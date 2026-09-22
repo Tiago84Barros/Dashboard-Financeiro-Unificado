@@ -4,8 +4,9 @@ views/portfolio_b3_safras.py — relatorio de desempenho safra a safra.
 Renderizacao apenas: toda a aritmetica de safra mora em core/b3_safras.py.
 views/portfolio_b3.py ja tem 4.400+ linhas e nao recebe logica nova.
 
-`_resumo_safras`, `_legenda_resumo`, `_tabela_para_exibicao` e
-`_grafico_barras` sao as pecas de logica deste modulo, e sao deliberadamente
+`_resumo_safras`, `_legenda_resumo`, `_tabela_para_exibicao`,
+`_column_config_retorno` e `_grafico_barras` sao as pecas de logica deste
+modulo, e sao deliberadamente
 puras (sem streamlit, sem banco) para poder ser testadas direto — nesta
 base, teste via Streamlit AppTest vaza atribuicao de modulo e falha só
 dentro da suíte completa no CI, nunca isolado (nota de memória
@@ -34,7 +35,7 @@ _CORES_SERIE = {
 def _resumo_safras(tabela: pd.DataFrame) -> dict:
     """Deriva das colunas publicadas tudo que a tela afirma em texto.
 
-    Pura (sem streamlit) para poder ser testada isoladamente. Duas regras
+    Pura (sem streamlit) para poder ser testada isoladamente. Regras
     fechadas por revisão:
 
     - a população das médias é `attrs["safras_completas"]`, nunca
@@ -45,11 +46,19 @@ def _resumo_safras(tabela: pd.DataFrame) -> dict:
       observada agora, nunca de uma suposição de calendário — de janeiro a
       março `safra_vigente_em` devolve o ano anterior, que ESTÁ dentro do
       range que `views/portfolio_b3.py` itera, e a safra vigente pode
-      aparecer como linha parcial (rodada de correção 1, achado I-2).
+      aparecer como linha parcial (rodada de correção 1, achado I-2);
+    - uma safra pode ter `Completa=True` e ainda assim não estar em
+      `completas` (janela fechada, mas zero pregão observado — o mesmo
+      caso do I-1). Ela não é `parciais` (a janela FECHOU) nem `completas`
+      (não foi medida): fica órfã das duas categorias, e por isso ganha a
+      própria lista, `orfas`, para a legenda não deixá-la muda (rodada de
+      correção 2, achado N-3).
     """
     safras_medidas = set(tabela.attrs.get("safras_completas", []))
-    completas = tabela[tabela["Safra"].isin(safras_medidas)]
+    completas_bool = tabela["Safra"].isin(safras_medidas)
+    completas = tabela[completas_bool]
     parciais = tabela[~tabela["Completa"]]
+    orfas = tabela[tabela["Completa"] & ~completas_bool]
 
     n_medidas = len(completas)
     if n_medidas:
@@ -68,6 +77,7 @@ def _resumo_safras(tabela: pd.DataFrame) -> dict:
     return {
         "completas": completas,
         "parciais": parciais,
+        "orfas": orfas,
         "n_medidas": n_medidas,
         "media_excesso": media_excesso,
         "venceu": venceu,
@@ -99,20 +109,48 @@ def _legenda_resumo(resumo: dict) -> str:
         base += (f" **A safra {safras_parciais} está nesta tabela com a "
                 "janela em curso** (marcada \"Completa\" = Não) — o retorno "
                 "dela é parcial e não entra nas médias acima.")
+
+    orfas = resumo["orfas"]
+    if not orfas.empty:
+        # N-3: a linha existe na tabela (Completa=True) mas não em
+        # `completas` nem em `parciais` — sem esta frase, ela aparece em
+        # branco do lado de uma legenda que só fala de "safra vigente" e
+        # "safra medida", sem cobrir o próprio caso.
+        safras_orfas = ", ".join(str(int(s)) for s in sorted(orfas["Safra"]))
+        base += (f" A safra {safras_orfas} tem a janela fechada, mas nenhum "
+                "pregão foi observado nela — por isso aparece em branco "
+                "nesta tabela e não entra em nenhuma média acima.")
     return base
 
 
 def _tabela_para_exibicao(tabela: pd.DataFrame) -> pd.DataFrame:
-    """Cópia de exibição: `NaN` vira travessão, nunca célula vazia sem
-    explicação (achado m-2). `NaN` nas colunas de retorno é o motor
-    (core/b3_safras.py) marcando explicitamente "não medido" — célula
-    vazia no `st.dataframe` não distingue isso de dado que sumiu."""
-    exibicao = tabela.copy()
-    for col in _COLUNAS_RETORNO:
-        exibicao[col] = exibicao[col].map(
-            lambda v: "—" if pd.isna(v) else f"{v:.1f}"
-        )
-    return exibicao
+    """Cópia de exibição — só uma cópia. Não formata os valores como texto.
+
+    A rodada de correção 1 (achado m-2) tinha `NaN` virando o texto "—"
+    aqui, via `.map(lambda v: "—" if pd.isna(v) else f"{v:.1f}")`. Isso
+    tornava as 4 colunas de retorno `object`/string, e o `st.dataframe`
+    passou a ordenar por clique de cabeçalho em ordem ALFABÉTICA, não
+    numérica: "-3,0 → 10,0 → 100,0 → 9,0" (achado N-1, rodada de correção
+    2). O dtype numérico tem que sobreviver até o `st.dataframe` para a
+    ordenação funcionar — por isso esta função não toca nos valores, só
+    copia; a formatação visual (1 casa) fica com `st.column_config` em
+    `_column_config_retorno`, que não muda o dtype subjacente.
+
+    `NaN` continua `NaN`: o motivo de uma célula estar vazia já está na
+    coluna "Mensurável", ao lado — não precisa (e não deve) virar texto
+    dentro da própria célula de novo."""
+    return tabela.copy()
+
+
+def _column_config_retorno() -> dict:
+    """Config de exibição das 4 colunas de retorno — 1 casa decimal, sem
+    alterar o dtype numérico da coluna (convenção já usada 3x em
+    `views/portfolio_b3.py`, linhas 2370/2397/2422, via
+    `st.column_config.NumberColumn`)."""
+    return {
+        col: st.column_config.NumberColumn(format="%.1f")
+        for col in _COLUNAS_RETORNO
+    }
 
 
 def _grafico_barras(completas: pd.DataFrame):
@@ -184,7 +222,8 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
             card_metrica("Safras medidas", "0",
                          ajuda="Nenhuma safra encerrada e mensurável ainda")
 
-    st.dataframe(_tabela_para_exibicao(tabela), width="stretch", hide_index=True)
+    st.dataframe(_tabela_para_exibicao(tabela), width="stretch", hide_index=True,
+                column_config=_column_config_retorno())
 
     if not completas.empty:
         st.plotly_chart(_grafico_barras(completas), width="stretch",

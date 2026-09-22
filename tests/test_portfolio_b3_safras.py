@@ -1,18 +1,20 @@
-"""Testes da rodada de correção 1 da Task 5 (views/portfolio_b3_safras.py).
+"""Testes das Tasks 5 e da rodada de correção 2 (views/portfolio_b3_safras.py).
 
 Todos os testes chamam as funções puras extraídas do módulo
 (`_resumo_safras`, `_legenda_resumo`, `_tabela_para_exibicao`,
-`_grafico_barras`) — nunca `render_safras` via AppTest, que nesta base
-vaza atribuição de módulo e só falha dentro da suíte completa no CI (nota
-de memória `apptest-vaza-atribuicao-de-modulo`). As tabelas de entrada são
-montadas à mão com o schema de `core.b3_safras.COLUNAS_TABELA`, sem passar
-por Streamlit nem pelo motor.
+`_column_config_retorno`, `_grafico_barras`) — nunca `render_safras` via
+AppTest, que nesta base vaza atribuição de módulo e só falha dentro da
+suíte completa no CI (nota de memória `apptest-vaza-atribuicao-de-modulo`).
+As tabelas de entrada são montadas à mão com o schema de
+`core.b3_safras.COLUNAS_TABELA`, sem passar por Streamlit nem pelo motor.
 """
 import numpy as np
 import pandas as pd
 
 from views.portfolio_b3_safras import (
+    _COLUNAS_RETORNO,
     _CORES_SERIE,
+    _column_config_retorno,
     _grafico_barras,
     _legenda_resumo,
     _resumo_safras,
@@ -127,20 +129,28 @@ def test_peso_ausente_max_ignora_safra_nao_medida():
 
 def test_legenda_intervalo_usa_safras_medidas_nao_tabela_inteira():
     """Mutação-alvo: `tabela['Safra'].min()/.max()` sobre a tabela inteira
-    incluiria 2010 (não mensurável) no intervalo, contradizendo a
-    contagem de safras medidas na mesma frase."""
+    incluiria 2010 (não mensurável, no PISO) e 2030 (não mensurável, no
+    TETO) no intervalo, contradizendo a contagem de safras medidas na
+    mesma frase. A re-revisão (m-1) provou que o fixture anterior só
+    cobria o piso: mutar `safra_max` de volta para `tabela['Safra'].max()`
+    deixava a suíte inteira verde porque não havia safra não mensurável
+    acima do intervalo medido. Este fixture tem as duas pontas."""
     tabela = _tabela(
         [
             _linha(2010, completa=True, mensuravel=False),
             _linha(2020, completa=True, mensuravel=True),
             _linha(2021, completa=True, mensuravel=True),
+            _linha(2030, completa=True, mensuravel=False),
         ],
         safras_completas=[2020, 2021],
     )
     resumo = _resumo_safras(tabela)
     legenda = _legenda_resumo(resumo)
-    assert "de 2020 a 2021" in legenda
-    assert "2010" not in legenda
+    # 2010 e 2030 são órfãs (Completa=True, Mensurável=False) e por isso
+    # aparecem noutra frase da legenda (achado N-3) — o que este teste
+    # prende é a frase de INTERVALO em si, não a ausência total dos anos
+    # em qualquer lugar do texto.
+    assert "2 safra(s) já encerrada(s) e mensurável(is), de 2020 a 2021." in legenda
 
 
 def test_legenda_sem_safra_medida_nao_publica_intervalo_vazio():
@@ -154,26 +164,97 @@ def test_legenda_sem_safra_medida_nao_publica_intervalo_vazio():
     assert "Nenhuma safra encerrada e mensurável ainda" in legenda
 
 
-# ── m-2: retorno NaN vira travessão na tabela exibida, não célula vazia ──
+# ── N-3: a safra órfã (Completa=True, Mensurável=False) ganha frase própria ──
 
 
-def test_tabela_exibicao_troca_nan_por_traco():
+def test_legenda_explica_safra_orfa_completa_mas_nao_mensuravel():
+    """Reproduz o achado N-3: a safra `Completa=True, Mensurável=False`
+    (o mesmo caso do I-1) não cai em `completas` (não foi medida) nem em
+    `parciais` (a janela FECHOU) — fica muda nas duas frases anteriores da
+    legenda, e a linha aparece em branco na tabela sem explicação.
+    Mutação-alvo: remover o bloco de `orfas` de `_legenda_resumo` faz
+    este teste falhar."""
+    tabela = _tabela(
+        [
+            _linha(2020, completa=True, mensuravel=False),
+            _linha(2021, completa=True, mensuravel=True),
+        ],
+        safras_completas=[2021],
+    )
+    resumo = _resumo_safras(tabela)
+    assert list(resumo["orfas"]["Safra"]) == [2020]
+    legenda = _legenda_resumo(resumo)
+    assert "A safra 2020 tem a janela fechada" in legenda
+    assert "nenhum pregão foi observado" in legenda
+
+
+def test_legenda_nao_menciona_orfa_quando_nao_ha_nenhuma():
+    """Contraparte: sem safra órfã, a frase de N-3 não deve aparecer."""
+    tabela = _tabela(
+        [_linha(2021, completa=True, mensuravel=True)],
+        safras_completas=[2021],
+    )
+    resumo = _resumo_safras(tabela)
+    assert resumo["orfas"].empty
+    legenda = _legenda_resumo(resumo)
+    assert "janela fechada, mas nenhum pregão" not in legenda
+
+
+# ── N-1/m-2: NaN não vira texto (quebrava a ordenação); formatação fica ──
+# ── no column_config, sem tocar no dtype numérico das colunas de retorno ──
+
+
+def test_tabela_exibicao_preserva_dtype_numerico_para_ordenar_corretamente():
+    """Mutação-alvo: voltar a
+    `.map(lambda v: "—" if pd.isna(v) else f"{v:.1f}")` (o bug do N-1)
+    torna a coluna `object`/string, e ordenar por ela passa a comparar
+    TEXTO em vez de número. Reproduzido pela revisão: ordenar "-3,0,
+    100,0, 9,0, 10,0" em texto devolve "-3.0 → 10.0 → 100.0 → 9.0" — a
+    safra de +9 pp aparece ACIMA da de +100 pp. Aqui provamos que o dtype
+    segue numérico (`is_numeric_dtype`) e que `sort_values` ordena pelo
+    valor, não pelo texto: se a coluna virasse string, `sort_values`
+    devolveria a ordem lexicográfica acima em vez da numérica."""
+    tabela = _tabela(
+        [
+            _linha(2020, completa=True, mensuravel=True, estrategia=-3.0),
+            _linha(2021, completa=True, mensuravel=True, estrategia=100.0),
+            _linha(2022, completa=True, mensuravel=True, estrategia=9.0),
+            _linha(2023, completa=True, mensuravel=True, estrategia=10.0),
+        ],
+        safras_completas=[2020, 2021, 2022, 2023],
+    )
+    exibicao = _tabela_para_exibicao(tabela)
+    assert pd.api.types.is_numeric_dtype(exibicao["Estratégia (%)"])
+    ordenada = list(exibicao.sort_values("Estratégia (%)")["Estratégia (%)"])
+    assert ordenada == [-3.0, 9.0, 10.0, 100.0]
+
+
+def test_tabela_exibicao_mantem_nan_numerico_sem_texto_na_celula():
+    """A ausência de retorno (safra não mensurável) não vira texto "—"
+    dentro da célula — isso é o que quebrava a ordenação (N-1). O motivo
+    já está do lado, na coluna "Mensurável"; a célula segue `NaN`
+    numérico, e é o `st.column_config.NumberColumn` (testado abaixo) que
+    cuida da formatação visual sem alterar o dtype."""
     tabela = _tabela(
         [_linha(2020, completa=True, mensuravel=False)],
         safras_completas=[],
     )
     exibicao = _tabela_para_exibicao(tabela)
-    assert exibicao.loc[0, "Estratégia (%)"] == "—"
-    assert exibicao.loc[0, "Excesso s/ Selic (pp)"] == "—"
+    assert pd.isna(exibicao.loc[0, "Estratégia (%)"])
+    assert not bool(exibicao.loc[0, "Mensurável"])
 
 
-def test_tabela_exibicao_formata_valor_medido_com_uma_casa():
-    tabela = _tabela(
-        [_linha(2021, completa=True, mensuravel=True, estrategia=12.345)],
-        safras_completas=[2021],
-    )
-    exibicao = _tabela_para_exibicao(tabela)
-    assert exibicao.loc[0, "Estratégia (%)"] == "12.3"
+def test_column_config_retorno_formata_como_numero_sem_mudar_dtype():
+    """`_column_config_retorno` tem que cobrir exatamente as 4 colunas de
+    retorno com `NumberColumn` (tipo "number" no config do Streamlit,
+    não "text") — é essa configuração, aplicada em cima de uma coluna que
+    continua numérica, que resolve a formatação (1 casa) sem reintroduzir
+    o bug de ordenação do N-1."""
+    config = _column_config_retorno()
+    assert set(config) == set(_COLUNAS_RETORNO)
+    for coluna, cfg in config.items():
+        assert cfg["type_config"]["type"] == "number", coluna
+        assert cfg["type_config"]["format"] == "%.1f", coluna
 
 
 # ── I-3: o gráfico usa o tema/cores compartilhados da aba, não os default do plotly ──

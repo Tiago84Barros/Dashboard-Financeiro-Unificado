@@ -76,6 +76,24 @@ def _nomes_atribuidos(caminho: Path) -> set[str]:
     return nomes
 
 
+def _valores_inteiros_atribuidos(caminho: Path) -> dict[str, int]:
+    """nome -> valor, só para atribuições simples de literal inteiro
+    (`NOME = 4`). Usado para achar duplicatas por VALOR, não só por nome
+    (achado N-2): um nome em português como `_MES_REBALANCE` não contém
+    a palavra inglesa "MONTH", e por isso escapava do critério anterior,
+    que só olhava o nome."""
+    arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+    valores: dict[str, int] = {}
+    for no in ast.walk(arvore):
+        if isinstance(no, ast.Assign) and isinstance(no.value, ast.Constant) \
+                and isinstance(no.value.value, int) \
+                and not isinstance(no.value.value, bool):
+            for alvo in no.targets:
+                if isinstance(alvo, ast.Name):
+                    valores[alvo.id] = no.value.value
+    return valores
+
+
 def test_mes_de_rebalance_definido_num_lugar_so():
     """Guarda duplicada nao fica igual: tres copias da regra de abril ja
     existiram e uma delas (o grafico) ficou para tras, e uma lista branca
@@ -84,16 +102,48 @@ def test_mes_de_rebalance_definido_num_lugar_so():
     lista aqui e derivada da estrutura -- todo .py de views/ e core/ --
     em vez de mais um nome de arquivo escrito a mao. O caminho e resolvido
     a partir da raiz do pacote, nao por `parts` de caminho absoluto --
-    filtro por caminho absoluto nao visita nada dentro de worktree."""
+    filtro por caminho absoluto nao visita nada dentro de worktree.
+
+    O criterio DENTRO de cada arquivo (achado N-2, rodada de correcao 2)
+    nao e mais so o nome em ingles ("REBAL"+"MONTH") -- essa lista branca
+    de palavras perdia um duplicado em portugues como `_MES_REBALANCE = 4`
+    (a re-revisao provou isso: 1 passed onde devia falhar). Agora o
+    criterio decisivo e o VALOR: qualquer atribuicao de literal inteiro
+    igual a `REBAL_MONTH` cujo nome contenha "REBAL" (raiz comum a
+    "rebalance"/"rebalanceamento" nas duas linguas) e suspeita. Valor +
+    nome, nao so nome -- ve `test_guarda_pega_duplicata_com_nome_em_portugues`
+    para a prova isolada."""
     permitido = RAIZ / "core" / "b3_vigencia.py"
     pastas = [RAIZ / "views", RAIZ / "core"]
     caminhos = [c for pasta in pastas for c in sorted(pasta.rglob("*.py"))
                 if c != permitido]
     assert caminhos, "a varredura de views/ e core/ nao encontrou nada"
     for caminho in caminhos:
-        definidos = {n for n in _nomes_atribuidos(caminho)
-                     if "REBAL" in n.upper() and "MONTH" in n.upper()}
-        assert not definidos, (
-            f"{caminho.relative_to(RAIZ)} define {sorted(definidos)}; "
-            "o mes de rebalance mora so em core/b3_vigencia.py"
+        valores = _valores_inteiros_atribuidos(caminho)
+        suspeitos = {n: v for n, v in valores.items()
+                     if v == REBAL_MONTH and "REBAL" in n.upper()}
+        assert not suspeitos, (
+            f"{caminho.relative_to(RAIZ)} define {sorted(suspeitos)} com o "
+            f"mesmo valor de REBAL_MONTH ({REBAL_MONTH}); o mes de "
+            "rebalance mora so em core/b3_vigencia.py"
         )
+
+
+def test_guarda_pega_duplicata_com_nome_em_portugues(tmp_path):
+    """Prova isolada do N-2: um duplicado em portugues, `_MES_REBALANCE = 4`,
+    tem que ser pego pelo novo criterio por valor -- o antigo (nome em
+    ingles "REBAL"+"MONTH") deixava passar (a re-revisao reproduziu com
+    1 passed). Escreve um modulo sintetico -- não altera nada em views/
+    nem core/ -- e roda a mesma função de detecção usada pelo teste
+    acima."""
+    modulo = tmp_path / "modulo_fake_pt.py"
+    modulo.write_text(
+        '"""Modulo sintetico so para este teste."""\n'
+        "_MES_REBALANCE = 4  # duplica REBAL_MONTH em portugues\n"
+        "JANELA_INICIO = \"04-01\"\n",
+        encoding="utf-8",
+    )
+    valores = _valores_inteiros_atribuidos(modulo)
+    suspeitos = {n: v for n, v in valores.items()
+                 if v == REBAL_MONTH and "REBAL" in n.upper()}
+    assert suspeitos == {"_MES_REBALANCE": 4}
