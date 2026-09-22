@@ -764,10 +764,17 @@ def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
     # subtracao direta estoura `TypeError: Expected numeric dtype, got
     # object instead` no `.round(1)` -- o bloco morreria justamente no
     # caso em que ele deveria dizer "nao houve o que comparar".
-    comparacao["Viés (pp)"] = (
+    # O arredondamento e de EXIBICAO. A conta roda no valor cheio: com
+    # `[3.04, 3.02, 2.97]` o teste t da p = 2,4e-05, e a mesma amostra
+    # arredondada para `[3.0, 3.0, 3.0]` perde toda a dispersao e volta
+    # `(None, None)` -- a tela imprimiria "nao ha dispersao entre si", que
+    # e falso sobre o dado, e rebaixaria um vies demonstrado a "nao
+    # testavel". Apresentacao nao pode apagar evidencia.
+    vies_cheio = (
         pd.to_numeric(comparacao["Estratégia (%) com gate"], errors="coerce")
         - pd.to_numeric(comparacao["Estratégia (%) sem gate"], errors="coerce")
-    ).round(1)
+    )
+    comparacao["Viés (pp)"] = vies_cheio.round(1)
     comparavel = comparacao["Safra"].isin(comparaveis)
     comparacao["Comparável"] = comparavel
     # Fora da populacao nao se publica numero: com um dos lados nao medido
@@ -777,8 +784,7 @@ def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
     # que ela mesma declara nao comparavel.
     if not comparacao.empty:
         comparacao.loc[~comparavel, "Viés (pp)"] = np.nan
-        vies = [float(v) for v in comparacao.loc[comparavel, "Viés (pp)"]
-                if pd.notna(v)]
+        vies = [float(v) for v in vies_cheio[comparavel] if pd.notna(v)]
     else:
         vies = []
     n = len(vies)
@@ -904,6 +910,41 @@ def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
     }
 
 
+def _assinatura_vies(com_gate: pd.DataFrame | None,
+                     resultados_aprovados: list[dict] | None,
+                     resultados_todos: list[dict] | None,
+                     df_precos: pd.DataFrame | None) -> str:
+    """Impressao digital das ENTRADAS da medição do viés.
+
+    A medição fica em `session_state` e sobrevive a um novo "Rodar": sem
+    esta assinatura, o Bloco 1 passa a mostrar a população nova e o Bloco 2
+    redesenha a antiga com carimbo de hora velho — duas populações lado a
+    lado na mesma tela, sem aviso.
+
+    A invalidação é por CONTEÚDO, não por uma lista de chaves escrita à
+    mão em outro módulo: lista de purga e código que grava a chave são
+    duas estruturas que divergem (este projeto já se queimou com
+    verificador e escritor lendo listas diferentes). Aqui quem decide se a
+    medição ainda vale é a própria entrada que a produziu.
+    """
+    partes: list[str] = [
+        f"aprovados={len(resultados_aprovados or [])}",
+        f"todos={len(resultados_todos or [])}",
+        f"precos={'x'.join(str(d) for d in df_precos.shape)}"
+        if df_precos is not None else "precos=-",
+    ]
+    if com_gate is not None and not com_gate.empty:
+        digitos = pd.util.hash_pandas_object(
+            com_gate.astype(str), index=True).sum()
+        partes.append(f"tabela={int(digitos) & 0xFFFFFFFFFFFF}")
+        partes.append(
+            "medidas=" + _lista_safras(com_gate.attrs.get("safras_completas",
+                                                          [])))
+    else:
+        partes.append("tabela=-")
+    return "|".join(partes)
+
+
 def _column_config_vies() -> dict:
     """1 casa decimal nas colunas de retorno/viés sem mexer no dtype — mesma
     convenção de `_column_config_retorno` (a ordenação por clique de
@@ -972,10 +1013,23 @@ def render_vies_universo(resultados_aprovados: list[dict],
         "naquele ano, sem gate de aprovação."
     )
 
+    assinatura = _assinatura_vies(tabela_com_gate, resultados_aprovados,
+                                  resultados_todos, df_precos)
+
     if not st.button("Medir o viés de universo", key="pb3_btn_vies"):
         medido = st.session_state.get("pb3_vies_universo")
-        if medido is not None:
-            _desenha_vies(medido["medicao"], quando=medido["quando"])
+        if medido is None:
+            return
+        # Medição de OUTRA análise não volta para a tela: ela responde a uma
+        # população que o Bloco 1 acima não mostra mais.
+        if medido.get("assinatura") != assinatura:
+            st.caption(
+                "A medição anterior do viés foi feita sobre outra análise e "
+                "não vale para a população atual. Clique em **Medir o viés "
+                "de universo** para refazê-la."
+            )
+            return
+        _desenha_vies(medido["medicao"], quando=medido["quando"])
         return
 
     with st.spinner("Reconstruindo as safras sem o gate de aprovação…"):
@@ -991,6 +1045,7 @@ def render_vies_universo(resultados_aprovados: list[dict],
 
     st.session_state["pb3_vies_universo"] = {
         "quando": pd.Timestamp.now().strftime("%d/%m/%Y %H:%M"),
+        "assinatura": assinatura,
         "medicao": medicao,
     }
     _desenha_vies(medicao)

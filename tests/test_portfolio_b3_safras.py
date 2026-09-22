@@ -9,11 +9,13 @@ As tabelas de entrada são montadas à mão com o schema de
 `core.b3_safras.COLUNAS_TABELA`, sem passar por Streamlit nem pelo motor.
 """
 import ast
+import contextlib
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
+import streamlit as _st_real
 
 from core.b3_safras import COLUNAS_TABELA
 from views.portfolio_b3_safras import (
@@ -1466,3 +1468,340 @@ def test_tela_b3_passa_os_aprovados_e_a_lista_completa():
         "a lista sem gate nao e a lista nao filtrada -- as duas curvas "
         "ficariam iguais e o vies sairia zero"
     )
+
+
+# ── Rodada de correção 1 ─────────────────────────────────────────────────────
+
+
+class _Falso:
+    """Dublê de `streamlit` para provar ALCANCE, não forma.
+
+    Não é AppTest: nada de runtime, script runner ou atribuição de módulo
+    (`apptest-vaza-atribuicao-de-modulo`). É só um objeto que registra o
+    que a função chamou, injetado no lugar do `st` do módulo — a única
+    forma de um teste falhar quando a função para de DESENHAR, e não
+    apenas quando o texto dela muda de forma.
+    """
+
+    def __init__(self, botao=False):
+        self.chamadas: list[tuple] = []
+        self.session_state: dict = {}
+        self._botao = botao
+
+    def _reg(self, nome):
+        def _f(*a, **k):
+            self.chamadas.append((nome, a, k))
+            return None
+        return _f
+
+    # `column_config` nao e desenho, e construcao de objeto que a funcao
+    # devolve -- o dublê deixa passar o modulo real.
+    column_config = _st_real.column_config
+
+    def __getattr__(self, nome):
+        return self._reg(nome)
+
+    def button(self, *a, **k):
+        self.chamadas.append(("button", a, k))
+        return self._botao
+
+    def columns(self, n, *a, **k):
+        self.chamadas.append(("columns", (n,), k))
+        quantas = n if isinstance(n, int) else len(n)
+        return [contextlib.nullcontext() for _ in range(quantas)]
+
+    def spinner(self, *a, **k):
+        self.chamadas.append(("spinner", a, k))
+        return contextlib.nullcontext()
+
+    def caption(self, texto="", *a, **k):
+        self.chamadas.append(("caption", (texto,), k))
+
+    def dataframe(self, *a, **k):
+        self.chamadas.append(("dataframe", a, k))
+
+    def nomes(self):
+        return [c[0] for c in self.chamadas]
+
+    def legendas(self):
+        return [c[1][0] for c in self.chamadas if c[0] == "caption"]
+
+
+def _tabela_vies(com, sem, safras=None):
+    """Duas tabelas de safras com os retornos dados, prontas para
+    `_vies_universo`."""
+    safras = safras or list(range(2020, 2020 + len(com)))
+    t_com = _tabela([_linha(s, completa=True, mensuravel=True, estrategia=v)
+                     for s, v in zip(safras, com)], list(safras))
+    t_sem = _tabela([_linha(s, completa=True, mensuravel=True, estrategia=v)
+                     for s, v in zip(safras, sem)], list(safras))
+    return t_com, t_sem
+
+
+def test_vies_testa_o_valor_cheio_e_nao_o_arredondado_para_exibicao():
+    """A-T7-02: arredondar antes do teste apaga viés demonstrado.
+
+    `[3.04, 3.02, 2.97]` dá p = 2,4e-05; a mesma amostra arredondada para
+    exibição vira `[3.0, 3.0, 3.0]`, perde toda a dispersão, e o teste t
+    devolve `(None, None)` — a tela publicaria "não têm dispersão entre
+    si", que é FALSO sobre o dado, e um viés significante sairia como
+    "não testável" com o card neutro.
+    """
+    com, sem = _tabela_vies([13.04, 13.02, 12.97], [10.0, 10.0, 10.0])
+    m = _vies_universo(com, sem)
+
+    assert m["vies"] == pytest.approx([3.04, 3.02, 2.97], abs=1e-9), (
+        "a amostra do teste saiu da coluna arredondada de exibição"
+    )
+    assert m["p_bilateral"] is not None, (
+        "dispersão real abaixo da primeira casa decimal foi apagada antes "
+        "do teste"
+    )
+    assert m["p_bilateral"] < 0.001
+    assert m["significante"] is True
+    assert m["positivo"] is False
+    texto = " ".join(m["notas"])
+    assert "dispersão entre si" not in texto, (
+        "a tela afirma ausência de dispersão sobre um dado que tem "
+        "dispersão medida"
+    )
+    assert list(m["comparacao"]["Viés (pp)"]) == pytest.approx([3.0, 3.0, 3.0])
+
+
+def test_alfa_do_vies_e_bilateral_e_cada_cauda_le_metade():
+    """A-T7-04: sem isto, `meia_cauda = _ALPHA_VIES` transforma o teste em
+    20% bilateral e a tela segue imprimindo "α = 0.10, 0.05 por cauda" —
+    número publicado que não corresponde à conta feita.
+
+    A amostra abaixo tem p bilateral = 0,115: acima de 0,10, logo NÃO
+    significante. Com a meia-cauda errada (0,10 em vez de 0,05) a cauda
+    direita (p = 0,057) passaria e o card viraria vermelho.
+    """
+    valores = [2.0, 0.0, 3.0, -0.5, 2.5]
+    com, sem = _tabela_vies([10.0 + v for v in valores], [10.0] * len(valores))
+    m = _vies_universo(com, sem)
+
+    assert m["p_bilateral"] == pytest.approx(0.11476192, abs=1e-6)
+    assert 0.10 < m["p_bilateral"] < 0.20
+    assert m["significante"] is False, (
+        "p bilateral acima de α = 0,10 saiu como significante — a "
+        "meia-cauda não está lendo α/2"
+    )
+    assert m["positivo"] is None
+    texto = " ".join(m["notas"])
+    assert "α = 0.10" in texto and "0.05 por cauda" in texto, (
+        "o α impresso tem que ser o α usado na decisão"
+    )
+
+
+def test_p_bilateral_e_o_dobro_da_cauda_menor():
+    """A-T7-05: sem dobrar, o p publicado é de um teste unilateral com
+    rótulo de bilateral — metade do valor certo, a favor de declarar viés."""
+    from core.b3_evidence import teste_t_unilateral
+
+    valores = [2.0, 0.0, 3.0, -0.5, 2.5]
+    com, sem = _tabela_vies([10.0 + v for v in valores], [10.0] * len(valores))
+    m = _vies_universo(com, sem)
+
+    p_mais = teste_t_unilateral(valores)[1]
+    p_menos = teste_t_unilateral([-v for v in valores])[1]
+    menor = min(p_mais, p_menos)
+    assert m["p_bilateral"] == pytest.approx(min(1.0, 2.0 * menor))
+    assert m["p_bilateral"] > menor * 1.5, (
+        "o p bilateral saiu sem dobrar a cauda"
+    )
+    assert _fmt_p(m["p_bilateral"]) in " ".join(m["notas"])
+
+
+def _tela_de_safras_falsa(monkeypatch, *, botao=False):
+    """Injeta o dublê de streamlit no módulo da view."""
+    import views.portfolio_b3_safras as mod
+    falso = _Falso(botao=botao)
+    monkeypatch.setattr(mod, "st", falso)
+    monkeypatch.setattr(mod, "card_metrica",
+                        lambda *a, **k: falso.chamadas.append(("card", a, k)))
+    return mod, falso
+
+
+def _resultado_b3(segmento, safra, tickers):
+    return {
+        "segmento": segmento,
+        "lids_por_ano": {safra - 1: list(tickers)},
+        "pesos_por_ano": {safra - 1: {t: 1.0 / len(tickers) for t in tickers}},
+        "tickers": list(tickers),
+    }
+
+
+def _precos_b3(tickers):
+    """Mesmo formato que o motor de safras consome: datas no índice,
+    tickers nas colunas."""
+    datas = pd.DatetimeIndex(["2024-04-30", "2025-03-31"])
+    return pd.DataFrame({t: [10.0, 12.0 + i] for i, t in enumerate(tickers)},
+                        index=datas)
+
+
+def test_render_safras_executa_o_bloco_2_de_fato(monkeypatch):
+    """A-T7-01: prova por ALCANCE, não por forma.
+
+    Um `return` logo antes da chamada não muda a forma da guarda nenhuma —
+    o `ast.If` continua lá, o `ast.Call` também — e o Bloco 2 some da tela
+    com a suíte verde. Este teste roda `render_safras` com um dublê de
+    streamlit e exige que `render_vies_universo` tenha sido REALMENTE
+    chamada, com a tabela do Bloco 1 junto.
+    """
+    mod, falso = _tela_de_safras_falsa(monkeypatch)
+    chamou: list[dict] = []
+    monkeypatch.setattr(mod, "render_vies_universo",
+                        lambda *a, **k: chamou.append({"args": a, "kwargs": k}))
+    monkeypatch.setattr(mod, "render_expectativa", lambda *a, **k: None)
+
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
+    todos = aprovados + [_resultado_b3("B", 2025, ["CCCC3"])]
+    precos = _precos_b3(["AAAA3", "BBBB3", "CCCC3"])
+
+    mod.render_safras(aprovados, precos, selic_por_ano={}, taxa_selic_aa=0.0,
+                      resultados_todos=todos)
+
+    assert chamou, (
+        "render_safras terminou sem executar o Bloco 2 -- a chamada pode "
+        "estar presente no código e inalcançável"
+    )
+    assert chamou[0]["args"][0] is aprovados
+    assert chamou[0]["args"][1] is todos
+    assert isinstance(chamou[0]["kwargs"]["tabela_com_gate"], pd.DataFrame)
+
+
+def test_render_safras_nao_executa_o_bloco_2_sem_a_lista_completa(monkeypatch):
+    """O outro lado: sem `resultados_todos` não há o que comparar, e o
+    bloco não pode ser desenhado."""
+    mod, falso = _tela_de_safras_falsa(monkeypatch)
+    chamou = []
+    monkeypatch.setattr(mod, "render_vies_universo",
+                        lambda *a, **k: chamou.append(a))
+    monkeypatch.setattr(mod, "render_expectativa", lambda *a, **k: None)
+
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
+    mod.render_safras(aprovados, _precos_b3(["AAAA3", "BBBB3"]),
+                      selic_por_ano={}, taxa_selic_aa=0.0)
+    assert not chamou
+
+
+def test_render_vies_universo_desenha_depois_do_clique(monkeypatch):
+    """A-T7-01 (A5): um `return` na primeira linha de
+    `render_vies_universo` não muda forma nenhuma e apaga o bloco. Aqui o
+    botão é clicado e a função TEM que desenhar: card, ressalvas e tabela.
+    """
+    mod, falso = _tela_de_safras_falsa(monkeypatch, botao=True)
+
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
+    todos = aprovados + [_resultado_b3("B", 2025, ["CCCC3"])]
+    precos = _precos_b3(["AAAA3", "BBBB3", "CCCC3"])
+
+    mod.render_vies_universo(aprovados, todos, precos, selic_por_ano={},
+                             taxa_selic_aa=0.0)
+
+    nomes = falso.nomes()
+    assert "button" in nomes, "o botão do Bloco 2 nem chegou a ser desenhado"
+    assert "card" in nomes, "clicou e o card do viés não foi desenhado"
+    assert "dataframe" in nomes, "clicou e a tabela do viés não foi desenhada"
+    assert falso.legendas(), "clicou e nenhuma ressalva foi publicada"
+    assert "pb3_vies_universo" in falso.session_state
+
+
+def test_medicao_de_outra_analise_nao_volta_para_a_tela(monkeypatch):
+    """A-T7-03: a chave `pb3_vies_universo` sobrevive a um novo "Rodar".
+
+    Sem invalidação, o Bloco 1 mostra a população nova e o Bloco 2
+    redesenha a antiga com carimbo de hora velho — duas populações lado a
+    lado, sem aviso.
+    """
+    mod, falso = _tela_de_safras_falsa(monkeypatch, botao=False)
+    falso.session_state["pb3_vies_universo"] = {
+        "quando": "01/01/2020 00:00",
+        "assinatura": "de-outra-analise",
+        "medicao": _vies_universo(*_tabela_vies([13.0], [10.0])),
+    }
+
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
+    mod.render_vies_universo(aprovados, aprovados,
+                             _precos_b3(["AAAA3", "BBBB3"]),
+                             selic_por_ano={}, taxa_selic_aa=0.0)
+
+    nomes = falso.nomes()
+    assert "card" not in nomes and "dataframe" not in nomes, (
+        "medição de outra análise foi republicada ao lado de uma população "
+        "que não é a dela"
+    )
+    assert any("não vale para a população atual" in c
+               for c in falso.legendas())
+
+
+def test_medicao_da_mesma_analise_volta_com_as_ressalvas(monkeypatch):
+    """O outro lado de A-T7-03: invalidar sempre seria fácil e errado — a
+    medição cara tem que voltar quando a população é a mesma."""
+    mod, falso = _tela_de_safras_falsa(monkeypatch, botao=False)
+
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
+    precos = _precos_b3(["AAAA3", "BBBB3"])
+    assinatura = mod._assinatura_vies(None, aprovados, aprovados, precos)
+    falso.session_state["pb3_vies_universo"] = {
+        "quando": "01/01/2020 00:00",
+        "assinatura": assinatura,
+        "medicao": _vies_universo(*_tabela_vies([13.0, 14.0], [10.0, 10.0])),
+    }
+
+    mod.render_vies_universo(aprovados, aprovados, precos,
+                             selic_por_ano={}, taxa_selic_aa=0.0)
+
+    assert "card" in falso.nomes()
+    assert falso.legendas(), "voltou o número sem as ressalvas"
+
+
+def test_assinatura_do_vies_muda_quando_a_populacao_muda():
+    """A assinatura tem que enxergar o que move a medição: a tabela do
+    Bloco 1, as safras mensuráveis dela e o tamanho das duas listas."""
+    import views.portfolio_b3_safras as mod
+
+    t1, _ = _tabela_vies([13.0, 14.0], [10.0, 10.0])
+    t2, _ = _tabela_vies([13.0, 99.0], [10.0, 10.0])
+    precos = _precos_b3(["AAAA3"])
+    base = mod._assinatura_vies(t1, [1], [1, 2], precos)
+
+    assert base == mod._assinatura_vies(t1, [1], [1, 2], precos)
+    assert base != mod._assinatura_vies(t2, [1], [1, 2], precos)
+    assert base != mod._assinatura_vies(t1, [1], [1, 2, 3], precos)
+    assert base != mod._assinatura_vies(t1, [1, 2], [1, 2], precos)
+    t3 = t1.copy()
+    t3.attrs["safras_completas"] = []
+    assert base != mod._assinatura_vies(t3, [1], [1, 2], precos)
+
+
+def test_medicao_recem_feita_volta_no_rerun_seguinte(monkeypatch):
+    """A assinatura GRAVADA tem que ser a mesma que a leitura confere.
+
+    Sem este teste, gravar uma assinatura que nunca casa passa despercebido:
+    a medição cara seria refeita a cada clique e o rerun seguinte publicaria
+    "não vale para a população atual" logo depois de medir. Escritor e
+    verificador tem que ler a mesma coisa.
+    """
+    mod, falso = _tela_de_safras_falsa(monkeypatch, botao=True)
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
+    todos = aprovados + [_resultado_b3("B", 2025, ["CCCC3"])]
+    precos = _precos_b3(["AAAA3", "BBBB3", "CCCC3"])
+
+    mod.render_vies_universo(aprovados, todos, precos, selic_por_ano={},
+                             taxa_selic_aa=0.0)
+    assert "pb3_vies_universo" in falso.session_state
+
+    # Rerun seguinte, mesma analise, sem clicar.
+    falso.chamadas.clear()
+    falso._botao = False
+    mod.render_vies_universo(aprovados, todos, precos, selic_por_ano={},
+                             taxa_selic_aa=0.0)
+
+    assert "card" in falso.nomes(), (
+        "a medicao recem-feita nao voltou no rerun -- a assinatura gravada "
+        "nao e a que a leitura confere"
+    )
+    assert not any("não vale para a população atual" in c
+                   for c in falso.legendas())
