@@ -19,6 +19,7 @@ from views.portfolio_b3_safras import (
     _COLUNAS_RETORNO,
     _CORES_SERIE,
     _column_config_retorno,
+    _expectativa,
     _grafico_barras,
     _legenda_resumo,
     _resumo_safras,
@@ -339,4 +340,154 @@ def test_colunas_retorno_esta_contida_em_colunas_tabela():
         "_COLUNAS_RETORNO tem coluna fora de core.b3_safras.COLUNAS_TABELA -- "
         "a formatacao dessa coluna em _column_config_retorno() seria "
         "ignorada em silencio pelo st.dataframe"
+    )
+
+
+# ── Task 6: Bloco 3 — banda (bootstrap) e fragilidade (leave-one-out) ──
+
+
+def _res_ic(ic_values):
+    return {"segmento": "S", "rank_ic_values": list(ic_values)}
+
+
+def test_expectativa_usa_attrs_safras_completas_nao_completa_da_tabela():
+    """Mutação-alvo: trocar a leitura de `attrs["safras_completas"]` por
+    `tabela[tabela["Completa"]]` (o que o rascunho da task propunha) faz a
+    safra 2020 — janela civil fechada, mas fora da população mensurável —
+    entrar na banda com +99 pp e jogar o intervalo todo para cima.
+
+    A banda é uma afirmação sobre excesso MEDIDO; a população dela tem que
+    ser a mesma das médias do Bloco 1, e essa população é `attrs`."""
+    linhas = [_linha(2021, completa=True, mensuravel=True, excesso=4.0),
+              _linha(2022, completa=True, mensuravel=True, excesso=5.0),
+              _linha(2023, completa=True, mensuravel=True, excesso=3.0),
+              _linha(2020, completa=True, mensuravel=True, excesso=99.0)]
+    tabela = _tabela(linhas, [2021, 2022, 2023])
+
+    out = _expectativa([_res_ic([0.1, 0.2, 0.15])], tabela)
+
+    assert out["n_safras_banda"] == 3
+    baixo, alto = out["banda"]
+    assert alto < 0.06, (
+        "a banda subiu acima de 6% -- a safra fora de safras_completas "
+        "entrou na reamostragem"
+    )
+    assert baixo > 0
+
+
+def test_expectativa_sem_safra_medida_nao_publica_banda():
+    """Nenhum número sem evidência medida por trás: sem safra mensurável a
+    banda sai `(None, None)` e o texto sai "—", nunca um ponto central
+    fabricado para preencher o card."""
+    tabela = _tabela([_linha(2026, completa=False, mensuravel=True)], [])
+
+    out = _expectativa([_res_ic([0.1, 0.2])], tabela)
+
+    assert out["banda"] == (None, None)
+    assert out["texto_banda"] == "—"
+    assert out["n_safras_banda"] == 0
+
+
+def test_limitacao_da_banda_e_derivada_da_contagem_medida():
+    """Texto de limitação derivado da MEDIÇÃO, nunca escrito à mão: com uma
+    única safra mensurável a frase tem que dizer "1 safra", e com nenhuma
+    tem que dizer "nenhuma". Uma frase fixa ("ainda não há safras
+    encerradas") envelheceria invertida e continuaria soando como rigor."""
+    uma = _expectativa(
+        [_res_ic([0.1, 0.2])],
+        _tabela([_linha(2023, completa=True, mensuravel=True)], [2023]),
+    )
+    assert uma["banda"] == (None, None)
+    assert "1 safra" in uma["limitacao_banda"]
+
+    nenhuma = _expectativa(
+        [_res_ic([0.1, 0.2])],
+        _tabela([_linha(2026, completa=False, mensuravel=True)], []),
+    )
+    assert "nenhuma safra" in nenhuma["limitacao_banda"].lower()
+
+
+def test_aviso_de_banda_atravessando_zero_cita_os_limites_medidos():
+    linhas = [_linha(2020 + i, completa=True, mensuravel=True, excesso=e)
+              for i, e in enumerate([20.0, -18.0, 15.0, -22.0, 5.0])]
+    tabela = _tabela(linhas, [2020, 2021, 2022, 2023, 2024])
+
+    out = _expectativa([_res_ic([0.1, 0.2, 0.15, 0.05, 0.12])], tabela)
+
+    baixo, alto = out["banda"]
+    assert baixo < 0 < alto
+    aviso = " ".join(out["avisos"])
+    assert "atravessa o zero" in aviso
+    assert f"{baixo:+.1%}" in aviso and f"{alto:+.1%}" in aviso
+
+
+def test_sem_aviso_de_banda_quando_ela_nao_atravessa_zero():
+    linhas = [_linha(2020 + i, completa=True, mensuravel=True, excesso=e)
+              for i, e in enumerate([10.0, 12.0, 11.0, 9.0, 13.0])]
+    tabela = _tabela(linhas, [2020, 2021, 2022, 2023, 2024])
+
+    out = _expectativa([_res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])], tabela)
+
+    assert all("atravessa o zero" not in a for a in out["avisos"])
+
+
+def test_aviso_de_fragilidade_conta_as_safras_que_viram():
+    """O veredito da B3 já virou para APROVADO por 0,004 e reprovava de
+    novo ao tirar uma safra. Quando o leave-one-out acha essa dependência,
+    ela tem que chegar à tela com o número de safras que a produzem."""
+    tabela = _tabela(
+        [_linha(2020 + i, completa=True, mensuravel=True, excesso=4.0)
+         for i in range(3)],
+        [2020, 2021, 2022],
+    )
+
+    out = _expectativa([_res_ic([0.02, 0.01, 0.0, 0.01, 0.60])], tabela)
+
+    assert out["loo"]["safras_que_viram"] >= 1
+    aviso = " ".join(out["avisos"])
+    assert f"{out['loo']['safras_que_viram']} das 5 safras" in aviso
+
+
+def test_sem_aviso_de_fragilidade_quando_nenhuma_safra_vira():
+    tabela = _tabela(
+        [_linha(2020 + i, completa=True, mensuravel=True, excesso=4.0)
+         for i in range(3)],
+        [2020, 2021, 2022],
+    )
+
+    out = _expectativa([_res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])], tabela)
+
+    assert out["loo"]["safras_que_viram"] == 0
+    assert all("veredito muda" not in a for a in out["avisos"])
+
+
+def test_expectativa_junta_rank_ic_de_todos_os_segmentos_e_descarta_nan():
+    """Os Rank-ICs vêm de vários segmentos e alguns anos não são
+    calculáveis (`None`/`NaN`). Ler só o primeiro resultado, ou deixar o
+    `NaN` passar, muda a amostra do veredito sem erro visível."""
+    tabela = _tabela([_linha(2023, completa=True, mensuravel=True)], [2023])
+
+    out = _expectativa(
+        [_res_ic([0.1, None, 0.2]), _res_ic([np.nan, 0.3])], tabela)
+
+    assert out["ic_values"] == [0.1, 0.2, 0.3]
+    assert out["veredito"].anos_medidos == 3
+
+
+def test_render_expectativa_e_chamada_por_render_safras():
+    """`_expectativa` testada isolada não prende o cabeamento: deletar a
+    chamada de `render_expectativa` em `render_safras` apaga o Bloco 3
+    inteiro da tela e deixa a suíte verde. Inspeção por AST, não AppTest
+    (nota de memória `apptest-vaza-atribuicao-de-modulo`)."""
+    caminho = RAIZ / "views" / "portfolio_b3_safras.py"
+    arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+    render = next(
+        no for no in ast.walk(arvore)
+        if isinstance(no, ast.FunctionDef) and no.name == "render_safras"
+    )
+    chamadas = {no.func.id for no in ast.walk(render)
+                if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)}
+    assert "render_expectativa" in chamadas, (
+        "render_safras nao chama render_expectativa -- o Bloco 3 nao "
+        "aparece na tela e nenhum outro teste percebe"
     )

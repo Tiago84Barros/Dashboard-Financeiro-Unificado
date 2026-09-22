@@ -120,10 +120,28 @@ Regras de medicao do retorno (rodada de correcao 4, revisao de codigo):
   se sobrar janela sem cobrir, levanta `ValueError` -- o erro aparece como
   erro.
 
+Task 6 -- a expectativa sai como banda e fragilidade, nunca como numero:
+
+- **`bootstrap_excesso` tem semente fixa por REPRODUTIBILIDADE, nao por
+  estabilidade.** Rodar de novo com outra semente so troca o ruido de
+  Monte Carlo; nao responde se a conclusao depende de uma safra
+  especifica. Quem responde isso e `fragilidade_leave_one_out`. Com menos
+  de duas safras a banda sai `(None, None)` -- sem dispersao observada nao
+  ha intervalo, e um ponto central sozinho seria numero sem medicao.
+- **O leave-one-out recalcula o p-valor em cada subamostra.**
+  `classify_evidence` so pode declarar `evidencia_a_favor` quando recebe
+  `p_value`; chamado sem ele (o rascunho da task), o classificador ficaria
+  preso em "inconclusivo (sem significancia)" e o LOO daria ZERO safras
+  que viram para QUALQUER amostra positiva -- publicando como robustez
+  medida uma insensibilidade do proprio criterio. `_p_valor_unilateral`
+  fecha isso, e o caso esta preso por
+  `test_leave_one_out_deriva_significancia_de_cada_subamostra`.
+
 Modulo puro: sem streamlit, sem banco. Coberto por tests/test_b3_safras.py.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import numpy as np
@@ -523,3 +541,98 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
     tabela.attrs["safras_completas"] = completas
     tabela.attrs["selic_anos_estimados_por_safra"] = selic_estimados_por_safra
     return tabela
+
+
+def bootstrap_excesso(excessos: list[float], *,
+                      n_reamostras: int = 10_000,
+                      seed: int = 20260921
+                      ) -> tuple[float | None, float | None]:
+    """Intervalo de 95% do excesso medio por safra, por reamostragem.
+
+    Semente fixa: o mesmo conjunto de safras tem que dar o mesmo intervalo
+    entre execucoes. A fragilidade da conclusao NAO se mede re-semeando --
+    trocar a semente so troca o ruido de Monte Carlo. Quem mede se a
+    conclusao depende de uma safra especifica e `fragilidade_leave_one_out`.
+
+    Com menos de duas safras nao ha dispersao a reamostrar e a funcao
+    devolve `(None, None)`: melhor a tela mostrar "—" do que publicar um
+    ponto central que a amostra nao sustenta.
+    """
+    valores = np.asarray([float(v) for v in (excessos or [])
+                          if v is not None and np.isfinite(float(v))],
+                         dtype=float)
+    if len(valores) < 2:
+        return (None, None)
+    rng = np.random.default_rng(seed)
+    medias = rng.choice(valores, size=(n_reamostras, len(valores)),
+                        replace=True).mean(axis=1)
+    return (float(np.percentile(medias, 2.5)),
+            float(np.percentile(medias, 97.5)))
+
+
+def _p_valor_unilateral(valores: list[float]) -> float | None:
+    """p-valor do teste t unilateral de `media > 0` sobre os Rank-ICs.
+
+    `classify_evidence` so tem como declarar `evidencia_a_favor` quando
+    recebe `p_value` -- sem ele o classificador nunca sai de
+    "inconclusivo (sem significancia)" para uma amostra positiva, por mais
+    forte que ela seja. Chamar o classificador sem p-valor dentro do
+    leave-one-out faria a fragilidade dar ZERO sempre, e zero ali seria
+    lido como robustez: exatamente a conclusao que esta funcao existe para
+    poder contradizer.
+
+    Aproximacao normal quando scipy esta ausente -- mesma convencao de
+    `core.b3_evidence.minimum_detectable_effect`.
+    """
+    amostra = np.asarray([float(v) for v in (valores or [])
+                          if v is not None and np.isfinite(float(v))],
+                         dtype=float)
+    n = len(amostra)
+    if n < 2:
+        return None
+    erro_padrao = float(amostra.std(ddof=1)) / math.sqrt(n)
+    if not np.isfinite(erro_padrao) or erro_padrao <= 0:
+        return None
+    estatistica = float(amostra.mean()) / erro_padrao
+    try:
+        from scipy.stats import t as _t
+        return float(_t.sf(estatistica, df=n - 1))
+    except Exception:
+        return float(0.5 * math.erfc(estatistica / math.sqrt(2.0)))
+
+
+def fragilidade_leave_one_out(ic_values: list[float]) -> dict:
+    """Quantas safras precisam sair para o veredito virar.
+
+    Reusa `core.b3_evidence.classify_evidence` -- o mesmo classificador que
+    a tela ja aplica, para que o veredito do LOO seja comparavel ao
+    veredito publicado, e nao um segundo criterio parecido.
+
+    Cada passo recalcula o p-valor sobre a PROPRIA subamostra
+    (`_p_valor_unilateral`), e nao reaproveita o do conjunto inteiro: o
+    ponto do leave-one-out e justamente que tirar uma safra muda a
+    significancia. Reaproveitar o p-valor completo (ou omiti-lo) daria
+    sempre "zero safras que viram", e a tela publicaria robustez que nao
+    foi medida.
+
+    Sem amostra, `estados_loo` sai vazio -- "zero safras que viram" ali
+    significa que nao havia o que remover, nao que a evidencia e solida; a
+    tela distingue os dois pela lista vazia.
+    """
+    from core.b3_evidence import classify_evidence
+
+    limpos = [float(v) for v in (ic_values or [])
+              if v is not None and np.isfinite(float(v))]
+    p_completo = _p_valor_unilateral(limpos)
+    completo = classify_evidence(ic_values=limpos, p_value=p_completo).estado
+    estados: list[str] = []
+    for i in range(len(limpos)):
+        sem_i = limpos[:i] + limpos[i + 1:]
+        p_sem_i = _p_valor_unilateral(sem_i)
+        estados.append(
+            classify_evidence(ic_values=sem_i, p_value=p_sem_i).estado)
+    return {
+        "estado_completo": completo,
+        "estados_loo": estados,
+        "safras_que_viram": sum(1 for e in estados if e != completo),
+    }

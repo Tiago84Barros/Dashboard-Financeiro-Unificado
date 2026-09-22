@@ -5,8 +5,8 @@ Renderizacao apenas: toda a aritmetica de safra mora em core/b3_safras.py.
 views/portfolio_b3.py ja tem 4.400+ linhas e nao recebe logica nova.
 
 `_resumo_safras`, `_legenda_resumo`, `_tabela_para_exibicao`,
-`_column_config_retorno` e `_grafico_barras` sao as pecas de logica deste
-modulo, e sao deliberadamente
+`_column_config_retorno`, `_grafico_barras` e `_expectativa` sao as pecas
+de logica deste modulo, e sao deliberadamente
 puras (sem streamlit, sem banco) para poder ser testadas direto — nesta
 base, teste via Streamlit AppTest vaza atribuicao de modulo e falha só
 dentro da suíte completa no CI, nunca isolado (nota de memória
@@ -175,6 +175,7 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                   taxa_selic_aa: float,
                   resultados_todos: list[dict] | None = None) -> None:
     """Bloco 1: a tabela de safras e a barra por safra contra Selic/EW.
+    Ao fim, chama `render_expectativa` (Bloco 3).
 
     `resultados_todos` fica reservado para a Task 7 (medicao de vies de
     universo); esta task nao o consome.
@@ -235,6 +236,8 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
             "ficaram atrás do benchmark."
         )
 
+    render_expectativa(resultados, tabela)
+
     # Mesma população das outras agregações (as safras medidas): incluir as
     # não mensuráveis infla o aviso, porque nelas "Peso sem preço" vale
     # 100,0 justamente por não ter havido observação nenhuma (achado I-1).
@@ -247,3 +250,136 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
             "inventamos a perda, mas ela também não rende o que os "
             "sobreviventes renderam."
         )
+
+
+def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
+    """Tudo que o Bloco 3 publica, derivado das leituras — sem streamlit.
+
+    Três perguntas distintas, e é de propósito que elas não virem um
+    número só: **ordenar não é superar**. Um Rank-IC positivo diz que o
+    score discriminou retornos; ele não diz que a carteira bateu a Selic.
+    Fundir os dois num "retorno esperado" leria como previsão um resultado
+    que a amostra não sustenta.
+
+    Regras fechadas nesta task:
+
+    - a população da banda é `attrs["safras_completas"]`, nunca
+      `tabela["Completa"]` — mesma população das médias do Bloco 1. Uma
+      safra de janela fechada e zero pregão observado não é evidência;
+    - a fragilidade NÃO é medida re-semeando o bootstrap (trocar a semente
+      só troca ruído de Monte Carlo) e sim por leave-one-out sobre as
+      safras. O veredito da B3 já passou a APROVADO por 0,004 e reprovava
+      de novo ao tirar uma safra — quem enxerga isso é o LOO;
+    - todo texto de limitação sai da medição. `limitacao_banda` cita a
+      contagem observada de safras mensuráveis, para não virar uma frase
+      fixa que envelhece invertida e continua soando como rigor.
+    """
+    from core.b3_evidence import classify_evidence
+    from core.b3_safras import bootstrap_excesso, fragilidade_leave_one_out
+
+    ic_values = [float(v) for res in (resultados or [])
+                 for v in (res.get("rank_ic_values") or [])
+                 if v is not None and pd.notna(v)]
+
+    medidas = set(tabela.attrs.get("safras_completas", []))
+    completas = (tabela[tabela["Safra"].isin(medidas)]
+                 if not tabela.empty else tabela)
+    excessos = [float(v) / 100.0
+                for v in (completas["Excesso s/ Selic (pp)"]
+                          if not completas.empty else [])
+                if pd.notna(v)]
+
+    veredito = classify_evidence(ic_values=ic_values)
+    baixo, alto = bootstrap_excesso(excessos)
+    loo = fragilidade_leave_one_out(ic_values)
+
+    avisos: list[str] = []
+    if baixo is not None and baixo <= 0 <= alto:
+        avisos.append(
+            f"O intervalo de 95% do excesso sobre a Selic vai de {baixo:+.1%} "
+            f"a {alto:+.1%} por safra: ele **atravessa o zero**. Nesta "
+            "amostra, a vantagem observada não é distinguível de acaso. "
+            "Ordenar não é superar — o Rank-IC pode indicar que o motor "
+            "discrimina retornos sem que isso vire vantagem líquida."
+        )
+    if loo["safras_que_viram"] > 0:
+        avisos.append(
+            f"O veredito muda se {loo['safras_que_viram']} das "
+            f"{len(loo['estados_loo'])} safras for removida. Uma conclusão "
+            "que depende de uma safra específica não é uma conclusão sobre a "
+            "estratégia — é uma conclusão sobre aquele ano."
+        )
+
+    n_banda = len(excessos)
+    if baixo is not None:
+        limitacao = ""
+    elif n_banda == 0:
+        limitacao = ("Banda não publicada: nenhuma safra mensurável até "
+                     "agora, e portanto nenhum excesso observado para "
+                     "reamostrar.")
+    else:
+        limitacao = (f"Banda não publicada: {n_banda} safra(s) mensurável(is) "
+                     "— abaixo de 2 não há dispersão entre safras para "
+                     "reamostrar, e um ponto central sozinho seria um número "
+                     "sem incerteza medida.")
+
+    return {
+        "ic_values": ic_values,
+        "veredito": veredito,
+        "banda": (baixo, alto),
+        "n_safras_banda": n_banda,
+        "texto_banda": (f"{baixo:+.1%} a {alto:+.1%}"
+                        if baixo is not None else "—"),
+        "loo": loo,
+        "avisos": avisos,
+        "limitacao_banda": limitacao,
+    }
+
+
+def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
+    """Bloco 3: o motor ordena? supera? e quão frágil é a conclusão?
+
+    Só renderiza — a medição inteira está em `_expectativa`, que é pura e
+    testada direto (AppTest, nesta base, vaza atribuição de módulo e falha
+    só dentro da suíte no CI)."""
+    from core.b3_evidence import evidence_label
+
+    st.markdown(
+        '<div style="font-weight:700;font-size:1.05rem;color:var(--app-text);'
+        'margin:20px 0 8px;">🎯 O que esperar da safra vigente</div>',
+        unsafe_allow_html=True,
+    )
+
+    exp = _expectativa(resultados, tabela)
+    veredito = exp["veredito"]
+    loo = exp["loo"]
+
+    mde = veredito.efeito_minimo_detectavel
+    ajuda_ordena = f"{veredito.anos_medidos} ano(s) de Rank-IC"
+    if mde is not None:
+        ajuda_ordena += f". Efeito mínimo detectável: {mde:.3f}"
+
+    cols = st.columns(3)
+    with cols[0]:
+        card_metrica("Ordena?", evidence_label(veredito), ajuda=ajuda_ordena)
+    with cols[1]:
+        baixo = exp["banda"][0]
+        card_metrica("Supera? (excesso s/ Selic)", exp["texto_banda"],
+                     positivo=(baixo is not None and baixo > 0),
+                     ajuda=(f"Intervalo de 95% por reamostragem de "
+                            f"{exp['n_safras_banda']} safra(s) mensurável(is)"))
+    with cols[2]:
+        # `estados_loo` vazio = não havia safra para remover. "0 safras que
+        # viram" ali seria lido como robustez medida, e não foi medida.
+        testou = bool(loo["estados_loo"])
+        card_metrica("Fragilidade",
+                     f"{loo['safras_que_viram']} safra(s)" if testou else "—",
+                     positivo=(loo["safras_que_viram"] == 0) if testou else None,
+                     ajuda=("Quantas precisam sair para o veredito virar"
+                            if testou else
+                            "Sem Rank-IC medido: não há veredito a testar"))
+
+    for aviso in exp["avisos"]:
+        st.warning(aviso)
+    if exp["limitacao_banda"]:
+        st.caption(exp["limitacao_banda"])

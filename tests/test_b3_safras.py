@@ -6,7 +6,9 @@ import core.b3_safras as b3_safras
 from core.b3_safras import (
     SafraCarteira,
     _dias_por_ano_civil,
+    bootstrap_excesso,
     carteiras_por_safra,
+    fragilidade_leave_one_out,
     retorno_da_safra,
     tabela_de_safras,
 )
@@ -544,3 +546,87 @@ def test_dias_por_ano_civil_acusa_erro_em_vez_de_travar(monkeypatch):
     with pytest.raises(ValueError, match="nao cobriu a janela inteira"):
         _dias_por_ano_civil(pd.Timestamp("2024-04-30"),
                             pd.Timestamp("2025-03-31"))
+
+
+# --------------------------------------------------------------------------
+# Task 6 -- Bloco 3: banda (bootstrap do excesso) e fragilidade (leave-one-out)
+# --------------------------------------------------------------------------
+
+
+def test_bootstrap_de_excessos_todos_positivos_nao_atravessa_zero():
+    baixo, alto = bootstrap_excesso([0.10, 0.12, 0.11, 0.09, 0.13])
+    assert baixo > 0
+    assert alto > baixo
+
+
+def test_bootstrap_de_excessos_mistos_atravessa_zero():
+    baixo, alto = bootstrap_excesso([0.20, -0.18, 0.15, -0.22, 0.05])
+    assert baixo < 0 < alto
+
+
+def test_bootstrap_com_amostra_minima_devolve_none():
+    assert bootstrap_excesso([0.1]) == (None, None)
+    assert bootstrap_excesso([]) == (None, None)
+
+
+def test_bootstrap_e_reprodutivel():
+    assert bootstrap_excesso([0.1, -0.05, 0.2, 0.0, 0.07]) == \
+           bootstrap_excesso([0.1, -0.05, 0.2, 0.0, 0.07])
+
+
+def test_leave_one_out_detecta_conclusao_que_depende_de_uma_safra():
+    """Quatro ICs modestos e um outlier que sustenta sozinho a media.
+    Remover o outlier tem que mudar o estado -- se a funcao devolver
+    zero safras que viram, ela nao esta recalculando de verdade."""
+    ic_values = [0.02, 0.01, 0.0, 0.01, 0.60]
+    out = fragilidade_leave_one_out(ic_values)
+    assert out["safras_que_viram"] >= 1
+    assert len(out["estados_loo"]) == len(ic_values)
+
+
+def test_leave_one_out_em_evidencia_robusta_nao_vira():
+    ic_values = [0.30, 0.32, 0.28, 0.31, 0.29, 0.33]
+    out = fragilidade_leave_one_out(ic_values)
+    assert out["safras_que_viram"] == 0
+
+
+def test_leave_one_out_deriva_significancia_de_cada_subamostra():
+    """`classify_evidence` sem `p_value` so consegue devolver tres estados
+    (sem amplitude, sinal anti-preditivo, sem significancia) -- nenhum deles
+    sensivel a tirar uma safra boa de uma amostra positiva. Chamada assim, a
+    fragilidade daria zero SEMPRE e pareceria robustez.
+
+    Este teste prende a derivacao: o p-valor tem que sair da SUBAMOSTRA de
+    cada passo, e com ele o estado do passo que remove o outlier vira
+    `evidencia_a_favor` enquanto o do conjunto inteiro continua
+    `inconclusivo`."""
+    out = fragilidade_leave_one_out([0.02, 0.01, 0.0, 0.01, 0.60])
+    assert out["estado_completo"] == "inconclusivo"
+    assert out["estados_loo"][-1] == "evidencia_a_favor"
+    assert out["estados_loo"][:-1] == ["inconclusivo"] * 4
+
+
+def test_leave_one_out_sem_amostra_nao_inventa_fragilidade():
+    """Sem safra nenhuma nao ha o que remover: zero safras que viram tem que
+    significar "nao ha evidencia a testar", e nao "a evidencia e robusta" --
+    por isso `estados_loo` sai vazio e o estado completo e o de amplitude
+    insuficiente, que a tela le para nao publicar selo de robustez."""
+    out = fragilidade_leave_one_out([])
+    assert out["estados_loo"] == []
+    assert out["safras_que_viram"] == 0
+    assert out["estado_completo"] == "inconclusivo"
+
+
+def test_bootstrap_e_reprodutivel_em_amostra_com_muitos_valores_distintos():
+    """`test_bootstrap_e_reprodutivel` sozinho NAO prende a semente: com 5
+    safras a media reamostrada assume poucos valores discretos e os
+    percentis 2,5/97,5 caem no mesmo deles mesmo sem semente -- removi
+    `seed` do `default_rng` e aquele teste passou.
+
+    Com 30 valores distintos os percentis ja separam as execucoes, e
+    reprodutibilidade volta a ser uma afirmacao verificavel. A semente
+    existe para isto, e nao para dar estabilidade a conclusao -- quem mede
+    estabilidade e `fragilidade_leave_one_out`."""
+    excessos = [round(0.01 * i - 0.15 + 0.0037 * (i % 7), 6) for i in range(30)]
+    assert len(set(excessos)) == 30
+    assert bootstrap_excesso(excessos) == bootstrap_excesso(excessos)
