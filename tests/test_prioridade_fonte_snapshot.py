@@ -51,6 +51,23 @@ def _case_da_consulta() -> str:
     return _SQL_POSICOES_SNAPSHOT
 
 
+def _posicao_no_desempate(origem: str) -> int:
+    """Onde `origem` aparece no CASE, com falha legivel se nao aparecer.
+
+    `str.index` sozinho estoura ValueError cru quando a origem sumiu do
+    CASE -- e o traceback fala de string, nao de prioridade de fonte. Quem
+    ler a falha precisa saber que o problema e uma origem caida no ELSE.
+    """
+    sql = _case_da_consulta()
+    marcador = f"'{origem}'"
+    assert marcador in sql, (
+        f"'{origem}' nao aparece no CASE de _SQL_POSICOES_SNAPSHOT: caiu no "
+        f"ELSE e perde todo empate de data. Sem ela nomeada nao ha ordem de "
+        f"autoridade para comparar."
+    )
+    return sql.index(marcador)
+
+
 def test_varredura_encontra_os_importadores_conhecidos():
     """Guarda do proprio teste.
 
@@ -82,9 +99,8 @@ def test_b3_tem_prioridade_sobre_a_xp():
     Investidor da B3 e cobre TODAS as corretoras; o Consolidado cobre uma.
     Empatados na data, vale o primeiro.
     """
-    sql = _case_da_consulta()
-    pos_b3 = sql.index("'b3_posicao_detalhada'")
-    pos_xp = sql.index("'xp_consolidado'")
+    pos_b3 = _posicao_no_desempate("b3_posicao_detalhada")
+    pos_xp = _posicao_no_desempate("xp_consolidado")
     assert pos_b3 < pos_xp, (
         "A ordem do CASE inverteu: a XP voltou a ganhar da B3 no empate."
     )
@@ -92,8 +108,8 @@ def test_b3_tem_prioridade_sobre_a_xp():
 
 def test_tesouro_continua_na_frente():
     """O Tesouro e a unica fonte que traz o titulo, entao segue em primeiro."""
-    sql = _case_da_consulta()
-    assert sql.index("'tesouro_direto'") < sql.index("'b3_posicao_detalhada'")
+    assert (_posicao_no_desempate("tesouro_direto")
+            < _posicao_no_desempate("b3_posicao_detalhada"))
 
 
 def test_o_corte_por_rank_continua_existindo():
