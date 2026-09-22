@@ -4474,11 +4474,17 @@ def render(show_header: bool = True) -> None:
     else:
         st.caption("Nenhuma empresa selecionada para mostrar desempenho.")
 
+    # `aprovados` (nao `resultados`) e a carteira que esta aba publica: as
+    # safras do Bloco 1 tem que ser reconstruidas com o MESMO conjunto de
+    # segmentos que a tela recomenda. `resultados` -- a lista nao filtrada
+    # -- entra como `resultados_todos` e serve ao Bloco 2, que mede quanto
+    # o gate de aprovacao move o retorno de cada safra.
     render_safras(
-        resultados,
+        aprovados,
         df_precos_all,
         selic_por_ano=selic_macro,
         taxa_selic_aa=taxa_selic_aa,
+        resultados_todos=resultados,
     )
 
     # ── Metodologia e referências científicas ────────────────────────────────

@@ -1143,3 +1143,34 @@ def test_a_legenda_do_gate_de_sinal_descreve_os_tres_desfechos():
         "a legenda tem que dizer que a ausência de valor-p é ausência de "
         "MEDIÇÃO, não evidência contra o segmento"
     )
+
+
+# ── Task 7 (Bloco 2): a medição do viés é possível por SUBSTITUIÇÃO ──────────
+
+
+def test_vies_de_universo_aparece_quando_ha_segmento_reprovado():
+    """Se as duas curvas forem identicas num cenario com segmento
+    reprovado, a medicao do vies nao esta medindo nada.
+
+    O Bloco 2 mede o vies trocando a ENTRADA de `tabela_de_safras` (os
+    aprovados por todos os segmentos) -- e isso so funciona porque o motor
+    nao sabe nada sobre aprovacao. Este teste falha no dia em que alguem
+    acoplar o gate de aprovacao dentro de `tabela_de_safras`: as duas
+    reconstrucoes passariam a sair iguais e o bloco publicaria vies zero,
+    sem erro nenhum na tela.
+    """
+    aprovado = _resultado("A", {2024: ["AAAA3"]}, {2024: {"AAAA3": 1.0}}, ["AAAA3"])
+    reprovado = _resultado("B", {2024: ["BBBB3"]}, {2024: {"BBBB3": 1.0}}, ["BBBB3"])
+    df = _precos(["2024-04-30", "2025-03-31"],
+                 {"AAAA3": [10.0, 20.0], "BBBB3": [10.0, 5.0]})
+
+    so_aprovados = tabela_de_safras([aprovado], df, selic_por_ano={},
+                                    taxa_selic_aa=0.0, hoje=HOJE)
+    todos = tabela_de_safras([aprovado, reprovado], df, selic_por_ano={},
+                             taxa_selic_aa=0.0, hoje=HOJE)
+
+    ret_aprovados = float(so_aprovados["Estratégia (%)"].iloc[0])
+    ret_todos = float(todos["Estratégia (%)"].iloc[0])
+    assert ret_aprovados == pytest.approx(100.0)
+    assert ret_todos == pytest.approx(25.0)      # (100 + (-50)) / 2
+    assert abs(ret_aprovados - ret_todos) > 1.0

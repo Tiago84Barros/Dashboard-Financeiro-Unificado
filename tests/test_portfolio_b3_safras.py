@@ -18,14 +18,18 @@ import pytest
 from core.b3_safras import COLUNAS_TABELA
 from views.portfolio_b3_safras import (
     _COLUNAS_RETORNO,
+    _COLUNAS_VIES,
     _CORES_SERIE,
+    _causa_sem_teste,
     _column_config_retorno,
+    _column_config_vies,
     _expectativa,
     _fmt_p,
     _grafico_barras,
     _legenda_resumo,
     _resumo_safras,
     _tabela_para_exibicao,
+    _vies_universo,
 )
 
 RAIZ = Path(__file__).parents[1]
@@ -1075,4 +1079,390 @@ def test_pares_de_ic_e_percorrido_uma_vez_so_por_expectativa():
     assert out["ic_values"], "o teste precisa do caminho que de fato mede"
     assert len(chamadas) == 1, (
         f"os pares foram montados {len(chamadas)} vezes por render"
+    )
+
+
+# ── Task 7 (Bloco 2) — o tamanho do viés de universo ──────────────────────
+
+
+def _par(linhas_com, completas_com, linhas_sem, completas_sem):
+    return (_tabela(linhas_com, completas_com),
+            _tabela(linhas_sem, completas_sem))
+
+
+def _safras_medidas(primeira, retornos):
+    """Linhas mensuráveis consecutivas a partir de `primeira`."""
+    return [_linha(primeira + i, completa=True, mensuravel=True,
+                   estrategia=r)
+            for i, r in enumerate(retornos)]
+
+
+def test_vies_le_attrs_safras_completas_e_nao_a_coluna_completa():
+    """Mutação-alvo: trocar `attrs["safras_completas"]` por
+    `df["Completa"]` em `_vies_universo`.
+
+    `attrs` é `completa AND mensurável`; a coluna é só `completa`. Uma
+    safra pode ter a janela civil fechada e zero pregão observado — ela
+    aparece com `Completa=True` e não entra em `attrs`. Aqui a safra 2020
+    está nesse estado do lado COM gate: se a população vier da coluna,
+    2020 passa a ser declarada "Comparável" e a ressalva que explica a
+    célula vazia desaparece da tela.
+    """
+    com_gate, sem_gate = _par(
+        [_linha(2020, completa=True, mensuravel=False),
+         _linha(2021, completa=True, mensuravel=True, estrategia=30.0)],
+        [2021],
+        [_linha(2020, completa=True, mensuravel=True, estrategia=10.0),
+         _linha(2021, completa=True, mensuravel=True, estrategia=10.0)],
+        [2020, 2021],
+    )
+    out = _vies_universo(com_gate, sem_gate)
+
+    assert out["n_safras"] == 1
+    assert out["medio"] == pytest.approx(20.0)
+    linha_2020 = out["comparacao"].set_index("Safra").loc[2020]
+    assert bool(linha_2020["Comparável"]) is False
+    assert pd.isna(linha_2020["Viés (pp)"])
+    assert any("2020" in n and "sem viés" in n for n in out["notas"]), (
+        f"a célula vazia da safra 2020 ficou sem explicação: {out['notas']}"
+    )
+
+
+def test_vies_ignora_safra_fora_de_attrs_mesmo_com_retorno_publicado():
+    """A mesma regra, sem depender de o valor excluído ser `NaN`.
+
+    O teste acima ainda passaria por acidente se a exclusão viesse do
+    `NaN` em vez de `attrs` — aqui a safra 2020 tem retorno publicado dos
+    dois lados e `Completa=True`, e mesmo assim está fora de
+    `safras_completas` do lado com gate. Só quem lê `attrs` a exclui; quem
+    ler a coluna publica um viés de +40 pp que a população não autoriza.
+    """
+    com_gate, sem_gate = _par(
+        [_linha(2020, completa=True, mensuravel=True, estrategia=50.0),
+         _linha(2021, completa=True, mensuravel=True, estrategia=30.0)],
+        [2021],
+        [_linha(2020, completa=True, mensuravel=True, estrategia=10.0),
+         _linha(2021, completa=True, mensuravel=True, estrategia=10.0)],
+        [2020, 2021],
+    )
+    out = _vies_universo(com_gate, sem_gate)
+
+    assert out["n_safras"] == 1
+    assert out["vies"] == pytest.approx([20.0])
+    assert out["medio"] == pytest.approx(20.0)
+    # E a linha nao comparavel nao publica numero NENHUM: os dois lados
+    # tem retorno, entao a subtracao existe -- e publicar +40 pp ali seria
+    # publicar um vies para uma safra que a propria tabela declara fora da
+    # populacao, na coluna ao lado.
+    assert pd.isna(out["comparacao"].set_index("Safra").loc[2020, "Viés (pp)"])
+
+
+def test_vies_nunca_publica_selo_verde():
+    """Verde no card afirmaria "não há viés de universo".
+
+    Nesta tela verde é conclusão, e "não rejeitei a hipótese nula" não é
+    conclusão nenhuma — é ausência de evidência. O critério descartado era
+    `positivo=abs(medio) < 1.0`: constante escrita à mão, sem medição
+    atrás, que dava selo de aprovação a um viés de 0,9 pp. Os dois
+    extremos entram aqui: viés exatamente zero e viés grande.
+    """
+    zero_com, zero_sem = _par(_safras_medidas(2020, [10.0, 12.0, 8.0]),
+                              [2020, 2021, 2022],
+                              _safras_medidas(2020, [10.0, 12.0, 8.0]),
+                              [2020, 2021, 2022])
+    assert _vies_universo(zero_com, zero_sem)["medio"] == pytest.approx(0.0)
+    assert _vies_universo(zero_com, zero_sem)["positivo"] is not True
+
+    pequeno_com, pequeno_sem = _par(
+        _safras_medidas(2020, [10.9, 12.8, 8.7, 11.6]),
+        [2020, 2021, 2022, 2023],
+        _safras_medidas(2020, [10.0, 12.0, 8.0, 11.0]),
+        [2020, 2021, 2022, 2023])
+    out = _vies_universo(pequeno_com, pequeno_sem)
+    assert 0 < out["medio"] < 1.0
+    assert out["positivo"] is not True, (
+        "um viés de menos de 1 pp voltou a ganhar selo verde -- o limiar "
+        "escrito à mão é exatamente o defeito que esta regra fechou"
+    )
+
+
+def test_vies_demonstrado_sai_vermelho_e_o_texto_diz_por_quanto():
+    """Viés consistente e com dispersão: o teste t tem que concluir, o
+    card tem que sair VERMELHO (viés medido é má notícia, não boa) e a
+    ressalva tem que trazer p-valor e faixa observada — contagem sozinha
+    não diz por quanto."""
+    com, sem = _par(_safras_medidas(2020, [20.0, 22.0, 19.0, 21.0, 20.5]),
+                    [2020, 2021, 2022, 2023, 2024],
+                    _safras_medidas(2020, [10.0, 10.0, 10.0, 10.0, 10.0]),
+                    [2020, 2021, 2022, 2023, 2024])
+    out = _vies_universo(com, sem)
+
+    assert out["n_safras"] == 5
+    assert out["significante"] is True
+    assert out["positivo"] is False
+    assert out["texto_medio"] == "+10.5 pp"
+    assert out["faixa"] == pytest.approx((9.0, 12.0))
+    juntas = " ".join(out["notas"])
+    assert "+9.0 a +12.0 pp" in juntas, f"a faixa observada sumiu: {juntas}"
+    assert "se distingue de zero" in juntas
+    assert "p = " in juntas
+
+
+def test_vies_sem_significancia_nao_afirma_ausencia_de_vies():
+    """Ausência de evidência não é evidência de ausência, e a frase tem que
+    dizer isso explicitamente: sem essa ressalva, "não se distingue de
+    zero" é lido como "não há viés" — e o viés observado continua de pé."""
+    com, sem = _par(_safras_medidas(2020, [20.0, -2.0, 15.0, 2.0]),
+                    [2020, 2021, 2022, 2023],
+                    _safras_medidas(2020, [10.0, 10.0, 10.0, 10.0]),
+                    [2020, 2021, 2022, 2023])
+    out = _vies_universo(com, sem)
+
+    assert out["significante"] is False
+    assert out["positivo"] is None
+    juntas = " ".join(out["notas"])
+    assert "não é o mesmo que não haver viés" in juntas, (
+        f"a tela afirmou ausência de viés a partir de um p-valor alto: {juntas}"
+    )
+
+
+def test_causa_de_nao_haver_teste_separa_as_duas_ausencias():
+    """`_causa_sem_teste` cobre duas ausências OPOSTAS: faltam safras, ou
+    há safras e as diferenças são todas iguais. Uma frase única culparia
+    sempre a primeira e, com 5 safras de viés idêntico, diria que faltaram
+    safras — texto de limitação que contradiz o próprio número ao lado."""
+    poucas = _causa_sem_teste([3.0])
+    assert "1 safra" in poucas and "dispersão" in poucas
+
+    identicas = _causa_sem_teste([3.0, 3.0, 3.0, 3.0, 3.0])
+    assert "5 diferenças" in identicas
+    assert "+3.0 pp" in identicas
+    assert "não há erro-padrão a estimar" in identicas
+
+
+def test_sem_dispersao_entre_safras_nao_publica_p_valor():
+    """Guarda de dispersão herdada de `core.b3_evidence` (relativa, não
+    `desvio <= 0.0`): diferenças idênticas não produzem p-valor, e a tela
+    tem que dizer por quê em vez de publicar significância fabricada."""
+    com, sem = _par(_safras_medidas(2020, [13.0, 15.0, 11.0]),
+                    [2020, 2021, 2022],
+                    _safras_medidas(2020, [10.0, 12.0, 8.0]),
+                    [2020, 2021, 2022])
+    out = _vies_universo(com, sem)
+
+    assert out["vies"] == pytest.approx([3.0, 3.0, 3.0])
+    assert out["p_bilateral"] is None
+    assert out["significante"] is False
+    assert any("não há erro-padrão a estimar" in n for n in out["notas"])
+
+
+def test_safra_que_so_existe_sem_o_gate_e_relatada():
+    """O gate não reduz o retorno dessas safras — ele apaga a safra
+    inteira. A subtração nunca mostraria isso, porque a linha simplesmente
+    não aparece no `merge`: só uma ressalva derivada da diferença entre os
+    dois conjuntos de safras conta essa parte do viés."""
+    com, sem = _par(_safras_medidas(2021, [30.0]), [2021],
+                    _safras_medidas(2020, [10.0, 10.0]), [2020, 2021])
+    out = _vies_universo(com, sem)
+
+    assert list(out["comparacao"]["Safra"]) == [2021]
+    assert any("2020" in n and "apaga a safra inteira" in n
+               for n in out["notas"]), (
+        f"a safra que o gate apagou não foi relatada: {out['notas']}"
+    )
+
+
+def test_limitacao_do_vies_deriva_a_causa_observada():
+    """"Sem safras suficientes para medir" cobre causas opostas e não
+    informa nenhuma. Aqui as duas reconstruções têm safras mensuráveis,
+    mas elas não se cruzam — e a frase tem que nomear os dois lados."""
+    com, sem = _par(
+        [_linha(2020, completa=True, mensuravel=True, estrategia=30.0),
+         _linha(2021, completa=True, mensuravel=False)],
+        [2020],
+        [_linha(2020, completa=True, mensuravel=False),
+         _linha(2021, completa=True, mensuravel=True, estrategia=10.0)],
+        [2021],
+    )
+    out = _vies_universo(com, sem)
+
+    assert out["n_safras"] == 0
+    assert out["texto_medio"] == "—"
+    assert "não se cruzam" in out["limitacao"]
+    assert "2020" in out["limitacao"] and "2021" in out["limitacao"]
+    assert out["limitacao"] in out["notas"]
+
+
+def test_vies_com_tabelas_vazias_nao_estoura_e_explica():
+    """Antes de rodar a análise as duas tabelas chegam vazias (mas com as
+    colunas de `COLUNAS_TABELA`). O bloco não pode estourar nem publicar
+    número — e tem que dizer o que faltou."""
+    vazia = _tabela(pd.DataFrame(columns=COLUNAS_TABELA), [])
+    out = _vies_universo(vazia, vazia)
+
+    assert out["n_safras"] == 0
+    assert out["medio"] is None
+    assert out["comparacao"].empty
+    assert "nenhuma safra em comum" in out["limitacao"]
+
+
+def test_column_config_do_vies_cobre_as_colunas_numericas():
+    """Mesma regra de `_column_config_retorno`: formatação por
+    `column_config`, nunca convertendo a coluna para texto — texto faz o
+    `st.dataframe` ordenar em ordem alfabética ("-3,0 → 10,0 → 100,0")."""
+    config = _column_config_vies()
+    assert set(config) == set(_COLUNAS_VIES)
+
+
+# ── Cabeamento do Bloco 2 (AST, nunca AppTest) ──────────────────────────────
+
+
+def _funcao_da_view(nome, arquivo="portfolio_b3_safras.py"):
+    caminho = RAIZ / "views" / arquivo
+    arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+    return next(no for no in ast.walk(arvore)
+                if isinstance(no, ast.FunctionDef) and no.name == nome)
+
+
+def test_render_safras_chama_render_vies_universo():
+    """Sem esta checagem, apagar a chamada apaga o Bloco 2 inteiro da tela
+    e deixa a suíte verde — `_vies_universo` é pura e continuaria passando
+    sozinha. Inspeção por AST (`apptest-vaza-atribuicao-de-modulo`)."""
+    render = _funcao_da_view("render_safras")
+    chamadas = {no.func.id for no in ast.walk(render)
+                if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)}
+    assert "render_vies_universo" in chamadas, (
+        "render_safras nao chama render_vies_universo -- o Bloco 2 nao "
+        "aparece na tela e nenhum outro teste percebe"
+    )
+    # Presenca nao e alcance: um `if False and ...` em volta da chamada
+    # deixaria o `ast.Call` no lugar e o Bloco 2 fora da tela. A guarda
+    # tem que ser exatamente "tenho a lista completa".
+    guardas = [no for no in ast.walk(render) if isinstance(no, ast.If)
+               and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                       and c.func.id == "render_vies_universo"
+                       for filho in no.body for c in ast.walk(filho))]
+    assert len(guardas) == 1, "esperava uma unica guarda em volta do Bloco 2"
+    teste = guardas[0].test
+    assert isinstance(teste, ast.Name) and teste.id == "resultados_todos", (
+        "a chamada do Bloco 2 esta sob uma condicao que nao e apenas "
+        "`resultados_todos` -- ela pode nunca ser alcancada"
+    )
+
+
+def test_bloco_2_so_mede_depois_do_botao():
+    """Decisão do dono do projeto: a reconstrução sem gate é a conta mais
+    cara da tela e não é paga a cada rerun. Renderizar eagerly não quebra
+    nada visível — só fica lento —, então o que prende o comportamento é a
+    estrutura: nenhuma chamada a `tabela_de_safras` pode estar acima da
+    guarda que retorna quando o botão não foi clicado."""
+    render = _funcao_da_view("render_vies_universo")
+    guardas = [no for no in ast.walk(render) if isinstance(no, ast.If)
+               and any(isinstance(c, ast.Call)
+                       and isinstance(c.func, ast.Attribute)
+                       and c.func.attr == "button"
+                       for c in ast.walk(no.test))]
+    assert guardas, "render_vies_universo nao esta atras de um st.button"
+    assert any(isinstance(s, ast.Return) for g in guardas
+               for s in ast.walk(g)), (
+        "o botao nao interrompe o render -- sem `return` a medicao roda "
+        "mesmo sem clique"
+    )
+    linha_guarda = min(g.lineno for g in guardas)
+    medicoes = [no.lineno for no in ast.walk(render)
+                if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
+                and no.func.id == "tabela_de_safras"]
+    assert medicoes, "render_vies_universo nao reconstroi safra nenhuma"
+    assert min(medicoes) > linha_guarda, (
+        "tabela_de_safras e chamada ANTES da guarda do botao -- o bloco "
+        "voltou a medir a cada rerun"
+    )
+
+
+def test_medicao_guardada_e_redesenhada_com_as_mesmas_ressalvas():
+    """A medição fica em `session_state` e volta nos reruns seguintes.
+    Se o caminho do cache republicar só a tabela, os números voltam sem o
+    texto que diz o que eles NÃO são — e é o texto que impede o viés de
+    ser lido como resultado da estratégia. Os dois caminhos têm que
+    desenhar pela mesma função."""
+    render = _funcao_da_view("render_vies_universo")
+    guardas = [no for no in ast.walk(render) if isinstance(no, ast.If)
+               and any(isinstance(c, ast.Call)
+                       and isinstance(c.func, ast.Attribute)
+                       and c.func.attr == "button"
+                       for c in ast.walk(no.test))]
+    dentro_da_guarda = {no.func.id for g in guardas for no in ast.walk(g)
+                        if isinstance(no, ast.Call)
+                        and isinstance(no.func, ast.Name)}
+    assert "_desenha_vies" in dentro_da_guarda, (
+        "o caminho do cache nao passa por _desenha_vies -- a medicao "
+        "guardada volta sem as ressalvas"
+    )
+    todas = [no for no in ast.walk(render)
+             if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
+             and no.func.id == "_desenha_vies"]
+    assert len(todas) >= 2, (
+        "o caminho da medicao nova nao desenha pela mesma funcao do cache"
+    )
+
+
+def test_ressalvas_do_vies_chegam_como_caption_e_nao_como_tooltip():
+    """`ajuda=` vira `title=` do `<div>` do card (`design/componentes.py`),
+    isto é, tooltip de hover — invisível no toque. As notas derivadas da
+    medição têm que sair por `st.caption`."""
+    desenha = _funcao_da_view("_desenha_vies")
+
+    def chaves(no):
+        return {n.slice.value for n in ast.walk(no)
+                if isinstance(n, ast.Subscript)
+                and isinstance(n.slice, ast.Constant)
+                and isinstance(n.slice.value, str)}
+
+    em_ajuda = set()
+    for no in ast.walk(desenha):
+        if isinstance(no, ast.Call):
+            for kw in no.keywords:
+                if kw.arg == "ajuda":
+                    em_ajuda |= chaves(kw.value)
+    assert "notas" not in em_ajuda, (
+        "as ressalvas do vies viraram tooltip -- `ajuda` e `title=`"
+    )
+
+    visiveis = set()
+    for no in ast.walk(desenha):
+        if isinstance(no, ast.For) and any(
+                isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+                and c.func.attr == "caption" for c in ast.walk(no)):
+            visiveis |= chaves(no)
+    assert "notas" in visiveis, (
+        f"as notas nao chegam por st.caption -- visiveis: {sorted(visiveis)}"
+    )
+
+
+def test_tela_b3_passa_os_aprovados_e_a_lista_completa():
+    """As duas pontas do Bloco 2 vêm da mesma chamada, e passar a lista
+    errada em qualquer uma delas não quebra nada visível: com `resultados`
+    no lugar de `aprovados` as duas reconstruções ficam IDÊNTICAS e o
+    bloco publica viés zero — um número tranquilizador e falso."""
+    chamada = next(
+        no for no in ast.walk(
+            ast.parse((RAIZ / "views" / "portfolio_b3.py")
+                      .read_text(encoding="utf-8")))
+        if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
+        and no.func.id == "render_safras"
+    )
+    assert isinstance(chamada.args[0], ast.Name)
+    assert chamada.args[0].id == "aprovados", (
+        "o Bloco 1 nao reconstroi a carteira que a tela publica -- primeiro "
+        f"argumento: {ast.dump(chamada.args[0])}"
+    )
+    todos = {kw.arg: kw.value for kw in chamada.keywords}
+    assert "resultados_todos" in todos, (
+        "render_safras nao recebe a lista nao filtrada -- o Bloco 2 nao "
+        "e renderizado"
+    )
+    assert isinstance(todos["resultados_todos"], ast.Name)
+    assert todos["resultados_todos"].id == "resultados", (
+        "a lista sem gate nao e a lista nao filtrada -- as duas curvas "
+        "ficariam iguais e o vies sairia zero"
     )

@@ -177,10 +177,14 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                   taxa_selic_aa: float,
                   resultados_todos: list[dict] | None = None) -> None:
     """Bloco 1: a tabela de safras e a barra por safra contra Selic/EW.
-    Ao fim, chama `render_expectativa` (Bloco 3).
+    Ao fim, chama `render_expectativa` (Bloco 3) e `render_vies_universo`
+    (Bloco 2, sob demanda).
 
-    `resultados_todos` fica reservado para a Task 7 (medicao de vies de
-    universo); esta task nao o consome.
+    `resultados` e a lista JA FILTRADA pelo gate de aprovacao -- e a
+    carteira que a tela publica. `resultados_todos` e a lista NAO
+    filtrada, e existe so para o Bloco 2 reconstruir as mesmas safras SEM
+    o gate e medir a distancia entre as duas. Sem ela o Bloco 2 nao e
+    renderizado: nao ha o que comparar.
     """
     st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
@@ -252,6 +256,16 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
             "inventamos a perda, mas ela também não rende o que os "
             "sobreviventes renderam."
         )
+
+    # Bloco 2 por último e sob demanda (decisão do dono do projeto): a
+    # reconstrução sem gate é a conta mais cara da tela. `tabela` vai junto
+    # para que o lado "com gate" da comparação seja a MESMA medição já
+    # publicada acima, e não uma segunda reconstrução que pode divergir.
+    if resultados_todos:
+        render_vies_universo(resultados, resultados_todos, df_precos,
+                             selic_por_ano=selic_por_ano,
+                             taxa_selic_aa=taxa_selic_aa,
+                             tabela_com_gate=tabela)
 
 
 def _ics_por_ano(resultados: list[dict],
@@ -664,3 +678,319 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
                  exp["limitacao_evidencia"], exp["limitacao_banda"]):
         if nota:
             st.caption(nota)
+
+
+# ── Bloco 2: o tamanho do viés de universo ──────────────────────────────────
+
+# Nivel BILATERAL do teste sobre as diferencas por safra. O vies pode ser
+# positivo (o gate adiciona) ou negativo (o gate subtrai), e as duas
+# direcoes sao igualmente um vies de selecao de universo -- entao sao duas
+# caudas. `teste_t_unilateral` e unilateral a direita por construcao (a
+# conta mora em core/b3_evidence.py e NAO e copiada aqui), entao a cauda
+# esquerda se obtem invertendo o sinal das observacoes e cada cauda e lida
+# contra `_ALPHA_VIES / 2`. Ler as duas caudas contra `_ALPHA_VIES` cheio
+# seria um teste de 20% com o rotulo de 10%.
+_ALPHA_VIES = 0.10
+
+_COLUNAS_VIES = ["Estratégia (%) com gate", "Estratégia (%) sem gate",
+                 "Viés (pp)"]
+
+
+def _lista_safras(safras) -> str:
+    return ", ".join(str(int(s)) for s in sorted(safras))
+
+
+def _causa_sem_teste(vies: list[float]) -> str:
+    """Por que o teste t não saiu — derivado das próprias observações.
+
+    As duas causas são opostas e a frase tem que separá-las: *não há
+    safras suficientes* e *há safras, mas as diferenças são todas iguais*.
+    Uma frase única culparia sempre a primeira, e com 5 safras de viés
+    idêntico ela diria que faltaram safras.
+    """
+    n = len(vies)
+    if n < 2:
+        return (f"Com {n} safra(s) comparável(is) não há dispersão entre "
+                "safras para testar se essa diferença se distingue de zero.")
+    return (f"As {n} diferenças não têm dispersão entre si (todas em torno "
+            f"de {vies[0]:+.1f} pp), e sem dispersão o teste t não existe — "
+            "não há erro-padrão a estimar.")
+
+
+def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
+    """Tudo que o Bloco 2 publica, derivado das duas reconstruções — puro.
+
+    O que este bloco mede: o score de cada safra é point-in-time, mas o
+    CONJUNTO de segmentos que entra na carteira sai do teste OOS com FDR
+    sobre a amostra inteira, até hoje. A safra mais antiga é reconstruída
+    com segmentos aprovados por evidência de hoje. Tornar isso PIT é
+    inviável (nas primeiras safras não há janela OOS e nenhum segmento
+    seria aprovado), então o bloco mede o TAMANHO: as mesmas safras, sem
+    o gate.
+
+    Regras fechadas nesta task:
+
+    - a população é a INTERSEÇÃO de `attrs["safras_completas"]` dos dois
+      lados, nunca `df["Completa"]`. Uma safra pode ter a janela civil
+      fechada e zero pregão observado; a coluna mente e o `attrs` não. E a
+      safra precisa ser mensurável dos DOIS lados: subtrair um retorno
+      medido de um `NaN` não é um viés de zero, é uma comparação que não
+      aconteceu;
+    - o portão de significância CHAMA `teste_t_unilateral` /
+      `sinal_significante` (`core/b3_evidence.py`), a mesma conta do resto
+      da tela. A guarda de dispersão relativa vem junto, de graça;
+    - **nunca selo verde.** Verde afirmaria "não há viés", e não haver
+      significância é ausência de evidência, não evidência de ausência. O
+      card fica vermelho quando o viés é demonstrado e neutro quando a
+      amostra não permite concluir — nunca verde. A alternativa descartada
+      era `positivo=abs(medio) < 1.0`: 1,0 pp é constante escrita à mão,
+      sem medição atrás, e um viés de 0,9 pp saía com selo de aprovação;
+    - todo texto de ressalva sai da medição (contagem de safras, faixa
+      observada, p-valor, causa da ausência de teste), nunca de calendário
+      ou constante.
+    """
+    from core.b3_evidence import sinal_significante, teste_t_unilateral
+
+    medidas_com = set(com_gate.attrs.get("safras_completas", []))
+    medidas_sem = set(sem_gate.attrs.get("safras_completas", []))
+    comparaveis = medidas_com & medidas_sem
+
+    comparacao = com_gate[["Safra", "Janela", "Estratégia (%)"]].merge(
+        sem_gate[["Safra", "Estratégia (%)"]], on="Safra",
+        suffixes=(" com gate", " sem gate"), how="inner",
+    )
+    # `to_numeric` nao e paranoia: `tabela_de_safras` sem safra nenhuma
+    # devolve as colunas de `COLUNAS_TABELA` com dtype `object`, e a
+    # subtracao direta estoura `TypeError: Expected numeric dtype, got
+    # object instead` no `.round(1)` -- o bloco morreria justamente no
+    # caso em que ele deveria dizer "nao houve o que comparar".
+    comparacao["Viés (pp)"] = (
+        pd.to_numeric(comparacao["Estratégia (%) com gate"], errors="coerce")
+        - pd.to_numeric(comparacao["Estratégia (%) sem gate"], errors="coerce")
+    ).round(1)
+    comparavel = comparacao["Safra"].isin(comparaveis)
+    comparacao["Comparável"] = comparavel
+    # Fora da populacao nao se publica numero: com um dos lados nao medido
+    # a subtracao ja e `NaN`, mas a linha tambem pode ter os dois lados com
+    # numero e mesmo assim estar fora (janela aberta), e ai o `NaN` tem que
+    # ser posto de proposito -- senao a tela publica um vies para uma safra
+    # que ela mesma declara nao comparavel.
+    if not comparacao.empty:
+        comparacao.loc[~comparavel, "Viés (pp)"] = np.nan
+        vies = [float(v) for v in comparacao.loc[comparavel, "Viés (pp)"]
+                if pd.notna(v)]
+    else:
+        vies = []
+    n = len(vies)
+    medio = float(np.mean(vies)) if n else None
+
+    _, p_mais = teste_t_unilateral(vies)
+    _, p_menos = teste_t_unilateral([-v for v in vies])
+    meia_cauda = _ALPHA_VIES / 2
+    significante = (sinal_significante(p_mais, alpha=meia_cauda)
+                    or sinal_significante(p_menos, alpha=meia_cauda))
+    p_bilateral = None
+    if p_mais is not None and p_menos is not None:
+        p_bilateral = min(1.0, 2.0 * min(p_mais, p_menos))
+
+    notas: list[str] = []
+    if n:
+        medidas_na_tabela = sorted(
+            int(s) for s in comparacao.loc[comparavel
+                                           & comparacao["Viés (pp)"].notna(),
+                                           "Safra"])
+        notas.append(
+            f"Nas {n} safra(s) mensurável(is) dos dois lados "
+            f"({_lista_safras(medidas_na_tabela)}), reconstruir a carteira "
+            f"com os segmentos aprovados hoje move o retorno em "
+            f"{medio:+.1f} pp por safra, em média (de {min(vies):+.1f} a "
+            f"{max(vies):+.1f} pp entre as safras). Essa diferença **não era "
+            "conhecida na época** de cada safra: ela vem de saber, hoje, "
+            "quais segmentos passaram no teste OOS. É o tamanho do viés, não "
+            "um resultado da estratégia.")
+        if p_bilateral is None:
+            notas.append(_causa_sem_teste(vies))
+        elif significante:
+            notas.append(
+                f"O teste t bilateral sobre as {n} diferenças dá "
+                f"p = {_fmt_p(p_bilateral)} (α = {_ALPHA_VIES:.2f}, "
+                f"{meia_cauda:.2f} por cauda): nesta amostra a diferença **se "
+                "distingue de zero**. O viés tem tamanho medido.")
+        else:
+            notas.append(
+                f"O teste t bilateral sobre as {n} diferenças dá "
+                f"p = {_fmt_p(p_bilateral)} (α = {_ALPHA_VIES:.2f}, "
+                f"{meia_cauda:.2f} por cauda): nesta amostra a diferença não "
+                "se distingue de zero. Isso **não é o mesmo que não haver "
+                f"viés** — com {n} safra(s) o teste enxerga pouco, e o viés "
+                "observado continua sendo o da frase acima.")
+
+    # A ausencia de populacao tem causas opostas, e a frase tem que dizer
+    # QUAL delas foi observada -- "sem safras suficientes para medir" cobre
+    # todas e nao informa nenhuma.
+    limitacao = ""
+    if not n:
+        so_com = sorted(medidas_com - medidas_sem)
+        so_sem = sorted(medidas_sem - medidas_com)
+        if comparacao.empty:
+            limitacao = ("Viés não medido: as duas reconstruções não têm "
+                         "nenhuma safra em comum — sem safra comum não há o "
+                         "que subtrair.")
+        elif not medidas_com and not medidas_sem:
+            limitacao = (
+                f"Viés não medido: {len(comparacao)} safra(s) existe(m) nas "
+                "duas reconstruções, mas nenhuma delas é mensurável de "
+                "nenhum dos dois lados (janela em curso ou nenhum pregão "
+                "observado na janela).")
+        else:
+            limitacao = (
+                "Viés não medido: as safras mensuráveis dos dois lados não "
+                f"se cruzam — {len(medidas_com)} com gate"
+                + (f" ({_lista_safras(so_com)} só desse lado)" if so_com else "")
+                + f" e {len(medidas_sem)} sem gate"
+                + (f" ({_lista_safras(so_sem)} só desse lado)" if so_sem else "")
+                + ". Subtrair um retorno medido de um não medido publicaria "
+                  "como viés uma comparação que não aconteceu.")
+        notas.append(limitacao)
+
+    # Safra que EXISTE de um lado so. Nao e um vies de tamanho pequeno: o
+    # gate nao muda o retorno dela, apaga a safra inteira -- e a subtracao
+    # nunca mostraria isso, porque a linha simplesmente nao aparece.
+    safras_com = {int(s) for s in com_gate["Safra"]}
+    safras_sem = {int(s) for s in sem_gate["Safra"]}
+    ausentes_com_gate = sorted(safras_sem - safras_com)
+    ausentes_sem_gate = sorted(safras_com - safras_sem)
+    if ausentes_com_gate:
+        notas.append(
+            f"A(s) safra(s) {_lista_safras(ausentes_com_gate)} só existe(m) "
+            "sem o gate: nenhum segmento aprovado tinha líder nelas. Nessas "
+            "safras o gate não muda o retorno — ele apaga a safra inteira, e "
+            "por isso elas não entram na média acima.")
+    if ausentes_sem_gate:
+        notas.append(
+            f"A(s) safra(s) {_lista_safras(ausentes_sem_gate)} só existe(m) "
+            "com o gate, o que não deveria acontecer: os aprovados são um "
+            "subconjunto dos resultados. Trate como defeito de dado, não "
+            "como medição.")
+
+    # Linhas em comum que ficaram sem vies publicado: a tabela mostra a
+    # linha, e sem esta frase a celula vazia nao tem explicacao ao lado.
+    sem_vies = (sorted(int(s) for s in comparacao.loc[~comparavel, "Safra"])
+                if not comparacao.empty else [])
+    if sem_vies:
+        notas.append(
+            f"A(s) safra(s) {_lista_safras(sem_vies)} aparece(m) na tabela "
+            "sem viés: ela(s) não é(são) mensurável(is) dos dois lados "
+            "(janela em curso ou nenhum pregão observado na janela).")
+
+    return {
+        "comparacao": comparacao,
+        "vies": vies,
+        "n_safras": n,
+        "medio": medio,
+        "faixa": (min(vies), max(vies)) if n else (None, None),
+        "p_bilateral": p_bilateral,
+        "significante": significante,
+        "texto_medio": f"{medio:+.1f} pp" if medio is not None else "—",
+        # Nunca `True`: ver a docstring. Vermelho = vies demonstrado;
+        # neutro = a amostra nao permite concluir.
+        "positivo": False if significante else None,
+        "ajuda": (f"Com gate menos sem gate, nas {n} safra(s) mensurável(is) "
+                  "dos dois lados"
+                  if n else "Nenhuma safra comparável entre as duas "
+                            "reconstruções"),
+        "notas": notas,
+        "limitacao": limitacao,
+    }
+
+
+def _column_config_vies() -> dict:
+    """1 casa decimal nas colunas de retorno/viés sem mexer no dtype — mesma
+    convenção de `_column_config_retorno` (a ordenação por clique de
+    cabeçalho tem que continuar numérica, não alfabética)."""
+    return {col: st.column_config.NumberColumn(format="%.1f")
+            for col in _COLUNAS_VIES}
+
+
+def _desenha_vies(medicao: dict, quando: str | None = None) -> None:
+    """Desenha o que `_vies_universo` mediu. Só desenha.
+
+    Existe separada porque a medição guardada em `session_state` é
+    redesenhada nos reruns seguintes, e ela tem que voltar com as MESMAS
+    ressalvas: republicar só a tabela publicaria os números sem o texto
+    que diz o que eles não são.
+    """
+    if quando:
+        st.caption(f"Última medição: {quando}")
+    cols = st.columns(1)
+    with cols[0]:
+        card_metrica("Viés médio de universo", medicao["texto_medio"],
+                     positivo=medicao["positivo"], ajuda=medicao["ajuda"])
+    # Ressalvas em `st.caption` VISÍVEL, nunca em `ajuda=`: `ajuda` vira o
+    # `title=` do card, tooltip de hover, invisível no toque.
+    for nota in medicao["notas"]:
+        st.caption(nota)
+    if not medicao["comparacao"].empty:
+        st.dataframe(medicao["comparacao"], width="stretch", hide_index=True,
+                     column_config=_column_config_vies())
+
+
+def render_vies_universo(resultados_aprovados: list[dict],
+                         resultados_todos: list[dict],
+                         df_precos: pd.DataFrame, *,
+                         selic_por_ano: dict[int, float],
+                         taxa_selic_aa: float,
+                         tabela_com_gate: pd.DataFrame | None = None) -> None:
+    """Bloco 2: o tamanho do viés de seleção de universo, SOB DEMANDA.
+
+    Atrás de um botão por decisão do dono do projeto: reconstruir todas as
+    safras com o universo inteiro é a conta mais cara desta tela, e ela
+    não é paga a cada rerun.
+
+    `tabela_com_gate` entra pronta quando quem chama já a tem (o Bloco 1
+    acabou de calculá-la com os mesmos argumentos): assim o lado "com
+    gate" desta comparação é literalmente a mesma medição que a tela
+    publicou acima, e não uma segunda reconstrução que pode divergir dela.
+
+    A medição inteira está em `_vies_universo`, que é pura e testada
+    direto — AppTest, nesta base, vaza atribuição de módulo e falha só
+    dentro da suíte completa no CI.
+    """
+    st.markdown(
+        '<div style="font-weight:700;font-size:1.05rem;color:var(--app-text);'
+        'margin:20px 0 8px;">🔍 Tamanho do viés de universo</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "O score de cada safra é point-in-time, mas o **conjunto de "
+        "segmentos** que compõe a carteira foi escolhido com o teste OOS "
+        "sobre a amostra inteira, até hoje. A safra mais antiga é "
+        "reconstruída com segmentos aprovados por evidência de hoje. Tornar "
+        "isso point-in-time é inviável — nas primeiras safras não há janela "
+        "OOS e nenhum segmento seria aprovado —, então aqui se mede o "
+        "tamanho: as mesmas safras, com todos os segmentos que tinham score "
+        "naquele ano, sem gate de aprovação."
+    )
+
+    if not st.button("Medir o viés de universo", key="pb3_btn_vies"):
+        medido = st.session_state.get("pb3_vies_universo")
+        if medido is not None:
+            _desenha_vies(medido["medicao"], quando=medido["quando"])
+        return
+
+    with st.spinner("Reconstruindo as safras sem o gate de aprovação…"):
+        com_gate = tabela_com_gate
+        if com_gate is None:
+            com_gate = tabela_de_safras(resultados_aprovados, df_precos,
+                                        selic_por_ano=selic_por_ano,
+                                        taxa_selic_aa=taxa_selic_aa)
+        sem_gate = tabela_de_safras(resultados_todos, df_precos,
+                                    selic_por_ano=selic_por_ano,
+                                    taxa_selic_aa=taxa_selic_aa)
+        medicao = _vies_universo(com_gate, sem_gate)
+
+    st.session_state["pb3_vies_universo"] = {
+        "quando": pd.Timestamp.now().strftime("%d/%m/%Y %H:%M"),
+        "medicao": medicao,
+    }
+    _desenha_vies(medicao)
