@@ -5,6 +5,7 @@ import pytest
 import core.b3_safras as b3_safras
 from core.b3_evidence import minimum_detectable_effect
 from core.b3_safras import (
+    MIN_SAFRAS_LOO,
     SafraCarteira,
     _dias_por_ano_civil,
     _p_valor_unilateral,
@@ -740,7 +741,7 @@ def test_p_valor_sem_dispersao_real_segue_a_convencao_relativa_do_modulo():
     assert veredito_do_rank_ic(quase_identicos).estado != "evidencia_a_favor"
 
 
-def test_scipy_e_importado_no_topo_nos_modulos_do_veredito():
+def test_a_conta_do_teste_t_mora_em_um_modulo_so():
     """F-3: `scipy` esta pinado em requirements.txt, entao o ramo de
     fallback era morto em producao -- nao servia de resiliencia, servia de
     armadilha: no dia em que o import falhasse por OUTRO motivo, um
@@ -754,20 +755,45 @@ def test_scipy_e_importado_no_topo_nos_modulos_do_veredito():
     p-valor do universo) -- corrigir a guarda num arquivo e deixar os
     vizinhos e o defeito "guarda duplicada nao fica igual".
 
-    Inspecao por AST: o import tem que estar no corpo do modulo, e nenhuma
-    funcao pode importar scipy dentro de um `try`."""
+    Rodada 3 (N-2): a conta passou a morar em UM modulo so
+    (`core.b3_evidence.teste_t_unilateral`). Enquanto era copiada, a copia
+    divergiu na guarda de dispersao e os dois cards da tela publicaram
+    vereditos opostos sobre os MESMOS Rank-ICs. Por isso a varredura agora
+    exige as duas coisas: scipy no topo de `b3_evidence`, e scipy em lugar
+    NENHUM dos outros dois -- quem quiser a distribuicao chama a funcao
+    compartilhada.
+
+    Inspecao por AST, nao por comportamento: duas copias que hoje
+    coincidem passam em qualquer teste de comportamento e divergem na
+    proxima edicao (`guarda-duplicada-diverge`)."""
     import ast
     from pathlib import Path
 
+    def importa_scipy(arvore):
+        return [no for no in ast.walk(arvore)
+                if isinstance(no, (ast.Import, ast.ImportFrom))
+                and any(nome.startswith("scipy") for nome in (
+                    [(no.module or "")] if isinstance(no, ast.ImportFrom)
+                    else [a.name for a in no.names]))]
+
+    arvores = {}
     for modulo in ("b3_safras.py", "b3_evidence.py", "b3_pooled_evidence.py"):
         caminho = Path(__file__).parents[1] / "core" / modulo
-        arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+        arvores[modulo] = ast.parse(caminho.read_text(encoding="utf-8"))
 
-        topo = [no for no in arvore.body
-                if isinstance(no, ast.ImportFrom)
-                and (no.module or "").startswith("scipy")]
-        assert topo, f"scipy nao e importado no topo de core/{modulo}"
+    topo = [no for no in arvores["b3_evidence.py"].body
+            if isinstance(no, ast.ImportFrom)
+            and (no.module or "").startswith("scipy")]
+    assert topo, "scipy nao e importado no topo de core/b3_evidence.py"
 
+    for modulo in ("b3_safras.py", "b3_pooled_evidence.py"):
+        assert not importa_scipy(arvores[modulo]), (
+            f"core/{modulo} voltou a importar scipy -- a conta do teste t "
+            "tem que vir de core.b3_evidence, senao a guarda de dispersao "
+            "volta a ser duas copias que divergem"
+        )
+
+    for modulo, arvore in arvores.items():
         for no in ast.walk(arvore):
             if not isinstance(no, ast.Try):
                 continue
@@ -859,3 +885,67 @@ def test_bootstrap_tambem_filtra_por_finitude_nao_por_nulidade():
         "a banda saiu infinita -- o filtro da reamostragem aceitou inf"
     )
     assert 8.0 < baixo <= alto < 13.0
+
+
+def test_os_dois_blocos_da_tela_nao_divergem_sobre_os_mesmos_ics_anuais():
+    """N-2: desde a rodada 2 o Bloco 3 e o bloco "Evidencia no universo"
+    leem os MESMOS Rank-ICs anuais -- e foi isso que expos que cada um
+    tinha a sua guarda de dispersao. `_p_valor_unilateral` usava a guarda
+    RELATIVA; `universe_evidence` ficou com `desvio > 0`. Sobre os ICs
+    {2018..2023} todos iguais a 0,30 exceto um 0,30+1e-12, um card
+    publicava `evidencia_a_favor` com p=5,0e-61 e o outro "Inconclusivo".
+
+    Um teste SO, comparando os dois caminhos sobre a mesma entrada. Dois
+    testes paralelos (um por caminho) envelheceriam separados e e
+    exatamente assim que a divergencia nasceu."""
+    from core.b3_pooled_evidence import universe_evidence
+
+    amostras = [
+        # dispersao de ruido de ponto flutuante: o caso medido
+        [0.30, 0.30, 0.30, 0.30, 0.30, 0.30 + 1e-12],
+        [0.30] * 6,
+        [0.2, 0.0, 0.1],
+        [0.30, 0.32, 0.28, 0.31, 0.29, 0.33],
+        [-0.1, -0.1, -0.1, -0.5],
+        [0.10, -0.08, 0.04],
+        [-0.20],                       # um ano so: amplitude insuficiente
+        [0.05],
+        [],
+    ]
+    for ic in amostras:
+        bloco3 = veredito_do_rank_ic(ic)
+        universo = universe_evidence(list(ic))
+        assert bloco3.estado == universo.estado, (
+            f"os dois blocos divergem sobre {ic}: Bloco 3 diz "
+            f"{bloco3.estado!r} e o universo diz {universo.estado!r}"
+        )
+
+
+def test_implicacao_da_banda_de_um_lado_e_presa_por_teste_nao_por_docstring():
+    """A banda so nao reprova hoje porque `classify_evidence` decide pelo
+    p-valor: com zero viradas sobre veredito conclusivo, todo p(sem_i) ja
+    esta do mesmo lado de alpha. Isso e uma IMPLICACAO, nao uma constante
+    -- e implicacao afirmada so na docstring e `gate-que-so-dava-false`
+    com o sinal invertido: no dia em que o criterio deixar de ser o
+    p-valor, a condicao passa a morder em silencio.
+
+    Este teste falha se a implicacao parar de valer:
+    conclusivo ∧ viram == 0 ⟹ banda_de_um_lado is not False."""
+    rng = np.random.default_rng(20260922)
+    vistos = {"conclusivo_sem_virada": 0}
+    for _ in range(4000):
+        n = int(rng.integers(MIN_SAFRAS_LOO, 17))
+        mu = float(rng.uniform(-0.25, 0.25))
+        amostra = (mu + rng.normal(0.0, float(rng.uniform(0.01, 0.30)), n))
+        loo = fragilidade_leave_one_out([float(v) for v in amostra])
+        if not (loo["conclusivo"] and loo["safras_que_viram"] == 0):
+            continue
+        vistos["conclusivo_sem_virada"] += 1
+        assert loo["banda_de_um_lado"] is not False, (
+            "a banda passou a atravessar alpha sobre uma conclusao com zero "
+            f"viradas -- a condicao deixou de ser inerte em {list(amostra)}"
+        )
+    assert vistos["conclusivo_sem_virada"] > 500, (
+        "a amostragem nao exercitou o caso que a implicacao descreve "
+        f"({vistos['conclusivo_sem_virada']} casos)"
+    )

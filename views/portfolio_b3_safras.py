@@ -18,6 +18,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from core.b3_pooled_evidence import MIN_ATIVOS_ANO
 from core.b3_safras import MIN_SAFRAS_LOO, tabela_de_safras
 from design.componentes import card_metrica
 from views.empresas_b3 import _COR_ALT, _COR_NEU, _COR_POS, _plot_layout
@@ -267,10 +268,24 @@ def _ics_por_ano(resultados: list[dict]) -> dict[int, float]:
     """
     from core.b3_pooled_evidence import pooled_yearly_ics
 
+    pares = _pares_de_ic(resultados)
+    return pooled_yearly_ics(pares) if pares else {}
+
+
+def _pares_de_ic(resultados: list[dict]) -> list[tuple]:
+    """Observações (ano, score, retorno) de TODOS os segmentos, sem reduzir.
+
+    Existe separada porque a mensagem de limitação precisa distinguir duas
+    ausências opostas que `ics_por_ano == {}` confunde: *não chegaram
+    pares* e *chegaram pares, mas nenhum ano juntou ativos suficientes*.
+    Discriminar por `rank_ic_values` respondia a outra pergunta — a lista
+    por segmento pode existir com zero pares, e a tela culpava a ausência
+    errada.
+    """
     pares: list[tuple] = []
     for res in (resultados or []):
         pares.extend(res.get("ic_pairs") or [])
-    return pooled_yearly_ics(pares) if pares else {}
+    return pares
 
 
 def _texto_banda_p(loo: dict) -> str:
@@ -284,31 +299,47 @@ def _texto_banda_p(loo: dict) -> str:
             f"{alto:.3f} (α = {loo['alpha']:.2f}).")
 
 
-def _ajuda_ordena(veredito, anos: list[int]) -> str:
-    """Ajuda do card mais forte — e é nela que a premissa de independência
-    aparece, derivada da medição.
+def _ajuda_ordena(veredito) -> str:
+    """Ajuda do card mais forte: amplitude e efeito mínimo detectável.
 
-    O selo "Evidência a favor" chegava sem nenhuma ressalva. A ressalva
-    não pode ser uma frase de rodapé fixa (este projeto já publicou texto
-    de limitação que envelheceu invertido e continuou soando como rigor):
-    ela cita quantos anos foram medidos, quais, e quantos deles são
-    consecutivos — que é a sobreposição de regime que o teste t ignora.
+    A premissa de independência NÃO fica aqui — ela qualifica o selo mais
+    forte da tela e saiu para `_nota_independencia`, que a view publica em
+    texto visível. `ajuda` vira o atributo `title=` do card
+    (`design/componentes.py`), isto é, tooltip de hover: invisível no
+    toque e invisível para quem não passa o mouse. Ressalva que só aparece
+    no hover é ressalva que não foi publicada.
     """
     partes = [f"{veredito.anos_medidos} ano(s) de Rank-IC"]
     mde = veredito.efeito_minimo_detectavel
     if mde is not None:
         partes.append(f"Efeito mínimo detectável: {mde:.3f}")
-    if anos:
-        corrida = maior = 1
-        for anterior, atual in zip(anos, anos[1:]):
-            corrida = corrida + 1 if atual == anterior + 1 else 1
-            maior = max(maior, corrida)
-        partes.append(
-            f"O teste trata os {len(anos)} anos ({anos[0]}–{anos[-1]}, "
-            f"até {maior} consecutivos) como independentes. Anos vizinhos "
-            "compartilham universo e regime de mercado, então o p-valor é "
-            "otimista")
     return ". ".join(partes)
+
+
+def _nota_independencia(anos: list[int]) -> str:
+    """Premissa que o teste t assume e os dados não garantem — visível.
+
+    Derivada da medição, nunca fixa (este projeto já publicou texto de
+    limitação que envelheceu invertido e continuou soando como rigor):
+    cita quantos anos entraram, quais, e o maior bloco consecutivo, que é
+    a sobreposição de regime que o teste ignora.
+    """
+    if not anos:
+        return ""
+    corrida = maior = 1
+    for anterior, atual in zip(anos, anos[1:]):
+        corrida = corrida + 1 if atual == anterior + 1 else 1
+        maior = max(maior, corrida)
+    return (f"O teste trata os {len(anos)} anos ({anos[0]}–{anos[-1]}, até "
+            f"{maior} consecutivos) como independentes. Anos vizinhos "
+            "compartilham universo e regime de mercado, então o p-valor é "
+            "otimista.")
+
+
+def _frase(*partes: str) -> str:
+    """Junta pedaços de texto já pontuados, sem deixar espaço órfão quando
+    um deles é vazio (a banda não é calculável em toda amostra)."""
+    return " ".join(p.strip() for p in partes if p and p.strip())
 
 
 def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
@@ -360,6 +391,7 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
         veredito_do_rank_ic,
     )
 
+    pares = _pares_de_ic(resultados)
     ics_por_ano = _ics_por_ano(resultados)
     anos = sorted(ics_por_ano)
     ic_values = [ics_por_ano[ano] for ano in anos]
@@ -398,9 +430,13 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
             "uma conclusão sobre aquele ano."
         )
 
+    # N-3: a causa vem do que `_ics_por_ano` VIU (os pares), não de
+    # `rank_ic_values`. As duas ausências são opostas e a tela culpava a
+    # errada: com pares presentes e nenhum ano elegível ela dizia "os pares
+    # não vieram", e a frase correta ficava inalcançável três linhas abaixo.
     if anos:
         limitacao_ev = ""
-    elif any((res.get("rank_ic_values") or []) for res in (resultados or [])):
+    elif not pares:
         limitacao_ev = (
             "Veredito não publicado: os pares (ano, score, retorno) não "
             "vieram nos resultados, e só eles permitem reduzir a um Rank-IC "
@@ -408,8 +444,11 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
             "por segmento — usá-la multiplicaria a mesma evidência pelo "
             "número de segmentos e inflaria a significância por √k.")
     else:
-        limitacao_ev = ("Veredito não publicado: nenhum ano com Rank-IC "
-                        "calculável no universo.")
+        limitacao_ev = (
+            f"Veredito não publicado: {len(pares)} observação(ões) (ano, "
+            "score, retorno) chegaram, mas nenhum ano juntou os "
+            f"{MIN_ATIVOS_ANO} ativos mínimos com score e retorno — sem isso "
+            "o Rank-IC do ano não é calculável.")
 
     n_banda = len(excessos)
     if baixo is not None:
@@ -441,27 +480,62 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
         texto_frag = f"{loo['safras_que_viram']} de {n_loo} anos"
         if loo["robusto"]:
             positivo_frag = True
-            ajuda_frag = (
-                f"Nenhum dos {n_loo} anos derruba o veredito. "
-                f"{_texto_banda_p(loo)}")
+            ajuda_frag = _frase(f"Nenhum dos {n_loo} anos derruba o veredito.",
+                                _texto_banda_p(loo))
         elif loo["safras_que_viram"] > 0:
             positivo_frag = False
-            ajuda_frag = (
-                f"Quantos anos precisam sair para o veredito virar. "
-                f"{_texto_banda_p(loo)}")
-        else:
+            ajuda_frag = _frase("Quantos anos precisam sair para o veredito "
+                                "virar.", _texto_banda_p(loo))
+        elif not loo["conclusivo"]:
             positivo_frag = None
-            ajuda_frag = (
+            ajuda_frag = _frase(
                 "Nesta amostra, remover um ano não é capaz de mudar o "
                 "veredito — e o veredito é inconclusivo. Zero aqui é "
                 "insensibilidade do teste sobre uma não-conclusão, não "
-                f"robustez. {_texto_banda_p(loo)}")
+                "robustez.", _texto_banda_p(loo))
+        else:
+            # N-1: zero viradas sobre veredito CONCLUSIVO, sem selo verde.
+            # O ramo anterior afirmava "o veredito é inconclusivo" ao lado
+            # de um card dizendo "Evidência contra" — em [-0.1, -0.1, -0.1,
+            # -0.5] as subamostras idênticas não têm dispersão, o p-valor
+            # não existe e a margem some, mas a conclusão continua de pé.
+            positivo_frag = None
+            sem_p = sum(1 for p in loo["p_loo"] if p is None)
+            causa = (
+                f"{sem_p} das {n_loo} subamostras ficam sem dispersão entre "
+                "os Rank-ICs e o p-valor nem existe nelas"
+                if sem_p else
+                f"a banda de p-valores atravessa α = {loo['alpha']:.2f}")
+            ajuda_frag = _frase(
+                f"Nenhum dos {n_loo} anos derruba o veredito "
+                f"({veredito.rotulo}), mas a margem não sustenta selo: "
+                f"{causa}. A contagem diz que nenhum ano virou; sem margem, "
+                "ela não diz por quanto.", _texto_banda_p(loo))
+
+    # A banda de p-valores é o "por quanto passou" — e é ela que impede o
+    # selo verde de ser lido como salvaguarda testada. Vai em texto
+    # VISÍVEL: no `ajuda` ela virava `title=` do card, tooltip de hover, e
+    # o usuário via "0 de 8 anos" em verde e mais nada.
+    nota_frag = _texto_banda_p(loo) if loo["medido"] else ""
+    # N-5: as duas contagens da tela medem coisas diferentes e ficavam
+    # lado a lado sem explicação — "Safras medidas: N" (janela fechada com
+    # pregão) contra "0 de M anos" (anos com Rank-IC calculável).
+    if loo["medido"] and n_banda and n_banda != n_loo:
+        nota_frag = _frase(
+            nota_frag,
+            f"A fragilidade conta os {n_loo} ano(s) com Rank-IC calculável "
+            f"(≥ {MIN_ATIVOS_ANO} ativos no universo), não as {n_banda} "
+            "safra(s) mensurável(is) do bloco acima: são populações "
+            "diferentes.")
 
     return {
         "ic_values": ic_values,
         "anos": anos,
+        "pares": len(pares),
         "veredito": veredito,
-        "ajuda_ordena": _ajuda_ordena(veredito, anos),
+        "ajuda_ordena": _ajuda_ordena(veredito),
+        "nota_independencia": _nota_independencia(anos),
+        "nota_fragilidade": nota_frag,
         "limitacao_evidencia": limitacao_ev,
         "texto_fragilidade": texto_frag,
         "positivo_fragilidade": positivo_frag,
@@ -510,7 +584,9 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
 
     for aviso in exp["avisos"]:
         st.warning(aviso)
-    if exp["limitacao_evidencia"]:
-        st.caption(exp["limitacao_evidencia"])
-    if exp["limitacao_banda"]:
-        st.caption(exp["limitacao_banda"])
+    # Ressalva e margem em texto visível, não em tooltip: `ajuda` vira
+    # `title=` do card e não existe no toque.
+    for nota in (exp["nota_independencia"], exp["nota_fragilidade"],
+                 exp["limitacao_evidencia"], exp["limitacao_banda"]):
+        if nota:
+            st.caption(nota)

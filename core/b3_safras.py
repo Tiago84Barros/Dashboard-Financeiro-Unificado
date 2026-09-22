@@ -172,22 +172,16 @@ Modulo puro: sem streamlit, sem banco. Coberto por tests/test_b3_safras.py.
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
 
-# Import no TOPO, de proposito. `scipy` esta pinado em requirements.txt
-# (scipy==1.17.1), entao o antigo `try: from scipy.stats import t / except
-# Exception: <aproximacao normal>` era ramo MORTO em producao -- nao servia
-# de resiliencia, servia de armadilha: no dia em que o import falhasse por
-# outro motivo (instalacao quebrada, conflito de ABI), um `except Exception`
-# largo trocaria a distribuicao em silencio por uma que INVERTE o veredito
-# (em [0.2, 0.0, 0.1] o t da p=0,113 e a normal p=0,042). Erro de import tem
-# que aparecer como erro.
-from scipy.stats import t as _t_student
-
+# O teste t NAO e reimplementado aqui: vem de `core.b3_evidence`, que e a
+# unica casa da distribuicao e da guarda de dispersao nos tres modulos do
+# veredito. Duas copias da mesma regra nao ficam iguais -- foi exatamente o
+# que aconteceu com a guarda de dispersao ate 2026-09.
+from core.b3_evidence import teste_t_unilateral
 from core.b3_vigencia import ano_base_do_score, janela_de_vigencia, safra_completa
 
 # A serie de precos e mensal: 45 dias cobre uma folga de um mes de atraso
@@ -655,27 +649,14 @@ def _p_valor_unilateral(valores: list[float] | None) -> float | None:
     sempre, e zero ali seria lido como robustez: exatamente a conclusao que
     esta funcao existe para poder contradizer.
 
-    Distribuicao t, nunca a aproximacao normal: com n na casa de 5 a 15
-    safras elas nao sao intercambiaveis, e e justamente ai que a diferenca
-    morde -- em `[0.2, 0.0, 0.1]` o t da 0,113 e a normal 0,042, lados
-    opostos de `alpha=0,10`.
-
-    Guarda de dispersao RELATIVA, a mesma convencao de
-    `core.b3_evidence.minimum_detectable_effect`: observacoes praticamente
-    identicas dao desvio ~1e-17 (ruido de ponto flutuante), nao zero exato,
-    e uma guarda absoluta (`erro_padrao <= 0`) deixava passar p = 2,85e-33
-    -- "evidencia a favor" sobre dispersao que nao existe.
+    A conta em si NAO mora aqui: e `core.b3_evidence.teste_t_unilateral`, a
+    mesma funcao que o bloco "Evidencia no universo" chama. Enquanto eram
+    duas copias, a guarda de dispersao divergiu (aqui relativa, la
+    `desvio > 0`) e os dois cards publicavam vereditos opostos sobre os
+    MESMOS Rank-ICs anuais -- p = 5,0e-61 de um lado, "Inconclusivo" do
+    outro.
     """
-    amostra = np.asarray(_ic_limpos(valores), dtype=float)
-    n = len(amostra)
-    if n < 2:
-        return None
-    desvio = float(amostra.std(ddof=1))
-    escala = max(float(np.abs(amostra).mean()), 1e-12)
-    if not np.isfinite(desvio) or desvio <= escala * 1e-9:
-        return None
-    estatistica = float(amostra.mean()) / (desvio / math.sqrt(n))
-    return float(_t_student.sf(estatistica, df=n - 1))
+    return teste_t_unilateral(_ic_limpos(valores))[1]
 
 
 def veredito_do_rank_ic(ic_values: list[float] | None):

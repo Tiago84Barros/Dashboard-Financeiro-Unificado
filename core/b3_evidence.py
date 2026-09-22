@@ -66,25 +66,81 @@ class EvidenceVerdict:
         return _ROTULOS.get(self.estado, self.estado)
 
 
+def _finitos(observacoes: list[float] | np.ndarray | None) -> np.ndarray:
+    """Observações finitas, na ordem de entrada — ausência não é observação."""
+    if observacoes is None:
+        return np.asarray([], dtype=float)
+    return np.asarray([v for v in observacoes
+                       if v is not None and np.isfinite(v)], dtype=float)
+
+
+def desvio_com_dispersao(observacoes: list[float] | np.ndarray | None, *,
+                         ddof: int = 1) -> float | None:
+    """Desvio-padrão amostral quando há dispersão REAL; None quando não há.
+
+    Esta é a regra ÚNICA de dispersão dos vereditos — o MDE, o p-valor das
+    safras (``core.b3_safras``) e o teste no universo
+    (``core.b3_pooled_evidence``) chamam ESTA função em vez de cada um
+    reimplementar a sua guarda.
+
+    A guarda é RELATIVA à escala das observações, não absoluta. Observações
+    praticamente idênticas dão desvio ~1e-17 (ruído de ponto flutuante), não
+    zero exato, e ``desvio > 0`` deixa esse ruído passar como se fosse
+    dispersão: medido em 2026-09, com os Rank-ICs anuais {2018..2023} todos
+    iguais a 0,30 exceto um 0,30 + 1e-12, a guarda absoluta produzia
+    p = 5,0e-61 ("evidência a favor" sobre dispersão que não existe) enquanto
+    a relativa devolvia "inconclusivo". Como os dois blocos da tela leem os
+    MESMOS ICs anuais desde a rodada 2, a divergência aparecia como dois
+    cards contraditórios lado a lado.
+
+    Devolve None com menos de 2 observações finitas ou sem dispersão real.
+    """
+    valores = _finitos(observacoes)
+    n = len(valores)
+    if n < 2:
+        return None
+    desvio = float(valores.std(ddof=ddof))
+    escala = max(float(np.abs(valores).mean()), 1e-12)
+    if not np.isfinite(desvio) or desvio <= escala * 1e-9:
+        return None
+    return desvio
+
+
+def teste_t_unilateral(observacoes: list[float] | np.ndarray | None
+                       ) -> tuple[float | None, float | None]:
+    """(t, p) do teste t unilateral À DIREITA de ``média > 0``, com ddof=1.
+
+    Distribuição t, nunca a aproximação normal: com n na casa de 5 a 15
+    observações elas não são intercambiáveis, e é justamente aí que a
+    diferença morde — em ``[0.2, 0.0, 0.1]`` o t dá 0,113 e a normal 0,042,
+    lados opostos de ``alpha = 0,10``.
+
+    Devolve ``(None, None)`` quando ``desvio_com_dispersao`` não encontra
+    dispersão: sem erro-padrão estimável não há teste, e publicar um p-valor
+    ali seria publicar o ruído de ponto flutuante como se fosse sinal.
+    """
+    valores = _finitos(observacoes)
+    desvio = desvio_com_dispersao(valores)
+    if desvio is None:
+        return (None, None)
+    n = len(valores)
+    estatistica = float(valores.mean()) / (desvio / math.sqrt(n))
+    return (estatistica, float(_t_student.sf(estatistica, df=n - 1)))
+
+
 def minimum_detectable_effect(observacoes: list[float] | np.ndarray, *,
                               alpha: float = 0.10, power: float = 0.80
                               ) -> float | None:
     """Menor Rank-IC médio que o teste detectaria, dado o tamanho da amostra.
 
     Teste t unilateral de uma amostra: MDE = (t_alpha + t_power) · s / √n.
-    Devolve None com menos de 2 observações ou dispersão nula (sem base para
-    estimar o erro-padrão).
+    Devolve None com menos de 2 observações ou sem dispersão real — a guarda
+    é a de ``desvio_com_dispersao``, compartilhada com o teste t.
     """
-    valores = np.asarray([v for v in (observacoes or [])
-                          if v is not None and np.isfinite(v)], dtype=float)
+    valores = _finitos(observacoes)
     n = len(valores)
-    if n < 2:
-        return None
-    desvio = float(valores.std(ddof=1))
-    # Observações idênticas dão desvio ~1e-17 (ruído de ponto flutuante), não
-    # zero exato. Sem dispersão real não há erro-padrão a estimar.
-    escala = max(float(np.abs(valores).mean()), 1e-12)
-    if not np.isfinite(desvio) or desvio <= escala * 1e-9:
+    desvio = desvio_com_dispersao(valores)
+    if desvio is None:
         return None
     t_alpha = float(_t_student.ppf(1 - alpha, df=n - 1))
     t_power = float(_t_student.ppf(power, df=n - 1))

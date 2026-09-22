@@ -716,28 +716,36 @@ def test_card_de_fragilidade_publica_a_banda_de_p_valores():
     assert "α = 0.10" in ajuda
 
 
-def test_ajuda_do_card_forte_declara_a_premissa_de_independencia():
+def test_premissa_de_independencia_sai_em_texto_visivel_nao_em_tooltip():
     """Premissa de independência: nenhum texto da tela mencionava que o
     teste t trata os anos como observações independentes, sendo que anos
     vizinhos compartilham universo e regime — o p-valor é otimista.
 
     A ressalva tem que sair da MEDIÇÃO (quantos anos, quais, quantos
     consecutivos), nunca de um rodapé fixo: este projeto já publicou texto
-    de limitação que envelheceu invertido e continuou soando como rigor."""
+    de limitação que envelheceu invertido e continuou soando como rigor.
+
+    N-4: e tem que ser VISÍVEL. Na rodada 2 ela foi parar no `ajuda`, que
+    `card_metrica` renderiza como atributo `title=` — tooltip de hover,
+    inexistente no toque. Ressalva que qualifica o selo mais forte da tela
+    não pode depender de o usuário passar o mouse."""
     out = _expectativa([_res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])],
                        _tabela_medida())
 
-    ajuda = out["ajuda_ordena"]
-    assert "independentes" in ajuda
-    assert "6 anos (2000–2005" in ajuda, f"não citou a medição: {ajuda!r}"
-    assert "6 consecutivos" in ajuda
+    nota = out["nota_independencia"]
+    assert "independentes" in nota
+    assert "6 anos (2000–2005" in nota, f"não citou a medição: {nota!r}"
+    assert "6 consecutivos" in nota
+    assert "independentes" not in out["ajuda_ordena"], (
+        "a ressalva voltou para o tooltip -- `ajuda` vira title= do card"
+    )
 
     # e a frase acompanha a medição: outra amostra, outros números
     esparso = _expectativa(
         [_res_ic([0.30, 0.32], ano0=2000),
          _res_ic([0.28, 0.31], ano0=2010)], _tabela_medida())
-    assert "4 anos (2000–2011" in esparso["ajuda_ordena"]
-    assert "2 consecutivos" in esparso["ajuda_ordena"]
+    assert "4 anos (2000–2011" in esparso["nota_independencia"]
+    assert "2 consecutivos" in esparso["nota_independencia"]
 
 
 def test_render_expectativa_le_a_ajuda_e_a_limitacao_da_funcao_pura():
@@ -760,3 +768,191 @@ def test_render_expectativa_le_a_ajuda_e_a_limitacao_da_funcao_pura():
         "render_expectativa nao le os textos derivados da medicao -- "
         f"leu apenas {sorted(lidas)}"
     )
+
+
+def test_ressalva_e_margem_chegam_a_tela_como_texto_e_nao_como_tooltip():
+    """N-4 e a banda: `ajuda=` vira `title=` do `<div>` do card
+    (`design/componentes.py`), isto e, tooltip de hover — invisivel no
+    toque. A premissa de independencia e a banda de p-valores tem que
+    chegar por `st.caption`, e NAO por `ajuda=`.
+
+    Inspecao por AST, nao AppTest (`apptest-vaza-atribuicao-de-modulo`):
+    procura as chaves lidas dentro do laco cujo corpo chama `st.caption`,
+    e confere que nenhuma delas e passada como `ajuda=` a um card."""
+    caminho = RAIZ / "views" / "portfolio_b3_safras.py"
+    arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+    render = next(
+        no for no in ast.walk(arvore)
+        if isinstance(no, ast.FunctionDef) and no.name == "render_expectativa"
+    )
+
+    def chaves(no):
+        return {n.slice.value for n in ast.walk(no)
+                if isinstance(n, ast.Subscript)
+                and isinstance(n.slice, ast.Constant)
+                and isinstance(n.slice.value, str)}
+
+    def chama_caption(no):
+        return any(isinstance(c, ast.Call)
+                   and isinstance(c.func, ast.Attribute)
+                   and c.func.attr == "caption"
+                   for c in ast.walk(no))
+
+    visiveis = set()
+    for no in ast.walk(render):
+        if isinstance(no, ast.For) and chama_caption(no):
+            visiveis |= chaves(no.iter)
+        elif isinstance(no, ast.If) and chama_caption(no):
+            visiveis |= chaves(no.test)
+        elif isinstance(no, ast.Expr) and chama_caption(no):
+            visiveis |= chaves(no.value)
+
+    assert {"nota_independencia", "nota_fragilidade"} <= visiveis, (
+        "a ressalva de independencia e a banda de p-valores nao sao "
+        f"publicadas em texto visivel -- st.caption recebe {sorted(visiveis)}"
+    )
+
+    em_tooltip = set()
+    for no in ast.walk(render):
+        if isinstance(no, ast.Call):
+            for kw in no.keywords:
+                if kw.arg == "ajuda":
+                    em_tooltip |= chaves(kw.value)
+    assert not ({"nota_independencia", "nota_fragilidade"} & em_tooltip), (
+        f"texto visivel virou tooltip de novo: {sorted(em_tooltip)}"
+    )
+
+
+def _pares_exatos(ano, rho, *, n=5):
+    """Pares (ano, score, retorno) com Rank-IC EXATAMENTE `rho`.
+
+    A bisseccao de `_pares_do_ano` chega perto, e perto nao serve aqui: o
+    ramo que este bloco de testes exercita depende de subamostras
+    IDENTICAS, sem dispersao nenhuma. Com n=5, rho = 1 − Σd²/20 assume
+    valores exatos; a busca varre as permutacoes ate achar o Σd² pedido.
+    """
+    import itertools
+    alvo = round((1 - rho) * (n * (n * n - 1) / 6) / 1.0)
+    for perm in itertools.permutations(range(n)):
+        d2 = sum((i - j) ** 2 for i, j in enumerate(perm))
+        if d2 == alvo:
+            return [(ano, float(i), float(p)) for i, p in enumerate(perm)]
+    raise AssertionError(f"rho={rho} nao e alcancavel com n={n}")
+
+
+def test_fragilidade_sem_margem_nao_afirma_veredito_inconclusivo():
+    """N-1: o texto do estado neutro dizia "o veredito e inconclusivo" ao
+    lado de um card publicando "Evidencia contra". Sao dois casos opostos
+    colados no mesmo ramo: (a) zero viradas sobre veredito inconclusivo e
+    (b) zero viradas sobre veredito CONCLUSIVO cuja banda nao e
+    calculavel. Em [-0.1, -0.1, -0.1, -0.5] as subamostras identicas ficam
+    sem dispersao, o p-valor nem existe, e o texto negava o proprio card
+    ao lado."""
+    pares = (_pares_exatos(2000, -0.1) + _pares_exatos(2001, -0.1)
+             + _pares_exatos(2002, -0.1) + _pares_exatos(2003, -0.5))
+    out = _expectativa([{"segmento": "S", "ic_pairs": pares}],
+                       _tabela_medida())
+
+    assert out["ic_values"] == pytest.approx([-0.1, -0.1, -0.1, -0.5])
+    assert len(set(out["ic_values"][:3])) == 1, (
+        "os tres primeiros anos precisam ser IDENTICOS -- e a ausencia "
+        "de dispersao na subamostra que apaga o p-valor"
+    )
+    assert out["veredito"].estado == "evidencia_contra"
+    assert out["loo"]["safras_que_viram"] == 0
+    assert out["loo"]["banda_de_um_lado"] is None
+    assert out["positivo_fragilidade"] is None
+
+    ajuda = out["ajuda_fragilidade"]
+    assert "inconclusivo" not in ajuda.lower(), (
+        f"o texto contradiz o card ao lado (Evidencia contra): {ajuda!r}"
+    )
+    assert "Evidência contra" in ajuda, (
+        f"o texto nao nomeia o veredito que sobreviveu: {ajuda!r}"
+    )
+    assert "sem dispersão" in ajuda, (
+        f"a causa da margem ausente nao foi medida no texto: {ajuda!r}"
+    )
+
+
+def test_banda_de_p_valores_e_publicada_em_texto_visivel():
+    """A banda e o "por quanto passou" — e e ela que impede o selo verde
+    de ser lido como salvaguarda testada. Na rodada 2 ela ficou so no
+    `ajuda`, ou seja, no `title=` do card: o usuario via "0 de 6 anos" em
+    verde e mais nada."""
+    out = _expectativa([_res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])],
+                       _tabela_medida())
+
+    baixo, alto = out["loo"]["p_banda"]
+    nota = out["nota_fragilidade"]
+    assert f"{baixo:.3f}" in nota and f"{alto:.3f}" in nota, (
+        f"a banda medida nao chegou ao texto visivel: {nota!r}"
+    )
+    assert "α = 0.10" in nota
+
+
+def test_limitacao_distingue_pares_ausentes_de_ano_sem_ativos_suficientes():
+    """N-3: com `ic_pairs` presentes e nenhum ano alcancando o minimo de
+    ativos, a tela dizia "os pares nao vieram nos resultados" — causa nao
+    medida, e a frase certa (nenhum ano calculavel) ficava inalcancavel
+    tres linhas abaixo. A discriminacao tem que ser pelos PARES, que e o
+    que `_ics_por_ano` viu, nao por `rank_ic_values`."""
+    poucos = [(2020, float(i), float(i)) for i in range(3)]
+    out = _expectativa(
+        [{"segmento": "S", "rank_ic_values": [0.3], "ic_pairs": poucos}],
+        _tabela_medida())
+
+    assert out["ic_values"] == []
+    limitacao = out["limitacao_evidencia"]
+    assert "não vieram" not in limitacao, (
+        f"culpou a ausencia errada: {limitacao!r}"
+    )
+    assert "3 observação(ões)" in limitacao, (
+        f"a limitacao nao cita o que chegou: {limitacao!r}"
+    )
+    assert "5 ativos mínimos" in limitacao
+
+
+def test_tela_explica_por_que_as_duas_contagens_diferem():
+    """N-5: "Safras medidas: 3" no Bloco 1 e "0 de 6 anos" no Bloco 3
+    ficavam lado a lado sem nada dizendo que sao populacoes diferentes —
+    safra mensuravel (janela fechada com pregao) contra ano com Rank-IC
+    calculavel (>= 5 ativos no universo)."""
+    out = _expectativa([_res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])],
+                       _tabela_medida(n=3))
+
+    assert out["n_safras_banda"] == 3 and out["loo"]["n_safras"] == 6
+    nota = out["nota_fragilidade"]
+    assert "6 ano(s) com Rank-IC calculável" in nota, nota
+    assert "3 safra(s) mensurável(is)" in nota, nota
+
+    # e some quando as duas contagens coincidem: nota derivada da medicao,
+    # nao frase fixa
+    igual = _expectativa([_res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])],
+                         _tabela_medida(n=6))
+    assert "populações diferentes" not in igual["nota_fragilidade"]
+
+
+def test_textos_do_bloco_nao_deixam_espaco_orfao():
+    """N-6: os textos eram concatenados com `". "` + `_texto_banda_p`, que
+    e vazio quando a banda nao e calculavel — sobrava espaco no fim ou
+    espaco duplo no meio."""
+    amostras = ([0.30, 0.32, 0.28, 0.31, 0.29, 0.33],
+                [0.02, -0.05, 0.10, -0.03, 0.06, 0.01],
+                [0.30, 0.32, 0.28],
+                [-0.20, -0.18, -0.25, -0.22])
+    entradas = [[_res_ic(ic)] for ic in amostras]
+    # o caso que de fato produz banda VAZIA: subamostras identicas, sem
+    # dispersao, `_texto_banda_p` devolve "" e a juncao ingenua deixaria o
+    # espaco orfao no fim da frase
+    entradas.append([{"segmento": "S", "ic_pairs": (
+        _pares_exatos(2000, -0.1) + _pares_exatos(2001, -0.1)
+        + _pares_exatos(2002, -0.1) + _pares_exatos(2003, -0.5))}])
+    for entrada in entradas:
+        out = _expectativa(entrada, _tabela_medida())
+        for chave in ("ajuda_ordena", "ajuda_fragilidade",
+                      "nota_fragilidade", "nota_independencia",
+                      "limitacao_evidencia", "limitacao_banda"):
+            texto = out[chave]
+            assert texto == texto.strip(), f"{chave} com espaco nas pontas"
+            assert "  " not in texto, f"{chave} com espaco duplo: {texto!r}"
