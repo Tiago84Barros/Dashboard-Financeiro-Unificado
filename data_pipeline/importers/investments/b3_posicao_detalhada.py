@@ -51,10 +51,14 @@ Regras de entrada
    duas --, porque e a mesma posicao vista por outro angulo, nao uma posicao
    adicional. Importar as duas dobraria R$ 34 mil de BBAS3 no patrimonio.
 
-4. **Provento provisionado nao e provento.** Vai para
-   `portfolio_provisioned_income` (migration 073), nunca para `dividends`:
-   e valor declarado com previsao de pagamento em 2026-2027, e somar com o
-   recebido inflaria o rendimento realizado de toda tela que le `dividends`.
+4. **Provento provisionado nao e gravado, e nunca vai para `dividends`.**
+   E valor declarado com previsao de pagamento em 2026-2027: somar com o
+   recebido inflaria o rendimento realizado de toda tela que le `dividends`,
+   e ele nao altera quantidade nem peso, logo nao muda carteira, backtest
+   nem rebalanceamento. Por decisao de 2026-09-22 o padrao e NAO guardar --
+   a secao e pulada com nota. Quem quiser o historico informativo roda a
+   migration 073, e `portfolio_provisioned_income` passa a ser preenchida
+   sem nenhuma outra mudanca de codigo: a deteccao e por `to_regclass`.
 
 Puro ate a borda do banco: o parsing da planilha nao toca engine e e testavel
 com um workbook em memoria.
@@ -588,9 +592,10 @@ def parse(payload: bytes | tuple[str, bytes], engine: Engine) -> dict[str, Any]:
                         summary["rows_skipped"] += len(linhas_secao)
                         summary["files_skipped_notes"].append(
                             f"Proventos provisionados: {len(linhas_secao)} "
-                            f"linhas ignoradas -- a tabela "
-                            f"portfolio_provisioned_income ainda nao existe "
-                            f"neste banco (migration 073)."
+                            f"linhas ignoradas -- provisionado nao altera "
+                            f"quantidade nem peso da carteira, entao nao e "
+                            f"gravado por padrao. Para guardar o historico, "
+                            f"rodar a migration 073."
                         )
                     continue
                 _importar_provisionados(

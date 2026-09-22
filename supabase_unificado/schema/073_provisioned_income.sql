@@ -1,6 +1,15 @@
 -- 073_provisioned_income.sql
 -- Proventos PROVISIONADOS (declarados, ainda nao pagos).
 --
+-- OPCIONAL -- NAO APLICADA POR PADRAO
+-- ----------------------------------
+-- Decisao de 2026-09-22: provisionado nao altera quantidade nem peso, logo
+-- nao muda carteira, backtest nem rebalanceamento. Sem esta tabela o
+-- importador pula a secao com nota e todo o resto do extrato entra normal --
+-- ele detecta a ausencia por `to_regclass`, nao por erro. Rodar este arquivo
+-- e o unico passo necessario para ligar o historico informativo; nao ha
+-- mudanca de codigo do outro lado.
+--
 -- Por que nao vai em `dividends`
 -- ------------------------------
 -- `dividends` guarda provento RECEBIDO: dinheiro que entrou, com data de
