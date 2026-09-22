@@ -13,6 +13,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from core.b3_safras import COLUNAS_TABELA
 from views.portfolio_b3_safras import (
@@ -346,8 +347,53 @@ def test_colunas_retorno_esta_contida_em_colunas_tabela():
 # ── Task 6: Bloco 3 — banda (bootstrap) e fragilidade (leave-one-out) ──
 
 
-def _res_ic(ic_values):
-    return {"segmento": "S", "rank_ic_values": list(ic_values)}
+_M_ATIVOS = 40
+
+
+def _pares_do_ano(ano, ic_alvo, *, m=_M_ATIVOS):
+    """Pares `(ano, score, retorno)` cujo Rank-IC do ano bate `ic_alvo`.
+
+    A população do Bloco 3 passou a ser `ic_pairs` (rodada 2, A-1), então o
+    helper dos testes tem que falar a mesma língua da tela: entrega PARES e
+    deixa `pooled_yearly_ics` reduzir, em vez de entregar o IC já reduzido
+    por um caminho que a tela não usa. Busca binária sobre uma mistura
+    monótona de score ordenado com ruído permutado; erro medido < 0,005.
+    """
+    from core.b3_pooled_evidence import pooled_yearly_ics
+
+    rng = np.random.default_rng(1000 + ano)
+    scores = np.arange(m, dtype=float)
+    ruido = rng.permutation(m).astype(float)
+    baixo, alto, a = -1.5, 1.5, 0.0
+    for _ in range(60):
+        a = (baixo + alto) / 2
+        retornos = a * scores + (1 - abs(a)) * ruido
+        ic = pooled_yearly_ics(
+            [(ano, s, r) for s, r in zip(scores, retornos)])[ano]
+        if ic < ic_alvo:
+            baixo = a
+        else:
+            alto = a
+    retornos = a * scores + (1 - abs(a)) * ruido
+    return [(ano, float(sc), float(rt)) for sc, rt in zip(scores, retornos)]
+
+
+def _res_ic(ic_values, *, ano0=2000, segmento="S", com_pares=True):
+    """Resultado de um segmento com os Rank-ICs anuais pedidos.
+
+    Mantém `rank_ic_values` preenchido DE PROPÓSITO: é a lista por
+    segmento que a tela lia antes e não pode voltar a ler (A-1). Um teste
+    que só entregasse `ic_pairs` deixaria o fallback passar despercebido.
+    """
+    pares = []
+    for i, ic in enumerate(ic_values):
+        if ic is None or (isinstance(ic, float) and np.isnan(ic)):
+            continue
+        pares.extend(_pares_do_ano(ano0 + i, float(ic)))
+    res = {"segmento": segmento, "rank_ic_values": list(ic_values)}
+    if com_pares:
+        res["ic_pairs"] = pares
+    return res
 
 
 def test_expectativa_usa_attrs_safras_completas_nao_completa_da_tabela():
@@ -445,7 +491,7 @@ def test_aviso_de_fragilidade_conta_as_safras_que_viram():
 
     assert out["loo"]["safras_que_viram"] >= 1
     aviso = " ".join(out["avisos"])
-    assert f"{out['loo']['safras_que_viram']} das 5 safras" in aviso
+    assert f"{out['loo']['safras_que_viram']} dos 5 anos" in aviso
 
 
 def test_sem_aviso_de_fragilidade_quando_nenhuma_safra_vira():
@@ -461,16 +507,17 @@ def test_sem_aviso_de_fragilidade_quando_nenhuma_safra_vira():
     assert all("veredito muda" not in a for a in out["avisos"])
 
 
-def test_expectativa_junta_rank_ic_de_todos_os_segmentos_e_descarta_nan():
-    """Os Rank-ICs vêm de vários segmentos e alguns anos não são
-    calculáveis (`None`/`NaN`). Ler só o primeiro resultado, ou deixar o
-    `NaN` passar, muda a amostra do veredito sem erro visível."""
+def test_expectativa_junta_os_pares_de_todos_os_segmentos_por_ano():
+    """Os pares vêm de vários segmentos e a redução é por ANO: dois
+    segmentos cobrindo anos diferentes somam anos; ano sem IC calculável
+    (`None`/`NaN` no lado do motor) não vira observação."""
     tabela = _tabela([_linha(2023, completa=True, mensuravel=True)], [2023])
 
     out = _expectativa(
-        [_res_ic([0.1, None, 0.2]), _res_ic([np.nan, 0.3])], tabela)
+        [_res_ic([0.1, None, 0.2]), _res_ic([0.3], ano0=2010)], tabela)
 
-    assert out["ic_values"] == [0.1, 0.2, 0.3]
+    assert out["anos"] == [2000, 2002, 2010]
+    assert out["ic_values"] == pytest.approx([0.1, 0.2, 0.3], abs=5e-3)
     assert out["veredito"].anos_medidos == 3
 
 
@@ -546,7 +593,10 @@ def test_card_de_fragilidade_sai_verde_quando_zero_foi_medido():
     out = _expectativa([_res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])],
                        _tabela_medida())
     assert out["loo"]["safras_que_viram"] == 0
-    assert out["texto_fragilidade"] == "0 safra(s)"
+    assert out["texto_fragilidade"] == "0 de 6 anos", (
+        "o card tem que publicar a POPULACAO junto do zero -- "
+        "'0 safra(s)' nao distingue robustez de amostra pequena"
+    )
     assert out["positivo_fragilidade"] is True
 
 
@@ -567,5 +617,146 @@ def test_render_expectativa_le_o_card_de_fragilidade_da_funcao_pura():
              and isinstance(no.slice.value, str)}
     assert {"texto_fragilidade", "positivo_fragilidade"} <= lidas, (
         "render_expectativa nao le o card de fragilidade de _expectativa -- "
+        f"leu apenas {sorted(lidas)}"
+    )
+
+
+# ── Rodada de correção 2 da Task 6 — a POPULAÇÃO do veredito (A-1, A-2) ──
+
+
+def test_veredito_nao_escala_com_o_numero_de_segmentos():
+    """A-1, o defeito maior da rodada: `ic_values` concatenava
+    `rank_ic_values` de todos os segmentos, então `n` era *segmento × ano*.
+
+    Replicar os MESMOS ICs anuais por k segmentos não acrescenta
+    informação nenhuma — é a mesma ordenação de mercado recontada — mas
+    multiplicava a amostra do teste t por k e inflava a significância por
+    √k. Medido antes da correção: 8 ICs em 20 segmentos moviam a tela de
+    "Inconclusivo / fragilidade 2 sem cor" para "Evidência a favor /
+    fragilidade 0 em VERDE", com a ajuda dizendo "160 ano(s)".
+
+    Este teste falha se a população voltar a escalar com k."""
+    ic = [0.02, -0.05, 0.10, -0.03, 0.06, 0.01, 0.04, -0.02]
+    tabela = _tabela_medida()
+    base = _res_ic(ic)
+
+    referencia = None
+    for k in (1, 3, 10, 20):
+        segmentos = [dict(base, segmento=f"S{j}") for j in range(k)]
+        out = _expectativa(segmentos, tabela)
+        atual = (out["veredito"].estado,
+                 out["veredito"].anos_medidos,
+                 out["texto_fragilidade"],
+                 out["positivo_fragilidade"])
+        if referencia is None:
+            referencia = atual
+        assert atual == referencia, (
+            f"com {k} segmentos a tela publica {atual}, e com 1 publicava "
+            f"{referencia} -- a populacao voltou a ser segmento-ano"
+        )
+        assert out["veredito"].anos_medidos == len(ic)
+
+
+def test_sem_pares_o_bloco_diz_que_nao_mediu_em_vez_de_cair_no_fallback():
+    """A-1, o caso oposto: sem `ic_pairs` não há como reduzir a um IC por
+    ano. Cair no `rank_ic_values` concatenado seria trocar "não medi" por
+    um número inflado — exatamente o defeito que a correção fecha. O bloco
+    tem que dizer que não pôde medir, e a limitação sai da medição."""
+    tabela = _tabela_medida()
+    sem_pares = _res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33],
+                        com_pares=False)
+
+    out = _expectativa([sem_pares, dict(sem_pares, segmento="S2")], tabela)
+
+    assert out["ic_values"] == []
+    assert out["veredito"].anos_medidos == 0
+    assert out["veredito"].estado != "evidencia_a_favor"
+    assert "rank_ic_values" in out["limitacao_evidencia"], (
+        "a limitacao tem que nomear a lista que NAO foi usada e por que"
+    )
+    assert out["texto_fragilidade"] == "—"
+    assert out["positivo_fragilidade"] is None
+
+
+def test_fragilidade_zero_sobre_inconclusivo_nao_sai_verde():
+    """A-2: "0 safra(s)" em VERDE ao lado de "Inconclusivo" afirma robustez
+    da *ignorância* — e isso acontecia em 50,8% dos casos inconclusivos
+    medidos (n=8, mu=0,02). Zero remoções sobre uma não-conclusão é
+    insensibilidade do teste, não robustez, e o texto tem que dizer isso."""
+    ic = [0.02, -0.05, 0.10, -0.03, 0.06, 0.01]
+    out = _expectativa([_res_ic(ic)], _tabela_medida())
+
+    assert out["veredito"].estado == "inconclusivo"
+    assert out["loo"]["safras_que_viram"] == 0
+    assert out["positivo_fragilidade"] is None, (
+        "card verde sobre veredito inconclusivo -- o verde afirma robustez "
+        "da ignorancia"
+    )
+    assert out["texto_fragilidade"] == "0 de 6 anos"
+    ajuda = out["ajuda_fragilidade"].lower()
+    assert "insensibilidade" in ajuda and "inconclusivo" in ajuda, (
+        f"o estado neutro nao carrega a causa: {out['ajuda_fragilidade']!r}"
+    )
+
+
+def test_card_de_fragilidade_publica_a_banda_de_p_valores():
+    """F-2 reaberto: contagem diz QUANTOS anos viram, e só a banda
+    `[min p(sem_i), max p(sem_i)]` diz por QUANTO a conclusão passou de
+    alpha. O veredito da B3 já virou para APROVADO por 0,004; uma contagem
+    de zero não distingue "passou raspando" de "passou com folga"."""
+    out = _expectativa([_res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])],
+                       _tabela_medida())
+
+    baixo, alto = out["loo"]["p_banda"]
+    assert baixo is not None and alto <= baixo + 1
+    ajuda = out["ajuda_fragilidade"]
+    assert f"{baixo:.3f}" in ajuda and f"{alto:.3f}" in ajuda, (
+        f"a banda medida nao chegou ao card: {ajuda!r}"
+    )
+    assert "α = 0.10" in ajuda
+
+
+def test_ajuda_do_card_forte_declara_a_premissa_de_independencia():
+    """Premissa de independência: nenhum texto da tela mencionava que o
+    teste t trata os anos como observações independentes, sendo que anos
+    vizinhos compartilham universo e regime — o p-valor é otimista.
+
+    A ressalva tem que sair da MEDIÇÃO (quantos anos, quais, quantos
+    consecutivos), nunca de um rodapé fixo: este projeto já publicou texto
+    de limitação que envelheceu invertido e continuou soando como rigor."""
+    out = _expectativa([_res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])],
+                       _tabela_medida())
+
+    ajuda = out["ajuda_ordena"]
+    assert "independentes" in ajuda
+    assert "6 anos (2000–2005" in ajuda, f"não citou a medição: {ajuda!r}"
+    assert "6 consecutivos" in ajuda
+
+    # e a frase acompanha a medição: outra amostra, outros números
+    esparso = _expectativa(
+        [_res_ic([0.30, 0.32], ano0=2000),
+         _res_ic([0.28, 0.31], ano0=2010)], _tabela_medida())
+    assert "4 anos (2000–2011" in esparso["ajuda_ordena"]
+    assert "2 consecutivos" in esparso["ajuda_ordena"]
+
+
+def test_render_expectativa_le_a_ajuda_e_a_limitacao_da_funcao_pura():
+    """Cabeamento dos textos novos: `render_expectativa` montava
+    `ajuda_ordena` na mão, e a ressalva de independência (que é derivada da
+    medição) sumiria da tela com a suíte verde. Inspeção por AST, não
+    AppTest (nota de memória `apptest-vaza-atribuicao-de-modulo`)."""
+    caminho = RAIZ / "views" / "portfolio_b3_safras.py"
+    arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+    render = next(
+        no for no in ast.walk(arvore)
+        if isinstance(no, ast.FunctionDef) and no.name == "render_expectativa"
+    )
+    lidas = {no.slice.value for no in ast.walk(render)
+             if isinstance(no, ast.Subscript)
+             and isinstance(no.slice, ast.Constant)
+             and isinstance(no.slice.value, str)}
+    assert {"ajuda_ordena", "ajuda_fragilidade",
+            "limitacao_evidencia"} <= lidas, (
+        "render_expectativa nao le os textos derivados da medicao -- "
         f"leu apenas {sorted(lidas)}"
     )

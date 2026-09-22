@@ -23,6 +23,15 @@ from dataclasses import dataclass
 
 import numpy as np
 
+# Import no TOPO, de proposito (rodada 2, A-3). `scipy` esta pinado em
+# requirements.txt, entao o `try: from scipy.stats import t / except
+# Exception: <aproximacao>` que estava aqui era ramo MORTO em producao --
+# nao servia de resiliencia, servia de armadilha: um `except Exception`
+# largo engole tambem o erro que NAO e "scipy ausente" (instalacao
+# quebrada, conflito de ABI) e troca a distribuicao em silencio por uma
+# que pode inverter o veredito. Erro de import tem que aparecer como erro.
+from scipy.stats import t as _t_student
+
 VERSION = "b3-evidence-1.0.0"
 
 A_FAVOR = "evidencia_a_favor"
@@ -77,12 +86,8 @@ def minimum_detectable_effect(observacoes: list[float] | np.ndarray, *,
     escala = max(float(np.abs(valores).mean()), 1e-12)
     if not np.isfinite(desvio) or desvio <= escala * 1e-9:
         return None
-    try:
-        from scipy.stats import t as _t
-        t_alpha = float(_t.ppf(1 - alpha, df=n - 1))
-        t_power = float(_t.ppf(power, df=n - 1))
-    except Exception:                      # scipy ausente: aproximação normal
-        t_alpha, t_power = 1.2816, 0.8416
+    t_alpha = float(_t_student.ppf(1 - alpha, df=n - 1))
+    t_power = float(_t_student.ppf(power, df=n - 1))
     return float((t_alpha + t_power) * desvio / math.sqrt(n))
 
 

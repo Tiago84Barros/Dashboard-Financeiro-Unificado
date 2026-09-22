@@ -154,6 +154,20 @@ achados: a tela publicava numero em verde sem evidencia medida atras.
 - **Guarda de dispersao relativa (F-4)** e **direcao/`ddof` presos por
   teste contra `scipy.stats.ttest_1samp` (F-5).**
 
+Rodada de correcao 2 -- o defeito maior estava na POPULACAO, um bloco
+acima (ver `views/portfolio_b3_safras.py`), e aqui ficam as duas metades
+que sao do motor:
+
+- **a justificativa do piso era falsa e a medicao a desmentiu.** Ver o
+  comentario de `MIN_SAFRAS_LOO`: o valor 4 continua, o motivo mudou, e
+  agora ele sai de uma tabela medida e nao de uma aritmetica de
+  `min_anos`.
+- **contagem nao mede margem.** O leave-one-out passa a publicar a banda
+  `[min_i p(sem_i), max_i p(sem_i)]`, que e o que diz quao perto de
+  `alpha` a conclusao passou, e `robusto` exige veredito CONCLUSIVO --
+  50,8% dos casos "Inconclusivo" saiam com "0 safra(s)" em VERDE ao lado,
+  afirmando robustez da ignorancia.
+
 Modulo puro: sem streamlit, sem banco. Coberto por tests/test_b3_safras.py.
 """
 from __future__ import annotations
@@ -180,13 +194,31 @@ from core.b3_vigencia import ano_base_do_score, janela_de_vigencia, safra_comple
 # na cotacao e nao mais que isso -- ver docstring do modulo.
 TOLERANCIA_DIAS = 45
 
-# Piso de safras para o leave-one-out publicar veredito. `classify_evidence`
-# exige `min_anos=2` para sequer aplicar o teste; cada passo do LOO remove
-# uma safra, entao com 3 a subamostra cai em 2 -- o limite exato do
-# mensuravel, com 1 grau de liberdade no t. Abaixo de 4, "zero safras que
-# viram" nao e robustez: e nao ter havido o que remover que fizesse o
-# classificador mudar de ideia, e esse zero saia em VERDE na tela.
+# Piso de safras para o leave-one-out publicar veredito.
+#
+# A justificativa da rodada 1 estava ERRADA e a medicao a desmentiu: dizia
+# que a subamostra de 2 era "o limite exato do mensuravel", e ela e
+# perfeitamente mensuravel -- vira veredito em ~64% dos casos. O limite
+# duro e a subamostra de 1, que cai em SEM_AMPLITUDE e torna o resultado
+# constante.
+#
+# O piso 4 sobrevive por outro motivo, esse sim medido (20.000 amostras,
+# Rank-IC ~ N(mu, 0,15), taxa de virada do LOO por mu):
+#
+#   n=2   mu=0 41,4%  mu=0,10 33,6%  mu=0,20 45,0%  -> amplitude 0,113
+#   n=3   mu=0 64,3%  mu=0,10 63,8%  mu=0,20 65,1%  -> amplitude 0,012
+#   n=4   mu=0 61,4%  mu=0,10 57,6%  mu=0,20 39,8%  -> amplitude 0,216
+#   n=8   mu=0 49,2%  mu=0,10 38,2%  mu=0,20  4,9%  -> amplitude 0,443
+#
+# Em n=3 a taxa de virada e a MESMA para sinal nulo e para sinal forte: o
+# numero existe, mas nao carrega informacao nenhuma sobre a verdade. n=4 e
+# o primeiro tamanho em que a medicao discrimina. Abaixo dele a tela nao
+# publica o numero -- e nao publica verde.
 MIN_SAFRAS_LOO = 4
+
+# Nivel do teste, o mesmo default de `classify_evidence`. A banda de
+# p-valores do leave-one-out e lida contra ele.
+ALPHA_EVIDENCIA = 0.10
 
 COLUNAS_TABELA = [
     "Safra", "Exercício-base", "Janela", "Completa", "Mensurável",
@@ -668,7 +700,7 @@ def veredito_do_rank_ic(ic_values: list[float] | None):
 
 
 def fragilidade_leave_one_out(ic_values: list[float] | None) -> dict:
-    """Quantas safras precisam sair para o veredito virar.
+    """Quantas safras precisam sair para o veredito virar, e com que margem.
 
     Reusa `veredito_do_rank_ic` -- o MESMO criterio que a tela publica no
     card "Ordena?", para que o veredito do LOO seja comparavel ao veredito
@@ -680,26 +712,62 @@ def fragilidade_leave_one_out(ic_values: list[float] | None) -> dict:
     "zero safras que viram", e a tela publicaria robustez que nao foi
     medida.
 
-    Abaixo de `MIN_SAFRAS_LOO` a funcao devolve `medido=False` e nao
-    publica veredito: com 1 a 3 safras o zero e assinatura da amostra, nao
-    limpeza -- nao havia o que remover que fizesse o classificador mudar de
-    ideia. A tela le `medido` para nao pintar de verde um zero que ninguem
-    mediu.
+    Abaixo de `MIN_SAFRAS_LOO` devolve `medido=False` e nao publica
+    veredito -- ver o comentario da constante para a medicao que sustenta
+    o valor.
+
+    Alem da contagem, publica a BANDA de p-valores do leave-one-out
+    (`p_banda = (min_i p(sem_i), max_i p(sem_i))`): e ela que diz a margem
+    da conclusao ate `alpha`, e contagem sozinha nao diz. `robusto` exige
+    as tres coisas -- medido, nenhuma virada, e veredito CONCLUSIVO.
+
+    Sobre `banda_de_um_lado`: hoje ela e implicada pelas outras duas
+    condicoes, e isso foi medido (20.000 amostras com n de 4 a 16; dos
+    12.770 casos conclusivos com zero viradas, ZERO tinham a banda
+    atravessando alpha). A implicacao e analitica -- se nenhuma subamostra
+    virou e o estado e `a_favor`, todo `p(sem_i)` ja esta abaixo de alpha
+    por definicao. Fica como condicao explicita porque o criterio de
+    `classify_evidence` pode deixar de ser o p-valor, e porque a banda
+    publicada e informacao real para quem le o card.
     """
     limpos = _ic_limpos(ic_values)
     completo = veredito_do_rank_ic(limpos).estado
+    conclusivo = completo != "inconclusivo"
     if len(limpos) < MIN_SAFRAS_LOO:
         return {
             "estado_completo": completo,
             "estados_loo": [],
             "safras_que_viram": 0,
             "medido": False,
+            "n_safras": len(limpos),
+            "p_loo": [],
+            "p_banda": (None, None),
+            "banda_de_um_lado": None,
+            "conclusivo": conclusivo,
+            "robusto": False,
+            "alpha": ALPHA_EVIDENCIA,
         }
-    estados = [veredito_do_rank_ic(limpos[:i] + limpos[i + 1:]).estado
-               for i in range(len(limpos))]
+    subamostras = [limpos[:i] + limpos[i + 1:] for i in range(len(limpos))]
+    estados = [veredito_do_rank_ic(sub).estado for sub in subamostras]
+    ps = [_p_valor_unilateral(sub) for sub in subamostras]
+    viram = sum(1 for e in estados if e != completo)
+    if any(p is None for p in ps):
+        p_banda: tuple[float | None, float | None] = (None, None)
+        um_lado: bool | None = None
+    else:
+        p_banda = (min(ps), max(ps))
+        um_lado = (p_banda[1] < ALPHA_EVIDENCIA
+                   or p_banda[0] >= ALPHA_EVIDENCIA)
     return {
         "estado_completo": completo,
         "estados_loo": estados,
-        "safras_que_viram": sum(1 for e in estados if e != completo),
+        "safras_que_viram": viram,
         "medido": True,
+        "n_safras": len(limpos),
+        "p_loo": ps,
+        "p_banda": p_banda,
+        "banda_de_um_lado": um_lado,
+        "conclusivo": conclusivo,
+        "robusto": bool(viram == 0 and conclusivo and um_lado is True),
+        "alpha": ALPHA_EVIDENCIA,
     }

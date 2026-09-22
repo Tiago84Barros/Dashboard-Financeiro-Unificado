@@ -252,6 +252,65 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
         )
 
 
+def _ics_por_ano(resultados: list[dict]) -> dict[int, float]:
+    """Um Rank-IC por ANO sobre o universo agrupado (rodada 2, A-1).
+
+    Usa `pooled_yearly_ics`, a MESMA redução que `_render_evidencia_universo`
+    aplica no bloco logo acima desta tela. Ler `rank_ic_values` (a lista
+    anual DE UM SEGMENTO) e concatenar entre segmentos faria `n` valer
+    `segmentos × anos`, e o teste t trataria a mesma ordenação de mercado,
+    recontada uma vez por segmento, como observações independentes.
+
+    Sem `ic_pairs` devolve vazio: o bloco diz que não pôde medir. Cair no
+    `rank_ic_values` concatenado seria trocar "não medi" por um número
+    inflado.
+    """
+    from core.b3_pooled_evidence import pooled_yearly_ics
+
+    pares: list[tuple] = []
+    for res in (resultados or []):
+        pares.extend(res.get("ic_pairs") or [])
+    return pooled_yearly_ics(pares) if pares else {}
+
+
+def _texto_banda_p(loo: dict) -> str:
+    """Margem medida do leave-one-out: a banda de p-valores das
+    subamostras contra `alpha`. Contagem diz quantos viram; só a banda diz
+    por quanto. Vazio quando não há banda calculável."""
+    baixo, alto = loo.get("p_banda", (None, None))
+    if baixo is None or alto is None:
+        return ""
+    return (f"Tirando um ano de cada vez, o p-valor fica entre {baixo:.3f} e "
+            f"{alto:.3f} (α = {loo['alpha']:.2f}).")
+
+
+def _ajuda_ordena(veredito, anos: list[int]) -> str:
+    """Ajuda do card mais forte — e é nela que a premissa de independência
+    aparece, derivada da medição.
+
+    O selo "Evidência a favor" chegava sem nenhuma ressalva. A ressalva
+    não pode ser uma frase de rodapé fixa (este projeto já publicou texto
+    de limitação que envelheceu invertido e continuou soando como rigor):
+    ela cita quantos anos foram medidos, quais, e quantos deles são
+    consecutivos — que é a sobreposição de regime que o teste t ignora.
+    """
+    partes = [f"{veredito.anos_medidos} ano(s) de Rank-IC"]
+    mde = veredito.efeito_minimo_detectavel
+    if mde is not None:
+        partes.append(f"Efeito mínimo detectável: {mde:.3f}")
+    if anos:
+        corrida = maior = 1
+        for anterior, atual in zip(anos, anos[1:]):
+            corrida = corrida + 1 if atual == anterior + 1 else 1
+            maior = max(maior, corrida)
+        partes.append(
+            f"O teste trata os {len(anos)} anos ({anos[0]}–{anos[-1]}, "
+            f"até {maior} consecutivos) como independentes. Anos vizinhos "
+            "compartilham universo e regime de mercado, então o p-valor é "
+            "otimista")
+    return ". ".join(partes)
+
+
 def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
     """Tudo que o Bloco 3 publica, derivado das leituras — sem streamlit.
 
@@ -278,7 +337,22 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
       é robustez;
     - todo texto de limitação sai da medição. `limitacao_banda` cita a
       contagem observada de safras mensuráveis, para não virar uma frase
-      fixa que envelhece invertida e continua soando como rigor.
+      fixa que envelhece invertida e continua soando como rigor;
+    - a população do veredito é **um Rank-IC por ano** (rodada 2, A-1).
+      Antes, `ic_values` concatenava `rank_ic_values` de todos os
+      segmentos, então `n` era *segmento × ano* e o teste t tratava a
+      mesma ordenação de mercado, recontada uma vez por segmento, como
+      observações independentes. Medido: os MESMOS 8 ICs anuais
+      replicados por 20 segmentos (zero informação nova) moviam a tela de
+      "Inconclusivo / fragilidade 2 sem cor" para "Evidência a favor /
+      fragilidade 0 em VERDE", com a ajuda dizendo "160 ano(s)" para 8
+      anos de dado. A redução vem de `pooled_yearly_ics`, a MESMA função
+      que o bloco "Evidência no universo" usa logo acima — dois critérios
+      homônimos sobre o mesmo dado, com populações diferentes, é o defeito
+      que o F-1 fechou um bloco abaixo;
+    - o verde da fragilidade exige veredito CONCLUSIVO (rodada 2, A-2).
+      "0 safra(s)" ao lado de "Inconclusivo" afirma robustez da
+      *ignorância*, e isso acontecia em 50,8% dos casos inconclusivos.
     """
     from core.b3_safras import (
         bootstrap_excesso,
@@ -286,9 +360,9 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
         veredito_do_rank_ic,
     )
 
-    ic_values = [float(v) for res in (resultados or [])
-                 for v in (res.get("rank_ic_values") or [])
-                 if v is not None and pd.notna(v)]
+    ics_por_ano = _ics_por_ano(resultados)
+    anos = sorted(ics_por_ano)
+    ic_values = [ics_por_ano[ano] for ano in anos]
 
     medidas = set(tabela.attrs.get("safras_completas", []))
     completas = (tabela[tabela["Safra"].isin(medidas)]
@@ -318,11 +392,24 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
         )
     if loo["safras_que_viram"] > 0:
         avisos.append(
-            f"O veredito muda se {loo['safras_que_viram']} das "
-            f"{len(loo['estados_loo'])} safras for removida. Uma conclusão "
-            "que depende de uma safra específica não é uma conclusão sobre a "
-            "estratégia — é uma conclusão sobre aquele ano."
+            f"O veredito muda se {loo['safras_que_viram']} dos "
+            f"{loo['n_safras']} anos for removido. Uma conclusão que depende "
+            "de um ano específico não é uma conclusão sobre a estratégia — é "
+            "uma conclusão sobre aquele ano."
         )
+
+    if anos:
+        limitacao_ev = ""
+    elif any((res.get("rank_ic_values") or []) for res in (resultados or [])):
+        limitacao_ev = (
+            "Veredito não publicado: os pares (ano, score, retorno) não "
+            "vieram nos resultados, e só eles permitem reduzir a um Rank-IC "
+            "por ano. A lista `rank_ic_values` está disponível, mas ela é "
+            "por segmento — usá-la multiplicaria a mesma evidência pelo "
+            "número de segmentos e inflaria a significância por √k.")
+    else:
+        limitacao_ev = ("Veredito não publicado: nenhum ano com Rank-IC "
+                        "calculável no universo.")
 
     n_banda = len(excessos)
     if baixo is not None:
@@ -337,21 +424,48 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
                      "reamostrar, e um ponto central sozinho seria um número "
                      "sem incerteza medida.")
 
-    # F-2: "0 safra(s)" em verde tem duas causas OPOSTAS -- evidencia
-    # robusta, ou amostra pequena demais para haver o que remover. O verde
-    # fica reservado ao zero MEDIDO; abaixo do piso o card sai "—" e sem cor.
+    # F-2 + A-2: o zero da fragilidade tem TRÊS causas, e só uma é verde.
+    # (a) amostra abaixo do piso -- não houve o que remover; (b) veredito
+    # inconclusivo -- o zero afirma robustez da ignorância; (c) conclusão
+    # medida que nenhuma remoção derruba. O texto do estado neutro carrega
+    # a causa, derivada da própria medição.
+    n_loo = loo["n_safras"]
+    if not loo["medido"]:
+        texto_frag, positivo_frag = "—", None
+        ajuda_frag = (
+            f"{n_loo} ano(s) com Rank-IC: abaixo de {MIN_SAFRAS_LOO} a taxa "
+            "de virada do leave-one-out é a mesma para sinal nulo e para "
+            "sinal forte (amplitude medida de 0,012 em n=3 contra 0,216 em "
+            "n=4), então o número existiria sem carregar informação")
+    else:
+        texto_frag = f"{loo['safras_que_viram']} de {n_loo} anos"
+        if loo["robusto"]:
+            positivo_frag = True
+            ajuda_frag = (
+                f"Nenhum dos {n_loo} anos derruba o veredito. "
+                f"{_texto_banda_p(loo)}")
+        elif loo["safras_que_viram"] > 0:
+            positivo_frag = False
+            ajuda_frag = (
+                f"Quantos anos precisam sair para o veredito virar. "
+                f"{_texto_banda_p(loo)}")
+        else:
+            positivo_frag = None
+            ajuda_frag = (
+                "Nesta amostra, remover um ano não é capaz de mudar o "
+                "veredito — e o veredito é inconclusivo. Zero aqui é "
+                "insensibilidade do teste sobre uma não-conclusão, não "
+                f"robustez. {_texto_banda_p(loo)}")
+
     return {
         "ic_values": ic_values,
+        "anos": anos,
         "veredito": veredito,
-        "texto_fragilidade": (f"{loo['safras_que_viram']} safra(s)"
-                              if loo["medido"] else "—"),
-        "positivo_fragilidade": ((loo["safras_que_viram"] == 0)
-                                 if loo["medido"] else None),
-        "ajuda_fragilidade": (
-            "Quantas precisam sair para o veredito virar" if loo["medido"]
-            else (f"{len(ic_values)} safra(s) com Rank-IC: abaixo de "
-                  f"{MIN_SAFRAS_LOO} não há o que remover que mude "
-                  "o veredito, e zero ali não seria robustez medida")),
+        "ajuda_ordena": _ajuda_ordena(veredito, anos),
+        "limitacao_evidencia": limitacao_ev,
+        "texto_fragilidade": texto_frag,
+        "positivo_fragilidade": positivo_frag,
+        "ajuda_fragilidade": ajuda_frag,
         "banda": (baixo, alto),
         "n_safras_banda": n_banda,
         "texto_banda": (f"{baixo:+.1%} a {alto:+.1%}"
@@ -379,14 +493,10 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
     exp = _expectativa(resultados, tabela)
     veredito = exp["veredito"]
 
-    mde = veredito.efeito_minimo_detectavel
-    ajuda_ordena = f"{veredito.anos_medidos} ano(s) de Rank-IC"
-    if mde is not None:
-        ajuda_ordena += f". Efeito mínimo detectável: {mde:.3f}"
-
     cols = st.columns(3)
     with cols[0]:
-        card_metrica("Ordena?", evidence_label(veredito), ajuda=ajuda_ordena)
+        card_metrica("Ordena?", evidence_label(veredito),
+                     ajuda=exp["ajuda_ordena"])
     with cols[1]:
         baixo = exp["banda"][0]
         card_metrica("Supera? (excesso s/ Selic)", exp["texto_banda"],
@@ -400,5 +510,7 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
 
     for aviso in exp["avisos"]:
         st.warning(aviso)
+    if exp["limitacao_evidencia"]:
+        st.caption(exp["limitacao_evidencia"])
     if exp["limitacao_banda"]:
         st.caption(exp["limitacao_banda"])

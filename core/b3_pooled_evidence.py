@@ -31,6 +31,15 @@ from dataclasses import dataclass
 
 import numpy as np
 
+# Import no TOPO, de proposito (rodada 2, A-3). `scipy` esta pinado em
+# requirements.txt, entao o `try: from scipy.stats import t / except
+# Exception: <aproximacao>` que estava aqui era ramo MORTO em producao --
+# nao servia de resiliencia, servia de armadilha: um `except Exception`
+# largo engole tambem o erro que NAO e "scipy ausente" (instalacao
+# quebrada, conflito de ABI) e troca a distribuicao em silencio por uma
+# que pode inverter o veredito. Erro de import tem que aparecer como erro.
+from scipy.stats import t as _t_student
+
 from core.b3_evidence import (
     A_FAVOR,
     CONTRA,
@@ -196,12 +205,7 @@ def universe_evidence(yearly_ics: dict[int, float] | list[float], *,
         desvio = float(np.std(limpos, ddof=1))
         if desvio > 0:
             t_stat = float(media / (desvio / math.sqrt(anos)))
-            try:
-                from scipy.stats import t as _t
-                p_value = float(_t.sf(t_stat, df=anos - 1))
-            except Exception:
-                from math import erf
-                p_value = float(0.5 * (1 - erf(t_stat / math.sqrt(2))))
+            p_value = float(_t_student.sf(t_stat, df=anos - 1))
 
     if media <= ic_contra:
         estado = CONTRA

@@ -740,33 +740,122 @@ def test_p_valor_sem_dispersao_real_segue_a_convencao_relativa_do_modulo():
     assert veredito_do_rank_ic(quase_identicos).estado != "evidencia_a_favor"
 
 
-def test_scipy_e_importado_no_topo_e_nao_dentro_de_except_largo():
+def test_scipy_e_importado_no_topo_nos_modulos_do_veredito():
     """F-3: `scipy` esta pinado em requirements.txt, entao o ramo de
     fallback era morto em producao -- nao servia de resiliencia, servia de
     armadilha: no dia em que o import falhasse por OUTRO motivo, um
     `except Exception` largo trocaria a estatistica em SILENCIO por uma que
     inverte o veredito. Erro tem que aparecer como erro.
 
+    Rodada 2 (A-3): a varredura cobre TODOS os modulos que esta tela le
+    para formar veredito, nao so este. O mesmo `try/except Exception` tinha
+    sobrevivido em `core/b3_evidence.py` (aproximacao normal 1,2816/0,8416
+    no efeito minimo detectavel) e em `core/b3_pooled_evidence.py` (erf no
+    p-valor do universo) -- corrigir a guarda num arquivo e deixar os
+    vizinhos e o defeito "guarda duplicada nao fica igual".
+
     Inspecao por AST: o import tem que estar no corpo do modulo, e nenhuma
     funcao pode importar scipy dentro de um `try`."""
     import ast
     from pathlib import Path
 
-    fonte = (Path(__file__).parents[1] / "core" / "b3_safras.py").read_text(
-        encoding="utf-8")
-    arvore = ast.parse(fonte)
+    for modulo in ("b3_safras.py", "b3_evidence.py", "b3_pooled_evidence.py"):
+        caminho = Path(__file__).parents[1] / "core" / modulo
+        arvore = ast.parse(caminho.read_text(encoding="utf-8"))
 
-    topo = [no for no in arvore.body
-            if isinstance(no, ast.ImportFrom) and (no.module or "").startswith("scipy")]
-    assert topo, "scipy nao e importado no topo de core/b3_safras.py"
+        topo = [no for no in arvore.body
+                if isinstance(no, ast.ImportFrom)
+                and (no.module or "").startswith("scipy")]
+        assert topo, f"scipy nao e importado no topo de core/{modulo}"
 
-    for no in ast.walk(arvore):
-        if not isinstance(no, ast.Try):
-            continue
-        for interno in ast.walk(no):
-            if isinstance(interno, ast.ImportFrom) and (
-                    interno.module or "").startswith("scipy"):
-                raise AssertionError(
-                    "core/b3_safras.py ainda importa scipy dentro de um try -- "
-                    "o fallback troca a distribuicao em silencio"
-                )
+        for no in ast.walk(arvore):
+            if not isinstance(no, ast.Try):
+                continue
+            for interno in ast.walk(no):
+                if isinstance(interno, ast.ImportFrom) and (
+                        interno.module or "").startswith("scipy"):
+                    raise AssertionError(
+                        f"core/{modulo} ainda importa scipy dentro de um try "
+                        "-- o fallback troca a distribuicao em silencio"
+                    )
+
+
+# ── Rodada de correção 2 da Task 6 — margem medida e zero conclusivo ──
+
+
+def test_leave_one_out_publica_a_banda_de_p_valores_das_subamostras():
+    """F-2 reaberto: contagem nao mede MARGEM. `p_banda` e o par
+    `(min_i p(sem_i), max_i p(sem_i))` -- a distancia ate `alpha` que a
+    conclusao manteve no pior e no melhor recorte. Reaproveitar o p-valor
+    do conjunto inteiro daria uma banda degenerada de largura zero."""
+    ic = [0.30, 0.32, 0.28, 0.31, 0.29, 0.33]
+    out = fragilidade_leave_one_out(ic)
+
+    esperados = [_p_valor_unilateral(ic[:i] + ic[i + 1:])
+                 for i in range(len(ic))]
+    assert out["p_loo"] == pytest.approx(esperados)
+    assert out["p_banda"] == pytest.approx((min(esperados), max(esperados)))
+    assert out["p_banda"][0] < out["p_banda"][1], (
+        "banda de largura zero -- o p-valor nao foi recalculado por "
+        "subamostra"
+    )
+    assert out["alpha"] == b3_safras.ALPHA_EVIDENCIA
+
+
+def test_leave_one_out_nao_declara_robusto_sobre_veredito_inconclusivo():
+    """A-2 no motor: `robusto` e o que a tela pinta de verde, e zero
+    remocoes sobre um veredito INCONCLUSIVO e insensibilidade do teste,
+    nao robustez -- 50,8% dos casos inconclusivos (n=8, mu=0,02) saiam com
+    "0 safra(s)" em verde ao lado de "Inconclusivo"."""
+    ic = [0.02, -0.05, 0.10, -0.03, 0.06, 0.01]
+    out = fragilidade_leave_one_out(ic)
+
+    assert out["estado_completo"] == "inconclusivo"
+    assert out["conclusivo"] is False
+    assert out["safras_que_viram"] == 0
+    assert out["robusto"] is False, (
+        "declarou robustez sobre uma nao-conclusao"
+    )
+
+    # caso oposto: amostra conclusiva e sem viradas volta a ser robusta
+    forte = fragilidade_leave_one_out([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])
+    assert forte["conclusivo"] is True
+    assert forte["robusto"] is True
+
+
+def test_leave_one_out_publica_a_populacao_junto_da_contagem():
+    """"0" sem denominador nao distingue robustez de amostra pequena:
+    `n_safras` e o tamanho da populacao DEPOIS da limpeza, e sai tambem
+    abaixo do piso, onde e justamente ele que explica o "—"."""
+    assert fragilidade_leave_one_out([0.3, 0.32, 0.28, 0.31])["n_safras"] == 4
+    curto = fragilidade_leave_one_out([0.3, 0.32])
+    assert curto["medido"] is False and curto["n_safras"] == 2
+    assert fragilidade_leave_one_out(
+        [0.3, None, 0.32, np.nan, 0.28, 0.31])["n_safras"] == 4
+
+
+def test_ic_limpo_e_o_criterio_de_finitude_nao_o_de_nulidade():
+    """A-4: `pd.notna(inf)` e True e `np.isfinite(inf)` e False. Contar a
+    populacao com um criterio e aplicar o teste com o outro publica um
+    denominador que o motor nunca usou -- e `inf` na amostra do t nao da
+    erro, da p-valor `nan` e veredito silenciosamente inconclusivo."""
+    import pandas as pd
+
+    com_inf = [0.30, float("inf"), 0.32, 0.28]
+    assert [pd.notna(v) for v in com_inf] == [True, True, True, True]
+    assert b3_safras._ic_limpos(com_inf) == [0.30, 0.32, 0.28]
+    assert fragilidade_leave_one_out(com_inf)["n_safras"] == 3
+
+
+def test_bootstrap_tambem_filtra_por_finitude_nao_por_nulidade():
+    """Achado colateral da rodada 2: a mesma divergencia `pd.notna` x
+    `np.isfinite` do A-4 existe na reamostragem, e ali `inf` nao fica
+    escondido -- ele contamina a MEDIA de cada reamostra e a banda inteira
+    sai `inf`, um numero publicado no card sem nenhuma excecao pelo
+    caminho. Nenhum teste separava os dois criterios aqui."""
+    baixo, alto = bootstrap_excesso([10.0, float("inf"), 12.0, 11.0, 9.0])
+    assert baixo is not None
+    assert np.isfinite(baixo) and np.isfinite(alto), (
+        "a banda saiu infinita -- o filtro da reamostragem aceitou inf"
+    )
+    assert 8.0 < baixo <= alto < 13.0
