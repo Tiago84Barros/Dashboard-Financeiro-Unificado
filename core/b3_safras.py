@@ -525,14 +525,24 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
 
 
 def _pct(valor: float | None) -> float:
-    """Fracao -> percentual com 1 casa; `None` (safra nao mensuravel) -> NaN.
+    """Fracao -> percentual, SEM arredondar; `None` (safra nao mensuravel)
+    -> NaN.
 
-    `round(None * 100, 1)` estouraria TypeError; e o pior seria "consertar"
-    com `0.0`, que publica um numero onde nao houve medicao nenhuma.
+    `None * 100` estouraria TypeError; e o pior seria "consertar" com
+    `0.0`, que publica um numero onde nao houve medicao nenhuma.
+
+    Nao arredonda de proposito (A-T7-02). Esta coluna nao e so exibida:
+    ela e a ENTRADA de quem mede -- o Bloco 2 subtrai os dois lados para
+    dimensionar o vies de universo, e o Bloco 3 reamostra o excesso. Com
+    `round(..., 1)` aqui, retornos de 13,04 / 13,02 / 12,97 chegavam ao
+    teste como `[3.0, 3.0, 3.0]`: dispersao real apagada, `p` nao
+    calculavel e a tela afirmando "nao tem dispersao entre si" sobre um
+    dado que tem. Arredondamento e do FORMATADOR
+    (`st.column_config.NumberColumn(format="%.1f")`), nunca do valor.
     """
     if valor is None:
         return float("nan")
-    return round(float(valor) * 100, 1)
+    return float(valor) * 100
 
 
 def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,

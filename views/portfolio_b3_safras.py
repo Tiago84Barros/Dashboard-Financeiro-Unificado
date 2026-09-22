@@ -14,6 +14,9 @@ dentro da suíte completa no CI, nunca isolado (nota de memória
 """
 from __future__ import annotations
 
+import hashlib
+import json
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -26,6 +29,14 @@ from views.empresas_b3 import _COR_ALT, _COR_NEU, _COR_POS, _plot_layout
 
 _COLUNAS_RETORNO = ["Estratégia (%)", "Equal-weight (%)", "Selic (%)",
                     "Excesso s/ Selic (pp)"]
+
+# Colunas cuja EXIBIÇÃO é arredondada em 1 casa. Desde a rodada de correção
+# 2, `core.b3_safras._pct` não arredonda mais (A-T7-02: o valor é lido por
+# quem mede, e quantizá-lo apagava dispersão real). Quem arredonda é este
+# formatador — e ele precisa cobrir também "Peso sem preço (%)", que não é
+# coluna de retorno mas passou a chegar com a fração cheia
+# (33.333333333333336 na tela).
+_COLUNAS_1CASA = _COLUNAS_RETORNO + ["Peso sem preço (%)"]
 
 _CORES_SERIE = {
     "Estratégia (%)": _COR_POS,
@@ -151,7 +162,7 @@ def _column_config_retorno() -> dict:
     `st.column_config.NumberColumn`)."""
     return {
         col: st.column_config.NumberColumn(format="%.1f")
-        for col in _COLUNAS_RETORNO
+        for col in _COLUNAS_1CASA
     }
 
 
@@ -696,6 +707,37 @@ _COLUNAS_VIES = ["Estratégia (%) com gate", "Estratégia (%) sem gate",
                  "Viés (pp)"]
 
 
+def _fmt_pp(valor: float | None) -> str:
+    """Valor em pp com casas SUFICIENTES para não publicar zero onde a
+    medição não é zero (A-N4).
+
+    Com `{:+.1f}` fixo, um viés de +0,036 pp significante (p = 0,002) saía
+    na manchete como **"+0,0 pp" em vermelho**: significância sem tamanho,
+    que é exatamente o que este bloco existe para evitar. A escolha aqui é
+    a primeira das duas que a revisão admitiu — publicar a grandeza real —
+    porque a outra (dizer só "abaixo da resolução") esconde o tamanho, e o
+    tamanho é o produto deste bloco. A ressalva sobre a resolução da
+    tabela vem junto, em `_vies_universo`, não no lugar do número.
+
+    Zero medido continua "+0.0": é o número certo, não um arredondamento.
+    """
+    if valor is None or not np.isfinite(float(valor)):
+        return "—"
+    valor = float(valor)
+    if valor == 0.0:
+        return "+0.0"
+    for casas in range(1, 7):
+        texto = f"{valor:+.{casas}f}"
+        if float(texto) != 0.0:
+            return texto
+    return f"{valor:+.1e}"
+
+
+# Resolução da tabela publicada: `_COLUNAS_1CASA` sai com 1 casa, logo
+# qualquer viés com módulo abaixo de 0,05 pp aparece como 0,0 lá.
+_RESOLUCAO_PP = 0.05
+
+
 def _lista_safras(safras) -> str:
     return ", ".join(str(int(s)) for s in sorted(safras))
 
@@ -713,7 +755,7 @@ def _causa_sem_teste(vies: list[float]) -> str:
         return (f"Com {n} safra(s) comparável(is) não há dispersão entre "
                 "safras para testar se essa diferença se distingue de zero.")
     return (f"As {n} diferenças não têm dispersão entre si (todas em torno "
-            f"de {vies[0]:+.1f} pp), e sem dispersão o teste t não existe — "
+            f"de {_fmt_pp(vies[0])} pp), e sem dispersão o teste t não existe — "
             "não há erro-padrão a estimar.")
 
 
@@ -809,8 +851,9 @@ def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
             f"Nas {n} safra(s) mensurável(is) dos dois lados "
             f"({_lista_safras(medidas_na_tabela)}), reconstruir a carteira "
             f"com os segmentos aprovados hoje move o retorno em "
-            f"{medio:+.1f} pp por safra, em média (de {min(vies):+.1f} a "
-            f"{max(vies):+.1f} pp entre as safras). Essa diferença **não era "
+            f"{_fmt_pp(medio)} pp por safra, em média (de "
+            f"{_fmt_pp(min(vies))} a {_fmt_pp(max(vies))} pp entre as "
+            "safras). Essa diferença **não era "
             "conhecida na época** de cada safra: ela vem de saber, hoje, "
             "quais segmentos passaram no teste OOS. É o tamanho do viés, não "
             "um resultado da estratégia.")
@@ -822,6 +865,17 @@ def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
                 f"p = {_fmt_p(p_bilateral)} (α = {_ALPHA_VIES:.2f}, "
                 f"{meia_cauda:.2f} por cauda): nesta amostra a diferença **se "
                 "distingue de zero**. O viés tem tamanho medido.")
+            # Significancia sem tamanho nao e acionavel (A-N4): sem esta
+            # frase, um vies de +0,04 pp por safra sai com card vermelho e
+            # a tabela ao lado mostrando uma coluna de zeros, sem nada
+            # explicando a contradicao aparente.
+            if abs(medio) < _RESOLUCAO_PP:
+                notas.append(
+                    f"O tamanho medido, porém, é de {_fmt_pp(medio)} pp por "
+                    f"safra — abaixo da resolução de 1 casa decimal da tabela "
+                    "abaixo, onde ele aparece como 0,0. O viés se distingue "
+                    "de zero e é **desprezível em tamanho**: significância "
+                    "não é magnitude.")
         else:
             notas.append(
                 f"O teste t bilateral sobre as {n} diferenças dá "
@@ -897,7 +951,7 @@ def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
         "faixa": (min(vies), max(vies)) if n else (None, None),
         "p_bilateral": p_bilateral,
         "significante": significante,
-        "texto_medio": f"{medio:+.1f} pp" if medio is not None else "—",
+        "texto_medio": f"{_fmt_pp(medio)} pp" if medio is not None else "—",
         # Nunca `True`: ver a docstring. Vermelho = vies demonstrado;
         # neutro = a amostra nao permite concluir.
         "positivo": False if significante else None,
@@ -910,10 +964,37 @@ def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
     }
 
 
+def _serializa(obj) -> str:
+    """Texto estável que representa o CONTEÚDO de uma entrada da medição.
+
+    `DataFrame` entra pelos valores (hash por linha), não pelo `shape`:
+    dois quadros de mesma forma e números diferentes produzem retornos
+    diferentes, e eram indistinguíveis para a assinatura anterior (A-N3).
+    O resto vai por `json` com chaves ordenadas — `default=str` cobre
+    `Timestamp`, `numpy` e afins sem quebrar, e o `repr` só entra como
+    último recurso (objeto que nem `str` serializa igual entre reruns é
+    conservador: muda a assinatura e manda remedir, nunca o contrário).
+    """
+    if isinstance(obj, pd.DataFrame):
+        if obj.empty:
+            return f"df:vazio:{list(obj.columns)}"
+        digitos = int(pd.util.hash_pandas_object(
+            obj.astype(str), index=True).sum()) & 0xFFFFFFFFFFFFFFFF
+        return f"df:{list(obj.columns)}:{obj.shape}:{digitos}"
+    if isinstance(obj, pd.Series):
+        return _serializa(obj.to_frame())
+    try:
+        return json.dumps(obj, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return repr(obj)
+
+
 def _assinatura_vies(com_gate: pd.DataFrame | None,
                      resultados_aprovados: list[dict] | None,
                      resultados_todos: list[dict] | None,
-                     df_precos: pd.DataFrame | None) -> str:
+                     df_precos: pd.DataFrame | None,
+                     selic_por_ano: dict | None,
+                     taxa_selic_aa: float | None) -> str:
     """Impressao digital das ENTRADAS da medição do viés.
 
     A medição fica em `session_state` e sobrevive a um novo "Rodar": sem
@@ -926,23 +1007,36 @@ def _assinatura_vies(com_gate: pd.DataFrame | None,
     duas estruturas que divergem (este projeto já se queimou com
     verificador e escritor lendo listas diferentes). Aqui quem decide se a
     medição ainda vale é a própria entrada que a produziu.
+
+    E o conjunto de entradas é o que `render_vies_universo` REALMENTE
+    passa para `tabela_de_safras` / `_vies_universo`, não uma lista de
+    propriedades escolhida à mão (A-N3): a primeira versão resumia as duas
+    listas de resultados pelo TAMANHO, e duas listas de mesmo tamanho e
+    composição diferente — medições de −7,5 pp e −87,5 pp — recebiam a
+    mesma assinatura. Os preços entravam só por `shape`, e a Selic não
+    entrava.
     """
-    partes: list[str] = [
-        f"aprovados={len(resultados_aprovados or [])}",
-        f"todos={len(resultados_todos or [])}",
-        f"precos={'x'.join(str(d) for d in df_precos.shape)}"
-        if df_precos is not None else "precos=-",
+    partes = [
+        _serializa(resultados_aprovados or []),
+        _serializa(resultados_todos or []),
+        _serializa(df_precos) if df_precos is not None else "precos=-",
+        _serializa(selic_por_ano or {}),
+        _serializa(taxa_selic_aa),
     ]
-    if com_gate is not None and not com_gate.empty:
-        digitos = pd.util.hash_pandas_object(
-            com_gate.astype(str), index=True).sum()
-        partes.append(f"tabela={int(digitos) & 0xFFFFFFFFFFFF}")
-        partes.append(
-            "medidas=" + _lista_safras(com_gate.attrs.get("safras_completas",
-                                                          [])))
+    if com_gate is not None:
+        partes.append(_serializa(com_gate))
+        # `attrs` nao entra no hash das celulas, e e ele que define a
+        # populacao das medias -- a mesma tabela com outra lista de safras
+        # mensuraveis e outra medicao.
+        partes.append("medidas=" + _lista_safras(
+            com_gate.attrs.get("safras_completas", [])))
     else:
         partes.append("tabela=-")
-    return "|".join(partes)
+    impressao = hashlib.blake2b(digest_size=16)
+    for parte in partes:
+        impressao.update(parte.encode("utf-8", "replace"))
+        impressao.update(b"\x00")
+    return impressao.hexdigest()
 
 
 def _column_config_vies() -> dict:
@@ -1014,7 +1108,8 @@ def render_vies_universo(resultados_aprovados: list[dict],
     )
 
     assinatura = _assinatura_vies(tabela_com_gate, resultados_aprovados,
-                                  resultados_todos, df_precos)
+                                  resultados_todos, df_precos,
+                                  selic_por_ano, taxa_selic_aa)
 
     if not st.button("Medir o viés de universo", key="pb3_btn_vies"):
         medido = st.session_state.get("pb3_vies_universo")

@@ -17,8 +17,9 @@ import pandas as pd
 import pytest
 import streamlit as _st_real
 
-from core.b3_safras import COLUNAS_TABELA
+from core.b3_safras import COLUNAS_TABELA, tabela_de_safras
 from views.portfolio_b3_safras import (
+    _COLUNAS_1CASA,
     _COLUNAS_RETORNO,
     _COLUNAS_VIES,
     _CORES_SERIE,
@@ -27,6 +28,7 @@ from views.portfolio_b3_safras import (
     _column_config_vies,
     _expectativa,
     _fmt_p,
+    _fmt_pp,
     _grafico_barras,
     _legenda_resumo,
     _resumo_safras,
@@ -266,7 +268,10 @@ def test_column_config_retorno_formata_como_numero_sem_mudar_dtype():
     continua numérica, que resolve a formatação (1 casa) sem reintroduzir
     o bug de ordenação do N-1."""
     config = _column_config_retorno()
-    assert set(config) == set(_COLUNAS_RETORNO)
+    # Desde a rodada de correção 2 o motor não arredonda mais (A-T7-02) e
+    # o formatador passou a cobrir também "Peso sem preço (%)".
+    assert set(config) == set(_COLUNAS_1CASA)
+    assert set(_COLUNAS_RETORNO) <= set(config)
     for coluna, cfg in config.items():
         assert cfg["type_config"]["type"] == "number", coluna
         assert cfg["type_config"]["format"] == "%.1f", coluna
@@ -1743,7 +1748,8 @@ def test_medicao_da_mesma_analise_volta_com_as_ressalvas(monkeypatch):
 
     aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
     precos = _precos_b3(["AAAA3", "BBBB3"])
-    assinatura = mod._assinatura_vies(None, aprovados, aprovados, precos)
+    assinatura = mod._assinatura_vies(None, aprovados, aprovados, precos,
+                                      {}, 0.0)
     falso.session_state["pb3_vies_universo"] = {
         "quando": "01/01/2020 00:00",
         "assinatura": assinatura,
@@ -1765,15 +1771,19 @@ def test_assinatura_do_vies_muda_quando_a_populacao_muda():
     t1, _ = _tabela_vies([13.0, 14.0], [10.0, 10.0])
     t2, _ = _tabela_vies([13.0, 99.0], [10.0, 10.0])
     precos = _precos_b3(["AAAA3"])
-    base = mod._assinatura_vies(t1, [1], [1, 2], precos)
 
-    assert base == mod._assinatura_vies(t1, [1], [1, 2], precos)
-    assert base != mod._assinatura_vies(t2, [1], [1, 2], precos)
-    assert base != mod._assinatura_vies(t1, [1], [1, 2, 3], precos)
-    assert base != mod._assinatura_vies(t1, [1, 2], [1, 2], precos)
+    def assina(tabela, aprovados, todos):
+        return mod._assinatura_vies(tabela, aprovados, todos, precos, {}, 0.0)
+
+    base = assina(t1, [1], [1, 2])
+
+    assert base == assina(t1, [1], [1, 2])
+    assert base != assina(t2, [1], [1, 2])
+    assert base != assina(t1, [1], [1, 2, 3])
+    assert base != assina(t1, [1, 2], [1, 2])
     t3 = t1.copy()
     t3.attrs["safras_completas"] = []
-    assert base != mod._assinatura_vies(t3, [1], [1, 2], precos)
+    assert base != assina(t3, [1], [1, 2])
 
 
 def test_medicao_recem_feita_volta_no_rerun_seguinte(monkeypatch):
@@ -1805,3 +1815,370 @@ def test_medicao_recem_feita_volta_no_rerun_seguinte(monkeypatch):
     )
     assert not any("não vale para a população atual" in c
                    for c in falso.legendas())
+
+
+# ── Rodada de correção 2 ─────────────────────────────────────────────────────
+
+
+def _cenario_de_motor(retornos_com_gate, sem_gate_alvo=10.0):
+    """Entradas REAIS do motor: um segmento aprovado e um reprovado, com
+    preços de verdade, para `tabela_de_safras` reconstruir as safras.
+
+    Existe porque montar a tabela à mão pula justamente o trecho onde o
+    A-T7-02 morava: `core.b3_safras._pct`. Um teste que fabrica a coluna
+    `Estratégia (%)` nunca vê o arredondamento do motor.
+
+    Em cada safra o lado com gate rende `r` (um líder, peso 1,0) e o lado
+    sem gate rende a média de `r` com o líder reprovado — este calibrado
+    para que o lado sem gate dê exatamente `sem_gate_alvo`.
+    """
+    safras = sorted(retornos_com_gate)
+    datas: list[pd.Timestamp] = []
+    for ano in safras:
+        datas += [pd.Timestamp(f"{ano}-04-30"), pd.Timestamp(f"{ano + 1}-03-31")]
+    idx = pd.DatetimeIndex(sorted(set(datas)))
+
+    colunas: dict[str, pd.Series] = {}
+    lids_a: dict[int, list[str]] = {}
+    lids_b: dict[int, list[str]] = {}
+    pesos_a: dict[int, dict[str, float]] = {}
+    pesos_b: dict[int, dict[str, float]] = {}
+    for ano in safras:
+        tk_a, tk_b = f"A{ano % 100}A3", f"B{ano % 100}B3"
+        r_a = float(retornos_com_gate[ano])
+        r_b = 2.0 * sem_gate_alvo - r_a          # (r_a + r_b) / 2 == alvo
+        lids_a[ano] = [tk_a]
+        lids_b[ano] = [tk_b]
+        pesos_a[ano] = {tk_a: 1.0}
+        pesos_b[ano] = {tk_b: 1.0}
+        for tk, retorno in ((tk_a, r_a), (tk_b, r_b)):
+            serie = pd.Series(index=idx, dtype=float)
+            serie[pd.Timestamp(f"{ano}-04-30")] = 100.0
+            serie[pd.Timestamp(f"{ano + 1}-03-31")] = 100.0 * (1 + retorno / 100)
+            colunas[tk] = serie
+
+    aprovados = [{"setor": "S", "subsetor": "SS", "segmento": "A",
+                  "tickers": [f"A{a % 100}A3" for a in safras],
+                  "lids_por_ano": lids_a, "pesos_por_ano": pesos_a}]
+    todos = aprovados + [{"setor": "S", "subsetor": "SS", "segmento": "B",
+                          "tickers": [f"B{a % 100}B3" for a in safras],
+                          "lids_por_ano": lids_b, "pesos_por_ano": pesos_b}]
+    return aprovados, todos, pd.DataFrame(colunas, index=idx)
+
+
+def _tabelas_do_motor(retornos_com_gate, sem_gate_alvo=10.0):
+    aprovados, todos, precos = _cenario_de_motor(retornos_com_gate,
+                                                 sem_gate_alvo)
+    hoje = pd.Timestamp("2026-09-21")
+    com = tabela_de_safras(aprovados, precos, selic_por_ano={},
+                           taxa_selic_aa=0.0, hoje=hoje)
+    sem = tabela_de_safras(todos, precos, selic_por_ano={},
+                           taxa_selic_aa=0.0, hoje=hoje)
+    return com, sem
+
+
+def test_motor_entrega_o_retorno_cheio_e_nao_quantizado():
+    """A-T7-02 na FONTE: `core.b3_safras._pct` arredondava em 1 casa, e a
+    coluna `Estratégia (%)` não é só exibida — ela é a ENTRADA de quem
+    mede (Bloco 2 subtrai os dois lados; Bloco 3 reamostra o excesso).
+
+    Com `round(v * 100, 1)` de volta no motor, 13,04 / 13,02 / 12,97 saem
+    todos como 13,0 e este teste falha na primeira asserção.
+    """
+    com, _ = _tabelas_do_motor({2022: 13.04, 2023: 13.02, 2024: 12.97})
+    assert list(com["Estratégia (%)"]) == pytest.approx([13.04, 13.02, 12.97],
+                                                        abs=1e-9), (
+        "o motor quantizou o retorno antes de entregá-lo a quem mede"
+    )
+
+
+def test_vies_atravessa_o_motor_real_e_enxerga_a_dispersao():
+    """A-T7-02 de ponta a ponta: motor -> tabela -> `_vies_universo`.
+
+    O teste da rodada 1 montava as duas tabelas à mão e por isso passava
+    com o arredondamento ainda de pé um andar acima. Aqui os números vêm
+    de `tabela_de_safras` sobre preços de verdade: com `_pct` arredondando,
+    a amostra vira `[3.0, 3.0, 3.0]`, `p_bilateral` volta `None`, o card
+    fica neutro e a tela imprime "não têm dispersão entre si" — falso
+    sobre o dado.
+    """
+    com, sem = _tabelas_do_motor({2022: 13.04, 2023: 13.02, 2024: 12.97})
+    m = _vies_universo(com, sem)
+
+    assert m["n_safras"] == 3
+    assert m["vies"] == pytest.approx([3.04, 3.02, 2.97], abs=1e-6)
+    assert m["p_bilateral"] is not None, (
+        "a dispersão real entre as safras foi apagada antes do teste — o "
+        "arredondamento voltou ao caminho da medição"
+    )
+    assert m["p_bilateral"] < 0.001
+    assert m["significante"] is True
+    texto = " ".join(m["notas"])
+    assert "dispersão entre si" not in texto
+
+
+def test_manchete_do_vies_nunca_publica_zero_em_vermelho():
+    """A-N4: corrigir o A-T7-02 na fonte torna alcançável um viés
+    significante e minúsculo. Com `{:+.1f}` fixo, `[0.04, 0.02, 0.03,
+    0.05, 0.04]` publicava **"+0,0 pp" em vermelho** (p = 0,002):
+    significância sem tamanho, que é o oposto do que este bloco existe
+    para dizer.
+    """
+    valores = [0.04, 0.02, 0.03, 0.05, 0.04]
+    com, sem = _tabela_vies([10.0 + v for v in valores], [10.0] * len(valores))
+    m = _vies_universo(com, sem)
+
+    assert m["significante"] is True and m["positivo"] is False
+    assert m["p_bilateral"] < 0.01
+    assert m["texto_medio"] == "+0.04 pp", (
+        f"a manchete do card vermelho saiu como {m['texto_medio']!r}"
+    )
+    assert float(m["texto_medio"].split()[0]) != 0.0, (
+        "card vermelho com manchete de tamanho zero"
+    )
+    assert "+0.0 pp" not in " ".join(m["notas"])
+
+
+def test_vies_significante_abaixo_da_resolucao_publicada_avisa():
+    """O outro lado do A-N4: a manchete publica +0,04 pp e a tabela ao
+    lado mostra uma coluna de zeros (1 casa). Sem uma frase derivada da
+    medição, a contradição aparente fica sem explicação na tela."""
+    valores = [0.04, 0.02, 0.03, 0.05, 0.04]
+    com, sem = _tabela_vies([10.0 + v for v in valores], [10.0] * len(valores))
+    notas = " ".join(_vies_universo(com, sem)["notas"])
+
+    assert "resolução" in notas and "desprezível em tamanho" in notas, (
+        f"significância sem tamanho publicada sem ressalva: {notas}"
+    )
+    assert "+0.04 pp" in notas
+
+    # E o aviso NÃO aparece quando o tamanho é publicável na tabela.
+    com2, sem2 = _tabela_vies([13.04, 13.02, 12.97], [10.0, 10.0, 10.0])
+    assert "desprezível em tamanho" not in " ".join(
+        _vies_universo(com2, sem2)["notas"])
+
+
+def test_fmt_pp_publica_casas_suficientes_e_nao_inventa_zero():
+    assert _fmt_pp(0.0) == "+0.0"
+    assert _fmt_pp(3.04) == "+3.0"
+    assert _fmt_pp(0.036) == "+0.04"
+    assert _fmt_pp(-0.0004) == "-0.0004"
+    assert _fmt_pp(None) == "—"
+    assert _fmt_pp(float("nan")) == "—"
+
+
+def test_peso_sem_preco_tem_formatador_de_uma_casa():
+    """`_pct` não arredonda mais, então a coluna chega com a fração cheia
+    (33.333333333333336). As quatro colunas de retorno já tinham
+    formatador; esta não tinha, e passaria a imprimir 14 casas na tela."""
+    config = _column_config_retorno()
+    assert "Peso sem preço (%)" in config, (
+        "a coluna de peso sem preço ficou sem formatador depois que o "
+        "motor parou de arredondar"
+    )
+    assert config["Peso sem preço (%)"]["type_config"]["format"] == "%.1f"
+
+
+# ── A-N3: a assinatura tem que enxergar o que a medição lê ───────────────────
+
+
+def _assinatura(mod, *, aprovados=None, todos=None, precos=None,
+                selic=None, taxa=0.0, tabela=None):
+    return mod._assinatura_vies(tabela, aprovados, todos, precos,
+                                selic if selic is not None else {}, taxa)
+
+
+def test_assinatura_enxerga_o_conteudo_e_nao_so_o_tamanho():
+    """A-N3: dois `resultados_todos` de mesmo tamanho e composição
+    diferente produziam a MESMA assinatura, com a medição indo de −7,5 pp
+    para −87,5 pp. Contar itens não é ler conteúdo."""
+    import views.portfolio_b3_safras as mod
+
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
+    todos_1 = aprovados + [_resultado_b3("B", 2025, ["CCCC3"])]
+    todos_2 = aprovados + [_resultado_b3("B", 2025, ["DDDD3"])]
+    precos = _precos_b3(["AAAA3", "BBBB3", "CCCC3", "DDDD3"])
+
+    base = _assinatura(mod, aprovados=aprovados, todos=todos_1, precos=precos)
+    assert base == _assinatura(mod, aprovados=aprovados, todos=todos_1,
+                               precos=precos)
+    assert base != _assinatura(mod, aprovados=aprovados, todos=todos_2,
+                               precos=precos), (
+        "duas listas sem gate de mesmo tamanho e conteúdo diferente "
+        "receberam a mesma assinatura"
+    )
+    outros_aprovados = [_resultado_b3("A", 2025, ["AAAA3"])]
+    assert base != _assinatura(mod, aprovados=outros_aprovados, todos=todos_1,
+                               precos=precos)
+
+
+def test_assinatura_enxerga_os_precos_e_a_selic():
+    """Mesma forma, números diferentes: o `shape` não distingue, e os
+    preços são metade da medição. A Selic e a taxa de fallback entram na
+    mesma conta (`retorno_da_safra`) e não entravam na assinatura."""
+    import views.portfolio_b3_safras as mod
+
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
+    p1 = _precos_b3(["AAAA3", "BBBB3"])
+    p2 = p1 * 2.0
+    p2.iloc[0, 0] = p1.iloc[0, 0]        # mesma forma, valores diferentes
+    assert p1.shape == p2.shape
+
+    base = _assinatura(mod, aprovados=aprovados, todos=aprovados, precos=p1)
+    assert base != _assinatura(mod, aprovados=aprovados, todos=aprovados,
+                               precos=p2), "preços diferentes, mesma assinatura"
+    assert base != _assinatura(mod, aprovados=aprovados, todos=aprovados,
+                               precos=p1, selic={2024: 0.10}), (
+        "a Selic observada não entra na assinatura"
+    )
+    assert base != _assinatura(mod, aprovados=aprovados, todos=aprovados,
+                               precos=p1, taxa=0.12), (
+        "a taxa de fallback não entra na assinatura"
+    )
+
+
+def test_assinatura_muda_quando_a_medicao_muda_de_verdade():
+    """Fecha o laço do A-N3 pelo resultado, não pelas entradas: se duas
+    entradas produzem medições diferentes, elas não podem compartilhar
+    assinatura — foi assim que −7,5 pp e −87,5 pp colidiram."""
+    import views.portfolio_b3_safras as mod
+
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3"])]
+    todos_1 = aprovados + [_resultado_b3("B", 2025, ["BBBB3"])]
+    todos_2 = aprovados + [_resultado_b3("B", 2025, ["CCCC3"])]
+    precos = _precos_b3(["AAAA3", "BBBB3", "CCCC3"])
+    hoje = pd.Timestamp("2026-09-21")
+
+    def mede(todos):
+        com = tabela_de_safras(aprovados, precos, selic_por_ano={},
+                               taxa_selic_aa=0.0, hoje=hoje)
+        sem = tabela_de_safras(todos, precos, selic_por_ano={},
+                               taxa_selic_aa=0.0, hoje=hoje)
+        return _vies_universo(com, sem)["medio"], com
+
+    medio_1, com_1 = mede(todos_1)
+    medio_2, com_2 = mede(todos_2)
+    assert medio_1 != medio_2, "cenário mal montado: as medições coincidem"
+
+    a1 = _assinatura(mod, aprovados=aprovados, todos=todos_1, precos=precos,
+                     tabela=com_1)
+    a2 = _assinatura(mod, aprovados=aprovados, todos=todos_2, precos=precos,
+                     tabela=com_2)
+    assert a1 != a2, (
+        f"medições diferentes ({medio_1} e {medio_2}) com a mesma assinatura"
+    )
+
+
+# ── A-N1 / A-N2: alcance dos outros dois blocos ──────────────────────────────
+
+
+def _alcancavel(corpo, alvo) -> bool:
+    """A sentença que satisfaz `alvo` é alcançável neste corpo?
+
+    Percorre os comandos em ordem e para no primeiro terminador
+    incondicional (`return`/`raise`/`break`/`continue`): o que vem depois
+    dele é código morto. Quando o alvo está dentro de um bloco composto,
+    a pergunta é refeita dentro de cada corpo desse bloco.
+
+    Isto NÃO é um teste de presença: um `return` inserido antes da chamada
+    deixa a chamada no lugar, e é exatamente o que derruba esta função.
+    """
+    for no in corpo:
+        if any(alvo(x) for x in ast.walk(no)):
+            if isinstance(no, (ast.If, ast.With, ast.For, ast.While, ast.Try)):
+                blocos = [getattr(no, campo, []) or []
+                          for campo in ("body", "orelse", "finalbody")]
+                blocos += [h.body for h in getattr(no, "handlers", [])]
+                return any(_alcancavel(b, alvo) for b in blocos)
+            return True
+        if isinstance(no, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+            return False
+    return False
+
+
+def test_chamada_de_render_safras_e_alcancavel_na_tela_b3():
+    """A-N1: um `return` antes de `render_safras(` em `views/portfolio_b3.py`
+    apaga os Blocos 1, 2 e 3 de uma vez, e a suíte segue verde — o teste de
+    AST existente continua ACHANDO a chamada, porque presença não é alcance.
+
+    `render()` tem 2.000 linhas e toca banco, cache e rede: não é
+    executável sob o dublê como `render_safras` e `render_expectativa` são.
+    A prova aqui é de alcançabilidade no fluxo de comandos — mais fraca que
+    executar, e mais forte que achar o nó.
+    """
+    arvore = ast.parse((RAIZ / "views" / "portfolio_b3.py")
+                       .read_text(encoding="utf-8"))
+    render = next(no for no in ast.walk(arvore)
+                  if isinstance(no, ast.FunctionDef) and no.name == "render")
+
+    def alvo(no):
+        return (isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
+                and no.func.id == "render_safras")
+
+    assert any(alvo(x) for x in ast.walk(render)), (
+        "views/portfolio_b3.py::render nao chama render_safras"
+    )
+    assert _alcancavel(render.body, alvo), (
+        "a chamada de render_safras existe mas esta em codigo morto -- a "
+        "tela de safras inteira (Blocos 1, 2 e 3) nao chega a ser desenhada"
+    )
+
+
+def test_alcancavel_reprova_codigo_depois_de_return():
+    """O detector do teste acima tem que reprovar o que ele promete
+    reprovar — senão ele é um assert que nunca falha."""
+    vivo = ast.parse("def f():\n    if x:\n        return 1\n    alvo()\n")
+    morto = ast.parse("def f():\n    return 1\n    alvo()\n")
+    dentro_de_if = ast.parse("def f():\n    if x:\n        return 1\n"
+                             "        alvo()\n")
+
+    def alvo(no):
+        return (isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
+                and no.func.id == "alvo")
+
+    assert _alcancavel(vivo.body[0].body, alvo)
+    assert not _alcancavel(morto.body[0].body, alvo)
+    assert not _alcancavel(dentro_de_if.body[0].body, alvo)
+
+
+def test_render_expectativa_desenha_de_fato(monkeypatch):
+    """A-N2: um `return` no topo de `render_expectativa` apaga o Bloco 3
+    inteiro sem mudar forma nenhuma. O Bloco 2 já estava provado por
+    alcance; este não estava."""
+    mod, falso = _tela_de_safras_falsa(monkeypatch)
+    tabela = _tabela(
+        [_linha(s, completa=True, mensuravel=True) for s in (2021, 2022, 2023)],
+        [2021, 2022, 2023])
+
+    mod.render_expectativa([], tabela)
+
+    cartoes = [c for c in falso.chamadas if c[0] == "card"]
+    assert cartoes, (
+        "render_expectativa terminou sem desenhar nenhum card -- o Bloco 3 "
+        "pode estar inalcançável"
+    )
+    titulos = [c[1][0] for c in cartoes]
+    assert "Ordena?" in titulos and "Fragilidade" in titulos
+    assert falso.legendas() or any(c[0] == "warning" for c in falso.chamadas), (
+        "o Bloco 3 desenhou os cards sem nenhuma ressalva ao lado"
+    )
+
+
+def test_render_safras_executa_o_bloco_3_de_fato(monkeypatch):
+    """A-N2, segundo ponto: a chamada de `render_expectativa` dentro de
+    `render_safras` também só estava presa por forma."""
+    mod, falso = _tela_de_safras_falsa(monkeypatch)
+    chamou = []
+    monkeypatch.setattr(mod, "render_expectativa",
+                        lambda *a, **k: chamou.append(a))
+    monkeypatch.setattr(mod, "render_vies_universo", lambda *a, **k: None)
+
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
+    mod.render_safras(aprovados, _precos_b3(["AAAA3", "BBBB3"]),
+                      selic_por_ano={}, taxa_selic_aa=0.0)
+
+    assert chamou, (
+        "render_safras terminou sem executar o Bloco 3 -- a chamada pode "
+        "estar presente e inalcançável"
+    )
+    assert isinstance(chamou[0][1], pd.DataFrame)
