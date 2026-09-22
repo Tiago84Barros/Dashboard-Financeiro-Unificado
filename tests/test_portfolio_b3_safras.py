@@ -491,3 +491,81 @@ def test_render_expectativa_e_chamada_por_render_safras():
         "render_safras nao chama render_expectativa -- o Bloco 3 nao "
         "aparece na tela e nenhum outro teste percebe"
     )
+
+
+# ── Rodada de correção 1 da Task 6 — F-1 e F-2 no que a tela publica ──
+
+
+def _tabela_medida(n=3):
+    return _tabela(
+        [_linha(2020 + i, completa=True, mensuravel=True, excesso=4.0)
+         for i in range(n)],
+        [2020 + i for i in range(n)],
+    )
+
+
+def test_card_ordena_usa_o_mesmo_criterio_do_leave_one_out():
+    """F-1 na tela: o veredito impresso no card "Ordena?" e o veredito que o
+    card de fragilidade testa tem que ser o MESMO. Com Rank-IC ~0,30 em 6
+    safras, o card imprimia "Inconclusivo" enquanto o LOO concluía
+    `evidencia_a_favor` — dois critérios homônimos com vereditos opostos
+    lado a lado na mesma tela, e nenhum teste comparava os caminhos."""
+    for ic in ([0.30, 0.32, 0.28, 0.31, 0.29, 0.33],
+               [0.02, 0.01, 0.0, 0.01, 0.60],
+               [-0.20, -0.18, -0.25, -0.22]):
+        out = _expectativa([_res_ic(ic)], _tabela_medida())
+        assert out["veredito"].estado == out["loo"]["estado_completo"], (
+            f"card e LOO divergem em {ic}"
+        )
+
+    forte = _expectativa([_res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])],
+                         _tabela_medida())
+    assert forte["veredito"].estado == "evidencia_a_favor", (
+        "unificar os dois caminhos no critério SEM p-valor deixaria "
+        "'evidência a favor' inalcançável no card"
+    )
+
+
+def test_card_de_fragilidade_nao_sai_verde_abaixo_do_piso():
+    """F-2 na tela: "0 safra(s)" em verde tem duas causas opostas —
+    evidência robusta, ou amostra pequena demais para haver o que remover.
+    Abaixo do piso o card sai "—" e SEM cor positiva; o verde é reservado a
+    zero medido."""
+    for ic in ([0.30], [0.30, 0.32], [0.30, 0.32, 0.28]):
+        out = _expectativa([_res_ic(ic)], _tabela_medida())
+        assert out["texto_fragilidade"] == "—", f"publicou número com {ic}"
+        assert out["positivo_fragilidade"] is None, (
+            f"card de fragilidade saiu colorido com n={len(ic)}"
+        )
+
+
+def test_card_de_fragilidade_sai_verde_quando_zero_foi_medido():
+    """Caso oposto do piso: acima dele, zero safras que viram volta a ser um
+    resultado medido e o card volta a sair verde. Sem esta metade, tornar o
+    piso inalcançável apagaria o card inteiro sem teste vermelho."""
+    out = _expectativa([_res_ic([0.30, 0.32, 0.28, 0.31, 0.29, 0.33])],
+                       _tabela_medida())
+    assert out["loo"]["safras_que_viram"] == 0
+    assert out["texto_fragilidade"] == "0 safra(s)"
+    assert out["positivo_fragilidade"] is True
+
+
+def test_render_expectativa_le_o_card_de_fragilidade_da_funcao_pura():
+    """`texto_fragilidade`/`positivo_fragilidade` testados isolados não
+    prendem o cabeamento: `render_expectativa` poderia voltar a montar o
+    texto na mão e o piso do F-2 sumiria da tela com a suíte verde.
+    Inspeção por AST (nota de memória `apptest-vaza-atribuicao-de-modulo`)."""
+    caminho = RAIZ / "views" / "portfolio_b3_safras.py"
+    arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+    render = next(
+        no for no in ast.walk(arvore)
+        if isinstance(no, ast.FunctionDef) and no.name == "render_expectativa"
+    )
+    lidas = {no.slice.value for no in ast.walk(render)
+             if isinstance(no, ast.Subscript)
+             and isinstance(no.slice, ast.Constant)
+             and isinstance(no.slice.value, str)}
+    assert {"texto_fragilidade", "positivo_fragilidade"} <= lidas, (
+        "render_expectativa nao le o card de fragilidade de _expectativa -- "
+        f"leu apenas {sorted(lidas)}"
+    )

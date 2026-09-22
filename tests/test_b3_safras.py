@@ -3,14 +3,17 @@ import pandas as pd
 import pytest
 
 import core.b3_safras as b3_safras
+from core.b3_evidence import minimum_detectable_effect
 from core.b3_safras import (
     SafraCarteira,
     _dias_por_ano_civil,
+    _p_valor_unilateral,
     bootstrap_excesso,
     carteiras_por_safra,
     fragilidade_leave_one_out,
     retorno_da_safra,
     tabela_de_safras,
+    veredito_do_rank_ic,
 )
 
 HOJE = pd.Timestamp("2026-09-21")
@@ -630,3 +633,140 @@ def test_bootstrap_e_reprodutivel_em_amostra_com_muitos_valores_distintos():
     excessos = [round(0.01 * i - 0.15 + 0.0037 * (i % 7), 6) for i in range(30)]
     assert len(set(excessos)) == 30
     assert bootstrap_excesso(excessos) == bootstrap_excesso(excessos)
+
+
+# --------------------------------------------------------------------------
+# Rodada de correcao 1 da Task 6 -- F-1/F-2/F-3/F-4/F-5
+# --------------------------------------------------------------------------
+
+
+def test_veredito_do_rank_ic_e_o_mesmo_que_o_leave_one_out_usa():
+    """F-1: dois leitores do mesmo Rank-IC tem que chegar ao mesmo estado.
+
+    A tela publicava `classify_evidence(ic_values=...)` sem p-valor no card
+    "Ordena?" enquanto o leave-one-out classificava COM p-valor. Com
+    Rank-IC ~0,30 em 6 safras o card imprimia "Inconclusivo" e o motor
+    interno concluia `evidencia_a_favor` -- o card de fragilidade dava selo
+    verde a um veredito que a tela nao mostrava e que contradizia o card ao
+    lado.
+
+    Este teste compara os DOIS caminhos nos mesmos dados: a regra certa num
+    leitor so nao cobre o outro leitor."""
+    for ic_values in ([0.30, 0.32, 0.28, 0.31, 0.29, 0.33],
+                      [0.02, 0.01, 0.0, 0.01, 0.60],
+                      [-0.20, -0.18, -0.25, -0.22]):
+        assert (veredito_do_rank_ic(ic_values).estado
+                == fragilidade_leave_one_out(ic_values)["estado_completo"]), (
+            f"os dois caminhos divergem em {ic_values}"
+        )
+
+
+def test_veredito_do_rank_ic_alcanca_evidencia_a_favor():
+    """Contrapartida do teste acima: unificar os dois caminhos no criterio
+    SEM p-valor tambem os deixaria iguais, e seria a unificacao errada --
+    `evidencia_a_favor` viraria inalcancavel e o card nunca sairia de
+    "Inconclusivo", por mais forte que a amostra fosse. Um criterio que so
+    pode dar um resultado nao e criterio."""
+    assert veredito_do_rank_ic(
+        [0.30, 0.32, 0.28, 0.31, 0.29, 0.33]).estado == "evidencia_a_favor"
+
+
+def test_leave_one_out_abaixo_do_piso_nao_publica_veredito():
+    """F-2: com n abaixo de `MIN_SAFRAS_LOO`, `safras_que_viram == 0` e
+    assinatura da amostra, nao robustez -- nao havia o que remover que
+    fizesse o classificador mudar de ideia. Zero ali saia em VERDE na tela.
+
+    Abaixo do piso a funcao declara `medido=False` e nao publica veredito
+    nenhum, em vez de publicar o zero que parece limpeza."""
+    for ic_values in ([0.30], [0.30, 0.32], [0.30, 0.32, 0.28]):
+        out = fragilidade_leave_one_out(ic_values)
+        assert out["medido"] is False, f"publicou veredito com n={len(ic_values)}"
+        assert out["estados_loo"] == []
+        assert out["safras_que_viram"] == 0
+
+
+def test_leave_one_out_no_piso_volta_a_publicar_veredito():
+    """Caso oposto do piso: exatamente em `MIN_SAFRAS_LOO` o LOO volta a
+    medir. Sem esta metade, subir o piso para um numero inalcancavel
+    desligaria a medicao inteira sem nenhum teste vermelho."""
+    ic_values = [0.30, 0.32, 0.28, 0.31][:b3_safras.MIN_SAFRAS_LOO]
+    assert len(ic_values) == b3_safras.MIN_SAFRAS_LOO
+    out = fragilidade_leave_one_out(ic_values)
+    assert out["medido"] is True
+    assert len(out["estados_loo"]) == b3_safras.MIN_SAFRAS_LOO
+
+
+def test_p_valor_concorda_com_o_teste_t_de_referencia():
+    """F-3 e F-5 no mesmo lugar: o p-valor tem que bater com
+    `scipy.stats.ttest_1samp(..., alternative="greater")` nos mesmos dados.
+
+    Prende de uma vez a distribuicao (t, nao normal -- com n de 5 a 15
+    safras elas nao sao intercambiaveis: em `[0.2, 0.0, 0.1]` o t da 0,113
+    e a normal 0,042, e o veredito VIRA), a direcao (unilateral a direita)
+    e o `ddof=1`."""
+    from scipy.stats import ttest_1samp
+
+    for amostra in ([0.2, 0.0, 0.1],
+                    [0.30, 0.32, 0.28, 0.31, 0.29, 0.33],
+                    [0.02, 0.01, 0.0, 0.01, 0.60],
+                    [-0.1, 0.05, -0.2, 0.0]):
+        esperado = float(ttest_1samp(amostra, 0.0, alternative="greater").pvalue)
+        assert _p_valor_unilateral(amostra) == pytest.approx(esperado, rel=1e-9)
+
+
+def test_p_valor_e_unilateral_a_direita_nao_bilateral():
+    """F-5, segunda trava: num teste unilateral, espelhar a amostra tem que
+    levar o p-valor para `1 - p`. Num bilateral os dois lados dao o MESMO
+    p, e a soma daria `2p` -- nao 1."""
+    amostra = [0.2, 0.0, 0.1]
+    espelhada = [-v for v in amostra]
+    assert _p_valor_unilateral(amostra) < 0.5
+    assert (_p_valor_unilateral(amostra) + _p_valor_unilateral(espelhada)
+            == pytest.approx(1.0))
+
+
+def test_p_valor_sem_dispersao_real_segue_a_convencao_relativa_do_modulo():
+    """F-4: a guarda era absoluta (`erro_padrao <= 0`), e valores
+    praticamente identicos passavam com desvio de ruido de ponto flutuante
+    -- p = 2,85e-33 e "evidencia a favor" sobre dispersao que nao existe.
+
+    Mesma convencao RELATIVA de `core.b3_evidence.minimum_detectable_effect`:
+    sem dispersao real nao ha erro-padrao a estimar, e o p-valor sai
+    `None`."""
+    quase_identicos = [0.30, 0.30, 0.30000000000000004, 0.29999999999999993]
+    assert _p_valor_unilateral(quase_identicos) is None
+    assert minimum_detectable_effect(quase_identicos) is None
+    # e o veredito nao pode virar "a favor" em cima disso
+    assert veredito_do_rank_ic(quase_identicos).estado != "evidencia_a_favor"
+
+
+def test_scipy_e_importado_no_topo_e_nao_dentro_de_except_largo():
+    """F-3: `scipy` esta pinado em requirements.txt, entao o ramo de
+    fallback era morto em producao -- nao servia de resiliencia, servia de
+    armadilha: no dia em que o import falhasse por OUTRO motivo, um
+    `except Exception` largo trocaria a estatistica em SILENCIO por uma que
+    inverte o veredito. Erro tem que aparecer como erro.
+
+    Inspecao por AST: o import tem que estar no corpo do modulo, e nenhuma
+    funcao pode importar scipy dentro de um `try`."""
+    import ast
+    from pathlib import Path
+
+    fonte = (Path(__file__).parents[1] / "core" / "b3_safras.py").read_text(
+        encoding="utf-8")
+    arvore = ast.parse(fonte)
+
+    topo = [no for no in arvore.body
+            if isinstance(no, ast.ImportFrom) and (no.module or "").startswith("scipy")]
+    assert topo, "scipy nao e importado no topo de core/b3_safras.py"
+
+    for no in ast.walk(arvore):
+        if not isinstance(no, ast.Try):
+            continue
+        for interno in ast.walk(no):
+            if isinstance(interno, ast.ImportFrom) and (
+                    interno.module or "").startswith("scipy"):
+                raise AssertionError(
+                    "core/b3_safras.py ainda importa scipy dentro de um try -- "
+                    "o fallback troca a distribuicao em silencio"
+                )

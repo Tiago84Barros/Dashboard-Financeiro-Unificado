@@ -18,7 +18,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from core.b3_safras import tabela_de_safras
+from core.b3_safras import MIN_SAFRAS_LOO, tabela_de_safras
 from design.componentes import card_metrica
 from views.empresas_b3 import _COR_ALT, _COR_NEU, _COR_POS, _plot_layout
 
@@ -270,12 +270,21 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
       só troca ruído de Monte Carlo) e sim por leave-one-out sobre as
       safras. O veredito da B3 já passou a APROVADO por 0,004 e reprovava
       de novo ao tirar uma safra — quem enxerga isso é o LOO;
+    - o veredito do card "Ordena?" sai de `veredito_do_rank_ic`, o MESMO
+      critério que o leave-one-out aplica (rodada de correção 1, F-1).
+      Dois critérios homônimos publicavam vereditos opostos lado a lado;
+    - abaixo de `MIN_SAFRAS_LOO` o card de fragilidade sai "—" e sem cor
+      (F-2): "0 safra(s)" em verde tem duas causas opostas, e só uma delas
+      é robustez;
     - todo texto de limitação sai da medição. `limitacao_banda` cita a
       contagem observada de safras mensuráveis, para não virar uma frase
       fixa que envelhece invertida e continua soando como rigor.
     """
-    from core.b3_evidence import classify_evidence
-    from core.b3_safras import bootstrap_excesso, fragilidade_leave_one_out
+    from core.b3_safras import (
+        bootstrap_excesso,
+        fragilidade_leave_one_out,
+        veredito_do_rank_ic,
+    )
 
     ic_values = [float(v) for res in (resultados or [])
                  for v in (res.get("rank_ic_values") or [])
@@ -289,7 +298,12 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
                           if not completas.empty else [])
                 if pd.notna(v)]
 
-    veredito = classify_evidence(ic_values=ic_values)
+    # F-1: o MESMO criterio que o leave-one-out usa. Antes o card chamava
+    # `classify_evidence` sem p-valor e o LOO chamava com: a tela imprimia
+    # "Inconclusivo" enquanto o motor interno concluia `evidencia_a_favor`,
+    # e o card de fragilidade dava selo verde a um veredito que a tela nao
+    # mostrava e que contradizia o card ao lado.
+    veredito = veredito_do_rank_ic(ic_values)
     baixo, alto = bootstrap_excesso(excessos)
     loo = fragilidade_leave_one_out(ic_values)
 
@@ -323,9 +337,21 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
                      "reamostrar, e um ponto central sozinho seria um número "
                      "sem incerteza medida.")
 
+    # F-2: "0 safra(s)" em verde tem duas causas OPOSTAS -- evidencia
+    # robusta, ou amostra pequena demais para haver o que remover. O verde
+    # fica reservado ao zero MEDIDO; abaixo do piso o card sai "—" e sem cor.
     return {
         "ic_values": ic_values,
         "veredito": veredito,
+        "texto_fragilidade": (f"{loo['safras_que_viram']} safra(s)"
+                              if loo["medido"] else "—"),
+        "positivo_fragilidade": ((loo["safras_que_viram"] == 0)
+                                 if loo["medido"] else None),
+        "ajuda_fragilidade": (
+            "Quantas precisam sair para o veredito virar" if loo["medido"]
+            else (f"{len(ic_values)} safra(s) com Rank-IC: abaixo de "
+                  f"{MIN_SAFRAS_LOO} não há o que remover que mude "
+                  "o veredito, e zero ali não seria robustez medida")),
         "banda": (baixo, alto),
         "n_safras_banda": n_banda,
         "texto_banda": (f"{baixo:+.1%} a {alto:+.1%}"
@@ -352,7 +378,6 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
 
     exp = _expectativa(resultados, tabela)
     veredito = exp["veredito"]
-    loo = exp["loo"]
 
     mde = veredito.efeito_minimo_detectavel
     ajuda_ordena = f"{veredito.anos_medidos} ano(s) de Rank-IC"
@@ -369,15 +394,9 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
                      ajuda=(f"Intervalo de 95% por reamostragem de "
                             f"{exp['n_safras_banda']} safra(s) mensurável(is)"))
     with cols[2]:
-        # `estados_loo` vazio = não havia safra para remover. "0 safras que
-        # viram" ali seria lido como robustez medida, e não foi medida.
-        testou = bool(loo["estados_loo"])
-        card_metrica("Fragilidade",
-                     f"{loo['safras_que_viram']} safra(s)" if testou else "—",
-                     positivo=(loo["safras_que_viram"] == 0) if testou else None,
-                     ajuda=("Quantas precisam sair para o veredito virar"
-                            if testou else
-                            "Sem Rank-IC medido: não há veredito a testar"))
+        card_metrica("Fragilidade", exp["texto_fragilidade"],
+                     positivo=exp["positivo_fragilidade"],
+                     ajuda=exp["ajuda_fragilidade"])
 
     for aviso in exp["avisos"]:
         st.warning(aviso)

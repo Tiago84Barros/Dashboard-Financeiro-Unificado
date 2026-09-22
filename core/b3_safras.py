@@ -137,6 +137,23 @@ Task 6 -- a expectativa sai como banda e fragilidade, nunca como numero:
   fecha isso, e o caso esta preso por
   `test_leave_one_out_deriva_significancia_de_cada_subamostra`.
 
+Rodada de correcao 1 da Task 6 -- a mesma familia de defeito nos tres
+achados: a tela publicava numero em verde sem evidencia medida atras.
+
+- **Um criterio so, `veredito_do_rank_ic` (F-1).** O card "Ordena?"
+  classificava SEM p-valor e o leave-one-out COM: dois criterios homonimos
+  com vereditos opostos lado a lado na mesma tela. Os dois leem a mesma
+  funcao agora, e `test_veredito_do_rank_ic_e_o_mesmo_que_o_leave_one_out_usa`
+  compara os caminhos entre si -- a regra certa num leitor so nao cobre o
+  outro leitor.
+- **Piso de amostra no leave-one-out, `MIN_SAFRAS_LOO` (F-2).** Zero safras
+  que viram tem duas causas OPOSTAS: evidencia robusta, ou amostra pequena
+  demais para haver o que remover. So a amostra vazia era distinguida; 1, 2
+  e 3 caiam no ramo que parece robustez e saiam em verde.
+- **`scipy` no topo, sem fallback (F-3).** Ver o comentario do import.
+- **Guarda de dispersao relativa (F-4)** e **direcao/`ddof` presos por
+  teste contra `scipy.stats.ttest_1samp` (F-5).**
+
 Modulo puro: sem streamlit, sem banco. Coberto por tests/test_b3_safras.py.
 """
 from __future__ import annotations
@@ -147,11 +164,29 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+# Import no TOPO, de proposito. `scipy` esta pinado em requirements.txt
+# (scipy==1.17.1), entao o antigo `try: from scipy.stats import t / except
+# Exception: <aproximacao normal>` era ramo MORTO em producao -- nao servia
+# de resiliencia, servia de armadilha: no dia em que o import falhasse por
+# outro motivo (instalacao quebrada, conflito de ABI), um `except Exception`
+# largo trocaria a distribuicao em silencio por uma que INVERTE o veredito
+# (em [0.2, 0.0, 0.1] o t da p=0,113 e a normal p=0,042). Erro de import tem
+# que aparecer como erro.
+from scipy.stats import t as _t_student
+
 from core.b3_vigencia import ano_base_do_score, janela_de_vigencia, safra_completa
 
 # A serie de precos e mensal: 45 dias cobre uma folga de um mes de atraso
 # na cotacao e nao mais que isso -- ver docstring do modulo.
 TOLERANCIA_DIAS = 45
+
+# Piso de safras para o leave-one-out publicar veredito. `classify_evidence`
+# exige `min_anos=2` para sequer aplicar o teste; cada passo do LOO remove
+# uma safra, entao com 3 a subamostra cai em 2 -- o limite exato do
+# mensuravel, com 1 grau de liberdade no t. Abaixo de 4, "zero safras que
+# viram" nao e robustez: e nao ter havido o que remover que fizesse o
+# classificador mudar de ideia, e esse zero saia em VERDE na tela.
+MIN_SAFRAS_LOO = 4
 
 COLUNAS_TABELA = [
     "Safra", "Exercício-base", "Janela", "Completa", "Mensurável",
@@ -570,69 +605,101 @@ def bootstrap_excesso(excessos: list[float], *,
             float(np.percentile(medias, 97.5)))
 
 
-def _p_valor_unilateral(valores: list[float]) -> float | None:
-    """p-valor do teste t unilateral de `media > 0` sobre os Rank-ICs.
+def _ic_limpos(ic_values: list[float] | None) -> list[float]:
+    """Rank-ICs finitos, na ordem de entrada. Ano sem IC calculavel chega
+    como `None`/`NaN` e nao e observacao."""
+    return [float(v) for v in (ic_values or [])
+            if v is not None and np.isfinite(float(v))]
+
+
+def _p_valor_unilateral(valores: list[float] | None) -> float | None:
+    """p-valor do teste t unilateral A DIREITA de `media > 0` sobre os
+    Rank-ICs, com `ddof=1`.
 
     `classify_evidence` so tem como declarar `evidencia_a_favor` quando
-    recebe `p_value` -- sem ele o classificador nunca sai de
-    "inconclusivo (sem significancia)" para uma amostra positiva, por mais
-    forte que ela seja. Chamar o classificador sem p-valor dentro do
-    leave-one-out faria a fragilidade dar ZERO sempre, e zero ali seria
-    lido como robustez: exatamente a conclusao que esta funcao existe para
-    poder contradizer.
+    recebe `p_value` -- sem ele o classificador nunca sai de "inconclusivo
+    (sem significancia)" para uma amostra positiva, por mais forte que ela
+    seja. Chamar o classificador sem p-valor faria a fragilidade dar ZERO
+    sempre, e zero ali seria lido como robustez: exatamente a conclusao que
+    esta funcao existe para poder contradizer.
 
-    Aproximacao normal quando scipy esta ausente -- mesma convencao de
-    `core.b3_evidence.minimum_detectable_effect`.
+    Distribuicao t, nunca a aproximacao normal: com n na casa de 5 a 15
+    safras elas nao sao intercambiaveis, e e justamente ai que a diferenca
+    morde -- em `[0.2, 0.0, 0.1]` o t da 0,113 e a normal 0,042, lados
+    opostos de `alpha=0,10`.
+
+    Guarda de dispersao RELATIVA, a mesma convencao de
+    `core.b3_evidence.minimum_detectable_effect`: observacoes praticamente
+    identicas dao desvio ~1e-17 (ruido de ponto flutuante), nao zero exato,
+    e uma guarda absoluta (`erro_padrao <= 0`) deixava passar p = 2,85e-33
+    -- "evidencia a favor" sobre dispersao que nao existe.
     """
-    amostra = np.asarray([float(v) for v in (valores or [])
-                          if v is not None and np.isfinite(float(v))],
-                         dtype=float)
+    amostra = np.asarray(_ic_limpos(valores), dtype=float)
     n = len(amostra)
     if n < 2:
         return None
-    erro_padrao = float(amostra.std(ddof=1)) / math.sqrt(n)
-    if not np.isfinite(erro_padrao) or erro_padrao <= 0:
+    desvio = float(amostra.std(ddof=1))
+    escala = max(float(np.abs(amostra).mean()), 1e-12)
+    if not np.isfinite(desvio) or desvio <= escala * 1e-9:
         return None
-    estatistica = float(amostra.mean()) / erro_padrao
-    try:
-        from scipy.stats import t as _t
-        return float(_t.sf(estatistica, df=n - 1))
-    except Exception:
-        return float(0.5 * math.erfc(estatistica / math.sqrt(2.0)))
+    estatistica = float(amostra.mean()) / (desvio / math.sqrt(n))
+    return float(_t_student.sf(estatistica, df=n - 1))
 
 
-def fragilidade_leave_one_out(ic_values: list[float]) -> dict:
-    """Quantas safras precisam sair para o veredito virar.
+def veredito_do_rank_ic(ic_values: list[float] | None):
+    """Criterio UNICO de veredito sobre o Rank-IC das safras.
 
-    Reusa `core.b3_evidence.classify_evidence` -- o mesmo classificador que
-    a tela ja aplica, para que o veredito do LOO seja comparavel ao
-    veredito publicado, e nao um segundo criterio parecido.
+    Existe para que a tela e o leave-one-out nao tenham dois criterios
+    homonimos. Antes, o card "Ordena?" chamava `classify_evidence` SEM
+    p-valor e o LOO chamava COM: com Rank-IC ~0,30 em 6 safras a tela
+    imprimia "Inconclusivo" enquanto o motor interno concluia
+    `evidencia_a_favor`, e o card de fragilidade dava selo verde a um
+    veredito que a tela nao mostrava e que contradizia o card ao lado.
 
-    Cada passo recalcula o p-valor sobre a PROPRIA subamostra
-    (`_p_valor_unilateral`), e nao reaproveita o do conjunto inteiro: o
-    ponto do leave-one-out e justamente que tirar uma safra muda a
-    significancia. Reaproveitar o p-valor completo (ou omiti-lo) daria
-    sempre "zero safras que viram", e a tela publicaria robustez que nao
-    foi medida.
-
-    Sem amostra, `estados_loo` sai vazio -- "zero safras que viram" ali
-    significa que nao havia o que remover, nao que a evidencia e solida; a
-    tela distingue os dois pela lista vazia.
+    Unificar no criterio sem p-valor "resolveria" a divergencia pelo lado
+    errado: `evidencia_a_favor` viraria inalcancavel e o card nunca sairia
+    de "Inconclusivo", por mais forte que a amostra fosse.
     """
     from core.b3_evidence import classify_evidence
 
-    limpos = [float(v) for v in (ic_values or [])
-              if v is not None and np.isfinite(float(v))]
-    p_completo = _p_valor_unilateral(limpos)
-    completo = classify_evidence(ic_values=limpos, p_value=p_completo).estado
-    estados: list[str] = []
-    for i in range(len(limpos)):
-        sem_i = limpos[:i] + limpos[i + 1:]
-        p_sem_i = _p_valor_unilateral(sem_i)
-        estados.append(
-            classify_evidence(ic_values=sem_i, p_value=p_sem_i).estado)
+    limpos = _ic_limpos(ic_values)
+    return classify_evidence(ic_values=limpos,
+                             p_value=_p_valor_unilateral(limpos))
+
+
+def fragilidade_leave_one_out(ic_values: list[float] | None) -> dict:
+    """Quantas safras precisam sair para o veredito virar.
+
+    Reusa `veredito_do_rank_ic` -- o MESMO criterio que a tela publica no
+    card "Ordena?", para que o veredito do LOO seja comparavel ao veredito
+    publicado, e nao um segundo criterio parecido.
+
+    Cada passo recalcula o p-valor sobre a PROPRIA subamostra: o ponto do
+    leave-one-out e justamente que tirar uma safra muda a significancia.
+    Reaproveitar o p-valor do conjunto inteiro (ou omiti-lo) daria sempre
+    "zero safras que viram", e a tela publicaria robustez que nao foi
+    medida.
+
+    Abaixo de `MIN_SAFRAS_LOO` a funcao devolve `medido=False` e nao
+    publica veredito: com 1 a 3 safras o zero e assinatura da amostra, nao
+    limpeza -- nao havia o que remover que fizesse o classificador mudar de
+    ideia. A tela le `medido` para nao pintar de verde um zero que ninguem
+    mediu.
+    """
+    limpos = _ic_limpos(ic_values)
+    completo = veredito_do_rank_ic(limpos).estado
+    if len(limpos) < MIN_SAFRAS_LOO:
+        return {
+            "estado_completo": completo,
+            "estados_loo": [],
+            "safras_que_viram": 0,
+            "medido": False,
+        }
+    estados = [veredito_do_rank_ic(limpos[:i] + limpos[i + 1:]).estado
+               for i in range(len(limpos))]
     return {
         "estado_completo": completo,
         "estados_loo": estados,
         "safras_que_viram": sum(1 for e in estados if e != completo),
+        "medido": True,
     }
