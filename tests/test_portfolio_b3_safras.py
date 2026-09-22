@@ -10,6 +10,7 @@ As tabelas de entrada são montadas à mão com o schema de
 """
 import ast
 import contextlib
+import re
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,7 @@ import pandas as pd
 import pytest
 import streamlit as _st_real
 
+import views.portfolio_b3_safras as mod_safras
 from core.b3_safras import COLUNAS_TABELA, tabela_de_safras
 from views.portfolio_b3_safras import (
     _COLUNAS_1CASA,
@@ -1357,60 +1359,126 @@ def test_render_safras_chama_render_vies_universo():
     )
 
 
-def test_bloco_2_so_mede_depois_do_botao():
-    """Decisão do dono do projeto: a reconstrução sem gate é a conta mais
-    cara da tela e não é paga a cada rerun. Renderizar eagerly não quebra
-    nada visível — só fica lento —, então o que prende o comportamento é a
-    estrutura: nenhuma chamada a `tabela_de_safras` pode estar acima da
-    guarda que retorna quando o botão não foi clicado."""
-    render = _funcao_da_view("render_vies_universo")
-    guardas = [no for no in ast.walk(render) if isinstance(no, ast.If)
-               and any(isinstance(c, ast.Call)
-                       and isinstance(c.func, ast.Attribute)
-                       and c.func.attr == "button"
-                       for c in ast.walk(no.test))]
-    assert guardas, "render_vies_universo nao esta atras de um st.button"
-    assert any(isinstance(s, ast.Return) for g in guardas
-               for s in ast.walk(g)), (
-        "o botao nao interrompe o render -- sem `return` a medicao roda "
-        "mesmo sem clique"
+def test_bloco_2_nao_mede_nada_em_rerun_sem_clique(monkeypatch):
+    """R2-3: prova por EXECUÇÃO de que o custo fica DEPOIS do portão.
+
+    "Sob demanda, com botão" é decisão do dono do projeto. A versão
+    anterior prendia isso pela forma (nenhuma chamada a `tabela_de_safras`
+    acima da guarda) e deixava passar o que de fato acontecia:
+    `_assinatura_vies` — 0,34 s e ~8 MB por rerun — era calculada ANTES do
+    botão e antes do early-return. Computar sempre e só esconder o
+    resultado cumpre a aparência da decisão, não a decisão.
+
+    Aqui a medição é CONTADA num rerun sem clique e sem medição guardada:
+    tem que ser zero, das duas partes caras.
+    """
+    mod, falso = _tela_de_safras_falsa(monkeypatch, botao=False)
+    contas = {"tabela": 0, "assinatura": 0}
+    original_tabela = mod.tabela_de_safras
+    original_assinatura = mod._assinatura_vies
+
+    def conta_tabela(*a, **k):
+        contas["tabela"] += 1
+        return original_tabela(*a, **k)
+
+    def conta_assinatura(*a, **k):
+        contas["assinatura"] += 1
+        return original_assinatura(*a, **k)
+
+    monkeypatch.setattr(mod, "tabela_de_safras", conta_tabela)
+    monkeypatch.setattr(mod, "_assinatura_vies", conta_assinatura)
+
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
+    todos = aprovados + [_resultado_b3("B", 2025, ["CCCC3"])]
+    precos = _precos_b3(["AAAA3", "BBBB3", "CCCC3"])
+
+    mod.render_vies_universo(aprovados, todos, precos, selic_por_ano={},
+                             taxa_selic_aa=0.0)
+
+    assert contas == {"tabela": 0, "assinatura": 0}, (
+        f"rerun sem clique pagou a medição: {contas} -- o bloco computa "
+        "sempre e só esconde o resultado atrás do botão"
     )
-    linha_guarda = min(g.lineno for g in guardas)
-    medicoes = [no.lineno for no in ast.walk(render)
-                if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
-                and no.func.id == "tabela_de_safras"]
-    assert medicoes, "render_vies_universo nao reconstroi safra nenhuma"
-    assert min(medicoes) > linha_guarda, (
-        "tabela_de_safras e chamada ANTES da guarda do botao -- o bloco "
-        "voltou a medir a cada rerun"
-    )
+    assert "card" not in falso.nomes() and "dataframe" not in falso.nomes()
 
 
-def test_medicao_guardada_e_redesenhada_com_as_mesmas_ressalvas():
+def test_bloco_2_mede_quando_alguem_clica(monkeypatch):
+    """O outro lado do R2-3: zerar o contador é trivial se o bloco nunca
+    medir. Com o clique, as duas partes caras TÊM que rodar."""
+    mod, falso = _tela_de_safras_falsa(monkeypatch, botao=True)
+    contas = {"tabela": 0, "assinatura": 0}
+    original_tabela = mod.tabela_de_safras
+    original_assinatura = mod._assinatura_vies
+    monkeypatch.setattr(mod, "tabela_de_safras",
+                        lambda *a, **k: (contas.__setitem__(
+                            "tabela", contas["tabela"] + 1)
+                            or original_tabela(*a, **k)))
+    monkeypatch.setattr(mod, "_assinatura_vies",
+                        lambda *a, **k: (contas.__setitem__(
+                            "assinatura", contas["assinatura"] + 1)
+                            or original_assinatura(*a, **k)))
+
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
+    todos = aprovados + [_resultado_b3("B", 2025, ["CCCC3"])]
+    precos = _precos_b3(["AAAA3", "BBBB3", "CCCC3"])
+
+    mod.render_vies_universo(aprovados, todos, precos, selic_por_ano={},
+                             taxa_selic_aa=0.0)
+
+    assert contas["tabela"] >= 1 and contas["assinatura"] == 1, (
+        f"clicou e a medição não rodou: {contas}"
+    )
+    assert "card" in falso.nomes()
+
+
+def test_medicao_guardada_e_redesenhada_com_as_mesmas_ressalvas(monkeypatch):
     """A medição fica em `session_state` e volta nos reruns seguintes.
     Se o caminho do cache republicar só a tabela, os números voltam sem o
     texto que diz o que eles NÃO são — e é o texto que impede o viés de
     ser lido como resultado da estratégia. Os dois caminhos têm que
-    desenhar pela mesma função."""
-    render = _funcao_da_view("render_vies_universo")
-    guardas = [no for no in ast.walk(render) if isinstance(no, ast.If)
-               and any(isinstance(c, ast.Call)
-                       and isinstance(c.func, ast.Attribute)
-                       and c.func.attr == "button"
-                       for c in ast.walk(no.test))]
-    dentro_da_guarda = {no.func.id for g in guardas for no in ast.walk(g)
-                        if isinstance(no, ast.Call)
-                        and isinstance(no.func, ast.Name)}
-    assert "_desenha_vies" in dentro_da_guarda, (
-        "o caminho do cache nao passa por _desenha_vies -- a medicao "
+    desenhar pela mesma função, e isso é contado por execução: a versão
+    por AST casava com a FORMA da guarda e quebrou quando o portão virou
+    `if not clicou and medido is None`, sem que o comportamento mudasse.
+    """
+    import views.portfolio_b3_safras as _mod_real
+    # O original de verdade, capturado ANTES de qualquer patch: `monkeypatch`
+    # só desfaz no teardown, então a segunda rodada leria o espião da
+    # primeira como "original" e contaria os desenhos duas vezes.
+    original = _mod_real._desenha_vies
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
+    precos = _precos_b3(["AAAA3", "BBBB3"])
+
+    def roda(*, botao, com_cache):
+        mod, falso = _tela_de_safras_falsa(monkeypatch, botao=botao)
+        desenhos = []
+
+        def espia(medicao, **k):
+            desenhos.append(medicao)
+            return original(medicao, **k)
+
+        monkeypatch.setattr(mod, "_desenha_vies", espia)
+        if com_cache:
+            falso.session_state["pb3_vies_universo"] = {
+                "quando": "01/01/2020 00:00",
+                "assinatura": mod._assinatura_vies(None, aprovados, aprovados,
+                                                   precos, {}, 0.0),
+                "medicao": _vies_universo(
+                    *_tabela_vies([13.0, 14.0], [10.0, 10.0])),
+            }
+        mod.render_vies_universo(aprovados, aprovados, precos,
+                                 selic_por_ano={}, taxa_selic_aa=0.0)
+        return falso, desenhos
+
+    falso_novo, novos = roda(botao=True, com_cache=False)
+    falso_cache, do_cache = roda(botao=False, com_cache=True)
+
+    assert len(novos) == 1 and len(do_cache) == 1, (
+        "um dos dois caminhos não desenha por _desenha_vies -- a medição "
         "guardada volta sem as ressalvas"
     )
-    todas = [no for no in ast.walk(render)
-             if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
-             and no.func.id == "_desenha_vies"]
-    assert len(todas) >= 2, (
-        "o caminho da medicao nova nao desenha pela mesma funcao do cache"
-    )
+    assert do_cache[0]["notas"], "a medição do cache voltou sem notas"
+    assert falso_cache.legendas(), "o cache republicou número sem ressalva"
+    assert "card" in falso_novo.nomes() and "card" in falso_cache.nomes()
 
 
 def test_ressalvas_do_vies_chegam_como_caption_e_nao_como_tooltip():
@@ -1930,7 +1998,10 @@ def test_manchete_do_vies_nunca_publica_zero_em_vermelho():
 
     assert m["significante"] is True and m["positivo"] is False
     assert m["p_bilateral"] < 0.01
-    assert m["texto_medio"] == "+0.04 pp", (
+    # Truncado, nunca arredondado (R2-2): a media e 0,036 e a manchete
+    # publica "+0.03", nunca "+0.04" -- o texto nao afirma mais vies do
+    # que a medicao viu.
+    assert m["texto_medio"] == "+0.03 pp", (
         f"a manchete do card vermelho saiu como {m['texto_medio']!r}"
     )
     assert float(m["texto_medio"].split()[0]) != 0.0, (
@@ -1950,7 +2021,7 @@ def test_vies_significante_abaixo_da_resolucao_publicada_avisa():
     assert "resolução" in notas and "desprezível em tamanho" in notas, (
         f"significância sem tamanho publicada sem ressalva: {notas}"
     )
-    assert "+0.04 pp" in notas
+    assert "+0.03 pp" in notas
 
     # E o aviso NÃO aparece quando o tamanho é publicável na tabela.
     com2, sem2 = _tabela_vies([13.04, 13.02, 12.97], [10.0, 10.0, 10.0])
@@ -1961,10 +2032,76 @@ def test_vies_significante_abaixo_da_resolucao_publicada_avisa():
 def test_fmt_pp_publica_casas_suficientes_e_nao_inventa_zero():
     assert _fmt_pp(0.0) == "+0.0"
     assert _fmt_pp(3.04) == "+3.0"
-    assert _fmt_pp(0.036) == "+0.04"
+    assert _fmt_pp(0.036) == "+0.03"
     assert _fmt_pp(-0.0004) == "-0.0004"
     assert _fmt_pp(None) == "—"
     assert _fmt_pp(float("nan")) == "—"
+
+
+def test_fmt_pp_nunca_publica_numero_maior_que_o_medido():
+    """R2-2: `_fmt_pp` parava na primeira casa não-nula ARREDONDANDO, e
+    `0.05` saía como "+0.1" — o dobro do medido, num bloco cujo produto é
+    justamente o tamanho do viés. A regra é truncar em direção a zero.
+    """
+    assert _fmt_pp(0.05) == "+0.05", "0,05 pp publicado com outro valor"
+    for valor in (0.05, 0.149, -0.149, 0.999, -0.06, 3.999, 0.0499):
+        publicado = abs(float(_fmt_pp(valor).replace("+", "")))
+        assert publicado <= abs(valor) + 1e-12, (
+            f"{valor} foi publicado como {_fmt_pp(valor)} -- maior em "
+            "módulo do que a medição"
+        )
+
+
+def _numeros_pp(texto):
+    return re.findall(r"[+-]\d+\.\d+", texto)
+
+
+def test_a_mesma_frase_nao_mistura_precisoes():
+    """R2-2, segunda metade: "de +0.02 a +0.1 pp" mistura duas precisões
+    dentro de uma frase só. Todas as casas de uma frase vêm de
+    `_casas_para`, que decide uma vez para todos os números dela."""
+    valores = [0.02, 0.10, 0.05, 0.04, 0.03]
+    com, sem = _tabela_vies([10.0 + v for v in valores], [10.0] * len(valores))
+    for nota in _vies_universo(com, sem)["notas"]:
+        casas = {len(n.split(".")[1].split(" ")[0]) for n in _numeros_pp(nota)}
+        assert len(casas) <= 1, (
+            f"a frase mistura precisões ({sorted(casas)}): {nota}"
+        )
+
+
+def test_faixa_min_max_nao_colapsa_no_cenario_do_a_t7_02():
+    """R2-1: o VALOR desquantizou na rodada anterior, a PROSA não. Com
+    2,97 a 3,04 a tela publicava "de +3.0 a +3.0 pp entre as safras" — a
+    faixa colapsa e volta a afirmar a uniformidade que o teste t acabou de
+    negar (p = 2,4e-05). É o A-T7-02 um andar acima, agora no texto."""
+    com, sem = _tabela_vies([13.04, 13.02, 12.97], [10.0, 10.0, 10.0])
+    m = _vies_universo(com, sem)
+    frase = next(n for n in m["notas"] if "entre as safras" in n)
+
+    assert "de +3.0 a +3.0 pp" not in frase, (
+        f"a faixa min-max colapsou e afirma uniformidade: {frase}"
+    )
+    numeros = _numeros_pp(frase)
+    assert len(set(numeros)) == len(numeros) >= 3, (
+        f"dois extremos distintos saíram com o mesmo texto: {frase}"
+    )
+    assert "+2.97" in frase and "+3.04" in frase, (
+        f"os extremos medidos não são os publicados: {frase}"
+    )
+
+
+def test_uma_so_regra_de_casas_para_tabela_e_prosa():
+    """R2-5: o literal `%.1f` estava em dois `column_config` e a meia casa
+    da resolução num terceiro lugar. Mudar o formato da coluna sem mexer
+    em `_RESOLUCAO_PP` deixaria a ressalva falando de uma resolução que a
+    tabela não tem mais."""
+    esperado = f"%.{mod_safras._CASAS_TABELA}f"
+    assert mod_safras._FORMATO_TABELA == esperado
+    for config in (_column_config_retorno(), _column_config_vies()):
+        for col, cfg in config.items():
+            assert cfg["type_config"]["format"] == esperado, col
+    assert mod_safras._RESOLUCAO_PP == pytest.approx(
+        0.5 * 10.0 ** -mod_safras._CASAS_TABELA)
 
 
 def test_peso_sem_preco_tem_formatador_de_uma_casa():
@@ -2072,7 +2209,47 @@ def test_assinatura_muda_quando_a_medicao_muda_de_verdade():
 # ── A-N1 / A-N2: alcance dos outros dois blocos ──────────────────────────────
 
 
-def _alcancavel(corpo, alvo) -> bool:
+def _valor_constante(no, ambiente):
+    """O valor deste nó, quando ele é constante EM TEMPO DE LEITURA.
+
+    Cobre literal (`False`, `0`, `""`), nome ligado a literal no escopo
+    lido (`_LIGADO = False` … `if _LIGADO:`) e `and`/`or` entre os dois.
+    Qualquer outra coisa devolve `_DESCONHECIDO`: só se conclui morte
+    quando o valor é sabido, nunca por não entender a expressão.
+    """
+    if isinstance(no, ast.Constant):
+        return no.value
+    if isinstance(no, ast.Name) and no.id in ambiente:
+        return ambiente[no.id]
+    if isinstance(no, ast.UnaryOp) and isinstance(no.op, ast.Not):
+        dentro = _valor_constante(no.operand, ambiente)
+        return _DESCONHECIDO if dentro is _DESCONHECIDO else (not dentro)
+    if isinstance(no, ast.BoolOp):
+        valores = [_valor_constante(v, ambiente) for v in no.values]
+        if any(v is _DESCONHECIDO for v in valores):
+            # `False and <qualquer coisa>` ainda é falso.
+            if isinstance(no.op, ast.And) and any(
+                    v is not _DESCONHECIDO and not v for v in valores):
+                return False
+            if isinstance(no.op, ast.Or) and any(
+                    v is not _DESCONHECIDO and v for v in valores):
+                return True
+            return _DESCONHECIDO
+        if isinstance(no.op, ast.And):
+            return all(valores)
+        return any(valores)
+    return _DESCONHECIDO
+
+
+class _Desconhecido:
+    def __repr__(self):
+        return "<desconhecido>"
+
+
+_DESCONHECIDO = _Desconhecido()
+
+
+def _alcancavel(corpo, alvo, ambiente=None) -> bool:
     """A sentença que satisfaz `alvo` é alcançável neste corpo?
 
     Percorre os comandos em ordem e para no primeiro terminador
@@ -2083,14 +2260,30 @@ def _alcancavel(corpo, alvo) -> bool:
     Isto NÃO é um teste de presença: um `return` inserido antes da chamada
     deixa a chamada no lugar, e é exatamente o que derruba esta função.
     """
+    ambiente = dict(ambiente or {})
     for no in corpo:
         if any(alvo(x) for x in ast.walk(no)):
-            if isinstance(no, (ast.If, ast.With, ast.For, ast.While, ast.Try)):
+            if isinstance(no, ast.If):
+                condicao = _valor_constante(no.test, ambiente)
+                vivos = []
+                if condicao is _DESCONHECIDO or condicao:
+                    vivos.append(no.body)
+                if condicao is _DESCONHECIDO or not condicao:
+                    vivos.append(no.orelse or [])
+                return any(_alcancavel(b, alvo, ambiente) for b in vivos)
+            if isinstance(no, (ast.With, ast.For, ast.While, ast.Try)):
                 blocos = [getattr(no, campo, []) or []
                           for campo in ("body", "orelse", "finalbody")]
                 blocos += [h.body for h in getattr(no, "handlers", [])]
-                return any(_alcancavel(b, alvo) for b in blocos)
+                return any(_alcancavel(b, alvo, ambiente) for b in blocos)
             return True
+        if isinstance(no, ast.Assign) and len(no.targets) == 1 and isinstance(
+                no.targets[0], ast.Name):
+            valor = _valor_constante(no.value, ambiente)
+            if valor is _DESCONHECIDO:
+                ambiente.pop(no.targets[0].id, None)
+            else:
+                ambiente[no.targets[0].id] = valor
         if isinstance(no, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
             return False
     return False
@@ -2118,7 +2311,12 @@ def test_chamada_de_render_safras_e_alcancavel_na_tela_b3():
     assert any(alvo(x) for x in ast.walk(render)), (
         "views/portfolio_b3.py::render nao chama render_safras"
     )
-    assert _alcancavel(render.body, alvo), (
+    modulo = {no.targets[0].id: no.value.value
+              for no in arvore.body
+              if isinstance(no, ast.Assign) and len(no.targets) == 1
+              and isinstance(no.targets[0], ast.Name)
+              and isinstance(no.value, ast.Constant)}
+    assert _alcancavel(render.body, alvo, modulo), (
         "a chamada de render_safras existe mas esta em codigo morto -- a "
         "tela de safras inteira (Blocos 1, 2 e 3) nao chega a ser desenhada"
     )
@@ -2139,6 +2337,27 @@ def test_alcancavel_reprova_codigo_depois_de_return():
     assert _alcancavel(vivo.body[0].body, alvo)
     assert not _alcancavel(morto.body[0].body, alvo)
     assert not _alcancavel(dentro_de_if.body[0].body, alvo)
+
+    # A-N1, segunda metade: `return` antes da chamada (M9) morria, mas a
+    # MESMA chamada sob condição sempre falsa (M10) sobrevivia — a forma
+    # continua lá e a tela some. Guarda constante conhecida é código
+    # morto; guarda desconhecida continua sendo alcance.
+    falsa = ast.parse("def f():\n    if False:\n        alvo()\n")
+    por_nome = ast.parse("def f():\n    liga = False\n    if liga:\n"
+                         "        alvo()\n")
+    composta = ast.parse("def f():\n    if False and x:\n        alvo()\n")
+    de_modulo = ast.parse("def f():\n    if LIGADO:\n        alvo()\n")
+    incerta = ast.parse("def f():\n    if x > 3:\n        alvo()\n")
+
+    assert not _alcancavel(falsa.body[0].body, alvo)
+    assert not _alcancavel(por_nome.body[0].body, alvo)
+    assert not _alcancavel(composta.body[0].body, alvo)
+    assert not _alcancavel(de_modulo.body[0].body, alvo, {"LIGADO": False})
+    assert _alcancavel(de_modulo.body[0].body, alvo, {"LIGADO": True})
+    assert _alcancavel(incerta.body[0].body, alvo), (
+        "condição que o detector não sabe avaliar não pode ser tratada "
+        "como código morto"
+    )
 
 
 def test_render_expectativa_desenha_de_fato(monkeypatch):

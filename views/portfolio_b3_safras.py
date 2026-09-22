@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 
 import numpy as np
 import pandas as pd
@@ -37,6 +38,12 @@ _COLUNAS_RETORNO = ["Estratégia (%)", "Equal-weight (%)", "Selic (%)",
 # coluna de retorno mas passou a chegar com a fração cheia
 # (33.333333333333336 na tela).
 _COLUNAS_1CASA = _COLUNAS_RETORNO + ["Peso sem preço (%)"]
+
+# Uma so regra de casas decimais para a tela inteira (R2-5): o formato das
+# colunas e a resolucao usada na prosa (`_RESOLUCAO_PP`) saem daqui, em vez
+# de repetir o literal "%.1f" em dois lugares e a meia casa num terceiro.
+_CASAS_TABELA = 1
+_FORMATO_TABELA = f"%.{_CASAS_TABELA}f"
 
 _CORES_SERIE = {
     "Estratégia (%)": _COR_POS,
@@ -161,7 +168,7 @@ def _column_config_retorno() -> dict:
     `views/portfolio_b3.py`, linhas 2370/2397/2422, via
     `st.column_config.NumberColumn`)."""
     return {
-        col: st.column_config.NumberColumn(format="%.1f")
+        col: st.column_config.NumberColumn(format=_FORMATO_TABELA)
         for col in _COLUNAS_1CASA
     }
 
@@ -707,9 +714,62 @@ _COLUNAS_VIES = ["Estratégia (%) com gate", "Estratégia (%) sem gate",
                  "Viés (pp)"]
 
 
-def _fmt_pp(valor: float | None) -> str:
+# Teto de casas antes de cair na notacao exponencial.
+_CASAS_MAX = 6
+
+
+def _trunca(valor: float, casas: int) -> float:
+    """Trunca EM DIRECAO A ZERO, nunca arredonda.
+
+    Arredondar publica numero MAIOR que o medido (R2-2): `0.05` com uma
+    casa vira `+0.1`, o dobro do que a medicao viu. Truncar erra sempre
+    para o lado conservador — o texto nunca afirma mais viés do que foi
+    observado.
+    """
+    # O ruido binario vem ANTES do truncamento: `13.04 - 10.0` e
+    # 3.039999999999999, e truncar cru publicaria "+3.03" para um vies
+    # medido de 3,04. Normalizar em casas muito alem da publicacao mata o
+    # ruido sem tocar no digito que a frase mostra.
+    valor = round(float(valor), _CASAS_MAX + 6)
+    fator = 10.0 ** casas
+    return math.trunc(valor * fator) / fator
+
+
+def _casas_para(valores) -> int:
+    """Quantas casas a FRASE inteira usa — uma só, para todos os números.
+
+    Duas exigências, as duas medidas sobre os próprios valores:
+
+    1. nenhum valor não-nulo pode sair como zero (A-N4: significância sem
+       tamanho não é acionável);
+    2. valores DIFERENTES não podem sair iguais (R2-1: com 2,97 a 3,04 a
+       faixa saía "de +3.0 a +3.0 pp", afirmando de novo a uniformidade
+       que o A-T7-02 acabou de tirar do valor — o mesmo defeito, um andar
+       acima, agora no texto).
+
+    O piso é a resolução da tabela publicada (`_CASAS_TABELA`) para que a
+    prosa nunca seja *menos* precisa que a coluna ao lado, e a casa é a
+    mesma para todos os números da frase (R2-2: "de +0.02 a +0.1 pp"
+    misturava precisões dentro de uma frase só).
+    """
+    finitos = [float(v) for v in valores
+               if v is not None and np.isfinite(float(v))]
+    if not finitos:
+        return _CASAS_TABELA
+    distintos = len(set(finitos))
+    for casas in range(_CASAS_TABELA, _CASAS_MAX + 1):
+        truncados = [_trunca(v, casas) for v in finitos]
+        sumiu = any(t == 0.0 and v != 0.0
+                    for t, v in zip(truncados, finitos))
+        colidiu = len(set(truncados)) < distintos
+        if not sumiu and not colidiu:
+            return casas
+    return _CASAS_MAX
+
+
+def _fmt_pp(valor: float | None, casas: int | None = None) -> str:
     """Valor em pp com casas SUFICIENTES para não publicar zero onde a
-    medição não é zero (A-N4).
+    medição não é zero (A-N4), e nunca MAIOR que o medido (R2-2).
 
     Com `{:+.1f}` fixo, um viés de +0,036 pp significante (p = 0,002) saía
     na manchete como **"+0,0 pp" em vermelho**: significância sem tamanho,
@@ -719,6 +779,10 @@ def _fmt_pp(valor: float | None) -> str:
     tamanho é o produto deste bloco. A ressalva sobre a resolução da
     tabela vem junto, em `_vies_universo`, não no lugar do número.
 
+    `casas` vem de `_casas_para` quando o número divide a frase com
+    outros: a mesma frase não pode misturar precisões. Sem ele, a decisão
+    é tomada para este valor sozinho.
+
     Zero medido continua "+0.0": é o número certo, não um arredondamento.
     """
     if valor is None or not np.isfinite(float(valor)):
@@ -726,23 +790,27 @@ def _fmt_pp(valor: float | None) -> str:
     valor = float(valor)
     if valor == 0.0:
         return "+0.0"
-    for casas in range(1, 7):
-        texto = f"{valor:+.{casas}f}"
-        if float(texto) != 0.0:
-            return texto
-    return f"{valor:+.1e}"
+    if casas is None:
+        casas = _casas_para([valor])
+    truncado = _trunca(valor, casas)
+    if truncado == 0.0:
+        # Só se chega aqui no teto de casas: publicar "+0.0" seria o
+        # defeito do A-N4 de volta, e arredondar para cima seria o R2-2.
+        return f"{valor:+.1e}"
+    return f"{truncado:+.{casas}f}"
 
 
-# Resolução da tabela publicada: `_COLUNAS_1CASA` sai com 1 casa, logo
-# qualquer viés com módulo abaixo de 0,05 pp aparece como 0,0 lá.
-_RESOLUCAO_PP = 0.05
+# Resolução da tabela publicada, DERIVADA do formato das colunas (R2-5):
+# com `_CASAS_TABELA` casas, qualquer viés com módulo abaixo de meia casa
+# aparece como 0,0 lá. Mudar o formato move as duas coisas juntas.
+_RESOLUCAO_PP = 0.5 * 10.0 ** (-_CASAS_TABELA)
 
 
 def _lista_safras(safras) -> str:
     return ", ".join(str(int(s)) for s in sorted(safras))
 
 
-def _causa_sem_teste(vies: list[float]) -> str:
+def _causa_sem_teste(vies: list[float], casas: int | None = None) -> str:
     """Por que o teste t não saiu — derivado das próprias observações.
 
     As duas causas são opostas e a frase tem que separá-las: *não há
@@ -755,8 +823,8 @@ def _causa_sem_teste(vies: list[float]) -> str:
         return (f"Com {n} safra(s) comparável(is) não há dispersão entre "
                 "safras para testar se essa diferença se distingue de zero.")
     return (f"As {n} diferenças não têm dispersão entre si (todas em torno "
-            f"de {_fmt_pp(vies[0])} pp), e sem dispersão o teste t não existe — "
-            "não há erro-padrão a estimar.")
+            f"de {_fmt_pp(vies[0], casas)} pp), e sem dispersão o teste t não "
+            "existe — não há erro-padrão a estimar.")
 
 
 def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
@@ -841,6 +909,15 @@ def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
     if p_mais is not None and p_menos is not None:
         p_bilateral = min(1.0, 2.0 * min(p_mais, p_menos))
 
+    # Uma casa decimal só para TODOS os números que a tela vai publicar
+    # desta medição (R2-1/R2-2): média, mínimo e máximo saem com a mesma
+    # precisão, e a precisão é a menor que ainda distingue o mínimo do
+    # máximo. Com 2,97 a 3,04 a frase saía "de +3.0 a +3.0 pp entre as
+    # safras" — afirmando uniformidade onde há dispersão, que é o A-T7-02
+    # de novo, um andar acima.
+    casas = (_casas_para([medio, min(vies), max(vies)]) if n
+             else _CASAS_TABELA)
+
     notas: list[str] = []
     if n:
         medidas_na_tabela = sorted(
@@ -851,14 +928,15 @@ def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
             f"Nas {n} safra(s) mensurável(is) dos dois lados "
             f"({_lista_safras(medidas_na_tabela)}), reconstruir a carteira "
             f"com os segmentos aprovados hoje move o retorno em "
-            f"{_fmt_pp(medio)} pp por safra, em média (de "
-            f"{_fmt_pp(min(vies))} a {_fmt_pp(max(vies))} pp entre as "
+            f"{_fmt_pp(medio, casas)} pp por safra, em média (de "
+            f"{_fmt_pp(min(vies), casas)} a {_fmt_pp(max(vies), casas)} pp "
+            "entre as "
             "safras). Essa diferença **não era "
             "conhecida na época** de cada safra: ela vem de saber, hoje, "
             "quais segmentos passaram no teste OOS. É o tamanho do viés, não "
             "um resultado da estratégia.")
         if p_bilateral is None:
-            notas.append(_causa_sem_teste(vies))
+            notas.append(_causa_sem_teste(vies, casas))
         elif significante:
             notas.append(
                 f"O teste t bilateral sobre as {n} diferenças dá "
@@ -871,8 +949,9 @@ def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
             # explicando a contradicao aparente.
             if abs(medio) < _RESOLUCAO_PP:
                 notas.append(
-                    f"O tamanho medido, porém, é de {_fmt_pp(medio)} pp por "
-                    f"safra — abaixo da resolução de 1 casa decimal da tabela "
+                    f"O tamanho medido, porém, é de {_fmt_pp(medio, casas)} pp por "
+                    f"safra — abaixo da resolução de {_CASAS_TABELA} casa(s) "
+                    "decimal(is) da tabela "
                     "abaixo, onde ele aparece como 0,0. O viés se distingue "
                     "de zero e é **desprezível em tamanho**: significância "
                     "não é magnitude.")
@@ -951,7 +1030,8 @@ def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
         "faixa": (min(vies), max(vies)) if n else (None, None),
         "p_bilateral": p_bilateral,
         "significante": significante,
-        "texto_medio": f"{_fmt_pp(medio)} pp" if medio is not None else "—",
+        "texto_medio": (f"{_fmt_pp(medio, casas)} pp"
+                        if medio is not None else "—"),
         # Nunca `True`: ver a docstring. Vermelho = vies demonstrado;
         # neutro = a amostra nao permite concluir.
         "positivo": False if significante else None,
@@ -1043,7 +1123,7 @@ def _column_config_vies() -> dict:
     """1 casa decimal nas colunas de retorno/viés sem mexer no dtype — mesma
     convenção de `_column_config_retorno` (a ordenação por clique de
     cabeçalho tem que continuar numérica, não alfabética)."""
-    return {col: st.column_config.NumberColumn(format="%.1f")
+    return {col: st.column_config.NumberColumn(format=_FORMATO_TABELA)
             for col in _COLUNAS_VIES}
 
 
@@ -1107,14 +1187,26 @@ def render_vies_universo(resultados_aprovados: list[dict],
         "naquele ano, sem gate de aprovação."
     )
 
+    clicou = st.button("Medir o viés de universo", key="pb3_btn_vies")
+    medido = st.session_state.get("pb3_vies_universo")
+
+    # PORTAO. Nada acima desta linha custa mais que desenhar texto (R2-3):
+    # `_assinatura_vies` custa 0,34 s e ~8 MB por rerun e era calculada
+    # ANTES do botao e ANTES do early-return. "Sob demanda, com botao" e
+    # decisao do dono do projeto; computar sempre e so esconder o resultado
+    # cumpre a aparencia da decisao, nao a decisao.
+    if not clicou and medido is None:
+        return
+
+    # A assinatura continua comparavel entre reruns -- ela so e calculada
+    # nos dois caminhos que PUBLICAM numero: quem clicou (e vai medir) e
+    # quem tem medicao guardada para redesenhar (e precisa saber se ela
+    # ainda vale). O rerun comum, sem clique e sem medicao, nao paga nada.
     assinatura = _assinatura_vies(tabela_com_gate, resultados_aprovados,
                                   resultados_todos, df_precos,
                                   selic_por_ano, taxa_selic_aa)
 
-    if not st.button("Medir o viés de universo", key="pb3_btn_vies"):
-        medido = st.session_state.get("pb3_vies_universo")
-        if medido is None:
-            return
+    if not clicou:
         # Medição de OUTRA análise não volta para a tela: ela responde a uma
         # população que o Bloco 1 acima não mostra mais.
         if medido.get("assinatura") != assinatura:
