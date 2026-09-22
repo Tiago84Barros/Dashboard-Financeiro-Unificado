@@ -8,9 +8,13 @@ suíte completa no CI (nota de memória `apptest-vaza-atribuicao-de-modulo`).
 As tabelas de entrada são montadas à mão com o schema de
 `core.b3_safras.COLUNAS_TABELA`, sem passar por Streamlit nem pelo motor.
 """
+import ast
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
+from core.b3_safras import COLUNAS_TABELA
 from views.portfolio_b3_safras import (
     _COLUNAS_RETORNO,
     _CORES_SERIE,
@@ -20,6 +24,8 @@ from views.portfolio_b3_safras import (
     _resumo_safras,
     _tabela_para_exibicao,
 )
+
+RAIZ = Path(__file__).parents[1]
 
 
 def _linha(safra, *, completa, mensuravel, estrategia=10.0, ew=8.0,
@@ -284,3 +290,53 @@ def test_grafico_barras_usa_cores_da_aba_para_cada_serie():
     fig = _grafico_barras(_resumo_safras(tabela)["completas"])
     cores_por_serie = {trace.name: trace.marker.color for trace in fig.data}
     assert cores_por_serie == _CORES_SERIE
+
+
+def test_render_safras_passa_column_config_ao_st_dataframe():
+    """Achado NOVO-1 (rodada de correção 3): `_column_config_retorno` é
+    testada isolada (`test_column_config_retorno_formata_como_numero_sem_mudar_dtype`),
+    mas nada prendia o fato de ela ser *usada* dentro de `render_safras`.
+    Remover `column_config=_column_config_retorno()` da chamada
+    `st.dataframe` deixava a suíte inteira verde — a tabela volta a
+    imprimir `9.130000000000001` sem erro nenhum, porque a formatação é
+    só visual e nenhum teste chama `render_safras`.
+
+    Inspeção por AST do código-fonte, não `AppTest` — nesta base o
+    AppTest vaza atribuição de módulo e só falha dentro da suíte
+    completa no CI, nunca isolado (nota de memória
+    `apptest-vaza-atribuicao-de-modulo`)."""
+    caminho = RAIZ / "views" / "portfolio_b3_safras.py"
+    arvore = ast.parse(caminho.read_text(encoding="utf-8"))
+    render = next(
+        no for no in ast.walk(arvore)
+        if isinstance(no, ast.FunctionDef) and no.name == "render_safras"
+    )
+    chamadas_dataframe = [
+        no for no in ast.walk(render)
+        if isinstance(no, ast.Call)
+        and isinstance(no.func, ast.Attribute)
+        and no.func.attr == "dataframe"
+    ]
+    assert chamadas_dataframe, "render_safras nao chama st.dataframe"
+    kwargs_passados = {
+        kw.arg for chamada in chamadas_dataframe for kw in chamada.keywords
+    }
+    assert "column_config" in kwargs_passados, (
+        "st.dataframe em render_safras nao recebe column_config -- a "
+        "formatacao de 1 casa de _column_config_retorno() nao esta cabeada"
+    )
+
+
+def test_colunas_retorno_esta_contida_em_colunas_tabela():
+    """Achado NOVO-1, segundo modo de falha: `st.dataframe` ignora em
+    silêncio qualquer chave de `column_config` que não corresponda a
+    nenhuma coluna da tabela exibida. Um rename em `_COLUNAS_RETORNO` (ou
+    em `core.b3_safras.COLUNAS_TABELA`) sem atualizar o outro lado apaga a
+    formatação de `_column_config_retorno` sem nenhum erro, nenhuma
+    exceção e nenhum teste vermelho -- exceto este, que prende a
+    inclusão diretamente."""
+    assert set(_COLUNAS_RETORNO) <= set(COLUNAS_TABELA), (
+        "_COLUNAS_RETORNO tem coluna fora de core.b3_safras.COLUNAS_TABELA -- "
+        "a formatacao dessa coluna em _column_config_retorno() seria "
+        "ignorada em silencio pelo st.dataframe"
+    )
