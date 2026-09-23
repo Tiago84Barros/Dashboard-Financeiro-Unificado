@@ -41,10 +41,29 @@ Regras de entrada
    dentro de `_TOL_COTAS`. Se um dia a divisao nao fechar, a linha e recusada
    pelo mesmo criterio.
 
-2. **Quantidade zero nao e posicao.** Ativo vendido continua aparecendo no
-   extrato com saldo e quantidade zero (CSMG3, MBRF3, HGRE11 em 21/09/2026),
-   carregando preco medio e rentabilidade historicos. Nao ha lista de tickers
-   aqui de proposito: a regra e `quantity != 0`, e ela nao envelhece.
+2. **Quantidade zero e a VENDA, e ela e gravada.** Ativo vendido continua
+   aparecendo no extrato com saldo e quantidade zero (CSMG3, MBRF3, HGRE11 em
+   21/09/2026), carregando preco medio e rentabilidade historicos. Ate
+   2026-09-22 essas linhas eram PULADAS, o que parecia conservador e era o
+   contrario: o `DENSE_RANK` de `core/investimentos.py::_SQL_POSICOES_SNAPSHOT`
+   escolhe, por ativo, a foto mais recente que EXISTE -- e, sem a linha de
+   hoje, ele caia na do `xp_consolidado` de 2026-07-31 e a tela seguia
+   mostrando 94 cotas de CSMG3 ja vendidas. Ausencia tem duas causas opostas
+   (papel vendido x fonte que nao cobre o ativo) e o banco nao distingue; quem
+   distingue e este parser, que esta lendo o zero. Entao a linha entra com
+   `quantity = 0` e `market_value = 0`, o snapshot de hoje ganha do antigo, e
+   o corte `vm <= 0` de `_montar_carteira_snapshot` tira o ativo da carteira
+   sem nenhum leitor precisar mudar.
+
+   Zero com saldo DIFERENTE de zero e outra coisa: contradicao dentro da
+   linha. Essa continua recusada, com o motivo.
+
+2b. **Tesouro sai com o nome do site, nao com o codigo da divida.** O extrato
+   publica "NTNB PRINC ago/2032"; a tela mostra "Tesouro IPCA+ 2032". A
+   traducao (`core/tesouro_nomes.py`) acontece na importacao porque o ticker
+   colapsa principal e com-cupom no mesmo `TIPCA2032` -- depois dele a
+   distincao ja se perdeu. Familia desconhecida devolve o texto original: um
+   rotulo amigavel errado e pior que um codigo feio.
 
 3. **Custodia Remunerada nao entra.** A secao repete acoes que ja estao em
    "Acoes" com a MESMA quantidade -- BBAS3 1.479 e PETR3 109 aparecem nas
@@ -76,6 +95,7 @@ from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
 
 from core.config import settings
+from core.tesouro_nomes import nome_amigavel
 
 from .common import (
     ensure_external_id_columns,
@@ -307,17 +327,24 @@ def posicao(secao: dict, linha: tuple):
 
     elif categoria.startswith("TESOURO DIRETO"):
         qtd = numero_br(_campo(secao, linha, "Quantidade", "Disponivel"))
-        if qtd is None or qtd == 0:
+        if qtd is None:
             return None, "sem quantidade"
         vencimento = _campo(secao, linha, "Vencimento")
-        # Mesma funcao que o Consolidado da XP usa, de proposito: dois
-        # esquemas de ticker para o mesmo titulo fragmentariam a carteira em
-        # dois ativos. A traducao abaixo so leva o codigo da B3 ("LFT") ao
-        # vocabulario que aquela funcao entende ("Tesouro Selic").
-        ticker, _ = _tesouro_ticker(_codigo_tesouro(primeira), vencimento)
+        # O extrato publica o codigo da divida ("NTNB PRINC ago/2032"); a
+        # tela mostra o nome do site do Tesouro ("Tesouro IPCA+ 2032"). A
+        # traducao acontece AQUI, na fonte, porque o ticker colapsa principal
+        # e com-cupom no mesmo `TIPCA2032` -- depois do ticker a distincao ja
+        # se perdeu. O ticker sai do nome publico e continua o mesmo que o
+        # Consolidado da XP gera: dois esquemas para o mesmo titulo
+        # fragmentariam a carteira em dois ativos.
+        nome = nome_amigavel(primeira, vencimento)
+        ticker, _ = _tesouro_ticker(nome, vencimento)
+        encerrada, motivo = _encerrada(qtd, saldo)
+        if motivo:
+            return None, motivo
         return {
             "ticker": ticker,
-            "name": primeira,
+            "name": nome,
             "asset_type": "tesouro",
             "quantity": qtd,
             # O extrato nao publica PU do titulo -- so saldo e quantidade,
@@ -325,8 +352,10 @@ def posicao(secao: dict, linha: tuple):
             # mas falso, e preco derivado de arredondamento ja custou caro
             # aqui antes.
             "market_price": None,
-            "market_value": saldo if saldo is not None else 0.0,
-            "invested_value": numero_br(
+            "market_value": 0.0 if encerrada else (
+                saldo if saldo is not None else 0.0
+            ),
+            "invested_value": 0.0 if encerrada else numero_br(
                 _campo(secao, linha, "Valor aplicado")
             ),
             "is_loaned": False,
@@ -343,8 +372,9 @@ def posicao(secao: dict, linha: tuple):
 
     if qtd is None:
         return None, "sem quantidade"
-    if qtd == 0:
-        return None, "quantidade zero (posicao encerrada)"
+    encerrada, motivo = _encerrada(qtd, saldo)
+    if motivo:
+        return None, motivo
 
     aplicado = None
     if medio is not None and medio > 0:
@@ -355,24 +385,35 @@ def posicao(secao: dict, linha: tuple):
         "name": nome,
         "asset_type": tipo,
         "quantity": qtd,
+        # O ultimo preco continua sendo observacao valida mesmo com a posicao
+        # encerrada -- e o que o extrato viu, nao o que a carteira vale.
         "market_price": preco,
-        "market_value": saldo if saldo is not None else 0.0,
-        "invested_value": aplicado,
+        "market_value": 0.0 if encerrada else (
+            saldo if saldo is not None else 0.0
+        ),
+        "invested_value": 0.0 if encerrada else aplicado,
         "is_loaned": categoria.startswith("ALUGUEL"),
         "currency": "BRL",
     }, ""
 
 
-def _codigo_tesouro(nome: str) -> str:
-    """Traduz o codigo da B3 para o nome que `_tesouro_ticker` reconhece."""
-    upper = _norm(nome)
-    if upper.startswith("LFT"):
-        return "Tesouro Selic"
-    if upper.startswith("LTN") or upper.startswith("NTNF"):
-        return "Tesouro Prefixado"
-    if upper.startswith("NTNB"):
-        return "Tesouro IPCA"
-    return nome
+def _encerrada(qtd: float, saldo: float | None) -> tuple[bool, str]:
+    """Quantidade zero e encerramento? Devolve (encerrada, motivo_de_recusa).
+
+    Zero com saldo zero e posicao encerrada -- a venda, escrita. Zero com
+    saldo diferente de zero e contradicao dentro da propria linha: o extrato
+    diz ao mesmo tempo que nao ha papel e que ha dinheiro. Escolher um dos
+    dois apagaria uma posicao viva ou ressuscitaria uma morta, entao a linha
+    e recusada com o motivo.
+    """
+    if qtd != 0:
+        return False, ""
+    if saldo not in (None, 0, 0.0):
+        return False, (
+            f"quantidade zero com saldo {saldo}: a linha se contradiz e nao "
+            f"da para afirmar se a posicao foi encerrada"
+        )
+    return True, ""
 
 
 def _classe_ativo(tipo: str) -> str:
@@ -659,6 +700,19 @@ def _importar_posicoes(
                     source_table=SOURCE_TABLE,
                 )
                 summary["positions_imported"] += 1
+                if pos["quantity"] == 0:
+                    # Encerramento e importacao, nao recusa: a linha entra no
+                    # snapshot justamente para a tela PARAR de mostrar o
+                    # ativo. Contar a parte para o resumo nao dizer so
+                    # "importadas" de uma venda.
+                    summary["positions_closed"] = (
+                        summary.get("positions_closed", 0) + 1
+                    )
+                    summary["files_skipped_notes"].append(
+                        f"{pos['ticker']}: posicao encerrada (quantidade "
+                        f"zero no extrato) -- gravada como zero para sair "
+                        f"da carteira."
+                    )
         except Exception as exc:  # noqa: BLE001
             summary["errors"].append(
                 f"[{secao['categoria'].title()}] {pos['ticker']}: "
