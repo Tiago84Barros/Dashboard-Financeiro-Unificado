@@ -2279,7 +2279,14 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
         custo_original = pos.get("total_investido_moeda_original")
         custo_val = f"US$ {custo_original:,.2f}" if custo_original is not None else "Não informado"
     else:
-        custo_label = "Custo estimado" if custo_fonte == "preco_medio_estimado" else "Custo investido"
+        # "Estimado" e o custo que esta app calculou esticando um preco medio
+        # sobre uma quantidade que a fonte do preco nao afirma. O custo que a
+        # B3 declara nao entra aqui.
+        custo_label = (
+            "Custo estimado"
+            if custo_fonte in ("preco_medio_estimado", "b3_preco_medio_escalado")
+            else "Custo investido"
+        )
         custo_val = "Não informado" if custo_ausente else fmt_moeda(ti)
     resultado_val = "—" if custo_ausente or not rentab_ok else f"{seta_r} {abs(rentab):.2f}%"
     retorno_val = "—" if not custo_comparavel_brl else f"{rsc:.2f}%"

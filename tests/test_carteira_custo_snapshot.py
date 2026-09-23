@@ -25,7 +25,8 @@ from types import SimpleNamespace
 from core.investimentos import _montar_carteira_snapshot
 
 
-def _row(ticker, *, qty, vm, invested=None, pp_qty=0, pp_ti=0, pp_avg=0):
+def _row(ticker, *, qty, vm, invested=None, pp_qty=0, pp_ti=0, pp_avg=0,
+         b3_avg=0, b3_qty=0):
     return SimpleNamespace(
         ticker=ticker,
         quantity=qty,
@@ -43,6 +44,9 @@ def _row(ticker, *, qty, vm, invested=None, pp_qty=0, pp_ti=0, pp_avg=0):
         pp_quantity=pp_qty,
         pp_total_invested=pp_ti,
         pp_average_price=pp_avg,
+        b3_avg_price=b3_avg,
+        b3_quantity=b3_qty,
+        b3_report_date=date(2026, 9, 21),
     )
 
 
@@ -54,11 +58,12 @@ def _pos(rows, ticker):
 def test_custo_do_extrato_ganha_do_historico_parcial():
     """O caso BBAS3 de 21/09/2026, com os numeros de producao."""
     pos = _pos([_row("BBAS3", qty=1479, vm=34017.00, invested=35377.68,
-                     pp_qty=1086, pp_ti=11294.64, pp_avg=10.4003)], "BBAS3")
+                     pp_qty=1086, pp_ti=11294.64, pp_avg=10.4003,
+                     b3_avg=23.9200, b3_qty=1479)], "BBAS3")
 
-    assert pos["total_investido"] == 35377.68
+    assert round(pos["total_investido"], 2) == 35377.68
     assert round(pos["preco_medio"], 2) == 23.92
-    assert pos["custo_fonte"] == "snapshot"
+    assert pos["custo_fonte"] == "b3_posicao_detalhada"
     # Numero declarado pela corretora nao e estimativa: o card nao pode
     # rotular como "Custo estimado" o unico custo autoritativo que existe.
     assert pos["custo_estimado"] is False
@@ -92,3 +97,59 @@ def test_custo_zero_no_snapshot_nao_e_custo():
 
     assert pos["total_investido"] == 800.0
     assert pos["custo_fonte"] == "b3_negociacao"
+
+
+def test_preco_medio_da_b3_ganha_do_consolidado_da_rico():
+    """Um consolidado da Rico mais recente nao pode assumir o preco medio.
+
+    O `DENSE_RANK` que escolhe a linha da posicao ordena por data PRIMEIRO --
+    autoridade da fonte so desempata dentro da mesma data. Entao basta o
+    usuario subir o .xlsx da Rico depois do ultimo extrato da B3 para que o
+    consolidado passe a ditar quantidade, valor de mercado E custo de todo
+    ativo que as duas fontes cobrem.
+
+    Para a foto da posicao isso esta certo. Para o custo nao: preco medio nao
+    envelhece como cotacao envelhece -- ele so muda quando ha compra ou venda
+    --, e a B3 e a custodia central, com o historico de TODAS as corretoras,
+    enquanto o consolidado enxerga so a propria. O numero da Rico aqui (PM
+    R$ 31,00) e o de uma corretora que so viu parte das compras.
+    """
+    pos = _pos([_row("BBAS3", qty=1479, vm=34017.00, invested=45849.00,
+                     b3_avg=23.9200, b3_qty=1479)], "BBAS3")
+
+    assert round(pos["preco_medio"], 2) == 23.92
+    assert round(pos["total_investido"], 2) == 35377.68
+    assert pos["custo_fonte"] == "b3_posicao_detalhada"
+    assert pos["custo_estimado"] is False
+
+
+def test_preco_medio_da_b3_escala_para_a_quantidade_de_hoje():
+    """Quantidade nova, preco medio antigo: o PM da B3 vale, o total nao.
+
+    Se o extrato da B3 e de antes da ultima compra, o total investido que ele
+    publica e de outra posicao -- mas o preco medio segue sendo o melhor que
+    existe. Multiplicar pelo que se tem hoje e extrapolacao, e o card precisa
+    dizer isso: e "Custo estimado", nao "Custo investido".
+    """
+    pos = _pos([_row("DIRR3", qty=800, vm=9000.00, invested=None,
+                     b3_avg=11.84, b3_qty=649)], "DIRR3")
+
+    assert round(pos["preco_medio"], 2) == 11.84
+    assert round(pos["total_investido"], 2) == 9472.00
+    assert pos["custo_fonte"] == "b3_preco_medio_escalado"
+    assert pos["custo_estimado"] is True
+
+
+def test_sem_nenhuma_fonte_b3_o_consolidado_segue_valendo():
+    """A regra e de prioridade, nao de proibicao.
+
+    Os CDBs e os titulos privados (4606422UNA, 5082123CA1) existem so no
+    consolidado da corretora: nao tem linha na "Posicao Detalhada" da B3 nem
+    nota de negociacao importada. Descartar o numero deles em nome da regra
+    trocaria um custo correto por "Nao informado" -- perder o dado nao e
+    cumprir a regra, e so perder o dado.
+    """
+    pos = _pos([_row("CDB0001", qty=1, vm=10500.00, invested=10000.00)], "CDB0001")
+
+    assert round(pos["total_investido"], 2) == 10000.00
+    assert pos["custo_fonte"] == "snapshot"
