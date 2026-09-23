@@ -1118,8 +1118,8 @@ def test_cards_por_ativo_saem_em_token_de_tema_e_nao_em_literal():
     """
     import re
 
-    from design.portfolio_global_cards import card_papel_html, card_recomendacao_html
     from core.global_portfolio import roles
+    from design.portfolio_global_cards import card_papel_html, card_recomendacao_html
 
     entrada = roles.PapelDoAtivo(
         symbol="PETR4", papeis=frozenset(), indeterminados=frozenset(),
