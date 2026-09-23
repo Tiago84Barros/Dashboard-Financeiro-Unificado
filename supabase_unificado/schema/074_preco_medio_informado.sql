@@ -53,3 +53,24 @@ COMMENT ON COLUMN investment_manual_costs.ticker IS
     'Ticker-base em MAIÚSCULAS, sem o sufixo F do fracionário.';
 COMMENT ON COLUMN investment_manual_costs.average_price IS
     'Preço médio em BRL -- a mesma moeda em que o card exibe o custo.';
+
+-- RLS no mesmo padrão de investment_transactions / portfolio_positions /
+-- dividends. Sem isto a tabela nasce legível pela API REST com a chave
+-- anônima (o role `anon` tem SELECT no schema public). O app conecta como
+-- `postgres`, que ignora RLS, então nada muda para ele.
+ALTER TABLE investment_manual_costs ENABLE ROW LEVEL SECURITY;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_policies
+        WHERE schemaname = 'public'
+          AND tablename  = 'investment_manual_costs'
+          AND policyname = 'manual_costs_owner_all'
+    ) THEN
+        CREATE POLICY manual_costs_owner_all ON investment_manual_costs
+            FOR ALL
+            USING (user_id = auth.uid())
+            WITH CHECK (user_id = auth.uid());
+    END IF;
+END $$;
