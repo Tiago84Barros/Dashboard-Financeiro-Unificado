@@ -1998,10 +1998,11 @@ def test_manchete_do_vies_nunca_publica_zero_em_vermelho():
 
     assert m["significante"] is True and m["positivo"] is False
     assert m["p_bilateral"] < 0.01
-    # Truncado, nunca arredondado (R2-2): a media e 0,036 e a manchete
-    # publica "+0.03", nunca "+0.04" -- o texto nao afirma mais vies do
-    # que a medicao viu.
-    assert m["texto_medio"] == "+0.03 pp", (
+    # Arredondado para o vizinho mais proximo (NOVO-3): a media e 0,036 e
+    # a manchete publica "+0.04". Truncar em direcao a zero (rodada 3)
+    # publicava "+0.03" -- erro de 0,006 contra 0,004, e sistematico numa
+    # direcao so, num bloco cujo produto E o tamanho do vies.
+    assert m["texto_medio"] == "+0.04 pp", (
         f"a manchete do card vermelho saiu como {m['texto_medio']!r}"
     )
     assert float(m["texto_medio"].split()[0]) != 0.0, (
@@ -2021,7 +2022,7 @@ def test_vies_significante_abaixo_da_resolucao_publicada_avisa():
     assert "resolução" in notas and "desprezível em tamanho" in notas, (
         f"significância sem tamanho publicada sem ressalva: {notas}"
     )
-    assert "+0.03 pp" in notas
+    assert "+0.04 pp" in notas
 
     # E o aviso NÃO aparece quando o tamanho é publicável na tabela.
     com2, sem2 = _tabela_vies([13.04, 13.02, 12.97], [10.0, 10.0, 10.0])
@@ -2032,23 +2033,45 @@ def test_vies_significante_abaixo_da_resolucao_publicada_avisa():
 def test_fmt_pp_publica_casas_suficientes_e_nao_inventa_zero():
     assert _fmt_pp(0.0) == "+0.0"
     assert _fmt_pp(3.04) == "+3.0"
-    assert _fmt_pp(0.036) == "+0.03"
+    assert _fmt_pp(0.036) == "+0.04"
     assert _fmt_pp(-0.0004) == "-0.0004"
     assert _fmt_pp(None) == "—"
     assert _fmt_pp(float("nan")) == "—"
 
 
-def test_fmt_pp_nunca_publica_numero_maior_que_o_medido():
-    """R2-2: `_fmt_pp` parava na primeira casa não-nula ARREDONDANDO, e
-    `0.05` saía como "+0.1" — o dobro do medido, num bloco cujo produto é
-    justamente o tamanho do viés. A regra é truncar em direção a zero.
+def test_fmt_pp_nao_se_afasta_do_medido_mais_que_meia_casa():
+    """NOVO-2/NOVO-3: a rodada 3 truncava em direção a zero, e o teste
+    anterior ("nunca publica número maior que o medido") ABENÇOAVA o
+    defeito — `0.29` com 2 casas saía `0.28` e a asserção passava porque
+    0,28 < 0,29. A propriedade certa é a distância: publicar a casa
+    escolhida não pode afastar o texto do medido mais que meia casa, nas
+    DUAS direções. Truncar erra até uma casa inteira, e sempre para o
+    mesmo lado — viés sistemático na medida do próprio viés.
     """
-    assert _fmt_pp(0.05) == "+0.05", "0,05 pp publicado com outro valor"
-    for valor in (0.05, 0.149, -0.149, 0.999, -0.06, 3.999, 0.0499):
-        publicado = abs(float(_fmt_pp(valor).replace("+", "")))
-        assert publicado <= abs(valor) + 1e-12, (
-            f"{valor} foi publicado como {_fmt_pp(valor)} -- maior em "
-            "módulo do que a medição"
+    # O caso que motivou o truncamento (R2-2) continua fechado: numa frase
+    # cuja casa vem de `_casas_para`, 0,05 sai "+0.05", nunca "+0.1".
+    casas_frase = mod_safras._casas_para([0.05, 0.02, 0.10])
+    assert _fmt_pp(0.05, casas_frase) == "+0.05", "R2-2 reaberto"
+    assert _fmt_pp(0.05) == "+0.05", "R2-2 reaberto no valor sozinho"
+
+    medidos = [i / 100 for i in range(-400, 401)] + [
+        0.036, 0.149, -0.149, 0.999, -0.06, 3.999, 0.0499, 2.01, 0.29]
+    for valor in medidos:
+        for casas in range(1, mod_safras._CASAS_MAX + 1):
+            texto = _fmt_pp(valor, casas)
+            if texto == "—":
+                continue
+            distancia = abs(float(texto) - valor)
+            assert distancia <= 0.5 * 10.0 ** -casas + 1e-12, (
+                f"{valor} com {casas} casa(s) saiu {texto}: distância "
+                f"{distancia}, acima de meia casa"
+            )
+        # E na casa que a frase escolheria, o dígito publicado é o do
+        # decimal, não o do produto binário (NOVO-2: 0.29 -> 0.28).
+        casas = mod_safras._casas_para([valor])
+        assert float(_fmt_pp(valor, casas)) == pytest.approx(
+            float(f"{valor:.{casas}f}"), abs=1e-12), (
+            f"{valor} publicado como {_fmt_pp(valor, casas)}"
         )
 
 
@@ -2088,6 +2111,74 @@ def test_faixa_min_max_nao_colapsa_no_cenario_do_a_t7_02():
     assert "+2.97" in frase and "+3.04" in frase, (
         f"os extremos medidos não são os publicados: {frase}"
     )
+
+
+def test_manchete_do_cenario_canonico_e_a_media_das_tres_safras():
+    """NOVO-4: a manchete do card do cenário canônico (A-T7-02) mudou de
+    "+3.0 pp" para "+3.01 pp" quando a precisão passou a vir da dispersão
+    entre safras, e nenhum teste a prendia — número publicado mudando sem
+    deixar rastro. A manchete é a média (3,01) na casa da frase."""
+    com, sem = _tabela_vies([13.04, 13.02, 12.97], [10.0, 10.0, 10.0])
+    m = _vies_universo(com, sem)
+
+    assert m["texto_medio"] == "+3.01 pp", (
+        f"a manchete do cenário canônico saiu como {m['texto_medio']!r}"
+    )
+    assert m["medio"] == pytest.approx(3.01, abs=1e-9)
+
+
+def test_ruido_binario_nao_infla_a_precisao_publicada():
+    """NOVO-1: `_casas_para` contava distintos sobre o float CRU, e
+    `[3.0, 3.0000000000000995]` — que é o mesmo fato, com o bit que a
+    subtração de floats deixa — era lido como dois valores distintos.
+    Nenhuma casa até o teto os separava, a função caía no teto e a tela
+    publicava "+3.000000 pp": seis casas de precisão falsa.
+    """
+    assert mod_safras._casas_para([3.0, 3.0000000000000995, 3.0]) == 1
+
+    com, sem = _tabela_vies([13.0, 13.0000000000000995, 13.0],
+                            [10.0, 10.0, 10.0])
+    frase = _vies_universo(com, sem)["notas"][0]
+    assert "+3.000000" not in frase, f"precisão inflada por ruído: {frase}"
+    for numero in _numeros_pp(frase):
+        assert len(numero.split(".")[1]) <= 2, (
+            f"a frase publica {numero} para um viés de 3,0 pp: {frase}"
+        )
+
+
+def test_frase_decimal_nunca_publica_notacao_exponencial():
+    """NOVO-1, segunda metade: um viés que é ruído puro ao lado de um viés
+    real (`[3.04, 1.95e-14]`) publicava "+2.0e-14" DENTRO de uma frase de
+    números decimais. Exponencial não é uma casa a mais — é outro
+    formato, e a regra 1 cedendo em silêncio."""
+    com, sem = _tabela_vies([13.04, 10.0000000000000195], [10.0, 10.0])
+    frase = _vies_universo(com, sem)["notas"][0]
+
+    assert "e-" not in frase and "E-" not in frase, (
+        f"notação exponencial dentro da frase decimal: {frase}"
+    )
+    assert "+3.0" in frase, f"o viés real sumiu da frase: {frase}"
+
+
+def test_prioridade_das_regras_de_casas_e_explicita_no_teto():
+    """NOVO-6: `_casas_para([1.0, 1.0000000001])` devolvia 6 e os dois
+    saíam "+1.000000" — a regra 2 (distintos não colidem) desistindo em
+    silêncio no teto. A prioridade agora é explícita: distinção é medida
+    sobre o valor COMO SERÁ PUBLICADO, então esses dois não são distintos
+    e a frase não afirma faixa que o texto não mostra."""
+    assert mod_safras._casas_para([1.0, 1.0000000001]) == 1
+
+    com, sem = _tabela_vies([13.0, 13.0000000001], [10.0, 10.0])
+    frase = _vies_universo(com, sem)["notas"][0]
+    assert "de +3.0 a +3.0 pp" not in frase, (
+        f"a frase afirma uma faixa que o texto não mostra: {frase}"
+    )
+    assert "na casa publicada" in frase, (
+        f"extremos iguais publicados como faixa: {frase}"
+    )
+    # A regra 1 é a única que pode ceder, e só além do teto de casas.
+    assert mod_safras._fmt_pp(1.95e-14, 1) == "+0.0"
+    assert mod_safras._casas_para([0.05]) == 2
 
 
 def test_uma_so_regra_de_casas_para_tabela_e_prosa():

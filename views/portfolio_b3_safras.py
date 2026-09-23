@@ -714,62 +714,90 @@ _COLUNAS_VIES = ["Estratégia (%) com gate", "Estratégia (%) sem gate",
                  "Viés (pp)"]
 
 
-# Teto de casas antes de cair na notacao exponencial.
+# Teto de casas da prosa. Alem dele a frase nao ganha precisao: ganha
+# ruido binario com cara de medicao.
 _CASAS_MAX = 6
 
 
-def _trunca(valor: float, casas: int) -> float:
-    """Trunca EM DIRECAO A ZERO, nunca arredonda.
+def _arredonda(valor: float, casas: int) -> float:
+    """O valor COMO ELE SERÁ PUBLICADO, de volta como número.
 
-    Arredondar publica numero MAIOR que o medido (R2-2): `0.05` com uma
-    casa vira `+0.1`, o dobro do que a medicao viu. Truncar erra sempre
-    para o lado conservador — o texto nunca afirma mais viés do que foi
-    observado.
+    A conversão é a mesma que a frase faz (`f"{v:.{casas}f}"`), então o
+    que esta função devolve é exatamente o que o leitor vai ver — é isso
+    que permite a `_casas_para` medir distinção sobre o publicado, e não
+    sobre o float cru (NOVO-1).
+
+    **Arredonda** para o vizinho mais próximo; não trunca. Truncar em
+    direção a zero (rodada 3) errava o dobro e sempre para o mesmo lado:
+    num bloco cujo produto É o tamanho do viés, isso é enviesar a medida
+    do viés (NOVO-3). E `math.trunc(v * 10**casas)` opera sobre um produto
+    binário, publicando o último dígito errado — `0.29` com 2 casas saía
+    `0.28`, em 69 de 999 valores da forma `i/100` (NOVO-2). Arredondando,
+    o publicado nunca se afasta do medido mais que meia casa, nas duas
+    direções.
     """
-    # O ruido binario vem ANTES do truncamento: `13.04 - 10.0` e
-    # 3.039999999999999, e truncar cru publicaria "+3.03" para um vies
-    # medido de 3,04. Normalizar em casas muito alem da publicacao mata o
-    # ruido sem tocar no digito que a frase mostra.
-    valor = round(float(valor), _CASAS_MAX + 6)
-    fator = 10.0 ** casas
-    return math.trunc(valor * fator) / fator
+    return float(f"{float(valor):.{casas}f}")
 
 
 def _casas_para(valores) -> int:
     """Quantas casas a FRASE inteira usa — uma só, para todos os números.
 
-    Duas exigências, as duas medidas sobre os próprios valores:
+    Três exigências, todas medidas sobre os próprios valores:
 
     1. nenhum valor não-nulo pode sair como zero (A-N4: significância sem
-       tamanho não é acionável);
+       tamanho não é acionável). Na prática a frase mostra ao menos o
+       primeiro algarismo significativo do menor módulo não-nulo, o que
+       também impede `0.05` de sair `+0.1` (R2-2);
     2. valores DIFERENTES não podem sair iguais (R2-1: com 2,97 a 3,04 a
        faixa saía "de +3.0 a +3.0 pp", afirmando de novo a uniformidade
        que o A-T7-02 acabou de tirar do valor — o mesmo defeito, um andar
-       acima, agora no texto).
+       acima, agora no texto);
+    3. a casa é a mesma para todos os números da frase (R2-2: "de +0.02 a
+       +0.1 pp" misturava precisões dentro de uma frase só).
+
+    **Prioridade explícita quando as três não cabem juntas** (NOVO-6):
+
+    - a regra 3 nunca cede: é a forma da frase, e misturar precisões é o
+      próprio R2-2;
+    - a regra 2 é sempre satisfazível, por construção: "diferentes" é
+      medido sobre o valor COMO ELE SERÁ PUBLICADO no teto de casas, de
+      modo que dois valores que só divergem em ruído binário não são
+      distintos para efeito de publicação (NOVO-1: `[3.0,
+      3.0000000000000995]` pedia seis casas e publicava "+3.000000"). E
+      quem afirma distinção é a frase: `_vies_universo` só diz "de X a Y"
+      quando X e Y saem diferentes;
+    - a regra 1 é a única que pode ser impossível: um não-nulo cujo
+      primeiro algarismo significativo cai além do teto (1,95e-14). Aí o
+      teto vence e ele sai "+0.0" na casa da frase — nunca em notação
+      exponencial, que seria outro formato dentro de uma frase decimal
+      (NOVO-1: "+2.0e-14" no meio de "+1.520000" e "+3.040000").
 
     O piso é a resolução da tabela publicada (`_CASAS_TABELA`) para que a
-    prosa nunca seja *menos* precisa que a coluna ao lado, e a casa é a
-    mesma para todos os números da frase (R2-2: "de +0.02 a +0.1 pp"
-    misturava precisões dentro de uma frase só).
+    prosa nunca seja *menos* precisa que a coluna ao lado.
     """
     finitos = [float(v) for v in valores
                if v is not None and np.isfinite(float(v))]
     if not finitos:
         return _CASAS_TABELA
-    distintos = len(set(finitos))
-    for casas in range(_CASAS_TABELA, _CASAS_MAX + 1):
-        truncados = [_trunca(v, casas) for v in finitos]
-        sumiu = any(t == 0.0 and v != 0.0
-                    for t, v in zip(truncados, finitos))
-        colidiu = len(set(truncados)) < distintos
-        if not sumiu and not colidiu:
+    publicaveis = [_arredonda(v, _CASAS_MAX) for v in finitos]
+    distintos = len(set(publicaveis))
+    piso = _CASAS_TABELA
+    modulos = [abs(p) for p in publicaveis if p != 0.0]
+    if modulos:
+        # Casa do primeiro algarismo significativo do MENOR modulo: abaixo
+        # dela a frase publica zero (regra 1) ou dobra o numero (0,05 ->
+        # +0.1, o sintoma que o R2-2 nomeia).
+        piso = max(piso, -math.floor(math.log10(min(modulos))))
+    piso = max(_CASAS_TABELA, min(piso, _CASAS_MAX))
+    for casas in range(piso, _CASAS_MAX + 1):
+        if len({_arredonda(v, casas) for v in finitos}) == distintos:
             return casas
     return _CASAS_MAX
 
 
 def _fmt_pp(valor: float | None, casas: int | None = None) -> str:
     """Valor em pp com casas SUFICIENTES para não publicar zero onde a
-    medição não é zero (A-N4), e nunca MAIOR que o medido (R2-2).
+    medição não é zero (A-N4), e nunca a mais de meia casa do medido.
 
     Com `{:+.1f}` fixo, um viés de +0,036 pp significante (p = 0,002) saía
     na manchete como **"+0,0 pp" em vermelho**: significância sem tamanho,
@@ -781,7 +809,10 @@ def _fmt_pp(valor: float | None, casas: int | None = None) -> str:
 
     `casas` vem de `_casas_para` quando o número divide a frase com
     outros: a mesma frase não pode misturar precisões. Sem ele, a decisão
-    é tomada para este valor sozinho.
+    é tomada para este valor sozinho — e é `_casas_para`, pela regra do
+    primeiro algarismo significativo, quem garante que `0.05` não sai
+    `+0.1` (R2-2); truncar era remédio para uma causa que essa regra já
+    resolve, e cobrava o dobro de erro, sempre para o mesmo lado.
 
     Zero medido continua "+0.0": é o número certo, não um arredondamento.
     """
@@ -792,12 +823,11 @@ def _fmt_pp(valor: float | None, casas: int | None = None) -> str:
         return "+0.0"
     if casas is None:
         casas = _casas_para([valor])
-    truncado = _trunca(valor, casas)
-    if truncado == 0.0:
-        # Só se chega aqui no teto de casas: publicar "+0.0" seria o
-        # defeito do A-N4 de volta, e arredondar para cima seria o R2-2.
-        return f"{valor:+.1e}"
-    return f"{truncado:+.{casas}f}"
+    # Sem escape exponencial: um "+2.0e-14" no meio de uma frase decimal
+    # nao e uma casa a mais, e outro formato (NOVO-1). Valor cujo primeiro
+    # algarismo significativo cai alem do teto sai "+0.0" na casa da
+    # frase, e e o unico caso em que a regra 1 cede -- ver `_casas_para`.
+    return f"{_arredonda(valor, casas):+.{casas}f}"
 
 
 # Resolução da tabela publicada, DERIVADA do formato das colunas (R2-5):
@@ -924,14 +954,22 @@ def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
             int(s) for s in comparacao.loc[comparavel
                                            & comparacao["Viés (pp)"].notna(),
                                            "Safra"])
+        # A frase so afirma faixa quando os dois extremos SAEM diferentes
+        # (NOVO-6). "de +3.0 a +3.0 pp entre as safras" afirma uma
+        # distincao que o texto nao mostra; quando a casa escolhida nao
+        # separa os extremos, o certo e dizer que eles nao se separam na
+        # casa publicada, e nao inventar mais casas para forcar a faixa.
+        pub_min = _fmt_pp(min(vies), casas)
+        pub_max = _fmt_pp(max(vies), casas)
+        faixa_txt = (f"de {pub_min} a {pub_max} pp entre as safras"
+                     if pub_min != pub_max else
+                     f"todas as safras em {pub_min} pp, na casa publicada")
         notas.append(
             f"Nas {n} safra(s) mensurável(is) dos dois lados "
             f"({_lista_safras(medidas_na_tabela)}), reconstruir a carteira "
             f"com os segmentos aprovados hoje move o retorno em "
-            f"{_fmt_pp(medio, casas)} pp por safra, em média (de "
-            f"{_fmt_pp(min(vies), casas)} a {_fmt_pp(max(vies), casas)} pp "
-            "entre as "
-            "safras). Essa diferença **não era "
+            f"{_fmt_pp(medio, casas)} pp por safra, em média "
+            f"({faixa_txt}). Essa diferença **não era "
             "conhecida na época** de cada safra: ela vem de saber, hoje, "
             "quais segmentos passaram no teste OOS. É o tamanho do viés, não "
             "um resultado da estratégia.")
