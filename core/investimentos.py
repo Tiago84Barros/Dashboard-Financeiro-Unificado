@@ -53,12 +53,12 @@ _SETOR_SCHEMA:   { nome, valor_mercado, pct_carteira }
 import logging
 from collections import defaultdict
 
-from core.tesouro_nomes import nome_amigavel
 from core.categorias import SQL_INVESTIMENTO
 from core.config import settings
 from core.currency_returns import retorno_em_brl, retorno_moeda_origem
 from core.fx_aquisicao import cambio_medio_de_aquisicao, taxa_para
 from core.market_freshness import classificar_cotacao, intervalo_referencia
+from core.tesouro_nomes import nome_amigavel
 from core.user_context import user_cache_data
 
 logger = logging.getLogger(__name__)

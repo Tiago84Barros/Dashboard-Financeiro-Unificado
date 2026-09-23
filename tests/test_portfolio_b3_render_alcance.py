@@ -28,9 +28,8 @@ import pytest
 
 import views.empresas_b3 as _emp
 import views.portfolio_b3 as mod
-from views.empresas_b3 import PITCoverage
-
 from tests.test_portfolio_b3_safras import _Falso
+from views.empresas_b3 import PITCoverage
 
 
 class _YfProibido:
