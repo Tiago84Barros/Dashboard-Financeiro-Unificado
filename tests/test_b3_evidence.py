@@ -12,6 +12,7 @@ from core.b3_evidence import (
     classify_evidence,
     evidence_label,
     minimum_detectable_effect,
+    sinal_significante,
 )
 
 
@@ -101,3 +102,82 @@ def test_apenas_evidencia_contra_bloqueia():
     ]
     assert [c.bloqueante for c in casos] == [False, False, False]
     assert classify_evidence(ic_values=[-0.3, -0.4], p_value=0.01).bloqueante is True
+
+
+# ── Rodada de correção 4 da Task 6 (A-1): o portão do sinal ──
+
+
+def test_portao_do_sinal_nao_aprova_sem_p_valor_nem_o_trata_como_contra():
+    """A-1: `views/portfolio_b3.py` mantinha a QUARTA cópia do teste t —
+    a única que DECIDE — com a guarda absoluta (`sd > 0`) e um
+    `p_value_ic = 0.0` literal: dois anos com Rank-IC idêntico e positivo
+    davam dispersão zero e a tela gravava `p = 0.0`, `t = inf`, isto é,
+    certeza absoluta onde não há grau de liberdade para afirmar nada. Sob
+    postos independentes isso alcança 2,7% dos segmentos de 5 ativos.
+
+    Sem dispersão real não há p-valor, e os DOIS lados da ausência foram
+    medidos antes da escolha: num modo que exige prova positiva ela não
+    aprova (`sinal_significante is False`), e também não é evidência
+    contra (`classify_evidence` devolve inconclusivo, não bloqueante)."""
+    # importado aqui dentro de proposito: no topo, o `test*` do nome faz o
+    # pytest COLETAR `teste_t_unilateral` como se fosse um teste.
+    from core.b3_evidence import teste_t_unilateral
+
+    identicos = [0.30, 0.30]
+    assert teste_t_unilateral(identicos) == (None, None)
+    assert sinal_significante(None) is False
+
+    veredito = classify_evidence(ic_values=identicos, p_value=None)
+    assert veredito.estado == INCONCLUSIVO and veredito.bloqueante is False
+    assert veredito.estado != CONTRA
+
+
+def test_sinal_significante_e_o_mesmo_alpha_de_classify_evidence():
+    """O portão aprova significância DEMONSTRADA e nada além dela: o
+    limiar é o mesmo `alpha` que classifica o estado, e valores que não
+    são p-valor (`None`, `nan`) não aprovam por descuido de comparação —
+    `nan < 0.10` é False, mas `p >= 0.10` (a forma antiga do portão)
+    também era False para `nan`, e isso APROVAVA."""
+    assert sinal_significante(0.0) is True
+    assert sinal_significante(0.099) is True
+    assert sinal_significante(0.10) is False
+    assert sinal_significante(0.5) is False
+    assert sinal_significante(1.0) is False
+    assert sinal_significante(float("nan")) is False
+    assert sinal_significante(0.04, alpha=0.01) is False
+
+    # e concorda com o estado publicado ao lado: o que o portão aprova é
+    # exatamente o que `classify_evidence` chama de evidência a favor
+    for p in (0.001, 0.05, 0.099, 0.10, 0.3, 0.9):
+        estado = classify_evidence(ic_values=[0.3, 0.25, 0.28], p_value=p).estado
+        assert sinal_significante(p) is (estado == A_FAVOR), p
+
+
+def test_classify_evidence_chama_a_regra_em_vez_de_repeti_la():
+    """N-4: `classify_evidence` repetia INLINE a regra que
+    `sinal_significante` centraliza (`p is not None and isfinite(p) and
+    p < alpha`). Enquanto era cópia, o teste acima só prendia o
+    comportamento de hoje — duas cópias que coincidem passam em qualquer
+    teste de comportamento e divergem na próxima edição
+    (`guarda-duplicada-diverge`). Foi exatamente assim que a guarda de
+    dispersão virou duas cópias com vereditos opostos sobre os MESMOS
+    Rank-ICs.
+
+    Inspeção por AST: o que se prende aqui é a EXISTÊNCIA de uma única
+    conta, não o valor que ela devolve hoje."""
+    import ast
+    from pathlib import Path
+
+    arvore = ast.parse((Path(__file__).parents[1] / "core" / "b3_evidence.py")
+                       .read_text(encoding="utf-8"))
+    alvo = next(no for no in ast.walk(arvore)
+                if isinstance(no, ast.FunctionDef)
+                and no.name == "classify_evidence")
+    chamadas = {no.func.id for no in ast.walk(alvo)
+                if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)}
+    assert "sinal_significante" in chamadas, (
+        "core/b3_evidence.py::classify_evidence voltou a decidir "
+        "significância por conta própria -- a regra do portão do sinal "
+        "mora em `sinal_significante` e tem que ser CHAMADA, senão o "
+        "portão da tela e o estado publicado podem divergir"
+    )

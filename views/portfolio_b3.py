@@ -16,6 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
 import core.data_reconciliacao as _recon
+from core.b3_evidence import sinal_significante, teste_t_unilateral
 from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
 from core.b3_portfolio_model import (
     list_b3_portfolio_model_versions,
@@ -24,6 +25,14 @@ from core.b3_portfolio_model import (
 )
 from core.b3_renda_sustentavel import (
     enrich_decision_universe as _enrich_decision_universe,
+)
+from core.b3_vigencia import (
+    REBAL_MONTH as _REBAL_MONTH,
+)
+from core.b3_vigencia import (
+    ano_base_do_score,
+    janela_de_vigencia,
+    safra_vigente_em,
 )
 from core.dossie_b3 import avaliar_para_selecao, quali_gate_disponivel
 from core.macro_data.database import get_local_macro_engine
@@ -41,7 +50,6 @@ from views.empresas_b3 import (
     _COR_POS,
     _DIV_POR_ACAO_MAX,
     _GAMMA_DEF,
-    _REBAL_MONTH,
     _SOFT_DEF,
     PITCoverage,
     _aplicar_cheapness,
@@ -66,6 +74,7 @@ from views.empresas_b3 import (
     _yf_multiplos_dividendos,
     _yf_trailing12m_divs,
 )
+from views.portfolio_b3_safras import render_safras
 
 _MIN_MARKET_CAP_COVERAGE = 0.80
 _MIN_ADTV_COVERAGE = 0.70
@@ -1001,7 +1010,11 @@ def _processar_segmento(
     rank_ic_mean = float("nan")
     rank_ic_years = 0
     rank_ic_tstat = float("nan")
-    p_value_ic = 1.0
+    # `None` = o teste do sinal NAO foi feito, que e diferente de "foi feito
+    # e nao deu significancia" (p = 1,0). Quem le trata a ausencia por
+    # `core.b3_evidence.sinal_significante` -- sem inventar aprovacao nem
+    # reprovacao por evidencia contra.
+    p_value_ic: float | None = None
     wf_hit_rate = float("nan")
     contrib_est: dict[str, float] = {}
     pit_validacao = PITCoverage()
@@ -1155,16 +1168,17 @@ def _processar_segmento(
             # sobre os ICs anuais (H0: IC médio = 0). É macro-neutro e de alta
             # amplitude (Grinold-Kahn) — muito mais robusto que o p-value do
             # retorno de 24m. p_value_ic é a chance de o poder preditivo ser sorte.
-            if len(ic_values) >= 2:
-                _ic = np.asarray(ic_values, dtype=float)
-                _sd = float(_ic.std(ddof=1))
-                if _sd > 0:
-                    rank_ic_tstat = float(_ic.mean() / (_sd / np.sqrt(len(_ic))))
-                    from scipy.stats import t as _tdist
-                    p_value_ic = float(_tdist.sf(rank_ic_tstat, df=len(_ic) - 1))
-                elif _ic.mean() > 0:
-                    rank_ic_tstat = float("inf")
-                    p_value_ic = 0.0
+            # A conta mora em `core.b3_evidence.teste_t_unilateral` -- a MESMA
+            # que o Bloco 3 das safras e o bloco "Evidencia no universo"
+            # chamam. Esta era a QUARTA copia dela, e a unica que DECIDE: ela
+            # ficou com a guarda ABSOLUTA (`sd > 0`) que as outras tres
+            # abandonaram e gravava `p_value_ic = 0.0` com `t = inf` quando
+            # dois anos davam Rank-IC identico e positivo -- certeza absoluta
+            # onde nao ha grau de liberdade para afirmar nada. Sem dispersao
+            # real nao ha p-valor, e o caminho passa a dizer isso (`None`).
+            _t_ic, _p_ic = teste_t_unilateral(ic_values)
+            if _t_ic is not None and _p_ic is not None:
+                rank_ic_tstat, p_value_ic = float(_t_ic), float(_p_ic)
 
     total_lids = sum(len(v) for v in liderancas_hist.values())
     participacao = {
@@ -1211,6 +1225,11 @@ def _processar_segmento(
         "ano_ref_score": ano_ref_score,
         "lids_prox": lids_prox,
         "pesos_prox": pesos_prox,
+        # Carteira historica por safra. Ja eram PIT (score com lag=1, dados
+        # ate N-1) mas morriam dentro desta funcao -- por isso nunca houve
+        # tela mostrando quem entrou na carteira de cada ano.
+        "lids_por_ano": lids_por_ano,
+        "pesos_por_ano": pesos_por_ano,
         "contrib_est": contrib_est,
         "ticker_maior_part": max(contrib_est, key=contrib_est.get) if contrib_est else None,
         "score_rows": score_rows,
@@ -3102,7 +3121,9 @@ def render(show_header: bool = True) -> None:
     # Resultados ficam em session_state e sobrevivem a deploys. Execuções feitas
     # antes do overhaul (holdout OOS + FDR) não têm as chaves _oos e quebrariam o
     # render. Detecta o schema antigo, descarta e pede novo "Rodar".
-    if resultados and any("val_est_oos" not in r for r in resultados):
+    if resultados and any(
+        "val_est_oos" not in r or "lids_por_ano" not in r for r in resultados
+    ):
         for _k in (
             "pb3_resultados", "pb3_df_set", "pb3_precos_all",
             "pb3_quality_summary", "pb3_quality_audit", "pb3_hist_audit",
@@ -3180,7 +3201,12 @@ def render(show_header: bool = True) -> None:
                 return False
             if usar_gate_sinal:
                 # Significância do SINAL (Rank-IC) — Grinold-Kahn, macro-neutra.
-                if float(res.get("p_value_ic", 1.0)) >= 0.10:
+                # Regra compartilhada: ausência de p-valor (sem dispersão entre
+                # os Rank-ICs anuais) NÃO aprova — num modo que exige prova
+                # positiva, "não deu para testar" não é prova — e também não é
+                # evidência contra: a coluna Situação sai "🟡 Inconclusivo",
+                # nunca "❌ Reprovado (evidência contra)".
+                if not sinal_significante(res.get("p_value_ic")):
                     return False
             else:
                 # Significância do RETORNO de 24m + correção FDR.
@@ -3274,7 +3300,16 @@ def render(show_header: bool = True) -> None:
         _modo_txt = (
             "**Critério: Sinal fundamental (Rank-IC).** A aprovação exige que o poder "
             "preditivo (Rank-IC) seja estatisticamente significativo — **valor-p do "
-            "sinal ≤ 10%** — medido em muitos anos × nomes (macro-neutro, alto poder). "
+            "sinal abaixo de 10%** — medido em muitos anos × nomes (macro-neutro, alto "
+            "poder). São **três** desfechos, não dois: **(1)** valor-p abaixo de 10% → "
+            "aprova; **(2)** valor-p de 10% ou mais → não aprova, porque o Rank-IC "
+            "médio não se distingue do acaso nesta amostra; **(3)** **sem valor-p** → "
+            "os Rank-ICs anuais não variaram o bastante entre si para estimar o "
+            "erro-padrão, então **o teste não chegou a ser feito**. No terceiro caso o "
+            "segmento também não é aprovado — um critério que exige prova positiva não "
+            "aprova sem teste —, mas isso é **ausência de medição, não evidência "
+            "contra**: a Situação sai 🟡 *Inconclusivo (sem significância)*, nunca "
+            "❌ *Reprovado (evidência contra)* por esse motivo. "
             "O valor-p do retorno de 24m vira **diagnóstico** e não reprova."
         )
     else:
@@ -3381,7 +3416,13 @@ def render(show_header: bool = True) -> None:
                 if np.isfinite(float(res.get("rank_ic_mean", float("nan"))))
                 else None
             ),
-            "valor-p do sinal (Rank-IC)": round(float(res.get("p_value_ic", 1.0)), 4),
+            # Sem dispersão entre os Rank-ICs anuais não houve teste: a
+            # célula fica VAZIA em vez de publicar 1,0, que seria afirmar
+            # "testei e não deu" sobre um teste que não aconteceu.
+            "valor-p do sinal (Rank-IC)": (
+                round(float(res["p_value_ic"]), 4)
+                if res.get("p_value_ic") is not None else None
+            ),
             "Anos batendo pares (%)": (
                 round(float(res["wf_hit_rate"]) * 100, 0)
                 if np.isfinite(float(res.get("wf_hit_rate", float("nan"))))
@@ -4348,16 +4389,35 @@ def render(show_header: bool = True) -> None:
 
     st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
-    _sec_hdr(f"📈 Desempenho parcial das selecionadas (ano atual: {ano_atual})")
-    st.caption("Acompanhamento de aportes mensais de R$1.000 desde janeiro do ano atual.")
+    _hoje_vig = pd.Timestamp.now()
+    _safra_vig = safra_vigente_em(_hoje_vig)
+    _ini_vig, _fim_vig = janela_de_vigencia(_safra_vig)
+    _sec_hdr(
+        f"📈 Desempenho da safra {_safra_vig} "
+        f"(balanços de {ano_base_do_score(_safra_vig)})"
+    )
+    st.caption(
+        f"Aportes mensais de R$1.000 desde **abril/{_safra_vig}**, quando a "
+        f"safra entrou em vigor. A janela vai até {_fim_vig:%m/%Y}. Antes de "
+        "abril a carteira não existia: os balanços do exercício-base só são "
+        "públicos até 31/03, e começar em janeiro mostraria o desempenho de "
+        "uma carteira que ninguém poderia ter montado."
+    )
+    st.caption(
+        "⚠️ Look-ahead residual: a carteira aqui simulada usa o piso de "
+        "liquidez e a diversificação por correlação com dados de **hoje**, "
+        "não de abril. A distorção é a do intervalo abril→hoje, não a do ano "
+        "inteiro — mas não é zero."
+    )
 
     if proximos_uniq:
         tks_prox = tuple(sorted({p["tk"] for p in proximos_uniq}))
         df_prec_prox = _batch_yf_precos_mensais(tks_prox, period="1y")
 
         if not df_prec_prox.empty:
-            data_ini_ano = pd.Timestamp(ano_atual, 1, 1)
-            df_ano = df_prec_prox[df_prec_prox.index >= data_ini_ano].copy()
+            df_ano = df_prec_prox[
+                (df_prec_prox.index >= _ini_vig) & (df_prec_prox.index <= _fim_vig)
+            ].copy()
             if not df_ano.empty:
                 aporte_sim  = 1000.0
                 taxa_m_sim  = (1 + taxa_selic_aa) ** (1 / 12) - 1
@@ -4387,7 +4447,7 @@ def render(show_header: bool = True) -> None:
                     st.markdown(
                         f'<div style="font-weight:700;font-size:0.9rem;'
                         f'color:var(--app-text);margin-bottom:8px;">'
-                        f'Comparativo de desempenho parcial em {ano_atual}</div>',
+                        f'Safra {_safra_vig} — abril/{_safra_vig} em diante</div>',
                         unsafe_allow_html=True,
                     )
                     melt_p = df_perf.melt("Data", var_name="Carteira",
@@ -4405,11 +4465,27 @@ def render(show_header: bool = True) -> None:
                                     config={"displayModeBar": False},
                                     key="pb3_perf_chart")
             else:
-                st.caption("Dados insuficientes para o ano atual.")
+                st.caption(
+                    f"Sem preços mensais na janela da safra {_safra_vig} "
+                    f"(a partir de abril/{_safra_vig})."
+                )
         else:
             st.caption("Não foi possível baixar preços para as empresas selecionadas.")
     else:
         st.caption("Nenhuma empresa selecionada para mostrar desempenho.")
+
+    # `aprovados` (nao `resultados`) e a carteira que esta aba publica: as
+    # safras do Bloco 1 tem que ser reconstruidas com o MESMO conjunto de
+    # segmentos que a tela recomenda. `resultados` -- a lista nao filtrada
+    # -- entra como `resultados_todos` e serve ao Bloco 2, que mede quanto
+    # o gate de aprovacao move o retorno de cada safra.
+    render_safras(
+        aprovados,
+        df_precos_all,
+        selic_por_ano=selic_macro,
+        taxa_selic_aa=taxa_selic_aa,
+        resultados_todos=resultados,
+    )
 
     # ── Metodologia e referências científicas ────────────────────────────────
     _render_metodologia_portfolio()

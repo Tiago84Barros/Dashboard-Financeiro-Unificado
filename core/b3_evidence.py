@@ -23,6 +23,15 @@ from dataclasses import dataclass
 
 import numpy as np
 
+# Import no TOPO, de proposito (rodada 2, A-3). `scipy` esta pinado em
+# requirements.txt, entao o `try: from scipy.stats import t / except
+# Exception: <aproximacao>` que estava aqui era ramo MORTO em producao --
+# nao servia de resiliencia, servia de armadilha: um `except Exception`
+# largo engole tambem o erro que NAO e "scipy ausente" (instalacao
+# quebrada, conflito de ABI) e troca a distribuicao em silencio por uma
+# que pode inverter o veredito. Erro de import tem que aparecer como erro.
+from scipy.stats import t as _t_student
+
 VERSION = "b3-evidence-1.0.0"
 
 A_FAVOR = "evidencia_a_favor"
@@ -57,32 +66,110 @@ class EvidenceVerdict:
         return _ROTULOS.get(self.estado, self.estado)
 
 
+def _finitos(observacoes: list[float] | np.ndarray | None) -> np.ndarray:
+    """Observações finitas, na ordem de entrada — ausência não é observação."""
+    if observacoes is None:
+        return np.asarray([], dtype=float)
+    return np.asarray([v for v in observacoes
+                       if v is not None and np.isfinite(v)], dtype=float)
+
+
+def desvio_com_dispersao(observacoes: list[float] | np.ndarray | None, *,
+                         ddof: int = 1) -> float | None:
+    """Desvio-padrão amostral quando há dispersão REAL; None quando não há.
+
+    Esta é a regra ÚNICA de dispersão dos vereditos — o MDE, o p-valor das
+    safras (``core.b3_safras``) e o teste no universo
+    (``core.b3_pooled_evidence``) chamam ESTA função em vez de cada um
+    reimplementar a sua guarda.
+
+    A guarda é RELATIVA à escala das observações, não absoluta. Observações
+    praticamente idênticas dão desvio ~1e-17 (ruído de ponto flutuante), não
+    zero exato, e ``desvio > 0`` deixa esse ruído passar como se fosse
+    dispersão: medido em 2026-09, com os Rank-ICs anuais {2018..2023} todos
+    iguais a 0,30 exceto um 0,30 + 1e-12, a guarda absoluta produzia
+    p = 5,0e-61 ("evidência a favor" sobre dispersão que não existe) enquanto
+    a relativa devolvia "inconclusivo". Como os dois blocos da tela leem os
+    MESMOS ICs anuais desde a rodada 2, a divergência aparecia como dois
+    cards contraditórios lado a lado.
+
+    Devolve None com menos de 2 observações finitas ou sem dispersão real.
+    """
+    valores = _finitos(observacoes)
+    n = len(valores)
+    if n < 2:
+        return None
+    desvio = float(valores.std(ddof=ddof))
+    escala = max(float(np.abs(valores).mean()), 1e-12)
+    if not np.isfinite(desvio) or desvio <= escala * 1e-9:
+        return None
+    return desvio
+
+
+def teste_t_unilateral(observacoes: list[float] | np.ndarray | None
+                       ) -> tuple[float | None, float | None]:
+    """(t, p) do teste t unilateral À DIREITA de ``média > 0``, com ddof=1.
+
+    Distribuição t, nunca a aproximação normal: com n na casa de 5 a 15
+    observações elas não são intercambiáveis, e é justamente aí que a
+    diferença morde — em ``[0.2, 0.0, 0.1]`` o t dá 0,113 e a normal 0,042,
+    lados opostos de ``alpha = 0,10``.
+
+    Devolve ``(None, None)`` quando ``desvio_com_dispersao`` não encontra
+    dispersão: sem erro-padrão estimável não há teste, e publicar um p-valor
+    ali seria publicar o ruído de ponto flutuante como se fosse sinal.
+    """
+    valores = _finitos(observacoes)
+    desvio = desvio_com_dispersao(valores)
+    if desvio is None:
+        return (None, None)
+    n = len(valores)
+    estatistica = float(valores.mean()) / (desvio / math.sqrt(n))
+    return (estatistica, float(_t_student.sf(estatistica, df=n - 1)))
+
+
+def sinal_significante(p_value: float | None, *, alpha: float = 0.10) -> bool:
+    """O portão do sinal aprova apenas significância DEMONSTRADA.
+
+    ``p_value is None`` é o que ``teste_t_unilateral`` devolve quando não há
+    dispersão real entre os Rank-ICs anuais: não existe teste, logo não
+    existe significância demonstrada, e num portão que exige prova positiva
+    a resposta é ``False``.
+
+    Isso **não** é evidência contra o segmento, e os dois lados foram
+    medidos antes da escolha. Quem classifica o estado é
+    ``classify_evidence``, que com o mesmo ``None`` devolve
+    ``inconclusivo`` (não bloqueante) — a tela imprime "🟡 Inconclusivo",
+    nunca "❌ Reprovado (evidência contra)". O outro lado, fabricar o
+    p-valor, era o que a cópia da tela fazia até 2026-09: com ``sd == 0`` e
+    média > 0 ela gravava ``p = 0.0`` e ``t = inf``, isto é, certeza
+    absoluta exatamente onde não há grau de liberdade para afirmar nada.
+    Sob postos independentes (sem nenhuma habilidade preditiva, 20.000
+    sorteios por tamanho) isso alcança 2,7% dos segmentos de 5 ativos com
+    2 anos de Rank-IC.
+    """
+    if p_value is None:
+        return False
+    valor = float(p_value)
+    return bool(np.isfinite(valor) and valor < alpha)
+
+
 def minimum_detectable_effect(observacoes: list[float] | np.ndarray, *,
                               alpha: float = 0.10, power: float = 0.80
                               ) -> float | None:
     """Menor Rank-IC médio que o teste detectaria, dado o tamanho da amostra.
 
     Teste t unilateral de uma amostra: MDE = (t_alpha + t_power) · s / √n.
-    Devolve None com menos de 2 observações ou dispersão nula (sem base para
-    estimar o erro-padrão).
+    Devolve None com menos de 2 observações ou sem dispersão real — a guarda
+    é a de ``desvio_com_dispersao``, compartilhada com o teste t.
     """
-    valores = np.asarray([v for v in (observacoes or [])
-                          if v is not None and np.isfinite(v)], dtype=float)
+    valores = _finitos(observacoes)
     n = len(valores)
-    if n < 2:
+    desvio = desvio_com_dispersao(valores)
+    if desvio is None:
         return None
-    desvio = float(valores.std(ddof=1))
-    # Observações idênticas dão desvio ~1e-17 (ruído de ponto flutuante), não
-    # zero exato. Sem dispersão real não há erro-padrão a estimar.
-    escala = max(float(np.abs(valores).mean()), 1e-12)
-    if not np.isfinite(desvio) or desvio <= escala * 1e-9:
-        return None
-    try:
-        from scipy.stats import t as _t
-        t_alpha = float(_t.ppf(1 - alpha, df=n - 1))
-        t_power = float(_t.ppf(power, df=n - 1))
-    except Exception:                      # scipy ausente: aproximação normal
-        t_alpha, t_power = 1.2816, 0.8416
+    t_alpha = float(_t_student.ppf(1 - alpha, df=n - 1))
+    t_power = float(_t_student.ppf(power, df=n - 1))
     return float((t_alpha + t_power) * desvio / math.sqrt(n))
 
 
@@ -129,7 +216,11 @@ def classify_evidence(*,
              "ao contrário do retorno realizado."),
             anos, mde, True)
 
-    significativo = p_value is not None and np.isfinite(p_value) and p_value < alpha
+    # Rodada 5 (N-4): a mesma regra que `sinal_significante` centraliza,
+    # chamada e nao repetida. Enquanto era copia inline, nada impedia
+    # o portao da tela e o classificador de divergirem na proxima
+    # edicao -- foi assim que a guarda de dispersao virou duas copias.
+    significativo = sinal_significante(p_value, alpha=alpha)
     if significativo and media > 0:
         return EvidenceVerdict(
             A_FAVOR, "significante",
