@@ -555,7 +555,7 @@ características da medição, verificadas no código:
    "rende zero" e que a perda "também não rende o que os sobreviventes
    renderam".
 
-### Limitação conhecida: a chamada do relatório está provada por forma, não por alcance real
+### O alcance da chamada do relatório: por forma (AST) e, desde 22/09/2026, por execução
 
 `tests/test_portfolio_b3_safras.py` tem um verificador de alcançabilidade por
 AST (`_alcancavel`) que confirma que `render_safras` é chamada dentro de
@@ -576,6 +576,20 @@ dela) ficar dentro de um `if` cuja condição de runtime é **sempre falsa na
 prática** — uma flag de sessão que nunca é setada, uma lista que chega vazia
 por um bug upstream —, o verificador continua passando (porque não consegue
 provar que a condição é sempre falsa), e a tela inteira — Blocos 1, 2 e 3 —
-some da produção com a suíte inteira verde. Não é uma correção pendente; é uma
-lacuna estrutural do que um teste de AST consegue provar sobre condições que
-dependem de dado em tempo de execução.
+some da produção com a suíte inteira verde. É uma lacuna estrutural do que um
+teste de AST consegue provar sobre condições que dependem de dado em tempo de
+execução.
+
+**Essa lacuna foi fechada em 22/09/2026 por execução**, e não por um verificador
+melhor. `tests/test_portfolio_b3_render_alcance.py` roda
+`views/portfolio_b3.py::render()` de ponta a ponta sob 15 dublês (nenhuma rede,
+nenhum Supabase) e falha se `render_safras` não for chamada — ou se for chamada
+com a carteira vazia, sem `df_precos_all`, ou sem `resultados_todos`. O teste
+custa ~4,9 s dentro de `render()` e ~10 s de arquivo.
+
+A prova de que ele morde: envolver a chamada num `if` cuja condição é falsa
+**por dado** (`st.session_state.get("pb3_safras_visivel")`, chave que nenhum
+caminho do app grava) faz o teste de execução falhar e o verificador de AST
+continuar passando — que é exatamente o cenário descrito acima. O verificador
+de AST segue no lugar: ele é barato e pega o caso constante; o teste de
+execução é o que cobre o caso dependente de dado.
