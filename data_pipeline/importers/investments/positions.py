@@ -10,9 +10,14 @@ cada importação manual bem-sucedida.
 Algoritmo: custo médio ponderado (padrão BR).
   buy:  new_avg = (qty_atual*avg + buy_qty*price + fees) / (qty_atual + buy_qty)
   sell: qty_atual -= sell_qty   (avg_price inalterado)
+  venda sem cobertura: qty e avg_price voltam a zero -- o histórico está
+        truncado (o relatório de Negociação da B3 começa em nov/2019), não
+        há posição negativa a carregar para dentro da média seguinte.
   final: somente ativos com qty > 0 e avg_price > 0 são gravados.
 
-Idempotência: UPSERT em (portfolio_id, asset_id).
+Idempotência: UPSERT em (portfolio_id, asset_id) + DELETE das posições que
+o recálculo não produziu -- sem isso, ativo que deixa de qualificar fica
+publicado para sempre com o valor do último recálculo em que qualificou.
 """
 from __future__ import annotations
 
@@ -67,13 +72,32 @@ def _compute(transactions: list[dict]) -> tuple[list[dict], list[dict]]:
         elif tx_type == "sell":
             new_qty = s["qty"] - qty
             if new_qty < Decimal("-0.0001"):
+                # Venda sem cobertura: o relatorio de Negociacao da B3 comeca
+                # em nov/2019, entao ativo comprado antes disso chega aqui so
+                # com a venda. Deixar a quantidade NEGATIVA envenenava a
+                # compra seguinte -- em `(qty*avg + custo) / novo_qty` o termo
+                # `qty*avg` vira credito e afunda a media. Foi assim que 747
+                # cotas de BBAS3 ficaram com R$ 0,000245 de preco medio, um
+                # numero positivo que escapava do guarda `avg <= 0` no fim.
+                #
+                # O que sabemos e que o historico esta truncado, nao que o
+                # investidor ficou devendo acoes. Zerar quantidade e base de
+                # custo assume o minimo defensavel: o pedaco que conhecemos
+                # acabou ali. Se sobrara posicao anterior ao corte, a
+                # quantidade recalculada fica ABAIXO da posicao real e a
+                # cobertura em `core/investimentos.py` reprova o PM sozinha.
                 alerts.append({
                     "asset_id": asset_id,
                     "ticker":   s["ticker"],
                     "type":     "quantidade_negativa",
                     "detail":   f"venda sem cobertura (qty antes={s['qty']}, venda={qty})",
                 })
+                new_qty = Decimal("0")
             s["qty"] = new_qty
+            if s["qty"] <= Decimal("0.0001"):
+                # Posicao zerada: a proxima compra abre base de custo nova.
+                s["qty"]       = Decimal("0")
+                s["avg_price"] = Decimal("0")
         else:
             alerts.append({
                 "asset_id": asset_id,
@@ -213,6 +237,46 @@ def _upsert(
     return len(rows)
 
 
+def _remover_obsoletas(
+    conn: Connection,
+    portfolio_id: str,
+    user_id: str,
+    positions: list[dict],
+) -> int:
+    """Apaga da carteira as posições que o recálculo não produziu.
+
+    O UPSERT sozinho só sabe escrever. Ativo que deixou de qualificar --
+    vendido por inteiro, ou com preço médio inválido -- permanecia na tabela
+    com o valor da última vez em que qualificou, e o app seguia publicando
+    esse fóssil. BBAS3 ficou meses assim: 747 cotas a R$ 0,18 no total,
+    vindas de um recálculo antigo, enquanto o cálculo atual nem gerava a
+    linha.
+
+    Escopo estreito de propósito: só esta carteira, só este usuário.
+    """
+    aids = [str(p["asset_id"]) for p in positions if p["quantity"] > 0]
+    if aids:
+        res = conn.execute(
+            text("""
+                DELETE FROM portfolio_positions
+                WHERE portfolio_id = :pid
+                  AND user_id      = :uid
+                  AND NOT (asset_id::text = ANY(:aids))
+            """),
+            {"pid": portfolio_id, "uid": user_id, "aids": aids},
+        )
+    else:
+        res = conn.execute(
+            text("""
+                DELETE FROM portfolio_positions
+                WHERE portfolio_id = :pid
+                  AND user_id      = :uid
+            """),
+            {"pid": portfolio_id, "uid": user_id},
+        )
+    return int(res.rowcount or 0)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # API pública
 # ─────────────────────────────────────────────────────────────────────────────
@@ -226,6 +290,7 @@ def recompute_for_user(engine: Engine, user_id: str) -> dict[str, Any]:
       - ok: bool
       - transactions_loaded: int
       - positions_upserted: int
+      - positions_deleted: int
       - alerts: list[str] (resumido, ≤10 itens)
       - error: str | None
     """
@@ -233,6 +298,7 @@ def recompute_for_user(engine: Engine, user_id: str) -> dict[str, Any]:
         "ok":                  False,
         "transactions_loaded": 0,
         "positions_upserted":  0,
+        "positions_deleted":   0,
         "alerts":              [],
         "error":               None,
     }
@@ -251,6 +317,9 @@ def recompute_for_user(engine: Engine, user_id: str) -> dict[str, Any]:
                 positions, alerts = _compute(transactions)
                 upserted = _upsert(conn, positions, portfolio_id, user_id)
                 summary["positions_upserted"] = upserted
+                summary["positions_deleted"] = _remover_obsoletas(
+                    conn, portfolio_id, user_id, positions
+                )
 
                 # Resume alertas: por tipo + ticker, máximo 10
                 if alerts:

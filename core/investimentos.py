@@ -58,6 +58,7 @@ from core.config import settings
 from core.currency_returns import retorno_em_brl, retorno_moeda_origem
 from core.fx_aquisicao import cambio_medio_de_aquisicao, taxa_para
 from core.market_freshness import classificar_cotacao, intervalo_referencia
+from core.precos_medios_manuais import listar as listar_precos_manuais
 from core.tesouro_nomes import nome_amigavel
 from core.user_context import user_cache_data
 
@@ -758,7 +759,9 @@ def _carteira_real() -> dict:
             if rows:
                 tx_costs = _calcular_custos_transacoes(conn, owner)
                 fx_compra = cambio_medio_de_aquisicao(conn, owner)
-                carteira = _montar_carteira_snapshot(rows, tx_costs)
+                carteira = _montar_carteira_snapshot(
+                    rows, tx_costs, listar_precos_manuais(owner, conn)
+                )
                 # Adiciona posições que existem em portfolio_positions mas NÃO
                 # no snapshot XP (ex: ETFs Nomad — SPY, IEFA — importados via PDF).
                 extra_rows = conn.execute(
@@ -961,7 +964,8 @@ def _calcular_custos_transacoes(conn, owner_id: str) -> dict[str, dict]:
     return {}
 
 
-def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
+def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
+                              precos_manuais: dict | None = None) -> dict:
     """Monta a carteira real a partir do ultimo snapshot XP + custo da B3.
 
     Estrategia de unificacao (corrige bug 2026-05-22 onde card misturava
@@ -979,7 +983,13 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
          dos dois, a amostra esticada; depois o invested_value da linha
          vencedora (CDBs e titulos privados, que so existem no .xlsx da
          corretora); e em ultimo caso o market_value.
+      4. Acima de todas: o preco medio que o PROPRIO investidor declarou
+         (`precos_manuais`, tabela investment_manual_costs). Vem primeiro
+         porque so e preenchido quando a pessoa sabe que as outras fontes
+         estao erradas ou ausentes -- e vai rotulado como "informado por
+         voce", nunca como declarado pela B3.
     """
+    precos_manuais = precos_manuais or {}
     # ── 1. Agrupa rows por base_ticker
     grupos: dict[str, dict] = {}
     for r in rows:
@@ -1057,7 +1067,27 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
         # Se pp_qty > qty_snap (novas compras Nomad apos o snapshot), escala
         # os valores BRL do snapshot proporcionalmente para refletir a posicao atual.
         ccy = str(primary.currency or "BRL").upper()
-        if ccy == "USD" and vi_snap > 0:
+
+        # ── O preco medio que o INVESTIDOR declarou vem antes de tudo.
+        #
+        # Nao e por ele ser mais confiavel: e por so existir quando as outras
+        # fontes ja falharam. O caso que criou esta porta foi o BBAS3 -- o
+        # relatorio de Negociacao da B3 comeca em nov/2019, as compras
+        # anteriores nao existem em fonte nenhuma, e o numero que o app
+        # exibia como "declarado pela B3" tinha sido DIGITADO A MAO pelo
+        # usuario na planilha de posicao que ele subiu. O palpite vinha com
+        # a autoridade da custodia central.
+        #
+        # Aqui ele entra pela porta da frente e com procedencia propria: a
+        # tela diz "informado por voce". Apagar a declaracao devolve o ativo
+        # a cadeia normal, sem nenhum outro efeito.
+        pm_manual = float((precos_manuais.get(base) or {}).get("preco_medio", 0) or 0)
+        if pm_manual > 0 and qty_snap > 0:
+            qty         = qty_snap
+            preco_medio = pm_manual
+            ti          = pm_manual * qty_snap
+            custo_fonte = "informado_pelo_usuario"
+        elif ccy == "USD" and vi_snap > 0:
             if pp_qty > qty_snap * 1.005 and qty_snap > 0:
                 # Novas cotas Nomad apos snapshot → escala BRL proporcionalmente
                 scale   = pp_qty / qty_snap
@@ -1637,7 +1667,16 @@ def _evolucao_real() -> dict:
             if snap_rows:
                 div_rows = conn.execute(text(_SQL_EVOLUCAO_DIV), {"uid": owner}).fetchall()
                 current_rows = conn.execute(text(_SQL_POSICOES_SNAPSHOT), {"uid": owner}).fetchall()
-                current_totals = _montar_carteira_snapshot(current_rows) if current_rows else None
+                # A evolucao compara custo com mercado; se o custo da tela
+                # vem da declaracao do usuario, o da curva tem de vir dela
+                # tambem -- duas respostas para "quanto custou" e um degrau
+                # inexplicavel no grafico.
+                current_totals = (
+                    _montar_carteira_snapshot(
+                        current_rows, None, listar_precos_manuais(owner, conn)
+                    )
+                    if current_rows else None
+                )
                 return _montar_evolucao_snapshot(snap_rows, div_rows, current_totals)
         tx_rows   = conn.execute(text(_SQL_EVOLUCAO_TX),    {"uid": owner}).fetchall()
         div_rows  = conn.execute(text(_SQL_EVOLUCAO_DIV),   {"uid": owner}).fetchall()

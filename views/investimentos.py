@@ -2261,6 +2261,7 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     ti       = pos["total_investido"]
     custo_fonte = pos.get("custo_fonte", "snapshot")
     custo_ausente = custo_fonte == "mercado_fallback"
+    custo_do_usuario = custo_fonte == "informado_pelo_usuario"
     moeda = str(pos.get("moeda") or "BRL").upper()
     custo_cambio_atual = custo_fonte == "cambio_atual_estimado"
     custo_comparavel_brl = not custo_ausente and not custo_cambio_atual
@@ -2282,11 +2283,20 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
         # "Estimado" e o custo que esta app calculou esticando um preco medio
         # sobre uma quantidade que a fonte do preco nao afirma. O custo que a
         # B3 declara nao entra aqui.
-        custo_label = (
-            "Custo estimado"
-            if custo_fonte in ("preco_medio_estimado", "b3_preco_medio_escalado")
-            else "Custo investido"
-        )
+        if custo_do_usuario:
+            # A procedencia viaja com o numero. Este preco medio nao foi
+            # declarado pela B3 nem calculado das notas: foi digitado pelo
+            # proprio investidor, justamente porque nenhuma das duas fontes
+            # sabia. Exibi-lo como "Custo investido", igual aos outros,
+            # devolveria o palpite com a autoridade da custodia central --
+            # que e como o BBAS3 passou meses publicando R$ 23,92.
+            custo_label = "Custo informado por você"
+        else:
+            custo_label = (
+                "Custo estimado"
+                if custo_fonte in ("preco_medio_estimado", "b3_preco_medio_escalado")
+                else "Custo investido"
+            )
         custo_val = "Não informado" if custo_ausente else fmt_moeda(ti)
     resultado_val = "—" if custo_ausente or not rentab_ok else f"{seta_r} {abs(rentab):.2f}%"
     retorno_val = "—" if not custo_comparavel_brl else f"{rsc:.2f}%"
@@ -2314,7 +2324,8 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
         ("Peso na carteira",              f"{pos['pct_carteira']:.2f}%",             "var(--app-muted)"),
         ("Quantidade",                    f"{pos['quantidade']:,.6f}".rstrip("0").rstrip(".") if "." in f"{pos['quantidade']:.6f}" else f"{pos['quantidade']:,.0f}".replace(",", "."), "var(--app-muted)"),
         (f"{fonte_icon} Cotação ({fonte_label}) {dot}", fmt_moeda(pos["preco_atual"]), "var(--app-muted)"),
-        ("Preço médio (custo)",           (f"US$ {pos.get('preco_medio_moeda_original', 0):,.2f}" if custo_cambio_atual else fmt_moeda(pos["preco_medio"])), "var(--app-muted)"),
+        ("Preço médio (informado por você)" if custo_do_usuario else "Preço médio (custo)",
+                                          (f"US$ {pos.get('preco_medio_moeda_original', 0):,.2f}" if custo_cambio_atual else fmt_moeda(pos["preco_medio"])), "var(--app-muted)"),
         (custo_label,                     custo_val,                                   "var(--app-muted)"),
         ("Valor de mercado atual",        fmt_moeda(pos["valor_mercado"]),              mercado_cor),
         ("Valoriz./Desvalorização (R$)",  dif_val,                                     dif_cor if custo_comparavel_brl else "var(--app-subtle)"),
@@ -2363,6 +2374,126 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
         f'<div>{rows_html}</div>'
         f'</div>'
     )
+
+
+_ROTULO_CUSTO_FONTE = {
+    "b3_posicao_detalhada":     "o extrato Posição Detalhada da B3",
+    "b3_preco_medio_escalado":  "o preço médio do extrato da B3, esticado",
+    "b3_negociacao":            "as notas de negociação importadas",
+    "preco_medio_estimado":     "uma amostra das notas, esticada",
+    "snapshot":                 "o consolidado da corretora",
+    "nomad_scaled":             "o consolidado Nomad, escalado",
+    "cambio_historico_compras": "o câmbio histórico das compras",
+    "mercado_fallback":         "o valor de mercado (custo desconhecido)",
+    "informado_pelo_usuario":   "o preço médio informado por você",
+}
+
+
+def _editor_preco_medio_manual(posicoes: list[dict]) -> None:
+    """Tela onde o investidor declara o preço médio que as fontes não sabem.
+
+    Fica recolhida de propósito: é exceção, não fluxo normal. O que ela
+    resolve é o caso em que as duas fontes de custo do app falham ao mesmo
+    tempo -- as notas de negociação da B3 começam em nov/2019, e o extrato
+    de Posição Detalhada pode trazer um preço médio que a própria pessoa
+    digitou na planilha antes de subir. Foi assim com o BBAS3: R$ 23,92
+    exibidos com a autoridade da custódia central, e nenhuma das duas fontes
+    sabia o número real.
+
+    Declarar aqui não maquia nada -- o card passa a dizer "informado por
+    você" e o custo continua marcado como estimado. Apagar devolve o ativo à
+    cadeia normal de fontes.
+    """
+    from core.config import settings
+    from core.precos_medios_manuais import listar, remover, salvar
+
+    uid = settings.OWNER_USER_ID
+    if not uid:
+        return
+
+    atuais = listar(uid)
+    n_ativos = len(atuais)
+    titulo = "✏️ Preço médio informado por você"
+    if n_ativos:
+        titulo += f" · {n_ativos} ativo{'s' if n_ativos != 1 else ''}"
+
+    with st.expander(titulo, expanded=False):
+        st.caption(
+            "Use quando nem as notas de negociação nem o extrato da B3 "
+            "souberem o preço médio real de um ativo. O valor fica gravado "
+            "em tabela própria — sobrevive ao próximo upload de planilha e "
+            "ao recálculo das posições — e o card passa a exibir "
+            "**“informado por você”**, nunca como declarado pela B3."
+        )
+
+        por_ticker = {p["ticker"]: p for p in posicoes}
+        opcoes = sorted(por_ticker)
+        if not opcoes:
+            return
+
+        col_a, col_b, col_c = st.columns([2, 2, 3], gap="small")
+        with col_a:
+            tk = st.selectbox("Ativo", opcoes, key="pmm_ticker")
+        pos_sel = por_ticker.get(tk, {})
+        vigente = float(atuais.get(tk, {}).get("preco_medio") or 0)
+        with col_b:
+            valor = st.number_input(
+                "Preço médio (R$)",
+                min_value=0.0,
+                value=float(vigente or pos_sel.get("preco_medio") or 0.0),
+                step=0.01,
+                format="%.6f",
+                key="pmm_valor",
+            )
+        with col_c:
+            nota = st.text_input(
+                "De onde veio esse número (opcional)",
+                value=str(atuais.get(tk, {}).get("nota") or ""),
+                placeholder="ex.: somei as notas de corretagem de 2015-2018",
+                key="pmm_nota",
+            )
+
+        # Contexto honesto: o que o app usaria se esta declaração não
+        # existisse. Sem isso a pessoa digita no escuro.
+        fonte_atual = pos_sel.get("custo_fonte", "")
+        if fonte_atual and fonte_atual != "informado_pelo_usuario":
+            st.caption(
+                f"Hoje este ativo usa **{_ROTULO_CUSTO_FONTE.get(fonte_atual, fonte_atual)}** "
+                f"— preço médio de {fmt_moeda(pos_sel.get('preco_medio', 0))}."
+            )
+
+        b1, b2 = st.columns([1, 1], gap="small")
+        with b1:
+            if st.button("Salvar preço médio", type="primary",
+                         use_container_width=True, key="pmm_salvar"):
+                try:
+                    salvar(uid, tk, valor, nota)
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Não foi possível salvar: {exc}")
+                else:
+                    st.cache_data.clear()
+                    st.success(f"{tk}: preço médio informado por você gravado.")
+                    st.rerun()
+        with b2:
+            if vigente and st.button("Apagar declaração", use_container_width=True,
+                                     key="pmm_apagar"):
+                remover(uid, tk)
+                st.cache_data.clear()
+                st.rerun()
+
+        if atuais:
+            st.markdown("**Declarados por você**")
+            linhas = "".join(
+                f"<li><b>{t}</b> — {fmt_moeda(d['preco_medio'])}"
+                + (f" · <i>{d['nota']}</i>" if d.get("nota") else "")
+                + "</li>"
+                for t, d in sorted(atuais.items())
+            )
+            st.markdown(
+                f'<ul style="margin:4px 0 0 18px;color:var(--app-muted);'
+                f'font-size:0.85rem;">{linhas}</ul>',
+                unsafe_allow_html=True,
+            )
 
 
 def _tab_carteira(carteira: dict, proventos: dict) -> None:
@@ -2429,6 +2560,8 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
     from design.portfolio_valuations import render_portfolio_valuations
 
     render_portfolio_valuations(posicoes)
+
+    _editor_preco_medio_manual(posicoes)
 
     # Busca logos em lote (cache 24h) — falha silenciosa
     tickers_tuple = tuple(p["ticker"] for p in posicoes)
