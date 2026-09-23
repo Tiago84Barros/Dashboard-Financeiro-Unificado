@@ -53,6 +53,7 @@ _SETOR_SCHEMA:   { nome, valor_mercado, pct_carteira }
 import logging
 from collections import defaultdict
 
+from core.tesouro_nomes import nome_amigavel
 from core.categorias import SQL_INVESTIMENTO
 from core.config import settings
 from core.currency_returns import retorno_em_brl, retorno_moeda_origem
@@ -179,6 +180,26 @@ def get_carteira() -> dict:
             "por_setor": [],
             "avisos_dados": ["Carteira indisponível; nenhum dado sintético foi substituído."],
         }
+
+
+_TIPOS_TESOURO = {"tesouro", "fixed_income", "renda_fixa"}
+
+
+def _nome_exibicao(nome: str | None, ticker: str, asset_type: str | None) -> str:
+    """Nome do ativo como a tela mostra.
+
+    So o Tesouro passa pela traducao, e de proposito: `nome_amigavel` decide
+    pelo prefixo do texto, e uma empresa chamada "LFT Participacoes" viraria
+    "Tesouro Selic" se a regra valesse para todo mundo.
+
+    A traducao acontece aqui ALEM de na importacao porque `get_or_create_asset`
+    nao reescreve `assets.name` de um ticker que ja existe: as linhas ja
+    gravadas como "LFT mar/2031" continuariam saindo em codigo para sempre.
+    """
+    base = (nome or "").strip() or ticker
+    if (asset_type or "").strip().lower() in _TIPOS_TESOURO:
+        return nome_amigavel(base)
+    return base
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -740,7 +761,7 @@ def _carteira_real() -> dict:
         )
         posicoes.append({
             "ticker":            r.ticker,
-            "nome":              r.asset_name,
+            "nome":              _nome_exibicao(r.asset_name, r.ticker, classe_raw),
             "classe":            _CLASS_LABEL.get(classe_raw, classe_raw.title()),
             "setor":             _SETOR_LABEL.get(setor_raw, setor_raw.title()),
             "moeda":             ccy,
@@ -875,10 +896,14 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
         # Filtra posicoes vazias. Excecao: Tesouro/RF que a XP reporta com
         # qty=0 (arredondamento) mas vm > 0 — esses sao posicoes reais com
         # valor de cota inteiro (ex: TSELIC2028 R$ 5.483 mas qty=0).
-        asset_type_low = str(getattr(r, "asset_type", "") or "").lower()
+        tipo_row = str(getattr(r, "asset_type", "") or "").lower()
+        # Posicao encerrada chega aqui como vm = 0 (o extrato da B3 publica o
+        # ativo vendido com saldo e quantidade zero, e o importador GRAVA esse
+        # zero de proposito, para a foto de hoje ganhar da foto antiga de
+        # outra fonte no DENSE_RANK). E aqui que ela sai da carteira.
         if vm <= 0:
             continue
-        if qty <= 0 and asset_type_low not in ("fixed_income", "tesouro", "renda_fixa"):
+        if qty <= 0 and tipo_row not in ("fixed_income", "tesouro", "renda_fixa"):
             continue
 
         base = _base_ticker(r.ticker)
@@ -989,7 +1014,14 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
         # recente disponível (yfinance via pipeline) para refletir o valor atual.
         live_price   = g.get("live_price")
         usd_brl_live = g.get("usd_brl_rate") or 1.0
-        is_rf = asset_type_low in ("fixed_income", "tesouro", "renda_fixa", "fundo_rf")
+        # Do ativo DESTE grupo. Ate 2026-09-22 esta linha lia a variavel que
+        # sobrava do laco anterior, ou seja, o tipo da ULTIMA row que o SQL
+        # devolveu -- o mesmo `is_rf` valia para a carteira inteira, e um
+        # titulo do Tesouro no fim da lista congelava toda acao no preco do
+        # snapshot em vez da cotacao viva.
+        is_rf = str(primary.asset_type or "").lower() in (
+            "fixed_income", "tesouro", "renda_fixa", "fundo_rf"
+        )
 
         status_cotacao = classificar_cotacao(g.get("live_ts")) if live_price else "missing"
         if live_price and not is_rf:
@@ -1017,7 +1049,8 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
         total_mercado   += vm_calc
         posicoes.append({
             "ticker":          base,
-            "nome":            primary.asset_name or base,
+            "nome":            _nome_exibicao(primary.asset_name, base,
+                                              primary.asset_type),
             "classe":          _CLASS_LABEL.get(classe_raw, classe_raw.title()),
             "setor":           _SETOR_LABEL.get(primary.sector or "other", (primary.sector or "other").title()),
             "moeda":           primary.currency or "BRL",

@@ -191,16 +191,68 @@ def test_posicao_acao():
     assert pos["market_value"] == pytest.approx(34017.00)
 
 
-def test_posicao_zerada_nao_entra():
-    """CSMG3 com Qtd. 0 é papel vendido, não posição viva.
+def test_posicao_zerada_entra_como_encerrada():
+    """CSMG3 com Qtd. 0 é papel vendido — e a VENDA precisa ser gravada.
 
-    Gravar quantidade zero num snapshot faria a tela mostrar um ativo que o
-    usuário não tem mais — com valor R$ 0,00, que parece dado faltando.
+    Pular a linha parecia conservador e era o contrário: sem a foto de hoje
+    dizendo zero, o DENSE_RANK de `_SQL_POSICOES_SNAPSHOT` cai na foto mais
+    recente que EXISTE para o ativo — a do `xp_consolidado` de 2026-07-31 —
+    e a tela segue mostrando 94 cotas de CSMG3 que o usuário já vendeu.
+    Ausência tem duas causas opostas (papel vendido x fonte que não cobre o
+    ativo) e o banco não sabe distinguir: quem sabe é este parser, que está
+    lendo o zero.
     """
     sec = secoes(_linhas_acoes())[0]
     pos, motivo = posicao(sec, sec["linhas"][1])
+    assert motivo == ""
+    assert pos["ticker"] == "CSMG3"
+    assert pos["quantity"] == 0.0
+    # `_montar_carteira_snapshot` corta em `vm <= 0`: com valor zero a posição
+    # sai da carteira sem que nenhum leitor precise mudar.
+    assert pos["market_value"] == 0.0
+    assert pos["invested_value"] == 0.0
+
+
+def test_posicao_zerada_com_saldo_nao_zero_e_recusada():
+    """Qtd. 0 com saldo R$ 5.347,66 é contradição, não encerramento.
+
+    Gravar zero aqui apagaria uma posição que o próprio extrato diz valer
+    dinheiro. Sem saber qual dos dois campos está certo, a linha é recusada
+    com o motivo, em vez de o parser escolher um.
+    """
+    linhas = [
+        ("Ações", None, None, None, None, None, "R$ 109.127,53"),
+        (
+            "36,6% | Renda Variável Brasil", "Saldo", "% Alocação",
+            "Rentabilidade", "Preço médio", "Último preço (R$)", "Qtd. total",
+        ),
+        ("CSMG3", "R$ 5.347,66", "2%", "R$ 0,00", "R$ 40,83", "R$ 56,89",
+         "0"),
+    ]
+    sec = secoes(linhas)[0]
+    pos, motivo = posicao(sec, sec["linhas"][0])
     assert pos is None
-    assert "zero" in motivo
+    assert "saldo" in motivo
+
+
+def test_posicao_fii_zerada_entra_como_encerrada():
+    """HGRE11 zerado: saldo R$ 0,00 com cotação viva.
+
+    A quantidade dos FIIs é recuperada por Saldo / cotação, e 0/116,60 = 0 —
+    o mesmo encerramento, por outro caminho.
+    """
+    linhas = [
+        ("Fundos Imobiliários", None, None, None, None, None,
+         "R$ 18.331,90"),
+        ("6,7% | Fundos Listados", None, None, "Saldo", "% Alocação",
+         "Preço médio (abertura)", "Última cotação"),
+        ("HGRE11", None, None, "R$ 0,00", "0%", "R$ 0,00", "R$ 116,60"),
+    ]
+    sec = secoes(linhas)[0]
+    pos, motivo = posicao(sec, sec["linhas"][0])
+    assert motivo == ""
+    assert pos["quantity"] == 0.0
+    assert pos["market_value"] == 0.0
 
 
 def test_posicao_sem_quantidade_nao_entra():
@@ -266,6 +318,31 @@ def test_posicao_tesouro_nao_inventa_preco_unitario():
     assert pos["quantity"] == pytest.approx(2.83)
     assert pos["market_price"] is None
     assert pos["market_value"] == pytest.approx(56154.59)
+
+
+def test_posicao_tesouro_usa_nome_publico():
+    """O extrato publica o código da dívida; a tela mostra o nome do site.
+
+    "NTNB PRINC ago/2032" e "NTNB ago/2032" caem no MESMO ticker
+    (`TIPCA2032`), então o nome não pode vir do ticker — vem do texto da
+    fonte, aqui, na importação.
+    """
+    linhas = [
+        ("Tesouro Direto", None, None, None, None, None, "R$ 109.542,88"),
+        ("20% | Tesouro", "Saldo", "% Alocação", "Valor aplicado",
+         "Quantidade", "Disponível", "Vencimento"),
+        ("NTNB PRINC ago/2032", "R$ 30.526,01", "11,2%", "R$ 28.000,00",
+         "9,96", "9,96", "15/08/2032"),
+        ("LFT mar/2031", "R$ 56.154,59", "20,6%", "R$ 50.000,00",
+         "2,83", "2,83", "01/03/2031"),
+    ]
+    sec = secoes(linhas)[0]
+    pos, _ = posicao(sec, sec["linhas"][0])
+    assert pos["ticker"] == "TIPCA2032"
+    assert pos["name"] == "Tesouro IPCA+ 2032"
+    pos, _ = posicao(sec, sec["linhas"][1])
+    assert pos["ticker"] == "TSELIC2031"
+    assert pos["name"] == "Tesouro Selic 2031"
 
 
 def test_posicao_fii_deriva_cotas():
