@@ -1100,3 +1100,50 @@ def test_peso_ausente_nao_vira_zero_por_cento_no_card():
     assert "Empresas Americanas" in html
     assert "do patrim" not in html
     assert html.count("<div") == html.count("</div>")
+
+
+def test_cards_por_ativo_saem_em_token_de_tema_e_nao_em_literal():
+    """Os cards do Portfolio Global ficavam escuros no tema claro.
+
+    O fundo, a borda e o texto eram literais (``#12151E``, ``#E2E8F0``)
+    escritos direto no atributo ``style``. Estilo inline nao e alcancado por
+    regra de folha sem ``!important``, e o tema claro nem tinha o seletor —
+    o card ficava azul-escuro no meio da pagina branca, com o resto da tela
+    ja claro (pedido de 23/09/2026).
+
+    A checagem e sobre a SAIDA, nao sobre a constante: quem inventar um
+    literal novo dentro de uma f-string continua sendo pego. Cor literal so
+    passa se vier como fallback de um ``var(--app-...)``, que e o que mantem
+    o card identico no escuro caso o token falte.
+    """
+    import re
+
+    from core.global_portfolio import roles
+    from design.portfolio_global_cards import card_papel_html, card_recomendacao_html
+
+    entrada = roles.PapelDoAtivo(
+        symbol="PETR4", papeis=frozenset(), indeterminados=frozenset(),
+        evidencias=(), justificativa="sem dado",
+    )
+    htmls = [
+        card_recomendacao_html(_acao_de_teste(), "Reduzir", "#F97316",
+                               "custo: R$ 31,40"),
+        card_papel_html(entrada, classe_label="Acoes BR", peso=0.12),
+    ]
+
+    # Todo valor de cor do card: `color:`, `background-color:` e a cor que
+    # fecha `border...:1px solid <cor>`.
+    padrao = re.compile(r"(?:background-)?color:\s*([^;\"]+)|solid\s+(#[0-9A-Fa-f]{3,8}|var\([^)]*\)|rgba?\([^)]*\))")
+    for html in htmls:
+        valores = [a or b for a, b in padrao.findall(html)]
+        assert valores, "nenhuma cor encontrada — o padrao do teste envelheceu"
+        for valor in valores:
+            assert valor.strip().startswith("var(--app-"), (
+                f"cor literal {valor!r} no card: o tema claro nao alcanca "
+                "estilo inline, use um token via design.componentes.cor_token"
+            )
+
+    # O atalho `background` reescreve `background-image` junto; o projeto ja
+    # perdeu os logos da B3 por isso (`memoria: atalho-background-apaga-imagem-inline`).
+    for html in htmls:
+        assert "background:" not in html
