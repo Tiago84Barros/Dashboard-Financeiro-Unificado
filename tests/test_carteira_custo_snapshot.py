@@ -153,3 +153,49 @@ def test_sem_nenhuma_fonte_b3_o_consolidado_segue_valendo():
 
     assert round(pos["total_investido"], 2) == 10000.00
     assert pos["custo_fonte"] == "snapshot"
+
+
+# ── 2026-09-23: a precedencia se inverte quando as compras explicam a posicao.
+#
+# O usuario decidiu que o preco medio deve sair dos valores COMPRADOS, porque
+# os da planilha de posicao "nem sempre estao corretos". A regra so nao vale
+# quando o historico de notas nao cobre a quantidade de hoje -- ai o que
+# existe nao e um preco medio, e uma amostra, e o caso BBAS3 acima continua
+# valendo exatamente como esta.
+
+
+def test_preco_medio_vem_das_compras_quando_o_historico_cobre_a_posicao():
+    """Notas cobrindo as 109 cotas: o PM delas ganha do declarado no extrato."""
+    pos = _pos([_row("PETR3", qty=109, vm=3900.00, invested=3934.90,
+                     pp_qty=230, pp_ti=6619.40, pp_avg=28.78,
+                     b3_avg=36.10, b3_qty=109)], "PETR3")
+    assert round(pos["preco_medio"], 2) == 28.78
+    assert pos["custo_fonte"] == "b3_negociacao"
+    # Vender nao muda o preco medio, mas muda o total: 109 cotas, nao 230.
+    assert round(pos["total_investido"], 2) == round(28.78 * 109, 2)
+
+
+def test_venda_parcial_nao_e_lida_como_historico_incompleto():
+    """pp_qty > qty_snap e cobertura, nao lacuna."""
+    pos = _pos([_row("DEXP3", qty=17, vm=120.00,
+                     pp_qty=293, pp_ti=2344.00, pp_avg=8.00,
+                     b3_avg=9.50, b3_qty=17)], "DEXP3")
+    assert round(pos["preco_medio"], 2) == 8.00
+    assert pos["custo_fonte"] == "b3_negociacao"
+
+
+def test_historico_que_nao_cobre_a_posicao_nao_vira_preco_medio():
+    """DIRR3 em producao: nota para 37% das cotas de hoje."""
+    pos = _pos([_row("DIRR3", qty=649, vm=8000.00, invested=7684.16,
+                     pp_qty=243, pp_ti=3839.40, pp_avg=15.80,
+                     b3_avg=11.84, b3_qty=649)], "DIRR3")
+    assert round(pos["preco_medio"], 2) == 11.84
+    assert pos["custo_fonte"] == "b3_posicao_detalhada"
+
+
+def test_sem_extrato_a_amostra_estica_e_vai_rotulada():
+    """Nem cobertura nem extrato: o unico numero que existe, marcado."""
+    pos = _pos([_row("MBRF3", qty=38, vm=900.00,
+                     pp_qty=6, pp_ti=120.00, pp_avg=20.00)], "MBRF3")
+    assert round(pos["preco_medio"], 2) == 20.00
+    assert pos["custo_fonte"] == "preco_medio_estimado"

@@ -372,6 +372,41 @@ _SQL_POSICOES_SNAPSHOT = """
     -- Por isso o custo tem a sua propria fonte, decidida fora do ranking:
     -- a foto mais recente da B3 que publica custo, independente de quem tenha
     -- ganhado o ranking da posicao.
+    -- ── ENCERRAMENTO: ausencia na foto seguinte nao apaga a venda.
+    --
+    -- O extrato da B3 publica o ativo vendido com quantidade e saldo zero, e
+    -- o importador grava esse zero de proposito -- e a evidencia de que a
+    -- posicao acabou. Mas `latest_rows` so preserva as linhas da data MAXIMA
+    -- de cada fonte: quando chega um extrato mais novo, a linha zerada do
+    -- extrato anterior e descartada, e se a B3 ja parou de listar o ativo
+    -- (ela para, algumas semanas depois da venda) o encerramento some junto.
+    -- HGRE11 voltou assim: zerado em 2026-09-21, ausente em 2026-09-22, e
+    -- ressuscitado pelo consolidado da Rico de 2026-07-31, que ainda o
+    -- mostrava com 31 cotas.
+    --
+    -- Por isso o encerramento e lido na ULTIMA linha que a B3 publicou para
+    -- AQUELE ativo, nao na ultima foto da fonte. Recompra volta a aparecer
+    -- sozinha: a linha nova, com quantidade > 0, passa a ser a ultima.
+    b3_ultima_linha AS (
+        SELECT s.asset_id, MAX(s.report_date) AS report_date
+        FROM normalized_snapshots s
+        WHERE s.effective_source_table = 'b3_posicao_detalhada'
+        GROUP BY s.asset_id
+    ),
+    b3_encerrados AS (
+        -- Soma lote padrao + fracionario da mesma data: encerrado e o ativo
+        -- cuja ultima linha na custodia central nao tem nem quantidade nem
+        -- saldo.
+        SELECT s.asset_id
+        FROM normalized_snapshots s
+        JOIN b3_ultima_linha u
+          ON u.asset_id = s.asset_id
+         AND u.report_date = s.report_date
+        WHERE s.effective_source_table = 'b3_posicao_detalhada'
+        GROUP BY s.asset_id
+        HAVING COALESCE(SUM(s.quantity), 0) = 0
+           AND COALESCE(SUM(s.market_value), 0) = 0
+    ),
     b3_cost_latest AS (
         SELECT
             REGEXP_REPLACE(a.ticker, 'F$', '') AS base_ticker,
@@ -461,6 +496,7 @@ _SQL_POSICOES_SNAPSHOT = """
     ) fx ON true
     WHERE pps.user_id = :uid
       AND pps.asset_source_rank = 1
+      AND pps.asset_id NOT IN (SELECT asset_id FROM b3_encerrados)
     ORDER BY pps.market_value DESC
 """
 
@@ -934,13 +970,15 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
       1. Agrupa rows do SQL por base_ticker (BBAS3 + BBAS3F → BBAS3)
       2. Soma quantidade e market_value de todos os snapshots do base_ticker
          desconsiderando emprestimos de ativos (filtrados no SQL).
-      3. Para o CUSTO: o preco medio vem sempre da B3, nunca do consolidado
-         da corretora -- nesta ordem, o extrato "Posicao Detalhada"
-         (CTE b3_cost, decidida FORA do ranking da posicao), depois o
-         agregado das notas de negociacao (pp_base). So quando nenhuma
-         fonte da B3 cobre o ativo -- CDBs e titulos privados, que existem
-         so no .xlsx da corretora -- e que o invested_value da linha vencedora
-         entra; e em ultimo caso o market_value.
+      3. Para o CUSTO: o preco medio vem do que foi COMPRADO -- o agregado
+         das notas de negociacao (pp_base) -- sempre que esse historico
+         cobrir a quantidade de hoje. Quando nao cobre, o que existe e uma
+         amostra, e entra o preco medio declarado no extrato "Posicao
+         Detalhada" da B3 (CTE b3_cost, decidida FORA do ranking da
+         posicao), que e calculado sobre o historico inteiro. Sem nenhum
+         dos dois, a amostra esticada; depois o invested_value da linha
+         vencedora (CDBs e titulos privados, que so existem no .xlsx da
+         corretora); e em ultimo caso o market_value.
     """
     # ── 1. Agrupa rows por base_ticker
     grupos: dict[str, dict] = {}
@@ -1058,7 +1096,49 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
         # central, com o historico de TODAS as corretoras, enquanto o
         # consolidado enxerga so a propria. Por isso o preco medio da B3 vem
         # antes, venha de onde vier a foto da posicao.
+        # ── CUSTO: o preco medio sai do que foi COMPRADO -- o agregado das
+        # notas de negociacao (pp_base, reconstruido de investment_transactions
+        # por positions.recompute_for_user) --, nao do preco medio declarado
+        # na planilha de posicao.
+        #
+        # A planilha e uma foto de terceiro: o PM que ela publica depende de
+        # qual corretora calculou, de que eventos ela considerou e de quando
+        # a foto foi tirada. As compras sao o fato primario, e sao nossas.
+        #
+        # A ressalva vale para o proximo leitor, porque ela tem tamanho: o
+        # historico de notas NAO cobre todo ativo. Em 2026-09-23, das 29
+        # posicoes, DIRR3 tinha nota para 37% das cotas de hoje, SBSP3 para
+        # 69% e BBAS3 para 73%. Dividir o total comprado pela quantidade de
+        # hoje nesses casos nao devolve o preco medio: devolve o preco medio
+        # de um pedaco do historico esticado sobre a posicao inteira -- foi
+        # o defeito que o PR #309 corrigiu (BBAS3 com PM de R$ 10,40 contra
+        # os R$ 23,92 reais, lucro fantasma de +121%).
+        #
+        # Por isso a precedencia das compras e condicionada a UMA verificacao,
+        # que e a propria pergunta "as compras explicam a posicao?": o
+        # historico precisa cobrir a quantidade de hoje. Quando cobre, o PM
+        # das notas vale, venha o que vier na planilha. Quando nao cobre, o
+        # que existe nao e um preco medio -- e uma amostra --, e o extrato da
+        # B3 (custodia central, historico de TODAS as corretoras) volta a ser
+        # a melhor fonte.
+        #
+        # Venda parcial nao quebra a cobertura: sob preco medio, vender nao
+        # muda o PM, entao pp_qty > qty_snap continua coberto.
+        elif pp_ti > 0 and qty_snap > 0 and pp_qty >= qty_snap * 0.99:
+            qty         = qty_snap
+            preco_medio = pp_avg if pp_avg > 0 else (pp_ti / pp_qty)
+            if abs(qty_snap - pp_qty) / pp_qty <= 0.01:
+                # Mesma quantidade: o custo e a soma das notas, nao uma conta.
+                ti = pp_ti
+            else:
+                # Houve venda depois das compras importadas. O PM sobrevive
+                # a venda; o total, nao.
+                ti = preco_medio * qty_snap
+            custo_fonte = "b3_negociacao"
         elif b3_avg > 0:
+            # As notas nao cobrem a posicao (ou nao existem). O extrato da B3
+            # calcula o PM sobre o historico INTEIRO, inclusive o pedaco
+            # anterior a qualquer arquivo que este app tenha importado.
             qty         = qty_snap
             preco_medio = b3_avg
             ti          = b3_avg * qty_snap
@@ -1072,29 +1152,13 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
                 # o card precisa rotular como estimado.
                 custo_fonte = "b3_preco_medio_escalado"
         elif pp_ti > 0 and pp_qty > 0:
-            # Sem custo no extrato (a B3 publica PM zero quando perdeu a
-            # base, e o importador grava isso como ausencia, nao como zero).
-            # O agregado das notas passa a ser o melhor que existe.
+            # Nem extrato nem cobertura: so resta esticar a amostra sobre a
+            # posicao de hoje. E o unico numero que existe, e vai rotulado
+            # como estimado justamente por isso.
             qty         = qty_snap
             preco_medio = pp_avg if pp_avg > 0 else (pp_ti / pp_qty)
-            # Reconcilia qty_snap (corretora, valor atual) com pp_qty
-            # (historico de transacoes B3). 3 cenarios:
-            #  A) qty_snap == pp_qty (1% tolerancia): tudo casa, usa pp_ti
-            #  B) qty_snap < pp_qty: venda parcial (DEXP3 17 sh, comprou 293)
-            #     mantem PM, recalcula ti = PM * qty atual (evita custo inflado)
-            #  C) qty_snap > pp_qty: historico incompleto (MBRF3 38 sh, B3
-            #     so importou 6) — usa PM como referencia mas ti subestimado
-            #     ou superestimado (sinaliza com custo_fonte=preco_medio_estimado)
-            qty_diff_pct = abs(qty_snap - pp_qty) / pp_qty if pp_qty > 0 else 1.0
-            if qty_diff_pct <= 0.01:
-                ti = pp_ti
-                custo_fonte = "b3_negociacao"
-            elif qty_snap < pp_qty:
-                ti = preco_medio * qty_snap
-                custo_fonte = "b3_negociacao"
-            else:
-                ti = preco_medio * qty_snap
-                custo_fonte = "preco_medio_estimado"
+            ti          = preco_medio * qty_snap
+            custo_fonte = "preco_medio_estimado"
         elif vi_snap > 0:
             # Nenhuma fonte da B3 cobre este ativo -- e o caso dos CDBs e dos
             # titulos privados, que existem so no consolidado da corretora.

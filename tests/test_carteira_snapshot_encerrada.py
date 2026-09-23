@@ -97,3 +97,42 @@ def test_nome_do_tesouro_sai_amigavel_mesmo_gravado_em_codigo():
              asset_name="LFT mar/2031"),
     ])
     assert carteira["posicoes"][0]["nome"] == "Tesouro Selic 2031"
+
+
+# ── 2026-09-23: o encerramento tem que sobreviver a foto seguinte.
+#
+# HGRE11 saiu zerado no extrato de 2026-09-21 e sumiu do extrato de 09-22 (a
+# B3 para de listar o ativo vendido algumas semanas depois). Como `latest_rows`
+# so preserva as linhas da data MAXIMA de cada fonte, a linha zerada foi
+# descartada e o consolidado da Rico de 2026-07-31, que ainda mostrava 31
+# cotas, ressuscitou a posicao. O corte por `vm <= 0` acima nao alcanca esse
+# caso: nao chega linha nenhuma para cortar.
+#
+# O SQL nao roda em teste (e Postgres: LATERAL, REGEXP_REPLACE), entao o que
+# se verifica aqui e a estrutura: que o encerramento e lido na ultima linha
+# do ATIVO, nao na ultima foto da fonte, e que ele exclui de fato.
+
+
+def _sql() -> str:
+    from core.investimentos import _SQL_POSICOES_SNAPSHOT
+
+    return _SQL_POSICOES_SNAPSHOT
+
+
+def test_encerramento_e_lido_por_ativo_e_nao_pela_foto_da_fonte():
+    sql = _sql()
+    assert "b3_ultima_linha AS (" in sql
+    trecho = sql.split("b3_ultima_linha AS (")[1].split("),")[0]
+    assert "MAX(s.report_date)" in trecho
+    assert "GROUP BY s.asset_id" in trecho, (
+        "a ultima linha tem que ser por ativo; agrupar por fonte traz de "
+        "volta o bug do HGRE11"
+    )
+
+
+def test_ativo_encerrado_sai_do_resultado():
+    sql = _sql()
+    assert "b3_encerrados AS (" in sql
+    assert "NOT IN (SELECT asset_id FROM b3_encerrados)" in sql, (
+        "a CTE existir nao basta: ela precisa filtrar o SELECT final"
+    )
