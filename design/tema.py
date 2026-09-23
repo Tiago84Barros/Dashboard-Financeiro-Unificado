@@ -204,6 +204,9 @@ hr {
     --app-info: #4A9EFF;
     --app-danger: #FC5C7D;
     --app-warning: #F6C90E;
+    /* Laranja de 'reduzir'/'VaR': era literal nas telas e no claro ficava
+       ilegivel sobre branco. Token para o tema poder escurece-lo. */
+    --app-alert: #F97316;
     --app-accent: #C084FC;
     --app-radius-sm: 10px;
     --app-radius-md: 14px;

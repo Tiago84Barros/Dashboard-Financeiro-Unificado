@@ -15,7 +15,8 @@ LIGHT_CSS = """
  --app-border:#d1d9e4; --app-border-strong:#a5b4c7;
  --app-text:#172033; --app-muted:#46566e; --app-subtle:#52627a;
  --app-primary:#007e60; --app-info:#175eac; --app-danger:#b42342;
- --app-warning:#875e00; --app-accent:#6d28d9; --app-shadow:0 8px 24px rgba(30,45,70,.08);
+ --app-warning:#875e00; --app-accent:#6d28d9; --app-alert:#b4530a;
+ --app-shadow:0 8px 24px rgba(30,45,70,.08);
  color-scheme:light;
 }
 .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"] {

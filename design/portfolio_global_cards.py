@@ -19,19 +19,31 @@ from __future__ import annotations
 from html import escape
 
 from core.global_portfolio import advisor, roles
+from design.componentes import cor_token
 
-_FUNDO = "#12151E"
-_BORDA = "#1E2533"
-_TEXTO = "#E2E8F0"
-_TEXTO2 = "#CBD5E0"
-_TEXTO3 = "#9CA3AF"
-_TEXTO4 = "#718096"
+# Fundo, borda e texto saem como token, nao como literal. Enquanto eram
+# ``#12151E``/``#E2E8F0`` cravados no atributo ``style``, o tema claro nao
+# tinha por onde alcanca-los -- nenhuma regra de CSS vence um estilo inline
+# sem ``!important``, e o token nem chegava ao elemento. O resultado era um
+# bloco azul-escuro com texto claro no meio da pagina branca
+# (`memoria: tema-claro-so-alcanca-o-que-passa-por-token`). O literal antigo
+# fica como fallback: se o tema nao tiver definido a variavel, o card volta
+# a ser exatamente o que era, em vez de herdar cor do navegador.
+_FUNDO = "var(--app-surface, #12151E)"
+_BORDA = "var(--app-border, #1E2533)"
+_TEXTO = "var(--app-text, #E2E8F0)"
+_TEXTO2 = "var(--app-text, #CBD5E0)"
+_TEXTO3 = "var(--app-muted, #9CA3AF)"
+_TEXTO4 = "var(--app-subtle, #718096)"
 
-POSITIVO = "#00C896"
-NEGATIVO = "#FC5C7D"
-INFO = "#4A9EFF"
-ALERTA = "#F6C90E"
-NEUTRO = "#9CA3AF"
+# As cores semanticas passam por ``cor_token`` pelo mesmo motivo, e com o
+# mesmo mapa que o resto do app ja usa: no claro, ``#00C896`` sobre branco e
+# ilegivel e vira ``--app-primary`` (#007e60).
+POSITIVO = cor_token("#00C896")
+NEGATIVO = cor_token("#FC5C7D")
+INFO = cor_token("#4A9EFF")
+ALERTA = cor_token("#F6C90E")
+NEUTRO = cor_token("#9CA3AF")
 
 
 def _t(texto: object) -> str:
@@ -40,9 +52,14 @@ def _t(texto: object) -> str:
 
 
 def _moldura(accent: str, miolo: str) -> str:
+    # ``background-color`` e nao o atalho ``background``: o atalho reescreve
+    # ``background-image`` junto (`memoria: atalho-background-apaga-imagem-inline`).
+    # ``accent`` chega literal de quem chama (``_ACCENT_ACAO`` na view) e passa
+    # por ``cor_token`` aqui, para a borda acompanhar o tema sem obrigar cada
+    # chamador a lembrar disso.
     return (
-        f'<div style="background:{_FUNDO};border:1px solid {_BORDA};'
-        f'border-left:3px solid {accent};border-radius:10px;'
+        f'<div style="background-color:{_FUNDO};border:1px solid {_BORDA};'
+        f'border-left:3px solid {cor_token(accent)};border-radius:10px;'
         f'padding:12px 14px;height:100%;margin-bottom:10px;">{miolo}</div>'
     )
 
@@ -59,7 +76,7 @@ def _cabecalho(symbol: str, rotulo: str, cor: str,
         f'<div style="font-size:1.0rem;font-weight:800;color:{_TEXTO};'
         f'letter-spacing:-0.01em;">{_t(symbol)}</div>'
         f'<div style="font-size:0.62rem;font-weight:800;text-transform:uppercase;'
-        f'letter-spacing:0.08em;color:{cor};">{_t(rotulo)}</div></div>'
+        f'letter-spacing:0.08em;color:{cor_token(cor)};">{_t(rotulo)}</div></div>'
         f'{sub}'
     )
 
@@ -90,7 +107,7 @@ def _linha_papel(icone: str, titulo: str, detalhe: str, cor: str) -> str:
     )
     return (
         f'<div style="margin-bottom:5px;">'
-        f'<div style="font-size:0.74rem;color:{cor};font-weight:600;">'
+        f'<div style="font-size:0.74rem;color:{cor_token(cor)};font-weight:600;">'
         f'{icone} {_t(titulo)}</div>{detalhe_html}</div>'
     )
 

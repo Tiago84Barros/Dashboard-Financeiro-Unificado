@@ -211,6 +211,7 @@ _TOKEN_POR_COR = {
     "#4A9EFF": "var(--app-info)",
     "#FC5C7D": "var(--app-danger)",
     "#F6C90E": "var(--app-warning)",
+    "#F97316": "var(--app-alert)",
     "#9CA3AF": "var(--app-muted)",
     "#4A5568": "var(--app-subtle)",
     "#E2E8F0": "var(--app-text)",
