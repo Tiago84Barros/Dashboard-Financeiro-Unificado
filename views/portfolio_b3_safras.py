@@ -1,0 +1,1276 @@
+"""
+views/portfolio_b3_safras.py — relatorio de desempenho safra a safra.
+
+Renderizacao apenas: toda a aritmetica de safra mora em core/b3_safras.py.
+views/portfolio_b3.py ja tem 4.400+ linhas e nao recebe logica nova.
+
+`_resumo_safras`, `_legenda_resumo`, `_tabela_para_exibicao`,
+`_column_config_retorno`, `_grafico_barras` e `_expectativa` sao as pecas
+de logica deste modulo, e sao deliberadamente
+puras (sem streamlit, sem banco) para poder ser testadas direto — nesta
+base, teste via Streamlit AppTest vaza atribuicao de modulo e falha só
+dentro da suíte completa no CI, nunca isolado (nota de memória
+`apptest-vaza-atribuicao-de-modulo`).
+"""
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+
+import numpy as np
+import pandas as pd
+import plotly.express as px
+import streamlit as st
+
+from core.b3_pooled_evidence import MIN_ATIVOS_ANO
+from core.b3_safras import MIN_SAFRAS_LOO, tabela_de_safras
+from design.componentes import card_metrica
+from views.empresas_b3 import _COR_ALT, _COR_NEU, _COR_POS, _plot_layout
+
+_COLUNAS_RETORNO = ["Estratégia (%)", "Equal-weight (%)", "Selic (%)",
+                    "Excesso s/ Selic (pp)"]
+
+# Colunas cuja EXIBIÇÃO é arredondada em 1 casa. Desde a rodada de correção
+# 2, `core.b3_safras._pct` não arredonda mais (A-T7-02: o valor é lido por
+# quem mede, e quantizá-lo apagava dispersão real). Quem arredonda é este
+# formatador — e ele precisa cobrir também "Peso sem preço (%)", que não é
+# coluna de retorno mas passou a chegar com a fração cheia
+# (33.333333333333336 na tela).
+_COLUNAS_1CASA = _COLUNAS_RETORNO + ["Peso sem preço (%)"]
+
+# Uma so regra de casas decimais para a tela inteira (R2-5): o formato das
+# colunas e a resolucao usada na prosa (`_RESOLUCAO_PP`) saem daqui, em vez
+# de repetir o literal "%.1f" em dois lugares e a meia casa num terceiro.
+_CASAS_TABELA = 1
+_FORMATO_TABELA = f"%.{_CASAS_TABELA}f"
+
+_CORES_SERIE = {
+    "Estratégia (%)": _COR_POS,
+    "Equal-weight (%)": _COR_NEU,
+    "Selic (%)": _COR_ALT,
+}
+
+
+def _resumo_safras(tabela: pd.DataFrame) -> dict:
+    """Deriva das colunas publicadas tudo que a tela afirma em texto.
+
+    Pura (sem streamlit) para poder ser testada isoladamente. Regras
+    fechadas por revisão:
+
+    - a população das médias é `attrs["safras_completas"]`, nunca
+      `tabela["Completa"]` sozinha — "Completa" só diz que a janela civil
+      fechou, e uma safra pode ter janela fechada e zero pregão observado
+      (core/b3_safras.py, rodada 4 da Task 4);
+    - a frase sobre a safra vigente é derivada de `tabela["Completa"]`
+      observada agora, nunca de uma suposição de calendário — de janeiro a
+      março `safra_vigente_em` devolve o ano anterior, que ESTÁ dentro do
+      range que `views/portfolio_b3.py` itera, e a safra vigente pode
+      aparecer como linha parcial (rodada de correção 1, achado I-2);
+    - uma safra pode ter `Completa=True` e ainda assim não estar em
+      `completas` (janela fechada, mas zero pregão observado — o mesmo
+      caso do I-1). Ela não é `parciais` (a janela FECHOU) nem `completas`
+      (não foi medida): fica órfã das duas categorias, e por isso ganha a
+      própria lista, `orfas`, para a legenda não deixá-la muda (rodada de
+      correção 2, achado N-3).
+    """
+    safras_medidas = set(tabela.attrs.get("safras_completas", []))
+    completas_bool = tabela["Safra"].isin(safras_medidas)
+    completas = tabela[completas_bool]
+    parciais = tabela[~tabela["Completa"]]
+    orfas = tabela[tabela["Completa"] & ~completas_bool]
+
+    n_medidas = len(completas)
+    if n_medidas:
+        media_excesso = float(completas["Excesso s/ Selic (pp)"].mean())
+        venceu = int((completas["Excesso s/ Selic (pp)"] > 0).sum())
+        peso_ausente_max = float(completas["Peso sem preço (%)"].max())
+        safra_min = int(completas["Safra"].min())
+        safra_max = int(completas["Safra"].max())
+    else:
+        media_excesso = None
+        venceu = 0
+        peso_ausente_max = 0.0
+        safra_min = None
+        safra_max = None
+
+    return {
+        "completas": completas,
+        "parciais": parciais,
+        "orfas": orfas,
+        "n_medidas": n_medidas,
+        "media_excesso": media_excesso,
+        "venceu": venceu,
+        "peso_ausente_max": peso_ausente_max,
+        "safra_min": safra_min,
+        "safra_max": safra_max,
+    }
+
+
+def _legenda_resumo(resumo: dict) -> str:
+    """Texto do caption principal — sempre derivado de `resumo`, nunca do
+    intervalo bruto de `tabela["Safra"]` (achado m-1: a legenda contava as
+    safras medidas mas publicava o min..max da tabela inteira)."""
+    if resumo["n_medidas"]:
+        intervalo = f"de {resumo['safra_min']} a {resumo['safra_max']}"
+        base = f"{resumo['n_medidas']} safra(s) já encerrada(s) e mensurável(is), {intervalo}."
+    else:
+        base = "Nenhuma safra encerrada e mensurável ainda."
+    base += (" Cada safra é pontuada com dados até o ano anterior e vigora "
+            "de abril a março.")
+
+    parciais = resumo["parciais"]
+    if parciais.empty:
+        base += (" **A safra vigente não aparece nesta tabela** — a janela "
+                "dela ainda está em curso; o desempenho em andamento está "
+                "no gráfico logo acima, não aqui.")
+    else:
+        safras_parciais = ", ".join(str(int(s)) for s in sorted(parciais["Safra"]))
+        base += (f" **A safra {safras_parciais} está nesta tabela com a "
+                "janela em curso** (marcada \"Completa\" = Não) — o retorno "
+                "dela é parcial e não entra nas médias acima.")
+
+    orfas = resumo["orfas"]
+    if not orfas.empty:
+        # N-3: a linha existe na tabela (Completa=True) mas não em
+        # `completas` nem em `parciais` — sem esta frase, ela aparece em
+        # branco do lado de uma legenda que só fala de "safra vigente" e
+        # "safra medida", sem cobrir o próprio caso.
+        safras_orfas = ", ".join(str(int(s)) for s in sorted(orfas["Safra"]))
+        base += (f" A safra {safras_orfas} tem a janela fechada, mas nenhum "
+                "pregão foi observado nela — por isso aparece em branco "
+                "nesta tabela e não entra em nenhuma média acima.")
+    return base
+
+
+def _tabela_para_exibicao(tabela: pd.DataFrame) -> pd.DataFrame:
+    """Cópia de exibição — só uma cópia. Não formata os valores como texto.
+
+    A rodada de correção 1 (achado m-2) tinha `NaN` virando o texto "—"
+    aqui, via `.map(lambda v: "—" if pd.isna(v) else f"{v:.1f}")`. Isso
+    tornava as 4 colunas de retorno `object`/string, e o `st.dataframe`
+    passou a ordenar por clique de cabeçalho em ordem ALFABÉTICA, não
+    numérica: "-3,0 → 10,0 → 100,0 → 9,0" (achado N-1, rodada de correção
+    2). O dtype numérico tem que sobreviver até o `st.dataframe` para a
+    ordenação funcionar — por isso esta função não toca nos valores, só
+    copia; a formatação visual (1 casa) fica com `st.column_config` em
+    `_column_config_retorno`, que não muda o dtype subjacente.
+
+    `NaN` continua `NaN`: o motivo de uma célula estar vazia já está na
+    coluna "Mensurável", ao lado — não precisa (e não deve) virar texto
+    dentro da própria célula de novo."""
+    return tabela.copy()
+
+
+def _column_config_retorno() -> dict:
+    """Config de exibição das 4 colunas de retorno — 1 casa decimal, sem
+    alterar o dtype numérico da coluna (convenção já usada 3x em
+    `views/portfolio_b3.py`, linhas 2370/2397/2422, via
+    `st.column_config.NumberColumn`)."""
+    return {
+        col: st.column_config.NumberColumn(format=_FORMATO_TABELA)
+        for col in _COLUNAS_1CASA
+    }
+
+
+def _grafico_barras(completas: pd.DataFrame):
+    """Barras Estratégia/Equal-weight/Selic por safra, no mesmo tema
+    transparente e nas mesmas cores dos demais gráficos da aba (achado
+    I-3): sem isso este era o único gráfico com papel branco opaco e Selic
+    trocando de cor em relação ao gráfico vizinho."""
+    longo = completas.melt(
+        id_vars="Safra",
+        value_vars=["Estratégia (%)", "Equal-weight (%)", "Selic (%)"],
+        var_name="Série", value_name="Retorno da safra (%)",
+    )
+    fig = px.bar(longo, x="Safra", y="Retorno da safra (%)",
+                 color="Série", barmode="group",
+                 color_discrete_map=_CORES_SERIE)
+    fig.update_layout(**_plot_layout(360))
+    return fig
+
+
+def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
+                  selic_por_ano: dict[int, float],
+                  taxa_selic_aa: float,
+                  resultados_todos: list[dict] | None = None) -> None:
+    """Bloco 1: a tabela de safras e a barra por safra contra Selic/EW.
+    Ao fim, chama `render_expectativa` (Bloco 3) e `render_vies_universo`
+    (Bloco 2, sob demanda).
+
+    `resultados` e a lista JA FILTRADA pelo gate de aprovacao -- e a
+    carteira que a tela publica. `resultados_todos` e a lista NAO
+    filtrada, e existe so para o Bloco 2 reconstruir as mesmas safras SEM
+    o gate e medir a distancia entre as duas. Sem ela o Bloco 2 nao e
+    renderizado: nao ha o que comparar.
+    """
+    st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-weight:700;font-size:1.05rem;color:var(--app-text);'
+        'margin-bottom:8px;">🗂️ Desempenho safra a safra</div>',
+        unsafe_allow_html=True,
+    )
+
+    if not resultados or df_precos is None or df_precos.empty:
+        st.caption("Rode a análise para reconstruir as safras.")
+        return
+
+    tabela = tabela_de_safras(resultados, df_precos,
+                              selic_por_ano=selic_por_ano,
+                              taxa_selic_aa=taxa_selic_aa)
+    if tabela.empty:
+        st.caption("Nenhuma safra com líderes reconstruídos.")
+        return
+
+    resumo = _resumo_safras(tabela)
+    completas = resumo["completas"]
+
+    st.caption(_legenda_resumo(resumo))
+
+    cols = st.columns(3)
+    if resumo["n_medidas"]:
+        with cols[0]:
+            card_metrica("Safras medidas", f"{resumo['n_medidas']}",
+                         ajuda="Janela fechada e com pelo menos um pregão observado")
+        with cols[1]:
+            media = resumo["media_excesso"]
+            card_metrica("Excesso médio s/ Selic", f"{media:+.1f} pp",
+                         positivo=media > 0,
+                         ajuda="Média simples das safras medidas")
+        with cols[2]:
+            card_metrica("Safras acima da Selic",
+                         f"{resumo['venceu']} de {resumo['n_medidas']}",
+                         ajuda="Contagem, não significância")
+    else:
+        with cols[0]:
+            card_metrica("Safras medidas", "0",
+                         ajuda="Nenhuma safra encerrada e mensurável ainda")
+
+    st.dataframe(_tabela_para_exibicao(tabela), width="stretch", hide_index=True,
+                column_config=_column_config_retorno())
+
+    if not completas.empty:
+        st.plotly_chart(_grafico_barras(completas), width="stretch",
+                        config={"displayModeBar": False},
+                        key="pb3_safras_barras")
+        st.caption(
+            "Barras, não curva acumulada: encadear os retornos produziria um "
+            "número grande e único, que esconde quantas safras individuais "
+            "ficaram atrás do benchmark."
+        )
+
+    render_expectativa(resultados, tabela)
+
+    # Mesma população das outras agregações (as safras medidas): incluir as
+    # não mensuráveis infla o aviso, porque nelas "Peso sem preço" vale
+    # 100,0 justamente por não ter havido observação nenhuma (achado I-1).
+    ausente = resumo["peso_ausente_max"]
+    if ausente > 0:
+        st.info(
+            f"Em pelo menos uma safra medida, até {ausente:.1f}% do peso "
+            "ficou sem preço na janela — deslistagem, incorporação ou "
+            "buraco de dado. Essa fatia rende **zero** no cálculo: não "
+            "inventamos a perda, mas ela também não rende o que os "
+            "sobreviventes renderam."
+        )
+
+    # Bloco 2 por último e sob demanda (decisão do dono do projeto): a
+    # reconstrução sem gate é a conta mais cara da tela. `tabela` vai junto
+    # para que o lado "com gate" da comparação seja a MESMA medição já
+    # publicada acima, e não uma segunda reconstrução que pode divergir.
+    if resultados_todos:
+        render_vies_universo(resultados, resultados_todos, df_precos,
+                             selic_por_ano=selic_por_ano,
+                             taxa_selic_aa=taxa_selic_aa,
+                             tabela_com_gate=tabela)
+
+
+def _ics_por_ano(resultados: list[dict],
+                 pares: list[tuple] | None = None) -> dict[int, float]:
+    """Um Rank-IC por ANO sobre o universo agrupado (rodada 2, A-1).
+
+    Usa `pooled_yearly_ics`, a MESMA redução que `_render_evidencia_universo`
+    aplica no bloco logo acima desta tela. Ler `rank_ic_values` (a lista
+    anual DE UM SEGMENTO) e concatenar entre segmentos faria `n` valer
+    `segmentos × anos`, e o teste t trataria a mesma ordenação de mercado,
+    recontada uma vez por segmento, como observações independentes.
+
+    Sem `ic_pairs` devolve vazio: o bloco diz que não pôde medir. Cair no
+    `rank_ic_values` concatenado seria trocar "não medi" por um número
+    inflado.
+    """
+    from core.b3_pooled_evidence import pooled_yearly_ics
+
+    # `pares` entra pronto quando quem chama ja os tem: a lista e a mais
+    # larga do bloco (todos os ativos x todos os anos x todos os
+    # segmentos) e `_expectativa` precisava dela para a limitacao, entao
+    # percorre-la duas vezes era trabalho duplicado, nao seguranca.
+    if pares is None:
+        pares = _pares_de_ic(resultados)
+    return pooled_yearly_ics(pares) if pares else {}
+
+
+def _pares_de_ic(resultados: list[dict]) -> list[tuple]:
+    """Observações (ano, score, retorno) de TODOS os segmentos, sem reduzir.
+
+    Existe separada porque a mensagem de limitação precisa distinguir duas
+    ausências opostas que `ics_por_ano == {}` confunde: *não chegaram
+    pares* e *chegaram pares, mas nenhum ano juntou ativos suficientes*.
+    Discriminar por `rank_ic_values` respondia a outra pergunta — a lista
+    por segmento pode existir com zero pares, e a tela culpava a ausência
+    errada.
+    """
+    pares: list[tuple] = []
+    for res in (resultados or []):
+        pares.extend(res.get("ic_pairs") or [])
+    return pares
+
+
+def _observacoes_por_ano(pares: list[tuple]) -> dict[int, int]:
+    """Quantas observacoes finitas cada ano trouxe — o mesmo filtro que
+    `pooled_yearly_ics` aplica antes de exigir `MIN_ATIVOS_ANO`.
+
+    Existe para a mensagem de limitacao DERIVAR a causa em vez de assumir
+    uma delas: o ano tambem e descartado quando os postos sao degenerados
+    (score ou retorno identico no ano inteiro), e a frase que culpava
+    sempre o minimo de ativos se contradizia — com 6 pares num unico ano
+    ela imprimia "6 observacao(oes) chegaram, mas nenhum ano juntou os 5
+    ativos minimos".
+    """
+    contagem: dict[int, int] = {}
+    for item in pares or []:
+        try:
+            ano, score, retorno = int(item[0]), float(item[1]), float(item[2])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not (np.isfinite(score) and np.isfinite(retorno)):
+            continue
+        contagem[ano] = contagem.get(ano, 0) + 1
+    return contagem
+
+
+def _fmt_p(valor: float) -> str:
+    """p-valor em formato que preserva a ORDEM DE GRANDEZA.
+
+    Com `.3f` fixo, 2.255 dos 13.040 casos robustos de uma amostragem de
+    20.000 (17,3% dos selos verdes) imprimiam "entre 0.000 e 0.000": as
+    bandas reais desses casos estao na casa de 1e-7, e o "por quanto
+    passou" — que saiu do tooltip justamente para ser lido — virava zero
+    visual. Abaixo de 0,001 a notacao cientifica diz o que o `.3f` apaga.
+    """
+    return f"{valor:.1e}" if abs(valor) < 0.001 else f"{valor:.3f}"
+
+
+def _texto_banda_p(loo: dict) -> str:
+    """Margem medida do leave-one-out: a banda de p-valores das
+    subamostras contra `alpha`. Contagem diz quantos viram; só a banda diz
+    por quanto. Vazio quando não há banda calculável."""
+    baixo, alto = loo.get("p_banda", (None, None))
+    if baixo is None or alto is None:
+        return ""
+    return (f"Tirando um ano de cada vez, o p-valor fica entre "
+            f"{_fmt_p(baixo)} e {_fmt_p(alto)} (α = {loo['alpha']:.2f}).")
+
+
+def _ajuda_ordena(veredito) -> str:
+    """Ajuda do card mais forte: amplitude e efeito mínimo detectável.
+
+    A premissa de independência NÃO fica aqui — ela qualifica o selo mais
+    forte da tela e saiu para `_nota_independencia`, que a view publica em
+    texto visível. `ajuda` vira o atributo `title=` do card
+    (`design/componentes.py`), isto é, tooltip de hover: invisível no
+    toque e invisível para quem não passa o mouse. Ressalva que só aparece
+    no hover é ressalva que não foi publicada.
+    """
+    partes = [f"{veredito.anos_medidos} ano(s) de Rank-IC"]
+    mde = veredito.efeito_minimo_detectavel
+    if mde is not None:
+        partes.append(f"Efeito mínimo detectável: {mde:.3f}")
+    return ". ".join(partes)
+
+
+def _nota_independencia(anos: list[int]) -> str:
+    """Premissa que o teste t assume e os dados não garantem — visível.
+
+    Derivada da medição, nunca fixa (este projeto já publicou texto de
+    limitação que envelheceu invertido e continuou soando como rigor):
+    cita quantos anos entraram, quais, e o maior bloco consecutivo, que é
+    a sobreposição de regime que o teste ignora.
+    """
+    if not anos:
+        return ""
+    corrida = maior = 1
+    for anterior, atual in zip(anos, anos[1:]):
+        corrida = corrida + 1 if atual == anterior + 1 else 1
+        maior = max(maior, corrida)
+    return (f"O teste trata os {len(anos)} anos ({anos[0]}–{anos[-1]}, até "
+            f"{maior} consecutivos) como independentes. Anos vizinhos "
+            "compartilham universo e regime de mercado, então o p-valor é "
+            "otimista.")
+
+
+def _frase(*partes: str) -> str:
+    """Junta pedaços de texto já pontuados, sem deixar espaço órfão quando
+    um deles é vazio (a banda não é calculável em toda amostra)."""
+    return " ".join(p.strip() for p in partes if p and p.strip())
+
+
+def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
+    """Tudo que o Bloco 3 publica, derivado das leituras — sem streamlit.
+
+    Três perguntas distintas, e é de propósito que elas não virem um
+    número só: **ordenar não é superar**. Um Rank-IC positivo diz que o
+    score discriminou retornos; ele não diz que a carteira bateu a Selic.
+    Fundir os dois num "retorno esperado" leria como previsão um resultado
+    que a amostra não sustenta.
+
+    Regras fechadas nesta task:
+
+    - a população da banda é `attrs["safras_completas"]`, nunca
+      `tabela["Completa"]` — mesma população das médias do Bloco 1. Uma
+      safra de janela fechada e zero pregão observado não é evidência;
+    - a fragilidade NÃO é medida re-semeando o bootstrap (trocar a semente
+      só troca ruído de Monte Carlo) e sim por leave-one-out sobre as
+      safras. O veredito da B3 já passou a APROVADO por 0,004 e reprovava
+      de novo ao tirar uma safra — quem enxerga isso é o LOO;
+    - o veredito do card "Ordena?" sai de `veredito_do_rank_ic`, o MESMO
+      critério que o leave-one-out aplica (rodada de correção 1, F-1).
+      Dois critérios homônimos publicavam vereditos opostos lado a lado;
+    - abaixo de `MIN_SAFRAS_LOO` o card de fragilidade sai "—" e sem cor
+      (F-2): "0 safra(s)" em verde tem duas causas opostas, e só uma delas
+      é robustez;
+    - todo texto de limitação sai da medição. `limitacao_banda` cita a
+      contagem observada de safras mensuráveis, para não virar uma frase
+      fixa que envelhece invertida e continua soando como rigor;
+    - a população do veredito é **um Rank-IC por ano** (rodada 2, A-1).
+      Antes, `ic_values` concatenava `rank_ic_values` de todos os
+      segmentos, então `n` era *segmento × ano* e o teste t tratava a
+      mesma ordenação de mercado, recontada uma vez por segmento, como
+      observações independentes. Medido: os MESMOS 8 ICs anuais
+      replicados por 20 segmentos (zero informação nova) moviam a tela de
+      "Inconclusivo / fragilidade 2 sem cor" para "Evidência a favor /
+      fragilidade 0 em VERDE", com a ajuda dizendo "160 ano(s)" para 8
+      anos de dado. A redução vem de `pooled_yearly_ics`, a MESMA função
+      que o bloco "Evidência no universo" usa logo acima — dois critérios
+      homônimos sobre o mesmo dado, com populações diferentes, é o defeito
+      que o F-1 fechou um bloco abaixo;
+    - o verde da fragilidade exige veredito CONCLUSIVO (rodada 2, A-2).
+      "0 safra(s)" ao lado de "Inconclusivo" afirma robustez da
+      *ignorância*, e isso acontecia em 50,8% dos casos inconclusivos.
+    """
+    from core.b3_safras import (
+        bootstrap_excesso,
+        fragilidade_leave_one_out,
+        veredito_do_rank_ic,
+    )
+
+    pares = _pares_de_ic(resultados)
+    ics_por_ano = _ics_por_ano(resultados, pares)
+    anos = sorted(ics_por_ano)
+    ic_values = [ics_por_ano[ano] for ano in anos]
+
+    medidas = set(tabela.attrs.get("safras_completas", []))
+    completas = (tabela[tabela["Safra"].isin(medidas)]
+                 if not tabela.empty else tabela)
+    excessos = [float(v) / 100.0
+                for v in (completas["Excesso s/ Selic (pp)"]
+                          if not completas.empty else [])
+                if pd.notna(v)]
+
+    # F-1: o MESMO criterio que o leave-one-out usa. Antes o card chamava
+    # `classify_evidence` sem p-valor e o LOO chamava com: a tela imprimia
+    # "Inconclusivo" enquanto o motor interno concluia `evidencia_a_favor`,
+    # e o card de fragilidade dava selo verde a um veredito que a tela nao
+    # mostrava e que contradizia o card ao lado.
+    veredito = veredito_do_rank_ic(ic_values)
+    baixo, alto = bootstrap_excesso(excessos)
+    loo = fragilidade_leave_one_out(ic_values)
+
+    avisos: list[str] = []
+    if baixo is not None and baixo <= 0 <= alto:
+        avisos.append(
+            f"O intervalo de 95% do excesso sobre a Selic vai de {baixo:+.1%} "
+            f"a {alto:+.1%} por safra: ele **atravessa o zero**. Nesta "
+            "amostra, a vantagem observada não é distinguível de acaso. "
+            "Ordenar não é superar — o Rank-IC pode indicar que o motor "
+            "discrimina retornos sem que isso vire vantagem líquida."
+        )
+    if loo["safras_que_viram"] > 0:
+        avisos.append(
+            f"O veredito muda se {loo['safras_que_viram']} dos "
+            f"{loo['n_safras']} anos for removido. Uma conclusão que depende "
+            "de um ano específico não é uma conclusão sobre a estratégia — é "
+            "uma conclusão sobre aquele ano."
+        )
+
+    # N-3: a causa vem do que `_ics_por_ano` VIU (os pares), não de
+    # `rank_ic_values`. As duas ausências são opostas e a tela culpava a
+    # errada: com pares presentes e nenhum ano elegível ela dizia "os pares
+    # não vieram", e a frase correta ficava inalcançável três linhas abaixo.
+    if anos:
+        limitacao_ev = ""
+    elif not pares:
+        limitacao_ev = (
+            "Veredito não publicado: os pares (ano, score, retorno) não "
+            "vieram nos resultados, e só eles permitem reduzir a um Rank-IC "
+            "por ano. A lista `rank_ic_values` está disponível, mas ela é "
+            "por segmento — usá-la multiplicaria a mesma evidência pelo "
+            "número de segmentos e inflaria a significância por √k.")
+    else:
+        # A-2: a causa sai da MEDIÇÃO. `pooled_yearly_ics` descarta o ano
+        # por duas razões opostas — menos de `MIN_ATIVOS_ANO` observações,
+        # ou postos degenerados (score ou retorno idêntico no ano inteiro,
+        # `rank.std() <= 0`). A frase culpava sempre a primeira e chegava a
+        # contradizer o próprio número que imprimia: com 6 pares num único
+        # ano ela dizia que "nenhum ano juntou os 5 ativos mínimos".
+        com_ativos = sorted(ano for ano, n in _observacoes_por_ano(pares).items()
+                            if n >= MIN_ATIVOS_ANO)
+        if not com_ativos:
+            limitacao_ev = (
+                f"Veredito não publicado: {len(pares)} observação(ões) (ano, "
+                "score, retorno) chegaram, mas nenhum ano juntou os "
+                f"{MIN_ATIVOS_ANO} ativos mínimos com score e retorno — sem "
+                "isso o Rank-IC do ano não é calculável.")
+        else:
+            lista = ", ".join(str(ano) for ano in com_ativos)
+            limitacao_ev = (
+                f"Veredito não publicado: {len(pares)} observação(ões) (ano, "
+                f"score, retorno) chegaram e {len(com_ativos)} ano(s) "
+                f"({lista}) juntaram os {MIN_ATIVOS_ANO} ativos mínimos, mas "
+                "em todos eles os postos são degenerados — score ou retorno "
+                "idêntico no ano inteiro —, e sem variação nos postos o "
+                "Rank-IC do ano não é calculável.")
+
+    n_banda = len(excessos)
+    if baixo is not None:
+        limitacao = ""
+    elif n_banda == 0:
+        limitacao = ("Banda não publicada: nenhuma safra mensurável até "
+                     "agora, e portanto nenhum excesso observado para "
+                     "reamostrar.")
+    else:
+        limitacao = (f"Banda não publicada: {n_banda} safra(s) mensurável(is) "
+                     "— abaixo de 2 não há dispersão entre safras para "
+                     "reamostrar, e um ponto central sozinho seria um número "
+                     "sem incerteza medida.")
+
+    # F-2 + A-2: o zero da fragilidade tem TRÊS causas, e só uma é verde.
+    # (a) amostra abaixo do piso -- não houve o que remover; (b) veredito
+    # inconclusivo -- o zero afirma robustez da ignorância; (c) conclusão
+    # medida que nenhuma remoção derruba. O texto do estado neutro carrega
+    # a causa, derivada da própria medição.
+    n_loo = loo["n_safras"]
+    if not loo["medido"]:
+        texto_frag, positivo_frag = "—", None
+        ajuda_frag = (
+            f"{n_loo} ano(s) com Rank-IC: abaixo de {MIN_SAFRAS_LOO} a taxa "
+            "de virada do leave-one-out é a mesma para sinal nulo e para "
+            "sinal forte (amplitude medida de 0,012 em n=3 contra 0,216 em "
+            "n=4), então o número existiria sem carregar informação")
+    else:
+        texto_frag = f"{loo['safras_que_viram']} de {n_loo} anos"
+        # A banda NAO se repete aqui: ela ja vai em `nota_fragilidade`,
+        # que a view publica em `st.caption`. Repetida no `ajuda` (o
+        # `title=` do card), quem passava o mouse lia a mesma frase duas
+        # vezes -- e o tooltip nao e onde a margem precisa estar.
+        if loo["robusto"]:
+            positivo_frag = True
+            ajuda_frag = f"Nenhum dos {n_loo} anos derruba o veredito."
+        elif loo["safras_que_viram"] > 0:
+            positivo_frag = False
+            ajuda_frag = ("Quantos anos precisam sair para o veredito "
+                          "virar.")
+        elif not loo["conclusivo"]:
+            positivo_frag = None
+            ajuda_frag = (
+                "Nesta amostra, remover um ano não é capaz de mudar o "
+                "veredito — e o veredito é inconclusivo. Zero aqui é "
+                "insensibilidade do teste sobre uma não-conclusão, não "
+                "robustez.")
+        else:
+            # N-1: zero viradas sobre veredito CONCLUSIVO, sem selo verde.
+            # O ramo anterior afirmava "o veredito é inconclusivo" ao lado
+            # de um card dizendo "Evidência contra" — em [-0.1, -0.1, -0.1,
+            # -0.5] as subamostras idênticas não têm dispersão, o p-valor
+            # não existe e a margem some, mas a conclusão continua de pé.
+            positivo_frag = None
+            sem_p = sum(1 for p in loo["p_loo"] if p is None)
+            causa = (
+                f"{sem_p} das {n_loo} subamostras ficam sem dispersão entre "
+                "os Rank-ICs e o p-valor nem existe nelas"
+                if sem_p else
+                f"a banda de p-valores atravessa α = {loo['alpha']:.2f}")
+            ajuda_frag = (
+                f"Nenhum dos {n_loo} anos derruba o veredito "
+                f"({veredito.rotulo}), mas a margem não sustenta selo: "
+                f"{causa}. A contagem diz que nenhum ano virou; sem margem, "
+                "ela não diz por quanto.")
+
+    # A banda de p-valores é o "por quanto passou" — e é ela que impede o
+    # selo verde de ser lido como salvaguarda testada. Vai em texto
+    # VISÍVEL: no `ajuda` ela virava `title=` do card, tooltip de hover, e
+    # o usuário via "0 de 8 anos" em verde e mais nada.
+    nota_frag = _texto_banda_p(loo) if loo["medido"] else ""
+    if loo["medido"] and not nota_frag:
+        # A-5: `p_banda == (None, None)` é o ÚNICO ramo em que a banda de
+        # fato reprova o selo — e era justamente nele que `nota_fragilidade`
+        # ficava vazia e a explicação da margem ausente vivia só no
+        # tooltip, o oposto do que a banda saiu do `ajuda=` para fazer.
+        sem_banda = sum(1 for p in loo["p_loo"] if p is None)
+        nota_frag = (
+            f"A margem não foi calculável: {sem_banda} das {n_loo} "
+            "subamostras do leave-one-out ficam sem dispersão entre os "
+            "Rank-ICs, e sem dispersão não há p-valor — o selo não é "
+            "publicado porque a conclusão não tem por quanto, não porque "
+            "ela tenha caído.")
+    # N-5: as duas contagens da tela medem coisas diferentes e ficavam
+    # lado a lado sem explicação — "Safras medidas: N" (janela fechada com
+    # pregão) contra "0 de M anos" (anos com Rank-IC calculável).
+    if loo["medido"] and n_banda and n_banda != n_loo:
+        nota_frag = _frase(
+            nota_frag,
+            f"A fragilidade conta os {n_loo} ano(s) com Rank-IC calculável "
+            f"(≥ {MIN_ATIVOS_ANO} ativos no universo), não as {n_banda} "
+            "safra(s) mensurável(is) do bloco acima: são populações "
+            "diferentes.")
+
+    return {
+        "ic_values": ic_values,
+        "anos": anos,
+        "veredito": veredito,
+        "ajuda_ordena": _ajuda_ordena(veredito),
+        "nota_independencia": _nota_independencia(anos),
+        "nota_fragilidade": nota_frag,
+        "limitacao_evidencia": limitacao_ev,
+        "texto_fragilidade": texto_frag,
+        "positivo_fragilidade": positivo_frag,
+        "ajuda_fragilidade": ajuda_frag,
+        "banda": (baixo, alto),
+        "n_safras_banda": n_banda,
+        "texto_banda": (f"{baixo:+.1%} a {alto:+.1%}"
+                        if baixo is not None else "—"),
+        "loo": loo,
+        "avisos": avisos,
+        "limitacao_banda": limitacao,
+    }
+
+
+def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
+    """Bloco 3: o motor ordena? supera? e quão frágil é a conclusão?
+
+    Só renderiza — a medição inteira está em `_expectativa`, que é pura e
+    testada direto (AppTest, nesta base, vaza atribuição de módulo e falha
+    só dentro da suíte no CI)."""
+    from core.b3_evidence import evidence_label
+
+    st.markdown(
+        '<div style="font-weight:700;font-size:1.05rem;color:var(--app-text);'
+        'margin:20px 0 8px;">🎯 O que esperar da safra vigente</div>',
+        unsafe_allow_html=True,
+    )
+
+    exp = _expectativa(resultados, tabela)
+    veredito = exp["veredito"]
+
+    cols = st.columns(3)
+    with cols[0]:
+        card_metrica("Ordena?", evidence_label(veredito),
+                     ajuda=exp["ajuda_ordena"])
+    with cols[1]:
+        baixo = exp["banda"][0]
+        card_metrica("Supera? (excesso s/ Selic)", exp["texto_banda"],
+                     positivo=(baixo is not None and baixo > 0),
+                     ajuda=(f"Intervalo de 95% por reamostragem de "
+                            f"{exp['n_safras_banda']} safra(s) mensurável(is)"))
+    with cols[2]:
+        card_metrica("Fragilidade", exp["texto_fragilidade"],
+                     positivo=exp["positivo_fragilidade"],
+                     ajuda=exp["ajuda_fragilidade"])
+
+    for aviso in exp["avisos"]:
+        st.warning(aviso)
+    # Ressalva e margem em texto visível, não em tooltip: `ajuda` vira
+    # `title=` do card e não existe no toque.
+    for nota in (exp["nota_independencia"], exp["nota_fragilidade"],
+                 exp["limitacao_evidencia"], exp["limitacao_banda"]):
+        if nota:
+            st.caption(nota)
+
+
+# ── Bloco 2: o tamanho do viés de universo ──────────────────────────────────
+
+# Nivel BILATERAL do teste sobre as diferencas por safra. O vies pode ser
+# positivo (o gate adiciona) ou negativo (o gate subtrai), e as duas
+# direcoes sao igualmente um vies de selecao de universo -- entao sao duas
+# caudas. `teste_t_unilateral` e unilateral a direita por construcao (a
+# conta mora em core/b3_evidence.py e NAO e copiada aqui), entao a cauda
+# esquerda se obtem invertendo o sinal das observacoes e cada cauda e lida
+# contra `_ALPHA_VIES / 2`. Ler as duas caudas contra `_ALPHA_VIES` cheio
+# seria um teste de 20% com o rotulo de 10%.
+_ALPHA_VIES = 0.10
+
+_COLUNAS_VIES = ["Estratégia (%) com gate", "Estratégia (%) sem gate",
+                 "Viés (pp)"]
+
+
+# Teto de casas da prosa. Alem dele a frase nao ganha precisao: ganha
+# ruido binario com cara de medicao.
+_CASAS_MAX = 6
+
+
+def _arredonda(valor: float, casas: int) -> float:
+    """O valor COMO ELE SERÁ PUBLICADO, de volta como número.
+
+    A conversão é a mesma que a frase faz (`f"{v:.{casas}f}"`), então o
+    que esta função devolve é exatamente o que o leitor vai ver — é isso
+    que permite a `_casas_para` medir distinção sobre o publicado, e não
+    sobre o float cru (NOVO-1).
+
+    **Arredonda** para o vizinho mais próximo; não trunca. Truncar em
+    direção a zero (rodada 3) errava o dobro e sempre para o mesmo lado:
+    num bloco cujo produto É o tamanho do viés, isso é enviesar a medida
+    do viés (NOVO-3). E `math.trunc(v * 10**casas)` opera sobre um produto
+    binário, publicando o último dígito errado — `0.29` com 2 casas saía
+    `0.28`, em 69 de 999 valores da forma `i/100` (NOVO-2). Arredondando,
+    o publicado nunca se afasta do medido mais que meia casa, nas duas
+    direções.
+    """
+    return float(f"{float(valor):.{casas}f}")
+
+
+def _casas_para(valores) -> int:
+    """Quantas casas a FRASE inteira usa — uma só, para todos os números.
+
+    Três exigências, todas medidas sobre os próprios valores:
+
+    1. nenhum valor não-nulo pode sair como zero (A-N4: significância sem
+       tamanho não é acionável). Na prática a frase mostra ao menos o
+       primeiro algarismo significativo do menor módulo não-nulo, o que
+       também impede `0.05` de sair `+0.1` (R2-2);
+    2. valores DIFERENTES não podem sair iguais (R2-1: com 2,97 a 3,04 a
+       faixa saía "de +3.0 a +3.0 pp", afirmando de novo a uniformidade
+       que o A-T7-02 acabou de tirar do valor — o mesmo defeito, um andar
+       acima, agora no texto);
+    3. a casa é a mesma para todos os números da frase (R2-2: "de +0.02 a
+       +0.1 pp" misturava precisões dentro de uma frase só).
+
+    **Prioridade explícita quando as três não cabem juntas** (NOVO-6):
+
+    - a regra 3 nunca cede: é a forma da frase, e misturar precisões é o
+      próprio R2-2;
+    - a regra 2 é sempre satisfazível, por construção: "diferentes" é
+      medido sobre o valor COMO ELE SERÁ PUBLICADO no teto de casas, de
+      modo que dois valores que só divergem em ruído binário não são
+      distintos para efeito de publicação (NOVO-1: `[3.0,
+      3.0000000000000995]` pedia seis casas e publicava "+3.000000"). E
+      quem afirma distinção é a frase: `_vies_universo` só diz "de X a Y"
+      quando X e Y saem diferentes;
+    - a regra 1 é a única que pode ser impossível: um não-nulo cujo
+      primeiro algarismo significativo cai além do teto (1,95e-14). Aí o
+      teto vence e ele sai "+0.0" na casa da frase — nunca em notação
+      exponencial, que seria outro formato dentro de uma frase decimal
+      (NOVO-1: "+2.0e-14" no meio de "+1.520000" e "+3.040000").
+
+    O piso é a resolução da tabela publicada (`_CASAS_TABELA`) para que a
+    prosa nunca seja *menos* precisa que a coluna ao lado.
+    """
+    finitos = [float(v) for v in valores
+               if v is not None and np.isfinite(float(v))]
+    if not finitos:
+        return _CASAS_TABELA
+    publicaveis = [_arredonda(v, _CASAS_MAX) for v in finitos]
+    distintos = len(set(publicaveis))
+    piso = _CASAS_TABELA
+    modulos = [abs(p) for p in publicaveis if p != 0.0]
+    if modulos:
+        # Casa do primeiro algarismo significativo do MENOR modulo: abaixo
+        # dela a frase publica zero (regra 1) ou dobra o numero (0,05 ->
+        # +0.1, o sintoma que o R2-2 nomeia).
+        piso = max(piso, -math.floor(math.log10(min(modulos))))
+    piso = max(_CASAS_TABELA, min(piso, _CASAS_MAX))
+    for casas in range(piso, _CASAS_MAX + 1):
+        if len({_arredonda(v, casas) for v in finitos}) == distintos:
+            return casas
+    return _CASAS_MAX
+
+
+def _fmt_pp(valor: float | None, casas: int | None = None) -> str:
+    """Valor em pp com casas SUFICIENTES para não publicar zero onde a
+    medição não é zero (A-N4), e nunca a mais de meia casa do medido.
+
+    Com `{:+.1f}` fixo, um viés de +0,036 pp significante (p = 0,002) saía
+    na manchete como **"+0,0 pp" em vermelho**: significância sem tamanho,
+    que é exatamente o que este bloco existe para evitar. A escolha aqui é
+    a primeira das duas que a revisão admitiu — publicar a grandeza real —
+    porque a outra (dizer só "abaixo da resolução") esconde o tamanho, e o
+    tamanho é o produto deste bloco. A ressalva sobre a resolução da
+    tabela vem junto, em `_vies_universo`, não no lugar do número.
+
+    `casas` vem de `_casas_para` quando o número divide a frase com
+    outros: a mesma frase não pode misturar precisões. Sem ele, a decisão
+    é tomada para este valor sozinho — e é `_casas_para`, pela regra do
+    primeiro algarismo significativo, quem garante que `0.05` não sai
+    `+0.1` (R2-2); truncar era remédio para uma causa que essa regra já
+    resolve, e cobrava o dobro de erro, sempre para o mesmo lado.
+
+    Zero medido continua "+0.0": é o número certo, não um arredondamento.
+    """
+    if valor is None or not np.isfinite(float(valor)):
+        return "—"
+    valor = float(valor)
+    if valor == 0.0:
+        return "+0.0"
+    if casas is None:
+        casas = _casas_para([valor])
+    # Sem escape exponencial: um "+2.0e-14" no meio de uma frase decimal
+    # nao e uma casa a mais, e outro formato (NOVO-1). Valor cujo primeiro
+    # algarismo significativo cai alem do teto sai "+0.0" na casa da
+    # frase, e e o unico caso em que a regra 1 cede -- ver `_casas_para`.
+    return f"{_arredonda(valor, casas):+.{casas}f}"
+
+
+# Resolução da tabela publicada, DERIVADA do formato das colunas (R2-5):
+# com `_CASAS_TABELA` casas, qualquer viés com módulo abaixo de meia casa
+# aparece como 0,0 lá. Mudar o formato move as duas coisas juntas.
+_RESOLUCAO_PP = 0.5 * 10.0 ** (-_CASAS_TABELA)
+
+
+def _lista_safras(safras) -> str:
+    return ", ".join(str(int(s)) for s in sorted(safras))
+
+
+def _causa_sem_teste(vies: list[float], casas: int | None = None) -> str:
+    """Por que o teste t não saiu — derivado das próprias observações.
+
+    As duas causas são opostas e a frase tem que separá-las: *não há
+    safras suficientes* e *há safras, mas as diferenças são todas iguais*.
+    Uma frase única culparia sempre a primeira, e com 5 safras de viés
+    idêntico ela diria que faltaram safras.
+    """
+    n = len(vies)
+    if n < 2:
+        return (f"Com {n} safra(s) comparável(is) não há dispersão entre "
+                "safras para testar se essa diferença se distingue de zero.")
+    return (f"As {n} diferenças não têm dispersão entre si (todas em torno "
+            f"de {_fmt_pp(vies[0], casas)} pp), e sem dispersão o teste t não "
+            "existe — não há erro-padrão a estimar.")
+
+
+def _vies_universo(com_gate: pd.DataFrame, sem_gate: pd.DataFrame) -> dict:
+    """Tudo que o Bloco 2 publica, derivado das duas reconstruções — puro.
+
+    O que este bloco mede: o score de cada safra é point-in-time, mas o
+    CONJUNTO de segmentos que entra na carteira sai do teste OOS com FDR
+    sobre a amostra inteira, até hoje. A safra mais antiga é reconstruída
+    com segmentos aprovados por evidência de hoje. Tornar isso PIT é
+    inviável (nas primeiras safras não há janela OOS e nenhum segmento
+    seria aprovado), então o bloco mede o TAMANHO: as mesmas safras, sem
+    o gate.
+
+    Regras fechadas nesta task:
+
+    - a população é a INTERSEÇÃO de `attrs["safras_completas"]` dos dois
+      lados, nunca `df["Completa"]`. Uma safra pode ter a janela civil
+      fechada e zero pregão observado; a coluna mente e o `attrs` não. E a
+      safra precisa ser mensurável dos DOIS lados: subtrair um retorno
+      medido de um `NaN` não é um viés de zero, é uma comparação que não
+      aconteceu;
+    - o portão de significância CHAMA `teste_t_unilateral` /
+      `sinal_significante` (`core/b3_evidence.py`), a mesma conta do resto
+      da tela. A guarda de dispersão relativa vem junto, de graça;
+    - **nunca selo verde.** Verde afirmaria "não há viés", e não haver
+      significância é ausência de evidência, não evidência de ausência. O
+      card fica vermelho quando o viés é demonstrado e neutro quando a
+      amostra não permite concluir — nunca verde. A alternativa descartada
+      era `positivo=abs(medio) < 1.0`: 1,0 pp é constante escrita à mão,
+      sem medição atrás, e um viés de 0,9 pp saía com selo de aprovação;
+    - todo texto de ressalva sai da medição (contagem de safras, faixa
+      observada, p-valor, causa da ausência de teste), nunca de calendário
+      ou constante.
+    """
+    from core.b3_evidence import sinal_significante, teste_t_unilateral
+
+    medidas_com = set(com_gate.attrs.get("safras_completas", []))
+    medidas_sem = set(sem_gate.attrs.get("safras_completas", []))
+    comparaveis = medidas_com & medidas_sem
+
+    comparacao = com_gate[["Safra", "Janela", "Estratégia (%)"]].merge(
+        sem_gate[["Safra", "Estratégia (%)"]], on="Safra",
+        suffixes=(" com gate", " sem gate"), how="inner",
+    )
+    # `to_numeric` nao e paranoia: `tabela_de_safras` sem safra nenhuma
+    # devolve as colunas de `COLUNAS_TABELA` com dtype `object`, e a
+    # subtracao direta estoura `TypeError: Expected numeric dtype, got
+    # object instead` no `.round(1)` -- o bloco morreria justamente no
+    # caso em que ele deveria dizer "nao houve o que comparar".
+    # O arredondamento e de EXIBICAO. A conta roda no valor cheio: com
+    # `[3.04, 3.02, 2.97]` o teste t da p = 2,4e-05, e a mesma amostra
+    # arredondada para `[3.0, 3.0, 3.0]` perde toda a dispersao e volta
+    # `(None, None)` -- a tela imprimiria "nao ha dispersao entre si", que
+    # e falso sobre o dado, e rebaixaria um vies demonstrado a "nao
+    # testavel". Apresentacao nao pode apagar evidencia.
+    vies_cheio = (
+        pd.to_numeric(comparacao["Estratégia (%) com gate"], errors="coerce")
+        - pd.to_numeric(comparacao["Estratégia (%) sem gate"], errors="coerce")
+    )
+    comparacao["Viés (pp)"] = vies_cheio.round(1)
+    comparavel = comparacao["Safra"].isin(comparaveis)
+    comparacao["Comparável"] = comparavel
+    # Fora da populacao nao se publica numero: com um dos lados nao medido
+    # a subtracao ja e `NaN`, mas a linha tambem pode ter os dois lados com
+    # numero e mesmo assim estar fora (janela aberta), e ai o `NaN` tem que
+    # ser posto de proposito -- senao a tela publica um vies para uma safra
+    # que ela mesma declara nao comparavel.
+    if not comparacao.empty:
+        comparacao.loc[~comparavel, "Viés (pp)"] = np.nan
+        vies = [float(v) for v in vies_cheio[comparavel] if pd.notna(v)]
+    else:
+        vies = []
+    n = len(vies)
+    medio = float(np.mean(vies)) if n else None
+
+    _, p_mais = teste_t_unilateral(vies)
+    _, p_menos = teste_t_unilateral([-v for v in vies])
+    meia_cauda = _ALPHA_VIES / 2
+    significante = (sinal_significante(p_mais, alpha=meia_cauda)
+                    or sinal_significante(p_menos, alpha=meia_cauda))
+    p_bilateral = None
+    if p_mais is not None and p_menos is not None:
+        p_bilateral = min(1.0, 2.0 * min(p_mais, p_menos))
+
+    # Uma casa decimal só para TODOS os números que a tela vai publicar
+    # desta medição (R2-1/R2-2): média, mínimo e máximo saem com a mesma
+    # precisão, e a precisão é a menor que ainda distingue o mínimo do
+    # máximo. Com 2,97 a 3,04 a frase saía "de +3.0 a +3.0 pp entre as
+    # safras" — afirmando uniformidade onde há dispersão, que é o A-T7-02
+    # de novo, um andar acima.
+    casas = (_casas_para([medio, min(vies), max(vies)]) if n
+             else _CASAS_TABELA)
+
+    notas: list[str] = []
+    if n:
+        medidas_na_tabela = sorted(
+            int(s) for s in comparacao.loc[comparavel
+                                           & comparacao["Viés (pp)"].notna(),
+                                           "Safra"])
+        # A frase so afirma faixa quando os dois extremos SAEM diferentes
+        # (NOVO-6). "de +3.0 a +3.0 pp entre as safras" afirma uma
+        # distincao que o texto nao mostra; quando a casa escolhida nao
+        # separa os extremos, o certo e dizer que eles nao se separam na
+        # casa publicada, e nao inventar mais casas para forcar a faixa.
+        pub_min = _fmt_pp(min(vies), casas)
+        pub_max = _fmt_pp(max(vies), casas)
+        faixa_txt = (f"de {pub_min} a {pub_max} pp entre as safras"
+                     if pub_min != pub_max else
+                     f"todas as safras em {pub_min} pp, na casa publicada")
+        notas.append(
+            f"Nas {n} safra(s) mensurável(is) dos dois lados "
+            f"({_lista_safras(medidas_na_tabela)}), reconstruir a carteira "
+            f"com os segmentos aprovados hoje move o retorno em "
+            f"{_fmt_pp(medio, casas)} pp por safra, em média "
+            f"({faixa_txt}). Essa diferença **não era "
+            "conhecida na época** de cada safra: ela vem de saber, hoje, "
+            "quais segmentos passaram no teste OOS. É o tamanho do viés, não "
+            "um resultado da estratégia.")
+        if p_bilateral is None:
+            notas.append(_causa_sem_teste(vies, casas))
+        elif significante:
+            notas.append(
+                f"O teste t bilateral sobre as {n} diferenças dá "
+                f"p = {_fmt_p(p_bilateral)} (α = {_ALPHA_VIES:.2f}, "
+                f"{meia_cauda:.2f} por cauda): nesta amostra a diferença **se "
+                "distingue de zero**. O viés tem tamanho medido.")
+            # Significancia sem tamanho nao e acionavel (A-N4): sem esta
+            # frase, um vies de +0,04 pp por safra sai com card vermelho e
+            # a tabela ao lado mostrando uma coluna de zeros, sem nada
+            # explicando a contradicao aparente.
+            if abs(medio) < _RESOLUCAO_PP:
+                notas.append(
+                    f"O tamanho medido, porém, é de {_fmt_pp(medio, casas)} pp por "
+                    f"safra — abaixo da resolução de {_CASAS_TABELA} casa(s) "
+                    "decimal(is) da tabela "
+                    "abaixo, onde ele aparece como 0,0. O viés se distingue "
+                    "de zero e é **desprezível em tamanho**: significância "
+                    "não é magnitude.")
+        else:
+            notas.append(
+                f"O teste t bilateral sobre as {n} diferenças dá "
+                f"p = {_fmt_p(p_bilateral)} (α = {_ALPHA_VIES:.2f}, "
+                f"{meia_cauda:.2f} por cauda): nesta amostra a diferença não "
+                "se distingue de zero. Isso **não é o mesmo que não haver "
+                f"viés** — com {n} safra(s) o teste enxerga pouco, e o viés "
+                "observado continua sendo o da frase acima.")
+
+    # A ausencia de populacao tem causas opostas, e a frase tem que dizer
+    # QUAL delas foi observada -- "sem safras suficientes para medir" cobre
+    # todas e nao informa nenhuma.
+    limitacao = ""
+    if not n:
+        so_com = sorted(medidas_com - medidas_sem)
+        so_sem = sorted(medidas_sem - medidas_com)
+        if comparacao.empty:
+            limitacao = ("Viés não medido: as duas reconstruções não têm "
+                         "nenhuma safra em comum — sem safra comum não há o "
+                         "que subtrair.")
+        elif not medidas_com and not medidas_sem:
+            limitacao = (
+                f"Viés não medido: {len(comparacao)} safra(s) existe(m) nas "
+                "duas reconstruções, mas nenhuma delas é mensurável de "
+                "nenhum dos dois lados (janela em curso ou nenhum pregão "
+                "observado na janela).")
+        else:
+            limitacao = (
+                "Viés não medido: as safras mensuráveis dos dois lados não "
+                f"se cruzam — {len(medidas_com)} com gate"
+                + (f" ({_lista_safras(so_com)} só desse lado)" if so_com else "")
+                + f" e {len(medidas_sem)} sem gate"
+                + (f" ({_lista_safras(so_sem)} só desse lado)" if so_sem else "")
+                + ". Subtrair um retorno medido de um não medido publicaria "
+                  "como viés uma comparação que não aconteceu.")
+        notas.append(limitacao)
+
+    # Safra que EXISTE de um lado so. Nao e um vies de tamanho pequeno: o
+    # gate nao muda o retorno dela, apaga a safra inteira -- e a subtracao
+    # nunca mostraria isso, porque a linha simplesmente nao aparece.
+    safras_com = {int(s) for s in com_gate["Safra"]}
+    safras_sem = {int(s) for s in sem_gate["Safra"]}
+    ausentes_com_gate = sorted(safras_sem - safras_com)
+    ausentes_sem_gate = sorted(safras_com - safras_sem)
+    if ausentes_com_gate:
+        notas.append(
+            f"A(s) safra(s) {_lista_safras(ausentes_com_gate)} só existe(m) "
+            "sem o gate: nenhum segmento aprovado tinha líder nelas. Nessas "
+            "safras o gate não muda o retorno — ele apaga a safra inteira, e "
+            "por isso elas não entram na média acima.")
+    if ausentes_sem_gate:
+        notas.append(
+            f"A(s) safra(s) {_lista_safras(ausentes_sem_gate)} só existe(m) "
+            "com o gate, o que não deveria acontecer: os aprovados são um "
+            "subconjunto dos resultados. Trate como defeito de dado, não "
+            "como medição.")
+
+    # Linhas em comum que ficaram sem vies publicado: a tabela mostra a
+    # linha, e sem esta frase a celula vazia nao tem explicacao ao lado.
+    sem_vies = (sorted(int(s) for s in comparacao.loc[~comparavel, "Safra"])
+                if not comparacao.empty else [])
+    if sem_vies:
+        notas.append(
+            f"A(s) safra(s) {_lista_safras(sem_vies)} aparece(m) na tabela "
+            "sem viés: ela(s) não é(são) mensurável(is) dos dois lados "
+            "(janela em curso ou nenhum pregão observado na janela).")
+
+    return {
+        "comparacao": comparacao,
+        "vies": vies,
+        "n_safras": n,
+        "medio": medio,
+        "faixa": (min(vies), max(vies)) if n else (None, None),
+        "p_bilateral": p_bilateral,
+        "significante": significante,
+        "texto_medio": (f"{_fmt_pp(medio, casas)} pp"
+                        if medio is not None else "—"),
+        # Nunca `True`: ver a docstring. Vermelho = vies demonstrado;
+        # neutro = a amostra nao permite concluir.
+        "positivo": False if significante else None,
+        "ajuda": (f"Com gate menos sem gate, nas {n} safra(s) mensurável(is) "
+                  "dos dois lados"
+                  if n else "Nenhuma safra comparável entre as duas "
+                            "reconstruções"),
+        "notas": notas,
+        "limitacao": limitacao,
+    }
+
+
+def _serializa(obj) -> str:
+    """Texto estável que representa o CONTEÚDO de uma entrada da medição.
+
+    `DataFrame` entra pelos valores (hash por linha), não pelo `shape`:
+    dois quadros de mesma forma e números diferentes produzem retornos
+    diferentes, e eram indistinguíveis para a assinatura anterior (A-N3).
+    O resto vai por `json` com chaves ordenadas — `default=str` cobre
+    `Timestamp`, `numpy` e afins sem quebrar, e o `repr` só entra como
+    último recurso (objeto que nem `str` serializa igual entre reruns é
+    conservador: muda a assinatura e manda remedir, nunca o contrário).
+    """
+    if isinstance(obj, pd.DataFrame):
+        if obj.empty:
+            return f"df:vazio:{list(obj.columns)}"
+        digitos = int(pd.util.hash_pandas_object(
+            obj.astype(str), index=True).sum()) & 0xFFFFFFFFFFFFFFFF
+        return f"df:{list(obj.columns)}:{obj.shape}:{digitos}"
+    if isinstance(obj, pd.Series):
+        return _serializa(obj.to_frame())
+    try:
+        return json.dumps(obj, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return repr(obj)
+
+
+def _assinatura_vies(com_gate: pd.DataFrame | None,
+                     resultados_aprovados: list[dict] | None,
+                     resultados_todos: list[dict] | None,
+                     df_precos: pd.DataFrame | None,
+                     selic_por_ano: dict | None,
+                     taxa_selic_aa: float | None) -> str:
+    """Impressao digital das ENTRADAS da medição do viés.
+
+    A medição fica em `session_state` e sobrevive a um novo "Rodar": sem
+    esta assinatura, o Bloco 1 passa a mostrar a população nova e o Bloco 2
+    redesenha a antiga com carimbo de hora velho — duas populações lado a
+    lado na mesma tela, sem aviso.
+
+    A invalidação é por CONTEÚDO, não por uma lista de chaves escrita à
+    mão em outro módulo: lista de purga e código que grava a chave são
+    duas estruturas que divergem (este projeto já se queimou com
+    verificador e escritor lendo listas diferentes). Aqui quem decide se a
+    medição ainda vale é a própria entrada que a produziu.
+
+    E o conjunto de entradas é o que `render_vies_universo` REALMENTE
+    passa para `tabela_de_safras` / `_vies_universo`, não uma lista de
+    propriedades escolhida à mão (A-N3): a primeira versão resumia as duas
+    listas de resultados pelo TAMANHO, e duas listas de mesmo tamanho e
+    composição diferente — medições de −7,5 pp e −87,5 pp — recebiam a
+    mesma assinatura. Os preços entravam só por `shape`, e a Selic não
+    entrava.
+    """
+    partes = [
+        _serializa(resultados_aprovados or []),
+        _serializa(resultados_todos or []),
+        _serializa(df_precos) if df_precos is not None else "precos=-",
+        _serializa(selic_por_ano or {}),
+        _serializa(taxa_selic_aa),
+    ]
+    if com_gate is not None:
+        partes.append(_serializa(com_gate))
+        # `attrs` nao entra no hash das celulas, e e ele que define a
+        # populacao das medias -- a mesma tabela com outra lista de safras
+        # mensuraveis e outra medicao.
+        partes.append("medidas=" + _lista_safras(
+            com_gate.attrs.get("safras_completas", [])))
+    else:
+        partes.append("tabela=-")
+    impressao = hashlib.blake2b(digest_size=16)
+    for parte in partes:
+        impressao.update(parte.encode("utf-8", "replace"))
+        impressao.update(b"\x00")
+    return impressao.hexdigest()
+
+
+def _column_config_vies() -> dict:
+    """1 casa decimal nas colunas de retorno/viés sem mexer no dtype — mesma
+    convenção de `_column_config_retorno` (a ordenação por clique de
+    cabeçalho tem que continuar numérica, não alfabética)."""
+    return {col: st.column_config.NumberColumn(format=_FORMATO_TABELA)
+            for col in _COLUNAS_VIES}
+
+
+def _desenha_vies(medicao: dict, quando: str | None = None) -> None:
+    """Desenha o que `_vies_universo` mediu. Só desenha.
+
+    Existe separada porque a medição guardada em `session_state` é
+    redesenhada nos reruns seguintes, e ela tem que voltar com as MESMAS
+    ressalvas: republicar só a tabela publicaria os números sem o texto
+    que diz o que eles não são.
+    """
+    if quando:
+        st.caption(f"Última medição: {quando}")
+    cols = st.columns(1)
+    with cols[0]:
+        card_metrica("Viés médio de universo", medicao["texto_medio"],
+                     positivo=medicao["positivo"], ajuda=medicao["ajuda"])
+    # Ressalvas em `st.caption` VISÍVEL, nunca em `ajuda=`: `ajuda` vira o
+    # `title=` do card, tooltip de hover, invisível no toque.
+    for nota in medicao["notas"]:
+        st.caption(nota)
+    if not medicao["comparacao"].empty:
+        st.dataframe(medicao["comparacao"], width="stretch", hide_index=True,
+                     column_config=_column_config_vies())
+
+
+def render_vies_universo(resultados_aprovados: list[dict],
+                         resultados_todos: list[dict],
+                         df_precos: pd.DataFrame, *,
+                         selic_por_ano: dict[int, float],
+                         taxa_selic_aa: float,
+                         tabela_com_gate: pd.DataFrame | None = None) -> None:
+    """Bloco 2: o tamanho do viés de seleção de universo, SOB DEMANDA.
+
+    Atrás de um botão por decisão do dono do projeto: reconstruir todas as
+    safras com o universo inteiro é a conta mais cara desta tela, e ela
+    não é paga a cada rerun.
+
+    `tabela_com_gate` entra pronta quando quem chama já a tem (o Bloco 1
+    acabou de calculá-la com os mesmos argumentos): assim o lado "com
+    gate" desta comparação é literalmente a mesma medição que a tela
+    publicou acima, e não uma segunda reconstrução que pode divergir dela.
+
+    A medição inteira está em `_vies_universo`, que é pura e testada
+    direto — AppTest, nesta base, vaza atribuição de módulo e falha só
+    dentro da suíte completa no CI.
+    """
+    st.markdown(
+        '<div style="font-weight:700;font-size:1.05rem;color:var(--app-text);'
+        'margin:20px 0 8px;">🔍 Tamanho do viés de universo</div>',
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "O score de cada safra é point-in-time, mas o **conjunto de "
+        "segmentos** que compõe a carteira foi escolhido com o teste OOS "
+        "sobre a amostra inteira, até hoje. A safra mais antiga é "
+        "reconstruída com segmentos aprovados por evidência de hoje. Tornar "
+        "isso point-in-time é inviável — nas primeiras safras não há janela "
+        "OOS e nenhum segmento seria aprovado —, então aqui se mede o "
+        "tamanho: as mesmas safras, com todos os segmentos que tinham score "
+        "naquele ano, sem gate de aprovação."
+    )
+
+    clicou = st.button("Medir o viés de universo", key="pb3_btn_vies")
+    medido = st.session_state.get("pb3_vies_universo")
+
+    # PORTAO. Nada acima desta linha custa mais que desenhar texto (R2-3):
+    # `_assinatura_vies` custa 0,34 s e ~8 MB por rerun e era calculada
+    # ANTES do botao e ANTES do early-return. "Sob demanda, com botao" e
+    # decisao do dono do projeto; computar sempre e so esconder o resultado
+    # cumpre a aparencia da decisao, nao a decisao.
+    if not clicou and medido is None:
+        return
+
+    # A assinatura continua comparavel entre reruns -- ela so e calculada
+    # nos dois caminhos que PUBLICAM numero: quem clicou (e vai medir) e
+    # quem tem medicao guardada para redesenhar (e precisa saber se ela
+    # ainda vale). O rerun comum, sem clique e sem medicao, nao paga nada.
+    assinatura = _assinatura_vies(tabela_com_gate, resultados_aprovados,
+                                  resultados_todos, df_precos,
+                                  selic_por_ano, taxa_selic_aa)
+
+    if not clicou:
+        # Medição de OUTRA análise não volta para a tela: ela responde a uma
+        # população que o Bloco 1 acima não mostra mais.
+        if medido.get("assinatura") != assinatura:
+            st.caption(
+                "A medição anterior do viés foi feita sobre outra análise e "
+                "não vale para a população atual. Clique em **Medir o viés "
+                "de universo** para refazê-la."
+            )
+            return
+        _desenha_vies(medido["medicao"], quando=medido["quando"])
+        return
+
+    with st.spinner("Reconstruindo as safras sem o gate de aprovação…"):
+        com_gate = tabela_com_gate
+        if com_gate is None:
+            com_gate = tabela_de_safras(resultados_aprovados, df_precos,
+                                        selic_por_ano=selic_por_ano,
+                                        taxa_selic_aa=taxa_selic_aa)
+        sem_gate = tabela_de_safras(resultados_todos, df_precos,
+                                    selic_por_ano=selic_por_ano,
+                                    taxa_selic_aa=taxa_selic_aa)
+        medicao = _vies_universo(com_gate, sem_gate)
+
+    st.session_state["pb3_vies_universo"] = {
+        "quando": pd.Timestamp.now().strftime("%d/%m/%Y %H:%M"),
+        "assinatura": assinatura,
+        "medicao": medicao,
+    }
+    _desenha_vies(medicao)

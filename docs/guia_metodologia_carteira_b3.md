@@ -512,3 +512,84 @@ teste que morre se a separação for desfeita.
 LLM a ela não é. A regra 5.4 do prompt instrui que contexto e cobertura não
 reprovam, mas instrução não é portão. Medir isso exige rodar o gate com LLM
 ligada (`scripts/eval_gate_selecao.py`), o que não foi feito aqui.
+
+## 17. Vigência da safra (22/09/2026)
+
+A safra N é pontuada com dados até N−1 (`lag = 1`) e vigora de **01/04/N a
+31/03/N+1**: os balanços do exercício N−1 só são públicos até 31/03 (CVM). A
+regra vive em `core/b3_vigencia.py` e é a única definição do mês de rebalance
+no projeto — `tests/test_b3_vigencia.py::test_mes_de_rebalance_definido_num_lugar_so`
+varre `views/` e `core/` por AST e falha se outro arquivo redefinir o mesmo
+valor (por nome em inglês *ou* em português, ex.: `_MES_REBALANCE = 4`).
+
+O relatório de safras (`core/b3_safras.py`, desenhado por
+`views/portfolio_b3_safras.py`) reconstrói a carteira de cada safra — os
+líderes por segmento com o orçamento que o score daquele ano definiu — e mede
+o retorno da janela de vigência contra Selic e equal-weight. Três
+características da medição, verificadas no código:
+
+1. **Viés de universo — medido, não só declarado.** O conjunto de segmentos
+   elegíveis vem do teste OOS sobre a amostra inteira, até hoje; uma safra
+   antiga é reconstruída com segmentos que só foram aprovados por evidência
+   posterior a ela. Isso não dá para tornar point-in-time (nas primeiras
+   safras não há janela OOS e nenhum segmento seria aprovado). Em vez de só
+   avisar, o bloco "Tamanho do viés de universo" (`render_vies_universo`,
+   sob demanda via botão — é a reconstrução mais cara da tela) recalcula as
+   mesmas safras sem o gate de aprovação e publica a distância entre as duas
+   curvas.
+2. **Pós-filtros não entram na reconstrução histórica.** `carteiras_por_safra`
+   monta a carteira de cada safra direto de `lids_por_ano`/`pesos_por_ano` —
+   os líderes por segmento e os pesos do score daquele ano — sem repassar o
+   piso de liquidez nem a diversificação por correlação que a carteira atual
+   aplica. Diferente do viés de universo, isto **não tem caption própria na
+   tela**: é uma propriedade do código (`core/b3_safras.py`), não um aviso
+   visível para quem lê o relatório.
+3. **Peso sem preço rende zero, e não é redistribuído.** Um ticker sem preço
+   válido na janela (deslistagem, incorporação, buraco de dado) fica com sua
+   fatia em `peso_ausente` na estratégia e entra com `0.0` no equal-weight —
+   nos dois casos, sem redistribuir o orçamento entre os sobreviventes.
+   Redistribuir inflaria os dois lados da comparação com "a média de quem
+   sobreviveu", que é sistematicamente mais forte que o mercado que a conta
+   deveria descrever. A tela publica isso: quando `peso_ausente` de alguma
+   safra medida é maior que zero, aparece um aviso dizendo que aquela fatia
+   "rende zero" e que a perda "também não rende o que os sobreviventes
+   renderam".
+
+### O alcance da chamada do relatório: por forma (AST) e, desde 22/09/2026, por execução
+
+`tests/test_portfolio_b3_safras.py` tem um verificador de alcançabilidade por
+AST (`_alcancavel`) que confirma que `render_safras` é chamada dentro de
+`render()` e que nenhum `return`, nem um `if` com condição **constante**
+conhecida (`if False:`, uma variável atribuída a `False` no próprio corpo, ou
+uma constante de módulo), esconde essa chamada como código morto. Isso
+substituiu um teste mais fraco que só verificava a *presença* do nó na árvore,
+sem checar se o fluxo de execução realmente chegava até ele.
+
+Mas o verificador tem um limite deliberado: quando a condição de um `if` **não
+é uma constante que ele sabe avaliar** — por exemplo, uma variável calculada em
+tempo de execução a partir de dados (sessão, banco, resposta de rede) —, ele
+trata os dois ramos como potencialmente alcançáveis, porque não pode provar o
+contrário sem executar o código de fato. Isso é uma escolha correta para não
+gerar falso-positivo, mas tem um efeito colateral: se algum dia a chamada de
+`render_safras` (ou de `render_expectativa`/`render_vies_universo` dentro
+dela) ficar dentro de um `if` cuja condição de runtime é **sempre falsa na
+prática** — uma flag de sessão que nunca é setada, uma lista que chega vazia
+por um bug upstream —, o verificador continua passando (porque não consegue
+provar que a condição é sempre falsa), e a tela inteira — Blocos 1, 2 e 3 —
+some da produção com a suíte inteira verde. É uma lacuna estrutural do que um
+teste de AST consegue provar sobre condições que dependem de dado em tempo de
+execução.
+
+**Essa lacuna foi fechada em 22/09/2026 por execução**, e não por um verificador
+melhor. `tests/test_portfolio_b3_render_alcance.py` roda
+`views/portfolio_b3.py::render()` de ponta a ponta sob 15 dublês (nenhuma rede,
+nenhum Supabase) e falha se `render_safras` não for chamada — ou se for chamada
+com a carteira vazia, sem `df_precos_all`, ou sem `resultados_todos`. O teste
+custa ~4,9 s dentro de `render()` e ~10 s de arquivo.
+
+A prova de que ele morde: envolver a chamada num `if` cuja condição é falsa
+**por dado** (`st.session_state.get("pb3_safras_visivel")`, chave que nenhum
+caminho do app grava) faz o teste de execução falhar e o verificador de AST
+continuar passando — que é exatamente o cenário descrito acima. O verificador
+de AST segue no lugar: ele é barato e pega o caso constante; o teste de
+execução é o que cobre o caso dependente de dado.

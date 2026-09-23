@@ -11,12 +11,12 @@ import hashlib
 import json
 import logging
 import uuid
-from datetime import date
 from typing import Any
 
 from sqlalchemy import text
 
 from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
+from core.b3_vigencia import janela_de_vigencia, safra_vigente_em
 from core.config import settings
 from core.database import get_engine
 from core.portfolio_staleness import marcar_defasagem
@@ -242,6 +242,25 @@ def _clear_b3_portfolio_caches() -> None:
     list_b3_portfolio_model_versions.clear()
 
 
+def _params_com_safra(params: dict | None, *, hoje=None) -> tuple[dict, int]:
+    """Carimba safra e janela de vigencia nos params, e devolve o ano_compra.
+
+    `date.today().year` carimbaria 2027 numa carteira salva em fevereiro de
+    2027, quando a safra vigente ainda e a de 2026. A safra nunca deve
+    precisar ser inferida de created_at.
+    """
+    import pandas as pd
+
+    params = dict(params or {})
+    hoje = pd.Timestamp(hoje) if hoje is not None else pd.Timestamp.now()
+    safra = int(params.get("ano_compra") or safra_vigente_em(hoje))
+    inicio, fim = janela_de_vigencia(safra)
+    params["safra"] = safra
+    params["vigencia_inicio"] = inicio.strftime("%Y-%m-%d")
+    params["vigencia_fim"] = fim.strftime("%Y-%m-%d")
+    return params, safra
+
+
 def save_b3_portfolio_model(
     items: list[dict],
     params: dict,
@@ -259,8 +278,8 @@ def save_b3_portfolio_model(
     params = dict(params or {})
     params.setdefault("score_version", SCORE_VERSION)
     params.setdefault("model_schema_version", MODEL_SCHEMA_VERSION)
+    params, ano_compra = _params_com_safra(params)
     owner = _owner_id()
-    ano_compra = int(params.get("ano_compra") or date.today().year)
     weights = _normalize_weight(items)
     plan_hash = _plan_hash(items, params)
     model_id = str(uuid.uuid4())

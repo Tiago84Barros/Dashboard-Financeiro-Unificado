@@ -31,11 +31,20 @@ from dataclasses import dataclass
 
 import numpy as np
 
+# A distribuicao t e a guarda de dispersao vem de `core.b3_evidence` -- uma
+# casa so. Nao ha `try: import scipy / except: <aproximacao>` em lugar
+# nenhum destes modulos: o pacote esta pinado em requirements.txt, o ramo de
+# fallback seria morto em producao e um `except Exception` largo trocaria a
+# distribuicao em silencio por uma que pode inverter o veredito.
 from core.b3_evidence import (
     A_FAVOR,
     CONTRA,
     INCONCLUSIVO,
+    SEM_AMPLITUDE,
+    classify_evidence,
+    desvio_com_dispersao,
     minimum_detectable_effect,
+    teste_t_unilateral,
 )
 
 VERSION = "b3-pooled-evidence-1.0.0"
@@ -191,30 +200,34 @@ def universe_evidence(yearly_ics: dict[int, float] | list[float], *,
             "Nenhum ano com Rank-IC calculável no universo.")
 
     media = float(np.mean(limpos))
-    t_stat = p_value = None
-    if anos >= 2:
-        desvio = float(np.std(limpos, ddof=1))
-        if desvio > 0:
-            t_stat = float(media / (desvio / math.sqrt(anos)))
-            try:
-                from scipy.stats import t as _t
-                p_value = float(_t.sf(t_stat, df=anos - 1))
-            except Exception:
-                from math import erf
-                p_value = float(0.5 * (1 - erf(t_stat / math.sqrt(2))))
+    # Teste t e guarda de dispersao vem de `core.b3_evidence`, a MESMA regra
+    # que o Bloco 3 das safras usa. Enquanto esta funcao tinha a sua propria
+    # copia com guarda absoluta (`desvio > 0`), os dois cards liam os mesmos
+    # Rank-ICs anuais e publicavam vereditos opostos.
+    t_stat, p_value = teste_t_unilateral(limpos)
 
-    if media <= ic_contra:
-        estado = CONTRA
+    # O ESTADO sai de `classify_evidence` — o mesmo classificador que o
+    # Bloco 3 das safras chama. Só o TEXTO é próprio deste bloco. Quando o
+    # estado também era decidido aqui, a regra de um ano só divergia: com um
+    # único ano de Rank-IC −0,20 este card dizia "Evidência contra" e o
+    # Bloco 3 dizia "não deu para medir", sobre a mesma observação.
+    veredito = classify_evidence(ic_values=limpos, ic_mean=media,
+                                 p_value=p_value, alpha=alpha,
+                                 ic_contra=ic_contra)
+    estado = veredito.estado
+    if estado == CONTRA:
         texto = (f"Rank-IC médio {media:+.3f} no universo ({anos} anos, "
                  f"~{n_medio_ativos:.0f} empresas/ano): o score ordena ao "
                  "contrário do retorno.")
-    elif p_value is not None and p_value < alpha and media > 0:
-        estado = A_FAVOR
+    elif estado == A_FAVOR:
         texto = (f"Rank-IC médio {media:+.3f} no universo ({anos} anos, "
                  f"~{n_medio_ativos:.0f} empresas/ano), p={p_value:.3f} < "
                  f"{alpha:.2f}. Este é o teste com amplitude real.")
+    elif veredito.motivo == SEM_AMPLITUDE:
+        texto = (f"Rank-IC médio {media:+.3f} no universo com apenas {anos} "
+                 "ano(s) medido(s): amplitude insuficiente para testar — não "
+                 "é evidência contra o score.")
     else:
-        estado = INCONCLUSIVO
         detalhe = (f" Efeito mínimo detectável: {mde:.3f}."
                    if mde is not None else "")
         texto = (f"Rank-IC médio {media:+.3f} no universo ({anos} anos) não "
@@ -232,8 +245,8 @@ def _erro_padrao(sample: SegmentSample) -> float | None:
     valores = [float(v) for v in sample.ic_values
                if v is not None and np.isfinite(float(v))]
     if len(valores) >= 2:
-        desvio = float(np.std(valores, ddof=1))
-        if np.isfinite(desvio) and desvio > 0:
+        desvio = desvio_com_dispersao(valores)
+        if desvio is not None:
             return desvio / math.sqrt(len(valores))
     n = float(sample.n_assets or 0)
     if n > 2:

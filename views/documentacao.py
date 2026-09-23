@@ -455,7 +455,7 @@ FLOW_ANALISE_AVANCADA = FlowSpec(
             "backtest", "Backtest mensal", "Validação",
             "Simula aportes mensais usando os scores disponíveis no período correto, sem usar dados futuros.",
             (
-                "Publication lag = 1 (point-in-time)",
+                "Publication lag = 1 — safra N vigora de abril/N a março/N+1",
                 "Aportes mensais com custos",
                 "Pesos Iguais = referência de habilidade (macro-neutra)",
                 "Selic = diagnóstico de timing (não critério)",

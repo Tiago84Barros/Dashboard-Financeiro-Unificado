@@ -355,6 +355,52 @@ _SQL_POSICOES_SNAPSHOT = """
             ) AS asset_source_rank
         FROM latest_rows pps
     ),
+    -- ── REGRA DE CUSTO: o preco medio sai do extrato da B3, nunca do
+    -- consolidado da corretora (o .xlsx da Rico/XP, gravado como
+    -- 'xp_consolidado').
+    --
+    -- Isto NAO e o mesmo que o DENSE_RANK abaixo. Aquele ordena por
+    -- report_date PRIMEIRO, e so desempata por autoridade da fonte dentro da
+    -- mesma data -- ou seja, um consolidado da corretora mais recente que o
+    -- ultimo extrato da B3 passa a ditar quantidade, valor de mercado E
+    -- custo de todo ativo que as duas fontes cobrem. Para a foto da posicao
+    -- isso esta certo (o mais recente e o mais verdadeiro). Para o CUSTO nao:
+    -- preco medio nao envelhece como cotacao envelhece -- ele so muda quando
+    -- ha compra ou venda --, e a B3 e a custodia central, com o historico de
+    -- TODAS as corretoras, enquanto o consolidado enxerga so a propria.
+    --
+    -- Por isso o custo tem a sua propria fonte, decidida fora do ranking:
+    -- a foto mais recente da B3 que publica custo, independente de quem tenha
+    -- ganhado o ranking da posicao.
+    b3_cost_latest AS (
+        SELECT
+            REGEXP_REPLACE(a.ticker, 'F$', '') AS base_ticker,
+            MAX(s.report_date) AS report_date
+        FROM normalized_snapshots s
+        JOIN assets a ON a.id = s.asset_id
+        WHERE s.effective_source_table = 'b3_posicao_detalhada'
+          AND s.invested_value > 0
+          AND s.quantity > 0
+        GROUP BY 1
+    ),
+    b3_cost AS (
+        -- Soma lote padrao + fracionario da MESMA data antes de dividir: o
+        -- preco medio de PETR3 e PETR3F e um so para o investidor.
+        SELECT
+            c.base_ticker,
+            SUM(s.invested_value) / NULLIF(SUM(s.quantity), 0) AS b3_avg_price,
+            SUM(s.quantity)                                    AS b3_quantity,
+            c.report_date                                      AS b3_report_date
+        FROM normalized_snapshots s
+        JOIN assets a ON a.id = s.asset_id
+        JOIN b3_cost_latest c
+          ON c.base_ticker = REGEXP_REPLACE(a.ticker, 'F$', '')
+         AND c.report_date = s.report_date
+        WHERE s.effective_source_table = 'b3_posicao_detalhada'
+          AND s.invested_value > 0
+          AND s.quantity > 0
+        GROUP BY c.base_ticker, c.report_date
+    ),
     pp_base AS (
         SELECT
             REGEXP_REPLACE(a.ticker, 'F$', '') AS base_ticker,
@@ -377,6 +423,9 @@ _SQL_POSICOES_SNAPSHOT = """
         pp_base.pp_total_invested,
         pp_base.pp_cost_quantity,
         pp_base.pp_average_price,
+        b3_cost.b3_avg_price,
+        b3_cost.b3_quantity,
+        b3_cost.b3_report_date,
         pps.is_loaned,
         pps.asset_type,
         pps.asset_name,
@@ -393,6 +442,8 @@ _SQL_POSICOES_SNAPSHOT = """
     JOIN assets a ON a.id = pps.asset_id
     LEFT JOIN pp_base
       ON pp_base.base_ticker = REGEXP_REPLACE(a.ticker, 'F$', '')
+    LEFT JOIN b3_cost
+      ON b3_cost.base_ticker = REGEXP_REPLACE(a.ticker, 'F$', '')
     LEFT JOIN LATERAL (
         SELECT close, timestamp
         FROM   asset_quotes
@@ -883,10 +934,13 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
       1. Agrupa rows do SQL por base_ticker (BBAS3 + BBAS3F → BBAS3)
       2. Soma quantidade e market_value de todos os snapshots do base_ticker
          desconsiderando emprestimos de ativos (filtrados no SQL).
-      3. Para o CUSTO: usa pp_total_invested + pp_quantity da CTE pp_base
-         (fonte unica e consistente — investment_transactions agregadas).
-         Se pp_base nao tiver o ticker (Tesouro, CDB), cai no
-         invested_value do snapshot, e em ultimo caso no market_value.
+      3. Para o CUSTO: o preco medio vem sempre da B3, nunca do consolidado
+         da corretora -- nesta ordem, o extrato "Posicao Detalhada"
+         (CTE b3_cost, decidida FORA do ranking da posicao), depois o
+         agregado das notas de negociacao (pp_base). So quando nenhuma
+         fonte da B3 cobre o ativo -- CDBs e titulos privados, que existem
+         so no .xlsx da corretora -- e que o invested_value da linha vencedora
+         entra; e em ultimo caso o market_value.
     """
     # ── 1. Agrupa rows por base_ticker
     grupos: dict[str, dict] = {}
@@ -954,6 +1008,12 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
         pp_ti    = float(getattr(primary, "pp_total_invested", 0) or 0)
         pp_avg   = float(getattr(primary, "pp_average_price", 0) or 0)
 
+        # Preco medio da B3, decidido fora do ranking da posicao (ver a CTE
+        # b3_cost). Tambem agregado por base_ticker: todas as rows do grupo
+        # trazem o mesmo valor.
+        b3_avg   = float(getattr(primary, "b3_avg_price", 0) or 0)
+        b3_qty   = float(getattr(primary, "b3_quantity", 0) or 0)
+
         # ── Ativos em USD (Nomad): snapshot ja vem convertido em BRL pelo
         # importer com cambio do dia. pp_base guarda em USD (sem conversao).
         # Se pp_qty > qty_snap (novas compras Nomad apos o snapshot), escala
@@ -972,9 +1032,49 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
                 ti      = vi_snap
                 custo_fonte = "snapshot"
             preco_medio = ti / qty if qty > 0 else 0.0
-        # ── CUSTO: prioridade pp_base (mesma fonte: qty + ti consistentes)
+        # ── CUSTO: prioridade para o custo da PROPRIA linha do snapshot.
+        #
+        # A "Posicao Detalhada" da B3 publica o preco medio que a corretora
+        # calcula sobre o historico INTEIRO -- inclusive o pedaco anterior a
+        # qualquer arquivo que este app tenha importado. `pp_base` agrega so
+        # as notas de negociacao que chegaram ate aqui.
+        #
+        # Ate 2026-09-22 `pp_base` vinha primeiro, e o efeito era esticar um
+        # preco medio parcial sobre a quantidade de hoje: BBAS3 saia com
+        # custo de R$ 15.374,93 (PM R$ 10,40, de 1.086 cotas de historico)
+        # contra os R$ 35.377,68 do extrato (PM R$ 23,92 sobre as 1.479 em
+        # carteira). Lucro fantasma de +121% no lugar do prejuizo de -3,85%.
+        #
+        # O criterio nao e "a corretora e mais confiavel": e que quantidade,
+        # valor de mercado e custo da MESMA linha sao consistentes entre si.
+        # Cruzar a quantidade de uma fonte com o PM de outra produz um custo
+        # que nenhuma das duas afirma.
+        #
+        # ── Mas "a linha que ganhou o ranking" nao e necessariamente a B3.
+        # O ranking ordena por data PRIMEIRO, entao um consolidado da Rico/XP
+        # subido depois do ultimo extrato assume quantidade, valor de mercado
+        # E custo. Para a posicao isso esta certo; para o CUSTO nao -- preco
+        # medio so muda quando ha compra ou venda, e a B3 e a custodia
+        # central, com o historico de TODAS as corretoras, enquanto o
+        # consolidado enxerga so a propria. Por isso o preco medio da B3 vem
+        # antes, venha de onde vier a foto da posicao.
+        elif b3_avg > 0:
+            qty         = qty_snap
+            preco_medio = b3_avg
+            ti          = b3_avg * qty_snap
+            if b3_qty > 0 and abs(qty_snap - b3_qty) / b3_qty <= 0.01:
+                # Mesma quantidade do extrato: o custo e o declarado, nao uma
+                # conta nossa.
+                custo_fonte = "b3_posicao_detalhada"
+            else:
+                # O extrato e de antes da ultima movimentacao. O PM continua
+                # sendo o melhor que existe, mas o total e extrapolacao -- e
+                # o card precisa rotular como estimado.
+                custo_fonte = "b3_preco_medio_escalado"
         elif pp_ti > 0 and pp_qty > 0:
-            # pp_base agregado da B3 negociacao — fonte mais confiavel
+            # Sem custo no extrato (a B3 publica PM zero quando perdeu a
+            # base, e o importador grava isso como ausencia, nao como zero).
+            # O agregado das notas passa a ser o melhor que existe.
             qty         = qty_snap
             preco_medio = pp_avg if pp_avg > 0 else (pp_ti / pp_qty)
             # Reconcilia qty_snap (corretora, valor atual) com pp_qty
@@ -996,7 +1096,10 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
                 ti = preco_medio * qty_snap
                 custo_fonte = "preco_medio_estimado"
         elif vi_snap > 0:
-            # Snapshot da corretora reportou invested_value (raro)
+            # Nenhuma fonte da B3 cobre este ativo -- e o caso dos CDBs e dos
+            # titulos privados, que existem so no consolidado da corretora.
+            # A regra e de prioridade, nao de proibicao: descartar este numero
+            # trocaria um custo correto por "Nao informado".
             ti          = vi_snap
             qty         = qty_snap
             preco_medio = ti / qty if qty > 0 else 0.0
@@ -1041,7 +1144,11 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
         data_referencia = g.get("live_ts") if cotacao_fonte in {"live", "stale"} else report_date
 
         rentab = round((vm_calc - ti) / ti * 100, 2) if ti > 0 else 0.0
-        custo_estimado = custo_fonte != "b3_negociacao"
+        # Custo declarado pela corretora nao e estimativa -- e o unico numero
+        # autoritativo que existe sobre o assunto.
+        custo_estimado = custo_fonte not in (
+            "b3_posicao_detalhada", "b3_negociacao", "snapshot",
+        )
 
         classe_raw = _class_key_from_snapshot(primary.asset_type, base, primary.country)
 
