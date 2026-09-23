@@ -883,10 +883,11 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
       1. Agrupa rows do SQL por base_ticker (BBAS3 + BBAS3F → BBAS3)
       2. Soma quantidade e market_value de todos os snapshots do base_ticker
          desconsiderando emprestimos de ativos (filtrados no SQL).
-      3. Para o CUSTO: usa pp_total_invested + pp_quantity da CTE pp_base
-         (fonte unica e consistente — investment_transactions agregadas).
-         Se pp_base nao tiver o ticker (Tesouro, CDB), cai no
-         invested_value do snapshot, e em ultimo caso no market_value.
+      3. Para o CUSTO: usa o invested_value da PROPRIA linha do snapshot,
+         que e o preco medio da corretora sobre o historico inteiro e e
+         consistente com a quantidade da mesma linha. So quando o extrato
+         nao traz custo e que cai no agregado de pp_base (as notas de
+         negociacao que este app leu), e em ultimo caso no market_value.
     """
     # ── 1. Agrupa rows por base_ticker
     grupos: dict[str, dict] = {}
@@ -972,9 +973,32 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
                 ti      = vi_snap
                 custo_fonte = "snapshot"
             preco_medio = ti / qty if qty > 0 else 0.0
-        # ── CUSTO: prioridade pp_base (mesma fonte: qty + ti consistentes)
+        # ── CUSTO: prioridade para o custo da PROPRIA linha do snapshot.
+        #
+        # A "Posicao Detalhada" da B3 publica o preco medio que a corretora
+        # calcula sobre o historico INTEIRO -- inclusive o pedaco anterior a
+        # qualquer arquivo que este app tenha importado. `pp_base` agrega so
+        # as notas de negociacao que chegaram ate aqui.
+        #
+        # Ate 2026-09-22 `pp_base` vinha primeiro, e o efeito era esticar um
+        # preco medio parcial sobre a quantidade de hoje: BBAS3 saia com
+        # custo de R$ 15.374,93 (PM R$ 10,40, de 1.086 cotas de historico)
+        # contra os R$ 35.377,68 do extrato (PM R$ 23,92 sobre as 1.479 em
+        # carteira). Lucro fantasma de +121% no lugar do prejuizo de -3,85%.
+        #
+        # O criterio nao e "a corretora e mais confiavel": e que quantidade,
+        # valor de mercado e custo da MESMA linha sao consistentes entre si.
+        # Cruzar a quantidade de uma fonte com o PM de outra produz um custo
+        # que nenhuma das duas afirma.
+        elif vi_snap > 0:
+            ti          = vi_snap
+            qty         = qty_snap
+            preco_medio = ti / qty if qty > 0 else 0.0
+            custo_fonte = "snapshot"
         elif pp_ti > 0 and pp_qty > 0:
-            # pp_base agregado da B3 negociacao — fonte mais confiavel
+            # Sem custo no extrato (a B3 publica PM zero quando perdeu a
+            # base, e o importador grava isso como ausencia, nao como zero).
+            # O agregado das notas passa a ser o melhor que existe.
             qty         = qty_snap
             preco_medio = pp_avg if pp_avg > 0 else (pp_ti / pp_qty)
             # Reconcilia qty_snap (corretora, valor atual) com pp_qty
@@ -995,12 +1019,6 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
             else:
                 ti = preco_medio * qty_snap
                 custo_fonte = "preco_medio_estimado"
-        elif vi_snap > 0:
-            # Snapshot da corretora reportou invested_value (raro)
-            ti          = vi_snap
-            qty         = qty_snap
-            preco_medio = ti / qty if qty > 0 else 0.0
-            custo_fonte = "snapshot"
         else:
             # Sem custo conhecido — usa market_value como estimativa
             ti          = vm
@@ -1041,7 +1059,9 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None) -> dict:
         data_referencia = g.get("live_ts") if cotacao_fonte in {"live", "stale"} else report_date
 
         rentab = round((vm_calc - ti) / ti * 100, 2) if ti > 0 else 0.0
-        custo_estimado = custo_fonte != "b3_negociacao"
+        # Custo declarado pela corretora nao e estimativa -- e o unico numero
+        # autoritativo que existe sobre o assunto.
+        custo_estimado = custo_fonte not in ("b3_negociacao", "snapshot")
 
         classe_raw = _class_key_from_snapshot(primary.asset_type, base, primary.country)
 
