@@ -109,3 +109,67 @@ def test_falha_de_leitura_bloqueia_gravacao_e_permite_retry(monkeypatch):
     assert not app.exception
     assert not app.selectbox[0].disabled
     assert app.selectbox[0].value == "light"
+
+
+# Resolver o tema acontece no TOPO de app.py, acima de todo o conteúdo da
+# página. Por isso este script isola a resolução: o que importa medir é que
+# ``current_theme`` não desenha nada -- ver o docstring da função.
+SCRIPT_SO_RESOLVE = '''
+import time
+import streamlit as st
+from design.theme_selector import current_theme
+st.session_state.setdefault('_app4_user', {'id': 'A', 'expires_at': time.time()+600})
+st.session_state['_tema_resolvido'] = current_theme()
+st.write("conteudo da pagina")
+'''
+
+
+def test_resolver_o_tema_nao_desenha_nada_acima_da_pagina(monkeypatch):
+    """Falha de leitura não pode inserir elemento acima do conteúdo.
+
+    Medido em 22/09/2026 num app isolado: com a estrutura estável, nem o rerun
+    do ``file_uploader`` nem elementos novos DENTRO da aba movem a seleção do
+    ``st.tabs``; UM elemento a mais acima das abas devolve a seleção para a
+    primeira, sempre. O aviso que ``current_theme`` desenhava só nas execuções
+    em que a leitura falhava era exatamente esse elemento -- e por isso subir
+    arquivo em "Atualização de dados" jogava a pessoa de volta em "Geral" na
+    mesma execução em que o app repintava de escuro.
+    """
+    import design.theme_selector as selector
+
+    def fail():
+        raise RuntimeError("banco indisponivel")
+
+    monkeypatch.setattr(selector, "load_theme", fail)
+    app = AppTest.from_string(SCRIPT_SO_RESOLVE).run()
+    assert not app.exception
+    assert app.session_state["_tema_resolvido"] == "dark"
+    assert list(app.warning) == [], (
+        "current_theme desenhou um aviso no fluxo principal. Esse elemento "
+        "aparece acima do st.tabs de Configurações e devolve a pessoa para a "
+        "primeira aba. O aviso pertence a render_theme_selector, que já mora "
+        "dentro da aba Geral."
+    )
+    assert list(app.error) == []
+
+
+def test_falha_de_leitura_avisa_onde_o_tema_se_escolhe(monkeypatch):
+    """Tirar o aviso do topo não pode tirá-lo da tela.
+
+    Sem isto, a correção do parágrafo acima viraria silêncio: o app cairia para
+    dark e o seletor apareceria desabilitado sem nenhuma explicação.
+    """
+    import design.theme_selector as selector
+
+    def fail():
+        raise RuntimeError("banco indisponivel")
+
+    monkeypatch.setattr(selector, "load_theme", fail)
+    app = AppTest.from_string(SCRIPT).run()
+    assert not app.exception
+    assert app.selectbox[0].disabled
+    assert len(app.warning) == 1
+    assert "tema" in app.warning[0].value.lower()
+    monkeypatch.setattr(selector, "load_theme", lambda: "light")
+    app.run()
+    assert list(app.warning) == []
