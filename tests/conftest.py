@@ -136,8 +136,9 @@ def _limpar(mr) -> None:
 # `socket.socket.connect` e `socket.create_connection` sao codigo Python, e todo
 # cliente escrito em Python passa por eles. libpq NAO: psycopg2 abre o socket em
 # C, e a chamada nunca toca o modulo `socket`. O guarda acima, portanto, cobria
-# `requests`, `urllib`, `yfinance` -- e deixava passar justamente a conexao mais
-# cara, a do banco de PRODUCAO.
+# `requests`, `urllib` e `httpx` -- e deixava passar justamente a conexao mais
+# cara, a do banco de PRODUCAO. (O mesmo vale para o libcurl, que o yfinance usa;
+# essa terceira porta esta no fim deste arquivo.)
 #
 # Medido em 21/09/2026, com o guarda de socket ativo: `psycopg2.connect` para o
 # pooler do Supabase resolveu o DNS, abriu TCP para 54.232.77.43, completou o
@@ -202,3 +203,79 @@ def _instalar_guarda_libpq() -> None:
 
 if os.getenv("DFU_TESTES_PERMITEM_REDE", "").strip().lower() not in {"1", "true", "yes"}:
     _instalar_guarda_libpq()
+
+
+# ── libcurl tambem nao passa pelo socket do Python ───────────────────────────
+# Mesma lacuna do libpq, outra porta. `yfinance` >= 0.2.5x nao usa `requests`:
+# usa `curl_cffi`, que abre o socket dentro do libcurl, em C. O guarda de socket
+# nao ve nada, e o teste que sai pela rede nem fica lento o bastante para chamar
+# atencao -- fica VERDE.
+#
+# Medido em 22/09/2026, com o guarda de socket e o de libpq ativos:
+# `curl_cffi.requests.get("https://query2.finance.yahoo.com/...")` completou o
+# TLS e voltou com HTTP 429 do Yahoo em 0,9 s. Na mesma execucao, `requests.get`
+# foi recusado. O furo tem nome: a primeira versao de
+# `tests/test_portfolio_b3_render_alcance.py` passava verde enquanto o yfinance
+# batia em `BBBB3.SA` e tomava 404 -- ~20 s de rede num teste de 25 s. So
+# apareceu porque uma execucao falhou e o pytest despejou o log capturado; o
+# pytest so exibe o log quando o teste falha.
+#
+# O ponto de aplicacao e `Curl.setopt(CurlOpt.URL, ...)`, nao `Session.request`:
+# e por onde passa TODA requisicao do curl_cffi -- sincrona, assincrona e
+# websocket --, e e o unico lugar onde a URL entra na handle (site-packages/
+# curl_cffi/requests/utils.py). Guardar a API de alto nivel deixaria de fora
+# quem chamar a handle direto, e mudaria de lugar a cada versao da biblioteca.
+#
+# A regra e a MESMA (`_e_local`) e a recusa e a MESMA (`_recusar`), pelo mesmo
+# motivo das outras duas portas.
+def _endereco_da_url(url):
+    """(host, porta) do que libcurl vai discar, ou None quando nao da para dizer.
+
+    None segue para o driver de proposito: URL ilegivel nao abre socket nenhum,
+    e trocar o erro nativo do libcurl pelo nosso esconderia o defeito real.
+    """
+    if isinstance(url, (bytes, bytearray)):
+        url = bytes(url).decode("utf-8", "replace")
+    if not isinstance(url, str) or not url.strip():
+        return None
+    from urllib.parse import urlsplit
+    try:
+        # Sem esquema, `urlsplit` leria o host como caminho. libcurl aceita
+        # "example.com/x" e assume http.
+        partes = urlsplit(url if "://" in url else f"//{url}")
+        host = partes.hostname
+        porta = partes.port
+    except ValueError:
+        return None
+    if not host:
+        return None
+    return (host, porta)
+
+
+def _instalar_guarda_libcurl() -> None:
+    try:
+        from curl_cffi import CurlOpt
+        from curl_cffi.curl import Curl
+    except Exception:  # a biblioteca pode nao estar instalada neste checkout
+        return
+
+    original = Curl.setopt
+    opcao_url = int(CurlOpt.URL)
+
+    def _setopt_guardado(self, option, value, *args, **kwargs):
+        try:
+            e_url = int(option) == opcao_url
+        except (TypeError, ValueError):
+            e_url = False
+        if e_url:
+            endereco = _endereco_da_url(value)
+            if endereco is not None and not _e_local(endereco):
+                _recusar(endereco)
+        return original(self, option, value, *args, **kwargs)
+
+    _setopt_guardado._dfu_original = original  # noqa: SLF001 - usado no teste
+    Curl.setopt = _setopt_guardado
+
+
+if os.getenv("DFU_TESTES_PERMITEM_REDE", "").strip().lower() not in {"1", "true", "yes"}:
+    _instalar_guarda_libcurl()
