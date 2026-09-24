@@ -1660,11 +1660,12 @@ FLOW_PORTFOLIO_GLOBAL = FlowSpec(
         ),
         "alvos_pg": _node(
             "alvos_pg", "Alocação-alvo", "Consolidação",
-            "Você define o alvo por classe num editor. O app compara alvo com o real e "
-            "avisa quando existe alvo sem nenhuma posição correspondente.",
+            "Você define o alvo por classe num editor, mais a fatia de renda fixa do "
+            "patrimônio. O plano de aporte compara esse alvo com a carteira real da aba "
+            "Investimentos e avisa quando existe alvo sem nenhuma posição correspondente.",
             (
-                "Editor de alvo por classe",
-                "Desvio entre alvo e posição atual",
+                "Editor de alvo por classe e fatia de renda fixa",
+                "Desvio entre alvo e carteira real (Investimentos)",
                 "Aviso de classe com alvo e sem posição",
             ),
             "Alvo sem posição costuma ser intenção esquecida. Vale aparecer como aviso, "

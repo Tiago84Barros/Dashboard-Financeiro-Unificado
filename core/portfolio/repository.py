@@ -214,6 +214,27 @@ def load_active_snapshots(asset_class: str, *, engine=None, owner_id=None) -> di
     return load_snapshots(asset_class, model_id, engine=engine)
 
 
+# Chave reservada dentro de targets_json para a fatia de renda fixa. Ela NAO e
+# uma classe do registro (renda fixa nao tem carteira-modelo, snapshot nem
+# adaptador) e por isso fica fora de `targets`: todo consumidor de `targets`
+# chama get_spec(classe) e quebraria. Os pesos de `targets` continuam somando
+# 1 -- eles dividem a parcela que NAO e renda fixa.
+_CHAVE_RENDA_FIXA = "_renda_fixa"
+
+
+def _normalizar_renda_fixa(valor) -> float | None:
+    """Fracao do patrimonio em renda fixa, em [0, 1). None = nao definida.
+
+    So fracao: aceitar tambem % tornaria 1.0 ambiguo (1% ou 100%?).
+    """
+    if valor is None:
+        return None
+    rf = float(valor)
+    if rf < 0 or rf >= 1.0:
+        raise ValueError("a fatia de renda fixa precisa ficar entre 0% e 100% (exclusive)")
+    return rf
+
+
 def _normalizar_alvos(targets: dict) -> dict[str, float]:
     """Valida as classes e normaliza os pesos para somar 1."""
     limpos: dict[str, float] = {}
@@ -231,9 +252,18 @@ def _normalizar_alvos(targets: dict) -> dict[str, float]:
 
 
 def save_allocation_targets(targets: dict[str, float], *, total_brl: float | None = None,
-                            notes: str = "", engine=None, owner_id=None) -> str:
-    """Salva a alocacao-alvo ativa, arquivando a anterior. Devolve o id."""
+                            notes: str = "", renda_fixa: float | None = None,
+                            engine=None, owner_id=None) -> str:
+    """Salva a alocacao-alvo ativa, arquivando a anterior. Devolve o id.
+
+    `renda_fixa`: fracao do patrimonio que deve ficar em renda fixa.
+    Os pesos de `targets` dividem o restante.
+    """
     normalizados = _normalizar_alvos(targets)
+    rf = _normalizar_renda_fixa(renda_fixa)
+    gravar = dict(normalizados)
+    if rf is not None:
+        gravar[_CHAVE_RENDA_FIXA] = rf
     eng = _resolve_engine(engine)
     owner = _resolve_owner(owner_id)
     placeholder = ("CAST(:targets_json AS jsonb)"
@@ -255,7 +285,7 @@ def save_allocation_targets(targets: dict[str, float], *, total_brl: float | Non
             """),
             {
                 "id": novo_id, "uid": owner, "total_brl": total_brl,
-                "targets_json": canonical_json(normalizados), "notes": notes or "",
+                "targets_json": canonical_json(gravar), "notes": notes or "",
             },
         )
     return novo_id
@@ -278,12 +308,14 @@ def load_allocation_targets(*, engine=None, owner_id=None) -> dict:
         ).mappings().first()
 
     if not linha:
-        return {"targets": {}, "total_brl": None, "notes": ""}
+        return {"targets": {}, "total_brl": None, "notes": "", "renda_fixa": None}
 
-    alvos = _decode(linha["targets_json"]) or {}
+    alvos = dict(_decode(linha["targets_json"]) or {})
+    rf = alvos.pop(_CHAVE_RENDA_FIXA, None)
     total = linha["total_brl"]
     return {
         "targets": {str(k): float(v) for k, v in sorted(alvos.items())},
         "total_brl": float(total) if total is not None else None,
         "notes": linha["notes"] or "",
+        "renda_fixa": float(rf) if rf is not None else None,
     }
