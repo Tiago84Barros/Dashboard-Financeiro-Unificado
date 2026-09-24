@@ -297,6 +297,9 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
         "portfolio": p_stats, "equal_weight": ew_stats,
         "portfolio_gross": gross_stats,
         "excess_ann_vs_ew": excess,
+        # Excesso sobre pesos iguais período a período: é o que permite dizer
+        # se ordenar bem (Rank-IC) virou retorno a mais ou só variância.
+        "excess_periods": [float(x) for x in excess_series.dropna()],
         "avg_turnover": float(np.mean(turns)) if turns else None,
         "concentration": {
             "strategy_mode": "teorica_sem_cap",

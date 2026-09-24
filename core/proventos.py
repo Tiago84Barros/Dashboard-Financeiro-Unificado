@@ -270,8 +270,24 @@ def _proventos_real() -> dict:
 # Helpers de montagem (compartilhados por mock e real)
 # ─────────────────────────────────────────────────────────────────────────────
 
+#: Tipos que remuneram o investidor. ``amortization`` devolve o próprio capital
+#: e ``other`` é, na prática, venda/cessão de direito de subscrição
+#: (``data_pipeline/importers/investments/common.py``): nenhum dos dois é renda.
+#: Somá-los inflava o DY exibido em Investimentos (mesma regra do A-128 para
+#: ``market.dividends``, em ``core/dividend_types.py``).
+TIPOS_RENDA_PESSOAL = frozenset({"dividend", "jcp", "reit_income"})
+
+
 def _montar_dict(eventos: list, hoje: _date) -> dict:
-    """Monta o dict de proventos a partir de uma lista de eventos normalizados."""
+    """Monta o dict de proventos a partir de uma lista de eventos normalizados.
+
+    Totais, históricos e rankings contam só renda (``TIPOS_RENDA_PESSOAL``).
+    ``eventos`` e ``por_tipo`` continuam com tudo, e o capital devolvido sai
+    separado em ``capital_12m``/``capital_historico``.
+    """
+    todos = eventos
+    capital = [e for e in todos if e["tipo"] not in TIPOS_RENDA_PESSOAL]
+    eventos = [e for e in todos if e["tipo"] in TIPOS_RENDA_PESSOAL]
     inicio_12m = hoje - _timedelta(days=365)
     total_mes     = sum(
         e["total_amount"] for e in eventos
@@ -301,12 +317,18 @@ def _montar_dict(eventos: list, hoje: _date) -> dict:
         "total_historico": round(total_hist, 2),
         "num_ativos":      len(ativos_set),
         "num_eventos":     len(eventos),
+        "capital_12m":     round(sum(
+            e["total_amount"] for e in capital
+            if e["payment_date"] and inicio_12m <= e["payment_date"] <= hoje
+        ), 2),
+        "capital_historico": round(sum(e["total_amount"] for e in capital), 2),
         "historico_mensal": _historico_mensal(eventos),
         "historico_anual":  _historico_anual(eventos),
         "por_ativo":        _agregar_por_ativo(eventos, total_hist),
         "por_ativo_12m":    _agregar_por_ativo(eventos_12m, total_12m),
-        "por_tipo":         _agregar_por_tipo(eventos, total_hist),
-        "eventos":          eventos,
+        "por_tipo":         _agregar_por_tipo(
+            todos, sum(e["total_amount"] for e in todos)),
+        "eventos":          todos,
         # data_source injetado pelo caller
     }
 

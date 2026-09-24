@@ -42,3 +42,20 @@ def test_por_ativo_12m_vazio_e_expresso_como_lista_vazia():
     dados = _montar_dict([_evento("FII11", 15.0, date(2024, 1, 1))], hoje)
     assert dados["por_ativo_12m"] == []
     assert dados["total_12m"] == 0.0
+
+
+def test_amortizacao_e_direito_de_subscricao_nao_contam_como_renda():
+    hoje = date(2026, 7, 25)
+    amort = {**_evento("FII11", 50.0, date(2026, 7, 1)), "tipo": "amortization"}
+    direito = {**_evento("FII11", 30.0, date(2026, 6, 1)), "tipo": "other"}
+    dados = _montar_dict(
+        [_evento("FII11", 20.0, date(2026, 7, 1)), amort, direito], hoje,
+    )
+
+    assert dados["total_12m"] == 20.0
+    assert dados["total_mes"] == 20.0
+    assert dados["por_ativo_12m"][0]["total"] == 20.0
+    assert dados["capital_12m"] == 80.0
+    # A trilha completa continua visível: nada some da tabela de eventos.
+    assert len(dados["eventos"]) == 3
+    assert {t["tipo"] for t in dados["por_tipo"]} >= {"amortization", "other"}
