@@ -10,8 +10,9 @@ Aqui a elegibilidade de cada ano de decisão é medida com o volume dos
 ``meses`` anteriores ao mês de rebalanceamento daquele ano. Limitações
 declaradas, porque o filtro só consegue REMOVER nomes:
 
-* o universo de partida continua sendo o de hoje (quem deslistou nunca
-  entrou) — viés de sobrevivência que este filtro não trata;
+* este filtro só remove: quem deslistou entra pelo outro lado, via
+  ``core.b3_saidas`` (o volume da época delas é somado ao dos vivos antes
+  de chamar ``elegiveis_por_ano``);
 * o piso é em reais nominais, não deflacionado: R$ 1 mi/dia de 2012 vale mais
   que o de hoje, então o filtro é MAIS brando nos anos antigos;
 * ticker sem nenhum pregão medido na janela fica ELEGÍVEL — ausência pode ser
