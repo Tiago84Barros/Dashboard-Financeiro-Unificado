@@ -1511,15 +1511,19 @@ def _agregar_por_setor(posicoes: list) -> list:
 # API pública — evolução patrimonial histórica
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Só ativos em reais: somar preço em dólar da Nomad com preço em reais da B3
+# dava um "aporte" que não existiu em moeda nenhuma.
 _SQL_EVOLUCAO_TX = """
     SELECT
-        DATE_TRUNC('month', transaction_date) AS mes,
-        SUM(CASE WHEN type = 'buy'  THEN  quantity * unit_price
-                 WHEN type = 'sell' THEN -(quantity * unit_price)
+        DATE_TRUNC('month', t.transaction_date) AS mes,
+        SUM(CASE WHEN t.type = 'buy'  THEN  t.quantity * t.unit_price
+                 WHEN t.type = 'sell' THEN -(t.quantity * t.unit_price)
                  ELSE 0
         END) AS delta_investido
-    FROM investment_transactions
-    WHERE user_id = :uid
+    FROM investment_transactions t
+    JOIN assets a ON a.id = t.asset_id
+    WHERE t.user_id = :uid
+      AND COALESCE(a.currency, 'BRL') = 'BRL'
     GROUP BY 1
     ORDER BY 1
 """
@@ -1666,6 +1670,7 @@ def _evolucao_real() -> dict:
             snap_rows = conn.execute(text(_SQL_EVOLUCAO_SNAPSHOTS), {"uid": owner}).fetchall()
             if snap_rows:
                 div_rows = conn.execute(text(_SQL_EVOLUCAO_DIV), {"uid": owner}).fetchall()
+                tx_rows = conn.execute(text(_SQL_EVOLUCAO_TX), {"uid": owner}).fetchall()
                 current_rows = conn.execute(text(_SQL_POSICOES_SNAPSHOT), {"uid": owner}).fetchall()
                 # A evolucao compara custo com mercado; se o custo da tela
                 # vem da declaracao do usuario, o da curva tem de vir dela
@@ -1677,7 +1682,7 @@ def _evolucao_real() -> dict:
                     )
                     if current_rows else None
                 )
-                return _montar_evolucao_snapshot(snap_rows, div_rows, current_totals)
+                return _montar_evolucao_snapshot(snap_rows, div_rows, current_totals, tx_rows)
         tx_rows   = conn.execute(text(_SQL_EVOLUCAO_TX),    {"uid": owner}).fetchall()
         div_rows  = conn.execute(text(_SQL_EVOLUCAO_DIV),   {"uid": owner}).fetchall()
         ratio_row = conn.execute(text(_SQL_EVOLUCAO_RATIO), {"uid": owner}).fetchone()
@@ -1728,12 +1733,19 @@ def _evolucao_real() -> dict:
     }
 
 
-def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: dict | None = None) -> dict:
+def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: dict | None = None,
+                              tx_rows: list | None = None) -> dict:
+    """Série de patrimônio pelas fotos e fluxo de aporte pelo extrato.
+
+    ``aporte`` é compra − venda do extrato no mês. Antes era a variação do
+    valor de mercado entre duas fotos: valorização virava "aporte" e uma
+    queda de preço virava "resgate", e entre fotos anuais o mês inteiro do
+    ano sumia dentro de um único ponto.
+    """
     div_map = {r.mes: float(r.delta_dividendos or 0) for r in div_rows}
     snapshots = []
     fluxo_mensal = []
     cum_div = 0.0
-    prev_value = None
 
     for r in snap_rows:
         mes = r.mes
@@ -1751,14 +1763,6 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
             "valor_mercado":       round(vm, 2),
             "valor_com_dividendos": round(vm + cum_div, 2),
         })
-        fluxo_mensal.append({
-            "label":   label,
-            "mes_str": mes_str,
-            "aporte":  round(vm - prev_value, 2) if prev_value is not None else round(vm, 2),
-            "ano":     mes.year,
-            "mes":     mes.month,
-        })
-        prev_value = vm
 
     if current_totals:
         from datetime import date as _date
@@ -1776,19 +1780,20 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
             "valor_mercado":       current_vm,
             "valor_com_dividendos": round(current_vm + cum_div, 2),
         }
-        current_flux = {
-            "label":   label,
-            "mes_str": mes_str,
-            "aporte":  round(current_vm - prev_value, 2) if prev_value is not None else current_vm,
-            "ano":     current_month.year,
-            "mes":     current_month.month,
-        }
         if snapshots and snapshots[-1]["mes_str"] == mes_str:
             snapshots[-1] = current_snapshot
-            fluxo_mensal[-1] = current_flux
         else:
             snapshots.append(current_snapshot)
-            fluxo_mensal.append(current_flux)
+
+    for r in sorted(tx_rows or [], key=lambda r: r.mes):
+        mes = r.mes
+        fluxo_mensal.append({
+            "label":   f"{_MESES_PT_CF[mes.month]}/{str(mes.year)[-2:]}",
+            "mes_str": mes.strftime("%Y-%m"),
+            "aporte":  round(float(r.delta_investido or 0), 2),
+            "ano":     mes.year,
+            "mes":     mes.month,
+        })
 
     latest = snapshots[-1] if snapshots else {}
     return {
@@ -1841,4 +1846,169 @@ def _evolucao_mock() -> dict:
         "total_investido":  round(cum_inv, 2),
         "total_mercado":    round(snapshots[-1]["valor_mercado"], 2) if snapshots else 0.0,
         "total_dividendos": round(cum_div, 2),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# API pública — rentabilidade (TIR) da renda variável na B3 contra o CDI
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SQL_RENTAB_TX_B3 = """
+    SELECT t.transaction_date::date AS data, a.ticker, t.type AS tipo,
+           t.quantity AS quantidade, t.unit_price AS preco,
+           COALESCE(t.fees, 0) AS taxas
+    FROM investment_transactions t
+    JOIN assets a ON a.id = t.asset_id
+    WHERE t.user_id = :uid
+      AND t.broker = 'B3'
+      AND t.type IN ('buy', 'sell')
+    ORDER BY t.transaction_date
+"""
+
+# Mesma deduplicação de _SQL_EVOLUCAO_DIV, por evento e não por mês. Só o que
+# já foi pago: provento anunciado com data futura ainda não é dinheiro.
+_SQL_RENTAB_PROVENTOS_B3 = """
+    WITH dedup AS (
+        SELECT d.*, a.ticker,
+            ROW_NUMBER() OVER (
+                PARTITION BY d.asset_id, d.payment_date, d.type, ROUND(d.total_amount::numeric, 2)
+                ORDER BY CASE
+                    WHEN d.external_id LIKE 'b3mov-%' THEN 0
+                    WHEN d.external_id LIKE 'xpcsl-%' THEN 1
+                    ELSE 2
+                END,
+                d.id
+            ) AS rn
+        FROM dividends d
+        JOIN assets a ON a.id = d.asset_id
+        WHERE d.user_id = :uid
+          AND d.payment_date IS NOT NULL
+          AND d.payment_date <= CURRENT_DATE
+          AND COALESCE(a.currency, 'BRL') = 'BRL'
+    )
+    SELECT payment_date::date AS data, ticker, total_amount AS valor
+    FROM dedup
+    WHERE rn = 1
+"""
+
+# Classes da posição que são negociadas na B3 em reais.
+_CLASSES_RV_B3 = {"Ações BR", "FII", "ETF", "ETF Brasil", "BDR"}
+
+
+@user_cache_data(ttl=3600)
+def _cdi_diario_cache(inicio_iso: str, fim_iso: str) -> dict:
+    from datetime import date as _date
+
+    from core.rentabilidade import carregar_cdi_diario
+
+    return carregar_cdi_diario(_date.fromisoformat(inicio_iso), _date.fromisoformat(fim_iso))
+
+
+@user_cache_data(ttl=300)
+def get_rentabilidade_rv_b3() -> dict:
+    """TIR da renda variável negociada na B3 e a mesma sequência de fluxos no CDI.
+
+    Mede só os ativos cujo extrato de negociação fecha com a posição de hoje
+    (ver ``core.rentabilidade.conciliar_universo``) e devolve a cobertura:
+    quanto do valor atual em renda variável B3 entrou na conta.
+    """
+    if settings.MOCK_MODE:
+        return {"data_source": "mock", "disponivel": False,
+                "motivo": "Rentabilidade não é simulada em modo mock."}
+    try:
+        return _rentabilidade_rv_b3_real()
+    except Exception as exc:
+        logger.warning("[investimentos] rentabilidade indisponível (%s).", type(exc).__name__)
+        return {"data_source": "error", "disponivel": False,
+                "motivo": "Não foi possível carregar o extrato de negociação."}
+
+
+def _rentabilidade_rv_b3_real() -> dict:
+    from datetime import date as _date
+
+    from sqlalchemy import text
+
+    from core.database import get_engine
+    from core.rentabilidade import cdi_anualizado, comparar_com_cdi, conciliar_universo
+
+    engine = get_engine()
+    if engine is None:
+        raise RuntimeError("Engine indisponível.")
+    owner = settings.OWNER_USER_ID
+    if not owner:
+        raise RuntimeError("OWNER_USER_ID não configurado.")
+
+    with engine.connect() as conn:
+        tx_rows = conn.execute(text(_SQL_RENTAB_TX_B3), {"uid": owner}).fetchall()
+        prov_rows = conn.execute(text(_SQL_RENTAB_PROVENTOS_B3), {"uid": owner}).fetchall()
+
+    if not tx_rows:
+        return {"data_source": "real", "disponivel": False,
+                "motivo": "Nenhuma negociação da B3 importada."}
+
+    transacoes = [
+        {"data": r.data, "ticker": _base_ticker(r.ticker), "tipo": r.tipo,
+         "quantidade": float(r.quantidade or 0), "preco": float(r.preco or 0),
+         "taxas": float(r.taxas or 0)}
+        for r in tx_rows
+    ]
+    proventos = [
+        {"data": r.data, "ticker": _base_ticker(r.ticker), "valor": float(r.valor or 0)}
+        for r in prov_rows
+    ]
+
+    # O valor final é o da MESMA posição que a aba Carteira mostra — preço,
+    # preço manual e fonte já resolvidos lá. Uma segunda leitura da posição
+    # daria dois patrimônios para a mesma pergunta.
+    carteira = get_carteira()
+    posicoes: dict[str, dict] = {}
+    for p in carteira.get("posicoes") or []:
+        if p.get("moeda") != "BRL" or p.get("classe") not in _CLASSES_RV_B3:
+            continue
+        tk = _base_ticker(p.get("ticker") or "")
+        cur = posicoes.setdefault(tk, {"quantidade": 0.0, "valor_mercado": 0.0})
+        cur["quantidade"] += float(p.get("quantidade") or 0)
+        cur["valor_mercado"] += float(p.get("valor_mercado") or 0)
+
+    universo = conciliar_universo(transacoes, proventos, posicoes)
+    hoje = _date.today()
+    fluxos = universo["fluxos"]
+    if not fluxos:
+        return {"data_source": "real", "disponivel": False,
+                "motivo": "Nenhum ativo com extrato que feche com a posição.",
+                "excluidos": universo["excluidos"]}
+
+    inicio = fluxos[0][0]
+    cdi = _cdi_diario_cache(inicio.isoformat(), hoje.isoformat())
+    comp = comparar_com_cdi(fluxos, universo["valor_final"], hoje, cdi)
+
+    aportes = -sum(v for _, v in fluxos if v < 0)
+    retiradas = sum(v for _, v in fluxos if v > 0)
+    cobertura = (
+        universo["valor_final"] / universo["valor_total"]
+        if universo["valor_total"] > 0 else None
+    )
+    return {
+        "data_source": "real",
+        "disponivel": comp["tir_carteira"] is not None,
+        "motivo": None if comp["tir_carteira"] is not None else
+                  "Os fluxos não têm troca de sinal suficiente para uma TIR.",
+        "inicio": inicio,
+        "fim": hoje,
+        "tir_carteira": comp["tir_carteira"],
+        "tir_cdi": comp["tir_cdi"],
+        "cdi_periodo_aa": cdi_anualizado(cdi, inicio, hoje) if comp["cobertura_cdi"] else None,
+        "valor_final": universo["valor_final"],
+        "valor_cdi": comp["valor_cdi"],
+        "diferenca": comp["diferenca"],
+        "pme": comp["pme"],
+        "cdi_disponivel": comp["cobertura_cdi"],
+        "aportes": aportes,
+        "retiradas": retiradas,
+        "cobertura_valor": cobertura,
+        "n_incluidos": len(universo["incluidos"]),
+        "n_em_carteira": universo["n_em_carteira"],
+        "n_em_carteira_incluidos": universo["n_em_carteira_incluidos"],
+        "incluidos": universo["incluidos"],
+        "excluidos": universo["excluidos"],
     }
