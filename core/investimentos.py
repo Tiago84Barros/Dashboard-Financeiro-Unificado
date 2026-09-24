@@ -717,6 +717,32 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list,
     carteira["por_setor"]  = _agregar_por_setor(carteira["posicoes"])
 
 
+def _carteira_snapshot_consolidada(conn, owner: str, rows: list) -> dict:
+    """Carteira de hoje: ultimo snapshot XP + posicoes USD fora dele.
+
+    Unica montagem do "quanto vale a carteira hoje". O Dashboard e o ponto
+    corrente da Evolucao Patrimonial leem daqui: a evolucao montava so o
+    snapshot e deixava de fora os ETFs da Nomad, e o "Valor de Mercado
+    Atual" do Historico saia menor que o "Patrimonio Total" do Dashboard
+    pela fatia do exterior.
+    """
+    from sqlalchemy import text
+
+    tx_costs = _calcular_custos_transacoes(conn, owner)
+    fx_compra = cambio_medio_de_aquisicao(conn, owner)
+    carteira = _montar_carteira_snapshot(
+        rows, tx_costs, listar_precos_manuais(owner, conn)
+    )
+    # Adiciona posições que existem em portfolio_positions mas NÃO
+    # no snapshot XP (ex: ETFs Nomad — SPY, IEFA — importados via PDF).
+    extra_rows = conn.execute(
+        text(_SQL_POSICOES_EXTRAS_FORA_SNAPSHOT), {"uid": owner}
+    ).fetchall()
+    if extra_rows:
+        _adicionar_extras_ao_snapshot(carteira, extra_rows, fx_compra)
+    return carteira
+
+
 def _carteira_real() -> dict:
     """
     Consulta portfolio_positions + assets + asset_quotes (LATERAL) e monta o dict.
@@ -757,19 +783,7 @@ def _carteira_real() -> dict:
         if has_snapshots:
             rows = conn.execute(text(_SQL_POSICOES_SNAPSHOT), {"uid": owner}).fetchall()
             if rows:
-                tx_costs = _calcular_custos_transacoes(conn, owner)
-                fx_compra = cambio_medio_de_aquisicao(conn, owner)
-                carteira = _montar_carteira_snapshot(
-                    rows, tx_costs, listar_precos_manuais(owner, conn)
-                )
-                # Adiciona posições que existem em portfolio_positions mas NÃO
-                # no snapshot XP (ex: ETFs Nomad — SPY, IEFA — importados via PDF).
-                extra_rows = conn.execute(
-                    text(_SQL_POSICOES_EXTRAS_FORA_SNAPSHOT), {"uid": owner}
-                ).fetchall()
-                if extra_rows:
-                    _adicionar_extras_ao_snapshot(carteira, extra_rows, fx_compra)
-                return carteira
+                return _carteira_snapshot_consolidada(conn, owner, rows)
         rows = conn.execute(text(_SQL_POSICOES), {"uid": owner}).fetchall()
         fx_compra = cambio_medio_de_aquisicao(conn, owner)
 
@@ -1676,10 +1690,11 @@ def _evolucao_real() -> dict:
                 # vem da declaracao do usuario, o da curva tem de vir dela
                 # tambem -- duas respostas para "quanto custou" e um degrau
                 # inexplicavel no grafico.
+                # O ponto de hoje e o mesmo Patrimonio Total do Dashboard,
+                # exterior incluido: a mesma pergunta com duas montagens dava
+                # dois numeros.
                 current_totals = (
-                    _montar_carteira_snapshot(
-                        current_rows, None, listar_precos_manuais(owner, conn)
-                    )
+                    _carteira_snapshot_consolidada(conn, owner, current_rows)
                     if current_rows else None
                 )
                 return _montar_evolucao_snapshot(snap_rows, div_rows, current_totals, tx_rows)
