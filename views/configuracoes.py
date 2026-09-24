@@ -1032,31 +1032,27 @@ def _mostrar_template_csv(tipo: str) -> None:
 def _render_import_postgres() -> None:
     st.caption("Conecte a um banco de origem para importar dados históricos.")
 
+    # Só fontes configuradas no ambiente. O campo "Outra (informar URL)"
+    # aceitava qualquer connection string digitada na tela publicada: o
+    # servidor da Streamlit Cloud abria conexão para o host que o formulário
+    # mandasse, sem que isso servisse a nenhuma importação recorrente.
     fontes = {
-        "App 1 — Dashboard B3":          settings.SOURCE_DB_APP1,
-        "App 2 — Investimentos (SQLite)": settings.SOURCE_DB_APP2,
-        "App 3 — Controle Financeiro":    settings.url_origem_controle,
-        "Outra (informar URL)":           None,
+        nome: url for nome, url in {
+            "App 1 — Dashboard B3":          settings.SOURCE_DB_APP1,
+            "App 2 — Investimentos (SQLite)": settings.SOURCE_DB_APP2,
+            "App 3 — Controle Financeiro":    settings.url_origem_controle,
+        }.items() if url
     }
+    if not fontes:
+        st.info(
+            "Nenhum banco de origem configurado. Informe a URL no ambiente "
+            "(SOURCE_DB_APP1, SOURCE_DB_APP2 ou a do Controle Financeiro)."
+        )
+        return
 
     fonte = st.selectbox("Fonte", list(fontes.keys()), key="_pg_fonte")
     url = fontes[fonte]
-
-    if url is None:
-        url = st.text_input(
-            "Connection string",
-            type="password",
-            placeholder="postgresql://usuario:senha@host:5432/banco",
-            key="_pg_url",
-        )
-    elif url:
-        st.success(f"URL configurada para {fonte} ✓")
-    else:
-        st.warning(f"URL não configurada para {fonte}. Informe manualmente ou adicione ao .env.")
-        url = st.text_input("Connection string", type="password", key="_pg_url_manual")
-
-    if not url:
-        return
+    st.success(f"URL configurada para {fonte} ✓")
 
     col1, col2 = st.columns(2)
     with col1:

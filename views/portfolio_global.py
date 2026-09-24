@@ -50,7 +50,7 @@ from core.portfolio.repository import (
     load_allocation_targets,
     save_allocation_targets,
 )
-from core.rebalancing import CalendarRebalance
+from core.rebalancing import ThresholdRebalance
 from core.utils import escapar_cifrao
 from design.componentes import card_metrica
 from design.market_companies import render_company_logo
@@ -66,6 +66,13 @@ MSG_SEM_ALVO = "Defina a alocação-alvo por classe para consolidar o patrimôni
 MSG_FALHA_AO_CARREGAR = (
     "Não foi possível conectar ao banco de dados. Tente novamente em instantes."
 )
+
+# Politica do motor de movimentacao. Era `CalendarRebalance()` sem data do
+# ultimo rebalanceamento -- que a tela nunca teve --, entao toda consulta caia
+# em "Primeira execucao" e liberava movimento para a carteira inteira. A
+# carteira real ja existe (le as posicoes desde o PR #319): o que decide e o
+# desvio contra o alvo, que se mede sem historico.
+_POLITICA_REBALANCEAMENTO = ThresholdRebalance(banda_abs=0.05, rebal_inicial=False)
 
 # Chave de session_state que carrega a confirmacao de "alocacao salva" atraves
 # do st.rerun() disparado logo apos salvar (ver _editor_de_alocacao).
@@ -1031,6 +1038,8 @@ def _texto_de_limiares_motor() -> str:
         f"tilt de fator extremo = {signals.LIMIAR_TILT_FATOR_EXTREMO:g}",
         f"sensibilidade do score = {advisor.SENSIBILIDADE_SCORE_DEFAULT:g}",
         f"peso mínimo antes de virar venda = {advisor.LIMIAR_VENDA_DEFAULT:.2%}",
+        "movimenta só se algum ativo desviar mais de "
+        f"{_POLITICA_REBALANCEAMENTO.banda_abs * 100:.0f} p.p. do peso sugerido",
     ]
     return (
         "Limiares heurísticos do motor de movimentação, ajustáveis e não fatos "
@@ -1104,7 +1113,7 @@ def _gerar_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
     )
 
     return advisor.recomendar(
-        df, sinais, alvos=alvos, politica=CalendarRebalance(),
+        df, sinais, alvos=alvos, politica=_POLITICA_REBALANCEAMENTO,
         custos=_custos_por_classe(), patrimonio_total=float(total_brl or 0.0),
         data_atual=date.today(),
         macro_impacts=macro_impacts,

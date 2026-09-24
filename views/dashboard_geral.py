@@ -1657,6 +1657,19 @@ def _carteira_modelo_us() -> dict:
         return {}
 
 
+def _rotulo_do_periodo(tem_mes_corrente: bool, visao: dict, hoje: _date) -> str:
+    """Rótulo "Período" do cabeçalho, casado com a origem dos KPIs.
+
+    Sem lançamento no mês corrente, receitas e despesas vêm de `fluxo_mes`, que
+    é o último mês com dado. O rótulo era sempre o de hoje: em 1º de setembro a
+    tela dizia "Set" sobre os números de agosto.
+    """
+    atual = f"{_MESES_PT[hoje.month]} {hoje.year}"
+    if tem_mes_corrente:
+        return atual
+    return visao.get("mes_referencia") or atual
+
+
 def render() -> None:
     # ── Dados ─────────────────────────────────────────────────────────────────
     try:
@@ -1701,7 +1714,7 @@ def render() -> None:
         ("Fallback demonstrativo", _COR_NEGATIVO) if fonte == "mock_fallback" else
         ("Dados de demonstração", _COR_ALERTA)
     )
-    mes_ref = f"{_MESES_PT[hoje.month]} {hoje.year}"
+    mes_ref = _rotulo_do_periodo(cur is not None, d, hoje)
 
     # ── Cabeçalho ──────────────────────────────────────────────────────────────
     _render_dashboard_header(mes_ref, badge_label, badge_cor, hoje)

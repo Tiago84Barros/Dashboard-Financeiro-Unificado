@@ -33,6 +33,7 @@ Mapeamentos dos apps originais (App 1, 2 e 3):
 """
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -54,6 +55,9 @@ _TABELAS_VALIDAS = {
     "usuarios", "contas", "categorias", "transacoes",
     "orcamentos", "metas", "ativos", "operacoes", "proventos", "cotacoes",
 }
+
+# Tabela e colunas da fonte: identificador simples, sem aspas nem ponto.
+_IDENTIFICADOR_SQL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 # Palavras-chave proibidas no filtro_sql para prevenir operacoes destrutivas
 _PALAVRAS_PROIBIDAS_FILTRO: frozenset = frozenset({
@@ -428,6 +432,19 @@ class ImportadorPostgres:
             res.erros.append(
                 f"Tabela destino inválida: '{tabela_destino}'. "
                 f"Permitidas: {sorted(_TABELAS_VALIDAS)}"
+            )
+            return res
+
+        # Tabela e colunas da fonte entram entre aspas duplas na consulta; uma
+        # aspa no nome fecharia o identificador e o resto viraria SQL.
+        invalidos = [
+            nome for nome in (tabela_fonte, *mapeamento.values())
+            if not _IDENTIFICADOR_SQL.fullmatch(str(nome or ""))
+        ]
+        if invalidos:
+            res.erros.append(
+                f"Nome de tabela ou coluna inválido na fonte: {invalidos}. "
+                "Use só letras, números e sublinhado."
             )
             return res
 
