@@ -1,6 +1,6 @@
 """
 views/configuracoes.py
-Configurações do sistema — seis abas organizadas por finalidade.
+Configurações do sistema — sete abas organizadas por finalidade.
 
   ⚙️ Geral                — tema, troca de usuário e memória da LLM
   🎯 Grau de Confiança    — quanto o app confia em cada seção, e por quê
@@ -10,6 +10,7 @@ Configurações do sistema — seis abas organizadas por finalidade.
   🔄 Dados de mercado     — CVM, YFinance, Banco Central, macro (orquestração)
   🗄️ Banco de dados       — conexão, capacidade, schema e diagnóstico técnico
   🔒 Segurança            — sessão e autenticação
+  📚 Documentação         — fluxogramas e explicações do app (era rota da sidebar)
 """
 from __future__ import annotations
 
@@ -34,11 +35,15 @@ def render() -> None:
     if not is_admin():
         from design.user_accounts import render_user_accounts
         st.title("Minhas configurações")
-        personal, account = st.tabs(["Importar meus dados", "Minha conta"])
+        personal, account, docs = st.tabs(
+            ["Importar meus dados", "Minha conta", "📚 Documentação"]
+        )
         with personal:
             _render_atualizacao_de_dados()
         with account:
             render_user_accounts()
+        with docs:
+            _render_documentacao()
         return
     container_pagina(
         "Central de Configurações",
@@ -48,13 +53,15 @@ def render() -> None:
     )
     st.markdown(_CONFIG_CSS + _CARD_CSS, unsafe_allow_html=True)
 
-    tab_geral, tab_conf, tab_atualizacao, tab_dados, tab_banco, tab_seg = st.tabs([
+    (tab_geral, tab_conf, tab_atualizacao, tab_dados, tab_banco, tab_seg,
+     tab_docs) = st.tabs([
         "⚙️ Geral",
         "🎯 Grau de Confiança",
         "🔁 Atualização de dados",
         "🔄 Dados de mercado",
         "🗄️ Banco de dados",
         "🔒 Segurança",
+        "📚 Documentação",
     ])
 
     with tab_geral:
@@ -106,6 +113,28 @@ def render() -> None:
             "var(--app-danger, #FC5C7D)",
         )
         _render_seguranca()
+
+    with tab_docs:
+        _render_tab_intro(
+            "Documentação",
+            "Fluxogramas clicáveis e explicações das partes complexas do app. "
+            "Era rota própria da sidebar até 24/09/2026.",
+            "Guia do app",
+            "var(--app-info, #4A9EFF)",
+        )
+        _render_documentacao()
+
+
+def _render_documentacao() -> None:
+    """Aba da Documentação, que deixou de ser rota da sidebar em 24/09/2026.
+
+    Import tardio pelo mesmo motivo de ``_render_confianca``: o módulo tem
+    quase 3 mil linhas de fluxogramas e prende o erro nesta aba em vez de
+    derrubar Configurações inteira.
+    """
+    from views.documentacao import render_corpo
+
+    render_corpo()
 
 
 def _render_atualizacao_de_dados() -> None:

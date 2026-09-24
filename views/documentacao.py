@@ -1960,7 +1960,8 @@ FLOW_CONFIGURACOES = FlowSpec(
     subtitle=(
         "A Central de Configurações reúne quatro tarefas diferentes sob a mesma barra: "
         "preferência da conta, entrada de arquivo, diagnóstico do ambiente e segurança. "
-        "Saber qual aba faz o quê evita procurar o upload no lugar errado."
+        "Saber qual aba faz o quê evita procurar o upload no lugar errado. "
+        "Esta documentação é a última aba da mesma barra."
     ),
     rows=(
         ("Preferências", ("cfg_tema", "cfg_trocar_usuario", "cfg_memoria_llm")),
@@ -2749,12 +2750,23 @@ def _render_indicadores() -> None:
 
 
 def render() -> None:
-    st.markdown(_CSS, unsafe_allow_html=True)
+    """Tela avulsa, com cabeçalho próprio.
+
+    Desde 24/09/2026 a Documentação não é mais rota da sidebar: mora como aba
+    de Configurações, que chama ``render_corpo()`` direto -- o cabeçalho da
+    página repetiria o título da aba logo abaixo dela.
+    """
     container_pagina(
         "Documentação",
         "Fluxogramas clicáveis e explicações para entender as partes complexas do App 4.",
         "📚",
     )
+    render_corpo()
+
+
+def render_corpo() -> None:
+    """CSS e abas da documentação, sem o cabeçalho da página."""
+    st.markdown(_CSS, unsafe_allow_html=True)
 
     tab_labels = [
         "Controle financeiro",
