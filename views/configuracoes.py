@@ -1497,10 +1497,15 @@ def _executar_lote(arquivos: list[tuple[str, bytes]], lote: dict) -> dict:
         "%d/%m/%Y %H:%M:%S"
     )
 
-    # Recálculo da carteira: uma vez por lote, e só se alguma operação entrou.
-    # O lote do Tesouro grava snapshot e lote, não operação — ele passa reto
-    # por aqui sem precisar de exceção própria.
-    if consolidado["transactions_imported"] > 0 and settings.OWNER_USER_ID:
+    # Recálculo da carteira: uma vez por lote, e só se alguma operação ou
+    # evento corporativo entrou -- a Movimentação quase não grava operação,
+    # mas o desdobro e a bonificação dela mudam o preço médio. O lote do
+    # Tesouro grava snapshot e lote, não operação — ele passa reto por aqui
+    # sem precisar de exceção própria.
+    if (
+        consolidado["transactions_imported"] + consolidado["events_recorded"] > 0
+        and settings.OWNER_USER_ID
+    ):
         from core.database import get_engine
         from data_pipeline.importers.investments.positions import (
             recompute_for_user,
@@ -1814,7 +1819,8 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
     if (
         not cfg.get("skip_recompute")
         and summary.get("status") in ("success", "partial_success")
-        and int(summary.get("transactions_imported", 0)) > 0
+        and int(summary.get("transactions_imported", 0))
+        + int(summary.get("events_recorded", 0) or 0) > 0
         and settings.OWNER_USER_ID
     ):
         from data_pipeline.importers.investments.positions import recompute_for_user

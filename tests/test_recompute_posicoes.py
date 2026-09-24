@@ -122,6 +122,10 @@ def test_recompute_apaga_posicao_que_deixou_de_qualificar():
         def fetchall(self):
             return []
 
+        def scalar(self):
+            # to_regclass: tabela de eventos da Movimentação ainda não existe.
+            return None
+
     class _Conn:
         def execute(self, stmt, params=None):
             executados.append((str(stmt), params))
