@@ -56,6 +56,7 @@ _COR_INFO     = "#4A9EFF"
 _COR_ALERTA   = "#F6C90E"
 _COR_NEUTRO   = "#9CA3AF"
 _COR_ROXO     = "#9B59B6"
+_COR_SEM_BASE = "#718096"
 
 # Em HTML as mesmas cores viram token, para acompanhar o tema claro; o Plotly
 # segue recebendo o literal, porque não resolve `var(--…)`.
@@ -65,6 +66,10 @@ _TOKEN_POR_COR = {
     _COR_INFO: "var(--app-info)",
     _COR_ALERTA: "var(--app-warning)",
     _COR_NEUTRO: "var(--app-muted)",
+    _COR_ROXO: "var(--app-accent)",
+    # Cinza de "sem base para calcular": ficava ilegível sobre branco por não
+    # estar no mapa, e `_cor_texto` devolve o literal quando não encontra.
+    _COR_SEM_BASE: "var(--app-subtle)",
 }
 
 
@@ -110,7 +115,7 @@ _FUND_CSS = """
 .f-chip-yellow { background:color-mix(in srgb, var(--app-warning) 15%, transparent);color:var(--app-warning);border:1px solid color-mix(in srgb, var(--app-warning) 30%, transparent); }
 .f-chip-red    { background:color-mix(in srgb, var(--app-danger) 15%, transparent);color:var(--app-danger);border:1px solid color-mix(in srgb, var(--app-danger) 30%, transparent); }
 .f-chip-blue   { background:color-mix(in srgb, var(--app-info) 15%, transparent);color:var(--app-info);border:1px solid color-mix(in srgb, var(--app-info) 30%, transparent); }
-.f-chip-purple { background:rgba(155,89,182,0.15);color:#9B59B6;border:1px solid rgba(155,89,182,0.3); }
+.f-chip-purple { background:color-mix(in srgb, var(--app-accent) 15%, transparent);color:var(--app-accent);border:1px solid color-mix(in srgb, var(--app-accent) 30%, transparent); }
 .alert-item { border-left:3px solid;padding:10px 14px;margin-bottom:9px;
               border-radius:0 8px 8px 0;background:var(--app-surface-raised);
               font-size:0.83rem;color:var(--app-muted);line-height:1.45; }
@@ -2403,7 +2408,7 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     yoc_val = "—" if not custo_comparavel_brl or renda <= 0 else f"{yoc:.2f}%"
     resultado_cor = "var(--app-subtle)" if custo_ausente else cor_r
     retorno_cor = "var(--app-subtle)" if not custo_comparavel_brl else cor_rsc
-    yoc_cor = "#718096" if (not custo_comparavel_brl or renda <= 0) else _COR_ROXO
+    yoc_cor = _COR_SEM_BASE if (not custo_comparavel_brl or renda <= 0) else _COR_ROXO
     mercado_cor = "var(--app-muted)" if custo_ausente else cor_vm
 
     # Indicador da fonte e do frescor da cotação.
@@ -3366,6 +3371,17 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                         unsafe_allow_html=True)
             else:
                 st.caption("Sem dados de setor.")
+
+        # Por último na sub-aba: st.chat_input puxa o foco para o rodapé.
+        from core.llm_context_carteira import build_carteira_geral_context
+        from design.chat_carteira import render_chat_carteira
+
+        render_chat_carteira(
+            classe="geral", tickers=[p["ticker"] for p in posicoes],
+            build_context=lambda _pergunta, *, valores_reais=False:
+                build_carteira_geral_context(carteira, proventos,
+                                             valores_reais=valores_reais),
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════
