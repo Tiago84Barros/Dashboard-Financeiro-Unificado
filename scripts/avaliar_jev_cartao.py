@@ -126,7 +126,10 @@ def resumir(res: list[dict]) -> list[str]:
 
 
 def _perguntar(item: dict, api_key: str, modelo: str) -> dict:
-    from core.card_categorization import ler_resposta_jev_categoria, pergunta_jev_categoria
+    from core.card_categorization import (
+        ler_resposta_jev_categoria,
+        pergunta_jev_categoria,
+    )
     from core.jev import system_one
 
     state, questions = pergunta_jev_categoria(item["descricao"], item["valor"])
