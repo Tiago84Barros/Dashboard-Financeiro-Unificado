@@ -159,6 +159,7 @@ def test_corretagem_entra_no_custo_e_sai_da_receita():
 @pytest.mark.parametrize("ticker,classe,esperado", [
     ("PETR4", "stock", "acao"), ("TAEE11", "stock", "acao"), ("AAPL34", "stock", "bdr"),
     ("HGLG11", "reit", "fii"), ("BOVA11", "etf", "etf"), ("BTC", "crypto", None),
+    ("GMAT1", "stock", "direito"), ("ITSA2", "stock", "direito"),
 ])
 def test_tipo_fiscal(ticker, classe, esperado):
     assert tipo_fiscal(ticker, classe) == esperado
@@ -170,6 +171,27 @@ def test_bdr_nao_entra_na_isencao():
     m = mes(r, "2025-02")
     assert m["cestas"]["comum"]["ganho_isento"] == 0
     assert m["imposto"] == Decimal("150")
+
+
+def test_direito_recebido_tem_custo_zero_e_nao_isenta():
+    r = apurar([tx("2025-03-10", "GMAT1", "sell", 1000, 2)], hoje=HOJE)   # vendas 2.000
+    m = mes(r, "2025-03")
+    c = m["cestas"]["comum"]
+    assert not m["incompleto"] and c["sem_custo"] == []
+    assert c["ganho_isento"] == 0 and m["vendas_acoes"] == 0
+    assert c["base"] == Decimal("2000") and m["imposto"] == Decimal("300")
+
+
+def test_direito_comprado_usa_o_custo_da_compra():
+    r = apurar([tx("2025-03-03", "GMAT1", "buy", 1000, 1.5),
+                tx("2025-03-10", "GMAT1", "sell", 1000, 2)], hoje=HOJE)
+    assert mes(r, "2025-03")["cestas"]["comum"]["base"] == Decimal("500")
+
+
+def test_direito_de_fii_tem_custo_zero_na_cesta_fii():
+    r = apurar([tx("2025-03-10", "HGLG12", "sell", 10, 5, classe="reit")], hoje=HOJE)
+    c = mes(r, "2025-03")["cestas"]["fii"]
+    assert c["sem_custo"] == [] and c["imposto"] == Decimal("10")
 
 
 def test_classe_fora_do_escopo_vira_alerta():

@@ -12,7 +12,11 @@ unificava as alíquotas, perdeu a vigência sem ser votada):
   FII (comum e day trade)                      20%
 
   - Isenção: ganho em AÇÕES (inclui units) no mês em que o total vendido de
-    ações fica em até R$ 20.000. Não vale para ETF, BDR, FII nem day trade.
+    ações fica em até R$ 20.000. Não vale para ETF, BDR, FII, day trade nem
+    direito de subscrição (a Receita fechou essa leitura em 2021).
+  - Direito de subscrição (GMAT1, HGLG12) recebido da empresa tem custo zero:
+    a venda sem compra no extrato é ganho integral, não custo desconhecido.
+    Direitos vivem semanas, então não há direito "anterior ao extrato".
     O prejuízo em ações num mês isento continua compensável.
   - Prejuízo compensa só dentro da mesma cesta (comum, day trade, FII), sem
     prazo.
@@ -48,6 +52,7 @@ from __future__ import annotations
 
 import calendar
 import logging
+import re
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
@@ -80,8 +85,18 @@ def _base(ticker: str) -> str:
     return t[:-1] if t.endswith("F") and len(t) > 4 else t
 
 
+_DIREITO_ACAO = re.compile(r"^[A-Z]{4}[12]$")
+_DIREITO_FII = re.compile(r"^[A-Z]{4}12$")
+
+
+def e_direito(ticker: str, tipo: str | None) -> bool:
+    """Direito de subscrição: sufixo 1/2 numa ação, 12 num FII."""
+    t = _base(ticker)
+    return tipo == "direito" or (tipo == "fii" and bool(_DIREITO_FII.match(t)))
+
+
 def tipo_fiscal(ticker: str, classe: str | None) -> str | None:
-    """'acao', 'etf', 'bdr', 'fii' ou None (fora do escopo deste módulo).
+    """'acao', 'direito', 'etf', 'bdr', 'fii' ou None (fora do escopo).
 
     O BDR é reconhecido pelo sufixo 32-35/39 do ticker, porque o cadastro de
     ativos o guarda como 'stock'. Units (TAEE11, KLBN11) cadastradas como
@@ -96,6 +111,8 @@ def tipo_fiscal(ticker: str, classe: str | None) -> str | None:
     if c == "stock":
         if len(t) >= 6 and t[-2:] in {"32", "33", "34", "35", "39"}:
             return "bdr"
+        if _DIREITO_ACAO.match(t):
+            return "direito"
         return "acao"
     return None
 
@@ -239,6 +256,9 @@ def _realizacoes(transacoes: list[dict], eventos: list[dict] | None,
             sem = q_v_resto - coberta
             receita = liq_v * q_v_resto / q_v
             receita_coberta = receita * coberta / q_v_resto
+            if sem > _EPS and e_direito(b, tipo):
+                # Direito recebido da empresa: custo zero, ganho integral.
+                receita_coberta, sem = receita, _ZERO
             realizacoes.append({
                 "mes": _mes(dia), "data": dia, "ticker": b, "tipo": tipo,
                 "cesta": _cesta_comum(tipo), "day_trade": False,
