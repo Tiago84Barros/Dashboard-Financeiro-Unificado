@@ -90,10 +90,13 @@ _COR_INFO = "#4A9EFF"
 _COR_ALT = "#F6C90E"
 _COR_NEU = "#9CA3AF"
 
+# "Inverso da volatilidade" saiu das opções: nenhum código calcula a coluna
+# `volatility` dos candidatos, e `_base_target`/`build_portfolio` caíam em
+# silêncio para o peso por pontuação -- a tela prometia um método e entregava
+# outro. Volta quando houver volatilidade medida na vitrine.
 _WEIGHTING_LABELS = {
     "score": "Pontuação fundamentalista",
     "equal": "Pesos iguais",
-    "inverse_vol": "Inverso da volatilidade",
 }
 
 # Toda evidência histórica desta tela (Rank-IC, curva do backtest, auditoria por
@@ -2082,7 +2085,7 @@ def _portfolio_controls(scored: pd.DataFrame, prefix: str):
     with c3:
         maxs = st.slider("Peso máx/setor %", 15, 60, 30, key=f"{prefix}_maxs") / 100
     with c4:
-        mode = st.selectbox("Ponderação", ["score", "equal", "inverse_vol"],
+        mode = st.selectbox("Ponderação", list(_WEIGHTING_LABELS),
                             format_func=lambda value: _WEIGHTING_LABELS[value],
                             key=f"{prefix}_mode")
     constraints = PortfolioConstraints(top_n=top_n, max_weight=maxw,
@@ -2484,7 +2487,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
             )
         with r4:
             weighting = st.selectbox(
-                "Ponderação", ["score", "equal", "inverse_vol"],
+                "Ponderação", list(_WEIGHTING_LABELS),
                 format_func=lambda value: _WEIGHTING_LABELS[value],
                 key="us_create_weighting",
             )
