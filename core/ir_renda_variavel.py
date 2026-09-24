@@ -86,13 +86,15 @@ def _base(ticker: str) -> str:
 
 
 _DIREITO_ACAO = re.compile(r"^[A-Z]{4}[12]$")
-_DIREITO_FII = re.compile(r"^[A-Z]{4}12$")
 
 
 def e_direito(ticker: str, tipo: str | None) -> bool:
-    """Direito de subscrição: sufixo 1/2 numa ação, 12 num FII."""
+    """Direito de subscrição: sufixo 1/2 numa ação, 12 num FII (XXXX11 → XXXX12)."""
+    from core.fii_ticker import e_ticker_fii
+
     t = _base(ticker)
-    return tipo == "direito" or (tipo == "fii" and bool(_DIREITO_FII.match(t)))
+    return tipo == "direito" or (
+        tipo == "fii" and t.endswith("12") and e_ticker_fii(t[:-2] + "11"))
 
 
 def tipo_fiscal(ticker: str, classe: str | None) -> str | None:
