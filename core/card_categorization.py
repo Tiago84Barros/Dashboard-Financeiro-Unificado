@@ -206,3 +206,61 @@ def classify(
 
     # 5) Não catalogado -> revisão manual
     return REVIEW_SENTINEL, "sem-regra"
+
+
+# ── Sugestão pelo Jev (modelo de decisão) — PILOTO, nunca decide sozinho ─────
+# O Jev escolhe uma opção de uma lista fechada e devolve a probabilidade. Aqui
+# só se montam a pergunta e a leitura da resposta; a chamada HTTP mora em
+# core.jev. As categorias estruturais ficam de fora: pagamento, estorno e
+# anuidade já são decididos pela descrição em classify(), sem ambiguidade.
+DESCRICAO_CATEGORIA_JEV = {
+    "Alimentação": "Restaurante, lanchonete, bar, padaria para consumo no local, delivery de comida",
+    "Mercado": "Supermercado, atacadista, hortifruti, mercearia: compra de mantimentos para casa",
+    "Compras / Varejo": "Loja física ou online, marketplace, roupas, eletrônicos, presentes, compra avulsa de produto",
+    "Assinaturas & Serviços digitais": "Cobrança recorrente de software, streaming, nuvem, telefonia, programa de pontos",
+    "Saúde & Bem-estar": "Farmácia, médico, exame, plano de saúde, academia",
+    "Cuidados pessoais": "Barbearia, salão de beleza, estética, cosméticos",
+    "Casa & Construção": "Material de construção, reforma, móveis, decoração, utilidades para casa",
+    "Transporte & Combustível": "Posto de combustível, pedágio, estacionamento, aplicativo de transporte, oficina",
+    "Lazer & Entretenimento": "Cinema, parque, show, viagem, hotel, jogos, passeio",
+    "Educação & Profissional": "Curso, escola, livro técnico, conselho ou associação profissional",
+}
+
+_INSTRUCAO_JEV = ("Em qual categoria de gasto pessoal se encaixa esta compra no cartão de "
+                  "crédito, julgando pelo nome do estabelecimento em `estabelecimento`?")
+
+
+def pergunta_jev_categoria(description: object, value_brl: float) -> tuple[dict, dict]:
+    """Devolve (state, questions) para o Jev escolher a categoria de um lançamento."""
+    state = {
+        "estabelecimento": " ".join(str(description or "").split()),
+        "valor_brl": round(abs(float(value_brl or 0.0)), 2),
+    }
+    questions = {"categoria": {
+        "type": "choice",
+        "instructions": _INSTRUCAO_JEV,
+        "criteria": dict(DESCRICAO_CATEGORIA_JEV),
+    }}
+    return state, questions
+
+
+def ler_resposta_jev_categoria(answers: dict) -> tuple[str, float | None]:
+    """Extrai (categoria, probabilidade) da resposta do Jev.
+
+    Categoria fora da taxonomia vira REVIEW_SENTINEL. A probabilidade é a da
+    opção escolhida; sem ela, cai na `confidence`; sem nenhuma, None — ausência
+    de medida não é confiança zero nem confiança total.
+    """
+    ans = (answers or {}).get("categoria")
+    if not isinstance(ans, dict):
+        return REVIEW_SENTINEL, None
+    cat = ans.get("choice")
+    if cat not in DESCRICAO_CATEGORIA_JEV:
+        return REVIEW_SENTINEL, None
+    prob = None
+    probs = ans.get("probabilities")
+    if isinstance(probs, dict) and isinstance(probs.get(cat), (int, float)):
+        prob = float(probs[cat])
+    elif isinstance(ans.get("confidence"), (int, float)):
+        prob = float(ans["confidence"])
+    return cat, prob

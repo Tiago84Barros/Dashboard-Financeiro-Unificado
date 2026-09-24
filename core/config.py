@@ -178,7 +178,14 @@ class Settings:
     GEMINI_BASE_URL: str = _get_secret(
         "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
 
-    # ── Empresas Americanas — fonte de dados ──────────────────────────────────
+    # ── Jev (TypeSafe AI) — modelo de DECISÃO, em piloto ──────────────────────
+    # Não gera texto: escolhe opção de lista fechada e devolve probabilidade.
+    # Opt-in: sem a chave, nada chama o Jev. Fixar a versão (ex.: jev-1.13.0)
+    # depois de medir, para o limiar não mudar de sentido sem aviso.
+    TYPESAFE_API_KEY: str = _get_secret("TYPESAFE_API_KEY")
+    TYPESAFE_MODEL: str = _get_secret("TYPESAFE_MODEL", "jev-latest")
+
+    # ── Empresas Americanas — fonte de dados──────────────────────────────────
     # FONTE PADRÃO: SEC EDGAR (dados públicos, de domínio público) p/ fundamentos
     # + yfinance p/ preços. Escolhida após a leitura dos Termos da FMP, que
     # proíbem cópia/armazenamento sem autorização escrita e exigem apagar tudo
