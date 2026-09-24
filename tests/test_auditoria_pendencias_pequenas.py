@@ -9,7 +9,6 @@ from datetime import date
 
 from core.rebalancing import ThresholdRebalance
 
-
 # ── 1. Dashboard: rótulo do período segue a origem dos KPIs ──────────────────
 
 def test_rotulo_do_periodo_com_mes_corrente_e_o_de_hoje():
