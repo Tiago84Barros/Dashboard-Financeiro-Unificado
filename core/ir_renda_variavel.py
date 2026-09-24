@@ -45,6 +45,13 @@ parte NÃO é tratada como custo zero nem como ganho zero: a cesta do mês fica
 marcada como incompleta, e o prejuízo que ela carrega para a frente também.
 O imposto exibido nesses meses cobre só a parte com custo conhecido.
 
+Custo inicial declarado: a posição (quantidade e custo total) que o próprio
+contribuinte informou em Bens e Direitos de uma declaração do IRPF pode
+ancorar o custo dos ativos anteriores ao extrato. Ela SUBSTITUI o estado do
+ativo ao fim do dia declarado, porque o saldo declarado já contém as
+compras, vendas e eventos até ali. É dado digitado, não conferido: a venda
+que usa esse custo sai marcada como ``custo_declarado`` e a tela diz isso.
+
 Tudo aqui é puro: sem banco, sem rede. O carregamento fica em
 ``carregar_operacoes``.
 """
@@ -176,6 +183,7 @@ def _mes(d: Any) -> str:
 
 
 def _realizacoes(transacoes: list[dict], eventos: list[dict] | None,
+                 custos_iniciais: list[dict] | None = None,
                  ) -> tuple[list[dict], list[dict]]:
     """Percorre compras, vendas e eventos e devolve cada venda realizada.
 
@@ -212,12 +220,25 @@ def _realizacoes(transacoes: list[dict], eventos: list[dict] | None,
         agenda.append((str(ev.get("event_date") or ""), 0, "", ev))
     for (dia, b) in dias:
         agenda.append((dia, 1, b, None))
+    ancoras = {(str(c["data"]), _base(str(c["ticker"]))): c for c in custos_iniciais or []}
+    for (dia, b), c in ancoras.items():
+        # Ordem 2: depois das negociações do dia, que o saldo declarado já inclui.
+        agenda.append((dia, 2, b, c))
     agenda.sort(key=lambda x: (x[0], x[1], x[2]))
 
+    declarado: set[str] = set()
     realizacoes: list[dict] = []
     for dia, ordem, b, ev in agenda:
         if ordem == 0:
             _aplicar_evento(ev, state, grupos, alertas)
+            continue
+        if ordem == 2:
+            q = _dec(ev["quantidade"])
+            if b not in tipos or q <= _EPS:
+                continue
+            state[b]["qty"] = q
+            state[b]["avg_price"] = _dec(ev["custo_total"]) / q
+            declarado.add(b)
             continue
         tipo = tipos[b]
         s = state[b]
@@ -264,6 +285,7 @@ def _realizacoes(transacoes: list[dict], eventos: list[dict] | None,
             realizacoes.append({
                 "mes": _mes(dia), "data": dia, "ticker": b, "tipo": tipo,
                 "cesta": _cesta_comum(tipo), "day_trade": False,
+                "custo_declarado": coberta > _EPS and b in declarado,
                 "valor_venda": bruto_v * q_v_resto / q_v,
                 "ganho": receita_coberta - coberta * s["avg_price"],
                 "qtd_sem_custo": sem if sem > _EPS else _ZERO,
@@ -272,6 +294,7 @@ def _realizacoes(transacoes: list[dict], eventos: list[dict] | None,
             s["qty"] -= coberta
             if s["qty"] <= _EPS:
                 s["qty"], s["avg_price"] = _ZERO, _ZERO
+                declarado.discard(b)
     return realizacoes, alertas
 
 
@@ -290,15 +313,17 @@ def _meses_entre(primeiro: str, ultimo: str) -> list[str]:
 
 
 def apurar(transacoes: list[dict], eventos: list[dict] | None = None,
-           hoje: date | None = None) -> dict:
+           hoje: date | None = None, custos_iniciais: list[dict] | None = None) -> dict:
     """Apuração mês a mês, do primeiro mês com venda até o mês corrente.
 
     ``transacoes``: dicts com transaction_date, ticker, classe ('stock',
     'reit', 'etf', ...), type ('buy'/'sell'), quantity, unit_price, fees.
     ``eventos``: linhas da Movimentação, como ``positions._load_events``.
+    ``custos_iniciais``: dicts com ticker, data, quantidade e custo_total da
+    posição declarada no IRPF (ver o docstring do módulo).
     """
     hoje = hoje or date.today()
-    realizacoes, alertas = _realizacoes(transacoes, eventos)
+    realizacoes, alertas = _realizacoes(transacoes, eventos, custos_iniciais)
     if not realizacoes:
         return {"meses": [], "anos": [], "alertas": alertas, "pendente": None}
 
@@ -372,6 +397,7 @@ def apurar(transacoes: list[dict], eventos: list[dict] | None = None,
                 "imposto": imposto,
                 "prejuizo_a_compensar": prejuizo[c],
                 "sem_custo": sem_custo,
+                "custo_declarado": sorted({r["ticker"] for r in rc if r.get("custo_declarado")}),
                 "valor_sem_custo": sum((r["valor_sem_custo"] for r in rc), _ZERO),
                 "incompleta": bool(sem_custo),
                 "prejuizo_incerto": incerto[c] or carregado_incerto,
@@ -400,6 +426,7 @@ def apurar(transacoes: list[dict], eventos: list[dict] | None = None,
             "acumulado_proximo": acumulado,
             "vencimento": vencimento_darf(ano, m),
             "incompleto": any(cestas[c]["incompleta"] for c in CESTAS),
+            "custo_declarado": any(cestas[c]["custo_declarado"] for c in CESTAS),
         })
     if irrf_saldo > 0 and ano_corrente is not None:
         irrf_a_declarar[ano_corrente] += irrf_saldo
