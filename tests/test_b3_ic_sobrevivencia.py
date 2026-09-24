@@ -41,6 +41,19 @@ def test_empresa_que_deslistou_no_meio_da_janela_continua_no_teste():
     assert "QUEBROU3" not in antigo.index
 
 
+def test_saida_antes_da_ponta_final_usa_a_ultima_cotacao_da_janela():
+    """Quem sai da bolsa em outubro nao tem cotacao nenhuma em jan-mar."""
+    start = _janela({"VIVE3": [10.0, 11.0], "SAIU3": [10.0, 4.0]},
+                    ["2020-04-30", "2020-10-31"])
+    end = _janela({"VIVE3": [12.0, 13.0], "SAIU3": [None, None]},
+                  ["2021-01-31", "2021-02-28"])
+
+    r = retornos_da_janela(start, end).dropna()
+
+    assert r["SAIU3"] == pytest.approx(-0.60)
+    assert r["VIVE3"] == pytest.approx(0.30)
+
+
 def test_ausencia_num_unico_pregao_nao_elimina_a_empresa():
     start = _janela({"A3": [None, 10.0], "B3X": [20.0, 21.0]},
                     ["2020-04-30", "2020-05-31"])

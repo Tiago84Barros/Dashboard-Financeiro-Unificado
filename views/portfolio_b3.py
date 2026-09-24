@@ -15,6 +15,7 @@ import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 
 import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
+import core.b3_saidas as _saidas
 import core.b3_selecao as _selecao
 import core.b3_universo_pit as _upit
 import core.data_reconciliacao as _recon
@@ -471,6 +472,11 @@ def _simular_seg_backtest(
     caixa_ew = 0.0
     prev_est = prev_ew = prev_selic = None
     monthly_returns: list[dict] = []
+    # Último mês com preço de cada papel. Depois dele o papel não existe mais
+    # (saiu da bolsa): a posição vira caixa pelo último preço e volta a ser
+    # investida. Sem isso o valor ficava congelado no último preço para
+    # sempre, rendendo zero — nem a perda seguia, nem o dinheiro trabalhava.
+    ultimo_preco_em = {tk: df_prec_seg[tk].last_valid_index() for tk in all_tks}
 
     for dt, row in df_prec_seg.iterrows():
         ano = dt.year
@@ -492,6 +498,17 @@ def _simular_seg_backtest(
             # scoring): mantém a carteira vigente — antes a estratégia
             # parava de aportar enquanto Selic/EW seguiam (viés contra a
             # estratégia no ano corrente).
+
+        for tk in all_tks:
+            fim_tk = ultimo_preco_em.get(tk)
+            if fim_tk is None or dt <= fim_tk or tk not in last_prices:
+                continue
+            if cotas_est[tk] > 0:
+                caixa_est += cotas_est[tk] * last_prices[tk]
+                cotas_est[tk] = 0.0
+            if cotas_ew[tk] > 0:
+                caixa_ew += cotas_ew[tk] * last_prices[tk]
+                cotas_ew[tk] = 0.0
 
         # Reinvestimento de dividendos — idêntico ao App1
         if dividendos:
@@ -922,9 +939,16 @@ def _processar_segmento(
     walk_forward: bool = False,
     cap_adaptativo: bool = False,
     elegibilidade_pit: dict[int, dict] | None = None,
+    saidas_elegiveis: dict[str, set[int]] | None = None,
+    saidas_ultimo_pregao: dict[str, pd.Timestamp] | None = None,
 ) -> dict | None:
     """
     Roda o engine de scoring ano-a-ano para um segmento.
+
+    ``saidas_elegiveis`` (core.b3_saidas): empresas que SAÍRAM da bolsa e os
+    anos de decisão em que podiam concorrer (listadas no rebalanceamento e,
+    com piso de tamanho, grandes o bastante na época). Entram só na
+    reconstrução histórica — nunca na carteira do próximo ano (AUD-2).
 
     ``elegibilidade_pit`` (core.b3_universo_pit): por ano de decisão, quem
     estava abaixo do piso de liquidez COM O VOLUME DA ÉPOCA. Esses nomes não
@@ -933,6 +957,10 @@ def _processar_segmento(
     """
     if len(tickers) < 1:
         return None
+    saidas_elegiveis = saidas_elegiveis or {}
+    tickers_vivos = [tk for tk in tickers if tk not in saidas_elegiveis]
+    tickers_saidos = [tk for tk in tickers if tk in saidas_elegiveis]
+    tickers_saidos_por_ano: dict[int, list[str]] = {}
 
     pesos = _aplicar_cheapness(_get_pesos_setor(setor), cheapness_weight)
     tk_grupos = {tk: {"SETOR": setor, "SUBSETOR": subsetor, "SEGMENTO": segmento}
@@ -952,9 +980,17 @@ def _processar_segmento(
     universo_excluidos: dict[int, list[str]] = {}
 
     for ano in range(ano_inicio, ano_atual):
-        tickers_ano = _upit.filtrar(tickers, elegibilidade_pit, ano, chave=_ticker_key)
-        if len(tickers_ano) < len(tickers):
-            universo_excluidos[ano] = sorted(set(tickers) - set(tickers_ano))
+        # Quem saiu da bolsa só concorre nos anos em que estava listado; fora
+        # deles não é "excluído por liquidez", simplesmente não existia.
+        tickers_existentes = tickers_vivos + [
+            tk for tk in tickers_saidos if ano in saidas_elegiveis[tk]]
+        tickers_ano = _upit.filtrar(tickers_existentes, elegibilidade_pit, ano,
+                                    chave=_ticker_key)
+        _saidos_ano = [tk for tk in tickers_saidos if tk in tickers_ano]
+        if _saidos_ano:
+            tickers_saidos_por_ano[ano] = _saidos_ano
+        if len(tickers_ano) < len(tickers_existentes):
+            universo_excluidos[ano] = sorted(set(tickers_existentes) - set(tickers_ano))
         if not tickers_ano:
             continue
         score_map, pit_ano = _score_historico_ano_com_cobertura(
@@ -1017,9 +1053,12 @@ def _processar_segmento(
     if not anos_com_score:
         return None
 
-    # Score para o próximo ano (dados até ano_atual - 1)
+    # Score para o próximo ano (dados até ano_atual - 1). Só empresas listadas
+    # hoje: quem saiu da bolsa não é comprável (AUD-2).
+    if not tickers_vivos:
+        return None
     score_proximo, pit_proximo = _score_historico_ano_com_cobertura(
-        hist_batch, tickers, ano_atual, pesos, tk_grupos, lag=1,
+        hist_batch, tickers_vivos, ano_atual, pesos, tk_grupos, lag=1,
         macro_by_year=macro_history or None,
     )
     if not score_proximo:
@@ -1036,7 +1075,7 @@ def _processar_segmento(
     n_prox      = _select_n_heuristica(scores_prox) if len(ranked_prox) >= 2 else 1
     _min_n_prox = 1 if cap_adaptativo else minimum_assets_for_cap(cap)
     n_prox      = min(len(ranked_prox), max(n_prox, _min_n_prox))
-    lids_prox   = [tk for tk, _ in ranked_prox[:n_prox] if tk in tickers]
+    lids_prox   = [tk for tk, _ in ranked_prox[:n_prox] if tk in tickers_vivos]
 
     if lids_prox and len(lids_prox) >= 2:
         _cap_ef_prox = max(cap, 1.0 / len(lids_prox)) if cap_adaptativo else cap
@@ -1273,7 +1312,15 @@ def _processar_segmento(
 
     return {
         "setor": setor, "subsetor": subsetor, "segmento": segmento,
-        "tickers": tickers,
+        # `tickers` é o universo de HOJE (consumido como "considerados na
+        # decisão"); quem saiu da bolsa vem à parte, por safra.
+        "tickers": tickers_vivos,
+        "tickers_saidos_por_ano": tickers_saidos_por_ano,
+        "saidas": {
+            tk: (saidas_ultimo_pregao or {}).get(tk)
+            for tk in tickers_saidos
+            if (saidas_ultimo_pregao or {}).get(tk) is not None
+        },
         "liderancas_hist": liderancas_hist,
         "participacao": participacao,
         "ultimo_lid": ultimo_lid,
@@ -2783,6 +2830,19 @@ def render(show_header: bool = True) -> None:
                  "régua da seção de Saúde; ausência de dado NUNCA reprova (uma "
                  "holding não tem margem operacional própria).",
         )
+        incluir_saidas = st.checkbox(
+            "Incluir empresas que saíram da bolsa na reconstrução histórica",
+            value=True,
+            key="pb3_incluir_saidas",
+            help="O cadastro de setores só conhece quem está listado HOJE: sem "
+                 "isto, a carteira de 2017 é escolhida só entre quem sobreviveu "
+                 "até 2026 (viés de sobrevivência). Ligado, as empresas que "
+                 "saíram (falência, OPA, incorporação) concorrem nos anos em que "
+                 "estavam listadas, com preço, volume e múltiplos da época "
+                 "(COTAHIST + DFP da CVM). Nunca concorrem à carteira atual nem "
+                 "à do próximo ano. Na saída, a posição vira caixa pelo último "
+                 "fechamento e é reinvestida no mês.",
+        )
         _quali_ok = quali_gate_disponivel()
         st.checkbox(
             "Parecer qualitativo (LLM) na seleção — veto com substituição",
@@ -3016,12 +3076,32 @@ def render(show_header: bool = True) -> None:
     # cada ano de decisão só aceita quem negociava acima do piso nos 6 meses
     # anteriores ao rebalanceamento DAQUELE ano. Falha de consulta não filtra
     # (mesma regra do piso corrente) e fica declarada.
+    # Empresas que saíram da bolsa (decisão AUD-2): entram só na reconstrução,
+    # e só nos anos de decisão em que estavam listadas. O piso de tamanho delas
+    # é o valor de mercado DA ÉPOCA (não existe "hoje" para quem saiu).
+    _doc_saidas = _saidas.carregar() if incluir_saidas else {}
+    _anos_recon = list(range(int(ano_inicio), pd.Timestamp.now().year))
+    _saidas_eleg: dict[str, set[int]] = {}
+    _saidas_ult: dict[str, pd.Timestamp] = {}
+    if _doc_saidas:
+        _saidas_eleg = _saidas.elegibilidade(_doc_saidas, _anos_recon, float(min_mcap))
+        _saidas_ult = {tk: fim for tk, (_ini, fim) in _saidas.periodo_listado(_doc_saidas).items()}
+    elif incluir_saidas:
+        st.warning(
+            "⚠️ Arquivo das empresas que saíram da bolsa indisponível: a "
+            "reconstrução histórica usa só as listadas hoje (viés de sobrevivência)."
+        )
+
     _elegib_pit: dict[int, dict] | None = None
     if min_adtv > 0:
         try:
             _vol_hist = _load_volume_mensal_historico(int(ano_inicio))
+            if _doc_saidas:
+                _vol_hist = pd.concat(
+                    [_vol_hist, _saidas.volume_mensal(_doc_saidas)], ignore_index=True
+                )
             _elegib_pit = _upit.elegiveis_por_ano(
-                _vol_hist, list(range(int(ano_inicio), pd.Timestamp.now().year)),
+                _vol_hist, _anos_recon,
                 float(min_adtv), rebal_month=int(_REBAL_MONTH),
             )
         except LiquidezDataError as exc:
@@ -3038,10 +3118,18 @@ def render(show_header: bool = True) -> None:
                 f"🕰️ Liquidez por época: em {len(_anos_med)} de {len(_elegib_pit)} "
                 f"anos da reconstrução havia volume para medir; {_pares} "
                 "combinação(ões) papel-ano ficaram fora da disputa por estarem "
-                "abaixo do piso naquela época. O universo de partida segue sendo o "
-                "de hoje (quem deslistou nunca entra) e o piso é nominal, não "
+                "abaixo do piso naquela época. O piso é nominal, não "
                 "deflacionado — mais brando nos anos antigos."
             )
+    if _saidas_eleg:
+        _n_conc = sum(1 for v in _saidas_eleg.values() if v)
+        _pares_s = sum(len(v) for v in _saidas_eleg.values())
+        st.caption(
+            f"🪦 Sobrevivência: {_n_conc} de {len(_saidas_eleg)} empresas que saíram "
+            f"da bolsa concorrem na reconstrução ({_pares_s} combinações empresa-ano, "
+            "só nos anos em que estavam listadas). Nenhuma concorre à carteira "
+            "atual. Saídas antes de 2016 e instituições financeiras ficam fora."
+        )
 
     taxa_selic_aa = (
         float(np.mean(list(selic_macro.values()))) if selic_macro else 0.1075
@@ -3068,6 +3156,12 @@ def render(show_header: bool = True) -> None:
 
         with st.spinner("Carregando histórico de múltiplos de todos os tickers…"):
             hist_batch_raw = _db.load_multiplos_historico_batch(all_tickers)
+            if _saidas_eleg:
+                # Só quem não está no market.*: um ticker vivo homônimo manda.
+                hist_batch_raw = dict(hist_batch_raw)
+                for _tk, _h in _saidas.historico_multiplos(_doc_saidas).items():
+                    if _tk not in hist_batch_raw and _saidas_eleg.get(_tk):
+                        hist_batch_raw[_tk] = _h
 
         with st.spinner("Saneando fundamentos com ranges, outliers e fallback web..."):
             # Política única de fontes (fix auditoria 2026-07): com market.*
@@ -3109,14 +3203,37 @@ def render(show_header: bool = True) -> None:
 
         with st.spinner("Carregando preços mensais ajustados…"):
             df_precos_all = _batch_yf_precos_mensais(all_tickers, period="10y")
+            if _saidas_eleg and not df_precos_all.empty:
+                _p_s = _saidas.precos_mensais(_doc_saidas)
+                _p_s = _p_s[[c for c in _p_s.columns
+                             if c not in df_precos_all.columns and _saidas_eleg.get(c)]]
+                _p_s = _p_s[_p_s.index >= df_precos_all.index.min()]
+                if not _p_s.empty:
+                    df_precos_all = df_precos_all.join(_p_s, how="outer").sort_index()
 
         resultados: list[dict] = []
+        # O df_set persistido segue só com as listadas: as telas seguintes
+        # (próximo ano, carteira atual) falam da decisão de hoje.
+        df_set_vivas = df_set
+        anos_hist_rec = dict(anos_hist or {})
+        if _saidas_eleg:
+            _set_s = _saidas.setores(_doc_saidas)
+            _set_s = _set_s[_set_s["ticker"].map(
+                lambda t: bool(_saidas_eleg.get(t)) and t in hist_batch
+                and t not in set(df_set["ticker"])
+            )]
+            df_set = pd.concat([df_set, _set_s], ignore_index=True)
+            if anos_hist:
+                for _tk, _n in _saidas.anos_de_historico(
+                    _doc_saidas, pd.Timestamp.now().year
+                ).items():
+                    anos_hist_rec.setdefault(_tk, _n)
         # Fallback de granularidade: segmentos com poucas empresas ELEGÍVEIS
         # (< min_empresas_grupo) são agrupados no subsetor, para haver massa para
         # medir o poder preditivo (Rank-IC). min_empresas_grupo=1 desativa.
         df_set = df_set.copy()
         df_set["_elig"] = df_set["ticker"].map(
-            lambda tk: 1 if (tk in hist_batch and (not anos_hist or anos_hist.get(tk, 0) >= int(min_anos_dre))) else 0
+            lambda tk: 1 if (tk in hist_batch and (not anos_hist or anos_hist_rec.get(tk, 0) >= int(min_anos_dre))) else 0
         )
         if int(min_empresas_grupo) > 1:
             _elig_por_seg = df_set.groupby(["SETOR", "SUBSETOR", "SEGMENTO"])["_elig"].transform("sum")
@@ -3132,7 +3249,7 @@ def render(show_header: bool = True) -> None:
         for i, ((setor, subsetor, segmento), grupo) in enumerate(grupos):
             tickers_seg = [
                 tk for tk in grupo["ticker"].tolist()
-                if tk in hist_batch and (not anos_hist or anos_hist.get(tk, 0) >= int(min_anos_dre))
+                if tk in hist_batch and (not anos_hist or anos_hist_rec.get(tk, 0) >= int(min_anos_dre))
             ]
             if tickers_seg:
                 # adjusted_close já é retorno total → dividendos=None (sem dupla contagem)
@@ -3147,6 +3264,8 @@ def render(show_header: bool = True) -> None:
                     walk_forward=bool(walk_forward),
                     cap_adaptativo=bool(cap_adaptativo),
                     elegibilidade_pit=_elegib_pit,
+                    saidas_elegiveis=_saidas_eleg,
+                    saidas_ultimo_pregao=_saidas_ult,
                 )
                 if res:
                     resultados.append(res)
@@ -3155,7 +3274,9 @@ def render(show_header: bool = True) -> None:
 
         prog.empty()
         st.session_state["pb3_resultados"] = resultados
-        st.session_state["pb3_df_set"]     = df_set
+        st.session_state["pb3_df_set"]     = df_set[
+            df_set["ticker"].isin(set(df_set_vivas["ticker"]))
+        ].copy()
         st.session_state["pb3_precos_all"] = df_precos_all
         st.session_state["pb3_quality_summary"] = quality_summary
         st.session_state["pb3_quality_audit"]   = audit_recon
@@ -3191,6 +3312,8 @@ def render(show_header: bool = True) -> None:
                     "cheapness_weight": float(cheapness_weight),
                     "minimum_market_cap": float(min_mcap),
                     "rebalance_month": int(_REBAL_MONTH),
+                    "delisted_included": bool(_saidas_eleg),
+                    "delisted_file_version": str(_doc_saidas.get("versao") or ""),
                 }
                 _run_id = persist_validation_run(
                     engine=_eng_validation,

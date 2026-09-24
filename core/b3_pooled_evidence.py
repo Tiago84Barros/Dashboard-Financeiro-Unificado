@@ -125,7 +125,11 @@ def retornos_da_janela(start_rows, end_rows):
     if start_rows is None or end_rows is None or start_rows.empty or end_rows.empty:
         return None
     preco_inicio = start_rows.bfill().iloc[0]
-    preco_fim = end_rows.ffill().iloc[-1]
+    # A ultima cotacao vem da janela INTEIRA (abril/N a marco/N+1), nao so do
+    # trecho final: quem saiu da bolsa antes de janeiro tinha a ponta final
+    # toda vazia e voltava a sair do teste -- justamente o caso de A-119.
+    preco_fim = end_rows.infer_objects().ffill().iloc[-1].fillna(
+        start_rows.infer_objects().ffill().iloc[-1])
     preco_inicio = preco_inicio.where(preco_inicio > 0)
     return (preco_fim / preco_inicio - 1.0).replace([_np.inf, -_np.inf], _np.nan)
 

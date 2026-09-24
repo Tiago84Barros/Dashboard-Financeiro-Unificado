@@ -1575,6 +1575,13 @@ SCORE_VERSION_CHANGELOG = {
         "de 90% (core.b3_selecao) em todos os modos, e a reconstrucao "
         "historica passa a usar a liquidez da epoca (core.b3_universo_pit)."
     ),
+    "2.28.0": (
+        "Vies de sobrevivencia: a reconstrucao historica passa a incluir as "
+        "empresas que sairam da B3 desde 2016 (core.b3_saidas, COTAHIST + DFP "
+        "da CVM), so nos anos em que estavam listadas e nunca na decisao "
+        "corrente. Na saida a posicao vira caixa pelo ultimo fechamento e e "
+        "reinvestida; o Rank-IC usa a ultima cotacao da janela inteira."
+    ),
 }
 
 
