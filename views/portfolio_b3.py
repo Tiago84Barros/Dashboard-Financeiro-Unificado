@@ -3075,11 +3075,6 @@ def render(show_header: bool = True) -> None:
             # sobrescreve o banco; passar fund_data={} faz a reconciliação
             # virar apenas saneamento por ranges (nulo fica nulo), alinhado
             # à regra da Análise Avançada ("vazio fica vazio").
-            _mkt_ativo = False
-            try:
-                _mkt_ativo = bool(_db.market_active())
-            except Exception:
-                pass
             # Scraping descontinuado (2026-07): fonte única = market.* (brapi).
             # include_status=False e fund_data={} fazem a reconciliação virar só
             # saneamento por faixas canônicas (nulo fica nulo).
@@ -3087,7 +3082,7 @@ def render(show_header: bool = True) -> None:
                 all_tickers,
                 df_base=df_mult_todos,
                 include_status=False,
-                fund_data={} if _mkt_ativo else None,
+                fund_data={},
             )
             zero_invalid = set(quality_summary.get("campos_zero_suspeito", []))
             hist_clean, hist_audit = _recon.clean_multiplos_history_batch(

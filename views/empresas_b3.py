@@ -28,7 +28,6 @@ import yfinance as yf
 import core.b3_company_score as _company_score
 import core.b3_data as _db  # facade de leitura B3 — fonte financeira única: market.* (brapi)
 import core.data_quality as _dq
-import core.data_reconciliacao as _recon
 import core.market_read as _mr  # séries do market.* (preços mensais ajustados) p/ backtest
 from core.b3_methodology import SCORE_VERSION
 from core.b3_renda_sustentavel import enrich_decision_universe
@@ -316,13 +315,12 @@ def _dividendos_anuais_market_first(ticker: str) -> tuple[pd.DataFrame, str]:
     granularidade (são somas anuais dos dois lados), diferente do gráfico de
     preço. Retorna (DataFrame [Data, Dividendos], fonte) para rótulo na UI.
     """
-    if _db.market_active():
-        try:
-            df_market = _mr.load_dividendos_anuais(ticker)
-            if not df_market.empty:
-                return df_market, "market.dividends"
-        except Exception:
-            pass
+    try:
+        df_market = _mr.load_dividendos_anuais(ticker)
+        if not df_market.empty:
+            return df_market, "market.dividends"
+    except Exception:
+        pass
     return _yf_dividendos_anuais(ticker), "yfinance"
 
 
@@ -481,17 +479,16 @@ def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y") -> pd
     if not tickers:
         return pd.DataFrame()
     # Fonte primária: banco (market.*) — adjusted_close, sem rede.
-    if _db.market_active():
-        try:
-            df_db = _mr.load_precos_mensais(tuple(tickers))
-            if not df_db.empty:
-                anos = _period_to_years(period)
-                if anos and df_db.index.notna().any():
-                    corte = df_db.index.max() - pd.DateOffset(years=anos)
-                    df_db = df_db[df_db.index >= corte]
-                return df_db
-        except Exception:
-            pass  # fallback yfinance
+    try:
+        df_db = _mr.load_precos_mensais(tuple(tickers))
+        if not df_db.empty:
+            anos = _period_to_years(period)
+            if anos and df_db.index.notna().any():
+                corte = df_db.index.max() - pd.DateOffset(years=anos)
+                df_db = df_db[df_db.index >= corte]
+            return df_db
+    except Exception:
+        pass  # fallback yfinance
     tks_sa = [f"{t.strip().upper().replace('.SA', '')}.SA" for t in tickers]
     try:
         if len(tks_sa) == 1:
@@ -791,24 +788,6 @@ _INV_LABELS: set[str] = {"Endiv.", "P/L", "P/VP", "EV/EBIT"}
 
 _SLOPE_COLS: tuple[str, ...] = SLOPE_COLS
 
-_FUND_FALLBACK_MAP: dict[str, str] = {
-    "pl": "P/L",
-    "pvp": "P/VP",
-    "dy": "DY",
-    "roe": "ROE",
-    "roic": "ROIC",
-    "marg_liq": "Margem_Liquida",
-    "marg_ebit": "Margem_Operacional",
-    "ev_ebit": "EV_EBIT",
-    "liq_corr": "Liquidez_Corrente",
-    "div_brut_patrim": "Endividamento_Total",
-}
-
-_PCT_SCORE_FIELDS: set[str] = {
-    "DY", "ROE", "ROIC", "ROA", "Margem_Liquida",
-    "Margem_Operacional", "Payout",
-}
-
 # Fonte unica da verdade das faixas: core/data_quality.py (margens apertadas
 # para [-100%, +100%], o que captura outliers como UGPA3=190%).
 _SCORE_RANGES = _dq.CANONICAL_RANGES
@@ -870,122 +849,6 @@ def _clean_score_inputs(df: pd.DataFrame, cols: list[str] | tuple[str, ...] | No
         vals = pd.to_numeric(out[col], errors="coerce")
         out[col] = vals.where(vals.map(lambda v, c=col: _score_value_usable(c, v)))
     return out
-
-
-@st.cache_data(ttl=3600, show_spinner=False)
-def _fundamentus_fallback_canonico(tickers: tuple[str, ...]) -> dict[str, dict[str, float]]:
-    fund_fmt = _recon.batch_fund_fmt(tuple(sorted(set(tickers))))
-    out: dict[str, dict[str, float]] = {}
-    for tk, raw in fund_fmt.items():
-        vals: dict[str, float] = {}
-        for fund_key, db_key in _FUND_FALLBACK_MAP.items():
-            v = raw.get(fund_key)
-            try:
-                x = float(v)
-            except (TypeError, ValueError):
-                continue
-            if not np.isfinite(x):
-                continue
-            vals[db_key] = x / 100.0 if db_key in _PCT_SCORE_FIELDS else x
-        if vals:
-            out[str(tk).upper().replace(".SA", "")] = vals
-    return out
-
-
-def _enrich_multiplos_fallback_web(
-    df_mult: pd.DataFrame,
-    tickers: list[str],
-    cols: list[str] | tuple[str, ...],
-) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Substitui ausentes/outliers do snapshot por Fundamentus em lote.
-    Retorna o DataFrame enriquecido e uma auditoria resumida por ticker/campo.
-    """
-    if df_mult.empty or not tickers:
-        return df_mult, pd.DataFrame()
-
-    out = df_mult.copy()
-    out["Ticker"] = out["Ticker"].astype(str).str.replace(".SA", "", regex=False).str.upper()
-    web = _fundamentus_fallback_canonico(tuple(tickers))
-    audit_rows: list[dict] = []
-
-    for tk in tickers:
-        vals = web.get(str(tk).upper().replace(".SA", ""), {})
-        if not vals:
-            continue
-        idx = out.index[out["Ticker"] == tk]
-        if len(idx) == 0:
-            continue
-        i = idx[0]
-        for col in cols:
-            if col not in out.columns or col not in vals:
-                continue
-            old = out.at[i, col]
-            new = vals.get(col)
-            if not _score_value_usable(col, new):
-                continue
-            if not _score_value_usable(col, old):
-                out.at[i, col] = float(new)
-                audit_rows.append({
-                    "Ticker": tk,
-                    "Indicador": col,
-                    "Antes": old,
-                    "Depois": float(new),
-                    "Fonte": "Fundamentus",
-                })
-
-    out = _clean_score_inputs(out, cols)
-    return out, pd.DataFrame(audit_rows)
-
-
-def _cross_source_audit_dataframe(
-    df_mult_raw: pd.DataFrame,
-    tickers: list[str],
-    indicadores: list[str] | tuple[str, ...],
-) -> pd.DataFrame:
-    """Build Banco x Fundamentus cross-source audit rows for the UI."""
-    if df_mult_raw.empty or not tickers:
-        return pd.DataFrame()
-
-    from core.cross_source import compare_indicators, consensus_value
-
-    base = df_mult_raw.copy()
-    if "Ticker" not in base.columns:
-        return pd.DataFrame()
-    base["Ticker"] = base["Ticker"].astype(str).str.replace(".SA", "", regex=False).str.upper()
-    db_by_ticker = base.drop_duplicates("Ticker").set_index("Ticker").to_dict("index")
-    web_by_ticker = _fundamentus_fallback_canonico(tuple(tickers))
-
-    rows: list[dict] = []
-    for tk in tickers:
-        db_row = db_by_ticker.get(str(tk).upper(), {})
-        web_row = web_by_ticker.get(str(tk).upper(), {})
-        for ind in indicadores:
-            values = {"Banco": db_row.get(ind), "Fundamentus": web_row.get(ind)}
-            flag = compare_indicators(tk, ind, values)
-            if flag.n_fontes < 2:
-                continue
-            consensus = consensus_value(values)
-            rows.append({
-                "Ticker": tk,
-                "Indicador": ind,
-                "Banco": values["Banco"],
-                "Fundamentus": values["Fundamentus"],
-                "Consenso": consensus,
-                "Spread %": round(flag.spread_rel * 100.0, 1),
-                "Severidade": flag.severidade,
-            })
-
-    if not rows:
-        return pd.DataFrame()
-    sev_order = {"critical": 0, "warn": 1, "ok": 2}
-    out = pd.DataFrame(rows)
-    out["_ord"] = out["Severidade"].map(sev_order).fillna(3)
-    return (
-        out.sort_values(["_ord", "Spread %", "Ticker"], ascending=[True, False, True])
-        .drop(columns=["_ord"])
-        .reset_index(drop=True)
-    )
 
 
 def _sem_acentos(texto: str) -> str:
@@ -1072,50 +935,6 @@ def _percentile_score(s: pd.Series, melhor_alto: bool = True) -> pd.Series:
     if valid.sum() >= 2:
         result[valid] = s[valid].rank(pct=True, ascending=melhor_alto)
     return result
-
-
-def _impute_with_group_median(
-    df: pd.DataFrame,
-    col: str,
-    group_col: str | None = None,
-) -> pd.Series:
-    """
-    Fix banca M5 parcial (2026-05-25): imputacao por mediana do grupo
-    em substituicao ao default 0.5 fixo.
-
-    Para indicador 'col' do DataFrame df:
-      - NaN intra-grupo recebe mediana do grupo (se group_col fornecido
-        e o grupo tem >= 3 obs validas)
-      - NaN sem grupo identificavel recebe mediana global
-      - Se ainda NaN (grupo todo vazio), mantem NaN — caller decide
-        se aplica 0.5 ou descarta
-
-    Reduz vies de 'missing-as-neutral': empresa sem dado de Margem
-    Liquida em setor onde a media e 25% NAO deveria receber percentil
-    0.5 (= mediano BR), mas sim percentil da mediana do seu setor.
-    """
-    if col not in df.columns:
-        return pd.Series(float("nan"), index=df.index, dtype=float)
-    s = pd.to_numeric(df[col], errors="coerce").copy()
-    if s.notna().all():
-        return s
-
-    # Tentativa 1: imputar com mediana do grupo
-    if group_col and group_col in df.columns:
-        for _, idx in df.groupby(group_col).groups.items():
-            grupo = s.loc[idx]
-            n_valid = grupo.notna().sum()
-            if n_valid >= 3:
-                med_grupo = grupo.median()
-                s.loc[idx] = grupo.fillna(med_grupo)
-
-    # Tentativa 2: o que sobrar (NaN), tenta mediana global
-    if s.isna().any():
-        med_global = s.median()
-        if pd.notna(med_global):
-            s = s.fillna(med_global)
-
-    return s
 
 
 def _resolve_group_col_df(df: pd.DataFrame, prefer: str = "SEGMENTO",
@@ -1320,23 +1139,6 @@ def _score_universo(
     group_col = _resolve_group_col_df(df, prefer=group_col_prefer)
     score = pd.Series(0.0, index=df.index)
 
-    # M5 completo (banca 2026-05-23): MICE sobre o DataFrame inteiro antes do
-    # loop — usa correlações entre indicadores para imputar NaN com mais precisão
-    # que a mediana de grupo. _impute_with_group_median abaixo serve de fallback
-    # residual para qualquer NaN que sobrar após MICE.
-    # Cutover: com fonte limpa (market.*) NÃO se imputa — nulo vira rank neutro
-    # (ausente = "não sei"), não valor reconstruído. Só repara no legado.
-    if not _db.market_active():
-        try:
-            from core.mice_imputer import mice_impute_panel
-            df = mice_impute_panel(
-                df,
-                indicator_cols=list(pesos.keys()),
-                group_col=group_col,
-            )
-        except Exception:
-            pass
-
     for col, (peso, melhor_alto) in pesos.items():
         if col not in df.columns or peso == 0:
             continue
@@ -1345,11 +1147,9 @@ def _score_universo(
             # mesma do múltiplo (o recíproco é monótono nos positivos).
             s, melhor_alto = rendimentos[col], True
         else:
-            # Fix banca M5 parcial (2026-05-25): imputa NaN com mediana do
-            # grupo (substitui 0.5 fixo implicito no .fillna(0.5) abaixo).
-            # Cutover: no market (dado limpo) não imputa — NaN segue p/ rank neutro.
-            s = (pd.to_numeric(df[col], errors="coerce") if _db.market_active()
-                 else _impute_with_group_median(df, col, group_col))
+            # Fonte limpa (market.*): nulo segue para o rank neutro, não é
+            # reconstruído por imputação.
+            s = pd.to_numeric(df[col], errors="coerce")
         if s.notna().sum() < 2:
             continue
         s_win = _winsorize_series(s.dropna()).reindex(s.index)
@@ -3707,27 +3507,13 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
     with st.spinner(f"Carregando dados de {tk}…"):
         df_fin       = _db.load_demonstracoes(tk)
         df_mult_hist = _db.load_multiplos_historico(tk)
-        if _db.market_active():
-            # snapshot limpo do market.* (sem reconciliação por scraping)
-            mult = _db.load_multiplos(tk)
-            fontes_recon = {k: "market" for k in getattr(mult, "index", [])
-                            if k not in ("Ticker", "data")}
-        else:
-            recon = _recon.get_multiplos_reconciliados(tk)
-            mult = _recon.reconciliacao_to_series(recon)
-            fontes_recon = dict(recon.get("_fontes", {}))
-        # DY/Payout via yfinance só como patch do legado; no market o snapshot já traz.
-        yf_divs_mult = {} if _db.market_active() else _yf_multiplos_dividendos(tk)
+        # Snapshot limpo do market.* (sem reconciliação por scraping); DY e
+        # Payout já vêm nele.
+        mult = _db.load_multiplos(tk)
+        fontes_recon = {k: "market" for k in getattr(mult, "index", [])
+                        if k not in ("Ticker", "data")}
         df_yf_divs, fonte_divs = _dividendos_anuais_market_first(tk)
         df_precos    = _yf_precos(tk)
-
-    # Patch DY / Payout ausentes com yfinance (apenas no legado)
-    mult_dict = mult.to_dict() if not mult.empty else {}
-    for field, val in yf_divs_mult.items():
-        if mult_dict.get(field) is None:
-            mult_dict[field] = val
-            fontes_recon[field] = "yfinance"
-    mult = pd.Series(mult_dict) if mult_dict else mult
 
     sem_banco = df_fin.empty and mult.empty
 
@@ -4542,17 +4328,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             _ano_dados = int(_datas.dt.year.max())
     _ano_label = _ano_dados if _ano_dados is not None else _ano_base
     _fonte_pit = ""
-    try:
-        if _db.market_active():
-            # Fix auditoria 2026-07: com fonte market, load_multiplos_todos
-            # (ano_ref_max) agora serve métricas do exercício ANUAL fechado
-            # — antes servia o snapshot TTM de hoje rotulado com o ano do
-            # último balanço, contradizendo a frase abaixo.
-            _fonte_pit = (" Fonte market.*: métricas anuais fechadas. A data "
-                          "de publicação histórica ainda é aproximada; períodos "
-                          "anteriores ao versionamento não são point-in-time.")
-    except Exception:
-        pass
+    # Fix auditoria 2026-07: com fonte market, load_multiplos_todos
+    # (ano_ref_max) serve métricas do exercício ANUAL fechado — antes servia o
+    # snapshot TTM de hoje rotulado com o ano do último balanço.
+    _fonte_pit = (" Fonte market.*: métricas anuais fechadas. A data "
+                  "de publicação histórica ainda é aproximada; períodos "
+                  "anteriores ao versionamento não são point-in-time.")
     st.caption(
         f"📅 **Ano-base do score: {_ano_label}** — a seleção do ano atual "
         f"({_ano_corrente}) usa os fundamentos consolidados do ano anterior. "
@@ -4634,16 +4415,6 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     # Dicionário de grupos por ticker — passado ao backtest para scoring intra-grupo
     tk_grupos = {tk: _tk2g.get(tk, {}) for tk in tks_uni}
 
-    cols_av = sorted(set([c for c, _ in _COLS_COMP] + list(_SCORE_RANGES.keys())))
-    # Cutover: o patch por scraping (Fundamentus) só faz sentido sobre o legado;
-    # com market.* (fonte limpa) não se reconcilia por web — vazio fica vazio.
-    if _db.market_active():
-        audit_fallback = pd.DataFrame()
-    else:
-        with st.spinner("Reconciliando vazios/outliers com Fundamentus..."):
-            df_mult_enrich, audit_fallback = _enrich_multiplos_fallback_web(
-                df_mult_enrich, tks_uni, cols_av
-            )
 
     # Carregar histórico para penalidade de instabilidade + slope_log
     with st.spinner("Calculando scoring v2…"):
@@ -4850,15 +4621,6 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
 
     tk_info       = {row["ticker"]: row for _, row in df_filt.iterrows()}
 
-    if not audit_fallback.empty:
-        with st.expander("Auditoria dos dados usados no scoring"):
-            st.caption(
-                "Valores vazios, zerados indevidamente ou fora de faixas razoáveis "
-                "foram substituídos antes do cálculo do score."
-            )
-            st.dataframe(audit_fallback, width="stretch",
-                         height=min(260, 45 + 32 * len(audit_fallback)))
-
     if usar_pesos_setor and usar_fama_macbeth:
         with st.expander("Calibracao Fama-MacBeth MVP dos pesos"):
             if isinstance(fm_result, dict) and fm_result.get("erro"):
@@ -4900,62 +4662,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             "canonicos. Divergencias criticas devem ser revisadas antes de "
             "confiar no ranking."
         )
-        if _db.market_active():
-            st.caption("Auditoria cross-source (Fundamentus) desativada: fonte única "
-                       "brapi (market.*), monitorada pelos controles internos do pipeline.")
-            run_cross = False
-        else:
-            run_cross = st.checkbox(
-                "Executar auditoria cross-source",
-                value=False,
-                key="b3_run_cross_source",
-            )
-        if run_cross:
-            audit_cross = _cross_source_audit_dataframe(
-                df_mult_todos,
-                tks_uni,
-                ["ROE", "ROIC", "Margem_Liquida", "Margem_Operacional",
-                 "DY", "P/L", "P/VP", "EV_EBIT", "Endividamento_Total",
-                 "Liquidez_Corrente"],
-            )
-            if audit_cross.empty:
-                st.info("Nao ha pares Banco x Fundamentus suficientes para comparar.")
-            else:
-                n_crit = int((audit_cross["Severidade"] == "critical").sum())
-                n_warn = int((audit_cross["Severidade"] == "warn").sum())
-                n_ok = int((audit_cross["Severidade"] == "ok").sum())
-                mc1, mc2, mc3 = st.columns(3)
-                with mc1:
-                    card_metrica("Críticas", n_crit, accent="#FC5C7D")
-                with mc2:
-                    card_metrica("Alertas", n_warn, accent="#F6C90E")
-                with mc3:
-                    card_metrica("OK", n_ok, accent="#00C896")
-                st.dataframe(
-                    audit_cross,
-                    width="stretch",
-                    height=min(360, 45 + 28 * len(audit_cross)),
-                    column_config={
-                        "Banco": st.column_config.NumberColumn(format="%.4g"),
-                        "Fundamentus": st.column_config.NumberColumn(format="%.4g"),
-                        "Consenso": st.column_config.NumberColumn(format="%.4g"),
-                        "Spread %": st.column_config.NumberColumn(format="%.1f%%"),
-                    },
-                )
-                if st.button("Salvar historico desta auditoria", key="b3_save_cross_history"):
-                    from core.cross_source import append_validation_history
-
-                    saved = append_validation_history(
-                        audit_cross.to_dict("records"),
-                        run_meta={
-                            "setor": sel_set,
-                            "subsetor": sel_sub,
-                            "segmento": sel_seg,
-                            "tickers": list(tks_uni),
-                            "score_version": SCORE_VERSION,
-                        },
-                    )
-                    st.success(f"{saved} linhas salvas no historico cross-source.")
+        st.caption("Auditoria cross-source (Fundamentus) desativada: fonte única "
+                   "brapi (market.*), monitorada pelos controles internos do pipeline.")
 
         show_cross_history = st.checkbox(
             "Mostrar historico salvo",
@@ -5699,123 +5407,6 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                             f"(max {max(opt['weights'].values())*100:.1f}%). "
                             f"δ={ra_bl} controla agressividade do tilt vs prior."
                         )
-
-    # ── Banca A6c (2026-05-26): UI cross-source validation ────────────────────
-    with st.expander("🔍 Validação cross-source — Fundamentus × DRE"):
-        st.caption(
-            "Detecta divergências entre fontes do mesmo indicador. "
-            "Indicadores com spread > threshold (15-30% por tipo) são "
-            "flagados — empresa pode ter dado contaminado em uma das fontes."
-        )
-        if _db.market_active():
-            st.caption("Desativada: fonte única brapi (market.*) — não há scraping "
-                       "Fundamentus/Status Invest para cruzar.")
-            run_a6 = False
-        elif df_scored.empty:
-            st.info("Sem empresas scoradas para validar.")
-            run_a6 = False
-        else:
-            run_a6 = st.checkbox("Executar validação", value=False, key="b3_a6_run")
-        if run_a6:
-                from core.cross_source import (
-                    batch_validate,
-                    resumo_validacao,
-                )
-                # Monta dict {ticker: {indicador: {fonte: valor}}}
-                # Sources: df_mult_enrich (Fundamentus/StatusInvest pipeline)
-                # vs df_filt (DRE bruto). MVP: usa o que tem na pipeline atual.
-                indics_check = ("ROE", "ROIC", "Margem_Liquida",
-                                 "Margem_Operacional", "P/L", "P/VP", "DY",
-                                 "EV_EBIT", "Endividamento_Total")
-                dados_xs: dict = {}
-                # Para o MVP, simula 2 fontes: pipeline atual + DRE histórico
-                # (último ano). Em produção, plugar com cache de scrapers.
-                for tk in df_scored["Ticker"].tolist()[:30]:
-                    row_p = df_mult_enrich[df_mult_enrich["Ticker"] == tk]
-                    df_h  = (hist_batch or {}).get(tk)
-                    if row_p.empty:
-                        continue
-                    r_pipeline = row_p.iloc[0]
-                    r_dre = (df_h.sort_values("Data").iloc[-1].to_dict()
-                             if df_h is not None and not df_h.empty
-                             and "Data" in df_h.columns else {})
-                    inds_ticker: dict = {}
-                    for ind in indics_check:
-                        v_pipeline = r_pipeline.get(ind)
-                        v_dre = r_dre.get(ind)
-                        if v_pipeline is None and v_dre is None:
-                            continue
-                        # Só compara se ambas as fontes têm valor não-nulo
-                        if v_pipeline is None or v_dre is None:
-                            continue
-                        try:
-                            inds_ticker[ind] = {
-                                "pipeline": float(v_pipeline),
-                                "dre":      float(v_dre),
-                            }
-                        except (TypeError, ValueError):
-                            continue
-                    if inds_ticker:
-                        dados_xs[tk] = inds_ticker
-
-                flags = batch_validate(dados_xs, indicadores=indics_check)
-                resumo = resumo_validacao(flags)
-
-                # KPIs
-                ck1, ck2, ck3 = st.columns(3)
-                with ck1:
-                    st.markdown(_kpi_macro(
-                        "Total flags",
-                        str(resumo["total"]),
-                        f"em {len(dados_xs)} empresas auditadas",
-                        _COR_NEU if resumo["total"] == 0 else _COR_ALT,
-                    ), unsafe_allow_html=True)
-                with ck2:
-                    st.markdown(_kpi_macro(
-                        "Critical",
-                        str(resumo["critical"]),
-                        "spread > 2× threshold",
-                        _COR_NEG if resumo["critical"] > 0 else _COR_POS,
-                    ), unsafe_allow_html=True)
-                with ck3:
-                    st.markdown(_kpi_macro(
-                        "Tickers afetados",
-                        str(resumo["tickers_afetados"]),
-                        ", ".join(resumo.get("tickers_critical", [])[:5]) or "—",
-                        _COR_ALT,
-                    ), unsafe_allow_html=True)
-
-                if flags:
-                    import pandas as _pd
-                    df_flags = _pd.DataFrame([{
-                        "Ticker":     f.ticker,
-                        "Indicador":  f.indicador,
-                        "Severidade": f.severidade,
-                        "Mediana":    f.mediana,
-                        "Spread (%)": f.spread_rel * 100,
-                        "Pipeline":   f.valores.get("pipeline"),
-                        "DRE":        f.valores.get("dre"),
-                    } for f in flags])
-                    st.dataframe(
-                        df_flags, hide_index=True, width="stretch",
-                        column_config={
-                            "Spread (%)": st.column_config.NumberColumn(format="%.1f%%"),
-                            "Mediana":    st.column_config.NumberColumn(format="%.3f"),
-                            "Pipeline":   st.column_config.NumberColumn(format="%.3f"),
-                            "DRE":        st.column_config.NumberColumn(format="%.3f"),
-                        },
-                    )
-                    st.caption(
-                        "Critical = spread > 2× threshold. Use `consensus_value()` "
-                        "(mediana das fontes) para resolver — devolve `None` "
-                        "automaticamente se spread > 50%."
-                    )
-                else:
-                    st.success(
-                        f"✓ Nenhuma divergência detectada em {len(dados_xs)} "
-                        f"empresa(s) e {len(indics_check)} indicador(es).",
-                        icon="✅",
-                    )
 
     # ── CARDS DO UNIVERSO ────────────────────────────────────────────────────
     # Só quem pontuou. Antes a grade emendava as empresas sem múltiplos, que
