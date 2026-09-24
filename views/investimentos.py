@@ -4101,11 +4101,12 @@ def render() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Sub-navegação via tabs ────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📊  Dashboard",
         "📈  Histórico",
         "💼  Carteira",
         "🔍  Análise",
+        "🧾  Imposto de Renda",
     ])
 
     with tab1:
@@ -4119,6 +4120,10 @@ def render() -> None:
 
     with tab4:
         _tab_analise(carteira, proventos)
+
+    with tab5:
+        from views.ir_renda_variavel import render as _render_ir
+        _render_ir()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
