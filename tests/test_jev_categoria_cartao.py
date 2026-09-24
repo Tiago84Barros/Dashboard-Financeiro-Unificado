@@ -13,7 +13,13 @@ from core.card_categorization import (
     ler_resposta_jev_categoria,
     pergunta_jev_categoria,
 )
-from core.jev import JevErro, system_one
+from core.jev import (
+    JEV_URL,
+    OPENROUTER_DECISIONS_URL,
+    JevErro,
+    destino_jev,
+    system_one,
+)
 from scripts.avaliar_jev_cartao import origem_do_rotulo, resumir, rotulados_unicos
 
 
@@ -77,6 +83,52 @@ def test_falha_de_rede_nao_ecoa_a_chave():
         system_one({}, {}, api_key="sk-segredo", http_post=post)
     assert "sk-segredo" not in str(exc.value)
     assert exc.value.__cause__ is None
+
+
+def test_system_one_via_openrouter_le_prompt_tokens_e_custo():
+    visto = {}
+
+    def post(url, json, headers, timeout):
+        visto.update(url=url, json=json)
+        return _Resp(200, {"model": "typesafe/jev-1.13",
+                           "answers": {"q": {"choice": "a"}},
+                           "usage": {"prompt_tokens": 180, "cost": 0.0000076}})
+
+    r = system_one({}, {"q": {"type": "noul"}}, api_key="sk-or", model="typesafe/jev-1.13",
+                   url=OPENROUTER_DECISIONS_URL, http_post=post)
+    assert visto["url"] == OPENROUTER_DECISIONS_URL
+    assert visto["json"]["model"] == "typesafe/jev-1.13"
+    assert r.tokens_entrada == 180
+    assert r.custo_usd == pytest.approx(0.0000076)
+
+
+def test_typesafe_direto_nao_informa_custo():
+    r = system_one({}, {}, api_key="k", http_post=lambda *a, **k: _Resp(
+        200, {"answers": {}, "usage": {"input_tokens": 5}}))
+    assert r.custo_usd is None
+
+
+class _Cfg:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+def test_destino_prefere_typesafe():
+    d = destino_jev(_Cfg(TYPESAFE_API_KEY="ts", TYPESAFE_MODEL="",
+                         OPENROUTER_API_KEY="or"))
+    assert (d.via, d.url, d.api_key, d.modelo) == ("typesafe", JEV_URL, "ts", "jev-latest")
+
+
+def test_destino_cai_no_openrouter_sem_chave_typesafe():
+    d = destino_jev(_Cfg(TYPESAFE_API_KEY="", OPENROUTER_API_KEY="sk-or-segredo",
+                         OPENROUTER_JEV_MODEL=""))
+    assert (d.via, d.url, d.modelo) == ("openrouter", OPENROUTER_DECISIONS_URL,
+                                        "typesafe/jev-1.13")
+    assert "sk-or-segredo" not in repr(d)
+
+
+def test_destino_sem_chave_nenhuma():
+    assert destino_jev(_Cfg()) is None
 
 
 # ── pergunta e leitura ───────────────────────────────────────────────────────
