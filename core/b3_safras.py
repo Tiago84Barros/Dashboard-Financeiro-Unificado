@@ -172,7 +172,7 @@ Modulo puro: sem streamlit, sem banco. Coberto por tests/test_b3_safras.py.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -233,6 +233,9 @@ class SafraCarteira:
     pesos: dict[str, float]
     universo: tuple[str, ...]
     segmentos: int
+    # Empresas que SAIRAM da bolsa (core.b3_saidas) -> ultimo pregao. O
+    # ultimo preco delas e o valor de saida, nao uma lacuna de dado.
+    saidas: dict[str, pd.Timestamp] = field(default_factory=dict)
 
 
 def _pesos_internos_do_segmento(lids: list[str], brutos: dict) -> dict[str, float]:
@@ -281,6 +284,7 @@ def carteiras_por_safra(resultados: list[dict], *,
 
         pesos: dict[str, float] = {}
         universo: list[str] = []
+        saidas: dict[str, pd.Timestamp] = {}
         for res in contribuintes:
             lids = [str(t).upper() for t in (res.get("lids_por_ano") or {})[safra]]
             if not lids:
@@ -297,6 +301,12 @@ def carteiras_por_safra(resultados: list[dict], *,
                     continue
                 pesos[tk] = pesos.get(tk, 0.0) + fatia
             universo.extend(str(t).upper() for t in (res.get("tickers") or []))
+            # Quem saiu da bolsa entra no universo so nas safras em que
+            # estava listado -- senao o equal-weight fica so com sobreviventes.
+            universo.extend(str(t).upper() for t in
+                            ((res.get("tickers_saidos_por_ano") or {}).get(safra) or []))
+            for tk, d in (res.get("saidas") or {}).items():
+                saidas[str(tk).upper()] = pd.Timestamp(d)
 
         inicio, fim = janela_de_vigencia(safra)
         saida.append(SafraCarteira(
@@ -310,6 +320,7 @@ def carteiras_por_safra(resultados: list[dict], *,
             # ordem alfabetica que apaga a estrutura por segmento.
             universo=tuple(dict.fromkeys(universo)),
             segmentos=len(contribuintes),
+            saidas=saidas,
         ))
     return saida
 
@@ -338,7 +349,8 @@ def _janela_de_mercado(df_precos: pd.DataFrame, inicio: pd.Timestamp,
 
 
 def _preco_nas_pontas(serie: pd.Series, inicio_mercado: pd.Timestamp,
-                      corte: pd.Timestamp) -> tuple[float, float] | None:
+                      corte: pd.Timestamp,
+                      saida: pd.Timestamp | None = None) -> tuple[float, float] | None:
     """Primeiro e ultimo preco valido DENTRO da janela, com as pontas perto
     do inicio e do corte de mercado da safra (tolerancia de
     `TOLERANCIA_DIAS`).
@@ -350,6 +362,11 @@ def _preco_nas_pontas(serie: pd.Series, inicio_mercado: pd.Timestamp,
     inicio civil): se o feed inteiro so comeca depois do inicio da safra,
     isso e cobertura de dado, nao liquidez do papel, e nao pode reprovar
     todo mundo.
+
+    `saida` (ultimo pregao de quem deixou a bolsa, core.b3_saidas) dentro
+    da janela dispensa a tolerancia da ponta final: ali o fim da serie e o
+    evento, e o ultimo preco e o que o acionista levou. Sem isso a empresa
+    que quebrou no meio da safra rendia ZERO em vez da perda.
     """
     dentro = serie[(serie.index >= inicio_mercado) & (serie.index <= corte)].dropna()
     dentro = dentro[dentro > 0]
@@ -357,7 +374,10 @@ def _preco_nas_pontas(serie: pd.Series, inicio_mercado: pd.Timestamp,
         return None
     d0, d1 = dentro.index[0], dentro.index[-1]
     tolerancia = pd.Timedelta(days=TOLERANCIA_DIAS)
-    if (d0 - inicio_mercado) > tolerancia or (corte - d1) > tolerancia:
+    saiu_na_janela = saida is not None and inicio_mercado <= saida <= corte
+    if (d0 - inicio_mercado) > tolerancia:
+        return None
+    if (corte - d1) > tolerancia and not saiu_na_janela:
         return None
     return float(dentro.iloc[0]), float(dentro.iloc[-1])
 
@@ -465,7 +485,8 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
     def _pontas(tk: str) -> tuple[float, float] | None:
         if tk not in df_precos.columns:
             return None
-        return _preco_nas_pontas(df_precos[tk], inicio_mercado, corte)
+        return _preco_nas_pontas(df_precos[tk], inicio_mercado, corte,
+                                 saida=carteira.saidas.get(tk))
 
     retorno_est = 0.0
     peso_ausente = 0.0
