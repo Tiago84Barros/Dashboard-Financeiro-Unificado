@@ -184,6 +184,9 @@ class Settings:
     # depois de medir, para o limiar não mudar de sentido sem aviso.
     TYPESAFE_API_KEY: str = _get_secret("TYPESAFE_API_KEY")
     TYPESAFE_MODEL: str = _get_secret("TYPESAFE_MODEL", "jev-latest")
+    # Sem chave da TypeSafe, o Jev sai pelo OpenRouter (Decisions API, beta),
+    # com a OPENROUTER_API_KEY que o app já usa. Versão fixada de propósito.
+    OPENROUTER_JEV_MODEL: str = _get_secret("OPENROUTER_JEV_MODEL", "typesafe/jev-1.13")
 
     # ── Empresas Americanas — fonte de dados──────────────────────────────────
     # FONTE PADRÃO: SEC EDGAR (dados públicos, de domínio público) p/ fundamentos
