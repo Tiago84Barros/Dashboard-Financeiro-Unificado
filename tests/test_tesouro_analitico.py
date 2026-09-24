@@ -333,3 +333,43 @@ def test_conjuntura_sem_dois_vertices_nao_inventa_inclinacao():
     html = card_conjuntura_html(data_curva=None, pre_curto=None, pre_longo=None,
                                 inflacao_implicita=None)
     assert "Sem dois vértices" in html
+
+
+def test_cards_do_tesouro_saem_em_token_de_tema_e_nao_em_literal():
+    """Os cards da marcação a mercado ficavam escuros no tema claro.
+
+    Cor cravada dentro do atributo ``style`` é o pior dos casos: nenhuma folha
+    de estilo vence estilo inline sem ``!important``, então não existe seletor a
+    corrigir e o grep por CSS não acha nada. O teste lê a SAÍDA do gerador, e
+    não as constantes do módulo, porque é a saída que o navegador recebe
+    (`memoria: tema-claro-so-alcanca-o-que-passa-por-token`).
+    """
+    import re
+
+    titulo = _titulo_fake()
+    comp = comparar_carregar_vs_vender(
+        [], vencimento=titulo.vencimento, data_avaliacao=date(2026, 9, 4),
+        taxa_mercado_resgate=0.0008, taxa_alternativa=None,
+    )
+    htmls = [
+        card_titulo_html(titulo),
+        card_veredito_html(titulo, comp),
+        card_conjuntura_html(data_curva=date(2026, 9, 4), pre_curto=None,
+                             pre_longo=None, inflacao_implicita=None),
+    ]
+    padrao = re.compile(
+        r"(?:background-)?color:\s*([^;\"]+)"
+        r"|solid\s+(#[0-9A-Fa-f]{3,8}|var\([^)]*\)|rgba?\([^)]*\))"
+    )
+    for html in htmls:
+        valores = [a or b for a, b in padrao.findall(html)]
+        assert valores, "nenhuma cor encontrada — o padrao do teste envelheceu"
+        for valor in valores:
+            assert valor.strip().startswith("var(--app-"), (
+                f"cor literal no style inline: {valor!r} — o tema claro não alcança"
+            )
+
+    for html in htmls:
+        # `background:` reescreve `background-image` junto
+        # (`memoria: atalho-background-apaga-imagem-inline`).
+        assert "background:" not in html

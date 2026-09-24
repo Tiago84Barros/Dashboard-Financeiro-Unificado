@@ -21,19 +21,30 @@ from core.tesouro_mtm import (
     Comparacao,
 )
 from core.utils import fmt_moeda
+from design.componentes import cor_token
 
-_FUNDO = "#12151E"
-_BORDA = "#1E2533"
-_TEXTO = "#E2E8F0"
-_TEXTO2 = "#CBD5E0"
-_TEXTO3 = "#9CA3AF"
-_TEXTO4 = "#718096"
+# Fundo, borda e texto saem como token, nao como literal. Enquanto eram
+# ``#12151E``/``#E2E8F0`` cravados no atributo ``style``, o tema claro nao tinha
+# por onde alcanca-los: nenhuma regra de folha de estilo vence estilo inline sem
+# ``!important``, e o token sequer chegava ao elemento. O resultado era um bloco
+# azul-escuro com texto claro no meio da pagina branca
+# (`memoria: tema-claro-so-alcanca-o-que-passa-por-token`). O literal antigo
+# fica como fallback: sem a variavel definida, o card volta a ser o que era, em
+# vez de herdar cor do navegador.
+_FUNDO = "var(--app-surface, #12151E)"
+_BORDA = "var(--app-border, #1E2533)"
+_TEXTO = "var(--app-text, #E2E8F0)"
+_TEXTO2 = "var(--app-text, #CBD5E0)"
+_TEXTO3 = "var(--app-muted, #9CA3AF)"
+_TEXTO4 = "var(--app-subtle, #718096)"
 
-POSITIVO = "#00C896"
-NEGATIVO = "#FC5C7D"
-INFO = "#4A9EFF"
-ALERTA = "#F6C90E"
-NEUTRO = "#9CA3AF"
+# As cores semanticas passam pelo mesmo tradutor que o resto do app ja usa: no
+# claro, ``#00C896`` sobre branco e ilegivel e vira ``--app-primary`` (#007e60).
+POSITIVO = cor_token("#00C896")
+NEGATIVO = cor_token("#FC5C7D")
+INFO = cor_token("#4A9EFF")
+ALERTA = cor_token("#F6C90E")
+NEUTRO = cor_token("#9CA3AF")
 
 _COR_VEREDITO = {
     MANTER: POSITIVO,
@@ -102,7 +113,7 @@ def card_titulo_html(titulo) -> str:
                  f'então a marcação aqui é aproximação, não identidade.</div>')
 
     return (
-        f'<div style="background:{_FUNDO};border:1px solid {_BORDA};'
+        f'<div style="background-color:{_FUNDO};border:1px solid {_BORDA};'
         f'border-left:4px solid {cor};border-radius:10px;padding:16px 18px;margin-bottom:12px;">'
         f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">'
         f'  <div>'
@@ -167,7 +178,7 @@ def card_veredito_html(titulo, comparacao: Comparacao,
         )
 
     return (
-        f'<div style="background:{_FUNDO};border:1px solid {_BORDA};'
+        f'<div style="background-color:{_FUNDO};border:1px solid {_BORDA};'
         f'border-left:4px solid {cor};border-radius:10px;padding:16px 18px;margin-bottom:12px;">'
         f'<div style="font-size:0.65rem;font-weight:800;color:{_TEXTO4};'
         f'  text-transform:uppercase;letter-spacing:0.06em;">VEREDITO · {titulo.titulo}</div>'
@@ -237,7 +248,7 @@ def card_conjuntura_html(*, data_curva: date | None, pre_curto: dict | None,
                            f'leitura de hoje): {" · ".join(partes)}.</div>')
 
     return (
-        f'<div style="background:{_FUNDO};border:1px solid {_BORDA};'
+        f'<div style="background-color:{_FUNDO};border:1px solid {_BORDA};'
         f'border-left:4px solid {INFO};border-radius:10px;padding:16px 18px;margin-bottom:12px;">'
         f'<div style="font-size:0.65rem;font-weight:800;color:{INFO};'
         f'  text-transform:uppercase;letter-spacing:0.06em;">CONJUNTURA · CURVA DE {quando}</div>'
