@@ -173,3 +173,60 @@ def test_falha_de_leitura_avisa_onde_o_tema_se_escolhe(monkeypatch):
     monkeypatch.setattr(selector, "load_theme", lambda: "light")
     app.run()
     assert list(app.warning) == []
+
+
+SCRIPT_CONTA_ELEMENTOS = '''
+import time
+import streamlit as st
+from design.tema import aplicar_tema
+st.session_state.setdefault('_app4_user', {'id': 'A', 'expires_at': time.time()+600})
+aplicar_tema(st.session_state.get('_tema_pedido', 'dark'))
+st.write("conteudo da pagina")
+'''
+
+
+def test_aplicar_tema_nao_muda_a_contagem_de_elementos_por_tema():
+    """Trocar de tema não pode deslocar o conteúdo da página.
+
+    O CSS claro entrava como um ``st.markdown`` EXTRA: dois elementos no claro
+    contra um no escuro. Qualquer execução que resolvesse o tema diferente da
+    anterior mudava o número de elementos acima do ``st.tabs`` de
+    Configurações, e o Streamlit devolve a seleção para a primeira aba quando o
+    grupo de abas muda de posição -- era o "voltei para a aba Geral" que
+    acompanhava o "o app ficou escuro".
+    """
+    escuro = AppTest.from_string(SCRIPT_CONTA_ELEMENTOS).run()
+    assert not escuro.exception
+    claro = AppTest.from_string(SCRIPT_CONTA_ELEMENTOS)
+    claro.session_state["_tema_pedido"] = "light"
+    claro.run()
+    assert not claro.exception
+    assert len(claro.markdown) == len(escuro.markdown), (
+        "aplicar_tema desenhou um número de elementos diferente por tema"
+    )
+    assert "--app-bg" in "".join(bloco.value for bloco in claro.markdown)
+
+
+def test_falha_de_leitura_mantem_o_ultimo_tema_conhecido(monkeypatch):
+    """Falha de leitura não é troca de preferência.
+
+    Enquanto a primeira leitura da sessão falha não há cache, então TODA
+    execução relê -- e um job de atualização de dados, que ocupa a única
+    conexão do pool, derruba a leitura justamente no clique do botão. Cair para
+    dark nessas execuções repintava o app inteiro no meio do trabalho.
+    """
+    import design.theme_selector as selector
+
+    monkeypatch.setattr(selector, "load_theme", lambda: "light")
+    app = AppTest.from_string(SCRIPT_SO_RESOLVE).run()
+    assert app.session_state["_tema_resolvido"] == "light"
+    del app.session_state["_app4_theme_preference"]
+
+    def fail():
+        raise RuntimeError("banco ocupado")
+
+    monkeypatch.setattr(selector, "load_theme", fail)
+    app.run()
+    assert not app.exception
+    assert app.session_state["_tema_resolvido"] == "light"
+    assert app.session_state["_app4_theme_load_error"] is True

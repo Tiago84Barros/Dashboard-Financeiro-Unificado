@@ -12,6 +12,7 @@ _CHOICE = "_app4_theme_choice"
 _CACHE = "_app4_theme_preference"
 _ERROR = "_app4_theme_error"
 _LOAD_ERROR = "_app4_theme_load_error"
+_ULTIMO_OK = "_app4_theme_last_ok"
 
 
 def current_theme() -> str:
@@ -45,10 +46,17 @@ def current_theme() -> str:
             # engolida inteira e a única pista que sobrava era o app escuro.
             logger.exception("falha ao ler o tema da conta")
             st.session_state[_LOAD_ERROR] = True
-            return "dark"
+            # Falha de leitura não é troca de preferência. Enquanto o cache da
+            # sessão não existe (a primeira leitura falhou), toda execução
+            # relê, e cair para "dark" em cada falha repintava o app inteiro no
+            # meio do trabalho -- foi o que acontecia ao clicar num botão de
+            # atualização em Configurações, que ocupa a única conexão do pool.
+            ultimo = st.session_state.get(_ULTIMO_OK)
+            return ultimo if ultimo in ("dark", "light") else "dark"
         st.session_state.pop(_LOAD_ERROR, None)
         st.session_state[_CACHE] = (uid, theme)
         st.session_state[_CHOICE] = theme
+        st.session_state[_ULTIMO_OK] = theme
     return st.session_state[_CACHE][1]
 
 
@@ -76,6 +84,7 @@ def _persist_choice() -> None:
         st.session_state[_ERROR] = True
     else:
         st.session_state[_CACHE] = (uid, choice)
+        st.session_state[_ULTIMO_OK] = choice
 
 
 def render_theme_selector() -> None:
@@ -94,10 +103,16 @@ def render_theme_selector() -> None:
         # Não é `pop`: enquanto a leitura falhar, o seletor fica desabilitado e
         # a pessoa precisa continuar vendo por quê. `current_theme` limpa a
         # marca na primeira leitura que der certo.
+        atual = st.session_state.get(_ULTIMO_OK)
+        mantido = (
+            "o app manteve o último tema que conseguiu ler"
+            if atual in ("dark", "light")
+            else "o app está usando dark temporariamente"
+        )
         st.warning(
-            "Não foi possível carregar o tema da sua conta. O app está usando "
-            "dark temporariamente e sua preferência não foi alterada — tente "
-            "novamente em instantes."
+            "Não foi possível carregar o tema da sua conta. "
+            f"{mantido[0].upper()}{mantido[1:]} e sua preferência não foi "
+            "alterada — tente novamente em instantes."
         )
     if st.session_state.pop(_ERROR, False):
         st.error("Não foi possível salvar o tema. Sua preferência anterior foi mantida; tente novamente.")
