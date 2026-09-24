@@ -43,7 +43,9 @@ def intervalo_excesso(excesso: Iterable[float], confianca: float = CONFIANCA_PAD
         return vazio
     media = sum(xs) / n
     var = sum((x - media) ** 2 for x in xs) / (n - 1)
-    if var <= 0:
+    # Série constante: a soma em ponto flutuante deixa resíduo da ordem de
+    # 1e-35 na variância, e o intervalo degenerado viraria veredito firme.
+    if math.sqrt(var) <= 1e-12:
         vazio["media"] = media
         return vazio
     from scipy.stats import t
