@@ -15,6 +15,22 @@ Algoritmo: custo médio ponderado (padrão BR).
         há posição negativa a carregar para dentro da média seguinte.
   final: somente ativos com qty > 0 e avg_price > 0 são gravados.
 
+Eventos corporativos (2026-09-24): as linhas cruas da Movimentação da B3
+(`investment_movement_events`, SQL 075) entram na mesma sequência, ANTES das
+negociações do mesmo dia -- a venda do dia do crédito já é em cotas novas:
+  desdobro / grupamento: qty muda pelo sentido, custo total preservado;
+  bonificação em ativos: qty sobe e o custo sobe pelo custo atribuído que a
+        B3 publica (preço unitário, a regra fiscal); sem preço, o custo é
+        preservado e o PM dilui;
+  fração em ativos (débito): sai como uma venda -- PM inalterado;
+  recibo de subscrição: compra da cota (`XXXX12..15` -> `XXXX11`) pelo valor
+        publicado; sem valor, fica de fora (cota sem o dinheiro que a pagou);
+  transferência, incorporação, atualização etc.: ignorados.
+Evento sobre posição zerada (histórico truncado antes de nov/2019) não cria
+quantidade sem custo: vira alerta. Errar aqui tem de custar cobertura -- a
+conciliação em `core/investimentos.py` já reprova PM cuja quantidade não
+fecha com a posição -- e nunca um preço médio inventado.
+
 Idempotência: UPSERT em (portfolio_id, asset_id) + DELETE das posições que
 o recálculo não produziu -- sem isso, ativo que deixa de qualificar fica
 publicado para sempre com o valor do último recálculo em que qualificou.
@@ -22,6 +38,7 @@ publicado para sempre com o valor do último recálculo em que qualificou.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
@@ -35,13 +52,153 @@ logger = logging.getLogger(__name__)
 PORTFOLIO_NAME = "Carteira Principal"
 PORTFOLIO_TYPE = "personal"  # respeita CHECK portfolios.type
 
+# Rótulos da Movimentação (minúsculos, como o importador grava).
+EV_DESDOBRO = "desdobro"
+EV_GRUPAMENTO = "grupamento"
+EV_BONIFICACAO = "bonificação em ativos"
+EV_FRACAO = "fração em ativos"
+EV_SUBSCRICAO = "recibo de subscrição"
+EVENTOS_DE_POSICAO = frozenset({EV_DESDOBRO, EV_GRUPAMENTO, EV_BONIFICACAO,
+                                EV_FRACAO, EV_SUBSCRICAO})
+
+_RX_RECIBO_FII = re.compile(r"^([A-Z]{3}[A-Z0-9])1[2-5]$")
+
+
+def _base(ticker: str) -> str:
+    """Forma-base do ticker, como o `pp_base` de core/investimentos agrega."""
+    t = (ticker or "").strip().upper()
+    return t[:-1] if t.endswith("F") and len(t) > 4 else t
+
+
+def _sinal(direcao: str) -> int:
+    d = (direcao or "").strip().lower()
+    if d.startswith(("cred", "créd", "entrada")):
+        return 1
+    if d.startswith(("deb", "déb", "saida", "saída")):
+        return -1
+    return 0
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Cálculo em memória
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _compute(transactions: list[dict]) -> tuple[list[dict], list[dict]]:
-    """Custo médio ponderado em memória. Retorna (positions, alerts)."""
+def _liquidar_reorganizacoes(events: list[dict]) -> list[dict]:
+    """Desdobro e grupamento viram UMA linha líquida por dia e ativo.
+
+    A B3 pode publicar a reorganização como a diferença (crédito de 100 num
+    desdobro de 100 para 200) ou como as duas pontas (débito das 1.000
+    antigas e crédito das 100 novas num grupamento). Linha a linha, o
+    segundo formato debitaria a posição inteira -- recusado -- e depois
+    somaria as novas por cima das antigas. O saldo líquido do dia é o mesmo
+    nos dois formatos.
+    """
+    liquido: dict[tuple, Decimal] = {}
+    outros: list[dict] = []
+    for ev in events:
+        mov = str(ev.get("movement") or "").strip().lower()
+        if mov not in (EV_DESDOBRO, EV_GRUPAMENTO):
+            outros.append(ev)
+            continue
+        chave = (str(ev.get("event_date") or ""), _base(str(ev.get("ticker") or "")), mov)
+        q = abs(Decimal(str(ev.get("quantity") or "0")))
+        liquido[chave] = liquido.get(chave, Decimal("0")) + _sinal(str(ev.get("direction") or "")) * q
+    for (dia, tk, mov), q in liquido.items():
+        if q:
+            outros.append({"event_date": dia, "movement": mov, "ticker": tk,
+                           "direction": "Credito" if q > 0 else "Debito",
+                           "quantity": abs(q)})
+    return outros
+
+
+def _sequencia(transactions: list[dict], events: list[dict]) -> list[dict]:
+    """Negociações e eventos numa ordem só: por data, eventos antes.
+
+    Sem eventos, a ordem recebida (a do SQL) é mantida intacta.
+    """
+    if not events:
+        return list(transactions)
+    itens = [(tx.get("transaction_date"), 1, i, tx) for i, tx in enumerate(transactions)]
+    itens += [(ev.get("event_date"), 0, i, {**ev, "type": "evento"})
+              for i, ev in enumerate(events)]
+    return [x[3] for x in sorted(itens, key=lambda x: (str(x[0] or ""), x[1], x[2]))]
+
+
+def _aplicar_evento(ev: dict, state: dict, grupos: dict[str, list[str]],
+                    alerts: list[dict]) -> None:
+    """Um evento da Movimentação sobre o estado (ver docstring do módulo)."""
+    mov = str(ev.get("movement") or "").strip().lower()
+    base = _base(str(ev.get("ticker") or ""))
+    if mov == EV_SUBSCRICAO:
+        m = _RX_RECIBO_FII.match(base)
+        base = f"{m.group(1)}11" if m else base
+    sinal = _sinal(str(ev.get("direction") or ""))
+    qty = abs(Decimal(str(ev.get("quantity") or "0")))
+    if mov not in EVENTOS_DE_POSICAO or not sinal or qty <= 0:
+        return
+
+    def alerta(tipo: str, detalhe: str) -> None:
+        alerts.append({"asset_id": None, "ticker": base, "type": tipo,
+                       "detail": f"{mov} em {ev.get('event_date')}: {detalhe}"})
+
+    aids = grupos.get(base) or []
+    if not aids:
+        alerta("evento_sem_ativo", "ticker sem nenhuma negociação importada")
+        return
+    # PETR4 e PETR4F somam na mesma posição (pp_base): o evento vai para o
+    # ativo que mais tem cotas agora -- o que tem a base de custo a ajustar.
+    aid = max(aids, key=lambda a: state[a]["qty"])
+    s = state[aid]
+    q0 = s["qty"]
+    custo0 = q0 * s["avg_price"]
+
+    if mov == EV_SUBSCRICAO:
+        if sinal < 0:
+            return
+        valor = abs(Decimal(str(ev.get("total_value") or "0")))
+        if valor <= 0:
+            alerta("subscricao_sem_valor", "cotas sem o valor pago no extrato; fora do PM")
+            return
+        s["qty"] = q0 + qty
+        s["avg_price"] = (custo0 + valor) / s["qty"]
+        return
+
+    if q0 <= Decimal("0.0001"):
+        alerta("evento_sem_posicao",
+               "posição zerada no histórico importado (truncado?); evento ignorado")
+        return
+
+    if mov == EV_FRACAO:
+        if sinal > 0:
+            alerta("fracao_credito", "crédito de fração sem custo conhecido; ignorado")
+            return
+        s["qty"] = max(q0 - qty, Decimal("0"))
+        if s["qty"] <= Decimal("0.0001"):
+            s["qty"], s["avg_price"] = Decimal("0"), Decimal("0")
+        return
+
+    novo = q0 + sinal * qty
+    if novo <= Decimal("0.0001"):
+        alerta("evento_zeraria_posicao", f"débito de {qty} sobre {q0} cotas; ignorado")
+        return
+    custo = custo0
+    if mov == EV_BONIFICACAO and sinal > 0:
+        preco = Decimal(str(ev.get("unit_price") or "0"))
+        if preco > 0:
+            custo += qty * preco
+    s["qty"] = novo
+    s["avg_price"] = custo / novo
+
+
+def _compute(
+    transactions: list[dict],
+    events: list[dict] | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """Custo médio ponderado em memória. Retorna (positions, alerts).
+
+    ``events``: linhas cruas da Movimentação (event_date, movement,
+    direction, ticker, quantity, unit_price, total_value).
+    """
     state: dict[str, dict] = defaultdict(lambda: {
         "qty":        Decimal("0"),
         "avg_price":  Decimal("0"),
@@ -50,8 +207,17 @@ def _compute(transactions: list[dict]) -> tuple[list[dict], list[dict]]:
         "ticker":     "",
     })
     alerts: list[dict] = []
-
+    grupos: dict[str, list[str]] = defaultdict(list)
     for tx in transactions:
+        aid = str(tx["asset_id"])
+        g = grupos[_base(str(tx.get("ticker") or ""))]
+        if aid not in g:
+            g.append(aid)
+
+    for tx in _sequencia(transactions, _liquidar_reorganizacoes(events or [])):
+        if tx["type"] == "evento":
+            _aplicar_evento(tx, state, grupos, alerts)
+            continue
         asset_id = str(tx["asset_id"])
         tx_type  = str(tx["type"]).lower()
         qty      = Decimal(str(tx["quantity"]))
@@ -192,6 +358,43 @@ def _load_transactions(conn: Connection, user_id: str) -> list[dict]:
     ]
 
 
+def _load_events(conn: Connection, user_id: str) -> list[dict]:
+    """Eventos da Movimentação; lista vazia se a tabela ainda não existe.
+
+    A tabela nasce no primeiro upload da Movimentação (SQL 075). `to_regclass`
+    pergunta sem falhar: um SELECT numa tabela ausente abortaria a transação
+    do recálculo inteiro no Postgres, e o UPSERT das posições iria junto.
+    """
+    existe = conn.execute(
+        text("SELECT to_regclass('investment_movement_events') IS NOT NULL")
+    ).scalar()
+    if not existe:
+        return []
+    rows = conn.execute(
+        text("""
+            SELECT event_date, movement, direction, ticker,
+                   quantity, unit_price, total_value
+            FROM investment_movement_events
+            WHERE user_id = :uid
+              AND movement = ANY(:movs)
+            ORDER BY event_date ASC, id ASC
+        """),
+        {"uid": user_id, "movs": sorted(EVENTOS_DE_POSICAO)},
+    ).fetchall()
+    return [
+        {
+            "event_date":  r[0],
+            "movement":    r[1],
+            "direction":   r[2],
+            "ticker":      r[3],
+            "quantity":    r[4],
+            "unit_price":  r[5],
+            "total_value": r[6],
+        }
+        for r in rows
+    ]
+
+
 def _upsert(
     conn: Connection,
     positions: list[dict],
@@ -289,6 +492,7 @@ def recompute_for_user(engine: Engine, user_id: str) -> dict[str, Any]:
     Retorna dict com:
       - ok: bool
       - transactions_loaded: int
+      - events_loaded: int (eventos corporativos da Movimentação aplicados)
       - positions_upserted: int
       - positions_deleted: int
       - alerts: list[str] (resumido, ≤10 itens)
@@ -297,6 +501,7 @@ def recompute_for_user(engine: Engine, user_id: str) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "ok":                  False,
         "transactions_loaded": 0,
+        "events_loaded":       0,
         "positions_upserted":  0,
         "positions_deleted":   0,
         "alerts":              [],
@@ -308,13 +513,15 @@ def recompute_for_user(engine: Engine, user_id: str) -> dict[str, Any]:
             with conn.begin():
                 portfolio_id = _ensure_portfolio(conn, user_id)
                 transactions = _load_transactions(conn, user_id)
+                events = _load_events(conn, user_id)
                 summary["transactions_loaded"] = len(transactions)
+                summary["events_loaded"] = len(events)
 
                 if not transactions:
                     summary["ok"] = True
                     return summary
 
-                positions, alerts = _compute(transactions)
+                positions, alerts = _compute(transactions, events)
                 upserted = _upsert(conn, positions, portfolio_id, user_id)
                 summary["positions_upserted"] = upserted
                 summary["positions_deleted"] = _remover_obsoletas(
