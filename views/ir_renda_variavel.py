@@ -196,9 +196,11 @@ def render() -> None:
 - Operações comuns em ações, units, ETF e BDR: **15%** sobre o ganho líquido do mês.
 - Day trade: **20%**. FII, comum ou day trade: **20%**.
 - Ganho em **ações** é isento no mês em que o total vendido de ações fica em até R$ 20 mil.
-  ETF, BDR, FII e day trade não têm isenção. No mês isento, as ações se compensam entre si
+  ETF, BDR, FII, day trade e direito de subscrição não têm isenção. No mês isento, as ações se compensam entre si
   primeiro, e só o prejuízo líquido passa adiante.
 - O prejuízo só compensa dentro da mesma cesta (comum, day trade, FII), sem prazo.
+- Direito de subscrição recebido da empresa (GMAT1, HGLG12) tem custo zero: a venda é
+  ganho integral, sem isenção.
 - DARF código **{CODIGO_DARF}**, até o último dia útil do mês seguinte. Abaixo de R$ 10 o
   valor acumula para o próximo DARF.
 - Custo: preço médio ponderado, com a corretagem da compra no custo e a da venda descontada
