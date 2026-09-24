@@ -104,6 +104,25 @@ def _canonical_region(value: Any) -> str | None:
     return _MACRO_REGIONS.get(normalized)
 
 
+_CNPJ_PUNCTUATION = str.maketrans("", "", ".-/ ")
+
+
+def _canonical_party(value: Any) -> str:
+    """Devolve o CNPJ com 14 dígitos; qualquer outro nome passa só por strip.
+
+    A brapi grava o CNPJ como número e perde o zero à esquerda
+    (``2773542000122``), enquanto a CVM grava ``02773542000122``. Sem esta
+    normalização a mesma securitizadora virava dois emissores e o teto
+    ``max_issuer`` podia ser contornado em silêncio pela formatação.
+    O piso de 12 dígitos evita confundir CPF (11) com CNPJ.
+    """
+    text = str(value).strip()
+    digits = text.translate(_CNPJ_PUNCTUATION)
+    if digits.isdigit() and 12 <= len(digits) <= 14:
+        return digits.zfill(14)
+    return text
+
+
 def normalized_dimension_mapping(row: dict, dimension: str) -> dict[str, float]:
     """Limpa exposições e consolida UFs na mesma macrorregião do IBGE."""
     field = DIMENSION_FIELDS[dimension]
@@ -118,11 +137,12 @@ def normalized_dimension_mapping(row: dict, dimension: str) -> dict[str, float]:
             continue
         if not math.isfinite(number) or number <= 0:
             continue
-        name = (
-            _canonical_region(raw_name)
-            if dimension == "region"
-            else str(raw_name).strip()
-        )
+        if dimension == "region":
+            name = _canonical_region(raw_name)
+        elif dimension in ("issuer", "debtor"):
+            name = _canonical_party(raw_name)
+        else:
+            name = str(raw_name).strip()
         if not name:
             continue
         normalized[name] = normalized.get(name, 0.0) + number

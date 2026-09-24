@@ -2532,19 +2532,23 @@ def render(show_header: bool = True) -> None:
         thr_ew      = p2.number_input(
             "Margem mín. vs Pesos Iguais · validação ~24m (%)", 0.0, 300.0, 0.0, 5.0,
             key="pb3_thr_ew_oos24",
-            help="Piso de MAGNITUDE do excesso sobre a carteira de Pesos Iguais na "
-                 "janela de validação (fora da amostra), aplicado só quando o modo "
-                 "ao lado = 'Exigir margem mínima'. A significância estatística vs "
-                 "Pesos Iguais já é sempre exigida.",
+            help="Piso de MAGNITUDE do excesso sobre a carteira de Pesos Iguais, "
+                 "aplicado só quando o campo ao lado = 'Exigir margem mínima'. "
+                 "No modo 'Econômico (Brasil)' usa o histórico cheio; nos modos "
+                 "estatísticos, a janela de validação. Nenhum modo testa a "
+                 "SIGNIFICÂNCIA do excesso sobre Pesos Iguais: com este campo "
+                 "desligado, bater o 1/N não é exigido.",
         )
         uso_ew      = p3.selectbox(
             "Piso de magnitude vs Pesos Iguais",
             ["Apenas significância estatística", "Exigir margem mínima"],
             key="pb3_ew_floor_mode2",
-            help="A aprovação SEMPRE exige significância estatística do excesso "
-                 "sobre a carteira de Pesos Iguais (habilidade de seleção, neutra "
-                 "ao cenário macro). Aqui você decide se, além disso, a margem "
-                 "precisa superar o piso ao lado.",
+            help="Decide se a estratégia precisa superar a carteira de Pesos "
+                 "Iguais pela margem ao lado. 'Apenas significância estatística' "
+                 "NÃO aplica piso nenhum vs Pesos Iguais: no modo 'Econômico "
+                 "(Brasil)' a única estatística é o guarda-corpo Rank-IC ≥ −0,05; "
+                 "nos modos estatísticos, a significância é a do critério "
+                 "escolhido (Rank-IC ou retorno de 24m com FDR).",
         )
         # Definido aqui (e não depois do bloco de captions) porque as legendas
         # do modo econômico precisam informar se o segundo portão está ativo.
@@ -2616,10 +2620,11 @@ def render(show_header: bool = True) -> None:
             "Critério de aprovação",
             ["Econômico (Brasil)", "Sinal fundamental (Rank-IC)", "Retorno de 24m (FDR)"],
             key="pb3_criterio_aprov2",
-            help="Econômico (Brasil) — RECOMENDADO p/ o mercado local: o gate é a "
-                 "margem vs Selic no histórico (critério econômico, robusto a "
-                 "amostra pequena); a estatística vira GUARDA-CORPO (só reprova "
-                 "sinal claramente anti-preditivo), não exige prova de "
+            help="Econômico (Brasil) — padrão dos perfis: o gate é a margem vs "
+                 "Selic no histórico. Atenção: isso mede se o SEGMENTO rendeu "
+                 "mais que a renda fixa, não se a escolha das empresas dentro "
+                 "dele foi boa; a estatística vira GUARDA-CORPO (só reprova "
+                 "sinal claramente anti-preditivo) e não exige prova de "
                  "significância. Sinal fundamental (Rank-IC): exige significância "
                  "do sinal — precisa de amplitude, escassa na B3. Retorno de 24m "
                  "(FDR): exige significância do retorno recente — o mais frágil aqui.",

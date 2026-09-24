@@ -1300,14 +1300,15 @@ def _get_macro_dados() -> dict:
     except Exception:
         yf = None
 
-    dados = {
-        "selic":     14.75,
-        "ipca_12m":  4.80,
-        "cdi_12m":   14.65,
-        "usdbrl":    5.75,
-        "ibovespa":  130000.0,
-        "sp500":     5500.0,
-        "ifix":      3200.0,
+    # Sem valor de referência: quando a fonte falha o card diz "indisponível".
+    # Antes caía em Selic 14,75 / Ibovespa 130k fixos, exibidos como atuais.
+    dados: dict[str, float | None] = {
+        "selic":     None,
+        "ipca_12m":  None,
+        "cdi":       None,
+        "usdbrl":    None,
+        "ibovespa":  None,
+        "sp500":     None,
     }
 
     # BCB: Meta SELIC (série 4189)
@@ -1332,8 +1333,16 @@ def _get_macro_dados() -> dict:
     except Exception:
         pass
 
-    # CDI ≈ SELIC − 0,10 p.p.
-    dados["cdi_12m"] = round(dados["selic"] - 0.10, 2)
+    # BCB: CDI anualizado base 252 (série 4389) — medido, não Selic − 0,10.
+    try:
+        r = requests.get(
+            "https://api.bcb.gov.br/dados/serie/bcdata.sgs.4389/dados/ultimos/1?formato=json",
+            timeout=5,
+        )
+        if r.ok and r.json():
+            dados["cdi"] = float(r.json()[0]["valor"].replace(",", "."))
+    except Exception:
+        pass
 
     # yfinance: câmbio e bolsas
     for sym, key in [
@@ -1765,42 +1774,40 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
     )
 
     macro = _get_macro_dados()
-    cm1, cm2, cm3, cm4, cm5, cm6, cm7 = st.columns(7, gap="small")
+
+    def _fmt_macro(chave: str, molde: str, escala: float = 1.0) -> str:
+        valor = macro.get(chave)
+        return "indisponível" if valor is None else molde.format(valor / escala)
+
+    cm1, cm2, cm3, cm4, cm5, cm6 = st.columns(6, gap="small")
     with cm1:
-        st.markdown(_kpi_macro("SELIC", f"{macro['selic']:.2f}%",
+        st.markdown(_kpi_macro("SELIC", _fmt_macro("selic", "{:.2f}%"),
                                "Meta SELIC a.a.", _COR_NEGATIVO),
                     unsafe_allow_html=True)
     with cm2:
-        st.markdown(_kpi_macro("IPCA 12M", f"{macro['ipca_12m']:.2f}%",
+        st.markdown(_kpi_macro("IPCA 12M", _fmt_macro("ipca_12m", "{:.2f}%"),
                                "Acumulado 12 meses", _COR_ALERTA),
                     unsafe_allow_html=True)
     with cm3:
-        st.markdown(_kpi_macro("CDI 12M", f"{macro['cdi_12m']:.2f}%",
-                               "Taxa CDI anual", _COR_ALERTA),
+        st.markdown(_kpi_macro("CDI", _fmt_macro("cdi", "{:.2f}%"),
+                               "CDI anualizado (base 252)", _COR_ALERTA),
                     unsafe_allow_html=True)
     with cm4:
-        st.markdown(_kpi_macro("USD / BRL", f"R$ {macro['usdbrl']:.4f}",
+        st.markdown(_kpi_macro("USD / BRL", _fmt_macro("usdbrl", "R$ {:.4f}"),
                                "Câmbio atual", _COR_INFO),
                     unsafe_allow_html=True)
     with cm5:
-        ibov_k = macro["ibovespa"] / 1000
-        st.markdown(_kpi_macro("IBOVESPA", f"{ibov_k:,.1f}k",
+        st.markdown(_kpi_macro("IBOVESPA", _fmt_macro("ibovespa", "{:,.1f}k", 1000),
                                "Índice Bovespa (pts)", _COR_POSITIVO),
                     unsafe_allow_html=True)
     with cm6:
-        sp_k = macro["sp500"] / 1000
-        st.markdown(_kpi_macro("S&P 500", f"{sp_k:,.1f}k",
+        st.markdown(_kpi_macro("S&P 500", _fmt_macro("sp500", "{:,.1f}k", 1000),
                                "Índice S&P 500 (pts)", _COR_POSITIVO),
-                    unsafe_allow_html=True)
-    with cm7:
-        ifix_k = macro["ifix"] / 1000
-        st.markdown(_kpi_macro("IFIX", f"{ifix_k:,.3f}k",
-                               "Índice de FIIs", _COR_ROXO),
                     unsafe_allow_html=True)
 
     st.caption(
-        "Fontes: BCB API (SELIC, IPCA) · Yahoo Finance (câmbio, bolsas). "
-        "IFIX exibe valor de referência estático."
+        "Fontes: BCB API (SELIC, IPCA, CDI) · Yahoo Finance (câmbio, bolsas). "
+        "Fonte fora do ar aparece como indisponível — nunca como valor fixo."
     )
 
     # ── Dependências Macro do Portfólio ────────────────────────────────────────

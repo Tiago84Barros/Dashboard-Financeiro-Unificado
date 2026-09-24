@@ -2300,6 +2300,60 @@ def _render_us_portfolio_version_history(key: str) -> None:
                 )
 
 
+def _veredito_validacao_us(res: dict) -> tuple[str, str] | None:
+    """Resume o teste histórico em (nível, texto) para o topo da Criação.
+
+    O resultado vivia só no expander do fim da aba: quem montava a carteira
+    via o painel inteiro antes de saber que o excesso sobre pesos iguais não
+    se distingue de zero. Nível ``"warning"`` sempre que o intervalo t de 95%
+    do excesso cruza zero ou o excesso médio não é positivo.
+    """
+    if not res.get("ok"):
+        return None
+    ic = res.get("rank_ic") or {}
+    excesso = res.get("excess_ann_vs_ew")
+    periodos = [float(x) for x in (res.get("excess_periods") or [])]
+    if excesso is None or len(periodos) < 3:
+        return None
+    serie = np.asarray(periodos)
+    media = float(serie.mean())
+    erro = float(serie.std(ddof=1) / np.sqrt(len(serie)))
+    from scipy import stats as _stats
+    meia = float(_stats.t.ppf(.975, len(serie) - 1)) * erro
+    lo, hi = media - meia, media + meia
+    ic_txt = ("—" if ic.get("mean") is None else
+              f"{ic['mean']:.3f} (t = {ic.get('t_stat') or 0:.2f})")
+    texto = (
+        f"**Validação histórica ({res.get('n_periods')} safras anuais):** a "
+        f"nota ordena as empresas — correlação média com o retorno seguinte "
+        f"{ic_txt} — e o top 20 rendeu **{excesso:+.2%} ao ano** sobre pesos "
+        f"iguais, com intervalo de 95% por safra de **{lo:+.2%} a {hi:+.2%}**. "
+    )
+    if lo <= 0 or media <= 0:
+        texto += ("Ordenar bem **não se converteu em retorno distinguível de "
+                  "zero**: não há evidência de que a carteira abaixo supere "
+                  "dividir igualmente entre as elegíveis. ")
+        nivel = "warning"
+    else:
+        nivel = "info"
+    texto += ("O teste mede o top 20 pela nota pura; a carteira desta aba "
+              "(tetos, penalidades, piso de qualidade) **não foi testada**. "
+              "Detalhes em *Validação histórica e benchmarks*, no fim da aba.")
+    return nivel, texto
+
+
+def _render_veredito_validacao_us() -> None:
+    try:
+        res = us.backtest(top_n=20, weighting="score")
+    except Exception:  # o veredito é resumo; a falha já aparece no expander
+        return
+    veredito = _veredito_validacao_us(res)
+    if veredito is None:
+        return
+    nivel, texto = veredito
+    (st.warning if nivel == "warning" else st.info)(texto, icon="🧪")
+
+
 def _tab_criacao_portfolio(status: dict) -> None:
     """Etapa 2 de 3: aplicação em escala da metodologia americana."""
     if _empty_if_offline(status, "Sem dados locais para montar a carteira.", "🚀"):
@@ -2345,6 +2399,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
     # histórico é a consulta -- que já devolve o motivo quando não há.
     score_panel = us.score_panel()
     history_available = score_panel is not None and not score_panel.empty
+    if history_available:
+        _render_veredito_validacao_us()
 
     # Semear ANTES de instanciar qualquer widget: depois de instanciado, o
     # Streamlit não deixa mais escrever a chave no session_state.

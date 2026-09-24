@@ -1542,9 +1542,14 @@ def get_transacoes_filtradas(
 
     try:
         return _transacoes_real_filtradas(tipo, categoria, ano, mes, dia, texto, incluir_fatura_cartao)
-    except Exception as exc:
-        logger.warning("[controle] get_transacoes_filtradas falhou (%s) — usando mock.", type(exc).__name__)
-        return _transacoes_mock_filtradas(tipo, categoria, ano, mes, dia, texto, incluir_fatura_cartao)
+    except Exception:
+        # Sem fallback mock: em modo real, transação fictícia na aba Tabelas
+        # é indistinguível de dado do usuário. Tabela vazia é honesta.
+        logger.warning(
+            "[controle] get_transacoes_filtradas falhou — sem fallback mock.",
+            exc_info=True,
+        )
+        return []
 
 
 # ─────────────────────────────────────────────────────────────────────────────

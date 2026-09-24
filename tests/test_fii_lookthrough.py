@@ -1,3 +1,5 @@
+import pytest
+
 from core.fii_lookthrough import (
     dimension_is_applicable,
     has_observed_dimension,
@@ -108,3 +110,19 @@ def test_manager_dimension_is_applicable_to_every_fii_type():
                "manager": "61809182000130"}
         assert dimension_is_applicable(row, "manager") is True, fii_type
 
+
+
+def test_cnpj_sem_zero_a_esquerda_consolida_o_mesmo_emissor():
+    # brapi grava 2773542000122; CVM grava 02773542000122. É a mesma
+    # securitizadora e o teto de emissor precisa enxergar uma só.
+    row = {"issuers": {"2773542000122": 0.12, "02.773.542/0001-22": 0.08}}
+    assert normalized_dimension_mapping(row, "issuer") == {
+        "02773542000122": pytest.approx(0.20),
+    }
+
+
+def test_cpf_e_nome_nao_sao_preenchidos_como_cnpj():
+    row = {"debtors": {"12345678901": 0.1, " Devedor X ": 0.2}}
+    assert normalized_dimension_mapping(row, "debtor") == {
+        "12345678901": 0.1, "Devedor X": 0.2,
+    }
