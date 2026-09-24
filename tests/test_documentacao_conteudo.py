@@ -100,8 +100,12 @@ def test_as_chaves_de_flow_sao_unicas():
 
 
 def test_os_modulos_novos_tem_aba():
-    """Flow criado e não pendurado em `render` é documentação invisível."""
-    fonte = inspect.getsource(doc.render)
+    """Flow criado e não pendurado nas abas é documentação invisível.
+
+    As abas moram em ``render_corpo`` desde que a Documentação virou aba de
+    Configurações; ``render`` só acrescenta o cabeçalho da tela avulsa.
+    """
+    fonte = inspect.getsource(doc.render_corpo)
     for nome in ("FLOW_SELECAO_FIIS", "FLOW_EMPRESAS_EUA",
                  "FLOW_PORTFOLIO_GLOBAL", "FLOW_QUALIDADE_DADOS"):
         assert nome in fonte, f"{nome} sem aba"

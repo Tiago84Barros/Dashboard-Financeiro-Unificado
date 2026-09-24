@@ -51,7 +51,6 @@ _ROTAS: dict[str, str] = {
     "🌎 Empresas Americanas": "empresas_americanas",
     "🏬 Seleção de FIIs":      "fiis",
     "🌐 Portfólio Global":    "portfolio_global",
-    "📚 Documentação":        "documentacao",
     "⚙️ Configurações":       "configuracoes",
 }
 
@@ -97,7 +96,9 @@ with st.sidebar:
         # "Grau de Confiança" deixou de ser rota própria e virou aba dentro de
         # Configurações (``views/configuracoes.py``); a porta de entrada existe,
         # mudou de lugar (``memoria: diagnostico-precisa-porta-de-entrada``).
-        opcoes_sistema = ["📚 Documentação", "⚙️ Configurações"]
+        # "Documentação" seguiu o mesmo caminho em 24/09/2026: é a última aba
+        # de Configurações.
+        opcoes_sistema = ["⚙️ Configurações"]
         opcoes_menu = opcoes_visao + opcoes_financas + opcoes_invest + opcoes_sistema
 
     menu = st.radio(

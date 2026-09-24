@@ -110,6 +110,24 @@ def test_grau_de_confianca_e_aba_de_configuracoes():
                    "render_corpo")
 
 
+def test_documentacao_e_aba_de_configuracoes():
+    """Mesmo caminho do Grau de Confiança, em 24/09/2026.
+
+    Vale para as duas barras de Configurações -- a do admin e a do usuário
+    comum --, porque as duas viam a Documentação quando ela era rota da
+    sidebar. Tirá-la de uma só fecharia a porta para quem não é admin.
+    """
+    assert "📚 Documentação" not in _rotas()
+    fonte = Path("views/configuracoes.py").read_text(encoding="utf-8")
+    assert fonte.count('"📚 Documentação"') == 2
+    assert "from views.documentacao import render_corpo" in fonte
+    chamadas = (fonte.count("_render_documentacao()")
+                - fonte.count("def _render_documentacao()"))
+    assert chamadas == 2
+    assert hasattr(__import__("views.documentacao", fromlist=["render_corpo"]),
+                   "render_corpo")
+
+
 def test_o_modulo_de_cada_rota_existe_em_views():
     """Rota que aponta para módulo inexistente só falha ao ser clicada."""
     dic = _ATRIB["_ROTAS"]
