@@ -301,3 +301,108 @@ def build_carteira_classe_context(
         "- Não há neste contexto preço-alvo, projeção de lucro nem recomendação.",
     ]
     return "\n".join(blocos)
+
+
+def _brl(valor) -> str:
+    return (f"R$ {valor:,.2f}".replace(",", "@").replace(".", ",")
+            .replace("@", "."))
+
+
+def build_carteira_geral_context(carteira: dict, proventos: dict | None = None,
+                                 *, valores_reais: bool = False) -> str:
+    """Contexto da sub-aba Visão Geral: a carteira inteira, entre classes.
+
+    Os pesos são os mesmos ``pct_carteira`` que a tela mostra — sobre o valor
+    de mercado consolidado —, para a LLM e o dono da carteira lerem o mesmo
+    número. A renda de 12 meses sai como percentual do custo; em reais só com
+    o toggle ligado, junto com os totais.
+    """
+    carteira = carteira or {}
+    proventos = proventos or {}
+    posicoes = list(carteira.get("posicoes") or ())
+    por_classe = list(carteira.get("por_classe") or ())
+    por_setor = list(carteira.get("por_setor") or ())
+
+    blocos: list[str] = [
+        "ESCOPO: carteira inteira (todas as classes), como carregada na Visão Geral.",
+        f"Ativos com posição: {len(posicoes)}",
+        "Cotações ao vivo: " + ("disponíveis" if carteira.get("cotacoes_disponiveis")
+                                else "indisponíveis — valor de mercado pode ser o custo"),
+        "",
+        "ALOCAÇÃO POR CLASSE (percentual do valor de mercado):",
+    ]
+    for cls in por_classe:
+        rentab = _n(cls.get("rentab_pct"))
+        blocos.append(
+            f"- {cls.get('nome')}: {_pct(cls.get('pct_carteira'))} | "
+            f"{int(cls.get('num_ativos') or 0)} ativo(s) | mercado/custo "
+            + ("ausente" if rentab is None else f"{rentab:+.1f}%"))
+    if not por_classe:
+        blocos.append("- sem dado de alocação")
+
+    ordenadas = sorted(posicoes, key=lambda p: (-(_n(p.get("pct_carteira")) or 0.0),
+                                                str(p.get("ticker") or "")))
+    blocos += ["", "POSIÇÕES (peso na carteira | classe | setor | mercado/custo):"]
+    for pos in ordenadas:
+        rentab = _n(pos.get("rentab_pct"))
+        if pos.get("retorno_brl_disponivel") is False:
+            rentab = None
+        blocos.append(
+            f"- {str(pos.get('ticker') or '').upper()}: {_pct(pos.get('pct_carteira'))} | "
+            f"{pos.get('classe') or 'classe ausente'} | {pos.get('setor') or 'setor ausente'} | "
+            + ("ausente" if rentab is None else f"{rentab:+.1f}%"))
+    pesos = [(_n(p.get("pct_carteira")) or 0.0) / 100 for p in ordenadas]
+    if pesos:
+        hhi = sum(w * w for w in pesos)
+        blocos += [
+            f"- Soma das cinco maiores: {sum(pesos[:5]):.1%}",
+            "- Posições acima de 10%: " + (", ".join(
+                str(p.get("ticker")).upper() for p, w in zip(ordenadas, pesos) if w > .10)
+                or "nenhuma"),
+            f"- Número efetivo de ativos (1/HHI): {1 / hhi:.1f}" if hhi else "",
+        ]
+
+    if por_setor:
+        blocos += ["", "EXPOSIÇÃO POR SETOR (percentual do valor de mercado):"]
+        blocos += [f"- {s.get('nome')}: {_pct(s.get('pct_carteira'))}" for s in por_setor]
+
+    blocos += ["", "RETORNO E RENDA:"]
+    if carteira.get("rentabilidade_total_disponivel", True):
+        blocos.append("- Retorno mercado/custo da carteira: "
+                      f"{_pct(carteira.get('rentabilidade_total_pct'))} "
+                      "(não inclui proventos nem ajusta aportes/resgates)")
+    else:
+        blocos.append("- Retorno mercado/custo da carteira: indisponível em BRL "
+                      "(falta câmbio histórico de aquisição de posição em USD)")
+    custo = _n(carteira.get("total_investido"))
+    renda = _n(proventos.get("total_12m", proventos.get("total_ano")))
+    if renda is not None and custo:
+        blocos.append(f"- Renda recebida em 12 meses sobre o custo: {renda / custo:.2%}")
+    else:
+        blocos.append("- Renda recebida em 12 meses: ausente")
+    por_ativo = [a for a in proventos.get("por_ativo_12m") or () if _n(a.get("total"))]
+    if por_ativo and renda:
+        blocos.append("- Participação na renda de 12 meses: " + ", ".join(
+            f"{str(a.get('ticker')).upper()} {_n(a.get('total')) / renda:.1%}"
+            for a in sorted(por_ativo, key=lambda a: -_n(a.get("total")))[:10]))
+
+    if valores_reais:
+        blocos += ["", "VALORES EM REAIS (enviados a pedido do dono da carteira):",
+                   f"- Custo total: {_brl(custo or 0.0)}",
+                   f"- Valor de mercado: {_brl(_n(carteira.get('total_mercado')) or 0.0)}",
+                   f"- Renda recebida em 12 meses: {_brl(renda or 0.0)}"]
+        blocos += [f"- {str(p.get('ticker') or '').upper()}: "
+                   f"{_brl(_n(p.get('valor_mercado')) or 0.0)}" for p in ordenadas]
+    else:
+        blocos += ["", "Valores em reais e quantidades não são enviados."]
+
+    blocos += [
+        "",
+        "REGRAS DE LEITURA DESTE CONTEXTO:",
+        "- Retorno mercado/custo não é rentabilidade: ignora proventos, aportes "
+        "e resgates ao longo do tempo.",
+        "- Este contexto não traz múltiplos, notas nem documentos por ativo; "
+        "esse detalhe está nas sub-abas de cada classe.",
+        "- Ausência de dado nunca equivale a zero, a valor neutro ou a risco baixo.",
+    ]
+    return "\n".join(linha for linha in blocos if linha is not None)

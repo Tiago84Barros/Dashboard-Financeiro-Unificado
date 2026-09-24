@@ -27,6 +27,13 @@ _ESCOPOS = {
         "tem demonstração de companhia: não invente múltiplos, margens ou "
         "score para um fundo de índice. Considere risco cambial em BRL."
     ),
+    "geral": (
+        "a carteira inteira, somando ações, FIIs, Tesouro e exterior. O foco é "
+        "a alocação entre classes, a concentração por ativo e por setor, a "
+        "renda recebida e o retorno mercado/custo. O detalhe fundamentalista "
+        "de cada classe está nas outras sub-abas e NÃO está neste contexto: "
+        "não invente múltiplo, nota ou indicador de ativo."
+    ),
 }
 
 
@@ -35,7 +42,7 @@ def escopo_da_classe(classe: str) -> str:
     return _ESCOPOS.get(str(classe or "").lower(), _ESCOPOS["acoes"])
 
 
-def regras_da_analise() -> str:
+def regras_da_analise(*, geral: bool = False) -> str:
     """As regras que valem em TODA a aba Análise — chat e dossiê.
 
     A regra 7 já foi o oposto do que é hoje: proibia recomendação personalizada
@@ -47,15 +54,23 @@ def regras_da_analise() -> str:
     Uma função só, lida pelos dois chamadores, porque guarda duplicada diverge
     — e divergir aqui significa o chat permitir o que o dossiê proíbe na mesma
     aba, sem que nada quebre.
+
+    ``geral`` troca só o recorte da regra 2: na Visão Geral o contexto é a
+    carteira inteira, e "cobre apenas esta classe" seria falso.
     """
+    recorte = (
+        "ele cobre a carteira como carregada nesta tela, nada além dela."
+        if geral else
+        "ele cobre apenas esta classe — nunca fale do patrimônio total."
+    )
+    contexto = "CONTEXTO DA CARTEIRA" if geral else "CONTEXTO DA CLASSE"
     return (
         "REGRAS OBRIGATÓRIAS:\n"
-        "1. Use como fatos somente o que está no CONTEXTO DA CLASSE. Não invente "
+        f"1. Use como fatos somente o que está no {contexto}. Não invente "
         "cotação, múltiplo, dividendo, vencimento, nota, evento ou notícia.\n"
         "2. Trabalhe com os pesos percentuais. Valores em reais só existem se o "
         "contexto os trouxer; quando não trouxer, não estime, não peça e não "
-        "deduza o patrimônio do usuário. Mesmo quando trouxer, ele cobre apenas "
-        "esta classe — nunca fale do patrimônio total.\n"
+        f"deduza o patrimônio do usuário. Mesmo quando trouxer, {recorte}\n"
         "3. Separe explicitamente fato observado, comparação quantitativa e "
         "inferência sua.\n"
         "4. Toda média vem com cobertura. Se a cobertura for parcial, diga isso "
@@ -77,15 +92,18 @@ def regras_da_analise() -> str:
 def chat_com_carteira(context: str, history: Iterable[dict], user_message: str,
                       *, classe: str, model: str | None = None) -> str:
     """Responde sobre uma classe da carteira usando só o contexto auditável."""
+    geral = str(classe or "").lower() == "geral"
+    regras = regras_da_analise(geral=True) if geral else regras_da_analise()
+    titulo = "CONTEXTO DA CARTEIRA" if geral else "CONTEXTO DA CLASSE"
     system = (
         "Você é um analista quantitativo sênior conversando com o dono desta "
         f"carteira sobre {escopo_da_classe(classe)} Responda em português do "
         "Brasil.\n\n"
-        f"{regras_da_analise()}\n\n"
+        f"{regras}\n\n"
         "FORMATO: responda diretamente à pergunta. Quando útil, use as seções "
         "**Resposta objetiva**, **Evidências**, **Riscos e contrapontos** e "
         "**Dados ausentes**. Evite texto genérico de manual.\n\n"
-        f"=== CONTEXTO DA CLASSE ===\n{context}"
+        f"=== {titulo} ===\n{context}"
     )
     messages = [{"role": "system", "content": system}]
     for message in list(history)[-10:]:

@@ -47,6 +47,11 @@ _SUGESTOES: dict[str, tuple[str, ...]] = {
         "O que não dá para avaliar por serem ETFs?",
         "Como esta parcela se relaciona com o restante da carteira?",
     ),
+    "geral": (
+        "A alocação entre classes está equilibrada para a renda que recebo?",
+        "Onde está o maior risco de concentração da carteira?",
+        "Qual classe deveria receber o próximo aporte, e por quê?",
+    ),
 }
 
 _PLACEHOLDER = {
@@ -54,10 +59,12 @@ _PLACEHOLDER = {
     "fiis": "Pergunte sobre seus FIIs — P/VP, renda, vacância, tipo, pares…",
     "tesouro": "Pergunte sobre seus títulos — indexador, prazo, juro real, marcação…",
     "exterior": "Pergunte sobre o exterior — câmbio, composição, o que dá e o que não dá para avaliar…",
+    "geral": "Pergunte sobre a carteira inteira — alocação, concentração, renda, próximo aporte…",
 }
 
 _TITULO = {"acoes": "suas ações", "fiis": "seus FIIs",
-           "tesouro": "seu Tesouro Direto", "exterior": "sua posição no exterior"}
+           "tesouro": "seu Tesouro Direto", "exterior": "sua posição no exterior",
+           "geral": "sua carteira"}
 
 _DOSSIE_LABEL = {
     "acoes": "Concentração setorial, comparação com pares da B3, substituições "
@@ -102,6 +109,11 @@ def render_chat_carteira(
     o dossiê é pedido, para não pagar o custo a cada rerun.
     """
     classe = str(classe or "acoes").lower()
+    # A Visão Geral usa a mesma barra com a carteira inteira como escopo: o
+    # toggle de reais passa a cobrir o consolidado, e o dossiê — roteiro de
+    # doze seções escrito para UMA classe — não é oferecido.
+    geral = classe == "geral"
+    recorte = "da carteira inteira" if geral else "desta classe"
     presentes = tuple(sorted({str(t or "").strip().upper() for t in (tickers or ()) if t}))
     if not presentes:
         return
@@ -129,30 +141,49 @@ def render_chat_carteira(
 
     # Reais são opt-in e ficam DESMARCADOS por padrão: o contexto trabalha com
     # percentuais. Marcado, vai o valor de mercado por posição desta classe —
-    # nunca o patrimônio consolidado, nunca as outras classes.
+    # nunca o patrimônio consolidado, nunca as outras classes. Na Visão Geral
+    # o escopo É o consolidado, e o rótulo do toggle diz isso.
     valores_reais = st.checkbox(
-        "Enviar os valores em reais desta classe à LLM",
+        f"Enviar os valores em reais {recorte} à LLM",
         key=f"chat_carteira_{classe}_reais", value=False,
-        help="Desmarcado, a LLM vê só percentuais. Marcado, ela vê o valor de "
-             "mercado de cada posição desta classe — e só desta classe.")
+        help=("Desmarcado, a LLM vê só percentuais. Marcado, ela vê custo, "
+              "valor de mercado, renda e o valor de cada posição."
+              if geral else
+              "Desmarcado, a LLM vê só percentuais. Marcado, ela vê o valor de "
+              "mercado de cada posição desta classe — e só desta classe."))
 
-    st.markdown(_card_html(
-        f"Chat focado em {len(presentes)} ativo(s) desta classe",
-        "A resposta usa apenas o que esta aba carregou: composição em percentual, "
-        "médias com a respectiva cobertura e as notas do universo do banco. "
-        + ("Os valores em reais desta classe vão junto; o patrimônio total e as "
-           "outras classes não."
-           if valores_reais else
-           "Valores em reais e quantidades não são enviados.")
-        + " O que falta de dado é declarado em vez de preenchido.",
-        accent,
-    ), unsafe_allow_html=True)
+    if geral:
+        cartao = _card_html(
+            f"Chat sobre a carteira inteira — {len(presentes)} ativo(s)",
+            "A resposta usa o que esta aba mostra: alocação por classe e por "
+            "setor, peso de cada posição, retorno mercado/custo e renda de 12 "
+            "meses sobre o custo. "
+            + ("Os valores em reais vão junto." if valores_reais else
+               "Valores em reais e quantidades não são enviados.")
+            + " Múltiplos e notas por ativo ficam nas sub-abas de cada classe.",
+            accent,
+        )
+    else:
+        cartao = _card_html(
+            f"Chat focado em {len(presentes)} ativo(s) desta classe",
+            "A resposta usa apenas o que esta aba carregou: composição em percentual, "
+            "médias com a respectiva cobertura e as notas do universo do banco. "
+            + ("Os valores em reais desta classe vão junto; o patrimônio total e as "
+               "outras classes não."
+               if valores_reais else
+               "Valores em reais e quantidades não são enviados.")
+            + " O que falta de dado é declarado em vez de preenchido.",
+            accent,
+        )
+    st.markdown(cartao, unsafe_allow_html=True)
 
     col_dossie, _, col_limpar = st.columns([2, 3, 1])
-    with col_dossie:
-        gerar = st.button("📑 Gerar dossiê da classe",
-                          key=f"chat_carteira_{classe}_dossie", width="stretch",
-                          help=_DOSSIE_LABEL.get(classe, ""))
+    gerar = False
+    if not geral:
+        with col_dossie:
+            gerar = st.button("📑 Gerar dossiê da classe",
+                              key=f"chat_carteira_{classe}_dossie", width="stretch",
+                              help=_DOSSIE_LABEL.get(classe, ""))
     with col_limpar:
         if st.button("🗑️ Limpar chat", key=f"chat_carteira_{classe}_clear",
                      width="stretch"):
