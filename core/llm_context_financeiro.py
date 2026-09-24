@@ -139,8 +139,12 @@ def build_financas_chat_context(
 
     cats_mes = [
         {"nome": c.get("nome", "—"), "gasto": round(float(c.get("gasto", 0) or 0), 2),
-         "orcamento": round(float(c.get("orcamento", 0) or 0), 2),
-         "pct_usado": float(c.get("pct_usado", 0) or 0),
+         # None = sem orçamento cadastrado. Zero aqui viraria "orç. R$ 0,00 |
+         # 0%" e a IA leria um limite que ninguém definiu.
+         "orcamento": (round(float(c["orcamento"]), 2)
+                       if c.get("orcamento") else None),
+         "pct_usado": (float(c["pct_usado"])
+                       if c.get("orcamento") and c.get("pct_usado") is not None else None),
          "essencialidade": classificar_essencialidade(c.get("nome"))}
         for c in categorias
     ]
@@ -206,8 +210,9 @@ def build_financas_chat_context(
     L.append("DESPESAS POR CATEGORIA NO MÊS (gasto | orçamento | % usado | essencialidade):")
     if cats_mes:
         for c in cats_mes:
-            L.append(f"  {c['nome']}: {_brl(c['gasto'])} | orç. {_brl(c['orcamento'])} | "
-                     f"{_pct(c['pct_usado'])} | {c['essencialidade']}")
+            orc = (f"orç. {_brl(c['orcamento'])} | {_pct(c['pct_usado'])}"
+                   if c.get("orcamento") else "sem orçamento cadastrado | —")
+            L.append(f"  {c['nome']}: {_brl(c['gasto'])} | {orc} | {c['essencialidade']}")
     else:
         L.append("  Sem despesas categorizadas no mês.")
 
@@ -380,8 +385,8 @@ def build_cartao_chat_context(
     ]
 
     chart_meta = {
-        "categorias_mes": [{"nome": c["nome"], "gasto": c["gasto"], "orcamento": 0.0,
-                            "pct_usado": 0.0, "essencialidade": c["essencialidade"]}
+        "categorias_mes": [{"nome": c["nome"], "gasto": c["gasto"], "orcamento": None,
+                            "pct_usado": None, "essencialidade": c["essencialidade"]}
                            for c in cats_meta],
         "categorias_anual": cats_meta,
         "essencialidade_mes": {k: ess.get(k, 0.0) for k in
