@@ -4,35 +4,35 @@
     "extras": {
       "bootstrap_amostras": 2000,
       "ic_por_ano": {
-        "2016": 0.125,
-        "2017": -0.0345,
-        "2018": -0.1421,
-        "2019": 0.315,
-        "2020": 0.0417,
-        "2021": 0.1781,
-        "2022": 0.1766,
-        "2023": -0.0684,
-        "2024": 0.1675,
-        "2025": 0.1009
+        "2016": 0.052,
+        "2017": -0.0201,
+        "2018": -0.0758,
+        "2019": 0.2915,
+        "2020": 0.0864,
+        "2021": 0.1564,
+        "2022": 0.1921,
+        "2023": -0.0839,
+        "2024": 0.1707,
+        "2025": 0.11
       },
-      "n_medio_ativos_ano": 117.6,
-      "n_pares": 1176
+      "n_medio_ativos_ano": 108.1,
+      "n_pares": 1081
     },
     "fonte": "aba de Criacao de Portfolio B3 sobre banco publicado do App 1 (nuvem)",
     "formato": "coeficiente",
     "ic_confianca": 0.95,
-    "ic_high": 0.16500497670467873,
-    "ic_low": 0.00414056533765579,
+    "ic_high": 0.1600519684584535,
+    "ic_low": 0.018434714922607797,
     "janela": {
       "fim": "2025",
       "inicio": "2016"
     },
-    "media": 0.08597778042479778,
-    "medido_em": "2026-09-14",
+    "media": 0.08792841116215555,
+    "medido_em": "2026-09-24",
     "metrica": "Rank-IC anual do universo (score de t vs retorno t->t+1)",
     "motor": "b3",
     "n_periodos": 10,
-    "versao_metodologia": "2.26.0"
+    "versao_metodologia": "2.27.0"
   },
   "us": {
     "configuracao": "walk-forward anual, top_n=20, pesos=score",
