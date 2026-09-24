@@ -1180,7 +1180,7 @@ _B3_JOBS: dict[str, dict[str, str]] = {
         "file_types":  "xlsx",
         "parser_attr": "parse_b3_movimentacao",
         "job_name":    "import_b3_movimentacao",
-        "table_name":  "dividends, investment_transactions",
+        "table_name":  "dividends, investment_transactions, investment_movement_events",
         "source_name": "B3 — Movimentação (manual)",
         "skip_recompute": True,
     },
@@ -1444,6 +1444,7 @@ def _consolidar_resultados_lote(
         "positions_imported",
         "duplicates_skipped",
         "rows_skipped",
+        "events_recorded",
     )
     total: dict = {k: 0 for k in contadores}
     total["errors"] = []

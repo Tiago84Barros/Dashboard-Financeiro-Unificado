@@ -203,6 +203,7 @@ def conciliar_universo(
     proventos: list[dict],
     posicoes: dict[str, dict],
     tolerancia: float = 0.5,
+    movimentacao: dict | None = None,
 ) -> dict:
     """Separa os ativos cujo extrato explica a posição dos que não explica.
 
@@ -216,19 +217,33 @@ def conciliar_universo(
     transacoes: {data, ticker, tipo ('buy'|'sell'), quantidade, preco, taxas}
     proventos:  {data, ticker, valor}
     posicoes:   {ticker: {quantidade, valor_mercado}}
+    movimentacao: saída de ``core.movimentacao_b3.interpretar`` -- bonificação,
+                desdobro, subscrição e afins, que mudam a quantidade sem ser
+                negociação. Sem ela, esses ativos caem em "quantidade diverge".
     """
+    mov = movimentacao or {}
+    ajustes = mov.get("ajustes") or []
+    bloqueados: dict[str, str] = mov.get("bloqueados") or {}
+
     liquido: dict[str, float] = {}
-    comprou: set[str] = set()
+    comprou: set[str] = set(mov.get("subscritos") or ())
     for t in transacoes:
         q = float(t["quantidade"] or 0)
         sinal = 1.0 if t["tipo"] == "buy" else -1.0
         liquido[t["ticker"]] = liquido.get(t["ticker"], 0.0) + sinal * q
         if t["tipo"] == "buy":
             comprou.add(t["ticker"])
+    for a in ajustes:
+        liquido[a["ticker"]] = liquido.get(a["ticker"], 0.0) + float(a["delta_qtd"] or 0)
 
     incluidos: set[str] = set()
     excluidos: list[dict] = []
     for tk in sorted(set(liquido) | set(posicoes)):
+        if tk in bloqueados:
+            q_pos_b = float((posicoes.get(tk) or {}).get("quantidade") or 0)
+            if q_pos_b > tolerancia or abs(liquido.get(tk, 0.0)) > tolerancia or tk in comprou:
+                excluidos.append({"ticker": tk, "motivo": bloqueados[tk]})
+            continue
         q_pos = float((posicoes.get(tk) or {}).get("quantidade") or 0)
         q_liq = liquido.get(tk)
         em_carteira = tk in posicoes and q_pos > tolerancia
@@ -260,6 +275,9 @@ def conciliar_universo(
             fluxos.append((t["data"], -(bruto + taxas)))
         else:
             fluxos.append((t["data"], bruto - taxas))
+    for a in ajustes:
+        if a["ticker"] in incluidos and a.get("caixa"):
+            fluxos.append((a["data"], float(a["caixa"])))
     for p in proventos:
         if p["ticker"] in incluidos and p["valor"]:
             fluxos.append((p["data"], float(p["valor"])))
