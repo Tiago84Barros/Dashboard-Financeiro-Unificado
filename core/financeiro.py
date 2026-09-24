@@ -13,7 +13,7 @@ Chave "data_source" sempre presente no dict retornado:
 
 Views consultadas (Fase 4.9):
   v_net_worth, v_monthly_cashflow, v_category_spending_mtd,
-  v_investment_summary, v_budget_usage_mtd, dividends
+  v_investment_summary, dividends; budgets via core.orcamento
 
 Padrão de uso nas páginas:
     from core.financeiro import get_visao_geral
@@ -24,6 +24,7 @@ Padrão de uso nas páginas:
 import logging
 import math
 
+from core import orcamento
 from core.config import settings
 from core.user_context import user_cache_data
 
@@ -223,16 +224,14 @@ def _visao_geral_real() -> dict:
             {"uid": owner},
         ).fetchall()
 
-        # ── 4. Orçamentos do mês (v_budget_usage_mtd) ─────────────────────
-        budget_rows = conn.execute(
-            text(
-                "SELECT category_name, amount_limit, amount_spent, usage_pct "
-                "FROM v_budget_usage_mtd "
-                "WHERE user_id = :uid "
-                "ORDER BY usage_pct DESC NULLS LAST"
-            ),
-            {"uid": owner},
-        ).fetchall()
+        # ── 4. Orçamentos em vigor no mês (mesma regra do Controle) ───────
+        # v_budget_usage_mtd só enxergava o limite gravado no próprio mês;
+        # o Controle carrega o último limite para a frente. As duas telas
+        # agora leem a mesma regra (core.orcamento.vigentes).
+        from datetime import date as _date_cls
+
+        _hoje = _date_cls.today()
+        budget_map = orcamento.carregar_vigentes(conn, owner, _date_cls(_hoje.year, _hoje.month, 1))
 
         # ── 5. Resumo de investimentos (v_investment_summary) ─────────────
         inv_rows = conn.execute(
@@ -335,42 +334,30 @@ def _visao_geral_real() -> dict:
     maior_cat_nome  = cat_rows[0].category_name if cat_rows else "—"
     maior_cat_valor = _f(cat_rows[0].total_spent) if cat_rows else 0.0
 
-    budget_map: dict[str, tuple] = {}
-    cat_alerta_nome = maior_cat_nome
-    cat_alerta_pct  = 0.0
-
-    if budget_rows:
-        # Há orçamentos configurados → usar usage_pct real
-        budget_map = {
-            r.category_name: (_f(r.amount_limit), _f(r.amount_spent), _f(r.usage_pct))
-            for r in budget_rows
-        }
-        cat_alerta_nome = budget_rows[0].category_name
-        cat_alerta_pct  = _f(budget_rows[0].usage_pct)
-
-    categorias_despesa = []
-    for r in cat_rows[:7]:
-        nome  = r.category_name
-        gasto = _f(r.total_spent)
-        if nome in budget_map:
-            orcamento = budget_map[nome][0]
-            pct_usado = budget_map[nome][2]
-        else:
-            # Sem orçamento: referência = gasto × 1.2 (83 % de uso → visual limpo)
-            orcamento = round(gasto * 1.2, 2)
-            pct_usado = round((gasto / orcamento * 100), 1) if orcamento > 0 else 0.0
-        categorias_despesa.append(
-            {"nome": nome, "gasto": gasto, "orcamento": orcamento, "pct_usado": pct_usado}
-        )
-
-    cats_no_limite = sum(1 for c in categorias_despesa if c["pct_usado"] >= 90)
+    # Sem limite cadastrado a categoria fica SEM orçamento: o antigo
+    # "gasto × 1,2" deixava toda categoria 83% usada e dava 20 pontos cheios
+    # de "orçamento respeitado" na nota de saúde a quem nunca orçou nada.
+    categorias_despesa = [
+        orcamento.linha_categoria(r.category_name, _f(r.total_spent),
+                                  budget_map.get(r.category_name))
+        for r in cat_rows[:7]
+    ]
+    todas_orcadas = orcamento.consumo(
+        {r.category_name: _f(r.total_spent) for r in cat_rows}, budget_map)
+    res_orc = orcamento.resumo(todas_orcadas)
+    mais_usada = max(
+        (c for c in todas_orcadas if c["pct_usado"] is not None),
+        key=lambda c: c["pct_usado"], default=None,
+    )
+    cat_alerta_nome = mais_usada["nome"] if mais_usada else maior_cat_nome
+    cat_alerta_pct = mais_usada["pct_usado"] if mais_usada else 0.0
 
     # ── Score de saúde ────────────────────────────────────────────────────
     saude_score = calcular_saude_score(
         taxa_poupanca=taxa_poup,
         meses_reserva=meses_reserva,
-        categorias_estouradas=cats_no_limite,
-        total_categorias=len(categorias_despesa),
+        categorias_estouradas=res_orc["categorias_estouradas"],
+        total_categorias=res_orc["categorias_orcadas"],
         rentabilidade_positiva=False,   # cotações ausentes → retorno = 0
     )
 
@@ -620,7 +607,8 @@ def calcular_saude_score(
     Componentes:
       40 pts → taxa de poupança ≥ 30% (proporcional)
       30 pts → reserva de emergência ≥ 6 meses (proporcional)
-      20 pts → orçamento respeitado (proporção de categorias fora do limite)
+      20 pts → orçamento respeitado (proporção de categorias fora do limite);
+               sem orçamento cadastrado, os outros 80 são reescalados para 100
       10 pts → investimentos com rentabilidade positiva
 
     `categorias_estouradas` conta categorias com uso ≥ 90% do orçamento (ruim);
@@ -634,13 +622,18 @@ def calcular_saude_score(
     # Meses de reserva (meta: 6 meses)
     score += min(meses_reserva / 6.0, 1.0) * 30
 
-    # Orçamento respeitado (categorias abaixo de 90% do limite)
-    if total_categorias > 0:
-        categorias_ok = total_categorias - categorias_estouradas
-        score += (categorias_ok / total_categorias) * 20
-
     # Rentabilidade positiva
     if rentabilidade_positiva:
         score += 10
+
+    # Orçamento respeitado (categorias abaixo de 90% do limite). Sem nenhum
+    # orçamento o componente não existe: os outros 80 pontos são reescalados
+    # para 100, em vez de dar 20 de graça (o antigo) ou tirar 20 de quem só
+    # não orçou (punir a ausência como se fosse estouro).
+    if total_categorias > 0:
+        categorias_ok = total_categorias - categorias_estouradas
+        score += (categorias_ok / total_categorias) * 20
+    else:
+        score = score * 100 / 80
 
     return round(score)

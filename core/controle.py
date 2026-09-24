@@ -54,6 +54,7 @@ from collections import Counter
 from datetime import date as _date
 from typing import Optional
 
+from core import orcamento
 from core.categorias import (
     CHAVES_DE_INVESTIMENTO,
     SQL_INVESTIMENTO,
@@ -214,15 +215,6 @@ _SQL_TRANSACOES = """
     ORDER  BY t.due_date DESC, t.created_at DESC
 """
 
-_SQL_ORCAMENTOS = """
-    SELECT
-        c.name  AS category_name,
-        b.amount_limit
-    FROM   budgets b
-    JOIN   categories c ON c.id = b.category_id
-    WHERE  b.user_id    = :uid
-      AND  b.month_year = :mes_inicio
-"""
 
 _SQL_CATEGORIAS = """
     SELECT id::text, name, type
@@ -546,6 +538,36 @@ def get_contas_cartao_credito() -> list[dict]:
         return []
 
 
+@user_cache_data(ttl=60)
+def get_orcamentos_vigentes(ano: int, mes: int) -> dict[str, float]:
+    """{category_id: limite} em vigor no mês, para o editor de orçamento.
+
+    Vazio em mock ou em falha: o editor abre em branco em vez de derrubar a
+    página, e a tela de consumo continua lendo `get_controle`.
+    """
+    if settings.MOCK_MODE:
+        return {}
+    try:
+        from sqlalchemy import text
+
+        from core.database import get_engine
+
+        engine = get_engine()
+        owner = settings.OWNER_USER_ID
+        if engine is None or not owner:
+            return {}
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text(orcamento.SQL_ORCAMENTOS_VIGENTES),
+                {"uid": owner, "mes_inicio": _date(ano, mes, 1)},
+            ).fetchall()
+        return {r.category_id: float(r.amount_limit) for r in rows
+                if r.amount_limit is not None and float(r.amount_limit) > 0}
+    except Exception as exc:
+        logger.warning("[controle] Falha ao carregar orçamentos: %s", exc)
+        return {}
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # API pública — escrita
 # ─────────────────────────────────────────────────────────────────────────────
@@ -560,6 +582,7 @@ def _clear_controle_caches() -> None:
         "get_historico_cc_mensal",
         "get_transacoes_cartao_credito",
         "get_dividas_cc",
+        "get_orcamentos_vigentes",
     ):
         cached_fn = globals().get(cached_name)
         if hasattr(cached_fn, "clear"):
@@ -1176,6 +1199,50 @@ def inserir_transacao(
 
     except Exception as exc:
         logger.error("[controle] Falha ao inserir transação: %s", exc)
+        return False, str(exc)
+
+
+def salvar_orcamentos(ano: int, mes: int,
+                      limites: dict[str, float | None]) -> tuple[bool, str]:
+    """Grava {category_id: limite} a partir do mês (ano, mes).
+
+    O limite vale deste mês em diante, até outro mês gravar um valor novo
+    (`core.orcamento.vigentes`). None ou 0 encerra o orçamento da categoria
+    a partir daqui, sem apagar o histórico dos meses anteriores.
+    """
+    if settings.MOCK_MODE:
+        return False, "Modo mock ativo — orçamento não gravado."
+    linhas = []
+    for cat_id, limite in (limites or {}).items():
+        try:
+            valor = round(float(limite or 0.0), 2)
+        except (TypeError, ValueError):
+            return False, "Limite inválido."
+        if valor < 0:
+            return False, "O limite não pode ser negativo."
+        linhas.append({"category_id": cat_id, "limite": valor})
+    if not linhas:
+        return True, ""
+    try:
+        from sqlalchemy import text
+
+        from core.database import get_engine
+
+        engine = get_engine()
+        if engine is None:
+            return False, "Banco não configurado."
+        owner = settings.OWNER_USER_ID
+        if not owner:
+            return False, "OWNER_USER_ID não configurado."
+        mes_inicio = _date(ano, mes, 1)
+        with engine.begin() as conn:
+            for linha in linhas:
+                conn.execute(text(orcamento.SQL_UPSERT_ORCAMENTO),
+                             {"uid": owner, "mes_inicio": mes_inicio, **linha})
+        _clear_controle_caches()
+        return True, ""
+    except Exception as exc:
+        logger.error("[controle] Falha ao gravar orçamento: %s", exc)
         return False, str(exc)
 
 
@@ -1822,14 +1889,7 @@ def _controle_mock(ano: int, mes: int) -> dict:
     taxa     = round(saldo / receitas * 100, 1) if receitas > 0 else 0.0
 
     # Categorias
-    cats = []
-    for nome, gasto, orc in _MOCK_CATS:
-        pct = round(gasto / orc * 100, 1) if orc > 0 else 0.0
-        tipo_badge = "erro" if pct >= 90 else "alerta" if pct >= 75 else "sucesso"
-        cats.append({
-            "nome": nome, "gasto": gasto, "orcamento": orc,
-            "pct_usado": pct, "tipo_badge": tipo_badge,
-        })
+    cats = [orcamento.linha_categoria(nome, gasto, orc) for nome, gasto, orc in _MOCK_CATS]
 
     # Transações
     trans = []
@@ -1862,6 +1922,7 @@ def _controle_mock(ano: int, mes: int) -> dict:
         "taxa_poupanca_pct": taxa,
         "num_transacoes":    len(trans),
         "categorias":        cats,
+        "orcamento":         {"linhas": cats, **orcamento.resumo(cats)},
         "transacoes":        trans,
     }
 
@@ -1912,10 +1973,7 @@ def _controle_real(ano: int, mes: int) -> dict:
             {"uid": owner, "ano": ano, "mes": mes},
         ).fetchall()
 
-        budget_rows = conn.execute(
-            text(_SQL_ORCAMENTOS),
-            {"uid": owner, "mes_inicio": mes_inicio},
-        ).fetchall()
+        budget_map = orcamento.carregar_vigentes(conn, owner, mes_inicio)
 
     def _f(v) -> float:
         return float(v) if v is not None else 0.0
@@ -1937,9 +1995,6 @@ def _controle_real(ano: int, mes: int) -> dict:
     saldo    = round(receitas - despesas, 2)
     taxa     = round(saldo / receitas * 100, 1) if receitas > 0 else 0.0
 
-    # Orçamentos mapeados
-    budget_map: dict[str, float] = {r.category_name: _f(r.amount_limit) for r in budget_rows}
-
     # Categorias de despesa — idem, sem compras de cartão de crédito
     cat_gastos: dict[str, float] = {}
     for r in tx_rows:
@@ -1947,15 +2002,10 @@ def _controle_real(ano: int, mes: int) -> dict:
             cat = r.category_name
             cat_gastos[cat] = cat_gastos.get(cat, 0.0) + abs(_f(r.amount))
 
-    categorias = []
-    for nome, gasto in sorted(cat_gastos.items(), key=lambda x: x[1], reverse=True):
-        orc = budget_map.get(nome, round(gasto * 1.2, 2))   # implicit budget if absent
-        pct = round(gasto / orc * 100, 1) if orc > 0 else 0.0
-        tipo_badge = "erro" if pct >= 90 else "alerta" if pct >= 75 else "sucesso"
-        categorias.append({
-            "nome": nome, "gasto": round(gasto, 2), "orcamento": orc,
-            "pct_usado": pct, "tipo_badge": tipo_badge,
-        })
+    # Sem limite cadastrado, a categoria fica SEM orçamento. O antigo
+    # "gasto × 1,2" deixava tudo 83% usado e parecia controle.
+    linhas_orc = orcamento.consumo(cat_gastos, budget_map)
+    categorias = [c for c in linhas_orc if c["gasto"] > 0]
 
     # Transações
     transacoes = []
@@ -1996,6 +2046,7 @@ def _controle_real(ano: int, mes: int) -> dict:
         "taxa_poupanca_pct": taxa,
         "num_transacoes":    len(transacoes),
         "categorias":        categorias,
+        "orcamento":         {"linhas": linhas_orc, **orcamento.resumo(linhas_orc)},
         "transacoes":        transacoes,
     }
 

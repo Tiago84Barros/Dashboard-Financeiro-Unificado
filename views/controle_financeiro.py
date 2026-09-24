@@ -9,7 +9,8 @@ Replica FIELMENTE as 4 seções do app original controlefinanceirotsb.streamlit.
 
 Adições do app unificado preservadas (não existiam no original):
   - Pizza de despesas na aba Análises
-  - Orçamento vs Realizado (overlay)
+  - Aba Orçamento: limite por categoria (vale do mês gravado em diante)
+  - Conciliação lançamento manual × extrato importado (aba Tabelas)
   - Barras de progresso por categoria
   - (Taxa de poupança mensal histórica removida)
 
@@ -31,6 +32,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from core import orcamento as orc
 from core.card_categorization import REVIEW_SENTINEL, categorias_disponiveis
 from core.categorias import listar as listar_categorias
 from core.chat_memory import (
@@ -51,9 +53,12 @@ from core.controle import (
     get_gastos_categoria_anual,
     get_historico_anual,
     get_opcoes_formulario,
+    get_orcamentos_vigentes,
     get_transacoes_cartao_credito,
     get_transacoes_filtradas,
     inserir_transacao,
+    is_investment_category,
+    salvar_orcamentos,
 )
 from core.controle_indicadores import indicadores_caixa
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
@@ -243,40 +248,6 @@ def _fig_pizza_cats(cats: list) -> go.Figure:
         showlegend=True,
         legend={"font": {"size": 11}, "bgcolor": "rgba(0,0,0,0)"},
         margin={"t": 10, "b": 10, "l": 0, "r": 0}, height=300,
-    )
-    return fig
-
-
-def _fig_orcamento(cats: list) -> go.Figure:
-    nomes    = [c["nome"]     for c in cats]
-    gastos   = [c["gasto"]    for c in cats]
-    orcs     = [c["orcamento"] for c in cats]
-    cores    = [
-        _COR_DESPESA if c["pct_usado"] >= 90 else
-        "#F6C90E"    if c["pct_usado"] >= 70 else
-        _COR_RECEITA for c in cats
-    ]
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        name="Orçamento", x=nomes, y=orcs,
-        marker_color="#1E2533", marker_line_color="#2D3748", marker_line_width=1,
-        hovertemplate="<b>%{x}</b><br>Orçamento: R$ %{y:,.2f}<extra></extra>",
-    ))
-    fig.add_trace(go.Bar(
-        name="Gasto", x=nomes, y=gastos, marker_color=cores,
-        opacity=0.9,
-        hovertemplate="<b>%{x}</b><br>Gasto: R$ %{y:,.2f}<extra></extra>",
-    ))
-    fig.update_layout(
-        barmode="overlay",
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font_color=_COR_NEUTRO,
-        legend={"orientation": "h", "y": -0.22, "font": {"size": 11},
-                "bgcolor": "rgba(0,0,0,0)"},
-        margin={"t": 10, "b": 10, "l": 0, "r": 0}, height=300,
-        xaxis={"showgrid": False, "tickangle": -30},
-        yaxis={"showgrid": True, "gridcolor": "#1E2533",
-               "tickformat": ",.0f", "tickprefix": "R$ "},
     )
     return fig
 
@@ -869,14 +840,23 @@ def _tab_analises(
             _COR_NEUTRO,
         ), unsafe_allow_html=True)
     with col_m3:
-        maior_pct = maior_cat["pct_usado"] if maior_cat else 0
+        # Sem orçamento cadastrado não há "% do orçamento" a mostrar: o
+        # antigo limite implícito (gasto × 1,2) dava 83% para qualquer um.
+        maior_pct = maior_cat.get("pct_usado") if maior_cat else None
+        if not maior_cat:
+            desc_maior, cor_maior = "Sem dados.", _COR_NEUTRO
+        elif maior_pct is None:
+            desc_maior = f"{fmt_moeda(maior_cat['gasto'])} · sem orçamento cadastrado"
+            cor_maior = _COR_NEUTRO
+        else:
+            desc_maior = f"{fmt_moeda(maior_cat['gasto'])} ({maior_pct:.0f}% do orçamento)"
+            cor_maior = (_COR_DESPESA if maior_pct >= 90 else
+                         "#F6C90E" if maior_pct >= 70 else _COR_RECEITA)
         st.markdown(_kpi_card(
             "Maior Categoria",
             maior_cat["nome"] if maior_cat else "—",
-            f"{fmt_moeda(maior_cat['gasto'])} ({maior_pct:.0f}% do orçamento)"
-            if maior_cat else "Sem dados.",
-            _COR_DESPESA if maior_pct >= 90 else
-            "#F6C90E"    if maior_pct >= 70 else _COR_RECEITA,
+            desc_maior,
+            cor_maior,
         ), unsafe_allow_html=True)
     with col_m4:
         st.markdown(_kpi_card(
@@ -1306,6 +1286,172 @@ def _editor_lancamentos(txs: list, form_key: str, editor_key: str, limit: int = 
         st.error(e)
     if ok_count == 0 and not erros:
         st.info("Nenhuma alteração detectada.")
+
+
+def _categorias_orcaveis(opcoes: dict) -> list[dict]:
+    """Categorias de despesa que aceitam limite (aporte não é gasto)."""
+    return [
+        c for c in (opcoes.get("categorias") or [])
+        if str(c.get("tipo") or "") == "expense"
+        and not is_investment_category(c.get("nome"))
+    ]
+
+
+def _linha_consumo_html(linha: dict) -> str:
+    """Barra de consumo de uma categoria orçada, num bloco HTML só."""
+    pct = float(linha.get("pct_usado") or 0.0)
+    cor = (_COR_DESPESA if pct >= orc.LIMIAR_ESTOURO else
+           "#F6C90E" if pct >= orc.LIMIAR_ALERTA else _COR_RECEITA)
+    largura = min(pct, 100.0)
+    nome = html.escape(str(linha.get("nome") or "—"))
+    valores = escapar_cifrao(
+        f"{fmt_moeda(linha['gasto'])} de {fmt_moeda(linha['orcamento'])} · {pct:.0f}%")
+    return (
+        '<div style="background:var(--app-surface);border:1px solid var(--app-border);'
+        'border-radius:8px;padding:10px 14px;margin-bottom:6px;">'
+        '<div style="display:flex;justify-content:space-between;font-size:0.82rem;'
+        f'color:var(--app-text);margin-bottom:6px;"><span>{nome}</span>'
+        f'<span style="color:{cor_token(cor)};font-weight:700">{valores}</span></div>'
+        '<div style="background:var(--app-bg);border-radius:4px;height:6px;">'
+        f'<div style="width:{largura:.1f}%;background:{cor_token(cor)};height:6px;'
+        'border-radius:4px;"></div></div></div>'
+    )
+
+
+def _tab_orcamento(d: dict, ano: int, mes: int, rotulo_mes: str) -> None:
+    """Orçamento por categoria: consumo do mês e editor de limites.
+
+    O limite vale do mês em que é gravado em diante (core.orcamento.vigentes).
+    Categoria sem limite aparece como "sem orçamento", nunca com um limite
+    inventado.
+    """
+    dados_orc = d.get("orcamento") or {}
+    linhas = dados_orc.get("linhas") or []
+    orcadas = [c for c in linhas if c.get("orcamento")]
+    sem_orc = [c for c in linhas if not c.get("orcamento") and c["gasto"] > 0]
+
+    _secao_titulo("🎯", f"Orçamento de {rotulo_mes}")
+    cobertura = dados_orc.get("cobertura_pct")
+    estouradas = dados_orc.get("categorias_estouradas", 0)
+    c1, c2, c3 = st.columns(3, gap="medium")
+    with c1:
+        st.markdown(_kpi_card(
+            "Categorias orçadas",
+            str(dados_orc.get("categorias_orcadas", 0)),
+            f"{estouradas} com 90% ou mais do limite usado.",
+            _COR_DESPESA if estouradas else _COR_NEUTRO,
+        ), unsafe_allow_html=True)
+    with c2:
+        st.markdown(_kpi_card(
+            "Gasto nas orçadas",
+            fmt_moeda(dados_orc.get("gasto_orcado", 0.0)),
+            f"Limite somado: {fmt_moeda(dados_orc.get('limite_total', 0.0))}.",
+            _COR_NEUTRO,
+        ), unsafe_allow_html=True)
+    with c3:
+        st.markdown(_kpi_card(
+            "Cobertura do orçamento",
+            "—" if cobertura is None else f"{cobertura:.0f}%",
+            "Parte do gasto do mês em categoria com limite. Tudo dentro do "
+            "limite com cobertura baixa não é mês sob controle.",
+            _COR_NEUTRO,
+        ), unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    if orcadas:
+        st.markdown("".join(_linha_consumo_html(c) for c in orcadas),
+                    unsafe_allow_html=True)
+    else:
+        st.caption("Nenhuma categoria tem limite em vigor neste mês.")
+    if sem_orc:
+        nomes = ", ".join(f"{c['nome']} ({fmt_moeda(c['gasto'])})" for c in sem_orc)
+        st.caption(escapar_cifrao(f"Gasto sem orçamento: {nomes}."))
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    _secao_titulo("✏️", "Definir limites")
+    st.caption(
+        f"O limite gravado vale de {rotulo_mes} em diante, até você gravar outro "
+        "valor num mês seguinte. Zerar encerra o orçamento da categoria daqui para "
+        "a frente, sem mexer nos meses anteriores."
+    )
+    categorias = _categorias_orcaveis(get_opcoes_formulario())
+    if not categorias:
+        st.caption("Sem categorias de despesa cadastradas.")
+        return
+    vigentes = get_orcamentos_vigentes(ano, mes)
+    gastos = {c["nome"]: c["gasto"] for c in linhas}
+    with st.form("cf_form_orcamento"):
+        cols = st.columns(3, gap="small")
+        valores: dict[str, float] = {}
+        for n, cat in enumerate(sorted(categorias, key=lambda c: str(c["nome"]))):
+            cid = str(cat["id"])
+            with cols[n % 3]:
+                valores[cid] = st.number_input(
+                    str(cat["nome"]),
+                    min_value=0.0,
+                    step=50.0,
+                    value=float(vigentes.get(cid, 0.0)),
+                    help=escapar_cifrao(
+                        f"Gasto no mês: {fmt_moeda(gastos.get(cat['nome'], 0.0))}"),
+                    key=f"cf_orc_{cid}",
+                )
+        gravar = st.form_submit_button("Salvar orçamento", type="primary")
+    if not gravar:
+        return
+    mudou = {
+        cid: v for cid, v in valores.items()
+        if round(v, 2) != round(float(vigentes.get(cid, 0.0)), 2)
+    }
+    if not mudou:
+        st.info("Nenhum limite mudou.")
+        return
+    ok, msg = salvar_orcamentos(ano, mes, mudou)
+    if ok:
+        st.success(f"{len(mudou)} limite(s) gravado(s) a partir de {rotulo_mes}.")
+        st.rerun()
+    else:
+        st.error(f"Não foi possível gravar: {msg}")
+
+
+def _render_conciliacao(d: dict) -> None:
+    """Lançamento manual e extrato importado que parecem a mesma movimentação.
+
+    Os dois contam no fluxo de caixa; digitar o gasto e depois subir o
+    extrato soma a mesma saída duas vezes sem erro nenhum. A tela só aponta:
+    quem decide qual apagar é o usuário.
+    """
+    pares = orc.duplicatas_provaveis(d.get("transacoes") or [])
+    if not pares:
+        return
+    total = sum(p["valor"] for p in pares)
+    with st.expander(
+        escapar_cifrao(f"⚠️ {len(pares)} possível(is) lançamento(s) em dobro no mês "
+                       f"({fmt_moeda(total)})"),
+        expanded=False,
+    ):
+        st.caption(
+            f"Mesma conta, mesmo valor e datas a até {orc.TOLERANCIA_DIAS} dias: "
+            "um lançamento manual e um do extrato importado. Se forem a mesma "
+            "movimentação, ela está contada duas vezes no mês. Confira e remova a "
+            "cópia manual na edição de lançamentos abaixo. Pares que cruzam a "
+            "virada do mês não aparecem aqui."
+        )
+        blocos = []
+        for p in pares:
+            m, i = p["manual"], p["importado"]
+            valor = escapar_cifrao(fmt_moeda(p["valor"]))
+            blocos.append(
+                '<div style="background:var(--app-surface);border:1px solid var(--app-border);'
+                'border-radius:8px;padding:8px 12px;margin-bottom:6px;font-size:0.80rem;'
+                'color:var(--app-text);">'
+                f'<b>{valor}</b> · {html.escape(str(m.get("conta") or "—"))}<br>'
+                '<span style="color:var(--app-muted)">'
+                f'Manual {html.escape(str(m.get("data_fmt") or "—"))}: '
+                f'{html.escape(str(m.get("descricao") or "—"))}<br>'
+                f'Extrato {html.escape(str(i.get("data_fmt") or "—"))}: '
+                f'{html.escape(str(i.get("descricao") or "—"))}</span></div>'
+            )
+        st.markdown("".join(blocos), unsafe_allow_html=True)
 
 
 def _tab_tabelas(d: dict) -> None:
@@ -3381,15 +3527,19 @@ def render() -> None:
     # estado preservado (st.tabs não expõe `key` e voltava para Dashboard quando
     # um filtro interno disparava rerun) e rolagem ao topo na troca de seção —
     # sem ela, Análises e Cartão de Crédito abriam no rodapé, junto do chat.
-    _SECOES = ["📊  Dashboard", "📈  Análises", "🧾  Tabelas", "💳  Cartão de Crédito"]
+    _SECOES = ["📊  Dashboard", "📈  Análises", "🎯  Orçamento", "🧾  Tabelas",
+               "💳  Cartão de Crédito"]
     secao = abas_secao(_SECOES, key="cf_secao_ativa", default=_SECOES[0])
 
     if secao == _SECOES[1]:
         _tab_analises(d, historico, hist_anual, gastos_cartao, investido_mes,
                       evolucao, sel["ano"], sel["mes"])
     elif secao == _SECOES[2]:
-        _tab_tabelas(d)
+        _tab_orcamento(d, sel["ano"], sel["mes"], sel["label"])
     elif secao == _SECOES[3]:
+        _render_conciliacao(d)
+        _tab_tabelas(d)
+    elif secao == _SECOES[4]:
         _tab_cartao(d, sel["ano"], sel["mes"])
     else:
         _tab_dashboard(d, historico, fluxo_inv, investido_mes)
