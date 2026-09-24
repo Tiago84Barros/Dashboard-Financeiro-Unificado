@@ -713,11 +713,18 @@ def aplicar_tema(theme: str = "dark") -> None:
     """
     from design.tema_canvas import instalar_adaptadores, registrar_tema
 
-    st.markdown(_CSS, unsafe_allow_html=True)
+    # Um `st.markdown` só, sempre: o CSS claro entra concatenado no mesmo
+    # bloco em vez de virar um segundo elemento. Dois elementos no claro e um
+    # no escuro faziam o número de elementos ACIMA da página depender do tema,
+    # e qualquer troca de tema no meio da sessão deslocava o `st.tabs` de
+    # Configurações -- o Streamlit devolve a seleção para a primeira aba
+    # quando o grupo de abas muda de posição. Medido em 24/09/2026.
+    css = _CSS
+    if theme == "light":
+        from design.theme_light import LIGHT_CSS
+        css += LIGHT_CSS
+    st.markdown(css, unsafe_allow_html=True)
     # Gráficos e tabelas desenham em canvas e não enxergam o CSS: os
     # adaptadores leem o tema da sessão na hora de renderizar cada elemento.
     registrar_tema(theme)
     instalar_adaptadores()
-    if theme == "light":
-        from design.theme_light import LIGHT_CSS
-        st.markdown(LIGHT_CSS, unsafe_allow_html=True)
