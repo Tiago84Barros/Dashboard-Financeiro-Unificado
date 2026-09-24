@@ -484,6 +484,92 @@ def _sidebar_render(ano: int, mes: int) -> None:
 # TAB 1 — Dashboard
 # ══════════════════════════════════════════════════════════════════════════════
 
+_LANC_COLS = [1.3, 2.3, 1.15, 1.2, 1.4, 1.5]
+_LANC_POR_PAGINA = 10
+
+
+def _pagina_lancamentos(total: int) -> range:
+    """Faixa de linhas visível no editor claro dos Últimos Lançamentos.
+
+    Cada lançamento custa seis widgets nativos, e trinta de uma vez deixam a
+    tela lenta. O seletor fica FORA do form de propósito: dentro dele o
+    Streamlit só leria a troca de página no submit.
+    """
+    if total <= _LANC_POR_PAGINA:
+        return range(total)
+    paginas = (total + _LANC_POR_PAGINA - 1) // _LANC_POR_PAGINA
+    rotulos = [
+        f"{p * _LANC_POR_PAGINA + 1}–"
+        f"{min((p + 1) * _LANC_POR_PAGINA, total)} de {total}"
+        for p in range(paginas)
+    ]
+    escolhida = st.selectbox(
+        "Linhas", rotulos, key="dash_lanc_pagina",
+        help="A gravação salva o que você alterou nesta página.",
+    )
+    p = rotulos.index(escolhida)
+    return range(p * _LANC_POR_PAGINA, min((p + 1) * _LANC_POR_PAGINA, total))
+
+
+def _editor_lancamentos_claro(
+    df_edit: pd.DataFrame, fatia: range,
+    tipo_opcoes: list, cat_nomes: list, conta_nomes: list,
+) -> pd.DataFrame:
+    """Últimos Lançamentos desenhados com widgets nativos, para o tema claro.
+
+    Mesmo motivo dos outros dois editores desta tela: o ``st.data_editor`` pinta
+    a grade num canvas cujas cores o Streamlit monta em JS a partir do tema do
+    config (escuro), e CSS não alcança — medido injetando as ``--gdg-*`` no
+    container do grid, que passam a valer sem que o canvas mude de cor
+    (`memoria: canvas-do-data-editor-ignora-css`). Aqui cada campo vira widget
+    nativo, que obedece à camada clara.
+
+    Devolve o quadro INTEIRO, não só a página visível: as linhas de fora voltam
+    idênticas às de entrada, e o laço de gravação — que grava apenas o que
+    diverge da entrada — simplesmente não as vê.
+    """
+    # Mesmo recuo da grade escura: lista vazia deixaria o selectbox sem valor.
+    cat_nomes = cat_nomes or ["Sem categoria"]
+    conta_nomes = conta_nomes or ["Sem conta"]
+
+    cabecalho = st.columns(_LANC_COLS, gap="small")
+    for coluna, titulo in zip(cabecalho, ("Data", "Descrição", "Valor (R$)",
+                                          "Tipo", "Categoria", "Conta")):
+        coluna.markdown(
+            f'<div style="font-size:0.68rem;font-weight:700;letter-spacing:0.05em;'
+            f'text-transform:uppercase;color:var(--app-muted);padding-bottom:4px;'
+            f'border-bottom:1px solid var(--app-border);">{html.escape(titulo)}</div>',
+            unsafe_allow_html=True,
+        )
+
+    edited = df_edit.copy()
+    for i in fatia:
+        r = df_edit.iloc[i]
+        tx_id = str(r["ID"])
+        c_data, c_desc, c_valor, c_tipo, c_cat, c_conta = st.columns(_LANC_COLS, gap="small")
+        data_valor = pd.to_datetime(r["Data"]).date() if pd.notna(r["Data"]) else None
+        edited.at[i, "Data"] = c_data.date_input(
+            "Data", value=data_valor, format="DD/MM/YYYY",
+            key=f"dash_lanc_data_{tx_id}", label_visibility="collapsed")
+        edited.at[i, "Descrição"] = c_desc.text_input(
+            "Descrição", value=str(r["Descrição"]),
+            key=f"dash_lanc_desc_{tx_id}", label_visibility="collapsed")
+        edited.at[i, "Valor"] = c_valor.number_input(
+            "Valor (R$)", value=float(r["Valor"]), min_value=0.0, step=0.01,
+            format="%.2f", key=f"dash_lanc_valor_{tx_id}",
+            label_visibility="collapsed")
+        edited.at[i, "Tipo"] = c_tipo.selectbox(
+            "Tipo", tipo_opcoes, index=_indice_opcao(tipo_opcoes, r["Tipo"]),
+            key=f"dash_lanc_tipo_{tx_id}", label_visibility="collapsed")
+        edited.at[i, "Categoria"] = c_cat.selectbox(
+            "Categoria", cat_nomes, index=_indice_opcao(cat_nomes, r["Categoria"]),
+            key=f"dash_lanc_cat_{tx_id}", label_visibility="collapsed")
+        edited.at[i, "Conta"] = c_conta.selectbox(
+            "Conta", conta_nomes, index=_indice_opcao(conta_nomes, r["Conta"]),
+            key=f"dash_lanc_conta_{tx_id}", label_visibility="collapsed")
+    return edited
+
+
 def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                    investido_mes: float = 0.0) -> None:
     receitas     = d["receitas"]
@@ -691,32 +777,41 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                 "Conta":     tx["conta"],
             })
         df_edit = pd.DataFrame(rows_edit)
+        tipo_opcoes = ["entrada", "saída", "investimento", "transferência"]
+
+        # O seletor de página fica fora do form: dentro dele a troca só seria
+        # lida no submit.
+        fatia = _pagina_lancamentos(len(df_edit)) if no_claro() else range(len(df_edit))
 
         with st.form("form_editor_lancamentos", clear_on_submit=False):
-            edited = st.data_editor(
-                df_edit,
-                num_rows="fixed",
-                hide_index=True,
-                key="editor_lancamentos",
-                column_config={
-                    "ID":      None,   # oculto na edição (preservado para o save)
-                    "Tipo": st.column_config.SelectboxColumn(
-                        "Tipo",
-                        options=["entrada", "saída", "investimento", "transferência"],
-                    ),
-                    "Conta": st.column_config.SelectboxColumn(
-                        "Conta",
-                        options=conta_nomes if conta_nomes else ["Sem conta"],
-                    ),
-                    "Categoria": st.column_config.SelectboxColumn(
-                        "Categoria",
-                        options=cat_nomes if cat_nomes else ["Sem categoria"],
-                    ),
-                    "Data":    st.column_config.DateColumn("Data"),
-                    "Valor":   st.column_config.NumberColumn("Valor (R$)", format="%.2f", step=0.01),
-                    "Descrição": st.column_config.TextColumn("Descrição"),
-                },
-            )
+            if no_claro():
+                edited = _editor_lancamentos_claro(
+                    df_edit, fatia, tipo_opcoes, cat_nomes, conta_nomes)
+            else:
+                edited = st.data_editor(
+                    df_edit,
+                    num_rows="fixed",
+                    hide_index=True,
+                    key="editor_lancamentos",
+                    column_config={
+                        "ID":      None,   # oculto na edição (preservado para o save)
+                        "Tipo": st.column_config.SelectboxColumn(
+                            "Tipo",
+                            options=tipo_opcoes,
+                        ),
+                        "Conta": st.column_config.SelectboxColumn(
+                            "Conta",
+                            options=conta_nomes if conta_nomes else ["Sem conta"],
+                        ),
+                        "Categoria": st.column_config.SelectboxColumn(
+                            "Categoria",
+                            options=cat_nomes if cat_nomes else ["Sem categoria"],
+                        ),
+                        "Data":    st.column_config.DateColumn("Data"),
+                        "Valor":   st.column_config.NumberColumn("Valor (R$)", format="%.2f", step=0.01),
+                        "Descrição": st.column_config.TextColumn("Descrição"),
+                    },
+                )
             salvar_edicoes = st.form_submit_button("Salvar alterações", type="primary")
 
         if salvar_edicoes:

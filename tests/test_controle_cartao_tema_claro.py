@@ -214,3 +214,75 @@ def test_paginacao_do_editor_claro_limita_as_linhas_desenhadas(monkeypatch):
     total = cf._DETALHE_POR_PAGINA * 4 + 7
     assert list(cf._pagina_detalhado(total)) == list(range(cf._DETALHE_POR_PAGINA))
     assert len(registro["opcoes"]) == 5
+
+
+# ─────────────────────── Últimos Lançamentos (Dashboard) ─────────────────────
+
+def test_ultimos_lancamentos_escolhem_a_grade_pelo_tema_da_sessao():
+    """O terceiro editor desta tela caía no canvas escuro dentro do tema claro.
+
+    A grade de "Últimos Lançamentos" ficou para trás quando os outros dois
+    ganharam a versão nativa — habilitar a edição no claro devolvia um bloco
+    preto no meio da página branca.
+    """
+    fonte = inspect.getsource(cf._tab_dashboard)
+    assert "_editor_lancamentos_claro" in fonte
+    assert "no_claro()" in fonte
+    # O seletor de página tem de ficar FORA do form, como nos outros dois.
+    assert fonte.index("_pagina_lancamentos(") < fonte.index(
+        'with st.form("form_editor_lancamentos"')
+
+
+def _df_lancamentos():
+    return pd.DataFrame([{
+        "ID": f"tx-{n}", "Tipo": "saída", "Categoria": "Luz",
+        "Data": date(2026, 9, 21 - n), "Valor": 100.0 + n,
+        "Descrição": f"CONTA {n}", "Conta": "Conta Corrente",
+    } for n in range(3)])
+
+
+def test_editor_de_lancamentos_claro_devolve_o_quadro_inteiro(monkeypatch):
+    """Só a página visível é editada; o resto volta idêntico.
+
+    O laço de gravação compara cada linha com a entrada e grava o que divergir
+    — linha de fora que não voltasse igual seria regravada sem o usuário ter
+    tocado nela.
+    """
+    monkeypatch.setattr(cf, "st", SimpleNamespace(
+        columns=lambda larguras, **kw: [_ColunaDetalhe() for _ in larguras],
+        markdown=lambda html, **kw: None))
+    df_edit = _df_lancamentos()
+
+    edited = cf._editor_lancamentos_claro(
+        df_edit, range(1, 2), ["entrada", "saída"], ["Luz"], ["Conta Corrente"])
+
+    assert list(edited.columns) == list(df_edit.columns)
+    assert len(edited) == len(df_edit)
+    assert edited.iloc[1]["Descrição"] == "EDITADO"
+    for fora in (0, 2):
+        assert edited.iloc[fora].to_dict() == df_edit.iloc[fora].to_dict()
+
+
+def test_editor_de_lancamentos_claro_aceita_listas_de_opcoes_vazias(monkeypatch):
+    monkeypatch.setattr(cf, "st", SimpleNamespace(
+        columns=lambda larguras, **kw: [_ColunaDetalhe() for _ in larguras],
+        markdown=lambda html, **kw: None))
+    edited = cf._editor_lancamentos_claro(
+        _df_lancamentos(), range(3), ["saída"], [], [])
+    assert edited.iloc[0]["Categoria"] == "Sem categoria"
+    assert edited.iloc[0]["Conta"] == "Sem conta"
+
+
+def test_paginacao_dos_lancamentos_limita_as_linhas_desenhadas(monkeypatch):
+    registro = {}
+
+    def selectbox(_rotulo, opcoes, **kw):
+        registro["opcoes"] = opcoes
+        return opcoes[0]
+
+    monkeypatch.setattr(cf, "st", SimpleNamespace(selectbox=selectbox))
+    assert list(cf._pagina_lancamentos(5)) == list(range(5))
+    assert "opcoes" not in registro
+    total = cf._LANC_POR_PAGINA * 3
+    assert list(cf._pagina_lancamentos(total)) == list(range(cf._LANC_POR_PAGINA))
+    assert len(registro["opcoes"]) == 3
