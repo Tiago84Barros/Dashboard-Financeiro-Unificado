@@ -692,6 +692,65 @@ def batch_insert_investment_transactions(
     return result.rowcount if result.rowcount is not None else len(rows)
 
 
+_DDL_MOVEMENT_EVENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS investment_movement_events (
+        id           BIGSERIAL PRIMARY KEY,
+        user_id      UUID          NOT NULL,
+        event_date   DATE          NOT NULL,
+        movement     TEXT          NOT NULL,
+        direction    TEXT          NOT NULL DEFAULT '',
+        ticker       TEXT          NOT NULL,
+        product      TEXT,
+        institution  TEXT,
+        quantity     NUMERIC(24,8),
+        unit_price   NUMERIC(20,6),
+        total_value  NUMERIC(20,2),
+        external_id  VARCHAR(64)   NOT NULL,
+        created_at   TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+        CONSTRAINT investment_movement_events_external_id_key UNIQUE (external_id)
+    )
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS ix_investment_movement_events_user_date
+        ON investment_movement_events (user_id, event_date)
+    """,
+)
+
+
+def ensure_movement_events_table(engine: Engine) -> bool:
+    """Cria `investment_movement_events` se faltar (ver SQL 075). Idempotente.
+
+    Devolve False em vez de levantar: sem a tabela, o upload segue gravando
+    transações e proventos, só não guarda o fato cru.
+    """
+    try:
+        with engine.begin() as conn:
+            for stmt in _DDL_MOVEMENT_EVENTS:
+                conn.execute(text(stmt))
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[b3mov] tabela de eventos indisponível: %s", safe_error(exc))
+        return False
+
+
+def insert_movement_events(conn: Connection, rows: list[dict[str, Any]]) -> int:
+    """Grava as linhas cruas da Movimentação; repetidas saem pelo external_id."""
+    if not rows:
+        return 0
+    stmt = text("""
+        INSERT INTO investment_movement_events
+            (user_id, event_date, movement, direction, ticker, product,
+             institution, quantity, unit_price, total_value, external_id)
+        VALUES
+            (:user_id, :event_date, :movement, :direction, :ticker, :product,
+             :institution, :quantity, :unit_price, :total_value, :external_id)
+        ON CONFLICT (external_id) DO NOTHING
+    """)
+    result = conn.execute(stmt, rows)
+    return result.rowcount if result.rowcount is not None and result.rowcount >= 0 else len(rows)
+
+
 def batch_insert_dividends(
     conn: Connection,
     rows: list[dict[str, Any]],

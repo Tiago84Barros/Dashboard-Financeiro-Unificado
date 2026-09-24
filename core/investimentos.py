@@ -1891,6 +1891,33 @@ _SQL_RENTAB_PROVENTOS_B3 = """
     WHERE rn = 1
 """
 
+# Linhas cruas da Movimentação da B3 (SQL 075). Só as que mexem em quantidade
+# ou caixa fora da negociação interessam; o filtro fica em core.movimentacao_b3.
+_SQL_RENTAB_EVENTOS_B3 = """
+    SELECT event_date AS data, ticker, movement AS movimento,
+           direction AS sentido, quantity AS quantidade, total_value AS valor
+    FROM investment_movement_events
+    WHERE user_id = :uid
+      AND event_date <= CURRENT_DATE
+"""
+
+
+def _ler_eventos_movimentacao(engine, owner: str) -> list | None:
+    """Linhas da Movimentação, ou None se a tabela ainda não existe.
+
+    Conexão própria: no Postgres a falha de uma consulta aborta a transação
+    inteira, e a leitura das negociações não pode morrer junto.
+    """
+    from sqlalchemy import text
+
+    try:
+        with engine.connect() as conn:
+            return conn.execute(text(_SQL_RENTAB_EVENTOS_B3), {"uid": owner}).fetchall()
+    except Exception as exc:  # noqa: BLE001
+        logger.info("[rentabilidade] movimentação da B3 indisponível: %s", type(exc).__name__)
+        return None
+
+
 # Classes da posição que são negociadas na B3 em reais.
 _CLASSES_RV_B3 = {"Ações BR", "FII", "ETF", "ETF Brasil", "BDR"}
 
@@ -1929,6 +1956,7 @@ def _rentabilidade_rv_b3_real() -> dict:
     from sqlalchemy import text
 
     from core.database import get_engine
+    from core.movimentacao_b3 import interpretar
     from core.rentabilidade import cdi_anualizado, comparar_com_cdi, conciliar_universo
 
     engine = get_engine()
@@ -1970,7 +1998,13 @@ def _rentabilidade_rv_b3_real() -> dict:
         cur["quantidade"] += float(p.get("quantidade") or 0)
         cur["valor_mercado"] += float(p.get("valor_mercado") or 0)
 
-    universo = conciliar_universo(transacoes, proventos, posicoes)
+    ev_rows = _ler_eventos_movimentacao(engine, owner)
+    movimentacao = interpretar([
+        {"data": r.data, "ticker": _base_ticker(r.ticker), "movimento": r.movimento,
+         "sentido": r.sentido, "quantidade": r.quantidade, "valor": r.valor}
+        for r in ev_rows or []
+    ])
+    universo = conciliar_universo(transacoes, proventos, posicoes, movimentacao=movimentacao)
     hoje = _date.today()
     fluxos = universo["fluxos"]
     if not fluxos:
@@ -2011,4 +2045,7 @@ def _rentabilidade_rv_b3_real() -> dict:
         "n_em_carteira_incluidos": universo["n_em_carteira_incluidos"],
         "incluidos": universo["incluidos"],
         "excluidos": universo["excluidos"],
+        # 0 = a Movimentação nunca foi subida com a tabela de eventos; a tela
+        # avisa, porque bonificação e subscrição ficam de fora por isso.
+        "eventos_movimentacao": len(ev_rows or []),
     }

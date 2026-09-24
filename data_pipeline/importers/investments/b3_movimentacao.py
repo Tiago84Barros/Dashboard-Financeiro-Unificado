@@ -17,6 +17,13 @@ Ignora (com contagem):
   * Compra/venda comum (já vem do arquivo Negociação).
   * Eventos não suportados pelo schema atual.
 
+Guarda TODAS as linhas, cruas, em `investment_movement_events` (2026-09-24).
+Bonificação, desdobro, subscrição e transferência continuam fora de
+`investment_transactions` -- como buy/sell de preço zero derrubavam o preço
+médio --, mas eram jogadas fora, e o arquivo não fica guardado: o extrato de
+negociação fechava com a posição em 6 de 15 ativos sem que desse para saber
+por quê. A interpretação desses fatos mora em `core/movimentacao_b3.py`.
+
 Idempotência via `external_id` em ambas as tabelas.
 
 Otimização (2026-05-22):
@@ -42,8 +49,10 @@ from .common import (
     classify_movement,
     classify_ticker,
     ensure_external_id_columns,
+    ensure_movement_events_table,
     finalize_summary,
     get_or_create_b3_account,
+    insert_movement_events,
     make_external_id,
     make_summary,
     parse_date_br,
@@ -93,10 +102,18 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
     # Estratégia em 2 fases (ver b3_negociacao.py para racional).
     tx_candidates: list[dict] = []
     div_candidates: list[dict] = []
+    ev_candidates: list[dict] = []
+    ocorrencias: dict[tuple, int] = {}
 
     for i, row in enumerate(sheet.iter_rows(values_only=True)):
         if i == 0:
             continue
+        try:
+            ev = _parse_event(row, user_id, ocorrencias)
+        except Exception:  # noqa: BLE001 -- o fato cru nunca derruba o resto
+            ev = None
+        if ev is not None:
+            ev_candidates.append(ev)
         try:
             parsed = _parse_row(row)
         except Exception as exc:  # noqa: BLE001
@@ -110,8 +127,12 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
         else:
             tx_candidates.append(parsed)
 
-    if not tx_candidates and not div_candidates:
+    if not tx_candidates and not div_candidates and not ev_candidates:
         return finalize_summary(summary)
+
+    # DDL fora da transação principal: sem permissão de CREATE, perde-se o
+    # fato cru, não os proventos.
+    eventos_ok = bool(ev_candidates) and ensure_movement_events_table(engine)
 
     try:
         with engine.connect() as conn:
@@ -191,11 +212,64 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                 inserted_div = batch_insert_dividends(conn, div_rows)
                 summary["transactions_imported"] += inserted_tx
                 summary["incomes_imported"] += inserted_div
+
+                # 5) Fatos crus -- não entram em records_imported: não são
+                #    transação nem provento, e somar confundiria o resumo.
+                #    SAVEPOINT: no Postgres, um INSERT que falha envenena a
+                #    transação inteira, e os proventos acima iriam junto.
+                if eventos_ok:
+                    try:
+                        with conn.begin_nested():
+                            summary["events_recorded"] = insert_movement_events(
+                                conn, ev_candidates
+                            )
+                    except Exception as exc:  # noqa: BLE001
+                        summary["errors"].append(
+                            f"Eventos crus não gravados: {safe_error(exc)}"
+                        )
     except Exception as exc:  # noqa: BLE001
         summary["status"] = "failed"
         summary["errors"].append(f"Batch DB falhou: {safe_error(exc)}")
 
     return finalize_summary(summary)
+
+
+def _parse_event(row, user_id: str, ocorrencias: dict[tuple, int]) -> dict | None:
+    """A linha como a B3 publicou, para `investment_movement_events`.
+
+    O external_id inclui a instituição e a ORDEM da linha entre as idênticas
+    do mesmo arquivo: duas linhas iguais (mesmo evento em duas corretoras, ou
+    duas bonificações idênticas no mesmo dia) são dois fatos, e o hash só do
+    conteúdo guardaria um. A ordem é estável ao subir o mesmo arquivo de novo.
+    """
+    if not row or len(row) < 8:
+        return None
+    entrada, data_raw, mov_raw, produto_raw, inst, qtd_raw, preco_raw, valor_raw = row[:8]
+    if not mov_raw or not produto_raw or not data_raw:
+        return None
+    ticker, _nome = parse_ticker_from_produto(str(produto_raw))
+    d = parse_date_br(data_raw)
+    if not ticker or d is None:
+        return None
+    movimento = str(mov_raw).strip().lower()
+    sentido = str(entrada or "").strip().lower()
+    instituicao = str(inst or "").strip()
+    chave = (d.isoformat(), movimento, ticker, sentido, instituicao, str(qtd_raw), str(valor_raw))
+    ordem = ocorrencias.get(chave, 0)
+    ocorrencias[chave] = ordem + 1
+    return {
+        "user_id":     user_id,
+        "event_date":  d,
+        "movement":    movimento,
+        "direction":   sentido,
+        "ticker":      ticker,
+        "product":     str(produto_raw).strip()[:300],
+        "institution": instituicao[:300],
+        "quantity":    to_float_br(qtd_raw),
+        "unit_price":  to_float_br(preco_raw),
+        "total_value": to_float_br(valor_raw),
+        "external_id": make_external_id("b3evt", [*chave, ordem]),
+    }
 
 
 def _parse_row(row) -> dict | None:

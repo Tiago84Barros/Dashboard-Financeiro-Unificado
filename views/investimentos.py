@@ -2181,7 +2181,14 @@ def _bloco_rentabilidade_cdi(r: dict) -> None:
                 "quantidade em carteira (ou zeram, para quem já saiu). Se não fecham, houve "
                 "dinheiro fora do extrato — subscrição paga, posição anterior ao primeiro "
                 "extrato — e a TIR desse ativo sairia inflada ou achatada sem aviso. "
-                "Importar a movimentação completa da B3 aumenta a cobertura."
+                + (
+                    "Bonificações, desdobros e subscrições da Movimentação da B3 já entram "
+                    "na conta."
+                    if r.get("eventos_movimentacao") else
+                    "A Movimentação da B3 ainda não foi subida desde que o app passou a "
+                    "guardar bonificações, desdobros e subscrições: suba o arquivo de "
+                    "novo em Configurações → Importações (ele não duplica nada)."
+                )
             )
     st.caption(
         "TIR = taxa interna de retorno dos fluxos reais (compras, vendas, proventos pagos) "
