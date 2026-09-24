@@ -15,6 +15,8 @@ import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 
 import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
+import core.b3_selecao as _selecao
+import core.b3_universo_pit as _upit
 import core.data_reconciliacao as _recon
 from core.b3_evidence import sinal_significante, teste_t_unilateral
 from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
@@ -223,6 +225,44 @@ def _load_adtv(meses: int = 6) -> dict[str, float]:
         if np.isfinite(diario) and diario > 0:
             values[_ticker_key(row.ticker)] = diario
     return values
+
+
+@st.cache_data(ttl=3600)
+def _load_volume_mensal_historico(desde_ano: int) -> pd.DataFrame:
+    """Volume financeiro mensal (R$) por ticker desde ``desde_ano`` - 1.
+
+    Alimenta a elegibilidade por ÉPOCA (core.b3_universo_pit): o piso de
+    liquidez de hoje não diz se o papel era negociável no ano da decisão.
+    """
+    from sqlalchemy import text
+
+    from core.database import get_engine
+
+    eng = get_engine()
+    if eng is None:
+        raise LiquidezDataError("conexão com o banco indisponível")
+    query = text("""
+        SELECT ticker,
+               date_trunc('month', date)::date AS mes,
+               SUM(COALESCE(close, adjusted_close) * volume) AS financeiro
+        FROM market.historical_prices
+        WHERE volume IS NOT NULL AND volume > 0
+          AND COALESCE(close, adjusted_close) IS NOT NULL
+          AND date >= make_date(:ano, 1, 1)
+        GROUP BY 1, 2
+    """)
+    try:
+        with eng.connect() as conn:
+            rows = conn.execute(query, {"ano": int(desde_ano) - 1}).fetchall()
+    except Exception as exc:
+        raise LiquidezDataError(
+            f"consulta do volume histórico falhou ({type(exc).__name__})"
+        ) from exc
+    df = pd.DataFrame(
+        [(_ticker_key(r.ticker), r.mes, r.financeiro) for r in rows],
+        columns=["ticker", "mes", "financeiro"],
+    )
+    return df
 
 
 # ── CSS incremental ───────────────────────────────────────────────────────────
@@ -881,9 +921,14 @@ def _processar_segmento(
     cheapness_weight: float = 0.0,
     walk_forward: bool = False,
     cap_adaptativo: bool = False,
+    elegibilidade_pit: dict[int, dict] | None = None,
 ) -> dict | None:
     """
     Roda o engine de scoring ano-a-ano para um segmento.
+
+    ``elegibilidade_pit`` (core.b3_universo_pit): por ano de decisão, quem
+    estava abaixo do piso de liquidez COM O VOLUME DA ÉPOCA. Esses nomes não
+    concorrem à liderança naquele ano.
     Retorna dict com líderes, backtest e score para o próximo ano, ou None.
     """
     if len(tickers) < 1:
@@ -904,10 +949,16 @@ def _processar_segmento(
     constraint_warnings: list[str]         = []
     pit_por_ano: dict[int, PITCoverage]    = {}
     pit_historico = PITCoverage()
+    universo_excluidos: dict[int, list[str]] = {}
 
     for ano in range(ano_inicio, ano_atual):
+        tickers_ano = _upit.filtrar(tickers, elegibilidade_pit, ano, chave=_ticker_key)
+        if len(tickers_ano) < len(tickers):
+            universo_excluidos[ano] = sorted(set(tickers) - set(tickers_ano))
+        if not tickers_ano:
+            continue
         score_map, pit_ano = _score_historico_ano_com_cobertura(
-            hist_batch, tickers, ano, pesos, tk_grupos, lag=1,
+            hist_batch, tickers_ano, ano, pesos, tk_grupos, lag=1,
             macro_by_year=macro_history or None,
         )
         if not score_map:
@@ -931,7 +982,7 @@ def _processar_segmento(
         # segmento não tem — relaxa o teto por ativo até ficar viável.
         _min_n = 1 if cap_adaptativo else minimum_assets_for_cap(cap)
         n = min(len(ranked), max(n, _min_n))
-        lids = [tk for tk, _ in ranked[:n] if tk in tickers]
+        lids = [tk for tk, _ in ranked[:n] if tk in tickers_ano]
 
         lids_por_ano[ano] = lids
         for tk in lids:
@@ -1007,6 +1058,7 @@ def _processar_segmento(
     val_est_oos = val_selic_oos = val_ew_oos = 0.0
     p_value_oos = 1.0
     n_months_oos = 0
+    selecao_excesso = _selecao.intervalo_excesso([])
     rank_ic_mean = float("nan")
     rank_ic_years = 0
     rank_ic_tstat = float("nan")
@@ -1095,6 +1147,10 @@ def _processar_segmento(
                     - pd.to_numeric(monthly["equal_weight"], errors="coerce")
                 ).replace([np.inf, -np.inf], np.nan).dropna()
                 n_months_oos = int(len(excess))
+                # Mesma série, lida como intervalo: o valor-p unilateral só diz
+                # "há vantagem?"; o intervalo diz também "há evidência CONTRA?"
+                # e de que tamanho — é ele que o portão de seleção usa.
+                selecao_excesso = _selecao.intervalo_excesso(excess.tolist())
                 if len(excess) >= 12 and float(excess.std(ddof=1) or 0.0) > 0:
                     from scipy.stats import ttest_1samp
                     test = ttest_1samp(excess, popmean=0.0, alternative="greater")
@@ -1242,6 +1298,8 @@ def _processar_segmento(
         "val_ew_oos": val_ew_oos,
         "p_value_oos": p_value_oos,
         "n_months_oos": n_months_oos,
+        "selecao_excesso": selecao_excesso,
+        "universo_excluidos": universo_excluidos,
         "rank_ic_mean": rank_ic_mean,
         "rank_ic_years": rank_ic_years,
         "rank_ic_tstat": rank_ic_tstat,
@@ -2535,9 +2593,10 @@ def render(show_header: bool = True) -> None:
             help="Piso de MAGNITUDE do excesso sobre a carteira de Pesos Iguais, "
                  "aplicado só quando o campo ao lado = 'Exigir margem mínima'. "
                  "No modo 'Econômico (Brasil)' usa o histórico cheio; nos modos "
-                 "estatísticos, a janela de validação. Nenhum modo testa a "
-                 "SIGNIFICÂNCIA do excesso sobre Pesos Iguais: com este campo "
-                 "desligado, bater o 1/N não é exigido.",
+                 "estatísticos, a janela de validação. Independente deste campo, "
+                 "TODOS os modos passam pelo teste de seleção: o excesso mensal "
+                 "sobre Pesos Iguais na validação vira um intervalo de 90%, e "
+                 "intervalo inteiro abaixo de zero reprova.",
         )
         uso_ew      = p3.selectbox(
             "Piso de magnitude vs Pesos Iguais",
@@ -2657,6 +2716,18 @@ def render(show_header: bool = True) -> None:
                  "acima do risco-livre. Exige também ROIC > Selic na maioria dos anos.",
         )
         thr_roic_spread = float(thr_roic_spread_pct) / 100.0
+        exigir_vantagem_selecao = st.checkbox(
+            "Exigir vantagem de seleção comprovada (IC 90% do excesso sobre "
+            "Pesos Iguais acima de zero)",
+            value=False,
+            key="pb3_exigir_vantagem_sel",
+            help="Por padrão o teste de seleção só REPROVA quando a validação "
+                 "mostra a seleção pior que comprar o segmento inteiro "
+                 "(intervalo todo abaixo de zero). Ligado, só aprova quem mostra "
+                 "vantagem: o intervalo inteiro acima de zero. Com ~24 meses de "
+                 "validação isso reprova a maioria dos segmentos — é o critério "
+                 "honesto de 'a escolha acrescenta algo', não o usual.",
+        )
         lc1, lc2 = st.columns(2)
         _liq_label = lc1.selectbox(
             "Tamanho mínimo (valor de mercado)",
@@ -2941,6 +3012,37 @@ def render(show_header: bool = True) -> None:
         )
         return
 
+    # Liquidez por ÉPOCA: o filtro acima usa o volume de hoje. Na reconstrução,
+    # cada ano de decisão só aceita quem negociava acima do piso nos 6 meses
+    # anteriores ao rebalanceamento DAQUELE ano. Falha de consulta não filtra
+    # (mesma regra do piso corrente) e fica declarada.
+    _elegib_pit: dict[int, dict] | None = None
+    if min_adtv > 0:
+        try:
+            _vol_hist = _load_volume_mensal_historico(int(ano_inicio))
+            _elegib_pit = _upit.elegiveis_por_ano(
+                _vol_hist, list(range(int(ano_inicio), pd.Timestamp.now().year)),
+                float(min_adtv), rebal_month=int(_REBAL_MONTH),
+            )
+        except LiquidezDataError as exc:
+            st.warning(
+                f"⚠️ Liquidez por época **não aplicada** ({exc}): a reconstrução "
+                "histórica usa o universo filtrado pelo volume de HOJE em todos os "
+                "anos — papéis ilíquidos no passado podem ter sido escolhidos."
+            )
+        if _elegib_pit:
+            _anos_med = [a for a, v in _elegib_pit.items() if v["medido"]]
+            _tks_set = {_ticker_key(t) for t in df_set["ticker"].unique()}
+            _pares = sum(len(v["abaixo"] & _tks_set) for v in _elegib_pit.values())
+            st.caption(
+                f"🕰️ Liquidez por época: em {len(_anos_med)} de {len(_elegib_pit)} "
+                f"anos da reconstrução havia volume para medir; {_pares} "
+                "combinação(ões) papel-ano ficaram fora da disputa por estarem "
+                "abaixo do piso naquela época. O universo de partida segue sendo o "
+                "de hoje (quem deslistou nunca entra) e o piso é nominal, não "
+                "deflacionado — mais brando nos anos antigos."
+            )
+
     taxa_selic_aa = (
         float(np.mean(list(selic_macro.values()))) if selic_macro else 0.1075
     )
@@ -3049,6 +3151,7 @@ def render(show_header: bool = True) -> None:
                     cheapness_weight=float(cheapness_weight),
                     walk_forward=bool(walk_forward),
                     cap_adaptativo=bool(cap_adaptativo),
+                    elegibilidade_pit=_elegib_pit,
                 )
                 if res:
                     resultados.append(res)
@@ -3222,6 +3325,12 @@ def render(show_header: bool = True) -> None:
             if usar_ew_como_criterio and res["val_ew_oos"] > 0 and m_ew < thr_ew:
                 return False
 
+        # Teste de seleção (todos os modos): o excesso mensal sobre Pesos
+        # Iguais na validação, com intervalo. Antes o modo econômico podia
+        # aprovar segmento cuja escolha de líderes perdia do 1/N fora da
+        # amostra, porque só olhava a margem acumulada no histórico cheio.
+        if _selecao.reprova(res.get("selecao_excesso"), exigir_vantagem_selecao):
+            return False
         if not recente:
             return False
         # Trilha de resiliência estrutural (Damodaran, opcional em qualquer modo):
@@ -3338,7 +3447,11 @@ def render(show_header: bool = True) -> None:
         if walk_forward else ""
     )
     _comum_txt = (
-        " Todos os modos exigem liderança recente."
+        " Todos os modos exigem liderança recente e passam pelo teste de "
+        "seleção: excesso mensal sobre Pesos Iguais na validação com intervalo "
+        "de 90% inteiro abaixo de zero reprova"
+        + (" — e, com a opção ligada, só aprova intervalo inteiro acima de zero."
+           if exigir_vantagem_selecao else ".")
         if criterio_modo == "economico" else
         " Os modos estatísticos exigem ainda pelo menos 2 anos de poder preditivo "
         "(Rank-IC) com média positiva, bater os Pesos Iguais do segmento e "
@@ -3385,8 +3498,11 @@ def render(show_header: bool = True) -> None:
             and (not usar_ew_como_criterio or res.get("val_ew", 0.0) <= 0
                  or m_ew_full >= thr_ew)
         )
+        _iv_sel = res.get("selecao_excesso") or {}
         if _aprovado(res):
             _situacao = "✅ Aprovado"
+        elif _iv_sel.get("veredito") == _selecao.CONTRA:
+            _situacao = "❌ Reprovado (seleção pior que Pesos Iguais)"
         elif _verdict.bloqueante:
             _situacao = "❌ Reprovado (evidência contra)"
         elif not _economico_ok:
@@ -3416,6 +3532,8 @@ def render(show_header: bool = True) -> None:
             "valor-p (validação)": round(float(res.get("p_value_oos", 1.0)), 4),
             "q-valor (falsos positivos)": round(float(res.get("q_value_oos", 1.0)), 4),
             "Meses de validação": int(res.get("n_months_oos", 0)),
+            "Excesso vs Pesos Iguais · validação (% a.m., IC 90%)": _selecao.rotulo(_iv_sel),
+            "Teste de seleção": _iv_sel.get("veredito", _selecao.SEM_AMOSTRA),
             "Poder preditivo médio (Rank-IC)": (
                 round(float(res["rank_ic_mean"]), 3)
                 if np.isfinite(float(res.get("rank_ic_mean", float("nan"))))

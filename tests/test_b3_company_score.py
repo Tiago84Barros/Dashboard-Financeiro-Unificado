@@ -35,11 +35,11 @@ def test_ausencia_de_sustentabilidade_vai_para_o_neutro():
     assert sem["score_shareholder"] > 0.0
 
 
-def test_score_version_2_26_0():
+def test_score_version_2_27_0():
     """A composição da trilha mudou; a versão a acompanha."""
     from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
 
-    assert SCORE_VERSION == "2.26.0"
+    assert SCORE_VERSION == "2.27.0"
     assert MODEL_SCHEMA_VERSION == 3
 
 

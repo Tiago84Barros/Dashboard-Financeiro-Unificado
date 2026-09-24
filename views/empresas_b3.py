@@ -25,6 +25,7 @@ import requests
 import streamlit as st
 import yfinance as yf
 
+import core.b3_company_score as _company_score
 import core.b3_data as _db  # facade de leitura B3 — fonte financeira única: market.* (brapi)
 import core.data_quality as _dq
 import core.data_reconciliacao as _recon
@@ -1302,6 +1303,18 @@ def _score_universo(
     df = df_mult[df_mult["Ticker"].isin(tickers_universo)].copy()
     if df.empty:
         return pd.DataFrame({"Ticker": tickers_universo, "score": 0.0, "ranking": 0})
+    # Motor único (A-101/A-105 no motor oficial): múltiplo de preço vira
+    # rendimento ANTES da limpeza de faixa. A faixa canônica começa em 0,01
+    # para P/L, P/VP, EV_EBIT e P_FCO, então a limpeza transformava prejuízo
+    # em ausência e ausência vale o neutro 0,5 — a deficitária ficava na
+    # mediana do segmento, mais "barata" que metade das lucrativas. O
+    # diagnóstico (core.b3_company_score) já corrigia isso; o oficial, que
+    # decide ranking e carteira, não. Agora os dois usam a mesma regra.
+    rendimentos = {
+        col: _company_score._numeric_metric(df, col)
+        for col in pesos
+        if col in _company_score._RECIPROCO and col in df.columns
+    }
     df = _clean_score_inputs(df, list(pesos.keys()))
 
     group_col = _resolve_group_col_df(df, prefer=group_col_prefer)
@@ -1327,11 +1340,16 @@ def _score_universo(
     for col, (peso, melhor_alto) in pesos.items():
         if col not in df.columns or peso == 0:
             continue
-        # Fix banca M5 parcial (2026-05-25): imputa NaN com mediana do
-        # grupo (substitui 0.5 fixo implicito no .fillna(0.5) abaixo).
-        # Cutover: no market (dado limpo) não imputa — NaN segue p/ rank neutro.
-        s = (pd.to_numeric(df[col], errors="coerce") if _db.market_active()
-             else _impute_with_group_median(df, col, group_col))
+        if col in rendimentos:
+            # Rendimento: maior é melhor, e a ordem entre lucrativas é a
+            # mesma do múltiplo (o recíproco é monótono nos positivos).
+            s, melhor_alto = rendimentos[col], True
+        else:
+            # Fix banca M5 parcial (2026-05-25): imputa NaN com mediana do
+            # grupo (substitui 0.5 fixo implicito no .fillna(0.5) abaixo).
+            # Cutover: no market (dado limpo) não imputa — NaN segue p/ rank neutro.
+            s = (pd.to_numeric(df[col], errors="coerce") if _db.market_active()
+                 else _impute_with_group_median(df, col, group_col))
         if s.notna().sum() < 2:
             continue
         s_win = _winsorize_series(s.dropna()).reindex(s.index)
@@ -1746,6 +1764,16 @@ SCORE_VERSION_CHANGELOG = {
         "cobertura medida 0 e SIMULACAO com disponibilidade MODELADA, nao "
         "'backtest point-in-time validado'; o card nomeia o risco residual de "
         "restatement (metric_value guarda o valor atual/reapresentado)."
+    ),
+    "2.27.0": (
+        "Auditoria 2026-09, motor unico: _score_universo (oficial) passa a "
+        "ranquear P/L, P/VP, EV_EBIT e P_FCO como rendimento (reciproco + piso "
+        "para prejuizo apagado, A-101/A-105), a mesma regra de "
+        "core.b3_company_score. Antes a faixa canonica (0,01..) anulava o "
+        "multiplo negativo e a deficitaria recebia o neutro 0,5. Selecao de "
+        "segmentos ganha o teste de excesso sobre Pesos Iguais com intervalo "
+        "de 90% (core.b3_selecao) em todos os modos, e a reconstrucao "
+        "historica passa a usar a liquidez da epoca (core.b3_universo_pit)."
     ),
 }
 
