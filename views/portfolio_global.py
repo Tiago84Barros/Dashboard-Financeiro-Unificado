@@ -28,6 +28,7 @@ from core.chat_memory import (
 )
 from core.global_portfolio import (
     advisor,
+    carteira_real,
     concentration,
     correlation,
     factors,
@@ -224,7 +225,20 @@ def _valor_inicial_total(total_brl: float | None) -> float:
     return float(total_brl) if total_brl is not None else 0.0
 
 
-def _editor_de_alocacao(alvos: dict, total_brl: float | None = None) -> None:
+def _renda_fixa_do_formulario(percentual: float | None) -> float | None:
+    """% digitado -> fracao salva. Zero (ou vazio) = renda fixa fora do plano.
+
+    Zero nao vira "alvo 0%": isso mandaria todo aporte para longe da renda
+    fixa sem o usuario ter pedido. Funcao pura para o teste nao precisar do
+    Streamlit.
+    """
+    if not percentual or float(percentual) <= 0:
+        return None
+    return float(percentual) / 100.0
+
+
+def _editor_de_alocacao(alvos: dict, total_brl: float | None = None,
+                        renda_fixa: float | None = None) -> None:
     """Formulario da alocacao-alvo por classe."""
     # A confirmacao precisa sobreviver ao st.rerun() disparado apos salvar —
     # por isso vem de session_state, exibida ANTES do expander: salvar altera
@@ -244,6 +258,15 @@ def _editor_de_alocacao(alvos: dict, total_brl: float | None = None) -> None:
                         value=float(alvos.get(classe, 0.0) * 100.0),
                         key=f"alvo_{classe}",
                     )
+            rf_pct = st.number_input(
+                "Renda fixa (% do patrimônio)",
+                min_value=0.0, max_value=99.0, step=1.0,
+                value=float((renda_fixa or 0.0) * 100.0),
+                key="alvo_renda_fixa",
+                help="Fatia do patrimônio inteiro em renda fixa, Tesouro e fundos RF. "
+                     "Os pesos acima dividem o restante. Zero deixa a renda fixa fora "
+                     "do plano de aporte.",
+            )
             total = st.number_input(
                 "Patrimônio total em R$ (opcional)",
                 min_value=0.0, step=1000.0,
@@ -252,7 +275,10 @@ def _editor_de_alocacao(alvos: dict, total_brl: float | None = None) -> None:
             )
             if st.form_submit_button("Salvar alocação"):
                 try:
-                    save_allocation_targets(entradas, total_brl=total or None)
+                    save_allocation_targets(
+                        entradas, total_brl=total or None,
+                        renda_fixa=_renda_fixa_do_formulario(rf_pct),
+                    )
                     st.session_state[_FLAG_ALOCACAO_SALVA] = True
                     st.rerun()
                 except (ValueError, KeyError) as exc:
@@ -1195,20 +1221,14 @@ _PREMISSA_CONVERGENCIA = (
 )
 
 
-def valores_por_classe(df: pd.DataFrame, total_brl: float | None) -> dict[str, float]:
-    """{classe: valor em R$} agregado das posições.
+def _carregar_carteira_real() -> dict:
+    """Posições reais do dono (`core.investimentos.get_carteira`, já cacheada)."""
+    from core.investimentos import get_carteira
 
-    Função pura, separada do painel para o teste não precisar do Streamlit.
-    Sem `total_brl` devolve `{}` — o plano de aporte é em reais, e derivar
-    reais de peso sem patrimônio seria inventar a base.
-    """
-    if df is None or df.empty or not total_brl or float(total_brl) <= 0:
-        return {}
-    agrupado = df.groupby("asset_class")["weight_global"].sum()
-    return {str(c): float(p) * float(total_brl) for c, p in agrupado.items()}
+    return get_carteira()
 
 
-def _painel_aporte(df: pd.DataFrame, alvos: dict, total_brl: float | None) -> None:
+def _painel_aporte(alvos: dict, renda_fixa: float | None) -> None:
     """Painel 'Plano de aporte' — para onde vai o próximo aporte, sem vender.
 
     Responde a pergunta que o motor de movimentação não responde. O motor
@@ -1221,19 +1241,34 @@ def _painel_aporte(df: pd.DataFrame, alvos: dict, total_brl: float | None) -> No
     Trabalha no nível de CLASSE porque é nesse nível que a alocação-alvo
     desta tela é definida (`load_allocation_targets`). O motor por trás
     (`core.aporte`) não sabe disso e funciona igual por ticker.
+
+    Lê a carteira REAL (Investimentos), não as carteiras-modelo: somar o
+    `weight_global` dos modelos devolvia o próprio alvo e o desvio saía
+    sempre 0% -- `memoria: medir-a-fonte-que-a-decisao-le`.
     """
     st.markdown("#### Plano de aporte")
+    st.caption("Sobre a sua carteira real (aba Investimentos), com renda fixa como classe.")
 
-    valores = valores_por_classe(df, total_brl)
-    if not valores:
-        st.info(
-            "Informe o patrimônio total em R$ na alocação-alvo para o plano de "
-            "aporte sair em reais."
-        )
-        return
     if not alvos:
         st.info("Defina a alocação-alvo por classe para calcular o plano de aporte.")
         return
+    carteira = _carregar_carteira_real()
+    if carteira.get("data_source") == "error":
+        st.warning(carteira.get("error_message") or "Carteira real indisponível.")
+        return
+    valores, alvos_plano, fora = carteira_real.base_do_plano(
+        carteira.get("posicoes"), alvos, renda_fixa,
+    )
+    if not valores:
+        st.info("Nenhuma posição com valor de mercado na aba Investimentos.")
+        return
+    if carteira.get("data_source") == "mock":
+        st.caption("⚠️ Modo demonstração: posições fictícias.")
+    if fora:
+        st.caption(
+            "Renda fixa fora do plano: defina a fatia de renda fixa na "
+            "alocação-alvo para ela entrar na conta."
+        )
 
     aporte = st.number_input(
         "Aporte a distribuir (R$)",
@@ -1243,9 +1278,9 @@ def _painel_aporte(df: pd.DataFrame, alvos: dict, total_brl: float | None) -> No
              "entre as classes abaixo do peso-alvo.",
     )
 
-    plano = plano_de_aporte(valores, alvos, aporte)
+    plano = plano_de_aporte(valores, alvos_plano, aporte)
     if aporte > 0:
-        plano = com_convergencia(plano, valores, alvos, aporte)
+        plano = com_convergencia(plano, valores, alvos_plano, aporte)
 
     colunas = st.columns(4)
     with colunas[0]:
@@ -1290,7 +1325,7 @@ def _painel_aporte(df: pd.DataFrame, alvos: dict, total_brl: float | None) -> No
 
     linhas = [
         {
-            "Classe": get_spec(a.symbol).label if a.symbol in asset_classes() else a.symbol,
+            "Classe": carteira_real.ROTULOS.get(a.symbol, a.symbol),
             "Peso atual": a.peso_atual * 100.0,
             "Alvo": a.peso_alvo * 100.0,
             "Diferença até o alvo (R$)": a.deficit,
@@ -1316,6 +1351,8 @@ def _painel_aporte(df: pd.DataFrame, alvos: dict, total_brl: float | None) -> No
         "Diferença negativa = classe **acima** do alvo. Ela não recebe aporte e "
         "também não é vendida: o peso se corrige sozinho conforme as outras "
         "crescem. " + _PREMISSA_CONVERGENCIA
+        + " “Outros” (cripto e o que não tem classe) não tem alvo: pesa no "
+        "patrimônio e nunca recebe aporte."
     )
 
 
@@ -1409,7 +1446,7 @@ def render() -> None:
         return
 
     alvos = alocacao.get("targets") or {}
-    _editor_de_alocacao(alvos, alocacao.get("total_brl"))
+    _editor_de_alocacao(alvos, alocacao.get("total_brl"), alocacao.get("renda_fixa"))
 
     aviso = estado_vazio(snapshots, alvos)
     if aviso:
@@ -1457,7 +1494,7 @@ def render() -> None:
     _painel_risco(ret, pesos)
     papeis = _painel_papeis(df, ret)
     acoes = _painel_recomendacoes(df, ret, pesos, alvos, alocacao.get("total_brl"))
-    _painel_aporte(df, alvos, alocacao.get("total_brl"))
+    _painel_aporte(alvos, alocacao.get("renda_fixa"))
     # O chat fica por ultimo de proposito: `st.chat_input` toma o foco quando
     # renderiza, e no meio da tela ele empurraria a rolagem para longe dos
     # paineis (mesmo efeito ja anotado em views/fiis.py).

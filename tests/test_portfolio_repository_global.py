@@ -99,7 +99,7 @@ def test_alocacao_alvo_round_trip_normaliza_pesos(engine):
 
 def test_alocacao_alvo_sem_registro_devolve_estrutura_vazia(engine):
     alvo = load_allocation_targets(engine=engine, owner_id=OWNER)
-    assert alvo == {"targets": {}, "total_brl": None, "notes": ""}
+    assert alvo == {"targets": {}, "total_brl": None, "notes": "", "renda_fixa": None}
 
 
 def test_salvar_alocacao_arquiva_a_anterior(engine):
@@ -130,3 +130,24 @@ def test_alocacao_com_peso_negativo_e_rejeitada(engine):
 def test_alocacao_com_classe_desconhecida_e_rejeitada(engine):
     with pytest.raises(KeyError, match="cripto"):
         save_allocation_targets({"cripto": 100}, engine=engine, owner_id=OWNER)
+
+
+def test_renda_fixa_fica_fora_de_targets_e_volta_separada(engine):
+    """Renda fixa nao e classe do registro: se vazasse para `targets`, todo
+    consumidor que chama get_spec(classe) levantaria KeyError."""
+    save_allocation_targets({"b3": 60, "fii": 40}, renda_fixa=0.3,
+                            engine=engine, owner_id=OWNER)
+    alvo = load_allocation_targets(engine=engine, owner_id=OWNER)
+    assert alvo["targets"] == pytest.approx({"b3": 0.6, "fii": 0.4})
+    assert alvo["renda_fixa"] == pytest.approx(0.3)
+
+
+def test_renda_fixa_ausente_em_alocacao_antiga_volta_none(engine):
+    save_allocation_targets({"b3": 100}, engine=engine, owner_id=OWNER)
+    assert load_allocation_targets(engine=engine, owner_id=OWNER)["renda_fixa"] is None
+
+
+@pytest.mark.parametrize("rf", [-0.1, 1.0, 30.0])
+def test_renda_fixa_fora_do_intervalo_e_rejeitada(engine, rf):
+    with pytest.raises(ValueError, match="renda fixa"):
+        save_allocation_targets({"b3": 100}, renda_fixa=rf, engine=engine, owner_id=OWNER)
