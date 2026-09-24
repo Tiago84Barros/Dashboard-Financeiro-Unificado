@@ -9,6 +9,7 @@ sabe: mês com venda sem custo de aquisição não tem imposto conhecido.
 """
 from __future__ import annotations
 
+import json
 from datetime import date
 from decimal import Decimal
 
@@ -25,7 +26,7 @@ _MESES = ["", "jan", "fev", "mar", "abr", "mai", "jun",
 
 
 @user_cache_data(ttl=900, show_spinner=False)
-def _apuracao() -> dict | None:
+def _apuracao(custos_json: str = "[]") -> dict | None:
     from core.config import settings
     from core.database import get_engine
     from core.ir_renda_variavel import carregar_operacoes
@@ -35,7 +36,15 @@ def _apuracao() -> dict | None:
     if engine is None or not owner:
         return None
     transacoes, eventos = carregar_operacoes(engine, owner)
-    return apurar(transacoes, eventos)
+    return apurar(transacoes, eventos, custos_iniciais=json.loads(custos_json))
+
+
+def _custos() -> list[dict]:
+    from core.ir_custo_inicial import carregar
+    try:
+        return carregar()
+    except Exception:  # noqa: BLE001 — sem custo declarado a apuração segue
+        return []
 
 
 def _rotulo_mes(mes: str) -> str:
@@ -51,11 +60,12 @@ def _situacao(m: dict) -> str:
         return "Mês em curso"
     if m["incompleto"]:
         return "Incompleto: venda sem custo"
+    nota = " · custo IRPF" if m.get("custo_declarado") else ""
     if m["darf"] > 0:
-        return f"DARF até {m['vencimento'].strftime('%d/%m/%Y')}"
+        return f"DARF até {m['vencimento'].strftime('%d/%m/%Y')}{nota}"
     if m["acumulado_proximo"] > 0:
-        return "Abaixo de R$ 10: acumula"
-    return "Nada a pagar"
+        return f"Abaixo de R$ 10: acumula{nota}"
+    return f"Nada a pagar{nota}"
 
 
 def _tabela_mensal(meses: list[dict]) -> pd.DataFrame:
@@ -101,13 +111,15 @@ def render() -> None:
         "Ganho de capital mês a mês, DARF (código 6015) e prejuízo a compensar, "
         "a partir do extrato de Negociação e da Movimentação da B3.",
     )
+    custos = _custos()
     try:
-        res = _apuracao()
+        res = _apuracao(json.dumps(custos, sort_keys=True))
     except Exception as exc:  # noqa: BLE001
         st.error(f"Não foi possível carregar as operações: {type(exc).__name__}.", icon="🚫")
         return
     if res is None:
         st.info("A apuração precisa do banco com as operações importadas.", icon="ℹ️")
+        _custo_declarado(custos)
         return
     meses = res["meses"]
     if not meses:
@@ -121,6 +133,7 @@ def render() -> None:
     prej = {c: ultimo["cestas"][c]["prejuizo_a_compensar"] for c in CESTAS}
     prej_incerto = any(ultimo["cestas"][c]["prejuizo_incerto"] for c in CESTAS)
     n_incompletos = sum(1 for m in meses if m["incompleto"])
+    n_declarados = sum(1 for m in meses if m.get("custo_declarado") and not m["incompleto"])
 
     c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
@@ -170,10 +183,15 @@ def render() -> None:
             "São ativos comprados antes do início do extrato da B3 (nov/2019). O ganho dessas "
             "vendas não é conhecido, e não foi tratado nem como lucro nem como prejuízo: o "
             "imposto desses meses cobre só o resto, e o prejuízo que eles carregam para a "
-            "frente fica incerto. Para fechar a conta, use o custo das notas de corretagem "
-            "da época.",
+            "frente fica incerto. Para fechar a conta, carregue o custo declarado no IRPF "
+            "(no fim desta aba) ou use o custo das notas de corretagem da época.",
             icon="⚠️",
         )
+    if n_declarados:
+        st.caption(
+            f"{n_declarados} mês(es) fechados com custo declarado no IRPF (\"custo IRPF\" na "
+            "situação). Esse custo foi digitado na declaração, não conferido com notas de "
+            "corretagem: se a declaração errou, o imposto desses meses erra junto.")
     if prej_incerto and not n_incompletos:
         st.caption("O prejuízo acumulado herda uma venda sem custo de meses anteriores.")
 
@@ -221,3 +239,37 @@ def render() -> None:
         with st.expander(f"{len(alertas)} evento(s) da Movimentação não aplicados"):
             for a in alertas[:30]:
                 st.caption(f"{a.get('ticker')}: {a.get('detail')}")
+    _custo_declarado(custos)
+
+
+def _custo_declarado(custos: list[dict]) -> None:
+    from core.ir_custo_inicial import ler_csv, salvar
+
+    rotulo = f"Custo inicial declarado no IRPF ({len(custos)} ativo(s))"
+    with st.expander(rotulo, expanded=False):
+        st.markdown(
+            "Posição de Bens e Direitos de uma declaração do IRPF (normalmente 31/12/2019, "
+            "o saldo logo depois do início do extrato). Ela **substitui** o custo do ativo "
+            "ao fim da data informada. Fica só na sua conta, nunca no código.\n\n"
+            "CSV com cabeçalho `ticker;data;quantidade;custo_total` (a coluna `fonte` é "
+            "opcional). Aceita `31/12/2019` e `1.234,56`.")
+        if custos:
+            st.dataframe(pd.DataFrame(custos), hide_index=True, use_container_width=True)
+        arq = st.file_uploader("CSV do custo declarado", type=["csv"], key="ir_custo_csv")
+        if arq is not None:
+            try:
+                linhas = ler_csv(arq.getvalue())
+            except ValueError as exc:
+                st.error(f"Arquivo recusado: {exc}", icon="🚫")
+                linhas = []
+            if linhas:
+                st.caption(f"{len(linhas)} linha(s) lidas. Salvar substitui a lista atual.")
+                st.dataframe(pd.DataFrame(linhas), hide_index=True, use_container_width=True)
+                if st.button("Salvar custo declarado", key="ir_custo_salvar", type="primary"):
+                    salvar(linhas)
+                    _apuracao.clear()
+                    st.rerun()
+        if custos and st.button("Apagar custo declarado", key="ir_custo_apagar"):
+            salvar([])
+            _apuracao.clear()
+            st.rerun()

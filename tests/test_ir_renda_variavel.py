@@ -194,6 +194,65 @@ def test_direito_de_fii_tem_custo_zero_na_cesta_fii():
     assert c["sem_custo"] == [] and c["imposto"] == Decimal("10")
 
 
+CUSTO_ITUB = [{"ticker": "ITUB3", "data": "2019-12-31", "quantidade": "1000",
+               "custo_total": "20000"}]
+
+
+def test_custo_declarado_fecha_a_venda_sem_custo():
+    vendas = [tx("2021-05-10", "ITUB3", "sell", 1000, 30)]
+    sem = mes(apurar(vendas, hoje=HOJE), "2021-05")
+    assert sem["incompleto"]
+    com = mes(apurar(vendas, hoje=HOJE, custos_iniciais=CUSTO_ITUB), "2021-05")
+    assert not com["incompleto"] and com["custo_declarado"]
+    assert com["cestas"]["comum"]["base"] == Decimal("10000")
+    assert com["cestas"]["comum"]["custo_declarado"] == ["ITUB3"]
+
+
+def test_custo_declarado_substitui_o_extrato_ate_a_data():
+    # A compra de dez/2019 já está no saldo declarado: não pode somar de novo.
+    r = apurar([tx("2019-12-02", "ITUB3", "buy", 500, 50),
+                tx("2020-02-10", "ITUB3", "buy", 1000, 30),
+                tx("2020-03-10", "ITUB3", "sell", 2000, 30)],
+               hoje=HOJE, custos_iniciais=CUSTO_ITUB)
+    c = mes(r, "2020-03")["cestas"]["comum"]
+    assert c["sem_custo"] == []
+    assert c["resultado"] == Decimal("10000")     # 60.000 − (20.000 + 30.000)
+
+
+def test_venda_antes_da_data_declarada_continua_sem_custo():
+    r = apurar([tx("2019-11-20", "ITUB3", "sell", 100, 30),
+                tx("2020-03-10", "ITUB3", "sell", 1000, 30)],
+               hoje=HOJE, custos_iniciais=CUSTO_ITUB)
+    assert mes(r, "2019-11")["incompleto"]
+    assert not mes(r, "2020-03")["incompleto"]
+
+
+def test_quantidade_declarada_menor_que_a_vendida_deixa_o_resto_sem_custo():
+    r = apurar([tx("2020-03-10", "ITUB3", "sell", 1500, 30)],
+               hoje=HOJE, custos_iniciais=CUSTO_ITUB)
+    c = mes(r, "2020-03")["cestas"]["comum"]
+    assert c["sem_custo"] == ["ITUB3"] and c["custo_declarado"] == ["ITUB3"]
+
+
+def test_recompra_depois_de_zerar_nao_herda_a_marca_de_declarado():
+    r = apurar([tx("2020-03-10", "ITUB3", "sell", 1000, 30),
+                tx("2021-01-10", "ITUB3", "buy", 100, 30),
+                tx("2021-02-10", "ITUB3", "sell", 100, 40)],
+               hoje=HOJE, custos_iniciais=CUSTO_ITUB)
+    assert not mes(r, "2021-02")["custo_declarado"]
+
+
+def test_ler_csv_aceita_formato_brasileiro_e_recusa_linha_invalida():
+    from core.ir_custo_inicial import ler_csv
+    ok = ler_csv("ticker;data;quantidade;custo_total\nitub3;31/12/2019;1.000;20.000,50\n".encode())
+    assert ok == [{"ticker": "ITUB3", "data": "2019-12-31", "quantidade": "1000",
+                   "custo_total": "20000.50", "fonte": "declarado no IRPF"}]
+    with pytest.raises(ValueError, match="linha 3"):
+        ler_csv("ticker;data;quantidade;custo_total\nA;2019-12-31;1;1\nB;2019-12-31;0;1\n")
+    with pytest.raises(ValueError, match="colunas ausentes"):
+        ler_csv("ticker;quantidade\nA;1\n")
+
+
 def test_classe_fora_do_escopo_vira_alerta():
     r = apurar([tx("2025-01-02", "BTC", "buy", 1, 100, classe="crypto")], hoje=HOJE)
     assert r["meses"] == []
@@ -222,7 +281,8 @@ def test_tela_renderiza_com_mes_incompleto_e_darf_pendente(monkeypatch):
     res = apurar([tx("2025-01-10", "BBAS3", "sell", 1000, 30),
                   tx("2026-08-03", "PETR4", "buy", 2000, 10),
                   tx("2026-08-20", "PETR4", "sell", 2000, 12.5)], hoje=date.today())
-    monkeypatch.setattr(tela, "_apuracao", lambda: res)
+    monkeypatch.setattr(tela, "_apuracao", lambda *a: res)
+    monkeypatch.setattr(tela, "_custos", lambda: [])
     avisos = []
     monkeypatch.setattr(tela.st, "warning", lambda msg, **k: avisos.append(msg))
     tela.render()
