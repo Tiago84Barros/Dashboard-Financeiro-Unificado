@@ -1277,6 +1277,9 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                     prices=prices,
                     scenario_provenance=scenario_provenance,
                 )
+                from core.contexto_mercado import bloco_contexto_mercado
+
+                context = context + "\n\n" + bloco_contexto_mercado()
                 answer = chat_com_fiis(context, history[:-1], user_input)
             except Exception as exc:
                 answer = f"Não foi possível consultar a LLM neste momento: {exc}"

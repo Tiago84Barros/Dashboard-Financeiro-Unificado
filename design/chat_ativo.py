@@ -153,7 +153,11 @@ def render_chat_ativo(
     with st.chat_message("assistant"):
         with st.spinner(f"Consultando os dados de {tk}, pares e qualidade…"):
             try:
-                contexto = build_context(pergunta)
+                # O bloco do ativo já traz o noticiário dele; aqui entram macro,
+                # curva, câmbio e manchetes gerais — premissa do app.
+                from core.contexto_mercado import bloco_contexto_mercado
+
+                contexto = build_context(pergunta) + "\n\n" + bloco_contexto_mercado()
                 resposta = chat_com_ativo(contexto, historico[:-1], pergunta,
                                           mercado=mercado, ticker=tk)
             except Exception as exc:  # provedor fora do ar, timeout, dado ausente

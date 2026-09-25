@@ -221,6 +221,7 @@ CARIMBO = {
     "us_vintages": ("supabase", "SELECT max(created_at) FROM market_us.score_vintages"),
     "us_delistings": ("supabase", "SELECT max(derived_at) FROM market_us.delistings"),
     "us_prices": ("supabase", "SELECT max(ingested_at) FROM market_us.prices_monthly"),
+    "noticias_vitrine": ("supabase", "SELECT max(gerada_em) FROM noticias_vitrine_meta"),
 }
 
 

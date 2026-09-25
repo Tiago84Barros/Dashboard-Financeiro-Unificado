@@ -1252,6 +1252,11 @@ def _render_chat_financeiro(
                     ano_ref=ano_ref,
                     mes_ref=mes_ref,
                 )
+                # Premissa do app: macro e noticiário geral acompanham toda
+                # conversa — juro e inflação mudam a leitura do orçamento.
+                from core.contexto_mercado import bloco_contexto_mercado
+
+                context = context + "\n\n" + bloco_contexto_mercado()
                 resposta_raw = chat_com_financas(context, history[:-1], user_input)
                 resposta, chart_directives = parse_chart_directives(resposta_raw)
                 if not chart_directives:
@@ -3470,6 +3475,11 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
                     assinaturas=_prepare_subscriptions(df_all),
                     filtro_label=filtro_label,
                 )
+                # Premissa do app: macro e noticiário geral acompanham toda
+                # conversa — juro e inflação mudam a leitura do orçamento.
+                from core.contexto_mercado import bloco_contexto_mercado
+
+                context = context + "\n\n" + bloco_contexto_mercado()
                 resposta_raw = chat_com_cartao(context, history[:-1], user_input)
                 resposta, chart_directives = parse_chart_directives(resposta_raw)
                 if not chart_directives:

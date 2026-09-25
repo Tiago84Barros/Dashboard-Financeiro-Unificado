@@ -46,7 +46,7 @@ from core.frescor import idade_limite  # noqa: E402
 # é o mais apertado porque é o único com validade dura no código:
 # `fii_methodology` recusa snapshot com mais de 4 dias, então uma vitrine de 5
 # dias não deixa a tela degradada, deixa a tela errada.
-IDADE_MAXIMA = {m: idade_limite(m) for m in ("fii", "us", "b3")}
+IDADE_MAXIMA = {m: idade_limite(m) for m in ("fii", "us", "b3", "noticias")}
 
 
 def _resultado(modulo, ok, linhas=0, idade=None, detalhe="") -> dict:
@@ -129,7 +129,38 @@ def verificar_b3() -> dict:
         "b3", frame, ("Ticker", "P/L", "P/VP", "DY", "ROE"), idade)
 
 
-VERIFICADORES = {"fii": verificar_fii, "us": verificar_us, "b3": verificar_b3}
+def verificar_noticias() -> dict:
+    """A vitrine de notícias não é quadro: é meta + uma linha por ativo.
+
+    A idade sai de ``gerada_em`` da meta, que é o carimbo que as LLMs recebem.
+    """
+    from sqlalchemy import text
+
+    from core.database import get_engine
+    from core.noticias import vitrine as vit
+
+    try:
+        engine = get_engine()
+        _, meta = vit.ler(engine, ())
+        with engine.connect() as conn:
+            linhas = int(conn.execute(text(
+                "SELECT count(*) FROM noticias_vitrine WHERE n_itens > 0")).scalar() or 0)
+    except Exception as exc:  # noqa: BLE001
+        return _resultado("noticias", False, detalhe=f"a vitrine não pôde ser lida ({exc})")
+    if meta is None:
+        return _resultado("noticias", False, detalhe="a vitrine nunca foi publicada")
+    idade = _idade_em_dias(meta.get("gerada_em"))
+    if not linhas:
+        return _resultado("noticias", False, 0, idade, "nenhum ativo com manchete")
+    limite = IDADE_MAXIMA["noticias"]
+    if idade is not None and idade > limite:
+        return _resultado("noticias", False, linhas, idade,
+                          f"idade {idade}d acima do limite {limite}d")
+    return _resultado("noticias", True, linhas, idade, "legível, com manchetes")
+
+
+VERIFICADORES = {"fii": verificar_fii, "us": verificar_us, "b3": verificar_b3,
+                 "noticias": verificar_noticias}
 
 
 def main(argv=None) -> int:

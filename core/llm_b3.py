@@ -13,6 +13,8 @@ sobre setores/segmentos do mercado brasileiro para gerar análise institucional.
 """
 from __future__ import annotations
 
+from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+
 import json
 import logging
 import os
@@ -660,6 +662,7 @@ def chat_com_portfolio(
         "concorrentes/pares, use os tickers do bloco 'CONCORRENTES DE ...' do contexto (tipo "
         "'comparison' com o ativo + os concorrentes); nunca diga que não conhece os concorrentes "
         "se esse bloco estiver presente.\n\n"
+        f"{REGRA_CONTEXTO_MERCADO}\n\n"
         f"=== CONTEXTO DO PORTFÓLIO ===\n{context}"
     )
 

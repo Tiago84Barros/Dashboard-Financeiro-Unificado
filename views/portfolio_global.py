@@ -1426,6 +1426,19 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                     df, alvos=alvos, total_brl=total_brl, retornos=ret,
                     cobertura=cob, pesos=pesos, papeis=papeis, acoes=acoes,
                 )
+                # Premissa do app: macro, curva e noticiário dos dois bancos
+                # entram em toda conversa, com o dos ativos da carteira.
+                from core.contexto_mercado import bloco_contexto_mercado
+
+                ativos: dict[str, dict[str, str]] = {}
+                for linha in df.to_dict("records"):
+                    classe = str(linha.get("asset_class") or "").strip().lower()
+                    simbolo = str(linha.get("symbol") or "").strip().upper()
+                    if classe in ("b3", "fii", "us") and simbolo:
+                        ativos.setdefault(classe, {})[simbolo] = str(
+                            linha.get("sector_raw") or linha.get("sector") or "")
+                contexto += "\n\n" + bloco_contexto_mercado(
+                    ativos, max_itens_por_classe=6)
                 resposta = chat_com_portfolio_global(contexto, historico[:-1], pergunta)
             except Exception as exc:  # noqa: BLE001 - fronteira de isolamento do provedor
                 logger.exception("Falha no chat do portfolio global")

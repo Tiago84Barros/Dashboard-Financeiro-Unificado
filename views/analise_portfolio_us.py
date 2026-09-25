@@ -1013,6 +1013,9 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
                     portfolio_tickers=[str(it.get("ticker") or "")
                                        for it in model.get("items", [])],
                 )
+                from core.contexto_mercado import bloco_contexto_mercado
+
+                contexto = contexto + "\n\n" + bloco_contexto_mercado()
                 resposta = chat_com_portfolio(contexto, historico[:-1], pergunta)
             except Exception as exc:  # noqa: BLE001
                 resposta = f"Erro ao consultar LLM: {exc}"

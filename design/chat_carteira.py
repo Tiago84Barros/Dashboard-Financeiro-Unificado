@@ -160,18 +160,21 @@ def render_chat_carteira(
             "meses sobre o custo. "
             + ("Os valores em reais vão junto." if valores_reais else
                "Valores em reais e quantidades não são enviados.")
+            + " Junto vão Selic, IPCA, juro real, câmbio, a curva do Tesouro e o "
+            "noticiário do mercado e dos seus ativos, com fonte e data."
             + " Múltiplos e notas por ativo ficam nas sub-abas de cada classe.",
             accent,
         )
     else:
         cartao = _card_html(
             f"Chat focado em {len(presentes)} ativo(s) desta classe",
-            "A resposta usa apenas o que esta aba carregou: composição em percentual, "
+            "A resposta usa o que esta aba carregou: composição em percentual, "
             "médias com a respectiva cobertura e as notas do universo do banco. "
             + ("Os valores em reais desta classe vão junto; o patrimônio total e as "
                "outras classes não."
                if valores_reais else
                "Valores em reais e quantidades não são enviados.")
+            + " Junto vão macro, curva do Tesouro e noticiário, com fonte e data."
             + " O que falta de dado é declarado em vez de preenchido.",
             accent,
         )
@@ -237,7 +240,7 @@ def render_chat_carteira(
     with st.chat_message("user"):
         st.markdown(escapar_cifrao(pergunta))
     with st.chat_message("assistant"):
-        with st.spinner("Consultando composição, médias e universo do banco…"):
+        with st.spinner("Consultando carteira, macro, curva e noticiário…"):
             try:
                 contexto = build_context(pergunta, valores_reais=valores_reais)
                 resposta = chat_com_carteira(contexto, historico[:-1], pergunta,
