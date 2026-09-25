@@ -101,3 +101,42 @@ def test_foto_historica_nao_recebe_o_exterior_de_hoje(banco_falso):
 
     assert evolucao["snapshots"][0]["mes_str"] == "2020-01"
     assert evolucao["snapshots"][0]["valor_mercado"] == pytest.approx(900.0)
+
+
+# ── Foto sem custo não vira custo zero ────────────────────────────────────────
+
+
+def test_sql_so_soma_custo_quando_toda_posicao_tem_custo():
+    sql = " ".join(investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower().split())
+
+    assert "bool_and(coalesce(pps.invested_value, 0) > 0)" in sql
+    assert "sum(coalesce(pps.invested_value, 0))" not in sql
+
+
+def test_foto_sem_custo_vira_lacuna_e_nao_zero():
+    snaps = [
+        SimpleNamespace(mes=date(2020, 12, 31), valor_mercado=600.0,
+                        valor_investido_snapshot=None),
+        SimpleNamespace(mes=date(2023, 12, 31), valor_mercado=300.0,
+                        valor_investido_snapshot=250.0),
+    ]
+    d = investimentos._montar_evolucao_snapshot(snaps, [], None, [])
+
+    assert d["snapshots"][0]["valor_investido"] is None
+    assert d["snapshots"][1]["valor_investido"] == pytest.approx(250.0)
+    assert d["total_investido"] == pytest.approx(250.0)
+
+    from views.investimentos import _fig_evolucao_patrimonial
+    fig = _fig_evolucao_patrimonial(d["snapshots"])
+    investido = next(t for t in fig.data if t.name == "Valor Investido")
+    assert investido.y[0] is None
+
+
+def test_grafico_do_dashboard_geral_aceita_custo_desconhecido():
+    from views.dashboard_geral import _fig_evolucao_investimentos
+
+    fig = _fig_evolucao_investimentos({"snapshots": [
+        {"label": "Dez/20", "valor_mercado": 600.0, "valor_investido": None},
+        {"label": "Dez/23", "valor_mercado": 300.0, "valor_investido": 250.0},
+    ]})
+    assert any(t.name == "Custo histórico" for t in fig.data)

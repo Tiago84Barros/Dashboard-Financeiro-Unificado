@@ -1607,7 +1607,14 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
         SELECT
             pps.report_date,
             SUM(pps.market_value)              AS vm,
-            SUM(COALESCE(pps.invested_value, 0)) AS vi
+            -- Custo so quando TODA posicao com valor tem custo. Soma parcial
+            -- e amostra (as fotos antigas da XP vem sem invested_value) e o
+            -- grafico desenhava "custo zero" sob R$ 600 mil de mercado.
+            CASE
+                WHEN BOOL_AND(COALESCE(pps.invested_value, 0) > 0)
+                     FILTER (WHERE pps.market_value > 0)
+                THEN SUM(pps.invested_value) FILTER (WHERE pps.market_value > 0)
+            END AS vi
         FROM portfolio_position_snapshots pps
         JOIN xp_pref xp
           ON xp.report_date  = pps.report_date
@@ -1774,7 +1781,10 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
         snapshots.append({
             "label":               label,
             "mes_str":             mes_str,
-            "valor_investido":     round(float(r.valor_investido_snapshot or 0), 2),
+            # None = custo desconhecido na foto: o grafico abre uma lacuna
+            # em vez de desenhar custo zero.
+            "valor_investido":     (round(float(r.valor_investido_snapshot), 2)
+                                    if r.valor_investido_snapshot is not None else None),
             "valor_mercado":       round(vm, 2),
             "valor_com_dividendos": round(vm + cum_div, 2),
         })
@@ -1814,7 +1824,7 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
     return {
         "snapshots":        snapshots,
         "fluxo_mensal":     fluxo_mensal,
-        "total_investido":  latest.get("valor_investido", 0.0),
+        "total_investido":  latest.get("valor_investido") or 0.0,
         "total_mercado":    latest.get("valor_mercado", 0.0),
         "total_dividendos": round(cum_div, 2),
     }
