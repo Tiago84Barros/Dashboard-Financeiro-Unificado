@@ -17,8 +17,11 @@ O que entra, e de onde:
     ``public.macro`` (anual, último valor de cada ano), a curva do Tesouro
     (``tesouro_market_rates``, diária), o dólar (``USDBRL`` em
     ``asset_quotes``) e a vitrine de notícias (``noticias_vitrine``).
-``Armazém local`` (só em desenvolvimento)
+``Armazém local`` (direto em desenvolvimento; pelo túnel em produção)
     as séries do ``macro_staging`` e o acervo de notícias, com nota e direção.
+    Em produção o caminho é :mod:`core.armazem_remoto`, que só responde com o
+    PC do usuário e o túnel ligados; sem ele, a vitrine do Supabase entra no
+    lugar do acervo e o bloco diz qual das duas entrou.
 
 Cada fonte que falha vira uma linha nomeando a falha — nunca some, porque
 bloco que some é indistinguível de "nada a relatar". Nada aqui levanta:
@@ -40,6 +43,9 @@ logger = logging.getLogger(__name__)
 #: Leituras do Supabase: 15 min. Curva, dólar e macro mudam por dia, e a
 #: vitrine é republicada algumas vezes por dia.
 _TTL_REMOTO = 900
+#: Leituras pelo túnel: curto, porque o caso comum de falha é o PC desligado, e
+#: guardar a falha por 15 min manteria a produção na vitrine depois de ligá-lo.
+_TTL_TUNEL = 120
 
 #: Manchetes gerais do mercado (sem filtro de ativo) levadas ao prompt.
 MAX_MANCHETES = 12
@@ -205,6 +211,27 @@ def linhas_curva_tesouro(curva) -> list[str]:
 # Macro — armazém local
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _linhas_macro_local(fatos, origem: str) -> list[str]:
+    """Séries do armazém com período no último ano, sem a cópia de public.macro."""
+    from core.macro_data.context import format_macro_context
+
+    hoje = date.today()
+    recentes = []
+    for fato in fatos:
+        try:
+            periodo = date.fromisoformat(str(fato.get("reference_period"))[:10])
+        except ValueError:
+            continue
+        if (hoje - periodo <= _IDADE_MAX_SERIE_LOCAL
+                and fato.get("provider") != _PROVEDOR_ESPELHO):
+            recentes.append(fato)
+    if not recentes:
+        return [f"  {origem}: nenhuma série com período recente."]
+    return [f"  {origem} (séries com período no último ano; a cópia "
+            "de public.macro fica de fora):"] + [
+        "    " + linha for linha in format_macro_context(recentes)]
+
+
 def _macro_local() -> list[str]:
     try:
         from core.macro_data.database import get_local_macro_engine
@@ -214,26 +241,10 @@ def _macro_local() -> list[str]:
     try:
         engine = get_local_macro_engine()
         if engine is None:
-            return ["  Armazém macro local: não alcançável neste ambiente (a "
-                    "produção só alcança o Supabase)."]
-        from core.macro_data.context import format_macro_context, latest_macro_context
+            return _macro_remoto()
+        from core.macro_data.context import latest_macro_context
 
-        fatos = latest_macro_context(engine)
-        hoje = date.today()
-        recentes = []
-        for fato in fatos:
-            try:
-                periodo = date.fromisoformat(str(fato.get("reference_period"))[:10])
-            except ValueError:
-                continue
-            if (hoje - periodo <= _IDADE_MAX_SERIE_LOCAL
-                    and fato.get("provider") != _PROVEDOR_ESPELHO):
-                recentes.append(fato)
-        if not recentes:
-            return ["  Armazém macro local: nenhuma série com período recente."]
-        return ["  Armazém macro local (séries com período no último ano; a cópia "
-                "de public.macro fica de fora):"] + [
-            "    " + linha for linha in format_macro_context(recentes)]
+        return _linhas_macro_local(latest_macro_context(engine), "Armazém macro local")
     except Exception as exc:  # noqa: BLE001
         return [f"  Armazém macro local: falha na leitura ({_limpo(exc, 120)})."]
     finally:
@@ -241,11 +252,34 @@ def _macro_local() -> list[str]:
             engine.dispose()
 
 
+@st.cache_data(ttl=_TTL_TUNEL, show_spinner=False)
+def _macro_remoto() -> list[str]:
+    """O armazém macro pelo túnel, quando o ambiente não o alcança direto."""
+    try:
+        from core import armazem_remoto
+
+        fatos = armazem_remoto.macro_recente()
+        if fatos is None:
+            return ["  Armazém macro local: não alcançável neste ambiente (a "
+                    "produção só alcança o Supabase)."]
+        return _linhas_macro_local(fatos, "Armazém macro local, lido pelo túnel")
+    except Exception as exc:  # noqa: BLE001
+        return [f"  Armazém macro local pelo túnel: indisponível ({_limpo(exc, 120)}); "
+                "só as séries do Supabase acima entraram."]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Noticiário geral (sem filtro de ativo)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _data(valor: object) -> str:
+    if isinstance(valor, str):
+        # O túnel entrega datas em ISO; sem isto a mesma manchete sairia com
+        # formato diferente conforme a rota que a trouxe.
+        try:
+            valor = datetime.fromisoformat(valor)
+        except ValueError:
+            pass
     if isinstance(valor, datetime):
         return f"{valor:%d/%m %H:%M}"
     texto = str(valor or "")[:16].replace("T", " ")
@@ -270,32 +304,57 @@ def _manchetes_acervo(limite: int) -> list[str] | None:
             return None
         from core.noticias.armazenamento import ler_recentes
 
-        itens = list(ler_recentes(150, dias=3, engine=engine))
-        itens.sort(key=lambda i: (_cita_brasil(i), float(i.get("nota") or 0)),
-                   reverse=True)
-        linhas = [f"  Acervo local ({len(itens)} itens avaliados nos últimos 3 "
-                  "dias; Brasil primeiro, depois os de maior relevância):"]
-        vistos: set[str] = set()
-        for item in itens:
-            titulo = _limpo(item.get("titulo"))
-            if not titulo or titulo in vistos:
-                continue
-            vistos.add(titulo)
-            direcao = _limpo(item.get("direcao"), 20) or "indefinida"
-            linhas.append(f"    - [{_data(item.get('publicado_em') or item.get('coletado_em'))}] "
-                          f"{titulo} ({_limpo(item.get('veiculo'), 40)}; relevância "
-                          f"{float(item.get('nota') or 0):.0f}; direção {direcao})")
-            if len(vistos) >= limite:
-                break
-        if not vistos:
-            linhas.append("    nenhum item avaliado no período — ausência de "
-                          "coleta, não de fatos.")
-        return linhas
+        return _linhas_acervo(ler_recentes(150, dias=3, engine=engine), limite,
+                              "Acervo local")
     except Exception as exc:  # noqa: BLE001
         return [f"  Acervo local de notícias: falha na leitura ({_limpo(exc, 120)})."]
     finally:
         if engine is not None:
             engine.dispose()
+
+
+def _linhas_acervo(itens, limite: int, origem: str) -> list[str]:
+    itens = list(itens)
+    itens.sort(key=lambda i: (_cita_brasil(i), float(i.get("nota") or 0)),
+               reverse=True)
+    linhas = [f"  {origem} ({len(itens)} itens avaliados nos últimos 3 "
+              "dias; Brasil primeiro, depois os de maior relevância):"]
+    vistos: set[str] = set()
+    for item in itens:
+        titulo = _limpo(item.get("titulo"))
+        if not titulo or titulo in vistos:
+            continue
+        vistos.add(titulo)
+        direcao = _limpo(item.get("direcao"), 20) or "indefinida"
+        linhas.append(f"    - [{_data(item.get('publicado_em') or item.get('coletado_em'))}] "
+                      f"{titulo} ({_limpo(item.get('veiculo'), 40)}; relevância "
+                      f"{float(item.get('nota') or 0):.0f}; direção {direcao})")
+        if len(vistos) >= limite:
+            break
+    if not vistos:
+        linhas.append("    nenhum item avaliado no período — ausência de "
+                      "coleta, não de fatos.")
+    return linhas
+
+
+@st.cache_data(ttl=_TTL_TUNEL, show_spinner=False)
+def _manchetes_remoto(limite: int) -> tuple[list[str] | None, str | None]:
+    """O acervo pelo túnel: ``(linhas, None)``, ``(None, aviso)`` ou ``(None, None)``.
+
+    O aviso existe porque a vitrine que entra no lugar é um recorte por ativo,
+    não o noticiário inteiro. Sem dizer que o acervo falhou, o modelo leria o
+    recorte como se fosse tudo o que aconteceu.
+    """
+    try:
+        from core import armazem_remoto
+
+        itens = armazem_remoto.noticias_recentes(150, dias=3)
+    except Exception as exc:  # noqa: BLE001
+        return None, (f"  Acervo local pelo túnel: indisponível ({_limpo(exc, 120)}); "
+                      "segue a vitrine do Supabase, que é um recorte por ativo.")
+    if itens is None:
+        return None, None
+    return _linhas_acervo(itens, limite, "Acervo local, lido pelo túnel"), None
 
 
 @st.cache_data(ttl=_TTL_REMOTO, show_spinner=False)
@@ -411,6 +470,10 @@ def bloco_contexto_mercado(
     if noticias_gerais:
         partes += ["", "NOTICIÁRIO GERAL DO MERCADO:"]
         acervo = _manchetes_acervo(MAX_MANCHETES)
+        if acervo is None:
+            acervo, aviso = _manchetes_remoto(MAX_MANCHETES)
+            if aviso:
+                partes.append(aviso)
         partes += (acervo if acervo is not None
                    else _manchetes_vitrine_cache(MAX_MANCHETES))
 
