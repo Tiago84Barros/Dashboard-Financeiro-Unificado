@@ -24,9 +24,10 @@ def test_carimbo_aponta_para_a_base_que_o_alvo_escreve(chave, onde):
     workflow remoto mantém -- um carimbo recente de uma tabela que este alvo não
     escreve. A rotina acharia que está em dia com o armazém parado há semanas,
     que foi exatamente o estado encontrado em 01/09/2026: Supabase de 26/08,
-    armazém de 11/08.
+    armazém de 11/08. O espelho também escreve no armazém (lê o Supabase).
     """
-    assert onde == ("armazem" if chave == "fii_ingest" else "supabase")
+    escreve_no_armazem = {"fii_ingest", "espelho_supabase"}
+    assert onde == ("armazem" if chave in escreve_no_armazem else "supabase")
 
 
 def test_resumo_json_pega_a_ultima_linha_e_so_o_que_interessa():

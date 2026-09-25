@@ -46,7 +46,7 @@ from core.frescor import idade_limite  # noqa: E402
 # é o mais apertado porque é o único com validade dura no código:
 # `fii_methodology` recusa snapshot com mais de 4 dias, então uma vitrine de 5
 # dias não deixa a tela degradada, deixa a tela errada.
-IDADE_MAXIMA = {m: idade_limite(m) for m in ("fii", "us", "b3", "noticias")}
+IDADE_MAXIMA = {m: idade_limite(m) for m in ("fii", "us", "b3", "noticias", "espelho")}
 
 
 def _resultado(modulo, ok, linhas=0, idade=None, detalhe="") -> dict:
@@ -159,8 +159,40 @@ def verificar_noticias() -> dict:
     return _resultado("noticias", True, linhas, idade, "legível, com manchetes")
 
 
+def verificar_espelho() -> dict:
+    """O espelho mora no armazém: confere a última execução e que ela trouxe tudo."""
+    from sqlalchemy import create_engine, text
+
+    from scripts.espelhar_supabase_local import META, TABELAS
+    from scripts.publish_fii_selection_from_local import _warehouse_url
+
+    try:
+        engine = create_engine(_warehouse_url())
+        try:
+            with engine.connect() as conn:
+                linha = conn.execute(text(
+                    f"SELECT executado_em, tabelas, linhas FROM {META} "
+                    "ORDER BY executado_em DESC LIMIT 1")).first()
+        finally:
+            engine.dispose()
+    except Exception as exc:  # noqa: BLE001
+        return _resultado("espelho", False, detalhe=f"o carimbo não pôde ser lido ({exc})")
+    if linha is None:
+        return _resultado("espelho", False, detalhe="o espelho nunca rodou")
+    quando, tabelas, linhas = linha
+    idade = _idade_em_dias(quando)
+    if tabelas != len(TABELAS):
+        return _resultado("espelho", False, linhas, idade,
+                          f"{tabelas} tabelas espelhadas de {len(TABELAS)}")
+    limite = IDADE_MAXIMA["espelho"]
+    if idade is not None and idade > limite:
+        return _resultado("espelho", False, linhas, idade,
+                          f"idade {idade}d acima do limite {limite}d")
+    return _resultado("espelho", True, linhas, idade, f"{tabelas} tabelas")
+
+
 VERIFICADORES = {"fii": verificar_fii, "us": verificar_us, "b3": verificar_b3,
-                 "noticias": verificar_noticias}
+                 "noticias": verificar_noticias, "espelho": verificar_espelho}
 
 
 def main(argv=None) -> int:
