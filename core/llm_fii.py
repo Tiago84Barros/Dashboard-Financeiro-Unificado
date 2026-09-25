@@ -1,6 +1,8 @@
 """Chat especializado na lista de diligência e carteira de FIIs."""
 from __future__ import annotations
 
+from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+
 from typing import Iterable
 
 from core.llm_b3 import _chat_complete, _report_model
@@ -45,6 +47,7 @@ def chat_com_fiis(context: str, history: Iterable[dict], user_message: str,
         "FORMATO: responda diretamente à pergunta. Quando útil, use as seções "
         "**Resposta objetiva**, **Evidências**, **Riscos e contrapontos**, "
         "**Dados ausentes** e **Conclusão para diligência**. Evite texto genérico.\n\n"
+        f"{REGRA_CONTEXTO_MERCADO}\n\n"
         f"=== CONTEXTO FII ===\n{context}"
     )
     messages = [{"role": "system", "content": system}]

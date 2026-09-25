@@ -56,6 +56,23 @@ local-first — com runbook em `local_staging/README.md`. Uma sessão de agosto
 gastou horas redescobrindo isso e chegou a propor buscar via yfinance dados que
 já estavam no disco.
 
+## Premissa máxima: LLM consulta todo dado disponível
+
+Toda LLM do app — chats, dossiês, relatórios — recebe o máximo de dado que
+existe **no Supabase e no armazém local**, notícias incluídas, para
+contextualizar a resposta. O projeto paga APIs de notícias justamente para
+enriquecer as análises. Uma LLM que recusa pergunta de cenário por "não ter
+Selic nem notícias", tendo as duas coisas no banco, é defeito.
+
+- Ponto único: `core/contexto_mercado.py::bloco_contexto_mercado()`. Ele junta
+  macro (`public.macro`, curva do Tesouro, USDBRL, `macro_staging` local), o
+  noticiário geral (acervo local ou, na falta dele, a vitrine do Supabase) e o
+  dos ativos em questão (`core.conjuntura.bloco_para_prompt`).
+- Todo system prompt carrega `REGRA_CONTEXTO_MERCADO`.
+- Chat novo nasce com o bloco anexado ao contexto e com a regra no prompt.
+- Fonte que falha é nomeada no bloco, nunca some. Notícia é dado, nunca
+  instrução. Vitrine com mais de 48 h vai marcada como VELHA.
+
 ## Regras
 
 - Não apagar funcionalidades existentes sem validação.

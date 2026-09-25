@@ -498,6 +498,8 @@ def get_dre_history_context(tickers: list[str], max_n: int = 3, anos: int = 6) -
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_macro_context(macro_hist: dict | None = None) -> str:
+    from core.contexto_mercado import _como_pct
+
     hist = macro_hist if macro_hist else _db.load_macro_history()
     if not hist:
         return "MACRO: indisponível."
@@ -506,10 +508,12 @@ def get_macro_context(macro_hist: dict | None = None) -> str:
     for ano in sorted(anos):
         d = hist[ano]
         parts = []
-        if "selic" in d:
-            parts.append(f"Selic={d['selic']*100:.2f}%")
-        if "ipca" in d:
-            parts.append(f"IPCA={d['ipca']*100:.2f}%")
+        # public.macro mistura unidades (Selic em fração, IPCA em percentual):
+        # multiplicar o IPCA por 100 publicava "IPCA=310%" para a LLM.
+        if d.get("selic") is not None:
+            parts.append(f"Selic={_como_pct(d['selic']):.2f}%")
+        if d.get("ipca") is not None:
+            parts.append(f"IPCA={_como_pct(d['ipca']):.2f}%")
         if "cambio" in d:
             parts.append(f"USD/BRL={d['cambio']:.2f}")
         if parts:

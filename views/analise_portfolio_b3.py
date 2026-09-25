@@ -1352,6 +1352,9 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
                         portfolio_tickers=[it.get("ticker", "") for it in model.get("items", [])],
                         cobertura_docs=cobertura_docs,
                     )
+                    from core.contexto_mercado import bloco_contexto_mercado
+
+                    context = context + "\n\n" + bloco_contexto_mercado()
                     resposta_raw = chat_com_portfolio(context, history[:-1], user_input)
                     resposta, chart_directives = parse_chart_directives(resposta_raw)
                     # Fallback: a LLM às vezes descreve o gráfico sem emitir a

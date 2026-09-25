@@ -167,6 +167,17 @@ ALVOS: tuple[Alvo, ...] = (
         modulo="us",
     ),
     Alvo(
+        # Sem este alvo a vitrine ficou 18 dias parada (06/09 a 24/09/2026)
+        # com a coleta local rodando a cada 30 min: o publicador existia e
+        # ninguém o chamava. Em produção é o único noticiário que as LLMs
+        # alcançam. Simula por omissão -- sem `--apply` sairia 0 sem gravar.
+        chave="noticias_vitrine",
+        titulo="Vitrine de notícias",
+        passos=(("scripts/publish_noticias_vitrine.py", "--apply"),),
+        cadencia_dias=1,
+        modulo="noticias",
+    ),
+    Alvo(
         chave="us_prices",
         titulo="Preços mensais dos EUA",
         passos=(("-m", "scripts.publish_us_prices_monthly", "--apply"),),

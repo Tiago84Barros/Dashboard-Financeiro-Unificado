@@ -3121,12 +3121,20 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
     def _contexto(_pergunta, *, valores_reais: bool = False) -> str:
         # Os documentos só são lidos quando a LLM vai ser chamada — a aba
         # inteira não paga a consulta ao acervo em cada rerun.
+        # Premissa do app: a LLM recebe tudo o que os dois bancos têm — macro,
+        # curva, noticiário geral e o dos ativos desta classe. O Tesouro não
+        # tem ticker com notícia; recebe macro e manchetes gerais.
+        from core.contexto_mercado import CLASSE_DA_ABA, bloco_contexto_mercado
+
+        conj = CLASSE_DA_ABA.get(classe)
+        ativos = ({conj: {str(p.get("ticker") or "").upper(): str(p.get("setor") or "")
+                          for p in posicoes_classe}} if conj else None)
         return build_carteira_classe_context(
             classe, posicoes_classe, valuations=valuations, db=db,
             tesouro=tesouro, macro=macro, fundamentos=fundamentos,
             documentos=carregar_documentos(classe, chaves),
             valores_reais=valores_reais,
-        )
+        ) + "\n\n" + bloco_contexto_mercado(ativos)
 
     render_chat_carteira(classe=classe, tickers=tickers,
                          build_context=_contexto)
@@ -3384,11 +3392,15 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         from core.llm_context_carteira import build_carteira_geral_context
         from design.chat_carteira import render_chat_carteira
 
+        from core.contexto_mercado import ativos_por_classe, bloco_contexto_mercado
+
         render_chat_carteira(
             classe="geral", tickers=[p["ticker"] for p in posicoes],
             build_context=lambda _pergunta, *, valores_reais=False:
                 build_carteira_geral_context(carteira, proventos,
-                                             valores_reais=valores_reais),
+                                             valores_reais=valores_reais)
+                + "\n\n" + bloco_contexto_mercado(ativos_por_classe(posicoes),
+                                                   max_itens_por_classe=6),
         )
 
 

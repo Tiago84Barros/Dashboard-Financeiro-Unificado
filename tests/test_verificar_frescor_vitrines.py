@@ -87,3 +87,43 @@ def test_fii_tem_o_limite_mais_apertado():
     """
     assert IDADE_MAXIMA["fii"] <= 4
     assert IDADE_MAXIMA["fii"] < IDADE_MAXIMA["us"]
+
+
+def test_verificador_de_noticias_reprova_vitrine_velha_e_nunca_publicada(monkeypatch):
+    # A vitrine ficou 18 dias parada sem nenhum alarme: o verificador lê o
+    # carimbo que as LLMs recebem, não a presença de linhas.
+    from datetime import datetime, timedelta, timezone
+
+    import core.database as database
+    import core.noticias.vitrine as vit
+    import scripts.verificar_frescor_vitrines as ver
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, *_a):
+            class _R:
+                def scalar(self_inner):
+                    return 40
+            return _R()
+
+    class _Eng:
+        def connect(self):
+            return _Conn()
+
+    monkeypatch.setattr(database, "get_engine", lambda: _Eng())
+    velha = datetime.now(timezone.utc) - timedelta(days=18)
+    monkeypatch.setattr(vit, "ler", lambda _e, _s: ((), {"gerada_em": velha}))
+    r = ver.verificar_noticias()
+    assert not r["ok"] and "acima do limite" in r["detalhe"]
+
+    monkeypatch.setattr(vit, "ler", lambda _e, _s: ((), None))
+    assert "nunca foi publicada" in ver.verificar_noticias()["detalhe"]
+
+    fresca = datetime.now(timezone.utc) - timedelta(hours=3)
+    monkeypatch.setattr(vit, "ler", lambda _e, _s: ((), {"gerada_em": fresca}))
+    assert ver.verificar_noticias()["ok"]

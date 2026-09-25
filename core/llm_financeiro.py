@@ -13,6 +13,8 @@ proprietário (OWNER_USER_ID). Este módulo não acessa banco.
 """
 from __future__ import annotations
 
+from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+
 from typing import Iterable
 
 from core.llm_b3 import _chat_complete, parse_chart_directives  # noqa: F401 (reexport)
@@ -55,6 +57,7 @@ qualidade de vida; nunca recomende cortar saúde, moradia ou dívidas sem ressal
 7. Você é apoio à decisão e educação financeira, NÃO recomendação de investimento \
 específico nem garantia de resultado.
 8. Seja conciso. Responda à pergunta primeiro; detalhe só o necessário.
+9. {regra_mercado}
 
 FORMATO: responda em markdown. Quando útil, use seções curtas como \
 **Resposta**, **Números**, **Cálculo**, **Riscos**, **Recomendações**, \
@@ -90,7 +93,7 @@ def chat_com_financas(context: str, history: Iterable[dict], user_message: str,
     """
     # Concatenação (NÃO str.format): o prompt contém chaves { } literais dos
     # exemplos de diretiva JSON, que o str.format interpretaria como campos.
-    system = _SYSTEM + (context or "")
+    system = _SYSTEM.replace("{regra_mercado}", REGRA_CONTEXTO_MERCADO) + (context or "")
     messages = [{"role": "system", "content": system}]
     for message in list(history)[-10:]:
         role = str(message.get("role") or "")
@@ -138,6 +141,7 @@ PREMISSAS, LIMITAÇÕES e IMPACTOS esperados das recomendações.
 recomende cortar saúde/essenciais sem ressalva.
 7. Apoio à decisão e educação financeira — não é recomendação de investimento nem garantia.
 8. Seja conciso. Responda primeiro; detalhe só o necessário.
+9. {regra_mercado}
 
 FORMATO: markdown, com seções curtas quando útil (**Resposta**, **Números**, \
 **Cálculo**, **Riscos**, **Recomendações**, **Premissas e limitações**).
@@ -167,7 +171,8 @@ def chat_com_cartao(context: str, history: Iterable[dict], user_message: str,
     contexto fornecido. Mesma cadeia de provedores e protocolo de gráficos do
     chat de Análises, com foco no cartão.
     """
-    system = _SYSTEM_CARTAO + (context or "")
+    system = (_SYSTEM_CARTAO.replace("{regra_mercado}", REGRA_CONTEXTO_MERCADO)
+              + (context or ""))
     messages = [{"role": "system", "content": system}]
     for message in list(history)[-10:]:
         role = str(message.get("role") or "")

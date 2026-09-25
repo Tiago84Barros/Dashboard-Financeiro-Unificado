@@ -13,6 +13,8 @@ Coberto por tests/test_llm_global.py.
 """
 from __future__ import annotations
 
+from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+
 from typing import Iterable
 
 from core.llm_b3 import _chat_complete, _report_model
@@ -64,6 +66,7 @@ def chat_com_portfolio_global(
         "**Resumo** · **Dados utilizados** · **Leitura por classe** · "
         "**Concentração e risco** · **Pontos de atenção** · "
         "**O que os dados não permitem afirmar** · **Conclusão prática**.\n\n"
+        f"{REGRA_CONTEXTO_MERCADO}\n\n"
         f"=== CONTEXTO DO PORTFÓLIO GLOBAL ===\n{context}"
     )
 

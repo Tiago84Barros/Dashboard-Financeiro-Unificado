@@ -31,6 +31,7 @@ ALVO_DO_MODULO = {
     "fii": "fii_selection",
     "us": "us_snapshot",
     "b3": "b3_metrics",
+    "noticias": "noticias_vitrine",
 }
 
 # Folga entre "passou da cadência" e "não serve mais". Existe porque perder uma

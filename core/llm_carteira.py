@@ -1,6 +1,8 @@
 """Chat especializado em uma classe da carteira do usuário."""
 from __future__ import annotations
 
+from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+
 from typing import Iterable
 
 from core.llm_b3 import _chat_complete, _report_model
@@ -85,7 +87,8 @@ def regras_da_analise(*, geral: bool = False) -> str:
         "o lastro citado é proibida. Preço-alvo só se o contexto trouxer a base "
         "para calculá-lo — caso contrário, diga que não há base.\n"
         "8. Se a pergunta não puder ser respondida com o contexto, diga qual "
-        "dado falta e como ele mudaria a conclusão."
+        "dado falta e como ele mudaria a conclusão.\n"
+        f"9. {REGRA_CONTEXTO_MERCADO}"
     )
 
 
