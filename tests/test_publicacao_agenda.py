@@ -196,6 +196,7 @@ def test_publicador_que_simula_por_omissao_carrega_apply(alvo):
         "scripts.publish_us_prices_monthly",
         "scripts/publish_b3_metrics_to_supabase.py",
         "scripts/publish_noticias_vitrine.py",
+        "scripts/espelhar_supabase_local.py",
     }
     for passo in alvo.passos:
         if set(passo) & exige_apply:

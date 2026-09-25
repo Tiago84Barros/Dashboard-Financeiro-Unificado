@@ -178,6 +178,16 @@ ALVOS: tuple[Alvo, ...] = (
         modulo="noticias",
     ),
     Alvo(
+        # Sentido inverso dos demais: lê o Supabase e grava no armazém os dados
+        # de controle financeiro e carteira que só o app publicado escreve.
+        # Simula por omissão.
+        chave="espelho_supabase",
+        titulo="Espelho do Supabase no armazém",
+        passos=(("scripts/espelhar_supabase_local.py", "--apply"),),
+        cadencia_dias=1,
+        modulo="espelho",
+    ),
+    Alvo(
         chave="us_prices",
         titulo="Preços mensais dos EUA",
         passos=(("-m", "scripts.publish_us_prices_monthly", "--apply"),),

@@ -136,3 +136,79 @@ def test_tabela_ausente_no_local_nao_bloqueia(monkeypatch):
     sup = {"debts": (["id"], ["id"], [(1,)])}
     d = _diag(monkeypatch, sup, {}, ["debts"])["debts"]
     assert d["existe_local"] is False and d["n_local"] is None and d["bloqueio"] == ""
+
+
+def test_linha_apagada_no_app_sai_sem_bloquear(monkeypatch):
+    # A 3 veio do espelho anterior e sumiu do Supabase: foi apagada no app.
+    # A 4 nunca veio de lá: foi criada no local e continua bloqueando.
+    sup = {"transactions": (["id"], ["id"], [(1,)])}
+    loc = {"transactions": (["id"], ["id"], [(1,), (3,), (4,)])}
+    monkeypatch.setattr(esp, "_chaves_espelhadas", lambda _c, _t: {1, 3})
+    d = _diag(monkeypatch, sup, loc, ["transactions"])["transactions"]
+    assert d["apagadas_na_origem"] == 1
+    assert d["so_local"] == 1 and d["bloqueio"] == "1 linha(s) só no local"
+
+    monkeypatch.setattr(esp, "_chaves_espelhadas", lambda _c, _t: {1, 3, 4})
+    d = _diag(monkeypatch, sup, loc, ["transactions"])["transactions"]
+    assert d["apagadas_na_origem"] == 2 and d["bloqueio"] == ""
+
+
+def test_chave_e_montada_pelo_banco():
+    assert esp._expr_chave(["user_id", "data"]) == \
+        "concat_ws('|', \"user_id\"::text, \"data\"::text)"
+
+
+def test_poda_mantem_os_backups_mais_novos(tmp_path):
+    for dia in range(1, 6):
+        (tmp_path / f"espelho_antes_2026090{dia}_010000.dump").write_bytes(b"x")
+    (tmp_path / "fii_warehouse_pre_v690.dump").write_bytes(b"x")
+    apagados = esp.podar_backups(tmp_path, manter=2)
+    assert len(apagados) == 3
+    restantes = sorted(p.name for p in tmp_path.iterdir())
+    assert restantes == ["espelho_antes_20260904_010000.dump",
+                         "espelho_antes_20260905_010000.dump",
+                         "fii_warehouse_pre_v690.dump"]
+
+
+def test_verificador_do_espelho(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    import scripts.publish_fii_selection_from_local as pub
+    import scripts.verificar_frescor_vitrines as ver
+    import sqlalchemy
+
+    linha = {"v": None}
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return False
+
+        def execute(self, *_a):
+            class _R:
+                def first(self_inner):
+                    return linha["v"]
+            return _R()
+
+    class _Eng:
+        def connect(self):
+            return _Conn()
+
+        def dispose(self):
+            pass
+
+    monkeypatch.setattr(pub, "_warehouse_url", lambda: "postgresql://x")
+    monkeypatch.setattr(sqlalchemy, "create_engine", lambda _u: _Eng())
+    assert "nunca rodou" in ver.verificar_espelho()["detalhe"]
+
+    agora = datetime.now(timezone.utc)
+    linha["v"] = (agora - timedelta(days=9), len(esp.TABELAS), 5000)
+    assert "acima do limite" in ver.verificar_espelho()["detalhe"]
+
+    linha["v"] = (agora - timedelta(hours=2), len(esp.TABELAS) - 1, 5000)
+    assert "tabelas espelhadas" in ver.verificar_espelho()["detalhe"]
+
+    linha["v"] = (agora - timedelta(hours=2), len(esp.TABELAS), 5000)
+    assert ver.verificar_espelho()["ok"]

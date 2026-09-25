@@ -49,6 +49,12 @@ if str(ROOT) not in sys.path:
 
 CONTAINER = "dfu_warehouse"
 PASTA_BACKUP = ROOT / "local_staging" / "backups"
+BACKUPS_MANTIDOS = 14
+# Carimbo de cada execução (é o que a rotina diária e o verificador leem) e as
+# chaves que cada tabela recebeu, para separar "apagada no app" de "criada no
+# local" na execução seguinte.
+META = "public.espelho_supabase_meta"
+CHAVES = "public.espelho_supabase_chaves"
 
 # Dados de usuário que só o app publicado escreve, e portanto têm o Supabase
 # como fonte. A ordem não importa: a carga roda com as FKs desligadas.
@@ -126,6 +132,25 @@ def _pk(conn, tabela: str) -> list[str]:
         "WHERE i.indrelid = to_regclass(:t) AND i.indisprimary"), {"t": _q(tabela)})]
 
 
+def _expr_chave(colunas: list[str]) -> str:
+    """Chave primária como um texto só, montado pelo Postgres dos dois lados.
+
+    Montar no banco, e não em Python, é o que torna comparável a chave lida do
+    Supabase, a do local e a guardada em ``CHAVES``: timestamp e numeric viram
+    texto do mesmo jeito nos três.
+    """
+    return "concat_ws('|', " + ", ".join(f'"{c}"::text' for c in colunas) + ")"
+
+
+def _chaves_espelhadas(conn, tabela: str) -> set[str]:
+    from sqlalchemy import text
+
+    if conn.execute(text("SELECT to_regclass(:t)"), {"t": CHAVES}).scalar() is None:
+        return set()
+    return {r[0] for r in conn.execute(
+        text(f"SELECT chave FROM {CHAVES} WHERE tabela = :t"), {"t": tabela})}
+
+
 def diagnosticar(sup, loc) -> list[dict]:
     """Uma linha por tabela: contagens, linhas só-local, colunas que faltam."""
     from sqlalchemy import text
@@ -134,7 +159,7 @@ def diagnosticar(sup, loc) -> list[dict]:
     with sup.connect() as s, loc.connect() as lc:
         for tabela in TABELAS:
             d = {"tabela": tabela, "existe_local": _existe(lc, tabela), "so_local": 0,
-                 "colunas_faltam": [], "bloqueio": ""}
+                 "apagadas_na_origem": 0, "colunas_faltam": [], "bloqueio": ""}
             if not _existe(s, tabela):
                 d["bloqueio"] = "não existe no Supabase"
                 linhas.append(d)
@@ -146,11 +171,15 @@ def diagnosticar(sup, loc) -> list[dict]:
                 d["colunas_faltam"] = [(c, t) for c, t in cols_s.items() if c not in cols_l]
                 chave = _pk(s, tabela)
                 if chave and d["n_local"]:
-                    sel = ", ".join(f'"{c}"' for c in chave)
-                    origem = {tuple(r) for r in s.execute(text(f"SELECT {sel} FROM {_q(tabela)}"))}
-                    d["so_local"] = sum(
-                        1 for r in lc.execute(text(f"SELECT {sel} FROM {_q(tabela)}"))
-                        if tuple(r) not in origem)
+                    sel = _expr_chave(chave)
+                    origem = {r[0] for r in s.execute(text(f"SELECT {sel} FROM {_q(tabela)}"))}
+                    so_local = [r[0] for r in lc.execute(text(f"SELECT {sel} FROM {_q(tabela)}"))
+                                if r[0] not in origem]
+                    # Linha que o espelho anterior trouxe e sumiu da origem foi
+                    # apagada no app: sai junto. Só a que o local criou bloqueia.
+                    espelhadas = _chaves_espelhadas(lc, tabela)
+                    d["apagadas_na_origem"] = sum(1 for k in so_local if k in espelhadas)
+                    d["so_local"] = len(so_local) - d["apagadas_na_origem"]
                 elif not chave and d["n_local"]:
                     d["bloqueio"] = "sem chave primária para comparar"
                 if d["so_local"] and tabela not in DESCARTA_SO_LOCAL:
@@ -186,7 +215,16 @@ def fazer_backup(tabelas: list[str]) -> Path | None:
     for t in tabelas:
         args += ["-t", _q(t)]
     destino.write_bytes(_docker(*args))
+    podar_backups(PASTA_BACKUP)
     return destino
+
+
+def podar_backups(pasta: Path, manter: int = BACKUPS_MANTIDOS) -> list[Path]:
+    """Rodando todo dia, sem poda a pasta cresce para sempre. Fica o mais novo."""
+    antigos = sorted(pasta.glob("espelho_antes_*.dump"), reverse=True)[manter:]
+    for arquivo in antigos:
+        arquivo.unlink()
+    return antigos
 
 
 def ddl_do_supabase(tabelas: list[str]) -> list[str]:
@@ -296,18 +334,29 @@ def aplicar(sup, loc, diag: list[dict]) -> dict:
     try:
         s_raw.set_session(readonly=True)
         cur = l_raw.cursor()
+        cur.execute(f"CREATE TABLE IF NOT EXISTS {META} (executado_em timestamptz PRIMARY KEY, "
+                    "tabelas int NOT NULL, linhas bigint NOT NULL, backup text)")
+        cur.execute(f"CREATE TABLE IF NOT EXISTS {CHAVES} (tabela text NOT NULL, "
+                    "chave text NOT NULL, PRIMARY KEY (tabela, chave))")
         cur.execute("SET LOCAL session_replication_role = replica")
         for d in diag:
             tabela = d["tabela"]
             with sup.connect() as s:
                 colunas = list(_colunas(s, tabela))
+                chave = _pk(s, tabela)
             cur.execute(f"DELETE FROM {_q(tabela)}")
             _copiar(s_raw, l_raw, tabela, colunas)
             _acertar_sequencias(cur, tabela)
+            cur.execute(f"DELETE FROM {CHAVES} WHERE tabela = %s", (tabela,))
+            if chave:
+                cur.execute(f"INSERT INTO {CHAVES} SELECT %s, {_expr_chave(chave)} "
+                            f"FROM {_q(tabela)}", (tabela,))
         cur.execute("SET LOCAL session_replication_role = origin")
         quebradas = _fks_quebradas(cur, set(TABELAS))
         if quebradas:
             raise RuntimeError("FK quebrada, nada gravado: " + "; ".join(quebradas))
+        cur.execute(f"INSERT INTO {META} SELECT now(), %s, "
+                    f"(SELECT count(*) FROM {CHAVES}), %s", (len(diag), str(backup or "")))
         l_raw.commit()
     except Exception:
         l_raw.rollback()
@@ -336,6 +385,8 @@ def main(argv=None) -> int:
     for d in diag:
         local = "AUSENTE" if d["n_local"] is None else d["n_local"]
         extra = []
+        if d["apagadas_na_origem"]:
+            extra.append(f"{d['apagadas_na_origem']} apagada(s) no app")
         if d["so_local"]:
             extra.append(f"descarta {d['so_local']} só-local"
                          if d["tabela"] in DESCARTA_SO_LOCAL else f"{d['so_local']} só-local")
