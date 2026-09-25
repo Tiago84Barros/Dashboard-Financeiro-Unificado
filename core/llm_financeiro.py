@@ -13,10 +13,9 @@ proprietário (OWNER_USER_ID). Este módulo não acessa banco.
 """
 from __future__ import annotations
 
-from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
-
 from typing import Iterable
 
+from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
 from core.llm_b3 import _chat_complete, parse_chart_directives  # noqa: F401 (reexport)
 
 _MODEL_CHAT_DEFAULT = "gpt-4o-mini"

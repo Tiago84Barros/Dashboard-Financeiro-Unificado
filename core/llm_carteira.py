@@ -1,10 +1,9 @@
 """Chat especializado em uma classe da carteira do usuário."""
 from __future__ import annotations
 
-from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
-
 from typing import Iterable
 
+from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
 from core.llm_b3 import _chat_complete, _report_model
 
 _ESCOPOS = {

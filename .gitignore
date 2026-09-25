@@ -251,6 +251,7 @@ local_staging/fii_b3_cotahist/
 # reconstruíveis a partir da fonte. Versionar cache é versionar a rede.
 local_staging/cache_us_saidas/
 local_staging/logs/
+local_staging/backups/
 local_staging/fii_document_backfill.pid
 local_staging/fii_document_backfill.stop
 # Estado da rotina de publicação: é de MÁQUINA, não de repositório. Versionar
