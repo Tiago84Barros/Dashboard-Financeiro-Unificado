@@ -136,11 +136,71 @@ def test_ativos_por_classe():
     }
 
 
-def _sem_rede(monkeypatch, *, acervo=None):
+def _sem_rede(monkeypatch, *, acervo=None, remoto=(None, None)):
     monkeypatch.setattr(cm, "_macro_supabase_cache", lambda: ["  MACRO-SUPA"])
     monkeypatch.setattr(cm, "_macro_local", lambda: ["  MACRO-LOCAL"])
     monkeypatch.setattr(cm, "_manchetes_acervo", lambda _l: acervo)
+    monkeypatch.setattr(cm, "_manchetes_remoto", lambda _l: remoto)
     monkeypatch.setattr(cm, "_manchetes_vitrine_cache", lambda _l: ["  VITRINE"])
+
+
+def test_bloco_prefere_tunel_a_vitrine(monkeypatch):
+    _sem_rede(monkeypatch, remoto=(["  PELO-TUNEL"], None))
+    texto = cm.bloco_contexto_mercado()
+    assert "PELO-TUNEL" in texto and "VITRINE" not in texto
+
+
+def test_tunel_que_falha_e_nomeado_antes_da_vitrine(monkeypatch):
+    """A vitrine é recorte por ativo; sem o aviso o modelo a leria como tudo."""
+    _sem_rede(monkeypatch, remoto=(None, "  TUNEL-FORA"))
+    texto = cm.bloco_contexto_mercado()
+    assert texto.index("TUNEL-FORA") < texto.index("VITRINE")
+
+
+def test_manchetes_remoto_distingue_nao_configurado_de_fora_do_ar(monkeypatch):
+    import core.armazem_remoto as ar
+
+    cm._manchetes_remoto.clear()
+    monkeypatch.setattr(ar, "noticias_recentes", lambda *a, **k: None)
+    assert cm._manchetes_remoto(5) == (None, None)
+
+    def _fora(*_a, **_k):
+        raise ar.ArmazemRemotoIndisponivel("sem resposta")
+
+    cm._manchetes_remoto.clear()
+    monkeypatch.setattr(ar, "noticias_recentes", _fora)
+    linhas, aviso = cm._manchetes_remoto(5)
+    assert linhas is None and "sem resposta" in aviso and "recorte" in aviso
+
+    cm._manchetes_remoto.clear()
+    monkeypatch.setattr(ar, "noticias_recentes", lambda *a, **k: [
+        {"titulo": "Copom", "publicado_em": "2026-09-24T13:05:00+00:00",
+         "veiculo": "Valor", "nota": 80, "direcao": "alta",
+         "entidades": {"paises": ["BR"]}}])
+    linhas, aviso = cm._manchetes_remoto(5)
+    cm._manchetes_remoto.clear()
+    assert aviso is None
+    assert "lido pelo túnel" in linhas[0]
+    assert "[24/09 13:05] Copom" in linhas[1]
+
+
+def test_macro_sem_engine_local_vai_ao_tunel(monkeypatch):
+    import core.armazem_remoto as ar
+    import core.macro_data.database as db
+
+    monkeypatch.setattr(db, "get_local_macro_engine", lambda: None)
+    cm._macro_remoto.clear()
+    monkeypatch.setattr(ar, "macro_recente", lambda: None)
+    assert "não alcançável" in cm._macro_local()[0]
+
+    def _fora():
+        raise ar.ArmazemRemotoIndisponivel("HTTP 503")
+
+    cm._macro_remoto.clear()
+    monkeypatch.setattr(ar, "macro_recente", _fora)
+    linha = cm._macro_local()[0]
+    cm._macro_remoto.clear()
+    assert "pelo túnel: indisponível (HTTP 503)" in linha
 
 
 def test_bloco_usa_vitrine_quando_nao_ha_acervo(monkeypatch):
