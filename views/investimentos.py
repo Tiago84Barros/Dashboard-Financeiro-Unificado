@@ -2250,6 +2250,14 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
             "Empréstimos de ativos são desconsiderados para manter comparação com a carteira investida. "
             "Com Dividendos = Mercado + proventos históricos acumulados."
         )
+        sem_custo = [s["label"] for s in snapshots if s.get("valor_investido") is None]
+        if sem_custo:
+            st.caption(
+                f"Valor Investido sem linha em {len(sem_custo)} foto(s) "
+                f"({sem_custo[0]} a {sem_custo[-1]}): o relatório da corretora não "
+                "trouxe o custo de todas as posições, e uma soma parcial pareceria "
+                "custo menor que o real."
+            )
     else:
         st.info("Sem dados históricos de transações para exibir.", icon="📈")
 

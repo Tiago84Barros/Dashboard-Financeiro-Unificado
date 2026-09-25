@@ -716,7 +716,7 @@ def _fig_evolucao_investimentos(evolucao: dict) -> go.Figure:
                 "line": {"color": "#00FFBB", "width": 1.5}},
         hovertemplate="<b>%{x}</b><br>Mercado: R$ %{y:,.2f}<extra></extra>",
     ))
-    investido_vis = [v for v in investido if v > 0]
+    investido_vis = [v for v in investido if v is not None and v > 0]
     if investido_vis:
         fig.add_trace(go.Scatter(
             x=labels, y=investido, name="Custo histórico",
