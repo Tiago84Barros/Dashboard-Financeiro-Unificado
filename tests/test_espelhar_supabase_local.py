@@ -173,9 +173,10 @@ def test_poda_mantem_os_backups_mais_novos(tmp_path):
 def test_verificador_do_espelho(monkeypatch):
     from datetime import datetime, timedelta, timezone
 
+    import sqlalchemy
+
     import scripts.publish_fii_selection_from_local as pub
     import scripts.verificar_frescor_vitrines as ver
-    import sqlalchemy
 
     linha = {"v": None}
 

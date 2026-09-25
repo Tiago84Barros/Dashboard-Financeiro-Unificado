@@ -13,8 +13,6 @@ sobre setores/segmentos do mercado brasileiro para gerar análise institucional.
 """
 from __future__ import annotations
 
-from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
-
 import json
 import logging
 import os
@@ -22,6 +20,8 @@ import re
 
 import pandas as pd
 import streamlit as st
+
+from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
 
 logger = logging.getLogger(__name__)
 

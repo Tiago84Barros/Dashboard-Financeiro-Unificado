@@ -3389,10 +3389,9 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 st.caption("Sem dados de setor.")
 
         # Por último na sub-aba: st.chat_input puxa o foco para o rodapé.
+        from core.contexto_mercado import ativos_por_classe, bloco_contexto_mercado
         from core.llm_context_carteira import build_carteira_geral_context
         from design.chat_carteira import render_chat_carteira
-
-        from core.contexto_mercado import ativos_por_classe, bloco_contexto_mercado
 
         render_chat_carteira(
             classe="geral", tickers=[p["ticker"] for p in posicoes],

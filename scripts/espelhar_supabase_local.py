@@ -247,7 +247,7 @@ def limpar_ddl(sql: str) -> list[str]:
     """Instruções do dump que o armazém local consegue executar."""
     # Comentário e meta-comando do psql (`\restrict`, do pg_dump 17.6+) não são
     # SQL: o driver recusa a instrução inteira.
-    sql = "\n".join(l for l in sql.splitlines() if not l.startswith(("--", "\\")))
+    sql = "\n".join(linha for linha in sql.splitlines() if not linha.startswith(("--", "\\")))
     instrucoes = []
     for bruto in sql.split(";\n"):
         inst = bruto.strip()

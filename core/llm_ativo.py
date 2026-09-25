@@ -5,10 +5,9 @@ lá o objeto é a carteira; aqui é o ativo isolado que o usuário está analisa
 """
 from __future__ import annotations
 
-from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
-
 from typing import Iterable
 
+from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
 from core.llm_b3 import _chat_complete, _report_model
 
 _MERCADOS = {
