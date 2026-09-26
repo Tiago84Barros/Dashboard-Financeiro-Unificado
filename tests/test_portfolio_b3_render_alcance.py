@@ -296,7 +296,7 @@ def tela(monkeypatch):
     monkeypatch.setattr(mod, "_yf_trailing12m_divs", lambda *a, **k: 0.0)
     falso.yf_proibido = _YfProibido()
     monkeypatch.setattr(_emp, "yf", falso.yf_proibido)
-    monkeypatch.setattr(mod, "get_local_macro_engine", lambda *a, **k: None)
+    monkeypatch.setattr(mod, "get_macro_source", lambda *a, **k: None)
     monkeypatch.setattr(mod, "load_portfolio_macro_snapshot",
                         lambda *a, **k: {})
     monkeypatch.setattr(mod, "quali_gate_disponivel", lambda *a, **k: False)

@@ -64,7 +64,7 @@ from core.llm_context_ativo import build_fii_ativo_context
 from core.llm_context_fii import build_fii_chat_context
 from core.llm_fii import chat_com_fiis
 from core.macro_cenario import CenarioObservado, cenario_macro_observado
-from core.macro_data.database import get_local_macro_engine
+from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from core.utils import escapar_cifrao
 from data_pipeline.market import fii as _fz
@@ -1507,7 +1507,8 @@ def _integrated_preference_controls() -> dict:
                 "scenario": "Cenário ampliado",
             }.get,
             key="fii_pref_macro_mode",
-            help=("Usa séries do PostgreSQL Docker local e sensibilidades por tipo "
+            help=("Usa séries do PostgreSQL Docker local (ou os insumos que ele publicou) "
+                  "e sensibilidades por tipo "
                   "de FII. Lacunas permanecem explicitamente sem cobertura."),
         )
 
@@ -2227,11 +2228,11 @@ def _carteira_integrada(preferences: dict):
     )
     scored = score_fiis_by_type(eligible_rows, validation_status=validation_status)
     macro_snapshot = None
-    local_macro_engine = get_local_macro_engine()
-    if local_macro_engine is not None:
+    macro_fonte = get_macro_source()
+    if macro_fonte is not None:
         try:
             macro_snapshot = load_portfolio_macro_snapshot(
-                local_macro_engine,
+                macro_fonte,
                 asset_class="fii",
                 assets={
                     str(row.get("ticker") or ""): str(row.get("tipo") or "")
@@ -2403,12 +2404,12 @@ def _carteira_integrada(preferences: dict):
         )
     elif macro_snapshot is None:
         st.warning(
-            "Camada macro do Docker local indisponível; a carteira mantém a "
+            "Camada macro indisponível (sem Docker local e sem arquivo publicado recente); a carteira mantém a "
             "metodologia estrutural e os cenários informados acima."
         )
     else:
         st.info(
-            f"Macro local · corte {macro_snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
+            f"{descrever_fonte_macro(macro_fonte)} · corte {macro_snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
             f"cobertura da seleção {result.get('macro_coverage', 0):.0%} · "
             f"{macro_snapshot.source_count} séries. O ajuste é limitado e não é previsão."
         )

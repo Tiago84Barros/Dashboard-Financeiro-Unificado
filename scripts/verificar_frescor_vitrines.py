@@ -46,7 +46,7 @@ from core.frescor import idade_limite  # noqa: E402
 # é o mais apertado porque é o único com validade dura no código:
 # `fii_methodology` recusa snapshot com mais de 4 dias, então uma vitrine de 5
 # dias não deixa a tela degradada, deixa a tela errada.
-IDADE_MAXIMA = {m: idade_limite(m) for m in ("fii", "us", "b3", "noticias", "espelho")}
+IDADE_MAXIMA = {m: idade_limite(m) for m in ("fii", "us", "b3", "noticias", "espelho", "macro")}
 
 
 def _resultado(modulo, ok, linhas=0, idade=None, detalhe="") -> dict:
@@ -191,8 +191,34 @@ def verificar_espelho() -> dict:
     return _resultado("espelho", True, linhas, idade, f"{tabelas} tabelas")
 
 
+def verificar_macro() -> dict:
+    """O arquivo que a produção lê: legível, com exposições e séries, e novo.
+
+    Lido sem o corte de idade do carregador (30 dias), que é o limite de USO;
+    aqui vale o de publicação, bem mais curto.
+    """
+    from core.macro_data.insumos_publicados import CAMINHO_PADRAO, desserializar
+
+    try:
+        insumos = desserializar(CAMINHO_PADRAO.read_bytes())
+    except Exception as exc:  # noqa: BLE001
+        return _resultado("macro", False, detalhe=f"o arquivo não pôde ser lido ({exc})")
+    linhas = len(insumos.observacoes)
+    idade = _idade_em_dias(insumos.gerado_em)
+    if not insumos.exposicoes or not linhas:
+        return _resultado("macro", False, linhas, idade,
+                          "sem exposições setoriais ou sem observações")
+    limite = IDADE_MAXIMA["macro"]
+    if idade is not None and idade > limite:
+        return _resultado("macro", False, linhas, idade,
+                          f"idade {idade}d acima do limite {limite}d")
+    classes = sorted({str(e.get("asset_class")) for e in insumos.exposicoes})
+    return _resultado("macro", True, linhas, idade, "exposições de " + ", ".join(classes))
+
+
 VERIFICADORES = {"fii": verificar_fii, "us": verificar_us, "b3": verificar_b3,
-                 "noticias": verificar_noticias, "espelho": verificar_espelho}
+                 "noticias": verificar_noticias, "espelho": verificar_espelho,
+                 "macro": verificar_macro}
 
 
 def main(argv=None) -> int:

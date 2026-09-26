@@ -188,6 +188,25 @@ ALVOS: tuple[Alvo, ...] = (
         modulo="espelho",
     ),
     Alvo(
+        # O ajuste macro de score e peso (B3, EUA, FIIs, Portfólio Global) só
+        # existia no Docker: em produção as quatro telas diziam "indisponível".
+        # E a coleta nem estava agendada -- parou em 09/09/2026 sem ninguém ver.
+        # Uma cadeia só, e não dois alvos: publicar sem coletar antes renovaria
+        # a data do arquivo sobre o cenário velho. O publicador também recusa
+        # coleta com mais de 7 dias. A coleta doméstica LÊ o Supabase
+        # (`public.macro`) e grava no Docker.
+        chave="macro_insumos",
+        titulo="Insumos macro das carteiras",
+        passos=(
+            ("run_macro_updates.py",),
+            ("run_macro_domestic_sync.py",),
+            ("scripts/publish_macro_insumos.py",),
+        ),
+        cadencia_dias=1,
+        modulo="macro",
+        artefatos=("data/public/macro_insumos.json.gz",),
+    ),
+    Alvo(
         chave="us_prices",
         titulo="Preços mensais dos EUA",
         passos=(("-m", "scripts.publish_us_prices_monthly", "--apply"),),

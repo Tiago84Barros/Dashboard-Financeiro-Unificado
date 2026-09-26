@@ -23,7 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 import core.us_data as us
 from core.llm_context_ativo import build_us_ativo_context
-from core.macro_data.database import get_local_macro_engine
+from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from core.market_companies import (
     filter_market_companies,
@@ -1084,12 +1084,13 @@ def _tab_avancada_unificada(status: dict) -> None:
     eligible = filtered[coverage >= min_coverage].copy()
     entry = build_entry_scores(eligible, custom_weights)
     macro_snapshot_lab = None
+    macro_fonte = None
     if not entry.empty:
-        local_macro_engine = get_local_macro_engine()
-        if local_macro_engine is not None:
+        macro_fonte = get_macro_source()
+        if macro_fonte is not None:
             try:
                 macro_snapshot_lab = load_portfolio_macro_snapshot(
-                    local_macro_engine,
+                    macro_fonte,
                     asset_class="us",
                     assets={
                         str(row.get("symbol") or ""): translate_us_sector(
@@ -1138,10 +1139,10 @@ def _tab_avancada_unificada(status: dict) -> None:
             st.dataframe(pd.DataFrame(track_cov), hide_index=True, width="stretch")
         st.caption("Ausência não vira zero: recebe posição neutra no score e reduz a cobertura.")
         if macro_snapshot_lab is None:
-            st.caption("Camada macro local indisponível; score de entrada preservado.")
+            st.caption("Camada macro indisponível (sem Docker local e sem arquivo publicado recente); score de entrada preservado.")
         else:
             st.caption(
-                f"Macro Docker local: corte {macro_snapshot_lab.as_of:%d/%m/%Y} · "
+                f"{descrever_fonte_macro(macro_fonte)}: corte {macro_snapshot_lab.as_of:%d/%m/%Y} · "
                 f"cobertura {macro_snapshot_lab.coverage:.0%}. Score contextual "
                 "é exibido separadamente e limitado a ±10 pontos."
             )
@@ -2612,7 +2613,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
         index=1,
         format_func=macro_labels.get,
         key="us_create_macro_mode",
-        help=("O cálculo é determinístico e usa apenas o PostgreSQL do Docker local. "
+        help=("O cálculo é determinístico e usa o PostgreSQL do Docker local ou, sem ele, "
+              "os insumos que o Docker publicou no repositório. "
               "Ausência de cobertura mantém o peso fundamental."),
     )
 
@@ -2627,11 +2629,11 @@ def _tab_criacao_portfolio(status: dict) -> None:
             baseline = build_portfolio_creation(portfolio_scored, params, score_panel)
             snapshot = None
             holdings_base = baseline.get("holdings", pd.DataFrame())
-            local_engine = get_local_macro_engine()
-            if local_engine is not None and not holdings_base.empty:
+            macro_fonte_criacao = get_macro_source()
+            if macro_fonte_criacao is not None and not holdings_base.empty:
                 try:
                     snapshot = load_portfolio_macro_snapshot(
-                        local_engine,
+                        macro_fonte_criacao,
                         asset_class="us",
                         assets=dict(zip(
                             holdings_base["symbol"].astype(str),
@@ -2646,6 +2648,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
                 macro_mode=macro_mode,
             )
             result["macro_snapshot"] = snapshot
+            result["macro_fonte"] = descrever_fonte_macro(macro_fonte_criacao)
             st.session_state["us_portfolio_creation_result"] = result
             st.session_state["us_portfolio_creation_params"] = {
                 **params_to_dict(params), "macro_mode": macro_mode,
@@ -2692,12 +2695,12 @@ def _tab_criacao_portfolio(status: dict) -> None:
     snapshot = result.get("macro_snapshot")
     if snapshot is None:
         st.warning(
-            "Camada macro local indisponível nesta execução; a composição mantém "
+            "Camada macro indisponível nesta execução (sem Docker local e sem arquivo publicado recente); a composição mantém "
             "os pesos fundamentalistas."
         )
     else:
         st.info(
-            f"Macro no Docker local · corte {snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
+            f"{result.get('macro_fonte') or 'Macro'} · corte {snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
             f"cobertura {macro_info.get('coverage', 0):.0%} · "
             f"turnover atribuído ao macro {macro_info.get('turnover', 0):.1%}. "
             "Impactos são contexto histórico, não previsão de retorno."
