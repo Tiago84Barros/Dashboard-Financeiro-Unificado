@@ -180,10 +180,13 @@ def test_prioridade_das_acoes():
 def test_secoes_externas_na_ordem_da_tela():
     a = _analise("HGLG11", _ctx())
     assert [s.chave for s in a.secoes_externas] == list(secoes.SECOES)
-    # fundamentos é real; sem dado na suíte offline ele sai SEM_DADOS
-    assert a.fundamentos.estado == m.SEM_DADOS
+    # fundamentos, valuation e pares são reais; sem dado na suíte offline
+    # saem SEM_DADOS
+    reais = {"fundamentos", "valuation", "pares"}
+    assert all(s.estado == m.SEM_DADOS for s in a.secoes_externas
+               if s.chave in reais)
     assert all(s.estado == m.PENDENTE for s in a.secoes_externas
-               if s.chave != "fundamentos")
+               if s.chave not in reais)
     q = a.questoes
     assert q[m.Q_FUNDAMENTOS].estado == m.SEM_DADOS
     assert "nenhum dos 14 indicadores" in q[m.Q_FUNDAMENTOS].resposta
