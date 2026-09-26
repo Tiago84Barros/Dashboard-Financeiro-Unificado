@@ -13,6 +13,7 @@ import datetime as dt
 import gzip
 import hashlib
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -80,6 +81,17 @@ def _jsonable(value: Any) -> Any:
             return None
     except (TypeError, ValueError):
         pass
+    if isinstance(value, float) and math.isfinite(value):
+        # O hash é calculado sobre este texto, mas o Supabase devolve o que o
+        # jsonb guardou, e o jsonb guarda número como `numeric`: sem zero
+        # negativo e sem notação científica. Em 26/09/2026 um único -0.0
+        # (TCIN11) reprovou a vitrine inteira por hash. A forma canônica aqui
+        # é a que sobrevive ao banco. Float com |x| >= 1e16 é sempre inteiro,
+        # e é o limiar a partir do qual o Python passa a escrever "1e+16".
+        if value == 0.0:
+            return 0.0
+        if abs(value) >= 1e16:
+            return int(value)
     return value
 
 

@@ -604,6 +604,27 @@ _FII_SNAPSHOT_ARTIFACT_PATH = (
 )
 
 
+# Causa legível de cada `load_error` da vitrine de FIIs. Mora aqui, ao lado de
+# quem produz os códigos, para a tela de FIIs e o valuation dizerem o mesmo.
+CAUSA_FALHA_VITRINE_FII = {
+    "snapshot_stale": "a vitrine publicada passou do prazo de validade",
+    "snapshot_deadline_exceeded": "a leitura da vitrine estourou o prazo da tela",
+    "snapshot_query_failed": "a consulta à vitrine falhou",
+    "snapshot_worker_failed": "a leitura da vitrine não retornou",
+    "database_unavailable": "o banco não respondeu",
+    "snapshot_hash_invalid": "a vitrine publicada não confere com o próprio hash",
+}
+
+
+def causa_falha_vitrine_fii(load_error: str | None) -> str:
+    """Frase da falha; código sem tradução sai cru, nunca some."""
+    codigo = str(load_error or "").strip()
+    if not codigo:
+        return "o universo de FIIs não pôde ser carregado"
+    return CAUSA_FALHA_VITRINE_FII.get(
+        codigo, f"o universo de FIIs não pôde ser carregado ({codigo})")
+
+
 def _utcnow() -> _dt.datetime:
     return _dt.datetime.now(_dt.timezone.utc)
 

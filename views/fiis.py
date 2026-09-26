@@ -393,21 +393,12 @@ def _info_card_html(title: str, body: str, *, accent: str = "#4A9EFF") -> str:
             f'<div class="title">{escape(title)}</div>{escape(body)}</div>')
 
 
-_MOTIVO_DE_FALHA = {
-    "snapshot_stale": ("a vitrine publicada passou do prazo de validade",
-                       "Rode a atualização a partir do armazém local "
+_SAIDA_DE_FALHA = {
+    "snapshot_stale": ("Rode a atualização a partir do armazém local "
                        "(`python scripts/atualizar_vitrines.py`), que reingere o "
                        "cadastro e republica a vitrine na ordem certa."),
-    "snapshot_deadline_exceeded": ("a leitura da vitrine estourou o prazo da tela",
-                                   "Recarregue a página em alguns instantes."),
-    "snapshot_query_failed": ("a consulta à vitrine falhou",
-                              "Recarregue a página em alguns instantes."),
-    "snapshot_worker_failed": ("a leitura da vitrine não retornou",
-                               "Recarregue a página em alguns instantes."),
-    "database_unavailable": ("o banco não respondeu",
-                             "Verifique a conexão e recarregue a página."),
-    "snapshot_hash_invalid": ("a vitrine publicada não confere com o próprio hash",
-                              "Republique a vitrine a partir do armazém local "
+    "database_unavailable": "Verifique a conexão e recarregue a página.",
+    "snapshot_hash_invalid": ("Republique a vitrine a partir do armazém local "
                               "(`python scripts/atualizar_vitrines.py`)."),
 }
 
@@ -422,9 +413,9 @@ def _falha_de_leitura_da_vitrine(inputs: pd.DataFrame) -> bool:
     erro = inputs.attrs.get("load_error")
     if not erro and not inputs.empty:
         return False
-    causa, saida = _MOTIVO_DE_FALHA.get(
-        str(erro or ""), ("o universo de FIIs não pôde ser carregado",
-                          "Recarregue a página em alguns instantes."))
+    causa = _mr.causa_falha_vitrine_fii(erro)
+    saida = _SAIDA_DE_FALHA.get(
+        str(erro or ""), "Recarregue a página em alguns instantes.")
     idade = inputs.attrs.get("snapshot_age_days")
     as_of = inputs.attrs.get("snapshot_as_of")
     detalhe = ""

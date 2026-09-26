@@ -339,11 +339,14 @@ def test_candidatos_e_entradas_tesouro():
 
 # -- despacho por classe -------------------------------------------------------------
 
+_CARREGAR_FII_REAL = fv._carregar_fii
+
+
 @pytest.fixture
 def sem_io(monkeypatch):
     monkeypatch.setattr(fv, "arquivo", lambda: {})
     monkeypatch.setattr(fv, "_carregar_b3", lambda: ([], {}))
-    monkeypatch.setattr(fv, "_carregar_fii", lambda: [])
+    monkeypatch.setattr(fv, "_carregar_fii", lambda: ([], None))
     monkeypatch.setattr(fv, "_carregar_taxas_tesouro", lambda: [])
     monkeypatch.setattr(fv, "_carregar_serie_tesouro", lambda k: [])
 
@@ -370,6 +373,61 @@ def test_ler_sem_cache_b3_com_universo(sem_io, monkeypatch):
     assert comp.linha("p_l").mediana_pares == 14
     assert val.linha("p_l").posicao_pares == v.ABAIXO
     assert val.grupo_pares == "3 pares do mesmo segmento (Seg)"
+
+
+@pytest.mark.parametrize("erro, causa", [
+    ("snapshot_deadline_exceeded", "estourou o prazo"),
+    ("snapshot_hash_invalid", "não confere com o próprio hash"),
+    ("codigo_novo_qualquer", "codigo_novo_qualquer"),
+])
+def test_ler_sem_cache_fii_nomeia_falha_da_vitrine(sem_io, monkeypatch, erro,
+                                                   causa):
+    # Em 26/09/2026 a vitrine falhou (prazo de 12 s, hash inválido) e a tela
+    # mostrava P/VP "Dado não disponível" e pares "Ativo fora do universo":
+    # o fundo parecia sem dado, quando o que falhou foi a leitura.
+    vazio = pd.DataFrame()
+    vazio.attrs["load_error"] = erro
+    import core.market_read as mr
+    monkeypatch.setattr(mr, "load_fii_methodology_inputs", lambda: vazio)
+    monkeypatch.setattr(fv, "_carregar_fii", _CARREGAR_FII_REAL)
+    val, comp = fv.ler_sem_cache("HGLG11", "HGLG11", "FII", "BRL")
+    premissas = " ".join(val.premissas)
+    assert any(x.startswith(fv.AVISO_VITRINE_FII_INDISPONIVEL)
+               for x in val.premissas)
+    assert causa in premissas and erro in premissas
+    assert "fora do universo" not in comp.grupo.motivo
+    assert causa in comp.grupo.motivo
+
+
+def test_ler_sem_cache_fii_sem_falha_nao_inventa_aviso(sem_io):
+    val, comp = fv.ler_sem_cache("HGLG11", "HGLG11", "FII", "BRL")
+    assert "Vitrine de FIIs indisponível" not in " ".join(val.premissas)
+    assert "fora do universo" in comp.grupo.motivo
+
+
+def test_ler_nao_prende_falha_da_vitrine_no_cache(sem_io, monkeypatch):
+    vazio = pd.DataFrame()
+    vazio.attrs["load_error"] = "snapshot_deadline_exceeded"
+    import core.market_read as mr
+    monkeypatch.setattr(mr, "load_fii_methodology_inputs", lambda: vazio)
+    monkeypatch.setattr(fv, "_carregar_fii", _CARREGAR_FII_REAL)
+    chamadas = []
+
+    def ler_contando(*args):
+        chamadas.append(args)
+        return fv._ler_como_dicts(*args)
+
+    ler_contando.clear = lambda: chamadas.append("clear")
+    monkeypatch.setattr(fv, "_ler_cache", ler_contando)
+    fv.ler("HGLG11", "HGLG11", "FII", "BRL")
+    assert chamadas[-1] == "clear"
+
+
+def test_entradas_fii_tipo_desconhecido_nao_vira_nao_se_aplica():
+    # Sem a linha do fundo (vitrine em falha) o tipo é desconhecido: dizer
+    # que cap rate "só tem leitura em tijolo" para a HGLG11 era falso.
+    assert fv.entradas_fii(None, None)["cap_rate"].excluida is None
+    assert fv.entradas_fii({"tipo": "papel"}, None)["cap_rate"].excluida ==         "fii_nao_tijolo"
 
 
 # -- publicador ----------------------------------------------------------------------
