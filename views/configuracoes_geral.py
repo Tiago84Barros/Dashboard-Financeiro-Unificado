@@ -2,6 +2,7 @@
 views/configuracoes_geral.py
 Aba "Geral" de Configurações — o que era da sidebar, mais o que não tinha lugar.
 
+  🎯 Estratégia        — a política de investimentos (premissa da análise)
   🎨 Tema              — a preferência visual da conta
   🏷️ Categorias        — as opções do lançamento manual do Controle Financeiro
   👤 Trocar de usuário — encerrar a sessão deste navegador
@@ -33,10 +34,26 @@ _NOME_CAT = "cfg_geral_nome_categoria"
 
 
 def render() -> None:
+    render_estrategia_bloco()
     _render_tema()
     _render_categorias()
     _render_trocar_usuario()
     _render_memoria_llm()
+
+
+# -- estratégia de investimentos ----------------------------------------------
+
+def render_estrategia_bloco() -> None:
+    """Bloco da estratégia. Público: a aba Geral do não-admin mostra só ele."""
+    from views.configuracoes_estrategia import render as render_estrategia
+
+    with st.container(border=True, key="cfg_geral_estrategia"):
+        _cabecalho(
+            "01", "🎯 Estratégia de Investimentos",
+            "O que você pretende construir com seu patrimônio. É a premissa "
+            "que a IA usa para analisar a carteira e cada ativo.",
+        )
+        render_estrategia()
 
 
 # -- tema ---------------------------------------------------------------------
@@ -46,7 +63,7 @@ def _render_tema() -> None:
 
     with st.container(border=True, key="cfg_geral_tema"):
         _cabecalho(
-            "01", "🎨 Tema do aplicativo",
+            "02", "🎨 Tema do aplicativo",
             "Claro ou escuro, salvo na sua conta e aplicado na hora.",
         )
         # A lógica de persistência não muda de lugar junto: o callback
@@ -70,7 +87,7 @@ def _render_categorias() -> None:
     """
     with st.container(border=True, key="cfg_geral_categorias"):
         _cabecalho(
-            "02", "🏷️ Categorias do Controle Financeiro",
+            "03", "🏷️ Categorias do Controle Financeiro",
             "As opções que aparecem ao lançar entrada, saída ou investimento.",
         )
         tipo = st.selectbox(
@@ -130,7 +147,7 @@ def _render_trocar_usuario() -> None:
 
     with st.container(border=True, key="cfg_geral_usuario"):
         _cabecalho(
-            "03", "👤 Trocar de usuário",
+            "04", "👤 Trocar de usuário",
             "Encerra a sessão deste navegador e volta para a tela de entrada.",
         )
         nome = str(principal().get("name") or principal().get("email") or "")
@@ -153,7 +170,7 @@ def _render_trocar_usuario() -> None:
 def _render_memoria_llm() -> None:
     with st.container(border=True, key="cfg_geral_llm"):
         _cabecalho(
-            "04", "🧹 Limpar histórico da LLM",
+            "05", "🧹 Limpar histórico da LLM",
             "Escolha a seção cuja conversa deve ser apagada. Nada é apagado "
             "sem a escolha e o clique.",
         )
