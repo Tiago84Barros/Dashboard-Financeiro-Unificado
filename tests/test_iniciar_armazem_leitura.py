@@ -12,6 +12,9 @@ import os
 import pathlib
 import subprocess
 import sys
+import time
+
+import pytest
 
 _RAIZ = pathlib.Path(__file__).resolve().parents[1]
 if str(_RAIZ) not in sys.path:
@@ -111,13 +114,58 @@ def test_filho_escreve_o_log_em_utf8(tmp_path, monkeypatch):
     monkeypatch.delenv("PYTHONIOENCODING", raising=False)
     visto: dict = {}
 
-    def _sup(comando, log):
+    def _sup(comando, log, **kw):
         visto["enc"] = os.environ.get("PYTHONIOENCODING")
         return 0
 
     monkeypatch.setattr(sup, "supervisionar", _sup)
     assert sup.main(["--env", str(env), "--log", str(tmp_path / "a.log")]) == 0
     assert visto["enc"] == "utf-8"
+
+
+def _vivo(pid: int) -> bool:
+    import ctypes
+
+    k32 = ctypes.WinDLL("kernel32")
+    k32.OpenProcess.restype = ctypes.c_void_p
+    h = k32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+    if not h:
+        return False
+    codigo = ctypes.c_ulong()
+    k32.GetExitCodeProcess(ctypes.c_void_p(h), ctypes.byref(codigo))
+    k32.CloseHandle(ctypes.c_void_p(h))
+    return codigo.value == 259  # STILL_ACTIVE
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Job Object é do Windows")
+def test_filho_morre_quando_o_supervisor_e_morto(tmp_path):
+    """O cenário do Stop-ScheduledTask: TerminateProcess no supervisor."""
+    pidfile = tmp_path / "filho.pid"
+    filho = ("import os,time,pathlib;"
+             f"pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid()));"
+             "time.sleep(120)")
+    supervisor = (
+        f"import sys; sys.path.insert(0, {str(_RAIZ)!r});"
+        "from scripts import iniciar_armazem_leitura as s;"
+        "job = s._job_que_mata_ao_fechar(); assert job is not None;"
+        f"s._executar_no_job(job)([sys.executable, '-c', {filho!r}])")
+    proc = subprocess.Popen([sys.executable, "-c", supervisor])
+    try:
+        for _ in range(100):
+            if pidfile.exists() and pidfile.read_text():
+                break
+            time.sleep(0.1)
+        pid = int(pidfile.read_text())
+        assert _vivo(pid)
+        proc.kill()  # TerminateProcess: nenhum finally roda
+        proc.wait(10)
+        for _ in range(50):
+            if not _vivo(pid):
+                break
+            time.sleep(0.1)
+        assert not _vivo(pid), "servidor filho ficou órfão"
+    finally:
+        proc.kill()
 
 
 def test_env_ausente_nao_sobe(tmp_path):
