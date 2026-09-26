@@ -230,16 +230,26 @@ CARIMBO = {
     # Publica num arquivo do repositório, não numa tabela: o carimbo é o
     # `generated_at` gravado dentro dele.
     "macro_insumos": ("arquivo", "data/public/macro_insumos.json.gz"),
+    "valuation_historico": ("arquivo", "data/public/valuation_historico.json.gz"),
 }
 
 
 def _carimbo_do_arquivo(relativo: str):
-    from core.macro_data.insumos_publicados import desserializar
-
     caminho = ROOT / relativo
     if not caminho.exists():
         return None
-    return desserializar(caminho.read_bytes()).gerado_em
+    import gzip
+    bruto = caminho.read_bytes()
+    try:
+        dados = json.loads(gzip.decompress(bruto).decode("utf-8"))
+    except (OSError, ValueError):
+        dados = None
+    # Arquivo com ``gerado_em`` ISO no topo (valuation); senão, o formato
+    # próprio dos insumos macro.
+    if isinstance(dados, dict) and isinstance(dados.get("gerado_em"), str):
+        return datetime.fromisoformat(dados["gerado_em"])
+    from core.macro_data.insumos_publicados import desserializar
+    return desserializar(bruto).gerado_em
 
 
 def semear(estado: dict, versoes: dict) -> dict:

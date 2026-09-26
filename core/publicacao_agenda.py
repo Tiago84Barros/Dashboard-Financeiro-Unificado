@@ -207,6 +207,19 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/macro_insumos.json.gz",),
     ),
     Alvo(
+        # Histórico de múltiplos (B3 anual, FII mensal, EUA anual) e a
+        # volatilidade usada na escolha de pares da Inteligência dos Ativos.
+        # Vem de tabelas pesadas que só existem no armazém (fita da B3,
+        # prices_monthly), por isso é arquivo em data/public, não tabela no
+        # Supabase. O dado é anual/mensal: semanal basta.
+        chave="valuation_historico",
+        titulo="Histórico de valuation da Inteligência dos Ativos",
+        passos=(("scripts/publish_valuation_historico.py",),),
+        cadencia_dias=7,
+        modulo="b3",
+        artefatos=("data/public/valuation_historico.json.gz",),
+    ),
+    Alvo(
         # O cache bruto da brapi é o que mais cresce no Supabase: ~2,6 MB/dia de
         # cotações e ~48 MB aos sábados (anuais), sem nada que pode. Os dois
         # scripts existiam e ninguém os chamava -- o último arquivamento foi em

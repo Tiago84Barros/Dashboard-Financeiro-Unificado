@@ -26,6 +26,8 @@ from core.inteligencia_ativos import calculos as calc
 from core.inteligencia_ativos import fundamentos as fund
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import papeis
+from core.inteligencia_ativos import pares as prs
+from core.inteligencia_ativos import valuation as val
 from core.estrategia import politica as pol
 from core.estrategia import portao
 from core.utils import fmt_moeda
@@ -379,6 +381,117 @@ def corpo_fundamentos(f: fund.Fundamentos) -> str:
         f'"{escape(fund.NAO_DISPONIVEL)}" não é estimado.</div>')
 
 
+_SUB_T = ('<div style="font-size:0.7rem;font-weight:700;letter-spacing:.05em;'
+          'text-transform:uppercase;color:var(--app-subtle);margin-top:8px">')
+_TH = ('style="padding:2px 10px 2px 0;text-align:left;font-weight:600;'
+       'color:var(--app-subtle);font-size:0.74rem;vertical-align:bottom"')
+_TD = 'style="padding:2px 10px 2px 0;vertical-align:top;'
+
+
+def _tabela(cabecalho: list[str], corpo: str) -> str:
+    """Tabela com rolagem horizontal própria: no celular não empurra a página."""
+    ths = "".join(f"<th {_TH}>{escape(c)}</th>" for c in cabecalho)
+    return ('<div style="overflow-x:auto;margin-top:4px">'
+            '<table style="font-size:0.84rem;border-collapse:collapse">'
+            f"<thead><tr>{ths}</tr></thead><tbody>{corpo}</tbody></table></div>")
+
+
+def _nota(texto: str) -> str:
+    return ('<div style="font-size:0.76rem;color:var(--app-subtle);'
+            f'margin-top:4px">{escape(texto)}</div>')
+
+
+def corpo_valuation(v: val.Valuation) -> str:
+    """Valor atual, histórico, pares, faixas e premissas (DADO) separados das
+    frases de comparação (INTERPRETAÇÃO). Nunca "barato"/"caro". Puro."""
+    if v.tipo is None or not v.linhas:
+        return escape(v.motivo or fund.NAO_DISPONIVEL)
+    fmt = lambda x, l: fund.formatar(x, l.unidade, v.moeda)  # noqa: E731
+    linhas, faixas, leituras = "", "", ""
+    for l in v.linhas:
+        if not l.aplicavel:
+            linhas += (f'<tr><td {_TD}color:var(--app-muted)">{escape(l.rotulo)}'
+                       f'</td><td {_TD}color:var(--app-subtle)" colspan="4">'
+                       f'Não se aplica: {escape(l.motivo or "")}</td></tr>')
+            continue
+        h, p = l.historico, l.pares
+        cor = "var(--app-text)" if l.atual is not None else "var(--app-subtle)"
+        hist = (f"{fmt(h.media, l)} / {fmt(h.mediana, l)} "
+                f"({h.n} obs., {h.inicio}–{h.fim})" if h else fund.NAO_DISPONIVEL)
+        par = (f"{fmt(p.mediana, l)} ({p.n})" if p else fund.NAO_DISPONIVEL)
+        origem = " · ".join(x for x in (l.referencia, l.fonte) if x)
+        linhas += (
+            f'<tr><td {_TD}color:var(--app-muted)">{escape(l.rotulo)}</td>'
+            f'<td {_TD}color:{cor};font-weight:600">'
+            f'{escape(l.texto_atual(v.moeda))}</td>'
+            f'<td {_TD}color:var(--app-text)">{escape(hist)}</td>'
+            f'<td {_TD}color:var(--app-text)">{escape(par)}</td>'
+            f'<td {_TD}color:var(--app-subtle);font-size:0.76rem">'
+            f'{escape(origem)}</td></tr>')
+        for fx in l.faixas:
+            faixas += (f"<li>{escape(l.rotulo)} — {escape(fx.rotulo)}: "
+                       f"{escape(fmt(fx.minimo, l))} a "
+                       f"{escape(fmt(fx.maximo, l))}</li>")
+        if l.atual is not None:
+            leituras += (f"<li>{escape(l.comparacao_historica)}</li>"
+                         f"<li>{escape(l.comparacao_pares)}</li>")
+    lista = ('<ul style="margin:2px 0 0 18px;padding:0;font-size:0.82rem;'
+             'color:var(--app-muted)">')
+    return (
+        f'<div>{escape(fund.ROTULO_TIPO[v.tipo])}: métricas de valuation que '
+        f'fazem sentido para a classe ({len(v.com_dado)} de {len(v.linhas)} '
+        'com dado).</div>'
+        f'{_SUB_T}Dado · fornecido pelo sistema</div>'
+        + _tabela(["Métrica", "Atual", "Histórico: média / mediana",
+                   "Mediana dos pares (n)", "Referência"], linhas)
+        + (f'{_SUB_T}Faixas de referência (observadas, não alvo)</div>'
+           f'{lista}{faixas}</ul>' if faixas else "")
+        + f'{_SUB_T}Premissas</div>{lista}'
+        + "".join(f"<li>{escape(x)}</li>" for x in v.premissas) + "</ul>"
+        + f'{_SUB_T}Interpretação · comparação, não veredito</div>'
+        + (f'{lista}{leituras}</ul>' if leituras
+           else _nota("Sem valor atual para comparar."))
+        + _nota(val.AVISO))
+
+
+def corpo_pares(c: prs.ComparacaoPares) -> str:
+    """Grupo escolhido por regra e a tabela Ativo | Métrica | Valor | Mediana
+    dos pares | Diferença | Interpretação. Puro."""
+    g = c.grupo
+    if not g.pares:
+        return escape(c.motivo or g.motivo or fund.NAO_DISPONIVEL)
+    lista = ('<ul style="margin:2px 0 0 18px;padding:0;font-size:0.82rem;'
+             'color:var(--app-muted)">')
+    pares_li = "".join(
+        f"<li><strong>{escape(p.ticker)}</strong>"
+        f"{' — ' + escape(p.nome) if p.nome else ''}: {escape(p.motivo)}</li>"
+        for p in g.pares)
+    linhas = ""
+    for l in c.linhas:
+        cor = "var(--app-text)" if l.valor is not None else "var(--app-subtle)"
+        linhas += (
+            f'<tr><td {_TD}color:var(--app-muted)">{escape(c.ativo)}</td>'
+            f'<td {_TD}color:var(--app-muted)">{escape(l.metrica)}</td>'
+            f'<td {_TD}color:{cor};font-weight:600">'
+            f'{escape(l.texto_valor(c.moeda))}</td>'
+            f'<td {_TD}color:var(--app-text)">'
+            f'{escape(l.texto_mediana(c.moeda))}'
+            f'{f" ({l.n_pares})" if l.n_pares else ""}</td>'
+            f'<td {_TD}color:var(--app-text)">'
+            f'{escape(l.texto_diferenca(c.moeda))}</td>'
+            f'<td {_TD}color:var(--app-muted);font-size:0.8rem">'
+            f'{escape(l.interpretacao)}</td></tr>')
+    return (
+        f'<div>{escape(g.descricao or "")}.</div>'
+        f'{_SUB_T}Como o grupo foi escolhido</div>{lista}'
+        + "".join(f"<li>{escape(x)}</li>" for x in g.criterios + g.relaxamentos)
+        + f'</ul>{_SUB_T}Pares</div>{lista}{pares_li}</ul>'
+        f'{_SUB_T}Dado · comparação</div>'
+        + _tabela(["Ativo", "Métrica", "Valor", "Mediana dos pares (n)",
+                   "Diferença", "Interpretação"], linhas)
+        + _nota(prs.RODAPE))
+
+
 def cartoes_analise(a: m.AnaliseAtivo) -> list[str]:
     """Um cartão por etapa, na ordem ATIVO → ... → AÇÃO. Puro."""
     i, fx = a.ativo, a.faixa
@@ -441,6 +554,10 @@ def cartoes_analise(a: m.AnaliseAtivo) -> list[str]:
     for n, s in enumerate(a.secoes_externas, start=5):
         if s.chave == "fundamentos" and s.dados:
             corpo = corpo_fundamentos(fund.Fundamentos.de_dict(s.dados))
+        elif s.chave == "valuation" and s.dados:
+            corpo = corpo_valuation(val.Valuation.de_dict(s.dados))
+        elif s.chave == "pares" and s.dados:
+            corpo = corpo_pares(prs.ComparacaoPares.de_dict(s.dados))
         else:
             corpo = escape(s.resumo)
         cartoes.append(_cartao(n, s.titulo, corpo,
