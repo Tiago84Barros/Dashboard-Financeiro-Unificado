@@ -23,6 +23,9 @@ from core.utils import escapar_cifrao
 _MODO = "cfg_estrategia_modo"
 _FLASH = "cfg_estrategia_flash"
 _CONFIRMA_DESCARTE = "cfg_estrategia_confirma_descarte"
+# Posto pelo botão da aba Investimentos → Inteligência dos Ativos
+# (``views.inteligencia_ativos.VEIO_DA_ANALISE``).
+_VEIO_DA_ANALISE = "cfg_estrategia_veio_da_analise"
 _MODO_CHAT = "💬 Entrevista"
 _MODO_FORM = "📝 Revisar respostas"
 
@@ -37,6 +40,10 @@ _NAO_INFORMADO = "— não informado —"
 
 def render() -> None:
     _mostrar_flash()
+    if st.session_state.pop(_VEIO_DA_ANALISE, False):
+        st.info("Você veio da **Inteligência dos Ativos**. Conclua a "
+                "estratégia para liberar a análise; o que já foi respondido "
+                "continua salvo.")
     try:
         estado = repo.carregar()
     except Exception as exc:  # noqa: BLE001
@@ -178,8 +185,10 @@ def _render_rascunho(estado: repo.Estado) -> None:
             ok, erros = repo.concluir(rascunho.id)
             if ok:
                 _flash("success", f"Estratégia concluída (versão "
-                                  f"{rascunho.version}). É ela que a análise "
-                                  "vai usar.")
+                                  f"{rascunho.version}). A análise "
+                                  "inteligente dos seus ativos já está "
+                                  "disponível em Investimentos → "
+                                  "Inteligência dos Ativos.")
                 st.rerun()
             st.error("Não foi possível concluir:\n\n"
                      + "\n".join(f"- {e}" for e in erros))
