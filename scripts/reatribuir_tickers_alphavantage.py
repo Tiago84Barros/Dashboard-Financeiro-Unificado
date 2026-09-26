@@ -36,8 +36,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from sqlalchemy import text  # noqa: E402
 
-from core.noticias import coleta  # noqa: E402
-from core.noticias import universo_entidades  # noqa: E402
+from core.noticias import (
+    coleta,  # noqa: E402
+    universo_entidades,  # noqa: E402
+)
 from core.noticias.cache import DIRETORIO_PADRAO  # noqa: E402
 from core.noticias.dedup import hash_url  # noqa: E402
 from core.noticias.destino import engine_acervo  # noqa: E402
