@@ -103,6 +103,82 @@ def _girar(arquivo: Path) -> None:
         arquivo.rename(anterior)
 
 
+def _job_que_mata_ao_fechar():
+    """Job do Windows cujos processos morrem quando o último handle fecha.
+
+    ``Stop-ScheduledTask`` encerra o supervisor com ``TerminateProcess``: não há
+    ``finally`` que rode. Sem o job, o servidor filho ficava órfão segurando a
+    porta 8787 com o código antigo, e o supervisor seguinte entrava em laço de
+    reinício sem conseguir escutar. O handle do job só existe neste processo;
+    quando ele morre, por qualquer via, o Windows fecha o handle e leva o filho.
+
+    Devolve ``None`` fora do Windows ou se a API recusar -- aí vale o
+    comportamento anterior, sem derrubar o serviço.
+    """
+    if os.name != "nt":
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class _Basica(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64),
+                    ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD),
+                    ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t),
+                    ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t),
+                    ("PriorityClass", wintypes.DWORD),
+                    ("SchedulingClass", wintypes.DWORD)]
+
+    class _Io(ctypes.Structure):
+        _fields_ = [(n, ctypes.c_uint64) for n in (
+            "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+            "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+    class _Estendida(ctypes.Structure):
+        _fields_ = [("BasicLimitInformation", _Basica),
+                    ("IoInfo", _Io),
+                    ("ProcessMemoryLimit", ctypes.c_size_t),
+                    ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                    ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    k32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int,
+                                            ctypes.c_void_p, wintypes.DWORD]
+    job = k32.CreateJobObjectW(None, None)
+    if not job:
+        return None
+    info = _Estendida()
+    info.BasicLimitInformation.LimitFlags = 0x2000  # KILL_ON_JOB_CLOSE
+    # 9 = JobObjectExtendedLimitInformation
+    if not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+        return None
+    return job
+
+
+def _prender_ao_job(job, processo: subprocess.Popen) -> bool:
+    if job is None:
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    return bool(k32.AssignProcessToJobObject(job, int(processo._handle)))
+
+
+def _executar_no_job(job):
+    def _executar(comando, **kw) -> subprocess.CompletedProcess:
+        processo = subprocess.Popen(comando, **kw)
+        _prender_ao_job(job, processo)
+        return subprocess.CompletedProcess(comando, processo.wait())
+    return _executar
+
+
 def supervisionar(comando: list[str], log: Path, *, executar=subprocess.run,
                   dormir=time.sleep, max_execucoes: int | None = None) -> int:
     """Roda ``comando`` e o levanta de novo quando cai.
@@ -149,7 +225,10 @@ def main(argv=None) -> int:
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
     # -u: sem buffer, para o log mostrar a requisição quando ela acontece.
     comando = [sys.executable, "-u", str(SERVIDOR), "--porta", str(args.porta)]
-    return supervisionar(comando, args.log)
+    job = _job_que_mata_ao_fechar()
+    if job is None and os.name == "nt":
+        _log(args.log, "job do Windows indisponível: parar a tarefa pode deixar o servidor órfão")
+    return supervisionar(comando, args.log, executar=_executar_no_job(job))
 
 
 if __name__ == "__main__":
