@@ -69,14 +69,26 @@ cloudflared tunnel --url http://127.0.0.1:8787
 Ele imprime um endereço `https://<aleatório>.trycloudflare.com`. Serve para
 testar, mas cada reinício exige atualizar o segredo na Cloud.
 
-**Fixo, com conta.** Exige um domínio seu na Cloudflare:
+**Fixo, com conta (o modo permanente).** Exige um domínio seu na Cloudflare.
+O caminho mais curto é pelo painel, sem `tunnel login`:
 
-```bash
-cloudflared tunnel login
-cloudflared tunnel create armazem
-cloudflared tunnel route dns armazem armazem.<seu-dominio>
-cloudflared tunnel run --url http://127.0.0.1:8787 armazem
-```
+1. Zero Trust → Networks → Tunnels → **Create a tunnel** → Cloudflared,
+   com o nome `armazem`.
+2. O painel mostra um comando com token. Rode-o num PowerShell **como
+   administrador**. O executável está em `C:\Program Files (x86)\cloudflared\`:
+
+   ```bash
+   cloudflared service install <token-do-painel>
+   ```
+
+   Isso registra o `cloudflared` como serviço do Windows. Ele sobe no boot e
+   se levanta sozinho se cair. O token é da sua conta: não o cole em chat nem
+   em arquivo do repositório.
+3. Na aba **Public Hostname**, cadastre `armazem.<seu-dominio>` → `HTTP` →
+   `127.0.0.1:8787`.
+
+Com o serviço instalado, o quick tunnel (`cloudflared tunnel --url ...`) deixa
+de ser necessário. Feche-o.
 
 ### 4. Informar a produção
 
@@ -89,11 +101,46 @@ ARMAZEM_API_TOKEN = "<o mesmo token>"
 
 Salvar os segredos reinicia o app.
 
-### 5. Deixar ligado sozinho (opcional)
+### 5. Deixar o serviço Python ligado sozinho
 
-Tanto o serviço quanto o `cloudflared` podem ir para o Agendador de Tarefas,
-com gatilho de logon, como a rotina noturna. O `cloudflared` também se instala
-como serviço do Windows (`cloudflared service install`).
+O `cloudflared` já sobe sozinho como serviço (passo 3). Para o servidor
+Python também subir, use a tarefa de logon **`DFU - Armazem leitura`**.
+
+1. **A pasta do serviço** é um worktree destacado em `origin/main`, separado
+   da árvore de trabalho. Assim a branch do dia não derruba a rota nova. Só é
+   preciso criá-la uma vez:
+
+   ```bash
+   git worktree add --detach ../dfu-armazem-servico origin/main
+   ```
+
+2. **Registrar a tarefa** num PowerShell comum, sem precisar de administrador:
+
+   ```bash
+   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\registrar_armazem_leitura.ps1
+   ```
+
+A tarefa roda `scripts/iniciar_armazem_leitura.py` com `pythonw`, sem janela.
+Esse supervisor:
+
+- leva a pasta para `origin/main` a cada logon, desde que ela esteja
+  destacada e limpa;
+- lê o `.env` da árvore principal, que continua sendo o único;
+- levanta o servidor de novo em 30 s se ele cair;
+- para de vez se o token estiver ausente ou curto.
+
+O log fica em `%LOCALAPPDATA%\DFU\armazem_leitura.log`.
+
+O gatilho é de logon, e não de boot, porque o Docker Desktop só sobe quando
+você entra. O servidor não espera o Docker: até o armazém aparecer, ele
+responde 503 e o app avisa que caiu na vitrine.
+
+Para subir agora sem reiniciar o PC, feche antes o servidor aberto à mão,
+porque a porta 8787 é uma só:
+
+```bash
+powershell -Command "Start-ScheduledTask -TaskName 'DFU - Armazem leitura'"
+```
 
 ## Como saber se está funcionando
 
