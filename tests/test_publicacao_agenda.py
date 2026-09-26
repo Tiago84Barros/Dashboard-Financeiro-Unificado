@@ -197,6 +197,7 @@ def test_publicador_que_simula_por_omissao_carrega_apply(alvo):
         "scripts/publish_b3_metrics_to_supabase.py",
         "scripts/publish_noticias_vitrine.py",
         "scripts/espelhar_supabase_local.py",
+        "scripts/compact_remote_brapi_raw.py",
     }
     for passo in alvo.passos:
         if set(passo) & exige_apply:
