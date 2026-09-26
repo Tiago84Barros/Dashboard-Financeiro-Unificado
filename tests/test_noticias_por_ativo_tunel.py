@@ -216,3 +216,33 @@ def test_bloco_so_usa_tunel_sem_acervo_local(monkeypatch):
     P.bloco_para_prompt(asset_class="b3", ativos={"PETR4": ""})
 
     assert recebidos == [P._ler_noticias_remoto, None]
+
+
+# ── para_llm(): o teto corta manchetes, nunca ativos ────────────────────────
+def test_teto_de_manchetes_nao_esconde_ativo(monkeypatch):
+    """Caso real de 26/09/2026: Visão Geral com 10 ativos e ``max_itens=6``.
+
+    BBAS3 e GMAT3 levavam 3 manchetes cada e PETR3, com 166 itens no acervo,
+    sumia do bloco; a LLM respondeu que ela não tinha notícia nenhuma.
+    """
+    ordem = ["BBAS3", "GMAT3", "ITUB4", "PETR3", "SBSP3", "ISAE3",
+             "VALE3", "WEGE3", "TAEE11", "KLBN11"]
+    linhas = [_linha(s, n) for s in ordem[:6] for n in range(1, 6)]
+
+    def _remoto(**kw):
+        return P._agregar(linhas, simbolos=kw["simbolos"],
+                          janela_dias=kw["janela_dias"])
+
+    ctx = P.carregar(asset_class="acoes_br", ativos=dict.fromkeys(ordem, ""),
+                     as_of=CORTE, noticias_engine=None, vitrine_engine=None,
+                     noticias_remoto=_remoto)
+    texto = P.para_llm(ctx, max_itens=6)
+
+    for simbolo in ordem[:6]:
+        assert f"    {simbolo} [" in texto, f"{simbolo} sumiu do bloco"
+    assert texto.count("      • ") == 6, "o teto de manchetes continua valendo"
+    # Rodízio: cada ativo com notícia leva uma antes de alguém levar a segunda.
+    assert "PETR3 notícia 1" in texto
+    assert "BBAS3 notícia 2" not in texto
+    assert "4 de 5 item(ns) do acervo não reproduzido(s)" in texto
+    assert "Sem nenhum item no corte: VALE3, WEGE3, TAEE11, KLBN11" in texto

@@ -822,18 +822,40 @@ def para_llm(contexto: ContextoConjuntural, *, max_itens: int = 12) -> str:
     citaveis = [lt for lt in contexto.leituras.values() if lt.itens]
     if citaveis:
         linhas.append("  Notícias no corte (cite sempre veículo e data):")
-        mostrados = 0
+        # O teto vale para MANCHETES, nunca para ativos. Antes ele era gasto
+        # em ordem: os dois primeiros ativos levavam 3 manchetes cada e os
+        # seguintes sumiam do bloco sem nota nem nome. Com "4 de 10 sem
+        # amostra" nas limitações, a LLM concluía que PETR3 (166 itens no
+        # acervo) não tinha notícia. Agora a nota de todo ativo sai sempre e as
+        # manchetes são distribuídas em rodízio, uma por ativo antes da segunda.
+        escolhidas: dict[str, list] = {lt.simbolo: [] for lt in citaveis}
+        restante = max_itens
+        for rodada in range(3):
+            for leitura in citaveis:
+                if restante <= 0:
+                    break
+                if rodada < len(leitura.itens):
+                    escolhidas[leitura.simbolo].append(leitura.itens[rodada])
+                    restante -= 1
         for leitura in citaveis:
-            if mostrados >= max_itens:
-                break
             marca = (f"{leitura.valor:+.0f}" if leitura.medida
                      else f"não medido — {leitura.motivo}")
             linhas.append(f"    {leitura.simbolo} [{marca}]:")
-            for item in leitura.itens[:3]:
-                if mostrados >= max_itens:
-                    break
+            mostradas = escolhidas[leitura.simbolo]
+            for item in mostradas:
                 linhas.append(f"      • {item.titulo} ({item.procedencia})")
-                mostrados += 1
+            total = max(leitura.n_itens, len(leitura.itens))
+            if total > len(mostradas):
+                linhas.append(
+                    f"      ({total - len(mostradas)} de {total} item(ns) do "
+                    "acervo não reproduzido(s) aqui pelo teto do prompt; a nota "
+                    "acima já os considera — não diga que não há notícias)")
+        sem_itens = [lt.simbolo for lt in contexto.leituras.values()
+                     if not lt.itens]
+        if sem_itens:
+            linhas.append(
+                "  Sem nenhum item no corte: " + ", ".join(sem_itens)
+                + ". Só estes; qualquer ativo listado acima TEM notícia.")
     elif contexto.acervo_falhou:
         linhas.append(
             "  Notícias: o acervo NÃO PÔDE SER LIDO. Não há informação sobre "
