@@ -22,6 +22,7 @@ import streamlit as st
 
 from core import inteligencia_ativos as servico
 from core.inteligencia_ativos import analise as servico_analise
+from core.inteligencia_ativos import calculos as calc
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import papeis
 from core.estrategia import politica as pol
@@ -233,6 +234,96 @@ def cartao_premissa(ctx: m.ContextoInvestidor) -> str:
     )
 
 
+_COR_SEVERIDADE = {calc.ALTA: "var(--app-danger)",
+                   calc.MEDIA: "var(--app-warning)",
+                   calc.INFO: "var(--app-info)"}
+_COR_STATUS = {calc.ACIMA: "var(--app-danger)", calc.ABAIXO: "var(--app-warning)",
+               calc.DENTRO: "var(--app-primary)",
+               calc.SEM_REFERENCIA: "var(--app-muted)"}
+_ROTULO_STATUS = {calc.ACIMA: "acima", calc.ABAIXO: "abaixo",
+                  calc.DENTRO: "na faixa", calc.SEM_REFERENCIA: "sem alvo"}
+
+
+def _faixa_txt(f: calc.Faixa) -> str:
+    if f.vazia:
+        return "—"
+    return f"{_pct(f.piso)} a {_pct(f.teto)}"
+
+
+def cartao_calculos(c: calc.Calculos) -> str:
+    """Alocação vs alvo, concentração e alertas: só números do código. Puro."""
+    cel = 'style="padding:3px 10px 3px 0;'
+    th = ('<th style="text-align:left;padding:3px 10px 3px 0;font-weight:600;'
+          'color:var(--app-muted)">')
+    linhas = ""
+    for a in c.alocacao[calc.DIM_CLASSE]:
+        cor = _COR_STATUS[a.status]
+        linhas += (
+            f'<tr><td {cel}color:var(--app-text)">{escape(a.rotulo)}</td>'
+            f'<td {cel}color:var(--app-text)">{_pct(a.atual)}</td>'
+            f'<td {cel}color:var(--app-muted)">{_pct(a.faixa.alvo, 0)}</td>'
+            f'<td {cel}color:var(--app-muted)">{_faixa_txt(a.faixa)}</td>'
+            f'<td {cel}color:var(--app-text)">{_pp(a.diferenca_para_alvo)}</td>'
+            f'<td {cel}color:var(--app-text)">{_pp(a.overweight)}</td>'
+            f'<td {cel}color:var(--app-text)">{_pp(a.underweight)}</td>'
+            f'<td {cel}color:{cor};font-weight:700">'
+            f'{_ROTULO_STATUS[a.status]}</td></tr>')
+    tabela = (
+        '<table style="font-size:0.84rem;border-collapse:collapse;'
+        'margin-top:6px"><tr>' + "".join(
+            f"{th}{h}</th>" for h in ("Classe", "Atual", "Alvo", "Faixa",
+                                      "Dif. alvo", "Overweight",
+                                      "Underweight", "Status"))
+        + f"</tr>{linhas}</table>")
+
+    conc = ""
+    for dim in calc.DIMENSOES_CONCENTRACAO:
+        k = c.concentracao[dim]
+        if k.peso_da_base <= 0:
+            valor, detalhe = "—", f"sem posições em {k.base}"
+        else:
+            maior = k.maior
+            valor = (f"{escape(maior.chave)} {_pct(maior.peso)}" if maior
+                     else "não identificado")
+            hhi = ("HHI —" if k.hhi is None else
+                   f"HHI {k.hhi:.2f} · ≈ {k.numero_efetivo:.1f} iguais"
+                   .replace(".", ","))
+            detalhe = f"{hhi} · base {k.base}"
+            if k.cobertura < 99.95:
+                detalhe += f" · identificado {_pct(k.cobertura)}"
+        conc += (
+            '<div style="min-width:170px;flex:1 1 170px"><div style="font-size:'
+            f'0.72rem;color:var(--app-muted)">{calc.ROTULO_DIMENSAO[dim]}</div>'
+            f'<div style="font-weight:700;color:var(--app-text)">{valor}</div>'
+            '<div style="font-size:0.74rem;color:var(--app-subtle)">'
+            f'{escape(detalhe)}</div></div>')
+
+    if c.alertas:
+        alertas = "".join(
+            f'<div style="margin:3px 0;color:{_COR_SEVERIDADE[a.severidade]}">'
+            f'● <span style="color:var(--app-text)">{escape(a.mensagem)}'
+            '</span></div>' for a in c.alertas)
+    else:
+        alertas = ('<div style="color:var(--app-primary)">Nenhum limite ou '
+                   'faixa da sua estratégia foi ultrapassado.</div>')
+
+    sub_t = ('<div style="font-size:0.72rem;font-weight:700;letter-spacing:.05em;'
+             'text-transform:uppercase;color:var(--app-subtle);margin-top:12px">')
+    return (
+        '<div style="background:var(--app-surface);border:1px solid '
+        'var(--app-border);border-radius:12px;padding:14px 18px;'
+        'margin:0 0 14px 0">'
+        '<div style="font-size:0.72rem;font-weight:700;letter-spacing:.05em;'
+        'text-transform:uppercase;color:var(--app-info)">Cálculos da carteira'
+        ' · feitos pelo sistema, não pela IA</div>'
+        f'{sub_t}Alertas objetivos</div>'
+        f'<div style="font-size:0.88rem;margin-top:4px">{alertas}</div>'
+        f'{sub_t}Alocação atual vs alvo</div>{tabela}'
+        f'{sub_t}Concentração</div>'
+        '<div style="display:flex;flex-wrap:wrap;gap:10px 20px;'
+        f'margin-top:6px">{conc}</div></div>')
+
+
 def _gatilhos(tese: m.Tese) -> str:
     saida = ""
     for g in tese.gatilhos:
@@ -282,22 +373,37 @@ def cartoes_analise(a: m.AnaliseAtivo) -> list[str]:
         f'<div style="margin-top:6px;font-size:0.84rem">{_gatilhos(a.tese)}</div>'
     )))
 
-    cartoes.append(_cartao(3, "Peso atual", _grade([
+    peso_itens = [
         ("Na carteira", _pct(i.peso_atual)),
         ("Da classe na carteira", _pct(fx.peso_classe)),
         ("Do setor na carteira", _pct(fx.peso_setor)),
-    ])))
+        ("Emissor", fx.emissor or "—"),
+    ]
+    if fx.indexador is not None:
+        peso_itens.append(("Indexador", fx.indexador))
+    cartoes.append(_cartao(3, "Peso atual", _grade(peso_itens)))
 
     classe = (_ROTULO_CLASSE.get(i.classe_politica, "—")
               if i.classe_politica else "fora da política")
-    cartoes.append(_cartao(4, "Peso desejado / faixa desejada", _grade([
+    faixa_itens = [
         (f"Alvo da classe ({classe})", _pct(fx.alvo_classe, 0)),
         ("Diferença da classe para o alvo", _pp(fx.desvio_classe)),
         ("Limite por ativo", _pct(fx.teto_ativo, 0)),
         ("Folga até o limite", _pp(fx.folga_ativo)),
-    ]) + ('<div style="color:var(--app-muted);font-size:0.82rem;'
-          'margin-top:6px">Sua estratégia define alvo por classe, não por '
-          'ativo. Nenhum alvo individual é presumido.</div>')))
+    ]
+    if fx.piso_ativo is not None or fx.alvo_ativo is not None:
+        faixa_itens += [
+            ("Faixa do ativo", f"{_pct(fx.piso_ativo)} a {_pct(fx.teto_ativo)}"),
+            ("Overweight", _pp(fx.overweight_ativo)),
+            ("Underweight", _pp(fx.underweight_ativo)),
+        ]
+        nota = "Faixa do ativo definida por você."
+    else:
+        nota = ("Sua estratégia define alvo por classe, não por ativo. "
+                "Nenhum alvo individual é presumido.")
+    cartoes.append(_cartao(4, "Peso desejado / faixa desejada", _grade(
+        faixa_itens) + ('<div style="color:var(--app-muted);font-size:0.82rem;'
+                        f'margin-top:6px">{escape(nota)}</div>')))
 
     for n, s in enumerate(a.secoes_externas, start=5):
         cartoes.append(_cartao(n, s.titulo, escape(s.resumo),
@@ -349,6 +455,7 @@ def _render_liberada(liberacao: portao.Liberacao, carteira: dict) -> None:
         return
     ctx, analises = resultado["contexto"], resultado["analises"]
     st.markdown(cartao_premissa(ctx), unsafe_allow_html=True)
+    st.markdown(cartao_calculos(ctx.calculos), unsafe_allow_html=True)
 
     st.dataframe(
         [{"Ativo": a.ativo.ticker,

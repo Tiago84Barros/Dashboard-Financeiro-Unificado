@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+from core.inteligencia_ativos.calculos import Calculos
+
 # -- estados de seção ----------------------------------------------------------
 
 DISPONIVEL = "DISPONIVEL"
@@ -117,6 +119,8 @@ class ContextoInvestidor:
     peso_por_classe: dict[str, float]        # classe da política → % atual
     peso_por_setor: dict[str, float]         # setor → % atual
     peso_fora_da_politica: float             # % em classes que a política não cobre
+    # pesos, faixas, desvios, concentração e alertas (calculos.py)
+    calculos: Calculos | None = None
 
 
 @dataclass(frozen=True)
@@ -149,6 +153,15 @@ class FaixaAlvo:
     folga_ativo: float | None          # teto_ativo − peso_atual, em pp
     teto_setor: float | None
     peso_setor: float | None
+    # só existem se o usuário informar uma faixa para o ativo
+    piso_ativo: float | None = None
+    alvo_ativo: float | None = None
+    diferenca_para_alvo_ativo: float | None = None
+    overweight_ativo: float = 0.0
+    underweight_ativo: float = 0.0
+    status_ativo: str | None = None     # calculos.DENTRO/ACIMA/ABAIXO/SEM_REFERENCIA
+    emissor: str | None = None
+    indexador: str | None = None
 
 
 @dataclass(frozen=True)

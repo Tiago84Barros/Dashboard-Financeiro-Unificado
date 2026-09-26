@@ -21,7 +21,7 @@ Puro. Coberto por tests/test_inteligencia_ativos_adequacao.py.
 """
 from __future__ import annotations
 
-from core.inteligencia_ativos import adequacao, papeis, secoes
+from core.inteligencia_ativos import adequacao, calculos, papeis, secoes
 from core.inteligencia_ativos.contexto import classe_politica, texto_carteira
 from core.inteligencia_ativos.modelos import (
     AnaliseAtivo,
@@ -30,7 +30,9 @@ from core.inteligencia_ativos.modelos import (
     Papel,
 )
 
-_PREFIXOS_RF = ("CDB", "LCI", "LCA", "CRI", "CRA", "DEBENTURE")
+# A subclasse é calculada em calculos.py (a alocação por subclasse usa a
+# mesma regra); reexportada aqui.
+subclasse = calculos.subclasse
 
 
 def _num(x) -> float | None:
@@ -40,27 +42,12 @@ def _num(x) -> float | None:
         return None
 
 
-def subclasse(posicao: dict) -> str | None:
-    classe = posicao.get("classe")
-    nome = str(posicao.get("nome") or "").upper()
-    ticker = str(posicao.get("ticker") or "").upper()
-    if classe == "Tesouro Direto":
-        if "IPCA" in nome or "RENDA+" in nome or "EDUCA" in nome:
-            return "Tesouro IPCA+"
-        if "SELIC" in nome:
-            return "Tesouro Selic"
-        if "PREFIXADO" in nome:
-            return "Tesouro Prefixado"
-        return None
-    if classe == "Renda Fixa":
-        return next((p for p in _PREFIXOS_RF if ticker.startswith(p)), None)
-    if classe in ("BDR", "ETF Internacional", "ETF Brasil", "Fundo RF"):
-        return classe
-    return None
-
-
-def info_basica(posicao: dict) -> InfoBasica:
+def info_basica(posicao: dict, peso: float | None = None) -> InfoBasica:
+    """``peso`` é o de ``calculos.pesos``; sem ele (uso avulso), vale o
+    ``pct_carteira`` que veio da carteira."""
     ticker = str(posicao.get("ticker") or "").strip().upper()
+    if peso is None:
+        peso = _num(posicao.get("pct_carteira")) or 0.0
     return InfoBasica(
         ticker=ticker,
         nome=str(posicao.get("nome") or ticker),
@@ -71,7 +58,7 @@ def info_basica(posicao: dict) -> InfoBasica:
         moeda=str(posicao.get("moeda") or "BRL").upper(),
         valor_investido=_num(posicao.get("total_investido")),
         valor_mercado=_num(posicao.get("valor_mercado")),
-        peso_atual=round(_num(posicao.get("pct_carteira")) or 0.0, 2),
+        peso_atual=round(peso, 2),
     )
 
 
@@ -80,7 +67,8 @@ def analisar(posicao: dict, ctx: ContextoInvestidor, *,
     if not isinstance(ctx, ContextoInvestidor):
         raise TypeError("analisar exige o ContextoInvestidor (política "
                         "concluída + carteira completa).")
-    info = info_basica(posicao)
+    calc = ctx.calculos.peso(str(posicao.get("ticker") or ""))
+    info = info_basica(posicao, calc.peso if calc else None)
     lista_papeis = papeis_usuario or papeis.inferir(info)
     fx = adequacao.faixa(info, ctx)
     externas = secoes.coletar(info, ctx)
@@ -109,8 +97,10 @@ def analisar(posicao: dict, ctx: ContextoInvestidor, *,
 
 def analisar_carteira(ctx: ContextoInvestidor) -> list[AnaliseAtivo]:
     """Uma análise por posição, da maior para a menor."""
-    ordem = sorted(ctx.posicoes, key=lambda p: _num(p.get("pct_carteira")) or 0,
-                   reverse=True)
+    def _peso(p):
+        pa = ctx.calculos.peso(str(p.get("ticker") or ""))
+        return pa.peso if pa else 0.0
+    ordem = sorted(ctx.posicoes, key=_peso, reverse=True)
     return [analisar(p, ctx) for p in ordem]
 
 
@@ -122,6 +112,22 @@ def texto_para_llm(analise: AnaliseAtivo, ctx: ContextoInvestidor) -> str:
               f"Nome: {a.nome} · Classe: {a.classe}"
               + (f" ({a.subclasse})" if a.subclasse else "")
               + f" · Setor: {a.setor or '—'} · Peso: {a.peso_atual:.1f}%"]
+    fx = analise.faixa
+    linhas.append("[Números do ativo — calculados pelo código, não recalcule]")
+    linhas.append(f"- Peso: {calculos.fmt_pct(a.peso_atual, 2)} · emissor "
+                  f"{fx.emissor or '—'}"
+                  + (f" · indexador {fx.indexador}" if fx.indexador else ""))
+    if fx.teto_ativo is not None or fx.piso_ativo is not None:
+        linhas.append(
+            f"- Faixa do ativo: mínimo {calculos.fmt_pct(fx.piso_ativo)}, alvo "
+            f"{calculos.fmt_pct(fx.alvo_ativo)}, máximo "
+            f"{calculos.fmt_pct(fx.teto_ativo)} · overweight "
+            f"{calculos.fmt_pp(fx.overweight_ativo)} · underweight "
+            f"{calculos.fmt_pp(fx.underweight_ativo)} · status {fx.status_ativo}")
+    chaves = {a.ticker, a.setor, a.classe_politica, fx.emissor} - {None}
+    for al in ctx.calculos.alertas:
+        if al.chave in chaves:
+            linhas.append(f"- Alerta ({al.severidade}): {al.mensagem}")
     linhas += papeis.em_linguagem_natural(analise.papeis)
     linhas.append(f"Tese: {analise.tese.por_que_esta_na_carteira}")
     linhas.append(f"Alinhamento: {analise.tese.alinhamento}")

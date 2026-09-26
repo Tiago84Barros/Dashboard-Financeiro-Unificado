@@ -16,7 +16,9 @@ A ordem é:
 Módulos do pacote:
 
 - ``modelos``   — dataclasses da análise, estados de ação, papéis, perguntas;
-- ``contexto``  — política + carteira → ``ContextoInvestidor``;
+- ``calculos``  — pesos, alocação vs alvo, faixas, desvios, concentração
+  (HHI) e alertas objetivos: todo número da análise, sem LLM;
+- ``contexto``  — política + carteira + cálculos → ``ContextoInvestidor``;
 - ``papeis``    — para que o ativo serve;
 - ``adequacao`` — faixa desejada, tese, impacto e ação a considerar;
 - ``secoes``    — fundamentos, valuation, pares, cenário, notícias,
@@ -58,7 +60,8 @@ def _carteira(carteira: dict | None) -> dict:
 
 
 def analisar_ativo(ticker: str, *, carteira: dict | None = None,
-                   engine=None, owner_id=None) -> dict:
+                   faixas: dict | None = None, engine=None,
+                   owner_id=None) -> dict:
     """Analisa um ativo da carteira, se a estratégia permitir.
 
     ``carteira`` é o dict de ``core.investimentos.get_carteira()``; quem já o
@@ -75,19 +78,21 @@ def analisar_ativo(ticker: str, *, carteira: dict | None = None,
                 "analysis_available": False,
                 "reason": ATIVO_FORA_DA_CARTEIRA}
 
-    ctx = _contexto.montar(liberacao.politica, carteira)
+    ctx = _contexto.montar(liberacao.politica, carteira, faixas=faixas)
     resultado = _analise.analisar(posicao, ctx)
     return {
         **liberacao.como_dict(),
         "asset": resultado.ativo.ticker,
         "policy_context": ctx.texto_politica,
         "analysis": resultado.como_dict(),
+        "portfolio_calculations": ctx.calculos.como_dict(),
         "llm_input": _analise.texto_para_llm(resultado, ctx),
     }
 
 
 def analisar_carteira(*, carteira: dict | None = None,
                       liberacao: portao.Liberacao | None = None,
+                      faixas: dict | None = None,
                       engine=None, owner_id=None) -> dict:
     """Todas as posições de uma vez, com um único teste do portão.
 
@@ -102,6 +107,7 @@ def analisar_carteira(*, carteira: dict | None = None,
         liberacao = portao.verificar(engine=engine, owner_id=owner_id)
     if not liberacao.disponivel:
         return liberacao.como_dict()
-    ctx = _contexto.montar(liberacao.politica, _carteira(carteira))
+    ctx = _contexto.montar(liberacao.politica, _carteira(carteira),
+                           faixas=faixas)
     return {**liberacao.como_dict(), "contexto": ctx,
             "analises": _analise.analisar_carteira(ctx)}
