@@ -34,10 +34,17 @@ def render() -> None:
     require_user()
     if not is_admin():
         from design.user_accounts import render_user_accounts
+        from views.configuracoes_geral import render_estrategia_bloco
         st.title("Minhas configurações")
-        personal, account, docs = st.tabs(
-            ["Importar meus dados", "Minha conta", "📚 Documentação"]
+        # A estratégia é de cada conta, não da administração do app: por isso
+        # o não-admin também tem a aba Geral, só com ela. O CSS dos blocos
+        # (``cfg-workflow-*``) vem junto, ou o cabeçalho sai sem estilo.
+        st.markdown(_CONFIG_CSS, unsafe_allow_html=True)
+        geral, personal, account, docs = st.tabs(
+            ["⚙️ Geral", "Importar meus dados", "Minha conta", "📚 Documentação"]
         )
+        with geral:
+            render_estrategia_bloco()
         with personal:
             _render_atualizacao_de_dados()
         with account:
@@ -67,7 +74,8 @@ def render() -> None:
     with tab_geral:
         _render_tab_intro(
             "Geral",
-            "Tema do aplicativo, troca de usuário e limpeza da memória da LLM. "
+            "Estratégia de investimentos, tema do aplicativo, troca de usuário "
+            "e limpeza da memória da LLM. "
             "O tema e a saída moravam na sidebar até 21/09/2026.",
             "Preferências da conta",
             "var(--app-info, #4A9EFF)",
