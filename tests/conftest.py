@@ -346,3 +346,19 @@ def _valuation_sem_banco(monkeypatch):
                                   grupo.motivo))
     monkeypatch.setattr(secoes, "_ler_valuation_e_pares", _vazio)
     yield
+
+
+# Notícias, relatórios e eventos: sem o arquivo publicado e sem banco, as três
+# seções saem "sem dado". Os leitores têm testes em
+# tests/test_inteligencia_ativos_informacoes.py.
+@pytest.fixture(autouse=True)
+def _informacoes_sem_arquivo(monkeypatch):
+    try:
+        from core.inteligencia_ativos import informacoes as inf
+        from core.inteligencia_ativos import secoes
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(secoes, "_ler_informacoes", lambda info: (
+        inf.Noticias(), inf.Relatorios(), inf.Eventos()))
+    yield

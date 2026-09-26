@@ -10,7 +10,9 @@ Cada seção tem um provedor com a mesma assinatura::
 ``fundamentos`` já é real (``provedor_fundamentos``: catálogo por classe
 em ``fundamentos.py``, leitores em ``fontes_fundamentos.py``), assim como
 ``valuation`` e ``pares`` (``valuation.py``, ``pares.py``, leitores em
-``fontes_valuation.py``). Os demais
+``fontes_valuation.py``), e ``noticias``, ``relatorios`` e ``eventos``
+(``informacoes.py``, leitor em ``fontes_informacoes.py``, artefato gerado
+por ``scripts/publish_informacoes_recentes.py``). Os demais
 ainda são ``_pendente``: devolvem ``estado=PENDENTE`` e o que a seção vai
 trazer. Implementar uma etapa é trocar a entrada dela em ``PROVEDORES``
 por um provedor real; nada mais na análise ou na tela precisa mudar. Um
@@ -22,8 +24,10 @@ Fontes que já existem no projeto e devem alimentar estas seções:
 - fundamentos/valuation B3: vitrine de Empresas B3 (score e múltiplos);
 - fundamentos/valuation FII: ``fii_selection_snapshot`` (P/VP, DY, vacância);
 - EUA: vitrine de Empresas Americanas;
-- notícias: acervo de notícias com ``ticker_sentiment`` (corte 0,70);
-- relatórios: RAG de relatórios da B3 / FII;
+- notícias: acervo de notícias do armazém local, filtrado pela manchete;
+- relatórios: documentos CVM (IPE) da B3 e FNET dos FIIs, só metadados;
+- eventos: proventos anunciados (``market.dividends``), prazo regulatório
+  de resultado e vencimento do Tesouro;
 - cenário: insumos macro publicados (Selic, IPCA, câmbio).
 """
 from __future__ import annotations
@@ -57,13 +61,13 @@ SECOES: dict[str, tuple[str, str]] = {
     "cenario": ("Cenário",
                 "Como juros, inflação e câmbio afetam este tipo de ativo."),
     "noticias": ("Notícias",
-                 "Notícias recentes em que o ativo é o assunto, não só citado."),
+                 "Notícias recentes em que o ativo é o assunto, com impacto "
+                 "e dimensões afetadas."),
     "relatorios": ("Relatórios",
-                   "Resultados trimestrais, relatórios gerenciais e fatos "
-                   "relevantes."),
+                   "Balanços, releases, relatórios gerenciais, fatos "
+                   "relevantes e comunicados recentes."),
     "eventos": ("Próximos eventos",
-                "Data-com, divulgação de resultados, assembleias e "
-                "vencimentos."),
+                "Proventos anunciados, prazo de resultado e vencimentos."),
 }
 
 
@@ -127,10 +131,55 @@ def provedor_pares(info: InfoBasica, ctx: ContextoInvestidor, *,
                        "projeto" if comp.com_dado else None)
 
 
+def _ler_informacoes(info: InfoBasica):
+    from core.inteligencia_ativos import fontes_informacoes
+    return fontes_informacoes.ler(info.ticker, info.nome, info.classe,
+                                  info.moeda)
+
+
+def provedor_noticias(info: InfoBasica, ctx: ContextoInvestidor, *,
+                      leitor=None) -> Secao:
+    """Manchetes em que o ativo é o assunto, com nível de impacto e
+    dimensões. ``leitor(info) -> (Noticias, Relatorios, Eventos)``."""
+    from core.inteligencia_ativos import informacoes as inf
+    n, _, _ = (leitor or _ler_informacoes)(info)
+    return Secao(chave="noticias", titulo=SECOES["noticias"][0],
+                 estado=DISPONIVEL if n.itens else SEM_DADOS,
+                 resumo=inf.resumo_noticias(n), dados=n.como_dict(),
+                 fonte=n.fonte if n.itens else None)
+
+
+def provedor_relatorios(info: InfoBasica, ctx: ContextoInvestidor, *,
+                        leitor=None) -> Secao:
+    """Documentos oficiais recentes (metadados) e os indícios, pelo título,
+    para as sete perguntas de extração."""
+    from core.inteligencia_ativos import informacoes as inf
+    _, r, _ = (leitor or _ler_informacoes)(info)
+    return Secao(chave="relatorios", titulo=SECOES["relatorios"][0],
+                 estado=DISPONIVEL if r.documentos else SEM_DADOS,
+                 resumo=inf.resumo_relatorios(r), dados=r.como_dict(),
+                 fonte=r.fonte if r.documentos else None)
+
+
+def provedor_eventos(info: InfoBasica, ctx: ContextoInvestidor, *,
+                     leitor=None) -> Secao:
+    """Linha do tempo à frente: só eventos com data de fonte."""
+    from core.inteligencia_ativos import informacoes as inf
+    _, _, e = (leitor or _ler_informacoes)(info)
+    fontes = sorted({x.source for x in e.itens if x.source})
+    return Secao(chave="eventos", titulo=SECOES["eventos"][0],
+                 estado=DISPONIVEL if e.itens else SEM_DADOS,
+                 resumo=inf.resumo_eventos(e), dados=e.como_dict(),
+                 fonte=", ".join(fontes) or None)
+
+
 PROVEDORES: dict[str, Provedor] = {c: _pendente(c) for c in SECOES}
 PROVEDORES["fundamentos"] = provedor_fundamentos
 PROVEDORES["valuation"] = provedor_valuation
 PROVEDORES["pares"] = provedor_pares
+PROVEDORES["noticias"] = provedor_noticias
+PROVEDORES["relatorios"] = provedor_relatorios
+PROVEDORES["eventos"] = provedor_eventos
 
 
 def coletar(info: InfoBasica, ctx: ContextoInvestidor) -> dict[str, Secao]:

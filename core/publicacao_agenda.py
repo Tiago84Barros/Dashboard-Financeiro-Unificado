@@ -220,6 +220,19 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/valuation_historico.json.gz",),
     ),
     Alvo(
+        # Notícias filtradas por relevância, relatórios (documentos CVM/SEC) e
+        # eventos datados por ativo, para a Inteligência dos Ativos. Lê o
+        # acervo de notícias e os documentos que só existem no armazém; o
+        # Supabase passou dos 500 MB, então sai como arquivo em data/public.
+        # Grava por omissão (`--dry-run` só mede). Notícia envelhece em dias.
+        chave="informacoes_recentes",
+        titulo="Informações recentes dos ativos",
+        passos=(("scripts/publish_informacoes_recentes.py",),),
+        cadencia_dias=1,
+        modulo="noticias",
+        artefatos=("data/public/informacoes_recentes.json.gz",),
+    ),
+    Alvo(
         # O cache bruto da brapi é o que mais cresce no Supabase: ~2,6 MB/dia de
         # cotações e ~48 MB aos sábados (anuais), sem nada que pode. Os dois
         # scripts existiam e ninguém os chamava -- o último arquivamento foi em
