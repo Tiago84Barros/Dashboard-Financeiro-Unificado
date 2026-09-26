@@ -37,6 +37,9 @@ if (-not $Pasta) { $Pasta = Join-Path (Split-Path -Parent $repo) "dfu-armazem-se
 # Padrao: o .env da arvore PRINCIPAL (dona do .git comum), qualquer que seja o
 # worktree de onde este script foi chamado.
 if (-not $ArquivoEnv) {
+    # O git escreve UTF-8; o PowerShell 5.1 decodifica pela pagina do console e
+    # transforma o "A" acentuado de "Area de Trabalho" em lixo.
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
     $gitComum = git -C $repo rev-parse --path-format=absolute --git-common-dir
     $ArquivoEnv = Join-Path (Split-Path -Parent $gitComum) ".env"
 }
