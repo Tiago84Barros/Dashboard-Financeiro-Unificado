@@ -144,6 +144,9 @@ def main(argv=None) -> int:
         return SAIDA_CONFIGURACAO
     _log(args.log, f"{carregar_env(args.env)} chave(s) lidas de {args.env}")
 
+    # O log é UTF-8; sem isto o filho escreve na página de código do Windows
+    # (cp1252) e os acentos viram lixo no arquivo.
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
     # -u: sem buffer, para o log mostrar a requisição quando ela acontece.
     comando = [sys.executable, "-u", str(SERVIDOR), "--porta", str(args.porta)]
     return supervisionar(comando, args.log)

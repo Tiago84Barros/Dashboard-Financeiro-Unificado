@@ -105,6 +105,21 @@ def test_supervisor_para_em_erro_de_configuracao(tmp_path):
     assert codigo == sup.SAIDA_CONFIGURACAO and len(feitos) == 1
 
 
+def test_filho_escreve_o_log_em_utf8(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text("", encoding="utf-8")
+    monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+    visto: dict = {}
+
+    def _sup(comando, log):
+        visto["enc"] = os.environ.get("PYTHONIOENCODING")
+        return 0
+
+    monkeypatch.setattr(sup, "supervisionar", _sup)
+    assert sup.main(["--env", str(env), "--log", str(tmp_path / "a.log")]) == 0
+    assert visto["enc"] == "utf-8"
+
+
 def test_env_ausente_nao_sobe(tmp_path):
     assert sup.main(["--env", str(tmp_path / "nao.env"),
                      "--log", str(tmp_path / "a.log")]) == sup.SAIDA_CONFIGURACAO
