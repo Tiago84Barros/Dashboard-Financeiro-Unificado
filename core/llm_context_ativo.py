@@ -49,21 +49,28 @@ def _local_macro_block(asset_class: str, symbol: str, sector: str) -> str:
     if not symbol or not sector:
         return ""
     try:
-        from core.macro_data.database import get_local_macro_engine
+        from core.macro_data.database import descrever_fonte_macro, get_macro_source
         from core.macro_data.portfolio_context import (
             format_portfolio_macro_context,
             load_portfolio_macro_snapshot,
         )
 
-        engine = get_local_macro_engine()
-        if engine is None:
-            return ""
-        snapshot = load_portfolio_macro_snapshot(
-            engine, asset_class=asset_class, assets={symbol: sector},
-        )
-        return format_portfolio_macro_context(snapshot)
+        fonte = get_macro_source()
+        if fonte is None:
+            # Nomeado, não vazio: string vazia fazia o LLM ler o setor como
+            # neutro ao macro em vez de sem medição.
+            return ("CONTEXTO MACRO SETORIAL: indisponível (sem Docker local e sem "
+                    "arquivo publicado recente). Não trate como exposição neutra.")
+        try:
+            snapshot = load_portfolio_macro_snapshot(
+                fonte, asset_class=asset_class, assets={symbol: sector},
+            )
+        finally:
+            if hasattr(fonte, "dispose"):
+                fonte.dispose()
+        return format_portfolio_macro_context(snapshot, descrever_fonte_macro(fonte))
     except Exception:
-        logger.exception("contexto macro local de %s indisponível", symbol)
+        logger.exception("contexto macro de %s indisponível", symbol)
         return ""
 
 

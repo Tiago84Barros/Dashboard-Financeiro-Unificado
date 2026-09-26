@@ -95,6 +95,31 @@ def latest_macro_context(
     return build_macro_context(rows, now=now)
 
 
+def published_macro_context(
+    insumos, *, now: datetime | None = None
+) -> tuple[dict[str, object], ...]:
+    """O mesmo recorte de :func:`latest_macro_context`, lido dos insumos publicados.
+
+    O arquivo guarda as 24 últimas observações por série; aqui fica só a mais
+    recente de cada uma, pela mesma ordem da consulta (vintage/período, depois
+    coleta). O arquivo não traz o nome do indicador; ``build_macro_context`` cai
+    no ``provider_code``.
+    """
+    ultima: dict[tuple, Mapping[str, object]] = {}
+    for obs in insumos.observacoes:
+        if obs.get("value") is None:
+            continue
+        chave = (obs.get("provider"), obs.get("provider_code"), obs.get("country_code") or "")
+        ordem = (obs.get("vintage_date") or obs.get("reference_period"),
+                 obs.get("retrieved_at"))
+        atual = ultima.get(chave)
+        if atual is None or ordem > (atual.get("vintage_date") or atual.get("reference_period"),
+                                     atual.get("retrieved_at")):
+            ultima[chave] = obs
+    linhas = [ultima[k] for k in sorted(ultima, key=str)][:MAX_CONTEXT_ITEMS]
+    return build_macro_context(linhas, now=now)
+
+
 def format_macro_context(facts: Iterable[Mapping[str, object]]) -> tuple[str, ...]:
     """Linhas factuais para prompt ancorado, sem instruções externas."""
     lines = []
