@@ -288,9 +288,15 @@ def _sinal_do_item(item: ItemNoticiaBruto) -> float | None:
     return base * intensidade
 
 
-def _ler_noticias(engine, *, simbolos: Sequence[str], as_of: datetime,
-                  janela_dias: int) -> dict[str, LeituraNoticias]:
-    """Agrega o noticiário por ativo. Levanta em falha; devolve vazio em vazio."""
+def linhas_do_acervo(engine, *, simbolos: Sequence[str], as_of: datetime,
+                     janela_dias: int) -> list[dict]:
+    """As linhas cruas do acervo, antes de qualquer agregação.
+
+    Separada da agregação para que o serviço do túnel
+    (``scripts/servir_armazem_leitura.py``) entregue exatamente estas linhas e o
+    app agregue com a MESMA fórmula de quando lê o armazém direto. Levanta
+    :class:`AcervoIndisponivel` em falha.
+    """
     inicio = as_of - timedelta(days=janela_dias)
     try:
         with engine.connect() as conn:
@@ -306,7 +312,53 @@ def _ler_noticias(engine, *, simbolos: Sequence[str], as_of: datetime,
         raise AcervoIndisponivel(
             f"acervo de notícias não pôde ser lido "
             f"({', '.join(_TABELAS_NOTICIAS)}): {causa}") from exc
+    return [dict(linha) for linha in linhas]
 
+
+def _ler_noticias(engine, *, simbolos: Sequence[str], as_of: datetime,
+                  janela_dias: int) -> dict[str, LeituraNoticias]:
+    """Agrega o noticiário por ativo. Levanta em falha; devolve vazio em vazio."""
+    linhas = linhas_do_acervo(engine, simbolos=simbolos, as_of=as_of,
+                              janela_dias=janela_dias)
+    return _agregar(linhas, simbolos=simbolos, janela_dias=janela_dias)
+
+
+def _data(valor) -> datetime | None:
+    """``publicado_em`` chega como datetime do banco ou ISO do túnel."""
+    if isinstance(valor, datetime):
+        return valor
+    if isinstance(valor, str) and valor:
+        try:
+            return datetime.fromisoformat(valor)
+        except ValueError:
+            return None
+    return None
+
+
+def _ler_noticias_remoto(*, simbolos: Sequence[str], as_of: datetime,
+                         janela_dias: int) -> dict[str, LeituraNoticias] | None:
+    """O acervo pelo túnel. ``None`` quando o túnel não está configurado.
+
+    Configurado e fora do ar levanta :class:`AcervoIndisponivel`: o contexto
+    precisa dizer que o túnel caiu antes de ler a vitrine, senão o recorte
+    publicado passa por noticiário de agora.
+    """
+    from core import armazem_remoto as remoto
+
+    try:
+        linhas = remoto.noticias_por_ativo(
+            simbolos, as_of=as_of, janela_dias=janela_dias)
+    except remoto.ArmazemRemotoIndisponivel as exc:
+        raise AcervoIndisponivel(
+            f"acervo de notícias pelo túnel não respondeu: {exc}") from exc
+    if linhas is None:
+        return None
+    return _agregar(linhas, simbolos=simbolos, janela_dias=janela_dias)
+
+
+def _agregar(linhas: Iterable[Mapping], *, simbolos: Sequence[str],
+             janela_dias: int) -> dict[str, LeituraNoticias]:
+    """Piso de amostra e média ponderada por ativo, sobre linhas já filtradas."""
     por_ativo: dict[str, list[ItemNoticiaBruto]] = {s: [] for s in simbolos}
     for linha in linhas:
         simbolo = str(linha["simbolo"])
@@ -321,7 +373,7 @@ def _ler_noticias(engine, *, simbolos: Sequence[str], as_of: datetime,
             veiculo=(str(linha["veiculo"]).strip() or None
                      if linha["veiculo"] is not None else None),
             url=(str(linha["url"]) if linha["url"] else None),
-            publicado_em=linha["publicado_em"],
+            publicado_em=_data(linha["publicado_em"]),
             tipo_evento=(str(linha["tipo_evento"]) if linha["tipo_evento"] else None),
             nota=_num(linha["nota"]),
             direcao=(str(linha["direcao"]) if linha["direcao"] else None),
@@ -477,6 +529,7 @@ def carregar(
     macro_engine=None,
     noticias_engine=None,
     vitrine_engine=None,
+    noticias_remoto=None,
     quedas: Mapping[str, float] | None = None,
     fundamentos_deteriorados: Mapping[str, bool] | None = None,
     janela_noticias_dias: int = JANELA_NOTICIAS_DIAS,
@@ -492,6 +545,11 @@ def carregar(
     Nenhuma exceção de infraestrutura escapa: cada fonte que falha vira uma
     limitação nomeada, e o componente correspondente fica de fora do
     denominador em vez de entrar como zero.
+
+    ``noticias_remoto`` é o leitor do acervo pelo túnel
+    (:func:`_ler_noticias_remoto`), consultado só quando não há
+    ``noticias_engine``. É parâmetro, e não chamada fixa, para que quem carrega a
+    conjuntura com engines explícitos nunca saia para a rede por acidente.
     """
     momento = _agora(as_of)
     simbolos = [str(s).strip().upper() for s in ativos if str(s).strip()]
@@ -549,6 +607,27 @@ def carregar(
             acervo_falhou = True
             limitacoes.append(str(exc))
             logger.warning("acervo de notícias indisponível: %s", exc)
+    elif simbolos and noticias_remoto is not None:
+        # Produção com o túnel ligado: o mesmo acervo, pela mesma fórmula, só
+        # que via HTTP. Não configurado (None) cai no aviso de sempre.
+        try:
+            remotas = noticias_remoto(simbolos=simbolos, as_of=momento,
+                                      janela_dias=janela_noticias_dias)
+        except AcervoIndisponivel as exc:
+            acervo_falhou = True
+            limitacoes.append(str(exc))
+            logger.warning("acervo de notícias pelo túnel indisponível: %s", exc)
+        else:
+            if remotas is None:
+                limitacoes.append(
+                    "acervo de notícias não consultado: engine ausente e túnel "
+                    "do armazém não configurado")
+            else:
+                leituras = remotas
+                fonte_noticias = "acervo"
+                limitacoes.append(
+                    "notícias por ativo lidas do acervo local pelo túnel do "
+                    "armazém (recalculadas agora, não a vitrine publicada)")
     elif noticias_engine is None:
         limitacoes.append("acervo de notícias não consultado: engine ausente")
 
@@ -834,7 +913,8 @@ def bloco_para_prompt(
             asset_class=asset_class, ativos=ativos, estruturais=estruturais,
             as_of=as_of, knowledge_mode=knowledge_mode,
             macro_engine=macro, noticias_engine=acervo,
-            vitrine_engine=vitrine)
+            vitrine_engine=vitrine,
+            noticias_remoto=_ler_noticias_remoto if acervo is None else None)
     except Exception as exc:  # noqa: BLE001
         logger.exception("contexto conjuntural indisponível")
         return ("CONTEXTO CONJUNTURAL: não foi possível montá-lo "
