@@ -350,6 +350,105 @@ def resolver_tickers(declarados, texto: str,
     return tuple(achados)
 
 
+#: Verbos do relato de posição na voz ativa ("<detentor> Sells ... of
+#: <emissor>"). Title Case de propósito: é a forma do molde, e em prosa
+#: ("the fund sells shares of") o molde não se aplica.
+_VERBO_POSICAO = (
+    r"Buys|Sells|Purchases|Acquires|Takes|Has|Holds|Invests|Raises|Lifts|"
+    r"Boosts|Grows|Increases|Expands|Adds|Cuts|Trims|Lowers|Reduces|"
+    r"Decreases|Makes|Initiates|Establishes|Ups|Sheds|Divests")
+#: O que cabe entre o verbo e o "of/in": quantidade, valor e o substantivo da
+#: posição ("Has $7.53 Billion Position in", "Makes New $6 Million
+#: Investment in", "Buys 177,853 Shares of").
+_MEIO_POSICAO = (
+    r"(?:New|Additional|Stock|Shares?|Stake|Position|Holdings?|Investment|"
+    r"Interest|Million|Billion|Thousand|\$?[\d.,]+[KMB]?)")
+#: Particípios da voz passiva ("<emissor> Stake Raised by <detentor>").
+_PARTICIPIO_POSICAO = (
+    r"Sold|Bought|Acquired|Purchased|Raised|Lowered|Cut|Trimmed|Increased|"
+    r"Decreased|Reduced|Boosted|Lifted|Grown|Upped|Added|Initiated|Held")
+
+_RELATO_ATIVO = re.compile(
+    rf"^(?P<detentor>.+?)\s+(?:{_VERBO_POSICAO})(?:\s+{_MEIO_POSICAO})*"
+    rf"\s+(?:of|in)\s+(?P<emissor>.+)$")
+# A passiva exige o substantivo da posição colado ao particípio, ou o prefixo
+# "N Shares in". Sem essa âncora, "Foo Inc. $FOO Acquired by Bar Corp" -- uma
+# aquisição, em que o comprador É assunto -- cairia no molde.
+_RELATO_PASSIVO = re.compile(
+    rf"^(?P<emissor>.+?)\s+(?:(?:Stock|Shares?|Stake|Position|Holdings?)\s+)+"
+    rf"(?:{_PARTICIPIO_POSICAO})\s+by\s+(?P<detentor>.+)$")
+_RELATO_PASSIVO_COTAS = re.compile(
+    rf"^(?P<emissor>(?:[\d.,]+\s+)?(?:Shares?|Stake|Position)\s+in\s+.+?)\s+"
+    rf"(?:{_PARTICIPIO_POSICAO})\s+by\s+(?P<detentor>.+)$")
+
+#: O emissor vem marcado com o próprio ticker: ``$LMND`` ou ``(NYSE:RSG)``.
+_MARCA_EMISSOR = re.compile(
+    r"\$(?P<cifrao>[A-Z]{1,5}(?:\.[A-Z])?)\b"
+    r"|\((?:NYSE|NASDAQ|NYSEAMERICAN|NYSEARCA|NYSEMKT|AMEX|BATS|CBOE|OTC|"
+    r"OTCMKTS|TSE|TSX|TSXV|LON|ASX|BVMF)\s*:\s*(?P<bolsa>[A-Z][A-Z.]{0,5})\)")
+
+
+@dataclass(frozen=True)
+class RelatoDePosicao:
+    """Manchete de movimento de carteira institucional (13F e afins)."""
+
+    detentor: str
+    emissor: str
+    marcados: tuple[str, ...]
+
+
+def relato_de_posicao(titulo: str) -> RelatoDePosicao | None:
+    """A manchete é "quem comprou/vendeu posição em quem"? Se for, separa.
+
+    O defeito, medido
+    -----------------
+    Em 26/09/2026, com o acervo local em 22.785 itens, 1.427 manchetes tinham
+    este molde -- "Bank of America Corp DE Buys 177,853 Shares of Lemonade,
+    Inc. $LMND", "ONEOK, Inc. $OKE Stake Raised by Envestnet Asset
+    Management". O assunto é o **emissor**; o detentor é só quem apareceu no
+    formulário 13F. O casamento por nome não sabia disso, e o ramo por nome
+    (sem os declarados) atribuía:
+
+    - pelo detentor na manchete: BAC 139, STT 81, BNY 7, BLK 1 -- 234
+      atribuições no acervo inteiro;
+    - pelo resumo desses mesmos itens, que é boilerplate de detentores ("Other
+      institutional investors like BlackRock and State Street..."): BLK 108,
+      STT 29, BAC 12, BNY 8 -- 202 no total.
+
+    BLK 108 de 142 vinha só daí. É o mesmo defeito do crédito da foto
+    (``memoria: nome-citado-nao-e-sujeito``): o nome está no texto e não é o
+    sujeito.
+
+    A âncora é a **marca do emissor** (``$TICK`` ou ``(NYSE:TICK)``) no trecho
+    do emissor. Sem ela o molde casaria com insider ("Nvidia (NVDA) Board Member
+    Sells $410 Million of Company Stock", onde a Nvidia é o assunto) e com
+    investimento de verdade ("Goldman Sachs Group Invests $400 Million in
+    Cyera"). Com ela, os 252 detentores distintos das 1.427 manchetes, lidos
+    um a um, eram todos gestora, fundo, banco ou insider pessoa física.
+
+    Depois do corte, no mesmo acervo: BLK 142 -> 33, STT 133 -> 23, BAC 278 ->
+    127, BNY 18 -> 3. As 503 atribuições removidas eram todas de detentor ou de
+    resumo de 13F; as 154 que entraram são o emissor marcado ($PG, $GM...) que
+    o nome não alcançava.
+    """
+    limpo = " ".join(str(titulo or "").split())
+    if not limpo:
+        return None
+    for molde in (_RELATO_PASSIVO_COTAS, _RELATO_PASSIVO, _RELATO_ATIVO):
+        casa = molde.match(limpo)
+        if not casa:
+            continue
+        emissor = casa.group("emissor")
+        marcados = tuple(dict.fromkeys(
+            m.group("cifrao") or m.group("bolsa")
+            for m in _MARCA_EMISSOR.finditer(emissor)))
+        if not marcados:
+            return None
+        return RelatoDePosicao(detentor=casa.group("detentor"),
+                               emissor=emissor, marcados=marcados)
+    return None
+
+
 def _casar(texto_normalizado: str, mapa: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
     achados: list[str] = []
     for chave, termos in mapa.items():
@@ -383,7 +482,22 @@ def resolver(
     texto = f"{titulo or ''} {resumo or ''}"
     normalizado = normalizar_texto(texto)
 
-    tickers = resolver_tickers(tickers_declarados, texto, universo)
+    # Em relato de posição o assunto é o emissor e só ele -- ver
+    # :func:`relato_de_posicao`. O nome é procurado só no trecho do emissor, e
+    # o ticker que a manchete marca nele entra no lugar dos declarados: em 37
+    # dos 972 relatos com emissor conhecido o nome só casava pelo resumo
+    # ("Medtronic PLC", "Leidos Holdings").
+    #
+    # Os declarados saem porque o provedor lê o mesmo resumo: nos 650 itens
+    # crus da Alpha Vantage em cache (26/09/2026), 164 eram relatos, e o
+    # ``ticker_sentiment`` deles trazia além do emissor BLK 23 vezes, BAC 19,
+    # MS 13, STT 12 -- "QRG Capital Management Inc. Sells 6,359 Shares of
+    # Republic Services, Inc. $RSG" chegava declarado como RSG, BLK, WBA.
+    relato = relato_de_posicao(titulo)
+    if relato is None:
+        tickers = resolver_tickers(tickers_declarados, texto, universo)
+    else:
+        tickers = resolver_tickers(relato.marcados, relato.emissor, universo)
 
     empresas = []
     for nome in empresas_declaradas or ():
