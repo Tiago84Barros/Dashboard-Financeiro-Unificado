@@ -120,6 +120,41 @@ def published_macro_context(
     return build_macro_context(linhas, now=now)
 
 
+def available_macro_context() -> tuple[tuple[dict[str, object], ...], str | None]:
+    """Fatos macro de onde houver: Docker, túnel, arquivo publicado.
+
+    Devolve ``(fatos, origem)``; ``origem`` é ``None`` quando nenhuma das três
+    respondeu. Existe para quem monta prompt fora de :mod:`core.contexto_mercado`
+    -- a Inteligência de Mercado pedia só o Docker e, em produção, todo parecer
+    saía com "contexto macro indisponível" ao lado de telas que tinham o macro.
+    """
+    from core.macro_data.database import get_local_macro_engine
+
+    engine = get_local_macro_engine()
+    if engine is not None:
+        try:
+            return latest_macro_context(engine), "armazém macro local"
+        except Exception:  # noqa: BLE001 - Docker parado: tenta as outras
+            pass
+        finally:
+            engine.dispose()
+    try:
+        from core import armazem_remoto
+
+        fatos = armazem_remoto.macro_recente()
+        if fatos is not None:
+            return tuple(fatos), "armazém macro local, lido pelo túnel"
+    except Exception:  # noqa: BLE001 - PC desligado: resta o arquivo
+        pass
+    from core.macro_data.insumos_publicados import carregar_insumos_publicados
+
+    insumos = carregar_insumos_publicados()
+    if insumos is None:
+        return (), None
+    return (published_macro_context(insumos),
+            f"insumos macro publicados em {insumos.gerado_em:%d/%m/%Y}")
+
+
 def format_macro_context(facts: Iterable[Mapping[str, object]]) -> tuple[str, ...]:
     """Linhas factuais para prompt ancorado, sem instruções externas."""
     lines = []

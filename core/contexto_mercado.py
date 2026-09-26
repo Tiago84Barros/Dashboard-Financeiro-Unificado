@@ -32,6 +32,7 @@ conter texto dirigido ao modelo, e o cabeçalho do bloco diz isso ao modelo.
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Iterable, Mapping
@@ -382,16 +383,24 @@ def _manchetes_vitrine_cache(limite: int) -> list[str]:
 
 
 def _manchetes_vitrine(engine, limite: int) -> list[str]:
-    """Panorama da vitrine do Supabase: as manchetes mais novas de todos os ativos."""
+    """Panorama da vitrine do Supabase, para quando o acervo não está ao alcance.
+
+    Prefere as manchetes gerais publicadas na meta -- o mesmo recorte que o
+    chat lê no acervo local. Sem elas (vitrine publicada antes da coluna
+    existir), cai na união das manchetes por ativo, que não traz o que não
+    cita ticker: Fed, Copom, geopolítica.
+    """
     if engine is None:
         return ["  Vitrine de notícias: banco Supabase indisponível."]
     try:
         from sqlalchemy import text
 
         with engine.connect() as conn:
+            # ``to_jsonb(m) -> 'manchetes'`` dá NULL se a coluna ainda não
+            # existe, em vez de abortar a transação e perder a vitrine inteira.
             meta = conn.execute(text(
-                "SELECT gerada_em, janela_dias FROM noticias_vitrine_meta "
-                "WHERE id = 1")).first()
+                "SELECT gerada_em, janela_dias, to_jsonb(m) -> 'manchetes' "
+                "FROM noticias_vitrine_meta m WHERE id = 1")).first()
             linhas_db = conn.execute(text(
                 "SELECT simbolo, itens FROM noticias_vitrine "
                 "WHERE n_itens > 0")).all()
@@ -400,6 +409,12 @@ def _manchetes_vitrine(engine, limite: int) -> list[str]:
     if meta is None:
         return ["  Vitrine de notícias: nunca publicada."]
     gerada = meta[0]
+    gerais = meta[2] if len(meta) > 2 else None
+    if isinstance(gerais, str):
+        try:
+            gerais = json.loads(gerais)
+        except ValueError:
+            gerais = None
     idade = ""
     if isinstance(gerada, datetime):
         horas = (datetime.now(timezone.utc) - gerada.astimezone(timezone.utc)
@@ -408,6 +423,11 @@ def _manchetes_vitrine(engine, limite: int) -> list[str]:
         if horas > _IDADE_MAX_VITRINE_H:
             idade += (" — VELHA: não descreve o noticiário de hoje; diga a data "
                       "ao citar qualquer manchete")
+    gerais = [i for i in (gerais or ()) if isinstance(i, dict)]
+    if gerais:
+        origem = (f"Noticiário geral publicado no Supabase em {_data(gerada)} UTC"
+                  f"{idade}; recorte das mais relevantes do acervo")
+        return _linhas_acervo(gerais, limite, origem)
     cabeca = (f"  Vitrine de notícias do Supabase, gerada em {_data(gerada)} UTC"
               f"{idade}, janela de {meta[1]} dias — manchetes por ativo, as mais "
               "novas primeiro:")

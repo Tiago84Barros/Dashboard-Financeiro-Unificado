@@ -287,3 +287,59 @@ def test_o_prompt_do_acervo_nao_carimba_vitrine(vazia, monkeypatch):
     ctx = ponte.carregar(asset_class="acoes_br", ativos={"AAA": "energia"},
                          noticias_engine=vazia, vitrine_engine=vazia)
     assert "VITRINE publicada" not in ponte.para_llm(ctx)
+
+
+# ── o noticiário geral, que não cita ticker ─────────────────────────────────
+
+def _linha_geral(titulo: str, nota: float, *, paises=("US",)) -> dict:
+    return {"titulo": titulo, "veiculo": "Reuters", "nota": nota,
+            "direcao": "queda", "resumo": "texto longo que não sobe",
+            "url": "https://exemplo/x", "entidades": {"paises": list(paises),
+                                                     "tickers": []},
+            "publicado_em": dt.datetime.now(dt.timezone.utc),
+            "coletado_em": dt.datetime.now(dt.timezone.utc)}
+
+
+def test_manchetes_gerais_ficam_as_mais_relevantes_sem_resumo():
+    import json
+
+    linhas = [_linha_geral(f"n{i}", float(i)) for i in range(60)]
+    linhas.append(_linha_geral("n59", 1.0))       # título repetido
+    saida = json.loads(vit.manchetes_da_leitura(linhas))
+    assert len(saida) == vit.MANCHETES_GERAIS
+    assert saida[0]["titulo"] == "n59" and saida[0]["nota"] == 59.0
+    assert "resumo" not in saida[0] and "url" not in saida[0]
+    assert saida[0]["entidades"] == {"paises": ["US"]}
+
+
+def test_chat_le_o_noticiario_geral_publicado(vazia):
+    """Com o PC desligado, a manchete do Fed tem de chegar ao chat."""
+    from core import contexto_mercado as cm
+
+    vit.publicar(vazia, [_leitura("AAA", 10.0, itens=[_item("só do ativo")])],
+                 versao="1.0.0", janela_dias=30,
+                 manchetes=[_linha_geral("Fed sobe juros", 90.0),
+                            _linha_geral("Copom mantém Selic", 80.0, paises=("BR",))])
+    linhas = cm._manchetes_vitrine(vazia, 12)
+    texto = "\n".join(linhas)
+    assert "Noticiário geral publicado no Supabase" in linhas[0]
+    # Brasil primeiro, como no acervo local.
+    assert texto.index("Copom mantém Selic") < texto.index("Fed sobe juros")
+    assert "só do ativo" not in texto
+
+
+def test_vitrine_sem_a_coluna_cai_nas_manchetes_por_ativo(vazia):
+    """Supabase publicado antes da coluna: a leitura não pode abortar."""
+    from core import contexto_mercado as cm
+
+    vit.publicar(vazia, [_leitura("AAA", 10.0, itens=[_item("só do ativo")])],
+                 versao="1.0.0", janela_dias=30)
+    with vazia.begin() as conn:
+        conn.execute(text(f"ALTER TABLE {SCHEMA}.noticias_vitrine_meta "
+                          "DROP COLUMN manchetes"))
+    try:
+        texto = "\n".join(cm._manchetes_vitrine(vazia, 12))
+        assert "só do ativo" in texto and "citada para AAA" in texto
+    finally:
+        with vazia.begin() as conn:
+            vit.garantir_schema(conn)

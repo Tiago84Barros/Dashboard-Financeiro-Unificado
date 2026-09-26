@@ -35,7 +35,10 @@ load_dotenv(ROOT / ".env")
 from core.conjuntura import ponte  # noqa: E402
 from core.destino_local import e_local, url_da_engine  # noqa: E402
 from core.noticias import vitrine as vit  # noqa: E402
-from core.noticias.armazenamento import VERSAO_METODOLOGIA  # noqa: E402
+from core.noticias.armazenamento import (  # noqa: E402
+    VERSAO_METODOLOGIA,
+    ler_recentes,
+)
 
 logger = logging.getLogger("publish_noticias_vitrine")
 
@@ -117,12 +120,17 @@ def publicar(*, aplicar: bool, janela_dias: int, versao: str) -> dict:
             acervo, simbolos=simbolos, as_of=momento, janela_dias=janela_dias)
         itens = sum(lt.n_itens for lt in leituras.values())
         medidos = sum(1 for lt in leituras.values() if lt.medida)
+        # O noticiário geral -- Fed, Copom, guerra -- não cita ticker e não
+        # cabe em linha de ativo. É a mesma leitura que o chat faz no acervo
+        # local (150 itens, 3 dias), para o PC desligado não mudar o recorte.
+        gerais = ler_recentes(150, dias=3, engine=acervo, versao=versao)
 
         resumo = {
             "ativos": len(simbolos), "ativos_medidos": medidos,
             "itens_no_acervo": itens, "janela_dias": janela_dias,
             "versao": versao, "do_acervo": len(do_acervo),
             "da_carteira": len(da_carteira),
+            "manchetes_no_acervo": len(gerais),
             "destino": url_da_engine(remoto),
         }
         if not aplicar:
@@ -133,7 +141,7 @@ def publicar(*, aplicar: bool, janela_dias: int, versao: str) -> dict:
         escrito = vit.publicar(
             remoto, leituras.values(), versao=versao,
             janela_dias=janela_dias, itens_no_acervo=itens,
-            origem="armazém local", gerada_em=momento)
+            origem="armazém local", gerada_em=momento, manchetes=gerais)
         resumo.update(escrito)
         return resumo
     finally:

@@ -179,6 +179,44 @@ def coletar_noticias(tickers: tuple[str, ...], estado: hom.Estado | None = None)
         return None, f"a coleta falhou: {type(exc).__name__}"
 
 
+def _instante(valor):
+    if isinstance(valor, str) and valor:
+        try:
+            instante = dt.datetime.fromisoformat(valor)
+        except ValueError:
+            return None
+        return instante if instante.tzinfo else instante.replace(tzinfo=dt.timezone.utc)
+    return valor
+
+
+def _linhas_do_acervo(ler_recentes, limite: int) -> tuple[dict, ...]:
+    """Acervo local se esta máquina o alcança; senão, o mesmo acervo pelo túnel.
+
+    Em produção não há acervo local, e ``ler_recentes`` sem engine caía no
+    Supabase, onde ``noticias_itens`` não existe: a tela dizia "não pôde ser
+    lido" mesmo com o PC ligado e o túnel servindo as mesmas linhas ao chat.
+    """
+    from core.noticias.destino import engine_acervo
+
+    engine = engine_acervo()
+    if engine is not None:
+        try:
+            return ler_recentes(limite=limite, engine=engine)
+        finally:
+            engine.dispose()
+    from core import armazem_remoto
+
+    itens = armazem_remoto.noticias_recentes(limite, dias=7)
+    if itens is None:
+        raise RuntimeError("acervo local fora do alcance deste ambiente e túnel "
+                           "do armazém não configurado")
+    # O túnel entrega JSON: sem voltar a datetime, frescor e ordenação da tela
+    # comparariam texto com instante.
+    return tuple({**item, "publicado_em": _instante(item.get("publicado_em")),
+                  "coletado_em": _instante(item.get("coletado_em"))}
+                 for item in itens)
+
+
 def carregar_acervo(limite: int = 50):
     """Notícias já gravadas pelo coletor automático, com o carimbo mais novo.
 
@@ -192,7 +230,7 @@ def carregar_acervo(limite: int = 50):
         return (), None, f"acervo indisponível ({type(exc).__name__})"
 
     try:
-        linhas = ler_recentes(limite=limite)
+        linhas = _linhas_do_acervo(ler_recentes, limite)
     except Exception as exc:  # noqa: BLE001 - falha de leitura não é acervo vazio
         return (), None, f"o acervo não pôde ser lido: {exc}"
     if not linhas:

@@ -321,13 +321,18 @@ def contexto_segregado(
     # A falha do armazenamento macro não bloqueia a inteligência existente.
     # Só entram fatos já normalizados e higienizados; não há payload externo.
     try:
-        from core.macro_data.context import format_macro_context, latest_macro_context
+        from core.macro_data.context import (
+            available_macro_context,
+            format_macro_context,
+        )
 
         if macro_facts is None:
-            from core.macro_data.database import get_local_macro_engine
-
-            engine = get_local_macro_engine()
-            macro_facts = latest_macro_context(engine) if engine is not None else ()
+            macro_facts, origem_macro = available_macro_context()
+            if origem_macro is None:
+                linhas.append("- LIMITAÇÃO MACRO: contexto macro indisponível (sem "
+                              "Docker, sem túnel e sem arquivo publicado recente).")
+            else:
+                linhas.append(f"- MACRO: origem {origem_macro}.")
         linhas.extend(format_macro_context(macro_facts))
     except Exception:
         linhas.append("- LIMITAÇÃO MACRO: contexto macro indisponível.")
