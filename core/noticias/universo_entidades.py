@@ -59,6 +59,16 @@ NOMES_GENERICOS = frozenset({
     "financial", "national", "general", "global", "first", "united",
 })
 
+#: Chaves que a poda de sufixo reduz a **substantivo comum** do inglês. Não
+#: entram em :data:`NOMES_GENERICOS` porque aquela lista também decide o que é
+#: forma jurídica em ``entidades._forma_juridica``, e "News" não é sufixo
+#: societário. ``NEWS CORP`` vira ``news``, e a trava de vizinhança do PR #216
+#: se cala em Title Case: em 26/09/2026 o acervo tinha 73 atribuições a NWS e
+#: só 7 eram da News Corp -- o resto era "Stock News & Updates", "Breakfast
+#: News", "Governance Settlement News". A empresa volta pelo nome inteiro, em
+#: :data:`APELIDOS`.
+PALAVRAS_COMUNS = frozenset({"news"})
+
 _SQL_B3 = text("""
     SELECT a.ticker, COALESCE(c.name, a.ticker) AS nome,
            COALESCE(NULLIF(c.sector, ''), '') AS setor
@@ -189,6 +199,9 @@ APELIDOS: dict[str, tuple[str, ...]] = {
     "YDUQ3": ("Estacio",),
     "CIEL3": ("Cielo",),
     "GOAU4": ("Metalurgica Gerdau",),
+    # Ver PALAVRAS_COMUNS: a chave podada "news" saiu; o nome inteiro fica.
+    "NWS": ("News Corp", "News Corporation"),
+    "NWSA": ("News Corp", "News Corporation"),
 }
 
 
@@ -314,7 +327,7 @@ def _com_apelidos(universo: Universo, pares: dict[str, str]) -> Universo:
                                         (ticker,))
         for apelido in apelidos:
             chave = normalizar_texto(apelido)
-            if not chave or chave in NOMES_GENERICOS:
+            if not chave or chave in NOMES_GENERICOS or chave in PALAVRAS_COMUNS:
                 continue
             juntos = list(por_nome.get(chave, ()))
             for classe in classes:
@@ -335,7 +348,7 @@ def _sem_nomes_genericos(universo: Universo) -> Universo:
     matéria sobre política monetária.
     """
     por_nome = {nome: tickers for nome, tickers in universo.por_nome.items()
-                if nome not in NOMES_GENERICOS}
+                if nome not in NOMES_GENERICOS and nome not in PALAVRAS_COMUNS}
     if len(por_nome) == len(universo.por_nome):
         return universo
     return Universo(tickers=universo.tickers, por_nome=por_nome,
