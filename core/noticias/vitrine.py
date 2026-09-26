@@ -61,6 +61,11 @@ logger = logging.getLogger(__name__)
 #: que ninguém lê.
 ITENS_POR_ATIVO = 3
 
+#: Manchetes do noticiário geral (sem filtro de ativo) guardadas na meta. O
+#: chat mostra 12; o resto é folga para a deduplicação por título. Com ~250
+#: bytes cada, são ~10 KB fixos -- a vitrine continua do tamanho de uma foto.
+MANCHETES_GERAIS = 40
+
 
 class VitrineIlegivel(RuntimeError):
     """A vitrine não pôde ser lida — o que não é o mesmo que vitrine vazia."""
@@ -91,6 +96,13 @@ DDL_SQL = [
         origem              TEXT NOT NULL DEFAULT ''
     )
     """,
+    # Coluna acrescentada depois: a vitrine por ativo não guarda a manchete do
+    # Fed ou do Copom que não cita ticker nenhum, e com o PC desligado o chat
+    # perdia o noticiário geral inteiro.
+    """
+    ALTER TABLE noticias_vitrine_meta
+        ADD COLUMN IF NOT EXISTS manchetes JSONB NOT NULL DEFAULT '[]'::jsonb
+    """,
 ]
 
 _INSERT_LINHA = text("""
@@ -106,10 +118,10 @@ _INSERT_LINHA = text("""
 _UPSERT_META = text("""
     INSERT INTO noticias_vitrine_meta (
         id, gerada_em, janela_dias, versao_metodologia, ativos,
-        ativos_medidos, itens_no_acervo, origem
+        ativos_medidos, itens_no_acervo, origem, manchetes
     ) VALUES (
         1, :gerada_em, :janela_dias, :versao_metodologia, :ativos,
-        :ativos_medidos, :itens_no_acervo, :origem
+        :ativos_medidos, :itens_no_acervo, :origem, CAST(:manchetes AS JSONB)
     )
     ON CONFLICT (id) DO UPDATE SET
         gerada_em = EXCLUDED.gerada_em,
@@ -118,7 +130,8 @@ _UPSERT_META = text("""
         ativos = EXCLUDED.ativos,
         ativos_medidos = EXCLUDED.ativos_medidos,
         itens_no_acervo = EXCLUDED.itens_no_acervo,
-        origem = EXCLUDED.origem
+        origem = EXCLUDED.origem,
+        manchetes = EXCLUDED.manchetes
 """)
 
 _SELECT_LINHAS = text("""
@@ -179,9 +192,56 @@ def linha_da_leitura(leitura, *, versao: str, janela_dias: int,
     }
 
 
+def _texto_iso(valor) -> str | None:
+    if isinstance(valor, datetime):
+        return valor.isoformat()
+    return str(valor) if valor else None
+
+
+def manchetes_da_leitura(linhas, limite: int = MANCHETES_GERAIS) -> str:
+    """Achata linhas de ``ler_recentes`` no JSON da meta. Testável sem banco.
+
+    Guarda só o que o chat imprime -- título, veículo, nota, direção, data e os
+    países citados (o Brasil ordena primeiro). Sem ``resumo`` e sem URL: é isso
+    que mantém o noticiário inteiro fora da nuvem.
+
+    As mais relevantes entram, não as mais novas: o chat escolhe pela nota, e
+    cortar pela data jogaria fora justamente o que ele mostraria.
+    """
+    ordenadas = sorted(linhas, key=lambda i: float(i.get("nota") or 0), reverse=True)
+    saida: list[dict] = []
+    vistos: set[str] = set()
+    for linha in ordenadas:
+        titulo = str(linha.get("titulo") or "").strip()
+        if not titulo or titulo in vistos:
+            continue
+        vistos.add(titulo)
+        entidades = linha.get("entidades") or {}
+        if isinstance(entidades, str):
+            try:
+                entidades = json.loads(entidades)
+            except ValueError:
+                entidades = {}
+        paises = (list(entidades.get("paises") or ())
+                  if isinstance(entidades, dict) else [])
+        nota = linha.get("nota")
+        saida.append({
+            "titulo": titulo,
+            "veiculo": str(linha.get("veiculo") or "") or None,
+            "nota": None if nota is None else round(float(nota), 1),
+            "direcao": str(linha.get("direcao") or "") or None,
+            "publicado_em": _texto_iso(linha.get("publicado_em")),
+            "coletado_em": _texto_iso(linha.get("coletado_em")),
+            "entidades": {"paises": paises},
+        })
+        if len(saida) >= limite:
+            break
+    return json.dumps(saida, ensure_ascii=False)
+
+
 def publicar(engine, leituras, *, versao: str, janela_dias: int,
              itens_no_acervo: int = 0, origem: str = "armazém local",
-             gerada_em: datetime | None = None) -> dict:
+             gerada_em: datetime | None = None, manchetes=()) -> dict:
     """Substitui a vitrine inteira, numa transação só.
 
     **Esta é a única gravação remota do noticiário, e é deliberada.** O acervo é
@@ -207,8 +267,10 @@ def publicar(engine, leituras, *, versao: str, janela_dias: int,
             "versao_metodologia": versao, "ativos": len(linhas),
             "ativos_medidos": medidos,
             "itens_no_acervo": int(itens_no_acervo), "origem": origem,
+            "manchetes": manchetes_da_leitura(manchetes),
         })
     return {"publicado": True, "ativos": len(linhas), "ativos_medidos": medidos,
+            "manchetes_gerais": len(json.loads(manchetes_da_leitura(manchetes))),
             "gerada_em": momento, "versao": versao, "janela_dias": janela_dias}
 
 
