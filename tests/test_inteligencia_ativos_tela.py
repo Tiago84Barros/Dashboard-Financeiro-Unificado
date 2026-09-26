@@ -124,7 +124,9 @@ def test_liberada_mostra_premissa_resumo_e_os_13_cartoes():
     assert posicoes == sorted(posicoes)
     assert "Papel principal: renda imobiliária." in fluxo
     assert "Nenhum alvo individual é presumido" in fluxo
-    assert fluxo.count("em preparação</span>") == 7
+    assert fluxo.count("em preparação</span>") == 6  # fundamentos é real
+    assert "Dado · fornecido pelo sistema" in fluxo
+    assert "P/VP" in fluxo and "Dado não disponível." in fluxo
     questoes = next(h for h in htmls if "flex:1 1 220px" in h)
     for pergunta in m.PERGUNTAS.values():
         assert escape(pergunta) in questoes

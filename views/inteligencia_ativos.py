@@ -23,6 +23,7 @@ import streamlit as st
 from core import inteligencia_ativos as servico
 from core.inteligencia_ativos import analise as servico_analise
 from core.inteligencia_ativos import calculos as calc
+from core.inteligencia_ativos import fundamentos as fund
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import papeis
 from core.estrategia import politica as pol
@@ -346,6 +347,38 @@ _VALIDADE = {
 }
 
 
+def corpo_fundamentos(f: fund.Fundamentos) -> str:
+    """DADO (tabela do sistema) separado de INTERPRETAÇÃO (da LLM). Puro."""
+    if f.tipo is None:
+        return escape(f.motivo or fund.NAO_DISPONIVEL)
+    sub_t = ('<div style="font-size:0.7rem;font-weight:700;letter-spacing:.05em;'
+             'text-transform:uppercase;color:var(--app-subtle);margin-top:8px">')
+    cel = 'style="padding:2px 10px 2px 0;vertical-align:top;'
+    linhas = ""
+    for i in f.indicadores:
+        cor = "var(--app-text)" if i.disponivel else "var(--app-subtle)"
+        origem = " · ".join(x for x in (i.referencia, i.nota) if x)
+        linhas += (
+            f'<tr><td {cel}color:var(--app-muted)">{escape(i.rotulo)}</td>'
+            f'<td {cel}color:{cor};font-weight:600">'
+            f'{escape(i.texto(f.moeda))}</td>'
+            f'<td {cel}color:var(--app-subtle);font-size:0.76rem">'
+            f'{escape(origem)}</td></tr>')
+    fontes = "; ".join(f.fontes) or "nenhuma fonte com dado para este ativo"
+    return (
+        f'<div>{escape(fund.ROTULO_TIPO[f.tipo])}: indicadores próprios da '
+        f'classe ({len(f.disponiveis)} de {len(f.indicadores)} com dado).</div>'
+        f'{sub_t}Dado · fornecido pelo sistema</div>'
+        '<table style="font-size:0.84rem;border-collapse:collapse;'
+        f'margin-top:4px">{linhas}</table>'
+        '<div style="font-size:0.76rem;color:var(--app-subtle);margin-top:4px">'
+        f'Fontes: {escape(fontes)}</div>'
+        f'{sub_t}Interpretação</div>'
+        '<div style="font-size:0.84rem;color:var(--app-muted)">Cabe à análise '
+        'por LLM, usando só o bloco de dados acima; o que estiver como '
+        f'"{escape(fund.NAO_DISPONIVEL)}" não é estimado.</div>')
+
+
 def cartoes_analise(a: m.AnaliseAtivo) -> list[str]:
     """Um cartão por etapa, na ordem ATIVO → ... → AÇÃO. Puro."""
     i, fx = a.ativo, a.faixa
@@ -406,8 +439,12 @@ def cartoes_analise(a: m.AnaliseAtivo) -> list[str]:
                         f'margin-top:6px">{escape(nota)}</div>')))
 
     for n, s in enumerate(a.secoes_externas, start=5):
-        cartoes.append(_cartao(n, s.titulo, escape(s.resumo),
-                               pendente=s.estado != m.DISPONIVEL))
+        if s.chave == "fundamentos" and s.dados:
+            corpo = corpo_fundamentos(fund.Fundamentos.de_dict(s.dados))
+        else:
+            corpo = escape(s.resumo)
+        cartoes.append(_cartao(n, s.titulo, corpo,
+                               pendente=s.estado == m.PENDENTE))
 
     cartoes.append(_cartao(12, "Impacto na carteira",
                            _lista(a.impacto.observacoes)))

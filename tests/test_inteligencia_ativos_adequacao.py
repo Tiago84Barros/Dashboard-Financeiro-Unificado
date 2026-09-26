@@ -177,12 +177,16 @@ def test_prioridade_das_acoes():
 
 # -- seções externas e as quatro perguntas ------------------------------------------
 
-def test_secoes_externas_pendentes_na_ordem_da_tela():
+def test_secoes_externas_na_ordem_da_tela():
     a = _analise("HGLG11", _ctx())
     assert [s.chave for s in a.secoes_externas] == list(secoes.SECOES)
-    assert all(s.estado == m.PENDENTE for s in a.secoes_externas)
+    # fundamentos é real; sem dado na suíte offline ele sai SEM_DADOS
+    assert a.fundamentos.estado == m.SEM_DADOS
+    assert all(s.estado == m.PENDENTE for s in a.secoes_externas
+               if s.chave != "fundamentos")
     q = a.questoes
-    assert q[m.Q_FUNDAMENTOS].estado == m.PENDENTE
+    assert q[m.Q_FUNDAMENTOS].estado == m.SEM_DADOS
+    assert "nenhum dos 14 indicadores" in q[m.Q_FUNDAMENTOS].resposta
     assert q[m.Q_ADEQUACAO].estado == m.DISPONIVEL
     assert "renda imobiliária" in q[m.Q_FUNCAO].resposta
 
@@ -193,7 +197,8 @@ def test_provedor_que_falha_vira_sem_dados(monkeypatch):
     monkeypatch.setitem(secoes.PROVEDORES, "valuation", _quebra)
     a = _analise("HGLG11", _ctx())
     assert a.valuation.estado == m.SEM_DADOS
-    assert a.fundamentos.estado == m.PENDENTE
+    assert a.fundamentos.estado == m.SEM_DADOS
+    assert a.fundamentos.dados["tipo"] == "fii"  # os demais seguem de pé
 
 
 # -- fluxo completo --------------------------------------------------------------
@@ -214,6 +219,7 @@ def test_texto_para_llm_leva_politica_carteira_e_ativo():
     assert "ATIVO EM ANÁLISE: HGLG11" in texto
     assert "Papel principal: renda imobiliária." in texto
     assert m.ROTULO_ACAO[m.APORTE_COMPATIVEL] in texto
+    assert "=== FUNDAMENTOS: HGLG11 ===" in texto and "[INTERPRETAÇÃO" in texto
 
 
 def test_como_dict_serializa():
