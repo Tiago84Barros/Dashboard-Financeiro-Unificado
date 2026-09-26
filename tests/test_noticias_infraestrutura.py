@@ -261,6 +261,37 @@ def test_execucao_concorrente_e_recusada_e_nao_gasta_cota(monkeypatch):
     assert not est.ciclos, "recusa por lock não é incidente"
 
 
+@pytest.mark.parametrize("horas,status", [(None, "skipped"), (1, "skipped"),
+                                          (2.9, "skipped"), (3, "failed"),
+                                          (32, "failed")])
+def test_lock_preso_por_horas_vira_falha_e_nao_pulo_silencioso(
+        monkeypatch, horas, status):
+    """Em 24/09/2026 uma sessão órfã no pooler segurou o lock por 32 h.
+
+    Cada execução saía ``skipped`` com código 0, o agendador mostrava sucesso e
+    nenhuma notícia entrou no acervo. Pulo curto é concorrência legítima; pulo
+    que dura mais que vários ciclos é lock preso e precisa sair com código 1.
+    """
+    ultima = None if horas is None else AGORA - timedelta(hours=horas)
+    est = EstadoFalso(lock_livre=False, ultima_tentativa=ultima)
+    est.instalar(monkeypatch)
+    provedor = _provedor_ok()
+    _preparar(monkeypatch, [provedor])
+
+    saida = job.run(engine=None, agora=AGORA, forcar=True)
+
+    assert saida["status"] == status
+    assert provedor.chamadas == 0
+    if status == "failed":
+        assert "pg_terminate_backend" in saida["error_message"]
+
+
+def test_lock_preso_aceita_carimbo_sem_fuso():
+    ultima = (AGORA - timedelta(hours=5)).replace(tzinfo=None)
+    assert job._lock_preso(ultima, AGORA)
+    assert job._lock_preso("2026-09-24", AGORA) is None
+
+
 # ── 6 a 8. Provedores ────────────────────────────────────────────────────────
 def test_um_provedor_fora_do_ar_degrada_sem_derrubar(monkeypatch):
     est = EstadoFalso()
@@ -752,3 +783,55 @@ def test_evento_passado_deixa_de_sustentar_a_aceleracao(monkeypatch):
 
     assert est.modos[-1] == 0
     assert est.estado.modo == cad.MODO_NORMAL
+
+
+class _ConexaoGravadora:
+    def __init__(self):
+        self.sql: list[str] = []
+
+    def execute(self, clausula, parametros=None):
+        self.sql.append(str(clausula))
+
+        class _R:
+            def scalar(self_inner):
+                return True
+        return _R()
+
+    def commit(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class _MotorFalso:
+    def __init__(self, dialeto):
+        self.dialect = type("D", (), {"name": dialeto})()
+        self.conexao = _ConexaoGravadora()
+
+    def connect(self):
+        return self.conexao
+
+
+def test_trava_no_postgres_limita_ociosidade_so_na_transacao():
+    """Sem prazo, a sessão órfã segurou o lock até alguém matá-la à mão.
+
+    ``SET LOCAL`` e não ``SET``: pelo pooler, um ajuste de sessão sobreviveria à
+    devolução da conexão e derrubaria transações alheias ociosas por 45 min.
+    """
+    motor = _MotorFalso("postgresql")
+    with ec.travar(motor) as obtido:
+        assert obtido is True
+    sql = motor.conexao.sql
+    assert sql[0].startswith("SET LOCAL idle_in_transaction_session_timeout")
+    assert f"'{ec.PRAZO_OCIOSO_LOCK_MIN}min'" in sql[0]
+    assert "pg_try_advisory_lock" in sql[1]
+    assert "pg_advisory_unlock" in sql[-1]
+    assert ec.PRAZO_OCIOSO_LOCK_MIN < ConfigFalsa.noticias_freq_vigilancia_min
+
+
+def test_trava_fora_do_postgres_nao_emite_set():
+    motor = _MotorFalso("sqlite")
+    with ec.travar(motor):
+        pass
+    assert not any("SET LOCAL" in s for s in motor.conexao.sql)

@@ -23,7 +23,12 @@ comportamento anterior e explica o motivo.
 - **Só GET.** A sessão do Postgres abre com `default_transaction_read_only=on`.
 - **Só `127.0.0.1`.** Quem expõe o serviço é o túnel, e só ele.
 - **Token de 32+ caracteres obrigatório**, comparado em tempo constante.
-- **Tetos por chamada:** até 500 notícias e até 30 dias.
+- **Tetos por chamada:** até 500 notícias e até 30 dias; na rota por ativo
+  (`/noticias/ativos`), até 80 tickers e 30 dias.
+- **Notícias por ativo:** a rota devolve as linhas cruas e o app agrega com a
+  mesma fórmula da leitura direta (`core.conjuntura.ponte`). Depois de atualizar
+  o código, **reinicie o serviço**: o processo antigo não conhece a rota nova e
+  o app cai na vitrine avisando que o túnel respondeu 404.
 
 ## Passo a passo (feito por você: conta e instalação ficam fora do código)
 

@@ -57,6 +57,14 @@ PREFIXO_PROVEDOR = "provedor:"
 #: dois locks, e nenhum dos dois protegeria nada.
 LOCK_COLETA = "noticias_coleta"
 
+#: Prazo para a sessão que segura o lock ficar ociosa. O lock é de sessão e o
+#: Supabase fala com o app por um pooler (Supavisor): em 24/09/2026 o processo
+#: morreu sem soltar, o pooler manteve a sessão "idle in transaction" e toda
+#: coleta seguinte saiu ``skipped`` por 32 h. Com o prazo, o Postgres encerra a
+#: sessão abandonada e o lock cai sozinho. Ciclos observados duram 3 a 9 min;
+#: 45 fica folgado e abaixo da cadência de 60 min do modo vigilância.
+PRAZO_OCIOSO_LOCK_MIN = 45
+
 DDL_SQL = [
     """
     CREATE TABLE IF NOT EXISTS noticias_coleta_estado (
@@ -178,6 +186,12 @@ def travar(engine=None, *, nome: str = LOCK_COLETA):
     conn = motor.connect()
     obtido = False
     try:
+        if motor.dialect.name == "postgresql":
+            # LOCAL: vale só nesta transação, que fica aberta até o unlock; um
+            # SET de sessão vazaria pelo pooler para quem pegar a conexão depois.
+            conn.execute(text(
+                f"SET LOCAL idle_in_transaction_session_timeout = "
+                f"'{int(PRAZO_OCIOSO_LOCK_MIN)}min'"))
         obtido = bool(conn.execute(
             text("SELECT pg_try_advisory_lock(hashtextextended(:n, 0))"),
             {"n": nome}).scalar())

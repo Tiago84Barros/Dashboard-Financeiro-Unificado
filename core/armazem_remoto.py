@@ -76,6 +76,25 @@ def noticias_recentes(limite: int = 150, dias: float = 3) -> list[dict] | None:
     return [i for i in itens if isinstance(i, dict)]
 
 
+def noticias_por_ativo(simbolos, *, as_of, janela_dias: int) -> list[dict] | None:
+    """Linhas cruas do acervo por ticker, como ``ponte.linhas_do_acervo``.
+
+    A agregação fica do lado do app, e não do servidor, para que a fórmula seja
+    uma só: o PC servindo uma versão velha do código não muda a nota.
+    """
+    corpo = _ler("/noticias/ativos", {
+        "tickers": ",".join(str(s) for s in simbolos),
+        "as_of": as_of.isoformat(),
+        "janela_dias": int(janela_dias),
+    })
+    if corpo is None:
+        return None
+    linhas = corpo.get("linhas")
+    if not isinstance(linhas, list):
+        raise ArmazemRemotoIndisponivel("resposta sem a lista de linhas")
+    return [linha for linha in linhas if isinstance(linha, dict)]
+
+
 def macro_recente() -> list[dict] | None:
     """Última observação por série, como ``latest_macro_context``."""
     corpo = _ler("/macro/recente")

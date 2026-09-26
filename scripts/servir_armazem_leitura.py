@@ -26,6 +26,7 @@ Uso:
 Rotas (todas GET, todas exigem ``Authorization: Bearer <token>``):
     /saude                              -- o banco responde?
     /noticias/recentes?limite=150&dias=3
+    /noticias/ativos?tickers=PETR4,VALE3&janela_dias=30&as_of=<ISO>
     /macro/recente
 """
 from __future__ import annotations
@@ -35,7 +36,7 @@ import hmac
 import json
 import logging
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -53,6 +54,10 @@ TOKEN_MINIMO = 32
 #: token vazado vire um dump do acervo inteiro numa chamada só.
 LIMITE_MAX_NOTICIAS = 500
 DIAS_MAX_NOTICIAS = 30.0
+#: Tetos da rota por ativo. A carteira-modelo mais larga pede ~40 tickers; a
+#: janela da conjuntura é de 30 dias.
+TICKERS_MAX = 80
+JANELA_MAX_ATIVOS = 30
 
 _ENGINES: dict[str, object] = {}
 
@@ -120,6 +125,35 @@ def rota_noticias(params) -> tuple[int, dict]:
     return 200, {"itens": list(itens), "limite": limite, "dias": dias}
 
 
+def rota_noticias_ativos(params) -> tuple[int, dict]:
+    from core.conjuntura.ponte import JANELA_NOTICIAS_DIAS, linhas_do_acervo
+
+    url = _url_noticias()
+    if not url:
+        return 503, {"erro": "acervo de notícias não configurado nesta máquina"}
+    tickers = [t.strip().upper()
+               for t in ",".join(params.get("tickers", [])).split(",") if t.strip()]
+    tickers = list(dict.fromkeys(tickers))
+    if not tickers:
+        return 400, {"erro": "informe tickers"}
+    if len(tickers) > TICKERS_MAX:
+        return 400, {"erro": f"no máximo {TICKERS_MAX} tickers por chamada"}
+    janela = int(_numero(params, "janela_dias", JANELA_NOTICIAS_DIAS, JANELA_MAX_ATIVOS))
+    agora = datetime.now(timezone.utc)
+    try:
+        as_of = datetime.fromisoformat(params.get("as_of", [""])[0])
+    except ValueError:
+        as_of = agora
+    if as_of.tzinfo is None:
+        as_of = as_of.replace(tzinfo=timezone.utc)
+    # Corte no futuro não traz nada a mais, mas o teto deixa a regra explícita.
+    as_of = min(as_of, agora)
+    linhas = linhas_do_acervo(engine_leitura(url), simbolos=tickers,
+                              as_of=as_of, janela_dias=janela)
+    return 200, {"linhas": linhas, "janela_dias": janela,
+                 "as_of": as_of.isoformat(), "tickers": len(tickers)}
+
+
 def rota_macro(_params) -> tuple[int, dict]:
     from core.macro_data.context import latest_macro_context
 
@@ -132,6 +166,7 @@ def rota_macro(_params) -> tuple[int, dict]:
 ROTAS = {
     "/saude": rota_saude,
     "/noticias/recentes": rota_noticias,
+    "/noticias/ativos": rota_noticias_ativos,
     "/macro/recente": rota_macro,
 }
 
