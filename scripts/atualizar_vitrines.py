@@ -223,6 +223,10 @@ CARIMBO = {
     "us_prices": ("supabase", "SELECT max(ingested_at) FROM market_us.prices_monthly"),
     "noticias_vitrine": ("supabase", "SELECT max(gerada_em) FROM noticias_vitrine_meta"),
     "espelho_supabase": ("armazem", "SELECT max(executado_em) FROM public.espelho_supabase_meta"),
+    # A poda apaga no Supabase e não deixa carimbo lá; o rastro é o manifesto
+    # do arquivamento, gravado no armazém pelo primeiro passo.
+    "brapi_raw_poda": ("armazem",
+                       "SELECT max(archived_at) FROM market.brapi_remote_archive_manifest"),
     # Publica num arquivo do repositório, não numa tabela: o carimbo é o
     # `generated_at` gravado dentro dele.
     "macro_insumos": ("arquivo", "data/public/macro_insumos.json.gz"),

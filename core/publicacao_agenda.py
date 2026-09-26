@@ -207,6 +207,23 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/macro_insumos.json.gz",),
     ),
     Alvo(
+        # O cache bruto da brapi é o que mais cresce no Supabase: ~2,6 MB/dia de
+        # cotações e ~48 MB aos sábados (anuais), sem nada que pode. Os dois
+        # scripts existiam e ninguém os chamava -- o último arquivamento foi em
+        # 06/09/2026, e o banco passou dos 500 MB do plano free em 26/09.
+        # A compactação recusa apagar payload sem cópia local, então arquivar
+        # antes é o que a destrava. Preserva o último por (endpoint, ticker), o
+        # referenciado e as últimas 48 h. O VACUUM FULL continua manual.
+        chave="brapi_raw_poda",
+        titulo="Poda do cache bruto da brapi",
+        passos=(
+            ("scripts/archive_remote_brapi_raw.py",),
+            ("scripts/compact_remote_brapi_raw.py", "--apply"),
+        ),
+        cadencia_dias=1,
+        modulo="b3",
+    ),
+    Alvo(
         chave="us_prices",
         titulo="Preços mensais dos EUA",
         passos=(("-m", "scripts.publish_us_prices_monthly", "--apply"),),
