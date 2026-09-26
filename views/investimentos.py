@@ -4120,12 +4120,20 @@ def render() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Sub-navegação via tabs ────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    # A Inteligência dos Ativos depende da Estratégia (Configurações → Geral).
+    # Bloqueada, a aba continua visível, com 🔒 no rótulo: é por ela que o
+    # usuário descobre o que falta.
+    from core.estrategia import portao as _portao
+    from views import inteligencia_ativos as _ia
+    _liberacao = _portao.verificar()
+
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📊  Dashboard",
         "📈  Histórico",
         "💼  Carteira",
         "🔍  Análise",
         "🧾  Imposto de Renda",
+        _ia.rotulo_aba(_liberacao),
     ])
 
     with tab1:
@@ -4143,6 +4151,9 @@ def render() -> None:
     with tab5:
         from views.ir_renda_variavel import render as _render_ir
         _render_ir()
+
+    with tab6:
+        _ia.render(_liberacao, carteira)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
