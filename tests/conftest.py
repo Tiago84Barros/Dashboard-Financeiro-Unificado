@@ -286,3 +286,19 @@ def _instalar_guarda_libcurl() -> None:
 
 if os.getenv("DFU_TESTES_PERMITEM_REDE", "").strip().lower() not in {"1", "true", "yes"}:
     _instalar_guarda_libcurl()
+
+
+# ── nenhum teste herda resposta ou falha do túnel de outro ──────────────────
+# `core.armazem_remoto` guarda respostas por 5 min e falhas por 60 s na memória
+# do processo. Sem esta limpeza, um teste que simula o túnel fora do ar faria o
+# seguinte levantar sem sequer chamar o servidor que ele subiu.
+@pytest.fixture(autouse=True)
+def _sem_memoria_do_tunel():
+    try:
+        import core.armazem_remoto as ar
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    ar._limpar_memoria()
+    yield
+    ar._limpar_memoria()

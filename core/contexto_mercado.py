@@ -502,6 +502,7 @@ def bloco_contexto_mercado(
     *,
     noticias_gerais: bool = True,
     max_itens_por_classe: int = 10,
+    as_of: datetime | None = None,
 ) -> str:
     """Bloco CONTEXTO DE MERCADO pronto para anexar a qualquer contexto de LLM.
 
@@ -538,7 +539,7 @@ def bloco_contexto_mercado(
             from core.conjuntura import bloco_para_prompt
 
             bloco = bloco_para_prompt(asset_class=classe, ativos=dict(mapa),
-                                      max_itens=max_itens_por_classe)
+                                      max_itens=max_itens_por_classe, as_of=as_of)
         except Exception as exc:  # noqa: BLE001
             bloco = (f"CONTEXTO CONJUNTURAL ({classe}): falha ao montar "
                      f"({_limpo(exc, 120)}). Não trate como ausência de notícias.")
@@ -549,13 +550,17 @@ def bloco_contexto_mercado(
 
 
 def conjuntura_da_empresa(classe: str, ticker: str, setor: str | None,
-                          *, max_itens: int = 8) -> str:
+                          *, max_itens: int = 8, as_of: datetime | None = None) -> str:
     """Conjuntura e noticiário de UM ativo, para o relatório institucional dele.
 
     É o recorte por ativo que o bloco de mercado dá aos chats, sem o macro
     geral nem as manchetes do mercado: o relatório de cada empresa já recebe o
     macro no próprio prompt. Falha vira texto que nomeia a falha, nunca vazio —
     vazio a LLM lê como "não houve notícia".
+
+    ``as_of`` é o corte do relatório inteiro: com o mesmo corte em todas as
+    empresas, o prompt de cada uma carimba a mesma hora e a leitura pelo túnel
+    reaproveita o que já trouxe (``core.armazem_remoto``).
     """
     tk = str(ticker or "").strip().upper()
     if not tk or classe not in ("b3", "fii", "us"):
@@ -564,13 +569,14 @@ def conjuntura_da_empresa(classe: str, ticker: str, setor: str | None,
         from core.conjuntura import bloco_para_prompt
 
         return bloco_para_prompt(asset_class=classe, ativos={tk: str(setor or "")},
-                                 max_itens=max_itens)
+                                 max_itens=max_itens, as_of=as_of)
     except Exception as exc:  # noqa: BLE001
         return (f"CONTEXTO CONJUNTURAL ({tk}): falha ao montar "
                 f"({_limpo(exc, 120)}). Não trate como ausência de notícias.")
 
 
-def conjuntura_da_carteira(classe: str, itens: Iterable[Mapping]) -> str:
+def conjuntura_da_carteira(classe: str, itens: Iterable[Mapping], *,
+                           as_of: datetime | None = None) -> str:
     """Bloco de mercado de uma carteira B3 ou EUA: macro, manchetes gerais e
     o noticiário de CADA ativo dela.
 
@@ -582,7 +588,8 @@ def conjuntura_da_carteira(classe: str, itens: Iterable[Mapping]) -> str:
     ativos = ativos_da_carteira(classe, itens)
     n = len(ativos.get(classe, {}))
     try:
-        return bloco_contexto_mercado(ativos, max_itens_por_classe=max(10, 2 * n))
+        return bloco_contexto_mercado(ativos, max_itens_por_classe=max(10, 2 * n),
+                                      as_of=as_of)
     except Exception as exc:  # noqa: BLE001
         return (f"CONTEXTO DE MERCADO ({classe}): falha ao montar "
                 f"({_limpo(exc, 120)}). Não trate como ausência de notícias "

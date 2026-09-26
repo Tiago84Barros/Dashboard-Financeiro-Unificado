@@ -776,7 +776,13 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
     erros: list[str] = []
     financials: dict[str, pd.DataFrame] = {}
     progresso = st.progress(0, text="Analisando empresas via LLM…")
+    from datetime import datetime, timezone
+
     from core.contexto_mercado import conjuntura_da_carteira, conjuntura_da_empresa
+
+    # Um corte para o relatório inteiro: todas as empresas e o consolidado
+    # leem o noticiário do mesmo instante, e o túnel serve cada ativo uma vez.
+    corte_conjuntura = datetime.now(timezone.utc)
 
     for idx, it in enumerate(items):
         tk = str(it.get("ticker") or it.get("symbol") or "").upper()
@@ -816,7 +822,8 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 portfolio_tickers=[str(i.get("ticker") or "") for i in items],
                 portfolio_context=contexto_empresa,
                 status=status,
-                conjuntura=conjuntura_da_empresa("us", tk, it.get("setor")),
+                conjuntura=conjuntura_da_empresa("us", tk, it.get("setor"),
+                                                 as_of=corte_conjuntura),
             )
         except Exception as exc:  # noqa: BLE001 - fronteira de isolamento por empresa
             st.warning(f"{tk}: erro LLM — {exc}")
@@ -872,7 +879,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 status=status,
                 financials=financials,
                 usd_brl=_usd_brl_da_base(),
-                conjuntura=conjuntura_da_carteira("us", items),
+                conjuntura=conjuntura_da_carteira("us", items, as_of=corte_conjuntura),
             )
             if int(port_analise.get("confianca_media") or 0) == 0:
                 erros.append("Relatório consolidado: resposta da LLM não pôde ser "
