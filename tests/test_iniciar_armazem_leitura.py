@@ -64,6 +64,14 @@ def test_atualizacao_em_destacado_limpo_vai_para_main(tmp_path):
     assert "origin/main" in msg
 
 
+def test_atualizacao_nao_recua_pasta_a_frente_da_main(tmp_path):
+    chamadas: list = []
+    msg = sup.atualizar_para_main(tmp_path, git=_git_falso(
+        {"symbolic-ref": (1, ""), "status": (0, ""), "merge-base": (1, "")}, chamadas))
+    assert "origin/main ainda não tem" in msg
+    assert "checkout" not in chamadas
+
+
 def test_fetch_falho_nao_impede_subir(tmp_path):
     chamadas: list = []
     msg = sup.atualizar_para_main(tmp_path, git=_git_falso(

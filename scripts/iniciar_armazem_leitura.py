@@ -77,6 +77,11 @@ def atualizar_para_main(pasta: Path, *, git=_git) -> str:
     busca = git("fetch", "-q", "origin", "main", pasta=pasta)
     if busca.returncode != 0:
         return f"atualização pulada: git fetch falhou ({busca.stderr.strip()[:200]})"
+    # Só avança. Uma pasta à frente da main (ex.: no commit de um PR ainda não
+    # mergeado) voltaria para um código sem este supervisor, e o próximo logon
+    # não acharia o script.
+    if git("merge-base", "--is-ancestor", "HEAD", "origin/main", pasta=pasta).returncode != 0:
+        return "atualização pulada: a pasta tem commits que origin/main ainda não tem"
     antes = git("rev-parse", "--short", "HEAD", pasta=pasta).stdout.strip()
     troca = git("checkout", "-q", "--detach", "origin/main", pasta=pasta)
     if troca.returncode != 0:
