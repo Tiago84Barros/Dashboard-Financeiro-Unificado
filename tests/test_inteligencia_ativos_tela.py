@@ -1,16 +1,24 @@
 """Aba Inteligência dos Ativos: onboarding quando bloqueada, análise quando não."""
 import ast
+from html import escape
 from pathlib import Path
 
-from core import inteligencia_ativos as servico
 from core.estrategia import politica as pol
 from core.estrategia import portao
+from core.inteligencia_ativos import modelos as m
 from core.estrategia import repositorio as repo
 from views import inteligencia_ativos as tela
 
 RAIZ = Path(__file__).resolve().parents[1]
 
-CARTEIRA = {"posicoes": [{"ticker": "HGLG11", "nome": "CSHG Logística"}]}
+CARTEIRA_COMPLETA = {"total_mercado": 1000.0, "posicoes": [
+    {"ticker": "TAEE11", "nome": "Taesa", "classe": "Ações BR",
+     "setor": "Utilidades", "moeda": "BRL", "pct_carteira": 40.0,
+     "total_investido": 380.0, "valor_mercado": 400.0},
+    {"ticker": "HGLG11", "nome": "CSHG Logística", "classe": "FII",
+     "setor": "Logística", "moeda": "BRL", "pct_carteira": 60.0,
+     "total_investido": 550.0, "valor_mercado": 600.0},
+]}
 
 
 def _bloqueada(status=pol.NOT_STARTED, pct=0.0, faltantes=pol.OBRIGATORIOS,
@@ -20,8 +28,13 @@ def _bloqueada(status=pol.NOT_STARTED, pct=0.0, faltantes=pol.OBRIGATORIOS,
 
 
 def _liberada():
-    politica = pol.aplicar({}, {"objective": "renda_passiva"},
-                           fonte="manual")[0]
+    politica = pol.aplicar({}, {
+        "objective": "renda_passiva", "time_horizon": "longo",
+        "risk_profile": "moderado", "liquidity_need": "baixa",
+        "predominant_strategy": "dividendos", "single_asset_limit_pct": 50,
+        "asset_class_targets": {"renda_fixa": 40, "acoes_br": 20,
+                                "fiis": 30, "exterior": 10}},
+        fonte="manual")[0]
     reg = repo.Registro(
         id="r1", version=3, status_gravado="COMPLETED",
         schema_version=pol.SCHEMA_VERSION, politica=politica, entrevista=[],
@@ -91,22 +104,49 @@ def test_linguagem_de_onboarding_nao_de_erro():
             assert proibida not in texto
 
 
-def test_liberada_analisa_pelo_servico(monkeypatch):
-    chamadas = []
-
-    def _falso(ticker, **kw):
-        chamadas.append((ticker, kw["carteira"]))
-        return {"analysis_available": True, "analysis": None,
-                "policy_context": "Objetivo principal: Renda passiva"}
-    monkeypatch.setattr(servico, "analisar_ativo", _falso)
-
-    app = _rodar(_liberada(), CARTEIRA)
+def test_liberada_mostra_premissa_resumo_e_os_13_cartoes():
+    app = _rodar(_liberada(), CARTEIRA_COMPLETA)
     assert not app.exception
     assert "já está disponível" in app.success[0].value
     assert "versão 3" in app.success[0].value
-    app.button[0].click().run(timeout=30)
-    assert chamadas == [("HGLG11", CARTEIRA)]
-    assert "Renda passiva" in app.code[0].value
+    htmls = [md.value for md in app.markdown]
+    assert any("Premissa de toda análise" in h for h in htmls)
+    assert app.dataframe[0].value["Ativo"].tolist() == ["HGLG11", "TAEE11"]
+    assert app.selectbox(key="ia_ativo").value == "HGLG11"
+
+    fluxo = next(h for h in htmls if "01 · Ativo" in h)
+    titulos = ["Ativo", "Papel na carteira", "Peso atual",
+               "Peso desejado / faixa desejada", "Fundamentos", "Valuation",
+               "Comparação com pares", "Cenário", "Notícias", "Relatórios",
+               "Próximos eventos", "Impacto na carteira", "Ação a considerar"]
+    posicoes = [fluxo.index(f"{n:02d} · {t}") for n, t in
+                enumerate(titulos, start=1)]
+    assert posicoes == sorted(posicoes)
+    assert "Papel principal: renda imobiliária." in fluxo
+    assert "Nenhum alvo individual é presumido" in fluxo
+    assert fluxo.count("em preparação</span>") == 7
+    questoes = next(h for h in htmls if "flex:1 1 220px" in h)
+    for pergunta in m.PERGUNTAS.values():
+        assert escape(pergunta) in questoes
+    assert "ATIVO EM ANÁLISE: HGLG11" in app.code[0].value
+
+    app.selectbox(key="ia_ativo").set_value("TAEE11").run(timeout=30)
+    assert any("ATIVO EM ANÁLISE: TAEE11" in c.value for c in app.code)
+
+
+def test_liberada_sem_posicoes_nao_quebra():
+    app = _rodar(_liberada(), {"posicoes": []})
+    assert not app.exception
+    assert "Nenhum ativo" in app.info[0].value
+
+
+def test_cartoes_da_analise_so_usam_tokens_de_tema():
+    from core.inteligencia_ativos import analise, contexto
+    ctx = contexto.montar(_liberada().politica, CARTEIRA_COMPLETA)
+    a = analise.analisar_carteira(ctx)[0]
+    for html in (tela.cartao_premissa(ctx), tela.fluxo_html(a),
+                 tela.cartao_questoes(a)):
+        assert "#" not in html.replace("&#", "")
 
 
 def test_aba_esta_em_investimentos_e_constantes_batem_com_o_app():

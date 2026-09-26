@@ -69,7 +69,20 @@ def test_concluida_libera_com_a_politica_como_premissa(kw):
     assert d["asset"] == "HGLG11" and d["policy_version"] == 1
     assert "Objetivo principal: Renda passiva" in d["policy_context"]
     assert "Status: Concluída" in d["policy_context"]
-    assert d["analysis"] is None  # a análise por LLM é a próxima etapa
+    a = d["analysis"]
+    assert a["ativo"]["ticker"] == "HGLG11" and a["versao_politica"] == 1
+    assert a["acao"]["estado"] and a["acao"]["completa"] is False
+    assert "ATIVO EM ANÁLISE: HGLG11" in d["llm_input"]
+    assert "Objetivo principal: Renda passiva" in d["llm_input"]
+
+
+def test_carteira_inteira_com_um_teste_do_portao(kw):
+    assert servico.analisar_carteira(carteira=CARTEIRA, **kw)[
+        "analysis_available"] is False
+    _concluida(kw)
+    d = servico.analisar_carteira(carteira=CARTEIRA, **kw)
+    assert d["contexto"].versao_politica == 1
+    assert [a.ativo.ticker for a in d["analises"]] == ["HGLG11"]
 
 
 def test_ativo_fora_da_carteira(kw):
