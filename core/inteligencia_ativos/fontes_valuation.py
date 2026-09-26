@@ -52,6 +52,7 @@ FONTE_FII = "Vitrine de FIIs (retrato da metodologia)"
 FONTE_HISTORICO = "Histórico de valuation (armazém local, arquivo publicado)"
 FONTE_EUA = "Retrato de Empresas Americanas (SEC + preço)"
 FONTE_TESOURO = "Tesouro Direto (taxas publicadas)"
+AVISO_VITRINE_FII_INDISPONIVEL = "Vitrine de FIIs indisponível nesta leitura"
 
 # SUBSETOR da B3 cujo EV/EBIT não tem leitura (dívida é matéria-prima)
 SUBSETORES_FINANCEIROS = frozenset({"Intermediários Financeiros",
@@ -290,17 +291,29 @@ def entradas_fii(linha: dict | None, art: dict | None) -> dict[str, v.Entrada]:
                  if pvp is not None and pvp <= 0 else entrada("p_vp", pvp)),
         "dividend_yield": entrada("dividend_yield", _pct(linha.get("dy_12m"))),
     }
-    if _txt(linha.get("tipo")) != "tijolo":
+    tipo = _txt(linha.get("tipo"))
+    # tipo desconhecido não prova que o fundo não é de tijolo
+    if tipo is not None and tipo != "tijolo":
         saida["cap_rate"] = v.Entrada(excluida="fii_nao_tijolo")
     else:
         saida["cap_rate"] = entrada("cap_rate", _pct(linha.get("implied_cap_rate")))
     return saida
 
 
-def _carregar_fii() -> list[dict]:
-    from core.market_read import load_fii_methodology_inputs
+def _carregar_fii() -> tuple[list[dict], str | None]:
+    """(linhas, falha). ``falha`` é a frase da causa quando a vitrine não leu.
+
+    Sem ela a falha de leitura virava "Dado não disponível" no P/VP e "Ativo
+    fora do universo" nos pares, e o fundo parecia sem dado.
+    """
+    from core.market_read import (causa_falha_vitrine_fii,
+                                  load_fii_methodology_inputs)
     frame = load_fii_methodology_inputs()
-    return frame.to_dict("records") if frame is not None else []
+    erro = frame.attrs.get("load_error") if frame is not None else "sem_quadro"
+    if erro or frame.empty:
+        causa = causa_falha_vitrine_fii(erro)
+        return [], f"{causa} ({erro or 'universo vazio'})"
+    return frame.to_dict("records"), None
 
 
 # -- EUA -----------------------------------------------------------------------------
@@ -509,20 +522,25 @@ def ler_sem_cache(ticker: str, nome: str, classe: str, moeda: str):
                        "Ação fora do universo americano coberto (só ações, "
                        "sem REIT).")
     if tipo == FII:
-        linhas = _carregar_fii()
+        linhas, falha = _carregar_fii()
         art = arquivo()
         universo = candidatos_fii(linhas)
         linha = next((r for r in linhas if str(r.get("ticker")).upper() == tk), None)
+        aviso = ((f"{AVISO_VITRINE_FII_INDISPONIVEL}: {falha}. P/VP, "
+                  "DY e cap rate atuais e o universo de pares dependem dela; "
+                  "onde aparecer \"Dado não disponível\", a causa é a falha "
+                  "da leitura, não o fundo.",) if falha else ())
         return _montar(tipo, moeda,
                        entradas_fii(linha, (art.get("fii") or {}).get(tk)),
                        universo.get(tk), list(universo.values()),
-                       (f"Valor atual: {FONTE_FII}.",
+                       aviso + (f"Valor atual: {FONTE_FII}.",
                         "Segmento de FII é o declarado pelo próprio fundo no "
                         "cadastro e pode divergir do portfólio (HGLG11, "
                         "logístico, aparece como Varejo); \"Multicategoria\" "
                         "e \"Outros\" não servem de modelo de negócio e o "
                         "grupo sobe para tipo e mandato.")
-                       + _premissas_arquivo(art, "fii"))
+                       + _premissas_arquivo(art, "fii"),
+                       f"Sem pares: {falha}." if falha else None)
     if tipo == RENDA_FIXA:
         posicao = {"ticker": ticker, "nome": nome, "classe": classe,
                    "moeda": moeda}
@@ -578,6 +596,15 @@ _ler_cache = _cache(_ler_como_dicts)
 
 
 def ler(ticker: str, nome: str, classe: str, moeda: str):
-    """(Valuation, ComparacaoPares), com cache de 15 min por ativo."""
+    """(Valuation, ComparacaoPares), com cache de 15 min por ativo.
+
+    Leitura com a vitrine de FIIs em falha não fica no cache: guardá-la
+    prenderia o fundo em "Dado não disponível" por 15 min depois de a vitrine
+    voltar (mesma regra de ``load_fii_methodology_inputs``).
+    """
     dv, dc = _ler_cache(ticker, nome, classe, moeda)
+    if (any(str(x).startswith(AVISO_VITRINE_FII_INDISPONIVEL)
+            for x in dv.get("premissas") or ())
+            and hasattr(_ler_cache, "clear")):
+        _ler_cache.clear()
     return v.Valuation.de_dict(dv), p.ComparacaoPares.de_dict(dc)
