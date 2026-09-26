@@ -1134,13 +1134,15 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
 
     macro_changes = {}
     try:
-        from core.macro_data.database import get_macro_source
+        from core.macro_data.database import descrever_fonte_macro, get_macro_source
         from core.macro_data.global_context import load_global_macro_context
         from core.macro_data.portfolio_context import format_portfolio_macro_context
-        snapshots, macro_changes, macro_limits = load_global_macro_context(get_macro_source(), df)
+        fonte_macro = get_macro_source()
+        snapshots, macro_changes, macro_limits = load_global_macro_context(fonte_macro, df)
         with st.expander("Contexto macro das carteiras", expanded=False):
             for snapshot in snapshots.values():
-                st.text(format_portfolio_macro_context(snapshot))
+                st.text(format_portfolio_macro_context(
+                    snapshot, descrever_fonte_macro(fonte_macro)))
             for limitation in macro_limits:
                 st.caption(limitation)
             st.caption("O ajuste global considera a mudança desde a criação, com limites e custos; requer revisão humana.")

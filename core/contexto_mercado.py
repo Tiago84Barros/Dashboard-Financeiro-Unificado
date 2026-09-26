@@ -246,7 +246,10 @@ def _macro_local() -> list[str]:
 
         return _linhas_macro_local(latest_macro_context(engine), "Armazém macro local")
     except Exception as exc:  # noqa: BLE001
-        return [f"  Armazém macro local: falha na leitura ({_limpo(exc, 120)})."]
+        # URL configurada com o Docker parado: o túnel e o arquivo publicado
+        # ainda respondem, e parar na falha jogava fora os dois.
+        return ([f"  Armazém macro local: falha na leitura ({_limpo(exc, 120)})."]
+                + _macro_remoto())
     finally:
         if engine is not None:
             engine.dispose()
@@ -260,12 +263,28 @@ def _macro_remoto() -> list[str]:
 
         fatos = armazem_remoto.macro_recente()
         if fatos is None:
-            return ["  Armazém macro local: não alcançável neste ambiente (a "
-                    "produção só alcança o Supabase)."]
+            return _macro_publicado("túnel não configurado")
         return _linhas_macro_local(fatos, "Armazém macro local, lido pelo túnel")
     except Exception as exc:  # noqa: BLE001
-        return [f"  Armazém macro local pelo túnel: indisponível ({_limpo(exc, 120)}); "
-                "só as séries do Supabase acima entraram."]
+        return _macro_publicado(f"túnel indisponível: {_limpo(exc, 120)}")
+
+
+def _macro_publicado(motivo: str) -> list[str]:
+    """Último recurso com o PC desligado: os insumos que a rotina publicou."""
+    try:
+        from core.macro_data.context import published_macro_context
+        from core.macro_data.insumos_publicados import carregar_insumos_publicados
+
+        insumos = carregar_insumos_publicados()
+    except Exception as exc:  # noqa: BLE001
+        insumos = None
+        motivo = f"{motivo}; arquivo publicado ilegível ({_limpo(exc, 80)})"
+    if insumos is None:
+        return [f"  Armazém macro local: não alcançável neste ambiente ({motivo}) e "
+                "sem arquivo publicado recente; só as séries do Supabase acima entraram."]
+    origem = (f"Armazém macro, publicado em {insumos.gerado_em:%d/%m/%Y} "
+              f"({motivo})")
+    return _linhas_macro_local(published_macro_context(insumos), origem)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

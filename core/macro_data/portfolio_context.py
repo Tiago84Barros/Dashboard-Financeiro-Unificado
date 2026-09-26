@@ -294,10 +294,16 @@ def load_portfolio_macro_snapshot(
     )
 
 
-def format_portfolio_macro_context(snapshot: PortfolioMacroSnapshot) -> str:
-    """Texto factual limitado para LLM; decisões e pesos continuam em Python."""
+def format_portfolio_macro_context(snapshot: PortfolioMacroSnapshot,
+                                   origem: str | None = None) -> str:
+    """Texto factual limitado para LLM; decisões e pesos continuam em Python.
+
+    ``origem`` vem de ``descrever_fonte_macro``. Fica fora do snapshot porque
+    lá mudaria o ``snapshot_id`` de insumos idênticos; sem ela, o cabeçalho
+    não afirma de onde veio em vez de dizer "Docker local" para o arquivo.
+    """
     lines = [
-        "CAMADA MACRO DETERMINÍSTICA (Docker local):",
+        f"CAMADA MACRO DETERMINÍSTICA ({origem or 'origem não informada'}):",
         f"  data de corte={snapshot.as_of.isoformat()}; cobertura="
         f"{snapshot.coverage:.1%}; séries={snapshot.source_count}; "
         f"modo={snapshot.knowledge_mode}",

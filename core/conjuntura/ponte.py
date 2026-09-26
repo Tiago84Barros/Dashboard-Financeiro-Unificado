@@ -579,7 +579,7 @@ def carregar(
             limitacoes.append(f"contexto macro indisponível: {exc}")
             logger.warning("contexto macro indisponível em %s", momento)
     elif macro_engine is None:
-        limitacoes.append("banco macro local não configurado")
+        limitacoes.append("macro indisponível (sem Docker local e sem arquivo publicado recente)")
 
     if impactos:
         disponiveis.append("macro")
@@ -892,11 +892,14 @@ def _engines() -> tuple[object | None, object | None, object | None]:
     """
     macro = acervo = vitrine = None
     try:
-        from core.macro_data.database import get_local_macro_engine
+        # Docker que responde, senão os insumos publicados no repositório: em
+        # produção só o segundo existe, e sem ele todo chat de carteira dizia
+        # "sem macro" ao lado da tela que mostrava o ajuste macro.
+        from core.macro_data.database import get_macro_source
 
-        macro = get_local_macro_engine()
+        macro = get_macro_source()
     except Exception as exc:  # noqa: BLE001 - ausência declarada, não silêncio
-        logger.info("banco macro local indisponível: %s", exc)
+        logger.info("fonte macro indisponível: %s", exc)
     try:
         from core.noticias.destino import engine_acervo
 
@@ -949,7 +952,8 @@ def bloco_para_prompt(
         # montagem deixa dois pools abertos no Postgres local. O engine do
         # Supabase -- o da vitrine -- vem de ``st.cache_resource`` e e
         # compartilhado: fecha-lo derrubaria o app, e por isso ele nao entra aqui.
+        # Os insumos publicados não são engine e não têm o que fechar.
         for local in (macro, acervo):
-            if local is not None:
+            if local is not None and hasattr(local, "dispose"):
                 local.dispose()
     return para_llm(contexto, max_itens=max_itens)

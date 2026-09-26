@@ -200,7 +200,58 @@ def test_macro_sem_engine_local_vai_ao_tunel(monkeypatch):
     monkeypatch.setattr(ar, "macro_recente", _fora)
     linha = cm._macro_local()[0]
     cm._macro_remoto.clear()
-    assert "pelo túnel: indisponível (HTTP 503)" in linha
+    assert "túnel indisponível: HTTP 503" in linha
+    assert "sem arquivo publicado recente" in linha
+
+
+def test_macro_sem_docker_nem_tunel_le_o_arquivo_publicado(monkeypatch):
+    """PC desligado: o bloco de mercado usa os insumos que a rotina publicou."""
+    from datetime import datetime, timezone
+
+    import core.armazem_remoto as ar
+    import core.macro_data.database as db
+    from core.macro_data import insumos_publicados as ip
+
+    agora = datetime.now(timezone.utc)
+    obs = [
+        {"provider": "bcb", "provider_code": "433", "country_code": "BR", "unit": "%",
+         "reference_period": date.today() - timedelta(days=d), "value": v,
+         "retrieved_at": agora, "released_at": None, "vintage_date": None,
+         "is_forecast": False, "is_preliminary": False}
+        for d, v in ((90, 1), (30, 2))
+    ]
+    insumos = ip.desserializar(ip.serializar(agora, [], obs))
+    monkeypatch.setattr(db, "get_local_macro_engine", lambda: None)
+    monkeypatch.setattr(ar, "macro_recente", lambda: None)
+    monkeypatch.setattr(ip, "carregar_insumos_publicados", lambda *a, **k: insumos)
+    cm._macro_remoto.clear()
+    linhas = cm._macro_local()
+    cm._macro_remoto.clear()
+    assert f"publicado em {agora:%d/%m/%Y}" in linhas[0]
+    # Só a observação mais recente da série.
+    assert len(linhas) == 2 and "valor 2 %" in linhas[1]
+
+
+def test_docker_configurado_e_parado_ainda_tenta_o_tunel(monkeypatch):
+    import core.armazem_remoto as ar
+    import core.macro_data.context as ctx
+    import core.macro_data.database as db
+
+    class _Parado:
+        def dispose(self):
+            pass
+
+    def _cai(_e):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(db, "get_local_macro_engine", lambda: _Parado())
+    monkeypatch.setattr(ctx, "latest_macro_context", _cai)
+    monkeypatch.setattr(ar, "macro_recente", lambda: None)
+    cm._macro_remoto.clear()
+    linhas = cm._macro_local()
+    cm._macro_remoto.clear()
+    assert "falha na leitura" in linhas[0]
+    assert "túnel não configurado" in linhas[1]
 
 
 def test_bloco_usa_vitrine_quando_nao_ha_acervo(monkeypatch):
