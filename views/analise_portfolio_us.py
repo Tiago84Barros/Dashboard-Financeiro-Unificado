@@ -776,6 +776,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
     erros: list[str] = []
     financials: dict[str, pd.DataFrame] = {}
     progresso = st.progress(0, text="Analisando empresas via LLM…")
+    from core.contexto_mercado import conjuntura_da_carteira, conjuntura_da_empresa
 
     for idx, it in enumerate(items):
         tk = str(it.get("ticker") or it.get("symbol") or "").upper()
@@ -815,6 +816,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 portfolio_tickers=[str(i.get("ticker") or "") for i in items],
                 portfolio_context=contexto_empresa,
                 status=status,
+                conjuntura=conjuntura_da_empresa("us", tk, it.get("setor")),
             )
         except Exception as exc:  # noqa: BLE001 - fronteira de isolamento por empresa
             st.warning(f"{tk}: erro LLM — {exc}")
@@ -870,6 +872,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 status=status,
                 financials=financials,
                 usd_brl=_usd_brl_da_base(),
+                conjuntura=conjuntura_da_carteira("us", items),
             )
             if int(port_analise.get("confianca_media") or 0) == 0:
                 erros.append("Relatório consolidado: resposta da LLM não pôde ser "
@@ -1013,9 +1016,10 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
                     portfolio_tickers=[str(it.get("ticker") or "")
                                        for it in model.get("items", [])],
                 )
-                from core.contexto_mercado import bloco_contexto_mercado
+                from core.contexto_mercado import conjuntura_da_carteira
 
-                contexto = contexto + "\n\n" + bloco_contexto_mercado()
+                contexto = contexto + "\n\n" + conjuntura_da_carteira(
+                    "us", model.get("items", []))
                 resposta = chat_com_portfolio(contexto, historico[:-1], pergunta)
             except Exception as exc:  # noqa: BLE001
                 resposta = f"Erro ao consultar LLM: {exc}"

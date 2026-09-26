@@ -882,6 +882,7 @@ def _executar_analise(
     items_analisados: list[dict] = []
     erros: list[str] = []          # erros de LLM capturados — exibidos após o rerun
     prog = st.progress(0, text="Analisando empresas via LLM…")
+    from core.contexto_mercado import conjuntura_da_carteira, conjuntura_da_empresa
 
     for idx, it in enumerate(items):
         tk        = it["ticker"]
@@ -933,6 +934,7 @@ def _executar_analise(
                 portfolio_tickers=[item.get("ticker", "") for item in items],
                 rag_context=rag_ctx,
                 portfolio_context=_ctx_emp,
+                conjuntura=conjuntura_da_empresa("b3", tk, it.get("setor")),
             )
         except Exception as exc:
             st.warning(f"{tk}: erro LLM — {exc}")
@@ -963,6 +965,7 @@ def _executar_analise(
         try:
             port_analise = analyze_portfolio_report(
                 items_analisados, macro_hist, web_context=web_context,
+                conjuntura=conjuntura_da_carteira("b3", items),
             )
             if int(port_analise.get("confianca_media") or 0) == 0:
                 # _parse_json caiu no fallback (resposta da LLM não era JSON válido).
@@ -1352,9 +1355,10 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
                         portfolio_tickers=[it.get("ticker", "") for it in model.get("items", [])],
                         cobertura_docs=cobertura_docs,
                     )
-                    from core.contexto_mercado import bloco_contexto_mercado
+                    from core.contexto_mercado import conjuntura_da_carteira
 
-                    context = context + "\n\n" + bloco_contexto_mercado()
+                    context = context + "\n\n" + conjuntura_da_carteira(
+                        "b3", model.get("items", []))
                     resposta_raw = chat_com_portfolio(context, history[:-1], user_input)
                     resposta, chart_directives = parse_chart_directives(resposta_raw)
                     # Fallback: a LLM às vezes descreve o gráfico sem emitir a

@@ -472,6 +472,21 @@ def ativos_por_classe(posicoes: Iterable[Mapping]) -> dict[str, dict[str, str]]:
     return grupos
 
 
+def ativos_da_carteira(classe: str, itens: Iterable[Mapping]) -> dict[str, dict[str, str]]:
+    """Itens de UMA carteira de classe única no formato de :func:`bloco_contexto_mercado`.
+
+    As carteiras B3 e EUA guardam o ticker em ``ticker`` (a americana às
+    vezes em ``symbol``) e o setor em ``setor``. Sem ativo, devolve ``{}`` e o
+    bloco sai só com macro e manchetes gerais.
+    """
+    mapa: dict[str, str] = {}
+    for it in itens or ():
+        tk = str(it.get("ticker") or it.get("symbol") or "").strip().upper()
+        if tk:
+            mapa[tk] = str(it.get("setor") or "")
+    return {classe: mapa} if mapa else {}
+
+
 def _supabase():
     try:
         from core.database import get_engine
@@ -531,3 +546,44 @@ def bloco_contexto_mercado(
             partes += ["", f"NOTICIÁRIO E CONJUNTURA DOS ATIVOS DA CARTEIRA ({classe}):",
                        bloco]
     return "\n".join(partes)
+
+
+def conjuntura_da_empresa(classe: str, ticker: str, setor: str | None,
+                          *, max_itens: int = 8) -> str:
+    """Conjuntura e noticiário de UM ativo, para o relatório institucional dele.
+
+    É o recorte por ativo que o bloco de mercado dá aos chats, sem o macro
+    geral nem as manchetes do mercado: o relatório de cada empresa já recebe o
+    macro no próprio prompt. Falha vira texto que nomeia a falha, nunca vazio —
+    vazio a LLM lê como "não houve notícia".
+    """
+    tk = str(ticker or "").strip().upper()
+    if not tk or classe not in ("b3", "fii", "us"):
+        return ""
+    try:
+        from core.conjuntura import bloco_para_prompt
+
+        return bloco_para_prompt(asset_class=classe, ativos={tk: str(setor or "")},
+                                 max_itens=max_itens)
+    except Exception as exc:  # noqa: BLE001
+        return (f"CONTEXTO CONJUNTURAL ({tk}): falha ao montar "
+                f"({_limpo(exc, 120)}). Não trate como ausência de notícias.")
+
+
+def conjuntura_da_carteira(classe: str, itens: Iterable[Mapping]) -> str:
+    """Bloco de mercado de uma carteira B3 ou EUA: macro, manchetes gerais e
+    o noticiário de CADA ativo dela.
+
+    O teto de itens cresce com a carteira: com teto fixo, uma carteira de 15
+    ativos só levava a notícia de uns poucos, e os demais pareciam sem
+    notícia. Falha vira texto que nomeia a falha — o relatório consolidado e o
+    chat seguem sem o bloco, mas sabendo que ele faltou.
+    """
+    ativos = ativos_da_carteira(classe, itens)
+    n = len(ativos.get(classe, {}))
+    try:
+        return bloco_contexto_mercado(ativos, max_itens_por_classe=max(10, 2 * n))
+    except Exception as exc:  # noqa: BLE001
+        return (f"CONTEXTO DE MERCADO ({classe}): falha ao montar "
+                f"({_limpo(exc, 120)}). Não trate como ausência de notícias "
+                "nem como conjuntura neutra.")
