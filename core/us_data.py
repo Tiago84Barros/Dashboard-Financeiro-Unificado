@@ -49,6 +49,15 @@ def company_financials(symbol: str):
 
 
 @_cache
+def company_metrics(symbol: str) -> dict:
+    """JSON ``metrics`` da vitrine de uma empresa (último exercício anual)."""
+    try:
+        return _read._snapshot_json_for(symbol, "metrics") or {}
+    except Exception:  # noqa: BLE001 - a facade nunca derruba a tela
+        return {}
+
+
+@_cache
 def company_market_data(symbol: str):
     """Históricos de cotação, dividendos e múltiplos, sempre offline-first."""
     if _use_snapshot():

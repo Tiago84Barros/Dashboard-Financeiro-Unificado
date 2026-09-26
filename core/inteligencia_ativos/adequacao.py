@@ -135,6 +135,10 @@ def alinhamento(papel: Papel | None, ctx: ContextoInvestidor) -> str:
 
 # -- tese -----------------------------------------------------------------------
 
+_TENDENCIA_FUNDAMENTOS = ("Depende da tendência dos fundamentos (histórico); "
+                          "os valores atuais estão na seção Fundamentos.")
+
+
 def tese(info: InfoBasica, papeis: tuple[Papel, ...], fx: FaixaAlvo,
          ctx: ContextoInvestidor) -> Tese:
     principal = next((p for p in papeis if p.principal), None)
@@ -156,14 +160,14 @@ def tese(info: InfoBasica, papeis: tuple[Papel, ...], fx: FaixaAlvo,
         gatilhos.append(Gatilho("reducao_dividendos",
                                 "Redução estrutural de dividendos",
                                 m.PENDENTE, None,
-                                "Depende da etapa de fundamentos."))
+                                _TENDENCIA_FUNDAMENTOS))
     if info.classe_politica in ("acoes_br", "exterior"):
         gatilhos.append(Gatilho("aumento_divida",
                                 "Aumento relevante de dívida", m.PENDENTE,
-                                None, "Depende da etapa de fundamentos."))
+                                None, _TENDENCIA_FUNDAMENTOS))
         gatilhos.append(Gatilho("perda_qualidade",
                                 "Perda de qualidade operacional", m.PENDENTE,
-                                None, "Depende da etapa de fundamentos."))
+                                None, _TENDENCIA_FUNDAMENTOS))
     gatilhos.append(Gatilho("mudanca_estrategia",
                             "Mudança de estratégia do emissor ou gestor",
                             m.PENDENTE, None,
@@ -316,8 +320,8 @@ def acao(info: InfoBasica, fx: FaixaAlvo, tese_: Tese,
 def questoes(papeis_texto: list[str], acao_: Acao,
              fundamentos: Secao, valuation: Secao) -> dict[str, Resposta]:
     def _externa(chave: str, secao: Secao) -> Resposta:
-        if secao.estado == m.DISPONIVEL:
-            return Resposta(m.PERGUNTAS[chave], m.DISPONIVEL, secao.resumo)
+        if secao.estado in (m.DISPONIVEL, m.SEM_DADOS):
+            return Resposta(m.PERGUNTAS[chave], secao.estado, secao.resumo)
         return Resposta(m.PERGUNTAS[chave], m.PENDENTE,
                         "Ainda não avaliado: depende da etapa de "
                         f"{secao.titulo.lower()}.")

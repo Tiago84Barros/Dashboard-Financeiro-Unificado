@@ -21,7 +21,8 @@ Puro. Coberto por tests/test_inteligencia_ativos_adequacao.py.
 """
 from __future__ import annotations
 
-from core.inteligencia_ativos import adequacao, calculos, papeis, secoes
+from core.inteligencia_ativos import (adequacao, calculos, fundamentos,
+                                      papeis, secoes)
 from core.inteligencia_ativos.contexto import classe_politica, texto_carteira
 from core.inteligencia_ativos.modelos import (
     AnaliseAtivo,
@@ -141,6 +142,11 @@ def texto_para_llm(analise: AnaliseAtivo, ctx: ContextoInvestidor) -> str:
     linhas.append("\n[Seções de mercado]")
     for s in analise.secoes_externas:
         linhas.append(f"- {s.titulo}: {s.estado}. {s.resumo}")
+    if analise.fundamentos.dados:
+        linhas.append("")
+        linhas.append(fundamentos.texto(
+            fundamentos.Fundamentos.de_dict(analise.fundamentos.dados),
+            a.ticker))
     linhas.append(f"\n[Ação a considerar (regras)] {analise.acao.rotulo}")
     linhas += [f"- {j}" for j in analise.acao.justificativas]
     return "\n".join(linhas)

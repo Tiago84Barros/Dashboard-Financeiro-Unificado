@@ -302,3 +302,23 @@ def _sem_memoria_do_tunel():
     ar._limpar_memoria()
     yield
     ar._limpar_memoria()
+
+
+# ── fundamentos da Inteligência dos Ativos sem banco ─────────────────────────
+# O provedor real lê snapshot de FII, Supabase (B3/EUA) e o extrato do
+# Tesouro. Na suíte, todo ativo sai com o catálogo da classe e nenhum dado
+# ("Dado não disponível."): determinístico e offline. Os leitores têm testes
+# próprios em tests/test_inteligencia_ativos_fundamentos.py.
+@pytest.fixture(autouse=True)
+def _fundamentos_sem_banco(monkeypatch):
+    try:
+        from core.inteligencia_ativos import fundamentos as f
+        from core.inteligencia_ativos import secoes
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(
+        secoes, "_ler_fundamentos",
+        lambda info: f.montar(f.tipo_do_ativo(info.classe, info.moeda), {},
+                              moeda=info.moeda))
+    yield

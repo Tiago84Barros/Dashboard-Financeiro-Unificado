@@ -7,8 +7,10 @@ Cada seção tem um provedor com a mesma assinatura::
 
     provedor(info: InfoBasica, ctx: ContextoInvestidor) -> Secao
 
-Hoje todos são ``_pendente``: devolvem ``estado=PENDENTE`` e o que a seção
-vai trazer. Implementar uma etapa é trocar a entrada dela em ``PROVEDORES``
+``fundamentos`` já é real (``provedor_fundamentos``: catálogo por classe
+em ``fundamentos.py``, leitores em ``fontes_fundamentos.py``). Os demais
+ainda são ``_pendente``: devolvem ``estado=PENDENTE`` e o que a seção vai
+trazer. Implementar uma etapa é trocar a entrada dela em ``PROVEDORES``
 por um provedor real; nada mais na análise ou na tela precisa mudar. Um
 provedor que falha não derruba a análise: ``coletar`` converte a exceção em
 ``SEM_DADOS`` com o motivo.
@@ -28,6 +30,7 @@ import logging
 from typing import Callable
 
 from core.inteligencia_ativos.modelos import (
+    DISPONIVEL,
     PENDENTE,
     SEM_DADOS,
     ContextoInvestidor,
@@ -71,7 +74,26 @@ def _pendente(chave: str) -> Provedor:
     return provedor
 
 
+def _ler_fundamentos(info: InfoBasica):
+    from core.inteligencia_ativos import fontes_fundamentos
+    return fontes_fundamentos.ler(info.ticker, info.nome, info.classe,
+                                  info.moeda)
+
+
+def provedor_fundamentos(info: InfoBasica, ctx: ContextoInvestidor, *,
+                         leitor=None) -> Secao:
+    """Indicadores da classe do ativo, com ``Dado não disponível.`` onde a
+    fonte não tem o número. ``leitor(info) -> Fundamentos`` é injetável."""
+    from core.inteligencia_ativos import fundamentos as f
+    fund = (leitor or _ler_fundamentos)(info)
+    return Secao(chave="fundamentos", titulo=SECOES["fundamentos"][0],
+                 estado=DISPONIVEL if fund.disponiveis else SEM_DADOS,
+                 resumo=f.resumo(fund), dados=fund.como_dict(),
+                 fonte=", ".join(fund.fontes) or None)
+
+
 PROVEDORES: dict[str, Provedor] = {c: _pendente(c) for c in SECOES}
+PROVEDORES["fundamentos"] = provedor_fundamentos
 
 
 def coletar(info: InfoBasica, ctx: ContextoInvestidor) -> dict[str, Secao]:

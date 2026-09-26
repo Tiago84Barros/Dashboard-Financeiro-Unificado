@@ -236,7 +236,7 @@ class Acao:
 class Resposta:
     """Resposta a uma das quatro perguntas."""
     pergunta: str
-    estado: str      # DISPONIVEL | PENDENTE
+    estado: str      # DISPONIVEL | PENDENTE | SEM_DADOS
     resposta: str
 
 
