@@ -47,6 +47,13 @@ JOB_NAME = "update_noticias"
 ORIGEM_JOB = "job"
 ORIGEM_MANUAL = "manual"
 
+#: Acima disto, lock ocupado deixa de ser "outra execução em andamento" e vira
+#: falha. Em 24/09/2026 um lock órfão fez toda coleta sair ``skipped`` com
+#: código 0 por 32 h: o agendador marcava sucesso e o acervo parou. O prazo
+#: ocioso do lock (``PRAZO_OCIOSO_LOCK_MIN``) deveria soltá-lo bem antes; se
+#: não soltou, alguém precisa olhar.
+LOCK_PRESO_HORAS = 3
+
 
 def _agora() -> datetime:
     return datetime.now(timezone.utc)
@@ -63,6 +70,26 @@ def _resultado_base() -> dict:
         "records_failed": 0,
         "error_message": None,
     }
+
+
+def _lock_preso(ultima_tentativa, agora: datetime) -> str | None:
+    """Mensagem de falha quando o lock ocupado já não pode ser uma execução viva.
+
+    ``ultima_tentativa`` só avança quando um ciclo obtém o lock, então ela
+    marca quando o dono atual começou. Sem registro nenhum não há como medir,
+    e o lock ocupado segue como ``skipped``.
+    """
+    if not isinstance(ultima_tentativa, datetime):
+        return None
+    if ultima_tentativa.tzinfo is None:
+        ultima_tentativa = ultima_tentativa.replace(tzinfo=timezone.utc)
+    horas = (agora - ultima_tentativa).total_seconds() / 3600
+    if horas < LOCK_PRESO_HORAS:
+        return None
+    return (f"lock da coleta ocupado ha {horas:.0f} h sem ciclo novo: sessao "
+            "orfa segurando pg_advisory_lock('noticias_coleta'). Encerre-a no "
+            "banco (pg_terminate_backend do pid em pg_locks) -- ate la nenhuma "
+            "noticia entra no acervo")
 
 
 def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
@@ -118,11 +145,15 @@ def run(tickers: tuple[str, ...] = (), *, forcar: bool = False,
 
     with ec.travar(engine) as obtido:
         if not obtido:
-            # Não é erro: é a proteção funcionando. Gravar como falha encheria
-            # o histórico de incidentes que nunca existiram.
+            # Normalmente não é erro: é a proteção funcionando. Gravar como
+            # falha encheria o histórico de incidentes que nunca existiram.
             result["status"] = "skipped"
             result["error_message"] = (
                 "outra execucao da coleta ja esta em andamento")
+            preso = _lock_preso(estado.ultima_tentativa, inicio)
+            if preso:
+                result["status"] = "failed"
+                result["error_message"] = preso
             return result
         return _executar(result, ciclo, ritmo, tickers, engine=engine,
                          settings=settings, cad=cad, ec=ec, uni=uni,
