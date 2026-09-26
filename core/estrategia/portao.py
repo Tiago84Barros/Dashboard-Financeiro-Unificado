@@ -4,7 +4,7 @@ Portão entre a Estratégia de Investimentos e a análise individual dos ativos.
 
 A análise só roda com uma política CONCLUÍDA e vigente. Quem decide isso é
 este módulo, não a tela: a aba de Investimentos só pergunta e mostra, e o
-serviço de análise (``core/inteligencia_ativos.py``) pergunta de novo antes
+serviço de análise (``core/inteligencia_ativos/``) pergunta de novo antes
 de trabalhar. Assim a regra vale para qualquer chamador, não só para quem
 passou pela interface.
 

@@ -21,8 +21,12 @@ from html import escape
 import streamlit as st
 
 from core import inteligencia_ativos as servico
+from core.inteligencia_ativos import analise as servico_analise
+from core.inteligencia_ativos import modelos as m
+from core.inteligencia_ativos import papeis
 from core.estrategia import politica as pol
 from core.estrategia import portao
+from core.utils import fmt_moeda
 
 ROTULO = "Inteligência dos Ativos"
 # Mesmos valores de app.py (menu) e views/configuracoes.py (flag lida lá).
@@ -128,34 +132,242 @@ def _render_onboarding(liberacao: portao.Liberacao) -> None:
 
 
 # -- liberada ------------------------------------------------------------------
+# Cada cartão sai num st.markdown só e usa apenas var(--app-*): assim o tema
+# claro alcança tudo.
+
+_COR_ACAO = {
+    m.REAVALIAR_TESE: "var(--app-danger)",
+    m.REDUZIR_CONCENTRACAO: "var(--app-warning)",
+    m.COMPARAR_ALTERNATIVAS: "var(--app-warning)",
+    m.REAVALIAR_APORTES: "var(--app-warning)",
+    m.APORTE_COMPATIVEL: "var(--app-primary)",
+    m.EXPOSICAO_ADEQUADA: "var(--app-primary)",
+    m.MANTER: "var(--app-info)",
+}
+
+_ROTULO_CLASSE = dict(pol.CLASSES)
+_SETA = ('<div style="text-align:center;color:var(--app-subtle);'
+         'font-size:0.8rem;line-height:1.2">↓</div>')
+
+
+def _pct(x: float | None, casas: int = 1) -> str:
+    return "—" if x is None else f"{x:.{casas}f}%".replace(".", ",")
+
+
+def _pp(x: float | None) -> str:
+    return "—" if x is None else f"{x:+.1f} pp".replace(".", ",")
+
+
+def _moeda(x: float | None, moeda: str = "BRL") -> str:
+    if x is None:
+        return "—"
+    return fmt_moeda(x, "US$" if moeda == "USD" else "R$")
+
+
+def _cartao(num: int, titulo: str, corpo: str, *, pendente: bool = False,
+            destaque: str | None = None) -> str:
+    borda = destaque or "var(--app-border)"
+    chip = ('<span style="margin-left:8px;font-size:0.7rem;font-weight:600;'
+            'padding:2px 8px;border-radius:999px;border:1px solid '
+            'var(--app-border);color:var(--app-subtle)">em preparação</span>'
+            if pendente else "")
+    opacidade = "opacity:.75;" if pendente else ""
+    return (
+        f'<div style="background:var(--app-surface);border:1px solid {borda};'
+        f'border-left:4px solid {borda};border-radius:10px;padding:12px 16px;'
+        f'{opacidade}">'
+        '<div style="font-size:0.72rem;font-weight:700;letter-spacing:.05em;'
+        f'text-transform:uppercase;color:var(--app-subtle)">{num:02d} · '
+        f'{escape(titulo)}{chip}</div>'
+        '<div style="font-size:0.9rem;color:var(--app-text);margin-top:6px;'
+        f'line-height:1.5">{corpo}</div></div>'
+    )
+
+
+def _grade(pares: list[tuple[str, str]]) -> str:
+    itens = "".join(
+        '<div style="min-width:140px"><div style="font-size:0.72rem;'
+        f'color:var(--app-muted)">{escape(r)}</div><div style="font-weight:'
+        f'700;color:var(--app-text)">{escape(v)}</div></div>'
+        for r, v in pares)
+    return f'<div style="display:flex;flex-wrap:wrap;gap:12px 24px">{itens}</div>'
+
+
+def _lista(itens) -> str:
+    return "".join(f'<div style="margin:2px 0">• {escape(i)}</div>'
+                   for i in itens)
+
+
+def cartao_premissa(ctx: m.ContextoInvestidor) -> str:
+    """A estratégia que orienta todas as análises, no topo da aba. Puro."""
+    def _rot(chave: str, valor) -> str:
+        return pol.formatar(chave, valor) if valor is not None else "—"
+    linhas = "".join(
+        '<tr><td style="padding:2px 12px 2px 0;color:var(--app-muted)">'
+        f'{escape(rot)}</td><td style="padding:2px 12px 2px 0;'
+        f'color:var(--app-text)">{_pct(ctx.peso_por_classe.get(c))}</td>'
+        '<td style="color:var(--app-muted)">alvo '
+        f'{_pct(ctx.alocacao_alvo.get(c), 0)}</td></tr>'
+        for c, rot in pol.CLASSES)
+    fora = ('<div style="color:var(--app-muted);margin-top:4px">Fora das '
+            f'classes da política: {_pct(ctx.peso_fora_da_politica)}</div>'
+            if ctx.peso_fora_da_politica else "")
+    grade = _grade([
+        ("Objetivo", _rot("objective", ctx.objetivo)),
+        ("Horizonte", _rot("time_horizon", ctx.horizonte)),
+        ("Perfil de risco", _rot("risk_profile", ctx.perfil_risco)),
+        ("Estratégia", _rot("predominant_strategy", ctx.estrategia)),
+        ("Limite por ativo", _pct(ctx.limite_por_ativo, 0)),
+        ("Limite por setor", _pct(ctx.limite_por_setor, 0)),
+    ])
+    return (
+        '<div style="background:var(--app-surface-raised);border:1px solid '
+        'var(--app-border);border-radius:12px;padding:14px 18px;'
+        'margin:6px 0 14px 0">'
+        '<div style="font-size:0.72rem;font-weight:700;letter-spacing:.05em;'
+        'text-transform:uppercase;color:var(--app-info)">Premissa de toda '
+        f'análise · estratégia versão {ctx.versao_politica}</div>'
+        f'<div style="margin-top:8px">{grade}</div>'
+        '<table style="margin-top:10px;font-size:0.86rem;'
+        f'border-collapse:collapse">{linhas}</table>{fora}</div>'
+    )
+
+
+def _gatilhos(tese: m.Tese) -> str:
+    saida = ""
+    for g in tese.gatilhos:
+        if g.disparado:
+            marca, cor = "⚠", "var(--app-danger)"
+        elif g.disparado is None:
+            marca, cor = "○", "var(--app-muted)"
+        else:
+            marca, cor = "✓", "var(--app-primary)"
+        saida += (f'<div style="margin:2px 0;color:{cor}">{marca} '
+                  f'{escape(g.descricao)} — {escape(g.detalhe)}</div>')
+    return saida
+
+
+_VALIDADE = {
+    True: "Sim.",
+    False: "Há sinal de que não: veja os gatilhos abaixo.",
+    None: "Ainda sem veredito: depende das etapas de fundamentos e "
+          "relatórios.",
+}
+
+
+def cartoes_analise(a: m.AnaliseAtivo) -> list[str]:
+    """Um cartão por etapa, na ordem ATIVO → ... → AÇÃO. Puro."""
+    i, fx = a.ativo, a.faixa
+    cartoes = [_cartao(1, "Ativo", _grade([
+        ("Nome", i.nome), ("Ticker", i.ticker), ("Classe", i.classe),
+        ("Subclasse", i.subclasse or "—"), ("Setor", i.setor or "—"),
+        ("Valor investido", _moeda(i.valor_investido, i.moeda)),
+        ("Valor de mercado", _moeda(i.valor_mercado, i.moeda)),
+    ]))]
+
+    frases = "".join(f"<div><strong>{escape(f)}</strong></div>"
+                     for f in papeis.em_linguagem_natural(a.papeis))
+    origem = ""
+    if a.papeis:
+        origem = ('<div style="color:var(--app-muted);font-size:0.82rem">'
+                  'Como foi identificado: '
+                  f'{escape("; ".join(p.motivo for p in a.papeis))}.</div>')
+    cartoes.append(_cartao(2, "Papel na carteira", (
+        frases + origem
+        + '<div style="margin-top:10px;font-weight:700">Tese do ativo</div>'
+        f'<div>Por que está na carteira? '
+        f'{escape(a.tese.por_que_esta_na_carteira)}</div>'
+        f'<div>{escape(a.tese.alinhamento)}</div>'
+        f'<div>O motivo continua válido? {escape(_VALIDADE[a.tese.valida])}</div>'
+        f'<div style="margin-top:6px;font-size:0.84rem">{_gatilhos(a.tese)}</div>'
+    )))
+
+    cartoes.append(_cartao(3, "Peso atual", _grade([
+        ("Na carteira", _pct(i.peso_atual)),
+        ("Da classe na carteira", _pct(fx.peso_classe)),
+        ("Do setor na carteira", _pct(fx.peso_setor)),
+    ])))
+
+    classe = (_ROTULO_CLASSE.get(i.classe_politica, "—")
+              if i.classe_politica else "fora da política")
+    cartoes.append(_cartao(4, "Peso desejado / faixa desejada", _grade([
+        (f"Alvo da classe ({classe})", _pct(fx.alvo_classe, 0)),
+        ("Diferença da classe para o alvo", _pp(fx.desvio_classe)),
+        ("Limite por ativo", _pct(fx.teto_ativo, 0)),
+        ("Folga até o limite", _pp(fx.folga_ativo)),
+    ]) + ('<div style="color:var(--app-muted);font-size:0.82rem;'
+          'margin-top:6px">Sua estratégia define alvo por classe, não por '
+          'ativo. Nenhum alvo individual é presumido.</div>')))
+
+    for n, s in enumerate(a.secoes_externas, start=5):
+        cartoes.append(_cartao(n, s.titulo, escape(s.resumo),
+                               pendente=s.estado != m.DISPONIVEL))
+
+    cartoes.append(_cartao(12, "Impacto na carteira",
+                           _lista(a.impacto.observacoes)))
+
+    cor = _COR_ACAO[a.acao.estado]
+    cartoes.append(_cartao(13, "Ação a considerar", (
+        f'<div style="font-size:1.1rem;font-weight:800;color:{cor}">'
+        f'{escape(a.acao.rotulo)}</div>' + _lista(a.acao.justificativas)
+    ), destaque=cor))
+    return cartoes
+
+
+def fluxo_html(a: m.AnaliseAtivo) -> str:
+    """Os 13 cartões ligados por setas, num bloco só."""
+    return _SETA.join(cartoes_analise(a))
+
+
+def cartao_questoes(a: m.AnaliseAtivo) -> str:
+    """As quatro perguntas lado a lado, cada uma com a sua resposta. Puro."""
+    blocos = ""
+    for r in a.questoes.values():
+        cor = "text" if r.estado == m.DISPONIVEL else "subtle"
+        blocos += (
+            '<div style="flex:1 1 220px;background:var(--app-surface);'
+            'border:1px solid var(--app-border);border-radius:10px;'
+            'padding:10px 12px"><div style="font-size:0.78rem;font-weight:'
+            f'700;color:var(--app-{cor})">{escape(r.pergunta)}</div>'
+            '<div style="font-size:0.84rem;color:var(--app-muted);'
+            f'margin-top:4px">{escape(r.resposta)}</div></div>')
+    return ('<div style="display:flex;flex-wrap:wrap;gap:8px;'
+            f'margin:4px 0 12px 0">{blocos}</div>')
+
 
 def _render_liberada(liberacao: portao.Liberacao, carteira: dict) -> None:
     versao = liberacao.politica.version
     st.success("Configuração concluída. A análise inteligente dos seus ativos "
                f"já está disponível. Premissa: estratégia versão {versao}.")
-    posicoes = carteira.get("posicoes") or []
-    if not posicoes:
+    if not carteira.get("posicoes"):
         st.info("Nenhum ativo na carteira para analisar.")
         return
-    opcoes = {f"{p['ticker']} · {p.get('nome') or p['ticker']}": p["ticker"]
-              for p in posicoes}
-    escolha = st.selectbox("Ativo", list(opcoes), key="ia_ativo")
-    if st.button("Analisar ativo", key="ia_analisar"):
-        resultado = servico.analisar_ativo(opcoes[escolha], carteira=carteira)
-        _render_resultado(resultado)
-
-
-def _render_resultado(resultado: dict) -> None:
+    resultado = servico.analisar_carteira(carteira=carteira,
+                                          liberacao=liberacao)
     if not resultado.get("analysis_available"):
-        # O portão fechou entre o desenho da aba e o clique (outra aba
-        # concluiu uma edição, a política venceu). Ou o ativo saiu da carteira.
-        if resultado.get("reason") == servico.ATIVO_FORA_DA_CARTEIRA:
-            st.info("Este ativo não está mais na carteira.")
-        else:
-            st.info("Sua estratégia mudou de situação. Recarregue a página.")
+        st.info("Sua estratégia mudou de situação. Recarregue a página.")
         return
-    if resultado.get("analysis") is None:
-        st.info("A análise individual por LLM é a próxima etapa desta aba. "
-                "Ela vai partir obrigatoriamente da sua estratégia, lida "
-                "assim:")
-        st.code(resultado["policy_context"], language=None)
+    ctx, analises = resultado["contexto"], resultado["analises"]
+    st.markdown(cartao_premissa(ctx), unsafe_allow_html=True)
+
+    st.dataframe(
+        [{"Ativo": a.ativo.ticker,
+          "Papel principal": (a.papel_principal.rotulo
+                              if a.papel_principal else "—"),
+          "Peso": round(a.ativo.peso_atual, 1),
+          "Classe vs alvo (pp)": a.faixa.desvio_classe,
+          "Ação a considerar": a.acao.rotulo} for a in analises],
+        hide_index=True, use_container_width=True,
+        column_config={"Peso": st.column_config.NumberColumn(format="%.1f%%")})
+
+    por_ticker = {a.ativo.ticker: a for a in analises}
+    escolha = st.selectbox(
+        "Ativo", list(por_ticker), key="ia_ativo",
+        format_func=lambda t: f"{t} · {por_ticker[t].ativo.nome}")
+    analise_ = por_ticker[escolha]
+    st.markdown(cartao_questoes(analise_), unsafe_allow_html=True)
+    st.markdown(fluxo_html(analise_), unsafe_allow_html=True)
+    with st.expander("Contexto que a análise por LLM vai receber"):
+        st.caption("Política, carteira completa e a análise acima. A redação "
+                   "por LLM é a próxima etapa desta aba.")
+        st.code(servico_analise.texto_para_llm(analise_, ctx), language=None)
