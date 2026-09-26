@@ -10,7 +10,7 @@ def load_global_macro_context(engine, positions, *, as_of=None):
     as_of = as_of or datetime.now(timezone.utc)
     snapshots, changes, limitations = {}, {}, []
     if engine is None:
-        return snapshots, changes, ["Macro local indisponível."]
+        return snapshots, changes, ["Macro indisponível: sem Docker local e sem arquivo publicado recente."]
     for asset_class, frame in positions.groupby("asset_class"):
         if asset_class not in {"b3", "us", "fii"}:
             continue

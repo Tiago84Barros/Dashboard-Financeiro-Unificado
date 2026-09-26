@@ -67,7 +67,7 @@ def render_preview(mode="partial", history=True, llm=True):
         mocked("views.fiis.apply_integrated_eligibility", return_value=(
             eligible, {"eligible_count": len(eligible), "universe_count": len(rows), "policy": {}}))
         mocked("views.fiis.score_fiis_by_type", side_effect=lambda rows, **kw: rows)
-        mocked("views.fiis.get_local_macro_engine", return_value=None)
+        mocked("views.fiis.get_macro_source", return_value=None)
         mocked("views.fiis.evaluate_publication_gate", return_value=SimpleNamespace(
             median_confidence=.9, can_publish_recommendation=False, reasons=["PIT pendente"]))
         mocked("core.fii_portfolio_model.load_active_fii_portfolio_model", return_value={})

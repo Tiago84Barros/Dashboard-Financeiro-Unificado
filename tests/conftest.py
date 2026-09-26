@@ -93,6 +93,13 @@ def _sem_armazem_macro(monkeypatch):
     except Exception:  # o modulo pode nao existir neste checkout
         return
     monkeypatch.setattr(macro_db, "get_local_macro_engine", lambda: None)
+    # Sem Docker, `get_macro_source` cai no arquivo commitado em data/public.
+    # Ele vence em 30 dias: deixado solto, o mesmo teste mudaria de resultado
+    # conforme a idade do arquivo, sem nenhum diff que explicasse.
+    from core.macro_data import insumos_publicados
+
+    monkeypatch.setattr(insumos_publicados, "carregar_insumos_publicados",
+                        lambda *a, **k: None)
 
 
 # ── nenhum teste herda a leitura em voo de outro ─────────────────────────────

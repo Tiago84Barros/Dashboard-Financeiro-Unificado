@@ -38,7 +38,7 @@ from core.b3_vigencia import (
     safra_vigente_em,
 )
 from core.dossie_b3 import avaliar_para_selecao, quali_gate_disponivel
-from core.macro_data.database import get_local_macro_engine
+from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.componentes import card_metrica, cor_token
@@ -2905,7 +2905,8 @@ def render(show_header: bool = True) -> None:
             }.get,
             key="pb3_macro_mode",
             help=("Sensibilidades explícitas por setor e séries guardadas no "
-                  "PostgreSQL Docker local. Ausência não é tratada como zero."),
+                  "PostgreSQL Docker local, ou nos insumos que ele publicou. "
+                  "Ausência não é tratada como zero."),
         )
         if criterio_modo == "economico":
             if usar_ew_como_criterio:
@@ -4184,12 +4185,13 @@ def render(show_header: bool = True) -> None:
     # Assim, o contexto não escolhe empresas nem enfraquece restrições.
     macro_snapshot = None
     macro_turnover = 0.0
+    macro_fonte = None
     if proximos_uniq and _portfolio_viavel:
-        local_macro_engine = get_local_macro_engine()
-        if local_macro_engine is not None:
+        macro_fonte = get_macro_source()
+        if macro_fonte is not None:
             try:
                 macro_snapshot = load_portfolio_macro_snapshot(
-                    local_macro_engine,
+                    macro_fonte,
                     asset_class="b3",
                     assets={item["tk"]: item["setor"] for item in proximos_uniq},
                 )
@@ -4234,12 +4236,12 @@ def render(show_header: bool = True) -> None:
     if proximos_uniq:
         if macro_snapshot is None:
             st.warning(
-                "Camada macro do Docker local indisponível; os pesos permanecem "
+                "Camada macro indisponível (sem Docker local e sem arquivo publicado recente); os pesos permanecem "
                 "fundamentalistas."
             )
         else:
             st.info(
-                f"Macro local · corte {macro_snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
+                f"{descrever_fonte_macro(macro_fonte)} · corte {macro_snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
                 f"cobertura {macro_snapshot.coverage:.0%} · "
                 f"turnover macro {macro_turnover:.1%}. O ajuste não é previsão."
             )

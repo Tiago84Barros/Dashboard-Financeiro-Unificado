@@ -4563,9 +4563,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         macro_context=_macro_for_year(macro_history),
     )
     macro_snapshot_av = None
+    macro_fonte_av = None
     if df_scored is not None and not df_scored.empty:
         try:
-            from core.macro_data.database import get_local_macro_engine
+            from core.macro_data.database import get_macro_source
             from core.macro_data.portfolio_context import (
                 aggregate_impact_rows,
                 load_portfolio_macro_snapshot,
@@ -4577,10 +4578,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 for _, row in df_set.iterrows()
                 if row.get("ticker")
             }
-            local_engine = get_local_macro_engine()
-            if local_engine is not None:
+            macro_fonte_av = get_macro_source()
+            if macro_fonte_av is not None:
                 macro_snapshot_av = load_portfolio_macro_snapshot(
-                    local_engine,
+                    macro_fonte_av,
                     asset_class="b3",
                     assets={
                         str(ticker): sector_map.get(str(ticker).upper(), "")
@@ -4608,11 +4609,13 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 ).reset_index(drop=True)
         except Exception:
             macro_snapshot_av = None
+    from core.macro_data.database import descrever_fonte_macro
+
     if macro_snapshot_av is None:
-        st.caption("Macro internacional local indisponível; ranking doméstico preservado.")
+        st.caption("Macro internacional indisponível (sem Docker local e sem arquivo publicado recente); ranking doméstico preservado.")
     else:
         st.caption(
-            f"Macro Docker local: corte {macro_snapshot_av.as_of:%d/%m/%Y} · "
+            f"{descrever_fonte_macro(macro_fonte_av)}: corte {macro_snapshot_av.as_of:%d/%m/%Y} · "
             f"cobertura {macro_snapshot_av.coverage:.0%}. O ajuste internacional "
             "é separado do macro doméstico e limitado a ±10 pontos."
         )

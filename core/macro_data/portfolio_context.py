@@ -1,4 +1,4 @@
-"""Contexto macro por ativo, calculado apenas com dados do Docker local."""
+"""Contexto macro por ativo: Docker local ou os insumos que ele publicou."""
 
 from __future__ import annotations
 
@@ -93,44 +93,26 @@ def observation_applies_to_asset_class(
     )
 
 
-def load_portfolio_macro_snapshot(
-    engine,
-    *,
-    asset_class: str,
-    assets: Mapping[str, str],
-    as_of: datetime | None = None,
-    knowledge_mode: str = "strict",
-) -> PortfolioMacroSnapshot:
-    """Calcula impactos para símbolos/setores informados sem consultar a rede.
+def _ler_insumos(fonte, *, asset_class: str, sectors: list[str], as_of: datetime,
+                 knowledge_mode: str) -> tuple[list, list]:
+    """Exposições do setor e as 24 últimas observações de cada série.
 
-    Para datas históricas, a consulta é estritamente point-in-time: uma linha só
-    entra se já havia sido recuperada e, quando conhecida, divulgada até ``as_of``.
+    ``fonte`` é o engine do Docker local ou os insumos publicados
+    (:mod:`core.macro_data.insumos_publicados`), que respondem o mesmo.
     """
-    if asset_class not in {"b3", "us", "fii"}:
-        raise ValueError("classe de ativo macro inválida")
-    if knowledge_mode not in {"strict", "reconstructed"}:
-        raise ValueError("modo de conhecimento macro inválido")
-    as_of = as_of or datetime.now(timezone.utc)
-    if as_of.tzinfo is None:
-        as_of = as_of.replace(tzinfo=timezone.utc)
-    normalized_assets = {
-        str(symbol).strip().upper(): str(sector).strip()
-        for symbol, sector in assets.items()
-        if str(symbol).strip()
-    }
-    if not normalized_assets:
-        return PortfolioMacroSnapshot(
-            {}, (), as_of, 0, 0, 0, ("ativos sem setor",), knowledge_mode
-        )
+    from core.macro_data.insumos_publicados import InsumosMacroPublicados
 
-    with engine.connect() as conn:
+    if isinstance(fonte, InsumosMacroPublicados):
+        return fonte.ler(asset_class=asset_class, sectors=sectors,
+                         as_of=as_of, knowledge_mode=knowledge_mode)
+    with fonte.connect() as conn:
         exposures = conn.execute(
             text("""
                 SELECT sector, factor, sensitivity, confidence, channel
                   FROM macro_sector_exposures
                  WHERE asset_class=:asset_class AND sector = ANY(:sectors)
             """),
-            {"asset_class": asset_class, "sectors": list(set(normalized_assets.values()))},
+            {"asset_class": asset_class, "sectors": sectors},
         ).mappings().all()
         observations = conn.execute(
             text("""
@@ -176,6 +158,45 @@ def load_portfolio_macro_snapshot(
             """),
             {"as_of": as_of, "knowledge_mode": knowledge_mode},
         ).mappings().all()
+
+    return exposures, observations
+
+
+def load_portfolio_macro_snapshot(
+    engine,
+    *,
+    asset_class: str,
+    assets: Mapping[str, str],
+    as_of: datetime | None = None,
+    knowledge_mode: str = "strict",
+) -> PortfolioMacroSnapshot:
+    """Calcula impactos para símbolos/setores informados sem consultar a rede.
+
+    Para datas históricas, a consulta é estritamente point-in-time: uma linha só
+    entra se já havia sido recuperada e, quando conhecida, divulgada até ``as_of``.
+    """
+    if asset_class not in {"b3", "us", "fii"}:
+        raise ValueError("classe de ativo macro inválida")
+    if knowledge_mode not in {"strict", "reconstructed"}:
+        raise ValueError("modo de conhecimento macro inválido")
+    as_of = as_of or datetime.now(timezone.utc)
+    if as_of.tzinfo is None:
+        as_of = as_of.replace(tzinfo=timezone.utc)
+    normalized_assets = {
+        str(symbol).strip().upper(): str(sector).strip()
+        for symbol, sector in assets.items()
+        if str(symbol).strip()
+    }
+    if not normalized_assets:
+        return PortfolioMacroSnapshot(
+            {}, (), as_of, 0, 0, 0, ("ativos sem setor",), knowledge_mode
+        )
+
+    exposures, observations = _ler_insumos(
+        engine, asset_class=asset_class,
+        sectors=list(set(normalized_assets.values())),
+        as_of=as_of, knowledge_mode=knowledge_mode,
+    )
 
     exposure_by_sector_factor = {
         (str(row["sector"]), str(row["factor"])): row for row in exposures

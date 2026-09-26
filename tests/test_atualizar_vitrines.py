@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 import pytest
 
@@ -27,7 +28,20 @@ def test_carimbo_aponta_para_a_base_que_o_alvo_escreve(chave, onde):
     armazém de 11/08. O espelho também escreve no armazém (lê o Supabase).
     """
     escreve_no_armazem = {"fii_ingest", "espelho_supabase"}
-    assert onde == ("armazem" if chave in escreve_no_armazem else "supabase")
+    escreve_arquivo = {"macro_insumos"}
+    esperado = ("armazem" if chave in escreve_no_armazem
+                else "arquivo" if chave in escreve_arquivo else "supabase")
+    assert onde == esperado
+
+
+def test_carimbo_de_arquivo_le_o_generated_at(tmp_path, monkeypatch):
+    from core.macro_data import insumos_publicados as ip
+
+    quando = datetime(2026, 9, 26, 3, tzinfo=timezone.utc)
+    (tmp_path / "m.json.gz").write_bytes(ip.serializar(quando, [], []))
+    monkeypatch.setattr(av, "ROOT", tmp_path)
+    assert av._carimbo_do_arquivo("m.json.gz") == quando
+    assert av._carimbo_do_arquivo("ausente.json.gz") is None
 
 
 def test_resumo_json_pega_a_ultima_linha_e_so_o_que_interessa():

@@ -223,7 +223,19 @@ CARIMBO = {
     "us_prices": ("supabase", "SELECT max(ingested_at) FROM market_us.prices_monthly"),
     "noticias_vitrine": ("supabase", "SELECT max(gerada_em) FROM noticias_vitrine_meta"),
     "espelho_supabase": ("armazem", "SELECT max(executado_em) FROM public.espelho_supabase_meta"),
+    # Publica num arquivo do repositório, não numa tabela: o carimbo é o
+    # `generated_at` gravado dentro dele.
+    "macro_insumos": ("arquivo", "data/public/macro_insumos.json.gz"),
 }
+
+
+def _carimbo_do_arquivo(relativo: str):
+    from core.macro_data.insumos_publicados import desserializar
+
+    caminho = ROOT / relativo
+    if not caminho.exists():
+        return None
+    return desserializar(caminho.read_bytes()).gerado_em
 
 
 def semear(estado: dict, versoes: dict) -> dict:
@@ -245,11 +257,15 @@ def semear(estado: dict, versoes: dict) -> dict:
         for chave, (onde, consulta) in CARIMBO.items():
             if novo.get(chave, {}).get("ultima_publicacao"):
                 continue
-            if onde not in conexoes:
-                motor = get_engine() if onde == "supabase" else create_engine(_warehouse_url())
-                conexoes[onde] = motor.connect()
             try:
-                quando = conexoes[onde].execute(text(consulta)).scalar()
+                if onde == "arquivo":
+                    quando = _carimbo_do_arquivo(consulta)
+                else:
+                    if onde not in conexoes:
+                        motor = (get_engine() if onde == "supabase"
+                                 else create_engine(_warehouse_url()))
+                        conexoes[onde] = motor.connect()
+                    quando = conexoes[onde].execute(text(consulta)).scalar()
             except Exception as exc:  # noqa: BLE001
                 registrar(f"ATENÇÃO: sem carimbo para {chave} ({exc}); ficará como devido.")
                 continue

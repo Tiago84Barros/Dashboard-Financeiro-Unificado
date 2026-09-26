@@ -33,6 +33,7 @@ ALVO_DO_MODULO = {
     "b3": "b3_metrics",
     "noticias": "noticias_vitrine",
     "espelho": "espelho_supabase",
+    "macro": "macro_insumos",
 }
 
 # Folga entre "passou da cadência" e "não serve mais". Existe porque perder uma
