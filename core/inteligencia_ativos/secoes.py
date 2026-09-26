@@ -8,7 +8,9 @@ Cada seção tem um provedor com a mesma assinatura::
     provedor(info: InfoBasica, ctx: ContextoInvestidor) -> Secao
 
 ``fundamentos`` já é real (``provedor_fundamentos``: catálogo por classe
-em ``fundamentos.py``, leitores em ``fontes_fundamentos.py``). Os demais
+em ``fundamentos.py``, leitores em ``fontes_fundamentos.py``), assim como
+``valuation`` e ``pares`` (``valuation.py``, ``pares.py``, leitores em
+``fontes_valuation.py``). Os demais
 ainda são ``_pendente``: devolvem ``estado=PENDENTE`` e o que a seção vai
 trazer. Implementar uma etapa é trocar a entrada dela em ``PROVEDORES``
 por um provedor real; nada mais na análise ou na tela precisa mudar. Um
@@ -92,8 +94,43 @@ def provedor_fundamentos(info: InfoBasica, ctx: ContextoInvestidor, *,
                  fonte=", ".join(fund.fontes) or None)
 
 
+def _ler_valuation_e_pares(info: InfoBasica):
+    from core.inteligencia_ativos import fontes_valuation
+    return fontes_valuation.ler(info.ticker, info.nome, info.classe,
+                                info.moeda)
+
+
+def provedor_valuation(info: InfoBasica, ctx: ContextoInvestidor, *,
+                       leitor=None) -> Secao:
+    """Múltiplos da classe contra o próprio histórico e a mediana dos pares,
+    com dado e interpretação separados. ``leitor(info) -> (Valuation,
+    ComparacaoPares)`` é injetável."""
+    from core.inteligencia_ativos import valuation as v
+    val, _ = (leitor or _ler_valuation_e_pares)(info)
+    return Secao(chave="valuation", titulo=SECOES["valuation"][0],
+                 estado=DISPONIVEL if val.com_dado else SEM_DADOS,
+                 resumo=v.resumo(val), dados=val.como_dict(),
+                 fonte=", ".join(val.fontes) or None)
+
+
+def provedor_pares(info: InfoBasica, ctx: ContextoInvestidor, *,
+                   leitor=None) -> Secao:
+    """Grupo de pares escolhido por regra (classe, mercado, modelo de negócio,
+    porte, risco) e a tabela Ativo | Métrica | Valor | Mediana | Diferença.
+    ``dados`` é o insumo estruturado para o Portfolio Fit."""
+    from core.inteligencia_ativos import pares as p
+    _, comp = (leitor or _ler_valuation_e_pares)(info)
+    return Secao(chave="pares", titulo=SECOES["pares"][0],
+                 estado=DISPONIVEL if comp.com_dado else SEM_DADOS,
+                 resumo=p.resumo(comp), dados=comp.como_dict(),
+                 fonte="Universo da mesma classe e mercado nas vitrines do "
+                       "projeto" if comp.com_dado else None)
+
+
 PROVEDORES: dict[str, Provedor] = {c: _pendente(c) for c in SECOES}
 PROVEDORES["fundamentos"] = provedor_fundamentos
+PROVEDORES["valuation"] = provedor_valuation
+PROVEDORES["pares"] = provedor_pares
 
 
 def coletar(info: InfoBasica, ctx: ContextoInvestidor) -> dict[str, Secao]:

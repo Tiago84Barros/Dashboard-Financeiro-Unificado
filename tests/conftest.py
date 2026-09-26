@@ -322,3 +322,27 @@ def _fundamentos_sem_banco(monkeypatch):
         lambda info: f.montar(f.tipo_do_ativo(info.classe, info.moeda), {},
                               moeda=info.moeda))
     yield
+
+
+# Mesma ideia para valuation e pares: sem banco e sem o arquivo publicado, a
+# seção sai "sem dado" e o grupo de pares vazio. Os leitores têm testes em
+# tests/test_inteligencia_ativos_valuation.py.
+@pytest.fixture(autouse=True)
+def _valuation_sem_banco(monkeypatch):
+    try:
+        from core.inteligencia_ativos import fundamentos as f
+        from core.inteligencia_ativos import pares as p
+        from core.inteligencia_ativos import secoes
+        from core.inteligencia_ativos import valuation as v
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+
+    def _vazio(info):
+        tipo = f.tipo_do_ativo(info.classe, info.moeda)
+        grupo = p.GrupoPares(motivo="Sem universo de comparação (teste).")
+        return (v.montar(tipo, {}, moeda=info.moeda),
+                p.ComparacaoPares(info.ticker, tipo, info.moeda, grupo, (),
+                                  grupo.motivo))
+    monkeypatch.setattr(secoes, "_ler_valuation_e_pares", _vazio)
+    yield
