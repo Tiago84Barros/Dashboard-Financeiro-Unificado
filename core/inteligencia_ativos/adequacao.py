@@ -17,6 +17,7 @@ Puro. Coberto por tests/test_inteligencia_ativos_adequacao.py.
 from __future__ import annotations
 
 from core.estrategia import politica as pol
+from core.inteligencia_ativos import calculos as calc_
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos.modelos import (
     Acao,
@@ -33,7 +34,8 @@ from core.inteligencia_ativos.modelos import (
 
 # Desvio da classe em relação ao alvo que ainda conta como "na faixa". É
 # convenção do sistema, não resposta do usuário, e a justificativa diz isso.
-TOLERANCIA_PP = 5.0
+# Definida em calculos.py, que monta a faixa da classe com ela.
+TOLERANCIA_PP = calc_.TOLERANCIA_CLASSE_PP
 # Folga até o teto por ativo abaixo da qual um aporte já não é "compatível".
 FOLGA_MINIMA_PP = 1.0
 
@@ -61,19 +63,34 @@ def _r(x: float | None) -> float | None:
 # -- faixa desejada -------------------------------------------------------------
 
 def faixa(info: InfoBasica, ctx: ContextoInvestidor) -> FaixaAlvo:
+    """O que a estratégia (e a faixa do usuário, se houver) diz deste ativo.
+
+    Só lê números prontos de ``ctx.calculos``; nada é somado aqui.
+    """
+    calc = ctx.calculos
     classe = info.classe_politica
-    alvo = ctx.alocacao_alvo.get(classe) if classe else None
-    peso_classe = ctx.peso_por_classe.get(classe) if classe else None
-    desvio = (peso_classe - alvo) if alvo is not None and peso_classe is not None else None
-    teto = ctx.limite_por_ativo
+    lc = calc.linha(calc_.DIM_CLASSE, classe) if classe else None
+    la = calc.linha(calc_.DIM_ATIVO, info.ticker)
+    ls = calc.linha(calc_.DIM_SETOR, info.setor) if info.setor else None
+    pa = calc.peso(info.ticker)
+    fa = la.faixa if la else calc_.Faixa()
+    teto = fa.teto
     return FaixaAlvo(
-        alvo_classe=alvo,
-        peso_classe=_r(peso_classe),
-        desvio_classe=_r(desvio),
+        alvo_classe=ctx.alocacao_alvo.get(classe) if classe else None,
+        peso_classe=_r(lc.atual) if lc else None,
+        desvio_classe=_r(lc.diferenca_para_alvo) if lc else None,
         teto_ativo=teto,
         folga_ativo=_r(teto - info.peso_atual) if teto is not None else None,
-        teto_setor=ctx.limite_por_setor,
-        peso_setor=_r(ctx.peso_por_setor.get(info.setor)) if info.setor else None,
+        teto_setor=(ls.faixa.teto if ls else ctx.limite_por_setor),
+        peso_setor=_r(ls.atual) if ls else None,
+        piso_ativo=fa.piso,
+        alvo_ativo=fa.alvo,
+        diferenca_para_alvo_ativo=_r(la.diferenca_para_alvo) if la else None,
+        overweight_ativo=_r(la.overweight) if la else 0.0,
+        underweight_ativo=_r(la.underweight) if la else 0.0,
+        status_ativo=la.status if la else None,
+        emissor=pa.emissor if pa else None,
+        indexador=pa.indexador if pa else None,
     )
 
 
@@ -255,6 +272,12 @@ def acao(info: InfoBasica, fx: FaixaAlvo, tese_: Tese,
         candidatas.append((m.REDUZIR_CONCENTRACAO,
                            f"A classe soma {fx.peso_classe:.1f}%, acima do seu "
                            f"limite de {teto_classe:g}%."))
+
+    if fx.status_ativo == calc_.ABAIXO and fx.piso_ativo is not None:
+        candidatas.append((m.APORTE_COMPATIVEL,
+                           f"O ativo pesa {info.peso_atual:.1f}%, "
+                           f"{fx.underweight_ativo:.1f} pp abaixo do mínimo de "
+                           f"{fx.piso_ativo:g}% da faixa que você definiu."))
 
     tol = f"tolerância de {TOLERANCIA_PP:g} pp adotada pelo sistema"
     if fx.desvio_classe is not None:

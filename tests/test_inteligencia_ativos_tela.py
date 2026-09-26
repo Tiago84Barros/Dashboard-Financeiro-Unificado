@@ -162,3 +162,19 @@ def test_aba_esta_em_investimentos_e_constantes_batem_com_o_app():
 
     from views import configuracoes_estrategia as cfg
     assert cfg._VEIO_DA_ANALISE == tela.VEIO_DA_ANALISE
+
+
+def test_cartao_de_calculos_aparece_com_alertas_tabela_e_concentracao():
+    from core.inteligencia_ativos import contexto
+    app = _rodar(_liberada(), CARTEIRA_COMPLETA)
+    assert not app.exception
+    ctx = contexto.montar(_liberada().politica, CARTEIRA_COMPLETA)
+    html = next(md.value for md in app.markdown
+                if "Cálculos da carteira" in md.value)
+    assert "feitos pelo sistema, não pela IA" in html
+    for trecho in ("Alertas objetivos", "Alocação atual vs alvo",
+                   "Concentração", "Overweight", "Underweight", "HHI"):
+        assert trecho in html
+    for alerta in ctx.calculos.alertas:
+        assert escape(alerta.mensagem) in html
+    assert "#" not in tela.cartao_calculos(ctx.calculos).replace("&#", "")

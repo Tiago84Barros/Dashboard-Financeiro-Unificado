@@ -1,31 +1,27 @@
 """
 core/inteligencia_ativos/contexto.py
-Monta o ``ContextoInvestidor``: a política concluída + a carteira completa.
+Monta o ``ContextoInvestidor``: a política concluída + a carteira completa +
+os cálculos determinísticos sobre ela.
 
 É daqui que sai tudo o que uma análise de ativo sabe sobre o investidor. Só
 aceita política COMPLETED (``contexto_obrigatorio`` levanta para o resto), e
 sempre recebe a carteira inteira: o peso de um ativo, o desvio da classe e a
 concentração do setor só existem em relação ao todo.
+
+Nenhum número é somado aqui: pesos, faixas, desvios, concentração e alertas
+vêm de ``calculos.calcular`` e ficam em ``ContextoInvestidor.calculos``.
 """
 from __future__ import annotations
 
 from core.estrategia import politica as pol
 from core.estrategia import repositorio as repo
+from core.inteligencia_ativos import calculos
 from core.inteligencia_ativos.modelos import ContextoInvestidor
 
-# Rótulo de classe da carteira (core/investimentos._CLASS_LABEL) → classe da
-# política. O que não está aqui (Cripto, Outros, ETF sem país) fica fora das
-# classes que a política cobre, e a análise diz isso em vez de encaixar.
-_CLASSE_POLITICA: dict[str, str] = {
-    "Renda Fixa": "renda_fixa",
-    "Tesouro Direto": "renda_fixa",
-    "Fundo RF": "renda_fixa",
-    "FII": "fiis",
-    "Ações BR": "acoes_br",
-    "ETF Brasil": "acoes_br",
-    "ETF Internacional": "exterior",
-    "BDR": "exterior",
-}
+# O mapa rótulo da carteira → classe da política mora em calculos.py, junto
+# com os números; aqui só é reexportado para quem já o importava daqui.
+_CLASSE_POLITICA = calculos.CLASSE_POLITICA
+classe_politica = calculos.classe_politica
 
 
 class PoliticaNaoConcluida(RuntimeError):
@@ -46,44 +42,18 @@ def contexto_obrigatorio(registro: repo.Registro | None) -> str:
                                  status=registro.status)
 
 
-def classe_politica(posicao: dict) -> str | None:
-    """Classe da política para uma posição da carteira, ou None.
+def montar(registro: repo.Registro | None, carteira: dict, *,
+           faixas: dict | None = None) -> ContextoInvestidor:
+    """Política concluída + carteira completa + cálculos determinísticos.
 
-    A moeda vence o rótulo: a carteira rotula ação americana como "Ações BR"
-    quando o tipo bruto é ``stock`` fora do Brasil, e o que decide exposição
-    internacional é a moeda em que o ativo é cotado.
+    ``faixas`` é opcional (formato em ``calculos.alocacao``): faixas
+    aceitáveis que o usuário der por ativo, setor, subclasse ou classe.
     """
-    moeda = str(posicao.get("moeda") or "BRL").upper()
-    if moeda not in ("", "BRL"):
-        return "exterior"
-    return _CLASSE_POLITICA.get(str(posicao.get("classe") or ""))
-
-
-def _pct(posicao: dict) -> float:
-    try:
-        return float(posicao.get("pct_carteira") or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def montar(registro: repo.Registro | None, carteira: dict) -> ContextoInvestidor:
     texto = contexto_obrigatorio(registro)   # levanta se não concluída
     v = pol.valores(registro.politica)
     posicoes = tuple(dict(p) for p in carteira.get("posicoes") or [])
-
-    peso_classe = {c: 0.0 for c, _ in pol.CLASSES}
-    peso_setor: dict[str, float] = {}
-    fora = 0.0
-    for p in posicoes:
-        pct = _pct(p)
-        classe = classe_politica(p)
-        if classe is None:
-            fora += pct
-        else:
-            peso_classe[classe] += pct
-        setor = p.get("setor")
-        if setor:
-            peso_setor[setor] = peso_setor.get(setor, 0.0) + pct
+    calc = calculos.calcular(posicoes, v, faixas)
+    fora = sum(p.peso for p in calc.pesos if p.classe_politica is None)
 
     restricoes = tuple(str(v[c]) for c in ("user_constraints",
                                            "liquidity_constraints") if v.get(c))
@@ -101,20 +71,24 @@ def montar(registro: repo.Registro | None, carteira: dict) -> ContextoInvestidor
         limite_por_setor=v.get("sector_limit_pct"),
         restricoes=restricoes,
         texto_politica=texto,
-        total_mercado=float(carteira.get("total_mercado") or 0.0),
+        total_mercado=calc.total,
         posicoes=posicoes,
-        peso_por_classe={k: round(x, 2) for k, x in peso_classe.items()},
-        peso_por_setor={k: round(x, 2) for k, x in peso_setor.items()},
+        peso_por_classe={k: round(x, 2) for k, x in
+                         calc.peso_por(calculos.DIM_CLASSE).items()},
+        peso_por_setor={k: round(x, 2) for k, x in
+                        calc.peso_por(calculos.DIM_SETOR).items()},
         peso_fora_da_politica=round(fora, 2),
+        calculos=calc,
     )
 
 
 def texto_carteira(ctx: ContextoInvestidor) -> str:
     """A carteira completa como a LLM vai lê-la, ao lado da política."""
+    calc = ctx.calculos
     linhas = ["=== CARTEIRA COMPLETA DO USUÁRIO ==="]
     if ctx.total_mercado:
         valor = f"{ctx.total_mercado:,.2f}".replace(",", "X").replace(".", ",")
-        linhas.append(f"Valor de mercado total: R$ {valor.replace('X', '.')}")
+        linhas.append(f"Valor total: R$ {valor.replace('X', '.')}")
     linhas.append("\n[Peso por classe da política: atual vs alvo]")
     for classe, rotulo in pol.CLASSES:
         alvo = ctx.alocacao_alvo.get(classe)
@@ -125,8 +99,11 @@ def texto_carteira(ctx: ContextoInvestidor) -> str:
         linhas.append(f"- Fora das classes da política: "
                       f"{ctx.peso_fora_da_politica:.1f}%")
     linhas.append("\n[Posições]")
-    for p in sorted(ctx.posicoes, key=_pct, reverse=True):
-        linhas.append(f"- {p.get('ticker')} · {p.get('nome') or ''} · "
-                      f"{p.get('classe') or '—'} · {p.get('setor') or '—'} · "
-                      f"{_pct(p):.1f}%")
+    for p in calc.pesos:
+        extra = f" · emissor {p.emissor}"
+        if p.indexador is not None:
+            extra += f" · indexador {p.indexador}"
+        linhas.append(f"- {p.ticker} · {p.nome} · {p.classe} · "
+                      f"{p.setor or '—'} · {calculos.fmt_pct(p.peso, 2)}{extra}")
+    linhas += ["", calculos.texto(calc)]
     return "\n".join(linhas)
