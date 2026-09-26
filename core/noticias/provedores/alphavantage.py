@@ -38,8 +38,18 @@ Duas armadilhas desta API, ambas tratadas aqui:
    erro nenhum -- ele respondia ``200`` com ``feed`` vazio, que é a resposta
    correta para a pergunta errada. Ausência que não parece falha é o modo de
    falha mais caro deste projeto.
+
+4. **``ticker_sentiment`` lista quem é citado, não quem é o sujeito.** Uma
+   matéria sobre a Palo Alto traz MSFT com ``relevance_score`` 0,60; outra
+   sobre a Intel traz BLK, TSLA, AMD e MSFT, todos entre 0,57 e 0,65. Aceitar a
+   lista inteira dava à MSFT, em 26/09/2026, 50 notícias em 7 dias, das quais
+   32 não citavam a Microsoft -- e a nota conjuntural +33 saía de notícia de
+   outra empresa. O corte está em :data:`RELEVANCIA_MINIMA_TICKER`, medido;
+   ver :meth:`AlphaVantage._por_ticker`.
 """
 from __future__ import annotations
+
+import re
 
 from core.noticias.provedores.base import (
     Consulta,
@@ -59,6 +69,55 @@ URL = "https://www.alphavantage.co/query"
 # Sinais de estouro de cota no corpo de uma resposta 200.
 _MARCAS_COTA = ("call frequency", "rate limit", "premium", "requests per day",
                 "higher api call")
+
+#: Relevância mínima para um ticker de ``ticker_sentiment`` ser atribuído à
+#: notícia, quando ela cita mais de um. Medido em 26/09/2026 sobre 6.320 pares
+#: (item, ticker) de 4.471 itens crus da API (18 a 26/09), contra um critério
+#: independente -- o título ou o resumo citam o nome, a marca ou o símbolo:
+#:
+#: ============  ==========  ============
+#: faixa          citam       não citam
+#: ============  ==========  ============
+#: < 0,40 (*)       391          336
+#: 0,40 a 0,70      144        1.289
+#: 0,70 a 0,95      331          184
+#: >= 0,95        3.111          534
+#: ============  ==========  ============
+#:
+#: A faixa de 0,55 a 0,65 é onde mora o ticker tangencial: MSFT em matéria da
+#: Palo Alto, WFC em matéria do Bank of Montreal, e os que citam são o banco
+#: que aparece como acionista ou o índice. A precisão dela é de 10%. O vale da
+#: distribuição fica entre 0,65 e 0,70 (30 pares); 0,65 e 0,70 dão o mesmo
+#: resultado, então o corte não depende de casa decimal.
+#:
+#: (*) A faixa baixa é quase toda de item com **um único** ticker -- aviso de
+#: Form 4 da Fortinet, rating da UBS para a Autodesk, com relevância 0,30 --, e
+#: ali o ticker é o sujeito. Por isso o ticker único passa sem corte: a API não
+#: teria outro candidato, e o score baixo mede a extensão do texto, não o
+#: sujeito. Com as duas regras, ficam 95,8% dos pares que citam a empresa e
+#: saem 58% dos que não citam.
+RELEVANCIA_MINIMA_TICKER = 0.70
+
+#: A API resume o conteúdo da página, e quando a página veio vazia ou com erro
+#: o resumo diz isso: "This article from Yahoo Finance is largely empty,
+#: displaying an error message". O item não tem fato nenhum e, antes do corte
+#: de relevância, levava NVDA, TSLA, AAPL e MSFT. Três em 7.083 no acervo em
+#: 26/09/2026 -- raro, mas é ruído puro. As expressões são estreitas de
+#: propósito: "placeholder" sozinho casa com aviso de Form 4, que é notícia.
+_PAGINA_VAZIA = re.compile(
+    r"\berror (?:page|message)\b"
+    r"|\b(?:largely|mostly|essentially|entirely) (?:empty|blank)\b"
+    r"|\bplaceholder or (?:an? )?(?:stub|error)\b"
+    r"|\b(?:is|appears to be|seems to be) (?:an? )?(?:stub|blank page|empty page)\b"
+    r"|\bcontent (?:is|was) (?:missing|unavailable|not available)\b"
+    r"|\bno (?:actual|substantive) (?:article )?content\b",
+    re.IGNORECASE,
+)
+
+
+def pagina_vazia(resumo: str | None) -> bool:
+    """O resumo da API declara que a página não tinha conteúdo."""
+    return bool(resumo and _PAGINA_VAZIA.search(resumo))
 
 
 class AlphaVantage(ProvedorBase):
@@ -150,14 +209,18 @@ class AlphaVantage(ProvedorBase):
                 # notícia. Descartar aqui é melhor do que propagar um registro
                 # que nenhuma camada adiante consegue avaliar.
                 continue
+            resumo = _texto(cru.get("summary"))
+            if pagina_vazia(resumo):
+                continue
 
-            tickers, sentimentos = self._por_ticker(cru.get("ticker_sentiment"))
+            tickers, sentimentos, descartados = self._por_ticker(
+                cru.get("ticker_sentiment"))
             topicos, aderencia = self._topicos(cru.get("topics"))
 
             itens.append(ItemBruto(
                 titulo=titulo,
                 url=url,
-                resumo=_texto(cru.get("summary")),
+                resumo=resumo,
                 veiculo=_texto(cru.get("source")),
                 autor=", ".join(_tupla(cru.get("authors"))) or None,
                 publicado_em=_texto(cru.get("time_published")),
@@ -168,22 +231,34 @@ class AlphaVantage(ProvedorBase):
                 sentimento_api=_decimal(cru.get("overall_sentiment_score")),
                 rotulo_sentimento=_texto(cru.get("overall_sentiment_label")),
                 relevancia_api=aderencia,
-                bruto={"ticker_sentiment": sentimentos},
+                # Os descartados ficam registrados: sumir com eles sem rastro
+                # impediria medir o corte de novo quando a API mudar.
+                bruto={"ticker_sentiment": sentimentos,
+                       "tickers_tangenciais": descartados},
             ))
         return itens
 
     @staticmethod
-    def _por_ticker(valor: object) -> tuple[tuple[str, ...], dict[str, float]]:
-        """Tickers citados e o sentimento de cada um.
+    def _por_ticker(valor: object) -> tuple[
+            tuple[str, ...], dict[str, float], dict[str, float | None]]:
+        """Tickers que são sujeito da notícia, o sentimento de cada um e os
+        descartados como tangenciais (com a relevância que tinham).
 
         O sentimento por ticker é mais informativo que o geral: uma matéria
         sobre a compra de A por B costuma ser positiva para um lado e negativa
         para o outro, e o escore geral achata isso em algo próximo de zero.
+
+        Ticker único passa sempre; com mais de um, só os de relevância
+        >= :data:`RELEVANCIA_MINIMA_TICKER`. Relevância ausente não passa no
+        corte: ausência não é evidência de que o ticker seja o sujeito, e
+        aceitá-la reabriria o defeito no dia em que a API parar de mandar o
+        campo.
         """
         if not isinstance(valor, list):
-            return (), {}
-        tickers: list[str] = []
+            return (), {}, {}
+        ordem: list[str] = []
         escores: dict[str, float] = {}
+        relevancias: dict[str, float | None] = {}
         for item in valor:
             if not isinstance(item, dict):
                 continue
@@ -191,12 +266,28 @@ class AlphaVantage(ProvedorBase):
             if not simbolo:
                 continue
             simbolo = simbolo.upper()
-            if simbolo not in tickers:
-                tickers.append(simbolo)
+            relevancia = _decimal(item.get("relevance_score"))
+            if simbolo not in ordem:
+                ordem.append(simbolo)
+                relevancias[simbolo] = relevancia
+            elif relevancia is not None:
+                anterior = relevancias[simbolo]
+                relevancias[simbolo] = (relevancia if anterior is None
+                                        else max(anterior, relevancia))
             escore = _decimal(item.get("ticker_sentiment_score"))
             if escore is not None:
                 escores[simbolo] = escore
-        return tuple(tickers), escores
+
+        # ``CRYPTO:BTC`` e ``FOREX:USD`` não são empresa e não disputam o posto
+        # de sujeito: a medição contou só os símbolos de ativo.
+        if len([s for s in ordem if ":" not in s]) <= 1:
+            return tuple(ordem), escores, {}
+        tickers = tuple(
+            s for s in ordem
+            if (relevancias[s] or 0.0) >= RELEVANCIA_MINIMA_TICKER)
+        descartados = {s: relevancias[s] for s in ordem if s not in tickers}
+        return (tickers, {s: e for s, e in escores.items() if s in tickers},
+                descartados)
 
     @staticmethod
     def _topicos(valor: object) -> tuple[tuple[str, ...], float | None]:

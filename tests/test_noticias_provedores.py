@@ -117,6 +117,83 @@ def test_alphavantage_extrai_os_campos_que_a_api_entrega():
     assert item.bruto["ticker_sentiment"] == {"ALFA": 0.44}
 
 
+def _item_av(titulo, resumo, tickers):
+    return {
+        "title": titulo, "summary": resumo,
+        "url": f"https://exemplo.com/{abs(hash(titulo))}",
+        "time_published": "20260925T1030", "source": "Exemplo",
+        "ticker_sentiment": [
+            {"ticker": t, "relevance_score": r, "ticker_sentiment_score": "0.1"}
+            for t, r in tickers],
+    }
+
+
+def _extrair_av(*feed):
+    transporte = TransporteFalso([_ok({"feed": list(feed)})])
+    return _av(transporte).buscar(Consulta()).itens
+
+
+def test_ticker_tangencial_nao_e_atribuido_a_noticia_de_outra_empresa():
+    """Caso real de 26/09/2026: a MSFT vinha em matéria da Palo Alto com 0,60
+    e em matéria da Intel com 0,57, e somava nota conjuntural de outra empresa.
+    """
+    palo, intel = _extrair_av(
+        _item_av("Palo Alto Networks Inc Stock (PANW) Moved Down by 3.95%",
+                 "Palo Alto Networks (PANW) stock dropped 3.95%.",
+                 [("PANW", "1.000000"), ("MSFT", "0.604511")]),
+        _item_av("Is Now the Time to Bet on Intel's (INTC) Server CPU Comeback",
+                 "Intel (INTC) is advancing its 18A process.",
+                 [("INTC", "1.000000"), ("BLK", "0.640667"),
+                  ("TSLA", "0.645720"), ("AMD", "0.584436"),
+                  ("MSFT", "0.573259")]),
+    )
+    assert palo.tickers == ("PANW",)
+    assert intel.tickers == ("INTC",)
+    # O sentimento acompanha a atribuição, e o descarte fica registrado.
+    assert set(intel.bruto["ticker_sentiment"]) == {"INTC"}
+    assert intel.bruto["tickers_tangenciais"]["MSFT"] == pytest.approx(0.573259)
+
+
+def test_co_sujeito_acima_do_corte_continua_atribuido():
+    (item,) = _extrair_av(_item_av(
+        "Major retailers find new spots in the Austin suburbs",
+        "Retailers like Walmart and Target are expanding.",
+        [("WMT", "0.91"), ("TGT", "0.73")]))
+    assert item.tickers == ("WMT", "TGT")
+
+
+def test_ticker_unico_passa_mesmo_com_relevancia_baixa():
+    """Form 4 e nota de rating vêm com 0,30 e um ticker só -- que é o sujeito."""
+    (item,) = _extrair_av(
+        _item_av("Form 4 Fortinet Inc For: 25 September",
+                 "This article reports on a Form 4 filing for Fortinet Inc.",
+                 [("FTNT", "0.30476"), ("CRYPTO:BTC", "0.2")]))
+    assert item.tickers == ("FTNT", "CRYPTO:BTC")
+
+
+def test_relevancia_ausente_nao_passa_no_corte_com_varios_tickers():
+    (item,) = _extrair_av(_item_av("Alfa e Beta", "Texto.",
+                                   [("ALFA", "0.95"), ("BETA", None)]))
+    assert item.tickers == ("ALFA",)
+
+
+def test_pagina_vazia_ou_de_erro_e_descartada():
+    """O resumo da API diz que a página veio vazia: não há fato a atribuir."""
+    vazia = _item_av(
+        "Core & Main, Inc. (CNM) Stock forecasts",
+        "This article from Yahoo Finance is largely empty, displaying an error "
+        "message where content should be.",
+        [("CNM", "1.0"), ("MSFT", "0.606544")])
+    form4 = _item_av(
+        "Form 4 Boeing Co For: 26 September By Investing.com",
+        "It is a brief news item, primarily serving as a placeholder for the "
+        "filing notice.",
+        [("BA", "0.31")])
+    itens = _extrair_av(vazia, form4)
+    # "placeholder" sozinho é aviso legítimo de Form 4 e fica.
+    assert [i.tickers for i in itens] == [("BA",)]
+
+
 def test_marketaux_cumpre_o_mesmo_contrato_com_outro_formato():
     """O contrato só se prova com o segundo implementador."""
     transporte = TransporteFalso([_ok(CARGA_MX)])
