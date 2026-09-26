@@ -22,7 +22,8 @@ Puro. Coberto por tests/test_inteligencia_ativos_adequacao.py.
 from __future__ import annotations
 
 from core.inteligencia_ativos import (adequacao, calculos, fundamentos,
-                                      pares, papeis, secoes, valuation)
+                                      informacoes, pares, papeis, secoes,
+                                      valuation)
 from core.inteligencia_ativos.contexto import classe_politica, texto_carteira
 from core.inteligencia_ativos.modelos import (
     AnaliseAtivo,
@@ -155,6 +156,18 @@ def texto_para_llm(analise: AnaliseAtivo, ctx: ContextoInvestidor) -> str:
         linhas.append("")
         linhas.append(pares.texto(
             pares.ComparacaoPares.de_dict(analise.pares.dados), a.ticker))
+    if analise.noticias.dados:
+        linhas.append("")
+        linhas.append(informacoes.texto_noticias(
+            informacoes.Noticias.de_dict(analise.noticias.dados), a.ticker))
+    if analise.relatorios.dados:
+        linhas.append("")
+        linhas.append(informacoes.texto_relatorios(
+            informacoes.Relatorios.de_dict(analise.relatorios.dados), a.ticker))
+    if analise.eventos.dados:
+        linhas.append("")
+        linhas.append(informacoes.texto_eventos(
+            informacoes.Eventos.de_dict(analise.eventos.dados), a.ticker))
     linhas.append(f"\n[Ação a considerar (regras)] {analise.acao.rotulo}")
     linhas += [f"- {j}" for j in analise.acao.justificativas]
     return "\n".join(linhas)

@@ -231,6 +231,7 @@ CARIMBO = {
     # `generated_at` gravado dentro dele.
     "macro_insumos": ("arquivo", "data/public/macro_insumos.json.gz"),
     "valuation_historico": ("arquivo", "data/public/valuation_historico.json.gz"),
+    "informacoes_recentes": ("arquivo", "data/public/informacoes_recentes.json.gz"),
 }
 
 

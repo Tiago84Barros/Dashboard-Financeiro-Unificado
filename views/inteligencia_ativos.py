@@ -24,6 +24,7 @@ from core import inteligencia_ativos as servico
 from core.inteligencia_ativos import analise as servico_analise
 from core.inteligencia_ativos import calculos as calc
 from core.inteligencia_ativos import fundamentos as fund
+from core.inteligencia_ativos import informacoes as inf
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import papeis
 from core.inteligencia_ativos import pares as prs
@@ -492,6 +493,119 @@ def corpo_pares(c: prs.ComparacaoPares) -> str:
         + _nota(prs.RODAPE))
 
 
+_COR_NIVEL = {inf.HIGH: "var(--app-danger)", inf.MEDIUM: "var(--app-warning)",
+              inf.LOW: "var(--app-subtle)"}
+
+
+def _nivel(nivel: str) -> str:
+    return (f'<span style="font-weight:700;color:{_COR_NIVEL.get(nivel, "var(--app-subtle)")}">'
+            f'{escape(inf.ROTULO_NIVEL.get(nivel, nivel))}</span>')
+
+
+def _link(texto: str, url: str | None) -> str:
+    """Link só para http(s); qualquer outra coisa vira texto."""
+    if url and url.lower().startswith(("http://", "https://")):
+        return (f'<a href="{escape(url, quote=True)}" target="_blank" '
+                f'rel="noopener noreferrer" style="color:var(--app-text)">'
+                f'{escape(texto)}</a>')
+    return escape(texto)
+
+
+def _data(iso: str | None) -> str:
+    return inf._data_br(iso)
+
+
+def corpo_noticias(n: inf.Noticias) -> str:
+    """Tabela Data | Impacto | Dimensões | Manchete | Fonte, o que o filtro
+    descartou e o aviso de que o nível vem da manchete. Puro."""
+    if not n.itens:
+        return escape(n.motivo or inf.NAO_DISPONIVEL)
+    linhas = ""
+    for i in n.itens:
+        dims = ", ".join(inf.ROTULO_DIMENSAO.get(d, d) for d in i.affected_dimension)
+        resumo = (f'<div style="font-size:0.78rem;color:var(--app-subtle)">'
+                  f'{escape(i.summary)}</div>' if i.summary else "")
+        linhas += (
+            f'<tr><td {_TD}color:var(--app-muted);white-space:nowrap">'
+            f'{_data(i.date)}</td>'
+            f'<td {_TD}">{_nivel(i.impact_level)}</td>'
+            f'<td {_TD}color:var(--app-muted);font-size:0.8rem">{escape(dims)}'
+            f'<div style="color:var(--app-subtle)">{escape(i.motivo)}</div></td>'
+            f'<td {_TD}color:var(--app-text)">{_link(i.headline, i.url)}{resumo}</td>'
+            f'<td {_TD}color:var(--app-subtle);font-size:0.78rem">'
+            f'{escape(i.source or "—")}</td></tr>')
+    descartes = sum(n.descartadas.values())
+    lista = ('<ul style="margin:2px 0 0 18px;padding:0;font-size:0.8rem;'
+             'color:var(--app-muted)">')
+    return (
+        f'<div>{escape(inf.resumo_noticias(n))}</div>'
+        f'{_SUB_T}Dado · manchetes da fonte</div>'
+        + _tabela(["Data", "Impacto", "Dimensões", "Manchete", "Fonte"], linhas)
+        + (f'{_SUB_T}Filtro de relevância · {descartes} descartada(s)</div>'
+           f'{lista}' + "".join(f"<li>{escape(k)}: {v}</li>"
+                               for k, v in n.descartadas.items()) + "</ul>"
+           if descartes else "")
+        + _nota("Impacto e dimensões saem de regras sobre a manchete, não da "
+                "leitura da matéria. Acervo até "
+                f"{_data(n.base_ate)}; janela de {n.janela_dias} dias. "
+                f"Fonte: {n.fonte or '—'}."))
+
+
+def corpo_relatorios(r: inf.Relatorios) -> str:
+    """Documentos oficiais (metadados) e, para cada uma das sete perguntas,
+    os documentos cujo título aponta para ela — ou "Dado não disponível.".
+    Puro."""
+    if not r.documentos:
+        return escape(r.motivo or inf.NAO_DISPONIVEL)
+    linhas = "".join(
+        f'<tr><td {_TD}color:var(--app-muted);white-space:nowrap">'
+        f'{_data(d.reference_date)}</td>'
+        f'<td {_TD}color:var(--app-muted)">{escape(d.rotulo)}</td>'
+        f'<td {_TD}color:var(--app-text)">{_link(d.titulo, d.source_url)}</td>'
+        f'<td {_TD}color:var(--app-subtle);font-size:0.78rem">'
+        f'{escape(d.source or "—")}</td></tr>' for d in r.documentos)
+    ind = r.indicios()
+    perguntas = "".join(
+        f'<tr><td {_TD}color:var(--app-muted)">{escape(rot)}</td>'
+        f'<td {_TD}color:{"var(--app-text)" if ind[k] else "var(--app-subtle)"}">'
+        + (escape("; ".join(f"{d.rotulo} de {_data(d.reference_date)}"
+                            for d in ind[k])) if ind[k] else escape(inf.NAO_DISPONIVEL))
+        + "</td></tr>" for k, rot in inf.PERGUNTAS)
+    return (
+        f'<div>{escape(inf.resumo_relatorios(r))}</div>'
+        f'{_SUB_T}Dado · documentos publicados</div>'
+        + _tabela(["Data", "Tipo", "Documento", "Fonte"], linhas)
+        + f'{_SUB_T}Onde procurar · indício pelo título, não conclusão</div>'
+        + _tabela(["Pergunta", "Documentos"], perguntas)
+        + _nota("O conteúdo dos documentos não é lido aqui; melhora, piora e "
+                "oportunidade exigem a leitura e ficam como dado não "
+                f"disponível. Base até {_data(r.base_ate)}. "
+                f"Fonte: {r.fonte or '—'}."))
+
+
+def corpo_eventos(e: inf.Eventos) -> str:
+    """Linha do tempo Evento | Data | Relevância | Possível impacto, com a
+    natureza da data e a fonte; e os tipos sem fonte de data. Puro."""
+    sem = ", ".join(inf.TIPOS_EVENTO[t][0] for t in e.sem_dado)
+    rodape = _nota(f"Sem fonte de data para: {sem}.") if sem else ""
+    if not e.itens:
+        return escape(e.motivo or inf.NAO_DISPONIVEL) + rodape
+    linhas = "".join(
+        f'<tr><td {_TD}color:var(--app-text);font-weight:600">{escape(x.rotulo)}'
+        f'<div style="font-weight:400;font-size:0.78rem;color:var(--app-muted)">'
+        f'{escape(x.descricao)}</div></td>'
+        f'<td {_TD}color:var(--app-muted);white-space:nowrap">{_data(x.data)}'
+        f'<div style="font-size:0.74rem;color:var(--app-subtle)">'
+        f'{escape(x.natureza)}</div></td>'
+        f'<td {_TD}">{_nivel(x.relevancia)}</td>'
+        f'<td {_TD}color:var(--app-muted);font-size:0.8rem">{escape(x.impacto)}'
+        f'<div style="color:var(--app-subtle)">{_link(x.source or "—", x.source_url)}'
+        f'</div></td></tr>' for x in e.itens)
+    return (f'<div>{escape(inf.resumo_eventos(e))}</div>'
+            + _tabela(["Evento", "Data", "Relevância", "Possível impacto"], linhas)
+            + rodape)
+
+
 def cartoes_analise(a: m.AnaliseAtivo) -> list[str]:
     """Um cartão por etapa, na ordem ATIVO → ... → AÇÃO. Puro."""
     i, fx = a.ativo, a.faixa
@@ -558,6 +672,12 @@ def cartoes_analise(a: m.AnaliseAtivo) -> list[str]:
             corpo = corpo_valuation(val.Valuation.de_dict(s.dados))
         elif s.chave == "pares" and s.dados:
             corpo = corpo_pares(prs.ComparacaoPares.de_dict(s.dados))
+        elif s.chave == "noticias" and s.dados:
+            corpo = corpo_noticias(inf.Noticias.de_dict(s.dados))
+        elif s.chave == "relatorios" and s.dados:
+            corpo = corpo_relatorios(inf.Relatorios.de_dict(s.dados))
+        elif s.chave == "eventos" and s.dados:
+            corpo = corpo_eventos(inf.Eventos.de_dict(s.dados))
         else:
             corpo = escape(s.resumo)
         cartoes.append(_cartao(n, s.titulo, corpo,
