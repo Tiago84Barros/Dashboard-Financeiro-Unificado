@@ -21,7 +21,6 @@ from html import escape
 import streamlit as st
 
 from core import inteligencia_ativos as servico
-from core.inteligencia_ativos import analise as servico_analise
 from core.inteligencia_ativos import calculos as calc
 from core.inteligencia_ativos import fundamentos as fund
 from core.inteligencia_ativos import informacoes as inf
@@ -32,6 +31,7 @@ from core.inteligencia_ativos import valuation as val
 from core.estrategia import politica as pol
 from core.estrategia import portao
 from core.utils import fmt_moeda
+from views import inteligencia_ativos_fit as tela_fit
 
 ROTULO = "Inteligência dos Ativos"
 # Mesmos valores de app.py (menu) e views/configuracoes.py (flag lida lá).
@@ -748,7 +748,5 @@ def _render_liberada(liberacao: portao.Liberacao, carteira: dict) -> None:
     analise_ = por_ticker[escolha]
     st.markdown(cartao_questoes(analise_), unsafe_allow_html=True)
     st.markdown(fluxo_html(analise_), unsafe_allow_html=True)
-    with st.expander("Contexto que a análise por LLM vai receber"):
-        st.caption("Política, carteira completa e a análise acima. A redação "
-                   "por LLM é a próxima etapa desta aba.")
-        st.code(servico_analise.texto_para_llm(analise_, ctx), language=None)
+    st.markdown("#### Portfolio Fit")
+    tela_fit.render(analise_, ctx)
