@@ -29,9 +29,9 @@ CONFIGURACAO_NECESSARIA = "STRATEGY_CONFIGURATION_REQUIRED"
 REVISAO_NECESSARIA = "STRATEGY_REVIEW_REQUIRED"
 ESTRATEGIA_INDISPONIVEL = "STRATEGY_UNAVAILABLE"
 
-PROXIMO_PASSO = {"section": "settings", "tab": "general",
+# A estratégia se configura na própria aba que ela libera (desde 27/09/2026).
+PROXIMO_PASSO = {"section": "investments", "tab": "asset_intelligence",
                  "feature": "investment_strategy"}
-CAMINHO = ("Configurações", "Geral", "Estratégia de Investimentos")
 
 
 @dataclass(frozen=True)

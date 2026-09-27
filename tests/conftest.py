@@ -390,3 +390,31 @@ def _historico_em_memoria(monkeypatch):
     monkeypatch.setattr(hrepo, "carregar", _carregar)
     monkeypatch.setattr(hrepo, "registrar", _registrar)
     yield guardado
+
+
+# Estratégia de Investimentos em memória. A aba Inteligência dos Ativos
+# mostra o bloco da estratégia (abaixo do onboarding, ou em "Minha estratégia"
+# quando liberada), e o bloco lê o repositório. Não é autouse porque os testes
+# do repositório exercitam o `carregar` real com engine falso: quem renderiza a
+# aba pede este fixture (pytestmark nos módulos da tela e do painel).
+@pytest.fixture
+def estrategia_falsa(monkeypatch):
+    from core.estrategia import politica as pol
+    from core.estrategia import repositorio as repo
+
+    class _Falso:
+        estado = repo.Estado()
+        iniciados = 0
+
+    falso = _Falso()
+
+    def _iniciar(**_):
+        falso.iniciados += 1
+        falso.estado = repo.Estado(rascunho=repo.Registro(
+            id="r1", version=1, status_gravado="IN_PROGRESS",
+            schema_version=pol.SCHEMA_VERSION, politica={}, entrevista=[], completion_pct=0,
+            completed_at=None, created_at=None, updated_at=None))
+        return falso.estado.rascunho
+    monkeypatch.setattr(repo, "carregar", lambda **_: falso.estado)
+    monkeypatch.setattr(repo, "iniciar", _iniciar)
+    yield falso

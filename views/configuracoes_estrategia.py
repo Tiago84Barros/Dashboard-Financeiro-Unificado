@@ -1,11 +1,14 @@
 """
 views/configuracoes_estrategia.py
-Configurações → Geral → 🎯 Estratégia de Investimentos.
+🎯 Estratégia de Investimentos, mostrada em Investimentos → Inteligência dos
+Ativos (abaixo do onboarding quando a aba está bloqueada; em "Minha
+estratégia", no fim da página, quando liberada). Até 27/09/2026 morava em
+Configurações → Geral.
 
 O corpo do bloco: estado, progresso, entrevista guiada, formulário de revisão
 e as ações do ciclo de vida (iniciar, continuar, concluir, editar, descartar).
-O cabeçalho e a moldura ficam em ``views/configuracoes_geral.py``, como os
-demais blocos da aba.
+A moldura fica em ``views/inteligencia_ativos.py``. Renderize uma vez só por
+página: as chaves dos widgets são fixas.
 
 Regras e SQL moram em ``core/estrategia``; a entrevista, em
 ``core/llm_estrategia``. Aqui só se lê, mostra e encaminha.
@@ -23,9 +26,6 @@ from core.utils import escapar_cifrao
 _MODO = "cfg_estrategia_modo"
 _FLASH = "cfg_estrategia_flash"
 _CONFIRMA_DESCARTE = "cfg_estrategia_confirma_descarte"
-# Posto pelo botão da aba Investimentos → Inteligência dos Ativos
-# (``views.inteligencia_ativos.VEIO_DA_ANALISE``).
-_VEIO_DA_ANALISE = "cfg_estrategia_veio_da_analise"
 _MODO_CHAT = "💬 Entrevista"
 _MODO_FORM = "📝 Revisar respostas"
 
@@ -40,10 +40,6 @@ _NAO_INFORMADO = "— não informado —"
 
 def render() -> None:
     _mostrar_flash()
-    if st.session_state.pop(_VEIO_DA_ANALISE, False):
-        st.info("Você veio da **Inteligência dos Ativos**. Conclua a "
-                "estratégia para liberar a análise; o que já foi respondido "
-                "continua salvo.")
     try:
         estado = repo.carregar()
     except Exception as exc:  # noqa: BLE001
@@ -67,7 +63,7 @@ def render() -> None:
                    "concluir.")
         if st.button("▶️ Iniciar configuração", key="cfg_estrategia_iniciar",
                      type="primary"):
-            _iniciar()
+            iniciar()
 
     atual = estado.rascunho or estado.vigente
     if atual is not None:
@@ -132,7 +128,7 @@ def _render_vigente(vigente: repo.Registro) -> None:
                  width="stretch")
     if st.button("✏️ Editar estratégia", key="cfg_estrategia_editar",
                  type="primary"):
-        _iniciar()
+        iniciar()
 
 
 def tabela_respostas(politica: dict) -> pd.DataFrame:
@@ -187,8 +183,7 @@ def _render_rascunho(estado: repo.Estado) -> None:
                 _flash("success", f"Estratégia concluída (versão "
                                   f"{rascunho.version}). A análise "
                                   "inteligente dos seus ativos já está "
-                                  "disponível em Investimentos → "
-                                  "Inteligência dos Ativos.")
+                                  "disponível nesta aba.")
                 st.rerun()
             st.error("Não foi possível concluir:\n\n"
                      + "\n".join(f"- {e}" for e in erros))
@@ -415,7 +410,8 @@ def _float(v):
     return None if v is None else float(v)
 
 
-def _iniciar() -> None:
+def iniciar() -> None:
+    """Abre o rascunho e reexecuta. Público: o botão do onboarding usa."""
     try:
         repo.iniciar()
     except repo.TabelaAusente:

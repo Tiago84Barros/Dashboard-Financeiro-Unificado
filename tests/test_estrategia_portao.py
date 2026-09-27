@@ -35,7 +35,7 @@ def test_sem_estrategia_bloqueia_com_todos_os_minimos():
         "completion_percentage": 0.0,
         "reason": "STRATEGY_CONFIGURATION_REQUIRED",
         "missing_fields": list(pol.OBRIGATORIOS),
-        "next_step": {"section": "settings", "tab": "general",
+        "next_step": {"section": "investments", "tab": "asset_intelligence",
                       "feature": "investment_strategy"},
     }
 

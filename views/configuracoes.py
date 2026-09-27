@@ -34,20 +34,17 @@ def render() -> None:
     require_user()
     if not is_admin():
         from design.user_accounts import render_user_accounts
-        from views.configuracoes_geral import (
-            render_cenario_bloco,
-            render_estrategia_bloco,
-        )
+        from views.configuracoes_geral import render_cenario_bloco
         st.title("Minhas configurações")
-        # A estratégia e o cenário são de cada conta, não da administração do
-        # app: por isso o não-admin também tem a aba Geral, só com eles. O CSS dos blocos
+        # O cenário é de cada conta, não da administração do app: por isso o
+        # não-admin também tem a aba Geral, só com ele (a estratégia mora na
+        # Inteligência dos Ativos). O CSS dos blocos
         # (``cfg-workflow-*``) vem junto, ou o cabeçalho sai sem estilo.
         st.markdown(_CONFIG_CSS, unsafe_allow_html=True)
         geral, personal, account, docs = st.tabs(
             ["⚙️ Geral", "Importar meus dados", "Minha conta", "📚 Documentação"]
         )
         with geral:
-            render_estrategia_bloco()
             render_cenario_bloco()
         with personal:
             _render_atualizacao_de_dados()

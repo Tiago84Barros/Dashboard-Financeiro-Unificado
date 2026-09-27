@@ -11,6 +11,25 @@ virou um painel. De cima para baixo, ela mostra:
 4. **Análise completa** do ativo escolhido: as questões e o fluxo das 13 seções.
 5. **Portfolio Fit**, primeiro pelas regras e depois pela LLM, sob demanda.
 6. **Histórico e auditoria** do ativo escolhido.
+7. **Minha estratégia**, recolhida num expander ao fim da página. Mostra a
+   estratégia vigente e permite editá-la. A edição abre uma nova versão, e a
+   atual continua valendo até a nova ser concluída.
+
+## Estratégia na própria aba
+
+Desde 27/09/2026 a Estratégia de Investimentos não fica mais em Configurações
+→ Geral. Ela é configurada e alterada nesta aba.
+
+- **Bloqueada.** O cartão de onboarding mostra o que falta. O botão
+  (*Configurar*, *Continuar* ou *Revisar minha estratégia*) abre a
+  configuração logo abaixo do cartão. Com a estratégia não iniciada, o
+  próprio clique já abre o rascunho. Ao concluir, o app reexecuta, o portão
+  reavalia e o painel aparece.
+- **Liberada.** A seção *Minha estratégia* fica no fim da página.
+
+O bloco (`views/configuracoes_estrategia.py`) é renderizado uma única vez por
+execução, porque as chaves dos widgets são fixas. O `next_step` do portão
+aponta para `investments / asset_intelligence`.
 
 ## Resumo da carteira
 

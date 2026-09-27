@@ -3,13 +3,18 @@ import ast
 from html import escape
 from pathlib import Path
 
+import pytest
+
 from core.estrategia import politica as pol
 from core.estrategia import portao
-from core.inteligencia_ativos import modelos as m
 from core.estrategia import repositorio as repo
+from core.inteligencia_ativos import modelos as m
 from views import inteligencia_ativos as tela
 
 RAIZ = Path(__file__).resolve().parents[1]
+
+# A aba mostra o bloco da estratégia: o repositório fica em memória.
+pytestmark = pytest.mark.usefixtures("estrategia_falsa")
 
 CARTEIRA_COMPLETA = {"total_mercado": 1000.0, "posicoes": [
     {"ticker": "TAEE11", "nome": "Taesa", "classe": "Ações BR",
@@ -57,20 +62,46 @@ def test_rotulo_mostra_cadeado_so_quando_bloqueada():
     assert tela.rotulo_aba(_liberada()) == "🧠  Inteligência dos Ativos"
 
 
-def test_nao_iniciada_orienta_e_leva_para_a_estrategia():
+def test_nao_iniciada_orienta_e_configura_na_propria_aba(estrategia_falsa):
     app = _rodar(_bloqueada())
     assert not app.exception
     html = app.markdown[0].value
     assert "Configure sua estratégia para liberar esta análise" in html
-    assert "Configurações</strong> → <strong>Geral</strong> → " in html
+    assert "<strong>aqui mesmo</strong>" in html
+    assert "Configurações" not in html
     assert html.count("○") == len(pol.OBRIGATORIOS) and "✓" not in html
     assert "0% concluída" in app.get("progress")[0].proto.text
     botao = app.button[0]
     assert botao.label == "Configurar minha estratégia"
+    # fechada, a aba não lê a estratégia de novo: só o cartão e o botão
+    assert len(app.button) == 1
 
     botao.click().run(timeout=30)
-    assert app.session_state[tela.NAVEGACAO_KEY] == tela.ROTA_CONFIGURACOES
-    assert app.session_state[tela.VEIO_DA_ANALISE] is True
+    assert not app.exception
+    # um clique só: abre o rascunho e já mostra a entrevista, na mesma aba
+    assert estrategia_falsa.iniciados == 1
+    assert app.session_state[tela.ESTRATEGIA_ABERTA] is True
+    app.run(timeout=30)          # o AppTest não reexecuta sozinho no st.rerun
+    assert not app.exception
+    assert not any(b.key == "ia_abrir_estrategia" for b in app.button)
+    assert any("Estratégia de Investimentos" in md.value for md in app.markdown)
+    assert app.button(key="cfg_estrategia_concluir") is not None
+    assert "Configuração da estratégia" in app.get("progress")[0].proto.text
+
+
+def test_em_andamento_abre_o_rascunho_sem_criar_outro(estrategia_falsa):
+    from core.estrategia import repositorio as repo
+    estrategia_falsa.estado = repo.Estado(rascunho=repo.Registro(
+        id="r9", version=1, status_gravado="IN_PROGRESS",
+        schema_version=pol.SCHEMA_VERSION, politica={}, entrevista=[],
+        completion_pct=50, completed_at=None, created_at=None,
+        updated_at=None))
+    app = _rodar(_bloqueada(pol.IN_PROGRESS, 50.0, ["risk_profile"]))
+    app.button[0].click().run(timeout=30)
+    assert not app.exception
+    assert estrategia_falsa.iniciados == 0
+    app.run(timeout=30)
+    assert app.button(key="cfg_estrategia_concluir") is not None
 
 
 def test_em_andamento_mostra_progresso_e_o_que_falta():
@@ -113,6 +144,10 @@ def test_liberada_mostra_premissa_resumo_e_os_13_cartoes():
     assert any("Premissa de toda análise" in h for h in htmls)
     assert app.dataframe[0].value["Ativo"].tolist() == ["HGLG11", "TAEE11"]
     assert app.selectbox(key="ia_ativo").value == "HGLG11"
+    # no fim da página, a estratégia vigente e como alterá-la
+    assert "Minha estratégia" in htmls[-1] or any(
+        "Minha estratégia" in h for h in htmls[-3:])
+    assert app.expander[-1].label == "✏️ Ver ou alterar minha estratégia"
 
     fluxo = next(h for h in htmls if "01 · Ativo" in h)
     titulos = ["Ativo", "Papel na carteira", "Peso atual",
@@ -145,6 +180,22 @@ def test_liberada_sem_posicoes_nao_quebra():
     app = _rodar(_liberada(), {"posicoes": []})
     assert not app.exception
     assert "Nenhum ativo" in app.info[0].value
+    # sem ativos, a estratégia continua alterável
+    assert app.expander[-1].label == "✏️ Ver ou alterar minha estratégia"
+
+
+def test_alterar_estrategia_no_fim_da_aba_liberada(estrategia_falsa):
+    from core.estrategia import repositorio as repo
+    vigente = _liberada().politica
+    estrategia_falsa.estado = repo.Estado(vigente=vigente)
+    app = _rodar(_liberada(), CARTEIRA_COMPLETA)
+    assert not app.exception
+    editar = app.button(key="cfg_estrategia_editar")
+    editar.click().run(timeout=30)
+    assert not app.exception
+    assert estrategia_falsa.iniciados == 1
+    app.run(timeout=30)
+    assert app.button(key="cfg_estrategia_concluir") is not None
 
 
 def test_cartoes_da_analise_so_usam_tokens_de_tema():
@@ -156,19 +207,21 @@ def test_cartoes_da_analise_so_usam_tokens_de_tema():
         assert "#" not in html.replace("&#", "")
 
 
-def test_aba_esta_em_investimentos_e_constantes_batem_com_o_app():
+def test_aba_esta_em_investimentos_e_a_estrategia_so_nela():
     fonte = (RAIZ / "views" / "investimentos.py").read_text(encoding="utf-8")
-    assert "_ia.rotulo_aba(_liberacao)" in fonte
     assert "_ia.render(_liberacao, carteira, proventos)" in fonte
-
-    app = ast.parse((RAIZ / "app.py").read_text(encoding="utf-8"))
-    literais = {n.value for n in ast.walk(app)
-                if isinstance(n, ast.Constant) and isinstance(n.value, str)}
-    assert tela.NAVEGACAO_KEY in literais
-    assert tela.ROTA_CONFIGURACOES in literais
-
-    from views import configuracoes_estrategia as cfg
-    assert cfg._VEIO_DA_ANALISE == tela.VEIO_DA_ANALISE
+    assert "_ia.rotulo_aba(_liberacao)" in fonte
+    # a estratégia saiu de Configurações em 27/09/2026
+    for arq in ("configuracoes.py", "configuracoes_geral.py"):
+        cfg = (RAIZ / "views" / arq).read_text(encoding="utf-8")
+        assert "configuracoes_estrategia" not in cfg
+        assert "render_estrategia_bloco" not in cfg
+    # renderizada em um lugar só por execução (as chaves dos widgets são fixas)
+    arvore = ast.parse((RAIZ / "views" / "inteligencia_ativos.py")
+                       .read_text(encoding="utf-8"))
+    chamadas = [n for n in ast.walk(arvore) if isinstance(n, ast.Call)
+                and ast.unparse(n.func) == "tela_estrategia.render"]
+    assert len(chamadas) == 2   # onboarding (bloqueada) e fim (liberada)
 
 
 def test_cartao_de_calculos_aparece_com_alertas_tabela_e_concentracao():

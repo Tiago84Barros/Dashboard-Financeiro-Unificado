@@ -148,15 +148,17 @@ def test_diferencas_so_regrava_o_que_mudou():
     assert remocoes == ["monthly_contribution"]
 
 
-def test_bloco_e_o_primeiro_da_aba_geral_e_o_nao_admin_tambem_ve():
+def test_bloco_mora_na_inteligencia_dos_ativos_e_nao_em_configuracoes():
     geral = ast.parse((RAIZ / "views" / "configuracoes_geral.py")
                       .read_text(encoding="utf-8"))
     render = next(n for n in geral.body
                   if isinstance(n, ast.FunctionDef) and n.name == "render")
-    primeira = render.body[0].value.func.id
-    assert primeira == "render_estrategia_bloco"
-    fonte = (RAIZ / "views" / "configuracoes.py").read_text(encoding="utf-8")
-    assert fonte.count("render_estrategia_bloco") == 2  # import + chamada
+    assert render.body[0].value.func.id == "render_cenario_bloco"
+    for arq in ("configuracoes.py", "configuracoes_geral.py"):
+        fonte = (RAIZ / "views" / arq).read_text(encoding="utf-8")
+        assert "render_estrategia_bloco" not in fonte
+    fonte = (RAIZ / "views" / "inteligencia_ativos.py").read_text(encoding="utf-8")
+    assert "tela_estrategia.render()" in fonte
 
 
 def test_formulario_renderiza_todos_os_tipos_e_salva_so_a_mudanca(monkeypatch):
