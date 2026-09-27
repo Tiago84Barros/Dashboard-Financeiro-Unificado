@@ -4120,7 +4120,7 @@ def render() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Sub-navegação via tabs ────────────────────────────────────────────────
-    # A Inteligência dos Ativos depende da Estratégia (Configurações → Geral).
+    # A Inteligência dos Ativos depende da Estratégia, configurada na própria aba.
     # Bloqueada, a aba continua visível, com 🔒 no rótulo: é por ela que o
     # usuário descobre o que falta.
     from core.estrategia import portao as _portao

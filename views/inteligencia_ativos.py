@@ -2,11 +2,15 @@
 views/inteligencia_ativos.py
 Aba "Inteligência dos Ativos" de Investimentos.
 
-Depende da Estratégia de Investimentos (Configurações → Geral). Sem uma
-estratégia concluída, a aba continua visível (com 🔒 no rótulo) e mostra o
-caminho para liberá-la: o que falta, quanto já foi feito e um botão que leva
-direto ao bloco da estratégia. Não é erro nem página vazia; é a etapa que
-falta para a análise ser do usuário, e não genérica.
+Depende da Estratégia de Investimentos, que se configura aqui mesmo. Sem uma
+estratégia concluída, a aba continua visível (com 🔒 no rótulo) e mostra o que
+falta, quanto já foi feito e um botão que abre a configuração logo abaixo, na
+própria aba. Não é erro nem página vazia; é a etapa que falta para a análise
+ser do usuário, e não genérica. Liberada, a aba termina com "Minha
+estratégia", onde a configuração pode ser alterada depois.
+
+Até 27/09/2026 a estratégia morava em Configurações → Geral e o botão
+navegava para lá. Mudou para que tudo aconteça na mesma aba.
 
 A decisão de liberar é de ``core/estrategia/portao.py``; a análise passa por
 ``core/inteligencia_ativos.py``, que pergunta ao portão de novo. Esta tela
@@ -29,6 +33,8 @@ from html import escape
 import streamlit as st
 
 from core import inteligencia_ativos as servico
+from core.estrategia import politica as pol
+from core.estrategia import portao
 from core.inteligencia_ativos import calculos as calc
 from core.inteligencia_ativos import fundamentos as fund
 from core.inteligencia_ativos import historico as hist
@@ -37,17 +43,14 @@ from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import painel, papeis
 from core.inteligencia_ativos import pares as prs
 from core.inteligencia_ativos import valuation as val
-from core.estrategia import politica as pol
-from core.estrategia import portao
 from core.utils import fmt_moeda
+from views import configuracoes_estrategia as tela_estrategia
 from views import inteligencia_ativos_fit as tela_fit
 from views import inteligencia_ativos_painel as tela_painel
 
 ROTULO = "Inteligência dos Ativos"
-# Mesmos valores de app.py (menu) e views/configuracoes.py (flag lida lá).
-NAVEGACAO_KEY = "app_main_navigation"
-ROTA_CONFIGURACOES = "⚙️ Configurações"
-VEIO_DA_ANALISE = "cfg_estrategia_veio_da_analise"
+# Configuração aberta na própria aba (onboarding ou "Minha estratégia").
+ESTRATEGIA_ABERTA = "ia_estrategia_aberta"
 
 _BOTAO = {
     pol.NOT_STARTED: "Configurar minha estratégia",
@@ -95,8 +98,6 @@ def checklist(liberacao: portao.Liberacao) -> list[tuple[str, bool]]:
 def cartao_onboarding(liberacao: portao.Liberacao) -> str:
     """HTML do cartão de onboarding, num bloco só. Puro."""
     titulo, texto = _titulo_e_texto(liberacao)
-    caminho = " → ".join(f"<strong>{escape(p)}</strong>"
-                         for p in portao.CAMINHO)
     itens = ""
     for chave, feito in checklist(liberacao):
         marca, cor = ("✓", "var(--app-primary)") if feito else ("○", "var(--app-muted)")
@@ -114,7 +115,8 @@ def cartao_onboarding(liberacao: portao.Liberacao) -> str:
         '<div style="font-size:0.92rem;color:var(--app-muted);'
         f'line-height:1.5">{texto}</div>'
         '<div style="font-size:0.88rem;color:var(--app-text);'
-        f'margin-top:14px">📍 Onde resolver: {caminho}</div>'
+        'margin-top:14px">📍 Onde resolver: <strong>aqui mesmo</strong>, na '
+        'configuração logo abaixo. Nada muda de página.</div>'
         '<div style="font-size:0.88rem;font-weight:600;color:var(--app-text);'
         'margin-top:14px">Para liberar a análise:</div>'
         f'<ul style="padding-left:4px;margin:6px 0 0 0">{itens}</ul>'
@@ -126,12 +128,6 @@ def cartao_onboarding(liberacao: portao.Liberacao) -> str:
     )
 
 
-def _ir_para_estrategia() -> None:
-    """Callback do botão: troca a rota antes de o menu ser desenhado."""
-    st.session_state[NAVEGACAO_KEY] = ROTA_CONFIGURACOES
-    st.session_state[VEIO_DA_ANALISE] = True
-
-
 def _render_onboarding(liberacao: portao.Liberacao) -> None:
     if liberacao.motivo == portao.ESTRATEGIA_INDISPONIVEL:
         st.info("Não foi possível ler sua estratégia de investimentos agora. "
@@ -140,11 +136,31 @@ def _render_onboarding(liberacao: portao.Liberacao) -> None:
                 "tabela da estratégia (migration 076).")
         return
     st.markdown(cartao_onboarding(liberacao), unsafe_allow_html=True)
-    st.progress(liberacao.pct / 100,
-                text=f"Configuração da estratégia: {liberacao.pct:.0f}% concluída")
-    st.button(_BOTAO.get(liberacao.status, _BOTAO[pol.NOT_STARTED]),
-              key="ia_ir_para_estrategia", type="primary",
-              on_click=_ir_para_estrategia)
+    if not st.session_state.get(ESTRATEGIA_ABERTA):
+        st.progress(liberacao.pct / 100, text="Configuração da estratégia: "
+                                              f"{liberacao.pct:.0f}% concluída")
+        if st.button(_BOTAO.get(liberacao.status, _BOTAO[pol.NOT_STARTED]),
+                     key="ia_abrir_estrategia", type="primary"):
+            st.session_state[ESTRATEGIA_ABERTA] = True
+            if liberacao.status == pol.NOT_STARTED:
+                tela_estrategia.iniciar()      # abre o rascunho e reexecuta
+            st.rerun()
+        return
+    # Aberta, a configuração mostra o próprio progresso: o da aba sai.
+    # Concluir reexecuta o app, e o portão reavaliado libera a análise.
+    with st.container(border=True, key="ia_estrategia_onboarding"):
+        st.markdown("##### 🎯 Estratégia de Investimentos")
+        tela_estrategia.render()
+
+
+def _render_minha_estrategia() -> None:
+    """Fim da aba liberada: a estratégia vigente, e como alterá-la."""
+    st.markdown("#### Minha estratégia")
+    st.caption("A premissa de toda a análise acima. Alterar abre uma nova "
+               "versão; a atual continua valendo até você concluir a edição.")
+    with st.expander("✏️ Ver ou alterar minha estratégia",
+                     expanded=bool(st.session_state.get(ESTRATEGIA_ABERTA))):
+        tela_estrategia.render()
 
 
 # -- liberada ------------------------------------------------------------------
@@ -731,6 +747,12 @@ def _render_liberada(liberacao: portao.Liberacao, carteira: dict,
     versao = liberacao.politica.version
     st.success("Configuração concluída. A análise inteligente dos seus ativos "
                f"já está disponível. Premissa: estratégia versão {versao}.")
+    _render_painel(liberacao, carteira, proventos)
+    _render_minha_estrategia()
+
+
+def _render_painel(liberacao: portao.Liberacao, carteira: dict,
+                   proventos: dict | None) -> None:
     if not carteira.get("posicoes"):
         st.info("Nenhum ativo na carteira para analisar.")
         return

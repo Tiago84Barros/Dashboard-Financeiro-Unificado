@@ -2,7 +2,7 @@
 views/configuracoes_geral.py
 Aba "Geral" de Configurações — o que era da sidebar, mais o que não tinha lugar.
 
-  🎯 Estratégia        — a política de investimentos (premissa da análise)
+  🌎 Cenário           — o ambiente econômico em que o usuário acredita investir
   🎨 Tema              — a preferência visual da conta
   🏷️ Categorias        — as opções do lançamento manual do Controle Financeiro
   👤 Trocar de usuário — encerrar a sessão deste navegador
@@ -15,6 +15,10 @@ Arquivo separado de ``views/configuracoes.py`` de propósito: aquele já passa d
 O tema e a troca de usuário **saíram da sidebar** em 21/09/2026. Estavam
 visíveis em toda tela, ocupando a barra que serve para navegar, e são ajustes
 que se fazem uma vez.
+
+A 🎯 Estratégia de Investimentos **saiu daqui** em 27/09/2026: é configurada e
+alterada na própria aba Investimentos → Inteligência dos Ativos, que depende
+dela.
 """
 from __future__ import annotations
 
@@ -34,7 +38,6 @@ _NOME_CAT = "cfg_geral_nome_categoria"
 
 
 def render() -> None:
-    render_estrategia_bloco()
     render_cenario_bloco()
     _render_tema()
     _render_categorias()
@@ -42,33 +45,20 @@ def render() -> None:
     _render_memoria_llm()
 
 
-# -- estratégia de investimentos ----------------------------------------------
-
-def render_estrategia_bloco() -> None:
-    """Bloco da estratégia. Público: a aba Geral do não-admin mostra só ele."""
-    from views.configuracoes_estrategia import render as render_estrategia
-
-    with st.container(border=True, key="cfg_geral_estrategia"):
-        _cabecalho(
-            "01", "🎯 Estratégia de Investimentos",
-            "O que você pretende construir com seu patrimônio. É a premissa "
-            "que a IA usa para analisar a carteira e cada ativo.",
-        )
-        render_estrategia()
-
-
 # -- cenário de investimentos --------------------------------------------------
 
 def render_cenario_bloco() -> None:
-    """Bloco do cenário. Público: é de cada conta, como a estratégia."""
+    """Bloco do cenário. Público: é de cada conta, e o não-admin também vê."""
     from views.configuracoes_cenario import render as render_cenario
 
     with st.container(border=True, key="cfg_geral_cenario"):
         _cabecalho(
-            "02", "🌎 Cenário de Investimentos",
+            "01", "🌎 Cenário de Investimentos",
             "Em que ambiente econômico você acredita estar investindo. Entra "
             "como premissa adicional nas análises e só muda quando você muda.",
         )
+        st.caption("A Estratégia de Investimentos agora se configura em "
+                   "Investimentos → Inteligência dos Ativos.")
         render_cenario()
 
 

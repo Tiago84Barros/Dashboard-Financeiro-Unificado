@@ -2,6 +2,8 @@
 import datetime as dt
 from dataclasses import replace
 
+import pytest
+
 from core.inteligencia_ativos import analise, painel
 from core.inteligencia_ativos import calculos as calc
 from core.inteligencia_ativos import historico as hist
@@ -9,6 +11,9 @@ from core.inteligencia_ativos import modelos as m
 from tests.test_inteligencia_ativos_adequacao import _ctx
 from tests.test_inteligencia_ativos_tela import CARTEIRA_COMPLETA, _liberada, _rodar
 from views import inteligencia_ativos_painel as tela_painel
+
+# A aba mostra o bloco da estratégia: o repositório fica em memória.
+pytestmark = pytest.mark.usefixtures("estrategia_falsa")
 
 HOJE = dt.date(2026, 9, 26)
 CARTEIRA_APP = {"total_investido": 10000.0, "rentabilidade_total_pct": 10.0,
