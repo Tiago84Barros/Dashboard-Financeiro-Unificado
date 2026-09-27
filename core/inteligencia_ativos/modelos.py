@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 
+from core.cenario.divergencia import Sinal
+from core.cenario.modelo import Cenario
 from core.inteligencia_ativos.calculos import Calculos
 
 # -- estados de seção ----------------------------------------------------------
@@ -121,6 +123,10 @@ class ContextoInvestidor:
     peso_fora_da_politica: float             # % em classes que a política não cobre
     # pesos, faixas, desvios, concentração e alertas (calculos.py)
     calculos: Calculos | None = None
+    # Cenário de Investimentos do usuário (core/cenario): premissa adicional,
+    # só de leitura. ``None`` quando não cadastrado ou ilegível.
+    cenario: Cenario | None = None
+    sinais_cenario: tuple[Sinal, ...] = ()
 
 
 @dataclass(frozen=True)

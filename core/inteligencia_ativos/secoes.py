@@ -12,9 +12,10 @@ em ``fundamentos.py``, leitores em ``fontes_fundamentos.py``), assim como
 ``valuation`` e ``pares`` (``valuation.py``, ``pares.py``, leitores em
 ``fontes_valuation.py``), e ``noticias``, ``relatorios`` e ``eventos``
 (``informacoes.py``, leitor em ``fontes_informacoes.py``, artefato gerado
-por ``scripts/publish_informacoes_recentes.py``). Os demais
-ainda são ``_pendente``: devolvem ``estado=PENDENTE`` e o que a seção vai
-trazer. Implementar uma etapa é trocar a entrada dela em ``PROVEDORES``
+por ``scripts/publish_informacoes_recentes.py``), e ``cenario``, que lê o
+Cenário de Investimentos do próprio usuário (``core/cenario``) já carregado
+no ``ContextoInvestidor``. Uma seção sem provedor real usaria ``_pendente``:
+devolve ``estado=PENDENTE`` e o que a seção vai trazer. Implementar uma etapa é trocar a entrada dela em ``PROVEDORES``
 por um provedor real; nada mais na análise ou na tela precisa mudar. Um
 provedor que falha não derruba a análise: ``coletar`` converte a exceção em
 ``SEM_DADOS`` com o motivo.
@@ -28,10 +29,12 @@ Fontes que já existem no projeto e devem alimentar estas seções:
 - relatórios: documentos CVM (IPE) da B3 e FNET dos FIIs, só metadados;
 - eventos: proventos anunciados (``market.dividends``), prazo regulatório
   de resultado e vencimento do Tesouro;
-- cenário: insumos macro publicados (Selic, IPCA, câmbio).
+- cenário: o Cenário de Investimentos do usuário, com sinais de revisão
+  calculados contra os insumos macro publicados (Selic, IPCA, câmbio).
 """
 from __future__ import annotations
 
+import datetime as dt
 import logging
 from typing import Callable
 
@@ -59,7 +62,8 @@ SECOES: dict[str, tuple[str, str]] = {
     "pares": ("Comparação com pares",
               "O ativo contra empresas ou fundos do mesmo segmento."),
     "cenario": ("Cenário",
-                "Como juros, inflação e câmbio afetam este tipo de ativo."),
+                "O Cenário de Investimentos que você cadastrou, como "
+                "premissa do ambiente econômico."),
     "noticias": ("Notícias",
                  "Notícias recentes em que o ativo é o assunto, com impacto "
                  "e dimensões afetadas."),
@@ -173,7 +177,52 @@ def provedor_eventos(info: InfoBasica, ctx: ContextoInvestidor, *,
                  fonte=", ".join(fontes) or None)
 
 
+def provedor_cenario(info: InfoBasica, ctx: ContextoInvestidor, *,
+                     hoje: dt.date | None = None) -> Secao:
+    """O cenário do usuário como premissa. Não lê banco: vem no ``ctx``.
+
+    Não mede impacto no ativo: isso é leitura, e fica com a LLM, que recebe
+    o cenário ao lado dos fundamentos e da estratégia.
+    """
+    from core.cenario import modelo as cen
+
+    titulo = SECOES["cenario"][0]
+    c = ctx.cenario
+    if c is None or c.vazio:
+        return Secao(chave="cenario", titulo=titulo, estado=SEM_DADOS,
+                     resumo="Nenhum Cenário de Investimentos cadastrado. "
+                            "Cadastre em Configurações → Geral → Cenário de "
+                            "Investimentos.")
+    hoje = hoje or dt.date.today()
+    sinais = ctx.sinais_cenario
+    relev = [k for k in cen.relevantes(info.classe_politica)
+             if c.item(k).preenchido]
+    resumo = (f"Premissa do usuário, versão {c.versao}: "
+              f"{len(c.preenchidos)} de {len(cen.CHAVES)} itens. ")
+    if relev:
+        resumo += ("Mais relevantes para esta classe: "
+                   + "; ".join(f"{cen.ROTULO[k]} {c.item(k).current_value}"
+                               for k in relev) + ".")
+    else:
+        resumo += ("Nenhum dos itens mais relevantes para esta classe foi "
+                   "preenchido.")
+    velhos = c.envelhecidos(hoje)
+    if velhos:
+        resumo += (f" Revistos há mais de {cen.ENVELHECE_DIAS} dias: "
+                   + ", ".join(cen.ROTULO[k] for k in velhos) + ".")
+    if sinais:
+        resumo += " " + cen.FRASE_REVISAO
+    return Secao(chave="cenario", titulo=titulo, estado=DISPONIVEL,
+                 resumo=resumo,
+                 dados=cen.para_contexto(c, hoje=hoje,
+                                         classe_politica=info.classe_politica,
+                                         sinais=sinais) or {},
+                 fonte=f"Cenário de Investimentos do usuário (versão "
+                       f"{c.versao})")
+
+
 PROVEDORES: dict[str, Provedor] = {c: _pendente(c) for c in SECOES}
+PROVEDORES["cenario"] = provedor_cenario
 PROVEDORES["fundamentos"] = provedor_fundamentos
 PROVEDORES["valuation"] = provedor_valuation
 PROVEDORES["pares"] = provedor_pares
