@@ -147,8 +147,24 @@ ALVOS: tuple[Alvo, ...] = (
     Alvo(
         chave="us_snapshot",
         titulo="Vitrine dos EUA (company_snapshots)",
-        passos=(("scripts/publish_us_snapshot_from_local.py",),),
-        cadencia_dias=7,
+        # Cadeia, e não só o publicador: o preço diário dos EUA não era coletado
+        # por rotina nenhuma. `prices_daily` parou em 15/09, o giro saiu dali
+        # e, a partir de 26/09, o publicador recusou todo dia por giro com mais
+        # de 7 dias (`LIQUIDITY_MAX_AGE_DAYS`) -- e sem giro fresco a Criação de
+        # Portfólio dos EUA bloqueia. Mesmo precedente de `fii_ingest` e
+        # `macro_insumos`: publicar sem coletar antes só renova a data do
+        # arquivo sobre o dado velho.
+        #
+        # Cadência de 2 dias, e não 7: com teto de giro de 7 dias, publicar a
+        # cada 7 vence no meio do ciclo por qualquer atraso. Dois dias absorvem
+        # fim de semana e feriado. O custo no Supabase é baixo: upsert por
+        # símbolo numa tabela de ~39 MB, espaço que o autovacuum reaproveita.
+        passos=(
+            ("run_us_ingest.py", "daily", "--warehouse", "--json"),
+            ("run_us_ingest.py", "snapshot", "--warehouse", "--json"),
+            ("scripts/publish_us_snapshot_from_local.py",),
+        ),
+        cadencia_dias=2,
         modulo="us",
     ),
     Alvo(
