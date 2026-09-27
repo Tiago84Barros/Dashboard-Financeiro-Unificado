@@ -13,8 +13,8 @@ from views import inteligencia_ativos as tela
 
 RAIZ = Path(__file__).resolve().parents[1]
 
-# A aba mostra o bloco da estratégia: o repositório fica em memória.
-pytestmark = pytest.mark.usefixtures("estrategia_falsa")
+# A aba mostra os blocos da estratégia e do cenário: repositórios em memória.
+pytestmark = pytest.mark.usefixtures("estrategia_falsa", "cenario_falso")
 
 CARTEIRA_COMPLETA = {"total_mercado": 1000.0, "posicoes": [
     {"ticker": "TAEE11", "nome": "Taesa", "classe": "Ações BR",
@@ -144,10 +144,12 @@ def test_liberada_mostra_premissa_resumo_e_os_13_cartoes():
     assert any("Premissa de toda análise" in h for h in htmls)
     assert app.dataframe[0].value["Ativo"].tolist() == ["HGLG11", "TAEE11"]
     assert app.selectbox(key="ia_ativo").value == "HGLG11"
-    # no fim da página, a estratégia vigente e como alterá-la
-    assert "Minha estratégia" in htmls[-1] or any(
-        "Minha estratégia" in h for h in htmls[-3:])
-    assert app.expander[-1].label == "✏️ Ver ou alterar minha estratégia"
+    # no fim da página: a estratégia vigente e, depois dela, o cenário
+    titulos = [h for h in htmls if h in ("#### Minha estratégia",
+                                         "#### Meu cenário")]
+    assert titulos == ["#### Minha estratégia", "#### Meu cenário"]
+    assert [e.label for e in app.expander[-2:]] == [
+        "✏️ Ver ou alterar minha estratégia", "🌎 Ver ou alterar meu cenário"]
 
     fluxo = next(h for h in htmls if "01 · Ativo" in h)
     titulos = ["Ativo", "Papel na carteira", "Peso atual",
@@ -181,7 +183,8 @@ def test_liberada_sem_posicoes_nao_quebra():
     assert not app.exception
     assert "Nenhum ativo" in app.info[0].value
     # sem ativos, a estratégia continua alterável
-    assert app.expander[-1].label == "✏️ Ver ou alterar minha estratégia"
+    assert [e.label for e in app.expander[-2:]] == [
+        "✏️ Ver ou alterar minha estratégia", "🌎 Ver ou alterar meu cenário"]
 
 
 def test_alterar_estrategia_no_fim_da_aba_liberada(estrategia_falsa):
@@ -207,6 +210,21 @@ def test_cartoes_da_analise_so_usam_tokens_de_tema():
         assert "#" not in html.replace("&#", "")
 
 
+def test_meu_cenario_no_fim_da_aba_liberada(cenario_falso):
+    app = _rodar(_liberada(), CARTEIRA_COMPLETA)
+    assert not app.exception
+    assert any("Meu cenário" in md.value for md in app.markdown)
+    assert app.button(key="cfg_cenario_sugerir_v0") is not None
+    assert any("Nenhum cenário cadastrado" in md.value for md in app.markdown)
+
+
+def test_bloqueada_nao_mostra_o_cenario():
+    app = _rodar(_bloqueada())
+    assert not app.exception
+    assert not any(e.label == "🌎 Ver ou alterar meu cenário"
+                   for e in app.expander)
+
+
 def test_aba_esta_em_investimentos_e_a_estrategia_so_nela():
     fonte = (RAIZ / "views" / "investimentos.py").read_text(encoding="utf-8")
     assert "_ia.render(_liberacao, carteira, proventos)" in fonte
@@ -216,12 +234,18 @@ def test_aba_esta_em_investimentos_e_a_estrategia_so_nela():
         cfg = (RAIZ / "views" / arq).read_text(encoding="utf-8")
         assert "configuracoes_estrategia" not in cfg
         assert "render_estrategia_bloco" not in cfg
+        # o cenário saiu junto, no mesmo dia
+        assert "configuracoes_cenario" not in cfg
+        assert "render_cenario_bloco" not in cfg
     # renderizada em um lugar só por execução (as chaves dos widgets são fixas)
     arvore = ast.parse((RAIZ / "views" / "inteligencia_ativos.py")
                        .read_text(encoding="utf-8"))
     chamadas = [n for n in ast.walk(arvore) if isinstance(n, ast.Call)
                 and ast.unparse(n.func) == "tela_estrategia.render"]
     assert len(chamadas) == 2   # onboarding (bloqueada) e fim (liberada)
+    chamadas = [n for n in ast.walk(arvore) if isinstance(n, ast.Call)
+                and ast.unparse(n.func) == "tela_cenario.render"]
+    assert len(chamadas) == 1   # só no fim da aba liberada
 
 
 def test_cartao_de_calculos_aparece_com_alertas_tabela_e_concentracao():

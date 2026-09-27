@@ -1,4 +1,4 @@
-"""Tela da estratégia (Configurações → Geral): fluxo com repositório em memória."""
+"""Tela da estratégia (aba Inteligência dos Ativos): fluxo com repositório em memória."""
 import ast
 from pathlib import Path
 
@@ -153,7 +153,10 @@ def test_bloco_mora_na_inteligencia_dos_ativos_e_nao_em_configuracoes():
                       .read_text(encoding="utf-8"))
     render = next(n for n in geral.body
                   if isinstance(n, ast.FunctionDef) and n.name == "render")
-    assert render.body[0].value.func.id == "render_cenario_bloco"
+    chamadas = {ast.unparse(n.func) for n in ast.walk(render)
+                if isinstance(n, ast.Call)}
+    assert "_render_tema" in chamadas
+    assert "render_cenario_bloco" not in chamadas
     for arq in ("configuracoes.py", "configuracoes_geral.py"):
         fonte = (RAIZ / "views" / arq).read_text(encoding="utf-8")
         assert "render_estrategia_bloco" not in fonte

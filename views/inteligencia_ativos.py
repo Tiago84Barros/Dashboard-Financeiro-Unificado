@@ -9,8 +9,11 @@ própria aba. Não é erro nem página vazia; é a etapa que falta para a análi
 ser do usuário, e não genérica. Liberada, a aba termina com "Minha
 estratégia", onde a configuração pode ser alterada depois.
 
-Até 27/09/2026 a estratégia morava em Configurações → Geral e o botão
-navegava para lá. Mudou para que tudo aconteça na mesma aba.
+Depois dela vem "Meu cenário": o Cenário de Investimentos, premissa opcional
+da análise, também visto e alterado aqui.
+
+Até 27/09/2026 a estratégia e o cenário moravam em Configurações → Geral (e o
+botão navegava para lá). Mudou para que tudo aconteça na mesma aba.
 
 A decisão de liberar é de ``core/estrategia/portao.py``; a análise passa por
 ``core/inteligencia_ativos.py``, que pergunta ao portão de novo. Esta tela
@@ -44,6 +47,7 @@ from core.inteligencia_ativos import painel, papeis
 from core.inteligencia_ativos import pares as prs
 from core.inteligencia_ativos import valuation as val
 from core.utils import fmt_moeda
+from views import configuracoes_cenario as tela_cenario
 from views import configuracoes_estrategia as tela_estrategia
 from views import inteligencia_ativos_fit as tela_fit
 from views import inteligencia_ativos_painel as tela_painel
@@ -161,6 +165,19 @@ def _render_minha_estrategia() -> None:
     with st.expander("✏️ Ver ou alterar minha estratégia",
                      expanded=bool(st.session_state.get(ESTRATEGIA_ABERTA))):
         tela_estrategia.render()
+
+
+def _render_meu_cenario() -> None:
+    """Fim da aba liberada: o cenário em que o usuário acredita, e como alterá-lo.
+
+    Opcional: não bloqueia a análise. Sem ele, a seção de cenário de cada
+    ativo sai "sem dados" e a análise segue com estratégia e fundamentos.
+    """
+    st.markdown("#### Meu cenário")
+    st.caption("Premissa opcional: em que ambiente econômico você acredita "
+               "estar investindo. A análise o lê, mas nunca o altera.")
+    with st.expander("🌎 Ver ou alterar meu cenário"):
+        tela_cenario.render()
 
 
 # -- liberada ------------------------------------------------------------------
@@ -749,6 +766,7 @@ def _render_liberada(liberacao: portao.Liberacao, carteira: dict,
                f"já está disponível. Premissa: estratégia versão {versao}.")
     _render_painel(liberacao, carteira, proventos)
     _render_minha_estrategia()
+    _render_meu_cenario()
 
 
 def _render_painel(liberacao: portao.Liberacao, carteira: dict,

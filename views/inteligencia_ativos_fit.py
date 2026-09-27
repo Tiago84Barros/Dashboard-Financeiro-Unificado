@@ -207,8 +207,8 @@ def aviso_cenario(ctx: m.ContextoInvestidor,
              + _itens("Por quê", motivos)
              + '<div style="font-size:0.82rem;color:var(--app-subtle);'
              'margin-top:6px">O cenário salvo continua valendo e não foi '
-             'alterado. Para revisá-lo: Configurações → Geral → Cenário de '
-             'Investimentos.</div>')
+             'alterado. Para revisá-lo: "Meu cenário", no fim desta '
+             'aba.</div>')
     return _caixa(corpo, borda="warning")
 
 
