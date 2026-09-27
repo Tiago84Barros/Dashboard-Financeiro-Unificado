@@ -23,14 +23,19 @@ Módulos do pacote:
 - ``adequacao`` — faixa desejada, tese, impacto e ação a considerar;
 - ``secoes``    — fundamentos, valuation, pares, cenário, notícias,
   relatórios e eventos (hoje provedores pendentes);
-- ``analise``   — orquestra tudo numa ``AnaliseAtivo``.
+- ``analise``   — orquestra tudo numa ``AnaliseAtivo``;
+- ``painel``    — resumo da carteira e cartão de cada ativo para o painel
+  da aba (puro);
+- ``historico`` — fotos das análises, regra de quando salvar, comparação
+  com a anterior e campos de auditoria (puro); ``historico_repo`` grava em
+  ``user_settings.extra_settings``.
 
 O Cenário de Investimentos do usuário (``core/cenario``) entra no contexto
 como premissa só de leitura: ``_cenario`` o lê junto com os sinais de revisão.
 Falha na leitura vira "sem cenário", nunca bloqueio da análise.
 
-A redação por LLM ainda não existe: ``analise.texto_para_llm`` já monta a
-entrada dela.
+A leitura por LLM é o Portfolio Fit (``portfolio_fit`` + ``leitura_llm``);
+ela registra o modelo que de fato respondeu, para a auditoria.
 
 Coberto por tests/test_inteligencia_ativos.py.
 """

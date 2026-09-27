@@ -159,7 +159,7 @@ def test_cartoes_da_analise_so_usam_tokens_de_tema():
 def test_aba_esta_em_investimentos_e_constantes_batem_com_o_app():
     fonte = (RAIZ / "views" / "investimentos.py").read_text(encoding="utf-8")
     assert "_ia.rotulo_aba(_liberacao)" in fonte
-    assert "_ia.render(_liberacao, carteira)" in fonte
+    assert "_ia.render(_liberacao, carteira, proventos)" in fonte
 
     app = ast.parse((RAIZ / "app.py").read_text(encoding="utf-8"))
     literais = {n.value for n in ast.walk(app)

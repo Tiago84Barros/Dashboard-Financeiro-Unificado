@@ -12,10 +12,18 @@ A decisão de liberar é de ``core/estrategia/portao.py``; a análise passa por
 ``core/inteligencia_ativos.py``, que pergunta ao portão de novo. Esta tela
 não decide nada sozinha.
 
-Coberto por tests/test_inteligencia_ativos_tela.py.
+Liberada, a aba é um painel, de cima para baixo: resumo da carteira,
+cartões dos ativos (o botão de cada um abre a análise completa), análise
+completa e Portfolio Fit do ativo escolhido, e o histórico com a auditoria de
+cada foto. Os cartões vêm de ``views/inteligencia_ativos_painel.py``; os
+números, de ``core/inteligencia_ativos/painel.py`` e ``historico.py``.
+
+Coberto por tests/test_inteligencia_ativos_tela.py e
+tests/test_inteligencia_ativos_painel.py.
 """
 from __future__ import annotations
 
+import datetime as dt
 from html import escape
 
 import streamlit as st
@@ -23,15 +31,17 @@ import streamlit as st
 from core import inteligencia_ativos as servico
 from core.inteligencia_ativos import calculos as calc
 from core.inteligencia_ativos import fundamentos as fund
+from core.inteligencia_ativos import historico as hist
 from core.inteligencia_ativos import informacoes as inf
 from core.inteligencia_ativos import modelos as m
-from core.inteligencia_ativos import papeis
+from core.inteligencia_ativos import painel, papeis
 from core.inteligencia_ativos import pares as prs
 from core.inteligencia_ativos import valuation as val
 from core.estrategia import politica as pol
 from core.estrategia import portao
 from core.utils import fmt_moeda
 from views import inteligencia_ativos_fit as tela_fit
+from views import inteligencia_ativos_painel as tela_painel
 
 ROTULO = "Inteligência dos Ativos"
 # Mesmos valores de app.py (menu) e views/configuracoes.py (flag lida lá).
@@ -51,9 +61,10 @@ def rotulo_aba(liberacao: portao.Liberacao) -> str:
     return f"{icone}  {ROTULO}"
 
 
-def render(liberacao: portao.Liberacao, carteira: dict | None = None) -> None:
+def render(liberacao: portao.Liberacao, carteira: dict | None = None,
+           proventos: dict | None = None) -> None:
     if liberacao.disponivel:
-        _render_liberada(liberacao, carteira or {})
+        _render_liberada(liberacao, carteira or {}, proventos)
     else:
         _render_onboarding(liberacao)
 
@@ -715,7 +726,8 @@ def cartao_questoes(a: m.AnaliseAtivo) -> str:
             f'margin:4px 0 12px 0">{blocos}</div>')
 
 
-def _render_liberada(liberacao: portao.Liberacao, carteira: dict) -> None:
+def _render_liberada(liberacao: portao.Liberacao, carteira: dict,
+                     proventos: dict | None = None) -> None:
     versao = liberacao.politica.version
     st.success("Configuração concluída. A análise inteligente dos seus ativos "
                f"já está disponível. Premissa: estratégia versão {versao}.")
@@ -728,9 +740,40 @@ def _render_liberada(liberacao: portao.Liberacao, carteira: dict) -> None:
         st.info("Sua estratégia mudou de situação. Recarregue a página.")
         return
     ctx, analises = resultado["contexto"], resultado["analises"]
-    st.markdown(cartao_premissa(ctx), unsafe_allow_html=True)
-    st.markdown(cartao_calculos(ctx.calculos), unsafe_allow_html=True)
 
+    # Dashboard: resumo, cartões e histórico. O detalhe continua abaixo.
+    resumo = painel.resumo(ctx, analises, carteira, proventos)
+    tela_painel.registrar_uma_vez(ctx, analises, resumo)
+    _, comparacao = tela_painel.comparacao_de(
+        hist.CARTEIRA, hist.capturar_carteira(
+            resumo, ctx, agora=dt.datetime.now(dt.timezone.utc)))
+    st.markdown(tela_painel.cartao_resumo(resumo, comparacao),
+                unsafe_allow_html=True)
+    st.markdown("#### Ativos")
+    tela_painel.render_cards(painel.cards(analises, ctx))
+
+    with st.expander("Estratégia, cálculos e tabela da carteira"):
+        st.markdown(cartao_premissa(ctx), unsafe_allow_html=True)
+        st.markdown(cartao_calculos(ctx.calculos), unsafe_allow_html=True)
+        _tabela_carteira(analises)
+
+    st.markdown("#### Análise completa")
+    por_ticker = {a.ativo.ticker: a for a in analises}
+    if st.session_state.get(tela_painel.SELECAO_KEY) not in por_ticker:
+        st.session_state.pop(tela_painel.SELECAO_KEY, None)
+    escolha = st.selectbox(
+        "Ativo", list(por_ticker), key=tela_painel.SELECAO_KEY,
+        format_func=lambda t: f"{t} · {por_ticker[t].ativo.nome}")
+    analise_ = por_ticker[escolha]
+    st.markdown(cartao_questoes(analise_), unsafe_allow_html=True)
+    st.markdown(fluxo_html(analise_), unsafe_allow_html=True)
+    st.markdown("#### Portfolio Fit")
+    leitura = tela_fit.render(analise_, ctx)
+    st.markdown("#### Histórico e auditoria")
+    tela_painel.render_historico(analise_, ctx, leitura)
+
+
+def _tabela_carteira(analises) -> None:
     st.dataframe(
         [{"Ativo": a.ativo.ticker,
           "Papel principal": (a.papel_principal.rotulo
@@ -740,13 +783,3 @@ def _render_liberada(liberacao: portao.Liberacao, carteira: dict) -> None:
           "Ação a considerar": a.acao.rotulo} for a in analises],
         hide_index=True, use_container_width=True,
         column_config={"Peso": st.column_config.NumberColumn(format="%.1f%%")})
-
-    por_ticker = {a.ativo.ticker: a for a in analises}
-    escolha = st.selectbox(
-        "Ativo", list(por_ticker), key="ia_ativo",
-        format_func=lambda t: f"{t} · {por_ticker[t].ativo.nome}")
-    analise_ = por_ticker[escolha]
-    st.markdown(cartao_questoes(analise_), unsafe_allow_html=True)
-    st.markdown(fluxo_html(analise_), unsafe_allow_html=True)
-    st.markdown("#### Portfolio Fit")
-    tela_fit.render(analise_, ctx)
