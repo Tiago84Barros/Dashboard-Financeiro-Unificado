@@ -10,6 +10,7 @@ Coberto por tests/test_inteligencia_ativos_portfolio_fit.py (LLM simulada).
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Callable
 
 from core.inteligencia_ativos import modelos as m
@@ -41,6 +42,14 @@ def _chamar_padrao(mensagens: list[dict]) -> str:
     return _chat_complete(mensagens, temperature=_TEMPERATURA, json_mode=True)
 
 
+def _modelo_que_respondeu(chamar) -> str | None:
+    """Para a auditoria. Com ``chamar`` de teste, não há provedor real."""
+    if chamar is not None:
+        return getattr(chamar, "modelo", None)
+    from core.llm_b3 import ultimo_modelo
+    return ultimo_modelo()
+
+
 def gerar(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor, *,
           chamar: Callable[[list[dict]], str] | None = None,
           mercado: str | None = None) -> pf.Leitura:
@@ -61,4 +70,5 @@ def gerar(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor, *,
     dado = pf.ler_json(bruto)
     if dado is None:
         return pf.falha("A resposta da LLM não é um JSON válido.", regras)
-    return pf.validar(dado, contexto, pf.texto_ancora(contexto, mercado))
+    leitura = pf.validar(dado, contexto, pf.texto_ancora(contexto, mercado))
+    return replace(leitura, modelo=_modelo_que_respondeu(chamar))

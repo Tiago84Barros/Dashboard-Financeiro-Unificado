@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import threading
 
 import pandas as pd
 import streamlit as st
@@ -166,6 +167,15 @@ def provedores_disponiveis() -> list[str]:
     return [nome for nome, _c, _m in _provider_chain()]
 
 
+# Quem respondeu a última chamada desta thread ("provedor/modelo"). Serve à
+# auditoria da análise: com fallback, o modelo pedido não é o que respondeu.
+_ULTIMO = threading.local()
+
+
+def ultimo_modelo() -> str | None:
+    return getattr(_ULTIMO, "modelo", None)
+
+
 def _chat_complete(
     messages: list[dict],
     temperature: float = _TEMPERATURE,
@@ -185,6 +195,7 @@ def _chat_complete(
             "GEMINI_API_KEY no .env / Streamlit Secrets."
         )
     erros: list[str] = []
+    _ULTIMO.modelo = None
     for nome, client, modelo in chain:
         try:
             if json_mode:
@@ -193,6 +204,7 @@ def _chat_complete(
                         model=modelo, messages=messages, temperature=temperature,
                         response_format={"type": "json_object"},
                     )
+                    _ULTIMO.modelo = f"{nome}/{modelo}"
                     return resp.choices[0].message.content
                 except Exception as exc_json:
                     logger.warning("JSON mode falhou em %s (%s) — tentando sem response_format.",
@@ -202,6 +214,7 @@ def _chat_complete(
             )
             if nome != "openai":
                 logger.info("LLM respondido pelo provedor de fallback: %s (%s)", nome, modelo)
+            _ULTIMO.modelo = f"{nome}/{modelo}"
             return resp.choices[0].message.content
         except Exception as exc:
             erros.append(f"{nome}({modelo}): {exc}")

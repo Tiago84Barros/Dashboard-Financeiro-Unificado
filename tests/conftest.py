@@ -362,3 +362,31 @@ def _informacoes_sem_arquivo(monkeypatch):
     monkeypatch.setattr(secoes, "_ler_informacoes", lambda info: (
         inf.Noticias(), inf.Relatorios(), inf.Eventos()))
     yield
+
+
+# Histórico das análises: a aba grava fotos em user_settings a cada sessão.
+# Na suíte, o repositório vira um dicionário em memória por teste; nenhum
+# teste chega ao banco. O repositório real tem teste próprio, com engine
+# falso, em tests/test_inteligencia_ativos_historico.py.
+@pytest.fixture(autouse=True)
+def _historico_em_memoria(monkeypatch):
+    try:
+        from core.inteligencia_ativos import historico as hist
+        from core.inteligencia_ativos import historico_repo as hrepo
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield None
+        return
+    guardado = {"extra": {}}
+
+    def _carregar(**_):
+        return hist.ler(guardado["extra"])
+
+    def _registrar(fotos, *, forcar=None, **_):
+        historico, gravadas = hist.anexar(hist.ler(guardado["extra"]), fotos,
+                                          forcar=forcar)
+        if gravadas:
+            guardado["extra"] = hist.gravar_em(guardado["extra"], historico)
+        return historico, gravadas
+    monkeypatch.setattr(hrepo, "carregar", _carregar)
+    monkeypatch.setattr(hrepo, "registrar", _registrar)
+    yield guardado

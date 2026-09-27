@@ -221,7 +221,9 @@ def chave_sessao(analise: m.AnaliseAtivo, contexto: dict) -> str:
 
 # -- tela ------------------------------------------------------------------------
 
-def render(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor) -> None:
+def render(analise: m.AnaliseAtivo,
+           ctx: m.ContextoInvestidor) -> pf.Leitura | None:
+    """Desenha o bloco e devolve a leitura por LLM desta sessão, se houver."""
     from core.inteligencia_ativos import leitura_llm
     from core.llm_b3 import llm_disponivel
 
@@ -255,3 +257,4 @@ def render(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor) -> None:
                    "scenario.cenario_do_investidor, só para leitura. O bloco "
                    "de contexto de mercado é anexado na hora da chamada.")
         st.json(contexto, expanded=False)
+    return leitura if isinstance(leitura, pf.Leitura) else None

@@ -4153,7 +4153,7 @@ def render() -> None:
         _render_ir()
 
     with tab6:
-        _ia.render(_liberacao, carteira)
+        _ia.render(_liberacao, carteira, proventos)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

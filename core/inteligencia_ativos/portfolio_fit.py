@@ -663,6 +663,7 @@ class Leitura:
     divergencia_regras: str | None = None
     fit_regras: FitRegras | None = None
     revisao_cenario: bool = False          # a LLM escreveu FRASE_REVISAO
+    modelo: str | None = None              # "provedor/modelo" que respondeu
 
     @property
     def rotulo_acao(self) -> str:
