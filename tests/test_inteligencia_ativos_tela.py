@@ -131,10 +131,13 @@ def test_liberada_mostra_premissa_resumo_e_os_13_cartoes():
     questoes = next(h for h in htmls if "flex:1 1 220px" in h)
     for pergunta in m.PERGUNTAS.values():
         assert escape(pergunta) in questoes
-    assert "ATIVO EM ANÁLISE: HGLG11" in app.code[0].value
+    # Portfolio Fit: pré-leitura por regras sempre visível e o contexto
+    # estruturado (JSON) que a LLM recebe; a LLM só roda no botão.
+    assert any("Portfolio Fit pelas regras" in h for h in htmls)
+    assert '"ticker": "HGLG11"' in app.json[0].proto.body
 
     app.selectbox(key="ia_ativo").set_value("TAEE11").run(timeout=30)
-    assert any("ATIVO EM ANÁLISE: TAEE11" in c.value for c in app.code)
+    assert '"ticker": "TAEE11"' in app.json[0].proto.body
 
 
 def test_liberada_sem_posicoes_nao_quebra():
