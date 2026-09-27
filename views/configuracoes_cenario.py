@@ -1,6 +1,9 @@
 """
 views/configuracoes_cenario.py
-Configurações → Geral → 🌎 Cenário de Investimentos.
+🌎 Cenário de Investimentos, mostrado em Investimentos → Inteligência dos
+Ativos ("Meu cenário", no fim da aba liberada). Até 27/09/2026 morava em
+Configurações → Geral. Renderize uma vez só por página: as chaves dos widgets
+são fixas por versão.
 
 O corpo do bloco: situação do cenário salvo, sinais de revisão e o formulário
 dos 12 itens. Cabeçalho e moldura ficam em ``views/configuracoes_geral.py``.

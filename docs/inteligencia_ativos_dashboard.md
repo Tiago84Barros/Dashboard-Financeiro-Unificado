@@ -14,8 +14,10 @@ virou um painel. De cima para baixo, ela mostra:
 7. **Minha estratégia**, recolhida num expander ao fim da página. Mostra a
    estratégia vigente e permite editá-la. A edição abre uma nova versão, e a
    atual continua valendo até a nova ser concluída.
+8. **Meu cenário**, também num expander, depois da estratégia. É o Cenário de
+   Investimentos, premissa opcional: não bloqueia a análise.
 
-## Estratégia na própria aba
+## Estratégia e cenário na própria aba
 
 Desde 27/09/2026 a Estratégia de Investimentos não fica mais em Configurações
 → Geral. Ela é configurada e alterada nesta aba.
@@ -30,6 +32,14 @@ Desde 27/09/2026 a Estratégia de Investimentos não fica mais em Configuraçõe
 O bloco (`views/configuracoes_estrategia.py`) é renderizado uma única vez por
 execução, porque as chaves dos widgets são fixas. O `next_step` do portão
 aponta para `investments / asset_intelligence`.
+
+O Cenário de Investimentos saiu de Configurações → Geral no mesmo dia. Como é
+opcional, só aparece na aba liberada (*Meu cenário*); com a aba bloqueada, o
+que falta é a estratégia. O bloco (`views/configuracoes_cenario.py`) também é
+renderizado uma vez só. Os avisos que mandavam o usuário a Configurações
+(seção de cenário do ativo e aviso de revisão do Portfolio Fit) agora apontam
+para *Meu cenário*, no fim da aba. O não-admin perdeu a aba Geral de
+Configurações, que só tinha o cenário.
 
 ## Resumo da carteira
 

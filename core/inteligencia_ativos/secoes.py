@@ -191,8 +191,8 @@ def provedor_cenario(info: InfoBasica, ctx: ContextoInvestidor, *,
     if c is None or c.vazio:
         return Secao(chave="cenario", titulo=titulo, estado=SEM_DADOS,
                      resumo="Nenhum Cenário de Investimentos cadastrado. "
-                            "Cadastre em Configurações → Geral → Cenário de "
-                            "Investimentos.")
+                            "Cadastre em \"Meu cenário\", no fim desta "
+                            "aba.")
     hoje = hoje or dt.date.today()
     sinais = ctx.sinais_cenario
     relev = [k for k in cen.relevantes(info.classe_politica)

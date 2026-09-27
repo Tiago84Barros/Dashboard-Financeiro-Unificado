@@ -12,8 +12,8 @@ from tests.test_inteligencia_ativos_adequacao import _ctx
 from tests.test_inteligencia_ativos_tela import CARTEIRA_COMPLETA, _liberada, _rodar
 from views import inteligencia_ativos_painel as tela_painel
 
-# A aba mostra o bloco da estratégia: o repositório fica em memória.
-pytestmark = pytest.mark.usefixtures("estrategia_falsa")
+# A aba mostra os blocos da estratégia e do cenário: repositórios em memória.
+pytestmark = pytest.mark.usefixtures("estrategia_falsa", "cenario_falso")
 
 HOJE = dt.date(2026, 9, 26)
 CARTEIRA_APP = {"total_investido": 10000.0, "rentabilidade_total_pct": 10.0,

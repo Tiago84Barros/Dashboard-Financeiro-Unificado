@@ -223,7 +223,7 @@ def _com_cenario(ticker="HGLG11", sinais=()):
 def test_secao_cenario_sem_cadastro_aponta_configuracoes():
     a = _analise("HGLG11", _ctx())
     assert a.cenario.estado == m.SEM_DADOS
-    assert "Configurações → Geral → Cenário" in a.cenario.resumo
+    assert '"Meu cenário", no fim desta aba' in a.cenario.resumo
 
 
 def test_secao_cenario_disponivel_com_itens_relevantes_da_classe():

@@ -7,7 +7,7 @@ O cenário é uma premissa adicional da análise dos ativos. Não substitui os f
 
 ## Onde fica
 
-- **Tela:** Configurações → Geral → bloco 02 "🌎 Cenário de Investimentos" (`views/configuracoes_cenario.py`). O não-admin também vê o bloco, porque o cenário é de cada conta.
+- **Tela:** Investimentos → Inteligência dos Ativos → "Meu cenário", no fim da aba liberada (`views/configuracoes_cenario.py`). Até 27/09/2026 ficava em Configurações → Geral. Cada conta tem o seu, admin ou não.
 - **Armazenamento:** `user_settings.extra_settings["investment_scenario"]`, esquema `cenario.v1`. Não usa tabela nova nem migration, porque o Supabase está acima de 500 MB.
 - **Regras:** `core/cenario/`:
   - `modelo.py` é puro;
@@ -45,7 +45,7 @@ Um item preenchido exige direção, confiança e fonte, porque premissa sem proc
 - **Datas e histórico.** Salvar sem mudança não cria versão. Só os itens alterados ganham `last_updated` novo. O histórico guarda as últimas 20 revisões.
 - **Sugestão não grava.** A sugestão só preenche o formulário, e direção e confiança continuam sendo decisão do usuário.
 - **Prompt.** O prompt leva `REGRA_CENARIO`: usar como premissa, nunca alterar e, se os fatos contradisserem o cenário, escrever exatamente *"Existem mudanças relevantes que podem justificar revisão do cenário."*.
-- **Validador.** O validador do Portfolio Fit descarta chaves como `updated_scenario`/`new_scenario` e marca `revisao_cenario` quando a frase aparece. A tela então mostra o aviso e aponta para Configurações.
+- **Validador.** O validador do Portfolio Fit descarta chaves como `updated_scenario`/`new_scenario` e marca `revisao_cenario` quando a frase aparece. A tela então mostra o aviso e aponta para "Meu cenário", no fim da aba.
 
 ## Sinais de revisão (calculados pelo código)
 

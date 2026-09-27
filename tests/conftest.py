@@ -418,3 +418,21 @@ def estrategia_falsa(monkeypatch):
     monkeypatch.setattr(repo, "carregar", lambda **_: falso.estado)
     monkeypatch.setattr(repo, "iniciar", _iniciar)
     yield falso
+
+
+# Cenário de Investimentos em memória, pelo mesmo motivo: a aba liberada
+# termina com "Meu cenário", e o bloco lê o repositório e as referências macro.
+@pytest.fixture
+def cenario_falso(monkeypatch):
+    from core.cenario import modelo as mod
+    from core.cenario import referencias
+    from core.cenario import repositorio as repo
+
+    class _Falso:
+        cenario = mod.Cenario.de_dict(None)
+
+    falso = _Falso()
+    monkeypatch.setattr(repo, "carregar", lambda **_: falso.cenario)
+    monkeypatch.setattr(referencias, "referencias", lambda **_: {})
+    monkeypatch.setattr(referencias, "sugestoes", lambda **_: {})
+    yield falso

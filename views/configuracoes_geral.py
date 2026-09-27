@@ -2,7 +2,6 @@
 views/configuracoes_geral.py
 Aba "Geral" de Configurações — o que era da sidebar, mais o que não tinha lugar.
 
-  🌎 Cenário           — o ambiente econômico em que o usuário acredita investir
   🎨 Tema              — a preferência visual da conta
   🏷️ Categorias        — as opções do lançamento manual do Controle Financeiro
   👤 Trocar de usuário — encerrar a sessão deste navegador
@@ -16,9 +15,9 @@ O tema e a troca de usuário **saíram da sidebar** em 21/09/2026. Estavam
 visíveis em toda tela, ocupando a barra que serve para navegar, e são ajustes
 que se fazem uma vez.
 
-A 🎯 Estratégia de Investimentos **saiu daqui** em 27/09/2026: é configurada e
-alterada na própria aba Investimentos → Inteligência dos Ativos, que depende
-dela.
+A 🎯 Estratégia e o 🌎 Cenário de Investimentos **saíram daqui** em 27/09/2026:
+são configurados e alterados na própria aba Investimentos → Inteligência dos
+Ativos, que depende deles.
 """
 from __future__ import annotations
 
@@ -38,28 +37,12 @@ _NOME_CAT = "cfg_geral_nome_categoria"
 
 
 def render() -> None:
-    render_cenario_bloco()
+    st.caption("A Estratégia e o Cenário de Investimentos se configuram em "
+               "Investimentos → Inteligência dos Ativos.")
     _render_tema()
     _render_categorias()
     _render_trocar_usuario()
     _render_memoria_llm()
-
-
-# -- cenário de investimentos --------------------------------------------------
-
-def render_cenario_bloco() -> None:
-    """Bloco do cenário. Público: é de cada conta, e o não-admin também vê."""
-    from views.configuracoes_cenario import render as render_cenario
-
-    with st.container(border=True, key="cfg_geral_cenario"):
-        _cabecalho(
-            "01", "🌎 Cenário de Investimentos",
-            "Em que ambiente econômico você acredita estar investindo. Entra "
-            "como premissa adicional nas análises e só muda quando você muda.",
-        )
-        st.caption("A Estratégia de Investimentos agora se configura em "
-                   "Investimentos → Inteligência dos Ativos.")
-        render_cenario()
 
 
 # -- tema ---------------------------------------------------------------------
@@ -69,7 +52,7 @@ def _render_tema() -> None:
 
     with st.container(border=True, key="cfg_geral_tema"):
         _cabecalho(
-            "03", "🎨 Tema do aplicativo",
+            "01", "🎨 Tema do aplicativo",
             "Claro ou escuro, salvo na sua conta e aplicado na hora.",
         )
         # A lógica de persistência não muda de lugar junto: o callback
@@ -93,7 +76,7 @@ def _render_categorias() -> None:
     """
     with st.container(border=True, key="cfg_geral_categorias"):
         _cabecalho(
-            "04", "🏷️ Categorias do Controle Financeiro",
+            "02", "🏷️ Categorias do Controle Financeiro",
             "As opções que aparecem ao lançar entrada, saída ou investimento.",
         )
         tipo = st.selectbox(
@@ -153,7 +136,7 @@ def _render_trocar_usuario() -> None:
 
     with st.container(border=True, key="cfg_geral_usuario"):
         _cabecalho(
-            "05", "👤 Trocar de usuário",
+            "03", "👤 Trocar de usuário",
             "Encerra a sessão deste navegador e volta para a tela de entrada.",
         )
         nome = str(principal().get("name") or principal().get("email") or "")
@@ -176,7 +159,7 @@ def _render_trocar_usuario() -> None:
 def _render_memoria_llm() -> None:
     with st.container(border=True, key="cfg_geral_llm"):
         _cabecalho(
-            "06", "🧹 Limpar histórico da LLM",
+            "04", "🧹 Limpar histórico da LLM",
             "Escolha a seção cuja conversa deve ser apagada. Nada é apagado "
             "sem a escolha e o clique.",
         )
