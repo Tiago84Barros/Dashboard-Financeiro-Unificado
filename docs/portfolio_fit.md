@@ -88,6 +88,6 @@ Soma a isso `dimensions`, com nível, fato e interpretação por dimensão, e `c
 
 ## Limitações
 
-- A seção de cenário por ativo continua pendente. O cenário vem só do bloco de mercado.
+- O cenário é o Cenário de Investimentos do usuário (`scenario.cenario_do_investidor`), somado ao bloco de mercado. Ele é só leitura: a LLM não o altera e o validador descarta qualquer chave que tente reescrevê-lo. Ver `docs/cenario_investimentos.md`.
 - A política não tem alvo por ativo, só por classe, e o contexto diz isso explicitamente.
 - A leitura fica na sessão, com uma chave que depende do ativo, da versão da política e do hash do contexto. Mudou a carteira, é preciso pedir de novo.

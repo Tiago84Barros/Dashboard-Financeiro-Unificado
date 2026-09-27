@@ -28,6 +28,13 @@ Este módulo é puro:
   dimensões sem dado forçadas a "insuficiente" e números sem âncora no
   contexto.
 
+O Cenário de Investimentos do usuário (``core/cenario``) entra em
+``scenario.cenario_do_investidor`` como premissa só de leitura, com
+``REGRA_CENARIO`` no prompt. A resposta não tem por onde alterá-lo: nada
+daqui grava, e ``validar`` descarta qualquer chave que tente reescrevê-lo
+(``CHAVES_CENARIO``). Se a LLM achar que os fatos o contradizem, ela escreve
+``FRASE_REVISAO`` e a tela mostra o aviso; quem muda o cenário é o usuário.
+
 A chamada ao provedor mora em ``leitura_llm.py``.
 Coberto por tests/test_inteligencia_ativos_portfolio_fit.py.
 """
@@ -37,6 +44,7 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 
+from core.cenario.modelo import FRASE_REVISAO, REGRA_CENARIO
 from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
 from core.estrategia import politica as pol
 from core.inteligencia_ativos import adequacao
@@ -113,6 +121,13 @@ CHAVES_PROIBIDAS = frozenset({
     "score", "overall", "overall_score", "overall_rating", "ranking", "rank",
     "nota", "nota_geral", "final_score", "total_score", "recommendation",
     "recomendacao", "veredito_geral",
+})
+
+# Chaves com que a resposta tentaria reescrever o cenário do usuário.
+CHAVES_CENARIO = frozenset({
+    "scenario", "scenario_update", "updated_scenario", "new_scenario",
+    "scenario_changes", "investment_scenario", "cenario",
+    "cenario_atualizado", "novo_cenario", "cenario_de_investimentos",
 })
 
 CAMPOS_TEXTO = ("fundamental_analysis", "valuation_analysis", "peer_analysis",
@@ -456,6 +471,10 @@ def contexto(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor, *,
         "allocation": _alocacao(analise, ctx),
         "concentration": _concentracao(analise, ctx),
         "scenario": {
+            "cenario_do_investidor": (analise.cenario.dados
+                                      if analise.cenario.estado == m.DISPONIVEL
+                                      and analise.cenario.dados
+                                      else NAO_DISPONIVEL),
             "secao_cenario": {"estado": analise.cenario.estado,
                               "resumo": analise.cenario.resumo},
             "contexto_mercado": ("no bloco CONTEXTO DE MERCADO, após este JSON"
@@ -562,6 +581,11 @@ def sistema() -> str:
         "ordem de compra ou venda.\n"
         "8. Desempenho passado, múltiplos e comparações não são previsão.\n\n"
         f"{REGRA_CONTEXTO_MERCADO}\n\n"
+        f"{REGRA_CENARIO}\n"
+        "O cenário do usuário está em \"scenario.cenario_do_investidor\". "
+        "Use \"scenario_impact\" para dizer como ele afeta este ativo nesta "
+        "carteira e, se for o caso, para a frase de revisão. Não devolva "
+        "chave nenhuma com um cenário novo.\n\n"
         "SAÍDA: responda SOMENTE com um objeto JSON neste formato:\n"
         + _esquema()
     )
@@ -638,6 +662,7 @@ class Leitura:
     numeros_sem_ancora: tuple[str, ...] = ()
     divergencia_regras: str | None = None
     fit_regras: FitRegras | None = None
+    revisao_cenario: bool = False          # a LLM escreveu FRASE_REVISAO
 
     @property
     def rotulo_acao(self) -> str:
@@ -716,6 +741,11 @@ def validar(dado: dict | None, contexto_: dict, ancora: str) -> Leitura:
     if proibidas:
         correcoes.append("Nota geral ou ranking removido (as dimensões são "
                          "independentes): " + ", ".join(proibidas) + ".")
+    reescrita = sorted(k for k in dado if str(k).lower() in CHAVES_CENARIO)
+    if reescrita:
+        correcoes.append("A resposta tentou reescrever o Cenário de "
+                         "Investimentos (" + ", ".join(reescrita) + "); "
+                         "descartado. O cenário só muda pelo usuário.")
 
     papeis_, ok = _lista(dado.get("asset_role"))
     desconhecidos = [p for p in papeis_ if p not in m.PAPEIS]
@@ -812,6 +842,8 @@ def validar(dado: dict | None, contexto_: dict, ancora: str) -> Leitura:
                        "regras da política, como "
                        f"\"{ROTULO_NIVEL[regras.nivel]}\".")
 
+    revisao = FRASE_REVISAO.lower() in corpo.lower()
+
     status = (COM_RESSALVAS if (problemas or correcoes or sem_ancora)
               else APROVADA)
     return Leitura(status=status, papeis=tuple(papeis_), tese=tese,
@@ -819,4 +851,5 @@ def validar(dado: dict | None, contexto_: dict, ancora: str) -> Leitura:
                    dimensoes=tuple(dims), conclusoes=tuple(conclusoes),
                    problemas=tuple(problemas), correcoes=tuple(correcoes),
                    numeros_sem_ancora=sem_ancora,
-                   divergencia_regras=divergencia, fit_regras=regras)
+                   divergencia_regras=divergencia, fit_regras=regras,
+                   revisao_cenario=revisao)

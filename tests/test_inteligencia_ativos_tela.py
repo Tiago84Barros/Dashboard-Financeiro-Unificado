@@ -124,8 +124,9 @@ def test_liberada_mostra_premissa_resumo_e_os_13_cartoes():
     assert posicoes == sorted(posicoes)
     assert "Papel principal: renda imobiliária." in fluxo
     assert "Nenhum alvo individual é presumido" in fluxo
-    # só o cenário segue em preparação
-    assert fluxo.count("em preparação</span>") == 1
+    # nenhuma seção segue em preparação: o cenário virou premissa cadastrável
+    assert "em preparação</span>" not in fluxo
+    assert "Nenhum Cenário de Investimentos cadastrado" in fluxo
     assert "Dado · fornecido pelo sistema" in fluxo
     assert "P/VP" in fluxo and "Dado não disponível." in fluxo
     questoes = next(h for h in htmls if "flex:1 1 220px" in h)

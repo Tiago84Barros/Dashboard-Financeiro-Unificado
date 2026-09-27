@@ -21,6 +21,9 @@ Puro. Coberto por tests/test_inteligencia_ativos_adequacao.py.
 """
 from __future__ import annotations
 
+import datetime as dt
+
+from core.cenario import modelo as cenario_mod
 from core.inteligencia_ativos import (adequacao, calculos, fundamentos,
                                       informacoes, pares, papeis, secoes,
                                       valuation)
@@ -110,6 +113,10 @@ def texto_para_llm(analise: AnaliseAtivo, ctx: ContextoInvestidor) -> str:
     """Entrada da etapa de LLM: política, carteira e a análise estruturada."""
     a = analise.ativo
     linhas = [ctx.texto_politica, "", texto_carteira(ctx), "",
+              cenario_mod.texto_para_llm(
+                  ctx.cenario, hoje=dt.date.today(),
+                  classe_politica=a.classe_politica,
+                  sinais=ctx.sinais_cenario), "",
               f"=== ATIVO EM ANÁLISE: {a.ticker} ===",
               f"Nome: {a.nome} · Classe: {a.classe}"
               + (f" ({a.subclasse})" if a.subclasse else "")

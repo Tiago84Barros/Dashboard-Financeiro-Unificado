@@ -180,14 +180,11 @@ def test_prioridade_das_acoes():
 def test_secoes_externas_na_ordem_da_tela():
     a = _analise("HGLG11", _ctx())
     assert [s.chave for s in a.secoes_externas] == list(secoes.SECOES)
-    # só o cenário segue pendente; sem dado na suíte offline os reais saem
-    # SEM_DADOS
-    reais = {"fundamentos", "valuation", "pares", "noticias", "relatorios",
-             "eventos"}
-    assert all(s.estado == m.SEM_DADOS for s in a.secoes_externas
-               if s.chave in reais)
-    assert all(s.estado == m.PENDENTE for s in a.secoes_externas
-               if s.chave not in reais)
+    # nenhuma seção segue pendente; sem dado (nem cenário cadastrado) na
+    # suíte offline todas saem SEM_DADOS
+    assert all(s.estado == m.SEM_DADOS for s in a.secoes_externas)
+    cen = next(s for s in a.secoes_externas if s.chave == "cenario")
+    assert "Configurações → Geral → Cenário de Investimentos" in cen.resumo
     q = a.questoes
     assert q[m.Q_FUNDAMENTOS].estado == m.SEM_DADOS
     assert "nenhum dos 14 indicadores" in q[m.Q_FUNDAMENTOS].resposta

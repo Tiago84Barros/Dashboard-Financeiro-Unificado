@@ -43,7 +43,8 @@ def contexto_obrigatorio(registro: repo.Registro | None) -> str:
 
 
 def montar(registro: repo.Registro | None, carteira: dict, *,
-           faixas: dict | None = None) -> ContextoInvestidor:
+           faixas: dict | None = None, cenario=None,
+           sinais_cenario: tuple = ()) -> ContextoInvestidor:
     """Política concluída + carteira completa + cálculos determinísticos.
 
     ``faixas`` é opcional (formato em ``calculos.alocacao``): faixas
@@ -79,6 +80,8 @@ def montar(registro: repo.Registro | None, carteira: dict, *,
                         calc.peso_por(calculos.DIM_SETOR).items()},
         peso_fora_da_politica=round(fora, 2),
         calculos=calc,
+        cenario=cenario,
+        sinais_cenario=tuple(sinais_cenario),
     )
 
 

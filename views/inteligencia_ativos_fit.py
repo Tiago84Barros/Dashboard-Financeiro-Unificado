@@ -11,6 +11,10 @@ As três dimensões aparecem lado a lado e nunca somadas: não há nota geral
 nem ranking. Cada conclusão separa fato, interpretação, impacto na carteira
 e ação a considerar.
 
+O Cenário de Investimentos entra só como premissa. Quando os dados publicados
+ou a própria LLM apontam contradição, a tela avisa (``aviso_cenario``) e manda
+o usuário a Configurações; nada aqui altera o cenário.
+
 Cada cartão sai num st.markdown só e usa apenas var(--app-*).
 Coberto por tests/test_inteligencia_ativos_portfolio_fit.py.
 """
@@ -187,6 +191,27 @@ def cartao_validacao(leitura: pf.Leitura) -> str:
                   else cor)
 
 
+def aviso_cenario(ctx: m.ContextoInvestidor,
+                  leitura: pf.Leitura | None = None) -> str | None:
+    """Aviso de revisão do cenário, ou None. Só avisa: quem muda é o usuário."""
+    from core.cenario.modelo import FRASE_REVISAO
+
+    motivos = [s.texto for s in ctx.sinais_cenario]
+    if leitura is not None and leitura.revisao_cenario:
+        motivos.append("A leitura por LLM apontou fatos que contradizem o "
+                       "cenário salvo.")
+    if not motivos:
+        return None
+    corpo = (f'<div style="font-weight:800;color:var(--app-warning)">'
+             f'{escape(FRASE_REVISAO)}</div>'
+             + _itens("Por quê", motivos)
+             + '<div style="font-size:0.82rem;color:var(--app-subtle);'
+             'margin-top:6px">O cenário salvo continua valendo e não foi '
+             'alterado. Para revisá-lo: Configurações → Geral → Cenário de '
+             'Investimentos.</div>')
+    return _caixa(corpo, borda="warning")
+
+
 def chave_sessao(analise: m.AnaliseAtivo, contexto: dict) -> str:
     """A leitura guardada vale só para este ativo, esta política e este
     contexto: mudou a carteira ou a estratégia, pede de novo."""
@@ -213,6 +238,10 @@ def render(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor) -> None:
             st.session_state[chave] = leitura_llm.gerar(analise, ctx)
 
     leitura = st.session_state.get(chave)
+    aviso = aviso_cenario(ctx, leitura if isinstance(leitura, pf.Leitura)
+                          else None)
+    if aviso:
+        st.markdown(aviso, unsafe_allow_html=True)
     if isinstance(leitura, pf.Leitura):
         if leitura.status != pf.REJEITADA:
             st.markdown(cartao_dimensoes(leitura), unsafe_allow_html=True)
@@ -222,6 +251,7 @@ def render(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor) -> None:
 
     with st.expander("Contexto estruturado que a LLM recebe"):
         st.caption("Só o que a análise acima já montou, sem o banco inteiro. "
-                   "O bloco de contexto de mercado é anexado na hora da "
-                   "chamada.")
+                   "O Cenário de Investimentos vai em "
+                   "scenario.cenario_do_investidor, só para leitura. O bloco "
+                   "de contexto de mercado é anexado na hora da chamada.")
         st.json(contexto, expanded=False)

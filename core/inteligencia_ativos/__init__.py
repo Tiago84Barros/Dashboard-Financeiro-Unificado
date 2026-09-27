@@ -25,12 +25,18 @@ Módulos do pacote:
   relatórios e eventos (hoje provedores pendentes);
 - ``analise``   — orquestra tudo numa ``AnaliseAtivo``.
 
+O Cenário de Investimentos do usuário (``core/cenario``) entra no contexto
+como premissa só de leitura: ``_cenario`` o lê junto com os sinais de revisão.
+Falha na leitura vira "sem cenário", nunca bloqueio da análise.
+
 A redação por LLM ainda não existe: ``analise.texto_para_llm`` já monta a
 entrada dela.
 
 Coberto por tests/test_inteligencia_ativos.py.
 """
 from __future__ import annotations
+
+import logging
 
 from core.estrategia import portao
 from core.inteligencia_ativos import analise as _analise
@@ -44,6 +50,22 @@ __all__ = ["ATIVO_FORA_DA_CARTEIRA", "PoliticaNaoConcluida",
            "contexto_obrigatorio", "analisar_ativo", "analisar_carteira"]
 
 ATIVO_FORA_DA_CARTEIRA = "ASSET_NOT_IN_PORTFOLIO"
+
+logger = logging.getLogger(__name__)
+
+
+def _cenario(engine=None, owner_id=None) -> tuple:
+    """(cenário, sinais de revisão). Leitura apenas: nada aqui grava."""
+    from core.cenario import divergencia, referencias
+    from core.cenario import repositorio as repo_cenario
+    try:
+        cenario = repo_cenario.carregar(engine=engine, owner_id=owner_id)
+    except Exception:  # noqa: BLE001 — sem cenário a análise segue
+        logger.warning("inteligencia_ativos: cenário ilegível", exc_info=True)
+        return None, ()
+    if cenario.vazio:
+        return cenario, ()
+    return cenario, divergencia.sinais(cenario, referencias.referencias())
 
 
 def _posicao(carteira: dict, ticker: str) -> dict | None:
@@ -78,7 +100,9 @@ def analisar_ativo(ticker: str, *, carteira: dict | None = None,
                 "analysis_available": False,
                 "reason": ATIVO_FORA_DA_CARTEIRA}
 
-    ctx = _contexto.montar(liberacao.politica, carteira, faixas=faixas)
+    cenario, sinais = _cenario(engine, owner_id)
+    ctx = _contexto.montar(liberacao.politica, carteira, faixas=faixas,
+                           cenario=cenario, sinais_cenario=sinais)
     resultado = _analise.analisar(posicao, ctx)
     return {
         **liberacao.como_dict(),
@@ -107,7 +131,9 @@ def analisar_carteira(*, carteira: dict | None = None,
         liberacao = portao.verificar(engine=engine, owner_id=owner_id)
     if not liberacao.disponivel:
         return liberacao.como_dict()
+    cenario, sinais = _cenario(engine, owner_id)
     ctx = _contexto.montar(liberacao.politica, _carteira(carteira),
-                           faixas=faixas)
+                           faixas=faixas, cenario=cenario,
+                           sinais_cenario=sinais)
     return {**liberacao.como_dict(), "contexto": ctx,
             "analises": _analise.analisar_carteira(ctx)}
