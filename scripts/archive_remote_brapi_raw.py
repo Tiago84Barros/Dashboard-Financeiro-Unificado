@@ -28,7 +28,8 @@ def _engine(url: str, remote: bool = False):
     parsed = make_url(url)
     if parsed.drivername in {"postgresql", "postgres"}:
         parsed = parsed.set(drivername="postgresql+psycopg2")
-    connect_args: dict = {"connect_timeout": 15}
+    # 15 s estourava: o handshake com o pooler do Supabase chegou a 34 s.
+    connect_args: dict = {"connect_timeout": 60 if remote else 15}
     kwargs: dict = {"future": True, "connect_args": connect_args}
     if remote:
         parsed = parsed.update_query_dict({"sslmode": "require"})
@@ -49,6 +50,46 @@ def _chunks(values: list[int], size: int):
     iterator = iter(values)
     while chunk := list(islice(iterator, size)):
         yield chunk
+
+
+# Payloads lidos por consulta. Pequeno o bastante para uma falha no meio custar
+# pouco; o custo real estava na conexão, não no tamanho do lote.
+LOTE = 25
+
+
+def ler_em_lotes(remote, consulta, lotes, tentativas: int = 5, espera=time.sleep):
+    """Lê cada lote de ids numa conexão REAPROVEITADA, reabrindo só se cair.
+
+    O engine remoto usa NullPool, então `remote.connect()` por lote abria uma
+    conexão nova a cada 5 payloads. Em 27/09/2026 o handshake com o pooler do
+    Supabase levava de 4 a 34 s: a cópia de 2.817 payloads andava a 20 por
+    minuto e levaria 2 horas. Uma conexão só, com reconexão na falha, paga o
+    handshake uma vez.
+    """
+    conn = None
+    try:
+        for ids in lotes:
+            for tentativa in range(1, tentativas + 1):
+                try:
+                    if conn is None:
+                        conn = remote.connect()
+                    rows = [dict(row) for row in
+                            conn.execute(consulta, {"ids": ids}).mappings()]
+                    break
+                except Exception:
+                    if conn is not None:
+                        try:
+                            conn.close()
+                        except Exception:
+                            pass
+                        conn = None
+                    if tentativa == tentativas:
+                        raise
+                    espera(2 * tentativa)
+            yield rows
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _json(value):
@@ -202,18 +243,7 @@ def archive() -> dict:
         DO NOTHING
     """)
     read = inserted = 0
-    for ids in _chunks(missing_ids, 5):
-        rows = None
-        for attempt in range(1, 6):
-            try:
-                with remote.connect() as conn:
-                    rows = [dict(row) for row in conn.execute(select_rows, {"ids": ids}).mappings()]
-                break
-            except Exception:
-                if attempt == 5:
-                    raise
-                time.sleep(2 * attempt)
-        assert rows is not None
+    for rows in ler_em_lotes(remote, select_rows, _chunks(missing_ids, LOTE)):
         prepared = []
         for row in rows:
             row.pop("id", None)
