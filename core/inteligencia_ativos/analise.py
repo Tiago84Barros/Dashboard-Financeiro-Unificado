@@ -24,9 +24,16 @@ from __future__ import annotations
 import datetime as dt
 
 from core.cenario import modelo as cenario_mod
-from core.inteligencia_ativos import (adequacao, calculos, fundamentos,
-                                      informacoes, pares, papeis, secoes,
-                                      valuation)
+from core.inteligencia_ativos import (
+    adequacao,
+    calculos,
+    fundamentos,
+    informacoes,
+    papeis,
+    pares,
+    secoes,
+    valuation,
+)
 from core.inteligencia_ativos.contexto import classe_politica, texto_carteira
 from core.inteligencia_ativos.modelos import (
     AnaliseAtivo,

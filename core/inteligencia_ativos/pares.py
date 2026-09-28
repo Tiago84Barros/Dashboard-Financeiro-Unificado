@@ -41,8 +41,8 @@ from core.inteligencia_ativos.fundamentos import (
     PCT,
     RENDA_FIXA,
     ROTULO_TIPO,
-    X,
     Metrica,
+    X,
     _tem_valor,
     formatar,
 )
@@ -359,39 +359,39 @@ class ComparacaoPares:
 
     @property
     def com_dado(self) -> tuple[LinhaComparacao, ...]:
-        return tuple(l for l in self.linhas if l.posicao != SEM_DADO)
+        return tuple(linha for linha in self.linhas if linha.posicao != SEM_DADO)
 
     def linha(self, chave: str) -> LinhaComparacao | None:
-        return next((l for l in self.linhas if l.chave == chave), None)
+        return next((linha for linha in self.linhas if linha.chave == chave), None)
 
     def como_dict(self) -> dict:
         return {"ativo": self.ativo, "tipo": self.tipo, "moeda": self.moeda,
                 "motivo": self.motivo, "rodape": RODAPE,
                 "grupo": self.grupo.como_dict(),
                 "linhas": [{
-                    "ativo": l.ativo, "chave": l.chave, "metrica": l.metrica,
-                    "unidade": l.unidade, "valor": l.valor,
-                    "mediana_pares": l.mediana_pares, "n_pares": l.n_pares,
-                    "diferenca": l.diferenca, "diferenca_pct": l.diferenca_pct,
-                    "posicao": l.posicao, "interpretacao": l.interpretacao,
-                    "texto_valor": l.texto_valor(self.moeda),
-                    "texto_mediana": l.texto_mediana(self.moeda),
-                    "texto_diferenca": l.texto_diferenca(self.moeda)}
-                    for l in self.linhas]}
+                    "ativo": linha.ativo, "chave": linha.chave, "metrica": linha.metrica,
+                    "unidade": linha.unidade, "valor": linha.valor,
+                    "mediana_pares": linha.mediana_pares, "n_pares": linha.n_pares,
+                    "diferenca": linha.diferenca, "diferenca_pct": linha.diferenca_pct,
+                    "posicao": linha.posicao, "interpretacao": linha.interpretacao,
+                    "texto_valor": linha.texto_valor(self.moeda),
+                    "texto_mediana": linha.texto_mediana(self.moeda),
+                    "texto_diferenca": linha.texto_diferenca(self.moeda)}
+                    for linha in self.linhas]}
 
     @classmethod
     def de_dict(cls, d: dict | None) -> "ComparacaoPares":
         d = d or {}
         return cls(d.get("ativo") or "", d.get("tipo"), d.get("moeda") or "BRL",
                    GrupoPares.de_dict(d.get("grupo")), tuple(
-                       LinhaComparacao(l["ativo"], l["chave"], l["metrica"],
-                                       l["unidade"], l.get("valor"),
-                                       l.get("mediana_pares"),
-                                       int(l.get("n_pares") or 0),
-                                       l.get("diferenca"), l.get("diferenca_pct"),
-                                       l.get("posicao") or SEM_DADO,
-                                       l.get("interpretacao") or NAO_DISPONIVEL)
-                       for l in d.get("linhas") or ()), d.get("motivo"))
+                       LinhaComparacao(linha["ativo"], linha["chave"], linha["metrica"],
+                                       linha["unidade"], linha.get("valor"),
+                                       linha.get("mediana_pares"),
+                                       int(linha.get("n_pares") or 0),
+                                       linha.get("diferenca"), linha.get("diferenca_pct"),
+                                       linha.get("posicao") or SEM_DADO,
+                                       linha.get("interpretacao") or NAO_DISPONIVEL)
+                       for linha in d.get("linhas") or ()), d.get("motivo"))
 
 
 def _interpretacao(mt: Metrica, pos: str, n: int) -> str:
@@ -440,8 +440,8 @@ def comparar(alvo: Candidato, grupo: GrupoPares, *,
 def resumo(c: ComparacaoPares) -> str:
     if not c.grupo.pares:
         return c.motivo or c.grupo.motivo or "Sem grupo de pares comparáveis."
-    acima = [l.metrica for l in c.com_dado if l.posicao == ACIMA]
-    abaixo = [l.metrica for l in c.com_dado if l.posicao == ABAIXO]
+    acima = [linha.metrica for linha in c.com_dado if linha.posicao == ACIMA]
+    abaixo = [linha.metrica for linha in c.com_dado if linha.posicao == ABAIXO]
     partes = [c.grupo.descricao or ""]
     if acima:
         partes.append("acima da mediana em " + ", ".join(acima[:3]))
@@ -463,11 +463,11 @@ def texto(c: ComparacaoPares, ticker: str) -> str:
     linhas.append("Pares: " + ", ".join(
         f"{p.ticker}" + (f" ({p.nome})" if p.nome else "") for p in c.grupo.pares))
     linhas.append("Ativo | Métrica | Valor | Mediana dos pares | Diferença")
-    for l in c.linhas:
-        linhas.append(f"{l.ativo} | {l.metrica} | {l.texto_valor(c.moeda)} | "
-                      f"{l.texto_mediana(c.moeda)}"
-                      f"{f' ({l.n_pares})' if l.n_pares else ''} | "
-                      f"{l.texto_diferenca(c.moeda)}")
+    for linha in c.linhas:
+        linhas.append(f"{linha.ativo} | {linha.metrica} | {linha.texto_valor(c.moeda)} | "
+                      f"{linha.texto_mediana(c.moeda)}"
+                      f"{f' ({linha.n_pares})' if linha.n_pares else ''} | "
+                      f"{linha.texto_diferenca(c.moeda)}")
     linhas.append("[INTERPRETAÇÃO — sua tarefa, usando só o bloco DADO]")
     linhas.append(f"- {RODAPE}")
     linhas.append("- As diferenças se explicam por modelo de negócio, "

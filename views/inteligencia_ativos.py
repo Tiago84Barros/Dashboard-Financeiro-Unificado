@@ -451,35 +451,35 @@ def corpo_valuation(v: val.Valuation) -> str:
     frases de comparação (INTERPRETAÇÃO). Nunca "barato"/"caro". Puro."""
     if v.tipo is None or not v.linhas:
         return escape(v.motivo or fund.NAO_DISPONIVEL)
-    fmt = lambda x, l: fund.formatar(x, l.unidade, v.moeda)  # noqa: E731
+    fmt = lambda x, linha: fund.formatar(x, linha.unidade, v.moeda)  # noqa: E731
     linhas, faixas, leituras = "", "", ""
-    for l in v.linhas:
-        if not l.aplicavel:
-            linhas += (f'<tr><td {_TD}color:var(--app-muted)">{escape(l.rotulo)}'
+    for linha in v.linhas:
+        if not linha.aplicavel:
+            linhas += (f'<tr><td {_TD}color:var(--app-muted)">{escape(linha.rotulo)}'
                        f'</td><td {_TD}color:var(--app-subtle)" colspan="4">'
-                       f'Não se aplica: {escape(l.motivo or "")}</td></tr>')
+                       f'Não se aplica: {escape(linha.motivo or "")}</td></tr>')
             continue
-        h, p = l.historico, l.pares
-        cor = "var(--app-text)" if l.atual is not None else "var(--app-subtle)"
-        hist = (f"{fmt(h.media, l)} / {fmt(h.mediana, l)} "
+        h, p = linha.historico, linha.pares
+        cor = "var(--app-text)" if linha.atual is not None else "var(--app-subtle)"
+        hist = (f"{fmt(h.media, linha)} / {fmt(h.mediana, linha)} "
                 f"({h.n} obs., {h.inicio}–{h.fim})" if h else fund.NAO_DISPONIVEL)
-        par = (f"{fmt(p.mediana, l)} ({p.n})" if p else fund.NAO_DISPONIVEL)
-        origem = " · ".join(x for x in (l.referencia, l.fonte) if x)
+        par = (f"{fmt(p.mediana, linha)} ({p.n})" if p else fund.NAO_DISPONIVEL)
+        origem = " · ".join(x for x in (linha.referencia, linha.fonte) if x)
         linhas += (
-            f'<tr><td {_TD}color:var(--app-muted)">{escape(l.rotulo)}</td>'
+            f'<tr><td {_TD}color:var(--app-muted)">{escape(linha.rotulo)}</td>'
             f'<td {_TD}color:{cor};font-weight:600">'
-            f'{escape(l.texto_atual(v.moeda))}</td>'
+            f'{escape(linha.texto_atual(v.moeda))}</td>'
             f'<td {_TD}color:var(--app-text)">{escape(hist)}</td>'
             f'<td {_TD}color:var(--app-text)">{escape(par)}</td>'
             f'<td {_TD}color:var(--app-subtle);font-size:0.76rem">'
             f'{escape(origem)}</td></tr>')
-        for fx in l.faixas:
-            faixas += (f"<li>{escape(l.rotulo)} — {escape(fx.rotulo)}: "
-                       f"{escape(fmt(fx.minimo, l))} a "
-                       f"{escape(fmt(fx.maximo, l))}</li>")
-        if l.atual is not None:
-            leituras += (f"<li>{escape(l.comparacao_historica)}</li>"
-                         f"<li>{escape(l.comparacao_pares)}</li>")
+        for fx in linha.faixas:
+            faixas += (f"<li>{escape(linha.rotulo)} — {escape(fx.rotulo)}: "
+                       f"{escape(fmt(fx.minimo, linha))} a "
+                       f"{escape(fmt(fx.maximo, linha))}</li>")
+        if linha.atual is not None:
+            leituras += (f"<li>{escape(linha.comparacao_historica)}</li>"
+                         f"<li>{escape(linha.comparacao_pares)}</li>")
     lista = ('<ul style="margin:2px 0 0 18px;padding:0;font-size:0.82rem;'
              'color:var(--app-muted)">')
     return (
@@ -512,20 +512,20 @@ def corpo_pares(c: prs.ComparacaoPares) -> str:
         f"{' — ' + escape(p.nome) if p.nome else ''}: {escape(p.motivo)}</li>"
         for p in g.pares)
     linhas = ""
-    for l in c.linhas:
-        cor = "var(--app-text)" if l.valor is not None else "var(--app-subtle)"
+    for linha in c.linhas:
+        cor = "var(--app-text)" if linha.valor is not None else "var(--app-subtle)"
         linhas += (
             f'<tr><td {_TD}color:var(--app-muted)">{escape(c.ativo)}</td>'
-            f'<td {_TD}color:var(--app-muted)">{escape(l.metrica)}</td>'
+            f'<td {_TD}color:var(--app-muted)">{escape(linha.metrica)}</td>'
             f'<td {_TD}color:{cor};font-weight:600">'
-            f'{escape(l.texto_valor(c.moeda))}</td>'
+            f'{escape(linha.texto_valor(c.moeda))}</td>'
             f'<td {_TD}color:var(--app-text)">'
-            f'{escape(l.texto_mediana(c.moeda))}'
-            f'{f" ({l.n_pares})" if l.n_pares else ""}</td>'
+            f'{escape(linha.texto_mediana(c.moeda))}'
+            f'{f" ({linha.n_pares})" if linha.n_pares else ""}</td>'
             f'<td {_TD}color:var(--app-text)">'
-            f'{escape(l.texto_diferenca(c.moeda))}</td>'
+            f'{escape(linha.texto_diferenca(c.moeda))}</td>'
             f'<td {_TD}color:var(--app-muted);font-size:0.8rem">'
-            f'{escape(l.interpretacao)}</td></tr>')
+            f'{escape(linha.interpretacao)}</td></tr>')
     return (
         f'<div>{escape(g.descricao or "")}.</div>'
         f'{_SUB_T}Como o grupo foi escolhido</div>{lista}'
