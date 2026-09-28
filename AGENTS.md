@@ -37,8 +37,24 @@ Aplicação Streamlit unificada para controle financeiro, investimentos, carteir
 | Páginas, componentes, cache e estado Streamlit | `streamlit-financial-app` |
 | Testes, regressão, lint e critérios de aceite | `financial-app-quality` |
 | Validação funcional e visual no navegador | `streamlit-browser-validation` e a Skill oficial `browser:control-in-app-browser` |
+| Tratar a fila de lacunas (`local_staging/lacunas/abertas.json`) | `.claude/skills/corrigir-lacuna/SKILL.md` |
 
 Leia todas as Skills envolvidas quando uma mudança cruza domínios.
+
+## Log de lacunas
+
+O app registra o que admite não saber: limitação de motor, aviso de tela, bloco `<lacunas>` da LLM e exceção de rota. Os pontos de registro são `core/lacunas` e `design/lacunas.py::aviso_lacuna`.
+
+- **Onde fica o log:**
+  - na máquina local, em `local_staging/lacunas/eventos.jsonl`;
+  - na Streamlit Cloud, na tabela `app_lacunas`.
+- **Fila:** `python scripts/lacunas_sincronizar.py` funde os dois registros em `local_staging/lacunas/abertas.json`, ordenado por prioridade.
+- **Como corrigir:** siga `.claude/skills/corrigir-lacuna/SKILL.md` à risca.
+  - 1 lacuna e no máximo 1 PR por execução; com 3 PRs `lacuna/` abertos, não faça nada.
+  - Nunca faça merge nem push na `main`.
+  - Nunca relaxe portão ou filtro, e nunca substitua a ausência de dado por valor padrão.
+- **Como registrar a decisão:** `python scripts/lacunas_sincronizar.py marcar <impressao> --status legitima|incerta|em_pr [--pr-url URL] --nota "..."`.
+- **Guarda no CI:** um aviso de lacuna não pode ser removido sem uma seção `## Aviso removido` no corpo do PR. Quem barra é `tests/test_lacunas_guarda.py`.
 
 ## Estrutura e execução
 
