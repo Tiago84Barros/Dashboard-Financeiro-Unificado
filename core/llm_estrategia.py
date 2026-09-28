@@ -114,7 +114,17 @@ grave: faça uma pergunta de esclarecimento.
 Isso é definição de estratégia, não recomendação.
 7. Use a carteira atual e as metas cadastradas só como contexto para \
 perguntar melhor; elas NÃO são respostas do usuário.
-8. "finished" = true só quando todos os OBRIGATÓRIOS estiverem preenchidos e \
+8. Se houver PERFIL FINANCEIRO no contexto, use-o para avaliar e orientar, \
+citando o número na pergunta: aporte compatível com a sobra média real (não \
+proponha aporte acima dela sem apontar isso); reserva de emergência em meses \
+da despesa média; capacidade de risco e necessidade de liquidez diante da \
+estabilidade da renda, dos meses em déficit e dos parcelamentos; gastos não \
+essenciais e recorrentes que poderiam liberar aporte. Aporte não é despesa, e \
+a fatura do cartão não se soma às despesas do caixa. A regra 3 continua \
+valendo: o perfil sugere, só o usuário confirma. Ex.: "Sua sobra média é R$ \
+X; aportar R$ Y por mês faz sentido para você?" — e grave só o valor que ele \
+disser ou confirmar.
+9. "finished" = true só quando todos os OBRIGATÓRIOS estiverem preenchidos e \
 os complementares relevantes cobertos, ou quando o usuário pedir para parar.
 
 CAMPOS

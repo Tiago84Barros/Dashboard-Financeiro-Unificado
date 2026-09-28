@@ -41,6 +41,43 @@ renderizado uma vez só. Os avisos que mandavam o usuário a Configurações
 para *Meu cenário*, no fim da aba. O não-admin perdeu a aba Geral de
 Configurações, que só tinha o cenário.
 
+## Entrevista com o perfil financeiro
+
+Desde 28/09/2026 a IA da entrevista lê um resumo do Controle Financeiro
+(`core/estrategia/perfil_financeiro.py`). O resumo cobre os últimos 12 meses
+fechados; o mês corrente fica de fora, porque pela metade derrubaria as médias.
+O resumo traz:
+
+- a renda: média, mediana, mínima, máxima e estabilidade (coeficiente de
+  variação);
+- a despesa média do caixa e a renda comprometida;
+- a sobra (receitas − despesas, antes de investir) e os meses em déficit;
+- o aporte médio;
+- a reserva de referência, de 6 e de 12 meses de despesa;
+- as categorias do caixa, com recorrência e essencialidade;
+- o cartão: fatura média, categorias, cobranças que se repetem em 3 ou mais
+  faturas e parcelamentos ativos.
+
+As regras de leitura são as mesmas do Controle Financeiro:
+
+- aporte não é despesa;
+- compras no cartão não entram nas despesas do caixa;
+- a categoria de pagamento de fatura aparece à parte, para não ser somada à
+  fatura;
+- dado de demonstração (MOCK_MODE ou fallback mock) não entra.
+
+A regra 8 do prompt (`core/llm_estrategia._SISTEMA`) manda a IA usar esses
+números para avaliar e orientar. Ela deve:
+
+- sugerir um aporte compatível com a sobra real;
+- dimensionar a reserva de emergência em meses de despesa;
+- pesar a capacidade de risco contra a estabilidade da renda.
+
+A IA cita os números na pergunta, mas continua gravando só o que o usuário
+disser ou confirmar. Na tela, o expander *📊 O que a IA vê das suas finanças*
+mostra exatamente o mesmo texto. O resumo fica em cache por 10 minutos, por
+dono.
+
 ## Resumo da carteira
 
 | Campo | Origem |

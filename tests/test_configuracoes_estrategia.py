@@ -66,11 +66,16 @@ def _rodar():
     return AppTest.from_function(_app).run(timeout=30)
 
 
+# O fixture abaixo troca o _contexto; o teste do perfil usa o real.
+_CONTEXTO_REAL = tela._contexto
+
+
 @pytest.fixture(autouse=True)
 def _sem_llm_real(monkeypatch):
     monkeypatch.setattr(ent, "llm_disponivel", lambda: True)
     monkeypatch.setattr(ent, "provedores_disponiveis", lambda: ["openai"])
     monkeypatch.setattr(tela, "_contexto", lambda: "")
+    monkeypatch.setattr(tela, "_perfil_financeiro", lambda: "")
 
 
 def test_nao_iniciada_mostra_zero_e_botao_de_iniciar(monkeypatch):
@@ -187,3 +192,37 @@ def test_formulario_renderiza_todos_os_tipos_e_salva_so_a_mudanca(monkeypatch):
     _, politica, _ = falso.salvos[-1]
     assert politica["risk_profile"]["source"] == "manual"
     assert politica["objective"]["source"] == "entrevista"  # intocado
+
+
+def test_entrevista_mostra_o_que_a_ia_ve_e_manda_o_perfil(monkeypatch):
+    _RepoFalso(monkeypatch, repo.Estado(rascunho=_registro()))
+    perfil = "- Renda média mensal: R$ 10.250,00 (estável)."
+    monkeypatch.setattr(tela, "_contexto", _CONTEXTO_REAL)
+    monkeypatch.setattr(tela, "_perfil_financeiro", lambda: perfil)
+    monkeypatch.setattr("core.investimentos.get_carteira", lambda: {})
+    monkeypatch.setattr("core.metas.get_metas", lambda: {})
+    capturado = {}
+
+    def _etapa(p, h, r, **k):
+        capturado.update(k)
+        return ent.Etapa(politica=p, pergunta="Quanto quer aportar?")
+    monkeypatch.setattr(ent, "proxima_etapa", _etapa)
+    app = _rodar()
+    assert not app.exception
+    painel = next(e for e in app.expander
+                  if e.label == "📊 O que a IA vê das suas finanças")
+    assert any(r"R\$ 10.250,00" in md.value for md in painel.markdown)
+
+    app.chat_input[0].set_value("quero aportar").run(timeout=30)
+    assert not app.exception
+    assert capturado["contexto"].startswith("PERFIL FINANCEIRO do usuário")
+    assert perfil in capturado["contexto"]
+
+
+def test_sem_perfil_o_painel_avisa_e_o_contexto_nao_leva_bloco(monkeypatch):
+    _RepoFalso(monkeypatch, repo.Estado(rascunho=_registro()))
+    app = _rodar()
+    assert not app.exception
+    painel = next(e for e in app.expander
+                  if e.label == "📊 O que a IA vê das suas finanças")
+    assert "Sem lançamentos reais" in painel.caption[0].value
