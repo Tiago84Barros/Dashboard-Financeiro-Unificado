@@ -208,3 +208,21 @@ def macro_recente() -> list[dict] | None:
     if not isinstance(fatos, list):
         raise ArmazemRemotoIndisponivel("resposta sem a lista de fatos")
     return [f for f in fatos if isinstance(f, dict)]
+
+
+def detalhe_eua(simbolos) -> dict[str, dict] | None:
+    """Linhas cruas de ``us_detalhe_armazem.ler_detalhe``; ``None`` sem configuração.
+
+    As contas ficam no app (``resumo_para_prompt``), pelo mesmo motivo das
+    notícias por ativo.
+    """
+    alvo = ",".join(sorted({str(s).strip().upper() for s in simbolos if str(s).strip()}))
+    if not alvo:
+        return {}
+    corpo = _ler("/eua/detalhe", {"simbolos": alvo})
+    if corpo is None:
+        return None
+    detalhe = corpo.get("detalhe")
+    if not isinstance(detalhe, dict):
+        raise ArmazemRemotoIndisponivel("resposta sem o detalhe por símbolo")
+    return {str(k): v for k, v in detalhe.items() if isinstance(v, dict)}

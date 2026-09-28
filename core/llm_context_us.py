@@ -89,6 +89,10 @@ def get_available_database_schema() -> str:
         "  score: pontuação fundamentalista 0–100 por trilha, calculada dentro da "
         "própria indústria.\n"
         "  laboratório avançado: Piotroski, Altman, Sloan e ROIC incremental.\n"
+        "  detalhe por ticker citado (bloco DETALHE DO ARMAZÉM, quando presente): "
+        "retornos e volatilidade do preço diário, últimos trimestres com variação "
+        "a/a e proventos de 12 meses. Se o bloco disser que não entrou, não "
+        "estime esses números.\n"
         "NÃO EXISTE base documental indexada (não há equivalente de CVM/IPE aqui). "
         "Se a pergunta exigir fato de documento, declare a limitação.\n"
         "Todos os valores em dólares. Custo de oportunidade: Treasury. Benchmark: S&P 500."
@@ -166,6 +170,39 @@ def get_peers_context(tickers: list[str], max_tickers: int = 3) -> tuple[str, di
         blocos.append(f"CONCORRENTES DE {tk} (mesma {nivel}): {', '.join(pares)}")
         blocos.append(build_us_fundamentals_context(frame, [tk, *pares], max_n=9))
     return ("\n".join(blocos), mapa) if blocos else ("", {})
+
+
+_MAX_DETALHE = 5
+
+
+def get_warehouse_detail_context(tickers: list[str]) -> str:
+    """Preço diário, trimestres e proventos dos tickers citados, lidos do armazém.
+
+    Direto quando o app aponta para o armazém (desenvolvimento); pelo túnel na
+    produção. Túnel ausente ou fora do ar vira uma linha dizendo isso -- sem
+    ela, a LLM trataria o resumo da vitrine como tudo o que existe.
+    """
+    alvo = list(dict.fromkeys(_norm_tk(t) for t in tickers if str(t).strip()))[:_MAX_DETALHE]
+    if not alvo:
+        return ""
+    from core.us_detalhe_armazem import ler_detalhe, resumo_para_prompt
+    from core.us_read import _db_is_local, _engine
+
+    try:
+        if _db_is_local() and _engine() is not None:
+            return resumo_para_prompt(ler_detalhe(_engine(), alvo), origem="lido direto")
+        from core import armazem_remoto
+
+        detalhe = armazem_remoto.detalhe_eua(alvo)
+    except Exception as exc:  # noqa: BLE001 - vira linha no prompt
+        logger.warning("detalhe do armazém indisponível: %s", exc)
+        motivo = str(exc).splitlines()[0][:140] if str(exc) else type(exc).__name__
+        return ("DETALHE DO ARMAZÉM LOCAL: indisponível agora "
+                f"({motivo}); preço diário, trimestres e proventos não entraram.")
+    if detalhe is None:
+        return ("DETALHE DO ARMAZÉM LOCAL: túnel não configurado neste ambiente; "
+                "preço diário, trimestres e proventos não entraram.")
+    return resumo_para_prompt(detalhe, origem="lido pelo túnel")
 
 
 def get_creation_context(model: dict) -> str:
@@ -246,6 +283,11 @@ def build_llm_context_for_us_portfolio_chat(
         bloco_pares, mapa_pares = get_peers_context(citados)
         if bloco_pares:
             partes += ["", bloco_pares]
+
+    if citados:
+        bloco = get_warehouse_detail_context(citados)
+        if bloco:
+            partes += ["", bloco]
 
     if "creation" in intent:
         bloco = get_creation_context(model)
