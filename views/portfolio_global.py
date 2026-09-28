@@ -42,6 +42,7 @@ from core.global_portfolio import (
 from core.global_portfolio.aggregate import classes_sem_posicao, montar_posicoes
 from core.global_portfolio.returns import Cobertura, retornos_mensais
 from core.global_portfolio.taxonomy import ROTULOS, nao_mapeados
+from core.lacunas import registrar_limitacoes
 from core.llm_context_global import build_global_portfolio_context
 from core.llm_global import chat_com_portfolio_global
 from core.market_companies import us_logo_url
@@ -1183,6 +1184,8 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
         with st.expander("Contexto macro das carteiras", expanded=False):
             for texto in macro.textos:
                 st.text(texto)
+            registrar_limitacoes(macro.limitacoes,
+                                 modulo="views/portfolio_global.py:contexto_macro")
             for limitation in macro.limitacoes:
                 st.caption(limitation)
             st.caption("O ajuste global considera a mudança desde a criação, com limites e custos; requer revisão humana.")

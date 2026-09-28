@@ -27,6 +27,7 @@ import streamlit as st
 from core.inteligencia import alertas as al
 from core.inteligencia import painel as P
 from core.inteligencia import qualificacao as qz
+from core.lacunas import registrar_limitacoes
 from core.seguranca import travas as tv
 
 __all__ = [
@@ -168,6 +169,7 @@ def cabecalho_bloco(bloco: qz.Bloco, agora: dt.datetime | None = None) -> None:
 
 def area_tecnica(bloco: qz.Bloco, chave: str = "") -> None:
     """A área que se expande. O simples fica fora; o técnico, dentro."""
+    registrar_limitacoes(bloco, modulo=f"design/inteligencia.py:{bloco.titulo}")
     if not bloco.detalhe_tecnico and not bloco.limitacoes:
         return
     with st.expander(f"Detalhe técnico — {bloco.titulo}", expanded=False):

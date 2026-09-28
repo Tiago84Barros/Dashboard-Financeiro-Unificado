@@ -141,6 +141,14 @@ if modulo_nome:
             # amigavel; quem opera o app le o log para diagnosticar. Ver
             # achado A-013 (vazamento de excecao crua ao usuario final).
             logger.exception('Erro ao carregar o modulo "%s"', menu)
+            # Log de lacunas: a mesma identidade (tipo + frame do projeto, sem
+            # a mensagem) vai para a fila que o agente de correcao le.
+            try:
+                from core.lacunas import registrar_excecao
+
+                registrar_excecao(exc, rota=menu)
+            except Exception:  # noqa: BLE001 - lacuna e extra, nunca requisito
+                logger.exception("falha ao registrar a excecao como lacuna")
             mensagem_erro(
                 f'Erro ao carregar o módulo "{menu}"',
                 MSG_ERRO_GENERICO_AO_CARREGAR_MODULO,

@@ -38,6 +38,7 @@ from core.inteligencia import alertas as al
 from core.inteligencia import llm as intel_llm
 from core.inteligencia import painel as P
 from core.inteligencia import qualificacao as qz
+from core.lacunas import registrar_limitacoes
 from core.seguranca import travas as tv
 from design import inteligencia as ui
 from design.componentes import abas_secao, container_pagina, estado_vazio, secao_titulo
@@ -649,6 +650,7 @@ def render_atualizacao(pn: P.Painel) -> None:
             st.session_state[CHAVE_COLETA] = (coleta, erro)
             st.rerun()
 
+    registrar_limitacoes(pn, modulo="views/inteligencia_mercado.py:painel")
     for linha in pn.limitacoes:
         st.caption(f"⚠ {linha}")
 

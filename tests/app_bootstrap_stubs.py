@@ -18,11 +18,13 @@ from types import SimpleNamespace
 # Módulos que os testes de bootstrap deixam executar de verdade. Não são
 # dublados de propósito: `core.app_test_mode` é a regra sob teste, e
 # `core.erro_diagnostico` produz o texto que o teste do handler de erro
-# inspeciona. Um import novo fora desta lista e fora de STUBS faz
+# inspeciona. `core.lacunas` roda de verdade porque, sob pytest, o destino
+# e `desligado`: registrar uma excecao no handler nao grava nada. Um import novo fora desta lista e fora de STUBS faz
 # `test_app_bootstrap_stubs.py` falhar — que é o ponto.
 MODULOS_EXECUTADOS_DE_VERDADE = frozenset({
     "core.app_test_mode",
     "core.erro_diagnostico",
+    "core.lacunas",
 })
 
 # Identidade sintética: `principal()` real lê `st.session_state`, que não
