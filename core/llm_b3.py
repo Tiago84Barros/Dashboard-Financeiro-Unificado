@@ -17,6 +17,7 @@ import json
 import logging
 import os
 import re
+import sys
 import threading
 
 import pandas as pd
@@ -176,6 +177,49 @@ def ultimo_modelo() -> str | None:
     return getattr(_ULTIMO, "modelo", None)
 
 
+def _modulo_lacuna() -> str:
+    """Quem chamou ``_chat_complete`` -- e ele o dono da lacuna, nao este ponto unico."""
+    try:
+        from core.lacunas.registro import modulo_do_frame
+
+        return modulo_do_frame(sys._getframe(2))
+    except Exception:  # noqa: BLE001 - lacuna e extra, nunca requisito
+        return ""
+
+
+def _com_instrucao_lacunas(messages: list[dict]) -> list[dict]:
+    """Copia ``messages`` com a instrucao do bloco ``<lacunas>`` no system prompt.
+
+    So em texto livre: em ``json_mode`` o provedor exige JSON puro e um bloco
+    fora dele quebraria o parse.
+    """
+    try:
+        from core.lacunas.llm import INSTRUCAO_LACUNAS
+    except Exception:  # noqa: BLE001
+        return messages
+    copia = [dict(m) for m in messages]
+    if copia and copia[0].get("role") == "system":
+        copia[0]["content"] = (copia[0].get("content") or "") + "\n\n" + INSTRUCAO_LACUNAS
+    else:
+        copia.insert(0, {"role": "system", "content": INSTRUCAO_LACUNAS})
+    return copia
+
+
+def _sem_lacunas(texto: str | None, modulo: str) -> str | None:
+    """Tira o bloco ``<lacunas>`` da resposta e o registra. Tambem em
+    ``json_mode``: um modelo que escreva o bloco mesmo sem pedido nao pode
+    estragar o JSON de quem le."""
+    if not texto:
+        return texto
+    try:
+        from core.lacunas.llm import processar_resposta
+
+        return processar_resposta(texto, modulo=modulo)
+    except Exception:  # noqa: BLE001 - lacuna nunca derruba a resposta
+        logger.warning("falha ao processar lacunas da resposta", exc_info=True)
+        return texto
+
+
 def _chat_complete(
     messages: list[dict],
     temperature: float = _TEMPERATURE,
@@ -188,6 +232,9 @@ def _chat_complete(
     (degrada para chamada simples se o provedor não suportar response_format).
     Levanta RuntimeError só se TODOS os provedores falharem.
     """
+    modulo_lacuna = _modulo_lacuna()
+    if not json_mode:
+        messages = _com_instrucao_lacunas(messages)
     chain = _provider_chain(primary_model)
     if not chain:
         raise RuntimeError(
@@ -205,7 +252,7 @@ def _chat_complete(
                         response_format={"type": "json_object"},
                     )
                     _ULTIMO.modelo = f"{nome}/{modelo}"
-                    return resp.choices[0].message.content
+                    return _sem_lacunas(resp.choices[0].message.content, modulo_lacuna)
                 except Exception as exc_json:
                     logger.warning("JSON mode falhou em %s (%s) — tentando sem response_format.",
                                    nome, exc_json)
@@ -215,7 +262,7 @@ def _chat_complete(
             if nome != "openai":
                 logger.info("LLM respondido pelo provedor de fallback: %s (%s)", nome, modelo)
             _ULTIMO.modelo = f"{nome}/{modelo}"
-            return resp.choices[0].message.content
+            return _sem_lacunas(resp.choices[0].message.content, modulo_lacuna)
         except Exception as exc:
             erros.append(f"{nome}({modelo}): {exc}")
             logger.warning("Provedor LLM %s falhou: %s", nome, exc)
