@@ -239,3 +239,13 @@ def test_investimentos_tem_a_aba_de_imposto():
     fonte = inspect.getsource(inv.render)
     assert "🧾  Imposto de Renda" in fonte
     assert "views.ir_renda_variavel" in fonte
+
+
+def test_aba_de_imposto_e_a_ultima():
+    import inspect
+
+    import views.investimentos as inv
+    fonte = inspect.getsource(inv.render)
+    rotulos = fonte[fonte.index("st.tabs(["):]
+    rotulos = rotulos[:rotulos.index("])")]
+    assert rotulos.rstrip().rstrip(",").endswith('"🧾  Imposto de Renda"')
