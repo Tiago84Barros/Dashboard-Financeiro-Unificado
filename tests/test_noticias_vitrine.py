@@ -31,8 +31,9 @@ from sqlalchemy import create_engine, text
 
 from core.conjuntura import ponte
 from core.noticias import vitrine as vit
+from tests.apoio_armazem import opcoes_conexao, schema_descartavel
 
-SCHEMA = "app4_vitrine_teste"
+SCHEMA = schema_descartavel("app4_vitrine_teste")
 
 
 @pytest.fixture(scope="module")
@@ -48,7 +49,7 @@ def engine():
 
         motor = create_engine(
             _warehouse_url(),
-            connect_args={"options": f"-csearch_path={SCHEMA},public"})
+            connect_args=opcoes_conexao(SCHEMA))
         with motor.begin() as conn:
             conn.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
             conn.execute(text(f"CREATE SCHEMA {SCHEMA}"))
