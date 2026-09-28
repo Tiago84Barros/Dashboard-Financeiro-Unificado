@@ -125,7 +125,7 @@ def test_texto_separa_dado_de_interpretacao_e_nao_da_veredito():
     assert t.index("[DADO") < t.index("[INTERPRETAÇÃO")
     assert v.AVISO in t
     assert not VEREDITO.search(v.resumo(val) + " ".join(
-        l.comparacao_historica + l.comparacao_pares for l in val.linhas))
+        ln.comparacao_historica + ln.comparacao_pares for ln in val.linhas))
 
 
 # -- seleção de pares ----------------------------------------------------------------

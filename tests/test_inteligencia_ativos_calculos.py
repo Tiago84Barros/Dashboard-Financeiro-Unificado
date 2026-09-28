@@ -21,8 +21,8 @@ import pandas as pd
 import pytest
 
 from core.global_portfolio.concentration import hhi as hhi_global
-from core.inteligencia_ativos import analise, calculos as c, contexto
-from core.inteligencia_ativos import modelos as m
+from core.inteligencia_ativos import analise, contexto
+from core.inteligencia_ativos import calculos as c
 from tests.test_inteligencia_ativos_adequacao import _registro
 
 
