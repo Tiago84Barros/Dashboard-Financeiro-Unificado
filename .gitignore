@@ -281,3 +281,6 @@ backups/
 # Motor Conjuntural de noticias: cache, cota e carimbo de coleta sao estado
 # de maquina, nao codigo.
 local_staging/noticias/
+
+# Log de lacunas (core/lacunas) — eventos locais e consolidado para o agente
+local_staging/lacunas/
