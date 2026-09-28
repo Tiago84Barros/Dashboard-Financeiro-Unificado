@@ -40,10 +40,18 @@ _envios: list[Future] = []
 
 def _modulo_chamador() -> str:
     """Primeiro frame fora de ``core/lacunas``, como ``caminho.py:funcao``."""
-    frame = sys._getframe(1)
+    return modulo_do_frame(sys._getframe(1))
+
+
+def modulo_do_frame(frame) -> str:
+    """``caminho.py:funcao`` do primeiro frame, a partir de ``frame``, fora de
+    ``core/lacunas``. Publico para quem precisa pular os proprios frames (o
+    ponto unico da LLM quer o nome de QUEM chamou a LLM, nao o dele)."""
     while frame is not None:
         caminho = Path(frame.f_code.co_filename).resolve()
-        if caminho.parent != _PACOTE:
+        # lambda de adaptacao (`chamar = lambda p: _chat_complete(...)`) nao
+        # nomeia nada: quem a chamou e o modulo que interessa.
+        if caminho.parent != _PACOTE and frame.f_code.co_name != "<lambda>":
             try:
                 rel = caminho.relative_to(destino.RAIZ).as_posix()
             except ValueError:
