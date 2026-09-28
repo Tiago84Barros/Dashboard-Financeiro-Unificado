@@ -47,6 +47,7 @@ from design.componentes import (
     frescor_da_vitrine,
     selo_de_frescor,
 )  # KPIs em cards CSS (visual coeso)
+from design.lacunas import aviso_lacuna
 from design.market_companies import (
     render_company_logo,
     render_market_css,
@@ -3275,7 +3276,8 @@ def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> Non
     )
 
     if dossie.get("erro"):
-        st.info(f"Dossiê determinístico indisponível: {dossie['erro']}")
+        aviso_lacuna(f"Dossiê determinístico indisponível: {dossie['erro']}",
+                     codigo="tela.b3.dossie_indisponivel", entidade=ticker)
     else:
         # `red_flags` carrega três coisas distintas; o componente tem de
         # distinguir. `st.warning` para todas fazia 426 de 426 empresas
@@ -4873,7 +4875,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     .to_numpy()
                 )
                 if returns.shape[0] < 6:
-                    st.warning("Histórico de retornos insuficiente (<6 obs).")
+                    aviso_lacuna("Histórico de retornos insuficiente (<6 obs).",
+                                 codigo="tela.b3.retornos_insuficientes", nivel="warning")
                 else:
                     _spinner_labels = {
                         "Fama-French": "Calculando min-variance (Fama-French Σ)...",
@@ -4911,7 +4914,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                                     + (f" · avisos: {ff_model.warnings}" if ff_model.warnings else "")
                                 )
                             except Exception as _ff_err:
-                                st.warning(f"Fama-French indisponível ({_ff_err}); usando Ledoit-Wolf.")
+                                aviso_lacuna(f"Fama-French indisponível ({_ff_err}); usando Ledoit-Wolf.",
+                                             codigo="tela.b3.fama_french_indisponivel",
+                                             nivel="warning")
 
                         elif cov_method == "DCC-GARCH":
                             try:
@@ -4940,7 +4945,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                                         f"regime score={summ['regime_score']:.2f}"
                                     )
                             except Exception as _dcc_err:
-                                st.warning(f"DCC-GARCH indisponível ({_dcc_err}); usando Ledoit-Wolf.")
+                                aviso_lacuna(f"DCC-GARCH indisponível ({_dcc_err}); usando Ledoit-Wolf.",
+                                             codigo="tela.b3.dcc_garch_indisponivel",
+                                             nivel="warning")
 
                         if mk is None:
                             mk = min_variance_capped(top_tks, returns, cap=cap_mk)
@@ -5076,7 +5083,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     "Valores extremos de DY/Payout podem indicar evento não recorrente."
                 )
             except Exception as _val_err:
-                st.warning(f"Valuation indisponível: {_val_err}")
+                aviso_lacuna(f"Valuation indisponível: {_val_err}",
+                             codigo="tela.b3.valuation_indisponivel", nivel="warning")
 
     # ── Resiliência histórica + saúde financeira ─────────────────────────────
     with st.expander("🛡️ Resiliência histórica e saúde financeira — sensibilidade Brasil"):
@@ -5323,7 +5331,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     rets_hist = (df_precos[top_bl].iloc[-36:].pct_change()
                                   .dropna().to_numpy())
                     if len(rets_hist) < 6:
-                        st.warning("Histórico < 6 retornos — janela insuficiente.")
+                        aviso_lacuna("Histórico < 6 retornos — janela insuficiente.",
+                                     codigo="tela.b3.janela_backtest_insuficiente",
+                                     nivel="warning")
                     else:
                         prior = _np.full(len(top_bl), prior_pct / 100.0)
                         bl = bl_combined_optimization(top_bl, prior, rets_hist,

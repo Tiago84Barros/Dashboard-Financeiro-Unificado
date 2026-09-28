@@ -65,6 +65,7 @@ from design.componentes import (
     secao_titulo,
     selo_de_frescor,
 )
+from design.lacunas import aviso_lacuna
 from design.market_companies import (
     render_company_logo,
     render_company_search,
@@ -606,7 +607,8 @@ def _tab_empresa(status: dict) -> None:
             st.plotly_chart(fig, width="stretch",
                             config={"displayModeBar": False}, key=f"us_statements_chart_{symbol}")
     else:
-        st.info("Demonstrações históricas indisponíveis para este ticker.")
+        aviso_lacuna("Demonstrações históricas indisponíveis para este ticker.",
+                     codigo="tela.eua.demonstracoes_sem_historico", entidade=symbol)
 
     _analysis_header("💰 Dividendos por ação")
     if not dividend_history.empty:
@@ -617,7 +619,8 @@ def _tab_empresa(status: dict) -> None:
         st.plotly_chart(fig, width="stretch",
                         config={"displayModeBar": False}, key=f"us_dividends_{symbol}")
     else:
-        st.info("Sem histórico de dividendos por ação publicado.")
+        aviso_lacuna("Sem histórico de dividendos por ação publicado.",
+                     codigo="tela.eua.dividendos_sem_historico", entidade=symbol)
 
     _analysis_header("📊 Gráfico de Múltiplos — Histórico")
     metric_labels = {
@@ -645,7 +648,8 @@ def _tab_empresa(status: dict) -> None:
             st.plotly_chart(fig, width="stretch",
                             config={"displayModeBar": False}, key=f"us_metrics_chart_{symbol}")
     else:
-        st.info("Histórico de margens e retornos ainda indisponível.")
+        aviso_lacuna("Histórico de margens e retornos ainda indisponível.",
+                     codigo="tela.eua.margens_sem_historico", entidade=symbol)
 
     _analysis_header("💰 Fluxo de Caixa")
     cashflow_map = {
@@ -1567,7 +1571,8 @@ def _render_us_lab_backtest() -> None:
     if not result:
         st.caption("Configure os parâmetros e clique em ▶ Simular Backtest.")
     elif not result.get("ok"):
-        st.info(result.get("reason", "Teste histórico indisponível."))
+        aviso_lacuna(result.get("reason", "Teste histórico indisponível."),
+                     codigo="tela.eua.backtest_indisponivel")
     else:
         p, ic = result["portfolio"], result["rank_ic"]
         stats = [
@@ -1613,8 +1618,9 @@ def _render_us_lab_backtest() -> None:
             fig.update_layout(**_PLOT_LAYOUT, height=340, legend_title_text="Série")
             st.plotly_chart(fig, width="stretch", key="us_lab_bt_curve")
         if benchmark_state and not benchmark_state.get("ok"):
-            st.warning(benchmark_state.get("mensagem", "Benchmark indisponível; "
-                       "o excesso contra índice não foi calculado."))
+            aviso_lacuna(benchmark_state.get("mensagem", "Benchmark indisponível; "
+                         "o excesso contra índice não foi calculado."),
+                         codigo="tela.eua.benchmark_indisponivel", nivel="warning")
         elif benchmark_state.get("modo") == "sem_indice":
             st.caption("Comparação contra índice desativada explicitamente; pesos iguais "
                        "do universo continuam como baseline interno.")
@@ -1693,7 +1699,8 @@ def _render_us_lab_comparisons(entry: pd.DataFrame) -> None:
             fig.update_layout(**_PLOT_LAYOUT, height=360, yaxis_title=f"{statement_label} (US$)")
             st.plotly_chart(fig, width="stretch", key="us_lab_statement_chart")
         else:
-            st.info("Sem histórico publicado para a seleção.")
+            aviso_lacuna("Sem histórico publicado para a seleção.",
+                         codigo="tela.eua.laboratorio_sem_historico")
 
     _analysis_header("📊 Quadro Comparativo — Indicadores por Empresa")
     display_cols = [c for c in ("symbol", "roe", "roic", "net_margin", "operating_margin",
@@ -1731,7 +1738,8 @@ def _render_us_lab_comparisons(entry: pd.DataFrame) -> None:
     if st.button("💵 Calcular FCO/Lucro", key="us_lab_cash_btn"):
         cash = entry[["symbol", "cash_conversion", "entry_score"]].dropna()
         if cash.empty:
-            st.info("Conversão de caixa indisponível no universo atual.")
+            aviso_lacuna("Conversão de caixa indisponível no universo atual.",
+                             codigo="tela.eua.conversao_caixa_indisponivel")
         else:
             fig = px.bar(cash.head(50), x="symbol", y="cash_conversion", color="entry_score",
                          color_continuous_scale=[_COR_NEG, _COR_ALT, _COR_POS])
@@ -3144,8 +3152,9 @@ def _tab_backtests(status: dict) -> None:
         st.caption(f"Retorno total em USD, nas mesmas janelas de "
                    f"{benchmark_state.get('horizonte_meses')} meses do painel PIT.")
     elif benchmark_state and not benchmark_state.get("ok"):
-        st.warning(benchmark_state.get("mensagem", "Benchmark indisponível; "
-                   "o excesso contra índice não foi calculado."))
+        aviso_lacuna(benchmark_state.get("mensagem", "Benchmark indisponível; "
+                     "o excesso contra índice não foi calculado."),
+                     codigo="tela.eua.benchmark_pit_indisponivel", nivel="warning")
     elif benchmark_state.get("modo") == "sem_indice":
         st.caption("Comparação contra índice desativada explicitamente; pesos iguais "
                    "do universo continuam como baseline interno.")

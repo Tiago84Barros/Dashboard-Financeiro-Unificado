@@ -48,6 +48,7 @@ from core.tesouro_analysis import (
 from core.user_context import user_cache_data
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, container_pagina
+from design.lacunas import aviso_lacuna
 
 # ── Paleta ────────────────────────────────────────────────────────────────────
 _COR_POSITIVO = "#00C896"
@@ -2140,7 +2141,8 @@ def _bloco_rentabilidade_cdi(r: dict) -> None:
         "TIR da renda variável na B3 e os mesmos aportes aplicados no CDI",
     )
     if not r.get("disponivel"):
-        st.info(r.get("motivo") or "Rentabilidade indisponível.", icon="🎯")
+        aviso_lacuna(r.get("motivo") or "Rentabilidade indisponível.",
+                     codigo="tela.investimentos.rentabilidade_cdi_indisponivel", icon="🎯")
         return
 
     cor, frase = _veredito_cdi(r)
