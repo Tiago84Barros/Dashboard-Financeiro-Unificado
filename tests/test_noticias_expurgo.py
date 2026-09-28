@@ -29,8 +29,9 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from core.noticias import estado_coleta as ec
+from tests.apoio_armazem import opcoes_conexao, schema_descartavel
 
-SCHEMA = "app4_expurgo_teste"
+SCHEMA = schema_descartavel("app4_expurgo_teste")
 
 _DDL_ACERVO = f"""
     CREATE TABLE {SCHEMA}.noticias_itens (
@@ -49,7 +50,7 @@ def acervo():
 
         motor = create_engine(
             _warehouse_url(),
-            connect_args={"options": f"-csearch_path={SCHEMA},public"})
+            connect_args=opcoes_conexao(SCHEMA))
         with motor.begin() as conn:
             conn.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
             conn.execute(text(f"CREATE SCHEMA {SCHEMA}"))

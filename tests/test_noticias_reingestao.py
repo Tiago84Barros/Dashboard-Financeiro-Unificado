@@ -32,9 +32,10 @@ from core.noticias import armazenamento as arm
 from core.noticias import impacto as imp
 from core.noticias import modelos, relevancia
 from core.noticias.coleta import ResultadoColeta
+from tests.apoio_armazem import opcoes_conexao, schema_descartavel
 from tests.apoio_noticias import AGORA, noticia, quando
 
-SCHEMA = "app4_reingestao_teste"
+SCHEMA = schema_descartavel("app4_reingestao_teste")
 
 RODAPE = (" A empresa comunicou o fato ao mercado."
           " The post Alfa comunica acordo appeared first on Veiculo Teste .")
@@ -48,7 +49,7 @@ def acervo():
 
         motor = create_engine(
             _warehouse_url(),
-            connect_args={"options": f"-csearch_path={SCHEMA},public"})
+            connect_args=opcoes_conexao(SCHEMA))
         with motor.begin() as conn:
             conn.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
             conn.execute(text(f"CREATE SCHEMA {SCHEMA}"))

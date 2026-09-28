@@ -33,9 +33,10 @@ from core.noticias import armazenamento as arm
 from core.noticias import coleta as col
 from core.noticias import portoes
 from core.noticias.impacto import BaseHistorica
+from tests.apoio_armazem import opcoes_conexao, schema_descartavel
 from tests.apoio_noticias import AGORA, quando
 
-SCHEMA = "app4_veredito_teste"
+SCHEMA = schema_descartavel("app4_veredito_teste")
 
 
 # ───────────────────────── a entrada do portao quantitativo ──────────────────
@@ -161,7 +162,7 @@ def acervo():
 
         motor = create_engine(
             _warehouse_url(),
-            connect_args={"options": f"-csearch_path={SCHEMA},public"})
+            connect_args=opcoes_conexao(SCHEMA))
         with motor.begin() as conn:
             conn.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
             conn.execute(text(f"CREATE SCHEMA {SCHEMA}"))
@@ -223,7 +224,7 @@ def test_o_ddl_roda_em_cada_destino_e_nao_uma_vez_por_processo(acervo):
 
     outro = create_engine(
         acervo.url,
-        connect_args={"options": f"-csearch_path={SCHEMA}_b,public"})
+        connect_args=opcoes_conexao(f"{SCHEMA}_b"))
     try:
         with outro.begin() as conn:
             conn.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA}_b CASCADE"))

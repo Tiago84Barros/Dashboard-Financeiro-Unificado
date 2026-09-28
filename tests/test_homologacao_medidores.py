@@ -31,8 +31,9 @@ from sqlalchemy import create_engine, text
 
 from core.auditoria import trilha
 from core.homologacao import medicoes as M
+from tests.apoio_armazem import opcoes_conexao, schema_descartavel
 
-SCHEMA = "app4_medicoes_teste"
+SCHEMA = schema_descartavel("app4_medicoes_teste")
 
 _DDL = [
     f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE",
@@ -78,7 +79,7 @@ def engine():
 
         url = _warehouse_url()
         motor = create_engine(
-            url, connect_args={"options": f"-csearch_path={SCHEMA},public"})
+            url, connect_args=opcoes_conexao(SCHEMA))
         with motor.begin() as conn:
             for ddl in _DDL:
                 conn.execute(text(ddl))
