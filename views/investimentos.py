@@ -4134,8 +4134,8 @@ def render() -> None:
         "📈  Histórico",
         "💼  Carteira",
         "🔍  Análise",
-        "🧾  Imposto de Renda",
         _ia.rotulo_aba(_liberacao),
+        "🧾  Imposto de Renda",
     ])
 
     with tab1:
@@ -4151,11 +4151,11 @@ def render() -> None:
         _tab_analise(carteira, proventos)
 
     with tab5:
-        from views.ir_renda_variavel import render as _render_ir
-        _render_ir()
+        _ia.render(_liberacao, carteira, proventos)
 
     with tab6:
-        _ia.render(_liberacao, carteira, proventos)
+        from views.ir_renda_variavel import render as _render_ir
+        _render_ir()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
