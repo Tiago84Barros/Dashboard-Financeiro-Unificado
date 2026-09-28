@@ -57,8 +57,20 @@ registrar_lacuna(
 
 ### Destino
 
-A escolha usa `core/destino_local.py::e_local(get_engine())`. Não se cria uma
-segunda guarda de ambiente.
+A escolha **não** usa `e_local(get_engine())`: na máquina local `get_engine()`
+também devolve o Supabase (ver `CLAUDE.md`), então essa regra mandaria tudo para
+a nuvem. A ordem é:
+
+1. `LACUNAS_DESTINO` (`local` · `supabase` · `desligado`) quando definida.
+2. Rodando sob pytest (`PYTEST_CURRENT_TEST`) → `desligado`.
+3. Repositório montado em `/mount/src` (Streamlit Community Cloud) → `supabase`.
+4. Qualquer outro caso → `local`.
+
+O nome do módulo inferido é `caminho/relativo.py:funcao`, **sem número de
+linha**, porque o número muda a cada edição e mudaria a impressão digital.
+
+Na Cloud, a gravação vai para uma thread de um único worker, para o UPSERT não
+somar latência de rede ao render.
 
 - **Local:** acrescenta uma linha JSON em `local_staging/lacunas/eventos.jsonl`
   (fora do git): `ts, impressao, fonte, modulo, codigo, entidade, mensagem,
