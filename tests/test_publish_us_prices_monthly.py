@@ -90,3 +90,66 @@ def test_simbolo_sem_serie_no_local_aparece_com_zero(local, remoto):
 def test_publicar_respeita_lista_explicita_de_simbolos(local, remoto):
     resumo = pub.publicar(local=local, remoto=remoto, apply=False, simbolos=["MSFT"])
     assert set(resumo) == {"MSFT"}
+
+
+def test_nan_vira_none_antes_de_gravar():
+    """NaN numa coluna numeric do PostgreSQL grava 'NaN', que passa por número.
+
+    O SQLite do teste guardaria NaN como NULL de qualquer jeito, então a guarda
+    é conferida no que sai para o banco, não no que o SQLite devolve.
+    """
+    import math
+
+    import pandas as pd
+
+    df = pd.DataFrame([("AAPL", "2024-01-31", 100.0, 99.0, 1000, math.nan)],
+                      columns=pub._COLUNAS)
+    (reg,) = pub._registros(df)
+    assert reg["total_return"] is None
+    assert reg["close"] == 100.0 and reg["volume"] == 1000
+
+
+def test_grava_em_lotes_menores_que_o_total(local, remoto):
+    df = pub.ler_do_local(["AAPL", "MSFT"], engine=local)
+    pub._gravar(df, engine=remoto, lote=2)
+    with remoto.connect() as c:
+        linhas = c.execute(text("SELECT symbol, month_end, close FROM prices_monthly "
+                                "ORDER BY symbol, month_end")).all()
+    assert [tuple(r) for r in linhas] == [("AAPL", "2024-01-31", 100.0),
+                                          ("AAPL", "2024-02-29", 110.0),
+                                          ("MSFT", "2024-01-31", 200.0)]
+
+
+def test_regravar_atualiza_o_valor_existente(local, remoto):
+    pub.publicar(local=local, remoto=remoto, apply=True)
+    with local.begin() as c:
+        c.execute(text("UPDATE prices_monthly SET close = 111.0 "
+                       "WHERE symbol='AAPL' AND month_end='2024-02-29'"))
+    pub.publicar(local=local, remoto=remoto, apply=True)
+    with remoto.connect() as c:
+        assert c.execute(text("SELECT close FROM prices_monthly WHERE symbol='AAPL' "
+                              "AND month_end='2024-02-29'")).scalar() == 111.0
+
+
+def test_lote_que_falha_nao_desfaz_os_anteriores(local, remoto, monkeypatch):
+    """Cada lote tem a sua transação: uma queda no meio deixa o que já entrou,
+    e rodar de novo completa o resto (o INSERT é idempotente)."""
+    df = pub.ler_do_local(["AAPL", "MSFT"], engine=local)
+    reais = remoto.begin
+    chamadas = {"n": 0}
+
+    def _begin():
+        chamadas["n"] += 1
+        if chamadas["n"] == 2:
+            raise RuntimeError("conexão caiu")
+        return reais()
+
+    monkeypatch.setattr(remoto, "begin", _begin)
+    with pytest.raises(RuntimeError):
+        pub._gravar(df, engine=remoto, lote=2)
+    monkeypatch.setattr(remoto, "begin", reais)
+    with remoto.connect() as c:
+        assert c.execute(text("SELECT COUNT(*) FROM prices_monthly")).scalar() == 2
+    pub._gravar(df, engine=remoto, lote=2)
+    with remoto.connect() as c:
+        assert c.execute(text("SELECT COUNT(*) FROM prices_monthly")).scalar() == 3
