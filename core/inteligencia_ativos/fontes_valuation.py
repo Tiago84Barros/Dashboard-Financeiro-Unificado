@@ -306,8 +306,7 @@ def _carregar_fii() -> tuple[list[dict], str | None]:
     Sem ela a falha de leitura virava "Dado não disponível" no P/VP e "Ativo
     fora do universo" nos pares, e o fundo parecia sem dado.
     """
-    from core.market_read import (causa_falha_vitrine_fii,
-                                  load_fii_methodology_inputs)
+    from core.market_read import causa_falha_vitrine_fii, load_fii_methodology_inputs
     frame = load_fii_methodology_inputs()
     erro = frame.attrs.get("load_error") if frame is not None else "sem_quadro"
     if erro or frame.empty:

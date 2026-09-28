@@ -15,7 +15,6 @@ from core.inteligencia_ativos import fundamentos as f
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import secoes
 
-
 # -- catálogo e montagem ------------------------------------------------------------
 
 def test_cada_classe_tem_o_seu_catalogo():

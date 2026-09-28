@@ -16,7 +16,7 @@ e o texto separa os dois blocos.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 ACAO = "acao"
 FII = "fii"

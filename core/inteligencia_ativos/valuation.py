@@ -32,9 +32,9 @@ from core.inteligencia_ativos.fundamentos import (
     PCT,
     RENDA_FIXA,
     ROTULO_TIPO,
-    X,
     Dado,
     Metrica,
+    X,
     _tem_valor,
     formatar,
 )
@@ -222,19 +222,19 @@ class Valuation:
 
     @property
     def com_dado(self) -> tuple[LinhaValuation, ...]:
-        return tuple(l for l in self.linhas if l.aplicavel and l.atual is not None)
+        return tuple(ln for ln in self.linhas if ln.aplicavel and ln.atual is not None)
 
     @property
     def fontes(self) -> tuple[str, ...]:
         vistas: list[str] = []
-        for l in self.com_dado:
-            for f in (l.fonte, l.fonte_historico):
+        for ln in self.com_dado:
+            for f in (ln.fonte, ln.fonte_historico):
                 if f and f not in vistas:
                     vistas.append(f)
         return tuple(vistas)
 
     def linha(self, chave: str) -> LinhaValuation | None:
-        return next((l for l in self.linhas if l.chave == chave), None)
+        return next((ln for ln in self.linhas if ln.chave == chave), None)
 
     def como_dict(self) -> dict:
         return {
@@ -242,40 +242,40 @@ class Valuation:
             "grupo_pares": self.grupo_pares, "premissas": list(self.premissas),
             "fontes": list(self.fontes),
             "linhas": [{
-                "chave": l.chave, "rotulo": l.rotulo, "unidade": l.unidade,
-                "aplicavel": l.aplicavel, "motivo": l.motivo,
-                "atual": l.atual, "texto": l.texto_atual(self.moeda),
-                "fonte": l.fonte, "referencia": l.referencia,
-                "historico": l.historico.como_dict() if l.historico else None,
-                "fonte_historico": l.fonte_historico,
-                "pares": l.pares.como_dict() if l.pares else None,
-                "percentil_historico": l.percentil_historico,
-                "posicao_historica": l.posicao_historica,
-                "posicao_pares": l.posicao_pares,
-                "comparacao_historica": l.comparacao_historica,
-                "comparacao_pares": l.comparacao_pares,
-                "faixas": [[f.rotulo, f.minimo, f.maximo] for f in l.faixas],
-            } for l in self.linhas],
+                "chave": ln.chave, "rotulo": ln.rotulo, "unidade": ln.unidade,
+                "aplicavel": ln.aplicavel, "motivo": ln.motivo,
+                "atual": ln.atual, "texto": ln.texto_atual(self.moeda),
+                "fonte": ln.fonte, "referencia": ln.referencia,
+                "historico": ln.historico.como_dict() if ln.historico else None,
+                "fonte_historico": ln.fonte_historico,
+                "pares": ln.pares.como_dict() if ln.pares else None,
+                "percentil_historico": ln.percentil_historico,
+                "posicao_historica": ln.posicao_historica,
+                "posicao_pares": ln.posicao_pares,
+                "comparacao_historica": ln.comparacao_historica,
+                "comparacao_pares": ln.comparacao_pares,
+                "faixas": [[f.rotulo, f.minimo, f.maximo] for f in ln.faixas],
+            } for ln in self.linhas],
         }
 
     @classmethod
     def de_dict(cls, d: dict | None) -> "Valuation":
         d = d or {}
         linhas = tuple(LinhaValuation(
-            chave=l["chave"], rotulo=l["rotulo"], unidade=l["unidade"],
-            aplicavel=bool(l.get("aplicavel")), motivo=l.get("motivo"),
-            atual=l.get("atual"), fonte=l.get("fonte"),
-            referencia=l.get("referencia"),
-            historico=Estatistica.de_dict(l.get("historico")),
-            fonte_historico=l.get("fonte_historico"),
-            pares=Estatistica.de_dict(l.get("pares")),
-            percentil_historico=l.get("percentil_historico"),
-            posicao_historica=l.get("posicao_historica") or SEM_DADO,
-            posicao_pares=l.get("posicao_pares") or SEM_DADO,
-            comparacao_historica=l.get("comparacao_historica") or NAO_DISPONIVEL,
-            comparacao_pares=l.get("comparacao_pares") or NAO_DISPONIVEL,
-            faixas=tuple(Faixa(*f) for f in l.get("faixas") or ()),
-        ) for l in d.get("linhas") or ())
+            chave=ln["chave"], rotulo=ln["rotulo"], unidade=ln["unidade"],
+            aplicavel=bool(ln.get("aplicavel")), motivo=ln.get("motivo"),
+            atual=ln.get("atual"), fonte=ln.get("fonte"),
+            referencia=ln.get("referencia"),
+            historico=Estatistica.de_dict(ln.get("historico")),
+            fonte_historico=ln.get("fonte_historico"),
+            pares=Estatistica.de_dict(ln.get("pares")),
+            percentil_historico=ln.get("percentil_historico"),
+            posicao_historica=ln.get("posicao_historica") or SEM_DADO,
+            posicao_pares=ln.get("posicao_pares") or SEM_DADO,
+            comparacao_historica=ln.get("comparacao_historica") or NAO_DISPONIVEL,
+            comparacao_pares=ln.get("comparacao_pares") or NAO_DISPONIVEL,
+            faixas=tuple(Faixa(*f) for f in ln.get("faixas") or ()),
+        ) for ln in d.get("linhas") or ())
         return cls(d.get("tipo"), d.get("moeda") or "BRL", linhas,
                    tuple(d.get("premissas") or ()), d.get("grupo_pares"),
                    d.get("motivo"))
@@ -489,26 +489,26 @@ def premissas(tipo: str, frequencias, grupo_pares: str | None,
 def resumo(v: Valuation) -> str:
     if not v.linhas:
         return v.motivo or NAO_DISPONIVEL
-    comparadas = [l for l in v.com_dado if l.posicao_historica != SEM_DADO
-                  or l.posicao_pares != SEM_DADO]
+    comparadas = [ln for ln in v.com_dado if ln.posicao_historica != SEM_DADO
+                  or ln.posicao_pares != SEM_DADO]
     if not v.com_dado:
         return (f"{ROTULO_TIPO[v.tipo]}: nenhuma métrica de valuation com "
                 "valor atual disponível.")
     partes = []
-    for l in comparadas[:2]:
+    for ln in comparadas[:2]:
         pedacos = []
-        if l.posicao_historica != SEM_DADO:
-            pedacos.append(f"{_POSICAO_TXT[l.posicao_historica]}"
-                           f"{' a' if l.posicao_historica == EM_LINHA else ' da'} "
+        if ln.posicao_historica != SEM_DADO:
+            pedacos.append(f"{_POSICAO_TXT[ln.posicao_historica]}"
+                           f"{' a' if ln.posicao_historica == EM_LINHA else ' da'} "
                            "média histórica")
-        if l.posicao_pares != SEM_DADO:
-            pedacos.append(f"{_POSICAO_TXT[l.posicao_pares]}"
-                           f"{' a' if l.posicao_pares == EM_LINHA else ' da'} "
+        if ln.posicao_pares != SEM_DADO:
+            pedacos.append(f"{_POSICAO_TXT[ln.posicao_pares]}"
+                           f"{' a' if ln.posicao_pares == EM_LINHA else ' da'} "
                            "mediana dos pares")
-        partes.append(f"{l.rotulo} {l.texto_atual(v.moeda)} "
+        partes.append(f"{ln.rotulo} {ln.texto_atual(v.moeda)} "
                       f"({'; '.join(pedacos)})")
     if not partes:
-        partes = [f"{l.rotulo} {l.texto_atual(v.moeda)}" for l in v.com_dado[:2]]
+        partes = [f"{ln.rotulo} {ln.texto_atual(v.moeda)}" for ln in v.com_dado[:2]]
     return (f"{len(v.com_dado)} de {len(v.linhas)} métricas com valor atual: "
             + "; ".join(partes) + ". Comparação, não veredito.")
 
@@ -521,20 +521,20 @@ def texto(v: Valuation, ticker: str) -> str:
         return "\n".join(linhas)
     linhas.append("[DADO — fornecido pelo sistema; não invente valores "
                   f"ausentes: onde estiver \"{NAO_DISPONIVEL}\", diga isso]")
-    for l in v.linhas:
-        if not l.aplicavel:
-            linhas.append(f"- {l.rotulo}: {l.motivo}")
+    for ln in v.linhas:
+        if not ln.aplicavel:
+            linhas.append(f"- {ln.rotulo}: {ln.motivo}")
             continue
-        extras = [x for x in (l.referencia and f"ref. {l.referencia}",
-                              l.fonte and f"fonte: {l.fonte}") if x]
-        linhas.append(f"- {l.rotulo} atual: {l.texto_atual(v.moeda)}"
+        extras = [x for x in (ln.referencia and f"ref. {ln.referencia}",
+                              ln.fonte and f"fonte: {ln.fonte}") if x]
+        linhas.append(f"- {ln.rotulo} atual: {ln.texto_atual(v.moeda)}"
                       + (f" ({'; '.join(extras)})" if extras else ""))
-        linhas.append(f"  Histórico: {l.comparacao_historica}")
-        linhas.append(f"  Pares: {l.comparacao_pares}")
-        for f in l.faixas:
+        linhas.append(f"  Histórico: {ln.comparacao_historica}")
+        linhas.append(f"  Pares: {ln.comparacao_pares}")
+        for f in ln.faixas:
             linhas.append(f"  Faixa — {f.rotulo}: "
-                          f"{formatar(f.minimo, l.unidade, v.moeda)} a "
-                          f"{formatar(f.maximo, l.unidade, v.moeda)}")
+                          f"{formatar(f.minimo, ln.unidade, v.moeda)} a "
+                          f"{formatar(f.maximo, ln.unidade, v.moeda)}")
     linhas.append("Premissas:")
     linhas += [f"- {p}" for p in v.premissas]
     linhas.append("[INTERPRETAÇÃO — sua tarefa, usando só o bloco DADO]")
