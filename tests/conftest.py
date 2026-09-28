@@ -392,6 +392,20 @@ def _historico_em_memoria(monkeypatch):
     yield guardado
 
 
+# A entrevista da estratégia lê 12 meses do Controle Financeiro. Em teste, o
+# perfil sai vazio; quem quer um perfil troca ``_perfil_financeiro`` da tela
+# (o carregador real é testado com os repositórios trocados).
+@pytest.fixture(autouse=True)
+def _perfil_financeiro_sem_banco(monkeypatch):
+    try:
+        from core.estrategia import perfil_financeiro as pf
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(pf, "carregar", lambda *a, **k: None)
+    yield
+
+
 # Estratégia de Investimentos em memória. A aba Inteligência dos Ativos
 # mostra o bloco da estratégia (abaixo do onboarding, ou em "Minha estratégia"
 # quando liberada), e o bloco lê o repositório. Não é autouse porque os testes

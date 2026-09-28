@@ -19,8 +19,10 @@ import pandas as pd
 import streamlit as st
 
 from core import llm_estrategia as entrevista
+from core.estrategia import perfil_financeiro
 from core.estrategia import politica as pol
 from core.estrategia import repositorio as repo
+from core.user_context import user_cache_data
 from core.utils import escapar_cifrao
 
 _MODO = "cfg_estrategia_modo"
@@ -214,6 +216,19 @@ def _render_entrevista(rascunho: repo.Registro) -> None:
         st.info("Nenhum provedor de IA configurado. Você ainda pode preencher "
                 f"tudo em **{_MODO_FORM}**.")
 
+    perfil = _perfil_financeiro()
+    with st.expander("📊 O que a IA vê das suas finanças"):
+        if perfil:
+            st.caption("Resumo do Controle Financeiro que a IA lê para avaliar "
+                       "seu padrão de gasto e sugerir uma estratégia viável. "
+                       "É contexto, não resposta: só entra na estratégia o que "
+                       "você confirmar.")
+            st.markdown(escapar_cifrao(perfil))
+        else:
+            st.caption("Sem lançamentos reais no Controle Financeiro dos últimos "
+                       "12 meses. A IA vai perguntar sobre renda e gastos em "
+                       "vez de avaliá-los.")
+
     historico = list(rascunho.entrevista)
     if not historico:
         historico = [_msg("assistant", entrevista.abertura(rascunho.politica))]
@@ -260,14 +275,34 @@ def _msg(papel: str, conteudo: str) -> dict:
             "at": repo._agora().isoformat()}
 
 
+@user_cache_data(ttl=600)
+def _perfil_financeiro() -> str:
+    """Resumo de 12 meses do Controle Financeiro ("" sem dado real).
+
+    Cacheado por dono: a entrevista reexecuta a cada resposta, e o resumo lê
+    12 meses de lançamentos mais o cartão.
+    """
+    perfil = perfil_financeiro.carregar()
+    return perfil_financeiro.texto(perfil) if perfil else ""
+
+
 def _contexto() -> str:
     """O que o app já sabe, para a IA perguntar melhor. Nunca vira resposta.
 
-    Só percentuais da carteira, nunca valores em reais. Dado de demonstração
-    (MOCK_MODE) fica de fora: pergunta guiada por carteira inventada é
-    pergunta errada.
+    Carteira só em percentuais, nunca valores em reais. O perfil do Controle
+    Financeiro vai em reais de propósito (pedido em 28/09/2026): a IA avalia
+    renda, gasto, sobra e recorrências para sugerir aporte e reserva viáveis.
+    Dado de demonstração (MOCK_MODE) fica de fora: pergunta guiada por dado
+    inventado é pergunta errada.
     """
     partes = []
+    try:
+        perfil = _perfil_financeiro()
+        if perfil:
+            partes.append("PERFIL FINANCEIRO do usuário (Controle Financeiro, "
+                          "últimos 12 meses fechados):\n" + perfil)
+    except Exception:  # noqa: BLE001
+        pass
     try:
         from core.investimentos import get_carteira
         carteira = get_carteira()
