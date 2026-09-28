@@ -12,6 +12,7 @@ from core.portfolio_valuations import (
     load_valuation_fundamentals,
     metric_spec,
 )
+from design.lacunas import aviso_lacuna
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -85,7 +86,8 @@ def render_portfolio_valuations(positions):
                     _cor_cobertura(item['coverage']),
                 ), unsafe_allow_html=True)
     if unavailable:
-        st.warning('Fonte indisponível para: ' + ', '.join(unavailable))
+        aviso_lacuna('Fonte indisponível para: ' + ', '.join(unavailable),
+                     codigo='tela.carteira.fonte_valuation_indisponivel', nivel='warning')
     st.caption('Médias aritméticas ponderadas pelo valor de mercado em BRL dos ativos com dado válido. '
                'Cobertura sobre o valor positivo conhecido da carteira, incluindo renda fixa. '
                'Sem dado não significa zero; DY zero é incluído. Múltiplos nulos ou negativos são excluídos. '

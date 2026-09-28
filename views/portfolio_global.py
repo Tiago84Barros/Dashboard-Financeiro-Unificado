@@ -55,6 +55,7 @@ from core.portfolio.repository import (
 from core.rebalancing import ThresholdRebalance
 from core.utils import escapar_cifrao
 from design.componentes import card_metrica
+from design.lacunas import aviso_lacuna
 from design.market_companies import render_company_logo
 from design.portfolio_global_cards import card_papel_html, card_recomendacao_html
 
@@ -1309,7 +1310,8 @@ def _painel_aporte(alvos: dict, renda_fixa: float | None) -> None:
         return
     carteira = _carregar_carteira_real()
     if carteira.get("data_source") == "error":
-        st.warning(carteira.get("error_message") or "Carteira real indisponível.")
+        aviso_lacuna(carteira.get("error_message") or "Carteira real indisponível.",
+                     codigo="tela.global.carteira_real_indisponivel", nivel="warning")
         return
     valores, alvos_plano, fora = carteira_real.base_do_plano(
         carteira.get("posicoes"), alvos, renda_fixa,

@@ -76,6 +76,7 @@ from design.componentes import (
     container_pagina,
     rolar_para_topo,
 )
+from design.lacunas import aviso_lacuna
 from design.market_companies import company_logo_html
 
 # Metadados por tipo de FII: emoji, rótulo e cor de destaque do card.
@@ -301,8 +302,9 @@ def render(show_header: bool = True) -> None:
                 "A conexão foi preservada em modo somente leitura; tente novamente."
             )
         else:
-            st.info("Ainda não há FIIs no banco. Rode `python run_market_ingest.py fiis` "
-                    "(+ `fiis-cvm`, `fiis-series`) para popular.")
+            aviso_lacuna("Ainda não há FIIs no banco. Rode `python run_market_ingest.py fiis` "
+                         "(+ `fiis-cvm`, `fiis-series`) para popular.",
+                         codigo="tela.fii.universo_vazio")
         return
     df = df.copy()
     # P/VP efetivo (fix auditoria FII 2026-07): preço ÷ VPA CVM quando
@@ -1557,7 +1559,8 @@ def _render_portfolio_correlation(weights: dict[str, float],
     returns, corr = _portfolio_return_correlation(prices, order)
     st.markdown("#### Correlação entre os FIIs selecionados")
     if corr.empty or corr.notna().to_numpy().sum() <= len(corr):
-        st.info("Não há pelo menos dois FIIs com 12 meses coincidentes para calcular a correlação.")
+        aviso_lacuna("Não há pelo menos dois FIIs com 12 meses coincidentes para calcular a correlação.",
+                     codigo="tela.fii.correlacao_sem_janela_comum")
         return returns
     avg_correlation = _fz.mean_correlation(corr)
     st.caption(
@@ -1936,7 +1939,8 @@ def _tab_busca(df: pd.DataFrame) -> None:
 
     d = _mr.load_fii_one(tk)
     if d is None or d.empty:
-        st.warning(f"Sem dados para {tk}.")
+        aviso_lacuna(f"Sem dados para {tk}.", codigo="tela.fii.sem_dados",
+                     nivel="warning", entidade=tk)
         return
     tipo = (d.get("Tipo") or "").strip().lower()
 
@@ -2053,8 +2057,9 @@ def _tab_busca(df: pd.DataFrame) -> None:
                 st.caption("Imóveis por região")
                 st.bar_chart(por_reg)
         else:
-            st.info("Ainda não há imóveis coletados para este FII. Rode "
-                    "`python run_market_ingest.py fiis-imoveis` (coleta best-effort por scraping).")
+            aviso_lacuna("Ainda não há imóveis coletados para este FII. Rode "
+                         "`python run_market_ingest.py fiis-imoveis` (coleta best-effort por scraping).",
+                         codigo="tela.fii.imoveis_nao_coletados", entidade=tk)
 
     render_chat_ativo(
         mercado="fii", ticker=tk, nome=str(d.get("Nome") or ""), accent="#B084F6",
