@@ -30,6 +30,8 @@ Rotas (todas GET, todas exigem ``Authorization: Bearer <token>``):
     /noticias/ativos?tickers=PETR4,VALE3&janela_dias=30&as_of=<ISO>
     /macro/recente
     /eua/detalhe?simbolos=AAPL,KO     -- preço diário, trimestres e proventos
+    /fii/detalhe?tickers=HGLG11,KNCR11 -- informe mensal CVM, preço, proventos,
+                                       composição, imóveis e score mês a mês
 """
 from __future__ import annotations
 
@@ -201,12 +203,28 @@ def rota_eua_detalhe(params) -> tuple[int, dict]:
     return 200, {"detalhe": ler_detalhe(engine_leitura(url), simbolos)}
 
 
+def rota_fii_detalhe(params) -> tuple[int, dict]:
+    from core.fii_detalhe_armazem import TICKERS_MAX, ler_detalhe, normalizar_tickers
+
+    tickers = normalizar_tickers(",".join(params.get("tickers", [])).split(","))
+    if not tickers:
+        return 400, {"erro": "informe tickers"}
+    if len(tickers) > TICKERS_MAX:
+        return 400, {"erro": f"no máximo {TICKERS_MAX} tickers por chamada"}
+    # O schema ``market`` dos FIIs mora no mesmo banco do ``market_us``.
+    url = _url_eua()
+    if not url:
+        return 503, {"erro": "armazém não configurado nesta máquina"}
+    return 200, {"detalhe": ler_detalhe(engine_leitura(url), tickers)}
+
+
 ROTAS = {
     "/saude": rota_saude,
     "/noticias/recentes": rota_noticias,
     "/noticias/ativos": rota_noticias_ativos,
     "/macro/recente": rota_macro,
     "/eua/detalhe": rota_eua_detalhe,
+    "/fii/detalhe": rota_fii_detalhe,
 }
 
 

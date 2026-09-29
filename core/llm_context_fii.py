@@ -1,6 +1,7 @@
 """Contexto determinístico e auditável para o chat de FIIs."""
 from __future__ import annotations
 
+import logging
 from collections import defaultdict
 from typing import Any, Iterable
 
@@ -8,6 +9,8 @@ import pandas as pd
 
 from core.fii_renda_recorrente import dy_recorrente, protecao_nao_divulgada
 from core.fii_ticker import tickers_citados
+
+logger = logging.getLogger(__name__)
 
 _DETAIL_METRICS = (
     "dy_recorrente", "vacancia_fisica", "vacancia_financeira", "wault_anos",
@@ -138,6 +141,57 @@ def _correlation_context(prices: pd.DataFrame | None, selected_tickers: list[str
                 lines.append(f"{ticker} x {benchmark}: corr={corr:.3f}, meses={len(common)}")
     return "Correlação de retornos totais mensais:\n  " + "\n  ".join(lines) if lines else (
         "Correlação: menos de 12 meses coincidentes por par.")
+
+
+#: Fundos com detalhe do armazém por pergunta. Cada um rende ~12 linhas no
+#: prompt; a carteira inteira (até ~20 fundos) pesaria mais que o resto dele.
+_MAX_DETALHE = 6
+
+
+def tickers_para_detalhe(user_question: str, selected_items: Iterable[dict]) -> list[str]:
+    """Citados na pergunta primeiro; depois os de maior peso na seleção."""
+    selecionados = sorted((dict(r) for r in selected_items),
+                          key=lambda r: _num(r.get("weight")) or 0, reverse=True)
+    return list(dict.fromkeys(
+        [t.upper() for t in tickers_citados(user_question)]
+        + [str(r.get("ticker") or "").strip().upper() for r in selecionados
+           if str(r.get("ticker") or "").strip()]))
+
+
+def get_warehouse_detail_context(tickers: list[str]) -> str:
+    """Série da CVM, preço, proventos, composição, imóveis e score mês a mês.
+
+    Direto quando o app aponta para o armazém (desenvolvimento); pelo túnel na
+    produção. Túnel ausente ou fora do ar vira uma linha dizendo isso -- sem
+    ela, a LLM trataria a foto da vitrine como tudo o que existe.
+    """
+    todos = list(dict.fromkeys(str(t).strip().upper() for t in tickers if str(t).strip()))
+    alvo = todos[:_MAX_DETALHE]
+    if not alvo:
+        return ""
+    from core.fii_detalhe_armazem import ler_detalhe, resumo_para_prompt
+    from core.us_read import _db_is_local, _engine
+
+    fora = ("" if len(todos) <= len(alvo) else
+            f"\n  (detalhe limitado a {len(alvo)} fundos; sem detalhe: "
+            + ", ".join(todos[len(alvo):]) + ")")
+    try:
+        if _db_is_local() and _engine() is not None:
+            return resumo_para_prompt(ler_detalhe(_engine(), alvo), origem="lido direto") + fora
+        from core import armazem_remoto
+
+        detalhe = armazem_remoto.detalhe_fii(alvo)
+    except Exception as exc:  # noqa: BLE001 - vira linha no prompt
+        logger.warning("detalhe de FII do armazém indisponível: %s", exc)
+        motivo = str(exc).splitlines()[0][:140] if str(exc) else type(exc).__name__
+        return ("DETALHE DO ARMAZÉM LOCAL: indisponível agora "
+                f"({motivo}); histórico do informe mensal, proventos, composição, "
+                "imóveis e score mês a mês não entraram.")
+    if detalhe is None:
+        return ("DETALHE DO ARMAZÉM LOCAL: túnel não configurado neste ambiente; "
+                "histórico do informe mensal, proventos, composição, imóveis e "
+                "score mês a mês não entraram.")
+    return resumo_para_prompt(detalhe, origem="lido pelo túnel") + fora
 
 
 def build_fii_chat_context(

@@ -61,7 +61,11 @@ from core.fii_taxonomy import ORDEM_CATEGORIAS_FII, categoria_fii
 from core.fii_validation import validation_supports_strategy
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_context_ativo import build_fii_ativo_context
-from core.llm_context_fii import build_fii_chat_context
+from core.llm_context_fii import (
+    build_fii_chat_context,
+    get_warehouse_detail_context,
+    tickers_para_detalhe,
+)
 from core.llm_fii import chat_com_fiis
 from core.macro_cenario import CenarioObservado, cenario_macro_observado
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
@@ -1272,6 +1276,10 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                 )
                 from core.contexto_mercado import bloco_contexto_mercado
 
+                detalhe = get_warehouse_detail_context(
+                    tickers_para_detalhe(user_input, items))
+                if detalhe:
+                    context = context + "\n\n" + detalhe
                 context = context + "\n\n" + bloco_contexto_mercado()
                 answer = chat_com_fiis(context, history[:-1], user_input)
             except Exception as exc:
