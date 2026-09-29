@@ -19,6 +19,7 @@ import os
 import re
 import sys
 import threading
+import time
 
 import pandas as pd
 import streamlit as st
@@ -220,17 +221,65 @@ def _sem_lacunas(texto: str | None, modulo: str) -> str | None:
         return texto
 
 
+# Provedor sem crédito ou com chave recusada não volta sozinho em segundos: cada
+# chamada pagaria de novo o 429 com os retries do SDK (13 s medidos na OpenAI
+# sem crédito, em 28/09/2026) antes de passar ao próximo. Fica fora da cadeia
+# por um tempo. E modelo que não aceita response_format (o Nemotron gratuito
+# devolve resposta vazia) não é tentado de novo em modo JSON.
+_PAUSA_PROVEDOR_S = 15 * 60
+_PAUSADOS: dict[str, float] = {}
+_SEM_JSON: set[tuple[str, str]] = set()
+
+
+def _status(exc: Exception) -> int | None:
+    codigo = getattr(exc, "status_code", None)
+    return codigo if isinstance(codigo, int) else None
+
+
+def _sem_credito(exc: Exception) -> bool:
+    return (_status(exc) in (401, 403)
+            or "insufficient_quota" in str(exc)
+            or "no credits" in str(exc).casefold())
+
+
+def _json_nao_suportado(exc: Exception) -> bool:
+    """O modelo recusou response_format, e não uma falha passageira.
+
+    Timeout, queda de conexão e 5xx passam na próxima; só parâmetro recusado
+    (4xx) ou resposta sem conteúdo desliga o modo JSON daquele modelo.
+    """
+    codigo = _status(exc)
+    if codigo is not None:
+        return 400 <= codigo < 500
+    return not _passageiro(exc)
+
+
+def _passageiro(exc: Exception) -> bool:
+    nome = type(exc).__name__
+    return "Timeout" in nome or "Connection" in nome
+
+
+def _limpar_estado_provedores() -> None:
+    """Esquece pausas e modos JSON aprendidos (teste e troca de chave)."""
+    _PAUSADOS.clear()
+    _SEM_JSON.clear()
+
+
 def _chat_complete(
     messages: list[dict],
     temperature: float = _TEMPERATURE,
     json_mode: bool = False,
     primary_model: str | None = None,
+    timeout: float | None = None,
 ) -> str:
     """
     Executa um chat completion com fallback entre provedores. Tenta OpenAI e,
     se falhar (cota/erro), tenta o Gemini. `json_mode` pede resposta JSON estrita
     (degrada para chamada simples se o provedor não suportar response_format).
     Levanta RuntimeError só se TODOS os provedores falharem.
+
+    `timeout` (s) vale por provedor e substitui o padrão de 90 s: tela
+    interativa prefere passar ao próximo provedor a esperar um modelo lento.
     """
     modulo_lacuna = _modulo_lacuna()
     if not json_mode:
@@ -241,19 +290,36 @@ def _chat_complete(
             "Nenhum provedor LLM configurado — defina OPENAI_API_KEY e/ou "
             "GEMINI_API_KEY no .env / Streamlit Secrets."
         )
+    agora = time.monotonic()
+    ativos = [elo for elo in chain if _PAUSADOS.get(elo[0], 0.0) <= agora]
+    # Todos pausados: tenta assim mesmo -- melhor um 429 que tela sem resposta.
+    chain = ativos or chain
     erros: list[str] = []
     _ULTIMO.modelo = None
     for nome, client, modelo in chain:
+        if timeout is not None and hasattr(client, "with_options"):
+            client = client.with_options(timeout=timeout, max_retries=0)
         try:
-            if json_mode:
+            if json_mode and (nome, modelo) not in _SEM_JSON:
                 try:
                     resp = client.chat.completions.create(
                         model=modelo, messages=messages, temperature=temperature,
                         response_format={"type": "json_object"},
                     )
+                    conteudo = resp.choices[0].message.content
+                    if not (conteudo or "").strip():
+                        raise ValueError("resposta vazia em modo JSON")
                     _ULTIMO.modelo = f"{nome}/{modelo}"
-                    return _sem_lacunas(resp.choices[0].message.content, modulo_lacuna)
+                    return _sem_lacunas(conteudo, modulo_lacuna)
                 except Exception as exc_json:
+                    # Cota, chave, limite de taxa e lentidão não mudam sem
+                    # response_format: repetir só dobra a espera. Vai para o
+                    # próximo provedor.
+                    if (_status(exc_json) in (401, 403, 429)
+                            or _sem_credito(exc_json) or _passageiro(exc_json)):
+                        raise
+                    if _json_nao_suportado(exc_json):
+                        _SEM_JSON.add((nome, modelo))
                     logger.warning("JSON mode falhou em %s (%s) — tentando sem response_format.",
                                    nome, exc_json)
             resp = client.chat.completions.create(
@@ -265,6 +331,11 @@ def _chat_complete(
             return _sem_lacunas(resp.choices[0].message.content, modulo_lacuna)
         except Exception as exc:
             erros.append(f"{nome}({modelo}): {exc}")
+            if _sem_credito(exc):
+                _PAUSADOS[nome] = time.monotonic() + _PAUSA_PROVEDOR_S
+                logger.warning("Provedor LLM %s sem crédito ou chave recusada; "
+                               "fora da cadeia por %d min.", nome,
+                               _PAUSA_PROVEDOR_S // 60)
             logger.warning("Provedor LLM %s falhou: %s", nome, exc)
             continue
     raise RuntimeError("Todos os provedores LLM falharam — " + " | ".join(erros))

@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 MAX_TURNOS = 25
 MAX_HISTORICO_PROMPT = 30
 TEMPERATURA = 0.2
+# Tempo por provedor em cada resposta. O Nemotron gratuito levou 85 s num turno
+# (28/09/2026); numa conversa, passar ao próximo provedor é melhor que esperar.
+TIMEOUT_TURNO_S = 25
 
 __all__ = ["Etapa", "MAX_TURNOS", "abertura", "llm_disponivel",
            "provedores_disponiveis", "proxima_etapa", "pergunta_do_roteiro"]
@@ -106,7 +109,11 @@ explicitamente na última resposta. Nunca suponha, nunca complete lacunas, \
 nunca preencha por coerência. Cada campo em "updates" precisa de um trecho da \
 resposta em "evidence" com a mesma chave.
 4. Traduza a resposta para as opções do campo. Se a resposta for ambígua, NÃO \
-grave: faça uma pergunta de esclarecimento.
+grave: faça uma pergunta de esclarecimento. Quem cita mais de um objetivo e \
+destaca um ("principalmente", "sobretudo", "acima de tudo") já disse qual é o \
+principal: grave-o em objective e os demais em secondary_objectives. Nunca \
+repita uma pergunta que o usuário já respondeu; se ainda houver dúvida, \
+pergunte de outro jeito, citando as opções. Na pergunta sobre uma queda de 20% da carteira, a reação é o perfil de risco: vender para não perder mais = conservador; manter e esperar = moderado; manter e comprar mais = arrojado.
 5. Você pode sugerir uma divisão por classe coerente com as respostas, em \
 "proposal", explicando-a na pergunta. Ela só vai para "updates" \
 (asset_class_targets) depois que o usuário confirmar.
@@ -147,9 +154,13 @@ def _mensagens(politica: dict, historico: list, resposta: str,
     if contexto:
         estado.append("\n=== CONTEXTO (não são respostas do usuário) ===\n"
                       + contexto)
+    # Uma mensagem de sistema só: o Gemini (endpoint compatível com a OpenAI)
+    # descarta a primeira quando há duas. Sem as regras, ele respondia
+    # {"objective": ..., "question": ...}, nada era gravado e a entrevista
+    # repetia a pergunta do roteiro a cada resposta (28/09/2026).
     msgs = [{"role": "system",
-             "content": _SISTEMA.format(campos=_descricao_campos())},
-            {"role": "system", "content": "\n".join(estado)}]
+             "content": _SISTEMA.format(campos=_descricao_campos())
+             + "\n\n" + "\n".join(estado)}]
     for m in (historico or [])[-MAX_HISTORICO_PROMPT:]:
         if m.get("role") in ("user", "assistant") and m.get("content"):
             msgs.append({"role": m["role"], "content": str(m["content"])})
@@ -174,6 +185,33 @@ def _json(bruto: str) -> dict | None:
 
 # -- etapa ---------------------------------------------------------------------
 
+# Chaves do formato pedido. JSON sem nenhuma delas é outro formato (o Gemini
+# sem as regras devolvia {"objective", "question"}), não resposta vazia.
+_NO_FORMATO = frozenset({"updates", "evidence", "next_question", "finished",
+                         "proposal"})
+
+
+def _pergunta_sem_repetir(politica: dict, historico: list) -> str | None:
+    """Pergunta do roteiro; se for a mesma que acabou de ser feita, com opções.
+
+    Repetir a pergunta idêntica a quem acabou de respondê-la parece que a
+    resposta foi ignorada. Com as opções à vista, a pessoa sabe o que dizer
+    para a resposta ser registrada.
+    """
+    pergunta = pergunta_do_roteiro(politica)
+    ultima = next((str(m.get("content") or "") for m in reversed(historico or [])
+                   if m.get("role") == "assistant"), "")
+    if not pergunta or pergunta not in ultima:
+        return pergunta
+    campo = next(c for c in pol.CAMPOS if c.pergunta == pergunta)
+    if campo.opcoes:
+        return (f"Ainda não consegui registrar {campo.rotulo.lower()}. "
+                "Qual destas opções descreve melhor? "
+                + "; ".join(r for _, r in campo.opcoes) + ".")
+    return (f"Ainda não consegui registrar {campo.rotulo.lower()}. "
+            f"{pergunta}")
+
+
 def _turnos(historico: list) -> int:
     return sum(1 for m in historico or [] if m.get("role") == "user")
 
@@ -194,15 +232,17 @@ def proxima_etapa(politica: dict, historico: list, resposta: str, *,
 
     try:
         bruto = chat(_mensagens(politica, historico, resposta, contexto),
-                     temperature=TEMPERATURA, json_mode=True)
+                     temperature=TEMPERATURA, json_mode=True,
+                     timeout=TIMEOUT_TURNO_S)
         dados = _json(bruto)
     except Exception as exc:  # noqa: BLE001
         logger.warning("entrevista de estratégia sem LLM: %s", exc)
         dados = None
 
-    if dados is None:
+    if dados is None or not _NO_FORMATO.intersection(dados):
         return Etapa(
-            politica=politica, pergunta=pergunta_do_roteiro(politica),
+            politica=politica,
+            pergunta=_pergunta_sem_repetir(politica, historico),
             origem="roteiro",
             aviso=("A IA não respondeu de forma legível; nada foi gravado "
                    "desta resposta. Você pode repetir ou usar o formulário."))
@@ -234,7 +274,7 @@ def proxima_etapa(politica: dict, historico: list, resposta: str, *,
     elif bool(dados.get("finished")) or pergunta is None:
         # A LLM quis parar com mínimo faltando, ou não perguntou nada: o
         # roteiro assume. Um "terminei" com lacuna não vira política vazia.
-        pergunta = pergunta_do_roteiro(nova)
+        pergunta = _pergunta_sem_repetir(nova, historico)
     if rejeitados:
         logger.info("entrevista: campos descartados %s", rejeitados)
     return Etapa(politica=nova, aplicados=aplicados, rejeitados=rejeitados,
