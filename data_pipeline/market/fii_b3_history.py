@@ -7,6 +7,7 @@ retornos com proventos separadamente quando disponíveis e reporta a cobertura.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 from datetime import datetime, timezone
@@ -31,6 +32,27 @@ _LOGGER = logging.getLogger(__name__)
 _BATCH_SIZE = 1_000
 
 
+def _problema_do_zip(content: bytes) -> str | None:
+    """Motivo para recusar a resposta, ou ``None`` se é um COTAHIST legível.
+
+    Começar com ``PK`` não basta. Em 29/09/2026 a URL de reserva da B3 devolveu
+    HTTP 200 com um ZIP de 22 bytes, só o diretório central e nenhum arquivo;
+    ele passou por válido, sobrescreveu o cache de 72 MB e a carga saiu
+    "completed" com zero linhas.
+    """
+    import zipfile
+
+    if not content.startswith(b"PK"):
+        return "resposta não ZIP"
+    try:
+        membros = zipfile.ZipFile(io.BytesIO(content)).infolist()
+    except zipfile.BadZipFile as exc:
+        return f"ZIP ilegível ({exc})"
+    if not any(m.file_size > 0 for m in membros):
+        return f"ZIP vazio ({len(content)} bytes)"
+    return None
+
+
 def fetch_year(year: int, timeout: int = 180) -> tuple[bytes, str, dict[str, str]]:
     import requests
     from requests.adapters import HTTPAdapter
@@ -52,11 +74,14 @@ def fetch_year(year: int, timeout: int = 180) -> tuple[bytes, str, dict[str, str
                 continue
             response.raise_for_status()
             content = response.content
-            if not content.startswith(b"PK"):
-                errors.append(f"{url}: resposta não ZIP")
+            problema = _problema_do_zip(content)
+            if problema:
+                errors.append(f"{url}: {problema}")
                 continue
             cache.parent.mkdir(parents=True, exist_ok=True)
-            cache.write_bytes(content)
+            provisorio = cache.with_suffix(".tmp")
+            provisorio.write_bytes(content)
+            provisorio.replace(cache)
             headers = {key: str(value) for key, value in response.headers.items()
                        if key.lower() in {"etag", "last-modified", "content-length"}}
             return content, url, headers
@@ -162,6 +187,11 @@ def ingest_b3_history(*, years: int = 10) -> dict:
                     "download do COTAHIST falhou; carregado o ZIP em cache, "
                     "que pode estar velho")})
             rows = parse_cotahist(content)
+            if not rows:
+                # Todo ano do COTAHIST tem FII desde 2010; zero linhas é
+                # arquivo errado, não ano vazio. Registrar 'completed' faria o
+                # carimbo da rotina dizer que a fita está em dia.
+                raise RuntimeError(f"COTAHIST {year} sem nenhuma linha de FII")
             collected = datetime.now(timezone.utc)
             sha = hashlib.sha256(content).hexdigest()
             with engine.connect() as conn:

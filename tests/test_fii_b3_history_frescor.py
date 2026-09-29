@@ -172,3 +172,46 @@ def test_rotina_baixa_antes_de_reler_o_cache():
     alvo = POR_CHAVE["b3_pregao"]
     assert alvo.passos[0][:2] == ("run_market_ingest.py", "fiis-b3-history")
     assert "--cache-apenas" in alvo.passos[1]
+
+
+_ZIP_VAZIO = b"PK\x05\x06" + b"\x00" * 18  # o que a reserva da B3 devolveu em 29/09
+
+
+def test_zip_vazio_e_recusado_sem_sobrescrever_o_cache(tmp_path, monkeypatch):
+    bom = _zip(f"{ANO}0105")
+    (tmp_path / f"COTAHIST_A{ANO}.ZIP").write_bytes(bom)
+    monkeypatch.setattr(fbh, "CACHE_ROOT", tmp_path)
+
+    class Resposta:
+        status_code = 200
+        content = _ZIP_VAZIO
+        headers: dict = {}
+
+        def raise_for_status(self):
+            pass
+
+    import requests
+    monkeypatch.setattr(requests.Session, "get", lambda self, url, timeout: Resposta())
+    conteudo, _, cabecalhos = fbh.fetch_year(ANO)
+    assert cabecalhos == {"cache-fallback": "true"}
+    assert conteudo == bom
+    assert (tmp_path / f"COTAHIST_A{ANO}.ZIP").read_bytes() == bom
+
+
+def test_problema_do_zip():
+    assert fbh._problema_do_zip(_ZIP_VAZIO).startswith("ZIP vazio")
+    assert fbh._problema_do_zip(b"<html>") == "resposta não ZIP"
+    assert fbh._problema_do_zip(b"PK\x03\x04lixo").startswith("ZIP ilegível")
+    assert fbh._problema_do_zip(_zip(f"{ANO}0105")) is None
+
+
+def test_arquivo_sem_linha_de_fii_nao_conclui(banco, monkeypatch):
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as compactado:
+        compactado.writestr("COTAHIST_A.TXT", "00COTAHIST\n")
+    _servir(monkeypatch, buffer.getvalue())
+    relatorio = fbh.ingest_b3_history(years=1)
+    assert relatorio["status"] == "failed"
+    with banco.connect() as conn:
+        assert conn.execute(text("SELECT count(*) FROM market.fii_b3_archive_loads "
+                                 "WHERE status='completed'")).scalar() == 0
