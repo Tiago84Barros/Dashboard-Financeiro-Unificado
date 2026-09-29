@@ -193,7 +193,8 @@ def test_zip_vazio_e_recusado_sem_sobrescrever_o_cache(tmp_path, monkeypatch):
     import requests
     monkeypatch.setattr(requests.Session, "get", lambda self, url, timeout: Resposta())
     conteudo, _, cabecalhos = fbh.fetch_year(ANO)
-    assert cabecalhos == {"cache-fallback": "true"}
+    assert cabecalhos["cache-fallback"] == "true"
+    assert "ZIP vazio" in cabecalhos["cache-fallback-motivo"]
     assert conteudo == bom
     assert (tmp_path / f"COTAHIST_A{ANO}.ZIP").read_bytes() == bom
 

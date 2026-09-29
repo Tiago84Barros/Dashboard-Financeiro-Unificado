@@ -88,7 +88,9 @@ def fetch_year(year: int, timeout: int = 180) -> tuple[bytes, str, dict[str, str
         except requests.RequestException as exc:
             errors.append(f"{url}: {exc}")
     if cache.exists():
-        return cache.read_bytes(), URLS[0].format(year=int(year)), {"cache-fallback": "true"}
+        return cache.read_bytes(), URLS[0].format(year=int(year)), {
+            "cache-fallback": "true",
+            "cache-fallback-motivo": "; ".join(errors)[:400] or "404 nas URLs"}
     raise RuntimeError("; ".join(errors) or f"COTAHIST {year} indisponível")
 
 
@@ -185,7 +187,8 @@ def ingest_b3_history(*, years: int = 10) -> dict:
                 # fita parada. Carrega assim mesmo, mas o relatório sai parcial.
                 report["errors"].append({"year": year, "error": (
                     "download do COTAHIST falhou; carregado o ZIP em cache, "
-                    "que pode estar velho")})
+                    "que pode estar velho: "
+                    + headers.get("cache-fallback-motivo", "motivo não informado"))})
             rows = parse_cotahist(content)
             if not rows:
                 # Todo ano do COTAHIST tem FII desde 2010; zero linhas é
