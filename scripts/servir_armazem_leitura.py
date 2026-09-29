@@ -32,6 +32,8 @@ Rotas (todas GET, todas exigem ``Authorization: Bearer <token>``):
     /eua/detalhe?simbolos=AAPL,KO     -- preço diário, trimestres e proventos
     /fii/detalhe?tickers=HGLG11,KNCR11 -- informe mensal CVM, preço, proventos,
                                        composição, imóveis e score mês a mês
+    /b3/detalhe?tickers=WEGE3,PETR4    -- pregão diário (COTAHIST) e reação a
+                                          resultados anuais (Memória de Mercado)
 """
 from __future__ import annotations
 
@@ -218,6 +220,21 @@ def rota_fii_detalhe(params) -> tuple[int, dict]:
     return 200, {"detalhe": ler_detalhe(engine_leitura(url), tickers)}
 
 
+def rota_b3_detalhe(params) -> tuple[int, dict]:
+    from core.b3_detalhe_armazem import TICKERS_MAX, ler_detalhe, normalizar_tickers
+
+    tickers = normalizar_tickers(",".join(params.get("tickers", [])).split(","))
+    if not tickers:
+        return 400, {"erro": "informe tickers"}
+    if len(tickers) > TICKERS_MAX:
+        return 400, {"erro": f"no máximo {TICKERS_MAX} tickers por chamada"}
+    # COTAHIST (``market``) e Memória de Mercado moram no banco do ``market_us``.
+    url = _url_eua()
+    if not url:
+        return 503, {"erro": "armazém não configurado nesta máquina"}
+    return 200, {"detalhe": ler_detalhe(engine_leitura(url), tickers)}
+
+
 ROTAS = {
     "/saude": rota_saude,
     "/noticias/recentes": rota_noticias,
@@ -225,6 +242,7 @@ ROTAS = {
     "/macro/recente": rota_macro,
     "/eua/detalhe": rota_eua_detalhe,
     "/fii/detalhe": rota_fii_detalhe,
+    "/b3/detalhe": rota_b3_detalhe,
 }
 
 
