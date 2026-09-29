@@ -124,12 +124,47 @@ _CADEIA_PREGAO = (
     ("scripts/ingerir_precos_b3.py", "--apply", "--anos", "recentes",
      "--cache-apenas"),
 )
+
+# Documentos de companhias abertas (CVM/IPE) em `public.docs_corporativos`.
+# Nada agendava a coleta: em 29/09/2026 o último documento era de 04/09, e as
+# LLMs da B3 e as Informações Recentes liam essa idade. O primeiro passo traz
+# os metadados novos do ano (resultado, fato relevante, provento); o segundo
+# extrai o texto completo com teto de 100 documentos por dia -- o mesmo job do
+# gotejamento, com disjuntor contra bloqueio da CVM. Uma cadeia só: metadado
+# sem texto vira chunk de ruído no RAG.
+_CADEIA_CVM_IPE = (
+    ("scripts/backfill_cvm_ipe.py", "--years", "recentes", "--apply"),
+    ("scripts/drenar_cvm_fulltext.py", "--ciclos", "5", "--por-ciclo", "20",
+     "--delay", "1.5"),
+)
 ALVOS: tuple[Alvo, ...] = (
     Alvo(
         # Primeiro da fila: quem vem depois (FIIs, valuation) lê esta fita.
         chave="b3_pregao",
         titulo="Pregão diário da B3 no armazém (FIIs e ações)",
         passos=_CADEIA_PREGAO,
+        cadencia_dias=1,
+        modulo="b3",
+    ),
+    Alvo(
+        # Documentos de FIIs (FNET) em `market.fii_documents`: saem do arquivo
+        # EVENTUAL da CVM, lido pela carga estruturada. Ela não estava na
+        # cadeia diária -- em 29/09/2026 o último documento era de 15/07, a
+        # data da última carga manual. Download condicional (ETag) e ponto de
+        # controle por hash: arquivo que não mudou não é relido. Dois anos
+        # para não perder dezembro na virada. Antes de `fii_ingest`, que lê as
+        # observações mensais que esta carga também grava.
+        chave="fii_documentos",
+        titulo="Documentos de FIIs da CVM (FNET) no armazém",
+        passos=(("run_market_ingest.py", "fiis-cvm-structured", "--warehouse",
+                 "--json", "--years", "2"),),
+        cadencia_dias=1,
+        modulo="fii",
+    ),
+    Alvo(
+        chave="cvm_ipe",
+        titulo="Documentos CVM/IPE das companhias no armazém",
+        passos=_CADEIA_CVM_IPE,
         cadencia_dias=1,
         modulo="b3",
     ),

@@ -28,7 +28,7 @@ def test_carimbo_aponta_para_a_base_que_o_alvo_escreve(chave, onde):
     armazém de 11/08. O espelho também escreve no armazém (lê o Supabase).
     """
     escreve_no_armazem = {"fii_ingest", "espelho_supabase", "brapi_raw_poda",
-                          "b3_pregao"}
+                          "b3_pregao", "fii_documentos", "cvm_ipe"}
     escreve_arquivo = {"macro_insumos", "valuation_historico",
                        "informacoes_recentes"}
     esperado = ("armazem" if chave in escreve_no_armazem

@@ -47,6 +47,17 @@ def _cfg_int(name: str, default: int) -> int:
         return default
 
 
+def _texto_gravavel(texto: str) -> str:
+    """Texto sem NUL, que o PostgreSQL recusa em coluna de texto.
+
+    Alguns PDFs da CVM extraem com ``\\x00``. A gravação falhava e o documento
+    continuava pendente -- e, como a fila prioriza carteira e fato relevante,
+    ele voltava ao topo em toda execução, gastando uma vaga por ciclo para
+    sempre (doc 5908, 29/09/2026).
+    """
+    return (texto or "").replace("\x00", "")
+
+
 def _select_pending(conn, limit: int):
     from sqlalchemy import text
     # Prioriza: carteira (b3_portfolio_model_items) → Fato Relevante/Resultados → mais antigos
@@ -139,7 +150,7 @@ def run() -> dict:
             falhas += 1
             continue
 
-        texto = ipe.extract_text(content)
+        texto = _texto_gravavel(ipe.extract_text(content))
         try:
             with engine.begin() as conn:
                 if len(texto) < min_chars:
