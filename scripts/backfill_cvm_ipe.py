@@ -189,10 +189,12 @@ def run(years: list[int], per_ticker: int, apply: bool, clean_previous: bool,
 
     # Coleta + filtra + dedup
     docs: list[dict] = []
+    sem_csv: list[int] = []
     for y in years:
         content = ipe.fetch_ipe_csv(y)
         if not content:
             logger.warning("ano %s sem CSV (download falhou)", y)
+            sem_csv.append(y)
             continue
         for d in ipe.filter_docs(ipe.parse_ipe_csv(content), cod_map):
             if d["url"] not in existing:
@@ -213,9 +215,18 @@ def run(years: list[int], per_ticker: int, apply: bool, clean_previous: bool,
     for cat, n in cats.most_common(12):
         logger.info("  %5d  %s", n, cat)
 
+    # Download que falha sai com 1, mesmo gravando o que os outros anos
+    # trouxeram. Sair com 0 aqui fazia a rotina agendada carimbar "em dia" um
+    # dia em que a CVM não respondeu -- e zero documento novo é indistinguível
+    # de zero documento publicado.
+    codigo = 1 if sem_csv else 0
+    if sem_csv:
+        logger.error("sem CSV do IPE para %s -- execução reprovada.",
+                     ",".join(map(str, sem_csv)))
+
     if not apply:
         logger.info("DRY-RUN — nada gravado. Use --apply para inserir.")
-        return 0
+        return codigo
 
     raw = eng.raw_connection()
     if clean_previous:
@@ -287,13 +298,28 @@ def run(years: list[int], per_ticker: int, apply: bool, clean_previous: bool,
         pass
 
     logger.info("FIM: %d docs + %d chunks inseridos | run=%s", ins_docs, ins_chunks, run_id)
-    return 0
+    return codigo
+
+
+def anos_do_argumento(valor: str, hoje: date | None = None) -> list[int]:
+    """``recentes`` é o ano corrente, mais o anterior em janeiro e fevereiro.
+
+    A rotina agendada não pode fixar o ano no comando: em 2027 ela continuaria
+    pedindo 2026. O anterior entra no começo do ano porque a CVM ainda recebe
+    entregas com data de referência de dezembro -- mesma regra do job
+    `update_cvm_ipe`.
+    """
+    if str(valor).strip().lower() == "recentes":
+        hoje = hoje or datetime.now(timezone.utc).date()
+        return ([hoje.year - 1] if hoje.month <= 2 else []) + [hoje.year]
+    return [int(y) for y in str(valor).split(",") if y.strip().isdigit()]
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Backfill CVM/IPE com mix balanceado por empresa.")
     ap.add_argument("--years", default="2024,2025,2026",
-                    help="Anos do IPE a coletar, separados por vírgula (default: 2024,2025,2026).")
+                    help=("Anos do IPE a coletar, separados por vírgula (default: 2024,2025,2026), "
+                          "ou 'recentes' (ano corrente; mais o anterior em jan/fev)."))
     ap.add_argument("--per-ticker", type=int, default=30,
                     help="Teto de documentos por empresa (default: 30).")
     ap.add_argument("--apply", action="store_true",
@@ -309,7 +335,7 @@ def main() -> int:
     args = ap.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    years = [int(y) for y in str(args.years).split(",") if y.strip().isdigit()]
+    years = anos_do_argumento(args.years)
     if not years:
         logger.error("Nenhum ano válido em --years.")
         return 1

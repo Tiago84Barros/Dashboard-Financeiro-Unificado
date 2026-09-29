@@ -214,6 +214,10 @@ CARIMBO = {
     # O segundo passo (ações) é o último a gravar; a carga dele só conclui
     # depois que a de FIIs baixou o ZIP.
     "b3_pregao": ("armazem", "SELECT max(completed_at) FROM market.b3_archive_loads"),
+    "fii_documentos": ("armazem",
+                       "SELECT max(completed_at) FROM market.fii_cvm_archive_loads "
+                       "WHERE archive_kind = 'eventual'"),
+    "cvm_ipe": ("armazem", "SELECT max(created_at) FROM public.docs_corporativos"),
     "fii_selection": ("supabase",
                       "SELECT max(generated_at) FROM market.fii_selection_inputs"),
     "b3_metrics": ("supabase", "SELECT max(updated_at) FROM market.calculated_metrics"),

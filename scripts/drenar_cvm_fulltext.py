@@ -97,6 +97,7 @@ def main() -> int:
     if not restam:
         return 0
 
+    codigo = 0
     for i in range(1, args.ciclos + 1):
         t0 = time.time()
         r = run()
@@ -105,14 +106,17 @@ def main() -> int:
                     i, args.ciclos, r.get("error_message") or r.get("status"),
                     time.time() - t0, restam)
         if r.get("status") == "failed":
+            # Sai com 1: na rotina agendada, sair com 0 aqui carimbava sucesso
+            # num dia em que a CVM bloqueou e nada foi extraído.
             logger.error("job falhou — interrompendo para não insistir contra a CVM.")
+            codigo = 1
             break
         if not restam:
             logger.info("fila drenada.")
             break
 
     logger.info("FIM: restam %d | %.1f min", restam, (time.time() - inicio) / 60)
-    return 0
+    return codigo
 
 
 if __name__ == "__main__":

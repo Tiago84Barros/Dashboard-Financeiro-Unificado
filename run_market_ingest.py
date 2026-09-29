@@ -335,7 +335,10 @@ def main() -> int:
             print(json.dumps(rep, indent=2, default=str))
         if args.command == "fiis-documents":
             return 0 if rep.get("failed", 0) != -1 else 1
-        if args.command == "fiis-cvm-cri":
+        if args.command in ("fiis-cvm-cri", "fiis-cvm-structured"):
+            # A estruturada caía no retorno genérico abaixo, que olha `erros`
+            # -- chave que ela não tem. Saía 0 com todos os arquivos em erro, e
+            # a rotina agendada carimbaria em dia a coleta dos documentos.
             return 0 if rep.get("status") == "completed" else 1
         if args.command in ("fiis-registry", "fiis-b3-history", "fiis-entities",
                             "fiis-confidence"):
