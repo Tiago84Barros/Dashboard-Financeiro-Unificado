@@ -412,14 +412,22 @@ def publicar(*, local, remoto, aplicar: bool, versao: str | None = None,
         conn.exec_driver_sql(DDL_VINTAGES)
         conn.exec_driver_sql(DDL_PRECOS)
 
-    sql_v = (f"INSERT INTO market_us.score_vintages ({','.join(COLS_VINTAGE)}) "
+    # O WHERE pula a linha idêntica: a publicação é noturna e regravava as
+    # ~364 mil linhas de preço sem mudança (2,3 milhões de UPDATEs, cada um
+    # uma tupla morta no Supabase).
+    sql_v = (f"INSERT INTO market_us.score_vintages AS alvo ({','.join(COLS_VINTAGE)}) "
              "VALUES %s ON CONFLICT (symbol, score_version, as_of_date, track) "
              "DO UPDATE SET score = EXCLUDED.score, coverage = EXCLUDED.coverage, "
-             "score_confidence = EXCLUDED.score_confidence")
-    sql_p = (f"INSERT INTO market_us.prices_monthly ({','.join(COLS_PRECO)}) "
+             "score_confidence = EXCLUDED.score_confidence "
+             "WHERE (alvo.score, alvo.coverage, alvo.score_confidence) IS DISTINCT FROM "
+             "(EXCLUDED.score, EXCLUDED.coverage, EXCLUDED.score_confidence)")
+    sql_p = (f"INSERT INTO market_us.prices_monthly AS alvo ({','.join(COLS_PRECO)}) "
              "VALUES %s ON CONFLICT (symbol, month_end) DO UPDATE SET "
              "close = EXCLUDED.close, adjusted_close = EXCLUDED.adjusted_close, "
-             "volume = EXCLUDED.volume, total_return = EXCLUDED.total_return")
+             "volume = EXCLUDED.volume, total_return = EXCLUDED.total_return "
+             "WHERE (alvo.close, alvo.adjusted_close, alvo.volume, alvo.total_return) "
+             "IS DISTINCT FROM (EXCLUDED.close, EXCLUDED.adjusted_close, "
+             "EXCLUDED.volume, EXCLUDED.total_return)")
     resumo["safras_gravadas"] = _gravar_em_lotes(
         remoto, sql_v, safras, rotulo="safras")
     resumo["precos_gravados"] = _gravar_em_lotes(
