@@ -100,7 +100,8 @@ def _registros(df: pd.DataFrame) -> list[dict]:
 
 
 def _gravar(df: pd.DataFrame, *, engine, lote: int = LOTE) -> None:
-    """Grava as linhas no destino; idempotente via ON CONFLICT DO UPDATE.
+    """Grava as linhas no destino; idempotente via ON CONFLICT DO UPDATE, que
+    pula a linha cujo valor não mudou (regravá-la só deixaria tupla morta).
 
     Um INSERT de varias linhas por lote, cada lote na sua transacao. Numa
     transacao unica, 8.805 linhas estouraram o statement_timeout de 2 min do
@@ -119,13 +120,16 @@ def _gravar(df: pd.DataFrame, *, engine, lote: int = LOTE) -> None:
             valores.append("(" + ", ".join(f":{c}_{i}" for c in _COLUNAS) + ")")
             params.update({f"{c}_{i}": reg[c] for c in _COLUNAS})
         sql = text(f"""
-            INSERT INTO {tabela} ({', '.join(_COLUNAS)})
+            INSERT INTO {tabela} AS alvo ({', '.join(_COLUNAS)})
             VALUES {', '.join(valores)}
             ON CONFLICT (symbol, month_end) DO UPDATE SET
                 close = EXCLUDED.close,
                 adjusted_close = EXCLUDED.adjusted_close,
                 volume = EXCLUDED.volume,
                 total_return = EXCLUDED.total_return
+            WHERE (alvo.close, alvo.adjusted_close, alvo.volume, alvo.total_return)
+                IS DISTINCT FROM (EXCLUDED.close, EXCLUDED.adjusted_close,
+                                  EXCLUDED.volume, EXCLUDED.total_return)
         """)
         with engine.begin() as conn:
             conn.execute(sql, params)
