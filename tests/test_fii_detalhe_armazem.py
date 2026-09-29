@@ -50,8 +50,24 @@ def _serie():
     return linhas
 
 
+#: 70 pregões de mercado até HOJE (dias úteis, sem feriado).
+CALENDARIO = []
+_d = HOJE
+while len(CALENDARIO) < 70:
+    if _d.weekday() < 5:
+        CALENDARIO.insert(0, _d)
+    _d -= timedelta(days=1)
+
+
+def _pregoes(dias, volume=Decimal("1000000"), negocios=500):
+    return [{"date": d, "fechamento": Decimal("99"), "negocios": negocios,
+             "volume": volume} for d in dias]
+
+
 def _detalhe():
     return {"HGLG11": {
+        "pregoes": _pregoes(CALENDARIO),
+        "calendario": list(CALENDARIO),
         "serie": _serie(),
         "precos": [{"date": HOJE - timedelta(days=400), "preco": Decimal("80")},
                    {"date": HOJE - timedelta(days=200), "preco": Decimal("100")},
@@ -153,6 +169,51 @@ def test_fundo_sem_dado_diz_que_nao_tem():
     assert "nenhum registrado" in texto
 
 
+def test_liquidez_conta_pregao_sem_negocio_como_zero():
+    # Negocia só nos pregões pares: a mediana dos 21 é zero, não o volume do dia.
+    negociados = CALENDARIO[-21::2]
+    liq = det.resumo_liquidez(_pregoes(negociados), CALENDARIO)
+    assert liq["j21"]["negociados"] == 11 and liq["j21"]["volume_mediano"] == 1_000_000
+    negociados = CALENDARIO[-20::2]
+    liq = det.resumo_liquidez(_pregoes(negociados), CALENDARIO)
+    assert liq["j21"]["negociados"] == 10 and liq["j21"]["volume_mediano"] == 0
+    assert liq["j21"]["volume_total"] == 10_000_000
+    assert liq["ultimo_pregao"] == HOJE and liq["ultimo_negocio"] == CALENDARIO[-2]
+
+
+def test_liquidez_janela_curta_na_fita_nao_vira_numero():
+    liq = det.resumo_liquidez(_pregoes(CALENDARIO[-30:]), CALENDARIO[-30:])
+    assert liq["j21"]["negociados"] == 21 and liq["j63"] is None
+
+
+def test_prompt_traz_liquidez_e_avisa_ultimo_negocio_antigo():
+    d = _detalhe()
+    d["HGLG11"]["pregoes"] = _pregoes(CALENDARIO[:-3])
+    texto = det.resumo_para_prompt(d, origem="x", hoje=HOJE)
+    assert ("Liquidez na B3 (COTAHIST até o pregão de 28/09/2026): 21 pregões: "
+            "volume mediano R$ 1.0 mi/dia (total R$ 18.0 mi), 500 negócios/dia, "
+            "negociado em 18 de 21") in texto
+    assert f"último negócio em {CALENDARIO[-4]:%d/%m/%Y}" in texto
+    assert "fita do armazém parada" not in texto
+
+
+def test_fita_parada_e_avisada():
+    d = _detalhe()
+    d["HGLG11"]["calendario"] = CALENDARIO[:-10]
+    assert "dias atrás — fita do armazém parada" in det.resumo_para_prompt(
+        d, origem="x", hoje=HOJE)
+
+
+def test_liquidez_ausente_distingue_servidor_antigo_de_fita_vazia():
+    d = _detalhe()
+    del d["HGLG11"]["calendario"]
+    assert "versão antiga do código" in det.resumo_para_prompt(d, origem="x", hoje=HOJE)
+    d["HGLG11"]["calendario"] = []
+    assert "não tem a fita do COTAHIST" in det.resumo_para_prompt(d, origem="x", hoje=HOJE)
+    d["HGLG11"]["calendario"], d["HGLG11"]["pregoes"] = CALENDARIO, []
+    assert "nenhum negócio no recorte" in det.resumo_para_prompt(d, origem="x", hoje=HOJE)
+
+
 class _Conexao:
     def __init__(self, respostas):
         self.respostas = respostas
@@ -199,6 +260,9 @@ def test_leitura_fica_com_a_versao_mais_nova_e_a_ultima_publicacao_do_mes():
     eng = _Engine({
         "fii_metric_observations": [], "historical_prices": [], "dividends": [],
         "fii_exposures": comp, "fii_imoveis": [],
+        "financial_volume": [{"ticker": "HGLG11", "trade_date": HOJE, "close": 99,
+                              "trades": 10, "financial_volume": 5}],
+        "AS pregao": [{"pregao": HOJE - timedelta(days=1)}, {"pregao": HOJE}],
         "fii_pit_score_snapshots": [
             _score("6.9.0", date(2026, 8, 31), 90, novo),
             _score("6.10.0", date(2026, 8, 31), 70, antigo),
@@ -212,8 +276,12 @@ def test_leitura_fica_com_a_versao_mais_nova_e_a_ultima_publicacao_do_mes():
     setor = d["HGLG11"]["composicao"]
     assert len(setor) == det.ITENS_COMPOSICAO and setor[0]["nome"] == "S10"
     assert {c["itens_no_tipo"] for c in setor} == {10}
+    assert d["HGLG11"]["pregoes"] == [{"date": HOJE, "fechamento": 99, "negocios": 10,
+                                       "volume": 5}]
+    # O calendário é do mercado: o fundo sem negócio também o recebe.
     assert d["KNRI11"] == {"serie": [], "precos": [], "proventos": [], "composicao": [],
-                           "imoveis": [], "score": []}
+                           "imoveis": [], "score": [], "pregoes": [],
+                           "calendario": [HOJE - timedelta(days=1), HOJE]}
 
 
 def test_rota_recusa_pedido_sem_ticker_ou_largo_demais():
@@ -319,6 +387,8 @@ def test_sql_roda_no_armazem_de_verdade():
     finally:
         engine.dispose()
     assert d["HGLG11"]["serie"] and d["HGLG11"]["composicao"]
-    assert not any(d["XXXX11"].values())
+    assert d["HGLG11"]["pregoes"] and len(d["HGLG11"]["calendario"]) >= 63
+    assert d["XXXX11"]["calendario"] == d["HGLG11"]["calendario"]
+    assert not any(v for k, v in d["XXXX11"].items() if k != "calendario")
     texto = det.resumo_para_prompt(d, origem="x")
     assert "HGLG11:" in texto and "VPA R$" in texto
