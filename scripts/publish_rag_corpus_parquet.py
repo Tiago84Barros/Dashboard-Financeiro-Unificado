@@ -42,6 +42,7 @@ import hashlib
 import json
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -82,6 +83,7 @@ SELECT
     COALESCE(d.extraction_version, '')                          AS extracao_doc
 FROM public.docs_corporativos_chunks c
 JOIN public.docs_corporativos d ON d.id = c.doc_id
+ORDER BY c.doc_id, c.chunk_index
 """
 
 _SQL_ASSINATURA = """
@@ -104,6 +106,52 @@ def _marca_ancora(df: pd.DataFrame) -> pd.Series:
     return alvo.str.contains(_RE_ANCORA, regex=True, na=False)
 
 
+def _manifesto_atual(destino: Path) -> dict | None:
+    try:
+        return json.loads((destino / "manifesto.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def origem_inalterada(anterior: dict | None, assinatura: dict, destino: Path) -> bool:
+    """A origem e a mesma da ultima publicacao que conferiu.
+
+    Reescrever nesse caso so geraria commit sem conteudo novo na rotina
+    semanal. Sem particao em disco, publica de qualquer jeito.
+    """
+    return bool(anterior and anterior.get("confere")
+                and anterior.get("assinatura_origem") == assinatura["assinatura"]
+                and anterior.get("linhas_origem") == int(assinatura["n"])
+                and list(destino.glob("chunks_*.parquet")))
+
+
+def gravar_particoes(df: pd.DataFrame, destino: Path) -> list[dict]:
+    """Grava uma particao por letra do root e ano do documento.
+
+    A letra e o que a consulta filtra (`root`). O ano existe por causa do git:
+    a rotina republica toda semana e commita o que mudou, e documento novo e
+    quase sempre do ano corrente -- so letra fazia toda particao mudar toda
+    semana, ~46 MB de historico por republicacao. Com a ordem fixa do SELECT
+    (doc_id, chunk_index), particao sem dado novo sai byte a byte igual e o git
+    nao a ve como mudada. Particao que deixou de existir e apagada.
+    """
+    destino.mkdir(parents=True, exist_ok=True)
+    for antigo in destino.glob("*.parquet"):
+        antigo.unlink()
+
+    ano = pd.to_datetime(df["data_doc"], errors="coerce").dt.year
+    rotulo = (df["root"].str[0].fillna("_").str.upper() + "_"
+              + ano.map(lambda a: "sem-data" if pd.isna(a) else str(int(a))))
+    partes = []
+    for prefixo, bloco in df.groupby(rotulo, sort=True):
+        caminho = destino / f"chunks_{prefixo}.parquet"
+        tabela = pa.Table.from_pandas(bloco, preserve_index=False)
+        pq.write_table(tabela, caminho, compression="zstd", compression_level=9)
+        partes.append({"arquivo": caminho.name, "linhas": len(bloco),
+                       "bytes": caminho.stat().st_size})
+    return partes
+
+
 def publicar(destino: Path = DESTINO) -> dict:
     eng = _engine(_warehouse_url())
     with eng.connect() as conn:
@@ -122,6 +170,10 @@ def publicar(destino: Path = DESTINO) -> dict:
                 "carrega - publicar agora desligaria a busca semantica sem "
                 "aviso. Estenda o Parquet para incluir o vetor antes de seguir.")
         assinatura = dict(conn.execute(text(_SQL_ASSINATURA)).mappings().one())
+        anterior = _manifesto_atual(destino)
+        if origem_inalterada(anterior, assinatura, destino):
+            eng.dispose()
+            return {**anterior, "inalterado": True}
         df = pd.read_sql(text(_SQL), conn)
     eng.dispose()
 
@@ -136,52 +188,36 @@ def publicar(destino: Path = DESTINO) -> dict:
     # 'YYYY-MM-DD 00:00:00' e o texto exibido ao usuario divergiria do banco.
     df["data_doc"] = pd.to_datetime(df["data_doc"], errors="coerce").dt.date
 
-    destino.mkdir(parents=True, exist_ok=True)
-    for antigo in destino.glob("*.parquet"):
-        antigo.unlink()
-
-    # Particionado por prefixo do root (1 letra). Toda consulta filtra por
-    # `root`, entao o DuckDB le so o arquivo da letra e ignora os outros 25 --
-    # e um republish so reescreve as particoes que mudaram, o que importa
-    # quando o destino e o repositorio git.
-    df["_p"] = df["root"].str[0].fillna("_").str.upper()
-    partes = []
-    for prefixo, bloco in df.groupby("_p", sort=True):
-        caminho = destino / f"chunks_{prefixo}.parquet"
-        tabela = pa.Table.from_pandas(bloco.drop(columns=["_p"]),
-                                      preserve_index=False)
-        pq.write_table(tabela, caminho, compression="zstd", compression_level=9)
-        partes.append({"arquivo": caminho.name, "linhas": len(bloco),
-                       "bytes": caminho.stat().st_size})
-
-    total_bytes = sum(p["bytes"] for p in partes)
     # Assinatura propria do Parquet, calculada do MESMO jeito que a do Postgres
     # (md5 sobre os chunk_hash ordenados, separados por \n). Igualdade aqui
-    # prova que o arquivo carrega o corpus inteiro, chunk a chunk.
+    # prova que o arquivo carrega o corpus inteiro, chunk a chunk. Conferida
+    # ANTES de apagar as particoes: se divergir, o corpus publicado fica como
+    # estava, coerente com o manifesto que o descreve.
     assinatura_parquet = hashlib.md5(
         "\n".join(sorted(df["chunk_hash"].astype(str))).encode()
     ).hexdigest()
+    if not (assinatura_parquet == assinatura["assinatura"]
+            and len(df) == int(assinatura["n"])):
+        raise RuntimeError(
+            "corpus lido diverge da origem: "
+            f"{len(df)} linhas/{assinatura_parquet} vs "
+            f"{assinatura['n']}/{assinatura['assinatura']}")
 
+    partes = gravar_particoes(df, destino)
     manifesto = {
+        "gerado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "linhas": int(len(df)),
         "chunks_distintos": int(df["chunk_hash"].nunique()),
         "roots": int(df["root"].nunique()),
         "ancoras": int(df["eh_ancora"].sum()),
         "stubs": int(df["eh_stub"].sum()),
-        "bytes": total_bytes,
+        "bytes": sum(p["bytes"] for p in partes),
         "particoes": partes,
         "assinatura_chunk_hash": assinatura_parquet,
         "assinatura_origem": assinatura["assinatura"],
         "linhas_origem": int(assinatura["n"]),
-        "confere": (assinatura_parquet == assinatura["assinatura"]
-                    and len(df) == int(assinatura["n"])),
+        "confere": True,
     }
-    if not manifesto["confere"]:
-        raise RuntimeError(
-            "corpus publicado diverge da origem: "
-            f"{len(df)} linhas/{assinatura_parquet} vs "
-            f"{assinatura['n']}/{assinatura['assinatura']}")
-
     (destino / "manifesto.json").write_text(
         json.dumps(manifesto, ensure_ascii=False, indent=2), encoding="utf-8")
     return manifesto

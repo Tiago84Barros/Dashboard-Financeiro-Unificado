@@ -1,134 +1,495 @@
 {
-  "linhas": 162282,
-  "chunks_distintos": 162282,
+  "gerado_em": "2026-09-29T23:51:39+00:00",
+  "linhas": 167189,
+  "chunks_distintos": 167189,
   "roots": 292,
-  "ancoras": 74454,
-  "stubs": 2600,
-  "bytes": 46275244,
+  "ancoras": 76304,
+  "stubs": 4880,
+  "bytes": 49178393,
   "particoes": [
     {
-      "arquivo": "chunks_A.parquet",
-      "linhas": 13171,
-      "bytes": 3682966
+      "arquivo": "chunks_A_2023.parquet",
+      "linhas": 3635,
+      "bytes": 1094383
     },
     {
-      "arquivo": "chunks_B.parquet",
-      "linhas": 21538,
-      "bytes": 6094337
+      "arquivo": "chunks_A_2024.parquet",
+      "linhas": 2096,
+      "bytes": 622026
     },
     {
-      "arquivo": "chunks_C.parquet",
-      "linhas": 20383,
-      "bytes": 5819031
+      "arquivo": "chunks_A_2025.parquet",
+      "linhas": 1515,
+      "bytes": 409506
     },
     {
-      "arquivo": "chunks_D.parquet",
-      "linhas": 5005,
-      "bytes": 1396410
+      "arquivo": "chunks_A_2026.parquet",
+      "linhas": 6356,
+      "bytes": 1688241
     },
     {
-      "arquivo": "chunks_E.parquet",
-      "linhas": 12217,
-      "bytes": 3607374
+      "arquivo": "chunks_B_2023.parquet",
+      "linhas": 5185,
+      "bytes": 1569264
     },
     {
-      "arquivo": "chunks_F.parquet",
-      "linhas": 3042,
-      "bytes": 836283
+      "arquivo": "chunks_B_2024.parquet",
+      "linhas": 4636,
+      "bytes": 1379590
     },
     {
-      "arquivo": "chunks_G.parquet",
-      "linhas": 7922,
-      "bytes": 2232378
+      "arquivo": "chunks_B_2025.parquet",
+      "linhas": 3653,
+      "bytes": 1034372
     },
     {
-      "arquivo": "chunks_H.parquet",
-      "linhas": 3710,
-      "bytes": 1060228
+      "arquivo": "chunks_B_2026.parquet",
+      "linhas": 8870,
+      "bytes": 2436444
     },
     {
-      "arquivo": "chunks_I.parquet",
-      "linhas": 3992,
-      "bytes": 1181901
+      "arquivo": "chunks_C_2023.parquet",
+      "linhas": 5169,
+      "bytes": 1571398
     },
     {
-      "arquivo": "chunks_J.parquet",
-      "linhas": 878,
-      "bytes": 219593
+      "arquivo": "chunks_C_2024.parquet",
+      "linhas": 3228,
+      "bytes": 1032712
     },
     {
-      "arquivo": "chunks_K.parquet",
-      "linhas": 1501,
-      "bytes": 435108
+      "arquivo": "chunks_C_2025.parquet",
+      "linhas": 2910,
+      "bytes": 803157
     },
     {
-      "arquivo": "chunks_L.parquet",
-      "linhas": 5670,
-      "bytes": 1588262
+      "arquivo": "chunks_C_2026.parquet",
+      "linhas": 9842,
+      "bytes": 2730145
     },
     {
-      "arquivo": "chunks_M.parquet",
-      "linhas": 8748,
-      "bytes": 2584120
+      "arquivo": "chunks_D_2023.parquet",
+      "linhas": 953,
+      "bytes": 306613
     },
     {
-      "arquivo": "chunks_N.parquet",
-      "linhas": 4141,
-      "bytes": 1124426
+      "arquivo": "chunks_D_2024.parquet",
+      "linhas": 790,
+      "bytes": 231565
     },
     {
-      "arquivo": "chunks_O.parquet",
-      "linhas": 4106,
-      "bytes": 1178632
+      "arquivo": "chunks_D_2025.parquet",
+      "linhas": 425,
+      "bytes": 133834
     },
     {
-      "arquivo": "chunks_P.parquet",
-      "linhas": 11083,
-      "bytes": 3133463
+      "arquivo": "chunks_D_2026.parquet",
+      "linhas": 2873,
+      "bytes": 806145
     },
     {
-      "arquivo": "chunks_Q.parquet",
-      "linhas": 1091,
-      "bytes": 292675
+      "arquivo": "chunks_E_2023.parquet",
+      "linhas": 3534,
+      "bytes": 1101457
     },
     {
-      "arquivo": "chunks_R.parquet",
-      "linhas": 5572,
-      "bytes": 1624767
+      "arquivo": "chunks_E_2024.parquet",
+      "linhas": 2280,
+      "bytes": 675601
     },
     {
-      "arquivo": "chunks_S.parquet",
-      "linhas": 6646,
-      "bytes": 1940638
+      "arquivo": "chunks_E_2025.parquet",
+      "linhas": 1075,
+      "bytes": 335929
     },
     {
-      "arquivo": "chunks_T.parquet",
-      "linhas": 10802,
-      "bytes": 3067529
+      "arquivo": "chunks_E_2026.parquet",
+      "linhas": 5733,
+      "bytes": 1571871
     },
     {
-      "arquivo": "chunks_U.parquet",
-      "linhas": 2498,
-      "bytes": 696257
+      "arquivo": "chunks_F_2023.parquet",
+      "linhas": 794,
+      "bytes": 241528
     },
     {
-      "arquivo": "chunks_V.parquet",
-      "linhas": 5072,
-      "bytes": 1519122
+      "arquivo": "chunks_F_2024.parquet",
+      "linhas": 674,
+      "bytes": 217040
     },
     {
-      "arquivo": "chunks_W.parquet",
-      "linhas": 2947,
-      "bytes": 817902
+      "arquivo": "chunks_F_2025.parquet",
+      "linhas": 161,
+      "bytes": 57726
     },
     {
-      "arquivo": "chunks_Y.parquet",
-      "linhas": 547,
-      "bytes": 141842
+      "arquivo": "chunks_F_2026.parquet",
+      "linhas": 1473,
+      "bytes": 413346
+    },
+    {
+      "arquivo": "chunks_G_2023.parquet",
+      "linhas": 1878,
+      "bytes": 560242
+    },
+    {
+      "arquivo": "chunks_G_2024.parquet",
+      "linhas": 1232,
+      "bytes": 360937
+    },
+    {
+      "arquivo": "chunks_G_2025.parquet",
+      "linhas": 1062,
+      "bytes": 282761
+    },
+    {
+      "arquivo": "chunks_G_2026.parquet",
+      "linhas": 3879,
+      "bytes": 1063951
+    },
+    {
+      "arquivo": "chunks_H_2023.parquet",
+      "linhas": 1153,
+      "bytes": 396769
+    },
+    {
+      "arquivo": "chunks_H_2024.parquet",
+      "linhas": 339,
+      "bytes": 128106
+    },
+    {
+      "arquivo": "chunks_H_2025.parquet",
+      "linhas": 206,
+      "bytes": 69416
+    },
+    {
+      "arquivo": "chunks_H_2026.parquet",
+      "linhas": 2123,
+      "bytes": 556025
+    },
+    {
+      "arquivo": "chunks_I_2023.parquet",
+      "linhas": 1010,
+      "bytes": 342487
+    },
+    {
+      "arquivo": "chunks_I_2024.parquet",
+      "linhas": 498,
+      "bytes": 171472
+    },
+    {
+      "arquivo": "chunks_I_2025.parquet",
+      "linhas": 473,
+      "bytes": 155496
+    },
+    {
+      "arquivo": "chunks_I_2026.parquet",
+      "linhas": 2094,
+      "bytes": 632077
+    },
+    {
+      "arquivo": "chunks_J_2023.parquet",
+      "linhas": 197,
+      "bytes": 77076
+    },
+    {
+      "arquivo": "chunks_J_2024.parquet",
+      "linhas": 94,
+      "bytes": 35147
+    },
+    {
+      "arquivo": "chunks_J_2025.parquet",
+      "linhas": 257,
+      "bytes": 85737
+    },
+    {
+      "arquivo": "chunks_J_2026.parquet",
+      "linhas": 342,
+      "bytes": 97722
+    },
+    {
+      "arquivo": "chunks_K_2023.parquet",
+      "linhas": 295,
+      "bytes": 111580
+    },
+    {
+      "arquivo": "chunks_K_2024.parquet",
+      "linhas": 189,
+      "bytes": 70848
+    },
+    {
+      "arquivo": "chunks_K_2025.parquet",
+      "linhas": 9,
+      "bytes": 9967
+    },
+    {
+      "arquivo": "chunks_K_2026.parquet",
+      "linhas": 1023,
+      "bytes": 287322
+    },
+    {
+      "arquivo": "chunks_L_2023.parquet",
+      "linhas": 1413,
+      "bytes": 433162
+    },
+    {
+      "arquivo": "chunks_L_2024.parquet",
+      "linhas": 493,
+      "bytes": 157370
+    },
+    {
+      "arquivo": "chunks_L_2025.parquet",
+      "linhas": 811,
+      "bytes": 251491
+    },
+    {
+      "arquivo": "chunks_L_2026.parquet",
+      "linhas": 3010,
+      "bytes": 832327
+    },
+    {
+      "arquivo": "chunks_M_2023.parquet",
+      "linhas": 2608,
+      "bytes": 820992
+    },
+    {
+      "arquivo": "chunks_M_2024.parquet",
+      "linhas": 1358,
+      "bytes": 456910
+    },
+    {
+      "arquivo": "chunks_M_2025.parquet",
+      "linhas": 1391,
+      "bytes": 394243
+    },
+    {
+      "arquivo": "chunks_M_2026.parquet",
+      "linhas": 3615,
+      "bytes": 1076970
+    },
+    {
+      "arquivo": "chunks_N_2023.parquet",
+      "linhas": 991,
+      "bytes": 323111
+    },
+    {
+      "arquivo": "chunks_N_2024.parquet",
+      "linhas": 588,
+      "bytes": 180722
+    },
+    {
+      "arquivo": "chunks_N_2025.parquet",
+      "linhas": 838,
+      "bytes": 238698
+    },
+    {
+      "arquivo": "chunks_N_2026.parquet",
+      "linhas": 1799,
+      "bytes": 490583
+    },
+    {
+      "arquivo": "chunks_O_2023.parquet",
+      "linhas": 1053,
+      "bytes": 308230
+    },
+    {
+      "arquivo": "chunks_O_2024.parquet",
+      "linhas": 744,
+      "bytes": 244317
+    },
+    {
+      "arquivo": "chunks_O_2025.parquet",
+      "linhas": 343,
+      "bytes": 122727
+    },
+    {
+      "arquivo": "chunks_O_2026.parquet",
+      "linhas": 2247,
+      "bytes": 602435
+    },
+    {
+      "arquivo": "chunks_P_2023.parquet",
+      "linhas": 3095,
+      "bytes": 953095
+    },
+    {
+      "arquivo": "chunks_P_2024.parquet",
+      "linhas": 1761,
+      "bytes": 517597
+    },
+    {
+      "arquivo": "chunks_P_2025.parquet",
+      "linhas": 1639,
+      "bytes": 444393
+    },
+    {
+      "arquivo": "chunks_P_2026.parquet",
+      "linhas": 4957,
+      "bytes": 1365040
+    },
+    {
+      "arquivo": "chunks_Q_2023.parquet",
+      "linhas": 326,
+      "bytes": 118774
+    },
+    {
+      "arquivo": "chunks_Q_2024.parquet",
+      "linhas": 126,
+      "bytes": 57459
+    },
+    {
+      "arquivo": "chunks_Q_2025.parquet",
+      "linhas": 184,
+      "bytes": 68462
+    },
+    {
+      "arquivo": "chunks_Q_2026.parquet",
+      "linhas": 549,
+      "bytes": 151360
+    },
+    {
+      "arquivo": "chunks_R_2023.parquet",
+      "linhas": 1368,
+      "bytes": 411517
+    },
+    {
+      "arquivo": "chunks_R_2024.parquet",
+      "linhas": 938,
+      "bytes": 295636
+    },
+    {
+      "arquivo": "chunks_R_2025.parquet",
+      "linhas": 802,
+      "bytes": 240458
+    },
+    {
+      "arquivo": "chunks_R_2026.parquet",
+      "linhas": 2532,
+      "bytes": 756401
+    },
+    {
+      "arquivo": "chunks_S_2023.parquet",
+      "linhas": 1397,
+      "bytes": 465540
+    },
+    {
+      "arquivo": "chunks_S_2024.parquet",
+      "linhas": 2239,
+      "bytes": 658692
+    },
+    {
+      "arquivo": "chunks_S_2025.parquet",
+      "linhas": 537,
+      "bytes": 173618
+    },
+    {
+      "arquivo": "chunks_S_2026.parquet",
+      "linhas": 2689,
+      "bytes": 698036
+    },
+    {
+      "arquivo": "chunks_T_2023.parquet",
+      "linhas": 2668,
+      "bytes": 860011
+    },
+    {
+      "arquivo": "chunks_T_2024.parquet",
+      "linhas": 1794,
+      "bytes": 538809
+    },
+    {
+      "arquivo": "chunks_T_2025.parquet",
+      "linhas": 1344,
+      "bytes": 407500
+    },
+    {
+      "arquivo": "chunks_T_2026.parquet",
+      "linhas": 5455,
+      "bytes": 1522164
+    },
+    {
+      "arquivo": "chunks_U_2023.parquet",
+      "linhas": 454,
+      "bytes": 157915
+    },
+    {
+      "arquivo": "chunks_U_2024.parquet",
+      "linhas": 257,
+      "bytes": 102775
+    },
+    {
+      "arquivo": "chunks_U_2025.parquet",
+      "linhas": 301,
+      "bytes": 114532
+    },
+    {
+      "arquivo": "chunks_U_2026.parquet",
+      "linhas": 1499,
+      "bytes": 416323
+    },
+    {
+      "arquivo": "chunks_V_2023.parquet",
+      "linhas": 1148,
+      "bytes": 404493
+    },
+    {
+      "arquivo": "chunks_V_2024.parquet",
+      "linhas": 612,
+      "bytes": 212432
+    },
+    {
+      "arquivo": "chunks_V_2025.parquet",
+      "linhas": 576,
+      "bytes": 192790
+    },
+    {
+      "arquivo": "chunks_V_2026.parquet",
+      "linhas": 2849,
+      "bytes": 839814
+    },
+    {
+      "arquivo": "chunks_W_2023.parquet",
+      "linhas": 772,
+      "bytes": 233204
+    },
+    {
+      "arquivo": "chunks_W_2024.parquet",
+      "linhas": 415,
+      "bytes": 152596
+    },
+    {
+      "arquivo": "chunks_W_2025.parquet",
+      "linhas": 545,
+      "bytes": 185721
+    },
+    {
+      "arquivo": "chunks_W_2026.parquet",
+      "linhas": 1234,
+      "bytes": 354253
+    },
+    {
+      "arquivo": "chunks_Y_2023.parquet",
+      "linhas": 215,
+      "bytes": 72001
+    },
+    {
+      "arquivo": "chunks_Y_2024.parquet",
+      "linhas": 214,
+      "bytes": 65330
+    },
+    {
+      "arquivo": "chunks_Y_2025.parquet",
+      "linhas": 21,
+      "bytes": 19983
+    },
+    {
+      "arquivo": "chunks_Y_2026.parquet",
+      "linhas": 162,
+      "bytes": 56350
     }
   ],
-  "assinatura_chunk_hash": "c51504c1a031098d60b4c70004abe111",
-  "assinatura_origem": "c51504c1a031098d60b4c70004abe111",
-  "linhas_origem": 162282,
+  "assinatura_chunk_hash": "529a6e68a847cb7ea263ef193c721d44",
+  "assinatura_origem": "529a6e68a847cb7ea263ef193c721d44",
+  "linhas_origem": 167189,
   "confere": true
 }
