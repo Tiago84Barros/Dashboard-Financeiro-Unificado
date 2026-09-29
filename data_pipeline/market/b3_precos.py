@@ -250,6 +250,10 @@ def ingerir_ano(engine, ano: int, *, conteudo: bytes | None = None) -> dict:
         return {**relatorio, "pulado": True}
 
     linhas = preparar_linhas(b3_cotahist.ler_linhas(conteudo))
+    if not linhas:
+        # ZIP vazio (a reserva da B3 devolve um de 22 bytes com HTTP 200) não
+        # é ano sem pregão; concluir com zero linhas faria o carimbo mentir.
+        raise RuntimeError(f"COTAHIST {ano} sem nenhuma linha de acao")
     coletado = datetime.now(timezone.utc)
     relatorio["linhas"] = len(linhas)
     relatorio["tickers"] = len({linha["ticker"] for linha in linhas})

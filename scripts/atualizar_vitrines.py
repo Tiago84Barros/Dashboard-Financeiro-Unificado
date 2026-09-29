@@ -211,6 +211,9 @@ def gravar_estado(estado: dict) -> None:
 # alvo a alvo em vez de adivinhado.
 CARIMBO = {
     "fii_ingest": ("armazem", "SELECT max(updated_at) FROM market.fiis"),
+    # O segundo passo (ações) é o último a gravar; a carga dele só conclui
+    # depois que a de FIIs baixou o ZIP.
+    "b3_pregao": ("armazem", "SELECT max(completed_at) FROM market.b3_archive_loads"),
     "fii_selection": ("supabase",
                       "SELECT max(generated_at) FROM market.fii_selection_inputs"),
     "b3_metrics": ("supabase", "SELECT max(updated_at) FROM market.calculated_metrics"),
