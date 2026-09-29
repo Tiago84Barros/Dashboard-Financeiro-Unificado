@@ -159,7 +159,7 @@ def tickers_para_detalhe(user_question: str, selected_items: Iterable[dict]) -> 
 
 
 def get_warehouse_detail_context(tickers: list[str]) -> str:
-    """Série da CVM, preço, proventos, composição, imóveis e score mês a mês.
+    """Série da CVM, preço, liquidez na B3, proventos, composição, imóveis e score.
 
     Direto quando o app aponta para o armazém (desenvolvimento); pelo túnel na
     produção. Túnel ausente ou fora do ar vira uma linha dizendo isso -- sem
@@ -185,12 +185,12 @@ def get_warehouse_detail_context(tickers: list[str]) -> str:
         logger.warning("detalhe de FII do armazém indisponível: %s", exc)
         motivo = str(exc).splitlines()[0][:140] if str(exc) else type(exc).__name__
         return ("DETALHE DO ARMAZÉM LOCAL: indisponível agora "
-                f"({motivo}); histórico do informe mensal, proventos, composição, "
-                "imóveis e score mês a mês não entraram.")
+                f"({motivo}); histórico do informe mensal, liquidez na B3, proventos, "
+                "composição, imóveis e score mês a mês não entraram.")
     if detalhe is None:
         return ("DETALHE DO ARMAZÉM LOCAL: túnel não configurado neste ambiente; "
-                "histórico do informe mensal, proventos, composição, imóveis e "
-                "score mês a mês não entraram.")
+                "histórico do informe mensal, liquidez na B3, proventos, composição, "
+                "imóveis e score mês a mês não entraram.")
     return resumo_para_prompt(detalhe, origem="lido pelo túnel") + fora
 
 

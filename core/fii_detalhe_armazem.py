@@ -4,8 +4,9 @@ A vitrine do Supabase guarda a foto do fundo: métricas do último informe, scor
 e peso na carteira. O bastante para selecionar, pouco para a LLM responder "o
 VPA do HGLG11 vem caindo?" ou "o rendimento do KNCR11 subiu no último ano?". O
 armazém tem a série do informe mensal da CVM desde 2017, os proventos desde
-2014, a composição da carteira, a lista de imóveis e o score reconstruído mês a
-mês; este módulo lê um recorte curto disso para os fundos da conversa.
+2014, a composição da carteira, a lista de imóveis, o score reconstruído mês a
+mês e a fita diária da B3 (COTAHIST); este módulo lê um recorte curto disso
+para os fundos da conversa.
 
 Duas metades, separadas de propósito (mesma regra de ``us_detalhe_armazem``):
 
@@ -19,6 +20,7 @@ from __future__ import annotations
 
 import math
 import re
+import statistics
 from datetime import date, datetime, timedelta
 
 #: Tetos do recorte. 40 meses dão a variação de 36 do VPA mesmo com o informe
@@ -32,6 +34,13 @@ ANOS_COMPOSICAO = 2
 ITENS_COMPOSICAO = 8
 IMOVEIS_LISTADOS = 5
 TICKERS_MAX = 10
+#: 110 dias corridos dão os 63 pregões da janela longa mesmo com Carnaval e
+#: feriados no meio (~70 pregões).
+DIAS_LIQUIDEZ = 110
+JANELAS_LIQUIDEZ = (21, 63)
+#: Mais que um fim de semana prolongado sem pregão novo é a fita parada, não
+#: o calendário.
+DIAS_FITA_PARADA = 5
 
 #: Métricas do informe mensal da CVM. ``leverage`` é passivo/ativo total e
 #: ``dy_patrimonial_mes`` é o rendimento do mês sobre o patrimônio (fração).
@@ -100,6 +109,24 @@ FROM market.fii_imoveis
 WHERE ticker = ANY(:t)
 """
 
+# A fita só tem linha no pregão em que o fundo negociou; o calendário vem do
+# mercado inteiro, para que o dia sem negócio conte como zero em vez de sumir.
+# Uma linha por pregão: se duas cargas deixarem o mesmo dia, vale a mais nova.
+_SQL_PREGOES = """
+SELECT DISTINCT ON (ticker, trade_date)
+       ticker, trade_date, close, trades, financial_volume
+FROM market.fii_b3_security_history
+WHERE ticker = ANY(:t) AND trade_date >= :desde AND trade_date <= :hoje
+ORDER BY ticker, trade_date, collected_at DESC NULLS LAST
+"""
+
+_SQL_CALENDARIO = """
+SELECT DISTINCT trade_date AS pregao
+FROM market.fii_b3_security_history
+WHERE trade_date >= :desde AND trade_date <= :hoje
+ORDER BY pregao
+"""
+
 _SQL_SCORE = """
 SELECT ticker, reference_date, available_at, methodology_version, fii_type,
        type_score, confidence, coverage, data_readiness_status
@@ -127,7 +154,8 @@ def _meses_antes(ref: date, meses: int) -> date:
 
 def ler_detalhe(engine, tickers, *, hoje: date | None = None) -> dict[str, dict]:
     """Linhas cruas por ticker: ``serie``, ``precos``, ``proventos``,
-    ``composicao``, ``imoveis`` e ``score``.
+    ``composicao``, ``imoveis``, ``score``, ``pregoes`` (fita da B3) e
+    ``calendario`` (pregões do mercado no mesmo recorte, igual para todos).
 
     Ticker sem nenhuma linha volta com listas vazias -- ausência também é
     resposta, e o resumo diz que o armazém não tem, em vez de omitir.
@@ -137,7 +165,8 @@ def ler_detalhe(engine, tickers, *, hoje: date | None = None) -> dict[str, dict]
     alvo = normalizar_tickers(tickers)[:TICKERS_MAX]
     hoje = hoje or date.today()
     saida = {t: {"serie": [], "precos": [], "proventos": [], "composicao": [],
-                 "imoveis": [], "score": []} for t in alvo}
+                 "imoveis": [], "score": [], "pregoes": [], "calendario": []}
+             for t in alvo}
     if not alvo:
         return saida
     with engine.connect() as conn:
@@ -157,6 +186,10 @@ def ler_detalhe(engine, tickers, *, hoje: date | None = None) -> dict[str, dict]
         score = conn.execute(text(_SQL_SCORE), {
             "t": alvo, "hoje": hoje,
             "desde": _meses_antes(hoje, MESES_SCORE)}).mappings().all()
+        janela = {"hoje": hoje, "desde": hoje - timedelta(days=DIAS_LIQUIDEZ)}
+        pregoes = conn.execute(text(_SQL_PREGOES), {"t": alvo, **janela}).mappings().all()
+        calendario = [r["pregao"] for r in
+                      conn.execute(text(_SQL_CALENDARIO), janela).mappings().all()]
 
     for r in serie:
         saida[r["ticker"]]["serie"].append(
@@ -179,6 +212,12 @@ def ler_detalhe(engine, tickers, *, hoje: date | None = None) -> dict[str, dict]
                 {"tipo": tipo, "nome": r["exposure_name"], "peso": r["exposure_weight"],
                  "ref": r["reference_date"], "fonte": r["source"],
                  "itens_no_tipo": len(linhas)})
+    for r in pregoes:
+        saida[r["ticker"]]["pregoes"].append(
+            {"date": r["trade_date"], "fechamento": r["close"],
+             "negocios": r["trades"], "volume": r["financial_volume"]})
+    for tk in saida:
+        saida[tk]["calendario"] = list(calendario)
     for r in imoveis:
         saida[r["ticker"]]["imoveis"].append(
             {k: r[k] for k in ("nome_imovel", "area_m2", "vacancia", "cidade", "uf",
@@ -308,6 +347,67 @@ def resumo_precos(precos: list[dict]) -> dict | None:
             "max52": max(ano), "min52": min(ano), "dd12m": dd}
 
 
+def resumo_liquidez(pregoes: list[dict], calendario: list) -> dict | None:
+    """Volume e negócios nos últimos 21 e 63 pregões do mercado.
+
+    Pregão sem negócio do fundo entra como zero: a mediana de quem negocia um
+    dia sim, outro não, é a metade do que a média dos dias negociados diria.
+    """
+    dias = sorted({d for d in map(_data, calendario or []) if d is not None})
+    if not dias:
+        return None
+    por_dia = {d: r for d, r in ((_data(r.get("date")), r) for r in pregoes or [])
+               if d is not None}
+
+    def janela(n: int) -> dict | None:
+        recorte = dias[-n:]
+        if len(recorte) < n:
+            return None
+        volumes = [(_num(por_dia[d].get("volume")) or 0.0) if d in por_dia else 0.0
+                   for d in recorte]
+        negocios = [(_num(por_dia[d].get("negocios")) or 0.0) if d in por_dia else 0.0
+                    for d in recorte]
+        return {"volume_mediano": statistics.median(volumes), "volume_total": sum(volumes),
+                "negocios_medianos": statistics.median(negocios),
+                "negociados": sum(1 for v in volumes if v > 0), "pregoes": n}
+
+    negociados = [d for d, r in por_dia.items() if (_num(r.get("volume")) or 0) > 0]
+    return {"ultimo_pregao": dias[-1],
+            "ultimo_negocio": max(negociados) if negociados else None,
+            **{f"j{n}": janela(n) for n in JANELAS_LIQUIDEZ}}
+
+
+def _linha_liquidez(d: dict, hoje: date) -> str:
+    if "calendario" not in d:
+        # Servidor do túnel rodando código anterior a esta leitura.
+        return ("    Liquidez na B3: não veio nesta leitura (o servidor do armazém "
+                "roda uma versão antiga do código).")
+    liq = resumo_liquidez(d.get("pregoes") or [], d.get("calendario") or [])
+    if liq is None:
+        return ("    Liquidez na B3: o armazém não tem a fita do COTAHIST dos últimos "
+                f"{DIAS_LIQUIDEZ} dias.")
+    idade = (hoje - liq["ultimo_pregao"]).days
+    cabeca = (f"    Liquidez na B3 (COTAHIST até o pregão de {liq['ultimo_pregao']:%d/%m/%Y}"
+              + (f", {idade} dias atrás — fita do armazém parada" if idade > DIAS_FITA_PARADA
+                 else "") + ")")
+    if liq["ultimo_negocio"] is None:
+        return f"{cabeca}: nenhum negócio no recorte de {DIAS_LIQUIDEZ} dias."
+    partes = []
+    for n in JANELAS_LIQUIDEZ:
+        j = liq[f"j{n}"]
+        if j is None:
+            partes.append(f"janela de {n} pregões incompleta na fita")
+            continue
+        partes.append(f"{n} pregões: volume mediano {_brl(j['volume_mediano'])}/dia "
+                      f"(total {_brl(j['volume_total'])}), "
+                      f"{j['negocios_medianos']:,.0f} negócios/dia, negociado em "
+                      f"{j['negociados']} de {n}")
+    atraso = ("" if liq["ultimo_negocio"] == liq["ultimo_pregao"] else
+              f"; último negócio em {liq['ultimo_negocio']:%d/%m/%Y}")
+    return (f"{cabeca}: " + "; ".join(partes)
+            + f" (pregão sem negócio conta zero){atraso}.")
+
+
 def resumo_proventos(proventos: list[dict], hoje: date) -> dict:
     datas = [(_data(r.get("data_com")), _num(r.get("valor"))) for r in proventos]
     datas = sorted((d, v) for d, v in datas if d is not None and v is not None and v > 0)
@@ -379,8 +479,8 @@ def resumo_para_prompt(detalhe: dict[str, dict], *, origem: str,
     if not detalhe:
         return ""
     linhas = [f"DETALHE DO ARMAZÉM LOCAL ({origem}) — histórico do informe mensal da "
-              "CVM, preço, proventos, composição, imóveis e score mês a mês que a "
-              "vitrine não guarda. Números calculados em código."]
+              "CVM, preço, liquidez na B3, proventos, composição, imóveis e score mês "
+              "a mês que a vitrine não guarda. Números calculados em código."]
     for tk, d in detalhe.items():
         linhas.append(f"  {tk}:")
         s = resumo_serie(d.get("serie") or [])
@@ -412,6 +512,7 @@ def resumo_para_prompt(detalhe: dict[str, dict], *, origem: str,
                 + f"): R$ {p['ultimo']:,.2f}{pvp}; retorno 3m {_pct(p['r3m'])}, "
                 f"12m {_pct(p['r12m'])}; faixa 12m {p['min52']:,.2f}–{p['max52']:,.2f}; "
                 f"queda máx. 12m {_pct(p['dd12m'])} ({p['pontos']} cotações no ano).")
+        linhas.append(_linha_liquidez(d, hoje))
         pv = resumo_proventos(d.get("proventos") or [], hoje)
         if pv["ultimo"] is None:
             linhas.append(f"    Proventos: nenhum registrado nos últimos {ANOS_PROVENTOS} anos.")
