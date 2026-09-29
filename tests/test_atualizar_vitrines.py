@@ -27,7 +27,8 @@ def test_carimbo_aponta_para_a_base_que_o_alvo_escreve(chave, onde):
     que foi exatamente o estado encontrado em 01/09/2026: Supabase de 26/08,
     armazém de 11/08. O espelho também escreve no armazém (lê o Supabase).
     """
-    escreve_no_armazem = {"fii_ingest", "espelho_supabase", "brapi_raw_poda"}
+    escreve_no_armazem = {"fii_ingest", "espelho_supabase", "brapi_raw_poda",
+                          "b3_pregao"}
     escreve_arquivo = {"macro_insumos", "valuation_historico",
                        "informacoes_recentes"}
     esperado = ("armazem" if chave in escreve_no_armazem

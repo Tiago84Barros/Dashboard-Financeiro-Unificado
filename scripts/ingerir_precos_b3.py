@@ -9,6 +9,7 @@ Uso
     python scripts/ingerir_precos_b3.py                      # simula, nao grava
     python scripts/ingerir_precos_b3.py --apply --cache-apenas
     python scripts/ingerir_precos_b3.py --apply --anos 2026
+    python scripts/ingerir_precos_b3.py --apply --anos recentes --cache-apenas  # rotina
 
 `--cache-apenas` usa os ZIPs ja baixados em `local_staging/fii_b3_cotahist/`
 (584 MB em disco desde julho) e nao toca a rede. Sem ele, o ano corrente é
@@ -34,10 +35,16 @@ from scripts.construir_memoria_mercado import warehouse_url  # noqa: E402
 logger = logging.getLogger("b3.precos")
 
 
-def _anos_do_argumento(bruto: str | None) -> range:
-    corrente = datetime.now(timezone.utc).year
+def _anos_do_argumento(bruto: str | None, hoje=None) -> range:
+    hoje = hoje or datetime.now(timezone.utc).date()
+    corrente = hoje.year
     if not bruto:
         return range(b3_precos.PRIMEIRO_ANO, corrente + 1)
+    if bruto == "recentes":
+        # Modo da rotina diaria. Em janeiro inclui o ano anterior, cujo ZIP
+        # ganha os pregoes finais de dezembro depois da virada; o sha repetido
+        # faz a releitura dele ser so um hash.
+        return range(corrente - 1 if hoje.month == 1 else corrente, corrente + 1)
     if "-" in bruto:
         inicio, fim = bruto.split("-", 1)
         return range(int(inicio), int(fim) + 1)
@@ -75,7 +82,7 @@ def main() -> int:
     parser.add_argument("--apply", action="store_true",
                         help="grava de fato; sem isso apenas simula")
     parser.add_argument("--anos", default=None,
-                        help="ano unico (2026) ou intervalo (2010-2026)")
+                        help="ano unico (2026), intervalo (2010-2026) ou recentes")
     parser.add_argument("--cache-apenas", action="store_true",
                         help="usa so os ZIPs ja baixados, sem tocar a rede")
     args = parser.parse_args()

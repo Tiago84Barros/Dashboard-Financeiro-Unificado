@@ -111,7 +111,28 @@ _CADEIA_FII = (
     ("run_market_ingest.py", "fiis-monitor", "--warehouse", "--json"),
 )
 
+# A fita diária da B3 (COTAHIST) no armazém: FIIs (BDI 12) em
+# `fii_b3_security_history`, ações (BDI 02) em `b3_security_history`. Nada a
+# agendava: em 29/09/2026 a de FIIs parava em 14/07 e a de ações em 01/09, e a
+# liquidez, a Memória de Mercado e o detalhe da B3 no túnel liam essa idade.
+# O primeiro passo baixa o ZIP (e o deixa no cache); o segundo relê o mesmo
+# ZIP, sem rede. Dois anos para não perder dezembro na virada -- o ano
+# fechado e já carregado não é baixado de novo.
+_CADEIA_PREGAO = (
+    ("run_market_ingest.py", "fiis-b3-history", "--warehouse", "--json",
+     "--years", "2"),
+    ("scripts/ingerir_precos_b3.py", "--apply", "--anos", "recentes",
+     "--cache-apenas"),
+)
 ALVOS: tuple[Alvo, ...] = (
+    Alvo(
+        # Primeiro da fila: quem vem depois (FIIs, valuation) lê esta fita.
+        chave="b3_pregao",
+        titulo="Pregão diário da B3 no armazém (FIIs e ações)",
+        passos=_CADEIA_PREGAO,
+        cadencia_dias=1,
+        modulo="b3",
+    ),
     Alvo(
         chave="fii_ingest",
         titulo="Ingestão de FIIs no armazém",

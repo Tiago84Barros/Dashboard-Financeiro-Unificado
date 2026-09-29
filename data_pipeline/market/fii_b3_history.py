@@ -108,6 +108,27 @@ def _register_parser(conn) -> None:
              "schema": PARSER_SCHEMA_VERSION, "sha": _parser_hash()})
 
 
+def _ano_fechado_carregado(engine, year: int) -> bool:
+    """O ZIP de um ano só muda até o último pregão dele.
+
+    Uma carga concluída a partir de 02/01 do ano seguinte já leu o arquivo
+    definitivo; baixá-lo de novo (~90 MB) só para achar o mesmo sha é
+    desperdício. É o que deixa a rotina diária pedir dois anos -- e assim
+    pegar os pregões finais de dezembro na virada -- sem pagar o download do
+    ano anterior todo dia.
+    """
+    with engine.connect() as conn:
+        return bool(conn.execute(text("""
+            SELECT EXISTS (
+                SELECT 1 FROM market.fii_b3_archive_loads
+                WHERE archive_year=:year AND status='completed'
+                  AND parser_name=:parser AND parser_version=:version
+                  AND completed_at >= make_date(:year + 1, 1, 2)
+            )
+        """), {"year": year, "parser": PARSER_NAME,
+                 "version": PARSER_VERSION}).scalar())
+
+
 def ingest_b3_history(*, years: int = 10) -> dict:
     engine = get_pipeline_engine()
     if engine is None:
@@ -127,7 +148,19 @@ def ingest_b3_history(*, years: int = 10) -> dict:
     for year in range(current - max(int(years), 1) + 1, current + 1):
         sha: str | None = None
         try:
+            if year < current and _ano_fechado_carregado(engine, year):
+                report["archives"] += 1
+                report["skipped"] += 1
+                _LOGGER.info("COTAHIST %s — ano fechado já carregado, sem download", year)
+                continue
             content, url, headers = fetch_year(year)
+            if headers.get("cache-fallback") and year == current:
+                # O ano corrente em cache é o do último download que deu certo:
+                # carregá-lo em silêncio marcaria a rotina como em dia com a
+                # fita parada. Carrega assim mesmo, mas o relatório sai parcial.
+                report["errors"].append({"year": year, "error": (
+                    "download do COTAHIST falhou; carregado o ZIP em cache, "
+                    "que pode estar velho")})
             rows = parse_cotahist(content)
             collected = datetime.now(timezone.utc)
             sha = hashlib.sha256(content).hexdigest()
@@ -177,6 +210,18 @@ def ingest_b3_history(*, years: int = 10) -> dict:
             for offset in range(0, len(payload), _BATCH_SIZE):
                 batch = payload[offset:offset + _BATCH_SIZE]
                 with engine.begin() as conn:
+                    # O ZIP do ano corrente muda a cada pregão, e o sha entra na
+                    # chave única: sem esta troca, cada recarga duplicaria o ano
+                    # inteiro e todo leitor por (ticker, trade_date) somaria em
+                    # dobro. Mesma transação do INSERT, para não haver janela
+                    # com o pregão faltando ou repetido.
+                    conn.execute(text("""
+                        DELETE FROM market.fii_b3_security_history h
+                        USING jsonb_to_recordset(CAST(:rows AS jsonb))
+                              AS x(ticker text, trade_date date)
+                        WHERE h.ticker = x.ticker AND h.trade_date = x.trade_date
+                          AND h.archive_sha256 <> :sha
+                    """), {"rows": json.dumps(batch, ensure_ascii=False), "sha": sha})
                     conn.execute(text("""
                         INSERT INTO market.fii_b3_security_history (
                             ticker,trade_date,issuer_short_name,specification,isin,open,high,low,
