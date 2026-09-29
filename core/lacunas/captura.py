@@ -17,6 +17,7 @@ import logging
 import re
 from collections.abc import Iterable
 
+from core.lacunas.evento import normalizar
 from core.lacunas.registro import registrar_lacuna
 
 _log = logging.getLogger(__name__)
@@ -63,17 +64,33 @@ def _textos(objeto) -> list[str]:
     return []
 
 
+def _codigo_por_causa(texto: str, simbolos: set[str]) -> str | None:
+    """``"KNSL: sem X"`` com KNSL em ``simbolos`` -> ``"limitacao:sem x"``."""
+    prefixo, sep, resto = texto.partition(":")
+    if not sep or prefixo.strip().upper() not in simbolos or not resto.strip():
+        return None
+    return "limitacao:" + normalizar(resto)
+
+
 def registrar_limitacoes(objeto, *, modulo: str, entidade: str | None = None,
-                         fonte: str = "motor") -> None:
+                         fonte: str = "motor", simbolos: Iterable[str] = ()) -> None:
     """Registra cada limitacao declarada por ``objeto``. Nunca levanta.
 
     ``objeto``: algo com ``.limitacoes`` e/ou ``.alertas``, uma sequencia de
     textos ou um texto. Sem codigo estavel, a chave de cada lacuna e o texto
     normalizado (datas e numeros viram marcadores), entao "faltam 12 meses" e
     "faltam 13 meses" continuam sendo a mesma lacuna.
+
+    ``simbolos``: ativos que o motor pode citar como prefixo (``"KNSL: sem
+    comparacao macro"``). Com eles, a chave vira o texto SEM o simbolo, e 30
+    ativos com a mesma causa sao uma lacuna so -- a mensagem guarda o ultimo
+    exemplo. Prefixo fora da lista nao e tratado ("VPA: ausente" e "DY:
+    ausente" sao causas diferentes). Com ``entidade`` explicita, nada muda.
     """
     try:
+        conhecidos = {str(s).strip().upper() for s in simbolos if s} if entidade is None else set()
         for texto in dict.fromkeys(t.strip() for t in _textos(objeto) if t and t.strip()):
-            registrar_lacuna(fonte, None, texto, modulo=modulo, entidade=entidade)
+            codigo = _codigo_por_causa(texto, conhecidos) if conhecidos else None
+            registrar_lacuna(fonte, codigo, texto, modulo=modulo, entidade=entidade)
     except Exception:  # noqa: BLE001 - registrar lacuna nao pode virar lacuna
         _log.warning("falha ao registrar limitacoes de %s", modulo, exc_info=True)

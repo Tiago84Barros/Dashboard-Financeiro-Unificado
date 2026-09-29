@@ -1186,7 +1186,8 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
             for texto in macro.textos:
                 st.text(texto)
             registrar_limitacoes(macro.limitacoes,
-                                 modulo="views/portfolio_global.py:contexto_macro")
+                                 modulo="views/portfolio_global.py:contexto_macro",
+                                 simbolos=df["symbol"] if "symbol" in df else ())
             for limitation in macro.limitacoes:
                 st.caption(limitation)
             st.caption("O ajuste global considera a mudança desde a criação, com limites e custos; requer revisão humana.")

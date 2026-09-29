@@ -105,3 +105,40 @@ def test_objeto_vazio_ou_none_nao_grava(arquivo):
     registrar_limitacoes(_Bloco(), modulo="m")
     registrar_limitacoes(object(), modulo="m")
     assert _eventos(arquivo) == []
+
+
+# ── limitacao por ativo: "SIMBOLO: texto" e a mesma causa ────────────────────
+
+def test_prefixo_de_simbolo_conhecido_agrupa_a_causa(arquivo):
+    """30 ativos sem comparacao macro sao UMA lacuna, nao 30: o corretor trata
+    uma por dia e gastaria um mes na mesma causa."""
+    textos = [f"{s}: sem comparação macro rastreável; somente contexto."
+              for s in ("KNSL", "MET", "MELI")]
+    registrar_limitacoes(textos, modulo="views/portfolio_global.py:contexto_macro",
+                         simbolos=["knsl", "MET", "MELI"])
+    evs = _eventos(arquivo)
+    assert len(evs) == 1
+    assert evs[0]["mensagem"].startswith("KNSL: ")  # o texto guarda um exemplo
+    assert evs[0]["codigo"] == "limitacao:sem comparação macro rastreável; somente contexto."
+
+
+def test_causas_diferentes_continuam_separadas(arquivo):
+    registrar_limitacoes(["KNSL: impacto macro inválido; somente contexto.",
+                          "MET: impacto macro não finito; somente contexto."],
+                         modulo="m", simbolos=["KNSL", "MET"])
+    assert len(_eventos(arquivo)) == 2
+
+
+def test_prefixo_fora_da_lista_nao_e_simbolo(arquivo):
+    """"VPA: ausente" e "DY: ausente" sao causas diferentes: so o simbolo
+    que quem chama declarou vira marcador."""
+    registrar_limitacoes(["VPA: ausente", "DY: ausente"], modulo="m",
+                         simbolos=["KNSL"])
+    evs = _eventos(arquivo)
+    assert len(evs) == 2
+    assert {e["codigo"] for e in evs} == {""}
+
+
+def test_entidade_explicita_mantem_a_chave_por_texto(arquivo):
+    registrar_limitacoes(["KNSL: x"], modulo="m", entidade="KNSL", simbolos=["KNSL"])
+    assert _eventos(arquivo)[0]["codigo"] == ""
