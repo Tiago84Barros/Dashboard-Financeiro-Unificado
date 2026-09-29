@@ -136,3 +136,95 @@ def test_provedores_disponiveis_lista_ordem(monkeypatch):
     monkeypatch.setattr(llm, "_get_openai_client", lambda: _FakeClient(content="a"))
     monkeypatch.setattr(llm, "_get_gemini_client", lambda: _FakeClient(content="b"))
     assert llm.provedores_disponiveis() == ["openrouter", "openai", "gemini"]
+
+
+# ── lentidão da cadeia (28/09/2026) ──────────────────────────────────────────
+# Medido na entrevista da estratégia: a OpenAI sem crédito gastava 13,6 s no
+# modo JSON e mais 6,6 s na repetição sem JSON, a cada resposta; o Nemotron
+# gratuito devolvia vazio no modo JSON (8 s) antes de responder sem ele.
+
+class _Erro429(Exception):
+    status_code = 429
+
+
+class _SeqClient(_FakeClient):
+    """Responde conforme o pedido: com ou sem response_format."""
+    def __init__(self, com_json, sem_json):
+        super().__init__()
+        self.pedidos = []
+        self._com, self._sem = com_json, sem_json
+
+    def _create(self, **kwargs):
+        self.calls += 1
+        com = "response_format" in kwargs
+        self.pedidos.append("json" if com else "plain")
+        r = self._com if com else self._sem
+        if isinstance(r, Exception):
+            raise r
+        return _FakeResp(r)
+
+
+def test_sem_credito_nao_repete_sem_json_e_sai_da_cadeia(monkeypatch):
+    sem_credito = _Erro429("Error code: 429 - insufficient_quota")
+    oc = _SeqClient(sem_credito, sem_credito)
+    gc = _FakeClient(content='{"ok": 1}')
+    monkeypatch.setattr(llm, "_get_openai_client", lambda: oc)
+    monkeypatch.setattr(llm, "_get_gemini_client", lambda: gc)
+    msgs = [{"role": "user", "content": "x"}]
+    assert llm._chat_complete(msgs, json_mode=True) == '{"ok": 1}'
+    assert oc.pedidos == ["json"]  # sem a segunda tentativa, sem JSON
+    assert llm._chat_complete(msgs, json_mode=True) == '{"ok": 1}'
+    assert oc.calls == 1  # pausada: a segunda resposta nem passa por ela
+
+
+def test_limite_de_taxa_passa_adiante_sem_pausar(monkeypatch):
+    oc = _SeqClient(_Erro429("rate limit"), '{"nao": 1}')
+    gc = _FakeClient(content='{"ok": 1}')
+    monkeypatch.setattr(llm, "_get_openai_client", lambda: oc)
+    monkeypatch.setattr(llm, "_get_gemini_client", lambda: gc)
+    msgs = [{"role": "user", "content": "x"}]
+    assert llm._chat_complete(msgs, json_mode=True) == '{"ok": 1}'
+    assert llm._chat_complete(msgs, json_mode=True) == '{"ok": 1}'
+    assert oc.pedidos == ["json", "json"]  # limite de taxa passa; não pausa
+
+
+def test_modelo_que_nao_aceita_json_nao_e_tentado_de_novo(monkeypatch):
+    rc = _SeqClient(None, '{"ok": 1}')  # modo JSON devolve conteúdo vazio
+    monkeypatch.setattr(llm, "_get_openrouter_client", lambda: rc)
+    msgs = [{"role": "user", "content": "x"}]
+    assert llm._chat_complete(msgs, json_mode=True) == '{"ok": 1}'
+    assert llm._chat_complete(msgs, json_mode=True) == '{"ok": 1}'
+    assert rc.pedidos == ["json", "plain", "plain"]
+
+
+def test_timeout_no_modo_json_passa_adiante_e_nao_desliga_o_json(monkeypatch):
+    """Modelo lento continua lento sem JSON: repetir nele dobraria a espera."""
+    class APITimeoutError(Exception):
+        pass
+    rc = _SeqClient(APITimeoutError("timeout"), '{"nao": 1}')
+    gc = _FakeClient(content='{"ok": 1}')
+    monkeypatch.setattr(llm, "_get_openrouter_client", lambda: rc)
+    monkeypatch.setattr(llm, "_get_gemini_client", lambda: gc)
+    msgs = [{"role": "user", "content": "x"}]
+    assert llm._chat_complete(msgs, json_mode=True) == '{"ok": 1}'
+    assert llm._chat_complete(msgs, json_mode=True) == '{"ok": 1}'
+    assert rc.pedidos == ["json", "json"]
+
+
+def test_timeout_do_chamador_vale_por_provedor_e_sem_retry(monkeypatch):
+    class _ComOpcoes(_FakeClient):
+        def with_options(self, **kw):
+            self.opcoes = kw
+            return self
+    rc = _ComOpcoes(content='{"ok": 1}')
+    monkeypatch.setattr(llm, "_get_openrouter_client", lambda: rc)
+    llm._chat_complete([{"role": "user", "content": "x"}], json_mode=True,
+                       timeout=25)
+    assert rc.opcoes == {"timeout": 25, "max_retries": 0}
+
+
+def test_todos_pausados_ainda_tenta(monkeypatch):
+    oc = _FakeClient(content='{"ok": 1}')
+    monkeypatch.setattr(llm, "_get_openai_client", lambda: oc)
+    monkeypatch.setitem(llm._PAUSADOS, "openai", float("inf"))
+    assert llm._chat_complete([{"role": "user", "content": "x"}]) == '{"ok": 1}'

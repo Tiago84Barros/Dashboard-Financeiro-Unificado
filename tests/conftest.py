@@ -102,6 +102,23 @@ def _sem_armazem_macro(monkeypatch):
                         lambda *a, **k: None)
 
 
+# ── nenhum teste herda a pausa de provedor de outro ─────────────────────────
+# `core.llm_b3` tira da cadeia, por 15 minutos, o provedor que respondeu "sem
+# credito", e lembra o modelo que recusou o modo JSON. O estado e do processo:
+# um teste que simula 429 de cota pausaria a OpenAI para todos os seguintes.
+@pytest.fixture(autouse=True)
+def _sem_pausa_de_provedor_herdada():
+    import sys
+
+    mod = sys.modules.get("core.llm_b3")
+    if mod is not None and hasattr(mod, "_limpar_estado_provedores"):
+        mod._limpar_estado_provedores()
+    yield
+    mod = sys.modules.get("core.llm_b3")
+    if mod is not None and hasattr(mod, "_limpar_estado_provedores"):
+        mod._limpar_estado_provedores()
+
+
 # ── nenhum teste herda a leitura em voo de outro ─────────────────────────────
 # `core.market_read._FII_SNAPSHOT_JOB` e um slot global do processo, e a leitura
 # real o preenche sem esperar (`timeout_seconds=0`) quando o artefato local

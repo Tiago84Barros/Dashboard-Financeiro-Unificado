@@ -83,11 +83,14 @@ def test_prompt_leva_politica_contexto_e_historico_e_pede_json():
                                   "next_question": "E o risco?"}, capturado))
     msgs = capturado["messages"]
     assert capturado["kw"]["json_mode"] is True
-    assert "NÃO recomende ativos" in msgs[0]["content"]
-    assert "Objetivo principal: não informado" in msgs[1]["content"]
-    assert "Composição: FII 40%" in msgs[1]["content"]
-    assert "não são respostas do usuário" in msgs[1]["content"]
-    assert [m["content"] for m in msgs[2:]] == ["Qual o objetivo?", "crescer",
+    # Regras e estado numa mensagem de sistema só (o Gemini descarta a
+    # primeira de duas; ver test_entrevista_nao_repete).
+    sistema = msgs[0]["content"]
+    assert "NÃO recomende ativos" in sistema
+    assert "Objetivo principal: não informado" in sistema
+    assert "Composição: FII 40%" in sistema
+    assert "não são respostas do usuário" in sistema
+    assert [m["content"] for m in msgs[1:]] == ["Qual o objetivo?", "crescer",
                                                "10 anos"]
 
 
