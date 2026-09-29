@@ -1442,8 +1442,8 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
         "As perguntas são respondidas apenas com os dados desta tela — "
         "composição, alvo x real, concentração, múltiplos, risco, correlação, "
         "papel estratégico, as recomendações do motor e a camada macro que as "
-        "ajustou — mais o macro e o noticiário dos ativos lidos na hora da "
-        "pergunta. O modelo não busca nada na web; onde o dado falta, ele deve "
+        "ajustou — mais o macro, o noticiário e o detalhe do armazém (liquidez, "
+        "trimestres, proventos) dos ativos, lidos na hora da pergunta. O modelo não busca nada na web; onde o dado falta, ele deve "
         "dizer que falta."
     )
 
@@ -1492,6 +1492,13 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                             linha.get("sector_raw") or linha.get("sector") or "")
                 contexto += "\n\n" + bloco_contexto_mercado(
                     ativos, max_itens_por_classe=6)
+                # Liquidez, trimestres, proventos e score mês a mês que os
+                # snapshots não guardam: do armazém, direto ou pelo túnel.
+                from core.llm_context_global_armazem import bloco_detalhe_armazem
+
+                detalhe = bloco_detalhe_armazem(df, pergunta)
+                if detalhe:
+                    contexto += "\n\n" + detalhe
                 resposta = chat_com_portfolio_global(contexto, historico[:-1], pergunta)
             except Exception as exc:  # noqa: BLE001 - fronteira de isolamento do provedor
                 logger.exception("Falha no chat do portfolio global")
