@@ -33,7 +33,26 @@ Uso
 ---
     python scripts/construir_memoria_mercado.py --mercado us --eventos eventos.json
     python scripts/construir_memoria_mercado.py --mercado fii --do-banco-de-noticias
-    python scripts/construir_memoria_mercado.py --mercado b3 --do-catalogo --dry-run
+    python scripts/construir_memoria_mercado.py --mercado b3 --do-catalogo --apply
+
+Sem `--apply` a rodada so mede e relata -- a convencao dos scripts que gravam
+no armazem (`scripts/ingerir_precos_b3.py`). Ate 28/09/2026 este script gravava
+por omissao e tinha `--dry-run`; o flag continua aceito e nao muda nada.
+
+Saltos de preco (metodologia 1.1.0)
+-----------------------------------
+B3 e FII leem preco BRUTO do COTAHIST. Desdobramento, grupamento e bonificacao
+aparecem nele como variacao de um dia (WEGE3 -50,7 % em 28/04/2021, MGLU3
++896 % em 27/05/2024), e ate a 1.0.0 isso entrava no indice equiponderado e no
+retorno do ativo. Agora:
+
+* salto acima de `SALTO_SUSPEITO` num pregao em que a especificacao ganha
+  marcador "ex-" e retroajustado (vira retorno zero);
+* salto sem marcador tira da medicao a janela que o atravessa (MOTIVO_SALTO);
+* o indice exclui da media o retorno diario acima do limiar.
+
+O relatorio traz `distribuicao_indice`: p1/p99 dos retornos de 20 e 60 pregoes
+do indice, antes e depois.
 
 `--do-banco-de-noticias` nao produz safra hoje, e nao e defeito: em 05/09/2026 o
 acervo local tinha 48 itens, todos de 03 a 05/09/2026. Medir reacao exige preco
@@ -51,6 +70,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import subprocess
 import sys
 from collections import defaultdict
@@ -66,8 +86,16 @@ from core.memoria_mercado import benchmark as bmk  # noqa: E402
 from core.memoria_mercado import destino as dst  # noqa: E402
 from core.memoria_mercado import repositorio as repo  # noqa: E402
 from core.memoria_mercado import similaridade as sim  # noqa: E402
-from core.memoria_mercado.retornos import HORIZONTES, medir_evento  # noqa: E402
-from core.memoria_mercado.serie import SeriePrecos  # noqa: E402
+from core.memoria_mercado.retornos import (  # noqa: E402
+    HORIZONTES,
+    MOTIVO_SALTO,
+    medir_evento,
+)
+from core.memoria_mercado.serie import (  # noqa: E402
+    SALTO_SUSPEITO,
+    SeriePrecos,
+    neutralizar_eventos_societarios,
+)
 
 logger = logging.getLogger("memoria_mercado.construir")
 
@@ -89,26 +117,78 @@ FONTES = {
     "fii": {
         "sql": """
             SELECT ticker AS simbolo, trade_date AS data,
-                   close AS fechamento, quantity AS volume
+                   close AS fechamento, quantity AS volume,
+                   specification AS especificacao
               FROM market.fii_b3_security_history
              WHERE ticker = ANY(:simbolos)
              ORDER BY ticker, trade_date
         """,
         "descricao": "market.fii_b3_security_history",
         "diaria": True,
+        "preco_bruto": True,
     },
     "b3": {
         "sql": """
             SELECT ticker AS simbolo, trade_date AS data,
-                   close_unitario AS fechamento, quantity AS volume
+                   close_unitario AS fechamento, quantity AS volume,
+                   specification AS especificacao
               FROM market.b3_security_history
              WHERE ticker = ANY(:simbolos)
              ORDER BY ticker, trade_date
         """,
         "descricao": "market.b3_security_history",
         "diaria": True,
+        "preco_bruto": True,
     },
 }
+
+#: Marcador "ex-" na especificacao do COTAHIST: ``EB`` bonificacao, ``EG``
+#: grupamento, ``ED`` dividendo, ``EJ`` juros sobre capital, ``ES``
+#: subscricao, ``EX`` e combinacoes (``EDB``, ``EBG``...). O COTAHIST o escreve
+#: no primeiro pregao ex, e as vezes o mantem por semanas -- por isso vale so o
+#: marcador que APARECE de um pregao para o seguinte.
+MARCADOR_EX = re.compile(r"^E[A-Z]{1,2}$")
+
+
+def _marcadores(especificacao) -> frozenset:
+    return frozenset(t for t in str(especificacao or "").split()
+                     if MARCADOR_EX.match(t))
+
+
+def datas_com_marcador_novo(linhas) -> tuple:
+    """Pregoes em que a especificacao ganhou marcador "ex-" que nao tinha.
+
+    ``linhas`` sao ``(data, especificacao)`` ja em ordem de data. O primeiro
+    pregao da serie nao conta: sem o anterior nao ha "novo".
+    """
+    saida = []
+    anterior = None
+    for data, especificacao in linhas:
+        atual = _marcadores(especificacao)
+        if anterior is not None and atual - anterior:
+            saida.append(data)
+        anterior = atual
+    return tuple(saida)
+
+
+def _percentis(serie: SeriePrecos, h: int) -> dict:
+    """p1/p50/p99 e extremos do retorno de ``h`` pregoes, em janela deslizante."""
+    rs = sorted(serie.fechamentos[i + h] / serie.fechamentos[i] - 1.0
+                for i in range(len(serie.fechamentos) - h)
+                if serie.fechamentos[i] > 0)
+    if not rs:
+        return {}
+
+    def q(p):
+        return round(rs[min(len(rs) - 1, int(p * (len(rs) - 1) + 0.5))], 4)
+
+    return {"n": len(rs), "min": round(rs[0], 4), "p1": q(0.01),
+            "p50": q(0.50), "p99": q(0.99), "max": round(rs[-1], 4)}
+
+
+def distribuicao_indice(indice: SeriePrecos) -> dict:
+    """Retornos de 20 e 60 pregoes do indice: o que o filtro de salto mudou."""
+    return {f"{h}d": _percentis(indice, h) for h in (20, 60)}
 
 
 #: Colunas que :func:`carregar_series` le de qualquer FONTE. A consulta pode
@@ -134,7 +214,9 @@ def verificar_fonte(engine, mercado: str) -> dict:
     with engine.begin() as conn:
         resultado = conn.execute(text(fonte["sql"]), {"simbolos": []})
         entregues = set(resultado.keys())
-    faltando = [c for c in COLUNAS_EXIGIDAS if c not in entregues]
+    exigidas = COLUNAS_EXIGIDAS + (("especificacao",)
+                                   if fonte.get("preco_bruto") else ())
+    faltando = [c for c in exigidas if c not in entregues]
     if faltando:
         raise RuntimeError(
             f"fonte de precos de '{mercado}' ({fonte['descricao']}) nao "
@@ -236,18 +318,33 @@ def carregar_eventos_do_catalogo(engine, *, mercado: str,
     return eventos, tuple(montado["limitacoes"])
 
 
-def carregar_series(engine, mercado: str, simbolos) -> dict[str, SeriePrecos]:
+def carregar_series(engine, mercado: str, simbolos, *,
+                    neutralizar: bool = True) -> dict[str, SeriePrecos]:
+    """Series por simbolo. Em preco bruto, ja retroajustadas nos eventos
+    societarios que o proprio COTAHIST marca -- ver
+    :func:`core.memoria_mercado.serie.neutralizar_eventos_societarios`.
+    ``neutralizar=False`` devolve o preco como esta, para medir o antes."""
     fonte = FONTES[mercado]
     alvo = sorted({str(s).upper() for s in simbolos})
     if not alvo:
         return {}
     por_simbolo: dict[str, list[tuple]] = defaultdict(list)
+    especificacoes: dict[str, list[tuple]] = defaultdict(list)
     with engine.begin() as conn:
         for linha in conn.execute(text(fonte["sql"]), {"simbolos": alvo}).mappings():
-            por_simbolo[str(linha["simbolo"]).upper()].append(
+            simbolo = str(linha["simbolo"]).upper()
+            por_simbolo[simbolo].append(
                 (linha["data"], linha["fechamento"], linha["volume"]))
-    return {s: SeriePrecos.de_pares(s, pares, fonte=fonte["descricao"])
-            for s, pares in por_simbolo.items()}
+            if fonte.get("preco_bruto"):
+                especificacoes[simbolo].append(
+                    (linha["data"], linha.get("especificacao")))
+    series = {s: SeriePrecos.de_pares(s, pares, fonte=fonte["descricao"])
+              for s, pares in por_simbolo.items()}
+    if neutralizar and fonte.get("preco_bruto"):
+        series = {s: neutralizar_eventos_societarios(
+                      serie, datas_com_marcador_novo(especificacoes.get(s, ())))
+                  for s, serie in series.items()}
+    return series
 
 
 def construir(engine, *, mercado: str, eventos: list[dict],
@@ -257,10 +354,12 @@ def construir(engine, *, mercado: str, eventos: list[dict],
     simbolos = {str(e.get("simbolo", "")).upper() for e in eventos}
     simbolos.discard("")
     series = carregar_series(engine, mercado, simbolos)
+    preco_bruto = bool(FONTES[mercado].get("preco_bruto"))
+    limiar_salto = SALTO_SUSPEITO if preco_bruto else None
 
     indice = bmk.indice_equiponderado(
         list(series.values()), nome=f"{mercado}_equiponderado",
-        minimo_ativos=minimo_ativos_indice)
+        minimo_ativos=minimo_ativos_indice, limiar_salto=SALTO_SUSPEITO)
     sintetico = not indice.vazia
 
     medidos = []
@@ -284,6 +383,7 @@ def construir(engine, *, mercado: str, eventos: list[dict],
             modelo=modelo,
             horizontes=tuple(horizontes),
             setor=bruto.get("setor"),
+            limiar_salto=limiar_salto,
         )
         if evento is None:
             sem_pregao.append(str(bruto.get("chave")))
@@ -305,7 +405,26 @@ def construir(engine, *, mercado: str, eventos: list[dict],
         "indice_sintetico": sintetico,
         "pregoes_do_indice": len(indice),
         "cenarios": len(cenarios),
+        "precos_retroajustados": sum(len(s.ajustes) for s in series.values()),
+        "janelas_nao_medidas_por_salto": sum(
+            1 for ev in medidos for j in ev.janelas.values()
+            if j.motivo_ausencia == MOTIVO_SALTO),
+        "drawdown_nao_medido_por_salto": sum(
+            1 for ev in medidos if any(lim.startswith("drawdown nao medido")
+                                       for lim in ev.limitacoes)),
     }
+    if sintetico:
+        # O antes e o depois do filtro, lado a lado: o indice que a versao
+        # 1.0.0 usava (preco bruto, sem filtro) e o desta rodada.
+        brutas = (carregar_series(engine, mercado, simbolos, neutralizar=False)
+                  if preco_bruto else series)
+        antes = bmk.indice_equiponderado(
+            list(brutas.values()), nome="antes",
+            minimo_ativos=minimo_ativos_indice, limiar_salto=None)
+        relatorio["distribuicao_indice"] = {
+            "antes_sem_filtro": distribuicao_indice(antes),
+            "depois": distribuicao_indice(indice),
+        }
     if not sintetico:
         relatorio["aviso_indice"] = (
             "nenhum indice construido: menos ativos que o minimo por pregao; "
@@ -337,10 +456,16 @@ def main() -> int:
                         default=bmk.MODELO_DIFERENCA)
     parser.add_argument("--limpar-tipo", default=None,
                         help="apaga todas as safras de um tipo antes de gravar")
+    parser.add_argument("--apply", action="store_true",
+                        help="grava a safra; sem isto a rodada so mede e relata")
     parser.add_argument("--dry-run", action="store_true",
-                        help="mede e relata, sem gravar")
+                        help="(padrao) mede e relata, sem gravar; mantido por "
+                             "compatibilidade")
     args = parser.parse_args()
 
+    if args.apply and args.dry_run:
+        logger.error("--apply e --dry-run sao contraditorios")
+        return 2
     if args.tipos and not args.do_catalogo:
         logger.error("--tipos so faz sentido com --do-catalogo")
         return 2
@@ -413,9 +538,9 @@ def main() -> int:
         # sobrevivente antes de citar o numero.
         relatorio["limitacoes_da_fonte"] = list(limitacoes_da_fonte)
 
-    if args.dry_run:
+    if not args.apply:
         relatorio["gravado"] = False
-        logger.info("dry-run: nada gravado")
+        logger.info("simulacao: nada gravado (use --apply para gravar)")
     else:
         if args.limpar_tipo:
             relatorio["linhas_removidas"] = repo.limpar_tipo(destino,

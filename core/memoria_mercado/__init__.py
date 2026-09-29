@@ -40,4 +40,4 @@ Camadas
 ``ponte_noticias`` conversão para ``core.noticias.impacto.BaseHistorica``
 """
 
-MEMORIA_MERCADO_VERSAO = "1.0.0"
+MEMORIA_MERCADO_VERSAO = "1.1.0"

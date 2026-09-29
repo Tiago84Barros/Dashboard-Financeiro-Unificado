@@ -70,6 +70,24 @@ TOLERANCIA_PREGOES = 1.0
 #: desvio-padrão amostral é mais ruído do que medida.
 PREGOES_MINIMOS_VOLATILIDADE = 10
 
+#: Variação diária acima disto, no preço bruto do COTAHIST, é quase sempre
+#: evento societário (desdobramento, grupamento, bonificação), não mercado. É o
+#: mesmo corte de ``core.b3_detalhe_armazem``, que importa daqui -- duas cópias
+#: de um limiar divergem na primeira correção (``memoria:
+#: guarda-duplicada-diverge``).
+#:
+#: Medido em 28/09/2026 em ``market.b3_security_history``: 2.989 pregões
+#: passam deste corte. 550 trazem marcador "ex-" novo na especificação do papel
+#: (``EB`` bonificação, ``EG`` grupamento, ``ED`` provento...) e são evento
+#: societário confirmado. Os outros 2.439 são de dois tipos que o preço sozinho
+#: não separa: queda real (AMER3 em 12/01/2023, -77 %; HAPV3 em 13/11/2025,
+#: -42 %) e ruído de papel sem liquidez.
+SALTO_SUSPEITO = 0.35
+
+
+def _retorno_diario(anterior: float, atual: float) -> float | None:
+    return (atual / anterior - 1.0) if anterior > 0 else None
+
 
 def _como_data(valor) -> date | None:
     if valor is None:
@@ -113,6 +131,9 @@ class SeriePrecos:
     fechamentos: tuple[float, ...]
     volumes: tuple[float | None, ...] = ()
     fonte: str | None = None
+    #: Pregões em que o preço foi retroajustado por evento societário
+    #: confirmado. Ver :func:`neutralizar_eventos_societarios`.
+    ajustes: tuple[date, ...] = ()
 
     @classmethod
     def de_pares(cls, simbolo: str, pares, *, fonte: str | None = None) -> SeriePrecos:
@@ -252,6 +273,67 @@ class SeriePrecos:
         if not medidos:
             return None
         return sum(medidos) / len(medidos)
+
+    # ── saltos ─────────────────────────────────────────────────────────────
+
+    def saltos(self, limiar: float = SALTO_SUSPEITO) -> tuple[int, ...]:
+        """Índices ``i`` cujo retorno ``i-1 -> i`` passa de ``limiar``.
+
+        O salto que sobra depois de :func:`neutralizar_eventos_societarios`
+        não tem explicação no dado: pode ser queda real ou desdobramento sem
+        marcador. Quem mede decide o que fazer; aqui só se acha.
+        """
+        saida = []
+        for i in range(1, len(self.fechamentos)):
+            r = _retorno_diario(self.fechamentos[i - 1], self.fechamentos[i])
+            if r is not None and abs(r) > limiar:
+                saida.append(i)
+        return tuple(saida)
+
+
+def neutralizar_eventos_societarios(serie: SeriePrecos, datas_marcadas,
+                                    *, limiar: float = SALTO_SUSPEITO
+                                    ) -> SeriePrecos:
+    """Retroajusta o preço nos saltos que o próprio pregão marca como evento.
+
+    ``datas_marcadas`` são os pregões em que a especificação do papel ganhou
+    um marcador "ex-" (o COTAHIST escreve ``ON  EB  NM`` no primeiro dia
+    ex-bonificação). Em cada uma delas **com** retorno acima de ``limiar``, o
+    preço de todos os pregões anteriores é multiplicado pela razão do dia e o
+    volume dividido por ela -- o salto vira retorno zero, e o antes e o depois
+    ficam na mesma unidade.
+
+    Marcador sem salto (dividendo de 1 %) não mexe em nada: a série segue
+    sendo de preço, sem provento, que é o que a Memória de Mercado mede. Salto
+    sem marcador também não: pode ser queda real, e zerar uma queda real é
+    fabricar calma. Esse fica para :meth:`SeriePrecos.saltos`.
+    """
+    marcadas = {d for d in (_como_data(x) for x in (datas_marcadas or ())) if d}
+    if not marcadas or serie.vazia:
+        return serie
+    fechamentos = list(serie.fechamentos)
+    volumes = list(serie.volumes) if serie.volumes else [None] * len(fechamentos)
+    ajustes: list[date] = []
+    # De trás para a frente: o fator de um evento se aplica sobre preços já
+    # ajustados pelos eventos posteriores, e o último trecho fica intocado.
+    for i in range(len(fechamentos) - 1, 0, -1):
+        if serie.datas[i] not in marcadas:
+            continue
+        r = _retorno_diario(fechamentos[i - 1], fechamentos[i])
+        if r is None or abs(r) <= limiar:
+            continue
+        fator = fechamentos[i] / fechamentos[i - 1]
+        for j in range(i):
+            fechamentos[j] *= fator
+            if volumes[j] is not None:
+                volumes[j] /= fator
+        ajustes.append(serie.datas[i])
+    if not ajustes:
+        return serie
+    return SeriePrecos(simbolo=serie.simbolo, datas=serie.datas,
+                       fechamentos=tuple(fechamentos), volumes=tuple(volumes),
+                       fonte=serie.fonte,
+                       ajustes=tuple(sorted(set(serie.ajustes) | set(ajustes))))
 
 
 SERIE_VAZIA = SeriePrecos(simbolo="", datas=(), fechamentos=(), volumes=())
