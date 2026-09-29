@@ -228,6 +228,20 @@ def detalhe_eua(simbolos) -> dict[str, dict] | None:
     return {str(k): v for k, v in detalhe.items() if isinstance(v, dict)}
 
 
+def detalhe_b3(tickers) -> dict[str, dict] | None:
+    """Linhas cruas de ``b3_detalhe_armazem.ler_detalhe``; ``None`` sem configuração."""
+    alvo = ",".join(sorted({str(t).strip().upper() for t in tickers if str(t).strip()}))
+    if not alvo:
+        return {}
+    corpo = _ler("/b3/detalhe", {"tickers": alvo})
+    if corpo is None:
+        return None
+    detalhe = corpo.get("detalhe")
+    if not isinstance(detalhe, dict):
+        raise ArmazemRemotoIndisponivel("resposta sem o detalhe por ticker")
+    return {str(k): v for k, v in detalhe.items() if isinstance(v, dict)}
+
+
 def detalhe_fii(tickers) -> dict[str, dict] | None:
     """Linhas cruas de ``fii_detalhe_armazem.ler_detalhe``; ``None`` sem configuração."""
     alvo = ",".join(sorted({str(t).strip().upper() for t in tickers if str(t).strip()}))

@@ -628,6 +628,63 @@ def get_chunks_context(query: str, tickers: list[str], cobertura_docs: dict | No
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Detalhe do armazém local (pregão diário e reação a resultados)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_MAX_DETALHE = 6
+
+
+def tickers_para_detalhe(citados: list[str], carteira: list[str],
+                         weights: dict | None = None) -> list[str]:
+    """Citados na pergunta primeiro; depois a carteira, maior peso antes."""
+    pesos = weights if isinstance(weights, dict) else {}
+
+    def peso(tk: str) -> float:
+        try:
+            return float(pesos.get(tk, pesos.get(f"{tk}.SA", 0)) or 0)
+        except (TypeError, ValueError):
+            return 0.0
+
+    ordem = sorted((_norm_tk(t) for t in carteira), key=peso, reverse=True)
+    return [t for t in dict.fromkeys([_norm_tk(t) for t in citados] + ordem) if t]
+
+
+def get_warehouse_detail_context(tickers: list[str]) -> str:
+    """Liquidez diária da B3 e reação histórica a resultados anuais.
+
+    Direto quando o app aponta para o armazém (desenvolvimento); pelo túnel na
+    produção. Túnel ausente ou fora do ar vira uma linha dizendo isso -- sem
+    ela, a LLM trataria a vitrine como tudo o que existe.
+    """
+    todos = [t for t in dict.fromkeys(_norm_tk(t) for t in tickers) if t]
+    alvo = todos[:_MAX_DETALHE]
+    if not alvo:
+        return ""
+    from core.b3_detalhe_armazem import ler_detalhe, resumo_para_prompt
+    from core.us_read import _db_is_local, _engine
+
+    fora = ("" if len(todos) <= len(alvo) else
+            f"\n  (detalhe limitado a {len(alvo)} ações; sem detalhe: "
+            + ", ".join(todos[len(alvo):]) + ")")
+    try:
+        if _db_is_local() and _engine() is not None:
+            return resumo_para_prompt(ler_detalhe(_engine(), alvo), origem="lido direto") + fora
+        from core import armazem_remoto
+
+        detalhe = armazem_remoto.detalhe_b3(alvo)
+    except Exception as exc:  # noqa: BLE001 - vira linha no prompt
+        logger.warning("detalhe B3 do armazém indisponível: %s", exc)
+        motivo = str(exc).splitlines()[0][:140] if str(exc) else type(exc).__name__
+        return ("DETALHE DO ARMAZÉM LOCAL: indisponível agora "
+                f"({motivo}); liquidez diária da B3 e reação histórica a resultados "
+                "não entraram.")
+    if detalhe is None:
+        return ("DETALHE DO ARMAZÉM LOCAL: túnel não configurado neste ambiente; "
+                "liquidez diária da B3 e reação histórica a resultados não entraram.")
+    return resumo_para_prompt(detalhe, origem="lido pelo túnel") + fora
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Orquestrador
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -706,6 +763,11 @@ def build_llm_context_for_portfolio_chat(
 
     if "creation" in intent or "compare_outside" in intent:
         parts += ["", get_creation_context(model)]
+
+    # Liquidez diária e reação histórica a resultados, que só o armazém tem.
+    detalhe = get_warehouse_detail_context(tickers_para_detalhe(q_tickers, port_tks, weights))
+    if detalhe:
+        parts += ["", detalhe]
 
     # Conjuntura (macro + noticiario) dos ativos em foco. Entra depois de todos
     # os blocos fundamentalistas de proposito: e leitura de contexto, nao de

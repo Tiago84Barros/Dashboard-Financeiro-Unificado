@@ -104,6 +104,7 @@ def build_b3_ativo_context(
         get_dre_history_context,
         get_macro_context,
         get_peers_context,
+        get_warehouse_detail_context,
     )
     tk = str(ticker or "").strip().upper()
     preco_txt = {
@@ -143,6 +144,12 @@ def build_b3_ativo_context(
             blocos.append("\n" + pares_txt)
     except Exception:
         logger.exception("pares de %s indisponíveis", tk)
+    try:
+        detalhe = get_warehouse_detail_context([tk])
+        if detalhe:
+            blocos.append("\n" + detalhe)
+    except Exception:
+        logger.exception("detalhe do armazém de %s indisponível", tk)
     try:
         docs = get_chunks_context(user_question or tk, [tk], None)
         if docs:
