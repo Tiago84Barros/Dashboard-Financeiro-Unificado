@@ -211,3 +211,60 @@ def test_moldura_clara_nao_sobrepoe_a_cor_escolhida_pela_tela():
     spec = clarear_spec_vega({"mark": "bar", "config": {"axis": {"labelColor": "#123456"}}})
     assert spec["config"]["axis"]["labelColor"] == "#123456"
     assert spec["config"]["axis"]["gridColor"] == "#e3e9f2"
+
+
+# ── data_editor: o canvas não obedece ao CSS, então precisa de caminho claro ───
+def _chamadas_data_editor(fonte: str) -> list[tuple[int, bool]]:
+    """Cada ``st.data_editor`` do módulo, com um sinal de se há guarda de tema.
+
+    A guarda é procurada nos ancestrais do nó: serve o ``if no_claro():``, o
+    ternário ``... if no_claro() else st.data_editor(...)`` e a função
+    ``*_escuro``, que existe só para o ramo escuro e é escolhida no chamador.
+    """
+    import ast
+
+    arvore = ast.parse(fonte)
+    pai: dict[int, ast.AST] = {}
+    for no in ast.walk(arvore):
+        for filho in ast.iter_child_nodes(no):
+            pai[id(filho)] = no
+
+    def guardado(no: ast.AST) -> bool:
+        atual = pai.get(id(no))
+        while atual is not None:
+            teste = getattr(atual, "test", None)
+            if teste is not None and "no_claro" in ast.unparse(teste):
+                return True
+            if (isinstance(atual, ast.FunctionDef)
+                    and atual.name.endswith("_escuro")):
+                return True
+            atual = pai.get(id(atual))
+        return False
+
+    achados = []
+    for no in ast.walk(arvore):
+        if (isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute)
+                and no.func.attr == "data_editor"):
+            achados.append((no.lineno, guardado(no)))
+    return achados
+
+
+def test_todo_data_editor_tem_caminho_para_o_tema_claro():
+    """A grade nativa pinta num canvas que o CSS não alcança.
+
+    Medido injetando as ``--gdg-*`` no container do grid: elas passam a valer e o
+    canvas não muda de cor (memória: canvas-do-data-editor-ignora-css). Quem não
+    oferece outro caminho no claro entrega um bloco escuro na página branca.
+    """
+    sem_guarda = []
+    for arquivo in sorted((RAIZ / "views").glob("*.py")):
+        fonte = arquivo.read_text(encoding="utf-8")
+        if "data_editor" not in fonte:
+            continue
+        sem_guarda += [
+            f"{arquivo.name}:{linha}"
+            for linha, tem_guarda in _chamadas_data_editor(fonte) if not tem_guarda
+        ]
+    assert not sem_guarda, (
+        "st.data_editor sem alternativa no tema claro: " + ", ".join(sem_guarda)
+    )

@@ -20,11 +20,71 @@ from core.bank_statement_import import (
 from core.config import settings
 from core.utils import fmt_moeda
 from design.componentes import card_metrica
+from design.tema_canvas import no_claro
 
 _COR_RECEITA = "var(--app-primary)"
 _COR_DESPESA = "var(--app-danger)"
 _COR_INVEST = "var(--app-info)"
 _COR_NEUTRO = "var(--app-muted)"
+
+
+_PREVIA_COLS = [1.1, 1.2, 2.6, 1.2, 1.7, 1.2]
+
+
+def _indice_opcao(opcoes: list, valor: object) -> int:
+    texto = str(valor or "")
+    return opcoes.index(texto) if texto in opcoes else 0
+
+
+def _editor_previa_claro(edit_df: pd.DataFrame, category_options: list) -> pd.DataFrame:
+    """Prévia do extrato desenhada com widgets nativos, para o tema claro.
+
+    O ``st.data_editor`` pinta a grade num canvas cujas cores o Streamlit monta
+    em JS a partir do tema do config (escuro), e CSS não alcança (memória:
+    canvas-do-data-editor-ignora-css). Data e Tipo banco são só leitura aqui
+    como são na grade escura — viram texto, não widget.
+
+    A chave usa a posição da linha: a prévia não tem id, e o quadro é
+    recalculado a cada upload.
+    """
+    category_options = category_options or ["Pendente"]
+    direcoes = ["entrada", "saida"]
+
+    cabecalho = st.columns(_PREVIA_COLS, gap="small")
+    for coluna, titulo in zip(cabecalho, ("Data", "Tipo banco", "Descrição",
+                                          "Direção", "Categoria", "Valor (R$)")):
+        coluna.markdown(
+            f'<div style="font-size:0.68rem;font-weight:700;letter-spacing:0.05em;'
+            f'text-transform:uppercase;color:var(--app-muted);padding-bottom:4px;'
+            f'border-bottom:1px solid var(--app-border);">{html.escape(titulo)}</div>',
+            unsafe_allow_html=True,
+        )
+
+    edited = edit_df.copy()
+    for i in range(len(edit_df)):
+        r = edit_df.iloc[i]
+        c_data, c_tipo, c_desc, c_dir, c_cat, c_valor = st.columns(
+            _PREVIA_COLS, gap="small")
+        for coluna, texto in ((c_data, r["Data"]), (c_tipo, r["Tipo banco"])):
+            coluna.markdown(
+                f'<div style="padding-top:6px;font-size:0.8rem;color:var(--app-text);">'
+                f'{html.escape(str(texto))}</div>',
+                unsafe_allow_html=True,
+            )
+        edited.at[i, "Descrição"] = c_desc.text_input(
+            "Descrição", value=str(r["Descrição"]),
+            key=f"previa_desc_{i}", label_visibility="collapsed")
+        edited.at[i, "Direção"] = c_dir.selectbox(
+            "Direção", direcoes, index=_indice_opcao(direcoes, r["Direção"]),
+            key=f"previa_dir_{i}", label_visibility="collapsed")
+        edited.at[i, "Categoria"] = c_cat.selectbox(
+            "Categoria", category_options,
+            index=_indice_opcao(category_options, r["Categoria"]),
+            key=f"previa_cat_{i}", label_visibility="collapsed")
+        edited.at[i, "Valor (R$)"] = c_valor.number_input(
+            "Valor (R$)", value=float(r["Valor (R$)"]), step=0.01, format="%.2f",
+            key=f"previa_valor_{i}", label_visibility="collapsed")
+    return edited
 
 
 def _safe(value: object) -> str:
@@ -223,7 +283,7 @@ def _render_upload(*, show_header: bool = True) -> None:
     )
 
     st.caption("Revise antes de salvar — você pode editar Descrição, Direção, Valor e Categoria.")
-    edited = st.data_editor(
+    edited = _editor_previa_claro(edit_df, category_options) if no_claro() else st.data_editor(
         edit_df,
         hide_index=True,
         width="stretch",
