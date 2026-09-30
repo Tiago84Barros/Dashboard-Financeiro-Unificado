@@ -268,3 +268,29 @@ def test_todo_data_editor_tem_caminho_para_o_tema_claro():
     assert not sem_guarda, (
         "st.data_editor sem alternativa no tema claro: " + ", ".join(sem_guarda)
     )
+
+
+def test_tema_claro_clareia_o_bloco_de_codigo_com_texto_e_tokens():
+    """``st.code`` é prosa no app, e ficava preto no claro.
+
+    Medido em 29/09/2026 no bundle do Streamlit 1.57: o ``pre`` do ``stCode``
+    recebe ``background: codeBackgroundColor`` e ``color: bodyText``, e cada
+    ``.token.*`` sai de uma cor nomeada do tema — que é escuro no config. Fundo
+    claro sem o texto e sem os tokens dá branco no branco, então as três coisas
+    andam juntas. Confirmado no preview: ``pre`` rgb(238,242,247) sobre
+    rgb(23,32,51), ``keyword`` rgb(27,79,160), ``comment`` rgb(70,86,110).
+    """
+    from design.theme_light import LIGHT_CSS
+
+    assert "#0e1117" not in LIGHT_CSS.lower(), "o fundo preto do stCode voltou"
+    for trecho in ('[data-testid="stCode"] pre',
+                   ".token.comment",
+                   ".token.keyword",
+                   ".token.string",
+                   '[data-testid="stMarkdownContainer"] :not(pre) > code'):
+        assert trecho in LIGHT_CSS, f"{trecho} sem regra no tema claro"
+
+    regra_pre = LIGHT_CSS.split('[data-testid="stCode"] pre {', 1)[1].split("}", 1)[0]
+    assert "color:var(--app-text)" in regra_pre, (
+        "fundo claro sem cor de texto: o código fica branco no branco"
+    )
