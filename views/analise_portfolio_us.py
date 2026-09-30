@@ -782,10 +782,14 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
     from core.llm_context_us import (
         get_warehouse_detail_context as get_us_warehouse_detail,
     )
+    from core.portfolio_report_common import detalhe_do_consolidado
 
     # Um corte para o relatório inteiro: todas as empresas e o consolidado
     # leem o noticiário do mesmo instante, e o túnel serve cada ativo uma vez.
     corte_conjuntura = datetime.now(timezone.utc)
+    # O detalhe de cada nota é guardado para o consolidado: ele recebe o dos
+    # ativos de maior peso sem uma segunda leitura no armazém ou no túnel.
+    detalhes: dict[str, str] = {}
 
     for idx, it in enumerate(items):
         tk = str(it.get("ticker") or it.get("symbol") or "").upper()
@@ -827,7 +831,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 status=status,
                 conjuntura=conjuntura_da_empresa("us", tk, it.get("setor"),
                                                  as_of=corte_conjuntura),
-                detalhe_armazem=get_us_warehouse_detail([tk]),
+                detalhe_armazem=detalhes.setdefault(tk, get_us_warehouse_detail([tk])),
             )
         except Exception as exc:  # noqa: BLE001 - fronteira de isolamento por empresa
             st.warning(f"{tk}: erro LLM — {exc}")
@@ -884,6 +888,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 financials=financials,
                 usd_brl=_usd_brl_da_base(),
                 conjuntura=conjuntura_da_carteira("us", items, as_of=corte_conjuntura),
+                detalhe_armazem=detalhe_do_consolidado(detalhes, items_analisados),
             )
             if int(port_analise.get("confianca_media") or 0) == 0:
                 erros.append("Relatório consolidado: resposta da LLM não pôde ser "

@@ -888,10 +888,14 @@ def _executar_analise(
     from core.llm_context_b3 import (
         get_warehouse_detail_context as get_b3_warehouse_detail,
     )
+    from core.portfolio_report_common import detalhe_do_consolidado
 
     # Um corte para o relatório inteiro: todas as empresas e o consolidado
     # leem o noticiário do mesmo instante, e o túnel serve cada ativo uma vez.
     corte_conjuntura = datetime.now(timezone.utc)
+    # O detalhe de cada nota é guardado para o consolidado: ele recebe o dos
+    # ativos de maior peso sem uma segunda leitura no armazém ou no túnel.
+    detalhes: dict[str, str] = {}
 
     for idx, it in enumerate(items):
         tk        = it["ticker"]
@@ -945,7 +949,8 @@ def _executar_analise(
                 portfolio_context=_ctx_emp,
                 conjuntura=conjuntura_da_empresa("b3", tk, it.get("setor"),
                                                  as_of=corte_conjuntura),
-                detalhe_armazem=get_b3_warehouse_detail([tk]),
+                detalhe_armazem=detalhes.setdefault(
+                    str(tk).upper(), get_b3_warehouse_detail([tk])),
             )
         except Exception as exc:
             st.warning(f"{tk}: erro LLM — {exc}")
@@ -977,6 +982,7 @@ def _executar_analise(
             port_analise = analyze_portfolio_report(
                 items_analisados, macro_hist, web_context=web_context,
                 conjuntura=conjuntura_da_carteira("b3", items, as_of=corte_conjuntura),
+                detalhe_armazem=detalhe_do_consolidado(detalhes, items_analisados),
             )
             if int(port_analise.get("confianca_media") or 0) == 0:
                 # _parse_json caiu no fallback (resposta da LLM não era JSON válido).
