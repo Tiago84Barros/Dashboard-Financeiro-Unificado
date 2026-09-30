@@ -294,3 +294,33 @@ def test_tema_claro_clareia_o_bloco_de_codigo_com_texto_e_tokens():
     assert "color:var(--app-text)" in regra_pre, (
         "fundo claro sem cor de texto: o código fica branco no branco"
     )
+
+
+def test_tema_claro_alcanca_o_que_a_varredura_do_dom_achou_escuro():
+    """Varredura no preview claro: luminância do fundo computado de cada nó.
+
+    Sobraram quatro superfícies em 29/09/2026, todas fora do alcance dos
+    tokens: a casca do menu do selectbox/multiselect (rgb(14,17,23) em volta
+    das opções já brancas), a seta e o "x" do select (fill rgb(250,250,250)
+    sumindo no campo branco), o delta do metric (rgb(92,228,136) e
+    rgb(255,108,108), pálidos sobre branco) e o ``st.json``, que desenha com
+    estilo inline. Depois da correção a varredura só acha o que é de propósito:
+    o verde do checkbox marcado.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    for seletor in ('[data-testid="stSelectboxVirtualDropdown"]',
+                    '[data-baseweb="select"] svg',
+                    '[data-testid="stMetricDeltaIcon-Up"]',
+                    '[data-testid="stMetricDeltaIcon-Down"]',
+                    '[data-testid="stJson"] .react-json-view'):
+        assert seletor in LIGHT_CSS, f"{seletor} sem regra no tema claro"
+
+    # O tooltip usa o mesmo data-baseweb do menu e escuro ali é o desenho
+    # normal: a regra do menu precisa se prender ao dropdown.
+    for linha in LIGHT_CSS.splitlines():
+        alvo = linha.strip().rstrip(",").rstrip(" {")
+        if alvo.startswith('[data-baseweb="popover"]') and "stSelectbox" not in alvo:
+            assert "listbox" in alvo or "[role=" in alvo, (
+                f"{alvo} pinta todo popover, tooltip incluído"
+            )

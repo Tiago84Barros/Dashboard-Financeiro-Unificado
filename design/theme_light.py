@@ -254,6 +254,39 @@ button:disabled {opacity:.55;}
 [data-testid="stChatMessageContent"] :not(pre) > code {
  background:var(--app-surface-raised)!important; color:#0a4a63!important;
 }
+/* Menu do selectbox/multiselect: as opções já vinham claras, mas a casca do
+   popover (o `ul` virtualizado e as duas divs acima dele) continuava
+   rgb(14,17,23) -- o menu aberto aparecia como moldura preta em volta das
+   opções brancas. O `:has` prende a regra ao menu: o tooltip usa o mesmo
+   `data-baseweb="popover"` e escuro ali é o desenho normal. */
+[data-baseweb="popover"]:has([data-testid="stSelectboxVirtualDropdown"]),
+[data-baseweb="popover"]:has([data-testid="stSelectboxVirtualDropdown"]) > div,
+[data-testid="stSelectboxVirtualDropdown"] {
+ background:var(--app-surface)!important; border-color:var(--app-border)!important;
+}
+/* Seta e "x" do select vêm com fill rgb(250,250,250): sumiam no campo branco. */
+[data-baseweb="select"] svg {fill:var(--app-muted)!important;}
+/* Delta do metric: verde/vermelho do tema escuro (92,228,136 e 255,108,108)
+   quase não aparecem no branco. O ícone é `fill="currentColor"`, então a cor
+   do contêiner leva texto e seta juntos. */
+[data-testid="stMetricDelta"]:has([data-testid="stMetricDeltaIcon-Up"]) {
+ color:#087548!important;
+}
+[data-testid="stMetricDelta"]:has([data-testid="stMetricDeltaIcon-Down"]) {
+ color:var(--app-danger)!important;
+}
+/* st.json desenha com estilo inline (react-json-view): fundo rgb(14,17,23) e
+   chaves rgb(249,248,245). Só `!important` alcança. As chaves e a pontuação
+   são `span`; os valores são `div` e ficam com a cor do próprio tipo. */
+[data-testid="stJson"] .react-json-view {
+ background:var(--app-surface-raised)!important;
+ border:1px solid var(--app-border)!important; border-radius:10px;
+}
+[data-testid="stJson"] span {color:var(--app-text)!important;}
+[data-testid="stJson"] :is(.object-key, .object-key span) {
+ color:var(--app-info)!important;
+}
+[data-testid="stJson"] svg {color:var(--app-muted)!important;}
 </style>
 """
 
