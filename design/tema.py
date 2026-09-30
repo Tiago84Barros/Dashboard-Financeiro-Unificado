@@ -208,6 +208,11 @@ hr {
        ilegivel sobre branco. Token para o tema poder escurece-lo. */
     --app-alert: #F97316;
     --app-accent: #C084FC;
+    /* Tinta de quem escreve POR CIMA de um token de cor (numero do proximo
+       passo, etiqueta preenchida). Aqui os tokens sao claros e o texto tem de
+       ser escuro; no tema claro eles sao escuros e o texto vira branco -- sem
+       token, o literal escuro dava 2,9:1 sobre o vermelho do claro. */
+    --app-on-accent: #0E1117;
     --app-radius-sm: 10px;
     --app-radius-md: 14px;
     --app-radius-lg: 20px;
