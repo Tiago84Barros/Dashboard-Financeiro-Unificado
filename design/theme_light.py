@@ -3,8 +3,8 @@
 O que é desenhado em canvas não obedece a CSS: gráficos e tabelas passam pelos
 adaptadores de ``design/tema_canvas.py`` (Plotly/Vega) e
 ``design/tabela_clara.py`` (``st.dataframe`` reemitido como HTML). Segue
-escuro só o que depende da grade nativa: ``st.data_editor`` e as tabelas que o
-HTML não dá conta (seleção, tamanho).
+escuro só a grade nativa que o claro não substitui -- as tabelas que o HTML
+não dá conta (seleção, tamanho); os ``st.data_editor`` já têm caminho claro.
 """
 from design.tabela_clara import CSS_TABELA
 
@@ -214,7 +214,46 @@ button:disabled {opacity:.55;}
  background:var(--app-surface); border:1px solid var(--app-border);
  border-radius:10px; padding:4px;
 }
-[data-testid="stCode"] {background:#0e1117;border-radius:10px;}
+/* st.code é usado para prosa no app (evidência, fórmula, dossiê, política), e
+   ficava preto no claro. Medido em 29/09/2026 no bundle do Streamlit 1.57
+   (StreamlitSyntaxHighlighter + ErrorElement): o `pre` recebe
+   `background: codeBackgroundColor` e `color: bodyText`, e cada `.token.*` sai
+   de uma cor nomeada do tema (gray70, blue70, green80...). Como o tema do
+   config é escuro, trocar só o fundo daria branco no branco -- por isso o
+   texto e os tokens vêm juntos. O stylesheet do Prism vai vazio (`style={}`),
+   então não há cor inline para disputar: CSS alcança. */
+[data-testid="stCode"] {background:transparent;}
+[data-testid="stCode"] pre {
+ background:var(--app-surface-raised)!important; color:var(--app-text)!important;
+ border:1px solid var(--app-border)!important; border-radius:10px;
+}
+[data-testid="stCode"] pre code {color:var(--app-text)!important;}
+[data-testid="stCode"] .comment.linenumber {color:var(--app-subtle)!important;}
+[data-testid="stCode"] :is(.token.comment,.token.prolog,.token.doctype,
+ .token.cdata,.token.punctuation) {color:var(--app-muted)!important;}
+[data-testid="stCode"] :is(.token.attr-name,.token.property,.token.variable) {
+ color:var(--app-info)!important;
+}
+[data-testid="stCode"] :is(.token.boolean,.token.constant,.token.symbol,
+ .token.inserted) {color:#087548!important;}
+[data-testid="stCode"] :is(.token.number,.token.regex) {color:#0f6a80!important;}
+[data-testid="stCode"] :is(.token.string,.token.char,.token.attr-value) {
+ color:#0a6b3d!important;
+}
+[data-testid="stCode"] :is(.token.operator,.token.entity,.token.decorator,
+ .token.atrule) {color:#9a4b06!important;}
+[data-testid="stCode"] .token.url {color:var(--app-accent)!important;}
+[data-testid="stCode"] :is(.token.keyword,.token.tag,.token.function,
+ .token.class-name,.token.selector) {color:#1b4fa0!important;}
+[data-testid="stCode"] :is(.token.important,.token.deleted) {
+ color:var(--app-danger)!important;
+}
+/* Código inline do markdown (`texto`) sai do mesmo par de cores do tema
+   escuro -- vira etiqueta preta no meio do parágrafo claro. */
+[data-testid="stMarkdownContainer"] :not(pre) > code,
+[data-testid="stChatMessageContent"] :not(pre) > code {
+ background:var(--app-surface-raised)!important; color:#0a4a63!important;
+}
 </style>
 """
 
