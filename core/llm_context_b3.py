@@ -649,12 +649,16 @@ def tickers_para_detalhe(citados: list[str], carteira: list[str],
     return [t for t in dict.fromkeys([_norm_tk(t) for t in citados] + ordem) if t]
 
 
-def get_warehouse_detail_context(tickers: list[str]) -> str:
+def get_warehouse_detail_context(tickers: list[str], *,
+                                 captura: dict | None = None) -> str:
     """Liquidez diária da B3 e reação histórica a resultados anuais.
 
     Direto quando o app aponta para o armazém (desenvolvimento); pelo túnel na
     produção. Túnel ausente ou fora do ar vira uma linha dizendo isso -- sem
     ela, a LLM trataria a vitrine como tudo o que existe.
+    ``captura`` recebe o detalhe bruto por ticker quando a leitura dá certo:
+    quem precisa dos números (o Portfolio Fit) os pega sem uma segunda ida
+    ao armazém ou ao túnel.
     """
     todos = [t for t in dict.fromkeys(_norm_tk(t) for t in tickers) if t]
     alvo = todos[:_MAX_DETALHE]
@@ -668,10 +672,11 @@ def get_warehouse_detail_context(tickers: list[str]) -> str:
             + ", ".join(todos[len(alvo):]) + ")")
     try:
         if _db_is_local() and _engine() is not None:
-            return resumo_para_prompt(ler_detalhe(_engine(), alvo), origem="lido direto") + fora
-        from core import armazem_remoto
+            detalhe, origem = ler_detalhe(_engine(), alvo), "lido direto"
+        else:
+            from core import armazem_remoto
 
-        detalhe = armazem_remoto.detalhe_b3(alvo)
+            detalhe, origem = armazem_remoto.detalhe_b3(alvo), "lido pelo túnel"
     except Exception as exc:  # noqa: BLE001 - vira linha no prompt
         logger.warning("detalhe B3 do armazém indisponível: %s", exc)
         motivo = str(exc).splitlines()[0][:140] if str(exc) else type(exc).__name__
@@ -681,7 +686,9 @@ def get_warehouse_detail_context(tickers: list[str]) -> str:
     if detalhe is None:
         return ("DETALHE DO ARMAZÉM LOCAL: túnel não configurado neste ambiente; "
                 "liquidez diária da B3 e reação histórica a resultados não entraram.")
-    return resumo_para_prompt(detalhe, origem="lido pelo túnel") + fora
+    if captura is not None:
+        captura.update(detalhe)
+    return resumo_para_prompt(detalhe, origem=origem) + fora
 
 
 # ─────────────────────────────────────────────────────────────────────────────

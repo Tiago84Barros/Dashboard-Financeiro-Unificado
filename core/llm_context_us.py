@@ -175,12 +175,16 @@ def get_peers_context(tickers: list[str], max_tickers: int = 3) -> tuple[str, di
 _MAX_DETALHE = 5
 
 
-def get_warehouse_detail_context(tickers: list[str]) -> str:
+def get_warehouse_detail_context(tickers: list[str], *,
+                                 captura: dict | None = None) -> str:
     """Preço diário, trimestres e proventos dos tickers citados, lidos do armazém.
 
     Direto quando o app aponta para o armazém (desenvolvimento); pelo túnel na
     produção. Túnel ausente ou fora do ar vira uma linha dizendo isso -- sem
     ela, a LLM trataria o resumo da vitrine como tudo o que existe.
+    ``captura`` recebe o detalhe bruto por ticker quando a leitura dá certo:
+    quem precisa dos números (o Portfolio Fit) os pega sem uma segunda ida
+    ao armazém ou ao túnel.
     """
     alvo = list(dict.fromkeys(_norm_tk(t) for t in tickers if str(t).strip()))[:_MAX_DETALHE]
     if not alvo:
@@ -190,10 +194,11 @@ def get_warehouse_detail_context(tickers: list[str]) -> str:
 
     try:
         if _db_is_local() and _engine() is not None:
-            return resumo_para_prompt(ler_detalhe(_engine(), alvo), origem="lido direto")
-        from core import armazem_remoto
+            detalhe, origem = ler_detalhe(_engine(), alvo), "lido direto"
+        else:
+            from core import armazem_remoto
 
-        detalhe = armazem_remoto.detalhe_eua(alvo)
+            detalhe, origem = armazem_remoto.detalhe_eua(alvo), "lido pelo túnel"
     except Exception as exc:  # noqa: BLE001 - vira linha no prompt
         logger.warning("detalhe do armazém indisponível: %s", exc)
         motivo = str(exc).splitlines()[0][:140] if str(exc) else type(exc).__name__
@@ -202,7 +207,9 @@ def get_warehouse_detail_context(tickers: list[str]) -> str:
     if detalhe is None:
         return ("DETALHE DO ARMAZÉM LOCAL: túnel não configurado neste ambiente; "
                 "preço diário, trimestres e proventos não entraram.")
-    return resumo_para_prompt(detalhe, origem="lido pelo túnel")
+    if captura is not None:
+        captura.update(detalhe)
+    return resumo_para_prompt(detalhe, origem=origem)
 
 
 def get_creation_context(model: dict) -> str:
