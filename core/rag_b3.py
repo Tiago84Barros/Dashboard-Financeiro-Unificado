@@ -267,7 +267,7 @@ def _has_embeddings(ticker: str) -> bool:
 # OpenAI (só usado quando embeddings existem)
 # ─────────────────────────────────────────────────────────────────────────────
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def _get_openai_client():
     try:
         from openai import OpenAI

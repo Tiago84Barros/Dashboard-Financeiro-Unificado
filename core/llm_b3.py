@@ -58,7 +58,7 @@ _TIMEOUT       = 90
 # OpenAI falha (ex.: cota 429), a cadeia tenta o Gemini automaticamente.
 # ─────────────────────────────────────────────────────────────────────────────
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def _get_openai_client():
     try:
         from openai import OpenAI
@@ -73,7 +73,7 @@ def _get_openai_client():
         return None
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def _get_gemini_client():
     try:
         from openai import OpenAI
@@ -91,7 +91,7 @@ def _get_gemini_client():
         return None
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def _get_openrouter_client():
     try:
         from openai import OpenAI

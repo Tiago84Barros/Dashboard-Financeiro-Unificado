@@ -33,7 +33,7 @@ def _fii_snapshot_connection_url(url: str):
     return parsed
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def get_engine():
     """
     Cria e cacheia o engine SQLAlchemy.
@@ -65,7 +65,7 @@ def get_engine():
     return create_engine(url, **kwargs)
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def get_fii_snapshot_read_engine():
     """Engine de leitura curta da vitrine de FIIs.
 
@@ -105,7 +105,7 @@ def get_fii_snapshot_read_engine():
     )
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def get_session_factory():
     """
     Retorna a SessionFactory para uso com context manager.
@@ -163,7 +163,7 @@ def _database_limit_mb() -> float:
         return SUPABASE_FREE_DB_LIMIT_MB
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300, show_spinner=False)
 def get_database_storage_status() -> dict:
     """
     Mede o uso atual do banco PostgreSQL/Supabase.

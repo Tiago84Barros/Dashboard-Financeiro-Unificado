@@ -143,7 +143,7 @@ _SQL_ATIVO_TICKER = """
 # API pública
 # ─────────────────────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300, show_spinner=False)
 def get_ativos() -> dict:
     """
     Retorna dict com todos os ativos cadastrados + resumo por classe.
@@ -164,7 +164,7 @@ def get_ativos() -> dict:
         return d
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300, show_spinner=False)
 def get_ativo_por_ticker(ticker: str):
     """Retorna dict de um ativo específico ou None se não encontrado."""
     if settings.MOCK_MODE:
