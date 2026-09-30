@@ -312,6 +312,57 @@ def clarear_figura(fig):
     return fig
 
 
+# ───────────────────────────── Vega-Lite ─────────────────────────────
+# Medido em 29/09/2026 no bundle `ArrowVegaLiteChart` do Streamlit 1.57:
+#
+#     theme === "streamlit" ? config = temaCompleto(config) : config = padroes(config)
+#
+# ou seja, `theme=None` **não** deixa o gráfico com as cores neutras do
+# Vega — o front-end ainda aplica `padroes()`, que preenche fundo, eixos,
+# legenda e títulos com as cores do tema do Streamlit. E o tema do Streamlit
+# continua `base="dark"` (config.toml): o claro do app é CSS por cima. Daí os
+# painéis escuros dentro da página clara.
+#
+# As duas funções mesclam deixando o que já está no spec ganhar do padrão,
+# então basta escrever a moldura clara no próprio spec.
+_CONFIG_VEGA_CLARO = {
+    # Transparente, e não branco: o gráfico fica sobre o fundo da página ou do
+    # cartão, que o CSS já pinta.
+    "background": "transparent",
+    "axis": {
+        "labelColor": _TEXTO_PADRAO, "titleColor": _TEXTO_PADRAO,
+        "gridColor": _GRADE, "domainColor": _EIXO, "tickColor": _EIXO,
+    },
+    "legend": {"labelColor": _TEXTO_PADRAO, "titleColor": _TEXTO_PADRAO},
+    "title": {"color": _TEXTO_PADRAO, "subtitleColor": _TEXTO_PADRAO},
+    "header": {"labelColor": _TEXTO_PADRAO, "titleColor": _TEXTO_PADRAO},
+    "text": {"color": _TEXTO_PADRAO},
+    "view": {"stroke": _GRADE},
+}
+
+
+def _mesclar_padrao(destino: dict, padrao: dict) -> dict:
+    """Escreve `padrao` em `destino` sem sobrepor o que já estava lá."""
+    for chave, valor in padrao.items():
+        atual = destino.get(chave)
+        if isinstance(valor, dict):
+            if isinstance(atual, dict):
+                _mesclar_padrao(atual, valor)
+            elif chave not in destino:
+                destino[chave] = dict(valor)
+        elif chave not in destino:
+            destino[chave] = valor
+    return destino
+
+
+def clarear_spec_vega(spec: dict) -> dict:
+    """Devolve uma cópia do spec com a moldura clara escrita no `config`."""
+    copia = dict(spec)
+    config = dict(copia.get("config") or {})
+    copia["config"] = _mesclar_padrao(config, _CONFIG_VEGA_CLARO)
+    return copia
+
+
 # ─────────────────────── instalação dos adaptadores ───────────────────────
 def registrar_tema(theme: str) -> None:
     """Guarda o tema da sessão corrente para os adaptadores consultarem."""
@@ -368,16 +419,23 @@ def instalar_adaptadores() -> None:
                 pass  # qualquer tropeço na marcação cai na grade nativa
         return dataframe_original(self, data, *args, **kwargs)
 
-    altair_original = VegaChartsMixin._altair_chart
+    # Um ponto só: `line_chart`, `bar_chart`, `area_chart`, `scatter_chart`,
+    # `altair_chart` e `vega_lite_chart` todos terminam aqui.
+    vega_original = VegaChartsMixin._vega_lite_chart
 
-    def _altair_chart(self, *args, **kwargs):
+    def _vega_lite_chart(self, data=None, spec=None, *args, **kwargs):
         if no_claro():
             kwargs["theme"] = None
-        return altair_original(self, *args, **kwargs)
+            if isinstance(spec, dict):
+                spec = clarear_spec_vega(spec)
+            elif spec is None and isinstance(data, dict):
+                # `st.vega_lite_chart({...})` passa o spec como primeiro argumento.
+                data = clarear_spec_vega(data)
+        return vega_original(self, data, spec, *args, **kwargs)
 
     DeltaGenerator.plotly_chart = plotly_chart
     DeltaGenerator.dataframe = dataframe
-    VegaChartsMixin._altair_chart = _altair_chart
+    VegaChartsMixin._vega_lite_chart = _vega_lite_chart
     # ``st.plotly_chart`` e ``st.dataframe`` são métodos já vinculados ao
     # DeltaGenerator raiz: trocar só na classe não alcança quem chama pelo
     # módulo, que é a forma usada em praticamente todas as telas.
