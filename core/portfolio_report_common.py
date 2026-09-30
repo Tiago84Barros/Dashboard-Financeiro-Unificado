@@ -265,6 +265,9 @@ def sanitize_company_report(raw: Any, ticker: str) -> dict:
     report["score_qualitativo_ponderado"] = weighted_10
     report["score_qualitativo"] = weighted_100
     report.setdefault("relatorio", {})
+    if isinstance(report["relatorio"], dict) and "comportamento_de_mercado" in report["relatorio"]:
+        report["relatorio"]["comportamento_de_mercado"] = _texto_corrido(
+            report["relatorio"]["comportamento_de_mercado"])
     report.setdefault("riscos", [])
     report.setdefault("catalisadores", [])
     report.setdefault("sensibilidade_macro", [])

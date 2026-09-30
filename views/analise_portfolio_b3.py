@@ -647,6 +647,7 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
             ("valuation", "Valuation"),
             ("governanca_controlador", "Governança e controlador"),
             ("eventos_relevantes", "Eventos relevantes e percepção de mercado"),
+            ("comportamento_de_mercado", "Liquidez, retorno e reação a resultados (armazém)"),
             ("qualidade_dados", "Qualidade dos dados"),
         ):
             txt = rel.get(k_sec)
