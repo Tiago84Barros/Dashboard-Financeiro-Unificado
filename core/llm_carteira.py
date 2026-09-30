@@ -32,8 +32,9 @@ _ESCOPOS = {
         "a carteira inteira, somando ações, FIIs, Tesouro e exterior. O foco é "
         "a alocação entre classes, a concentração por ativo e por setor, a "
         "renda recebida e o retorno mercado/custo. O detalhe fundamentalista "
-        "de cada classe está nas outras sub-abas e NÃO está neste contexto: "
-        "não invente múltiplo, nota ou indicador de ativo."
+        "completo de cada classe está nas outras sub-abas; aqui só entra o "
+        "bloco DETALHE DO ARMAZÉM POR CLASSE, para os ativos que ele lista. "
+        "Para os demais, não invente múltiplo, nota ou indicador de ativo."
     ),
 }
 
@@ -58,6 +59,10 @@ def regras_da_analise(*, geral: bool = False) -> str:
 
     ``geral`` troca só o recorte da regra 2: na Visão Geral o contexto é a
     carteira inteira, e "cobre apenas esta classe" seria falso.
+
+    A regra 10 descreve o detalhe do armazém que o ``build_context`` da aba
+    anexa (``core.llm_context_global_armazem``): sem ela, a LLM trataria o
+    bloco como exceção à regra 1 ou o ignoraria.
     """
     recorte = (
         "ele cobre a carteira como carregada nesta tela, nada além dela."
@@ -87,7 +92,12 @@ def regras_da_analise(*, geral: bool = False) -> str:
         "para calculá-lo — caso contrário, diga que não há base.\n"
         "8. Se a pergunta não puder ser respondida com o contexto, diga qual "
         "dado falta e como ele mudaria a conclusão.\n"
-        f"9. {REGRA_CONTEXTO_MERCADO}"
+        f"9. {REGRA_CONTEXTO_MERCADO}\n"
+        "10. Quando presente, o bloco DETALHE DO ARMAZÉM POR CLASSE traz, para "
+        "os ativos citados na pergunta e os de maior peso, liquidez diária, "
+        "preço, proventos, trimestres e score mês a mês lidos do armazém local. "
+        "Ele vale só para os ativos que lista: ativo fora dele não tem esse "
+        "detalhe, e fonte que o bloco declara indisponível não é dado zero."
     )
 
 
