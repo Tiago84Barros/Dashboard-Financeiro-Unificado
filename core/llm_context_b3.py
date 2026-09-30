@@ -696,12 +696,17 @@ def build_llm_context_for_portfolio_chat(
     macro_hist: dict | None = None,
     portfolio_tickers: list[str] | None = None,
     cobertura_docs: dict | None = None,
+    history: list[dict] | None = None,
 ) -> tuple[str, dict]:
     """
     Monta o contexto AMPLO para o chat. `base_context` é a saída do
     ``_build_chat_context`` existente (carteira + consolidados + RAG + macro da
     carteira). Adiciona schema e, conforme a intenção, blocos de universo,
     setor, fundamentos externos e criação de portfólio.
+
+    `history` são os turnos anteriores da conversa: os tickers citados neles
+    também recebem múltiplos, porque o follow-up ("ranking dos 5 nomes") não
+    repete os nomes e a LLM dizia que eles não estavam carregados.
 
     Retorna (context_str, meta) — `meta` alimenta os gráficos.
     """
@@ -710,6 +715,12 @@ def build_llm_context_for_portfolio_chat(
     q_tickers = _extract_tickers(user_question)
     # tickers externos mencionados (não na carteira)
     externos = [t for t in q_tickers if t not in port_tks]
+    # Mesma janela que chat_com_portfolio envia à LLM (últimos 10 turnos).
+    h_tickers = [
+        t for t in _extract_tickers(" ".join(
+            str(m.get("content") or "") for m in (history or [])[-10:]))
+        if t not in port_tks and t not in q_tickers
+    ]
 
     parts: list[str] = [get_available_database_schema(), "", base_context]
 
@@ -725,6 +736,7 @@ def build_llm_context_for_portfolio_chat(
     fund_tks = list(externos)
     if "fundamentals" in intent and q_tickers:
         fund_tks = list(dict.fromkeys(q_tickers))  # inclui também os citados da carteira p/ comparar
+    fund_tks += h_tickers  # depois dos da pergunta: o corte de max_n poupa esses
     if fund_tks:
         block = get_company_fundamentals_context(fund_tks)
         if block:
@@ -792,6 +804,7 @@ def build_llm_context_for_portfolio_chat(
         "portfolio_tickers": port_tks,
         "mentioned_tickers": q_tickers,
         "external_tickers": externos,
+        "history_tickers": h_tickers,
         "intent": sorted(intent),
         "peers": peers_map,
     }
