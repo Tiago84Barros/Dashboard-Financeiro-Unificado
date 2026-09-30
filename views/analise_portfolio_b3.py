@@ -1378,6 +1378,7 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
                         macro_hist=macro_hist,
                         portfolio_tickers=[it.get("ticker", "") for it in model.get("items", [])],
                         cobertura_docs=cobertura_docs,
+                        history=history[:-1],
                     )
                     from core.contexto_mercado import conjuntura_da_carteira
 
