@@ -543,6 +543,9 @@ indústrias diferentes. Responda em português do Brasil, com valores em dólare
 O DETALHE DO ARMAZÉM traz preço diário, trimestres e proventos dos ativos que ele lista: use-o para
 tendência, volatilidade e risco de preço do conjunto, citando o período. Ativo fora do bloco não tem
 esse detalhe aqui; fonte declarada indisponível é lacuna, não dado zero.
+Os números desse bloco vão em "comportamento_de_mercado": por ativo, giro, retornos, queda máxima e
+volatilidade anualizada exatamente como escritos lá, com a data do pregão; depois, o que isso diz do
+conjunto. Não troque por estimativa de cabeça.
 
 === COMPOSIÇÃO E LEITURAS INDIVIDUAIS ===
 {items_context}
@@ -593,6 +596,7 @@ Responda somente JSON válido com este schema. Preserve os campos legados porque
   "resumo_executivo": "até cinco linhas, decisão central e principal risco",
   "relatorio_estrategico": "leitura causal do conjunto, sem recomendação simplista",
   "papel_dos_ativos": "como exposições se complementam ou concentram",
+  "comportamento_de_mercado": "números do DETALHE DO ARMAZÉM por ativo (liquidez, retornos, volatilidade, data do pregão) e a leitura do conjunto; ativo fora do bloco nomeado como sem detalhe; bloco não montado dito como lacuna",
   "pontos_fortes": ["força específica e mecanismo"],
   "pontos_fracos": ["fragilidade específica e mecanismo"],
   "sintese_alocacao": "como o método quanti+quali altera exposições; não dê ordem de negociação",

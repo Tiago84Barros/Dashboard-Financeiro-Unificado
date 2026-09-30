@@ -353,7 +353,9 @@ def _render_relatorio_consolidado(port_analise: dict) -> None:
 
     with st.expander("📝 Resumo Executivo + Papel dos Ativos", expanded=True):
         for chave, rotulo in (("resumo_executivo", "Resumo Executivo"),
-                              ("papel_dos_ativos", "Papel dos Ativos na Carteira")):
+                              ("papel_dos_ativos", "Papel dos Ativos na Carteira"),
+                              ("comportamento_de_mercado",
+                               "Liquidez, retorno e volatilidade (armazém)")):
             texto = port_analise.get(chave, "")
             if texto:
                 st.markdown(
