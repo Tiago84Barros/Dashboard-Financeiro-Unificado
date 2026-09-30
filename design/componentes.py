@@ -282,6 +282,13 @@ def abas_secao(
     def _marcar_troca() -> None:
         st.session_state[flag_key] = True
 
+    # Seção que deixa de existir (aba retirada entre um deploy e outro) fica
+    # guardada em session_state e o widget seria criado com um valor fora das
+    # opções. Descartar aqui devolve o usuário ao default em vez de quebrar a
+    # página de quem estava com a aba antiga aberta.
+    if st.session_state.get(widget_key) not in (None, *opcoes):
+        del st.session_state[widget_key]
+
     escolhida = st.segmented_control(
         label,
         opcoes,

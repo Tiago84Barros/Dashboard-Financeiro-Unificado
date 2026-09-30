@@ -9,7 +9,8 @@ Replica FIELMENTE as 4 seções do app original controlefinanceirotsb.streamlit.
 
 Adições do app unificado preservadas (não existiam no original):
   - Pizza de despesas na aba Análises
-  - Aba Orçamento: limite por categoria (vale do mês gravado em diante)
+  - Orçamento por categoria: a aba saiu da navegação em 30/09/2026; o cálculo
+    segue vivo para os alertas e o Dashboard Geral
   - Conciliação lançamento manual × extrato importado (aba Tabelas)
   - Barras de progresso por categoria
   - (Taxa de poupança mensal histórica removida)
@@ -3713,7 +3714,11 @@ def render() -> None:
     # estado preservado (st.tabs não expõe `key` e voltava para Dashboard quando
     # um filtro interno disparava rerun) e rolagem ao topo na troca de seção —
     # sem ela, Análises e Cartão de Crédito abriam no rodapé, junto do chat.
-    _SECOES = ["📊  Dashboard", "📈  Análises", "🎯  Orçamento", "🧾  Tabelas",
+    # A aba "Orçamento" saiu da navegação a pedido do usuário (30/09/2026).
+    # `_tab_orcamento` continua no módulo, sem rota, porque o orçamento em si
+    # não foi desligado: `core.alertas` (R1) e o Dashboard Geral seguem lendo
+    # os limites gravados. Sem a aba, porém, não há mais onde cadastrá-los.
+    _SECOES = ["📊  Dashboard", "📈  Análises", "🧾  Tabelas",
                "💳  Cartão de Crédito"]
     secao = abas_secao(_SECOES, key="cf_secao_ativa", default=_SECOES[0])
 
@@ -3721,11 +3726,9 @@ def render() -> None:
         _tab_analises(d, historico, hist_anual, gastos_cartao, investido_mes,
                       evolucao, sel["ano"], sel["mes"])
     elif secao == _SECOES[2]:
-        _tab_orcamento(d, sel["ano"], sel["mes"], sel["label"])
-    elif secao == _SECOES[3]:
         _render_conciliacao(d)
         _tab_tabelas(d)
-    elif secao == _SECOES[4]:
+    elif secao == _SECOES[3]:
         _tab_cartao(d, sel["ano"], sel["mes"])
     else:
         _tab_dashboard(d, historico, fluxo_inv, investido_mes)
