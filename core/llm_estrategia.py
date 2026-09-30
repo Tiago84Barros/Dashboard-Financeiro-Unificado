@@ -19,6 +19,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 
+from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
 from core.estrategia import politica as pol
 from core.llm_b3 import _chat_complete, llm_disponivel, provedores_disponiveis
 
@@ -133,6 +134,17 @@ X; aportar R$ Y por mês faz sentido para você?" — e grave só o valor que el
 disser ou confirmar.
 9. "finished" = true só quando todos os OBRIGATÓRIOS estiverem preenchidos e \
 os complementares relevantes cobertos, ou quando o usuário pedir para parar.
+10. Se houver CONTEXTO DE MERCADO no contexto, use-o para explicar a divisão \
+proposta e para responder perguntas sobre o cenário: ao falar de renda fixa, \
+juros, inflação ou câmbio, cite o número e a data do bloco (ex.: "Selic de \
+X% em 2026", "Tesouro IPCA+ 2035 a Y% em DD/MM"), nunca "juros altos" sem o \
+número. O cenário NÃO é resposta do usuário e nunca vai para "updates". \
+Política vale por anos: se a resposta for motivada por movimento recente do \
+mercado ou por notícia (ex.: "a bolsa subiu, quero tudo em ações"), NÃO grave \
+a divisão nessa resposta — ponha-a em "proposal" e COMECE "next_question" \
+com uma frase que lembre, com o número e a data do bloco, que o movimento é \
+recente e a política vale por anos; só depois faça a pergunta seguinte \
+(esta regra vem antes da regra 2).
 
 CAMPOS
 {campos}
@@ -160,6 +172,7 @@ def _mensagens(politica: dict, historico: list, resposta: str,
     # repetia a pergunta do roteiro a cada resposta (28/09/2026).
     msgs = [{"role": "system",
              "content": _SISTEMA.format(campos=_descricao_campos())
+             + "\n\n" + REGRA_CONTEXTO_MERCADO
              + "\n\n" + "\n".join(estado)}]
     for m in (historico or [])[-MAX_HISTORICO_PROMPT:]:
         if m.get("role") in ("user", "assistant") and m.get("content"):

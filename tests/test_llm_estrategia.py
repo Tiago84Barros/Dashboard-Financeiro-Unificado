@@ -109,3 +109,26 @@ def test_abertura_e_roteiro_sem_llm():
     base, _ = pol.aplicar({}, {"objective": "aposentadoria"}, fonte="manual")
     assert "continuar de onde paramos" in ent.abertura(base)
     assert ent.pergunta_do_roteiro(base) == pol.POR_CHAVE["time_horizon"].pergunta
+
+
+def test_regra_10_cenario_cita_numero_e_nao_grava_por_euforia():
+    regra = ent._SISTEMA[ent._SISTEMA.index("10. "):]
+    assert "CONTEXTO DE MERCADO" in regra
+    assert "nunca vai para \"updates\"" in regra
+    assert "NÃO grave a divisão nessa resposta" in regra
+    assert "COMECE \"next_question\"" in regra
+
+
+def test_prompt_leva_a_regra_de_contexto_de_mercado_e_o_bloco():
+    from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+    capturado: dict = {}
+    ent.proxima_etapa({}, [], "a bolsa subiu, quero tudo em ações",
+                      contexto="CONTEXTO DE MERCADO: Ibovespa +8,3% {literal}",
+                      chat=_chat({"updates": {}, "evidence": {},
+                                  "next_question": "Qual o horizonte?",
+                                  "finished": False}, capturado))
+    sistema = capturado["messages"][0]
+    assert sistema["role"] == "system"
+    assert sum(m["role"] == "system" for m in capturado["messages"]) == 1
+    assert REGRA_CONTEXTO_MERCADO in sistema["content"]
+    assert "Ibovespa +8,3% {literal}" in sistema["content"]
