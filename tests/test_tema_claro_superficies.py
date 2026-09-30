@@ -142,3 +142,72 @@ def test_tema_claro_alcanca_a_tabela_markdown_da_resposta_da_llm():
                     '[data-testid="stMarkdownContainer"] table :is(th,td)',
                     '[data-testid="stMarkdownContainer"] table thead th'):
         assert seletor in LIGHT_CSS, f"{seletor} sem regra no tema claro"
+
+
+# ── Vega-Lite: os gráficos nativos (line/bar/area/scatter_chart) ──────────────
+def _capturar_specs(tema: str) -> list[tuple[dict, dict]]:
+    """Roda os gráficos nativos no tema dado e devolve (spec, kwargs) de cada um.
+
+    Espia ``_vega_lite_chart``, que é por onde todo gráfico Vega passa — assim o
+    teste mede o que chega ao front-end, não o que o adaptador pretendia fazer.
+    """
+    import pandas as pd
+    import streamlit as st
+    from streamlit.elements.vega_charts import VegaChartsMixin
+
+    from design.tema_canvas import instalar_adaptadores, registrar_tema
+
+    capturado: list[tuple[dict, dict]] = []
+
+    def espiao(self, data=None, spec=None, *args, **kwargs):
+        alvo = spec if isinstance(spec, dict) else data
+        capturado.append((alvo or {}, kwargs))
+        return None
+
+    original = VegaChartsMixin._vega_lite_chart
+    VegaChartsMixin._vega_lite_chart = espiao
+    try:
+        instalar_adaptadores()  # embrulha o espião; idempotente por processo
+        registrar_tema(tema)
+        df = pd.DataFrame({"v": [1.0, 2.0, 3.0]})
+        st.line_chart(df)
+        st.bar_chart(df["v"])
+        st.area_chart(df)
+        st.scatter_chart(df)
+    finally:
+        VegaChartsMixin._vega_lite_chart = original
+    return capturado
+
+
+def test_grafico_nativo_no_claro_leva_a_moldura_clara_no_proprio_spec():
+    """``theme=None`` não basta: o front-end preenche o que o spec deixa vazio.
+
+    Medido no bundle do Streamlit 1.57 — quando o tema não é ``"streamlit"`` ele
+    aplica os padrões do tema do app (que segue ``base="dark"``) sobre o spec.
+    Quem não escreve fundo, eixo e rótulo no spec recebe o escuro de volta.
+    """
+    capturado = _capturar_specs("light")
+    assert len(capturado) == 4, "os quatro gráficos nativos precisam passar pelo adaptador"
+    for spec, kwargs in capturado:
+        assert kwargs.get("theme") is None
+        config = spec.get("config") or {}
+        assert config.get("background") == "transparent"
+        for chave in ("axis", "legend", "title", "header"):
+            assert config.get(chave), f"config.{chave} vazio deixa o front-end escurecer"
+        assert config["axis"]["labelColor"] == "#172033"
+        assert config["axis"]["gridColor"] == "#e3e9f2"
+
+
+def test_grafico_nativo_no_escuro_continua_com_o_tema_do_streamlit():
+    for spec, kwargs in _capturar_specs("dark"):
+        assert kwargs.get("theme") == "streamlit"
+        assert "background" not in (spec.get("config") or {})
+
+
+def test_moldura_clara_nao_sobrepoe_a_cor_escolhida_pela_tela():
+    """O que a tela já definiu ganha do padrão — senão o adaptador viraria dono."""
+    from design.tema_canvas import clarear_spec_vega
+
+    spec = clarear_spec_vega({"mark": "bar", "config": {"axis": {"labelColor": "#123456"}}})
+    assert spec["config"]["axis"]["labelColor"] == "#123456"
+    assert spec["config"]["axis"]["gridColor"] == "#e3e9f2"
