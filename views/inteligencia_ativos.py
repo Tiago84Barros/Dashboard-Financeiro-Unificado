@@ -51,6 +51,7 @@ from views import configuracoes_cenario as tela_cenario
 from views import configuracoes_estrategia as tela_estrategia
 from views import inteligencia_ativos_fit as tela_fit
 from views import inteligencia_ativos_painel as tela_painel
+from views import inteligencia_ativos_resumida as tela_resumida
 
 ROTULO = "Inteligência dos Ativos"
 # Configuração aberta na própria aba (onboarding ou "Minha estratégia").
@@ -762,8 +763,8 @@ def cartao_questoes(a: m.AnaliseAtivo) -> str:
 def _render_liberada(liberacao: portao.Liberacao, carteira: dict,
                      proventos: dict | None = None) -> None:
     versao = liberacao.politica.version
-    st.success("Configuração concluída. A análise inteligente dos seus ativos "
-               f"já está disponível. Premissa: estratégia versão {versao}.")
+    st.caption("A análise inteligente dos seus ativos já está disponível. "
+               f"Premissa: estratégia versão {versao}.")
     _render_painel(liberacao, carteira, proventos)
     _render_minha_estrategia()
     _render_meu_cenario()
@@ -781,23 +782,29 @@ def _render_painel(liberacao: portao.Liberacao, carteira: dict,
         return
     ctx, analises = resultado["contexto"], resultado["analises"]
 
-    # Dashboard: resumo, cartões e histórico. O detalhe continua abaixo.
+    # Página resumida (rascunho do usuário, 30/09/2026): reserva, renda
+    # fixa e uma caixa por ativo. Visão geral e análise detalhada ficam
+    # abaixo, fechadas até o usuário pedir.
     resumo = painel.resumo(ctx, analises, carteira, proventos)
     tela_painel.registrar_uma_vez(ctx, analises, resumo)
-    _, comparacao = tela_painel.comparacao_de(
-        hist.CARTEIRA, hist.capturar_carteira(
-            resumo, ctx, agora=dt.datetime.now(dt.timezone.utc)))
-    st.markdown(tela_painel.cartao_resumo(resumo, comparacao),
-                unsafe_allow_html=True)
-    st.markdown("#### Ativos")
-    tela_painel.render_cards(painel.cards(analises, ctx))
+    politica = liberacao.politica.politica if liberacao.politica else None
+    tela_resumida.render(analises, ctx, politica)
 
-    with st.expander("Estratégia, cálculos e tabela da carteira"):
+    with st.expander("📊 Visão geral da carteira"):
+        _, comparacao = tela_painel.comparacao_de(
+            hist.CARTEIRA, hist.capturar_carteira(
+                resumo, ctx, agora=dt.datetime.now(dt.timezone.utc)))
+        st.markdown(tela_painel.cartao_resumo(resumo, comparacao),
+                    unsafe_allow_html=True)
         st.markdown(cartao_premissa(ctx), unsafe_allow_html=True)
         st.markdown(cartao_calculos(ctx.calculos), unsafe_allow_html=True)
         _tabela_carteira(analises)
 
-    st.markdown("#### Análise completa")
+    # Toggle, não expander: o Portfolio Fit tem expander próprio e o
+    # Streamlit não aninha expanders.
+    if not st.toggle("🔎 Análise detalhada (13 etapas, Portfolio Fit e "
+                     "histórico)", key=tela_resumida.DETALHE_KEY):
+        return
     por_ticker = {a.ativo.ticker: a for a in analises}
     if st.session_state.get(tela_painel.SELECAO_KEY) not in por_ticker:
         st.session_state.pop(tela_painel.SELECAO_KEY, None)
