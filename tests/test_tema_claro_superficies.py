@@ -153,9 +153,10 @@ def _capturar_specs(tema: str) -> list[tuple[dict, dict]]:
     """
     import pandas as pd
     import streamlit as st
+    from streamlit.delta_generator import DeltaGenerator
     from streamlit.elements.vega_charts import VegaChartsMixin
 
-    from design.tema_canvas import instalar_adaptadores, registrar_tema
+    from design.tema_canvas import _INSTALADO, instalar_adaptadores, registrar_tema
 
     capturado: list[tuple[dict, dict]] = []
 
@@ -165,9 +166,17 @@ def _capturar_specs(tema: str) -> list[tuple[dict, dict]]:
         return None
 
     original = VegaChartsMixin._vega_lite_chart
+    # `instalar_adaptadores` é idempotente por processo: se outro teste da mesma
+    # sessão já instalou, ela sai na primeira linha e o espião ficaria **sem**
+    # embrulho -- o teste passava sozinho e falhava na suíte. Zerar a marca faz
+    # o embrulho acontecer de novo; o `finally` devolve tudo como estava.
+    marca = getattr(st, _INSTALADO, False)
+    antes = (DeltaGenerator.plotly_chart, DeltaGenerator.dataframe,
+             st.plotly_chart, st.dataframe)
+    setattr(st, _INSTALADO, False)
     VegaChartsMixin._vega_lite_chart = espiao
     try:
-        instalar_adaptadores()  # embrulha o espião; idempotente por processo
+        instalar_adaptadores()
         registrar_tema(tema)
         df = pd.DataFrame({"v": [1.0, 2.0, 3.0]})
         st.line_chart(df)
@@ -176,6 +185,9 @@ def _capturar_specs(tema: str) -> list[tuple[dict, dict]]:
         st.scatter_chart(df)
     finally:
         VegaChartsMixin._vega_lite_chart = original
+        setattr(st, _INSTALADO, marca)
+        (DeltaGenerator.plotly_chart, DeltaGenerator.dataframe,
+         st.plotly_chart, st.dataframe) = antes
     return capturado
 
 
@@ -324,3 +336,43 @@ def test_tema_claro_alcanca_o_que_a_varredura_do_dom_achou_escuro():
             assert "listbox" in alvo or "[role=" in alvo, (
                 f"{alvo} pinta todo popover, tooltip incluído"
             )
+
+
+def test_escala_de_correlacao_clara_tem_meio_claro_e_numero_legivel():
+    """``colorscale`` é o ponto cego do adaptador, e por decisão do módulo.
+
+    Medido em 29/09/2026: ``_overrides`` percorre dicionários e listas, mas as
+    paradas da escala são pares ``[posição, cor]`` — listas de escalares, que
+    ele devolve intactas. Ou seja, o mapa de correlação chegava ao tema claro
+    com o meio da escala em ``#0F172A``: célula quase preta no meio da página
+    branca, e o número por cima já escurecido pelo adaptador. Clarear parada
+    por parada quebraria a ordem do gradiente, então a saída é a que o próprio
+    ``_tinta_clara`` prescreve: escolher a paleta clara na origem.
+    """
+    from design.tema_canvas import _luminancia, _rgba, escala_correlacao, registrar_tema
+
+    def contraste(cor: str, texto: str) -> float:
+        a, b = (_luminancia(_rgba(c)[:3]) for c in (cor, texto))
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+
+    registrar_tema("light")
+    clara = escala_correlacao()
+    registrar_tema("dark")
+    escura = escala_correlacao()
+    assert clara != escura, "a escala não acompanha o tema da sessão"
+
+    posicoes = [p for p, _ in clara]
+    assert posicoes == [p for p, _ in escura], "as paradas mudaram de posição"
+    for posicao, cor in clara:
+        lum = _luminancia(_rgba(cor)[:3])
+        assert lum > 0.4, f"parada {posicao} ({cor}) escura demais para o claro"
+        # O valor da correlação é escrito dentro da célula, em `--app-text`.
+        assert contraste(cor, "#172033") >= 4.5, (
+            f"parada {posicao} ({cor}) não deixa o número legível")
+
+
+def test_mapa_de_correlacao_nao_crava_a_escala_na_tela():
+    """Paleta cravada na view volta a ignorar o tema — a escolha é do tema."""
+    fonte = (RAIZ / "views" / "investimentos.py").read_text(encoding="utf-8")
+    assert "escala_correlacao()" in fonte, "a tela não pede a escala ao tema"
+    assert "#0F172A" not in fonte.upper(), "parada escura cravada voltou à tela"

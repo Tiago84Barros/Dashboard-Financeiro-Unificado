@@ -389,6 +389,28 @@ def no_claro() -> bool:
     return tema_da_sessao() == "light"
 
 
+# Escala divergente da correlação. O ``_overrides`` não mexe em ``colorscale``
+# de propósito: clarear parada por parada quebraria a ordem do gradiente (a
+# ponta escura sobe, a clara fica) -- a limitação está anotada em
+# ``_tinta_clara``. O caminho que sobra é o que aquela nota manda: escolher a
+# paleta clara na origem. No escuro o meio da escala é quase preto para casar
+# com a página; no claro ele precisa ser quase branco, e as pontas ficam
+# pastéis porque o número vai escrito por cima em ``--app-text``.
+_ESCALA_CORR_ESCURA = [
+    [0.00, "#2563EB"], [0.35, "#0F172A"], [0.50, "#1E293B"],
+    [0.65, "#FACC15"], [1.00, "#F43F5E"],
+]
+_ESCALA_CORR_CLARA = [
+    [0.00, "#8ab4f8"], [0.35, "#cddffb"], [0.50, "#f1f4f9"],
+    [0.65, "#fbe38a"], [1.00, "#f7a3b4"],
+]
+
+
+def escala_correlacao() -> list[list]:
+    """Paradas da escala de correlação no tema da sessão."""
+    return [list(p) for p in (_ESCALA_CORR_CLARA if no_claro() else _ESCALA_CORR_ESCURA)]
+
+
 def instalar_adaptadores() -> None:
     """Embrulha os elementos que desenham em canvas. Roda uma vez por processo."""
     if getattr(st, _INSTALADO, False):
