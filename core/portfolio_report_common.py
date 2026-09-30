@@ -237,6 +237,7 @@ def fallback_portfolio(reason: str = "LLM indisponível") -> dict:
         "resumo_executivo": f"Relatório consolidado indisponível: {reason}.",
         "relatorio_estrategico": "",
         "papel_dos_ativos": "",
+        "comportamento_de_mercado": "",
         "pontos_fortes": [],
         "pontos_fracos": [],
         "sintese_alocacao": "",
@@ -295,6 +296,14 @@ def sanitize_company_report(raw: Any, ticker: str) -> dict:
     return report
 
 
+def _texto_corrido(valor: Any) -> str:
+    if isinstance(valor, dict):
+        return " ".join(f"{k}: {_texto_corrido(v)}" for k, v in valor.items())
+    if isinstance(valor, (list, tuple)):
+        return " ".join(_texto_corrido(v) for v in valor)
+    return "" if valor is None else str(valor)
+
+
 def sanitize_portfolio_report(raw: Any, items: list[dict]) -> dict:
     """Consolida o relatório da carteira. Confiança e score vêm dos itens.
 
@@ -308,6 +317,9 @@ def sanitize_portfolio_report(raw: Any, items: list[dict]) -> dict:
     defaults = fallback_portfolio()
     for key, value in defaults.items():
         report.setdefault(key, value)
+    # Números por ativo convidam a LLM a devolver {ticker: texto}; a tela
+    # interpola texto, e um dict viraria repr do Python.
+    report["comportamento_de_mercado"] = _texto_corrido(report["comportamento_de_mercado"])
     report["qualidade_carteira"] = (
         report["qualidade_carteira"] if report["qualidade_carteira"] in {"alta", "media", "baixa"}
         else "media"

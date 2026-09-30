@@ -441,6 +441,12 @@ def _render_relatorio_consolidado(port_analise: dict) -> None:
                 f'<div class="apb3-report-qual"><div class="apb3-report-label">Papel dos Ativos na Carteira</div>{papel}</div>',
                 unsafe_allow_html=True,
             )
+        mercado = port_analise.get("comportamento_de_mercado", "")
+        if mercado:
+            st.markdown(
+                f'<div class="apb3-report-qual"><div class="apb3-report-label">Liquidez, retorno e volatilidade (armazém)</div>{mercado}</div>',
+                unsafe_allow_html=True,
+            )
 
     with st.expander("💪 Pontos Fortes / Fracos", expanded=False):
         fortes = port_analise.get("pontos_fortes", [])

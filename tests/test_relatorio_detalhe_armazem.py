@@ -136,3 +136,46 @@ def test_telas_passam_ao_consolidado_o_detalhe_ja_lido():
         assert "detalhes.setdefault(" in fonte
         assert "detalhe_armazem=detalhe_do_consolidado(detalhes, items_analisados)" in fonte
         assert fonte.count("warehouse_detail([") == 1
+
+
+# --- Campo próprio no esquema ------------------------------------------------
+# Medido com LLM real em 30/09/2026 (7 ações, 195 números no bloco): sem campo
+# próprio o consolidado citou 0–9 números do armazém e inventou uma
+# "volatilidade ponderada"; com "comportamento_de_mercado", 44–56, todos no campo.
+
+@pytest.mark.parametrize("modulo,funcao", [(rb3, "analyze_portfolio_report"),
+                                           (rus, "analyze_us_portfolio_report")])
+def test_consolidado_pede_campo_proprio_para_os_numeros(monkeypatch, modulo, funcao):
+    cap = _captura(monkeypatch, modulo)
+    getattr(modulo, funcao)(_itens(("A3", 100)), None, detalhe_armazem=_MARCA)
+    corrido = " ".join(cap["prompt"].split())
+    assert 'Os números desse bloco vão em "comportamento_de_mercado"' in corrido
+    assert '"comportamento_de_mercado": "números do DETALHE DO ARMAZÉM' in corrido
+
+
+@pytest.mark.parametrize("modulo,funcao", [(rb3, "analyze_portfolio_report"),
+                                           (rus, "analyze_us_portfolio_report")])
+def test_campo_da_llm_chega_ao_relatorio(monkeypatch, modulo, funcao):
+    texto = "A3 (pregão 28/09/2026): R$ 12,3 mi/dia; volatilidade 22,9%."
+    monkeypatch.setattr(modulo, "_call_llm", lambda prompt, model=None: json.dumps(
+        {"comportamento_de_mercado": texto}, ensure_ascii=False))
+    rel = getattr(modulo, funcao)(_itens(("A3", 100)), None, detalhe_armazem=_MARCA)
+    assert rel["comportamento_de_mercado"] == texto
+
+
+def test_campo_estruturado_vira_texto_e_ausente_vira_vazio():
+    assert common.fallback_portfolio()["comportamento_de_mercado"] == ""
+    rel = common.sanitize_portfolio_report(
+        {"comportamento_de_mercado": {"A3": "R$ 1 mi/dia", "B3X": ["vol 20%", "1m +2%"]}},
+        _itens(("A3", 50), ("B3X", 50)))
+    assert rel["comportamento_de_mercado"] == "A3: R$ 1 mi/dia B3X: vol 20% 1m +2%"
+    assert common.sanitize_portfolio_report({}, _itens(("A3", 1)))["comportamento_de_mercado"] == ""
+
+
+def test_telas_mostram_o_campo():
+    from views import analise_portfolio_b3, analise_portfolio_us
+
+    for tela in (analise_portfolio_b3, analise_portfolio_us):
+        fonte = inspect.getsource(tela)
+        assert '"comportamento_de_mercado"' in fonte
+        assert "Liquidez, retorno e volatilidade (armazém)" in fonte
