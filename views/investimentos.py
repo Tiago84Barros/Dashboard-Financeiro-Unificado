@@ -49,6 +49,7 @@ from core.user_context import user_cache_data
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, container_pagina
 from design.lacunas import aviso_lacuna
+from design.tema_canvas import escala_correlacao
 
 # ── Paleta ────────────────────────────────────────────────────────────────────
 _COR_POSITIVO = "#00C896"
@@ -1210,13 +1211,7 @@ def _fig_corr_heatmap(corr: pd.DataFrame) -> go.Figure:
         y=corr.index,
         zmin=-1,
         zmax=1,
-        colorscale=[
-            [0.00, "#2563EB"],
-            [0.35, "#0F172A"],
-            [0.50, "#1E293B"],
-            [0.65, "#FACC15"],
-            [1.00, "#F43F5E"],
-        ],
+        colorscale=escala_correlacao(),
         colorbar={"title": "corr."},
         text=corr.round(2).astype(str).values,
         texttemplate="%{text}",
