@@ -33,7 +33,7 @@ _APP_TEST_MODE = is_app_test_mode()
 if not _APP_TEST_MODE:
     from core.auth import verificar_autenticacao
     from core.config import settings
-    from design.componentes import mensagem_erro
+    from design.componentes import mensagem_erro, transicao_de_pagina
     from design.tema import aplicar_tema
 
     verificar_autenticacao()
@@ -124,6 +124,18 @@ with st.sidebar:
             _sessao["_avisos_ambiente_logados"] = True
         for aviso in settings.validate():
             logger.warning("ambiente: %s", aviso)
+
+# ── Transição de página ───────────────────────────────────────────────────────
+# Antes de qualquer conteúdo da rota, e sem condição: o Streamlit entrega os
+# elementos na ordem em que o script os cria, então este é o primeiro a chegar
+# ao navegador e já age enquanto a view ainda carrega. Sem condição porque um
+# elemento que existisse só em alguns runs deslocaria os `st.tabs` das views, e
+# o Streamlit devolve a seleção para a primeira aba quando o grupo de abas muda
+# de posição.
+# A única condição é o modo sintético, que vale para a sessão inteira e não
+# muda de um run para o outro -- a posição do elemento continua fixa.
+if not _APP_TEST_MODE:
+    transicao_de_pagina(menu)
 
 # ── Roteamento ────────────────────────────────────────────────────────────────
 modulo_nome = _ROTAS.get(menu)
