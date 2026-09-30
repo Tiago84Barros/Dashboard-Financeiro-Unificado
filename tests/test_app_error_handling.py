@@ -120,7 +120,11 @@ def test_excecao_ao_carregar_modulo_nao_vaza_para_a_tela_e_log_recebe_detalhe(
     instalar_stubs_de_bootstrap(
         monkeypatch,
         fake_st,
-        design_componentes=SimpleNamespace(mensagem_erro=fake_mensagem_erro),
+        design_componentes=SimpleNamespace(
+            mensagem_erro=fake_mensagem_erro,
+            transicao_de_pagina=lambda *_args: None,
+        ),
+            transicao_de_pagina=lambda *_args: None,
     )
     monkeypatch.setattr(importlib, "import_module", fake_import_module)
 
@@ -172,7 +176,8 @@ def test_modulo_carregado_com_sucesso_nao_aciona_o_handler_de_erro(monkeypatch, 
         design_componentes=SimpleNamespace(
             mensagem_erro=lambda titulo, detalhe="": mensagens_amigaveis.append(
                 (titulo, detalhe)
-            )
+            ),
+            transicao_de_pagina=lambda *_args: None,
         ),
     )
     monkeypatch.setattr(importlib, "import_module", lambda _name: fake_view)

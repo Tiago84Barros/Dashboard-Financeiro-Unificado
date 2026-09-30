@@ -53,7 +53,10 @@ def stubs_de_bootstrap(**overrides) -> dict[str, SimpleNamespace]:
         "core.user_context": SimpleNamespace(
             principal=lambda: dict(USUARIO_SINTETICO),
         ),
-        "design.componentes": SimpleNamespace(mensagem_erro=lambda *_args: None),
+        "design.componentes": SimpleNamespace(
+            mensagem_erro=lambda *_args: None,
+            transicao_de_pagina=lambda *_args: None,
+        ),
         "design.tema": SimpleNamespace(aplicar_tema=lambda theme="dark": None),
         # Importado com o ``streamlit`` falso em sys.modules, o módulo real
         # guardaria o falso no próprio ``st`` e o vazaria para todos os testes
