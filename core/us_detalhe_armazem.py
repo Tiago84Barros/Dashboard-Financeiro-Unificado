@@ -271,7 +271,11 @@ def resumo_para_prompt(detalhe: dict[str, dict], *, origem: str,
                 for e in exercicios))
         pv = resumo_proventos(d.get("proventos") or [], hoje)
         if pv["ultimo"] is None:
-            linhas.append(f"    Proventos: nenhum registrado nos últimos {ANOS_PROVENTOS} anos.")
+            # O armazém guarda proventos das ações do universo; ETF (SPY, IEFA)
+            # fica de fora e "nenhum registrado" leria como "não paga".
+            linhas.append(f"    Proventos: nenhum registrado no armazém nos últimos "
+                          f"{ANOS_PROVENTOS} anos (ele cobre as ações do universo, "
+                          "não ETF nem fundo) -- ausência aqui não prova que não pagou.")
         else:
             rend = ""
             if p is not None and p["ultimo"] > 0 and pv["soma12m"] > 0:

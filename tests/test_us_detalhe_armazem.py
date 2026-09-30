@@ -103,6 +103,7 @@ def test_ticker_sem_dado_diz_que_nao_tem():
     assert "não tem série recente" in texto
     assert "sem demonstrativo trimestral" in texto
     assert "nenhum registrado" in texto
+    assert "não prova que não pagou" in texto  # ETF fora do universo não vira "não paga"
 
 
 class _Conexao:

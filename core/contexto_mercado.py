@@ -458,16 +458,25 @@ def _manchetes_vitrine(engine, limite: int) -> list[str]:
 # Montagem
 # ─────────────────────────────────────────────────────────────────────────────
 
+def classe_conjuntura(posicao: Mapping) -> str | None:
+    """Classe de conjuntura (b3/fii/us) de uma posição da carteira; ``None`` fora delas.
+
+    ETF ou BDR cotado fora do real é exterior, qualquer que seja o rótulo.
+    """
+    classe = _CLASSE_CONJUNTURA.get(str(posicao.get("classe") or ""))
+    if classe == "b3" and str(posicao.get("moeda") or "BRL").upper() != "BRL":
+        return "us"
+    return classe
+
+
 def ativos_por_classe(posicoes: Iterable[Mapping]) -> dict[str, dict[str, str]]:
     """Posições da carteira agrupadas pela classe de conjuntura (b3/fii/us)."""
     grupos: dict[str, dict[str, str]] = {}
     for p in posicoes or ():
         ticker = str(p.get("ticker") or "").strip().upper()
-        classe = _CLASSE_CONJUNTURA.get(str(p.get("classe") or ""))
+        classe = classe_conjuntura(p)
         if not ticker or classe is None:
             continue
-        if classe == "b3" and str(p.get("moeda") or "BRL").upper() != "BRL":
-            classe = "us"
         grupos.setdefault(classe, {})[ticker] = str(p.get("setor") or "")
     return grupos
 

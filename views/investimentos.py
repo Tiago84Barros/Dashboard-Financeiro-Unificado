@@ -3131,12 +3131,27 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
         conj = CLASSE_DA_ABA.get(classe)
         ativos = ({conj: {str(p.get("ticker") or "").upper(): str(p.get("setor") or "")
                           for p in posicoes_classe}} if conj else None)
-        return build_carteira_classe_context(
+        contexto = build_carteira_classe_context(
             classe, posicoes_classe, valuations=valuations, db=db,
             tesouro=tesouro, macro=macro, fundamentos=fundamentos,
             documentos=carregar_documentos(classe, chaves),
             valores_reais=valores_reais,
         ) + "\n\n" + bloco_contexto_mercado(ativos)
+        if conj:
+            # Liquidez, preço, proventos, trimestres e score mês a mês: o
+            # mesmo detalhe que a tela da classe lê, do armazém ou pelo túnel.
+            from core.llm_context_global_armazem import (
+                MAX_NA_ABA_DA_CLASSE,
+                bloco_detalhe_armazem,
+                quadro_das_posicoes,
+            )
+
+            detalhe = bloco_detalhe_armazem(
+                quadro_das_posicoes(posicoes_classe, classe=conj), _pergunta,
+                max_por_classe=MAX_NA_ABA_DA_CLASSE, classes=(conj,))
+            if detalhe:
+                contexto += "\n\n" + detalhe
+        return contexto
 
     render_chat_carteira(classe=classe, tickers=tickers,
                          build_context=_contexto)
@@ -3393,15 +3408,23 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         # Por último na sub-aba: st.chat_input puxa o foco para o rodapé.
         from core.contexto_mercado import ativos_por_classe, bloco_contexto_mercado
         from core.llm_context_carteira import build_carteira_geral_context
+        from core.llm_context_global_armazem import (
+            bloco_detalhe_armazem,
+            quadro_das_posicoes,
+        )
         from design.chat_carteira import render_chat_carteira
+
+        def _contexto_geral(pergunta, *, valores_reais=False):
+            contexto = (build_carteira_geral_context(carteira, proventos,
+                                                     valores_reais=valores_reais)
+                        + "\n\n" + bloco_contexto_mercado(ativos_por_classe(posicoes),
+                                                       max_itens_por_classe=6))
+            detalhe = bloco_detalhe_armazem(quadro_das_posicoes(posicoes), pergunta)
+            return contexto + ("\n\n" + detalhe if detalhe else "")
 
         render_chat_carteira(
             classe="geral", tickers=[p["ticker"] for p in posicoes],
-            build_context=lambda _pergunta, *, valores_reais=False:
-                build_carteira_geral_context(carteira, proventos,
-                                             valores_reais=valores_reais)
-                + "\n\n" + bloco_contexto_mercado(ativos_por_classe(posicoes),
-                                                   max_itens_por_classe=6),
+            build_context=_contexto_geral,
         )
 
 

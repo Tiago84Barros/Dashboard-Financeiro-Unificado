@@ -1,4 +1,7 @@
-"""Detalhe do armazém local para o chat do Portfólio Global.
+"""Detalhe do armazém local para os chats de carteira com mais de um ativo.
+
+Nasceu para o Portfólio Global; a aba Investimentos → Análise usa o mesmo
+seletor, na Visão Geral e em cada classe (ver :func:`quadro_das_posicoes`).
 
 `core.llm_context_global` só formata o que a tela já calculou e não busca
 nada. Este módulo é a parte com I/O: escolhe, por classe, os ativos que
@@ -14,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Iterable, Mapping
 
 import pandas as pd
 
@@ -26,6 +29,10 @@ logger = logging.getLogger(__name__)
 #: ~40 linhas; o limite de cada leitor sozinho (5–6) triplicado pesaria mais
 #: que o resto do contexto do patrimônio.
 MAX_POR_CLASSE = 4
+
+#: No chat de UMA classe o bloco é o único detalhe por ativo que a LLM recebe;
+#: 5 é o menor limite entre os três leitores (o americano).
+MAX_NA_ABA_DA_CLASSE = 5
 
 _ROTULOS = {"b3": "AÇÕES DA B3", "fii": "FUNDOS IMOBILIÁRIOS", "us": "AÇÕES AMERICANAS"}
 
@@ -59,14 +66,42 @@ def _citado(simbolo: str, classe: str, pergunta: str) -> bool:
     return re.search(rf"\b{re.escape(simbolo)}\b", pergunta, re.IGNORECASE) is not None
 
 
+def quadro_das_posicoes(posicoes: Iterable[Mapping],
+                        classe: str | None = None) -> pd.DataFrame:
+    """Posições da aba Investimentos no formato que :func:`ativos_para_detalhe` lê.
+
+    O peso é o valor de mercado: ordena igual ao peso percentual, e a
+    ordenação é tudo o que o seletor usa dele.
+
+    ``classe`` é a da sub-aba que já separou as posições. As sub-abas filtram
+    por trecho do rótulo ("ação", "fii") e por país/moeda, o que é mais largo
+    que o mapa de rótulos: sem ela, uma posição rotulada só "Ações", ou um BDR
+    custodiado lá fora, sumiria do detalhe da própria aba sem aviso.
+    """
+    from core.contexto_mercado import classe_conjuntura
+
+    linhas = []
+    for p in posicoes or ():
+        simbolo = str(p.get("ticker") or "").strip().upper()
+        classe_da_posicao = classe or classe_conjuntura(p)
+        if simbolo and classe_da_posicao:
+            linhas.append({"symbol": simbolo, "asset_class": classe_da_posicao,
+                           "weight_global": _peso(p.get("valor_mercado"))})
+    return pd.DataFrame(linhas, columns=["symbol", "asset_class", "weight_global"])
+
+
 def ativos_para_detalhe(df: pd.DataFrame, pergunta: str,
-                        max_por_classe: int = MAX_POR_CLASSE) -> dict[str, list[str]]:
+                        max_por_classe: int = MAX_POR_CLASSE,
+                        classes: Iterable[str] | None = None) -> dict[str, list[str]]:
     """Por classe: citados na pergunta primeiro, depois os de maior peso global.
 
     Ação da B3 ou FII citado que não está na carteira também entra, na sua
     classe -- "e se eu trocar X por Y" precisa do detalhe de Y. Ticker
     americano fora da carteira não entra: sem o universo, ele é
     indistinguível de sigla ("FED", "CPI").
+
+    ``classes`` restringe a saída -- o chat de uma classe não recebe o detalhe
+    das outras, nem de ativo citado de outra classe.
     """
     pergunta = str(pergunta or "")
     carteira: dict[str, list[tuple[str, float]]] = {}
@@ -84,7 +119,10 @@ def ativos_para_detalhe(df: pd.DataFrame, pergunta: str,
     na_carteira = {s for itens in carteira.values() for s, _ in itens}
 
     saida: dict[str, list[str]] = {}
+    permitidas = set(classes) if classes is not None else set(_ROTULOS)
     for classe in _ROTULOS:
+        if classe not in permitidas:
+            continue
         itens = carteira.get(classe, [])
         citados = [s for s, _ in itens if _citado(s, classe, pergunta)]
         citados += [s for s in externos.get(classe, []) if s not in na_carteira]
@@ -96,14 +134,15 @@ def ativos_para_detalhe(df: pd.DataFrame, pergunta: str,
 
 
 def bloco_detalhe_armazem(df: pd.DataFrame, pergunta: str,
-                          max_por_classe: int = MAX_POR_CLASSE) -> str:
+                          max_por_classe: int = MAX_POR_CLASSE,
+                          classes: Iterable[str] | None = None) -> str:
     """Detalhe do armazém por classe, com a falha de cada classe nomeada.
 
     Os leitores já devolvem uma linha quando o túnel falta ou cai; o
     try/except aqui cobre o que escapar deles, para que o erro de uma classe
     não apague as outras duas.
     """
-    escolhidos = ativos_para_detalhe(df, pergunta, max_por_classe)
+    escolhidos = ativos_para_detalhe(df, pergunta, max_por_classe, classes)
     if not escolhidos:
         return ""
     leitores = _leitores()
