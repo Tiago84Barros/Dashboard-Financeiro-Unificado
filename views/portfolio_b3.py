@@ -98,7 +98,7 @@ def _ticker_key(value: object) -> str:
     return str(value or "").upper().replace(".SA", "").strip()
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _load_market_caps() -> dict[str, float]:
     """Carrega marketCap PIT e complementa lacunas com o snapshot corrente.
 
@@ -169,7 +169,7 @@ def _market_cap_coverage(
     return covered, total, (covered / total if total else 0.0)
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _load_adtv(meses: int = 6) -> dict[str, float]:
     """Volume financeiro DIÁRIO típico (R$/dia) por ticker.
 
@@ -229,7 +229,7 @@ def _load_adtv(meses: int = 6) -> dict[str, float]:
     return values
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _load_volume_mensal_historico(desde_ano: int) -> pd.DataFrame:
     """Volume financeiro mensal (R$) por ticker desde ``desde_ano`` - 1.
 
