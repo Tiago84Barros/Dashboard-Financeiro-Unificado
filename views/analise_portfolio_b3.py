@@ -885,6 +885,9 @@ def _executar_analise(
     from datetime import datetime, timezone
 
     from core.contexto_mercado import conjuntura_da_carteira, conjuntura_da_empresa
+    from core.llm_context_b3 import (
+        get_warehouse_detail_context as get_b3_warehouse_detail,
+    )
 
     # Um corte para o relatório inteiro: todas as empresas e o consolidado
     # leem o noticiário do mesmo instante, e o túnel serve cada ativo uma vez.
@@ -942,6 +945,7 @@ def _executar_analise(
                 portfolio_context=_ctx_emp,
                 conjuntura=conjuntura_da_empresa("b3", tk, it.get("setor"),
                                                  as_of=corte_conjuntura),
+                detalhe_armazem=get_b3_warehouse_detail([tk]),
             )
         except Exception as exc:
             st.warning(f"{tk}: erro LLM — {exc}")
