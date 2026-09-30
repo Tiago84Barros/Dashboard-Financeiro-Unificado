@@ -286,6 +286,18 @@ def _perfil_financeiro() -> str:
     return perfil_financeiro.texto(perfil) if perfil else ""
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def _contexto_mercado() -> str:
+    """Macro, curva, câmbio e noticiário geral (regra 10 da entrevista).
+
+    Cacheado: a entrevista reexecuta a cada resposta e o bloco lido do armazém
+    local levou 25 s frio (30/09/2026). Não é dado do usuário, então o cache é
+    comum a todos.
+    """
+    from core.contexto_mercado import bloco_contexto_mercado
+    return bloco_contexto_mercado()
+
+
 def _contexto() -> str:
     """O que o app já sabe, para a IA perguntar melhor. Nunca vira resposta.
 
@@ -321,6 +333,10 @@ def _contexto() -> str:
                 for m in metas["metas"]))
     except Exception:  # noqa: BLE001
         pass
+    try:
+        partes.append("\n" + _contexto_mercado())
+    except Exception as exc:  # noqa: BLE001
+        partes.append(f"CONTEXTO DE MERCADO: falha ao montar ({str(exc)[:160]}).")
     return "\n".join(partes)
 
 

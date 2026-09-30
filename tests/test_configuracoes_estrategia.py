@@ -76,6 +76,9 @@ def _sem_llm_real(monkeypatch):
     monkeypatch.setattr(ent, "provedores_disponiveis", lambda: ["openai"])
     monkeypatch.setattr(tela, "_contexto", lambda: "")
     monkeypatch.setattr(tela, "_perfil_financeiro", lambda: "")
+    # o bloco real lê macro e notícias do banco (25 s frio)
+    monkeypatch.setattr(tela, "_contexto_mercado",
+                        lambda: "CONTEXTO DE MERCADO: Selic 13,75% em 2026")
 
 
 def test_nao_iniciada_mostra_zero_e_botao_de_iniciar(monkeypatch):
@@ -226,3 +229,21 @@ def test_sem_perfil_o_painel_avisa_e_o_contexto_nao_leva_bloco(monkeypatch):
     painel = next(e for e in app.expander
                   if e.label == "📊 O que a IA vê das suas finanças")
     assert "Sem lançamentos reais" in painel.caption[0].value
+
+
+def test_contexto_leva_o_bloco_de_mercado_por_ultimo(monkeypatch):
+    monkeypatch.setattr(tela, "_perfil_financeiro", lambda: "- Renda: R$ 1,00.")
+    monkeypatch.setattr("core.investimentos.get_carteira", lambda: {})
+    monkeypatch.setattr("core.metas.get_metas", lambda: {})
+    ctx = _CONTEXTO_REAL()
+    assert ctx.startswith("PERFIL FINANCEIRO do usuário")
+    assert ctx.endswith("CONTEXTO DE MERCADO: Selic 13,75% em 2026")
+
+
+def test_contexto_de_mercado_que_falha_e_nomeado(monkeypatch):
+    def quebra():
+        raise RuntimeError("banco fora")
+    monkeypatch.setattr(tela, "_contexto_mercado", quebra)
+    monkeypatch.setattr("core.investimentos.get_carteira", lambda: {})
+    monkeypatch.setattr("core.metas.get_metas", lambda: {})
+    assert "CONTEXTO DE MERCADO: falha ao montar (banco fora)." in _CONTEXTO_REAL()
