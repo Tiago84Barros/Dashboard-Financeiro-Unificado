@@ -131,7 +131,8 @@ CHAVES_CENARIO = frozenset({
 })
 
 CAMPOS_TEXTO = ("fundamental_analysis", "valuation_analysis", "peer_analysis",
-                "scenario_impact", "portfolio_impact", "reasoning_summary")
+                "market_behavior", "scenario_impact", "portfolio_impact",
+                "reasoning_summary")
 CAMPOS_LISTA = ("risks", "opportunities", "events_to_watch", "data_gaps")
 CHAVES_CONCLUSAO = ("fact", "interpretation", "portfolio_impact",
                     "action_to_consider")
@@ -451,10 +452,13 @@ def lacunas(analise: m.AnaliseAtivo) -> list[str]:
 
 
 def contexto(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor, *,
-             cenario_mercado: str | None = None) -> dict:
+             cenario_mercado: str | None = None,
+             mercado_armazem: dict | None = None) -> dict:
     """O objeto que a LLM recebe. Só o que a análise já montou, nada do
     banco inteiro. ``cenario_mercado`` é o bloco de mercado (I/O), que vai
-    no prompt como texto separado."""
+    no prompt como texto separado. ``mercado_armazem`` são os números do
+    detalhe do armazém como campos (``armazem_fatos``): no texto, a LLM não
+    os usava."""
     pares_, comparacao = _pares(analise.pares)
     regras = fit_por_regras(analise, ctx)
     return {
@@ -481,6 +485,8 @@ def contexto(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor, *,
                                  if cenario_mercado else NAO_DISPONIVEL),
         },
         "asset": _ativo(analise),
+        "warehouse_market": (mercado_armazem if mercado_armazem is not None
+                             else {"estado": NAO_DISPONIVEL}),
         "fundamentals": _fundamentos(analise.fundamentos),
         "valuation": _valuation(analise.valuation),
         "peers": pares_,
@@ -519,6 +525,9 @@ def _esquema() -> str:
         "fundamental_analysis": "texto",
         "valuation_analysis": "texto",
         "peer_analysis": "texto",
+        "market_behavior": ("texto: liquidez, retornos e volatilidade de "
+                            "\"warehouse_market\", com janela e data de "
+                            "referência"),
         "scenario_impact": "texto",
         "portfolio_impact": "texto",
         "risks": ["texto"],
@@ -582,7 +591,18 @@ def sistema() -> str:
         "6. A política não tem alvo por ativo, só por classe. Não invente um.\n"
         "7. \"action_to_consider\" é um dos códigos permitidos; nenhum é "
         "ordem de compra ou venda.\n"
-        "8. Desempenho passado, múltiplos e comparações não são previsão.\n\n"
+        "8. Desempenho passado, múltiplos e comparações não são previsão.\n"
+        "9. \"warehouse_market\" traz, calculados em código, liquidez, "
+        "retornos e volatilidade do ativo lidos do armazém. Eles vão em "
+        "\"market_behavior\", com a janela de cada número e a data de "
+        "referência; a reação a resultados anteriores (no bloco DETALHE DO "
+        "ARMAZÉM LOCAL) também. Liquidez que limita entrar ou sair da "
+        "posição vai ainda em \"risks\". Número do armazém que diverge de "
+        "outro do contexto (ex.: a volatilidade de \"peer_comparison\", que "
+        "vem da vitrine com outra série e janela) é escrito junto com o "
+        "outro, cada um com a origem; não escolha um em silêncio. Estado "
+        "\"indisponível\" é lacuna, não dado zero: diga isso em "
+        "\"market_behavior\"; \"não se aplica\" também.\n\n"
         f"{REGRA_CONTEXTO_MERCADO}\n\n"
         f"{REGRA_CENARIO}\n"
         "O cenário do usuário está em \"scenario.cenario_do_investidor\". "

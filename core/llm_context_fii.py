@@ -158,12 +158,16 @@ def tickers_para_detalhe(user_question: str, selected_items: Iterable[dict]) -> 
            if str(r.get("ticker") or "").strip()]))
 
 
-def get_warehouse_detail_context(tickers: list[str]) -> str:
+def get_warehouse_detail_context(tickers: list[str], *,
+                                 captura: dict | None = None) -> str:
     """Série da CVM, preço, liquidez na B3, proventos, composição, imóveis e score.
 
     Direto quando o app aponta para o armazém (desenvolvimento); pelo túnel na
     produção. Túnel ausente ou fora do ar vira uma linha dizendo isso -- sem
     ela, a LLM trataria a foto da vitrine como tudo o que existe.
+    ``captura`` recebe o detalhe bruto por ticker quando a leitura dá certo:
+    quem precisa dos números (o Portfolio Fit) os pega sem uma segunda ida
+    ao armazém ou ao túnel.
     """
     todos = list(dict.fromkeys(str(t).strip().upper() for t in tickers if str(t).strip()))
     alvo = todos[:_MAX_DETALHE]
@@ -177,10 +181,11 @@ def get_warehouse_detail_context(tickers: list[str]) -> str:
             + ", ".join(todos[len(alvo):]) + ")")
     try:
         if _db_is_local() and _engine() is not None:
-            return resumo_para_prompt(ler_detalhe(_engine(), alvo), origem="lido direto") + fora
-        from core import armazem_remoto
+            detalhe, origem = ler_detalhe(_engine(), alvo), "lido direto"
+        else:
+            from core import armazem_remoto
 
-        detalhe = armazem_remoto.detalhe_fii(alvo)
+            detalhe, origem = armazem_remoto.detalhe_fii(alvo), "lido pelo túnel"
     except Exception as exc:  # noqa: BLE001 - vira linha no prompt
         logger.warning("detalhe de FII do armazém indisponível: %s", exc)
         motivo = str(exc).splitlines()[0][:140] if str(exc) else type(exc).__name__
@@ -191,7 +196,9 @@ def get_warehouse_detail_context(tickers: list[str]) -> str:
         return ("DETALHE DO ARMAZÉM LOCAL: túnel não configurado neste ambiente; "
                 "histórico do informe mensal, liquidez na B3, proventos, composição, "
                 "imóveis e score mês a mês não entraram.")
-    return resumo_para_prompt(detalhe, origem="lido pelo túnel") + fora
+    if captura is not None:
+        captura.update(detalhe)
+    return resumo_para_prompt(detalhe, origem=origem) + fora
 
 
 def build_fii_chat_context(

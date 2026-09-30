@@ -156,6 +156,7 @@ def cartao_detalhes(leitura: pf.Leitura) -> str:
             ("fundamental_analysis", "Fundamentos"),
             ("valuation_analysis", "Valuation"),
             ("peer_analysis", "Comparação com pares"),
+            ("market_behavior", "Liquidez, retorno e volatilidade (armazém)"),
             ("reasoning_summary", "Resumo do raciocínio")):
         corpo += _paragrafo(titulo, leitura.textos.get(campo, pf.NAO_DISPONIVEL))
     corpo += _itens("Riscos", leitura.listas.get("risks", ()), "warning")

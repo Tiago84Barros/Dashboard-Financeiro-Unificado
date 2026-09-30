@@ -38,7 +38,31 @@ def contexto_mercado_do_ativo(analise: m.AnaliseAtivo) -> str:
                 "nem como conjuntura neutra.")
 
 
-def detalhe_armazem_do_ativo(analise: m.AnaliseAtivo) -> str:
+def armazem_do_ativo(analise: m.AnaliseAtivo) -> tuple[str, dict]:
+    """O detalhe do armazém do ativo em duas formas, de UMA leitura: o texto
+    que vai colado ao bloco de mercado e os números como campos do contexto
+    estruturado (``armazem_fatos``)."""
+    from core.inteligencia_ativos import armazem_fatos
+
+    bruto: dict = {}
+    texto = detalhe_armazem_do_ativo(analise, captura=bruto)
+    return texto, armazem_fatos.fatos(_classe(analise),
+                                      str(analise.ativo.ticker or ""),
+                                      bruto, aviso=texto)
+
+
+def _classe(analise: m.AnaliseAtivo) -> str | None:
+    try:
+        from core.contexto_mercado import classe_conjuntura
+
+        i = analise.ativo
+        return classe_conjuntura({"classe": i.classe, "moeda": i.moeda})
+    except Exception:  # noqa: BLE001 — sem classe, sem fatos
+        return None
+
+
+def detalhe_armazem_do_ativo(analise: m.AnaliseAtivo, *,
+                             captura: dict | None = None) -> str:
     """Liquidez, preço, proventos, trimestres e score mês a mês do ativo,
     lidos do armazém (direto ou pelo túnel) -- o mesmo detalhe que os chats
     da carteira recebem. Vazio para classe sem leitor (Tesouro, renda fixa).
@@ -55,7 +79,9 @@ def detalhe_armazem_do_ativo(analise: m.AnaliseAtivo) -> str:
         classe = classe_conjuntura({"classe": i.classe, "moeda": i.moeda})
         if classe is None or not str(i.ticker or "").strip():
             return ""
-        return _leitores()[classe]([str(i.ticker).strip().upper()])
+        leitor = _leitores()[classe]
+        alvo = [str(i.ticker).strip().upper()]
+        return leitor(alvo) if captura is None else leitor(alvo, captura=captura)
     except Exception as exc:  # noqa: BLE001 — a leitura continua sem o detalhe
         log.warning("detalhe do armazém indisponível: %s", exc)
         return ("DETALHE DO ARMAZÉM LOCAL: falha ao montar "
@@ -83,12 +109,14 @@ def gerar(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor, *,
 
     ``chamar`` e ``mercado`` existem para teste: sem eles, usa o provedor
     configurado e monta o bloco de mercado de verdade."""
+    fatos = None
     if mercado is None:
         mercado = contexto_mercado_do_ativo(analise)
-        detalhe = detalhe_armazem_do_ativo(analise)
+        detalhe, fatos = armazem_do_ativo(analise)
         if detalhe:
             mercado += "\n\n" + detalhe
-    contexto = pf.contexto(analise, ctx, cenario_mercado=mercado)
+    contexto = pf.contexto(analise, ctx, cenario_mercado=mercado,
+                           mercado_armazem=fatos)
     regras = pf.fit_por_regras(analise, ctx)
     try:
         bruto = (chamar or _chamar_padrao)(pf.mensagens(contexto, mercado))
