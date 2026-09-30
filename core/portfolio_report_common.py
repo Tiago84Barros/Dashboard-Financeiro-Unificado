@@ -355,3 +355,45 @@ def company_summary_for_portfolio(item: dict) -> str:
         f"resumo={analysis.get('resumo', '')} | cenários={scenario_text or 'N/D'} | "
         f"riscos={risks[:3]} | catalisadores={catalysts[:3]}"
     )
+
+
+MAX_DETALHE_NO_CONSOLIDADO = 6
+
+SEM_DETALHE_NO_CONSOLIDADO = (
+    "Detalhe do armazém não montado nesta execução; não trate como ausência de dado."
+)
+
+
+def detalhe_do_consolidado(detalhes: dict[str, str], items: list[dict],
+                           limite: int = MAX_DETALHE_NO_CONSOLIDADO) -> str:
+    """Detalhe do armazém para a síntese consolidada, pelos ativos de maior peso.
+
+    Reaproveita o texto que cada nota por empresa já recebeu: nenhuma leitura
+    nova no armazém ou no túnel. O teto segura o tamanho do prompt, e quem
+    ficou de fora é nomeado — sem isso a LLM leria a ausência do detalhe como
+    ausência de liquidez ou de preço daquele ativo.
+    """
+    por_peso = sorted(
+        (it for it in items if str(it.get("ticker") or "").strip()),
+        key=lambda it: -float(it.get("peso_pct") or 0),
+    )
+    dentro, fora = [], []
+    for it in por_peso:
+        tk = str(it["ticker"]).strip().upper()
+        texto = str(detalhes.get(tk) or "").strip()
+        if texto and len(dentro) < limite:
+            dentro.append((tk, texto))
+        else:
+            fora.append(tk)
+    if not dentro:
+        return ""
+    cabecalho = (
+        f"Detalhe dos {len(dentro)} ativos de maior peso com leitura do armazém "
+        f"({', '.join(tk for tk, _ in dentro)})."
+    )
+    if fora:
+        cabecalho += (
+            f" Fora deste bloco: {', '.join(fora)} — o detalhe deles não entrou "
+            "aqui, o que não significa dado ausente nem zero."
+        )
+    return "\n\n".join([cabecalho] + [texto for _, texto in dentro])
