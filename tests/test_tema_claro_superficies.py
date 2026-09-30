@@ -431,3 +431,85 @@ def test_moldura_clara_respeita_a_modebar_escolhida_pela_tela():
     fig.update_layout(modebar={"color": "#123456"})
     clarear_figura(fig)
     assert fig.to_plotly_json()["layout"]["modebar"]["color"] == "#123456"
+
+
+# ── Terceira varredura: tinta que escreve POR CIMA de um token ───────────────
+
+def _contraste(a: str, b: str) -> float:
+    from design.tema_canvas import _luminancia, _rgba
+
+    la, lb = (_luminancia(_rgba(c)[:3]) for c in (a, b))
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def _tokens(fonte: str) -> dict[str, str]:
+    """Lê o bloco ``:root`` do tema e devolve os tokens de cor."""
+    return {n: v.strip() for n, v in re.findall(r"--(app-[\w-]+)\s*:\s*(#[0-9a-fA-F]{6})", fonte)}
+
+
+def test_tinta_sobre_preenchimento_acompanha_o_tema():
+    """O número do "próximo passo" é escrito DENTRO do círculo do token.
+
+    No tema escuro os tokens são claros (``--app-danger`` = #FC5C7D) e o texto
+    tinha de ser escuro; no tema claro eles são escuros (#b42342) e o mesmo
+    literal ``#0E1117`` desaba para 2,9:1 — número ilegível dentro da bolinha.
+    A tinta de quem escreve por cima passa a ser token, e cada tema escolhe.
+    """
+    escuro = _tokens((RAIZ / "design" / "tema.py").read_text(encoding="utf-8"))
+    claro = _tokens((RAIZ / "design" / "theme_light.py").read_text(encoding="utf-8"))
+    for tema, tokens in (("escuro", escuro), ("claro", claro)):
+        assert "app-on-accent" in tokens, f"tema {tema} sem --app-on-accent"
+        tinta = tokens["app-on-accent"]
+        for nome in ("app-danger", "app-warning", "app-info", "app-primary"):
+            assert _contraste(tinta, tokens[nome]) >= 4.5, (
+                f"tema {tema}: {tinta} sobre {nome} ({tokens[nome]}) fica ilegível")
+
+
+def test_cartao_de_proximo_passo_nao_crava_a_tinta_do_numero():
+    fonte = (RAIZ / "design" / "componentes.py").read_text(encoding="utf-8")
+    assert "var(--app-on-accent)" in fonte, "o cartão não pede a tinta ao tema"
+    assert "#0E1117" not in fonte.upper(), "tinta escura cravada voltou ao componente"
+
+
+def test_cartoes_sem_modulo_nao_vazam_bloco_de_codigo():
+    """Interpolação sozinha numa linha vira linha em branco quando vazia.
+
+    Com ``modulo=""`` o Markdown fechava ali o bloco de HTML e o ``</div>``
+    seguinte, recuado, saía renderizado como bloco de código no meio do card —
+    medido no DOM em 29/09/2026, três blocos a mais do que a tela pedia.
+    """
+    from unittest.mock import patch
+
+    import design.componentes as componentes
+
+    for chamada in (
+        lambda: componentes.card_alerta_resumo("info", "🔵", "Título", "Descrição"),
+        lambda: componentes.card_proximo_passo(1, "Título", "Descrição"),
+    ):
+        with patch.object(componentes.st, "markdown") as espiao:
+            chamada()
+        marcacao = espiao.call_args.args[0]
+        assert "\n" not in marcacao, (
+            "marcação em várias linhas: sem `modulo` o Markdown fecha o bloco e "
+            "o fechamento recuado vira bloco de código")
+
+
+def test_avatar_da_posicao_pinta_o_fundo_com_o_token():
+    """Ali a cor da classe é preenchimento, e as iniciais vão brancas por cima."""
+    fonte = (RAIZ / "views" / "investimentos.py").read_text(encoding="utf-8")
+    assert "background:{_cor_texto(cor)}" in fonte, (
+        "o avatar voltou a usar o literal do tema escuro como fundo")
+
+
+def test_tema_claro_alcanca_a_terceira_varredura_do_dom():
+    """Cada asserção desfaz uma cor medida no DOM em 29/09/2026."""
+    from design.theme_light import LIGHT_CSS
+
+    # A barra do botão "copiar" não tem testid — só classe de hash. O alvo é
+    # estrutural, senão a regra morre na próxima versão do Streamlit.
+    assert 'div:has(> [data-testid="stElementToolbarButton"])' in LIGHT_CSS, (
+        "o quadrado escuro no canto do bloco de código voltou")
+    # react-json-view pinta os separadores e os valores em `div`, não em `span`:
+    # o `:` rendia 1,06:1 sobre o claro.
+    assert '[data-testid="stJson"] :is(span, div)' in LIGHT_CSS, (
+        "st.json voltou a alcançar só os `span`")

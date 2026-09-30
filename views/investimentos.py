@@ -2455,6 +2455,9 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     initials   = pos["ticker"][:5]
     nome_curto = pos["nome"][:22] if len(pos["nome"]) > 22 else pos["nome"]
     # Avatar: iniciais como fundo; imagem CSS transparente quando o CDN falha.
+    # A cor da classe passa por `_cor_texto` porque aqui ela e' PREENCHIMENTO e as
+    # iniciais vao em branco por cima: o literal do tema escuro (#4A9EFF) rende
+    # 2,2:1 com branco, o token do claro (#175eac) rende 6,5:1.
     img_tag = (
         f'<span role="img" aria-label="{_html.escape(pos["ticker"], quote=True)}" '
         f'style="position:absolute;inset:0;border-radius:8px;'
@@ -2463,7 +2466,7 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     ) if logo_url else ""
     avatar_html = (
         f'<div style="width:40px;height:40px;border-radius:8px;position:relative;'
-        f'flex-shrink:0;background:{cor};display:flex;align-items:center;'
+        f'flex-shrink:0;background:{_cor_texto(cor)};display:flex;align-items:center;'
         f'justify-content:center;font-size:0.60rem;font-weight:800;color:#fff;">'
         f'{initials}{img_tag}'
         f'</div>'

@@ -560,22 +560,17 @@ def card_alerta_resumo(
         f'<div style="font-size:0.72rem;color:var(--app-subtle);margin-top:4px">📁 {modulo}</div>'
         if modulo else ""
     )
+    # Marcação numa linha só, sem recuo: com `modulo` vazio a linha de
+    # `{modulo_html}` virava linha em branco, o Markdown fechava ali o bloco de
+    # HTML e o `</div>` seguinte, recuado, saía na tela como bloco de código.
     st.markdown(
-        f"""<div style="
-            background:{fundo};
-            border-left:3px solid {borda};
-            border-radius:0 8px 8px 0;
-            padding:10px 14px;
-            margin-bottom:8px;
-        ">
-            <div style="font-size:0.92rem;font-weight:600;color:var(--app-text)">
-                {icone} {titulo}
-            </div>
-            <div style="font-size:0.80rem;color:var(--app-muted);margin-top:3px">
-                {descricao}
-            </div>
-            {modulo_html}
-        </div>""",
+        f'<div style="background:{fundo};border-left:3px solid {borda};'
+        f'border-radius:0 8px 8px 0;padding:10px 14px;margin-bottom:8px;">'
+        f'<div style="font-size:0.92rem;font-weight:600;color:var(--app-text)">'
+        f'{icone} {titulo}</div>'
+        f'<div style="font-size:0.80rem;color:var(--app-muted);margin-top:3px">'
+        f'{descricao}</div>'
+        f'{modulo_html}</div>',
         unsafe_allow_html=True,
     )
 
@@ -607,40 +602,22 @@ def card_proximo_passo(
         if modulo else ""
     )
     st.markdown(
-        f"""<div style="
-            display:flex;
-            gap:14px;
-            align-items:flex-start;
-            padding:10px 14px;
-            background:var(--app-surface);
-            border:1px solid var(--app-border);
-            border-radius:10px;
-            margin-bottom:8px;
-        ">
-            <div style="
-                min-width:32px;height:32px;
-                background:{cor};
-                color:#0E1117;
-                border-radius:50%;
-                display:flex;align-items:center;justify-content:center;
-                font-weight:800;font-size:0.9rem;
-                flex-shrink:0;margin-top:2px;
-            ">{numero}</div>
-            <div>
-                <div style="font-size:0.92rem;font-weight:600;color:var(--app-text)">
-                    {titulo}
-                    <span style="
-                        font-size:0.68rem;font-weight:600;
-                        color:{cor};margin-left:8px;
-                        vertical-align:middle;
-                    ">{label_urgencia}</span>
-                </div>
-                <div style="font-size:0.80rem;color:var(--app-muted);margin-top:3px">
-                    {descricao}
-                </div>
-                {modulo_html}
-            </div>
-        </div>""",
+        # Uma linha só, sem recuo: ver a nota em `card_alerta_resumo`.
+        f'<div style="display:flex;gap:14px;align-items:flex-start;'
+        f'padding:10px 14px;background:var(--app-surface);'
+        f'border:1px solid var(--app-border);border-radius:10px;'
+        f'margin-bottom:8px;">'
+        f'<div style="min-width:32px;height:32px;background:{cor};'
+        f'color:var(--app-on-accent);border-radius:50%;display:flex;'
+        f'align-items:center;justify-content:center;font-weight:800;'
+        f'font-size:0.9rem;flex-shrink:0;margin-top:2px;">{numero}</div>'
+        f'<div><div style="font-size:0.92rem;font-weight:600;'
+        f'color:var(--app-text)">{titulo}'
+        f'<span style="font-size:0.68rem;font-weight:600;color:{cor};'
+        f'margin-left:8px;vertical-align:middle;">{label_urgencia}</span></div>'
+        f'<div style="font-size:0.80rem;color:var(--app-muted);margin-top:3px">'
+        f'{descricao}</div>'
+        f'{modulo_html}</div></div>',
         unsafe_allow_html=True,
     )
 

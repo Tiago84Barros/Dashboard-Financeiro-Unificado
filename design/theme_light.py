@@ -16,6 +16,7 @@ LIGHT_CSS = """
  --app-text:#172033; --app-muted:#46566e; --app-subtle:#52627a;
  --app-primary:#007e60; --app-info:#175eac; --app-danger:#b42342;
  --app-warning:#875e00; --app-accent:#6d28d9; --app-alert:#b4530a;
+ --app-on-accent:#ffffff;
  --app-shadow:0 8px 24px rgba(30,45,70,.08);
  color-scheme:light;
 }
@@ -277,12 +278,16 @@ button:disabled {opacity:.55;}
 }
 /* st.json desenha com estilo inline (react-json-view): fundo rgb(14,17,23) e
    chaves rgb(249,248,245). Só `!important` alcança. As chaves e a pontuação
-   são `span`; os valores são `div` e ficam com a cor do próprio tipo. */
+   são `span`; os valores e os separadores são `div`, e deixá-los com a cor do
+   próprio tipo (a decisão anterior) não sobreviveu à medida: sobre o claro o
+   `:` rende 1,06:1, o booleano 2,5:1 e o número 3,4:1 (medido em 29/09/2026).
+   O tipo continua legível pela classe que a biblioteca dá à chave e à cadeia. */
 [data-testid="stJson"] .react-json-view {
  background:var(--app-surface-raised)!important;
  border:1px solid var(--app-border)!important; border-radius:10px;
 }
-[data-testid="stJson"] span {color:var(--app-text)!important;}
+[data-testid="stJson"] :is(span, div) {color:var(--app-text)!important;}
+[data-testid="stJson"] .string-value {color:var(--app-primary)!important;}
 [data-testid="stJson"] :is(.object-key, .object-key span) {
  color:var(--app-info)!important;
 }
@@ -323,6 +328,14 @@ button:disabled {opacity:.55;}
    rótulo fecha o tom e o "x" acompanha. */
 [data-testid="stMultiSelect"] [data-baseweb="tag"] {color:#08281f!important;}
 [data-testid="stMultiSelect"] [data-baseweb="tag"] svg {fill:#08281f!important;}
+/* Terceira varredura (29/09/2026). A barra que carrega o botão "copiar" do
+   bloco de código não tem testid próprio -- só uma classe de hash, que muda a
+   cada versão do Streamlit. Por isso o alvo é estrutural: o pai do botão. Ela
+   vinha com o #131720 do cromo escuro e virava um quadrado escuro no canto de
+   todo bloco de código, inclusive dentro das respostas da LLM. */
+[data-testid="stCode"] div:has(> [data-testid="stElementToolbarButton"]) {
+ background:var(--app-surface-raised)!important; border-radius:8px;
+}
 </style>
 """
 
