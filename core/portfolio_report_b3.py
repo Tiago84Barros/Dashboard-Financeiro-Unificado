@@ -300,6 +300,10 @@ REGRAS ANALÍTICAS OBRIGATÓRIAS:
    preço aos resultados anuais: use-o como série observada para liquidez, tendência de preço e
    resposta a resultados, citando o período. Fonte que o bloco declara indisponível é lacuna, não
    dado zero nem risco.
+   Os números desse bloco vão em relatorio.comportamento_de_mercado: liquidez (volume financeiro
+   mediano e data do pregão), retornos, volatilidade anualizada e a reação a cada resultado anual
+   (1d, 20d, pior queda, recuperação), exatamente como escritos lá; depois, o que isso diz da
+   empresa. Não troque por estimativa de cabeça.
 9. A conclusão deve responder: cara/justa/barata; desconto justificável; pessimismo/otimismo implícito;
    risco-retorno; principal positivo; principal risco. Termine com resumo executivo de até cinco linhas.
 10. Score qualitativo: notas 0–10, justificativa causal e evidência/lacuna para cada dimensão. Pesos:
@@ -319,6 +323,7 @@ descritos são obrigatórios):
     "qualidade_resultados": "lucro, FCO, FCF, conversão, recorrência e extraordinários",
     "governanca_controlador": "governança e alocação de capital com evidência disponível",
     "eventos_relevantes": "fatos documentados e seu efeito potencial",
+    "comportamento_de_mercado": "números do DETALHE DO ARMAZÉM (liquidez, retornos, volatilidade, reação a resultados, com datas) e o que dizem da empresa; bloco não montado dito como lacuna",
     "qualidade_dados": "lacunas que limitam a leitura"
   }},
   "riscos": [{{"risco": "", "mecanismo": "", "indicador_monitorado": ""}}],

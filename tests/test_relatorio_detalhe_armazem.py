@@ -179,3 +179,68 @@ def test_telas_mostram_o_campo():
         fonte = inspect.getsource(tela)
         assert '"comportamento_de_mercado"' in fonte
         assert "Liquidez, retorno e volatilidade (armazém)" in fonte
+
+
+# Nota individual: mesma lição, medida em 30/09/2026 com LLM real. TAEE11 foi de
+# 0/30 números do bloco citados (4 rodadas) para 9–25/30; KO, de 2–7/44 para
+# 14–39/44 — quase tudo em relatorio.comportamento_de_mercado.
+
+def _nota_b3(monkeypatch, resposta: dict | None = None) -> tuple[dict, str]:
+    dossie = {"identificacao": {"nome": "Teste", "setor": "S", "subsetor": "S",
+                                "segmento": "G"}, "series_anuais": []}
+    monkeypatch.setattr(rb3, "build_dossie", lambda tk: dossie)
+    monkeypatch.setattr(rb3, "build_peer_context", lambda *a, **k: "PARES")
+    cap: dict[str, str] = {}
+
+    def falso(prompt, model=None):
+        cap["prompt"] = prompt
+        return json.dumps(resposta or {}, ensure_ascii=False)
+
+    monkeypatch.setattr(rb3, "_call_llm", falso)
+    rel, _ = rb3.generate_company_portfolio_report("TEST3", df_fin=pd.DataFrame(),
+                                                   detalhe_armazem=_MARCA)
+    return rel, cap["prompt"]
+
+
+def _nota_eua(monkeypatch, resposta: dict | None = None) -> tuple[dict, str]:
+    monkeypatch.setattr(rus, "build_dossie", lambda tk: {"name": "T", "industry": "I"})
+    monkeypatch.setattr(rus, "dossie_to_text", lambda d: "DOSSIE")
+    monkeypatch.setattr(rus, "build_peer_context", lambda *a, **k: "PARES")
+    cap: dict[str, str] = {}
+
+    def falso(prompt, model=None):
+        cap["prompt"] = prompt
+        return json.dumps(resposta or {}, ensure_ascii=False)
+
+    monkeypatch.setattr(rus, "_call_llm", falso)
+    rel, _ = rus.generate_company_us_report("TST", df_fin=pd.DataFrame(),
+                                            detalhe_armazem=_MARCA)
+    return rel, cap["prompt"]
+
+
+@pytest.mark.parametrize("nota", [_nota_b3, _nota_eua])
+def test_nota_pede_campo_proprio_para_os_numeros(monkeypatch, nota):
+    _, prompt = nota(monkeypatch)
+    corrido = " ".join(prompt.split())
+    assert "Os números desse bloco vão em relatorio.comportamento_de_mercado" in corrido
+    assert "Não troque por estimativa de cabeça." in corrido
+    assert '"comportamento_de_mercado": "números do DETALHE DO ARMAZÉM' in corrido
+
+
+@pytest.mark.parametrize("nota", [_nota_b3, _nota_eua])
+def test_campo_da_nota_chega_ao_relatorio_como_texto(monkeypatch, nota):
+    texto = "Pregão 28/09/2026: R$ 58,5 mi/dia; volatilidade 22,9%."
+    rel, _ = nota(monkeypatch, {"relatorio": {"comportamento_de_mercado": texto}})
+    assert rel["relatorio"]["comportamento_de_mercado"] == texto
+    rel, _ = nota(monkeypatch, {"relatorio": {"comportamento_de_mercado":
+                                              {"liquidez": "R$ 1 mi/dia", "retornos": ["1m +2%"]}}})
+    assert rel["relatorio"]["comportamento_de_mercado"] == "liquidez: R$ 1 mi/dia retornos: 1m +2%"
+
+
+def test_telas_mostram_o_campo_da_nota():
+    from views import analise_portfolio_b3, analise_portfolio_us
+
+    assert ('("comportamento_de_mercado", "Liquidez, retorno e reação a resultados (armazém)")'
+            in inspect.getsource(analise_portfolio_b3))
+    assert ('("comportamento_de_mercado", "Preço, trimestres e proventos (armazém)")'
+            in inspect.getsource(analise_portfolio_us))

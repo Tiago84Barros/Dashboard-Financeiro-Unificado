@@ -470,6 +470,10 @@ REGRAS ANALÍTICAS OBRIGATÓRIAS:
    empresa: use-o como série observada para tendência de preço, resultado trimestral e
    proventos, citando o período. Fonte que o bloco declara indisponível é lacuna, não dado zero
    nem risco.
+   Os números desse bloco vão em relatorio.comportamento_de_mercado: preço, retornos, queda
+   máxima, volatilidade e giro com a data do pregão; trimestres e exercícios (receita, lucro,
+   margem, FCF, variação a/a); proventos em 12m, exatamente como escritos lá; depois, o que isso
+   diz da empresa. Não troque por estimativa de cabeça.
 9. Sensibilidade macro deve usar os fatores americanos do contexto — Fed funds, CPI, PIB real,
    desemprego, curva de juros, spread de crédito e dólar. Não use Selic, IPCA nem Ibovespa.
    Respeite a PROCEDÊNCIA declarada no bloco macro: se ele estiver marcado como premissa,
@@ -498,6 +502,7 @@ Responda somente JSON válido, sem markdown, com exatamente esta estrutura princ
     "qualidade_resultados": "lucro, FCO, FCL, conversão, recompras, SBC e extraordinários",
     "governanca_controlador": "governança e alocação de capital com evidência disponível",
     "eventos_relevantes": "fatos documentados no contexto e seu efeito potencial",
+    "comportamento_de_mercado": "números do DETALHE DO ARMAZÉM (preço, retornos, volatilidade, trimestres, proventos, com datas) e o que dizem da empresa; bloco não montado dito como lacuna",
     "qualidade_dados": "lacunas que limitam a leitura"
   }},
   "riscos": [{{"risco": "", "mecanismo": "", "indicador_monitorado": ""}}],
