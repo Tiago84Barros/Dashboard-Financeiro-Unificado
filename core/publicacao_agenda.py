@@ -74,11 +74,12 @@ class Alvo:
     de hoje, e é o motivo estrutural de nada disto poder ser um GitHub Action:
     as 18 tabelas de trabalho do pipeline de FIIs existem só no armazém.
 
-    ``artefatos`` são os arquivos DO REPOSITÓRIO que a publicação reescreve --
-    hoje só o fallback offline da vitrine de FIIs. Ficam declarados aqui, e não
-    descobertos por varredura de diretório, porque `data/public/` também guarda
-    25 MB de parquets do corpus RAG: uma varredura levaria o corpus junto no dia
-    em que ele fosse reconstruído. Quem os commita é `core.publicacao_git`.
+    ``artefatos`` são os caminhos DO REPOSITÓRIO que a publicação reescreve.
+    Ficam declarados aqui, e não descobertos por varredura de `data/public/`,
+    para que um alvo nunca leve junto o artefato de outro. O único diretório
+    declarado é `data/public/rag`, do corpus RAG, porque o número de partições
+    varia com o dado (letra e ano) e partição removida também precisa ir para
+    o commit. Quem os commita é `core.publicacao_git`.
     """
 
     chave: str
@@ -303,6 +304,20 @@ ALVOS: tuple[Alvo, ...] = (
         cadencia_dias=1,
         modulo="noticias",
         artefatos=("data/public/informacoes_recentes.json.gz",),
+    ),
+    Alvo(
+        # Corpus RAG (chunks CVM/IPE) em Parquet, que o app lê por DuckDB. Só
+        # o armazém tem os chunks, e desde o PR #393 a coleta e a extração de
+        # texto rodam todo dia -- sem este alvo o Parquet parou em 08/09. É
+        # semanal, e não diário, porque cada republicação vira histórico no
+        # git; o publicador não reescreve nada se a origem não mudou, e a
+        # partição por ano limita o que muda ao ano que recebeu documento.
+        chave="rag_corpus",
+        titulo="Corpus RAG dos documentos CVM (Parquet)",
+        passos=(("scripts/publish_rag_corpus_parquet.py",),),
+        cadencia_dias=7,
+        modulo="b3",
+        artefatos=("data/public/rag",),
     ),
     Alvo(
         # O cache bruto da brapi é o que mais cresce no Supabase: ~2,6 MB/dia de

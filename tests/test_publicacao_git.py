@@ -110,6 +110,34 @@ def test_artefato_identico_nao_gera_commit_vazio(repositorio):
     assert _commits_do_remoto(repositorio) == antes
 
 
+def test_diretorio_declarado_leva_particao_nova_mudada_e_removida(repositorio):
+    """O corpus RAG declara o diretório: o número de partições varia com o dado.
+
+    Partição removida que não entrasse no commit deixaria na `main` um arquivo
+    que o manifesto não descreve, e o DuckDB o leria junto com os demais.
+    """
+    _escrever(repositorio, "data/public/rag/chunks_A_2025.parquet", "a")
+    _escrever(repositorio, "data/public/rag/chunks_B_2025.parquet", "b")
+    publicar_artefatos(repositorio, ["data/public/rag"], MENSAGEM)
+
+    (repositorio / "data/public/rag/chunks_A_2025.parquet").unlink()
+    _escrever(repositorio, "data/public/rag/chunks_B_2025.parquet", "b2")
+    _escrever(repositorio, "data/public/rag/chunks_C_2026.parquet", "c")
+    _escrever(repositorio, "data/public/outro.json", "não declarado")
+
+    resultado = publicar_artefatos(repositorio, ["data/public/rag"], MENSAGEM + " 2")
+
+    assert resultado.ok and resultado.empurrou
+    assert set(resultado.arquivos) == {"data/public/rag/chunks_A_2025.parquet",
+                                       "data/public/rag/chunks_B_2025.parquet",
+                                       "data/public/rag/chunks_C_2026.parquet"}
+    _git(repositorio, "fetch", "origin")
+    no_remoto = _git(repositorio, "ls-tree", "-r", "--name-only", "origin/main").split()
+    assert "data/public/rag/chunks_A_2025.parquet" not in no_remoto
+    assert "data/public/rag/chunks_C_2026.parquet" in no_remoto
+    assert "data/public/outro.json" not in no_remoto
+
+
 def test_fora_da_main_recusa_e_avisa(repositorio):
     """A Streamlit Cloud publica da `main`.
 

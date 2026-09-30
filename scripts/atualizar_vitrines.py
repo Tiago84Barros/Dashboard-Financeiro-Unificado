@@ -239,6 +239,7 @@ CARIMBO = {
     "macro_insumos": ("arquivo", "data/public/macro_insumos.json.gz"),
     "valuation_historico": ("arquivo", "data/public/valuation_historico.json.gz"),
     "informacoes_recentes": ("arquivo", "data/public/informacoes_recentes.json.gz"),
+    "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),
 }
 
 
@@ -251,9 +252,12 @@ def _carimbo_do_arquivo(relativo: str):
     try:
         dados = json.loads(gzip.decompress(bruto).decode("utf-8"))
     except (OSError, ValueError):
-        dados = None
-    # Arquivo com ``gerado_em`` ISO no topo (valuation); senão, o formato
-    # próprio dos insumos macro.
+        try:
+            dados = json.loads(bruto.decode("utf-8"))  # manifesto do corpus RAG
+        except (UnicodeDecodeError, ValueError):
+            dados = None
+    # Arquivo com ``gerado_em`` ISO no topo (valuation, corpus RAG); senão, o
+    # formato próprio dos insumos macro.
     if isinstance(dados, dict) and isinstance(dados.get("gerado_em"), str):
         return datetime.fromisoformat(dados["gerado_em"])
     from core.macro_data.insumos_publicados import desserializar
