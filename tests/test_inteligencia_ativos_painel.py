@@ -163,15 +163,15 @@ def test_aba_mostra_resumo_cartoes_e_abre_a_analise(_historico_em_memoria):
     assert not app.exception
     htmls = [md.value for md in app.markdown]
     assert any("Patrimônio total" in h for h in htmls)
-    cartoes = [h for h in htmls if "Ação a considerar" in h
-               and "Principal risco" in h]
+    cartoes = [h for h in htmls if "Manter, comprar ou vender" in h
+               and "Porcentagem devida" in h]
     assert len(cartoes) == 2
     # a primeira visita grava a foto de cada ativo e a da carteira
     guardado = hist.ler(_historico_em_memoria["extra"])
     assert set(guardado) == {"HGLG11", "TAEE11", hist.CARTEIRA}
     assert guardado["HGLG11"][0].motivo == hist.PRIMEIRA
 
-    app.button(key="ia_abrir_TAEE11").click().run(timeout=30)
+    app.button(key="ia_resumo_TAEE11").click().run(timeout=30)
     assert not app.exception
     assert app.selectbox(key="ia_ativo").value == "TAEE11"
     assert '"ticker": "TAEE11"' in app.json[0].proto.body
@@ -196,5 +196,7 @@ def test_falha_do_historico_nao_derruba_a_aba(monkeypatch):
         raise RuntimeError("banco fora")
     monkeypatch.setattr(hrepo, "registrar", quebra)
     app = _rodar(_liberada(), CARTEIRA_COMPLETA)
+    assert not app.exception
+    app.toggle(key="ia_detalhe").set_value(True).run(timeout=30)
     assert not app.exception
     assert any("Histórico da análise" in md.value for md in app.markdown)

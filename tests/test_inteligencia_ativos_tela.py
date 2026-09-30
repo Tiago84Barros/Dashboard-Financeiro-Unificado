@@ -138,11 +138,24 @@ def test_linguagem_de_onboarding_nao_de_erro():
 def test_liberada_mostra_premissa_resumo_e_os_13_cartoes():
     app = _rodar(_liberada(), CARTEIRA_COMPLETA)
     assert not app.exception
-    assert "já está disponível" in app.success[0].value
-    assert "versão 3" in app.success[0].value
+    assert "já está disponível" in app.caption[0].value
+    assert "versão 3" in app.caption[0].value
     htmls = [md.value for md in app.markdown]
+    # página resumida: um grupo por classe e uma caixa por ativo
+    assert any("Ações" in h and "📈" in h for h in htmls)
+    assert any("Fundos imobiliários" in h for h in htmls)
+    rotulos = [e.label for e in app.expander]
+    assert rotulos[:2] == ["TAEE11 · 40,0% · Manter",
+                           "HGLG11 · 60,0% · Vender"]
+    assert "📊 Visão geral da carteira" in rotulos
     assert any("Premissa de toda análise" in h for h in htmls)
     assert app.dataframe[0].value["Ativo"].tolist() == ["HGLG11", "TAEE11"]
+    # a análise detalhada só abre no botão
+    assert not any("01 · Ativo" in h for h in htmls)
+    assert "ia_ativo" not in [s.key for s in app.selectbox]
+    app.toggle(key="ia_detalhe").set_value(True).run(timeout=30)
+    assert not app.exception
+    htmls = [md.value for md in app.markdown]
     assert app.selectbox(key="ia_ativo").value == "HGLG11"
     # no fim da página: a estratégia vigente e, depois dela, o cenário
     titulos = [h for h in htmls if h in ("#### Minha estratégia",

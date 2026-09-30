@@ -1,21 +1,57 @@
 # Inteligência dos Ativos — painel
 
-Investimentos → Inteligência dos Ativos, com a estratégia concluída. A aba
-virou um painel. De cima para baixo, ela mostra:
+Investimentos → Inteligência dos Ativos, com a estratégia concluída. Desde
+30/09/2026 a aba abre numa **página resumida**, desenhada pelo usuário porque
+o painel anterior mostrava tudo de uma vez e confundia. De cima para baixo:
 
-1. **Resumo da carteira**, um cartão só.
-2. **Ativos**, com um cartão por posição. O botão *Abrir análise completa*
-   seleciona o ativo.
-3. **Estratégia, cálculos e tabela da carteira**, recolhido num expander. Traz
-   a premissa, os cálculos objetivos e a tabela de adequação.
-4. **Análise completa** do ativo escolhido: as questões e o fluxo das 13 seções.
-5. **Portfolio Fit**, primeiro pelas regras e depois pela LLM, sob demanda.
-6. **Histórico e auditoria** do ativo escolhido.
-7. **Minha estratégia**, recolhida num expander ao fim da página. Mostra a
+1. **Página resumida**, um grupo por classe (seção abaixo).
+2. **📊 Visão geral da carteira**, recolhida num expander. Traz o resumo da
+   carteira, a premissa, os cálculos objetivos e a tabela de adequação.
+3. **🔎 Análise detalhada**, atrás de um toggle (desligado ao abrir). Mostra as
+   questões e o fluxo das 13 seções do ativo escolhido, o **Portfolio Fit**
+   (regras e LLM sob demanda) e o **Histórico e auditoria**. É um toggle, e
+   não um expander, porque o Portfolio Fit tem expander próprio e o Streamlit
+   não aninha expanders.
+4. **Minha estratégia**, recolhida num expander ao fim da página. Mostra a
    estratégia vigente e permite editá-la. A edição abre uma nova versão, e a
    atual continua valendo até a nova ser concluída.
-8. **Meu cenário**, também num expander, depois da estratégia. É o Cenário de
+5. **Meu cenário**, também num expander, depois da estratégia. É o Cenário de
    Investimentos, premissa opcional: não bloqueia a análise.
+
+## Página resumida
+
+Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
+`analisar_carteira` já montou); tela em `views/inteligencia_ativos_resumida.py`.
+
+- **🛟 Reserva de emergência**: o Tesouro Selic (nome com SELIC ou LFT) ou o
+  ativo com papel de reserva. Valor e % de cada título. A reserva conta no
+  alvo da renda fixa; se a estratégia informa os meses de reserva, eles
+  aparecem no cabeçalho.
+- **🏦 Renda fixa**: as demais, em lista com valor e %. O cabeçalho mostra o
+  alvo da renda fixa, com a reserva incluída.
+- **📈 Ações, 🏢 FIIs e 🌎 Internacional**: um expander por ativo, com o rótulo
+  `TICKER · peso · Manter|Comprar|Vender`. Dentro, na ordem do rascunho:
+  - **Porcentagem atual** e **porcentagem devida**. A devida só é um número
+    quando o usuário definiu faixa para o ativo; senão aparece o limite por
+    ativo ("até 10%") ou "sem alvo". Nenhum alvo individual é inventado.
+  - **Manter, comprar ou vender**: tradução da ação de adequação. Comprar vem
+    de *aporte compatível*. Vender vem de *reavaliar tese*, *reduzir
+    concentração* (vender parte) ou *comparar alternativas*. Manter cobre o
+    resto. O estado original e a primeira justificativa aparecem ao lado,
+    com o aviso de que não é ordem.
+  - **Se vender, qual substituir?**: até dois pares do mesmo grupo fora da
+    carteira, os mais próximos em perfil. Não são ordenados como melhores.
+  - **Comparação com o mesmo segmento**: o ativo e os dois pares mais
+    próximos numa tabela, só com as métricas que têm dado.
+  - **Papel na carteira**, notícias (3 mais recentes), relatórios oficiais
+    (3 mais recentes) e **como o macro influencia**: as variáveis que mais
+    pesam na classe, o que o cenário do usuário diz delas, os sinais de
+    divergência e, se já gerada nesta sessão, a leitura de impacto do
+    Portfolio Fit.
+  - O botão **Ver análise completa** liga a análise detalhada já no ativo.
+
+Os cartões antigos da grade "Ativos" (`tela_painel.render_cards`) saíram da
+tela; a função continua no módulo.
 
 ## Estratégia e cenário na própria aba
 
@@ -182,8 +218,12 @@ aprovada. O formato JSON já usa os nomes em inglês dessas colunas.
 
 - `tests/test_inteligencia_ativos_painel.py` cobre o resumo, os cartões, a
   ordem dos riscos, o HTML só com tokens e o AppTest completo da aba: abrir a
-  análise pelo cartão, a gravação automática, o botão de salvar e a falha do
-  banco.
+  análise pela caixa do ativo, a gravação automática, o botão de salvar e a
+  falha do banco.
+- `tests/test_inteligencia_ativos_resumida.py` cobre a página resumida: os
+  grupos, manter/comprar/vender, a porcentagem devida sem alvo inventado, os
+  substitutos fora da carteira, a tabela de pares, notícias, macro e o HTML
+  só com tokens.
 - `tests/test_inteligencia_ativos_historico.py` cobre a regra de quando salvar,
   o limite, a comparação, a auditoria, o modelo que respondeu e o repositório
   com engine falso.
