@@ -779,6 +779,9 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
     from datetime import datetime, timezone
 
     from core.contexto_mercado import conjuntura_da_carteira, conjuntura_da_empresa
+    from core.llm_context_us import (
+        get_warehouse_detail_context as get_us_warehouse_detail,
+    )
 
     # Um corte para o relatório inteiro: todas as empresas e o consolidado
     # leem o noticiário do mesmo instante, e o túnel serve cada ativo uma vez.
@@ -824,6 +827,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 status=status,
                 conjuntura=conjuntura_da_empresa("us", tk, it.get("setor"),
                                                  as_of=corte_conjuntura),
+                detalhe_armazem=get_us_warehouse_detail([tk]),
             )
         except Exception as exc:  # noqa: BLE001 - fronteira de isolamento por empresa
             st.warning(f"{tk}: erro LLM — {exc}")
