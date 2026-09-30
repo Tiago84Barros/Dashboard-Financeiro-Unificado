@@ -287,6 +287,42 @@ button:disabled {opacity:.55;}
  color:var(--app-info)!important;
 }
 [data-testid="stJson"] svg {color:var(--app-muted)!important;}
+/* Segunda varredura de luminância (29/09/2026), nas famílias de widget que a
+   primeira não tinha na tela. Cada regra abaixo desfaz uma cor medida no DOM,
+   não uma suspeita. */
+/* Segmentos e pílulas: o botão não escolhido vinha com o preto do cromo escuro
+   no fundo e o texto já reescrito para --app-text -- escuro no escuro, rótulo
+   invisível. */
+[data-testid="stBaseButton-segmented_control"],
+[data-testid="stBaseButton-pills"] {
+ background:var(--app-surface)!important; color:var(--app-muted)!important;
+ border-color:var(--app-border)!important;
+}
+/* O escolhido tem testid próprio (`...Active`), não `aria-checked`: vem com o
+   verde da marca em texto sobre 10% do mesmo verde, 1,9:1 no branco. */
+[data-testid="stBaseButton-segmented_controlActive"],
+[data-testid="stBaseButton-pillsActive"] {
+ color:var(--app-primary)!important; border-color:var(--app-primary)!important;
+}
+/* Barra de ferramentas que flutua sobre tabela e gráfico (baixar, buscar, tela
+   cheia): retângulo #131720 por cima da superfície clara. */
+[data-testid="stElementToolbar"],
+[data-testid="stElementToolbarButtonContainer"] {
+ background:var(--app-surface)!important;
+}
+[data-testid="stElementToolbarButton"] :is(svg, span) {
+ color:var(--app-muted)!important; fill:var(--app-muted)!important;
+}
+/* Seta de recolher a barra lateral: rgba(250,250,250,.6) sobre cabeçalho claro,
+   ou seja, sumia. Mesmo caso dos ícones do cabeçalho já tratados. */
+[data-testid="stBaseButton-headerNoPadding"] [data-testid="stIconMaterial"],
+[data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"] {
+ color:var(--app-muted)!important;
+}
+/* Etiqueta do multiselect: verde da marca com texto branco dá 1,9:1. No claro o
+   rótulo fecha o tom e o "x" acompanha. */
+[data-testid="stMultiSelect"] [data-baseweb="tag"] {color:#08281f!important;}
+[data-testid="stMultiSelect"] [data-baseweb="tag"] svg {fill:#08281f!important;}
 </style>
 """
 

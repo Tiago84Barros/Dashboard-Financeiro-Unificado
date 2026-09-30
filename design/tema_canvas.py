@@ -295,6 +295,17 @@ def clarear_figura(fig):
     layout.setdefault("paper_bgcolor", "rgba(0,0,0,0)")
     layout.setdefault("plot_bgcolor", "rgba(0,0,0,0)")
     layout.setdefault("font", {}).setdefault("color", _TEXTO_PADRAO)
+    # A modebar (zoom, câmera, casinha) não sai do template: o Plotly desenha o
+    # grupo com rgba(0,0,0,.5) e os ícones com rgba(255,255,255,.3) — medido no
+    # DOM em 29/09/2026 — o que sobre o gráfico claro vira borrão escuro de
+    # ícones invisíveis. As cores são atributo da figura, não CSS.
+    # Cinza médio, e não o do eixo: o ícone é traço fino de 16 px sobre branco.
+    escolhida = (bruto.get("layout") or {}).get("modebar") or {}
+    modebar = layout.setdefault("modebar", {})
+    for chave, cor in (("bgcolor", "rgba(0,0,0,0)"), ("color", "#8494a8"),
+                       ("activecolor", _TEXTO_PADRAO)):
+        if not escolhida.get(chave):  # o que a tela definiu ganha do padrão
+            modebar.setdefault(chave, cor)
     try:
         fig.update_layout(**layout)
     except Exception:

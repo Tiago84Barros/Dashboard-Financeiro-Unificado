@@ -376,3 +376,58 @@ def test_mapa_de_correlacao_nao_crava_a_escala_na_tela():
     fonte = (RAIZ / "views" / "investimentos.py").read_text(encoding="utf-8")
     assert "escala_correlacao()" in fonte, "a tela não pede a escala ao tema"
     assert "#0F172A" not in fonte.upper(), "parada escura cravada voltou à tela"
+
+
+def test_tema_claro_alcanca_a_segunda_varredura_do_dom():
+    """Famílias de widget que a primeira varredura não tinha na tela.
+
+    Medido no DOM em 29/09/2026: segmento e pílula não escolhidos vinham com
+    fundo ``#0e1117``; a barra de ferramentas que flutua sobre tabela e gráfico,
+    ``#131720``; a seta de recolher a barra lateral, ``rgba(250,250,250,.6)``
+    sobre cabeçalho claro. O escolhido do segmento tem ``data-testid`` próprio
+    terminado em ``Active`` -- não ``aria-checked`` --, e é por ele que a regra
+    precisa entrar.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    for seletor in ('[data-testid="stBaseButton-segmented_control"]',
+                    '[data-testid="stBaseButton-segmented_controlActive"]',
+                    '[data-testid="stBaseButton-pillsActive"]',
+                    '[data-testid="stElementToolbarButtonContainer"]',
+                    '[data-testid="stBaseButton-headerNoPadding"]',
+                    '[data-testid="stMultiSelect"] [data-baseweb="tag"]'):
+        assert seletor in LIGHT_CSS, f"{seletor} sem regra no tema claro"
+    assert 'stBaseButton-segmented_control"][aria-checked' not in LIGHT_CSS, (
+        "o escolhido do segmento não usa aria-checked: a regra não pegaria nada")
+
+
+def test_moldura_clara_pinta_a_modebar_do_plotly():
+    """A modebar não sai do template: é atributo da figura, não CSS.
+
+    O Plotly desenha o grupo com ``rgba(0,0,0,.5)`` e os ícones com
+    ``rgba(255,255,255,.3)`` -- borrão escuro de ícones invisíveis sobre o
+    gráfico claro.
+    """
+    import plotly.graph_objects as go
+
+    from design.tema_canvas import _luminancia, _rgba, clarear_figura
+
+    fig = go.Figure(go.Bar(x=["a"], y=[1]))
+    clarear_figura(fig)
+    modebar = fig.to_plotly_json()["layout"]["modebar"]
+    assert _rgba(modebar["bgcolor"])[3] == 0, "o grupo da modebar continua pintado"
+    for chave in ("color", "activecolor"):
+        assert _luminancia(_rgba(modebar[chave])[:3]) < 0.45, (
+            f"modebar.{chave} claro demais para ícone sobre branco")
+
+
+def test_moldura_clara_respeita_a_modebar_escolhida_pela_tela():
+    """Quem já definiu a modebar manda — o adaptador só preenche o que falta."""
+    import plotly.graph_objects as go
+
+    from design.tema_canvas import clarear_figura
+
+    fig = go.Figure(go.Bar(x=["a"], y=[1]))
+    fig.update_layout(modebar={"color": "#123456"})
+    clarear_figura(fig)
+    assert fig.to_plotly_json()["layout"]["modebar"]["color"] == "#123456"
