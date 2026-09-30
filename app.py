@@ -10,7 +10,13 @@ import logging
 
 import streamlit as st
 
-from core.app_test_mode import is_app_test_mode, module_for_route
+from core.modulos_frescos import descartar_se_o_codigo_mudou
+
+# Antes de qualquer outro import do projeto: depois de um deploy, o Cloud roda
+# este arquivo novo sobre módulos antigos em memória (ImportError em 30/09/2026).
+descartar_se_o_codigo_mudou()
+
+from core.app_test_mode import is_app_test_mode, module_for_route  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

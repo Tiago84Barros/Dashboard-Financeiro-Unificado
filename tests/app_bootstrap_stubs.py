@@ -43,6 +43,12 @@ def stubs_de_bootstrap(**overrides) -> dict[str, SimpleNamespace]:
     `mensagem_erro` que grava as chamadas). A chave usa `_` no lugar de `.`.
     """
     stubs = {
+        # O real tiraria do sys.modules os módulos que o teste acabou de
+        # dublar ou de monkeypatchar se alguém editar um .py durante a suíte.
+        # Ele tem teste próprio em tests/test_modulos_frescos.py.
+        "core.modulos_frescos": SimpleNamespace(
+            descartar_se_o_codigo_mudou=lambda *_args: [],
+        ),
         "core.auth": SimpleNamespace(
             verificar_autenticacao=lambda: None,
             encerrar_sessao=lambda: None,
