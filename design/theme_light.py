@@ -117,6 +117,25 @@ LIGHT_CSS = """
  border-color:var(--app-border)!important; caret-color:var(--app-text)!important;
 }
 input::placeholder, textarea::placeholder {color:#64748b!important;}
+/* O calendario do `st.date_input` so tinha a raiz pintada de branco: tudo que
+   o BaseWeb desenha dentro dela continuava vindo do tema escuro do config.
+   Tres vazamentos medidos no DOM (01/10/2026), nao suspeitos:
+     - celula vazia do grid: `::after` de 42x42 com o fundo do config -- os
+       quadrados pretos nos cantos do mes;
+     - cabecalho do mes/ano e a linha Su..Sa: `div` com a superficie
+       secundaria do config;
+     - numero do dia: a tinta clara do config, invisivel no branco.
+   O verde do dia escolhido tambem e um `::after` (#00C896, raio 100%), entao a
+   limpeza do fundo vai nos elementos -- pseudo-elemento nao e alcancado por
+   regra de elemento -- e so o `::after` da celula *vazia* e apagado. Vazia se
+   reconhece por nao ter filho (`:not(:has(*))`): nao depende do idioma do
+   `aria-label`, que vem em ingles. */
+[data-baseweb="calendar"] div {background-color:transparent!important;}
+[data-baseweb="calendar"] :is(div,span,button,abbr) {color:var(--app-text)!important;}
+[data-baseweb="calendar"] svg {color:var(--app-muted)!important; fill:currentColor!important;}
+[data-baseweb="calendar"] [role="gridcell"]:not(:has(*))::after {
+ background-color:transparent!important;
+}
 [data-baseweb="tab"] {color:var(--app-muted)!important;}
 [data-baseweb="tab"][aria-selected="true"] {color:#00694f!important;}
 /* ``^=`` e não ``=``: o botão de um ``st.form`` chega como

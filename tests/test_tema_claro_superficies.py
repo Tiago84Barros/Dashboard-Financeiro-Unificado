@@ -513,3 +513,47 @@ def test_tema_claro_alcanca_a_terceira_varredura_do_dom():
     # o `:` rendia 1,06:1 sobre o claro.
     assert '[data-testid="stJson"] :is(span, div)' in LIGHT_CSS, (
         "st.json voltou a alcançar só os `span`")
+
+
+def test_tema_claro_alcanca_o_calendario_do_date_input():
+    """Cada asserção desfaz uma cor medida no DOM do popover em 01/10/2026.
+
+    A raiz do calendário já era pintada de branco; o que o BaseWeb desenha
+    dentro dela não era. Mediu-se: ``::after`` de 42x42 com #0E1117 na célula
+    vazia (os quadrados pretos), #1A1F2E no cabeçalho do mês e na linha
+    Su..Sa, e #FAFAFA no número do dia -- invisível no branco.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    assert '[data-baseweb="calendar"] div {background-color:transparent' in LIGHT_CSS, (
+        "as tarjas escuras do cabeçalho e dos dias da semana voltaram")
+    assert '[data-baseweb="calendar"] :is(div,span,button,abbr) {color:' in LIGHT_CSS, (
+        "o número do dia voltou a herdar a tinta clara do tema escuro")
+    assert '[data-baseweb="calendar"] [role="gridcell"]:not(:has(*))::after' in LIGHT_CSS, (
+        "os quadrados pretos das células vazias voltaram")
+
+
+def test_limpeza_do_calendario_poupa_o_dia_escolhido():
+    """O verde do dia escolhido é um ``::after`` -- e a célula dele tem filho.
+
+    Apagar o fundo de todo ``::after`` do grid levaria a marca junto. Por isso
+    a regra do fundo vai nos elementos (pseudo-elemento não é alcançado por
+    regra de elemento) e a do ``::after`` só pega a célula sem filho. O
+    recorte é estrutural de propósito: ``aria-label`` chega em inglês
+    ("Selected. Monday...") mesmo com o app em português.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    # Sem os comentários: o texto que explica a regra também fala em `::after`
+    # e seria lido como seletor por quem fatia o CSS nas chaves.
+    css = re.sub(r"/\*.*?\*/", "", LIGHT_CSS, flags=re.S)
+    for regra in css.split("}"):
+        if "{" not in regra:
+            continue
+        seletor, _corpo = regra.split("{", 1)
+        if '[data-baseweb="calendar"]' not in seletor or "::after" not in seletor:
+            continue
+        assert ":not(:has(*))" in seletor, (
+            f"regra de ::after do calendário sem recorte da célula vazia: {seletor.strip()}")
+        assert "aria-label" not in seletor, (
+            "recorte por aria-label depende do idioma do BaseWeb")
