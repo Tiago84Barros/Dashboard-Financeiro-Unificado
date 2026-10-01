@@ -9,7 +9,7 @@ Relevante / Resultados na avaliação da LLM.
 
 Estratégia:
   1. Mapa codigo_cvm → ticker do universo (reusa _codigo_to_ticker do job:
-     registro oficial cvm_to_ticker ∩ setores).
+     registro oficial cvm_to_ticker ∩ setores, completado por market.ticker_cvm).
   2. Baixa o(s) ano(s) do IPE (CVM Dados Abertos, .zip → CSV) e filtra pelas
      categorias relevantes (core.cvm_ipe.RELEVANT_CATEGORIES) do universo.
   3. Por empresa, seleciona até --per-ticker docs em ROUND-ROBIN entre categorias

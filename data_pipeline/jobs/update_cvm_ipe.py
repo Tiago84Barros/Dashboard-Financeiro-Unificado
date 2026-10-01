@@ -38,9 +38,9 @@ def _codigo_to_ticker(conn) -> dict[int, str]:
     `docs_corporativos.codigo_cvm`, mas essa coluna está 100% NULL — o mapa saía
     vazio e o coletor pulava TODA execução (status="skipped"), nunca ingerindo
     nada para empresas ainda sem documento (problema de bootstrap ovo-e-galinha).
-    O registro cobre ~263/266 tickers do universo, incluindo os que nunca foram
-    coletados. Complementa com qualquer codigo_cvm já presente em
-    docs_corporativos (retrocompatibilidade).
+    O registro cobre 289 dos 379 tickers do universo (30/09/2026); o mapa do
+    cadastro CVM (market.ticker_cvm) leva a 376. Complementa com qualquer
+    codigo_cvm já presente em docs_corporativos (retrocompatibilidade).
     """
     from sqlalchemy import text
     out: dict[int, str] = {}
@@ -68,6 +68,29 @@ def _codigo_to_ticker(conn) -> dict[int, str]:
             _add(cod, tk, overwrite=True)
     except Exception as exc:
         logger.warning("update_cvm_ipe: cvm_to_ticker indisponível (%s)", exc)
+
+    # 1b) Mapa do cadastro CVM (market.ticker_cvm, cad + FCA) ∩ universo.
+    # cvm_to_ticker não cobre 87 das 379 empresas do universo (SOND3, RADL3,
+    # ITSA3, SANB3...), e elas nunca recebiam documento algum — o chat dizia
+    # faltar nota explicativa que a CVM publica (lacuna 7b45c481). Não
+    # sobrescreve o registro oficial; to_regclass antes, porque uma consulta que
+    # falha aborta a transação e mataria o complemento abaixo.
+    try:
+        existe = conn.execute(text(
+            "SELECT to_regclass('market.ticker_cvm') IS NOT NULL")).scalar()
+        if existe:
+            rows = conn.execute(text('''
+                SELECT DISTINCT t.codigo_cvm AS cod, UPPER(s.ticker) AS ticker
+                FROM market.ticker_cvm t
+                JOIN public.setores s ON UPPER(s.ticker) = UPPER(t.ticker)
+            ''')).fetchall()
+            for cod, tk in rows:
+                _add(cod, tk, overwrite=False)
+        else:
+            logger.warning("update_cvm_ipe: market.ticker_cvm ausente; universo "
+                           "fica só com cvm_to_ticker")
+    except Exception as exc:
+        logger.warning("update_cvm_ipe: market.ticker_cvm indisponível (%s)", exc)
 
     # 2) Complemento: codigo_cvm já registrado em docs_corporativos (se houver).
     try:
