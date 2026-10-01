@@ -55,6 +55,55 @@ Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
        quando a classe já passou do alvo (*reavaliar aportes*): aí fica
        manter. Dentro da folga é manter.
     3. Sem % devida, vale a tradução da ação de adequação.
+    4. Sobre isso, a **avaliação multicritério** (`avaliacao.avaliar`, desde
+       01/10/2026, pedido do usuário: "fundamentos e valuation na decisão
+       ... sentimento do mercado"). Um alerta eliminatório leva a **avaliar
+       troca**, mesmo com tudo o mais bom e mesmo com o ativo já acima do
+       peso. Qualidade frágil com preço caro ou mercado negativo também leva a
+       *avaliar troca*. Qualidade frágil sozinha não deixa aportar
+       (comprar → manter) nem reforçar. Num comprar, preço caro pede aportar
+       aos poucos.
+
+  - **Avaliação do ativo** (card): três dimensões, cada critério com número e
+    referência (+ a favor, − contra, · contexto). Não é média solta.
+    - **Régua setorial** (`avaliacao.perfil`):
+      - banco/seguradora: sem dívida/EBITDA nem caixa livre; o ROE pesa;
+      - setor regulado: dívida/EBITDA tolerada até 4x (crítico acima de
+        5,5x); payout acima de 100% com caixa livre negativo é alerta, não
+        eliminação;
+      - cíclica: P/L baixo não conta como barato (pico de ciclo);
+      - FII: vacância, inadimplência, alavancagem e WAULT;
+      - geral: dívida/EBITDA bom até 1,5x, alto acima de 3x, crítico acima de
+        4,5x.
+    - **Qualidade e fundamentos**:
+      - ROE e margem contra a mediana dos pares; sem pares, régua absoluta;
+      - ROIC, crescimento de receita e de lucro;
+      - conversão do lucro em caixa (razão acima de 5x não conta: lucro
+        perto de zero);
+      - fluxo de caixa livre, dívida, cobertura de juros e payout.
+
+      A leitura é forte, adequada, frágil ou dado insuficiente (menos de 3
+      critérios). Alerta eliminatório põe frágil direto:
+      - alavancagem acima do crítico;
+      - cobertura de juros abaixo de 1x;
+      - payout acima de 100% com caixa livre negativo;
+      - patrimônio negativo;
+      - vacância acima de 30% ou inadimplência acima de 10%;
+      - recuperação judicial ou fraude no noticiário do ativo.
+    - **Valuation**: cada múltiplo contra a mediana do próprio histórico e
+      contra a dos pares. As duas réguas concordando valem 1; uma só vale
+      meia. P/L abaixo de 3x não conta como barato (lucro não recorrente).
+      Frágil e barato ao mesmo tempo gera o aviso de *armadilha de valor*.
+    - **Mercado e notícias**:
+      - tom das notícias próprias pelo léxico de `core.noticias.sentimento`;
+      - tom do segmento, como contexto;
+      - volatilidade e queda máxima contra os pares.
+
+      Notícia de recuperação judicial que fala da *saída* dela ("página
+      virada") vira alerta não eliminatório.
+    - **Limites declarados no card**: o sentimento é um léxico (termômetro),
+      e o momento de preço não entra. O bloco vai inteiro para a LLM em
+      `analise.texto_para_llm`.
 
     *Comparar alternativas* continua sem gerador em `adequacao.acao`; só tem
     rótulo.

@@ -26,6 +26,7 @@ import datetime as dt
 from core.cenario import modelo as cenario_mod
 from core.inteligencia_ativos import (
     adequacao,
+    avaliacao,
     calculos,
     fundamentos,
     informacoes,
@@ -182,6 +183,8 @@ def texto_para_llm(analise: AnaliseAtivo, ctx: ContextoInvestidor) -> str:
         linhas.append("")
         linhas.append(informacoes.texto_eventos(
             informacoes.Eventos.de_dict(analise.eventos.dados), a.ticker))
+    linhas.append("")
+    linhas.append(avaliacao.texto(avaliacao.avaliar(analise), a.ticker))
     linhas.append(f"\n[Ação a considerar (regras)] {analise.acao.rotulo}")
     linhas += [f"- {j}" for j in analise.acao.justificativas]
     return "\n".join(linhas)

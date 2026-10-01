@@ -18,6 +18,7 @@ from html import escape
 
 import streamlit as st
 
+from core.inteligencia_ativos import avaliacao as av_
 from core.inteligencia_ativos import destaques_relatorios as dr
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import pares as prs
@@ -110,9 +111,10 @@ def cartao_lista(b: rs.Bloco) -> str:
 # -- a caixa de cada ativo ------------------------------------------------------------
 
 def rotulo_expander(a: m.AnaliseAtivo,
-                    sugerido: rs.AlvoSugerido | None = None) -> str:
+                    sugerido: rs.AlvoSugerido | None = None,
+                    avaliacao: av_.Avaliacao | None = None) -> str:
     """"BBAS3 · 8,5% → 2,3% · Vender": peso atual, % devida e a decisão."""
-    d = rs.decisao(a, sugerido)
+    d = rs.decisao(a, sugerido, avaliacao)
     alvo = rs.alvo_do_ativo(a, sugerido)
     peso = _pct(a.ativo.peso_atual)
     if alvo is not None:
@@ -121,9 +123,10 @@ def rotulo_expander(a: m.AnaliseAtivo,
 
 
 def cartao_posicao(a: m.AnaliseAtivo,
-                   sugerido: rs.AlvoSugerido | None = None) -> str:
+                   sugerido: rs.AlvoSugerido | None = None,
+                   avaliacao: av_.Avaliacao | None = None) -> str:
     """% atual, % devida e manter / comprar / vender. Puro."""
-    d = rs.decisao(a, sugerido)
+    d = rs.decisao(a, sugerido, avaliacao)
     devido = rs.peso_devido(a, sugerido)
     cor = _COR_DECISAO[d.codigo]
 
@@ -146,6 +149,61 @@ def cartao_posicao(a: m.AnaliseAtivo,
         + (f'<div style="font-size:0.82rem;color:var(--app-muted);'
            f'margin-top:6px">{escape(d.motivo)}</div>' if d.motivo else "")
         + _nota(rs.AVISO_DECISAO) + "</div>")
+
+
+_COR_LEITURA = {
+    av_.FORTE: "var(--app-primary)", av_.BARATO: "var(--app-primary)",
+    av_.POSITIVO: "var(--app-primary)",
+    av_.ADEQUADA: "var(--app-text)", av_.JUSTO: "var(--app-text)",
+    av_.NEUTRO: "var(--app-text)", av_.MISTO: "var(--app-warning)",
+    av_.FRAGIL: "var(--app-danger)", av_.CARO: "var(--app-warning)",
+    av_.NEGATIVO: "var(--app-danger)",
+    av_.INSUFICIENTE: "var(--app-subtle)", av_.SEM_LEITURA: "var(--app-subtle)",
+}
+_SINAL = {1: ("+", "var(--app-primary)"), -1: ("−", "var(--app-danger)"),
+          0: ("·", "var(--app-subtle)")}
+
+
+def _bloco_dimensao(d: av_.Dimensao) -> str:
+    cor = _COR_LEITURA.get(d.leitura, "var(--app-text)")
+    itens = "".join(
+        f'<div style="display:flex;gap:6px;margin:2px 0;font-size:0.82rem;'
+        f'color:var(--app-text)"><span style="font-weight:700;width:10px;'
+        f'flex:none;color:{_SINAL[c.sinal][1]}">{_SINAL[c.sinal][0]}</span>'
+        f'<span>{escape(c.texto)}</span></div>'
+        for c in d.criterios)
+    contagem = (f"{d.favoraveis} a favor · {d.desfavoraveis} contra"
+                if d.criterios else "")
+    return (
+        f'<div style="border:1px solid var(--app-border);border-radius:8px;'
+        f'padding:8px 10px;background:var(--app-surface-raised)">'
+        f'<div style="{_SUB};margin-top:0">{escape(d.rotulo)}</div>'
+        f'<div style="font-size:1.05rem;font-weight:700;color:{cor}">'
+        f'{escape(d.rotulo_leitura)}</div>'
+        + (f'<div style="font-size:0.74rem;color:var(--app-subtle);'
+           f'margin-bottom:4px">{escape(contagem)}</div>' if contagem else "")
+        + itens
+        + (f'<div style="font-size:0.76rem;color:var(--app-muted);'
+           f'margin-top:4px">{escape(d.nota)}</div>' if d.nota else "")
+        + "</div>")
+
+
+def cartao_avaliacao(av: av_.Avaliacao) -> str:
+    """Qualidade, preço e mercado com os critérios que pesaram e os alertas.
+    Puro."""
+    alertas = "".join(
+        f'<div style="margin:3px 0;font-size:0.84rem;color:'
+        f'{"var(--app-danger)" if al.critico else "var(--app-warning)"}">'
+        f'<b>{"Alerta eliminatório" if al.critico else "Alerta"}:</b> '
+        f'{escape(al.texto)}</div>' for al in av.alertas)
+    grade = "".join(_bloco_dimensao(d) for d in av.dimensoes)
+    return (f'<div style="{_CAIXA}">{_secao("Avaliação do ativo")}'
+            f'<div style="font-size:0.8rem;color:var(--app-muted);'
+            f'margin-bottom:6px">Régua setorial: {escape(av.rotulo_perfil)}'
+            f'</div>{alertas}'
+            f'<div style="display:grid;grid-template-columns:repeat(auto-fill,'
+            f'minmax(240px,1fr));gap:8px;margin-top:4px">{grade}</div>'
+            f'{_nota(av_.AVISO)}</div>')
 
 
 def cartao_substitutos(subs: tuple[prs.Par, ...]) -> str:
@@ -466,12 +524,13 @@ def _abrir_detalhe(ticker: str) -> None:
 def _render_ativo(a: m.AnaliseAtivo, ctx: m.ContextoInvestidor,
                   na_carteira: tuple[str, ...],
                   sugerido: rs.AlvoSugerido | None = None) -> None:
-    with st.expander(rotulo_expander(a, sugerido)):
-        d = rs.decisao(a, sugerido)
-        html = cartao_posicao(a, sugerido)
+    av = av_.avaliar(a)
+    with st.expander(rotulo_expander(a, sugerido, av)):
+        d = rs.decisao(a, sugerido, av)
+        html = cartao_posicao(a, sugerido, av)
         if d.codigo == rs.VENDER:
             html += cartao_substitutos(rs.substitutos(a, na_carteira))
-        html += (cartao_pares(rs.tabela_pares(a)) + cartao_papel(a)
+        html += (cartao_avaliacao(av) + cartao_pares(rs.tabela_pares(a)) + cartao_papel(a)
                  + cartao_noticias(a, _noticiario_geral()
                                    if rs.precisa_noticiario_geral(a) else None)
                  + cartao_relatorios(a, _destaques(a.ativo.ticker))
