@@ -21,13 +21,12 @@ estimado.
 """
 from __future__ import annotations
 
-import gzip
-import json
 import logging
 from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
+from core.inteligencia_ativos import arquivo_publicado
 from core.inteligencia_ativos import informacoes as inf
 from core.inteligencia_ativos.fundamentos import (
     ACAO,
@@ -53,18 +52,6 @@ SEM_ARQUIVO = ("Dado não disponível. O arquivo de informações recentes não 
                "foi encontrado.")
 
 
-def _ler_arquivo(caminho: str) -> dict:
-    try:
-        with gzip.open(caminho, "rb") as fh:
-            return json.loads(fh.read().decode("utf-8"))
-    except FileNotFoundError:
-        logger.info("[informacoes] arquivo ausente: %s", caminho)
-    except Exception as exc:  # arquivo corrompido não derruba a seção
-        logger.warning("[informacoes] arquivo ilegível: %s",
-                       type(exc).__name__)
-    return {}
-
-
 def _cache(fn):
     try:
         import streamlit as st
@@ -73,11 +60,9 @@ def _cache(fn):
         return fn
 
 
-_arquivo_cache = _cache(_ler_arquivo)
-
-
 def arquivo() -> dict:
-    return _arquivo_cache(str(ARQUIVO))
+    # Lido uma vez e compartilhado; ver arquivo_publicado (CPU, 30/09/2026).
+    return arquivo_publicado.ler(str(ARQUIVO), "informacoes")
 
 
 def _do_ticker(por_ticker: dict, ticker: str):

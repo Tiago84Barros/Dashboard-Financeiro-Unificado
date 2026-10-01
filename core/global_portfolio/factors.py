@@ -155,6 +155,31 @@ def _n_obs_comuns(y: pd.Series, X: pd.DataFrame) -> int:
     return len(y.dropna().index.intersection(X.dropna().index))
 
 
+def _contador_de_obs_comuns(y: pd.Series, X: pd.DataFrame):
+    """``_n_obs_comuns(y, X[colunas])`` para muitos subconjuntos de colunas.
+
+    A selecao testa dezenas de subconjuntos por ativo, e cada ``dropna`` +
+    interseccao de indice custava caro: ~2,3 s de CPU por rerun do Portfolio
+    Global (medicao de 30/09/2026, throttle do Streamlit Cloud). Aqui a
+    presenca de dado vira uma matriz booleana uma vez so, alinhada as datas de
+    y, e cada contagem e um ``all`` por linha — mesmo numero, mesma regra.
+    Indice com data repetida cai na contagem original, que deduplica.
+    """
+    idx = y.dropna().index
+    if not (idx.is_unique and X.index.is_unique):
+        return lambda colunas: _n_obs_comuns(y, X[list(colunas)])
+    presente = X.notna().reindex(idx, fill_value=False)
+    posicao = {c: i for i, c in enumerate(presente.columns)}
+    matriz = presente.to_numpy(dtype=bool)
+
+    def contar(colunas) -> int:
+        if not colunas:
+            return 0
+        return int(matriz[:, [posicao[c] for c in colunas]].all(axis=1).sum())
+
+    return contar
+
+
 def _selecionar_fatores(y: pd.Series, X: pd.DataFrame) -> tuple[pd.DataFrame, tuple[str, ...]]:
     """Maior subconjunto de fatores cuja interseccao de datas com y sustenta
     o piso MIN_OBS_FATOR.
@@ -166,11 +191,12 @@ def _selecionar_fatores(y: pd.Series, X: pd.DataFrame) -> tuple[pd.DataFrame, tu
     """
     colunas = sorted(X.columns)
     excluidos: list[str] = []
+    n_obs = _contador_de_obs_comuns(y, X)
 
-    while colunas and _n_obs_comuns(y, X[colunas]) < MIN_OBS_FATOR:
+    while colunas and n_obs(colunas) < MIN_OBS_FATOR:
         def ganho_ao_remover(candidato: str) -> int:
             resto = [c for c in colunas if c != candidato]
-            return _n_obs_comuns(y, X[resto]) if resto else len(y.dropna())
+            return n_obs(resto) if resto else len(y.dropna())
 
         pior = min(colunas, key=lambda c: (-ganho_ao_remover(c), c))
         colunas.remove(pior)

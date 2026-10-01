@@ -32,6 +32,9 @@ tests/test_inteligencia_ativos_painel.py.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import json
+import time
 from html import escape
 
 import streamlit as st
@@ -757,13 +760,52 @@ def _render_liberada(liberacao: portao.Liberacao, carteira: dict,
     _render_minha_estrategia()
 
 
+_ANALISE_MEMO_KEY = "_ia_analise_carteira_memo"
+# Mesmo prazo dos leitores de fonte (st.cache_data ttl=900): passado isso, a
+# análise é refeita e pega cenário, notícias e preços novos.
+_ANALISE_MEMO_TTL = 900
+
+
+def _chave_analise(liberacao: portao.Liberacao, carteira: dict) -> tuple:
+    reg = liberacao.politica
+    assinatura = hashlib.sha1(json.dumps(
+        carteira, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+    return (getattr(reg, "id", None), getattr(reg, "version", None),
+            str(getattr(reg, "updated_at", None)), liberacao.status,
+            assinatura)
+
+
+def _analisar_carteira_memo(liberacao: portao.Liberacao,
+                            carteira: dict) -> dict:
+    """``servico.analisar_carteira`` lembrado na sessão até algo mudar.
+
+    Cada clique na tela (abrir o detalhe, trocar o ativo) refazia a análise
+    das ~30 posições, e isso custava segundos de CPU por rerun (medição de
+    30/09/2026, throttle do Streamlit Cloud). A chave é a política (id,
+    versão, gravação, status) mais a carteira inteira; o prazo renova
+    cenário e fontes. Fica em ``session_state`` e não em ``st.cache_data``
+    porque o resultado carrega objetos de domínio grandes, que o
+    ``cache_data`` copiaria por pickle a cada acerto.
+    """
+    chave = _chave_analise(liberacao, carteira)
+    agora = time.monotonic()
+    memo = st.session_state.get(_ANALISE_MEMO_KEY)
+    if memo and memo[0] == chave and memo[1] > agora:
+        return memo[2]
+    resultado = servico.analisar_carteira(carteira=carteira,
+                                          liberacao=liberacao)
+    if resultado.get("analysis_available"):
+        st.session_state[_ANALISE_MEMO_KEY] = (
+            chave, agora + _ANALISE_MEMO_TTL, resultado)
+    return resultado
+
+
 def _render_painel(liberacao: portao.Liberacao, carteira: dict,
                    proventos: dict | None) -> None:
     if not carteira.get("posicoes"):
         st.info("Nenhum ativo na carteira para analisar.")
         return
-    resultado = servico.analisar_carteira(carteira=carteira,
-                                          liberacao=liberacao)
+    resultado = _analisar_carteira_memo(liberacao, carteira)
     if not resultado.get("analysis_available"):
         st.info("Sua estratégia mudou de situação. Recarregue a página.")
         return
