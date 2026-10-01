@@ -14,6 +14,22 @@ Duas decisões que evitam modos de falha já vistos neste projeto:
 * **Negação inverte, não anula.** "não confirmou a fusão" com a fusão contando
   positivo daria um falso positivo; inverter o sinal do termo negado é o
   mínimo para o léxico não dizer o contrário do texto.
+
+Na 1.2.0 a negação ganhou escopo (1.1.0 errava "não reduz dividendos" para
+negativo, e "Banco não tem recomendação de venda" para venda):
+
+* **A negação vale para o primeiro termo que vem depois dela**, em até três
+  palavras, e é consumida ali. Termo de duas ou mais palavras também é negado.
+* **Verbo que diminui inverte o termo seguinte** ("corta dividendos" é ruim,
+  "reduz prejuízo" é bom). Sozinho ele não pontua: "reduz custos" e "corta a
+  Selic" continuam sem medida, porque corte de custo ou de juros não é
+  notícia ruim.
+* **Negação antes do verbo que diminui cancela a inversão**: "não reduz
+  dividendos" volta a ser dividendos, positivo.
+* **Pontuação e conjunção fecham o escopo** ("não cai, mas lucro sobe" não
+  nega o lucro; "reduz projeção, rebaixa Klabin" não inverte o rebaixamento).
+* **Casa o termo mais longo**: "eleva preço-alvo" conta uma vez, não também
+  como "eleva".
 """
 from __future__ import annotations
 
@@ -22,7 +38,7 @@ import re
 from core.noticias.modelos import Sentimento
 from core.noticias.normalizacao import detectar_idioma, normalizar_texto
 
-METODO = "lexico_app4_1.1.0"
+METODO = "lexico_app4_1.2.0"
 
 # Pesos em -1..+1. Termos fortes (fraude, recuperação judicial) valem mais que
 # termos de variação de preço, porque descrevem mudança de fundamento e não
@@ -111,14 +127,55 @@ LEXICO_EN: dict[str, float] = {
 NEGACOES_PT = ("nao", "sem", "nunca", "nenhum", "nenhuma", "jamais")
 NEGACOES_EN = ("no", "not", "never", "without", "fails", "failed")
 
+# Verbos que diminuem o que vem depois. Ver docstring. "menor" e "lower"
+# ficaram de fora: medidos no acervo, apareciam mais depois do substantivo ou
+# como comparativo ("20% menor que", "moves lower as ...") do que antes dele.
+DIMINUIDORES_PT = frozenset({
+    "reduz", "reduziu", "reduzem", "reduzir", "corta", "cortou", "cortam",
+    "cortar", "suspende", "suspendeu", "suspendem", "suspender", "cancela",
+    "cancelou", "cancelar", "adia", "adiou", "adiar", "elimina", "eliminou",
+    "eliminar", "interrompe", "interrompeu", "interromper",
+})
+DIMINUIDORES_EN = frozenset({
+    "cut", "cuts", "slashes", "slashed", "trims", "trimmed", "suspend",
+    "suspends", "suspended", "cancel", "cancels", "cancelled", "canceled",
+    "reduce", "reduces", "reduced", "lowers", "lowered", "halt",
+    "halts", "halted", "scraps", "scrapped", "eliminates",
+})
+FRONTEIRAS_PT = frozenset({"e", "mas", "porem", "enquanto", "contudo"})
+FRONTEIRAS_EN = frozenset({"and", "but", "while", "whereas", "however"})
+
+# Quantas palavras depois da negação (ou do verbo que diminui) o termo pode
+# estar para ser alcançado.
 _JANELA_NEGACAO = 3
+# Separador de oração no texto original (a normalização apaga a pontuação).
+# Vírgula entre dígitos é decimal e não separa.
+_ORACAO = re.compile(r"(?<!\d),|,(?!\d)|[.;:!?()\[\]|\u2014\u2013]")
 
 
-def _lexico(idioma: str | None) -> tuple[dict[str, float], tuple[str, ...]] | None:
+def _lexico(idioma: str | None):
     if idioma == "pt":
-        return LEXICO_PT, NEGACOES_PT
+        return LEXICO_PT, NEGACOES_PT, DIMINUIDORES_PT, FRONTEIRAS_PT
     if idioma == "en":
-        return LEXICO_EN, NEGACOES_EN
+        return LEXICO_EN, NEGACOES_EN, DIMINUIDORES_EN, FRONTEIRAS_EN
+    return None
+
+
+def _indexar(lexico: dict[str, float]) -> dict[str, list[tuple[tuple[str, ...], float]]]:
+    """Primeira palavra -> termos que começam por ela, o mais longo primeiro."""
+    indice: dict[str, list[tuple[tuple[str, ...], float]]] = {}
+    for termo, peso in lexico.items():
+        partes = tuple(termo.split())
+        indice.setdefault(partes[0], []).append((partes, peso))
+    for termos in indice.values():
+        termos.sort(key=lambda t: -len(t[0]))
+    return indice
+
+
+def _casar(indice, palavras: list[str], i: int) -> tuple[int, float] | None:
+    for partes, peso in indice.get(palavras[i], ()):
+        if tuple(palavras[i:i + len(partes)]) == partes:
+            return len(partes), peso
     return None
 
 
@@ -136,28 +193,54 @@ def calcular(texto: str | None, idioma: str | None = None) -> float | None:
     escolhido = _lexico(idioma)
     if escolhido is None:
         return None
-    lexico, negacoes = escolhido
+    lexico, negacoes, diminuidores, fronteiras = escolhido
+    indice = _indexar(lexico)
 
-    palavras = normalizado.split()
     pesos: list[float] = []
-
-    for termo, peso in lexico.items():
-        if " " in termo:
-            if re.search(rf"(?<![a-z0-9]){re.escape(termo)}(?![a-z0-9])",
-                         normalizado):
-                pesos.append(peso)
-            continue
-        for i, palavra in enumerate(palavras):
-            if palavra != termo:
-                continue
-            janela = palavras[max(0, i - _JANELA_NEGACAO):i]
-            negado = any(p in negacoes for p in janela)
-            pesos.append(-peso if negado else peso)
+    for oracao in _ORACAO.split(str(texto)):
+        pesos.extend(_pesos_da_oracao(normalizar_texto(oracao).split(),
+                                      indice, negacoes, diminuidores,
+                                      fronteiras))
 
     if not pesos:
         return None
     media = sum(pesos) / len(pesos)
     return max(-1.0, min(1.0, media))
+
+
+def _pesos_da_oracao(palavras, indice, negacoes, diminuidores,
+                     fronteiras) -> list[float]:
+    pesos: list[float] = []
+    # Última posição que a negação / o verbo que diminui ainda alcança.
+    negacao_ate = diminui_ate = -1
+    diminui_inverte = False
+
+    i = 0
+    while i < len(palavras):
+        casado = _casar(indice, palavras, i)
+        if casado is not None:
+            tamanho, peso = casado
+            if i <= negacao_ate:
+                peso, negacao_ate = -peso, -1
+            if i <= diminui_ate:
+                if diminui_inverte:
+                    peso = -peso
+                diminui_ate = -1
+            pesos.append(peso)
+            i += tamanho
+            continue
+        palavra = palavras[i]
+        if palavra in diminuidores:
+            # "não reduz": a negação cancela a diminuição e se consome nela.
+            diminui_inverte = i > negacao_ate
+            negacao_ate = -1
+            diminui_ate = i + _JANELA_NEGACAO
+        elif palavra in negacoes:
+            negacao_ate = i + _JANELA_NEGACAO
+        elif palavra in fronteiras:
+            negacao_ate = diminui_ate = -1
+        i += 1
+    return pesos
 
 
 def avaliar(titulo: str, resumo: str | None = None, *,

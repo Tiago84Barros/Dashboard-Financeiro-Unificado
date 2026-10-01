@@ -104,8 +104,10 @@ Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
       Frágil e barato ao mesmo tempo gera o aviso de *armadilha de valor*.
     - **Mercado e notícias**:
       - tom das notícias próprias. Vem do provedor (Alpha Vantage) quando
-        ele mede; senão, do léxico de `core.noticias.sentimento` (1.1.0,
-        com vocabulário de mercado). O critério diz quantas notícias vieram
+        ele mede; senão, do léxico de `core.noticias.sentimento` (1.2.0,
+        com vocabulário de mercado e negação com escopo: "não reduz
+        dividendos" é positivo, "corta dividendos" é negativo, "reduz
+        custos" fica sem medida). O critério diz quantas notícias vieram
         de cada método e quantas tiveram provedor e léxico em sinais
         opostos;
       - tom do segmento, como contexto;

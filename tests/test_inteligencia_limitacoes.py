@@ -32,7 +32,7 @@ from tests.test_inteligencia_avaliacao import (  # noqa: F401
 
 
 def test_lexico_reconhece_vocabulario_de_mercado():
-    assert sentimento.METODO == "lexico_app4_1.1.0"
+    assert sentimento.METODO == "lexico_app4_1.2.0"
     assert sentimento.calcular("Ação dispara após balanço", "pt") > 0
     assert sentimento.calcular("Banco eleva preço-alvo da WEG", "pt") > 0
     assert sentimento.calcular("Papel despenca e tomba na bolsa", "pt") < 0
@@ -218,3 +218,37 @@ def test_alavancagem_da_brapi_dispara_as_reguas_existentes(an):  # noqa: F811
     textos = " | ".join(x.texto for x in a.criticos)
     assert "alavancagem de 6,92x o EBITDA" in textos
     assert "não paga os juros" in textos
+
+
+# -- negação com escopo (léxico 1.2.0) ---------------------------------------------
+
+
+def test_negacao_antes_do_verbo_que_diminui_vira_positivo():
+    # 1.1.0 dava negativo: negava "dividendos" em vez de "reduz"
+    assert sentimento.calcular("Empresa não reduz dividendos", "pt") > 0
+    assert sentimento.calcular("Company does not cut dividend", "en") > 0
+
+
+def test_verbo_que_diminui_inverte_o_termo_seguinte():
+    assert sentimento.calcular("Empresa corta dividendos", "pt") < 0
+    assert sentimento.calcular("Empresa reduz prejuízo", "pt") > 0
+    assert sentimento.calcular("Company slashes its dividend", "en") < 0
+    # sozinho não pontua: corte de custo ou de juros não é notícia ruim
+    assert sentimento.calcular("Empresa reduz custos", "pt") is None
+    assert sentimento.calcular("Copom corta a Selic", "pt") is None
+
+
+def test_negacao_alcanca_termo_de_varias_palavras():
+    assert sentimento.calcular("Empresa não registra prejuízo", "pt") > 0
+    assert sentimento.calcular("Analyst says it is not a buy rating", "en") < 0
+
+
+def test_pontuacao_e_conjuncao_fecham_o_escopo():
+    assert sentimento.calcular("BBI reduz projeção, rebaixa Klabin", "pt") < 0
+    assert sentimento.calcular("Ação não cai, mas lucro sobe", "pt") > 0
+    # vírgula decimal não separa oração
+    assert sentimento.calcular("Lucro de R$ 1,2 bi", "pt") > 0
+
+
+def test_termo_mais_longo_conta_uma_vez():
+    assert sentimento.calcular("Banco eleva preço-alvo", "pt") == 0.5
