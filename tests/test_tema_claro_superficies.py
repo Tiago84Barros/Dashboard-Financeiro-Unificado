@@ -538,22 +538,64 @@ def test_limpeza_do_calendario_poupa_o_dia_escolhido():
 
     Apagar o fundo de todo ``::after`` do grid levaria a marca junto. Por isso
     a regra do fundo vai nos elementos (pseudo-elemento não é alcançado por
-    regra de elemento) e a do ``::after`` só pega a célula sem filho. O
-    recorte é estrutural de propósito: ``aria-label`` chega em inglês
-    ("Selected. Monday...") mesmo com o app em português.
+    regra de elemento) e a limpeza do ``::after`` só pega a célula sem filho.
     """
     from design.theme_light import LIGHT_CSS
 
     # Sem os comentários: o texto que explica a regra também fala em `::after`
     # e seria lido como seletor por quem fatia o CSS nas chaves.
     css = re.sub(r"/\*.*?\*/", "", LIGHT_CSS, flags=re.S)
+    limpezas = [
+        s for s, _c in _regras_de_after_do_calendario(css)
+        if "transparent" in _c
+    ]
+    assert limpezas, "sumiu a limpeza do ::after das células do calendário"
+    for seletor in limpezas:
+        assert ":not(:has(*))" in seletor, (
+            f"limpeza de ::after do calendário sem recorte da célula vazia: {seletor.strip()}")
+
+
+def _regras_de_after_do_calendario(css):
+    """Pares (seletor, corpo) das regras de ``::after`` dentro do calendário."""
     for regra in css.split("}"):
         if "{" not in regra:
             continue
-        seletor, _corpo = regra.split("{", 1)
-        if '[data-baseweb="calendar"]' not in seletor or "::after" not in seletor:
-            continue
-        assert ":not(:has(*))" in seletor, (
-            f"regra de ::after do calendário sem recorte da célula vazia: {seletor.strip()}")
-        assert "aria-label" not in seletor, (
-            "recorte por aria-label depende do idioma do BaseWeb")
+        seletor, corpo = regra.split("{", 1)
+        if '[data-baseweb="calendar"]' in seletor and "::after" in seletor:
+            yield seletor, corpo
+
+
+def test_dia_sob_o_cursor_nao_acende_um_disco_escuro():
+    """Medido em 01/10/2026: o hover acende o mesmo ``::after``, na cor do config.
+
+    Fora do hover ele vem com ``content:none`` e não desenha; no hover o
+    BaseWeb liga o ``content`` e o dia fica debaixo de um círculo preto. A
+    regra pinta esse disco de claro -- e o ``:has(*)`` deixa de fora a célula
+    vazia, que não tem dia para acender.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    assert '[data-baseweb="calendar"] [role="gridcell"]:has(*):hover::after' in LIGHT_CSS, (
+        "o disco escuro sob o cursor voltou")
+
+
+def test_dia_escolhido_continua_verde_sob_o_cursor():
+    """A regra de hover passaria por cima da marca do dia escolhido.
+
+    O único sinal que separa o escolhido dos demais é o ``aria-label``:
+    ``tabindex=0`` anda com o cursor (medido: o hover leva o 0 junto) e as
+    classes do BaseWeb são hashes. Ele entra só para *devolver* o primário,
+    nunca como única defesa -- se o rótulo um dia for traduzido, o escolhido
+    fica cinza sob o cursor, nunca preto.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    css = re.sub(r"/\*.*?\*/", "", LIGHT_CSS, flags=re.S)
+    por_rotulo = [
+        (s, c) for s, c in _regras_de_after_do_calendario(css) if "aria-label" in s
+    ]
+    assert len(por_rotulo) == 1, (
+        "aria-label do BaseWeb depende do idioma: só a devolução do primário pode usá-lo")
+    seletor, corpo = por_rotulo[0]
+    assert ":hover" in seletor and "--app-primary" in corpo, (
+        f"regra por aria-label que não é a devolução do verde no hover: {seletor.strip()}")

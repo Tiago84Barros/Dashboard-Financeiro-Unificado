@@ -136,6 +136,23 @@ input::placeholder, textarea::placeholder {color:#64748b!important;}
 [data-baseweb="calendar"] [role="gridcell"]:not(:has(*))::after {
  background-color:transparent!important;
 }
+/* O disco que acende sob o cursor e o mesmo `::after`: fora do hover ele vem com
+   `content:none` e nao desenha; no hover o BaseWeb liga o `content` e a cor --
+   a do config -- fica visivel, e o dia some debaixo de um circulo preto. Pintar
+   o hover de claro resolve isso em qualquer idioma.
+   A marca do dia escolhido tambem e esse `::after`, sempre ligada e com o
+   primario, e a regra de hover passaria por cima dela. O unico sinal que separa
+   o escolhido dos demais e o `aria-label` ("Selected. ..."): `tabindex=0` anda
+   com o cursor (roving) e as classes do BaseWeb sao hashes. Por isso ele entra
+   so para *devolver* o verde, nunca como unica defesa -- se um dia o rotulo for
+   traduzido, o escolhido fica cinza sob o cursor, nunca preto.
+   O `:has(*)` deixa de fora a celula vazia: sem filho, nao ha dia para acender. */
+[data-baseweb="calendar"] [role="gridcell"]:has(*):hover::after {
+ background-color:var(--app-surface-raised)!important;
+}
+[data-baseweb="calendar"] [role="gridcell"][aria-label^="Selected"]:hover::after {
+ background-color:var(--app-primary)!important;
+}
 [data-baseweb="tab"] {color:var(--app-muted)!important;}
 [data-baseweb="tab"][aria-selected="true"] {color:#00694f!important;}
 /* ``^=`` e não ``=``: o botão de um ``st.form`` chega como
