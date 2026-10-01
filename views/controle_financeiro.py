@@ -1634,9 +1634,14 @@ def _tab_tabelas(d: dict) -> None:
         key="tab_busca",
     )
 
-    # Aplica filtros
-    txs_f = get_transacoes_filtradas(
-        tipo=aba,
+    # Aplica os filtros de período, categoria e busca — MENOS o tipo. Os cards
+    # de Entradas, Saídas e Investimentos somavam a lista já recortada pelo
+    # rádio: com "Despesas" marcado, Entradas e Investimentos mostravam R$ 0,00
+    # "no filtro aplicado", e a leitura era "não investi nada em 2026" num ano
+    # com R$ 137 mil aportados. Cada card agora mostra o seu tipo no período;
+    # o rádio recorta só a tabela e o Total Filtrado.
+    txs_periodo = get_transacoes_filtradas(
+        tipo="Todos",
         categoria=f_cat,
         ano=f_ano,
         mes=f_mes,
@@ -1644,12 +1649,16 @@ def _tab_tabelas(d: dict) -> None:
         texto=f_busca,
         incluir_fatura_cartao=f_incluir_fatura,
     )
+    fluxo_do_tipo = {"Receitas": "income", "Despesas": "expense",
+                     "Investimentos": "investment"}.get(aba)
+    txs_f = [t for t in txs_periodo
+             if fluxo_do_tipo is None or t.get("tipo_fluxo") == fluxo_do_tipo]
 
     # ── Resumo (igual ao original) ─────────────────────────────────────────────
     total_filtrado = sum(abs(t["valor"]) for t in txs_f)
-    total_rec      = sum(abs(t["valor"]) for t in txs_f if t.get("tipo_fluxo") == "income")
-    total_desp     = sum(abs(t["valor"]) for t in txs_f if t.get("tipo_fluxo") == "expense")
-    total_inv      = sum(abs(t["valor"]) for t in txs_f if t.get("tipo_fluxo") == "investment")
+    total_rec      = sum(abs(t["valor"]) for t in txs_periodo if t.get("tipo_fluxo") == "income")
+    total_desp     = sum(abs(t["valor"]) for t in txs_periodo if t.get("tipo_fluxo") == "expense")
+    total_inv      = sum(abs(t["valor"]) for t in txs_periodo if t.get("tipo_fluxo") == "investment")
 
     col_s1, col_s2, col_s3, col_s4 = st.columns(4, gap="small")
     with col_s1:
@@ -1661,19 +1670,19 @@ def _tab_tabelas(d: dict) -> None:
     with col_s2:
         st.markdown(_kpi_card(
             "Entradas", fmt_moeda(total_rec),
-            "Receitas no filtro aplicado",
+            "Receitas no período, qualquer que seja o tipo marcado",
             _COR_RECEITA,
         ), unsafe_allow_html=True)
     with col_s3:
         st.markdown(_kpi_card(
             "Saídas", fmt_moeda(total_desp),
-            "Despesas no filtro aplicado",
+            "Despesas no período, qualquer que seja o tipo marcado",
             _COR_DESPESA,
         ), unsafe_allow_html=True)
     with col_s4:
         st.markdown(_kpi_card(
             "Investimentos", fmt_moeda(total_inv),
-            "Aportes no filtro aplicado",
+            "Aportes no período, qualquer que seja o tipo marcado",
             _COR_INVEST,
         ), unsafe_allow_html=True)
 
