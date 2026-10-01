@@ -15,7 +15,6 @@ from core.global_portfolio import factors
 from core.inteligencia_ativos import arquivo_publicado
 from design import market_companies as mc
 
-
 # -- logos ------------------------------------------------------------------
 
 @pytest.fixture
