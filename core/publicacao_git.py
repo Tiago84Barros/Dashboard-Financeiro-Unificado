@@ -34,6 +34,19 @@ O que este módulo NÃO faz, de propósito
 * **Não falha calado.** Toda recusa volta com motivo, e o orquestrador a leva
   para a notificação. Um artefato que parou de ser commitado tem de aparecer.
 
+A `main` local anda, mas só para a frente
+-----------------------------------------
+Todo trabalho entra na `origin/main` por PR, de outros worktrees; ninguém faz
+`pull` no checkout onde a rotina roda. Sem atualizar, ele fica para trás, o
+push do artefato passa a ser rejeitado todo dia e os publicadores rodam com o
+código velho -- em 01/10/2026 o checkout estava 63 commits atrás, com cinco
+republicações de 29 e 30/09 commitadas e nunca empurradas.
+`atualizar_main` resolve isso antes de publicar, com ``merge --ff-only``: não
+reescreve histórico, não cria commit de merge e não sobrescreve trabalho local
+(o git recusa se o avanço pisaria num arquivo modificado). Divergência -- a
+`main` local com commits que a remota não tem -- continua sendo de quem está
+trabalhando: a função recusa e diz quantos commits de cada lado.
+
 Sem Streamlit, sem banco, sem rede própria -- só `git` no diretório que recebe.
 """
 from __future__ import annotations
@@ -123,6 +136,87 @@ def artefatos_mudados(raiz: Path, caminhos: list[str]) -> list[str]:
         mudados.update(linha.strip() for linha in (proc.stdout or "").splitlines()
                        if linha.strip())
     return sorted(mudados)
+
+
+@dataclass
+class ResultadoAtualizacao:
+    """O que `atualizar_main` fez com a `main` local."""
+
+    avancou: int = 0
+    motivo: str = ""
+    erro: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.erro
+
+    def resumo(self) -> str:
+        if self.erro:
+            return self.erro
+        if self.avancou:
+            return f"main local avançou {self.avancou} commit(s) até a origin/main"
+        return self.motivo or "main local já em dia"
+
+
+def _contagem(raiz: Path) -> tuple[int, int] | None:
+    """(à frente, atrás) da `main` local em relação à `origin/main`."""
+    proc = _git(raiz, "rev-list", "--left-right", "--count",
+                f"{RAMO_PUBLICADO}...origin/{RAMO_PUBLICADO}")
+    partes = (proc.stdout or "").split()
+    if proc.returncode != 0 or len(partes) != 2:
+        return None
+    return int(partes[0]), int(partes[1])
+
+
+def atualizar_main(raiz: Path) -> ResultadoAtualizacao:
+    """Avança a `main` local até a `origin/main`, só por fast-forward.
+
+    Roda antes dos publicadores, para eles usarem o código mergeado e o push
+    do artefato não ser rejeitado por a `main` local estar para trás. Ver o
+    cabeçalho do módulo para o que ela se recusa a fazer.
+    """
+    resultado = ResultadoAtualizacao()
+    ramo = ramo_atual(raiz)
+    if ramo != RAMO_PUBLICADO:
+        resultado.erro = (f"ramo atual é {ramo or 'desconhecido'}, não "
+                          f"{RAMO_PUBLICADO}; main local não atualizada")
+        return resultado
+    em_curso = operacao_em_curso(raiz)
+    if em_curso:
+        resultado.erro = f"{em_curso} em andamento; main local não atualizada"
+        return resultado
+
+    proc = _git(raiz, "fetch", "origin", RAMO_PUBLICADO)
+    if proc.returncode != 0:
+        resultado.erro = f"git fetch falhou: {_ultima_linha(proc)}"
+        return resultado
+    contagem = _contagem(raiz)
+    if contagem is None:
+        resultado.erro = "não deu para comparar a main local com a origin/main"
+        return resultado
+    frente, atras = contagem
+    if not atras:
+        resultado.motivo = ("main local já em dia" if not frente else
+                            f"main local {frente} commit(s) à frente; o próximo "
+                            "push os leva")
+        return resultado
+    if frente:
+        resultado.erro = (
+            f"main local divergiu: {frente} commit(s) à frente e {atras} atrás "
+            "da origin/main. Avanço só por fast-forward é impossível; resolva à "
+            "mão (nada foi reescrito). Até lá o push do artefato é rejeitado e "
+            "os publicadores rodam com o código antigo.")
+        return resultado
+
+    proc = _git(raiz, "merge", "--ff-only", f"origin/{RAMO_PUBLICADO}")
+    if proc.returncode != 0:
+        resultado.erro = (
+            f"fast-forward recusado ({atras} commit(s) atrás): "
+            f"{_ultima_linha(proc)}. Provável arquivo modificado na árvore de "
+            "trabalho que a origin também mudou; nada foi sobrescrito.")
+        return resultado
+    resultado.avancou = atras
+    return resultado
 
 
 def publicar_artefatos(raiz: Path, caminhos, mensagem: str,

@@ -16,6 +16,7 @@ import pytest
 
 from core.publicacao_git import (
     artefatos_mudados,
+    atualizar_main,
     operacao_em_curso,
     publicar_artefatos,
     ramo_atual,
@@ -236,3 +237,73 @@ def test_sem_empurrar_commita_e_para(repositorio):
     assert resultado.ok and resultado.commitou and not resultado.empurrou
     assert "NÃO empurrado" in resultado.resumo()
     assert ramo_atual(repositorio) == "main"
+
+
+# --- atualizar_main: a main local anda só por fast-forward -------------------
+
+def _commit_de_outro(tmp_path, nome, conteudo="de outro\n"):
+    """Outro clone empurra um commit: a origin/main anda sem o checkout saber."""
+    outro = tmp_path / "outro"
+    if not outro.exists():
+        _git(tmp_path, "clone", str(tmp_path / "remoto.git"), str(outro))
+        _git(outro, "config", "user.email", "outro@exemplo.invalid")
+        _git(outro, "config", "user.name", "Outro")
+    _git(outro, "pull", "-q", "origin", "main")
+    _escrever(outro, nome, conteudo)
+    _git(outro, "add", nome)
+    _git(outro, "commit", "-m", f"outro mexe em {nome}")
+    _git(outro, "push", "origin", "main")
+
+
+def test_atualizar_main_avanca_quem_ficou_para_tras(repositorio, tmp_path):
+    _commit_de_outro(tmp_path, "a.txt")
+    _commit_de_outro(tmp_path, "b.txt")
+    _escrever(repositorio, "meu_rascunho.txt", "nao rastreado\n")
+
+    resultado = atualizar_main(repositorio)
+
+    assert resultado.ok and resultado.avancou == 2
+    assert (repositorio / "b.txt").exists()
+    assert (repositorio / "meu_rascunho.txt").exists()
+    # Depois de avançar, o artefato chega ao remoto: era o push rejeitado.
+    _escrever(repositorio, ARTEFATO, "conteudo")
+    assert publicar_artefatos(repositorio, [ARTEFATO], MENSAGEM).empurrou
+
+
+def test_atualizar_main_em_dia_nao_faz_nada(repositorio):
+    resultado = atualizar_main(repositorio)
+
+    assert resultado.ok and resultado.avancou == 0
+    assert resultado.resumo() == "main local já em dia"
+
+
+def test_atualizar_main_divergente_recusa_sem_reescrever(repositorio, tmp_path):
+    _commit_de_outro(tmp_path, "a.txt")
+    _escrever(repositorio, ARTEFATO, "conteudo")
+    publicar_artefatos(repositorio, [ARTEFATO], MENSAGEM, empurrar=False)
+    antes = _git(repositorio, "rev-parse", "HEAD")
+
+    resultado = atualizar_main(repositorio)
+
+    assert not resultado.ok
+    assert "1 commit(s) à frente e 1 atrás" in resultado.resumo()
+    assert _git(repositorio, "rev-parse", "HEAD") == antes
+
+
+def test_atualizar_main_nao_sobrescreve_arquivo_modificado(repositorio, tmp_path):
+    _commit_de_outro(tmp_path, "README.md", "a origin mudou\n")
+    _escrever(repositorio, "README.md", "trabalho local nao commitado\n")
+
+    resultado = atualizar_main(repositorio)
+
+    assert not resultado.ok and "fast-forward recusado" in resultado.resumo()
+    assert ((repositorio / "README.md").read_text(encoding="utf-8")
+            == "trabalho local nao commitado\n")
+
+
+def test_atualizar_main_fora_da_main_recusa(repositorio):
+    _git(repositorio, "checkout", "-b", "trabalho")
+
+    resultado = atualizar_main(repositorio)
+
+    assert not resultado.ok and "não main" in resultado.resumo()

@@ -53,7 +53,7 @@ from core.publicacao_agenda import (  # noqa: E402
     alvos_devidos,
     registrar_resultado,
 )
-from core.publicacao_git import publicar_artefatos  # noqa: E402
+from core.publicacao_git import atualizar_main, publicar_artefatos  # noqa: E402
 
 ESTADO = ROOT / "local_staging" / "estado_publicacao.json"
 LOG_DIR = ROOT / "local_staging" / "logs"
@@ -484,6 +484,13 @@ def main(argv=None) -> int:
     ambiente["PYTHONIOENCODING"] = "utf-8"
 
     falhas: list[str] = []
+    # Antes dos publicadores, que rodam em subprocesso: assim usam o código
+    # mergeado, e o push do artefato não é rejeitado por a main estar atrás.
+    # Recusa não impede publicar no Supabase, mas vai para a notificação.
+    atualizacao = atualizar_main(ROOT)
+    registrar(f"  git: {atualizacao.resumo()}")
+    if not atualizacao.ok:
+        falhas.append(f"main local não atualizada -- {atualizacao.resumo()}")
     publicados: list[str] = []
     publicados_alvos: list = []
     modulos: set[str] = set()
