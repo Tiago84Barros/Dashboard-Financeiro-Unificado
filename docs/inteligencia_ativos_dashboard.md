@@ -103,13 +103,15 @@ Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
       meia. P/L abaixo de 3x não conta como barato (lucro não recorrente).
       Frágil e barato ao mesmo tempo gera o aviso de *armadilha de valor*.
     - **Mercado e notícias**:
-      - tom das notícias próprias. Vem do provedor (Alpha Vantage) quando
-        ele mede; senão, do léxico de `core.noticias.sentimento` (1.2.0,
+      - tom das notícias próprias. Vem do provedor (Alpha Vantage,
+        Marketaux) quando ele mede: o tom que ele mediu para o ticker
+        (`entidades.sentimento_por_ticker` no acervo) e, na falta dele, o
+        do artigo inteiro; senão, do léxico de `core.noticias.sentimento` (1.2.0,
         com vocabulário de mercado e negação com escopo: "não reduz
         dividendos" é positivo, "corta dividendos" é negativo, "reduz
         custos" fica sem medida). O critério diz quantas notícias vieram
-        de cada método e quantas tiveram provedor e léxico em sinais
-        opostos;
+        de cada método (do provedor, separando ticker e artigo) e quantas
+        tiveram provedor e léxico em sinais opostos;
       - tom do segmento, como contexto;
       - volatilidade e queda máxima contra os pares;
       - momento: retorno de 12 meses com proventos reinvestidos contra a

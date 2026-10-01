@@ -115,7 +115,8 @@ class Marketaux(ProvedorBase):
                 relevancia_api=_decimal(cru.get("relevance_score")),
                 bruto={"uuid": _texto(cru.get("uuid")),
                        "setores": list(entidades["setores"]),
-                       "paises": list(entidades["paises"])},
+                       "paises": list(entidades["paises"]),
+                       "ticker_sentiment": entidades["por_ticker"]},
             ))
         return itens
 
@@ -129,7 +130,7 @@ class Marketaux(ProvedorBase):
         perto de zero e faria parecer que o mercado nunca reage a nada.
         """
         vazio = {"tickers": (), "empresas": (), "setores": (), "paises": (),
-                 "pais": None, "sentimento": None}
+                 "pais": None, "sentimento": None, "por_ticker": {}}
         if not isinstance(valor, list):
             return vazio
 
@@ -138,6 +139,9 @@ class Marketaux(ProvedorBase):
         setores: list[str] = []
         paises: list[str] = []
         escores: list[float] = []
+        # Tom de cada símbolo; o mesmo símbolo pode vir mais de uma vez
+        # (bolsas diferentes) e fica com a média das ocorrências.
+        por_simbolo: dict[str, list[float]] = {}
         for item in valor:
             if not isinstance(item, dict):
                 continue
@@ -156,6 +160,8 @@ class Marketaux(ProvedorBase):
             escore = _decimal(item.get("sentiment_score"))
             if escore is not None:
                 escores.append(escore)
+                if simbolo:
+                    por_simbolo.setdefault(simbolo.upper(), []).append(escore)
 
         return {
             "tickers": tuple(tickers),
@@ -164,4 +170,5 @@ class Marketaux(ProvedorBase):
             "paises": tuple(paises),
             "pais": paises[0] if paises else None,
             "sentimento": (sum(escores) / len(escores)) if escores else None,
+            "por_ticker": {s: sum(v) / len(v) for s, v in por_simbolo.items()},
         }

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import threading
 from datetime import datetime, timedelta, timezone
 
@@ -254,11 +255,43 @@ def garantir_schema(conn) -> None:
         _schema_pronto.add(chave)
 
 
+def sentimento_por_ticker(bruto, tickers) -> dict[str, float]:
+    """Tom do provedor para cada ticker que a notícia de fato tem.
+
+    O provedor mede o tom de cada ticker citado (``ticker_sentiment``), e numa
+    matéria sobre a compra de A por B ele costuma ser positivo para um e
+    negativo para o outro; o escore do artigo achata os dois. Só entram os
+    tickers que sobreviveram à resolução de entidades: o provedor lista
+    citados, não sujeitos, e o tom de um citado que a resolução descartou não
+    tem a quem ser atribuído.
+    """
+    cru = bruto.get("ticker_sentiment") if isinstance(bruto, dict) else None
+    if not isinstance(cru, dict):
+        return {}
+    saida: dict[str, float] = {}
+    for tk in tickers or ():
+        try:
+            valor = float(cru.get(tk))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(valor):
+            saida[tk] = round(max(-1.0, min(1.0, valor)), 4)
+    return saida
+
+
 def linha_item(avaliada: NoticiaAvaliada, evento_id: str | None = None) -> dict:
     """Monta a linha do fato observado. Testável sem banco."""
     n = avaliada.noticia
     fonte = n.fonte
     ent = n.entidades
+    entidades = {
+        "tickers": list(ent.tickers), "empresas": list(ent.empresas),
+        "setores": list(ent.setores), "paises": list(ent.paises),
+        "moedas": list(ent.moedas), "ativos": list(ent.ativos),
+    }
+    por_ticker = sentimento_por_ticker(n.bruto, ent.tickers)
+    if por_ticker:
+        entidades["sentimento_por_ticker"] = por_ticker
     return {
         "id_dedup": n.id_dedup,
         "hash_conteudo": n.hash_conteudo,
@@ -277,11 +310,7 @@ def linha_item(avaliada: NoticiaAvaliada, evento_id: str | None = None) -> dict:
         "provedor": n.provedor,
         "idioma": n.idioma,
         "pais": n.pais,
-        "entidades": json.dumps({
-            "tickers": list(ent.tickers), "empresas": list(ent.empresas),
-            "setores": list(ent.setores), "paises": list(ent.paises),
-            "moedas": list(ent.moedas), "ativos": list(ent.ativos),
-        }, ensure_ascii=False),
+        "entidades": json.dumps(entidades, ensure_ascii=False),
         "tipo_evento": n.tipo_evento,
         "evento_id": evento_id or n.evento_id,
         "sentimento_api": n.sentimento.valor_api,

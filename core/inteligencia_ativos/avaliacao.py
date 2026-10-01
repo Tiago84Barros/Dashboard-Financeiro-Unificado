@@ -25,10 +25,12 @@ Três decisões de método, porque já custaram caro neste projeto:
   alavancagem maior, regulada; em commodity e siderurgia o P/L baixo costuma
   marcar o pico do ciclo, e não conta como barato.
 
-O sentimento das notícias é, quando a fonte mede, o do provedor (Alpha
-Vantage, por ticker); senão, o léxico do próprio app
+O sentimento das notícias é, quando a fonte mede, o do provedor: o que ele
+mediu para o ticker, e na falta dele o do artigo inteiro (Alpha Vantage e
+Marketaux medem os dois); senão, o léxico do próprio app
 (``core.noticias.sentimento``), que não é modelo: serve de termômetro, e o
-texto diz quantas notícias vieram de cada método. Quando os dois existem e
+texto diz quantas notícias vieram de cada método -- e, do provedor, quantas
+com o tom do ticker e quantas com o do artigo. Quando os dois existem e
 discordam de sinal, o critério conta a divergência. Momento de preço é o
 retorno de 12 meses com proventos reinvestidos (publicado em
 ``data/public/valuation_historico``), lido contra a mediana dos pares.
@@ -101,7 +103,8 @@ _TERMOS_SAIDA = ("pagina virada", "sai da", "saida da", "deixa a", "encerra",
 
 AVISO = ("Avaliação por regras sobre os dados do app, não recomendação: cada "
          "critério traz o número e a referência. Sentimento vem do provedor "
-         "da notícia quando ele mede, senão do léxico do app (termômetro, não "
+         "da notícia quando ele mede (o do ticker, ou na falta dele o do "
+         "artigo inteiro), senão do léxico do app (termômetro, não "
          "modelo); momento de preço é o retorno de 12 meses contra os pares, "
          "descreve o passado recente e não promete o próximo ano.")
 
@@ -562,14 +565,19 @@ def _lexico(n: inf.Noticia, moeda: str) -> float | None:
 def _sentimento_medido(n: inf.Noticia, moeda: str
                        ) -> tuple[float | None, str | None, bool]:
     """(tom, método, divergência). Prefere o do provedor, que lê o texto
-    inteiro e é por ticker; o léxico fica para quem não tem. Divergência:
-    os dois medem e apontam sinais opostos além do limiar."""
+    inteiro; o léxico fica para quem não tem. O método diz de quem é o tom
+    do provedor: ``provedor_ticker`` (medido para este ativo) ou
+    ``provedor_artigo`` (a matéria inteira; arquivo sem o campo de escopo é
+    anterior ao tom por ticker e cai aqui). Divergência: os dois medem e
+    apontam sinais opostos além do limiar."""
     api = _num(n.sentimento_api)
     lex = _lexico(n, moeda)
     if api is not None:
         diverge = (lex is not None and abs(api) > LIMIAR_TOM
                    and abs(lex) > LIMIAR_TOM and (api > 0) != (lex > 0))
-        return api, "provedor", diverge
+        metodo = ("provedor_ticker" if n.sentimento_escopo == "ticker"
+                  else "provedor_artigo")
+        return api, metodo, diverge
     if lex is not None:
         return lex, "léxico", False
     return None, None, False
@@ -612,7 +620,8 @@ def _mercado(a: m.AnaliseAtivo, c, crits: list[Criterio],
              alertas: list[Alerta]) -> tuple[str, str | None]:
     nots = inf.Noticias.de_dict(_secao(a.noticias))
     escores = []
-    metodos = {"provedor": 0, "léxico": 0, "categoria": 0}
+    metodos = {"provedor_ticker": 0, "provedor_artigo": 0, "léxico": 0,
+               "categoria": 0}
     divergentes = 0
     for n in nots.itens:
         if n.categoria in CATEGORIAS_CRITICAS and any(
@@ -646,7 +655,9 @@ def _mercado(a: m.AnaliseAtivo, c, crits: list[Criterio],
         pos = sum(1 for s in escores if s > LIMIAR_TOM)
         neg = sum(1 for s in escores if s < -LIMIAR_TOM)
         media = sum(escores) / len(escores)
-        rotulos = {"provedor": "pelo provedor", "léxico": "pelo léxico",
+        rotulos = {"provedor_ticker": "pelo provedor para o ticker",
+                   "provedor_artigo": "pelo provedor para o artigo inteiro",
+                   "léxico": "pelo léxico",
                    "categoria": "pela categoria do fato"}
         origem = ", ".join(f"{q} {rotulos[k]}" for k, q in metodos.items()
                            if q)
