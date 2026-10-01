@@ -82,12 +82,20 @@ Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
         perto de zero);
       - fluxo de caixa livre, dívida, cobertura de juros e payout.
 
+      Na B3, a base contábil não tem EBITDA nem despesa financeira. Quando
+      falta, dívida líquida/EBITDA e cobertura de juros vêm do
+      `financialData` da brapi (foto de até 200 dias, publicada em
+      `data/public/valuation_historico`). Bancos não têm EBITDA e ficam sem
+      a razão. A cobertura usa EBIT ÷ despesa financeira do exercício; a
+      despesa inclui variação cambial, então a razão sai conservadora.
+
       A leitura é forte, adequada, frágil ou dado insuficiente (menos de 3
       critérios). Alerta eliminatório põe frágil direto:
       - alavancagem acima do crítico;
       - cobertura de juros abaixo de 1x;
       - payout acima de 100% com caixa livre negativo;
       - patrimônio negativo;
+      - EBITDA de 12 meses negativo;
       - vacância acima de 30% ou inadimplência acima de 10%;
       - recuperação judicial ou fraude no noticiário do ativo.
     - **Valuation**: cada múltiplo contra a mediana do próprio histórico e
@@ -95,15 +103,24 @@ Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
       meia. P/L abaixo de 3x não conta como barato (lucro não recorrente).
       Frágil e barato ao mesmo tempo gera o aviso de *armadilha de valor*.
     - **Mercado e notícias**:
-      - tom das notícias próprias pelo léxico de `core.noticias.sentimento`;
+      - tom das notícias próprias. Vem do provedor (Alpha Vantage) quando
+        ele mede; senão, do léxico de `core.noticias.sentimento` (1.1.0,
+        com vocabulário de mercado). O critério diz quantas notícias vieram
+        de cada método e quantas tiveram provedor e léxico em sinais
+        opostos;
       - tom do segmento, como contexto;
-      - volatilidade e queda máxima contra os pares.
+      - volatilidade e queda máxima contra os pares;
+      - momento: retorno de 12 meses com proventos reinvestidos contra a
+        mediana dos pares. 10 p.p. ou mais de diferença conta a favor ou
+        contra. Queda de 30% ou mais vira alerta não eliminatório. Preço
+        vem de `market.historical_prices` do Supabase; preço com mais de
+        45 dias ou salto de 3x na janela fica de fora.
 
       Notícia de recuperação judicial que fala da *saída* dela ("página
       virada") vira alerta não eliminatório.
-    - **Limites declarados no card**: o sentimento é um léxico (termômetro),
-      e o momento de preço não entra. O bloco vai inteiro para a LLM em
-      `analise.texto_para_llm`.
+    - **Limites declarados no card**: o sentimento é termômetro, não modelo,
+      e momento descreve o passado recente, não o próximo ano. O bloco vai
+      inteiro para a LLM em `analise.texto_para_llm`.
 
     *Comparar alternativas* continua sem gerador em `adequacao.acao`; só tem
     rótulo.

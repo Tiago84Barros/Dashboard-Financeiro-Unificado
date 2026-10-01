@@ -135,6 +135,9 @@ def _premissas_arquivo(art: dict, mercado: str) -> tuple[str, ...]:
     vol = (art.get("metodo") or {}).get("volatilidade")
     if vol:
         saida.append(f"Volatilidade (risco na seleção de pares): {vol}")
+    mom = (art.get("metodo") or {}).get("momento")
+    if mom:
+        saida.append(f"Retorno de 12 meses (momento de preço): {mom}")
     return tuple(saida)
 
 
@@ -166,6 +169,7 @@ def candidatos_b3(multiplos: list[dict], setores: dict[str, dict],
             "roe": _pct(m.get("ROE")),
             "margem_liquida": _pct(m.get("Margem_Liquida")),
             "volatilidade": vol, "porte": porte,
+            "retorno_12m": _num(a.get("retorno_12m")),
         }
         saida[tk] = p.Candidato(
             tk, _txt(s.get("nome_empresa")), ACAO, "B3",
@@ -231,8 +235,9 @@ def _taxonomia_fii(linha: dict) -> tuple:
             ("tipo", tipo))
 
 
-def candidatos_fii(linhas: list[dict]) -> dict[str, p.Candidato]:
-    saida = {}
+def candidatos_fii(linhas: list[dict], art_fii: dict | None = None
+                   ) -> dict[str, p.Candidato]:
+    saida, art_fii = {}, art_fii or {}
     for r in linhas:
         tk = str(r.get("ticker") or "").upper()
         if not tk:
@@ -245,6 +250,7 @@ def candidatos_fii(linhas: list[dict]) -> dict[str, p.Candidato]:
             "cap_rate": _pct(r.get("implied_cap_rate")),
             "alavancagem": _pct(r.get("leverage")), "max_drawdown": risco,
             "liquidez_diaria": _num(r.get("liquidez_diaria")), "porte": porte,
+            "retorno_12m": _num((art_fii.get(tk) or {}).get("retorno_12m")),
         }
         saida[tk] = p.Candidato(
             tk, _txt(r.get("name")), FII, "B3", _taxonomia_fii(r), porte, risco,
@@ -333,6 +339,7 @@ def candidatos_eua(art_eua: dict) -> dict[str, p.Candidato]:
             "roe": _num(atual.get("roe")),
             "margem_liquida": _num(atual.get("margem_liquida")),
             "volatilidade": vol, "porte": porte,
+            "retorno_12m": _num(a.get("retorno_12m")),
         }
         saida[str(sym).upper()] = p.Candidato(
             str(sym).upper(), _txt(a.get("nome")), ACAO, "EUA",
@@ -508,7 +515,7 @@ def ler_sem_cache(ticker: str, nome: str, classe: str, moeda: str):
     if tipo == FII:
         linhas, falha = _carregar_fii()
         art = arquivo()
-        universo = candidatos_fii(linhas)
+        universo = candidatos_fii(linhas, art.get("fii") or {})
         linha = next((r for r in linhas if str(r.get("ticker")).upper() == tk), None)
         aviso = ((f"{AVISO_VITRINE_FII_INDISPONIVEL}: {falha}. P/VP, "
                   "DY e cap rate atuais e o universo de pares dependem dela; "

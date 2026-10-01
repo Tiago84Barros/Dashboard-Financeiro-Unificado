@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from datetime import date, timedelta
 
 NAO_DISPONIVEL = "Dado não disponível."
@@ -419,6 +419,10 @@ class Noticia:
     motivo: str
     retrieved_at: str | None = None
     ticker: str | None = None      # só nas do segmento: de qual par é
+    # Tom medido pelo provedor (Alpha Vantage, -1..1), quando a fonte mede;
+    # fontes brasileiras não medem e ficam com o léxico do app.
+    sentimento_api: float | None = None
+    rotulo_sentimento: str | None = None
 
     @property
     def rotulo_categoria(self) -> str:
@@ -449,8 +453,13 @@ class Noticias:
 
     @classmethod
     def de_dict(cls, d: dict) -> "Noticias":
+        campos = {f.name for f in fields(Noticia)}
+
         def _itens(lista):
-            return tuple(Noticia(**{**i, "affected_dimension": tuple(
+            # Chave que o arquivo publicado tenha a mais não derruba a tela.
+            return tuple(Noticia(**{**{k: v for k, v in i.items()
+                                       if k in campos},
+                                    "affected_dimension": tuple(
                 i.get("affected_dimension") or ())}) for i in lista or ())
         return cls(itens=_itens(d.get("itens")), **{k: d.get(k) for k in (
             "janela_dias", "base_ate", "fonte", "retrieved_at", "motivo",

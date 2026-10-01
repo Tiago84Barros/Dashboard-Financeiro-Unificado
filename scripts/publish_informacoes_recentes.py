@@ -82,6 +82,14 @@ def _resumo(texto: str | None) -> str | None:
     return t if len(t) <= MAX_RESUMO else t[:MAX_RESUMO - 1].rstrip() + "…"
 
 
+def _num(v) -> float | None:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return round(x, 4) if x == x else None
+
+
 def agrupar_noticias(linhas, resolver, eh_13f) -> dict:
     """Linhas do acervo → ``{ticker: {"itens": [...], "descartadas": {...}}}``.
 
@@ -133,6 +141,10 @@ def agrupar_noticias(linhas, resolver, eh_13f) -> dict:
                 "categoria": cl.categoria,
                 "motivo": cl.motivo,
                 "retrieved_at": _iso(r.get("coletado_em")),
+                # sentimento do provedor (Alpha Vantage etc.), por artigo;
+                # ausente na maioria das fontes brasileiras
+                "sentimento_api": _num(r.get("sentimento_api")),
+                "rotulo_sentimento": r.get("rotulo_sentimento") or None,
             })
         # exibição: mais recente primeiro dentro do que entrou
         itens.sort(key=lambda i: i["date"] or "", reverse=True)
@@ -196,7 +208,8 @@ def coletar_noticias(conn_noticias, universo) -> tuple[dict, str | None, int]:
     from core.noticias.entidades import relato_de_posicao, resolver_tickers
     linhas = [dict(r._mapping) for r in conn_noticias.execute(text(f"""
         SELECT titulo, resumo, url, url_canonica, veiculo, dominio,
-               publicado_em, coletado_em, evento_id, entidades
+               publicado_em, coletado_em, evento_id, entidades,
+               sentimento_api, rotulo_sentimento
           FROM noticias_itens
          WHERE publicado_em >= now() - interval '{JANELA_NOTICIAS} days'
            AND publicado_em <= now() + interval '1 day'"""))]

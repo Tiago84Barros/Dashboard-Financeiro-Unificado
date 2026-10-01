@@ -37,6 +37,11 @@ def _pct(x) -> float | None:
     return None if v is None else v * 100.0
 
 
+def _txt(x) -> str | None:
+    t = str(x).strip() if x is not None else ""
+    return t or None
+
+
 def _br(v: float, casas: int = 1) -> str:
     return f"{v:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
@@ -375,11 +380,18 @@ def ler_etf(posicao: dict) -> dict[str, Dado]:
 # Demonstrações anuais (market.income_statements/balance_sheets/
 # cash_flow_statements, R$ absolutos) e métricas calculadas
 # (market.calculated_metrics, frações, TTM), pelas leituras cacheadas de
-# core.market_read. Não existem na base: margem bruta publicada, despesa
-# financeira (cobertura de juros) e guidance.
+# core.market_read. Não existem na base: margem bruta publicada, EBITDA,
+# despesa financeira e guidance. Dívida líquida/EBITDA e cobertura de juros
+# vêm, quando a base não as tem, do financialData da brapi publicado no
+# arquivo de valuation (ver scripts/publish_valuation_historico.py).
 
 FONTE_B3_DEMO = "Demonstrações anuais B3 (market.income_statements, balance_sheets, cash_flow_statements)"
 FONTE_B3_MET = "Métricas calculadas B3 (market.calculated_metrics, 12 meses)"
+FONTE_B3_BRAPI = ("brapi financialData e demonstrativo anual "
+                  "(data/public/valuation_historico)")
+# Nota do indicador sem valor quando o EBITDA é negativo: a avaliação a
+# reconhece por este prefixo e levanta o alerta (a razão não tem número).
+NOTA_EBITDA_NEGATIVO = "EBITDA de 12 meses negativo"
 
 
 def _crescimento(atual, anterior) -> float | None:
@@ -389,9 +401,13 @@ def _crescimento(atual, anterior) -> float | None:
     return (a / b - 1.0) * 100.0
 
 
-def dados_acao_b3(demonstracoes, multiplos) -> dict[str, Dado]:
+def dados_acao_b3(demonstracoes, multiplos,
+                  alavancagem: dict | None = None) -> dict[str, Dado]:
     """``demonstracoes``: DataFrame anual de ``load_demonstracoes`` (colunas
-    PT, ``Data`` = 31/12). ``multiplos``: Series de ``load_multiplos``."""
+    PT, ``Data`` = 31/12). ``multiplos``: Series de ``load_multiplos``.
+    ``alavancagem``: o item do ticker no arquivo de valuation (chaves
+    ``divida_liquida_ebitda``, ``cobertura_juros``...), só preenche o que a
+    base contábil não tem."""
     saida: dict[str, Dado] = {}
     if demonstracoes is not None and not getattr(demonstracoes, "empty", True):
         df = demonstracoes.sort_values("Data")
@@ -442,13 +458,38 @@ def dados_acao_b3(demonstracoes, multiplos) -> dict[str, Dado]:
             v = _pct(multiplos.get(coluna))
             if v is not None:
                 saida[chave] = Dado(v, FONTE_B3_MET, ref_m, nota)
+
+    al = alavancagem or {}
+    ref_al = _txt(al.get("alavancagem_ref"))
+    if "divida_liquida_ebitda" not in saida:
+        dle = _num(al.get("divida_liquida_ebitda"))
+        if dle is not None:
+            saida["divida_liquida_ebitda"] = Dado(
+                dle, FONTE_B3_BRAPI, ref_al,
+                "(dívida total − caixa) ÷ EBITDA de 12 meses, os três da "
+                "mesma foto; EBITDA do provedor, não o ajustado da empresa")
+        elif al.get("ebitda_negativo"):
+            saida["divida_liquida_ebitda"] = Dado(
+                None, FONTE_B3_BRAPI, ref_al,
+                f"{NOTA_EBITDA_NEGATIVO}: a razão não tem leitura, e a "
+                "operação não gera caixa para a dívida")
+    if "cobertura_juros" not in saida:
+        cob = _num(al.get("cobertura_juros"))
+        if cob is not None:
+            saida["cobertura_juros"] = Dado(
+                cob, FONTE_B3_BRAPI, _txt(al.get("cobertura_ref")) or ref_al,
+                "EBIT ÷ despesas financeiras do exercício; a despesa inclui "
+                "variação cambial e monetária, então sai conservadora")
     return saida
 
 
 def ler_acao_b3(ticker: str) -> dict[str, Dado]:
     from core import market_read
+    from core.inteligencia_ativos import fontes_valuation
+    alav = ((fontes_valuation.arquivo().get("b3") or {})
+            .get(str(ticker or "").upper()))
     return dados_acao_b3(market_read.load_demonstracoes(ticker),
-                         market_read.load_multiplos(ticker))
+                         market_read.load_multiplos(ticker), alav)
 
 
 # -- ações EUA ----------------------------------------------------------------------

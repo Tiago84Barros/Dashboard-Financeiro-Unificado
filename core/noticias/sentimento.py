@@ -22,7 +22,7 @@ import re
 from core.noticias.modelos import Sentimento
 from core.noticias.normalizacao import detectar_idioma, normalizar_texto
 
-METODO = "lexico_app4_1.0.0"
+METODO = "lexico_app4_1.1.0"
 
 # Pesos em -1..+1. Termos fortes (fraude, recuperação judicial) valem mais que
 # termos de variação de preço, porque descrevem mudança de fundamento e não
@@ -40,6 +40,35 @@ LEXICO_PT: dict[str, float] = {
     "recuperacao judicial": -0.95, "falencia": -0.95, "despencou": -0.7,
     "crise": -0.6, "risco": -0.3, "adiamento": -0.3, "suspensao": -0.5,
     "pessimista": -0.4, "desvalorizacao": -0.5, "escandalo": -0.8,
+    # 1.1.0 -- vocabulário de mercado. Na 1.0.0 o léxico não casava nada em
+    # 58% das notícias publicadas (801 de 1.377), quase todas de analista
+    # ("eleva preço-alvo", "rebaixa para neutro") ou de pregão ("ações sobem").
+    "sobe": 0.4, "sobem": 0.4, "subiu": 0.4, "subiram": 0.4, "dispara": 0.6,
+    "disparam": 0.6, "salta": 0.5, "saltam": 0.5, "ganha": 0.3, "ganham": 0.3,
+    "lucrou": 0.5, "superou": 0.6, "superam": 0.6, "positivo": 0.4,
+    "positivos": 0.4, "forte": 0.3, "fortes": 0.3, "eleva": 0.4,
+    "elevam": 0.4, "melhoram": 0.5, "melhorou": 0.5, "aprova": 0.4,
+    "recompra": 0.5, "proventos": 0.4, "jcp": 0.4, "otimismo": 0.4,
+    "recomendacao de compra": 0.6, "recomenda compra": 0.6,
+    "recomendacao para compra": 0.6, "classificacao de compra": 0.6,
+    "eleva preco alvo": 0.5, "aumenta preco alvo": 0.5,
+    "eleva recomendacao": 0.6, "eleva classificacao": 0.6, "eleva rating": 0.6,
+    "eleva a recomendacao": 0.6, "inicia cobertura com compra": 0.5,
+    "acima do esperado": 0.5, "acima das estimativas": 0.5,
+    "caem": -0.4, "caiu": -0.4, "cairam": -0.4, "recua": -0.4,
+    "recuam": -0.4, "recuou": -0.4, "despenca": -0.7, "despencam": -0.7,
+    "desaba": -0.7, "desabam": -0.7, "tomba": -0.6, "tombam": -0.6,
+    "derrete": -0.7, "afunda": -0.6, "afundam": -0.6, "negativo": -0.4,
+    "negativos": -0.4, "fraco": -0.4, "fracos": -0.4, "fraca": -0.4,
+    "piora": -0.5, "piorou": -0.5, "rebaixa": -0.6, "rebaixam": -0.6,
+    "rebaixou": -0.6, "endividamento": -0.3,
+    "preocupacao": -0.4, "preocupacoes": -0.4,
+    "pessimismo": -0.4, "prejuizos": -0.7, "deficit": -0.4,
+    "recomendacao de venda": -0.6, "recomenda venda": -0.6,
+    "recomenda vender": -0.6, "classificacao de venda": -0.6,
+    "corta preco alvo": -0.5, "reduz preco alvo": -0.5,
+    "rebaixa preco alvo": -0.5, "abaixo do esperado": -0.5,
+    "abaixo das estimativas": -0.5, "rebaixa recomendacao": -0.6,
 }
 
 LEXICO_EN: dict[str, float] = {
@@ -55,6 +84,28 @@ LEXICO_EN: dict[str, float] = {
     "bankruptcy": -0.95, "vacancy": -0.5, "strike": -0.4, "lawsuit": -0.5,
     "crisis": -0.6, "risk": -0.3, "delay": -0.3, "suspension": -0.5,
     "scandal": -0.8, "warns": -0.5, "warning": -0.5,
+    # 1.1.0 -- vocabulário de mercado (ver nota no LEXICO_PT).
+    "soar": 0.6, "soars": 0.6, "soared": 0.6, "surges": 0.6, "surged": 0.6,
+    "jumps": 0.5, "jumped": 0.5, "rose": 0.4, "gains": 0.4, "gained": 0.4,
+    "climbs": 0.4, "rallies": 0.5, "beating": 0.5, "tops": 0.5,
+    "upgrades": 0.6, "upgraded": 0.6, "raises": 0.4, "raised": 0.4,
+    "lifts": 0.4, "boosts": 0.4, "strong": 0.3, "stronger": 0.4,
+    "undervalued": 0.4, "buyback": 0.5, "repurchase": 0.4, "shines": 0.5,
+    "outperforms": 0.6, "positive": 0.4, "bullish": 0.5,
+    "buy rating": 0.5, "overweight": 0.5, "outperform rating": 0.6,
+    "raises price target": 0.5, "raised price target": 0.5,
+    "raises guidance": 0.6, "raises outlook": 0.6, "lifts outlook": 0.6,
+    "raises forecast": 0.6, "price target raised": 0.5,
+    "plunged": -0.7, "plunges": -0.7, "tumbles": -0.6, "tumbled": -0.6,
+    "slumps": -0.6, "slumped": -0.6, "sinks": -0.5, "sank": -0.5,
+    "drops": -0.4, "dropped": -0.4, "fell": -0.4, "slides": -0.4,
+    "crashed": -0.8, "crash": -0.7, "downgrades": -0.7, "downgraded": -0.7,
+    "weak": -0.4, "weaker": -0.4, "missed": -0.6, "negative": -0.4,
+    "pessimistic": -0.4, "bearish": -0.5, "concerns": -0.4, "overvalued": -0.4,
+    "sell rating": -0.5, "underweight": -0.5, "underperform": -0.6,
+    "cuts price target": -0.5, "lowers price target": -0.5,
+    "price target cut": -0.5, "cuts guidance": -0.6, "lowers guidance": -0.6,
+    "cuts outlook": -0.6, "lowers outlook": -0.6, "cuts forecast": -0.6,
 }
 
 NEGACOES_PT = ("nao", "sem", "nunca", "nenhum", "nenhuma", "jamais")
