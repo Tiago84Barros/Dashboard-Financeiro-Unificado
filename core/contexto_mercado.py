@@ -454,6 +454,24 @@ def _manchetes_vitrine(engine, limite: int) -> list[str]:
         for titulo, r in ordenadas]
 
 
+def manchetes_gerais(limite: int = MAX_MANCHETES) -> tuple[list[str], str]:
+    """``(manchetes, origem)``: o noticiário geral que o bloco de mercado dá
+    aos chats, item a item, para telas que não podem ficar sem notícia.
+
+    Mesma escolha de fonte do bloco: acervo local, túnel, vitrine. Cada item
+    sai como ``[dd/mm hh:mm] título (veículo; ...)``.
+    """
+    linhas = _manchetes_acervo(limite)
+    if linhas is None:
+        linhas, _ = _manchetes_remoto(limite)
+    if linhas is None:
+        linhas = _manchetes_vitrine_cache(limite)
+    if not linhas:
+        return [], ""
+    itens = [ln.strip()[2:] for ln in linhas if ln.strip().startswith("- ")]
+    return itens, linhas[0].strip().rstrip(":")
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Montagem
 # ─────────────────────────────────────────────────────────────────────────────

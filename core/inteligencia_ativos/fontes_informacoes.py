@@ -24,6 +24,7 @@ from __future__ import annotations
 import gzip
 import json
 import logging
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -117,6 +118,22 @@ def noticias_de(art: dict, ticker: str, tipo: str | None) -> inf.Noticias:
     return inf.Noticias(**{**meta, "descartadas": n.descartadas}, motivo=(
         f"Dado não disponível. {total} notícia(s) citavam {ticker}, nenhuma "
         "passou no filtro de relevância."))
+
+
+def noticias_do_setor(art: dict, tickers, n: int = 5) -> tuple[inf.Noticia, ...]:
+    """As ``n`` notícias mais recentes dos pares do mesmo segmento, cada uma
+    marcada com o ticker de origem, sem repetir manchete. Puro."""
+    por_ticker = (art.get("noticias") or {}).get("por_ticker") or {}
+    vistas: dict[str, inf.Noticia] = {}
+    for tk in tickers:
+        entrada = _do_ticker(por_ticker, str(tk))
+        if not entrada:
+            continue
+        for item in inf.Noticias.de_dict(entrada).itens:
+            if item.headline not in vistas:
+                vistas[item.headline] = replace(item, ticker=str(tk).upper())
+    return tuple(sorted(vistas.values(), key=lambda i: i.date or "",
+                        reverse=True)[:n])
 
 
 def relatorios_de(art: dict, ticker: str, tipo: str | None) -> inf.Relatorios:

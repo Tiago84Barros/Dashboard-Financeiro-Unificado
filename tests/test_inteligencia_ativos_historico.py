@@ -125,7 +125,7 @@ def test_foto_da_carteira_compara_patrimonio_e_alocacao():
     antes = replace(atual, valor=10000.0,
                     alocacao={**atual.alocacao, "Renda fixa": 40.0})
     frases = hist.comparar(antes, atual)
-    assert any("o patrimônio era R$ 10000,00" in f for f in frases)
+    assert any("o patrimônio era R$ 10.000,00" in f for f in frases)
     assert "Renda fixa passou de 40,0% para 45,0% da carteira." in frases
     assert hist.motivo_para_salvar(atual, antes) == "a alocação por classe mudou"
 

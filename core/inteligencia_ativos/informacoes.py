@@ -418,6 +418,7 @@ class Noticia:
     categoria: str
     motivo: str
     retrieved_at: str | None = None
+    ticker: str | None = None      # só nas do segmento: de qual par é
 
     @property
     def rotulo_categoria(self) -> str:
@@ -434,19 +435,28 @@ class Noticias:
     fonte: str | None = None
     retrieved_at: str | None = None
     motivo: str | None = None
+    # Sem notícia própria, as dos pares do mesmo segmento (30/09/2026: "se
+    # não houver informações relevantes do ativo, deve ao menos mostrar
+    # informações sobre como está o setor").
+    setor: tuple[Noticia, ...] = ()
+    setor_rotulo: str | None = None
 
     def como_dict(self) -> dict:
         d = asdict(self)
         d["itens"] = [asdict(i) for i in self.itens]
+        d["setor"] = [asdict(i) for i in self.setor]
         return d
 
     @classmethod
     def de_dict(cls, d: dict) -> "Noticias":
-        itens = tuple(Noticia(**{**i, "affected_dimension": tuple(
-            i.get("affected_dimension") or ())}) for i in d.get("itens") or ())
-        return cls(itens=itens, **{k: d.get(k) for k in (
-            "janela_dias", "base_ate", "fonte", "retrieved_at", "motivo")},
-            descartadas=dict(d.get("descartadas") or {}))
+        def _itens(lista):
+            return tuple(Noticia(**{**i, "affected_dimension": tuple(
+                i.get("affected_dimension") or ())}) for i in lista or ())
+        return cls(itens=_itens(d.get("itens")), **{k: d.get(k) for k in (
+            "janela_dias", "base_ate", "fonte", "retrieved_at", "motivo",
+            "setor_rotulo")},
+            descartadas=dict(d.get("descartadas") or {}),
+            setor=_itens(d.get("setor")))
 
 
 # Documentos: categoria da fonte → tipo pedido pelo usuário.
@@ -684,6 +694,10 @@ def _data_br(iso: str | None) -> str:
 
 
 def resumo_noticias(n: Noticias) -> str:
+    if not n.itens and n.setor:
+        return (f"{n.motivo or NAO_DISPONIVEL} Do segmento"
+                + (f" ({n.setor_rotulo})" if n.setor_rotulo else "")
+                + f": {len(n.setor)} notícia(s) dos pares.")
     if not n.itens:
         return n.motivo or NAO_DISPONIVEL
     altos = sum(1 for i in n.itens if i.impact_level == HIGH)

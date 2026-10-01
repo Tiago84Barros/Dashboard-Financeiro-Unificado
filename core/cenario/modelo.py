@@ -7,9 +7,10 @@ Cada item guarda ``current_value``, ``expected_direction``, ``confidence``,
 quando o conteúdo do item muda, e só então. Assim a data diz quando a premissa
 foi revista de fato, não quando alguém apertou "salvar".
 
-Regra central: o cenário só muda por edição manual ou por pedido explícito do
-usuário de atualizar a partir dos dados publicados. ``ORIGENS`` lista as duas;
-não existe origem "llm", e ``revisar`` recusa qualquer outra. A LLM lê o
+Desde 30/09/2026 a aba Inteligência dos Ativos não pergunta mais o cenário:
+``core/cenario/automatico.py`` o monta dos dados a cada leitura, com
+``origem=DADOS``, e nada é gravado. O cenário salvo à mão continua legível.
+``revisar`` só aceita as origens de ``ORIGENS``; não existe origem "llm". A LLM lê o
 cenário como premissa e, se os fatos o contradisserem, escreve
 ``FRASE_REVISAO``. Nunca o altera.
 """
@@ -61,6 +62,9 @@ MANUAL = "manual"
 ATUALIZACAO_SOLICITADA = "atualizacao_solicitada"
 ORIGENS = {MANUAL: "Edição manual",
            ATUALIZACAO_SOLICITADA: "Atualização pedida pelo usuário"}
+# Montado pelo código a partir das séries do banco (core/cenario/automatico).
+# Fica fora de ORIGENS: nunca é gravado como edição.
+DADOS = "dados"
 
 MAX_VALOR = 300
 MAX_FONTE = 200
@@ -71,20 +75,24 @@ FRASE_REVISAO = ("Existem mudanças relevantes que podem justificar revisão "
                  "do cenário.")
 
 REGRA_CENARIO = (
-    "CENÁRIO DE INVESTIMENTOS (premissa do usuário):\n"
-    "1. O bloco CENÁRIO DE INVESTIMENTOS é a leitura do usuário sobre o "
-    "ambiente econômico. Use-o como premissa adicional, ao lado da "
-    "estratégia. Ele NÃO substitui os fundamentos do ativo nem a estratégia "
-    "do usuário: com os três, a estratégia define o objetivo, os fundamentos "
-    "descrevem o ativo e o cenário descreve o ambiente.\n"
-    "2. Você NÃO altera o cenário. Não proponha valores novos como se fossem "
-    "o cenário, não o reescreva e não o trate como desatualizado por conta "
-    "própria: ele vale até o usuário mudá-lo.\n"
-    "3. Se fatos do contexto (dados de mercado, notícias ou os sinais de "
+    "CENÁRIO DE INVESTIMENTOS (ambiente econômico):\n"
+    "1. O bloco CENÁRIO DE INVESTIMENTOS descreve o ambiente econômico. "
+    "Quando diz \"lido dos dados\", foi montado pelo código a partir das "
+    "séries do banco (Selic, IPCA, curva do Tesouro, câmbio, juros e crédito "
+    "nos EUA), cada item com fonte, data e tendência calculada. Use-o como "
+    "premissa adicional, ao lado da estratégia. Ele NÃO substitui os "
+    "fundamentos do ativo nem a estratégia do usuário: a estratégia define o "
+    "objetivo, os fundamentos descrevem o ativo e o cenário descreve o "
+    "ambiente.\n"
+    "2. Você NÃO altera o cenário. Não reescreva os valores nem invente "
+    "números para ele.\n"
+    "3. Se fatos do contexto (notícias, dados mais recentes ou os sinais de "
     "revisão calculados pelo código) contradisserem o cenário, escreva "
     f"exatamente: \"{FRASE_REVISAO}\" e diga qual fato contradiz qual item. "
     "Nada além disso.\n"
-    "4. Item sem valor é premissa ausente, não premissa neutra."
+    "4. Item sem valor é dado ausente, não premissa neutra. Commodities e "
+    "risco geopolítico não têm série no banco: leia-os nas notícias do "
+    "contexto."
 )
 
 
@@ -286,9 +294,16 @@ def relevantes(classe_politica: str | None) -> tuple[str, ...]:
     return RELEVANCIA.get(classe_politica or "", CHAVES)
 
 
-def linha_item(chave: str, it: Item) -> str:
+def linha_item(chave: str, it: Item, *, dados: bool = False) -> str:
     if not it.preenchido:
+        if dados:
+            return f"- {ROTULO[chave]}: sem dado ({it.source or 'ausente'})."
         return f"- {ROTULO[chave]}: sem premissa cadastrada."
+    if dados:
+        return (f"- {ROTULO[chave]}: {it.current_value} · tendência "
+                f"{ROTULO_DIRECAO.get(it.expected_direction, '—')} · confiança "
+                f"{ROTULO_CONFIANCA.get(it.confidence, '—')} · fonte "
+                f"{it.source} · referência {it.last_updated or '—'}")
     return (f"- {ROTULO[chave]}: {it.current_value} · direção esperada "
             f"{ROTULO_DIRECAO.get(it.expected_direction, '—')} · confiança "
             f"{ROTULO_CONFIANCA.get(it.confidence, '—')} · fonte {it.source}"
@@ -300,11 +315,28 @@ def texto_para_llm(c: Cenario | None, *, hoje: dt.date,
                    sinais: tuple = ()) -> str:
     """O bloco que a LLM lê. Sem cenário, diz isso em vez de omitir."""
     if c is None or c.vazio:
+        if c is None or c.origem == DADOS:
+            return ("=== CENÁRIO DE INVESTIMENTOS ===\nAs séries macro do "
+                    "banco não puderam ser lidas agora. Não presuma um "
+                    "cenário; use só os dados de mercado do contexto.")
         return ("=== CENÁRIO DE INVESTIMENTOS ===\nO usuário não cadastrou "
                 "cenário. Não presuma um; use só os dados de mercado do "
                 "contexto.")
     ordem = list(relevantes(classe_politica))
     ordem += [k for k in CHAVES if k not in ordem]
+    if c.origem == DADOS:
+        linhas = [f"=== CENÁRIO DE INVESTIMENTOS (lido dos dados pelo código "
+                  f"em {(c.salvo_em or '—')[:10]}) ===",
+                  "Montado das séries do banco; não é opinião do usuário nem "
+                  "da LLM. Não altere. Não substitui fundamentos nem "
+                  "estratégia."]
+        linhas += [linha_item(k, c.item(k), dados=True) for k in ordem]
+        velhos = c.envelhecidos(hoje)
+        if velhos:
+            linhas.append(f"Itens com dado de referência de mais de "
+                          f"{ENVELHECE_DIAS} dias: "
+                          + ", ".join(ROTULO[k] for k in velhos) + ".")
+        return "\n".join(linhas)
     linhas = [f"=== CENÁRIO DE INVESTIMENTOS (premissa do usuário, versão "
               f"{c.versao}, salvo em {(c.salvo_em or '—')[:10]}) ===",
               "Não altere. Não substitui fundamentos nem estratégia."]
@@ -324,6 +356,18 @@ def para_contexto(c: Cenario | None, *, hoje: dt.date,
     """O cenário como objeto do contexto estruturado. ``None`` sem cenário."""
     if c is None or c.vazio:
         return None
+    if c.origem == DADOS:
+        return {
+            "natureza": "lido dos dados pelo código; não alterar; não "
+                        "substitui fundamentos nem estratégia",
+            "lido_em": (c.salvo_em or "")[:10] or None,
+            "itens": {ROTULO[k]: c.item(k).como_dict() for k in c.preenchidos},
+            "sem_dado": {ROTULO[k]: c.item(k).source or "ausente"
+                         for k in CHAVES if not c.item(k).preenchido},
+            "mais_relevantes_para_a_classe": [ROTULO[k] for k in
+                                              relevantes(classe_politica)],
+            "sinais_de_revisao": [s.texto for s in sinais],
+        }
     return {
         "natureza": "premissa do usuário; não alterar; não substitui "
                     "fundamentos nem estratégia",

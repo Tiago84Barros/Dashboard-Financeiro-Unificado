@@ -223,7 +223,7 @@ def _com_cenario(ticker="HGLG11", sinais=()):
 def test_secao_cenario_sem_cadastro_aponta_configuracoes():
     a = _analise("HGLG11", _ctx())
     assert a.cenario.estado == m.SEM_DADOS
-    assert '"Meu cenário", no fim desta aba' in a.cenario.resumo
+    assert "séries macro do banco não puderam ser lidas" in a.cenario.resumo
 
 
 def test_secao_cenario_disponivel_com_itens_relevantes_da_classe():
@@ -246,7 +246,7 @@ def test_sinal_entra_na_secao_e_no_texto_da_llm():
 def test_texto_sem_cenario_diz_para_nao_presumir():
     ctx = _ctx()
     texto = analise.texto_para_llm(_analise("HGLG11", ctx), ctx)
-    assert "não cadastrou cenário" in texto
+    assert "não puderam ser lidas" in texto and "Não presuma" in texto
 
 
 def test_provedor_nao_le_banco(monkeypatch):
@@ -304,7 +304,7 @@ def test_aviso_da_tela_do_fit():
     assert tela_fit.aviso_cenario(ctx) is None
     s = divergencia.sinais(_cenario(), {"interest_rate": _ref(14.0)})
     html = tela_fit.aviso_cenario(dataclasses.replace(ctx, sinais_cenario=s))
-    assert mod.FRASE_REVISAO in html and "não foi alterado" in html
+    assert mod.FRASE_REVISAO in html and "nada foi alterado" in html
     assert "#" not in html.split("style=")[1][:200]
 
 

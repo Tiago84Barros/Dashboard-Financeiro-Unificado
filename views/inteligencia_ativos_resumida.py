@@ -18,6 +18,7 @@ from html import escape
 
 import streamlit as st
 
+from core.inteligencia_ativos import destaques_relatorios as dr
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import pares as prs
 from core.inteligencia_ativos import resumida as rs
@@ -113,10 +114,11 @@ def rotulo_expander(a: m.AnaliseAtivo) -> str:
     return f"{a.ativo.ticker} · {_pct(a.ativo.peso_atual)} · {d.rotulo}"
 
 
-def cartao_posicao(a: m.AnaliseAtivo) -> str:
+def cartao_posicao(a: m.AnaliseAtivo,
+                   sugerido: rs.AlvoSugerido | None = None) -> str:
     """% atual, % devida e manter / comprar / vender. Puro."""
     d = rs.decisao(a)
-    devido = rs.peso_devido(a)
+    devido = rs.peso_devido(a, sugerido)
     cor = _COR_DECISAO[d.codigo]
 
     def _kpi(rotulo, valor, detalhe="", estilo=""):
@@ -156,20 +158,81 @@ def cartao_substitutos(subs: tuple[prs.Par, ...]) -> str:
             f'{corpo}{_nota(rs.AVISO_SUBSTITUTO)}</div>')
 
 
+def _regua(mt: rs.MetricaPares) -> str:
+    """Uma régua por métrica: o ativo (ponto cheio), os pares (vazados) e a
+    mediana do segmento (traço). A régua vai do menor ao maior valor
+    mostrado; não há lado bom nem ruim."""
+    marcas = []
+    if mt.mediana_pos is not None:
+        marcas.append(
+            f'<div title="mediana do segmento" style="position:absolute;'
+            f'left:{mt.mediana_pos:.1f}%;top:-4px;width:2px;height:14px;'
+            f'margin-left:-1px;background:var(--app-text);opacity:.55"></div>')
+    for pt in sorted(mt.pontos, key=lambda x: x.eh_ativo):
+        tam = 12 if pt.eh_ativo else 9
+        estilo = ("background:var(--app-primary);border:2px solid "
+                  "var(--app-surface)" if pt.eh_ativo else
+                  "background:var(--app-surface);border:2px solid var(--app-muted)")
+        marcas.append(
+            f'<div title="{escape(pt.ticker, quote=True)}: '
+            f'{escape(pt.texto, quote=True)}" style="position:absolute;'
+            f'left:{pt.posicao:.1f}%;top:{3 - tam / 2:.1f}px;width:{tam}px;'
+            f'height:{tam}px;margin-left:-{tam / 2:.1f}px;border-radius:50%;'
+            f'{estilo}"></div>')
+    return ('<div style="position:relative;height:6px;margin:12px 6px 8px;'
+            'border-radius:3px;background:var(--app-border)">'
+            + "".join(marcas) + "</div>")
+
+
+def _bloco_metrica(mt: rs.MetricaPares) -> str:
+    pares = " · ".join(f"{escape(pt.ticker)} {escape(pt.texto)}"
+                       for pt in mt.pontos if not pt.eh_ativo)
+    return (
+        f'<div title="{escape(mt.leitura, quote=True)}" style="border:1px '
+        f'solid var(--app-border);border-radius:8px;padding:8px 10px;'
+        f'background:var(--app-surface-raised)">'
+        f'<div style="{_SUB};margin-top:0">{escape(mt.rotulo)}</div>'
+        f'<div style="display:flex;align-items:baseline;gap:8px;'
+        f'flex-wrap:wrap"><span style="font-size:1.15rem;font-weight:700;'
+        f'color:var(--app-text)">{escape(mt.texto_ativo)}</span>'
+        f'<span style="font-size:0.75rem;color:var(--app-muted)">'
+        f'{escape(rs.ROTULO_POSICAO.get(mt.posicao, ""))}</span></div>'
+        + _regua(mt)
+        + f'<div style="font-size:0.74rem;color:var(--app-subtle)">'
+          f'Mediana do segmento {escape(mt.texto_mediana)} '
+          f'({mt.n_pares} {"par" if mt.n_pares == 1 else "pares"})</div>'
+        + (f'<div style="font-size:0.74rem;color:var(--app-muted)">'
+           f'{pares}</div>' if pares else "")
+        + "</div>")
+
+
 def cartao_pares(t: rs.TabelaPares) -> str:
-    """O ativo e dois pares do mesmo segmento, lado a lado. Puro."""
+    """O ativo contra o segmento, uma régua por indicador. Puro."""
     titulo = "Comparação com o mesmo segmento"
     if not t.linhas:
         return (f'<div style="{_CAIXA}">{_secao(titulo)}<div style="color:'
                 f'var(--app-muted)">{escape(t.motivo or "")}</div></div>')
-    cab = "".join(f"<th {_TH}>{escape(c)}</th>" for c in ("Ativo", *t.colunas))
-    corpo = "".join(
-        f"<tr><td {_TD}><b>{escape(tk)}</b></td>"
-        + "".join(f"<td {_TD}>{escape(v)}</td>" for v in vals) + "</tr>"
-        for tk, vals in t.linhas)
+    ponto = ('<span style="display:inline-block;width:9px;height:9px;'
+             'border-radius:50%;margin-right:4px;vertical-align:middle;{}">'
+             '</span>')
+    legenda = []
+    for i, (tk, nome) in enumerate(t.nomes):
+        estilo = ("background:var(--app-primary)" if i == 0 else
+                  "border:2px solid var(--app-muted)")
+        legenda.append(f'<span style="margin-right:12px;white-space:nowrap">'
+                       f'{ponto.format(estilo)}<b>{escape(tk)}</b> '
+                       f'<span style="color:var(--app-subtle)">'
+                       f'{escape(nome)}</span></span>')
+    legenda.append('<span style="white-space:nowrap"><span style="display:'
+                   'inline-block;width:2px;height:11px;margin-right:4px;'
+                   'vertical-align:middle;background:var(--app-text);'
+                   'opacity:.55"></span>mediana do segmento</span>')
+    grade = "".join(_bloco_metrica(mt) for mt in t.metricas)
     return (f'<div style="{_CAIXA}">{_secao(f"{titulo} · {t.titulo}")}'
-            f'<div style="overflow-x:auto"><table style="border-collapse:'
-            f'collapse;font-size:0.85rem"><tr>{cab}</tr>{corpo}</table></div>'
+            f'<div style="font-size:0.8rem;color:var(--app-text);'
+            f'margin-bottom:8px">{"".join(legenda)}</div>'
+            f'<div style="display:grid;grid-template-columns:repeat(auto-fill,'
+            f'minmax(200px,1fr));gap:8px">{grade}</div>'
             f'{_nota(prs.RODAPE)}</div>')
 
 
@@ -193,33 +256,109 @@ def cartao_papel(a: m.AnaliseAtivo) -> str:
                       f'{x}</div>' for x in linhas) + "</div>")
 
 
-def cartao_noticias(a: m.AnaliseAtivo) -> str:
+def _manchete(i) -> str:
+    origem = f"{i.ticker} · " if getattr(i, "ticker", None) else ""
+    return (f'<div style="margin:3px 0"><span style="color:var(--app-subtle);'
+            f'font-size:0.78rem">{escape(origem)}'
+            f'{escape(rs.inf._data_br(i.date))} · {escape(i.source or "—")}'
+            f'</span><div style="color:var(--app-text)">'
+            f'{_link(i.headline, i.url)}</div></div>')
+
+
+def cartao_noticias(a: m.AnaliseAtivo,
+                    gerais: tuple[list[str], str] | None = None) -> str:
+    """Notícias do ativo; sem elas, as do segmento; e, se ainda faltar, o
+    noticiário geral do mercado. Nunca em branco. Puro."""
     itens, motivo = rs.noticias(a)
-    if not itens:
-        corpo = f'<div style="color:var(--app-muted)">{escape(motivo or "")}</div>'
+    partes = []
+    if itens:
+        partes.append("".join(_manchete(i) for i in itens))
     else:
-        corpo = "".join(
-            f'<div style="margin:3px 0"><span style="color:var(--app-subtle);'
-            f'font-size:0.78rem">{escape(rs.inf._data_br(i.date))} · '
-            f'{escape(i.source or "—")}</span><div style="color:var(--app-text)">'
-            f'{_link(i.headline, i.url)}</div></div>' for i in itens)
-    return f'<div style="{_CAIXA}">{_secao("Notícias")}{corpo}</div>'
+        partes.append(f'<div style="color:var(--app-muted)">'
+                      f'{escape(motivo or "")}</div>')
+    setor, rotulo = rs.noticias_setor(a)
+    if setor:
+        partes.append(_secao("Como está o segmento"
+                             + (f" · {rotulo}" if rotulo else "")))
+        partes.append("".join(_manchete(i) for i in setor))
+        partes.append(_nota("Notícias dos pares do mesmo segmento, não do "
+                            "ativo."))
+    lista, origem = gerais or ([], "")
+    if lista and rs.precisa_noticiario_geral(a):
+        falta = rs.N_NOTICIAS - len(itens) - len(setor)
+        partes.append(_secao("Noticiário geral do mercado"))
+        partes.append("".join(
+            f'<div style="margin:3px 0;color:var(--app-text)">{escape(x)}</div>'
+            for x in lista[:max(falta, 1)]))
+        if origem:
+            partes.append(_nota(origem))
+    elif not itens and not setor:
+        partes.append(_nota("Noticiário geral do mercado indisponível agora."))
+    return f'<div style="{_CAIXA}">{_secao("Notícias")}{"".join(partes)}</div>'
 
 
-def cartao_relatorios(a: m.AnaliseAtivo) -> str:
+@st.cache_data(ttl=900, show_spinner=False)
+def _noticiario_geral() -> tuple[list[str], str]:
+    """Noticiário geral do mercado, o mesmo que os chats leem. Falha vira
+    lista vazia: a caixa diz que faltou."""
+    try:
+        from core.contexto_mercado import manchetes_gerais
+        return manchetes_gerais(rs.N_NOTICIAS)
+    except Exception:  # noqa: BLE001 - fonte fora do ar não derruba a página
+        return [], ""
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _destaques(ticker: str) -> tuple[dr.Destaque, ...]:
+    """Frases de fato dos documentos do ativo, do corpus RAG. Falha vira
+    vazio: a caixa cai na lista de documentos."""
+    try:
+        return dr.ler(ticker)
+    except Exception:  # noqa: BLE001 - corpus ilegível não derruba a página
+        return ()
+
+
+def cartao_relatorios(a: m.AnaliseAtivo,
+                      destaques: tuple[dr.Destaque, ...] = ()) -> str:
+    """O que os documentos dizem (frases do emissor com fato e número), não
+    o link para o documento inteiro. Documento sem texto extraído aparece
+    só com título e data. Puro."""
     docs, motivo = rs.relatorios(a)
-    if not docs:
-        corpo = f'<div style="color:var(--app-muted)">{escape(motivo or "")}</div>'
-    else:
-        corpo = "".join(
-            f'<div style="margin:3px 0"><span style="color:var(--app-subtle);'
-            f'font-size:0.78rem">{escape(rs.inf._data_br(d.reference_date))} · '
-            f'{escape(d.rotulo or "")}</span><div style="color:var(--app-text)">'
-            f'{_link(d.titulo or d.rotulo or "documento", d.source_url)}</div>'
-            f'</div>' for d in docs)
-    return (f'<div style="{_CAIXA}">{_secao("Relatórios relevantes")}{corpo}'
-            f'{_nota("Documentos oficiais mais recentes. O que dizem sobre o futuro está na análise detalhada.")}'
-            f'</div>')
+    partes = []
+    for d in destaques:
+        partes.append(
+            '<div style="margin:6px 0 8px 0"><div style="font-size:0.78rem;'
+            f'color:var(--app-subtle)">{escape(rs.inf._data_br(d.data))} · '
+            f'{escape(d.tipo)}</div><div style="color:var(--app-text);'
+            f'font-weight:700;margin:1px 0 3px 0">{escape(d.titulo)}</div>'
+            '<ul style="margin:0 0 0 18px;padding:0;color:var(--app-text)">'
+            + "".join(f'<li style="margin:2px 0">{escape(f)}</li>'
+                      for f in d.frases)
+            + "</ul></div>")
+    restantes = [d for d in docs
+                 if not any(dr.mesmo_documento(d.titulo, d.reference_date, x)
+                            for x in destaques)]
+    if restantes:
+        partes.append(
+            f'<div style="margin-top:6px;color:var(--app-muted);'
+            f'font-size:0.8rem"><b>{"Outros documentos recentes" if destaques else "Documentos recentes"}'
+            ' (ainda sem texto extraído no acervo):</b></div>'
+            + "".join(
+                '<div style="margin:2px 0;font-size:0.82rem;color:var(--app-'
+                f'text)">{escape(rs.inf._data_br(d.reference_date))} · '
+                f'{escape(d.rotulo or "")}: {escape(d.titulo or "")}</div>'
+                for d in restantes))
+    if not partes:
+        partes.append(f'<div style="color:var(--app-muted)">'
+                      f'{escape(motivo or rs.inf.NAO_DISPONIVEL)}</div>')
+    nota = ("Trechos literais dos documentos oficiais, escolhidos por conterem "
+            "fato e número (resultado, caixa, dívida, proventos, guidance). A "
+            "leitura do que isso muda na tese está na análise detalhada."
+            if destaques else
+            "O texto destes documentos ainda não está no acervo; quando "
+            "estiver, os pontos principais aparecem aqui.")
+    return (f'<div style="{_CAIXA}">{_secao("Relatórios relevantes")}'
+            f'{"".join(partes)}{_nota(nota)}</div>')
 
 
 def cartao_macro(mc: rs.Macro, impacto: str | None = None) -> str:
@@ -228,18 +367,18 @@ def cartao_macro(mc: rs.Macro, impacto: str | None = None) -> str:
     partes = [f'<div style="color:var(--app-text)"><b>O que mais pesa nesta '
               f'classe:</b> {escape(", ".join(mc.canais) or "—")}</div>']
     if mc.sem_cenario:
-        partes.append('<div style="color:var(--app-muted)">Nenhum cenário '
-                      'cadastrado. Preencha "Meu cenário" abaixo para ver as '
-                      'suas premissas aqui.</div>')
+        partes.append('<div style="color:var(--app-muted)">As séries macro do '
+                      'banco não puderam ser lidas agora.</div>')
     elif mc.premissas:
         partes.append("<div style=\"color:var(--app-text);margin-top:4px\">"
-                      "<b>O seu cenário:</b></div><ul style=\"margin:2px 0 0 "
-                      "18px;padding:0;color:var(--app-text)\">"
+                      "<b>Como estão agora (lido dos dados):</b></div><ul "
+                      "style=\"margin:2px 0 0 18px;padding:0;"
+                      "color:var(--app-text)\">"
                       + "".join(f"<li>{escape(p)}</li>" for p in mc.premissas)
                       + "</ul>")
     else:
-        partes.append('<div style="color:var(--app-muted)">O seu cenário não '
-                      'preenche as variáveis desta classe.</div>')
+        partes.append('<div style="color:var(--app-muted)">Sem dado para as '
+                      'variáveis desta classe agora.</div>')
     if mc.sinais:
         partes.append("<ul style=\"margin:4px 0 0 18px;padding:0;"
                       "color:var(--app-warning)\">"
@@ -253,6 +392,53 @@ def cartao_macro(mc: rs.Macro, impacto: str | None = None) -> str:
                             "análise detalhada."))
     return (f'<div style="{_CAIXA}">{_secao("Como o macro influencia")}'
             + "".join(partes) + "</div>")
+
+
+_SETA_TENDENCIA = {"alta": ("▲ alta", "var(--app-warning)"),
+                   "queda": ("▼ queda", "var(--app-info)"),
+                   "estavel": ("● estável", "var(--app-muted)"),
+                   "incerta": ("? incerta", "var(--app-subtle)")}
+
+
+def cartao_cenario(linhas: tuple[rs.LinhaCenario, ...]) -> str:
+    """Cenário econômico atual, lido dos dados: uma peça por variável, com
+    valor, tendência calculada, fonte e data. Puro."""
+    if not linhas or not any(ln.valor for ln in linhas):
+        return (f'<div style="{_CAIXA}">{_secao("🌎 Cenário econômico atual")}'
+                '<div style="color:var(--app-muted)">As séries macro do banco '
+                'não puderam ser lidas agora.</div></div>')
+    pecas = []
+    for ln in linhas:
+        if ln.valor:
+            seta, cor = _SETA_TENDENCIA.get(ln.tendencia or "incerta",
+                                            _SETA_TENDENCIA["incerta"])
+            corpo = (f'<div style="color:var(--app-text);font-size:0.86rem;'
+                     f'margin-top:2px">{escape(ln.valor)}</div>'
+                     f'<div style="font-size:0.74rem;font-weight:700;color:{cor};'
+                     f'margin-top:4px">{escape(seta)}</div>'
+                     f'<div style="font-size:0.7rem;color:var(--app-subtle);'
+                     f'margin-top:2px">{escape(ln.fonte)}'
+                     f'{" · " + escape(ln.referencia) if ln.referencia else ""}'
+                     '</div>')
+        else:
+            corpo = (f'<div style="color:var(--app-subtle);font-size:0.8rem;'
+                     f'margin-top:2px">Sem dado: {escape(ln.fonte or "ausente")}'
+                     '</div>')
+        pecas.append('<div style="border:1px solid var(--app-border);'
+                     'border-radius:8px;background:var(--app-surface-raised);'
+                     'padding:8px 10px"><div style="font-size:0.72rem;'
+                     'font-weight:700;color:var(--app-muted);text-transform:'
+                     f'uppercase;letter-spacing:.04em">{escape(ln.rotulo)}</div>'
+                     f'{corpo}</div>')
+    return (f'<div style="{_CAIXA}">{_secao("🌎 Cenário econômico atual")}'
+            '<div style="display:grid;grid-template-columns:repeat(auto-fill,'
+            f'minmax(220px,1fr));gap:8px">{"".join(pecas)}</div>'
+            + _nota("Lido pelo programa das séries do banco (Selic, IPCA, "
+                    "curva do Tesouro, dólar, juros e crédito nos EUA). A "
+                    "tendência é calculada a partir dos dados, não é opinião. "
+                    "Commodities e risco geopolítico não têm série: as LLMs "
+                    "os leem nas notícias.")
+            + "</div>")
 
 
 def _impacto_fit(a: m.AnaliseAtivo) -> str | None:
@@ -272,14 +458,17 @@ def _abrir_detalhe(ticker: str) -> None:
 
 
 def _render_ativo(a: m.AnaliseAtivo, ctx: m.ContextoInvestidor,
-                  na_carteira: tuple[str, ...]) -> None:
+                  na_carteira: tuple[str, ...],
+                  sugerido: rs.AlvoSugerido | None = None) -> None:
     with st.expander(rotulo_expander(a)):
         d = rs.decisao(a)
-        html = cartao_posicao(a)
+        html = cartao_posicao(a, sugerido)
         if d.codigo == rs.VENDER:
             html += cartao_substitutos(rs.substitutos(a, na_carteira))
         html += (cartao_pares(rs.tabela_pares(a)) + cartao_papel(a)
-                 + cartao_noticias(a) + cartao_relatorios(a)
+                 + cartao_noticias(a, _noticiario_geral()
+                                   if rs.precisa_noticiario_geral(a) else None)
+                 + cartao_relatorios(a, _destaques(a.ativo.ticker))
                  + cartao_macro(rs.macro(a, ctx), _impacto_fit(a)))
         st.markdown(html, unsafe_allow_html=True)
         st.button("Ver análise completa", key=f"ia_resumo_{a.ativo.ticker}",
@@ -289,11 +478,15 @@ def _render_ativo(a: m.AnaliseAtivo, ctx: m.ContextoInvestidor,
 def render(analises, ctx: m.ContextoInvestidor,
            politica: dict | None = None) -> None:
     na_carteira = tuple(a.ativo.ticker for a in analises)
+    with st.expander("🌎 Cenário econômico atual (lido dos dados)"):
+        st.markdown(cartao_cenario(rs.cenario_atual(ctx.cenario)),
+                    unsafe_allow_html=True)
     for b in rs.blocos(analises, ctx):
         meta = rs.meta_reserva(politica) if b.chave == rs.RESERVA else None
         st.markdown(cabecalho_grupo(b, meta), unsafe_allow_html=True)
         if b.chave in rs.GRUPOS_EM_LISTA:
             st.markdown(cartao_lista(b), unsafe_allow_html=True)
             continue
+        alvos = b.alvos
         for a in b.analises:
-            _render_ativo(a, ctx, na_carteira)
+            _render_ativo(a, ctx, na_carteira, alvos.get(a.ativo.ticker))

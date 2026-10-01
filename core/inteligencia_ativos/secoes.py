@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from dataclasses import replace
 from typing import Callable
 
 from core.inteligencia_ativos.modelos import (
@@ -188,11 +189,12 @@ def provedor_cenario(info: InfoBasica, ctx: ContextoInvestidor, *,
 
     titulo = SECOES["cenario"][0]
     c = ctx.cenario
+    if c is not None and c.origem == cen.DADOS:
+        return _secao_cenario_dados(info, ctx, c, hoje or dt.date.today())
     if c is None or c.vazio:
         return Secao(chave="cenario", titulo=titulo, estado=SEM_DADOS,
-                     resumo="Nenhum Cenário de Investimentos cadastrado. "
-                            "Cadastre em \"Meu cenário\", no fim desta "
-                            "aba.")
+                     resumo="Cenário econômico indisponível: as séries "
+                            "macro do banco não puderam ser lidas agora.")
     hoje = hoje or dt.date.today()
     sinais = ctx.sinais_cenario
     relev = [k for k in cen.relevantes(info.classe_politica)
@@ -221,6 +223,37 @@ def provedor_cenario(info: InfoBasica, ctx: ContextoInvestidor, *,
                        f"{c.versao})")
 
 
+def _secao_cenario_dados(info: InfoBasica, ctx: ContextoInvestidor, c,
+                         hoje: dt.date) -> Secao:
+    """O cenário lido dos dados (``core.cenario.automatico``)."""
+    from core.cenario import modelo as cen
+
+    titulo = SECOES["cenario"][0]
+    if c.vazio:
+        return Secao(chave="cenario", titulo=titulo, estado=SEM_DADOS,
+                     resumo="As séries macro do banco não puderam ser lidas "
+                            "agora; o cenário volta quando elas voltarem.")
+    relev = [k for k in cen.relevantes(info.classe_politica)
+             if c.item(k).preenchido]
+    resumo = (f"Lido dos dados em {(c.salvo_em or '')[:10]}: "
+              f"{len(c.preenchidos)} de {len(cen.CHAVES)} itens com dado. ")
+    if relev:
+        resumo += ("Mais relevantes para esta classe: "
+                   + "; ".join(f"{cen.ROTULO[k]} {c.item(k).current_value}"
+                               for k in relev) + ".")
+    velhos = c.envelhecidos(hoje)
+    if velhos:
+        resumo += (" Dado de referência antigo: "
+                   + ", ".join(cen.ROTULO[k] for k in velhos) + ".")
+    return Secao(chave="cenario", titulo=titulo, estado=DISPONIVEL,
+                 resumo=resumo,
+                 dados=cen.para_contexto(c, hoje=hoje,
+                                         classe_politica=info.classe_politica,
+                                         sinais=ctx.sinais_cenario) or {},
+                 fonte="Cenário lido dos dados (public.macro, curva do "
+                       "Tesouro, USDBRL, insumos macro publicados)")
+
+
 PROVEDORES: dict[str, Provedor] = {c: _pendente(c) for c in SECOES}
 PROVEDORES["cenario"] = provedor_cenario
 PROVEDORES["fundamentos"] = provedor_fundamentos
@@ -229,6 +262,37 @@ PROVEDORES["pares"] = provedor_pares
 PROVEDORES["noticias"] = provedor_noticias
 PROVEDORES["relatorios"] = provedor_relatorios
 PROVEDORES["eventos"] = provedor_eventos
+
+
+def _ler_noticias_do_setor(tickers) -> tuple:
+    from core.inteligencia_ativos import fontes_informacoes
+    return fontes_informacoes.noticias_do_setor(fontes_informacoes.arquivo(),
+                                                tickers)
+
+
+def noticias_com_setor(noticias: Secao, pares: Secao | None, *,
+                       leitor=None) -> Secao:
+    """Sem notícia própria, a seção traz as dos pares do mesmo segmento.
+
+    A notícia do par não vira notícia do ativo: fica em ``setor``, marcada
+    com o ticker de origem, e o estado continua SEM_DADOS para o ativo.
+    """
+    from core.inteligencia_ativos import informacoes as inf
+    from core.inteligencia_ativos import pares as p
+    if not noticias.dados or not pares or not pares.dados:
+        return noticias
+    n = inf.Noticias.de_dict(noticias.dados)
+    if n.itens:
+        return noticias
+    grupo = p.ComparacaoPares.de_dict(pares.dados).grupo
+    tickers = [x.ticker for x in sorted(grupo.pares, key=lambda x: x.distancia)]
+    if not tickers:
+        return noticias
+    setor = (leitor or _ler_noticias_do_setor)(tickers)
+    if not setor:
+        return noticias
+    n = replace(n, setor=tuple(setor), setor_rotulo=grupo.valor)
+    return replace(noticias, resumo=inf.resumo_noticias(n), dados=n.como_dict())
 
 
 def coletar(info: InfoBasica, ctx: ContextoInvestidor) -> dict[str, Secao]:
@@ -243,4 +307,10 @@ def coletar(info: InfoBasica, ctx: ContextoInvestidor) -> dict[str, Secao]:
                                  estado=SEM_DADOS,
                                  resumo="Não foi possível obter os dados "
                                         "desta seção agora.")
+    try:
+        saida["noticias"] = noticias_com_setor(saida["noticias"],
+                                               saida.get("pares"))
+    except Exception as exc:  # sem o segmento, fica a seção como estava
+        logger.warning("[inteligencia_ativos] notícias do segmento de %s: %s",
+                       info.ticker, type(exc).__name__)
     return saida

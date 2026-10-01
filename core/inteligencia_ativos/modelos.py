@@ -148,9 +148,10 @@ class FaixaAlvo:
     """O que a política diz sobre o peso deste ativo.
 
     A política não tem alvo por ativo; tem alvo por classe e, se a pessoa
-    respondeu, teto por ativo e por setor. Um alvo individual inventado
-    (alvo da classe ÷ número de ativos) seria um número que ninguém escolheu
-    apresentado como escolha — por isso não existe aqui.
+    respondeu, teto por ativo e por setor. Aqui fica só o que a política
+    diz. A % sugerida por ativo (pedido do usuário em 30/09/2026) é calculada
+    na página resumida (``resumida.alvos_sugeridos``) e rotulada como
+    sugestão, com o método; não entra nesta faixa.
     """
     alvo_classe: float | None          # % da carteira desejado para a classe
     peso_classe: float | None          # % atual da classe
