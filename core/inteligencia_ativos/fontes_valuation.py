@@ -23,14 +23,13 @@ os ``_carregar_*`` fazem a leitura.
 """
 from __future__ import annotations
 
-import gzip
-import json
 import logging
 import math
 import re
 from datetime import date, timedelta
 from pathlib import Path
 
+from core.inteligencia_ativos import arquivo_publicado
 from core.inteligencia_ativos import pares as p
 from core.inteligencia_ativos import valuation as v
 from core.inteligencia_ativos.fundamentos import (
@@ -110,18 +109,6 @@ def _raiz_b3(ticker: str) -> str:
 
 # -- arquivo publicado ---------------------------------------------------------------
 
-def _ler_arquivo(caminho: str) -> dict:
-    try:
-        with gzip.open(caminho, "rb") as fh:
-            return json.loads(fh.read().decode("utf-8"))
-    except FileNotFoundError:
-        logger.info("[valuation] arquivo de histórico ausente: %s", caminho)
-    except Exception as exc:  # arquivo corrompido não derruba a seção
-        logger.warning("[valuation] arquivo de histórico ilegível: %s",
-                       type(exc).__name__)
-    return {}
-
-
 def _cache(fn):
     try:
         import streamlit as st
@@ -130,11 +117,9 @@ def _cache(fn):
         return fn
 
 
-_arquivo_cache = _cache(_ler_arquivo)
-
-
 def arquivo() -> dict:
-    return _arquivo_cache(str(ARQUIVO))
+    # Lido uma vez e compartilhado; ver arquivo_publicado (CPU, 30/09/2026).
+    return arquivo_publicado.ler(str(ARQUIVO), "valuation")
 
 
 def _premissas_arquivo(art: dict, mercado: str) -> tuple[str, ...]:

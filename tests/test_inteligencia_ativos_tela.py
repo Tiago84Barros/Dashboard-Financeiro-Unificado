@@ -281,3 +281,32 @@ def test_cartao_de_calculos_aparece_com_alertas_tabela_e_concentracao():
     for alerta in ctx.calculos.alertas:
         assert escape(alerta.mensagem) in html
     assert "#" not in tela.cartao_calculos(ctx.calculos).replace("&#", "")
+
+
+def test_analise_da_carteira_nao_e_refeita_a_cada_clique(monkeypatch):
+    """Abrir o detalhe ou trocar o ativo reaproveita a análise (CPU, 30/09)."""
+    from core import inteligencia_ativos as servico
+    original = servico.analisar_carteira
+    chamadas = []
+
+    def contando(**kw):
+        chamadas.append(kw["carteira"])
+        return original(**kw)
+
+    monkeypatch.setattr(servico, "analisar_carteira", contando)
+    app = _rodar(_liberada(), CARTEIRA_COMPLETA)
+    app.toggle(key="ia_detalhe").set_value(True).run(timeout=30)
+    app.selectbox(key="ia_ativo").set_value("TAEE11").run(timeout=30)
+    assert not app.exception
+    assert len(chamadas) == 1
+
+
+def test_chave_da_analise_muda_com_carteira_e_politica():
+    base = tela._chave_analise(_liberada(), CARTEIRA_COMPLETA)
+    outra_carteira = {**CARTEIRA_COMPLETA, "total_mercado": 1001.0}
+    assert tela._chave_analise(_liberada(), outra_carteira) != base
+    lib = _liberada()
+    from dataclasses import replace
+    outra_politica = replace(lib, politica=replace(lib.politica, version=4))
+    assert tela._chave_analise(outra_politica, CARTEIRA_COMPLETA) != base
+    assert tela._chave_analise(_liberada(), dict(CARTEIRA_COMPLETA)) == base
