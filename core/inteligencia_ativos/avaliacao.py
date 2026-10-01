@@ -25,16 +25,20 @@ Três decisões de método, porque já custaram caro neste projeto:
   alavancagem maior, regulada; em commodity e siderurgia o P/L baixo costuma
   marcar o pico do ciclo, e não conta como barato.
 
-O sentimento das notícias é o léxico do próprio app
-(``core.noticias.sentimento``), não um modelo: serve de termômetro, e o texto
-diz isso. Momento de preço não entra porque o app não publica série de preço
-por ativo para a tela.
+O sentimento das notícias é, quando a fonte mede, o do provedor (Alpha
+Vantage, por ticker); senão, o léxico do próprio app
+(``core.noticias.sentimento``), que não é modelo: serve de termômetro, e o
+texto diz quantas notícias vieram de cada método. Quando os dois existem e
+discordam de sinal, o critério conta a divergência. Momento de preço é o
+retorno de 12 meses com proventos reinvestidos (publicado em
+``data/public/valuation_historico``), lido contra a mediana dos pares.
 """
 from __future__ import annotations
 
 import unicodedata
 from dataclasses import dataclass
 
+from core.inteligencia_ativos import fontes_fundamentos as ff
 from core.inteligencia_ativos import fundamentos as fnd
 from core.inteligencia_ativos import informacoes as inf
 from core.inteligencia_ativos import modelos as m
@@ -96,8 +100,20 @@ _TERMOS_SAIDA = ("pagina virada", "sai da", "saida da", "deixa a", "encerra",
                  "exits", "emerges")
 
 AVISO = ("Avaliação por regras sobre os dados do app, não recomendação: cada "
-         "critério traz o número e a referência. Sentimento é léxico do app "
-         "(termômetro, não modelo); momento de preço não entra.")
+         "critério traz o número e a referência. Sentimento vem do provedor "
+         "da notícia quando ele mede, senão do léxico do app (termômetro, não "
+         "modelo); momento de preço é o retorno de 12 meses contra os pares, "
+         "descreve o passado recente e não promete o próximo ano.")
+
+# Momento: diferença, em pontos percentuais, contra a mediana dos pares para
+# contar como favorável ou desfavorável. Retorno de 12 meses tem dispersão de
+# dezenas de pontos entre pares; 10 p.p. separa o que destoa do ruído.
+MOMENTO_DIFERENCA_PP = 10.0
+# Queda absoluta que vira alerta (não eliminatório) mesmo em linha com pares
+# que também caíram: o mercado está precificando algo no segmento.
+MOMENTO_QUEDA_ALERTA = -30.0
+# Tom acima disto (em módulo) conta como positivo/negativo.
+LIMIAR_TOM = 0.15
 
 
 @dataclass(frozen=True)
@@ -356,6 +372,13 @@ def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
                                    "caixa", -1))
 
     # Endividamento, com a régua do setor.
+    bruto = f.indicador("divida_liquida_ebitda")
+    if bruto is not None and _num(bruto.valor) is None and \
+            (bruto.nota or "").startswith(ff.NOTA_EBITDA_NEGATIVO):
+        crits.append(Criterio("EBITDA de 12 meses negativo: a operação não "
+                              "gera caixa para servir a dívida", -1))
+        alertas.append(Alerta("EBITDA de 12 meses negativo: a operação não "
+                              "paga a dívida", True))
     dl_ebitda = ind("divida_liquida_ebitda")
     if dl_ebitda is not None:
         x = _num(dl_ebitda.valor)
@@ -519,18 +542,78 @@ def _valuation(v: val.Valuation, perfil_: str, crits: list[Criterio],
 
 # -- mercado e notícias --------------------------------------------------------------
 
-def _sentimento(n: inf.Noticia, moeda: str) -> float | None:
+def _lexico(n: inf.Noticia, moeda: str) -> float | None:
+    """Tom pelo léxico do app. Sem idioma detectado, tenta os dois léxicos
+    e fica com o que reconhece algum termo (manchete curta engana o
+    detector)."""
     from core.noticias import normalizacao, sentimento
     texto = f"{n.headline}. {n.summary or ''}"
-    idioma = normalizacao.detectar_idioma(texto) or (
-        "pt" if moeda == "BRL" else "en")
-    return sentimento.calcular(texto, idioma)
+    idioma = normalizacao.detectar_idioma(texto)
+    if idioma:
+        return sentimento.calcular(texto, idioma)
+    preferido = "pt" if moeda == "BRL" else "en"
+    for lingua in (preferido, "en" if preferido == "pt" else "pt"):
+        s = sentimento.calcular(texto, lingua)
+        if s is not None:
+            return s
+    return None
+
+
+def _sentimento_medido(n: inf.Noticia, moeda: str
+                       ) -> tuple[float | None, str | None, bool]:
+    """(tom, método, divergência). Prefere o do provedor, que lê o texto
+    inteiro e é por ticker; o léxico fica para quem não tem. Divergência:
+    os dois medem e apontam sinais opostos além do limiar."""
+    api = _num(n.sentimento_api)
+    lex = _lexico(n, moeda)
+    if api is not None:
+        diverge = (lex is not None and abs(api) > LIMIAR_TOM
+                   and abs(lex) > LIMIAR_TOM and (api > 0) != (lex > 0))
+        return api, "provedor", diverge
+    if lex is not None:
+        return lex, "léxico", False
+    return None, None, False
+
+
+def _sentimento(n: inf.Noticia, moeda: str) -> float | None:
+    return _sentimento_medido(n, moeda)[0]
+
+
+def _momento(c, crits: list[Criterio], alertas: list[Alerta]) -> None:
+    """Retorno de 12 meses contra a mediana dos pares (diferença em p.p.)."""
+    ln = c.linha("retorno_12m") if c is not None else None
+    if ln is None or ln.valor is None:
+        return
+    r = _num(ln.valor)
+    med = _num(ln.mediana_pares)
+    if r is None:
+        return
+    if med is None or not ln.n_pares:
+        crits.append(Criterio(f"Retorno de 12 meses de {_pct(r)} (sem pares "
+                              "para comparar)", 0))
+    else:
+        dif = r - med
+        sinal = (1 if dif >= MOMENTO_DIFERENCA_PP else
+                 -1 if dif <= -MOMENTO_DIFERENCA_PP else 0)
+        rel = ("acima da" if sinal > 0 else "abaixo da" if sinal < 0 else
+               "em linha com")
+        crits.append(Criterio(
+            f"Retorno de 12 meses de {_pct(r)}, {rel} mediana de "
+            f"{ln.n_pares} pares ({_pct(med)}; diferença de "
+            f"{_br(dif)} p.p.)", sinal))
+    if r <= MOMENTO_QUEDA_ALERTA:
+        alertas.append(Alerta(f"preço caiu {_pct(-r)} em 12 meses (com "
+                              "proventos): o mercado precifica alguma "
+                              "deterioração; confirme nos fundamentos e nas "
+                              "notícias", False))
 
 
 def _mercado(a: m.AnaliseAtivo, c, crits: list[Criterio],
              alertas: list[Alerta]) -> tuple[str, str | None]:
     nots = inf.Noticias.de_dict(_secao(a.noticias))
     escores = []
+    metodos = {"provedor": 0, "léxico": 0, "categoria": 0}
+    divergentes = 0
     for n in nots.itens:
         if n.categoria in CATEGORIAS_CRITICAS and any(
                 t in _norm(n.headline) for t in _TERMOS_SAIDA):
@@ -547,23 +630,34 @@ def _mercado(a: m.AnaliseAtivo, c, crits: list[Criterio],
                                   True))
             crits.append(Criterio(f"{n.rotulo_categoria}: {n.headline}", -1))
             escores.append(-1.0)
+            metodos["categoria"] += 1
             continue
-        s = _sentimento(n, a.ativo.moeda)
+        s, metodo, diverge = _sentimento_medido(n, a.ativo.moeda)
         if n.categoria in CATEGORIAS_NEGATIVAS and (s is None or s > 0):
-            s = -0.5
+            s, metodo = -0.5, "categoria"
         if s is None:
             continue
+        if metodo:
+            metodos[metodo] += 1
+        divergentes += diverge
         escores.append(s)
     nota = None
     if escores:
-        pos = sum(1 for s in escores if s > 0.15)
-        neg = sum(1 for s in escores if s < -0.15)
+        pos = sum(1 for s in escores if s > LIMIAR_TOM)
+        neg = sum(1 for s in escores if s < -LIMIAR_TOM)
         media = sum(escores) / len(escores)
+        rotulos = {"provedor": "pelo provedor", "léxico": "pelo léxico",
+                   "categoria": "pela categoria do fato"}
+        origem = ", ".join(f"{q} {rotulos[k]}" for k, q in metodos.items()
+                           if q)
+        origem = f" ({origem})" if origem else ""
+        aviso = (f"; {divergentes} com provedor e léxico em sinais opostos"
+                 if divergentes else "")
         crits.append(Criterio(
             f"{len(escores)} notícia(s) própria(s) com tom medido em "
-            f"{nots.janela_dias or 60} dias: {pos} positiva(s), {neg} "
-            f"negativa(s), tom médio {_br(media, 2)}",
-            1 if media > 0.15 else -1 if media < -0.15 else 0))
+            f"{nots.janela_dias or 60} dias{origem}: {pos} positiva(s), {neg} "
+            f"negativa(s), tom médio {_br(media, 2)}{aviso}",
+            1 if media > LIMIAR_TOM else -1 if media < -LIMIAR_TOM else 0))
     elif nots.itens:
         nota = "Notícias próprias sem termo que o léxico meça."
     else:
@@ -589,6 +683,7 @@ def _mercado(a: m.AnaliseAtivo, c, crits: list[Criterio],
             f"{rotulo} de {_pct(abs(ln.valor))} "
             f"{'acima' if maior else 'abaixo'} da mediana de {ln.n_pares} "
             f"pares ({_pct(abs(ln.mediana_pares))})", -1 if maior else 1))
+    _momento(c, crits, alertas)
 
     assinados = [x.sinal for x in crits if x.sinal]
     if not assinados:

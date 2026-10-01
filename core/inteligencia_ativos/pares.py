@@ -61,6 +61,11 @@ N_MAXIMO = 10
 BANDA_PORTE = 10.0     # 1/10x a 10x
 BANDA_RISCO = 2.0      # 1/2x a 2x
 
+# Métricas que cruzam o zero comparam por diferença absoluta (pontos
+# percentuais): retorno de 12 meses com mediana de 1,9% e tolerância relativa
+# de 5% deixaria "em linha" só quem ficasse a 0,1 p.p. da mediana.
+TOLERANCIA_ABSOLUTA: dict[str, float] = {"retorno_12m": 5.0}
+
 RODAPE = ("Indicador melhor que o dos pares não implica investimento melhor: "
           "a comparação é insumo para o Portfolio Fit, não recomendação.")
 
@@ -74,6 +79,7 @@ METRICAS: dict[str, tuple[Metrica, ...]] = {
         Metrica("roe", "ROE", PCT),
         Metrica("margem_liquida", "Margem líquida", PCT),
         Metrica("volatilidade", "Volatilidade anualizada", PCT),
+        Metrica("retorno_12m", "Retorno de 12 meses", PCT),
         Metrica("porte", "Valor de mercado", MOEDA),
     ),
     FII: (
@@ -82,6 +88,7 @@ METRICAS: dict[str, tuple[Metrica, ...]] = {
         Metrica("cap_rate", "Cap rate implícito", PCT),
         Metrica("alavancagem", "Alavancagem", PCT),
         Metrica("max_drawdown", "Maior queda (drawdown)", PCT),
+        Metrica("retorno_12m", "Retorno de 12 meses", PCT),
         Metrica("liquidez_diaria", "Liquidez diária", MOEDA),
         Metrica("porte", "Patrimônio líquido", MOEDA),
     ),
@@ -110,6 +117,9 @@ LEITURA: dict[str, str] = {
                       "receita; depende do modelo de negócio",
     "volatilidade": "o preço oscilou mais (acima) ou menos (abaixo) nos "
                     "últimos 36 meses",
+    "retorno_12m": "o preço, com proventos reinvestidos, subiu mais "
+                   "(acima) ou menos (abaixo) nos últimos 12 meses; momento "
+                   "descreve o passado recente, não promete o próximo ano",
     "porte": "é maior (acima) ou menor (abaixo) que o par típico",
     "cap_rate": "a renda imobiliária implícita no preço é maior (acima) ou "
                 "menor (abaixo)",
@@ -398,6 +408,9 @@ def _interpretacao(mt: Metrica, pos: str, n: int) -> str:
     if pos == SEM_DADO:
         return NAO_DISPONIVEL if n else "Nenhum par com este dado."
     if pos == EM_LINHA:
+        if mt.chave in TOLERANCIA_ABSOLUTA:
+            return (f"Em linha com a mediana dos pares (diferença de até "
+                    f"{TOLERANCIA_ABSOLUTA[mt.chave]:.0f} p.p.).")
         return (f"Em linha com a mediana dos pares (diferença de até "
                 f"{TOLERANCIA.get(mt.chave, TOLERANCIA_EM_LINHA) * 100:.0f}%).")
     lado = "Acima" if pos == ACIMA else "Abaixo"
@@ -417,13 +430,19 @@ def comparar(alvo: Candidato, grupo: GrupoPares, *,
         valor = float(valor) if _tem_valor(valor) else None
         amostra = grupo.valores(mt.chave)
         mediana = statistics.median(amostra) if amostra else None
-        pos = (posicao(valor, mediana, TOLERANCIA.get(mt.chave,
-                                                      TOLERANCIA_EM_LINHA))
-               if grupo.pares else SEM_DADO)
+        absoluta = TOLERANCIA_ABSOLUTA.get(mt.chave)
         dif = (valor - mediana) if valor is not None and mediana is not None \
             else None
+        if not grupo.pares:
+            pos = SEM_DADO
+        elif absoluta is not None:
+            pos = (SEM_DADO if dif is None else EM_LINHA if abs(dif) <= absoluta
+                   else ACIMA if dif > 0 else ABAIXO)
+        else:
+            pos = posicao(valor, mediana, TOLERANCIA.get(mt.chave,
+                                                         TOLERANCIA_EM_LINHA))
         dif_pct = (100.0 * dif / abs(mediana)) if dif is not None and mediana \
-            else None
+            and absoluta is None else None
         interp = (_interpretacao(mt, pos, len(amostra)) if valor is not None
                   else NAO_DISPONIVEL)
         linhas.append(LinhaComparacao(

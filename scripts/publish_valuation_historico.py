@@ -37,6 +37,23 @@ Métodos (repetidos no campo ``metodo`` do arquivo):
   do valor). Mês cujo valor ÷ preço foge mais de 1,5x da mediana móvel de 13
   meses é descartado, e do degrau que sobra só vale o trecho posterior.
 
+Momento de preço (desde 01/10/2026): retorno de 12 e de 3 meses com preço
+ajustado por proventos e eventos (retorno total), do fechamento mensal mais
+recente contra o de 12 (3) meses antes. Para B3 e FII o preço vem do
+Supabase (``market.historical_prices``), que a rotina diária mantém em dia; o
+espelho local fica semanas para trás na maioria dos tickers, e o momento de
+julho lido em outubro diria o contrário do pregão. Sem Supabase, cai no
+local e só publica o que tiver preço de até ``MOMENTO_MAX_IDADE_DIAS``. Mês
+com salto de mais de 3x contra o anterior na janela (ajuste de split que
+não chegou) descarta o ticker.
+
+Alavancagem da B3 (desde 01/10/2026): dívida líquida ÷ EBITDA e cobertura de
+juros saem do último ``quote`` da brapi com o módulo ``financialData``
+(EBITDA dos 12 meses, dívida e caixa totais da mesma foto) e do último
+demonstrativo anual do mesmo payload (EBIT ÷ despesas financeiras). A base
+contábil do armazém não tem EBITDA, e sem ele o critério eliminatório de
+endividamento nunca disparava.
+
 Recusa publicar (saída 1) se a fita da B3 estiver parada há mais de
 ``FITA_MAXIMA_DIAS``.
 """
@@ -60,6 +77,9 @@ ANO_INICIAL = 2010          # a fita da B3 no armazém começa em 2010
 FITA_MAXIMA_DIAS = 45       # a fita chega por arquivo mensal da B3
 FATOR_MC_IMPLAUSIVEL = 20.0
 JANELA_VOL_MESES = 36
+MOMENTO_MAX_IDADE_DIAS = 45     # preço mais velho que isso não mede momento
+MOMENTO_SALTO = 3.0             # mês que muda mais que 3x: ajuste faltando
+ALAVANCAGEM_MAX_IDADE_DIAS = 200
 
 METODO = {
     "b3": ("Anual. P/L = fechamento do último pregão do ano na fita da B3 "
@@ -82,6 +102,21 @@ METODO = {
     "volatilidade": (f"Desvio-padrão dos retornos mensais dos últimos "
                      f"{JANELA_VOL_MESES} meses (preço ajustado), anualizado "
                      "(× √12), em %."),
+    "momento": ("Retorno total (preço ajustado por proventos e eventos) de 12 "
+                "e de 3 meses: último fechamento mensal ÷ o de 12 (3) meses "
+                "antes − 1, em %. B3 e FII com preço do Supabase "
+                "(market.historical_prices); EUA com market_us.prices_monthly. "
+                f"Só com preço de até {MOMENTO_MAX_IDADE_DIAS} dias; ticker "
+                f"com mês que salta mais de {MOMENTO_SALTO:.0f}x na janela é "
+                "descartado."),
+    "alavancagem": ("B3. Dívida líquida ÷ EBITDA = (dívida total − caixa) ÷ "
+                    "EBITDA dos 12 meses, os três da mesma foto do "
+                    "financialData da brapi; cobertura de juros = EBIT ÷ "
+                    "despesas financeiras do último exercício anual do mesmo "
+                    "payload. EBITDA é o do provedor, não o ajustado que a "
+                    "empresa divulga; despesa financeira inclui variação "
+                    "cambial e monetária, então a cobertura sai conservadora "
+                    "em empresa com dívida em moeda forte."),
 }
 
 
@@ -122,6 +157,147 @@ def volatilidade(precos, *, janela: int = JANELA_VOL_MESES) -> dict[str, float]:
         r = np.diff(r)
         saida[str(tk)] = float(np.std(r, ddof=1) * math.sqrt(12) * 100)
     return saida
+
+
+# -- momento ------------------------------------------------------------------------
+
+def momento(precos, hoje, *, max_idade: int = MOMENTO_MAX_IDADE_DIAS
+            ) -> tuple[dict[str, dict], dict]:
+    """``precos``: ticker, mes (1º dia), data (do último preço do mês), preco
+    (ajustado). → ({ticker: {retorno_12m, retorno_3m, momento_ref}},
+    {motivo: contagem}). Puro."""
+    import pandas as pd
+    excl = {"preco_velho": 0, "salto_na_janela": 0, "historico_curto": 0}
+    saida: dict[str, dict] = {}
+    hoje = pd.Timestamp(hoje)
+    hoje = (hoje.tz_localize(None) if hoje.tzinfo is None
+            else hoje.tz_convert(None)).normalize()
+    for tk, g in precos.sort_values("mes").groupby("ticker"):
+        g = g[g["preco"].astype(float) > 0].copy()
+        if g.empty:
+            continue
+        g["_p"] = pd.to_datetime(g["mes"], utc=True).dt.tz_convert(None) \
+            .dt.to_period("M")
+        g = g.drop_duplicates("_p", keep="last")
+        ult = g.iloc[-1]
+        if (hoje - pd.Timestamp(str(ult["data"])[:10])).days > max_idade:
+            excl["preco_velho"] += 1
+            continue
+        serie = g.set_index("_p")["preco"].astype(float)
+        fim = serie.index[-1]
+        ini12 = fim - 12
+        if ini12 not in serie.index:
+            excl["historico_curto"] += 1
+            continue
+        janela = serie[serie.index >= ini12]
+        razao = (janela / janela.shift(1)).dropna()
+        if ((razao > MOMENTO_SALTO) | (razao < 1 / MOMENTO_SALTO)).any():
+            excl["salto_na_janela"] += 1
+            continue
+        item = {"retorno_12m": _r(100.0 * (serie[fim] / serie[ini12] - 1), 2)}
+        if (fim - 3) in serie.index:
+            item["retorno_3m"] = _r(100.0 * (serie[fim] / serie[fim - 3] - 1), 2)
+        base = g[g["_p"] == ini12].iloc[-1]
+        item["momento_ref"] = (f"{str(base['data'])[:10]} a "
+                               f"{str(ult['data'])[:10]}")
+        saida[str(tk)] = item
+    return saida, excl
+
+
+_SQL_PRECOS_MENSAIS = """
+    SELECT DISTINCT ON (ticker, date_trunc('month', date))
+           ticker, date_trunc('month', date) AS mes, date AS data,
+           COALESCE(adjusted_close, close) AS preco
+      FROM market.historical_prices
+     WHERE date >= now() - interval '40 months'
+     ORDER BY ticker, date_trunc('month', date), date DESC
+"""
+
+
+def precos_mensais_supabase():
+    """Último preço ajustado de cada mês, 40 meses, do Supabase. ``None`` se
+    a conexão falhar (o chamador cai no espelho local e o relatório diz)."""
+    try:
+        from sqlalchemy import text
+
+        from core.database import get_engine
+        with get_engine().connect() as c:
+            c.execute(text("SET TRANSACTION READ ONLY"))
+            df = _ler(c, _SQL_PRECOS_MENSAIS)
+        df["preco"] = df["preco"].astype(float)
+        return df
+    except Exception as exc:  # noqa: BLE001 -- fonte opcional, nomeada no relatório
+        print(f"Supabase indisponível para preços: {type(exc).__name__}: {exc}")
+        return None
+
+
+# -- alavancagem B3 -----------------------------------------------------------------
+
+def _f(v) -> float | None:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return x if math.isfinite(x) else None
+
+
+def alavancagem_brapi(linhas, hoje, *, max_idade: int = ALAVANCAGEM_MAX_IDADE_DIAS
+                      ) -> tuple[dict[str, dict], dict]:
+    """``linhas``: dicts com ticker, fetched_at, financial_data (dict) e
+    anuais (lista do incomeStatementHistory). Uma linha por ticker, a mais
+    recente com financialData. Puro.
+
+    EBITDA ≤ 0 não dá razão (dívida ÷ número negativo inverte o sentido);
+    vai como ``ebitda_negativo`` para o leitor dizer isso em vez de calar.
+    """
+    excl = {"foto_velha": 0, "sem_ebitda": 0}
+    saida: dict[str, dict] = {}
+    hoje_d = hoje.date() if hasattr(hoje, "date") else hoje
+    for r in linhas:
+        tk = str(r["ticker"]).upper()
+        quando = r["fetched_at"]
+        if (hoje_d - quando.date()).days > max_idade:
+            excl["foto_velha"] += 1
+            continue
+        fd = r.get("financial_data") or {}
+        ebitda, divida, caixa = (_f(fd.get("ebitda")), _f(fd.get("totalDebt")),
+                                 _f(fd.get("totalCash")))
+        item: dict = {"alavancagem_ref": f"brapi financialData de "
+                                         f"{quando.date().isoformat()}"}
+        if ebitda is None or divida is None or caixa is None:
+            excl["sem_ebitda"] += 1
+        elif ebitda <= 0:
+            item["ebitda_negativo"] = True
+        else:
+            item["divida_liquida_ebitda"] = _r((divida - caixa) / ebitda, 2)
+            item["ebitda_12m"] = _r(ebitda, 0)
+        anuais = [a for a in (r.get("anuais") or [])
+                  if isinstance(a, dict) and a.get("type") == "yearly"
+                  and a.get("endDate")]
+        if anuais:
+            a = max(anuais, key=lambda x: x["endDate"])
+            ebit, desp = _f(a.get("ebit")), _f(a.get("financialExpenses"))
+            if ebit is not None and desp is not None and desp < 0:
+                item["cobertura_juros"] = _r(ebit / abs(desp), 2)
+                item["cobertura_ref"] = (f"exercício encerrado em "
+                                         f"{str(a['endDate'])[:10]}")
+        if len(item) > 1:
+            saida[tk] = item
+    return saida, excl
+
+
+def coletar_alavancagem(conn, hoje) -> tuple[dict, dict]:
+    from sqlalchemy import text
+    linhas = [dict(r._mapping) for r in conn.execute(text("""
+        SELECT DISTINCT ON (ticker) ticker, fetched_at,
+               payload_json->'financialData' AS financial_data,
+               payload_json->'incomeStatementHistory' AS anuais
+          FROM market.brapi_raw_payloads
+         WHERE endpoint = 'quote' AND request_status = 'success'
+           AND payload_json ? 'financialData'
+         ORDER BY ticker, fetched_at DESC
+    """))]
+    return alavancagem_brapi(linhas, hoje)
 
 
 # -- B3 -----------------------------------------------------------------------------
@@ -180,7 +356,8 @@ def historico_b3(fechamentos, demos, proventos) -> tuple[dict, dict]:
     return saida, exclusoes
 
 
-def coletar_b3(conn) -> tuple[dict, dict, str | None]:
+def coletar_b3(conn, precos_supabase=None, hoje=None
+               ) -> tuple[dict, dict, str | None]:
     fech = _ler(conn, """
         SELECT DISTINCT ON (ticker, EXTRACT(YEAR FROM trade_date))
                ticker, EXTRACT(YEAR FROM trade_date)::int AS ano,
@@ -213,20 +390,20 @@ def coletar_b3(conn) -> tuple[dict, dict, str | None]:
                  WHERE ex_date IS NOT NULL AND amount > 0) d
          GROUP BY 1, 2
     """)
-    precos = _ler(conn, """
-        SELECT DISTINCT ON (ticker, date_trunc('month', date))
-               ticker, date_trunc('month', date) AS mes,
-               COALESCE(adjusted_close, close) AS preco
-          FROM market.historical_prices
-         WHERE date >= now() - interval '40 months'
-         ORDER BY ticker, date_trunc('month', date), date DESC
-    """)
+    precos = (precos_supabase if precos_supabase is not None
+              else _ler(conn, _SQL_PRECOS_MENSAIS))
     for c in ("close", "lucro", "lpa", "patrimonio", "total"):
         for df in (fech, demos, prov):
             if c in df:
                 df[c] = df[c].astype(float)
     hist, exclusoes = historico_b3(fech, demos, prov)
+    hoje = hoje or datetime.now(timezone.utc)
+    precos["preco"] = precos["preco"].astype(float)
     vol = volatilidade(precos)
+    mom, excl_mom = momento(precos, hoje)
+    exclusoes["momento"] = excl_mom
+    alav, excl_alav = coletar_alavancagem(conn, hoje)
+    exclusoes["alavancagem"] = excl_alav
     px = {str(r.ticker): (float(r.close), str(r.trade_date)[:10])
           for r in ultimo.itertuples()}
     for tk, item in hist.items():
@@ -238,6 +415,8 @@ def coletar_b3(conn) -> tuple[dict, dict, str | None]:
                                  f"do exercício {ano}")
         if tk in vol:
             item["volatilidade"] = _r(vol[tk], 2)
+        item.update(mom.get(tk, {}))
+        item.update(alav.get(tk, {}))
     fita = str(ultimo["trade_date"].max())[:10] if not ultimo.empty else None
     return hist, exclusoes, fita
 
@@ -293,7 +472,7 @@ def historico_fii(vpa, fechamentos, proventos) -> tuple[dict, dict]:
     return saida, exclusoes
 
 
-def coletar_fii(conn) -> tuple[dict, dict]:
+def coletar_fii(conn, precos=None, hoje=None) -> tuple[dict, dict]:
     import pandas as pd
     vpa = _ler(conn, """
         SELECT ticker, ref_month AS mes, vpa FROM market.fii_metrics_monthly
@@ -315,7 +494,15 @@ def coletar_fii(conn) -> tuple[dict, dict]:
     for df, c in ((vpa, "mes"), (fech, "mes")):
         df[c] = pd.to_datetime(df[c]).dt.tz_localize(None)
     fech["close"] = fech["close"].astype(float)
-    return historico_fii(vpa, fech, prov)
+    hist, excl = historico_fii(vpa, fech, prov)
+    if precos is None:
+        precos = _ler(conn, _SQL_PRECOS_MENSAIS)
+    precos = precos[precos["ticker"].isin(set(vpa["ticker"]))].copy()
+    precos["preco"] = precos["preco"].astype(float)
+    mom, excl["momento"] = momento(precos, hoje or datetime.now(timezone.utc))
+    for tk, item in hist.items():
+        item.update(mom.get(tk, {}))
+    return hist, excl
 
 
 # -- EUA ----------------------------------------------------------------------------
@@ -423,7 +610,8 @@ def coletar_eua(conn) -> tuple[dict, dict]:
            AND symbol IN (SELECT symbol FROM market_us.company_snapshots)
     """, ini=ANO_INICIAL)
     mensais = _ler(conn, """
-        SELECT symbol, month_end AS mes, close, adjusted_close
+        SELECT symbol, month_end AS mes, month_end AS data, close,
+               adjusted_close
           FROM market_us.prices_monthly
          WHERE month_end >= make_date(:ini, 1, 1) AND close > 0
            AND symbol IN (SELECT symbol FROM market_us.company_snapshots)
@@ -438,8 +626,11 @@ def coletar_eua(conn) -> tuple[dict, dict]:
     import pandas as pd
     recentes = mensais[pd.to_datetime(mensais["mes"])
                        >= pd.Timestamp.now() - pd.DateOffset(months=40)]
-    vol = volatilidade(recentes.rename(columns={"symbol": "ticker",
-                                                "adjusted_close": "preco"}))
+    recentes = recentes.rename(columns={"symbol": "ticker",
+                                        "adjusted_close": "preco"})
+    vol = volatilidade(recentes)
+    mom, excl_mom = momento(recentes.dropna(subset=["preco"]),
+                            datetime.now(timezone.utc))
     saida = {}
     for r in snap.itertuples():
         met = r.metrics if isinstance(r.metrics, dict) else json.loads(r.metrics or "{}")
@@ -460,13 +651,15 @@ def coletar_eua(conn) -> tuple[dict, dict]:
             "sic_descricao": r.sic_descricao,
             "porte": mc,
             "volatilidade": _r(vol.get(str(r.symbol)), 2),
+            **mom.get(str(r.symbol), {}),
             "atual": {k: _r(v) for k, v in atual.items() if _r(v) is not None},
             "atual_ref": (f"exercício {int(r.last_fiscal_year)}"
                           if r.last_fiscal_year is not None
                           and str(r.last_fiscal_year) != "nan" else None),
             "historico": hist.get(str(r.symbol), {}),
         }
-    return saida, {"capitalizacao_fora_do_preco": descartados}
+    return saida, {"capitalizacao_fora_do_preco": descartados,
+                   "momento": excl_mom}
 
 
 # -- saída --------------------------------------------------------------------------
@@ -502,15 +695,18 @@ def main(argv=None) -> int:
         print(f"armazém local indisponível: {type(exc).__name__}: {exc}")
         return 2
     agora = datetime.now(timezone.utc)
+    precos = precos_mensais_supabase()
     with conn:
         conn.execute(text("SET TRANSACTION READ ONLY"))
-        b3, excl_b3, fita = coletar_b3(conn)
-        fii, excl_fii = coletar_fii(conn)
+        b3, excl_b3, fita = coletar_b3(conn, precos, agora)
+        fii, excl_fii = coletar_fii(conn, precos, agora)
         eua, excl_eua = coletar_eua(conn)
 
     relatorio = {
         "b3": len(b3), "fii": len(fii), "eua": len(eua),
         "fita_b3_mais_recente": fita, "exclusoes_b3": excl_b3,
+        "precos_b3_fii": ("Supabase" if precos is not None
+                          else "armazém local (Supabase indisponível)"),
         "exclusoes_fii": excl_fii, "exclusoes_eua": excl_eua,
     }
     if fita is None or (agora.date() - datetime.fromisoformat(fita).date()).days \
@@ -522,6 +718,7 @@ def main(argv=None) -> int:
     payload = {
         "versao": VERSAO, "gerado_em": agora.isoformat(timespec="seconds"),
         "fita_b3": fita, "metodo": METODO,
+        "precos_b3_fii": ("supabase" if precos is not None else "local"),
         "exclusoes": {"b3": excl_b3, "fii": excl_fii, "eua": excl_eua},
         "b3": b3, "fii": fii, "eua": eua,
     }
