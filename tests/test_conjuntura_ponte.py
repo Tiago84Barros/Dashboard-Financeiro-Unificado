@@ -19,8 +19,9 @@ import pytest
 from sqlalchemy import create_engine, text
 
 from core.conjuntura import ponte as P
+from tests.apoio_armazem import opcoes_conexao, schema_descartavel
 
-SCHEMA = "app4_conjuntura_teste"
+SCHEMA = schema_descartavel("app4_conjuntura_teste")
 
 CORTE = datetime(2026, 6, 30, 12, 0, tzinfo=timezone.utc)
 
@@ -61,7 +62,7 @@ def engine():
 
         motor = create_engine(
             _warehouse_url(),
-            connect_args={"options": f"-csearch_path={SCHEMA},public"})
+            connect_args=opcoes_conexao(SCHEMA))
         with motor.begin() as conn:
             for ddl in _DDL:
                 conn.execute(text(ddl))

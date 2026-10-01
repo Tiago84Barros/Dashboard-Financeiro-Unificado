@@ -237,6 +237,7 @@ def fallback_portfolio(reason: str = "LLM indisponível") -> dict:
         "resumo_executivo": f"Relatório consolidado indisponível: {reason}.",
         "relatorio_estrategico": "",
         "papel_dos_ativos": "",
+        "comportamento_de_mercado": "",
         "pontos_fortes": [],
         "pontos_fracos": [],
         "sintese_alocacao": "",
@@ -264,6 +265,9 @@ def sanitize_company_report(raw: Any, ticker: str) -> dict:
     report["score_qualitativo_ponderado"] = weighted_10
     report["score_qualitativo"] = weighted_100
     report.setdefault("relatorio", {})
+    if isinstance(report["relatorio"], dict) and "comportamento_de_mercado" in report["relatorio"]:
+        report["relatorio"]["comportamento_de_mercado"] = _texto_corrido(
+            report["relatorio"]["comportamento_de_mercado"])
     report.setdefault("riscos", [])
     report.setdefault("catalisadores", [])
     report.setdefault("sensibilidade_macro", [])
@@ -295,6 +299,14 @@ def sanitize_company_report(raw: Any, ticker: str) -> dict:
     return report
 
 
+def _texto_corrido(valor: Any) -> str:
+    if isinstance(valor, dict):
+        return " ".join(f"{k}: {_texto_corrido(v)}" for k, v in valor.items())
+    if isinstance(valor, (list, tuple)):
+        return " ".join(_texto_corrido(v) for v in valor)
+    return "" if valor is None else str(valor)
+
+
 def sanitize_portfolio_report(raw: Any, items: list[dict]) -> dict:
     """Consolida o relatório da carteira. Confiança e score vêm dos itens.
 
@@ -308,6 +320,9 @@ def sanitize_portfolio_report(raw: Any, items: list[dict]) -> dict:
     defaults = fallback_portfolio()
     for key, value in defaults.items():
         report.setdefault(key, value)
+    # Números por ativo convidam a LLM a devolver {ticker: texto}; a tela
+    # interpola texto, e um dict viraria repr do Python.
+    report["comportamento_de_mercado"] = _texto_corrido(report["comportamento_de_mercado"])
     report["qualidade_carteira"] = (
         report["qualidade_carteira"] if report["qualidade_carteira"] in {"alta", "media", "baixa"}
         else "media"
@@ -355,3 +370,45 @@ def company_summary_for_portfolio(item: dict) -> str:
         f"resumo={analysis.get('resumo', '')} | cenários={scenario_text or 'N/D'} | "
         f"riscos={risks[:3]} | catalisadores={catalysts[:3]}"
     )
+
+
+MAX_DETALHE_NO_CONSOLIDADO = 6
+
+SEM_DETALHE_NO_CONSOLIDADO = (
+    "Detalhe do armazém não montado nesta execução; não trate como ausência de dado."
+)
+
+
+def detalhe_do_consolidado(detalhes: dict[str, str], items: list[dict],
+                           limite: int = MAX_DETALHE_NO_CONSOLIDADO) -> str:
+    """Detalhe do armazém para a síntese consolidada, pelos ativos de maior peso.
+
+    Reaproveita o texto que cada nota por empresa já recebeu: nenhuma leitura
+    nova no armazém ou no túnel. O teto segura o tamanho do prompt, e quem
+    ficou de fora é nomeado — sem isso a LLM leria a ausência do detalhe como
+    ausência de liquidez ou de preço daquele ativo.
+    """
+    por_peso = sorted(
+        (it for it in items if str(it.get("ticker") or "").strip()),
+        key=lambda it: -float(it.get("peso_pct") or 0),
+    )
+    dentro, fora = [], []
+    for it in por_peso:
+        tk = str(it["ticker"]).strip().upper()
+        texto = str(detalhes.get(tk) or "").strip()
+        if texto and len(dentro) < limite:
+            dentro.append((tk, texto))
+        else:
+            fora.append(tk)
+    if not dentro:
+        return ""
+    cabecalho = (
+        f"Detalhe dos {len(dentro)} ativos de maior peso com leitura do armazém "
+        f"({', '.join(tk for tk, _ in dentro)})."
+    )
+    if fora:
+        cabecalho += (
+            f" Fora deste bloco: {', '.join(fora)} — o detalhe deles não entrou "
+            "aqui, o que não significa dado ausente nem zero."
+        )
+    return "\n\n".join([cabecalho] + [texto for _, texto in dentro])

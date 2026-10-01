@@ -347,11 +347,15 @@ def _bloco_recomendacoes(acoes: Sequence[Any]) -> list[str]:
             custo = f"R$ {_f(getattr(acao, 'custo_estimado', None))}"
         score = getattr(acao, "score", None)
         analisadores = sorted(getattr(acao, "analisadores", ()) or ())
+        delta = _num(getattr(acao, "macro_delta", None))
+        macro = ("sem ajuste macro" if delta is None
+                 else f"ajuste macro {delta:+.2f}/100 desde a criação")
         linhas.append(
             f"- {getattr(acao, 'symbol', '?')}: {getattr(acao, 'acao', '?')} | "
             f"peso {_pct(getattr(acao, 'peso_atual', None))} -> "
             f"{_pct(getattr(acao, 'peso_sugerido', None))} | "
             f"score {'ausente' if score is None else _f(score, 3)} | custo {custo} | "
+            f"{macro} | "
             f"analisadores: {', '.join(analisadores) if analisadores else 'nenhum'}"
         )
     return linhas
@@ -367,6 +371,7 @@ def build_global_portfolio_context(
     pesos: dict | None = None,
     papeis: Iterable[Any] = (),
     acoes: Iterable[Any] = (),
+    macro_carteiras: str | None = None,
 ) -> str:
     """Texto do contexto que vai ao LLM no chat do Portfólio Global.
 
@@ -392,4 +397,7 @@ def build_global_portfolio_context(
     partes += _bloco_risco(retornos, pesos)
     partes += _bloco_papeis(list(papeis))
     partes += _bloco_recomendacoes(list(acoes))
+    partes += ["", "=== CAMADA MACRO DAS CARTEIRAS (a mesma que ajustou as recomendações) ===",
+               macro_carteiras if macro_carteiras is not None else
+               "Não montada nesta execução; não trate como macro neutro."]
     return "\n".join(partes)

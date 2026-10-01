@@ -49,7 +49,16 @@ def require_admin() -> str:
 
 
 def user_cache_data(**options):
-    """Inclui dono e modo de dados na chave de todos os caches pessoais."""
+    """Inclui dono e modo de dados na chave de todos os caches pessoais.
+
+    O spinner do cache vem desligado por padrão: ligado, ele imprime na tela a
+    tarja "Running <função>(...)" -- e o nome que aparece é o da closure interna
+    (`user_cache_data.<locals>.decorate.<locals>.cached`), detalhe de
+    implementação que não diz nada a quem usa o app. Quem quiser o aviso passa
+    `show_spinner=` explicitamente e o valor do chamador vence.
+    """
+    options.setdefault("show_spinner", False)
+
     def decorate(function):
         @st.cache_data(**options)
         def cached(identity, function_key, mock_mode, args, kwargs):

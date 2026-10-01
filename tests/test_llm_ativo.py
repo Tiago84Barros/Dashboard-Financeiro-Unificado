@@ -58,6 +58,7 @@ def test_contexto_b3_registra_ausencias_em_vez_de_omitir(monkeypatch):
                             lambda *a, **k: (_ for _ in ()).throw(RuntimeError("banco fora")))
     monkeypatch.setattr("core.llm_context_b3.get_peers_context",
                         lambda *a, **k: (_ for _ in ()).throw(RuntimeError("banco fora")))
+    monkeypatch.setattr("core.database.get_engine", lambda: None)
     texto = ctx.build_b3_ativo_context(
         "wege3", nome="WEG", setor="Bens Industriais", preco_status="falha_rede",
         mult=pd.Series(dtype=float), df_fin=pd.DataFrame(),
@@ -66,6 +67,7 @@ def test_contexto_b3_registra_ausencias_em_vez_de_omitir(monkeypatch):
     assert "Múltiplos do snapshot: ausentes" in texto
     assert "Demonstrações: nenhuma linha" in texto
     assert "falha de rede" in texto
+    assert "Cadastro CVM: indisponível (banco não conectado)" in texto
 
 
 def test_contexto_us_diz_que_o_universo_exclui_reit(monkeypatch):
@@ -92,3 +94,84 @@ def test_contexto_fii_de_papel_nao_inventa_carteira_de_imoveis():
     assert "OUTR11" in texto          # par do mesmo tipo entra
     assert "TIJO11" not in texto      # tijolo não vira par de fundo de papel
     assert "PARES DO TIPO PAPEL" in texto
+
+
+class _Resultado:
+    def __init__(self, linhas):
+        self.linhas = linhas
+
+    def scalars(self):
+        return [linha[0] for linha in self.linhas]
+
+    def first(self):
+        return self.linhas[0] if self.linhas else None
+
+
+class _BancoFalso:
+    """market.companies com ou sem as colunas da migration 078."""
+
+    def __init__(self, colunas, linhas):
+        self.colunas, self.linhas, self.consultas = colunas, linhas, []
+
+    def connect(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        texto = str(sql)
+        self.consultas.append((texto, params))
+        if "information_schema" in texto:
+            return _Resultado([(c,) for c in self.colunas])
+        return _Resultado(self.linhas)
+
+
+_COLUNAS_078 = ["id", "codigo_cvm", "name", "dt_constituicao", "dt_registro_cvm",
+                "categoria_registro", "controle_acionario"]
+
+
+def test_cadastro_cvm_entrega_fundacao_e_registro_da_sond5(monkeypatch):
+    """Lacuna b23e53d5: o chat da SOND5 não sabia a fundação nem o registro."""
+    from datetime import date
+    banco = _BancoFalso(_COLUNAS_078, [(date(1954, 1, 1), date(1980, 8, 19),
+                                        "Categoria A", "PRIVADO")])
+    monkeypatch.setattr("core.database.get_engine", lambda: banco)
+    linha = ctx._cadastro_cvm_linha("SOND5")
+    assert "constituição da companhia em 01/01/1954" in linha
+    assert "registro de companhia aberta na CVM em 19/08/1980" in linha
+    assert "não é a data de listagem na B3" in linha
+    assert "Categoria A" in linha and "privado" in linha
+    assert banco.consultas[-1][1] == {"tk": "SOND5"}
+
+
+def test_cadastro_cvm_sem_data_de_constituicao_diz_que_falta(monkeypatch):
+    from datetime import date
+    banco = _BancoFalso(_COLUNAS_078, [(None, date(2020, 3, 2), None, None)])
+    monkeypatch.setattr("core.database.get_engine", lambda: banco)
+    linha = ctx._cadastro_cvm_linha("NOVA3")
+    assert "constituição da companhia em data ausente no cadastro" in linha
+    assert "02/03/2020" in linha
+
+
+def test_cadastro_cvm_sem_migration_nomeia_a_078(monkeypatch):
+    banco = _BancoFalso(["id", "codigo_cvm", "name"], [])
+    monkeypatch.setattr("core.database.get_engine", lambda: banco)
+    assert "migration 078 pendente" in ctx._cadastro_cvm_linha("SOND5")
+    assert len(banco.consultas) == 1  # não consulta coluna que não existe
+
+
+def test_cadastro_cvm_que_falha_e_nomeado(monkeypatch):
+    def quebra():
+        raise RuntimeError("pooler fora")
+    monkeypatch.setattr("core.database.get_engine", quebra)
+    assert "falha ao consultar o banco (RuntimeError)" in ctx._cadastro_cvm_linha("SOND5")
+
+
+def test_cadastro_cvm_sem_linha_da_empresa(monkeypatch):
+    monkeypatch.setattr("core.database.get_engine",
+                        lambda: _BancoFalso(_COLUNAS_078, []))
+    assert "sem linha em market.companies" in ctx._cadastro_cvm_linha("XPTO3")

@@ -48,6 +48,8 @@ from core.tesouro_analysis import (
 from core.user_context import user_cache_data
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, container_pagina
+from design.lacunas import aviso_lacuna
+from design.tema_canvas import escala_correlacao
 
 # ── Paleta ────────────────────────────────────────────────────────────────────
 _COR_POSITIVO = "#00C896"
@@ -1209,13 +1211,7 @@ def _fig_corr_heatmap(corr: pd.DataFrame) -> go.Figure:
         y=corr.index,
         zmin=-1,
         zmax=1,
-        colorscale=[
-            [0.00, "#2563EB"],
-            [0.35, "#0F172A"],
-            [0.50, "#1E293B"],
-            [0.65, "#FACC15"],
-            [1.00, "#F43F5E"],
-        ],
+        colorscale=escala_correlacao(),
         colorbar={"title": "corr."},
         text=corr.round(2).astype(str).values,
         texttemplate="%{text}",
@@ -2140,7 +2136,8 @@ def _bloco_rentabilidade_cdi(r: dict) -> None:
         "TIR da renda variável na B3 e os mesmos aportes aplicados no CDI",
     )
     if not r.get("disponivel"):
-        st.info(r.get("motivo") or "Rentabilidade indisponível.", icon="🎯")
+        aviso_lacuna(r.get("motivo") or "Rentabilidade indisponível.",
+                     codigo="tela.investimentos.rentabilidade_cdi_indisponivel", icon="🎯")
         return
 
     cor, frase = _veredito_cdi(r)
@@ -2458,6 +2455,9 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     initials   = pos["ticker"][:5]
     nome_curto = pos["nome"][:22] if len(pos["nome"]) > 22 else pos["nome"]
     # Avatar: iniciais como fundo; imagem CSS transparente quando o CDN falha.
+    # A cor da classe passa por `_cor_texto` porque aqui ela e' PREENCHIMENTO e as
+    # iniciais vao em branco por cima: o literal do tema escuro (#4A9EFF) rende
+    # 2,2:1 com branco, o token do claro (#175eac) rende 6,5:1.
     img_tag = (
         f'<span role="img" aria-label="{_html.escape(pos["ticker"], quote=True)}" '
         f'style="position:absolute;inset:0;border-radius:8px;'
@@ -2466,7 +2466,7 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     ) if logo_url else ""
     avatar_html = (
         f'<div style="width:40px;height:40px;border-radius:8px;position:relative;'
-        f'flex-shrink:0;background:{cor};display:flex;align-items:center;'
+        f'flex-shrink:0;background:{_cor_texto(cor)};display:flex;align-items:center;'
         f'justify-content:center;font-size:0.60rem;font-weight:800;color:#fff;">'
         f'{initials}{img_tag}'
         f'</div>'
@@ -3129,12 +3129,27 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
         conj = CLASSE_DA_ABA.get(classe)
         ativos = ({conj: {str(p.get("ticker") or "").upper(): str(p.get("setor") or "")
                           for p in posicoes_classe}} if conj else None)
-        return build_carteira_classe_context(
+        contexto = build_carteira_classe_context(
             classe, posicoes_classe, valuations=valuations, db=db,
             tesouro=tesouro, macro=macro, fundamentos=fundamentos,
             documentos=carregar_documentos(classe, chaves),
             valores_reais=valores_reais,
         ) + "\n\n" + bloco_contexto_mercado(ativos)
+        if conj:
+            # Liquidez, preço, proventos, trimestres e score mês a mês: o
+            # mesmo detalhe que a tela da classe lê, do armazém ou pelo túnel.
+            from core.llm_context_global_armazem import (
+                MAX_NA_ABA_DA_CLASSE,
+                bloco_detalhe_armazem,
+                quadro_das_posicoes,
+            )
+
+            detalhe = bloco_detalhe_armazem(
+                quadro_das_posicoes(posicoes_classe, classe=conj), _pergunta,
+                max_por_classe=MAX_NA_ABA_DA_CLASSE, classes=(conj,))
+            if detalhe:
+                contexto += "\n\n" + detalhe
+        return contexto
 
     render_chat_carteira(classe=classe, tickers=tickers,
                          build_context=_contexto)
@@ -3391,15 +3406,23 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         # Por último na sub-aba: st.chat_input puxa o foco para o rodapé.
         from core.contexto_mercado import ativos_por_classe, bloco_contexto_mercado
         from core.llm_context_carteira import build_carteira_geral_context
+        from core.llm_context_global_armazem import (
+            bloco_detalhe_armazem,
+            quadro_das_posicoes,
+        )
         from design.chat_carteira import render_chat_carteira
+
+        def _contexto_geral(pergunta, *, valores_reais=False):
+            contexto = (build_carteira_geral_context(carteira, proventos,
+                                                     valores_reais=valores_reais)
+                        + "\n\n" + bloco_contexto_mercado(ativos_por_classe(posicoes),
+                                                       max_itens_por_classe=6))
+            detalhe = bloco_detalhe_armazem(quadro_das_posicoes(posicoes), pergunta)
+            return contexto + ("\n\n" + detalhe if detalhe else "")
 
         render_chat_carteira(
             classe="geral", tickers=[p["ticker"] for p in posicoes],
-            build_context=lambda _pergunta, *, valores_reais=False:
-                build_carteira_geral_context(carteira, proventos,
-                                             valores_reais=valores_reais)
-                + "\n\n" + bloco_contexto_mercado(ativos_por_classe(posicoes),
-                                                   max_itens_por_classe=6),
+            build_context=_contexto_geral,
         )
 
 
@@ -4120,11 +4143,19 @@ def render() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Sub-navegação via tabs ────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    # A Inteligência dos Ativos depende da Estratégia, configurada na própria aba.
+    # Bloqueada, a aba continua visível, com 🔒 no rótulo: é por ela que o
+    # usuário descobre o que falta.
+    from core.estrategia import portao as _portao
+    from views import inteligencia_ativos as _ia
+    _liberacao = _portao.verificar()
+
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📊  Dashboard",
         "📈  Histórico",
         "💼  Carteira",
         "🔍  Análise",
+        _ia.rotulo_aba(_liberacao),
         "🧾  Imposto de Renda",
     ])
 
@@ -4141,6 +4172,9 @@ def render() -> None:
         _tab_analise(carteira, proventos)
 
     with tab5:
+        _ia.render(_liberacao, carteira, proventos)
+
+    with tab6:
         from views.ir_renda_variavel import render as _render_ir
         _render_ir()
 

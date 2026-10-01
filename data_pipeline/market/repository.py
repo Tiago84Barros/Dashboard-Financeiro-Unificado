@@ -19,7 +19,10 @@ _QUALITY_SEVERITY_ALIASES = {"warning": "warn", "error": "critical"}
 # colunas atualizadas no ON CONFLICT (exclui chaves e created_at)
 _UPDATE_COLS = {
     "companies": ("name", "cnpj", "sector", "subsector", "segment", "website",
-                  "description", "logo_url", "codigo_cvm"),
+                  "description", "logo_url", "codigo_cvm",
+                  # 078: datas do cadastro CVM (omitidas se a migration faltar)
+                  "dt_constituicao", "dt_registro_cvm", "categoria_registro",
+                  "controle_acionario"),
     "assets": ("company_id", "asset_type", "exchange", "currency", "is_active"),
     "historical_prices": ("open", "high", "low", "close", "adjusted_close", "volume",
                           "source", "raw_payload_id", "knowledge_at",
@@ -239,27 +242,33 @@ def _upsert(conn, table: str, rows: list[dict], page_size: int = 500) -> int:
                 return 0
     collist = ", ".join(f'"{c}"' for c in cols)
     upd = _UPDATE_COLS[table]
-    assignments = []
+    novos: dict[str, str] = {}  # coluna -> expressão do valor que o SET gravaria
     for c in upd:
         if c not in cols:
             continue
         if table == "assets" and c == "asset_type":
             # Não rebaixa uma classificação forte já confirmada por pipelines
             # especializados (FII/ETF/BDR) para inferências fracas de quote.
-            assignments.append(
-                '"asset_type" = CASE '
-                "WHEN market.assets.asset_type IN ('fii','etf','bdr') "
-                " AND EXCLUDED.asset_type IN ('stock','unit','other') "
-                "THEN market.assets.asset_type ELSE EXCLUDED.asset_type END"
-            )
+            novos[c] = ("CASE WHEN alvo.asset_type IN ('fii','etf','bdr') "
+                        " AND EXCLUDED.asset_type IN ('stock','unit','other') "
+                        "THEN alvo.asset_type ELSE EXCLUDED.asset_type END")
         else:
-            assignments.append(f'"{c}" = EXCLUDED."{c}"')
-    setlist = ", ".join(assignments)
+            novos[c] = f'EXCLUDED."{c}"'
     conflict = _CONFLICT[table]
-    action = f"DO UPDATE SET {setlist}" if setlist else "DO NOTHING"
+    if novos:
+        # Só reescreve a linha se algum valor mudaria. Sem o WHERE, cada
+        # re-ingestão regravava a linha idêntica: 3,25 milhões de UPDATEs em
+        # dividends e 718 mil em historical_prices, cada um deixando uma
+        # tupla morta para o autovacuum num banco com teto de 500 MB.
+        setlist = ", ".join(f'"{c}" = {e}' for c, e in novos.items())
+        atuais = ", ".join(f'alvo."{c}"' for c in novos)
+        action = (f"DO UPDATE SET {setlist} "
+                  f"WHERE ({atuais}) IS DISTINCT FROM ({', '.join(novos.values())})")
+    else:
+        action = "DO NOTHING"
 
     vals = ", ".join(f":{c}" for c in cols)
-    single_sql = (f'INSERT INTO market.{table} ({collist}) VALUES ({vals}) '
+    single_sql = (f'INSERT INTO market.{table} AS alvo ({collist}) VALUES ({vals}) '
                   f'ON CONFLICT ({conflict}) {action}')
 
     def _row_by_row():
@@ -272,7 +281,7 @@ def _upsert(conn, table: str, rows: list[dict], page_size: int = 500) -> int:
         _row_by_row()
         return len(rows)
 
-    batch_sql = (f'INSERT INTO market.{table} ({collist}) VALUES %s '
+    batch_sql = (f'INSERT INTO market.{table} AS alvo ({collist}) VALUES %s '
                  f'ON CONFLICT ({conflict}) {action}')
     values = [tuple(r.get(c) for c in cols) for r in rows]
     sp = conn.begin_nested()  # SAVEPOINT: isola falha do lote

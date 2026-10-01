@@ -33,6 +33,10 @@ _TABELA_ITENS = "us_portfolio_model_items"
 
 _COLUNAS = ["symbol", "month_end", "close", "adjusted_close", "volume", "total_return"]
 
+# Linhas por INSERT/transacao: 500 x 6 = 3.000 parametros, longe do teto do
+# SQLite (32.766) e de qualquer statement_timeout.
+LOTE = 500
+
 
 def _tabela_prices_monthly(engine) -> str:
     """SQLite nao tem schemas; qualifica o nome so no PostgreSQL.
@@ -85,23 +89,50 @@ def ler_do_local(simbolos: list[str], *, engine) -> pd.DataFrame:
         )
 
 
-def _gravar(df: pd.DataFrame, *, engine) -> None:
-    """Grava as linhas no destino; idempotente via ON CONFLICT DO UPDATE."""
+def _registros(df: pd.DataFrame) -> list[dict]:
+    """Linhas como dicionarios, com NaN virando None (NULL no banco).
+
+    O 1o mes de cada serie nao tem retorno e chega como NaN; numa coluna
+    numeric do PostgreSQL isso grava o valor 'NaN', que passa por numero e
+    contamina media/soma -- 11 linhas assim ja estavam no Supabase.
+    """
+    return df[_COLUNAS].astype(object).where(pd.notna(df[_COLUNAS]), None).to_dict("records")
+
+
+def _gravar(df: pd.DataFrame, *, engine, lote: int = LOTE) -> None:
+    """Grava as linhas no destino; idempotente via ON CONFLICT DO UPDATE, que
+    pula a linha cujo valor não mudou (regravá-la só deixaria tupla morta).
+
+    Um INSERT de varias linhas por lote, cada lote na sua transacao. Numa
+    transacao unica, 8.805 linhas estouraram o statement_timeout de 2 min do
+    Supabase e a sessao ficou 'idle in transaction' segurando as chaves --
+    a nova tentativa esperava por ela ate estourar de novo. Linha a linha
+    (executemany de text()), cada lote de 500 levava ~25 s pelo pooler.
+    """
     if df.empty:
         return
     tabela = _tabela_prices_monthly(engine)
-    sql = text(f"""
-        INSERT INTO {tabela}
-            (symbol, month_end, close, adjusted_close, volume, total_return)
-        VALUES (:symbol, :month_end, :close, :adjusted_close, :volume, :total_return)
-        ON CONFLICT (symbol, month_end) DO UPDATE SET
-            close = EXCLUDED.close,
-            adjusted_close = EXCLUDED.adjusted_close,
-            volume = EXCLUDED.volume,
-            total_return = EXCLUDED.total_return
-    """)
-    with engine.begin() as conn:
-        conn.execute(sql, df.to_dict("records"))
+    registros = _registros(df)
+    for inicio in range(0, len(registros), lote):
+        pedaco = registros[inicio:inicio + lote]
+        valores, params = [], {}
+        for i, reg in enumerate(pedaco):
+            valores.append("(" + ", ".join(f":{c}_{i}" for c in _COLUNAS) + ")")
+            params.update({f"{c}_{i}": reg[c] for c in _COLUNAS})
+        sql = text(f"""
+            INSERT INTO {tabela} AS alvo ({', '.join(_COLUNAS)})
+            VALUES {', '.join(valores)}
+            ON CONFLICT (symbol, month_end) DO UPDATE SET
+                close = EXCLUDED.close,
+                adjusted_close = EXCLUDED.adjusted_close,
+                volume = EXCLUDED.volume,
+                total_return = EXCLUDED.total_return
+            WHERE (alvo.close, alvo.adjusted_close, alvo.volume, alvo.total_return)
+                IS DISTINCT FROM (EXCLUDED.close, EXCLUDED.adjusted_close,
+                                  EXCLUDED.volume, EXCLUDED.total_return)
+        """)
+        with engine.begin() as conn:
+            conn.execute(sql, params)
 
 
 def publicar(*, local, remoto, apply: bool, simbolos: list[str] | None = None) -> dict[str, int]:

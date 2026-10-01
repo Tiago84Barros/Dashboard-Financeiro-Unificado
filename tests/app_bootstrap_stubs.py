@@ -18,11 +18,13 @@ from types import SimpleNamespace
 # Módulos que os testes de bootstrap deixam executar de verdade. Não são
 # dublados de propósito: `core.app_test_mode` é a regra sob teste, e
 # `core.erro_diagnostico` produz o texto que o teste do handler de erro
-# inspeciona. Um import novo fora desta lista e fora de STUBS faz
+# inspeciona. `core.lacunas` roda de verdade porque, sob pytest, o destino
+# e `desligado`: registrar uma excecao no handler nao grava nada. Um import novo fora desta lista e fora de STUBS faz
 # `test_app_bootstrap_stubs.py` falhar — que é o ponto.
 MODULOS_EXECUTADOS_DE_VERDADE = frozenset({
     "core.app_test_mode",
     "core.erro_diagnostico",
+    "core.lacunas",
 })
 
 # Identidade sintética: `principal()` real lê `st.session_state`, que não
@@ -41,6 +43,12 @@ def stubs_de_bootstrap(**overrides) -> dict[str, SimpleNamespace]:
     `mensagem_erro` que grava as chamadas). A chave usa `_` no lugar de `.`.
     """
     stubs = {
+        # O real tiraria do sys.modules os módulos que o teste acabou de
+        # dublar ou de monkeypatchar se alguém editar um .py durante a suíte.
+        # Ele tem teste próprio em tests/test_modulos_frescos.py.
+        "core.modulos_frescos": SimpleNamespace(
+            descartar_se_o_codigo_mudou=lambda *_args: [],
+        ),
         "core.auth": SimpleNamespace(
             verificar_autenticacao=lambda: None,
             encerrar_sessao=lambda: None,
@@ -51,7 +59,10 @@ def stubs_de_bootstrap(**overrides) -> dict[str, SimpleNamespace]:
         "core.user_context": SimpleNamespace(
             principal=lambda: dict(USUARIO_SINTETICO),
         ),
-        "design.componentes": SimpleNamespace(mensagem_erro=lambda *_args: None),
+        "design.componentes": SimpleNamespace(
+            mensagem_erro=lambda *_args: None,
+            transicao_de_pagina=lambda *_args: None,
+        ),
         "design.tema": SimpleNamespace(aplicar_tema=lambda theme="dark": None),
         # Importado com o ``streamlit`` falso em sys.modules, o módulo real
         # guardaria o falso no próprio ``st`` e o vazaria para todos os testes

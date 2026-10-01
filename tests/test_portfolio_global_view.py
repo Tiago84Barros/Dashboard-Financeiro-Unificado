@@ -1147,3 +1147,43 @@ def test_cards_por_ativo_saem_em_token_de_tema_e_nao_em_literal():
     # perdeu os logos da B3 por isso (`memoria: atalho-background-apaga-imagem-inline`).
     for html in htmls:
         assert "background:" not in html
+
+
+# ---------------------------------------------------------------------------
+# Camada macro: uma leitura para o motor, a tela e o chat
+# ---------------------------------------------------------------------------
+
+
+def test_macro_e_lido_uma_vez_e_chega_ao_motor_e_ao_chat():
+    """O chat recebia só o macro genérico e via 'macro_data' nas recomendações
+    sem o snapshot que as ajustou. Recarregar no chat seria outra leitura --
+    a mesma armadilha de 'medir-a-fonte-que-a-decisao-le'."""
+    import inspect
+
+    fonte = inspect.getsource(portfolio_global.render)
+    assert "macro = _carregar_macro_carteiras(df)" in fonte
+    assert fonte.count("macro=macro") == 2
+    chat = inspect.getsource(portfolio_global._painel_chat)
+    assert "macro.para_llm()" in chat
+    assert "_carregar_macro_carteiras" not in chat
+
+
+def test_falha_do_macro_vira_texto_que_nomeia_a_falha(monkeypatch):
+    import core.macro_data.database as macro_db
+
+    def cai():
+        raise RuntimeError("arquivo publicado ilegível")
+
+    monkeypatch.setattr(macro_db, "get_macro_source", cai)
+    macro = portfolio_global._carregar_macro_carteiras(pd.DataFrame())
+    assert macro.impactos == {}
+    texto = macro.para_llm()
+    assert "arquivo publicado ilegível" in texto and "não trate isso como macro neutro" in texto
+
+
+def test_macro_carteiras_leva_snapshot_e_limitacoes():
+    macro = portfolio_global.MacroCarteiras(
+        impactos={"PETR4": 1.0}, textos=("SNAPSHOT B3",), limitacoes=("AAPL: sem comparação",))
+    texto = macro.para_llm()
+    assert "SNAPSHOT B3" in texto and "limitação: AAPL: sem comparação" in texto
+

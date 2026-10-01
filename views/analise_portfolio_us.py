@@ -353,7 +353,9 @@ def _render_relatorio_consolidado(port_analise: dict) -> None:
 
     with st.expander("📝 Resumo Executivo + Papel dos Ativos", expanded=True):
         for chave, rotulo in (("resumo_executivo", "Resumo Executivo"),
-                              ("papel_dos_ativos", "Papel dos Ativos na Carteira")):
+                              ("papel_dos_ativos", "Papel dos Ativos na Carteira"),
+                              ("comportamento_de_mercado",
+                               "Liquidez, retorno e volatilidade (armazém)")):
             texto = port_analise.get(chave, "")
             if texto:
                 st.markdown(
@@ -559,6 +561,7 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
             ("qualidade_resultados", "Qualidade dos Resultados"),
             ("governanca_controlador", "Governança e alocação de capital"),
             ("eventos_relevantes", "Eventos relevantes e percepção de mercado"),
+            ("comportamento_de_mercado", "Preço, trimestres e proventos (armazém)"),
             ("qualidade_dados", "Qualidade dos dados"),
         ):
             texto = rel.get(chave)
@@ -776,6 +779,20 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
     erros: list[str] = []
     financials: dict[str, pd.DataFrame] = {}
     progresso = st.progress(0, text="Analisando empresas via LLM…")
+    from datetime import datetime, timezone
+
+    from core.contexto_mercado import conjuntura_da_carteira, conjuntura_da_empresa
+    from core.llm_context_us import (
+        get_warehouse_detail_context as get_us_warehouse_detail,
+    )
+    from core.portfolio_report_common import detalhe_do_consolidado
+
+    # Um corte para o relatório inteiro: todas as empresas e o consolidado
+    # leem o noticiário do mesmo instante, e o túnel serve cada ativo uma vez.
+    corte_conjuntura = datetime.now(timezone.utc)
+    # O detalhe de cada nota é guardado para o consolidado: ele recebe o dos
+    # ativos de maior peso sem uma segunda leitura no armazém ou no túnel.
+    detalhes: dict[str, str] = {}
 
     for idx, it in enumerate(items):
         tk = str(it.get("ticker") or it.get("symbol") or "").upper()
@@ -815,6 +832,9 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 portfolio_tickers=[str(i.get("ticker") or "") for i in items],
                 portfolio_context=contexto_empresa,
                 status=status,
+                conjuntura=conjuntura_da_empresa("us", tk, it.get("setor"),
+                                                 as_of=corte_conjuntura),
+                detalhe_armazem=detalhes.setdefault(tk, get_us_warehouse_detail([tk])),
             )
         except Exception as exc:  # noqa: BLE001 - fronteira de isolamento por empresa
             st.warning(f"{tk}: erro LLM — {exc}")
@@ -870,6 +890,8 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 status=status,
                 financials=financials,
                 usd_brl=_usd_brl_da_base(),
+                conjuntura=conjuntura_da_carteira("us", items, as_of=corte_conjuntura),
+                detalhe_armazem=detalhe_do_consolidado(detalhes, items_analisados),
             )
             if int(port_analise.get("confianca_media") or 0) == 0:
                 erros.append("Relatório consolidado: resposta da LLM não pôde ser "
@@ -1013,9 +1035,10 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
                     portfolio_tickers=[str(it.get("ticker") or "")
                                        for it in model.get("items", [])],
                 )
-                from core.contexto_mercado import bloco_contexto_mercado
+                from core.contexto_mercado import conjuntura_da_carteira
 
-                contexto = contexto + "\n\n" + bloco_contexto_mercado()
+                contexto = contexto + "\n\n" + conjuntura_da_carteira(
+                    "us", model.get("items", []))
                 resposta = chat_com_portfolio(contexto, historico[:-1], pergunta)
             except Exception as exc:  # noqa: BLE001
                 resposta = f"Erro ao consultar LLM: {exc}"

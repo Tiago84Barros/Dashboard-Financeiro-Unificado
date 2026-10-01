@@ -441,6 +441,12 @@ def _render_relatorio_consolidado(port_analise: dict) -> None:
                 f'<div class="apb3-report-qual"><div class="apb3-report-label">Papel dos Ativos na Carteira</div>{papel}</div>',
                 unsafe_allow_html=True,
             )
+        mercado = port_analise.get("comportamento_de_mercado", "")
+        if mercado:
+            st.markdown(
+                f'<div class="apb3-report-qual"><div class="apb3-report-label">Liquidez, retorno e volatilidade (armazém)</div>{mercado}</div>',
+                unsafe_allow_html=True,
+            )
 
     with st.expander("💪 Pontos Fortes / Fracos", expanded=False):
         fortes = port_analise.get("pontos_fortes", [])
@@ -641,6 +647,7 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
             ("valuation", "Valuation"),
             ("governanca_controlador", "Governança e controlador"),
             ("eventos_relevantes", "Eventos relevantes e percepção de mercado"),
+            ("comportamento_de_mercado", "Liquidez, retorno e reação a resultados (armazém)"),
             ("qualidade_dados", "Qualidade dos dados"),
         ):
             txt = rel.get(k_sec)
@@ -882,6 +889,20 @@ def _executar_analise(
     items_analisados: list[dict] = []
     erros: list[str] = []          # erros de LLM capturados — exibidos após o rerun
     prog = st.progress(0, text="Analisando empresas via LLM…")
+    from datetime import datetime, timezone
+
+    from core.contexto_mercado import conjuntura_da_carteira, conjuntura_da_empresa
+    from core.llm_context_b3 import (
+        get_warehouse_detail_context as get_b3_warehouse_detail,
+    )
+    from core.portfolio_report_common import detalhe_do_consolidado
+
+    # Um corte para o relatório inteiro: todas as empresas e o consolidado
+    # leem o noticiário do mesmo instante, e o túnel serve cada ativo uma vez.
+    corte_conjuntura = datetime.now(timezone.utc)
+    # O detalhe de cada nota é guardado para o consolidado: ele recebe o dos
+    # ativos de maior peso sem uma segunda leitura no armazém ou no túnel.
+    detalhes: dict[str, str] = {}
 
     for idx, it in enumerate(items):
         tk        = it["ticker"]
@@ -933,6 +954,10 @@ def _executar_analise(
                 portfolio_tickers=[item.get("ticker", "") for item in items],
                 rag_context=rag_ctx,
                 portfolio_context=_ctx_emp,
+                conjuntura=conjuntura_da_empresa("b3", tk, it.get("setor"),
+                                                 as_of=corte_conjuntura),
+                detalhe_armazem=detalhes.setdefault(
+                    str(tk).upper(), get_b3_warehouse_detail([tk])),
             )
         except Exception as exc:
             st.warning(f"{tk}: erro LLM — {exc}")
@@ -963,6 +988,8 @@ def _executar_analise(
         try:
             port_analise = analyze_portfolio_report(
                 items_analisados, macro_hist, web_context=web_context,
+                conjuntura=conjuntura_da_carteira("b3", items, as_of=corte_conjuntura),
+                detalhe_armazem=detalhe_do_consolidado(detalhes, items_analisados),
             )
             if int(port_analise.get("confianca_media") or 0) == 0:
                 # _parse_json caiu no fallback (resposta da LLM não era JSON válido).
@@ -1351,10 +1378,12 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
                         macro_hist=macro_hist,
                         portfolio_tickers=[it.get("ticker", "") for it in model.get("items", [])],
                         cobertura_docs=cobertura_docs,
+                        history=history[:-1],
                     )
-                    from core.contexto_mercado import bloco_contexto_mercado
+                    from core.contexto_mercado import conjuntura_da_carteira
 
-                    context = context + "\n\n" + bloco_contexto_mercado()
+                    context = context + "\n\n" + conjuntura_da_carteira(
+                        "b3", model.get("items", []))
                     resposta_raw = chat_com_portfolio(context, history[:-1], user_input)
                     resposta, chart_directives = parse_chart_directives(resposta_raw)
                     # Fallback: a LLM às vezes descreve o gráfico sem emitir a

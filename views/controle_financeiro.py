@@ -9,7 +9,8 @@ Replica FIELMENTE as 4 seções do app original controlefinanceirotsb.streamlit.
 
 Adições do app unificado preservadas (não existiam no original):
   - Pizza de despesas na aba Análises
-  - Aba Orçamento: limite por categoria (vale do mês gravado em diante)
+  - Orçamento por categoria: a aba saiu da navegação em 30/09/2026; o cálculo
+    segue vivo para os alertas e o Dashboard Geral
   - Conciliação lançamento manual × extrato importado (aba Tabelas)
   - Barras de progresso por categoria
   - (Taxa de poupança mensal histórica removida)
@@ -488,12 +489,15 @@ _LANC_COLS = [1.3, 2.3, 1.15, 1.2, 1.4, 1.5]
 _LANC_POR_PAGINA = 10
 
 
-def _pagina_lancamentos(total: int) -> range:
+def _pagina_lancamentos(total: int, prefixo: str = "dash_lanc") -> range:
     """Faixa de linhas visível no editor claro dos Últimos Lançamentos.
 
     Cada lançamento custa seis widgets nativos, e trinta de uma vez deixam a
     tela lenta. O seletor fica FORA do form de propósito: dentro dele o
     Streamlit só leria a troca de página no submit.
+
+    O ``prefixo`` existe porque as abas do Streamlit desenham todas no mesmo
+    run: dois editores com a mesma chave de widget colidiriam.
     """
     if total <= _LANC_POR_PAGINA:
         return range(total)
@@ -504,7 +508,7 @@ def _pagina_lancamentos(total: int) -> range:
         for p in range(paginas)
     ]
     escolhida = st.selectbox(
-        "Linhas", rotulos, key="dash_lanc_pagina",
+        "Linhas", rotulos, key=f"{prefixo}_pagina",
         help="A gravação salva o que você alterou nesta página.",
     )
     p = rotulos.index(escolhida)
@@ -514,6 +518,7 @@ def _pagina_lancamentos(total: int) -> range:
 def _editor_lancamentos_claro(
     df_edit: pd.DataFrame, fatia: range,
     tipo_opcoes: list, cat_nomes: list, conta_nomes: list,
+    prefixo: str = "dash_lanc",
 ) -> pd.DataFrame:
     """Últimos Lançamentos desenhados com widgets nativos, para o tema claro.
 
@@ -527,6 +532,9 @@ def _editor_lancamentos_claro(
     Devolve o quadro INTEIRO, não só a página visível: as linhas de fora voltam
     idênticas às de entrada, e o laço de gravação — que grava apenas o que
     diverge da entrada — simplesmente não as vê.
+
+    O ``prefixo`` separa as chaves de widget entre as telas que usam este mesmo
+    editor: as abas do Streamlit desenham todas no mesmo run.
     """
     # Mesmo recuo da grade escura: lista vazia deixaria o selectbox sem valor.
     cat_nomes = cat_nomes or ["Sem categoria"]
@@ -550,23 +558,23 @@ def _editor_lancamentos_claro(
         data_valor = pd.to_datetime(r["Data"]).date() if pd.notna(r["Data"]) else None
         edited.at[i, "Data"] = c_data.date_input(
             "Data", value=data_valor, format="DD/MM/YYYY",
-            key=f"dash_lanc_data_{tx_id}", label_visibility="collapsed")
+            key=f"{prefixo}_data_{tx_id}", label_visibility="collapsed")
         edited.at[i, "Descrição"] = c_desc.text_input(
             "Descrição", value=str(r["Descrição"]),
-            key=f"dash_lanc_desc_{tx_id}", label_visibility="collapsed")
+            key=f"{prefixo}_desc_{tx_id}", label_visibility="collapsed")
         edited.at[i, "Valor"] = c_valor.number_input(
             "Valor (R$)", value=float(r["Valor"]), min_value=0.0, step=0.01,
-            format="%.2f", key=f"dash_lanc_valor_{tx_id}",
+            format="%.2f", key=f"{prefixo}_valor_{tx_id}",
             label_visibility="collapsed")
         edited.at[i, "Tipo"] = c_tipo.selectbox(
             "Tipo", tipo_opcoes, index=_indice_opcao(tipo_opcoes, r["Tipo"]),
-            key=f"dash_lanc_tipo_{tx_id}", label_visibility="collapsed")
+            key=f"{prefixo}_tipo_{tx_id}", label_visibility="collapsed")
         edited.at[i, "Categoria"] = c_cat.selectbox(
             "Categoria", cat_nomes, index=_indice_opcao(cat_nomes, r["Categoria"]),
-            key=f"dash_lanc_cat_{tx_id}", label_visibility="collapsed")
+            key=f"{prefixo}_cat_{tx_id}", label_visibility="collapsed")
         edited.at[i, "Conta"] = c_conta.selectbox(
             "Conta", conta_nomes, index=_indice_opcao(conta_nomes, r["Conta"]),
-            key=f"dash_lanc_conta_{tx_id}", label_visibility="collapsed")
+            key=f"{prefixo}_conta_{tx_id}", label_visibility="collapsed")
     return edited
 
 
@@ -1310,9 +1318,19 @@ def _editor_lancamentos(txs: list, form_key: str, editor_key: str, limit: int = 
         for tx in txs[:limit]
     ]
     df_edit = pd.DataFrame(rows_edit)
+    tipo_opcoes = ["entrada", "saída", "investimento", "transferência"]
+
+    # No claro a grade nativa não serve: o data_editor pinta num canvas cujas
+    # cores o Streamlit monta em JS a partir do tema do config (escuro), e CSS
+    # não alcança (memória: canvas-do-data-editor-ignora-css). O seletor de
+    # página fica fora do form — dentro dele a troca só seria lida no submit.
+    fatia = (_pagina_lancamentos(len(df_edit), prefixo=editor_key)
+             if no_claro() else range(len(df_edit)))
 
     with st.form(form_key, clear_on_submit=False):
-        edited = st.data_editor(
+        edited = _editor_lancamentos_claro(
+            df_edit, fatia, tipo_opcoes, cat_nomes, conta_nomes, prefixo=editor_key,
+        ) if no_claro() else st.data_editor(
             df_edit,
             num_rows="fixed",
             hide_index=True,
@@ -1320,9 +1338,7 @@ def _editor_lancamentos(txs: list, form_key: str, editor_key: str, limit: int = 
             key=editor_key,
             column_config={
                 "ID": None,
-                "Tipo": st.column_config.SelectboxColumn(
-                    "Tipo", options=["entrada", "saída", "investimento", "transferência"],
-                ),
+                "Tipo": st.column_config.SelectboxColumn("Tipo", options=tipo_opcoes),
                 "Conta": st.column_config.SelectboxColumn(
                     "Conta", options=conta_nomes if conta_nomes else ["Sem conta"],
                 ),
@@ -1618,9 +1634,14 @@ def _tab_tabelas(d: dict) -> None:
         key="tab_busca",
     )
 
-    # Aplica filtros
-    txs_f = get_transacoes_filtradas(
-        tipo=aba,
+    # Aplica os filtros de período, categoria e busca — MENOS o tipo. Os cards
+    # de Entradas, Saídas e Investimentos somavam a lista já recortada pelo
+    # rádio: com "Despesas" marcado, Entradas e Investimentos mostravam R$ 0,00
+    # "no filtro aplicado", e a leitura era "não investi nada em 2026" num ano
+    # com R$ 137 mil aportados. Cada card agora mostra o seu tipo no período;
+    # o rádio recorta só a tabela e o Total Filtrado.
+    txs_periodo = get_transacoes_filtradas(
+        tipo="Todos",
         categoria=f_cat,
         ano=f_ano,
         mes=f_mes,
@@ -1628,12 +1649,16 @@ def _tab_tabelas(d: dict) -> None:
         texto=f_busca,
         incluir_fatura_cartao=f_incluir_fatura,
     )
+    fluxo_do_tipo = {"Receitas": "income", "Despesas": "expense",
+                     "Investimentos": "investment"}.get(aba)
+    txs_f = [t for t in txs_periodo
+             if fluxo_do_tipo is None or t.get("tipo_fluxo") == fluxo_do_tipo]
 
     # ── Resumo (igual ao original) ─────────────────────────────────────────────
     total_filtrado = sum(abs(t["valor"]) for t in txs_f)
-    total_rec      = sum(abs(t["valor"]) for t in txs_f if t.get("tipo_fluxo") == "income")
-    total_desp     = sum(abs(t["valor"]) for t in txs_f if t.get("tipo_fluxo") == "expense")
-    total_inv      = sum(abs(t["valor"]) for t in txs_f if t.get("tipo_fluxo") == "investment")
+    total_rec      = sum(abs(t["valor"]) for t in txs_periodo if t.get("tipo_fluxo") == "income")
+    total_desp     = sum(abs(t["valor"]) for t in txs_periodo if t.get("tipo_fluxo") == "expense")
+    total_inv      = sum(abs(t["valor"]) for t in txs_periodo if t.get("tipo_fluxo") == "investment")
 
     col_s1, col_s2, col_s3, col_s4 = st.columns(4, gap="small")
     with col_s1:
@@ -1645,19 +1670,19 @@ def _tab_tabelas(d: dict) -> None:
     with col_s2:
         st.markdown(_kpi_card(
             "Entradas", fmt_moeda(total_rec),
-            "Receitas no filtro aplicado",
+            "Receitas no período, qualquer que seja o tipo marcado",
             _COR_RECEITA,
         ), unsafe_allow_html=True)
     with col_s3:
         st.markdown(_kpi_card(
             "Saídas", fmt_moeda(total_desp),
-            "Despesas no filtro aplicado",
+            "Despesas no período, qualquer que seja o tipo marcado",
             _COR_DESPESA,
         ), unsafe_allow_html=True)
     with col_s4:
         st.markdown(_kpi_card(
             "Investimentos", fmt_moeda(total_inv),
-            "Aportes no filtro aplicado",
+            "Aportes no período, qualquer que seja o tipo marcado",
             _COR_INVEST,
         ), unsafe_allow_html=True)
 
@@ -1736,6 +1761,67 @@ def _fmt_date_ui(value: object) -> str:
     return value.strftime("%d/%m/%Y") if hasattr(value, "strftime") else "-"
 
 
+_EXTRATO_COLS = [1.1, 1.0, 2.6, 1.2, 1.7, 1.2]
+
+
+def _editor_extratos_claro(df: pd.DataFrame, fatia: range, options: list) -> pd.DataFrame:
+    """Movimentos de extrato desenhados com widgets nativos, para o tema claro.
+
+    Mesmo motivo dos outros editores desta tela: o ``st.data_editor`` pinta a
+    grade num canvas cujas cores o Streamlit monta em JS a partir do tema do
+    config (escuro), e CSS não alcança (memória:
+    canvas-do-data-editor-ignora-css).
+
+    Data, Banco e Status são só leitura aqui como são na grade escura — viram
+    texto, não widget. Devolve o quadro INTEIRO: as linhas fora da página voltam
+    idênticas às de entrada, e o laço de gravação não as vê.
+    """
+    options = options or ["Pendente"]
+
+    cabecalho = st.columns(_EXTRATO_COLS, gap="small")
+    for coluna, titulo in zip(cabecalho, ("Data · Banco", "Status", "Descrição",
+                                          "Direção", "Categoria", "Valor (R$)")):
+        coluna.markdown(
+            f'<div style="font-size:0.68rem;font-weight:700;letter-spacing:0.05em;'
+            f'text-transform:uppercase;color:var(--app-muted);padding-bottom:4px;'
+            f'border-bottom:1px solid var(--app-border);">{html.escape(titulo)}</div>',
+            unsafe_allow_html=True,
+        )
+
+    edited = df.copy()
+    for i in fatia:
+        r = df.iloc[i]
+        mov_id = str(r["ID"])
+        c_data, c_status, c_desc, c_dir, c_cat, c_valor = st.columns(
+            _EXTRATO_COLS, gap="small")
+        c_data.markdown(
+            f'<div style="padding-top:6px;font-size:0.82rem;color:var(--app-text);">'
+            f'{html.escape(str(r["Data"]))}<br>'
+            f'<span style="color:var(--app-muted);font-size:0.72rem;">'
+            f'{html.escape(str(r["Banco"]))}</span></div>',
+            unsafe_allow_html=True,
+        )
+        c_status.markdown(
+            f'<div style="padding-top:6px;font-size:0.78rem;color:var(--app-muted);">'
+            f'{html.escape(str(r["Status"]))}</div>',
+            unsafe_allow_html=True,
+        )
+        edited.at[i, "Descrição"] = c_desc.text_input(
+            "Descrição", value=str(r["Descrição"]),
+            key=f"extrato_desc_{mov_id}", label_visibility="collapsed")
+        edited.at[i, "Direção"] = c_dir.selectbox(
+            "Direção", ["entrada", "saida"],
+            index=_indice_opcao(["entrada", "saida"], r["Direção"]),
+            key=f"extrato_dir_{mov_id}", label_visibility="collapsed")
+        edited.at[i, "Categoria"] = c_cat.selectbox(
+            "Categoria", options, index=_indice_opcao(options, r["Categoria"]),
+            key=f"extrato_cat_{mov_id}", label_visibility="collapsed")
+        edited.at[i, "Valor (R$)"] = c_valor.number_input(
+            "Valor (R$)", value=float(r["Valor (R$)"]), step=0.01, format="%.2f",
+            key=f"extrato_valor_{mov_id}", label_visibility="collapsed")
+    return edited
+
+
 def _editor_extratos(rows: list, categories: list) -> None:
     """Editor in-place dos movimentos de extrato importados.
     Permite editar Descrição, Direção, Valor e Categoria e grava via
@@ -1767,8 +1853,13 @@ def _editor_extratos(rows: list, categories: list) -> None:
         for row in rows
     ])
 
+    # O seletor de página fica fora do form: dentro dele a troca só seria lida
+    # no submit.
+    fatia = (_pagina_lancamentos(len(df), prefixo="extrato")
+             if no_claro() else range(len(df)))
+
     with st.form("form_editor_extratos", clear_on_submit=False):
-        edited = st.data_editor(
+        edited = _editor_extratos_claro(df, fatia, options) if no_claro() else st.data_editor(
             df,
             num_rows="fixed",
             hide_index=True,
@@ -3632,7 +3723,11 @@ def render() -> None:
     # estado preservado (st.tabs não expõe `key` e voltava para Dashboard quando
     # um filtro interno disparava rerun) e rolagem ao topo na troca de seção —
     # sem ela, Análises e Cartão de Crédito abriam no rodapé, junto do chat.
-    _SECOES = ["📊  Dashboard", "📈  Análises", "🎯  Orçamento", "🧾  Tabelas",
+    # A aba "Orçamento" saiu da navegação a pedido do usuário (30/09/2026).
+    # `_tab_orcamento` continua no módulo, sem rota, porque o orçamento em si
+    # não foi desligado: `core.alertas` (R1) e o Dashboard Geral seguem lendo
+    # os limites gravados. Sem a aba, porém, não há mais onde cadastrá-los.
+    _SECOES = ["📊  Dashboard", "📈  Análises", "🧾  Tabelas",
                "💳  Cartão de Crédito"]
     secao = abas_secao(_SECOES, key="cf_secao_ativa", default=_SECOES[0])
 
@@ -3640,11 +3735,9 @@ def render() -> None:
         _tab_analises(d, historico, hist_anual, gastos_cartao, investido_mes,
                       evolucao, sel["ano"], sel["mes"])
     elif secao == _SECOES[2]:
-        _tab_orcamento(d, sel["ano"], sel["mes"], sel["label"])
-    elif secao == _SECOES[3]:
         _render_conciliacao(d)
         _tab_tabelas(d)
-    elif secao == _SECOES[4]:
+    elif secao == _SECOES[3]:
         _tab_cartao(d, sel["ano"], sel["mes"])
     else:
         _tab_dashboard(d, historico, fluxo_inv, investido_mes)

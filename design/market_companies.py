@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import html
+import threading
+import time
 
 import pandas as pd
 import streamlit as st
@@ -103,6 +105,30 @@ def render_company_search(*, label: str, placeholder: str, key: str) -> str:
     return st.text_input(label, key=key, placeholder=placeholder).strip()
 
 
+# Uma conexão reaproveitada por host. Sem Session, cada logo pagava um
+# handshake TLS novo e recarregava o bundle de CAs: 40 logos custavam ~18 s de
+# CPU e o Streamlit Cloud reduziu a CPU do app em 30/09/2026. Com a Session, as
+# mesmas 40 checagens custam ~0,8 s.
+_SESSAO_LOGOS = None
+_SESSAO_LOCK = threading.Lock()
+
+# Logo que existe não some de uma hora para outra; logo ausente pode aparecer
+# (ou a falha ter sido de rede). Por isso o positivo vale dias e o negativo, 1 h.
+_TTL_LOGO_OK = 7 * 24 * 3600
+_TTL_LOGO_AUSENTE = 3600
+_CACHE_LOGOS: dict[str, tuple[bool, float]] = {}
+_CACHE_LOCK = threading.Lock()
+
+
+def _sessao_logos():
+    global _SESSAO_LOGOS
+    with _SESSAO_LOCK:
+        if _SESSAO_LOGOS is None:
+            import requests
+            _SESSAO_LOGOS = requests.Session()
+        return _SESSAO_LOGOS
+
+
 def _logo_disponivel(url: str) -> bool:
     """True apenas quando a URL pública do logo responde HTTP 200.
 
@@ -113,14 +139,30 @@ def _logo_disponivel(url: str) -> bool:
     if not url:
         return False
     try:
-        import requests
-        resposta = requests.head(url, timeout=2.0, allow_redirects=True)
+        resposta = _sessao_logos().head(url, timeout=2.0, allow_redirects=True)
         return resposta.status_code == 200
     except Exception:
         return False
 
 
-_logo_disponivel_cached = st.cache_data(ttl=3600, show_spinner=False)(_logo_disponivel)
+def _logo_disponivel_cached(url: str) -> bool:
+    """``_logo_disponivel`` com validade por resultado (ver os TTLs acima).
+
+    Dicionário do processo em vez de ``st.cache_data``: o cache do Streamlit
+    tem um TTL só, e o que se quer é lembrar o positivo por dias.
+    """
+    if not url:
+        return False
+    agora = time.monotonic()
+    with _CACHE_LOCK:
+        visto = _CACHE_LOGOS.get(url)
+    if visto is not None and visto[1] > agora:
+        return visto[0]
+    ok = _logo_disponivel(url)
+    validade = agora + (_TTL_LOGO_OK if ok else _TTL_LOGO_AUSENTE)
+    with _CACHE_LOCK:
+        _CACHE_LOGOS[url] = (ok, validade)
+    return ok
 
 
 def render_company_logo(ticker: str, url: str, *, size: int = 64) -> None:

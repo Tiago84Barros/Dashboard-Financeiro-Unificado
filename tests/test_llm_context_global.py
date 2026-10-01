@@ -64,6 +64,7 @@ class _Acao:
     analisadores: frozenset
     custo_estimado: float
     custo_calibrado: bool
+    macro_delta: float | None = None
 
 
 def test_contexto_traz_composicao_alvo_e_desvio():
@@ -197,3 +198,29 @@ def test_classe_desconhecida_nao_derruba_o_builder(valor):
     df = _df()
     df.loc[df["symbol"] == "AAPL", "asset_class"] = valor
     assert build_global_portfolio_context(df)
+
+
+# ── camada macro das carteiras ──────────────────────────────────────────────
+# O motor ajusta peso pelo macro (`Acao.macro_delta`) e a tela mostra o
+# snapshot; o chat via só "analisadores: macro_data", sem quanto nem por quê.
+
+def test_recomendacao_diz_quanto_o_macro_mexeu():
+    acoes = [_Acao("PETR4", "reduzir", 0.30, 0.25, -0.4, {}, frozenset({"macro_data"}),
+                   10.0, True, macro_delta=-3.25),
+             _Acao("VALE3", "manter", 0.10, 0.10, 0.0, {}, frozenset(), 0.0, True)]
+    texto = build_global_portfolio_context(_df(), acoes=acoes)
+    assert "ajuste macro -3.25/100 desde a criação" in texto
+    assert "VALE3: manter" in texto and "sem ajuste macro" in texto
+
+
+def test_snapshot_macro_das_carteiras_chega_ao_chat():
+    texto = build_global_portfolio_context(
+        _df(), macro_carteiras="CAMADA MACRO DETERMINÍSTICA (arquivo): PETR4 +1.00/100")
+    assert "=== CAMADA MACRO DAS CARTEIRAS" in texto
+    assert "PETR4 +1.00/100" in texto
+
+
+def test_sem_camada_macro_o_contexto_diz_que_faltou():
+    texto = build_global_portfolio_context(_df())
+    assert "Não montada nesta execução; não trate como macro neutro." in texto
+

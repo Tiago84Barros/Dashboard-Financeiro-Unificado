@@ -86,45 +86,163 @@ def container_pagina(
 NAV_KEY_PREFIX = "appnav_"
 
 
-def rolar_para_topo() -> None:
-    """Reposiciona a página no topo.
+CLASSE_TRANSICAO = "app-em-transicao"
+_ROTA_RENDERIZADA = "_app_rota_renderizada"
+_SEQ_TRANSICAO = "_app_transicao_seq"
 
-    O Streamlit preserva a posição de rolagem entre reruns e o ``st.chat_input``
-    no fim das abas com IA recebe foco ao montar — o navegador então rola o
-    rodapé para dentro da tela. Sem isto, "Análises" e "Cartão de Crédito"
-    abrem no fim da página, longe do conteúdo que o usuário pediu.
+# Um script só para as duas metades do problema, medidas no DOM em 29/09/2026:
+#
+# 1. Fantasma. Entre a troca de rota e o fim do novo run, o Streamlit mantém
+#    montados os elementos do run anterior com `data-stale="true"` -- 120 deles,
+#    numa página de porte médio -- e eles continuam visíveis por baixo do título
+#    da página nova. O tema claro ainda subia a opacidade de `.33` para `.88`,
+#    quase opaco. A classe no `body` liga a regra do tema que os esconde; o vigia
+#    a retira quando não sobra nenhum velho, e um teto garante que a tela nunca
+#    fique presa escondida se algo der errado no meio.
+# 2. Rolagem. O Streamlit preserva a rolagem entre reruns, e o `st.tabs` troca de
+#    aba só no cliente (nenhum rerun): sem ouvinte de clique, a aba nova abre na
+#    altura em que a anterior estava -- 2389 px, na medição. Daí o ouvinte em
+#    capture, que alcança tanto a aba quanto o menu da barra lateral antes do
+#    servidor responder. O reposicionamento é repetido por alguns frames de
+#    propósito: este iframe carrega antes do restante da página, e o `chat_input`
+#    do fim das abas com IA recebe foco ao montar, o que rolaria o rodapé de volta
+#    para dentro da tela.
+_JS_TRANSICAO = """
+<script>
+/* marca __MARCA__ -- muda a cada run para o iframe recarregar e o script rodar */
+(function () {
+    const janela = window.parent;
+    const doc = janela && janela.document;
+    if (!doc || !doc.body) { return; }
+    const CLASSE = '__CLASSE__';
+    const MIN_MS = 900;      /* piso antes de soltar, para o stale chegar */
+    const TETO_MS = 25000;   /* teto de seguranca: a tela nunca fica presa */
+    const PASSO_MS = 100;
+    const est = janela.__app4Transicao || (janela.__app4Transicao = {});
 
-    O reposicionamento é repetido por alguns frames de propósito: este iframe
-    carrega antes do restante da aba, e uma única chamada seria desfeita pelo
-    foco que chega depois.
-    """
-    components.html(
-        """
-        <script>
-        (function () {
-            const doc = window.parent && window.parent.document;
-            if (!doc) { return; }
-            function aoTopo() {
-                const alvos = [
-                    doc.querySelector('section.stMain'),
-                    doc.querySelector('[data-testid="stMain"]'),
-                    doc.querySelector('section.main'),
-                    doc.scrollingElement,
-                ];
-                for (const alvo of alvos) {
-                    if (alvo && typeof alvo.scrollTo === 'function') {
-                        alvo.scrollTo({top: 0, behavior: 'auto'});
-                    }
-                }
+    function principal() {
+        return doc.querySelector('section.stMain')
+            || doc.querySelector('[data-testid="stMain"]')
+            || doc.querySelector('section.main');
+    }
+    function aoTopo() {
+        const alvos = [principal(), doc.scrollingElement, doc.documentElement];
+        for (const alvo of alvos) {
+            if (alvo && typeof alvo.scrollTo === 'function') {
+                alvo.scrollTo({top: 0, behavior: 'auto'});
             }
-            aoTopo();
-            requestAnimationFrame(aoTopo);
-            [60, 160, 320, 600].forEach(function (ms) { setTimeout(aoTopo, ms); });
-        })();
-        </script>
-        """,
-        height=0,
+        }
+    }
+    function insistirNoTopo() {
+        aoTopo();
+        requestAnimationFrame(aoTopo);
+        [60, 160, 320, 600].forEach(function (ms) { janela.setTimeout(aoTopo, ms); });
+    }
+    /* Os temporizadores moram na janela de cima porque este iframe e' recarregado
+       a cada run: um `setInterval` daqui morreria com ele no meio da transicao. */
+    function vigiar() {
+        if (est.vigia) { janela.clearInterval(est.vigia); }
+        est.vigia = janela.setInterval(function () {
+            if (!doc.body.classList.contains(CLASSE)) {
+                janela.clearInterval(est.vigia); est.vigia = null; return;
+            }
+            const area = principal();
+            const velhos = area ? area.querySelectorAll('[data-stale="true"]').length : 0;
+            if (velhos > 0) { est.viuVelhos = true; }
+            const idade = Date.now() - (est.inicio || 0);
+            const acabou = velhos === 0 && (est.viuVelhos || idade > MIN_MS);
+            if (acabou || idade > TETO_MS) {
+                doc.body.classList.remove(CLASSE);
+                janela.clearInterval(est.vigia); est.vigia = null;
+                aoTopo();
+                janela.setTimeout(aoTopo, 80);
+            }
+        }, PASSO_MS);
+    }
+    function ligar() {
+        est.inicio = Date.now();
+        est.viuVelhos = false;
+        doc.body.classList.add(CLASSE);
+        insistirNoTopo();
+        vigiar();
+    }
+    function aoClicar(ev) {
+        /* Nao `instanceof Element`: o no' clicado vem do documento de cima e
+           `Element` aqui e' o construtor DESTE iframe -- entre realms o teste da'
+           falso e o ouvinte saia' sem fazer nada. Medido em 29/09/2026: o clique
+           na aba nao rolava a pagina por causa disso. Vale o que o no' sabe
+           fazer, nao de que realm ele veio. */
+        const alvo = ev && ev.target && typeof ev.target.closest === 'function'
+            ? ev.target : null;
+        if (!alvo) { return; }
+        const secao = alvo.closest('[data-testid="stSidebar"] [role="radiogroup"] label,'
+            + ' [data-testid="stSidebarNav"] a');
+        if (secao) { ligar(); return; }
+        /* Aba: o corpo das duas ja' esta' no DOM, nao ha' fantasma a esconder --
+           so' falta abrir no topo. */
+        if (alvo.closest('[role="tab"], [data-baseweb="tab"]')) { insistirNoTopo(); }
+    }
+    if (est.ouvinte) { doc.removeEventListener('click', est.ouvinte, true); }
+    est.ouvinte = aoClicar;
+    doc.addEventListener('click', aoClicar, true);
+
+    if (__ATIVA__) {
+        ligar();
+    } else if (doc.body.classList.contains(CLASSE)) {
+        /* Transicao aberta por um run anterior: o vigia dela morreu com o iframe
+           daquele run, e sem reassumir aqui a tela ficaria escondida. */
+        est.inicio = est.inicio || Date.now();
+        vigiar();
+    }
+})();
+</script>
+"""
+
+
+def _injetar_transicao(*, ativa: bool, marca: str) -> None:
+    html = (
+        _JS_TRANSICAO
+        .replace("__CLASSE__", CLASSE_TRANSICAO)
+        .replace("__ATIVA__", "true" if ativa else "false")
+        .replace("__MARCA__", marca)
     )
+    components.html(html, height=0)
+
+
+def transicao_de_pagina(rota: str) -> None:
+    """Instala a transição de página: sem fantasma e sempre no topo.
+
+    Chamar uma vez por rerun, **sem condição**, antes de renderizar a rota. Sem
+    condição de propósito: um elemento que só existe em alguns runs desloca os
+    `st.tabs` das views, e o Streamlit devolve a seleção para a primeira aba
+    quando o grupo de abas muda de posição (medido em 24/09/2026).
+
+    O que o script faz depende de ``rota``: quando ela difere da última
+    renderizada, a transição é ligada aqui mesmo -- é o que cobre troca de seção
+    por qualquer caminho, inclusive sem clique. O ouvinte de clique, esse é
+    instalado sempre.
+    """
+    sessao = getattr(st, "session_state", None)
+    if sessao is None:  # dublê de testes sem session_state
+        _injetar_transicao(ativa=True, marca=str(rota))
+        return
+    trocou = sessao.get(_ROTA_RENDERIZADA) != rota
+    sessao[_ROTA_RENDERIZADA] = rota
+    seq = int(sessao.get(_SEQ_TRANSICAO, 0)) + 1
+    sessao[_SEQ_TRANSICAO] = seq
+    _injetar_transicao(ativa=trocou, marca=f"{seq}")
+
+
+def rolar_para_topo() -> None:
+    """Reposiciona a página no topo e esconde o render anterior.
+
+    Usada por quem tem sub-navegação própria (``abas_secao``, Seleção de FIIs,
+    Empresas): a troca de aba dispara rerun, e no rerun valem as duas metades do
+    defeito -- a aba nova nascia na altura da anterior e o conteúdo da anterior
+    seguia na tela até o novo terminar de carregar. É a mesma transição de
+    ``transicao_de_pagina``, sempre ligada.
+    """
+    _injetar_transicao(ativa=True, marca="topo")
 
 
 def abas_secao(
@@ -163,6 +281,13 @@ def abas_secao(
 
     def _marcar_troca() -> None:
         st.session_state[flag_key] = True
+
+    # Seção que deixa de existir (aba retirada entre um deploy e outro) fica
+    # guardada em session_state e o widget seria criado com um valor fora das
+    # opções. Descartar aqui devolve o usuário ao default em vez de quebrar a
+    # página de quem estava com a aba antiga aberta.
+    if st.session_state.get(widget_key) not in (None, *opcoes):
+        del st.session_state[widget_key]
 
     escolhida = st.segmented_control(
         label,
@@ -560,22 +685,17 @@ def card_alerta_resumo(
         f'<div style="font-size:0.72rem;color:var(--app-subtle);margin-top:4px">📁 {modulo}</div>'
         if modulo else ""
     )
+    # Marcação numa linha só, sem recuo: com `modulo` vazio a linha de
+    # `{modulo_html}` virava linha em branco, o Markdown fechava ali o bloco de
+    # HTML e o `</div>` seguinte, recuado, saía na tela como bloco de código.
     st.markdown(
-        f"""<div style="
-            background:{fundo};
-            border-left:3px solid {borda};
-            border-radius:0 8px 8px 0;
-            padding:10px 14px;
-            margin-bottom:8px;
-        ">
-            <div style="font-size:0.92rem;font-weight:600;color:var(--app-text)">
-                {icone} {titulo}
-            </div>
-            <div style="font-size:0.80rem;color:var(--app-muted);margin-top:3px">
-                {descricao}
-            </div>
-            {modulo_html}
-        </div>""",
+        f'<div style="background:{fundo};border-left:3px solid {borda};'
+        f'border-radius:0 8px 8px 0;padding:10px 14px;margin-bottom:8px;">'
+        f'<div style="font-size:0.92rem;font-weight:600;color:var(--app-text)">'
+        f'{icone} {titulo}</div>'
+        f'<div style="font-size:0.80rem;color:var(--app-muted);margin-top:3px">'
+        f'{descricao}</div>'
+        f'{modulo_html}</div>',
         unsafe_allow_html=True,
     )
 
@@ -607,40 +727,22 @@ def card_proximo_passo(
         if modulo else ""
     )
     st.markdown(
-        f"""<div style="
-            display:flex;
-            gap:14px;
-            align-items:flex-start;
-            padding:10px 14px;
-            background:var(--app-surface);
-            border:1px solid var(--app-border);
-            border-radius:10px;
-            margin-bottom:8px;
-        ">
-            <div style="
-                min-width:32px;height:32px;
-                background:{cor};
-                color:#0E1117;
-                border-radius:50%;
-                display:flex;align-items:center;justify-content:center;
-                font-weight:800;font-size:0.9rem;
-                flex-shrink:0;margin-top:2px;
-            ">{numero}</div>
-            <div>
-                <div style="font-size:0.92rem;font-weight:600;color:var(--app-text)">
-                    {titulo}
-                    <span style="
-                        font-size:0.68rem;font-weight:600;
-                        color:{cor};margin-left:8px;
-                        vertical-align:middle;
-                    ">{label_urgencia}</span>
-                </div>
-                <div style="font-size:0.80rem;color:var(--app-muted);margin-top:3px">
-                    {descricao}
-                </div>
-                {modulo_html}
-            </div>
-        </div>""",
+        # Uma linha só, sem recuo: ver a nota em `card_alerta_resumo`.
+        f'<div style="display:flex;gap:14px;align-items:flex-start;'
+        f'padding:10px 14px;background:var(--app-surface);'
+        f'border:1px solid var(--app-border);border-radius:10px;'
+        f'margin-bottom:8px;">'
+        f'<div style="min-width:32px;height:32px;background:{cor};'
+        f'color:var(--app-on-accent);border-radius:50%;display:flex;'
+        f'align-items:center;justify-content:center;font-weight:800;'
+        f'font-size:0.9rem;flex-shrink:0;margin-top:2px;">{numero}</div>'
+        f'<div><div style="font-size:0.92rem;font-weight:600;'
+        f'color:var(--app-text)">{titulo}'
+        f'<span style="font-size:0.68rem;font-weight:600;color:{cor};'
+        f'margin-left:8px;vertical-align:middle;">{label_urgencia}</span></div>'
+        f'<div style="font-size:0.80rem;color:var(--app-muted);margin-top:3px">'
+        f'{descricao}</div>'
+        f'{modulo_html}</div></div>',
         unsafe_allow_html=True,
     )
 

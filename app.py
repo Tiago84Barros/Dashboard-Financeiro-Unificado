@@ -10,7 +10,13 @@ import logging
 
 import streamlit as st
 
-from core.app_test_mode import is_app_test_mode, module_for_route
+from core.modulos_frescos import descartar_se_o_codigo_mudou
+
+# Antes de qualquer outro import do projeto: depois de um deploy, o Cloud roda
+# este arquivo novo sobre módulos antigos em memória (ImportError em 30/09/2026).
+descartar_se_o_codigo_mudou()
+
+from core.app_test_mode import is_app_test_mode, module_for_route  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +39,7 @@ _APP_TEST_MODE = is_app_test_mode()
 if not _APP_TEST_MODE:
     from core.auth import verificar_autenticacao
     from core.config import settings
-    from design.componentes import mensagem_erro
+    from design.componentes import mensagem_erro, transicao_de_pagina
     from design.tema import aplicar_tema
 
     verificar_autenticacao()
@@ -125,6 +131,18 @@ with st.sidebar:
         for aviso in settings.validate():
             logger.warning("ambiente: %s", aviso)
 
+# ── Transição de página ───────────────────────────────────────────────────────
+# Antes de qualquer conteúdo da rota, e sem condição: o Streamlit entrega os
+# elementos na ordem em que o script os cria, então este é o primeiro a chegar
+# ao navegador e já age enquanto a view ainda carrega. Sem condição porque um
+# elemento que existisse só em alguns runs deslocaria os `st.tabs` das views, e
+# o Streamlit devolve a seleção para a primeira aba quando o grupo de abas muda
+# de posição.
+# A única condição é o modo sintético, que vale para a sessão inteira e não
+# muda de um run para o outro -- a posição do elemento continua fixa.
+if not _APP_TEST_MODE:
+    transicao_de_pagina(menu)
+
 # ── Roteamento ────────────────────────────────────────────────────────────────
 modulo_nome = _ROTAS.get(menu)
 
@@ -141,6 +159,14 @@ if modulo_nome:
             # amigavel; quem opera o app le o log para diagnosticar. Ver
             # achado A-013 (vazamento de excecao crua ao usuario final).
             logger.exception('Erro ao carregar o modulo "%s"', menu)
+            # Log de lacunas: a mesma identidade (tipo + frame do projeto, sem
+            # a mensagem) vai para a fila que o agente de correcao le.
+            try:
+                from core.lacunas import registrar_excecao
+
+                registrar_excecao(exc, rota=menu)
+            except Exception:  # noqa: BLE001 - lacuna e extra, nunca requisito
+                logger.exception("falha ao registrar a excecao como lacuna")
             mensagem_erro(
                 f'Erro ao carregar o módulo "{menu}"',
                 MSG_ERRO_GENERICO_AO_CARREGAR_MODULO,

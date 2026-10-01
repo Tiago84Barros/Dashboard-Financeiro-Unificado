@@ -23,19 +23,37 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def conn():
-    """Conexao com o armazem local (a origem do Parquet)."""
-    from sqlalchemy import create_engine
+    """Conexao com o armazem local (a origem do Parquet), na mesma safra.
+
+    Paridade so se mede entre o Parquet e a origem que ele fotografou. A coleta
+    CVM grava no armazem todo dia e o Parquet e republicado toda semana: entre
+    uma republicacao e outra os dois divergem por DADO, nao por consulta, e
+    comparar acusaria diferenca que nao e defeito. Pula nomeando a defasagem;
+    logo apos `publish_rag_corpus_parquet.py` a paridade roda cheia.
+    """
+    from sqlalchemy import create_engine, text
 
     from scripts.publish_fii_selection_from_local import _warehouse_url
+    from scripts.publish_rag_corpus_parquet import _SQL_ASSINATURA
     try:
         eng = create_engine(
             _warehouse_url().replace("postgresql://", "postgresql+psycopg2://"),
             future=True)
-        with eng.connect() as c:
-            yield c
-        eng.dispose()
+        c = eng.connect()
     except Exception as exc:  # pragma: no cover - ambiente sem Docker
         pytest.skip(f"armazem local indisponivel: {exc}")
+    try:
+        origem = c.execute(text(_SQL_ASSINATURA)).mappings().one()
+        publicado = rag_store.manifesto() or {}
+        if publicado.get("assinatura_origem") != origem["assinatura"]:
+            pytest.skip(
+                f"Parquet de outra safra (gerado_em={publicado.get('gerado_em', '?')}, "
+                f"{publicado.get('linhas_origem')} chunks vs {origem['n']} no armazem); "
+                "republique com scripts/publish_rag_corpus_parquet.py para medir")
+        yield c
+    finally:
+        c.close()
+        eng.dispose()
 
 
 # Tickers escolhidos por perfil, nao por conveniencia: WEGE3 e o caso do

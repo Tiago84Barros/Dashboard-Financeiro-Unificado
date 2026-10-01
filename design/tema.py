@@ -208,6 +208,11 @@ hr {
        ilegivel sobre branco. Token para o tema poder escurece-lo. */
     --app-alert: #F97316;
     --app-accent: #C084FC;
+    /* Tinta de quem escreve POR CIMA de um token de cor (numero do proximo
+       passo, etiqueta preenchida). Aqui os tokens sao claros e o texto tem de
+       ser escuro; no tema claro eles sao escuros e o texto vira branco -- sem
+       token, o literal escuro dava 2,9:1 sobre o vermelho do claro. */
+    --app-on-accent: #0E1117;
     --app-radius-sm: 10px;
     --app-radius-md: 14px;
     --app-radius-lg: 20px;
@@ -691,6 +696,38 @@ hr { border-color: var(--app-border) !important; }
     .app-page-meta-group { justify-content: flex-start; }
     .app-page-meta { min-width: 100px; }
     .stTabs [data-baseweb="tab"] { padding-inline: .68rem; }
+}
+
+/* ── Transição entre páginas ──────────────────────────────────────────────
+   Entre a troca de seção e o fim do novo run, o Streamlit mantém montado o
+   render anterior, marcado `data-stale="true"`: o conteúdo da página que o
+   usuário acabou de deixar seguia visível dentro da página nova até ela
+   terminar de carregar -- no claro quase opaco, porque lá o stale vai a `.88`.
+   `display:none` não disputa com opacidade: quem some não tem opacidade.
+
+   A classe é posta e retirada pelo script de `design/componentes.py`, que solta
+   a tela assim que não sobra nenhum elemento velho (e por teto, se algo falhar).
+   O escopo é a área principal: a barra lateral e o cabeçalho ficam de pé, senão
+   a troca de seção pareceria uma queda do app. A pílula substitui o aviso que o
+   desbotamento dava -- "estou carregando" -- sem deslocar o conteúdo novo. */
+body.app-em-transicao [data-testid="stMain"] [data-stale="true"] {
+    display: none !important;
+}
+body.app-em-transicao [data-testid="stMain"]::before {
+    content: "Carregando…";
+    position: fixed;
+    z-index: 20;
+    bottom: 1.6rem;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: .35rem 1rem;
+    border-radius: 999px;
+    border: 1px solid var(--app-border);
+    background: var(--app-surface-raised);
+    color: var(--app-muted);
+    font-size: .82rem;
+    letter-spacing: .01em;
+    pointer-events: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -295,6 +295,17 @@ def clarear_figura(fig):
     layout.setdefault("paper_bgcolor", "rgba(0,0,0,0)")
     layout.setdefault("plot_bgcolor", "rgba(0,0,0,0)")
     layout.setdefault("font", {}).setdefault("color", _TEXTO_PADRAO)
+    # A modebar (zoom, câmera, casinha) não sai do template: o Plotly desenha o
+    # grupo com rgba(0,0,0,.5) e os ícones com rgba(255,255,255,.3) — medido no
+    # DOM em 29/09/2026 — o que sobre o gráfico claro vira borrão escuro de
+    # ícones invisíveis. As cores são atributo da figura, não CSS.
+    # Cinza médio, e não o do eixo: o ícone é traço fino de 16 px sobre branco.
+    escolhida = (bruto.get("layout") or {}).get("modebar") or {}
+    modebar = layout.setdefault("modebar", {})
+    for chave, cor in (("bgcolor", "rgba(0,0,0,0)"), ("color", "#8494a8"),
+                       ("activecolor", _TEXTO_PADRAO)):
+        if not escolhida.get(chave):  # o que a tela definiu ganha do padrão
+            modebar.setdefault(chave, cor)
     try:
         fig.update_layout(**layout)
     except Exception:
@@ -310,6 +321,57 @@ def clarear_figura(fig):
         except Exception:
             continue
     return fig
+
+
+# ───────────────────────────── Vega-Lite ─────────────────────────────
+# Medido em 29/09/2026 no bundle `ArrowVegaLiteChart` do Streamlit 1.57:
+#
+#     theme === "streamlit" ? config = temaCompleto(config) : config = padroes(config)
+#
+# ou seja, `theme=None` **não** deixa o gráfico com as cores neutras do
+# Vega — o front-end ainda aplica `padroes()`, que preenche fundo, eixos,
+# legenda e títulos com as cores do tema do Streamlit. E o tema do Streamlit
+# continua `base="dark"` (config.toml): o claro do app é CSS por cima. Daí os
+# painéis escuros dentro da página clara.
+#
+# As duas funções mesclam deixando o que já está no spec ganhar do padrão,
+# então basta escrever a moldura clara no próprio spec.
+_CONFIG_VEGA_CLARO = {
+    # Transparente, e não branco: o gráfico fica sobre o fundo da página ou do
+    # cartão, que o CSS já pinta.
+    "background": "transparent",
+    "axis": {
+        "labelColor": _TEXTO_PADRAO, "titleColor": _TEXTO_PADRAO,
+        "gridColor": _GRADE, "domainColor": _EIXO, "tickColor": _EIXO,
+    },
+    "legend": {"labelColor": _TEXTO_PADRAO, "titleColor": _TEXTO_PADRAO},
+    "title": {"color": _TEXTO_PADRAO, "subtitleColor": _TEXTO_PADRAO},
+    "header": {"labelColor": _TEXTO_PADRAO, "titleColor": _TEXTO_PADRAO},
+    "text": {"color": _TEXTO_PADRAO},
+    "view": {"stroke": _GRADE},
+}
+
+
+def _mesclar_padrao(destino: dict, padrao: dict) -> dict:
+    """Escreve `padrao` em `destino` sem sobrepor o que já estava lá."""
+    for chave, valor in padrao.items():
+        atual = destino.get(chave)
+        if isinstance(valor, dict):
+            if isinstance(atual, dict):
+                _mesclar_padrao(atual, valor)
+            elif chave not in destino:
+                destino[chave] = dict(valor)
+        elif chave not in destino:
+            destino[chave] = valor
+    return destino
+
+
+def clarear_spec_vega(spec: dict) -> dict:
+    """Devolve uma cópia do spec com a moldura clara escrita no `config`."""
+    copia = dict(spec)
+    config = dict(copia.get("config") or {})
+    copia["config"] = _mesclar_padrao(config, _CONFIG_VEGA_CLARO)
+    return copia
 
 
 # ─────────────────────── instalação dos adaptadores ───────────────────────
@@ -336,6 +398,28 @@ def no_claro() -> bool:
     checagem seja reescrita em cada tela.
     """
     return tema_da_sessao() == "light"
+
+
+# Escala divergente da correlação. O ``_overrides`` não mexe em ``colorscale``
+# de propósito: clarear parada por parada quebraria a ordem do gradiente (a
+# ponta escura sobe, a clara fica) -- a limitação está anotada em
+# ``_tinta_clara``. O caminho que sobra é o que aquela nota manda: escolher a
+# paleta clara na origem. No escuro o meio da escala é quase preto para casar
+# com a página; no claro ele precisa ser quase branco, e as pontas ficam
+# pastéis porque o número vai escrito por cima em ``--app-text``.
+_ESCALA_CORR_ESCURA = [
+    [0.00, "#2563EB"], [0.35, "#0F172A"], [0.50, "#1E293B"],
+    [0.65, "#FACC15"], [1.00, "#F43F5E"],
+]
+_ESCALA_CORR_CLARA = [
+    [0.00, "#8ab4f8"], [0.35, "#cddffb"], [0.50, "#f1f4f9"],
+    [0.65, "#fbe38a"], [1.00, "#f7a3b4"],
+]
+
+
+def escala_correlacao() -> list[list]:
+    """Paradas da escala de correlação no tema da sessão."""
+    return [list(p) for p in (_ESCALA_CORR_CLARA if no_claro() else _ESCALA_CORR_ESCURA)]
 
 
 def instalar_adaptadores() -> None:
@@ -368,16 +452,23 @@ def instalar_adaptadores() -> None:
                 pass  # qualquer tropeço na marcação cai na grade nativa
         return dataframe_original(self, data, *args, **kwargs)
 
-    altair_original = VegaChartsMixin._altair_chart
+    # Um ponto só: `line_chart`, `bar_chart`, `area_chart`, `scatter_chart`,
+    # `altair_chart` e `vega_lite_chart` todos terminam aqui.
+    vega_original = VegaChartsMixin._vega_lite_chart
 
-    def _altair_chart(self, *args, **kwargs):
+    def _vega_lite_chart(self, data=None, spec=None, *args, **kwargs):
         if no_claro():
             kwargs["theme"] = None
-        return altair_original(self, *args, **kwargs)
+            if isinstance(spec, dict):
+                spec = clarear_spec_vega(spec)
+            elif spec is None and isinstance(data, dict):
+                # `st.vega_lite_chart({...})` passa o spec como primeiro argumento.
+                data = clarear_spec_vega(data)
+        return vega_original(self, data, spec, *args, **kwargs)
 
     DeltaGenerator.plotly_chart = plotly_chart
     DeltaGenerator.dataframe = dataframe
-    VegaChartsMixin._altair_chart = _altair_chart
+    VegaChartsMixin._vega_lite_chart = _vega_lite_chart
     # ``st.plotly_chart`` e ``st.dataframe`` são métodos já vinculados ao
     # DeltaGenerator raiz: trocar só na classe não alcança quem chama pelo
     # módulo, que é a forma usada em praticamente todas as telas.

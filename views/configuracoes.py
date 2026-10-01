@@ -35,6 +35,10 @@ def render() -> None:
     if not is_admin():
         from design.user_accounts import render_user_accounts
         st.title("Minhas configurações")
+        # A estratégia e o cenário são de cada conta e moram na aba
+        # Investimentos → Inteligência dos Ativos desde 27/09/2026.
+        st.caption("A Estratégia e o Cenário de Investimentos se configuram "
+                   "em Investimentos → Inteligência dos Ativos.")
         personal, account, docs = st.tabs(
             ["Importar meus dados", "Minha conta", "📚 Documentação"]
         )
@@ -67,7 +71,8 @@ def render() -> None:
     with tab_geral:
         _render_tab_intro(
             "Geral",
-            "Tema do aplicativo, troca de usuário e limpeza da memória da LLM. "
+            "Tema do aplicativo, categorias, troca de usuário e limpeza da "
+            "memória da LLM. "
             "O tema e a saída moravam na sidebar até 21/09/2026.",
             "Preferências da conta",
             "var(--app-info, #4A9EFF)",

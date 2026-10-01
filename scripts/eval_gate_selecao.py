@@ -27,6 +27,8 @@ Nenhum dado real do usuário sai daqui. Requer OPENAI_API_KEY e/ou GEMINI_API_KE
 Uso:
   python scripts/eval_gate_selecao.py
   python scripts/eval_gate_selecao.py --repeticoes 3 --saida relatorio.json
+  python scripts/eval_gate_selecao.py --contexto adverso   # notícia ruim não veta
+  python scripts/eval_gate_selecao.py --contexto favoravel # euforia não salva
 """
 from __future__ import annotations
 
@@ -211,6 +213,50 @@ CASOS: tuple[Caso, ...] = (SOLIDA, LUCRO_MASCARADO, PATRIMONIO_NEGATIVO,
                            CICLICA_EM_VALE, BANCO_EBIT_NEGATIVO)
 
 
+#: Contexto de mercado SINTÉTICO injetado no parecer (``--contexto``). O gate
+#: recebe macro, notícias e detalhe do armazém, e a regra 5.5 do prompt diz que
+#: nada disso sustenta veto sozinho. Os dois modos testam as duas direções:
+#: "adverso" põe manchete grave e preço desabando na empresa sólida — não pode
+#: virar veto; "favoravel" põe euforia na empresa quebrada — não pode salvá-la.
+#: {tk} e {nome} são trocados pelos do caso.
+_CONTEXTO_SINTETICO = {
+    "adverso": (
+        "CONTEXTO DE MERCADO (macro de 29/09/2026): Selic 15,00% a.a.; IPCA 12m "
+        "5,40%; USDBRL 5,92 (+8,1% em 30 dias); curva do Tesouro: NTN-B 2035 "
+        "IPCA+ 7,90%.\n"
+        "Noticiário de {tk}:\n"
+        "  - [28/09/2026 | Valor] Ações de {nome} despencam 18% após rebaixamento "
+        "de recomendação por dois bancos\n"
+        "  - [27/09/2026 | InfoMoney] Analistas veem risco de corte de dividendos "
+        "em {nome} com juro alto\n"
+        "  - [25/09/2026 | Estadão] Rumor de investigação envolvendo ex-diretor de "
+        "{nome}; companhia nega\n\n"
+        "DETALHE DO ARMAZÉM ({tk}): último pregão 29/09/2026; volume financeiro "
+        "mediano 63d R$ 4,1 mi/dia; retorno 12m -41,3%; retorno 3m -22,8%; "
+        "volatilidade anualizada 58,4%; pior queda desde o topo -47,9%; reação ao "
+        "último resultado anual: 1d -9,2%, 20d -14,6%."),
+    "favoravel": (
+        "CONTEXTO DE MERCADO (macro de 29/09/2026): Selic 10,50% a.a.; IPCA 12m "
+        "3,10%; USDBRL 4,85 (-6,0% em 30 dias).\n"
+        "Noticiário de {tk}:\n"
+        "  - [28/09/2026 | Valor] {nome} dispara 25% e vira queridinha dos "
+        "gestores\n"
+        "  - [27/09/2026 | InfoMoney] Três bancos elevam {nome} para compra com "
+        "potencial de 60%\n\n"
+        "DETALHE DO ARMAZÉM ({tk}): último pregão 29/09/2026; volume financeiro "
+        "mediano 63d R$ 310,5 mi/dia; retorno 12m +84,2%; retorno 3m +31,7%; "
+        "volatilidade anualizada 21,3%; reação ao último resultado anual: 1d "
+        "+6,4%, 20d +12,9%."),
+}
+
+
+def _contexto_do_caso(caso: Caso, modo: str) -> str:
+    modelo = _CONTEXTO_SINTETICO.get(modo)
+    if not modelo:
+        return ""
+    return modelo.format(tk=caso.dossie["ticker"], nome=caso.dossie.get("nome", ""))
+
+
 def _limpar_cache_parecer() -> None:
     """Sem isto, ``--repeticoes`` mede a mesma resposta N vezes.
 
@@ -226,12 +272,14 @@ def _limpar_cache_parecer() -> None:
         pass
 
 
-def _avaliar(caso: Caso) -> dict:
+def _avaliar(caso: Caso, contexto: str = "vazio") -> dict:
     from core.dossie_b3 import gerar_parecer_empresa
 
     _limpar_cache_parecer()
 
-    parecer, _ = gerar_parecer_empresa(caso.dossie["ticker"], dossie=caso.dossie)
+    parecer, _ = gerar_parecer_empresa(
+        caso.dossie["ticker"], dossie=caso.dossie,
+        contexto_mercado=_contexto_do_caso(caso, contexto))
     classificacao = str(parecer.get("classificacao_selecao", ""))
     motivo = str(parecer.get("motivo_selecao", ""))
 
@@ -261,12 +309,15 @@ def main() -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--repeticoes", type=int, default=1)
     p.add_argument("--saida", default=None)
+    p.add_argument("--contexto", choices=("vazio", *_CONTEXTO_SINTETICO),
+                   default="vazio",
+                   help="contexto de mercado sintético injetado no parecer")
     args = p.parse_args()
 
     resultados: list[dict] = []
     for volta in range(1, max(1, args.repeticoes) + 1):
         for caso in CASOS:
-            r = _avaliar(caso)
+            r = _avaliar(caso, args.contexto)
             r["repeticao"] = volta
             resultados.append(r)
             marca = ("indisponível" if r["indisponivel"]
@@ -281,6 +332,7 @@ def main() -> int:
         return round(100.0 * sum(1 for r in rs if r["acertou"]) / len(rs), 1) if rs else 0.0
 
     resumo = {
+        "contexto": args.contexto,
         "execucoes": len(resultados),
         "indisponiveis": len(resultados) - len(validos),
         "acuracia_geral_pct": _pct(validos),

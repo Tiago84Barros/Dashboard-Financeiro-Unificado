@@ -7,6 +7,7 @@ retornos com proventos separadamente quando disponíveis e reporta a cobertura.
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import logging
 from datetime import datetime, timezone
@@ -31,6 +32,27 @@ _LOGGER = logging.getLogger(__name__)
 _BATCH_SIZE = 1_000
 
 
+def _problema_do_zip(content: bytes) -> str | None:
+    """Motivo para recusar a resposta, ou ``None`` se é um COTAHIST legível.
+
+    Começar com ``PK`` não basta. Em 29/09/2026 a URL de reserva da B3 devolveu
+    HTTP 200 com um ZIP de 22 bytes, só o diretório central e nenhum arquivo;
+    ele passou por válido, sobrescreveu o cache de 72 MB e a carga saiu
+    "completed" com zero linhas.
+    """
+    import zipfile
+
+    if not content.startswith(b"PK"):
+        return "resposta não ZIP"
+    try:
+        membros = zipfile.ZipFile(io.BytesIO(content)).infolist()
+    except zipfile.BadZipFile as exc:
+        return f"ZIP ilegível ({exc})"
+    if not any(m.file_size > 0 for m in membros):
+        return f"ZIP vazio ({len(content)} bytes)"
+    return None
+
+
 def fetch_year(year: int, timeout: int = 180) -> tuple[bytes, str, dict[str, str]]:
     import requests
     from requests.adapters import HTTPAdapter
@@ -52,18 +74,23 @@ def fetch_year(year: int, timeout: int = 180) -> tuple[bytes, str, dict[str, str
                 continue
             response.raise_for_status()
             content = response.content
-            if not content.startswith(b"PK"):
-                errors.append(f"{url}: resposta não ZIP")
+            problema = _problema_do_zip(content)
+            if problema:
+                errors.append(f"{url}: {problema}")
                 continue
             cache.parent.mkdir(parents=True, exist_ok=True)
-            cache.write_bytes(content)
+            provisorio = cache.with_suffix(".tmp")
+            provisorio.write_bytes(content)
+            provisorio.replace(cache)
             headers = {key: str(value) for key, value in response.headers.items()
                        if key.lower() in {"etag", "last-modified", "content-length"}}
             return content, url, headers
         except requests.RequestException as exc:
             errors.append(f"{url}: {exc}")
     if cache.exists():
-        return cache.read_bytes(), URLS[0].format(year=int(year)), {"cache-fallback": "true"}
+        return cache.read_bytes(), URLS[0].format(year=int(year)), {
+            "cache-fallback": "true",
+            "cache-fallback-motivo": "; ".join(errors)[:400] or "404 nas URLs"}
     raise RuntimeError("; ".join(errors) or f"COTAHIST {year} indisponível")
 
 
@@ -108,6 +135,27 @@ def _register_parser(conn) -> None:
              "schema": PARSER_SCHEMA_VERSION, "sha": _parser_hash()})
 
 
+def _ano_fechado_carregado(engine, year: int) -> bool:
+    """O ZIP de um ano só muda até o último pregão dele.
+
+    Uma carga concluída a partir de 02/01 do ano seguinte já leu o arquivo
+    definitivo; baixá-lo de novo (~90 MB) só para achar o mesmo sha é
+    desperdício. É o que deixa a rotina diária pedir dois anos -- e assim
+    pegar os pregões finais de dezembro na virada -- sem pagar o download do
+    ano anterior todo dia.
+    """
+    with engine.connect() as conn:
+        return bool(conn.execute(text("""
+            SELECT EXISTS (
+                SELECT 1 FROM market.fii_b3_archive_loads
+                WHERE archive_year=:year AND status='completed'
+                  AND parser_name=:parser AND parser_version=:version
+                  AND completed_at >= make_date(:year + 1, 1, 2)
+            )
+        """), {"year": year, "parser": PARSER_NAME,
+                 "version": PARSER_VERSION}).scalar())
+
+
 def ingest_b3_history(*, years: int = 10) -> dict:
     engine = get_pipeline_engine()
     if engine is None:
@@ -127,8 +175,26 @@ def ingest_b3_history(*, years: int = 10) -> dict:
     for year in range(current - max(int(years), 1) + 1, current + 1):
         sha: str | None = None
         try:
+            if year < current and _ano_fechado_carregado(engine, year):
+                report["archives"] += 1
+                report["skipped"] += 1
+                _LOGGER.info("COTAHIST %s — ano fechado já carregado, sem download", year)
+                continue
             content, url, headers = fetch_year(year)
+            if headers.get("cache-fallback") and year == current:
+                # O ano corrente em cache é o do último download que deu certo:
+                # carregá-lo em silêncio marcaria a rotina como em dia com a
+                # fita parada. Carrega assim mesmo, mas o relatório sai parcial.
+                report["errors"].append({"year": year, "error": (
+                    "download do COTAHIST falhou; carregado o ZIP em cache, "
+                    "que pode estar velho: "
+                    + headers.get("cache-fallback-motivo", "motivo não informado"))})
             rows = parse_cotahist(content)
+            if not rows:
+                # Todo ano do COTAHIST tem FII desde 2010; zero linhas é
+                # arquivo errado, não ano vazio. Registrar 'completed' faria o
+                # carimbo da rotina dizer que a fita está em dia.
+                raise RuntimeError(f"COTAHIST {year} sem nenhuma linha de FII")
             collected = datetime.now(timezone.utc)
             sha = hashlib.sha256(content).hexdigest()
             with engine.connect() as conn:
@@ -177,6 +243,18 @@ def ingest_b3_history(*, years: int = 10) -> dict:
             for offset in range(0, len(payload), _BATCH_SIZE):
                 batch = payload[offset:offset + _BATCH_SIZE]
                 with engine.begin() as conn:
+                    # O ZIP do ano corrente muda a cada pregão, e o sha entra na
+                    # chave única: sem esta troca, cada recarga duplicaria o ano
+                    # inteiro e todo leitor por (ticker, trade_date) somaria em
+                    # dobro. Mesma transação do INSERT, para não haver janela
+                    # com o pregão faltando ou repetido.
+                    conn.execute(text("""
+                        DELETE FROM market.fii_b3_security_history h
+                        USING jsonb_to_recordset(CAST(:rows AS jsonb))
+                              AS x(ticker text, trade_date date)
+                        WHERE h.ticker = x.ticker AND h.trade_date = x.trade_date
+                          AND h.archive_sha256 <> :sha
+                    """), {"rows": json.dumps(batch, ensure_ascii=False), "sha": sha})
                     conn.execute(text("""
                         INSERT INTO market.fii_b3_security_history (
                             ticker,trade_date,issuer_short_name,specification,isin,open,high,low,

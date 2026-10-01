@@ -102,6 +102,23 @@ def _sem_armazem_macro(monkeypatch):
                         lambda *a, **k: None)
 
 
+# ── nenhum teste herda a pausa de provedor de outro ─────────────────────────
+# `core.llm_b3` tira da cadeia, por 15 minutos, o provedor que respondeu "sem
+# credito", e lembra o modelo que recusou o modo JSON. O estado e do processo:
+# um teste que simula 429 de cota pausaria a OpenAI para todos os seguintes.
+@pytest.fixture(autouse=True)
+def _sem_pausa_de_provedor_herdada():
+    import sys
+
+    mod = sys.modules.get("core.llm_b3")
+    if mod is not None and hasattr(mod, "_limpar_estado_provedores"):
+        mod._limpar_estado_provedores()
+    yield
+    mod = sys.modules.get("core.llm_b3")
+    if mod is not None and hasattr(mod, "_limpar_estado_provedores"):
+        mod._limpar_estado_provedores()
+
+
 # ── nenhum teste herda a leitura em voo de outro ─────────────────────────────
 # `core.market_read._FII_SNAPSHOT_JOB` e um slot global do processo, e a leitura
 # real o preenche sem esperar (`timeout_seconds=0`) quando o artefato local
@@ -286,3 +303,199 @@ def _instalar_guarda_libcurl() -> None:
 
 if os.getenv("DFU_TESTES_PERMITEM_REDE", "").strip().lower() not in {"1", "true", "yes"}:
     _instalar_guarda_libcurl()
+
+
+# ── nenhum teste herda resposta ou falha do túnel de outro ──────────────────
+# `core.armazem_remoto` guarda respostas por 5 min e falhas por 60 s na memória
+# do processo. Sem esta limpeza, um teste que simula o túnel fora do ar faria o
+# seguinte levantar sem sequer chamar o servidor que ele subiu.
+@pytest.fixture(autouse=True)
+def _sem_memoria_do_tunel():
+    try:
+        import core.armazem_remoto as ar
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    ar._limpar_memoria()
+    yield
+    ar._limpar_memoria()
+
+
+# ── fundamentos da Inteligência dos Ativos sem banco ─────────────────────────
+# O provedor real lê snapshot de FII, Supabase (B3/EUA) e o extrato do
+# Tesouro. Na suíte, todo ativo sai com o catálogo da classe e nenhum dado
+# ("Dado não disponível."): determinístico e offline. Os leitores têm testes
+# próprios em tests/test_inteligencia_ativos_fundamentos.py.
+@pytest.fixture(autouse=True)
+def _fundamentos_sem_banco(monkeypatch):
+    try:
+        from core.inteligencia_ativos import fundamentos as f
+        from core.inteligencia_ativos import secoes
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(
+        secoes, "_ler_fundamentos",
+        lambda info: f.montar(f.tipo_do_ativo(info.classe, info.moeda), {},
+                              moeda=info.moeda))
+    yield
+
+
+# Mesma ideia para valuation e pares: sem banco e sem o arquivo publicado, a
+# seção sai "sem dado" e o grupo de pares vazio. Os leitores têm testes em
+# tests/test_inteligencia_ativos_valuation.py.
+@pytest.fixture(autouse=True)
+def _valuation_sem_banco(monkeypatch):
+    try:
+        from core.inteligencia_ativos import fundamentos as f
+        from core.inteligencia_ativos import pares as p
+        from core.inteligencia_ativos import secoes
+        from core.inteligencia_ativos import valuation as v
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+
+    def _vazio(info):
+        tipo = f.tipo_do_ativo(info.classe, info.moeda)
+        grupo = p.GrupoPares(motivo="Sem universo de comparação (teste).")
+        return (v.montar(tipo, {}, moeda=info.moeda),
+                p.ComparacaoPares(info.ticker, tipo, info.moeda, grupo, (),
+                                  grupo.motivo))
+    monkeypatch.setattr(secoes, "_ler_valuation_e_pares", _vazio)
+    yield
+
+
+# Notícias, relatórios e eventos: sem o arquivo publicado e sem banco, as três
+# seções saem "sem dado". Os leitores têm testes em
+# tests/test_inteligencia_ativos_informacoes.py.
+@pytest.fixture(autouse=True)
+def _informacoes_sem_arquivo(monkeypatch):
+    try:
+        from core.inteligencia_ativos import informacoes as inf
+        from core.inteligencia_ativos import secoes
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(secoes, "_ler_informacoes", lambda info: (
+        inf.Noticias(), inf.Relatorios(), inf.Eventos()))
+    yield
+
+
+# Histórico das análises: a aba grava fotos em user_settings a cada sessão.
+# Na suíte, o repositório vira um dicionário em memória por teste; nenhum
+# teste chega ao banco. O repositório real tem teste próprio, com engine
+# falso, em tests/test_inteligencia_ativos_historico.py.
+@pytest.fixture(autouse=True)
+def _historico_em_memoria(monkeypatch):
+    try:
+        from core.inteligencia_ativos import historico as hist
+        from core.inteligencia_ativos import historico_repo as hrepo
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield None
+        return
+    guardado = {"extra": {}}
+
+    def _carregar(**_):
+        return hist.ler(guardado["extra"])
+
+    def _registrar(fotos, *, forcar=None, **_):
+        historico, gravadas = hist.anexar(hist.ler(guardado["extra"]), fotos,
+                                          forcar=forcar)
+        if gravadas:
+            guardado["extra"] = hist.gravar_em(guardado["extra"], historico)
+        return historico, gravadas
+    monkeypatch.setattr(hrepo, "carregar", _carregar)
+    monkeypatch.setattr(hrepo, "registrar", _registrar)
+    yield guardado
+
+
+# A entrevista da estratégia lê 12 meses do Controle Financeiro. Em teste, o
+# perfil sai vazio; quem quer um perfil troca ``_perfil_financeiro`` da tela
+# (o carregador real é testado com os repositórios trocados).
+@pytest.fixture(autouse=True)
+def _perfil_financeiro_sem_banco(monkeypatch):
+    try:
+        from core.estrategia import perfil_financeiro as pf
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(pf, "carregar", lambda *a, **k: None)
+    yield
+
+
+# O cenário econômico é lido das séries do banco (core/cenario/automatico.py).
+# Em teste não há banco: os insumos saem vazios e o cache começa limpo. O
+# ``carregar`` real roda (é puro sobre os insumos); quem quer séries troca
+# ``ler_insumos``.
+@pytest.fixture(autouse=True)
+def _cenario_automatico_sem_banco(monkeypatch):
+    try:
+        from core.cenario import automatico
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(automatico, "ler_insumos",
+                        lambda engine=None: automatico.Insumos())
+    automatico._CACHE.clear()
+    yield
+    automatico._CACHE.clear()
+
+
+# Os destaques dos relatórios leem o corpus RAG publicado; em teste a caixa sai
+# só com os metadados. Quem testa a extração chama ``destaques`` (puro).
+@pytest.fixture(autouse=True)
+def _destaques_relatorios_sem_corpus(monkeypatch):
+    try:
+        from core.inteligencia_ativos import destaques_relatorios as dr
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(dr, "ler", lambda ticker: ())
+    yield
+
+
+# Estratégia de Investimentos em memória. A aba Inteligência dos Ativos
+# mostra o bloco da estratégia (abaixo do onboarding, ou em "Minha estratégia"
+# quando liberada), e o bloco lê o repositório. Não é autouse porque os testes
+# do repositório exercitam o `carregar` real com engine falso: quem renderiza a
+# aba pede este fixture (pytestmark nos módulos da tela e do painel).
+@pytest.fixture
+def estrategia_falsa(monkeypatch):
+    from core.estrategia import politica as pol
+    from core.estrategia import repositorio as repo
+
+    class _Falso:
+        estado = repo.Estado()
+        iniciados = 0
+
+    falso = _Falso()
+
+    def _iniciar(**_):
+        falso.iniciados += 1
+        falso.estado = repo.Estado(rascunho=repo.Registro(
+            id="r1", version=1, status_gravado="IN_PROGRESS",
+            schema_version=pol.SCHEMA_VERSION, politica={}, entrevista=[], completion_pct=0,
+            completed_at=None, created_at=None, updated_at=None))
+        return falso.estado.rascunho
+    monkeypatch.setattr(repo, "carregar", lambda **_: falso.estado)
+    monkeypatch.setattr(repo, "iniciar", _iniciar)
+    yield falso
+
+
+# Cenário de Investimentos do usuário em memória. Desde 30/09/2026 a aba não
+# mostra mais "Meu cenário" (o cenário é lido dos dados); a tela antiga e o
+# repositório continuam e são testados com este fixture.
+@pytest.fixture
+def cenario_falso(monkeypatch):
+    from core.cenario import modelo as mod
+    from core.cenario import referencias
+    from core.cenario import repositorio as repo
+
+    class _Falso:
+        cenario = mod.Cenario.de_dict(None)
+
+    falso = _Falso()
+    monkeypatch.setattr(repo, "carregar", lambda **_: falso.cenario)
+    monkeypatch.setattr(referencias, "referencias", lambda **_: {})
+    monkeypatch.setattr(referencias, "sugestoes", lambda **_: {})
+    yield falso

@@ -100,7 +100,9 @@ def _engine(url: str, remote: bool):
     parsed = make_url(url)
     if parsed.drivername in {"postgresql", "postgres"}:
         parsed = parsed.set(drivername="postgresql+psycopg2")
-    kwargs: dict = {"future": True, "connect_args": {"connect_timeout": 15}}
+    # 15 s estourava: o handshake com o pooler do Supabase chegou a 34 s.
+    kwargs: dict = {"future": True,
+                    "connect_args": {"connect_timeout": 60 if remote else 15}}
     if remote:
         parsed = parsed.update_query_dict({"sslmode": "require"})
         kwargs["connect_args"].update(options="-c statement_timeout=300000")

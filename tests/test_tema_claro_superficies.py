@@ -142,3 +142,418 @@ def test_tema_claro_alcanca_a_tabela_markdown_da_resposta_da_llm():
                     '[data-testid="stMarkdownContainer"] table :is(th,td)',
                     '[data-testid="stMarkdownContainer"] table thead th'):
         assert seletor in LIGHT_CSS, f"{seletor} sem regra no tema claro"
+
+
+# ── Vega-Lite: os gráficos nativos (line/bar/area/scatter_chart) ──────────────
+def _capturar_specs(tema: str) -> list[tuple[dict, dict]]:
+    """Roda os gráficos nativos no tema dado e devolve (spec, kwargs) de cada um.
+
+    Espia ``_vega_lite_chart``, que é por onde todo gráfico Vega passa — assim o
+    teste mede o que chega ao front-end, não o que o adaptador pretendia fazer.
+    """
+    import pandas as pd
+    import streamlit as st
+    from streamlit.delta_generator import DeltaGenerator
+    from streamlit.elements.vega_charts import VegaChartsMixin
+
+    from design.tema_canvas import _INSTALADO, instalar_adaptadores, registrar_tema
+
+    capturado: list[tuple[dict, dict]] = []
+
+    def espiao(self, data=None, spec=None, *args, **kwargs):
+        alvo = spec if isinstance(spec, dict) else data
+        capturado.append((alvo or {}, kwargs))
+        return None
+
+    original = VegaChartsMixin._vega_lite_chart
+    # `instalar_adaptadores` é idempotente por processo: se outro teste da mesma
+    # sessão já instalou, ela sai na primeira linha e o espião ficaria **sem**
+    # embrulho -- o teste passava sozinho e falhava na suíte. Zerar a marca faz
+    # o embrulho acontecer de novo; o `finally` devolve tudo como estava.
+    marca = getattr(st, _INSTALADO, False)
+    antes = (DeltaGenerator.plotly_chart, DeltaGenerator.dataframe,
+             st.plotly_chart, st.dataframe)
+    setattr(st, _INSTALADO, False)
+    VegaChartsMixin._vega_lite_chart = espiao
+    try:
+        instalar_adaptadores()
+        registrar_tema(tema)
+        df = pd.DataFrame({"v": [1.0, 2.0, 3.0]})
+        st.line_chart(df)
+        st.bar_chart(df["v"])
+        st.area_chart(df)
+        st.scatter_chart(df)
+    finally:
+        VegaChartsMixin._vega_lite_chart = original
+        setattr(st, _INSTALADO, marca)
+        (DeltaGenerator.plotly_chart, DeltaGenerator.dataframe,
+         st.plotly_chart, st.dataframe) = antes
+    return capturado
+
+
+def test_grafico_nativo_no_claro_leva_a_moldura_clara_no_proprio_spec():
+    """``theme=None`` não basta: o front-end preenche o que o spec deixa vazio.
+
+    Medido no bundle do Streamlit 1.57 — quando o tema não é ``"streamlit"`` ele
+    aplica os padrões do tema do app (que segue ``base="dark"``) sobre o spec.
+    Quem não escreve fundo, eixo e rótulo no spec recebe o escuro de volta.
+    """
+    capturado = _capturar_specs("light")
+    assert len(capturado) == 4, "os quatro gráficos nativos precisam passar pelo adaptador"
+    for spec, kwargs in capturado:
+        assert kwargs.get("theme") is None
+        config = spec.get("config") or {}
+        assert config.get("background") == "transparent"
+        for chave in ("axis", "legend", "title", "header"):
+            assert config.get(chave), f"config.{chave} vazio deixa o front-end escurecer"
+        assert config["axis"]["labelColor"] == "#172033"
+        assert config["axis"]["gridColor"] == "#e3e9f2"
+
+
+def test_grafico_nativo_no_escuro_continua_com_o_tema_do_streamlit():
+    for spec, kwargs in _capturar_specs("dark"):
+        assert kwargs.get("theme") == "streamlit"
+        assert "background" not in (spec.get("config") or {})
+
+
+def test_moldura_clara_nao_sobrepoe_a_cor_escolhida_pela_tela():
+    """O que a tela já definiu ganha do padrão — senão o adaptador viraria dono."""
+    from design.tema_canvas import clarear_spec_vega
+
+    spec = clarear_spec_vega({"mark": "bar", "config": {"axis": {"labelColor": "#123456"}}})
+    assert spec["config"]["axis"]["labelColor"] == "#123456"
+    assert spec["config"]["axis"]["gridColor"] == "#e3e9f2"
+
+
+# ── data_editor: o canvas não obedece ao CSS, então precisa de caminho claro ───
+def _chamadas_data_editor(fonte: str) -> list[tuple[int, bool]]:
+    """Cada ``st.data_editor`` do módulo, com um sinal de se há guarda de tema.
+
+    A guarda é procurada nos ancestrais do nó: serve o ``if no_claro():``, o
+    ternário ``... if no_claro() else st.data_editor(...)`` e a função
+    ``*_escuro``, que existe só para o ramo escuro e é escolhida no chamador.
+    """
+    import ast
+
+    arvore = ast.parse(fonte)
+    pai: dict[int, ast.AST] = {}
+    for no in ast.walk(arvore):
+        for filho in ast.iter_child_nodes(no):
+            pai[id(filho)] = no
+
+    def guardado(no: ast.AST) -> bool:
+        atual = pai.get(id(no))
+        while atual is not None:
+            teste = getattr(atual, "test", None)
+            if teste is not None and "no_claro" in ast.unparse(teste):
+                return True
+            if (isinstance(atual, ast.FunctionDef)
+                    and atual.name.endswith("_escuro")):
+                return True
+            atual = pai.get(id(atual))
+        return False
+
+    achados = []
+    for no in ast.walk(arvore):
+        if (isinstance(no, ast.Call) and isinstance(no.func, ast.Attribute)
+                and no.func.attr == "data_editor"):
+            achados.append((no.lineno, guardado(no)))
+    return achados
+
+
+def test_todo_data_editor_tem_caminho_para_o_tema_claro():
+    """A grade nativa pinta num canvas que o CSS não alcança.
+
+    Medido injetando as ``--gdg-*`` no container do grid: elas passam a valer e o
+    canvas não muda de cor (memória: canvas-do-data-editor-ignora-css). Quem não
+    oferece outro caminho no claro entrega um bloco escuro na página branca.
+    """
+    sem_guarda = []
+    for arquivo in sorted((RAIZ / "views").glob("*.py")):
+        fonte = arquivo.read_text(encoding="utf-8")
+        if "data_editor" not in fonte:
+            continue
+        sem_guarda += [
+            f"{arquivo.name}:{linha}"
+            for linha, tem_guarda in _chamadas_data_editor(fonte) if not tem_guarda
+        ]
+    assert not sem_guarda, (
+        "st.data_editor sem alternativa no tema claro: " + ", ".join(sem_guarda)
+    )
+
+
+def test_tema_claro_clareia_o_bloco_de_codigo_com_texto_e_tokens():
+    """``st.code`` é prosa no app, e ficava preto no claro.
+
+    Medido em 29/09/2026 no bundle do Streamlit 1.57: o ``pre`` do ``stCode``
+    recebe ``background: codeBackgroundColor`` e ``color: bodyText``, e cada
+    ``.token.*`` sai de uma cor nomeada do tema — que é escuro no config. Fundo
+    claro sem o texto e sem os tokens dá branco no branco, então as três coisas
+    andam juntas. Confirmado no preview: ``pre`` rgb(238,242,247) sobre
+    rgb(23,32,51), ``keyword`` rgb(27,79,160), ``comment`` rgb(70,86,110).
+    """
+    from design.theme_light import LIGHT_CSS
+
+    assert "#0e1117" not in LIGHT_CSS.lower(), "o fundo preto do stCode voltou"
+    for trecho in ('[data-testid="stCode"] pre',
+                   ".token.comment",
+                   ".token.keyword",
+                   ".token.string",
+                   '[data-testid="stMarkdownContainer"] :not(pre) > code'):
+        assert trecho in LIGHT_CSS, f"{trecho} sem regra no tema claro"
+
+    regra_pre = LIGHT_CSS.split('[data-testid="stCode"] pre {', 1)[1].split("}", 1)[0]
+    assert "color:var(--app-text)" in regra_pre, (
+        "fundo claro sem cor de texto: o código fica branco no branco"
+    )
+
+
+def test_tema_claro_alcanca_o_que_a_varredura_do_dom_achou_escuro():
+    """Varredura no preview claro: luminância do fundo computado de cada nó.
+
+    Sobraram quatro superfícies em 29/09/2026, todas fora do alcance dos
+    tokens: a casca do menu do selectbox/multiselect (rgb(14,17,23) em volta
+    das opções já brancas), a seta e o "x" do select (fill rgb(250,250,250)
+    sumindo no campo branco), o delta do metric (rgb(92,228,136) e
+    rgb(255,108,108), pálidos sobre branco) e o ``st.json``, que desenha com
+    estilo inline. Depois da correção a varredura só acha o que é de propósito:
+    o verde do checkbox marcado.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    for seletor in ('[data-testid="stSelectboxVirtualDropdown"]',
+                    '[data-baseweb="select"] svg',
+                    '[data-testid="stMetricDeltaIcon-Up"]',
+                    '[data-testid="stMetricDeltaIcon-Down"]',
+                    '[data-testid="stJson"] .react-json-view'):
+        assert seletor in LIGHT_CSS, f"{seletor} sem regra no tema claro"
+
+    # O tooltip usa o mesmo data-baseweb do menu e escuro ali é o desenho
+    # normal: a regra do menu precisa se prender ao dropdown.
+    for linha in LIGHT_CSS.splitlines():
+        alvo = linha.strip().rstrip(",").rstrip(" {")
+        if alvo.startswith('[data-baseweb="popover"]') and "stSelectbox" not in alvo:
+            assert "listbox" in alvo or "[role=" in alvo, (
+                f"{alvo} pinta todo popover, tooltip incluído"
+            )
+
+
+def test_escala_de_correlacao_clara_tem_meio_claro_e_numero_legivel():
+    """``colorscale`` é o ponto cego do adaptador, e por decisão do módulo.
+
+    Medido em 29/09/2026: ``_overrides`` percorre dicionários e listas, mas as
+    paradas da escala são pares ``[posição, cor]`` — listas de escalares, que
+    ele devolve intactas. Ou seja, o mapa de correlação chegava ao tema claro
+    com o meio da escala em ``#0F172A``: célula quase preta no meio da página
+    branca, e o número por cima já escurecido pelo adaptador. Clarear parada
+    por parada quebraria a ordem do gradiente, então a saída é a que o próprio
+    ``_tinta_clara`` prescreve: escolher a paleta clara na origem.
+    """
+    from design.tema_canvas import _luminancia, _rgba, escala_correlacao, registrar_tema
+
+    def contraste(cor: str, texto: str) -> float:
+        a, b = (_luminancia(_rgba(c)[:3]) for c in (cor, texto))
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+
+    registrar_tema("light")
+    clara = escala_correlacao()
+    registrar_tema("dark")
+    escura = escala_correlacao()
+    assert clara != escura, "a escala não acompanha o tema da sessão"
+
+    posicoes = [p for p, _ in clara]
+    assert posicoes == [p for p, _ in escura], "as paradas mudaram de posição"
+    for posicao, cor in clara:
+        lum = _luminancia(_rgba(cor)[:3])
+        assert lum > 0.4, f"parada {posicao} ({cor}) escura demais para o claro"
+        # O valor da correlação é escrito dentro da célula, em `--app-text`.
+        assert contraste(cor, "#172033") >= 4.5, (
+            f"parada {posicao} ({cor}) não deixa o número legível")
+
+
+def test_mapa_de_correlacao_nao_crava_a_escala_na_tela():
+    """Paleta cravada na view volta a ignorar o tema — a escolha é do tema."""
+    fonte = (RAIZ / "views" / "investimentos.py").read_text(encoding="utf-8")
+    assert "escala_correlacao()" in fonte, "a tela não pede a escala ao tema"
+    assert "#0F172A" not in fonte.upper(), "parada escura cravada voltou à tela"
+
+
+def test_tema_claro_alcanca_a_segunda_varredura_do_dom():
+    """Famílias de widget que a primeira varredura não tinha na tela.
+
+    Medido no DOM em 29/09/2026: segmento e pílula não escolhidos vinham com
+    fundo ``#0e1117``; a barra de ferramentas que flutua sobre tabela e gráfico,
+    ``#131720``; a seta de recolher a barra lateral, ``rgba(250,250,250,.6)``
+    sobre cabeçalho claro. O escolhido do segmento tem ``data-testid`` próprio
+    terminado em ``Active`` -- não ``aria-checked`` --, e é por ele que a regra
+    precisa entrar.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    for seletor in ('[data-testid="stBaseButton-segmented_control"]',
+                    '[data-testid="stBaseButton-segmented_controlActive"]',
+                    '[data-testid="stBaseButton-pillsActive"]',
+                    '[data-testid="stElementToolbarButtonContainer"]',
+                    '[data-testid="stBaseButton-headerNoPadding"]',
+                    '[data-testid="stMultiSelect"] [data-baseweb="tag"]'):
+        assert seletor in LIGHT_CSS, f"{seletor} sem regra no tema claro"
+    assert 'stBaseButton-segmented_control"][aria-checked' not in LIGHT_CSS, (
+        "o escolhido do segmento não usa aria-checked: a regra não pegaria nada")
+
+
+def test_moldura_clara_pinta_a_modebar_do_plotly():
+    """A modebar não sai do template: é atributo da figura, não CSS.
+
+    O Plotly desenha o grupo com ``rgba(0,0,0,.5)`` e os ícones com
+    ``rgba(255,255,255,.3)`` -- borrão escuro de ícones invisíveis sobre o
+    gráfico claro.
+    """
+    import plotly.graph_objects as go
+
+    from design.tema_canvas import _luminancia, _rgba, clarear_figura
+
+    fig = go.Figure(go.Bar(x=["a"], y=[1]))
+    clarear_figura(fig)
+    modebar = fig.to_plotly_json()["layout"]["modebar"]
+    assert _rgba(modebar["bgcolor"])[3] == 0, "o grupo da modebar continua pintado"
+    for chave in ("color", "activecolor"):
+        assert _luminancia(_rgba(modebar[chave])[:3]) < 0.45, (
+            f"modebar.{chave} claro demais para ícone sobre branco")
+
+
+def test_moldura_clara_respeita_a_modebar_escolhida_pela_tela():
+    """Quem já definiu a modebar manda — o adaptador só preenche o que falta."""
+    import plotly.graph_objects as go
+
+    from design.tema_canvas import clarear_figura
+
+    fig = go.Figure(go.Bar(x=["a"], y=[1]))
+    fig.update_layout(modebar={"color": "#123456"})
+    clarear_figura(fig)
+    assert fig.to_plotly_json()["layout"]["modebar"]["color"] == "#123456"
+
+
+# ── Terceira varredura: tinta que escreve POR CIMA de um token ───────────────
+
+def _contraste(a: str, b: str) -> float:
+    from design.tema_canvas import _luminancia, _rgba
+
+    la, lb = (_luminancia(_rgba(c)[:3]) for c in (a, b))
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def _tokens(fonte: str) -> dict[str, str]:
+    """Lê o bloco ``:root`` do tema e devolve os tokens de cor."""
+    return {n: v.strip() for n, v in re.findall(r"--(app-[\w-]+)\s*:\s*(#[0-9a-fA-F]{6})", fonte)}
+
+
+def test_tinta_sobre_preenchimento_acompanha_o_tema():
+    """O número do "próximo passo" é escrito DENTRO do círculo do token.
+
+    No tema escuro os tokens são claros (``--app-danger`` = #FC5C7D) e o texto
+    tinha de ser escuro; no tema claro eles são escuros (#b42342) e o mesmo
+    literal ``#0E1117`` desaba para 2,9:1 — número ilegível dentro da bolinha.
+    A tinta de quem escreve por cima passa a ser token, e cada tema escolhe.
+    """
+    escuro = _tokens((RAIZ / "design" / "tema.py").read_text(encoding="utf-8"))
+    claro = _tokens((RAIZ / "design" / "theme_light.py").read_text(encoding="utf-8"))
+    for tema, tokens in (("escuro", escuro), ("claro", claro)):
+        assert "app-on-accent" in tokens, f"tema {tema} sem --app-on-accent"
+        tinta = tokens["app-on-accent"]
+        for nome in ("app-danger", "app-warning", "app-info", "app-primary"):
+            assert _contraste(tinta, tokens[nome]) >= 4.5, (
+                f"tema {tema}: {tinta} sobre {nome} ({tokens[nome]}) fica ilegível")
+
+
+def test_cartao_de_proximo_passo_nao_crava_a_tinta_do_numero():
+    fonte = (RAIZ / "design" / "componentes.py").read_text(encoding="utf-8")
+    assert "var(--app-on-accent)" in fonte, "o cartão não pede a tinta ao tema"
+    assert "#0E1117" not in fonte.upper(), "tinta escura cravada voltou ao componente"
+
+
+def test_cartoes_sem_modulo_nao_vazam_bloco_de_codigo():
+    """Interpolação sozinha numa linha vira linha em branco quando vazia.
+
+    Com ``modulo=""`` o Markdown fechava ali o bloco de HTML e o ``</div>``
+    seguinte, recuado, saía renderizado como bloco de código no meio do card —
+    medido no DOM em 29/09/2026, três blocos a mais do que a tela pedia.
+    """
+    from unittest.mock import patch
+
+    import design.componentes as componentes
+
+    for chamada in (
+        lambda: componentes.card_alerta_resumo("info", "🔵", "Título", "Descrição"),
+        lambda: componentes.card_proximo_passo(1, "Título", "Descrição"),
+    ):
+        with patch.object(componentes.st, "markdown") as espiao:
+            chamada()
+        marcacao = espiao.call_args.args[0]
+        assert "\n" not in marcacao, (
+            "marcação em várias linhas: sem `modulo` o Markdown fecha o bloco e "
+            "o fechamento recuado vira bloco de código")
+
+
+def test_avatar_da_posicao_pinta_o_fundo_com_o_token():
+    """Ali a cor da classe é preenchimento, e as iniciais vão brancas por cima."""
+    fonte = (RAIZ / "views" / "investimentos.py").read_text(encoding="utf-8")
+    assert "background:{_cor_texto(cor)}" in fonte, (
+        "o avatar voltou a usar o literal do tema escuro como fundo")
+
+
+def test_tema_claro_alcanca_a_terceira_varredura_do_dom():
+    """Cada asserção desfaz uma cor medida no DOM em 29/09/2026."""
+    from design.theme_light import LIGHT_CSS
+
+    # A barra do botão "copiar" não tem testid — só classe de hash. O alvo é
+    # estrutural, senão a regra morre na próxima versão do Streamlit.
+    assert 'div:has(> [data-testid="stElementToolbarButton"])' in LIGHT_CSS, (
+        "o quadrado escuro no canto do bloco de código voltou")
+    # react-json-view pinta os separadores e os valores em `div`, não em `span`:
+    # o `:` rendia 1,06:1 sobre o claro.
+    assert '[data-testid="stJson"] :is(span, div)' in LIGHT_CSS, (
+        "st.json voltou a alcançar só os `span`")
+
+
+def test_tema_claro_alcanca_o_calendario_do_date_input():
+    """Cada asserção desfaz uma cor medida no DOM do popover em 01/10/2026.
+
+    A raiz do calendário já era pintada de branco; o que o BaseWeb desenha
+    dentro dela não era. Mediu-se: ``::after`` de 42x42 com #0E1117 na célula
+    vazia (os quadrados pretos), #1A1F2E no cabeçalho do mês e na linha
+    Su..Sa, e #FAFAFA no número do dia -- invisível no branco.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    assert '[data-baseweb="calendar"] div {background-color:transparent' in LIGHT_CSS, (
+        "as tarjas escuras do cabeçalho e dos dias da semana voltaram")
+    assert '[data-baseweb="calendar"] :is(div,span,button,abbr) {color:' in LIGHT_CSS, (
+        "o número do dia voltou a herdar a tinta clara do tema escuro")
+    assert '[data-baseweb="calendar"] [role="gridcell"]:not(:has(*))::after' in LIGHT_CSS, (
+        "os quadrados pretos das células vazias voltaram")
+
+
+def test_limpeza_do_calendario_poupa_o_dia_escolhido():
+    """O verde do dia escolhido é um ``::after`` -- e a célula dele tem filho.
+
+    Apagar o fundo de todo ``::after`` do grid levaria a marca junto. Por isso
+    a regra do fundo vai nos elementos (pseudo-elemento não é alcançado por
+    regra de elemento) e a do ``::after`` só pega a célula sem filho. O
+    recorte é estrutural de propósito: ``aria-label`` chega em inglês
+    ("Selected. Monday...") mesmo com o app em português.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    # Sem os comentários: o texto que explica a regra também fala em `::after`
+    # e seria lido como seletor por quem fatia o CSS nas chaves.
+    css = re.sub(r"/\*.*?\*/", "", LIGHT_CSS, flags=re.S)
+    for regra in css.split("}"):
+        if "{" not in regra:
+            continue
+        seletor, _corpo = regra.split("{", 1)
+        if '[data-baseweb="calendar"]' not in seletor or "::after" not in seletor:
+            continue
+        assert ":not(:has(*))" in seletor, (
+            f"regra de ::after do calendário sem recorte da célula vazia: {seletor.strip()}")
+        assert "aria-label" not in seletor, (
+            "recorte por aria-label depende do idioma do BaseWeb")

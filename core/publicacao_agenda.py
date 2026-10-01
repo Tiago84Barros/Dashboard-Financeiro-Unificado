@@ -74,11 +74,12 @@ class Alvo:
     de hoje, e é o motivo estrutural de nada disto poder ser um GitHub Action:
     as 18 tabelas de trabalho do pipeline de FIIs existem só no armazém.
 
-    ``artefatos`` são os arquivos DO REPOSITÓRIO que a publicação reescreve --
-    hoje só o fallback offline da vitrine de FIIs. Ficam declarados aqui, e não
-    descobertos por varredura de diretório, porque `data/public/` também guarda
-    25 MB de parquets do corpus RAG: uma varredura levaria o corpus junto no dia
-    em que ele fosse reconstruído. Quem os commita é `core.publicacao_git`.
+    ``artefatos`` são os caminhos DO REPOSITÓRIO que a publicação reescreve.
+    Ficam declarados aqui, e não descobertos por varredura de `data/public/`,
+    para que um alvo nunca leve junto o artefato de outro. O único diretório
+    declarado é `data/public/rag`, do corpus RAG, porque o número de partições
+    varia com o dado (letra e ano) e partição removida também precisa ir para
+    o commit. Quem os commita é `core.publicacao_git`.
     """
 
     chave: str
@@ -111,7 +112,63 @@ _CADEIA_FII = (
     ("run_market_ingest.py", "fiis-monitor", "--warehouse", "--json"),
 )
 
+# A fita diária da B3 (COTAHIST) no armazém: FIIs (BDI 12) em
+# `fii_b3_security_history`, ações (BDI 02) em `b3_security_history`. Nada a
+# agendava: em 29/09/2026 a de FIIs parava em 14/07 e a de ações em 01/09, e a
+# liquidez, a Memória de Mercado e o detalhe da B3 no túnel liam essa idade.
+# O primeiro passo baixa o ZIP (e o deixa no cache); o segundo relê o mesmo
+# ZIP, sem rede. Dois anos para não perder dezembro na virada -- o ano
+# fechado e já carregado não é baixado de novo.
+_CADEIA_PREGAO = (
+    ("run_market_ingest.py", "fiis-b3-history", "--warehouse", "--json",
+     "--years", "2"),
+    ("scripts/ingerir_precos_b3.py", "--apply", "--anos", "recentes",
+     "--cache-apenas"),
+)
+
+# Documentos de companhias abertas (CVM/IPE) em `public.docs_corporativos`.
+# Nada agendava a coleta: em 29/09/2026 o último documento era de 04/09, e as
+# LLMs da B3 e as Informações Recentes liam essa idade. O primeiro passo traz
+# os metadados novos do ano (resultado, fato relevante, provento); o segundo
+# extrai o texto completo com teto de 100 documentos por dia -- o mesmo job do
+# gotejamento, com disjuntor contra bloqueio da CVM. Uma cadeia só: metadado
+# sem texto vira chunk de ruído no RAG.
+_CADEIA_CVM_IPE = (
+    ("scripts/backfill_cvm_ipe.py", "--years", "recentes", "--apply"),
+    ("scripts/drenar_cvm_fulltext.py", "--ciclos", "5", "--por-ciclo", "20",
+     "--delay", "1.5"),
+)
 ALVOS: tuple[Alvo, ...] = (
+    Alvo(
+        # Primeiro da fila: quem vem depois (FIIs, valuation) lê esta fita.
+        chave="b3_pregao",
+        titulo="Pregão diário da B3 no armazém (FIIs e ações)",
+        passos=_CADEIA_PREGAO,
+        cadencia_dias=1,
+        modulo="b3",
+    ),
+    Alvo(
+        # Documentos de FIIs (FNET) em `market.fii_documents`: saem do arquivo
+        # EVENTUAL da CVM, lido pela carga estruturada. Ela não estava na
+        # cadeia diária -- em 29/09/2026 o último documento era de 15/07, a
+        # data da última carga manual. Download condicional (ETag) e ponto de
+        # controle por hash: arquivo que não mudou não é relido. Dois anos
+        # para não perder dezembro na virada. Antes de `fii_ingest`, que lê as
+        # observações mensais que esta carga também grava.
+        chave="fii_documentos",
+        titulo="Documentos de FIIs da CVM (FNET) no armazém",
+        passos=(("run_market_ingest.py", "fiis-cvm-structured", "--warehouse",
+                 "--json", "--years", "2"),),
+        cadencia_dias=1,
+        modulo="fii",
+    ),
+    Alvo(
+        chave="cvm_ipe",
+        titulo="Documentos CVM/IPE das companhias no armazém",
+        passos=_CADEIA_CVM_IPE,
+        cadencia_dias=1,
+        modulo="b3",
+    ),
     Alvo(
         chave="fii_ingest",
         titulo="Ingestão de FIIs no armazém",
@@ -147,8 +204,24 @@ ALVOS: tuple[Alvo, ...] = (
     Alvo(
         chave="us_snapshot",
         titulo="Vitrine dos EUA (company_snapshots)",
-        passos=(("scripts/publish_us_snapshot_from_local.py",),),
-        cadencia_dias=7,
+        # Cadeia, e não só o publicador: o preço diário dos EUA não era coletado
+        # por rotina nenhuma. `prices_daily` parou em 15/09, o giro saiu dali
+        # e, a partir de 26/09, o publicador recusou todo dia por giro com mais
+        # de 7 dias (`LIQUIDITY_MAX_AGE_DAYS`) -- e sem giro fresco a Criação de
+        # Portfólio dos EUA bloqueia. Mesmo precedente de `fii_ingest` e
+        # `macro_insumos`: publicar sem coletar antes só renova a data do
+        # arquivo sobre o dado velho.
+        #
+        # Cadência de 2 dias, e não 7: com teto de giro de 7 dias, publicar a
+        # cada 7 vence no meio do ciclo por qualquer atraso. Dois dias absorvem
+        # fim de semana e feriado. O custo no Supabase é baixo: upsert por
+        # símbolo numa tabela de ~39 MB, espaço que o autovacuum reaproveita.
+        passos=(
+            ("run_us_ingest.py", "daily", "--warehouse", "--json"),
+            ("run_us_ingest.py", "snapshot", "--warehouse", "--json"),
+            ("scripts/publish_us_snapshot_from_local.py",),
+        ),
+        cadencia_dias=2,
         modulo="us",
     ),
     Alvo(
@@ -205,6 +278,63 @@ ALVOS: tuple[Alvo, ...] = (
         cadencia_dias=1,
         modulo="macro",
         artefatos=("data/public/macro_insumos.json.gz",),
+    ),
+    Alvo(
+        # Histórico de múltiplos (B3 anual, FII mensal, EUA anual) e a
+        # volatilidade usada na escolha de pares da Inteligência dos Ativos.
+        # Vem de tabelas pesadas que só existem no armazém (fita da B3,
+        # prices_monthly), por isso é arquivo em data/public, não tabela no
+        # Supabase. O dado é anual/mensal: semanal basta.
+        chave="valuation_historico",
+        titulo="Histórico de valuation da Inteligência dos Ativos",
+        passos=(("scripts/publish_valuation_historico.py",),),
+        cadencia_dias=7,
+        modulo="b3",
+        artefatos=("data/public/valuation_historico.json.gz",),
+    ),
+    Alvo(
+        # Notícias filtradas por relevância, relatórios (documentos CVM/SEC) e
+        # eventos datados por ativo, para a Inteligência dos Ativos. Lê o
+        # acervo de notícias e os documentos que só existem no armazém; o
+        # Supabase passou dos 500 MB, então sai como arquivo em data/public.
+        # Grava por omissão (`--dry-run` só mede). Notícia envelhece em dias.
+        chave="informacoes_recentes",
+        titulo="Informações recentes dos ativos",
+        passos=(("scripts/publish_informacoes_recentes.py",),),
+        cadencia_dias=1,
+        modulo="noticias",
+        artefatos=("data/public/informacoes_recentes.json.gz",),
+    ),
+    Alvo(
+        # Corpus RAG (chunks CVM/IPE) em Parquet, que o app lê por DuckDB. Só
+        # o armazém tem os chunks, e desde o PR #393 a coleta e a extração de
+        # texto rodam todo dia -- sem este alvo o Parquet parou em 08/09. É
+        # semanal, e não diário, porque cada republicação vira histórico no
+        # git; o publicador não reescreve nada se a origem não mudou, e a
+        # partição por ano limita o que muda ao ano que recebeu documento.
+        chave="rag_corpus",
+        titulo="Corpus RAG dos documentos CVM (Parquet)",
+        passos=(("scripts/publish_rag_corpus_parquet.py",),),
+        cadencia_dias=7,
+        modulo="b3",
+        artefatos=("data/public/rag",),
+    ),
+    Alvo(
+        # O cache bruto da brapi é o que mais cresce no Supabase: ~2,6 MB/dia de
+        # cotações e ~48 MB aos sábados (anuais), sem nada que pode. Os dois
+        # scripts existiam e ninguém os chamava -- o último arquivamento foi em
+        # 06/09/2026, e o banco passou dos 500 MB do plano free em 26/09.
+        # A compactação recusa apagar payload sem cópia local, então arquivar
+        # antes é o que a destrava. Preserva o último por (endpoint, ticker), o
+        # referenciado e as últimas 48 h. O VACUUM FULL continua manual.
+        chave="brapi_raw_poda",
+        titulo="Poda do cache bruto da brapi",
+        passos=(
+            ("scripts/archive_remote_brapi_raw.py",),
+            ("scripts/compact_remote_brapi_raw.py", "--apply"),
+        ),
+        cadencia_dias=1,
+        modulo="b3",
     ),
     Alvo(
         chave="us_prices",

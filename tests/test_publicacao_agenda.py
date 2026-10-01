@@ -28,12 +28,12 @@ def test_nunca_publicado_esta_devendo():
 
 
 def test_dentro_da_cadencia_nao_deve_nada():
-    alvo = POR_CHAVE["us_snapshot"]  # semanal
+    alvo = POR_CHAVE["b3_metrics"]  # semanal
     assert motivo_para_publicar(alvo, _registro(3), AGORA) is None
 
 
 def test_cadencia_vencida_deve_publicar():
-    alvo = POR_CHAVE["us_snapshot"]  # semanal
+    alvo = POR_CHAVE["b3_metrics"]  # semanal
     motivo = motivo_para_publicar(alvo, _registro(8), AGORA)
     assert motivo is not None and "8d" in motivo
 
@@ -197,6 +197,8 @@ def test_publicador_que_simula_por_omissao_carrega_apply(alvo):
         "scripts/publish_b3_metrics_to_supabase.py",
         "scripts/publish_noticias_vitrine.py",
         "scripts/espelhar_supabase_local.py",
+        "scripts/compact_remote_brapi_raw.py",
+        "scripts/backfill_cvm_ipe.py",
     }
     for passo in alvo.passos:
         if set(passo) & exige_apply:
@@ -247,3 +249,25 @@ def test_artefato_declarado_e_rastreavel_pelo_git():
         rastreado = subprocess.run(["git", "ls-files", "--error-unmatch", caminho],
                                    cwd=str(raiz), capture_output=True, check=False)
         assert rastreado.returncode == 0, f"{caminho} não está commitado na main"
+
+
+def test_vitrine_dos_eua_coleta_antes_de_publicar():
+    """Sem o `daily` a série parou em 15/09 e o publicador recusou por giro velho.
+
+    A ordem importa: o snapshot lê o preço que o `daily` grava, e o publicador
+    lê o snapshot. Publicar sem coletar só renovaria a data sobre o giro velho.
+    """
+    alvo = POR_CHAVE["us_snapshot"]
+    assert alvo.passos == (
+        ("run_us_ingest.py", "daily", "--warehouse", "--json"),
+        ("run_us_ingest.py", "snapshot", "--warehouse", "--json"),
+        ("scripts/publish_us_snapshot_from_local.py",),
+    )
+
+
+def test_cadencia_dos_eua_cabe_no_teto_do_giro_com_folga():
+    """Publicar no ritmo do teto do giro vence no meio do ciclo."""
+    from core.us_liquidity import LIQUIDITY_MAX_AGE_DAYS
+
+    alvo = POR_CHAVE["us_snapshot"]
+    assert alvo.cadencia_dias * 2 < LIQUIDITY_MAX_AGE_DAYS

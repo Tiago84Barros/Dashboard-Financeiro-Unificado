@@ -279,3 +279,36 @@ def test_local_snapshot_artifact_roundtrip_is_hash_verified(tmp_path):
     _write_local_snapshot_artifact(rows, path)
     corrupted = _load_fii_snapshot_artifact(path)
     assert corrupted.attrs["load_error"] == "snapshot_hash_invalid"
+
+
+def _jsonb_roundtrip(encoded: str):
+    """Imita o que o Postgres devolve de uma coluna jsonb.
+
+    O jsonb guarda número como `numeric`, que não tem zero negativo e sai sem
+    notação científica. Em 26/09/2026 a vitrine do Supabase reprovou inteira
+    por isso: TCIN11 publicou `total_return_trend = -0.0`, o hash foi calculado
+    sobre "-0.0" e o banco devolveu "0.0".
+    """
+    import json
+    from decimal import Decimal
+
+    def as_numeric(token: str):
+        value = Decimal(token)
+        text = format(value, "f")
+        return json.loads(text[1:] if value.is_zero() and text.startswith("-") else text)
+
+    return json.loads(encoded, parse_float=as_numeric)
+
+
+@pytest.mark.parametrize("value", [-0.0, 1e16, -2.5e20])
+def test_payload_hash_survives_jsonb_numeric_normalization(value):
+    from core.market_read import _snapshot_payload_digest
+
+    rows = build_rows(pd.DataFrame([{
+        "ticker": "TCIN11", "tipo": "papel", "total_return_trend": value,
+    }]))
+
+    stored = _jsonb_roundtrip(rows[0]["payload_json"])
+
+    assert stored["total_return_trend"] == value
+    assert _snapshot_payload_digest(stored) == rows[0]["payload_sha256"]

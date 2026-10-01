@@ -79,6 +79,64 @@ def _local_macro_block(asset_class: str, symbol: str, sector: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _cadastro_cvm_linha(ticker: str) -> str:
+    """Constituição e registro na CVM (migration 078), com a ausência nomeada.
+
+    Rótulos precisos de propósito: DT_REG é o registro de companhia aberta na
+    CVM, não a listagem na B3 — sem o aviso a LLM responde "listada desde".
+    """
+    rotulo = "  Cadastro CVM: "
+    try:
+        from sqlalchemy import text
+
+        from core.database import get_engine
+
+        engine = get_engine()
+        if engine is None:
+            return rotulo + "indisponível (banco não conectado)."
+        with engine.connect() as conn:
+            colunas = set(conn.execute(text(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema = 'market' AND table_name = 'companies'"
+            )).scalars())
+            if "dt_constituicao" not in colunas:
+                return (rotulo + "datas de constituição e de registro ainda não "
+                        "gravadas no banco (migration 078 pendente).")
+            linha = conn.execute(text("""
+                SELECT c.dt_constituicao, c.dt_registro_cvm,
+                       c.categoria_registro, c.controle_acionario
+                FROM market.companies c
+                JOIN market.assets a ON a.company_id = c.id
+                WHERE a.ticker = :tk
+                LIMIT 1
+            """), {"tk": ticker}).first()
+    except Exception as exc:
+        logger.exception("cadastro CVM de %s indisponível", ticker)
+        return rotulo + f"falha ao consultar o banco ({type(exc).__name__})."
+    if linha is None:
+        return rotulo + "empresa sem linha em market.companies."
+    const, registro, categoria, controle = linha
+    partes = [
+        f"constituição da companhia em {_data_br(const)}",
+        f"registro de companhia aberta na CVM em {_data_br(registro)} "
+        "(não é a data de listagem na B3, que a CVM não publica)",
+    ]
+    if categoria:
+        partes.append(f"{categoria}")
+    if controle:
+        partes.append(f"controle acionário {controle.lower()}")
+    return rotulo + "; ".join(partes) + " (fonte: cad_cia_aberta.csv da CVM)."
+
+
+def _data_br(valor) -> str:
+    if valor is None:
+        return "data ausente no cadastro"
+    try:
+        return valor.strftime("%d/%m/%Y")
+    except AttributeError:
+        return str(valor)
+
+
 def _conjuntura_block(asset_class: str, symbol: str, sector: str) -> str:
     """Bloco conjuntural do ativo: noticias com procedencia e o nao medido.
 
@@ -104,6 +162,7 @@ def build_b3_ativo_context(
         get_dre_history_context,
         get_macro_context,
         get_peers_context,
+        get_warehouse_detail_context,
     )
     tk = str(ticker or "").strip().upper()
     preco_txt = {
@@ -114,6 +173,7 @@ def build_b3_ativo_context(
         "ATIVO EM ANÁLISE (tela Empresas B3 → Análise de empresas):",
         f"  Ticker: {tk} | Nome: {nome or 'ausente'}",
         f"  Setor: {setor or 'ausente'} | Subsetor: {subsetor or 'ausente'}",
+        _cadastro_cvm_linha(tk),
         f"  Preço corrente: {preco_txt}",
     ]
     if mult is not None and getattr(mult, "empty", True) is False:
@@ -143,6 +203,12 @@ def build_b3_ativo_context(
             blocos.append("\n" + pares_txt)
     except Exception:
         logger.exception("pares de %s indisponíveis", tk)
+    try:
+        detalhe = get_warehouse_detail_context([tk])
+        if detalhe:
+            blocos.append("\n" + detalhe)
+    except Exception:
+        logger.exception("detalhe do armazém de %s indisponível", tk)
     try:
         docs = get_chunks_context(user_question or tk, [tk], None)
         if docs:

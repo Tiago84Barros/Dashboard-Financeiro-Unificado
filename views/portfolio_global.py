@@ -12,6 +12,7 @@ tests/test_portfolio_global_view.py.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from datetime import date
 
 import pandas as pd
@@ -41,6 +42,7 @@ from core.global_portfolio import (
 from core.global_portfolio.aggregate import classes_sem_posicao, montar_posicoes
 from core.global_portfolio.returns import Cobertura, retornos_mensais
 from core.global_portfolio.taxonomy import ROTULOS, nao_mapeados
+from core.lacunas import registrar_limitacoes
 from core.llm_context_global import build_global_portfolio_context
 from core.llm_global import chat_com_portfolio_global
 from core.market_companies import us_logo_url
@@ -53,6 +55,7 @@ from core.portfolio.repository import (
 from core.rebalancing import ThresholdRebalance
 from core.utils import escapar_cifrao
 from design.componentes import card_metrica
+from design.lacunas import aviso_lacuna
 from design.market_companies import render_company_logo
 from design.portfolio_global_cards import card_papel_html, card_recomendacao_html
 
@@ -1120,8 +1123,52 @@ def _gerar_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
     )
 
 
+@dataclass(frozen=True)
+class MacroCarteiras:
+    """A camada macro que ajusta as recomendações, lida uma vez por render.
+
+    A tela (expander de `_painel_recomendacoes`) e o chat leem esta mesma
+    leitura: o chat recebia só o macro genérico do bloco de mercado e via
+    "analisadores: macro_data" sem saber quanto nem por quê.
+    """
+
+    impactos: dict = field(default_factory=dict)
+    textos: tuple[str, ...] = ()
+    limitacoes: tuple[str, ...] = ()
+    falha: str | None = None
+
+    def para_llm(self) -> str:
+        if self.falha is not None:
+            return (f"Camada macro das carteiras indisponível nesta consulta "
+                    f"({self.falha}). As recomendações abaixo saíram sem ajuste "
+                    "macro; não trate isso como macro neutro.")
+        partes = list(self.textos) + [f"  limitação: {x}" for x in self.limitacoes]
+        return "\n".join(partes) or "Camada macro das carteiras sem snapshot nesta consulta."
+
+
+def _carregar_macro_carteiras(df: pd.DataFrame) -> MacroCarteiras:
+    """Snapshot macro por classe e deltas de impacto (Docker → arquivo publicado)."""
+    try:
+        from core.macro_data.database import descrever_fonte_macro, get_macro_source
+        from core.macro_data.global_context import load_global_macro_context
+        from core.macro_data.portfolio_context import format_portfolio_macro_context
+
+        fonte_macro = get_macro_source()
+        snapshots, impactos, limitacoes = load_global_macro_context(fonte_macro, df)
+        origem = descrever_fonte_macro(fonte_macro)
+        return MacroCarteiras(
+            impactos=dict(impactos),
+            textos=tuple(format_portfolio_macro_context(s, origem)
+                         for s in snapshots.values()),
+            limitacoes=tuple(limitacoes))
+    except Exception as exc:  # noqa: BLE001 - macro é insumo, não pode derrubar a tela
+        logger.exception("Falha ao carregar o contexto macro das carteiras")
+        return MacroCarteiras(falha=f"{type(exc).__name__}: {str(exc)[:120]}")
+
+
 def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
-                          alvos: dict, total_brl: float | None) -> list[advisor.Acao]:
+                          alvos: dict, total_brl: float | None,
+                          macro: MacroCarteiras | None = None) -> list[advisor.Acao]:
     """Painel 'Recomendações do motor de movimentação' (Fase 3b, Task 6).
 
     Cartões CSS (`card_metrica`), nunca informação solta — mesma regra do
@@ -1132,25 +1179,24 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
     """
     st.markdown("#### Recomendações do motor de movimentação")
 
-    macro_changes = {}
-    try:
-        from core.macro_data.database import descrever_fonte_macro, get_macro_source
-        from core.macro_data.global_context import load_global_macro_context
-        from core.macro_data.portfolio_context import format_portfolio_macro_context
-        fonte_macro = get_macro_source()
-        snapshots, macro_changes, macro_limits = load_global_macro_context(fonte_macro, df)
+    if macro is None:
+        macro = _carregar_macro_carteiras(df)
+    if macro.falha is None:
         with st.expander("Contexto macro das carteiras", expanded=False):
-            for snapshot in snapshots.values():
-                st.text(format_portfolio_macro_context(
-                    snapshot, descrever_fonte_macro(fonte_macro)))
-            for limitation in macro_limits:
+            for texto in macro.textos:
+                st.text(texto)
+            registrar_limitacoes(macro.limitacoes,
+                                 modulo="views/portfolio_global.py:contexto_macro",
+                                 simbolos=df["symbol"] if "symbol" in df else ())
+            for limitation in macro.limitacoes:
                 st.caption(limitation)
             st.caption("O ajuste global considera a mudança desde a criação, com limites e custos; requer revisão humana.")
-    except Exception:
+    else:
         st.caption("Contexto macro indisponível nesta consulta.")
 
     try:
-        acoes = _gerar_recomendacoes(df, ret, pesos, alvos, total_brl, macro_impacts=macro_changes)
+        acoes = _gerar_recomendacoes(df, ret, pesos, alvos, total_brl,
+                                     macro_impacts=macro.impactos)
     except Exception:  # noqa: BLE001 - fronteira de isolamento do motor de recomendacao
         st.warning(
             "⚠️ Não foi possível gerar as recomendações do motor de movimentação. "
@@ -1265,7 +1311,8 @@ def _painel_aporte(alvos: dict, renda_fixa: float | None) -> None:
         return
     carteira = _carregar_carteira_real()
     if carteira.get("data_source") == "error":
-        st.warning(carteira.get("error_message") or "Carteira real indisponível.")
+        aviso_lacuna(carteira.get("error_message") or "Carteira real indisponível.",
+                     codigo="tela.global.carteira_real_indisponivel", nivel="warning")
         return
     valores, alvos_plano, fora = carteira_real.base_do_plano(
         carteira.get("posicoes"), alvos, renda_fixa,
@@ -1376,7 +1423,8 @@ _CHAVE_CHAT = "portfolio_global_chat_historico"
 
 def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                  ret: pd.DataFrame, cob: Cobertura | None, pesos: dict,
-                 papeis: list, acoes: list) -> None:
+                 papeis: list, acoes: list,
+                 macro: MacroCarteiras | None = None) -> None:
     """Caixa de texto para conversar com a LLM sobre o patrimonio consolidado.
 
     O contexto e montado a partir do que ESTA TELA ja calculou — `df`, `ret`,
@@ -1393,8 +1441,10 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
     st.caption(
         "As perguntas são respondidas apenas com os dados desta tela — "
         "composição, alvo x real, concentração, múltiplos, risco, correlação, "
-        "papel estratégico e as recomendações do motor. O modelo não busca "
-        "cotação nem notícia; onde o dado falta, ele deve dizer que falta."
+        "papel estratégico, as recomendações do motor e a camada macro que as "
+        "ajustou — mais o macro, o noticiário e o detalhe do armazém (liquidez, "
+        "trimestres, proventos) dos ativos, lidos na hora da pergunta. O modelo não busca nada na web; onde o dado falta, ele deve "
+        "dizer que falta."
     )
 
     _, coluna_limpar = st.columns([5, 1])
@@ -1427,6 +1477,7 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                 contexto = build_global_portfolio_context(
                     df, alvos=alvos, total_brl=total_brl, retornos=ret,
                     cobertura=cob, pesos=pesos, papeis=papeis, acoes=acoes,
+                    macro_carteiras=(macro.para_llm() if macro is not None else None),
                 )
                 # Premissa do app: macro, curva e noticiário dos dois bancos
                 # entram em toda conversa, com o dos ativos da carteira.
@@ -1441,6 +1492,13 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                             linha.get("sector_raw") or linha.get("sector") or "")
                 contexto += "\n\n" + bloco_contexto_mercado(
                     ativos, max_itens_por_classe=6)
+                # Liquidez, trimestres, proventos e score mês a mês que os
+                # snapshots não guardam: do armazém, direto ou pelo túnel.
+                from core.llm_context_global_armazem import bloco_detalhe_armazem
+
+                detalhe = bloco_detalhe_armazem(df, pergunta)
+                if detalhe:
+                    contexto += "\n\n" + detalhe
                 resposta = chat_com_portfolio_global(contexto, historico[:-1], pergunta)
             except Exception as exc:  # noqa: BLE001 - fronteira de isolamento do provedor
                 logger.exception("Falha no chat do portfolio global")
@@ -1517,10 +1575,14 @@ def render() -> None:
     _painel_fatores(ret, pesos)
     _painel_risco(ret, pesos)
     papeis = _painel_papeis(df, ret)
-    acoes = _painel_recomendacoes(df, ret, pesos, alvos, alocacao.get("total_brl"))
+    # Uma leitura macro por render, a mesma para o motor, a tela e o chat.
+    macro = _carregar_macro_carteiras(df)
+    acoes = _painel_recomendacoes(df, ret, pesos, alvos, alocacao.get("total_brl"),
+                                  macro=macro)
     _painel_aporte(alvos, alocacao.get("renda_fixa"))
     # O chat fica por ultimo de proposito: `st.chat_input` toma o foco quando
     # renderiza, e no meio da tela ele empurraria a rolagem para longe dos
     # paineis (mesmo efeito ja anotado em views/fiis.py).
     _painel_chat(df, alvos=alvos, total_brl=alocacao.get("total_brl"),
-                 ret=ret, cob=cob, pesos=pesos, papeis=papeis, acoes=acoes)
+                 ret=ret, cob=cob, pesos=pesos, papeis=papeis, acoes=acoes,
+                 macro=macro)

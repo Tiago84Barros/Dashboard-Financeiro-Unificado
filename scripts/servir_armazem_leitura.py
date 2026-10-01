@@ -7,7 +7,8 @@ Este serviço fecha essa lacuna sem abrir o Postgres para a internet.
 
 O desenho é deliberadamente estreito:
 
-* **Só dado público.** Notícias avaliadas e séries macro. Nada de finanças
+* **Só dado público.** Notícias avaliadas, séries macro e o detalhe de
+  mercado das empresas americanas (preço, demonstrativo, provento). Nada de finanças
   pessoais, carteira ou espelho do Supabase -- esses já estão no Supabase e,
   se vazassem por aqui, vazariam dado de uma pessoa.
 * **Só leitura, em duas camadas.** Não há rota que escreva, e a sessão do
@@ -28,6 +29,11 @@ Rotas (todas GET, todas exigem ``Authorization: Bearer <token>``):
     /noticias/recentes?limite=150&dias=3
     /noticias/ativos?tickers=PETR4,VALE3&janela_dias=30&as_of=<ISO>
     /macro/recente
+    /eua/detalhe?simbolos=AAPL,KO     -- preço diário, trimestres e proventos
+    /fii/detalhe?tickers=HGLG11,KNCR11 -- informe mensal CVM, preço, proventos,
+                                       composição, imóveis e score mês a mês
+    /b3/detalhe?tickers=WEGE3,PETR4    -- pregão diário (COTAHIST) e reação a
+                                          resultados anuais (Memória de Mercado)
 """
 from __future__ import annotations
 
@@ -60,6 +66,7 @@ TICKERS_MAX = 80
 JANELA_MAX_ATIVOS = 30
 
 _ENGINES: dict[str, object] = {}
+_URL_EUA: list[str] = []
 
 
 def _json_padrao(valor):
@@ -92,6 +99,27 @@ def _url_macro() -> str:
     from core.config import settings
 
     return settings.MACRO_LOCAL_DB_URL or ""
+
+
+def _url_eua() -> str:
+    """O banco do armazém que guarda ``market_us`` (não é o das notícias).
+
+    ``US_LOCAL_DB_URL`` vence quando configurada; sem ela, a mesma URL que os
+    publicadores usam, montada com a senha do container.
+    """
+    if _URL_EUA:
+        return _URL_EUA[0]
+    from core.config import _get_secret
+
+    url = _get_secret("US_LOCAL_DB_URL")
+    if not url:
+        # ``docker inspect`` a cada pedido custaria ~0,1 s; a senha do
+        # container não muda com o serviço de pé.
+        from scripts.publish_fii_selection_from_local import _warehouse_url
+
+        url = _warehouse_url()
+    _URL_EUA.append(url)
+    return url
 
 
 def _numero(params: dict, chave: str, padrao: float, teto: float) -> float:
@@ -163,11 +191,58 @@ def rota_macro(_params) -> tuple[int, dict]:
     return 200, {"fatos": list(latest_macro_context(engine_leitura(url)))}
 
 
+def rota_eua_detalhe(params) -> tuple[int, dict]:
+    from core.us_detalhe_armazem import SIMBOLOS_MAX, ler_detalhe, normalizar_simbolos
+
+    simbolos = normalizar_simbolos(",".join(params.get("simbolos", [])).split(","))
+    if not simbolos:
+        return 400, {"erro": "informe simbolos"}
+    if len(simbolos) > SIMBOLOS_MAX:
+        return 400, {"erro": f"no máximo {SIMBOLOS_MAX} símbolos por chamada"}
+    url = _url_eua()
+    if not url:
+        return 503, {"erro": "armazém dos EUA não configurado nesta máquina"}
+    return 200, {"detalhe": ler_detalhe(engine_leitura(url), simbolos)}
+
+
+def rota_fii_detalhe(params) -> tuple[int, dict]:
+    from core.fii_detalhe_armazem import TICKERS_MAX, ler_detalhe, normalizar_tickers
+
+    tickers = normalizar_tickers(",".join(params.get("tickers", [])).split(","))
+    if not tickers:
+        return 400, {"erro": "informe tickers"}
+    if len(tickers) > TICKERS_MAX:
+        return 400, {"erro": f"no máximo {TICKERS_MAX} tickers por chamada"}
+    # O schema ``market`` dos FIIs mora no mesmo banco do ``market_us``.
+    url = _url_eua()
+    if not url:
+        return 503, {"erro": "armazém não configurado nesta máquina"}
+    return 200, {"detalhe": ler_detalhe(engine_leitura(url), tickers)}
+
+
+def rota_b3_detalhe(params) -> tuple[int, dict]:
+    from core.b3_detalhe_armazem import TICKERS_MAX, ler_detalhe, normalizar_tickers
+
+    tickers = normalizar_tickers(",".join(params.get("tickers", [])).split(","))
+    if not tickers:
+        return 400, {"erro": "informe tickers"}
+    if len(tickers) > TICKERS_MAX:
+        return 400, {"erro": f"no máximo {TICKERS_MAX} tickers por chamada"}
+    # COTAHIST (``market``) e Memória de Mercado moram no banco do ``market_us``.
+    url = _url_eua()
+    if not url:
+        return 503, {"erro": "armazém não configurado nesta máquina"}
+    return 200, {"detalhe": ler_detalhe(engine_leitura(url), tickers)}
+
+
 ROTAS = {
     "/saude": rota_saude,
     "/noticias/recentes": rota_noticias,
     "/noticias/ativos": rota_noticias_ativos,
     "/macro/recente": rota_macro,
+    "/eua/detalhe": rota_eua_detalhe,
+    "/fii/detalhe": rota_fii_detalhe,
+    "/b3/detalhe": rota_b3_detalhe,
 }
 
 

@@ -14,6 +14,10 @@ Arquivo separado de ``views/configuracoes.py`` de propósito: aquele já passa d
 O tema e a troca de usuário **saíram da sidebar** em 21/09/2026. Estavam
 visíveis em toda tela, ocupando a barra que serve para navegar, e são ajustes
 que se fazem uma vez.
+
+A 🎯 Estratégia e o 🌎 Cenário de Investimentos **saíram daqui** em 27/09/2026:
+são configurados e alterados na própria aba Investimentos → Inteligência dos
+Ativos, que depende deles.
 """
 from __future__ import annotations
 
@@ -33,6 +37,8 @@ _NOME_CAT = "cfg_geral_nome_categoria"
 
 
 def render() -> None:
+    st.caption("A Estratégia e o Cenário de Investimentos se configuram em "
+               "Investimentos → Inteligência dos Ativos.")
     _render_tema()
     _render_categorias()
     _render_trocar_usuario()

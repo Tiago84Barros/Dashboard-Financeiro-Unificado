@@ -42,6 +42,7 @@ from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design.componentes import card_metrica, cor_token
+from design.lacunas import aviso_lacuna
 from design.market_companies import company_logo_html
 
 # ── Importa engine compartilhado de empresas_b3 ───────────────────────────────
@@ -97,7 +98,7 @@ def _ticker_key(value: object) -> str:
     return str(value or "").upper().replace(".SA", "").strip()
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _load_market_caps() -> dict[str, float]:
     """Carrega marketCap PIT e complementa lacunas com o snapshot corrente.
 
@@ -168,7 +169,7 @@ def _market_cap_coverage(
     return covered, total, (covered / total if total else 0.0)
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _load_adtv(meses: int = 6) -> dict[str, float]:
     """Volume financeiro DIÁRIO típico (R$/dia) por ticker.
 
@@ -228,7 +229,7 @@ def _load_adtv(meses: int = 6) -> dict[str, float]:
     return values
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)
 def _load_volume_mensal_historico(desde_ano: int) -> pd.DataFrame:
     """Volume financeiro mensal (R$) por ticker desde ``desde_ano`` - 1.
 
@@ -427,7 +428,8 @@ def _render_data_quality_box(summary: dict, audit: pd.DataFrame, hist_audit: pd.
                          accent="#00C896")
         zeros = summary.get("campos_zero_suspeito") or []
         if zeros:
-            st.warning("Campos tratados como ausentes por excesso de zeros: " + ", ".join(zeros))
+            aviso_lacuna("Campos tratados como ausentes por excesso de zeros: " + ", ".join(zeros),
+                         codigo="tela.b3.campos_zero_suspeito", nivel="warning")
         if not audit.empty:
             st.dataframe(audit.head(80), width="stretch", height=260)
         if not hist_audit.empty:
@@ -1514,7 +1516,8 @@ def _render_paineis_app1(
 
     with st.expander("🧩 Patch 1 — Régua de Convicção", expanded=False):
         if score_global.empty:
-            st.info("Régua de convicção indisponível para esta execução.")
+            aviso_lacuna("Régua de convicção indisponível para esta execução.",
+                         codigo="tela.b3.regua_conviccao_indisponivel")
         else:
             ultimo_ano = int(pd.to_numeric(score_global["Ano"], errors="coerce").max())
             df_ano = score_global[
@@ -1546,7 +1549,8 @@ def _render_paineis_app1(
 
     with st.expander("🧩 Patch 2 — Dominância", expanded=False):
         if lideres_global.empty:
-            st.info("Mapa de dominância indisponível para esta execução.")
+            aviso_lacuna("Mapa de dominância indisponível para esta execução.",
+                         codigo="tela.b3.mapa_dominancia_indisponivel")
         else:
             dom = (
                 lideres_global[lideres_global["ticker"].isin(selecionados)]
@@ -1560,7 +1564,8 @@ def _render_paineis_app1(
     with st.expander("🧩 Patch 3 — Diversificação e Concentração", expanded=False):
         df_sel = pd.DataFrame(proximos_uniq)
         if df_sel.empty:
-            st.info("Diversificação indisponível.")
+            aviso_lacuna("Diversificação indisponível.",
+                         codigo="tela.b3.diversificacao_indisponivel")
         else:
             c1, c2 = st.columns(2)
             by_setor = df_sel["setor"].value_counts().reset_index()
@@ -1958,7 +1963,8 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
 
     dfm = pd.DataFrame(rows)
     if dfm.empty:
-        st.info("Sem dados suficientes para exibir o Patch 5.")
+        aviso_lacuna("Sem dados suficientes para exibir o Patch 5.",
+                     codigo="tela.b3.patch5_sem_dados")
         return
 
     def _pct_rank(col: str, invert: bool = False) -> pd.Series:

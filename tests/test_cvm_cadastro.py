@@ -42,3 +42,39 @@ def test_build_map_joins_by_cnpj():
 
 def test_cnpj_digits():
     assert cad.cnpj_digits("33.000.167/0001-01") == "33000167000101"
+
+
+_CAD_DATAS = (
+    "CNPJ_CIA;DENOM_SOCIAL;DENOM_COMERC;DT_REG;DT_CONST;SIT;CD_CVM;SETOR_ATIV;"
+    "CATEG_REG;CONTROLE_ACIONARIO\n"
+    "33.386.210/0001-19;SONDOTECNICA ENGENHARIA DE SOLOS S.A.;SONDOTECNICA;"
+    "1980-08-19;1954-01-01;ATIVO;10880;Construção;Categoria A;PRIVADO\n"
+    "11.111.111/0001-11;NOVA S.A.;NOVA;2020-03-02;;ATIVO;99999;Varejo;;\n"
+).encode("latin-1")
+
+_FCA_DATAS = (
+    "CNPJ_Companhia;Valor_Mobiliario;Codigo_Negociacao;Mercado;Segmento\n"
+    "33.386.210/0001-19;Ações Preferenciais;SOND5;Bolsa;Tradicional\n"
+    "11.111.111/0001-11;Ações Ordinárias;NOVA3;Bolsa;Novo Mercado\n"
+).encode("latin-1")
+
+
+def test_cadastro_leva_constituicao_e_registro_ate_a_empresa():
+    """Lacuna b23e53d5: DT_CONST e DT_REG eram lidos e descartados."""
+    from datetime import date
+    _, companies = cad.build_map(cad.parse_cad(_CAD_DATAS),
+                                 cad.parse_fca_valmob(_FCA_DATAS))
+    sond = companies[10880]
+    assert sond["dt_constituicao"] == date(1954, 1, 1)
+    assert sond["dt_registro_cvm"] == date(1980, 8, 19)
+    assert sond["categoria_registro"] == "Categoria A"
+    assert sond["controle_acionario"] == "PRIVADO"
+    nova = companies[99999]
+    assert nova["dt_constituicao"] is None  # vazio no cadastro: None, não chute
+    assert nova["categoria_registro"] is None
+
+
+def test_data_malformada_vira_none():
+    assert cad._data("19/08/1980") is None
+    assert cad._data("") is None
+    assert str(cad._data("1980-08-19 00:00:00")) == "1980-08-19"

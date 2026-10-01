@@ -3,8 +3,8 @@
 O que é desenhado em canvas não obedece a CSS: gráficos e tabelas passam pelos
 adaptadores de ``design/tema_canvas.py`` (Plotly/Vega) e
 ``design/tabela_clara.py`` (``st.dataframe`` reemitido como HTML). Segue
-escuro só o que depende da grade nativa: ``st.data_editor`` e as tabelas que o
-HTML não dá conta (seleção, tamanho).
+escuro só a grade nativa que o claro não substitui -- as tabelas que o HTML
+não dá conta (seleção, tamanho); os ``st.data_editor`` já têm caminho claro.
 """
 from design.tabela_clara import CSS_TABELA
 
@@ -16,6 +16,7 @@ LIGHT_CSS = """
  --app-text:#172033; --app-muted:#46566e; --app-subtle:#52627a;
  --app-primary:#007e60; --app-info:#175eac; --app-danger:#b42342;
  --app-warning:#875e00; --app-accent:#6d28d9; --app-alert:#b4530a;
+ --app-on-accent:#ffffff;
  --app-shadow:0 8px 24px rgba(30,45,70,.08);
  color-scheme:light;
 }
@@ -116,6 +117,25 @@ LIGHT_CSS = """
  border-color:var(--app-border)!important; caret-color:var(--app-text)!important;
 }
 input::placeholder, textarea::placeholder {color:#64748b!important;}
+/* O calendario do `st.date_input` so tinha a raiz pintada de branco: tudo que
+   o BaseWeb desenha dentro dela continuava vindo do tema escuro do config.
+   Tres vazamentos medidos no DOM (01/10/2026), nao suspeitos:
+     - celula vazia do grid: `::after` de 42x42 com o fundo do config -- os
+       quadrados pretos nos cantos do mes;
+     - cabecalho do mes/ano e a linha Su..Sa: `div` com a superficie
+       secundaria do config;
+     - numero do dia: a tinta clara do config, invisivel no branco.
+   O verde do dia escolhido tambem e um `::after` (#00C896, raio 100%), entao a
+   limpeza do fundo vai nos elementos -- pseudo-elemento nao e alcancado por
+   regra de elemento -- e so o `::after` da celula *vazia* e apagado. Vazia se
+   reconhece por nao ter filho (`:not(:has(*))`): nao depende do idioma do
+   `aria-label`, que vem em ingles. */
+[data-baseweb="calendar"] div {background-color:transparent!important;}
+[data-baseweb="calendar"] :is(div,span,button,abbr) {color:var(--app-text)!important;}
+[data-baseweb="calendar"] svg {color:var(--app-muted)!important; fill:currentColor!important;}
+[data-baseweb="calendar"] [role="gridcell"]:not(:has(*))::after {
+ background-color:transparent!important;
+}
 [data-baseweb="tab"] {color:var(--app-muted)!important;}
 [data-baseweb="tab"][aria-selected="true"] {color:#00694f!important;}
 /* ``^=`` e não ``=``: o botão de um ``st.form`` chega como
@@ -214,7 +234,127 @@ button:disabled {opacity:.55;}
  background:var(--app-surface); border:1px solid var(--app-border);
  border-radius:10px; padding:4px;
 }
-[data-testid="stCode"] {background:#0e1117;border-radius:10px;}
+/* st.code é usado para prosa no app (evidência, fórmula, dossiê, política), e
+   ficava preto no claro. Medido em 29/09/2026 no bundle do Streamlit 1.57
+   (StreamlitSyntaxHighlighter + ErrorElement): o `pre` recebe
+   `background: codeBackgroundColor` e `color: bodyText`, e cada `.token.*` sai
+   de uma cor nomeada do tema (gray70, blue70, green80...). Como o tema do
+   config é escuro, trocar só o fundo daria branco no branco -- por isso o
+   texto e os tokens vêm juntos. O stylesheet do Prism vai vazio (`style={}`),
+   então não há cor inline para disputar: CSS alcança. */
+[data-testid="stCode"] {background:transparent;}
+[data-testid="stCode"] pre {
+ background:var(--app-surface-raised)!important; color:var(--app-text)!important;
+ border:1px solid var(--app-border)!important; border-radius:10px;
+}
+[data-testid="stCode"] pre code {color:var(--app-text)!important;}
+[data-testid="stCode"] .comment.linenumber {color:var(--app-subtle)!important;}
+[data-testid="stCode"] :is(.token.comment,.token.prolog,.token.doctype,
+ .token.cdata,.token.punctuation) {color:var(--app-muted)!important;}
+[data-testid="stCode"] :is(.token.attr-name,.token.property,.token.variable) {
+ color:var(--app-info)!important;
+}
+[data-testid="stCode"] :is(.token.boolean,.token.constant,.token.symbol,
+ .token.inserted) {color:#087548!important;}
+[data-testid="stCode"] :is(.token.number,.token.regex) {color:#0f6a80!important;}
+[data-testid="stCode"] :is(.token.string,.token.char,.token.attr-value) {
+ color:#0a6b3d!important;
+}
+[data-testid="stCode"] :is(.token.operator,.token.entity,.token.decorator,
+ .token.atrule) {color:#9a4b06!important;}
+[data-testid="stCode"] .token.url {color:var(--app-accent)!important;}
+[data-testid="stCode"] :is(.token.keyword,.token.tag,.token.function,
+ .token.class-name,.token.selector) {color:#1b4fa0!important;}
+[data-testid="stCode"] :is(.token.important,.token.deleted) {
+ color:var(--app-danger)!important;
+}
+/* Código inline do markdown (`texto`) sai do mesmo par de cores do tema
+   escuro -- vira etiqueta preta no meio do parágrafo claro. */
+[data-testid="stMarkdownContainer"] :not(pre) > code,
+[data-testid="stChatMessageContent"] :not(pre) > code {
+ background:var(--app-surface-raised)!important; color:#0a4a63!important;
+}
+/* Menu do selectbox/multiselect: as opções já vinham claras, mas a casca do
+   popover (o `ul` virtualizado e as duas divs acima dele) continuava
+   rgb(14,17,23) -- o menu aberto aparecia como moldura preta em volta das
+   opções brancas. O `:has` prende a regra ao menu: o tooltip usa o mesmo
+   `data-baseweb="popover"` e escuro ali é o desenho normal. */
+[data-baseweb="popover"]:has([data-testid="stSelectboxVirtualDropdown"]),
+[data-baseweb="popover"]:has([data-testid="stSelectboxVirtualDropdown"]) > div,
+[data-testid="stSelectboxVirtualDropdown"] {
+ background:var(--app-surface)!important; border-color:var(--app-border)!important;
+}
+/* Seta e "x" do select vêm com fill rgb(250,250,250): sumiam no campo branco. */
+[data-baseweb="select"] svg {fill:var(--app-muted)!important;}
+/* Delta do metric: verde/vermelho do tema escuro (92,228,136 e 255,108,108)
+   quase não aparecem no branco. O ícone é `fill="currentColor"`, então a cor
+   do contêiner leva texto e seta juntos. */
+[data-testid="stMetricDelta"]:has([data-testid="stMetricDeltaIcon-Up"]) {
+ color:#087548!important;
+}
+[data-testid="stMetricDelta"]:has([data-testid="stMetricDeltaIcon-Down"]) {
+ color:var(--app-danger)!important;
+}
+/* st.json desenha com estilo inline (react-json-view): fundo rgb(14,17,23) e
+   chaves rgb(249,248,245). Só `!important` alcança. As chaves e a pontuação
+   são `span`; os valores e os separadores são `div`, e deixá-los com a cor do
+   próprio tipo (a decisão anterior) não sobreviveu à medida: sobre o claro o
+   `:` rende 1,06:1, o booleano 2,5:1 e o número 3,4:1 (medido em 29/09/2026).
+   O tipo continua legível pela classe que a biblioteca dá à chave e à cadeia. */
+[data-testid="stJson"] .react-json-view {
+ background:var(--app-surface-raised)!important;
+ border:1px solid var(--app-border)!important; border-radius:10px;
+}
+[data-testid="stJson"] :is(span, div) {color:var(--app-text)!important;}
+[data-testid="stJson"] .string-value {color:var(--app-primary)!important;}
+[data-testid="stJson"] :is(.object-key, .object-key span) {
+ color:var(--app-info)!important;
+}
+[data-testid="stJson"] svg {color:var(--app-muted)!important;}
+/* Segunda varredura de luminância (29/09/2026), nas famílias de widget que a
+   primeira não tinha na tela. Cada regra abaixo desfaz uma cor medida no DOM,
+   não uma suspeita. */
+/* Segmentos e pílulas: o botão não escolhido vinha com o preto do cromo escuro
+   no fundo e o texto já reescrito para --app-text -- escuro no escuro, rótulo
+   invisível. */
+[data-testid="stBaseButton-segmented_control"],
+[data-testid="stBaseButton-pills"] {
+ background:var(--app-surface)!important; color:var(--app-muted)!important;
+ border-color:var(--app-border)!important;
+}
+/* O escolhido tem testid próprio (`...Active`), não `aria-checked`: vem com o
+   verde da marca em texto sobre 10% do mesmo verde, 1,9:1 no branco. */
+[data-testid="stBaseButton-segmented_controlActive"],
+[data-testid="stBaseButton-pillsActive"] {
+ color:var(--app-primary)!important; border-color:var(--app-primary)!important;
+}
+/* Barra de ferramentas que flutua sobre tabela e gráfico (baixar, buscar, tela
+   cheia): retângulo #131720 por cima da superfície clara. */
+[data-testid="stElementToolbar"],
+[data-testid="stElementToolbarButtonContainer"] {
+ background:var(--app-surface)!important;
+}
+[data-testid="stElementToolbarButton"] :is(svg, span) {
+ color:var(--app-muted)!important; fill:var(--app-muted)!important;
+}
+/* Seta de recolher a barra lateral: rgba(250,250,250,.6) sobre cabeçalho claro,
+   ou seja, sumia. Mesmo caso dos ícones do cabeçalho já tratados. */
+[data-testid="stBaseButton-headerNoPadding"] [data-testid="stIconMaterial"],
+[data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"] {
+ color:var(--app-muted)!important;
+}
+/* Etiqueta do multiselect: verde da marca com texto branco dá 1,9:1. No claro o
+   rótulo fecha o tom e o "x" acompanha. */
+[data-testid="stMultiSelect"] [data-baseweb="tag"] {color:#08281f!important;}
+[data-testid="stMultiSelect"] [data-baseweb="tag"] svg {fill:#08281f!important;}
+/* Terceira varredura (29/09/2026). A barra que carrega o botão "copiar" do
+   bloco de código não tem testid próprio -- só uma classe de hash, que muda a
+   cada versão do Streamlit. Por isso o alvo é estrutural: o pai do botão. Ela
+   vinha com o #131720 do cromo escuro e virava um quadrado escuro no canto de
+   todo bloco de código, inclusive dentro das respostas da LLM. */
+[data-testid="stCode"] div:has(> [data-testid="stElementToolbarButton"]) {
+ background:var(--app-surface-raised)!important; border-radius:8px;
+}
 </style>
 """
 

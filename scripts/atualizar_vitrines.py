@@ -211,6 +211,13 @@ def gravar_estado(estado: dict) -> None:
 # alvo a alvo em vez de adivinhado.
 CARIMBO = {
     "fii_ingest": ("armazem", "SELECT max(updated_at) FROM market.fiis"),
+    # O segundo passo (ações) é o último a gravar; a carga dele só conclui
+    # depois que a de FIIs baixou o ZIP.
+    "b3_pregao": ("armazem", "SELECT max(completed_at) FROM market.b3_archive_loads"),
+    "fii_documentos": ("armazem",
+                       "SELECT max(completed_at) FROM market.fii_cvm_archive_loads "
+                       "WHERE archive_kind = 'eventual'"),
+    "cvm_ipe": ("armazem", "SELECT max(created_at) FROM public.docs_corporativos"),
     "fii_selection": ("supabase",
                       "SELECT max(generated_at) FROM market.fii_selection_inputs"),
     "b3_metrics": ("supabase", "SELECT max(updated_at) FROM market.calculated_metrics"),
@@ -223,19 +230,38 @@ CARIMBO = {
     "us_prices": ("supabase", "SELECT max(ingested_at) FROM market_us.prices_monthly"),
     "noticias_vitrine": ("supabase", "SELECT max(gerada_em) FROM noticias_vitrine_meta"),
     "espelho_supabase": ("armazem", "SELECT max(executado_em) FROM public.espelho_supabase_meta"),
+    # A poda apaga no Supabase e não deixa carimbo lá; o rastro é o manifesto
+    # do arquivamento, gravado no armazém pelo primeiro passo.
+    "brapi_raw_poda": ("armazem",
+                       "SELECT max(archived_at) FROM market.brapi_remote_archive_manifest"),
     # Publica num arquivo do repositório, não numa tabela: o carimbo é o
     # `generated_at` gravado dentro dele.
     "macro_insumos": ("arquivo", "data/public/macro_insumos.json.gz"),
+    "valuation_historico": ("arquivo", "data/public/valuation_historico.json.gz"),
+    "informacoes_recentes": ("arquivo", "data/public/informacoes_recentes.json.gz"),
+    "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),
 }
 
 
 def _carimbo_do_arquivo(relativo: str):
-    from core.macro_data.insumos_publicados import desserializar
-
     caminho = ROOT / relativo
     if not caminho.exists():
         return None
-    return desserializar(caminho.read_bytes()).gerado_em
+    import gzip
+    bruto = caminho.read_bytes()
+    try:
+        dados = json.loads(gzip.decompress(bruto).decode("utf-8"))
+    except (OSError, ValueError):
+        try:
+            dados = json.loads(bruto.decode("utf-8"))  # manifesto do corpus RAG
+        except (UnicodeDecodeError, ValueError):
+            dados = None
+    # Arquivo com ``gerado_em`` ISO no topo (valuation, corpus RAG); senão, o
+    # formato próprio dos insumos macro.
+    if isinstance(dados, dict) and isinstance(dados.get("gerado_em"), str):
+        return datetime.fromisoformat(dados["gerado_em"])
+    from core.macro_data.insumos_publicados import desserializar
+    return desserializar(bruto).gerado_em
 
 
 def semear(estado: dict, versoes: dict) -> dict:

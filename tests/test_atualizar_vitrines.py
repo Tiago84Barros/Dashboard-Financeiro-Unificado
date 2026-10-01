@@ -27,8 +27,10 @@ def test_carimbo_aponta_para_a_base_que_o_alvo_escreve(chave, onde):
     que foi exatamente o estado encontrado em 01/09/2026: Supabase de 26/08,
     armazém de 11/08. O espelho também escreve no armazém (lê o Supabase).
     """
-    escreve_no_armazem = {"fii_ingest", "espelho_supabase"}
-    escreve_arquivo = {"macro_insumos"}
+    escreve_no_armazem = {"fii_ingest", "espelho_supabase", "brapi_raw_poda",
+                          "b3_pregao", "fii_documentos", "cvm_ipe"}
+    escreve_arquivo = {"macro_insumos", "valuation_historico",
+                       "informacoes_recentes", "rag_corpus"}
     esperado = ("armazem" if chave in escreve_no_armazem
                 else "arquivo" if chave in escreve_arquivo else "supabase")
     assert onde == esperado
@@ -42,6 +44,17 @@ def test_carimbo_de_arquivo_le_o_generated_at(tmp_path, monkeypatch):
     monkeypatch.setattr(av, "ROOT", tmp_path)
     assert av._carimbo_do_arquivo("m.json.gz") == quando
     assert av._carimbo_do_arquivo("ausente.json.gz") is None
+
+
+def test_carimbo_de_arquivo_generico_le_o_gerado_em(tmp_path, monkeypatch):
+    import gzip
+    import json
+
+    (tmp_path / "v.json.gz").write_bytes(gzip.compress(json.dumps(
+        {"gerado_em": "2026-09-26T03:00:00+00:00"}).encode("utf-8")))
+    monkeypatch.setattr(av, "ROOT", tmp_path)
+    assert av._carimbo_do_arquivo("v.json.gz") == datetime(
+        2026, 9, 26, 3, tzinfo=timezone.utc)
 
 
 def test_resumo_json_pega_a_ultima_linha_e_so_o_que_interessa():

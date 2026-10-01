@@ -17,6 +17,7 @@ import io
 import logging
 import re
 import zipfile
+from datetime import date
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +65,20 @@ def parse_cad(content: bytes) -> dict[str, dict]:
             "sector": (r.get("SETOR_ATIV") or "").strip() or None,
             "situacao": (r.get("SIT") or "").strip() or None,
             "cnpj": (r.get("CNPJ_CIA") or "").strip() or None,
+            "dt_constituicao": _data(r.get("DT_CONST")),
+            "dt_registro_cvm": _data(r.get("DT_REG")),
+            "categoria_registro": (r.get("CATEG_REG") or "").strip() or None,
+            "controle_acionario": (r.get("CONTROLE_ACIONARIO") or "").strip() or None,
         }
     return out
+
+
+def _data(s) -> date | None:
+    """Data ISO do cadastro; vazia ou malformada vira None, nunca um chute."""
+    try:
+        return date.fromisoformat(str(s or "").strip()[:10])
+    except ValueError:
+        return None
 
 
 def parse_fca_valmob(content: bytes) -> list[dict]:
@@ -91,7 +104,9 @@ def build_map(cad: dict[str, dict], fca: list[dict]) -> tuple[dict[str, int], di
     """
     Junta por CNPJ. Retorna:
       ticker_to_cod: {ticker: codigo_cvm}
-      companies:     {codigo_cvm: {codigo_cvm, name, sector, cnpj, segment}}
+      companies:     {codigo_cvm: {codigo_cvm, name, sector, cnpj, segment,
+                                   dt_constituicao, dt_registro_cvm,
+                                   categoria_registro, controle_acionario}}
     """
     ticker_to_cod: dict[str, int] = {}
     companies: dict[int, dict] = {}
@@ -107,6 +122,10 @@ def build_map(cad: dict[str, dict], fca: list[dict]) -> tuple[dict[str, int], di
             "cnpj": meta.get("cnpj"),
             "sector": meta.get("sector"),
             "segment": row.get("segmento"),
+            "dt_constituicao": meta.get("dt_constituicao"),
+            "dt_registro_cvm": meta.get("dt_registro_cvm"),
+            "categoria_registro": meta.get("categoria_registro"),
+            "controle_acionario": meta.get("controle_acionario"),
         })
     return ticker_to_cod, companies
 
