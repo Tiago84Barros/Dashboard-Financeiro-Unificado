@@ -109,15 +109,21 @@ def cartao_lista(b: rs.Bloco) -> str:
 
 # -- a caixa de cada ativo ------------------------------------------------------------
 
-def rotulo_expander(a: m.AnaliseAtivo) -> str:
-    d = rs.decisao(a)
-    return f"{a.ativo.ticker} · {_pct(a.ativo.peso_atual)} · {d.rotulo}"
+def rotulo_expander(a: m.AnaliseAtivo,
+                    sugerido: rs.AlvoSugerido | None = None) -> str:
+    """"BBAS3 · 8,5% → 2,3% · Vender": peso atual, % devida e a decisão."""
+    d = rs.decisao(a, sugerido)
+    alvo = rs.alvo_do_ativo(a, sugerido)
+    peso = _pct(a.ativo.peso_atual)
+    if alvo is not None:
+        peso += f" → {_pct(alvo)}"
+    return f"{a.ativo.ticker} · {peso} · {d.rotulo}"
 
 
 def cartao_posicao(a: m.AnaliseAtivo,
                    sugerido: rs.AlvoSugerido | None = None) -> str:
     """% atual, % devida e manter / comprar / vender. Puro."""
-    d = rs.decisao(a)
+    d = rs.decisao(a, sugerido)
     devido = rs.peso_devido(a, sugerido)
     cor = _COR_DECISAO[d.codigo]
 
@@ -460,8 +466,8 @@ def _abrir_detalhe(ticker: str) -> None:
 def _render_ativo(a: m.AnaliseAtivo, ctx: m.ContextoInvestidor,
                   na_carteira: tuple[str, ...],
                   sugerido: rs.AlvoSugerido | None = None) -> None:
-    with st.expander(rotulo_expander(a)):
-        d = rs.decisao(a)
+    with st.expander(rotulo_expander(a, sugerido)):
+        d = rs.decisao(a, sugerido)
         html = cartao_posicao(a, sugerido)
         if d.codigo == rs.VENDER:
             html += cartao_substitutos(rs.substitutos(a, na_carteira))
