@@ -147,8 +147,8 @@ def test_liberada_mostra_premissa_resumo_e_os_13_cartoes():
     rotulos = [e.label for e in app.expander]
     # o cenário, lido dos dados, abre a página; depois um ativo por caixa
     assert rotulos[:3] == ["🌎 Cenário econômico atual (lido dos dados)",
-                           "TAEE11 · 40,0% · Manter",
-                           "HGLG11 · 60,0% · Vender"]
+                           "TAEE11 · 40,0% → 20,0% · Vender",   # ativo a ativo
+                           "HGLG11 · 60,0% → 30,0% · Vender"]
     assert "📊 Visão geral da carteira" in rotulos
     assert any("Premissa de toda análise" in h for h in htmls)
     assert app.dataframe[0].value["Ativo"].tolist() == ["HGLG11", "TAEE11"]

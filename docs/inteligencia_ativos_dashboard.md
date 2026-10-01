@@ -33,7 +33,7 @@ Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
 - **🏦 Renda fixa**: as demais, em lista com valor e %. O cabeçalho mostra o
   alvo da renda fixa, com a reserva incluída.
 - **📈 Ações, 🏢 FIIs e 🌎 Internacional**: um expander por ativo, com o rótulo
-  `TICKER · peso · Manter|Comprar|Vender`. Dentro, na ordem do rascunho:
+  `TICKER · peso → % devida · Manter|Comprar|Vender`. Dentro, na ordem do rascunho:
   - **Porcentagem atual** e **porcentagem devida**. Desde 30/09/2026 (pedido
     do usuário) a devida é **sugerida**: o alvo da classe dividido entre os
     ativos da classe pelo inverso da volatilidade dos retornos mensais
@@ -42,11 +42,22 @@ Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
     volatilidade mediana da classe; sem nenhum histórico, pesos iguais. A
     faixa que o usuário definir para o ativo prevalece. Reserva e renda fixa
     não recebem alvo por ativo. O método aparece ao lado do número.
-  - **Manter, comprar ou vender**: tradução da ação de adequação. Comprar vem
-    de *aporte compatível*. Vender vem de *reavaliar tese*, *reduzir
-    concentração* (vender parte) ou *comparar alternativas*. Manter cobre o
-    resto. O estado original e a primeira justificativa aparecem ao lado,
-    com o aviso de que não é ordem.
+  - **Manter, comprar ou vender**: decidido **ativo a ativo** desde
+    01/10/2026 (`resumida.decisao(a, sugerido)`). Antes era só a tradução da
+    ação de adequação, que lê a classe. Por isso a tela publicada dava
+    "Comprar" a todos os FIIs e "Manter" a todas as ações, e nunca "Vender"
+    sem teto estourado; o usuário perguntou se estava certo. A ordem agora:
+    1. Vender da análise (*reavaliar tese*, *reduzir concentração*) prevalece.
+    2. Com % devida (faixa do usuário ou sugestão), o peso decide. Acima da
+       devida mais a folga (`tolerancia_pp`: 20% do alvo, mínimo 0,5 pp) é
+       **vender parte**, com o lembrete de que parar de aportar também
+       reduz o peso. Abaixo da devida menos a folga é **comprar**, salvo
+       quando a classe já passou do alvo (*reavaliar aportes*): aí fica
+       manter. Dentro da folga é manter.
+    3. Sem % devida, vale a tradução da ação de adequação.
+
+    *Comparar alternativas* continua sem gerador em `adequacao.acao`; só tem
+    rótulo.
   - **Se vender, qual substituir?**: até dois pares do mesmo grupo fora da
     carteira, os mais próximos em perfil. Não são ordenados como melhores.
   - **Comparação com o mesmo segmento**: uma régua por métrica (P/L, P/VP,

@@ -95,6 +95,52 @@ def test_cada_acao_vira_uma_das_tres_palavras(carteira, estado, codigo):
     assert set(rs.DECISAO) == set(m.ROTULO_ACAO)
 
 
+def _sug(peso):
+    return rs.AlvoSugerido(peso, 20.0, False, 25.0, rs.METODO_VOL)
+
+
+def _pesando(a, peso, estado=m.EXPOSICAO_ADEQUADA):
+    a = _com_acao(a, estado, "leitura da classe")
+    return replace(a, ativo=replace(a.ativo, peso_atual=peso))
+
+
+def test_decisao_por_ativo_compara_o_peso_com_a_porcentagem_devida(carteira):
+    # 01/10/2026: a classe dentro do alvo dava "Manter" a todos; BBAS3 com
+    # 8,5% numa classe que reparte 25% entre dez ativos precisa sair "Vender".
+    _, an = carteira
+    a = an[2]
+    d = rs.decisao(_pesando(a, 8.5), _sug(2.5))
+    assert d.codigo == rs.VENDER and "6,0 pp acima da % devida 2,5%" in d.detalhe
+    assert "parar de aportar" in d.motivo
+    d = rs.decisao(_pesando(a, 0.6), _sug(2.5))
+    assert d.codigo == rs.COMPRAR and "faltam 1,9 pp" in d.detalhe
+    # dentro da folga (20% do alvo, mínimo 0,5 pp) fica como está
+    d = rs.decisao(_pesando(a, 2.9), _sug(2.5))
+    assert d.codigo == rs.MANTER and d.motivo == "leitura da classe"
+    assert rs.tolerancia_pp(1.0) == 0.5 and rs.tolerancia_pp(10.0) == 2.0
+
+
+def test_decisao_por_ativo_respeita_classe_acima_do_alvo_e_venda_da_analise(
+        carteira):
+    _, an = carteira
+    a = an[2]
+    # abaixo da % devida, mas a classe já passou do alvo: não compra
+    d = rs.decisao(_pesando(a, 0.6, m.REAVALIAR_APORTES), _sug(2.5))
+    assert d.codigo == rs.MANTER and "classe já passou do alvo" in d.detalhe
+    # vender que vem da análise (tese, teto) não é desfeito pela % devida
+    d = rs.decisao(_pesando(a, 0.6, m.REAVALIAR_TESE), _sug(2.5))
+    assert d.codigo == rs.VENDER and d.motivo == "leitura da classe"
+    # sem % devida, vale a leitura da classe
+    assert rs.decisao(_pesando(a, 8.5)).codigo == rs.MANTER
+    # a faixa do usuário vence a sugestão
+    b = _pesando(a, 8.5)
+    b = replace(b, faixa=replace(b.faixa, alvo_ativo=8.0))
+    assert rs.decisao(b, _sug(2.5)).codigo == rs.MANTER
+    assert tela.rotulo_expander(b, _sug(2.5)).endswith("8,5% → 8,0% · Manter")
+    assert (tela.rotulo_expander(_pesando(a, 8.5), _sug(2.5))
+            == f"{a.ativo.ticker} · 8,5% → 2,5% · Vender")
+
+
 def test_peso_devido_sem_alvo_da_classe_fica_no_limite_ou_sem_alvo(carteira):
     _, an = carteira
     assert rs.peso_devido(an[2]).valor == "sem alvo"

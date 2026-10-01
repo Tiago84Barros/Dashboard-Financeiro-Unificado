@@ -72,7 +72,7 @@ DECISAO: dict[str, tuple[str, str]] = {
     m.MANTER: (MANTER, "nenhuma regra pede mudança"),
 }
 
-AVISO_DECISAO = ("Leitura de adequação à sua estratégia (pesos, limites e "
+AVISO_DECISAO = ("Leitura de adequação à sua estratégia (% devida, limites e "
                  "tese), não ordem de compra ou venda. Fundamentos e valuation "
                  "ainda não entram nela.")
 AVISO_SUBSTITUTO = ("Candidatos do mesmo grupo de comparação, fora da sua "
@@ -115,10 +115,58 @@ class Decisao:
         return ROTULO_DECISAO[self.codigo]
 
 
-def decisao(a: m.AnaliseAtivo) -> Decisao:
+def alvo_do_ativo(a: m.AnaliseAtivo,
+                  sugerido: "AlvoSugerido | None" = None) -> float | None:
+    """A % devida que a decisão compara: a faixa do usuário, senão a sugestão."""
+    if a.faixa.alvo_ativo is not None:
+        return float(a.faixa.alvo_ativo)
+    return None if sugerido is None else float(sugerido.peso)
+
+
+def tolerancia_pp(alvo: float) -> float:
+    """Folga em torno da % devida antes de pedir mudança: 20% do alvo, no
+    mínimo meio ponto. Sem ela, todo ativo viraria comprar ou vender por
+    centésimos."""
+    return max(0.5, 0.2 * alvo)
+
+
+def decisao(a: m.AnaliseAtivo,
+            sugerido: "AlvoSugerido | None" = None) -> Decisao:
+    """Manter, comprar ou vender, ativo a ativo. Puro.
+
+    1. Vender que vem da análise (tese em dúvida, teto estourado) prevalece.
+    2. Com % devida (faixa do usuário ou sugestão), o peso do ativo contra
+       ela decide: acima da folga → vender parte; abaixo → comprar, salvo se
+       a classe já passou do alvo dela; dentro → manter.
+    3. Sem % devida, vale a leitura da classe (a tradução de ``DECISAO``).
+
+    Até 01/10/2026 só o passo 3 existia, e a decisão era a da classe: todos
+    os FIIs "Comprar", todas as ações "Manter", nenhum "Vender" sem teto
+    estourado (o usuário notou nas telas publicadas).
+    """
     codigo, detalhe = DECISAO.get(a.acao.estado, (MANTER, a.acao.rotulo))
     motivo = a.acao.justificativas[0] if a.acao.justificativas else ""
-    return Decisao(codigo, detalhe, motivo)
+    alvo = alvo_do_ativo(a, sugerido)
+    if codigo == VENDER or alvo is None:
+        return Decisao(codigo, detalhe, motivo)
+    atual = float(a.ativo.peso_atual)
+    dif = atual - alvo
+    devida = f"% devida {_pct(alvo)}"
+    if dif > tolerancia_pp(alvo):
+        return Decisao(
+            VENDER, f"vender parte: {_pp(dif)[1:]} acima da {devida}",
+            f"Pesa {_pct(atual)} da carteira contra {_pct(alvo)} devidos. "
+            "Vender tem custo (imposto, corretagem): parar de aportar nele e "
+            "aportar no resto da classe também reduz o peso.")
+    if dif < -tolerancia_pp(alvo):
+        if a.acao.estado == m.REAVALIAR_APORTES:
+            return Decisao(
+                MANTER, f"abaixo da {devida}, mas a classe já passou do alvo",
+                motivo)
+        return Decisao(
+            COMPRAR, f"faltam {_pp(-dif)[1:]} para a {devida}",
+            f"Pesa {_pct(atual)} da carteira contra {_pct(alvo)} devidos.")
+    return Decisao(MANTER, f"na {devida}", motivo)
 
 
 # -- porcentagem devida ------------------------------------------------------------
