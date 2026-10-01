@@ -21,10 +21,11 @@ Coberto por tests/test_inteligencia_ativos_resumida.py.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from core.cenario import modelo as cen
 from core.estrategia import politica as pol
+from core.inteligencia_ativos import avaliacao as av_
 from core.inteligencia_ativos import informacoes as inf
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import pares as prs
@@ -72,9 +73,11 @@ DECISAO: dict[str, tuple[str, str]] = {
     m.MANTER: (MANTER, "nenhuma regra pede mudança"),
 }
 
-AVISO_DECISAO = ("Leitura de adequação à sua estratégia (% devida, limites e "
-                 "tese), não ordem de compra ou venda. Fundamentos e valuation "
-                 "ainda não entram nela.")
+AVISO_DECISAO = ("Leitura por regras, não ordem de compra ou venda: junta a "
+                 "adequação à sua estratégia (% devida, limites e tese) com a "
+                 "avaliação multicritério do ativo (qualidade contra os pares, "
+                 "valuation contra o histórico e os pares, notícias e risco "
+                 "de mercado). Alerta eliminatório pesa sozinho.")
 AVISO_SUBSTITUTO = ("Candidatos do mesmo grupo de comparação, fora da sua "
                     "carteira. O sistema não os ordena como melhores: compare "
                     "na tabela antes de decidir.")
@@ -109,10 +112,16 @@ class Decisao:
     codigo: str          # MANTER | COMPRAR | VENDER
     detalhe: str         # por que, em poucas palavras
     motivo: str          # a primeira justificativa da análise
+    avaliacao: av_.Avaliacao | None = None
 
     @property
     def rotulo(self) -> str:
         return ROTULO_DECISAO[self.codigo]
+
+    @property
+    def argumentos(self) -> tuple[str, ...]:
+        """Uma linha por dimensão avaliada, com os critérios que pesaram."""
+        return av_.argumentos(self.avaliacao) if self.avaliacao else ()
 
 
 def alvo_do_ativo(a: m.AnaliseAtivo,
@@ -131,7 +140,8 @@ def tolerancia_pp(alvo: float) -> float:
 
 
 def decisao(a: m.AnaliseAtivo,
-            sugerido: "AlvoSugerido | None" = None) -> Decisao:
+            sugerido: "AlvoSugerido | None" = None,
+            avaliacao: av_.Avaliacao | None = None) -> Decisao:
     """Manter, comprar ou vender, ativo a ativo. Puro.
 
     1. Vender que vem da análise (tese em dúvida, teto estourado) prevalece.
@@ -139,11 +149,79 @@ def decisao(a: m.AnaliseAtivo,
        ela decide: acima da folga → vender parte; abaixo → comprar, salvo se
        a classe já passou do alvo dela; dentro → manter.
     3. Sem % devida, vale a leitura da classe (a tradução de ``DECISAO``).
+    4. A avaliação multicritério (``avaliacao.avaliar``) corrige o resultado:
+       alerta eliminatório → avaliar troca; qualidade frágil barra o aporte
+       e, somada a preço caro ou mercado negativo, vira avaliar troca; preço
+       caro ou notícias negativas qualificam o comprar.
 
     Até 01/10/2026 só o passo 3 existia, e a decisão era a da classe: todos
     os FIIs "Comprar", todas as ações "Manter", nenhum "Vender" sem teto
-    estourado (o usuário notou nas telas publicadas).
+    estourado (o usuário notou nas telas publicadas). O passo 4 entrou no
+    mesmo dia: "coloque fundamentos e valuation na decisão também".
     """
+    base = _decisao_por_peso(a, sugerido)
+    return com_avaliacao(base, avaliacao if avaliacao is not None
+                         else av_.avaliar(a))
+
+
+def com_avaliacao(d: Decisao, av: av_.Avaliacao) -> Decisao:
+    """Aplica a avaliação multicritério sobre a decisão por peso. Puro."""
+    d = replace(d, avaliacao=av)
+    q, preco, mercado = av.qualidade, av.preco, av.mercado
+    custo = ("Vender tem custo (imposto, corretagem): compare com os "
+             "substitutos e, no mínimo, não aporte mais.")
+    if av.criticos:
+        # O alerta vem antes do peso: "vender parte" esconderia que o
+        # problema é o ativo, não o tamanho da posição.
+        alerta = av.criticos[0].texto
+        antes = f" {d.motivo}" if d.codigo == VENDER and d.motivo else ""
+        return replace(d, codigo=VENDER, detalhe="avaliar troca: alerta "
+                       "eliminatório", motivo=f"{alerta[:1].upper()}"
+                       f"{alerta[1:]}. Nenhum ponto bom compensa esse alerta."
+                       f"{antes if antes else ' ' + custo}")
+    if q == av_.FRAGIL:
+        piora = [t for t, ok in (("preço acima do normal", preco == av_.CARO),
+                                 ("mercado e notícias negativos",
+                                  mercado == av_.NEGATIVO)) if ok]
+        if d.codigo != VENDER and piora:
+            return replace(d, codigo=VENDER, detalhe="avaliar troca: qualidade "
+                           f"frágil e {' e '.join(piora)}",
+                           motivo=f"{_motivo_qualidade(av)} {custo}")
+        if d.codigo == COMPRAR:
+            return replace(d, codigo=MANTER, detalhe=f"{d.detalhe}, mas "
+                           "qualidade frágil: não aportar por ora",
+                           motivo=_motivo_qualidade(av))
+        if d.codigo == MANTER:
+            return replace(d, detalhe=f"{d.detalhe}; qualidade frágil: não "
+                           "reforçar")
+        return d
+    if d.codigo == COMPRAR:
+        notas = []
+        if q == av_.FORTE and preco == av_.BARATO:
+            notas.append("qualidade forte e preço abaixo do normal")
+        elif preco == av_.CARO:
+            notas.append("preço acima do normal: aportar aos poucos")
+        if mercado == av_.NEGATIVO:
+            notas.append("mercado e notícias negativos: conferir antes")
+        if notas:
+            return replace(d, detalhe=f"{d.detalhe}; {'; '.join(notas)}")
+    if d.codigo == VENDER and q == av_.FORTE and not av.criticos:
+        return replace(d, motivo=f"{d.motivo} A qualidade é forte: o excesso "
+                       "pode sair pelo aporte no resto da classe, sem vender."
+                       .strip())
+    return d
+
+
+def _motivo_qualidade(av: av_.Avaliacao) -> str:
+    contra = [c.texto for c in av.dimensao(av_.QUALIDADE).criterios
+              if c.sinal < 0][:2]
+    return ("Qualidade frágil: " + "; ".join(contra) + ".") if contra else (
+        "Qualidade frágil.")
+
+
+def _decisao_por_peso(a: m.AnaliseAtivo,
+                      sugerido: "AlvoSugerido | None" = None) -> Decisao:
+    """Passos 1 a 3 de ``decisao``: estratégia e peso, sem o ativo em si."""
     codigo, detalhe = DECISAO.get(a.acao.estado, (MANTER, a.acao.rotulo))
     motivo = a.acao.justificativas[0] if a.acao.justificativas else ""
     alvo = alvo_do_ativo(a, sugerido)
