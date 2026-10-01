@@ -184,7 +184,7 @@ def test_secoes_externas_na_ordem_da_tela():
     # suíte offline todas saem SEM_DADOS
     assert all(s.estado == m.SEM_DADOS for s in a.secoes_externas)
     cen = next(s for s in a.secoes_externas if s.chave == "cenario")
-    assert '"Meu cenário", no fim desta aba' in cen.resumo
+    assert "séries macro do banco não puderam ser lidas" in cen.resumo
     q = a.questoes
     assert q[m.Q_FUNDAMENTOS].estado == m.SEM_DADOS
     assert "nenhum dos 14 indicadores" in q[m.Q_FUNDAMENTOS].resposta

@@ -423,6 +423,37 @@ def _perfil_financeiro_sem_banco(monkeypatch):
     yield
 
 
+# O cenário econômico é lido das séries do banco (core/cenario/automatico.py).
+# Em teste não há banco: os insumos saem vazios e o cache começa limpo. O
+# ``carregar`` real roda (é puro sobre os insumos); quem quer séries troca
+# ``ler_insumos``.
+@pytest.fixture(autouse=True)
+def _cenario_automatico_sem_banco(monkeypatch):
+    try:
+        from core.cenario import automatico
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(automatico, "ler_insumos",
+                        lambda engine=None: automatico.Insumos())
+    automatico._CACHE.clear()
+    yield
+    automatico._CACHE.clear()
+
+
+# Os destaques dos relatórios leem o corpus RAG publicado; em teste a caixa sai
+# só com os metadados. Quem testa a extração chama ``destaques`` (puro).
+@pytest.fixture(autouse=True)
+def _destaques_relatorios_sem_corpus(monkeypatch):
+    try:
+        from core.inteligencia_ativos import destaques_relatorios as dr
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(dr, "ler", lambda ticker: ())
+    yield
+
+
 # Estratégia de Investimentos em memória. A aba Inteligência dos Ativos
 # mostra o bloco da estratégia (abaixo do onboarding, ou em "Minha estratégia"
 # quando liberada), e o bloco lê o repositório. Não é autouse porque os testes
@@ -451,8 +482,9 @@ def estrategia_falsa(monkeypatch):
     yield falso
 
 
-# Cenário de Investimentos em memória, pelo mesmo motivo: a aba liberada
-# termina com "Meu cenário", e o bloco lê o repositório e as referências macro.
+# Cenário de Investimentos do usuário em memória. Desde 30/09/2026 a aba não
+# mostra mais "Meu cenário" (o cenário é lido dos dados); a tela antiga e o
+# repositório continuam e são testados com este fixture.
 @pytest.fixture
 def cenario_falso(monkeypatch):
     from core.cenario import modelo as mod

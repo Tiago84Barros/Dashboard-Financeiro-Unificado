@@ -156,11 +156,16 @@ def _concentracoes(c: calc.Calculos) -> tuple[Concentracao, ...]:
 
 def _texto_cenario(ctx: m.ContextoInvestidor) -> str:
     c = ctx.cenario
+    from core.cenario.modelo import CHAVES, DADOS
     if c is None:
-        return "Cenário de Investimentos ilegível agora."
+        return "Cenário econômico: séries macro ilegíveis agora."
+    if c.origem == DADOS:
+        if c.vazio:
+            return "Cenário econômico: séries macro ilegíveis agora."
+        return (f"Lido dos dados: {len(c.preenchidos)} de {len(CHAVES)} "
+                "itens com dado.")
     if c.vazio:
         return "Nenhum Cenário de Investimentos cadastrado."
-    from core.cenario.modelo import CHAVES
     return (f"Versão {c.versao}: {len(c.preenchidos)} de {len(CHAVES)} itens "
             "preenchidos.")
 

@@ -60,17 +60,20 @@ logger = logging.getLogger(__name__)
 
 
 def _cenario(engine=None, owner_id=None) -> tuple:
-    """(cenário, sinais de revisão). Leitura apenas: nada aqui grava."""
-    from core.cenario import divergencia, referencias
-    from core.cenario import repositorio as repo_cenario
+    """(cenário, sinais de revisão). Leitura apenas: nada aqui grava.
+
+    Desde 30/09/2026 o cenário é lido dos dados (``core.cenario.automatico``),
+    não perguntado ao usuário. Os sinais de revisão comparavam a premissa do
+    usuário com os dados; com o cenário feito dos próprios dados, não há o
+    que comparar. ``owner_id`` fica na assinatura: o cenário é o mesmo para
+    todos.
+    """
+    from core.cenario import automatico
     try:
-        cenario = repo_cenario.carregar(engine=engine, owner_id=owner_id)
+        return automatico.carregar(engine), ()
     except Exception:  # noqa: BLE001 — sem cenário a análise segue
         logger.warning("inteligencia_ativos: cenário ilegível", exc_info=True)
         return None, ()
-    if cenario.vazio:
-        return cenario, ()
-    return cenario, divergencia.sinais(cenario, referencias.referencias())
 
 
 def _posicao(carteira: dict, ticker: str) -> dict | None:

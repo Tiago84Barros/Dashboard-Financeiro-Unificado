@@ -145,7 +145,9 @@ def test_liberada_mostra_premissa_resumo_e_os_13_cartoes():
     assert any("Ações" in h and "📈" in h for h in htmls)
     assert any("Fundos imobiliários" in h for h in htmls)
     rotulos = [e.label for e in app.expander]
-    assert rotulos[:2] == ["TAEE11 · 40,0% · Manter",
+    # o cenário, lido dos dados, abre a página; depois um ativo por caixa
+    assert rotulos[:3] == ["🌎 Cenário econômico atual (lido dos dados)",
+                           "TAEE11 · 40,0% · Manter",
                            "HGLG11 · 60,0% · Vender"]
     assert "📊 Visão geral da carteira" in rotulos
     assert any("Premissa de toda análise" in h for h in htmls)
@@ -157,12 +159,11 @@ def test_liberada_mostra_premissa_resumo_e_os_13_cartoes():
     assert not app.exception
     htmls = [md.value for md in app.markdown]
     assert app.selectbox(key="ia_ativo").value == "HGLG11"
-    # no fim da página: a estratégia vigente e, depois dela, o cenário
+    # no fim da página: a estratégia vigente
     titulos = [h for h in htmls if h in ("#### Minha estratégia",
                                          "#### Meu cenário")]
-    assert titulos == ["#### Minha estratégia", "#### Meu cenário"]
-    assert [e.label for e in app.expander[-2:]] == [
-        "✏️ Ver ou alterar minha estratégia", "🌎 Ver ou alterar meu cenário"]
+    assert titulos == ["#### Minha estratégia"]
+    assert app.expander[-1].label == "✏️ Ver ou alterar minha estratégia"
 
     fluxo = next(h for h in htmls if "01 · Ativo" in h)
     titulos = ["Ativo", "Papel na carteira", "Peso atual",
@@ -173,10 +174,10 @@ def test_liberada_mostra_premissa_resumo_e_os_13_cartoes():
                 enumerate(titulos, start=1)]
     assert posicoes == sorted(posicoes)
     assert "Papel principal: renda imobiliária." in fluxo
-    assert "Nenhum alvo individual é presumido" in fluxo
+    assert "alvo da classe dividido pelo risco" in fluxo
     # nenhuma seção segue em preparação: o cenário virou premissa cadastrável
     assert "em preparação</span>" not in fluxo
-    assert "Nenhum Cenário de Investimentos cadastrado" in fluxo
+    assert "séries macro do banco não puderam ser lidas" in fluxo
     assert "Dado · fornecido pelo sistema" in fluxo
     assert "P/VP" in fluxo and "Dado não disponível." in fluxo
     questoes = next(h for h in htmls if "flex:1 1 220px" in h)
@@ -196,8 +197,7 @@ def test_liberada_sem_posicoes_nao_quebra():
     assert not app.exception
     assert "Nenhum ativo" in app.info[0].value
     # sem ativos, a estratégia continua alterável
-    assert [e.label for e in app.expander[-2:]] == [
-        "✏️ Ver ou alterar minha estratégia", "🌎 Ver ou alterar meu cenário"]
+    assert app.expander[-1].label == "✏️ Ver ou alterar minha estratégia"
 
 
 def test_alterar_estrategia_no_fim_da_aba_liberada(estrategia_falsa):
@@ -223,12 +223,18 @@ def test_cartoes_da_analise_so_usam_tokens_de_tema():
         assert "#" not in html.replace("&#", "")
 
 
-def test_meu_cenario_no_fim_da_aba_liberada(cenario_falso):
+def test_cenario_vem_dos_dados_e_nao_e_perguntado():
+    """30/09/2026: o usuário pediu para não perguntar o cenário; ele é lido
+    das séries do banco. Sem séries (teste), a caixa diz que faltaram."""
     app = _rodar(_liberada(), CARTEIRA_COMPLETA)
     assert not app.exception
-    assert any("Meu cenário" in md.value for md in app.markdown)
-    assert app.button(key="cfg_cenario_sugerir_v0") is not None
-    assert any("Nenhum cenário cadastrado" in md.value for md in app.markdown)
+    htmls = [md.value for md in app.markdown]
+    assert not any("Meu cenário" in h for h in htmls)
+    assert not any(e.label == "🌎 Ver ou alterar meu cenário"
+                   for e in app.expander)
+    assert not [b for b in app.button if "cenario" in (b.key or "")]
+    assert any("Cenário econômico atual" in h
+               and "não puderam ser lidas" in h for h in htmls)
 
 
 def test_bloqueada_nao_mostra_o_cenario():
@@ -258,7 +264,7 @@ def test_aba_esta_em_investimentos_e_a_estrategia_so_nela():
     assert len(chamadas) == 2   # onboarding (bloqueada) e fim (liberada)
     chamadas = [n for n in ast.walk(arvore) if isinstance(n, ast.Call)
                 and ast.unparse(n.func) == "tela_cenario.render"]
-    assert len(chamadas) == 1   # só no fim da aba liberada
+    assert not chamadas   # 30/09/2026: o cenário é lido dos dados
 
 
 def test_cartao_de_calculos_aparece_com_alertas_tabela_e_concentracao():

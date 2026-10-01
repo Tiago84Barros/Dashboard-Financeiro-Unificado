@@ -4,19 +4,22 @@ Investimentos → Inteligência dos Ativos, com a estratégia concluída. Desde
 30/09/2026 a aba abre numa **página resumida**, desenhada pelo usuário porque
 o painel anterior mostrava tudo de uma vez e confundia. De cima para baixo:
 
-1. **Página resumida**, um grupo por classe (seção abaixo).
-2. **📊 Visão geral da carteira**, recolhida num expander. Traz o resumo da
+1. **🌎 Cenário econômico atual (lido dos dados)**, num expander no topo: as
+   12 variáveis do cenário com valor, tendência, fonte e data (seção
+   *Cenário lido dos dados*, abaixo).
+2. **Página resumida**, um grupo por classe (seção abaixo).
+3. **📊 Visão geral da carteira**, recolhida num expander. Traz o resumo da
    carteira, a premissa, os cálculos objetivos e a tabela de adequação.
-3. **🔎 Análise detalhada**, atrás de um toggle (desligado ao abrir). Mostra as
+4. **🔎 Análise detalhada**, atrás de um toggle (desligado ao abrir). Mostra as
    questões e o fluxo das 13 seções do ativo escolhido, o **Portfolio Fit**
    (regras e LLM sob demanda) e o **Histórico e auditoria**. É um toggle, e
    não um expander, porque o Portfolio Fit tem expander próprio e o Streamlit
    não aninha expanders.
-4. **Minha estratégia**, recolhida num expander ao fim da página. Mostra a
+5. **Minha estratégia**, recolhida num expander ao fim da página. Mostra a
    estratégia vigente e permite editá-la. A edição abre uma nova versão, e a
    atual continua valendo até a nova ser concluída.
-5. **Meu cenário**, também num expander, depois da estratégia. É o Cenário de
-   Investimentos, premissa opcional: não bloqueia a análise.
+*Meu cenário* saiu em 30/09/2026: o usuário não informa mais o cenário,
+o programa o lê do banco.
 
 ## Página resumida
 
@@ -31,9 +34,14 @@ Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
   alvo da renda fixa, com a reserva incluída.
 - **📈 Ações, 🏢 FIIs e 🌎 Internacional**: um expander por ativo, com o rótulo
   `TICKER · peso · Manter|Comprar|Vender`. Dentro, na ordem do rascunho:
-  - **Porcentagem atual** e **porcentagem devida**. A devida só é um número
-    quando o usuário definiu faixa para o ativo; senão aparece o limite por
-    ativo ("até 10%") ou "sem alvo". Nenhum alvo individual é inventado.
+  - **Porcentagem atual** e **porcentagem devida**. Desde 30/09/2026 (pedido
+    do usuário) a devida é **sugerida**: o alvo da classe dividido entre os
+    ativos da classe pelo inverso da volatilidade dos retornos mensais
+    (`resumida.alvos_sugeridos`), respeitando o teto por ativo, com o
+    excedente redistribuído (*water-filling*). Ativo sem histórico recebe a
+    volatilidade mediana da classe; sem nenhum histórico, pesos iguais. A
+    faixa que o usuário definir para o ativo prevalece. Reserva e renda fixa
+    não recebem alvo por ativo. O método aparece ao lado do número.
   - **Manter, comprar ou vender**: tradução da ação de adequação. Comprar vem
     de *aporte compatível*. Vender vem de *reavaliar tese*, *reduzir
     concentração* (vender parte) ou *comparar alternativas*. Manter cobre o
@@ -41,11 +49,22 @@ Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
     com o aviso de que não é ordem.
   - **Se vender, qual substituir?**: até dois pares do mesmo grupo fora da
     carteira, os mais próximos em perfil. Não são ordenados como melhores.
-  - **Comparação com o mesmo segmento**: o ativo e os dois pares mais
-    próximos numa tabela, só com as métricas que têm dado.
-  - **Papel na carteira**, notícias (3 mais recentes), relatórios oficiais
-    (3 mais recentes) e **como o macro influencia**: as variáveis que mais
-    pesam na classe, o que o cenário do usuário diz delas, os sinais de
+  - **Comparação com o mesmo segmento**: uma régua por métrica (P/L, P/VP,
+    DY, ROE...) com o ativo e os dois pares mais próximos marcados, e a
+    leitura de onde o ativo fica entre eles. Só métricas que têm dado.
+  - **Papel na carteira** e **notícias** (3 mais recentes). A caixa nunca
+    fica vazia: sem notícia do ativo, mostra as do segmento
+    (`informacoes.noticias_com_setor`); sem elas, o noticiário geral do
+    mercado (`contexto_mercado.manchetes_gerais`), cada nível rotulado.
+  - **Relatórios relevantes**: o que os documentos dizem, não o link. Até 3
+    documentos dos últimos 12 meses com até 3 frases literais do emissor
+    que têm fato e número (resultado, caixa, dívida, proventos, guidance),
+    escolhidas de forma determinística do corpus RAG
+    (`destaques_relatorios.py`, sem LLM). Tabela, cabeçalho, inglês e
+    documento de política/regimento ficam de fora. Documento sem texto no
+    acervo aparece só com data e título.
+  - **Como o macro influencia**: as variáveis que mais pesam na classe, o
+    que o cenário lido dos dados diz delas, os sinais de
     divergência e, se já gerada nesta sessão, a leitura de impacto do
     Portfolio Fit.
   - O botão **Ver análise completa** liga a análise detalhada já no ativo.
@@ -53,7 +72,20 @@ Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
 Os cartões antigos da grade "Ativos" (`tela_painel.render_cards`) saíram da
 tela; a função continua no módulo.
 
-## Estratégia e cenário na própria aba
+## Cenário lido dos dados
+
+Desde 30/09/2026 o cenário não é perguntado ao usuário: havia dado
+suficiente no banco para o programa dizer em que ambiente estamos.
+`core/cenario/automatico.py` monta os 12 itens com `origem=DADOS`: Selic
+(`public.macro`), prefixado de ~1 ano contra a Selic (curva do Tesouro),
+IPCA, inflação implícita, USDBRL diário, PIB e ICC, dívida/PIB, juro real
+IPCA+, Fed Funds e Treasury 10 anos, spread high yield. Commodities e risco
+geopolítico não têm série: saem ausentes, nomeados, e a LLM os lê nas
+notícias. Fonte que falha vira motivo no item, nunca some. `de_dados` é
+puro; `carregar` usa cache de 15 minutos e nunca grava. `revisar` continua
+recusando `origem=DADOS`.
+
+## Estratégia na própria aba
 
 Desde 27/09/2026 a Estratégia de Investimentos não fica mais em Configurações
 → Geral. Ela é configurada e alterada nesta aba.
@@ -69,13 +101,9 @@ O bloco (`views/configuracoes_estrategia.py`) é renderizado uma única vez por
 execução, porque as chaves dos widgets são fixas. O `next_step` do portão
 aponta para `investments / asset_intelligence`.
 
-O Cenário de Investimentos saiu de Configurações → Geral no mesmo dia. Como é
-opcional, só aparece na aba liberada (*Meu cenário*); com a aba bloqueada, o
-que falta é a estratégia. O bloco (`views/configuracoes_cenario.py`) também é
-renderizado uma vez só. Os avisos que mandavam o usuário a Configurações
-(seção de cenário do ativo e aviso de revisão do Portfolio Fit) agora apontam
-para *Meu cenário*, no fim da aba. O não-admin perdeu a aba Geral de
-Configurações, que só tinha o cenário.
+O Cenário de Investimentos saiu de Configurações → Geral no mesmo dia e,
+em 30/09/2026, da aba também: passou a ser lido dos dados (seção acima).
+O não-admin perdeu a aba Geral de Configurações, que só tinha o cenário.
 
 ## Entrevista com o perfil financeiro
 
@@ -221,9 +249,14 @@ aprovada. O formato JSON já usa os nomes em inglês dessas colunas.
   análise pela caixa do ativo, a gravação automática, o botão de salvar e a
   falha do banco.
 - `tests/test_inteligencia_ativos_resumida.py` cobre a página resumida: os
-  grupos, manter/comprar/vender, a porcentagem devida sem alvo inventado, os
-  substitutos fora da carteira, a tabela de pares, notícias, macro e o HTML
-  só com tokens.
+  grupos, manter/comprar/vender, a porcentagem devida sugerida pelo inverso
+  da volatilidade (teto, redistribuição, mediana, pesos iguais), os
+  substitutos fora da carteira, a régua de pares, notícias com fallback,
+  relatórios sem link, macro e o HTML só com tokens.
+- `tests/test_cenario_automatico.py` cobre o cenário lido dos dados (itens,
+  ausências nomeadas, fallback do câmbio, cache, texto da LLM, tela).
+- `tests/test_destaques_relatorios.py` cobre a escolha das frases dos
+  relatórios.
 - `tests/test_inteligencia_ativos_historico.py` cobre a regra de quando salvar,
   o limite, a comparação, a auditoria, o modelo que respondeu e o repositório
   com engine falso.

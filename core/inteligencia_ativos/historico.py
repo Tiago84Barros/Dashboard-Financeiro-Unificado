@@ -341,6 +341,11 @@ def _br(x: float, casas: int = 1) -> str:
     return f"{x:.{casas}f}".replace(".", ",")
 
 
+def _brl(x: float) -> str:
+    """R$ 391.815,14: milhar com ponto, centavos com vírgula."""
+    return "R$ " + f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def _fmt(x: Metrica) -> str:
     return fund.formatar(x.valor, x.unidade, "BRL")
 
@@ -378,7 +383,7 @@ def comparar(anterior: Snapshot | None, atual: Snapshot) -> list[str]:
     if n.ticker == CARTEIRA:
         if a.valor and n.valor:
             frases.append(f"{quando}, o patrimônio era "
-                          f"R$ {_br(a.valor, 2)}; agora é R$ {_br(n.valor, 2)}.")
+                          f"{_brl(a.valor)}; agora é {_brl(n.valor)}.")
         for k, v in n.alocacao.items():
             antes = a.alocacao.get(k)
             if antes is not None and abs(v - antes) >= LIMIAR_PESO_PP:

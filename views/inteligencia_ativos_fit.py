@@ -200,16 +200,15 @@ def aviso_cenario(ctx: m.ContextoInvestidor,
     motivos = [s.texto for s in ctx.sinais_cenario]
     if leitura is not None and leitura.revisao_cenario:
         motivos.append("A leitura por LLM apontou fatos que contradizem o "
-                       "cenário salvo.")
+                       "cenário lido dos dados.")
     if not motivos:
         return None
     corpo = (f'<div style="font-weight:800;color:var(--app-warning)">'
              f'{escape(FRASE_REVISAO)}</div>'
              + _itens("Por quê", motivos)
              + '<div style="font-size:0.82rem;color:var(--app-subtle);'
-             'margin-top:6px">O cenário salvo continua valendo e não foi '
-             'alterado. Para revisá-lo: "Meu cenário", no fim desta '
-             'aba.</div>')
+             'margin-top:6px">O cenário é lido dos dados e se atualiza '
+             'sozinho quando as séries mudam; nada foi alterado.</div>')
     return _caixa(corpo, borda="warning")
 
 

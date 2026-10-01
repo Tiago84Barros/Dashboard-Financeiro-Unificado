@@ -95,15 +95,76 @@ def test_cada_acao_vira_uma_das_tres_palavras(carteira, estado, codigo):
     assert set(rs.DECISAO) == set(m.ROTULO_ACAO)
 
 
-def test_peso_devido_nao_inventa_alvo_por_ativo(carteira):
+def test_peso_devido_sem_alvo_da_classe_fica_no_limite_ou_sem_alvo(carteira):
     _, an = carteira
     assert rs.peso_devido(an[2]).valor == "sem alvo"
     ctx = _ctx(CARTEIRA, single_asset_limit_pct=10)
     a = _analise("BBAS3", ctx)
     devido = rs.peso_devido(a)
-    assert devido.valor == "até 10%" and "Sem alvo individual" in devido.detalhe
+    assert devido.valor == "até 10%" and "não tem alvo" in devido.detalhe
+    # o alvo que o usuário definiu vence a sugestão
     fx = replace(a.faixa, alvo_ativo=8.0, piso_ativo=5.0)
-    assert rs.peso_devido(replace(a, faixa=fx)).valor == "8,0%"
+    sug = rs.AlvoSugerido(12.0, 20.0, False, 20.0, rs.METODO_VOL)
+    assert rs.peso_devido(replace(a, faixa=fx), sug).valor == "8,0%"
+
+
+def _acoes(carteira, teto=None):
+    ctx, an = carteira
+    b = next(b for b in rs.blocos(an, ctx) if b.chave == rs.ACOES)
+    analises = tuple(replace(a, faixa=replace(a.faixa, teto_ativo=teto))
+                     for a in b.analises)
+    return replace(b, analises=analises)
+
+
+def test_alvo_sugerido_divide_a_classe_pelo_inverso_da_volatilidade(
+        carteira, monkeypatch):
+    """30/09/2026: o usuário pediu que a % devida seja sugerida. Alvo da
+    classe (20%) dividido para que cada ativo contribua com risco parecido."""
+    vols = {"BBAS3": 30.0, "TAEE11": 15.0}
+    monkeypatch.setattr(rs, "volatilidade", lambda a: vols[a.ativo.ticker])
+    alvos = _acoes(carteira).alvos
+    assert alvos["TAEE11"].peso == pytest.approx(20 * 2 / 3)
+    assert alvos["BBAS3"].peso == pytest.approx(20 / 3)
+    assert sum(x.peso for x in alvos.values()) == pytest.approx(20.0)
+    assert {x.metodo for x in alvos.values()} == {rs.METODO_VOL}
+    a = next(x for x in _acoes(carteira).analises if x.ativo.ticker == "TAEE11")
+    devido = rs.peso_devido(a, alvos["TAEE11"])
+    assert devido.valor == "13,3%"
+    assert "sugestão" in devido.detalhe and "15,0% a.a." in devido.detalhe
+    assert "Faltam" in devido.detalhe
+
+
+def test_alvo_sugerido_respeita_o_limite_e_repassa_a_sobra(carteira, monkeypatch):
+    vols = {"BBAS3": 30.0, "TAEE11": 10.0}
+    monkeypatch.setattr(rs, "volatilidade", lambda a: vols[a.ativo.ticker])
+    alvos = _acoes(carteira, teto=12.0).alvos
+    assert alvos["TAEE11"].peso == pytest.approx(12.0) and alvos["TAEE11"].limitado
+    assert alvos["BBAS3"].peso == pytest.approx(8.0) and not alvos["BBAS3"].limitado
+
+
+def test_alvo_sugerido_sem_volatilidade_usa_mediana_ou_pesos_iguais(
+        carteira, monkeypatch):
+    monkeypatch.setattr(rs, "volatilidade", lambda a: None)
+    alvos = _acoes(carteira).alvos
+    assert [x.peso for x in alvos.values()] == pytest.approx([10.0, 10.0])
+    assert {x.metodo for x in alvos.values()} == {rs.METODO_IGUAL}
+    vols = {"BBAS3": 20.0, "TAEE11": None}
+    monkeypatch.setattr(rs, "volatilidade", lambda a: vols[a.ativo.ticker])
+    alvos = _acoes(carteira).alvos
+    assert alvos["TAEE11"].peso == pytest.approx(10.0)   # mediana = 20
+
+
+def test_alvo_sugerido_nao_se_aplica_a_reserva_nem_sem_alvo_da_classe(carteira):
+    ctx, an = carteira
+    bs = {b.chave: b for b in rs.blocos(an, ctx)}
+    assert bs[rs.RESERVA].alvos == {} and bs[rs.RENDA_FIXA].alvos == {}
+    assert replace(bs[rs.ACOES], alvo_classe=None).alvos == {}
+
+
+def test_distribuir_com_todos_no_teto_nao_passa_do_teto():
+    pesos, presos = rs._distribuir({"a": 1.0, "b": 1.0}, 30.0,
+                                   {"a": 10.0, "b": 10.0})
+    assert pesos == {"a": 10.0, "b": 10.0} and presos == {"a", "b"}
 
 
 # -- pares e substitutos ---------------------------------------------------------------
@@ -201,3 +262,15 @@ def test_cartoes_so_usam_tokens_e_nao_viram_link_perigoso(carteira):
     assert "Vender" in htmls[2] and "Porcentagem devida" in htmls[2]
     assert "Leitura do Portfolio Fit" in htmls[-1]
     assert tela.rotulo_expander(a) == "BBAS3 · 15,0% · Vender"
+
+
+def test_relatorios_mostram_o_que_o_documento_diz_sem_link(carteira):
+    from core.inteligencia_ativos import destaques_relatorios as dr
+    _, an = carteira
+    a = _por(an, "BBAS3")
+    d = dr.Destaque("Release 2T26", "2026-08-10", "Release",
+                    ("O lucro foi de R$ 3 bilhões, <alta> de 8%.",))
+    html = tela.cartao_relatorios(a, (d,))
+    assert "Release 2T26" in html and "&lt;alta&gt;" in html
+    assert "<a href" not in html and "Trechos literais" in html
+    assert _sem_cor_literal(html)
