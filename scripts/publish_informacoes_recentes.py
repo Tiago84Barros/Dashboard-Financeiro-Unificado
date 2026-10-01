@@ -130,6 +130,7 @@ def agrupar_noticias(linhas, resolver, eh_13f) -> dict:
             if len(itens) >= MAX_NOTICIAS:
                 continue
             pub = r.get("publicado_em")
+            tom, escopo = _tom_do_provedor(r, tk)
             itens.append({
                 "headline": titulo,
                 "date": pub.date().isoformat() if pub else None,
@@ -141,16 +142,36 @@ def agrupar_noticias(linhas, resolver, eh_13f) -> dict:
                 "categoria": cl.categoria,
                 "motivo": cl.motivo,
                 "retrieved_at": _iso(r.get("coletado_em")),
-                # sentimento do provedor (Alpha Vantage etc.), por artigo;
+                # sentimento do provedor (Alpha Vantage, Marketaux): o do
+                # ticker quando o provedor o mediu, senão o do artigo;
                 # ausente na maioria das fontes brasileiras
-                "sentimento_api": _num(r.get("sentimento_api")),
-                "rotulo_sentimento": r.get("rotulo_sentimento") or None,
+                "sentimento_api": tom,
+                "sentimento_escopo": escopo,
+                # o rótulo da API é do artigo: não acompanha o tom do ticker
+                "rotulo_sentimento": ((r.get("rotulo_sentimento") or None)
+                                      if escopo == "artigo" else None),
             })
         # exibição: mais recente primeiro dentro do que entrou
         itens.sort(key=lambda i: i["date"] or "", reverse=True)
         saida[tk] = {"itens": itens,
                      "descartadas": dict(sorted(descartes[tk].items()))}
     return saida
+
+
+def _tom_do_provedor(r, tk: str) -> tuple[float | None, str | None]:
+    """(tom, escopo) do provedor para ``tk`` nesta notícia.
+
+    O do ticker (``entidades.sentimento_por_ticker``) vence o do artigo: numa
+    matéria que cita vários ativos o escore do artigo mistura todos e não diz
+    o que a notícia significa para este. Sem tom do ticker, vale o do artigo,
+    marcado como tal para quem lê saber de qual se trata."""
+    por_ticker = (r.get("entidades") or {}).get("sentimento_por_ticker")
+    if isinstance(por_ticker, dict):
+        tom = _num(por_ticker.get(tk))
+        if tom is not None:
+            return tom, "ticker"
+    tom = _num(r.get("sentimento_api"))
+    return tom, ("artigo" if tom is not None else None)
 
 
 def agrupar_documentos(linhas) -> dict:

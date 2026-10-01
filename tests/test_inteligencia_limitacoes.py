@@ -81,7 +81,8 @@ def test_avaliacao_prefere_o_tom_do_provedor_e_conta_os_metodos(an):  # noqa: F8
     ]))
     crit = next(c for c in a.dimensao(av.MERCADO).criterios
                 if "notícia(s) própria(s)" in c.texto)
-    assert "1 pelo provedor, 1 pelo léxico" in crit.texto
+    assert ("1 pelo provedor para o artigo inteiro, 1 pelo léxico"
+            in crit.texto)
     assert "1 com provedor e léxico em sinais opostos" in crit.texto
 
 
@@ -252,3 +253,102 @@ def test_pontuacao_e_conjuncao_fecham_o_escopo():
 
 def test_termo_mais_longo_conta_uma_vez():
     assert sentimento.calcular("Banco eleva preço-alvo", "pt") == 0.5
+
+
+# -- tom do provedor por ticker (01/10/2026) -------------------------------------
+# Pedido do usuário: "Resolva também o tom do provedor por ticker". O arquivo
+# publicado levava o tom do artigo inteiro; numa matéria sobre vários ativos ele
+# mistura todos.
+
+
+def test_acervo_grava_o_tom_de_cada_ticker_resolvido():
+    import json
+    from dataclasses import replace as rep
+
+    from core.noticias import armazenamento as arm
+    from core.noticias import modelos
+    from tests.apoio_noticias import noticia
+    from tests.test_noticias_reingestao import _avaliada
+
+    n = noticia("Alfa compra Beta", "https://v.teste/alfa-beta")
+    n = rep(n, entidades=modelos.Entidades(tickers=("ALFA", "BETA")),
+            bruto={"ticker_sentiment": {"ALFA": -0.2, "BETA": 0.61234567,
+                                        "GAMA": 0.9}})
+    ent = json.loads(arm.linha_item(_avaliada(n))["entidades"])
+    # GAMA foi citado pelo provedor, mas a resolução não o manteve
+    assert ent["sentimento_por_ticker"] == {"ALFA": -0.2, "BETA": 0.6123}
+    assert ent["tickers"] == ["ALFA", "BETA"]
+
+    sem = json.loads(arm.linha_item(_avaliada(rep(n, bruto={})))["entidades"])
+    assert "sentimento_por_ticker" not in sem
+
+
+def test_tom_por_ticker_ignora_valor_invalido():
+    from core.noticias.armazenamento import sentimento_por_ticker
+    assert sentimento_por_ticker(
+        {"ticker_sentiment": {"A": "x", "B": float("nan"), "C": 2}},
+        ("A", "B", "C")) == {"C": 1.0}
+    assert sentimento_por_ticker(None, ("A",)) == {}
+
+
+def test_marketaux_guarda_o_tom_de_cada_entidade():
+    from core.noticias.provedores.marketaux import Marketaux
+    e = Marketaux._entidades([
+        {"symbol": "aapl", "sentiment_score": 0.5},
+        {"symbol": "AAPL", "sentiment_score": 0.3},
+        {"symbol": "MSFT", "sentiment_score": -0.4},
+        {"symbol": "GOOG"},
+    ])
+    assert e["por_ticker"] == {"AAPL": 0.4, "MSFT": -0.4}
+    assert abs(e["sentimento"] - (0.5 + 0.3 - 0.4) / 3) < 1e-9
+
+
+def test_publicador_prefere_o_tom_do_ticker_ao_do_artigo():
+    from scripts import publish_informacoes_recentes as pub
+    quando = datetime(2026, 9, 20, 12, tzinfo=timezone.utc)
+    linhas = [{"titulo": "Vale (VALE3) e Petrobras (PETR4) fecham acordo",
+               "publicado_em": quando, "url": "https://a", "veiculo": "A",
+               "entidades": {"tickers": ["VALE3", "PETR4"],
+                             "sentimento_por_ticker": {"VALE3": -0.45}},
+               "sentimento_api": 0.2, "rotulo_sentimento": "Somewhat-Bullish"}]
+    grupos = pub.agrupar_noticias(linhas, lambda t: ("VALE3", "PETR4"),
+                                  lambda t: False)
+    vale = grupos["VALE3"]["itens"][0]
+    assert (vale["sentimento_api"], vale["sentimento_escopo"]) == (-0.45,
+                                                                   "ticker")
+    assert vale["rotulo_sentimento"] is None   # o rótulo é do artigo
+    petr = grupos["PETR4"]["itens"][0]
+    assert (petr["sentimento_api"], petr["sentimento_escopo"]) == (0.2,
+                                                                   "artigo")
+    assert petr["rotulo_sentimento"] == "Somewhat-Bullish"
+
+
+def test_avaliacao_separa_tom_do_ticker_e_do_artigo(an):  # noqa: F811
+    a = av.avaliar(_com(an["WEGE3"], _fund(**BOA), noticias=[
+        replace(_noticia("Ação dispara"), sentimento_api=-0.4,
+                sentimento_escopo="ticker"),
+        replace(_noticia("Resultado do trimestre"), sentimento_api=0.3,
+                sentimento_escopo="artigo"),
+    ]))
+    crit = next(c for c in a.dimensao(av.MERCADO).criterios
+                if "notícia(s) própria(s)" in c.texto)
+    assert ("1 pelo provedor para o ticker, 1 pelo provedor para o artigo "
+            "inteiro") in crit.texto
+
+
+def test_backfill_so_acrescenta_o_que_falta_para_os_tickers_da_linha():
+    from scripts.backfill_sentimento_por_ticker import planejar
+    tons = {("alphavantage", "https://a"): {"AAPL": 0.3, "MSFT": -0.2}}
+    linhas = [
+        {"id_dedup": "1", "provedor": "alphavantage", "url": "https://a",
+         "entidades": {"tickers": ["AAPL"]}},
+        {"id_dedup": "2", "provedor": "alphavantage", "url": "https://a",
+         "entidades": '{"tickers": ["AAPL"], '
+                      '"sentimento_por_ticker": {"AAPL": 0.3}}'},
+        {"id_dedup": "3", "provedor": "marketaux", "url": "https://a",
+         "entidades": {"tickers": ["AAPL"]}},
+        {"id_dedup": "4", "provedor": "alphavantage", "url": "https://a",
+         "entidades": {"tickers": ["NVDA"]}},
+    ]
+    # 2 já tem; 3 é de outro provedor; 4 não tem ticker com tom
+    assert planejar(linhas, tons) == [("1", {"AAPL": 0.3})]

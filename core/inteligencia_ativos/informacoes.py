@@ -423,6 +423,10 @@ class Noticia:
     # fontes brasileiras não medem e ficam com o léxico do app.
     sentimento_api: float | None = None
     rotulo_sentimento: str | None = None
+    # De quem é o tom: "ticker" (o provedor mediu este ativo) ou "artigo" (a
+    # matéria inteira). Arquivo publicado antes de 01/10/2026 não traz o
+    # campo, e ali o tom era sempre o do artigo.
+    sentimento_escopo: str | None = None
 
     @property
     def rotulo_categoria(self) -> str:
