@@ -19,7 +19,10 @@ _QUALITY_SEVERITY_ALIASES = {"warning": "warn", "error": "critical"}
 # colunas atualizadas no ON CONFLICT (exclui chaves e created_at)
 _UPDATE_COLS = {
     "companies": ("name", "cnpj", "sector", "subsector", "segment", "website",
-                  "description", "logo_url", "codigo_cvm"),
+                  "description", "logo_url", "codigo_cvm",
+                  # 078: datas do cadastro CVM (omitidas se a migration faltar)
+                  "dt_constituicao", "dt_registro_cvm", "categoria_registro",
+                  "controle_acionario"),
     "assets": ("company_id", "asset_type", "exchange", "currency", "is_active"),
     "historical_prices": ("open", "high", "low", "close", "adjusted_close", "volume",
                           "source", "raw_payload_id", "knowledge_at",
