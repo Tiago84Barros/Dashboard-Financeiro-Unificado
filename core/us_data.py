@@ -13,9 +13,16 @@ import core.us_read as _read
 try:
     import streamlit as st
     _cache = st.cache_data(ttl=300, show_spinner=False)
+    # Leituras que trazem a tabela inteira. O painel PIT lê os ~350 mil preços
+    # mensais de uma vez; com TTL de 5 min ele foi, sozinho, o maior egress do
+    # Supabase (92 mi de linhas desde jul/2026 -- o ciclo set/2026 fechou em
+    # 7,8 GB contra 5 GB do plano). Safras e preços mudam no máximo uma vez
+    # por noite, então 12 h não envelhece nada que a tela mostre.
+    _cache_pesado = st.cache_data(ttl=43200, show_spinner=False)
 except Exception:  # contexto sem Streamlit (testes/CLI): no-op
     def _cache(fn):
         return fn
+    _cache_pesado = _cache
 
 
 @_cache
@@ -124,7 +131,7 @@ def _anexa_negociabilidade_e_ciclo(frame):
     return out
 
 
-@_cache
+@_cache_pesado
 def scored_universe(limit_companies: int | None = None):
     """Cross-section com score fundamentalista calculado (para as abas de análise).
 
@@ -179,7 +186,7 @@ def dossie(symbol: str) -> dict:
 HORIZONTE_PAINEL_MESES = 12
 
 
-@_cache
+@_cache_pesado
 def score_panel(score_version: str | None = None,
                 horizon_months: int = HORIZONTE_PAINEL_MESES):
     return _read.load_score_panel(score_version=score_version,
@@ -194,7 +201,7 @@ def advanced_snapshot(symbol: str):
     return _read.load_advanced_snapshot(symbol)
 
 
-@_cache
+@_cache_pesado
 def asymmetry_universe(limit_companies: int | None = None):
     """Cross-section de assimetria (Empresas Fora da Curva)."""
     if _use_snapshot():
