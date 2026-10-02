@@ -19,6 +19,7 @@ from core.chat_memory import (
     save_chat_history,
     visible_chat_history,
 )
+from core.inteligencia_ativos import veredito
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_carteira import chat_com_carteira
 from core.llm_dossie_carteira import gerar_dossie_classe
@@ -92,12 +93,28 @@ def _card_html(titulo: str, texto: str, accent: str) -> str:
     )
 
 
+def _com_veredito(contexto: str, vereditos, pergunta: str) -> tuple[str, dict]:
+    """Contexto com o bloco de veredito, se a tela der um. Falha vira um
+    bloco que a nomeia: a LLM não conclui sem o veredito."""
+    if vereditos is None:
+        return contexto, {}
+    try:
+        bloco, avaliacoes = vereditos(pergunta)
+    except Exception as exc:  # noqa: BLE001 - o chat não cai pelo veredito
+        bloco, avaliacoes = (
+            "=== AVALIAÇÃO POR REGRAS (Inteligência dos Ativos) ===\n"
+            f"Indisponível agora ({type(exc).__name__}): não recomende "
+            "comprar nem aumentar sem ela."), {}
+    return (f"{contexto}\n\n{bloco}" if bloco else contexto), avaliacoes
+
+
 def render_chat_carteira(
     *,
     classe: str,
     tickers: Sequence[str],
     build_context: Callable[..., str],
     sugestoes: Sequence[str] | None = None,
+    vereditos: Callable[[str], tuple[str, dict]] | None = None,
     # Roxo escurecido: sem token, ficava fixo, e #B084F6 rende 2,8:1
     # sobre a pagina clara -- ilegivel. #9B51E0 fica legivel nos dois.
     accent: str = "#9B51E0",
@@ -107,6 +124,10 @@ def render_chat_carteira(
     ``build_context`` recebe a pergunta e o sinalizador ``valores_reais`` e
     devolve o contexto auditável; só é chamado quando existe pergunta ou quando
     o dossiê é pedido, para não pagar o custo a cada rerun.
+
+    ``vereditos`` (opcional) recebe a pergunta e devolve o bloco de veredito
+    da Inteligência dos Ativos e as avaliações por ticker: o bloco vai ao
+    contexto, e a resposta (chat e dossiê) é conferida contra elas.
     """
     classe = str(classe or "acoes").lower()
     # A Visão Geral usa a mesma barra com a carteira inteira como escopo: o
@@ -218,7 +239,12 @@ def render_chat_carteira(
                             "substituições, tributação e plano de aporte…"):
                 try:
                     contexto = build_context(pedido, valores_reais=valores_reais)
+                    contexto, avaliacoes = _com_veredito(contexto, vereditos, pedido)
                     resposta = gerar_dossie_classe(contexto, classe=classe)
+                    # Dossiê é longo e caro: sem reescrita, mas a contradição
+                    # com o veredito sai avisada no topo, nunca em silêncio.
+                    resposta = veredito.com_aviso(
+                        resposta, veredito.conferir_resposta(resposta, avaliacoes))
                 except Exception as exc:  # provedor fora do ar, timeout, dado ausente
                     resposta = f"Não foi possível gerar o dossiê agora: {exc}"
             st.markdown(escapar_cifrao(resposta))
@@ -243,8 +269,11 @@ def render_chat_carteira(
         with st.spinner("Consultando carteira, macro, curva e noticiário…"):
             try:
                 contexto = build_context(pergunta, valores_reais=valores_reais)
-                resposta = chat_com_carteira(contexto, historico[:-1], pergunta,
-                                             classe=classe)
+                contexto, avaliacoes = _com_veredito(contexto, vereditos, pergunta)
+                resposta = veredito.responder_coerente(
+                    lambda h, msg: chat_com_carteira(contexto, h, msg,
+                                                     classe=classe),
+                    historico[:-1], pergunta, avaliacoes)
             except Exception as exc:  # provedor fora do ar, timeout, dado ausente
                 resposta = f"Não foi possível consultar a LLM neste momento: {exc}"
         st.markdown(escapar_cifrao(resposta))

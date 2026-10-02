@@ -15,6 +15,7 @@ Dashboard:
 Dados: core/investimentos + core/proventos
 """
 import html as _html
+import logging
 from datetime import datetime as _datetime
 
 import pandas as pd
@@ -50,6 +51,8 @@ from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, container_pagina
 from design.lacunas import aviso_lacuna
 from design.tema_canvas import escala_correlacao
+
+logger = logging.getLogger(__name__)
 
 # ── Paleta ────────────────────────────────────────────────────────────────────
 _COR_POSITIVO = "#00C896"
@@ -3085,8 +3088,32 @@ def _fundamentos_exterior(ext_pos) -> dict:
     return saida
 
 
+def _vereditos_da_carteira(carteira: dict | None, posicoes):
+    """Callable de ``render_chat_carteira``: o bloco de veredito das
+    ``posicoes`` com a DECISÃO que a Inteligência dos Ativos mostra para a
+    carteira do usuário (estratégia e peso) e, sem Estratégia liberada ou sem
+    decisão para o ativo, o limite do ativo. Mesma análise memorizada da aba
+    da Inteligência: nada é recalculado se ela já rodou."""
+    from core.inteligencia_ativos import veredito
+
+    def _vereditos(pergunta: str) -> tuple[str, dict]:
+        decisoes: dict = {}
+        if carteira:
+            from core.estrategia import portao as _portao
+            from views import inteligencia_ativos as _ia
+            try:
+                lib = _portao.verificar()
+                if lib.disponivel:
+                    decisoes = veredito.vereditos_da_carteira(
+                        _ia._analisar_carteira_memo(lib, carteira))
+            except Exception:  # noqa: BLE001 - cai no limite do ativo
+                logger.exception("Decisão da Inteligência para o chat falhou")
+        return veredito.bloco_da_carteira(posicoes, decisoes, pergunta)
+    return _vereditos
+
+
 def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
-                          ano_atual=None) -> None:
+                          ano_atual=None, carteira: dict | None = None) -> None:
     from core.llm_context_carteira import build_carteira_classe_context
     from design.chat_carteira import render_chat_carteira
     from design.portfolio_db_analysis import (
@@ -3152,7 +3179,10 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
         return contexto
 
     render_chat_carteira(classe=classe, tickers=tickers,
-                         build_context=_contexto)
+                         build_context=_contexto,
+                         vereditos=(None if classe == "tesouro" else
+                                    _vereditos_da_carteira(carteira,
+                                                           posicoes_classe)))
 
 
 def _tab_analise(carteira: dict, proventos: dict) -> None:
@@ -3423,6 +3453,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         render_chat_carteira(
             classe="geral", tickers=[p["ticker"] for p in posicoes],
             build_context=_contexto_geral,
+            vereditos=_vereditos_da_carteira(carteira, posicoes),
         )
 
 
@@ -3473,6 +3504,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             _bloco_analise_classe(
                 "acoes", acoes,
                 {p["ticker"]: fd_all.get(_base(p["ticker"]), {}) for p in acoes},
+                carteira=carteira,
             )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -3509,6 +3541,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             _bloco_analise_classe(
                 "fiis", fiis,
                 {p["ticker"]: fd_fiis.get(p["ticker"], {}) for p in fiis},
+                carteira=carteira,
             )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -3823,6 +3856,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
 
             _bloco_analise_classe(
                 "exterior", ext_pos, _fundamentos_exterior(ext_pos),
+                carteira=carteira,
             )
 
     # ══════════════════════════════════════════════════════════════════════════

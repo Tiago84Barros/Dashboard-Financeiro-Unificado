@@ -12,6 +12,7 @@ tests/test_portfolio_global_view.py.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import date
 
@@ -42,6 +43,7 @@ from core.global_portfolio import (
 from core.global_portfolio.aggregate import classes_sem_posicao, montar_posicoes
 from core.global_portfolio.returns import Cobertura, retornos_mensais
 from core.global_portfolio.taxonomy import ROTULOS, nao_mapeados
+from core.inteligencia_ativos import veredito
 from core.lacunas import registrar_limitacoes
 from core.llm_context_global import build_global_portfolio_context
 from core.llm_global import chat_com_portfolio_global
@@ -1421,6 +1423,24 @@ def _painel_aporte(alvos: dict, renda_fixa: float | None) -> None:
 _CHAVE_CHAT = "portfolio_global_chat_historico"
 
 
+def _itens_do_veredito(df: pd.DataFrame, pergunta: str) -> list[dict]:
+    """Ações e FIIs da carteira para o bloco de veredito, com mercado: os
+    citados na pergunta primeiro (o bloco tem teto de tickers)."""
+    texto = str(pergunta or "").upper()
+    itens = []
+    for linha in df.to_dict("records"):
+        classe = str(linha.get("asset_class") or "").strip().lower()
+        simbolo = str(linha.get("symbol") or "").strip().upper()
+        if classe in veredito.MERCADOS and simbolo:
+            citado = re.search(rf"(?<![A-Z0-9]){re.escape(simbolo)}(?![A-Z0-9])",
+                               texto) is not None
+            itens.append((not citado, {"ticker": simbolo, "mercado": classe,
+                                       "setor": str(linha.get("sector_raw")
+                                                    or linha.get("sector") or "")
+                                       or None}))
+    return [item for _, item in sorted(itens, key=lambda x: x[0])]
+
+
 def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                  ret: pd.DataFrame, cob: Cobertura | None, pesos: dict,
                  papeis: list, acoes: list,
@@ -1499,7 +1519,13 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                 detalhe = bloco_detalhe_armazem(df, pergunta)
                 if detalhe:
                     contexto += "\n\n" + detalhe
-                resposta = chat_com_portfolio_global(contexto, historico[:-1], pergunta)
+                # O mesmo veredito da Inteligência dos Ativos por ação e FII
+                # (carteiras-modelo: o limite do ativo), conferido na resposta.
+                contexto, avaliacoes = veredito.anexar(
+                    contexto, _itens_do_veredito(df, pergunta))
+                resposta = veredito.responder_coerente(
+                    lambda h, msg: chat_com_portfolio_global(contexto, h, msg),
+                    historico[:-1], pergunta, avaliacoes)
             except Exception as exc:  # noqa: BLE001 - fronteira de isolamento do provedor
                 logger.exception("Falha no chat do portfolio global")
                 resposta = f"Erro ao consultar a LLM: {exc}"

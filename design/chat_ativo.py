@@ -18,6 +18,7 @@ from core.chat_memory import (
     save_chat_history,
     visible_chat_history,
 )
+from core.inteligencia_ativos import veredito
 from core.llm_ativo import chat_com_ativo
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.utils import escapar_cifrao
@@ -158,8 +159,17 @@ def render_chat_ativo(
                 from core.contexto_mercado import bloco_contexto_mercado
 
                 contexto = build_context(pergunta) + "\n\n" + bloco_contexto_mercado()
-                resposta = chat_com_ativo(contexto, historico[:-1], pergunta,
-                                          mercado=mercado, ticker=tk)
+                # O veredito da Inteligência dos Ativos para este ativo, e a
+                # resposta conferida contra ele.
+                avaliacoes: dict = {}
+                if mercado in veredito.MERCADOS:
+                    contexto, avaliacoes = veredito.anexar(
+                        contexto, [{"ticker": tk, "nome": nome or None}],
+                        mercado=mercado)
+                resposta = veredito.responder_coerente(
+                    lambda h, msg: chat_com_ativo(contexto, h, msg,
+                                                  mercado=mercado, ticker=tk),
+                    historico[:-1], pergunta, avaliacoes)
             except Exception as exc:  # provedor fora do ar, timeout, dado ausente
                 resposta = f"Não foi possível consultar a LLM neste momento: {exc}"
         st.markdown(escapar_cifrao(resposta))

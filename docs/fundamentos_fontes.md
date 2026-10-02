@@ -97,7 +97,7 @@ criada. Se um leitor falhar, a seção vira `SEM_DADOS` e o resto da análise co
 suíte de testes, a fixture `_fundamentos_sem_banco` (`tests/conftest.py`) mantém a
 seção offline.
 
-## O mesmo veredito nas LLMs da Empresas B3
+## O mesmo veredito em todo o app (B3, EUA, FII)
 
 `core/inteligencia_ativos/veredito.py` calcula, para cada ação B3, a mesma `Avaliacao`
 da Inteligência dos Ativos (mesmos leitores, mesma régua de dívida) e o limite que ela
@@ -120,3 +120,32 @@ negativo → "avaliar troca"; qualidade frágil sozinha → "não aportar". São
   a `perspectiva` em código ("fraca" com "avaliar troca", "moderada" com "não aportar"),
   dizendo no resumo por quê. A perspectiva limitada também reduz o multiplicador da
   redistribuição de pesos.
+
+### Generalização (02/10/2026)
+
+O veredito deixou de ser só da Empresas B3. `veredito.avaliar_ativo(..., mercado=)`
+avalia ação da B3, ação americana e FII com os leitores da Inteligência; o bloco aceita
+`mercado` por item. Duas profundidades:
+
+- **Carteiras-modelo** (Empresas B3, Empresas Americanas, Seleção de FIIs, Portfólio
+  Global, chat por ativo): o limite do ativo, como acima.
+- **Carteira do usuário** (Investimentos, chat por classe, Visão Geral e dossiê): a
+  DECISÃO que a Inteligência mostra para a posição — estratégia e peso, via
+  `resumida.decisao` — convertida em limite por `veredito_de_decisao` ("avaliar troca",
+  "reduzir", "não aportar", "livre"). Sem Estratégia liberada, ou sem decisão para o
+  ativo, vale o limite do ativo. ETF, BDR e renda fixa não têm avaliação por regras.
+
+Todo chat dessas telas passa por `veredito.responder_coerente` (a conferência acima). O
+dossiê não é reescrito (é longo): a contradição detectada sai avisada no topo.
+`REGRA_VEREDITO` está nos prompts de B3, FII, Global, ativo e carteira.
+
+**Portão da seleção (Criação de Portfólio B3)**: sempre ligado, depois do piso de
+qualidade e antes do parecer de LLM. Nome com limite "avaliar troca" ou "não aportar"
+não entra; o próximo do ranking do mesmo segmento herda a vaga e o peso
+(`veredito.filtrar_selecao`). Avaliação indisponível não veta, mas é listada; vaga sem
+substituto fica vazia e é listada. A seção "Inteligência dos Ativos — vetos e
+substituições" e o resumo salvo (`inteligencia_*`) mostram tudo.
+
+Lacunas conhecidas: a seleção de FIIs e a de ações americanas ainda não têm portão; a
+conferência é heurística; menção a ticker americano só é reconhecida para tickers que
+estão no bloco.
