@@ -30,8 +30,9 @@ from core.chat_memory import (
     save_chat_history,
     visible_chat_history,
 )
+from core.inteligencia_ativos import veredito
 from core.llm_b3 import (
-    chat_com_portfolio,
+    chat_coerente,
     llm_disponivel,
     provedores_disponiveis,
     redistribuir_pesos,
@@ -1039,7 +1040,11 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
 
                 contexto = contexto + "\n\n" + conjuntura_da_carteira(
                     "us", model.get("items", []))
-                resposta = chat_com_portfolio(contexto, historico[:-1], pergunta)
+                contexto, avaliacoes = veredito.anexar(
+                    contexto, model.get("items", []),
+                    (_meta or {}).get("mentioned_tickers"), mercado="us")
+                resposta = chat_coerente(contexto, historico[:-1], pergunta,
+                                         avaliacoes)
             except Exception as exc:  # noqa: BLE001
                 resposta = f"Erro ao consultar LLM: {exc}"
         st.markdown(escapar_cifrao(resposta))

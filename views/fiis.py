@@ -59,6 +59,7 @@ from core.fii_renda_recorrente import dy_recorrente
 from core.fii_selection_explanations import build_selection_reports
 from core.fii_taxonomy import ORDEM_CATEGORIAS_FII, categoria_fii
 from core.fii_validation import validation_supports_strategy
+from core.inteligencia_ativos import veredito
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_context_ativo import build_fii_ativo_context
 from core.llm_context_fii import (
@@ -1276,12 +1277,18 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                 )
                 from core.contexto_mercado import bloco_contexto_mercado
 
-                detalhe = get_warehouse_detail_context(
-                    tickers_para_detalhe(user_input, items))
+                alvos = tickers_para_detalhe(user_input, items)
+                detalhe = get_warehouse_detail_context(alvos)
                 if detalhe:
                     context = context + "\n\n" + detalhe
                 context = context + "\n\n" + bloco_contexto_mercado()
-                answer = chat_com_fiis(context, history[:-1], user_input)
+                # Citados primeiro, depois a seleção por peso: o mesmo
+                # veredito da Inteligência dos Ativos, conferido na resposta.
+                context, avaliacoes = veredito.anexar(
+                    context, [{"ticker": t} for t in alvos], mercado="fii")
+                answer = veredito.responder_coerente(
+                    lambda h, msg: chat_com_fiis(context, h, msg),
+                    history[:-1], user_input, avaliacoes)
             except Exception as exc:
                 answer = f"Não foi possível consultar a LLM neste momento: {exc}"
         st.markdown(escapar_cifrao(answer))

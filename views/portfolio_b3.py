@@ -38,6 +38,7 @@ from core.b3_vigencia import (
     safra_vigente_em,
 )
 from core.dossie_b3 import avaliar_para_selecao, quali_gate_disponivel
+from core.inteligencia_ativos import veredito
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from data_pipeline.utils.date_utils import fmt_datetime_br
@@ -596,6 +597,36 @@ def _quali_avaliar_cached(tk: str) -> dict:
                          "motivo": f"avaliação indisponível ({exc})",
                          "parecer": {}, "dossie": {}}
     return cache[tk]
+
+
+def _intel_avaliar_cached(tk: str, setor: str | None = None):
+    """Avaliação por regras da Inteligência dos Ativos, com cache de sessão.
+    Falha não é guardada: o portão é fail-open e tenta de novo no rerun."""
+    cache = st.session_state.setdefault("pb3_intel_cache", {})
+    chave = str(tk).upper().replace(".SA", "")
+    if chave not in cache:
+        cache[chave] = veredito.avaliar_acao_b3(chave, None, setor)
+    return cache[chave]
+
+
+def _aplicar_portao_inteligencia(
+    selecionados: list[str],
+    ranked_prox: list[tuple[str, float]],
+    entry_guard: dict,
+    pesos_p: dict[str, float],
+    seg_label: str,
+    log: dict,
+    setor: str | None = None,
+) -> list[str]:
+    """A carteira criada é compra: nome que a Inteligência dos Ativos barra
+    ("avaliar troca" ou "não aportar") não entra, e o próximo do ranking do
+    segmento herda a vaga e o peso (``veredito.filtrar_selecao``). Sem ele, a
+    tela recomendaria comprar o que a Inteligência manda trocar."""
+    return veredito.filtrar_selecao(
+        selecionados, ranked_prox,
+        avaliador=lambda tk: _intel_avaliar_cached(tk, setor),
+        pesos=pesos_p, seg_label=seg_label, log=log,
+        exclui=lambda tk: _entry_guard_exclui(entry_guard, tk))
 
 
 def _entry_guard_exclui(entry_guard: dict, tk: str) -> bool:
@@ -3758,6 +3789,26 @@ def render(show_header: bool = True) -> None:
     piso_log: dict = {"reprovados": [], "substituicoes": [], "sem_substituto": [],
                 "afrouxado_por_viabilidade": []}
     _piso_ativo = bool(st.session_state.get("pb3_piso_qualidade", True))
+    intel_log: dict = veredito.novo_log_selecao()
+    if aprovados:
+        # Pré-avalia as candidatas do portão da Inteligência: a primeira
+        # montagem lê fundamentos, valuation e notícias de cada uma.
+        _pend_i = []
+        for res in aprovados:
+            _rp = sorted(res["score_proximo"].items(),
+                         key=lambda x: (-float(x[1]), str(x[0])))
+            _pend_i += [(str(t), res.get("setor")) for t, _ in _rp[:2]]
+        _cache_i = st.session_state.get("pb3_intel_cache", {})
+        _pend_i = [(t, s_) for t, s_ in dict.fromkeys(_pend_i)
+                   if t.upper().replace(".SA", "") not in _cache_i]
+        if _pend_i:
+            with st.spinner("Inteligência dos Ativos: avaliando "
+                            f"{len(_pend_i)} candidatas…"):
+                for _tk, _st in _pend_i:
+                    try:
+                        _intel_avaliar_cached(_tk, _st)
+                    except Exception:  # noqa: BLE001 - o portão nomeia a falha
+                        pass
     if _gate_ativo and aprovados:
         _pend: list[str] = []
         for res in aprovados:
@@ -3812,6 +3863,15 @@ def render(show_header: bool = True) -> None:
                 float(taxa_selic_aa),
             )
 
+        # PORTÃO DA INTELIGÊNCIA DOS ATIVOS, sempre ligado: o mesmo veredito
+        # da aba Inteligência e dos chats. Determinístico; antes do parecer
+        # de LLM pelo mesmo motivo do piso.
+        selecionados = _aplicar_portao_inteligencia(
+            selecionados, ranked_prox, entry_guard, pesos_p,
+            f"{res['setor']} › {res['segmento']}", intel_log,
+            setor=res.get("setor"),
+        )
+
         if _gate_ativo:
             selecionados = _aplicar_gate_qualitativo(
                 selecionados, ranked_prox, entry_guard, pesos_p,
@@ -3849,6 +3909,10 @@ def render(show_header: bool = True) -> None:
                 _motivo_afr = _motivo_afrouxamento_lider(tk, piso_log)
                 if _motivo_afr:
                     motivos.append(_motivo_afr)
+            _sub_intel = next((s["sai"] for s in intel_log["substituicoes"]
+                               if s["entra"] == tk), None)
+            if _sub_intel:
+                motivos.append(f"Entrou pela Inteligência dos Ativos sobre {_sub_intel}")
             motivos.extend(_motivos_dy_sustentavel(tk, df_mult_todos))
             _aval_quali = (st.session_state.get("pb3_quali_cache", {}).get(tk)
                            if _gate_ativo else None)
@@ -4358,6 +4422,31 @@ def render(show_header: bool = True) -> None:
                for item in (proximos_uniq or [])},
     )
 
+    # ── TRANSPARÊNCIA DO PORTÃO DA INTELIGÊNCIA DOS ATIVOS ───────────────────
+    if any(intel_log.values()):
+        st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
+                    unsafe_allow_html=True)
+        _sec_hdr("🧭 Inteligência dos Ativos — vetos e substituições")
+        st.caption(
+            "A carteira criada é compra: nome que a Inteligência dos Ativos "
+            "manda avaliar troca ou não aportar (alerta eliminatório, "
+            "qualidade frágil) não entra. O substituto é o próximo do ranking "
+            "do MESMO segmento e herda o peso. Nada aqui altera score; "
+            "avaliação indisponível não veta, mas é listada."
+        )
+        for v in intel_log["vetados"]:
+            st.markdown(f"❌ **{v['tk']}** ({v['segmento']}) — {v['limite']}: "
+                        f"{v['motivo']}")
+        for s in intel_log["substituicoes"]:
+            st.markdown(f"🔁 **{s['entra']}** herda a vaga de **{s['sai']}** "
+                        f"({s['segmento']})")
+        for s in intel_log["vagas_vazias"]:
+            st.markdown(f"⬜ Vaga de **{s['sai']}** ({s['segmento']}) ficou "
+                        "vazia: nenhum substituto passou.")
+        for s in intel_log["indisponiveis"]:
+            st.markdown(f"⚠️ **{s['tk']}** ({s['segmento']}): avaliação "
+                        f"indisponível ({s['erro']}); entrou sem o portão.")
+
     # ── TRANSPARÊNCIA DO GATE QUALITATIVO ────────────────────────────────────
     if _gate_ativo:
         st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
@@ -4534,6 +4623,10 @@ def render(show_header: bool = True) -> None:
             "qualitative_gate": bool(_gate_ativo),
             "quali_vetados": quali_log["vetados"],
             "quali_substituicoes": quali_log["substituicoes"],
+            "inteligencia_vetados": intel_log["vetados"],
+            "inteligencia_substituicoes": intel_log["substituicoes"],
+            "inteligencia_vagas_vazias": intel_log["vagas_vazias"],
+            "inteligencia_indisponiveis": intel_log["indisponiveis"],
             "correlation_diversification": bool(diversificar_corr),
             "correlation_threshold": float(corr_threshold),
             "correlation_score_alpha": float(corr_alpha),

@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+from core.inteligencia_ativos.veredito import REGRA_VEREDITO
 from core.llm_b3 import _chat_complete, _report_model
 
 _ESCOPOS = {
@@ -97,7 +98,11 @@ def regras_da_analise(*, geral: bool = False) -> str:
         "os ativos citados na pergunta e os de maior peso, liquidez diária, "
         "preço, proventos, trimestres e score mês a mês lidos do armazém local. "
         "Ele vale só para os ativos que lista: ativo fora dele não tem esse "
-        "detalhe, e fonte que o bloco declara indisponível não é dado zero."
+        "detalhe, e fonte que o bloco declara indisponível não é dado zero.\n"
+        f"11. {REGRA_VEREDITO} Na carteira do usuário, a recomendação de "
+        "compra, venda ou peso da regra 7 parte da DECISÃO da Inteligência "
+        "do bloco; sem bloco ou sem a linha DECISÃO para o ativo, vale o "
+        "LIMITE."
     )
 
 

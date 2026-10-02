@@ -228,3 +228,171 @@ def test_chat_coerente_avisa_quando_persiste_ou_falha(monkeypatch):
     _chat_em_sequencia(monkeypatch, [ruim, RuntimeError("cota")])
     txt = llm_b3.chat_coerente("ctx", [], "?", _AVS)
     assert "Conferência automática" in txt and txt.endswith(ruim)
+
+
+# ── Generalização: todas as classes e todos os chats ───────────────────────
+
+def test_info_do_ativo_por_mercado():
+    us = vd.info_ativo("aapl", mercado="us")
+    assert (us.ticker, us.classe, us.moeda, us.classe_politica) == (
+        "AAPL", "Ações EUA", "USD", "exterior")
+    fii = vd.info_ativo("HGLG11.SA", mercado="fii")
+    assert (fii.ticker, fii.classe_politica) == ("HGLG11", "fiis")
+    assert vd.info_acao_b3("WEGE3.SA").classe_politica == "acoes_br"
+
+
+def test_bloco_usa_o_mercado_de_cada_item(monkeypatch):
+    vistos = []
+
+    def falso(tk, nome, setor, *, mercado):
+        vistos.append((tk, mercado))
+        return _av()
+    monkeypatch.setattr(vd, "avaliar_ativo", falso)
+    vd.bloco_para_llm([{"ticker": "AAPL"}, {"ticker": "HGLG11", "mercado": "fii"}],
+                      mercado="us")
+    assert vistos == [("AAPL", "us"), ("HGLG11", "fii")]
+
+
+def _dec(codigo, detalhe):
+    return r.Decisao(codigo, detalhe, "", _av(alertas=[_CRITICO]))
+
+
+def test_decisao_da_carteira_vira_veredito():
+    casos = [(_dec(r.VENDER, "avaliar troca por uma alternativa"), vd.TROCAR),
+             (_dec(r.VENDER, "vender parte: acima do alvo"), vd.REDUZIR),
+             (_dec(r.MANTER, "no alvo"), vd.NAO_APORTAR),
+             (_dec(r.COMPRAR, "abaixo do alvo"), vd.LIVRE)]
+    for d, esperado in casos:
+        v = vd.veredito_de_decisao("DIRR3", d)
+        assert v.limite == esperado and v.decisao == d.rotulo
+        assert "DECISÃO da Inteligência dos Ativos para DIRR3" in \
+            vd.texto_ticker(v, "DIRR3")
+
+
+def test_decisao_pronta_vence_o_avaliador_e_nao_conta_no_teto():
+    v = vd.veredito_de_decisao("DIRR3", _dec(r.VENDER, "vender parte: x"))
+    chamados = []
+
+    def avaliador(tk, nome, setor):
+        chamados.append(tk)
+        return _av()
+    bloco, avs = vd.bloco_para_llm([{"ticker": "DIRR3"}, {"ticker": "WEGE3"}],
+                                   avaliador=avaliador, decisoes={"dirr3": v})
+    assert chamados == ["WEGE3"] and avs["DIRR3"] is v
+    assert "LIMITE da recomendação para DIRR3: reduzir" in bloco
+
+
+def test_vereditos_da_carteira_sem_analise_e_vazio():
+    assert vd.vereditos_da_carteira(None) == {}
+    assert vd.vereditos_da_carteira({"analysis_available": False}) == {}
+
+
+def test_mercado_da_posicao():
+    assert vd.mercado_da_posicao({"classe": "Ações BR"}) == "b3"
+    assert vd.mercado_da_posicao({"classe": "FII"}) == "fii"
+    assert vd.mercado_da_posicao({"classe": "Ações EUA", "moeda": "USD"}) == "us"
+    for pos in ({"classe": "ETF Internacional", "moeda": "USD"},
+              {"classe": "Renda Fixa"}, {"classe": "BDR"}):
+        assert vd.mercado_da_posicao(pos) is None
+
+
+def test_bloco_da_carteira_decisao_primeiro_e_citados(monkeypatch):
+    vistos = []
+
+    def falso(itens, **kw):
+        vistos.append(([i["ticker"] for i in itens], kw))
+        return "bloco", {}
+    monkeypatch.setattr(vd, "bloco_seguro", falso)
+    v = vd.veredito_de_decisao("DIRR3", _dec(r.MANTER, "no alvo"))
+    pos = [{"ticker": "WEGE3", "classe": "Ações BR", "valor_mercado": 10},
+           {"ticker": "DIRR3", "classe": "Ações BR", "valor_mercado": 5},
+           {"ticker": "CDB1", "classe": "Renda Fixa", "valor_mercado": 99}]
+    vd.bloco_da_carteira(pos, {"DIRR3": v}, "e MRVE3?")
+    tickers, kw = vistos[0]
+    assert tickers == ["MRVE3", "DIRR3", "WEGE3"]
+    assert kw["max_tickers"] == vd.MAX_TICKERS + 1
+
+
+def test_conferencia_com_ticker_americano_e_reduzir():
+    v = vd.veredito_de_decisao("AAPL", _dec(r.VENDER, "vender parte: acima"))
+    avs = {"AAPL": v, "MSFT": _av(qualidade=av.FORTE)}
+    out = vd.conferir_resposta("AAPL: aumentar a posição. MSFT: comprar.", avs)
+    assert [(x.ticker, x.limite) for x in out] == [("AAPL", vd.REDUZIR)]
+    assert [x.acao for x in vd.conferir_resposta("AAPL: manter.", avs)] == [
+        "manter sem ressalva"]
+    # "A" e "E" são palavras, não tickers: não viram menção
+    assert vd.conferir_resposta(
+        "E comprar mais? A MSFT sim; AAPL não, evite aumentar.", avs) == []
+
+
+def test_responder_coerente_reescreve_uma_vez():
+    respostas = ["DIRR3: comprar mais.", "DIRR3: avaliar troca."]
+    turnos = []
+
+    def chat(h, msg):
+        turnos.append((list(h), msg))
+        return respostas.pop(0)
+    assert vd.responder_coerente(chat, [], "?", _AVS) == "DIRR3: avaliar troca."
+    assert len(turnos) == 2 and "CONFERÊNCIA AUTOMÁTICA" in turnos[1][1]
+
+
+def test_portao_da_selecao_veta_e_substitui():
+    avs = {"DIRR3": _av(alertas=[_CRITICO]), "MRVE3": _av(qualidade=av.FRAGIL),
+           "CYRE3": _av(qualidade=av.FORTE), "EVEN3": _av()}
+
+    def avaliador(tk):
+        if tk == "TEND3":
+            raise RuntimeError("fora")
+        return avs[tk]
+    log = vd.novo_log_selecao()
+    pesos = {"DIRR3": 0.6, "TEND3": 0.4}
+    ranked = [("DIRR3", 9), ("TEND3", 8), ("MRVE3", 7), ("EVEN3", 6), ("CYRE3", 5)]
+    out = vd.filtrar_selecao(["DIRR3", "TEND3"], ranked, avaliador=avaliador,
+                             pesos=pesos, seg_label="Construção", log=log,
+                             exclui=lambda tk: tk == "EVEN3")
+    assert out == ["CYRE3", "TEND3"]  # TEND3 falhou: não veta (fail-open)
+    assert pesos["CYRE3"] == 0.6
+    assert [v["tk"] for v in log["vetados"]] == ["DIRR3", "MRVE3"]
+    assert log["vetados"][0]["limite"] == "avaliar troca"
+    assert log["substituicoes"] == [{"entra": "CYRE3", "sai": "DIRR3",
+                                     "segmento": "Construção"}]
+    assert [i["tk"] for i in log["indisponiveis"]] == ["TEND3"]
+
+    log = vd.novo_log_selecao()
+    assert vd.filtrar_selecao(["DIRR3"], [("DIRR3", 1), ("MRVE3", 0)],
+                              avaliador=avaliador, pesos={}, seg_label="s",
+                              log=log) == []
+    assert log["vagas_vazias"] == [{"sai": "DIRR3", "segmento": "s"}]
+
+
+def test_regra_do_veredito_em_todos_os_prompts(monkeypatch):
+    from core import llm_ativo, llm_carteira, llm_fii, llm_global
+    sistemas = []
+
+    def falso(messages, **kw):
+        sistemas.append(messages[0]["content"])
+        return "ok"
+    for mod in (llm_fii, llm_global, llm_ativo, llm_carteira):
+        if hasattr(mod, "_chat_complete"):
+            monkeypatch.setattr(mod, "_chat_complete", falso)
+    monkeypatch.setattr(llm_b3, "_chat_complete", falso)
+    llm_fii.chat_com_fiis("ctx", [], "?")
+    llm_global.chat_com_portfolio_global("ctx", [], "?")
+    llm_ativo.chat_com_ativo("ctx", [], "?", mercado="us", ticker="AAPL")
+    llm_carteira.chat_com_carteira("ctx", [], "?", classe="acoes")
+    assert len(sistemas) == 4
+    assert all(vd.REGRA_VEREDITO in s for s in sistemas)
+
+
+def test_chat_global_cita_primeiro_e_leva_o_mercado():
+    import pandas as pd
+
+    from views import portfolio_global as pg
+    df = pd.DataFrame([
+        {"asset_class": "b3", "symbol": "WEGE3", "sector": "Industrial"},
+        {"asset_class": "us", "symbol": "AAPL", "sector": "Tech"},
+        {"asset_class": "fii", "symbol": "HGLG11"},
+        {"asset_class": "rf", "symbol": "CDB"}])
+    itens = pg._itens_do_veredito(df, "Vale manter HGLG11?")
+    assert [(i["ticker"], i["mercado"]) for i in itens] == [
+        ("HGLG11", "fii"), ("WEGE3", "b3"), ("AAPL", "us")]

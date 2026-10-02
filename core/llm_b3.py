@@ -822,24 +822,9 @@ def chat_coerente(
     (``veredito.conferir_resposta``), pede uma reescrita. Se a reescrita
     falhar ou ainda contradisser, a resposta sai com aviso no topo — nunca
     em silêncio. Custa uma chamada a mais só quando há contradição."""
-    resposta = chat_com_portfolio(context, history, user_message, model=model)
-    violacoes = _veredito.conferir_resposta(resposta, avaliacoes)
-    if not violacoes:
-        return resposta
-    logger.info("Chat contradiz o veredito em %s; pedindo reescrita.",
-                ", ".join(v.ticker for v in violacoes))
-    turnos = [*history, {"role": "user", "content": user_message},
-              {"role": "assistant", "content": resposta}]
-    try:
-        nova = chat_com_portfolio(context, turnos,
-                                  _veredito.pedido_de_correcao(violacoes),
-                                  model=model)
-    except Exception as exc:
-        logger.warning("Reescrita do chat falhou: %s", exc)
-        return _veredito.com_aviso(resposta, violacoes)
-    if not str(nova or "").strip():
-        return _veredito.com_aviso(resposta, violacoes)
-    return _veredito.com_aviso(nova, _veredito.conferir_resposta(nova, avaliacoes))
+    return _veredito.responder_coerente(
+        lambda h, msg: chat_com_portfolio(context, h, msg, model=model),
+        history, user_message, avaliacoes)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
