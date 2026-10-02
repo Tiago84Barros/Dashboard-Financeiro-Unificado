@@ -145,7 +145,7 @@ criada. Avaliação indisponível não veta, mas é listada (fail-open nomeado).
 
 - **B3**: depois do piso de qualidade e antes do parecer de LLM; o próximo do ranking
   do mesmo segmento herda a vaga e o peso (`veredito.filtrar_selecao`). Vaga sem
-  substituto fica vazia e é listada. O resumo salvo (`inteligencia_*`) leva o log.
+  substituto fica vazia e é listada.
 - **Empresas Americanas**: em `us_portfolio_creation.select_industry_leaders`, depois
   do piso; o substituto é o próximo da mesma indústria que também passa no piso
   (`filtrar_selecao`). A rede "carteira preservada" e a revisão (`us_review`) não
@@ -156,9 +156,10 @@ criada. Avaliação indisponível não veta, mas é listada (fail-open nomeado).
   revisão (`fii_review`) também recebe o universo sem vetados.
 
 As três telas mostram a seção "Inteligência dos Ativos — vetos e substituições"
-(`design/portao_inteligencia.py`).
+(`design/portao_inteligencia.py`). O resumo salvo da carteira (`params_json`) leva o log nas
+chaves `inteligencia_vetados`, `_substituicoes`, `_vagas_vazias`, `_indisponiveis` e
+`_persistentes` (`veredito.log_para_payload`), igual nas três.
 
 Lacunas conhecidas: nos FIIs, quem entra no lugar do vetado é escolha do otimizador,
-não herança de vaga; o log das seleções americana e de FIIs ainda não vai para o resumo
-salvo; a conferência é heurística; menção a ticker americano só é reconhecida para
+não herança de vaga; nenhuma tela ainda exibe o log a partir do resumo salvo; a conferência é heurística; menção a ticker americano só é reconhecida para
 tickers que estão no bloco.

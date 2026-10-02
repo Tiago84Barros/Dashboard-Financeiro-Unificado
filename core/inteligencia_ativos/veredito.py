@@ -615,6 +615,15 @@ def novo_log_selecao() -> dict:
             "indisponiveis": [], "persistentes": []}
 
 
+def log_para_payload(log: dict | None) -> dict:
+    """O log do portão nas chaves ``inteligencia_*`` do resumo salvo da
+    carteira (params_json), igual nas três telas de criação. Log ausente vira
+    listas vazias: o resumo diz "nada vetado", não "não se sabe"."""
+    log = log or {}
+    return {f"inteligencia_{k}": list(log.get(k) or ())
+            for k in novo_log_selecao()}
+
+
 def filtrar_selecao(selecionados, ranked, *, avaliador, pesos: dict,
                     seg_label: str, log: dict, exclui=None,
                     max_substitutos: int = 3) -> list[str]:

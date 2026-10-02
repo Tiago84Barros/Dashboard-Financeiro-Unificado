@@ -467,3 +467,24 @@ def test_portao_na_selecao_americana():
     # Sem avaliador, nada muda.
     assert list(build_portfolio_creation(_universe(), params)["candidates"]
                 ["symbol"]) == lideres
+
+
+def test_log_do_portao_no_resumo_salvo():
+    log = vd.novo_log_selecao()
+    log["vetados"].append({"tk": "A11", "segmento": "Papel",
+                           "limite": "não aportar", "motivo": "x"})
+    out = vd.log_para_payload(log)
+    assert set(out) == {"inteligencia_vetados", "inteligencia_substituicoes",
+                        "inteligencia_vagas_vazias", "inteligencia_indisponiveis",
+                        "inteligencia_persistentes"}
+    assert out["inteligencia_vetados"][0]["tk"] == "A11"
+    assert out["inteligencia_vetados"] is not log["vetados"]
+    assert all(v == [] for v in vd.log_para_payload(None).values())
+
+
+def test_as_tres_telas_gravam_o_log_no_resumo():
+    import inspect
+
+    from views import empresas_americanas, fiis, portfolio_b3
+    for mod in (portfolio_b3, empresas_americanas, fiis):
+        assert "veredito.log_para_payload(" in inspect.getsource(mod), mod

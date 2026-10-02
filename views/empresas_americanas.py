@@ -2942,6 +2942,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
                             snapshot.as_of.isoformat() if snapshot else None
                         ),
                         "macro_coverage": macro_info.get("coverage"),
+                        **veredito.log_para_payload(
+                            result.get("inteligencia_log")),
                     },
                     metrics={**metrics, "macro_turnover": macro_info.get("turnover")},
                     name=f"Portfolio EUA Modelo {pd.Timestamp.today().year}",
