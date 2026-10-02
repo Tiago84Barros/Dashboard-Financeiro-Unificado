@@ -13,7 +13,7 @@ Chave "data_source" sempre presente no dict retornado:
 
 Views consultadas (Fase 4.9):
   v_net_worth, v_monthly_cashflow, v_category_spending_mtd,
-  v_investment_summary, dividends; budgets via core.orcamento
+  v_investment_summary; proventos via core.proventos; budgets via core.orcamento
 
 Padrão de uso nas páginas:
     from core.financeiro import get_visao_geral
@@ -155,6 +155,21 @@ def patrimonio_investido_confiavel(
     return None
 
 
+def dividendos_do_periodo(proventos: dict | None) -> tuple[float, float]:
+    """(proventos do mês, proventos do ano) recebidos, via ``core.proventos``.
+
+    A soma direta em ``dividends`` contava o mesmo pagamento duas vezes quando
+    ele vinha da B3 e da XP ou do lote padrão e do fracionário (BBAS3/BBAS3F),
+    agrupava por ``ex_date`` em vez da data do pagamento e somava amortização.
+    ``core.proventos`` já resolve as três coisas; aqui só se lê o resultado.
+    Sem proventos reais, zero: o dashboard não mistura mock com dado real.
+    """
+    if not proventos or proventos.get("data_source") != "real":
+        return 0.0, 0.0
+    return (float(proventos.get("total_mes") or 0.0),
+            float(proventos.get("total_ano") or 0.0))
+
+
 def _visao_geral_real() -> dict:
     """
     Consulta as views do Supabase e monta o dict de visão geral.
@@ -244,19 +259,6 @@ def _visao_geral_real() -> dict:
             ),
             {"uid": owner},
         ).fetchall()
-
-        # ── 6. Dividendos (dividends) ──────────────────────────────────────
-        div_row = conn.execute(
-            text(
-                "SELECT "
-                "  COALESCE(SUM(CASE WHEN date_trunc('month', ex_date) = "
-                "    date_trunc('month', CURRENT_DATE) THEN total_amount ELSE 0 END), 0) AS div_mes, "
-                "  COALESCE(SUM(CASE WHEN EXTRACT(year FROM ex_date) = "
-                "    EXTRACT(year FROM CURRENT_DATE) THEN total_amount ELSE 0 END), 0) AS div_ano "
-                "FROM dividends WHERE user_id = :uid"
-            ),
-            {"uid": owner},
-        ).fetchone()
 
     carteira_migrada = None
     proventos_migrados = None
@@ -391,10 +393,7 @@ def _visao_geral_real() -> dict:
     maior_cls  = classes_ativo[0] if classes_ativo else {"nome": "—", "pct_carteira": 0.0}
 
     # ── Portfolio ─────────────────────────────────────────────────────────
-    dividendos_mes = _f(div_row.div_mes) if div_row else 0.0
-    dividendos_ano = _f(div_row.div_ano) if div_row else 0.0
-    if proventos_migrados and proventos_migrados.get("data_source") == "real":
-        dividendos_ano = _f(proventos_migrados.get("total_12m", dividendos_ano))
+    dividendos_mes, dividendos_ano = dividendos_do_periodo(proventos_migrados)
     rentab_invest = (
         _f(carteira_migrada.get("rentabilidade_total_pct"))
         if carteira_migrada and carteira_migrada.get("data_source") == "real"
