@@ -54,6 +54,7 @@ from core.inteligencia_ativos import informacoes as inf
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import pares as prs
 from core.inteligencia_ativos import valuation as val
+from core.inteligencia_ativos.referencia_modelo import REGRA_REFERENCIA
 from core.llm_grounding import check_grounding
 
 NAO_DISPONIVEL = "Dado não disponível."
@@ -453,12 +454,15 @@ def lacunas(analise: m.AnaliseAtivo) -> list[str]:
 
 def contexto(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor, *,
              cenario_mercado: str | None = None,
-             mercado_armazem: dict | None = None) -> dict:
+             mercado_armazem: dict | None = None,
+             referencia_modelo: dict | None = None) -> dict:
     """O objeto que a LLM recebe. Só o que a análise já montou, nada do
     banco inteiro. ``cenario_mercado`` é o bloco de mercado (I/O), que vai
     no prompt como texto separado. ``mercado_armazem`` são os números do
     detalhe do armazém como campos (``armazem_fatos``): no texto, a LLM não
-    os usava."""
+    os usava. ``referencia_modelo`` é ``ReferenciaModelo.para_llm``: a
+    carteira recomendada do Portfólio Global, só como comparação -- fica
+    fora de ``rules`` e de ``fit_por_regras``."""
     pares_, comparacao = _pares(analise.pares)
     regras = fit_por_regras(analise, ctx)
     return {
@@ -495,6 +499,9 @@ def contexto(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor, *,
         "reports": _relatorios(analise.relatorios),
         "events": _eventos(analise.eventos),
         "alternatives": _alternativas(analise, ctx, pares_),
+        "app_model_reference": (referencia_modelo
+                                if referencia_modelo is not None
+                                else {"estado": NAO_DISPONIVEL}),
         "rules": {
             "acao_a_considerar": analise.acao.estado,
             "acao_rotulo": analise.acao.rotulo,
@@ -603,6 +610,7 @@ def sistema() -> str:
         "outro, cada um com a origem; não escolha um em silêncio. Estado "
         "\"indisponível\" é lacuna, não dado zero: diga isso em "
         "\"market_behavior\"; \"não se aplica\" também.\n\n"
+        f"{REGRA_REFERENCIA}\n\n"
         f"{REGRA_CONTEXTO_MERCADO}\n\n"
         f"{REGRA_CENARIO}\n"
         "O cenário do usuário está em \"scenario.cenario_do_investidor\". "
