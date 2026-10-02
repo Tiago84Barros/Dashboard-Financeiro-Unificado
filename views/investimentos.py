@@ -2338,6 +2338,134 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
     else:
         st.caption("Sem histórico de proventos.")
 
+    st.markdown("<br>", unsafe_allow_html=True)
+    _proventos_por_ativo(proventos)
+
+
+def _fmt_brl(v: float, casas: int = 2) -> str:
+    return f"R$ {v:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _proventos_por_ativo(proventos: dict) -> None:
+    """Compara, ativo a ativo, os proventos recebidos — no histórico todo ou num ano."""
+    from core.proventos import serie_por_ativo
+
+    _secao_titulo_orig("🏦", "Proventos por ativo",
+                       "Compare os pagadores ao longo do histórico ou dentro de um ano")
+
+    eventos = proventos.get("eventos") or []
+    base = serie_por_ativo(eventos, "anual")
+    if not base["ordem"]:
+        st.caption("Sem proventos por ativo para comparar.")
+        return
+
+    anos = sorted({int(p) for p in base["periodos"]}, reverse=True)
+    c_ativos, c_periodo, c_agrup, c_tipo = st.columns([3, 1.2, 1, 1.3])
+    with c_ativos:
+        ativos = st.multiselect(
+            "Ativos",
+            base["ordem"],
+            default=base["ordem"][:5],
+            key="inv_hist_prov_ativos",
+            help="Ordenados pelo total recebido no histórico. Os 5 maiores vêm marcados.",
+        )
+    with c_periodo:
+        periodo = st.selectbox(
+            "Período", ["Todo o histórico", *[str(a) for a in anos]],
+            key="inv_hist_prov_ativo_periodo",
+        )
+    ano = None if periodo == "Todo o histórico" else int(periodo)
+    with c_agrup:
+        if ano is None:
+            agrup = st.selectbox("Agrupar por", ["Anual", "Mensal"],
+                                 key="inv_hist_prov_ativo_agrup")
+        else:
+            # Dentro de um ano só a visão mensal compara alguma coisa; a anual
+            # seria uma barra por ativo, que o ranking abaixo já mostra.
+            agrup = st.selectbox("Agrupar por", ["Mensal"], disabled=True,
+                                 key="inv_hist_prov_ativo_agrup_ano")
+    with c_tipo:
+        tipo_graf = st.selectbox(
+            "Gráfico", ["Barras lado a lado", "Barras empilhadas", "Linhas"],
+            key="inv_hist_prov_ativo_tipo",
+        )
+
+    if not ativos:
+        st.info("Escolha ao menos um ativo para comparar.", icon="🏦")
+        return
+
+    dados = serie_por_ativo(eventos, agrup.lower(), ano=ano, tickers=ativos)
+    if not dados["ordem"]:
+        st.info(f"Nenhum dos ativos escolhidos pagou proventos em {periodo}.", icon="🏦")
+        return
+
+    # Cor fixa por ativo (pela posição no ranking histórico): trocar o período
+    # não pode trocar a cor de um ativo, senão a comparação entre telas engana.
+    cor_de = {t: _PERF_PALETTE[i % len(_PERF_PALETTE)] for i, t in enumerate(base["ordem"])}
+    x = dados["periodos"]
+    fig = go.Figure()
+    for t in dados["ordem"]:
+        y = dados["series"][t]
+        hover = f"<b>{t}</b> · %{{x}}<br>R$ %{{y:,.2f}}<extra></extra>"
+        if tipo_graf == "Linhas":
+            fig.add_trace(go.Scatter(
+                x=x, y=y, name=t, mode="lines+markers",
+                line={"color": cor_de[t], "width": 2}, marker={"size": 6},
+                hovertemplate=hover,
+            ))
+        else:
+            fig.add_trace(go.Bar(
+                x=x, y=y, name=t, marker_color=cor_de[t], opacity=0.9,
+                hovertemplate=hover,
+            ))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        barmode="stack" if tipo_graf == "Barras empilhadas" else "group",
+        bargap=0.2, bargroupgap=0.05,
+        margin={"t": 30, "b": 0, "l": 0, "r": 0}, height=360,
+        xaxis={"showgrid": False, "type": "category"},
+        yaxis={"showgrid": True, "gridcolor": "#1E2533",
+               "tickformat": ",.0f", "tickprefix": "R$ "},
+        legend={"orientation": "h", "yanchor": "bottom", "y": 1.02,
+                "xanchor": "left", "x": 0},
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False},
+                    key="hist_proventos_por_ativo")
+
+    # Ranking do período: o total de cada ativo e quanto ele pesa no conjunto.
+    total = sum(dados["totais"].values()) or 1.0
+    n_periodos = len(x)
+    linhas = []
+    for t in dados["ordem"]:
+        vals = dados["series"][t]
+        pagos = sum(1 for v in vals if v > 0)
+        linhas.append({
+            "Ativo": t,
+            "Total": dados["totais"][t],
+            "% do selecionado": dados["totais"][t] / total * 100,
+            f"Média por {'ano' if agrup == 'Anual' else 'mês'}": dados["totais"][t] / n_periodos,
+            "Períodos com pagamento": f"{pagos}/{n_periodos}",
+        })
+    st.dataframe(
+        pd.DataFrame(linhas),
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Total": st.column_config.NumberColumn(format="R$ %.2f"),
+            "% do selecionado": st.column_config.ProgressColumn(
+                format="%.1f%%", min_value=0, max_value=100),
+            f"Média por {'ano' if agrup == 'Anual' else 'mês'}":
+                st.column_config.NumberColumn(format="R$ %.2f"),
+        },
+    )
+    st.caption(
+        f"{periodo} · {len(dados['ordem'])} ativo(s) · total {_fmt_brl(sum(dados['totais'].values()))}. "
+        "Conta só renda (dividendos, JCP e rendimentos de FII); amortização e "
+        "venda de direitos ficam de fora. Períodos sem pagamento aparecem zerados."
+    )
+
 
 def _header_classe(cls_info: dict, renda_cls: float) -> None:
     cor  = cls_info.get("cor", "var(--app-subtle)")
