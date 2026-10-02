@@ -134,6 +134,17 @@ def build_financas_chat_context(
         for h in (historico or [])
     ]
 
+    # ── Receitas por categoria (mês selecionado) ─────────────────────────────
+    # As mesmas linhas que somam `receitas` em get_controle. Sem elas a IA só
+    # via o total e não separava salário de aluguel ou bônus (lacuna b98a68c2).
+    receitas_tx = [t for t in (dados_mes.get("transacoes") or []) if t.get("eh_receita")]
+    rec_por_cat: dict[str, float] = {}
+    for t in receitas_tx:
+        nome = t.get("categoria") or "(sem categoria)"
+        rec_por_cat[nome] = rec_por_cat.get(nome, 0.0) + float(t.get("valor", 0) or 0)
+    receitas_cats = [{"nome": n, "valor": round(v, 2)}
+                     for n, v in sorted(rec_por_cat.items(), key=lambda kv: -kv[1])]
+
     por_ano = hist_anual.get("por_ano", {}) or {}
     anos = sorted(hist_anual.get("anos", []) or [])
 
@@ -167,6 +178,7 @@ def build_financas_chat_context(
         "poupanca_no_teto": _ind["poupanca_no_teto"],
         "renda_comprometida_pct": comprometido,
         "categorias_mes": cats_mes,
+        "receitas_categorias_mes": receitas_cats,
         "categorias_anual": cats_anual,
         "fluxo_mensal": fluxo_mensal,
         "anos": anos,
@@ -205,6 +217,27 @@ def build_financas_chat_context(
              "no saldo nem na renda comprometida. Só há déficit quando as despesas "
              "superam as receitas.")
     L.append(f"  Nº de lançamentos: {dados_mes.get('num_transacoes', 0)}")
+
+    L.append("")
+    L.append("RECEITAS POR CATEGORIA NO MÊS (categoria: total):")
+    if receitas_cats:
+        for c in receitas_cats:
+            L.append(f"  {c['nome']}: {_brl(c['valor'])}")
+        soma = round(sum(c["valor"] for c in receitas_cats), 2)
+        if abs(soma - round(receitas, 2)) > 0.01:
+            L.append(f"  ATENÇÃO: a soma por categoria ({_brl(soma)}) não fecha com o "
+                     f"total de receitas ({_brl(receitas)}).")
+        L.append("  Lançamentos de receita (data | descrição | categoria | valor):")
+        for t in receitas_tx[:30]:
+            L.append(f"    {t.get('data_fmt', '—')} | {t.get('descricao') or '—'} | "
+                     f"{t.get('categoria') or '(sem categoria)'} | "
+                     f"{_brl(float(t.get('valor', 0) or 0))}")
+        if len(receitas_tx) > 30:
+            L.append(f"    … e mais {len(receitas_tx) - 30} lançamentos de receita.")
+    elif receitas:
+        L.append("  Detalhamento das receitas indisponível: só o total chegou ao contexto.")
+    else:
+        L.append("  Sem receitas lançadas no mês.")
 
     L.append("")
     L.append("DESPESAS POR CATEGORIA NO MÊS (gasto | orçamento | % usado | essencialidade):")
