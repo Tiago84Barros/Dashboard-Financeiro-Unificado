@@ -2641,7 +2641,9 @@ def _carteira_integrada(preferences: dict):
                "macro_coverage": result.get("macro_coverage"),
                "scenario": scenario.__dict__, "policy": result.get("policy"),
                "eligibility": eligibility.get("policy"),
-               "correlation_penalty": result.get("correlation_penalty")},
+               "correlation_penalty": result.get("correlation_penalty"),
+               # Do log local: no caminho da revisão `result` é substituído.
+               **veredito.log_para_payload(intel_log)},
         {"trailing_yield_12m": result["trailing_yield_12m"],
          "expected_yield": result["expected_yield"],
          "effective_assets": result["effective_assets"],
