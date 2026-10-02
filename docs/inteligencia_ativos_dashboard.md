@@ -323,6 +323,15 @@ longa), a alternativa é uma tabela `asset_analysis_snapshots`, com as colunas
 de auditoria promovidas a físicas. Essa mudança depende de uma migration
 aprovada. O formato JSON já usa os nomes em inglês dessas colunas.
 
+## Referência: carteira do Portfólio Global
+
+Desde 02/10/2026 (PR #437), a Visão geral e a Análise detalhada mostram a
+carteira recomendada do Portfólio Global como **referência comparativa**,
+lado a lado com os pesos reais: peso no modelo, peso real e a diferença
+entre eles. Ela fica fora do veredito, da "Ação a considerar" e do Portfolio
+Fit por regras, para evitar confirmação circular. Detalhes em
+[inteligencia_referencia_portfolio_global.md](inteligencia_referencia_portfolio_global.md).
+
 ## Testes
 
 - `tests/test_inteligencia_ativos_painel.py` cobre o resumo, os cartões, a
