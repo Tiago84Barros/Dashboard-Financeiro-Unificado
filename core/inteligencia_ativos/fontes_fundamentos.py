@@ -392,6 +392,16 @@ FONTE_B3_BRAPI = ("brapi financialData e demonstrativo anual "
 # Nota do indicador sem valor quando o EBITDA é negativo: a avaliação a
 # reconhece por este prefixo e levanta o alerta (a razão não tem número).
 NOTA_EBITDA_NEGATIVO = "EBITDA de 12 meses negativo"
+# Nota do indicador retido porque a dívida líquida da brapi não cabe na
+# dívida bruta do balanço da base: a avaliação a reconhece por este prefixo
+# e avisa sem eliminar (DIRR3, 10/2026: brapi 6,44x, líquida ~R$ 8 bi contra
+# bruta ~R$ 3,5 bi no balanço; incorporadora soma ao totalDebt passivos que
+# não são dívida corporativa).
+NOTA_FONTES_DIVERGENTES = "Fontes divergentes"
+# Folga sobre a dívida bruta do balanço: a foto da brapi é mais nova que o
+# exercício anual, e a dívida pode ter crescido nesse meio tempo. Líquida
+# acima de 1,5× a bruta anual já não é crescimento, é outra definição.
+FOLGA_DIVIDA_BRAPI = 1.5
 
 
 def _crescimento(atual, anterior) -> float | None:
@@ -399,6 +409,26 @@ def _crescimento(atual, anterior) -> float | None:
     if a is None or b is None or b <= 0:
         return None  # base nula ou negativa: a taxa não tem leitura
     return (a / b - 1.0) * 100.0
+
+
+def _divergencia_brapi(dle: float | None, ebitda: float | None,
+                       bruta: Dado | None) -> str | None:
+    """Nota de divergência quando a dívida líquida implícita na razão da
+    brapi (razão × EBITDA de 12 meses) passa da dívida bruta do balanço da
+    base com folga: líquida maior que bruta não existe, então as duas fontes
+    não medem a mesma dívida e a razão não pode eliminar ninguém. Sem
+    EBITDA ou sem bruta positiva não há como conferir, e nada muda."""
+    b = _num(bruta.valor) if bruta is not None else None
+    if dle is None or ebitda is None or ebitda <= 0 or b is None or b <= 0:
+        return None
+    liquida = dle * ebitda
+    if liquida <= FOLGA_DIVIDA_BRAPI * b:
+        return None
+    return (f"{NOTA_FONTES_DIVERGENTES}: a razão da brapi ({_br(dle, 2)}x) "
+            f"implica dívida líquida de R$ {_br(liquida / 1e9, 2)} bi, acima "
+            f"da dívida bruta de R$ {_br(b / 1e9, 2)} bi do balanço "
+            f"({bruta.referencia}); as fontes não medem a mesma dívida e o "
+            "indicador fica retido até a conferência")
 
 
 def dados_acao_b3(demonstracoes, multiplos,
@@ -429,6 +459,10 @@ def dados_acao_b3(demonstracoes, multiplos,
         if dl is not None and ebitda is not None and ebitda > 0:
             put("divida_liquida_ebitda", dl / ebitda,
                 "calculada: dívida líquida ÷ EBITDA do mesmo exercício")
+        bruta, pl = _num(ult.get("Divida_Total")), _num(ult.get("Patrimonio_Liquido"))
+        if bruta is not None and pl is not None and pl > 0:
+            put("divida_bruta_patrimonio", bruta / pl,
+                "calculada: dívida bruta ÷ patrimônio líquido do mesmo exercício")
         if len(df) >= 2:
             ant = df.iloc[-2]
             if int(ant["Data"].year) == ano - 1:
@@ -458,12 +492,37 @@ def dados_acao_b3(demonstracoes, multiplos,
             v = _pct(multiplos.get(coluna))
             if v is not None:
                 saida[chave] = Dado(v, FONTE_B3_MET, ref_m, nota)
+        # Dív/PL: o mesmo número que a Empresas B3 mede contra o teto do
+        # segmento; tem precedência sobre o calculado do balanço.
+        endiv = _num(multiplos.get("Endividamento_Total"))
+        if endiv is not None and endiv >= 0:
+            saida["divida_bruta_patrimonio"] = Dado(
+                endiv, FONTE_B3_MET, ref_m,
+                "dívida bruta ÷ patrimônio líquido, o mesmo da Empresas B3")
 
     al = alavancagem or {}
     ref_al = _txt(al.get("alavancagem_ref"))
+    dl_base = saida.get("divida_liquida")
+    ebitda_al = _num(al.get("ebitda_12m"))
+    if "divida_liquida_ebitda" not in saida and dl_base is not None \
+            and ebitda_al is not None and ebitda_al > 0:
+        # A dívida é a do balanço da base, a mesma que a Empresas B3 e o
+        # chat leem; da brapi vem só o EBITDA. A razão pronta da brapi mede
+        # outra dívida em parte das empresas (DIRR3: 6,44x contra ~1,4x).
+        saida["divida_liquida_ebitda"] = Dado(
+            dl_base.valor / ebitda_al, f"{FONTE_B3_DEMO} + {FONTE_B3_BRAPI}",
+            f"dívida do {dl_base.referencia}; EBITDA de 12 meses"
+            + (f" ({ref_al})" if ref_al else ""),
+            "calculada: dívida líquida do balanço ÷ EBITDA de 12 meses do "
+            "provedor (a base não grava o EBITDA)")
     if "divida_liquida_ebitda" not in saida:
         dle = _num(al.get("divida_liquida_ebitda"))
-        if dle is not None:
+        divergencia = _divergencia_brapi(dle, _num(al.get("ebitda_12m")),
+                                         saida.get("divida_bruta"))
+        if divergencia is not None:
+            saida["divida_liquida_ebitda"] = Dado(
+                None, FONTE_B3_BRAPI, ref_al, divergencia)
+        elif dle is not None:
             saida["divida_liquida_ebitda"] = Dado(
                 dle, FONTE_B3_BRAPI, ref_al,
                 "(dívida total − caixa) ÷ EBITDA de 12 meses, os três da "
@@ -532,6 +591,8 @@ def dados_acao_eua(metricas: dict | None, financials) -> dict[str, Dado]:
     put("fluxo_caixa_livre", _num(m_.get("_fcf")))
     put("divida_liquida", _num(m_.get("_net_debt")))
     put("divida_liquida_ebitda", _num(m_.get("net_debt_ebitda")))
+    put("divida_bruta_patrimonio", _num(m_.get("debt_to_equity")),
+        "dívida total ÷ patrimônio líquido")
     put("cobertura_juros", _num(m_.get("interest_coverage")),
         "EBIT ÷ despesa de juros")
     put("payout", _pct(m_.get("payout_ratio")))
