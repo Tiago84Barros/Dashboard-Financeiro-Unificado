@@ -19,6 +19,8 @@ eliminatório e qualidade frágil, os mesmos passos de
 from __future__ import annotations
 
 import logging
+import re
+import unicodedata
 from dataclasses import dataclass
 
 from core.inteligencia_ativos import avaliacao as av_
@@ -195,3 +197,145 @@ def regra_relatorio(av: av_.Avaliacao | None, ticker: str) -> str:
     return ("\n\n" + texto_ticker(av, ticker) + "\nEste é o veredito que a "
             "Inteligência dos Ativos mostra ao usuário; a nota não pode "
             "contradizê-lo." + regra)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Conferência pós-resposta do chat
+# ─────────────────────────────────────────────────────────────────────────────
+# O chat é texto livre: a regra no prompt não garante nada. A conferência lê a
+# resposta e procura recomendação acima do limite por ticker. É heurística
+# (padrões de verbo e negação): não pega toda paráfrase e pode marcar falso
+# positivo. O que ela garante é que nenhuma contradição detectada sai sem
+# reescrita ou sem aviso visível.
+
+_TICKER_RE = re.compile(r"\b([A-Z]{4}\d{1,2})\b")
+_CHARTS_RE = re.compile(r"```charts.*?```", re.DOTALL | re.IGNORECASE)
+_OBJETO = r"(?=[^.;\n]{0,25}?\b(posicao|peso|exposicao|participacao|alocacao|fatia|[a-z]{4}\d{1,2})\b)"
+_COMPRA_RE = re.compile(
+    r"\b(comprar|compre|comprando|compraria|aportar|aporte|aportes|aportando|"
+    r"acumular|acumule|acumulando|sobreponderar|sobrepondere|overweight)\b"
+    r"|recomenda\w*\s*(de|:)?\s*compra\b"
+    r"|\b(aumentar|aumente|aumentando|elevar|eleve|reforcar|reforce|"
+    r"adicionar|adicione)\b" + _OBJETO)
+_MANTER_RE = re.compile(r"\b(manter|mantenha|mantenho|manteria|manutencao)\b")
+_NEGACAO_RE = re.compile(
+    r"\b(nao|nem|evite|evitar|sem|proibido|jamais|nunca|antes de|deixar de|"
+    r"em vez de|ao inves de|so|desaconselh\w*)\b")
+_RESSALVA_RE = re.compile(
+    r"alerta|eliminatori|troca|trocar|vender|venda|reduzir|reduza|sair|saida")
+
+
+@dataclass(frozen=True)
+class Violacao:
+    ticker: str
+    acao: str          # "comprar/aumentar" ou "manter sem ressalva"
+    trecho: str
+    limite: str
+    motivo: str
+
+
+def _norm(texto: str) -> str:
+    """Minúsculas sem acento, com o mesmo comprimento do original (os
+    índices dos tickers achados no original valem no normalizado)."""
+    saida = []
+    for ch in texto:
+        n = "".join(c for c in unicodedata.normalize("NFKD", ch)
+                    if not unicodedata.combining(c)).lower()
+        saida.append(n if len(n) == 1 else ch)
+    return "".join(saida)
+
+
+def _trechos(texto: str, ticker: str) -> list[tuple[int, int]]:
+    """Janelas do texto que falam de ``ticker``: da menção (ou do começo da
+    linha, se não houver outro ticker antes) até o próximo ticker, o fim do
+    parágrafo ou 400 caracteres. Ticker em título estende ao parágrafo
+    seguinte."""
+    mencoes = [(m.start(), m.end(), m.group(1))
+               for m in _TICKER_RE.finditer(texto)]
+    janelas = []
+    for i, (ini, fim, tk) in enumerate(mencoes):
+        if tk != ticker:
+            continue
+        inicio = texto.rfind("\n", 0, ini) + 1
+        outros_antes = [f for s, f, t in mencoes[:i] if t != ticker]
+        if outros_antes:
+            inicio = max(inicio, outros_antes[-1])
+        final = min(len(texto), fim + 400)
+        outros_depois = [s for s, f, t in mencoes[i + 1:] if t != ticker]
+        if outros_depois:
+            final = min(final, outros_depois[0])
+        par = texto.find("\n\n", fim)
+        if par != -1 and par - fim < 40:
+            par = texto.find("\n\n", par + 2)
+        if par != -1:
+            final = min(final, par)
+        janelas.append((inicio, final))
+    return janelas
+
+
+def _sem_negacao(norm: str, m: re.Match, inicio: int) -> bool:
+    antes = norm[max(inicio, m.start() - 30):m.start()]
+    antes = re.split(r"[.;:!?\n]", antes)[-1]  # só a oração do verbo
+    return not _NEGACAO_RE.search(antes)
+
+
+def conferir_resposta(texto: str, avaliacoes: dict | None) -> list[Violacao]:
+    """Contradições da resposta com o limite de cada ticker avaliado: compra
+    ou aumento com limite "avaliar troca" ou "não aportar"; manter sem
+    ressalva com "avaliar troca". Uma violação por ticker, no máximo."""
+    if not texto or not avaliacoes:
+        return []
+    corpo = _CHARTS_RE.sub(lambda m: " " * len(m.group(0)), texto)
+    norm = _norm(corpo)
+    achadas: list[Violacao] = []
+    for tk, av in avaliacoes.items():
+        cod, motivo = limite(av)
+        if cod == LIVRE:
+            continue
+        for ini, fim in _trechos(corpo, tk):
+            seg = norm[ini:fim]
+            acao = None
+            for m in _COMPRA_RE.finditer(norm, ini, fim):
+                if _sem_negacao(norm, m, ini):
+                    acao = "comprar/aumentar"
+                    break
+            if acao is None and cod == TROCAR and not _RESSALVA_RE.search(seg):
+                for m in _MANTER_RE.finditer(norm, ini, fim):
+                    if _sem_negacao(norm, m, ini):
+                        acao = "manter sem ressalva"
+                        break
+            if acao:
+                trecho = " ".join(corpo[ini:fim].split())[:200]
+                achadas.append(Violacao(tk, acao, trecho, cod, motivo))
+                break
+    return achadas
+
+
+def _linha(v: Violacao) -> str:
+    return (f"{v.ticker}: a resposta indica {v.acao} (\u201c{v.trecho}\u201d), "
+            f"mas o limite é '{ROTULO_LIMITE[v.limite]}' ({v.motivo})")
+
+
+def pedido_de_correcao(violacoes: list[Violacao]) -> str:
+    """Mensagem que pede à LLM a resposta inteira de novo, sem a contradição."""
+    linhas = "\n".join(f"- {_linha(v)}." for v in violacoes)
+    return (
+        "CONFERÊNCIA AUTOMÁTICA: sua resposta anterior contradiz a avaliação "
+        "por regras da Inteligência dos Ativos:\n" + linhas + "\n"
+        "Reescreva a resposta INTEIRA à pergunta anterior do usuário "
+        "respeitando REGRA_VEREDITO: com 'avaliar troca', não recomende "
+        "comprar, aumentar nem manter sem ressalva, e cite o alerta com o "
+        "número; com 'não aportar', não recomende comprar nem aumentar. "
+        "Mantenha os números, as seções e o bloco ```charts```, se houver. "
+        "Entregue só a resposta corrigida, sem comentar esta conferência."
+    )
+
+
+def com_aviso(texto: str, violacoes: list[Violacao]) -> str:
+    """A resposta com um aviso no topo, para a contradição que sobrou."""
+    if not violacoes:
+        return texto
+    linhas = "\n".join(f"> - {_linha(v)}." for v in violacoes)
+    return ("> ⚠️ **Conferência automática:** esta resposta contradiz a "
+            "avaliação por regras da Inteligência dos Ativos. Vale o veredito "
+            "da Inteligência.\n" + linhas + "\n\n" + (texto or ""))

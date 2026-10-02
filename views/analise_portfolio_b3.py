@@ -33,7 +33,7 @@ from core.dossie_b3 import (
 )
 from core.inteligencia_ativos import veredito
 from core.llm_b3 import (
-    chat_com_portfolio,
+    chat_coerente,
     llm_disponivel,
     parse_chart_directives,
     provedores_disponiveis,
@@ -844,18 +844,19 @@ def _render_conclusao(port_analise: dict) -> None:
 # Runner de análise LLM
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _veredito_do_chat(items: list[dict], mencionados) -> str:
+def _veredito_do_chat(items: list[dict], mencionados) -> tuple[str, dict]:
     """Bloco 'AVALIAÇÃO POR REGRAS' das ações da carteira e das citadas na
-    pergunta: o chat lê o mesmo veredito da Inteligência dos Ativos. Se a
-    avaliação inteira cair, o bloco diz isso em vez de sumir."""
+    pergunta, e as avaliações por ticker (para a conferência pós-resposta):
+    o chat lê o mesmo veredito da Inteligência dos Ativos. Se a avaliação
+    inteira cair, o bloco diz isso em vez de sumir."""
     alvo = list(items or []) + [{"ticker": t} for t in (mencionados or ()) if t]
     try:
-        bloco, _ = veredito.bloco_para_llm(alvo)
+        bloco, avs = veredito.bloco_para_llm(alvo)
     except Exception as exc:
         return ("\n\n=== AVALIAÇÃO POR REGRAS (Inteligência dos Ativos) ===\n"
                 f"Indisponível agora ({type(exc).__name__}); não recomende "
-                "comprar ou aumentar sem ela.")
-    return "\n\n" + bloco if bloco else ""
+                "comprar ou aumentar sem ela."), {}
+    return ("\n\n" + bloco if bloco else ""), avs
 
 
 def _web_ctx_da_empresa(ticker: str, web_sinal: dict[str, dict] | None) -> str:
@@ -1408,9 +1409,13 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
 
                     context = context + "\n\n" + conjuntura_da_carteira(
                         "b3", model.get("items", []))
-                    context = context + _veredito_do_chat(
+                    bloco_veredito, avaliacoes = _veredito_do_chat(
                         model.get("items", []), chart_meta.get("mentioned_tickers"))
-                    resposta_raw = chat_com_portfolio(context, history[:-1], user_input)
+                    context = context + bloco_veredito
+                    # Conferência pós-resposta: contradição com o veredito
+                    # pede reescrita; se persistir, sai com aviso.
+                    resposta_raw = chat_coerente(
+                        context, history[:-1], user_input, avaliacoes)
                     resposta, chart_directives = parse_chart_directives(resposta_raw)
                     # Fallback: a LLM às vezes descreve o gráfico sem emitir a
                     # diretiva. Se pediram um gráfico e nenhuma veio, inferimos.

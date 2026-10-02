@@ -137,10 +137,94 @@ def test_chat_da_empresas_b3_anexa_o_bloco(monkeypatch):
         visto["tickers"] = [i["ticker"] for i in itens]
         return "=== AVALIAÇÃO POR REGRAS ===\nDIRR3", {}
     monkeypatch.setattr(view.veredito, "bloco_para_llm", bloco)
-    txt = view._veredito_do_chat([{"ticker": "WEGE3"}], ["DIRR3"])
+    txt, _ = view._veredito_do_chat([{"ticker": "WEGE3"}], ["DIRR3"])
     assert visto["tickers"] == ["WEGE3", "DIRR3"] and "DIRR3" in txt
 
     def quebra(itens, **kw):
         raise RuntimeError("x")
     monkeypatch.setattr(view.veredito, "bloco_para_llm", quebra)
-    assert "Indisponível agora (RuntimeError)" in view._veredito_do_chat([], None)
+    txt, avs = view._veredito_do_chat([], None)
+    assert "Indisponível agora (RuntimeError)" in txt and avs == {}
+
+
+# ── Conferência pós-resposta ────────────────────────────────────────────────
+
+_AVS = {"DIRR3": _av(alertas=(_CRITICO,)),          # avaliar troca
+        "MRVE3": _av(qualidade=av.FRAGIL),           # não aportar
+        "WEGE3": _av(qualidade=av.FORTE)}            # livre
+
+
+def test_conferencia_pega_compra_contra_o_limite():
+    txt = ("**Conclusão prática**\n\n- **DIRR3**: comprar mais, a Dív/PL de "
+           "1,27x é confortável.\n- WEGE3: aumentar posição.")
+    v = vd.conferir_resposta(txt, _AVS)
+    assert [(x.ticker, x.acao, x.limite) for x in v] == [
+        ("DIRR3", "comprar/aumentar", vd.TROCAR)]
+    assert "1,27x" in v[0].trecho and "dívida bruta" in v[0].motivo
+
+
+def test_conferencia_ignora_negacao_e_ticker_vizinho():
+    txt = ("Não recomendo comprar DIRR3 nem aumentar a posição em MRVE3. "
+           "Prefira reforçar WEGE3.\nPara DIRR3, evite aportar: o alerta "
+           "eliminatório pede avaliar troca.")
+    assert vd.conferir_resposta(txt, _AVS) == []
+    # "não" de outra oração não protege o verbo
+    assert vd.conferir_resposta(
+        "A dívida não preocupa; recomendo comprar DIRR3.", _AVS)
+
+
+def test_conferencia_manter_depende_do_limite():
+    sem_ressalva = "DIRR3: manter a posição, empresa sólida."
+    com_ressalva = "DIRR3: manter por ora, mas o alerta de dívida pede troca."
+    assert [x.acao for x in vd.conferir_resposta(sem_ressalva, _AVS)] == [
+        "manter sem ressalva"]
+    assert vd.conferir_resposta(com_ressalva, _AVS) == []
+    assert vd.conferir_resposta("MRVE3: manter, sem reforçar.", _AVS) == []
+    assert vd.conferir_resposta("MRVE3: aumentar peso.", _AVS)
+
+
+def test_conferencia_ignora_bloco_de_graficos():
+    txt = ('DIRR3 tem alerta.\n```charts\n[{"tipo": "comparison", '
+           '"titulo": "comprar DIRR3?", "tickers": ["DIRR3"]}]\n```')
+    assert vd.conferir_resposta(txt, _AVS) == []
+
+
+def _chat_em_sequencia(monkeypatch, respostas):
+    chamadas = []
+
+    def falso(messages, **kw):
+        chamadas.append(messages)
+        r_ = respostas.pop(0)
+        if isinstance(r_, Exception):
+            raise r_
+        return r_
+    monkeypatch.setattr(llm_b3, "_chat_complete", falso)
+    return chamadas
+
+
+def test_chat_coerente_reescreve_a_contradicao(monkeypatch):
+    ruim = "DIRR3: comprar mais.\n```charts\n[]\n```"
+    boa = "DIRR3: avaliar troca pelo alerta de dívida.\n```charts\n[]\n```"
+    chamadas = _chat_em_sequencia(monkeypatch, [ruim, boa])
+    assert llm_b3.chat_coerente("ctx", [], "Compro DIRR3?", _AVS) == boa
+    pedido = chamadas[1][-1]["content"]
+    assert "CONFERÊNCIA AUTOMÁTICA" in pedido and "DIRR3" in pedido
+    assert chamadas[1][-2] == {"role": "assistant", "content": ruim}
+
+
+def test_chat_coerente_sem_contradicao_faz_uma_chamada(monkeypatch):
+    chamadas = _chat_em_sequencia(monkeypatch, ["WEGE3: comprar mais."])
+    assert llm_b3.chat_coerente("ctx", [], "e WEGE3?", _AVS) == "WEGE3: comprar mais."
+    assert len(chamadas) == 1
+
+
+def test_chat_coerente_avisa_quando_persiste_ou_falha(monkeypatch):
+    ruim = "DIRR3: comprar mais."
+    _chat_em_sequencia(monkeypatch, [ruim, "DIRR3: aumentar posição."])
+    txt = llm_b3.chat_coerente("ctx", [], "?", _AVS)
+    assert txt.startswith("> ⚠️ **Conferência automática:**")
+    assert txt.endswith("DIRR3: aumentar posição.")
+
+    _chat_em_sequencia(monkeypatch, [ruim, RuntimeError("cota")])
+    txt = llm_b3.chat_coerente("ctx", [], "?", _AVS)
+    assert "Conferência automática" in txt and txt.endswith(ruim)

@@ -107,8 +107,15 @@ negativo → "avaliar troca"; qualidade frágil sozinha → "não aportar". São
 
 - **Chat da análise de portfólio**: o contexto recebe o bloco `AVALIAÇÃO POR REGRAS`
   das ações da carteira e das citadas na pergunta (até 15), e o system prompt carrega
-  `REGRA_VEREDITO`. O chat é texto livre: a coerência vem da regra, não de código.
-  Ticker que falha é nomeado no bloco.
+  `REGRA_VEREDITO`. Ticker que falha é nomeado no bloco.
+- **Conferência pós-resposta do chat** (`llm_b3.chat_coerente`): a resposta passa por
+  `veredito.conferir_resposta`, que procura, por ticker, compra/aumento/aporte com
+  limite "avaliar troca" ou "não aportar", e "manter" sem ressalva (alerta, troca,
+  venda, redução) com "avaliar troca". Achou → uma chamada a mais pede a resposta
+  inteira reescrita. Se a reescrita falhar ou ainda contradisser, a resposta sai com um
+  aviso no topo nomeando ticker, trecho e limite. É heurística (verbos, negação na
+  mesma oração, janela até o próximo ticker): paráfrase como "vale ter mais" escapa e
+  pode haver falso positivo; o que ela garante é que contradição detectada não sai calada.
 - **Relatório por empresa**: o veredito entra no contexto e `veredito.coerente` limita
   a `perspectiva` em código ("fraca" com "avaliar troca", "moderada" com "não aportar"),
   dizendo no resumo por quê. A perspectiva limitada também reduz o multiplicador da

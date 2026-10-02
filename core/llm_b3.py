@@ -25,6 +25,7 @@ import pandas as pd
 import streamlit as st
 
 from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+from core.inteligencia_ativos import veredito as _veredito
 from core.inteligencia_ativos.veredito import REGRA_VEREDITO
 
 logger = logging.getLogger(__name__)
@@ -807,6 +808,38 @@ def chat_com_portfolio(
 
     # Chat livre (markdown), sem JSON mode. Usa a cadeia OpenAI → Gemini.
     return _chat_complete(messages, temperature=0.3, json_mode=False, primary_model=model)
+
+
+def chat_coerente(
+    context: str,
+    history: list[dict],
+    user_message: str,
+    avaliacoes: dict | None,
+    model: str = _MODEL_DEFAULT,
+) -> str:
+    """``chat_com_portfolio`` com conferência pós-resposta: se a resposta
+    recomenda acima do limite da Inteligência dos Ativos para algum ticker
+    (``veredito.conferir_resposta``), pede uma reescrita. Se a reescrita
+    falhar ou ainda contradisser, a resposta sai com aviso no topo — nunca
+    em silêncio. Custa uma chamada a mais só quando há contradição."""
+    resposta = chat_com_portfolio(context, history, user_message, model=model)
+    violacoes = _veredito.conferir_resposta(resposta, avaliacoes)
+    if not violacoes:
+        return resposta
+    logger.info("Chat contradiz o veredito em %s; pedindo reescrita.",
+                ", ".join(v.ticker for v in violacoes))
+    turnos = [*history, {"role": "user", "content": user_message},
+              {"role": "assistant", "content": resposta}]
+    try:
+        nova = chat_com_portfolio(context, turnos,
+                                  _veredito.pedido_de_correcao(violacoes),
+                                  model=model)
+    except Exception as exc:
+        logger.warning("Reescrita do chat falhou: %s", exc)
+        return _veredito.com_aviso(resposta, violacoes)
+    if not str(nova or "").strip():
+        return _veredito.com_aviso(resposta, violacoes)
+    return _veredito.com_aviso(nova, _veredito.conferir_resposta(nova, avaliacoes))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
