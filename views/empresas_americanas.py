@@ -22,6 +22,7 @@ import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 
 import core.us_data as us
+from core.inteligencia_ativos import veredito
 from core.llm_context_ativo import build_us_ativo_context
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
@@ -52,6 +53,7 @@ from core.us_company_analysis import (
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
 from core.validacao_motor import validacao_us
 from data_pipeline.utils.date_utils import fmt_datetime_br
+from design import portao_inteligencia as _portao_ui
 from design.chat_ativo import render_chat_ativo
 from design.componentes import (
     aviso_cobertura_do_universo,
@@ -2102,6 +2104,16 @@ def _portfolio_controls(scored: pd.DataFrame, prefix: str):
     return build_portfolio(scored, constraints), constraints
 
 
+def _intel_avaliar_us(tk: str):
+    """Avaliação por regras da Inteligência dos Ativos (EUA), com cache de
+    sessão. Falha não é guardada: o portão é fail-open e tenta de novo no rerun."""
+    cache = st.session_state.setdefault("us_intel_cache", {})
+    chave = str(tk).upper()
+    if chave not in cache:
+        cache[chave] = veredito.avaliar_ativo(chave, mercado="us")
+    return cache[chave]
+
+
 def _render_us_portfolio_creation_css() -> None:
     st.markdown("""
     <style>
@@ -2634,7 +2646,10 @@ def _tab_criacao_portfolio(status: dict) -> None:
             portfolio_scored = us.portfolio_candidates_with_renda_sustentavel(
                 scored, params,
             )
-            baseline = build_portfolio_creation(portfolio_scored, params, score_panel)
+            baseline = build_portfolio_creation(
+                portfolio_scored, params, score_panel,
+                avaliador=_intel_avaliar_us,
+            )
             snapshot = None
             holdings_base = baseline.get("holdings", pd.DataFrame())
             macro_fonte_criacao = get_macro_source()
@@ -2654,6 +2669,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
                 portfolio_scored, params, score_panel,
                 macro_impacts=(snapshot.impacts if snapshot else {}),
                 macro_mode=macro_mode,
+                avaliador=_intel_avaliar_us,
             )
             result["macro_snapshot"] = snapshot
             result["macro_fonte"] = descrever_fonte_macro(macro_fonte_criacao)
@@ -2863,6 +2879,16 @@ def _tab_criacao_portfolio(status: dict) -> None:
                     "aprovadas. A carteira foi remontada sem ele para não sair "
                     "vazia: nenhum nome abaixo passou no piso, e a leitura "
                     "desta carteira exige ler os motivos acima antes.")
+
+    intel_log = result.get("inteligencia_log") or {}
+    if _portao_ui.tem_conteudo(intel_log):
+        with st.expander(_portao_ui.TITULO, expanded=bool(
+                intel_log.get("vetados") or intel_log.get("persistentes"))):
+            _portao_ui.render(
+                intel_log, grupo="indústria",
+                como_substitui=("O substituto é o próximo do ranking da MESMA "
+                                "indústria que também passa no piso de "
+                                "qualidade; os pesos são reotimizados."))
 
     secao_titulo("Travessia de Recessão", "🛡️")
     _render_us_ciclo(holdings)

@@ -396,3 +396,74 @@ def test_chat_global_cita_primeiro_e_leva_o_mercado():
     itens = pg._itens_do_veredito(df, "Vale manter HGLG11?")
     assert [(i["ticker"], i["mercado"]) for i in itens] == [
         ("HGLG11", "fii"), ("WEGE3", "b3"), ("AAPL", "us")]
+
+
+def test_reotimizar_sem_vetados_remonta_ate_limpar():
+    avs = {"A11": _av(alertas=[_CRITICO]), "B11": _av(), "C11": _av(),
+           "D11": _av(qualidade=av.FRAGIL), "E11": _av()}
+
+    def avaliador(tk):
+        if tk == "C11":
+            raise RuntimeError("fora")
+        return avs[tk]
+    ordem = ["A11", "B11", "C11", "D11", "E11"]
+    chamadas = []
+
+    def montar(excl):
+        chamadas.append(excl)
+        return {"items": [{"ticker": t, "tipo": "Tijolo"}
+                          for t in ordem if t not in excl][:3]}
+    log = vd.novo_log_selecao()
+    res, excl = vd.reotimizar_sem_vetados(
+        montar, avaliador=avaliador, log=log,
+        itens_de=lambda r: [(i["ticker"], i["tipo"]) for i in r["items"]])
+    # A11 sai → D11 entra e é barrado → E11 entra.
+    assert [i["ticker"] for i in res["items"]] == ["B11", "C11", "E11"]
+    assert excl == {"A11", "D11"}
+    assert [v["tk"] for v in log["vetados"]] == ["A11", "D11"]
+    assert log["substituicoes"] == [{"entra": "E11", "sai": "D11",
+                                     "segmento": "Tijolo"}]
+    assert [i["tk"] for i in log["indisponiveis"]] == ["C11"]  # fail-open
+    assert log["persistentes"] == [] and len(chamadas) == 3
+
+
+def test_reotimizar_declara_vetado_que_persiste():
+    log = vd.novo_log_selecao()
+    res, _ = vd.reotimizar_sem_vetados(
+        lambda excl: {"items": [{"ticker": "A11", "tipo": "Papel"}]},
+        avaliador=lambda tk: _av(alertas=[_CRITICO]), log=log, max_rodadas=2,
+        itens_de=lambda r: [(i["ticker"], i["tipo"]) for i in r["items"]])
+    assert [i["ticker"] for i in res["items"]] == ["A11"]
+    assert [v["tk"] for v in log["persistentes"]] == ["A11"]
+    assert log["substituicoes"] == []
+
+
+def test_portao_na_selecao_americana():
+    from core.us_portfolio_creation import (
+        USPortfolioCreationParams,
+        build_portfolio_creation,
+    )
+    from tests.test_us_portfolio_creation import _universe
+    params = USPortfolioCreationParams(
+        top_n=15, leaders_per_industry=1, min_companies_per_industry=4,
+        min_entry_score=50, min_score_edge=0, min_market_cap=1_000_000_000,
+        apply_quality_floor=False,
+    )
+    base = build_portfolio_creation(_universe(), params)
+    lideres = list(base["candidates"]["symbol"])
+    alvo = lideres[0]
+    res = build_portfolio_creation(
+        _universe(), params,
+        avaliador=lambda tk: _av(alertas=[_CRITICO]) if tk == alvo else _av())
+    escolhidos = set(res["candidates"]["symbol"])
+    assert alvo not in escolhidos
+    assert alvo not in set(res["holdings"].get("symbol", []))
+    log = res["inteligencia_log"]
+    assert [v["tk"] for v in log["vetados"]] == [alvo]
+    entra = log["substituicoes"][0]["entra"]
+    assert entra in escolhidos and entra[:3] == alvo[:3]  # mesma indústria
+    linha = res["candidates"].set_index("symbol").loc[entra]
+    assert "Inteligência" in linha["selection_reason"]
+    # Sem avaliador, nada muda.
+    assert list(build_portfolio_creation(_universe(), params)["candidates"]
+                ["symbol"]) == lideres

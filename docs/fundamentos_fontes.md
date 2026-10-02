@@ -139,13 +139,26 @@ Todo chat dessas telas passa por `veredito.responder_coerente` (a conferência a
 dossiê não é reescrito (é longo): a contradição detectada sai avisada no topo.
 `REGRA_VEREDITO` está nos prompts de B3, FII, Global, ativo e carteira.
 
-**Portão da seleção (Criação de Portfólio B3)**: sempre ligado, depois do piso de
-qualidade e antes do parecer de LLM. Nome com limite "avaliar troca" ou "não aportar"
-não entra; o próximo do ranking do mesmo segmento herda a vaga e o peso
-(`veredito.filtrar_selecao`). Avaliação indisponível não veta, mas é listada; vaga sem
-substituto fica vazia e é listada. A seção "Inteligência dos Ativos — vetos e
-substituições" e o resumo salvo (`inteligencia_*`) mostram tudo.
+**Portão da seleção (Criação de Portfólio B3, Empresas Americanas, Seleção de FIIs)**:
+sempre ligado. Nome com limite "avaliar troca" ou "não aportar" não entra na carteira
+criada. Avaliação indisponível não veta, mas é listada (fail-open nomeado).
 
-Lacunas conhecidas: a seleção de FIIs e a de ações americanas ainda não têm portão; a
-conferência é heurística; menção a ticker americano só é reconhecida para tickers que
-estão no bloco.
+- **B3**: depois do piso de qualidade e antes do parecer de LLM; o próximo do ranking
+  do mesmo segmento herda a vaga e o peso (`veredito.filtrar_selecao`). Vaga sem
+  substituto fica vazia e é listada. O resumo salvo (`inteligencia_*`) leva o log.
+- **Empresas Americanas**: em `us_portfolio_creation.select_industry_leaders`, depois
+  do piso; o substituto é o próximo da mesma indústria que também passa no piso
+  (`filtrar_selecao`). A rede "carteira preservada" e a revisão (`us_review`) não
+  readmitem vetados.
+- **FIIs**: o otimizador não tem vaga por tipo, então `veredito.reotimizar_sem_vetados`
+  exclui o vetado e remonta a carteira (`montar_carteira_com_concessao`) sob as mesmas
+  restrições, até 6 rodadas; vetado que resta vai como "persistente", com aviso. A
+  revisão (`fii_review`) também recebe o universo sem vetados.
+
+As três telas mostram a seção "Inteligência dos Ativos — vetos e substituições"
+(`design/portao_inteligencia.py`).
+
+Lacunas conhecidas: nos FIIs, quem entra no lugar do vetado é escolha do otimizador,
+não herança de vaga; o log das seleções americana e de FIIs ainda não vai para o resumo
+salvo; a conferência é heurística; menção a ticker americano só é reconhecida para
+tickers que estão no bloco.

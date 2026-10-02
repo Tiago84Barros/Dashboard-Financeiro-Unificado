@@ -450,7 +450,8 @@ def test_kpis_de_prontidao_medem_o_universo_exibido():
     corpo = inspect.getsource(fiis._carteira_integrada)
     assert "_universo_exibido(" in corpo
     gate = corpo.index("investable_gate = evaluate_publication_gate(")
-    montagem = corpo.index("result = montar_carteira_com_concessao(")
+    # A montagem passa pelo portão da Inteligência (reotimiza sem vetados).
+    montagem = corpo.index("veredito.reotimizar_sem_vetados(")
     assert gate > montagem, "o gate precisa conhecer a carteira que a tela exibe"
 
 

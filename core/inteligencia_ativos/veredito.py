@@ -601,7 +601,7 @@ def responder_coerente(chat: Callable[[list, str], str], history: list,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Portão da seleção (Criação de Portfólio B3)
+# Portão da seleção (Criação de Portfólio B3, Empresas Americanas, FIIs)
 # ─────────────────────────────────────────────────────────────────────────────
 # A carteira criada é compra: um nome que a Inteligência barra ("avaliar
 # troca" ou "não aportar") não pode entrar nela, ou a mesma tela que monta a
@@ -612,7 +612,7 @@ VETA_SELECAO = (TROCAR, NAO_APORTAR)
 
 def novo_log_selecao() -> dict:
     return {"vetados": [], "substituicoes": [], "vagas_vazias": [],
-            "indisponiveis": []}
+            "indisponiveis": [], "persistentes": []}
 
 
 def filtrar_selecao(selecionados, ranked, *, avaliador, pesos: dict,
@@ -678,3 +678,68 @@ def filtrar_selecao(selecionados, ranked, *, avaliador, pesos: dict,
         else:
             log["vagas_vazias"].append({"sai": tk, "segmento": seg_label})
     return finais
+
+
+def reotimizar_sem_vetados(montar: Callable[[frozenset], dict], *,
+                           avaliador, itens_de, log: dict,
+                           max_rodadas: int = 6) -> tuple[dict, frozenset]:
+    """O portão para carteira montada por otimizador (Seleção de FIIs), que
+    não tem vaga por segmento para um substituto herdar.
+
+    ``montar(excluidos) -> resultado`` monta a carteira sem os tickers de
+    ``excluidos``; ``itens_de(resultado) -> [(ticker, grupo)]`` lista o que
+    entrou. Nome barrado ("avaliar troca" ou "não aportar") vai para os
+    excluídos e a carteira é montada de novo: quem entra no lugar é escolha
+    do otimizador, sob as mesmas restrições. Repete até nenhum entrar
+    barrado ou até ``max_rodadas``; o que ainda restar barrado vai para
+    ``log["persistentes"]`` (nunca sai calado).
+
+    Mesma regra de ``filtrar_selecao``: avaliação que falha não veta, mas é
+    nomeada em ``log["indisponiveis"]``. Devolve (resultado, excluídos)."""
+    julgados: dict[str, tuple[str, str] | None] = {}
+    excluidos: frozenset = frozenset()
+    resultado = montar(excluidos)
+    anteriores = {tk for tk, _ in itens_de(resultado)}
+    for rodada in range(max_rodadas):
+        barrados = []
+        for tk, grupo in itens_de(resultado):
+            if tk not in julgados:
+                try:
+                    cod, motivo = limite(avaliador(tk))
+                    julgados[tk] = ((cod, motivo) if cod in VETA_SELECAO
+                                    else None)
+                except Exception as exc:  # fail-open, mas nomeado
+                    logger.warning("Inteligência indisponível para %s: %s",
+                                   tk, exc)
+                    log["indisponiveis"].append(
+                        {"tk": tk, "segmento": grupo,
+                         "erro": type(exc).__name__})
+                    julgados[tk] = None
+            if julgados[tk] is not None:
+                barrados.append((tk, grupo))
+        if not barrados:
+            break
+        if rodada == max_rodadas - 1:
+            log.setdefault("persistentes", []).extend(
+                {"tk": tk, "segmento": g,
+                 "limite": ROTULO_LIMITE[julgados[tk][0]],
+                 "motivo": julgados[tk][1]} for tk, g in barrados)
+            break
+        for tk, grupo in barrados:
+            cod, motivo = julgados[tk]
+            log["vetados"].append({"tk": tk, "segmento": grupo,
+                                   "limite": ROTULO_LIMITE[cod],
+                                   "motivo": motivo})
+        excluidos = excluidos | {tk for tk, _ in barrados}
+        resultado = montar(excluidos)
+        sai = ", ".join(tk for tk, _ in barrados)
+        atuais = itens_de(resultado)
+        for tk, grupo in atuais:
+            if tk not in anteriores:
+                log["substituicoes"].append({"entra": tk, "sai": sai,
+                                             "segmento": grupo})
+        anteriores = {tk for tk, _ in atuais}
+    # Quem entrou numa rodada e foi barrado na seguinte não substituiu ninguém.
+    log["substituicoes"] = [s for s in log["substituicoes"]
+                            if s["entra"] not in excluidos]
+    return resultado, excluidos
