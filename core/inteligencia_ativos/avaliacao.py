@@ -9,7 +9,7 @@ Lê só o que a análise já carrega (seções ``fundamentos``, ``valuation``,
 ``pares`` e ``noticias``) e devolve, por dimensão, uma leitura e os critérios
 com número e referência que a sustentam. Puro: nenhuma consulta a banco.
 
-Três decisões de método, porque já custaram caro neste projeto:
+Quatro decisões de método, porque já custaram caro neste projeto:
 
 * **Alerta eliminatório elimina.** Fraude, recuperação judicial, patrimônio
   negativo, juros maiores que o resultado operacional, dividendo pago sem
@@ -23,7 +23,14 @@ Três decisões de método, porque já custaram caro neste projeto:
 * **Setor muda a régua.** Banco e seguradora não têm dívida/EBITDA nem
   EV/EBIT (dívida é matéria-prima); elétricas e saneamento convivem com
   alavancagem maior, regulada; em commodity e siderurgia o P/L baixo costuma
-  marcar o pico do ciclo, e não conta como barato.
+  marcar o pico do ciclo, e não conta como barato. Na incorporadora o EBITDA
+  segue o reconhecimento da obra e a dívida financia a produção: a régua é a
+  dívida bruta/patrimônio, e dívida/EBITDA vira contexto.
+* **Uma régua de dívida só no app.** A dívida é a do balanço da base, a
+  mesma que a Empresas B3 e o chat leem, e o teto de dívida bruta/patrimônio
+  é o do arquétipo do segmento em ``core.segment_calibration``. Duas telas
+  com vereditos opostos sobre a mesma dívida (DIRR3, 10/2026: "Vender" por
+  6,44x o EBITDA aqui, "comprar mais" com Dív/PL de 1,27x lá) é defeito.
 
 O sentimento das notícias é, quando a fonte mede, o do provedor: o que ele
 mediu para o ticker, e na falta dele o do artigo inteiro (Alpha Vantage e
@@ -37,6 +44,7 @@ retorno de 12 meses com proventos reinvestidos (publicado em
 """
 from __future__ import annotations
 
+import statistics
 import unicodedata
 from dataclasses import dataclass
 
@@ -69,19 +77,26 @@ ROTULO_DIMENSAO = {QUALIDADE: "Qualidade e fundamentos",
                    MERCADO: "Mercado e notícias"}
 
 # Perfis setoriais (a régua muda com o negócio).
-GERAL, FINANCEIRA, REGULADA, CICLICA, FII = (
-    "geral", "financeira", "regulada", "ciclica", "fii")
+GERAL, FINANCEIRA, REGULADA, CICLICA, FII, INCORPORADORA = (
+    "geral", "financeira", "regulada", "ciclica", "fii", "incorporadora")
 ROTULO_PERFIL = {
     GERAL: "régua geral",
     FINANCEIRA: "banco/seguradora: sem dívida/EBITDA nem EV/EBIT; pesa ROE e P/VP",
     REGULADA: "setor regulado (energia, saneamento): tolera alavancagem maior",
     CICLICA: "commodity/cíclica: P/L baixo pode ser pico de ciclo",
     FII: "fundo imobiliário: vacância, inadimplência, alavancagem e P/VP",
+    INCORPORADORA: ("incorporadora: dívida medida por dívida bruta/patrimônio; "
+                    "dívida/EBITDA só como contexto"),
 }
 # Dívida líquida/EBITDA: (bom até, alto acima de, crítico acima de).
 LIMITES_ALAVANCAGEM = {GERAL: (1.5, 3.0, 4.5), CICLICA: (1.0, 2.5, 4.0),
                        REGULADA: (3.0, 4.0, 5.5)}
 
+# Dívida bruta/patrimônio acima deste múltiplo do teto do segmento elimina a
+# incorporadora (nela, é a régua que substitui a de dívida/EBITDA).
+FATOR_CRITICO_DIVIDA_PL = 2.0
+
+_TERMOS_INCORPORADORA = ("incorpora", "construcao civil", "edificac")
 _TERMOS_FINANCEIRA = ("financ", "banco", "bancos", "segur", "previdencia",
                       "intermediarios", "bank", "insurance", "credit")
 _TERMOS_CICLICA = ("materiais basicos", "petroleo", "refino", "exploracao",
@@ -254,12 +269,46 @@ def perfil(a: m.AnaliseAtivo, f: fnd.Fundamentos, v: val.Valuation,
     texto = " ".join(_norm(t) for t in textos if t)
     if any(t in texto for t in _TERMOS_FINANCEIRA):
         return FINANCEIRA
+    if any(t in texto for t in _TERMOS_INCORPORADORA):
+        return INCORPORADORA
     # Cíclica antes de regulada: "Petróleo, Gás e Biocombustíveis" é commodity.
     if any(t in texto for t in _TERMOS_CICLICA):
         return CICLICA
     if any(t in texto for t in _TERMOS_REGULADA):
         return REGULADA
     return GERAL
+
+
+def teto_divida_patrimonio(a: m.AnaliseAtivo, f: fnd.Fundamentos,
+                           c: prs.ComparacaoPares | None
+                           ) -> tuple[float, str] | None:
+    """(teto, origem) de dívida bruta/patrimônio para ação da B3: o mesmo da
+    Empresas B3, para as duas telas não darem vereditos opostos. O teto é o
+    do arquétipo do segmento (``core.segment_calibration``), refinado como
+    lá: não fica abaixo do p90 observado, aqui o dos pares. Banco e
+    seguradora não têm teto; ação de fora da B3 também não (a régua é da
+    base brasileira)."""
+    if (f.moeda or "").upper() != "BRL":
+        return None
+    from core.segment_calibration import classificar_arquetipo
+    nivel = (c.grupo.nivel if c is not None else None) or ""
+    grupo = c.grupo.valor if c is not None else None
+    segmento = grupo if nivel in ("segmento", "subsetor") else None
+    setor = grupo if nivel == "setor" else a.ativo.setor
+    arq = classificar_arquetipo(setor or "", segmento or a.ativo.subclasse or "")
+    if arq.endividamento_teto is None:
+        return None
+    teto = arq.endividamento_teto
+    origem = f"teto do segmento {arq.label}, o mesmo da Empresas B3"
+    amostra = sorted(c.grupo.valores("divida_bruta_patrimonio")) if c else []
+    if len(amostra) >= prs.N_MINIMO:
+        p90 = statistics.quantiles(amostra, n=10, method="inclusive")[8]
+        if p90 > teto:
+            teto = round(p90, 2)
+            origem = (f"p90 de {len(amostra)} pares, acima do teto de "
+                      f"{_x(arq.endividamento_teto)} do segmento "
+                      f"{arq.label}")
+    return teto, origem
 
 
 # -- qualidade -----------------------------------------------------------------------
@@ -278,7 +327,8 @@ def _contra_pares(c: prs.ComparacaoPares | None, chave: str, rotulo: str,
 
 
 def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
-                    crits: list[Criterio], alertas: list[Alerta]) -> None:
+                    crits: list[Criterio], alertas: list[Alerta],
+                    teto_pl: tuple[float, str] | None = None) -> None:
     def ind(chave):
         i = f.indicador(chave)
         return i if i is not None and _num(i.valor) is not None else None
@@ -388,7 +438,16 @@ def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
         alertas.append(Alerta(f"Dívida líquida/EBITDA sem leitura. "
                               f"{bruto.nota}", False))
     dl_ebitda = ind("divida_liquida_ebitda")
-    if dl_ebitda is not None:
+    if dl_ebitda is not None and perfil_ == INCORPORADORA:
+        # O EBITDA da incorporadora acompanha o reconhecimento da receita
+        # pela obra, e boa parte da dívida financia a produção com o
+        # recebível como lastro: a razão informa, não julga.
+        crits.append(Criterio(
+            f"Dívida líquida/EBITDA de {_x(_num(dl_ebitda.valor))}"
+            f"{_ref(dl_ebitda)}: contexto (em incorporadora o EBITDA segue a "
+            "obra e a dívida financia a produção; a régua é dívida "
+            "bruta/patrimônio)", 0))
+    elif dl_ebitda is not None:
         x = _num(dl_ebitda.valor)
         bom, alto, critico = LIMITES_ALAVANCAGEM.get(perfil_,
                                                      LIMITES_ALAVANCAGEM[GERAL])
@@ -407,6 +466,21 @@ def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
                 alertas.append(Alerta(f"alavancagem de {_x(x)} o EBITDA, acima "
                                       f"do limite de {_x(critico)}{regua}",
                                       True))
+    dpl = ind("divida_bruta_patrimonio")
+    if dpl is not None and teto_pl is not None and perfil_ != FINANCEIRA:
+        x, (teto, origem) = _num(dpl.valor), teto_pl
+        txt = f"Dívida bruta/patrimônio de {_x(x)}{_ref(dpl)}"
+        if x > teto:
+            crits.append(Criterio(f"{txt}: acima do teto de {_x(teto)} "
+                                  f"({origem})", -1))
+            if perfil_ == INCORPORADORA and x > FATOR_CRITICO_DIVIDA_PL * teto:
+                alertas.append(Alerta(
+                    f"dívida bruta de {_x(x)} o patrimônio, mais de "
+                    f"{_br(FATOR_CRITICO_DIVIDA_PL, 0)} vezes o teto de "
+                    f"{_x(teto)} ({origem})", True))
+        elif perfil_ == INCORPORADORA:
+            crits.append(Criterio(f"{txt}: dentro do teto de {_x(teto)} "
+                                  f"({origem})", 1))
     cob = ind("cobertura_juros")
     if cob is not None:
         x = _num(cob.valor)
@@ -726,7 +800,8 @@ def avaliar(a: m.AnaliseAtivo) -> Avaliacao:
     if perfil_ == FII:
         _qualidade_fii(f, c, q, alertas)
     elif (f.tipo or v.tipo) == fnd.ACAO:
-        _qualidade_acao(f, c, perfil_, q, alertas)
+        _qualidade_acao(f, c, perfil_, q, alertas,
+                        teto_divida_patrimonio(a, f, c))
     vc: list[Criterio] = []
     leitura_v, nota_v = _valuation(v, perfil_, vc, alertas)
     mc: list[Criterio] = []

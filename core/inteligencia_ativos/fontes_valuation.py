@@ -83,6 +83,11 @@ def _positivo(x) -> float | None:
     return f if f is not None and f > 0 else None
 
 
+def _nao_negativo(x) -> float | None:
+    f = _num(x)
+    return f if f is not None and f >= 0 else None
+
+
 def _txt(x) -> str | None:
     s = str(x).strip() if x is not None else ""
     return None if s in ("", "nan", "None") else s
@@ -170,6 +175,10 @@ def candidatos_b3(multiplos: list[dict], setores: dict[str, dict],
             "margem_liquida": _pct(m.get("Margem_Liquida")),
             "volatilidade": vol, "porte": porte,
             "retorno_12m": _num(a.get("retorno_12m")),
+            # Não entra na tabela de pares: alimenta o teto de Dív/PL da
+            # avaliação, refinado pelo p90 dos pares como na Empresas B3.
+            "divida_bruta_patrimonio": None if financeira else
+            _nao_negativo(m.get("Endividamento_Total")),
         }
         saida[tk] = p.Candidato(
             tk, _txt(s.get("nome_empresa")), ACAO, "B3",

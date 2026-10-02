@@ -401,3 +401,109 @@ def test_backfill_so_acrescenta_o_que_falta_para_os_tickers_da_linha():
     ]
     # 2 já tem; 3 é de outro provedor; 4 não tem ticker com tom
     assert planejar(linhas, tons) == [("1", {"AAPL": 0.3})]
+
+
+# -- item 2: régua de dívida coerente com a Empresas B3 (DIRR3, 10/2026) -----------
+# A Inteligência dizia "Vender" por 6,44x o EBITDA enquanto a Empresas B3 e o
+# chat liam Dív/PL de 1,27x. Agora a dívida é a do balanço em todas as ações,
+# o Dív/PL entra com o teto do mesmo arquétipo, e a incorporadora é julgada
+# por ele, não por dívida/EBITDA.
+
+
+def _balanco_completo(divida_total=3.5e9, divida_liquida=1.7e9, pl=2.76e9):
+    return pd.DataFrame({"Data": [pd.Timestamp(2025, 12, 31)],
+                         "Receita_Liquida": [4.343e9],
+                         "Lucro_Liquido": [9.8e8],
+                         "Divida_Total": [divida_total],
+                         "Divida_Liquida": [divida_liquida],
+                         "Patrimonio_Liquido": [pl], "EBITDA": [None]})
+
+
+def test_divida_liquida_do_balanco_sobre_ebitda_do_provedor():
+    d = ff.dados_acao_b3(_balanco_completo(), None, _ALAV_DIRR3)
+    dado = d["divida_liquida_ebitda"]
+    assert abs(dado.valor - 1.7e9 / 1252058000.0) < 1e-9
+    assert ff.FONTE_B3_DEMO in dado.fonte and ff.FONTE_B3_BRAPI in dado.fonte
+    assert "exercício 2025" in dado.referencia
+
+
+def test_divida_bruta_patrimonio_prefere_a_metrica_da_empresas_b3():
+    d = ff.dados_acao_b3(_balanco_completo(), None, None)
+    assert abs(d["divida_bruta_patrimonio"].valor - 3.5 / 2.76) < 1e-9
+    mult = pd.Series({"Endividamento_Total": 1.27, "data": "2026-09-30"})
+    d = ff.dados_acao_b3(_balanco_completo(), mult, None)
+    assert d["divida_bruta_patrimonio"].valor == 1.27
+    assert d["divida_bruta_patrimonio"].fonte == ff.FONTE_B3_MET
+    # PL negativo: a razão não tem leitura
+    assert "divida_bruta_patrimonio" not in ff.dados_acao_b3(
+        _balanco_completo(pl=-1.0e9), None, None)
+
+
+def _incorporadora(a):
+    return replace(a, ativo=replace(a.ativo, ticker="DIRR3",
+                                    setor="Construção Civil",
+                                    subclasse="Incorporações"))
+
+
+def test_incorporadora_nao_e_eliminada_por_divida_ebitda(an):  # noqa: F811
+    a = av.avaliar(_com(_incorporadora(an["WEGE3"]),
+                        _fund(**{**BOA, "divida_liquida_ebitda": 6.44,
+                                 "divida_bruta_patrimonio": 1.27})))
+    assert a.perfil == av.INCORPORADORA
+    assert not a.criticos
+    q = a.dimensao(av.QUALIDADE)
+    ctx = next(c for c in q.criterios if "Dívida líquida/EBITDA" in c.texto)
+    assert ctx.sinal == 0
+    dpl = next(c for c in q.criterios if "Dívida bruta/patrimônio" in c.texto)
+    assert dpl.sinal == 1 and "1,80x" in dpl.texto
+    assert "Empresas B3" in dpl.texto
+
+
+def test_incorporadora_muito_alavancada_no_patrimonio_e_eliminada(an):  # noqa: F811
+    a = av.avaliar(_com(_incorporadora(an["WEGE3"]),
+                        _fund(**{**BOA, "divida_bruta_patrimonio": 4.0})))
+    assert any("dívida bruta de 4,00x o patrimônio" in x.texto
+               for x in a.criticos)
+    a = av.avaliar(_com(_incorporadora(an["WEGE3"]),
+                        _fund(**{**BOA, "divida_bruta_patrimonio": 2.5})))
+    assert not a.criticos
+    assert any(c.sinal == -1 and "acima do teto de 1,80x" in c.texto
+               for c in a.dimensao(av.QUALIDADE).criterios)
+
+
+def test_divida_patrimonio_acima_do_teto_pesa_em_qualquer_acao_b3(an):  # noqa: F811
+    # WEGE3 é industrial: teto 2,0x, o mesmo da Empresas B3
+    a = av.avaliar(_com(an["WEGE3"],
+                        _fund(**{**BOA, "divida_bruta_patrimonio": 2.6})))
+    assert a.perfil == av.GERAL and not a.criticos
+    assert any(c.sinal == -1 and "acima do teto de 2,00x" in c.texto
+               for c in a.dimensao(av.QUALIDADE).criterios)
+    # dentro do teto, fora da incorporadora, não soma ponto: a dívida já
+    # conta pela razão sobre o EBITDA
+    a = av.avaliar(_com(an["WEGE3"],
+                        _fund(**{**BOA, "divida_bruta_patrimonio": 1.0})))
+    assert not any("Dívida bruta/patrimônio" in c.texto
+                   for c in a.dimensao(av.QUALIDADE).criterios)
+
+
+def test_banco_nao_tem_teto_de_divida_patrimonio(an):  # noqa: F811
+    a = av.avaliar(_com(an["BBAS3"],
+                        _fund(roe=20.0, divida_bruta_patrimonio=9.0)))
+    assert not any("Dívida bruta/patrimônio" in c.texto
+                   for c in a.dimensao(av.QUALIDADE).criterios)
+
+
+def test_teto_sobe_para_o_p90_dos_pares_como_na_empresas_b3(an):  # noqa: F811
+    grupo = p.GrupoPares("segmento", "Incorporações", tuple(
+        p.Par(f"P{i}", None, 0.0, "m", {"divida_bruta_patrimonio": x})
+        for i, x in enumerate((1.0, 1.5, 2.0, 2.4, 3.0))))
+    c = p.ComparacaoPares("DIRR3", f.ACAO, "BRL", grupo, ())
+    fund = f.Fundamentos.de_dict(_fund(divida_bruta_patrimonio=2.5))
+    teto, origem = av.teto_divida_patrimonio(_incorporadora(an["WEGE3"]),
+                                             fund, c)
+    assert teto == 2.76 and "p90 de 5 pares" in origem
+    # ação de fora da B3: a régua é da base brasileira
+    fund_us = f.Fundamentos.de_dict(f.montar(
+        f.ACAO, {"divida_bruta_patrimonio": f.Dado(2.5, "t", "2025")},
+        moeda="USD").como_dict())
+    assert av.teto_divida_patrimonio(an["WEGE3"], fund_us, None) is None

@@ -61,6 +61,7 @@ CATALOGO: dict[str, tuple[Metrica, ...]] = {
         Metrica("divida_bruta", "Dívida bruta", MOEDA),
         Metrica("divida_liquida", "Dívida líquida", MOEDA),
         Metrica("divida_liquida_ebitda", "Dívida líquida/EBITDA", X),
+        Metrica("divida_bruta_patrimonio", "Dívida bruta/patrimônio líquido", X),
         Metrica("cobertura_juros", "Cobertura de juros (EBIT/despesa financeira)", X),
         Metrica("payout", "Payout", PCT),
         Metrica("dividend_yield", "Dividend yield", PCT),
