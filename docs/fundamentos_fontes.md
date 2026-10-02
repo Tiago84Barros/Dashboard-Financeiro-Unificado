@@ -32,6 +32,7 @@ para a LLM) e em `core/inteligencia_ativos/fontes_fundamentos.py` (leitores por 
 | Receita, lucro líquido, FCO, FCL, dívida bruta, dívida líquida | `market.income_statements`, `balance_sheets`, `cash_flow_statements` via `core.market_read.load_demonstracoes` | último exercício anual |
 | Crescimento da receita e do lucro | idem | variação anual; só entre exercícios consecutivos e com base positiva |
 | Dívida líquida/EBITDA | idem, calculado | só quando o EBITDA está gravado e é positivo; hoje ele vem vazio para boa parte da base, então o indicador fica indisponível |
+| Dívida líquida/EBITDA (na falta da base) | brapi `financialData` via `data/public/valuation_historico` | conferida contra a dívida bruta do balanço: se a líquida implícita (razão × EBITDA de 12 meses) passar de 1,5× a bruta anual, o indicador fica retido com nota "Fontes divergentes" e vira aviso, nunca alerta eliminatório (caso DIRR3, 10/2026) |
 | Margem EBIT, margem líquida, ROE, ROIC, payout, DY | `market.calculated_metrics` via `load_multiplos` | 12 meses; ROIC **antes** de impostos; DY "como gravado na base" |
 | Margem bruta, cobertura de juros, proventos em 12 meses por ação, guidance | — | **Dado não disponível.** O loader não lê custo nem despesa financeira. A coluna `Dividendos` da demonstração tem unidade ambígua e não é usada. Não existe fonte de guidance. |
 

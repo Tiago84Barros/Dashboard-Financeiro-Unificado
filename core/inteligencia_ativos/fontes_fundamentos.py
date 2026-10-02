@@ -392,6 +392,16 @@ FONTE_B3_BRAPI = ("brapi financialData e demonstrativo anual "
 # Nota do indicador sem valor quando o EBITDA é negativo: a avaliação a
 # reconhece por este prefixo e levanta o alerta (a razão não tem número).
 NOTA_EBITDA_NEGATIVO = "EBITDA de 12 meses negativo"
+# Nota do indicador retido porque a dívida líquida da brapi não cabe na
+# dívida bruta do balanço da base: a avaliação a reconhece por este prefixo
+# e avisa sem eliminar (DIRR3, 10/2026: brapi 6,44x, líquida ~R$ 8 bi contra
+# bruta ~R$ 3,5 bi no balanço; incorporadora soma ao totalDebt passivos que
+# não são dívida corporativa).
+NOTA_FONTES_DIVERGENTES = "Fontes divergentes"
+# Folga sobre a dívida bruta do balanço: a foto da brapi é mais nova que o
+# exercício anual, e a dívida pode ter crescido nesse meio tempo. Líquida
+# acima de 1,5× a bruta anual já não é crescimento, é outra definição.
+FOLGA_DIVIDA_BRAPI = 1.5
 
 
 def _crescimento(atual, anterior) -> float | None:
@@ -399,6 +409,26 @@ def _crescimento(atual, anterior) -> float | None:
     if a is None or b is None or b <= 0:
         return None  # base nula ou negativa: a taxa não tem leitura
     return (a / b - 1.0) * 100.0
+
+
+def _divergencia_brapi(dle: float | None, ebitda: float | None,
+                       bruta: Dado | None) -> str | None:
+    """Nota de divergência quando a dívida líquida implícita na razão da
+    brapi (razão × EBITDA de 12 meses) passa da dívida bruta do balanço da
+    base com folga: líquida maior que bruta não existe, então as duas fontes
+    não medem a mesma dívida e a razão não pode eliminar ninguém. Sem
+    EBITDA ou sem bruta positiva não há como conferir, e nada muda."""
+    b = _num(bruta.valor) if bruta is not None else None
+    if dle is None or ebitda is None or ebitda <= 0 or b is None or b <= 0:
+        return None
+    liquida = dle * ebitda
+    if liquida <= FOLGA_DIVIDA_BRAPI * b:
+        return None
+    return (f"{NOTA_FONTES_DIVERGENTES}: a razão da brapi ({_br(dle, 2)}x) "
+            f"implica dívida líquida de R$ {_br(liquida / 1e9, 2)} bi, acima "
+            f"da dívida bruta de R$ {_br(b / 1e9, 2)} bi do balanço "
+            f"({bruta.referencia}); as fontes não medem a mesma dívida e o "
+            "indicador fica retido até a conferência")
 
 
 def dados_acao_b3(demonstracoes, multiplos,
@@ -463,7 +493,12 @@ def dados_acao_b3(demonstracoes, multiplos,
     ref_al = _txt(al.get("alavancagem_ref"))
     if "divida_liquida_ebitda" not in saida:
         dle = _num(al.get("divida_liquida_ebitda"))
-        if dle is not None:
+        divergencia = _divergencia_brapi(dle, _num(al.get("ebitda_12m")),
+                                         saida.get("divida_bruta"))
+        if divergencia is not None:
+            saida["divida_liquida_ebitda"] = Dado(
+                None, FONTE_B3_BRAPI, ref_al, divergencia)
+        elif dle is not None:
             saida["divida_liquida_ebitda"] = Dado(
                 dle, FONTE_B3_BRAPI, ref_al,
                 "(dívida total − caixa) ÷ EBITDA de 12 meses, os três da "

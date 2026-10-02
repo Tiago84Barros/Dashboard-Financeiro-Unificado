@@ -382,6 +382,11 @@ def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
                               "gera caixa para servir a dívida", -1))
         alertas.append(Alerta("EBITDA de 12 meses negativo: a operação não "
                               "paga a dívida", True))
+    if bruto is not None and _num(bruto.valor) is None and \
+            (bruto.nota or "").startswith(ff.NOTA_FONTES_DIVERGENTES):
+        # Número que contradiz o balanço não elimina: avisa e pede conferência.
+        alertas.append(Alerta(f"Dívida líquida/EBITDA sem leitura. "
+                              f"{bruto.nota}", False))
     dl_ebitda = ind("divida_liquida_ebitda")
     if dl_ebitda is not None:
         x = _num(dl_ebitda.valor)

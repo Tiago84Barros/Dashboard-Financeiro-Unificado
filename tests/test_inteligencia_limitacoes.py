@@ -221,6 +221,55 @@ def test_alavancagem_da_brapi_dispara_as_reguas_existentes(an):  # noqa: F811
     assert "não paga os juros" in textos
 
 
+def _balanco(divida_total):
+    # exercício anual sem EBITDA: a razão só pode vir da brapi
+    return pd.DataFrame({"Data": [pd.Timestamp(2025, 12, 31)],
+                         "Receita_Liquida": [4.343e9],
+                         "Lucro_Liquido": [9.8e8],
+                         "Divida_Total": [divida_total],
+                         "Divida_Liquida": [None], "EBITDA": [None]})
+
+
+# DIRR3 no arquivo de 01/10/2026: 6,44x sobre EBITDA de R$ 1,252 bi
+_ALAV_DIRR3 = {"divida_liquida_ebitda": 6.44, "ebitda_12m": 1252058000.0,
+               "alavancagem_ref": "brapi financialData de 2026-09-19"}
+
+
+def test_brapi_com_liquida_maior_que_a_bruta_do_balanco_fica_retida():
+    d = ff.dados_acao_b3(_balanco(3.5e9), None, _ALAV_DIRR3)
+    dado = d["divida_liquida_ebitda"]
+    assert dado.valor is None and dado.fonte == ff.FONTE_B3_BRAPI
+    assert dado.nota.startswith(ff.NOTA_FONTES_DIVERGENTES)
+    assert "R$ 8,06 bi" in dado.nota and "R$ 3,50 bi" in dado.nota
+    assert "exercício 2025" in dado.nota
+
+
+def test_brapi_dentro_da_folga_segue_valendo():
+    # líquida de R$ 8,06 bi contra bruta de R$ 6 bi: cabe na folga de 1,5×
+    d = ff.dados_acao_b3(_balanco(6.0e9), None, _ALAV_DIRR3)
+    assert d["divida_liquida_ebitda"].valor == 6.44
+
+
+def test_sem_bruta_ou_sem_ebitda_nao_ha_conferencia():
+    assert ff.dados_acao_b3(None, None, _ALAV_DIRR3)[
+        "divida_liquida_ebitda"].valor == 6.44
+    sem_ebitda = {k: v for k, v in _ALAV_DIRR3.items() if k != "ebitda_12m"}
+    assert ff.dados_acao_b3(_balanco(3.5e9), None, sem_ebitda)[
+        "divida_liquida_ebitda"].valor == 6.44
+
+
+def test_fontes_divergentes_avisam_sem_eliminar(an):  # noqa: F811
+    dados = ff.dados_acao_b3(_balanco(3.5e9), None, _ALAV_DIRR3)
+    fund = f.montar(f.ACAO, {**{k: f.Dado(v, "teste", "2025")
+                                for k, v in BOA.items()
+                                if k not in dados}, **dados}).como_dict()
+    a = av.avaliar(_com(an["WEGE3"], fund))
+    assert not any("alavancagem de" in x.texto for x in a.alertas)
+    assert not any("Fontes divergentes" in x.texto for x in a.criticos)
+    aviso = next(x for x in a.alertas if "Fontes divergentes" in x.texto)
+    assert not aviso.critico
+
+
 # -- negação com escopo (léxico 1.2.0) ---------------------------------------------
 
 
