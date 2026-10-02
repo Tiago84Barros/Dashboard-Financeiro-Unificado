@@ -63,3 +63,65 @@ def test_ano_corrente_nao_mostra_meses_futuros():
 
 def test_sem_eventos_devolve_estrutura_vazia():
     assert serie_por_ativo([], "anual")["ordem"] == []
+
+
+# ── Fracionário (BBAS3F) é o mesmo ativo que o lote padrão (BBAS3) ──────────
+
+from core.proventos import _montar_dict  # noqa: E402
+
+
+def _ev_fonte(ticker, total, pagamento, ext, nome=None):
+    return {"ticker": ticker, "nome": nome or ticker, "classe": "Ações",
+            "cor": "#000", "tipo": "dividend", "label_tipo": "Dividendo",
+            "total_amount": total, "payment_date": pagamento, "external_id": ext}
+
+
+HOJE = date(2026, 10, 2)
+
+
+def test_fracionario_soma_no_lote_padrao():
+    d = _montar_dict([
+        _ev_fonte("BBAS3", 100.0, date(2025, 3, 1), "b3mov-1", "Banco do Brasil"),
+        _ev_fonte("BBAS3F", 7.5, date(2025, 3, 1), "xpcsl-1", "BBAS3F"),
+    ], HOJE)
+    assert [a["ticker"] for a in d["por_ativo"]] == ["BBAS3"]
+    assert d["por_ativo"][0]["total"] == 107.5
+    assert d["por_ativo"][0]["nome"] == "Banco do Brasil"
+    assert d["num_ativos"] == 1
+
+
+def test_mesmo_pagamento_nos_dois_tickers_conta_uma_vez_e_fica_o_da_b3():
+    d = _montar_dict([
+        _ev_fonte("BBAS3F", 50.0, date(2025, 6, 1), "xpcsl-9"),
+        _ev_fonte("BBAS3", 50.0, date(2025, 6, 1), "b3mov-9"),
+    ], HOJE)
+    assert d["total_historico"] == 50.0
+    assert [e["external_id"] for e in d["eventos"]] == ["b3mov-9"]
+
+
+def test_pagamentos_iguais_no_mesmo_ticker_nao_sao_descartados():
+    d = _montar_dict([
+        _ev_fonte("BBAS3", 50.0, date(2025, 6, 1), "b3mov-1"),
+        _ev_fonte("BBAS3", 50.0, date(2025, 6, 1), "b3mov-2"),
+    ], HOJE)
+    assert d["total_historico"] == 100.0
+
+
+def test_fii_e_unit_mantem_o_ticker():
+    d = _montar_dict([
+        _ev_fonte("MXRF11", 10.0, date(2025, 1, 1), "b3mov-1"),
+        _ev_fonte("MXRF11F", 2.0, date(2025, 1, 1), "xpcsl-1"),
+        _ev_fonte("TAEE11", 3.0, date(2025, 1, 1), "b3mov-2"),
+    ], HOJE)
+    totais = {a["ticker"]: a["total"] for a in d["por_ativo"]}
+    assert totais == {"MXRF11": 12.0, "TAEE11": 3.0}
+
+
+def test_serie_por_ativo_ve_um_so_ativo():
+    d = _montar_dict([
+        _ev_fonte("BBAS3", 100.0, date(2024, 3, 1), "b3mov-1"),
+        _ev_fonte("BBAS3F", 7.5, date(2025, 3, 1), "xpcsl-1"),
+    ], HOJE)
+    s = serie_por_ativo(d["eventos"], "anual")
+    assert s["ordem"] == ["BBAS3"]
+    assert s["series"]["BBAS3"] == [100.0, 7.5]
