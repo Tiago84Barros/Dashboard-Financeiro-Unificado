@@ -891,6 +891,8 @@ def _carteira_real() -> dict:
             "cor":               _CLASS_COR.get(classe_raw, "#718096"),
         })
 
+    posicoes = _juntar_fracionario_posicoes(posicoes)
+
     # Preenche pct_carteira com base no total_mercado consolidado
     base = total_mercado if total_mercado > 0 else total_investido
     n_live = sum(1 for p in posicoes if p.get("cotacao_fonte") == "live")
@@ -929,6 +931,51 @@ def _carteira_real() -> dict:
         "avisos_dados":            avisos_dados,
         # data_source injetado pelo caller
     }
+
+
+def _juntar_fracionario_posicoes(posicoes: list) -> list:
+    """Uma posição por ticker-base: BBAS3F soma em BBAS3.
+
+    Caminho de reserva de `_carteira_real` (sem snapshots), que lê
+    portfolio_positions linha a linha, uma por asset_id. O caminho principal
+    já agrupa pelo ticker-base no SQL. Quantidade, custo e mercado somam;
+    preço médio e rentabilidade são recalculados; nome, cotação e o resto
+    vêm da linha do lote padrão quando ela existe. Posição no exterior não
+    tem fracionário e passa intacta.
+    """
+    grupos: dict[object, dict] = {}
+    for i, p in enumerate(posicoes):
+        if (p.get("moeda") or "BRL") != "BRL":
+            grupos[("exterior", i)] = p
+            continue
+        base = _base_ticker(p.get("ticker") or "")
+        atual = grupos.get(base)
+        if atual is None:
+            grupos[base] = {**p, "ticker": base}
+            continue
+        e_lote_padrao = str(p.get("ticker") or "").upper().strip() == base
+        principal, outra = (p, atual) if e_lote_padrao else (atual, p)
+        qtd = float(principal.get("quantidade") or 0) + float(outra.get("quantidade") or 0)
+        ti = float(principal.get("total_investido") or 0) + float(outra.get("total_investido") or 0)
+        vm = round(float(principal.get("valor_mercado") or 0)
+                   + float(outra.get("valor_mercado") or 0), 2)
+        rentab = round((vm - ti) / ti * 100, 2) if ti > 0 else None
+        pm = ti / qtd if qtd else 0.0
+        grupos[base] = {
+            **principal,
+            "ticker": base,
+            "quantidade": qtd,
+            "total_investido": ti,
+            "total_investido_moeda_original": ti,
+            "preco_medio": pm,
+            "preco_medio_moeda_original": pm,
+            "valor_mercado": vm,
+            "diferenca_reais": round(vm - ti, 2),
+            "rentab_pct": rentab,
+            "rentab_brl_pct": rentab,
+            "retorno_brl_disponivel": rentab is not None,
+        }
+    return list(grupos.values())
 
 
 def _base_ticker(ticker: str) -> str:
@@ -1542,12 +1589,24 @@ _SQL_EVOLUCAO_TX = """
     ORDER BY 1
 """
 
+# Ticker-base em SQL, com a regra de `_base_ticker`: BBAS3F e MXRF11F caem em
+# BBAS3 e MXRF11. O dedup de proventos particiona por ele, e não por asset_id,
+# porque o mesmo pagamento gravado como BBAS3 (B3) e BBAS3F (XP) são dois
+# asset_id e entrava duas vezes nas somas.
+_SQL_TICKER_BASE = """
+    CASE WHEN UPPER(TRIM(a.ticker)) LIKE '%F'
+              AND (LENGTH(TRIM(a.ticker)) > 4 OR UPPER(TRIM(a.ticker)) LIKE '%11F')
+         THEN LEFT(UPPER(TRIM(a.ticker)), LENGTH(TRIM(a.ticker)) - 1)
+         ELSE UPPER(TRIM(a.ticker))
+    END
+"""
+
 _SQL_EVOLUCAO_DIV = """
     WITH dedup AS (
         SELECT
             d.*,
             ROW_NUMBER() OVER (
-                PARTITION BY d.asset_id, d.payment_date, d.type, ROUND(d.total_amount::numeric, 2)
+                PARTITION BY """ + _SQL_TICKER_BASE + """, d.payment_date, d.type, ROUND(d.total_amount::numeric, 2)
                 ORDER BY CASE
                     WHEN d.external_id LIKE 'b3mov-%' THEN 0
                     WHEN d.external_id LIKE 'xpcsl-%' THEN 1
@@ -1556,6 +1615,7 @@ _SQL_EVOLUCAO_DIV = """
                 d.id
             ) AS rn
         FROM dividends d
+        JOIN assets a ON a.id = d.asset_id
         WHERE d.user_id = :uid
           AND d.payment_date IS NOT NULL
     )
@@ -1896,7 +1956,7 @@ _SQL_RENTAB_PROVENTOS_B3 = """
     WITH dedup AS (
         SELECT d.*, a.ticker,
             ROW_NUMBER() OVER (
-                PARTITION BY d.asset_id, d.payment_date, d.type, ROUND(d.total_amount::numeric, 2)
+                PARTITION BY """ + _SQL_TICKER_BASE + """, d.payment_date, d.type, ROUND(d.total_amount::numeric, 2)
                 ORDER BY CASE
                     WHEN d.external_id LIKE 'b3mov-%' THEN 0
                     WHEN d.external_id LIKE 'xpcsl-%' THEN 1

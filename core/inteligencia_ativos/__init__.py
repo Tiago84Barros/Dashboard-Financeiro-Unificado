@@ -77,9 +77,21 @@ def _cenario(engine=None, owner_id=None) -> tuple:
 
 
 def _posicao(carteira: dict, ticker: str) -> dict | None:
+    """Posição de ``ticker``; o fracionário (BBAS3F) acha a do lote padrão.
+
+    A carteira já chega agrupada pelo ticker-base, então quem pergunta pelo
+    ticker com F não pode receber "fora da carteira".
+    """
+    from core.investimentos import _base_ticker
     alvo = ticker.strip().upper()
-    return next((p for p in carteira.get("posicoes") or []
-                 if str(p.get("ticker", "")).strip().upper() == alvo), None)
+    posicoes = carteira.get("posicoes") or []
+    exata = next((p for p in posicoes
+                  if str(p.get("ticker", "")).strip().upper() == alvo), None)
+    if exata is not None:
+        return exata
+    base = _base_ticker(alvo)
+    return next((p for p in posicoes
+                 if _base_ticker(str(p.get("ticker", ""))) == base), None)
 
 
 def _carteira(carteira: dict | None) -> dict:
