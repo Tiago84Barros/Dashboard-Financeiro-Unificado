@@ -92,7 +92,7 @@ def test_leitor_entrega_o_bruto_na_captura(monkeypatch, mod, leitor, teste, tick
     captura.clear()
     monkeypatch.setattr(ur, "_db_is_local", lambda: True)
     monkeypatch.setattr(ur, "_engine", lambda: object())
-    monkeypatch.setattr(teste.det, "ler_detalhe", lambda _e, t: {x: next(iter(bruto.values()))
+    monkeypatch.setattr(teste.det, "ler_detalhe", lambda _e, t, **_k: {x: next(iter(bruto.values()))
                                                           for x in t})
     ctx.get_warehouse_detail_context([ticker], captura=captura)
     assert set(captura) == {ticker}
