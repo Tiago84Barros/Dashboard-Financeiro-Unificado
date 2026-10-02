@@ -443,3 +443,93 @@ def _agregar_por_tipo(eventos: list, total: float) -> list:
         key=lambda x: x["total"],
         reverse=True,
     )
+
+
+def _como_data(v):
+    """``payment_date`` vem como ``date`` do banco; do cache pode vir como texto."""
+    if isinstance(v, _date):
+        return v
+    if isinstance(v, str) and v:
+        try:
+            return _date.fromisoformat(v[:10])
+        except ValueError:
+            return None
+    return None
+
+
+def serie_por_ativo(
+    eventos: list,
+    granularidade: str = "anual",
+    ano: int | None = None,
+    tickers: list | None = None,
+) -> dict:
+    """Matriz período × ativo de proventos recebidos, para comparar pagadores.
+
+    Conta só renda (``TIPOS_RENDA_PESSOAL``), como o resto deste módulo: a
+    amortização devolvida por um FII não é um pagamento de dividendo e,
+    somada, faria um ativo parecer pagar mais do que paga.
+
+    Os períodos são contíguos e preenchidos com zero. Um ano sem pagamento é
+    informação — sumir com ele no eixo faria um corte de dividendo parecer
+    continuidade.
+
+    granularidade  "anual" (um ponto por ano) ou "mensal" (um por mês).
+    ano            recorta a série nesse ano; ``None`` usa todo o histórico.
+    tickers        ativos a incluir; ``None`` inclui todos.
+
+    Devolve ``{"periodos": [label], "series": {ticker: [valor]},
+    "totais": {ticker: total}, "ordem": [tickers por total decrescente]}``.
+    """
+    alvo = set(tickers) if tickers is not None else None
+    validos = []
+    for e in eventos or []:
+        if e.get("tipo") not in TIPOS_RENDA_PESSOAL:
+            continue
+        if alvo is not None and e.get("ticker") not in alvo:
+            continue
+        pd = _como_data(e.get("payment_date"))
+        if pd is None or (ano is not None and pd.year != ano):
+            continue
+        validos.append((e["ticker"], pd, float(e.get("total_amount") or 0.0)))
+
+    vazio = {"periodos": [], "series": {}, "totais": {}, "ordem": []}
+    if not validos:
+        return vazio
+
+    if granularidade == "mensal":
+        if ano is not None:
+            # No ano corrente, mês que ainda não chegou não é "zero pago":
+            # exibi-lo derrubaria a média e pareceria corte de dividendo.
+            hoje = _date.today()
+            ultimo = 12 if ano != hoje.year else max(
+                hoje.month, max(d.month for _, d, _ in validos))
+            chaves = [(ano, m) for m in range(1, ultimo + 1)]
+        else:
+            ini = min((d.year, d.month) for _, d, _ in validos)
+            fim = max((d.year, d.month) for _, d, _ in validos)
+            chaves, (a, m) = [], ini
+            while (a, m) <= fim:
+                chaves.append((a, m))
+                a, m = (a + 1, 1) if m == 12 else (a, m + 1)
+        labels = [f"{_MESES_PT[m]}/{str(a)[2:]}" for a, m in chaves]
+
+        def _chave(d):
+            return (d.year, d.month)
+    else:
+        anos = [d.year for _, d, _ in validos]
+        chaves = list(range(min(anos), max(anos) + 1))
+        labels = [str(a) for a in chaves]
+
+        def _chave(d):
+            return d.year
+
+    idx = {k: i for i, k in enumerate(chaves)}
+    series: dict[str, list] = {}
+    for ticker, d, valor in validos:
+        linha = series.setdefault(ticker, [0.0] * len(chaves))
+        linha[idx[_chave(d)]] += valor
+
+    series = {t: [round(v, 2) for v in vals] for t, vals in series.items()}
+    totais = {t: round(sum(vals), 2) for t, vals in series.items()}
+    ordem = sorted(totais, key=lambda t: (-totais[t], t))
+    return {"periodos": labels, "series": series, "totais": totais, "ordem": ordem}
