@@ -96,3 +96,20 @@ Todas as leituras passam por funções já cacheadas do projeto (Supabase e
 criada. Se um leitor falhar, a seção vira `SEM_DADOS` e o resto da análise continua. Na
 suíte de testes, a fixture `_fundamentos_sem_banco` (`tests/conftest.py`) mantém a
 seção offline.
+
+## O mesmo veredito nas LLMs da Empresas B3
+
+`core/inteligencia_ativos/veredito.py` calcula, para cada ação B3, a mesma `Avaliacao`
+da Inteligência dos Ativos (mesmos leitores, mesma régua de dívida) e o limite que ela
+impõe: alerta eliminatório → "avaliar troca"; qualidade frágil com preço caro ou mercado
+negativo → "avaliar troca"; qualidade frágil sozinha → "não aportar". São os passos de
+`resumida.com_avaliacao`, sem a decisão por peso, que depende da política do usuário.
+
+- **Chat da análise de portfólio**: o contexto recebe o bloco `AVALIAÇÃO POR REGRAS`
+  das ações da carteira e das citadas na pergunta (até 15), e o system prompt carrega
+  `REGRA_VEREDITO`. O chat é texto livre: a coerência vem da regra, não de código.
+  Ticker que falha é nomeado no bloco.
+- **Relatório por empresa**: o veredito entra no contexto e `veredito.coerente` limita
+  a `perspectiva` em código ("fraca" com "avaliar troca", "moderada" com "não aportar"),
+  dizendo no resumo por quê. A perspectiva limitada também reduz o multiplicador da
+  redistribuição de pesos.

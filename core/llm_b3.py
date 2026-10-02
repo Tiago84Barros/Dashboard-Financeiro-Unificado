@@ -25,6 +25,7 @@ import pandas as pd
 import streamlit as st
 
 from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+from core.inteligencia_ativos.veredito import REGRA_VEREDITO
 
 logger = logging.getLogger(__name__)
 
@@ -794,6 +795,7 @@ def chat_com_portfolio(
         "'comparison' com o ativo + os concorrentes); nunca diga que não conhece os concorrentes "
         "se esse bloco estiver presente.\n\n"
         f"{REGRA_CONTEXTO_MERCADO}\n\n"
+        f"{REGRA_VEREDITO}\n\n"
         f"=== CONTEXTO DO PORTFÓLIO ===\n{context}"
     )
 

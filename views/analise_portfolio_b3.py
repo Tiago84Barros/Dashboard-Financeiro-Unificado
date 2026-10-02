@@ -31,6 +31,7 @@ from core.dossie_b3 import (
     TITULO_SEVERIDADE,
     agrupa_flags_por_severidade,
 )
+from core.inteligencia_ativos import veredito
 from core.llm_b3 import (
     chat_com_portfolio,
     llm_disponivel,
@@ -843,6 +844,20 @@ def _render_conclusao(port_analise: dict) -> None:
 # Runner de análise LLM
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _veredito_do_chat(items: list[dict], mencionados) -> str:
+    """Bloco 'AVALIAÇÃO POR REGRAS' das ações da carteira e das citadas na
+    pergunta: o chat lê o mesmo veredito da Inteligência dos Ativos. Se a
+    avaliação inteira cair, o bloco diz isso em vez de sumir."""
+    alvo = list(items or []) + [{"ticker": t} for t in (mencionados or ()) if t]
+    try:
+        bloco, _ = veredito.bloco_para_llm(alvo)
+    except Exception as exc:
+        return ("\n\n=== AVALIAÇÃO POR REGRAS (Inteligência dos Ativos) ===\n"
+                f"Indisponível agora ({type(exc).__name__}); não recomende "
+                "comprar ou aumentar sem ela.")
+    return "\n\n" + bloco if bloco else ""
+
+
 def _web_ctx_da_empresa(ticker: str, web_sinal: dict[str, dict] | None) -> str:
     """Frase sobre a segunda fonte desta empresa, para o prompt individual.
 
@@ -939,12 +954,19 @@ def _executar_analise(
         # loaders e provedores existentes sem tocar nos prompts do gate, Score,
         # análise individual B3 ou Empresas Americanas.
         dossie: dict = {}
+        # Mesmo veredito da Inteligência dos Ativos (caso DIRR3, 10/2026).
+        try:
+            av_regras = veredito.avaliar_acao_b3(tk, it.get("nome"), it.get("setor"))
+        except Exception as exc_av:
+            av_regras = None
+            erros.append(f"{tk}: avaliação por regras indisponível ({type(exc_av).__name__}).")
         try:
             _ctx_emp = (
                 f"{portfolio_ctx} Empresa avaliada: {nome_} | setor {setor_} / "
                 f"segmento {seg_}. Peso atual na carteira: {peso_pct_:.1f}% | "
                 f"score quantitativo {score_:.1f} | alpha vs Selic {alpha_:+.1f}%."
                 + _web_ctx_da_empresa(tk, web_sinal)
+                + veredito.regra_relatorio(av_regras, tk)
             )
             analise, dossie = generate_company_portfolio_report(
                 tk,
@@ -967,6 +989,8 @@ def _executar_analise(
         else:
             if int(analise.get("confianca") or 0) == 0:
                 erros.append(f"{tk}: relatório institucional não gerado — exibindo fallback neutro.")
+        # O fallback neutro também respeita o teto.
+        analise = veredito.coerente(analise, av_regras)
 
         items_analisados.append({
             "ticker":     tk,
@@ -1384,6 +1408,8 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
 
                     context = context + "\n\n" + conjuntura_da_carteira(
                         "b3", model.get("items", []))
+                    context = context + _veredito_do_chat(
+                        model.get("items", []), chart_meta.get("mentioned_tickers"))
                     resposta_raw = chat_com_portfolio(context, history[:-1], user_input)
                     resposta, chart_directives = parse_chart_directives(resposta_raw)
                     # Fallback: a LLM às vezes descreve o gráfico sem emitir a
