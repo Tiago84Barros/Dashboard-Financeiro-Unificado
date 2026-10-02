@@ -16,6 +16,7 @@ Dados: core/investimentos + core/proventos
 """
 import html as _html
 import logging
+import re
 from datetime import datetime as _datetime
 
 import pandas as pd
@@ -238,6 +239,39 @@ _MACRO_COEF: dict[str, list] = {
 # ══════════════════════════════════════════════════════════════════════════════
 # HELPERS — métricas e computed fields
 # ══════════════════════════════════════════════════════════════════════════════
+
+_TICKER_B3 = re.compile(r"^[A-Z]{4}\d{1,2}$")
+
+
+def _com_fracionario(tickers: list[str]) -> dict[str, str]:
+    """Ticker a consultar → ticker da carteira, com o fracionário de cada B3.
+
+    A carteira chega pelo ticker-base (BBAS3), mas cotações e fotos de
+    posição podem estar gravadas só no asset do fracionário (BBAS3F). Só
+    ticker no formato da B3 ganha o F: no exterior o sufixo é outro papel.
+    """
+    mapa = {tk: tk for tk in tickers}
+    for tk in tickers:
+        if _TICKER_B3.match(tk or ""):
+            mapa.setdefault(f"{tk}F", tk)
+    return mapa
+
+
+def _preco_por_ticker_base(df: pd.DataFrame, mapa: dict[str, str]) -> pd.DataFrame:
+    """Uma linha por (data, ticker da carteira); o lote padrão vence o F.
+
+    ``mapa`` é o de `_com_fracionario`. Pede ``data``, ``ticker`` e ``preco``
+    já limpas.
+    """
+    df = df.copy()
+    df["_frac"] = df["ticker"].map(lambda t: mapa.get(t, t) != t)
+    df["ticker"] = df["ticker"].map(lambda t: mapa.get(t, t))
+    return (
+        df.sort_values(["data", "_frac"], ascending=[True, False])
+        .drop_duplicates(["data", "ticker"], keep="last")
+        .drop(columns="_frac")
+    )
+
 
 def _calc_n_efetivo(posicoes: list) -> float:
     """N efetivo = 1 / Σwi² (índice inverso de Herfindahl)."""
@@ -539,7 +573,8 @@ def _load_corr_precos_db(
                   AND aq.timestamp >= CURRENT_DATE - INTERVAL '3 years'
                 ORDER BY aq.timestamp
             """).bindparams(bindparam("tickers", expanding=True))
-            tickers_consulta = [*tickers, *(["USDBRL"] if precisa_usd else [])]
+            consulta = _com_fracionario(tickers)
+            tickers_consulta = [*consulta, *(["USDBRL"] if precisa_usd else [])]
             rows = conn.execute(q_quotes, {"tickers": tickers_consulta}).mappings().all()
             if rows:
                 quote_frame = pd.DataFrame(rows)
@@ -556,10 +591,10 @@ def _load_corr_precos_db(
                 fx = dfq.loc[dfq["ticker"] == "USDBRL", ["data", "preco"]]
                 if not fx.empty:
                     cambio_para_brl["USD"] = fx.set_index("data")["preco"]
+            dfq = _preco_por_ticker_base(dfq, _com_fracionario(tickers))
             dfq = dfq[dfq["ticker"].isin(tickers)]
             daily = (
                 dfq.sort_values("data")
-                .drop_duplicates(["data", "ticker"], keep="last")
                 .pivot(index="data", columns="ticker", values="preco")
                 .sort_index()
             )
@@ -598,7 +633,9 @@ def _load_corr_precos_db(
                   ) IS NOT NULL
                 ORDER BY pps.report_date
             """).bindparams(bindparam("tickers", expanding=True))
-            rows = conn.execute(q_snap, {"uid": owner, "tickers": tickers}).mappings().all()
+            rows = conn.execute(
+                q_snap, {"uid": owner, "tickers": list(_com_fracionario(tickers))}
+            ).mappings().all()
             if rows:
                 frames.append(pd.DataFrame(rows))
         except Exception:
@@ -615,8 +652,7 @@ def _load_corr_precos_db(
         return {"corr": pd.DataFrame(), "returns": pd.DataFrame(), "symbols_ok": []}
 
     close = (
-        df.sort_values("data")
-        .drop_duplicates(["data", "ticker"], keep="last")
+        _preco_por_ticker_base(df, _com_fracionario(tickers))
         .pivot(index="data", columns="ticker", values="preco")
         .sort_index()
     )
@@ -1486,7 +1522,8 @@ def _load_performance_history(
                   AND aq.timestamp >= CURRENT_DATE - (:days || ' days')::INTERVAL
                 ORDER BY aq.timestamp
             """).bindparams(bindparam("tickers", expanding=True))
-            rows = conn.execute(q, {"tickers": tickers_local, "days": str(days)}).mappings().all()
+            rows = conn.execute(q, {"tickers": list(_com_fracionario(tickers_local)),
+                                    "days": str(days)}).mappings().all()
         if not rows:
             return pd.DataFrame()
         df = pd.DataFrame(rows)
@@ -1496,8 +1533,7 @@ def _load_performance_history(
         if df.empty:
             return pd.DataFrame()
         pivot = (
-            df.sort_values("data")
-            .drop_duplicates(["data", "ticker"], keep="last")
+            _preco_por_ticker_base(df, _com_fracionario(tickers_local))
             .pivot(index="data", columns="ticker", values="preco")
             .sort_index()
         )
