@@ -22,6 +22,7 @@ from core.config import settings
 from core.controle import get_gastos_categoria_anual, get_historico_anual
 from core.controle_indicadores import indicadores_caixa
 from core.financeiro import get_visao_geral, patrimonio_investido_confiavel
+from core.inteligencia_ativos import veredito
 from core.investimentos import (
     get_carteira,
     get_cashflow_mensal,
@@ -29,6 +30,7 @@ from core.investimentos import (
 )
 from core.us_portfolio_model import load_active_us_portfolio_model
 from core.utils import fmt_moeda, fmt_percentual
+from design import portao_inteligencia as _portao_ui
 
 # Carteira-modelo de FIIs — recomputada com a mesma lógica da página Seleção de FIIs.
 _FIIS_N_MAX = 10          # nº de FIIs na carteira-modelo (default da página)
@@ -1262,6 +1264,8 @@ def _secao_carteira_modelo(
             unsafe_allow_html=True,
         )
 
+    _portao_ui.render_salvo(
+        veredito.log_do_payload(modelo.get("params_json")), tela=chave)
     st.markdown("<br>", unsafe_allow_html=True)
 
 
@@ -1463,7 +1467,20 @@ def _secao_fiis_sugeridos(port: list[dict] | None = None, salvo: bool = False) -
             unsafe_allow_html=True,
         )
 
+    if salvo:
+        _portao_ui.render_salvo(_log_da_carteira_fii_salva(), tela="fii")
     st.markdown("<br>", unsafe_allow_html=True)
+
+
+def _log_da_carteira_fii_salva() -> dict | None:
+    """Log do portão da carteira-modelo de FIIs salva (mesma leitura em cache
+    de ``_fiis_carteira_modelo``). Falha de banco vira "não se sabe"."""
+    try:
+        from core.fii_portfolio_model import load_active_fii_portfolio_model
+        return veredito.log_do_payload(
+            load_active_fii_portfolio_model().get("params_json"))
+    except Exception:  # noqa: BLE001 - mesma fronteira de _fiis_carteira_modelo
+        return None
 
 
 def _faixa_destaque(rotulo: str, titulo: str, descricao: str, cor: str) -> None:

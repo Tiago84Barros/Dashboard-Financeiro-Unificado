@@ -2344,10 +2344,8 @@ def _carteira_integrada(preferences: dict):
         with st.expander(_portao_ui.TITULO, expanded=bool(
                 intel_log.get("vetados") or intel_log.get("persistentes"))):
             _portao_ui.render(
-                intel_log, grupo="tipo",
-                como_substitui=("O otimizador remonta a carteira sem o vetado, "
-                                "sob as mesmas restrições; quem entra é "
-                                "escolha dele, não herança de vaga."))
+                intel_log, grupo=_portao_ui.GRUPO["fii"],
+                como_substitui=_portao_ui.COMO_SUBSTITUI["fii"])
     candidate_correlation = (
         _correlacao_da_ultima_tentativa[0] if _correlacao_da_ultima_tentativa
         else pd.DataFrame()
@@ -2690,7 +2688,23 @@ def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
                     "Não foi possível salvar por uma falha transacional no banco. "
                     "Nenhuma substituição parcial foi mantida."
                 )
+    _render_log_da_carteira_ativa()
     _render_portfolio_version_history(key)
+
+
+def _render_log_da_carteira_ativa() -> None:
+    """O portão gravado na carteira-modelo hoje salva — que pode não ser a
+    montada acima, ainda não salva."""
+    try:
+        from core.fii_portfolio_model import load_active_fii_portfolio_model
+        ativa = load_active_fii_portfolio_model()
+    except (RuntimeError, ValueError, SQLAlchemyError):
+        return
+    if not ativa.get("items"):
+        return
+    _portao_ui.render_salvo(
+        veredito.log_do_payload(ativa.get("params_json")), tela="fii",
+        titulo="🧭 Inteligência dos Ativos na carteira-modelo salva (ativa)")
 
 
 def _render_portfolio_version_history(key: str) -> None:
@@ -2717,6 +2731,9 @@ def _render_portfolio_version_history(key: str) -> None:
             ),
             key=f"{key}_restore_version",
         )
+        _portao_ui.render_conteudo_salvo(
+            veredito.log_do_payload(by_id[selected].get("params_json")),
+            tela="fii")
         confirmed = st.checkbox(
             "Confirmo que desejo substituir a versão ativa por esta versão arquivada.",
             key=f"{key}_restore_confirm",

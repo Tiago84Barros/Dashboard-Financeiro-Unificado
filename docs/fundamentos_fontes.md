@@ -160,6 +160,13 @@ As três telas mostram a seção "Inteligência dos Ativos — vetos e substitui
 chaves `inteligencia_vetados`, `_substituicoes`, `_vagas_vazias`, `_indisponiveis` e
 `_persistentes` (`veredito.log_para_payload`), igual nas três.
 
+A carteira salva exibe esse log de volta (`veredito.log_do_payload` +
+`portao_inteligencia.render_salvo`): na Avaliação de Portfólio B3 e EUA, no Dashboard
+Geral (B3, EUA e FIIs) e, na Seleção de FIIs, para a carteira-modelo ativa e para a
+versão arquivada escolhida no histórico. Carteira salva antes do registro aparece como
+"não se sabe", não como "nada vetado". O chat da Avaliação B3 e EUA recebe o mesmo log
+em texto (`veredito.log_para_texto`).
+
 Lacunas conhecidas: nos FIIs, quem entra no lugar do vetado é escolha do otimizador,
-não herança de vaga; nenhuma tela ainda exibe o log a partir do resumo salvo; a conferência é heurística; menção a ticker americano só é reconhecida para
+não herança de vaga; carteiras salvas antes do registro não têm o log de volta; a conferência é heurística; menção a ticker americano só é reconhecida para
 tickers que estão no bloco.

@@ -2885,10 +2885,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
         with st.expander(_portao_ui.TITULO, expanded=bool(
                 intel_log.get("vetados") or intel_log.get("persistentes"))):
             _portao_ui.render(
-                intel_log, grupo="indústria",
-                como_substitui=("O substituto é o próximo do ranking da MESMA "
-                                "indústria que também passa no piso de "
-                                "qualidade; os pesos são reotimizados."))
+                intel_log, grupo=_portao_ui.GRUPO["us"],
+                como_substitui=_portao_ui.COMO_SUBSTITUI["us"])
 
     secao_titulo("Travessia de Recessão", "🛡️")
     _render_us_ciclo(holdings)

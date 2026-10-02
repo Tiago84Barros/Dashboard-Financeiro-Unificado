@@ -4429,8 +4429,8 @@ def render(show_header: bool = True) -> None:
                     unsafe_allow_html=True)
         _sec_hdr(_portao_ui.TITULO)
         _portao_ui.render(
-            intel_log, como_substitui="O substituto é o próximo do ranking "
-            "do MESMO segmento e herda o peso.")
+            intel_log, grupo=_portao_ui.GRUPO["b3"],
+            como_substitui=_portao_ui.COMO_SUBSTITUI["b3"])
 
     # ── TRANSPARÊNCIA DO GATE QUALITATIVO ────────────────────────────────────
     if _gate_ativo:
