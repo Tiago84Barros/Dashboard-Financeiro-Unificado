@@ -221,15 +221,18 @@ def chave_sessao(analise: m.AnaliseAtivo, contexto: dict) -> str:
 
 # -- tela ------------------------------------------------------------------------
 
-def render(analise: m.AnaliseAtivo,
-           ctx: m.ContextoInvestidor) -> pf.Leitura | None:
-    """Desenha o bloco e devolve a leitura por LLM desta sessão, se houver."""
+def render(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor,
+           referencia_modelo: dict | None = None) -> pf.Leitura | None:
+    """Desenha o bloco e devolve a leitura por LLM desta sessão, se houver.
+
+    ``referencia_modelo`` (``ReferenciaModelo.para_llm``) vai para a LLM só
+    como comparação; a pré-leitura por regras não a vê."""
     from core.inteligencia_ativos import leitura_llm
     from core.llm_b3 import llm_disponivel
 
     st.markdown(cartao_fit_regras(pf.fit_por_regras(analise, ctx)),
                 unsafe_allow_html=True)
-    contexto = pf.contexto(analise, ctx)
+    contexto = pf.contexto(analise, ctx, referencia_modelo=referencia_modelo)
     chave = chave_sessao(analise, contexto)
 
     if not llm_disponivel():
@@ -237,7 +240,8 @@ def render(analise: m.AnaliseAtivo,
     elif st.button("Gerar leitura de Portfolio Fit", key=f"{chave}_botao",
                    type="primary"):
         with st.spinner("Lendo o ativo dentro da sua carteira…"):
-            st.session_state[chave] = leitura_llm.gerar(analise, ctx)
+            st.session_state[chave] = leitura_llm.gerar(
+                analise, ctx, referencia_modelo=referencia_modelo)
 
     leitura = st.session_state.get(chave)
     aviso = aviso_cenario(ctx, leitura if isinstance(leitura, pf.Leitura)
@@ -255,6 +259,8 @@ def render(analise: m.AnaliseAtivo,
         st.caption("Só o que a análise acima já montou, sem o banco inteiro. "
                    "O Cenário de Investimentos vai em "
                    "scenario.cenario_do_investidor, só para leitura. O bloco "
-                   "de contexto de mercado é anexado na hora da chamada.")
+                   "de contexto de mercado é anexado na hora da chamada. A "
+                   "carteira recomendada do Portfólio Global vai em "
+                   "app_model_reference, só como comparação.")
         st.json(contexto, expanded=False)
     return leitura if isinstance(leitura, pf.Leitura) else None

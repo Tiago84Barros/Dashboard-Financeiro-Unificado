@@ -23,7 +23,9 @@ não decide nada sozinha.
 Liberada, a aba é um painel, de cima para baixo: resumo da carteira,
 cartões dos ativos (o botão de cada um abre a análise completa), análise
 completa e Portfolio Fit do ativo escolhido, e o histórico com a auditoria de
-cada foto. Os cartões vêm de ``views/inteligencia_ativos_painel.py``; os
+cada foto. A carteira recomendada do Portfólio Global aparece como referência
+comparativa (``core/inteligencia_ativos/referencia_modelo.py``), em cartão
+próprio, fora das 13 etapas e da "Ação a considerar". Os cartões vêm de ``views/inteligencia_ativos_painel.py``; os
 números, de ``core/inteligencia_ativos/painel.py`` e ``historico.py``.
 
 Coberto por tests/test_inteligencia_ativos_tela.py e
@@ -49,6 +51,7 @@ from core.inteligencia_ativos import informacoes as inf
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import painel, papeis
 from core.inteligencia_ativos import pares as prs
+from core.inteligencia_ativos import referencia_modelo as refm
 from core.inteligencia_ativos import valuation as val
 from core.utils import fmt_moeda
 from views import configuracoes_estrategia as tela_estrategia
@@ -751,6 +754,65 @@ def cartao_questoes(a: m.AnaliseAtivo) -> str:
             f'margin:4px 0 12px 0">{blocos}</div>')
 
 
+def _cartao_ref(titulo: str, corpo: str) -> str:
+    return (
+        '<div style="background:var(--app-surface);border:1px dashed '
+        'var(--app-border);border-radius:10px;padding:12px 16px;'
+        'margin-top:12px"><div style="font-size:0.72rem;font-weight:700;'
+        'letter-spacing:.05em;text-transform:uppercase;'
+        f'color:var(--app-subtle)">{escape(titulo)}</div>'
+        '<div style="font-size:0.9rem;color:var(--app-text);margin-top:6px;'
+        f'line-height:1.5">{corpo}</div>'
+        '<div style="font-size:0.78rem;color:var(--app-muted);margin-top:8px">'
+        f'{escape(refm.AVISO)}</div></div>')
+
+
+def cartao_referencia_ativo(ref: refm.ReferenciaModelo, ticker: str) -> str:
+    """O ativo escolhido contra a carteira recomendada do Portfólio Global.
+    Fora das 13 etapas: é comparação, não etapa da decisão. Puro."""
+    titulo = "Referência · carteira recomendada do Portfólio Global"
+    if not ref.disponivel:
+        return _cartao_ref(titulo, escape(ref.motivo))
+    linha = ref.linha(ticker)
+    if linha is None:
+        return _cartao_ref(titulo, escape(
+            f"{ticker} não foi identificado na carteira nem no modelo."))
+    corpo = (f'<div style="font-weight:700">{escape(linha.ticker)} '
+             f'{escape(refm.ROTULO_SITUACAO[linha.situacao])}.</div>'
+             + _grade([("Peso no modelo", _pct(linha.peso_modelo)),
+                       ("Peso real", _pct(linha.peso_real)),
+                       ("Real − modelo", _pp(linha.diferenca))])
+             + '<div style="font-size:0.82rem;color:var(--app-muted);'
+             f'margin-top:6px">Base dos pesos: '
+             f'{escape(refm.ROTULO_BASE[ref.base])}.</div>')
+    return _cartao_ref(titulo, corpo)
+
+
+def cartao_referencia_carteira(ref: refm.ReferenciaModelo) -> str:
+    """Classes contra o alvo do modelo e os maiores ativos do modelo que a
+    carteira não tem. Puro."""
+    titulo = "Referência · carteira recomendada do Portfólio Global"
+    if not ref.disponivel:
+        return _cartao_ref(titulo, escape(ref.motivo))
+    td = '<td style="padding:2px 10px 2px 0">'
+    linhas = "".join(
+        f"<tr>{td}{escape(c.rotulo)}</td>{td}{_pct(c.alvo)}</td>"
+        f"{td}{_pct(c.real)}</td>{td}{_pp(c.diferenca)}</td></tr>"
+        for c in ref.classes)
+    corpo = _tabela(["Classe", "Modelo", "Real", "Real − modelo"], linhas)
+    fora = ref.fora_da_carteira()
+    if fora:
+        corpo += ('<div style="margin-top:8px;font-weight:700">'
+                  'Do modelo, fora da sua carteira</div>'
+                  + _lista(f"{x.ticker} · {x.nome} · {_pct(x.peso_modelo)}"
+                           for x in fora))
+    corpo += _lista(ref.avisos)
+    corpo += ('<div style="font-size:0.82rem;color:var(--app-muted);'
+              f'margin-top:6px">Base dos pesos: '
+              f'{escape(refm.ROTULO_BASE[ref.base])}.</div>')
+    return _cartao_ref(titulo, corpo)
+
+
 def _render_liberada(liberacao: portao.Liberacao, carteira: dict,
                      proventos: dict | None = None) -> None:
     versao = liberacao.politica.version
@@ -800,6 +862,26 @@ def _analisar_carteira_memo(liberacao: portao.Liberacao,
     return resultado
 
 
+_REFERENCIA_MEMO_KEY = "_ia_referencia_modelo_memo"
+
+
+def _referencia_memo(carteira: dict) -> refm.ReferenciaModelo:
+    """``refm.carregar`` lembrado na sessão pelo mesmo prazo da análise: a
+    carteira recomendada muda quando o Portfólio Global salva modelo ou
+    alocação, não a cada clique."""
+    assinatura = hashlib.sha1(json.dumps(
+        carteira.get("posicoes") or [], sort_keys=True,
+        default=str).encode("utf-8")).hexdigest()
+    agora = time.monotonic()
+    memo = st.session_state.get(_REFERENCIA_MEMO_KEY)
+    if memo and memo[0] == assinatura and memo[1] > agora:
+        return memo[2]
+    ref = refm.carregar(carteira.get("posicoes"))
+    st.session_state[_REFERENCIA_MEMO_KEY] = (
+        assinatura, agora + _ANALISE_MEMO_TTL, ref)
+    return ref
+
+
 def _render_painel(liberacao: portao.Liberacao, carteira: dict,
                    proventos: dict | None) -> None:
     if not carteira.get("posicoes"):
@@ -828,6 +910,8 @@ def _render_painel(liberacao: portao.Liberacao, carteira: dict,
         st.markdown(cartao_premissa(ctx), unsafe_allow_html=True)
         st.markdown(cartao_calculos(ctx.calculos), unsafe_allow_html=True)
         _tabela_carteira(analises)
+        st.markdown(cartao_referencia_carteira(_referencia_memo(carteira)),
+                    unsafe_allow_html=True)
 
     # Toggle, não expander: o Portfolio Fit tem expander próprio e o
     # Streamlit não aninha expanders.
@@ -843,8 +927,12 @@ def _render_painel(liberacao: portao.Liberacao, carteira: dict,
     analise_ = por_ticker[escolha]
     st.markdown(cartao_questoes(analise_), unsafe_allow_html=True)
     st.markdown(fluxo_html(analise_), unsafe_allow_html=True)
+    referencia = _referencia_memo(carteira)
+    st.markdown(cartao_referencia_ativo(referencia, analise_.ativo.ticker),
+                unsafe_allow_html=True)
     st.markdown("#### Portfolio Fit")
-    leitura = tela_fit.render(analise_, ctx)
+    leitura = tela_fit.render(analise_, ctx,
+                              referencia.para_llm(analise_.ativo.ticker))
     st.markdown("#### Histórico e auditoria")
     tela_painel.render_historico(analise_, ctx, leitura)
 

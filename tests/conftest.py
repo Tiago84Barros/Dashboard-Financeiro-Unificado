@@ -454,6 +454,22 @@ def _destaques_relatorios_sem_corpus(monkeypatch):
     yield
 
 
+# A Inteligência dos Ativos compara com a carteira recomendada do Portfólio
+# Global (core/inteligencia_ativos/referencia_modelo.py). Em teste não há
+# banco: sem modelo, a referência sai indisponível. Quem testa a comparação
+# chama ``montar`` (puro) ou troca ``_ler``.
+@pytest.fixture(autouse=True)
+def _referencia_modelo_sem_banco(monkeypatch):
+    try:
+        from core.inteligencia_ativos import referencia_modelo as rm
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(rm, "_ler", lambda engine=None, owner_id=None:
+                        ({}, {"targets": {}, "renda_fixa": None}))
+    yield
+
+
 # Estratégia de Investimentos em memória. A aba Inteligência dos Ativos
 # mostra o bloco da estratégia (abaixo do onboarding, ou em "Minha estratégia"
 # quando liberada), e o bloco lê o repositório. Não é autouse porque os testes

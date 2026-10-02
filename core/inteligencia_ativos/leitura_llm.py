@@ -104,11 +104,14 @@ def _modelo_que_respondeu(chamar) -> str | None:
 
 def gerar(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor, *,
           chamar: Callable[[list[dict]], str] | None = None,
-          mercado: str | None = None) -> pf.Leitura:
+          mercado: str | None = None,
+          referencia_modelo: dict | None = None) -> pf.Leitura:
     """Monta o contexto, chama a LLM e valida a resposta.
 
     ``chamar`` e ``mercado`` existem para teste: sem eles, usa o provedor
-    configurado e monta o bloco de mercado de verdade."""
+    configurado e monta o bloco de mercado de verdade. ``referencia_modelo``
+    é a carteira recomendada do Portfólio Global (``referencia_modelo.
+    ReferenciaModelo.para_llm``), só como comparação."""
     fatos = None
     if mercado is None:
         mercado = contexto_mercado_do_ativo(analise)
@@ -116,7 +119,8 @@ def gerar(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor, *,
         if detalhe:
             mercado += "\n\n" + detalhe
     contexto = pf.contexto(analise, ctx, cenario_mercado=mercado,
-                           mercado_armazem=fatos)
+                           mercado_armazem=fatos,
+                           referencia_modelo=referencia_modelo)
     regras = pf.fit_por_regras(analise, ctx)
     try:
         bruto = (chamar or _chamar_padrao)(pf.mensagens(contexto, mercado))
