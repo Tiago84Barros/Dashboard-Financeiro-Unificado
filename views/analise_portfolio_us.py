@@ -67,6 +67,7 @@ from core.us_macro import (
 )
 from core.us_portfolio_model import load_active_us_portfolio_model
 from core.utils import escapar_cifrao
+from design import portao_inteligencia as _portao_ui
 from design.market_companies import render_company_logo
 
 # CSS compartilhado com a aba B3: o visual das duas telas é o mesmo contrato,
@@ -138,6 +139,9 @@ def _render_portfolio_salvo(model: dict, pesos_novos: dict[str, float] | None) -
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+
+    _portao_ui.render_salvo(
+        veredito.log_do_payload(model.get("params_json")), tela="us")
 
 
 def _avaliacao_quantitativa(model: dict, scored: pd.DataFrame, macro: dict) -> dict:
@@ -946,6 +950,8 @@ def _contexto_base_chat(model: dict, state: dict, macro: dict,
         f"{s}={w*100:.0f}%" for s, w in sorted(setores.items(), key=lambda x: -x[1])))
     linhas.append("  Composição por indústria: " + ", ".join(
         f"{s}={w*100:.0f}%" for s, w in sorted(industrias.items(), key=lambda x: -x[1])[:10]))
+    linhas.append("  Portão da Inteligência dos Ativos na criação (vetos e substituições):")
+    linhas.extend(veredito.log_para_texto(veredito.log_do_payload(model.get("params_json"))))
 
     linhas.append("\nEMPRESAS DA CARTEIRA (dados gravados na Criação de Portfólio):")
     for it in por_peso:

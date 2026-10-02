@@ -488,3 +488,84 @@ def test_as_tres_telas_gravam_o_log_no_resumo():
     from views import empresas_americanas, fiis, portfolio_b3
     for mod in (portfolio_b3, empresas_americanas, fiis):
         assert "veredito.log_para_payload(" in inspect.getsource(mod), mod
+
+
+def test_log_lido_do_resumo_salvo():
+    import json
+
+    log = vd.novo_log_selecao()
+    log["vetados"].append({"tk": "A11", "segmento": "Papel",
+                           "limite": "não aportar", "motivo": "x"})
+    log["substituicoes"].append({"sai": "A11", "entra": "B11",
+                                 "segmento": "Papel"})
+    params = {"metodo": "m", **vd.log_para_payload(log)}
+    assert vd.log_do_payload(params) == log
+    assert vd.log_do_payload(json.dumps(params)) == log  # params_json em texto
+    # Carteira salva antes do registro: "não se sabe", não "nada vetado".
+    assert vd.log_do_payload({"metodo": "m"}) is None
+    assert vd.log_do_payload(None) is None
+    assert vd.log_do_payload("não é json") is None
+    # Gravação parcial (B3 antes de "persistentes"): chave ausente vira [].
+    parcial = vd.log_do_payload({"inteligencia_vetados": log["vetados"]})
+    assert parcial["vetados"] == log["vetados"] and parcial["persistentes"] == []
+
+
+def test_log_salvo_em_texto_para_a_llm():
+    assert "antes de o log" in vd.log_para_texto(None)[0]
+    assert "Nenhum nome vetado" in vd.log_para_texto(vd.novo_log_selecao())[0]
+    log = vd.novo_log_selecao()
+    log["vetados"].append({"tk": "A11", "segmento": "Papel",
+                           "limite": "não aportar", "motivo": "alerta"})
+    log["substituicoes"].append({"sai": "A11", "entra": "B11",
+                                 "segmento": "Papel"})
+    texto = "\n".join(vd.log_para_texto(log))
+    assert "VETADO A11" in texto and "B11 entrou no lugar de A11" in texto
+
+
+def test_conteudo_salvo_distingue_sem_registro_de_sem_veto(monkeypatch):
+    from design import portao_inteligencia as ui
+
+    chamadas: list[tuple[str, str]] = []
+
+    class _St:
+        def caption(self, t):
+            chamadas.append(("caption", t))
+
+        def markdown(self, t):
+            chamadas.append(("markdown", t))
+
+        def warning(self, t):
+            chamadas.append(("warning", t))
+
+    monkeypatch.setattr(ui, "st", _St())
+    ui.render_conteudo_salvo(None, tela="b3")
+    assert "antes de o log" in chamadas[-1][1]
+    ui.render_conteudo_salvo(vd.novo_log_selecao(), tela="us")
+    assert "nenhum nome foi vetado" in chamadas[-1][1]
+    log = vd.novo_log_selecao()
+    log["vetados"].append({"tk": "A11", "segmento": "Papel",
+                           "limite": "não aportar", "motivo": "x"})
+    chamadas.clear()
+    ui.render_conteudo_salvo(log, tela="fii")
+    assert ui.COMO_SUBSTITUI["fii"] in chamadas[0][1]
+    assert any("A11" in t for k, t in chamadas if k == "markdown")
+
+
+def test_carteira_salva_exibe_o_log_nas_telas_e_nas_llms():
+    import inspect
+
+    from views import (
+        analise_portfolio_b3,
+        analise_portfolio_us,
+        dashboard_geral,
+        fiis,
+    )
+    for mod in (analise_portfolio_b3, analise_portfolio_us, dashboard_geral):
+        assert "_portao_ui.render_salvo(" in inspect.getsource(mod), mod
+    src_fiis = inspect.getsource(fiis)
+    assert "_portao_ui.render_salvo(" in src_fiis
+    assert "_portao_ui.render_conteudo_salvo(" in src_fiis  # versão arquivada
+    assert "veredito.log_para_texto(" in inspect.getsource(
+        analise_portfolio_b3._build_chat_context)
+    assert "veredito.log_para_texto(" in inspect.getsource(
+        analise_portfolio_us._contexto_base_chat)

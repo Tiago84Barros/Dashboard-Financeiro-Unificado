@@ -58,6 +58,7 @@ from core.rag_b3 import (
     retrieve_chunks,
 )
 from core.utils import escapar_cifrao
+from design import portao_inteligencia as _portao_ui
 from design.market_companies import render_company_logo
 from views.empresas_b3 import _logo_url
 
@@ -271,6 +272,9 @@ def _render_portfolio_salvo(model: dict, pesos_novos: dict[str, float] | None) -
                     f'</div>',
                     unsafe_allow_html=True,
                 )
+
+    _portao_ui.render_salvo(
+        veredito.log_do_payload(model.get("params_json")), tela="b3")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1249,6 +1253,8 @@ def _build_chat_context(model: dict, state: dict, macro_hist: dict,
                 par_parts.append(f"{k}={params.get(k)}")
         if par_parts:
             lines.append("  Parametros/resultados da Criacao de Portfolio: " + " | ".join(par_parts))
+    lines.append("  Portão da Inteligência dos Ativos na criação (vetos e substituições):")
+    lines.extend(veredito.log_para_texto(veredito.log_do_payload(params)))
     segs: dict[str, float] = {}
     for it in items:
         seg = str(it.get("segmento") or it.get("setor") or "—")

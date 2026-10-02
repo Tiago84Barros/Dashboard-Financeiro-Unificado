@@ -24,6 +24,7 @@ Duas profundidades:
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import unicodedata
@@ -622,6 +623,50 @@ def log_para_payload(log: dict | None) -> dict:
     log = log or {}
     return {f"inteligencia_{k}": list(log.get(k) or ())
             for k in novo_log_selecao()}
+
+
+def log_do_payload(params) -> dict | None:
+    """Inverso de ``log_para_payload``: o log do portão lido do resumo salvo.
+    ``None`` quando a carteira foi salva antes de o log ser gravado (nenhuma
+    chave ``inteligencia_*``) — "não se sabe", diferente de "nada vetado".
+    Chave ausente numa carteira que tem outras vira lista vazia."""
+    if isinstance(params, str):
+        try:
+            params = json.loads(params)
+        except ValueError:
+            return None
+    if not isinstance(params, dict):
+        return None
+    chaves = {k: f"inteligencia_{k}" for k in novo_log_selecao()}
+    if not any(c in params for c in chaves.values()):
+        return None
+    return {k: [e for e in (params.get(c) or ()) if isinstance(e, dict)]
+            for k, c in chaves.items()}
+
+
+def log_para_texto(log: dict | None) -> list[str]:
+    """O log do portão em linhas para o contexto das LLMs da carteira salva."""
+    if log is None:
+        return ["  Carteira salva antes de o log do portão ser gravado: não se "
+                "sabe o que foi vetado ou substituído na criação."]
+    if not any(log.values()):
+        return ["  Nenhum nome vetado, substituído ou sem avaliação na criação."]
+    linhas = []
+    for v in log.get("vetados", ()):
+        linhas.append(f"  VETADO {v.get('tk')} ({v.get('segmento')}) — "
+                      f"{v.get('limite')}: {v.get('motivo')}")
+    for s in log.get("substituicoes", ()):
+        linhas.append(f"  SUBSTITUIÇÃO {s.get('entra')} entrou no lugar de "
+                      f"{s.get('sai')} ({s.get('segmento')})")
+    for s in log.get("vagas_vazias", ()):
+        linhas.append(f"  VAGA VAZIA de {s.get('sai')} ({s.get('segmento')})")
+    for s in log.get("indisponiveis", ()):
+        linhas.append(f"  SEM AVALIAÇÃO {s.get('tk')} ({s.get('segmento')}): "
+                      f"{s.get('erro')}; entrou sem o portão")
+    for v in log.get("persistentes", ()):
+        linhas.append(f"  VETADO QUE FICOU {v.get('tk')} ({v.get('segmento')}) "
+                      f"— {v.get('limite')}: {v.get('motivo')}")
+    return linhas
 
 
 def filtrar_selecao(selecionados, ranked, *, avaliador, pesos: dict,
