@@ -74,6 +74,7 @@ from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from core.utils import escapar_cifrao
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
+from design import portao_inteligencia as _portao_ui
 from design.chat_ativo import render_chat_ativo
 from design.componentes import (
     aviso_cobertura_do_universo,
@@ -2123,6 +2124,16 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
     _carteira_integrada(preferences)
 
 
+def _intel_avaliar_fii(tk: str):
+    """Avaliação por regras da Inteligência dos Ativos (FII), com cache de
+    sessão. Falha não é guardada: o portão é fail-open e tenta de novo no rerun."""
+    cache = st.session_state.setdefault("fii_intel_cache", {})
+    chave = str(tk).upper()
+    if chave not in cache:
+        cache[chave] = veredito.avaliar_ativo(chave, mercado="fii")
+    return cache[chave]
+
+
 def _carteira_integrada(preferences: dict):
     # Sem o subtítulo de versão da metodologia: o cabeçalho da página já traz
     # "Metodologia" nos metadados, e o nome interno do motor não muda decisão
@@ -2305,14 +2316,38 @@ def _carteira_integrada(preferences: dict):
     # da concessão de proteção — em ordem crescente de severidade e no menor
     # número que viabilize — quando o estrito não fecha a carteira. A regra é
     # única (core/fii_carteira_protegida.py); a tela não a reimplementa.
-    result = montar_carteira_com_concessao(
-        eligible_rows, candidatos_da_concessao, scenario,
-        policy=portfolio_policy,
-        score=lambda linhas: score_fiis_by_type(
-            linhas, validation_status=validation_status),
-        optimizer_kwargs=_kwargs_do_otimizador,
+    def _montar(excluidos: frozenset) -> dict:
+        def fora(rows):
+            return [r for r in rows
+                    if str(r.get("ticker") or "").upper() not in excluidos]
+        return montar_carteira_com_concessao(
+            fora(eligible_rows), fora(candidatos_da_concessao), scenario,
+            policy=portfolio_policy,
+            score=lambda linhas: score_fiis_by_type(
+                linhas, validation_status=validation_status),
+            optimizer_kwargs=_kwargs_do_otimizador,
+        )
+
+    # A carteira criada é compra: FII que a Inteligência dos Ativos manda
+    # avaliar troca ou não aportar sai, e a carteira é remontada sem ele sob
+    # as mesmas restrições (o otimizador não tem vaga por tipo para herdar).
+    intel_log = veredito.novo_log_selecao()
+    result, intel_excluidos = veredito.reotimizar_sem_vetados(
+        _montar, avaliador=_intel_avaliar_fii, log=intel_log,
+        itens_de=lambda r: [(str(i.get("ticker") or "").upper(),
+                             str(i.get("tipo") or "—"))
+                            for i in r.get("items") or []],
     )
     result["macro_snapshot"] = macro_snapshot
+    result["inteligencia_log"] = intel_log
+    if _portao_ui.tem_conteudo(intel_log):
+        with st.expander(_portao_ui.TITULO, expanded=bool(
+                intel_log.get("vetados") or intel_log.get("persistentes"))):
+            _portao_ui.render(
+                intel_log, grupo="tipo",
+                como_substitui=("O otimizador remonta a carteira sem o vetado, "
+                                "sob as mesmas restrições; quem entra é "
+                                "escolha dele, não herança de vaga."))
     candidate_correlation = (
         _correlacao_da_ultima_tentativa[0] if _correlacao_da_ultima_tentativa
         else pd.DataFrame()
@@ -2322,7 +2357,11 @@ def _carteira_integrada(preferences: dict):
         from core.portfolio_review_routes import fii_review
         from design.portfolio_review import render_portfolio_review
 
-        proposal = fii_review(scored, portfolio_policy, scenario)
+        # A revisão também é compra: o que o portão barrou não volta por ela.
+        proposal = fii_review(
+            [r for r in scored
+             if str(r.get("ticker") or "").upper() not in intel_excluidos],
+            portfolio_policy, scenario)
         st.session_state.pop("fii_port", None)
         st.session_state["fii_portfolio_can_publish"] = False
         with st.expander("Diagnóstico da tentativa com metas originais"):

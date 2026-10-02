@@ -42,6 +42,7 @@ from core.inteligencia_ativos import veredito
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from data_pipeline.utils.date_utils import fmt_datetime_br
+from design import portao_inteligencia as _portao_ui
 from design.componentes import card_metrica, cor_token
 from design.lacunas import aviso_lacuna
 from design.market_companies import company_logo_html
@@ -4423,29 +4424,13 @@ def render(show_header: bool = True) -> None:
     )
 
     # ── TRANSPARÊNCIA DO PORTÃO DA INTELIGÊNCIA DOS ATIVOS ───────────────────
-    if any(intel_log.values()):
+    if _portao_ui.tem_conteudo(intel_log):
         st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                     unsafe_allow_html=True)
-        _sec_hdr("🧭 Inteligência dos Ativos — vetos e substituições")
-        st.caption(
-            "A carteira criada é compra: nome que a Inteligência dos Ativos "
-            "manda avaliar troca ou não aportar (alerta eliminatório, "
-            "qualidade frágil) não entra. O substituto é o próximo do ranking "
-            "do MESMO segmento e herda o peso. Nada aqui altera score; "
-            "avaliação indisponível não veta, mas é listada."
-        )
-        for v in intel_log["vetados"]:
-            st.markdown(f"❌ **{v['tk']}** ({v['segmento']}) — {v['limite']}: "
-                        f"{v['motivo']}")
-        for s in intel_log["substituicoes"]:
-            st.markdown(f"🔁 **{s['entra']}** herda a vaga de **{s['sai']}** "
-                        f"({s['segmento']})")
-        for s in intel_log["vagas_vazias"]:
-            st.markdown(f"⬜ Vaga de **{s['sai']}** ({s['segmento']}) ficou "
-                        "vazia: nenhum substituto passou.")
-        for s in intel_log["indisponiveis"]:
-            st.markdown(f"⚠️ **{s['tk']}** ({s['segmento']}): avaliação "
-                        f"indisponível ({s['erro']}); entrou sem o portão.")
+        _sec_hdr(_portao_ui.TITULO)
+        _portao_ui.render(
+            intel_log, como_substitui="O substituto é o próximo do ranking "
+            "do MESMO segmento e herda o peso.")
 
     # ── TRANSPARÊNCIA DO GATE QUALITATIVO ────────────────────────────────────
     if _gate_ativo:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
 from math import ceil
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -462,13 +462,25 @@ def select_industry_leaders(
     eligible: pd.DataFrame,
     industry_audit: pd.DataFrame,
     params: USPortfolioCreationParams,
+    avaliador: Callable[[str], Any] | None = None,
 ) -> pd.DataFrame:
-    """Seleciona finalistas somente dentro das indústrias aprovadas."""
+    """Seleciona finalistas somente dentro das indústrias aprovadas.
+
+    Com ``avaliador`` (ticker → ``Avaliacao`` da Inteligência dos Ativos),
+    depois do piso de qualidade passa o portão da Inteligência
+    (``veredito.filtrar_selecao``): líder que ela manda avaliar troca ou não
+    aportar sai, e o próximo da MESMA indústria que passa no piso e no portão
+    entra. O log vai em ``attrs["inteligencia_log"]``."""
+    from core.inteligencia_ativos import veredito
+
+    intel_log = veredito.novo_log_selecao()
+
     def _vazio() -> pd.DataFrame:
         """Frame vazio que ainda carrega o log — quem consome não precisa
         descobrir por qual caminho a seleção saiu vazia."""
         saida = pd.DataFrame()
         saida.attrs["quality_floor_log"] = {}
+        saida.attrs["inteligencia_log"] = intel_log
         return saida
 
     if eligible is None or eligible.empty or industry_audit is None or industry_audit.empty:
@@ -511,7 +523,38 @@ def select_industry_leaders(
             leaders = ranked[ranked["symbol"].astype(str).str.upper().isin(
                 {s.upper() for s in escolhidos})].copy()
 
-        leaders["selection_reason"] = "Liderança de score na indústria aprovada"
+        if avaliador is not None:
+            # A carteira criada é compra: o mesmo veredito que a aba
+            # Inteligência dos Ativos mostra barra o líder. O substituto vem
+            # da mesma indústria e também precisa passar no piso.
+            reprovado_piso: set[str] = set()
+            if params.apply_quality_floor:
+                from core.us_quality_floor import evaluate
+                reprovado_piso = {
+                    sym for sym, v in evaluate(
+                        ranked, ranked["symbol"].astype(str).tolist()).items()
+                    if v.reprovado}
+            escolhidos = veredito.filtrar_selecao(
+                leaders["symbol"].astype(str).tolist(),
+                list(zip(ranked["symbol"].astype(str),
+                         _numeric(ranked, "entry_score").fillna(0.0))),
+                avaliador=avaliador, pesos={}, seg_label=str(industry),
+                log=intel_log,
+                exclui=lambda sym: str(sym).upper() in reprovado_piso)
+            if not escolhidos:
+                continue
+            ordem = {sym: i for i, sym in enumerate(escolhidos)}
+            leaders = ranked[ranked["symbol"].astype(str).isin(ordem)].copy()
+            entrou = {sb["entra"] for sb in intel_log["substituicoes"]
+                      if sb["segmento"] == str(industry)}
+        else:
+            entrou = set()
+
+        leaders["selection_reason"] = [
+            ("Entrou pela Inteligência dos Ativos na indústria aprovada"
+             if str(sym) in entrou else
+             "Liderança de score na indústria aprovada")
+            for sym in leaders["symbol"]]
         records.append(leaders)
     if not records:
         # REDE FINAL. O piso reprovou o universo inteiro: mesmo a guarda de
@@ -522,9 +565,15 @@ def select_industry_leaders(
         # recebe proteção nenhuma: recebe a tela em branco e vai decidir
         # sem o motor. A carteira volta a ser a PRÉ-PISO, e a cessão é
         # declarada no log, não silenciada.
+        # A rede devolve o piso, nunca o portão da Inteligência: nome que ela
+        # barra não volta por essa porta.
+        vetados = {v["tk"] for v in intel_log["vetados"]}
+        sem_piso = [b[~b["symbol"].astype(str).isin(vetados)] for b in sem_piso]
+        sem_piso = [b for b in sem_piso if not b.empty]
         if not sem_piso:
             saida = pd.DataFrame()
             saida.attrs["quality_floor_log"] = floor_log
+            saida.attrs["inteligencia_log"] = intel_log
             return saida
         floor_log.setdefault("carteira_preservada", []).append({
             "motivo": ("o piso de qualidade reprovou todas as indústrias "
@@ -544,6 +593,7 @@ def select_industry_leaders(
         ["entry_score", "fundamental_score"], ascending=False
     ).head(int(params.top_n)).reset_index(drop=True)
     candidates.attrs["quality_floor_log"] = floor_log
+    candidates.attrs["inteligencia_log"] = intel_log
     return candidates
 
 
@@ -764,13 +814,18 @@ def build_portfolio_creation(
     score_panel: pd.DataFrame | None = None,
     macro_impacts: dict[str, float] | None = None,
     macro_mode: str = "fundamental",
+    avaliador: Callable[[str], Any] | None = None,
 ) -> dict[str, Any]:
-    """Executa a criação completa e retorna payload pronto para a interface."""
+    """Executa a criação completa e retorna payload pronto para a interface.
+
+    ``avaliador`` liga o portão da Inteligência dos Ativos na seleção dos
+    líderes (ver ``select_industry_leaders``)."""
     params = params or USPortfolioCreationParams()
     eligible, exclusions = prepare_eligible_universe(scored, params)
     audit = build_industry_audit(eligible, params, score_panel)
-    candidates = select_industry_leaders(eligible, audit, params)
+    candidates = select_industry_leaders(eligible, audit, params, avaliador)
     floor_log = dict(candidates.attrs.get("quality_floor_log") or {})
+    intel_log = candidates.attrs.get("inteligencia_log") or {}
     # Capital residual substitui a antiga ampliação automática de tetos para
     # caber 100% num universo pequeno. A política solicitada continua auditável.
     allocation_params = replace(params, adaptive_caps=False)
@@ -845,7 +900,11 @@ def build_portfolio_creation(
     if holdings.empty or (params.require_historical_signal and not history_available):
         from core.portfolio_review_routes import us_review
 
-        review_portfolio = us_review(eligible, params)
+        # A revisão também é compra: o que o portão barrou não volta por ela.
+        vetados = {v["tk"] for v in intel_log.get("vetados") or ()}
+        review_portfolio = us_review(
+            eligible[~eligible["symbol"].astype(str).isin(vetados)]
+            if vetados else eligible, params)
         if liquidity_block:
             review_portfolio["reasons"].append(str(liquidity_block))
         if publication_blocking_error:
@@ -874,6 +933,7 @@ def build_portfolio_creation(
         "industry_audit": audit,
         "candidates": candidates,
         "quality_floor_log": floor_log,
+        "inteligencia_log": intel_log,
         "holdings": holdings,
         "metrics": portfolio_metrics(holdings, params),
         "macro": {
