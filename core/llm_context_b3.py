@@ -672,7 +672,17 @@ def get_warehouse_detail_context(tickers: list[str], *,
             + ", ".join(todos[len(alvo):]) + ")")
     try:
         if _db_is_local() and _engine() is not None:
-            detalhe, origem = ler_detalhe(_engine(), alvo), "lido direto"
+            # A safra da Memória de Mercado mora no banco do acervo, não no de
+            # preços; engine_memoria() não é cacheada e fica com quem abriu.
+            from core.memoria_mercado.destino import engine_memoria
+
+            memoria = engine_memoria()
+            try:
+                detalhe = ler_detalhe(_engine(), alvo, engine_eventos=memoria)
+            finally:
+                if memoria is not None:
+                    memoria.dispose()
+            origem = "lido direto"
         else:
             from core import armazem_remoto
 

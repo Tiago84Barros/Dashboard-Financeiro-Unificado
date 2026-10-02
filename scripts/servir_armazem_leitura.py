@@ -95,6 +95,12 @@ def _url_noticias() -> str:
     return url_acervo()
 
 
+def _url_memoria() -> str:
+    from core.memoria_mercado.destino import url_memoria
+
+    return url_memoria()
+
+
 def _url_macro() -> str:
     from core.config import settings
 
@@ -228,11 +234,15 @@ def rota_b3_detalhe(params) -> tuple[int, dict]:
         return 400, {"erro": "informe tickers"}
     if len(tickers) > TICKERS_MAX:
         return 400, {"erro": f"no máximo {TICKERS_MAX} tickers por chamada"}
-    # COTAHIST (``market``) e Memória de Mercado moram no banco do ``market_us``.
+    # O COTAHIST (``market``) mora no banco do ``market_us``; a safra da
+    # Memória de Mercado, no do acervo de notícias (``url_memoria``).
     url = _url_eua()
     if not url:
         return 503, {"erro": "armazém não configurado nesta máquina"}
-    return 200, {"detalhe": ler_detalhe(engine_leitura(url), tickers)}
+    url_memoria = _url_memoria()
+    return 200, {"detalhe": ler_detalhe(
+        engine_leitura(url), tickers,
+        engine_eventos=engine_leitura(url_memoria) if url_memoria else None)}
 
 
 ROTAS = {

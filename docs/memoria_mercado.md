@@ -156,6 +156,32 @@ marcado com `FONTE_SINTETICA` e propagado até o evento em
 `benchmark_sintetico`. Sem painel largo o bastante, não há índice: o retorno
 anormal sai `None` e a amostra cai para **retorno bruto**, dizendo que caiu.
 
+### 5.2 Salto de preço bruto (metodologia 1.1.0, 28/09/2026)
+
+B3 e FII leem o COTAHIST, que é preço **bruto**: desdobramento, grupamento e
+bonificação aparecem como variação de um dia. Até a 1.0.0 o índice
+equiponderado era a média crua desses retornos, e um grupamento 10:1 num único
+papel movia o "mercado" inteiro. Medido no armazém antes da correção: +77 % em
+20 pregões a partir de 01/02/2016, p99 de +721 % em 20 pregões e de +33.052 % em
+60. O retorno do ativo trazia o mesmo defeito (WEGE3 -63 % em 60 pregões depois
+do resultado de 2021, que era o desdobramento de 28/04/2021).
+
+A 1.1.0 trata o salto em três lugares, com um limiar só,
+`serie.SALTO_SUSPEITO = 0.35`:
+
+| onde | o que acontece |
+|---|---|
+| série do ativo | salto num pregão em que a especificação **ganha** um marcador "ex-" (`EB`, `EG`, `ED`...) é retroajustado: preço e volume anteriores vão para a unidade nova, e o dia vira retorno zero (`neutralizar_eventos_societarios`) |
+| medição do evento | salto **sem** marcador tira da medição o horizonte que o atravessa (`MOTIVO_SALTO`), o drawdown e a deriva cuja janela o contém; a volatilidade e o beta perdem só aquele pregão |
+| índice | o retorno diário acima do limiar é **excluído** da média do dia, e não aparado: aparar em 35 % ainda somaria 35/25 = 1,4 % de um mercado que não se mexeu |
+
+Depois da correção (B3): p1/p99 de 20 pregões -13,9 % / +16,4 %; de 60 pregões
+-33,3 % / +30,8 %. FII: -8,2 % / +7,3 % e -18,9 % / +12,3 %. O relatório do
+construtor publica esse antes e depois em `distribuicao_indice`.
+
+As linhas 1.0.0 continuam na tabela: chave primária e limpeza de órfãos são
+escopadas por versão. Quem lê filtra `versao_metodologia`.
+
 ---
 
 ## 6. Amostra histórica
@@ -432,13 +458,18 @@ python scripts/construir_memoria_mercado.py --mercado fii --do-banco-de-noticias
 ```
 
 ```bash
-python scripts/construir_memoria_mercado.py --mercado b3 --dry-run
+python scripts/construir_memoria_mercado.py --mercado b3 --do-catalogo --apply
 ```
+
+Sem `--apply` a rodada só mede e relata (até 28/09/2026 o script gravava por
+omissão; `--dry-run` continua aceito e não muda nada).
 
 Ler do banco de notícias é legítimo; **gravar** lá não é. O relatório de saída
 carrega `fonte_precos`, `serie_diaria`, `indice_sintetico`,
-`sem_serie_de_precos` e `sem_pregao_na_data` — falta de dado sai contada, não
-vira evento medido a partir de nada.
+`sem_serie_de_precos`, `sem_pregao_na_data`, `precos_retroajustados`,
+`janelas_nao_medidas_por_salto`, `drawdown_nao_medido_por_salto` e
+`distribuicao_indice` — falta de dado sai contada, não vira evento medido a
+partir de nada.
 
 ---
 
@@ -461,6 +492,7 @@ um aviso de limitação que virou falso e continuou soando como rigor.
    armazém (SPY/QQQ: 9 linhas; BOVA11: 220; IFIX: 133). O equiponderado do
    próprio painel é uma aproximação: ele não é o índice que o mercado olha, e
    herda o viés de composição do painel disponível. Vai marcado em cada evento.
+   Até a 1.0.0 ele também somava desdobramento como mercado; ver §5.2.
 3. **`market.macro_indicators` está vazia.** As dimensões macro do Fator de
    Similaridade (juros BR/US, inflação, câmbio, commodity) dependem de cenário
    fornecido por quem chama. Sem ele, saem **ausentes** — fora do denominador,

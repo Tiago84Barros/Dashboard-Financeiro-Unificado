@@ -34,7 +34,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import isfinite, sqrt
 
-from core.memoria_mercado.serie import SeriePrecos
+from core.memoria_mercado.serie import SALTO_SUSPEITO, SeriePrecos
 
 MODELO_DIFERENCA = "diferenca"
 MODELO_MERCADO = "mercado"
@@ -78,7 +78,8 @@ class Beta:
 def estimar_beta(ativo: SeriePrecos, indice: SeriePrecos, i0_ativo: int,
                  *, janela: int = JANELA_ESTIMACAO,
                  antecedencia: int = INTERVALO_ANTECEDENCIA,
-                 minimo: int = PREGOES_MINIMOS_ESTIMACAO) -> Beta | None:
+                 minimo: int = PREGOES_MINIMOS_ESTIMACAO,
+                 limiar_salto: float | None = None) -> Beta | None:
     """MQO de ``r_ativo`` contra ``r_indice`` na janela anterior ao evento.
 
     Casa os retornos **por data**, não por posição. Casar por posição em dois
@@ -86,6 +87,10 @@ def estimar_beta(ativo: SeriePrecos, indice: SeriePrecos, i0_ativo: int,
     ordenado``: não levanta erro nenhum e inverte a conclusão quando as duas
     séries têm feriados diferentes -- que é o caso normal entre uma ação
     brasileira e um índice americano.
+
+    ``limiar_salto`` tira do MQO o pregão em que o ativo se moveu mais do que
+    isso: um desdobramento sem marcador na janela de estimação vira um ponto
+    de alavanca que decide o beta sozinho.
     """
     fim = i0_ativo - max(0, antecedencia)
     inicio = fim - max(1, janela)
@@ -104,7 +109,10 @@ def estimar_beta(ativo: SeriePrecos, indice: SeriePrecos, i0_ativo: int,
         q0, q1 = indice.fechamentos[j_anterior], indice.fechamentos[j_atual]
         if p0 <= 0 or q0 <= 0:
             continue
-        pares.append((q1 / q0 - 1.0, p1 / p0 - 1.0))
+        r_ativo = p1 / p0 - 1.0
+        if limiar_salto is not None and abs(r_ativo) > limiar_salto:
+            continue
+        pares.append((q1 / q0 - 1.0, r_ativo))
 
     n = len(pares)
     if n < minimo:
@@ -180,7 +188,9 @@ def retorno_anormal(
 
 
 def indice_equiponderado(series, *, nome: str = "mercado",
-                         minimo_ativos: int = 20) -> SeriePrecos:
+                         minimo_ativos: int = 20,
+                         limiar_salto: float | None = SALTO_SUSPEITO
+                         ) -> SeriePrecos:
     """Índice sintético: média equiponderada dos retornos diários do painel.
 
     Existe por uma razão medida, não por elegância: o armazém local **não tem**
@@ -197,6 +207,15 @@ def indice_equiponderado(series, *, nome: str = "mercado",
 
     ``minimo_ativos`` protege as pontas: um "índice" de 3 ativos num dia é o
     retorno desses 3 ativos, e o dia é descartado em vez de entrar como mercado.
+
+    ``limiar_salto`` **exclui** da média o retorno diário de um papel que passe
+    de :data:`~core.memoria_mercado.serie.SALTO_SUSPEITO` em módulo. Até a
+    versão 1.0.0 não havia filtro, e o índice médio do preço bruto do COTAHIST
+    somava desdobramento como alta: +88 % em 20 pregões em fev/2016, p99 de
+    +672 % em 60 pregões. Excluir, e não aparar em 35 %: aparar ainda injetaria
+    um movimento de 35 % que não aconteceu. O custo é tirar da média, no mesmo
+    dia, a queda real de um papel -- 1/N de um dia, contra o índice inteiro
+    corrompido. ``None`` desliga, e só existe para medir o antes e o depois.
     """
     por_data: dict[object, list[float]] = {}
     for s in series or ():
@@ -204,8 +223,10 @@ def indice_equiponderado(series, *, nome: str = "mercado",
             anterior = s.fechamentos[i - 1]
             if anterior <= 0:
                 continue
-            por_data.setdefault(s.datas[i], []).append(
-                s.fechamentos[i] / anterior - 1.0)
+            r = s.fechamentos[i] / anterior - 1.0
+            if limiar_salto is not None and abs(r) > limiar_salto:
+                continue
+            por_data.setdefault(s.datas[i], []).append(r)
 
     datas = sorted(d for d, rs in por_data.items() if len(rs) >= minimo_ativos)
     if not datas:

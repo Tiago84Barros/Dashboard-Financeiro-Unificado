@@ -59,6 +59,12 @@ SEM_MOVIMENTO = "sem_movimento"
 #: histórico curto se resolve esperando, série esparsa não se resolve nunca.
 MOTIVO_FORA_DA_SERIE = "historico insuficiente"
 MOTIVO_ESPARSA = "serie sem densidade diaria"
+#: Terceiro motivo, que também não se resolve esperando: a janela atravessa um
+#: pregão com variação acima de ``limiar_salto`` que nenhum marcador explica.
+#: Medir através dele publicaria desdobramento como reação (WEGE3 em
+#: 28/04/2021 dava -50,7 %) ou, se for queda real, uma queda que não tem a ver
+#: com o evento medido. Não dá para saber qual das duas -- então não se mede.
+MOTIVO_SALTO = "salto de preco sem marcador societario na janela"
 
 #: Distância máxima, em dias corridos, entre a data do evento e o pregão zero.
 #: ``SeriePrecos.indice_do_pregao`` devolve o primeiro pregão *em ou após* a
@@ -229,6 +235,7 @@ def medir_evento(
     horizontes: tuple[int, ...] = HORIZONTES,
     densidade_minima: float = DENSIDADE_MINIMA,
     setor: str | None = None,
+    limiar_salto: float | None = None,
 ) -> EventoMedido | None:
     """Mede a reação de um ativo a um evento. ``None`` se o evento nem cabe.
 
@@ -236,6 +243,16 @@ def medir_evento(
     ativo -- aí não há ``t=0`` e não há nada a medir. Em qualquer outro caso
     devolve o objeto com os campos que deram e ``None`` nos que não deram: um
     evento com 20 pregões de história ainda informa os horizontes 1, 5 e 20.
+
+    ``limiar_salto`` liga o descarte de salto sem explicação (ver
+    :data:`MOTIVO_SALTO`): horizonte, drawdown e deriva cuja janela atravessa
+    um pregão acima do limiar saem ``None``; volatilidade e beta perdem só o
+    pregão do salto. Desligado por padrão porque só faz sentido em preço
+    bruto -- o chamador liga para B3 e FII e deixa desligado para os EUA, cuja
+    série já vem ajustada e onde 35 % num dia é movimento de verdade. Quem liga
+    deve passar a série já por
+    :func:`~core.memoria_mercado.serie.neutralizar_eventos_societarios`, senão
+    o desdobramento marcado também vira descarte em vez de ajuste.
     """
     i0 = ativo.indice_do_pregao(data_evento)
     if i0 is None:
@@ -254,9 +271,18 @@ def medir_evento(
             "sem indice de referencia para este ativo: retorno anormal nao "
             "calculado, apenas retorno bruto")
 
+    saltos = ativo.saltos(limiar_salto) if limiar_salto is not None else ()
+    saltos_usados: set[int] = set()
+
+    def _salto_em(a: int, b: int) -> bool:
+        """Há salto em algum retorno ``i-1 -> i`` com ``a < i <= b``?"""
+        achados = [i for i in saltos if a < i <= b]
+        saltos_usados.update(achados)
+        return bool(achados)
+
     beta = None
     if modelo == bmk.MODELO_MERCADO and tem_indice:
-        beta = bmk.estimar_beta(ativo, indice, i0)
+        beta = bmk.estimar_beta(ativo, indice, i0, limiar_salto=limiar_salto)
 
     i0_indice = indice.indice_do_pregao(ativo.datas[i0]) if tem_indice else None
     i0_setorial = (setorial.indice_do_pregao(ativo.datas[i0])
@@ -271,6 +297,10 @@ def medir_evento(
             janelas[h] = MetricasJanela(
                 horizonte=h, densidade=densidade,
                 motivo_ausencia=_motivo(ativo, i0, h, densidade_minima))
+            continue
+        if _salto_em(i0, i0 + h):
+            janelas[h] = MetricasJanela(
+                horizonte=h, densidade=densidade, motivo_ausencia=MOTIVO_SALTO)
             continue
 
         r_indice = (indice.retorno(i0_indice, h, densidade_minima=densidade_minima)
@@ -304,6 +334,9 @@ def medir_evento(
     pre_inicio = max(0, i0 - JANELA_PRE)
     retornos_pre = ativo.retornos_diarios(pre_inicio, i0)
     retornos_pos = ativo.retornos_diarios(i0, i0 + max(horizontes))
+    if limiar_salto is not None:
+        retornos_pre = tuple(r for r in retornos_pre if abs(r) <= limiar_salto)
+        retornos_pos = tuple(r for r in retornos_pos if abs(r) <= limiar_salto)
     vol_pre = (bmk.volatilidade_anualizada(retornos_pre)
                if len(retornos_pre) >= PREGOES_MINIMOS_VOLATILIDADE else None)
     vol_pos = (bmk.volatilidade_anualizada(retornos_pos)
@@ -318,8 +351,14 @@ def medir_evento(
     else:
         razao_volume = (vol_medio_pos / vol_medio_pre) if vol_medio_pre > 0 else None
 
-    dd, ate_pior, ate_recuperar, recuperou = _drawdown(
-        ativo, i0, JANELA_ACOMPANHAMENTO)
+    if _salto_em(i0, i0 + JANELA_ACOMPANHAMENTO):
+        dd = ate_pior = ate_recuperar = recuperou = None
+        limitacoes.append(
+            f"drawdown nao medido: {MOTIVO_SALTO} dos "
+            f"{JANELA_ACOMPANHAMENTO} pregoes seguintes")
+    else:
+        dd, ate_pior, ate_recuperar, recuperou = _drawdown(
+            ativo, i0, JANELA_ACOMPANHAMENTO)
     if recuperou is False:
         limitacoes.append(
             f"nao havia recuperado ao nivel de t=0 em {JANELA_ACOMPANHAMENTO} "
@@ -329,7 +368,7 @@ def medir_evento(
     # anteriores. É a evidência bruta de "a informação já estava no preço"; a
     # leitura fica em `similaridade.parcela_precificada`.
     deriva = None
-    if i0 - 20 >= 0:
+    if i0 - 20 >= 0 and not _salto_em(i0 - 20, i0):
         p_antes = ativo.fechamentos[i0 - 20]
         if p_antes > 0:
             deriva = ativo.fechamentos[i0] / p_antes - 1.0
@@ -347,6 +386,25 @@ def medir_evento(
         limitacoes.append(
             "indice de referencia e sintetico (media equiponderada do painel "
             "local), nao o indice de mercado publicado")
+
+    if saltos_usados:
+        limitacoes.append(
+            "salto acima de {:.0%} sem marcador societario em {}: janelas que o "
+            "atravessam nao medidas".format(
+                limiar_salto, ", ".join(ativo.datas[i].strftime("%d/%m/%Y")
+                                        for i in sorted(saltos_usados))))
+
+    # Ajuste que toca o que foi medido: da janela de estimação ao fim do
+    # acompanhamento. Ajuste de 2012 num evento de 2024 não é da conta dele.
+    if ativo.ajustes:
+        de = ativo.datas[max(0, i0 - bmk.JANELA_ESTIMACAO
+                             - bmk.INTERVALO_ANTECEDENCIA)]
+        ate = ativo.datas[min(len(ativo.datas) - 1, i0 + JANELA_ACOMPANHAMENTO)]
+        tocados = [d for d in ativo.ajustes if de <= d <= ate]
+        if tocados:
+            limitacoes.append(
+                "preco retroajustado por evento societario em "
+                + ", ".join(d.strftime("%d/%m/%Y") for d in tocados))
 
     nao_medidos = [h for h in horizontes if not janelas[h].medida]
     if nao_medidos:
