@@ -141,6 +141,7 @@ _SQL_PROVENTOS = """
         d.total_amount,
         d.ex_date,
         d.payment_date,
+        d.external_id,
         a.ticker,
         a.name      AS asset_name,
         a.class     AS asset_class
@@ -261,6 +262,7 @@ def _proventos_real() -> dict:
             "total_amount":    _f(r.total_amount),
             "ex_date":         r.ex_date,
             "payment_date":    r.payment_date,
+            "external_id":     getattr(r, "external_id", None),
         })
 
     return _montar_dict(eventos, hoje)
@@ -285,7 +287,7 @@ def _montar_dict(eventos: list, hoje: _date) -> dict:
     ``eventos`` e ``por_tipo`` continuam com tudo, e o capital devolvido sai
     separado em ``capital_12m``/``capital_historico``.
     """
-    todos = eventos
+    todos = _unificar_fracionario(eventos)
     capital = [e for e in todos if e["tipo"] not in TIPOS_RENDA_PESSOAL]
     eventos = [e for e in todos if e["tipo"] in TIPOS_RENDA_PESSOAL]
     inicio_12m = hoje - _timedelta(days=365)
@@ -331,6 +333,66 @@ def _montar_dict(eventos: list, hoje: _date) -> dict:
         "eventos":          todos,
         # data_source injetado pelo caller
     }
+
+
+def _prioridade_fonte(external_id) -> int:
+    """Mesma ordem do dedup em ``_SQL_PROVENTOS``: B3, depois XP, depois o resto."""
+    ext = str(external_id or "")
+    if ext.startswith("b3mov-"):
+        return 0
+    if ext.startswith("xpcsl-"):
+        return 1
+    return 2
+
+
+def _unificar_fracionario(eventos: list) -> list:
+    """Junta o ticker do fracionário ao do lote padrão (BBAS3F → BBAS3).
+
+    O ``F`` é o mercado onde a ação foi negociada, não outro ativo: o provento
+    é do mesmo papel. A carteira já agrupa assim (``core.investimentos.
+    _base_ticker``); aqui a regra é a mesma, importada, para as duas telas não
+    discordarem sobre o que é um ativo.
+
+    Também descarta o pagamento repetido entre os dois tickers. A proteção da
+    importação (``insert_dividend``) só compara dentro do mesmo ``asset_id``,
+    então um pagamento gravado como BBAS3 pela B3 e como BBAS3F pela XP
+    entrava duas vezes. Mesmo papel, mesma data, mesmo tipo e mesmo valor
+    total é o mesmo pagamento; fica a linha da fonte mais confiável.
+    """
+    from core.investimentos import _base_ticker
+
+    # chave do pagamento -> índices em `resultado`, um por ticker de origem.
+    vistos: dict[tuple, dict[str, int]] = {}
+    resultado: list[dict] = []
+    nome_base: dict[str, str] = {}
+    descartados = 0
+    for e in eventos:
+        original = str(e.get("ticker") or "").upper().strip()
+        base = _base_ticker(original)
+        if original == base and e.get("nome"):
+            nome_base.setdefault(base, e["nome"])
+        novo = {**e, "ticker": base}
+        chave = (base, e.get("payment_date"), e.get("tipo"),
+                 round(float(e.get("total_amount") or 0.0), 2))
+        por_origem = vistos.setdefault(chave, {})
+        # Repetição dentro do MESMO ticker já passou pelo dedup do SQL e é
+        # legítima; só a repetição vinda do OUTRO ticker é o mesmo pagamento.
+        outro = next((i for t, i in por_origem.items() if t != original), None)
+        if outro is None:
+            por_origem.setdefault(original, len(resultado))
+            resultado.append(novo)
+            continue
+        descartados += 1
+        if _prioridade_fonte(e.get("external_id")) < _prioridade_fonte(
+                resultado[outro].get("external_id")):
+            resultado[outro] = novo
+    if descartados:
+        logger.info("[proventos] %d pagamento(s) repetido(s) entre lote padrão e "
+                    "fracionário descartado(s)", descartados)
+    for e in resultado:
+        if e["ticker"] in nome_base:
+            e["nome"] = nome_base[e["ticker"]]
+    return resultado
 
 
 def _historico_mensal(eventos: list) -> list:
