@@ -469,7 +469,34 @@ def get_dre_history_context(tickers: list[str], max_n: int = 3, anos: int = 6) -
             return f"{f/1e6:,.0f}" if np.isfinite(f) else "N/D"
         except (TypeError, ValueError):
             return "N/D"
+    def _f(v):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f if np.isfinite(f) else None
+
+    def _caixa(r) -> str:
+        # FCO e FCF vêm de market.cash_flow_statements. O FCF é o do provedor
+        # (capex nulo na base, não dá para recompor): fluxo livre = FCO - capex
+        # nunca supera o FCO, e quando supera o número não é repassado como fato
+        # (ISAE3 2024: FCO -181 mi, "FCL" +1.136 mi).
+        partes = []
+        if "EBIT" in r and _f(r.get("EBIT")) is not None:
+            partes.append(f"EBIT={_mi(r.get('EBIT'))}")
+        fco = _f(r.get("FCO")) if "FCO" in r else None
+        if fco is not None:
+            partes.append(f"FCO={_mi(fco)}")
+        if "FCF" in r:
+            fcf = _f(r.get("FCF"))
+            if fcf is not None and (fco is None or fcf <= fco):
+                partes.append(f"FCL={_mi(fcf)}")
+            elif fcf is not None:
+                partes.append("FCL=N/D(provedor>FCO)")
+        return (" " + " ".join(partes)) if partes else ""
+
     lines: list[str] = []
+    notas: list[str] = []
     for tk in tks:
         try:
             d = _db.load_demonstracoes(tk)
@@ -486,11 +513,23 @@ def get_dre_history_context(tickers: list[str], max_n: int = 3, anos: int = 6) -
             f"{int(r['_ano'])}: Rec={_mi(r.get('Receita_Liquida'))} "
             f"LL={_mi(r.get('Lucro_Liquido'))}"
             + (f" EBITDA={_mi(r.get('EBITDA'))}" if pd.notna(r.get('EBITDA')) else "")
+            + _caixa(r)
             for _, r in d.iterrows())
         lines.append(f"  {tk} (R$ mi): {anos_txt}")
+        if "FCO" in d.columns:
+            ult = _f(d["FCO"].iloc[-1])
+            if ult is not None and ult < 0:
+                notas.append(f"  {tk}: FCO negativo em {int(d['_ano'].iloc[-1])} — "
+                             "o P/FCO não se aplica (N/D por definição, não por falta de dado).")
     if not lines:
         return ""
-    return "DRE HISTÓRICA (banco — Receita/Lucro líquido por ano, R$ milhões):\n" + "\n".join(lines)
+    legenda = []
+    if any("FCO=" in l for l in lines):
+        legenda.append("  (FCO = fluxo de caixa operacional; FCL = fluxo de caixa livre do "
+                       "provedor; FCL=N/D(provedor>FCO) = número do provedor maior que o "
+                       "FCO, inconsistente com FCO - capex, não repassado)")
+    return ("DRE HISTÓRICA (banco — Receita/Lucro líquido/EBIT e fluxo de caixa por ano, "
+            "R$ milhões):\n" + "\n".join(lines + notas + legenda))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
