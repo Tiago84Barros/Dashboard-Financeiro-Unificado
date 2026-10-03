@@ -524,7 +524,7 @@ def get_dre_history_context(tickers: list[str], max_n: int = 3, anos: int = 6) -
     if not lines:
         return ""
     legenda = []
-    if any("FCO=" in l for l in lines):
+    if any("FCO=" in ln for ln in lines):
         legenda.append("  (FCO = fluxo de caixa operacional; FCL = fluxo de caixa livre do "
                        "provedor; FCL=N/D(provedor>FCO) = número do provedor maior que o "
                        "FCO, inconsistente com FCO - capex, não repassado)")
