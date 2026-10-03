@@ -280,9 +280,8 @@ hr {
     background: #00C896;
     box-shadow: 0 0 0 3px rgba(0,200,150,.18);
 }
-/* O card da marca é escuro nos DOIS temas, de propósito: é a assinatura do
-   app. Os textos usam cor literal clara, não token -- no claro o token de
-   texto é escuro e sumiria sobre o gradiente. */
+/* Card da marca escuro. Os textos usam cor literal clara, não token; o tema
+   claro tem versão própria em design/theme_light.py. */
 .app-brand {
     position: relative;
     overflow: hidden;
