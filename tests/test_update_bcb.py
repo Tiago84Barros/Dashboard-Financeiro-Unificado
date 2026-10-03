@@ -12,12 +12,11 @@ import pandas as pd
 import pytest
 import requests
 
+import run_data_updates
 from core import bcb_sgs, rentabilidade
 from data_pipeline import orchestrator as orq
 from data_pipeline.jobs import update_bcb
 from scripts import seed_macro_bcb
-
-import run_data_updates
 
 SERIES = list(seed_macro_bcb.SERIES)
 
