@@ -35,12 +35,16 @@ seria contado duas vezes: **confirmação circular**. Um ativo "comprar" entrari
 modelo, e o modelo reforçaria o "comprar".
 
 Como isso é garantido:
-- Ficaram intactos `fit_por_regras`, `analise`, `adequacao`, `veredito`,
-  `calculos`, `contexto` e `painel`.
+- Ficaram intactos os módulos `analise`, `adequacao`, `veredito`, `calculos`,
+  `contexto` e `painel`, e a função `fit_por_regras` (em `portfolio_fit.py`).
 - Um teste (`test_modulos_de_decisao_nao_importam_a_referencia`) falha se algum
-  desses módulos passar a citar `referencia_modelo`.
-- Outro teste mostra que o contexto do Portfolio Fit é **idêntico** com ou sem a
-  referência, exceto pela chave `app_model_reference`.
+  desses **seis módulos** passar a citar `referencia_modelo`. Ele não cobre
+  `portfolio_fit.py`, que importa `REGRA_REFERENCIA` de propósito.
+- `fit_por_regras` fica protegida de outro jeito: não recebe a referência como
+  parâmetro, e `test_referencia_fica_fora_das_regras_e_da_acao` mostra que o
+  contexto do Portfolio Fit — incluindo `rules`, que sai de `fit_por_regras` —
+  é **idêntico** com ou sem a referência, exceto pela chave
+  `app_model_reference`.
 - Limite conhecido: a barreira na LLM é uma instrução de prompt, não uma garantia.
   A barreira dura está no código das regras, que não recebe a referência.
 
@@ -55,6 +59,11 @@ escolhe a base assim:
 | Fatia de renda fixa salva na alocação-alvo | Patrimônio inteiro | alvo da classe × (1 − renda fixa) × peso do ativo na classe |
 | Sem fatia de renda fixa | Carteira sem renda fixa | alvo da classe × peso do ativo na classe |
 
+Na base sem renda fixa, as posições da classe **Outros** continuam no
+denominador, embora o modelo não tenha alvo para ela. Com isso o peso real de
+B3, FII e US fica um pouco menor, e o desvio negativo um pouco maior, do que
+seria sem elas. A linha "Outros" aparece na tabela por classe, sem alvo.
+
 A base usada aparece no cartão e no payload da LLM (`base_dos_pesos`). Um mesmo
 "+12 pp" significa coisas diferentes em cada base.
 
@@ -65,22 +74,30 @@ A referência nunca some: ela fica indisponível e diz o motivo quando:
 - não há alocação-alvo entre as classes salva;
 - a carteira real não tem valor de mercado positivo;
 - a leitura falha (o motivo nomeia a exceção, por exemplo `ConnectionError`).
+  Esse caso não fica no cache: o próximo rerun tenta ler de novo.
 
 Quando uma classe tem alvo mas não tem carteira-modelo, isso vira aviso, por
-exemplo "Internacional: alvo de 20,0% sem carteira-modelo ativa".
+exemplo: "Internacional tem alvo de 20,0% no Portfólio Global, mas nenhuma
+carteira-modelo ativa: os ativos dessa classe ficam fora da comparação."
 
 **Esperado em produção:** enquanto a alocação-alvo (e a fatia de renda fixa) não
 for salva no Portfólio Global, o cartão mostra "indisponível". Não é defeito.
 
 ## 5. Limitações aceitas
 
-- **BDRs:** AAPL34 na carteira não casa com AAPL no modelo americano; os dois
-  aparecem como posições distintas. Não foi criada tabela de equivalência.
-- Tickers com `.SA` são normalizados (`PETR4.SA` → `PETR4`).
+- **BDRs:** AAPL34 na carteira não casa com AAPL no modelo americano; no nível
+  do ativo, os dois aparecem como posições distintas. Não foi criada tabela de
+  equivalência. No nível da classe, porém, o BDR conta como Internacional
+  (`carteira_real` classifica BDR como `us`), então a tabela por classe já o
+  soma ao real de US.
 - Um ticker presente em duas classes do modelo tem os pesos somados; vale a
   primeira classe.
 - Cache em `st.session_state` com TTL de 900 s, a chave é o hash das posições.
   Um modelo republicado no Portfólio Global pode levar até 15 min para aparecer.
+  Falha de leitura não é guardada (ver seção 4).
+
+Os tickers com `.SA` são normalizados (`PETR4.SA` → `PETR4`) antes da
+comparação, então essa diferença de fonte não gera posição duplicada.
 
 ## 6. Arquivos
 
