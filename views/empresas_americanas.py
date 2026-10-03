@@ -377,16 +377,30 @@ def _tab_empresas_setor(status: dict) -> None:
         estado_vazio("Nenhuma ação americana válida encontrada na vitrine.", "🌎")
         return
     query = render_company_search(
-        label="🔍 Buscar ticker (ex.: AAPL)",
+        label="🔍 Buscar por ticker, nome ou setor (ex.: AAPL, Microsoft)",
         placeholder="Digite e pressione Enter", key="us_company_search",
     )
     if query:
-        ticker_query = query.upper()
-        if ticker_query in set(companies["ticker"]):
-            st.session_state["us_selected_ticker"] = ticker_query
+        # Ticker exato ou nome que aponta uma única empresa abre a análise
+        # direto. O filtro de cards também casa setor/indústria; só pula para a
+        # análise quando ele concorda que sobrou uma empresa só — "software" não
+        # pode sumir com o setor inteiro por casar o nome de uma empresa.
+        candidatos = buscar_empresas(query, companies, col_ticker="ticker",
+                                     col_nome="company_name")
+        filtradas = filter_market_companies(companies, query)
+        exato = query.strip().upper() in set(companies["ticker"])
+        if exato or (len(candidatos) == 1 and len(filtradas) == 1
+                     and filtradas["ticker"].iloc[0] == candidatos[0][0]):
+            st.session_state["us_selected_ticker"] = candidatos[0][0]
             st.session_state["us_active_tab"] = 1
             st.rerun()
-        companies = filter_market_companies(companies, query)
+        if filtradas.empty and candidatos:
+            # Nada casou literalmente, mas a busca aproximada achou (erro de
+            # digitação no nome): mostra esses cards em vez de grade vazia.
+            alvo = {tk for tk, _ in candidatos}
+            filtradas = companies[companies["ticker"].isin(alvo)].reset_index(drop=True)
+            st.caption("Nenhuma correspondência exata — mostrando nomes parecidos.")
+        companies = filtradas
     render_sector_grid(
         companies, key_prefix="us", selected_ticker=st.session_state.get("us_selected_ticker"),
         selected_state_key="us_selected_ticker", active_state_key="us_active_tab",
