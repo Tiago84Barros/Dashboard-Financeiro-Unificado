@@ -12,7 +12,8 @@ o painel anterior mostrava tudo de uma vez e confundia. De cima para baixo:
    carteira, a premissa, os cálculos objetivos e a tabela de adequação.
 4. **🔎 Análise detalhada**, atrás de um toggle (desligado ao abrir). Mostra as
    questões e o fluxo das 13 seções do ativo escolhido, o **Portfolio Fit**
-   (regras e LLM sob demanda) e o **Histórico e auditoria**. É um toggle, e
+   (regras e LLM sob demanda). O histórico é gravado, mas não aparece na tela
+   desde 03/10/2026 (PR #456; seção *Histórico*, abaixo). É um toggle, e
    não um expander, porque o Portfolio Fit tem expander próprio e o Streamlit
    não aninha expanders.
 5. **Minha estratégia**, recolhida num expander ao fim da página. Mostra a
@@ -135,8 +136,13 @@ Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
     leitura de onde o ativo fica entre eles. Só métricas que têm dado.
   - **Papel na carteira** e **notícias** (3 mais recentes). A caixa nunca
     fica vazia: sem notícia do ativo, mostra as do segmento
-    (`informacoes.noticias_com_setor`); sem elas, o noticiário geral do
-    mercado (`contexto_mercado.manchetes_gerais`), cada nível rotulado.
+    (`informacoes.noticias_com_setor`) e, abaixo, o **Cenário econômico e
+    político** (`resumida.noticias_cenario`, PR #454): só juros, inflação,
+    câmbio, fiscal/política, atividade, geopolítica, crise e pandemia, mais
+    commodity e crédito quando pesam na classe. Matéria que cita ticker fica
+    de fora. Ordem: tema que pesa na classe, país do ativo (BR; EUA para
+    exterior) e nota. Os itens vêm de `contexto_mercado.itens_gerais()`
+    (acervo local → túnel → vitrine), cada nível rotulado.
   - **Relatórios relevantes**: o que os documentos dizem, não o link. Até 3
     documentos dos últimos 12 meses com até 3 frases literais do emissor
     que têm fato e número (resultado, caixa, dívida, proventos, guidance),
@@ -276,7 +282,8 @@ só grava:
 Há duas outras formas de gravar:
 
 - **leitura por LLM gerada:** grava sempre, com o modelo que respondeu;
-- **botão *Salvar esta análise no histórico*:** grava sempre, como manual.
+- **botão *Salvar esta análise no histórico*:** removido em 03/10/2026
+  (PR #456). O motivo `manual` continua aceito pelo repositório.
 
 A aba tenta a gravação automática uma vez por sessão. A decisão acontece
 dentro da transação, com a linha travada (`FOR UPDATE`), então duas abas
@@ -293,6 +300,12 @@ agora. Ela gera frases como:
 Variações de métrica abaixo de 2% são tratadas como ruído e não viram frase.
 
 ## Auditoria
+
+Desde 03/10/2026 (PR #456), a trilha não é mais exibida: o cartão *Histórico
+da análise* e a tabela de auditoria saíram da Análise detalhada, porque não
+ajudam o investidor a decidir. Os campos continuam gravados em cada foto, e a
+frase "Desde a última análise" da Visão geral segue usando o histórico. A
+leitura por LLM nova é gravada por `views/inteligencia_ativos_painel.py::registrar_leitura_llm`.
 
 Cada foto registra os seguintes campos:
 
