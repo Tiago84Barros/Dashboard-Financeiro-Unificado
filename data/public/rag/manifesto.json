@@ -1,11 +1,11 @@
 {
-  "gerado_em": "2026-10-02T22:34:40+00:00",
-  "linhas": 452062,
-  "chunks_distintos": 452062,
+  "gerado_em": "2026-10-03T00:46:33+00:00",
+  "linhas": 455495,
+  "chunks_distintos": 455495,
   "roots": 364,
-  "ancoras": 196788,
-  "stubs": 0,
-  "bytes": 134991204,
+  "ancoras": 198480,
+  "stubs": 982,
+  "bytes": 135738167,
   "particoes": [
     {
       "arquivo": "chunks_A_2023.parquet",
@@ -24,8 +24,8 @@
     },
     {
       "arquivo": "chunks_A_2026.parquet",
-      "linhas": 17450,
-      "bytes": 4834014
+      "linhas": 17782,
+      "bytes": 4899691
     },
     {
       "arquivo": "chunks_B_2023.parquet",
@@ -44,8 +44,8 @@
     },
     {
       "arquivo": "chunks_B_2026.parquet",
-      "linhas": 23682,
-      "bytes": 6409266
+      "linhas": 23873,
+      "bytes": 6452034
     },
     {
       "arquivo": "chunks_C_2023.parquet",
@@ -64,8 +64,8 @@
     },
     {
       "arquivo": "chunks_C_2026.parquet",
-      "linhas": 24058,
-      "bytes": 6818630
+      "linhas": 24576,
+      "bytes": 6929417
     },
     {
       "arquivo": "chunks_D_2023.parquet",
@@ -104,8 +104,8 @@
     },
     {
       "arquivo": "chunks_E_2026.parquet",
-      "linhas": 14556,
-      "bytes": 4161717
+      "linhas": 14580,
+      "bytes": 4163630
     },
     {
       "arquivo": "chunks_F_2023.parquet",
@@ -124,8 +124,8 @@
     },
     {
       "arquivo": "chunks_F_2026.parquet",
-      "linhas": 2633,
-      "bytes": 815311
+      "linhas": 2662,
+      "bytes": 818855
     },
     {
       "arquivo": "chunks_G_2023.parquet",
@@ -184,8 +184,8 @@
     },
     {
       "arquivo": "chunks_I_2026.parquet",
-      "linhas": 7032,
-      "bytes": 1889603
+      "linhas": 8029,
+      "bytes": 2137020
     },
     {
       "arquivo": "chunks_J_2023.parquet",
@@ -204,8 +204,8 @@
     },
     {
       "arquivo": "chunks_J_2026.parquet",
-      "linhas": 926,
-      "bytes": 232813
+      "linhas": 975,
+      "bytes": 238082
     },
     {
       "arquivo": "chunks_K_2023.parquet",
@@ -244,8 +244,8 @@
     },
     {
       "arquivo": "chunks_L_2026.parquet",
-      "linhas": 6469,
-      "bytes": 1902981
+      "linhas": 6529,
+      "bytes": 1909291
     },
     {
       "arquivo": "chunks_M_2023.parquet",
@@ -264,8 +264,8 @@
     },
     {
       "arquivo": "chunks_M_2026.parquet",
-      "linhas": 9189,
-      "bytes": 2698144
+      "linhas": 9289,
+      "bytes": 2706663
     },
     {
       "arquivo": "chunks_N_2023.parquet",
@@ -284,8 +284,8 @@
     },
     {
       "arquivo": "chunks_N_2026.parquet",
-      "linhas": 3161,
-      "bytes": 832518
+      "linhas": 3191,
+      "bytes": 835972
     },
     {
       "arquivo": "chunks_O_2023.parquet",
@@ -304,8 +304,8 @@
     },
     {
       "arquivo": "chunks_O_2026.parquet",
-      "linhas": 5060,
-      "bytes": 1409429
+      "linhas": 5069,
+      "bytes": 1410668
     },
     {
       "arquivo": "chunks_P_2023.parquet",
@@ -324,8 +324,8 @@
     },
     {
       "arquivo": "chunks_P_2026.parquet",
-      "linhas": 13084,
-      "bytes": 3533576
+      "linhas": 13167,
+      "bytes": 3542269
     },
     {
       "arquivo": "chunks_Q_2023.parquet",
@@ -364,8 +364,8 @@
     },
     {
       "arquivo": "chunks_R_2026.parquet",
-      "linhas": 6746,
-      "bytes": 1979034
+      "linhas": 6961,
+      "bytes": 2009442
     },
     {
       "arquivo": "chunks_S_2023.parquet",
@@ -384,8 +384,8 @@
     },
     {
       "arquivo": "chunks_S_2026.parquet",
-      "linhas": 8920,
-      "bytes": 2439931
+      "linhas": 9635,
+      "bytes": 2645221
     },
     {
       "arquivo": "chunks_T_2023.parquet",
@@ -444,8 +444,8 @@
     },
     {
       "arquivo": "chunks_V_2026.parquet",
-      "linhas": 7249,
-      "bytes": 2100190
+      "linhas": 7330,
+      "bytes": 2105865
     },
     {
       "arquivo": "chunks_W_2023.parquet",
@@ -488,8 +488,8 @@
       "bytes": 169615
     }
   ],
-  "assinatura_chunk_hash": "9ab447a8c99a7971bf515815634a6071",
-  "assinatura_origem": "9ab447a8c99a7971bf515815634a6071",
-  "linhas_origem": 452062,
+  "assinatura_chunk_hash": "48c317992912731c681f947a4d7970c7",
+  "assinatura_origem": "48c317992912731c681f947a4d7970c7",
+  "linhas_origem": 455495,
   "confere": true
 }
