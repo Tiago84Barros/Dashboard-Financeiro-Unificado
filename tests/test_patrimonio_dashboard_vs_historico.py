@@ -113,6 +113,13 @@ def test_sql_so_soma_custo_quando_toda_posicao_tem_custo():
     assert "sum(coalesce(pps.invested_value, 0))" not in sql
 
 
+def test_historico_inclui_acoes_emprestadas():
+    # Dez/23 da B3 (R$ 590.520,23) so fecha somando a aba de emprestimos.
+    sql = investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower()
+
+    assert "is_loaned" not in sql
+
+
 def test_foto_sem_custo_vira_lacuna_e_nao_zero():
     snaps = [
         SimpleNamespace(mes=date(2020, 12, 31), valor_mercado=600.0,
