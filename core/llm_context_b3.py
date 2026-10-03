@@ -415,6 +415,30 @@ def compute_segment_peers(ticker: str, max_peers: int = 10) -> tuple[list[str], 
     return peers[:max_peers], nivel
 
 
+def _ler_alavancagem(ticker: str):
+    """Dívida líquida/EBITDA do par pela mesma leitura da Inteligência dos
+    Ativos (dívida do balanço da base ÷ EBITDA de 12 meses do arquivo de
+    valuation, com a conferência de fontes divergentes)."""
+    from core.inteligencia_ativos.fontes_fundamentos import ler_acao_b3
+    return ler_acao_b3(ticker).get("divida_liquida_ebitda")
+
+
+def _fmt_alavancagem(ticker: str) -> str:
+    try:
+        d = _ler_alavancagem(ticker)
+    except Exception as exc:
+        logger.warning("peers: alavancagem de %s falhou: %s", ticker, exc)
+        d = None
+    v = getattr(d, "valor", None)
+    try:
+        v = float(v) if v is not None else None
+    except (TypeError, ValueError):
+        v = None
+    if v is None or not np.isfinite(v):
+        return "DL/EBITDA=N/D"
+    return f"DL/EBITDA={v:.2f}x"
+
+
 def get_peers_context(tickers: list[str], max_tickers: int = 2) -> tuple[str, dict]:
     """
     Lista os concorrentes (mesmo segmento) dos tickers citados, com nome, receita
@@ -448,10 +472,16 @@ def get_peers_context(tickers: list[str], max_tickers: int = 2) -> tuple[str, di
                     m = " | " + " ".join(
                         f"{_LABEL.get(c, c)}={_fmt_val(c, mrow[c].iloc[0])}"
                         for c in ("P/L", "ROE", "Margem_Liquida") if c in mrow.columns)
+            m = (m or " |") + " " + _fmt_alavancagem(p)
             lines.append(f"  {p} [{nm}]{m}")
     if not lines:
         return "", {}
-    return _cap("\n".join(lines), _CAP_SECTOR), peers_map
+    # A legenda fica fora do teto: truncada, a LLM leria a razão sem saber
+    # que não é a alavancagem de covenant que a empresa divulga.
+    legenda = ("  (DL/EBITDA = dívida líquida do balanço anual da base ÷ EBITDA de "
+               "12 meses do provedor — não é a alavancagem ajustada/de covenant "
+               "divulgada pela empresa; N/D = sem dado ou fontes divergentes)")
+    return _cap("\n".join(lines), _CAP_SECTOR) + "\n" + legenda, peers_map
 
 
 # ─────────────────────────────────────────────────────────────────────────────
