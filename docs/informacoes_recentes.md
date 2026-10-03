@@ -74,6 +74,26 @@ Não há fonte de data no projeto para guidance, assembleia, emissão de cotas, 
 
 ## Limitações conhecidas (26/09/2026)
 
-- A última atualização de `docs_corporativos` é de 04/09/2026, e o texto dos documentos está vazio. Só os metadados servem.
+- A última atualização de `docs_corporativos` é de 04/09/2026. ~~O texto dos documentos está vazio~~: desatualizado. Desde 03/10/2026 o texto vem do corpus RAG em Parquet (`data/public/rag/`, lido por `core/rag_store.py`), e a etapa 10 mostra trechos literais por tema (ver abaixo).
 - Os documentos de FII no FNET param em 15/07/2026.
 - O resolvedor de nomes não acha toda empresa citada. Alguns resumos com várias empresas passam como notícia de uma delas.
+
+## Etapa 10 · o que os documentos dizem (03/10/2026)
+
+A tabela "Dado · documentos publicados" saiu da tela. Pedido do usuário: o app
+deve mostrar o que interessa nos relatórios, não a lista deles.
+
+- `destaques_relatorios.ler_trechos(ticker)` lê até 12 documentos de fato dos
+  últimos 12 meses no corpus RAG e escolhe até 4 frases com fato e número por
+  documento. É a mesma regra da caixa "Relatórios relevantes" da resumida.
+- `por_tema` reagrupa as frases em Resultado, Proventos e recompra, Caixa e
+  dívida, Projeções e estratégia, Operação e crescimento e Outros fatos, com até
+  3 por tema. O mesmo fato publicado em dois documentos aparece uma vez: a
+  chave são os valores numéricos da frase.
+- `provedor_relatorios` grava os trechos em `Relatorios.trechos`. A tela
+  (`corpo_relatorios`) e o texto da LLM (`texto_relatorios`) leem dali. Antes a
+  LLM recebia só metadados, embora o prompt falasse em "trechos recuperados".
+- A frase é sempre do emissor, nunca paráfrase. O tema sai de palavra-chave,
+  então uma frase pode cair no tema errado.
+- Sem texto no acervo (FII, ou documento só com metadado), a tela diz isso em
+  uma linha.

@@ -14,6 +14,7 @@ from datetime import date, datetime, timezone
 
 import pytest
 
+from core.inteligencia_ativos import destaques_relatorios as dr
 from core.inteligencia_ativos import fontes_informacoes as fi
 from core.inteligencia_ativos import informacoes as inf
 from core.inteligencia_ativos import modelos as m
@@ -287,6 +288,41 @@ def test_texto_para_llm_separa_dado_e_nao_inventa():
     assert inf.NAO_DISPONIVEL in te and "Sem fonte de data para" in te
 
 
+TRECHOS = (
+    dr.Trecho("resultado", "O lucro foi de R$ 3 bi, alta de 8%.", "2026-08-10",
+              "Release 2T26", "Press-release"),
+    dr.Trecho("proventos", "<b>JCP</b> de R$ 0,50 por ação.", "2026-08-11",
+              "Aviso || pauta longa", "Aviso"),
+)
+
+
+def test_provedor_relatorios_le_os_trechos_e_leva_a_llm():
+    sr = secoes.provedor_relatorios(_info(), None, leitor=_leitor,
+                                    trechos=lambda tk: TRECHOS)
+    r = inf.Relatorios.de_dict(sr.dados)
+    assert r.trechos == TRECHOS
+    assert "2 fato(s) de 2 documento(s)" in sr.resumo
+    assert "resultado, proventos e recompra" in sr.resumo
+    tr = inf.texto_relatorios(r, "PETR4")
+    assert "só metadados" not in tr and "Trechos · Resultado:" in tr
+    assert "O lucro foi de R$ 3 bi" in tr and "10/08/2026" in tr
+    # Sem documentos na vitrine, o corpus não é consultado.
+    vazio = secoes.provedor_relatorios(
+        _info(), None, leitor=lambda i: (None, inf.Relatorios(), None),
+        trechos=lambda tk: TRECHOS)
+    assert vazio.estado == m.SEM_DADOS
+
+
+def test_corpo_relatorios_mostra_o_que_os_documentos_dizem():
+    from views import inteligencia_ativos as tela
+    hr = tela.corpo_relatorios(inf.Relatorios(documentos=(), trechos=TRECHOS))
+    assert hr.index("Resultado") < hr.index("Proventos e recompra")
+    assert "O lucro foi de R$ 3 bi" in hr and "10/08/2026" in hr
+    assert "<b>JCP</b>" not in hr and "&lt;b&gt;JCP" in hr
+    assert "pauta longa" not in hr and "Aviso" in hr
+    assert "<table" not in hr and "documentos publicados" not in hr
+
+
 def test_texto_da_analise_inclui_as_tres_camadas(monkeypatch):
     from core.inteligencia_ativos import analise
     monkeypatch.setattr(secoes, "_ler_informacoes", _leitor)
@@ -315,8 +351,9 @@ def test_cartoes_escapam_e_so_linkam_http():
     hl = tela.corpo_noticias(nn)
     assert 'href="https://x/1"' in hl and 'rel="noopener noreferrer"' in hl
     hr, he = tela.corpo_relatorios(r), tela.corpo_eventos(e)
-    assert "Documento" in hr and "Onde procurar" not in hr
-    assert "Pergunta" not in hr
+    # Sem texto no acervo: aviso, não tabela de documentos.
+    assert "ainda não está no acervo" in hr and "<table" not in hr
+    assert "Onde procurar" not in hr and "Pergunta" not in hr
     for cab in ("Evento", "Data", "Relevância", "Possível impacto"):
         assert cab in he
     assert "Sem fonte de data para" in he

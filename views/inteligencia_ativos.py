@@ -45,6 +45,7 @@ from core import inteligencia_ativos as servico
 from core.estrategia import politica as pol
 from core.estrategia import portao
 from core.inteligencia_ativos import calculos as calc
+from core.inteligencia_ativos import destaques_relatorios as dr
 from core.inteligencia_ativos import fundamentos as fund
 from core.inteligencia_ativos import historico as hist
 from core.inteligencia_ativos import informacoes as inf
@@ -590,23 +591,36 @@ def corpo_noticias(n: inf.Noticias) -> str:
 
 
 def corpo_relatorios(r: inf.Relatorios) -> str:
-    """Documentos oficiais (metadados). Os indícios por pergunta seguem no
-    texto da LLM, fora da tela. Puro."""
-    if not r.documentos:
-        return escape(r.motivo or inf.NAO_DISPONIVEL)
-    linhas = "".join(
-        f'<tr><td {_TD}color:var(--app-muted);white-space:nowrap">'
-        f'{_data(d.reference_date)}</td>'
-        f'<td {_TD}color:var(--app-muted)">{escape(d.rotulo)}</td>'
-        f'<td {_TD}color:var(--app-text)">{_link(d.titulo, d.source_url)}</td>'
-        f'<td {_TD}color:var(--app-subtle);font-size:0.78rem">'
-        f'{escape(d.source or "—")}</td></tr>' for d in r.documentos)
-    return (
-        f'<div>{escape(inf.resumo_relatorios(r))}</div>'
-        f'{_SUB_T}Dado · documentos publicados</div>'
-        + _tabela(["Data", "Tipo", "Documento", "Fonte"], linhas)
-        + _nota("O conteúdo dos documentos não é lido aqui. "
-                f"Base até {_data(r.base_ate)}. Fonte: {r.fonte or '—'}."))
+    """O que os documentos oficiais dizem, por tema do investidor: frases
+    literais do emissor, cada uma com data e documento. Sem texto no acervo,
+    só o aviso. Puro."""
+    if not r.trechos:
+        if not r.documentos:
+            return escape(r.motivo or inf.NAO_DISPONIVEL)
+        return (f'<div>{escape(inf.resumo_relatorios(r))}</div>'
+                + _nota("O texto destes documentos ainda não está no acervo; "
+                        "quando estiver, os fatos principais aparecem aqui, "
+                        "por tema. Base até " + _data(r.base_ate) + "."))
+    blocos, atual = "", None
+    for t in r.trechos:
+        if t.tema != atual:
+            if atual is not None:
+                blocos += "</ul>"
+            atual = t.tema
+            blocos += (f'{_SUB_T}{escape(dr.ROTULO_TEMA[t.tema])}</div>'
+                       '<ul style="margin:2px 0 0 18px;padding:0">')
+        blocos += (
+            f'<li style="margin:4px 0;color:var(--app-text)">{escape(t.frase)}'
+            '<div style="font-size:0.76rem;color:var(--app-subtle)">'
+            f'{_data(t.data)} · {escape(dr.titulo_curto(t.titulo, t.tipo))}'
+            '</div></li>')
+    blocos += "</ul>"
+    return (f'<div>{escape(inf.resumo_relatorios(r))}</div>' + blocos
+            + _nota("Frases literais dos documentos oficiais (CVM), escolhidas "
+                    "por regra por trazerem fato e número e agrupadas por "
+                    "tema; o mesmo fato publicado em dois documentos aparece "
+                    "uma vez. O que isso muda na tese fica para a análise. "
+                    f"Base até {_data(r.base_ate)}."))
 
 
 def corpo_eventos(e: inf.Eventos) -> str:
