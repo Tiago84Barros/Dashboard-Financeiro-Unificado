@@ -1,8 +1,9 @@
-# Atualizações 2026-10 — Inteligência dos Ativos: notícias de cenário e histórico fora da tela
+# Atualizações 2026-10 — Inteligência dos Ativos: notícias de cenário e tela mais enxuta
 
 - **PRs:**
   - #454 (merge squash em 2026-10-03, commit `2efe60c`);
-  - #456 (merge squash em 2026-10-03, commit `77c1ff0`).
+  - #456 (merge squash em 2026-10-03, commit `77c1ff0`);
+  - #458 (merge squash em 2026-10-03, commit `8b2f649`).
 - **Seção:** Investimentos → Inteligência dos Ativos
 
 ## 1. Notícias: o complemento passa a ser o cenário do país (PR #454)
@@ -71,7 +72,29 @@ pedido: a tabela técnica (`analysis_timestamp`, `model_used`, `scenario_version
 
 O toggle passou a se chamar "Análise detalhada (13 etapas e Portfolio Fit)".
 
-## 3. Limitações aceitas
+## 3. "Onde procurar" e o JSON da LLM saem da tela (PR #458)
+
+**Decisão.** A pedido, mais dois blocos técnicos saíram da Análise detalhada:
+- **"Onde procurar · indício pelo título, não conclusão"** (etapa 10,
+  Relatórios): a tabela Pergunta → Documentos, que na prática mostrava quase
+  só "Dado não disponível.". Fica a tabela de documentos publicados e uma nota
+  curta ("O conteúdo dos documentos não é lido aqui. Base até … Fonte: …").
+- **"Contexto estruturado que a LLM recebe"** (Portfolio Fit): o expander com o
+  JSON (`ordem_de_analise`, `portfolio`, `scenario`, `news` …).
+
+**O que não mudou.** A LLM recebe o mesmo de antes:
+- os indícios por pergunta seguem no texto da análise
+  (`core/inteligencia_ativos/informacoes.py`, `r.indicios()` + `PERGUNTAS`);
+- o contexto do Portfolio Fit é montado igual (`pf.contexto`) e continua
+  servindo de chave de sessão (`chave_sessao`);
+- o bloco de mercado (`bloco_contexto_mercado`) segue anexado na hora da
+  chamada. Ele nunca apareceu naquele JSON: `"news": []` ali significa só que o
+  ativo não tinha notícia própria, não que a LLM ficou sem noticiário.
+
+**Custo.** Sem o JSON na tela, auditar o que a LLM recebeu exige ler o código ou
+gerar o contexto localmente (`pf.contexto(analise, ctx)`).
+
+## 4. Limitações aceitas
 
 - [Provável] A janela de 150 itens em 3 dias pode ter pouco assunto de cenário, e
   a caixa então mostra "Nenhuma manchete…". Se isso for comum, o ajuste é ampliar
@@ -79,8 +102,9 @@ O toggle passou a se chamar "Análise detalhada (13 etapas e Portfolio Fit)".
 - [Provável] A classificação por palavra-chave ainda deixa passar notícia política
   fraca (por exemplo, TSE no Rio).
 - [Certo] Sem a trilha na tela, rever por que uma análise mudou exige ler o banco.
+- [Certo] Sem o JSON na tela, conferir o que a LLM recebeu exige o código.
 
-## 4. Arquivos
+## 5. Arquivos
 
 - `core/contexto_mercado.py`: `itens_gerais`, `_normalizar_item`.
 - `core/inteligencia_ativos/resumida.py`: `noticias_cenario`, `TIPOS_POR_CANAL`,
@@ -89,13 +113,17 @@ O toggle passou a se chamar "Análise detalhada (13 etapas e Portfolio Fit)".
 - `core/noticias/vitrine.py`: `MANCHETES_MACRO`, `TIPOS_CENARIO`.
 - `views/inteligencia_ativos.py` e `views/inteligencia_ativos_painel.py`:
   histórico fora da tela, `registrar_leitura_llm`.
+- `views/inteligencia_ativos.py::corpo_relatorios`: sem a tabela "Onde procurar".
+- `views/inteligencia_ativos_fit.py::render`: sem o expander do JSON.
+- `docs/informacoes_recentes.md` e `docs/portfolio_fit.md`: notas da remoção.
 
-## 5. Verificação
+## 6. Verificação
 
 - PR #454: 6874 passed, 115 skipped; CI verde (Python 3.11 e 3.12).
   **Não verificado contra o acervo real.**
 - PR #456: 6881 passed, 115 skipped; CI verde (Python 3.11 e 3.12).
-- `ruff check .` limpo nos dois. Merges feitos sem revisão humana.
+- PR #458: 6893 passed, 115 skipped; CI verde (Python 3.11 e 3.12).
+- `ruff check .` limpo nos três. Merges feitos sem revisão humana.
 
 ## Relacionadas
 
