@@ -1,10 +1,11 @@
-# Atualizações 2026-10 — Inteligência dos Ativos: notícias de cenário, tela mais enxuta e relatórios lidos
+# Atualizações 2026-10 — Inteligência dos Ativos: notícias de cenário, tela mais enxuta, relatórios lidos e resumidos por IA
 
 - **PRs:**
   - #454 (merge squash em 2026-10-03, commit `2efe60c`);
   - #456 (merge squash em 2026-10-03, commit `77c1ff0`);
   - #458 (merge squash em 2026-10-03, commit `8b2f649`);
-  - #460 (merge squash em 2026-10-03, commit `dade9b9`).
+  - #460 (merge squash em 2026-10-03, commit `dade9b9`);
+  - #463 (merge squash em 2026-10-03, commit `1a810b2`).
 - **Seção:** Investimentos → Inteligência dos Ativos
 
 ## 1. Notícias: o complemento passa a ser o cenário do país (PR #454)
@@ -144,7 +145,50 @@ determinístico):
 **Testado com dados reais do corpus:** PETR4, TAEE11, WEGE3, ITUB4, BBAS3 e
 MGLU3.
 
-## 5. Limitações aceitas
+## 5. Resumo por IA dos relatórios (PR #463)
+
+**Problema.** As frases literais da etapa 10 mostram o que o documento diz, mas
+não o que isso significa para quem tem o ativo. O pedido foi que uma LLM lesse os
+trechos e resumisse.
+
+**O que mudou.**
+- Abaixo da etapa 10 aparece o botão **"Resumir os relatórios com IA"**. Ele só
+  aparece quando há trechos; sem provedor de LLM, aparece um aviso no lugar.
+- **Sob demanda**: cada ativo custa uma chamada, então a LLM nunca roda sozinha
+  na renderização (mesmo padrão do Portfolio Fit).
+- O cartão "10 · O que os relatórios mostram (IA)" traz:
+  1. a síntese (2 a 4 frases);
+  2. os pontos agrupados por tema, na mesma ordem da etapa 10;
+  3. "Acompanhar";
+  4. "O que os documentos não dizem";
+  5. a linha de validação e o modelo que respondeu.
+- O resumo fica na sessão. A chave é o hash dos trechos: chegou documento novo,
+  é preciso pedir de novo. Resumo rejeitado mostra "Tentar de novo".
+
+**O que a LLM recebe** (`core/inteligencia_ativos/leitura_relatorios.py`):
+- o texto da etapa 10 (`texto_relatorios`): trechos, documentos e indícios;
+- o bloco de mercado do ativo (`contexto_mercado_do_ativo`);
+- o detalhe do armazém local (`detalhe_armazem_do_ativo`).
+
+O system prompt leva `REGRA_CONTEXTO_MERCADO`, regras contra alucinação e a
+proibição de recomendar compra ou venda.
+
+**Validação.**
+- `check_grounding` confere cada número da síntese, dos pontos e de "Acompanhar"
+  contra a entrada. Número sem âncora deixa o resumo "com ressalvas" e aparece no
+  rodapé.
+- Sem síntese, JSON inválido ou provedor fora: resumo rejeitado, com o motivo.
+- Sem trechos, a LLM nem é chamada.
+
+**O que não mudou.** O resumo não entra em `texto_para_llm`: as outras LLMs
+(Portfolio Fit, leitura da análise) continuam lendo os trechos literais, não a
+paráfrase.
+
+**Tela.** `fluxo_partes` divide o fluxo dos 13 cartões logo depois da etapa 10
+para o resumo aparecer colado a ela. As duas partes juntas são idênticas a
+`fluxo_html`.
+
+## 6. Limitações aceitas
 
 - [Provável] A janela de 150 itens em 3 dias pode ter pouco assunto de cenário, e
   a caixa então mostra "Nenhuma manchete…". Se isso for comum, o ajuste é ampliar
@@ -157,12 +201,17 @@ MGLU3.
   exemplo, uma frase sobre dívida que cita "lucro" pode cair em Resultado.
 - [Certo] Etapa 10: às vezes a regra escolhe uma frase de pouco valor.
 - [Certo] Etapa 10: FIIs ainda não têm o texto dos documentos no corpus.
-- [Certo] O resumo por IA dos trechos foi implementado em seguida, sob
-  demanda (botão), em `core/inteligencia_ativos/leitura_relatorios.py`. Ver
-  `docs/informacoes_recentes.md`, "Etapa 10 · resumo por IA". Não foi testado
-  contra um provedor real nesta sessão.
+- [Certo] Resumo por IA: só foi testado com LLM simulada. Não havia provedor
+  configurado no ambiente de desenvolvimento; o primeiro teste real é no app.
+- [Certo] Resumo por IA: o grounding pega número inventado, mas não pega
+  interpretação errada de um número verdadeiro (por exemplo, "a dívida caiu"
+  quando o trecho diz que subiu).
+- [Certo] Resumo por IA: a LLM só lê os trechos que a regra escolheu. Se a regra
+  deixou de fora o fato principal do documento, o resumo também deixa.
+- [Palpite] Em ativo com muitos documentos, o bloco de mercado pode ser maior que
+  os trechos e diluir o foco da LLM.
 
-## 6. Arquivos
+## 7. Arquivos
 
 - `core/contexto_mercado.py`: `itens_gerais`, `_normalizar_item`.
 - `core/inteligencia_ativos/resumida.py`: `noticias_cenario`, `TIPOS_POR_CANAL`,
@@ -181,17 +230,26 @@ MGLU3.
 - `views/inteligencia_ativos.py::corpo_relatorios`: trechos por tema, sem a
   tabela de documentos.
 - `docs/informacoes_recentes.md` e `docs/portfolio_fit.md`: notas da remoção.
-  `docs/informacoes_recentes.md` também ganhou a seção "Etapa 10 · o que os
-  documentos dizem".
+  `docs/informacoes_recentes.md` também ganhou as seções "Etapa 10 · o que os
+  documentos dizem" e "Etapa 10 · resumo por IA".
+- `core/inteligencia_ativos/leitura_relatorios.py` (novo): `Resumo`, `Ponto`,
+  `sistema`, `texto_entrada`, `validar`, `gerar`, `relatorios_da_analise`.
+- `views/inteligencia_ativos_relatorios.py` (novo): `chave_sessao`, `cartao`,
+  `render`.
+- `views/inteligencia_ativos.py`: `fluxo_partes` e o encaixe do resumo em
+  `_render_painel`.
+- `tests/test_leitura_relatorios.py` (novo, 8 testes, LLM simulada).
 
-## 7. Verificação
+## 8. Verificação
 
 - PR #454: 6874 passed, 115 skipped; CI verde (Python 3.11 e 3.12).
   **Não verificado contra o acervo real.**
 - PR #456: 6881 passed, 115 skipped; CI verde (Python 3.11 e 3.12).
 - PR #458: 6893 passed, 115 skipped; CI verde (Python 3.11 e 3.12).
 - PR #460: 6898 passed, 115 skipped; CI verde.
-- `ruff check .` limpo nos quatro. Merges feitos sem revisão humana.
+- PR #463: 6910 passed, 115 skipped; CI verde (Python 3.11 e 3.12).
+  **Não verificado contra um provedor de LLM real.**
+- `ruff check .` limpo nos cinco. Merges feitos sem revisão humana.
 
 ## Relacionadas
 
