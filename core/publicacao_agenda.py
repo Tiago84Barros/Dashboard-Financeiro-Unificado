@@ -282,11 +282,10 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/macro_insumos.json.gz",),
     ),
     Alvo(
-        # CDI diário da comparação "Rentabilidade vs CDI". O SGS do BCB não
-        # responde fora do Brasil: em 03/10/2026 a Streamlit Cloud mostrava
-        # "Sem série do CDI" e o `update_bcb` do GitHub Actions voltava com 0
-        # pontos. A rotina local alcança o BCB; o app lê o arquivo e só pede ao
-        # BCB os dias depois dele. Não usa o armazém.
+        # CDI diário da comparação "Rentabilidade vs CDI". Em 03/10/2026 a
+        # Streamlit Cloud mostrava "Sem série do CDI": a API REST do SGS
+        # sumiu do DNS (``core.bcb_sgs`` cai no SOAP). O app lê o arquivo e só
+        # pede ao BCB os dias depois dele. Não usa o armazém.
         chave="cdi_diario",
         titulo="CDI diário (BCB/SGS 12)",
         passos=(("scripts/publicar_cdi_diario.py",),),

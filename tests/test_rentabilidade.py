@@ -127,6 +127,8 @@ def test_carregar_cdi_divide_em_janelas_e_sobrevive_a_falha(monkeypatch):
 
     import requests
     monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr("core.bcb_sgs.baixar_sgs_soap",
+                        lambda *a, **k: ({}, "o SOAP do SGS não respondeu"))
     out = rt.carregar_cdi_diario(date(2010, 1, 1), date(2026, 1, 1))
     assert len(chamadas) == 2          # primeira janela + a que falhou
     assert "dataFinal=31/12/2018" in chamadas[0]
