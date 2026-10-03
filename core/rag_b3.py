@@ -461,6 +461,58 @@ def _search_anchor_recent(conn: Any, ticker: str, lim: int, months_back: int) ->
     return out
 
 
+# Temas que toda análise de empresa precisa e que a ordem temporal não garante:
+# o custo e o prazo da dívida e a geração de caixa ficam no meio do release
+# (ISAE3, 2T26: trechos 14+ de um documento cuja âncora só alcança os 8
+# primeiros). Padrões ILIKE, em minúsculas.
+_TEMAS_FIXOS: dict[str, tuple[str, ...]] = {
+    "divida": ("%prazo médio%dívida%", "%custo médio%dívida%",
+               "%cronograma de amortiza%",
+               "%perfil da dívida%", "%perfil de endividamento%",
+               "%dívida líquida/ebitda%"),
+    "caixa": ("%fluxo de caixa operacional%", "%fluxo de caixa livre%",
+              "%geração de caixa%", "%geração operacional de caixa%"),
+}
+_POR_TEMA = 3
+
+
+def _search_tematico(conn: Any, ticker: str, months_back: int) -> list[dict]:
+    """Até ``_POR_TEMA`` trechos de texto real por tema fixo, o documento
+    mais recente primeiro. Entram à frente das âncoras para o teto por documento
+    da formatação não os cortar."""
+    out: list[dict] = []
+    for tema, padroes in _TEMAS_FIXOS.items():
+        try:
+            rows = rag_store.busca_termos(ticker, padroes, _POR_TEMA * 4,
+                                          months_back, conn=conn)
+        except Exception as exc:
+            logger.debug("RAG: busca do tema %s falhou para %s: %s", tema, ticker, exc)
+            continue
+        # Dentro do mesmo documento, o trecho que casa mais termos primeiro:
+        # no release de ISAE3 do 2T26 o trecho 38 cita "prazo médio" de
+        # passagem e o 39 traz custo (12,17% a.a.) e prazo (8,7 anos); o
+        # orçamento do chat só comporta um deles.
+        termos = [p.strip("%").lower() for p in padroes]
+        primeira = {}
+        for i, r in enumerate(rows):
+            primeira.setdefault(r[4], i)
+        rows = sorted(rows, key=lambda r: (
+            primeira[r[4]],
+            -sum(t in (r[0] or "").lower() for t in termos)))
+        n = 0
+        for r in rows:
+            texto = _clean_chunk_text(r[0] or "")
+            if _is_meta_stub(texto) or not _chunk_is_relevant(texto):
+                continue
+            out.append({"chunk_text": texto, "data_doc": r[1], "tipo_doc": r[2],
+                        "titulo": r[3], "dist": None, "doc_id": r[4],
+                        "topic": tema})
+            n += 1
+            if n >= _POR_TEMA:
+                break
+    return out
+
+
 def _merge_dedup(primary: list[dict], secondary: list[dict], cap: int) -> list[dict]:
     """Une mantendo `primary` (âncoras) à frente; dedup por prefixo do texto."""
     seen: set[str] = set()
@@ -523,6 +575,9 @@ def retrieve_chunks(
             # Âncoras determinísticas: marcos operacionais recentes de alto sinal,
             # mesclados em qualquer modo para nunca ficarem de fora por score.
             anchors = _search_anchor_recent(conn, tk, max(8, top_k_total // 5), months_back)
+            tematicos = _search_tematico(conn, tk, months_back)
+            stats["tematicos"] = len(tematicos)
+            anchors = _merge_dedup(tematicos, anchors, len(tematicos) + len(anchors))
 
             use_semantic = _has_embeddings(tk)
 
