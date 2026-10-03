@@ -58,6 +58,7 @@ from core.utils import fmt_moeda
 from views import configuracoes_estrategia as tela_estrategia
 from views import inteligencia_ativos_fit as tela_fit
 from views import inteligencia_ativos_painel as tela_painel
+from views import inteligencia_ativos_relatorios as tela_relatorios
 from views import inteligencia_ativos_resumida as tela_resumida
 
 ROTULO = "Inteligência dos Ativos"
@@ -740,6 +741,20 @@ def fluxo_html(a: m.AnaliseAtivo) -> str:
     return _SETA.join(cartoes_analise(a))
 
 
+def fluxo_partes(a: m.AnaliseAtivo) -> tuple[str, str]:
+    """O fluxo cortado logo depois da etapa 10, para o resumo por IA dos
+    relatórios entrar entre ela e a etapa seguinte. Sem etapa 10, tudo fica
+    na primeira parte. Puro."""
+    cartoes = cartoes_analise(a)
+    chaves = [s.chave for s in a.secoes_externas]
+    if "relatorios" not in chaves:
+        return _SETA.join(cartoes), ""
+    # Depois das seções externas vêm só as etapas 12 e 13.
+    corte = len(cartoes) - 2 - len(chaves) + chaves.index("relatorios") + 1
+    return (_SETA.join(cartoes[:corte]),
+            _SETA + _SETA.join(cartoes[corte:]))
+
+
 def cartao_questoes(a: m.AnaliseAtivo) -> str:
     """As quatro perguntas lado a lado, cada uma com a sua resposta. Puro."""
     blocos = ""
@@ -930,7 +945,11 @@ def _render_painel(liberacao: portao.Liberacao, carteira: dict,
         format_func=lambda t: f"{t} · {por_ticker[t].ativo.nome}")
     analise_ = por_ticker[escolha]
     st.markdown(cartao_questoes(analise_), unsafe_allow_html=True)
-    st.markdown(fluxo_html(analise_), unsafe_allow_html=True)
+    antes, depois = fluxo_partes(analise_)
+    st.markdown(antes, unsafe_allow_html=True)
+    tela_relatorios.render(analise_)
+    if depois:
+        st.markdown(depois, unsafe_allow_html=True)
     referencia = _referencia_memo(carteira)
     st.markdown(cartao_referencia_ativo(referencia, analise_.ativo.ticker),
                 unsafe_allow_html=True)
