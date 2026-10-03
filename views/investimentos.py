@@ -1077,16 +1077,8 @@ def _fig_evolucao_patrimonial(snapshots: list) -> go.Figure:
     Não há linha "mercado + proventos": o provento reinvestido já está no valor
     de mercado (virou cota), então somá-lo de novo conta duas vezes. Os
     proventos acumulados aparecem no hover do mercado.
-
-    O eixo X é de datas, não de rótulos: as fotos são anuais até dez/25 e
-    mensais depois, e em eixo de categorias cada ano ocupava o espaço de um
-    mês -- a queda de 2021 parecia tão rápida quanto a alta de agosto a
-    outubro de 2026. O custo vem com marcador porque foto com custo isolada
-    entre fotos sem custo não forma segmento e sumia do gráfico.
     """
     labels    = [s["label"]                for s in snapshots]
-    datas     = [f"{s['mes_str']}-01" if s.get("mes_str") else s["label"]
-                 for s in snapshots]
     investido = [s["valor_investido"]      for s in snapshots]
     mercado   = [s["valor_mercado"]        for s in snapshots]
     proventos = [
@@ -1098,25 +1090,22 @@ def _fig_evolucao_patrimonial(snapshots: list) -> go.Figure:
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=datas, y=mercado,
+        x=labels, y=mercado,
         name="Valor de Mercado",
-        mode="lines+markers",
+        mode="lines",
         line={"color": _COR_POSITIVO, "width": 2.5},
-        marker={"size": 5},
         fill="tozeroy",
         fillcolor="rgba(0,200,150,0.06)",
-        customdata=list(zip(labels, proventos)),
-        hovertemplate=("<b>%{customdata[0]}</b><br>Mercado: R$ %{y:,.0f}"
-                       "<br>Proventos acumulados: R$ %{customdata[1]:,.0f}<extra></extra>"),
+        customdata=proventos,
+        hovertemplate=("<b>%{x}</b><br>Mercado: R$ %{y:,.0f}"
+                       "<br>Proventos acumulados: R$ %{customdata:,.0f}<extra></extra>"),
     ))
     fig.add_trace(go.Scatter(
-        x=datas, y=investido,
+        x=labels, y=investido,
         name="Valor Investido",
-        mode="lines+markers",
+        mode="lines",
         line={"color": _COR_NEUTRO, "width": 1.5, "dash": "dot"},
-        marker={"size": 6, "symbol": "diamond"},
-        customdata=labels,
-        hovertemplate="<b>%{customdata}</b><br>Investido: R$ %{y:,.0f}<extra></extra>",
+        hovertemplate="<b>%{x}</b><br>Investido: R$ %{y:,.0f}<extra></extra>",
     ))
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
@@ -1129,9 +1118,6 @@ def _fig_evolucao_patrimonial(snapshots: list) -> go.Figure:
                "tickformat": ",.0f", "tickprefix": "R$ "},
         xaxis={"showgrid": False},
     )
-    if all(s.get("mes_str") for s in snapshots):
-        # Rótulo em português em cada foto; o espaçamento continua o das datas.
-        fig.update_xaxes(type="date", tickmode="array", tickvals=datas, ticktext=labels)
     return fig
 
 
