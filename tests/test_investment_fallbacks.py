@@ -70,3 +70,11 @@ def test_falha_de_evolucao_real_retorna_estado_vazio(monkeypatch):
     dados = investimentos.get_evolucao_patrimonial.__wrapped__()
     assert dados["data_source"] == "error"
     assert dados["snapshots"] == []
+
+
+def test_evolucao_nao_soma_tesouro_rotulado_como_xp_na_mesma_data():
+    # Ago/26: o consolidado da B3 e o extrato do Tesouro caem em 2026-08-31.
+    sql = " ".join(investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower().split())
+    xp_snaps = sql.split("xp_snaps as", 1)[1]
+
+    assert "coalesce(pps.source_id, '') not like 'td-snap-%'" in xp_snaps

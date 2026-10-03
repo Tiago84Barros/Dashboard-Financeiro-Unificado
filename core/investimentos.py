@@ -1686,6 +1686,10 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
         -- contra R$ 590.520,23 da Evolucao Patrimonial da B3; com ela,
         -- 2022 a 2025 batem com a B3 no centavo.
         WHERE pps.user_id = :uid
+          -- As seis linhas do Tesouro rotuladas xp_consolidado caem na mesma
+          -- data do consolidado de ago/26; sem este filtro o Tesouro somava
+          -- duas vezes.
+          AND COALESCE(pps.source_id, '') NOT LIKE 'td-snap-%'
         GROUP BY pps.report_date
     )
     SELECT
