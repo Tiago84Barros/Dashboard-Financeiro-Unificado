@@ -461,7 +461,10 @@ def _annual_long(where_sql: str, params: dict) -> pd.DataFrame:
     """, params)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+# 12 h: o histórico anual muda no máximo uma vez por noite, e a consulta de
+# safras (DISTINCT ON em calculated_metric_vintages) foi o 2º maior egress do
+# Supabase com TTL de 1 h -- ver supabase-cota-excedida.
+@st.cache_data(ttl=43200, show_spinner=False)
 def load_multiplos_historico(ticker: str) -> pd.DataFrame:
     """Histórico anual de múltiplos (1 linha por ano), colunas iguais ao legado."""
     tk = ticker.strip().upper().replace(".SA", "")
@@ -488,7 +491,7 @@ def load_multiplos_historico(ticker: str) -> pd.DataFrame:
     return out[cols]
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=43200, show_spinner=False)
 def load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame]:
     """Histórico anual de múltiplos p/ vários tickers (dict ticker->DataFrame)."""
     if not tickers:
