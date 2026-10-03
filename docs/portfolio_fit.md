@@ -66,7 +66,7 @@ O banco inteiro não é enviado. O contexto tem as chaves:
 - `news`, `reports`, `events`, `alternatives`;
 - `rules` (ação e fit pelas regras) e `data_gaps` (as lacunas que o código conhece).
 
-O bloco de contexto de mercado (`bloco_contexto_mercado`) vai anexado como texto, com `REGRA_CONTEXTO_MERCADO` no prompt de sistema. A tela mostra o JSON num expansor.
+O bloco de contexto de mercado (`bloco_contexto_mercado`) vai anexado como texto, com `REGRA_CONTEXTO_MERCADO` no prompt de sistema. O JSON não aparece mais na tela (o expansor "Contexto estruturado que a LLM recebe" saiu em 2026-10, a pedido); ele continua sendo montado e enviado igual.
 
 ## Resposta e validação
 

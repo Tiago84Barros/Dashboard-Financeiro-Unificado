@@ -165,7 +165,8 @@ def test_aba_mostra_resumo_cartoes_e_abre_a_analise(_historico_em_memoria):
     app.button(key="ia_resumo_TAEE11").click().run(timeout=30)
     assert not app.exception
     assert app.selectbox(key="ia_ativo").value == "TAEE11"
-    assert '"ticker": "TAEE11"' in app.json[0].proto.body
+    assert any("TAEE11" in md.value for md in app.markdown)
+    assert not app.json  # o contexto da LLM não vai à tela
     # o histórico é gravado, mas não aparece na tela do investidor
     assert not any("Histórico da análise" in md.value for md in app.markdown)
     assert not any(b.key == "ia_hist_salvar_TAEE11" for b in app.button)

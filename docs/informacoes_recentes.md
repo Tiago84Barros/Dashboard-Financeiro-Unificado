@@ -56,7 +56,7 @@ A janela é de 180 dias, com até 8 documentos por ativo.
 
 Os documentos são tipados como balanço, release, apresentação, relatório gerencial, fato relevante, comunicado, guidance, rating, assembleia ou oferta. Não há base de filings da SEC no projeto, então ações americanas mostram "Dado não disponível.".
 
-**Só metadados.** O conteúdo não é lido aqui. Para as sete perguntas (o que mudou, melhorou, piorou, novos riscos, oportunidades, estratégia, próximos movimentos), a tela mostra os documentos cujo **título** aponta para a pergunta, como indício de onde procurar. Melhorou, piorou e oportunidades exigem leitura e ficam como "Dado não disponível.".
+**Só metadados.** O conteúdo não é lido aqui. Para as sete perguntas (o que mudou, melhorou, piorou, novos riscos, oportunidades, estratégia, próximos movimentos), os documentos cujo **título** aponta para a pergunta seguem como indício no texto enviado à LLM. Melhorou, piorou e oportunidades exigem leitura e ficam como "Dado não disponível.". A tabela "Onde procurar" saiu da tela do investidor (2026-10); ela só lista a tabela de documentos.
 
 Os achados extraídos de documento de FII (`fii_document_findings`) ficam fora. Em 26/09/2026 nenhum dos 751 estava validado, e os lidos eram boilerplate de regulamento ou o contrário do rótulo.
 
