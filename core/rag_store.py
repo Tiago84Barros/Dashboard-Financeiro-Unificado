@@ -115,6 +115,22 @@ ORDER BY data_doc DESC NULLS LAST, chunk_index ASC, doc_id ASC
 LIMIT $lim
 """
 
+# `__TERMOS__` vira `(chunk_text ILIKE $t0 OR ...)` em `busca_termos`; ILIKE
+# existe nos dois motores, regex `~*` so no Postgres. Mais recente primeiro
+# (divida e caixa valem pelo trimestre); no mesmo dia, o documento de
+# resultado (ancora) antes do formulario que repete o numero.
+_Q_TERMOS = """
+SELECT chunk_text, CAST(data_doc AS VARCHAR) AS data_doc, tipo_doc, titulo,
+       doc_id
+FROM {fonte}
+WHERE root = $root
+  AND NOT eh_stub
+  AND (data_doc IS NULL OR $corte IS NULL OR data_doc >= $corte)
+  AND __TERMOS__
+ORDER BY data_doc DESC NULLS LAST, eh_ancora DESC, chunk_index ASC, doc_id ASC
+LIMIT $lim
+"""
+
 _Q_COBERTURA = """
 SELECT root, COUNT(*) AS n
 FROM {fonte}
@@ -215,6 +231,23 @@ def busca_ancora(root: str, limite: int, meses: int | None = None,
     return _executar(_Q_ANCORA,
                      {"root": root.upper()[:4], "lim": int(limite),
                       "corte": corte_de_data(meses)}, conn)
+
+
+def busca_termos(root: str, padroes: tuple[str, ...], limite: int,
+                 meses: int | None = None, conn: Any = None) -> list[tuple]:
+    """Chunks com texto real que casam algum padrao ILIKE (``%prazo medio%``).
+    Devolve (chunk_text, data_doc, tipo_doc, titulo, doc_id)."""
+    padroes = tuple(p for p in padroes if p)
+    if not padroes:
+        return []
+    params: dict = {"root": root.upper()[:4], "lim": int(limite),
+                    "corte": corte_de_data(meses)}
+    clausulas = []
+    for i, p in enumerate(padroes):
+        params[f"t{i}"] = p
+        clausulas.append(f"chunk_text ILIKE $t{i}")
+    sql = _Q_TERMOS.replace("__TERMOS__", "(" + " OR ".join(clausulas) + ")")
+    return _executar(sql, params, conn)
 
 
 def cobertura(roots: tuple[str, ...], conn: Any = None) -> dict[str, int]:
