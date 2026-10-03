@@ -1618,6 +1618,8 @@ _SQL_EVOLUCAO_DIV = """
         JOIN assets a ON a.id = d.asset_id
         WHERE d.user_id = :uid
           AND d.payment_date IS NOT NULL
+          -- Provento anunciado e ainda não pago não é ganho.
+          AND d.payment_date <= CURRENT_DATE
     )
     SELECT
         DATE_TRUNC('month', payment_date) AS mes,
@@ -1847,7 +1849,17 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
     queda de preço virava "resgate", e entre fotos anuais o mês inteiro do
     ano sumia dentro de um único ponto.
     """
-    div_map = {r.mes: float(r.delta_dividendos or 0) for r in div_rows}
+    # Proventos acumulados ATÉ o mês de cada foto, não só os pagos no mês da
+    # foto: com fotos anuais (dez/20 … dez/25) a soma por mês igual deixava de
+    # fora tudo o que foi pago de janeiro a novembro, e o "Ganho total" saía
+    # com uma fração dos proventos.
+    div_por_mes = sorted(
+        ((r.mes.year, r.mes.month), float(r.delta_dividendos or 0)) for r in div_rows
+    )
+
+    def _div_ate(ano: int, mes_: int) -> float:
+        return sum(v for chave, v in div_por_mes if chave <= (ano, mes_))
+
     snapshots = []
     fluxo_mensal = []
     cum_div = 0.0
@@ -1855,10 +1867,7 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
     for r in snap_rows:
         mes = r.mes
         vm = float(r.valor_mercado or 0)
-        cum_div += sum(
-            total for data, total in div_map.items()
-            if data.year == mes.year and data.month == mes.month
-        )
+        cum_div = _div_ate(mes.year, mes.month)
         label = f"{_MESES_PT_CF[mes.month]}/{str(mes.year)[-2:]}"
         mes_str = mes.strftime("%Y-%m")
         snapshots.append({
@@ -1881,6 +1890,7 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
         mes_str = current_month.strftime("%Y-%m")
         current_vm = round(float(current_totals.get("total_mercado") or 0), 2)
         current_vi = round(float(current_totals.get("total_investido") or 0), 2)
+        cum_div = _div_ate(current_month.year, current_month.month)
         current_snapshot = {
             "label":               label,
             "mes_str":             mes_str,
