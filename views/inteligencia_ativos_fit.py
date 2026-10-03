@@ -255,12 +255,4 @@ def render(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor,
             st.markdown(cartao_detalhes(leitura), unsafe_allow_html=True)
         st.markdown(cartao_validacao(leitura), unsafe_allow_html=True)
 
-    with st.expander("Contexto estruturado que a LLM recebe"):
-        st.caption("Só o que a análise acima já montou, sem o banco inteiro. "
-                   "O Cenário de Investimentos vai em "
-                   "scenario.cenario_do_investidor, só para leitura. O bloco "
-                   "de contexto de mercado é anexado na hora da chamada. A "
-                   "carteira recomendada do Portfólio Global vai em "
-                   "app_model_reference, só como comparação.")
-        st.json(contexto, expanded=False)
     return leitura if isinstance(leitura, pf.Leitura) else None

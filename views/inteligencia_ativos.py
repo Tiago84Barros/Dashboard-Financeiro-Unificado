@@ -590,9 +590,8 @@ def corpo_noticias(n: inf.Noticias) -> str:
 
 
 def corpo_relatorios(r: inf.Relatorios) -> str:
-    """Documentos oficiais (metadados) e, para cada uma das sete perguntas,
-    os documentos cujo título aponta para ela — ou "Dado não disponível.".
-    Puro."""
+    """Documentos oficiais (metadados). Os indícios por pergunta seguem no
+    texto da LLM, fora da tela. Puro."""
     if not r.documentos:
         return escape(r.motivo or inf.NAO_DISPONIVEL)
     linhas = "".join(
@@ -602,23 +601,12 @@ def corpo_relatorios(r: inf.Relatorios) -> str:
         f'<td {_TD}color:var(--app-text)">{_link(d.titulo, d.source_url)}</td>'
         f'<td {_TD}color:var(--app-subtle);font-size:0.78rem">'
         f'{escape(d.source or "—")}</td></tr>' for d in r.documentos)
-    ind = r.indicios()
-    perguntas = "".join(
-        f'<tr><td {_TD}color:var(--app-muted)">{escape(rot)}</td>'
-        f'<td {_TD}color:{"var(--app-text)" if ind[k] else "var(--app-subtle)"}">'
-        + (escape("; ".join(f"{d.rotulo} de {_data(d.reference_date)}"
-                            for d in ind[k])) if ind[k] else escape(inf.NAO_DISPONIVEL))
-        + "</td></tr>" for k, rot in inf.PERGUNTAS)
     return (
         f'<div>{escape(inf.resumo_relatorios(r))}</div>'
         f'{_SUB_T}Dado · documentos publicados</div>'
         + _tabela(["Data", "Tipo", "Documento", "Fonte"], linhas)
-        + f'{_SUB_T}Onde procurar · indício pelo título, não conclusão</div>'
-        + _tabela(["Pergunta", "Documentos"], perguntas)
-        + _nota("O conteúdo dos documentos não é lido aqui; melhora, piora e "
-                "oportunidade exigem a leitura e ficam como dado não "
-                f"disponível. Base até {_data(r.base_ate)}. "
-                f"Fonte: {r.fonte or '—'}."))
+        + _nota("O conteúdo dos documentos não é lido aqui. "
+                f"Base até {_data(r.base_ate)}. Fonte: {r.fonte or '—'}."))
 
 
 def corpo_eventos(e: inf.Eventos) -> str:
