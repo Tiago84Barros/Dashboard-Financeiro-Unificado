@@ -13,7 +13,14 @@ A escolha é determinística e cita o documento, sem paráfrase: a frase é do
 emissor, nunca da LLM. Documento que é só metadado (``eh_stub``) não entra
 no corpus de âncora e aparece na tela como "sem texto extraído".
 
-``destaques(chunks)`` é puro; ``ler(ticker)`` é a única função com I/O.
+Pedido seguinte (03/10/2026): a etapa 10 da análise detalhada não deve
+listar documentos, e sim mostrar o que eles dizem de forma coerente para o
+investidor. ``por_tema`` reagrupa as mesmas frases por assunto (resultado,
+proventos, caixa e dívida, projeções, operação), do documento mais novo para
+o mais velho, sem repetir o mesmo fato publicado em dois documentos.
+
+``destaques(chunks)`` e ``por_tema`` são puros; ``ler(ticker)`` é a única
+função com I/O.
 """
 from __future__ import annotations
 
@@ -159,13 +166,98 @@ def destaques(chunks, n_docs: int = N_DOCUMENTOS,
     return tuple(saida)
 
 
+# Tema do investidor, na ordem de exibição. A frase vai para o tema de maior
+# pontuação (cada termo vale o seu número de palavras: "custo de capital"
+# vence "custo"); empate fica com o primeiro. Sem acento: a comparação normaliza.
+TEMAS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("resultado", "Resultado", (
+        "lucro", "prejuizo", "receita", "ebitda", "margem", "resultado",
+        "custo", "despesa", "eficiencia", "retorno", "roe", "rentabilidade")),
+    ("proventos", "Proventos e recompra", (
+        "dividend", "provento", "juros sobre capital", "jcp", "payout",
+        "recompra", "data base", "data de corte", "data-com", "ex-dividendo",
+        "ex-juros", "remuneracao", "acionistas", "bonific")),
+    ("divida", "Caixa e dívida", (
+        "caixa", "divida", "alavancagem", "debenture", "rating",
+        "financiamento", "liquidez")),
+    ("projecoes", "Projeções e estratégia", (
+        "guidance", "projec", "meta", "custo de capital", "estima", "preve",
+        "estrategi", "plano de negocios")),
+    ("operacao", "Operação e crescimento", (
+        "producao", "vendas", "expansao", "lojas", "ocupacao", "vacancia",
+        "carteira", "contrato", "aquisic", "capex", "investimento",
+        "inaugur", "capacidade", "recorde", "export", "import")),
+)
+OUTROS = ("outros", "Outros fatos")
+ROTULO_TEMA = {c: r for c, r, _ in TEMAS} | {OUTROS[0]: OUTROS[1]}
+N_POR_TEMA = 3
+N_DOCS_TEMA, N_FRASES_TEMA = 12, 4
+_NUMEROS = re.compile(r"\d+(?:[.,]\d+)*")
+
+
+@dataclass(frozen=True)
+class Trecho:
+    tema: str
+    frase: str
+    data: str | None        # AAAA-MM-DD
+    titulo: str
+    tipo: str = ""
+
+
+def tema(frase: str) -> str:
+    """Chave do tema do investidor para a frase. Puro."""
+    base = _sem_acento(frase)
+    melhor, pontos = OUTROS[0], 0
+    for chave, _, palavras in TEMAS:
+        n = sum(len(p.split()) for p in palavras if p in base)
+        if n > pontos:
+            melhor, pontos = chave, n
+    return melhor
+
+
+def _chave_fato(frase: str) -> str:
+    """Mesmo fato em dois documentos (o relatório republicado, o release e a
+    transcrição) tem os mesmos valores. Conta só número com decimal ou de
+    três dígitos ou mais: "2T" e "12" variam de redação. Sem dois valores, o
+    começo do texto."""
+    nums = sorted({n for n in _NUMEROS.findall(frase)
+                   if len(n) >= 3 or "," in n or "." in n})
+    return "|".join(nums) if len(nums) >= 2 else _sem_acento(frase)[:80]
+
+
+def por_tema(dest, n_por_tema: int = N_POR_TEMA) -> tuple[Trecho, ...]:
+    """Destaques por documento (mais novo primeiro) → trechos agrupados por
+    tema, na ordem de ``TEMAS``, até ``n_por_tema`` por tema, sem repetir
+    fato. Puro."""
+    vistos, grupos = set(), {}
+    for d in dest or ():
+        for f in d.frases:
+            k = _chave_fato(f)
+            if k in vistos:
+                continue
+            vistos.add(k)
+            t = tema(f)
+            lista = grupos.setdefault(t, [])
+            if len(lista) < n_por_tema:
+                lista.append(Trecho(t, f, d.data, d.titulo, d.tipo))
+    ordem = [c for c, _, _ in TEMAS] + [OUTROS[0]]
+    return tuple(x for c in ordem for x in grupos.get(c, ()))
+
+
+def titulo_curto(titulo: str, tipo: str = "", n: int = 70) -> str:
+    """Título da CVM pode ser a pauta inteira da assembleia, com "||". Puro."""
+    t = (titulo or "").split("||")[0].strip() or tipo or "Documento"
+    return t if len(t) <= n else t[:n - 1].rstrip() + "…"
+
+
 def mesmo_documento(titulo: str, data: str | None, d: Destaque) -> bool:
     """O documento da lista de metadados é o mesmo que o do corpus?"""
     return (str(data or "")[:10] == (d.data or "")
             and _sem_acento(titulo or "")[:40] == _sem_acento(d.titulo)[:40])
 
 
-def ler(ticker: str) -> tuple[Destaque, ...]:
+def ler(ticker: str, n_docs: int = N_DOCUMENTOS,
+        n_frases: int = N_FRASES) -> tuple[Destaque, ...]:
     """Destaques dos documentos de fato (resultado, fato relevante, guidance,
     dividendo...) dos últimos ``MESES`` meses. Sem corpus, vazio."""
     from core.inteligencia_ativos.informacoes import raiz_b3
@@ -174,8 +266,16 @@ def ler(ticker: str) -> tuple[Destaque, ...]:
         return ()
     try:
         from core import rag_store
-        return destaques(rag_store.busca_ancora(raiz, LIMITE_CHUNKS, MESES))
+        limite = LIMITE_CHUNKS * max(1, n_docs // N_DOCUMENTOS)
+        return destaques(rag_store.busca_ancora(raiz, limite, MESES),
+                         n_docs, n_frases)
     except Exception:  # noqa: BLE001 — sem corpus a caixa cai na lista
         logger.warning("destaques de relatórios: corpus ilegível para %s",
                        ticker, exc_info=True)
         return ()
+
+
+def ler_trechos(ticker: str) -> tuple[Trecho, ...]:
+    """Trechos por tema dos documentos recentes do ativo. Sem corpus,
+    vazio."""
+    return por_tema(ler(ticker, N_DOCS_TEMA, N_FRASES_TEMA))

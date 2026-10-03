@@ -442,7 +442,8 @@ def _cenario_automatico_sem_banco(monkeypatch):
 
 
 # Os destaques dos relatórios leem o corpus RAG publicado; em teste a caixa sai
-# só com os metadados. Quem testa a extração chama ``destaques`` (puro).
+# só com os metadados. Quem testa a extração chama ``destaques`` e
+# ``por_tema`` (puros).
 @pytest.fixture(autouse=True)
 def _destaques_relatorios_sem_corpus(monkeypatch):
     try:
@@ -450,7 +451,7 @@ def _destaques_relatorios_sem_corpus(monkeypatch):
     except Exception:  # o modulo pode nao existir neste checkout
         yield
         return
-    monkeypatch.setattr(dr, "ler", lambda ticker: ())
+    monkeypatch.setattr(dr, "ler", lambda ticker, *a, **k: ())
     yield
 
 

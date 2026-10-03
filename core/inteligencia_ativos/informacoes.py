@@ -27,6 +27,12 @@ import unicodedata
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date, timedelta
 
+from core.inteligencia_ativos.destaques_relatorios import (
+    ROTULO_TEMA,
+    Trecho,
+    titulo_curto,
+)
+
 NAO_DISPONIVEL = "Dado não disponível."
 
 HIGH, MEDIUM, LOW = "HIGH", "MEDIUM", "LOW"
@@ -557,6 +563,9 @@ class Relatorios:
     fonte: str | None = None
     retrieved_at: str | None = None
     motivo: str | None = None
+    # O que os documentos dizem: frases literais do emissor, por tema
+    # (``destaques_relatorios.por_tema``). Vazio quando não há texto no acervo.
+    trechos: tuple[Trecho, ...] = ()
 
     def indicios(self) -> dict[str, tuple[Documento, ...]]:
         """Documentos cujo **título** aponta para cada pergunta. Não é leitura
@@ -577,13 +586,15 @@ class Relatorios:
     def como_dict(self) -> dict:
         d = asdict(self)
         d["documentos"] = [asdict(x) for x in self.documentos]
+        d["trechos"] = [asdict(x) for x in self.trechos]
         return d
 
     @classmethod
     def de_dict(cls, d: dict) -> "Relatorios":
         docs = tuple(Documento(**{**x, "dimensoes": tuple(
             x.get("dimensoes") or ())}) for x in d.get("documentos") or ())
-        return cls(documentos=docs, **{k: d.get(k) for k in (
+        trechos = tuple(Trecho(**x) for x in d.get("trechos") or ())
+        return cls(documentos=docs, trechos=trechos, **{k: d.get(k) for k in (
             "base_ate", "fonte", "retrieved_at", "motivo")})
 
 
@@ -719,6 +730,11 @@ def resumo_noticias(n: Noticias) -> str:
 
 
 def resumo_relatorios(r: Relatorios) -> str:
+    if r.trechos:
+        temas = list(dict.fromkeys(ROTULO_TEMA[t.tema] for t in r.trechos))
+        n_docs = len({(t.data, t.titulo) for t in r.trechos})
+        return (f"{len(r.trechos)} fato(s) de {n_docs} documento(s) oficial(is)"
+                f" recente(s): {', '.join(temas).lower()}.")
     if not r.documentos:
         return r.motivo or NAO_DISPONIVEL
     return (f"{len(r.documentos)} documento(s) recente(s); o mais novo em "
@@ -759,9 +775,19 @@ def texto_noticias(n: Noticias, ticker: str) -> str:
 
 def texto_relatorios(r: Relatorios, ticker: str) -> str:
     linhas = [f"[Relatórios e comunicados de {ticker} — DADO: documentos "
-              "publicados, só metadados]"]
-    if not r.documentos:
+              "publicados" + (" e trechos literais do texto deles]"
+                              if r.trechos else ", só metadados]")]
+    if not r.documentos and not r.trechos:
         linhas.append(f"- {r.motivo or NAO_DISPONIVEL}")
+    tema_atual = None
+    for t in r.trechos:
+        if t.tema != tema_atual:
+            tema_atual = t.tema
+            linhas.append(f"Trechos · {ROTULO_TEMA[t.tema]}:")
+        linhas.append(f"- \"{t.frase}\" ({_data_br(t.data)} · "
+                      f"{titulo_curto(t.titulo, t.tipo)})")
+    if r.documentos:
+        linhas.append("Documentos publicados:")
     for d in r.documentos:
         linhas.append(f"- {_data_br(d.reference_date)} · {d.rotulo} · "
                       f"\"{d.titulo}\" ({_fonte(d.source, d.source_url)})")
@@ -773,8 +799,10 @@ def texto_relatorios(r: Relatorios, ticker: str) -> str:
             "; ".join(f"{x.titulo} ({_data_br(x.reference_date)})"
                       for x in docs) if docs else NAO_DISPONIVEL))
     linhas.append("INTERPRETAÇÃO (sua): responda às sete perguntas só com o "
-                  "que os títulos e os trechos de documento recuperados "
-                  "sustentam; o resto fica como \"Dado não disponível.\"")
+                  "que os títulos e os trechos acima sustentam; o resto fica "
+                  "como \"Dado não disponível.\" Os trechos foram escolhidos "
+                  "por regra (frase com fato e número), não são o documento "
+                  "inteiro.")
     return "\n".join(linhas)
 
 

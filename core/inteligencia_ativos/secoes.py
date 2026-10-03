@@ -155,15 +155,23 @@ def provedor_noticias(info: InfoBasica, ctx: ContextoInvestidor, *,
 
 
 def provedor_relatorios(info: InfoBasica, ctx: ContextoInvestidor, *,
-                        leitor=None) -> Secao:
-    """Documentos oficiais recentes (metadados) e os indícios, pelo título,
-    para as sete perguntas de extração."""
+                        leitor=None, trechos=None) -> Secao:
+    """O que os documentos oficiais recentes dizem (trechos literais por
+    tema, do corpus RAG), os metadados e os indícios, pelo título, para as
+    sete perguntas de extração. ``trechos(ticker)`` troca a leitura do
+    corpus."""
+    from dataclasses import replace
+
+    from core.inteligencia_ativos import destaques_relatorios as dr
     from core.inteligencia_ativos import informacoes as inf
     _, r, _ = (leitor or _ler_informacoes)(info)
+    if r.documentos and not r.trechos:
+        r = replace(r, trechos=tuple((trechos or dr.ler_trechos)(info.ticker)))
+    tem = bool(r.documentos or r.trechos)
     return Secao(chave="relatorios", titulo=SECOES["relatorios"][0],
-                 estado=DISPONIVEL if r.documentos else SEM_DADOS,
+                 estado=DISPONIVEL if tem else SEM_DADOS,
                  resumo=inf.resumo_relatorios(r), dados=r.como_dict(),
-                 fonte=r.fonte if r.documentos else None)
+                 fonte=r.fonte if tem else None)
 
 
 def provedor_eventos(info: InfoBasica, ctx: ContextoInvestidor, *,

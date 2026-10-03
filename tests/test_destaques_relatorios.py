@@ -41,3 +41,37 @@ def test_destaques_respeita_os_limites():
               for i in range(1, 6)]
     assert len(dr.destaques(chunks, n_docs=2)) == 2
     assert dr.destaques(()) == ()
+
+
+def test_tema_pelo_assunto_da_frase():
+    assert dr.tema("O lucro líquido foi de R$ 3 bi e a margem subiu.") == "resultado"
+    assert dr.tema("O payout de dividendos foi de 100% do lucro.") == "proventos"
+    assert dr.tema("A dívida líquida subiu e o caixa caiu 10%.") == "divida"
+    # termo de mais palavras vence: "custo de capital" não é custo operacional
+    assert dr.tema("Passou a considerar custo de capital de 14,75%.") == "projecoes"
+    assert dr.tema("A capacidade de produção cresceu 5%.") == "operacao"
+    assert dr.tema("O conselho se reuniu em 3 de maio.") == "outros"
+
+
+def test_por_tema_agrupa_ordena_e_nao_repete_o_fato():
+    lucro = "O lucro líquido foi de R$ 3,1 bi, alta de 8,2% no trimestre."
+    lucro_rep = "Registramos lucro líquido de R$ 3,1 bi, alta de 8,2% no 2T."
+    caixa = "O caixa ficou em R$ 500 MM, queda de 10% no trimestre."
+    dest = (
+        dr.Destaque("Release 2T26", "2026-08-10", "Release", (caixa, lucro)),
+        dr.Destaque("Transcrição 2T26", "2026-08-12", "Transcrição",
+                    (lucro_rep,)),
+    )
+    out = dr.por_tema(dest)
+    assert [t.tema for t in out] == ["resultado", "divida"]
+    assert out[0].frase == lucro and out[0].titulo == "Release 2T26"
+    assert len(dr.por_tema(dest * 1, n_por_tema=1)) == 2
+    assert dr.por_tema(()) == ()
+
+
+def test_por_tema_respeita_o_limite_por_tema():
+    frases = tuple(f"O lucro foi de R$ {i},0 bi, alta de {i}% no ano."
+                   for i in range(1, 6))
+    out = dr.por_tema((dr.Destaque("R", "2026-01-01", "R", frases),),
+                      n_por_tema=2)
+    assert len(out) == 2
