@@ -29,9 +29,9 @@ def test_mes_e_ano_contam_pagamento_duplicado_uma_vez():
     assert dividendos_do_periodo(prov) == (10.0, 15.0)
 
 
-def test_sem_proventos_reais_zera():
-    assert dividendos_do_periodo(None) == (0.0, 0.0)
-    assert dividendos_do_periodo({"data_source": "mock", "total_mes": 9}) == (0.0, 0.0)
+def test_sem_proventos_reais_fica_indisponivel():
+    assert dividendos_do_periodo(None) == (None, None)
+    assert dividendos_do_periodo({"data_source": "mock", "total_mes": 9}) == (None, None)
 
 
 def test_visao_geral_nao_soma_dividends_direto():

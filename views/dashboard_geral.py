@@ -182,7 +182,7 @@ _DASHBOARD_STYLES = """
 }
 .dg-kpi-grid {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     gap: .78rem;
     margin: 0 0 1.4rem;
 }
@@ -350,6 +350,7 @@ _DASHBOARD_STYLES = """
 
 @media (max-width: 1100px) {
     .dg-kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .dg-kpi:last-child:nth-child(odd) { grid-column: 1 / -1; }
 }
 @media (max-width: 720px) {
     .dg-hero {
@@ -437,8 +438,10 @@ def _render_kpi_grid(
     despesas: float,
     investimentos: float,
     carteira: dict,
+    portfolio: dict | None = None,
+    hoje: _date | None = None,
 ) -> None:
-    """Quatro indicadores essenciais, em CSS Grid responsivo."""
+    """Cinco indicadores essenciais, em CSS Grid responsivo."""
     ind = indicadores_caixa(receitas, despesas, investimentos)
     saldo = ind["saldo"]
     taxa = ind["poupanca_alocada_pct"] or 0.0
@@ -458,6 +461,22 @@ def _render_kpi_grid(
         if patrimonio_investido is not None
         else "Valor de mercado da carteira indisponível"
     )
+
+    # Proventos de core.proventos (deduplicados, por data de pagamento, só
+    # renda). None = fonte indisponível, que é diferente de nada recebido.
+    portfolio = portfolio or {}
+    hoje = hoje or _date.today()
+    prov_mes = portfolio.get("dividendos_mes")
+    prov_ano = portfolio.get("dividendos_ano")
+    if prov_mes is None or prov_ano is None:
+        prov_valor = "N/D"
+        prov_detalhe = "Proventos da carteira indisponíveis"
+    else:
+        prov_valor = fmt_moeda(float(prov_mes))
+        prov_detalhe = (
+            f"Pagos em {_MESES_PT[hoje.month]}/{hoje.year} · no ano: "
+            f'<strong style="color:{_COR_FLUXO}">{fmt_moeda(float(prov_ano))}</strong>'
+        )
 
     cards = [
         _kpi_html(
@@ -492,6 +511,13 @@ def _render_kpi_grid(
             f'{"resultado positivo" if rentab >= 0 else "resultado negativo"}</strong>',
             "⌁",
             rentab_cor,
+        ),
+        _kpi_html(
+            "Proventos recebidos",
+            prov_valor,
+            prov_detalhe,
+            "$",
+            _COR_FLUXO,
         ),
     ]
     st.markdown(
@@ -1741,6 +1767,8 @@ def render() -> None:
         despesas_mes,
         investimentos_mes,
         carteira,
+        d.get("portfolio"),
+        hoje,
     )
     # ══════════════════════════════════════════════════════════════════════════
     # BLOCO 0 — Leitura do mês
