@@ -1071,6 +1071,31 @@ def _fig_cashflow_hist(cashflow: list) -> go.Figure:
     return fig
 
 
+_PERIODOS_EVOLUCAO = ("Anos", "12 M", "Tudo")
+
+
+def _recorte_evolucao(snapshots: list, periodo: str) -> list:
+    """Pontos do gráfico conforme o período, no formato da Área do Investidor.
+
+    "Anos": uma foto por ano -- a última de cada ano, com o ano como rótulo
+    (o ano corrente fica com a foto de hoje). É o que a B3 mostra, e evita
+    misturar fotos anuais e mensais no mesmo eixo, onde um ano ocupava o
+    espaço de um mês. "12 M": as fotos dos 12 meses até a mais recente.
+    "Tudo": todas as fotos, como antes.
+    """
+    com_mes = [s for s in snapshots if s.get("mes_str")]
+    if periodo == "Tudo" or len(com_mes) != len(snapshots):
+        return list(snapshots)
+    if periodo == "12 M":
+        ano, mes = map(int, com_mes[-1]["mes_str"].split("-"))
+        corte = f"{ano - 1:04d}-{mes:02d}"
+        return [s for s in com_mes if s["mes_str"] > corte]
+    por_ano: dict[str, dict] = {}
+    for s in com_mes:
+        por_ano[s["mes_str"][:4]] = s
+    return [{**s, "label": ano} for ano, s in sorted(por_ano.items())]
+
+
 def _fig_evolucao_patrimonial(snapshots: list) -> go.Figure:
     """Duas linhas: Valor de Mercado e Valor Investido.
 
@@ -1103,8 +1128,10 @@ def _fig_evolucao_patrimonial(snapshots: list) -> go.Figure:
     fig.add_trace(go.Scatter(
         x=labels, y=investido,
         name="Valor Investido",
-        mode="lines",
+        mode="lines+markers",
         line={"color": _COR_NEUTRO, "width": 1.5, "dash": "dot"},
+        # Marcador: custo isolado entre fotos sem custo não forma segmento.
+        marker={"size": 5},
         hovertemplate="<b>%{x}</b><br>Investido: R$ %{y:,.0f}<extra></extra>",
     ))
     fig.update_layout(
@@ -2297,13 +2324,30 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
             ), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
-        st.plotly_chart(_fig_evolucao_patrimonial(snapshots),
-                        width="stretch",
-                        config={"displayModeBar": False},
-                        key="hist_evolucao_patrimonial")
+        periodo = st.radio(
+            "Período", _PERIODOS_EVOLUCAO, horizontal=True,
+            key="inv_evolucao_periodo", label_visibility="collapsed",
+        )
+        pontos = _recorte_evolucao(snapshots, periodo)
+        col_graf, col_tab = st.columns([3, 1], gap="medium")
+        with col_graf:
+            st.plotly_chart(_fig_evolucao_patrimonial(pontos),
+                            width="stretch",
+                            config={"displayModeBar": False},
+                            key="hist_evolucao_patrimonial")
+        with col_tab:
+            st.dataframe(
+                pd.DataFrame([
+                    {"Período": p["label"], "Valor de mercado": fmt_moeda(p["valor_mercado"])}
+                    for p in reversed(pontos)
+                ]),
+                hide_index=True, width="stretch", height=380,
+            )
         st.caption(
-            "Snapshots XP (relatórios mensais). "
-            "Ponto atual inclui posições internacionais (Nomad) consolidadas. "
+            "O histórico vem dos relatórios da XP; o ponto de hoje inclui as outras "
+            "corretoras e o exterior (Nomad). A Evolução Patrimonial da Área do "
+            "Investidor da B3 soma tudo que está custodiado na B3, em todas as "
+            "corretoras, e não inclui o exterior: os anos antigos podem divergir dela. "
             "Empréstimos de ativos são desconsiderados para manter comparação com a carteira investida. "
             "Ganho total = (valor de mercado − custo da carteira atual) + lucro ou prejuízo "
             "já realizado em vendas + proventos recebidos. As vendas vêm do extrato de "
