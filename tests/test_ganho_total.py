@@ -53,3 +53,41 @@ def test_venda_sem_compra_no_extrato_fica_de_fora_e_e_declarada():
     r = resultado_realizado([_tx(date(2020, 5, 4), "WXYZ3", "sell", 10, 30.0)])
     assert r["ganho"] == 0.0
     assert round(r["valor_sem_custo"], 2) == 300.0
+    assert r["sem_custo_por_ticker"] == {
+        "WXYZ3": {"qtd": 10.0, "valor": 300.0, "primeira_venda": "2020-05-04"}}
+
+
+def test_posicao_anterior_declarada_da_custo_a_venda():
+    from core.posicao_anterior import como_compras
+
+    trades = [_tx(date(2019, 12, 2), "WXYZ3", "buy", 10, 40.0),
+              _tx(date(2020, 5, 4), "WXYZ3F", "sell", 20, 30.0)]
+    abertura = {"WXYZ3": {"quantidade": 10, "custo_total": 200.0},
+                "NADA3": {"quantidade": 5, "custo_total": 50.0}}   # sem negociação
+    compras = como_compras(abertura, trades)
+    assert [c["ticker"] for c in compras] == ["WXYZ3"]
+    r = resultado_realizado(compras + trades)
+    # PM (200 + 400) / 20 = 30 → venda a 30 empata.
+    assert round(r["ganho"], 2) == 0.0
+    assert r["valor_sem_custo"] == 0.0
+    assert r["sem_custo_por_ticker"] == {}
+
+
+def test_posicao_anterior_menor_que_a_venda_deixa_o_resto_sem_custo():
+    from core.posicao_anterior import como_compras
+
+    trades = [_tx(date(2020, 5, 4), "WXYZ3", "sell", 10, 30.0)]
+    compras = como_compras({"WXYZ3": {"quantidade": 4, "custo_total": 80.0}}, trades)
+    r = resultado_realizado(compras + trades)
+    assert round(r["ganho"], 2) == 4 * (30.0 - 20.0)
+    assert round(r["valor_sem_custo"], 2) == 180.0
+    assert r["sem_custo_por_ticker"]["WXYZ3"]["qtd"] == 6.0
+
+
+def test_ddl_da_posicao_anterior_roda_sem_parametros():
+    # garantir_tabela usa exec_driver_sql: '%' viraria placeholder no psycopg2.
+    from core.posicao_anterior import _DDL
+
+    sql = _DDL.read_text(encoding="utf-8")
+    assert "%" not in sql
+    assert "CREATE TABLE IF NOT EXISTS investment_opening_positions" in sql

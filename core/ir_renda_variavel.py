@@ -291,7 +291,22 @@ def resultado_realizado(transacoes: list[dict], eventos: list[dict] | None = Non
         "valor_vendido": float(sum((r["valor_venda"] for r in realizacoes), _ZERO)),
         "valor_sem_custo": float(sum((r["valor_sem_custo"] for r in realizacoes), _ZERO)),
         "n_vendas": len(realizacoes),
+        "sem_custo_por_ticker": _sem_custo_por_ticker(realizacoes),
     }
+
+
+def _sem_custo_por_ticker(realizacoes: list[dict]) -> dict[str, dict]:
+    """{ticker: {"qtd", "valor", "primeira_venda"}} das vendas sem custo."""
+    out: dict[str, dict] = {}
+    for r in realizacoes:
+        if r["qtd_sem_custo"] <= 0:
+            continue
+        d = out.setdefault(r["ticker"], {"qtd": 0.0, "valor": 0.0,
+                                         "primeira_venda": str(r["data"])})
+        d["qtd"] += float(r["qtd_sem_custo"])
+        d["valor"] += float(r["valor_sem_custo"])
+        d["primeira_venda"] = min(d["primeira_venda"], str(r["data"]))
+    return out
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -447,9 +462,16 @@ def apurar(transacoes: list[dict], eventos: list[dict] | None = None,
 # ─────────────────────────────────────────────────────────────────────────────
 
 def carregar_operacoes(engine, user_id: str) -> tuple[list[dict], list[dict]]:
-    """Negociações da B3 com a classe do ativo, e os eventos da Movimentação."""
+    """Negociações da B3 com a classe do ativo, e os eventos da Movimentação.
+
+    A posição anterior ao extrato que o investidor declarou entra como
+    compra sintética na frente de tudo (`core.posicao_anterior`): sem ela,
+    venda de lote comprado antes de nov/2019 não tem custo.
+    """
     from sqlalchemy import text
 
+    from core.posicao_anterior import como_compras
+    from core.posicao_anterior import listar as listar_abertura
     from data_pipeline.importers.investments.positions import _load_events
 
     with engine.connect() as conn:
@@ -466,9 +488,10 @@ def carregar_operacoes(engine, user_id: str) -> tuple[list[dict], list[dict]]:
             {"uid": user_id},
         ).fetchall()
         eventos = _load_events(conn, user_id)
+        abertura = listar_abertura(user_id, conn)
     transacoes = [
         {"transaction_date": r[0], "ticker": r[1], "classe": r[2], "type": r[3],
          "quantity": r[4], "unit_price": r[5], "fees": r[6] or 0}
         for r in rows
     ]
-    return transacoes, eventos
+    return como_compras(abertura, transacoes) + transacoes, eventos

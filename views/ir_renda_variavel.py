@@ -170,8 +170,9 @@ def render() -> None:
             "São ativos comprados antes do início do extrato da B3 (nov/2019). O ganho dessas "
             "vendas não é conhecido, e não foi tratado nem como lucro nem como prejuízo: o "
             "imposto desses meses cobre só o resto, e o prejuízo que eles carregam para a "
-            "frente fica incerto. Para fechar a conta, use o custo das notas de corretagem "
-            "da época.",
+            "frente fica incerto. Para fechar a conta, informe a posição que você tinha "
+            "antes do extrato (a linha do ativo em Bens e Direitos da declaração) em "
+            "Evolução Patrimonial › **Posição anterior ao extrato da B3**.",
             icon="⚠️",
         )
     if prej_incerto and not n_incompletos:

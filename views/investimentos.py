@@ -2327,13 +2327,7 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
             "percentual: dividir por custo da carteira de hoje misturaria dinheiro que já "
             "saiu dela; a taxa do período é a TIR do bloco contra o CDI."
         )
-        sem_custo_venda = float((realizado or {}).get("valor_sem_custo") or 0.0)
-        if sem_custo_venda > 0.005:
-            st.caption(
-                f"{fmt_moeda(sem_custo_venda)} em vendas de ativos comprados antes do "
-                "primeiro extrato da B3 (nov/2019) ficaram fora do lucro de vendas: sem o "
-                "custo de compra, o ganho delas não é conhecido."
-            )
+        _editor_posicao_anterior(realizado)
         sem_custo = [s["label"] for s in snapshots if s.get("valor_investido") is None]
         if sem_custo:
             st.caption(
@@ -2842,6 +2836,134 @@ def _editor_preco_medio_manual(posicoes: list[dict]) -> None:
             linhas = "".join(
                 f"<li><b>{t}</b> — {fmt_moeda(d['preco_medio'])}"
                 + (f" · <i>{d['nota']}</i>" if d.get("nota") else "")
+                + "</li>"
+                for t, d in sorted(atuais.items())
+            )
+            st.markdown(
+                f'<ul style="margin:4px 0 0 18px;color:var(--app-muted);'
+                f'font-size:0.85rem;">{linhas}</ul>',
+                unsafe_allow_html=True,
+            )
+
+
+def _editor_posicao_anterior(realizado: dict | None) -> None:
+    """Onde o investidor declara o que tinha antes do primeiro extrato da B3.
+
+    Venda de ativo comprado antes de nov/2019 não tem custo no extrato, e o
+    lucro dela fica fora do Ganho total e da apuração do IR. O número certo
+    está na declaração de IR (Bens e Direitos): quantidade e custo total do
+    ativo em 31/12 do ano anterior. Declarado aqui, ele vira o saldo de
+    abertura do cálculo a preço médio (`core.posicao_anterior`).
+
+    Só aparece quando há venda sem custo ou declaração gravada.
+    """
+    from core.config import settings
+    from core.posicao_anterior import listar, remover, salvar
+
+    uid = settings.OWNER_USER_ID
+    if not uid:
+        return
+    pendentes = (realizado or {}).get("sem_custo_por_ticker") or {}
+    atuais = listar(uid)
+    if not pendentes and not atuais:
+        return
+
+    total = sum(d["valor"] for d in pendentes.values())
+    if pendentes:
+        st.caption(
+            f"{fmt_moeda(total)} em vendas de ativos comprados antes do primeiro "
+            "extrato da B3 (nov/2019) ficaram fora do lucro de vendas: sem o custo "
+            "de compra, o ganho delas não é conhecido. Informe abaixo."
+        )
+
+    titulo = "🗂️ Posição anterior ao extrato da B3"
+    if pendentes:
+        titulo += f" · {len(pendentes)} ativo{'s' if len(pendentes) != 1 else ''} sem custo"
+    elif atuais:
+        titulo += f" · {len(atuais)} declarado{'s' if len(atuais) != 1 else ''}"
+
+    with st.expander(titulo, expanded=False):
+        st.caption(
+            "Informe a quantidade e o **custo total** que você tinha de cada ativo "
+            "antes de nov/2019 — é a linha dele em *Bens e Direitos* da declaração "
+            "de IR de 2019 (situação em 31/12/2018). O app usa isso como ponto de "
+            "partida do preço médio: o lucro dessas vendas entra no Ganho total e "
+            "na apuração do IR. A carteira atual não muda."
+        )
+        if pendentes:
+            st.dataframe(
+                pd.DataFrame([
+                    {"Ativo": t, "Qtd. vendida sem custo": d["qtd"],
+                     "Valor dessas vendas": d["valor"],
+                     "Primeira venda": d["primeira_venda"]}
+                    for t, d in sorted(pendentes.items(), key=lambda x: -x[1]["valor"])
+                ]),
+                hide_index=True, width="stretch",
+                column_config={
+                    "Qtd. vendida sem custo": st.column_config.NumberColumn(format="%.0f"),
+                    "Valor dessas vendas": st.column_config.NumberColumn(format="R$ %.2f"),
+                },
+            )
+            st.caption(
+                "A quantidade vendida está nas unidades da data da venda: se houve "
+                "desdobramento ou grupamento depois de 2018, declare a quantidade "
+                "de 2018 — o app aplica os eventos da Movimentação por cima."
+            )
+
+        opcoes = sorted(set(pendentes) | set(atuais))
+        col_a, col_b, col_c = st.columns([2, 2, 2], gap="small")
+        with col_a:
+            tk = st.selectbox("Ativo", opcoes, key="pa_ticker")
+        vigente = atuais.get(tk, {})
+        with col_b:
+            qtd = st.number_input(
+                "Quantidade",
+                min_value=0.0,
+                value=float(vigente.get("quantidade")
+                            or pendentes.get(tk, {}).get("qtd") or 0.0),
+                step=1.0, format="%.0f", key="pa_qtd",
+            )
+        with col_c:
+            custo = st.number_input(
+                "Custo total (R$)",
+                min_value=0.0,
+                value=float(vigente.get("custo_total") or 0.0),
+                step=0.01, format="%.2f", key="pa_custo",
+            )
+        nota = st.text_input(
+            "De onde veio esse número (opcional)",
+            value=str(vigente.get("nota") or ""),
+            placeholder="ex.: declaração de IR 2019, Bens e Direitos",
+            key="pa_nota",
+        )
+        if qtd > 0 and custo > 0:
+            st.caption(f"Preço médio resultante: {fmt_moeda(custo / qtd)}")
+
+        b1, b2 = st.columns([1, 1], gap="small")
+        with b1:
+            if st.button("Salvar posição", type="primary",
+                         width="stretch", key="pa_salvar"):
+                try:
+                    salvar(uid, tk, qtd, custo, nota)
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Não foi possível salvar: {exc}")
+                else:
+                    st.cache_data.clear()
+                    st.success(f"{tk}: posição anterior ao extrato gravada.")
+                    st.rerun()
+        with b2:
+            if vigente and st.button("Apagar declaração", width="stretch",
+                                     key="pa_apagar"):
+                remover(uid, tk)
+                st.cache_data.clear()
+                st.rerun()
+
+        if atuais:
+            st.markdown("**Declarados por você**")
+            linhas = "".join(
+                f"<li><b>{t}</b> — {d['quantidade']:,.0f} un., custo "
+                f"{fmt_moeda(d['custo_total'])}"
+                + (f" · <i>{_html.escape(d['nota'])}</i>" if d.get("nota") else "")
                 + "</li>"
                 for t, d in sorted(atuais.items())
             )
