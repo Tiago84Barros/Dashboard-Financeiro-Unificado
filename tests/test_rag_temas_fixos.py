@@ -13,7 +13,6 @@ import pytest
 import core.rag_b3 as rag_b3
 import core.rag_store as rag_store
 
-
 TRECHO_DIVIDA = ("A dívida bruta encerrou o 2T26 em R$ 31,3 bilhões, com custo "
                  "médio de CDI + 0,9% a.a. e prazo médio de 7,2 anos; o "
                  "cronograma de amortização concentra 12% em 2027.")
