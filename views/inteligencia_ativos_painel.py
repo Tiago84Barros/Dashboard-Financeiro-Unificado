@@ -1,7 +1,7 @@
 """
 views/inteligencia_ativos_painel.py
 Dashboard da aba Inteligência dos Ativos: resumo da carteira, um cartão por
-ativo (clique abre a análise completa) e o histórico com auditoria.
+ativo (clique abre a análise completa). O histórico é gravado, não exibido.
 
 As regras estão em ``core/inteligencia_ativos/painel.py`` (o que mostrar) e
 ``historico.py`` (quando salvar e como comparar); aqui só HTML e Streamlit.
@@ -248,7 +248,7 @@ def render_cards(cards: list[pn.CardAtivo], *, colunas: int = 3) -> None:
                           use_container_width=True)
 
 
-# -- histórico e auditoria --------------------------------------------------------------
+# -- histórico (gravado, não exibido) ----------------------------------------------------------
 
 def anterior(lista: list[hist.Snapshot], gravada_agora: bool) -> hist.Snapshot | None:
     """A foto com que a análise de agora se compara: se a de agora acabou de
@@ -256,58 +256,6 @@ def anterior(lista: list[hist.Snapshot], gravada_agora: bool) -> hist.Snapshot |
     if gravada_agora:
         return lista[-2] if len(lista) >= 2 else None
     return lista[-1] if lista else None
-
-
-def _linha_auditoria(s: hist.Snapshot) -> str:
-    a = s.auditoria
-    td = 'style="padding:2px 10px 2px 0;vertical-align:top;'
-    return (
-        f'<tr><td {td}white-space:nowrap">{escape(a.analysis_timestamp[:16].replace("T", " "))}</td>'
-        f'<td {td}color:var(--app-muted)">{escape(s.motivo or "—")}</td>'
-        f'<td {td}">{_pct(s.peso)}</td>'
-        f'<td {td}">{escape(pn.ROTULO_TESE.get(s.tese, s.tese))}</td>'
-        f'<td {td}">{escape(m.ROTULO_ACAO.get(s.acao or "", "—"))}</td>'
-        f'<td {td}color:var(--app-muted)">{escape(a.model_used or "sem LLM")}</td>'
-        f'<td {td}color:var(--app-muted)">{_data_br(a.data_timestamp)}</td>'
-        f'<td {td}color:var(--app-muted)">{a.scenario_version or "—"}</td>'
-        f'<td {td}color:var(--app-muted)">{a.investment_policy_version}</td>'
-        f'<td {td}color:var(--app-subtle);font-size:0.76rem">'
-        f'{escape("; ".join(a.sources_used) or "—")}</td></tr>')
-
-
-def cartao_historico(ticker: str, lista: list[hist.Snapshot],
-                     comparacao: list[str]) -> str:
-    """Comparação com a análise anterior e a trilha de auditoria. Puro."""
-    if comparacao:
-        topo = "".join(f"<div>• {escape(f)}</div>" for f in comparacao)
-    elif lista:
-        topo = _vazio("Primeira análise registrada deste ativo: ainda não há "
-                      "com o que comparar.")
-    else:
-        topo = _vazio("Nenhuma análise registrada ainda.")
-    tabela = ""
-    if lista:
-        th = ('<th style="text-align:left;padding:2px 10px 2px 0;font-weight:600;'
-              'color:var(--app-subtle);font-size:0.74rem">')
-        cab = ("analysis_timestamp", "Motivo", "Peso", "Tese", "Ação",
-               "model_used", "data_timestamp", "scenario_version",
-               "investment_policy_version", "sources_used")
-        tabela = (
-            f'<div style="{_ESTILO_ROTULO};margin-top:10px">Auditoria · '
-            f'{len(lista)} análise(s) registrada(s)</div>'
-            '<div style="overflow-x:auto"><table style="border-collapse:collapse;'
-            'font-size:0.8rem"><tr>' + "".join(f"{th}{h}</th>" for h in cab)
-            + "</tr>" + "".join(_linha_auditoria(s) for s in reversed(lista))
-            + "</table></div>")
-    return _caixa(
-        f'{_ROTULO_SECAO}Histórico da análise · {escape(ticker)}</div>'
-        f'<div style="font-size:0.88rem;color:var(--app-text);line-height:1.5">'
-        f'{topo}</div>{tabela}'
-        '<div style="font-size:0.76rem;color:var(--app-subtle);margin-top:8px">'
-        'Uma foto é salva na primeira análise, quando algo material muda (tese, '
-        'ação, peso de 1 pp ou mais, sinais de risco, estratégia, cenário), '
-        'quando uma leitura por LLM é gerada, ou após 30 dias.</div>',
-        borda="var(--app-info)")
 
 
 def _estado() -> tuple[dict, set]:
@@ -347,24 +295,19 @@ def comparacao_de(ticker: str, atual: hist.Snapshot) -> tuple[list, list[str]]:
     return lista, hist.comparar(anterior(lista, ticker in gravadas), atual)
 
 
-def render_historico(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor,
-                     leitura=None) -> None:
-    """Histórico do ativo escolhido. Leitura por LLM nova gera foto com o
-    modelo que respondeu; o botão salva uma foto manual."""
+def registrar_leitura_llm(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor,
+                          leitura=None) -> None:
+    """Leitura por LLM nova gera foto com o modelo que respondeu. O histórico
+    fica no banco para comparar análises; a tela não mostra a trilha."""
+    if leitura is None:
+        return
     ticker = analise.ativo.ticker
-    agora = dt.datetime.now(dt.timezone.utc)
+    feitas = st.session_state.setdefault(LLM_GRAVADAS_KEY, set())
+    marca = (ticker, id(leitura))
+    if marca in feitas:
+        return
+    feitas.add(marca)
     modelo = getattr(leitura, "modelo", None)
-    if leitura is not None:
-        feitas = st.session_state.setdefault(LLM_GRAVADAS_KEY, set())
-        marca = (ticker, id(leitura))
-        if marca not in feitas:
-            feitas.add(marca)
-            registrar([hist.capturar(analise, ctx, agora=agora,
-                                     modelo=modelo or "LLM (modelo não informado)")],
-                      forcar=hist.LEITURA_LLM)
-    atual = hist.capturar(analise, ctx, agora=agora, modelo=modelo)
-    lista, frases = comparacao_de(ticker, atual)
-    st.markdown(cartao_historico(ticker, lista, frases), unsafe_allow_html=True)
-    if st.button("Salvar esta análise no histórico", key=f"ia_hist_salvar_{ticker}"):
-        registrar([atual], forcar=hist.MANUAL)
-        st.rerun()
+    registrar([hist.capturar(analise, ctx, agora=dt.datetime.now(dt.timezone.utc),
+                             modelo=modelo or "LLM (modelo não informado)")],
+              forcar=hist.LEITURA_LLM)

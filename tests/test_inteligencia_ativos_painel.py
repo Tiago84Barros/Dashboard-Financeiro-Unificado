@@ -137,15 +137,6 @@ def test_resumo_so_usa_tokens_de_tema():
                    "Desde a última análise"):
         assert trecho in html
     assert "#" not in html.replace("&#", "")
-    foto = hist.capturar(an[0], ctx, agora=dt.datetime(
-        2026, 9, 26, tzinfo=dt.timezone.utc))
-    hist_html = tela_painel.cartao_historico(an[0].ativo.ticker,
-                                             [replace(foto, motivo="x")], [])
-    for campo in ("analysis_timestamp", "model_used", "data_timestamp",
-                  "scenario_version", "investment_policy_version",
-                  "sources_used"):
-        assert campo in hist_html
-    assert "#" not in hist_html.replace("&#", "")
 
 
 def test_anterior_pula_a_foto_gravada_nesta_sessao():
@@ -175,18 +166,11 @@ def test_aba_mostra_resumo_cartoes_e_abre_a_analise(_historico_em_memoria):
     assert not app.exception
     assert app.selectbox(key="ia_ativo").value == "TAEE11"
     assert '"ticker": "TAEE11"' in app.json[0].proto.body
-    assert any("Histórico da análise · TAEE11" in md.value
-               for md in app.markdown)
+    # o histórico é gravado, mas não aparece na tela do investidor
+    assert not any("Histórico da análise" in md.value for md in app.markdown)
+    assert not any(b.key == "ia_hist_salvar_TAEE11" for b in app.button)
     # a nova execução não grava de novo: uma tentativa por sessão
     assert len(hist.ler(_historico_em_memoria["extra"])["TAEE11"]) == 1
-
-    app.button(key="ia_hist_salvar_TAEE11").click().run(timeout=30)
-    assert not app.exception
-    lista = hist.ler(_historico_em_memoria["extra"])["TAEE11"]
-    assert [s.motivo for s in lista] == [hist.PRIMEIRA, hist.MANUAL]
-    html = next(md.value for md in app.markdown
-                if "Histórico da análise · TAEE11" in md.value)
-    assert "Desde a última análise" in html or "Na análise anterior" in html
 
 
 def test_falha_do_historico_nao_derruba_a_aba(monkeypatch):
@@ -199,4 +183,4 @@ def test_falha_do_historico_nao_derruba_a_aba(monkeypatch):
     assert not app.exception
     app.toggle(key="ia_detalhe").set_value(True).run(timeout=30)
     assert not app.exception
-    assert any("Histórico da análise" in md.value for md in app.markdown)
+    assert not any("Histórico da análise" in md.value for md in app.markdown)

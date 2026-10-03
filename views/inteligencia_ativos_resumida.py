@@ -7,7 +7,7 @@ curta; ações, FIIs e internacional com uma caixa por ativo. Dentro da caixa,
 na ordem do rascunho: quanto tem e quanto deveria ter, manter / comprar /
 vender, o substituto se for vender, dois pares numa tabela, o papel na
 carteira, notícias, relatórios e o que do macro pesa. O detalhe completo
-(13 etapas, Portfolio Fit, histórico) segue na aba, sob "Análise detalhada".
+(13 etapas e Portfolio Fit) segue na aba, sob "Análise detalhada".
 
 Os cartões saem num st.markdown só e só usam tokens var(--app-*).
 Dados: core/inteligencia_ativos/resumida.py (puro).
