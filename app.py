@@ -67,14 +67,17 @@ with st.sidebar:
     # toda tela, disputando a barra com o que ela existe para fazer: navegar.
     # O tema continua sendo APLICADO no topo deste arquivo; só a escolha mudou
     # de lugar.
-    st.markdown(
-        '<div class="app-brand">'
-        '<div class="app-brand-mark" aria-hidden="true">📊</div>'
-        '<div class="app-brand-title">Dashboard Financeiro</div>'
-        '<div class="app-brand-subtitle">Visão unificada do seu caixa e dos investimentos</div>'
-        '</div>',
-        unsafe_allow_html=True,
-    )
+    # O nome de quem está logado voltou ao topo em 03/10/2026, a pedido do dono
+    # do app -- só a identificação, discreta, acima da marca. "Sair / trocar
+    # usuário" continua em Configurações → Geral.
+    from design.componentes import marca_sidebar_html
+
+    _usuario = ""
+    if not _APP_TEST_MODE:
+        from core.user_context import principal
+
+        _usuario = str(principal().get("name") or principal().get("email") or "")
+    st.markdown(marca_sidebar_html(_usuario), unsafe_allow_html=True)
 
     st.markdown('<div class="nav-section">Navegação</div>', unsafe_allow_html=True)
     if _APP_TEST_MODE:

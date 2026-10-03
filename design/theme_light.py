@@ -216,12 +216,19 @@ button:disabled {opacity:.55;}
 :is(input,button,textarea,[role="combobox"]):focus-visible {
  outline:2px solid #175eac!important; outline-offset:2px;
 }
-.app-brand, .app-page-hero, .app-page-meta,
+.app-page-hero, .app-page-meta,
 .b3-card, .apb3-kpi, .apb3-macro, .apb3-logo-item,
 .fii-selection-card {
  background:var(--app-surface)!important; border-color:var(--app-border)!important;
  box-shadow:var(--app-shadow); color:var(--app-text)!important;
 }
+/* Card da marca: continua escuro no claro (ver design/tema.py), só a sombra
+   suaviza. O bloco do usuário segue os tokens. */
+.app-brand {box-shadow:0 10px 26px rgba(15,35,70,.18)!important;}
+.app-user {background:var(--app-surface)!important; border-color:var(--app-border)!important;
+ box-shadow:0 2px 8px rgba(15,35,70,.06);}
+.app-user-name {color:var(--app-text)!important;}
+.app-user-label {color:var(--app-muted)!important;}
 /* A placa do logo recebe a imagem como `background-image` inline (ver
    design/market_companies.py::company_logo_html). O atalho `background` com
    !important zera essa imagem — estilo inline perde para !important — e a
@@ -230,11 +237,11 @@ button:disabled {opacity:.55;}
  background-color:var(--app-surface-raised)!important;
  color:var(--app-muted)!important;
 }
-.app-brand-title, .app-page-title-row h1, .b3-card-ticker,
+.app-page-title-row h1, .b3-card-ticker,
 .apb3-kpi-val, .apb3-macro-val, .apb3-logo-ticker {
  color:var(--app-text)!important;
 }
-.app-brand-subtitle, .app-page-subtitle, .nav-section, .b3-card-nome,
+.app-page-subtitle, .nav-section, .b3-card-nome,
 .b3-card-tag, .apb3-kpi-label, .apb3-kpi-sub, .apb3-macro-lbl,
 .apb3-logo-weight {color:var(--app-muted)!important;}
 .apb3-macro-up {color:#087548!important;}
