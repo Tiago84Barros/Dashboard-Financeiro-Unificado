@@ -13,7 +13,10 @@ o painel anterior mostrava tudo de uma vez e confundia. De cima para baixo:
 4. **🔎 Análise detalhada**, atrás de um toggle (desligado ao abrir). Mostra as
    questões e o fluxo das 13 seções do ativo escolhido, o **Portfolio Fit**
    (regras e LLM sob demanda). O histórico é gravado, mas não aparece na tela
-   desde 03/10/2026 (PR #456; seção *Histórico*, abaixo). É um toggle, e
+   desde 03/10/2026 (PR #456; seção *Histórico*, abaixo). Também desde
+   03/10/2026 (PR #458), a tabela "Onde procurar" dos Relatórios e o expander
+   "Contexto estruturado que a LLM recebe" (JSON) saíram da tela; a LLM
+   recebe o mesmo de antes. É um toggle, e
    não um expander, porque o Portfolio Fit tem expander próprio e o Streamlit
    não aninha expanders.
 5. **Minha estratégia**, recolhida num expander ao fim da página. Mostra a
