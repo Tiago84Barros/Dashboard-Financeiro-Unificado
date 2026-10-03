@@ -22,8 +22,8 @@ def test_linha_do_par_traz_divida_liquida_ebitda(monkeypatch):
     dados = {"CPFE3": Dado(3.389, "fonte", "exercício 2025", None)}
     _cenario(monkeypatch, lambda tk: dados.get(tk))
     texto, _ = ctx.get_peers_context(["ISAE3"], max_tickers=1)
-    linha_cpfe = next(l for l in texto.splitlines() if "CPFE3" in l)
-    linha_neoe = next(l for l in texto.splitlines() if "NEOE3" in l)
+    linha_cpfe = next(ln for ln in texto.splitlines() if "CPFE3" in ln)
+    linha_neoe = next(ln for ln in texto.splitlines() if "NEOE3" in ln)
     assert "DL/EBITDA=3.39x" in linha_cpfe
     # Ausência fica nomeada, nunca vira zero nem some.
     assert "DL/EBITDA=N/D" in linha_neoe
