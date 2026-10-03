@@ -33,6 +33,7 @@ from core.b3_methodology import SCORE_VERSION
 from core.b3_renda_sustentavel import enrich_decision_universe
 from core.b3_slopes import SLOPE_COLS, compute_slope_log, enrich_com_slopes
 from core.b3_vigencia import REBAL_MONTH as _REBAL_MONTH
+from core.busca_empresa import buscar_empresas, normalizar_ticker
 from core.llm_context_ativo import build_b3_ativo_context
 from core.market_companies import normalize_b3_companies
 from core.validacao_motor import validacao_b3
@@ -3441,22 +3442,51 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
     col_inp, col_btn = st.columns([4, 1])
     with col_inp:
         ticker_raw = st.text_input(
-            "Ticker da empresa", value=default_tk,
+            "Ticker ou nome da empresa", value=default_tk,
             key="b3_ticker_input",
-            placeholder="Ex.: PETR4, BBAS3, WEGE3",
+            placeholder="Ex.: PETR4, Banco do Brasil, WEG",
         )
     with col_btn:
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("Analisar", type="primary", width="stretch",
                      key="b3_btn_analisar") and ticker_raw.strip():
-            st.session_state["b3_ticker_sel"] = (
-                ticker_raw.strip().upper().replace(".SA", "")
-            )
+            # Nome ou ticker: um único candidato vai direto para a análise;
+            # vários (ex.: PETR3/PETR4, ou "banco") viram uma escolha abaixo.
+            # Sem candidato, o texto segue como ticker e cai na validação do
+            # universo — que já sugere tickers parecidos.
+            candidatos = buscar_empresas(ticker_raw, df_set, _universo_b3_tickers())
+            if len(candidatos) == 1:
+                st.session_state["b3_ticker_sel"] = candidatos[0][0]
+                st.session_state.pop("b3_busca_candidatos", None)
+            elif candidatos:
+                st.session_state["b3_busca_candidatos"] = candidatos
+                st.session_state["b3_ticker_sel"] = ""
+            else:
+                st.session_state["b3_ticker_sel"] = normalizar_ticker(ticker_raw)
+                st.session_state.pop("b3_busca_candidatos", None)
             st.rerun()
 
-    tk = st.session_state.get("b3_ticker_sel", "").strip().upper().replace(".SA", "")
+    # Seleção vinda de outro caminho (card do setor) descarta a escolha pendente.
+    candidatos = st.session_state.get("b3_busca_candidatos") or []
+    if candidatos and st.session_state.get("b3_ticker_sel"):
+        st.session_state.pop("b3_busca_candidatos", None)
+        candidatos = []
+    if candidatos:
+        st.caption(f"{len(candidatos)} empresas encontradas — escolha uma:")
+        cols = st.columns(min(len(candidatos), 4))
+        for i, (c_tk, c_nome) in enumerate(candidatos):
+            rotulo = c_tk if c_nome == c_tk else f"{c_tk} — {c_nome}"
+            if cols[i % len(cols)].button(rotulo, key=f"b3_cand_{c_tk}",
+                                          width="stretch"):
+                st.session_state["b3_ticker_sel"] = c_tk
+                st.session_state.pop("b3_busca_candidatos", None)
+                st.rerun()
+
+    tk = normalizar_ticker(st.session_state.get("b3_ticker_sel", ""))
     if not tk:
-        st.info("Digite um ticker acima e clique em **Analisar**.", icon="🔍")
+        if not candidatos:
+            st.info("Digite um ticker ou o nome da empresa e clique em "
+                    "**Analisar**.", icon="🔍")
         return
 
     # ── Ticker conhecido? ─────────────────────────────────────────────────────

@@ -22,6 +22,7 @@ import streamlit as st
 from sqlalchemy.exc import SQLAlchemyError
 
 import core.us_data as us
+from core.busca_empresa import buscar_empresas
 from core.inteligencia_ativos import veredito
 from core.llm_context_ativo import build_us_ativo_context
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
@@ -448,24 +449,51 @@ def _tab_empresa(status: dict) -> None:
     input_col, button_col = st.columns([4, 1])
     with input_col:
         ticker_raw = st.text_input(
-            "Ticker da empresa", key="us_company_ticker_input",
-            placeholder="Ex.: AAPL, MSFT, NVDA",
+            "Ticker ou nome da empresa", key="us_company_ticker_input",
+            placeholder="Ex.: AAPL, Microsoft, NVDA",
         )
     with button_col:
         st.markdown("<br>", unsafe_allow_html=True)
         analyze = st.button("Analisar", type="primary", width="stretch",
                             key="us_btn_analisar_empresa")
-    if analyze:
-        requested = ticker_raw.strip().upper()
-        if requested in valid_symbols:
-            st.session_state["us_selected_ticker"] = requested
+    if analyze and ticker_raw.strip():
+        # Mesma regra da aba B3 (core.busca_empresa): um candidato abre direto,
+        # vários viram botões de escolha, nenhum vira aviso.
+        candidatos = buscar_empresas(ticker_raw, scored, valid_symbols,
+                                     col_ticker="symbol", col_nome="name")
+        if len(candidatos) == 1:
+            st.session_state["us_selected_ticker"] = candidatos[0][0]
+            st.session_state.pop("us_busca_candidatos", None)
             st.rerun()
-        elif requested:
-            st.warning("Ticker não encontrado no universo americano publicado.", icon="⚠️")
+        elif candidatos:
+            st.session_state["us_busca_candidatos"] = candidatos
+            st.session_state["us_selected_ticker"] = ""
+        else:
+            st.session_state.pop("us_busca_candidatos", None)
+            st.warning("Nenhuma empresa com esse ticker ou nome no universo "
+                       "americano publicado.", icon="⚠️")
+
+    # Seleção vinda de outro caminho (card do setor) descarta a escolha pendente.
+    candidatos = st.session_state.get("us_busca_candidatos") or []
+    if candidatos and st.session_state.get("us_selected_ticker"):
+        st.session_state.pop("us_busca_candidatos", None)
+        candidatos = []
+    if candidatos:
+        st.caption(f"{len(candidatos)} empresas encontradas — escolha uma:")
+        cols = st.columns(min(len(candidatos), 4))
+        for i, (c_tk, c_nome) in enumerate(candidatos):
+            rotulo = c_tk if c_nome == c_tk else f"{c_tk} — {c_nome}"
+            if cols[i % len(cols)].button(rotulo, key=f"us_cand_{c_tk}",
+                                          width="stretch"):
+                st.session_state["us_selected_ticker"] = c_tk
+                st.session_state.pop("us_busca_candidatos", None)
+                st.rerun()
 
     symbol = str(st.session_state.get("us_selected_ticker", "") or "").upper()
     if not symbol:
-        st.info("Digite um ticker acima e clique em **Analisar**.", icon="🔍")
+        if not candidatos:
+            st.info("Digite um ticker ou o nome da empresa e clique em "
+                    "**Analisar**.", icon="🔍")
         return
     match = scored[scored["symbol"] == symbol]
     if match.empty:
