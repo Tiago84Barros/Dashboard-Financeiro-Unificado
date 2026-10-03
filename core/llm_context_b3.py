@@ -415,6 +415,30 @@ def compute_segment_peers(ticker: str, max_peers: int = 10) -> tuple[list[str], 
     return peers[:max_peers], nivel
 
 
+def _ler_alavancagem(ticker: str):
+    """Dívida líquida/EBITDA do par pela mesma leitura da Inteligência dos
+    Ativos (dívida do balanço da base ÷ EBITDA de 12 meses do arquivo de
+    valuation, com a conferência de fontes divergentes)."""
+    from core.inteligencia_ativos.fontes_fundamentos import ler_acao_b3
+    return ler_acao_b3(ticker).get("divida_liquida_ebitda")
+
+
+def _fmt_alavancagem(ticker: str) -> str:
+    try:
+        d = _ler_alavancagem(ticker)
+    except Exception as exc:
+        logger.warning("peers: alavancagem de %s falhou: %s", ticker, exc)
+        d = None
+    v = getattr(d, "valor", None)
+    try:
+        v = float(v) if v is not None else None
+    except (TypeError, ValueError):
+        v = None
+    if v is None or not np.isfinite(v):
+        return "DL/EBITDA=N/D"
+    return f"DL/EBITDA={v:.2f}x"
+
+
 def get_peers_context(tickers: list[str], max_tickers: int = 2) -> tuple[str, dict]:
     """
     Lista os concorrentes (mesmo segmento) dos tickers citados, com nome, receita
@@ -448,10 +472,16 @@ def get_peers_context(tickers: list[str], max_tickers: int = 2) -> tuple[str, di
                     m = " | " + " ".join(
                         f"{_LABEL.get(c, c)}={_fmt_val(c, mrow[c].iloc[0])}"
                         for c in ("P/L", "ROE", "Margem_Liquida") if c in mrow.columns)
+            m = (m or " |") + " " + _fmt_alavancagem(p)
             lines.append(f"  {p} [{nm}]{m}")
     if not lines:
         return "", {}
-    return _cap("\n".join(lines), _CAP_SECTOR), peers_map
+    # A legenda fica fora do teto: truncada, a LLM leria a razão sem saber
+    # que não é a alavancagem de covenant que a empresa divulga.
+    legenda = ("  (DL/EBITDA = dívida líquida do balanço anual da base ÷ EBITDA de "
+               "12 meses do provedor — não é a alavancagem ajustada/de covenant "
+               "divulgada pela empresa; N/D = sem dado ou fontes divergentes)")
+    return _cap("\n".join(lines), _CAP_SECTOR) + "\n" + legenda, peers_map
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -469,7 +499,34 @@ def get_dre_history_context(tickers: list[str], max_n: int = 3, anos: int = 6) -
             return f"{f/1e6:,.0f}" if np.isfinite(f) else "N/D"
         except (TypeError, ValueError):
             return "N/D"
+    def _f(v):
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return f if np.isfinite(f) else None
+
+    def _caixa(r) -> str:
+        # FCO e FCF vêm de market.cash_flow_statements. O FCF é o do provedor
+        # (capex nulo na base, não dá para recompor): fluxo livre = FCO - capex
+        # nunca supera o FCO, e quando supera o número não é repassado como fato
+        # (ISAE3 2024: FCO -181 mi, "FCL" +1.136 mi).
+        partes = []
+        if "EBIT" in r and _f(r.get("EBIT")) is not None:
+            partes.append(f"EBIT={_mi(r.get('EBIT'))}")
+        fco = _f(r.get("FCO")) if "FCO" in r else None
+        if fco is not None:
+            partes.append(f"FCO={_mi(fco)}")
+        if "FCF" in r:
+            fcf = _f(r.get("FCF"))
+            if fcf is not None and (fco is None or fcf <= fco):
+                partes.append(f"FCL={_mi(fcf)}")
+            elif fcf is not None:
+                partes.append("FCL=N/D(provedor>FCO)")
+        return (" " + " ".join(partes)) if partes else ""
+
     lines: list[str] = []
+    notas: list[str] = []
     for tk in tks:
         try:
             d = _db.load_demonstracoes(tk)
@@ -486,11 +543,23 @@ def get_dre_history_context(tickers: list[str], max_n: int = 3, anos: int = 6) -
             f"{int(r['_ano'])}: Rec={_mi(r.get('Receita_Liquida'))} "
             f"LL={_mi(r.get('Lucro_Liquido'))}"
             + (f" EBITDA={_mi(r.get('EBITDA'))}" if pd.notna(r.get('EBITDA')) else "")
+            + _caixa(r)
             for _, r in d.iterrows())
         lines.append(f"  {tk} (R$ mi): {anos_txt}")
+        if "FCO" in d.columns:
+            ult = _f(d["FCO"].iloc[-1])
+            if ult is not None and ult < 0:
+                notas.append(f"  {tk}: FCO negativo em {int(d['_ano'].iloc[-1])} — "
+                             "o P/FCO não se aplica (N/D por definição, não por falta de dado).")
     if not lines:
         return ""
-    return "DRE HISTÓRICA (banco — Receita/Lucro líquido por ano, R$ milhões):\n" + "\n".join(lines)
+    legenda = []
+    if any("FCO=" in ln for ln in lines):
+        legenda.append("  (FCO = fluxo de caixa operacional; FCL = fluxo de caixa livre do "
+                       "provedor; FCL=N/D(provedor>FCO) = número do provedor maior que o "
+                       "FCO, inconsistente com FCO - capex, não repassado)")
+    return ("DRE HISTÓRICA (banco — Receita/Lucro líquido/EBIT e fluxo de caixa por ano, "
+            "R$ milhões):\n" + "\n".join(lines + notas + legenda))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

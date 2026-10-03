@@ -1075,6 +1075,80 @@ def _precos_do_painel(conn, score_version: str, horizon_months: int) -> pd.DataF
                        params={"v": score_version, "h": int(horizon_months)})
 
 
+# Painel PIT já montado, publicado por scripts/publish_us_score_panel.py. Ler
+# 22 mil linhas prontas custa menos egress que ler safras + preços + desfechos
+# e montar tudo a cada visita. A meta guarda a "impressão" das três fontes no
+# momento da montagem; se alguma mudou desde então (safra republicada, mês novo
+# de preço, desfecho novo), o painel publicado está velho e o leitor volta a
+# montar ao vivo -- painel velho servido como atual é o defeito que isto evita.
+PAINEL_PUB = "score_panel_pub"
+PAINEL_PUB_META = "score_panel_pub_meta"
+_ATTRS_PUBLICADOS = ("n_censored", "n_inobservavel", "n_convencionado",
+                     "n_desfechos")
+
+
+def impressao_do_painel(conn, score_version: str) -> dict:
+    """Estado das fontes do painel: contagens e o último mês de preço.
+
+    Uma consulta só, com resposta de uma linha -- o custo de verificar é
+    desprezível perto do de montar.
+    """
+    tem_desfechos = not _tabelas_ausentes(conn, "delisting_outcomes")
+    sub_desfechos = ("(SELECT COUNT(*) FROM market_us.delisting_outcomes)"
+                     if tem_desfechos else "NULL")
+    row = conn.execute(text(
+        "SELECT (SELECT COUNT(*) FROM market_us.score_vintages "
+        "         WHERE track='fundamental' AND score_version=:v), "
+        "       (SELECT COUNT(*) FROM market_us.prices_monthly), "
+        "       (SELECT MAX(month_end) FROM market_us.prices_monthly), "
+        f"       {sub_desfechos}"), {"v": score_version}).fetchone()
+    fim = row[2]
+    return {
+        "n_safras": int(row[0] or 0),
+        "n_precos": int(row[1] or 0),
+        "fim_do_dado": None if fim is None else pd.Timestamp(fim).date().isoformat(),
+        "n_desfechos": None if row[3] is None else int(row[3]),
+    }
+
+
+def _painel_publicado(conn, score_version: str, horizon_months: int):
+    """O painel publicado, se existir e ainda corresponder às fontes; senão None."""
+    import json
+    if _tabelas_ausentes(conn, PAINEL_PUB, PAINEL_PUB_META):
+        return None
+    meta = conn.execute(text(
+        f"SELECT impressao, atributos FROM market_us.{PAINEL_PUB_META} "
+        "WHERE score_version=:v AND horizon_months=:h"),
+        {"v": score_version, "h": int(horizon_months)}).fetchone()
+    if meta is None:
+        return None
+    gravada, atributos = (json.loads(m) if isinstance(m, str) else dict(m)
+                          for m in meta)
+    atual = impressao_do_painel(conn, score_version)
+    if gravada != atual:
+        logger.info("painel PIT publicado está velho (%s != %s); montando ao vivo",
+                    gravada, atual)
+        return None
+    if conn.dialect.name == "postgresql":
+        # As sessões do pooler do Supabase vêm com extra_float_digits=0: o
+        # float8 sai com 15 dígitos e o retorno lido difere do montado na 14ª
+        # casa (19 mil de 22 mil linhas). LOCAL não vaza para o próximo
+        # cliente do pooler em modo transação.
+        conn.execute(text("SET LOCAL extra_float_digits = 3"))
+    painel = pd.read_sql(text(
+        f"SELECT date, symbol, score, fwd_return, censored "
+        f"FROM market_us.{PAINEL_PUB} "
+        "WHERE score_version=:v AND horizon_months=:h ORDER BY ordem"),
+        conn, params={"v": score_version, "h": int(horizon_months)})
+    if painel.empty:
+        return None
+    painel["censored"] = painel["censored"].astype(bool)
+    painel.attrs.update({k: atributos[k] for k in _ATTRS_PUBLICADOS
+                         if k in atributos})
+    painel.attrs["fonte"] = "publicado"
+    return painel
+
+
 def _painel_vazio(motivo: str) -> pd.DataFrame:
     """Painel vazio que diz POR QUE está vazio.
 
@@ -1092,18 +1166,24 @@ def _painel_vazio(motivo: str) -> pd.DataFrame:
 
 
 def load_score_panel(score_version: str | None = None,
-                     horizon_months: int = 12) -> pd.DataFrame:
+                     horizon_months: int = 12, *,
+                     publicado: bool = True, engine=None) -> pd.DataFrame:
     """Painel PIT (date, symbol, score, fwd_return) para o backtest da Fase 6.
 
     Junta market_us.score_vintages (histórico PIT) a prices_monthly. Vazio até o
     histórico de scores ser computado (run_us_ingest.py score-history). Quando
     vazio, `attrs["motivo"]` nomeia a causa -- ver `_painel_vazio`.
+
+    Com ``publicado`` (padrão), serve o painel já montado da vitrine quando ele
+    corresponde às fontes atuais (`_painel_publicado`); o publicador passa
+    ``publicado=False`` para montar sempre a partir das fontes, e ``engine``
+    para montá-lo contra a vitrine fora do Streamlit.
     """
     from data_pipeline.us.scoring_history import build_annual_panel
     if score_version is None:
         from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
         score_version = US_FUNDAMENTAL_SCORE_VERSION
-    eng = _engine()
+    eng = engine if engine is not None else _engine()
     if eng is None:
         return _painel_vazio("sem banco de dados configurado")
     try:
@@ -1114,6 +1194,18 @@ def load_score_panel(score_version: str | None = None,
                     "a vitrine não tem market_us.{} -- publique com "
                     "scripts/publish_us_score_vintages.py --apply".format(
                         " nem market_us.".join(faltando)))
+            if publicado:
+                try:
+                    pronto = _painel_publicado(conn, score_version, horizon_months)
+                except Exception as exc:  # noqa: BLE001 - ao vivo ainda serve
+                    logger.info("painel publicado ilegível: %s", exc)
+                    pronto = None
+                    try:
+                        conn.rollback()
+                    except Exception:  # noqa: BLE001
+                        pass
+                if pronto is not None:
+                    return pronto
             vq = ("SELECT as_of_date, symbol, score FROM market_us.score_vintages "
                   "WHERE track='fundamental'")
             params: dict = {}
@@ -1136,6 +1228,7 @@ def load_score_panel(score_version: str | None = None,
     # Quantos desfechos a leitura enxergou. Sem isto, "a convenção não mudou
     # nada" e "a tabela não foi publicada" são indistinguíveis na tela.
     painel.attrs["n_desfechos"] = len(saidas)
+    painel.attrs["fonte"] = "ao vivo"
     return painel
 
 

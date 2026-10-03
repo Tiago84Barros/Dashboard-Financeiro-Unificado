@@ -31,6 +31,57 @@ def _linha(texto: object, *, aspas: bool = False) -> str:
     return escape(" ".join(str(texto).split()), quote=aspas)
 
 # ══════════════════════════════════════════════════════════════════
+# Marca da sidebar
+# ══════════════════════════════════════════════════════════════════
+
+def _iniciais(nome: str) -> str:
+    """Até duas iniciais para o avatar; e-mail vira a primeira letra."""
+    partes = nome.split("@")[0].replace(".", " ").replace("_", " ").split()
+    if not partes:
+        return "?"
+    if len(partes) == 1:
+        return partes[0][:2].upper()
+    return (partes[0][0] + partes[-1][0]).upper()
+
+
+def marca_sidebar_html(usuario: str = "") -> str:
+    """HTML do topo da sidebar: quem está logado e o card da marca.
+
+    O nome vem da sessão (cadastro do próprio usuário), então passa por
+    ``_linha`` como qualquer texto externo. Sem usuário -- modo sintético --
+    o bloco de identidade simplesmente não aparece.
+    """
+    partes: list[str] = []
+    nome = " ".join(str(usuario or "").split())
+    if nome:
+        partes.append(
+            '<div class="app-user">'
+            f'<div class="app-user-avatar" aria-hidden="true">{_linha(_iniciais(nome))}</div>'
+            '<div class="app-user-text">'
+            '<div class="app-user-label">Conectado como</div>'
+            f'<div class="app-user-name" title="{_linha(nome, aspas=True)}">{_linha(nome)}</div>'
+            '</div>'
+            '<span class="app-user-status" aria-hidden="true"></span>'
+            '</div>'
+        )
+    partes.append(
+        '<div class="app-brand">'
+        '<div class="app-brand-glow" aria-hidden="true"></div>'
+        '<div class="app-brand-head">'
+        '<div class="app-brand-mark" aria-hidden="true">📊</div>'
+        '<span class="app-brand-badge">Unificado</span>'
+        '</div>'
+        '<div class="app-brand-title">Dashboard Financeiro</div>'
+        '<div class="app-brand-subtitle">Visão unificada do seu caixa e dos investimentos</div>'
+        '<div class="app-brand-tags">'
+        '<span>Caixa</span><span>Carteira</span><span>Mercado</span>'
+        '</div>'
+        '</div>'
+    )
+    return "".join(partes)
+
+
+# ══════════════════════════════════════════════════════════════════
 # Estrutura de página
 # ══════════════════════════════════════════════════════════════════
 

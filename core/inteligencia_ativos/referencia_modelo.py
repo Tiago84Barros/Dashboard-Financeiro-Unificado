@@ -130,6 +130,9 @@ class ReferenciaModelo:
     classes: tuple[LinhaClasse, ...] = ()
     ativos: dict[str, LinhaAtivo] = field(default_factory=dict)
     avisos: tuple[str, ...] = ()
+    # Indisponível porque a leitura do banco falhou, e não por falta de
+    # modelo ou de alocação: a tela não lembra esse resultado.
+    falha_de_leitura: bool = False
 
     def linha(self, ticker) -> LinhaAtivo | None:
         return self.ativos.get(normalizar(ticker))
@@ -160,8 +163,10 @@ class ReferenciaModelo:
         }
 
 
-def indisponivel(motivo: str) -> ReferenciaModelo:
-    return ReferenciaModelo(disponivel=False, motivo=motivo)
+def indisponivel(motivo: str, *,
+                 falha_de_leitura: bool = False) -> ReferenciaModelo:
+    return ReferenciaModelo(disponivel=False, motivo=motivo,
+                            falha_de_leitura=falha_de_leitura)
 
 
 def _r(x: float | None, casas: int = 2) -> float | None:
@@ -274,5 +279,6 @@ def carregar(posicoes: list[dict] | None, *, engine=None,
     except Exception as exc:  # noqa: BLE001 — a análise segue sem a referência
         log.warning("referência do modelo indisponível: %s", exc)
         return indisponivel("Falha ao ler a carteira recomendada do Portfólio "
-                            f"Global ({type(exc).__name__}).")
+                            f"Global ({type(exc).__name__}).",
+                            falha_de_leitura=True)
     return montar(snapshots, alocacao, posicoes)

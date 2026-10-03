@@ -135,3 +135,35 @@ def test_tela_mostra_a_referencia_sem_quebrar():
     html = "".join(md.value for md in app.markdown)
     assert "carteira recomendada do Portfólio Global" in html
     assert "não tem carteira-modelo ativa" in html
+
+
+def test_memo_nao_lembra_falha_de_leitura(monkeypatch):
+    chamadas = []
+
+    def ler(engine=None, owner_id=None):
+        chamadas.append(1)
+        if len(chamadas) == 1:
+            raise ConnectionError("sem rede")
+        return SNAPSHOTS, {"targets": ALVOS, "renda_fixa": 0.4}
+    monkeypatch.setattr(rm, "_ler", ler)
+    monkeypatch.setattr(tela.st, "session_state", {})
+    carteira = {"posicoes": POSICOES}
+    falhou = tela._referencia_memo(carteira)
+    assert falhou.falha_de_leitura and not falhou.disponivel
+    assert tela._referencia_memo(carteira).disponivel   # tentou de novo
+    assert tela._referencia_memo(carteira).disponivel   # agora lembrou
+    assert len(chamadas) == 2
+
+
+def test_memo_lembra_indisponivel_sem_alocacao(monkeypatch):
+    chamadas = []
+
+    def ler(engine=None, owner_id=None):
+        chamadas.append(1)
+        return SNAPSHOTS, {"targets": {}, "renda_fixa": None}
+    monkeypatch.setattr(rm, "_ler", ler)
+    monkeypatch.setattr(tela.st, "session_state", {})
+    carteira = {"posicoes": POSICOES}
+    assert not tela._referencia_memo(carteira).falha_de_leitura
+    tela._referencia_memo(carteira)
+    assert len(chamadas) == 1

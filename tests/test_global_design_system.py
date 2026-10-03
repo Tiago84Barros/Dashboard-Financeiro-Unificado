@@ -108,3 +108,19 @@ def test_card_metrica_omite_delta_zero_string_vazia():
         card_metrica("T", "1", delta="")
         for chamada in fake_st.markdown.call_args_list:
             assert "app-kpi-delta" not in chamada[0][0]
+
+
+def test_sidebar_brand_shows_logged_user_escaped():
+    html = componentes.marca_sidebar_html("Tiago <b>Barros</b>")
+
+    assert html.index("app-user") < html.index("app-brand")
+    assert "Conectado como" in html
+    assert "<b>" not in html
+    assert ">TB<" in componentes.marca_sidebar_html("Tiago Barros")
+
+
+def test_sidebar_brand_without_user_hides_identity_block():
+    html = componentes.marca_sidebar_html("")
+
+    assert "app-user" not in html
+    assert "Dashboard Financeiro" in html
