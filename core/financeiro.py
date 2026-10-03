@@ -155,17 +155,20 @@ def patrimonio_investido_confiavel(
     return None
 
 
-def dividendos_do_periodo(proventos: dict | None) -> tuple[float, float]:
+def dividendos_do_periodo(
+    proventos: dict | None,
+) -> tuple[float | None, float | None]:
     """(proventos do mês, proventos do ano) recebidos, via ``core.proventos``.
 
     A soma direta em ``dividends`` contava o mesmo pagamento duas vezes quando
     ele vinha da B3 e da XP ou do lote padrão e do fracionário (BBAS3/BBAS3F),
     agrupava por ``ex_date`` em vez da data do pagamento e somava amortização.
     ``core.proventos`` já resolve as três coisas; aqui só se lê o resultado.
-    Sem proventos reais, zero: o dashboard não mistura mock com dado real.
+    Sem proventos reais, ``None``: o dashboard não mistura mock com dado real
+    e não confunde "fonte indisponível" com "nada recebido".
     """
     if not proventos or proventos.get("data_source") != "real":
-        return 0.0, 0.0
+        return None, None
     return (float(proventos.get("total_mes") or 0.0),
             float(proventos.get("total_ano") or 0.0))
 

@@ -595,3 +595,31 @@ def serie_por_ativo(
     totais = {t: round(sum(vals), 2) for t, vals in series.items()}
     ordem = sorted(totais, key=lambda t: (-totais[t], t))
     return {"periodos": labels, "series": series, "totais": totais, "ordem": ordem}
+
+
+SITUACOES_ATIVO = ("Todos", "Na carteira", "Saíram da carteira")
+
+
+def tickers_em_carteira(carteira: dict | None) -> set:
+    """Tickers-base com saldo hoje — o F do fracionário cai no lote padrão."""
+    from core.investimentos import _base_ticker
+
+    return {
+        _base_ticker(str(p.get("ticker") or ""))
+        for p in (carteira or {}).get("posicoes") or []
+        if float(p.get("quantidade") or 0) > 0 and p.get("ticker")
+    }
+
+
+def filtrar_por_situacao(ordem: list, em_carteira: set, situacao: str) -> list:
+    """Filtra os pagadores pela posição atual, preservando a ordem do ranking.
+
+    ``situacao`` é um de ``SITUACOES_ATIVO``; qualquer outro valor devolve tudo.
+    """
+    from core.investimentos import _base_ticker
+
+    if situacao == "Na carteira":
+        return [t for t in ordem if _base_ticker(t) in em_carteira]
+    if situacao == "Saíram da carteira":
+        return [t for t in ordem if _base_ticker(t) not in em_carteira]
+    return list(ordem)

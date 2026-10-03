@@ -2242,7 +2242,8 @@ def _bloco_rentabilidade_cdi(r: dict) -> None:
     )
 
 
-def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
+def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
+                   carteira: dict | None = None) -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     _bloco_rentabilidade_cdi(get_rentabilidade_rv_b3())
@@ -2375,16 +2376,21 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict) -> None:
         st.caption("Sem histórico de proventos.")
 
     st.markdown("<br>", unsafe_allow_html=True)
-    _proventos_por_ativo(proventos)
+    _proventos_por_ativo(proventos, carteira)
 
 
 def _fmt_brl(v: float, casas: int = 2) -> str:
     return f"R$ {v:,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def _proventos_por_ativo(proventos: dict) -> None:
+def _proventos_por_ativo(proventos: dict, carteira: dict | None = None) -> None:
     """Compara, ativo a ativo, os proventos recebidos — no histórico todo ou num ano."""
-    from core.proventos import serie_por_ativo
+    from core.proventos import (
+        SITUACOES_ATIVO,
+        filtrar_por_situacao,
+        serie_por_ativo,
+        tickers_em_carteira,
+    )
 
     _secao_titulo_orig("🏦", "Proventos por ativo",
                        "Compare os pagadores ao longo do histórico ou dentro de um ano")
@@ -2395,14 +2401,37 @@ def _proventos_por_ativo(proventos: dict) -> None:
         st.caption("Sem proventos por ativo para comparar.")
         return
 
+    em_carteira = tickers_em_carteira(carteira)
+    situacao = st.radio(
+        "Mostrar", SITUACOES_ATIVO, horizontal=True,
+        key="inv_hist_prov_ativo_situacao",
+        help="Na carteira: ativos com saldo hoje. Saíram da carteira: já pagaram "
+             "proventos, mas foram vendidos.",
+    )
+    if situacao != "Todos" and not em_carteira:
+        st.warning("Carteira atual indisponível — não dá para separar quem está "
+                   "e quem saiu. Mostrando todos os ativos.", icon="⚠️")
+        situacao = "Todos"
+    opcoes = filtrar_por_situacao(base["ordem"], em_carteira, situacao)
+    if not opcoes:
+        st.info(
+            "Nenhum ativo que pagou proventos "
+            + ("está na carteira hoje." if situacao == "Na carteira"
+               else "saiu da carteira."),
+            icon="🏦",
+        )
+        return
+
     anos = sorted({int(p) for p in base["periodos"]}, reverse=True)
     c_ativos, c_periodo, c_agrup, c_tipo = st.columns([3, 1.2, 1, 1.3])
     with c_ativos:
+        # Uma key por situação: cada filtro guarda a própria seleção, e um
+        # ativo de fora das opções nunca fica preso no estado do widget.
         ativos = st.multiselect(
             "Ativos",
-            base["ordem"],
-            default=base["ordem"][:5],
-            key="inv_hist_prov_ativos",
+            opcoes,
+            default=opcoes[:5],
+            key=f"inv_hist_prov_ativos_{SITUACOES_ATIVO.index(situacao)}",
             help="Ordenados pelo total recebido no histórico. Os 5 maiores vêm marcados.",
         )
     with c_periodo:
@@ -4361,7 +4390,7 @@ def render() -> None:
         _tab_dashboard(carteira, proventos, cashflow, evolucao)
 
     with tab2:
-        _tab_historico(cashflow, proventos, evolucao)
+        _tab_historico(cashflow, proventos, evolucao, carteira)
 
     with tab3:
         _tab_carteira(carteira, proventos)

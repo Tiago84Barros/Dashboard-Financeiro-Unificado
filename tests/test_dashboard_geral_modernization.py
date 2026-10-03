@@ -278,3 +278,41 @@ def test_faixa_de_destaque_escapa_o_conteudo_e_segue_o_tema(monkeypatch):
     assert "var(--app-surface)" in html
     assert "var(--app-text)" in html
     assert "var(--app-primary)" in html
+
+
+def test_kpi_grid_mostra_proventos_do_mes_e_do_ano(monkeypatch):
+    rendered = _capture_markdown(monkeypatch)
+
+    dashboard._render_kpi_grid(
+        {"total": 0, "delta_mes_pct": None},
+        receitas=0, despesas=0, investimentos=0, carteira={},
+        portfolio={"dividendos_mes": 312.5, "dividendos_ano": 4_180.75},
+        hoje=date(2026, 10, 3),
+    )
+
+    html = "\n".join(rendered)
+    assert "Proventos recebidos" in html
+    assert "R$ 312,50" in html
+    assert "Pagos em Out/2026" in html
+    assert "R$ 4.180,75" in html
+
+
+def test_kpi_grid_proventos_indisponiveis_nao_viram_zero(monkeypatch):
+    """Fonte de proventos fora do ar não pode aparecer como R$ 0,00 recebido."""
+    rendered = _capture_markdown(monkeypatch)
+
+    dashboard._render_kpi_grid(
+        {"total": 0, "delta_mes_pct": None},
+        receitas=0, despesas=0, investimentos=0,
+        carteira={"total_mercado": 1_000.0, "num_ativos": 1},
+        portfolio={"dividendos_mes": None, "dividendos_ano": None},
+    )
+
+    html = "\n".join(rendered)
+    assert "Proventos da carteira indisponíveis" in html
+    assert html.count("N/D") == 1
+
+
+def test_render_entrega_o_portfolio_da_visao_geral_ao_grid():
+    corpo = inspect.getsource(dashboard.render)
+    assert 'd.get("portfolio")' in corpo
