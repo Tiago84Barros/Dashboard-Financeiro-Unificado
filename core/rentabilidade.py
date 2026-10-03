@@ -438,7 +438,10 @@ def obter_cdi(inicio: date, fim: date, *, publicado: dict[date, float] | None = 
     motivo = None
     if not cobre:
         partes = []
-        if ultimo is None:
+        if not pub:
+            partes.append("o CDI ainda não foi publicado pela rotina local "
+                          "(scripts/publicar_cdi_diario.py)")
+        elif ultimo is None:
             partes.append("o arquivo publicado do CDI não cobre o período")
         else:
             partes.append(f"o arquivo publicado do CDI para em {ultimo:%d/%m/%Y}")

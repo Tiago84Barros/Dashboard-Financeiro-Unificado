@@ -302,8 +302,16 @@ def test_obter_cdi_sem_arquivo_e_sem_bcb_explica_o_motivo():
     out = rt.obter_cdi(date(2019, 12, 2), date(2026, 10, 3), publicado={},
                        baixar=lambda i, f: ({}, "o BCB não respondeu (ReadTimeout)"))
     assert out["serie"] == {}
-    assert out["motivo"] == ("O arquivo publicado do CDI não cobre o período e "
+    assert out["motivo"] == ("O CDI ainda não foi publicado pela rotina local "
+                             "(scripts/publicar_cdi_diario.py) e "
                              "o BCB não respondeu (ReadTimeout).")
+
+
+def test_obter_cdi_arquivo_que_comeca_tarde_diz_que_nao_cobre():
+    pub = _serie_cdi(date(2024, 1, 1), date(2026, 10, 2))
+    out = rt.obter_cdi(date(2019, 12, 2), date(2026, 10, 3), publicado=pub,
+                       baixar=lambda i, f: ({}, "o BCB não respondeu (ReadTimeout)"))
+    assert out["motivo"].startswith("O arquivo publicado do CDI não cobre o período")
 
 
 def test_obter_cdi_arquivo_velho_e_bcb_fora_ainda_compara_se_couber_na_folga():

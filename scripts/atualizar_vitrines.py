@@ -65,6 +65,8 @@ DOCKER_DESKTOP = Path(r"C:\Program Files\Docker\Docker\Docker Desktop.exe")
 # Um alvo travado não pode segurar a fila para sempre: sem teto, um passo que
 # nunca retorna deixa todos os alvos seguintes vencidos e silenciosos.
 TIMEOUT_PASSO = 90 * 60
+# Marca a execução filha de `recarregar`, para ela não recarregar de novo.
+_RECARREGADA = "DFU_ROTINA_RECARREGADA"
 
 
 def registrar(mensagem: str) -> None:
@@ -431,6 +433,21 @@ def notificar(texto: str, assunto: str) -> None:
         registrar(f"ATENÇÃO: aviso não enviado ({exc}).")
 
 
+def recarregar(argv) -> int:
+    """Roda a rotina de novo num processo novo, que já importa o código puxado.
+
+    `ALVOS` é lido na importação. Sem isto, um alvo que acabou de chegar pela
+    `main` só entraria na execução seguinte -- com a rotina diária, um dia
+    inteiro de atraso. Foi o que deixou o CDI vazio na tela em 03/10/2026
+    depois do merge que criou o alvo `cdi_diario`.
+    """
+    args = list(sys.argv[1:] if argv is None else argv)
+    ambiente = {**os.environ, _RECARREGADA: "1"}
+    proc = subprocess.run([_python(), str(Path(__file__).resolve()), *args],
+                          cwd=ROOT, env=ambiente, check=False)
+    return proc.returncode
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--apenas", action="append", dest="apenas",
@@ -447,6 +464,13 @@ def main(argv=None) -> int:
                    help="Lê dos bancos a data da última publicação de cada alvo "
                         "sem registro e grava o estado inicial.")
     args = p.parse_args(argv)
+
+    # Antes de decidir o que venceu: a decisão tem de usar a agenda mergeada.
+    if not (args.listar or args.dry_run) and not os.environ.get(_RECARREGADA):
+        atualizacao = atualizar_main(ROOT)
+        if atualizacao.avancou:
+            registrar(f"  git: {atualizacao.resumo()}; recarregando com o código novo")
+            return recarregar(argv)
 
     agora = datetime.now(timezone.utc)
     estado = ler_estado()
