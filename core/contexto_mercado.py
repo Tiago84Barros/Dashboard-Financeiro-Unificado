@@ -473,6 +473,115 @@ def manchetes_gerais(limite: int = MAX_MANCHETES) -> tuple[list[str], str]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Itens crus do noticiário geral (para telas que escolhem por tema)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _normalizar_item(item: Mapping) -> dict:
+    """Garante ``entidades`` como dict e ``tipo_evento`` preenchido.
+
+    Item da vitrine publicada antes de ``tipo_evento`` subir na meta vem sem
+    ele; o título é classificado aqui com o mesmo vocabulário da coleta, para
+    que a tela não confunda "sem tipo" com "não é macro".
+    """
+    saida = dict(item)
+    entidades = saida.get("entidades") or {}
+    if isinstance(entidades, str):
+        try:
+            entidades = json.loads(entidades)
+        except ValueError:
+            entidades = {}
+    saida["entidades"] = entidades if isinstance(entidades, dict) else {}
+    if not saida.get("tipo_evento"):
+        from core.noticias.eventos import classificar
+
+        saida["tipo_evento"] = classificar(str(saida.get("titulo") or ""))
+    return saida
+
+
+@st.cache_data(ttl=_TTL_TUNEL, show_spinner=False)
+def _itens_remoto() -> tuple[list[dict] | None, str]:
+    try:
+        from core import armazem_remoto
+
+        itens = armazem_remoto.noticias_recentes(150, dias=3)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"túnel indisponível ({_limpo(exc, 80)})"
+    return itens, ""
+
+
+@st.cache_data(ttl=_TTL_REMOTO, show_spinner=False)
+def _itens_vitrine_cache() -> tuple[list[dict], str]:
+    return _itens_vitrine(_supabase())
+
+
+def _itens_vitrine(engine) -> tuple[list[dict], str]:
+    """Manchetes gerais publicadas na meta da vitrine do Supabase."""
+    if engine is None:
+        return [], "Vitrine de notícias: banco Supabase indisponível"
+    try:
+        from sqlalchemy import text
+
+        with engine.connect() as conn:
+            meta = conn.execute(text(
+                "SELECT gerada_em, to_jsonb(m) -> 'manchetes' "
+                "FROM noticias_vitrine_meta m WHERE id = 1")).first()
+    except Exception as exc:  # noqa: BLE001
+        return [], f"Vitrine de notícias: falha na leitura ({_limpo(exc, 80)})"
+    if meta is None:
+        return [], "Vitrine de notícias: nunca publicada"
+    gerais = meta[1]
+    if isinstance(gerais, str):
+        try:
+            gerais = json.loads(gerais)
+        except ValueError:
+            gerais = None
+    origem = f"Noticiário geral publicado no Supabase em {_data(meta[0])} UTC"
+    gerada = meta[0]
+    if isinstance(gerada, datetime):
+        horas = (datetime.now(timezone.utc) - gerada.astimezone(timezone.utc)
+                 ).total_seconds() / 3600
+        if horas > _IDADE_MAX_VITRINE_H:
+            origem += f" ({horas:.0f} h atrás — VELHA)"
+    return [i for i in (gerais or ()) if isinstance(i, dict)], origem
+
+
+def itens_gerais() -> tuple[list[dict], str]:
+    """``(itens, origem)``: o noticiário geral cru, item a item, com
+    ``tipo_evento`` e ``entidades``, para quem precisa escolher por tema.
+
+    Mesma ordem de fonte de :func:`manchetes_gerais`: acervo local, túnel,
+    vitrine. Fonte que falha é nomeada em ``origem``, nunca some.
+    """
+    itens: list[dict] | None = None
+    origem = ""
+    try:
+        from core.noticias.destino import engine_acervo
+        engine = engine_acervo()
+    except Exception:  # noqa: BLE001
+        engine = None
+    if engine is not None:
+        try:
+            from core.noticias.armazenamento import ler_recentes
+
+            itens = list(ler_recentes(150, dias=3, engine=engine))
+            origem = "Acervo local (últimos 3 dias)"
+        except Exception as exc:  # noqa: BLE001
+            origem = f"Acervo local: falha na leitura ({_limpo(exc, 80)}); "
+        finally:
+            engine.dispose()
+    if itens is None:
+        remoto, aviso = _itens_remoto()
+        if remoto is not None:
+            itens, origem = remoto, "Acervo local, lido pelo túnel (últimos 3 dias)"
+        else:
+            if aviso:
+                origem += f"acervo pelo túnel: {aviso}; "
+            vitrine, origem_vitrine = _itens_vitrine_cache()
+            itens, origem = vitrine, origem + origem_vitrine
+    return [_normalizar_item(i) for i in itens], origem
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Montagem
 # ─────────────────────────────────────────────────────────────────────────────
 

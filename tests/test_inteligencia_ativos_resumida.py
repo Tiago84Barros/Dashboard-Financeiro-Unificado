@@ -320,3 +320,59 @@ def test_relatorios_mostram_o_que_o_documento_diz_sem_link(carteira):
     assert "Release 2T26" in html and "&lt;alta&gt;" in html
     assert "<a href" not in html and "Trechos literais" in html
     assert _sem_cor_literal(html)
+
+
+# -- cenário econômico e político (complemento das notícias) ------------------------
+
+def _geral(titulo, tipo, nota=50.0, paises=("BR",), tickers=(), url=None):
+    return {"titulo": titulo, "tipo_evento": tipo, "nota": nota,
+            "veiculo": "V", "url": url, "publicado_em": "2026-10-03T11:00:00",
+            "entidades": {"paises": list(paises), "tickers": list(tickers)}}
+
+
+GERAIS = [
+    _geral("Sable Offshore cai 51%", "indefinido", 90.0, ("US",)),
+    _geral("Tecnologia para clima quer financiamento", "operacional", 80.0),
+    _geral("Petrobras sobe com dólar", "cambio", 85.0, tickers=("PETR4",)),
+    _geral("Fed mantém juros", "juros_politica_monetaria", 70.0, ("US",)),
+    _geral("Copom sinaliza corte da Selic", "juros_politica_monetaria", 60.0),
+    _geral("Câmbio: real se valoriza", "cambio", 55.0),
+    _geral("Congresso aprova orçamento", "fiscal_politico", 40.0),
+    _geral("IPCA de setembro desacelera", "inflacao", 65.0),
+]
+
+
+def test_cenario_so_traz_fato_do_pais_nunca_outra_empresa(carteira):
+    _, an = carteira
+    itens = rs.noticias_cenario(_por(an, "BBAS3"), GERAIS, n=10)
+    titulos = [i.titulo for i in itens]
+    assert "Sable Offshore cai 51%" not in titulos
+    assert "Tecnologia para clima quer financiamento" not in titulos
+    assert "Petrobras sobe com dólar" not in titulos      # cita ticker
+    assert "Copom sinaliza corte da Selic" in titulos
+
+
+def test_cenario_prioriza_tema_da_classe_e_pais_do_ativo(carteira):
+    _, an = carteira
+    acao = [i.titulo for i in rs.noticias_cenario(_por(an, "BBAS3"), GERAIS)]
+    # Ações BR: juros, atividade, câmbio, fiscal pesam; Brasil antes dos EUA;
+    # inflação não está entre os canais da classe e fica depois.
+    assert acao[0] == "Copom sinaliza corte da Selic"
+    assert "Fed mantém juros" not in acao
+    assert "IPCA de setembro desacelera" not in acao
+    fii = [i.titulo for i in rs.noticias_cenario(_por(an, "HGLG11"), GERAIS)]
+    assert "IPCA de setembro desacelera" in fii           # inflação pesa em FII
+    exterior = rs.noticias_cenario(_por(an, "AAPL"), GERAIS)
+    assert exterior[0].titulo == "Fed mantém juros" and exterior[0].pais == "US"
+
+
+def test_cartao_mostra_cenario_e_diz_os_temas(carteira):
+    _, an = carteira
+    a = _por(an, "BBAS3")
+    html = tela.cartao_noticias(a, (GERAIS, "Acervo local"))
+    assert "Cenário econômico e político" in html
+    assert "Copom sinaliza corte da Selic" in html
+    assert "Sable Offshore" not in html and "Petrobras" not in html
+    assert "não de outras empresas" in html and "Fonte: Acervo local" in html
+    vazio = tela.cartao_noticias(a, ([GERAIS[0]], "Acervo local"))
+    assert "Nenhuma manchete de juros" in vazio and "Sable" not in vazio
