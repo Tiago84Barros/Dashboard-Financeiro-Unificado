@@ -125,3 +125,48 @@ def test_serie_por_ativo_ve_um_so_ativo():
     s = serie_por_ativo(d["eventos"], "anual")
     assert s["ordem"] == ["BBAS3"]
     assert s["series"]["BBAS3"] == [100.0, 7.5]
+
+
+# ── Filtro por situação na carteira ──────────────────────────────────────────
+
+from core.proventos import (  # noqa: E402
+    SITUACOES_ATIVO,
+    filtrar_por_situacao,
+    tickers_em_carteira,
+)
+
+ORDEM = ["BBAS3", "ITUB3", "MXRF11", "SAPR3"]
+
+
+def test_tickers_em_carteira_ignora_saldo_zero_e_junta_fracionario():
+    carteira = {"posicoes": [
+        {"ticker": "BBAS3F", "quantidade": 7},
+        {"ticker": "MXRF11", "quantidade": 100},
+        {"ticker": "ITUB3", "quantidade": 0},
+        {"ticker": None, "quantidade": 5},
+    ]}
+    assert tickers_em_carteira(carteira) == {"BBAS3", "MXRF11"}
+    assert tickers_em_carteira(None) == set()
+
+
+def test_filtrar_na_carteira_e_sairam_sao_complementares_e_mantem_ordem():
+    em = {"BBAS3", "MXRF11"}
+    na = filtrar_por_situacao(ORDEM, em, "Na carteira")
+    sairam = filtrar_por_situacao(ORDEM, em, "Saíram da carteira")
+    assert na == ["BBAS3", "MXRF11"]
+    assert sairam == ["ITUB3", "SAPR3"]
+    assert filtrar_por_situacao(ORDEM, em, "Todos") == ORDEM
+
+
+def test_filtrar_compara_pelo_ticker_base():
+    assert filtrar_por_situacao(["BBAS3F"], {"BBAS3"}, "Na carteira") == ["BBAS3F"]
+
+
+def test_situacoes_oferecidas_na_tela():
+    assert SITUACOES_ATIVO == ("Todos", "Na carteira", "Saíram da carteira")
+    import inspect
+
+    import views.investimentos as inv
+    corpo = inspect.getsource(inv._proventos_por_ativo)
+    assert "filtrar_por_situacao(base[\"ordem\"], em_carteira, situacao)" in corpo
+    assert "_proventos_por_ativo(proventos, carteira)" in inspect.getsource(inv._tab_historico)
