@@ -253,3 +253,46 @@ def test_cdi_a_espera_da_primeira_publicacao_fica_devido(tmp_path, monkeypatch):
         gzip.compress(json.dumps({"gerado_em": None, "serie": []}).encode()))
     monkeypatch.setattr(av, "ROOT", tmp_path)
     assert av._carimbo_do_arquivo("cdi.json.gz") is None
+
+
+class _Atualizacao:
+    def __init__(self, avancou):
+        self.avancou = avancou
+
+    def resumo(self):
+        return f"main local avançou {self.avancou} commit(s)"
+
+
+def test_main_que_avancou_recarrega_antes_de_decidir(monkeypatch):
+    """Alvo novo chegado pelo pull tem de entrar na mesma execução.
+
+    Em 03/10/2026 o alvo `cdi_diario` foi mergeado, mas a rotina decide pelo
+    `ALVOS` importado antes do pull: o CDI só sairia na execução seguinte.
+    """
+    monkeypatch.delenv(av._RECARREGADA, raising=False)
+    monkeypatch.setattr(av, "registrar", lambda _m: None)
+    monkeypatch.setattr(av, "atualizar_main", lambda _r: _Atualizacao(2))
+    monkeypatch.setattr(av, "ler_estado", _nunca)
+    chamadas = []
+    monkeypatch.setattr(av.subprocess, "run",
+                        lambda cmd, **k: chamadas.append((cmd, k["env"])) or _Proc(0))
+    assert av.main(["--apenas", "cdi_diario"]) == 0
+    cmd, env = chamadas[0]
+    assert cmd[-2:] == ["--apenas", "cdi_diario"]
+    assert env[av._RECARREGADA] == "1"
+
+
+def test_execucao_recarregada_nao_recarrega_de_novo(monkeypatch):
+    monkeypatch.setenv(av._RECARREGADA, "1")
+    monkeypatch.setattr(av, "registrar", lambda _m: None)
+    monkeypatch.setattr(av, "atualizar_main", _nunca)
+    monkeypatch.setattr(av, "ler_estado", lambda: {})
+    monkeypatch.setattr(av, "alvos_devidos", lambda *a, **k: [])
+    assert av.main([]) == 0
+
+
+def test_listar_nao_mexe_no_git(monkeypatch, capsys):
+    monkeypatch.delenv(av._RECARREGADA, raising=False)
+    monkeypatch.setattr(av, "atualizar_main", _nunca)
+    monkeypatch.setattr(av, "ler_estado", lambda: {})
+    assert av.main(["--listar"]) == 0
