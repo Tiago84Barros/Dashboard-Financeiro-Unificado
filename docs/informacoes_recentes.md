@@ -97,3 +97,30 @@ deve mostrar o que interessa nos relatórios, não a lista deles.
   então uma frase pode cair no tema errado.
 - Sem texto no acervo (FII, ou documento só com metadado), a tela diz isso em
   uma linha.
+
+## Etapa 10 · resumo por IA (03/10/2026)
+
+Abaixo das frases literais aparece o botão **"Resumir os relatórios com IA"**.
+Ele só aparece quando há trechos.
+
+- **Sob demanda.** Cada ativo custa uma chamada de LLM, por isso o resumo nunca
+  roda sozinho na renderização.
+- **Cache.** O resumo fica na sessão, com uma chave que muda quando os trechos
+  mudam (`views/inteligencia_ativos_relatorios.chave_sessao`).
+- **Resumo rejeitado.** Aparece o botão "Tentar de novo".
+- **Entrada da LLM** (`core/inteligencia_ativos/leitura_relatorios.py`):
+  - o texto da etapa 10 (`texto_relatorios`), com trechos, documentos e indícios;
+  - o bloco de mercado do ativo (`bloco_contexto_mercado`);
+  - o detalhe do armazém do ativo.
+  - É a mesma montagem do Portfolio Fit. O prompt leva
+    `REGRA_CONTEXTO_MERCADO`.
+- **Saída:** um JSON com síntese, pontos por tema, o que acompanhar e o que os
+  trechos não dizem.
+- **Validação:** `check_grounding` confere cada número contra a entrada.
+  - Número sem âncora deixa o resumo "com ressalvas" e aparece no rodapé.
+  - Sem síntese, JSON inválido ou provedor fora, o resumo é rejeitado.
+- **Texto da análise:** o resumo não entra em `texto_para_llm`. As outras LLMs
+  continuam lendo os trechos literais, não a paráfrase.
+- **Posição na tela:** o fluxo das 13 etapas sai em duas partes
+  (`fluxo_partes`), cortado logo depois da etapa 10, para o resumo aparecer
+  colado a ela.

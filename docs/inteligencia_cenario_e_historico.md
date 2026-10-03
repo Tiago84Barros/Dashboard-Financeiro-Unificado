@@ -157,8 +157,10 @@ MGLU3.
   exemplo, uma frase sobre dívida que cita "lucro" pode cair em Resultado.
 - [Certo] Etapa 10: às vezes a regra escolhe uma frase de pouco valor.
 - [Certo] Etapa 10: FIIs ainda não têm o texto dos documentos no corpus.
-- [Palpite] O próximo passo seria uma LLM escrever um resumo a partir dos
-  trechos. Custa uma chamada por ativo e ainda não foi decidido.
+- [Certo] O resumo por IA dos trechos foi implementado em seguida, sob
+  demanda (botão), em `core/inteligencia_ativos/leitura_relatorios.py`. Ver
+  `docs/informacoes_recentes.md`, "Etapa 10 · resumo por IA". Não foi testado
+  contra um provedor real nesta sessão.
 
 ## 6. Arquivos
 

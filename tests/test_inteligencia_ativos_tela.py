@@ -165,8 +165,12 @@ def test_liberada_mostra_premissa_resumo_e_os_13_cartoes():
     assert titulos == ["#### Minha estratégia"]
     assert app.expander[-1].label == "✏️ Ver ou alterar minha estratégia"
 
-    fluxo = next(h for h in htmls if "01 · Ativo" in h)
-    titulos = ["Ativo", "Papel na carteira", "Peso atual",
+    # O fluxo sai em duas partes, cortado depois da etapa 10 para o resumo
+    # por IA dos relatórios; sem trechos no acervo, nada entra entre elas.
+    i = next(n for n, h in enumerate(htmls) if "01 · Ativo" in h)
+    assert "11 · Próximos eventos" not in htmls[i]
+    fluxo = htmls[i] + htmls[i + 1]
+    titulos =["Ativo", "Papel na carteira", "Peso atual",
                "Peso desejado / faixa desejada", "Fundamentos", "Valuation",
                "Comparação com pares", "Cenário", "Notícias", "Relatórios",
                "Próximos eventos", "Impacto na carteira", "Ação a considerar"]
