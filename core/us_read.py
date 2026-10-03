@@ -1027,6 +1027,54 @@ def _tabelas_ausentes(conn, *nomes: str) -> list[str]:
     return ausentes
 
 
+# Só as linhas de preço que `build_annual_panel` consulta, por símbolo da safra:
+# a última cotação <= cada data-base (p0), a primeira >= data-base + horizonte
+# (saída; a tolerância é checada lá) e a última de todas (deslistagem). A linha
+# final carrega o mês mais recente da tabela inteira, que o painel usa como "fim
+# do dado" para separar deslistou de inobservável. Ler a tabela toda (368 mil
+# linhas) era o maior egress do Supabase -- ver supabase-cota-excedida.
+_SQL_PRECOS_PAINEL = """
+WITH d AS (
+    SELECT DISTINCT CAST(as_of_date AS date) AS a FROM market_us.score_vintages
+     WHERE track = 'fundamental' AND score_version = :v
+), s AS (
+    SELECT DISTINCT symbol FROM market_us.score_vintages
+     WHERE track = 'fundamental' AND score_version = :v
+), p AS (
+    SELECT pm.symbol, pm.month_end, pm.adjusted_close
+      FROM market_us.prices_monthly pm JOIN s ON s.symbol = pm.symbol
+     WHERE pm.adjusted_close IS NOT NULL
+), k AS (
+    SELECT p.symbol, MAX(p.month_end) AS me
+      FROM p JOIN d ON p.month_end <= d.a GROUP BY p.symbol, d.a
+    UNION
+    SELECT p.symbol, MIN(p.month_end)
+      FROM p JOIN d ON p.month_end >= d.a + make_interval(months => CAST(:h AS int))
+     GROUP BY p.symbol, d.a
+    UNION
+    SELECT symbol, MAX(month_end) FROM p GROUP BY symbol
+)
+SELECT p.symbol, p.month_end, p.adjusted_close
+  FROM p JOIN k ON k.symbol = p.symbol AND k.me = p.month_end
+UNION ALL
+(SELECT symbol, month_end, adjusted_close FROM market_us.prices_monthly
+  WHERE adjusted_close IS NOT NULL ORDER BY month_end DESC LIMIT 1)
+"""
+
+
+def _precos_do_painel(conn, score_version: str, horizon_months: int) -> pd.DataFrame:
+    """Preços mensais que o painel PIT de fato usa (mesmo resultado, ~1/6 das linhas).
+
+    Fora do PostgreSQL (a suíte roda em SQLite) lê a tabela inteira, como antes.
+    """
+    if conn.dialect.name != "postgresql":
+        return pd.read_sql(text(
+            "SELECT symbol, month_end, adjusted_close "
+            "FROM market_us.prices_monthly"), conn)
+    return pd.read_sql(text(_SQL_PRECOS_PAINEL), conn,
+                       params={"v": score_version, "h": int(horizon_months)})
+
+
 def _painel_vazio(motivo: str) -> pd.DataFrame:
     """Painel vazio que diz POR QUE está vazio.
 
@@ -1074,9 +1122,7 @@ def load_score_panel(score_version: str | None = None,
             vintages = pd.read_sql(text(vq), conn, params=params)
             if vintages.empty:
                 return _painel_vazio(_motivo_sem_safra(conn, score_version))
-            monthly = pd.read_sql(text(
-                "SELECT symbol, month_end, adjusted_close "
-                "FROM market_us.prices_monthly"), conn)
+            monthly = _precos_do_painel(conn, score_version, horizon_months)
             saidas = _ler_desfechos(conn)
     except Exception as exc:  # noqa: BLE001
         logger.warning("load_score_panel falhou: %s", exc)
