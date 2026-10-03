@@ -245,3 +245,73 @@ def test_veredito_usa_pme():
     assert _veredito_cdi({"pme": 1.05})[0] == _COR_POSITIVO
     assert _veredito_cdi({"pme": 0.95})[0] == _COR_NEGATIVO
     assert "Sem série" in _veredito_cdi({"pme": None})[1]
+
+
+# ── CDI publicado + BCB ───────────────────────────────────────────────────────
+
+
+def _serie_cdi(ini, fim, valor=0.04):
+    out, d = {}, ini
+    while d <= fim:
+        if d.weekday() < 5:
+            out[d] = valor
+        d += timedelta(days=1)
+    return out
+
+
+def test_cdi_publicado_ida_e_volta(tmp_path):
+    from datetime import datetime, timezone
+    serie = _serie_cdi(date(2024, 1, 1), date(2024, 1, 31))
+    arq = tmp_path / "cdi.json.gz"
+    arq.write_bytes(rt.serializar_cdi(serie, datetime(2024, 2, 1, tzinfo=timezone.utc)))
+    assert rt.ler_cdi_publicado(arq) == serie
+    assert rt.ler_cdi_publicado(tmp_path / "nao_existe.gz") == {}
+
+
+def test_arquivo_commitado_abre():
+    # O placeholder vazio, ou a série publicada: nunca exceção.
+    assert isinstance(rt.ler_cdi_publicado(), dict)
+
+
+def test_obter_cdi_usa_arquivo_e_so_pede_ao_bcb_o_que_falta():
+    pedidos = []
+
+    def baixar(ini, fim):
+        pedidos.append((ini, fim))
+        return _serie_cdi(ini, fim), None
+
+    pub = _serie_cdi(date(2019, 12, 1), date(2026, 9, 20))
+    out = rt.obter_cdi(date(2019, 12, 2), date(2026, 10, 3), publicado=pub, baixar=baixar)
+    # 20/09 é domingo: o último dia útil publicado é 18/09.
+    assert pedidos == [(date(2026, 9, 19), date(2026, 10, 3))]
+    assert out["motivo"] is None
+    assert "arquivo publicado" in out["fonte"] and "BCB" in out["fonte"]
+
+
+def test_obter_cdi_arquivo_em_dia_nao_chama_o_bcb():
+    def baixar(ini, fim):
+        raise AssertionError("não devia chamar o BCB")
+
+    pub = _serie_cdi(date(2019, 1, 1), date(2026, 10, 2))
+    out = rt.obter_cdi(date(2020, 1, 1), date(2026, 10, 3), publicado=pub, baixar=baixar)
+    assert out["motivo"] is None
+    assert min(out["serie"]) >= date(2020, 1, 1)
+
+
+def test_obter_cdi_sem_arquivo_e_sem_bcb_explica_o_motivo():
+    out = rt.obter_cdi(date(2019, 12, 2), date(2026, 10, 3), publicado={},
+                       baixar=lambda i, f: ({}, "o BCB não respondeu (ReadTimeout)"))
+    assert out["serie"] == {}
+    assert out["motivo"] == ("O arquivo publicado do CDI não cobre o período e "
+                             "o BCB não respondeu (ReadTimeout).")
+
+
+def test_obter_cdi_arquivo_velho_e_bcb_fora_ainda_compara_se_couber_na_folga():
+    pub = _serie_cdi(date(2019, 1, 1), date(2026, 9, 28))
+    out = rt.obter_cdi(date(2020, 1, 1), date(2026, 10, 3), publicado=pub,
+                       baixar=lambda i, f: ({}, "o BCB respondeu HTTP 503"))
+    # 28/09 está a 5 dias de 03/10: a comparação (folga de 7 dias) ainda vale.
+    assert out["motivo"] is None
+    comp = rt.comparar_com_cdi([(date(2020, 1, 2), -100.0)], 120.0, date(2026, 10, 3),
+                               out["serie"])
+    assert comp["cobertura_cdi"] is True

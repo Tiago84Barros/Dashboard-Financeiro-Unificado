@@ -282,6 +282,20 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/macro_insumos.json.gz",),
     ),
     Alvo(
+        # CDI diário da comparação "Rentabilidade vs CDI". O SGS do BCB não
+        # responde fora do Brasil: em 03/10/2026 a Streamlit Cloud mostrava
+        # "Sem série do CDI" e o `update_bcb` do GitHub Actions voltava com 0
+        # pontos. A rotina local alcança o BCB; o app lê o arquivo e só pede ao
+        # BCB os dias depois dele. Não usa o armazém.
+        chave="cdi_diario",
+        titulo="CDI diário (BCB/SGS 12)",
+        passos=(("scripts/publicar_cdi_diario.py",),),
+        cadencia_dias=1,
+        modulo="macro",
+        precisa_armazem=False,
+        artefatos=("data/public/cdi_diario.json.gz",),
+    ),
+    Alvo(
         # Histórico de múltiplos (B3 anual, FII mensal, EUA anual) e a
         # volatilidade usada na escolha de pares da Inteligência dos Ativos.
         # Vem de tabelas pesadas que só existem no armazém (fita da B3,

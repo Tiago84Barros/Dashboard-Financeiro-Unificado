@@ -237,6 +237,7 @@ CARIMBO = {
     # Publica num arquivo do repositório, não numa tabela: o carimbo é o
     # `generated_at` gravado dentro dele.
     "macro_insumos": ("arquivo", "data/public/macro_insumos.json.gz"),
+    "cdi_diario": ("arquivo", "data/public/cdi_diario.json.gz"),
     "valuation_historico": ("arquivo", "data/public/valuation_historico.json.gz"),
     "informacoes_recentes": ("arquivo", "data/public/informacoes_recentes.json.gz"),
     "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),
@@ -260,6 +261,8 @@ def _carimbo_do_arquivo(relativo: str):
     # formato próprio dos insumos macro.
     if isinstance(dados, dict) and isinstance(dados.get("gerado_em"), str):
         return datetime.fromisoformat(dados["gerado_em"])
+    if isinstance(dados, dict) and "gerado_em" in dados:
+        return None  # arquivo à espera da primeira publicação (CDI)
     from core.macro_data.insumos_publicados import desserializar
     return desserializar(bruto).gerado_em
 

@@ -1693,6 +1693,29 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
 """
 
 
+def ganho_total(evolucao: dict) -> dict | None:
+    """Ganho da carteira: (mercado − custo) + proventos recebidos.
+
+    Não é "mercado + proventos": o provento reinvestido já virou cota e está no
+    valor de mercado, e somá-lo de novo conta duas vezes. Aqui ele entra uma
+    vez só, reinvestido ou sacado, porque a valorização é medida contra o
+    custo -- e o custo do que foi comprado com provento está nele. ``None``
+    sem custo ou sem valor de mercado.
+    """
+    mercado = (evolucao or {}).get("total_mercado")
+    custo = (evolucao or {}).get("total_investido")
+    if mercado is None or not custo:
+        return None
+    proventos = float((evolucao or {}).get("total_dividendos") or 0.0)
+    valorizacao = float(mercado) - float(custo)
+    return {
+        "valorizacao": valorizacao,
+        "proventos": proventos,
+        "ganho": valorizacao + proventos,
+        "ganho_pct": (valorizacao + proventos) / float(custo),
+    }
+
+
 @user_cache_data(ttl=300)
 def get_evolucao_patrimonial() -> dict:
     """
@@ -2011,9 +2034,9 @@ _CLASSES_RV_B3 = {"Ações BR", "FII", "ETF", "ETF Brasil", "BDR"}
 def _cdi_diario_cache(inicio_iso: str, fim_iso: str) -> dict:
     from datetime import date as _date
 
-    from core.rentabilidade import carregar_cdi_diario
+    from core.rentabilidade import obter_cdi
 
-    return carregar_cdi_diario(_date.fromisoformat(inicio_iso), _date.fromisoformat(fim_iso))
+    return obter_cdi(_date.fromisoformat(inicio_iso), _date.fromisoformat(fim_iso))
 
 
 @user_cache_data(ttl=300)
@@ -2098,7 +2121,8 @@ def _rentabilidade_rv_b3_real() -> dict:
                 "excluidos": universo["excluidos"]}
 
     inicio = fluxos[0][0]
-    cdi = _cdi_diario_cache(inicio.isoformat(), hoje.isoformat())
+    cdi_info = _cdi_diario_cache(inicio.isoformat(), hoje.isoformat())
+    cdi = cdi_info["serie"]
     comp = comparar_com_cdi(fluxos, universo["valor_final"], hoje, cdi)
 
     aportes = -sum(v for _, v in fluxos if v < 0)
@@ -2122,6 +2146,9 @@ def _rentabilidade_rv_b3_real() -> dict:
         "diferenca": comp["diferenca"],
         "pme": comp["pme"],
         "cdi_disponivel": comp["cobertura_cdi"],
+        "cdi_fonte": cdi_info["fonte"],
+        "cdi_motivo": None if comp["cobertura_cdi"] else
+                      (cdi_info["motivo"] or "A série do CDI não cobre o período."),
         "aportes": aportes,
         "retiradas": retiradas,
         "cobertura_valor": cobertura,

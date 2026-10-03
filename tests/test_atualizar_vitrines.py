@@ -29,7 +29,7 @@ def test_carimbo_aponta_para_a_base_que_o_alvo_escreve(chave, onde):
     """
     escreve_no_armazem = {"fii_ingest", "espelho_supabase", "brapi_raw_poda",
                           "b3_pregao", "fii_documentos", "cvm_ipe"}
-    escreve_arquivo = {"macro_insumos", "valuation_historico",
+    escreve_arquivo = {"macro_insumos", "cdi_diario", "valuation_historico",
                        "informacoes_recentes", "rag_corpus"}
     esperado = ("armazem" if chave in escreve_no_armazem
                 else "arquivo" if chave in escreve_arquivo else "supabase")
@@ -243,3 +243,13 @@ def test_recusa_do_git_vira_falha_e_nao_some_no_log(monkeypatch):
 
     assert len(avisos) == 1
     assert "fii_selection" in avisos[0] and "não main" in avisos[0]
+
+
+def test_cdi_a_espera_da_primeira_publicacao_fica_devido(tmp_path, monkeypatch):
+    """O arquivo vazio commitado não pode semear o alvo como em dia."""
+    import gzip
+    import json
+    (tmp_path / "cdi.json.gz").write_bytes(
+        gzip.compress(json.dumps({"gerado_em": None, "serie": []}).encode()))
+    monkeypatch.setattr(av, "ROOT", tmp_path)
+    assert av._carimbo_do_arquivo("cdi.json.gz") is None

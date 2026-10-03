@@ -27,12 +27,16 @@ Convenção de sinal (ótica do investidor)
   valor final da posição → positivo, na data final
 
 Tudo aqui é puro: sem banco, sem rede. O carregamento fica em
-core/investimentos.py (fluxos) e em ``carregar_cdi_diario`` (BCB).
+core/investimentos.py (fluxos), em ``baixar_cdi_bcb`` (BCB) e em
+``ler_cdi_publicado`` (arquivo do repositório).
 """
 from __future__ import annotations
 
+import gzip
+import json
 import logging
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -319,11 +323,13 @@ def parse_sgs(payload: list[dict]) -> dict[date, float]:
     return out
 
 
-def carregar_cdi_diario(inicio: date, fim: date, timeout: float = 15.0) -> dict[date, float]:
+def baixar_cdi_bcb(inicio: date, fim: date,
+                   timeout: float = 15.0) -> tuple[dict[date, float], str | None]:
     """Baixa o CDI diário do BCB em janelas de até 9 anos (o SGS recusa >10).
 
-    Falha de rede devolve o que já veio (possivelmente vazio); quem chama
-    decide o que mostrar — ``comparar_com_cdi`` marca ``cobertura_cdi=False``.
+    Devolve ``(serie, motivo)``: ``motivo`` diz por que a série parou antes do
+    fim (HTTP x, timeout...), ou ``None`` se veio inteira. Falha devolve o que
+    já veio, possivelmente vazio.
     """
     import requests
 
@@ -336,10 +342,108 @@ def carregar_cdi_diario(inicio: date, fim: date, timeout: float = 15.0) -> dict[
             r = requests.get(url, timeout=timeout)
             if not r.ok:
                 logger.warning("[rentabilidade] SGS 12 respondeu HTTP %s.", r.status_code)
-                break
+                return out, f"o BCB respondeu HTTP {r.status_code}"
             out.update(parse_sgs(r.json()))
         except Exception as exc:
             logger.warning("[rentabilidade] CDI indisponível (%s).", type(exc).__name__)
-            break
+            return out, f"o BCB não respondeu ({type(exc).__name__})"
         ini = fim_janela + timedelta(days=1)
+    return out, None
+
+
+def carregar_cdi_diario(inicio: date, fim: date, timeout: float = 15.0) -> dict[date, float]:
+    """Só a série de :func:`baixar_cdi_bcb`, sem o motivo da falha."""
+    return baixar_cdi_bcb(inicio, fim, timeout)[0]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CDI publicado no repositório
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# O SGS não responde a quem está fora do Brasil. Em 03/10/2026 o job
+# `update_bcb` do GitHub Actions (servidor nos EUA) passava 90 s por série e
+# voltava com 0 pontos em todas -- e a Streamlit Cloud está no mesmo lugar: a
+# tela dizia "Sem série do CDI para comparar". Quem alcança o BCB é a rotina
+# local (`scripts/atualizar_vitrines.py`), que publica a série neste arquivo
+# (`scripts/publicar_cdi_diario.py`). O app lê o arquivo e só pede ao BCB os
+# dias que faltam depois dele.
+
+CAMINHO_CDI_PUBLICADO = (
+    Path(__file__).resolve().parents[1] / "data" / "public" / "cdi_diario.json.gz"
+)
+
+# O SGS publica o CDI de um dia útil no dia seguinte; com fim de semana e
+# feriado, 5 dias corridos de atraso ainda é série em dia.
+_FOLGA_CDI_DIAS = 5
+
+
+def serializar_cdi(serie: dict[date, float], gerado_em: datetime) -> bytes:
+    corpo = {
+        "schema": 1,
+        "fonte": "BCB/SGS 12 (CDI, % ao dia útil)",
+        "gerado_em": gerado_em.isoformat(),
+        "serie": [[d.isoformat(), v] for d, v in sorted(serie.items())],
+    }
+    return gzip.compress(json.dumps(corpo, separators=(",", ":")).encode("utf-8"), mtime=0)
+
+
+def desserializar_cdi(dados: bytes) -> dict[date, float]:
+    corpo = json.loads(gzip.decompress(dados).decode("utf-8"))
+    out: dict[date, float] = {}
+    for linha in corpo.get("serie") or []:
+        try:
+            out[date.fromisoformat(linha[0])] = float(linha[1])
+        except (IndexError, TypeError, ValueError):
+            continue
     return out
+
+
+def ler_cdi_publicado(caminho: Path = CAMINHO_CDI_PUBLICADO) -> dict[date, float]:
+    """Série do arquivo publicado; vazia se ele não existe ou não abre."""
+    try:
+        return desserializar_cdi(caminho.read_bytes())
+    except (OSError, ValueError, EOFError) as exc:
+        logger.info("[rentabilidade] CDI publicado ilegível (%s).", type(exc).__name__)
+        return {}
+
+
+def obter_cdi(inicio: date, fim: date, *, publicado: dict[date, float] | None = None,
+              baixar=baixar_cdi_bcb) -> dict:
+    """CDI diário de ``inicio`` a ``fim``: o arquivo publicado e, depois dele, o BCB.
+
+    Devolve ``{"serie", "fonte", "motivo"}``. ``motivo`` só vem preenchido
+    quando a série não cobre o período -- é o texto que a tela mostra no lugar
+    de um "—" mudo.
+    """
+    pub = ler_cdi_publicado() if publicado is None else publicado
+    serie = {d: v for d, v in pub.items() if inicio <= d <= fim}
+    cobre_inicio = bool(serie) and min(serie) <= inicio + timedelta(days=7)
+    ultimo = max(serie) if cobre_inicio else None
+    fontes = []
+    if ultimo is not None:
+        fontes.append(f"arquivo publicado até {ultimo:%d/%m/%Y}")
+    else:
+        serie = {}
+
+    falha = None
+    if ultimo is None or ultimo < fim - timedelta(days=_FOLGA_CDI_DIAS):
+        desde = inicio if ultimo is None else ultimo + timedelta(days=1)
+        novos, falha = baixar(desde, fim)
+        if novos:
+            serie.update(novos)
+            fontes.append("BCB")
+
+    cobre = (bool(serie) and min(serie) <= inicio + timedelta(days=7)
+             and max(serie) >= fim - timedelta(days=7))
+    motivo = None
+    if not cobre:
+        partes = []
+        if ultimo is None:
+            partes.append("o arquivo publicado do CDI não cobre o período")
+        else:
+            partes.append(f"o arquivo publicado do CDI para em {ultimo:%d/%m/%Y}")
+        if falha:
+            partes.append(falha)
+        motivo = " e ".join(partes) + "."
+        motivo = motivo[0].upper() + motivo[1:]
+    return {"serie": serie, "fonte": " + ".join(fontes) or None, "motivo": motivo}
