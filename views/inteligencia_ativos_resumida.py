@@ -329,10 +329,20 @@ def _manchete(i) -> str:
             f'{_link(i.headline, i.url)}</div></div>')
 
 
+def _manchete_cenario(i: rs.ItemCenario) -> str:
+    pais = f" · {i.pais}" if i.pais else ""
+    return (f'<div style="margin:3px 0"><span style="color:var(--app-subtle);'
+            f'font-size:0.78rem">{escape(i.tema.capitalize())}{escape(pais)} · '
+            f'{escape(i.data)} · {escape(i.veiculo or "—")}</span>'
+            f'<div style="color:var(--app-text)">{_link(i.titulo, i.url)}'
+            f'</div></div>')
+
+
 def cartao_noticias(a: m.AnaliseAtivo,
-                    gerais: tuple[list[str], str] | None = None) -> str:
+                    gerais: tuple[list[dict], str] | None = None) -> str:
     """Notícias do ativo; sem elas, as do segmento; e, se ainda faltar, o
-    noticiário geral do mercado. Nunca em branco. Puro."""
+    cenário econômico e político que pesa na classe do ativo. Nunca em
+    branco. Puro."""
     itens, motivo = rs.noticias(a)
     partes = []
     if itens:
@@ -347,29 +357,36 @@ def cartao_noticias(a: m.AnaliseAtivo,
         partes.append("".join(_manchete(i) for i in setor))
         partes.append(_nota("Notícias dos pares do mesmo segmento, não do "
                             "ativo."))
-    lista, origem = gerais or ([], "")
-    if lista and rs.precisa_noticiario_geral(a):
-        falta = rs.N_NOTICIAS - len(itens) - len(setor)
-        partes.append(_secao("Noticiário geral do mercado"))
-        partes.append("".join(
-            f'<div style="margin:3px 0;color:var(--app-text)">{escape(x)}</div>'
-            for x in lista[:max(falta, 1)]))
-        if origem:
-            partes.append(_nota(origem))
+    if gerais is not None and rs.precisa_noticiario_geral(a):
+        brutos, origem = gerais
+        falta = max(rs.N_NOTICIAS - len(itens) - len(setor), 1)
+        cenario = rs.noticias_cenario(a, brutos, falta)
+        temas = rs.temas_do_ativo(a.ativo.classe_politica)
+        partes.append(_secao("Cenário econômico e político"))
+        if cenario:
+            partes.append("".join(_manchete_cenario(i) for i in cenario))
+        else:
+            partes.append('<div style="color:var(--app-muted)">Nenhuma '
+                          'manchete de juros, inflação, câmbio, fiscal ou '
+                          'política no período.</div>')
+        partes.append(_nota(
+            "Fatos do país que pesam no ativo, não de outras empresas"
+            + (f"; escolhidos por {temas}" if temas else "")
+            + (f". Fonte: {origem}." if origem else ".")))
     elif not itens and not setor:
-        partes.append(_nota("Noticiário geral do mercado indisponível agora."))
+        partes.append(_nota("Cenário econômico e político indisponível agora."))
     return f'<div style="{_CAIXA}">{_secao("Notícias")}{"".join(partes)}</div>'
 
 
 @st.cache_data(ttl=900, show_spinner=False)
-def _noticiario_geral() -> tuple[list[str], str]:
-    """Noticiário geral do mercado, o mesmo que os chats leem. Falha vira
-    lista vazia: a caixa diz que faltou."""
+def _noticiario_geral() -> tuple[list[dict], str]:
+    """Noticiário geral cru (acervo, túnel ou vitrine), com o tipo de evento
+    de cada item. Falha vira lista vazia com a fonte nomeada."""
     try:
-        from core.contexto_mercado import manchetes_gerais
-        return manchetes_gerais(rs.N_NOTICIAS)
-    except Exception:  # noqa: BLE001 - fonte fora do ar não derruba a página
-        return [], ""
+        from core.contexto_mercado import itens_gerais
+        return itens_gerais()
+    except Exception as exc:  # noqa: BLE001 - fonte fora do ar não derruba a página
+        return [], f"leitura falhou ({type(exc).__name__})"
 
 
 @st.cache_data(ttl=3600, show_spinner=False)

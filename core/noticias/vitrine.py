@@ -66,6 +66,16 @@ ITENS_POR_ATIVO = 3
 #: bytes cada, são ~10 KB fixos -- a vitrine continua do tamanho de uma foto.
 MANCHETES_GERAIS = 40
 
+#: Vagas extras para fato de cenário (juros, inflação, câmbio, fiscal,
+#: política...) que não entrou entre as 40 mais relevantes. Sem elas, a
+#: Inteligência dos Ativos com o PC desligado teria só manchete de empresa
+#: para completar a caixa de notícias de um ativo sem notícia própria.
+MANCHETES_MACRO = 20
+TIPOS_CENARIO = frozenset({
+    "juros_politica_monetaria", "inflacao", "cambio", "fiscal_politico",
+    "atividade_emprego", "crise_sistemica", "geopolitica", "pandemia",
+    "commodity", "quebra_bancaria"})
+
 
 class VitrineIlegivel(RuntimeError):
     """A vitrine não pôde ser lida — o que não é o mesmo que vitrine vazia."""
@@ -198,23 +208,27 @@ def _texto_iso(valor) -> str | None:
     return str(valor) if valor else None
 
 
-def manchetes_da_leitura(linhas, limite: int = MANCHETES_GERAIS) -> str:
+def manchetes_da_leitura(linhas, limite: int = MANCHETES_GERAIS,
+                         macro: int = MANCHETES_MACRO) -> str:
     """Achata linhas de ``ler_recentes`` no JSON da meta. Testável sem banco.
 
-    Guarda só o que o chat imprime -- título, veículo, nota, direção, data e os
-    países citados (o Brasil ordena primeiro). Sem ``resumo`` e sem URL: é isso
-    que mantém o noticiário inteiro fora da nuvem.
+    Guarda só o que a tela e o chat imprimem -- título, veículo, nota, direção,
+    data, tipo de evento, os países citados (o Brasil ordena primeiro) e se a
+    matéria cita ticker. Sem ``resumo`` e sem URL: é isso que mantém o
+    noticiário inteiro fora da nuvem.
 
     As mais relevantes entram, não as mais novas: o chat escolhe pela nota, e
-    cortar pela data jogaria fora justamente o que ele mostraria.
+    cortar pela data jogaria fora justamente o que ele mostraria. Depois delas,
+    até ``macro`` fatos de cenário que ficaram de fora.
     """
     ordenadas = sorted(linhas, key=lambda i: float(i.get("nota") or 0), reverse=True)
     saida: list[dict] = []
     vistos: set[str] = set()
-    for linha in ordenadas:
+
+    def _achatar(linha) -> dict | None:
         titulo = str(linha.get("titulo") or "").strip()
         if not titulo or titulo in vistos:
-            continue
+            return None
         vistos.add(titulo)
         entidades = linha.get("entidades") or {}
         if isinstance(entidades, str):
@@ -222,20 +236,37 @@ def manchetes_da_leitura(linhas, limite: int = MANCHETES_GERAIS) -> str:
                 entidades = json.loads(entidades)
             except ValueError:
                 entidades = {}
-        paises = (list(entidades.get("paises") or ())
-                  if isinstance(entidades, dict) else [])
+        if not isinstance(entidades, dict):
+            entidades = {}
         nota = linha.get("nota")
-        saida.append({
+        return {
             "titulo": titulo,
             "veiculo": str(linha.get("veiculo") or "") or None,
             "nota": None if nota is None else round(float(nota), 1),
             "direcao": str(linha.get("direcao") or "") or None,
             "publicado_em": _texto_iso(linha.get("publicado_em")),
             "coletado_em": _texto_iso(linha.get("coletado_em")),
-            "entidades": {"paises": paises},
-        })
+            "entidades": {"paises": list(entidades.get("paises") or ())},
+            "tipo_evento": str(linha.get("tipo_evento") or "") or None,
+            "com_ticker": bool(entidades.get("tickers")),
+        }
+
+    for linha in ordenadas:
         if len(saida) >= limite:
             break
+        item = _achatar(linha)
+        if item is not None:
+            saida.append(item)
+    extras = 0
+    for linha in ordenadas:
+        if extras >= macro:
+            break
+        if str(linha.get("tipo_evento") or "") not in TIPOS_CENARIO:
+            continue
+        item = _achatar(linha)
+        if item is not None:
+            saida.append(item)
+            extras += 1
     return json.dumps(saida, ensure_ascii=False)
 
 

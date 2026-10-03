@@ -331,3 +331,24 @@ def test_regra_chega_aos_system_prompts(monkeypatch):
     for system in capturado:
         assert cm.REGRA_CONTEXTO_MERCADO in system
         assert "{regra_mercado}" not in system
+
+
+def test_item_geral_sem_tipo_e_classificado_pelo_titulo():
+    item = cm._normalizar_item({"titulo": "Copom mantém a Selic",
+                                "entidades": '{"paises": ["BR"]}'})
+    assert item["tipo_evento"] == "juros_politica_monetaria"
+    assert item["entidades"] == {"paises": ["BR"]}
+    assert cm._normalizar_item({"titulo": "x", "tipo_evento": "cambio",
+                                "entidades": None})["tipo_evento"] == "cambio"
+
+
+def test_itens_gerais_sem_acervo_nem_tunel_nomeiam_a_vitrine(monkeypatch):
+    import core.noticias.destino as destino
+
+    monkeypatch.setattr(destino, "engine_acervo", lambda: None)
+    monkeypatch.setattr(cm, "_itens_remoto", lambda: (None, "túnel fora"))
+    monkeypatch.setattr(cm, "_itens_vitrine_cache",
+                        lambda: ([{"titulo": "IPCA sobe"}], "Vitrine X"))
+    itens, origem = cm.itens_gerais()
+    assert itens[0]["tipo_evento"] == "inflacao"
+    assert "túnel fora" in origem and "Vitrine X" in origem

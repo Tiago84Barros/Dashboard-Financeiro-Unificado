@@ -344,3 +344,20 @@ def test_vitrine_sem_a_coluna_cai_nas_manchetes_por_ativo(vazia):
     finally:
         with vazia.begin() as conn:
             vit.garantir_schema(conn)
+
+
+def test_manchetes_gerais_reservam_vagas_para_o_cenario():
+    import json
+
+    linhas = [_linha_geral(f"n{i}", float(100 + i)) for i in range(60)]
+    macro = dict(_linha_geral("Copom corta Selic", 5.0, paises=("BR",)),
+                 tipo_evento="juros_politica_monetaria")
+    empresa = dict(_linha_geral("Vale anuncia recompra", 4.0),
+                   tipo_evento="dividendo",
+                   entidades={"paises": [], "tickers": ["VALE3"]})
+    saida = json.loads(vit.manchetes_da_leitura(linhas + [macro, empresa]))
+    assert len(saida) == vit.MANCHETES_GERAIS + 1
+    assert saida[-1]["titulo"] == "Copom corta Selic"
+    assert saida[-1]["tipo_evento"] == "juros_politica_monetaria"
+    assert not saida[-1]["com_ticker"]
+    assert "Vale anuncia recompra" not in {s["titulo"] for s in saida}

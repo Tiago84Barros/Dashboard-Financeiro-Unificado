@@ -586,8 +586,117 @@ def noticias_setor(a: m.AnaliseAtivo, n: int = N_NOTICIAS):
 
 def precisa_noticiario_geral(a: m.AnaliseAtivo, n: int = N_NOTICIAS) -> bool:
     """A caixa nunca fica em branco: com menos de ``n`` manchetes do ativo e
-    do segmento, ela completa com o noticiário geral do mercado."""
+    do segmento, ela completa com o cenário econômico e político."""
     return len(noticias(a, n)[0]) + len(noticias_setor(a, n)[0]) < n
+
+
+# -- cenário econômico e político (complemento das notícias) --------------------------
+
+# Canal do cenário (core.cenario.modelo) -> tipos de evento da taxonomia de
+# notícias que falam dele. É a ponte entre "o que pesa na classe" e "qual
+# manchete mostrar".
+TIPOS_POR_CANAL: dict[str, tuple[str, ...]] = {
+    "interest_rate": ("juros_politica_monetaria",),
+    "interest_rate_outlook": ("juros_politica_monetaria",),
+    "inflation": ("inflacao",),
+    "inflation_outlook": ("inflacao",),
+    "economic_activity": ("atividade_emprego",),
+    "fx": ("cambio",),
+    "fiscal_policy": ("fiscal_politico",),
+    "credit": ("juros_politica_monetaria", "quebra_bancaria"),
+    "commodities": ("commodity",),
+    "global_economy": ("juros_politica_monetaria", "atividade_emprego",
+                       "inflacao"),
+    "geopolitical_risk": ("geopolitica", "fiscal_politico"),
+    "capital_markets": ("crise_sistemica",),
+}
+# Fato macro que pesa em qualquer ativo, mesmo fora dos canais da classe.
+TIPOS_MACRO: frozenset[str] = frozenset({
+    "juros_politica_monetaria", "inflacao", "cambio", "fiscal_politico",
+    "atividade_emprego", "crise_sistemica", "geopolitica", "pandemia"})
+ROTULO_TIPO: dict[str, str] = {
+    "juros_politica_monetaria": "juros", "inflacao": "inflação",
+    "cambio": "câmbio", "fiscal_politico": "fiscal e política",
+    "atividade_emprego": "atividade e emprego", "crise_sistemica": "crise",
+    "geopolitica": "geopolítica", "pandemia": "saúde pública",
+    "commodity": "commodities", "quebra_bancaria": "crédito e bancos"}
+
+
+@dataclass(frozen=True)
+class ItemCenario:
+    titulo: str
+    url: str | None
+    veiculo: str | None
+    data: str            # dd/mm/aaaa ou "—"
+    tema: str            # rótulo curto do tipo de evento
+    pais: str | None     # "BR", "US"... o primeiro citado
+
+
+def tipos_do_ativo(classe_politica: str | None) -> tuple[str, ...]:
+    """Tipos de evento na ordem do que mais pesa para a classe. Puro."""
+    saida: list[str] = []
+    for canal in cen.relevantes(classe_politica):
+        for t in TIPOS_POR_CANAL.get(canal, ()):
+            if t not in saida:
+                saida.append(t)
+    return tuple(saida)
+
+
+def _data_item(item) -> str:
+    valor = item.get("publicado_em") or item.get("coletado_em")
+    if hasattr(valor, "isoformat"):
+        valor = valor.isoformat()
+    texto = str(valor or "")
+    return inf._data_br(texto) if len(texto) >= 10 and texto[4] == "-" else "—"
+
+
+def noticias_cenario(a: m.AnaliseAtivo, itens, n: int = N_NOTICIAS
+                     ) -> tuple[ItemCenario, ...]:
+    """As ``n`` manchetes macro e políticas que mais pesam no ativo. Puro.
+
+    Só entra fato de cenário (juros, inflação, câmbio, fiscal, política,
+    atividade, geopolítica) e, quando a classe é sensível a eles, commodities
+    e crédito. Matéria centrada em outra empresa (cita ticker) fica de fora:
+    o complemento é sobre o país, não sobre o vizinho. A ordem é: tema que
+    pesa na classe, depois país do ativo (Brasil; EUA para exterior), depois
+    a nota de relevância.
+    """
+    prioridade = tipos_do_ativo(a.ativo.classe_politica)
+    aceitos = TIPOS_MACRO | set(prioridade)
+    pais_alvo = "US" if a.ativo.classe_politica == "exterior" else "BR"
+    candidatos = []
+    vistos: set[str] = set()
+    for item in itens or ():
+        tipo = str(item.get("tipo_evento") or "")
+        titulo = str(item.get("titulo") or "").strip()
+        if tipo not in aceitos or not titulo or titulo in vistos:
+            continue
+        ent = item.get("entidades") or {}
+        if not isinstance(ent, dict):
+            ent = {}
+        if ent.get("tickers") or item.get("com_ticker"):
+            continue
+        vistos.add(titulo)
+        paises = list(ent.get("paises") or ())
+        rank = (prioridade.index(tipo) if tipo in prioridade
+                else len(prioridade))
+        candidatos.append(((rank == len(prioridade), pais_alvo not in paises,
+                            -float(item.get("nota") or 0)),
+                           ItemCenario(titulo, item.get("url") or None,
+                                       item.get("veiculo") or None,
+                                       _data_item(item),
+                                       ROTULO_TIPO.get(tipo, tipo),
+                                       paises[0] if paises else None)))
+    candidatos.sort(key=lambda c: c[0])
+    return tuple(c[1] for c in candidatos[:n])
+
+
+def temas_do_ativo(classe_politica: str | None) -> str:
+    """"juros, câmbio, fiscal e política" — os temas que guiaram a escolha."""
+    rotulos = list(dict.fromkeys(ROTULO_TIPO[t] for t in
+                                 tipos_do_ativo(classe_politica)
+                                 if t in ROTULO_TIPO))
+    return ", ".join(rotulos)
 
 
 def relatorios(a: m.AnaliseAtivo, n: int = N_RELATORIOS):
