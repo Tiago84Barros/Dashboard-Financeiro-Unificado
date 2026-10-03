@@ -22,8 +22,8 @@ não decide nada sozinha.
 
 Liberada, a aba é um painel, de cima para baixo: resumo da carteira,
 cartões dos ativos (o botão de cada um abre a análise completa), análise
-completa e Portfolio Fit do ativo escolhido, e o histórico com a auditoria de
-cada foto. A carteira recomendada do Portfólio Global aparece como referência
+completa e Portfolio Fit do ativo escolhido. O histórico de cada foto é
+gravado, mas não aparece na tela. A carteira recomendada do Portfólio Global aparece como referência
 comparativa (``core/inteligencia_ativos/referencia_modelo.py``), em cartão
 próprio, fora das 13 etapas e da "Ação a considerar". Os cartões vêm de ``views/inteligencia_ativos_painel.py``; os
 números, de ``core/inteligencia_ativos/painel.py`` e ``historico.py``.
@@ -918,8 +918,7 @@ def _render_painel(liberacao: portao.Liberacao, carteira: dict,
 
     # Toggle, não expander: o Portfolio Fit tem expander próprio e o
     # Streamlit não aninha expanders.
-    if not st.toggle("🔎 Análise detalhada (13 etapas, Portfolio Fit e "
-                     "histórico)", key=tela_resumida.DETALHE_KEY):
+    if not st.toggle("🔎 Análise detalhada (13 etapas e Portfolio Fit)", key=tela_resumida.DETALHE_KEY):
         return
     por_ticker = {a.ativo.ticker: a for a in analises}
     if st.session_state.get(tela_painel.SELECAO_KEY) not in por_ticker:
@@ -936,8 +935,7 @@ def _render_painel(liberacao: portao.Liberacao, carteira: dict,
     st.markdown("#### Portfolio Fit")
     leitura = tela_fit.render(analise_, ctx,
                               referencia.para_llm(analise_.ativo.ticker))
-    st.markdown("#### Histórico e auditoria")
-    tela_painel.render_historico(analise_, ctx, leitura)
+    tela_painel.registrar_leitura_llm(analise_, ctx, leitura)
 
 
 def _tabela_carteira(analises) -> None:
