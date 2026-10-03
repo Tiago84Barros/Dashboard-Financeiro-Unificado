@@ -227,7 +227,8 @@ ALVOS: tuple[Alvo, ...] = (
     Alvo(
         chave="us_vintages",
         titulo="Safras PIT dos EUA",
-        passos=(("-m", "scripts.publish_us_score_vintages", "--apply"),),
+        passos=(("-m", "scripts.publish_us_score_vintages", "--apply"),
+                ("-m", "scripts.publish_us_score_panel", "--apply")),
         cadencia_dias=None,
         modulo="us",
         versao_de="core.us_methodology:US_FUNDAMENTAL_SCORE_VERSION",
@@ -235,7 +236,8 @@ ALVOS: tuple[Alvo, ...] = (
     Alvo(
         chave="us_delistings",
         titulo="Saídas de bolsa dos EUA",
-        passos=(("-m", "scripts.publish_us_delistings", "--apply"),),
+        passos=(("-m", "scripts.publish_us_delistings", "--apply"),
+                ("-m", "scripts.publish_us_score_panel", "--apply")),
         cadencia_dias=30,
         modulo="us",
     ),
@@ -339,7 +341,8 @@ ALVOS: tuple[Alvo, ...] = (
     Alvo(
         chave="us_prices",
         titulo="Preços mensais dos EUA",
-        passos=(("-m", "scripts.publish_us_prices_monthly", "--apply"),),
+        passos=(("-m", "scripts.publish_us_prices_monthly", "--apply"),
+                ("-m", "scripts.publish_us_score_panel", "--apply")),
         cadencia_dias=30,
         modulo="us",
     ),
