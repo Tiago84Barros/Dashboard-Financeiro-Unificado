@@ -1695,14 +1695,17 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
 """
 
 
-def ganho_total(evolucao: dict) -> dict | None:
-    """Ganho da carteira: (mercado − custo) + proventos recebidos.
+def ganho_total(evolucao: dict, realizado: dict | None = None) -> dict | None:
+    """Ganho da carteira: (mercado − custo) + lucro realizado em vendas + proventos.
 
     Não é "mercado + proventos": o provento reinvestido já virou cota e está no
     valor de mercado, e somá-lo de novo conta duas vezes. Aqui ele entra uma
     vez só, reinvestido ou sacado, porque a valorização é medida contra o
-    custo -- e o custo do que foi comprado com provento está nele. ``None``
-    sem custo ou sem valor de mercado.
+    custo -- e o custo do que foi comprado com provento está nele.
+
+    O custo é o da carteira ATUAL: o que já foi vendido saiu dele. Sem o
+    ``realizado`` (de ``get_resultado_realizado``), o lucro ou prejuízo dessas
+    vendas sumia da conta. ``None`` sem custo ou sem valor de mercado.
     """
     mercado = (evolucao or {}).get("total_mercado")
     custo = (evolucao or {}).get("total_investido")
@@ -1710,12 +1713,38 @@ def ganho_total(evolucao: dict) -> dict | None:
         return None
     proventos = float((evolucao or {}).get("total_dividendos") or 0.0)
     valorizacao = float(mercado) - float(custo)
+    disponivel = bool(realizado) and realizado.get("ganho") is not None
+    vendas = float(realizado["ganho"]) if disponivel else 0.0
     return {
         "valorizacao": valorizacao,
+        "realizado": vendas if disponivel else None,
         "proventos": proventos,
-        "ganho": valorizacao + proventos,
-        "ganho_pct": (valorizacao + proventos) / float(custo),
+        "ganho": valorizacao + vendas + proventos,
     }
+
+
+@user_cache_data(ttl=300)
+def get_resultado_realizado() -> dict:
+    """Lucro realizado em vendas da renda variável B3, pelo extrato de negociação.
+
+    ``{"ganho": None, "motivo": ...}`` quando não dá para calcular: o card
+    mostra o ganho sem as vendas e diz por quê, em vez de tratar como zero.
+    """
+    if settings.MOCK_MODE:
+        return {"ganho": None, "motivo": "lucro de vendas não é simulado em modo mock"}
+    try:
+        from core.database import get_engine
+        from core.ir_renda_variavel import carregar_operacoes, resultado_realizado
+
+        engine = get_engine()
+        if engine is None:
+            raise RuntimeError("Engine indisponível.")
+        transacoes, eventos = carregar_operacoes(engine, settings.OWNER_USER_ID)
+        return resultado_realizado(transacoes, eventos)
+    except Exception as exc:
+        logger.warning("[investimentos] lucro realizado indisponível (%s).", type(exc).__name__)
+        return {"ganho": None,
+                "motivo": "não foi possível ler o extrato de negociação da B3"}
 
 
 @user_cache_data(ttl=300)
