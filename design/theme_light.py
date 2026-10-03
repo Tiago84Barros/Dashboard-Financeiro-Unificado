@@ -222,9 +222,26 @@ button:disabled {opacity:.55;}
  background:var(--app-surface)!important; border-color:var(--app-border)!important;
  box-shadow:var(--app-shadow); color:var(--app-text)!important;
 }
-/* Card da marca: continua escuro no claro (ver design/tema.py), só a sombra
-   suaviza. O bloco do usuário segue os tokens. */
-.app-brand {box-shadow:0 10px 26px rgba(15,35,70,.18)!important;}
+/* Card da marca no claro: versão clara com tinta verde/azul -- nem o card
+   escuro do tema escuro (destoava, pedido do dono em 03/10/2026) nem o branco
+   liso de antes. A faixa colorida do topo (::before) vem de design/tema.py. */
+.app-brand {
+ border-color:#cfdcea!important;
+ background:
+  radial-gradient(circle at 100% 0%, rgba(23,94,172,.13), transparent 55%),
+  radial-gradient(circle at 0% 100%, rgba(0,126,96,.11), transparent 55%),
+  linear-gradient(150deg, #ffffff 0%, #f3f8fd 60%, #edf5f9 100%)!important;
+ box-shadow:0 10px 24px rgba(15,35,70,.10)!important;
+}
+.app-brand-glow {border-color:rgba(23,94,172,.06)!important;}
+.app-brand-mark {background:#ffffff!important; border-color:#cfdcea!important;
+ box-shadow:0 2px 6px rgba(15,35,70,.08);}
+.app-brand-badge {background:rgba(0,126,96,.08)!important;
+ border-color:rgba(0,126,96,.30)!important; color:var(--app-primary)!important;}
+.app-brand-title {color:var(--app-text)!important;}
+.app-brand-subtitle {color:var(--app-muted)!important;}
+.app-brand-tags {border-top-color:#dbe4ee!important;}
+.app-brand-tags span {background:rgba(23,94,172,.07)!important; color:#33465e!important;}
 .app-user {background:var(--app-surface)!important; border-color:var(--app-border)!important;
  box-shadow:0 2px 8px rgba(15,35,70,.06);}
 .app-user-name {color:var(--app-text)!important;}
