@@ -275,6 +275,25 @@ def _realizacoes(transacoes: list[dict], eventos: list[dict] | None,
     return realizacoes, alertas
 
 
+def resultado_realizado(transacoes: list[dict], eventos: list[dict] | None = None,
+                        ) -> dict:
+    """Lucro (ou prejuízo) já realizado em vendas, somado desde o início do extrato.
+
+    Usa as mesmas realizações do IR (preço médio ponderado, corretagem, day
+    trade, eventos da Movimentação). Venda sem custo conhecido -- ativo
+    comprado antes do primeiro extrato -- não entra como ganho nem como
+    zero: o valor dela sai em ``valor_sem_custo``, para a tela dizer que ficou
+    de fora.
+    """
+    realizacoes, _ = _realizacoes(transacoes, eventos)
+    return {
+        "ganho": float(sum((r["ganho"] for r in realizacoes), _ZERO)),
+        "valor_vendido": float(sum((r["valor_venda"] for r in realizacoes), _ZERO)),
+        "valor_sem_custo": float(sum((r["valor_sem_custo"] for r in realizacoes), _ZERO)),
+        "n_vendas": len(realizacoes),
+    }
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Apuração mensal
 # ─────────────────────────────────────────────────────────────────────────────

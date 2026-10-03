@@ -323,3 +323,37 @@ def test_obter_cdi_arquivo_velho_e_bcb_fora_ainda_compara_se_couber_na_folga():
     comp = rt.comparar_com_cdi([(date(2020, 1, 2), -100.0)], 120.0, date(2026, 10, 3),
                                out["serie"])
     assert comp["cobertura_cdi"] is True
+
+
+def test_proventos_da_evolucao_acumulam_os_meses_sem_foto():
+    from core.investimentos import _montar_evolucao_snapshot
+
+    # Fotos anuais: o provento de março e o de novembro não caem em mês de foto.
+    snaps = [
+        SimpleNamespace(mes=date(2024, 12, 31), valor_mercado=1000, valor_investido_snapshot=900),
+        SimpleNamespace(mes=date(2025, 12, 31), valor_mercado=1100, valor_investido_snapshot=900),
+    ]
+    divs = [SimpleNamespace(mes=date(2024, 3, 1), delta_dividendos=10.0),
+            SimpleNamespace(mes=date(2024, 12, 1), delta_dividendos=5.0),
+            SimpleNamespace(mes=date(2025, 11, 1), delta_dividendos=20.0)]
+    d = _montar_evolucao_snapshot(snaps, divs, None, [])
+    assert [s["valor_com_dividendos"] - s["valor_mercado"] for s in d["snapshots"]] == [15.0, 35.0]
+    assert d["total_dividendos"] == 35.0
+
+
+def test_proventos_do_ponto_atual_incluem_os_meses_depois_da_ultima_foto():
+    from core.investimentos import _montar_evolucao_snapshot
+
+    snaps = [SimpleNamespace(mes=date(2020, 12, 31), valor_mercado=1000,
+                             valor_investido_snapshot=900)]
+    divs = [SimpleNamespace(mes=date(2020, 12, 1), delta_dividendos=5.0),
+            SimpleNamespace(mes=date(2021, 6, 1), delta_dividendos=7.0)]
+    d = _montar_evolucao_snapshot(
+        snaps, divs, {"total_mercado": 1200, "total_investido": 950}, [])
+    assert d["total_dividendos"] == 12.0
+
+
+def test_sql_de_proventos_da_evolucao_ignora_os_ainda_nao_pagos():
+    from core.investimentos import _SQL_EVOLUCAO_DIV
+
+    assert "payment_date <= CURRENT_DATE" in _SQL_EVOLUCAO_DIV

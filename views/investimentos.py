@@ -41,6 +41,7 @@ from core.investimentos import (
     get_cashflow_mensal,
     get_evolucao_patrimonial,
     get_rentabilidade_rv_b3,
+    get_resultado_realizado,
 )
 from core.proventos import get_proventos
 from core.tesouro_analysis import (
@@ -2272,13 +2273,20 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                 "Carteira consolidada atual", _COR_POSITIVO,
             ), unsafe_allow_html=True)
         with ck2:
-            g = ganho_total(evolucao)
+            realizado = get_resultado_realizado()
+            g = ganho_total(evolucao, realizado)
+            if g:
+                partes = [f"valorização {fmt_moeda(g['valorizacao'])}"]
+                if g["realizado"] is not None:
+                    partes.append(f"vendas {fmt_moeda(g['realizado'])}")
+                partes.append(f"proventos {fmt_moeda(g['proventos'])}")
+                sub = " + ".join(partes)
+                if g["realizado"] is None:
+                    sub += f" · sem o lucro de vendas: {realizado.get('motivo', 'indisponível')}"
             st.markdown(_kpi(
                 "Ganho total",
                 fmt_moeda(g["ganho"]) if g else "—",
-                (f"{g['ganho_pct'] * 100:+.1f}".replace(".", ",")
-                 + f"% sobre o custo · valorização {fmt_moeda(g['valorizacao'])}"
-                 f" + proventos {fmt_moeda(g['proventos'])}") if g else "Sem custo consolidado",
+                sub if g else "Sem custo consolidado",
                 (_COR_POSITIVO if g["ganho"] >= 0 else _COR_NEGATIVO) if g else _COR_NEUTRO,
             ), unsafe_allow_html=True)
         with ck3:
@@ -2297,11 +2305,21 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
             "Snapshots XP (relatórios mensais). "
             "Ponto atual inclui posições internacionais (Nomad) consolidadas. "
             "Empréstimos de ativos são desconsiderados para manter comparação com a carteira investida. "
-            "Ganho total = (valor de mercado − custo) + proventos recebidos. Não existe "
+            "Ganho total = (valor de mercado − custo da carteira atual) + lucro ou prejuízo "
+            "já realizado em vendas + proventos recebidos. As vendas vêm do extrato de "
+            "negociação da B3, a preço médio (a mesma conta do IR). Não existe "
             "\"mercado + proventos\" como patrimônio: o provento reinvestido já virou cota e "
-            "está no valor de mercado; somá-lo de novo contaria duas vezes. Lucro realizado "
-            "em vendas não entra na valorização (o custo é o da carteira atual)."
+            "está no valor de mercado; somá-lo de novo contaria duas vezes. Não há "
+            "percentual: dividir por custo da carteira de hoje misturaria dinheiro que já "
+            "saiu dela; a taxa do período é a TIR do bloco contra o CDI."
         )
+        sem_custo_venda = float((realizado or {}).get("valor_sem_custo") or 0.0)
+        if sem_custo_venda > 0.005:
+            st.caption(
+                f"{fmt_moeda(sem_custo_venda)} em vendas de ativos comprados antes do "
+                "primeiro extrato da B3 (nov/2019) ficaram fora do lucro de vendas: sem o "
+                "custo de compra, o ganho delas não é conhecido."
+            )
         sem_custo = [s["label"] for s in snapshots if s.get("valor_investido") is None]
         if sem_custo:
             st.caption(

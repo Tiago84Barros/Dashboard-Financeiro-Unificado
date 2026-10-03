@@ -1618,6 +1618,8 @@ _SQL_EVOLUCAO_DIV = """
         JOIN assets a ON a.id = d.asset_id
         WHERE d.user_id = :uid
           AND d.payment_date IS NOT NULL
+          -- Provento anunciado e ainda não pago não é ganho.
+          AND d.payment_date <= CURRENT_DATE
     )
     SELECT
         DATE_TRUNC('month', payment_date) AS mes,
@@ -1693,14 +1695,17 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
 """
 
 
-def ganho_total(evolucao: dict) -> dict | None:
-    """Ganho da carteira: (mercado − custo) + proventos recebidos.
+def ganho_total(evolucao: dict, realizado: dict | None = None) -> dict | None:
+    """Ganho da carteira: (mercado − custo) + lucro realizado em vendas + proventos.
 
     Não é "mercado + proventos": o provento reinvestido já virou cota e está no
     valor de mercado, e somá-lo de novo conta duas vezes. Aqui ele entra uma
     vez só, reinvestido ou sacado, porque a valorização é medida contra o
-    custo -- e o custo do que foi comprado com provento está nele. ``None``
-    sem custo ou sem valor de mercado.
+    custo -- e o custo do que foi comprado com provento está nele.
+
+    O custo é o da carteira ATUAL: o que já foi vendido saiu dele. Sem o
+    ``realizado`` (de ``get_resultado_realizado``), o lucro ou prejuízo dessas
+    vendas sumia da conta. ``None`` sem custo ou sem valor de mercado.
     """
     mercado = (evolucao or {}).get("total_mercado")
     custo = (evolucao or {}).get("total_investido")
@@ -1708,12 +1713,38 @@ def ganho_total(evolucao: dict) -> dict | None:
         return None
     proventos = float((evolucao or {}).get("total_dividendos") or 0.0)
     valorizacao = float(mercado) - float(custo)
+    disponivel = bool(realizado) and realizado.get("ganho") is not None
+    vendas = float(realizado["ganho"]) if disponivel else 0.0
     return {
         "valorizacao": valorizacao,
+        "realizado": vendas if disponivel else None,
         "proventos": proventos,
-        "ganho": valorizacao + proventos,
-        "ganho_pct": (valorizacao + proventos) / float(custo),
+        "ganho": valorizacao + vendas + proventos,
     }
+
+
+@user_cache_data(ttl=300)
+def get_resultado_realizado() -> dict:
+    """Lucro realizado em vendas da renda variável B3, pelo extrato de negociação.
+
+    ``{"ganho": None, "motivo": ...}`` quando não dá para calcular: o card
+    mostra o ganho sem as vendas e diz por quê, em vez de tratar como zero.
+    """
+    if settings.MOCK_MODE:
+        return {"ganho": None, "motivo": "lucro de vendas não é simulado em modo mock"}
+    try:
+        from core.database import get_engine
+        from core.ir_renda_variavel import carregar_operacoes, resultado_realizado
+
+        engine = get_engine()
+        if engine is None:
+            raise RuntimeError("Engine indisponível.")
+        transacoes, eventos = carregar_operacoes(engine, settings.OWNER_USER_ID)
+        return resultado_realizado(transacoes, eventos)
+    except Exception as exc:
+        logger.warning("[investimentos] lucro realizado indisponível (%s).", type(exc).__name__)
+        return {"ganho": None,
+                "motivo": "não foi possível ler o extrato de negociação da B3"}
 
 
 @user_cache_data(ttl=300)
@@ -1847,7 +1878,17 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
     queda de preço virava "resgate", e entre fotos anuais o mês inteiro do
     ano sumia dentro de um único ponto.
     """
-    div_map = {r.mes: float(r.delta_dividendos or 0) for r in div_rows}
+    # Proventos acumulados ATÉ o mês de cada foto, não só os pagos no mês da
+    # foto: com fotos anuais (dez/20 … dez/25) a soma por mês igual deixava de
+    # fora tudo o que foi pago de janeiro a novembro, e o "Ganho total" saía
+    # com uma fração dos proventos.
+    div_por_mes = sorted(
+        ((r.mes.year, r.mes.month), float(r.delta_dividendos or 0)) for r in div_rows
+    )
+
+    def _div_ate(ano: int, mes_: int) -> float:
+        return sum(v for chave, v in div_por_mes if chave <= (ano, mes_))
+
     snapshots = []
     fluxo_mensal = []
     cum_div = 0.0
@@ -1855,10 +1896,7 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
     for r in snap_rows:
         mes = r.mes
         vm = float(r.valor_mercado or 0)
-        cum_div += sum(
-            total for data, total in div_map.items()
-            if data.year == mes.year and data.month == mes.month
-        )
+        cum_div = _div_ate(mes.year, mes.month)
         label = f"{_MESES_PT_CF[mes.month]}/{str(mes.year)[-2:]}"
         mes_str = mes.strftime("%Y-%m")
         snapshots.append({
@@ -1881,6 +1919,7 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
         mes_str = current_month.strftime("%Y-%m")
         current_vm = round(float(current_totals.get("total_mercado") or 0), 2)
         current_vi = round(float(current_totals.get("total_investido") or 0), 2)
+        cum_div = _div_ate(current_month.year, current_month.month)
         current_snapshot = {
             "label":               label,
             "mes_str":             mes_str,
