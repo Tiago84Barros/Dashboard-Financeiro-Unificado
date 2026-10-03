@@ -79,8 +79,15 @@ def _add_years(d: date, years: int) -> date:
         return date(d.year + years, d.month, 28)
 
 
-def _fetch_sgs_series(name: str, code: int, start: date, end: date) -> pd.DataFrame:
+def _fetch_sgs_rest(code: int, start: date, end: date) -> tuple[list[dict], int]:
+    """Pontos brutos da API REST e quantos trechos de 8 anos se perderam.
+
+    ``ConnectionError`` (DNS, recusa) encerra a coleta na hora: desde
+    03/10/2026 o ``api.bcb.gov.br`` é NXDOMAIN, e insistir com três tentativas
+    por trecho custava ~90 s por série antes de chegar à reserva.
+    """
     raw: list[dict] = []
+    perdidos = 0
     cursor = start
     while cursor <= end:
         chunk_end = min(_add_years(cursor, 8), end)
@@ -94,10 +101,13 @@ def _fetch_sgs_series(name: str, code: int, start: date, end: date) -> pd.DataFr
                 )
                 if response.status_code < 500:
                     break
+            except requests.exceptions.ConnectionError:
+                return raw, perdidos + 1
             except requests.exceptions.RequestException:
                 pass
             time.sleep(5 * (attempt + 1))
         if response is None or response.status_code >= 500:
+            perdidos += 1
             cursor = chunk_end + timedelta(days=1)
             continue
         if response.status_code == 404 and "Value(s) not found" in (response.text or ""):
@@ -110,25 +120,50 @@ def _fetch_sgs_series(name: str, code: int, start: date, end: date) -> pd.DataFr
         try:
             chunk = response.json()
         except ValueError:
+            perdidos += 1
             cursor = chunk_end + timedelta(days=1)
             continue
         if isinstance(chunk, list):
             raw.extend(chunk)
         cursor = chunk_end + timedelta(days=1)
         time.sleep(0.15)
+    return raw, perdidos
 
-    if not raw:
+
+def _fetch_sgs_series(name: str, code: int, start: date, end: date) -> pd.DataFrame:
+    """Série do SGS pela REST; trecho perdido é completado pelo SOAP.
+
+    A REST perdia trechos em silêncio (a Selic de 30/09/2026 chegou com 269
+    pontos de ~4 mil) e em 03/10/2026 sumiu do DNS. ``core.bcb_sgs`` cobre o
+    intervalo inteiro numa chamada; o ponto da REST prevalece onde ambos existem.
+    """
+    raw, perdidos = _fetch_sgs_rest(code, start, end)
+    pontos: dict = {}
+    for item in raw:
+        try:
+            dia = datetime.strptime(str(item["data"]), "%d/%m/%Y").date()
+            pontos[dia] = float(str(item["valor"]).replace(",", "."))
+        except (KeyError, ValueError):
+            continue
+
+    if perdidos or not pontos:
+        from core.bcb_sgs import baixar_sgs_soap
+
+        reserva, motivo = baixar_sgs_soap(code, start, end)
+        if motivo:
+            print(f"BCB/SGS {code} {name}: reserva SOAP falhou -- {motivo}.")
+        elif reserva:
+            print(f"BCB/SGS {code} {name}: REST perdeu {perdidos or 'tudo'}; "
+                  f"SOAP trouxe {len(reserva)} ponto(s).")
+        pontos = {**reserva, **pontos}
+
+    if not pontos:
         return pd.DataFrame(columns=[name])
 
-    df = pd.DataFrame(raw)
-    df["data"] = pd.to_datetime(df["data"], format="%d/%m/%Y", errors="coerce")
-    df[name] = pd.to_numeric(
-        df["valor"].astype(str).str.replace(",", ".", regex=False),
-        errors="coerce",
-    )
-    df = df.dropna(subset=["data", name]).sort_values("data")
-    df = df.drop_duplicates(subset=["data"], keep="last")
-    return df.set_index("data")[[name]]
+    serie = pd.Series(pontos, name=name, dtype="float64")
+    serie.index = pd.to_datetime(serie.index)
+    serie.index.name = "data"
+    return serie.sort_index().to_frame()
 
 
 def _annual_last(df: pd.DataFrame, col: str) -> pd.DataFrame:
@@ -228,8 +263,10 @@ def _upsert_macro(conn, df: pd.DataFrame, apply: bool) -> int:
     cols = ["ano", "data", *MACRO_COLUMNS]
     cols_sql = ", ".join(cols + ["fonte", "updated_at"])
     placeholders = ", ".join(f":{c}" for c in cols) + ", 'BCB/SGS', now()"
+    # COALESCE: série que não veio nesta coleta (SGS fora do ar, timeout num
+    # trecho) chega como NULL e não pode apagar o valor já gravado.
     updates = ", ".join(
-        [f"{c} = EXCLUDED.{c}" for c in ["data", *MACRO_COLUMNS]]
+        [f"{c} = COALESCE(EXCLUDED.{c}, public.macro.{c})" for c in ["data", *MACRO_COLUMNS]]
         + ["fonte = EXCLUDED.fonte", "updated_at = now()"]
     )
     upsert_sql = f"""

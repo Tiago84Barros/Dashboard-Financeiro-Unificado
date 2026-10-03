@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -63,10 +64,27 @@ def cmd_run(args: argparse.Namespace) -> int:
             f"ERRO: {r['error_message']}" if r.get("error_message") else "",
         )
 
+        if r.get("fatal") and os.environ.get("GITHUB_ACTIONS") == "true":
+            print(f"::error title={r.get('job_name', '?')} sem dados::"
+                  f"{r.get('error_message') or 'fonte devolveu vazio'}")
+
     if args.json:
         print(json.dumps(resultado, indent=2, default=str))
 
-    return 0 if status in ("success", "partial_success", "skipped") else 1
+    return codigo_saida(resultado)
+
+
+def codigo_saida(resultado: dict) -> int:
+    """0 só quando nenhum job falhou por completo.
+
+    ``partial_success`` do pipeline soma jobs diferentes: um que gravou e outro
+    que não recebeu nada. Job que se declara ``fatal`` (fonte inteira vazia)
+    reprova a execução, senão o workflow fica verde com a fonte parada -- foi
+    o caso do ``update_bcb`` no GitHub Actions até 10/2026.
+    """
+    if any(r.get("fatal") for r in resultado.get("results", [])):
+        return 1
+    return 0 if resultado.get("status") in ("success", "partial_success", "skipped") else 1
 
 
 def cmd_status(args: argparse.Namespace) -> int:

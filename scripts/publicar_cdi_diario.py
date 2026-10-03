@@ -1,9 +1,8 @@
 """Publica o CDI diário (BCB/SGS 12) em ``data/public/cdi_diario.json.gz``.
 
-O app publicado não alcança o BCB: o SGS não responde fora do Brasil (o job
-``update_bcb`` do GitHub Actions volta com 0 pontos em todas as séries). Esta
-publicação roda na rotina local, que alcança, e o app lê o arquivo -- ver
-:func:`core.rentabilidade.obter_cdi`.
+O app lê o arquivo e só pede ao BCB os dias que faltam depois dele -- ver
+:func:`core.rentabilidade.obter_cdi`. Em 03/10/2026 a API REST do SGS sumiu do
+DNS; :func:`core.rentabilidade.baixar_cdi_bcb` cai no SOAP (``core.bcb_sgs``).
 
 Incremental: relê o arquivo atual e só pede ao BCB os dias depois do último
 publicado (com 10 dias de sobreposição, porque o SGS às vezes corrige o

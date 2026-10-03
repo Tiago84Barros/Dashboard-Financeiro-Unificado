@@ -323,14 +323,9 @@ def parse_sgs(payload: list[dict]) -> dict[date, float]:
     return out
 
 
-def baixar_cdi_bcb(inicio: date, fim: date,
-                   timeout: float = 15.0) -> tuple[dict[date, float], str | None]:
-    """Baixa o CDI diário do BCB em janelas de até 9 anos (o SGS recusa >10).
-
-    Devolve ``(serie, motivo)``: ``motivo`` diz por que a série parou antes do
-    fim (HTTP x, timeout...), ou ``None`` se veio inteira. Falha devolve o que
-    já veio, possivelmente vazio.
-    """
+def _baixar_cdi_rest(inicio: date, fim: date,
+                     timeout: float) -> tuple[dict[date, float], str | None]:
+    """CDI pela API REST, em janelas de até 9 anos (o SGS recusa >10)."""
     import requests
 
     out: dict[date, float] = {}
@@ -351,6 +346,26 @@ def baixar_cdi_bcb(inicio: date, fim: date,
     return out, None
 
 
+def baixar_cdi_bcb(inicio: date, fim: date,
+                   timeout: float = 15.0) -> tuple[dict[date, float], str | None]:
+    """Baixa o CDI diário do BCB: API REST e, se ela falhar, o SOAP do SGS.
+
+    Desde 03/10/2026 o ``api.bcb.gov.br`` não resolve no DNS; o SOAP
+    (``core.bcb_sgs``) cobre o intervalo numa chamada só e completa o que a
+    REST não trouxe. Devolve ``(serie, motivo)``: ``motivo`` diz por que a
+    série parou antes do fim, ou ``None`` se veio inteira.
+    """
+    out, motivo = _baixar_cdi_rest(inicio, fim, timeout)
+    if motivo is None:
+        return out, None
+    from core.bcb_sgs import baixar_sgs_soap
+
+    reserva, motivo_soap = baixar_sgs_soap(12, inicio, fim, timeout=max(timeout, 30.0))
+    if motivo_soap is None:
+        return {**reserva, **out}, None
+    return out, f"{motivo}; {motivo_soap}"
+
+
 def carregar_cdi_diario(inicio: date, fim: date, timeout: float = 15.0) -> dict[date, float]:
     """Só a série de :func:`baixar_cdi_bcb`, sem o motivo da falha."""
     return baixar_cdi_bcb(inicio, fim, timeout)[0]
@@ -360,13 +375,11 @@ def carregar_cdi_diario(inicio: date, fim: date, timeout: float = 15.0) -> dict[
 # CDI publicado no repositório
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# O SGS não responde a quem está fora do Brasil. Em 03/10/2026 o job
-# `update_bcb` do GitHub Actions (servidor nos EUA) passava 90 s por série e
-# voltava com 0 pontos em todas -- e a Streamlit Cloud está no mesmo lugar: a
-# tela dizia "Sem série do CDI para comparar". Quem alcança o BCB é a rotina
-# local (`scripts/atualizar_vitrines.py`), que publica a série neste arquivo
-# (`scripts/publicar_cdi_diario.py`). O app lê o arquivo e só pede ao BCB os
-# dias que faltam depois dele.
+# O app lê a série deste arquivo, publicado pela rotina local
+# (`scripts/atualizar_vitrines.py` -> `scripts/publicar_cdi_diario.py`), e só
+# pede ao BCB os dias que faltam depois dele: cada abertura de tela deixa de
+# depender do BCB. (Em 03/10/2026 a API REST do SGS sumiu do DNS -- NXDOMAIN
+# no mundo todo, não bloqueio geográfico; `baixar_cdi_bcb` cai no SOAP.)
 
 CAMINHO_CDI_PUBLICADO = (
     Path(__file__).resolve().parents[1] / "data" / "public" / "cdi_diario.json.gz"
