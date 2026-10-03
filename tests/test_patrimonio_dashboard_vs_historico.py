@@ -140,3 +140,25 @@ def test_grafico_do_dashboard_geral_aceita_custo_desconhecido():
         {"label": "Dez/23", "valor_mercado": 300.0, "valor_investido": 250.0},
     ]})
     assert any(t.name == "Custo histórico" for t in fig.data)
+
+
+def test_recorte_anual_pega_a_ultima_foto_de_cada_ano():
+    from views.investimentos import _recorte_evolucao
+
+    snaps = [
+        {"label": "Dez/20", "mes_str": "2020-12", "valor_mercado": 610.0, "valor_investido": None},
+        {"label": "Dez/25", "mes_str": "2025-12", "valor_mercado": 198.0, "valor_investido": 150.0},
+        {"label": "Jan/26", "mes_str": "2026-01", "valor_mercado": 200.0, "valor_investido": 160.0},
+        {"label": "Out/26", "mes_str": "2026-10", "valor_mercado": 317.0, "valor_investido": 300.0},
+    ]
+    anos = _recorte_evolucao(snaps, "Anos")
+    assert [p["label"] for p in anos] == ["2020", "2025", "2026"]
+    assert anos[-1]["valor_mercado"] == 317.0
+
+    doze = _recorte_evolucao(snaps, "12 M")
+    assert [p["label"] for p in doze] == ["Dez/25", "Jan/26", "Out/26"]
+
+    assert _recorte_evolucao(snaps, "Tudo") == snaps
+    # Sem mes_str não dá para agrupar: mostra tudo em vez de inventar.
+    assert _recorte_evolucao([{"label": "x", "valor_mercado": 1.0}], "Anos") == [
+        {"label": "x", "valor_mercado": 1.0}]
