@@ -69,3 +69,27 @@ def test_tela_usa_a_busca_por_nome():
     fonte = (RAIZ / "views" / "empresas_b3.py").read_text(encoding="utf-8")
     corpo = fonte.split("def _tab_analise(")[1].split("# ── Header ──")[0]
     assert "buscar_empresas(" in corpo
+
+
+_US = pd.DataFrame({
+    "symbol": ["AAPL", "MSFT", "V", "GOOGL", "GOOG"],
+    "name": ["Apple Inc.", "Microsoft Corporation", "Visa Inc.",
+             "Alphabet Inc. Class A", "Alphabet Inc. Class C"],
+})
+
+
+def _us(consulta):
+    return [tk for tk, _ in buscar_empresas(consulta, _US, col_ticker="symbol", col_nome="name")]
+
+
+def test_eua_colunas_symbol_e_name():
+    assert _us("microsoft") == ["MSFT"]
+    assert _us("visa") == ["V"]
+    assert _us("v") == ["V"]
+    assert set(_us("alphabet")) == {"GOOGL", "GOOG"}
+
+
+def test_tela_eua_usa_a_busca_por_nome():
+    fonte = (RAIZ / "views" / "empresas_americanas.py").read_text(encoding="utf-8")
+    corpo = fonte.split("def _tab_empresa(")[1].split("def ")[0]
+    assert "buscar_empresas(" in corpo

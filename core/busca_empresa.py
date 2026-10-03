@@ -39,10 +39,13 @@ def buscar_empresas(
     df_set: pd.DataFrame | None,
     universo: Iterable[str] = (),
     limite: int = 8,
+    col_ticker: str = "ticker",
+    col_nome: str = "nome_empresa",
 ) -> list[tuple[str, str]]:
     """Devolve ``[(ticker, nome)]`` que casam com ``consulta``, melhor primeiro.
 
-    ``df_set`` precisa das colunas ``ticker`` e ``nome_empresa``; ``universo``
+    ``df_set`` precisa das colunas ``col_ticker`` e ``col_nome`` (B3:
+    ``ticker``/``nome_empresa``; EUA: ``symbol``/``name``); ``universo``
     acrescenta tickers sem nome cadastrado (só casam por ticker). Lista vazia
     significa que nada casou — a tela decide como avisar.
     """
@@ -52,10 +55,10 @@ def buscar_empresas(
         return []
 
     nomes: dict[str, str] = {}
-    if df_set is not None and not df_set.empty and "ticker" in df_set.columns:
-        col_nome = "nome_empresa" if "nome_empresa" in df_set.columns else None
+    if df_set is not None and not df_set.empty and col_ticker in df_set.columns:
+        col_nome = col_nome if col_nome in df_set.columns else None
         for _, row in df_set.iterrows():
-            tk = normalizar_ticker(row["ticker"])
+            tk = normalizar_ticker(row[col_ticker])
             if not tk:
                 continue
             nome = str(row[col_nome]).strip() if col_nome and pd.notna(row[col_nome]) else ""
