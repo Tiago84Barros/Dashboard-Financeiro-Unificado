@@ -231,39 +231,145 @@ hr {
 }
 
 /* Marca e navegação */
-.app-brand {
-    position: relative;
-    overflow: hidden;
-    padding: 15px 14px;
+.app-user {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 11px;
+    margin-bottom: 12px;
     border: 1px solid var(--app-border);
-    border-radius: 15px;
-    background:
-        radial-gradient(circle at 95% 0%, rgba(74,158,255,.16), transparent 48%),
-        linear-gradient(145deg, rgba(25,31,47,.96), rgba(16,20,30,.96));
-    box-shadow: 0 10px 28px rgba(0,0,0,.24);
+    border-radius: 12px;
+    background: rgba(255,255,255,.025);
 }
-.app-brand-mark {
+.app-user-avatar {
+    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 34px;
     height: 34px;
-    border: 1px solid rgba(0,200,150,.28);
-    border-radius: 10px;
-    background: rgba(0,200,150,.10);
-    margin-bottom: 10px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #00C896, #4A9EFF);
+    color: #fff;
+    font-size: .78rem;
+    font-weight: 750;
+    letter-spacing: .02em;
+    box-shadow: 0 4px 12px rgba(0,200,150,.25);
+}
+.app-user-text { min-width: 0; flex: 1 1 auto; }
+.app-user-label {
+    color: var(--app-subtle);
+    font-size: .62rem;
+    font-weight: 650;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+.app-user-name {
+    color: var(--app-text);
+    font-size: .86rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.app-user-status {
+    flex: 0 0 auto;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #00C896;
+    box-shadow: 0 0 0 3px rgba(0,200,150,.18);
+}
+/* O card da marca é escuro nos DOIS temas, de propósito: é a assinatura do
+   app. Os textos usam cor literal clara, não token -- no claro o token de
+   texto é escuro e sumiria sobre o gradiente. */
+.app-brand {
+    position: relative;
+    overflow: hidden;
+    padding: 16px 15px 14px;
+    border: 1px solid rgba(74,158,255,.22);
+    border-radius: 16px;
+    background:
+        radial-gradient(circle at 100% 0%, rgba(74,158,255,.30), transparent 55%),
+        radial-gradient(circle at 0% 100%, rgba(0,200,150,.22), transparent 55%),
+        linear-gradient(150deg, #13233F 0%, #0F1A2E 55%, #0B1322 100%);
+    box-shadow: 0 12px 30px rgba(8,15,30,.35);
+}
+.app-brand::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 3px;
+    background: linear-gradient(90deg, #00C896, #4A9EFF, #C084FC);
+}
+.app-brand-glow {
+    position: absolute;
+    right: -38px;
+    bottom: -38px;
+    width: 120px;
+    height: 120px;
+    border-radius: 50%;
+    border: 18px solid rgba(255,255,255,.035);
+    pointer-events: none;
+}
+.app-brand-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 11px;
+}
+.app-brand-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border: 1px solid rgba(255,255,255,.16);
+    border-radius: 11px;
+    background: rgba(255,255,255,.08);
+    font-size: 1.05rem;
+}
+.app-brand-badge {
+    padding: 3px 8px;
+    border: 1px solid rgba(0,200,150,.35);
+    border-radius: 999px;
+    background: rgba(0,200,150,.12);
+    color: #5EEAC2;
+    font-size: .6rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
 }
 .app-brand-title {
-    color: var(--app-text);
-    font-size: .96rem;
+    position: relative;
+    color: #F8FAFC;
+    font-size: 1.02rem;
     font-weight: 780;
     letter-spacing: -.015em;
 }
 .app-brand-subtitle {
-    color: var(--app-subtle);
-    font-size: .69rem;
+    position: relative;
+    color: #A9B6CB;
+    font-size: .7rem;
     line-height: 1.45;
     margin-top: 3px;
+}
+.app-brand-tags {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 12px;
+    padding-top: 11px;
+    border-top: 1px solid rgba(255,255,255,.08);
+}
+.app-brand-tags span {
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: rgba(255,255,255,.06);
+    color: #C7D2E3;
+    font-size: .62rem;
+    font-weight: 600;
 }
 [data-testid="stSidebar"] {
     background:

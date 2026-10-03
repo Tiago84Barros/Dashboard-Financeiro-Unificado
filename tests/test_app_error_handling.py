@@ -123,6 +123,7 @@ def test_excecao_ao_carregar_modulo_nao_vaza_para_a_tela_e_log_recebe_detalhe(
         design_componentes=SimpleNamespace(
             mensagem_erro=fake_mensagem_erro,
             transicao_de_pagina=lambda *_args: None,
+            marca_sidebar_html=lambda *_args: "",
         ),
             transicao_de_pagina=lambda *_args: None,
     )
@@ -178,6 +179,7 @@ def test_modulo_carregado_com_sucesso_nao_aciona_o_handler_de_erro(monkeypatch, 
                 (titulo, detalhe)
             ),
             transicao_de_pagina=lambda *_args: None,
+            marca_sidebar_html=lambda *_args: "",
         ),
     )
     monkeypatch.setattr(importlib, "import_module", lambda _name: fake_view)

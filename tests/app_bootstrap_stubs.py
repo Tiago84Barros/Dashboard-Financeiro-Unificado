@@ -62,6 +62,7 @@ def stubs_de_bootstrap(**overrides) -> dict[str, SimpleNamespace]:
         "design.componentes": SimpleNamespace(
             mensagem_erro=lambda *_args: None,
             transicao_de_pagina=lambda *_args: None,
+            marca_sidebar_html=lambda *_args: "",
         ),
         "design.tema": SimpleNamespace(aplicar_tema=lambda theme="dark": None),
         # Importado com o ``streamlit`` falso em sys.modules, o módulo real
