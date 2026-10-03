@@ -1,9 +1,10 @@
-# Atualizações 2026-10 — Inteligência dos Ativos: notícias de cenário e tela mais enxuta
+# Atualizações 2026-10 — Inteligência dos Ativos: notícias de cenário, tela mais enxuta e relatórios lidos
 
 - **PRs:**
   - #454 (merge squash em 2026-10-03, commit `2efe60c`);
   - #456 (merge squash em 2026-10-03, commit `77c1ff0`);
-  - #458 (merge squash em 2026-10-03, commit `8b2f649`).
+  - #458 (merge squash em 2026-10-03, commit `8b2f649`);
+  - #460 (merge squash em 2026-10-03, commit `dade9b9`).
 - **Seção:** Investimentos → Inteligência dos Ativos
 
 ## 1. Notícias: o complemento passa a ser o cenário do país (PR #454)
@@ -77,8 +78,8 @@ O toggle passou a se chamar "Análise detalhada (13 etapas e Portfolio Fit)".
 **Decisão.** A pedido, mais dois blocos técnicos saíram da Análise detalhada:
 - **"Onde procurar · indício pelo título, não conclusão"** (etapa 10,
   Relatórios): a tabela Pergunta → Documentos, que na prática mostrava quase
-  só "Dado não disponível.". Fica a tabela de documentos publicados e uma nota
-  curta ("O conteúdo dos documentos não é lido aqui. Base até … Fonte: …").
+  só "Dado não disponível.". Ficaram a tabela de documentos publicados e uma
+  nota curta. **Ambas foram substituídas no PR #460 (seção 4).**
 - **"Contexto estruturado que a LLM recebe"** (Portfolio Fit): o expander com o
   JSON (`ordem_de_analise`, `portfolio`, `scenario`, `news` …).
 
@@ -94,7 +95,56 @@ O toggle passou a se chamar "Análise detalhada (13 etapas e Portfolio Fit)".
 **Custo.** Sem o JSON na tela, auditar o que a LLM recebeu exige ler o código ou
 gerar o contexto localmente (`pf.contexto(analise, ctx)`).
 
-## 4. Limitações aceitas
+## 4. Etapa 10 passa a mostrar o que os relatórios dizem (PR #460)
+
+**Problema.** A tabela "Documentos publicados" (data, tipo, título, link) era só
+metadado e não ajudava o investidor. O pedido foi que o app lesse os relatórios
+e mostrasse, de forma organizada, o que importa neles.
+
+**O que mudou.**
+- A tabela saiu. A etapa 10 agora mostra **frases literais** dos documentos
+  oficiais (CVM), agrupadas por tema, nesta ordem:
+  1. Resultado;
+  2. Proventos e recompra;
+  3. Caixa e dívida;
+  4. Projeções e estratégia;
+  5. Operação e crescimento;
+  6. Outros fatos.
+- Cada frase vem com "data · título curto do documento".
+- A nota diz que as frases foram escolhidas por regra, sem LLM.
+- Se o texto não está no acervo (FIIs, por enquanto), a etapa mostra só o resumo
+  e o aviso "O texto destes documentos ainda não está no acervo…".
+
+**Como funciona** (`core/inteligencia_ativos/destaques_relatorios.py`, tudo
+determinístico):
+- **Leitura.** `ler_trechos(ticker)` chama `ler(ticker, 12, 4)`: até 12
+  documentos e 4 frases cada, tiradas do corpus RAG
+  (`data/public/rag/chunks_*.parquet`, lido com DuckDB, sem embeddings). O corpus
+  é publicado com o app e funciona na Streamlit Cloud.
+- **Seleção.** `pontuar` escolhe as frases com prosa e números.
+- **Tema.** `tema(frase)` soma pontos para cada termo de `TEMAS` encontrado na
+  frase, e cada termo vale o seu número de palavras. Assim "custo de capital"
+  vai para Projeções, não para Resultado. No empate vence o primeiro tema da
+  lista; sem nenhum termo, a frase cai em "Outros fatos".
+- **Agrupamento.** `por_tema` guarda até 3 frases por tema e não repete o mesmo
+  fato. A chave do fato é o conjunto de números com separador decimal ou com 3+
+  dígitos, quando a frase tem pelo menos dois; senão, os 80 primeiros caracteres
+  normalizados.
+
+**O que a LLM recebe.**
+- Os trechos vão em `Relatorios.trechos`, persistido por `como_dict`/`de_dict`.
+- `texto_relatorios` passa a enviar, nesta ordem:
+  1. as linhas "Trechos · {tema}:";
+  2. a lista de documentos publicados;
+  3. os indícios por pergunta.
+- A linha INTERPRETAÇÃO avisa que os trechos foram escolhidos por regra.
+- Ou seja, a LLM recebe mais dado do que antes, e a lista de documentos continua
+  no texto que ela lê.
+
+**Testado com dados reais do corpus:** PETR4, TAEE11, WEGE3, ITUB4, BBAS3 e
+MGLU3.
+
+## 5. Limitações aceitas
 
 - [Provável] A janela de 150 itens em 3 dias pode ter pouco assunto de cenário, e
   a caixa então mostra "Nenhuma manchete…". Se isso for comum, o ajuste é ampliar
@@ -103,8 +153,14 @@ gerar o contexto localmente (`pf.contexto(analise, ctx)`).
   fraca (por exemplo, TSE no Rio).
 - [Certo] Sem a trilha na tela, rever por que uma análise mudou exige ler o banco.
 - [Certo] Sem o JSON na tela, conferir o que a LLM recebeu exige o código.
+- [Certo] Etapa 10: o tema é decidido por palavra-chave e às vezes erra. Por
+  exemplo, uma frase sobre dívida que cita "lucro" pode cair em Resultado.
+- [Certo] Etapa 10: às vezes a regra escolhe uma frase de pouco valor.
+- [Certo] Etapa 10: FIIs ainda não têm o texto dos documentos no corpus.
+- [Palpite] O próximo passo seria uma LLM escrever um resumo a partir dos
+  trechos. Custa uma chamada por ativo e ainda não foi decidido.
 
-## 5. Arquivos
+## 6. Arquivos
 
 - `core/contexto_mercado.py`: `itens_gerais`, `_normalizar_item`.
 - `core/inteligencia_ativos/resumida.py`: `noticias_cenario`, `TIPOS_POR_CANAL`,
@@ -115,15 +171,25 @@ gerar o contexto localmente (`pf.contexto(analise, ctx)`).
   histórico fora da tela, `registrar_leitura_llm`.
 - `views/inteligencia_ativos.py::corpo_relatorios`: sem a tabela "Onde procurar".
 - `views/inteligencia_ativos_fit.py::render`: sem o expander do JSON.
+- `core/inteligencia_ativos/destaques_relatorios.py`: `TEMAS`, `ROTULO_TEMA`,
+  `Trecho`, `tema`, `por_tema`, `titulo_curto`, `ler_trechos`.
+- `core/inteligencia_ativos/informacoes.py`: `Relatorios.trechos`,
+  `resumo_relatorios`, `texto_relatorios`.
+- `core/inteligencia_ativos/secoes.py::provedor_relatorios`: lê os trechos.
+- `views/inteligencia_ativos.py::corpo_relatorios`: trechos por tema, sem a
+  tabela de documentos.
 - `docs/informacoes_recentes.md` e `docs/portfolio_fit.md`: notas da remoção.
+  `docs/informacoes_recentes.md` também ganhou a seção "Etapa 10 · o que os
+  documentos dizem".
 
-## 6. Verificação
+## 7. Verificação
 
 - PR #454: 6874 passed, 115 skipped; CI verde (Python 3.11 e 3.12).
   **Não verificado contra o acervo real.**
 - PR #456: 6881 passed, 115 skipped; CI verde (Python 3.11 e 3.12).
 - PR #458: 6893 passed, 115 skipped; CI verde (Python 3.11 e 3.12).
-- `ruff check .` limpo nos três. Merges feitos sem revisão humana.
+- PR #460: 6898 passed, 115 skipped; CI verde.
+- `ruff check .` limpo nos quatro. Merges feitos sem revisão humana.
 
 ## Relacionadas
 
