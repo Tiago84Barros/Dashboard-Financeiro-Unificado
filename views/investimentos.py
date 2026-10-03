@@ -36,6 +36,7 @@ from core.correlation_analysis import (
     intervalo_confianca_correlacao,
 )
 from core.investimentos import (
+    ganho_total,
     get_carteira,
     get_cashflow_mensal,
     get_evolucao_patrimonial,
@@ -1070,20 +1071,23 @@ def _fig_cashflow_hist(cashflow: list) -> go.Figure:
 
 
 def _fig_evolucao_patrimonial(snapshots: list) -> go.Figure:
-    """Três linhas: Valor de Mercado, Com Dividendos, Valor Investido."""
+    """Duas linhas: Valor de Mercado e Valor Investido.
+
+    Não há linha "mercado + proventos": o provento reinvestido já está no valor
+    de mercado (virou cota), então somá-lo de novo conta duas vezes. Os
+    proventos acumulados aparecem no hover do mercado.
+    """
     labels    = [s["label"]                for s in snapshots]
     investido = [s["valor_investido"]      for s in snapshots]
     mercado   = [s["valor_mercado"]        for s in snapshots]
-    com_div   = [s["valor_com_dividendos"] for s in snapshots]
+    proventos = [
+        (s["valor_com_dividendos"] - s["valor_mercado"])
+        if s.get("valor_com_dividendos") is not None and s.get("valor_mercado") is not None
+        else None
+        for s in snapshots
+    ]
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=labels, y=com_div,
-        name="Com Dividendos",
-        mode="lines",
-        line={"color": _COR_ALERTA, "width": 2},
-        hovertemplate="<b>%{x}</b><br>c/ Dividendos: R$ %{y:,.0f}<extra></extra>",
-    ))
     fig.add_trace(go.Scatter(
         x=labels, y=mercado,
         name="Valor de Mercado",
@@ -1091,7 +1095,9 @@ def _fig_evolucao_patrimonial(snapshots: list) -> go.Figure:
         line={"color": _COR_POSITIVO, "width": 2.5},
         fill="tozeroy",
         fillcolor="rgba(0,200,150,0.06)",
-        hovertemplate="<b>%{x}</b><br>Mercado: R$ %{y:,.0f}<extra></extra>",
+        customdata=proventos,
+        hovertemplate=("<b>%{x}</b><br>Mercado: R$ %{y:,.0f}"
+                       "<br>Proventos acumulados: R$ %{customdata:,.0f}<extra></extra>"),
     ))
     fig.add_trace(go.Scatter(
         x=labels, y=investido,
@@ -2163,7 +2169,7 @@ def _veredito_cdi(r: dict) -> tuple[str, str]:
     PME não."""
     pme = r.get("pme")
     if pme is None:
-        return _COR_NEUTRO, "Sem série do CDI para comparar."
+        return _COR_NEUTRO, r.get("cdi_motivo") or "Sem série do CDI para comparar."
     if pme >= 1.0:
         return _COR_POSITIVO, f"Bateu o CDI (PME {pme:.3f})".replace(".", ",")
     return _COR_NEGATIVO, f"Ficou abaixo do CDI (PME {pme:.3f})".replace(".", ",")
@@ -2205,8 +2211,7 @@ def _bloco_rentabilidade_cdi(r: dict) -> None:
         st.markdown(_kpi(
             "Cobertura da medição",
             f"{cob * 100:.0f}%" if cob is not None else "—",
-            f"{r['n_em_carteira_incluidos']} de {r['n_em_carteira']} ativos em carteira "
-            "(valor atual em renda variável B3)",
+            f"{r['n_em_carteira_incluidos']} de {r['n_em_carteira']} ativos da RV B3",
             _COR_POSITIVO if (cob or 0) >= 0.8 else _COR_ALERTA,
         ), unsafe_allow_html=True)
 
@@ -2232,9 +2237,12 @@ def _bloco_rentabilidade_cdi(r: dict) -> None:
                 )
             )
     st.caption(
+        "Cobertura = fração do valor atual em renda variável B3 que entrou na conta. "
         "TIR = taxa interna de retorno dos fluxos reais (compras, vendas, proventos pagos) "
         "e do valor de mercado de hoje, em base 365 dias. A comparação aplica os mesmos "
-        "fluxos, nas mesmas datas, ao CDI diário do Banco Central (série 12), o que elimina "
+        "fluxos, nas mesmas datas, ao CDI diário do Banco Central (série 12"
+        + (f"; fonte: {r['cdi_fonte']}" if r.get("cdi_fonte") else "")
+        + "), o que elimina "
         "a vantagem de quem aportou mais perto de uma alta. Fora da conta: renda fixa, "
         "Tesouro e exterior (sem extrato de fluxos compatível). O retorno ponderado pelo "
         "tempo (TWR) não é exibido: ele exige o valor da carteira em cada data de aporte, "
@@ -2253,7 +2261,7 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
     # ── Evolução Patrimonial ──────────────────────────────────────────────────
     _secao_titulo_orig(
         "📈", "Evolução Patrimonial",
-        "Valor de Mercado e total com Dividendos acumulados — histórico completo",
+        "Valor de mercado, custo e ganho total com proventos — histórico completo",
     )
     if snapshots:
         # KPI summary row
@@ -2264,10 +2272,14 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                 "Carteira consolidada atual", _COR_POSITIVO,
             ), unsafe_allow_html=True)
         with ck2:
+            g = ganho_total(evolucao)
             st.markdown(_kpi(
-                "Total Com Dividendos",
-                fmt_moeda(evolucao["total_mercado"] + evolucao["total_dividendos"]),
-                "Mercado + proventos históricos acumulados", _COR_ALERTA,
+                "Ganho total",
+                fmt_moeda(g["ganho"]) if g else "—",
+                (f"{g['ganho_pct'] * 100:+.1f}".replace(".", ",")
+                 + f"% sobre o custo · valorização {fmt_moeda(g['valorizacao'])}"
+                 f" + proventos {fmt_moeda(g['proventos'])}") if g else "Sem custo consolidado",
+                (_COR_POSITIVO if g["ganho"] >= 0 else _COR_NEGATIVO) if g else _COR_NEUTRO,
             ), unsafe_allow_html=True)
         with ck3:
             st.markdown(_kpi(
@@ -2285,7 +2297,10 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
             "Snapshots XP (relatórios mensais). "
             "Ponto atual inclui posições internacionais (Nomad) consolidadas. "
             "Empréstimos de ativos são desconsiderados para manter comparação com a carteira investida. "
-            "Com Dividendos = Mercado + proventos históricos acumulados."
+            "Ganho total = (valor de mercado − custo) + proventos recebidos. Não existe "
+            "\"mercado + proventos\" como patrimônio: o provento reinvestido já virou cota e "
+            "está no valor de mercado; somá-lo de novo contaria duas vezes. Lucro realizado "
+            "em vendas não entra na valorização (o custo é o da carteira atual)."
         )
         sem_custo = [s["label"] for s in snapshots if s.get("valor_investido") is None]
         if sem_custo:
