@@ -868,7 +868,9 @@ _REFERENCIA_MEMO_KEY = "_ia_referencia_modelo_memo"
 def _referencia_memo(carteira: dict) -> refm.ReferenciaModelo:
     """``refm.carregar`` lembrado na sessão pelo mesmo prazo da análise: a
     carteira recomendada muda quando o Portfólio Global salva modelo ou
-    alocação, não a cada clique."""
+    alocação, não a cada clique. Falha de leitura (Supabase instável) não
+    é lembrada: o próximo rerun tenta de novo, em vez de deixar o cartão
+    15 min como "indisponível"."""
     assinatura = hashlib.sha1(json.dumps(
         carteira.get("posicoes") or [], sort_keys=True,
         default=str).encode("utf-8")).hexdigest()
@@ -877,8 +879,9 @@ def _referencia_memo(carteira: dict) -> refm.ReferenciaModelo:
     if memo and memo[0] == assinatura and memo[1] > agora:
         return memo[2]
     ref = refm.carregar(carteira.get("posicoes"))
-    st.session_state[_REFERENCIA_MEMO_KEY] = (
-        assinatura, agora + _ANALISE_MEMO_TTL, ref)
+    if not ref.falha_de_leitura:
+        st.session_state[_REFERENCIA_MEMO_KEY] = (
+            assinatura, agora + _ANALISE_MEMO_TTL, ref)
     return ref
 
 
