@@ -101,11 +101,15 @@ def buscar_empresas(
 
         # 4. aproximação, só se nada casou até aqui
         if not resultado and len(q_nome) >= 4:
+            # Compara também com o começo do nome, do tamanho da consulta:
+            # "microsft" contra "MICROSOFT CORPORATION" inteiro fica abaixo do
+            # corte, contra "MICROSOFT" não.
             por_nome: dict[str, list[str]] = {}
             for tk, n in com_nome.items():
-                por_nome.setdefault(n, []).append(tk)
+                for chave in {n, " ".join(n.split()[:len(palavras)])}:
+                    por_nome.setdefault(chave, []).append(tk)
             proximos = difflib.get_close_matches(q_nome, list(por_nome), n=limite, cutoff=0.75)
             for n in proximos:
-                _add(sorted(por_nome[n]))
+                _add(sorted(set(por_nome[n])))
 
     return [_par(tk) for tk in resultado[:limite]]

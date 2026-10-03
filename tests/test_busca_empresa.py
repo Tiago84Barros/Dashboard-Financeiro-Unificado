@@ -93,3 +93,14 @@ def test_tela_eua_usa_a_busca_por_nome():
     fonte = (RAIZ / "views" / "empresas_americanas.py").read_text(encoding="utf-8")
     corpo = fonte.split("def _tab_empresa(")[1].split("def ")[0]
     assert "buscar_empresas(" in corpo
+
+
+def test_aba_setor_eua_usa_a_busca_por_nome():
+    fonte = (RAIZ / "views" / "empresas_americanas.py").read_text(encoding="utf-8")
+    corpo = fonte.split("def _tab_empresas_setor(")[1].split("\ndef ")[0]
+    assert "buscar_empresas(" in corpo
+
+
+def test_erro_de_digitacao_em_nome_parcial():
+    assert _us("microsft") == ["MSFT"]
+    assert _tks("petrolio") == ["PETR3", "PETR4"]
