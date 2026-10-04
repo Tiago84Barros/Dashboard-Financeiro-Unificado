@@ -39,12 +39,18 @@ def _use_snapshot() -> bool:
     return not _read.schema_ready() and _read.snapshot_ready()
 
 
-@_cache
+# INF-A2: as duas leem a vitrine inteira por `_snapshot_df` -- 3.701 linhas,
+# 0,87 MB em texto (medido no armazém em 04/10/2026) -- para listar empresas e
+# contar setores. A vitrine é republicada uma vez por noite; com TTL de 5 min
+# cada visita à aba "Empresas por setor" depois da expiração relia tudo (até
+# 288 leituras/dia, ~250 MB/dia por processo). 12 h, como `scored_universe`,
+# que lê a mesma tabela.
+@_cache_pesado
 def overview() -> dict:
     return _read.load_snapshot_overview() if _use_snapshot() else _read.load_overview()
 
 
-@_cache
+@_cache_pesado
 def companies(sector: str | None = None, search: str | None = None,
               limit: int = 500):
     if _use_snapshot():

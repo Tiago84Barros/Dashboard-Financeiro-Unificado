@@ -591,6 +591,11 @@ _FII_SNAPSHOT_SCHEMA = "fii_selection_inputs.v2"
 _FII_SNAPSHOT_MAX_AGE_DAYS = 4
 _FII_SNAPSHOT_HARD_MAX_AGE_DAYS = 30
 _FII_SNAPSHOT_MEMORY_TTL_SECONDS = 900
+# INF-A2 (04/10/2026): com o artefato local válido, a leitura do Supabase em
+# segundo plano só serve se puder trazer vitrine MAIS NOVA -- e isso só é
+# possível quando o artefato passou do alvo de publicação. Mesmo então, uma
+# tentativa a cada 6 h basta: a vitrine remota muda no máximo uma vez por noite.
+_FII_SNAPSHOT_REMOTE_RETRY_SECONDS = 6 * 3600
 _FII_SNAPSHOT_MAX_ATTEMPTS = 2
 _FII_SNAPSHOT_DEADLINE_SECONDS = 12.0
 _FII_SNAPSHOT_REQUIRED_COLUMNS = {
@@ -602,6 +607,7 @@ _FII_SNAPSHOT_LOCK = threading.RLock()
 _FII_SNAPSHOT_LAST_GOOD: pd.DataFrame | None = None
 _FII_SNAPSHOT_LAST_GOOD_AT: _dt.datetime | None = None
 _FII_SNAPSHOT_JOB: tuple[threading.Thread, queue.Queue] | None = None
+_FII_SNAPSHOT_LAST_REMOTE_TRY_AT: _dt.datetime | None = None
 _FII_SNAPSHOT_ARTIFACT_PATH = (
     Path(__file__).resolve().parents[1]
     / "data" / "public" / "fii_selection_snapshot_v2.json.gz"
@@ -759,7 +765,7 @@ def _load_fii_snapshot_artifact(
     frame.attrs.update({
         "snapshot_source": "local_verified_artifact",
         "snapshot_fallback": True,
-        "fallback_reason": "remote_refresh_in_background",
+        "fallback_reason": "local_artifact_preferred",
         "snapshot_read_attempts": 0,
     })
     return frame
@@ -793,8 +799,9 @@ def _reset_fii_snapshot_memory_cache() -> None:
     e `scripts/verificar_frescor_vitrines.py` limpam justamente para reler a
     vitrine, e herdavam o resultado da leitura anterior.
 
-    Na suíte o preço era outro e maior. A leitura real dispara o worker sem
-    esperar (`timeout_seconds=0`) quando o artefato local responde, e ele segue
+    Na suíte o preço era outro e maior. A leitura real disparava o worker sem
+    esperar (`timeout_seconds=0`) quando o artefato local respondia (desde o
+    INF-A2, só quando o artefato passou do alvo de 4 dias), e ele segue
     lendo o Supabase por mais de 30 s. Qualquer teste que chamasse o carregador
     nesse intervalo recebia o resultado DELE -- 433 linhas reais ou um quadro
     vazio -- e seus `monkeypatch` de engine e `read_sql_query` viravam decoração.
@@ -804,10 +811,12 @@ def _reset_fii_snapshot_memory_cache() -> None:
     Abandonar é seguro: a thread é daemon e a fila é privada dela.
     """
     global _FII_SNAPSHOT_LAST_GOOD, _FII_SNAPSHOT_LAST_GOOD_AT, _FII_SNAPSHOT_JOB
+    global _FII_SNAPSHOT_LAST_REMOTE_TRY_AT
     with _FII_SNAPSHOT_LOCK:
         _FII_SNAPSHOT_LAST_GOOD = None
         _FII_SNAPSHOT_LAST_GOOD_AT = None
         _FII_SNAPSHOT_JOB = None
+        _FII_SNAPSHOT_LAST_REMOTE_TRY_AT = None
 
 
 def _read_fii_selection_snapshot(eng, page_size: int) -> pd.DataFrame:
@@ -936,14 +945,98 @@ def _annotate_fii_snapshot_freshness(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
+def _fii_snapshot_as_of(frame: pd.DataFrame) -> _dt.date | None:
+    if frame is None or frame.empty or "as_of_date" not in frame.columns:
+        return None
+    as_of = pd.to_datetime(frame["as_of_date"], errors="coerce").dt.date.dropna()
+    return None if as_of.empty else as_of.iloc[0]
+
+
+def _newer_remembered_fii_snapshot(artifact_as_of: _dt.date) -> pd.DataFrame | None:
+    """Vitrine remota já lida, verificada e mais nova que o artefato, se houver.
+
+    Sem o teto de 15 min de `_fresh_fii_snapshot_fallback`: lá a memória
+    substitui uma leitura que FALHOU; aqui ela compete com um artefato mais
+    velho, e uma vitrine verificada (hash, schema, 30 dias) mais nova vence o
+    artefato enquanto ele não for republicado.
+    """
+    with _FII_SNAPSHOT_LOCK:
+        cached = (None if _FII_SNAPSHOT_LAST_GOOD is None
+                  else _FII_SNAPSHOT_LAST_GOOD.copy(deep=True))
+    if cached is None or _fii_snapshot_integrity_error(cached) is not None:
+        return None
+    cached_as_of = _fii_snapshot_as_of(cached)
+    if cached_as_of is None or cached_as_of <= artifact_as_of:
+        return None
+    cached.attrs.update({
+        "snapshot_source": "database",
+        "snapshot_fallback": False,
+        "fallback_reason": "remote_newer_than_local_artifact",
+        "snapshot_read_attempts": 0,
+    })
+    return cached
+
+
+def _artifact_or_newer_remote(artifact: pd.DataFrame, eng, page_size: int) -> pd.DataFrame:
+    """Decide entre o artefato local verificado e a vitrine do Supabase.
+
+    INF-A2 (auditoria de 04/10/2026). Até aqui, com o artefato válido, a
+    leitura disparava SEMPRE um worker que trazia a vitrine inteira do Supabase
+    -- 434 linhas, 2,9 MB de JSON (medido no artefato de 04/10) -- e guardava o
+    resultado só na memória de última leitura boa, que o artefato vencia na
+    chamada seguinte. Era tráfego descartado a cada expiração do cache de 15
+    min: até 96 leituras/dia, ~280 MB/dia por processo, mais que o orçamento
+    inteiro de ~160 MB/dia que cabe nos 5 GB do plano free (o ciclo de
+    setembro fechou em 7,8 GB).
+
+    Agora o Supabase só é lido quando pode acrescentar algo: artefato além do
+    alvo de 4 dias (a rotina noturna parou de republicar) e sem tentativa
+    remota nas últimas 6 h. Quando o worker termina, a vitrine dele é servida
+    se for mais nova que o artefato -- antes ela nunca era.
+    """
+    artifact_as_of = _fii_snapshot_as_of(artifact)
+    if artifact_as_of is None:
+        return artifact
+    idade = (_utcnow().date() - artifact_as_of).days
+    if idade <= _FII_SNAPSHOT_MAX_AGE_DAYS:
+        return artifact
+
+    newer = _newer_remembered_fii_snapshot(artifact_as_of)
+    if newer is not None:
+        return newer
+
+    global _FII_SNAPSHOT_LAST_REMOTE_TRY_AT, _FII_SNAPSHOT_JOB
+    agora = _utcnow()
+    with _FII_SNAPSHOT_LOCK:
+        ultima = _FII_SNAPSHOT_LAST_REMOTE_TRY_AT
+        devida = eng is not None and (
+            ultima is None
+            or (agora - ultima).total_seconds() >= _FII_SNAPSHOT_REMOTE_RETRY_SECONDS
+        )
+        if devida:
+            _FII_SNAPSHOT_LAST_REMOTE_TRY_AT = agora
+            # Ninguém espera o worker disparado sem prazo, então ele termina e
+            # fica registrado. Reaproveitá-lo devolveria a leitura de 6 h atrás
+            # no lugar de uma nova; o que ele leu de bom já está na memória.
+            if _FII_SNAPSHOT_JOB is not None and not _FII_SNAPSHOT_JOB[0].is_alive():
+                _FII_SNAPSHOT_JOB = None
+    if devida:
+        _wait_for_fii_snapshot_job(eng, int(page_size), timeout_seconds=0)
+        artifact.attrs["fallback_reason"] = "remote_refresh_in_background"
+    else:
+        artifact.attrs["fallback_reason"] = "local_artifact_stale"
+    return artifact
+
+
 def _load_fii_selection_snapshot(page_size: int = 500) -> pd.DataFrame:
     """Lê a vitrine v2 sob prazo total e fallback verificado de 15 minutos."""
     eng = _fii_snapshot_engine()
     artifact = _load_fii_snapshot_artifact()
-    if not artifact.empty:
-        if eng is not None:
-            _wait_for_fii_snapshot_job(eng, int(page_size), timeout_seconds=0)
-        return _annotate_fii_snapshot_freshness(artifact)
+    # Artefato reprovado (hash, schema, > 30 dias) chega com linhas E
+    # `load_error`; servi-lo seria falhar com o Supabase talvez íntegro.
+    if not artifact.empty and not artifact.attrs.get("load_error"):
+        return _annotate_fii_snapshot_freshness(
+            _artifact_or_newer_remote(artifact, eng, int(page_size)))
     if eng is None:
         fallback = _fresh_fii_snapshot_fallback("database_unavailable", 0)
         if fallback is not None:
@@ -1626,7 +1719,11 @@ def load_fii_quality() -> pd.DataFrame:
     return base
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+# INF-A2: lê o histórico INTEIRO de preços dos FIIs + XFIX11 (42.628 linhas,
+# 1,24 MB em texto no armazém em 04/10/2026) para devolver duas séries
+# mensais. A fonte muda uma vez por noite e a saída é mensal: com TTL de 1 h
+# eram até 24 leituras/dia (~30 MB/dia de egress por processo) sem dado novo.
+@st.cache_data(ttl=43200, show_spinner=False)
 def load_mercado_retorno_mensal() -> pd.DataFrame:
     """
     Retornos MENSAIS (retorno total, adjusted_close) de referência de mercado:
