@@ -27,11 +27,15 @@ acumulado ``R − B`` sem resíduo (testado a 1e-12).
 
 **Referências por classe.** Ações Brasil: BOVA11 (o fundo reinveste os
 proventos, então é retorno total do Ibovespa). FIIs: o IFIX (retorno total,
-série oficial da B3) em ``market.historical_prices`` — só no pregão exato do
-fim de mês; o XFIX11 foi descartado porque caiu de 13,87 para 13,22 entre
-abril e setembro de 2026 sem provento registrado, e subestimaria o IFIX em
-cerca de 1% ao mês. Exterior: SPY convertido pelo USDBRL, sem dividendos —
-igual aos ETFs americanos da carteira, cujos dividendos não estão no banco.
+série da B3) em ``market.historical_prices`` — só no pregão exato do fim de
+mês. Na falta dele (a série tem buraco de 25/09 a 01/10/2026), o XFIX11, o
+mesmo proxy do benchmark composto do Portfólio Global
+(``core.global_portfolio.benchmark``), também só em data exata, e o mês
+declara qual usou. Medido nos meses com os dois: julho IFIX −0,32% e XFIX11
+−0,52%; agosto −1,48% e −0,89% — erro de rastreio de meio ponto, sem viés
+de sinal. Exterior: SPY convertido pelo USDBRL, diário, sem dividendos —
+igual aos ETFs americanos da carteira, cujos dividendos não estão no banco
+(o IVVB11 do Portfólio Global não tem cotação diária em ``asset_quotes``).
 Renda fixa: CDI.
 
 **Cobertura honesta.** O peso real usa o valor INTEIRO da classe: os ativos
@@ -63,6 +67,7 @@ ROTULO = {"renda_fixa": "Renda fixa", "acoes_br": "Ações Brasil",
           "fiis": "Fundos imobiliários", "exterior": "Exterior"}
 REFERENCIA = {"renda_fixa": "CDI", "acoes_br": "BOVA11", "fiis": "IFIX",
               "exterior": "SPY em reais"}
+_REF_TENTADAS = {**REFERENCIA, "fiis": "IFIX nem XFIX11"}
 EFEITOS = ("alocacao", "selecao", "interacao")
 LINKING = "Carino (logarítmico)"
 
@@ -222,7 +227,7 @@ def mes_atribuicao(mes: str, w_p: dict[str, float], w_b: dict[str, float],
     motivos = list(extras_motivo)
     for c in CLASSES:
         if r_b.get(c) is None:
-            motivos.append(f"sem referência de {ROTULO[c]} ({REFERENCIA[c]})")
+            motivos.append(f"sem referência de {ROTULO[c]} ({_REF_TENTADAS[c]})")
         elif w_p.get(c, 0.0) > 0 and r_p.get(c) is None:
             motivos.append(f"{ROTULO[c]} sem retorno medido no mês")
     base = {"mes": mes, "w_p": w_p, "w_b": w_b, "r_p": r_p, "r_b": r_b}
@@ -253,6 +258,12 @@ def _pct(v: float | None, casas: int = 1) -> str:
 def _desde(atr: dict) -> str:
     d = atr.get("meta_desde")
     return f", definida em {d:%d/%m/%Y}" if hasattr(d, "strftime") else ""
+
+
+def _troca_ref(m: dict) -> str:
+    trocas = [f"{ROTULO[c]} contra {r}" for c, r in (m.get("referencias") or {}).items()
+              if r != REFERENCIA.get(c)]
+    return f" (referência trocada: {', '.join(trocas)})" if trocas else ""
 
 
 def resumo_atribuicao(atr: dict) -> str | None:
@@ -302,7 +313,8 @@ def bloco_atribuicao_para_prompt(atr: dict | None) -> str:
             linhas.append(
                 f"- {mes_br(m['mes'])}: excesso {_pp(m['excesso'])} (carteira {_pct(m['R_p'], 2)}, "
                 f"meta {_pct(m['R_b'], 2)}); pesos reais "
-                + ", ".join(f"{ROTULO[c]} {_pct(m['w_p'].get(c), 0)}" for c in CLASSES))
+                + ", ".join(f"{ROTULO[c]} {_pct(m['w_p'].get(c), 0)}" for c in CLASSES)
+                + _troca_ref(m))
         else:
             linhas.append(f"- {mes_br(m['mes'])}: incompleto — " + "; ".join(m["motivos"]))
     linhas.append(
@@ -324,10 +336,10 @@ REGRA_ATRIBUICAO = (
 # Carga (I/O)
 # ─────────────────────────────────────────────────────────────────────────────
 
-_SQL_IFIX = """
+_SQL_REF_FII = """
     SELECT date AS data, close AS fechamento
     FROM market.historical_prices
-    WHERE ticker = 'IFIX' AND date >= :ini AND close IS NOT NULL
+    WHERE ticker = :ticker AND date >= :ini AND close IS NOT NULL
 """
 
 _SQL_FOTOS_VALOR = """
@@ -452,8 +464,10 @@ def _atribuicao_real() -> dict:
         if cur is None or v > cur["valor"]:
             foto[r.data][tk] = {"valor": v, "tipo": str(r.tipo), "moeda": str(r.moeda).upper()}
 
-    ifix = {r.data: float(r.fechamento) for r in _ler(engine, _SQL_IFIX, {"ini": meses[0][1]})
-            if r.fechamento}
+    ref_fii = {tk: {r.data: float(r.fechamento)
+                    for r in _ler(engine, _SQL_REF_FII, {"ticker": tk, "ini": meses[0][1]})
+                    if r.fechamento}
+               for tk in ("IFIX", "XFIX11")}
     spy_brl = {}
     fx = alinhar_precos(dias, cotacoes.get("USDBRL", {}), _FFILL_EXTERIOR)
     spy = alinhar_precos(dias, cotacoes.get("SPY", {}), _FFILL_EXTERIOR)
@@ -521,11 +535,19 @@ def _atribuicao_real() -> dict:
         r_b = {
             "renda_fixa": (fator_cdi(cdi, t0, t1) - 1.0) if ins["cdi_ok"] else None,
             "acoes_br": retorno_preco(bova, t0, t1),
-            "fiis": retorno_preco(ifix, t0, t1),
+            "fiis": retorno_preco(ref_fii["IFIX"], t0, t1),
             "exterior": retorno_preco(spy_brl, t0, t1),
         }
+        ref_usada = {}
+        if r_b["fiis"] is None:
+            r_b["fiis"] = retorno_preco(ref_fii["XFIX11"], t0, t1)
+            if r_b["fiis"] is not None:
+                ref_usada["fiis"] = "XFIX11"
+                notas.append("IFIX sem fechamento no início ou no fim do mês: "
+                             "FIIs contra o XFIX11")
         m = mes_atribuicao(mes, w_p, meta, r_p, r_b,
                            () if total_classes > 0 else ("nenhum valor nas classes da política",))
+        m["referencias"] = {c: ref_usada.get(c, REFERENCIA[c]) for c in CLASSES}
         m.update({
             "t0": t0, "t1": t1, "foto": d_foto, "notas": notas,
             "valor_classes": total_classes, "valor_fora": fora,

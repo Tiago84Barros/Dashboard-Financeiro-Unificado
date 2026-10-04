@@ -156,6 +156,8 @@ def render_atribuicao_carteira() -> None:
                          "Medido": _pct(m["cobertura"].get(c), 0)} for c in CLASSES}
             st.dataframe(_linhas_classe(m["efeitos"], extra), hide_index=True,
                          width="stretch")
+            for nota in m.get("notas") or []:
+                st.caption(nota)
 
     with st.expander("Cobertura e limitações da atribuição"):
         fonte = atr.get("fonte_classe") or {}
@@ -171,8 +173,9 @@ def render_atribuicao_carteira() -> None:
             f"Fora das quatro classes: {_pct(atr.get('pct_fora_politica'), 1)} do "
             f"patrimônio de hoje ({', '.join(atr.get('fora_politica') or []) or 'nada'}); "
             "não entra nos pesos.",
-            "IFIX só vale no pregão exato do fim do mês; mês em que a série do IFIX "
-            "tem buraco fica incompleto em vez de usar uma data vizinha.",
+            "IFIX só vale no pregão exato do fim do mês; sem ele, o XFIX11 (o proxy "
+            "do Portfólio Global), também em data exata — o mês diz qual usou. Sem "
+            "os dois, o mês fica incompleto em vez de usar uma data vizinha.",
             "Exterior: SPY em reais, sem dividendos — igual aos ETFs americanos da "
             "carteira, cujos dividendos não estão no banco.",
             "Ativo vendido antes de hoje entra no peso pela foto, mas o retorno "
