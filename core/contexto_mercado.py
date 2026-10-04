@@ -52,6 +52,12 @@ _TTL_TUNEL = 120
 MAX_MANCHETES = 12
 #: Série local mais velha que isto é histórico, não "cenário atual".
 _IDADE_MAX_SERIE_LOCAL = timedelta(days=400)
+#: Provedor de dado anual: o World Bank publica o ano fechado com 1 a 2 anos de
+#: atraso, então o corte de 400 dias apagava a série inteira em silêncio (a
+#: observação mais nova de uma série anual tem período de 1 a 2 anos atrás).
+#: 3 anos cobrem o atraso natural; além disso a série é nomeada como omitida.
+_IDADE_MAX_SERIE_ANUAL = timedelta(days=3 * 365)
+_PROVEDORES_ANUAIS = frozenset({"world_bank"})
 _MAX_TITULO = 200
 #: Mesmo limite de ``core.conjuntura.ponte.MAX_IDADE_VITRINE_HORAS``.
 _IDADE_MAX_VITRINE_H = 48
@@ -212,25 +218,48 @@ def linhas_curva_tesouro(curva) -> list[str]:
 # Macro — armazém local
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _idade_max_serie(fato) -> timedelta:
+    if fato.get("provider") in _PROVEDORES_ANUAIS:
+        return _IDADE_MAX_SERIE_ANUAL
+    return _IDADE_MAX_SERIE_LOCAL
+
+
 def _linhas_macro_local(fatos, origem: str) -> list[str]:
-    """Séries do armazém com período no último ano, sem a cópia de public.macro."""
+    """Séries do armazém com período dentro da tolerância da fonte.
+
+    A tolerância depende da frequência (anual tolera mais). A idade do período
+    vai na linha, e a série descartada por defasagem é nomeada: fonte que some
+    em silêncio parece fonte que nunca existiu.
+    """
     from core.macro_data.context import format_macro_context
 
     hoje = date.today()
-    recentes = []
+    recentes, omitidas = [], []
     for fato in fatos:
         try:
             periodo = date.fromisoformat(str(fato.get("reference_period"))[:10])
         except ValueError:
             continue
-        if (hoje - periodo <= _IDADE_MAX_SERIE_LOCAL
-                and fato.get("provider") != _PROVEDOR_ESPELHO):
-            recentes.append(fato)
-    if not recentes:
-        return [f"  {origem}: nenhuma série com período recente."]
-    return [f"  {origem} (séries com período no último ano; a cópia "
-            "de public.macro fica de fora):"] + [
-        "    " + linha for linha in format_macro_context(recentes)]
+        if fato.get("provider") == _PROVEDOR_ESPELHO:
+            continue
+        if hoje - periodo <= _idade_max_serie(fato):
+            recentes.append((fato, (hoje - periodo).days))
+        else:
+            omitidas.append(f"{fato.get('indicator')} [{fato.get('provider')}] "
+                            f"(período {periodo:%d/%m/%Y})")
+    linhas = []
+    if recentes:
+        linhas = [f"  {origem} (séries dentro da tolerância de idade da fonte; "
+                  "a cópia de public.macro fica de fora):"]
+        for fato, dias in recentes:
+            for linha in format_macro_context([fato]):
+                linhas.append(f"    {linha} · período há {dias} dias")
+    else:
+        linhas = [f"  {origem}: nenhuma série com período recente."]
+    if omitidas:
+        linhas.append("    Séries omitidas por defasagem acima da tolerância: "
+                      + "; ".join(omitidas[:8]) + ".")
+    return linhas
 
 
 def _macro_local() -> list[str]:
