@@ -85,3 +85,33 @@ def baixar_sgs_soap(codigo: int, inicio: date, fim: date,
     if not r.ok:
         return {}, f"o SOAP do SGS respondeu HTTP {r.status_code}"
     return parse_sgs_xml(r.text), None
+
+
+def ultimo_valor_sgs(codigo: int, janela_dias: int = 45,
+                     timeout: float = 8.0) -> float | None:
+    """Último ponto da série ``codigo``: REST primeiro, SOAP como reserva.
+
+    ``janela_dias`` precisa cobrir a defasagem da série (mensal publica com
+    ~40 dias de atraso). ``None`` quando as duas vias falham -- quem chama
+    mostra "indisponível", nunca um valor fixo.
+    """
+    import requests
+    from datetime import timedelta
+
+    try:
+        r = requests.get(
+            f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{int(codigo)}"
+            "/dados/ultimos/1?formato=json",
+            timeout=timeout,
+        )
+        if r.ok and r.json():
+            return float(str(r.json()[0]["valor"]).replace(",", "."))
+    except Exception:  # noqa: BLE001 -- REST fora do ar cai no SOAP
+        pass
+
+    hoje = date.today()
+    serie, _motivo = baixar_sgs_soap(codigo, hoje - timedelta(days=janela_dias),
+                                     hoje, timeout=timeout)
+    if not serie:
+        return None
+    return serie[max(serie)]
