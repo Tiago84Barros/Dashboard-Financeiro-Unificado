@@ -78,9 +78,10 @@ _TOL_QTD = 0.01
 
 BENCHMARK = "BOVA11"
 _FX = "USDBRL"
-# Referência da classe exterior na atribuição Brinson (core.carteira_atribuicao):
-# lida junto com o resto para não abrir uma segunda consulta a asset_quotes.
-REFERENCIAS_EXTRAS = ("SPY",)
+# Referências da atribuição Brinson (core.carteira_atribuicao) — SPY do
+# exterior, XFIX11 dos FIIs na falta do IFIX: lidas junto com o resto para não
+# abrir uma segunda consulta a asset_quotes.
+REFERENCIAS_EXTRAS = ("SPY", "XFIX11")
 _RX_TESOURO_SELIC = re.compile(r"TESOURO\s+SELIC\s+(\d{4})", re.IGNORECASE)
 
 FONTE_OBSERVADA = "cotação diária"

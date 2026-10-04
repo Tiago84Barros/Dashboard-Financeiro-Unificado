@@ -26,14 +26,21 @@ mesmo fator sobre o período inteiro; a soma encadeada fecha o excesso
 acumulado ``R − B`` sem resíduo (testado a 1e-12).
 
 **Referências por classe.** Ações Brasil: BOVA11 (o fundo reinveste os
-proventos, então é retorno total do Ibovespa). FIIs: o IFIX (retorno total,
-série da B3) em ``market.historical_prices`` — só no pregão exato do fim de
-mês. Na falta dele (a série tem buraco de 25/09 a 01/10/2026), o XFIX11, o
-mesmo proxy do benchmark composto do Portfólio Global
-(``core.global_portfolio.benchmark``), também só em data exata, e o mês
-declara qual usou. Medido nos meses com os dois: julho IFIX −0,32% e XFIX11
-−0,52%; agosto −1,48% e −0,89% — erro de rastreio de meio ponto, sem viés
-de sinal. Exterior: SPY convertido pelo USDBRL, diário, sem dividendos —
+proventos, então é retorno total do Ibovespa). FIIs: o IFIX, retorno total,
+nesta ordem e com UMA fonte por mês (o mês declara qual usou):
+
+1. o fechamento MENSAL oficial da B3 (``source = 'b3_official_ifix'`` em
+   ``market.historical_prices``, gravado pelo job diário de cotações via
+   ``data_pipeline.market.ifix_oficial``) — o mês contra o anterior, pela chave
+   AAAA-MM, porque a B3 data o valor no fim do mês corrido e não no pregão;
+2. o IFIX diário na data exata — é o spot da brapi coletado de manhã, valor
+   intradiário, e falha nos dias sem coleta (buraco de 25/09 a 01/10/2026);
+3. o XFIX11, o mesmo proxy do benchmark composto do Portfólio Global
+   (``core.global_portfolio.benchmark``), em data exata: primeiro a cotação
+   ajustada do Yahoo em ``asset_quotes``, depois o fechamento da brapi.
+
+Medido nos meses com IFIX e XFIX11: julho −0,32% e −0,52%; agosto −1,48% e
+−0,89% — erro de rastreio de meio ponto, sem viés de sinal. Exterior: SPY convertido pelo USDBRL, diário, sem dividendos —
 igual aos ETFs americanos da carteira, cujos dividendos não estão no banco
 (o IVVB11 do Portfólio Global não tem cotação diária em ``asset_quotes``).
 Renda fixa: CDI.
@@ -68,6 +75,10 @@ ROTULO = {"renda_fixa": "Renda fixa", "acoes_br": "Ações Brasil",
 REFERENCIA = {"renda_fixa": "CDI", "acoes_br": "BOVA11", "fiis": "IFIX",
               "exterior": "SPY em reais"}
 _REF_TENTADAS = {**REFERENCIA, "fiis": "IFIX nem XFIX11"}
+# O mesmo rótulo de ``data_pipeline.market.ifix_oficial.FONTE`` (testado): a
+# camada de leitura não importa o ETL.
+_FONTE_IFIX_OFICIAL = "b3_official_ifix"
+_REF_XFIX = "XFIX11"
 EFEITOS = ("alocacao", "selecao", "interacao")
 LINKING = "Carino (logarítmico)"
 
@@ -215,6 +226,40 @@ def retorno_preco(cotacoes: dict[date, float], t0: date, t1: date,
     return p1 / p0 - 1.0
 
 
+def _mes_anterior(mes: str) -> str:
+    ano, m = int(mes[:4]), int(mes[5:])
+    return f"{ano - (m == 1):04d}-{12 if m == 1 else m - 1:02d}"
+
+
+def retorno_mensal_oficial(oficial: dict[str, float], mes: str) -> float | None:
+    """``V(mês)/V(mês anterior) − 1`` pelo fechamento mensal oficial (chave AAAA-MM)."""
+    v0, v1 = oficial.get(_mes_anterior(mes)), oficial.get(mes)
+    if not v0 or not v1 or v0 <= 0 or v1 <= 0:
+        return None
+    return v1 / v0 - 1.0
+
+
+def referencia_fiis(mes: str, t0: date, t1: date, oficial: dict[str, float],
+                    ifix_diario: dict[date, float],
+                    xfix: Sequence[dict[date, float]]) -> tuple[float | None, str | None]:
+    """Retorno do IFIX no mês e o rótulo da fonte; nunca mistura duas fontes.
+
+    IFIX oficial mensal → IFIX diário em data exata ("IFIX spot") → XFIX11 em
+    data exata, na ordem das séries de ``xfix``.
+    """
+    r = retorno_mensal_oficial(oficial, mes)
+    if r is not None:
+        return r, "IFIX"
+    r = retorno_preco(ifix_diario, t0, t1)
+    if r is not None:
+        return r, "IFIX spot"
+    for serie in xfix:
+        r = retorno_preco(serie, t0, t1)
+        if r is not None:
+            return r, _REF_XFIX
+    return None, None
+
+
 def normalizar(valores: dict[str, float]) -> dict[str, float]:
     total = sum(v for v in valores.values() if v > 0)
     return {c: (max(v, 0.0) / total if total > 0 else 0.0) for c, v in valores.items()}
@@ -337,7 +382,7 @@ REGRA_ATRIBUICAO = (
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SQL_REF_FII = """
-    SELECT date AS data, close AS fechamento
+    SELECT date AS data, close AS fechamento, COALESCE(source, '') AS fonte
     FROM market.historical_prices
     WHERE ticker = :ticker AND date >= :ini AND close IS NOT NULL
 """
@@ -464,10 +509,16 @@ def _atribuicao_real() -> dict:
         if cur is None or v > cur["valor"]:
             foto[r.data][tk] = {"valor": v, "tipo": str(r.tipo), "moeda": str(r.moeda).upper()}
 
-    ref_fii = {tk: {r.data: float(r.fechamento)
-                    for r in _ler(engine, _SQL_REF_FII, {"ticker": tk, "ini": meses[0][1]})
-                    if r.fechamento}
-               for tk in ("IFIX", "XFIX11")}
+    ref_rows = {tk: [r for r in _ler(engine, _SQL_REF_FII, {"ticker": tk, "ini": meses[0][1]})
+                     if r.fechamento]
+                for tk in ("IFIX", _REF_XFIX)}
+    ifix_oficial = {r.data.strftime("%Y-%m"): float(r.fechamento) for r in ref_rows["IFIX"]
+                    if r.fonte == _FONTE_IFIX_OFICIAL}
+    ifix_diario = {r.data: float(r.fechamento) for r in ref_rows["IFIX"]}
+    # XFIX11: a cotação ajustada do Yahoo (asset_quotes, lida com o risco) antes
+    # do fechamento da brapi (market.historical_prices).
+    xfix = (cotacoes.get(_REF_XFIX, {}),
+            {r.data: float(r.fechamento) for r in ref_rows[_REF_XFIX]})
     spy_brl = {}
     fx = alinhar_precos(dias, cotacoes.get("USDBRL", {}), _FFILL_EXTERIOR)
     spy = alinhar_precos(dias, cotacoes.get("SPY", {}), _FFILL_EXTERIOR)
@@ -535,16 +586,17 @@ def _atribuicao_real() -> dict:
         r_b = {
             "renda_fixa": (fator_cdi(cdi, t0, t1) - 1.0) if ins["cdi_ok"] else None,
             "acoes_br": retorno_preco(bova, t0, t1),
-            "fiis": retorno_preco(ref_fii["IFIX"], t0, t1),
+            "fiis": None,
             "exterior": retorno_preco(spy_brl, t0, t1),
         }
         ref_usada = {}
-        if r_b["fiis"] is None:
-            r_b["fiis"] = retorno_preco(ref_fii["XFIX11"], t0, t1)
-            if r_b["fiis"] is not None:
-                ref_usada["fiis"] = "XFIX11"
-                notas.append("IFIX sem fechamento no início ou no fim do mês: "
-                             "FIIs contra o XFIX11")
+        r_b["fiis"], rotulo_fii = referencia_fiis(mes, t0, t1, ifix_oficial, ifix_diario, xfix)
+        if rotulo_fii not in (None, REFERENCIA["fiis"]):
+            ref_usada["fiis"] = rotulo_fii
+            notas.append(
+                "sem o fechamento mensal oficial do IFIX: FIIs contra o "
+                + ("IFIX spot da brapi (valor intradiário)" if rotulo_fii == "IFIX spot"
+                   else "XFIX11"))
         m = mes_atribuicao(mes, w_p, meta, r_p, r_b,
                            () if total_classes > 0 else ("nenhum valor nas classes da política",))
         m["referencias"] = {c: ref_usada.get(c, REFERENCIA[c]) for c in CLASSES}
