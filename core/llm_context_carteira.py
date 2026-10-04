@@ -309,13 +309,19 @@ def _brl(valor) -> str:
 
 
 def build_carteira_geral_context(carteira: dict, proventos: dict | None = None,
-                                 *, valores_reais: bool = False) -> str:
+                                 *, valores_reais: bool = False,
+                                 risco: dict | None = None) -> str:
     """Contexto da sub-aba Visão Geral: a carteira inteira, entre classes.
 
     Os pesos são os mesmos ``pct_carteira`` que a tela mostra — sobre o valor
     de mercado consolidado —, para a LLM e o dono da carteira lerem o mesmo
     número. A renda de 12 meses sai como percentual do custo; em reais só com
     o toggle ligado, junto com os totais.
+
+    ``risco`` é o resultado de ``core.carteira_risco.get_risco_carteira()``:
+    TWR, volatilidade, queda máxima, VaR, Sharpe e beta da série diária, com a
+    cobertura e o período. Sem ele, a LLM respondia "qual o risco da minha
+    carteira" pela concentração, sem um único número de oscilação.
     """
     carteira = carteira or {}
     proventos = proventos or {}
@@ -396,6 +402,11 @@ def build_carteira_geral_context(carteira: dict, proventos: dict | None = None,
     else:
         blocos += ["", "Valores em reais e quantidades não são enviados."]
 
+    if risco is not None:
+        from core.carteira_risco import bloco_risco_para_prompt
+
+        blocos += ["", bloco_risco_para_prompt(risco)]
+
     blocos += [
         "",
         "REGRAS DE LEITURA DESTE CONTEXTO:",
@@ -405,4 +416,8 @@ def build_carteira_geral_context(carteira: dict, proventos: dict | None = None,
         "esse detalhe está nas sub-abas de cada classe.",
         "- Ausência de dado nunca equivale a zero, a valor neutro ou a risco baixo.",
     ]
+    if risco is not None:
+        from core.carteira_risco import REGRA_RISCO
+
+        blocos.append(REGRA_RISCO)
     return "\n".join(linha for linha in blocos if linha is not None)
