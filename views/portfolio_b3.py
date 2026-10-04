@@ -42,6 +42,7 @@ from core.dossie_b3 import NAO_AVALIADO, avaliar_para_selecao, quali_gate_dispon
 from core.inteligencia_ativos import veredito
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
+from core.utils import escapar_cifrao
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design import portao_inteligencia as _portao_ui
 from design.componentes import card_metrica, cor_token
@@ -665,10 +666,26 @@ def _quali_avaliar_cached(tk: str) -> dict:
         except Exception as exc:  # falha de avaliação nunca veta -- nem aprova
             # Antes saía "aprovar_com_ressalvas" e a tela listava o ativo como
             # aprovado pelo portão sem parecer nenhum (auditoria B3-09).
+            # O motivo vai à lista de "não avaliados" na tela: categoria,
+            # nunca o texto da exceção (LLM-A11).
+            from core.llm_falha import motivo_falha_llm
+            _motivo = motivo_falha_llm(exc, f"portão qualitativo ({tk})")
             cache[tk] = {"classificacao": NAO_AVALIADO,
-                         "motivo": f"avaliação indisponível ({exc})",
+                         "motivo": f"avaliação indisponível ({_motivo})",
                          "parecer": {}, "dossie": {}}
     return cache[tk]
+
+
+def _registrar_aviso_ancoragem(log: dict, tk: str, aval: dict) -> None:
+    """Guarda no log do portão o aviso de número sem lastro do parecer de ``tk``.
+
+    O parecer já saía com ``aviso_ancoragem`` desde o PR #506 (LLM-A9), mas a
+    Criação de Portfólio -- a única tela que mostra o parecer, pelo motivo do
+    veto/ressalva -- não o exibia: o aviso morria no cache de sessão.
+    """
+    aviso = str((aval or {}).get("aviso_ancoragem") or "").strip()
+    if aviso:
+        log.setdefault("avisos_ancoragem", {})[tk] = aviso
 
 
 def _intel_avaliar_cached(tk: str, setor: str | None = None):
@@ -734,6 +751,7 @@ def _aplicar_gate_qualitativo(
     nao_avaliados = log.setdefault("nao_avaliados", {})
     for tk in selecionados:
         aval = _quali_avaliar_cached(tk)
+        _registrar_aviso_ancoragem(log, tk, aval)
         if aval["classificacao"] != "vetar":
             if aval["classificacao"] == NAO_AVALIADO:
                 nao_avaliados[tk] = str(aval.get("motivo") or "parecer indisponível")
@@ -752,6 +770,7 @@ def _aplicar_gate_qualitativo(
             if _entry_guard_exclui(entry_guard, cand):
                 continue
             aval_c = _quali_avaliar_cached(cand)
+            _registrar_aviso_ancoragem(log, cand, aval_c)
             avaliacoes += 1
             if aval_c["classificacao"] != "vetar":
                 substituto = cand
@@ -3923,7 +3942,7 @@ def render(show_header: bool = True) -> None:
     # ── Gate qualitativo: pré-avalia as candidatas com barra de progresso ────
     # (as avaliações são cacheadas — reruns e substitutos reaproveitam)
     quali_log: dict = {"vetados": [], "substituicoes": [], "ressalvas": {},
-                       "nao_avaliados": {}}
+                       "nao_avaliados": {}, "avisos_ancoragem": {}}
     _gate_ativo = bool(st.session_state.get("pb3_gate_quali")) and quali_gate_disponivel()
     # Piso absoluto de qualidade (determinístico, sem rede). Ligado por padrão:
     # sem ele o app entrega o líder do segmento seja ele qual for, e a única
@@ -4624,6 +4643,21 @@ def render(show_header: bool = True) -> None:
             ):
                 for _tk, _mot in quali_log["ressalvas"].items():
                     st.markdown(f"• **{_tk}**: {_mot}")
+        # Conferência dos números do parecer (LLM-A9): alerta, não veto -- o
+        # portão é fail-open e a classificação acima não muda por isso.
+        _avisos_anc = quali_log.get("avisos_ancoragem") or {}
+        if _avisos_anc:
+            with st.expander(
+                f"🔢 Pareceres com número a conferir ({len(_avisos_anc)})",
+                expanded=False,
+            ):
+                st.caption("Números citados no parecer sem lastro no dossiê "
+                           "nem no contexto enviado ao modelo, ou tirados de "
+                           "manchete sem atribuição. Não "
+                           "mudam a classificação; confira antes de usar o "
+                           "motivo do veto ou da ressalva.")
+                for _tk, _aviso in _avisos_anc.items():
+                    st.markdown(f"• **{_tk}**: {escapar_cifrao(_aviso)}")
 
     # ── TRANSPARÊNCIA DO PISO DE NEGOCIABILIDADE ─────────────────────────────
     if liq_trocas or liq_avisos:

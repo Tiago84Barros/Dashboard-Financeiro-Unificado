@@ -41,7 +41,34 @@ def _motivo(exc: BaseException) -> str:
         return "o provedor de IA recusou a chave de acesso"
     if "connection" in nome or "connect" in texto or "network" in texto:
         return "não houve conexão com o provedor de IA"
+    if "não interpretável" in texto or nome == "jsondecodeerror":
+        # core/dossie_b3._parecer_llm_cached levanta ValueError("resposta não
+        # interpretável") quando o modelo responde fora do esquema.
+        return "a resposta da IA veio fora do formato esperado"
     return "o provedor de IA falhou"
+
+
+def descrever_falha_llm(exc: BaseException) -> str:
+    """O motivo da falha em categoria, sem ``str(exc)`` e sem log.
+
+    Para quem precisa do motivo dentro de outro texto -- o ``resumo`` do
+    fallback do relatório, o ``motivo`` do portão de seleção. Antes esses
+    pontos gravavam ``str(exc)[:200]`` no relatório, que a tela mostra e que
+    fica no cache de sessão (LLM-A11, sobra do 13b). Mensagem de configuração
+    do próprio app (``_DO_APP``) sai inteira: é acionável e não tem dado de
+    terceiro.
+    """
+    bruto = str(exc)
+    if bruto.startswith(_DO_APP):
+        return bruto
+    return _motivo(exc)
+
+
+def motivo_falha_llm(exc: BaseException, onde: str) -> str:
+    """Registra ``exc`` no log (com traceback) e devolve o motivo em categoria."""
+    logger.error("Falha da LLM em %s (%s)", onde, type(exc).__name__,
+                 exc_info=(type(exc), exc, exc.__traceback__))
+    return descrever_falha_llm(exc)
 
 
 def mensagem_falha_llm(exc: BaseException, onde: str, *,
@@ -52,10 +79,8 @@ def mensagem_falha_llm(exc: BaseException, onde: str, *,
     O texto devolvido nunca contém ``str(exc)``, salvo as mensagens de
     configuração do próprio app (``_DO_APP``).
     """
-    logger.error("Falha da LLM em %s (%s)", onde, type(exc).__name__,
-                 exc_info=(type(exc), exc, exc.__traceback__))
-    bruto = str(exc)
-    if bruto.startswith(_DO_APP):
-        return f"Não foi possível {acao} agora: {bruto}"
-    return (f"Não foi possível {acao} agora: {_motivo(exc)}. Tente de novo em "
+    motivo = motivo_falha_llm(exc, onde)
+    if str(exc).startswith(_DO_APP):
+        return f"Não foi possível {acao} agora: {motivo}"
+    return (f"Não foi possível {acao} agora: {motivo}. Tente de novo em "
             "instantes; o detalhe técnico ficou no log do app.")

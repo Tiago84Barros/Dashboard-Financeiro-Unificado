@@ -26,7 +26,7 @@ Uso:
 
 Rotas (todas GET, todas exigem ``Authorization: Bearer <token>``):
     /saude                              -- o banco responde?
-    /noticias/recentes?limite=150&dias=3
+    /noticias/recentes?limite=150&dias=3[&ordem=nota]
     /noticias/ativos?tickers=PETR4,VALE3&janela_dias=30&as_of=<ISO>
     /macro/recente
     /eua/detalhe?simbolos=AAPL,KO     -- preço diário, trimestres e proventos
@@ -60,6 +60,14 @@ TOKEN_MINIMO = 32
 #: token vazado vire um dump do acervo inteiro numa chamada só.
 LIMITE_MAX_NOTICIAS = 500
 DIAS_MAX_NOTICIAS = 30.0
+#: O que a curadoria do bloco de mercado lê de cada item
+#: (``core.noticias.curadoria.curar`` e ``contexto_mercado._linhas_acervo``).
+#: ``ordem=nota`` devolve só isto: medido em 04/10/2026, os 400 de maior nota
+#: com o item inteiro davam 1.101 KiB (161 KiB em gzip), contra 406 KiB dos
+#: 150 mais novos que o túnel mandava; projetados, 234 KiB (47 KiB em gzip).
+#: Ler por relevância saiu mais barato que a leitura por data de antes.
+CAMPOS_POR_NOTA = ("titulo", "veiculo", "nota", "direcao", "publicado_em",
+                   "coletado_em", "evento_id", "tipo_evento", "entidades", "url")
 #: Tetos da rota por ativo. A carteira-modelo mais larga pede ~40 tickers; a
 #: janela da conjuntura é de 30 dias.
 TICKERS_MAX = 80
@@ -155,8 +163,16 @@ def rota_noticias(params) -> tuple[int, dict]:
         return 503, {"erro": "acervo de notícias não configurado nesta máquina"}
     limite = int(_numero(params, "limite", 150, LIMITE_MAX_NOTICIAS))
     dias = _numero(params, "dias", 3, DIAS_MAX_NOTICIAS)
-    itens = ler_recentes(limite, dias=dias, engine=engine_leitura(url))
-    return 200, {"itens": list(itens), "limite": limite, "dias": dias}
+    ordem = str(params.get("ordem", ["data"])[0] or "data").strip().lower()
+    if ordem not in ("data", "nota"):
+        return 400, {"erro": "ordem deve ser 'data' ou 'nota'"}
+    itens = ler_recentes(limite, dias=dias, engine=engine_leitura(url), ordem=ordem)
+    if ordem == "nota":
+        itens = [{c: i.get(c) for c in CAMPOS_POR_NOTA} for i in itens]
+    # ``ordem`` volta na resposta para o cliente saber se foi atendido: um
+    # serviço anterior a este parâmetro o ignora e devolve os mais novos.
+    return 200, {"itens": list(itens), "limite": limite, "dias": dias,
+                 "ordem": ordem}
 
 
 def rota_noticias_ativos(params) -> tuple[int, dict]:

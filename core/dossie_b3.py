@@ -883,10 +883,19 @@ def _parecer_fallback(tk: str, motivo: str = "LLM indisponível") -> dict:
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def _parecer_llm_cached(prompt: str, _tk: str) -> dict:
-    """Uma chamada LLM por (prompt) por dia — o prompt embute o hash do dossiê."""
+def _parecer_llm_por_chave(chave: str, _prompt: str, _tk: str) -> dict:
+    """Uma chamada LLM por ``chave`` por dia; o modelo recebe ``_prompt``.
+
+    ``chave`` é o prompt com o sufixo aleatório das cercas trocado por ``X``
+    (``sem_marcadores_aleatorios``). Antes a chave era o próprio prompt, e
+    desde as cercas do PR #506 ele carrega dois marcadores novos por chamada
+    (contexto de mercado) mais o do RAG: medido em 04/10/2026, duas
+    montagens seguidas do mesmo ativo davam prompts diferentes, e o cache de
+    24 h nunca acertava -- cada Criação de Portfólio pagava um parecer por
+    líder de novo. ``_prompt`` e ``_tk`` ficam fora do hash (sublinhado).
+    """
     from core.llm_b3 import _call_llm, _parse_json, _report_model
-    raw = _call_llm(prompt, model=_report_model())
+    raw = _call_llm(_prompt, model=_report_model())
     parecer = _parse_json(raw, None)
     if not isinstance(parecer, dict):
         # Levantar em vez de devolver o fallback: `st.cache_data` não guarda
@@ -894,6 +903,17 @@ def _parecer_llm_cached(prompt: str, _tk: str) -> dict:
         # provedor virava um dia inteiro de ativo sem parecer.
         raise ValueError("resposta não interpretável")
     return parecer
+
+
+def _parecer_llm_cached(prompt: str, tk: str) -> dict:
+    """O parecer do dia para ``prompt``, com a chave sem os marcadores aleatórios."""
+    from core.seguranca.procedencia import sem_marcadores_aleatorios
+    return _parecer_llm_por_chave(sem_marcadores_aleatorios(prompt), prompt, tk)
+
+
+# Quem limpa o cache (testes, scripts/eval_gate_selecao.py) continua chamando
+# ``_parecer_llm_cached.clear()``.
+_parecer_llm_cached.clear = _parecer_llm_por_chave.clear  # type: ignore[attr-defined]
 
 
 def _sanitizar_parecer(p: dict, tk: str) -> dict:
@@ -973,8 +993,11 @@ def gerar_parecer_empresa(
     try:
         parecer = _parecer_llm_cached(prompt, tk)
     except Exception as exc:
-        logger.warning("Parecer LLM falhou para %s: %s", tk, exc)
-        return _parecer_fallback(tk, str(exc)[:200]), dossie
+        # O motivo entra em ``motivo_selecao``, que a Criação de Portfólio
+        # mostra na lista de "não avaliados": categoria, nunca ``str(exc)``.
+        from core.llm_falha import motivo_falha_llm
+        motivo = motivo_falha_llm(exc, f"parecer de seleção de {tk}")
+        return _parecer_fallback(tk, motivo), dossie
     # LLM-A9: o parecer passa pela mesma conferência dos chats. O aviso fica
     # no parecer (campo ``aviso_ancoragem``) e NÃO muda a classificação:
     # o gate é fail-open e número sem lastro é alerta, não veto.
@@ -1014,6 +1037,9 @@ def avaliar_para_selecao(ticker: str) -> dict:
     return {
         "classificacao": parecer.get("classificacao_selecao", NAO_AVALIADO),
         "motivo": parecer.get("motivo_selecao", ""),
+        # Número do parecer sem lastro no dossiê/contexto (LLM-A9). A
+        # Criação de Portfólio mostra junto do motivo; não muda a decisão.
+        "aviso_ancoragem": parecer.get("aviso_ancoragem", ""),
         "parecer": parecer,
         "dossie": dossie,
     }

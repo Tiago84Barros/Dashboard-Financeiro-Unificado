@@ -29,6 +29,7 @@ from core.llm_context_b3 import (
     get_company_fundamentals_context,
     get_sector_comparison_context,
 )
+from core.llm_falha import motivo_falha_llm
 from core.llm_grounding import com_aviso_ancoragem
 from core.portfolio_report_common import (
     QUALITATIVE_WEIGHTS,
@@ -489,8 +490,10 @@ def generate_company_portfolio_report(
         parsed = _parse_json(raw, _fallback_company(tk, "JSON inválido"))
         return com_aviso_ancoragem(sanitize_company_report(parsed, tk), prompt), dossier
     except Exception as exc:
-        logger.warning("Relatório institucional de %s falhou: %s", tk, exc)
-        return _fallback_company(tk, str(exc)[:200]), dossier
+        # O motivo vai ao ``resumo`` que a tela mostra: categoria, nunca
+        # ``str(exc)`` (código HTTP, id de requisição, organização -- LLM-A11).
+        motivo = motivo_falha_llm(exc, f"relatório institucional de {tk}")
+        return _fallback_company(tk, motivo), dossier
 
 
 def analyze_portfolio_report(
@@ -522,5 +525,5 @@ def analyze_portfolio_report(
         return com_aviso_ancoragem(
             sanitize_portfolio_report(parsed, items_analyzed), prompt)
     except Exception as exc:
-        logger.warning("Relatório institucional consolidado falhou: %s", exc)
-        return _fallback_portfolio(str(exc)[:200])
+        return _fallback_portfolio(
+            motivo_falha_llm(exc, "relatório institucional consolidado B3"))
