@@ -51,6 +51,7 @@ _CLASSE_SCHEMA:  { nome, valor_mercado, total_investido,
 _SETOR_SCHEMA:   { nome, valor_mercado, pct_carteira }
 """
 import logging
+import re
 from collections import defaultdict
 
 from core.categorias import SQL_INVESTIMENTO
@@ -73,6 +74,7 @@ _CLASS_LABEL: dict[str, str] = {
     "renda_fixa":   "Renda Fixa",
     "tesouro":      "Tesouro Direto",
     "fundo_rf":     "Fundo RF",
+    "fip":          "FIP",
     "etf":          "ETF",
     "etf_br":       "ETF Brasil",
     "etf_intl":     "ETF Internacional",
@@ -89,6 +91,7 @@ _CLASS_COR: dict[str, str] = {
     "renda_fixa":   "#A855F7",
     "tesouro":      "#2ECC71",
     "fundo_rf":     "#7C3AED",
+    "fip":          "#C084FC",
     "etf":          "#F5A623",
     "etf_br":       "#F5A623",
     "etf_intl":     "#63cab7",
@@ -987,12 +990,31 @@ def _base_ticker(ticker: str) -> str:
     return t
 
 
-def _class_key_from_snapshot(raw_type: str | None, ticker: str, country: str | None) -> str:
+# FIP (fundo de investimento em participações) não é renda fixa: é private
+# equity ilíquido, sem curva nem cotação. A XP o entrega como fixed_income e o
+# código da B3 é numérico ("4606422UNA", "5082123CA1"), então o ticker não
+# denuncia -- a identificação é pelo nome ("... FIP ..." / "Fundo de
+# Investimento em Participações") ou por esta lista, que nasce da auditoria de
+# 04/10/2026 (INV-A1) e cresce quando surgir outro.
+_FIPS_CONHECIDOS = frozenset({"4606422UNA", "5082123CA1"})
+_RE_FIP_NOME = re.compile(
+    r"\bFIP\b|FUNDO\s+DE\s+INVEST\w*\s+EM\s+PARTICIPA", re.IGNORECASE)
+
+
+def eh_fip(ticker: str | None, nome: str | None = None) -> bool:
+    return ((ticker or "").upper().strip() in _FIPS_CONHECIDOS
+            or bool(_RE_FIP_NOME.search(nome or "")))
+
+
+def _class_key_from_snapshot(raw_type: str | None, ticker: str, country: str | None,
+                             nome: str | None = None) -> str:
     raw = (raw_type or "").strip().lower()
     t = (ticker or "").upper().strip()
     c = (country or "BR").upper().strip()
     if c not in ("", "BR"):
         return "etf_intl" if raw == "etf" else raw or "other"
+    if raw in {"renda_fixa", "fixed_income", "fundo_rf", "other", ""} and eh_fip(t, nome):
+        return "fip"
     if raw == "tesouro":
         return "tesouro"
     if raw in {"renda_fixa", "fixed_income"}:
@@ -1023,6 +1045,39 @@ def _calcular_custos_transacoes(conn, owner_id: str) -> dict[str, dict]:
     para FIFO em vez de avg ponderado).
     """
     return {}
+
+
+#: Classes sem cotação diária: o valor vem da foto da corretora.
+_CLASSES_SEM_COTACAO = frozenset({"renda_fixa", "fundo_rf", "fip"})
+
+
+def sem_marcacao_renda_fixa(classe_raw: str, custo_fonte: str, cotacao_fonte: str,
+                            custo: float, valor: float) -> bool:
+    """``True`` quando o retorno de um papel sem cotação é ausência, não 0,0%.
+
+    Vale para renda fixa privada, fundo e FIP (Tesouro tem marcação própria em
+    ``core.tesouro_mtm``). Dois sinais: (a) o custo é o próprio valor de
+    mercado, imputado por falta de fonte (``mercado_fallback``); (b) o custo
+    veio da foto e é igual ao valor da foto até o centavo -- um papel que rende
+    não fecha assim, é o relatório da corretora repetindo o mesmo número nas
+    duas colunas. Medido em 04/10/2026: 5 CDBs e 2 fundos (16,8% do valor)
+    apareciam com 0,0%. Papel com cotação viva (``live``) nunca cai aqui.
+    """
+    if classe_raw not in _CLASSES_SEM_COTACAO or cotacao_fonte in ("live", "stale"):
+        return False
+    if custo_fonte == "mercado_fallback":
+        return True
+    return custo_fonte == "snapshot" and abs(float(custo) - float(valor)) < 0.005
+
+
+def resumo_sem_marcacao(posicoes: list) -> dict:
+    """Quanto da carteira está sem marcação: ``{n, valor, pct, tickers}``."""
+    sem = [p for p in posicoes if p.get("sem_marcacao")]
+    total = sum(float(p.get("valor_mercado") or 0) for p in posicoes)
+    valor = sum(float(p.get("valor_mercado") or 0) for p in sem)
+    return {"n": len(sem), "valor": round(valor, 2),
+            "pct": round(valor / total * 100, 2) if total > 0 else 0.0,
+            "tickers": sorted(str(p.get("ticker")) for p in sem)}
 
 
 def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
@@ -1305,7 +1360,15 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
             "b3_posicao_detalhada", "b3_negociacao", "snapshot",
         )
 
-        classe_raw = _class_key_from_snapshot(primary.asset_type, base, primary.country)
+        classe_raw = _class_key_from_snapshot(primary.asset_type, base, primary.country,
+                                              primary.asset_name)
+        # Renda fixa, fundo e FIP não têm cotação diária: o "retorno" sai de
+        # custo vs. valor da foto. Quando a foto traz custo == valor (ou não
+        # traz custo nenhum), esse 0,0% é ausência de marcação, não resultado.
+        sem_marcacao = sem_marcacao_renda_fixa(classe_raw, custo_fonte,
+                                               cotacao_fonte, ti, vm_calc)
+        if sem_marcacao:
+            rentab = None
 
         total_investido += ti
         total_mercado   += vm_calc
@@ -1333,6 +1396,7 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
             "rentab_moeda":       "BRL",
             "rentab_brl_pct":     rentab,
             "retorno_brl_disponivel": True,
+            "sem_marcacao":       sem_marcacao,
             "pct_carteira":       0.0,
             "cor":                _CLASS_COR.get(classe_raw, "#718096"),
         })
@@ -1374,6 +1438,7 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
         "posicoes":                posicoes,
         "por_classe":              _agregar_por_classe(posicoes),
         "por_setor":               _agregar_por_setor(posicoes),
+        "sem_marcacao":            resumo_sem_marcacao(posicoes),
         "avisos_dados":            avisos_dados,
     }
 
@@ -1401,17 +1466,26 @@ def _agregar_por_classe(posicoes: list) -> list:
         buckets[cls]["valor_mercado"]   += p["valor_mercado"]
         buckets[cls]["total_investido"] += p["total_investido"]
         buckets[cls]["num_ativos"]      += 1
+        # O retorno da classe só soma quem tem marcação: um papel com custo
+        # igual ao valor puxaria a média para zero sem ter retorno medido.
+        if p.get("sem_marcacao"):
+            buckets[cls]["sem_marcacao_n"] = buckets[cls].get("sem_marcacao_n", 0) + 1
+        else:
+            buckets[cls]["vm_marcado"] = buckets[cls].get("vm_marcado", 0.0) + p["valor_mercado"]
+            buckets[cls]["ti_marcado"] = buckets[cls].get("ti_marcado", 0.0) + p["total_investido"]
 
     total = sum(b["valor_mercado"] for b in buckets.values()) or 1.0
     resultado = []
     for b in sorted(buckets.values(), key=lambda x: x["valor_mercado"], reverse=True):
-        ti = b["total_investido"]
         vm = b["valor_mercado"]
-        rentab = round((vm - ti) / ti * 100, 2) if ti > 0 else 0.0
+        ti_m = b.pop("ti_marcado", 0.0)
+        vm_m = b.pop("vm_marcado", 0.0)
+        rentab = round((vm_m - ti_m) / ti_m * 100, 2) if ti_m > 0 else 0.0
         resultado.append({
             **b,
             "pct_carteira": vm / total * 100,
             "rentab_pct":   rentab,
+            "sem_marcacao_n": b.get("sem_marcacao_n", 0),
         })
     return resultado
 
@@ -1623,7 +1697,13 @@ _SQL_EVOLUCAO_DIV = """
     )
     SELECT
         DATE_TRUNC('month', payment_date) AS mes,
-        SUM(total_amount) AS delta_dividendos
+        -- Amortização devolve o próprio capital: não é rendimento (A-128, e
+        -- INV-A2 da auditoria de 04/10/2026, que achou R$ 6,0 mil dela
+        -- somados ao ganho). Sai numa coluna à parte.
+        SUM(total_amount) FILTER (WHERE LOWER(COALESCE(type, '')) <> 'amortization')
+            AS delta_dividendos,
+        SUM(total_amount) FILTER (WHERE LOWER(COALESCE(type, '')) = 'amortization')
+            AS delta_amortizacao
     FROM dedup
     WHERE rn = 1
     GROUP BY 1
@@ -1782,6 +1862,87 @@ def ganho_total(evolucao: dict, realizado: dict | None = None) -> dict | None:
         "proventos": proventos,
         "ganho": valorizacao + vendas + proventos,
     }
+
+
+#: Classes cujo rendimento aparece como provento em ``dividends``. Renda fixa,
+#: fundo e FIP rendem dentro do valor de mercado e não geram linha de provento.
+_CLASSES_COM_PROVENTO = frozenset({
+    "Ações BR", "FII", "ETF", "ETF Brasil", "ETF Internacional", "BDR",
+})
+
+
+def _pct_valor(posicoes: list, predicado) -> float | None:
+    total = sum(float(p.get("valor_mercado") or 0) for p in posicoes)
+    if total <= 0:
+        return None
+    parte = sum(float(p.get("valor_mercado") or 0) for p in posicoes if predicado(p))
+    return round(parte / total * 100, 1)
+
+
+def _custo_confiavel(p: dict) -> bool:
+    return (not p.get("sem_marcacao")
+            and not p.get("custo_estimado")
+            and p.get("custo_fonte") != "mercado_fallback")
+
+
+def decompor_ganho(evolucao: dict, realizado: dict | None = None,
+                   carteira: dict | None = None) -> dict | None:
+    """Ganho em três parcelas, cada uma com a cobertura e o que ficou de fora.
+
+    O "ganho total" único somava populações diferentes (INV-A2, 04/10/2026):
+    R$ 208,7 mil que contradiziam a TIR de -0,94% a.a. das ações. Aqui as
+    parcelas ficam separadas e nenhuma é apresentada como retorno da carteira:
+
+    * ``nao_realizado`` -- mercado menos custo da carteira de hoje. Cobertura:
+      % do valor de mercado cujo custo é confiável (nem estimado, nem imputado
+      pelo valor de mercado, nem papel sem marcação).
+    * ``realizado`` -- lucro de vendas de renda variável da B3 pelo extrato de
+      negociação, a preço médio. Cobertura: parcela do valor vendido que tinha
+      custo no extrato (venda de posição anterior ao extrato fica fora e é
+      declarada em ``valor_sem_custo``). ``None`` se o extrato não foi lido.
+    * ``proventos`` -- só renda (dividendo, JCP, rendimento). Amortização sai
+      em ``devolucao_capital``: é o dinheiro do próprio cotista de volta.
+      Cobertura: % do patrimônio nas classes que distribuem proventos; o
+      resto rende dentro do valor de mercado.
+
+    ``None`` sem custo ou sem valor de mercado.
+    """
+    evolucao = evolucao or {}
+    mercado = evolucao.get("total_mercado")
+    custo = evolucao.get("total_investido")
+    if mercado is None or not custo:
+        return None
+    posicoes = list((carteira or {}).get("posicoes") or [])
+
+    nao_realizado = {
+        "valor": float(mercado) - float(custo),
+        "cobertura_pct": _pct_valor(posicoes, _custo_confiavel) if posicoes else None,
+        "nota": "mercado - custo da carteira de hoje",
+    }
+
+    disponivel = bool(realizado) and realizado.get("ganho") is not None
+    if disponivel:
+        vendido = float(realizado.get("valor_vendido") or 0.0)
+        sem_custo = float(realizado.get("valor_sem_custo") or 0.0)
+        cobre = vendido / (vendido + sem_custo) * 100 if vendido + sem_custo > 0 else None
+        parc_real = {"valor": float(realizado["ganho"]),
+                     "cobertura_pct": round(cobre, 1) if cobre is not None else None,
+                     "valor_sem_custo": sem_custo,
+                     "nota": "vendas de renda variável da B3, a preço médio"}
+    else:
+        parc_real = {"valor": None, "cobertura_pct": None, "valor_sem_custo": None,
+                     "nota": (realizado or {}).get("motivo")
+                     or "extrato de negociação indisponível"}
+
+    amort = evolucao.get("total_amortizacao")
+    proventos = {
+        "valor": float(evolucao.get("total_dividendos") or 0.0),
+        "cobertura_pct": (_pct_valor(posicoes, lambda p: p.get("classe") in _CLASSES_COM_PROVENTO)
+                          if posicoes else None),
+        "devolucao_capital": float(amort) if amort is not None else None,
+        "nota": "dividendos, JCP e rendimentos pagos; amortização é devolução de capital",
+    }
+    return {"nao_realizado": nao_realizado, "realizado": parc_real, "proventos": proventos}
 
 
 def _meses_entre(de: str, ate: str) -> int:
@@ -2081,9 +2242,15 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
     def _div_ate(ano: int, mes_: int) -> float:
         return sum(v for chave, v in div_por_mes if chave <= (ano, mes_))
 
+    amort_por_mes = [
+        ((r.mes.year, r.mes.month), float(getattr(r, "delta_amortizacao", None) or 0))
+        for r in div_rows
+    ]
+
     snapshots = []
     fluxo_mensal = []
     cum_div = 0.0
+    cum_amort = 0.0
 
     for r in snap_rows:
         mes = r.mes
@@ -2098,6 +2265,7 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
             if vi is not None:
                 vi = vi + ext["vi"] if ext["vi"] is not None else None
         cum_div = _div_ate(mes.year, mes.month)
+        cum_amort = sum(v for chave, v in amort_por_mes if chave <= (mes.year, mes.month))
         label = f"{_MESES_PT_CF[mes.month]}/{str(mes.year)[-2:]}"
         mes_str = mes.strftime("%Y-%m")
         snapshots.append({
@@ -2121,6 +2289,8 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
         current_vm = round(float(current_totals.get("total_mercado") or 0), 2)
         current_vi = round(float(current_totals.get("total_investido") or 0), 2)
         cum_div = _div_ate(current_month.year, current_month.month)
+        cum_amort = sum(v for chave, v in amort_por_mes
+                        if chave <= (current_month.year, current_month.month))
         current_snapshot = {
             "label":               label,
             "mes_str":             mes_str,
@@ -2150,6 +2320,7 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
         "total_investido":  latest.get("valor_investido") or 0.0,
         "total_mercado":    latest.get("valor_mercado", 0.0),
         "total_dividendos": round(cum_div, 2),
+        "total_amortizacao": round(cum_amort, 2),
     }
 
 
