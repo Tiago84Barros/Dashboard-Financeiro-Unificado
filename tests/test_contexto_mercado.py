@@ -306,7 +306,10 @@ def test_macro_local_filtra_espelho_e_serie_velha(monkeypatch):
     monkeypatch.setattr(ctx, "format_macro_context",
                         lambda fs: [f["series"] for f in fs])
     linhas = cm._macro_local()
-    assert linhas[1:] == ["    IBC-Br"]
+    # A série velha não entra como dado, mas é nomeada como omitida (não some).
+    assert linhas[1] == "    IBC-Br · período há 60 dias"
+    assert "omitidas por defasagem" in linhas[2] and "[ipea]" in linhas[2]
+    assert len(linhas) == 3
     assert _Eng.disposed
 
 

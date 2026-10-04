@@ -383,8 +383,17 @@ def _render_dashboard_header(
     fonte_label: str,
     fonte_cor: str,
     atualizado_em: _date,
+    parcial_ate: _date | None = None,
 ) -> None:
-    """Cabeçalho executivo responsivo e autocontido do Dashboard Geral."""
+    """Cabeçalho executivo responsivo e autocontido do Dashboard Geral.
+
+    ``parcial_ate``: quando o período é o mês corrente, o dia até onde os KPIs
+    foram apurados -- sem a marca, receita e despesa de 4 dias pareciam um mês.
+    """
+    chip_parcial = (
+        f'<span class="dg-chip">Mês parcial&nbsp;·&nbsp;até {parcial_ate.strftime("%d/%m")}</span>'
+        if parcial_ate else ""
+    )
     st.markdown(_DASHBOARD_STYLES, unsafe_allow_html=True)
     st.markdown(
         f"""
@@ -404,6 +413,7 @@ def _render_dashboard_header(
                 {escape(fonte_label)}
               </span>
               <span class="dg-chip">Período&nbsp;·&nbsp;{escape(mes_ref)}</span>
+              {chip_parcial}
               <span class="dg-chip">Atualizado&nbsp;·&nbsp;{atualizado_em.strftime("%d/%m/%Y")}</span>
             </div>
           </section>
@@ -1713,6 +1723,12 @@ def _rotulo_do_periodo(tem_mes_corrente: bool, visao: dict, hoje: _date) -> str:
     return visao.get("mes_referencia") or atual
 
 
+def mes_parcial_ate(tem_mes_corrente: bool, hoje: _date) -> _date | None:
+    """Dia de corte quando os KPIs são do mês corrente (sempre parcial: o dia
+    de hoje ainda não fechou); None quando vêm do último mês fechado."""
+    return hoje if tem_mes_corrente else None
+
+
 def render() -> None:
     # ── Dados ─────────────────────────────────────────────────────────────────
     try:
@@ -1760,7 +1776,10 @@ def render() -> None:
     mes_ref = _rotulo_do_periodo(cur is not None, d, hoje)
 
     # ── Cabeçalho ──────────────────────────────────────────────────────────────
-    _render_dashboard_header(mes_ref, badge_label, badge_cor, hoje)
+    _render_dashboard_header(
+        mes_ref, badge_label, badge_cor, hoje,
+        parcial_ate=mes_parcial_ate(cur is not None, hoje),
+    )
     _render_kpi_grid(
         pat,
         receitas_mes,

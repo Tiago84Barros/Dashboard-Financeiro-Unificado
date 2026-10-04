@@ -23,6 +23,7 @@ def _categories():
         {"id": "cat-outros-entrada", "nome": "Outros Rendimentos", "tipo": "income"},
         {"id": "cat-outros-saida", "nome": "Outras Despesas", "tipo": "expense"},
         {"id": "cat-pagamento-cartao", "nome": "Pagamento de Fatura", "tipo": "transfer"},
+        {"id": "cat-resgate", "nome": "Resgate de Investimento", "tipo": "transfer"},
     ]
 
 
@@ -101,8 +102,9 @@ def test_automatic_rules_and_default_other_behaviour():
 
     classified = classify_bank_movements(parsed["rows"], _categories())
 
-    assert classified[0]["categoria_id"] == "cat-outros-entrada"
-    assert classified[0]["categoria_sugerida_texto"] == "Outros"
+    # Resgate não é receita (CF-B4): categoria própria, tipo transfer.
+    assert classified[0]["categoria_id"] == "cat-resgate"
+    assert classified[0]["categoria_sugerida_texto"] == "Resgate de Investimento"
     assert classified[0]["status_classificacao"] == "sugerida"
     assert classified[1]["categoria_id"] == "cat-telefone"
     assert classified[2]["categoria_id"] == "cat-moradia"

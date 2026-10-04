@@ -212,7 +212,9 @@ def render() -> None:
             )
             for cls in por_classe:
                 cor_rentab = "#00C896" if cls["rentab_pct"] >= 0 else "#FC5C7D"
-                rentab_txt = fmt_percentual(cls["rentab_pct"]) if cotacoes else "—"
+                rentab_txt = (fmt_percentual(cls["rentab_pct"])
+                              if cotacoes and cls.get("sem_marcacao_n", 0) < cls["num_ativos"]
+                              else "—")
                 indicador_linha(
                     f"{cls['nome']} · {cls['num_ativos']} ativo{'s' if cls['num_ativos'] != 1 else ''}",
                     fmt_moeda(cls["valor_mercado"]),

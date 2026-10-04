@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import text
 
+from core.fii_methodology import METHODOLOGY_VERSION
 from core.fii_validation import FILTRO_RUN_VALIDACAO_PIT
 from data_pipeline.utils.db_utils import get_pipeline_engine
 
@@ -66,7 +67,7 @@ def run_monitoring() -> dict:
               (SELECT status FROM market.fii_validation_runs
                  WHERE methodology_version=:version AND {FILTRO_RUN_VALIDACAO_PIT}
                  ORDER BY coalesce(finished_at,started_at) DESC LIMIT 1) AS validation_status
-        """), {"version": "6.0.0"}).mappings().one())
+        """), {"version": METHODOLOGY_VERSION}).mappings().one())
         latest = conn.execute(text("""
             WITH current_scores AS (
               SELECT DISTINCT ON (ticker) ticker,confidence,coverage,
@@ -81,7 +82,7 @@ def run_monitoring() -> dict:
                    count(*) FILTER (WHERE data_readiness_status='ready')::numeric /
                        NULLIF(count(*),0) AS ready_fraction
             FROM current_scores
-        """), {"version": "6.0.0"}).mappings().one()
+        """), {"version": METHODOLOGY_VERSION}).mappings().one()
         metrics.update(dict(latest))
         rules = [
             ("fii_snapshot_freshness", float(metrics.get("fii_age_days") or 999) <= 2,
