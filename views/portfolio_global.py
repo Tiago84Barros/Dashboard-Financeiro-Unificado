@@ -1868,8 +1868,8 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                     historico[:-1], pergunta, avaliacoes)
                 aviso = aviso_ancoragem(resposta, contexto, pergunta)
             except Exception as exc:  # noqa: BLE001 - fronteira de isolamento do provedor
-                logger.exception("Falha no chat do portfolio global")
-                resposta = f"Erro ao consultar a LLM: {exc}"
+                from core.llm_falha import mensagem_falha_llm
+                resposta = mensagem_falha_llm(exc, "chat do Portfólio Global")
         st.markdown(escapar_cifrao(resposta))
         if aviso:
             st.caption(aviso)

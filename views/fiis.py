@@ -1346,7 +1346,8 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                     history[:-1], user_input, avaliacoes)
                 aviso = aviso_ancoragem(answer, context, user_input)
             except Exception as exc:
-                answer = f"Não foi possível consultar a LLM neste momento: {exc}"
+                from core.llm_falha import mensagem_falha_llm
+                answer = mensagem_falha_llm(exc, "chat da Seleção de FIIs")
         st.markdown(escapar_cifrao(answer))
         if aviso:
             st.caption(aviso)

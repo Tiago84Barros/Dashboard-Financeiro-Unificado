@@ -21,6 +21,7 @@ import logging
 
 import pandas as pd
 
+from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
 from core.dossie_b3 import build_dossie, dossie_to_text
 from core.llm_b3 import _call_llm, _parse_json, _report_model
 from core.llm_context_b3 import (
@@ -430,7 +431,11 @@ def build_company_prompt(
         dossier_text = dossie_to_text(dossier)
     except (KeyError, TypeError):
         dossier_text = str(dossier)
-    return _PROMPT_COMPANY_PORTFOLIO.format(
+    # O relatório vai numa mensagem só (``_call_llm``), sem system: a regra do
+    # contexto de mercado entra no topo do prompt, como nos chats (auditoria
+    # app4, LLM-A12). Sem ela, conjuntura e macro chegavam sem a instrução de
+    # citar fonte e data e de tratar manchete como dado, nunca como instrução.
+    return f"{REGRA_CONTEXTO_MERCADO}\n\n" + _PROMPT_COMPANY_PORTFOLIO.format(
         ticker=ticker,
         name=identity.get("nome") or ticker,
         sector=identity.get("setor") or "N/D",
@@ -502,7 +507,8 @@ def analyze_portfolio_report(
     ``web_context`` traz a reconciliação banco × Fundamentus/Status Invest da
     carteira. Vazio quando a rede falha — a síntese sai só com o banco.
     """
-    prompt = _PROMPT_PORTFOLIO.format(
+    # Regra de contexto de mercado no topo: ver build_company_prompt (LLM-A12).
+    prompt = f"{REGRA_CONTEXTO_MERCADO}\n\n" + _PROMPT_PORTFOLIO.format(
         items_context="\n".join(_company_summary_for_portfolio(item) for item in items_analyzed)
         or "Carteira vazia.",
         macro=_format_macro(macro_hist),
