@@ -599,6 +599,13 @@ Gere o relatório em JSON com EXATAMENTE este schema:
 # API pública
 # ─────────────────────────────────────────────────────────────────────────────
 
+# SEM CHAMADOR (auditoria app4, LLM-A13, 04/10/2026): nenhuma tela, ETL ou
+# script chama analisar_empresa/analisar_portfolio -- a Avaliação de Portfólio
+# B3 usa core.portfolio_report_b3 e a seleção usa dossie_b3.gerar_parecer_empresa.
+# Mantidas por decisão (não apagar sem validação): scripts/avaliar_provedor_llm.py
+# reaproveita _PROMPT_EMPRESA e os _fmt_*, e views/documentacao.py as descreve.
+# Não recebem REGRA_CONTEXTO_MERCADO nem o check de ancoragem; quem as religar
+# precisa acrescentar os dois.
 def analisar_empresa(
     ticker: str,
     nome: str,
@@ -630,6 +637,7 @@ def analisar_empresa(
     return _parse_json(raw, _fallback_empresa(ticker, peso_pct))
 
 
+# SEM CHAMADOR (LLM-A13): ver o comentário acima de analisar_empresa.
 def analisar_portfolio(
     items_analisados: list[dict],
     macro_hist: dict,

@@ -321,6 +321,22 @@ def _sem_memoria_do_tunel():
     ar._limpar_memoria()
 
 
+# ── nenhum teste herda a leitura macro de outro ─────────────────────────────
+# `core.macro_data.portfolio_context` guarda por 5 min as observações lidas de
+# cada engine (LLM-A10). Um teste que regrava o mesmo banco e relê com o mesmo
+# `as_of` receberia a leitura do teste anterior.
+@pytest.fixture(autouse=True)
+def _sem_leitura_macro_herdada():
+    try:
+        from core.macro_data import portfolio_context as pc
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    pc._limpar_cache_observacoes()
+    yield
+    pc._limpar_cache_observacoes()
+
+
 # ── nenhum teste herda o modo vitrine nem o dossiê dos EUA de outro ─────────
 # `core.us_data` guarda o "sim" do modo vitrine por 12 h na memória do processo
 # e o dossiê da vitrine no `st.cache_data` (INF-A2). Sem a limpeza, o primeiro

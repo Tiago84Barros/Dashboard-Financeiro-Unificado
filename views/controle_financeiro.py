@@ -1260,7 +1260,8 @@ def _render_chat_financeiro(
                     chart_directives = infer_financas_chart_directives(user_input, chart_meta)
                 aviso_ancoragem = _aviso_ancoragem(resposta, context, user_input)
             except Exception as exc:
-                resposta = f"Não foi possível consultar a IA agora: {exc}"
+                from core.llm_falha import mensagem_falha_llm
+                resposta = mensagem_falha_llm(exc, "chat do fluxo de caixa")
         st.markdown(escapar_cifrao(resposta))
         if aviso_ancoragem:
             st.caption(aviso_ancoragem)
@@ -3566,7 +3567,8 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
                     chart_directives = infer_cartao_chart_directives(user_input, chart_meta)
                 aviso_ancoragem = _aviso_ancoragem(resposta, context, user_input)
             except Exception as exc:
-                resposta = f"Não foi possível consultar a IA agora: {exc}"
+                from core.llm_falha import mensagem_falha_llm
+                resposta = mensagem_falha_llm(exc, "chat do cartão de crédito")
         st.markdown(escapar_cifrao(resposta))
         if aviso_ancoragem:
             st.caption(aviso_ancoragem)

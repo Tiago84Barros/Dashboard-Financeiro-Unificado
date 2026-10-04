@@ -1060,7 +1060,8 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
                                          avaliacoes)
                 aviso = aviso_ancoragem(resposta, contexto, pergunta)
             except Exception as exc:  # noqa: BLE001
-                resposta = f"Erro ao consultar LLM: {exc}"
+                from core.llm_falha import mensagem_falha_llm
+                resposta = mensagem_falha_llm(exc, "chat da Avaliação de Portfólio EUA")
         st.markdown(escapar_cifrao(resposta))
         if aviso:
             st.caption(aviso)
