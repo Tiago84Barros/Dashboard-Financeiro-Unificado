@@ -17,6 +17,7 @@ if str(ROOT) not in sys.path:
 def main() -> int:
     from core.config import settings
     from core.fii_methodology import METHODOLOGY_VERSION
+    from core.fii_validation import FILTRO_RUN_VALIDACAO_PIT
 
     parsed = make_url(settings.db_url)
     if parsed.drivername in {"postgresql", "postgres"}:
@@ -55,12 +56,12 @@ def main() -> int:
             GROUP BY dimension
             ORDER BY dimension
         """)).mappings().all()
-        validation = conn.execute(text("""
+        validation = conn.execute(text(f"""
             SELECT status,as_of_date,metrics_json->>'strategy_id' AS strategy_id,
                    metrics_json->'backtest'->>'periods' AS periods,
                    jsonb_array_length(blockers_json) AS blocker_count
             FROM market.fii_validation_runs
-            WHERE methodology_version=:version
+            WHERE methodology_version=:version AND {FILTRO_RUN_VALIDACAO_PIT}
             ORDER BY COALESCE(finished_at,started_at) DESC LIMIT 1
         """), {"version": METHODOLOGY_VERSION}).mappings().first()
         methodology = conn.execute(text("""

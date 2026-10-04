@@ -152,10 +152,12 @@ def snapshot_methodology_v4() -> dict:
         return result
     with engine.begin() as conn:
         _ensure_methodology_version(conn)
+    from core.fii_validation import FILTRO_RUN_VALIDACAO_PIT
     with engine.connect() as conn:
-        validation = conn.execute(text("""
+        validation = conn.execute(text(f"""
             SELECT status FROM market.fii_validation_runs
-            WHERE methodology_version=:version ORDER BY COALESCE(finished_at, started_at) DESC LIMIT 1
+            WHERE methodology_version=:version AND {FILTRO_RUN_VALIDACAO_PIT}
+            ORDER BY COALESCE(finished_at, started_at) DESC LIMIT 1
         """), {"version": METHODOLOGY_VERSION}).scalar() or "unvalidated"
         base = conn.execute(text("""
             WITH current_universe AS (

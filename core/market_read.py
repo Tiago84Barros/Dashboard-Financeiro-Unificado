@@ -1247,12 +1247,13 @@ def _load_fii_validation_status_cached(methodology_version: str | None) -> dict:
 
 def _fii_validation_status(methodology_version: str | None, engine) -> dict:
     from core.fii_methodology import METHODOLOGY_VERSION
+    from core.fii_validation import FILTRO_RUN_VALIDACAO_PIT
     if methodology_version is None:
         methodology_version = METHODOLOGY_VERSION
-    df = _q("""
+    df = _q(f"""
         SELECT status, metrics_json, blockers_json, as_of_date, finished_at
         FROM market.fii_validation_runs
-        WHERE methodology_version = :version
+        WHERE methodology_version = :version AND {FILTRO_RUN_VALIDACAO_PIT}
         ORDER BY COALESCE(finished_at, started_at) DESC LIMIT 1
     """, {"version": methodology_version}, engine=engine)
     if df.empty:
