@@ -3,7 +3,7 @@ import logging
 
 import streamlit as st
 
-from core.user_context import require_user
+from core.user_context import principal, require_user
 from core.user_preferences import load_theme, save_theme
 
 logger = logging.getLogger(__name__)
@@ -13,6 +13,20 @@ _CACHE = "_app4_theme_preference"
 _ERROR = "_app4_theme_error"
 _LOAD_ERROR = "_app4_theme_load_error"
 _ULTIMO_OK = "_app4_theme_last_ok"
+
+# Último tema lido com sucesso de cada conta, no processo -- e não na
+# sessão. Uma sessão nova (reconexão do navegador, aba reaberta, app que
+# voltou a aceitar conexão) começa sem `st.session_state`: a primeira
+# leitura é obrigatória, e quando ela falha não há último tema de sessão
+# para segurar a preferência -- o app repintava de escuro quem escolheu
+# claro. A falha é mais provável justamente no meio de uma importação
+# longa em Configurações, que ocupa a única conexão do pool.
+_LEMBRADO: dict[str, str] = {}
+
+
+def _lembrar(uid: str, theme: str) -> None:
+    if theme in ("dark", "light"):
+        _LEMBRADO[uid] = theme
 
 
 def current_theme() -> str:
@@ -51,13 +65,37 @@ def current_theme() -> str:
             # relê, e cair para "dark" em cada falha repintava o app inteiro no
             # meio do trabalho -- foi o que acontecia ao clicar num botão de
             # atualização em Configurações, que ocupa a única conexão do pool.
-            ultimo = st.session_state.get(_ULTIMO_OK)
+            ultimo = st.session_state.get(_ULTIMO_OK) or _LEMBRADO.get(uid)
             return ultimo if ultimo in ("dark", "light") else "dark"
         st.session_state.pop(_LOAD_ERROR, None)
         st.session_state[_CACHE] = (uid, theme)
         st.session_state[_CHOICE] = theme
         st.session_state[_ULTIMO_OK] = theme
+        _lembrar(uid, theme)
     return st.session_state[_CACHE][1]
+
+
+def tema_para_pintar() -> str:
+    """Tema a aplicar ANTES do portão de autenticação, e que nunca levanta.
+
+    ``aplicar_tema`` morava depois de ``verificar_autenticacao()``, e toda
+    execução interrompida pelo portão desenhava sem CSS nenhum -- com o tema
+    base do ``config.toml``, que é escuro. Era o que acontecia ao importar os
+    Dados Históricos B3: a importação longa ocupa a única conexão do pool, a
+    validação da sessão na execução seguinte não consegue conexão e o app
+    aparecia escuro, sem autorização de ninguém.
+
+    Sem conta na sessão (tela de login) devolve ``dark``: preferência de conta
+    é dado de conta, e ninguém se identificou ainda.
+    """
+    uid = str(principal().get("id", ""))
+    if not uid:
+        return "dark"
+    try:
+        return current_theme()
+    except Exception:
+        logger.exception("falha ao resolver o tema antes do portão")
+        return _LEMBRADO.get(uid, "dark")
 
 
 def _persist_choice() -> None:
@@ -85,6 +123,7 @@ def _persist_choice() -> None:
     else:
         st.session_state[_CACHE] = (uid, choice)
         st.session_state[_ULTIMO_OK] = choice
+        _lembrar(uid, choice)
 
 
 def render_theme_selector() -> None:

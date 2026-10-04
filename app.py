@@ -41,11 +41,18 @@ if not _APP_TEST_MODE:
     from core.config import settings
     from design.componentes import mensagem_erro, transicao_de_pagina
     from design.tema import aplicar_tema
+    from design.theme_selector import tema_para_pintar
 
+    # O tema é aplicado ANTES do portão: toda execução que o portão interrompe
+    # -- tela de login, ou o aviso de sessão que não deu para validar -- saía
+    # sem CSS nenhum, e o tema base do `config.toml` é escuro. Era isso que
+    # repintava o app de escuro no meio de uma importação em Configurações: a
+    # importação longa ocupa a única conexão do pool e a validação da sessão
+    # na execução seguinte não consegue conexão.
+    # Continua sendo UM `st.markdown` só, na mesma posição: o número de
+    # elementos acima da página não pode depender do tema (ver `aplicar_tema`).
+    aplicar_tema(tema_para_pintar())
     verificar_autenticacao()
-    from design.theme_selector import current_theme
-
-    aplicar_tema(current_theme())
 
 # ── Mapeamento: label da sidebar → módulo em views/ ──────────────────────────
 _ROTAS: dict[str, str] = {
