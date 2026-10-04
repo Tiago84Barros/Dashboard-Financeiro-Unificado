@@ -231,3 +231,31 @@ def test_contiguidade():
     assert ca._contiguo(["2026-07", "2026-08"])
     assert ca._contiguo(["2026-12", "2027-01"])
     assert not ca._contiguo(["2026-05", "2026-07"])
+
+
+# ── Referência dos FIIs: IFIX oficial → IFIX spot → XFIX11 ───────────────────
+
+def test_retorno_mensal_oficial_pela_chave_do_mes():
+    oficial = {"2025-12": 100.0, "2026-01": 102.0, "2026-09": 3755.22, "2026-08": 3762.79}
+    assert ca.retorno_mensal_oficial(oficial, "2026-01") == pytest.approx(0.02)
+    assert ca.retorno_mensal_oficial(oficial, "2026-09") == pytest.approx(3755.22 / 3762.79 - 1)
+    assert ca.retorno_mensal_oficial(oficial, "2026-02") is None  # sem o fim do mês
+    assert ca.retorno_mensal_oficial({"2026-03": 0.0, "2026-04": 1.0}, "2026-04") is None
+
+
+def test_referencia_fiis_prioridade_e_uma_fonte_por_mes():
+    t0, t1 = date(2026, 8, 31), date(2026, 9, 30)
+    oficial = {"2026-08": 100.0, "2026-09": 99.0}
+    diario = {t0: 200.0, t1: 210.0}
+    yahoo = {t0: 10.0, t1: 10.5}
+    brapi = {t0: 10.0, t1: 9.0}
+    r, rot = ca.referencia_fiis("2026-09", t0, t1, oficial, diario, (yahoo, brapi))
+    assert (r, rot) == (pytest.approx(-0.01), "IFIX")
+    r, rot = ca.referencia_fiis("2026-09", t0, t1, {}, diario, (yahoo, brapi))
+    assert (r, rot) == (pytest.approx(0.05), "IFIX spot")
+    # IFIX diário só no fim do mês: não se costura com outra série no início.
+    r, rot = ca.referencia_fiis("2026-09", t0, t1, {}, {t1: 210.0}, (yahoo, brapi))
+    assert (r, rot) == (pytest.approx(0.05), "XFIX11")
+    r, rot = ca.referencia_fiis("2026-09", t0, t1, {}, {}, ({t1: 10.5}, brapi))
+    assert (r, rot) == (pytest.approx(-0.10), "XFIX11")
+    assert ca.referencia_fiis("2026-09", t0, t1, {}, {}, ({}, {})) == (None, None)
