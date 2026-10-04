@@ -53,6 +53,7 @@ def _linha(safra, *, completa, mensuravel, estrategia=10.0, ew=8.0,
         "Segmentos": 1, "Ativos": 3, "Maiores posições": "AAA, BBB, CCC",
         "Estratégia (%)": estrategia, "Equal-weight (%)": ew,
         "Selic (%)": selic, "Excesso s/ Selic (pp)": excesso,
+        "Excesso s/ EW (pp)": excesso - 1.0,
         "Peso sem preço (%)": peso_ausente, "Universo com preço": 3,
     }
 
