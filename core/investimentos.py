@@ -1817,9 +1817,9 @@ def _evolucao_real() -> dict:
                 # vem da declaracao do usuario, o da curva tem de vir dela
                 # tambem -- duas respostas para "quanto custou" e um degrau
                 # inexplicavel no grafico.
-                # O ponto de hoje e o mesmo Patrimonio Total do Dashboard,
+                # O total de hoje e o mesmo Patrimonio Total do Dashboard,
                 # exterior incluido: a mesma pergunta com duas montagens dava
-                # dois numeros.
+                # dois numeros. O ponto do grafico fica so com o Brasil.
                 current_totals = (
                     _carteira_snapshot_consolidada(conn, owner, current_rows)
                     if current_rows else None
@@ -1875,6 +1875,13 @@ def _evolucao_real() -> dict:
     }
 
 
+def _e_exterior(pos: dict) -> bool:
+    """Mesma regra do cartao de exterior do Dashboard (views._is_exterior_position)."""
+    pais = str(pos.get("pais") or pos.get("country") or "BR").upper()
+    moeda = str(pos.get("moeda") or "BRL").upper()
+    return pais not in ("", "BR") or moeda != "BRL"
+
+
 def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: dict | None = None,
                               tx_rows: list | None = None) -> dict:
     """Série de patrimônio pelas fotos e fluxo de aporte pelo extrato.
@@ -1923,8 +1930,19 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
         current_month = _date(hoje.year, hoje.month, 1)
         label = f"{_MESES_PT_CF[current_month.month]}/{str(current_month.year)[-2:]}"
         mes_str = current_month.strftime("%Y-%m")
-        current_vm = round(float(current_totals.get("total_mercado") or 0), 2)
-        current_vi = round(float(current_totals.get("total_investido") or 0), 2)
+        total_vm = round(float(current_totals.get("total_mercado") or 0), 2)
+        total_vi = round(float(current_totals.get("total_investido") or 0), 2)
+        # O ponto de hoje no grafico fica so com o Brasil, como as fotos da
+        # B3 que vem antes dele: com a Nomad (~R$ 101 mil) somada so neste
+        # ponto, set/26 -> out/26 parecia um ganho de R$ 100 mil no mes. O
+        # total com o exterior continua nos cartoes (total_mercado).
+        posicoes = current_totals.get("posicoes")
+        if posicoes:
+            br = [p for p in posicoes if not _e_exterior(p)]
+            current_vm = round(sum(float(p.get("valor_mercado") or 0) for p in br), 2)
+            current_vi = round(sum(float(p.get("total_investido") or 0) for p in br), 2)
+        else:
+            current_vm, current_vi = total_vm, total_vi
         cum_div = _div_ate(current_month.year, current_month.month)
         current_snapshot = {
             "label":               label,
@@ -1932,6 +1950,7 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
             "valor_investido":     current_vi,
             "valor_mercado":       current_vm,
             "valor_com_dividendos": round(current_vm + cum_div, 2),
+            "so_brasil":           bool(posicoes),
         }
         if snapshots and snapshots[-1]["mes_str"] == mes_str:
             snapshots[-1] = current_snapshot
@@ -1949,6 +1968,8 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
         })
 
     latest = snapshots[-1] if snapshots else {}
+    if current_totals:
+        latest = {"valor_investido": total_vi, "valor_mercado": total_vm}
     return {
         "snapshots":        snapshots,
         "fluxo_mensal":     fluxo_mensal,

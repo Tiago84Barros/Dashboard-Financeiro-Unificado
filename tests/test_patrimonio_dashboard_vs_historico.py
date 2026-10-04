@@ -93,7 +93,18 @@ def test_historico_e_dashboard_dao_o_mesmo_patrimonio(banco_falso):
     assert carteira["total_mercado"] == pytest.approx(1550.0)
     assert evolucao["total_mercado"] == pytest.approx(carteira["total_mercado"])
     assert evolucao["total_investido"] == pytest.approx(carteira["total_investido"])
-    assert evolucao["snapshots"][-1]["valor_mercado"] == pytest.approx(1550.0)
+
+
+def test_ponto_de_hoje_no_grafico_e_so_brasil(banco_falso):
+    # Com a Nomad so no ultimo ponto, set/26 -> out/26 parecia R$ 100 mil de
+    # ganho no mes. O cartao soma o exterior; o grafico, como a B3, nao.
+    evolucao = investimentos._evolucao_real()
+    hoje = evolucao["snapshots"][-1]
+
+    assert hoje["valor_mercado"] == pytest.approx(1000.0)
+    assert hoje["valor_investido"] == pytest.approx(800.0)
+    assert hoje["so_brasil"] is True
+    assert evolucao["total_mercado"] == pytest.approx(1550.0)
 
 
 def test_foto_historica_nao_recebe_o_exterior_de_hoje(banco_falso):

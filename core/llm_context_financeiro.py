@@ -305,7 +305,8 @@ def build_financas_chat_context(
         L.append("PATRIMÔNIO INVESTIDO (evolução):")
         L.append(f"  Total investido (aportes): {_brl(evolucao.get('total_investido', 0))}")
         L.append(f"  Valor de mercado atual: {_brl(evolucao.get('total_mercado', 0))}")
-        L.append(f"  Último ponto: {ult.get('mes_str', ult.get('label', ''))} — "
+        escopo = " (só Brasil, comparável às fotos da B3)" if ult.get("so_brasil") else ""
+        L.append(f"  Último ponto{escopo}: {ult.get('mes_str', ult.get('label', ''))} — "
                  f"mercado {_brl(ult.get('valor_mercado', 0))}")
 
     L.append("")
