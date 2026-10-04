@@ -197,6 +197,34 @@ def problemas_vitrine(estado: dict, hoje: date, alvos=ALVOS
 
 
 # --------------------------------------------------------------------------
+# Atualidade trimestral das demonstrações da B3 no armazém (B3-02)
+# --------------------------------------------------------------------------
+
+CHAVE_ATUALIDADE_B3 = "b3:trimestre_armazem"
+
+
+def problema_atualidade_b3(avaliacao: dict | None) -> Problema | None:
+    """Armazém com trimestre vigente anterior ao que o calendário CVM exige.
+
+    A idade de publicação não pega isto: o alvo ``b3_metrics`` publicou em dia
+    com as demonstrações do armazém paradas desde 23/07/2026. O trimestre
+    vigente sai da cobertura do universo, não do ``MAX(data)`` (ver
+    `core.b3_atualidade_trimestral`). A assinatura é o par vigente -> esperado,
+    que só muda com o trimestre, e por isso não vira aviso diário.
+    """
+    if not avaliacao or not avaliacao.get("atrasada"):
+        return None
+    from core.b3_atualidade_trimestral import rotulo
+    assinatura = f"{rotulo(avaliacao.get('vigente'))}->{rotulo(avaliacao.get('esperado'))}"
+    return Problema(
+        CHAVE_ATUALIDADE_B3, assinatura,
+        "Demonstrações da B3 no armazém local atrasadas. "
+        f"{avaliacao.get('texto', '')} As métricas que o alvo b3_metrics publica "
+        "saem dessa base. Atualize com `python run_market_ingest.py annual "
+        "--warehouse` e `python run_market_ingest.py reprocess --warehouse`.")
+
+
+# --------------------------------------------------------------------------
 # Cegueira do próprio vigia
 # --------------------------------------------------------------------------
 

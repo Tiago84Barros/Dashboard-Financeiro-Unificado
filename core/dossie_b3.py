@@ -199,6 +199,35 @@ def _trimestres(tk: str, n: int = 6) -> dict:
     return {"serie": tris[-n:], "yoy": yoy}
 
 
+def _atualidade(tk: str, hoje: date | None = None) -> dict:
+    """Atualidade da demonstração e da base do score deste ticker (B3-02).
+
+    Mede pela cobertura do universo, não pelo ``MAX(data)``, e descobre de qual
+    trimestre é o TTM que o score usa. Detalhes e números medidos em
+    ``core/b3_atualidade_trimestral.py``. As séries são lidas cruas porque
+    ``_trimestres`` arredonda para R$ mi, e o arredondamento impede casar a
+    margem gravada com a janela que a produziu.
+    """
+    from core import b3_atualidade_trimestral as at
+    from core.database import get_engine
+
+    hoje = hoje or date.today()
+    eng = get_engine()
+    if eng is None:
+        return {}
+    with eng.connect() as conn:
+        desde = at.desde_ano(hoje)
+        universo = at.avaliar_universo(at.ler_contagens(conn, desde), hoje)
+        series, margens = at.ler_series_e_margens(conn, desde, ticker=tk)
+    medida = at.medir_base_do_score(series, margens).get(tk) or {}
+    serie = series.get(tk) or []
+    ultimo = max((r[:2] for r in serie), key=at.serial) if serie else None
+    out = at.avaliar_ticker(ultimo, medida.get("base"), universo["esperado"],
+                            universo["vigente"])
+    out["vigente_universo"] = universo["vigente"]
+    return out
+
+
 def _dividendos(tk: str, preco: float | None) -> dict:
     """Provento por acao separando renda de devolucao de capital.
 
@@ -629,6 +658,15 @@ def build_dossie(ticker: str) -> dict:
             "red_flags": [],
         }
         dossie["red_flags"] = _checks(serie, tris, divs, met, docs, val)
+        # Atualidade tem try próprio: falhar nela não pode apagar o dossiê
+        # inteiro, e o campo vazio diz "não medido".
+        try:
+            atual = _atualidade(tk)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("build_dossie(%s): atualidade não medida: %s", tk, exc)
+            atual = {}
+        dossie["atualidade"] = atual
+        dossie["red_flags"].extend(atual.get("flags") or [])
         return dossie
     except Exception as exc:  # banco fora, ticker inexistente etc.
         logger.warning("build_dossie(%s) falhou: %s", tk, exc)
@@ -661,6 +699,13 @@ def dossie_to_text(d: dict) -> str:
             L.append(f"  Último tri a/a ({tris['yoy'].get('ref')}): "
                      f"receita {tris['yoy'].get('receita_yoy_pct')}% | "
                      f"lucro {tris['yoy'].get('lucro_yoy_pct')}%")
+
+    at = d.get("atualidade") or {}
+    if at.get("esperado"):
+        from core.b3_atualidade_trimestral import rotulo
+        L.append(f"  ATUALIDADE: última demonstração {rotulo(at.get('ultimo_trimestre'))} | "
+                 f"base do score/TTM {rotulo(at.get('base_score'))} | "
+                 f"esperado pelo calendário CVM {rotulo(at.get('esperado'))}")
 
     dv = d.get("dividendos", {})
     L.append(f"\nDIVIDENDOS (R$/ação, dedup conservador por data-ex): por ano {dv.get('por_ano')}"

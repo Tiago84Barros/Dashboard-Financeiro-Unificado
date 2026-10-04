@@ -119,7 +119,10 @@ def test_papel_iliquido_na_epoca_fica_fora_so_naquele_ano():
         linhas += [("ILIQ3", date(2015, m, 1), 21 * 50_000.0),
                    ("LIQD3", date(2015, m, 1), 21 * 5_000_000.0)]
         linhas += [("ILIQ3", date(2016, m, 1), 21 * 3_000_000.0)]
-    el = upit.elegiveis_por_ano(_vol(linhas), [2015, 2016, 2017], piso)
+    # dias_parado=None isola o piso: LIQD3 some do quadro depois de 03/2015 e,
+    # pela regra do papel parado, sairia de 2016 (ver test_b3_universo_parado).
+    el = upit.elegiveis_por_ano(_vol(linhas), [2015, 2016, 2017], piso,
+                                dias_parado=None)
     assert el[2015]["abaixo"] == {"ILIQ3"}
     assert el[2016]["abaixo"] == set()
     assert not el[2017]["medido"]

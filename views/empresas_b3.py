@@ -39,6 +39,7 @@ from core.market_companies import normalize_b3_companies
 from core.validacao_motor import validacao_b3
 from design.chat_ativo import render_chat_ativo
 from design.componentes import (
+    aviso_atualidade_trimestral_b3,
     aviso_cobertura_do_universo,
     aviso_escala_do_score,
     badge_status,
@@ -1593,6 +1594,17 @@ SCORE_VERSION_CHANGELOG = {
         "transversal a 1%/99%. O EW da safra 2024 cai de +135,6% para -7,6%; "
         "a medicao OOS da 2.28.0 foi feita sobre o preco corrompido e precisa "
         "ser refeita para esta versao."
+    ),
+    "2.30.0": (
+        "Auditoria B3-06/07: papel PARADO sai da elegibilidade por epoca "
+        "(core.b3_universo_pit.parados_em). E parado quem ja negociou no "
+        "quadro e cujo ultimo mes com negocio terminou ha mais de 90 dias da "
+        "decisao, com a regua no ultimo mes negociado do universo da tela; "
+        "quem nunca apareceu segue elegivel. Antes a mediana da janela so via "
+        "os meses com negocio e o ticker sem linha na janela caia na regra da "
+        "ausencia. A regra roda tambem sem piso de volume e tira da carteira "
+        "atual quem esta parado hoje, sem tira-lo dos anos em que negociava. "
+        "Muda a elegibilidade de cada safra: a medicao OOS e desta versao."
     ),
 }
 
@@ -3285,6 +3297,12 @@ def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> Non
         f"{float(score_row.get('coverage', 0)):.0f}% de cobertura. "
         "Ausências ficam neutras e reduzem a cobertura."
     )
+    # B3-02: o aviso de atualidade sai ao lado do score, e não só na lista de
+    # limitações, porque é o score que fica velho. Em 04/10/2026, 344 dos 358
+    # scores mensuráveis usavam o TTM até o 2026T1 com o 2026T2 já no banco.
+    _aviso_atualidade = (dossie.get("atualidade") or {}).get("aviso")
+    if _aviso_atualidade:
+        st.warning(_aviso_atualidade)
 
     if dossie.get("erro"):
         aviso_lacuna(f"Dossiê determinístico indisponível: {dossie['erro']}",
@@ -6462,6 +6480,10 @@ def render() -> None:
                    ("Vitrine", resumo_curto(frescor) if frescor else "")],
     )
     selo_de_frescor("b3", frescor)
+    # O selo acima mede a idade da PUBLICAÇÃO. Uma vitrine publicada ontem
+    # pode carregar um trimestre a menos (B3-02), e é isso que o aviso abaixo
+    # mede: cobertura do universo e de qual trimestre é a base do score.
+    aviso_atualidade_trimestral_b3()
 
     with st.spinner("Carregando lista de empresas…"):
         df_set = _db.load_setores()
