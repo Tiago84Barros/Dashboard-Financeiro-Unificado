@@ -39,7 +39,7 @@ def test_score_version_2_29_0():
     """A composição da trilha mudou; a versão a acompanha."""
     from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
 
-    assert SCORE_VERSION == "2.29.0"
+    assert SCORE_VERSION == "2.30.0"
     assert MODEL_SCHEMA_VERSION == 3
 
 
