@@ -316,7 +316,8 @@ def _brl(valor) -> str:
 
 def build_carteira_geral_context(carteira: dict, proventos: dict | None = None,
                                  *, valores_reais: bool = False,
-                                 risco: dict | None = None) -> str:
+                                 risco: dict | None = None,
+                                 atribuicao: dict | None = None) -> str:
     """Contexto da sub-aba Visão Geral: a carteira inteira, entre classes.
 
     Os pesos são os mesmos ``pct_carteira`` que a tela mostra — sobre o valor
@@ -328,6 +329,11 @@ def build_carteira_geral_context(carteira: dict, proventos: dict | None = None,
     TWR, volatilidade, queda máxima, VaR, Sharpe e beta da série diária, com a
     cobertura e o período. Sem ele, a LLM respondia "qual o risco da minha
     carteira" pela concentração, sem um único número de oscilação.
+
+    ``atribuicao`` é ``core.carteira_atribuicao.get_atribuicao_carteira()``:
+    alocação, seleção e interação por classe contra a meta. Vai com uma frase
+    de resumo pronta e uma regra de POSIÇÃO ("comece com o Resumo") — dado só no
+    contexto saiu 0 de 6 citações; imperativo de posição, 3 de 3 (PR #416).
     """
     carteira = carteira or {}
     proventos = proventos or {}
@@ -412,6 +418,10 @@ def build_carteira_geral_context(carteira: dict, proventos: dict | None = None,
         from core.carteira_risco import bloco_risco_para_prompt
 
         blocos += ["", bloco_risco_para_prompt(risco)]
+    if atribuicao is not None:
+        from core.carteira_atribuicao import bloco_atribuicao_para_prompt
+
+        blocos += ["", bloco_atribuicao_para_prompt(atribuicao)]
 
     blocos += [
         "",
@@ -426,4 +436,8 @@ def build_carteira_geral_context(carteira: dict, proventos: dict | None = None,
         from core.carteira_risco import REGRA_RISCO
 
         blocos.append(REGRA_RISCO)
+    if atribuicao is not None:
+        from core.carteira_atribuicao import REGRA_ATRIBUICAO
+
+        blocos.append(REGRA_ATRIBUICAO)
     return "\n".join(linha for linha in blocos if linha is not None)
