@@ -9,6 +9,7 @@ análise institucional via OpenAI + redistribuição de pesos quanti-quali.
 from __future__ import annotations
 
 import json
+import logging
 
 import numpy as np
 import pandas as pd
@@ -67,6 +68,8 @@ from views.empresas_b3 import _logo_url
 # ─────────────────────────────────────────────────────────────────────────────
 # CSS
 # ─────────────────────────────────────────────────────────────────────────────
+
+logger = logging.getLogger(__name__)
 
 _CSS = """
 <style>
@@ -1458,8 +1461,11 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
             if chart_directives:
                 try:
                     render_charts_from_directives(chart_directives, chart_meta)
-                except Exception as exc:
-                    st.caption(f"⚠️ Não foi possível gerar os gráficos solicitados: {exc}")
+                except Exception:
+                    # O texto da exceção fica no log: na tela ele expunha
+                    # detalhe interno sem ajudar o usuário (auditoria LLM-A11).
+                    logger.exception("analise_portfolio_b3: gráficos do chat falharam")
+                    st.caption("⚠️ Não foi possível gerar os gráficos solicitados.")
 
         history.append({"role": "assistant", "content": resposta})
         save_chat_history(_memory_key, history, session_key="apb3_chat_history")
@@ -1593,10 +1599,11 @@ def render(show_header: bool = True) -> None:
         with st.spinner("Conferindo os fundamentos com fontes da web…"):
             try:
                 web_ctx, web_sinal = get_web_evidence_context(tickers_tuple)
-            except Exception as exc_web:  # noqa: BLE001 - web nunca bloqueia a análise
+            except Exception:  # noqa: BLE001 - web nunca bloqueia a análise
+                logger.exception("analise_portfolio_b3: segunda fonte (web) falhou")
                 st.warning(
-                    f"Segunda fonte (web) indisponível — a análise segue apenas "
-                    f"com o banco interno. Detalhe: {exc_web}",
+                    "Segunda fonte (web) indisponível — a análise segue apenas "
+                    "com o banco interno.",
                     icon="🌐",
                 )
                 web_ctx, web_sinal = "", {}
