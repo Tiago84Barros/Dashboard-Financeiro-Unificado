@@ -1,6 +1,6 @@
 """Vigia das automações: avisa no Telegram o que parou sem reclamar.
 
-Confere duas coisas e avisa pelo `scripts.notificar` (Hermes -> Telegram):
+Confere três coisas e avisa pelo `scripts.notificar` (Hermes -> Telegram):
 
 1. workflow AGENDADO do GitHub Actions com 2+ execuções agendadas seguidas em
    falha (lista descoberta em `.github/workflows/*.yml` pelo gatilho
@@ -8,6 +8,8 @@ Confere duas coisas e avisa pelo `scripts.notificar` (Hermes -> Telegram):
 2. publicação da rotina local (`scripts/atualizar_vitrines.py`) cuja última
    publicação bem-sucedida passou do limite do alvo -- lida do estado local
    `local_staging/estado_publicacao.json`, sem tocar no Supabase.
+3. trimestre vigente das demonstrações da B3 no armazém local, medido por
+   cobertura do universo, contra o calendário da CVM (B3-02).
 
 A decisão é de `core.vigia_automacoes`; aqui só há I/O. A memória dos avisos
 fica em `local_staging/vigia_automacoes.json` (estado de máquina, fora do git):
@@ -39,9 +41,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from core.vigia_automacoes import (  # noqa: E402
+    CHAVE_ATUALIDADE_B3,
     atualizar_cegueira,
     decidir,
     montar_mensagem,
+    problema_atualidade_b3,
     problema_workflow,
     problemas_vitrine,
     tem_agendamento,
@@ -91,6 +95,33 @@ def runs_agendados(workflow: str, gh: str) -> list[dict] | None:
     except ValueError:
         return None
     return dados if isinstance(dados, list) else None
+
+
+def atualidade_b3_do_armazem(hoje) -> dict | None:
+    """Avaliação do trimestre vigente no armazém local, ou ``None`` se não deu.
+
+    Só o armazém: é dele que o alvo ``b3_metrics`` publica, e lê-lo não gasta
+    egress do Supabase. Docker desligado não é problema a avisar aqui, porque a
+    própria rotina de publicação já falha alto sem ele.
+    """
+    try:
+        from sqlalchemy import create_engine
+
+        from core.b3_atualidade_trimestral import (
+            avaliar_universo,
+            desde_ano,
+            ler_contagens,
+        )
+        from scripts.publish_fii_selection_from_local import _warehouse_url
+        eng = create_engine(_warehouse_url(), pool_pre_ping=True)
+        try:
+            with eng.connect() as conn:
+                contagens = ler_contagens(conn, desde_ano(hoje))
+        finally:
+            eng.dispose()
+        return avaliar_universo(contagens, hoje)
+    except Exception:  # noqa: BLE001 - vigia não derruba a rotina
+        return None
 
 
 def _ler_json(caminho: Path) -> dict | None:
@@ -152,6 +183,17 @@ def vigiar(dry_run: bool = False, estado_publicacao: Path = ESTADO_PUBLICACAO,
     verificados |= verif_pub
     saida(f"  publicações: {len(verif_pub) - 1} alvo(s) medido(s) em "
           f"{estado_publicacao} -- {len(problemas_pub)} acima do limite")
+
+    # 3. Trimestre vigente das demonstrações da B3 no armazém (zero egress)
+    avaliacao = atualidade_b3_do_armazem(agora.astimezone().date())
+    if avaliacao is None:
+        saida("  demonstrações B3: armazém local indisponível, não medido")
+    else:
+        verificados.add(CHAVE_ATUALIDADE_B3)
+        problema_b3 = problema_atualidade_b3(avaliacao)
+        saida(f"  demonstrações B3: {avaliacao.get('texto')}")
+        if problema_b3:
+            problemas.append(problema_b3)
 
     decisao = decidir(problemas, avisos_anteriores, agora, verificados)
     mensagem = montar_mensagem(decisao, avisos_anteriores)

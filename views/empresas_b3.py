@@ -39,6 +39,7 @@ from core.market_companies import normalize_b3_companies
 from core.validacao_motor import validacao_b3
 from design.chat_ativo import render_chat_ativo
 from design.componentes import (
+    aviso_atualidade_trimestral_b3,
     aviso_cobertura_do_universo,
     aviso_escala_do_score,
     badge_status,
@@ -3296,6 +3297,12 @@ def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> Non
         f"{float(score_row.get('coverage', 0)):.0f}% de cobertura. "
         "Ausências ficam neutras e reduzem a cobertura."
     )
+    # B3-02: o aviso de atualidade sai ao lado do score, e não só na lista de
+    # limitações, porque é o score que fica velho. Em 04/10/2026, 344 dos 358
+    # scores mensuráveis usavam o TTM até o 2026T1 com o 2026T2 já no banco.
+    _aviso_atualidade = (dossie.get("atualidade") or {}).get("aviso")
+    if _aviso_atualidade:
+        st.warning(_aviso_atualidade)
 
     if dossie.get("erro"):
         aviso_lacuna(f"Dossiê determinístico indisponível: {dossie['erro']}",
@@ -6473,6 +6480,10 @@ def render() -> None:
                    ("Vitrine", resumo_curto(frescor) if frescor else "")],
     )
     selo_de_frescor("b3", frescor)
+    # O selo acima mede a idade da PUBLICAÇÃO. Uma vitrine publicada ontem
+    # pode carregar um trimestre a menos (B3-02), e é isso que o aviso abaixo
+    # mede: cobertura do universo e de qual trimestre é a base do score.
+    aviso_atualidade_trimestral_b3()
 
     with st.spinner("Carregando lista de empresas…"):
         df_set = _db.load_setores()

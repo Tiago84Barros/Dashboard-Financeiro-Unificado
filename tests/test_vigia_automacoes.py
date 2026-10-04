@@ -204,6 +204,8 @@ def rodada(monkeypatch, tmp_path):
     runs = {"a.yml": [_run("failure", 1), _run("failure", 25)],
             "b.yml": [_run("success", 1)]}
     monkeypatch.setattr(sv, "runs_agendados", lambda nome, gh: runs[nome])
+    # Sem isto a rodada abriria conexão com o armazém local de verdade.
+    monkeypatch.setattr(sv, "atualidade_b3_do_armazem", lambda hoje: None)
     enviados = []
     import scripts.notificar as notif
     monkeypatch.setattr(notif, "notificar",
@@ -238,3 +240,37 @@ def test_aviso_que_nao_saiu_e_tentado_de_novo(rodada, monkeypatch):
     sv.vigiar(estado_publicacao=estado, memoria_path=memoria, agora=AGORA,
               saida=lambda _l: None)
     assert json.loads(memoria.read_text(encoding="utf-8"))["avisos"] == {}
+
+
+# --- demonstrações da B3 no armazém (B3-02) -------------------------------------
+
+def _avaliacao_local():
+    from core.b3_atualidade_trimestral import avaliar_universo
+    # armazém em 04/10/2026: 2026T1 com 397 empresas, 2026T2 com 1
+    return avaliar_universo({(2025, 2): 413, (2025, 3): 404, (2025, 4): 389,
+                             (2026, 1): 397, (2026, 2): 1}, date(2026, 10, 4))
+
+
+def test_armazem_com_trimestre_atrasado_avisa_com_assinatura_estavel():
+    p = va.problema_atualidade_b3(_avaliacao_local())
+    assert p.chave == va.CHAVE_ATUALIDADE_B3
+    assert p.assinatura == "2026T1->2026T2"
+    assert "run_market_ingest.py annual --warehouse" in p.texto
+
+
+def test_armazem_em_dia_ou_nao_medido_nao_avisa():
+    from core.b3_atualidade_trimestral import avaliar_universo
+    em_dia = avaliar_universo({(2026, 1): 402, (2026, 2): 392}, date(2026, 10, 4))
+    assert va.problema_atualidade_b3(em_dia) is None
+    assert va.problema_atualidade_b3(None) is None
+    assert va.problema_atualidade_b3(avaliar_universo({}, date(2026, 10, 4))) is None
+
+
+def test_rodada_avisa_armazem_atrasado(rodada, monkeypatch):
+    sv, estado, memoria, enviados = rodada
+    monkeypatch.setattr(sv, "atualidade_b3_do_armazem", lambda hoje: _avaliacao_local())
+    sv.vigiar(estado_publicacao=estado, memoria_path=memoria, agora=AGORA,
+              saida=lambda _l: None)
+    assert "armazém local atrasadas" in enviados[0][1]
+    avisos = json.loads(memoria.read_text(encoding="utf-8"))["avisos"]
+    assert va.CHAVE_ATUALIDADE_B3 in avisos
