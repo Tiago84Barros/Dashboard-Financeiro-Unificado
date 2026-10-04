@@ -109,9 +109,11 @@ FORA_DO_PIT = (
     "Score de Entrada (entry guard), troca por classe de liquidez e "
     "substituição por correlação/Markowitz: dependem do retrato atual.",
     "Camada macro local: o contexto de hoje, sem histórico por safra.",
-    "Filtros de valor de mercado e liquidez do perfil: aplicados com o "
-    "retrato de hoje ao universo inteiro (quem era pequeno em 2015 e cresceu "
-    "entra; quem encolheu sai) -- viés de sobrevivência de tamanho.",
+    "Filtros de valor de mercado e liquidez do perfil (desde a 2.31.0, cada "
+    "safra usa o volume e o valor de mercado da época): o valor de mercado "
+    "da época é ESTIMADO pelo de hoje vezes a razão de preços sem "
+    "dividendos, então emissões e recompras posteriores não entram; quem "
+    "não tem valor de mercado hoje não recebe marca de tamanho no passado.",
     "Score da carteira histórica: o motor aplica penalidade de decaimento a "
     "quem lidera há vários anos; o score da carteira de hoje não aplica. A "
     "medição usa a carteira histórica do próprio motor (com decaimento).",

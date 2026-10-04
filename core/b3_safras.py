@@ -458,6 +458,29 @@ def _dias_por_ano_civil(inicio: pd.Timestamp, fim: pd.Timestamp) -> dict[int, in
     return dias
 
 
+def selic_sem_futuro(selic_por_ano: dict[int, float], ate_ano: int) -> dict[int, float]:
+    """Completa os anos sem Selic com a última conhecida ANTES deles.
+
+    O fallback da tela era a média de todos os anos da série -- 2012 sem dado
+    rendia a Selic média de 2010 a hoje, inclusive a de 2023. Aqui o ano
+    ausente herda o anterior mais próximo (o que se sabia na época). Anos
+    antes do primeiro observado continuam ausentes e caem no fallback
+    declarado de quem chama (`selic_anos_estimados`).
+    """
+    observados = {int(a): float(v) for a, v in (selic_por_ano or {}).items()
+                  if v is not None}
+    if not observados:
+        return {}
+    out = dict(observados)
+    ultimo = None
+    for ano in range(min(observados), int(ate_ano) + 1):
+        if ano in observados:
+            ultimo = observados[ano]
+        elif ultimo is not None:
+            out[ano] = ultimo
+    return out
+
+
 def _retorno_selic(inicio: pd.Timestamp, fim: pd.Timestamp,
                    selic_por_ano: dict[int, float],
                    taxa_selic_aa: float) -> tuple[float, list[int]]:

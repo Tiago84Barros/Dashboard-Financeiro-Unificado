@@ -165,13 +165,27 @@ bloqueio, reprovaria as validações 88 a 90 — #494.
 ## 3. Achados novos, fora do escopo e não corrigidos
 
 **Metodologia e rigor**
-- **Look-ahead na aba B3:** a média da Selic, o spread do ROIC e os filtros
-  usam o dia de hoje, e a carteira de peso igual só tem papéis vivos. A
-  regra da carteira histórica difere da atual.
-- **Vantagem líquida da B3:** some contra a carteira de peso igual (+2,00 para
-  +0,09 p.p.). Contra a Selic, cai de +12,64 para +10,73 p.p.
-- **OOS por perfil:** Equilibrado +4,2 p.p. com IC [−0,7; +10,8], que cruza
-  zero. Amplo +10,1 p.p., carregado por 2017.
+- **Look-ahead na aba B3 — corrigido na 2.31.0:** os pisos de valor de
+  mercado e de volume de hoje só decidem a carteira atual; cada safra usa o
+  volume e o tamanho da época, e o Pesos Iguais passa a ter quem encolheu.
+  A Selic de ano sem dado repete o último valor, sem a média com o futuro.
+  O spread do ROIC só entra na decisão de hoje, então não é look-ahead.
+  **Sobra:** o piso de qualidade, o portão da LLM e a guarda de entrada
+  leem hoje; e a regra de decaimento da carteira histórica difere da atual.
+- **Rank-IC do score B3 deixou de ser significativo na 2.31.0:** com o
+  universo honesto, a média caiu de 0,0765 para 0,0657 e o IC 95% foi de
+  [0,020; 0,130] para [−0,016; 0,142] (n de pares 1190 → 1449). O Grau de
+  Confiança passa a REPROVADO e o Black-Litterman dá confiança mínima à B3.
+  Não é defeito do código: é o que a evidência sustenta.
+- **Vantagem líquida da B3 (medida antes da 2.31.0):** some contra a carteira
+  de peso igual (+2,00 para +0,09 p.p.). Contra a Selic, cai de +12,64 para
+  +10,73 p.p.
+- **OOS por perfil (2.31.0, universo da época):** Equilibrado caiu de +4,2
+  para −2,5 p.p. por safra, IC [−9,7; +4,3], 7 de 9 safras negativas;
+  Conservador de +1,8 para +0,2 p.p., IC [−8,0; +7,8]. O Pesos Iguais agora
+  inclui quem encolheu, e a vantagem anterior era em parte esse viés. Amplo
+  segue +10,1 p.p., IC [+1,4; +23,2], carregado por 2017; ele não tem piso,
+  então a correção não o altera.
 - **Golden set do portão da LLM:** tem só 5 casos.
 
 **Dados**

@@ -31,6 +31,27 @@ negócio de QUALQUER papel, limitado à data da decisão: se a ingestão inteira
 parou, ninguém vira parado por isso. O filtro age só na ENTRADA da safra: quem
 já estava na carteira continua contando o retorno até a série acabar, então
 não há viés de sobrevivência por aqui.
+
+TAMANHO por época (auditoria app4, look-ahead da aba B3): o piso de valor de
+mercado também era o de HOJE e removia o papel de todos os anos da
+reconstrução — e do Pesos Iguais com ele. Quem era grande em 2016 e encolheu
+sumia do passado (o benchmark perdia justamente as quedas), e quem era nano
+em 2016 e cresceu entrava em 2016. ``abaixo_do_tamanho_por_ano`` mede o valor
+de mercado em 31/12 do exercício que a decisão lê (N-1), como ``core.b3_saidas``
+já fazia com quem saiu. A série de preços não tem número de ações por data;
+a estimativa é ``valor de hoje × fechamento(dez N-1) / fechamento de hoje``,
+com o fechamento ajustado só por desdobramento/grupamento (a coluna ``close``
+de ``market.historical_prices``). Emissão e recompra entre a data e hoje não
+entram: quem emitiu muito aparece maior no passado do que era. Sem valor de
+mercado hoje ou sem fechamento na época, o papel não é marcado (mesma regra da
+ausência do volume).
+
+O erro tem direção. Emissão posterior infla o passado e o piso DEIXA ENTRAR
+quem talvez fosse menor; só recompra grande o faria barrar indevidamente.
+Medido no armazém em 04/10/2026, dez/2018: PETR4 R$ 310 bi (real ~R$ 340 bi);
+CVCB3 R$ 26,5 bi, AMER3 R$ 824 bi e BHIA3 R$ 94 bi, todas recapitalizadas
+depois — muito acima do real, mas do lado em que o piso não morde. O volume
+da época (acima) segue barrando quem não negociava.
 """
 from __future__ import annotations
 
@@ -126,15 +147,80 @@ def elegiveis_por_ano(
     return out
 
 
+# Fechamento de dezembro com até dois meses de folga: a série é mensal e pode
+# faltar o último mês do ano; mais que isso já é outro preço, não o de 31/12.
+MESES_FOLGA_FECHAMENTO = 2
+
+
+def abaixo_do_tamanho_por_ano(
+    fechamento: pd.DataFrame,
+    mcap_hoje: dict[str, float],
+    anos: list[int],
+    piso: float,
+    meses_folga: int = MESES_FOLGA_FECHAMENTO,
+) -> dict[int, set[str]]:
+    """Por ano de decisão N: quem valia menos que ``piso`` em 31/12 de N-1.
+
+    ``fechamento``: colunas ``ticker``, ``mes`` (primeiro dia do mês) e
+    ``fechamento`` (último preço do mês, ajustado só por desdobramento). A
+    referência de "hoje" é o último mês com fechamento do próprio ticker. Ver
+    no docstring do módulo a estimativa e o que ela não alcança. ``piso<=0``
+    não marca ninguém.
+    """
+    out: dict[int, set[str]] = {int(a): set() for a in anos}
+    if piso <= 0 or fechamento is None or fechamento.empty or not mcap_hoje:
+        return out
+    df = fechamento[["ticker", "mes", "fechamento"]].copy()
+    df["mes"] = pd.to_datetime(df["mes"]).dt.date
+    df["fechamento"] = pd.to_numeric(df["fechamento"], errors="coerce")
+    df = df[df["fechamento"] > 0].sort_values(["ticker", "mes"])
+    for tk, serie in df.groupby("ticker"):
+        mc = mcap_hoje.get(str(tk))
+        if mc is None or not (float(mc) > 0):
+            continue
+        meses = serie["mes"].tolist()
+        precos = serie["fechamento"].tolist()
+        ref = float(precos[-1])
+        for ano in out:
+            fim = date(int(ano) - 1, 12, 1)
+            ini = (pd.Timestamp(fim) - pd.DateOffset(months=int(meses_folga))).date()
+            idx = [i for i, m in enumerate(meses) if ini <= m <= fim]
+            if not idx:
+                continue
+            if float(mc) * float(precos[idx[-1]]) / ref < float(piso):
+                out[ano].add(str(tk))
+    return out
+
+
+def incorporar_tamanho(
+    elegibilidade: dict[int, dict] | None,
+    abaixo_tamanho: dict[int, set[str]],
+) -> dict[int, dict]:
+    """Soma o piso de tamanho da época à elegibilidade por volume.
+
+    O tamanho vale mesmo nos anos sem volume medido: as duas medições são
+    independentes, e a falta de uma não apaga a outra.
+    """
+    out = {a: dict(v) for a, v in (elegibilidade or {}).items()}
+    for ano, fora in (abaixo_tamanho or {}).items():
+        info = out.setdefault(int(ano), {"medido": False, "abaixo": set(),
+                                         "parados": set(), "tickers_medidos": 0})
+        info["abaixo_tamanho"] = set(fora)
+    return out
+
+
 def filtrar(tickers: list[str], elegibilidade: dict[int, dict] | None, ano: int,
             chave=str) -> list[str]:
-    """Tickers elegíveis em ``ano``; sem medição do ano, devolve todos.
+    """Tickers elegíveis em ``ano``.
 
-    ``chave`` normaliza o ticker para o formato usado em ``abaixo`` e
-    ``parados``.
+    Sem volume medido no ano, o volume não filtra; o piso de tamanho da época
+    (``abaixo_tamanho``) filtra sempre que existir. ``chave`` normaliza o
+    ticker para o formato usado nos conjuntos.
     """
     info = (elegibilidade or {}).get(ano)
-    if not info or not info.get("medido"):
+    if not info:
         return list(tickers)
-    fora = set(info.get("abaixo") or ()) | set(info.get("parados") or ())
+    fora = set(info.get("abaixo_tamanho") or ())
+    if info.get("medido"):
+        fora |= set(info.get("abaixo") or ()) | set(info.get("parados") or ())
     return [tk for tk in tickers if chave(tk) not in fora]
