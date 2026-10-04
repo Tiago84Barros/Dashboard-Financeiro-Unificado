@@ -199,31 +199,36 @@ def _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje):
                     saidas[str(tk)] = pd.Timestamp(d)
         universo = list(dict.fromkeys(universo))
 
-        sel_seg = []
+        segmentos: list = []
         for res, m in aprovados:
             sel, pesos, ranking = oos.selecao_do_segmento(
                 res, m, safra, max_anos_lid=params["max_anos_lid"],
                 pode_incluir_maior=view._pode_incluir_maior_participacao)
             if sel:
-                sel_seg.append((res, sel, pesos, ranking))
+                segmentos.append((str(res.get("setor") or ""), sel, pesos, ranking))
 
-        candidatos = {tk for _, sel, _, rk in sel_seg for tk in sel} \
-            | {tk for _, _, _, rk in sel_seg for tk, _ in rk[:6]}
-        rets = oos.retornos_por_ticker(sorted(candidatos), universo, precos, safra, saidas)
+        rets = oos.retornos_por_ticker(oos.tickers_da_banda(segmentos), universo,
+                                       precos, safra, saidas)
+        tetos = {"cap": cap, "teto_setor": params["teto_setor"],
+                 "teto_ciclico": params["teto_ciclico"]}
 
         inicio, fim = janela_de_vigencia(safra)
+        brutos: dict[str, float] = {}
         for variante in oos.VARIANTES:
-            itens = []
-            for res, sel, pesos, ranking in sel_seg:
-                pesos_v = dict(pesos)
-                sel_v = list(sel)
-                if variante != oos.SEM_PORTAO:
-                    sel_v = oos.aplicar_veto_hipotetico(
-                        sel_v, ranking, pesos_v, rets,
-                        veta="melhor" if variante == oos.PORTAO_VETA_O_MELHOR else "pior")
-                itens.append((str(res.get("setor") or ""), sel_v, pesos_v))
-            cart = oos.montar_carteira(itens, cap=cap, teto_setor=params["teto_setor"],
-                                       teto_ciclico=params["teto_ciclico"])
+            veto = None
+            if variante == oos.SEM_PORTAO:
+                itens, _ = oos.vetar_na_carteira(segmentos, None)
+                cart = oos.montar_carteira(itens, **tetos)
+            else:
+                # Banda: o veto ÚNICO da safra que mais derruba (adversário)
+                # ou mais sobe (favorável) a carteira -- ver PORTAO_LLM.
+                esc = oos.escolher_veto(
+                    segmentos, rets, **tetos,
+                    veta="melhor" if variante == oos.PORTAO_VETA_O_MELHOR else "pior")
+                itens, cart = esc["itens"], esc["carteira"]
+                if esc["vetado"] is not None:
+                    entra = sorted({str(t["entra"]) for t in esc["trocas"] if t["entra"]})
+                    veto = f"{esc['vetado']} → {', '.join(entra) or 'ninguém'}"
             pesos_fin = cart["pesos"]
             base = retorno_da_safra(
                 SafraCarteira(safra=safra, ano_base=ano_base_do_score(safra),
@@ -238,6 +243,10 @@ def _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje):
                 # Mesma conta por dois caminhos: se divergirem, a carteira
                 # medida não é a que `core.b3_safras` mediria.
                 assert abs(bruto - base["retorno_estrategia"]) < 1e-9, (safra, variante)
+            if variante != oos.SEM_PORTAO:
+                # O veto foi escolhido com os mesmos retornos que a carteira mede.
+                assert abs(bruto - esc["bruto"]) < 1e-9, (safra, variante)
+            brutos[variante] = bruto
             linhas_por_variante[variante].append({
                 "safra": safra,
                 "pesos": pesos_fin,
@@ -252,7 +261,11 @@ def _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje):
                 "selic": base["retorno_selic"],
                 "ibov": oos.retorno_benchmark(ibov, precos, safra),
                 "mensuravel": bool(base["mensuravel"]),
+                "veto": veto,
             })
+        # "Não vetar" é opção das duas pontas: no bruto a banda contém o sem-portão.
+        assert (brutos[oos.PORTAO_VETA_O_MELHOR] - 1e-9 <= brutos[oos.SEM_PORTAO]
+                <= brutos[oos.PORTAO_VETA_O_PIOR] + 1e-9), (safra, brutos)
 
     perfis_var = {}
     for variante, linhas in linhas_por_variante.items():
@@ -263,7 +276,7 @@ def _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje):
         for r, c in zip(linhas, cadeia):
             linha = {k: r[k] for k in ("safra", "n_ativos", "segmentos_avaliados",
                                        "segmentos_aprovados", "reprovacoes",
-                                       "inviavel_no_cap", "exige_revisao")}
+                                       "inviavel_no_cap", "exige_revisao", "veto")}
             linha["maiores"] = ", ".join(
                 f"{tk} {w:.0%}" for tk, w in sorted(r["pesos"].items(),
                                                     key=lambda kv: (-kv[1], kv[0]))[:5])

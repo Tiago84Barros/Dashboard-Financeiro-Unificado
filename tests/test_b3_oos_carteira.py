@@ -91,17 +91,110 @@ def test_selecao_lider_mais_maior_participacao_com_peso_do_top_n():
     assert "CCCC3" in sel and pesos.get("CCCC3", 0.0) == 0.0
 
 
-def test_veto_do_melhor_substitui_pelo_proximo_e_herda_peso():
-    pesos = {"AAAA3": 0.6, "BBBB3": 0.4}
-    ranking = [("AAAA3", 3.0), ("BBBB3", 2.0), ("CCCC3", 1.0)]
-    rets = {"AAAA3": 0.50, "BBBB3": -0.10}
-    finais = oos.aplicar_veto_hipotetico(["AAAA3", "BBBB3"], ranking, pesos,
-                                         rets, veta="melhor")
-    assert finais == ["BBBB3", "CCCC3"] and pesos["CCCC3"] == 0.6
-    pesos = {"AAAA3": 0.6, "BBBB3": 0.4}
-    finais = oos.aplicar_veto_hipotetico(["AAAA3", "BBBB3"], ranking, pesos,
-                                         rets, veta="pior")
-    assert finais == ["AAAA3", "CCCC3"] and pesos["CCCC3"] == 0.4
+def _seg(setor, sel, pesos, ranking):
+    return (setor, list(sel), dict(pesos), [(tk, float(10 - k)) for k, tk in enumerate(ranking)])
+
+
+TETOS = {"cap": 1.0, "teto_setor": 1.0, "teto_ciclico": 1.0}
+
+
+def test_substituto_e_o_proximo_do_ranking_fora_da_selecao_e_herda_peso():
+    segs = [_seg("Financeiro", ["AAAA3", "BBBB3"], {"AAAA3": 0.6, "BBBB3": 0.4},
+                 ["AAAA3", "BBBB3", "CCCC3"])]
+    itens, trocas = oos.vetar_na_carteira(segs, "AAAA3")
+    assert itens == [("Financeiro", ["BBBB3", "CCCC3"],
+                      {"AAAA3": 0.6, "BBBB3": 0.4, "CCCC3": 0.6})]
+    assert trocas == [{"sai": "AAAA3", "entra": "CCCC3", "setor": "Financeiro"}]
+    # não muta a entrada: o sem-portão e as outras opções partem do mesmo lugar
+    assert segs[0][1] == ["AAAA3", "BBBB3"] and "CCCC3" not in segs[0][2]
+    assert oos.vetar_na_carteira(segs, None)[0] == [segs[0][:3]]
+
+
+def _carteira_de_lideres():
+    """Quatro segmentos, cada um com UM nome (o caso que empatava na 1.0.0)."""
+    segs = [_seg("S1", ["L1"], {"L1": 1.0}, ["L1", "R1"]),
+            _seg("S2", ["L2"], {"L2": 1.0}, ["L2", "R2"]),
+            _seg("S3", ["L3"], {"L3": 1.0}, ["L3", "R3"]),
+            _seg("S4", ["L4"], {"L4": 1.0}, ["L4", "R4"])]
+    rets = {"L1": 0.40, "L2": 0.10, "L3": -0.30, "L4": 0.00,
+            "R1": 0.00, "R2": 0.05, "R3": 0.20, "R4": 0.00}
+    return segs, rets
+
+
+def test_variantes_divergem_quando_cada_segmento_tem_um_unico_nome():
+    segs, rets = _carteira_de_lideres()
+    adv = oos.escolher_veto(segs, rets, veta="melhor", **TETOS)
+    fav = oos.escolher_veto(segs, rets, veta="pior", **TETOS)
+    sem = sum(0.25 * rets[f"L{i}"] for i in range(1, 5))
+    # adversário tira o líder que mais rendeu (L1 +40% -> R1 0%): -10 pp
+    assert adv["vetado"] == "L1" and adv["bruto"] == pytest.approx(sem - 0.10)
+    # favorável tira o que mais perdeu (L3 -30% -> R3 +20%): +12,5 pp
+    assert fav["vetado"] == "L3" and fav["bruto"] == pytest.approx(sem + 0.125)
+    assert adv["vetado"] != fav["vetado"]
+    assert adv["bruto"] < sem < fav["bruto"]
+    assert set(adv["carteira"]["pesos"]) == {"R1", "L2", "L3", "L4"}
+    assert fav["carteira"]["pesos"]["R3"] == pytest.approx(0.25)
+
+
+def test_um_so_segmento_com_um_so_nome_ainda_da_banda_com_largura():
+    # Na 1.0.0 as duas variantes vetavam o mesmo líder e empatavam. Com "não
+    # vetar" como opção, a banda vai de min a max de {líder, substituto}.
+    segs = [_seg("S1", ["L1"], {"L1": 1.0}, ["L1", "R1"])]
+    rets = {"L1": 0.10, "R1": -0.05}
+    adv = oos.escolher_veto(segs, rets, veta="melhor", **TETOS)
+    fav = oos.escolher_veto(segs, rets, veta="pior", **TETOS)
+    assert adv["vetado"] == "L1" and adv["bruto"] == pytest.approx(-0.05)
+    assert fav["vetado"] is None and fav["bruto"] == pytest.approx(0.10)
+    assert fav["bruto"] - adv["bruto"] == pytest.approx(0.15)
+
+
+def test_escolhe_pelo_impacto_na_carteira_e_nao_pelo_maior_retorno():
+    # A3 rendeu mais, mas tem 10% do segmento e um substituto quase igual;
+    # B3 rendeu menos com peso cheio e um substituto que perdeu.
+    segs = [_seg("S1", ["A3", "X3"], {"A3": 0.1, "X3": 0.9}, ["X3", "A3", "SA3"]),
+            _seg("S2", ["B3"], {"B3": 1.0}, ["B3", "SB3"])]
+    rets = {"A3": 0.80, "SA3": 0.78, "X3": 0.0, "B3": 0.30, "SB3": -0.20}
+    adv = oos.escolher_veto(segs, rets, veta="melhor", **TETOS)
+    assert adv["vetado"] == "B3"
+
+
+def test_veto_vale_para_o_papel_em_todo_segmento_que_o_escolheu():
+    segs = [_seg("S1", ["D3"], {"D3": 1.0}, ["D3", "E3"]),
+            _seg("S2", ["D3", "F3"], {"D3": 0.5, "F3": 0.5}, ["D3", "F3", "G3"])]
+    itens, trocas = oos.vetar_na_carteira(segs, "D3")
+    assert [t["entra"] for t in trocas] == ["E3", "G3"]
+    assert all("D3" not in sel for _s, sel, _p in itens)
+    rets = {"D3": 0.5, "E3": 0.0, "F3": 0.0, "G3": 0.0}
+    assert oos.tickers_da_banda(segs) == ["D3", "E3", "F3", "G3"]
+    adv = oos.escolher_veto(segs, rets, veta="melhor", **TETOS)
+    assert adv["vetado"] == "D3" and adv["bruto"] == pytest.approx(0.0)
+
+
+def test_empate_fica_com_nao_vetar_e_nome_sem_peso_nao_e_candidato():
+    segs = [_seg("S1", ["A3", "Z3"], {"A3": 1.0}, ["A3", "Z3", "B3"])]
+    assert oos.candidatos_a_veto(segs) == ["A3"]
+    rets = {"A3": 0.1, "B3": 0.1, "Z3": 9.0}
+    for veta in ("melhor", "pior"):
+        esc = oos.escolher_veto(segs, rets, veta=veta, **TETOS)
+        assert esc["vetado"] is None and esc["trocas"] == []
+    with pytest.raises(ValueError):
+        oos.escolher_veto(segs, rets, veta="medio", **TETOS)
+
+
+def test_banda_respeita_o_cap_na_remontagem():
+    # X0 tem 10% do segmento (3,3% da carteira crua), mas o cap de 25% com 4
+    # ativos leva todos a 25%: vetá-lo custa 15 pp, não os 2 pp da troca crua.
+    segs = [_seg("S0", ["L0", "X0"], {"L0": 0.9, "X0": 0.1}, ["L0", "X0", "R0"]),
+            _seg("S1", ["L1"], {"L1": 1.0}, ["L1", "R1"]),
+            _seg("S2", ["L2"], {"L2": 1.0}, ["L2", "R2"])]
+    rets = {"L0": 0.0, "X0": 0.6, "R0": 0.0, "L1": 0.0, "R1": 0.0,
+            "L2": 0.0, "R2": 0.0}
+    tetos = {"cap": 0.25, "teto_setor": 1.0, "teto_ciclico": 1.0}
+    sem = oos.montar_carteira(oos.vetar_na_carteira(segs, None)[0], **tetos)
+    assert sem["pesos"]["X0"] == pytest.approx(0.25)
+    adv = oos.escolher_veto(segs, rets, veta="melhor", **tetos)
+    assert adv["vetado"] == "X0" and adv["bruto"] == pytest.approx(0.0)
+    assert max(adv["carteira"]["pesos"].values()) <= 0.25 + 1e-9
 
 
 # ── montagem ────────────────────────────────────────────────────────────────
@@ -258,9 +351,13 @@ def test_leitura_diz_quanto_a_media_depende_da_melhor_safra():
 
 
 def test_vencida_por_versao():
-    dados = {"versao_metodologia": "2.30.0", "versao_presets": "b3-presets-1.0.0"}
+    dados = {"versao_metodologia": "2.30.0", "versao_presets": "b3-presets-1.0.0",
+             "versao_medicao": oos.VERSAO_MEDICAO}
     assert oos.vencida(dados, "2.30.0", "b3-presets-1.0.0") == []
     assert oos.vencida(dados, "2.31.0", "b3-presets-1.0.0")
+    # banda da 1.0.0 (um veto por segmento) não pode ler como a de hoje
+    velha = {**dados, "versao_medicao": "oos-carteira-1.0.0"}
+    assert any("medição" in m for m in oos.vencida(velha, "2.30.0", "b3-presets-1.0.0"))
     assert oos.vencida(None, "2.30.0", "x") == ["sem medição gravada"]
     assert math.isfinite(oos.CAPITAL_NOCIONAL)
 

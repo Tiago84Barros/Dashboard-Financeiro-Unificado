@@ -55,3 +55,25 @@ def test_vencida_detecta_troca_de_versao_e_arquivo_ausente(tmp_path):
                    PRESETS_VERSION) == ["sem medição gravada"]
     velho = {"versao_metodologia": "0.0.1", "versao_presets": PRESETS_VERSION}
     assert vencida(velho, SCORE_VERSION, PRESETS_VERSION)
+
+
+def test_banda_do_portao_tem_largura_e_contem_o_sem_portao():
+    """Na medição 1.0.0 o veto era um por segmento e, com um nome por
+    segmento, 'veta o melhor' e 'veta o pior' empatavam em todas as safras:
+    banda de largura zero. Desde a 2.0.0 (um veto por safra na carteira, com
+    "não vetar" como opção) a banda contém o sem-portão no bruto e só fica sem
+    largura se nenhum veto mudar nada -- o que, numa carteira real, é defeito."""
+    from core.b3_oos_carteira import PORTAO_VETA_O_MELHOR, PORTAO_VETA_O_PIOR, SEM_PORTAO
+
+    dados = json.loads(CAMINHO_MEDICAO.read_text(encoding="utf-8"))
+    for nome, medido in dados["perfis"].items():
+        por_var = {v: {s["safra"]: s for s in medido["variantes"][v]["safras"]
+                       if "bruto" in s}
+                   for v in (SEM_PORTAO, PORTAO_VETA_O_MELHOR, PORTAO_VETA_O_PIOR)}
+        larguras = []
+        for safra, sem in por_var[SEM_PORTAO].items():
+            adv = por_var[PORTAO_VETA_O_MELHOR][safra]["bruto"]
+            fav = por_var[PORTAO_VETA_O_PIOR][safra]["bruto"]
+            assert adv - 1e-9 <= sem["bruto"] <= fav + 1e-9, (nome, safra)
+            larguras.append(fav - adv)
+        assert larguras and max(larguras) > 1e-6, f"{nome}: banda do portão sem largura"

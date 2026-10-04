@@ -113,14 +113,23 @@ def render_oos_carteira() -> None:
                 st.caption(f"Giro médio de {giro:.0%} por rebalanceamento, custo médio "
                            f"de {custo * 100:.2f}% da carteira por ano.")
 
-            melhor = (variantes.get(oos.PORTAO_VETA_O_MELHOR) or {}).get("vs_equal_weight") or {}
-            pior = (variantes.get(oos.PORTAO_VETA_O_PIOR) or {}).get("vs_equal_weight") or {}
+            adv = variantes.get(oos.PORTAO_VETA_O_MELHOR) or {}
+            fav = variantes.get(oos.PORTAO_VETA_O_PIOR) or {}
+            melhor = adv.get("vs_equal_weight") or {}
+            pior = fav.get("vs_equal_weight") or {}
             if melhor and pior:
                 st.caption(
-                    "Banda do portão de LLM (não medido diretamente — ver abaixo): "
-                    f"se vetasse o MELHOR nome de cada segmento, {_pp(melhor.get('media'))} "
-                    f"IC {_ic(melhor)}; se vetasse o PIOR, {_pp(pior.get('media'))} "
-                    f"IC {_ic(pior)}.")
+                    "Banda do portão de LLM (não medido diretamente — ver abaixo), "
+                    "para um portão que vete ATÉ UM nome da carteira por safra: no "
+                    f"pior veto possível, {_pp(melhor.get('media'))} IC {_ic(melhor)}; "
+                    f"no melhor, {_pp(pior.get('media'))} IC {_ic(pior)}; sem portão, "
+                    f"{_pp(principal.get('media'))}. Portão que vete mais de um nome "
+                    "pode sair da banda.")
+                for rotulo, var in (("Pior veto", adv), ("Melhor veto", fav)):
+                    vetos = [f"{s['safra']} {s['veto']}" for s in var.get("safras") or []
+                             if s.get("veto") and not s.get("sem_carteira")]
+                    if vetos:
+                        st.caption(f"{rotulo} por safra (sai → entra): " + "; ".join(vetos) + ".")
 
             marcadas = sorted(set(base.get("safras_inviaveis_no_cap") or [])
                               | set(base.get("safras_com_revisao") or []))
