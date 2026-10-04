@@ -225,8 +225,10 @@ def test_a_sidebar_nao_tem_mais_tema_nem_saida():
     assert "render_theme_selector" not in chamadas
     assert "encerrar_sessao" not in chamadas
     # E o tema continua sendo APLICADO: mover a escolha não pode deixar o app
-    # abrir sem tema nenhum.
-    assert "aplicar_tema" in chamadas and "current_theme" in chamadas
+    # abrir sem tema nenhum. Quem resolve o tema no topo é `tema_para_pintar`,
+    # e não `current_theme`: o tema entra ANTES do portão de autenticação, que
+    # interrompe a execução sem CSS nenhum quando a sessão não dá para validar.
+    assert "aplicar_tema" in chamadas and "tema_para_pintar" in chamadas
 
 
 def test_geral_e_a_primeira_aba_de_configuracoes():

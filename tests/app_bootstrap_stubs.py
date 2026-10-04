@@ -71,6 +71,7 @@ def stubs_de_bootstrap(**overrides) -> dict[str, SimpleNamespace]:
         # 'streamlit' has no attribute 'session_state'" só dentro da suíte.
         "design.theme_selector": SimpleNamespace(
             current_theme=lambda: "dark",
+            tema_para_pintar=lambda: "dark",
             render_theme_selector=lambda: None,
         ),
     }
