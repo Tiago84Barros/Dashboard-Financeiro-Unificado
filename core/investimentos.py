@@ -790,7 +790,7 @@ def _carteira_real() -> dict:
     if not rows:
         raise RuntimeError(
             "Nenhuma posição encontrada em portfolio_positions para este usuário. "
-            "Verifique OWNER_USER_ID e confirme que 08_compute_portfolio_positions.py foi executado."
+            "Verifique OWNER_USER_ID e importe as negociações (recompute_for_user em data_pipeline/importers/investments/positions.py recalcula as posições)."
         )
 
     def _f(v) -> float:

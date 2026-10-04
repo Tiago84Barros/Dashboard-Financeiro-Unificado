@@ -41,3 +41,36 @@ def test_monitoramento_e_enriquecimento_usam_a_versao_vigente():
         fonte = inspect.getsource(mod)
         assert "6.0.0" not in fonte
         assert mod.METHODOLOGY_VERSION == METHODOLOGY_VERSION
+
+
+def _carregar_migration(nome):
+    import importlib.util
+    from pathlib import Path
+
+    caminho = Path(__file__).resolve().parents[1] / "migration" / f"{nome}.py"
+    spec = importlib.util.spec_from_file_location(f"mig_{nome}", caminho)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_migration_04_normaliza_datas_de_texto_e_datetime():
+    from datetime import datetime
+
+    mod = _carregar_migration("04_transform_to_canonical")
+    f = mod._normalize_date
+    assert f("2026-01-05") == "2026-01-05"
+    assert f("05/01/2026") == "2026-01-05"
+    assert f("2026-01-05T10:30:00") == "2026-01-05"
+    assert f("2026-01-05T10:30:00Z") == "2026-01-05"
+    assert f(datetime(2026, 1, 5, 10, 30)) == "2026-01-05"
+    assert f(date(2026, 1, 5)) == "2026-01-05"
+    assert f(None) is None and f("  ") is None
+
+
+def test_migration_08_legado_recusa_rodar_e_aponta_o_caminho_canonico(capsys, monkeypatch):
+    mod = _carregar_migration("08_compute_portfolio_positions")
+    monkeypatch.setattr("sys.argv", ["08", "--apply"])
+    assert mod.main() == 2
+    saida = capsys.readouterr().out
+    assert "recompute_for_user" in saida and "OBSOLETO" in saida
