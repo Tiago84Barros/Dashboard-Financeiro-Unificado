@@ -352,7 +352,50 @@ def _metricas_snapshot(tk: str) -> dict:
             for r in rows if r["metric_name"] in keep and _f(r["metric_value"]) is not None}
 
 
+def _eventos_do_artefato(tk: str, n: int) -> dict | None:
+    """Documentos CVM/IPE do artefato de informações recentes, ou ``None``.
+
+    O Supabase passou dos 500 MB e a ``public.docs_corporativos`` de lá parou
+    em 26/06/2026; o armazém local recebe a coleta todo dia e a publica em
+    ``data/public/informacoes_recentes.json.gz`` (``relatorios.por_ticker``,
+    180 dias, até 20 por ativo). Mesmo critério de classe do SQL antigo: os
+    quatro primeiros caracteres (PETR3 e PETR4 contam juntos). Documento do
+    FNET (fundo imobiliário) fica de fora -- a tabela antiga era só CVM/IPE.
+    ``None`` quando não há artefato, para o chamador cair no Supabase.
+    """
+    from core.inteligencia_ativos import fontes_informacoes as fi
+    art = fi.arquivo()
+    bloco = (art or {}).get("relatorios") or {}
+    por_ticker = bloco.get("por_ticker")
+    if not por_ticker:
+        return None
+    pref = tk[:4].upper()
+    docs = []
+    for chave, lista in por_ticker.items():
+        if not str(chave).upper().startswith(pref):
+            continue
+        for d in lista or []:
+            if "FNET" in str(d.get("source") or "").upper():
+                continue
+            docs.append(d)
+    docs.sort(key=lambda d: str(d.get("reference_date") or ""), reverse=True)
+    eventos = [{"data": str(d.get("reference_date")), "categoria": d.get("tipo"),
+                "titulo": (d.get("titulo") or "")[:140]} for d in docs[:n]]
+    return {
+        "eventos": eventos,
+        "n_docs": len(eventos),
+        "docs_desde": eventos[-1]["data"] if eventos else None,
+        "fonte": "artefato informacoes_recentes (armazém local)",
+        "janela_dias": bloco.get("janela_dias"),
+        "base_ate": (bloco.get("base_ate") or {}).get("b3"),
+    }
+
+
 def _eventos_societarios(tk: str, n: int = 12) -> dict:
+    # Artefato primeiro (local-first); Supabase só quando o arquivo não existe.
+    do_arquivo = _eventos_do_artefato(tk, n)
+    if do_arquivo is not None:
+        return do_arquivo
     rows = _rows(
         """
         SELECT COALESCE(document_date, data) AS dt, COALESCE(categoria, tipo) AS cat,
@@ -493,7 +536,10 @@ def _checks(serie: list[dict], tris: dict, divs: dict, met: dict,
     if serie and all(s.get("ebitda_mi") is None for s in serie):
         flags.append("COBERTURA: EBITDA ausente na DRE estruturada.")
     if not docs.get("n_docs"):
-        flags.append("COBERTURA: nenhum documento CVM indexado — parecer sem base documental.")
+        janela = docs.get("janela_dias")
+        flags.append("COBERTURA: nenhum documento CVM indexado"
+                     + (f" nos últimos {janela} dias" if janela else "")
+                     + " — parecer sem base documental.")
     if len(serie) < 5:
         flags.append(f"COBERTURA: apenas {len(serie)} ano(s) de DRE anual — histórico curto.")
     yoy = tris.get("yoy", {})
