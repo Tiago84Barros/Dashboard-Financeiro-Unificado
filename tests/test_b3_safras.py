@@ -268,7 +268,10 @@ def test_tabela_vazia_tem_colunas_e_empty():
     assert tabela.empty
     assert list(tabela.columns) == [
         "Safra", "Exercício-base", "Janela", "Completa", "Mensurável",
-        "Segmentos", "Ativos", "Maiores posições", "Estratégia (%)",
+        "Segmentos", "Ativos", "Maiores posições",
+        "Estratégia líquida (%)", "Excesso líquido s/ Selic (pp)",
+        "Excesso líquido s/ EW (pp)", "Giro (%)", "Custo de giro (pp)",
+        "IR (pp)", "Estratégia (%)",
         "Equal-weight (%)", "Selic (%)", "Excesso s/ Selic (pp)",
         "Excesso s/ EW (pp)",
         "Peso sem preço (%)", "Universo com preço",

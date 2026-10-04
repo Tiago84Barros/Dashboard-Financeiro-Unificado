@@ -42,11 +42,18 @@ RAIZ = Path(__file__).parents[1]
 
 
 def _linha(safra, *, completa, mensuravel, estrategia=10.0, ew=8.0,
-          selic=6.0, excesso=4.0, peso_ausente=0.0):
+          selic=6.0, excesso=4.0, peso_ausente=0.0, arrasto=0.0,
+          liquido=True):
+    """Linha no formato de `core.b3_safras.COLUNAS_TABELA`.
+
+    `arrasto` (pp) é custo de giro + IR: as colunas líquidas saem do bruto
+    menos ele. Default 0 para que os testes anteriores ao item 19 meçam o
+    mesmo número nas duas leituras. `liquido=False` monta um quadro antigo,
+    sem as colunas líquidas."""
     if not mensuravel:
         estrategia = ew = selic = excesso = np.nan
         peso_ausente = 100.0  # core/b3_safras.py: nada observado = 100%
-    return {
+    linha = {
         "Safra": safra, "Exercício-base": safra - 1,
         "Janela": f"abr/{safra} a mar/{safra + 1}",
         "Completa": completa, "Mensurável": mensuravel,
@@ -56,6 +63,16 @@ def _linha(safra, *, completa, mensuravel, estrategia=10.0, ew=8.0,
         "Excesso s/ EW (pp)": excesso - 1.0,
         "Peso sem preço (%)": peso_ausente, "Universo com preço": 3,
     }
+    if liquido:
+        linha.update({
+            "Estratégia líquida (%)": estrategia - arrasto,
+            "Excesso líquido s/ Selic (pp)": excesso - arrasto,
+            "Excesso líquido s/ EW (pp)": excesso - 1.0 - arrasto,
+            "Giro (%)": 0.0 if mensuravel else np.nan,
+            "Custo de giro (pp)": 0.3 * arrasto if mensuravel else np.nan,
+            "IR (pp)": 0.7 * arrasto if mensuravel else np.nan,
+        })
+    return linha
 
 
 def _tabela(linhas, safras_completas):
@@ -2493,3 +2510,103 @@ def test_render_safras_executa_o_bloco_3_de_fato(monkeypatch):
         "estar presente e inalcançável"
     )
     assert isinstance(chamou[0][1], pd.DataFrame)
+
+
+# ── B3-08 (auditoria app4, item 19): líquido como padrão, bruto ao lado ──────
+
+
+def test_motor_desconta_custo_de_giro_e_ir_da_safra_encadeada():
+    """Conta à mão, sobre as entradas REAIS do motor. Cada safra tem um
+    líder diferente com peso 1,0 (papel fora da lista de large caps):
+
+    - 2020: só a compra -- uma ponta de 3 + 15 bps = 0,18 pp, IR zero;
+    - 2021: vende o líder de 2020 (que rendeu 10%) e compra o novo -- duas
+      pontas (0,36 pp) e IR de 15% sobre o ganho realizado, 1 − 1/1,1 da
+      carteira (1,3636 pp).
+    """
+    com, _ = _tabelas_do_motor({2020: 10.0, 2021: 20.0})
+    por_safra = com.set_index("Safra")
+    assert por_safra.loc[2020, "Custo de giro (pp)"] == pytest.approx(0.18)
+    assert por_safra.loc[2020, "IR (pp)"] == pytest.approx(0.0)
+    assert por_safra.loc[2020, "Giro (%)"] == pytest.approx(0.0)
+    assert por_safra.loc[2021, "Giro (%)"] == pytest.approx(100.0)
+    assert por_safra.loc[2021, "Custo de giro (pp)"] == pytest.approx(0.36)
+    ir_2021 = 15.0 * (1 - 1 / 1.1)
+    assert por_safra.loc[2021, "IR (pp)"] == pytest.approx(ir_2021)
+    for safra in (2020, 2021):
+        linha = por_safra.loc[safra]
+        liquido = (linha["Estratégia (%)"] - linha["Custo de giro (pp)"]
+                   - linha["IR (pp)"])
+        assert linha["Estratégia líquida (%)"] == pytest.approx(liquido)
+        assert linha["Excesso líquido s/ Selic (pp)"] == pytest.approx(
+            liquido - linha["Selic (%)"])
+        assert linha["Excesso líquido s/ EW (pp)"] == pytest.approx(
+            liquido - linha["Equal-weight (%)"])
+
+
+def test_resumo_le_o_excesso_liquido_e_guarda_o_bruto():
+    tabela = _tabela(
+        [_linha(2020, completa=True, mensuravel=True, excesso=4.0, arrasto=1.5),
+         _linha(2021, completa=True, mensuravel=True, excesso=1.0, arrasto=1.5)],
+        [2020, 2021],
+    )
+    resumo = _resumo_safras(tabela)
+    assert resumo["liquido"] is True
+    assert resumo["media_excesso"] == pytest.approx(1.0)
+    assert resumo["media_excesso_bruto"] == pytest.approx(2.5)
+    # 2021 vence a Selic no bruto (+1,0) e perde no líquido (−0,5).
+    assert resumo["venceu"] == 1
+
+
+def test_quadro_sem_colunas_liquidas_cai_no_bruto_e_diz_que_e_bruto():
+    tabela = _tabela(
+        [_linha(2020, completa=True, mensuravel=True, liquido=False),
+         _linha(2021, completa=True, mensuravel=True, liquido=False)],
+        [2020, 2021],
+    )
+    resumo = _resumo_safras(tabela)
+    assert resumo["liquido"] is False
+    assert resumo["media_excesso"] == pytest.approx(4.0)
+    assert _expectativa([], tabela)["liquido"] is False
+
+
+def test_banda_do_bloco_3_e_a_do_excesso_liquido():
+    linhas = [_linha(2020 + i, completa=True, mensuravel=True, excesso=e,
+                     arrasto=2.0)
+              for i, e in enumerate([4.0, 5.0, 3.0, 6.0])]
+    out = _expectativa([], _tabela(linhas, [2020 + i for i in range(4)]))
+    baixo, alto = out["banda"]
+    # Líquido = 2..4 pp por safra: a banda inteira fica abaixo de 4,1%; a
+    # bruta (3..6 pp) passaria disso.
+    assert out["liquido"] is True
+    assert alto <= 0.041
+    assert out["texto_banda_bruta"] != out["texto_banda"]
+
+
+def test_rotulo_exibido_marca_as_colunas_brutas():
+    config = _column_config_retorno()
+    for coluna, rotulo in mod_safras._ROTULOS_BRUTOS.items():
+        assert config[coluna]["label"] == rotulo
+        assert "brut" in rotulo
+    assert config["Estratégia líquida (%)"]["label"] == "Estratégia líquida (%)"
+
+
+def test_grafico_mostra_liquida_e_bruta_lado_a_lado():
+    tabela = _tabela(
+        [_linha(2020, completa=True, mensuravel=True, arrasto=1.0)], [2020])
+    fig = _grafico_barras(_resumo_safras(tabela)["completas"])
+    nomes = {trace.name for trace in fig.data}
+    assert {"Estratégia líquida (%)", "Estratégia bruta (%)"} <= nomes
+
+
+def test_premissas_do_liquido_saem_das_constantes_e_vao_para_a_tela():
+    from core.backtest_liquido import premissas_b3
+
+    texto = mod_safras._texto_premissas_liquido_b3()
+    p = premissas_b3()
+    assert f"{p['emolumentos_bps_por_ponta']:g}" in texto
+    assert f"{p['meio_spread_small_bps']:g}" in texto
+    assert "15%" in texto and "20 mil" in texto
+    assert "brutos" in texto  # benchmarks
+    fonte = (RAIZ / "views" / "portfolio_b3_safras.py").read_text(encoding="utf-8")
+    assert "st.caption(_texto_premissas_liquido_b3())" in fonte

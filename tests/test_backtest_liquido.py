@@ -11,15 +11,20 @@ import pytest
 
 from core.backtest_liquido import (
     DIVIDEND_YIELD_EUA_PREMISSA,
+    EMOLUMENTOS_B3_BPS_POR_PONTA,
     IOF_INGRESSO_EXTERIOR,
     IOF_REMESSA_EXTERIOR,
     IR_FII_GANHO,
     RETENCAO_DIVIDENDOS_EUA,
     RastreadorIR,
+    custo_ponta_b3,
     liquido_eua_brl,
+    liquido_safras_b3,
+    premissas_b3,
     premissas_fii,
 )
 from core.ir_renda_variavel import ALIQUOTA
+from core.transaction_costs import SPREAD_BPS_LARGE_CAP_DEF, SPREAD_BPS_SMALL_CAP_DEF
 
 
 def test_aliquota_de_fii_vem_da_apuracao_real():
@@ -302,3 +307,73 @@ def test_tela_dos_eua_mostra_as_premissas_que_o_calculo_usou():
     texto = _texto_premissas_liquido_us(premissas_eua() | {"dividendo": "premissa de yield"})
     for trecho in ("10 bps", "30%", "1,5%", "15%", "1,1%", "0,38%", "Lei 14.754"):
         assert trecho in texto, trecho
+
+
+# ── B3: safras anuais encadeadas (B3-08) ─────────────────────────────────────
+
+_PONTA_SMALL = (EMOLUMENTOS_B3_BPS_POR_PONTA + SPREAD_BPS_SMALL_CAP_DEF / 2) / 1e4
+_PONTA_LARGE = (EMOLUMENTOS_B3_BPS_POR_PONTA + SPREAD_BPS_LARGE_CAP_DEF / 2) / 1e4
+
+
+def test_b3_custo_por_ponta_separa_large_de_small():
+    assert custo_ponta_b3("PETR4") == pytest.approx(_PONTA_LARGE)
+    assert custo_ponta_b3("XPTO3") == pytest.approx(_PONTA_SMALL)
+    assert custo_ponta_b3("PETR4") < custo_ponta_b3("XPTO3")
+
+
+def test_b3_primeira_safra_paga_so_a_compra():
+    out = liquido_safras_b3([({"XPTO3": 0.5, "ABCD3": 0.5},
+                              {"XPTO3": 0.1, "ABCD3": 0.1})])
+    assert out[0]["giro"] == pytest.approx(0.0)
+    assert out[0]["ir"] == pytest.approx(0.0)
+    assert out[0]["custo"] == pytest.approx(_PONTA_SMALL)
+
+
+def test_b3_troca_total_realiza_o_ganho_da_safra_anterior():
+    """Ganho de 10% numa posição única, vendida inteira no abril seguinte:
+    ganho realizado = 1 − 1/1,1 da carteira; IR = 15% disso; compra e venda
+    pagam uma ponta cada."""
+    out = liquido_safras_b3([({"XPTO3": 1.0}, {"XPTO3": 0.10}),
+                             ({"ABCD3": 1.0}, {"ABCD3": 0.0})])
+    assert out[1]["giro"] == pytest.approx(1.0)
+    assert out[1]["custo"] == pytest.approx(2 * _PONTA_SMALL)
+    assert out[1]["ir"] == pytest.approx(0.15 * (1 - 1 / 1.1))
+
+
+def test_b3_giro_sai_da_carteira_derivada_nao_do_alvo_anterior():
+    """Mesmo alvo 50/50 nos dois anos, mas um papel dobrou: a carteira chega
+    em 2/3–1/3 e o rebalanceamento vende 1/6 dela. Comparar alvo com alvo
+    daria giro zero e IR zero."""
+    pesos = {"XPTO3": 0.5, "ABCD3": 0.5}
+    out = liquido_safras_b3([(pesos, {"XPTO3": 1.0, "ABCD3": 0.0}),
+                             (pesos, {"XPTO3": 0.0, "ABCD3": 0.0})])
+    assert out[1]["giro"] == pytest.approx(2 / 3 - 1 / 2)
+    assert out[1]["custo"] == pytest.approx(2 * (1 / 6) * _PONTA_SMALL)
+    # Vendido 1/6 de uma posição de 2/3 com custo 1/3: metade do vendido é
+    # ganho.
+    assert out[1]["ir"] == pytest.approx(0.15 * (1 / 6) * 0.5)
+
+
+def test_b3_prejuizo_de_uma_safra_compensa_o_ganho_da_seguinte():
+    out = liquido_safras_b3([({"XPTO3": 1.0}, {"XPTO3": -0.5}),
+                             ({"ABCD3": 1.0}, {"ABCD3": 1.0}),
+                             ({"EFGH3": 1.0}, {"EFGH3": 0.0})])
+    assert out[1]["ir"] == pytest.approx(0.0)   # vendeu com prejuízo
+    # Prejuízo de 0,5 da carteira de 0,5 = 100% dela; renormalizado pela
+    # carteira que dobrou, vale 0,5 contra um ganho de 0,5: zera.
+    assert out[2]["ir"] == pytest.approx(0.0)
+
+
+def test_b3_safra_nao_mensuravel_fica_none_e_nao_quebra_a_cadeia():
+    out = liquido_safras_b3([({"XPTO3": 1.0}, None),
+                             ({"XPTO3": 1.0}, {"XPTO3": 0.1})])
+    assert out[0] is None
+    assert out[1]["custo"] == pytest.approx(_PONTA_SMALL)
+
+
+def test_premissas_b3_declaram_ir_sem_isencao_e_dividendo_no_preco():
+    p = premissas_b3()
+    assert p["ir_ganho_capital"] == pytest.approx(float(ALIQUOTA["comum"]))
+    assert p["isencao_20k_aplicada"] is False
+    assert p["dividendo_separado_do_preco"] is False
+    assert p["meio_spread_small_bps"] > p["meio_spread_large_bps"]

@@ -526,8 +526,14 @@ def _simular_seg_backtest(
     if df_prec_seg.empty:
         return 0.0, 0.0, 0.0, {}
     from core.transaction_costs import CostConfig, custo_compra
+    # B3-08 (auditoria app4, item 19): custo LIGADO por padrao. As duas
+    # chamadas da tela ja passavam `brasil_pf_default()`; o default
+    # desligado so servia a quem esquecesse o argumento -- e quem esquece
+    # publica retorno bruto como se fosse o do investidor. Quem quer o
+    # bruto (teste de contabilidade, comparacao) pede
+    # `CostConfig.desligado()` explicitamente.
     if cost_cfg is None:
-        cost_cfg = CostConfig.desligado()
+        cost_cfg = CostConfig.brasil_pf_default()
 
     all_tks = list(df_prec_seg.columns)
     cotas_est: dict[str, float] = {tk: 0.0 for tk in all_tks}
