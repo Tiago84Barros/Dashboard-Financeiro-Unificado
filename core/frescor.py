@@ -50,10 +50,22 @@ def idade_alvo(modulo: str) -> int:
 
 def idade_limite(modulo: str) -> int:
     """A partir daqui a tela declara a vitrine vencida."""
-    return idade_alvo(modulo) + TOLERANCIA_DIAS
+    return limite_do_alvo(ALVO_DO_MODULO[modulo])
 
 
-def idade_em_dias(valor) -> int | None:
+def limite_do_alvo(chave: str) -> int | None:
+    """Limite de idade de qualquer alvo da agenda: cadência + tolerância.
+
+    É a mesma regra de `idade_limite`, aplicada pela chave do alvo e não pelo
+    módulo da tela -- o vigia de automações (`core.vigia_automacoes`) confere
+    todos os alvos, não só os seis que têm tela. Alvo por versão (safra PIT)
+    não tem cadência de calendário e, portanto, não tem limite: ``None``.
+    """
+    cadencia = POR_CHAVE[chave].cadencia_dias
+    return None if cadencia is None else cadencia + TOLERANCIA_DIAS
+
+
+def idade_em_dias(valor, hoje: date | None = None) -> int | None:
     """Idade de um carimbo qualquer, ou ``None`` se não der para saber.
 
     Devolver ``None`` em vez de zero é deliberado: zero é uma afirmação de
@@ -74,6 +86,9 @@ def idade_em_dias(valor) -> int | None:
 
     Em produção isso não muda nada: na Streamlit Cloud o relógio local é UTC.
     Muda na máquina do usuário, que é onde o publicador roda.
+
+    ``hoje`` existe para a lógica pura que decide alertas poder ser testada sem
+    relógio; omitido, é o dia local corrente.
     """
     if valor is None or valor == "":
         return None
@@ -88,7 +103,7 @@ def idade_em_dias(valor) -> int | None:
         valor = valor.astimezone().date() if valor.tzinfo else valor.date()
     if not isinstance(valor, date):
         return None
-    return (date.today() - valor).days
+    return ((hoje or date.today()) - valor).days
 
 
 def selo(modulo: str, carimbo) -> dict:
