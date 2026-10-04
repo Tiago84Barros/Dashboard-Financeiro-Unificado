@@ -1,7 +1,8 @@
 # Dependências mínimas para o pipeline headless (GitHub Actions / CLI)
 # Streamlit é necessário porque core.database usa st.cache_resource/st.cache_data.
 streamlit>=1.39.0,<2.0.0
-sqlalchemy>=2.0.0,<3.0.0
+# Mesma versão do app: o 2.1 troca o driver padrão para psycopg v3 (ausente).
+sqlalchemy==2.0.49
 psycopg2-binary>=2.9.0,<3.0.0
 python-dotenv>=1.0.0,<2.0.0
 pandas>=2.2.0,<3.0.0
