@@ -62,9 +62,11 @@ from views.empresas_b3 import (
     _aplicar_cheapness,
     _apply_cap_soft,
     _apply_decay_penalty,
+    _avisar_degradacoes,
     _avisar_fonte_precos,
     _batch_yf_precos_mensais,
     _compute_score_entrada,
+    _degradacoes,
     _div_mes_sanitizado,
     _fv,
     _get_pesos_setor,
@@ -363,6 +365,10 @@ def _build_entry_guard(
         how="left",
     )
     frames: list[pd.DataFrame] = []
+    # O pd.concat abaixo descarta ``attrs`` quando os segmentos divergem, e
+    # com eles a marca de que o score/risco saiu degradado (INF-M4). Junta
+    # aqui, por código, com os segmentos afetados, para a tela nomear.
+    degradacoes: dict[str, dict] = {}
     for (setor, _subsetor, _segmento), grupo in base.groupby(["SETOR", "SUBSETOR", "SEGMENTO"], dropna=False):
         tks = [str(t).upper().replace(".SA", "") for t in grupo["Ticker"].dropna().tolist()]
         if not tks:
@@ -377,13 +383,30 @@ def _build_entry_guard(
         if scored.empty:
             continue
         entrada = _compute_score_entrada(scored, anos_hist)
+        rotulo = str(_segmento) if pd.notna(_segmento) else str(setor)
+        for d in _degradacoes(scored) + _degradacoes(entrada):
+            item = degradacoes.setdefault(
+                d["codigo"], {"mensagem": d["mensagem"], "segmentos": []}
+            )
+            if rotulo not in item["segmentos"]:
+                item["segmentos"].append(rotulo)
         if not entrada.empty:
             frames.append(entrada)
 
+    marcas = [
+        {"codigo": codigo,
+         "mensagem": (f"Guarda de entrada da carteira: {item['mensagem']} "
+                      f"Segmento(s) afetado(s): {', '.join(item['segmentos'][:8])}"
+                      + (" …" if len(item["segmentos"]) > 8 else "") + ".")}
+        for codigo, item in degradacoes.items()
+    ]
     if not frames:
-        return {}, pd.DataFrame()
+        vazio = pd.DataFrame()
+        vazio.attrs["degradacoes"] = marcas
+        return {}, vazio
 
     df_entry = pd.concat(frames, ignore_index=True)
+    df_entry.attrs["degradacoes"] = marcas
     guard: dict[str, dict] = {}
     for _, row in df_entry.iterrows():
         tk = str(row.get("Ticker", "")).upper().replace(".SA", "")
@@ -3460,6 +3483,9 @@ def render(show_header: bool = True) -> None:
         return
 
     _render_data_quality_box(quality_summary, quality_audit, hist_audit)
+    # A guarda de entrada filtra as recomendações abaixo; se o score ou o
+    # risco dela saiu degradado, a tela precisa dizer — antes ficava só no log.
+    _avisar_degradacoes(st.session_state.get("pb3_entry_guard_df", pd.DataFrame()))
 
     # Saneamento por scraping (Fundamentus/Status Invest) DESCONTINUADO (2026-07):
     # fundamentos vêm exclusivamente do market.* (brapi) — não há o que sanear

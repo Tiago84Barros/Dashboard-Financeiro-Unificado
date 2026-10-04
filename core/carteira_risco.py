@@ -78,6 +78,9 @@ _TOL_QTD = 0.01
 
 BENCHMARK = "BOVA11"
 _FX = "USDBRL"
+# Referência da classe exterior na atribuição Brinson (core.carteira_atribuicao):
+# lida junto com o resto para não abrir uma segunda consulta a asset_quotes.
+REFERENCIAS_EXTRAS = ("SPY",)
 _RX_TESOURO_SELIC = re.compile(r"TESOURO\s+SELIC\s+(\d{4})", re.IGNORECASE)
 
 FONTE_OBSERVADA = "cotação diária"
@@ -593,7 +596,19 @@ def _tolerancia_politica(engine, owner: str) -> tuple[float | None, str | None]:
         return None, None
 
 
-def _risco_carteira_real() -> dict:
+@user_cache_data(ttl=21600)
+def get_insumos_carteira() -> dict:
+    """Quantidades, preços, proventos e CDI da série diária, numa leitura só.
+
+    Compartilhado pelo risco (este módulo) e pela atribuição Brinson
+    (``core.carteira_atribuicao``): as duas telas medem a MESMA carteira, e
+    ler o Supabase duas vezes custaria egresso à toa (cota estourada em
+    10/2026). Exceção sobe para o chamador, que a converte em indisponível.
+    """
+    return _insumos_carteira_real()
+
+
+def _insumos_carteira_real() -> dict:
     from core.database import get_engine
     from core.investimentos import (
         _CLASSES_RV_B3,
@@ -637,7 +652,8 @@ def _risco_carteira_real() -> dict:
 
     mercado = [tk for tk, p in posicao.items() if p["categoria"] in ("brl", "usd")]
     cot_rows = _ler(engine, _SQL_COTACOES,
-                    {"tickers": sorted(set(mercado) | {BENCHMARK, _FX}), "ini": ini})
+                    {"tickers": sorted(set(mercado) | {BENCHMARK, _FX} | set(REFERENCIAS_EXTRAS)),
+                     "ini": ini})
     cotacoes: dict[str, dict[date, float]] = {}
     for r in cot_rows:
         if _num(r.fechamento) > 0:
@@ -650,7 +666,7 @@ def _risco_carteira_real() -> dict:
                        for d in cotacoes.get(tk, {})})
     dias = [d for d in dias if d.weekday() < 5]
     if len(dias) < _MIN_DIAS + 1:
-        return {"data_source": "real", "disponivel": False,
+        return {"disponivel": False,
                 "motivo": f"Menos de {_MIN_DIAS} pregões com cotação diária no banco"}
 
     # Âncoras: fotos de posição (dedup por instituição: a foto de 31/08 trouxe o
@@ -778,6 +794,30 @@ def _risco_carteira_real() -> dict:
             continue
         d = dias[bisect_left(dias, r.data)]
         proventos.setdefault(tk, {})[d] = proventos.get(tk, {}).get(d, 0.0) + _num(r.valor)
+
+    return {
+        "disponivel": True, "hoje": hoje, "total": total, "posicao": posicao,
+        "cotacoes": cotacoes, "dias": dias, "fx": fx, "cdi": cdi, "cdi_info": cdi_info,
+        "cdi_ok": cdi_ok, "quantidades": quantidades, "precos": precos,
+        "fonte_de": fonte_de, "excluidos": excluidos, "degraus": degraus,
+        "n_conc": n_conc, "n_deg": n_deg, "proventos": proventos,
+    }
+
+
+def _risco_carteira_real() -> dict:
+    from core.database import get_engine
+
+    ins = get_insumos_carteira()
+    if not ins.get("disponivel"):
+        return {"data_source": "real", "disponivel": False, "motivo": ins.get("motivo")}
+    total, posicao = ins["total"], ins["posicao"]
+    cotacoes, dias, cdi, cdi_info = ins["cotacoes"], ins["dias"], ins["cdi"], ins["cdi_info"]
+    cdi_ok, quantidades, precos = ins["cdi_ok"], ins["quantidades"], ins["precos"]
+    fonte_de, excluidos, degraus = ins["fonte_de"], ins["excluidos"], ins["degraus"]
+    n_conc, n_deg, proventos = ins["n_conc"], ins["n_deg"], ins["proventos"]
+    ultimo = dias[-1]
+    engine = get_engine()
+    owner = settings.OWNER_USER_ID
 
     serie = retornos_diarios(dias, quantidades, precos, proventos)
     rets = [s["retorno"] for s in serie]
