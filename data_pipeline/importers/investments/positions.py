@@ -15,6 +15,14 @@ Algoritmo: custo médio ponderado (padrão BR).
         há posição negativa a carregar para dentro da média seguinte.
   final: somente ativos com qty > 0 e avg_price > 0 são gravados.
 
+Lote padrão e fracionário (2026-10-04): PETR3 e PETR3F são a MESMA ação e
+dividem quantidade e custo médio -- o estado é indexado pelo ticker-base
+(`_base`), como já faz `core/ir_renda_variavel.py`. Indexar por asset_id
+deixava a venda no lote de cotas compradas no fracionário descoberta (zerada,
+com alerta `quantidade_negativa`) e o fracionário vivo, com o custo antigo
+dentro da média da compra seguinte. A posição é gravada no asset_id do lote
+padrão; só o fracionário negociado fica no asset_id dele.
+
 Eventos corporativos (2026-09-24): as linhas cruas da Movimentação da B3
 (`investment_movement_events`, SQL 075) entram na mesma sequência, ANTES das
 negociações do mesmo dia -- a venda do dia do crédito já é em cotas novas:
@@ -199,6 +207,7 @@ def _compute(
     ``events``: linhas cruas da Movimentação (event_date, movement,
     direction, ticker, quantity, unit_price, total_value).
     """
+    # Estado por ticker-base: lote e fracionário são uma posição só.
     state: dict[str, dict] = defaultdict(lambda: {
         "qty":        Decimal("0"),
         "avg_price":  Decimal("0"),
@@ -207,12 +216,22 @@ def _compute(
         "ticker":     "",
     })
     alerts: list[dict] = []
-    grupos: dict[str, list[str]] = defaultdict(list)
+
+    def chave(tx: dict) -> str:
+        # Sem ticker não há base a juntar: cada ativo segue sozinho.
+        return _base(str(tx.get("ticker") or "")) or f"#{tx['asset_id']}"
+
+    grupos: dict[str, list[str]] = {}
     for tx in transactions:
-        aid = str(tx["asset_id"])
-        g = grupos[_base(str(tx.get("ticker") or ""))]
-        if aid not in g:
-            g.append(aid)
+        ticker = str(tx.get("ticker") or "").strip().upper()
+        base = chave(tx)
+        grupos[base] = [base]
+        s = state[base]
+        # Onde a posição é gravada: o asset_id do lote padrão quando ele foi
+        # negociado; senão o primeiro visto (só fracionário, ex.: MXRF11F).
+        if s["asset_id"] is None or (ticker == base and s["ticker"] != base):
+            s["asset_id"] = str(tx["asset_id"])
+            s["ticker"] = ticker
 
     for tx in _sequencia(transactions, _liquidar_reorganizacoes(events or [])):
         if tx["type"] == "evento":
@@ -224,10 +243,8 @@ def _compute(
         price    = Decimal(str(tx["unit_price"]))
         fees     = Decimal(str(tx.get("fees") or "0"))
 
-        s = state[asset_id]
-        s["asset_id"] = asset_id
+        s = state[chave(tx)]
         s["user_id"]  = str(tx["user_id"])
-        s["ticker"]   = tx.get("ticker", "")
 
         if tx_type == "buy":
             buy_cost = qty * price + fees
@@ -273,7 +290,8 @@ def _compute(
             })
 
     positions: list[dict] = []
-    for asset_id, s in state.items():
+    for s in state.values():
+        asset_id = s["asset_id"]
         qty = s["qty"]
         avg = s["avg_price"]
         if qty <= Decimal("0.0001"):
