@@ -148,6 +148,19 @@ def test_um_so_segmento_com_um_so_nome_ainda_da_banda_com_largura():
     assert fav["bruto"] - adv["bruto"] == pytest.approx(0.15)
 
 
+def test_vetado_sem_substituto_esvazia_o_segmento_e_o_orcamento_vai_aos_demais():
+    # Segmento de um nome só e sem mais ninguém no ranking: o veto o tira da
+    # carteira ("→ ninguém") e a remontagem divide o orçamento entre os outros.
+    segs = [_seg("S1", ["L1"], {"L1": 1.0}, ["L1"]),
+            _seg("S2", ["L2"], {"L2": 1.0}, ["L2"])]
+    rets = {"L1": -0.40, "L2": 0.10}
+    fav = oos.escolher_veto(segs, rets, veta="pior", **TETOS)
+    assert fav["vetado"] == "L1"
+    assert fav["trocas"] == [{"sai": "L1", "entra": None, "setor": "S1"}]
+    assert fav["carteira"]["pesos"] == pytest.approx({"L2": 1.0})
+    assert fav["bruto"] == pytest.approx(0.10)
+
+
 def test_escolhe_pelo_impacto_na_carteira_e_nao_pelo_maior_retorno():
     # A3 rendeu mais, mas tem 10% do segmento e um substituto quase igual;
     # B3 rendeu menos com peso cheio e um substituto que perdeu.
