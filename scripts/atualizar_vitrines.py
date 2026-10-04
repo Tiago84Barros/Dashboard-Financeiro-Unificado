@@ -31,6 +31,12 @@ Uso:
     python scripts/atualizar_vitrines.py --listar       # só mostra o que deve
     python scripts/atualizar_vitrines.py --apenas fii_selection --forcar
     python scripts/atualizar_vitrines.py --dry-run
+    python scripts/atualizar_vitrines.py --sem-vigia      # sem o vigia no fim
+
+No fim de toda execução real (não em --listar/--dry-run) roda o vigia de
+automações (`scripts/vigia_automacoes.py`): workflows agendados em falha e
+publicações acima do limite viram aviso no Telegram. Falha do vigia não
+muda o código de saída da rotina.
 """
 from __future__ import annotations
 
@@ -463,6 +469,8 @@ def main(argv=None) -> int:
     p.add_argument("--semear", action="store_true",
                    help="Lê dos bancos a data da última publicação de cada alvo "
                         "sem registro e grava o estado inicial.")
+    p.add_argument("--sem-vigia", action="store_true",
+                   help="Não roda o vigia de automações no fim.")
     args = p.parse_args(argv)
 
     # Antes de decidir o que venceu: a decisão tem de usar a agenda mergeada.
@@ -470,8 +478,34 @@ def main(argv=None) -> int:
         atualizacao = atualizar_main(ROOT)
         if atualizacao.avancou:
             registrar(f"  git: {atualizacao.resumo()}; recarregando com o código novo")
+            # O processo filho roda o vigia; rodar aqui também avisaria duas vezes.
             return recarregar(argv)
 
+    try:
+        return _publicar(args)
+    finally:
+        # Em toda saída da execução real -- inclusive "nada vencido" e falha --,
+        # porque é justamente quando nada publica que a vitrine envelhece calada.
+        if not (args.listar or args.dry_run or args.sem_vigia):
+            vigiar()
+
+
+def vigiar() -> None:
+    """Roda o vigia de automações isolado: nada que ele faça muda o desfecho.
+
+    Ele lê o estado que esta execução acabou de gravar, então mede a idade já
+    depois das publicações de agora.
+    """
+    try:
+        from scripts.vigia_automacoes import vigiar as rodada
+
+        registrar("vigia de automações:")
+        rodada(estado_publicacao=ESTADO, saida=registrar)
+    except Exception as exc:  # noqa: BLE001
+        registrar(f"ATENÇÃO: vigia de automações falhou ({exc}).")
+
+
+def _publicar(args) -> int:
     agora = datetime.now(timezone.utc)
     estado = ler_estado()
     apenas = tuple(args.apenas or ())

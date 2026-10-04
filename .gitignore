@@ -258,6 +258,8 @@ local_staging/fii_document_backfill.stop
 # faria um `git pull` sobrescrever o histórico local de publicações -- e um
 # estado vindo de outra máquina diria "em dia" para vitrines vencidas aqui.
 local_staging/estado_publicacao.json
+# Memória do vigia de automações (avisos já dados): estado de máquina, idem.
+local_staging/vigia_automacoes.json
 
 # Saídas de teste locais (lixo)
 _testout.txt

@@ -6,6 +6,15 @@ import pytest
 from core.publicacao_agenda import ALVOS, POR_CHAVE
 from scripts import atualizar_vitrines as av
 
+# A implementação real, antes de a fixture abaixo trocá-la por um no-op.
+_VIGIAR_REAL = av.vigiar
+
+
+@pytest.fixture(autouse=True)
+def _sem_vigia_real(monkeypatch):
+    """O vigia chama o `gh` e o Telegram; aqui ele nunca roda de verdade."""
+    monkeypatch.setattr(av, "vigiar", lambda: None)
+
 
 def test_todo_alvo_tem_carimbo_de_onde_ler_a_ultima_publicacao():
     """Alvo sem carimbo é semeado como "nunca publicado" e republica tudo.
@@ -296,3 +305,36 @@ def test_listar_nao_mexe_no_git(monkeypatch, capsys):
     monkeypatch.setattr(av, "atualizar_main", _nunca)
     monkeypatch.setattr(av, "ler_estado", lambda: {})
     assert av.main(["--listar"]) == 0
+
+
+def test_vigia_roda_no_fim_da_execucao_real_mesmo_sem_nada_vencido(monkeypatch):
+    """É quando nada publica que a vitrine envelhece calada."""
+    monkeypatch.setenv(av._RECARREGADA, "1")
+    monkeypatch.setattr(av, "registrar", lambda _m: None)
+    monkeypatch.setattr(av, "ler_estado", lambda: {})
+    monkeypatch.setattr(av, "alvos_devidos", lambda *a, **k: [])
+    chamadas = []
+    monkeypatch.setattr(av, "vigiar", lambda: chamadas.append(1))
+    assert av.main([]) == 0
+    assert chamadas == [1]
+
+
+@pytest.mark.parametrize("argv", [["--listar"], ["--dry-run"], ["--sem-vigia"]])
+def test_vigia_nao_roda_em_listar_dry_run_ou_sem_vigia(monkeypatch, argv):
+    monkeypatch.setenv(av._RECARREGADA, "1")
+    monkeypatch.setattr(av, "registrar", lambda _m: None)
+    monkeypatch.setattr(av, "ler_estado", lambda: {})
+    monkeypatch.setattr(av, "alvos_devidos", lambda *a, **k: [])
+    monkeypatch.setattr(av, "vigiar", _nunca)
+    assert av.main(argv) == 0
+
+
+def test_falha_do_vigia_nao_muda_o_desfecho_da_rotina(monkeypatch):
+    """O vigia é isolado: exceção dele vira linha de log, não exceção."""
+    import scripts.vigia_automacoes as vigia
+
+    monkeypatch.setattr(vigia, "vigiar", _nunca)
+    avisos = []
+    monkeypatch.setattr(av, "registrar", avisos.append)
+    _VIGIAR_REAL()
+    assert any("vigia de automações falhou" in a for a in avisos)
