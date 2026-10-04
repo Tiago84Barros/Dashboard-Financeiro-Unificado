@@ -309,6 +309,20 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/valuation_historico.json.gz",),
     ),
     Alvo(
+        # Série mensal de fundamentos dos FIIs (VPA, patrimônio, cotistas,
+        # composição) com o fechamento mensal da fita da B3 para o P/VP. No
+        # Supabase a market.fii_metrics_monthly parou em 05/2026 (sem espaço
+        # e sem egress); o armazém tem até o mês corrente. O dado é mensal,
+        # mas o P/VP do mês corrente muda com o preço: semanal basta e
+        # limita o histórico no git.
+        chave="fii_metrics_monthly",
+        titulo="Série mensal de fundamentos dos FIIs",
+        passos=(("scripts/publish_fii_metrics_monthly.py",),),
+        cadencia_dias=7,
+        modulo="fii",
+        artefatos=("data/public/fii_metrics_monthly.json.gz",),
+    ),
+    Alvo(
         # Notícias filtradas por relevância, relatórios (documentos CVM/SEC) e
         # eventos datados por ativo, para a Inteligência dos Ativos. Lê o
         # acervo de notícias e os documentos que só existem no armazém; o
