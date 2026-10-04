@@ -251,6 +251,7 @@ CARIMBO = {
     "informacoes_recentes": ("arquivo", "data/public/informacoes_recentes.json.gz"),
     "fii_metrics_monthly": ("arquivo", "data/public/fii_metrics_monthly.json.gz"),
     "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),
+    "b3_linhagem": ("arquivo", "data/public/b3_linhagem.json"),
 }
 
 

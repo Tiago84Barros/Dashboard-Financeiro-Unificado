@@ -383,6 +383,20 @@ ALVOS: tuple[Alvo, ...] = (
         modulo="b3",
     ),
     Alvo(
+        # Procedência das demonstrações B3 (rastreada / ponteiro órfão /
+        # payload posterior), medida no armazém, que guarda o arquivo completo
+        # dos payloads da brapi. A validação B3 lê este arquivo quando o banco
+        # conectado não tem `market.brapi_raw_payloads`: é o que deixa a tabela
+        # sair do Supabase free sem a tela passar a dizer "sem origem" (INF-A2).
+        # Demonstração anual muda por trimestre: semanal basta.
+        chave="b3_linhagem",
+        titulo="Procedência das demonstrações B3",
+        passos=(("scripts/publish_b3_linhagem.py",),),
+        cadencia_dias=7,
+        modulo="b3",
+        artefatos=("data/public/b3_linhagem.json",),
+    ),
+    Alvo(
         chave="us_prices",
         titulo="Preços mensais dos EUA",
         passos=(("-m", "scripts.publish_us_prices_monthly", "--apply"),

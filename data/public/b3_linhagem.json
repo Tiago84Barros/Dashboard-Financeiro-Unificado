@@ -1,0 +1,34 @@
+{
+  "schema": "b3_linhagem.v1",
+  "gerado_em": "2026-10-04T18:12:35+00:00",
+  "base": "armazém local (dfu_warehouse)",
+  "metodo": "demonstrações anuais (period='annual') juntadas a market.brapi_raw_payloads pelo raw_payload_id; rastreada = payload existe e é anterior a first_seen_at",
+  "payloads": {
+    "linhas": 107962,
+    "fetched_de": "2026-07-02T12:13:50.418050+00:00",
+    "fetched_ate": "2026-10-04T17:52:00.857954+00:00"
+  },
+  "tabelas": {
+    "market.income_statements": {
+      "rows": 6081,
+      "traced_rows": 89,
+      "pointer_rows": 5379,
+      "dangling_rows": 0,
+      "impossible_rows": 5290
+    },
+    "market.balance_sheets": {
+      "rows": 6081,
+      "traced_rows": 89,
+      "pointer_rows": 5379,
+      "dangling_rows": 0,
+      "impossible_rows": 5290
+    },
+    "market.cash_flow_statements": {
+      "rows": 5960,
+      "traced_rows": 89,
+      "pointer_rows": 5259,
+      "dangling_rows": 0,
+      "impossible_rows": 5170
+    }
+  }
+}

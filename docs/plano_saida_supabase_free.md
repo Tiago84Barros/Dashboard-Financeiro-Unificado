@@ -71,7 +71,7 @@ FII).
 |---|---:|---|
 | `market.calculated_metric_vintages` | 70 | app (B3, PIT) |
 | `market_us.prices_monthly` | 64 | app (painel PIT, agora só o recorte do PR #445) |
-| `market.brapi_raw_payloads` | 59 | ETL; o app só junta `id`/`fetched_at` na linhagem (`core/b3_validation.py::lineage_counts`) |
+| `market.brapi_raw_payloads` | 59 | ETL; o app só a junta na linhagem (`core/b3_validation.py::lineage_counts`) quando ela existe — sem ela, lê `data/public/b3_linhagem.json` |
 | `market.historical_prices` | 57 | app |
 | `market_us.company_snapshots` | 41 | app |
 | `market.calculated_metrics` | 33 | app |
@@ -92,20 +92,34 @@ FII).
 | `load_score_panel` | lê 39 mil preços em vez de 368 mil (PR #445) | ~9× menos por leitura |
 | `score_panel`, `scored_universe`, `asymmetry_universe`, múltiplos B3 | TTL de 12 h (PRs #444/#445) | — |
 | `fii_metrics_monthly`, macro, `valuation_historico` | artefatos em `data/public/` | sem leitura remota |
-| **Este PR** | vitrine de FIIs sem leitura descartada; `companies`/`overview` e `load_mercado_retorno_mensal` com TTL de 12 h | ~−560 MB/dia por processo, no pior caso |
+| PR #501 | vitrine de FIIs sem leitura descartada; `companies`/`overview` e `load_mercado_retorno_mensal` com TTL de 12 h | ~−560 MB/dia por processo, no pior caso |
+| PR seguinte (INF-A2, parte 2) | `us_data.dossie()` com cache de 12 h por ticker; `us_data._use_snapshot()` guarda o "sim" por 12 h; linhagem B3 desacoplada de `brapi_raw_payloads` | ~7 KB e 2–3 consultas a menos por rerun da aba EUA; a tabela pode sair sem quebrar a validação |
 
 ## 3. O que ainda falta
 
 Tamanho do banco:
 
-1. **`brapi_raw_payloads`** (~59–71 MB). Quem lê é o ETL. O app só a junta
-   na contagem de linhagem da validação B3
-   (`core/b3_validation.py::lineage_counts`). A cópia local está completa
-   (18.622 payloads, zero hashes ausentes em 16/08). Falta a compactação
-   remota, que é do usuário (§5.4). Tirá-la **inteira**, como pede o item 5
-   do roteiro, faria toda linha de demonstrativo aparecer como `dangling` na
-   validação. Isso pede um PR antes, para que a linhagem passe a ser lida do
-   armazém ou de um artefato.
+1. **`brapi_raw_payloads`** (~59–71 MB). Quem lê é o ETL. A cópia local
+   está completa (18.622 payloads, zero hashes ausentes em 16/08). Falta a
+   compactação remota, que é do usuário (§5.4).
+   **Destravado do lado do app (INF-A2, parte 2):** antes, tirá-la inteira
+   fazia a junção de `lineage_counts` falhar e derrubava o manifesto inteiro
+   da validação B3 (Empresas B3, Confiança, Portfólio B3). Agora
+   `lineage_counts` decide a fonte:
+   - com a tabela no banco, mede ali (`verificacao='banco'`). A poda diária
+     preserva todo payload referenciado, então a medida segue válida;
+   - sem ela, lê `data/public/b3_linhagem.json` (`verificacao='artefato_armazem'`,
+     com `gerado_em`, `idade_dias` e `velho` acima de 14 dias). Esse arquivo
+     sai do armazém pelo alvo semanal `b3_linhagem`
+     (`scripts/publish_b3_linhagem.py`). As linhas do banco atual seguem ao
+     lado, em `rows_banco_atual`;
+   - sem os dois, `verificacao='indisponivel'`: linhas e ponteiros contados,
+     baldes em `None`. Nunca "toda linha sem origem".
+   Antes do `DROP`, ainda falta confirmar que nenhuma ingestão grava payloads
+   no Supabase. `data_pipeline/market/repository.py` insere em
+   `market.brapi_raw_payloads` na conexão que recebe, e o crescimento de
+   ~2,6 MB/dia que motivou o alvo `brapi_raw_poda` indica que alguma ainda
+   grava. Sem a tabela, essa ingestão falharia.
 2. **16,8 MB de índices mortos** e os 3 índices únicos duplicados sobre
    `docs_corporativos.doc_hash`. O SQL está pronto em
    `warehouse/remote_cleanup.md` (§5.3).
@@ -125,10 +139,11 @@ Tamanho do banco:
 
 Egress, fora do escopo deste PR e já observado:
 
-- `us_data.dossie()` não tem cache: ~7 KB e mais 2 consultas de metadado a
-  cada rerun da aba.
-- `us_data._use_snapshot()` não tem cache: 2–3 consultas pequenas a cada
-  chamada, e quase toda função da fachada o chama.
+- ~~`us_data.dossie()` não tem cache~~: resolvido na parte 2 do INF-A2
+  (12 h por ticker; a ausência não fica guardada).
+- ~~`us_data._use_snapshot()` não tem cache~~: resolvido na parte 2. O "sim"
+  vale 12 h. O "não" é refeito, porque falha transitória também responde
+  "não" e não pode fixar o modo.
 - `pgbouncer.get_auth`: 370 mil conexões novas desde julho. Cada handshake
   TLS custa alguns KB.
 - O topo atual do `pg_stat_statements` não foi medido nesta sessão, porque a
@@ -145,7 +160,7 @@ Egress, fora do escopo deste PR e já observado:
 | 2 | dia seguinte | Ver na Usage o egress de 24 h; meta < 130 MB/dia | usuário |
 | 3 | se passar de 130 MB/dia | Rodar o `pg_stat_statements` (§5.2) e atacar o novo topo | usuário + PR |
 | 4 | até 10/10 | `DROP INDEX CONCURRENTLY` dos índices mortos (§5.3) | usuário |
-| 5 | até 10/10 | Compactar `brapi_raw_payloads` e depois `VACUUM FULL` (§5.4) | usuário |
+| 5 | até 10/10 | Compactar `brapi_raw_payloads` e depois `VACUUM FULL` (§5.4). Tirá-la inteira está destravado no app (§3, item 1); antes, confirmar quem ainda grava nela | usuário |
 | 6 | se o banco ainda passar de 480 MB | Arquivar e podar as safras antigas de `fii_score_snapshots` (§5.5) | usuário |
 | 7 | depois | Retenção de `calculated_metric_vintages` (precisa de PR com teste PIT) | PR |
 | 8 | se um gatilho disparar | Plano pago ou outro host (§6) | usuário |
