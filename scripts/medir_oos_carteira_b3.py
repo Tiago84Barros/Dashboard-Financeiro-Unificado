@@ -353,6 +353,7 @@ def main() -> int:
     nomes = args.perfil or [RECOMENDADO, CONSERVADOR, AMPLO]
     perfis: dict = {}
     todas_safras: set[int] = set()
+    avaliadas: set[int] = set()
     for nome in nomes:
         print(f"\n== perfil {nome} ==", flush=True)
         # hash() de str muda a cada processo; md5 do nome é estável.
@@ -368,7 +369,11 @@ def main() -> int:
                 with cache.open("wb") as fh:
                     pickle.dump((resultados, precos, params), fh)
         medido, safras = _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje)
-        todas_safras.update(safras)
+        avaliadas.update(safras)
+        # A janela declarada é a das safras que tiveram carteira: as primeiras
+        # não têm líder anterior a elas (sem backtest, sem aprovação).
+        todas_safras.update(t["safra"] for t in medido["variantes"][oos.SEM_PORTAO]["safras"]
+                            if not t.get("sem_carteira"))
         perfis[nome] = medido
         print(medido["leitura"], flush=True)
         for v in oos.VARIANTES:
@@ -382,6 +387,7 @@ def main() -> int:
         "versao_presets": PRESETS_VERSION,
         "medido_em": datetime.now().isoformat(timespec="seconds"),
         "safras": sorted(todas_safras),
+        "safras_avaliadas": sorted(avaliadas),
         "janela": (f"abril/{min(todas_safras)} a março/{max(todas_safras) + 1}"
                    if todas_safras else None),
         "metrica_principal": (

@@ -248,6 +248,15 @@ def test_leitura_diz_quando_o_ic_cruza_zero():
     assert "insuficiente" in oos.leitura_honesta(oos.resumir(linhas[:1], "x"))
 
 
+def test_leitura_diz_quanto_a_media_depende_da_melhor_safra():
+    linhas = [{"safra": 2017, "x": 0.58}] + [
+        {"safra": 2018 + i, "x": v} for i, v in enumerate([0.02, -0.01, 0.03, 0.01])]
+    r = oos.resumir(linhas, "x")
+    assert r["melhor_safra"] == 2017
+    assert r["media_sem_melhor_safra"] == pytest.approx(0.0125)
+    assert "Sem a melhor safra (2017)" in oos.leitura_honesta(r)
+
+
 def test_vencida_por_versao():
     dados = {"versao_metodologia": "2.30.0", "versao_presets": "b3-presets-1.0.0"}
     assert oos.vencida(dados, "2.30.0", "b3-presets-1.0.0") == []

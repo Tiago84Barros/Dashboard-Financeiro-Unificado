@@ -535,12 +535,20 @@ def resumir(linhas: list[dict], chave: str) -> dict:
              if r.get(chave) is not None and np.isfinite(float(r[chave]))]
     valores = [v for _, v in pares]
     lo, hi = bootstrap_excesso(valores)
+    # Robustez a uma safra só: no perfil Amplo (2.30.0) a safra 2017 rendeu
+    # +57,7 pp sobre pesos iguais e sozinha leva a média de ~+4 para +10 pp.
+    # Média com IC que exclui o zero e que depende de um ano não é a mesma
+    # evidência que nove anos parecidos -- a tela precisa dizer qual é.
+    melhor = max(pares, key=lambda x: x[1]) if len(pares) >= 3 else None
+    resto = [v for a, v in pares if melhor is None or a != melhor[0]]
     return {
         "media": float(np.mean(valores)) if valores else None,
         "ic95": [lo, hi],
         "n_safras": len(valores),
         "safras_negativas": [a for a, v in pares if v < 0],
         "ic_cruza_zero": (lo is None or hi is None or (lo <= 0 <= hi)),
+        "melhor_safra": melhor[0] if melhor else None,
+        "media_sem_melhor_safra": float(np.mean(resto)) if melhor else None,
     }
 
 
@@ -555,12 +563,17 @@ def leitura_honesta(resumo: dict, rotulo: str = "pesos iguais") -> str:
     base = (f"Excesso médio de {media * 100:+.1f} pp por safra sobre {rotulo}, "
             f"IC 95% [{lo * 100:+.1f}; {hi * 100:+.1f}] pp, {n} safras, "
             f"{neg} negativa(s).")
+    sem_melhor = resumo.get("media_sem_melhor_safra")
+    robustez = ""
+    if sem_melhor is not None and resumo.get("melhor_safra") is not None:
+        robustez = (f" Sem a melhor safra ({resumo['melhor_safra']}), a média "
+                    f"seria {sem_melhor * 100:+.1f} pp.")
     if lo <= 0 <= hi:
         return base + (" O intervalo cruza o zero: a medição NÃO distingue esta "
-                       "carteira de dividir igualmente entre as empresas.")
+                       "carteira de dividir igualmente entre as empresas.") + robustez
     if hi < 0:
-        return base + " O intervalo está todo abaixo de zero: a carteira perdeu."
-    return base + " O intervalo exclui o zero."
+        return base + " O intervalo está todo abaixo de zero: a carteira perdeu." + robustez
+    return base + " O intervalo exclui o zero." + robustez
 
 
 def carregar(caminho: Path | str | None = None) -> dict | None:
