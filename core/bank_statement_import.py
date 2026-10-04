@@ -255,22 +255,73 @@ def _infer_bank_type(description: str, amount: float) -> str:
     return "Entrada" if amount >= 0 else "Saida"
 
 
+_TERMOS_SAIDA = (
+    "saida pix",
+    "pix enviado",
+    "pagamento",
+    "boleto",
+    "debito de cartao",
+    "outros gastos",
+    "utilidade de cartao",
+    # Aporte/transferência para investimento: dinheiro que SAI da conta. Sem
+    # estes termos, uma linha sem sinal e sem indicador D/C caía em "entrada"
+    # e o saldo de `v_account_balance` (SUM(amount)) inflava. Textos reais do
+    # extrato e do histórico do App 3.
+    "transferido para",
+    "transferida para",
+    "transferencia para",
+    "transferencia enviada",
+    "enviado para",
+    "enviada para",
+    "ted enviada",
+    "doc enviado",
+    "aplicacao",
+    "aplicado",
+    "aplicada",
+    "investido",
+    "aporte",
+    "alocacao",
+    "emissao de cdb",
+    "tesouro direto",
+    "tesouro nacional",
+    "nomad",
+)
+# Recebimento explícito vence o termo de destino ("Pix recebido de NOMAD" é
+# entrada, embora cite a Nomad). Só vale para valor não negativo.
+_TERMOS_RECEBIMENTO = (
+    "pix recebido",
+    "entrada pix",
+    "recebido de",
+    "recebida de",
+    "transferencia recebida",
+    "ted recebida",
+    "doc recebido",
+    # Renda de investimento também é entrada ("Rendimento de aplicação").
+    "rendimento",
+    "rendimentos",
+    "juros",
+    "dividendo",
+    "dividendos",
+    "provento",
+    "proventos",
+)
+_RE_TERMOS_SAIDA = re.compile(r"\b(?:" + "|".join(map(re.escape, _TERMOS_SAIDA)) + r")\b")
+_RE_TERMOS_RECEBIMENTO = re.compile(
+    r"\b(?:" + "|".join(map(re.escape, _TERMOS_RECEBIMENTO)) + r")\b"
+)
+
+
 def _direction_for(bank_type: str, description: str, amount: float) -> str:
     norm = _norm(f"{bank_type} {description}")
     if "resgate de cdb" in norm:
         return "entrada"
-    if amount < 0 or any(
-        term in norm
-        for term in (
-            "saida pix",
-            "pix enviado",
-            "pagamento",
-            "boleto",
-            "debito de cartao",
-            "outros gastos",
-            "utilidade de cartao",
-        )
-    ):
+    if amount < 0:
+        return "saida"
+    # Resgate é o caminho inverso do aporte: dinheiro voltando para a conta.
+    # Só sem sinal negativo -- "IOF sobre resgate" negativo continua saída.
+    if re.search(r"\bresgate\b", norm) or _RE_TERMOS_RECEBIMENTO.search(norm):
+        return "entrada"
+    if _RE_TERMOS_SAIDA.search(norm):
         return "saida"
     return "entrada"
 
