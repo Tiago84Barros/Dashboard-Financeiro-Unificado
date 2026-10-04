@@ -68,7 +68,9 @@ from core.transaction_costs import CostConfig, custo_compra, custo_venda
 
 logger = logging.getLogger(__name__)
 
-VERSAO_MEDICAO = "oos-carteira-1.0.0"
+#: 2.0.0: banda do portão por UM veto por safra na carteira (era um por
+#: segmento, que empatava as duas variantes quando o segmento tem um só nome).
+VERSAO_MEDICAO = "oos-carteira-2.0.0"
 CAMINHO_MEDICAO = Path(__file__).resolve().parents[1] / "data" / "oos_carteira_b3.json"
 
 #: Mesmo piso da view para a janela de validação valer: menos que 18 meses é
@@ -93,14 +95,24 @@ PORTAO_LLM = {
         "qualquer investidor teria conseguido. Além disso o portão é opcional "
         "(desligado por padrão) e não determinístico."),
     "como_medido": (
-        "Duas variantes dão a banda do quanto um portão que veta UM nome por "
-        "segmento pode mover o resultado: 'veta o melhor' (adversário: sai o "
-        "nome que mais rendeu na safra, entra o próximo do ranking) e 'veta o "
-        "pior' (favorável). Não são mínimo e máximo estritos -- o substituto "
-        "pode render mais ou menos que o vetado --, são a ordem de grandeza. "
-        "Em segmento com um único nome as duas variantes vetam o MESMO papel "
-        "(o líder) e medem, na prática, 'trocar o líder pelo próximo do "
-        "ranking'; por isso a banda pode ficar inteira abaixo do sem-portão."),
+        "Banda de ATÉ UM veto por safra, no nível da carteira. Em cada safra a "
+        "medição testa todas as opções -- não vetar e vetar cada nome da "
+        "carteira (ele sai de todo segmento em que foi escolhido e o próximo "
+        "do ranking da safra no segmento herda vaga e peso; sem próximo no "
+        "ranking, o segmento sai e seu orçamento vai para os demais) --, "
+        "remonta com "
+        "cap e tetos e fica com o veto que MAIS derruba o retorno bruto da "
+        "safra ('veta o melhor', adversário) e com o que MAIS o sobe ('veta o "
+        "pior', favorável). No bruto são limites estritos para qualquer "
+        "portão que vete no máximo um nome por safra, e o sem-portão fica "
+        "sempre entre eles; no líquido o veto muda o giro e o custo pode "
+        "deslocá-los um pouco. Portão que vete mais de um nome por safra pode "
+        "sair da banda. O substituto não passa pelo Score de Entrada (ele lê "
+        "o retrato de hoje e o sem-portão também não passa). Até a medição "
+        "1.0.0 o veto era um por SEGMENTO; como quase todo segmento escolhe "
+        "só o líder, 'o melhor' e 'o pior' eram o mesmo papel, as duas "
+        "variantes empatavam e mediam, na prática, 'trocar todos os líderes "
+        "pelo segundo do ranking'."),
 }
 
 FORA_DO_PIT = (
@@ -306,30 +318,98 @@ def selecao_do_segmento(res: dict, m: dict, safra: int, *, max_anos_lid: int,
     return selecionados, pesos, ranking
 
 
-def aplicar_veto_hipotetico(selecionados: list[str], ranking: list, pesos: dict,
-                            retornos: dict[str, float | None], *,
-                            veta: str) -> list[str]:
-    """Um portão que veta UM nome do segmento: o de maior (ou menor) retorno
-    realizado na safra. Substituição igual a `_aplicar_gate_qualitativo`: o
-    próximo do ranking que ainda não está na seleção herda vaga e peso."""
-    candidatos = [tk for tk in selecionados if float(pesos.get(tk, 0.0) or 0.0) > 0]
-    if not candidatos:
-        return list(selecionados)
+#: Um segmento na banda do portão: (setor, selecionados, pesos, ranking PIT).
+Segmento = tuple[str, list[str], dict, list]
 
-    def _r(tk: str) -> float:
-        v = retornos.get(tk)
-        return float(v) if v is not None else 0.0
 
-    escolha = max if veta == "melhor" else min
-    vetado = escolha(candidatos, key=lambda tk: (_r(tk), tk))
-    finais = [tk for tk in selecionados if tk != vetado]
+def substituto_no_segmento(selecionados: list[str], ranking: list) -> str | None:
+    """Quem herda a vaga de um vetado: o próximo do ranking PIT do segmento
+    que ainda não está na seleção (o vetado está nela, então é pulado).
+
+    Mesma ordem de `_aplicar_gate_qualitativo`, MENOS o Score de Entrada: ele
+    lê o retrato de hoje (`FORA_DO_PIT`) e o sem-portão também não passa por
+    ele -- filtrar só o substituto misturaria duas réguas na mesma banda."""
     for cand, _sc in ranking:
-        if cand in selecionados or cand in finais:
-            continue
-        finais.append(cand)
-        pesos[cand] = pesos.get(cand) or pesos.get(vetado, 0.0)
-        break
-    return finais
+        if str(cand) not in selecionados:
+            return str(cand)
+    return None
+
+
+def candidatos_a_veto(segmentos: list[Segmento]) -> list[str]:
+    """Nomes que um portão poderia vetar: os que têm peso em algum segmento
+    (nome com peso 0 é descartado na montagem -- vetá-lo não muda nada)."""
+    nomes = {str(tk) for _setor, sel, pesos, _rk in segmentos for tk in sel
+             if float(pesos.get(tk, 0.0) or 0.0) > 0}
+    return sorted(nomes)
+
+
+def tickers_da_banda(segmentos: list[Segmento]) -> list[str]:
+    """Selecionados mais os substitutos de cada veto possível: os retornos que
+    `escolher_veto` precisa para avaliar todas as opções."""
+    nomes = {str(tk) for _setor, sel, _p, _rk in segmentos for tk in sel}
+    for _setor, sel, _p, ranking in segmentos:
+        sub = substituto_no_segmento(sel, ranking)
+        if sub:
+            nomes.add(sub)
+    return sorted(nomes)
+
+
+def vetar_na_carteira(segmentos: list[Segmento],
+                      vetado: str | None) -> tuple[list[tuple[str, list[str], dict]], list[dict]]:
+    """Aplica UM veto à carteira inteira: o nome sai de todo segmento em que
+    foi escolhido (o portão julga o papel, não o segmento) e, em cada um, o
+    próximo do ranking herda vaga e peso -- `pesos[sub] = pesos.get(sub) or
+    pesos.get(vetado)`, como na tela. Não muta a entrada.
+
+    Devolve os itens no formato de `montar_carteira` e as trocas feitas."""
+    itens: list[tuple[str, list[str], dict]] = []
+    trocas: list[dict] = []
+    for setor, sel, pesos, ranking in segmentos:
+        sel_v, pesos_v = list(sel), dict(pesos)
+        if vetado is not None and vetado in sel_v:
+            sub = substituto_no_segmento(sel_v, ranking)
+            sel_v = [tk for tk in sel_v if tk != vetado]
+            if sub:
+                sel_v.append(sub)
+                pesos_v[sub] = pesos_v.get(sub) or pesos_v.get(vetado, 0.0)
+            trocas.append({"sai": vetado, "entra": sub, "setor": setor})
+        itens.append((setor, sel_v, pesos_v))
+    return itens, trocas
+
+
+def escolher_veto(segmentos: list[Segmento], retornos: dict[str, float | None], *,
+                  veta: str, cap: float, teto_setor: float,
+                  teto_ciclico: float) -> dict:
+    """O limite da banda do portão: o veto ÚNICO da safra que mais derruba
+    (`veta="melhor"`, adversário) ou mais sobe (`veta="pior"`, favorável) o
+    retorno bruto da CARTEIRA montada.
+
+    Enumera todas as opções -- não vetar e vetar cada nome com peso --,
+    remonta com cap e tetos e escolhe pelo retorno bruto (`None` rende 0, a
+    regra de `retorno_da_safra`). Escolher pelo impacto, e não pelo maior
+    retorno do vetado, é o que torna o limite estrito: o nome que mais rendeu
+    pode ter peso pequeno ou um substituto que rendeu quase o mesmo. "Não
+    vetar" entra como opção, então no bruto vale sempre
+    `adversário <= sem portão <= favorável`. Empate fica com não vetar e,
+    entre vetos, com a ordem alfabética (determinístico)."""
+    if veta not in ("melhor", "pior"):
+        raise ValueError(f"veta deve ser 'melhor' ou 'pior', não {veta!r}")
+
+    def _bruto(pesos_fin: dict[str, float]) -> float:
+        return sum(w * float(retornos.get(tk) or 0.0) for tk, w in pesos_fin.items())
+
+    opcoes = []
+    for i, vetado in enumerate([None] + candidatos_a_veto(segmentos)):
+        itens, trocas = vetar_na_carteira(segmentos, vetado)
+        cart = montar_carteira(itens, cap=cap, teto_setor=teto_setor,
+                               teto_ciclico=teto_ciclico)
+        opcoes.append((_bruto(cart["pesos"]), i, {
+            "vetado": vetado, "trocas": trocas, "itens": itens, "carteira": cart}))
+    sinal = 1.0 if veta == "melhor" else -1.0
+    # Arredondado: veto que não muda nada não pode vencer "não vetar" por
+    # ruído de ponto flutuante da reprojeção.
+    bruto, _i, escolhida = min(opcoes, key=lambda o: (round(sinal * o[0], 12), o[1]))
+    return {**escolhida, "bruto": bruto}
 
 
 def montar_carteira(itens_por_segmento: list[tuple[str, list[str], dict]], *,
@@ -586,11 +666,17 @@ def carregar(caminho: Path | str | None = None) -> dict | None:
     return dados if isinstance(dados, dict) else None
 
 
-def vencida(dados: dict | None, versao_atual: str, versao_presets: str) -> list[str]:
-    """Motivos pelos quais a medição gravada não vale para o código atual."""
+def vencida(dados: dict | None, versao_atual: str, versao_presets: str,
+            versao_medicao: str = VERSAO_MEDICAO) -> list[str]:
+    """Motivos pelos quais a medição gravada não vale para o código atual.
+
+    A versão da MEDIÇÃO conta também: com o score e os perfis iguais, a banda
+    do portão da 1.0.0 (um veto por segmento) leria como a da 2.0.0."""
     if not dados:
         return ["sem medição gravada"]
     motivos = []
+    if str(dados.get("versao_medicao")) != str(versao_medicao):
+        motivos.append(f"medição {dados.get('versao_medicao')} ≠ {versao_medicao}")
     if str(dados.get("versao_metodologia")) != str(versao_atual):
         motivos.append(f"metodologia {dados.get('versao_metodologia')} ≠ {versao_atual}")
     if str(dados.get("versao_presets")) != str(versao_presets):
@@ -602,7 +688,8 @@ __all__ = [
     "VERSAO_MEDICAO", "CAMINHO_MEDICAO", "VARIANTES", "PORTAO_LLM", "FORA_DO_PIT",
     "SEM_PORTAO", "PORTAO_VETA_O_MELHOR", "PORTAO_VETA_O_PIOR",
     "metricas_pit", "aprova_economico", "selecao_do_segmento",
-    "aplicar_veto_hipotetico", "montar_carteira", "retornos_por_ticker",
+    "substituto_no_segmento", "candidatos_a_veto", "tickers_da_banda",
+    "vetar_na_carteira", "escolher_veto", "montar_carteira", "retornos_por_ticker",
     "retorno_benchmark", "simular_custos", "resumir", "leitura_honesta",
     "carregar", "vencida",
 ]
