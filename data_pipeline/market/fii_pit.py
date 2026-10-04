@@ -451,8 +451,14 @@ def _monthly_returns(prices: pd.DataFrame, dividends: pd.DataFrame | None = None
     monthly["total_return"] = result.mask(impossible)
     monthly["return_method"] = "close_plus_dividends"
     monthly.loc[split_like & ~impossible, "return_method"] = "adjusted_split_fallback"
+    # Variação de preço sem o provento: é a parte tributável na venda (20%),
+    # enquanto o rendimento distribuído é isento para PF. No mês de split o
+    # fechamento não é comparável, e o retorno inteiro conta como preço --
+    # trata o provento daquele mês como ganho, o lado conservador do imposto.
+    monthly["price_return"] = monthly["close_return"].where(
+        ~split_like, monthly["total_return"])
     return monthly.dropna(subset=["total_return"])[
-        ["date", "ticker", "total_return", "return_method"]
+        ["date", "ticker", "total_return", "return_method", "price_return"]
     ]
 
 

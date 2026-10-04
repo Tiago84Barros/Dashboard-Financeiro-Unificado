@@ -2872,6 +2872,65 @@ def _cards_por_padrao(curvas: dict) -> None:
     )
 
 
+def _texto_premissas_liquido_fii(premissas: dict) -> str:
+    """Premissas do líquido como frase: a alíquota que só existe no cálculo
+    ninguém contesta."""
+    return (
+        f"Premissas do líquido: custo de giro de "
+        f"{float(premissas.get('custo_transacao_bps') or 0):.0f} bps + slippage de "
+        f"{float(premissas.get('slippage_bps') or 0):.0f} bps por unidade de "
+        f"turnover; IR de {float(premissas.get('ir_ganho_capital') or 0):.0%} sobre "
+        "o ganho de capital realizado no rebalanceamento, com compensação de "
+        "prejuízo; rendimento distribuído isento (PF); sem IR na liquidação "
+        "final, porque o IFIX de comparação também não paga. O IFIX segue "
+        "bruto: é o índice, não um investidor."
+    )
+
+
+def _bloco_liquido_fii(pit: dict) -> None:
+    """Bruto, após custos e líquido de IR lado a lado (auditoria app4, FII-10).
+
+    Certificado anterior ao líquido não tem as chaves; nele o excesso exibido
+    é após custos e sem IR, e a tela diz isso em vez de rotulá-lo líquido.
+    """
+    if not pit or pit.get("status") != "calculated":
+        return
+    if "mean_excess_bruto" not in pit:
+        st.info(
+            "Este certificado é anterior ao retorno líquido: o excesso e o "
+            "intervalo acima já descontam custo de giro (15 + 10 bps), mas "
+            "**não** os 20% de IR sobre o ganho de capital do giro. Ele passa "
+            "a ser líquido no próximo processamento da validação PIT."
+        )
+        return
+
+    def _pct(valor) -> str:
+        return "—" if valor is None or pd.isna(valor) else f"{float(valor):+.2%}"
+
+    st.markdown("#### Excesso sobre o IFIX: bruto × líquido")
+    colunas = st.columns(4)
+    colunas[0].markdown(_kpi_html(
+        "Bruto", _pct(pit.get("mean_excess_bruto")), sub="sem custo nem IR",
+        sub_color="#4A5568", accent="#9CA3AF"), unsafe_allow_html=True)
+    colunas[1].markdown(_kpi_html(
+        "Após custos", _pct(pit.get("mean_excess_apos_custos")),
+        sub="giro descontado", sub_color="#4A5568", accent="#4A9EFF"),
+        unsafe_allow_html=True)
+    if pit.get("ir_calculado"):
+        liquido_sub, liquido_val = "custos e IR — padrão", _pct(pit.get("mean_excess"))
+    else:
+        liquido_sub, liquido_val = "IR não calculado: retornos sem preço", "—"
+    colunas[2].markdown(_kpi_html(
+        "Líquido", liquido_val, sub=liquido_sub, sub_color="#4A5568",
+        accent="#00C896"), unsafe_allow_html=True)
+    colunas[3].markdown(_kpi_html(
+        "IR médio", f"{float(pit.get('mean_ir_periodo') or 0):.2%}",
+        sub="por período, sobre o giro", sub_color="#4A5568",
+        accent="#F6C90E"), unsafe_allow_html=True)
+    st.caption("Excesso médio por período. "
+               + _texto_premissas_liquido_fii(pit.get("premissas_liquido") or {}))
+
+
 def _tab_backtest() -> None:
     st.subheader("Validação point-in-time da metodologia")
     validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
@@ -2898,9 +2957,12 @@ def _tab_backtest() -> None:
     ci_text = (f"{excesso['inferior']:+.2%} a {excesso['superior']:+.2%}"
                if excesso["disponivel"] else "—")
     cards[4].markdown(_kpi_html("IC bootstrap do excesso", ci_text,
-                                sub=("intervalo de 95% · excesso não significativo"
-                                     if excesso["disponivel"] and not excesso["significativo"]
-                                     else "intervalo de 95%"),
+                                sub=(("95%, líquido de custos e IR"
+                                      if pit.get("ir_calculado") else
+                                      "95%, após custos, sem IR")
+                                     + (" · excesso não significativo"
+                                        if excesso["disponivel"]
+                                        and not excesso["significativo"] else "")),
                                 sub_color="#4A5568",
                                 accent="#00C896" if excesso["significativo"] else "#F6C90E"),
                       unsafe_allow_html=True)
@@ -2919,6 +2981,7 @@ def _tab_backtest() -> None:
             "não rende o que os fundos sobreviventes renderam."
         )
 
+    _bloco_liquido_fii(pit)
     _cards_por_padrao(pit.get("curvas_por_padrao") or {})
 
     blockers = validation.get("blockers") or []
