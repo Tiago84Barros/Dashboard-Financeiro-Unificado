@@ -11,6 +11,7 @@ import json
 import logging
 from datetime import datetime, timezone
 from numbers import Real
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -46,7 +47,7 @@ def _table_exists(conn, table: str) -> bool:
     return bool(conn.execute(text("SELECT to_regclass(:table) IS NOT NULL"), {"table": table}).scalar())
 
 
-def lineage_counts(conn, table: str) -> dict[str, int]:
+def medir_linhagem(conn, table: str) -> dict[str, int]:
     """Procedencia VERIFICADA das demonstracoes anuais, nao ponteiro nao-nulo.
 
     `raw_payload_id IS NOT NULL` mede que existe um ponteiro, nao que ele leva a
@@ -84,6 +85,117 @@ def lineage_counts(conn, table: str) -> dict[str, int]:
         "pointer_rows": int(row["pointed"] or 0),
         "dangling_rows": int(row["dangling"] or 0),
         "impossible_rows": int(row["impossible"] or 0),
+    }
+
+
+
+# INF-A2: a contagem acima junta as demonstrações a `market.brapi_raw_payloads`.
+# Essa tabela é só trilha de auditoria do ETL e é a próxima a sair do Supabase
+# free. O arquivo completo dos payloads mora no armazém local. A rotina
+# `b3_linhagem` (`scripts/publish_b3_linhagem.py`) mede lá e publica o
+# resultado neste artefato, que o app lê quando o banco conectado não tem os
+# payloads.
+ARTEFATO_LINHAGEM = (Path(__file__).resolve().parents[1]
+                     / "data" / "public" / "b3_linhagem.json")
+LINHAGEM_SCHEMA = "b3_linhagem.v1"
+# Demonstração anual muda a cada trimestre e o alvo é semanal: duas semanas
+# sem publicação já é rotina parada, e a contagem sai marcada como velha.
+LINHAGEM_IDADE_MAXIMA_DIAS = 14
+_PAYLOADS = "market.brapi_raw_payloads"
+_BALDES = ("traced_rows", "dangling_rows", "impossible_rows")
+
+
+def ler_artefato_linhagem(caminho: Path | None = None, *,
+                          agora: datetime | None = None) -> dict[str, Any] | None:
+    """Lê a contagem publicada; ``None`` se o arquivo faltar ou não for confiável."""
+    caminho = Path(caminho or ARTEFATO_LINHAGEM)
+    try:
+        dados = json.loads(caminho.read_text(encoding="utf-8"))
+        if dados.get("schema") != LINHAGEM_SCHEMA:
+            raise ValueError(f"schema {dados.get('schema')!r}")
+        gerado_em = datetime.fromisoformat(str(dados["gerado_em"]))
+        if gerado_em.tzinfo is None:
+            gerado_em = gerado_em.replace(tzinfo=timezone.utc)
+        tabelas = dados["tabelas"]
+        if not isinstance(tabelas, dict) or not tabelas:
+            raise ValueError("sem tabelas")
+    except FileNotFoundError:
+        return None
+    except Exception as exc:  # noqa: BLE001 - artefato ruim vira ausência nomeada
+        logger.warning("artefato de linhagem B3 ignorado (%s): %s", caminho, exc)
+        return None
+    idade = ((agora or datetime.now(timezone.utc)) - gerado_em).total_seconds() / 86400
+    return {**dados, "idade_dias": round(idade, 1),
+            "velho": idade > LINHAGEM_IDADE_MAXIMA_DIAS}
+
+
+def _contagem_sem_payloads(conn, table: str, motivo: str) -> dict[str, Any]:
+    """O que dá para afirmar sem os payloads: quantas linhas têm ponteiro.
+
+    Os três baldes ficam ``None``, e não zero. Zero rastreadas diria que nenhuma
+    linha tem procedência, e todas como `dangling` diria que todas perderam a
+    origem. Nenhuma das duas coisas foi medida.
+    """
+    row = conn.execute(text(f"""
+        SELECT count(*) AS rows,
+               count(*) FILTER (WHERE raw_payload_id IS NOT NULL) AS pointed
+        FROM {table} WHERE period='annual'
+    """)).mappings().one()
+    return {
+        "rows": int(row["rows"] or 0),
+        "pointer_rows": int(row["pointed"] or 0),
+        **{balde: None for balde in _BALDES},
+        "verificacao": "indisponivel",
+        "motivo": motivo,
+    }
+
+
+def _payloads_presentes(conn) -> bool:
+    # to_regclass só existe no Postgres; o inspetor cobre os outros dialetos
+    # (os testes de procedência rodam em SQLite).
+    if conn.dialect.name == "postgresql":
+        return _table_exists(conn, _PAYLOADS)
+    from sqlalchemy import inspect as _inspect
+    schema, nome = _PAYLOADS.split(".")
+    return _inspect(conn).has_table(nome, schema=schema)
+
+
+def lineage_counts(conn, table: str, *,
+                   artefato: Path | None = None,
+                   agora: datetime | None = None) -> dict[str, Any]:
+    """Procedência das demonstrações, dita de onde veio a verificação.
+
+    1. Com ``market.brapi_raw_payloads`` no banco, mede ali mesmo
+       (``verificacao='banco'``). A poda diária preserva todo payload referenciado
+       (``scripts/compact_remote_brapi_raw.py``), então a junção continua válida.
+    2. Sem a tabela, usa a contagem publicada do armazém local
+       (``verificacao='artefato_armazem'``, com ``gerado_em``, ``idade_dias`` e
+       ``velho``). É a medida das demonstrações do ARMAZÉM, não das linhas deste
+       banco. Por isso as linhas daqui seguem ao lado, em ``rows_banco_atual``.
+    3. Sem nenhum dos dois, ``verificacao='indisponivel'``: conta as linhas e os
+       ponteiros e deixa os baldes em ``None``.
+    """
+    if _payloads_presentes(conn):
+        return {**medir_linhagem(conn, table), "verificacao": "banco"}
+    publicado = ler_artefato_linhagem(artefato, agora=agora)
+    medida = (publicado or {}).get("tabelas", {}).get(table)
+    if not isinstance(medida, dict):
+        motivo = (f"{_PAYLOADS} ausente neste banco e sem contagem publicada do "
+                  "armazém local (rode scripts/publish_b3_linhagem.py)")
+        if publicado is not None:
+            motivo = (f"{_PAYLOADS} ausente neste banco e o artefato publicado "
+                      f"não traz {table}")
+        return _contagem_sem_payloads(conn, table, motivo)
+    proprio = _contagem_sem_payloads(conn, table, "")
+    return {
+        **{k: medida.get(k) for k in ("rows", "pointer_rows", *_BALDES)},
+        "verificacao": "artefato_armazem",
+        "base": publicado.get("base"),
+        "gerado_em": publicado.get("gerado_em"),
+        "idade_dias": publicado.get("idade_dias"),
+        "velho": publicado.get("velho"),
+        "rows_banco_atual": proprio["rows"],
+        "pointer_rows_banco_atual": proprio["pointer_rows"],
     }
 
 
