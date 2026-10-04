@@ -91,17 +91,7 @@ def forward_returns_from_monthly(monthly: pd.DataFrame) -> pd.DataFrame:
 
 
 # ── Derivação de prices_monthly (backtest lê desta tabela) ────────────────────
-def derive_prices_monthly(engine) -> dict:
-    """Deriva o fechamento MENSAL (último pregão do mês) de prices_daily.
-
-    O backtest PIT lê market_us.prices_monthly; a ingestão só grava o diário.
-    Sem este passo o painel do backtest fica vazio. SQL puro no Postgres
-    (DISTINCT ON pega o último pregão de cada mês); idempotente por (symbol,
-    month_end). total_return = retorno mês a mês do adjusted_close.
-    """
-    if engine is None:
-        return {"ok": False, "reason": "engine indisponível"}
-    sql = """
+_SQL_DERIVA_MENSAL = """
         INSERT INTO market_us.prices_monthly
             (symbol, month_end, close, adjusted_close, volume, total_return, source)
         WITH last_of_month AS (
@@ -109,6 +99,10 @@ def derive_prices_monthly(engine) -> dict:
                 symbol, date AS month_end, close,
                 COALESCE(adjusted_close, close) AS adjusted_close, volume
             FROM market_us.prices_daily
+            -- Pregão sem fechamento não é o último do mês: sem este filtro a
+            -- barra nula de 02/10/2026 vencia o DISTINCT ON e o WHERE de
+            -- baixo descartava outubro inteiro em vez de cair em 01/10.
+            WHERE COALESCE(adjusted_close, close) IS NOT NULL
             ORDER BY symbol, date_trunc('month', date), date DESC
         )
         SELECT symbol, month_end, close, adjusted_close, volume,
@@ -122,6 +116,19 @@ def derive_prices_monthly(engine) -> dict:
             close = EXCLUDED.close, adjusted_close = EXCLUDED.adjusted_close,
             volume = EXCLUDED.volume, total_return = EXCLUDED.total_return
     """
+
+
+def derive_prices_monthly(engine) -> dict:
+    """Deriva o fechamento MENSAL (último pregão do mês) de prices_daily.
+
+    O backtest PIT lê market_us.prices_monthly; a ingestão só grava o diário.
+    Sem este passo o painel do backtest fica vazio. SQL puro no Postgres
+    (DISTINCT ON pega o último pregão de cada mês); idempotente por (symbol,
+    month_end). total_return = retorno mês a mês do adjusted_close.
+    """
+    if engine is None:
+        return {"ok": False, "reason": "engine indisponível"}
+    sql = _SQL_DERIVA_MENSAL
     with engine.begin() as conn:
         conn.execute(text(sql))
         n = conn.execute(text("SELECT COUNT(*) FROM market_us.prices_monthly")).scalar()

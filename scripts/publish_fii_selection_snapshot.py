@@ -286,11 +286,20 @@ def build_rows(df: pd.DataFrame, now: dt.datetime | None = None) -> list[dict[st
 
 
 def _latest_validation(source_engine) -> dict[str, Any] | None:
+    """Último run de validação PIT -- nunca o gate da auditoria diária.
+
+    Ver ``core.fii_validation.FILTRO_RUN_VALIDACAO_PIT``: sem o filtro, o run
+    ``blocked`` que a auditoria grava todo dia escondia o PIT aprovado e o
+    preflight recusava a publicação.
+    """
+    from core.fii_validation import FILTRO_RUN_VALIDACAO_PIT
+
     with source_engine.connect() as conn:
-        row = conn.execute(text("""
+        row = conn.execute(text(f"""
             SELECT methodology_version,as_of_date,status,metrics_json,blockers_json,
                    started_at,finished_at
             FROM market.fii_validation_runs
+            WHERE {FILTRO_RUN_VALIDACAO_PIT}
             ORDER BY COALESCE(finished_at,started_at) DESC LIMIT 1
         """)).mappings().first()
     if not row:

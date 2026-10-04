@@ -11,6 +11,15 @@ import pandas as pd
 
 VALIDATION_STRATEGY_ID = "fii_rank_equal_weight_buffered.v1"
 
+# ``market.fii_validation_runs`` guarda dois tipos de run e não tem coluna que
+# os distinga: a validação PIT (``data_pipeline/market/fii_pit.py``, com
+# ``backtest`` no ``metrics_json``) e o gate de prontidão que a auditoria diária
+# grava (``fii_ingest.record_validation_readiness``, só com ``data_audit`` e
+# sempre ``blocked``). Toda leitura de "a validação vigente" precisa deste
+# filtro: sem ele, a auditoria de cada dia esconde o último run PIT aprovado --
+# foi assim que a vitrine de FIIs parou de publicar desde 28/09/2026.
+FILTRO_RUN_VALIDACAO_PIT = "metrics_json->'backtest' IS NOT NULL"
+
 
 def validation_supports_strategy(validation: dict[str, Any], strategy_id: str) -> bool:
     """Só aceita um gate que tenha validado exatamente o motor em execução."""
