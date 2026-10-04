@@ -63,7 +63,11 @@ def test_banda_do_portao_tem_largura_e_contem_o_sem_portao():
     banda de largura zero. Desde a 2.0.0 (um veto por safra na carteira, com
     "não vetar" como opção) a banda contém o sem-portão no bruto e só fica sem
     largura se nenhum veto mudar nada -- o que, numa carteira real, é defeito."""
-    from core.b3_oos_carteira import PORTAO_VETA_O_MELHOR, PORTAO_VETA_O_PIOR, SEM_PORTAO
+    from core.b3_oos_carteira import (
+        PORTAO_VETA_O_MELHOR,
+        PORTAO_VETA_O_PIOR,
+        SEM_PORTAO,
+    )
 
     dados = json.loads(CAMINHO_MEDICAO.read_text(encoding="utf-8"))
     for nome, medido in dados["perfis"].items():
