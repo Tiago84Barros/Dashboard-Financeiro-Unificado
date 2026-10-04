@@ -40,7 +40,6 @@ from core.investimentos import (
     get_carteira,
     get_cashflow_mensal,
     get_evolucao_patrimonial,
-    get_rentabilidade_rv_b3,
     get_resultado_realizado,
 )
 from core.proventos import get_proventos
@@ -52,7 +51,6 @@ from core.tesouro_analysis import (
 from core.user_context import user_cache_data
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, container_pagina
-from design.lacunas import aviso_lacuna
 from design.tema_canvas import escala_correlacao
 
 logger = logging.getLogger(__name__)
@@ -2185,104 +2183,10 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
             "Ativos de renda fixa e Tesouro entram na diversificação por classe, mas não possuem preço diário comparável."
         )
 
-def _fmt_pct_aa(v) -> str:
-    if v is None:
-        return "—"
-    return f"{v * 100:+.2f}".replace(".", ",") + "% a.a."
-
-
-def _veredito_cdi(r: dict) -> tuple[str, str]:
-    """(cor, frase) do confronto com o CDI. A régua é o PME, não a diferença
-    de TIRs: a TIR do CDI some quando o saldo da conta CDI fica negativo, o
-    PME não."""
-    pme = r.get("pme")
-    if pme is None:
-        return _COR_NEUTRO, r.get("cdi_motivo") or "Sem série do CDI para comparar."
-    if pme >= 1.0:
-        return _COR_POSITIVO, f"Bateu o CDI (PME {pme:.3f})".replace(".", ",")
-    return _COR_NEGATIVO, f"Ficou abaixo do CDI (PME {pme:.3f})".replace(".", ",")
-
-
-def _bloco_rentabilidade_cdi(r: dict) -> None:
-    _secao_titulo_orig(
-        "🎯", "Rentabilidade vs CDI",
-        "TIR da renda variável na B3 e os mesmos aportes aplicados no CDI",
-    )
-    if not r.get("disponivel"):
-        aviso_lacuna(r.get("motivo") or "Rentabilidade indisponível.",
-                     codigo="tela.investimentos.rentabilidade_cdi_indisponivel", icon="🎯")
-        return
-
-    cor, frase = _veredito_cdi(r)
-    periodo = f"{r['inicio']:%d/%m/%Y} a {r['fim']:%d/%m/%Y}"
-    c1, c2, c3, c4 = st.columns(4, gap="small")
-    with c1:
-        st.markdown(_kpi(
-            "TIR da carteira", _fmt_pct_aa(r.get("tir_carteira")),
-            f"Retorno do seu dinheiro · {periodo}", cor,
-        ), unsafe_allow_html=True)
-    with c2:
-        st.markdown(_kpi(
-            "Mesmos aportes no CDI", _fmt_pct_aa(r.get("tir_cdi")),
-            "Cada compra no CDI, cada venda e provento retirado dele",
-            _COR_INFO,
-        ), unsafe_allow_html=True)
-    with c3:
-        dif = r.get("diferenca")
-        st.markdown(_kpi(
-            "Resultado contra o CDI",
-            fmt_moeda(dif) if dif is not None else "—",
-            frase, cor,
-        ), unsafe_allow_html=True)
-    with c4:
-        cob = r.get("cobertura_valor")
-        st.markdown(_kpi(
-            "Cobertura da medição",
-            f"{cob * 100:.0f}%" if cob is not None else "—",
-            f"{r['n_em_carteira_incluidos']} de {r['n_em_carteira']} ativos da RV B3",
-            _COR_POSITIVO if (cob or 0) >= 0.8 else _COR_ALERTA,
-        ), unsafe_allow_html=True)
-
-    excluidos = r.get("excluidos") or []
-    if excluidos:
-        with st.expander(f"Ativos fora da medição ({len(excluidos)}) e por quê"):
-            st.dataframe(
-                pd.DataFrame(excluidos).rename(columns={"ticker": "Ativo", "motivo": "Motivo"}),
-                hide_index=True, width="stretch",
-            )
-            st.caption(
-                "Um ativo só entra quando compras − vendas do extrato da B3 fecham com a "
-                "quantidade em carteira (ou zeram, para quem já saiu). Se não fecham, houve "
-                "dinheiro fora do extrato — subscrição paga, posição anterior ao primeiro "
-                "extrato — e a TIR desse ativo sairia inflada ou achatada sem aviso. "
-                + (
-                    "Bonificações, desdobros e subscrições da Movimentação da B3 já entram "
-                    "na conta."
-                    if r.get("eventos_movimentacao") else
-                    "A Movimentação da B3 ainda não foi subida desde que o app passou a "
-                    "guardar bonificações, desdobros e subscrições: suba o arquivo de "
-                    "novo em Configurações → Importações (ele não duplica nada)."
-                )
-            )
-    st.caption(
-        "Cobertura = fração do valor atual em renda variável B3 que entrou na conta. "
-        "TIR = taxa interna de retorno dos fluxos reais (compras, vendas, proventos pagos) "
-        "e do valor de mercado de hoje, em base 365 dias. A comparação aplica os mesmos "
-        "fluxos, nas mesmas datas, ao CDI diário do Banco Central (série 12"
-        + (f"; fonte: {r['cdi_fonte']}" if r.get("cdi_fonte") else "")
-        + "), o que elimina "
-        "a vantagem de quem aportou mais perto de uma alta. Fora da conta: renda fixa, "
-        "Tesouro e exterior (sem extrato de fluxos compatível). O retorno ponderado pelo "
-        "tempo (TWR) não é exibido: ele exige o valor da carteira em cada data de aporte, "
-        "e as fotos disponíveis cobrem uma corretora só antes de set/2026."
-    )
-
 
 def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                    carteira: dict | None = None) -> None:
     st.markdown("<br>", unsafe_allow_html=True)
-
-    _bloco_rentabilidade_cdi(get_rentabilidade_rv_b3())
 
     snapshots = evolucao.get("snapshots", [])
 
