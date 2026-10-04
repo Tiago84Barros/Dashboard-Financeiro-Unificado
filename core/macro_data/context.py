@@ -6,10 +6,14 @@ ou conteúdo arbitrário de metadados é encaminhado ao modelo.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Iterable, Mapping
 
-MAX_CONTEXT_ITEMS = 20
+# Uma linha por série, e o catálogo tem ~26 séries reais. O teto antigo (20)
+# cortava por ordem alfabética e deixava o World Bank inteiro de fora.
+MAX_CONTEXT_ITEMS = 60
+# Provedores que só existem no armazém por testes de ingestão antigos.
+PROVEDORES_DE_TESTE = ("test", "test_repo")
 MAX_TEXT_LENGTH = 180
 
 
@@ -68,7 +72,14 @@ def build_macro_context(
 def latest_macro_context(
     engine, *, now: datetime | None = None
 ) -> tuple[dict[str, object], ...]:
-    """Lê somente a versão mais recente por série para contexto de LLM."""
+    """Lê a observação do período mais recente de cada série, na versão mais nova.
+
+    O período decide; o vintage só desempata revisões do mesmo período. Com o
+    ALFRED, observações de 1962 recebem vintage de ontem: ordenar por
+    ``COALESCE(vintage_date, reference_period)`` devolvia o FEDFUNDS de 1962-03
+    como "último", e o filtro de período recente apagava o macro dos EUA.
+    Sem ``LIMIT``: o ``DISTINCT ON`` já dá uma linha por série.
+    """
     from sqlalchemy import text
 
     with engine.connect() as conn:
@@ -82,12 +93,12 @@ def latest_macro_context(
             FROM macro_observations o
             LEFT JOIN macro_indicators i ON i.provider=o.provider AND i.provider_code=o.provider_code
              AND COALESCE(i.country_code, '')=COALESCE(o.country_code, '')
-            WHERE o.value IS NOT NULL
+            WHERE o.value IS NOT NULL AND o.provider <> ALL(:provedores_teste)
             ORDER BY o.provider, o.provider_code, COALESCE(o.country_code, ''),
-              COALESCE(o.vintage_date, o.reference_period) DESC, o.retrieved_at DESC
-            LIMIT :limit
+              o.reference_period DESC, o.vintage_date DESC NULLS LAST,
+              o.retrieved_at DESC
         """),
-                {"limit": MAX_CONTEXT_ITEMS},
+                {"provedores_teste": list(PROVEDORES_DE_TESTE)},
             )
             .mappings()
             .all()
@@ -101,23 +112,29 @@ def published_macro_context(
     """O mesmo recorte de :func:`latest_macro_context`, lido dos insumos publicados.
 
     O arquivo guarda as 24 últimas observações por série; aqui fica só a mais
-    recente de cada uma, pela mesma ordem da consulta (vintage/período, depois
-    coleta). O arquivo não traz o nome do indicador; ``build_macro_context`` cai
-    no ``provider_code``.
+    recente de cada uma, pela mesma ordem da consulta (período, depois vintage,
+    depois coleta). O arquivo não traz o nome do indicador; ``build_macro_context``
+    cai no ``provider_code``.
     """
     ultima: dict[tuple, Mapping[str, object]] = {}
     for obs in insumos.observacoes:
-        if obs.get("value") is None:
+        if obs.get("value") is None or obs.get("provider") in PROVEDORES_DE_TESTE:
             continue
         chave = (obs.get("provider"), obs.get("provider_code"), obs.get("country_code") or "")
-        ordem = (obs.get("vintage_date") or obs.get("reference_period"),
-                 obs.get("retrieved_at"))
         atual = ultima.get(chave)
-        if atual is None or ordem > (atual.get("vintage_date") or atual.get("reference_period"),
-                                     atual.get("retrieved_at")):
+        if atual is None or _ordem_publicada(obs) > _ordem_publicada(atual):
             ultima[chave] = obs
-    linhas = [ultima[k] for k in sorted(ultima, key=str)][:MAX_CONTEXT_ITEMS]
+    linhas = [ultima[k] for k in sorted(ultima, key=str)]
     return build_macro_context(linhas, now=now)
+
+
+def _ordem_publicada(obs: Mapping[str, object]) -> tuple:
+    # Vintage nulo perde do preenchido, como ``NULLS LAST`` na consulta.
+    vintage = obs.get("vintage_date")
+    coleta = obs.get("retrieved_at")
+    return (obs.get("reference_period") or date.min,
+            vintage is not None, vintage or date.min,
+            coleta is not None, coleta or datetime.min.replace(tzinfo=timezone.utc))
 
 
 def available_macro_context() -> tuple[tuple[dict[str, object], ...], str | None]:
