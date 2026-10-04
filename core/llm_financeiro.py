@@ -101,7 +101,7 @@ def chat_com_financas(context: str, history: Iterable[dict], user_message: str,
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user_message})
     return _chat_complete(messages, temperature=0.25, json_mode=False,
-                          primary_model=model or _MODEL_CHAT_DEFAULT)
+                          primary_model=model or _MODEL_CHAT_DEFAULT, pessoal=True)
 
 
 _SYSTEM_CARTAO = """Você é um ANALISTA FINANCEIRO PESSOAL focado na FATURA DE CARTÃO \
@@ -180,4 +180,4 @@ def chat_com_cartao(context: str, history: Iterable[dict], user_message: str,
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user_message})
     return _chat_complete(messages, temperature=0.25, json_mode=False,
-                          primary_model=model or _MODEL_CHAT_DEFAULT)
+                          primary_model=model or _MODEL_CHAT_DEFAULT, pessoal=True)
