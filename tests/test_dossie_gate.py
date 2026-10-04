@@ -210,7 +210,10 @@ def test_excecao_na_avaliacao_vira_nao_avaliado(monkeypatch):
     st.session_state["pb3_quali_cache"] = {}
     aval = view._quali_avaliar_cached("FFFF3")
     assert aval["classificacao"] == "nao_avaliado"
-    assert "provedor fora" in aval["motivo"]
+    # O motivo vai à lista de "não avaliados" da tela: categoria, não o texto
+    # da exceção (LLM-A11, sobra do 13b) -- o detalhe fica no log.
+    assert "provedor fora" not in aval["motivo"]
+    assert aval["motivo"] == "avaliação indisponível (o provedor de IA falhou)"
 
 
 def test_fallback_do_parecer_nao_aprova():

@@ -21,6 +21,12 @@ from typing import Any
 import streamlit as st
 from sqlalchemy import text
 
+from core.seguranca.procedencia import (
+    cercar_documentos,
+    linha_externa,
+    texto_documental,
+)
+
 logger = logging.getLogger(__name__)
 
 _EMBED_MODEL = "text-embedding-3-small"
@@ -710,8 +716,13 @@ def format_rag_context(chunks: list[dict], max_chars: int = 12000,
         usados_por_doc[doc_key] += 1
         data   = ch.get("data_doc") or "—"
         tipo   = ch.get("tipo_doc") or "Documento"
-        titulo = ch.get("titulo") or ""
-        texto  = _strip_boilerplate((ch.get("chunk_text") or "").strip())
+        # Título e texto são do emissor, não do backend: passam pela mesma
+        # neutralização do noticiário (marcador de papel, cerca de código,
+        # quebra de linha, segredo) ANTES de medir o orçamento, para o corte
+        # de ``max_chars`` valer sobre o que de fato vai ao prompt.
+        titulo = linha_externa(ch.get("titulo") or "")
+        texto  = texto_documental(
+            _strip_boilerplate((ch.get("chunk_text") or "").strip()))
         if not texto:
             continue
         header = f"[{data} | {tipo}" + (f" | {titulo[:60]}" if titulo else "") + "]"
@@ -733,4 +744,8 @@ def format_rag_context(chunks: list[dict], max_chars: int = 12000,
     # Ordena cronologicamente para leitura em linha do tempo. Datas vazias ("—")
     # vão para o fim (ordenam como string alta).
     selecionados.sort(key=lambda x: (x["data"] or "9999"))
-    return "\n\n---\n\n".join(s["entry"] for s in selecionados)
+    # Cerca de documento oficial (LLM-A4, sobra do 13b): instrução embutida no
+    # texto do emissor fica marcada como dado. Prefixo próprio, que
+    # ``sem_cercas`` não remove -- número de Release continua lastro.
+    corpo = "\n\n---\n\n".join(s["entry"] for s in selecionados)
+    return "\n".join(cercar_documentos([corpo]))

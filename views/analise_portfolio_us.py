@@ -38,6 +38,7 @@ from core.llm_b3 import (
     redistribuir_pesos,
 )
 from core.llm_context_us import build_llm_context_for_us_portfolio_chat
+from core.llm_falha import motivo_falha_llm
 from core.llm_grounding import aviso_ancoragem
 from core.market_companies import (
     translate_us_industry,
@@ -848,10 +849,14 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 detalhe_armazem=detalhes.setdefault(tk, get_us_warehouse_detail([tk])),
             )
         except Exception as exc:  # noqa: BLE001 - fronteira de isolamento por empresa
-            st.warning(f"{tk}: erro LLM — {exc}")
-            erros.append(f"{tk}: {exc}")
+            # Motivo em categoria na tela, na lista de erros e no fallback;
+            # o texto da exceção fica só no log (LLM-A11).
+            _motivo = motivo_falha_llm(exc, f"relatório da carteira EUA ({tk})")
+            st.warning(f"{tk}: relatório não gerado — {_motivo}. O detalhe "
+                       "técnico ficou no log do app.")
+            erros.append(f"{tk}: relatório não gerado — {_motivo}.")
             from core.portfolio_report_common import fallback_company
-            analise = fallback_company(tk, str(exc)[:200])
+            analise = fallback_company(tk, _motivo)
         else:
             if int(analise.get("confianca") or 0) == 0:
                 erros.append(
@@ -908,10 +913,12 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 erros.append("Relatório consolidado: resposta da LLM não pôde ser "
                              "interpretada (JSON inválido).")
         except Exception as exc:  # noqa: BLE001
-            st.warning(f"Análise de portfólio falhou: {exc}")
-            erros.append(f"Relatório consolidado: {exc}")
+            _motivo = motivo_falha_llm(exc, "relatório consolidado da carteira EUA")
+            st.warning(f"Análise de portfólio não gerada — {_motivo}. O detalhe "
+                       "técnico ficou no log do app.")
+            erros.append(f"Relatório consolidado: não gerado — {_motivo}.")
             from core.portfolio_report_common import fallback_portfolio
-            port_analise = fallback_portfolio(str(exc)[:200])
+            port_analise = fallback_portfolio(_motivo)
 
     return {
         "items_analisados": items_analisados,

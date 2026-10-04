@@ -43,6 +43,7 @@ from core.llm_context_b3 import (
     build_llm_context_for_portfolio_chat,
     get_web_evidence_context,
 )
+from core.llm_falha import motivo_falha_llm
 from core.llm_grounding import aviso_ancoragem
 from core.portfolio_chat_charts import (
     infer_chart_directives,
@@ -996,8 +997,12 @@ def _executar_analise(
                     str(tk).upper(), get_b3_warehouse_detail([tk])),
             )
         except Exception as exc:
-            st.warning(f"{tk}: erro LLM — {exc}")
-            erros.append(f"{tk}: {exc}")
+            # Tela e lista de erros recebem o motivo em categoria; o texto da
+            # exceção (HTTP, id de requisição, organização) fica só no log.
+            _motivo = motivo_falha_llm(exc, f"relatório da carteira B3 ({tk})")
+            st.warning(f"{tk}: relatório não gerado — {_motivo}. O detalhe "
+                       "técnico ficou no log do app.")
+            erros.append(f"{tk}: relatório não gerado — {_motivo}.")
             from core.llm_b3 import _fallback_empresa
             analise = _fallback_empresa(tk, peso_pct_)
         else:
@@ -1034,8 +1039,10 @@ def _executar_analise(
                 erros.append("Relatório consolidado: resposta da LLM não pôde ser "
                              "interpretada (JSON inválido).")
         except Exception as exc:
-            st.warning(f"Análise de portfólio falhou: {exc}")
-            erros.append(f"Relatório consolidado: {exc}")
+            _motivo = motivo_falha_llm(exc, "relatório consolidado da carteira B3")
+            st.warning(f"Análise de portfólio não gerada — {_motivo}. O detalhe "
+                       "técnico ficou no log do app.")
+            erros.append(f"Relatório consolidado: não gerado — {_motivo}.")
             from core.llm_b3 import _fallback_portfolio
             port_analise = _fallback_portfolio()
 

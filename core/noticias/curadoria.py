@@ -63,18 +63,45 @@ PUBLIEDITORIAL: tuple[tuple[str, re.Pattern], ...] = (
 _URL_PATROCINADA = re.compile(r"/(?:sponsored|patrocinado|publieditorial|conteudo-patrocinado)/",
                               re.IGNORECASE)
 
+#: Release de distribuidora paga pelo emissor (PR Newswire, GlobeNewswire,
+#: Business Wire, ACCESS Newswire, EIN Presswire, WebWire), direto ou
+#: sindicado: Manila Times ``/tmt-newswire/globenewswire/``, Morningstar
+#: ``/news/pr-newswire/``, StreetInsider ``/PRNewswire/``, TradingView
+#: ``/news/prnewswire:``. No acervo de 04/10/2026: 246 dos 32.506 itens, fora
+#: os 94 de escritório de advocacia, que saem pelo motivo próprio. O fato pode
+#: ser real ("Federal Realty Acquires The Summit"), mas quem escolheu dizê-lo
+#: e pagou para espalhar foi a própria empresa; na janela de 3 dias, três
+#: releases (notas 66-70, dois da PR Newswire) tomavam vagas das 12 manchetes
+#: gerais. Fora só do noticiário GERAL (bloco de mercado e manchetes da
+#: vitrine): a notícia por ativo (``core.conjuntura``) não usa este filtro e
+#: continua vendo o release do próprio emissor.
+_VEICULO_RELEASE = re.compile(
+    r"(?i)\(release\)|^\s*(?:pr newswire|globenewswire|business wire|"
+    r"access ?newswire|ein presswire|webwire)\b")
+_URL_RELEASE = re.compile(
+    r"(?i)(?:^|[/.:])(?:pr-?newswire|globe-?newswire|business-?wire|"
+    r"access-?newswire|accesswire|ein-?presswire|webwire)(?:[/.:]|$)")
+
 COTA_POR_VEICULO = 3
 COTA_POR_TIPO = 3
 
 
 def motivo_publieditorial(item: Mapping) -> str | None:
-    """Por que o item é anúncio, ou ``None``. Só título e URL -- ver acima."""
+    """Por que o item é anúncio, ou ``None``. Só título, URL e veículo -- ver acima.
+
+    Os padrões de título vêm antes do release: o de escritório de advocacia
+    sai quase sempre por distribuidora, e o motivo mais específico é o que
+    a linha de origem do bloco deve contar.
+    """
     titulo = str(item.get("titulo") or "")
     for motivo, padrao in PUBLIEDITORIAL:
         if padrao.search(titulo):
             return motivo
-    if _URL_PATROCINADA.search(str(item.get("url") or "")):
+    url = str(item.get("url") or "")
+    if _URL_PATROCINADA.search(url):
         return "URL de conteúdo patrocinado"
+    if _VEICULO_RELEASE.search(str(item.get("veiculo") or "")) or _URL_RELEASE.search(url):
+        return "release pago pelo emissor"
     return None
 
 

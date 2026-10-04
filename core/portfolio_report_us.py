@@ -29,6 +29,7 @@ import pandas as pd
 
 from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
 from core.llm_b3 import _call_llm, _parse_json, _report_model
+from core.llm_falha import motivo_falha_llm
 from core.llm_grounding import com_aviso_ancoragem
 from core.portfolio_report_common import (
     QUALITATIVE_WEIGHTS,
@@ -807,8 +808,9 @@ def generate_company_us_report(
         parsed = _parse_json(raw, fallback_company(tk, "JSON inválido"))
         return com_aviso_ancoragem(sanitize_company_report(parsed, tk), prompt), dossier
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Relatório institucional de %s falhou: %s", tk, exc)
-        return fallback_company(tk, str(exc)[:200]), dossier
+        # Motivo em categoria no ``resumo`` da tela, nunca ``str(exc)`` (LLM-A11).
+        motivo = motivo_falha_llm(exc, f"relatório institucional de {tk}")
+        return fallback_company(tk, motivo), dossier
 
 
 # Grau de confiança do score, produzido por core.us_score. O relatório precisa
@@ -1096,8 +1098,8 @@ def analyze_us_portfolio_report(
         return com_aviso_ancoragem(
             sanitize_portfolio_report(parsed, items_analyzed), prompt)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Relatório consolidado americano falhou: %s", exc)
-        return fallback_portfolio(str(exc)[:200])
+        return fallback_portfolio(
+            motivo_falha_llm(exc, "relatório consolidado americano"))
 
 
 __all__ = [

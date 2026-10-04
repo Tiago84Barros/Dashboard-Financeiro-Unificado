@@ -50,6 +50,18 @@ class ArmazemRemotoIndisponivel(RuntimeError):
         self.fora_do_ar = fora_do_ar
 
 
+class OrdemIgnorada(ArmazemRemotoIndisponivel):
+    """O serviço respondeu, mas sem honrar ``ordem`` -- versão anterior a ela.
+
+    Leva os itens que chegaram (os mais novos, não os de maior nota): o
+    chamador decide usá-los nomeando a degradação, em vez de perder o acervo.
+    """
+
+    def __init__(self, motivo: str, itens: list[dict]) -> None:
+        super().__init__(motivo, fora_do_ar=False)
+        self.itens = itens
+
+
 def _relogio() -> float:
     return time.monotonic()
 
@@ -140,15 +152,31 @@ def _buscar(url: str, token: str, caminho: str, params: dict | None) -> dict:
     return corpo
 
 
-def noticias_recentes(limite: int = 150, dias: float = 3) -> list[dict] | None:
-    """Itens avaliados do acervo, como ``ler_recentes``; ``None`` sem configuração."""
-    corpo = _ler("/noticias/recentes", {"limite": int(limite), "dias": dias})
+def noticias_recentes(limite: int = 150, dias: float = 3, *,
+                      ordem: str = "data") -> list[dict] | None:
+    """Itens avaliados do acervo, como ``ler_recentes``; ``None`` sem configuração.
+
+    ``ordem="nota"`` traz os ``limite`` de maior nota da janela, só com os
+    campos da curadoria (``CAMPOS_POR_NOTA`` do serviço). Serviço que não
+    conhece o parâmetro levanta :class:`OrdemIgnorada` com o que mandou.
+    """
+    params: dict = {"limite": int(limite), "dias": dias}
+    if ordem != "data":
+        # Só manda quando muda algo: a chave da memória de resposta e a URL
+        # da leitura por data ficam as mesmas de antes.
+        params["ordem"] = ordem
+    corpo = _ler("/noticias/recentes", params)
     if corpo is None:
         return None
     itens = corpo.get("itens")
     if not isinstance(itens, list):
         raise ArmazemRemotoIndisponivel("resposta sem a lista de itens")
-    return [i for i in itens if isinstance(i, dict)]
+    itens = [i for i in itens if isinstance(i, dict)]
+    if ordem != "data" and corpo.get("ordem") != ordem:
+        raise OrdemIgnorada(
+            f"o serviço do armazém ignorou ordem={ordem} (versão anterior; "
+            "reinicie scripts/servir_armazem_leitura.py)", itens)
+    return itens
 
 
 def noticias_por_ativo(simbolos, *, as_of, janela_dias: int) -> list[dict] | None:
