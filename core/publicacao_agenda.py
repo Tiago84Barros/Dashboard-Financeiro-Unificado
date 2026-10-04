@@ -282,7 +282,8 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/macro_insumos.json.gz",),
     ),
     Alvo(
-        # CDI diário da comparação "Rentabilidade vs CDI". Em 03/10/2026 a
+        # CDI diário de ``get_rentabilidade_rv_b3`` (o bloco "Rentabilidade vs
+        # CDI" saiu da tela em #477; o cálculo segue no core). Em 03/10/2026 a
         # Streamlit Cloud mostrava "Sem série do CDI": a API REST do SGS
         # sumiu do DNS (``core.bcb_sgs`` cai no SOAP). O app lê o arquivo e só
         # pede ao BCB os dias depois dele. Não usa o armazém.

@@ -241,14 +241,6 @@ def test_formato_percentual_nao_troca_ponto_da_unidade():
     assert _fmt_pct_aa(None) == "—"
 
 
-def test_veredito_usa_pme():
-    from views.investimentos import _COR_NEGATIVO, _COR_POSITIVO, _veredito_cdi
-
-    assert _veredito_cdi({"pme": 1.05})[0] == _COR_POSITIVO
-    assert _veredito_cdi({"pme": 0.95})[0] == _COR_NEGATIVO
-    assert "Sem série" in _veredito_cdi({"pme": None})[1]
-
-
 # ── CDI publicado + BCB ───────────────────────────────────────────────────────
 
 

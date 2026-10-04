@@ -36,11 +36,11 @@ from core.correlation_analysis import (
     intervalo_confianca_correlacao,
 )
 from core.investimentos import (
-    ganho_total,
+    crescimento_patrimonio,
+    crescimento_proventos,
     get_carteira,
     get_cashflow_mensal,
     get_evolucao_patrimonial,
-    get_rentabilidade_rv_b3,
     get_resultado_realizado,
 )
 from core.proventos import get_proventos
@@ -52,7 +52,6 @@ from core.tesouro_analysis import (
 from core.user_context import user_cache_data
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, container_pagina
-from design.lacunas import aviso_lacuna
 from design.tema_canvas import escala_correlacao
 
 logger = logging.getLogger(__name__)
@@ -2191,98 +2190,9 @@ def _fmt_pct_aa(v) -> str:
     return f"{v * 100:+.2f}".replace(".", ",") + "% a.a."
 
 
-def _veredito_cdi(r: dict) -> tuple[str, str]:
-    """(cor, frase) do confronto com o CDI. A régua é o PME, não a diferença
-    de TIRs: a TIR do CDI some quando o saldo da conta CDI fica negativo, o
-    PME não."""
-    pme = r.get("pme")
-    if pme is None:
-        return _COR_NEUTRO, r.get("cdi_motivo") or "Sem série do CDI para comparar."
-    if pme >= 1.0:
-        return _COR_POSITIVO, f"Bateu o CDI (PME {pme:.3f})".replace(".", ",")
-    return _COR_NEGATIVO, f"Ficou abaixo do CDI (PME {pme:.3f})".replace(".", ",")
-
-
-def _bloco_rentabilidade_cdi(r: dict) -> None:
-    _secao_titulo_orig(
-        "🎯", "Rentabilidade vs CDI",
-        "TIR da renda variável na B3 e os mesmos aportes aplicados no CDI",
-    )
-    if not r.get("disponivel"):
-        aviso_lacuna(r.get("motivo") or "Rentabilidade indisponível.",
-                     codigo="tela.investimentos.rentabilidade_cdi_indisponivel", icon="🎯")
-        return
-
-    cor, frase = _veredito_cdi(r)
-    periodo = f"{r['inicio']:%d/%m/%Y} a {r['fim']:%d/%m/%Y}"
-    c1, c2, c3, c4 = st.columns(4, gap="small")
-    with c1:
-        st.markdown(_kpi(
-            "TIR da carteira", _fmt_pct_aa(r.get("tir_carteira")),
-            f"Retorno do seu dinheiro · {periodo}", cor,
-        ), unsafe_allow_html=True)
-    with c2:
-        st.markdown(_kpi(
-            "Mesmos aportes no CDI", _fmt_pct_aa(r.get("tir_cdi")),
-            "Cada compra no CDI, cada venda e provento retirado dele",
-            _COR_INFO,
-        ), unsafe_allow_html=True)
-    with c3:
-        dif = r.get("diferenca")
-        st.markdown(_kpi(
-            "Resultado contra o CDI",
-            fmt_moeda(dif) if dif is not None else "—",
-            frase, cor,
-        ), unsafe_allow_html=True)
-    with c4:
-        cob = r.get("cobertura_valor")
-        st.markdown(_kpi(
-            "Cobertura da medição",
-            f"{cob * 100:.0f}%" if cob is not None else "—",
-            f"{r['n_em_carteira_incluidos']} de {r['n_em_carteira']} ativos da RV B3",
-            _COR_POSITIVO if (cob or 0) >= 0.8 else _COR_ALERTA,
-        ), unsafe_allow_html=True)
-
-    excluidos = r.get("excluidos") or []
-    if excluidos:
-        with st.expander(f"Ativos fora da medição ({len(excluidos)}) e por quê"):
-            st.dataframe(
-                pd.DataFrame(excluidos).rename(columns={"ticker": "Ativo", "motivo": "Motivo"}),
-                hide_index=True, width="stretch",
-            )
-            st.caption(
-                "Um ativo só entra quando compras − vendas do extrato da B3 fecham com a "
-                "quantidade em carteira (ou zeram, para quem já saiu). Se não fecham, houve "
-                "dinheiro fora do extrato — subscrição paga, posição anterior ao primeiro "
-                "extrato — e a TIR desse ativo sairia inflada ou achatada sem aviso. "
-                + (
-                    "Bonificações, desdobros e subscrições da Movimentação da B3 já entram "
-                    "na conta."
-                    if r.get("eventos_movimentacao") else
-                    "A Movimentação da B3 ainda não foi subida desde que o app passou a "
-                    "guardar bonificações, desdobros e subscrições: suba o arquivo de "
-                    "novo em Configurações → Importações (ele não duplica nada)."
-                )
-            )
-    st.caption(
-        "Cobertura = fração do valor atual em renda variável B3 que entrou na conta. "
-        "TIR = taxa interna de retorno dos fluxos reais (compras, vendas, proventos pagos) "
-        "e do valor de mercado de hoje, em base 365 dias. A comparação aplica os mesmos "
-        "fluxos, nas mesmas datas, ao CDI diário do Banco Central (série 12"
-        + (f"; fonte: {r['cdi_fonte']}" if r.get("cdi_fonte") else "")
-        + "), o que elimina "
-        "a vantagem de quem aportou mais perto de uma alta. Fora da conta: renda fixa, "
-        "Tesouro e exterior (sem extrato de fluxos compatível). O retorno ponderado pelo "
-        "tempo (TWR) não é exibido: ele exige o valor da carteira em cada data de aporte, "
-        "e as fotos disponíveis cobrem uma corretora só antes de set/2026."
-    )
-
-
 def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                    carteira: dict | None = None) -> None:
     st.markdown("<br>", unsafe_allow_html=True)
-
-    _bloco_rentabilidade_cdi(get_rentabilidade_rv_b3())
 
     snapshots = evolucao.get("snapshots", [])
 
@@ -2299,28 +2209,28 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                 "Valor de Mercado Atual", fmt_moeda(evolucao["total_mercado"]),
                 "Carteira consolidada atual", _COR_POSITIVO,
             ), unsafe_allow_html=True)
+        realizado = get_resultado_realizado()
         with ck2:
-            realizado = get_resultado_realizado()
-            g = ganho_total(evolucao, realizado)
-            if g:
-                partes = [f"valorização {fmt_moeda(g['valorizacao'])}"]
-                if g["realizado"] is not None:
-                    partes.append(f"vendas {fmt_moeda(g['realizado'])}")
-                partes.append(f"proventos {fmt_moeda(g['proventos'])}")
-                sub = " + ".join(partes)
-                if g["realizado"] is None:
-                    sub += f" · sem o lucro de vendas: {realizado.get('motivo', 'indisponível')}"
+            cp = crescimento_patrimonio(snapshots)
             st.markdown(_kpi(
-                "Ganho total",
-                fmt_moeda(g["ganho"]) if g else "—",
-                sub if g else "Sem custo consolidado",
-                (_COR_POSITIVO if g["ganho"] >= 0 else _COR_NEGATIVO) if g else _COR_NEUTRO,
+                "Crescimento anual do patrimônio",
+                _fmt_pct_aa(cp["taxa"]) if cp else "—",
+                (f"Média de {cp['de']} a {cp['ate']}, aportes incluídos" if cp
+                 else "Menos de 12 meses de histórico"),
+                (_COR_POSITIVO if cp["taxa"] >= 0 else _COR_NEGATIVO) if cp else _COR_NEUTRO,
             ), unsafe_allow_html=True)
         with ck3:
+            pagamentos = [e["payment_date"] for e in proventos.get("eventos") or []
+                          if e.get("payment_date")]
+            cd = crescimento_proventos(proventos.get("historico_anual") or [],
+                                       min(pagamentos) if pagamentos else None)
             st.markdown(_kpi(
-                "Total Investido (custo)",
-                fmt_moeda(evolucao["total_investido"]),
-                "Custo consolidado da carteira atual", _COR_NEUTRO,
+                "Crescimento anual dos proventos",
+                _fmt_pct_aa(cd["taxa"]) if cd else "—",
+                (f"Média de {cd['de']} ({fmt_moeda(cd['valor_de'])}) a "
+                 f"{cd['ate']} ({fmt_moeda(cd['valor_ate'])})" if cd
+                 else "Menos de dois anos completos de proventos"),
+                (_COR_POSITIVO if cd["taxa"] >= 0 else _COR_NEGATIVO) if cd else _COR_NEUTRO,
             ), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2348,13 +2258,11 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
             "ações emprestadas incluídas, como na Evolução Patrimonial da B3. "
             "Cada ponto soma também o exterior (Nomad), que a B3 não mostra: quantidade "
             "pelas notas de corretagem até a data, preço e dólar do fechamento da data. "
-            "Ganho total = (valor de mercado − custo da carteira atual) + lucro ou prejuízo "
-            "já realizado em vendas + proventos recebidos. As vendas vêm do extrato de "
-            "negociação da B3, a preço médio (a mesma conta do IR). Não existe "
-            "\"mercado + proventos\" como patrimônio: o provento reinvestido já virou cota e "
-            "está no valor de mercado; somá-lo de novo contaria duas vezes. Não há "
-            "percentual: dividir por custo da carteira de hoje misturaria dinheiro que já "
-            "saiu dela; a taxa do período é a TIR do bloco contra o CDI."
+            "Crescimento anual = taxa composta que leva o valor de mercado da primeira "
+            "foto ao de hoje. Inclui os aportes, então não é rentabilidade: mede quanto "
+            "o patrimônio cresceu, não quanto o dinheiro rendeu. Proventos = taxa composta "
+            "entre o primeiro e o último ano civil completo (fica de fora o ano corrente "
+            "e o primeiro ano, se não começou em janeiro), também puxada por aportes."
         )
         if evolucao.get("exterior_historico_ok") is False:
             st.warning("Não foi possível recompor o exterior (Nomad) nos meses passados; "
