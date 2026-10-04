@@ -168,6 +168,20 @@ que sao do motor:
   50,8% dos casos "Inconclusivo" saiam com "0 safra(s)" em VERDE ao lado,
   afirmando robustez da ignorancia.
 
+Retorno liquido (auditoria app4, item 19 / B3-08):
+
+- **As safras pagavam custo zero entre um abril e outro.** Cada safra e
+  buy-and-hold de um ano, mas a carteira de abril seguinte vende parte da
+  anterior. `tabela_de_safras` encadeia as safras em ordem e desconta, em
+  colunas proprias ao lado do bruto, o custo de giro (emolumentos + meio
+  spread por ponta) e o IR de 15% sobre o ganho realizado, com compensacao
+  de prejuizo -- conta em `core.backtest_liquido.liquido_safras_b3`, onde
+  estao as premissas comentadas. O bruto continua nas colunas de sempre: e
+  ele que o Bloco 2 (vies de universo) compara, e la custo e IR entram
+  igual dos dois lados.
+- **Benchmarks ficam brutos.** O equal-weight nao gira (e o universo
+  inteiro) e a Selic e o retorno de referencia; a tela diz isso ao lado.
+
 Modulo puro: sem streamlit, sem banco. Coberto por tests/test_b3_safras.py.
 """
 from __future__ import annotations
@@ -184,6 +198,7 @@ import pandas as pd
 from core.b3_evidence import teste_t_unilateral
 from core.b3_precos_saneamento import limites_winsor
 from core.b3_vigencia import ano_base_do_score, janela_de_vigencia, safra_completa
+from core.backtest_liquido import liquido_safras_b3
 
 # A serie de precos e mensal: 45 dias cobre uma folga de um mes de atraso
 # na cotacao e nao mais que isso -- ver docstring do modulo.
@@ -231,7 +246,12 @@ ALPHA_EVIDENCIA = 0.10
 
 COLUNAS_TABELA = [
     "Safra", "Exercício-base", "Janela", "Completa", "Mensurável",
-    "Segmentos", "Ativos", "Maiores posições", "Estratégia (%)",
+    "Segmentos", "Ativos", "Maiores posições",
+    # Liquido primeiro (padrao da tela); o bruto segue nas colunas de sempre.
+    "Estratégia líquida (%)", "Excesso líquido s/ Selic (pp)",
+    "Excesso líquido s/ EW (pp)", "Giro (%)", "Custo de giro (pp)",
+    "IR (pp)",
+    "Estratégia (%)",
     "Equal-weight (%)", "Selic (%)", "Excesso s/ Selic (pp)",
     "Excesso s/ EW (pp)",
     "Peso sem preço (%)", "Universo com preço",
@@ -531,11 +551,16 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
 
     retorno_est = 0.0
     peso_ausente = 0.0
+    # O retorno de cada posicao, o MESMO (winsorizado) que entra no bruto:
+    # e dele que o liquido apura o ganho realizado no abril seguinte.
+    # Papel sem preco fica de fora e rende zero, como no bruto.
+    retornos_por_ativo: dict[str, float] = {}
     for tk, peso in carteira.pesos.items():
         if tk not in observados:
             peso_ausente += float(peso)
             continue
-        retorno_est += float(peso) * _ret(tk)
+        retornos_por_ativo[tk] = _ret(tk)
+        retorno_est += float(peso) * retornos_por_ativo[tk]
 
     retornos_ew: list[float] = []
     retornos_ew_brutos: list[float] = []
@@ -570,6 +595,7 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
             "excesso_equal_weight": None,
             "retorno_equal_weight_bruto": None,
             "selic_anos_estimados": [],
+            "retornos_por_ativo": None,
             "mensuravel": False,
             **cobertura,
         }
@@ -587,6 +613,7 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
         "excesso_equal_weight": (retorno_est - retorno_ew
                                  if np.isfinite(retorno_ew) else float("nan")),
         "selic_anos_estimados": selic_anos_estimados,
+        "retornos_por_ativo": retornos_por_ativo,
         "mensuravel": True,
         **cobertura,
     }
@@ -638,10 +665,27 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
     linhas: list[dict] = []
     completas: list[int] = []
     selic_estimados_por_safra: dict[int, list[int]] = {}
-    for carteira in carteiras_por_safra(resultados, hoje=hoje):
-        metricas = retorno_da_safra(carteira, df_precos,
-                                    selic_por_ano=selic_por_ano,
-                                    taxa_selic_aa=taxa_selic_aa)
+    carteiras = carteiras_por_safra(resultados, hoje=hoje)
+    todas_metricas = [retorno_da_safra(c, df_precos,
+                                       selic_por_ano=selic_por_ano,
+                                       taxa_selic_aa=taxa_selic_aa)
+                      for c in carteiras]
+    # O liquido depende da safra ANTERIOR (o que se vende em abril), entao
+    # as safras sao encadeadas em ordem antes de virar linha.
+    liquidos = liquido_safras_b3([(c.pesos, m["retornos_por_ativo"])
+                                  for c, m in zip(carteiras, todas_metricas)])
+    for carteira, metricas, liq in zip(carteiras, todas_metricas, liquidos):
+        bruto = metricas["retorno_estrategia"]
+        if liq is not None and bruto is not None:
+            # Aditivo, a mesma convencao do FII: custo e IR saem no abril de
+            # entrada, como fracao da carteira daquele momento.
+            liquido = bruto - liq["custo"] - liq["ir"]
+            exc_selic_liq = liquido - metricas["retorno_selic"]
+            ew = metricas["retorno_equal_weight"]
+            exc_ew_liq = liquido - ew if np.isfinite(ew) else float("nan")
+            giro, custo, ir = liq["giro"], liq["custo"], liq["ir"]
+        else:
+            liquido = exc_selic_liq = exc_ew_liq = giro = custo = ir = None
         maiores = sorted(carteira.pesos.items(),
                          key=lambda kv: (-kv[1], kv[0]))[:5]
         linha = {
@@ -653,6 +697,12 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
             "Segmentos": carteira.segmentos,
             "Ativos": len(carteira.pesos),
             "Maiores posições": ", ".join(f"{tk} {p:.0%}" for tk, p in maiores),
+            "Estratégia líquida (%)": _pct(liquido),
+            "Excesso líquido s/ Selic (pp)": _pct(exc_selic_liq),
+            "Excesso líquido s/ EW (pp)": _pct(exc_ew_liq),
+            "Giro (%)": _pct(giro),
+            "Custo de giro (pp)": _pct(custo),
+            "IR (pp)": _pct(ir),
             "Estratégia (%)": _pct(metricas["retorno_estrategia"]),
             "Equal-weight (%)": _pct(metricas["retorno_equal_weight"]),
             "Selic (%)": _pct(metricas["retorno_selic"]),

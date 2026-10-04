@@ -10,6 +10,7 @@ import pytest
 import core.b3_saidas as saidas
 import views.portfolio_b3 as portfolio
 from core.b3_safras import _preco_nas_pontas
+from core.transaction_costs import CostConfig
 
 
 def _doc() -> dict:
@@ -95,9 +96,10 @@ def test_simulador_reinveste_a_posicao_de_quem_saiu():
     det: dict = {}
     est, _selic, _ew, _c = portfolio._simular_seg_backtest(
         precos, lids, pesos, aporte=100.0, taxa_selic_aa=0.0, selic_macro={},
-        details_out=det,
+        details_out=det, cost_cfg=CostConfig.desligado(),
     )
-    # Em julho a posição na morta vira caixa e vai para a viva: os 1.100
+    # Contabilidade pura: custo desligado de proposito (o default passou a
+    # ser `brasil_pf_default()`, B3-08). Em julho a posição na morta vira caixa e vai para a viva: os 1.100
     # aportados até novembro dobram em dezembro, mais o aporte de dezembro.
     # Congelada, metade ficaria rendendo zero (1.650 + 100).
     assert est == pytest.approx(2300.0)
@@ -157,3 +159,19 @@ def test_segmento_morta_so_concorre_nos_anos_listada_e_nunca_na_decisao_atual():
     # A morta tem o melhor ROE do segmento: concorre de fato, não só no papel.
     assert anos_com_morta and anos_com_morta <= {2019, 2020, 2021}
     assert res["saidas"] == {"MORT3": pd.Timestamp("2021-12-30")}
+
+
+def test_simulador_cobra_custo_por_padrao():
+    """B3-08: sem `cost_cfg`, o simulador usa `brasil_pf_default()` -- o
+    mesmo cenário rende menos do que com o custo desligado."""
+    idx = pd.date_range("2020-01-31", periods=12, freq="ME")
+    precos = pd.DataFrame({"VIVE3": [10.0] * 11 + [20.0],
+                           "OUTR3": [10.0] * 12}, index=idx)
+    lids = {2020: ["VIVE3", "OUTR3"]}
+    pesos = {2020: {"VIVE3": 0.5, "OUTR3": 0.5}}
+    padrao, *_ = portfolio._simular_seg_backtest(
+        precos, lids, pesos, aporte=100.0, taxa_selic_aa=0.0, selic_macro={})
+    bruto, *_ = portfolio._simular_seg_backtest(
+        precos, lids, pesos, aporte=100.0, taxa_selic_aa=0.0, selic_macro={},
+        cost_cfg=CostConfig.desligado())
+    assert padrao < bruto

@@ -111,6 +111,24 @@ def premissas_eua() -> dict[str, Any]:
     }
 
 
+def premissas_b3() -> dict[str, Any]:
+    from core.transaction_costs import (
+        SPREAD_BPS_LARGE_CAP_DEF,
+        SPREAD_BPS_SMALL_CAP_DEF,
+    )
+    return {
+        "emolumentos_bps_por_ponta": EMOLUMENTOS_B3_BPS_POR_PONTA,
+        "meio_spread_large_bps": SPREAD_BPS_LARGE_CAP_DEF / 2.0,
+        "meio_spread_small_bps": SPREAD_BPS_SMALL_CAP_DEF / 2.0,
+        "corretagem": 0.0,
+        "ir_ganho_capital": IR_ACOES_GANHO,
+        "isencao_20k_aplicada": False,
+        "dividendo_separado_do_preco": False,
+        "compensa_prejuizo": True,
+        "ir_na_liquidacao_final": False,
+    }
+
+
 def _finito(valor: Any) -> float | None:
     try:
         numero = float(valor)
@@ -361,3 +379,72 @@ def liquido_eua_brl(periodos: list[dict], fx: Any, *,
         "equity_curve_liquido": list((1 + liquido_s).cumprod().values),
         "dates": [str(d) for d in datas],
     }
+
+
+# ── B3: safras anuais com giro, custo e IR ───────────────────────────────────
+
+def custo_ponta_b3(ticker: str) -> float:
+    """Custo de UMA ponta (compra ou venda) como fração do valor negociado.
+
+    Emolumentos de PF mais meio spread, o mesmo critério large/small cap de
+    ``core.transaction_costs`` que o backtest por segmento já usa: 3 + 5 =
+    8 bps numa large cap, 3 + 15 = 18 bps numa small cap.
+    """
+    from core.transaction_costs import (
+        SPREAD_BPS_LARGE_CAP_DEF,
+        SPREAD_BPS_SMALL_CAP_DEF,
+        is_large_cap,
+    )
+    spread = SPREAD_BPS_LARGE_CAP_DEF if is_large_cap(ticker) else SPREAD_BPS_SMALL_CAP_DEF
+    return (EMOLUMENTOS_B3_BPS_POR_PONTA + spread / 2.0) / 10_000.0
+
+
+def liquido_safras_b3(sequencia: list[tuple[Mapping[str, float],
+                                            Mapping[str, float] | None]]
+                      ) -> list[dict | None]:
+    """Custo de giro e IR de cada safra, na ordem em que as safras vigoram.
+
+    ``sequencia`` traz, por safra, ``(pesos_alvo, retornos_por_ativo)``. Os
+    retornos são os MESMOS que entram no bruto (já winsorizados); ``None``
+    marca safra não mensurável, que é pulada sem mexer na carteira -- não
+    houve preço para saber o que ela virou.
+
+    Em cada safra, no abril de entrada:
+      * a carteira anterior chega DERIVADA pelo retorno do ano (quem subiu
+        pesa mais), e é dela que se vende para chegar ao alvo novo. Comparar
+        com os pesos-alvo antigos subestimaria o giro;
+      * custo = Σ |alvo − atual| × custo da ponta do papel. A primeira safra
+        paga a compra inteira (8 a 18 bps); não há custo nem IR de saída no
+        fim, a mesma convenção do ``RastreadorIR``;
+      * IR de 15% sobre o ganho realizado, com compensação de prejuízo.
+
+    ``preço ajustado`` embute o dividendo, que é isento: tratado como ganho,
+    ele paga 15% quando a posição é vendida. É conservador -- com DY de 6% e
+    metade da carteira trocada, cerca de 0,15 × 6% × 0,5 ≈ 0,45 pp ao ano a
+    mais de imposto -- e está dito na tela em vez de corrigido por uma
+    premissa de DY que o motor não mede por safra.
+    """
+    rastreador = RastreadorIR(IR_ACOES_GANHO)
+    saida: list[dict | None] = []
+    for pesos, retornos in sequencia:
+        if retornos is None:
+            saida.append(None)
+            continue
+        soma = sum(float(w) for w in pesos.values() if _finito(w) and float(w) > 0)
+        alvo = ({str(t): float(w) / soma for t, w in pesos.items()
+                 if _finito(w) and float(w) > 0} if soma > 0 else {})
+        total = sum(max(v, 0.0) for v in rastreador.valor.values())
+        atual = ({t: max(v, 0.0) / total for t, v in rastreador.valor.items()}
+                 if total > 0 else {})
+        negociado = {t: abs(alvo.get(t, 0.0) - atual.get(t, 0.0))
+                     for t in set(alvo) | set(atual)}
+        custo = sum(v * custo_ponta_b3(t) for t, v in negociado.items())
+        # Giro = parcela da carteira VENDIDA para chegar ao alvo. Com a
+        # carteira toda investida é o mesmo 0,5·Σ|Δw| do FII e dos EUA; a
+        # primeira safra sai com giro zero, porque só compra.
+        giro = sum(max(atual.get(t, 0.0) - alvo.get(t, 0.0), 0.0)
+                   for t in set(alvo) | set(atual))
+        ir = rastreador.rebalancear(alvo)
+        rastreador.evoluir(retornos)
+        saida.append({"custo": custo, "ir": ir, "giro": giro})
+    return saida
