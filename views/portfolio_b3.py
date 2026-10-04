@@ -71,6 +71,7 @@ from views.empresas_b3 import (
     _fv,
     _get_pesos_setor,
     _logo_url,
+    _mapa_sem_resiliencia,
     _pit_card_html,
     _pit_rotulo_resultado,
     _plot_layout,
@@ -438,6 +439,40 @@ def _prepare_entry_guard(
         df_mult_recon, hist_batch_guard, all_tickers
     )
     return _build_entry_guard(df_guard, df_set, hist_batch_guard, anos_hist)
+
+
+def _avisar_segmentos_sem_resiliencia(resultados: list[dict]) -> None:
+    """Nomeia na tela os segmentos cujo score saiu sem resiliência (INF-M4).
+
+    ``_processar_segmento`` consumia o mapa de scores e descartava a marca:
+    a liderança histórica e a carteira do próximo ano eram lidas como da
+    metodologia completa. A decisão corrente vem separada da reconstrução
+    porque pesa mais — é ela que vira carteira.
+    """
+    decisao = sorted(
+        str(r.get("segmento") or r.get("setor") or "?")
+        for r in resultados if r.get("decisao_sem_resiliencia")
+    )
+    historico = sorted(
+        f"{r.get('segmento') or r.get('setor') or '?'} "
+        f"({', '.join(str(a) for a in r['anos_sem_resiliencia'])})"
+        for r in resultados if r.get("anos_sem_resiliencia")
+    )
+    if decisao:
+        aviso_lacuna(
+            f"Score B3 {SCORE_VERSION} calculado **sem** os ajustes de resiliência "
+            "(histórico, valuation histórico e saúde) na carteira do próximo ano "
+            f"de {len(decisao)} segmento(s): " + ", ".join(decisao[:12])
+            + (" …" if len(decisao) > 12 else "")
+            + " — a escolha desses líderes não segue a metodologia declarada.",
+            codigo="tela.b3.carteira_score_sem_resiliencia", nivel="warning")
+    if historico:
+        aviso_lacuna(
+            "Reconstrução histórica com score **sem** os ajustes de resiliência "
+            f"em {len(historico)} segmento(s) (anos entre parênteses): "
+            + "; ".join(historico[:12]) + (" …" if len(historico) > 12 else "")
+            + " — backtest e Rank-IC desses anos medem outro ranking.",
+            codigo="tela.b3.carteira_historico_sem_resiliencia", nivel="warning")
 
 
 def _render_data_quality_box(summary: dict, audit: pd.DataFrame, hist_audit: pd.DataFrame) -> None:
@@ -1054,6 +1089,9 @@ def _processar_segmento(
     pit_por_ano: dict[int, PITCoverage]    = {}
     pit_historico = PITCoverage()
     universo_excluidos: dict[int, list[str]] = {}
+    # Anos cujo score saiu sem os ajustes de resiliência (INF-M4). Lido
+    # ANTES do _apply_decay_penalty, que devolve dict puro sem a marca.
+    anos_sem_resiliencia: list[int] = []
 
     for ano in range(ano_inicio, ano_atual):
         # Quem saiu da bolsa só concorre nos anos em que estava listado; fora
@@ -1075,6 +1113,8 @@ def _processar_segmento(
         )
         if not score_map:
             continue
+        if _mapa_sem_resiliencia(score_map):
+            anos_sem_resiliencia.append(ano)
         pit_por_ano[ano] = pit_ano
         pit_historico = pit_historico + pit_ano
         score_map = _apply_decay_penalty(score_map, anos_lideranca)
@@ -1144,6 +1184,9 @@ def _processar_segmento(
     if not score_proximo:
         return None
     ano_ref_score = ano_atual - 1
+    # A carteira do próximo ano sai deste score: degradado aqui, a decisão
+    # corrente não segue a metodologia declarada.
+    decisao_sem_resiliencia = _mapa_sem_resiliencia(score_proximo)
 
     # Líderes para próximo ano
     # Ordenação TOTAL (score desc, ticker asc): empate não pode ser resolvido
@@ -1454,6 +1497,8 @@ def _processar_segmento(
         "pit_coverage_decisao": pit_proximo,
         "pit_coverage_por_ano": dict(pit_por_ano),
         "constraint_warnings": sorted(set(constraint_warnings)),
+        "anos_sem_resiliencia": sorted(set(anos_sem_resiliencia)),
+        "decisao_sem_resiliencia": decisao_sem_resiliencia,
     }
 
 
@@ -3495,6 +3540,7 @@ def render(show_header: bool = True) -> None:
     # A guarda de entrada filtra as recomendações abaixo; se o score ou o
     # risco dela saiu degradado, a tela precisa dizer — antes ficava só no log.
     _avisar_degradacoes(st.session_state.get("pb3_entry_guard_df", pd.DataFrame()))
+    _avisar_segmentos_sem_resiliencia(resultados)
 
     # Saneamento por scraping (Fundamentus/Status Invest) DESCONTINUADO (2026-07):
     # fundamentos vêm exclusivamente do market.* (brapi) — não há o que sanear
