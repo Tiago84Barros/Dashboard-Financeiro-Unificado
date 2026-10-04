@@ -1313,6 +1313,39 @@ def load_fii_one(ticker: str) -> pd.Series:
     return df.iloc[0]
 
 
+ARQUIVO_FII_METRICS_MENSAL = (Path(__file__).resolve().parents[1] / "data" / "public"
+                              / "fii_metrics_monthly.json.gz")
+
+
+def _fii_metrics_do_artefato(tk: str) -> pd.DataFrame | None:
+    """Série mensal do FII lida do artefato publicado; ``None`` se o arquivo
+    não existe ou não traz o fundo (o chamador cai no Supabase).
+
+    Mesmas colunas e a mesma conta de P/VP do caminho SQL -- fechamento do
+    último pregão do mês na fita da B3 ÷ VPA --, só que o fechamento já vem
+    dentro do arquivo (lido do armazém). Mês sem fechamento fica com P/VP
+    nulo, como no caminho SQL.
+    """
+    from core.inteligencia_ativos import arquivo_publicado
+    art = arquivo_publicado.ler(str(ARQUIVO_FII_METRICS_MENSAL), "fii_metrics_monthly")
+    linhas = ((art or {}).get("por_ticker") or {}).get(tk)
+    colunas = (art or {}).get("colunas")
+    if not linhas or not colunas:
+        return None
+    df = pd.DataFrame(linhas, columns=colunas).rename(columns={
+        "ref_month": "Data", "vpa": "VPA", "patrimonio_liquido": "Patrimonio",
+        "num_cotistas": "Cotistas", "dy_patrimonial_mes": "DY_Patrimonial",
+        "pct_imoveis": "Pct_Imoveis", "pct_papel": "Pct_Papel",
+        "pct_caixa": "Pct_Caixa", "pct_fundos": "Pct_Fundos"})
+    df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+    for c in ("VPA", "Patrimonio", "Cotistas", "DY_Patrimonial", "Pct_Imoveis",
+              "Pct_Papel", "Pct_Caixa", "Pct_Fundos", "fechamento"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["P/VP"] = (df["fechamento"] / df["VPA"]).where(df["VPA"] > 0)
+    df = df.drop(columns=["fechamento"])
+    return df.dropna(subset=["Data"]).sort_values("Data").reset_index(drop=True)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_fii_metrics_mensal(ticker: str) -> pd.DataFrame:
     """
@@ -1339,6 +1372,12 @@ def load_fii_metrics_mensal(ticker: str) -> pd.DataFrame:
     grupamento o preço ajustado está.
     """
     tk = ticker.strip().upper().replace(".SA", "")
+    # Local-first: o artefato do armazém (scripts/publish_fii_metrics_monthly.py)
+    # está em dia; a tabela do Supabase parou em 05/2026 (sem espaço e sem
+    # egress). Só o fundo que o arquivo não traz, ou sem arquivo, vai ao banco.
+    do_arquivo = _fii_metrics_do_artefato(tk)
+    if do_arquivo is not None:
+        return do_arquivo
     met = _q("""
         SELECT ref_month AS "Data", vpa AS "VPA",
                patrimonio_liquido AS "Patrimonio", num_cotistas AS "Cotistas",
