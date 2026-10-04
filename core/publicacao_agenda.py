@@ -296,6 +296,22 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/cdi_diario.json.gz",),
     ),
     Alvo(
+        chave="macro_brasil",
+        titulo="Macro do BCB para as LLMs (Selic meta, IPCA 12m, Focus)",
+        # Ingestão antes da publicação, como em `macro_insumos`: publicar sem
+        # coletar só renovaria a data do arquivo. A ingestão grava no armazém
+        # (categoria `unmapped`, fora do score das carteiras); o publicador lê
+        # de lá e escreve o arquivo que o bloco CONTEXTO DE MERCADO usa em
+        # produção. Auditoria app4 de 04/10/2026, LLM-A2/A7.
+        passos=(
+            ("scripts/ingerir_macro_brasil.py",),
+            ("scripts/publish_macro_brasil.py",),
+        ),
+        cadencia_dias=1,
+        modulo="macro",
+        artefatos=("data/public/macro_brasil.json.gz",),
+    ),
+    Alvo(
         # Histórico de múltiplos (B3 anual, FII mensal, EUA anual) e a
         # volatilidade usada na escolha de pares da Inteligência dos Ativos.
         # Vem de tabelas pesadas que só existem no armazém (fita da B3,
