@@ -335,3 +335,168 @@ def test_piso_de_negociabilidade_ausente_vira_aviso_na_carteira():
     trecho = corpo[i:i + 600]
     assert "liq_avisos.append(" in trecho
     assert "não aplicado" in trecho
+
+
+# ── Continuação INF-M4: a marca chega à tela, não só ao log ────────────────
+
+def test_dossie_marca_nota_nao_finita_do_motor_oficial(monkeypatch):
+    """O motor rodou mas devolveu NaN para o ticker: antes a média das
+    trilhas entrava calada, rotulada como a metodologia oficial."""
+    import core.b3_company_score as score_mod
+    import core.b3_data as _db
+    import views.empresas_b3 as b3
+
+    universo = pd.DataFrame({"Ticker": ["AAA3", "BBB3"], "DY": [0.08, 0.09]})
+    monkeypatch.setattr(_db, "load_multiplos_todos", lambda: universo.copy())
+    monkeypatch.setattr(_db, "load_multiplos_historico_batch", lambda *_a, **_k: {})
+    monkeypatch.setattr(b3, "_enrich_com_evidencia_historica",
+                        lambda pares, *_a, **_k: pares)
+
+    def _trilhas(df):
+        out = df.copy()
+        out["score"] = 61.0
+        out["coverage"] = 1.0
+        return out
+
+    monkeypatch.setattr(score_mod, "score_cross_section", _trilhas)
+    monkeypatch.setattr(
+        b3, "_score_universo",
+        lambda df, *_a, **_k: pd.DataFrame({"Ticker": ["AAA3", "BBB3"],
+                                            "score": [np.nan, 70.0]}))
+
+    linha, _ref = b3._b3_peer_scores(
+        "AAA3", pd.Series({"DY": 0.08}), pd.DataFrame({"ticker": ["AAA3", "BBB3"]}))
+
+    assert linha["score"] == pytest.approx(61.0)
+    marcas = [d for d in linha.attrs["degradacoes"]
+              if d["codigo"] == "tela.b3.dossie_nota_das_trilhas"]
+    assert len(marcas) == 1 and "nota finita" in marcas[0]["mensagem"]
+
+
+def test_dossie_com_nota_oficial_finita_nao_marca_troca(monkeypatch):
+    import core.b3_company_score as score_mod
+    import core.b3_data as _db
+    import views.empresas_b3 as b3
+
+    universo = pd.DataFrame({"Ticker": ["AAA3", "BBB3"], "DY": [0.08, 0.09]})
+    monkeypatch.setattr(_db, "load_multiplos_todos", lambda: universo.copy())
+    monkeypatch.setattr(_db, "load_multiplos_historico_batch", lambda *_a, **_k: {})
+    monkeypatch.setattr(b3, "_enrich_com_evidencia_historica",
+                        lambda pares, *_a, **_k: pares)
+    monkeypatch.setattr(score_mod, "score_cross_section",
+                        lambda df: df.assign(score=61.0, coverage=1.0))
+    monkeypatch.setattr(
+        b3, "_score_universo",
+        lambda df, *_a, **_k: pd.DataFrame({"Ticker": ["AAA3", "BBB3"],
+                                            "score": [77.0, 70.0]}))
+
+    linha, _ref = b3._b3_peer_scores(
+        "AAA3", pd.Series({"DY": 0.08}), pd.DataFrame({"ticker": ["AAA3", "BBB3"]}))
+
+    assert linha["score"] == pytest.approx(77.0)
+    assert linha.attrs["degradacoes"] == []
+
+
+def test_mapa_de_scores_historico_carrega_a_falha_de_resiliencia(monkeypatch):
+    import pickle
+
+    import core.resilience_score as rs
+    import views.empresas_b3 as b3
+    monkeypatch.setattr(rs, "financial_health_penalty", _explode)
+
+    mapa, _cov = b3._score_historico_ano_com_cobertura(
+        _hist_sintetico(), ["AAA3", "BBB3", "CCC3"], 2023, {"ROE": (1.0, True)})
+
+    assert isinstance(mapa, dict) and mapa  # contrato dos chamadores intacto
+    assert [d["codigo"] for d in mapa.degradacoes] == ["tela.b3.score_sem_resiliencia"]
+    # st.cache_data serializa por pickle: a marca não pode cair aí.
+    assert pickle.loads(pickle.dumps(mapa)).degradacoes == mapa.degradacoes
+    # A função pública sem cobertura devolve o mesmo mapa marcado.
+    assert b3._score_historico_ano(
+        _hist_sintetico(), ["AAA3", "BBB3", "CCC3"], 2023, {"ROE": (1.0, True)}
+    ).degradacoes
+
+
+def _backtest_simples():
+    from views.empresas_b3 import _simular_backtest
+    df_bt, _top, _n = _simular_backtest(
+        _precos_sinteticos(), pd.DataFrame(), _hist_sintetico(),
+        ["AAA3", "BBB3", "CCC3"],
+        aporte=1000.0, data_inicio=pd.Timestamp("2021-01-01"),
+        taxa_selic_aa=0.10, pesos={"ROE": (1.0, True)}, tk_grupos=None,
+        top_n_max=3, usar_gamma=True, cap=0.50,
+    )
+    return df_bt
+
+
+def test_backtest_registra_anos_com_score_sem_resiliencia(monkeypatch):
+    import core.resilience_score as rs
+    monkeypatch.setattr(rs, "financial_health_penalty", _explode)
+
+    df_bt = _backtest_simples()
+
+    assert not df_bt.empty
+    anos = df_bt.attrs["anos_sem_resiliencia"]
+    assert anos and set(anos) <= {2021, 2022, 2023}
+
+
+def test_backtest_integro_nao_declara_ano_sem_resiliencia(monkeypatch):
+    _neutraliza_resiliencia(monkeypatch)
+    assert _backtest_simples().attrs["anos_sem_resiliencia"] == []
+
+
+def test_guarda_de_entrada_preserva_degradacoes_atraves_do_concat(monkeypatch):
+    """Dois segmentos: o pd.concat descartava ``attrs`` e a falha da
+    resiliência/risco ficava só no log."""
+    import core.resilience_score as rs
+    import core.risk_logit as rl
+    import views.portfolio_b3 as pb3
+    monkeypatch.setattr(rs, "financial_health_penalty", _explode)
+    monkeypatch.setattr(rl, "distress_risk_score", _explode)
+
+    mult = pd.DataFrame([
+        {"Ticker": "AAA3", "P/L": 6.0, "ROE": 0.25},
+        {"Ticker": "BBB3", "P/L": 9.0, "ROE": 0.18},
+        {"Ticker": "CCC3", "P/L": 14.0, "ROE": 0.10},
+        {"Ticker": "DDD3", "P/L": 20.0, "ROE": 0.05},
+    ])
+    df_set = pd.DataFrame({
+        "ticker": ["AAA3", "BBB3", "CCC3", "DDD3"],
+        "SETOR": ["X", "X", "Y", "Y"],
+        "SUBSETOR": ["x", "x", "y", "y"],
+        "SEGMENTO": ["Seg X", "Seg X", "Seg Y", "Seg Y"],
+    })
+
+    guard, df_entry = pb3._build_entry_guard(mult, df_set, {}, {})
+
+    assert guard and not df_entry.empty
+    marcas = {d["codigo"]: d["mensagem"] for d in df_entry.attrs["degradacoes"]}
+    assert set(marcas) == {"tela.b3.score_sem_resiliencia",
+                           "tela.b3.score_entrada_sem_risco"}
+    for msg in marcas.values():
+        assert "Seg X" in msg and "Seg Y" in msg
+
+    # E a tela nomeia cada uma.
+    import views.empresas_b3 as b3
+    avisos: list[str] = []
+    monkeypatch.setattr(b3, "aviso_lacuna",
+                        lambda msg, **k: avisos.append(k["codigo"]))
+    assert b3._avisar_degradacoes(df_entry) == 2
+    assert sorted(avisos) == sorted(marcas)
+
+
+def test_criacao_de_portfolio_avisa_degradacoes_da_guarda_na_tela():
+    import inspect
+
+    import views.portfolio_b3 as pb3
+    corpo = inspect.getsource(pb3.render)
+    i = corpo.index("_render_data_quality_box(quality_summary")
+    assert '_avisar_degradacoes(st.session_state.get("pb3_entry_guard_df"' in corpo[i:i + 400]
+
+
+def test_risk_engine_sem_codigo_morto_apos_o_return():
+    import inspect
+
+    from views.empresas_b3 import _risk_engine
+    fonte = inspect.getsource(_risk_engine)
+    assert "Liquidez_Corrente" not in fonte and "penalty.clip" not in fonte

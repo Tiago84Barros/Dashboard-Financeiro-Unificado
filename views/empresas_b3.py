@@ -1796,51 +1796,6 @@ def _risk_engine(df: pd.DataFrame) -> pd.Series:
         logger.exception("Risk engine B3 (distress_risk_score) falhou; penalidade 0")
         return pd.Series(0.0, index=df.index)
 
-    idx = df.index
-    penalty = pd.Series(0.0, index=idx)
-
-    # ROE negativo: penalidade graduada — quanto mais negativo, pior.
-    # Escala: ROE -5%  → 3 pts; -15% → 5 pts; -30%+ → 6 pts (cap).
-    if "ROE" in df.columns:
-        roe = pd.to_numeric(df["ROE"], errors="coerce")
-        mask = roe < 0
-        # Mapeia |ROE| ∈ [0, 0.30] para pen ∈ [0, 6.0]
-        pen_roe = (roe[mask].abs().clip(0, 0.30) / 0.30 * 6.0).fillna(0.0)
-        penalty.loc[mask] += pen_roe
-
-    # Endividamento alto: graduado entre 6× e 15× (antes era escalada em 2 steps)
-    if "Endividamento_Total" in df.columns:
-        debt = pd.to_numeric(df["Endividamento_Total"], errors="coerce")
-        mask = (debt > 6) & debt.notna()
-        # Escala: debt 6× → 1 pt; 10× → 5 pts; 15×+ → 9 pts (cap)
-        pen_debt = ((debt[mask].clip(6, 15) - 6) / 9.0 * 9.0).fillna(0.0)
-        penalty.loc[mask] += pen_debt
-
-    # Margem Líquida negativa: graduada por magnitude
-    # Escala: ML -2% → 1 pt; -10% → 3 pts; -20%+ → 4 pts (cap)
-    if "Margem_Liquida" in df.columns:
-        ml = pd.to_numeric(df["Margem_Liquida"], errors="coerce")
-        mask = ml < 0
-        pen_ml = (ml[mask].abs().clip(0, 0.20) / 0.20 * 4.0).fillna(0.0)
-        penalty.loc[mask] += pen_ml
-
-    # Liquidez Corrente baixa: graduada
-    # Escala: liq 0.5 → 0 pt; 0.3 → 2 pts; 0.1 ou menor → 3 pts (cap)
-    if "Liquidez_Corrente" in df.columns:
-        liq = pd.to_numeric(df["Liquidez_Corrente"], errors="coerce")
-        mask = (liq < 0.5) & liq.notna()
-        pen_liq = ((0.5 - liq[mask].clip(0.1, 0.5)) / 0.4 * 3.0).fillna(0.0)
-        penalty.loc[mask] += pen_liq
-
-    # P/VP especulativo: graduado de 15× a 30×
-    if "P/VP" in df.columns:
-        pvp = pd.to_numeric(df["P/VP"], errors="coerce")
-        mask = (pvp > 15) & pvp.notna()
-        pen_pvp = ((pvp[mask].clip(15, 30) - 15) / 15.0 * 2.0).fillna(0.0)
-        penalty.loc[mask] += pen_pvp
-
-    return penalty.clip(0, 20).round(1)
-
 
 def _consistency_engine(df: pd.DataFrame,
                          anos_hist: dict[str, int] | None = None) -> pd.Series:
@@ -2540,6 +2495,20 @@ def _pit_card_html(cov: PITCoverage, contexto: str = "Backtest") -> str:
     )
 
 
+class _MapaScores(dict):
+    """``{ticker: score}`` que carrega as degradações do score daquele ano.
+
+    O ``_score_universo`` anota em ``attrs`` quando o score saiu sem os
+    ajustes de resiliência, mas o mapa devolvido ao backtest é um dict — a
+    marca se perdia ali e o resultado era lido como da metodologia completa
+    (INF-M4). Subclasse de dict para não mudar o contrato dos chamadores.
+    """
+
+    def __init__(self, *args, degradacoes: list[dict] | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.degradacoes: list[dict] = list(degradacoes or [])
+
+
 def _score_historico_ano_com_cobertura(
     df_hist_batch: dict[str, pd.DataFrame],
     tickers: list[str],
@@ -2617,8 +2586,11 @@ def _score_historico_ano_com_cobertura(
     # descarta scores não-finitos (NaN/inf): empresa sem score computável naquele
     # ano não entra no ranking — evita poluir pesos/backtest com NaN (alpha NaN).
     sc = pd.to_numeric(df_sc["score"], errors="coerce")
-    return {tk: float(s) for tk, s in zip(df_sc["Ticker"], sc)
-            if pd.notna(s) and np.isfinite(s)}, cov
+    return _MapaScores(
+        {tk: float(s) for tk, s in zip(df_sc["Ticker"], sc)
+         if pd.notna(s) and np.isfinite(s)},
+        degradacoes=_degradacoes(df_sc),
+    ), cov
 
 
 def _score_historico_ano(
@@ -2870,6 +2842,9 @@ def _simular_backtest(
     # gamma-tilt do score (INF-M4): antes isso era `pass` — o usuário pedia
     # o híbrido e lia um backtest que não era o que pediu.
     markowitz_falhas: list[str] = []
+    # Anos cujo score saiu sem os ajustes de resiliência (INF-M4): o ranking
+    # daquele rebalance não é o da metodologia declarada.
+    anos_sem_resiliencia: list[int] = []
     last_prices: dict[str, float] = {}
     tax_state: dict[str, float] = {"prejuizo_acumulado": 0.0}
     caixa_est = 0.0
@@ -2897,6 +2872,9 @@ def _simular_backtest(
                 macro_by_year=macro_by_year, rebal_month=rebal_month,
             )
             pit_cov = pit_cov + _cov_ano
+            if any(d.get("codigo") == "tela.b3.score_sem_resiliencia"
+                   for d in getattr(score_map, "degradacoes", ())):
+                anos_sem_resiliencia.append(ano)
             # Fix auditoria 2026-07: sem fallback p/ scores de HOJE (era
             # look-ahead). Gap de histórico no meio da série ⇒ mantém a
             # carteira vigente sem rebalance neste ano (o início da série
@@ -3072,6 +3050,7 @@ def _simular_backtest(
     )
     df_resultado.attrs["restricoes_inviaveis"] = sorted(set(restricoes_inviaveis))
     df_resultado.attrs["markowitz_falhas"] = sorted(set(markowitz_falhas))
+    df_resultado.attrs["anos_sem_resiliencia"] = sorted(set(anos_sem_resiliencia))
     # Proveniência temporal: fração dos snapshots que alimentaram os rebalances
     # com disponibilidade MEDIDA. Com 0.0 o resultado não pode ser rotulado como
     # backtest point-in-time validado (ver _pit_rotulo_resultado).
@@ -3391,9 +3370,23 @@ def _b3_peer_scores(
             pares, list(tickers), pesos, historicos,
             group_col_prefer="SEGMENTO",
         )
-        nota = oficial.loc[oficial["Ticker"] == ticker, "score"]
+        nota = pd.to_numeric(
+            oficial.loc[oficial["Ticker"] == ticker, "score"], errors="coerce"
+        )
         if not nota.empty and np.isfinite(float(nota.iloc[0])):
             linha.loc[:, "score"] = float(nota.iloc[0])
+        else:
+            # O motor rodou mas não deu nota finita a este ticker: a tela fica
+            # com a média das trilhas — a mesma troca de nota que a exceção
+            # abaixo já nomeia. Cair calado nela rotularia como "Metodologia
+            # B3 <versão>" uma nota que não é a do ranking.
+            logger.warning("Motor oficial do score B3 sem nota finita para %s", ticker)
+            degradacoes.append({
+                "codigo": "tela.b3.dossie_nota_das_trilhas",
+                "mensagem": (f"Motor oficial do score não produziu nota finita para "
+                             f"{ticker}: a nota exibida é a média das seis trilhas, "
+                             "não a nota do ranking."),
+            })
         degradacoes.extend(_degradacoes(oficial))
     except Exception as exc:  # noqa: BLE001 - troca de nota precisa ser nomeada
         # Em indisponibilidade pontual do motor completo, a média das trilhas
@@ -6168,6 +6161,14 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 "só no score (gamma-tilt) — não é a alocação pedida: "
                 + "; ".join(_mk_falhas_bt[:8]),
                 codigo="tela.b3.backtest_markowitz_falhou", nivel="warning")
+        _anos_sem_res_bt = df_bt.attrs.get("anos_sem_resiliencia") or []
+        if _anos_sem_res_bt:
+            aviso_lacuna(
+                f"Score B3 {SCORE_VERSION} calculado **sem** os ajustes de "
+                "resiliência (histórico, valuation histórico e saúde) nos "
+                "rebalances de " + ", ".join(str(a) for a in _anos_sem_res_bt)
+                + " — o ranking desses anos não é o da metodologia declarada.",
+                codigo="tela.b3.backtest_score_sem_resiliencia", nivel="warning")
         _caixa_pendente = float(
             df_bt.attrs.get("caixa_pendente_estrategia", 0.0) or 0.0
         )
