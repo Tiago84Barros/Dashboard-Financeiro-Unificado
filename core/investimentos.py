@@ -1784,6 +1784,59 @@ def ganho_total(evolucao: dict, realizado: dict | None = None) -> dict | None:
     }
 
 
+def _meses_entre(de: str, ate: str) -> int:
+    """Meses de ``de`` a ``ate``, ambos ``YYYY-MM``."""
+    a0, m0 = (int(x) for x in de.split("-"))
+    a1, m1 = (int(x) for x in ate.split("-"))
+    return (a1 - a0) * 12 + (m1 - m0)
+
+
+def crescimento_patrimonio(snapshots: list) -> dict | None:
+    """Taxa média anual (CAGR) do valor de mercado, da primeira à última foto.
+
+    Mede o crescimento do PATRIMÔNIO, aportes incluídos -- não é rentabilidade.
+    Começa na primeira foto com valor positivo; exige ao menos 12 meses entre
+    as pontas, porque anualizar menos que isso infla qualquer variação.
+    ``None`` sem pontas utilizáveis.
+    """
+    pontos = [s for s in snapshots or []
+              if s.get("mes_str") and (s.get("valor_mercado") or 0) > 0]
+    if len(pontos) < 2:
+        return None
+    ini, fim = pontos[0], pontos[-1]
+    meses = _meses_entre(ini["mes_str"], fim["mes_str"])
+    if meses < 12:
+        return None
+    anos = meses / 12
+    taxa = (fim["valor_mercado"] / ini["valor_mercado"]) ** (1 / anos) - 1
+    return {"taxa": taxa, "de": ini["label"], "ate": fim["label"], "anos": anos}
+
+
+def crescimento_proventos(historico_anual: list, primeiro_pagamento=None,
+                          hoje=None) -> dict | None:
+    """Taxa média anual (CAGR) dos proventos recebidos por ano civil.
+
+    Só anos completos: sai o ano corrente e sai o primeiro ano quando o
+    primeiro pagamento não foi em janeiro -- um ano de meio expediente na
+    ponta inicial inflaria a taxa. Exige dois anos completos com o primeiro
+    positivo. ``None`` sem isso.
+    """
+    from datetime import date as _date
+
+    hoje = hoje or _date.today()
+    anos = [a for a in historico_anual or [] if a["ano"] < hoje.year]
+    if anos and primeiro_pagamento and primeiro_pagamento.month > 1 \
+            and anos[0]["ano"] == primeiro_pagamento.year:
+        anos = anos[1:]
+    if len(anos) < 2 or anos[0]["total"] <= 0:
+        return None
+    ini, fim = anos[0], anos[-1]
+    n = fim["ano"] - ini["ano"]
+    taxa = (max(fim["total"], 0.0) / ini["total"]) ** (1 / n) - 1
+    return {"taxa": taxa, "de": ini["ano"], "ate": fim["ano"],
+            "valor_de": ini["total"], "valor_ate": fim["total"]}
+
+
 @user_cache_data(ttl=300)
 def get_resultado_realizado() -> dict:
     """Lucro realizado em vendas da renda variável B3, pelo extrato de negociação.

@@ -233,6 +233,14 @@ def test_carregador_em_mock_nao_simula_rentabilidade(monkeypatch):
     assert r["disponivel"] is False
 
 
+def test_formato_percentual_nao_troca_ponto_da_unidade():
+    from views.investimentos import _fmt_pct_aa
+
+    assert _fmt_pct_aa(0.1234) == "+12,34% a.a."
+    assert _fmt_pct_aa(-0.05) == "-5,00% a.a."
+    assert _fmt_pct_aa(None) == "—"
+
+
 # ── CDI publicado + BCB ───────────────────────────────────────────────────────
 
 

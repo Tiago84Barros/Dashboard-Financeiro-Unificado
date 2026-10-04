@@ -36,7 +36,8 @@ from core.correlation_analysis import (
     intervalo_confianca_correlacao,
 )
 from core.investimentos import (
-    ganho_total,
+    crescimento_patrimonio,
+    crescimento_proventos,
     get_carteira,
     get_cashflow_mensal,
     get_evolucao_patrimonial,
@@ -2183,6 +2184,11 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
             "Ativos de renda fixa e Tesouro entram na diversificação por classe, mas não possuem preço diário comparável."
         )
 
+def _fmt_pct_aa(v) -> str:
+    if v is None:
+        return "—"
+    return f"{v * 100:+.2f}".replace(".", ",") + "% a.a."
+
 
 def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                    carteira: dict | None = None) -> None:
@@ -2203,28 +2209,28 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                 "Valor de Mercado Atual", fmt_moeda(evolucao["total_mercado"]),
                 "Carteira consolidada atual", _COR_POSITIVO,
             ), unsafe_allow_html=True)
+        realizado = get_resultado_realizado()
         with ck2:
-            realizado = get_resultado_realizado()
-            g = ganho_total(evolucao, realizado)
-            if g:
-                partes = [f"valorização {fmt_moeda(g['valorizacao'])}"]
-                if g["realizado"] is not None:
-                    partes.append(f"vendas {fmt_moeda(g['realizado'])}")
-                partes.append(f"proventos {fmt_moeda(g['proventos'])}")
-                sub = " + ".join(partes)
-                if g["realizado"] is None:
-                    sub += f" · sem o lucro de vendas: {realizado.get('motivo', 'indisponível')}"
+            cp = crescimento_patrimonio(snapshots)
             st.markdown(_kpi(
-                "Ganho total",
-                fmt_moeda(g["ganho"]) if g else "—",
-                sub if g else "Sem custo consolidado",
-                (_COR_POSITIVO if g["ganho"] >= 0 else _COR_NEGATIVO) if g else _COR_NEUTRO,
+                "Crescimento anual do patrimônio",
+                _fmt_pct_aa(cp["taxa"]) if cp else "—",
+                (f"Média de {cp['de']} a {cp['ate']}, aportes incluídos" if cp
+                 else "Menos de 12 meses de histórico"),
+                (_COR_POSITIVO if cp["taxa"] >= 0 else _COR_NEGATIVO) if cp else _COR_NEUTRO,
             ), unsafe_allow_html=True)
         with ck3:
+            pagamentos = [e["payment_date"] for e in proventos.get("eventos") or []
+                          if e.get("payment_date")]
+            cd = crescimento_proventos(proventos.get("historico_anual") or [],
+                                       min(pagamentos) if pagamentos else None)
             st.markdown(_kpi(
-                "Total Investido (custo)",
-                fmt_moeda(evolucao["total_investido"]),
-                "Custo consolidado da carteira atual", _COR_NEUTRO,
+                "Crescimento anual dos proventos",
+                _fmt_pct_aa(cd["taxa"]) if cd else "—",
+                (f"Média de {cd['de']} ({fmt_moeda(cd['valor_de'])}) a "
+                 f"{cd['ate']} ({fmt_moeda(cd['valor_ate'])})" if cd
+                 else "Menos de dois anos completos de proventos"),
+                (_COR_POSITIVO if cd["taxa"] >= 0 else _COR_NEGATIVO) if cd else _COR_NEUTRO,
             ), unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -2252,13 +2258,11 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
             "ações emprestadas incluídas, como na Evolução Patrimonial da B3. "
             "Cada ponto soma também o exterior (Nomad), que a B3 não mostra: quantidade "
             "pelas notas de corretagem até a data, preço e dólar do fechamento da data. "
-            "Ganho total = (valor de mercado − custo da carteira atual) + lucro ou prejuízo "
-            "já realizado em vendas + proventos recebidos. As vendas vêm do extrato de "
-            "negociação da B3, a preço médio (a mesma conta do IR). Não existe "
-            "\"mercado + proventos\" como patrimônio: o provento reinvestido já virou cota e "
-            "está no valor de mercado; somá-lo de novo contaria duas vezes. Não há "
-            "percentual: dividir por custo da carteira de hoje misturaria dinheiro que já "
-            "saiu dela; a taxa do período é a TIR do bloco contra o CDI."
+            "Crescimento anual = taxa composta que leva o valor de mercado da primeira "
+            "foto ao de hoje. Inclui os aportes, então não é rentabilidade: mede quanto "
+            "o patrimônio cresceu, não quanto o dinheiro rendeu. Proventos = taxa composta "
+            "entre o primeiro e o último ano civil completo (fica de fora o ano corrente "
+            "e o primeiro ano, se não começou em janeiro), também puxada por aportes."
         )
         if evolucao.get("exterior_historico_ok") is False:
             st.warning("Não foi possível recompor o exterior (Nomad) nos meses passados; "
