@@ -44,6 +44,13 @@ logger = logging.getLogger(__name__)
 # Schema mínimo que o parecer LLM deve devolver — superset do schema usado por
 # analisar_empresa (compatível com _render_empresa_expander/redistribuir_pesos).
 _CLASSIFICACOES = ("aprovar", "aprovar_com_ressalvas", "vetar")
+# Fora de `_CLASSIFICACOES` de propósito: não é veredito que a LLM possa dar,
+# é a ausência dele. Falha de LLM, resposta ilegível ou dossiê indisponível
+# saíam como "aprovar_com_ressalvas" -- e a tela mostrava o ativo como
+# aprovado pelo portão sem portão nenhum ter olhado (auditoria B3-09). O ativo
+# continua na carteira (falha não veta: a estatística decide sozinha), mas
+# marcado como não avaliado.
+NAO_AVALIADO = "nao_avaliado"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -858,8 +865,9 @@ def _parecer_fallback(tk: str, motivo: str = "LLM indisponível") -> dict:
     return {
         "perspectiva": "moderada", "acao_sugerida": "revisar",
         "confianca": 0, "score_qualitativo": 50,
-        "classificacao_selecao": "aprovar_com_ressalvas",
-        "motivo_selecao": f"Parecer não gerado ({motivo}) — mantido por padrão, sem veto.",
+        "classificacao_selecao": NAO_AVALIADO,
+        "motivo_selecao": (f"Parecer não gerado ({motivo}) — não avaliado pelo "
+                           "portão; mantido sem veto e sem aprovação."),
         "resumo": f"Parecer qualitativo indisponível para {tk}: {motivo}.",
         "alerta_principal": "Análise qualitativa não executada.",
         "proxima_acao": "Reexecutar quando o LLM estiver disponível.",
@@ -874,14 +882,20 @@ def _parecer_llm_cached(prompt: str, _tk: str) -> dict:
     """Uma chamada LLM por (prompt) por dia — o prompt embute o hash do dossiê."""
     from core.llm_b3 import _call_llm, _parse_json, _report_model
     raw = _call_llm(prompt, model=_report_model())
-    return _parse_json(raw, _parecer_fallback(_tk, "resposta não interpretável"))
+    parecer = _parse_json(raw, None)
+    if not isinstance(parecer, dict):
+        # Levantar em vez de devolver o fallback: `st.cache_data` não guarda
+        # exceção, e devolvido o fallback ficava 24 h no cache -- um soluço do
+        # provedor virava um dia inteiro de ativo sem parecer.
+        raise ValueError("resposta não interpretável")
+    return parecer
 
 
 def _sanitizar_parecer(p: dict, tk: str) -> dict:
     base = _parecer_fallback(tk, "campos ausentes")
     out = {**base, **(p or {})}
     if out.get("classificacao_selecao") not in _CLASSIFICACOES:
-        out["classificacao_selecao"] = "aprovar_com_ressalvas"
+        out["classificacao_selecao"] = NAO_AVALIADO
     if not isinstance(out.get("relatorio"), dict):
         out["relatorio"] = {}
     return out
@@ -975,7 +989,8 @@ def avaliar_para_selecao(ticker: str) -> dict:
     """
     Avaliação enxuta para o gate de seleção: dossiê + RAG curto + parecer.
     Retorna {"classificacao", "motivo", "parecer", "dossie"}.
-    Falha de LLM/dados NUNCA veta (fail-open): a estatística decide sozinha.
+    Falha de LLM/dados NUNCA veta: a estatística decide sozinha. Mas também
+    não aprova -- sai como ``NAO_AVALIADO`` para a tela dizer isso.
     """
     tk = ticker.strip().upper().replace(".SA", "")
     rag_ctx = ""
@@ -988,7 +1003,7 @@ def avaliar_para_selecao(ticker: str) -> dict:
     parecer, dossie = gerar_parecer_empresa(
         tk, rag_context=rag_ctx, contexto_mercado=contexto_mercado_para_parecer(tk))
     return {
-        "classificacao": parecer.get("classificacao_selecao", "aprovar_com_ressalvas"),
+        "classificacao": parecer.get("classificacao_selecao", NAO_AVALIADO),
         "motivo": parecer.get("motivo_selecao", ""),
         "parecer": parecer,
         "dossie": dossie,

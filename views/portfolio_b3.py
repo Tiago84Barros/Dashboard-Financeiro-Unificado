@@ -38,7 +38,7 @@ from core.b3_vigencia import (
     janela_de_vigencia,
     safra_vigente_em,
 )
-from core.dossie_b3 import avaliar_para_selecao, quali_gate_disponivel
+from core.dossie_b3 import NAO_AVALIADO, avaliar_para_selecao, quali_gate_disponivel
 from core.inteligencia_ativos import veredito
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
@@ -84,6 +84,7 @@ from views.empresas_b3 import (
     _yf_multiplos_dividendos,
     _yf_trailing12m_divs,
 )
+from views.portfolio_b3_oos_carteira import render_oos_carteira
 from views.portfolio_b3_safras import render_safras
 
 logger = logging.getLogger(__name__)
@@ -620,8 +621,10 @@ def _quali_avaliar_cached(tk: str) -> dict:
     if tk not in cache:
         try:
             cache[tk] = avaliar_para_selecao(tk)
-        except Exception as exc:  # fail-open: falha de avaliação nunca veta
-            cache[tk] = {"classificacao": "aprovar_com_ressalvas",
+        except Exception as exc:  # falha de avaliação nunca veta -- nem aprova
+            # Antes saía "aprovar_com_ressalvas" e a tela listava o ativo como
+            # aprovado pelo portão sem parecer nenhum (auditoria B3-09).
+            cache[tk] = {"classificacao": NAO_AVALIADO,
                          "motivo": f"avaliação indisponível ({exc})",
                          "parecer": {}, "dossie": {}}
     return cache[tk]
@@ -683,13 +686,17 @@ def _aplicar_gate_qualitativo(
     Roda DEPOIS do ranking estatístico e não altera score algum: um nome
     vetado sai com motivo registrado e o próximo elegível do MESMO segmento
     (na ordem do score) herda a vaga e o orçamento de peso. Veto é exceção
-    grave e documentada no parecer; falha de LLM nunca veta (fail-open).
+    grave e documentada no parecer; falha de LLM nunca veta, mas o ativo fica
+    em ``log["nao_avaliados"]`` -- mantido, não aprovado.
     """
     finais: list[str] = []
+    nao_avaliados = log.setdefault("nao_avaliados", {})
     for tk in selecionados:
         aval = _quali_avaliar_cached(tk)
         if aval["classificacao"] != "vetar":
-            if aval["classificacao"] == "aprovar_com_ressalvas" and aval.get("motivo"):
+            if aval["classificacao"] == NAO_AVALIADO:
+                nao_avaliados[tk] = str(aval.get("motivo") or "parecer indisponível")
+            elif aval["classificacao"] == "aprovar_com_ressalvas" and aval.get("motivo"):
                 log["ressalvas"][tk] = str(aval["motivo"])
             finais.append(tk)
             continue
@@ -707,7 +714,9 @@ def _aplicar_gate_qualitativo(
             avaliacoes += 1
             if aval_c["classificacao"] != "vetar":
                 substituto = cand
-                if (aval_c["classificacao"] == "aprovar_com_ressalvas"
+                if aval_c["classificacao"] == NAO_AVALIADO:
+                    nao_avaliados[cand] = str(aval_c.get("motivo") or "parecer indisponível")
+                elif (aval_c["classificacao"] == "aprovar_com_ressalvas"
                         and aval_c.get("motivo")):
                     log["ressalvas"][cand] = str(aval_c["motivo"])
                 break
@@ -3861,7 +3870,8 @@ def render(show_header: bool = True) -> None:
 
     # ── Gate qualitativo: pré-avalia as candidatas com barra de progresso ────
     # (as avaliações são cacheadas — reruns e substitutos reaproveitam)
-    quali_log: dict = {"vetados": [], "substituicoes": [], "ressalvas": {}}
+    quali_log: dict = {"vetados": [], "substituicoes": [], "ressalvas": {},
+                       "nao_avaliados": {}}
     _gate_ativo = bool(st.session_state.get("pb3_gate_quali")) and quali_gate_disponivel()
     # Piso absoluto de qualidade (determinístico, sem rede). Ligado por padrão:
     # sem ele o app entrega o líder do segmento seja ele qual for, e a única
@@ -4003,6 +4013,8 @@ def render(show_header: bool = True) -> None:
                     motivos.append(f"Entrou por veto qualitativo a {_sub_de}")
                 if tk in quali_log["ressalvas"]:
                     motivos.append("Parecer LLM com ressalva")
+                if tk in quali_log["nao_avaliados"]:
+                    motivos.append("Não avaliado pelo portão (parecer LLM indisponível)")
             nome_row = df_set[df_set["ticker"] == tk]
             nome = nome_row["nome_empresa"].iloc[0][:24] if not nome_row.empty else tk
             proximos.append({
@@ -4532,10 +4544,19 @@ def render(show_header: bool = True) -> None:
             "determinístico (fundamentos, dividendos recorrente vs extraordinário, "
             "eventos societários CVM e red flags de dados) e só veta exceção grave "
             "documentada. O substituto é o próximo do ranking do MESMO segmento. "
-            "Nada aqui altera score, FDR ou Rank-IC; falha de LLM não veta."
+            "Nada aqui altera score, FDR ou Rank-IC; falha de LLM não veta "
+            "— e também não aprova: o ativo fica marcado como não avaliado."
         )
+        if quali_log["nao_avaliados"]:
+            st.warning(
+                f"{len(quali_log['nao_avaliados'])} ativo(s) da carteira NÃO "
+                "foram avaliados pelo portão (parecer LLM indisponível): "
+                + ", ".join(f"**{_tk}** ({_mot})"
+                            for _tk, _mot in quali_log["nao_avaliados"].items())
+                + ". Estão na carteira só pela estatística.",
+                icon="⚠️")
         if not (quali_log["vetados"] or quali_log["substituicoes"]
-                or quali_log["ressalvas"]):
+                or quali_log["ressalvas"] or quali_log["nao_avaliados"]):
             st.markdown("✅ Nenhum veto ou ressalva — todas as líderes "
                         "estatísticas passaram no parecer qualitativo.")
         for v in quali_log["vetados"]:
@@ -4698,6 +4719,7 @@ def render(show_header: bool = True) -> None:
             "qualitative_gate": bool(_gate_ativo),
             "quali_vetados": quali_log["vetados"],
             "quali_substituicoes": quali_log["substituicoes"],
+            "quali_nao_avaliados": quali_log["nao_avaliados"],
             **veredito.log_para_payload(intel_log),
             "correlation_diversification": bool(diversificar_corr),
             "correlation_threshold": float(corr_threshold),
@@ -4901,6 +4923,11 @@ def render(show_header: bool = True) -> None:
         taxa_selic_aa=taxa_selic_aa,
         resultados_todos=resultados,
     )
+
+    # B3-03: as safras acima são da configuração ATUAL e brutas de custo; o
+    # bloco abaixo lê a medição gravada da carteira de cada perfil, líquida,
+    # point-in-time (scripts/medir_oos_carteira_b3.py).
+    render_oos_carteira()
 
     # ── Metodologia e referências científicas ────────────────────────────────
     _render_metodologia_portfolio()
