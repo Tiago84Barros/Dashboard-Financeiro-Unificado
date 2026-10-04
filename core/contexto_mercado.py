@@ -516,16 +516,27 @@ def _manchetes_remoto(limite: int) -> tuple[list[str] | None, str | None]:
     não o noticiário inteiro. Sem dizer que o acervo falhou, o modelo leria o
     recorte como se fosse tudo o que aconteceu.
     """
+    origem = "Acervo local, lido pelo túnel"
     try:
         from core import armazem_remoto
 
-        itens = armazem_remoto.noticias_recentes(150, dias=3)
+        # Mesma leitura do acervo direto (:func:`_manchetes_acervo`): os de
+        # maior nota da janela, para a curadoria escolher. Antes o túnel lia
+        # os 150 mais novos -- as últimas horas --, e em 04/10/2026 o topo
+        # curado dali tinha notas 56-68, contra 68-74 lendo pela nota.
+        try:
+            itens = armazem_remoto.noticias_recentes(
+                _LEITURA_POR_NOTA, dias=3, ordem="nota")
+        except armazem_remoto.OrdemIgnorada as exc:
+            itens = exc.itens
+            origem += (" (serviço desatualizado: vieram os mais novos, não os "
+                       "de maior relevância)")
     except Exception as exc:  # noqa: BLE001
         return None, (f"  Acervo local pelo túnel: indisponível ({_limpo(exc, 120)}); "
                       "segue a vitrine do Supabase, que é um recorte por ativo.")
     if itens is None:
         return None, None
-    return _linhas_acervo(itens, limite, "Acervo local, lido pelo túnel"), None
+    return _linhas_acervo(itens, limite, origem), None
 
 
 @st.cache_data(ttl=_TTL_REMOTO, show_spinner=False)
