@@ -58,7 +58,7 @@ from core.b3_safras import (
     _preco_nas_pontas,
     bootstrap_excesso,
 )
-from core.b3_vigencia import janela_de_vigencia
+from core.b3_vigencia import REBAL_MONTH, janela_de_vigencia
 from core.portfolio_constraints import (
     minimum_assets_for_cap,
     project_capped_simplex,
@@ -71,9 +71,6 @@ logger = logging.getLogger(__name__)
 VERSAO_MEDICAO = "oos-carteira-1.0.0"
 CAMINHO_MEDICAO = Path(__file__).resolve().parents[1] / "data" / "oos_carteira_b3.json"
 
-#: Mês do rebalanceamento: balanço de N-1 publicado até 31/03 (mesma regra de
-#: `views/portfolio_b3._REBAL_MONTH`).
-MES_REBAL = 4
 #: Mesmo piso da view para a janela de validação valer: menos que 18 meses é
 #: holdout episódico.
 MIN_LINHAS_VALIDACAO = 18
@@ -141,8 +138,8 @@ def _corte_ate_safra(df: pd.DataFrame, ano_inicio: int, safra: int) -> pd.DataFr
     if df.empty:
         return df
     idx = pd.DatetimeIndex(df.index)
-    inicio = pd.Timestamp(year=int(ano_inicio), month=MES_REBAL, day=1)
-    fim = pd.Timestamp(year=int(safra), month=MES_REBAL, day=1)
+    inicio = pd.Timestamp(year=int(ano_inicio), month=REBAL_MONTH, day=1)
+    fim = pd.Timestamp(year=int(safra), month=REBAL_MONTH, day=1)
     return df[(idx >= inicio) & (idx < fim)]
 
 
@@ -201,7 +198,7 @@ def metricas_pit(res: dict, safra: int, df_precos_all: pd.DataFrame, *,
                        maior=max(contrib, key=contrib.get) if contrib else None)
             ultimo = pd.Timestamp(df_seg.index.max())
             ini_val = pd.Timestamp(year=int(ultimo.year) - janela_val,
-                                   month=MES_REBAL, day=1)
+                                   month=REBAL_MONTH, day=1)
             df_val = df_seg[pd.DatetimeIndex(df_seg.index) >= ini_val]
             if len(df_val) >= MIN_LINHAS_VALIDACAO:
                 det: dict = {}
