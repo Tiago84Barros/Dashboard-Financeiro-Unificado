@@ -270,6 +270,7 @@ def test_tabela_vazia_tem_colunas_e_empty():
         "Safra", "Exercício-base", "Janela", "Completa", "Mensurável",
         "Segmentos", "Ativos", "Maiores posições", "Estratégia (%)",
         "Equal-weight (%)", "Selic (%)", "Excesso s/ Selic (pp)",
+        "Excesso s/ EW (pp)",
         "Peso sem preço (%)", "Universo com preço",
     ]
     assert tabela.attrs["safras_completas"] == []
