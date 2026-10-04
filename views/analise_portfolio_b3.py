@@ -43,6 +43,7 @@ from core.llm_context_b3 import (
     build_llm_context_for_portfolio_chat,
     get_web_evidence_context,
 )
+from core.llm_grounding import aviso_ancoragem
 from core.portfolio_chat_charts import (
     infer_chart_directives,
     render_charts_from_directives,
@@ -433,6 +434,9 @@ def _render_relatorio_consolidado(port_analise: dict) -> None:
     ])
     st.markdown(f'<div class="apb3-kpi-row">{cards_html}</div>', unsafe_allow_html=True)
 
+    if port_analise.get("aviso_ancoragem"):
+        st.caption(port_analise["aviso_ancoragem"])
+
     with st.expander("📝 Resumo Executivo + Papel dos Ativos", expanded=True):
         resumo = port_analise.get("resumo_executivo", "")
         papel  = port_analise.get("papel_dos_ativos", "")
@@ -599,6 +603,8 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
         elif quali_cls == "nao_avaliado":
             st.caption("⚪ Não avaliado pelo portão: "
                        f"{an.get('motivo_selecao') or 'parecer indisponível'}")
+        if an.get("aviso_ancoragem"):
+            st.caption(an["aviso_ancoragem"])
 
         # Síntese do parecer
         resumo = an.get("resumo", "")
@@ -1392,6 +1398,7 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
         with st.chat_message("assistant"):
             chart_directives: list[dict] = []
             chart_meta: dict = {}
+            aviso = ""
             with st.spinner("Consultando carteira, banco, setores e documentos…"):
                 try:
                     weights = _weights_from_model(model)
@@ -1434,9 +1441,12 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
                             chart_meta.get("mentioned_tickers"),
                             chart_meta.get("peers"),
                         )
+                    aviso = aviso_ancoragem(resposta, context, user_input)
                 except Exception as exc:
                     resposta = f"Erro ao consultar LLM: {exc}"
             st.markdown(escapar_cifrao(resposta))
+            if aviso:
+                st.caption(aviso)
             if chart_directives:
                 try:
                     render_charts_from_directives(chart_directives, chart_meta)

@@ -127,8 +127,12 @@ def test_vitrine_velha_e_carimbada():
     linhas = cm._manchetes_vitrine(_Engine((gerada, 7), [("PETR4", itens),
                                                          ("VALE3", itens)]), 5)
     assert "VELHA" in linhas[0]
-    assert len(linhas) == 2                     # deduplicada por título
-    assert "PETR4, VALE3" in linhas[1]
+    itens_l = [ln for ln in linhas if ln.strip().startswith("- ")]
+    assert len(itens_l) == 1                    # deduplicada por título
+    assert "PETR4, VALE3" in itens_l[0]
+    # Manchete é texto de terceiro: vai entre marcadores (LLM-A4).
+    assert "<<<INICIO CONTEUDO-EXTERNO-" in linhas[1]
+    assert "<<<FIM CONTEUDO-EXTERNO-" in linhas[-1]
 
 
 def test_vitrine_recente_sem_carimbo_de_velha():
@@ -205,7 +209,8 @@ def test_manchetes_remoto_distingue_nao_configurado_de_fora_do_ar(monkeypatch):
     cm._manchetes_remoto.clear()
     assert aviso is None
     assert "lido pelo túnel" in linhas[0]
-    assert "[24/09 13:05] Copom" in linhas[1]
+    assert "<<<INICIO CONTEUDO-EXTERNO-" in linhas[1]   # cercado (LLM-A4)
+    assert any("[24/09 13:05] Copom" in ln for ln in linhas)
 
 
 def test_macro_sem_engine_local_vai_ao_tunel(monkeypatch):

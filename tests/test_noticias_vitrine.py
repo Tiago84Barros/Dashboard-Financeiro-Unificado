@@ -324,8 +324,9 @@ def test_chat_le_o_noticiario_geral_publicado(vazia):
     linhas = cm._manchetes_vitrine(vazia, 12)
     texto = "\n".join(linhas)
     assert "Noticiário geral publicado no Supabase" in linhas[0]
-    # Brasil primeiro, como no acervo local.
-    assert texto.index("Copom mantém Selic") < texto.index("Fed sobe juros")
+    # Pela nota, como no acervo local (LLM-A5): o Brasil tem piso de vagas,
+    # não prioridade -- o "Brasil primeiro" punha nota baixa à frente de alta.
+    assert texto.index("Fed sobe juros") < texto.index("Copom mantém Selic")
     assert "só do ativo" not in texto
 
 

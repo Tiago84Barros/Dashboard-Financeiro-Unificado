@@ -32,6 +32,7 @@ from core.inteligencia_ativos.destaques_relatorios import (
     Trecho,
     titulo_curto,
 )
+from core.seguranca.procedencia import cercar_linhas, linha_externa
 
 NAO_DISPONIVEL = "Dado não disponível."
 
@@ -758,12 +759,20 @@ def texto_noticias(n: Noticias, ticker: str) -> str:
               "classificadas pelo código]"]
     if not n.itens:
         linhas.append(f"- {n.motivo or NAO_DISPONIVEL}")
+    # Manchete, resumo e veículo são texto de terceiro: neutralizados e entre
+    # marcadores (auditoria app4, LLM-A4). Antes entravam crus -- inclusive o
+    # resumo, com quebra de linha, que é a forma mais simples de abrir uma
+    # seção nova no prompt.
+    corpo: list[str] = []
     for i in n.itens:
         dims = ", ".join(ROTULO_DIMENSAO.get(d, d) for d in i.affected_dimension)
-        linhas.append(
+        corpo.append(
             f"- {_data_br(i.date)} · impacto {i.impact_level} · {dims} · "
-            f"\"{i.headline}\" ({_fonte(i.source, i.url)})"
-            + (f"\n  Resumo da fonte: {i.summary}" if i.summary else ""))
+            f"\"{linha_externa(i.headline)}\" "
+            f"({linha_externa(_fonte(i.source, i.url), teto=300)})")
+        if i.summary:
+            corpo.append(f"  Resumo da fonte: {linha_externa(i.summary, teto=600)}")
+    linhas.extend(cercar_linhas(corpo, recuo=""))
     if n.descartadas:
         linhas.append("- Descartadas pelo filtro: " + "; ".join(
             f"{k}: {v}" for k, v in n.descartadas.items()))

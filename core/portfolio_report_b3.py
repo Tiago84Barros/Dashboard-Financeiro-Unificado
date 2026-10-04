@@ -28,6 +28,7 @@ from core.llm_context_b3 import (
     get_company_fundamentals_context,
     get_sector_comparison_context,
 )
+from core.llm_grounding import com_aviso_ancoragem
 from core.portfolio_report_common import (
     QUALITATIVE_WEIGHTS,
     SEM_DETALHE_NO_CONSOLIDADO,
@@ -481,7 +482,7 @@ def generate_company_portfolio_report(
     try:
         raw = _call_llm(prompt, model=model or _report_model())
         parsed = _parse_json(raw, _fallback_company(tk, "JSON inválido"))
-        return sanitize_company_report(parsed, tk), dossier
+        return com_aviso_ancoragem(sanitize_company_report(parsed, tk), prompt), dossier
     except Exception as exc:
         logger.warning("Relatório institucional de %s falhou: %s", tk, exc)
         return _fallback_company(tk, str(exc)[:200]), dossier
@@ -512,7 +513,8 @@ def analyze_portfolio_report(
     try:
         raw = _call_llm(prompt, model=model or _report_model())
         parsed = _parse_json(raw, _fallback_portfolio("JSON inválido"))
-        return sanitize_portfolio_report(parsed, items_analyzed)
+        return com_aviso_ancoragem(
+            sanitize_portfolio_report(parsed, items_analyzed), prompt)
     except Exception as exc:
         logger.warning("Relatório institucional consolidado falhou: %s", exc)
         return _fallback_portfolio(str(exc)[:200])

@@ -28,6 +28,7 @@ from typing import Any
 import pandas as pd
 
 from core.llm_b3 import _call_llm, _parse_json, _report_model
+from core.llm_grounding import com_aviso_ancoragem
 from core.portfolio_report_common import (
     QUALITATIVE_WEIGHTS,
     SEM_DETALHE_NO_CONSOLIDADO,
@@ -799,7 +800,7 @@ def generate_company_us_report(
     try:
         raw = _call_llm(prompt, model=model or _report_model())
         parsed = _parse_json(raw, fallback_company(tk, "JSON inválido"))
-        return sanitize_company_report(parsed, tk), dossier
+        return com_aviso_ancoragem(sanitize_company_report(parsed, tk), prompt), dossier
     except Exception as exc:  # noqa: BLE001
         logger.warning("Relatório institucional de %s falhou: %s", tk, exc)
         return fallback_company(tk, str(exc)[:200]), dossier
@@ -1086,7 +1087,8 @@ def analyze_us_portfolio_report(
     try:
         raw = _call_llm(prompt, model=model or _report_model())
         parsed = _parse_json(raw, fallback_portfolio("JSON inválido"))
-        return sanitize_portfolio_report(parsed, items_analyzed)
+        return com_aviso_ancoragem(
+            sanitize_portfolio_report(parsed, items_analyzed), prompt)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Relatório consolidado americano falhou: %s", exc)
         return fallback_portfolio(str(exc)[:200])
