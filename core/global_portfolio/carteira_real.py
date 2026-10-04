@@ -76,6 +76,30 @@ def valores_reais_por_classe(posicoes: list[dict] | None) -> dict[str, float]:
     return valores
 
 
+def valores_reais_por_ativo(posicoes: list[dict] | None) -> dict[str, float]:
+    """{ticker normalizado: valor de mercado em R$} das classes de risco.
+
+    Base do ponto "carteira real" na fronteira Black-Litterman (GLB-01): o
+    advisor usa `weight_global` -- que é a meta -- como "peso atual", e só a
+    posição de verdade diz onde a carteira está. Renda fixa e "outros" ficam
+    fora porque a carteira-modelo cobre só a parcela de risco. O ticker sai
+    sem ".SA", o mesmo formato dos snapshots.
+    """
+    valores: dict[str, float] = {}
+    for p in posicoes or []:
+        if classe_global(p) not in ("b3", "fii", "us"):
+            continue
+        try:
+            vm = float(p.get("valor_mercado") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        tk = str(p.get("ticker") or "").strip().upper()
+        tk = tk[:-3] if tk.endswith(".SA") else tk
+        if vm > 0 and tk:
+            valores[tk] = valores.get(tk, 0.0) + vm
+    return valores
+
+
 def alvos_globais(alvos_modelo: dict[str, float] | None,
                   renda_fixa: float | None) -> dict[str, float]:
     """Alvo sobre o patrimônio inteiro.
