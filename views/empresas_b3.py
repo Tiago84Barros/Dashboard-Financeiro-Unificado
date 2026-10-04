@@ -1718,6 +1718,19 @@ SCORE_VERSION_CHANGELOG = {
         "atual quem esta parado hoje, sem tira-lo dos anos em que negociava. "
         "Muda a elegibilidade de cada safra: a medicao OOS e desta versao."
     ),
+    "2.31.0": (
+        "Auditoria app4, look-ahead da aba B3: os pisos de valor de mercado e "
+        "de volume com a foto de HOJE so decidem a carteira atual. Antes "
+        "valiam para todos os anos da reconstrucao -- quem encolheu sumia do "
+        "passado e o Pesos Iguais perdia justamente as quedas. Cada ano usa o "
+        "volume da epoca e o valor de mercado da epoca, estimado em 31/12 do "
+        "exercicio lido pela razao de precos sem dividendos "
+        "(core.b3_universo_pit.abaixo_do_tamanho_por_ano). A Selic do "
+        "backtest deixa de usar a media da serie inteira nos anos sem "
+        "observacao: repete o ultimo valor conhecido "
+        "(core.b3_safras.selic_sem_futuro). Muda o universo de cada safra: a "
+        "medicao OOS e desta versao."
+    ),
 }
 
 

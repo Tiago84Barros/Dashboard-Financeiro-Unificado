@@ -30,6 +30,7 @@ from core.b3_portfolio_model import (
 from core.b3_renda_sustentavel import (
     enrich_decision_universe as _enrich_decision_universe,
 )
+from core.b3_safras import selic_sem_futuro as _selic_sem_futuro
 from core.b3_vigencia import (
     REBAL_MONTH as _REBAL_MONTH,
 )
@@ -242,10 +243,11 @@ def _load_adtv(meses: int = 6) -> dict[str, float]:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def _load_volume_mensal_historico(desde_ano: int) -> pd.DataFrame:
-    """Volume financeiro mensal (R$) por ticker desde ``desde_ano`` - 1.
+    """Volume financeiro mensal (R$) e último fechamento do mês por ticker.
 
-    Alimenta a elegibilidade por ÉPOCA (core.b3_universo_pit): o piso de
-    liquidez de hoje não diz se o papel era negociável no ano da decisão.
+    Desde ``desde_ano`` - 1. Alimenta a elegibilidade por ÉPOCA
+    (core.b3_universo_pit): o piso de liquidez e o de tamanho de hoje não dizem
+    se o papel era negociável, nem se era grande, no ano da decisão.
     """
     from sqlalchemy import text
 
@@ -257,7 +259,9 @@ def _load_volume_mensal_historico(desde_ano: int) -> pd.DataFrame:
     query = text("""
         SELECT ticker,
                date_trunc('month', date)::date AS mes,
-               SUM(COALESCE(close, adjusted_close) * volume) AS financeiro
+               SUM(COALESCE(close, adjusted_close) * volume) AS financeiro,
+               (ARRAY_AGG(COALESCE(close, adjusted_close)
+                          ORDER BY date DESC))[1] AS fechamento
         FROM market.historical_prices
         WHERE volume IS NOT NULL AND volume > 0
           AND COALESCE(close, adjusted_close) IS NOT NULL
@@ -272,9 +276,11 @@ def _load_volume_mensal_historico(desde_ano: int) -> pd.DataFrame:
             f"consulta do volume histórico falhou ({type(exc).__name__})"
         ) from exc
     df = pd.DataFrame(
-        [(_ticker_key(r.ticker), r.mes, r.financeiro) for r in rows],
-        columns=["ticker", "mes", "financeiro"],
+        [(_ticker_key(r.ticker), r.mes, r.financeiro, r.fechamento) for r in rows],
+        columns=["ticker", "mes", "financeiro", "fechamento"],
     )
+    # numeric do Postgres chega como Decimal; a estimativa de tamanho multiplica.
+    df["fechamento"] = pd.to_numeric(df["fechamento"], errors="coerce")
     return df
 
 
@@ -1072,6 +1078,7 @@ def _processar_segmento(
     saidas_elegiveis: dict[str, set[int]] | None = None,
     saidas_ultimo_pregao: dict[str, pd.Timestamp] | None = None,
     parados_hoje: set[str] | None = None,
+    fora_hoje: set[str] | None = None,
 ) -> dict | None:
     """
     Roda o engine de scoring ano-a-ano para um segmento.
@@ -1089,6 +1096,11 @@ def _processar_segmento(
     ``parados_hoje``: tickers parados na data de HOJE. Não concorrem à carteira
     do próximo ano — não dá para comprá-los —, mas seguem na reconstrução nos
     anos em que negociavam (tirá-los do segmento inteiro seria sobrevivência).
+
+    ``fora_hoje``: tickers abaixo dos pisos de tamanho/liquidez com a foto de
+    HOJE. Mesma regra dos parados: fora da carteira do próximo ano, dentro da
+    reconstrução nos anos em que a época os aceitava (look-ahead, auditoria
+    app4 — antes o filtro de hoje apagava o passado de quem encolheu).
     Retorna dict com líderes, backtest e score para o próximo ano, ou None.
     """
     if len(tickers) < 1:
@@ -1097,6 +1109,15 @@ def _processar_segmento(
     tickers_vivos = [tk for tk in tickers if tk not in saidas_elegiveis]
     tickers_saidos = [tk for tk in tickers if tk in saidas_elegiveis]
     tickers_saidos_por_ano: dict[int, list[str]] = {}
+    # Score para o próximo ano (dados até ano_atual - 1). Só empresas listadas
+    # hoje: quem saiu da bolsa não é comprável (AUD-2). Pelo mesmo motivo sai
+    # quem está listado mas parado hoje (B3-06/07) e quem está abaixo dos
+    # pisos de hoje. Segmento sem nenhum comprável sai antes da reconstrução.
+    _nao_compraveis = (parados_hoje or set()) | (fora_hoje or set())
+    tickers_compraveis = [tk for tk in tickers_vivos
+                          if _ticker_key(tk) not in _nao_compraveis]
+    if not tickers_compraveis:
+        return None
 
     pesos = _aplicar_cheapness(_get_pesos_setor(setor), cheapness_weight)
     tk_grupos = {tk: {"SETOR": setor, "SUBSETOR": subsetor, "SEGMENTO": segmento}
@@ -1194,14 +1215,6 @@ def _processar_segmento(
     if not anos_com_score:
         return None
 
-    # Score para o próximo ano (dados até ano_atual - 1). Só empresas listadas
-    # hoje: quem saiu da bolsa não é comprável (AUD-2). Pelo mesmo motivo sai
-    # quem está listado mas parado hoje (B3-06/07).
-    _parados_hoje = parados_hoje or set()
-    tickers_compraveis = [tk for tk in tickers_vivos
-                          if _ticker_key(tk) not in _parados_hoje]
-    if not tickers_compraveis:
-        return None
     score_proximo, pit_proximo = _score_historico_ano_com_cobertura(
         hist_batch, tickers_compraveis, ano_atual, pesos, tk_grupos, lag=1,
         macro_by_year=macro_history or None,
@@ -3134,8 +3147,16 @@ def render(show_header: bool = True) -> None:
         return
 
     # Filtro de LIQUIDEZ (negociabilidade): remove micro-caps e nomes sem valor de
-    # mercado (deslistados/dado velho) ANTES de qualquer scoring — senão o modelo
-    # coroa empresas boas no papel mas intocáveis na prática (BALM3, CAMB3, EKTR3).
+    # mercado (deslistados/dado velho) da carteira ATUAL — senão o modelo coroa
+    # empresas boas no papel mas intocáveis na prática (BALM3, CAMB3, EKTR3).
+    # Look-ahead (auditoria app4): os dois pisos abaixo usam a foto de HOJE e
+    # valiam para todos os anos da reconstrução — quem encolheu sumia do
+    # passado, e o Pesos Iguais perdia justamente as quedas. Agora eles só
+    # tiram nomes da carteira atual; cada ano da reconstrução usa o volume e o
+    # valor de mercado da época (bloco "Universo por época", mais abaixo).
+    _fora_tamanho_hoje: set[str] = set()
+    _fora_liquidez_hoje: set[str] = set()
+    _mcaps: dict[str, float] = {}
     if min_mcap > 0:
         try:
             _mcaps = _load_market_caps()
@@ -3160,16 +3181,16 @@ def render(show_header: bool = True) -> None:
             )
             return
 
-        _keep = df_set["ticker"].map(
-            lambda t: _mcaps.get(_ticker_key(t), 0.0) >= min_mcap
-        )
-        df_set = df_set[_keep].copy()
-        _n_removidos = _n_antes - df_set["ticker"].nunique()
-        if _n_removidos > 0:
+        _fora_tamanho_hoje = {
+            str(t) for t in df_set["ticker"].unique()
+            if _mcaps.get(_ticker_key(t), 0.0) < min_mcap
+        }
+        if _fora_tamanho_hoje:
             st.caption(
-                f"🔒 Filtro de tamanho ({_liq_label}): {_n_removidos} empresa(s) "
-                "removida(s) por valor de mercado abaixo do piso ou ausente "
-                "(ilíquidas/deslistadas)."
+                f"🔒 Filtro de tamanho ({_liq_label}): {len(_fora_tamanho_hoje)} "
+                f"de {_n_antes} empresa(s) fora da carteira atual por valor de "
+                "mercado de hoje abaixo do piso ou ausente. Na reconstrução "
+                "histórica vale o valor de mercado de cada época."
             )
 
     # Filtro de NEGOCIABILIDADE (volume financeiro mediano diário). Distinto do
@@ -3189,9 +3210,14 @@ def render(show_header: bool = True) -> None:
                 "à negociabilidade."
             )
         if _adtvs:
-            _n_antes_adtv = df_set["ticker"].nunique()
+            # Cobertura medida em quem passou no tamanho, como antes: o volume
+            # das micro-caps falta mais, e contá-las desligaria o piso.
+            _tks_adtv = df_set["ticker"][
+                ~df_set["ticker"].astype(str).isin(_fora_tamanho_hoje)
+            ]
+            _n_antes_adtv = _tks_adtv.nunique()
             _cob_adtv, _tot_adtv, _ratio_adtv = _market_cap_coverage(
-                df_set["ticker"], _adtvs
+                _tks_adtv, _adtvs
             )
             if _tot_adtv and _ratio_adtv < _MIN_ADTV_COVERAGE:
                 st.warning(
@@ -3201,25 +3227,27 @@ def render(show_header: bool = True) -> None:
                     "`market.historical_prices`."
                 )
             else:
-                _removidos_adtv = sorted(
+                _fora_liquidez_hoje = {
                     str(t) for t in df_set["ticker"].unique()
                     if _adtvs.get(_ticker_key(t), 0.0) < min_adtv
-                )
-                df_set = df_set[
-                    df_set["ticker"].map(
-                        lambda t: _adtvs.get(_ticker_key(t), 0.0) >= min_adtv
-                    )
-                ].copy()
-                _n_rem_adtv = _n_antes_adtv - df_set["ticker"].nunique()
-                if _n_rem_adtv > 0:
-                    _amostra = ", ".join(_removidos_adtv[:12])
-                    _reticencias = "…" if len(_removidos_adtv) > 12 else ""
+                }
+                _novos_adtv = sorted(_fora_liquidez_hoje - _fora_tamanho_hoje)
+                if _novos_adtv:
+                    _amostra = ", ".join(_novos_adtv[:12])
+                    _reticencias = "…" if len(_novos_adtv) > 12 else ""
                     st.caption(
-                        f"💧 Filtro de liquidez ({_adtv_label}): {_n_rem_adtv} "
-                        f"empresa(s) removida(s) por volume negociado abaixo do "
-                        f"piso ou sem série de volume — {_amostra}{_reticencias}"
+                        f"💧 Filtro de liquidez ({_adtv_label}): {len(_novos_adtv)} "
+                        f"de {_n_antes_adtv} empresa(s) fora da carteira atual por "
+                        "volume negociado de hoje abaixo do piso ou sem série de "
+                        f"volume — {_amostra}{_reticencias}. Na reconstrução vale "
+                        "o volume de cada época."
                     )
 
+    # df_set_hist: universo da reconstrução (todas as listadas; a época filtra
+    # ano a ano). df_set: o que pode entrar na carteira de hoje.
+    _fora_hoje = _fora_tamanho_hoje | _fora_liquidez_hoje
+    df_set_hist = df_set
+    df_set = df_set[~df_set["ticker"].astype(str).isin(_fora_hoje)].copy()
     if df_set.empty:
         st.error(
             "Nenhuma empresa sobreviveu aos filtros de tamanho e liquidez. "
@@ -3261,23 +3289,34 @@ def render(show_header: bool = True) -> None:
         # viria dos FIIs e toda ação viraria "parada" (no armazém local, em
         # 04/10, a última ação negociada é de agosto e 334 FIIs vão até outubro).
         _vol_hist = _vol_hist[_vol_hist["ticker"].isin(
-            {_ticker_key(t) for t in df_set["ticker"].unique()}
+            {_ticker_key(t) for t in df_set_hist["ticker"].unique()}
         )]
         _parados_hoje = _upit.parados_em(_vol_hist, pd.Timestamp.now().date())
+        # Tamanho por época dos vivos; o de quem saiu já veio em _saidas_eleg.
+        _abaixo_tam = _upit.abaixo_do_tamanho_por_ano(
+            _vol_hist, _mcaps, _anos_recon, float(min_mcap)
+        )
         if _doc_saidas:
             _vol_hist = pd.concat(
                 [_vol_hist, _saidas.volume_mensal(_doc_saidas)], ignore_index=True
             )
-        _elegib_pit = _upit.elegiveis_por_ano(
-            _vol_hist, _anos_recon,
-            float(min_adtv), rebal_month=int(_REBAL_MONTH),
+        _elegib_pit = _upit.incorporar_tamanho(
+            _upit.elegiveis_por_ano(
+                _vol_hist, _anos_recon,
+                float(min_adtv), rebal_month=int(_REBAL_MONTH),
+            ),
+            _abaixo_tam,
         )
     except LiquidezDataError as exc:
-        if min_adtv > 0:
+        if _fora_hoje:
+            # Sem a série da época, o conservador é o filtro de hoje em todos
+            # os anos (o look-ahead antigo, declarado), não universo sem piso.
+            df_set_hist = df_set
             st.warning(
-                f"⚠️ Liquidez por época **não aplicada** ({exc}): a reconstrução "
-                "histórica usa o universo filtrado pelo volume de HOJE em todos os "
-                "anos — papéis ilíquidos no passado podem ter sido escolhidos."
+                f"⚠️ Tamanho e liquidez por época **não aplicados** ({exc}): a "
+                "reconstrução histórica usa o universo filtrado pela foto de "
+                "HOJE em todos os anos — quem encolheu sumiu do passado e o "
+                "resultado histórico fica otimista."
             )
         else:
             st.warning(
@@ -3286,17 +3325,30 @@ def render(show_header: bool = True) -> None:
             )
     if _elegib_pit:
         _anos_med = [a for a, v in _elegib_pit.items() if v["medido"]]
-        _tks_set = {_ticker_key(t) for t in df_set["ticker"].unique()}
+        _tks_set = {_ticker_key(t) for t in df_set_hist["ticker"].unique()}
         _pares = sum(len(v["abaixo"] & _tks_set) for v in _elegib_pit.values())
         _pares_parados = sum(
             len((v.get("parados") or set()) & _tks_set) for v in _elegib_pit.values()
         )
-        _parados_hoje_set = sorted(_parados_hoje & _tks_set)
+        _pares_tam = sum(
+            len((v.get("abaixo_tamanho") or set()) & _tks_set)
+            for v in _elegib_pit.values()
+        )
+        _parados_hoje_set = sorted(
+            _parados_hoje & {_ticker_key(t) for t in df_set["ticker"].unique()}
+        )
         _txt_piso = (
             f"{_pares} combinação(ões) papel-ano ficaram fora da disputa por "
             "estarem abaixo do piso naquela época (piso nominal, não "
             "deflacionado — mais brando nos anos antigos); "
             if min_adtv > 0 else ""
+        )
+        _txt_tam = (
+            f"{_pares_tam} combinação(ões) papel-ano ficaram fora por valor de "
+            f"mercado da época abaixo de {_liq_label} (estimado em 31/12 do "
+            "exercício lido: valor de hoje × razão de preços sem dividendos — "
+            "emissões e recompras posteriores não entram); "
+            if min_mcap > 0 else ""
         )
         _amostra_par = ", ".join(_parados_hoje_set[:12])
         _txt_hoje = (
@@ -3307,7 +3359,7 @@ def render(show_header: bool = True) -> None:
         )
         st.caption(
             f"🕰️ Universo por época: em {len(_anos_med)} de {len(_elegib_pit)} "
-            f"anos da reconstrução havia volume para medir; {_txt_piso}"
+            f"anos da reconstrução havia volume para medir; {_txt_piso}{_txt_tam}"
             f"{_pares_parados} combinação(ões) papel-ano ficaram fora por papel "
             f"parado (sem negócio há mais de {_upit.DIAS_PARADO} dias na data da "
             "decisão; quem já estava na carteira segue contando o retorno)."
@@ -3343,8 +3395,15 @@ def render(show_header: bool = True) -> None:
     teto_setor = float(st.session_state.get("pb3_teto_setor", 100)) / 100.0
     teto_ciclico = float(st.session_state.get("pb3_teto_ciclico", 100)) / 100.0
 
+    # Selic do backtest sem futuro: a média da série inteira entrava como
+    # caixa de anos sem observação (look-ahead, auditoria app4). taxa_selic_aa
+    # segue para o valuation de HOJE, onde a média é premissa declarada.
+    selic_hist = _selic_sem_futuro(selic_macro, pd.Timestamp.now().year)
+
     if rodar:
-        all_tickers = tuple(sorted(df_set["ticker"].unique()))
+        # Reconstrução sobre TODAS as listadas: os pisos de hoje só decidem a
+        # carteira atual (fora_hoje, abaixo); a época filtra ano a ano.
+        all_tickers = tuple(sorted(df_set_hist["ticker"].unique()))
 
         with st.spinner("Carregando histórico de múltiplos de todos os tickers…"):
             hist_batch_raw = _db.load_multiplos_historico_batch(all_tickers)
@@ -3408,6 +3467,7 @@ def render(show_header: bool = True) -> None:
         # O df_set persistido segue só com as listadas: as telas seguintes
         # (próximo ano, carteira atual) falam da decisão de hoje.
         df_set_vivas = df_set
+        df_set = df_set_hist
         anos_hist_rec = dict(anos_hist or {})
         if _saidas_eleg:
             _set_s = _saidas.setores(_doc_saidas)
@@ -3449,7 +3509,7 @@ def render(show_header: bool = True) -> None:
                 res = _processar_segmento(
                     tickers_seg, hist_batch, df_precos_all,
                     str(setor), str(subsetor), str(segmento),
-                    taxa_selic_aa, selic_macro, macro_history, float(aporte),
+                    taxa_selic_aa, selic_hist, macro_history, float(aporte),
                     int(ano_inicio), gamma, cap, soft,
                     dividendos=None,
                     janela_val_anos=int(janela_val_anos),
@@ -3460,6 +3520,7 @@ def render(show_header: bool = True) -> None:
                     saidas_elegiveis=_saidas_eleg,
                     saidas_ultimo_pregao=_saidas_ult,
                     parados_hoje=_parados_hoje,
+                    fora_hoje={_ticker_key(t) for t in _fora_hoje},
                 )
                 if res:
                     resultados.append(res)
@@ -5005,7 +5066,7 @@ def render(show_header: bool = True) -> None:
     render_safras(
         aprovados,
         df_precos_all,
-        selic_por_ano=selic_macro,
+        selic_por_ano=selic_hist,
         taxa_selic_aa=taxa_selic_aa,
         resultados_todos=resultados,
     )
