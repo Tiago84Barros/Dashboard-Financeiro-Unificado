@@ -1588,6 +1588,68 @@ def _render_us_lab_entry(entry: pd.DataFrame) -> None:
                 st.markdown(_entry_detail_card(row), unsafe_allow_html=True)
 
 
+def _texto_premissas_liquido_us(premissas: dict) -> str:
+    """Premissas do retorno líquido em reais, na tela (auditoria app4, EUA-J)."""
+    def _pct(chave: str, casas: int = 0) -> str:
+        return f"{float(premissas.get(chave) or 0) * 100:.{casas}f}%".replace(".", ",")
+    dividendo = ("o dividendo observado de cada ação"
+                 if premissas.get("dividendo") == "observado no painel" else
+                 f"um dividend yield declarado de {_pct('dividend_yield_premissa', 1)} "
+                 "a.a. (o painel não separa preço de provento)")
+    return (
+        "Líquido em reais: custo de giro de "
+        f"{float(premissas.get('custo_transacao_bps') or 0):.0f} bps + slippage de "
+        f"{float(premissas.get('slippage_bps') or 0):.0f} bps por unidade de "
+        f"turnover; retenção de {_pct('retencao_dividendos')} na fonte sobre "
+        f"{dividendo}; conversão pelo USDBRL de fim de mês; IR de "
+        f"{_pct('ir_ganho_capital')} sobre o ganho realizado em reais no "
+        "rebalanceamento (Lei 14.754, com compensação de prejuízo); IOF de "
+        f"{_pct('iof_remessa', 1)} na remessa e {_pct('iof_ingresso', 2)} no "
+        "ingresso. Sem IR na liquidação final. Os pesos iguais de comparação "
+        "saem em reais, brutos: são o universo, não um investidor."
+    )
+
+
+def _bloco_liquido_us(res: dict) -> None:
+    """Líquido em reais como padrão, bruto ao lado (auditoria app4, EUA-J)."""
+    liquido = res.get("liquido") or {}
+    if not liquido.get("ok"):
+        aviso_lacuna(
+            "Retorno líquido em reais indisponível ("
+            + str(liquido.get("motivo") or "sem série de USDBRL")
+            + "). Os números abaixo são brutos, em dólar, sem custo nem imposto.",
+            codigo="tela.eua.backtest_liquido_indisponivel", nivel="warning")
+        return
+
+    def _p(x):
+        return "—" if x is None else f"{x * 100:.2f}%"
+
+    secao_titulo("Retorno líquido em reais (padrão)", "🇧🇷")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        card_metrica("Retorno anual líquido (R$)",
+                     _p(liquido["portfolio_brl_liquido"].get("ann_return")),
+                     ajuda="Depois de custo, retenção, IR e IOF.")
+    with c2:
+        card_metrica("Retorno anual bruto (R$)",
+                     _p(liquido["portfolio_brl_bruto"].get("ann_return")),
+                     ajuda="Só a conversão cambial, sem custo nem imposto.")
+    with c3:
+        card_metrica("Excesso líquido sobre pesos iguais",
+                     _p(liquido.get("excess_ann_vs_ew_liquido")))
+    with c4:
+        card_metrica("Excesso bruto sobre pesos iguais",
+                     _p(liquido.get("excess_ann_vs_ew_brl_bruto")),
+                     ajuda="Em reais, sem custo nem imposto. Em dólar, o "
+                           "excesso bruto está na seção seguinte.")
+    st.caption(
+        f"Por período, em média: custo de giro {_p(liquido.get('custo_medio'))}, "
+        f"retenção {_p(liquido.get('retencao_media'))}, IR "
+        f"{_p(liquido.get('ir_medio'))}; IOF de ida e volta "
+        f"{_p(liquido.get('iof_total'))} no total. "
+        + _texto_premissas_liquido_us(liquido.get("premissas") or {}))
+
+
 def _render_us_lab_backtest() -> None:
     st.divider()
     _analysis_header("📈 Simulação de Patrimônio e Teste Histórico")
@@ -1634,7 +1696,10 @@ def _render_us_lab_backtest() -> None:
             with cols[idx]:
                 text = "—" if value is None else (f"{value*100:.2f}%" if percent else f"{value:.3f}")
                 card_metrica(label, text)
+        st.caption("Cartões acima: retorno bruto em dólar, sem custo, imposto "
+                   "nem câmbio.")
         st.caption(_aviso_sobrevivencia())
+        _bloco_liquido_us(result)
         curve = list(result.get("equity_curve") or [])
         dates = list(result.get("dates") or [])
         if curve:
@@ -3176,7 +3241,12 @@ def _tab_backtests(status: dict) -> None:
         card_metrica("Taxa de acerto", _p(ic["hit_rate"]))
     st.caption(_aviso_sobrevivencia())
 
-    secao_titulo("Desempenho da carteira versus pesos iguais", "📈")
+    _bloco_liquido_us(res)
+
+    secao_titulo("Desempenho bruto em dólar versus pesos iguais", "📈")
+    st.caption("Retorno total em USD, sem custo, imposto nem câmbio: é a "
+               "régua da ordenação (Rank-IC e o excesso guardado na medição "
+               "fora da amostra), não o que sobra no bolso.")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         card_metrica("Retorno anual.", _p(p["ann_return"]))
@@ -3290,8 +3360,11 @@ def _tab_backtests(status: dict) -> None:
 
     if res.get("equity_curve"):
         secao_titulo("Curva de capital", "📉")
-        curve = pd.DataFrame({"Curva": res["equity_curve"]},
+        curve = pd.DataFrame({"Bruta (US$)": res["equity_curve"]},
                              index=res.get("dates"))
+        liquido = res.get("liquido") or {}
+        if liquido.get("ok") and liquido.get("dates") == res.get("dates"):
+            curve["Líquida (R$)"] = liquido["equity_curve_liquido"]
         st.line_chart(curve)
 
 

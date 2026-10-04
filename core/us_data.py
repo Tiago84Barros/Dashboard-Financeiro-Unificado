@@ -209,6 +209,12 @@ def asymmetry_universe(limit_companies: int | None = None):
     return _read.load_asymmetry_frame(limit_companies=limit_companies)
 
 
+@_cache_pesado
+def usdbrl_mensal():
+    """Câmbio de fim de mês para o backtest em reais (core.us_read)."""
+    return _read.load_usdbrl_mensal()
+
+
 def backtest(top_n: int = 20, weighting: str = "score", *,
              benchmark=None, benchmark_loader=None) -> dict:
     """Backtest PIT sobre o painel de scores (vazio até computar o histórico).
@@ -221,6 +227,10 @@ def backtest(top_n: int = 20, weighting: str = "score", *,
     baseline; o equal-weight do universo continua sendo calculado e reportado.
     Sem série publicada para o índice, o resultado traz `benchmark.ok = False`
     com erro nomeado — nunca um excesso calculado contra outra coisa.
+    
+    O bloco `liquido` traz o mesmo walk-forward em reais, depois de custo,
+    retenção, IR e IOF (auditoria app4, EUA-J); é o que a tela mostra por
+    padrão. As chaves brutas em USD seguem iguais para a medição OOS.
     """
     import core.us_backtest as _bt
     panel = score_panel(horizon_months=HORIZONTE_PAINEL_MESES)
@@ -229,7 +239,8 @@ def backtest(top_n: int = 20, weighting: str = "score", *,
     return _bt.walk_forward(panel, top_n=top_n, weighting=weighting,
                             periods_per_year=1, benchmark=benchmark,
                             benchmark_loader=benchmark_loader,
-                            benchmark_horizon_months=HORIZONTE_PAINEL_MESES)
+                            benchmark_horizon_months=HORIZONTE_PAINEL_MESES,
+                            cambio_usdbrl=usdbrl_mensal())
 
 
 def benchmark_options() -> tuple[str, ...]:
