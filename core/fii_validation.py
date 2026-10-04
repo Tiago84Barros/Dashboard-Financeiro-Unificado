@@ -29,6 +29,72 @@ def validation_supports_strategy(validation: dict[str, Any], strategy_id: str) -
     return validation.get("status") == "passed" and validated_strategy == strategy_id
 
 
+# Piso do limite inferior do IC 95% do excesso mensal sobre o IFIX. É AVISO,
+# não portão: `validate_methodology` continua sem exigir excesso positivo.
+#
+# Medido no run 90 (v6.10.0, 70 períodos): excesso médio de +0,136 p.p./mês
+# com IC [−0,127; +0,380]. Os runs 88 e 89 dão o mesmo retrato (limite
+# inferior −0,112 e −0,141). Com o piso como bloqueio, os três reprovam e a
+# vitrine de FIIs, recém-destravada no PR #486, para de publicar. Endurecer o
+# portão é decisão humana; até lá o selo "Aprovado" sai acompanhado do IC e
+# da marca "excesso não significativo", para não ser lido como "bate o
+# índice". Os três leitores (card da carteira, aba de validação e
+# `core.validacao_motor`) leem esta constante: guarda duplicada diverge.
+PISO_IC_EXCESSO = 0.0
+
+
+def leitura_do_excesso(metrics: dict[str, Any] | None) -> dict[str, Any]:
+    """Excesso sobre o IFIX e seu IC, prontos para a tela, a partir do run.
+
+    Aceita o ``metrics_json`` do run (com ``backtest``) ou o próprio dicionário
+    do backtest. ``disponivel`` falso quando o intervalo não existe ou é NaN —
+    ausência não vira "não significativo", que é afirmação sobre um número.
+    """
+    metrics = metrics or {}
+    pit = metrics.get("backtest") if isinstance(metrics.get("backtest"), dict) else metrics
+    ci = pit.get("excess_bootstrap") or {}
+
+    def _f(valor: Any) -> float | None:
+        try:
+            numero = float(valor)
+        except (TypeError, ValueError):
+            return None
+        return numero if math.isfinite(numero) else None
+
+    inferior, superior = _f(ci.get("lower")), _f(ci.get("upper"))
+    media = _f(pit.get("mean_excess"))
+    if media is None:
+        media = _f(ci.get("mean"))
+    disponivel = inferior is not None and superior is not None
+    return {
+        "disponivel": disponivel,
+        "media": media,
+        "inferior": inferior,
+        "superior": superior,
+        "periodos": int(ci.get("n") or 0),
+        "piso": PISO_IC_EXCESSO,
+        "significativo": bool(disponivel and inferior > PISO_IC_EXCESSO),
+    }
+
+
+def _pp(valor: float) -> str:
+    """Retorno mensal em fração para pontos percentuais com vírgula."""
+    return f"{valor * 100:+.3f}".replace(".", ",").replace("-", "−")
+
+
+def texto_do_excesso(leitura: dict[str, Any]) -> str:
+    """Uma linha: média, IC 95% e o veredito contra o piso."""
+    if not leitura.get("disponivel"):
+        return "IC do excesso sobre o IFIX indisponível neste run"
+    media = leitura.get("media")
+    prefixo = (f"excesso médio de {_pp(media)} p.p./mês sobre o IFIX, "
+               if media is not None else "excesso sobre o IFIX, ")
+    veredito = ("significativo" if leitura["significativo"]
+                else "excesso não significativo")
+    return (f"{prefixo}IC 95% de {_pp(leitura['inferior'])} a "
+            f"{_pp(leitura['superior'])} p.p. — {veredito}")
+
+
 @dataclass(frozen=True)
 class ValidationThresholds:
     min_periods: int = 36
@@ -287,7 +353,7 @@ def robust_optimizer_point_in_time_backtest(
 ) -> dict[str, Any]:
     """Walk-forward do mesmo otimizador robusto usado pela carteira-modelo.
 
-    Cada rebalanceamento aplica a elegibilidade padrão v6.7, o score reconstruído
+    Cada rebalanceamento aplica a elegibilidade padrão vigente, o score reconstruído
     naquela data, o cenário macro então observável e correlações calculadas
     exclusivamente com retornos anteriores à decisão.
     """
@@ -609,7 +675,7 @@ def robust_optimizer_point_in_time_backtest(
         return {
             "status": "blocked",
             "strategy_id": LIVE_PORTFOLIO_STRATEGY_ID,
-            "blockers": ["nenhum período PIT elegível para o otimizador v6.7"],
+            "blockers": ["nenhum período PIT elegível para o otimizador robusto"],
             "optimizer_failures": optimizer_failures[:100],
             "optimizer_failure_summary": failure_summary,
             "missing_macro_periods": missing_macro_periods,

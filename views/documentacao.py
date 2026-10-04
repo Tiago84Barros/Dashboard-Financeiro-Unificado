@@ -1331,7 +1331,7 @@ FLOW_SELECAO_FIIS = FlowSpec(
             (
                 "Taxa de administração e de performance",
                 "Alavancagem e obrigações a pagar",
-                "Teto por gestora e por administradora na carteira",
+                "Teto por administrador na carteira",
             ),
             "Concentrar a carteira inteira numa única administradora é um risco que "
             "nenhuma métrica de renda mostra.",
@@ -1398,11 +1398,12 @@ FLOW_SELECAO_FIIS = FlowSpec(
         ),
         "preferencias_fii": _node(
             "preferencias_fii", "Suas preferências", "Carteira",
-            "Você define número de ativos, tetos por tipo, por gestora e por administradora, "
-            "e o piso de liquidez. A regra sai da sua mão, não de um padrão escondido.",
+            "Você define número de ativos, peso máximo por ativo e o piso de liquidez; os "
+            "tetos por tipo e por administrador vêm da política e aparecem na tela, inclusive "
+            "quando ficam inativos por falta de cobertura.",
             (
                 "Quantidade de ativos e pesos mínimo/máximo",
-                "Tetos por tipo, gestora e administradora",
+                "Tetos por tipo e por administrador (não por gestora)",
                 "Piso de liquidez diária",
             ),
             "Teto que você não viu é premissa de quem escreveu o código — e envelhece "
