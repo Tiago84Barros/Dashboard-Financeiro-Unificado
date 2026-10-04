@@ -70,7 +70,9 @@ logger = logging.getLogger(__name__)
 
 #: 2.0.0: banda do portão por UM veto por safra na carteira (era um por
 #: segmento, que empatava as duas variantes quando o segmento tem um só nome).
-VERSAO_MEDICAO = "oos-carteira-2.0.0"
+#: 2.1.0: nome selecionado com peso 0 também é candidato a veto -- o portão
+#: real roda antes do filtro de peso, e o substituto entra com o PRÓPRIO peso.
+VERSAO_MEDICAO = "oos-carteira-2.1.0"
 CAMINHO_MEDICAO = Path(__file__).resolve().parents[1] / "data" / "oos_carteira_b3.json"
 
 #: Mesmo piso da view para a janela de validação valer: menos que 18 meses é
@@ -96,17 +98,18 @@ PORTAO_LLM = {
         "(desligado por padrão) e não determinístico."),
     "como_medido": (
         "Banda de ATÉ UM veto por safra, no nível da carteira. Em cada safra a "
-        "medição testa todas as opções -- não vetar e vetar cada nome da "
-        "carteira (ele sai de todo segmento em que foi escolhido e o próximo "
-        "do ranking da safra no segmento herda vaga e peso; sem próximo no "
-        "ranking, o segmento sai e seu orçamento vai para os demais) --, "
-        "remonta com "
-        "cap e tetos e fica com o veto que MAIS derruba o retorno bruto da "
-        "safra ('veta o melhor', adversário) e com o que MAIS o sobe ('veta o "
-        "pior', favorável). No bruto são limites estritos para qualquer "
-        "portão que vete no máximo um nome por safra, e o sem-portão fica "
-        "sempre entre eles; no líquido o veto muda o giro e o custo pode "
-        "deslocá-los um pouco. Portão que vete mais de um nome por safra pode "
+        "medição testa todas as opções -- não vetar e vetar cada nome "
+        "selecionado, inclusive a maior participação que entra sem peso (ele "
+        "sai de todo segmento em que foi escolhido e o próximo do ranking da "
+        "safra no segmento herda a vaga, com o peso próprio ou, sem ele, o do "
+        "vetado; sem próximo no ranking, o segmento sai e seu orçamento vai "
+        "para os demais) --, remonta com cap e tetos e fica com o veto que "
+        "MAIS derruba o retorno BRUTO da safra ('veta o melhor', adversário) "
+        "e com o que MAIS o sobe ('veta o pior', favorável). No bruto são "
+        "limites estritos para qualquer portão que vete no máximo um nome por "
+        "safra, e o sem-portão fica sempre entre eles. No líquido não são: o "
+        "veto muda o giro, e os números líquidos dessas variantes são os dos "
+        "cenários escolhidos pelo bruto. Portão que vete mais de um nome por safra pode "
         "sair da banda. O substituto não passa pelo Score de Entrada (ele lê "
         "o retrato de hoje e o sem-portão também não passa). Até a medição "
         "1.0.0 o veto era um por SEGMENTO; como quase todo segmento escolhe "
@@ -336,10 +339,13 @@ def substituto_no_segmento(selecionados: list[str], ranking: list) -> str | None
 
 
 def candidatos_a_veto(segmentos: list[Segmento]) -> list[str]:
-    """Nomes que um portão poderia vetar: os que têm peso em algum segmento
-    (nome com peso 0 é descartado na montagem -- vetá-lo não muda nada)."""
-    nomes = {str(tk) for _setor, sel, pesos, _rk in segmentos for tk in sel
-             if float(pesos.get(tk, 0.0) or 0.0) > 0}
+    """Nomes que um portão poderia vetar: TODO selecionado, inclusive o de
+    peso 0. A maior participação fora do top-n entra na seleção sem peso, e o
+    portão da tela (`_aplicar_gate_qualitativo`) roda antes do filtro de
+    peso: vetá-lo põe o próximo do ranking com o peso PRÓPRIO dele
+    (`pesos.get(sub) or ...`), o que muda a carteira. Quando não muda, o
+    empate fica com "não vetar"."""
+    nomes = {str(tk) for _setor, sel, _p, _rk in segmentos for tk in sel}
     return sorted(nomes)
 
 
