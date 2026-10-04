@@ -54,6 +54,7 @@ from core.user_context import user_cache_data
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, container_pagina
 from design.tema_canvas import escala_correlacao
+from views.investimentos_atribuicao import render_atribuicao_carteira
 from views.investimentos_risco import render_risco_carteira
 
 logger = logging.getLogger(__name__)
@@ -3778,6 +3779,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 st.caption("Sem dados de setor.")
 
         # Por último na sub-aba: st.chat_input puxa o foco para o rodapé.
+        from core.carteira_atribuicao import get_atribuicao_carteira
         from core.carteira_risco import get_risco_carteira
         from core.contexto_mercado import ativos_por_classe, bloco_contexto_mercado
         from core.llm_context_carteira import build_carteira_geral_context
@@ -3790,7 +3792,8 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         def _contexto_geral(pergunta, *, valores_reais=False):
             contexto = (build_carteira_geral_context(carteira, proventos,
                                                      valores_reais=valores_reais,
-                                                     risco=get_risco_carteira())
+                                                     risco=get_risco_carteira(),
+                                                     atribuicao=get_atribuicao_carteira())
                         + "\n\n" + bloco_contexto_mercado(ativos_por_classe(posicoes),
                                                        max_itens_por_classe=6))
             detalhe = bloco_detalhe_armazem(quadro_das_posicoes(posicoes), pergunta)
@@ -4583,6 +4586,7 @@ def render() -> None:
     with tab2:
         _tab_historico(cashflow, proventos, evolucao, carteira)
         render_risco_carteira()
+        render_atribuicao_carteira()
 
     with tab3:
         _tab_carteira(carteira, proventos)
