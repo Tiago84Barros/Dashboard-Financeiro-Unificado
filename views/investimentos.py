@@ -2346,8 +2346,8 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
         st.caption(
             "O histórico vem dos relatórios consolidados da Área do Investidor da B3, "
             "ações emprestadas incluídas, como na Evolução Patrimonial da B3. "
-            "O ponto de hoje no gráfico também é só Brasil; o exterior (Nomad), que a B3 "
-            "não mostra, entra no Valor de Mercado Atual acima. "
+            "Cada ponto soma também o exterior (Nomad), que a B3 não mostra: quantidade "
+            "pelas notas de corretagem até a data, preço e dólar do fechamento da data. "
             "Ganho total = (valor de mercado − custo da carteira atual) + lucro ou prejuízo "
             "já realizado em vendas + proventos recebidos. As vendas vêm do extrato de "
             "negociação da B3, a preço médio (a mesma conta do IR). Não existe "
@@ -2356,6 +2356,13 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
             "percentual: dividir por custo da carteira de hoje misturaria dinheiro que já "
             "saiu dela; a taxa do período é a TIR do bloco contra o CDI."
         )
+        if evolucao.get("exterior_historico_ok") is False:
+            st.warning("Não foi possível recompor o exterior (Nomad) nos meses passados; "
+                       "só o ponto de hoje o inclui.")
+        sem_preco = [f"{s['label']} ({', '.join(s['exterior_sem_preco'])})"
+                     for s in snapshots if s.get("exterior_sem_preco")]
+        if sem_preco:
+            st.caption("Exterior sem cotação na data, fora da soma: " + "; ".join(sem_preco) + ".")
         _editor_posicao_anterior(realizado)
         sem_custo = [s["label"] for s in snapshots if s.get("valor_investido") is None]
         if sem_custo:

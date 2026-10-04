@@ -1700,6 +1700,61 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
     ORDER BY x.report_date
 """
 
+# Exterior (Nomad) nas datas das fotos da B3. A B3 nao enxerga a Nomad, entao
+# o ponto historico e recomposto: quantidade pelas notas de corretagem ate a
+# data, preco do ativo e USDBRL pelo ultimo fechamento de asset_quotes ate ela.
+_SQL_EVOLUCAO_EXTERIOR_TX = """
+    SELECT upper(a.ticker)            AS ticker,
+           it.asset_id::text          AS asset_id,
+           it.transaction_date::date  AS data,
+           lower(it.type)             AS tipo,
+           it.quantity                AS quantidade,
+           it.unit_price              AS preco
+    FROM   investment_transactions it
+    JOIN   assets a ON a.id = it.asset_id
+    WHERE  it.user_id = :uid
+      AND  upper(coalesce(a.currency, 'BRL')) = 'USD'
+      AND  lower(it.type) IN ('buy', 'sell')
+      AND  it.quantity > 0
+    ORDER  BY it.transaction_date, it.id
+"""
+
+_SQL_EVOLUCAO_EXTERIOR_PRECOS = """
+    SELECT d.data, t.asset_id::text AS asset_id, q.close
+    FROM   unnest(CAST(:datas AS date[])) AS d(data)
+    CROSS  JOIN unnest(CAST(:ativos AS uuid[])) AS t(asset_id)
+    LEFT JOIN LATERAL (
+        SELECT close
+        FROM   asset_quotes
+        WHERE  asset_id = t.asset_id
+          AND  close > 0
+          AND  timestamp::date <= d.data
+          AND  timestamp::date >= d.data - :janela
+        ORDER  BY timestamp DESC
+        LIMIT  1
+    ) q ON true
+"""
+
+_SQL_EVOLUCAO_EXTERIOR_FX = """
+    SELECT d.data, q.close
+    FROM   unnest(CAST(:datas AS date[])) AS d(data)
+    LEFT JOIN LATERAL (
+        SELECT aq.close
+        FROM   asset_quotes aq
+        JOIN   assets fa ON fa.id = aq.asset_id
+        WHERE  fa.ticker = 'USDBRL'
+          AND  aq.close > 0
+          AND  aq.timestamp::date <= d.data
+          AND  aq.timestamp::date >= d.data - :janela
+        ORDER  BY aq.timestamp DESC
+        LIMIT  1
+    ) q ON true
+"""
+
+#: Dias que a busca de preco anda para tras da data da foto: fim de mes em
+#: fim de semana mais feriado americano.
+_JANELA_EXTERIOR_DIAS = 10
+
 
 def ganho_total(evolucao: dict, realizado: dict | None = None) -> dict | None:
     """Ganho da carteira: (mercado − custo) + lucro realizado em vendas + proventos.
@@ -1817,14 +1872,24 @@ def _evolucao_real() -> dict:
                 # vem da declaracao do usuario, o da curva tem de vir dela
                 # tambem -- duas respostas para "quanto custou" e um degrau
                 # inexplicavel no grafico.
-                # O total de hoje e o mesmo Patrimonio Total do Dashboard,
+                # O ponto de hoje e o mesmo Patrimonio Total do Dashboard,
                 # exterior incluido: a mesma pergunta com duas montagens dava
-                # dois numeros. O ponto do grafico fica so com o Brasil.
+                # dois numeros.
                 current_totals = (
                     _carteira_snapshot_consolidada(conn, owner, current_rows)
                     if current_rows else None
                 )
-                return _montar_evolucao_snapshot(snap_rows, div_rows, current_totals, tx_rows)
+                try:
+                    exterior = _exterior_nas_datas(conn, owner, [r.mes for r in snap_rows])
+                    exterior_ok = True
+                except Exception as exc:
+                    logger.warning("[investimentos] exterior historico indisponivel (%s).",
+                                   type(exc).__name__)
+                    exterior, exterior_ok = {}, False
+                d = _montar_evolucao_snapshot(snap_rows, div_rows, current_totals, tx_rows,
+                                              exterior)
+                d["exterior_historico_ok"] = exterior_ok
+                return d
         tx_rows   = conn.execute(text(_SQL_EVOLUCAO_TX),    {"uid": owner}).fetchall()
         div_rows  = conn.execute(text(_SQL_EVOLUCAO_DIV),   {"uid": owner}).fetchall()
         ratio_row = conn.execute(text(_SQL_EVOLUCAO_RATIO), {"uid": owner}).fetchone()
@@ -1875,15 +1940,76 @@ def _evolucao_real() -> dict:
     }
 
 
-def _e_exterior(pos: dict) -> bool:
-    """Mesma regra do cartao de exterior do Dashboard (views._is_exterior_position)."""
-    pais = str(pos.get("pais") or pos.get("country") or "BR").upper()
-    moeda = str(pos.get("moeda") or "BRL").upper()
-    return pais not in ("", "BR") or moeda != "BRL"
+def _exterior_nas_datas(conn, owner: str, datas: list) -> dict:
+    """``{data: {"vm", "vi", "faltando"}}`` do exterior em cada data de foto.
+
+    ``vm`` soma so as posicoes com preco na data; as sem preco vao para
+    ``faltando`` pelo ticker, em vez de entrarem a zero sem aviso. ``vi`` e o
+    custo em BRL pelo cambio de cada compra; ``None`` se faltar esse cambio.
+    """
+    from sqlalchemy import text
+
+    tx = conn.execute(text(_SQL_EVOLUCAO_EXTERIOR_TX), {"uid": owner}).fetchall()
+    if not tx or not datas:
+        return {}
+    datas = sorted(set(datas))
+    ativos = sorted({r.asset_id for r in tx})
+    datas_fx = sorted(set(datas) | {r.data for r in tx})
+    params = {"janela": _JANELA_EXTERIOR_DIAS}
+    precos = {
+        (r.data, r.asset_id): float(r.close)
+        for r in conn.execute(text(_SQL_EVOLUCAO_EXTERIOR_PRECOS),
+                              {**params, "datas": datas, "ativos": ativos}).fetchall()
+        if r.close is not None
+    }
+    fx = {
+        r.data: float(r.close)
+        for r in conn.execute(text(_SQL_EVOLUCAO_EXTERIOR_FX),
+                              {**params, "datas": datas_fx}).fetchall()
+        if r.close is not None
+    }
+
+    # Por ticker: quantidade, custo em BRL (None = cambio da compra ausente).
+    carteira: dict[str, dict] = {}
+    resultado: dict = {}
+    i = 0
+    for data in datas:
+        while i < len(tx) and tx[i].data <= data:
+            r = tx[i]
+            i += 1
+            pos = carteira.setdefault(r.ticker, {"asset_id": r.asset_id, "qtd": 0.0, "custo": 0.0})
+            qtd = float(r.quantidade or 0)
+            if r.tipo == "buy":
+                taxa = fx.get(r.data)
+                pos["qtd"] += qtd
+                if pos["custo"] is not None:
+                    pos["custo"] = (pos["custo"] + qtd * float(r.preco or 0) * taxa
+                                    if taxa else None)
+            elif pos["qtd"] > 0:
+                fracao = min(qtd, pos["qtd"]) / pos["qtd"]
+                if pos["custo"] is not None:
+                    pos["custo"] -= pos["custo"] * fracao
+                pos["qtd"] = max(pos["qtd"] - qtd, 0.0)
+
+        vm, vi, faltando = 0.0, 0.0, []
+        taxa_hoje = fx.get(data)
+        for ticker, pos in sorted(carteira.items()):
+            if pos["qtd"] <= 1e-6:
+                continue
+            preco = precos.get((data, pos["asset_id"]))
+            if preco is None or not taxa_hoje:
+                faltando.append(ticker)
+            else:
+                vm += pos["qtd"] * preco * taxa_hoje
+            vi = None if vi is None or pos["custo"] is None else vi + pos["custo"]
+        resultado[data] = {"vm": round(vm, 2),
+                           "vi": round(vi, 2) if vi is not None else None,
+                           "faltando": faltando}
+    return resultado
 
 
 def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: dict | None = None,
-                              tx_rows: list | None = None) -> dict:
+                              tx_rows: list | None = None, exterior: dict | None = None) -> dict:
     """Série de patrimônio pelas fotos e fluxo de aporte pelo extrato.
 
     ``aporte`` é compra − venda do extrato no mês. Antes era a variação do
@@ -1909,6 +2035,15 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
     for r in snap_rows:
         mes = r.mes
         vm = float(r.valor_mercado or 0)
+        vi = r.valor_investido_snapshot
+        vi = float(vi) if vi is not None else None
+        # A foto da B3 nao tem a Nomad; o exterior da mesma data entra aqui,
+        # senao o ponto de hoje (que tem) salta ~R$ 100 mil sobre o anterior.
+        ext = (exterior or {}).get(mes)
+        if ext:
+            vm += ext["vm"]
+            if vi is not None:
+                vi = vi + ext["vi"] if ext["vi"] is not None else None
         cum_div = _div_ate(mes.year, mes.month)
         label = f"{_MESES_PT_CF[mes.month]}/{str(mes.year)[-2:]}"
         mes_str = mes.strftime("%Y-%m")
@@ -1917,10 +2052,10 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
             "mes_str":             mes_str,
             # None = custo desconhecido na foto: o grafico abre uma lacuna
             # em vez de desenhar custo zero.
-            "valor_investido":     (round(float(r.valor_investido_snapshot), 2)
-                                    if r.valor_investido_snapshot is not None else None),
+            "valor_investido":     round(vi, 2) if vi is not None else None,
             "valor_mercado":       round(vm, 2),
             "valor_com_dividendos": round(vm + cum_div, 2),
+            "exterior_sem_preco":  list(ext["faltando"]) if ext else [],
         })
 
     if current_totals:
@@ -1930,19 +2065,8 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
         current_month = _date(hoje.year, hoje.month, 1)
         label = f"{_MESES_PT_CF[current_month.month]}/{str(current_month.year)[-2:]}"
         mes_str = current_month.strftime("%Y-%m")
-        total_vm = round(float(current_totals.get("total_mercado") or 0), 2)
-        total_vi = round(float(current_totals.get("total_investido") or 0), 2)
-        # O ponto de hoje no grafico fica so com o Brasil, como as fotos da
-        # B3 que vem antes dele: com a Nomad (~R$ 101 mil) somada so neste
-        # ponto, set/26 -> out/26 parecia um ganho de R$ 100 mil no mes. O
-        # total com o exterior continua nos cartoes (total_mercado).
-        posicoes = current_totals.get("posicoes")
-        if posicoes:
-            br = [p for p in posicoes if not _e_exterior(p)]
-            current_vm = round(sum(float(p.get("valor_mercado") or 0) for p in br), 2)
-            current_vi = round(sum(float(p.get("total_investido") or 0) for p in br), 2)
-        else:
-            current_vm, current_vi = total_vm, total_vi
+        current_vm = round(float(current_totals.get("total_mercado") or 0), 2)
+        current_vi = round(float(current_totals.get("total_investido") or 0), 2)
         cum_div = _div_ate(current_month.year, current_month.month)
         current_snapshot = {
             "label":               label,
@@ -1950,7 +2074,6 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
             "valor_investido":     current_vi,
             "valor_mercado":       current_vm,
             "valor_com_dividendos": round(current_vm + cum_div, 2),
-            "so_brasil":           bool(posicoes),
         }
         if snapshots and snapshots[-1]["mes_str"] == mes_str:
             snapshots[-1] = current_snapshot
@@ -1968,8 +2091,6 @@ def _montar_evolucao_snapshot(snap_rows: list, div_rows: list, current_totals: d
         })
 
     latest = snapshots[-1] if snapshots else {}
-    if current_totals:
-        latest = {"valor_investido": total_vi, "valor_mercado": total_vm}
     return {
         "snapshots":        snapshots,
         "fluxo_mensal":     fluxo_mensal,
