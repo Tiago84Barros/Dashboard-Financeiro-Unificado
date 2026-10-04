@@ -115,16 +115,25 @@ def render_oos_carteira() -> None:
 
             adv = variantes.get(oos.PORTAO_VETA_O_MELHOR) or {}
             fav = variantes.get(oos.PORTAO_VETA_O_PIOR) or {}
-            melhor = adv.get("vs_equal_weight") or {}
-            pior = fav.get("vs_equal_weight") or {}
-            if melhor and pior:
+            adv_b = adv.get("vs_equal_weight_bruto") or {}
+            fav_b = fav.get("vs_equal_weight_bruto") or {}
+            sem_b = base.get("vs_equal_weight_bruto") or {}
+            adv_l = adv.get("vs_equal_weight") or {}
+            fav_l = fav.get("vs_equal_weight") or {}
+            if adv_b and fav_b:
+                # O veto é escolhido pelo BRUTO, e só no bruto a banda é limite
+                # estrito; o líquido das variantes é o daqueles cenários.
                 st.caption(
                     "Banda do portão de LLM (não medido diretamente — ver abaixo), "
-                    "para um portão que vete ATÉ UM nome da carteira por safra: no "
-                    f"pior veto possível, {_pp(melhor.get('media'))} IC {_ic(melhor)}; "
-                    f"no melhor, {_pp(pior.get('media'))} IC {_ic(pior)}; sem portão, "
-                    f"{_pp(principal.get('media'))}. Portão que vete mais de um nome "
-                    "pode sair da banda.")
+                    "para um portão que vete ATÉ UM nome da carteira por safra. "
+                    "Limites estritos, no BRUTO: pior veto possível "
+                    f"{_pp(adv_b.get('media'))} IC {_ic(adv_b)}; melhor "
+                    f"{_pp(fav_b.get('media'))} IC {_ic(fav_b)}; sem portão "
+                    f"{_pp(sem_b.get('media'))}. No líquido, os mesmos cenários dão "
+                    f"{_pp(adv_l.get('media'))} e {_pp(fav_l.get('media'))} (sem "
+                    f"portão {_pp(principal.get('media'))}) -- escolhidos pelo bruto, "
+                    "não são limites estritos do líquido. Portão que vete mais de "
+                    "um nome pode sair da banda.")
                 for rotulo, var in (("Pior veto", adv), ("Melhor veto", fav)):
                     vetos = [f"{s['safra']} {s['veto']}" for s in var.get("safras") or []
                              if s.get("veto") and not s.get("sem_carteira")]

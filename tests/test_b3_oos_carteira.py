@@ -161,6 +161,24 @@ def test_vetado_sem_substituto_esvazia_o_segmento_e_o_orcamento_vai_aos_demais()
     assert fav["bruto"] == pytest.approx(0.10)
 
 
+def test_vetar_a_maior_sem_peso_poe_o_substituto_com_o_peso_proprio():
+    # A maior participação fora do top-n entra sem peso; o portão da tela roda
+    # antes do filtro de peso, e vetá-la põe o próximo do ranking (B3, que tem
+    # peso próprio no top-n) na carteira. Aqui esse é o melhor veto: vetar A3
+    # o tira também de S2, onde o substituto C3 afunda.
+    segs = [_seg("S1", ["A3", "Z3"], {"A3": 0.5, "B3": 0.5}, ["A3", "Z3", "B3"]),
+            _seg("S2", ["A3"], {"A3": 1.0}, ["A3", "C3"])]
+    rets = {"A3": 0.0, "Z3": 0.0, "B3": 0.60, "C3": -1.0}
+    assert "Z3" in oos.candidatos_a_veto(segs)
+    sem = oos.montar_carteira(oos.vetar_na_carteira(segs, None)[0], **TETOS)
+    assert sem["pesos"] == pytest.approx({"A3": 1.0})
+    fav = oos.escolher_veto(segs, rets, veta="pior", **TETOS)
+    assert fav["vetado"] == "Z3"
+    assert fav["trocas"] == [{"sai": "Z3", "entra": "B3", "setor": "S1"}]
+    assert fav["carteira"]["pesos"] == pytest.approx({"A3": 0.75, "B3": 0.25})
+    assert fav["bruto"] == pytest.approx(0.15)
+
+
 def test_escolhe_pelo_impacto_na_carteira_e_nao_pelo_maior_retorno():
     # A3 rendeu mais, mas tem 10% do segmento e um substituto quase igual;
     # B3 rendeu menos com peso cheio e um substituto que perdeu.
@@ -183,9 +201,11 @@ def test_veto_vale_para_o_papel_em_todo_segmento_que_o_escolheu():
     assert adv["vetado"] == "D3" and adv["bruto"] == pytest.approx(0.0)
 
 
-def test_empate_fica_com_nao_vetar_e_nome_sem_peso_nao_e_candidato():
+def test_empate_fica_com_nao_vetar_mesmo_com_nome_sem_peso_candidato():
+    # Z3 entra sem peso e o substituto B3 também não tem: vetar Z3 não muda a
+    # carteira, empata com "não vetar" e o empate fica com não vetar.
     segs = [_seg("S1", ["A3", "Z3"], {"A3": 1.0}, ["A3", "Z3", "B3"])]
-    assert oos.candidatos_a_veto(segs) == ["A3"]
+    assert oos.candidatos_a_veto(segs) == ["A3", "Z3"]
     rets = {"A3": 0.1, "B3": 0.1, "Z3": 9.0}
     for veta in ("melhor", "pior"):
         esc = oos.escolher_veto(segs, rets, veta=veta, **TETOS)
