@@ -39,6 +39,8 @@ from typing import Iterable, Mapping
 
 import streamlit as st
 
+from core.seguranca.procedencia import cercar_linhas, linha_externa
+
 logger = logging.getLogger(__name__)
 
 #: Leituras do Supabase: 15 min. Curva, dólar e macro mudam por dia, e a
@@ -59,6 +61,14 @@ _IDADE_MAX_SERIE_LOCAL = timedelta(days=400)
 _IDADE_MAX_SERIE_ANUAL = timedelta(days=3 * 365)
 _PROVEDORES_ANUAIS = frozenset({"world_bank"})
 _MAX_TITULO = 200
+#: Quantos itens de maior nota o bloco lê do acervo para curar 12. Em
+#: 04/10/2026 a janela de 3 dias tinha 3.388 avaliados; o topo de 400 pela nota
+#: sai em 0,2-0,35 s e sobra folga para o dedup por evento e as cotas (os 150
+#: mais novos, lidos antes, cobriam só as últimas horas).
+_LEITURA_POR_NOTA = 400
+#: Vagas garantidas ao noticiário que cita o Brasil, pela nota. Piso, não
+#: prioridade -- ver :func:`core.noticias.curadoria.curar`.
+_PISO_BRASIL = 4
 #: Mesmo limite de ``core.conjuntura.ponte.MAX_IDADE_VITRINE_HORAS``.
 _IDADE_MAX_VITRINE_H = 48
 _FAMILIAS_CURVA = ("Tesouro Selic", "Tesouro Prefixado", "Tesouro IPCA+",
@@ -446,8 +456,9 @@ def _manchetes_acervo(limite: int) -> list[str] | None:
             return None
         from core.noticias.armazenamento import ler_recentes
 
-        return _linhas_acervo(ler_recentes(150, dias=3, engine=engine), limite,
-                              "Acervo local")
+        return _linhas_acervo(
+            ler_recentes(_LEITURA_POR_NOTA, dias=3, engine=engine, ordem="nota"),
+            limite, "Acervo local")
     except Exception as exc:  # noqa: BLE001
         return [f"  Acervo local de notícias: falha na leitura ({_limpo(exc, 120)})."]
     finally:
@@ -455,28 +466,46 @@ def _manchetes_acervo(limite: int) -> list[str] | None:
             engine.dispose()
 
 
+def _titulo_externo(valor: object) -> str:
+    return linha_externa(valor, teto=_MAX_TITULO)
+
+
 def _linhas_acervo(itens, limite: int, origem: str) -> list[str]:
+    """Cabeçalho + manchetes curadas e cercadas.
+
+    A escolha é de :func:`core.noticias.curadoria.curar` (nota, um por evento,
+    cota por veículo e por tipo, publieditorial fora, piso para o Brasil). Cada
+    campo de fora passa por :func:`linha_externa` e as linhas vão entre
+    marcadores (:func:`cercar_linhas`): manchete é dado, nunca instrução, e o
+    cabeçalho dizer isso não basta quando o título traz ``System:`` ou uma
+    quebra de linha que abre seção nova (auditoria app4, LLM-A4).
+    """
+    from core.noticias.curadoria import COTA_POR_TIPO, COTA_POR_VEICULO, curar
+
     itens = list(itens)
-    itens.sort(key=lambda i: (_cita_brasil(i), float(i.get("nota") or 0)),
-               reverse=True)
-    linhas = [f"  {origem} ({len(itens)} itens avaliados nos últimos 3 "
-              "dias; Brasil primeiro, depois os de maior relevância):"]
-    vistos: set[str] = set()
-    for item in itens:
-        titulo = _limpo(item.get("titulo"))
-        if not titulo or titulo in vistos:
-            continue
-        vistos.add(titulo)
-        direcao = _limpo(item.get("direcao"), 20) or "indefinida"
-        linhas.append(f"    - [{_data(item.get('publicado_em') or item.get('coletado_em'))}] "
-                      f"{titulo} ({_limpo(item.get('veiculo'), 40)}; relevância "
-                      f"{float(item.get('nota') or 0):.0f}; direção {direcao})")
-        if len(vistos) >= limite:
-            break
-    if not vistos:
+    escolhidos, descartes = curar(
+        itens, limite, chave_titulo=_titulo_externo,
+        reserva=(_cita_brasil, _PISO_BRASIL))
+    descarte = ""
+    if descartes:
+        partes = ", ".join(f"{n} por {m}" for m, n in sorted(descartes.items()))
+        descarte = f"; fora como publieditorial: {partes}"
+    linhas = [f"  {origem} ({len(itens)} itens avaliados lidos dos últimos 3 "
+              f"dias; os de maior relevância, um por evento, no máximo "
+              f"{COTA_POR_VEICULO} por veículo e {COTA_POR_TIPO} por tipo de "
+              f"evento, até {_PISO_BRASIL} vagas para o Brasil{descarte}):"]
+    corpo = []
+    for item in escolhidos:
+        direcao = linha_externa(item.get("direcao"), teto=20) or "indefinida"
+        corpo.append(f"    - [{_data(item.get('publicado_em') or item.get('coletado_em'))}] "
+                     f"{_titulo_externo(item.get('titulo'))} "
+                     f"({linha_externa(item.get('veiculo'), teto=40)}; relevância "
+                     f"{float(item.get('nota') or 0):.0f}; direção {direcao})")
+    if not corpo:
         linhas.append("    nenhum item avaliado no período — ausência de "
                       "coleta, não de fatos.")
-    return linhas
+        return linhas
+    return linhas + cercar_linhas(corpo)
 
 
 @st.cache_data(ttl=_TTL_TUNEL, show_spinner=False)
@@ -558,22 +587,23 @@ def _manchetes_vitrine(engine, limite: int) -> list[str]:
         for item in itens or ():
             if not isinstance(item, dict):
                 continue
-            titulo = _limpo(item.get("titulo"))
+            titulo = _titulo_externo(item.get("titulo"))
             if not titulo:
                 continue
             registro = por_titulo.setdefault(titulo, {
                 "publicado_em": str(item.get("publicado_em") or ""),
-                "veiculo": _limpo(item.get("veiculo"), 40), "ativos": set()})
+                "veiculo": linha_externa(item.get("veiculo"), teto=40),
+                "ativos": set()})
             registro["ativos"].add(str(simbolo))
     if not por_titulo:
         return [cabeca, "    nenhuma manchete publicada — ausência de coleta, "
                         "não de fatos."]
     ordenadas = sorted(por_titulo.items(), key=lambda kv: kv[1]["publicado_em"],
                        reverse=True)[:limite]
-    return [cabeca] + [
+    return [cabeca] + cercar_linhas([
         f"    - [{_data(r['publicado_em'])}] {titulo} ({r['veiculo']}; "
         f"citada para {', '.join(sorted(r['ativos'])[:4])})"
-        for titulo, r in ordenadas]
+        for titulo, r in ordenadas])
 
 
 def manchetes_gerais(limite: int = MAX_MANCHETES) -> tuple[list[str], str]:

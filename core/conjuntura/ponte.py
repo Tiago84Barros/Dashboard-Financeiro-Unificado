@@ -48,6 +48,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.memoria_mercado import scores as sc
+from core.seguranca import injecao
+from core.seguranca.procedencia import cercar_linhas, linha_externa
 
 logger = logging.getLogger(__name__)
 
@@ -837,13 +839,24 @@ def para_llm(contexto: ContextoConjuntural, *, max_itens: int = 12) -> str:
                 if rodada < len(leitura.itens):
                     escolhidas[leitura.simbolo].append(leitura.itens[rodada])
                     restante -= 1
+        # Título e veículo são texto de terceiro: passam pela neutralização
+        # e vão entre marcadores, um por ativo, com a nota do backend do lado
+        # de FORA -- dentro dela, ``sem_cercas`` a tiraria do lastro numérico
+        # (auditoria app4, LLM-A4). Antes o título entrava cru.
+        cerca = injecao.marcador()
+        primeira = True
         for leitura in citaveis:
             marca = (f"{leitura.valor:+.0f}" if leitura.medida
                      else f"não medido — {leitura.motivo}")
             linhas.append(f"    {leitura.simbolo} [{marca}]:")
             mostradas = escolhidas[leitura.simbolo]
-            for item in mostradas:
-                linhas.append(f"      • {item.titulo} ({item.procedencia})")
+            if mostradas:
+                linhas.extend(cercar_linhas(
+                    [f"      • {linha_externa(item.titulo)} "
+                     f"({linha_externa(item.procedencia, teto=80)})"
+                     for item in mostradas],
+                    marcador=cerca, recuo="      ", aviso=primeira))
+                primeira = False
             total = max(leitura.n_itens, len(leitura.itens))
             if total > len(mostradas):
                 linhas.append(

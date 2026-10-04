@@ -503,27 +503,14 @@ def _declaracoes_faltando(texto: str, exigidas: tuple[str, ...]) -> tuple[str, .
     return tuple(d for d in exigidas if not any(m in baixo for m in marcas.get(d, ())))
 
 
-#: Palavras que atribuem o número a um terceiro. Não basta "segundo" -- em
-#: "segundo a análise do painel" o modelo está atribuindo ao próprio painel um
-#: número que veio da manchete, que é exatamente a confusão a evitar.
-_ATRIBUICAO = re.compile(
-    r"(?i)\b(not[íi]cia|manchete|reportad\w*|relatad\w*|noticiad\w*|"
-    r"t[íi]tulo|headline|veicul\w*|publicad\w*\s+pel[ao])\b")
-
-
-def _bloco_externo(seg) -> str:
-    """O texto cercado, exatamente como o modelo o recebe. "" se não houver."""
-    if seg is None or not seg.itens:
-        return ""
-    inicio = seg.texto.find(f"<<<INICIO {seg.marcador}>>>")
-    fim = seg.texto.find(f"<<<FIM {seg.marcador}>>>", max(inicio, 0))
-    return seg.texto[inicio:fim] if inicio >= 0 and fim > inicio else ""
-
-
-def _literal_na_cerca(raw: str, externo: str) -> bool:
-    """O número aparece na notícia como número, não como pedaço de outro."""
-    return bool(raw) and bool(
-        re.search(rf"(?<![\d.,]){re.escape(raw)}(?![\d.,])", externo))
+# A atribuição, o recorte da cerca e o teste de literal moram em
+# :mod:`core.seguranca.procedencia` desde a auditoria app4 de 04/10/2026
+# (LLM-A4): os chats no ar passaram a cercar manchetes e a verificar ancoragem
+# com a mesma regra, e duas cópias dela divergiriam
+# (``memoria: guarda-duplicada-diverge``).
+_ATRIBUICAO = procedencia.ATRIBUICAO
+_bloco_externo = procedencia.bloco_externo
+_literal_na_cerca = procedencia.literal_na_cerca
 
 
 def _nao_literais(rel, seg, ctx):

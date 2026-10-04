@@ -47,6 +47,7 @@ from core.inteligencia_ativos import veredito
 from core.lacunas import registrar_limitacoes
 from core.llm_context_global import build_global_portfolio_context
 from core.llm_global import chat_com_portfolio_global
+from core.llm_grounding import aviso_ancoragem
 from core.market_companies import us_logo_url
 from core.portfolio.registry import asset_classes, get_spec
 from core.portfolio.repository import (
@@ -1827,6 +1828,7 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
         st.markdown(escapar_cifrao(pergunta))
 
     with st.chat_message("assistant"):
+        aviso = ""
         with st.spinner("Consultando os dados do patrimônio consolidado…"):
             try:
                 contexto = build_global_portfolio_context(
@@ -1864,10 +1866,13 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                 resposta = veredito.responder_coerente(
                     lambda h, msg: chat_com_portfolio_global(contexto, h, msg),
                     historico[:-1], pergunta, avaliacoes)
+                aviso = aviso_ancoragem(resposta, contexto, pergunta)
             except Exception as exc:  # noqa: BLE001 - fronteira de isolamento do provedor
                 logger.exception("Falha no chat do portfolio global")
                 resposta = f"Erro ao consultar a LLM: {exc}"
         st.markdown(escapar_cifrao(resposta))
+        if aviso:
+            st.caption(aviso)
 
     historico.append({"role": "assistant", "content": resposta})
     save_chat_history(_memory_key, historico, session_key=_CHAVE_CHAT)

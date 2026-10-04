@@ -425,3 +425,94 @@ def check_grounding(response: str, context: str, *,
         claims.append(Claim(valor, raw, True, motivo))
         corrente.append(valor)
     return GroundingReport(tuple(claims))
+
+
+def numeros_suspeitos(resposta: str, contexto: str, *,
+                      pergunta: str = "") -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """``(sem_lastro, de_manchete_sem_atribuicao)`` para um contexto com cercas.
+
+    O lastro é o texto do BACKEND (:func:`core.seguranca.procedencia.sem_cercas`):
+    número que só existe numa manchete cercada não ancora a resposta -- quem
+    escreve a manchete não pode escolher o que o painel afirma (mesma regra de
+    :func:`core.inteligencia.llm.validar`, medida em 03/09/2026 com
+    "Analista vê queda de 37,4% na PETR4"). Número que aparece literalmente
+    dentro da cerca não é absolvido por derivação (o lastro de 68 números do
+    bloco macro "derivava" o 37,4) e só passa se a resposta o atribui à notícia.
+    """
+    from core.seguranca import procedencia
+
+    texto = contexto or ""
+    externo = procedencia.conteudo_cercado(texto)
+    rel = check_grounding(resposta or "", procedencia.sem_cercas(texto),
+                          pergunta=pergunta or "")
+    suspeitos = [c.raw for c in rel.ungrounded]
+    if externo:
+        suspeitos += [c.raw for c in rel.claims
+                      if c.grounded and c.reason.startswith("derivado")
+                      and c.raw not in suspeitos
+                      and procedencia.literal_na_cerca(c.raw, externo)]
+    atribuiu = bool(procedencia.ATRIBUICAO.search(resposta or ""))
+    sem_lastro: list[str] = []
+    de_manchete: list[str] = []
+    for raw in suspeitos:
+        if externo and procedencia.literal_na_cerca(raw, externo):
+            if not atribuiu:
+                de_manchete.append(raw)
+        else:
+            sem_lastro.append(raw)
+    return tuple(sem_lastro), tuple(de_manchete)
+
+
+def aviso_ancoragem(resposta: str, contexto: str, pergunta: str = "") -> str:
+    """Legenda de alerta para a resposta de qualquer chat ou relatório, ou ``""``.
+
+    Antes da auditoria app4 (LLM-A9, 04/10/2026) só os dois chats do Controle
+    Financeiro e os relatórios da Inteligência dos Ativos verificavam a saída;
+    os chats de ativo, carteira, FIIs, B3, EUA, Portfólio Global e os dossiês
+    recebiam o mesmo bloco de mercado e ninguém conferia o que voltava. Só
+    avisa, nunca esconde a resposta, e nunca derruba a tela.
+    """
+    try:
+        sem_lastro, de_manchete = numeros_suspeitos(resposta, contexto,
+                                                    pergunta=pergunta)
+    except Exception:  # noqa: BLE001 - verificação nunca derruba o chat
+        return ""
+    partes = []
+    if sem_lastro:
+        um = len(sem_lastro) == 1
+        partes.append(
+            f"⚠️ Confira antes de usar: {', '.join(sem_lastro[:4])} — "
+            f"{'este valor não foi encontrado' if um else 'estes valores não foram encontrados'} "
+            "nos dados enviados à IA.")
+    if de_manchete:
+        partes.append(
+            f"⚠️ {', '.join(de_manchete[:4])} vem de manchete, não dos dados "
+            "do painel — a resposta não o atribuiu à notícia.")
+    return " ".join(partes)
+
+
+def _textos_do_relatorio(valor) -> list[str]:
+    """Só as frases do relatório; número solto do esquema (confiança, score)
+    é campo calculado pelo saneador, não afirmação da LLM sobre os dados."""
+    if isinstance(valor, str):
+        return [valor] if valor.strip() else []
+    if isinstance(valor, dict):
+        return [t for v in valor.values() for t in _textos_do_relatorio(v)]
+    if isinstance(valor, (list, tuple)):
+        return [t for v in valor for t in _textos_do_relatorio(v)]
+    return []
+
+
+def com_aviso_ancoragem(relatorio: dict, contexto: str) -> dict:
+    """O relatório estruturado com ``aviso_ancoragem`` quando há número sem lastro.
+
+    Os relatórios institucionais (B3 e EUA, por empresa e consolidado) voltam
+    como JSON e nenhum conferia o texto contra o prompt (LLM-A9). A tela mostra
+    o campo como legenda; o relatório em si não muda.
+    """
+    if not isinstance(relatorio, dict):
+        return relatorio
+    aviso = aviso_ancoragem("\n".join(_textos_do_relatorio(relatorio)), contexto)
+    if not aviso:
+        return relatorio
+    return {**relatorio, "aviso_ancoragem": aviso}

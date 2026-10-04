@@ -73,6 +73,7 @@ from core.llm_context_fii import (
     tickers_para_detalhe,
 )
 from core.llm_fii import chat_com_fiis
+from core.llm_grounding import aviso_ancoragem
 from core.macro_cenario import CenarioObservado, cenario_macro_observado
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
@@ -1315,6 +1316,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
     with st.chat_message("user"):
         st.markdown(escapar_cifrao(user_input))
     with st.chat_message("assistant"):
+        aviso = ""
         with st.spinner("Consultando seleção, pares, cenário e qualidade dos dados…"):
             try:
                 context = build_fii_chat_context(
@@ -1342,9 +1344,12 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                 answer = veredito.responder_coerente(
                     lambda h, msg: chat_com_fiis(context, h, msg),
                     history[:-1], user_input, avaliacoes)
+                aviso = aviso_ancoragem(answer, context, user_input)
             except Exception as exc:
                 answer = f"Não foi possível consultar a LLM neste momento: {exc}"
         st.markdown(escapar_cifrao(answer))
+        if aviso:
+            st.caption(aviso)
         st.caption("Análise educacional baseada nos dados disponíveis; não constitui recomendação.")
     history.append({"role": "assistant", "content": answer})
     save_chat_history(memory_key, history, session_key="fii_chat_history")

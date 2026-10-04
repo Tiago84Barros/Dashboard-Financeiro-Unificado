@@ -38,6 +38,7 @@ from sqlalchemy import text
 # da função.
 from core.b3_holdings_health import FRACAO_PL_QUEDA_CRITICA, MIN_PARES_PL_HIST
 from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+from core.seguranca.procedencia import linha_externa
 
 logger = logging.getLogger(__name__)
 
@@ -735,8 +736,12 @@ def dossie_to_text(d: dict) -> str:
     ev = d.get("eventos_societarios", {})
     if ev.get("eventos"):
         L.append(f"\nEVENTOS SOCIETÁRIOS (docs CVM indexados: {ev['n_docs']}, desde {ev['docs_desde']}):")
+        # Título de documento é texto do emissor, não do backend: neutralizado
+        # (sem quebra de linha nem marcador de papel) como as manchetes
+        # (auditoria app4, LLM-A4).
         for e in ev["eventos"]:
-            L.append(f"  {e['data']} [{e['categoria']}] {e['titulo']}")
+            L.append(f"  {e['data']} [{e['categoria']}] "
+                     f"{linha_externa(e['titulo'], teto=140)}")
 
     # As três categorias saem APARTADAS. Sob um cabeçalho único, as 222
     # empresas cuja observação o próprio texto declara NÃO ser risco chegavam
@@ -970,7 +975,11 @@ def gerar_parecer_empresa(
     except Exception as exc:
         logger.warning("Parecer LLM falhou para %s: %s", tk, exc)
         return _parecer_fallback(tk, str(exc)[:200]), dossie
-    return _sanitizar_parecer(parecer, tk), dossie
+    # LLM-A9: o parecer passa pela mesma conferência dos chats. O aviso fica
+    # no parecer (campo ``aviso_ancoragem``) e NÃO muda a classificação:
+    # o gate é fail-open e número sem lastro é alerta, não veto.
+    from core.llm_grounding import com_aviso_ancoragem
+    return com_aviso_ancoragem(_sanitizar_parecer(parecer, tk), prompt), dossie
 
 
 # ─────────────────────────────────────────────────────────────────────────────
