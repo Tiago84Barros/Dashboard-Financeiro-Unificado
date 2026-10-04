@@ -311,11 +311,25 @@ _CASHFLOW_COLS = ("fiscal_year", "operating_cash_flow", "capex", "free_cash_flow
                   "stock_based_compensation")
 
 
+# "Último preço" é o último pregão COM fechamento. Em 02/10/2026 a barra chegou
+# com 2.560 de 2.627 closes nulos (o provedor devolveu o pregão sem o Close);
+# ordenar por data e pegar a primeira linha devolvia None e apagava o valor de
+# mercado derivado de ~97% do universo no próximo load_scoring_frame.
+_SQL_ULTIMO_PRECO = (
+    "SELECT COALESCE(adjusted_close, close) FROM market_us.prices_daily "
+    "WHERE symbol=:s AND COALESCE(adjusted_close, close) IS NOT NULL "
+    "ORDER BY date DESC LIMIT 1")
+
+_SQL_ULTIMO_PRECO_POR_SIMBOLO = (
+    "SELECT DISTINCT ON (symbol) symbol, COALESCE(adjusted_close, close) AS px "
+    "FROM market_us.prices_daily "
+    "WHERE COALESCE(adjusted_close, close) IS NOT NULL "
+    "ORDER BY symbol, date DESC")
+
+
 def _latest_close(conn, symbol: str):
     try:
-        return conn.execute(text(
-            "SELECT COALESCE(adjusted_close, close) FROM market_us.prices_daily "
-            "WHERE symbol=:s ORDER BY date DESC LIMIT 1"), {"s": symbol}).scalar()
+        return conn.execute(text(_SQL_ULTIMO_PRECO), {"s": symbol}).scalar()
     except Exception:  # noqa: BLE001
         return None
 
@@ -453,9 +467,7 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
                 "SELECT DISTINCT ON (symbol) symbol, market_cap "
                 "FROM market_us.market_cap_history ORDER BY symbol, date DESC"), conn)
             # último preço por símbolo (deriva market cap quando não há histórico)
-            closes = pd.read_sql(text(
-                "SELECT DISTINCT ON (symbol) symbol, COALESCE(adjusted_close, close) AS px "
-                "FROM market_us.prices_daily ORDER BY symbol, date DESC"), conn)
+            closes = pd.read_sql(text(_SQL_ULTIMO_PRECO_POR_SIMBOLO), conn)
     except Exception as exc:  # noqa: BLE001
         logger.warning("load_scoring_frame falhou: %s", exc)
         return pd.DataFrame(columns=cols)

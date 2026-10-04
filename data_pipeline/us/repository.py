@@ -147,12 +147,20 @@ def upsert_statements(conn, table: str, company_id: int, symbol: str,
 
 
 def upsert_prices_daily(conn, symbol: str, rows: list[dict]) -> int:
+    """Grava as barras diárias; barra sem fechamento fica de fora.
+
+    Em 02/10/2026 o provedor devolveu o pregão com abertura, máxima, mínima e
+    volume, mas sem ``Close`` -- 2.560 de 2.627 símbolos --, e a barra nula
+    virou "o último preço" de quase todo o universo. Pular a linha não apaga
+    nada: a barra que já está no banco fica como está, e a janela incremental
+    (``ingest._janela`` recua alguns dias) volta nela quando o fechamento vier.
+    """
     payload = [{
         "symbol": symbol, "date": r.get("date"),
         "open": r.get("open"), "high": r.get("high"), "low": r.get("low"),
         "close": r.get("close"), "adjusted_close": r.get("adjClose") or r.get("adjusted_close"),
         "volume": r.get("volume"), "source": "fmp",
-    } for r in rows if r.get("date")]
+    } for r in rows if r.get("date") and r.get("close") is not None]
     return _exec_many(conn, "prices_daily", payload, conflict=["symbol", "date"])
 
 
