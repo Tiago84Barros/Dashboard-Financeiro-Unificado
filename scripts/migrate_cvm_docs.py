@@ -413,7 +413,7 @@ def migrate_chunks(
                                  :chunking_version, :extraction_version, :ingestion_run_id,
                                  :content_hash, :is_stub,
                                  CASE WHEN :embedding IS NULL THEN NULL
-                                      ELSE :embedding::vector END)
+                                      ELSE CAST(:embedding AS vector) END)
                             ON CONFLICT (chunk_hash) DO NOTHING
                         """
                         result = dst_conn.execute(text(insert_sql), {
