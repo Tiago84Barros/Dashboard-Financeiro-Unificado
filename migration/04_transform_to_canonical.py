@@ -196,19 +196,25 @@ def _normalize_date(value: Any) -> str | None:
     """Converte valor para string ISO 8601 YYYY-MM-DD."""
     if value is None:
         return None
-    if isinstance(value, date):
-        return value.isoformat()
+    # datetime é subclasse de date: tem de vir primeiro, senão o isoformat()
+    # devolve o timestamp inteiro em vez de YYYY-MM-DD.
     if isinstance(value, datetime):
         return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
     s = str(value).strip()
     if not s or s.lower() in ("none", "null", ""):
         return None
-    # Tentar formatos comuns
+    # Tentar formatos comuns. O corte era ``s[:len(fmt)]`` -- o tamanho do
+    # FORMATO ("%Y-%m-%d" tem 8 caracteres), não o da data (10) --, e truncava
+    # "2026-01-05" em "2026-01-" e "05/01/2026" em "05/01/20": nenhum formato
+    # casava, e timestamps e datas dd/mm/aaaa saíam sem normalizar.
     for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%SZ"):
-        try:
-            return datetime.strptime(s[:len(fmt)], fmt).date().isoformat()
-        except ValueError:
-            continue
+        for trecho in (s, s[:10], s[:19]):
+            try:
+                return datetime.strptime(trecho, fmt).date().isoformat()
+            except ValueError:
+                continue
     return s  # Retorna como está — warning será gerado pelo caller
 
 

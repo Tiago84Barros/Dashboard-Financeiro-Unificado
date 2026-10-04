@@ -11,6 +11,8 @@ from typing import Any
 
 from sqlalchemy import text
 
+from core.fii_methodology import METHODOLOGY_VERSION
+
 
 def _engine():
     from data_pipeline.utils.db_utils import get_pipeline_engine
@@ -27,7 +29,7 @@ def _current_candidates(limit: int) -> list[str]:
               SELECT DISTINCT ON (ticker) ticker, confidence, coverage,
                      data_readiness_status, type_score
               FROM market.fii_score_snapshots
-              WHERE methodology_version='6.0.0'
+              WHERE methodology_version=:version
               ORDER BY ticker, reference_date DESC, available_at DESC
             )
             SELECT f.ticker
@@ -47,7 +49,7 @@ def _current_candidates(limit: int) -> list[str]:
               s.type_score DESC NULLS LAST,
               f.liquidez_diaria DESC NULLS LAST, f.ticker
             LIMIT :limit
-        """), {"limit": max(int(limit), 1)}).scalars().all()
+        """), {"limit": max(int(limit), 1), "version": METHODOLOGY_VERSION}).scalars().all()
     return [str(value).upper().replace(".SA", "") for value in rows]
 
 
