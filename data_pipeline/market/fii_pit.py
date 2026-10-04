@@ -6,8 +6,6 @@ mas reduzem a fração verificada e impedem a aprovação metodológica.
 """
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import math
 from collections.abc import Iterator
@@ -33,12 +31,15 @@ from core.fii_validation import (
     validate_methodology,
 )
 from core.observacao_ausente import valor_observado
+from data_pipeline.market import ifix_oficial as _ifix
 from data_pipeline.utils.db_utils import get_pipeline_engine
 
-_B3_IFIX_MONTHLY_URL = (
-    "https://sistemaswebb3-listados.b3.com.br/"
-    "indexStatisticsProxy/IndexCall/GetMonthlyEvolution/"
-)
+# A série oficial do IFIX mora em ``ifix_oficial`` (o job diário de cotações a
+# grava no Supabase sem importar este módulo); os nomes antigos ficam.
+_B3_IFIX_MONTHLY_URL = _ifix.URL_MENSAL
+_parse_b3_ifix_monthly = _ifix.parse_ifix_mensal
+_ingest_b3_ifix_monthly = _ifix.ingerir_ifix_mensal
+
 VALIDATION_PROTOCOL_VERSION = "fii-pit-robust-optimizer-3.4.0"
 
 
@@ -67,64 +68,6 @@ def _json_safe(value: Any) -> Any:
         return number if math.isfinite(number) else None
     except (TypeError, ValueError):
         return str(value)
-
-
-def _parse_b3_ifix_monthly(payload: Any, *, start: date, end: date) -> list[dict]:
-    rows: list[dict] = []
-    if not isinstance(payload, list):
-        return rows
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
-        try:
-            month = int(item.get("month"))
-            year = int(item.get("year"))
-            value = float(item.get("indexClosingRate"))
-            reference = pd.Timestamp(year=year, month=month, day=1) + pd.offsets.MonthEnd(0)
-        except (TypeError, ValueError):
-            continue
-        if not math.isfinite(value) or value <= 0 or not start <= reference.date() <= end:
-            continue
-        rows.append({"date": reference.date(), "value": value})
-    return sorted(rows, key=lambda row: row["date"])
-
-
-def _ingest_b3_ifix_monthly(conn, *, start: date, end: date) -> dict:
-    """Ingere a série oficial de retorno total do IFIX publicada pela B3."""
-    query = {
-        "index": "IFIX", "language": "pt-br",
-        "dateInitial": start.isoformat(), "dateFinal": end.isoformat(),
-    }
-    encoded = base64.b64encode(
-        json.dumps(query, separators=(",", ":"), sort_keys=True).encode("utf-8")
-    ).decode("ascii")
-    response = requests.get(_B3_IFIX_MONTHLY_URL + encoded, timeout=60)
-    response.raise_for_status()
-    content_hash = hashlib.sha256(response.content).hexdigest()
-    rows = _parse_b3_ifix_monthly(response.json(), start=start, end=end)
-    if not rows:
-        return {"status": "empty", "rows": 0, "content_hash": content_hash}
-    conn.execute(text("""
-        INSERT INTO market.assets (ticker,asset_type,exchange,currency,is_active)
-        VALUES ('IFIX','other','B3','BRL',true)
-        ON CONFLICT (ticker) DO UPDATE SET is_active=true,updated_at=now()
-    """))
-    conn.execute(text("""
-        INSERT INTO market.historical_prices (
-            ticker,date,close,adjusted_close,source,knowledge_at,
-            availability_quality,content_hash
-        ) SELECT 'IFIX',date,value,value,'b3_official_ifix',
-                 (date::timestamp + interval '23 hours 59 minutes') AT TIME ZONE 'America/Sao_Paulo',
-                 'verified_publication',:content_hash
-        FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS x(date date,value numeric)
-        WHERE value IS NOT NULL AND value > 0
-        ON CONFLICT (ticker,date) DO UPDATE
-        SET close=EXCLUDED.close,adjusted_close=EXCLUDED.adjusted_close,
-            source=EXCLUDED.source,knowledge_at=EXCLUDED.knowledge_at,
-            availability_quality=EXCLUDED.availability_quality,
-            content_hash=EXCLUDED.content_hash,updated_at=now()
-    """), {"rows": json.dumps(_json_safe(rows)), "content_hash": content_hash})
-    return {"status": "saved", "rows": len(rows), "content_hash": content_hash}
 
 
 def _normalize_type(value: Any) -> str | None:
