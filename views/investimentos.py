@@ -1368,7 +1368,6 @@ def _legenda_par(row) -> tuple[str, bool]:
 @user_cache_data(ttl=1800)
 def _get_macro_dados() -> dict:
     """Busca indicadores macro: BCB (SELIC, IPCA) + yfinance (câmbio, bolsas)."""
-    import requests  # já é dep do streamlit
     try:
         import yfinance as yf
     except Exception:
@@ -1385,38 +1384,17 @@ def _get_macro_dados() -> dict:
         "sp500":     None,
     }
 
-    # BCB: Meta SELIC (série 4189)
-    try:
-        r = requests.get(
-            "https://api.bcb.gov.br/dados/serie/bcdata.sgs.4189/dados/ultimos/1?formato=json",
-            timeout=5,
-        )
-        if r.ok and r.json():
-            dados["selic"] = float(r.json()[0]["valor"].replace(",", "."))
-    except Exception:
-        pass
-
-    # BCB: IPCA acumulado 12M (série 13522)
-    try:
-        r = requests.get(
-            "https://api.bcb.gov.br/dados/serie/bcdata.sgs.13522/dados/ultimos/1?formato=json",
-            timeout=5,
-        )
-        if r.ok and r.json():
-            dados["ipca_12m"] = float(r.json()[0]["valor"].replace(",", "."))
-    except Exception:
-        pass
-
-    # BCB: CDI anualizado base 252 (série 4389) — medido, não Selic − 0,10.
-    try:
-        r = requests.get(
-            "https://api.bcb.gov.br/dados/serie/bcdata.sgs.4389/dados/ultimos/1?formato=json",
-            timeout=5,
-        )
-        if r.ok and r.json():
-            dados["cdi"] = float(r.json()[0]["valor"].replace(",", "."))
-    except Exception:
-        pass
+    # BCB: Meta SELIC (4189), IPCA 12M (13522, mensal) e CDI anualizado base
+    # 252 (4389 -- medido, não Selic − 0,10). REST com reserva SOAP: o host
+    # api.bcb.gov.br sumiu do DNS em 03/10/2026 e o card ficou "indisponível".
+    from core.bcb_sgs import ultimo_valor_sgs
+    for codigo, chave, janela in [(4189, "selic", 45),
+                                  (13522, "ipca_12m", 120),
+                                  (4389, "cdi", 15)]:
+        try:
+            dados[chave] = ultimo_valor_sgs(codigo, janela_dias=janela)
+        except Exception:
+            pass
 
     # yfinance: câmbio e bolsas
     for sym, key in [
