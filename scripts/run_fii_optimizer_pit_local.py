@@ -1,4 +1,4 @@
-"""Executa e persiste no warehouse local o walk-forward do otimizador FII v6.7."""
+"""Executa e persiste no warehouse local o walk-forward do otimizador FII robusto (versão em METHODOLOGY_VERSION)."""
 from __future__ import annotations
 
 import argparse
