@@ -93,18 +93,7 @@ def test_historico_e_dashboard_dao_o_mesmo_patrimonio(banco_falso):
     assert carteira["total_mercado"] == pytest.approx(1550.0)
     assert evolucao["total_mercado"] == pytest.approx(carteira["total_mercado"])
     assert evolucao["total_investido"] == pytest.approx(carteira["total_investido"])
-
-
-def test_ponto_de_hoje_no_grafico_e_so_brasil(banco_falso):
-    # Com a Nomad so no ultimo ponto, set/26 -> out/26 parecia R$ 100 mil de
-    # ganho no mes. O cartao soma o exterior; o grafico, como a B3, nao.
-    evolucao = investimentos._evolucao_real()
-    hoje = evolucao["snapshots"][-1]
-
-    assert hoje["valor_mercado"] == pytest.approx(1000.0)
-    assert hoje["valor_investido"] == pytest.approx(800.0)
-    assert hoje["so_brasil"] is True
-    assert evolucao["total_mercado"] == pytest.approx(1550.0)
+    assert evolucao["snapshots"][-1]["valor_mercado"] == pytest.approx(1550.0)
 
 
 def test_foto_historica_nao_recebe_o_exterior_de_hoje(banco_falso):
@@ -180,3 +169,65 @@ def test_recorte_anual_pega_a_ultima_foto_de_cada_ano():
     # Sem mes_str não dá para agrupar: mostra tudo em vez de inventar.
     assert _recorte_evolucao([{"label": "x", "valor_mercado": 1.0}], "Anos") == [
         {"label": "x", "valor_mercado": 1.0}]
+
+
+# ── Exterior (Nomad) nas fotos históricas ─────────────────────────────────────
+
+
+class _ConexaoExterior:
+    """Compra 2 SPY em 10/01 (dólar 5,00) e vende 1 em 20/02 (dólar 5,20)."""
+
+    def __init__(self, sem_preco_em=None):
+        self.sem_preco_em = sem_preco_em
+
+    def execute(self, stmt, params=None):
+        sql = str(stmt)
+        if sql == investimentos._SQL_EVOLUCAO_EXTERIOR_TX:
+            return _Resultado([
+                SimpleNamespace(ticker="SPY", asset_id="a1", data=date(2026, 1, 10),
+                                tipo="buy", quantidade=2.0, preco=100.0),
+                SimpleNamespace(ticker="SPY", asset_id="a1", data=date(2026, 2, 20),
+                                tipo="sell", quantidade=1.0, preco=120.0),
+            ])
+        if sql == investimentos._SQL_EVOLUCAO_EXTERIOR_PRECOS:
+            return _Resultado([
+                SimpleNamespace(data=d, asset_id="a1",
+                                close=None if d == self.sem_preco_em else 110.0)
+                for d in params["datas"]
+            ])
+        if sql == investimentos._SQL_EVOLUCAO_EXTERIOR_FX:
+            taxas = {date(2026, 1, 10): 5.0, date(2026, 2, 20): 5.2}
+            return _Resultado([SimpleNamespace(data=d, close=taxas.get(d, 6.0))
+                               for d in params["datas"]])
+        return _Resultado([])
+
+
+def test_exterior_recomposto_em_cada_data_de_foto():
+    datas = [date(2025, 12, 31), date(2026, 1, 31), date(2026, 2, 28)]
+    ext = investimentos._exterior_nas_datas(_ConexaoExterior(), "u1", datas)
+
+    assert ext[date(2025, 12, 31)] == {"vm": 0.0, "vi": 0.0, "faltando": []}
+    # 2 x 110 USD x 6,00; custo 2 x 100 x 5,00 (dolar da compra)
+    assert ext[date(2026, 1, 31)]["vm"] == pytest.approx(1320.0)
+    assert ext[date(2026, 1, 31)]["vi"] == pytest.approx(1000.0)
+    # Vendeu metade: custo cai pela metade, a preco medio
+    assert ext[date(2026, 2, 28)]["vm"] == pytest.approx(660.0)
+    assert ext[date(2026, 2, 28)]["vi"] == pytest.approx(500.0)
+
+
+def test_exterior_sem_preco_e_nomeado_e_nao_zerado_em_silencio():
+    ext = investimentos._exterior_nas_datas(
+        _ConexaoExterior(sem_preco_em=date(2026, 1, 31)), "u1", [date(2026, 1, 31)])
+
+    assert ext[date(2026, 1, 31)]["vm"] == 0.0
+    assert ext[date(2026, 1, 31)]["faltando"] == ["SPY"]
+
+
+def test_foto_da_b3_recebe_o_exterior_da_mesma_data():
+    snaps = [SimpleNamespace(mes=date(2026, 9, 30), valor_mercado=300.0,
+                             valor_investido_snapshot=250.0)]
+    ext = {date(2026, 9, 30): {"vm": 100.0, "vi": 80.0, "faltando": []}}
+    d = investimentos._montar_evolucao_snapshot(snaps, [], None, [], ext)
+
+    assert d["snapshots"][0]["valor_mercado"] == pytest.approx(400.0)
+    assert d["snapshots"][0]["valor_investido"] == pytest.approx(330.0)
