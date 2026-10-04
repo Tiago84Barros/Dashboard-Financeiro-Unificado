@@ -1594,6 +1594,17 @@ SCORE_VERSION_CHANGELOG = {
         "a medicao OOS da 2.28.0 foi feita sobre o preco corrompido e precisa "
         "ser refeita para esta versao."
     ),
+    "2.30.0": (
+        "Auditoria B3-06/07: papel PARADO sai da elegibilidade por epoca "
+        "(core.b3_universo_pit.parados_em). E parado quem ja negociou no "
+        "quadro e cujo ultimo mes com negocio terminou ha mais de 90 dias da "
+        "decisao, com a regua no ultimo mes negociado do universo da tela; "
+        "quem nunca apareceu segue elegivel. Antes a mediana da janela so via "
+        "os meses com negocio e o ticker sem linha na janela caia na regra da "
+        "ausencia. A regra roda tambem sem piso de volume e tira da carteira "
+        "atual quem esta parado hoje, sem tira-lo dos anos em que negociava. "
+        "Muda a elegibilidade de cada safra: a medicao OOS e desta versao."
+    ),
 }
 
 
