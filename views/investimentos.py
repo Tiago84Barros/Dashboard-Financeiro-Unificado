@@ -1414,6 +1414,15 @@ def _get_macro_dados() -> dict:
         except Exception:
             pass
 
+    # Reserva do câmbio: PTAX venda do BCB (SGS 1). O Yahoo falha por símbolo
+    # na Cloud -- em 04/10/2026 trouxe Ibovespa e S&P mas não USDBRL=X.
+    if dados["usdbrl"] is None:
+        try:
+            ptax = ultimo_valor_sgs(1, janela_dias=10)
+            dados["usdbrl"] = round(ptax, 4) if ptax is not None else None
+        except Exception:
+            pass
+
     return dados
 
 
@@ -1861,7 +1870,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                     unsafe_allow_html=True)
 
     st.caption(
-        "Fontes: BCB API (SELIC, IPCA, CDI) · Yahoo Finance (câmbio, bolsas). "
+        "Fontes: BCB/SGS (SELIC, IPCA, CDI; PTAX como reserva do câmbio) · Yahoo Finance (câmbio, bolsas). "
         "Fonte fora do ar aparece como indisponível — nunca como valor fixo."
     )
 
