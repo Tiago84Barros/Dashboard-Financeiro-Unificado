@@ -205,6 +205,12 @@ def main() -> int:
             log.info("FIIs COTAHIST B3 — arquivos=%s linhas=%s tickers=%s erros=%s",
                      rep.get("archives"), rep.get("rows"), rep.get("tickers"),
                      len(rep.get("errors") or []))
+            # O motivo vinha só como contagem: "erros=1" no log não dizia se
+            # era o download do ano corrente ou um ZIP ilegível.
+            for item in rep.get("errors") or []:
+                log.error("FIIs COTAHIST B3 — erro: %s", item)
+            for item in rep.get("warnings") or []:
+                log.warning("FIIs COTAHIST B3 — aviso (não derruba a etapa): %s", item)
         elif args.command == "fiis-entities":
             from data_pipeline.market.fii_entity_pipeline import resolve_entities
             rep = resolve_entities()

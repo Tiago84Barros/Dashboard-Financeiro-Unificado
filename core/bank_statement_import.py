@@ -960,8 +960,21 @@ def classify_bank_movement(
         )
         return _classification_payload(row, category, "Financiamento", "sugerida", 0.93, "Regra explicita: financiamento")
 
-    if "resgate de cdb" in desc:
-        return _other_classification(row, categories, 0.90, "Regra definida: resgate CDB como entrada em Outros")
+    # Resgate é dinheiro que VOLTA de um investimento: não é receita (inflava
+    # "Outros Rendimentos": 84 linhas, 16,3% da receita de 2024 e 17,1% da de
+    # 2025, segundo a auditoria de 04/10/2026) nem despesa. Categoria própria,
+    # do tipo transfer, que o fluxo de caixa já deixa fora de receita e despesa.
+    # Só a entrada: "IOF sobre resgate" é saída e segue as demais regras.
+    if row.get("direcao") == "entrada" and re.search(r"\bresgate\b", desc):
+        category = _find_category(
+            categories,
+            ["Resgate de Investimento", "Resgate de Investimentos", "Resgate"],
+            ("transfer",),
+        )
+        return _classification_payload(
+            row, category, "Resgate de Investimento", "sugerida", 0.90,
+            "Regra definida: resgate de investimento (transferência, não receita)",
+        )
 
     if "secretaria do tesouro nacional" in desc or "tesouro nacional" in desc:
         return _other_classification(row, categories, 0.88, "Regra definida: Tesouro Nacional como saida em Outros")
