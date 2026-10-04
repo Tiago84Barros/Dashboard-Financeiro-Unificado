@@ -138,10 +138,21 @@ def _gemini_model() -> str:
         return _GEMINI_MODEL_DEFAULT
 
 
-def _provider_chain(primary_model: str | None = None) -> list[tuple]:
+def _modelo_gratuito(modelo: str | None) -> bool:
+    """Modelo ``:free`` do OpenRouter: o provedor costuma pagar-se com os prompts."""
+    return ":free" in str(modelo or "").lower()
+
+
+def _provider_chain(primary_model: str | None = None, *,
+                    pessoal: bool = False) -> list[tuple]:
     """
     Lista de (nome, client, modelo) na ordem: OpenRouter → OpenAI → Gemini.
     Inclui apenas os provedores com chave configurada.
+
+    ``pessoal=True`` é a cadeia dos chats que mandam dado do usuário
+    (transações, fatura, posições, política, renda): os elos com modelo
+    ``:free`` saem e a ordem dos demais fica. A cadeia dos chats de mercado
+    não muda.
 
     O OpenRouter vai na frente por medição, não por preferência: no teste de
     `scripts/avaliar_provedor_llm.py` o Nemotron super-120b acertou o julgamento
@@ -159,6 +170,8 @@ def _provider_chain(primary_model: str | None = None) -> list[tuple]:
     gc = _get_gemini_client()
     if gc is not None:
         chain.append(("gemini", gc, _gemini_model()))
+    if pessoal:
+        chain = [elo for elo in chain if not _modelo_gratuito(elo[2])]
     return chain
 
 
@@ -273,6 +286,7 @@ def _chat_complete(
     json_mode: bool = False,
     primary_model: str | None = None,
     timeout: float | None = None,
+    pessoal: bool = False,
 ) -> str:
     """
     Executa um chat completion com fallback entre provedores. Tenta OpenAI e,
@@ -282,11 +296,24 @@ def _chat_complete(
 
     `timeout` (s) vale por provedor e substitui o padrão de 90 s: tela
     interativa prefere passar ao próximo provedor a esperar um modelo lento.
+
+    `pessoal=True` usa a cadeia sem modelos ``:free`` (ver ``_provider_chain``):
+    é o que passam os chats com dado do usuário. Se só houver modelo gratuito,
+    recusa em vez de mandar o dado para ele.
     """
     modulo_lacuna = _modulo_lacuna()
     if not json_mode:
         messages = _com_instrucao_lacunas(messages)
-    chain = _provider_chain(primary_model)
+    # Só passa ``pessoal`` quando pedido: quem substitui ``_provider_chain``
+    # (medição headless, testes) continua com a assinatura de um argumento.
+    chain = (_provider_chain(primary_model, pessoal=True) if pessoal
+             else _provider_chain(primary_model))
+    if not chain and pessoal and _provider_chain(primary_model):
+        raise RuntimeError(
+            "Só há provedor LLM gratuito configurado, e este chat leva dado "
+            "pessoal -- defina OPENAI_API_KEY ou GEMINI_API_KEY (ou um "
+            "OPENROUTER_MODEL pago)."
+        )
     if not chain:
         raise RuntimeError(
             "Nenhum provedor LLM configurado — defina OPENAI_API_KEY e/ou "

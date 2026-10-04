@@ -130,4 +130,4 @@ def chat_com_carteira(context: str, history: Iterable[dict], user_message: str,
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user_message})
     return _chat_complete(messages, temperature=.25, json_mode=False,
-                          primary_model=model or _report_model())
+                          primary_model=model or _report_model(), pessoal=True)
