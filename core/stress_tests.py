@@ -24,7 +24,9 @@ Nenhum acesso ao DB. Pode ser invocada em loop tight.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from datetime import date
 
 # ──────────────────────────────────────────────────────────────────────────
 # Cenários históricos (calibrados em dados públicos B3 / BCB)
@@ -201,21 +203,148 @@ _CLASSE_TO_SHOCK = {
     "Renda Fixa":         "shock_renda_fixa",
     "Tesouro Direto":     "shock_tesouro",
     "Fundo RF":           "shock_fundo_rf",
+    # FIP é private equity ilíquido, marcado pelo administrador: sem série
+    # de preço própria, o proxy conservador é o choque de ações BR.
+    "FIP":                "shock_stock_br",
     "BDR":                "shock_etf_intl",  # BDRs replicam ativo exterior
     "Cripto":             "shock_etf_intl",  # proxy (correlação imperfeita)
     "Outros":             "shock_stock_br",
 }
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Choque por indexador e duration (INV-A3, auditoria 04/10/2026)
+# ──────────────────────────────────────────────────────────────────────────
+# Antes, todo "Tesouro Direto" recebia ``shock_tesouro`` (o choque da LFT,
+# quase zero) -- mas 8,0% da carteira é Tesouro IPCA+ e 3,8% é prefixado, que
+# são os papéis que realmente perdem preço quando a taxa sobe. E todo CDB
+# recebia ``shock_renda_fixa`` (marcação a mercado), quando CDB/LCI/LCA se
+# carregam na curva até o vencimento: sem venda, não há marcação.
+
+#: Duration (anos) para a qual ``shock_renda_fixa`` foi calibrado. Premissa
+#: declarada, não medida: os choques dos cenários vêm de títulos longos
+#: pré/IPCA de duration intermediária. O choque do papel é o do cenário
+#: escalado por ``duration / DURATION_REFERENCIA_ANOS`` (aproximação de
+#: primeira ordem: ΔP ≈ -D·Δy).
+DURATION_REFERENCIA_ANOS = 5.0
+
+#: Piso do choque individual: escalar por duration não pode passar de perda total.
+PISO_CHOQUE_TITULO = -0.60
+
+#: Bancários que se carregam na curva (FGC, sem preço de mercado diário).
+_PREFIXOS_CURVA = ("CDB", "LCI", "LCA")
+
+_ANO_VENCIMENTO = re.compile(r"(20\d{2})")
+_MES_VENCIMENTO = {"jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
+                   "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12}
+_MES_E_ANO = re.compile(
+    r"\b(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*[/ .-]*(20\d{2})",
+    re.IGNORECASE)
+
+ROTULO_SELIC = "Tesouro Selic"
+ROTULO_IPCA = "IPCA+"
+ROTULO_PRE = "Prefixado"
+ROTULO_CURVA = "Bancário na curva (sem marcação)"
+ROTULO_FUNDO = "Fundo RF"
+ROTULO_NAO_IDENT = "Indexador não identificado"
+
+
+def _eh_curva(pos: dict) -> bool:
+    ticker = str(pos.get("ticker") or "").strip().upper()
+    nome = str(pos.get("nome") or "").strip().upper()
+    return ticker.startswith(_PREFIXOS_CURVA) or nome.startswith(_PREFIXOS_CURVA)
+
+
+def duration_anos(pos: dict, hoje: date | None = None) -> tuple[float | None, str]:
+    """(duration em anos, fonte). ``None`` quando o vencimento não é legível.
+
+    Respeita ``pos["duration_anos"]`` se a posição já traz. Senão lê o
+    vencimento do nome/ticker ("mar/2031" ou só o ano, e então assume 1º de
+    julho) e usa o prazo residual como duration: exato para título sem cupom
+    (LTN, NTN-B Principal) e limite superior para o que paga cupom --
+    portanto conservador. Vencimento ausente nunca vira zero.
+    """
+    declarada = pos.get("duration_anos")
+    if declarada is not None:
+        try:
+            return float(declarada), "informada"
+        except (TypeError, ValueError):
+            pass
+    hoje = hoje or date.today()
+    texto = f"{pos.get('nome') or ''} {pos.get('ticker') or ''}"
+    venc = None
+    m = _MES_E_ANO.search(texto)
+    if m:
+        venc = date(int(m.group(2)), _MES_VENCIMENTO[m.group(1).lower()[:3]], 15)
+    else:
+        a = _ANO_VENCIMENTO.search(texto)
+        if a:
+            venc = date(int(a.group(1)), 7, 1)
+    if venc is None:
+        return None, "vencimento ilegível"
+    return max((venc - hoje).days, 0) / 365.25, "prazo residual do vencimento"
+
+
+def classificar_exposicao(pos: dict, hoje: date | None = None) -> dict:
+    """Como o choque de uma posição é escolhido.
+
+    Devolve ``{"bucket", "shock_attr", "duration", "duration_fonte",
+    "escala_duration"}``. ``shock_attr=None`` significa choque zero: o papel
+    se carrega na curva e não tem marcação a mercado. ``escala_duration`` é
+    ``True`` quando o choque do cenário é escalado pela duration.
+    """
+    classe = str(pos.get("classe") or "Outros")
+    if classe == "Fundo RF":
+        return {"bucket": ROTULO_FUNDO, "shock_attr": "shock_fundo_rf",
+                "duration": None, "duration_fonte": "", "escala_duration": False}
+    if classe not in ("Tesouro Direto", "Renda Fixa"):
+        return {"bucket": None, "shock_attr": _CLASSE_TO_SHOCK.get(classe, "shock_stock_br"),
+                "duration": None, "duration_fonte": "", "escala_duration": False}
+    if classe == "Renda Fixa" and _eh_curva(pos):
+        return {"bucket": ROTULO_CURVA, "shock_attr": None,
+                "duration": None, "duration_fonte": "", "escala_duration": False}
+
+    from core.inteligencia_ativos.calculos import indexador as _indexador
+
+    idx = _indexador(pos)
+    if idx == "Selic" and classe == "Tesouro Direto":
+        return {"bucket": ROTULO_SELIC, "shock_attr": "shock_tesouro",
+                "duration": None, "duration_fonte": "", "escala_duration": False}
+    if idx == "Prefixado":
+        bucket = ROTULO_PRE
+    elif idx in ("IPCA", "IGP-M"):
+        bucket = ROTULO_IPCA
+    else:
+        # Não identificado, ou pós-fixado em crédito privado: o choque de juros
+        # longos do cenário, sem presumir que o papel é Selic. Errar para o lado
+        # conservador é o oposto do defeito que esta função corrige.
+        bucket = ROTULO_NAO_IDENT
+    dur, fonte = duration_anos(pos, hoje)
+    return {"bucket": bucket, "shock_attr": "shock_renda_fixa",
+            "duration": dur, "duration_fonte": fonte, "escala_duration": True}
+
+
+def _choque_da_posicao(scenario: StressScenario, exp: dict) -> float:
+    if exp["shock_attr"] is None:
+        return 0.0
+    base = float(getattr(scenario, exp["shock_attr"]))
+    if exp["escala_duration"] and exp["duration"] is not None:
+        base = max(base * exp["duration"] / DURATION_REFERENCIA_ANOS, PISO_CHOQUE_TITULO)
+    return base
+
+
 def aplicar_stress(
     posicoes: list[dict],
     scenario: StressScenario,
+    hoje: date | None = None,
 ) -> dict:
     """
     Aplica um cenário de estresse à carteira atual.
 
     Cada posição deve ter ao menos: classe (str), valor_mercado (float),
-    moeda (str opcional, default BRL).
+    moeda (str opcional, default BRL). Para renda fixa, ``ticker`` e ``nome``
+    (e opcionalmente ``duration_anos``) escolhem o choque: ver
+    :func:`classificar_exposicao`.
 
     Retorna dict:
       total_pre:        valor de mercado pré-choque (R$)
@@ -223,11 +352,15 @@ def aplicar_stress(
       perda_absoluta:   total_pre - total_pos
       perda_pct:        perda relativa em decimal
       por_classe:       {classe: {pre, pos, perda_pct}}
+      por_indexador:    {bucket de renda fixa: {pre, pos, perda_pct, duration_anos}}
+      renda_fixa_sem_duration: tickers cujo choque não pôde ser escalado
       tempo_recuperacao_meses: heurística histórica do cenário
     """
     total_pre = 0.0
     total_pos = 0.0
     por_classe: dict[str, dict] = {}
+    por_idx: dict[str, dict] = {}
+    sem_duration: list[str] = []
 
     for pos in posicoes:
         classe = str(pos.get("classe") or "Outros")
@@ -236,8 +369,8 @@ def aplicar_stress(
         if vm_br <= 0:
             continue
 
-        shock_attr = _CLASSE_TO_SHOCK.get(classe, "shock_stock_br")
-        shock = float(getattr(scenario, shock_attr))
+        exp = classificar_exposicao(pos, hoje)
+        shock = _choque_da_posicao(scenario, exp)
 
         # Ajuste cambial para ativos em USD (Nomad)
         if moeda == "USD":
@@ -254,6 +387,17 @@ def aplicar_stress(
         agg = por_classe.setdefault(classe, {"pre": 0.0, "pos": 0.0})
         agg["pre"] += vm_br
         agg["pos"] += vm_pos
+
+        if exp["bucket"]:
+            b = por_idx.setdefault(exp["bucket"], {"pre": 0.0, "pos": 0.0,
+                                                   "dur_x_vm": 0.0, "vm_dur": 0.0})
+            b["pre"] += vm_br
+            b["pos"] += vm_pos
+            if exp["duration"] is not None:
+                b["dur_x_vm"] += exp["duration"] * vm_br
+                b["vm_dur"] += vm_br
+            elif exp["escala_duration"]:
+                sem_duration.append(str(pos.get("ticker") or pos.get("nome") or "?"))
 
     for classe, agg in por_classe.items():
         pre = agg["pre"]
@@ -273,6 +417,14 @@ def aplicar_stress(
                                 "pos": round(v["pos"], 2),
                                 "perda_pct": v["perda_pct"]}
                             for k, v in por_classe.items()},
+        "por_indexador":   {k: {"pre": round(v["pre"], 2),
+                                "pos": round(v["pos"], 2),
+                                "perda_pct": ((v["pos"] - v["pre"]) / v["pre"]
+                                              if v["pre"] > 0 else 0.0),
+                                "duration_anos": (v["dur_x_vm"] / v["vm_dur"]
+                                                  if v["vm_dur"] > 0 else None)}
+                            for k, v in por_idx.items()},
+        "renda_fixa_sem_duration": sorted(set(sem_duration)),
         "tempo_recuperacao_meses": scenario.tempo_recuperacao_meses,
     }
 
