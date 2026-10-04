@@ -95,8 +95,9 @@ def ultimo_valor_sgs(codigo: int, janela_dias: int = 45,
     ~40 dias de atraso). ``None`` quando as duas vias falham -- quem chama
     mostra "indisponível", nunca um valor fixo.
     """
-    import requests
     from datetime import timedelta
+
+    import requests
 
     try:
         r = requests.get(
