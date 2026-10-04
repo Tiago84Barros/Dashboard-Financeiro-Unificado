@@ -31,6 +31,7 @@ import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from core.b3_precos_saneamento import neutralizar_saltos_mensais
 from core.data_quality import clean_multiples_frame
 from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
 from core.fii_ticker import sql_ticker_fii as _sql_ticker_fii
@@ -1679,7 +1680,13 @@ def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     wide = df.pivot_table(index="date", columns="ticker", values="c", aggfunc="last")
     mensal = wide.resample("ME").last()          # último preço válido de cada mês
     mensal.columns = [str(c).strip().upper() for c in mensal.columns]
-    return mensal.dropna(how="all")
+    # B3-01: desdobramento/grupamento que o ajuste da fonte nao retroagiu (e
+    # ajustado corrompido com close plano, MMAQ4/RSUL3) aparece como retorno
+    # mensal acima de +100% ou abaixo de -60%: 636 casos em 1.091 tickers em
+    # 04/10/2026, e a safra 2024 do EW saia +135,6% contra -7,7% saneada.
+    # A regra e o porque moram em core.b3_precos_saneamento.
+    mensal, _ = neutralizar_saltos_mensais(mensal.dropna(how="all"))
+    return mensal
 
 
 @st.cache_data(ttl=3600, show_spinner=False)

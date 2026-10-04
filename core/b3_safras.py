@@ -182,11 +182,25 @@ import pandas as pd
 # veredito. Duas copias da mesma regra nao ficam iguais -- foi exatamente o
 # que aconteceu com a guarda de dispersao ate 2026-09.
 from core.b3_evidence import teste_t_unilateral
+from core.b3_precos_saneamento import limites_winsor
 from core.b3_vigencia import ano_base_do_score, janela_de_vigencia, safra_completa
 
 # A serie de precos e mensal: 45 dias cobre uma folga de um mes de atraso
 # na cotacao e nao mais que isso -- ver docstring do modulo.
 TOLERANCIA_DIAS = 45
+
+#: Winsorizacao da secao transversal de cada safra (auditoria B3-01). Com ~300
+#: papeis por safra, 1%/99% corta 3 nomes por cauda. Medido em 04/10/2026 sobre
+#: o painel ja saneado de saltos: o EW da safra 2020 vai de +46,0% (sem corte)
+#: para +44,5% (1/99), +42,7% (2,5/97,5) e +39,9% (5/95) -- o corte de 1%
+#: tira o residuo de dado sem comer a cauda real do mercado, que e o que o
+#: 5/95 passa a fazer. A winsorizacao SOZINHA nao basta: sem o saneamento de
+#: saltos (core.b3_precos_saneamento) o EW da safra 2020 fica em +71,7% com
+#: 1/99 contra +44,5% saneado, e a de 2021 em -6,9% contra -10,1%.
+WINSOR_PCT_BAIXO = 1.0
+WINSOR_PCT_ALTO = 99.0
+#: Abaixo disto o percentil e o proprio dado: nao corta nada.
+WINSOR_MIN_PAPEIS = 30
 
 # Piso de safras para o leave-one-out publicar veredito.
 #
@@ -218,6 +232,7 @@ COLUNAS_TABELA = [
     "Safra", "Exercício-base", "Janela", "Completa", "Mensurável",
     "Segmentos", "Ativos", "Maiores posições", "Estratégia (%)",
     "Equal-weight (%)", "Selic (%)", "Excesso s/ Selic (pp)",
+    "Excesso s/ EW (pp)",
     "Peso sem preço (%)", "Universo com preço",
 ]
 
@@ -488,26 +503,52 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
         return _preco_nas_pontas(df_precos[tk], inicio_mercado, corte,
                                  saida=carteira.saidas.get(tk))
 
+    # Winsorizacao (B3-01): os limites saem da secao transversal OBSERVADA do
+    # universo da safra e valem para os DOIS lados da comparacao -- cortar so
+    # o EW ou so a estrategia criaria excesso por construcao. Ticker sem
+    # preco (lacuna) nao entra nos percentis: ele rende 0 por regra, nao por
+    # medicao.
+    observados = {}
+    for tk in dict.fromkeys(list(carteira.universo) + list(carteira.pesos)):
+        pontas = _pontas(tk)
+        if pontas is not None:
+            observados[tk] = pontas[1] / pontas[0] - 1.0
+    limites = limites_winsor([observados[tk] for tk in carteira.universo
+                              if tk in observados],
+                             pct_baixo=WINSOR_PCT_BAIXO,
+                             pct_alto=WINSOR_PCT_ALTO,
+                             minimo=WINSOR_MIN_PAPEIS)
+    n_winsorizados = 0
+
+    def _ret(tk: str) -> float:
+        nonlocal n_winsorizados
+        r = observados[tk]
+        if limites is not None and not limites[0] <= r <= limites[1]:
+            n_winsorizados += 1
+            return min(max(r, limites[0]), limites[1])
+        return r
+
     retorno_est = 0.0
     peso_ausente = 0.0
     for tk, peso in carteira.pesos.items():
-        pontas = _pontas(tk)
-        if pontas is None:
+        if tk not in observados:
             peso_ausente += float(peso)
             continue
-        p0, p1 = pontas
-        retorno_est += float(peso) * (p1 / p0 - 1.0)
+        retorno_est += float(peso) * _ret(tk)
 
     retornos_ew: list[float] = []
+    retornos_ew_brutos: list[float] = []
     n_com_preco = 0
+    n_winsorizados_estrategia = n_winsorizados
+    n_winsorizados = 0
     for tk in carteira.universo:
-        pontas = _pontas(tk)
-        if pontas is not None:
-            p0, p1 = pontas
-            retornos_ew.append(p1 / p0 - 1.0)
+        if tk in observados:
+            retornos_ew.append(_ret(tk))
+            retornos_ew_brutos.append(observados[tk])
             n_com_preco += 1
         else:
             retornos_ew.append(0.0)  # simetrico a estrategia: lacuna rende 0
+            retornos_ew_brutos.append(0.0)
 
     # Contagem do observado: vale tanto na safra mensuravel quanto na que
     # nao foi medida -- e o que a coluna "Universo com preço" mostra.
@@ -515,6 +556,8 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
         "peso_ausente": peso_ausente,
         "n_universo_total": len(carteira.universo),
         "n_universo_com_preco": n_com_preco,
+        "n_winsorizados_universo": n_winsorizados,
+        "n_winsorizados_estrategia": n_winsorizados_estrategia,
     }
 
     if n_com_preco == 0:
@@ -524,6 +567,7 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
             "retorno_selic": None,
             "excesso_selic": None,
             "excesso_equal_weight": None,
+            "retorno_equal_weight_bruto": None,
             "selic_anos_estimados": [],
             "mensuravel": False,
             **cobertura,
@@ -535,6 +579,8 @@ def retorno_da_safra(carteira: SafraCarteira, df_precos: pd.DataFrame, *,
     return {
         "retorno_estrategia": retorno_est,
         "retorno_equal_weight": retorno_ew,
+        # Sem winsorizar, so para a tela mostrar o tamanho do corte.
+        "retorno_equal_weight_bruto": float(np.mean(retornos_ew_brutos)),
         "retorno_selic": retorno_selic,
         "excesso_selic": retorno_est - retorno_selic,
         "excesso_equal_weight": (retorno_est - retorno_ew
@@ -610,6 +656,7 @@ def tabela_de_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
             "Equal-weight (%)": _pct(metricas["retorno_equal_weight"]),
             "Selic (%)": _pct(metricas["retorno_selic"]),
             "Excesso s/ Selic (pp)": _pct(metricas["excesso_selic"]),
+            "Excesso s/ EW (pp)": _pct(metricas["excesso_equal_weight"]),
             "Peso sem preço (%)": _pct(metricas["peso_ausente"]),
             "Universo com preço": (
                 f"{metricas['n_universo_com_preco']}/{metricas['n_universo_total']}"

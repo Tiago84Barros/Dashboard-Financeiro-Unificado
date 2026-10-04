@@ -1584,6 +1584,14 @@ SCORE_VERSION_CHANGELOG = {
         "corrente. Na saida a posicao vira caixa pelo ultimo fechamento e e "
         "reinvestida; o Rank-IC usa a ultima cotacao da janela inteira."
     ),
+    "2.29.0": (
+        "Auditoria B3-01: o preco mensal ajustado perde os saltos implausiveis "
+        "(> +100% ou < -60% em um mes: desdobramento/grupamento sem retroajuste "
+        "e ajustado corrompido) em core.b3_precos_saneamento, e as safras "
+        "winsorizam a secao transversal a 1%/99%. O EW da safra 2024 cai de "
+        "+135,6% para -7,7%; a medicao OOS da 2.28.0 foi feita sobre o preco "
+        "corrompido e precisa ser refeita para esta versao."
+    ),
 }
 
 
