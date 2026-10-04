@@ -2509,6 +2509,16 @@ class _MapaScores(dict):
         self.degradacoes: list[dict] = list(degradacoes or [])
 
 
+def _mapa_sem_resiliencia(score_map) -> bool:
+    """O score daquele ano saiu sem os ajustes de resiliência?
+
+    Ponto único da pergunta para backtest, Rank-IC e Criação de Portfólio:
+    três cópias da mesma checagem tendem a divergir quando o código muda.
+    """
+    return any(d.get("codigo") == "tela.b3.score_sem_resiliencia"
+               for d in getattr(score_map, "degradacoes", ()))
+
+
 def _score_historico_ano_com_cobertura(
     df_hist_batch: dict[str, pd.DataFrame],
     tickers: list[str],
@@ -2872,8 +2882,7 @@ def _simular_backtest(
                 macro_by_year=macro_by_year, rebal_month=rebal_month,
             )
             pit_cov = pit_cov + _cov_ano
-            if any(d.get("codigo") == "tela.b3.score_sem_resiliencia"
-                   for d in getattr(score_map, "degradacoes", ())):
+            if _mapa_sem_resiliencia(score_map):
                 anos_sem_resiliencia.append(ano)
             # Fix auditoria 2026-07: sem fallback p/ scores de HOJE (era
             # look-ahead). Gap de histórico no meio da série ⇒ mantém a
@@ -3092,6 +3101,9 @@ def _rank_ic_por_ano(
     rebal_m = _REBAL_MONTH
     out: list[dict] = []
     pit_cov = PITCoverage()
+    # Anos medidos com score sem os ajustes de resiliência (INF-M4): o IC
+    # desses anos mede outro ranking, não o da metodologia declarada.
+    anos_sem_resiliencia: list[int] = []
     for ano in sorted({d.year for d in df_precos.index}):
         # base: último preço até março/N; fim: último preço até março/N+1
         jan0 = df_precos[(df_precos.index.year == ano) &
@@ -3127,6 +3139,8 @@ def _rank_ic_por_ano(
         ordem = s.sort_values(ascending=False).index
         top_m = float(r[ordem[:k]].mean())
         bot_m = float(r[ordem[-k:]].mean())
+        if _mapa_sem_resiliencia(score_map):
+            anos_sem_resiliencia.append(ano)
         out.append({
             "Ano": ano, "N": len(comuns), "Rank-IC": round(ic, 3),
             "Top tercil (%)": round(top_m * 100, 1),
@@ -3139,6 +3153,7 @@ def _rank_ic_por_ano(
     df_ic.attrs["pit_coverage"] = pit_cov
     df_ic.attrs["pit_cobertura_medida"] = round(pit_cov.cobertura_medida, 4)
     df_ic.attrs["pit_disponibilidade"] = pit_cov.nivel
+    df_ic.attrs["anos_sem_resiliencia"] = sorted(set(anos_sem_resiliencia))
     return df_ic
 
 
@@ -6326,6 +6341,14 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             if isinstance(_pit_cov_ic, PITCoverage):
                 st.markdown(_pit_card_html(_pit_cov_ic, "Rank-IC"),
                             unsafe_allow_html=True)
+            _anos_sem_res_ic = df_ic.attrs.get("anos_sem_resiliencia") or []
+            if _anos_sem_res_ic:
+                aviso_lacuna(
+                    f"Rank-IC de {', '.join(str(a) for a in _anos_sem_res_ic)} "
+                    f"medido sobre o score B3 {SCORE_VERSION} **sem** os ajustes "
+                    "de resiliência (histórico, valuation histórico e saúde) — "
+                    "o IC desses anos não é o da metodologia declarada.",
+                    codigo="tela.b3.rank_ic_score_sem_resiliencia", nivel="warning")
             if _ic_med <= 0.0:
                 st.warning(
                     "IC médio ≤ 0 nesta janela/universo: o score NÃO demonstrou "

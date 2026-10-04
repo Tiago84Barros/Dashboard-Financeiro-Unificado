@@ -500,3 +500,110 @@ def test_risk_engine_sem_codigo_morto_apos_o_return():
     from views.empresas_b3 import _risk_engine
     fonte = inspect.getsource(_risk_engine)
     assert "Liquidez_Corrente" not in fonte and "penalty.clip" not in fonte
+
+
+# ── INF-M4 (resto): Rank-IC e Criação de Portfólio leem a marca ────────────
+
+def test_rank_ic_nomeia_anos_com_score_sem_resiliencia(monkeypatch):
+    import core.resilience_score as rs
+    from views.empresas_b3 import _rank_ic_por_ano
+    monkeypatch.setattr(rs, "financial_health_penalty", _explode)
+
+    df_ic = _rank_ic_por_ano(_precos_sinteticos(), _hist_sintetico(),
+                             ["AAA3", "BBB3", "CCC3"], {"ROE": (1.0, True)},
+                             min_n=3)
+
+    assert not df_ic.empty
+    # Só anos que de fato entraram no IC — nem mais, nem menos.
+    assert df_ic.attrs["anos_sem_resiliencia"] == sorted(df_ic["Ano"].tolist())
+
+
+def test_rank_ic_integro_nao_declara_ano_sem_resiliencia(monkeypatch):
+    from views.empresas_b3 import _rank_ic_por_ano
+    _neutraliza_resiliencia(monkeypatch)
+
+    df_ic = _rank_ic_por_ano(_precos_sinteticos(), _hist_sintetico(),
+                             ["AAA3", "BBB3", "CCC3"], {"ROE": (1.0, True)},
+                             min_n=3)
+
+    assert not df_ic.empty
+    assert df_ic.attrs["anos_sem_resiliencia"] == []
+
+
+def test_tela_do_rank_ic_avisa_anos_sem_resiliencia():
+    import inspect
+
+    import views.empresas_b3 as b3
+    corpo = inspect.getsource(b3)
+    i = corpo.index('_pit_card_html(_pit_cov_ic, "Rank-IC")')
+    trecho = corpo[i:i + 700]
+    assert 'df_ic.attrs.get("anos_sem_resiliencia")' in trecho
+    assert "tela.b3.rank_ic_score_sem_resiliencia" in trecho
+
+
+def _segmento(monkeypatch, explode: bool) -> dict:
+    import core.resilience_score as rs
+    from tests.test_portfolio_b3_pit_coverage import _hist, _resultado
+    if explode:
+        monkeypatch.setattr(rs, "financial_health_penalty", _explode)
+    else:
+        _neutraliza_resiliencia(monkeypatch)
+    resultado = _resultado(_hist([pd.NaT] * (pd.Timestamp.now().year - 2018)))
+    assert resultado is not None
+    return resultado
+
+
+def test_segmento_registra_anos_e_decisao_sem_resiliencia(monkeypatch):
+    resultado = _segmento(monkeypatch, explode=True)
+    assert resultado["anos_sem_resiliencia"]
+    assert set(resultado["anos_sem_resiliencia"]) <= set(
+        range(resultado["ano_inicio"], resultado["ano_fim"] + 1))
+    assert resultado["decisao_sem_resiliencia"] is True
+
+
+def test_segmento_integro_nao_marca_resiliencia(monkeypatch):
+    resultado = _segmento(monkeypatch, explode=False)
+    assert resultado["anos_sem_resiliencia"] == []
+    assert resultado["decisao_sem_resiliencia"] is False
+
+
+def test_criacao_de_portfolio_avisa_segmentos_sem_resiliencia(monkeypatch):
+    import views.portfolio_b3 as pb3
+    avisos: list[tuple[str, str]] = []
+    monkeypatch.setattr(pb3, "aviso_lacuna",
+                        lambda msg, **k: avisos.append((k["codigo"], msg)))
+
+    pb3._avisar_segmentos_sem_resiliencia([
+        {"segmento": "Seg A", "anos_sem_resiliencia": [2020, 2021],
+         "decisao_sem_resiliencia": True},
+        {"segmento": "Seg B", "anos_sem_resiliencia": [],
+         "decisao_sem_resiliencia": False},
+        {"segmento": "Seg C"},  # resultado antigo na sessão, sem as chaves
+    ])
+
+    codigos = dict(avisos)
+    assert set(codigos) == {"tela.b3.carteira_score_sem_resiliencia",
+                            "tela.b3.carteira_historico_sem_resiliencia"}
+    assert "Seg A" in codigos["tela.b3.carteira_score_sem_resiliencia"]
+    assert "Seg A (2020, 2021)" in codigos["tela.b3.carteira_historico_sem_resiliencia"]
+    assert "Seg B" not in " ".join(codigos.values())
+
+
+def test_criacao_de_portfolio_integra_nao_avisa(monkeypatch):
+    import views.portfolio_b3 as pb3
+    avisos: list[str] = []
+    monkeypatch.setattr(pb3, "aviso_lacuna", lambda msg, **k: avisos.append(msg))
+    pb3._avisar_segmentos_sem_resiliencia([
+        {"segmento": "Seg A", "anos_sem_resiliencia": [],
+         "decisao_sem_resiliencia": False},
+    ])
+    assert avisos == []
+
+
+def test_render_chama_aviso_de_segmentos_sem_resiliencia():
+    import inspect
+
+    import views.portfolio_b3 as pb3
+    corpo = inspect.getsource(pb3.render)
+    i = corpo.index("_render_data_quality_box(quality_summary")
+    assert "_avisar_segmentos_sem_resiliencia(resultados)" in corpo[i:i + 500]
