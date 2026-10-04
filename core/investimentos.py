@@ -1643,31 +1643,99 @@ _SQL_EVOLUCAO_RATIO = """
 """
 
 _SQL_EVOLUCAO_SNAPSHOTS = """
-    -- Serie temporal de patrimonio baseada nos snapshots XP.
-    -- Aceita tanto a fonte antiga (source_table='xp_positions', migracao
-    -- via migrate_app2_investimentos.py) quanto a nova
-    -- (source_table='xp_consolidado', upload manual em Configuracoes).
-    -- DISTINCT ON garante uma linha por report_date mesmo se ambas as
-    -- fontes existirem (prioriza xp_consolidado > xp_positions).
-    -- Atualizado 2026-05-23 — antes era hardcoded source_system='app2'.
-    WITH xp_pref AS (
-        SELECT DISTINCT ON (report_date)
-            report_date, source_system, source_table
-        FROM portfolio_position_snapshots
-        WHERE user_id = :uid
-          AND source_table IN ('xp_consolidado', 'xp_positions')
-          AND COALESCE(source_id, '') NOT LIKE 'td-snap-%'
-        ORDER BY report_date,
-                 CASE source_table
-                     WHEN 'xp_consolidado' THEN 0
-                     WHEN 'xp_positions'   THEN 1
-                     ELSE 2
-                 END
+    -- Serie temporal de patrimonio: cada ponto e a carteira montada com a
+    -- MESMA regra de _SQL_POSICOES_SNAPSHOT (o ponto de hoje), so que vista
+    -- do fim de cada mes com foto. Antes a serie somava uma unica fonte por
+    -- data (xp_consolidado > xp_positions) e o ponto de hoje somava todas --
+    -- Posicao Detalhada da B3, extrato do Tesouro e o resto do consolidado --,
+    -- e a curva subia ~R$ 100 mil de set/26 para out/26 sem aporte nenhum.
+    --
+    -- Por data de corte D:
+    --   1. de cada fonte, so a ultima foto ate D (latest_source);
+    --   2. por ativo, a foto mais recente; empate na data vai para a fonte de
+    --      mais autoridade -- o CASE e o mesmo de _SQL_POSICOES_SNAPSHOT, e
+    --      test_patrimonio_dashboard_vs_historico.py falha se divergir;
+    --   3. ativo cuja ultima linha da B3 ate D veio zerada esta vendido.
+    -- As linhas do Tesouro gravadas com rotulo xp_consolidado (source_id
+    -- td-snap-%) contam como tesouro_direto, como no ponto de hoje: na mesma
+    -- data do consolidado o desempate fica com uma so, e o Tesouro nao soma
+    -- duas vezes.
+    -- Acao emprestada (aba "Posicao - Emprestimos") continua sendo do
+    -- investidor e entra no patrimonio: sem ela dez/23 dava R$ 254 mil contra
+    -- R$ 590.520,23 da Evolucao Patrimonial da B3.
+    WITH normalized_snapshots AS (
+        SELECT
+            pps.*,
+            CASE
+                WHEN pps.source_id LIKE 'td-snap-%' THEN 'tesouro_direto'
+                ELSE pps.source_table
+            END AS effective_source_table
+        FROM portfolio_position_snapshots pps
+        WHERE pps.user_id = :uid
+    ),
+    cortes AS (
+        -- Um ponto por mes: a ultima foto do mes, de qualquer fonte.
+        SELECT MAX(report_date) AS corte
+        FROM normalized_snapshots
+        GROUP BY date_trunc('month', report_date)
+    ),
+    latest_source AS (
+        SELECT
+            c.corte,
+            s.source_system,
+            s.effective_source_table,
+            MAX(s.report_date) AS report_date
+        FROM cortes c
+        JOIN normalized_snapshots s ON s.report_date <= c.corte
+        GROUP BY c.corte, s.source_system, s.effective_source_table
+    ),
+    ranked_snapshots AS (
+        SELECT
+            ls.corte,
+            pps.*,
+            DENSE_RANK() OVER (
+                PARTITION BY ls.corte, pps.asset_id
+                ORDER BY
+                    pps.report_date DESC,
+                    CASE pps.effective_source_table
+                        WHEN 'tesouro_direto' THEN 0
+                        WHEN 'b3_posicao_detalhada' THEN 1
+                        WHEN 'xp_consolidado' THEN 2
+                        WHEN 'xp_positions' THEN 3
+                        ELSE 4
+                    END,
+                    pps.source_system,
+                    pps.effective_source_table
+            ) AS asset_source_rank
+        FROM latest_source ls
+        JOIN normalized_snapshots pps
+          ON pps.source_system = ls.source_system
+         AND pps.effective_source_table = ls.effective_source_table
+         AND pps.report_date = ls.report_date
+    ),
+    b3_ultima_linha AS (
+        SELECT c.corte, s.asset_id, MAX(s.report_date) AS report_date
+        FROM cortes c
+        JOIN normalized_snapshots s
+          ON s.report_date <= c.corte
+         AND s.effective_source_table = 'b3_posicao_detalhada'
+        GROUP BY c.corte, s.asset_id
+    ),
+    b3_encerrados AS (
+        SELECT u.corte, s.asset_id
+        FROM b3_ultima_linha u
+        JOIN normalized_snapshots s
+          ON s.asset_id = u.asset_id
+         AND s.report_date = u.report_date
+        WHERE s.effective_source_table = 'b3_posicao_detalhada'
+        GROUP BY u.corte, s.asset_id
+        HAVING COALESCE(SUM(s.quantity), 0) = 0
+           AND COALESCE(SUM(s.market_value), 0) = 0
     ),
     xp_snaps AS (
         SELECT
-            pps.report_date,
-            SUM(pps.market_value)              AS vm,
+            pps.corte AS report_date,
+            SUM(pps.market_value) FILTER (WHERE pps.market_value > 0) AS vm,
             -- Custo so quando TODA posicao com valor tem custo. Soma parcial
             -- e amostra (as fotos antigas da XP vem sem invested_value) e o
             -- grafico desenhava "custo zero" sob R$ 600 mil de mercado.
@@ -1676,27 +1744,20 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
                      FILTER (WHERE pps.market_value > 0)
                 THEN SUM(pps.invested_value) FILTER (WHERE pps.market_value > 0)
             END AS vi
-        FROM portfolio_position_snapshots pps
-        JOIN xp_pref xp
-          ON xp.report_date  = pps.report_date
-         AND xp.source_system = pps.source_system
-         AND xp.source_table  = pps.source_table
-        -- Acao emprestada (aba "Posicao - Emprestimos") continua sendo do
-        -- investidor e entra no patrimonio. Sem ela, dez/23 dava R$ 254 mil
-        -- contra R$ 590.520,23 da Evolucao Patrimonial da B3; com ela,
-        -- 2022 a 2025 batem com a B3 no centavo.
-        WHERE pps.user_id = :uid
-          -- As seis linhas do Tesouro rotuladas xp_consolidado caem na mesma
-          -- data do consolidado de ago/26; sem este filtro o Tesouro somava
-          -- duas vezes.
-          AND COALESCE(pps.source_id, '') NOT LIKE 'td-snap-%'
-        GROUP BY pps.report_date
+        FROM ranked_snapshots pps
+        WHERE pps.asset_source_rank = 1
+          AND NOT EXISTS (
+              SELECT 1 FROM b3_encerrados e
+              WHERE e.corte = pps.corte AND e.asset_id = pps.asset_id
+          )
+        GROUP BY pps.corte
     )
     SELECT
         x.report_date AS mes,
         x.vm AS valor_mercado,
         x.vi AS valor_investido_snapshot
     FROM xp_snaps x
+    WHERE x.vm > 0
     ORDER BY x.report_date
 """
 

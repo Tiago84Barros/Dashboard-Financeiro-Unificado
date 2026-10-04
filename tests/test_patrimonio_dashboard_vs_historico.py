@@ -120,6 +120,28 @@ def test_historico_inclui_acoes_emprestadas():
     assert "is_loaned" not in sql
 
 
+def _case_de_prioridade(sql: str) -> str:
+    sql = " ".join(sql.lower().split())
+    inicio = sql.index("case pps.effective_source_table")
+    return sql[inicio:sql.index("end", inicio)]
+
+
+def test_serie_desempata_fontes_como_o_ponto_de_hoje():
+    # Set/26 -> Out/26 subia ~R$ 100 mil sem aporte: a serie somava uma fonte
+    # por data e o ponto de hoje juntava todas. As duas consultas tem de
+    # montar a carteira com a mesma ordem de autoridade.
+    assert (_case_de_prioridade(investimentos._SQL_EVOLUCAO_SNAPSHOTS)
+            == _case_de_prioridade(investimentos._SQL_POSICOES_SNAPSHOT))
+
+
+def test_serie_le_todas_as_fontes_e_os_encerramentos_da_b3():
+    sql = " ".join(investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower().split())
+
+    assert "source_table in" not in sql
+    assert "b3_encerrados" in sql
+    assert "s.report_date <= c.corte" in sql
+
+
 def test_foto_sem_custo_vira_lacuna_e_nao_zero():
     snaps = [
         SimpleNamespace(mes=date(2020, 12, 31), valor_mercado=600.0,
