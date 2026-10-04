@@ -16,6 +16,7 @@ o que é intrínseco ao mercado americano:
 from __future__ import annotations
 
 import json
+import logging
 from html import escape
 
 import numpy as np
@@ -82,6 +83,8 @@ from views.analise_portfolio_b3 import (
     _persp_badge,
     _score_mod,
 )
+
+logger = logging.getLogger(__name__)
 
 _STATE = "apus_state"
 _CHAT = "apus_chat_history"
@@ -1110,8 +1113,11 @@ def render(show_header: bool = True) -> None:
     with st.spinner("Carregando portfólio modelo…"):
         try:
             model = load_active_us_portfolio_model()
-        except Exception as exc:  # noqa: BLE001
-            st.error(f"Não foi possível carregar a carteira salva: {exc}")
+        except Exception:  # noqa: BLE001
+            # Erro de banco pode carregar SQL e host na mensagem: vai para o
+            # log, a tela diz só o que aconteceu (auditoria LLM-A11).
+            logger.exception("analise_portfolio_us: carteira salva não carregou")
+            st.error("Não foi possível carregar a carteira salva. Detalhes no log do app.")
             return
 
     if not model or not model.get("items"):
