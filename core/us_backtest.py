@@ -196,7 +196,8 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
                  benchmark=None, benchmark_series: pd.Series | None = None,
                  benchmark_loader=None,
                  benchmark_horizon_months: int | None = None,
-                 benchmark_min_obs: int | None = None) -> dict:
+                 benchmark_min_obs: int | None = None,
+                 cambio_usdbrl: pd.Series | None = None) -> dict:
     """Backtest PIT: em cada data forma a carteira pelos scores e realiza o
     fwd_return; compara com equal-weight do universo. Retorna curvas + métricas.
 
@@ -212,6 +213,12 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
     Com benchmark inválido, sem série ou com interseção temporal abaixo do piso,
     ``res["benchmark"]["ok"]`` é ``False`` com ``erro``/``mensagem`` nomeados e
     NENHUMA métrica de excesso contra índice é devolvida.
+
+    ``cambio_usdbrl`` (série mensal de USDBRL em fim de mês) ACRESCENTA o bloco
+    ``liquido``: o mesmo walk-forward em reais, com custo, retenção, IR e IOF
+    (``core.backtest_liquido.liquido_eua_brl``). As chaves brutas em USD não
+    mudam -- o Rank-IC e o ``bootstrap_excess`` guardados em
+    ``data/vantagem_oos.json`` continuam medindo a ordenação, não o bolso.
     """
     if panel is None or panel.empty:
         return {"ok": False, "reason": "painel vazio"}
@@ -242,6 +249,8 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
         # poderiam mudar sem que quem lê o backtest soubesse.
         return {"ok": False, "reason": "retornos ou scores não finitos"}
     port_ret, gross_ret, ew_ret, dates = [], [], [], []
+    periodos_liquido: list[dict] = []
+    tem_preco = "fwd_price_return" in panel.columns
     prev_w: dict = {}
     turns = []
     max_weights, hhis = [], []
@@ -261,6 +270,14 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
         pesos = np.fromiter(w.values(), dtype=float)
         max_weights.append(float(pesos.max()))
         hhis.append(float(np.square(pesos).sum()))
+        if cambio_usdbrl is not None:
+            periodos_liquido.append({
+                "date": date, "pesos": w, "turnover": turn, "fwd": fwd,
+                "fwd_preco": (dict(zip(g["symbol"], pd.to_numeric(
+                    g["fwd_price_return"], errors="coerce")))
+                    if tem_preco else {}),
+                "ew_usd": ew_ret[-1],
+            })
         prev_w = w
     if not dates:
         return {"ok": False, "reason": "sem períodos utilizáveis"}
@@ -286,6 +303,10 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
             min_obs=(_bm.MIN_OBS_BENCHMARK if benchmark_min_obs is None
                      else int(benchmark_min_obs)),
             bootstrap_samples=bootstrap_samples)
+    if cambio_usdbrl is not None:
+        from core.backtest_liquido import liquido_eua_brl
+        extra["liquido"] = liquido_eua_brl(
+            periodos_liquido, cambio_usdbrl, periodos_por_ano=periods_per_year)
     max_weight = float(max(max_weights)) if max_weights else None
     max_hhi = float(max(hhis)) if hhis else None
     violates_policy = bool(max_weight is not None

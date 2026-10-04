@@ -1461,6 +1461,77 @@ def load_us_macro() -> dict:
     return snapshot
 
 
+# ── Câmbio para o backtest em reais (auditoria app4, EUA-J) ──────────────────
+
+def _serie_mensal(frame: pd.DataFrame, coluna_data: str, coluna_valor: str) -> pd.Series:
+    datas = pd.to_datetime(frame[coluna_data], errors="coerce", utc=True).dt.tz_localize(None)
+    valores = pd.to_numeric(frame[coluna_valor], errors="coerce")
+    serie = pd.Series(valores.to_numpy(), index=pd.DatetimeIndex(datas)).dropna()
+    serie = serie[serie > 0]
+    if serie.empty:
+        return pd.Series(dtype="float64")
+    serie.index = serie.index.normalize() + pd.offsets.MonthEnd(0)
+    return serie.groupby(level=0).last().sort_index()
+
+
+def load_usdbrl_mensal(*, engine=None) -> pd.Series:
+    """USDBRL de fim de mês para converter o walk-forward dos EUA em reais.
+
+    Fonte principal: ``public.info_economica_mensal."Cambio_Final"`` -- mensal
+    desde 2010-01, cobre todas as datas-base do painel (30/jun de 2010 a
+    2025). A cotação diária de ``asset_quotes`` (USDBRL, desde 2021-08) só
+    preenche o mês que a mensal ainda não fechou: o fim do último período do
+    painel (jun/2026) caiu fora dela em 04/10/2026. As duas diferem pouco
+    (30/06/2025: 5,4571 na mensal, 5,4784 na diária); a mensal tem
+    precedência para que o histórico inteiro saia da mesma régua.
+
+    Série vazia quando nenhuma das duas existe -- o backtest em reais diz
+    que faltou câmbio em vez de assumir câmbio constante.
+    """
+    eng = engine if engine is not None else _engine()
+    if eng is None:
+        return pd.Series(dtype="float64")
+    partes: list[pd.Series] = []
+    fontes: list[str] = []
+    consultas = (
+        ("info_economica_mensal.Cambio_Final",
+         'SELECT data, "Cambio_Final" AS valor FROM public.info_economica_mensal',
+         "data"),
+        ("asset_quotes.USDBRL",
+         "SELECT aq.timestamp AS data, aq.close AS valor FROM asset_quotes aq "
+         "JOIN assets a ON a.id = aq.asset_id "
+         "WHERE UPPER(TRIM(a.ticker)) = 'USDBRL' AND aq.close > 0",
+         "data"),
+    )
+    try:
+        conn_ctx = eng.connect()
+    except Exception as exc:  # noqa: BLE001 - sem câmbio, o bloco em reais avisa
+        logger.warning("load_usdbrl_mensal sem conexão: %s", exc)
+        return pd.Series(dtype="float64")
+    with conn_ctx as conn:
+        for nome, sql, coluna in consultas:
+            try:
+                frame = pd.read_sql(text(sql), conn)
+            except Exception as exc:  # noqa: BLE001 - a outra fonte ainda serve
+                logger.info("câmbio %s ilegível: %s", nome, exc)
+                try:
+                    conn.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+                continue
+            serie = _serie_mensal(frame, coluna, "valor") if not frame.empty                 else pd.Series(dtype="float64")
+            if not serie.empty:
+                partes.append(serie)
+                fontes.append(nome)
+    if not partes:
+        return pd.Series(dtype="float64")
+    serie = partes[0]
+    for complemento in partes[1:]:
+        serie = serie.combine_first(complemento)
+    serie.attrs["fonte"] = " + ".join(fontes)
+    return serie.sort_index()
+
+
 # ── Série mensal (formato do análogo da B3) ───────────────────────────────────
 
 def load_precos_mensais_us(symbols: tuple[str, ...], *, engine=None) -> pd.DataFrame:

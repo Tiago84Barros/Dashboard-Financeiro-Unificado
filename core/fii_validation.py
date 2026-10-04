@@ -356,7 +356,17 @@ def robust_optimizer_point_in_time_backtest(
     Cada rebalanceamento aplica a elegibilidade padrão vigente, o score reconstruído
     naquela data, o cenário macro então observável e correlações calculadas
     exclusivamente com retornos anteriores à decisão.
+
+    Retorno em três camadas (auditoria app4, FII-10): bruto, após custo de
+    giro e líquido de IR. ``portfolio_return`` -- o que alimenta excesso,
+    bootstrap e regimes -- é o LÍQUIDO: com giro de 263% ao ano, vender cota
+    com ganho paga 20% (o rendimento distribuído é isento), e um backtest que
+    não cobra isso mede um investidor que não existe. O IR exige separar preço
+    de provento; sem a coluna ``price_return`` nos retornos ele não é
+    calculado e ``ir_calculado`` sai ``False`` -- nunca um zero silencioso.
+    O IFIX de comparação segue bruto: é o índice, não um investidor.
     """
+    from core.backtest_liquido import IR_FII_GANHO, RastreadorIR, premissas_fii
     from core.fii_carteira_protegida import montar_carteira_com_concessao
     from core.fii_integrated_model import (
         ColunasDeElegibilidadeAusentes,
@@ -391,6 +401,8 @@ def robust_optimizer_point_in_time_backtest(
     b.index = pd.to_datetime(b.index).normalize()
     dates = sorted(set(s["reference_date"]))
     return_dates = sorted(set(r["date"]))
+    ir_calculado = "price_return" in r.columns
+    rastreador_ir = RastreadorIR(IR_FII_GANHO)
     previous = pd.Series(dtype=float)
     observations: list[dict[str, Any]] = []
     ranks: list[pd.Series] = []
@@ -623,7 +635,23 @@ def robust_optimizer_point_in_time_backtest(
             continue
         periodic = matrix.mul(weights, axis=1).sum(axis=1, skipna=True) / present_weight
         gross = float((1.0 + periodic).prod() - 1.0)
-        net = gross - turn * (transaction_cost + slippage)
+        after_costs = gross - turn * (transaction_cost + slippage)
+        ir_periodo = 0.0
+        if ir_calculado:
+            # O IR do rebalanceamento cai no período que ele abre, como o
+            # custo de giro. Mês sem retorno conta como posição parada, a
+            # mesma convenção do bruto acima.
+            ir_periodo = rastreador_ir.rebalancear(weights.to_dict())
+            price_matrix = period_rows.pivot_table(
+                index="date", columns="ticker", values="price_return", aggfunc="last",
+            ).reindex(index=matrix.index, columns=matrix.columns)
+            total_por_ativo = (1.0 + matrix.fillna(0.0)).prod() - 1.0
+            preco_por_ativo = (1.0 + price_matrix.fillna(0.0)).prod() - 1.0
+            rastreador_ir.evoluir(
+                total_por_ativo.to_dict(),
+                (total_por_ativo - preco_por_ativo).to_dict(),
+            )
+        net = after_costs - ir_periodo
         benchmark_period = b[b.index >= execution_date]
         if next_execution is not None:
             benchmark_period = benchmark_period[benchmark_period.index < next_execution]
@@ -634,6 +662,9 @@ def robust_optimizer_point_in_time_backtest(
         observations.append({
             "date": execution_date, "decision_date": decision,
             "portfolio_return": net, "benchmark_return": benchmark_return,
+            "portfolio_return_bruto": gross,
+            "portfolio_return_apos_custos": after_costs,
+            "ir_periodo": ir_periodo,
             "coverage": coverage, "turnover": turn,
             "holdings": {
                 str(ticker): float(weight) for ticker, weight in weights.items()
@@ -681,6 +712,8 @@ def robust_optimizer_point_in_time_backtest(
             "missing_macro_periods": missing_macro_periods,
         }
     excess = result["portfolio_return"] - result["benchmark_return"]
+    excess_bruto = result["portfolio_return_bruto"] - result["benchmark_return"]
+    excess_apos_custos = result["portfolio_return_apos_custos"] - result["benchmark_return"]
     stabilities = [
         ranking_stability(left, right)["spearman"]
         for left, right in zip(ranks, ranks[1:])
@@ -700,6 +733,16 @@ def robust_optimizer_point_in_time_backtest(
         "mean_benchmark": float(result["benchmark_return"].mean()),
         "mean_excess": float(excess.mean()),
         "excess_bootstrap": bootstrap_mean_ci(excess),
+        # As três camadas lado a lado: quanto do excesso o custo de giro come
+        # e quanto o IR come. O líquido acima é o padrão; estes são a régua.
+        "mean_return_bruto": float(result["portfolio_return_bruto"].mean()),
+        "mean_return_apos_custos": float(result["portfolio_return_apos_custos"].mean()),
+        "mean_excess_bruto": float(excess_bruto.mean()),
+        "mean_excess_apos_custos": float(excess_apos_custos.mean()),
+        "excess_bootstrap_bruto": bootstrap_mean_ci(excess_bruto),
+        "mean_ir_periodo": float(result["ir_periodo"].mean()),
+        "ir_calculado": bool(ir_calculado),
+        "premissas_liquido": premissas_fii(transaction_cost, slippage),
         "mean_coverage": float(result["coverage"].mean()),
         "annualized_turnover": float(np.mean(turnovers) * 12),
         "rank_stability": float(np.mean(valid_stabilities)) if valid_stabilities else np.nan,
