@@ -23,12 +23,55 @@ Padrão de uso nas páginas:
 """
 import logging
 import math
+from datetime import date
 
 from core import orcamento
 from core.config import settings
 from core.user_context import user_cache_data
 
 logger = logging.getLogger(__name__)
+
+
+#: Janela da média de despesa da reserva: 6 meses FECHADOS (o LIMIT 7 da consulta
+#: traz o corrente mais seis anteriores).
+_JANELA_RESERVA_MESES = 6
+
+
+def calcular_meses_reserva(
+    saldo: float,
+    cashflow: list[dict],
+    hoje: date | None = None,
+) -> tuple[float, str]:
+    """Quantos meses de despesa o saldo bancário cobre.
+
+    Divide pela média dos meses FECHADOS (até 6), nunca pelo mês corrente: no
+    dia 4 o mês tem 4 dias de despesa e o saldo parecia durar 45,9 meses, contra
+    19,8 pela média dos meses fechados (auditoria de 04/10/2026, CF-M1).
+
+    ``cashflow``: dicts com ``month_year`` (date) e ``expenses`` (valor absoluto).
+    Devolve ``(meses, base)``; ``base`` é ``"fechados"`` ou ``"mes_parcial"``
+    (só quando NÃO existe mês fechado -- dado observado, mas parcial, e a tela
+    avisa) ou ``"sem_dado"`` (0.0 = ausência, não "reserva zerada").
+    """
+    hoje = hoje or date.today()
+    primeiro_do_mes = date(hoje.year, hoje.month, 1)
+
+    def _dia(m) -> date:
+        return m.date() if hasattr(m, "date") and callable(m.date) else m
+
+    fechados = [r for r in cashflow if _dia(r["month_year"]) < primeiro_do_mes]
+    fechados = sorted(fechados, key=lambda r: _dia(r["month_year"]), reverse=True)
+    fechados = fechados[:_JANELA_RESERVA_MESES]
+    if fechados:
+        media = sum(float(r["expenses"] or 0) for r in fechados) / len(fechados)
+        base = "fechados"
+    else:
+        parcial = [r for r in cashflow if float(r["expenses"] or 0) > 0]
+        if not parcial:
+            return 0.0, "sem_dado"
+        media = float(parcial[0]["expenses"])
+        base = "mes_parcial"
+    return ((saldo / media) if media > 0 else 0.0), base
 
 
 @user_cache_data(ttl=300)
@@ -315,7 +358,7 @@ def _visao_geral_real() -> dict:
     econ_ant = prev_cf["economia"] if prev_cf else 0.0
     taxa_ant = (econ_ant / rec_ant * 100) if rec_ant > 0 else 0.0
 
-    meses_reserva = (bank_balance / despesas) if despesas > 0 else 0.0
+    meses_reserva, reserva_base = calcular_meses_reserva(bank_balance, cf_list)
 
     # Delta patrimônio mês a mês (aproximação pelo net_cashflow do mês atual)
     base_prev       = net_worth_total - economia
@@ -439,6 +482,7 @@ def _visao_geral_real() -> dict:
             "economia_mes_anterior":  econ_ant,
             "taxa_poupanca_anterior": round(taxa_ant, 1),
             "meses_reserva":          round(meses_reserva, 1),
+            "reserva_base":           reserva_base,
             "meta_meses_reserva":     6.0,
             "maior_categoria":        maior_cat_nome,
             "maior_categoria_valor":  maior_cat_valor,

@@ -565,6 +565,24 @@ def run(apply: bool) -> int:
 
 
 def main() -> int:
+    # Este script calcula a posição por asset_id e ignora a regra de lote /
+    # fracionário por ticker-base (PETR3 e PETR3F são a mesma ação), os eventos
+    # corporativos da Movimentação da B3 (desdobro, bonificação etc.) e a cobertura
+    # por venda sem histórico. O cálculo vigente é o de
+    # data_pipeline/importers/investments/positions.py. Gravar daqui sobrescreveria
+    # portfolio_positions com PM errado (ex.: BBAS3), então o script só roda com a
+    # confirmação explícita de que se quer o algoritmo legado.
+    if "--legado-ciente" not in sys.argv:
+        print(
+            "ERRO: migration/08_compute_portfolio_positions.py esta OBSOLETO.\n"
+            "  Use o calculo canonico:\n"
+            "    from data_pipeline.importers.investments.positions import recompute_for_user\n"
+            "    recompute_for_user(get_engine(), OWNER_USER_ID)\n"
+            "  (e a importacao manual ja o chama a cada importacao).\n"
+            "  Para rodar este algoritmo legado mesmo assim: --legado-ciente."
+        )
+        return 2
+    sys.argv.remove("--legado-ciente")
     parser = argparse.ArgumentParser(
         description="Computa portfolio_positions a partir de investment_transactions"
     )

@@ -10,13 +10,112 @@ from datetime import date
 
 from sqlalchemy import text
 
-from core.us_instrumento import motivo_exclusao_ativo
+from core.us_instrumento import (
+    MOTIVO_OUTRO_TICKER_DA_EMISSORA,
+    motivo_exclusao_ativo,
+    ticker_principal_da_emissora,
+)
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
 
 # A-140: a regra de quem e ativo analisavel mora em core/us_instrumento.py --
 # a leitura da vitrine precisa da MESMA regra, e duplica-la aqui garantiria que
 # as duas divergissem na primeira alteracao.
 instrument_exclusion_reason = motivo_exclusao_ativo
+
+
+# EUA-A (auditoria 04/10/2026): o vínculo de `classify_assets` casa pelo símbolo
+# das DEMONSTRAÇÕES e exige símbolo único. Duke Energy tinha as demonstrações
+# gravadas sob DUKB (um título de dívida da própria Duke), então DUK ficava
+# 'unresolved' com company_id nulo enquanto DUKB aparecia no ranking com nota
+# 65,6; o mesmo com MCHP/MCHPP (preferencial, P/L 155). Medido no armazém em
+# 04/10/2026: 3.863 ativos sem company_id, dos quais 590 têm CIK na SEC e a
+# companhia já está em `companies` -- esses o CIK resolve sem rede de dados.
+ERRO_SEM_CIK_SEC = "sem_cik_sec"
+ERRO_CIK_SEM_EMPRESA = "cik_sem_empresa"
+
+
+def link_assets_by_cik(engine, ticker_cik: dict[str, str]) -> dict:
+    """Preenche `assets.company_id` pelo CIK que a SEC atribui ao ticker.
+
+    `ticker_cik` é {símbolo: CIK de 10 dígitos} (`EdgarProvider.sec_ticker_cik_map`).
+    Só toca ativo SEM vínculo, só liga a companhia que já existe em `companies`
+    (não inventa empresa) e é idempotente. Não decide elegibilidade: o vínculo
+    por CIK faz DUK e DUKB caírem na mesma companhia, e quem exclui o título de
+    dívida é `classe_adicional_da_mesma_companhia`, na classificação.
+    """
+    pares = [{"s": str(k).upper(), "c": str(v)} for k, v in (ticker_cik or {}).items()
+             if k and v]
+    if not pares:
+        return {"linked": 0, "map_size": 0}
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE TEMP TABLE _sec_ticker_cik (symbol TEXT PRIMARY KEY, cik TEXT) "
+            "ON COMMIT DROP"))
+        conn.execute(text("INSERT INTO _sec_ticker_cik VALUES (:s, :c)"), pares)
+        linked = conn.execute(text("""
+            UPDATE market_us.assets a
+            SET company_id = c.id, updated_at = NOW()
+            FROM _sec_ticker_cik s
+            JOIN (SELECT cik, MIN(id) AS id FROM market_us.companies
+                  WHERE cik IS NOT NULL GROUP BY cik) c ON c.cik = s.cik
+            WHERE a.company_id IS NULL AND a.symbol = s.symbol
+        """)).rowcount
+    return {"linked": int(linked or 0), "map_size": len(pares)}
+
+
+def log_unlinked_assets(engine, ticker_cik: dict[str, str]) -> dict:
+    """Grava em `ingestion_errors` o ativo que a classificação deixou 'unresolved'.
+
+    Antes, 3.268 ativos sem vínculo (297 com mais de US$ 100 mi/dia) não deixavam
+    rastro nenhum: a tabela só tinha empty_facts e erros de perfil. Dois tipos,
+    porque a ação corretiva é diferente: `sem_cik_sec` (a SEC não lista o
+    ticker; cheque manual) e `cik_sem_empresa` (a SEC lista, mas a companhia
+    nunca foi ingerida; rodar a ingestão de fundamentos). Idempotente: não
+    repete erro aberto do mesmo símbolo e tipo, e fecha o que passou a ter vínculo.
+    """
+    ciks = {str(k).upper(): str(v) for k, v in (ticker_cik or {}).items() if k and v}
+    with engine.begin() as conn:
+        pendentes = conn.execute(text(
+            "SELECT symbol FROM market_us.assets "
+            "WHERE analysis_status='unresolved' AND company_id IS NULL")).fetchall()
+        conhecidos = {r[0] for r in conn.execute(text(
+            "SELECT cik FROM market_us.companies WHERE cik IS NOT NULL"))}
+        abertos = {(r[0], r[1]) for r in conn.execute(text(
+            "SELECT symbol, error_type FROM market_us.ingestion_errors "
+            "WHERE resolved = FALSE AND error_type IN (:a, :b)"),
+            {"a": ERRO_SEM_CIK_SEC, "b": ERRO_CIK_SEM_EMPRESA})}
+        novos = []
+        for (sym,) in pendentes:
+            cik = ciks.get(sym)
+            if cik is None:
+                tipo, msg = ERRO_SEM_CIK_SEC, "ticker ausente nas listagens da SEC"
+            elif cik not in conhecidos:
+                tipo = ERRO_CIK_SEM_EMPRESA
+                msg = f"CIK {cik} listado pela SEC, companhia ainda não ingerida"
+            else:
+                continue
+            if (sym, tipo) not in abertos:
+                novos.append({"s": sym, "t": tipo, "m": msg})
+        if novos:
+            conn.execute(text(
+                "INSERT INTO market_us.ingestion_errors "
+                "(symbol, domain, error_type, attempts, message) "
+                "VALUES (:s, 'assets', :t, 1, :m)"), novos)
+        fechados = conn.execute(text(
+            "UPDATE market_us.ingestion_errors e SET resolved = TRUE "
+            "FROM market_us.assets a WHERE e.symbol = a.symbol "
+            "AND a.company_id IS NOT NULL AND e.resolved = FALSE "
+            "AND e.error_type IN (:a, :b)"),
+            {"a": ERRO_SEM_CIK_SEC, "b": ERRO_CIK_SEM_EMPRESA}).rowcount
+    return {"logged": len(novos), "resolved": int(fechados or 0)}
+
+
+def link_classify_and_log(engine, ticker_cik: dict[str, str]) -> dict:
+    """Vincula por CIK, reclassifica e registra o que continuou sem vínculo."""
+    vinculo = link_assets_by_cik(engine, ticker_cik)
+    classes = classify_assets(engine)
+    return {"link": vinculo, "classify": classes,
+            "errors": log_unlinked_assets(engine, ticker_cik)}
 
 
 def classify_assets(engine) -> dict:
@@ -62,6 +161,14 @@ def classify_assets(engine) -> dict:
             FROM market_us.assets a
             LEFT JOIN market_us.companies c ON c.id=a.company_id
         """)).mappings().all()
+        # Giro financeiro médio dos últimos 60 dias de pregão com fechamento:
+        # critério do ticker principal da emissora (ver us_instrumento).
+        giro = {r[0]: r[1] for r in conn.execute(text("""
+            SELECT symbol, AVG(close * volume) FROM market_us.prices_daily
+            WHERE close IS NOT NULL AND volume IS NOT NULL
+              AND date >= (SELECT MAX(date) - 60 FROM market_us.prices_daily
+                           WHERE close IS NOT NULL)
+            GROUP BY symbol"""))}
         symbols_by_company: dict[int, tuple[str, ...]] = {}
         for row in assets:
             if row["company_id"] is not None:
@@ -86,11 +193,26 @@ def classify_assets(engine) -> dict:
                 status, reason = "eligible", None
             else:
                 status, reason = "pending", "demonstrações incompletas"
-            updates.append({"id": int(row["id"]), "status": status, "reason": reason})
+            updates.append({"id": int(row["id"]), "status": status, "reason": reason,
+                            "symbol": row["symbol"], "cid": cid})
+        # Uma companhia, um ticker elegível: o que sobra do mesmo CIK perde para
+        # o de maior giro (nota/preferencial que a regra de sufixo não pegou).
+        elegiveis: dict[int, dict] = {}
+        for u in updates:
+            if u["status"] == "eligible" and u["cid"] is not None:
+                elegiveis.setdefault(u["cid"], {})[u["symbol"]] = giro.get(u["symbol"])
+        for u in updates:
+            irmaos = elegiveis.get(u["cid"], {}) if u["status"] == "eligible" else {}
+            if len(irmaos) > 1:
+                principal = ticker_principal_da_emissora(irmaos)
+                if principal != str(u["symbol"]).upper():
+                    u["status"] = "excluded"
+                    u["reason"] = MOTIVO_OUTRO_TICKER_DA_EMISSORA.format(base=principal)
         conn.execute(text("""
             UPDATE market_us.assets SET analysis_status=:status,
               status_reason=:reason,classified_at=NOW() WHERE id=:id
-        """), updates)
+        """), [{"id": u["id"], "status": u["status"], "reason": u["reason"]}
+               for u in updates])
         rows = conn.execute(text(
             "SELECT analysis_status, COUNT(*) FROM market_us.assets GROUP BY 1"
         )).fetchall()

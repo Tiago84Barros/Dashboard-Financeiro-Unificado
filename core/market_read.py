@@ -31,6 +31,7 @@ import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from core.b3_precos_saneamento import neutralizar_saltos_mensais
 from core.data_quality import clean_multiples_frame
 from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
 from core.fii_ticker import sql_ticker_fii as _sql_ticker_fii
@@ -1313,6 +1314,39 @@ def load_fii_one(ticker: str) -> pd.Series:
     return df.iloc[0]
 
 
+ARQUIVO_FII_METRICS_MENSAL = (Path(__file__).resolve().parents[1] / "data" / "public"
+                              / "fii_metrics_monthly.json.gz")
+
+
+def _fii_metrics_do_artefato(tk: str) -> pd.DataFrame | None:
+    """Série mensal do FII lida do artefato publicado; ``None`` se o arquivo
+    não existe ou não traz o fundo (o chamador cai no Supabase).
+
+    Mesmas colunas e a mesma conta de P/VP do caminho SQL -- fechamento do
+    último pregão do mês na fita da B3 ÷ VPA --, só que o fechamento já vem
+    dentro do arquivo (lido do armazém). Mês sem fechamento fica com P/VP
+    nulo, como no caminho SQL.
+    """
+    from core.inteligencia_ativos import arquivo_publicado
+    art = arquivo_publicado.ler(str(ARQUIVO_FII_METRICS_MENSAL), "fii_metrics_monthly")
+    linhas = ((art or {}).get("por_ticker") or {}).get(tk)
+    colunas = (art or {}).get("colunas")
+    if not linhas or not colunas:
+        return None
+    df = pd.DataFrame(linhas, columns=colunas).rename(columns={
+        "ref_month": "Data", "vpa": "VPA", "patrimonio_liquido": "Patrimonio",
+        "num_cotistas": "Cotistas", "dy_patrimonial_mes": "DY_Patrimonial",
+        "pct_imoveis": "Pct_Imoveis", "pct_papel": "Pct_Papel",
+        "pct_caixa": "Pct_Caixa", "pct_fundos": "Pct_Fundos"})
+    df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+    for c in ("VPA", "Patrimonio", "Cotistas", "DY_Patrimonial", "Pct_Imoveis",
+              "Pct_Papel", "Pct_Caixa", "Pct_Fundos", "fechamento"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["P/VP"] = (df["fechamento"] / df["VPA"]).where(df["VPA"] > 0)
+    df = df.drop(columns=["fechamento"])
+    return df.dropna(subset=["Data"]).sort_values("Data").reset_index(drop=True)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_fii_metrics_mensal(ticker: str) -> pd.DataFrame:
     """
@@ -1339,6 +1373,12 @@ def load_fii_metrics_mensal(ticker: str) -> pd.DataFrame:
     grupamento o preço ajustado está.
     """
     tk = ticker.strip().upper().replace(".SA", "")
+    # Local-first: o artefato do armazém (scripts/publish_fii_metrics_monthly.py)
+    # está em dia; a tabela do Supabase parou em 05/2026 (sem espaço e sem
+    # egress). Só o fundo que o arquivo não traz, ou sem arquivo, vai ao banco.
+    do_arquivo = _fii_metrics_do_artefato(tk)
+    if do_arquivo is not None:
+        return do_arquivo
     met = _q("""
         SELECT ref_month AS "Data", vpa AS "VPA",
                patrimonio_liquido AS "Patrimonio", num_cotistas AS "Cotistas",
@@ -1629,8 +1669,8 @@ def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     # números impossíveis exibidos como medição -- queda máxima de -2.638%
     # em MMAQ4, -104% em RSUL3, volatilidade de 361% em NEMO3. Descartar a
     # observação devolve o mês como ausente, que todo consumidor já trata.
-    df = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c "
-            "FROM market.historical_prices WHERE ticker = ANY(:t) "
+    df = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c, "
+            "close AS b FROM market.historical_prices WHERE ticker = ANY(:t) "
             "AND COALESCE(adjusted_close, close) > 0 ORDER BY ticker, date",
             {"t": tks})
     if df.empty:
@@ -1640,7 +1680,18 @@ def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     wide = df.pivot_table(index="date", columns="ticker", values="c", aggfunc="last")
     mensal = wide.resample("ME").last()          # último preço válido de cada mês
     mensal.columns = [str(c).strip().upper() for c in mensal.columns]
-    return mensal.dropna(how="all")
+    brutos = (df.pivot_table(index="date", columns="ticker", values="b",
+                             aggfunc="last").resample("ME").last())
+    brutos.columns = [str(c).strip().upper() for c in brutos.columns]
+    # B3-01: desdobramento/grupamento que o ajuste da fonte nao retroagiu (e
+    # ajustado corrompido com close plano, MMAQ4/RSUL3) aparece como retorno
+    # mensal acima de +100% ou abaixo de -60%: a safra 2024 do EW saia
+    # +135,6% contra -8,1% saneada. So se neutraliza COM evidencia (fator
+    # redondo, close estavel ou alta > +300%): queda sem evidencia e perda
+    # real (AMER3 -82% em 01/2023). A regra e o porque moram em
+    # core.b3_precos_saneamento.
+    mensal, _ = neutralizar_saltos_mensais(mensal.dropna(how="all"), brutos)
+    return mensal
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
