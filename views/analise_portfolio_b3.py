@@ -596,6 +596,9 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
             st.error(f"🚫 Parecer recomenda VETO: {an.get('motivo_selecao', '')}")
         elif quali_cls == "aprovar_com_ressalvas" and an.get("motivo_selecao"):
             st.caption(f"⚠️ Ressalva do parecer: {an['motivo_selecao']}")
+        elif quali_cls == "nao_avaliado":
+            st.caption("⚪ Não avaliado pelo portão: "
+                       f"{an.get('motivo_selecao') or 'parecer indisponível'}")
 
         # Síntese do parecer
         resumo = an.get("resumo", "")
