@@ -1657,7 +1657,6 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
         WHERE user_id = :uid
           AND source_table IN ('xp_consolidado', 'xp_positions')
           AND COALESCE(source_id, '') NOT LIKE 'td-snap-%'
-          AND COALESCE(is_loaned, false) = false
         ORDER BY report_date,
                  CASE source_table
                      WHEN 'xp_consolidado' THEN 0
@@ -1682,8 +1681,15 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
           ON xp.report_date  = pps.report_date
          AND xp.source_system = pps.source_system
          AND xp.source_table  = pps.source_table
+        -- Acao emprestada (aba "Posicao - Emprestimos") continua sendo do
+        -- investidor e entra no patrimonio. Sem ela, dez/23 dava R$ 254 mil
+        -- contra R$ 590.520,23 da Evolucao Patrimonial da B3; com ela,
+        -- 2022 a 2025 batem com a B3 no centavo.
         WHERE pps.user_id = :uid
-          AND COALESCE(pps.is_loaned, false) = false
+          -- As seis linhas do Tesouro rotuladas xp_consolidado caem na mesma
+          -- data do consolidado de ago/26; sem este filtro o Tesouro somava
+          -- duas vezes.
+          AND COALESCE(pps.source_id, '') NOT LIKE 'td-snap-%'
         GROUP BY pps.report_date
     )
     SELECT

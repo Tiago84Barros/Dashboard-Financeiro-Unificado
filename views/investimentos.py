@@ -2344,11 +2344,9 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                 hide_index=True, width="stretch", height=380,
             )
         st.caption(
-            "O histórico vem dos relatórios da XP; o ponto de hoje inclui as outras "
-            "corretoras e o exterior (Nomad). A Evolução Patrimonial da Área do "
-            "Investidor da B3 soma tudo que está custodiado na B3, em todas as "
-            "corretoras, e não inclui o exterior: os anos antigos podem divergir dela. "
-            "Empréstimos de ativos são desconsiderados para manter comparação com a carteira investida. "
+            "O histórico vem dos relatórios consolidados da Área do Investidor da B3, "
+            "ações emprestadas incluídas, como na Evolução Patrimonial da B3. "
+            "O ponto de hoje inclui também o exterior (Nomad), que a B3 não mostra. "
             "Ganho total = (valor de mercado − custo da carteira atual) + lucro ou prejuízo "
             "já realizado em vendas + proventos recebidos. As vendas vêm do extrato de "
             "negociação da B3, a preço médio (a mesma conta do IR). Não existe "
