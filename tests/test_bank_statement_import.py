@@ -294,3 +294,74 @@ def test_bank_statement_hidden_account_ignores_investment_portfolios():
     assert _is_bank_statement_account_type("digital_wallet")
     assert not _is_bank_statement_account_type("investment")
     assert not _is_bank_statement_account_type("credit_card")
+
+
+# ── Aporte/transferência para investimento é saída (CF-B3) ───────────────────
+# Textos reais das 21 transferências para investimento que estavam com
+# amount > 0 no Supabase (sem o sufixo "[Categoria]" que a migração do App 3
+# anexou). Sem sinal no extrato e sem indicador D/C, `_direction_for` caía em
+# "entrada" e o lançamento inflava o saldo da conta (v_account_balance soma
+# amount).
+_DESCRICOES_REAIS_DE_APORTE = (
+    "Transferido para Nomad",
+    "Transferido para a Nomad",
+    "Transferido para a Rico",
+    "Enviado para Rico",
+    "Nomad",
+    "Tesouro Direto",
+    "13º  aplicado",
+    "Valor investido na estratégia das ações",
+    "Estratégia de alocação conforme Dashboard financeiro",
+    "Dinheiro reservado para o pagamento do Reserva do Lago",
+    "Emissão de CDB",
+)
+
+
+import pytest  # noqa: E402
+
+from core.bank_statement_import import (  # noqa: E402
+    _direction_for,
+    _infer_bank_type,
+    _normalize_signed_amount,
+)
+
+
+@pytest.mark.parametrize("descricao", _DESCRICOES_REAIS_DE_APORTE)
+def test_aporte_sem_sinal_no_extrato_e_saida(descricao):
+    tipo = _infer_bank_type(descricao, 1000.0)
+    assert _direction_for(tipo, descricao, 1000.0) == "saida"
+    assert _normalize_signed_amount(tipo, descricao, 1000.0) == -1000.0
+
+
+@pytest.mark.parametrize("descricao", [
+    "Pix recebido de NOMAD FINTECH INC",
+    "Transferencia recebida de RICO INVESTIMENTOS",
+    "Resgate Tesouro Direto",
+    "RESGATE DE CDB",
+    "Entradas resgate de cdb",
+    "Rendimento de aplicação",
+    "Dividendos recebidos",
+])
+def test_recebimento_e_resgate_de_investimento_continuam_entrada(descricao):
+    tipo = _infer_bank_type(descricao, 500.0)
+    assert _direction_for(tipo, descricao, 500.0) == "entrada"
+
+
+def test_termo_de_aporte_nao_casa_dentro_de_outra_palavra():
+    # "Frederico" contém "rico"; "nomadismo" contém "nomad": nenhum é aporte.
+    assert _direction_for("Entrada", "TED de FREDERICO SOUZA", 100.0) == "entrada"
+    assert _direction_for("Entrada", "Reembolso curso nomadismo digital", 100.0) == "entrada"
+
+
+def test_linha_de_extrato_sem_sinal_de_transferencia_para_investimento_vira_saida():
+    parsed = parse_c6_bank_text(
+        """
+        17/01/2026 Transferido para Nomad R$ 6.000,00
+        23/03/2026 Tesouro Direto R$ 10.000,00
+        24/03/2026 Pix recebido de NOMAD FINTECH INC R$ 1.000,00
+        """,
+        file_name="c6.pdf",
+    )
+
+    assert [r["valor"] for r in parsed["rows"]] == [-6000.00, -10000.00, 1000.00]
+    assert [r["direcao"] for r in parsed["rows"]] == ["saida", "saida", "entrada"]

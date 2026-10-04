@@ -95,12 +95,12 @@ _SQL_GOALS = """
 """
 
 _SQL_QUOTES_COUNT  = "SELECT COUNT(*) AS cnt FROM asset_quotes"
-_SQL_BUDGETS_COUNT = "SELECT COUNT(*) AS cnt FROM budgets WHERE user_id = :uid::uuid"
+_SQL_BUDGETS_COUNT = "SELECT COUNT(*) AS cnt FROM budgets WHERE user_id = CAST(:uid AS uuid)"
 
 _SQL_CASHFLOW_MES = """
     SELECT net_cashflow, total_income, total_expenses_abs
     FROM   v_monthly_cashflow
-    WHERE  user_id    = :uid::uuid
+    WHERE  user_id    = CAST(:uid AS uuid)
       AND  month_year = DATE_TRUNC('month', CURRENT_DATE)::DATE
 """
 
@@ -204,7 +204,7 @@ def _alertas_real() -> list:
 
         # ── R1: Orçamentos próximos/estourados ────────────────────────────────
         try:
-            bud_rows = conn.execute(text(_SQL_BUDGET_USAGE), {"uid": owner}).fetchall()
+            bud_rows = _consultar(conn, text(_SQL_BUDGET_USAGE), {"uid": owner}, "fetchall")
             for r in bud_rows:
                 pct  = float(r.usage_pct or 0)
                 lim  = float(r.amount_limit or 0)
@@ -233,7 +233,7 @@ def _alertas_real() -> list:
 
         # ── R2 + R3: Metas — progresso e prazo ───────────────────────────────
         try:
-            goal_rows = conn.execute(text(_SQL_GOALS), {"uid": owner}).fetchall()
+            goal_rows = _consultar(conn, text(_SQL_GOALS), {"uid": owner}, "fetchall")
             for r in goal_rows:
                 atual = float(r.current_amount or 0)
                 alvo  = float(r.target_amount)
@@ -286,7 +286,7 @@ def _alertas_real() -> list:
 
         # ── R4: asset_quotes vazia ────────────────────────────────────────────
         try:
-            quotes_cnt = conn.execute(text(_SQL_QUOTES_COUNT)).scalar()
+            quotes_cnt = _consultar(conn, text(_SQL_QUOTES_COUNT), {}, "scalar")
             if not quotes_cnt:
                 alertas.append({
                     "tipo":      "alerta",
@@ -303,7 +303,7 @@ def _alertas_real() -> list:
 
         # ── R5: budgets vazia ─────────────────────────────────────────────────
         try:
-            bud_cnt = conn.execute(text(_SQL_BUDGETS_COUNT), {"uid": owner}).scalar()
+            bud_cnt = _consultar(conn, text(_SQL_BUDGETS_COUNT), {"uid": owner}, "scalar")
             if not bud_cnt:
                 alertas.append({
                     "tipo":      "info",
@@ -320,7 +320,7 @@ def _alertas_real() -> list:
 
         # ── R6: Cashflow do mês corrente ──────────────────────────────────────
         try:
-            cf = conn.execute(text(_SQL_CASHFLOW_MES), {"uid": owner}).fetchone()
+            cf = _consultar(conn, text(_SQL_CASHFLOW_MES), {"uid": owner}, "fetchone")
             if cf:
                 net      = float(cf.net_cashflow or 0)
                 receitas = float(cf.total_income or 0)
@@ -372,6 +372,18 @@ def _alertas_real() -> list:
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _consultar(conn, stmt, params: dict, modo: str):
+    """Executa uma consulta de regra dentro de SAVEPOINT.
+
+    Todas as regras dividem a mesma conexão. Sem o savepoint, um erro numa
+    regra (tabela ausente, bind errado) deixa a transação abortada no Postgres
+    e as regras seguintes falham com InFailedSqlTransaction -- foi assim que a
+    falha do R5 matava o R6 em silêncio. O fetch acontece dentro do bloco.
+    """
+    with conn.begin_nested():
+        return getattr(conn.execute(stmt, params), modo)()
+
 
 def _build_result(alertas: list, data_source: str) -> dict:
     contagem: dict[str, int] = {"sucesso": 0, "alerta": 0, "erro": 0, "info": 0}
