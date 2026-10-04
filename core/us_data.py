@@ -8,7 +8,11 @@ vira estrutura vazia/segura. A chave FMP NUNCA passa por aqui.
 """
 from __future__ import annotations
 
+import logging
+
 import core.us_read as _read
+
+logger = logging.getLogger(__name__)
 
 try:
     import streamlit as st
@@ -114,7 +118,11 @@ def _anexa_negociabilidade_e_ciclo(frame):
     try:
         giro = _read.load_us_giro_diario()
         ciclo = _read.load_us_resiliencia()
-    except Exception:                       # dado ausente não pode zerar a aba
+    except Exception:  # noqa: BLE001 - dado ausente não pode zerar a aba
+        # A carteira EUA nomeia a coluna que falta; o log guarda a causa
+        # (INF-M4), que antes sumia sem rastro.
+        logger.exception(
+            "Negociabilidade/ciclo EUA indisponíveis; colunas não anexadas")
         return frame
 
     chaves = frame["symbol"].astype(str).str.strip().str.upper()

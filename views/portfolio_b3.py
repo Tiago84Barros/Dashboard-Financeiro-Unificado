@@ -7,6 +7,7 @@ por segmento e monta uma carteira sugerida com empresas reais da B3.
 from __future__ import annotations
 
 import html
+import logging
 
 import numpy as np
 import pandas as pd
@@ -61,6 +62,7 @@ from views.empresas_b3 import (
     _aplicar_cheapness,
     _apply_cap_soft,
     _apply_decay_penalty,
+    _avisar_fonte_precos,
     _batch_yf_precos_mensais,
     _compute_score_entrada,
     _div_mes_sanitizado,
@@ -81,6 +83,8 @@ from views.empresas_b3 import (
     _yf_trailing12m_divs,
 )
 from views.portfolio_b3_safras import render_safras
+
+logger = logging.getLogger(__name__)
 
 _MIN_MARKET_CAP_COVERAGE = 0.80
 _MIN_ADTV_COVERAGE = 0.70
@@ -975,6 +979,7 @@ def _processar_segmento(
     elegibilidade_pit: dict[int, dict] | None = None,
     saidas_elegiveis: dict[str, set[int]] | None = None,
     saidas_ultimo_pregao: dict[str, pd.Timestamp] | None = None,
+    parados_hoje: set[str] | None = None,
 ) -> dict | None:
     """
     Roda o engine de scoring ano-a-ano para um segmento.
@@ -986,7 +991,12 @@ def _processar_segmento(
 
     ``elegibilidade_pit`` (core.b3_universo_pit): por ano de decisão, quem
     estava abaixo do piso de liquidez COM O VOLUME DA ÉPOCA. Esses nomes não
-    concorrem à liderança naquele ano.
+    concorrem à liderança naquele ano. Também traz os PARADOS da época
+    (sem negócio há mais de ``core.b3_universo_pit.DIAS_PARADO`` dias).
+
+    ``parados_hoje``: tickers parados na data de HOJE. Não concorrem à carteira
+    do próximo ano — não dá para comprá-los —, mas seguem na reconstrução nos
+    anos em que negociavam (tirá-los do segmento inteiro seria sobrevivência).
     Retorna dict com líderes, backtest e score para o próximo ano, ou None.
     """
     if len(tickers) < 1:
@@ -1088,11 +1098,15 @@ def _processar_segmento(
         return None
 
     # Score para o próximo ano (dados até ano_atual - 1). Só empresas listadas
-    # hoje: quem saiu da bolsa não é comprável (AUD-2).
-    if not tickers_vivos:
+    # hoje: quem saiu da bolsa não é comprável (AUD-2). Pelo mesmo motivo sai
+    # quem está listado mas parado hoje (B3-06/07).
+    _parados_hoje = parados_hoje or set()
+    tickers_compraveis = [tk for tk in tickers_vivos
+                          if _ticker_key(tk) not in _parados_hoje]
+    if not tickers_compraveis:
         return None
     score_proximo, pit_proximo = _score_historico_ano_com_cobertura(
-        hist_batch, tickers_vivos, ano_atual, pesos, tk_grupos, lag=1,
+        hist_batch, tickers_compraveis, ano_atual, pesos, tk_grupos, lag=1,
         macro_by_year=macro_history or None,
     )
     if not score_proximo:
@@ -1109,7 +1123,7 @@ def _processar_segmento(
     n_prox      = _select_n_heuristica(scores_prox) if len(ranked_prox) >= 2 else 1
     _min_n_prox = 1 if cap_adaptativo else minimum_assets_for_cap(cap)
     n_prox      = min(len(ranked_prox), max(n_prox, _min_n_prox))
-    lids_prox   = [tk for tk, _ in ranked_prox[:n_prox] if tk in tickers_vivos]
+    lids_prox   = [tk for tk, _ in ranked_prox[:n_prox] if tk in tickers_compraveis]
 
     if lids_prox and len(lids_prox) >= 2:
         _cap_ef_prox = max(cap, 1.0 / len(lids_prox)) if cap_adaptativo else cap
@@ -3131,35 +3145,72 @@ def render(show_header: bool = True) -> None:
             "reconstrução histórica usa só as listadas hoje (viés de sobrevivência)."
         )
 
+    # Papel PARADO (auditoria app4, B3-06/07): roda mesmo sem piso de volume.
+    # Com "Sem filtro" a elegibilidade por época não era calculada, e um papel
+    # sem negócio havia anos concorria à liderança de qualquer safra. Com piso
+    # 0 a mesma chamada só retira os parados (core.b3_universo_pit.parados_em).
     _elegib_pit: dict[int, dict] | None = None
-    if min_adtv > 0:
-        try:
-            _vol_hist = _load_volume_mensal_historico(int(ano_inicio))
-            if _doc_saidas:
-                _vol_hist = pd.concat(
-                    [_vol_hist, _saidas.volume_mensal(_doc_saidas)], ignore_index=True
-                )
-            _elegib_pit = _upit.elegiveis_por_ano(
-                _vol_hist, _anos_recon,
-                float(min_adtv), rebal_month=int(_REBAL_MONTH),
+    _parados_hoje: set[str] = set()
+    try:
+        _vol_hist = _load_volume_mensal_historico(int(ano_inicio))
+        # Só o universo desta tela: a referência do "parado" é o último mês com
+        # negócio no quadro, e market.historical_prices também traz FII. Se a
+        # ingestão de ações atrasar enquanto a de FII segue em dia, a régua
+        # viria dos FIIs e toda ação viraria "parada" (no armazém local, em
+        # 04/10, a última ação negociada é de agosto e 334 FIIs vão até outubro).
+        _vol_hist = _vol_hist[_vol_hist["ticker"].isin(
+            {_ticker_key(t) for t in df_set["ticker"].unique()}
+        )]
+        _parados_hoje = _upit.parados_em(_vol_hist, pd.Timestamp.now().date())
+        if _doc_saidas:
+            _vol_hist = pd.concat(
+                [_vol_hist, _saidas.volume_mensal(_doc_saidas)], ignore_index=True
             )
-        except LiquidezDataError as exc:
+        _elegib_pit = _upit.elegiveis_por_ano(
+            _vol_hist, _anos_recon,
+            float(min_adtv), rebal_month=int(_REBAL_MONTH),
+        )
+    except LiquidezDataError as exc:
+        if min_adtv > 0:
             st.warning(
                 f"⚠️ Liquidez por época **não aplicada** ({exc}): a reconstrução "
                 "histórica usa o universo filtrado pelo volume de HOJE em todos os "
                 "anos — papéis ilíquidos no passado podem ter sido escolhidos."
             )
-        if _elegib_pit:
-            _anos_med = [a for a, v in _elegib_pit.items() if v["medido"]]
-            _tks_set = {_ticker_key(t) for t in df_set["ticker"].unique()}
-            _pares = sum(len(v["abaixo"] & _tks_set) for v in _elegib_pit.values())
-            st.caption(
-                f"🕰️ Liquidez por época: em {len(_anos_med)} de {len(_elegib_pit)} "
-                f"anos da reconstrução havia volume para medir; {_pares} "
-                "combinação(ões) papel-ano ficaram fora da disputa por estarem "
-                "abaixo do piso naquela época. O piso é nominal, não "
-                "deflacionado — mais brando nos anos antigos."
+        else:
+            st.warning(
+                f"⚠️ Filtro de papel parado **não aplicado** ({exc}): papéis sem "
+                "negócio podem concorrer na reconstrução e na carteira atual."
             )
+    if _elegib_pit:
+        _anos_med = [a for a, v in _elegib_pit.items() if v["medido"]]
+        _tks_set = {_ticker_key(t) for t in df_set["ticker"].unique()}
+        _pares = sum(len(v["abaixo"] & _tks_set) for v in _elegib_pit.values())
+        _pares_parados = sum(
+            len((v.get("parados") or set()) & _tks_set) for v in _elegib_pit.values()
+        )
+        _parados_hoje_set = sorted(_parados_hoje & _tks_set)
+        _txt_piso = (
+            f"{_pares} combinação(ões) papel-ano ficaram fora da disputa por "
+            "estarem abaixo do piso naquela época (piso nominal, não "
+            "deflacionado — mais brando nos anos antigos); "
+            if min_adtv > 0 else ""
+        )
+        _amostra_par = ", ".join(_parados_hoje_set[:12])
+        _txt_hoje = (
+            f" Fora da carteira atual por estarem parados hoje: "
+            f"{len(_parados_hoje_set)} ({_amostra_par}"
+            f"{'…' if len(_parados_hoje_set) > 12 else ''})."
+            if _parados_hoje_set else ""
+        )
+        st.caption(
+            f"🕰️ Universo por época: em {len(_anos_med)} de {len(_elegib_pit)} "
+            f"anos da reconstrução havia volume para medir; {_txt_piso}"
+            f"{_pares_parados} combinação(ões) papel-ano ficaram fora por papel "
+            f"parado (sem negócio há mais de {_upit.DIAS_PARADO} dias na data da "
+            "decisão; quem já estava na carteira segue contando o retorno)."
+            f"{_txt_hoje}"
+        )
     if _saidas_eleg:
         _n_conc = sum(1 for v in _saidas_eleg.values() if v)
         _pares_s = sum(len(v) for v in _saidas_eleg.values())
@@ -3242,6 +3293,7 @@ def render(show_header: bool = True) -> None:
 
         with st.spinner("Carregando preços mensais ajustados…"):
             df_precos_all = _batch_yf_precos_mensais(all_tickers, period="10y")
+            _avisar_fonte_precos(df_precos_all, "a seleção histórica")
             if _saidas_eleg and not df_precos_all.empty:
                 _p_s = _saidas.precos_mensais(_doc_saidas)
                 _p_s = _p_s[[c for c in _p_s.columns
@@ -3305,6 +3357,7 @@ def render(show_header: bool = True) -> None:
                     elegibilidade_pit=_elegib_pit,
                     saidas_elegiveis=_saidas_eleg,
                     saidas_ultimo_pregao=_saidas_ult,
+                    parados_hoje=_parados_hoje,
                 )
                 if res:
                     resultados.append(res)
@@ -3997,10 +4050,21 @@ def render(show_header: bool = True) -> None:
         try:
             _giro = _db.load_giro_diario()
             _irmas = _db.load_classes_irmas()
-        except Exception:                             # dado ausente não decide
+        except Exception:  # noqa: BLE001 - dado ausente não decide, mas é nomeado
+            logger.exception("Giro diário/classes irmãs indisponíveis; piso de "
+                             "negociabilidade não aplicado")
             _giro, _irmas = {}, {}
 
-        if _giro and _irmas:
+        if not (_giro and _irmas):
+            # INF-M4: dado ausente não decide — mas a carteira sai sem o piso,
+            # e antes isso era indistinguível de "nenhuma troca necessária".
+            liq_avisos.append(
+                "Piso de negociabilidade **não aplicado**: "
+                + ("giro diário" if not _giro else "classes irmãs")
+                + " indisponível. Ordinárias pouco negociadas não foram "
+                "trocadas pela classe irmã."
+            )
+        else:
             _candidatas = sorted({
                 t for tk in (str(i["tk"]).upper() for i in proximos_uniq)
                 for t in _irmas.get(tk, (tk,))
@@ -4737,6 +4801,7 @@ def render(show_header: bool = True) -> None:
     if proximos_uniq:
         tks_prox = tuple(sorted({p["tk"] for p in proximos_uniq}))
         df_prec_prox = _batch_yf_precos_mensais(tks_prox, period="1y")
+        _avisar_fonte_precos(df_prec_prox, "a simulação do ano vigente")
 
         if not df_prec_prox.empty:
             df_ano = df_prec_prox[

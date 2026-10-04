@@ -1072,7 +1072,8 @@ def _custos_por_classe() -> dict[str, transaction_costs.CostConfig]:
 
 def _gerar_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
                          alvos: dict, total_brl: float | None, *,
-                         loader=None, macro_impacts=None) -> list[advisor.Acao]:
+                         loader=None, macro_impacts=None,
+                         pesos_alvo: dict | None = None) -> list[advisor.Acao]:
     """Monta os sinais (Fase 3b Task 2) a partir dos analisadores de verdade
     e chama o motor (Task 4). Função pura, sem Streamlit — a fronteira de
     isolamento contra falha do motor fica em `_painel_recomendacoes`, que a
@@ -1086,6 +1087,9 @@ def _gerar_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
     `loader` só existe para o teste poder injetar uma série de fatores
     sintética sem tocar o banco — produção sempre usa o default de
     `factors.series_de_fatores` (mesmo padrão de `_painel_fatores`).
+
+    `pesos_alvo` (GLB-01) troca o tilt pelos pesos Black-Litterman; None
+    mantém o tilt, o padrão de sempre.
     """
     if df is None or df.empty or ret is None or ret.empty or ret.shape[1] < 2:
         return []
@@ -1122,6 +1126,7 @@ def _gerar_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
         custos=_custos_por_classe(), patrimonio_total=float(total_brl or 0.0),
         data_atual=date.today(),
         macro_impacts=macro_impacts,
+        pesos_alvo=pesos_alvo,
     )
 
 
@@ -1170,7 +1175,8 @@ def _carregar_macro_carteiras(df: pd.DataFrame) -> MacroCarteiras:
 
 def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
                           alvos: dict, total_brl: float | None,
-                          macro: MacroCarteiras | None = None) -> list[advisor.Acao]:
+                          macro: MacroCarteiras | None = None,
+                          bl=None) -> list[advisor.Acao]:
     """Painel 'Recomendações do motor de movimentação' (Fase 3b, Task 6).
 
     Cartões CSS (`card_metrica`), nunca informação solta — mesma regra do
@@ -1196,9 +1202,22 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
     else:
         st.caption("Contexto macro indisponível nesta consulta.")
 
+    # GLB-01: o alvo do motor pode vir do Black-Litterman. O tilt continua o
+    # padrão -- os dois mudam o resultado, e trocar sem o usuário pedir seria
+    # apagar o método que ele já conhece.
+    pesos_alvo = None
+    if bl is not None and bl.disponivel:
+        escolha = st.radio("Alvo do motor", (_ALVO_TILT, _ALVO_BL), horizontal=True,
+                           key=_CHAVE_ALVO_MOTOR,
+                           help="Tilt: o peso da meta inclinado pela média dos sinais. "
+                                "Black-Litterman: os pesos do painel acima (teóricos), "
+                                "ainda sujeitos a custo, banda e tetos.")
+        if escolha == _ALVO_BL:
+            pesos_alvo = alvo_do_motor_bl(df, bl)
     try:
         acoes = _gerar_recomendacoes(df, ret, pesos, alvos, total_brl,
-                                     macro_impacts=macro.impactos)
+                                     macro_impacts=macro.impactos,
+                                     pesos_alvo=pesos_alvo)
     except Exception:  # noqa: BLE001 - fronteira de isolamento do motor de recomendacao
         st.warning(
             "⚠️ Não foi possível gerar as recomendações do motor de movimentação. "
@@ -1268,6 +1287,322 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
                 )
 
     return acoes
+
+
+# ---------------------------------------------------------------------------
+# Black-Litterman (GLB-01): prior de equilíbrio da meta + views dos três motores
+# ---------------------------------------------------------------------------
+
+_CHAVE_ALVO_MOTOR = "portfolio_global_alvo_motor"
+_ALVO_TILT = "Tilt por sinais (padrão)"
+_ALVO_BL = "Black-Litterman"
+
+_AVISO_TEORICO_BL = (
+    "Teórico: μ é o retorno ESPERADO pelo modelo (prior de equilíbrio da sua "
+    "meta + views dos scores), não um retorno observado, e os pesos não são "
+    "ordem de compra. Quem decide o que executar é o motor de movimentação "
+    "abaixo, com custo e banda de rebalanceamento."
+)
+
+# Fundo transparente e o cromo escuro do resto do app; design/tema_canvas
+# recolore no tema claro.
+_LAYOUT_PLOTLY = {
+    "paper_bgcolor": "rgba(0,0,0,0)", "plot_bgcolor": "rgba(0,0,0,0)",
+    "font_color": "#9CA3AF", "margin": {"t": 30, "b": 40, "l": 50, "r": 10},
+    "height": 340, "legend": {"orientation": "h", "y": -0.2},
+}
+
+
+def alvo_do_motor_bl(df: pd.DataFrame, bl) -> dict[str, float]:
+    """Pesos BL na escala de `weight_global`, que é a do motor.
+
+    O BL normaliza a meta para somar 1; o motor compara contra `weight_global`
+    como vem do snapshot. Se a soma não for 1 (classe com alvo e sem posição),
+    sem reescalar o motor leria um "aumentar" em todo ativo só pela diferença
+    de escala.
+    """
+    soma = float(df.groupby("symbol")["weight_global"].sum().clip(lower=0.0).sum())
+    return {s: w * soma for s, w in bl.pesos_bl.items()}
+
+
+def _ler_restricoes_da_politica(renda_fixa: float | None):
+    """Tetos de `investment_policies` (a política vigente do dono), convertidos
+    para a parcela de risco. Sem política ou com falha na leitura, os padrões
+    de `alocacao_bl` -- e a fonte diz qual dos dois valeu."""
+    from core.global_portfolio import alocacao_bl
+
+    try:
+        from core.estrategia import politica as pol
+        from core.estrategia import repositorio as repo
+
+        registro = repo.politica_para_analise()
+        valores = pol.valores(registro.politica) if registro is not None else None
+    except Exception:  # noqa: BLE001 - política é insumo; sem ela, os padrões valem
+        logger.exception("Falha ao ler a política de investimento para o Black-Litterman")
+        valores = None
+    return alocacao_bl.restricoes_da_politica(valores, renda_fixa)
+
+
+def tabela_black_litterman(res, pesos_reais: dict[str, float]) -> pd.DataFrame:
+    """Meta × BL × carteira real por ativo, em % da parcela de risco.
+
+    Real = valor do ativo ÷ valor de toda a parcela de risco real (ativos fora
+    do modelo entram no denominador): é o peso que ele de fato tem. Ordenada
+    pela mudança que o BL propõe, a maior primeiro.
+    """
+    views = {v.symbol: v for v in res.views}
+    linhas = []
+    for s in res.pesos_meta:
+        v = views.get(s)
+        linhas.append({
+            "Ativo": s,
+            "Classe": carteira_real.ROTULOS.get(res.classes.get(s, ""), res.classes.get(s, "")),
+            "Meta": res.pesos_meta[s] * 100.0,
+            "Black-Litterman": res.pesos_bl.get(s, 0.0) * 100.0,
+            "Real": pesos_reais.get(s, 0.0) * 100.0,
+            "BL − meta (pp)": (res.pesos_bl.get(s, 0.0) - res.pesos_meta[s]) * 100.0,
+            "z do score": v.z if v else None,
+            "α da view": v.alpha * 100.0 if v else None,
+            "π": res.pi[s] * 100.0 if s in res.pi else None,
+            "μ BL": res.mu_bl[s] * 100.0 if s in res.mu_bl else None,
+        })
+    tabela = pd.DataFrame(linhas)
+    if tabela.empty:
+        return tabela
+    ordem = tabela["BL − meta (pp)"].abs().sort_values(ascending=False, kind="stable").index
+    return tabela.loc[ordem].reset_index(drop=True)
+
+
+def _fig_fronteira(pontos, marcadores):
+    import plotly.graph_objects as go
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=[p[0] * 100 for p in pontos], y=[p[1] * 100 for p in pontos],
+        mode="lines", name="Fronteira (teórica)", line={"color": "#4A9EFF", "width": 2},
+        hovertemplate="vol %{x:.1f}%<br>μ %{y:.2f}%<extra></extra>"))
+    for rotulo, (vol, ret), cor in marcadores:
+        fig.add_trace(go.Scatter(
+            x=[vol * 100], y=[ret * 100], mode="markers", name=rotulo,
+            marker={"size": 12, "color": cor, "line": {"color": "#0E1117", "width": 1}},
+            hovertemplate=rotulo + "<br>vol %{x:.1f}%<br>μ %{y:.2f}%<extra></extra>"))
+    fig.update_layout(
+        **_LAYOUT_PLOTLY,
+        xaxis={"title": "Volatilidade anual (%)", "gridcolor": "#1E2533"},
+        yaxis={"title": "Retorno esperado BL, excesso a.a. (%)", "gridcolor": "#1E2533"})
+    return fig
+
+
+def _fig_acumulado(series: dict[str, pd.Series]):
+    import plotly.graph_objects as go
+
+    cores = ["#4A9EFF", "#F5A623", "#00C896"]
+    fig = go.Figure()
+    for (rotulo, serie), cor in zip(series.items(), cores):
+        fig.add_trace(go.Scatter(x=serie.index, y=serie * 100, mode="lines", name=rotulo,
+                                 line={"color": cor, "width": 2}))
+    fig.update_layout(**_LAYOUT_PLOTLY,
+                      yaxis={"title": "Acumulado (%)", "gridcolor": "#1E2533"},
+                      xaxis={"gridcolor": "#1E2533"})
+    return fig
+
+
+def _benchmark_bl(res, ret: pd.DataFrame, alvos: dict, renda_fixa: float | None) -> None:
+    """Benchmark composto: os pesos por classe da meta × IBOV, IFIX, S&P em R$ e CDI.
+
+    Leitura leve: BOVA11 e IVVB11 saem do MESMO `load_precos_mensais` (mesma
+    tupla, mesmo cache de 1 h) que `factors.series_de_fatores` já faz no painel
+    de fatores, então não custam consulta nova; XFIX11 é a única série nova
+    (um ETF, ~1.400 pregões desde 2020). O CDI vem do arquivo publicado
+    (`data/public/cdi_diario.json.gz`), sem banco.
+    """
+    from core.global_portfolio import benchmark
+    from core.market_read import load_precos_mensais
+    from core.rentabilidade import ler_cdi_publicado
+
+    st.markdown("##### Benchmark composto")
+    pesos_classe = carteira_real.alvos_globais(alvos, renda_fixa)
+    partes = [load_precos_mensais(tuple(sorted(set(factors.PROXIES.values())))),
+              load_precos_mensais(("XFIX11",))]
+    partes = [p for p in partes if isinstance(p, pd.DataFrame) and not p.empty]
+    precos = pd.concat(partes, axis=1) if partes else pd.DataFrame()
+    if not precos.empty:
+        precos = precos.loc[:, ~precos.columns.duplicated()]
+    ret_proxies = benchmark.retornos_dos_proxies(precos)
+    cdi_m = benchmark.cdi_mensal(ler_cdi_publicado())
+    bench, avisos = benchmark.benchmark_composto(pesos_classe, ret_proxies, cdi_m)
+    st.caption("Pesos: " + " · ".join(
+        f"{benchmark.ROTULO_PROXY.get(c, c)} {p:.0%}" for c, p in pesos_classe.items()))
+    for aviso in avisos:
+        st.caption(f"⚠️ {aviso}")
+    if bench.empty:
+        st.info("Sem série suficiente para montar o benchmark composto.")
+        return
+
+    rf = renda_fixa if "renda_fixa" in pesos_classe else None
+    carteiras = {}
+    for rotulo, pesos in (("Meta (carteiras-modelo)", res.pesos_meta),
+                          ("Black-Litterman", res.pesos_bl)):
+        serie = risk.retorno_do_portfolio(ret, pesos)
+        if serie is not None and not serie.empty:
+            carteiras[rotulo] = benchmark.com_renda_fixa(serie, rf, cdi_m)
+    resumos = {r: benchmark.resumo(s, bench) for r, s in carteiras.items()}
+    resumos = {r: x for r, x in resumos.items() if x is not None}
+    if not resumos:
+        st.info("Menos de 12 meses em comum entre as carteiras e o benchmark.")
+        return
+
+    colunas = st.columns(len(resumos) + 1)
+    primeiro = next(iter(resumos.values()))
+    with colunas[0]:
+        card_metrica("Benchmark composto", f"{primeiro['retorno_anual_bench']:.1%} a.a.",
+                     ajuda=f"Vol {primeiro['vol_anual_bench']:.1%} a.a. · "
+                           f"{primeiro['meses']} meses ({primeiro['inicio']:%m/%Y} a "
+                           f"{primeiro['fim']:%m/%Y}).")
+    for coluna, (rotulo, x) in zip(colunas[1:], resumos.items()):
+        with coluna:
+            card_metrica(rotulo, f"{x['retorno_anual']:.1%} a.a.",
+                         delta=f"{x['excesso_anual'] * 100:+.1f} pp vs benchmark",
+                         positivo=x["excesso_anual"] >= 0,
+                         ajuda=f"Vol {x['vol_anual']:.1%} a.a. · tracking error "
+                               f"{x['tracking_error']:.1%} a.a.")
+    series = {"Benchmark composto": primeiro["acumulado"]["b"]}
+    series.update({r: x["acumulado"]["c"] for r, x in resumos.items()})
+    st.plotly_chart(_fig_acumulado(series), width="stretch")
+    st.caption(
+        "Retrospectivo e com viés de olhar para trás: os pesos de HOJE (meta e "
+        "BL) aplicados ao passado, com a mesma janela que estimou Σ e os scores "
+        "de agora. Mede se a seleção somou algo à decisão de alocação entre "
+        "classes nesse passado; não promete nada para o futuro. Sem custo de "
+        "transação e com rebalanceamento mensal implícito."
+    )
+
+
+def _painel_black_litterman(df: pd.DataFrame, ret: pd.DataFrame, alvos: dict,
+                            renda_fixa: float | None):
+    """Painel 'Alocação Black-Litterman' (GLB-01). Devolve o resultado para o
+    motor de movimentação e o chat lerem o MESMO cálculo; None se falhar.
+
+    Falha nunca derruba a tela: mesma fronteira de isolamento do motor.
+    """
+    from core.global_portfolio import alocacao_bl
+
+    st.markdown("#### Alocação Black-Litterman")
+    st.caption(
+        "Parte da sua meta (prior de equilíbrio π = δΣw) e a inclina pelos "
+        "scores dos três motores, cada um com a confiança que o próprio IC "
+        "fora da amostra justifica."
+    )
+    try:
+        restricoes = _ler_restricoes_da_politica(renda_fixa)
+        res = alocacao_bl.black_litterman_global(df, ret, restricoes=restricoes)
+    except Exception:  # noqa: BLE001 - fronteira de isolamento do Black-Litterman
+        logger.exception("Falha no Black-Litterman do portfólio global")
+        st.warning("⚠️ Não foi possível calcular a alocação Black-Litterman. "
+                   "As demais seções continuam válidas.")
+        return None
+    if not res.disponivel:
+        st.info(f"Black-Litterman indisponível: {res.motivo}.")
+        return res
+
+    st.caption(_AVISO_TEORICO_BL)
+    colunas = st.columns(4)
+    with colunas[0]:
+        card_metrica("Aversão a risco (δ)", f"{res.delta:g}",
+                     ajuda="Escala o prior: π = δΣw. 2,5 é o valor de referência "
+                           "de He-Litterman para uma carteira de ações.")
+    with colunas[1]:
+        card_metrica("Incerteza do prior (τ)", f"{res.tau:g}",
+                     ajuda="Quanto a média de equilíbrio pode errar, em fração de Σ.")
+    with colunas[2]:
+        card_metrica("Encolhimento Ledoit-Wolf", f"{res.alpha_lw:.2f}",
+                     ajuda="Peso do alvo diagonal na covariância (0 = amostral pura).")
+    with colunas[3]:
+        card_metrica("Janela comum", f"{res.meses} meses", ajuda=res.periodo)
+
+    colunas = st.columns(len(alocacao_bl.MOTORES))
+    for coluna, motor in zip(colunas, alocacao_bl.MOTORES):
+        c = res.motores.get(motor)
+        if c is None:
+            continue
+        with coluna:
+            card_metrica(
+                f"Confiança · {alocacao_bl.ROTULO_MOTOR[motor]}", f"{c.confianca:.1%}",
+                positivo=c.efetiva, accent="#00C896" if c.efetiva else "#FC5C7D",
+                ajuda=f"{c.fonte}. Fração do caminho que μ anda até a view; "
+                      f"Ω = {c.omega_multiplo:.0f}·τ·σ².")
+    for aviso in res.avisos:
+        st.caption(f"⚠️ {aviso}")
+    st.caption(f"Restrições: {res.restricoes.fonte}.")
+
+    carteira = _carregar_carteira_real()
+    valores = ({} if carteira.get("data_source") == "error"
+               else carteira_real.valores_reais_por_ativo(carteira.get("posicoes")))
+    total_real = sum(valores.values())
+    pesos_reais = {s: v / total_real for s, v in valores.items()} if total_real else {}
+
+    porcento = st.column_config.NumberColumn(format="%.2f%%")
+    st.dataframe(tabela_black_litterman(res, pesos_reais), width="stretch",
+                 hide_index=True, column_config={
+                     "Meta": porcento, "Black-Litterman": porcento, "Real": porcento,
+                     "BL − meta (pp)": st.column_config.NumberColumn(format="%+.2f"),
+                     "z do score": st.column_config.NumberColumn(format="%+.2f"),
+                     "α da view": porcento, "π": porcento, "μ BL": porcento,
+                 })
+    real_classe = res.pesos_por_classe(
+        {s: w for s, w in pesos_reais.items() if s in res.pesos_meta})
+    meta_c, bl_c = res.pesos_por_classe(res.pesos_meta), res.pesos_por_classe(res.pesos_bl)
+    por_classe = [{"Classe": carteira_real.ROTULOS.get(c, c), "Meta": meta_c[c] * 100,
+                   "Black-Litterman": bl_c.get(c, 0.0) * 100,
+                   "Real (ativos do modelo)": real_classe.get(c, 0.0) * 100}
+                  for c in sorted(meta_c)]
+    st.dataframe(pd.DataFrame(por_classe), width="stretch", hide_index=True,
+                 column_config={k: porcento for k in
+                                ("Meta", "Black-Litterman", "Real (ativos do modelo)")})
+    st.caption("% da parcela de risco. Real = valor na aba Investimentos ÷ toda a "
+               "parcela de risco real, inclusive ativos fora das carteiras-modelo.")
+
+    pontos = alocacao_bl.fronteira_eficiente(res)
+    marcadores = [("Meta", res.risco_retorno(res.pesos_meta), "#F5A623"),
+                  ("Black-Litterman", res.risco_retorno(res.pesos_bl), "#00C896")]
+    reais_cobertos, fracao = alocacao_bl.pesos_reais_cobertos(res, valores)
+    if reais_cobertos:
+        marcadores.append((f"Carteira real ({fracao:.0%} coberta)",
+                           res.risco_retorno(reais_cobertos), "#FC5C7D"))
+    marcadores = [m for m in marcadores if m[1] is not None]
+    if pontos:
+        st.plotly_chart(_fig_fronteira(pontos, marcadores), width="stretch")
+        if reais_cobertos:
+            st.caption(
+                "Fronteira TEÓRICA: carteiras dos ativos com série sob as mesmas "
+                "restrições do BL, no retorno esperado μ do modelo. O ponto da "
+                "carteira real usa só os ativos dela que têm série no modelo "
+                f"({fracao:.0%} do valor da parcela de risco real) e ignora o resto.")
+        else:
+            st.caption(
+                "Fronteira TEÓRICA sob as mesmas restrições do BL, no retorno "
+                "esperado μ do modelo. Nenhuma posição real coberta pelo modelo "
+                "para marcar.")
+
+    with st.expander("Como o score vira retorno esperado", expanded=False):
+        st.markdown(
+            "**Grinold-Kahn:** α = IC × σ × z. `z` é o posto do score dentro da "
+            "classe levado à normal (Φ⁻¹((posto − 0,5)/n)); σ é a volatilidade "
+            "anual do ativo em Σ; IC é o medido fora da amostra pelo motor. "
+            "A view é Q = π + α, absoluta, uma por ativo com score.\n\n"
+            "**Confiança (Idzorek):** c = 0,5 × min(IC/0,10, 1); metade se o "
+            "portão de excesso reprovou; 1% sem medição, com versão divergente "
+            "ou IC não significativo. Ω = (1/c − 1)·τ·σ², de modo que μ anda a "
+            "fração c do caminho até Q.\n\n"
+            "**Números de hoje:** B3 IC 0,075 (IC95% acima de zero, versão "
+            "2.28.0) → c = 37,5%; EUA IC de postos 0,107 (t = 3,96), excesso "
+            "reprovado → c = 25%; FII sem medição de IC → c = 1% (a view usa "
+            "IC 0,05 só para ter direção). Exemplo: um ativo B3 com σ = 30% a.a. "
+            "no topo de 10 (z = +1,64) recebe α = 0,075 × 0,30 × 1,64 ≈ 3,7 pp "
+            "a.a., e μ anda 37,5% disso ≈ 1,4 pp acima de π."
+        )
+    _benchmark_bl(res, ret, alvos, renda_fixa)
+    return res
 
 
 _CHAVE_APORTE = "portfolio_global_aporte_mensal"
@@ -1444,7 +1779,7 @@ def _itens_do_veredito(df: pd.DataFrame, pergunta: str) -> list[dict]:
 def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                  ret: pd.DataFrame, cob: Cobertura | None, pesos: dict,
                  papeis: list, acoes: list,
-                 macro: MacroCarteiras | None = None) -> None:
+                 macro: MacroCarteiras | None = None, bl=None) -> None:
     """Caixa de texto para conversar com a LLM sobre o patrimonio consolidado.
 
     O contexto e montado a partir do que ESTA TELA ja calculou — `df`, `ret`,
@@ -1499,6 +1834,9 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                     cobertura=cob, pesos=pesos, papeis=papeis, acoes=acoes,
                     macro_carteiras=(macro.para_llm() if macro is not None else None),
                 )
+                # GLB-01: a mesma alocação Black-Litterman que a tela mostra.
+                if bl is not None:
+                    contexto += "\n\n" + bl.para_llm()
                 # Premissa do app: macro, curva e noticiário dos dois bancos
                 # entram em toda conversa, com o dos ativos da carteira.
                 from core.contexto_mercado import bloco_contexto_mercado
@@ -1601,14 +1939,15 @@ def render() -> None:
     _painel_fatores(ret, pesos)
     _painel_risco(ret, pesos)
     papeis = _painel_papeis(df, ret)
+    bl = _painel_black_litterman(df, ret, alvos, alocacao.get("renda_fixa"))
     # Uma leitura macro por render, a mesma para o motor, a tela e o chat.
     macro = _carregar_macro_carteiras(df)
     acoes = _painel_recomendacoes(df, ret, pesos, alvos, alocacao.get("total_brl"),
-                                  macro=macro)
+                                  macro=macro, bl=bl)
     _painel_aporte(alvos, alocacao.get("renda_fixa"))
     # O chat fica por ultimo de proposito: `st.chat_input` toma o foco quando
     # renderiza, e no meio da tela ele empurraria a rolagem para longe dos
     # paineis (mesmo efeito ja anotado em views/fiis.py).
     _painel_chat(df, alvos=alvos, total_brl=alocacao.get("total_brl"),
                  ret=ret, cob=cob, pesos=pesos, papeis=papeis, acoes=acoes,
-                 macro=macro)
+                 macro=macro, bl=bl)
