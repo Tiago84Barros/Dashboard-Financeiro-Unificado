@@ -214,8 +214,14 @@ def _bloco_tesouro(tesouro, macro) -> list[str]:
     if macro and not macro.get("erro"):
         atual = macro.get("atual") or {}
         linhas.append(f"CONJUNTURA (public.macro, ano {atual.get('ano', '—')}):")
-        for campo, rotulo in (("selic", "Selic"), ("ipca", "IPCA"),
-                              ("juros_real_ex_ante", "Juro real ex-ante")):
+        # A coluna ``juros_real_ex_ante`` é EX POST (inflação já ocorrida), e no
+        # ano corrente o IPCA é o acumulado no ano, não 12 meses (auditoria
+        # app4, LLM-A2): o rótulo diz isso para a LLM não comparar com o
+        # IPCA+ do Tesouro como se fosse expectativa.
+        for campo, rotulo in (("selic", "Selic"),
+                              ("ipca", "IPCA (no ano corrente: acumulado no ano até o "
+                                       "último mês divulgado)"),
+                              ("juros_real_ex_ante", "Juro real ex post (realizado)")):
             valor = _n(atual.get(campo))
             linhas.append(f"- {rotulo}: " + (f"{valor:.2f}" if valor is not None
                                              else "ausente"))

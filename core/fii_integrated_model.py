@@ -11,6 +11,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
+from core.fii_methodology import METHODOLOGY_VERSION
 from core.fii_renda_recorrente import (
     TETO_LOCATARIO,
     TETO_VENCIMENTO_24M,
@@ -18,7 +19,12 @@ from core.fii_renda_recorrente import (
     estado_concentracao,
 )
 
-INTEGRATED_MODEL_VERSION = "6.8.0"
+# FII-07: era "6.8.0" literal enquanto a metodologia já estava na 6.10.0 e o
+# manifesto dizia que a elegibilidade também era 6.10.0 — três rótulos para o
+# mesmo motor. A elegibilidade muda junto com a metodologia (a 6.10.0 trouxe
+# o portão de renda recorrente e o veto de concentração), então o rótulo é o
+# da metodologia, lido da constante e nunca copiado.
+INTEGRATED_MODEL_VERSION = METHODOLOGY_VERSION
 
 #: Portões de proteção ao investidor e a severidade de cada um. São os únicos
 #: que admitem concessão por viabilidade: reprovar em qualquer outro portão

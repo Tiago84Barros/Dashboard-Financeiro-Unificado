@@ -122,9 +122,11 @@ BACKUP_DIR_PADRAO = ROOT / "backups" / "vitrine"
 
 def publish(periods: list[str], *, apply: bool = False,
             limit: int | None = None,
-            backup_dir: Path | None = None) -> dict:
+            backup_dir: Path | None = None,
+            aceitar_base_defasada: bool = False) -> dict:
     # O caminho da raiz é configurado acima para suportar execução direta do
     # script; dependências do projeto são carregadas somente depois disso.
+    from core import b3_atualidade_trimestral as atualidade
     from data_pipeline.market import repository
     from scripts.publish_b3_tickers_from_local import _remote_url
     from scripts.publish_fii_selection_from_local import _warehouse_url
@@ -156,6 +158,8 @@ def publish(periods: list[str], *, apply: bool = False,
                 FROM market.calculated_metrics
                 WHERE ticker = ANY(:tks) AND period = ANY(:ps)
             """), {"tks": tickers, "ps": periods}).mappings()]
+            desde = atualidade.desde_ano(datetime.now(timezone.utc).date())
+            contagens_origem = atualidade.ler_contagens(src, desde)
 
         resultado["tickers"] = len(tickers)
         resultado["linhas_origem"] = len(origem)
@@ -176,6 +180,19 @@ def publish(periods: list[str], *, apply: bool = False,
                 WHERE ticker = ANY(:tks) AND period = ANY(:ps)
             """), {"tks": tickers, "ps": periods}).mappings()]
 
+            # B3-02: em 28/09/2026 esta publicação trocou o TTM da vitrine,
+            # que já tinha o 2026T2, pelo do armazém, parado no 2026T1. Upsert
+            # não compara safra, então o portão compara o trimestre vigente
+            # (por cobertura do universo) dos dois lados antes de escrever.
+            contagens_destino = atualidade.ler_contagens(dst, desde)
+            resultado["trimestre_origem"] = atualidade.rotulo(
+                atualidade.trimestre_vigente(contagens_origem))
+            resultado["trimestre_vitrine"] = atualidade.rotulo(
+                atualidade.trimestre_vigente(contagens_destino))
+            bloqueio = atualidade.bloqueio_de_publicacao(contagens_origem,
+                                                         contagens_destino)
+            resultado["bloqueio_atualidade"] = bloqueio
+
             chaves_origem = {_chave(r) for r in origem}
             orfas = [r for r in remotas if _chave(r) not in chaves_origem]
             resultado["linhas_vitrine_antes"] = len(remotas)
@@ -187,6 +204,10 @@ def publish(periods: list[str], *, apply: bool = False,
                 dst.rollback()
                 resultado["linhas_a_gravar"] = len(origem)
                 return resultado
+            if bloqueio and not aceitar_base_defasada:
+                raise RuntimeError(
+                    f"publicação recusada: {bloqueio} Para publicar mesmo "
+                    "assim, use --aceitar-base-defasada.")
 
             gravadas = repository.upsert(
                 dst, "calculated_metrics",
@@ -229,11 +250,15 @@ def main() -> int:
                    help=f"onde gravar o backup das linhas apagadas "
                         f"(padrão: {BACKUP_DIR_PADRAO}). O backup é automático "
                         "e obrigatório: se falhar, nada é apagado")
+    p.add_argument("--aceitar-base-defasada", action="store_true",
+                   help="publica mesmo quando o armazém tem trimestre vigente "
+                        "anterior ao da vitrine (por padrão, recusa)")
     args = p.parse_args()
 
     periods = [s.strip() for s in str(args.periods).split(",") if s.strip()]
     saida = publish(periods, apply=bool(args.apply), limit=args.limit,
-                    backup_dir=args.backup_dir)
+                    backup_dir=args.backup_dir,
+                    aceitar_base_defasada=bool(args.aceitar_base_defasada))
     print(json.dumps(saida, indent=2, ensure_ascii=False, default=str))
     return 0
 

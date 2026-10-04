@@ -54,11 +54,16 @@ from core.fii_methodology import (
 from core.fii_portfolio_v4 import (
     LIVE_PORTFOLIO_STRATEGY_ID,
     PortfolioPolicy,
+    tetos_inativos,
 )
 from core.fii_renda_recorrente import dy_recorrente
 from core.fii_selection_explanations import build_selection_reports
 from core.fii_taxonomy import ORDEM_CATEGORIAS_FII, categoria_fii
-from core.fii_validation import validation_supports_strategy
+from core.fii_validation import (
+    leitura_do_excesso,
+    texto_do_excesso,
+    validation_supports_strategy,
+)
 from core.inteligencia_ativos import veredito
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_context_ativo import build_fii_ativo_context
@@ -295,6 +300,9 @@ def render(show_header: bool = True) -> None:
                     if validation_applicable
                     else "Motor atual pendente",
                 ),
+                # FII-02: o selo acima atesta integridade do protocolo, não
+                # vantagem. O IC do excesso fica ao lado dele no cabeçalho.
+                ("Excesso vs IFIX", _metadado_do_excesso(validation)),
             ],
         )
 
@@ -1085,6 +1093,41 @@ def _universo_exibido(estritos, candidatos, result: dict) -> list[dict]:
     ]
 
 
+def _aviso_de_tetos_inativos(inativos: list[dict]) -> str:
+    """Nomeia cada teto de concentração que o otimizador deixou de aplicar.
+
+    FII-03 (auditoria de 04/10/2026): com cobertura abaixo do mínimo o
+    otimizador faz ``continue`` e o teto some sem aviso — inquilino 0 de 219,
+    devedor 8,4%, indexador 57,9% e região 70,8%, contra 80% exigidos. A
+    legenda antiga listava só os nomes internos (``tenant``, ``debtor``); quem
+    lê a carteira precisa saber que ela pode concentrar nessas dimensões.
+    """
+    if not inativos:
+        return ""
+    partes = [
+        f"{t['rotulo']} (cobertura {t['cobertura']:.1%} contra mínimo de "
+        f"{t['minimo']:.0%}; teto de {t['teto']:.0%} não aplicado)"
+        for t in inativos
+    ]
+    return (
+        f"**{len(inativos)} tetos de concentração inativos** por falta de "
+        "cobertura: " + "; ".join(partes) + ". A carteira pode concentrar "
+        "nessas dimensões sem limite; setor e emissor têm histórico "
+        "point-in-time obrigatório."
+    )
+
+
+def _metadado_do_excesso(validation: dict) -> str:
+    """IC 95% do excesso mensal, curto para o cabeçalho da página."""
+    excesso = leitura_do_excesso(validation.get("metrics") or {})
+    if not excesso["disponivel"]:
+        return "IC indisponível"
+    inferior = f"{excesso['inferior'] * 100:+.2f}".replace(".", ",")
+    superior = f"{excesso['superior'] * 100:+.2f}".replace(".", ",")
+    faixa = f"IC 95% {inferior} a {superior} p.p./mês"
+    return faixa if excesso["significativo"] else f"{faixa} · não significativo"
+
+
 def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> str:
     """Card do veredito do protocolo PIT, com a cessão de proteção da safra.
 
@@ -1117,6 +1160,15 @@ def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> 
                 "proteção cedida não é ausência de risco")
         # Âmbar mesmo aprovado, na borda E no subtítulo: o verde desta tela
         # significa "sem ressalva", e a ressalva é justamente o subtítulo.
+        accent = sub_color = "#F6C90E"
+    # FII-02: o IC do excesso sai junto do selo. No run 90 ele vai de −0,127
+    # a +0,380 p.p./mês — "Aprovado" sem isso ao lado é lido como "bate o
+    # índice". O piso (`PISO_IC_EXCESSO`) é aviso, não bloqueio: o portão
+    # continua o mesmo, e a vitrine continua publicando.
+    excesso = leitura_do_excesso(validation_metrics)
+    sub += " · " + texto_do_excesso(excesso)
+    if aprovado and excesso["disponivel"] and not excesso["significativo"]:
+        valor = f"{valor} · excesso não significativo"
         accent = sub_color = "#F6C90E"
     return _kpi_html("Protocolo PIT", valor, sub=sub, sub_color=sub_color,
                      accent=accent)
@@ -2090,7 +2142,10 @@ def _tab_busca(df: pd.DataFrame) -> None:
 def _tab_carteira(ranked: pd.DataFrame) -> None:
     st.subheader("Preferências da seleção")
     st.markdown(_info_card_html(
-        "Seleção Integrada de FIIs · v6.7",
+        # FII-07: o card dizia "v6.7" fixo enquanto a metodologia era a
+        # 6.10.0. A versão sai da mesma constante que escolhe o run de
+        # validação (`load_fii_validation_status(METHODOLOGY_VERSION)`).
+        f"Seleção Integrada de FIIs · v{METHODOLOGY_VERSION}",
         "Um único motor combina elegibilidade histórica, score específico por tipo, "
         "qualidade dos dados, cenário macroeconômico, concentração e correlação. "
         "DY, P/VP e liquidez entram uma única vez, sem somar scores concorrentes.",
@@ -2527,17 +2582,14 @@ def _carteira_integrada(preferences: dict):
     k5.markdown(_kpi_html("Confiança ponderada", f"{average_confidence:.0%}",
                           accent="#00C896"), unsafe_allow_html=True)
     corr_coverage = float((result.get("correlation_info") or {}).get("coverage") or 0)
+    inativos = tetos_inativos(result)
     k6.markdown(_kpi_html("Cobertura da correlação", f"{corr_coverage:.0%}",
-                          sub=f"{len(result.get('unresolved_dimensions') or [])} dimensões sem cobertura",
+                          sub=f"{len(inativos)} tetos de concentração inativos",
                           accent="#FC5C7D" if corr_coverage < .80 else "#4A9EFF"),
                 unsafe_allow_html=True)
-    if result.get("unresolved_dimensions"):
-        st.caption(
-            "Look-through adicional ainda sem cobertura suficiente: "
-            + ", ".join(result["unresolved_dimensions"])
-            + ". Esses limites só são aplicados quando observáveis; setor e "
-              "emissor possuem histórico point-in-time obrigatório."
-        )
+    aviso_tetos = _aviso_de_tetos_inativos(inativos)
+    if aviso_tetos:
+        st.warning(aviso_tetos)
     for aviso in _avisos_de_cessao_de_protecao(result):
         st.warning(aviso)
     if result.get("protecao_excedida"):
@@ -2836,12 +2888,15 @@ def _tab_backtest() -> None:
     cards[3].markdown(_kpi_html("Cobertura de retornos",
                                 f"{float(pit.get('return_observation_coverage') or 0):.0%}",
                                 accent="#4A9EFF"), unsafe_allow_html=True)
-    ci = pit.get("excess_bootstrap") or {}
-    ci_text = (f"{float(ci['lower']):+.2%} a {float(ci['upper']):+.2%}"
-               if ci.get("lower") is not None and pd.notna(ci.get("lower")) else "—")
+    excesso = leitura_do_excesso(pit)
+    ci_text = (f"{excesso['inferior']:+.2%} a {excesso['superior']:+.2%}"
+               if excesso["disponivel"] else "—")
     cards[4].markdown(_kpi_html("IC bootstrap do excesso", ci_text,
-                                sub="intervalo de 95%", sub_color="#4A5568",
-                                accent="#00C896" if float(ci.get("lower") or -1) > 0 else "#F6C90E"),
+                                sub=("intervalo de 95% · excesso não significativo"
+                                     if excesso["disponivel"] and not excesso["significativo"]
+                                     else "intervalo de 95%"),
+                                sub_color="#4A5568",
+                                accent="#00C896" if excesso["significativo"] else "#F6C90E"),
                       unsafe_allow_html=True)
     # A-118: quanto da carteira saiu de campo (liquidação, incorporação ou fim
     # do dado) em vez de ter retorno observado. A versão anterior redistribuía
@@ -2868,17 +2923,15 @@ def _tab_backtest() -> None:
         # O que os gates NÃO perguntam. Sem isto, "atenderam aos gates" é lido
         # como "a estratégia funciona": nenhum dos critérios acima exige que o
         # excesso sobre o índice seja distinguível de zero.
-        _ci = pit.get("excess_bootstrap") or {}
-        try:
-            _low, _high = float(_ci["lower"]), float(_ci["upper"])
-        except (KeyError, TypeError, ValueError):
-            _low = _high = None
-        if _low is not None and pd.notna(_low) and _low <= 0:
+        # O piso é `PISO_IC_EXCESSO`, o mesmo do card da carteira.
+        if excesso["disponivel"] and not excesso["significativo"]:
             st.warning(
                 f"Os gates aferem **integridade do protocolo**, não vantagem. O "
                 f"excesso médio sobre o IFIX tem intervalo de 95% de "
-                f"{_low:+.2%} a {_high:+.2%} por período: ele **atravessa o "
-                f"zero**, então a vantagem observada não é distinguível de "
+                f"{excesso['inferior']:+.2%} a {excesso['superior']:+.2%} por "
+                f"período: **excesso não significativo** — o intervalo não fica "
+                f"acima do piso de {excesso['piso']:+.2%}, então a vantagem "
+                f"observada não é distinguível de "
                 f"acaso nesta amostra. A carteira segue sustentada por "
                 f"diversificação e por qualidade do ativo, não por evidência "
                 f"de que supera o índice."

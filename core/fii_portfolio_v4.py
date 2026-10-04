@@ -119,6 +119,55 @@ LIMITS = {
     "region": "max_region",
 }
 
+# Rótulo de cada dimensão na tela. `manager` é o ADMINISTRADOR: as duas fontes
+# que gravam a exposição (informe mensal da CVM, `CNPJ_Administrador`, e a
+# brapi, `administratorCnpj`) só trazem o administrador. Chamá-lo de "gestora"
+# prometia um teto que não existe — o CNPJ 59281253000123 (BTG DTVM) administra
+# 102 dos 433 fundos da vitrine (23,5%), e no cadastro da CVM de 14/07/2026 os
+# 218 fundos que ele administra têm 82 gestoras diferentes.
+ROTULO_DIMENSAO = {
+    "manager": "administrador", "sector": "setor", "tenant": "inquilino",
+    "debtor": "devedor", "issuer": "emissor", "indexer": "indexador",
+    "region": "região",
+}
+
+
+def tetos_inativos(result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Tetos de concentração que o otimizador NÃO impôs, com a cobertura.
+
+    `_optimize_sob_politica` e `portfolio_constraint_violations` fazem
+    ``continue`` quando a cobertura da dimensão fica abaixo de
+    ``min_dimension_coverage``: o teto deixa de existir em silêncio. Na
+    carteira de 04/10/2026 eram 4 dos 6 tetos de look-through (inquilino 0 de
+    219, devedor 8,4%, indexador 57,9%, região 70,8%, contra 80%). Esta função
+    devolve a lista para a tela dizer isso, em vez de a carteira parecer
+    protegida contra uma concentração que ninguém mediu.
+
+    O mínimo é o que a política APLICADA usou (``result["policy"]``): a cessão
+    de forma pode baixá-lo, e o que decide se o teto valeu é o aplicado.
+    """
+    cobertura = result.get("dimension_coverage") or {}
+    politica = result.get("policy") or {}
+    minimo = float(politica.get("min_dimension_coverage",
+                                PortfolioPolicy.min_dimension_coverage))
+    inativos = []
+    for dimensao, atributo in LIMITS.items():
+        info = cobertura.get(dimensao)
+        if info is None:
+            continue
+        cob = float(info.get("coverage") or 0.0)
+        if cob >= minimo and dimensao not in (result.get("unresolved_dimensions") or ()):
+            continue
+        inativos.append({
+            "dimensao": dimensao,
+            "rotulo": ROTULO_DIMENSAO.get(dimensao, dimensao),
+            "cobertura": cob,
+            "minimo": minimo,
+            "teto": float(info.get("limit", politica.get(
+                atributo, getattr(PortfolioPolicy, atributo)))),
+        })
+    return inativos
+
 
 def _num(value: Any, default: float = 0.0) -> float:
     try:

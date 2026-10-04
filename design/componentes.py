@@ -557,6 +557,54 @@ def selo_de_frescor(modulo: str, dados: dict | None = None) -> None:
                    f"(alvo de atualização: {dados['alvo']} dia(s)).")
 
 
+# ── Atualidade trimestral da B3 (B3-02) ─────────────────────────────────────
+# O selo acima responde "quando a vitrine foi publicada". Não responde "de
+# qual trimestre é o dado": em 28/09/2026 a vitrine foi publicada no prazo
+# carregando o TTM do 2026T1, com o 2026T2 já no banco.
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _atualidade_b3_cacheada(hoje_iso: str) -> dict | None:
+    """Cache de uma hora, chaveado pelo dia: a medição lê cerca de 200 kB do
+    Supabase (ver `core.b3_atualidade_trimestral.medir_banco`), e o egress está
+    acima da cota desde setembro."""
+    from datetime import date
+
+    from core.b3_atualidade_trimestral import medir_banco
+    from core.database import get_engine
+    eng = get_engine()
+    if eng is None:
+        return None
+    with eng.connect() as conn:
+        return medir_banco(conn, date.fromisoformat(hoje_iso))
+
+
+def aviso_atualidade_trimestral_b3() -> None:
+    """Avisa quando a base da B3 está um trimestre (ou mais) atrás.
+
+    Alto quando há atraso; discreto quando está em dia. Falha em silêncio pelo
+    mesmo motivo do selo de frescor: é contexto do ranking, não o ranking.
+    """
+    try:
+        from datetime import date
+
+        from core.b3_atualidade_trimestral import texto_do_score
+        medida = _atualidade_b3_cacheada(date.today().isoformat())
+    except Exception:  # noqa: BLE001 - contexto nao derruba a tela
+        return
+    if not medida:
+        return
+    universo = medida.get("universo") or {}
+    aviso_score = texto_do_score(medida.get("score") or {})
+    if universo.get("atrasada") or aviso_score:
+        partes = [universo.get("texto")] if universo.get("atrasada") else []
+        if aviso_score:
+            partes.append(aviso_score)
+        mensagem_aviso("Fundamentos com trimestre defasado", " ".join(partes))
+    elif universo.get("texto"):
+        st.caption(universo["texto"])
+
+
 def _tinta(token: str, pct: int = 12) -> str:
     """Fundo derivado do proprio token, para acompanhar a troca de tema."""
     return f"color-mix(in srgb, var({token}) {pct}%, transparent)"
