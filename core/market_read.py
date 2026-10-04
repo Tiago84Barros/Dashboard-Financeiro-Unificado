@@ -1669,8 +1669,8 @@ def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     # números impossíveis exibidos como medição -- queda máxima de -2.638%
     # em MMAQ4, -104% em RSUL3, volatilidade de 361% em NEMO3. Descartar a
     # observação devolve o mês como ausente, que todo consumidor já trata.
-    df = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c "
-            "FROM market.historical_prices WHERE ticker = ANY(:t) "
+    df = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c, "
+            "close AS b FROM market.historical_prices WHERE ticker = ANY(:t) "
             "AND COALESCE(adjusted_close, close) > 0 ORDER BY ticker, date",
             {"t": tks})
     if df.empty:
@@ -1680,12 +1680,17 @@ def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     wide = df.pivot_table(index="date", columns="ticker", values="c", aggfunc="last")
     mensal = wide.resample("ME").last()          # último preço válido de cada mês
     mensal.columns = [str(c).strip().upper() for c in mensal.columns]
+    brutos = (df.pivot_table(index="date", columns="ticker", values="b",
+                             aggfunc="last").resample("ME").last())
+    brutos.columns = [str(c).strip().upper() for c in brutos.columns]
     # B3-01: desdobramento/grupamento que o ajuste da fonte nao retroagiu (e
     # ajustado corrompido com close plano, MMAQ4/RSUL3) aparece como retorno
-    # mensal acima de +100% ou abaixo de -60%: 636 casos em 1.091 tickers em
-    # 04/10/2026, e a safra 2024 do EW saia +135,6% contra -7,7% saneada.
-    # A regra e o porque moram em core.b3_precos_saneamento.
-    mensal, _ = neutralizar_saltos_mensais(mensal.dropna(how="all"))
+    # mensal acima de +100% ou abaixo de -60%: a safra 2024 do EW saia
+    # +135,6% contra -8,1% saneada. So se neutraliza COM evidencia (fator
+    # redondo, close estavel ou alta > +300%): queda sem evidencia e perda
+    # real (AMER3 -82% em 01/2023). A regra e o porque moram em
+    # core.b3_precos_saneamento.
+    mensal, _ = neutralizar_saltos_mensais(mensal.dropna(how="all"), brutos)
     return mensal
 
 

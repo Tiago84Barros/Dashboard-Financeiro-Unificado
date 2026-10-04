@@ -1585,12 +1585,14 @@ SCORE_VERSION_CHANGELOG = {
         "reinvestida; o Rank-IC usa a ultima cotacao da janela inteira."
     ),
     "2.29.0": (
-        "Auditoria B3-01: o preco mensal ajustado perde os saltos implausiveis "
-        "(> +100% ou < -60% em um mes: desdobramento/grupamento sem retroajuste "
-        "e ajustado corrompido) em core.b3_precos_saneamento, e as safras "
-        "winsorizam a secao transversal a 1%/99%. O EW da safra 2024 cai de "
-        "+135,6% para -7,7%; a medicao OOS da 2.28.0 foi feita sobre o preco "
-        "corrompido e precisa ser refeita para esta versao."
+        "Auditoria B3-01: o preco mensal ajustado perde os saltos com "
+        "evidencia de evento societario ou dado corrompido (fator de split "
+        "redondo, ajustado explodindo com close estavel, alta > +300%) em "
+        "core.b3_precos_saneamento; queda sem evidencia (AMER3 -82% em "
+        "01/2023) fica, por ser perda real. As safras winsorizam a secao "
+        "transversal a 1%/99%. O EW da safra 2024 cai de +135,6% para -7,6%; "
+        "a medicao OOS da 2.28.0 foi feita sobre o preco corrompido e precisa "
+        "ser refeita para esta versao."
     ),
 }
 

@@ -191,12 +191,13 @@ TOLERANCIA_DIAS = 45
 
 #: Winsorizacao da secao transversal de cada safra (auditoria B3-01). Com ~300
 #: papeis por safra, 1%/99% corta 3 nomes por cauda. Medido em 04/10/2026 sobre
-#: o painel ja saneado de saltos: o EW da safra 2020 vai de +46,0% (sem corte)
-#: para +44,5% (1/99), +42,7% (2,5/97,5) e +39,9% (5/95) -- o corte de 1%
-#: tira o residuo de dado sem comer a cauda real do mercado, que e o que o
-#: 5/95 passa a fazer. A winsorizacao SOZINHA nao basta: sem o saneamento de
-#: saltos (core.b3_precos_saneamento) o EW da safra 2020 fica em +71,7% com
-#: 1/99 contra +44,5% saneado, e a de 2021 em -6,9% contra -10,1%.
+#: o painel ja saneado (core.b3_precos_saneamento 2.0.0): o EW da safra 2023
+#: vai de +30,3% (sem corte) para +26,3% (1/99), +24,5% (2,5/97,5) e +24,0%
+#: (5/95); o da 2024, de -4,1% para -7,6%, -8,1% e -8,0%. O corte de 1% tira o
+#: residuo de dado sem comer a cauda real do mercado (a de 2020 tem PRIO3,
+#: TASA3 e ETER3 com +350% a +660% REAIS, e 5/95 passa a cortar essa cauda).
+#: A winsorizacao SOZINHA nao basta: sem o saneamento o EW de 2020 fica em
+#: +71,7% com 1/99 contra +57,8% saneado.
 WINSOR_PCT_BAIXO = 1.0
 WINSOR_PCT_ALTO = 99.0
 #: Abaixo disto o percentil e o proprio dado: nao corta nada.
