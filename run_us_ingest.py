@@ -127,7 +127,7 @@ def main() -> int:
     p.add_argument("command", choices=[
         "init-schema", "test", "universe", "estimate", "bootstrap", "daily",
         "fundamentals", "resume", "validate", "score-history", "backtest",
-        "snapshot", "prices", "enrich", "macro"])
+        "snapshot", "prices", "enrich", "macro", "link-cik"])
     p.add_argument("--tickers", nargs="*", help="símbolos específicos")
     p.add_argument("--exchanges", nargs="*", default=None, help="NYSE NASDAQ AMEX")
     p.add_argument("--limit", type=int, default=None, help="limita o universo/lote")
@@ -164,7 +164,7 @@ def main() -> int:
 
     # Proteção: ingestão pesada NUNCA deve escrever no Supabase remoto.
     if args.command in {"bootstrap", "daily", "fundamentals", "universe", "resume",
-                        "score-history", "snapshot", "enrich", "macro"} \
+                        "score-history", "snapshot", "enrich", "macro", "link-cik"} \
             and not _is_local_target() and not args.dry_run:
         log.error("Comando %s exige --warehouse (destino local). "
                   "Ingestão pesada não pode ir para o Supabase.", args.command)
@@ -229,6 +229,22 @@ def main() -> int:
         if args.dry_run:
             return out({"ok": True, "action": "dry-run: enriquecimento não executado"})
         return out({"ok": True, **enrich_warehouse(get_engine())})
+
+    if args.command == "link-cik":
+        # EUA-A: vincula `assets` a `companies` pelo CIK das listagens da SEC,
+        # reclassifica (DUK/DUKB, MCHP/MCHPP passam a ser a mesma companhia) e
+        # grava em ingestion_errors o que continuou sem vínculo. Exige rede só
+        # para baixar as duas listagens; o resto é o armazém local.
+        from core.database import get_engine
+        from data_pipeline.us.edgar import build_edgar_provider
+        from data_pipeline.us.enrichment import link_classify_and_log
+        if args.offline:
+            return out({"ok": False, "reason": "link-cik exige rede (listagens da SEC)"})
+        mapa = build_edgar_provider().sec_ticker_cik_map()
+        if args.dry_run:
+            return out({"ok": True, "action": "dry-run: nada gravado",
+                        "sec_tickers": len(mapa)})
+        return out({"ok": True, **link_classify_and_log(get_engine(), mapa)})
 
     if args.command == "score-history":
         # sem rede: recomputa scores PIT a partir do que já está no warehouse
