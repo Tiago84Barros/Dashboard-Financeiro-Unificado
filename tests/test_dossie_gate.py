@@ -7,6 +7,7 @@ gate é testado com o cache de pareceres pré-populado em st.session_state.
 """
 from __future__ import annotations
 
+import pytest
 import streamlit as st
 
 from core.dossie_b3 import (
@@ -120,9 +121,10 @@ def test_valuation_sem_mcap_nao_quebra():
 # Sanitização do parecer LLM
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_sanitizar_parecer_classificacao_invalida_vira_ressalva():
+def test_sanitizar_parecer_classificacao_invalida_vira_nao_avaliado():
+    # B3-09: veredito ilegível não é aprovação -- é ausência de veredito.
     p = _sanitizar_parecer({"classificacao_selecao": "explodir"}, "XXXX3")
-    assert p["classificacao_selecao"] == "aprovar_com_ressalvas"
+    assert p["classificacao_selecao"] == "nao_avaliado"
     assert isinstance(p["relatorio"], dict)
 
 
@@ -183,13 +185,51 @@ def test_gate_respeita_entry_guard_do_substituto():
     assert finais == ["CCCC3"]
 
 
-def test_gate_falha_de_avaliacao_nao_veta():
-    # fail-open: parecer indisponível chega como aprovar_com_ressalvas
+def test_gate_falha_de_avaliacao_nao_veta_nem_aprova():
+    # B3-09: parecer indisponível mantém o ativo, mas como NÃO AVALIADO --
+    # antes chegava como "aprovar_com_ressalvas" e a tela o dava por aprovado.
     st.session_state["pb3_quali_cache"] = {
-        "EEEE3": {"classificacao": "aprovar_com_ressalvas",
+        "EEEE3": {"classificacao": "nao_avaliado",
                   "motivo": "avaliação indisponível (timeout)"},
     }
     log = {"vetados": [], "substituicoes": [], "ressalvas": {}}
     finais = _gate(["EEEE3"], [("EEEE3", 50.0)], {}, {"EEEE3": 1.0}, log)
     assert finais == ["EEEE3"]
     assert not log["vetados"]
+    assert "EEEE3" not in log["ressalvas"]
+    assert log["nao_avaliados"] == {"EEEE3": "avaliação indisponível (timeout)"}
+
+
+def test_excecao_na_avaliacao_vira_nao_avaliado(monkeypatch):
+    import views.portfolio_b3 as view
+
+    def _explode(_tk):
+        raise RuntimeError("provedor fora")
+
+    monkeypatch.setattr(view, "avaliar_para_selecao", _explode)
+    st.session_state["pb3_quali_cache"] = {}
+    aval = view._quali_avaliar_cached("FFFF3")
+    assert aval["classificacao"] == "nao_avaliado"
+    assert "provedor fora" in aval["motivo"]
+
+
+def test_fallback_do_parecer_nao_aprova():
+    from core.dossie_b3 import _CLASSIFICACOES, NAO_AVALIADO, _parecer_fallback
+    p = _parecer_fallback("XXXX3", "LLM indisponível")
+    assert p["classificacao_selecao"] == NAO_AVALIADO
+    assert NAO_AVALIADO not in _CLASSIFICACOES  # a LLM não pode "escolher" isso
+    assert "não avaliado pelo portão" in p["motivo_selecao"]
+
+
+def test_resposta_ilegivel_nao_fica_no_cache(monkeypatch):
+    # O fallback devolvido de dentro do cache_data ficava 24 h guardado.
+    import core.dossie_b3 as d
+    import core.llm_b3 as llm
+    chamadas = []
+    monkeypatch.setattr(llm, "_call_llm", lambda *a, **k: chamadas.append(1) or "lixo")
+    monkeypatch.setattr(llm, "_report_model", lambda: "m")
+    d._parecer_llm_cached.clear()
+    for _ in range(2):
+        with pytest.raises(ValueError):
+            d._parecer_llm_cached("prompt-teste-ilegivel", "XXXX3")
+    assert len(chamadas) == 2

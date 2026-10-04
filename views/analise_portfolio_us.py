@@ -38,6 +38,7 @@ from core.llm_b3 import (
     redistribuir_pesos,
 )
 from core.llm_context_us import build_llm_context_for_us_portfolio_chat
+from core.llm_grounding import aviso_ancoragem
 from core.market_companies import (
     translate_us_industry,
     translate_us_sector,
@@ -356,6 +357,9 @@ def _render_relatorio_consolidado(port_analise: dict) -> None:
     ])
     st.markdown(f'<div class="apb3-kpi-row">{cards}</div>', unsafe_allow_html=True)
 
+    if port_analise.get("aviso_ancoragem"):
+        st.caption(port_analise["aviso_ancoragem"])
+
     with st.expander("📝 Resumo Executivo + Papel dos Ativos", expanded=True):
         for chave, rotulo in (("resumo_executivo", "Resumo Executivo"),
                               ("papel_dos_ativos", "Papel dos Ativos na Carteira"),
@@ -513,6 +517,8 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
         f"{icone} {tk}  —  {faixa}  •  {w_novo*100:.1f}%  [{persp.upper()}]{selo_grau}",
         expanded=False,
     ):
+        if an.get("aviso_ancoragem"):
+            st.caption(an["aviso_ancoragem"])
         if motivo["marcas"]:
             legiveis = ", ".join(MARCA_LABEL.get(m, m) for m in motivo["marcas"])
             st.warning(
@@ -1030,6 +1036,7 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
         st.markdown(escapar_cifrao(pergunta))
 
     with st.chat_message("assistant"):
+        aviso = ""
         with st.spinner("Consultando carteira, universo americano e indústrias…"):
             try:
                 pesos = _pesos_do_modelo(model)
@@ -1051,9 +1058,13 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
                     (_meta or {}).get("mentioned_tickers"), mercado="us")
                 resposta = chat_coerente(contexto, historico[:-1], pergunta,
                                          avaliacoes)
+                aviso = aviso_ancoragem(resposta, contexto, pergunta)
             except Exception as exc:  # noqa: BLE001
-                resposta = f"Erro ao consultar LLM: {exc}"
+                from core.llm_falha import mensagem_falha_llm
+                resposta = mensagem_falha_llm(exc, "chat da Avaliação de Portfólio EUA")
         st.markdown(escapar_cifrao(resposta))
+        if aviso:
+            st.caption(aviso)
 
     historico.append({"role": "assistant", "content": resposta})
     save_chat_history(_memory_key, historico, session_key=_CHAT)

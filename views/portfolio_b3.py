@@ -7,6 +7,7 @@ por segmento e monta uma carteira sugerida com empresas reais da B3.
 from __future__ import annotations
 
 import html
+import logging
 
 import numpy as np
 import pandas as pd
@@ -37,7 +38,7 @@ from core.b3_vigencia import (
     janela_de_vigencia,
     safra_vigente_em,
 )
-from core.dossie_b3 import avaliar_para_selecao, quali_gate_disponivel
+from core.dossie_b3 import NAO_AVALIADO, avaliar_para_selecao, quali_gate_disponivel
 from core.inteligencia_ativos import veredito
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
@@ -61,12 +62,16 @@ from views.empresas_b3 import (
     _aplicar_cheapness,
     _apply_cap_soft,
     _apply_decay_penalty,
+    _avisar_degradacoes,
+    _avisar_fonte_precos,
     _batch_yf_precos_mensais,
     _compute_score_entrada,
+    _degradacoes,
     _div_mes_sanitizado,
     _fv,
     _get_pesos_setor,
     _logo_url,
+    _mapa_sem_resiliencia,
     _pit_card_html,
     _pit_rotulo_resultado,
     _plot_layout,
@@ -80,7 +85,10 @@ from views.empresas_b3 import (
     _yf_multiplos_dividendos,
     _yf_trailing12m_divs,
 )
+from views.portfolio_b3_oos_carteira import render_oos_carteira
 from views.portfolio_b3_safras import render_safras
+
+logger = logging.getLogger(__name__)
 
 _MIN_MARKET_CAP_COVERAGE = 0.80
 _MIN_ADTV_COVERAGE = 0.70
@@ -359,6 +367,10 @@ def _build_entry_guard(
         how="left",
     )
     frames: list[pd.DataFrame] = []
+    # O pd.concat abaixo descarta ``attrs`` quando os segmentos divergem, e
+    # com eles a marca de que o score/risco saiu degradado (INF-M4). Junta
+    # aqui, por código, com os segmentos afetados, para a tela nomear.
+    degradacoes: dict[str, dict] = {}
     for (setor, _subsetor, _segmento), grupo in base.groupby(["SETOR", "SUBSETOR", "SEGMENTO"], dropna=False):
         tks = [str(t).upper().replace(".SA", "") for t in grupo["Ticker"].dropna().tolist()]
         if not tks:
@@ -373,13 +385,30 @@ def _build_entry_guard(
         if scored.empty:
             continue
         entrada = _compute_score_entrada(scored, anos_hist)
+        rotulo = str(_segmento) if pd.notna(_segmento) else str(setor)
+        for d in _degradacoes(scored) + _degradacoes(entrada):
+            item = degradacoes.setdefault(
+                d["codigo"], {"mensagem": d["mensagem"], "segmentos": []}
+            )
+            if rotulo not in item["segmentos"]:
+                item["segmentos"].append(rotulo)
         if not entrada.empty:
             frames.append(entrada)
 
+    marcas = [
+        {"codigo": codigo,
+         "mensagem": (f"Guarda de entrada da carteira: {item['mensagem']} "
+                      f"Segmento(s) afetado(s): {', '.join(item['segmentos'][:8])}"
+                      + (" …" if len(item["segmentos"]) > 8 else "") + ".")}
+        for codigo, item in degradacoes.items()
+    ]
     if not frames:
-        return {}, pd.DataFrame()
+        vazio = pd.DataFrame()
+        vazio.attrs["degradacoes"] = marcas
+        return {}, vazio
 
     df_entry = pd.concat(frames, ignore_index=True)
+    df_entry.attrs["degradacoes"] = marcas
     guard: dict[str, dict] = {}
     for _, row in df_entry.iterrows():
         tk = str(row.get("Ticker", "")).upper().replace(".SA", "")
@@ -410,6 +439,40 @@ def _prepare_entry_guard(
         df_mult_recon, hist_batch_guard, all_tickers
     )
     return _build_entry_guard(df_guard, df_set, hist_batch_guard, anos_hist)
+
+
+def _avisar_segmentos_sem_resiliencia(resultados: list[dict]) -> None:
+    """Nomeia na tela os segmentos cujo score saiu sem resiliência (INF-M4).
+
+    ``_processar_segmento`` consumia o mapa de scores e descartava a marca:
+    a liderança histórica e a carteira do próximo ano eram lidas como da
+    metodologia completa. A decisão corrente vem separada da reconstrução
+    porque pesa mais — é ela que vira carteira.
+    """
+    decisao = sorted(
+        str(r.get("segmento") or r.get("setor") or "?")
+        for r in resultados if r.get("decisao_sem_resiliencia")
+    )
+    historico = sorted(
+        f"{r.get('segmento') or r.get('setor') or '?'} "
+        f"({', '.join(str(a) for a in r['anos_sem_resiliencia'])})"
+        for r in resultados if r.get("anos_sem_resiliencia")
+    )
+    if decisao:
+        aviso_lacuna(
+            f"Score B3 {SCORE_VERSION} calculado **sem** os ajustes de resiliência "
+            "(histórico, valuation histórico e saúde) na carteira do próximo ano "
+            f"de {len(decisao)} segmento(s): " + ", ".join(decisao[:12])
+            + (" …" if len(decisao) > 12 else "")
+            + " — a escolha desses líderes não segue a metodologia declarada.",
+            codigo="tela.b3.carteira_score_sem_resiliencia", nivel="warning")
+    if historico:
+        aviso_lacuna(
+            "Reconstrução histórica com score **sem** os ajustes de resiliência "
+            f"em {len(historico)} segmento(s) (anos entre parênteses): "
+            + "; ".join(historico[:12]) + (" …" if len(historico) > 12 else "")
+            + " — backtest e Rank-IC desses anos medem outro ranking.",
+            codigo="tela.b3.carteira_historico_sem_resiliencia", nivel="warning")
 
 
 def _render_data_quality_box(summary: dict, audit: pd.DataFrame, hist_audit: pd.DataFrame) -> None:
@@ -593,8 +656,10 @@ def _quali_avaliar_cached(tk: str) -> dict:
     if tk not in cache:
         try:
             cache[tk] = avaliar_para_selecao(tk)
-        except Exception as exc:  # fail-open: falha de avaliação nunca veta
-            cache[tk] = {"classificacao": "aprovar_com_ressalvas",
+        except Exception as exc:  # falha de avaliação nunca veta -- nem aprova
+            # Antes saía "aprovar_com_ressalvas" e a tela listava o ativo como
+            # aprovado pelo portão sem parecer nenhum (auditoria B3-09).
+            cache[tk] = {"classificacao": NAO_AVALIADO,
                          "motivo": f"avaliação indisponível ({exc})",
                          "parecer": {}, "dossie": {}}
     return cache[tk]
@@ -656,13 +721,17 @@ def _aplicar_gate_qualitativo(
     Roda DEPOIS do ranking estatístico e não altera score algum: um nome
     vetado sai com motivo registrado e o próximo elegível do MESMO segmento
     (na ordem do score) herda a vaga e o orçamento de peso. Veto é exceção
-    grave e documentada no parecer; falha de LLM nunca veta (fail-open).
+    grave e documentada no parecer; falha de LLM nunca veta, mas o ativo fica
+    em ``log["nao_avaliados"]`` -- mantido, não aprovado.
     """
     finais: list[str] = []
+    nao_avaliados = log.setdefault("nao_avaliados", {})
     for tk in selecionados:
         aval = _quali_avaliar_cached(tk)
         if aval["classificacao"] != "vetar":
-            if aval["classificacao"] == "aprovar_com_ressalvas" and aval.get("motivo"):
+            if aval["classificacao"] == NAO_AVALIADO:
+                nao_avaliados[tk] = str(aval.get("motivo") or "parecer indisponível")
+            elif aval["classificacao"] == "aprovar_com_ressalvas" and aval.get("motivo"):
                 log["ressalvas"][tk] = str(aval["motivo"])
             finais.append(tk)
             continue
@@ -680,7 +749,9 @@ def _aplicar_gate_qualitativo(
             avaliacoes += 1
             if aval_c["classificacao"] != "vetar":
                 substituto = cand
-                if (aval_c["classificacao"] == "aprovar_com_ressalvas"
+                if aval_c["classificacao"] == NAO_AVALIADO:
+                    nao_avaliados[cand] = str(aval_c.get("motivo") or "parecer indisponível")
+                elif (aval_c["classificacao"] == "aprovar_com_ressalvas"
                         and aval_c.get("motivo")):
                     log["ressalvas"][cand] = str(aval_c["motivo"])
                 break
@@ -1018,6 +1089,9 @@ def _processar_segmento(
     pit_por_ano: dict[int, PITCoverage]    = {}
     pit_historico = PITCoverage()
     universo_excluidos: dict[int, list[str]] = {}
+    # Anos cujo score saiu sem os ajustes de resiliência (INF-M4). Lido
+    # ANTES do _apply_decay_penalty, que devolve dict puro sem a marca.
+    anos_sem_resiliencia: list[int] = []
 
     for ano in range(ano_inicio, ano_atual):
         # Quem saiu da bolsa só concorre nos anos em que estava listado; fora
@@ -1039,6 +1113,8 @@ def _processar_segmento(
         )
         if not score_map:
             continue
+        if _mapa_sem_resiliencia(score_map):
+            anos_sem_resiliencia.append(ano)
         pit_por_ano[ano] = pit_ano
         pit_historico = pit_historico + pit_ano
         score_map = _apply_decay_penalty(score_map, anos_lideranca)
@@ -1108,6 +1184,9 @@ def _processar_segmento(
     if not score_proximo:
         return None
     ano_ref_score = ano_atual - 1
+    # A carteira do próximo ano sai deste score: degradado aqui, a decisão
+    # corrente não segue a metodologia declarada.
+    decisao_sem_resiliencia = _mapa_sem_resiliencia(score_proximo)
 
     # Líderes para próximo ano
     # Ordenação TOTAL (score desc, ticker asc): empate não pode ser resolvido
@@ -1418,6 +1497,8 @@ def _processar_segmento(
         "pit_coverage_decisao": pit_proximo,
         "pit_coverage_por_ano": dict(pit_por_ano),
         "constraint_warnings": sorted(set(constraint_warnings)),
+        "anos_sem_resiliencia": sorted(set(anos_sem_resiliencia)),
+        "decisao_sem_resiliencia": decisao_sem_resiliencia,
     }
 
 
@@ -3289,6 +3370,7 @@ def render(show_header: bool = True) -> None:
 
         with st.spinner("Carregando preços mensais ajustados…"):
             df_precos_all = _batch_yf_precos_mensais(all_tickers, period="10y")
+            _avisar_fonte_precos(df_precos_all, "a seleção histórica")
             if _saidas_eleg and not df_precos_all.empty:
                 _p_s = _saidas.precos_mensais(_doc_saidas)
                 _p_s = _p_s[[c for c in _p_s.columns
@@ -3455,6 +3537,10 @@ def render(show_header: bool = True) -> None:
         return
 
     _render_data_quality_box(quality_summary, quality_audit, hist_audit)
+    # A guarda de entrada filtra as recomendações abaixo; se o score ou o
+    # risco dela saiu degradado, a tela precisa dizer — antes ficava só no log.
+    _avisar_degradacoes(st.session_state.get("pb3_entry_guard_df", pd.DataFrame()))
+    _avisar_segmentos_sem_resiliencia(resultados)
 
     # Saneamento por scraping (Fundamentus/Status Invest) DESCONTINUADO (2026-07):
     # fundamentos vêm exclusivamente do market.* (brapi) — não há o que sanear
@@ -3830,7 +3916,8 @@ def render(show_header: bool = True) -> None:
 
     # ── Gate qualitativo: pré-avalia as candidatas com barra de progresso ────
     # (as avaliações são cacheadas — reruns e substitutos reaproveitam)
-    quali_log: dict = {"vetados": [], "substituicoes": [], "ressalvas": {}}
+    quali_log: dict = {"vetados": [], "substituicoes": [], "ressalvas": {},
+                       "nao_avaliados": {}}
     _gate_ativo = bool(st.session_state.get("pb3_gate_quali")) and quali_gate_disponivel()
     # Piso absoluto de qualidade (determinístico, sem rede). Ligado por padrão:
     # sem ele o app entrega o líder do segmento seja ele qual for, e a única
@@ -3972,6 +4059,8 @@ def render(show_header: bool = True) -> None:
                     motivos.append(f"Entrou por veto qualitativo a {_sub_de}")
                 if tk in quali_log["ressalvas"]:
                     motivos.append("Parecer LLM com ressalva")
+                if tk in quali_log["nao_avaliados"]:
+                    motivos.append("Não avaliado pelo portão (parecer LLM indisponível)")
             nome_row = df_set[df_set["ticker"] == tk]
             nome = nome_row["nome_empresa"].iloc[0][:24] if not nome_row.empty else tk
             proximos.append({
@@ -4045,10 +4134,21 @@ def render(show_header: bool = True) -> None:
         try:
             _giro = _db.load_giro_diario()
             _irmas = _db.load_classes_irmas()
-        except Exception:                             # dado ausente não decide
+        except Exception:  # noqa: BLE001 - dado ausente não decide, mas é nomeado
+            logger.exception("Giro diário/classes irmãs indisponíveis; piso de "
+                             "negociabilidade não aplicado")
             _giro, _irmas = {}, {}
 
-        if _giro and _irmas:
+        if not (_giro and _irmas):
+            # INF-M4: dado ausente não decide — mas a carteira sai sem o piso,
+            # e antes isso era indistinguível de "nenhuma troca necessária".
+            liq_avisos.append(
+                "Piso de negociabilidade **não aplicado**: "
+                + ("giro diário" if not _giro else "classes irmãs")
+                + " indisponível. Ordinárias pouco negociadas não foram "
+                "trocadas pela classe irmã."
+            )
+        else:
             _candidatas = sorted({
                 t for tk in (str(i["tk"]).upper() for i in proximos_uniq)
                 for t in _irmas.get(tk, (tk,))
@@ -4490,10 +4590,19 @@ def render(show_header: bool = True) -> None:
             "determinístico (fundamentos, dividendos recorrente vs extraordinário, "
             "eventos societários CVM e red flags de dados) e só veta exceção grave "
             "documentada. O substituto é o próximo do ranking do MESMO segmento. "
-            "Nada aqui altera score, FDR ou Rank-IC; falha de LLM não veta."
+            "Nada aqui altera score, FDR ou Rank-IC; falha de LLM não veta "
+            "— e também não aprova: o ativo fica marcado como não avaliado."
         )
+        if quali_log["nao_avaliados"]:
+            st.warning(
+                f"{len(quali_log['nao_avaliados'])} ativo(s) da carteira NÃO "
+                "foram avaliados pelo portão (parecer LLM indisponível): "
+                + ", ".join(f"**{_tk}** ({_mot})"
+                            for _tk, _mot in quali_log["nao_avaliados"].items())
+                + ". Estão na carteira só pela estatística.",
+                icon="⚠️")
         if not (quali_log["vetados"] or quali_log["substituicoes"]
-                or quali_log["ressalvas"]):
+                or quali_log["ressalvas"] or quali_log["nao_avaliados"]):
             st.markdown("✅ Nenhum veto ou ressalva — todas as líderes "
                         "estatísticas passaram no parecer qualitativo.")
         for v in quali_log["vetados"]:
@@ -4656,6 +4765,7 @@ def render(show_header: bool = True) -> None:
             "qualitative_gate": bool(_gate_ativo),
             "quali_vetados": quali_log["vetados"],
             "quali_substituicoes": quali_log["substituicoes"],
+            "quali_nao_avaliados": quali_log["nao_avaliados"],
             **veredito.log_para_payload(intel_log),
             "correlation_diversification": bool(diversificar_corr),
             "correlation_threshold": float(corr_threshold),
@@ -4785,6 +4895,7 @@ def render(show_header: bool = True) -> None:
     if proximos_uniq:
         tks_prox = tuple(sorted({p["tk"] for p in proximos_uniq}))
         df_prec_prox = _batch_yf_precos_mensais(tks_prox, period="1y")
+        _avisar_fonte_precos(df_prec_prox, "a simulação do ano vigente")
 
         if not df_prec_prox.empty:
             df_ano = df_prec_prox[
@@ -4858,6 +4969,11 @@ def render(show_header: bool = True) -> None:
         taxa_selic_aa=taxa_selic_aa,
         resultados_todos=resultados,
     )
+
+    # B3-03: as safras acima são da configuração ATUAL e brutas de custo; o
+    # bloco abaixo lê a medição gravada da carteira de cada perfil, líquida,
+    # point-in-time (scripts/medir_oos_carteira_b3.py).
+    render_oos_carteira()
 
     # ── Metodologia e referências científicas ────────────────────────────────
     _render_metodologia_portfolio()

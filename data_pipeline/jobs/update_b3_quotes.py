@@ -4,6 +4,15 @@ Atualiza cotacoes de ativos B3 e internacionais via yfinance.
 
 O job precisa ser tolerante a bancos em fases diferentes de migracao:
 alguns usam currency, outros moeda; alguns ja possuem ativo/active, outros nao.
+
+Referencias de mercado (``REFERENCIAS``) entram aqui mesmo sem estarem na
+carteira: a atribuicao contra a meta (``core.carteira_atribuicao``) mede os FIIs
+contra o IFIX e, na falta dele, contra o XFIX11. O job garante a linha do XFIX11
+em ``assets`` (com 1 ano de historico na primeira vez e 3 meses depois, para
+que um buraco de dias sem execucao se refaca sozinho), nunca a desativa e grava
+o IFIX oficial mensal da B3 em ``market.historical_prices``
+(``data_pipeline.market.ifix_oficial``). Os dois passos sao a prova de falha: o
+erro sai nomeado no resultado e o status do job continua sendo o das cotacoes.
 """
 from __future__ import annotations
 
@@ -18,6 +27,12 @@ SOURCE_NAME = "B3/Yahoo Finance"
 JOB_NAME = "update_b3_quotes"
 _B3_REGULAR_SUFFIXES = ("3", "4", "5", "6", "11", "34", "35", "39")
 _NON_MARKET_CLASSES = {"fixed_income", "renda_fixa", "tesouro_direto", "tesouro", "cash"}
+REFERENCIAS: dict[str, dict[str, str]] = {
+    "XFIX11": {"name": "TREND ETF IFIX (referencia dos FIIs)", "class": "etf",
+               "currency": "BRL", "exchange": "B3"},
+}
+_PERIODO_REF_NOVA = "1y"
+_PERIODO_REF = "3mo"
 
 
 def _safe_table_names(inspector) -> set[str]:
@@ -117,6 +132,46 @@ def _is_quote_eligible(row) -> bool:
     return re.fullmatch(r"[A-Z][A-Z0-9.\-]{0,9}", ticker) is not None
 
 
+def _garantir_referencias(conn, asset_cols: set[str]) -> set[str]:
+    """Cria (ou reativa) as referencias em ``assets``; devolve as que mudaram.
+
+    Insere so as colunas que o banco tem. A que acabou de nascer (ou voltar a
+    ativa) pede o historico longo, para a atribuicao ter os meses passados.
+    """
+    from sqlalchemy import text
+
+    if not {"id", "ticker"}.issubset(asset_cols):
+        return set()
+    active_col = "ativo" if "ativo" in asset_cols else ("active" if "active" in asset_cols else None)
+    mudaram: set[str] = set()
+    for ticker, meta in REFERENCIAS.items():
+        dados = {"ticker": ticker}
+        dados.update({k: v for k, v in meta.items() if k in asset_cols})
+        if "moeda" in asset_cols and "currency" not in asset_cols:
+            dados["moeda"] = meta["currency"]
+        cols = ", ".join(f'"{c}"' for c in dados)
+        vals = ", ".join(f":{c}" for c in dados)
+        on_conflict = (
+            f"DO UPDATE SET {active_col} = TRUE WHERE assets.{active_col} IS NOT TRUE"
+            if active_col else "DO NOTHING"
+        )
+        row = conn.execute(text(
+            f"INSERT INTO assets ({cols}) VALUES ({vals}) "
+            f"ON CONFLICT (ticker) {on_conflict} RETURNING ticker"
+        ), dados).fetchone()
+        if row is not None:
+            mudaram.add(ticker)
+    return mudaram
+
+
+def _periodo_do_ativo(ticker: str, periodo: str, referencias_novas: set[str]) -> str:
+    """Periodo do download: o do job, ou o das referencias (longo se nova)."""
+    t = str(ticker or "").strip().upper()
+    if t not in REFERENCIAS:
+        return periodo
+    return _PERIODO_REF_NOVA if t in referencias_novas else _PERIODO_REF
+
+
 def _download_history(yf, ticker_yf: str, periodo: str):
     return yf.download(
         ticker_yf,
@@ -162,6 +217,21 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
         result["error_message"] = "Banco nao conectado"
         return result
 
+    referencias_novas: set[str] = set()
+    try:
+        with engine.begin() as conn:
+            referencias_novas = _garantir_referencias(
+                conn, _safe_columns(sa_inspect(conn), "assets"))
+        result["referencias_novas"] = sorted(referencias_novas)
+    except Exception as exc:
+        logger.warning("update_b3_quotes: referencias nao garantidas: %s", exc)
+        result["referencias_erro"] = f"{type(exc).__name__}: {exc}"[:300]
+
+    from data_pipeline.market.ifix_oficial import atualizar_ifix_oficial
+
+    result["ifix_oficial"] = atualizar_ifix_oficial(engine)
+    logger.info("update_b3_quotes: IFIX oficial %s", result["ifix_oficial"])
+
     try:
         with engine.connect() as conn:
             rows, active_col = _list_assets_to_update(conn, sa_inspect, apenas_desatualizados)
@@ -192,7 +262,8 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
         currency = getattr(r, "currency", None) or "BRL"
         ticker_yf = f"{r.ticker}.SA" if currency == "BRL" else r.ticker
         try:
-            hist = _download_history(yf, ticker_yf, periodo)
+            hist = _download_history(
+                yf, ticker_yf, _periodo_do_ativo(r.ticker, periodo, referencias_novas))
             if hist.empty:
                 # Ativos pouco liquidos podem ficar sem negocio em 5 dias.
                 # Antes de marcar como inativo, valida em uma janela maior.
@@ -200,7 +271,8 @@ def run(periodo: str = "5d", apenas_desatualizados: bool = True) -> dict:
 
             if hist.empty:
                 logger.info("update_b3_quotes: sem dados para %s", ticker_yf)
-                if active_col:
+                # Referencia nao se desativa: um dia sem Yahoo apagaria a serie.
+                if active_col and str(r.ticker).strip().upper() not in REFERENCIAS:
                     with engine.begin() as conn:
                         conn.execute(
                             text(f"UPDATE assets SET {active_col} = FALSE WHERE id = :id"),

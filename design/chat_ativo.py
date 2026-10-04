@@ -21,6 +21,8 @@ from core.chat_memory import (
 from core.inteligencia_ativos import veredito
 from core.llm_ativo import chat_com_ativo
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
+from core.llm_falha import mensagem_falha_llm
+from core.llm_grounding import aviso_ancoragem
 from core.utils import escapar_cifrao
 
 _PROVEDOR_LABEL = {"openai": "OpenAI", "gemini": "Gemini", "openrouter": "OpenRouter"}
@@ -152,6 +154,7 @@ def render_chat_ativo(
     with st.chat_message("user"):
         st.markdown(escapar_cifrao(pergunta))
     with st.chat_message("assistant"):
+        aviso = ""
         with st.spinner(f"Consultando os dados de {tk}, pares e qualidade…"):
             try:
                 # O bloco do ativo já traz o noticiário dele; aqui entram macro,
@@ -170,9 +173,12 @@ def render_chat_ativo(
                     lambda h, msg: chat_com_ativo(contexto, h, msg,
                                                   mercado=mercado, ticker=tk),
                     historico[:-1], pergunta, avaliacoes)
+                aviso = aviso_ancoragem(resposta, contexto, pergunta)
             except Exception as exc:  # provedor fora do ar, timeout, dado ausente
-                resposta = f"Não foi possível consultar a LLM neste momento: {exc}"
+                resposta = mensagem_falha_llm(exc, f"chat do ativo {tk}")
         st.markdown(escapar_cifrao(resposta))
+        if aviso:
+            st.caption(aviso)
         st.caption("Análise educacional baseada nos dados disponíveis; "
                    "não constitui recomendação de compra ou venda.")
     historico.append({"role": "assistant", "content": resposta})

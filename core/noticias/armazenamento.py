@@ -455,9 +455,20 @@ _SELECT_RECENTES = text("""
      LIMIT :limite
 """)
 
+#: Mesma leitura, pela nota. O bloco de mercado lia os 150 MAIS NOVOS e só
+#: depois ordenava pela nota: em 04/10/2026 eram 150 de 3.388 avaliados nos 3
+#: dias (as últimas horas), e o item de maior nota da janela nunca chegava ao
+#: prompt. Ler tudo e ordenar em Python custava 1,7 s para 4.000 linhas; o
+#: ``ORDER BY nota`` no banco devolve o topo direto (medição no PR).
+_SELECT_RECENTES_POR_NOTA = text(
+    str(_SELECT_RECENTES).replace(
+        "ORDER BY COALESCE(i.publicado_em, i.coletado_em) DESC",
+        "ORDER BY a.nota DESC NULLS LAST, COALESCE(i.publicado_em, i.coletado_em) DESC"))
+
 
 def ler_recentes(limite: int = 50, *, dias: float = 7.0, engine=None,
-                 versao: str = VERSAO_METODOLOGIA) -> tuple[dict, ...]:
+                 versao: str = VERSAO_METODOLOGIA,
+                 ordem: str = "data") -> tuple[dict, ...]:
     """Acervo recente já avaliado, para a tela abrir sem ter coletado nada.
 
     Existe porque a coleta e a exibição são processos diferentes. O job do cron
@@ -469,7 +480,13 @@ def ler_recentes(limite: int = 50, *, dias: float = 7.0, engine=None,
     avaliado sob outra versão não é comparável com estes e some da lista em vez
     de entrar sem nota. Subir ``VERSAO_METODOLOGIA`` sem reavaliar o acervo
     esvazia a tela, e isso é visível -- o contrário seria silencioso.
+
+    ``ordem="nota"`` devolve os ``limite`` de maior nota da janela, em vez dos
+    mais novos -- para quem escolhe por relevância (bloco de mercado, vitrine).
     """
+    if ordem not in ("data", "nota"):
+        raise ValueError(f"ordem desconhecida: {ordem!r}")
+    consulta = _SELECT_RECENTES_POR_NOTA if ordem == "nota" else _SELECT_RECENTES
     motor = engine if engine is not None else engine_acervo() or get_engine()
     if motor is None:
         return ()
@@ -481,7 +498,7 @@ def ler_recentes(limite: int = 50, *, dias: float = 7.0, engine=None,
         # "não há notícias", que é o mesmo texto de um acervo legitimamente
         # vazio.
         with motor.connect() as conn:
-            linhas = conn.execute(_SELECT_RECENTES, {
+            linhas = conn.execute(consulta, {
                 "versao": versao, "corte": corte,
                 "limite": int(limite)}).mappings().all()
     except Exception as exc:  # noqa: BLE001 - vira falha declarada, não vazio

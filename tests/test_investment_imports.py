@@ -393,6 +393,54 @@ def test_insert_snapshot_preserva_a_fonte_informada():
     assert conn.params["source_table"] == "tesouro_direto"
 
 
+def test_parse_do_tesouro_grava_o_snapshot_com_a_fonte_tesouro():
+    # Regressão da foto de 31/08/2026: a 1ª versão do importador (c34cb24) não
+    # passava source_table, as linhas td-snap saíram como 'xp_consolidado' e o
+    # Tesouro apareceu duas vezes (como "Tesouro Direto" e como "XP").
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from unittest import mock
+
+    import data_pipeline.importers.investments.tesouro_direto as td
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_a):
+            return False
+
+        def begin(self):
+            return self
+
+    gravados = []
+    posicao = {"ticker": "TSELIC2031", "name": "Tesouro Selic 2031", "quantity": 1.0,
+               "invested_value": 900.0, "market_value": 1000.0,
+               "asset_type": "fixed_income", "currency": "BRL"}
+    alvos = {
+        "_parse_rows": {"return_value": (date(2026, 8, 31), [posicao], 0)},
+        "ensure_external_id_columns": {},
+        "_b3_tickers": {"return_value": []},
+        "filter_redundant_against_b3": {"side_effect": lambda pos, _b3: (pos, 0)},
+        "_ensure_portfolio": {"return_value": "p1"},
+        "get_or_create_asset": {"return_value": "a1"},
+        "_snapshot_exists": {"return_value": False},
+        "_insert_snapshot": {"side_effect": lambda *a, **k: gravados.append((a, k))},
+    }
+    with ExitStack() as st:
+        st.enter_context(mock.patch.object(td, "settings", SimpleNamespace(OWNER_USER_ID="u1")))
+        st.enter_context(mock.patch.object(
+            td.openpyxl, "load_workbook", return_value=mock.MagicMock(sheetnames=["Extrato"])))
+        for nome, kw in alvos.items():
+            st.enter_context(mock.patch.object(td, nome, **kw))
+        out = td.parse(b"xlsx", SimpleNamespace(connect=_Conn))
+
+    assert out["positions_imported"] == 1, out
+    (args, kwargs), = gravados
+    assert kwargs["source_table"] == "tesouro_direto"
+    assert args[6] == "Tesouro Direto" and args[7].startswith("td-snap")
+
+
 def test_xp_report_date_mensal():
     assert _parse_report_date("relatorio-consolidado-mensal-2026-janeiro.xlsx") == date(2026, 1, 31)
     assert _parse_report_date("relatorio-consolidado-mensal-2025-fevereiro.xlsx") == date(2025, 2, 28)

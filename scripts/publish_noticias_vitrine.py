@@ -121,9 +121,17 @@ def publicar(*, aplicar: bool, janela_dias: int, versao: str) -> dict:
         itens = sum(lt.n_itens for lt in leituras.values())
         medidos = sum(1 for lt in leituras.values() if lt.medida)
         # O noticiário geral -- Fed, Copom, guerra -- não cita ticker e não
-        # cabe em linha de ativo. É a mesma leitura que o chat faz no acervo
-        # local (150 itens, 3 dias), para o PC desligado não mudar o recorte.
-        gerais = ler_recentes(150, dias=3, engine=acervo, versao=versao)
+        # cabe em linha de ativo. O topo pela nota é a mesma leitura que o
+        # chat faz no acervo local (400 itens, 3 dias), para o PC desligado não
+        # mudar o recorte; os 150 mais novos vêm junto porque a reserva de
+        # cenário de ``manchetes_da_leitura`` pega fato macro de nota baixa,
+        # que o topo pela nota deixa de fora.
+        por_nota = ler_recentes(400, dias=3, engine=acervo, versao=versao,
+                                ordem="nota")
+        vistos = {g.get("id_dedup") for g in por_nota}
+        gerais = list(por_nota) + [
+            g for g in ler_recentes(150, dias=3, engine=acervo, versao=versao)
+            if g.get("id_dedup") not in vistos]
 
         resumo = {
             "ativos": len(simbolos), "ativos_medidos": medidos,

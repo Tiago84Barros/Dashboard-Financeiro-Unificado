@@ -1133,23 +1133,12 @@ def _aviso_ancoragem(resposta: str, contexto: str,
     """Alerta quando a IA cita número que não se ancora nos dados enviados.
 
     Auditoria 2026-07 (§12.8): os prompts proíbem inventar valores, mas nada
-    verificava a saída. A checagem é determinística e conservadora — só avisa,
-    nunca esconde a resposta, e ignora números derivados do próprio contexto.
+    verificava a saída. Desde a auditoria app4 (LLM-A9) a regra mora em
+    :func:`core.llm_grounding.aviso_ancoragem`, a mesma de todos os chats --
+    número que só existe numa manchete não conta mais como lastro.
     """
-    try:
-        from core.llm_grounding import check_grounding
-        # A pergunta ancora junto: número que o usuário propôs ("cortar 20%")
-        # é parâmetro do cenário, não afirmação sobre os dados.
-        relatorio = check_grounding(resposta or "", contexto or "",
-                                    pergunta=pergunta or "")
-    except Exception:                      # verificação nunca derruba o chat
-        return ""
-    if not relatorio.ungrounded:
-        return ""
-    citados = ", ".join(claim.raw for claim in relatorio.ungrounded[:4])
-    return (f"⚠️ Confira antes de usar: {citados} — "
-            f"{'este valor não foi encontrado' if len(relatorio.ungrounded) == 1 else 'estes valores não foram encontrados'} "
-            "nos dados enviados à IA.")
+    from core.llm_grounding import aviso_ancoragem
+    return aviso_ancoragem(resposta, contexto, pergunta)
 
 
 def _render_chat_financeiro(
@@ -1271,7 +1260,8 @@ def _render_chat_financeiro(
                     chart_directives = infer_financas_chart_directives(user_input, chart_meta)
                 aviso_ancoragem = _aviso_ancoragem(resposta, context, user_input)
             except Exception as exc:
-                resposta = f"Não foi possível consultar a IA agora: {exc}"
+                from core.llm_falha import mensagem_falha_llm
+                resposta = mensagem_falha_llm(exc, "chat do fluxo de caixa")
         st.markdown(escapar_cifrao(resposta))
         if aviso_ancoragem:
             st.caption(aviso_ancoragem)
@@ -3577,7 +3567,8 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
                     chart_directives = infer_cartao_chart_directives(user_input, chart_meta)
                 aviso_ancoragem = _aviso_ancoragem(resposta, context, user_input)
             except Exception as exc:
-                resposta = f"Não foi possível consultar a IA agora: {exc}"
+                from core.llm_falha import mensagem_falha_llm
+                resposta = mensagem_falha_llm(exc, "chat do cartão de crédito")
         st.markdown(escapar_cifrao(resposta))
         if aviso_ancoragem:
             st.caption(aviso_ancoragem)

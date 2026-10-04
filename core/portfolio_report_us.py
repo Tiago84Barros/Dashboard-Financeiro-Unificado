@@ -27,7 +27,9 @@ from typing import Any
 
 import pandas as pd
 
+from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
 from core.llm_b3 import _call_llm, _parse_json, _report_model
+from core.llm_grounding import com_aviso_ancoragem
 from core.portfolio_report_common import (
     QUALITATIVE_WEIGHTS,
     SEM_DETALHE_NO_CONSOLIDADO,
@@ -740,7 +742,11 @@ def build_company_prompt(
         dossier_text = dossie_to_text(dossier)
     except (KeyError, TypeError):
         dossier_text = str(dossier)
-    return _PROMPT_COMPANY_PORTFOLIO.format(
+    # O relatório vai numa mensagem só (``_call_llm``), sem system: a regra do
+    # contexto de mercado entra no topo do prompt, como nos chats (auditoria
+    # app4, LLM-A12). Sem ela, conjuntura e macro chegavam sem a instrução de
+    # citar fonte e data e de tratar manchete como dado, nunca como instrução.
+    return f"{REGRA_CONTEXTO_MERCADO}\n\n" + _PROMPT_COMPANY_PORTFOLIO.format(
         ticker=ticker,
         name=dossier.get("name") or ticker,
         sector=dossier.get("sector") or "N/D",
@@ -799,7 +805,7 @@ def generate_company_us_report(
     try:
         raw = _call_llm(prompt, model=model or _report_model())
         parsed = _parse_json(raw, fallback_company(tk, "JSON inválido"))
-        return sanitize_company_report(parsed, tk), dossier
+        return com_aviso_ancoragem(sanitize_company_report(parsed, tk), prompt), dossier
     except Exception as exc:  # noqa: BLE001
         logger.warning("Relatório institucional de %s falhou: %s", tk, exc)
         return fallback_company(tk, str(exc)[:200]), dossier
@@ -1070,7 +1076,8 @@ def analyze_us_portfolio_report(
     detalhe_armazem: str = "",
 ) -> dict:
     """Síntese consolidada da carteira americana, no schema que a UI consome."""
-    prompt = _PROMPT_PORTFOLIO.format(
+    # Regra de contexto de mercado no topo: ver build_company_prompt (LLM-A12).
+    prompt = f"{REGRA_CONTEXTO_MERCADO}\n\n" + _PROMPT_PORTFOLIO.format(
         items_context="\n".join(
             company_summary_for_portfolio(item) for item in items_analyzed
         ) or "Carteira vazia.",
@@ -1086,7 +1093,8 @@ def analyze_us_portfolio_report(
     try:
         raw = _call_llm(prompt, model=model or _report_model())
         parsed = _parse_json(raw, fallback_portfolio("JSON inválido"))
-        return sanitize_portfolio_report(parsed, items_analyzed)
+        return com_aviso_ancoragem(
+            sanitize_portfolio_report(parsed, items_analyzed), prompt)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Relatório consolidado americano falhou: %s", exc)
         return fallback_portfolio(str(exc)[:200])

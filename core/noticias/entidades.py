@@ -136,6 +136,36 @@ def _valido(ticker: str) -> bool:
     return bool(_TICKER_B3.match(ticker) or _TICKER_US.match(ticker))
 
 
+#: Sigla com forma de ticker da B3 escrita no titulo (``HGLG11``, ``PETR4``).
+_TICKER_B3_NO_TEXTO = re.compile(r"(?<![A-Za-z0-9])([A-Z]{4}(?:3|4|5|6|11|34|39))(?![A-Za-z0-9])")
+
+
+def tickers_b3_do_titulo(titulo: str | None,
+                         universo: Universo = UNIVERSO_VAZIO) -> tuple[str, ...]:
+    """Tickers da B3 escritos literalmente no titulo e conhecidos do universo.
+
+    A regra geral do modulo e nao varrer sigla solta, e ela continua valendo
+    para os EUA: ``POST``, ``ALL``, ``NOW`` sao palavras. Quatro letras mais o
+    digito da classe nao sao -- ``HGLG11`` no titulo so pode ser o fundo. Sem
+    esta excecao, o acervo local tinha em 04/10/2026 5 itens com HGLG, 8 com
+    XPML e 4 com MXRF no texto e ``tickers=[]`` em todos: RSS nao declara
+    ticker, e FII raramente tem nome que case ("CSHG Logistica" vs. o
+    titulo "HGLG11 anuncia..."). O chat do ativo nao achava noticia nenhuma.
+
+    So o titulo, de proposito: o resumo cita os pares ("como HGLG11, XPLG11 e
+    BTLG11") e citado nao e sujeito (memoria ``nome-citado-nao-e-sujeito``).
+    E so com universo carregado: o portao continua sendo o cadastro.
+    """
+    if not titulo or universo.vazio:
+        return ()
+    achados: list[str] = []
+    for casa in _TICKER_B3_NO_TEXTO.finditer(str(titulo)):
+        simbolo = casa.group(1)
+        if universo.conhece(simbolo) and simbolo not in achados:
+            achados.append(simbolo)
+    return tuple(achados)
+
+
 _PALAVRA = re.compile(r"[^\W\d_]+", re.UNICODE)
 
 
@@ -495,7 +525,10 @@ def resolver(
     # Republic Services, Inc. $RSG" chegava declarado como RSG, BLK, WBA.
     relato = relato_de_posicao(titulo)
     if relato is None:
-        tickers = resolver_tickers(tickers_declarados, texto, universo)
+        declarados = list(tickers_declarados or ())
+        declarados += [t for t in tickers_b3_do_titulo(titulo, universo)
+                       if t not in declarados]
+        tickers = resolver_tickers(declarados, texto, universo)
     else:
         tickers = resolver_tickers(relato.marcados, relato.emissor, universo)
 

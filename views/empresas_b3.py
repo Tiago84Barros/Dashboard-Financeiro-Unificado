@@ -59,6 +59,77 @@ from design.market_companies import (
 
 logger = logging.getLogger(__name__)
 
+
+# ── Estado degradado do cálculo (INF-M4 / B3-05, auditoria 04/10/2026) ───────
+# Um `except Exception: pass` num caminho de decisão troca um erro visível por
+# um número que PARECE íntegro: a resiliência zerada seguia com a versão do
+# score na tela, o portão de risco aprovava todo mundo com penalidade zero e a
+# série do yfinance entrava no backtest sem rótulo. O padrão aqui é o oposto:
+# o cálculo registra a degradação no próprio quadro (``attrs``) e a tela a
+# nomeia com ``aviso_lacuna`` — que também a manda para o log de lacunas.
+
+def _marcar_degradacao(df, codigo: str, mensagem: str) -> None:
+    """Anota em ``df.attrs["degradacoes"]`` que parte do cálculo falhou.
+
+    Lista nova a cada chamada (não ``append``): ``attrs`` é copiado de quadro
+    em quadro, e mutar a lista vazaria a marca para o quadro de origem.
+    """
+    atuais = list(df.attrs.get("degradacoes") or [])
+    if not any(d.get("codigo") == codigo for d in atuais):
+        atuais.append({"codigo": codigo, "mensagem": mensagem})
+    df.attrs["degradacoes"] = atuais
+
+
+def _degradacoes(obj) -> list[dict]:
+    """Degradações anotadas por ``_marcar_degradacao`` (lista vazia se íntegro)."""
+    attrs = getattr(obj, "attrs", None) or {}
+    return list(attrs.get("degradacoes") or [])
+
+
+def _avisar_degradacoes(obj, *, entidade: str | None = None,
+                        codigos: tuple[str, ...] | None = None) -> int:
+    """Nomeia na tela cada degradação do cálculo. Devolve quantas avisou.
+
+    ``codigos`` restringe às marcas desta etapa: ``attrs`` viaja nas cópias,
+    e o Score de Entrada herdaria — e repetiria — o aviso da resiliência que
+    já saiu no topo do ranking.
+    """
+    itens = [d for d in _degradacoes(obj)
+             if codigos is None or d.get("codigo") in codigos]
+    for d in itens:
+        aviso_lacuna(d["mensagem"], codigo=d["codigo"], nivel="warning",
+                     entidade=entidade)
+    return len(itens)
+
+
+def _avisar_fonte_precos(df: pd.DataFrame, uso: str) -> None:
+    """Procedência dos preços mensais (B3-05): o ranking e os fundamentos
+    vêm do ``market.*``; quando o preço veio do yfinance, a tela precisa
+    dizer, porque é outra fonte, outro ajuste e outra cobertura."""
+    attrs = getattr(df, "attrs", None) or {}
+    fonte, erro = attrs.get("fonte_precos"), attrs.get("fonte_precos_erro")
+    if fonte == "yfinance":
+        causa = (f"a leitura do market.historical_prices falhou ({erro})"
+                 if erro else "o market.historical_prices não cobre estes tickers")
+        aviso_lacuna(
+            f"Preços de {uso} vieram do **yfinance ao vivo**: {causa}. "
+            "É outra fonte e outro ajuste de proventos que os do ranking; "
+            "leia o resultado como estimativa.",
+            codigo="tela.b3.precos_fallback_yfinance", nivel="warning")
+    elif fonte == "indisponivel":
+        aviso_lacuna(
+            f"Preços de {uso} indisponíveis: market.historical_prices e "
+            f"yfinance falharam ({erro or 'sem dado'}).",
+            codigo="tela.b3.precos_indisponiveis", nivel="warning")
+
+
+def _herdar_fonte_precos(destino: pd.DataFrame, origem: pd.DataFrame) -> pd.DataFrame:
+    """Copia a procedência dos preços para o resultado derivado deles."""
+    for chave in ("fonte_precos", "fonte_precos_erro"):
+        if chave in (getattr(origem, "attrs", None) or {}):
+            destino.attrs[chave] = origem.attrs[chave]
+    return destino
+
 # Variável que realmente resolve a conexão desde o cutover de 2026-07;
 # `SUPABASE_DB_URL_B3` só alimenta o fallback legado de `core/b3_db.py`.
 VAR_CONEXAO = (
@@ -478,9 +549,16 @@ def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y") -> pd
     market-first: lê de market.historical_prices (sem rede) quando o market.*
     está ativo; senão cai no yfinance (auto_adjust=True). Retorna DataFrame com
     DatetimeIndex mensal e colunas = tickers sem .SA.
+
+    Procedência (B3-05): ``attrs["fonte_precos"]`` diz de onde a série veio
+    (``market.historical_prices`` | ``yfinance`` | ``indisponivel``) e
+    ``attrs["fonte_precos_erro"]`` guarda a falha que forçou a troca. Antes a
+    queda para o yfinance era um ``except: pass`` — o backtest, a calibração e
+    o Rank-IC rodavam sobre outra fonte sem que a tela soubesse.
     """
     if not tickers:
         return pd.DataFrame()
+    erro_market: str | None = None
     # Fonte primária: banco (market.*) — adjusted_close, sem rede.
     try:
         df_db = _mr.load_precos_mensais(tuple(tickers))
@@ -489,23 +567,33 @@ def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y") -> pd
             if anos and df_db.index.notna().any():
                 corte = df_db.index.max() - pd.DateOffset(years=anos)
                 df_db = df_db[df_db.index >= corte]
+            df_db.attrs["fonte_precos"] = "market.historical_prices"
             return df_db
-    except Exception:
-        pass  # fallback yfinance
+    except Exception as exc:  # noqa: BLE001 - qualquer falha do banco cai no yfinance, rotulada
+        erro_market = type(exc).__name__
+        logger.exception("Preços mensais do market.* falharam para %d ticker(s); "
+                         "caindo no yfinance", len(tickers))
     tks_sa = [f"{t.strip().upper().replace('.SA', '')}.SA" for t in tickers]
+
+    def _rotulado(df: pd.DataFrame, fonte: str, erro: str | None) -> pd.DataFrame:
+        df.attrs["fonte_precos"] = fonte
+        if erro:
+            df.attrs["fonte_precos_erro"] = erro
+        return df
+
     try:
         if len(tks_sa) == 1:
             raw = yf.download(tks_sa[0], period=period, interval="1mo",
                               auto_adjust=True, progress=False)
             if raw is None or raw.empty:
-                return pd.DataFrame()
+                return _rotulado(pd.DataFrame(), "indisponivel", erro_market)
             tk_clean = tks_sa[0].replace(".SA", "").upper()
             close = pd.DataFrame({tk_clean: raw["Close"]})
         else:
             raw = yf.download(tks_sa, period=period, interval="1mo",
                               auto_adjust=True, progress=False)
             if raw is None or raw.empty:
-                return pd.DataFrame()
+                return _rotulado(pd.DataFrame(), "indisponivel", erro_market)
             close = (
                 raw["Close"].copy()
                 if isinstance(raw.columns, pd.MultiIndex)
@@ -514,9 +602,12 @@ def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y") -> pd
         if hasattr(close.index, "tz") and close.index.tz is not None:
             close.index = close.index.tz_localize(None)
         close.columns = [str(c).replace(".SA", "").strip().upper() for c in close.columns]
-        return close.dropna(how="all")
-    except Exception:
-        return pd.DataFrame()
+        return _rotulado(close.dropna(how="all"), "yfinance", erro_market)
+    except Exception as exc:  # noqa: BLE001 - rede/parse do yfinance; vira estado rotulado
+        logger.exception("Preços mensais do yfinance falharam para %d ticker(s)",
+                         len(tickers))
+        erro = "; ".join(e for e in (erro_market, f"yfinance: {type(exc).__name__}") if e)
+        return _rotulado(pd.DataFrame(), "indisponivel", erro)
 
 
 # _batch_yf_liquidez (liquidez média diária via yfinance) foi removida: o
@@ -1200,6 +1291,15 @@ def _score_universo(
     # B: penalidade de risco de sobrevivência (balanço frágil).
     # C: bônus de valuation abaixo do próprio histórico sem deterioração de
     #    fundamentais — margem de segurança à la Graham, adaptada ao Brasil.
+    #
+    # Tudo ou nada (B3-05): A, C e B mexem em `score_raw` em sequência; uma
+    # falha em B deixava A e C aplicados pela metade. O snapshot abaixo volta
+    # o score ao estado anterior e a falha vira degradação nomeada. Antes, o
+    # `except` chamava `df.setdefault` — que DataFrame não tem —, então a
+    # falha derrubava o ranking inteiro com um AttributeError sem relação com
+    # a causa; e a intenção declarada (zerar e seguir) mantinha a versão do
+    # score na tela como se o número estivesse íntegro.
+    _score_antes_resiliencia = df["score_raw"].copy()
     try:
         from core.resilience_score import (
             financial_health_penalty,
@@ -1227,10 +1327,22 @@ def _score_universo(
         df["score_raw"]     *= (1.0 - _health_pen)
         df["health_penalty"] = (_health_pen * 100).round(1)
 
-    except Exception:
-        df.setdefault("hist_bonus",     0.0)
-        df.setdefault("val_hist_bonus", 0.0)
-        df.setdefault("health_penalty", 0.0)
+    except Exception as exc:  # noqa: BLE001 - qualquer falha vira degradação nomeada, não número
+        logger.exception("Ajustes de resiliência do score B3 falharam (%d empresas)",
+                         len(df))
+        df["score_raw"] = _score_antes_resiliencia
+        # NaN, não 0,0: zero afirma "sem bônus e balanço saudável" — a tabela
+        # de resiliência pintava 🟢 Saudável em todas. Sem cálculo, não há
+        # veredito.
+        for _col in ("hist_bonus", "val_hist_bonus", "health_penalty"):
+            df[_col] = np.nan
+        _marcar_degradacao(
+            df, "tela.b3.score_sem_resiliencia",
+            f"Score B3 {SCORE_VERSION} calculado **sem** os ajustes de "
+            f"resiliência e saúde financeira (falha: {type(exc).__name__}). "
+            "O ranking não desconta balanço frágil nem dá o bônus de reversão "
+            "histórica — não é a metodologia completa.",
+        )
 
     # Penalidade de crowding — desconta empresas no bucket de P/VP mais populoso do grupo
     crow_pen = _apply_crowding_penalty(df, group_col)
@@ -1680,53 +1792,9 @@ def _risk_engine(df: pd.DataFrame) -> pd.Series:
     try:
         from core.risk_logit import distress_risk_score
         return distress_risk_score(df)["r_penalty"]
-    except Exception:
+    except Exception:  # noqa: BLE001 - quem chama marca a degradação; aqui só o registro
+        logger.exception("Risk engine B3 (distress_risk_score) falhou; penalidade 0")
         return pd.Series(0.0, index=df.index)
-
-    idx = df.index
-    penalty = pd.Series(0.0, index=idx)
-
-    # ROE negativo: penalidade graduada — quanto mais negativo, pior.
-    # Escala: ROE -5%  → 3 pts; -15% → 5 pts; -30%+ → 6 pts (cap).
-    if "ROE" in df.columns:
-        roe = pd.to_numeric(df["ROE"], errors="coerce")
-        mask = roe < 0
-        # Mapeia |ROE| ∈ [0, 0.30] para pen ∈ [0, 6.0]
-        pen_roe = (roe[mask].abs().clip(0, 0.30) / 0.30 * 6.0).fillna(0.0)
-        penalty.loc[mask] += pen_roe
-
-    # Endividamento alto: graduado entre 6× e 15× (antes era escalada em 2 steps)
-    if "Endividamento_Total" in df.columns:
-        debt = pd.to_numeric(df["Endividamento_Total"], errors="coerce")
-        mask = (debt > 6) & debt.notna()
-        # Escala: debt 6× → 1 pt; 10× → 5 pts; 15×+ → 9 pts (cap)
-        pen_debt = ((debt[mask].clip(6, 15) - 6) / 9.0 * 9.0).fillna(0.0)
-        penalty.loc[mask] += pen_debt
-
-    # Margem Líquida negativa: graduada por magnitude
-    # Escala: ML -2% → 1 pt; -10% → 3 pts; -20%+ → 4 pts (cap)
-    if "Margem_Liquida" in df.columns:
-        ml = pd.to_numeric(df["Margem_Liquida"], errors="coerce")
-        mask = ml < 0
-        pen_ml = (ml[mask].abs().clip(0, 0.20) / 0.20 * 4.0).fillna(0.0)
-        penalty.loc[mask] += pen_ml
-
-    # Liquidez Corrente baixa: graduada
-    # Escala: liq 0.5 → 0 pt; 0.3 → 2 pts; 0.1 ou menor → 3 pts (cap)
-    if "Liquidez_Corrente" in df.columns:
-        liq = pd.to_numeric(df["Liquidez_Corrente"], errors="coerce")
-        mask = (liq < 0.5) & liq.notna()
-        pen_liq = ((0.5 - liq[mask].clip(0.1, 0.5)) / 0.4 * 3.0).fillna(0.0)
-        penalty.loc[mask] += pen_liq
-
-    # P/VP especulativo: graduado de 15× a 30×
-    if "P/VP" in df.columns:
-        pvp = pd.to_numeric(df["P/VP"], errors="coerce")
-        mask = (pvp > 15) & pvp.notna()
-        pen_pvp = ((pvp[mask].clip(15, 30) - 15) / 15.0 * 2.0).fillna(0.0)
-        penalty.loc[mask] += pen_pvp
-
-    return penalty.clip(0, 20).round(1)
 
 
 def _consistency_engine(df: pd.DataFrame,
@@ -1897,10 +1965,23 @@ def _compute_score_entrada(
         df["r_penalty"] = risk_df["r_penalty"]
         df["risk_probability"] = risk_df["risk_probability"]
         df["risk_driver"] = risk_df["risk_driver"]
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - qualquer falha vira degradação nomeada
+        # O "fallback" `_risk_engine` reimporta o mesmo distress_risk_score e,
+        # falhando de novo, devolve 0 — o portão "Excluída por risco" (r ≥ 10)
+        # fica desligado. Antes isso saía com probabilidade 0,0 e driver
+        # "none", que se lê como "sem risco"; agora o risco fica não apurado
+        # (NaN / "indisponivel") e a tela avisa que o portão não rodou.
+        logger.exception("Risco de distress do Score de Entrada falhou (%d empresas)",
+                         len(df))
         df["r_penalty"] = _risk_engine(df)
-        df["risk_probability"] = 0.0
-        df["risk_driver"] = "none"
+        df["risk_probability"] = np.nan
+        df["risk_driver"] = "indisponivel"
+        _marcar_degradacao(
+            df, "tela.b3.score_entrada_sem_risco",
+            f"Risco de distress não calculado (falha: {type(exc).__name__}): "
+            "o portão que exclui empresas com penalidade de risco ≥ 10 **não "
+            "rodou** — \"Aprovada\" aqui não passou pelo filtro de risco.",
+        )
     df["c_bonus"]    = _consistency_engine(df, anos_hist)
     df["cq_bonus"]   = _cash_quality_engine(df)
 
@@ -2414,6 +2495,30 @@ def _pit_card_html(cov: PITCoverage, contexto: str = "Backtest") -> str:
     )
 
 
+class _MapaScores(dict):
+    """``{ticker: score}`` que carrega as degradações do score daquele ano.
+
+    O ``_score_universo`` anota em ``attrs`` quando o score saiu sem os
+    ajustes de resiliência, mas o mapa devolvido ao backtest é um dict — a
+    marca se perdia ali e o resultado era lido como da metodologia completa
+    (INF-M4). Subclasse de dict para não mudar o contrato dos chamadores.
+    """
+
+    def __init__(self, *args, degradacoes: list[dict] | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.degradacoes: list[dict] = list(degradacoes or [])
+
+
+def _mapa_sem_resiliencia(score_map) -> bool:
+    """O score daquele ano saiu sem os ajustes de resiliência?
+
+    Ponto único da pergunta para backtest, Rank-IC e Criação de Portfólio:
+    três cópias da mesma checagem tendem a divergir quando o código muda.
+    """
+    return any(d.get("codigo") == "tela.b3.score_sem_resiliencia"
+               for d in getattr(score_map, "degradacoes", ()))
+
+
 def _score_historico_ano_com_cobertura(
     df_hist_batch: dict[str, pd.DataFrame],
     tickers: list[str],
@@ -2491,8 +2596,11 @@ def _score_historico_ano_com_cobertura(
     # descarta scores não-finitos (NaN/inf): empresa sem score computável naquele
     # ano não entra no ranking — evita poluir pesos/backtest com NaN (alpha NaN).
     sc = pd.to_numeric(df_sc["score"], errors="coerce")
-    return {tk: float(s) for tk, s in zip(df_sc["Ticker"], sc)
-            if pd.notna(s) and np.isfinite(s)}, cov
+    return _MapaScores(
+        {tk: float(s) for tk, s in zip(df_sc["Ticker"], sc)
+         if pd.notna(s) and np.isfinite(s)},
+        degradacoes=_degradacoes(df_sc),
+    ), cov
 
 
 def _score_historico_ano(
@@ -2740,6 +2848,13 @@ def _simular_backtest(
     total_ir_pago      = 0.0
     total_custos_rebal = 0.0
     restricoes_inviaveis: list[str] = []
+    # Anos em que o Markowitz híbrido falhou e os pesos ficaram só no
+    # gamma-tilt do score (INF-M4): antes isso era `pass` — o usuário pedia
+    # o híbrido e lia um backtest que não era o que pediu.
+    markowitz_falhas: list[str] = []
+    # Anos cujo score saiu sem os ajustes de resiliência (INF-M4): o ranking
+    # daquele rebalance não é o da metodologia declarada.
+    anos_sem_resiliencia: list[int] = []
     last_prices: dict[str, float] = {}
     tax_state: dict[str, float] = {"prejuizo_acumulado": 0.0}
     caixa_est = 0.0
@@ -2767,6 +2882,8 @@ def _simular_backtest(
                 macro_by_year=macro_by_year, rebal_month=rebal_month,
             )
             pit_cov = pit_cov + _cov_ano
+            if _mapa_sem_resiliencia(score_map):
+                anos_sem_resiliencia.append(ano)
             # Fix auditoria 2026-07: sem fallback p/ scores de HOJE (era
             # look-ahead). Gap de histórico no meio da série ⇒ mantém a
             # carteira vigente sem rebalance neste ano (o início da série
@@ -2830,8 +2947,11 @@ def _simular_backtest(
                                         pesos_est, mk, alpha=markowitz_alpha,
                                         cap=cap,
                                     )
-                        except Exception:
-                            pass  # fallback silencioso para gamma-tilt puro
+                        except Exception as exc:  # noqa: BLE001 - fallback nomeado
+                            logger.exception(
+                                "Markowitz híbrido do backtest B3 falhou em %s; "
+                                "pesos só do score", ano)
+                            markowitz_falhas.append(f"{ano}: {type(exc).__name__}")
                 else:
                     pesos_est = (
                         {tk: 1.0 / len(tickers_yr) for tk in tickers_yr}
@@ -2938,6 +3058,8 @@ def _simular_backtest(
         float(tax_state.get("prejuizo_acumulado", 0.0)), 2
     )
     df_resultado.attrs["restricoes_inviaveis"] = sorted(set(restricoes_inviaveis))
+    df_resultado.attrs["markowitz_falhas"] = sorted(set(markowitz_falhas))
+    df_resultado.attrs["anos_sem_resiliencia"] = sorted(set(anos_sem_resiliencia))
     # Proveniência temporal: fração dos snapshots que alimentaram os rebalances
     # com disponibilidade MEDIDA. Com 0.0 o resultado não pode ser rotulado como
     # backtest point-in-time validado (ver _pit_rotulo_resultado).
@@ -2979,6 +3101,9 @@ def _rank_ic_por_ano(
     rebal_m = _REBAL_MONTH
     out: list[dict] = []
     pit_cov = PITCoverage()
+    # Anos medidos com score sem os ajustes de resiliência (INF-M4): o IC
+    # desses anos mede outro ranking, não o da metodologia declarada.
+    anos_sem_resiliencia: list[int] = []
     for ano in sorted({d.year for d in df_precos.index}):
         # base: último preço até março/N; fim: último preço até março/N+1
         jan0 = df_precos[(df_precos.index.year == ano) &
@@ -3014,6 +3139,8 @@ def _rank_ic_por_ano(
         ordem = s.sort_values(ascending=False).index
         top_m = float(r[ordem[:k]].mean())
         bot_m = float(r[ordem[-k:]].mean())
+        if _mapa_sem_resiliencia(score_map):
+            anos_sem_resiliencia.append(ano)
         out.append({
             "Ano": ano, "N": len(comuns), "Rank-IC": round(ic, 3),
             "Top tercil (%)": round(top_m * 100, 1),
@@ -3026,6 +3153,7 @@ def _rank_ic_por_ano(
     df_ic.attrs["pit_coverage"] = pit_cov
     df_ic.attrs["pit_cobertura_medida"] = round(pit_cov.cobertura_medida, 4)
     df_ic.attrs["pit_disponibilidade"] = pit_cov.nivel
+    df_ic.attrs["anos_sem_resiliencia"] = sorted(set(anos_sem_resiliencia))
     return df_ic
 
 
@@ -3220,13 +3348,22 @@ def _b3_peer_scores(
     pares = pares.drop_duplicates("Ticker").reset_index(drop=True)
     tickers = tuple(pares["Ticker"].dropna().astype(str).tolist())
     historicos: dict[str, pd.DataFrame] = {}
+    # Degradações do dossiê (INF-M4): viajam em ``attrs`` da linha devolvida
+    # e a tela as nomeia ao lado da nota, que traz "Metodologia B3 <versão>".
+    degradacoes: list[dict] = []
     try:
         historicos = _db.load_multiplos_historico_batch(tickers)
         pares = _enrich_com_slopes(pares, historicos)
         pares = _enrich_com_evidencia_historica(pares, historicos, tickers)
-    except Exception:
-        # O score continua válido com crescimento neutro e cobertura reduzida.
-        pass
+    except Exception as exc:  # noqa: BLE001 - segue com crescimento neutro, mas nomeado
+        # O score continua calculável com crescimento neutro e cobertura
+        # reduzida — só não pode parecer que usou o histórico.
+        logger.exception("Histórico dos pares de %s falhou no dossiê B3", ticker)
+        degradacoes.append({
+            "codigo": "tela.b3.dossie_sem_historico",
+            "mensagem": (f"Histórico dos pares indisponível ({type(exc).__name__}): "
+                         "crescimento e evidência histórica entraram neutros na nota."),
+        })
 
     scored = score_cross_section(pares)
     linha = scored[scored["Ticker"] == ticker].copy()
@@ -3248,14 +3385,38 @@ def _b3_peer_scores(
             pares, list(tickers), pesos, historicos,
             group_col_prefer="SEGMENTO",
         )
-        nota = oficial.loc[oficial["Ticker"] == ticker, "score"]
+        nota = pd.to_numeric(
+            oficial.loc[oficial["Ticker"] == ticker, "score"], errors="coerce"
+        )
         if not nota.empty and np.isfinite(float(nota.iloc[0])):
             linha.loc[:, "score"] = float(nota.iloc[0])
-    except Exception:
+        else:
+            # O motor rodou mas não deu nota finita a este ticker: a tela fica
+            # com a média das trilhas — a mesma troca de nota que a exceção
+            # abaixo já nomeia. Cair calado nela rotularia como "Metodologia
+            # B3 <versão>" uma nota que não é a do ranking.
+            logger.warning("Motor oficial do score B3 sem nota finita para %s", ticker)
+            degradacoes.append({
+                "codigo": "tela.b3.dossie_nota_das_trilhas",
+                "mensagem": (f"Motor oficial do score não produziu nota finita para "
+                             f"{ticker}: a nota exibida é a média das seis trilhas, "
+                             "não a nota do ranking."),
+            })
+        degradacoes.extend(_degradacoes(oficial))
+    except Exception as exc:  # noqa: BLE001 - troca de nota precisa ser nomeada
         # Em indisponibilidade pontual do motor completo, a média das trilhas
-        # mantém o painel utilizável e a cobertura continua explícita.
-        pass
-    return linha.iloc[0], f"{referencia} · {len(pares)} empresa(s)"
+        # mantém o painel utilizável — mas é OUTRA nota, não a do ranking da
+        # Análise Avançada, e a tela dizia "Metodologia B3 <versão>" do mesmo jeito.
+        logger.exception("Motor oficial do score B3 falhou no dossiê de %s", ticker)
+        degradacoes.append({
+            "codigo": "tela.b3.dossie_nota_das_trilhas",
+            "mensagem": (f"Motor oficial do score indisponível ({type(exc).__name__}): "
+                         f"a nota de {ticker} é a média das seis trilhas, não a "
+                         "nota do ranking."),
+        })
+    out = linha.iloc[0].copy()
+    out.attrs["degradacoes"] = degradacoes
+    return out, f"{referencia} · {len(pares)} empresa(s)"
 
 
 def _metric_decimal_pct(mult: pd.Series, key: str) -> str:
@@ -3376,6 +3537,7 @@ def _render_b3_score_dashboard(
 
     with st.spinner("Calculando pontuação relativa e dossiê…"):
         score_row, referencia = _b3_peer_scores(ticker, mult, df_set)
+    _avisar_degradacoes(score_row, entidade=ticker)
     label, tipo = classification(score_row.get("score"))
 
     c1, c2, c3, c4 = st.columns(4)
@@ -3943,7 +4105,15 @@ def _render_saude_do_ranking(df_mult: pd.DataFrame, df_scored: pd.DataFrame,
         return
     try:
         saude = check_holdings(df_mult, alvos)
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - o piso não roda, mas não some calado
+        # Sem isto, o painel simplesmente não aparecia — o mesmo que "nenhuma
+        # das primeiras é crítica", que é a leitura oposta.
+        logger.exception("Piso de qualidade do ranking B3 falhou (%d alvos)", len(alvos))
+        aviso_lacuna(
+            f"Piso de qualidade não verificado nas primeiras do ranking "
+            f"(falha: {type(exc).__name__}) — ausência de alerta aqui não "
+            "significa empresa saudável.",
+            codigo="tela.b3.piso_qualidade_ranking_indisponivel", nivel="warning")
         return
 
     criticos = [h for h in saude if h.nivel == CRITICO]
@@ -4533,7 +4703,16 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 df_segment=_df_seg,
             )
             pesos_v2 = seg_calib.pesos
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - recua para os pesos do setor, nomeado
+            # O usuário marcou a calibração automática; sem aviso, o ranking
+            # saía com os pesos genéricos como se fossem os calibrados.
+            logger.exception("Calibração por segmento falhou (%s / %s)",
+                             setor_referencia, sel_seg)
+            aviso_lacuna(
+                f"Calibração automática do segmento indisponível "
+                f"({type(exc).__name__}): o ranking usa os pesos genéricos do setor.",
+                codigo="tela.b3.calibracao_segmento_indisponivel", nivel="warning")
+            seg_calib = None
             pesos_v2 = _get_pesos_setor(setor_referencia)
     else:
         pesos_v2 = _get_pesos_setor(setor_referencia)
@@ -4622,8 +4801,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         group_col_prefer=group_prefer,
         macro_context=_macro_for_year(macro_history),
     )
+    # Antes do ajuste macro: `apply_macro_scores` devolve quadro novo e o
+    # `attrs` com as degradações do score não atravessaria a junção.
+    _avisar_degradacoes(df_scored)
     macro_snapshot_av = None
     macro_fonte_av = None
+    macro_erro_av = None
     if df_scored is not None and not df_scored.empty:
         try:
             from core.macro_data.database import get_macro_source
@@ -4640,7 +4823,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             }
             macro_fonte_av = get_macro_source()
             if macro_fonte_av is not None:
-                macro_snapshot_av = load_portfolio_macro_snapshot(
+                # Tudo ou nada: o ranking só troca de nota se o ajuste inteiro
+                # deu certo. Antes, uma falha no meio deixava o `score` já
+                # contextual e a legenda dizia "ranking doméstico preservado".
+                _snap = load_portfolio_macro_snapshot(
                     macro_fonte_av,
                     asset_class="b3",
                     assets={
@@ -4649,30 +4835,38 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     },
                 )
                 international_impacts = aggregate_impact_rows(
-                    row for row in macro_snapshot_av.details
+                    row for row in _snap.details
                     if row.get("provider") != "app4_domestic"
                 )
-                df_scored = apply_macro_scores(
+                _df_macro = apply_macro_scores(
                     df_scored,
                     international_impacts,
                     symbol_column="Ticker",
                     score_column="score",
                     mode=macro_mode_av,
                 )
-                df_scored["score_domestic_context"] = df_scored["score"]
-                df_scored["score"] = df_scored["contextual_score"].clip(0, 100).round(1)
-                df_scored["ranking"] = df_scored["score"].rank(
+                _df_macro["score_domestic_context"] = _df_macro["score"]
+                _df_macro["score"] = _df_macro["contextual_score"].clip(0, 100).round(1)
+                _df_macro["ranking"] = _df_macro["score"].rank(
                     ascending=False, method="min"
                 ).astype(int)
-                df_scored = df_scored.sort_values(
+                _df_macro = _df_macro.sort_values(
                     ["score", "Ticker"], ascending=[False, True]
                 ).reset_index(drop=True)
-        except Exception:
+                df_scored, macro_snapshot_av = _df_macro, _snap
+        except Exception as exc:  # noqa: BLE001 - ranking doméstico intacto, causa nomeada
+            logger.exception("Ajuste macro internacional do ranking B3 falhou")
             macro_snapshot_av = None
+            macro_erro_av = type(exc).__name__
     from core.macro_data.database import descrever_fonte_macro
 
     if macro_snapshot_av is None:
-        st.caption("Macro internacional indisponível (sem Docker local e sem arquivo publicado recente); ranking doméstico preservado.")
+        # A legenda antiga culpava sempre o Docker/arquivo; quando a causa é
+        # uma exceção no ajuste, ela nomeava o passo errado.
+        _causa_macro = (f"o ajuste falhou ({macro_erro_av})" if macro_erro_av
+                        else "sem Docker local e sem arquivo publicado recente")
+        st.caption(f"Macro internacional indisponível ({_causa_macro}); "
+                   "ranking doméstico preservado.")
     else:
         st.caption(
             f"{descrever_fonte_macro(macro_fonte_av)}: corte {macro_snapshot_av.as_of:%d/%m/%Y} · "
@@ -4897,6 +5091,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             )
 
         if run_mk and not df_scored.empty:
+            _avisar_fonte_precos(df_precos, "a otimização Markowitz")
             # Ranking completo (melhor→pior) com preço disponível
             _ranked = [
                 tk for tk in df_scored["Ticker"].tolist()
@@ -5173,8 +5368,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     _res_df["hist_bonus"] + _res_df["val_hist_bonus"]
                     - _res_df["health_penalty"]
                 ).round(1)
+                # NaN = ajuste não apurado (falha nomeada no topo do ranking);
+                # sem este caso, NaN caía no ramo final e virava "Saudável".
                 _res_df["saude"] = _res_df["health_penalty"].apply(
-                    lambda p: "🔴 Risco" if p >= 20 else ("🟡 Alerta" if p >= 8 else "🟢 Saudável")
+                    lambda p: "— não apurado" if pd.isna(p) else (
+                        "🔴 Risco" if p >= 20 else ("🟡 Alerta" if p >= 8 else "🟢 Saudável"))
                 )
                 _res_df = _res_df.rename(columns={
                     "score":          "Score",
@@ -5239,6 +5437,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             from views.empresas_b3 import _compute_score_entrada
             df_se = _compute_score_entrada(df_scored.copy(),
                                             anos_hist=anos_hist or {})
+            _avisar_degradacoes(df_se, codigos=("tela.b3.score_entrada_sem_risco",))
             top_tks = df_se["Ticker"].tolist()[:10]
             ticker_sel = st.selectbox(
                 "Ticker para análise Shapley",
@@ -5316,6 +5515,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             st.info("Precisa ao menos 2 empresas scoradas para usar BL.")
         else:
             top_bl = df_scored["Ticker"].tolist()[:8]
+            _avisar_fonte_precos(df_precos, "o Black-Litterman")
             top_bl = [tk for tk in top_bl if tk in df_precos.columns]
             if len(top_bl) < 2:
                 st.warning("Top empresas sem séries históricas suficientes.")
@@ -5536,6 +5736,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
 
     if not df_scored.empty:
         df_entrada = _compute_score_entrada(df_scored, anos_hist)
+        _avisar_degradacoes(df_entrada, codigos=("tela.b3.score_entrada_sem_risco",))
 
         # ── KPI de distribuição de status ────────────────────────────────────
         n_aprov = int((df_entrada["status_entrada"] == "Aprovada").sum())
@@ -5731,6 +5932,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 per_cal    = per_opts.get(sel_per, "3y")
                 tks_cal    = tuple(sorted(tks_uni))
                 df_prec_cal = _batch_yf_precos_mensais(tks_cal, period=per_cal)
+                _avisar_fonte_precos(df_prec_cal, "a calibração de γ/cap/soft")
                 g_cal, c_cal, s_cal = _calibrate_walk_forward(
                     df_prec_cal, df_scored, tks_uni,
                     float(taxa_sel) / 100.0, float(aporte),
@@ -5847,6 +6049,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             cost_cfg=_cost_cfg,
             rebalance_com_vendas=_com_vendas,
         )
+        # A procedência viaja no resultado guardado na sessão: o aviso precisa
+        # reaparecer em cada rerun que mostra este backtest, não só no clique.
+        _herdar_fonte_precos(df_bt, df_prec_m)
 
         # Benchmark de MERCADO real (auditoria 2026-07): mesmo fluxo de
         # aportes aplicado ao IBOV — o "Benchmark" equal-weight é interno
@@ -5956,6 +6161,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 "⚠️ Backtest **sem custos** (ideal/teórico) — superestima o "
                 "retorno real. Marque a opção de custos para projeção realista."
             )
+        _avisar_fonte_precos(df_bt, "o backtest")
         _restricoes_bt = df_bt.attrs.get("restricoes_inviaveis") or []
         if _restricoes_bt:
             st.warning(
@@ -5963,6 +6169,21 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 "solicitado. O backtest usou equal-weight nesses anos: "
                 + "; ".join(_restricoes_bt[:8])
             )
+        _mk_falhas_bt = df_bt.attrs.get("markowitz_falhas") or []
+        if _mk_falhas_bt:
+            aviso_lacuna(
+                "O Markowitz híbrido falhou em alguns anos e os pesos ficaram "
+                "só no score (gamma-tilt) — não é a alocação pedida: "
+                + "; ".join(_mk_falhas_bt[:8]),
+                codigo="tela.b3.backtest_markowitz_falhou", nivel="warning")
+        _anos_sem_res_bt = df_bt.attrs.get("anos_sem_resiliencia") or []
+        if _anos_sem_res_bt:
+            aviso_lacuna(
+                f"Score B3 {SCORE_VERSION} calculado **sem** os ajustes de "
+                "resiliência (histórico, valuation histórico e saúde) nos "
+                "rebalances de " + ", ".join(str(a) for a in _anos_sem_res_bt)
+                + " — o ranking desses anos não é o da metodologia declarada.",
+                codigo="tela.b3.backtest_score_sem_resiliencia", nivel="warning")
         _caixa_pendente = float(
             df_bt.attrs.get("caixa_pendente_estrategia", 0.0) or 0.0
         )
@@ -6004,8 +6225,13 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     "incompleta; por isso não é exibida uma falsa estimativa "
                     "pontual de cobertura ou de bps de viés."
                 )
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001 - legenda informativa, falha nomeada
+            # Sem legenda, lia-se "não há viés de sobrevivência a declarar".
+            logger.exception("Checagem de viés de sobrevivência do backtest B3 falhou")
+            st.caption(
+                f"⚠️ Viés de sobrevivência **não verificado** ({type(exc).__name__}): "
+                "o universo simulado só contém empresas listadas hoje."
+            )
         _anos_ss = df_bt.attrs.get("anos_sem_score") or []
         if _anos_ss:
             st.caption(
@@ -6072,9 +6298,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             with st.spinner("Calculando IC por ano…"):
                 _prec_ic = _batch_yf_precos_mensais(
                     tuple(sorted(tks_uni)), period=per_opts.get(sel_per, "5y"))
-                st.session_state["b3_av_ic_df"] = _rank_ic_por_ano(
-                    _prec_ic, hist_batch, tks_uni, pesos_v2,
-                    tk_grupos, macro_history or None,
+                st.session_state["b3_av_ic_df"] = _herdar_fonte_precos(
+                    _rank_ic_por_ano(
+                        _prec_ic, hist_batch, tks_uni, pesos_v2,
+                        tk_grupos, macro_history or None,
+                    ),
+                    _prec_ic,
                 )
                 # registra com que parâmetros o IC foi calculado (evita
                 # leitura de resultado obsoleto após mudar filtros)
@@ -6085,6 +6314,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 )
                 st.session_state["b3_av_ic_signature"] = _ic_signature
         df_ic = st.session_state.get("b3_av_ic_df", pd.DataFrame())
+        _avisar_fonte_precos(df_ic, "o Rank-IC")
         if st.session_state.get("b3_av_ic_signature") != _ic_signature:
             df_ic = pd.DataFrame()
         _ic_meta = st.session_state.get("b3_av_ic_meta")
@@ -6111,6 +6341,14 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             if isinstance(_pit_cov_ic, PITCoverage):
                 st.markdown(_pit_card_html(_pit_cov_ic, "Rank-IC"),
                             unsafe_allow_html=True)
+            _anos_sem_res_ic = df_ic.attrs.get("anos_sem_resiliencia") or []
+            if _anos_sem_res_ic:
+                aviso_lacuna(
+                    f"Rank-IC de {', '.join(str(a) for a in _anos_sem_res_ic)} "
+                    f"medido sobre o score B3 {SCORE_VERSION} **sem** os ajustes "
+                    "de resiliência (histórico, valuation histórico e saúde) — "
+                    "o IC desses anos não é o da metodologia declarada.",
+                    codigo="tela.b3.rank_ic_score_sem_resiliencia", nivel="warning")
             if _ic_med <= 0.0:
                 st.warning(
                     "IC médio ≤ 0 nesta janela/universo: o score NÃO demonstrou "

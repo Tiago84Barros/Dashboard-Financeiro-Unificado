@@ -972,7 +972,9 @@ def test_falha_do_provedor_de_llm_nao_derruba_o_portfolio_global():
     import inspect
     fonte = inspect.getsource(portfolio_global._painel_chat)
     assert "except Exception" in fonte
-    assert "Erro ao consultar a LLM" in fonte
+    # Desde a LLM-A11 a mensagem vem de core.llm_falha: amigavel na tela,
+    # detalhe so no log.
+    assert "mensagem_falha_llm(exc" in fonte
 
 
 def test_card_mostra_a_causa_do_indeterminado_quando_ela_e_conhecida():

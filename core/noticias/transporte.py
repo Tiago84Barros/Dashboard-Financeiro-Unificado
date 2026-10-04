@@ -34,6 +34,29 @@ ESPERA_TETO = 30.0
 MASCARA = "***"
 
 
+def texto_da_resposta(resp) -> str:
+    """O corpo como texto, em UTF-8 quando o servidor não declara charset.
+
+    ``requests`` segue a RFC 2616 ao pé da letra: ``text/*`` sem ``charset``
+    vira ISO-8859-1. O feed da Exame responde ``text/xml`` sem charset e manda
+    UTF-8 -- foi assim que 2.923 dos 3.377 itens dela entraram no acervo
+    como ``AutorizaÃ§Ã£o`` entre 06/09 e 04/10/2026 (medido no armazém local).
+    Sem charset declarado, tenta UTF-8 primeiro (o ``-sig`` tira o BOM, que o
+    ElementTree não aceita antes da declaração XML); só se os bytes não forem
+    UTF-8 válido cai no palpite do ``requests``. Com charset declarado, vale o
+    que o servidor disse.
+    """
+    cabecalhos = getattr(resp, "headers", None) or {}
+    tipo = str(cabecalhos.get("Content-Type") or cabecalhos.get("content-type") or "")
+    bruto = getattr(resp, "content", None)
+    if "charset=" not in tipo.lower() and isinstance(bruto, (bytes, bytearray)):
+        try:
+            return bytes(bruto).decode("utf-8-sig")
+        except UnicodeDecodeError:
+            pass
+    return getattr(resp, "text", "") or ""
+
+
 class ErroTransporte(Exception):
     """Falha ao falar com o provedor. Carrega se vale a pena tentar de novo."""
 
@@ -121,7 +144,7 @@ class TransporteRequests:
             ) from exc
         return Resposta(
             status=int(resp.status_code),
-            texto=resp.text or "",
+            texto=texto_da_resposta(resp),
             cabecalhos=dict(resp.headers or {}),
             url=url,
         )

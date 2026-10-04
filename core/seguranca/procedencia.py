@@ -28,6 +28,7 @@ Puro: sem rede, sem banco, sem LLM.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from core.seguranca import injecao, segredos
@@ -157,6 +158,97 @@ def cercar(itens: list[ItemExterno] | tuple[ItemExterno, ...],
         linhas.append(f"    texto: {item.texto}")
     linhas.append(f"<<<FIM {marcador}>>>")
     return "\n".join(linhas)
+
+
+def linha_externa(texto: object, *, teto: int = 200) -> str:
+    """Um campo de fora (título, veículo, procedência) pronto para uma linha de prompt.
+
+    É :func:`preparar` sem a :class:`ItemExterno` em volta, para quem monta o
+    prompt em linhas formatadas -- o bloco de mercado e a conjuntura, que
+    entregam ``- [data] título (veículo; relevância N)``. A mesma ordem
+    (consertar a codificação, neutralizar, mascarar segredo) e o mesmo teto
+    de uma linha: título com quebra de linha é a forma mais simples de abrir
+    uma seção nova no prompt.
+
+    O conserto de mojibake vem antes de neutralizar porque ``neutralizar``
+    troca caractere de controle por espaço, e os bytes de continuação do UTF-8
+    lido como latin-1 (``\x80``-``\x9f``) caem nessa faixa: depois dela o
+    ``â€™`` já não tem volta.
+    """
+    from core.noticias.normalizacao import consertar_mojibake
+
+    limpo = injecao.neutralizar(consertar_mojibake(str(texto or "")), teto=teto)
+    return segredos.mascarar(limpo, pessoais=True)
+
+
+def cercar_linhas(linhas: list[str] | tuple[str, ...], *,
+                  marcador: str | None = None, recuo: str = "    ",
+                  aviso: bool = True) -> list[str]:
+    """Linhas já formatadas de conteúdo externo, entre marcadores imprevisíveis.
+
+    Para os prompts montados em linhas (``core.contexto_mercado`` e
+    ``core.conjuntura.ponte.para_llm``), que não cabem no molde
+    :func:`montar` porque o mesmo texto também vai para a tela e para o parser
+    de :func:`core.contexto_mercado.manchetes_gerais`. Cada campo de fora já
+    deve ter passado por :func:`linha_externa`; a cerca é a segunda camada, a
+    que não depende de a neutralização ter previsto o ataque.
+
+    O marcador nasce aqui, depois que a manchete já existe -- quem a escreveu
+    não tinha como conhecê-lo, e é isso que sustenta a cerca, não o segredo do
+    formato.
+
+    ``aviso=False`` omite o parágrafo de aviso, para a 2a cerca em diante do
+    mesmo prompt (a conjuntura cerca as manchetes de cada ativo à parte, para
+    a nota do backend ficar FORA da cerca e continuar ancorando número).
+    """
+    if not linhas:
+        return []
+    marca = marcador or injecao.marcador()
+    return [f"{recuo}<<<INICIO {marca}>>>", *([f"{recuo}{_AVISO}"] if aviso else []),
+            *linhas, f"{recuo}<<<FIM {marca}>>>"]
+
+
+_BLOCO_CERCADO = re.compile(
+    r"<<<INICIO (?P<m>CONTEUDO-EXTERNO-[0-9a-f]+)>>>(?P<corpo>.*?)<<<FIM (?P=m)>>>",
+    re.DOTALL)
+
+
+def sem_cercas(texto: str) -> str:
+    """O texto sem nenhum bloco cercado: o lastro numérico do backend.
+
+    Mesma razão de :attr:`PromptSegregado.texto_backend`, para contexto que
+    pode ter várias cercas (macro + noticiário geral + conjuntura de cada
+    classe): número que só existe na manchete não pode ancorar a resposta.
+    """
+    return _BLOCO_CERCADO.sub(" ", texto or "")
+
+
+def conteudo_cercado(texto: str) -> str:
+    """Só o que está dentro das cercas, concatenado. ``""`` se não houver."""
+    return "\n".join(m.group("corpo") for m in _BLOCO_CERCADO.finditer(texto or ""))
+
+
+def bloco_externo(prompt: PromptSegregado | None) -> str:
+    """O texto cercado de um :class:`PromptSegregado`, como o modelo o recebe."""
+    if prompt is None or not prompt.itens:
+        return ""
+    inicio = prompt.texto.find(f"<<<INICIO {prompt.marcador}>>>")
+    fim = prompt.texto.find(f"<<<FIM {prompt.marcador}>>>", max(inicio, 0))
+    return prompt.texto[inicio:fim] if inicio >= 0 and fim > inicio else ""
+
+
+#: Palavras que atribuem o número a um terceiro. Não basta "segundo" -- em
+#: "segundo a análise do painel" o modelo está atribuindo ao próprio painel um
+#: número que veio da manchete, que é exatamente a confusão a evitar.
+ATRIBUICAO = re.compile(
+    r"(?i)\b(not[íi]cia|manchete|reportad\w*|relatad\w*|noticiad\w*|"
+    r"t[íi]tulo|headline|veicul\w*|publicad\w*\s+pel[ao])\b")
+
+
+def literal_na_cerca(raw: str, externo: str) -> bool:
+    """O número aparece na notícia como número, não como pedaço de outro."""
+    return bool(raw) and bool(
+        re.search(rf"(?<![\d.,]){re.escape(raw)}(?![\d.,])", externo))
 
 
 def montar(instrucoes: str, dados: str,
