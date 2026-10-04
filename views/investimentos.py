@@ -38,6 +38,7 @@ from core.correlation_analysis import (
 from core.investimentos import (
     crescimento_patrimonio,
     crescimento_proventos,
+    decompor_ganho,
     get_carteira,
     get_cashflow_mensal,
     get_evolucao_patrimonial,
@@ -2168,6 +2169,58 @@ def _fmt_pct_aa(v) -> str:
     return f"{v * 100:+.2f}".replace(".", ",") + "% a.a."
 
 
+def _fmt_cobertura(c) -> str:
+    return "—" if c is None else f"{c:.0f}%"
+
+
+def _bloco_ganho_parcelas(g: dict | None) -> None:
+    """Ganho em três parcelas, cada uma com a cobertura (INV-A2).
+
+    Não há total: as parcelas vêm de populações diferentes (carteira de hoje,
+    vendas do extrato da B3, proventos pagos) e somá-las contradizia a TIR.
+    """
+    if not g:
+        return
+    st.markdown("<br>", unsafe_allow_html=True)
+    nr, rz, pv = g["nao_realizado"], g["realizado"], g["proventos"]
+    c1, c2, c3 = st.columns(3, gap="small")
+    with c1:
+        st.markdown(_kpi(
+            "Ganho não realizado", fmt_moeda(nr["valor"]),
+            f"Cobertura {_fmt_cobertura(nr['cobertura_pct'])} do valor, com custo confiável",
+            _COR_POSITIVO if nr["valor"] >= 0 else _COR_NEGATIVO,
+        ), unsafe_allow_html=True)
+    with c2:
+        if rz["valor"] is None:
+            st.markdown(_kpi("Ganho realizado em vendas", "—",
+                             _html.escape(str(rz["nota"])), _COR_NEUTRO),
+                        unsafe_allow_html=True)
+        else:
+            sem_custo = rz.get("valor_sem_custo") or 0.0
+            st.markdown(_kpi(
+                "Ganho realizado em vendas", fmt_moeda(rz["valor"]),
+                f"Cobertura {_fmt_cobertura(rz['cobertura_pct'])} do valor vendido"
+                + (f" · {fmt_moeda(sem_custo)} vendidos sem custo no extrato" if sem_custo else ""),
+                _COR_POSITIVO if rz["valor"] >= 0 else _COR_NEGATIVO,
+            ), unsafe_allow_html=True)
+    with c3:
+        devol = pv.get("devolucao_capital")
+        st.markdown(_kpi(
+            "Proventos recebidos", fmt_moeda(pv["valor"]),
+            f"Classes com provento: {_fmt_cobertura(pv['cobertura_pct'])} do patrimônio"
+            + (f" · {fmt_moeda(devol)} de amortização à parte (devolução de capital)"
+               if devol else ""),
+            _COR_INFO,
+        ), unsafe_allow_html=True)
+    st.caption(
+        "Três parcelas, sem soma: o não realizado é da carteira de hoje, o realizado "
+        "vem do extrato de negociação da B3 (só renda variável) e os proventos são "
+        "pagamentos em dinheiro. Somá-las misturava populações e contradizia a TIR. "
+        "Renda fixa, fundos e FIP rendem dentro do valor de mercado e, quando a foto "
+        "da corretora não traz custo real, aparecem como “sem marcação” em vez de 0,0%."
+    )
+
+
 def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                    carteira: dict | None = None) -> None:
     st.markdown("<br>", unsafe_allow_html=True)
@@ -2210,6 +2263,8 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                  else "Menos de dois anos completos de proventos"),
                 (_COR_POSITIVO if cd["taxa"] >= 0 else _COR_NEGATIVO) if cd else _COR_NEUTRO,
             ), unsafe_allow_html=True)
+
+        _bloco_ganho_parcelas(decompor_ganho(evolucao, realizado, carteira))
 
         st.markdown("<br>", unsafe_allow_html=True)
         periodo = st.radio(
@@ -2533,7 +2588,9 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
     custo_do_usuario = custo_fonte == "informado_pelo_usuario"
     moeda = str(pos.get("moeda") or "BRL").upper()
     custo_cambio_atual = custo_fonte == "cambio_atual_estimado"
-    custo_comparavel_brl = not custo_ausente and not custo_cambio_atual
+    sem_marcacao = bool(pos.get("sem_marcacao"))
+    custo_comparavel_brl = (not custo_ausente and not custo_cambio_atual
+                            and not sem_marcacao)
     rsc      = (pos["valor_mercado"] + renda - ti) / ti * 100 if ti > 0 and custo_comparavel_brl else 0.0
     cor_rsc  = _COR_POSITIVO if rsc >= 0 else _COR_NEGATIVO
     # Yield on Cost (YoC) — dividend yield personalizado: renda dos ultimos
@@ -2567,10 +2624,12 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
                 else "Custo investido"
             )
         custo_val = "Não informado" if custo_ausente else fmt_moeda(ti)
-    resultado_val = "—" if custo_ausente or not rentab_ok else f"{seta_r} {abs(rentab):.2f}%"
+    resultado_val = ("Sem marcação" if sem_marcacao
+                     else "—" if custo_ausente or not rentab_ok
+                     else f"{seta_r} {abs(rentab):.2f}%")
     retorno_val = "—" if not custo_comparavel_brl else f"{rsc:.2f}%"
     yoc_val = "—" if not custo_comparavel_brl or renda <= 0 else f"{yoc:.2f}%"
-    resultado_cor = "var(--app-subtle)" if custo_ausente else cor_r
+    resultado_cor = "var(--app-subtle)" if custo_ausente or sem_marcacao else cor_r
     retorno_cor = "var(--app-subtle)" if not custo_comparavel_brl else cor_rsc
     yoc_cor = _COR_SEM_BASE if (not custo_comparavel_brl or renda <= 0) else _COR_ROXO
     mercado_cor = "var(--app-muted)" if custo_ausente else cor_vm
@@ -4306,6 +4365,44 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 st.plotly_chart(fig_stress, width="stretch",
                                 config={"displayModeBar": False},
                                 key="analise_stress_bar")
+
+                # ── Renda fixa por indexador e duration (INV-A3) ──────────────
+                por_idx = pior.get("por_indexador") or {}
+                if por_idx:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.markdown(
+                        '<div style="font-size:0.83rem;font-weight:700;color:var(--app-text);'
+                        'margin-bottom:4px;">🏦 Renda fixa por indexador — '
+                        f'{_html.escape(str(pior.get("cenario", "")))}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.dataframe(
+                        pd.DataFrame([{
+                            "Indexador": k,
+                            "Valor hoje": v["pre"],
+                            "Valor pós-choque": v["pos"],
+                            "Queda": abs(float(v["perda_pct"])) * 100,
+                            "Duration (anos)": v["duration_anos"],
+                        } for k, v in por_idx.items()]),
+                        width="stretch", hide_index=True,
+                        column_config={
+                            "Valor hoje": st.column_config.NumberColumn(format="R$ %.2f"),
+                            "Valor pós-choque": st.column_config.NumberColumn(format="R$ %.2f"),
+                            "Queda": st.column_config.NumberColumn(format="%.1f%%"),
+                            "Duration (anos)": st.column_config.NumberColumn(format="%.1f"),
+                        },
+                    )
+                    sem_dur = pior.get("renda_fixa_sem_duration") or []
+                    st.caption(
+                        "Tesouro Selic recebe o choque de pós-fixado; IPCA+ e prefixado, o "
+                        "choque de juros longos escalado pela duration (prazo residual; "
+                        "referência de 5 anos). CDB, LCI e LCA se carregam na curva, sem "
+                        "marcação a mercado: choque zero (o risco deles é de crédito, "
+                        "fora deste modelo). Fundos de renda fixa e FIPs seguem o choque "
+                        "da própria classe."
+                        + (f" Sem vencimento legível, choque sem escala: {', '.join(sem_dur)}."
+                           if sem_dur else "")
+                    )
 
                 # ── Onde dói: perda por classe no pior cenário ────────────────
                 # O core já devolvia por_classe e a tela ignorava. É o dado que

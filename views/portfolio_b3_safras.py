@@ -29,7 +29,7 @@ from design.componentes import card_metrica
 from views.empresas_b3 import _COR_ALT, _COR_NEU, _COR_POS, _plot_layout
 
 _COLUNAS_RETORNO = ["Estratégia (%)", "Equal-weight (%)", "Selic (%)",
-                    "Excesso s/ Selic (pp)"]
+                    "Excesso s/ Selic (pp)", "Excesso s/ EW (pp)"]
 
 # Colunas cuja EXIBIÇÃO é arredondada em 1 casa. Desde a rodada de correção
 # 2, `core.b3_safras._pct` não arredonda mais (A-T7-02: o valor é lido por
@@ -485,6 +485,14 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
     # mostrava e que contradizia o card ao lado.
     veredito = veredito_do_rank_ic(ic_values)
     baixo, alto = bootstrap_excesso(excessos)
+    # B3-01: o excesso sobre o equal-weight (o teste que importa: a Selic é
+    # piso, o EW é o mercado) ganha o MESMO intervalo, sobre retornos já
+    # saneados de saltos e winsorizados em `core.b3_safras`.
+    excessos_ew = [float(v) / 100.0
+                   for v in (completas["Excesso s/ EW (pp)"]
+                             if not completas.empty else [])
+                   if pd.notna(v)]
+    baixo_ew, alto_ew = bootstrap_excesso(excessos_ew)
     loo = fragilidade_leave_one_out(ic_values)
 
     avisos: list[str] = []
@@ -496,6 +504,12 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
             "Ordenar não é superar — o Rank-IC pode indicar que o motor "
             "discrimina retornos sem que isso vire vantagem líquida."
         )
+    if baixo_ew is not None and baixo_ew <= 0 <= alto_ew:
+        avisos.append(
+            f"O intervalo de 95% do excesso sobre o equal-weight vai de "
+            f"{baixo_ew:+.1%} a {alto_ew:+.1%} por safra: ele **atravessa o "
+            "zero**. Nesta amostra, a carteira não é distinguível de comprar "
+            "o universo inteiro em partes iguais.")
     if loo["safras_que_viram"] > 0:
         avisos.append(
             f"O veredito muda se {loo['safras_que_viram']} dos "
@@ -647,6 +661,9 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
         "positivo_fragilidade": positivo_frag,
         "ajuda_fragilidade": ajuda_frag,
         "banda": (baixo, alto),
+        "banda_ew": (baixo_ew, alto_ew),
+        "texto_banda_ew": (f"{baixo_ew:+.1%} a {alto_ew:+.1%}"
+                           if baixo_ew is not None else "—"),
         "n_safras_banda": n_banda,
         "texto_banda": (f"{baixo:+.1%} a {alto:+.1%}"
                         if baixo is not None else "—"),
@@ -673,7 +690,7 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
     exp = _expectativa(resultados, tabela)
     veredito = exp["veredito"]
 
-    cols = st.columns(3)
+    cols = st.columns(4)
     with cols[0]:
         card_metrica("Ordena?", evidence_label(veredito),
                      ajuda=exp["ajuda_ordena"])
@@ -683,6 +700,14 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
                      positivo=(baixo is not None and baixo > 0),
                      ajuda=(f"Intervalo de 95% por reamostragem de "
                             f"{exp['n_safras_banda']} safra(s) mensurável(is)"))
+    with cols[3]:
+        baixo_ew = exp["banda_ew"][0]
+        card_metrica("Supera o mercado? (s/ equal-weight)",
+                     exp["texto_banda_ew"],
+                     positivo=(baixo_ew is not None and baixo_ew > 0),
+                     ajuda="Intervalo de 95% do excesso sobre o equal-weight "
+                           "do universo, com saltos de preço neutralizados e "
+                           "retornos winsorizados a 1%/99% por safra")
     with cols[2]:
         card_metrica("Fragilidade", exp["texto_fragilidade"],
                      positivo=exp["positivo_fragilidade"],

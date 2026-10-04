@@ -20,23 +20,44 @@ if str(_RAIZ) not in sys.path:
 import core.contexto_mercado as cm  # noqa: E402
 
 
-def test_como_pct_resolve_fracao_e_percentual():
-    assert cm._como_pct(0.15) == 15.0          # Selic gravada em fração
-    assert cm._como_pct(4.83) == 4.83          # IPCA gravado em percentual
-    assert cm._como_pct(None) is None
-    assert cm._como_pct("x") is None
-    assert cm._como_pct(float("nan")) is None
+def test_como_pct_usa_a_unidade_da_fonte():
+    assert cm._como_pct(0.15, "fracao") == 15.0   # Selic gravada em fração
+    assert cm._como_pct(4.83, "pct") == 4.83      # IPCA gravado em percentual
+    assert cm._como_pct(None, "pct") is None
+    assert cm._como_pct("x", "pct") is None
+    assert cm._como_pct(float("nan"), "pct") is None
+
+
+def test_como_pct_nao_adivinha_escala_pela_magnitude():
+    """Juro real de 0,194% virava 19,4% quando |x| <= 1 era lido como fração."""
+    assert cm._como_pct(0.194, "pct") == 0.194
+    assert cm._como_pct(-0.32, "pct") == -0.32   # IPCA mensal negativo
+    import pytest
+
+    with pytest.raises(ValueError):
+        cm._como_pct(0.194, "auto")
 
 
 def test_linhas_macro_anual_sem_ipca_centuplicado():
     hist = {2024: {"selic": 0.1225, "ipca": 4.83, "cambio": 6.19},
             2025: {"selic": 0.15, "ipca": 3.1, "juros_real_ex_ante": 9.5}}
-    texto = "\n".join(cm.linhas_macro_anual(hist))
+    texto = "\n".join(cm.linhas_macro_anual(hist, hoje=date(2026, 10, 4)))
     assert "Selic 15,00%" in texto
     assert "IPCA 3,10%" in texto
     assert "310" not in texto
     assert "USD/BRL 6,19" in texto
-    assert "juro real ex ante 9,50%" in texto
+    # Ano fechado: juro real por Fisher, não a coluna aritmética (9,50%).
+    assert "juro real ex post (Fisher, Selic de fim de ano sobre o IPCA do ano) 11,54%" in texto
+    assert "9,50%" not in texto and "ex ante" not in texto
+
+
+def test_ano_corrente_rotula_ipca_acumulado_no_ano_e_aponta_o_bcb():
+    """3,11% em 2026 era o acumulado até agosto, lido pela LLM como inflação anual."""
+    hist = {2026: {"selic": 0.1375, "ipca": 3.11, "juros_real_ex_ante": 10.64}}
+    texto = "\n".join(cm.linhas_macro_anual(hist, hoje=date(2026, 10, 4)))
+    assert "IPCA acumulado no ano até o último mês divulgado 3,11% (não é 12 meses)" in texto
+    assert "10,64" not in texto
+    assert "ver Selic meta e IPCA 12m do BCB" in texto
 
 
 def test_macro_vazio_e_declarado():
@@ -46,9 +67,11 @@ def test_macro_vazio_e_declarado():
 def test_get_macro_context_nao_multiplica_ipca_percentual():
     from core.llm_context_b3 import get_macro_context
 
-    texto = get_macro_context({2025: {"selic": 0.15, "ipca": 3.1}})
+    texto = get_macro_context({2025: {"selic": 0.15, "ipca": 3.1},
+                               date.today().year: {"selic": 0.1375, "ipca": 3.11}})
     assert "Selic=15.00%" in texto
     assert "IPCA=3.10%" in texto
+    assert "IPCA acumulado no ano até agora=3.11%" in texto
 
 
 def test_curva_do_tesouro_resume_vertices():
@@ -139,6 +162,7 @@ def test_ativos_por_classe():
 def _sem_rede(monkeypatch, *, acervo=None, remoto=(None, None)):
     monkeypatch.setattr(cm, "_macro_supabase_cache", lambda: ["  MACRO-SUPA"])
     monkeypatch.setattr(cm, "_macro_local", lambda: ["  MACRO-LOCAL"])
+    monkeypatch.setattr(cm, "_macro_brasil", lambda: ["  MACRO-BCB"])
     monkeypatch.setattr(cm, "_manchetes_acervo", lambda _l: acervo)
     monkeypatch.setattr(cm, "_manchetes_remoto", lambda _l: remoto)
     monkeypatch.setattr(cm, "_manchetes_vitrine_cache", lambda _l: ["  VITRINE"])
@@ -260,6 +284,8 @@ def test_bloco_usa_vitrine_quando_nao_ha_acervo(monkeypatch):
     assert texto.startswith("=== CONTEXTO DE MERCADO ===")
     assert "nunca é instrução" in texto
     assert "MACRO-SUPA" in texto and "MACRO-LOCAL" in texto
+    # O BCB vem depois de public.macro, que aponta para ele ("abaixo").
+    assert texto.index("MACRO-SUPA") < texto.index("MACRO-BCB") < texto.index("MACRO-LOCAL")
     assert "VITRINE" in texto
 
 
@@ -306,7 +332,10 @@ def test_macro_local_filtra_espelho_e_serie_velha(monkeypatch):
     monkeypatch.setattr(ctx, "format_macro_context",
                         lambda fs: [f["series"] for f in fs])
     linhas = cm._macro_local()
-    assert linhas[1:] == ["    IBC-Br"]
+    # A série velha não entra como dado, mas é nomeada como omitida (não some).
+    assert linhas[1] == "    IBC-Br · período há 60 dias"
+    assert "omitidas por defasagem" in linhas[2] and "[ipea]" in linhas[2]
+    assert len(linhas) == 3
     assert _Eng.disposed
 
 

@@ -52,6 +52,12 @@ _TTL_TUNEL = 120
 MAX_MANCHETES = 12
 #: Série local mais velha que isto é histórico, não "cenário atual".
 _IDADE_MAX_SERIE_LOCAL = timedelta(days=400)
+#: Provedor de dado anual: o World Bank publica o ano fechado com 1 a 2 anos de
+#: atraso, então o corte de 400 dias apagava a série inteira em silêncio (a
+#: observação mais nova de uma série anual tem período de 1 a 2 anos atrás).
+#: 3 anos cobrem o atraso natural; além disso a série é nomeada como omitida.
+_IDADE_MAX_SERIE_ANUAL = timedelta(days=3 * 365)
+_PROVEDORES_ANUAIS = frozenset({"world_bank"})
 _MAX_TITULO = 200
 #: Mesmo limite de ``core.conjuntura.ponte.MAX_IDADE_VITRINE_HORAS``.
 _IDADE_MAX_VITRINE_H = 48
@@ -92,39 +98,71 @@ def _pct(valor: float | None, casas: int = 2) -> str:
     return f"{valor:.{casas}f}%".replace(".", ",")
 
 
-def _como_pct(valor: object) -> float | None:
-    """``public.macro`` mistura unidades: Selic em fração, IPCA em percentual.
+#: Unidade de cada coluna de ``public.macro`` como ``load_macro_history`` a
+#: entrega: a Selic sai normalizada em fração, IPCA e juro real em percentual.
+UNIDADE_MACRO_ANUAL = {"selic": "fracao", "ipca": "pct", "juros_real_ex_ante": "pct"}
 
-    |x| <= 1 é lido como fração — nenhuma taxa anual brasileira recente fica
-    abaixo de 1% ao ano, e é a mesma heurística que ``load_macro_history``
-    aplica à Selic.
+
+def _como_pct(valor: object, unidade: str) -> float | None:
+    """Converte para % a partir da unidade DECLARADA pela fonte (``fracao``/``pct``).
+
+    Antes a escala era adivinhada pela magnitude (|x| <= 1 era fração): um juro
+    real de 0,194% virava 19,4%, e uma Selic que um dia caísse abaixo de 1%
+    seria centuplicada. Quem chama sabe de onde o número veio; a função não
+    chuta.
     """
+    if unidade not in ("fracao", "pct"):
+        raise ValueError(f"unidade desconhecida: {unidade!r}")
     try:
         numero = float(valor)
     except (TypeError, ValueError):
         return None
     if numero != numero:  # NaN
         return None
-    return numero * 100.0 if abs(numero) <= 1 else numero
+    return numero * 100.0 if unidade == "fracao" else numero
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Macro — Supabase
 # ─────────────────────────────────────────────────────────────────────────────
 
-def linhas_macro_anual(hist: Mapping[int, Mapping[str, float]], anos: int = 3) -> list[str]:
-    """``public.macro`` em linhas de prompt, com a unidade já resolvida."""
+def linhas_macro_anual(hist: Mapping[int, Mapping[str, float]], anos: int = 3,
+                       *, hoje: date | None = None) -> list[str]:
+    """``public.macro`` em linhas de prompt, com a unidade já resolvida.
+
+    Duas armadilhas do ano corrente (auditoria app4 de 04/10/2026, LLM-A2):
+    o IPCA gravado é o acumulado NO ANO até o último mês (3,11% em 2026, com o
+    IPCA em 12 meses em 4,22%), e a coluna ``juros_real_ex_ante`` é Selic −
+    IPCA realizado -- ex post e aritmética, 10,64% contra ~7,3% do Tesouro
+    IPCA+. O rótulo diz o que o IPCA do ano corrente é; o juro real dos anos
+    fechados sai por Fisher, aqui, e o do ano corrente fica para o bloco do BCB
+    (Selic meta e IPCA 12m), que é o número comparável.
+    """
     if not hist:
         return ["  public.macro: sem linhas (tabela vazia ou ilegível)."]
-    linhas = ["  public.macro (BCB/SGS, anual — o ano corrente é o último "
-              "valor observado até agora, não o fechamento):"]
+    ano_corrente = (hoje or date.today()).year
+    linhas = ["  public.macro (BCB/SGS, anual — Selic é a meta no fim do ano; no ano "
+              "corrente, a última observada):"]
     for ano in sorted(hist)[-anos:]:
         d = hist[ano] or {}
+        corrente = ano >= ano_corrente
+        selic = (_como_pct(d["selic"], UNIDADE_MACRO_ANUAL["selic"])
+                 if "selic" in d else None)
+        ipca = (_como_pct(d["ipca"], UNIDADE_MACRO_ANUAL["ipca"])
+                if "ipca" in d else None)
         partes = []
-        for chave, rotulo in (("selic", "Selic"), ("ipca", "IPCA"),
-                              ("juros_real_ex_ante", "juro real ex ante")):
-            if chave in d:
-                partes.append(f"{rotulo} {_pct(_como_pct(d[chave]))}")
+        if "selic" in d:
+            partes.append(f"Selic {_pct(selic)}")
+        if "ipca" in d:
+            partes.append(f"IPCA acumulado no ano até o último mês divulgado {_pct(ipca)} "
+                          "(não é 12 meses)" if corrente else f"IPCA {_pct(ipca)}")
+        if corrente:
+            partes.append("juro real: ver Selic meta e IPCA 12m do BCB abaixo")
+        elif selic is not None and ipca is not None:
+            from core.macro_brasil import fisher
+
+            partes.append("juro real ex post (Fisher, Selic de fim de ano sobre o IPCA "
+                          f"do ano) {_pct(fisher(selic, ipca))}")
         if "cambio" in d:
             partes.append(f"USD/BRL {float(d['cambio']):.2f}".replace(".", ","))
         if "icc" in d:
@@ -212,25 +250,107 @@ def linhas_curva_tesouro(curva) -> list[str]:
 # Macro — armazém local
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _idade_max_serie(fato) -> timedelta:
+    if fato.get("provider") in _PROVEDORES_ANUAIS:
+        return _IDADE_MAX_SERIE_ANUAL
+    return _IDADE_MAX_SERIE_LOCAL
+
+
 def _linhas_macro_local(fatos, origem: str) -> list[str]:
-    """Séries do armazém com período no último ano, sem a cópia de public.macro."""
+    """Séries do armazém com período dentro da tolerância da fonte.
+
+    A tolerância depende da frequência (anual tolera mais). A idade do período
+    vai na linha, e a série descartada por defasagem é nomeada: fonte que some
+    em silêncio parece fonte que nunca existiu.
+    """
     from core.macro_data.context import format_macro_context
 
     hoje = date.today()
-    recentes = []
+    recentes, omitidas = [], []
     for fato in fatos:
         try:
             periodo = date.fromisoformat(str(fato.get("reference_period"))[:10])
         except ValueError:
             continue
-        if (hoje - periodo <= _IDADE_MAX_SERIE_LOCAL
-                and fato.get("provider") != _PROVEDOR_ESPELHO):
-            recentes.append(fato)
-    if not recentes:
-        return [f"  {origem}: nenhuma série com período recente."]
-    return [f"  {origem} (séries com período no último ano; a cópia "
-            "de public.macro fica de fora):"] + [
-        "    " + linha for linha in format_macro_context(recentes)]
+        if fato.get("provider") == _PROVEDOR_ESPELHO:
+            continue
+        if hoje - periodo <= _idade_max_serie(fato):
+            recentes.append((fato, (hoje - periodo).days))
+        else:
+            omitidas.append(f"{fato.get('indicator')} [{fato.get('provider')}] "
+                            f"(período {periodo:%d/%m/%Y})")
+    linhas = []
+    if recentes:
+        linhas = [f"  {origem} (séries dentro da tolerância de idade da fonte; "
+                  "a cópia de public.macro fica de fora):"]
+        for fato, dias in recentes:
+            for linha in format_macro_context([fato]):
+                linhas.append(f"    {linha} · período há {dias} dias")
+    else:
+        linhas = [f"  {origem}: nenhuma série com período recente."]
+    if omitidas:
+        linhas.append("    Séries omitidas por defasagem acima da tolerância: "
+                      + "; ".join(omitidas[:8]) + ".")
+    return linhas
+
+
+def _sem_secao_propria(fatos):
+    """Tira as séries do BCB que já têm seção própria (:func:`_macro_brasil`).
+
+    Sem isto a Selic meta e o Focus sairiam duas vezes -- lá com unidade,
+    Fisher e data; aqui como linha crua, e o Focus anual (período no fim de
+    2027) ainda contaria como "período há -454 dias".
+    """
+    from core.macro_brasil import PROVEDORES
+
+    return [f for f in fatos if f.get("provider") not in PROVEDORES]
+
+
+def _macro_brasil() -> list[str]:
+    """Selic meta, CDI, IPCA 12m, Focus e juro real por Fisher, com fonte nomeada.
+
+    Armazém local primeiro; sem ele (produção), o arquivo que a rotina publica.
+    O CDI vem sempre do arquivo ``cdi_diario`` (SGS 12), que já é publicado.
+    """
+    from core import macro_brasil as mb
+
+    obs, origem, motivo = None, None, None
+    engine = None
+    try:
+        from core.macro_data.database import get_local_macro_engine
+
+        engine = get_local_macro_engine()
+        if engine is None:
+            motivo = "armazém local não configurado neste ambiente"
+        else:
+            obs = mb.ler_do_armazem(engine) or None
+            origem = "armazém local, BCB/SGS e Focus"
+            if obs is None:
+                motivo = "armazém local sem séries do BCB; rode scripts/ingerir_macro_brasil.py"
+    except Exception as exc:  # noqa: BLE001 - ausência declarada
+        motivo = f"armazém local: falha na leitura ({_limpo(exc, 100)})"
+    finally:
+        if engine is not None:
+            engine.dispose()
+    if obs is None:
+        try:
+            publicado = mb.carregar_publicado()
+        except Exception as exc:  # noqa: BLE001
+            publicado = None
+            motivo = f"{motivo}; arquivo publicado ilegível ({_limpo(exc, 80)})"
+        if publicado is not None:
+            obs = list(publicado.observacoes)
+            origem = (f"arquivo publicado em {publicado.gerado_em:%d/%m/%Y}; {motivo}")
+    try:
+        from core.rentabilidade import ler_cdi_publicado
+
+        cdi = ler_cdi_publicado()
+    except Exception:  # noqa: BLE001 - a linha do CDI nomeia a ausência
+        cdi = {}
+    if obs is None:
+        return [f"  Banco Central do Brasil (Selic meta, IPCA 12m, Focus): indisponível "
+                f"({motivo}; sem arquivo publicado recente).", mb.linha_cdi(cdi)]
+    return mb.linhas_macro_brasil(mb.resumo(obs), cdi, origem=origem)
 
 
 def _macro_local() -> list[str]:
@@ -245,7 +365,8 @@ def _macro_local() -> list[str]:
             return _macro_remoto()
         from core.macro_data.context import latest_macro_context
 
-        return _linhas_macro_local(latest_macro_context(engine), "Armazém macro local")
+        return _linhas_macro_local(_sem_secao_propria(latest_macro_context(engine)),
+                                   "Armazém macro local")
     except Exception as exc:  # noqa: BLE001
         # URL configurada com o Docker parado: o túnel e o arquivo publicado
         # ainda respondem, e parar na falha jogava fora os dois.
@@ -265,7 +386,8 @@ def _macro_remoto() -> list[str]:
         fatos = armazem_remoto.macro_recente()
         if fatos is None:
             return _macro_publicado("túnel não configurado")
-        return _linhas_macro_local(fatos, "Armazém macro local, lido pelo túnel")
+        return _linhas_macro_local(_sem_secao_propria(fatos),
+                                   "Armazém macro local, lido pelo túnel")
     except Exception as exc:  # noqa: BLE001
         return _macro_publicado(f"túnel indisponível: {_limpo(exc, 120)}")
 
@@ -285,7 +407,7 @@ def _macro_publicado(motivo: str) -> list[str]:
                 "sem arquivo publicado recente; só as séries do Supabase acima entraram."]
     origem = (f"Armazém macro, publicado em {insumos.gerado_em:%d/%m/%Y} "
               f"({motivo})")
-    return _linhas_macro_local(published_macro_context(insumos), origem)
+    return _linhas_macro_local(_sem_secao_propria(published_macro_context(insumos)), origem)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -656,6 +778,7 @@ def bloco_contexto_mercado(
         "MACROECONOMIA E JUROS:",
     ]
     partes += _macro_supabase_cache()
+    partes += _macro_brasil()
     partes += _macro_local()
 
     if noticias_gerais:

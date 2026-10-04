@@ -156,7 +156,7 @@ def render_db_macro(dados: dict) -> None:
         return
     atual = dados.get("atual") or {}
     campos = (("selic", "Selic"), ("ipca", "IPCA"),
-              ("juros_real_ex_ante", "Juro real ex-ante"), ("cambio", "Câmbio"))
+              ("juros_real_ex_ante", "Juro real ex post"), ("cambio", "Câmbio"))
     for col, (chave, rotulo) in zip(st.columns(len(campos)), campos):
         valor = atual.get(chave)
         texto = "—" if valor is None else f"{float(valor):.2f}"
@@ -177,7 +177,7 @@ def render_db_macro(dados: dict) -> None:
         with st.expander("Série recente"):
             st.dataframe(
                 [{"Ano": a["ano"], "Selic": a["selic"], "IPCA": a["ipca"],
-                  "Juro real ex-ante": a["juros_real_ex_ante"],
+                  "Juro real ex post": a["juros_real_ex_ante"],
                   "Câmbio": a["cambio"]} for a in anos],
                 width="stretch", hide_index=True)
     st.caption(
