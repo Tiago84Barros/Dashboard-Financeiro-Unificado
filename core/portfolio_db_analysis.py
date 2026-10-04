@@ -13,6 +13,15 @@ porque "não apurado" não é "mediano".
 """
 from __future__ import annotations
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+# INF-M4: todo erro destas funções vira o mesmo ``_SEM_BANCO`` para a tela —
+# inclusive um defeito de código no motor, que não tem nada a ver com banco.
+# A tela não muda (sem detalhe de conexão, como manda a docstring acima), mas
+# o log passa a guardar a exceção e a classe, para o diagnóstico não começar
+# pelo passo errado.
 _SEM_BANCO = "Universo indisponível no banco agora."
 
 
@@ -141,8 +150,8 @@ def analise_acoes_db(tickers) -> dict:
                 universo = universo.merge(
                     meta[[c for c in ("Ticker", "SETOR", "SUBSETOR", "nome_empresa")
                           if c in meta.columns]], on="Ticker", how="left")
-        except Exception:
-            pass
+        except Exception:  # noqa: BLE001 - setor é rótulo de exibição dos pares
+            logger.exception("Setores B3 indisponíveis na análise da carteira")
 
         crescimento_apurado = False
         try:
@@ -152,11 +161,11 @@ def analise_acoes_db(tickers) -> dict:
                 universo = _enriquece_universo_com_evidencia_historica(
                     universo, historicos, tickers_universo)
                 crescimento_apurado = True
-        except Exception:
+        except Exception:  # noqa: BLE001 - `crescimento_apurado=False` leva à tela
             # Sem histórico a trilha de crescimento fica sem cobertura e o
             # motor encolhe a nota para o neutro — é perda de convicção, não
             # penalidade; a tela precisa dizer isso.
-            pass
+            logger.exception("Histórico B3 indisponível na análise da carteira")
 
         scored = score_cross_section(universo)
         if scored is None or scored.empty:
@@ -203,7 +212,8 @@ def analise_acoes_db(tickers) -> dict:
                           candidatos, carregados=alvos,
                           grupos=[x.get("setor") for x in linhas])})
         return saida
-    except Exception:
+    except Exception:  # noqa: BLE001 - a tela recebe texto; o log, a causa
+        logger.exception("Análise da carteira contra o universo (ações B3) falhou")
         saida["erro"] = _SEM_BANCO
         return saida
 
@@ -231,7 +241,8 @@ def analise_fiis_db(tickers) -> dict:
         try:
             validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
             aplicavel = validation_supports_strategy(validation, LIVE_PORTFOLIO_STRATEGY_ID)
-        except Exception:
+        except Exception:  # noqa: BLE001 - falha fecha o portão (unvalidated)
+            logger.exception("Status de validação FII indisponível; tratado como não validado")
             aplicavel = False
         scored = score_fiis_by_type(
             inputs.to_dict("records"),
@@ -284,7 +295,8 @@ def analise_fiis_db(tickers) -> dict:
                           candidatos, carregados=alvos,
                           grupos=[x.get("tipo") for x in linhas])})
         return saida
-    except Exception:
+    except Exception:  # noqa: BLE001 - a tela recebe texto; o log, a causa
+        logger.exception("Análise da carteira contra o universo (FIIs) falhou")
         saida["erro"] = _SEM_BANCO
         return saida
 
@@ -366,7 +378,8 @@ def analise_exterior_db(symbols) -> dict:
                           candidatos, carregados=alvos,
                           grupos=[x.get("setor") for x in linhas])})
         return saida
-    except Exception:
+    except Exception:  # noqa: BLE001 - a tela recebe texto; o log, a causa
+        logger.exception("Análise da carteira contra o universo (ações dos EUA) falhou")
         saida["erro"] = _SEM_BANCO
         return saida
 
@@ -403,6 +416,7 @@ def analise_tesouro_db() -> dict:
         saida["anos"] = linhas
         saida["atual"] = linhas[-1] if linhas else None
         return saida
-    except Exception:
+    except Exception:  # noqa: BLE001 - a tela recebe texto; o log, a causa
+        logger.exception("Análise da carteira contra o universo (Tesouro/macro) falhou")
         saida["erro"] = _SEM_BANCO
         return saida

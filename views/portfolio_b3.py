@@ -7,6 +7,7 @@ por segmento e monta uma carteira sugerida com empresas reais da B3.
 from __future__ import annotations
 
 import html
+import logging
 
 import numpy as np
 import pandas as pd
@@ -61,6 +62,7 @@ from views.empresas_b3 import (
     _aplicar_cheapness,
     _apply_cap_soft,
     _apply_decay_penalty,
+    _avisar_fonte_precos,
     _batch_yf_precos_mensais,
     _compute_score_entrada,
     _div_mes_sanitizado,
@@ -81,6 +83,8 @@ from views.empresas_b3 import (
     _yf_trailing12m_divs,
 )
 from views.portfolio_b3_safras import render_safras
+
+logger = logging.getLogger(__name__)
 
 _MIN_MARKET_CAP_COVERAGE = 0.80
 _MIN_ADTV_COVERAGE = 0.70
@@ -3289,6 +3293,7 @@ def render(show_header: bool = True) -> None:
 
         with st.spinner("Carregando preços mensais ajustados…"):
             df_precos_all = _batch_yf_precos_mensais(all_tickers, period="10y")
+            _avisar_fonte_precos(df_precos_all, "a seleção histórica")
             if _saidas_eleg and not df_precos_all.empty:
                 _p_s = _saidas.precos_mensais(_doc_saidas)
                 _p_s = _p_s[[c for c in _p_s.columns
@@ -4045,10 +4050,21 @@ def render(show_header: bool = True) -> None:
         try:
             _giro = _db.load_giro_diario()
             _irmas = _db.load_classes_irmas()
-        except Exception:                             # dado ausente não decide
+        except Exception:  # noqa: BLE001 - dado ausente não decide, mas é nomeado
+            logger.exception("Giro diário/classes irmãs indisponíveis; piso de "
+                             "negociabilidade não aplicado")
             _giro, _irmas = {}, {}
 
-        if _giro and _irmas:
+        if not (_giro and _irmas):
+            # INF-M4: dado ausente não decide — mas a carteira sai sem o piso,
+            # e antes isso era indistinguível de "nenhuma troca necessária".
+            liq_avisos.append(
+                "Piso de negociabilidade **não aplicado**: "
+                + ("giro diário" if not _giro else "classes irmãs")
+                + " indisponível. Ordinárias pouco negociadas não foram "
+                "trocadas pela classe irmã."
+            )
+        else:
             _candidatas = sorted({
                 t for tk in (str(i["tk"]).upper() for i in proximos_uniq)
                 for t in _irmas.get(tk, (tk,))
@@ -4785,6 +4801,7 @@ def render(show_header: bool = True) -> None:
     if proximos_uniq:
         tks_prox = tuple(sorted({p["tk"] for p in proximos_uniq}))
         df_prec_prox = _batch_yf_precos_mensais(tks_prox, period="1y")
+        _avisar_fonte_precos(df_prec_prox, "a simulação do ano vigente")
 
         if not df_prec_prox.empty:
             df_ano = df_prec_prox[
