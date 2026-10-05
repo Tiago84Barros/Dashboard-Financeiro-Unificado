@@ -154,6 +154,12 @@ def _limpar(mr) -> None:
         mr._load_fii_methodology_inputs_cached.clear()
     except Exception:
         pass
+    # ``fontes_fundamentos.ler_fii`` guarda a linha de cada fundo lida dali.
+    try:
+        from core.inteligencia_ativos import fontes_fundamentos as ff
+        ff._linha_fii_cache.clear()
+    except Exception:
+        pass
 
 
 # ── libpq nao passa pelo socket do Python ────────────────────────────────────
