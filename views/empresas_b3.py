@@ -1731,6 +1731,19 @@ SCORE_VERSION_CHANGELOG = {
         "(core.b3_safras.selic_sem_futuro). Muda o universo de cada safra: a "
         "medicao OOS e desta versao."
     ),
+    "2.32.0": (
+        "Auditoria app4, sobras do look-ahead da aba B3. (1) A carteira de "
+        "hoje passa a aplicar a mesma penalidade de decaimento por anos de "
+        "lideranca que a reconstrucao aplica: antes a evidencia (Rank-IC, "
+        "safras, OOS) media uma regra que a tela nao entregava. (2) A medicao "
+        "OOS da carteira passa a aplicar o piso de qualidade (nos perfis que o "
+        "ligam) e o Score de Entrada com o retrato da propria safra -- "
+        "multiplos e serie de PL ate N-1, pela mesma regra de vintage do score "
+        "(core.b3_retrato_pit). O portao da Inteligencia dos Ativos e o "
+        "parecer de LLM leem o dossie de hoje e seguem cobertos so pela banda "
+        "das variantes. Muda a carteira atual e a medicao OOS: ambas sao "
+        "desta versao."
+    ),
 }
 
 

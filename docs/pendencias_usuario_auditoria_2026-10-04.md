@@ -173,8 +173,11 @@ bloqueio, reprovaria as validações 88 a 90 — #494.
   volume e o tamanho da época, e o Pesos Iguais passa a ter quem encolheu.
   A Selic de ano sem dado repete o último valor, sem a média com o futuro.
   O spread do ROIC só entra na decisão de hoje, então não é look-ahead.
-  **Sobra:** o piso de qualidade, o portão da LLM e a guarda de entrada
-  leem hoje; e a regra de decaimento da carteira histórica difere da atual.
+  **Sobra — corrigida na 2.32.0 (medição oos-carteira-2.3.0):** o piso de
+  qualidade e o Score de Entrada passam a ler o retrato da safra
+  (`core/b3_retrato_pit.py`), e o `score_proximo` de hoje leva o mesmo
+  decaimento da carteira histórica. O portão da LLM já era medido na data da
+  safra desde o #524.
 - **Rank-IC do score B3 deixou de ser significativo na 2.31.0:** com o
   universo honesto, a média caiu de 0,0765 para 0,0657 e o IC 95% foi de
   [0,020; 0,130] para [−0,016; 0,142] (n de pares 1190 → 1449). O Grau de
@@ -183,12 +186,14 @@ bloqueio, reprovaria as validações 88 a 90 — #494.
 - **Vantagem líquida da B3 (medida antes da 2.31.0):** some contra a carteira
   de peso igual (+2,00 para +0,09 p.p.). Contra a Selic, cai de +12,64 para
   +10,73 p.p.
-- **OOS por perfil (2.31.0, universo da época):** Equilibrado caiu de +4,2
-  para −2,5 p.p. por safra, IC [−9,7; +4,3], 7 de 9 safras negativas;
-  Conservador de +1,8 para +0,2 p.p., IC [−8,0; +7,8]. O Pesos Iguais agora
-  inclui quem encolheu, e a vantagem anterior era em parte esse viés. Amplo
-  segue +10,1 p.p., IC [+1,4; +23,2], carregado por 2017; ele não tem piso,
-  então a correção não o altera.
+- **OOS por perfil (2.32.0, piso e guarda da safra):** Equilibrado foi de
+  −1,7 para −4,3 p.p. por safra, IC [−21,1; +8,0], 5 de 9 safras negativas
+  (−7,8 p.p. sem 2021). Conservador foi de +0,5 para +2,5 p.p., IC
+  [−5,0; +12,0]. Amplo, sem piso, foi de +10,1 para +11,2 p.p., IC
+  [+2,0; +22,5]; só a guarda da safra o altera. Nenhum perfil com piso
+  distingue a carteira de dividir igualmente. O piso lido na safra reprova
+  21 nomes no Equilibrado (10 substituídos, 4 vagas perdidas); antes ele
+  julgava o passado com os balanços de hoje.
 - **Golden set do portão da LLM:** tem só 5 casos.
 
 **Dados**
