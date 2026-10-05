@@ -353,3 +353,24 @@ def test_render_passa_o_mesmo_bl_ao_motor_e_ao_chat():
     assert src.index("_painel_black_litterman(") < src.index("_painel_recomendacoes(")
     assert "macro=macro, bl=bl)" in src
     assert "bl.para_llm()" in inspect.getsource(v._painel_chat)
+
+
+def test_explicacao_de_hoje_sai_das_confiancas_vigentes():
+    """GLB-N1: o texto fixo dizia B3 c = 37,5% quando o cálculo já dava 1%."""
+    texto = bl.explicacao_numeros_de_hoje(_motores())
+    assert "Empresas B3 → c = 37,5%" in texto and "EUA → c = 25,0%" in texto
+    assert "FIIs → c = 1,0%" in texto
+    assert "Exemplo: um ativo de Empresas B3" in texto  # maior confiança efetiva
+
+    b3_cruza_zero = bl.confianca_dos_motores(
+        carregar=lambda m: {"b3": dict(MED_B3, ic_low=-0.016), "us": MED_US}.get(m),
+        versao=lambda m: VERSOES[m])
+    texto = bl.explicacao_numeros_de_hoje(b3_cruza_zero)
+    assert "Empresas B3 → c = 1,0%" in texto and "37,5" not in texto
+    assert "Exemplo: um ativo de EUA" in texto
+
+
+def test_explicacao_sem_motor_efetivo_nao_inventa_exemplo():
+    nada = bl.confianca_dos_motores(carregar=lambda m: None, versao=lambda m: "x")
+    texto = bl.explicacao_numeros_de_hoje(nada)
+    assert "Exemplo" not in texto and "praticamente na meta" in texto
