@@ -188,6 +188,8 @@ _DASHBOARD_STYLES = """
     margin: 0 0 1.4rem;
 }
 .dg-kpi {
+    display: flex;
+    flex-direction: column;
     position: relative;
     min-width: 0;
     padding: 1rem 1.05rem 1.05rem;
@@ -207,15 +209,22 @@ _DASHBOARD_STYLES = """
 }
 .dg-kpi-top {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: space-between;
     gap: .6rem;
 }
 .dg-kpi-label {
+    /* Duas linhas reservadas: o rotulo mais longo ocupa duas e os curtos
+       ocupam uma. Sem a reserva, o valor de cada card comecava numa altura
+       diferente e a linha dos cinco numeros saia torta. */
+    display: flex;
+    align-items: center;
+    min-height: 2.34em;
     color: var(--dg-muted);
-    font-size: .67rem;
+    font-size: .66rem;
     font-weight: 760;
-    letter-spacing: .085em;
+    letter-spacing: .07em;
+    line-height: 1.17;
     text-transform: uppercase;
 }
 .dg-kpi-icon {
@@ -231,13 +240,18 @@ _DASHBOARD_STYLES = """
     font-size: .82rem;
 }
 .dg-kpi-value {
-    overflow-wrap: anywhere;
+    /* `anywhere` partia "R$ 407.444,96" no meio dos digitos, e meio numero
+       lido como numero inteiro e pior que numero em duas linhas. A quebra
+       so pode cair no espaco; a fonte menor faz caber sem quebrar. */
+    overflow-wrap: normal;
+    word-break: keep-all;
     color: var(--dg-text);
-    font-size: clamp(1.25rem, 2vw, 1.7rem);
+    font-size: clamp(1.1rem, 1.55vw, 1.42rem);
+    font-variant-numeric: tabular-nums;
     font-weight: 820;
-    letter-spacing: -.035em;
-    line-height: 1.08;
-    margin-top: .7rem;
+    letter-spacing: -.03em;
+    line-height: 1.12;
+    margin-top: .55rem;
 }
 .dg-kpi-detail {
     color: var(--dg-subtle);

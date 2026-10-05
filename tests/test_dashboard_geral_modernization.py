@@ -1,5 +1,6 @@
 import contextlib
 import inspect
+import re
 from datetime import date, datetime
 from pathlib import Path
 
@@ -316,3 +317,33 @@ def test_kpi_grid_proventos_indisponiveis_nao_viram_zero(monkeypatch):
 def test_render_entrega_o_portfolio_da_visao_geral_ao_grid():
     corpo = inspect.getsource(dashboard.render)
     assert 'd.get("portfolio")' in corpo
+
+
+def _bloco_css(seletor: str) -> str:
+    """Devolve o corpo da regra CSS de ``seletor`` nos estilos do dashboard."""
+    estilos = re.sub(r"/\*.*?\*/", "", dashboard._DASHBOARD_STYLES, flags=re.S)
+    inicio = estilos.index(seletor + " {")
+    return estilos[inicio:estilos.index("}", inicio)]
+
+
+def test_o_valor_do_kpi_nunca_parte_no_meio_dos_digitos():
+    """Meio número lido como número inteiro é pior que número em duas linhas.
+
+    ``overflow-wrap: anywhere`` partia "R$ 407.444,96" entre os dígitos: a
+    primeira linha sozinha ("R$ 407.44") é um valor plausível e errado. A
+    quebra só pode cair no espaço, e por isso ``word-break: keep-all``.
+    """
+    regra = _bloco_css(".dg-kpi-value")
+    assert "anywhere" not in regra
+    assert "word-break: keep-all" in regra
+    assert "overflow-wrap: normal" in regra
+
+
+def test_o_rotulo_do_kpi_reserva_as_duas_linhas():
+    """Sem a reserva, cada card começava o valor numa altura diferente.
+
+    Os rótulos têm 1 ou 2 linhas ("Taxa de poupança" x "Rentabilidade da
+    carteira"); sem altura mínima, a linha dos cinco números saía torta.
+    """
+    regra = _bloco_css(".dg-kpi-label")
+    assert "min-height:" in regra
