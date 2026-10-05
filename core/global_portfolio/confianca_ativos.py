@@ -70,14 +70,34 @@ def _b3(engine, alvo: dict[str, str]) -> dict[str, float]:
 
 
 def _us(engine, alvo: dict[str, str]) -> dict[str, float]:
+    # `is_active IS FALSE` e a vitrine dizendo que a empresa saiu do universo:
+    # deixou de negociar (isActivelyTrading) ou sumiu do snapshot e a publicacao
+    # a preservou como 'stale'. A linha continua com score_confidence, e ate
+    # 05/10/2026 ela era lida como se a empresa seguisse em analise.
+    #
+    # Inativa vale 0, nao "sem entrada". Omitir seria o caminho obvio e o
+    # errado: ativo sem entrada entra com peso PLENO (regra de
+    # `sinais_qualidade`), e a empresa que parou de negociar ganharia mais
+    # conviccao do que tinha com a nota velha. Zero leva o sinal de qualidade a
+    # neutro sem inverter o lado -- a vitrine nao avaliza mais esse dado.
     from sqlalchemy import text
     with engine.connect() as conn:
         linhas = conn.execute(text("""
-            SELECT symbol, score_confidence FROM market_us.company_snapshots
-            WHERE score_confidence IS NOT NULL AND symbol = ANY(:s)
+            SELECT symbol, score_confidence, is_active
+            FROM market_us.company_snapshots
+            WHERE symbol = ANY(:s)
+              AND (score_confidence IS NOT NULL OR is_active IS FALSE)
         """), {"s": list(alvo)}).fetchall()
-    return {alvo[s.upper()]: v for s, bruto in linhas
-            if s.upper() in alvo and (v := _ancorar(bruto, "us")) is not None}
+    fora: dict[str, float] = {}
+    for s, bruto, ativo in linhas:
+        chave = alvo.get(s.upper())
+        if chave is None:
+            continue
+        if ativo is False:
+            fora[chave] = 0.0
+        elif (v := _ancorar(bruto, "us")) is not None:
+            fora[chave] = v
+    return fora
 
 
 def _fii(engine, alvo: dict[str, str]) -> dict[str, float]:

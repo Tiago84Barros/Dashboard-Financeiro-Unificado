@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 
 import core.global_portfolio.confianca_ativos as ca
 from core.global_portfolio import signals
@@ -85,3 +86,49 @@ def test_sufixo_sa_e_resolvido_de_volta_ao_symbol_da_carteira(monkeypatch):
     df = _pos(("PETR4.SA", "b3", "score", 70.0))
     assert ca.confianca_por_ativo(df, engine=object()) == {"PETR4.SA": 90.0}
     assert visto == {"PETR4": "PETR4.SA"}
+
+
+class _EngineFalso:
+    """Devolve as linhas dadas a qualquer consulta; guarda o SQL executado."""
+
+    def __init__(self, linhas):
+        self.linhas, self.sql = linhas, []
+
+    def connect(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def execute(self, sql, params=None):
+        self.sql.append(str(sql))
+        return self
+
+    def fetchall(self):
+        return self.linhas
+
+
+def test_eua_inativa_zera_a_confianca_em_vez_de_sumir():
+    """Empresa que saiu do universo (is_active FALSE) ainda tem score_confidence
+    na vitrine. Omiti-la daria peso PLENO -- mais conviccao do que a nota velha.
+    Tem de entrar com 0, que leva o sinal a neutro."""
+    eng = _EngineFalso([("AAPL", 81.1, True), ("ZOMB", 70.0, False), ("STAL", None, False)])
+    alvo = {"AAPL": "AAPL", "ZOMB": "ZOMB", "STAL": "STAL"}
+    assert ca._us(eng, alvo) == {"AAPL": 100.0, "ZOMB": 0.0, "STAL": 0.0}
+    assert "is_active" in eng.sql[0]
+
+
+def test_eua_is_active_nulo_segue_como_ativa():
+    """Linha anterior a coluna (NULL) nao e evidencia de saida."""
+    eng = _EngineFalso([("MSFT", 40.55, None)])
+    assert ca._us(eng, {"MSFT": "MSFT"}) == {"MSFT": pytest.approx(50.0)}
+
+
+def test_inativa_com_zero_neutraliza_o_sinal_sem_inverter():
+    df = _pos(("ZOMB", "us", "entry_score", 95.0), ("AAPL", "us", "entry_score", 20.0))
+    sinais = {s.symbol: s for s in signals.sinais_qualidade(df, confianca={"ZOMB": 0.0})}
+    assert sinais["ZOMB"].valor == 0.0
+    assert sinais["AAPL"].valor != 0.0
