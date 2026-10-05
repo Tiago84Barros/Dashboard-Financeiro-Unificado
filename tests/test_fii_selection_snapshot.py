@@ -312,3 +312,24 @@ def test_payload_hash_survives_jsonb_numeric_normalization(value):
 
     assert stored["total_return_trend"] == value
     assert _snapshot_payload_digest(stored) == rows[0]["payload_sha256"]
+
+
+def test_validacao_reprovada_publica_o_selo_bloqueado():
+    """FII-N1: abortar deixava o 'passed' antigo na tela."""
+    from scripts.publish_fii_selection_snapshot import _publica_selo_bloqueado
+
+    reprovada = {"status": "blocked", "metrics_json": {}, "blockers_json": ["x"]}
+    blockers = _publication_preflight(
+        validation=reprovada, lookthrough={"required_ready": True}, row_count=394)
+    assert _publica_selo_bloqueado(reprovada, blockers)
+
+    # dado ruim continua abortando, com ou sem validação reprovada
+    ruim = _publication_preflight(
+        validation=reprovada, lookthrough={"required_ready": False}, row_count=394)
+    assert not _publica_selo_bloqueado(reprovada, ruim)
+    assert not _publica_selo_bloqueado(None, ["validação PIT local não aprovada"])
+    # 'passed' de outro otimizador não é selo honesto
+    outro = {"status": "passed", "metrics_json": {"strategy_id": "legacy",
+             "backtest": {"periods": 99}}, "blockers_json": []}
+    assert not _publica_selo_bloqueado(outro, _publication_preflight(
+        validation=outro, lookthrough={"required_ready": True}, row_count=394))

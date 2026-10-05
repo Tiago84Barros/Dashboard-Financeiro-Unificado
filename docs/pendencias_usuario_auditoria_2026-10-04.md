@@ -129,7 +129,10 @@ look-through. A fração viável é de 86,1%, contra um piso de 95%.
 
 As opções:
 
-- (a) aceitar: a vitrine continua mostrando o selo bloqueado;
+- (a) aceitar: a tela passa a mostrar a validação bloqueada. Até 04/10 isso
+  não acontecia: o publicador abortava, e o Supabase seguia com o run 84
+  "aprovado" (70 meses, +0,136 p.p./mês). Depois do PR do FII-N1, a
+  próxima publicação leva o run 94 `blocked` para a tela;
 - (b) dispensar a dimensão obrigatória nos meses anteriores à existência do
   dado;
 - (c) começar a validação em 2024.
