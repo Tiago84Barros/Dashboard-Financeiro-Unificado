@@ -202,3 +202,52 @@ def test_segmento_sem_compravel_hoje_nem_reconstroi(monkeypatch):
         0.1, {}, {}, 1000.0, 2020, 1.0, 0.5, 0.0, fora_hoje={"AAAA3"},
     )
     assert res is None and not chamado
+
+
+def test_score_de_hoje_tem_o_mesmo_decaimento_da_reconstrucao(monkeypatch):
+    """Sobra do look-ahead (2.32.0): a reconstrução penaliza liderança longa e
+    o score da carteira de hoje não penalizava -- a evidência media uma regra
+    que a tela não entregava."""
+    import numpy as np
+
+    import views.portfolio_b3 as portfolio
+
+    real = portfolio._apply_decay_penalty
+    chamadas = []
+
+    def espiao(score_map, anos_lideranca, *a, **k):
+        saida = real(score_map, anos_lideranca, *a, **k)
+        chamadas.append((dict(score_map), dict(anos_lideranca), saida))
+        return saida
+
+    monkeypatch.setattr(portfolio, "_apply_decay_penalty", espiao)
+    hoje = pd.Timestamp.now()
+    tks = ["AAAA3", "BBBB3", "CCCC3", "DDDD3"]
+    idx = pd.date_range("2016-01-31", periods=(hoje.year - 2016) * 12, freq="ME")
+    precos = pd.DataFrame({
+        tk: 100.0 * np.cumprod(np.full(len(idx), 1.004 + i * 0.001))
+        for i, tk in enumerate(tks)
+    }, index=idx)
+    res = portfolio._processar_segmento(
+        tks, _hist_seg(tks, range(2012, hoje.year)), precos, "S", "SS", "SEG",
+        taxa_selic_aa=0.0, selic_macro={}, macro_history={}, aporte=1000.0,
+        ano_inicio=2018, gamma=1.0, cap=1.0, soft=0.0,
+    )
+    assert res is not None
+    anos_hist = sorted(res["lids_por_ano"])
+    assert len(chamadas) == len(anos_hist) + 1  # um por safra + o de hoje
+    bruto, anos, saida = chamadas[-1]
+    assert res["score_proximo"] == saida
+    # a sequência que chega ao score de hoje é a que termina em ano_atual-1
+    ultimo = anos_hist[-1]
+    esperado = {}
+    for tk in res["lids_por_ano"][ultimo]:
+        n, a = 0, ultimo
+        while a in res["lids_por_ano"] and tk in res["lids_por_ano"][a]:
+            n, a = n + 1, a - 1
+        esperado[tk] = n
+    assert anos == esperado
+    # e a penalidade de fato morde quem lidera há anos
+    lider = max(esperado, key=esperado.get)
+    assert esperado[lider] >= 1
+    assert res["score_proximo"][lider] < bruto[lider]

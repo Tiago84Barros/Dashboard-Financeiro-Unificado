@@ -427,3 +427,109 @@ def test_tela_le_a_medicao_e_diz_quando_cruza_o_zero(tmp_path, monkeypatch):
     assert not at.exception
     avisos = " ".join(w.value for w in at.warning)
     assert "VENCIDA" in avisos and "NÃO distingue" in avisos
+
+
+# ── piso de qualidade e Score de Entrada da safra (2.32.0) ──────────────────
+
+def _empresa(ticker, **kw):
+    base = {
+        "Ticker": ticker, "Payout": 0.40, "DY": 0.06, "ROIC": 0.20,
+        "Endividamento_Total": 0.50, "Liquidez_Corrente": 1.80,
+        "Margem_Operacional": 0.20, "P_FCO": 8.0,
+    }
+    base.update(kw)
+    return base
+
+
+def _so_c(tk):
+    return tk == "CCCC3"
+
+
+def test_substituto_do_veto_pula_quem_a_guarda_da_safra_exclui():
+    segs = [_seg("S", ["AAAA3", "BBBB3"], {"AAAA3": 0.6, "BBBB3": 0.4},
+                 ["AAAA3", "BBBB3", "CCCC3", "DDDD3"])]
+    assert oos.substituto_no_segmento(segs[0][1], segs[0][3], _so_c) == "DDDD3"
+    itens, trocas = oos.vetar_na_carteira(segs, "AAAA3", _so_c)
+    assert itens[0][1] == ["BBBB3", "DDDD3"] and itens[0][2]["DDDD3"] == 0.6
+    assert trocas[0]["entra"] == "DDDD3"
+    assert oos.tickers_da_banda(segs, _so_c) == ["AAAA3", "BBBB3", "DDDD3"]
+
+
+def test_montagem_tira_quem_a_guarda_exclui_sem_substituir():
+    itens = [("S1", ["AAAA3", "CCCC3"], {"AAAA3": 0.5, "CCCC3": 0.5}),
+             ("S2", ["BBBB3"], {"BBBB3": 1.0})]
+    cart = oos.montar_carteira(itens, **TETOS, exclui=_so_c)
+    assert "CCCC3" not in cart["pesos"]
+    assert sum(cart["pesos"].values()) == pytest.approx(1.0)
+    sem = oos.montar_carteira(itens, **TETOS)
+    assert sem["pesos"]["CCCC3"] > 0
+
+
+def test_banda_e_sem_portao_leem_a_mesma_guarda():
+    segs = [_seg("S1", ["AAAA3"], {"AAAA3": 1.0}, ["AAAA3", "CCCC3", "DDDD3"]),
+            _seg("S2", ["BBBB3"], {"BBBB3": 1.0}, ["BBBB3", "EEEE3"])]
+    rets = {"AAAA3": 0.50, "BBBB3": 0.0, "CCCC3": 0.90, "DDDD3": -0.10, "EEEE3": 0.0}
+    adv = oos.escolher_veto(segs, rets, veta="melhor", **TETOS, exclui=_so_c)
+    fav = oos.escolher_veto(segs, rets, veta="pior", **TETOS, exclui=_so_c)
+    # sem a guarda, vetar AAAA3 poria CCCC3 (+90%) no lugar; com ela, entra DDDD3
+    assert adv["vetado"] == "AAAA3" and "CCCC3" not in adv["carteira"]["pesos"]
+    assert adv["bruto"] == pytest.approx(0.5 * -0.10)
+    assert adv["bruto"] <= 0.5 * 0.50 <= fav["bruto"]
+
+
+def test_portao_medido_pula_excluido_sem_gastar_avaliacao():
+    segs = [_seg("S", ["AAAA3"], {"AAAA3": 1.0},
+                 ["AAAA3", "CCCC3", "DDDD3", "EEEE3"])]
+    pareceres = {"AAAA3": "vetar", "DDDD3": "vetar", "EEEE3": "aprovar"}
+    chamados: list[str] = []
+
+    def avaliar(tk):
+        chamados.append(tk)
+        return pareceres.get(tk, "aprovar")
+
+    itens, log = oos.aplicar_portao_medido(segs, avaliar, max_substitutos=2,
+                                           exclui=_so_c)
+    # CCCC3 nem é avaliado; DDDD3 (vetado) e EEEE3 são as duas avaliações
+    assert "CCCC3" not in chamados
+    assert itens[0][1] == ["EEEE3"] and itens[0][2]["EEEE3"] == 1.0
+    assert log["trocas"] == [{"sai": "AAAA3", "entra": "EEEE3", "setor": "S"}]
+
+
+def test_piso_desligado_nao_mexe_na_selecao():
+    df = pd.DataFrame([_empresa("AAAA3", FCO_Negativo=1.0, P_FCO=float("nan")),
+                       _empresa("BBBB3"), _empresa("CCCC3")])
+    pesos = {"AAAA3": 0.5, "BBBB3": 0.5}
+    finais = oos.aplicar_piso(
+        ["AAAA3", "BBBB3", "CCCC3"], [("AAAA3", 3.0), ("BBBB3", 2.0), ("CCCC3", 1.0)],
+        pesos, df_decisao=df, piso_ativo=False, seg_label="S > SEG", selic=0.10)
+    # o nome sem peso segue: a banda pode vetá-lo antes de a montagem descartá-lo
+    assert finais == ["AAAA3", "BBBB3", "CCCC3"]
+
+
+def test_piso_ligado_reprova_com_o_retrato_da_safra_e_substitui_no_segmento():
+    df = pd.DataFrame([_empresa("AAAA3", FCO_Negativo=1.0, P_FCO=float("nan")),
+                       _empresa("BBBB3"), _empresa("CCCC3")])
+    pesos = {"AAAA3": 0.6, "BBBB3": 0.4}
+    log: dict = {}
+    finais = oos.aplicar_piso(
+        ["AAAA3", "BBBB3"], [("AAAA3", 3.0), ("BBBB3", 2.0), ("CCCC3", 1.0)],
+        pesos, df_decisao=df, piso_ativo=True, seg_label="S > SEG", selic=0.10,
+        log=log)
+    assert "AAAA3" not in finais and set(finais) == {"BBBB3", "CCCC3"}
+    assert pesos["CCCC3"] == pytest.approx(0.6)
+    assert len(log["reprovados"]) == 1 and len(log["substituicoes"]) == 1
+
+
+def test_substituto_do_piso_que_a_guarda_exclui_sai_na_montagem_sem_nova_troca():
+    """Ordem da tela: o piso troca primeiro; a guarda depois só remove."""
+    df = pd.DataFrame([_empresa("AAAA3", Patrimonio_Negativo=1.0,
+                                Endividamento_Total=float("nan")),
+                       _empresa("BBBB3"), _empresa("CCCC3"), _empresa("DDDD3")])
+    pesos = {"AAAA3": 0.6, "BBBB3": 0.4}
+    sel = oos.aplicar_piso(
+        ["AAAA3", "BBBB3"],
+        [("AAAA3", 3.0), ("BBBB3", 2.0), ("CCCC3", 1.0), ("DDDD3", 0.5)],
+        pesos, df_decisao=df, piso_ativo=True, seg_label="S > SEG", selic=0.10)
+    assert set(sel) == {"BBBB3", "CCCC3"}
+    cart = oos.montar_carteira([("S", sel, pesos)], **TETOS, exclui=_so_c)
+    assert list(cart["pesos"]) == ["BBBB3"]

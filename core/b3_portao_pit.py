@@ -738,12 +738,15 @@ class AvaliadorPortaoPIT:
         return FALHOU if self.chave(tk, safra) in self.falhas else PENDENTE
 
     # -- portão -----------------------------------------------------------
-    def portao(self, segmentos, safra):
+    def portao(self, segmentos, safra, exclui=None):
+        """``exclui``: o Score de Entrada da safra -- o substituto que ele
+        barra é pulado sem parecer, como na tela."""
         from core.b3_oos_carteira import aplicar_portao_medido
-        return aplicar_portao_medido(segmentos, lambda tk: self.classificacao(tk, safra))
+        return aplicar_portao_medido(segmentos, lambda tk: self.classificacao(tk, safra),
+                                     exclui=exclui)
 
-    def __call__(self, segmentos, safra):
-        return self.portao(segmentos, safra)
+    def __call__(self, segmentos, safra, exclui=None):
+        return self.portao(segmentos, safra, exclui)
 
     def preparar(self, por_safra) -> None:
         """Ondas: aplica o portão com o que já se sabe, busca os pares que
@@ -765,7 +768,7 @@ class AvaliadorPortaoPIT:
                     if cls == PENDENTE:
                         faltam.add((tk, safra))
                     return cls
-                aplicar_portao_medido(p["segmentos"], _av)
+                aplicar_portao_medido(p["segmentos"], _av, exclui=p.get("exclui"))
             if not faltam:
                 break
             onda += 1

@@ -1225,6 +1225,13 @@ def _processar_segmento(
     # A carteira do próximo ano sai deste score: degradado aqui, a decisão
     # corrente não segue a metodologia declarada.
     decisao_sem_resiliencia = _mapa_sem_resiliencia(score_proximo)
+    # Mesma regra de decaimento da reconstrução (2.32.0): a sequência de
+    # liderança que chega aqui é a de ano_atual-1, a mesma que o laço usaria
+    # para decidir ano_atual. Antes a carteira de hoje saía sem a penalidade
+    # e a evidência (Rank-IC, safras, OOS) media uma regra que a tela não
+    # aplicava. Lido DEPOIS da marca de resiliência: o decaimento devolve
+    # dict puro.
+    score_proximo = _apply_decay_penalty(score_proximo, anos_lideranca)
 
     # Líderes para próximo ano
     # Ordenação TOTAL (score desc, ticker asc): empate não pode ser resolvido
@@ -3538,6 +3545,13 @@ def render(show_header: bool = True) -> None:
         st.session_state["pb3_hist_audit"]      = hist_audit
         st.session_state["pb3_entry_guard"]     = entry_guard
         st.session_state["pb3_entry_guard_df"]  = df_entry_guard
+        # Classificação e contagem de exercícios de TODA a reconstrução
+        # (vivas e saídas). A tela só usa as de hoje; a medição fora da
+        # amostra (scripts/medir_oos_carteira_b3.py) refaz com elas o Score
+        # de Entrada de cada safra passada, agrupado pelo segmento real.
+        st.session_state["pb3_classificacao_hist"] = df_set[
+            ["ticker", "SETOR", "SUBSETOR", "SEGMENTO"]].copy()
+        st.session_state["pb3_anos_hist_rec"] = dict(anos_hist_rec)
         # Evidencia persistida: a tela continua funcional se o banco estiver
         # indisponivel, mas cada execucao que puder ser gravada recebe manifesto,
         # parametros, versoes e qualidade PIT explicitamente declarada.
