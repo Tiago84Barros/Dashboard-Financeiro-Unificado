@@ -1594,13 +1594,10 @@ def _painel_black_litterman(df: pd.DataFrame, ret: pd.DataFrame, alvos: dict,
             "**Confiança (Idzorek):** c = 0,5 × min(IC/0,10, 1); metade se o "
             "portão de excesso reprovou; 1% sem medição, com versão divergente "
             "ou IC não significativo. Ω = (1/c − 1)·τ·σ², de modo que μ anda a "
-            "fração c do caminho até Q.\n\n"
-            "**Números de hoje:** B3 IC 0,075 (IC95% acima de zero, versão "
-            "2.28.0) → c = 37,5%; EUA IC de postos 0,107 (t = 3,96), excesso "
-            "reprovado → c = 25%; FII sem medição de IC → c = 1% (a view usa "
-            "IC 0,05 só para ter direção). Exemplo: um ativo B3 com σ = 30% a.a. "
-            "no topo de 10 (z = +1,64) recebe α = 0,075 × 0,30 × 1,64 ≈ 3,7 pp "
-            "a.a., e μ anda 37,5% disso ≈ 1,4 pp acima de π."
+            "fração c do caminho até Q. Motor sem medição usa IC 0,05 só para "
+            "a view ter direção.\n\n"
+            # Gerado das confianças vigentes: o texto fixo envelheceu (GLB-N1).
+            + alocacao_bl.explicacao_numeros_de_hoje(res.motores)
         )
     _benchmark_bl(res, ret, alvos, renda_fixa)
     return res
