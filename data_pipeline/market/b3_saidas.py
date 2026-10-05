@@ -22,8 +22,19 @@ Convenções declaradas (e herdadas pelas limitações do JSON):
   - Ações em circulação por ano = lucro dos controladores / LPA básico. O LPA
     vem com duas casas; abaixo de |0,05| o erro de arredondamento passa de 10%
     e o ano herda a estimativa do vizinho válido mais próximo.
+  - LPA informado por LOTE DE MIL ações (DFPs antigas de algumas companhias)
+    dá ações mil vezes menores; o ano que fica ~3 décadas abaixo da mediana
+    das próprias estimativas é multiplicado por mil (corrigir_lote_de_mil).
   - Desdobramento/grupamento: detectado no salto do preço bruto e confirmado
-    pela variação das ações estimadas entre as DFPs vizinhas.
+    pela variação das ações estimadas entre as DFPs vizinhas. A marcação
+    "ex" que a B3 imprime na especificação do papel (EG grupamento, EB
+    bonificação/desdobramento) basta para aceitar o evento sem DFP — inclusive
+    a bonificação de 20%, que mexe no preço menos que a faixa de candidatos.
+  - Restituição de capital (ER) e cisão (EC) NÃO são desdobramento: o valor
+    saiu para o acionista. Entram no retorno total como distribuição
+    reinvestida no fechamento do dia ex, medida pela queda do preço contra o
+    fechamento anterior (na mesma unidade). Sem a marcação da B3 não há como
+    separar distribuição de perda, e a queda fica como observada.
   - Dividendos: o total pago no ano (DFC) dividido pelas ações do ano, lançado
     em quatro parcelas trimestrais. Dividendo do ano da saída não é capturado.
 """
@@ -31,6 +42,7 @@ from __future__ import annotations
 
 import io
 import math
+import re
 import zipfile
 from dataclasses import dataclass, field
 
@@ -39,7 +51,13 @@ import pandas as pd
 from data_pipeline.market.metrics import compute_snapshot
 
 # Fatores "redondos" de desdobramento/grupamento praticados na B3.
-FATORES_REDONDOS = (2, 3, 4, 5, 6, 8, 10, 20, 25, 50, 100, 200, 1000)
+FATORES_REDONDOS = (2, 3, 4, 5, 6, 8, 10, 20, 25, 30, 40, 50, 100, 200, 1000)
+# Bonificações (ações novas por antiga) quando a B3 marca EB. Até 50%: acima disso o
+# salto se confunde com o desdobramento 1:2 (BRML3 2010 caiu a 0,507 e virava 1,95).
+BONIFICACOES = tuple(round(1.0 + 0.05 * i, 2) for i in range(1, 11))
+TOL_MARCADOR = 0.10      # distância máxima entre o salto do preço e o fator marcado
+QUEDA_MINIMA = 0.03      # queda no dia ex abaixo disso não separa distribuição de ruído
+LOTE_DE_MIL = (-2.5, 1.5)  # décadas abaixo da mediana / tolerância após ×1000
 _ESCALA = {"MIL": 1000.0, "UNIDADE": 1.0}
 LPA_MINIMO = 0.05
 
@@ -226,6 +244,27 @@ def fundamentos(dem: DemonstracaoAnual, classe: str = "3") -> dict:
 # --------------------------------------------------------------------------
 # Ações em circulação e eventos de capital
 # --------------------------------------------------------------------------
+def corrigir_lote_de_mil(acoes: dict[int, float]) -> tuple[dict[int, float], list[int]]:
+    """Desfaz o LPA informado por lote de mil ações.
+
+    A ENBR3 reportou o LPA de 2010–2011 em R$ por mil ações: lucro/LPA dava
+    6 milhões de ações em vez de 6 bilhões e o DPS saía mil vezes maior — o
+    índice de retorno total multiplicava por 17 a cada trimestre. Um ano a
+    2,5 décadas ou mais abaixo da mediana, que volta para perto dela (±1,5
+    década) quando multiplicado por mil, é corrigido. Uma queda de 100× (um
+    grupamento 100:1 de verdade) fica a 2 décadas e não é tocada.
+    """
+    if len(acoes) < 3:
+        return dict(acoes), []
+    med = float(pd.Series(list(acoes.values())).median())
+    out, anos = dict(acoes), []
+    for ano, n in sorted(acoes.items()):
+        if math.log10(n / med) <= LOTE_DE_MIL[0] and abs(math.log10(n * 1000 / med)) <= LOTE_DE_MIL[1]:
+            out[ano] = n * 1000
+            anos.append(ano)
+    return out, anos
+
+
 def acoes_estimadas(fund_por_ano: dict[int, dict]) -> dict[int, float]:
     """Ações por ano = lucro/LPA, na unidade vigente na data da DFP do ano.
 
@@ -250,15 +289,56 @@ def _fator_redondo(k: float, tol: float) -> float | None:
     return None
 
 
+_MARCA_EX = re.compile(r"^\*?E([A-Z]{1,3})$")
+
+
+def marcador_b3(especificacao: str | None) -> str:
+    """Letras da marcação "ex" na especificação do COTAHIST ("ON  ERC NM" -> "RC").
+
+    D dividendo, J juros sobre capital, S subscrição, B bonificação ou
+    desdobramento, G grupamento, R restituição de capital, C cisão.
+    """
+    if not especificacao:
+        return ""
+    for tok in str(especificacao).split():
+        m = _MARCA_EX.match(tok)
+        if m:
+            return m.group(1)
+    return ""
+
+
 @dataclass
 class EventoCapital:
     data: pd.Timestamp      # primeiro pregão na nova base
     fator: float            # ações novas por ação antiga (2 = desdobra 1:2; 0.1 = grupa 10:1)
-    status: str             # "confirmado" | "so_preco"
+    status: str             # "confirmado" | "marcador_b3" | "so_preco"
+
+
+@dataclass
+class Distribuicao:
+    data: pd.Timestamp      # dia ex
+    valor: float            # R$ por ação na unidade do próprio dia ex
+    fracao: float           # valor / fechamento do dia ex (reinvestido nele)
+    tipo: str               # "restituicao" | "cisao"
+
+
+def _primeiros_dias_de_marca(p: pd.Series, marcadores: pd.Series | None) -> pd.Series:
+    """Marca alinhada ao pregão, só no primeiro dia de cada sequência ("" no resto)."""
+    if marcadores is None:
+        return pd.Series("", index=p.index)
+    m = marcadores.reindex(p.index).fillna("").astype(str)
+    return m.where(m != m.shift(1).fillna(""), "")
+
+
+def _candidatos(marca: str) -> list[float]:
+    if "G" in marca:
+        return [1.0 / f for f in FATORES_REDONDOS]
+    return [float(f) for f in FATORES_REDONDOS] + list(BONIFICACOES)
 
 
 def detectar_eventos(precos: pd.Series, acoes: dict[int, float],
-                     available_at: dict[int, pd.Timestamp]) -> list[EventoCapital]:
+                     available_at: dict[int, pd.Timestamp],
+                     marcadores: pd.Series | None = None) -> list[EventoCapital]:
     """Desdobramentos/grupamentos no preço bruto diário (índice = pregão).
 
     Candidato: variação diária fora de [0,6; 1,7] que persiste (mediana dos 5
@@ -266,41 +346,113 @@ def detectar_eventos(precos: pd.Series, acoes: dict[int, float],
     fator fica a 12% de um fator redondo. Confirmado quando as ações estimadas
     nas DFPs que cercam o evento variam pelo mesmo fator (±25%). Sem DFP para
     confirmar, só aceita o fator a 3% de um redondo.
+
+    ``marcadores`` (letras de ``marcador_b3`` por pregão) muda duas coisas:
+      - dia marcado G ou B entra mesmo dentro da faixa (bonificação de 20%) e
+        mesmo longe de 3% do redondo: o fator é o candidato mais próximo do
+        salto (a 10%) — ou, havendo DFP dos dois lados, o que as ações da DFP
+        mostram (status "confirmado"); sem candidato, o próprio salto;
+      - dia marcado R ou C sem G/B nunca é desdobramento: é distribuição
+        (ver ``detectar_distribuicoes``). A ERC da BRPR3 caiu a 0,27× — a 9%
+        de 1/4, que passaria por desdobramento.
     """
     p = precos.dropna().sort_index()
     p = p[p > 0]
     if len(p) < 12:
         return []
+    marca = _primeiros_dias_de_marca(p, marcadores)
     r = p / p.shift(1)
+
+    def razao_dfp(data):
+        # ações da DFP publicada logo depois do evento / logo antes
+        antes_dfp = [a for a, d in available_at.items() if a in acoes and pd.notna(d) and d < data]
+        depois_dfp = [a for a, d in available_at.items() if a in acoes and pd.notna(d) and d >= data]
+        if not (antes_dfp and depois_dfp):
+            return None
+        return acoes[min(depois_dfp)] / acoes[max(antes_dfp)]
+
     ev = []
     for i in range(5, len(p) - 5):
         ri = r.iloc[i]
-        if not (ri < 0.6 or ri > 1.7):
+        mi = marca.iloc[i]
+        tem_split = "G" in mi or "B" in mi
+        if not tem_split and ("R" in mi or "C" in mi):
+            continue
+        if not tem_split and not (ri < 0.6 or ri > 1.7):
             continue
         antes = p.iloc[i - 5:i].median()
         depois = p.iloc[i:i + 5].median()
         persist = depois / antes
         if abs(persist / ri - 1.0) > 0.20:
             continue
+        data = p.index[i]
+        rz = razao_dfp(data)
+        if tem_split:
+            # o salto do dia e o persistente erram por lados diferentes (pregão
+            # ralo logo após o grupamento): candidato perto de qualquer um vale,
+            # e sem DFP vence o mais perto da média dos dois.
+            k_dia, k_pers = 1.0 / ri, 1.0 / persist
+            k_preco = math.sqrt(k_dia * k_pers)
+            if abs(k_preco - 1.0) < 0.04:
+                continue
+            cands = sorted((c for c in _candidatos(mi)
+                            if min(abs(math.log(c / k_dia)), abs(math.log(c / k_pers))) <= TOL_MARCADOR),
+                           key=lambda c: abs(math.log(c / k_preco)))
+            k, status = None, "marcador_b3"
+            if cands and rz is not None:
+                c = min(cands, key=lambda c: abs(math.log(rz / c)))
+                if abs(rz / c - 1.0) <= (0.05 if 0.5 < c < 2.0 else 0.25):
+                    k, status = c, "confirmado"
+            if k is None:
+                k = cands[0] if cands else round(k_preco, 4)
+            ev.append(EventoCapital(pd.Timestamp(data), float(k), status))
+            continue
         k_bruto = 1.0 / persist
         k = _fator_redondo(k_bruto, 0.12)
         if k is None:
             continue
-        data = p.index[i]
-        # DFP publicada antes e depois do evento
-        antes_dfp = [a for a, d in available_at.items() if a in acoes and pd.notna(d) and d < data]
-        depois_dfp = [a for a, d in available_at.items() if a in acoes and pd.notna(d) and d >= data]
         status = None
-        if antes_dfp and depois_dfp:
-            n0 = acoes[max(antes_dfp)]
-            n1 = acoes[min(depois_dfp)]
-            if abs((n1 / n0) / k - 1.0) <= 0.25:
-                status = "confirmado"
+        if rz is not None and abs(rz / k - 1.0) <= 0.25:
+            status = "confirmado"
         if status is None and _fator_redondo(k_bruto, 0.03) is not None:
             status = "so_preco"
         if status:
             ev.append(EventoCapital(pd.Timestamp(data), float(k), status))
     return ev
+
+
+def detectar_distribuicoes(precos: pd.Series, marcadores: pd.Series | None,
+                           eventos: list[EventoCapital]) -> list[Distribuicao]:
+    """Restituições de capital (R) e cisões (C) no primeiro dia da marcação.
+
+    Referência = fechamento anterior levado à unidade do dia (÷ fator do
+    desdobramento/grupamento do mesmo dia). A distribuição é a queda contra
+    a referência, desde que passe de 3% no dia e na mediana dos 5 pregões
+    seguintes (um fechamento errado isolado não vira provento).
+    """
+    p = precos.dropna().sort_index()
+    p = p[p > 0]
+    if p.empty or marcadores is None:
+        return []
+    marca = _primeiros_dias_de_marca(p, marcadores)
+    out = []
+    for i in range(1, len(p)):
+        mi = marca.iloc[i]
+        if not ("R" in mi or "C" in mi):
+            continue
+        data = p.index[i]
+        f = 1.0
+        for e in eventos:
+            if e.data == data:
+                f *= e.fator
+        ref = float(p.iloc[i - 1]) / f
+        pt = float(p.iloc[i])
+        depois = float(p.iloc[i:i + 5].median())
+        if 1.0 - pt / ref < QUEDA_MINIMA or 1.0 - depois / ref < QUEDA_MINIMA:
+            continue
+        out.append(Distribuicao(pd.Timestamp(data), ref - pt, (ref - pt) / pt,
+                                "restituicao" if "R" in mi else "cisao"))
+    return out
 
 
 def fator_acumulado(eventos: list[EventoCapital], depois_de: pd.Timestamp,
@@ -328,11 +480,14 @@ def preco_ajustado(precos: pd.Series, eventos: list[EventoCapital]) -> pd.Series
 # Séries mensais
 # --------------------------------------------------------------------------
 def retorno_total_mensal(precos: pd.Series, eventos: list[EventoCapital],
-                         dps_final_por_ano: dict[int, float]) -> pd.Series:
+                         dps_final_por_ano: dict[int, float],
+                         distribuicoes: list[Distribuicao] = ()) -> pd.Series:
     """Série mensal (fim de mês) de retorno total na unidade final.
 
-    TR_m = TR_{m-1} × (P_m + D_m) / P_{m-1}, com D_m = DPS do ano / 4 lançado
-    em mar/jun/set/dez até o mês do último pregão.
+    TR_m = TR_{m-1} × (P_m + D_m) / P_{m-1} × Π(1 + fração), com D_m = DPS do
+    ano / 4 lançado em mar/jun/set/dez até o mês do último pregão e uma
+    fração por restituição/cisão do mês (reinvestida no fechamento do dia ex,
+    o que dispensa converter a unidade).
     """
     adj = preco_ajustado(precos, eventos)
     if adj.empty:
@@ -349,9 +504,19 @@ def retorno_total_mensal(precos: pd.Series, eventos: list[EventoCapital],
             if per.month in (3, 6, 9, 12):
                 d = dps_final_por_ano.get(per.year, 0.0) / 4.0
             ant_tr = ant_tr * (float(p) + d) / ant_p
+            for x in distribuicoes:
+                if x.data.to_period("M") == per:
+                    ant_tr *= 1.0 + x.fracao
         ant_p = float(p)
         tr.append(ant_tr)
     return pd.Series(tr, index=mensal.index)
+
+
+def saltos_residuais(tr: pd.Series, limite: float = 3.0) -> list[dict]:
+    """Meses em que o índice multiplica por mais de ``limite`` ou divide por mais."""
+    r = (tr / tr.shift(1)).dropna()
+    return [{"mes": str(per), "razao": float(v)} for per, v in r.items()
+            if v > limite or v < 1.0 / limite]
 
 
 def volume_mensal(volume_diario: pd.Series) -> pd.Series:
