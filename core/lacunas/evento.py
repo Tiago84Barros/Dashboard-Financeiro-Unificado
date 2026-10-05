@@ -30,6 +30,22 @@ from datetime import datetime, timezone
 
 FONTES = ("motor", "llm", "tela", "excecao")
 
+#: Codigo que comeca assim e DETALHE TECNICO, nao lacuna: procedencia, versao de
+#: metodologia, data da vitrine, tamanho de amostra. Sai da tela de uso como as
+#: lacunas (pedido de 05/10/2026: o usuario nao ve detalhe tecnico; o
+#: administrador ve tudo em Configuracoes -> Restricoes), mas nasce com status
+#: ``legitima`` -- nao ha nada a corrigir, e o corretor diario nao o pega.
+PREFIXO_DETALHE = "detalhe."
+
+
+def e_detalhe(codigo: str | None) -> bool:
+    return (codigo or "").strip().startswith(PREFIXO_DETALHE)
+
+
+def status_inicial(codigo: str | None) -> str:
+    """``legitima`` para detalhe tecnico; ``aberta`` para lacuna."""
+    return "legitima" if e_detalhe(codigo) else "aberta"
+
 #: Unicas chaves de contexto aceitas. O resto e descartado em silencio.
 CHAVES_CONTEXTO = frozenset({"tabela", "coluna", "periodo", "n_faltantes", "versao_motor"})
 

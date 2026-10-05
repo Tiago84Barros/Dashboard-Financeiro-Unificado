@@ -1,9 +1,11 @@
 """
 views/configuracoes.py
-Configurações do sistema — sete abas organizadas por finalidade.
+Configurações do sistema — oito abas organizadas por finalidade.
 
   ⚙️ Geral                — tema, troca de usuário e memória da LLM
   🎯 Grau de Confiança    — quanto o app confia em cada seção, e por quê
+  🧭 Restrições           — limitações, erros e detalhes técnicos que saíram
+                            das telas de uso (05/10/2026), para decisão do admin
   🔁 Atualização de dados — o que o usuário sobe de arquivo, em duas sub-abas:
        💳 Controle Financeiro — fatura do cartão + extratos bancários
        📈 Investimentos       — importações B3, XP, Nomad
@@ -57,10 +59,11 @@ def render() -> None:
     )
     st.markdown(_CONFIG_CSS + _CARD_CSS, unsafe_allow_html=True)
 
-    (tab_geral, tab_conf, tab_atualizacao, tab_dados, tab_banco, tab_seg,
-     tab_docs) = st.tabs([
+    (tab_geral, tab_conf, tab_restr, tab_atualizacao, tab_dados, tab_banco,
+     tab_seg, tab_docs) = st.tabs([
         "⚙️ Geral",
         "🎯 Grau de Confiança",
+        "🧭 Restrições",
         "🔁 Atualização de dados",
         "🔄 Dados de mercado",
         "🗄️ Banco de dados",
@@ -88,6 +91,17 @@ def render() -> None:
             "var(--app-primary, #00C896)",
         )
         _render_confianca()
+
+    with tab_restr:
+        _render_tab_intro(
+            "Restrições",
+            "Limitações de dado, erros e detalhes técnicos que as telas de uso "
+            "não mostram mais ao usuário. Decida cada item: aceitar, corrigir "
+            "ou acompanhar.",
+            "Visível só ao admin",
+            "var(--app-warning, #F6C90E)",
+        )
+        _render_restricoes()
 
     with tab_atualizacao:
         _render_atualizacao_de_dados()
@@ -128,6 +142,14 @@ def render() -> None:
             "var(--app-info, #4A9EFF)",
         )
         _render_documentacao()
+
+
+def _render_restricoes() -> None:
+    """Import tardio, como nas outras abas pesadas: um defeito no painel fica
+    preso nesta aba em vez de derrubar Configurações inteira."""
+    from views.configuracoes_restricoes import render as render_restricoes
+
+    render_restricoes()
 
 
 def _render_documentacao() -> None:

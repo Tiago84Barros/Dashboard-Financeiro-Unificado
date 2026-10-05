@@ -1,7 +1,11 @@
-"""`aviso_lacuna`: exibe o aviso e registra a lacuna de tela numa chamada so."""
+"""`aviso_lacuna` e `detalhe_tecnico`: registram em silencio, sem exibir.
+
+Desde 05/10/2026 restricoes e detalhes tecnicos saem da tela de uso e vao
+para Configuracoes -> Restricoes."""
 import json
 
 import pytest
+import streamlit as st
 
 import design.lacunas as dl
 from core.lacunas import destino, registro
@@ -20,8 +24,10 @@ def arquivo(tmp_path, monkeypatch):
 @pytest.fixture
 def exibidos(monkeypatch):
     chamadas = []
-    for nivel in ("info", "warning", "caption"):
-        monkeypatch.setattr(dl.st, nivel,
+    # Vigia o proprio streamlit: o modulo nao o importa mais, entao qualquer
+    # exibicao que voltasse teria de passar por aqui.
+    for nivel in ("info", "warning", "caption", "error", "markdown"):
+        monkeypatch.setattr(st, nivel,
                             lambda msg, _n=nivel, **kw: chamadas.append((_n, msg, kw)))
     return chamadas
 
@@ -37,9 +43,11 @@ def _tela_do_fii():
                     nivel="warning", entidade="hglg11")
 
 
-def test_exibe_e_registra_com_modulo_de_quem_chamou(arquivo, exibidos):
+def test_nao_exibe_e_registra_com_modulo_de_quem_chamou(arquivo, exibidos):
+    """Desde 05/10/2026 a lacuna sai da tela de uso: so o log a recebe, e o
+    administrador a ve em Configuracoes -> Restricoes."""
     _tela_do_fii()
-    assert exibidos == [("warning", "Sem dados para HGLG11.", {})]
+    assert exibidos == []
     (ev,) = _eventos(arquivo)
     assert ev["fonte"] == "tela"
     assert ev["codigo"] == "tela.fii.sem_dados"
@@ -47,25 +55,35 @@ def test_exibe_e_registra_com_modulo_de_quem_chamou(arquivo, exibidos):
     assert ev["modulo"] == "tests/test_lacunas_aviso.py:_tela_do_fii"
 
 
-def test_nivel_padrao_e_info_e_icone_passa_adiante(arquivo, exibidos):
+def test_nivel_e_icone_sao_aceitos_e_ignorados(arquivo, exibidos):
     dl.aviso_lacuna("x", codigo="c", icon="🎯")
-    assert exibidos == [("info", "x", {"icon": "🎯"})]
-
-
-def test_caption_ignora_icone_e_nivel_invalido_vira_info(arquivo, exibidos):
     dl.aviso_lacuna("a", codigo="c1", nivel="caption", icon="🎯")
     dl.aviso_lacuna("b", codigo="c2", nivel="erro")
-    assert exibidos == [("caption", "a", {}), ("info", "b", {})]
+    assert exibidos == []
+    assert len(_eventos(arquivo)) == 3
 
 
-def test_aviso_aparece_mesmo_se_o_registro_falhar(arquivo, exibidos, monkeypatch):
+def test_falha_do_registro_nao_propaga(arquivo, exibidos, monkeypatch):
     monkeypatch.setattr(destino, "gravar_local", lambda *a, **k: 1 / 0)
     dl.aviso_lacuna("x", codigo="c")
-    assert exibidos == [("info", "x", {})]
+    assert exibidos == []
 
 
 def test_mesmo_codigo_com_texto_diferente_e_a_mesma_lacuna(arquivo, exibidos):
     dl.aviso_lacuna("faltam 3", codigo="tela.x")
     dl.aviso_lacuna("faltam 4", codigo="tela.x")
-    assert len(exibidos) == 2
     assert len(_eventos(arquivo)) == 1
+
+
+def _rodape_do_fii():
+    dl.detalhe_tecnico("Metodologia 2.32.0 · vitrine de 04/10", codigo="fii.metodologia")
+
+
+def test_detalhe_tecnico_nao_exibe_e_ganha_prefixo(arquivo, exibidos):
+    _rodape_do_fii()
+    dl.detalhe_tecnico("n=447", codigo="detalhe.b3.amostra")
+    assert exibidos == []
+    a, b = _eventos(arquivo)
+    assert a["codigo"] == "detalhe.fii.metodologia"
+    assert a["modulo"] == "tests/test_lacunas_aviso.py:_rodape_do_fii"
+    assert b["codigo"] == "detalhe.b3.amostra"
