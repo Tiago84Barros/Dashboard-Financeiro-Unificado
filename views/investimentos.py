@@ -4555,6 +4555,27 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
 # RENDER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 
+ABA_INVESTIMENTOS_KEY = "investimentos_aba"
+
+
+def _aba_mantida(atual: object, rotulo_ia: str) -> str | None:
+    """Aba a reafirmar em ``session_state`` antes de ``st.tabs``.
+
+    O id das abas com estado inclui os rótulos, e o da Inteligência dos Ativos
+    troca entre 🔒 e 🧠 quando a Estratégia é concluída. Com id novo o
+    Streamlit esquece a seleção e volta ao Dashboard, mesmo para quem estava
+    em outra aba. Reescrever a seleção pela chave, a cada execução, a carrega
+    para o id novo; a aba da IA com o ícone antigo vira a do ícone atual.
+    Rótulo que não existe mais cai no default dentro do próprio ``st.tabs``.
+    """
+    if not isinstance(atual, str) or not atual:
+        return None
+    _, _, nome = rotulo_ia.partition("  ")
+    if nome and atual.endswith(f"  {nome}"):
+        return rotulo_ia
+    return atual
+
+
 def render() -> None:
     carteira  = get_carteira()
     cashflow  = get_cashflow_mensal()
@@ -4619,39 +4640,55 @@ def render() -> None:
     # A Inteligência dos Ativos depende da Estratégia, configurada na própria aba.
     # Bloqueada, a aba continua visível, com 🔒 no rótulo: é por ela que o
     # usuário descobre o que falta.
+    #
+    # Abas sob demanda (``on_change="rerun"`` + ``if tabN.open``): sem isso o
+    # Streamlit executa as seis em todo rerun, e cada clique dentro da
+    # Inteligência dos Ativos refazia Dashboard, Histórico, Carteira, Análise e
+    # Imposto de Renda antes de responder (05/10/2026). Trocar de aba passa a
+    # custar um rerun só da aba aberta.
     from core.estrategia import portao as _portao
     from views import inteligencia_ativos as _ia
     _liberacao = _portao.verificar()
+    _rotulo_ia = _ia.rotulo_aba(_liberacao)
+    _aba = _aba_mantida(st.session_state.get(ABA_INVESTIMENTOS_KEY), _rotulo_ia)
+    if _aba is not None:
+        st.session_state[ABA_INVESTIMENTOS_KEY] = _aba
 
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📊  Dashboard",
         "📈  Histórico",
         "💼  Carteira",
         "🔍  Análise",
-        _ia.rotulo_aba(_liberacao),
+        _rotulo_ia,
         "🧾  Imposto de Renda",
-    ])
+    ], key=ABA_INVESTIMENTOS_KEY, on_change="rerun")
 
-    with tab1:
-        _tab_dashboard(carteira, proventos, cashflow, evolucao)
+    if tab1.open:
+        with tab1:
+            _tab_dashboard(carteira, proventos, cashflow, evolucao)
 
-    with tab2:
-        _tab_historico(cashflow, proventos, evolucao, carteira)
-        render_risco_carteira()
-        render_atribuicao_carteira()
+    if tab2.open:
+        with tab2:
+            _tab_historico(cashflow, proventos, evolucao, carteira)
+            render_risco_carteira()
+            render_atribuicao_carteira()
 
-    with tab3:
-        _tab_carteira(carteira, proventos)
+    if tab3.open:
+        with tab3:
+            _tab_carteira(carteira, proventos)
 
-    with tab4:
-        _tab_analise(carteira, proventos)
+    if tab4.open:
+        with tab4:
+            _tab_analise(carteira, proventos)
 
-    with tab5:
-        _ia.render(_liberacao, carteira, proventos)
+    if tab5.open:
+        with tab5:
+            _ia.render(_liberacao, carteira, proventos)
 
-    with tab6:
-        from views.ir_renda_variavel import render as _render_ir
-        _render_ir()
+    if tab6.open:
+        with tab6:
+            from views.ir_renda_variavel import render as _render_ir
+            _render_ir()
 
 
 # ══════════════════════════════════════════════════════════════════════════════

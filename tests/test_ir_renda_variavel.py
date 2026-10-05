@@ -247,5 +247,5 @@ def test_aba_de_imposto_e_a_ultima():
     import views.investimentos as inv
     fonte = inspect.getsource(inv.render)
     rotulos = fonte[fonte.index("st.tabs(["):]
-    rotulos = rotulos[:rotulos.index("])")]
+    rotulos = rotulos[:rotulos.index("]")]
     assert rotulos.rstrip().rstrip(",").endswith('"🧾  Imposto de Renda"')

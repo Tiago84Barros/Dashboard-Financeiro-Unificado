@@ -75,3 +75,37 @@ def test_por_tema_respeita_o_limite_por_tema():
     out = dr.por_tema((dr.Destaque("R", "2026-01-01", "R", frases),),
                       n_por_tema=2)
     assert len(out) == 2
+
+
+def _sem_acento_por_frase(t: str) -> str:
+    """A versão anterior: NFKD da frase inteira, laço por caractere."""
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", t.lower())
+                   if not unicodedata.combining(c))
+
+
+def test_sem_acento_igual_a_normalizar_a_frase_inteira():
+    textos = [
+        "Ação ordinária — dívida líquida caiu 12,5% no 3º trimestre",
+        "PROJEÇÕES: CAPEX de R$ 1,2 bi; EBITDA ajustado ½",
+        "ﬁnanciamento ﬂuxo ℃ ² Ǆ İstanbul ß ẞ",
+        "é ạ̀ ñ",  # marcas já decompostas
+        "texto ascii puro 123",
+        "",
+    ]
+    for t in textos:
+        assert dr._sem_acento(t) == _sem_acento_por_frase(t), t
+
+
+def test_ler_trechos_le_uma_vez_por_ativo(monkeypatch):
+    chamadas: list[str] = []
+
+    def ler(ticker, *a, **k):
+        chamadas.append(ticker)
+        return ()
+
+    monkeypatch.setattr(dr, "ler", ler)
+    assert dr.ler_trechos("petr4") == ()
+    assert dr.ler_trechos("PETR4") == ()
+    assert dr.ler_trechos("VALE3") == ()
+    assert chamadas == ["PETR4", "VALE3"]
