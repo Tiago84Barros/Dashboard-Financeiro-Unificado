@@ -88,7 +88,9 @@ def render_oos_carteira() -> None:
     )
 
     ativo = _perfil_ativo()
+    from core.b3_portfolio_presets import NOMES_ANTIGOS
     for nome, medido in dados["perfis"].items():
+        nome = NOMES_ANTIGOS.get(nome, nome)
         variantes = medido.get("variantes") or {}
         base = variantes.get(oos.SEM_PORTAO) or {}
         if not base:

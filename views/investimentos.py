@@ -1387,11 +1387,12 @@ def _get_macro_dados() -> dict:
         "sp500":     None,
     }
 
-    # BCB: Meta SELIC (4189), IPCA 12M (13522, mensal) e CDI anualizado base
+    # BCB: Meta SELIC (432, a do Copom; a 4189 é a efetiva do mês, ~0,10 abaixo),
+    # IPCA 12M (13522, mensal) e CDI anualizado base
     # 252 (4389 -- medido, não Selic − 0,10). REST com reserva SOAP: o host
     # api.bcb.gov.br sumiu do DNS em 03/10/2026 e o card ficou "indisponível".
     from core.bcb_sgs import ultimo_valor_sgs
-    for codigo, chave, janela in [(4189, "selic", 45),
+    for codigo, chave, janela in [(432, "selic", 15),
                                   (13522, "ipca_12m", 120),
                                   (4389, "cdi", 15)]:
         try:

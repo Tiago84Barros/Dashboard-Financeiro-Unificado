@@ -349,6 +349,28 @@ def _publication_preflight(
     return blockers
 
 
+_SO_VALIDACAO_REPROVADA = ["validação PIT local não aprovada"]
+
+
+def _publica_selo_bloqueado(validation: dict[str, Any] | None,
+                            preflight_blockers: list[str]) -> bool:
+    """A validação vigente reprovou e é o ÚNICO motivo do preflight.
+
+    Abortar nesse caso deixava no destino o selo ``passed`` da validação
+    anterior: em 04/10/2026 a tela mostrava o run 84 "aprovado" (70 períodos,
+    +0,136 p.p./mês) enquanto a medição vigente, o run 94 (99 períodos,
+    −0,116 p.p./mês), estava ``blocked`` (FII-N1). Publicar a reprovação é o
+    que leva o selo real à tela; a tela já trata ``blocked`` como não validado.
+
+    Dado ruim (snapshot vazio, look-through insuficiente) continua abortando,
+    assim como um ``passed`` de outro otimizador: ali não há selo honesto a
+    publicar.
+    """
+    return (bool(validation)
+            and validation.get("status") != "passed"
+            and preflight_blockers == _SO_VALIDACAO_REPROVADA)
+
+
 def _replace_target_snapshot(conn) -> int:
     """Atualiza a vitrine sem exigir o lock exclusivo de um TRUNCATE."""
     conn.execute(text("""
@@ -485,13 +507,14 @@ def publish(source_url: str, target_url: str, dry_run: bool = False) -> dict[str
         "lookthrough": lookthrough,
         "publication_ready": not preflight_blockers,
         "preflight_blockers": preflight_blockers,
+        "publica_selo_bloqueado": _publica_selo_bloqueado(validation, preflight_blockers),
     }
     if dry_run:
         report["coverage_mean_pct"] = round(
             sum(json.loads(row["coverage_json"])["coverage_pct"] for row in rows) / len(rows), 2
         )
         return report
-    if preflight_blockers:
+    if preflight_blockers and not report["publica_selo_bloqueado"]:
         raise RuntimeError(
             "publicação bloqueada no preflight: " + "; ".join(preflight_blockers)
         )

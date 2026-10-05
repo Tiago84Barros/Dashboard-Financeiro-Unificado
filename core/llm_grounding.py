@@ -22,6 +22,12 @@ from dataclasses import dataclass, field
 # Número em pt-BR ou en-US: 1.234,56 | 1,234.56 | 1234.56 | 12,5 | 45%
 _NUMBER_RE = re.compile(r"-?\d[\d.,]*")
 
+# Cerca de procedência (``core.seguranca``): ``<<<INICIO DOCUMENTO-OFICIAL-092e…>>>``.
+# O sufixo é aleatório por prompt; seus dígitos viravam "números do contexto" e,
+# por derivação, ancoravam ao acaso um número inventado da resposta (o teste
+# ``test_numero_inventado_fica_com_ressalva`` falhava conforme o sorteio).
+_MARCADOR_CERCA = re.compile(r"[A-Z]+(?:-[A-Z]+)*-[0-9a-f]{8,}")
+
 # Escalas textuais comuns em texto financeiro brasileiro.
 _SCALES = {
     "mil": 1e3, "mi": 1e6, "milhão": 1e6, "milhao": 1e6, "milhões": 1e6,
@@ -135,7 +141,8 @@ def extract_numbers_typed(text: str) -> list[tuple[float, str, bool]]:
     "R$ 780,00". Percentuais só casam com percentuais.
     """
     out: list[tuple[float, str, bool]] = []
-    for match in _NUMBER_RE.finditer(text or ""):
+    text = _MARCADOR_CERCA.sub(" ", text or "")
+    for match in _NUMBER_RE.finditer(text):
         value = parse_number(match.group())
         if value is None:
             continue

@@ -1924,7 +1924,11 @@ def decompor_ganho(evolucao: dict, realizado: dict | None = None,
     if disponivel:
         vendido = float(realizado.get("valor_vendido") or 0.0)
         sem_custo = float(realizado.get("valor_sem_custo") or 0.0)
-        cobre = vendido / (vendido + sem_custo) * 100 if vendido + sem_custo > 0 else None
+        # ``valor_sem_custo`` é PARTE de ``valor_vendido`` (a receita da fatia
+        # vendida sem custo no extrato), não um valor à parte: somá-los ao
+        # denominador contava a mesma venda duas vezes (70,2% em vez de 57,5%).
+        cobre = (max(vendido - sem_custo, 0.0) / vendido * 100
+                 if vendido > 0 else None)
         parc_real = {"valor": float(realizado["ganho"]),
                      "cobertura_pct": round(cobre, 1) if cobre is not None else None,
                      "valor_sem_custo": sem_custo,

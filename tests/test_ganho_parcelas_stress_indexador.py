@@ -126,12 +126,17 @@ def test_tres_parcelas_separadas_e_sem_total():
 def test_cobertura_de_cada_parcela():
     g = decompor_ganho(
         {"total_mercado": 1000.0, "total_investido": 900.0, "total_dividendos": 40.0},
-        {"ganho": 70.0, "valor_vendido": 500.0, "valor_sem_custo": 500.0},
+        {"ganho": 70.0, "valor_vendido": 1000.0, "valor_sem_custo": 500.0},
         _carteira_mista())
     # só as ações (600 de 1000) têm custo confiável: FII estimado, RF sem marcação
     assert g["nao_realizado"]["cobertura_pct"] == 60.0
-    # metade do valor vendido não tinha custo no extrato
+    # metade do valor vendido não tinha custo no extrato (sem_custo ⊂ vendido)
     assert g["realizado"]["cobertura_pct"] == 50.0
+    tudo_sem = decompor_ganho(
+        {"total_mercado": 1000.0, "total_investido": 900.0},
+        {"ganho": 0.0, "valor_vendido": 500.0, "valor_sem_custo": 500.0},
+        _carteira_mista())
+    assert tudo_sem["realizado"]["cobertura_pct"] == 0.0
     # ações + FII distribuem provento; a renda fixa rende dentro do valor
     assert g["proventos"]["cobertura_pct"] == 80.0
 
