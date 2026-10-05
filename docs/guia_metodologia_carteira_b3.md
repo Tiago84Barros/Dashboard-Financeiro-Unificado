@@ -400,7 +400,7 @@ configuração. Os perfis resolvem isso com combinações cujo efeito foi
 
 | Perfil | Para quê | Efeito medido |
 |---|---|---|
-| **Equilibrado (recomendado)** | uso normal | 10 ativos · 60% cíclico · 20% defensivo · 7 setores |
+| **Equilibrado (padrão)** | uso normal | 10 ativos · 60% cíclico · 20% defensivo · 7 setores |
 | **Conservador** | menos exposição ao ciclo | carteira menor por construção |
 | **Amplo (diagnóstico)** | explorar o universo | sem proteção de concentração — não use para decidir |
 

@@ -57,7 +57,7 @@
     "Spread de ROIC (perfil Conservador): recortado até N-1 aqui, mas na tela usa todos os anos -- a medição é mais estrita que a tela."
   ],
   "perfis": {
-    "Equilibrado (recomendado)": {
+    "Equilibrado (padrão)": {
       "parametros": {
         "criterio_modo": "economico",
         "thr_selic": 15.0,
