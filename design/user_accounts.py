@@ -3,6 +3,7 @@ import streamlit as st
 
 from core.user_accounts import change_password, create_user, list_users
 from core.user_context import is_admin, principal, require_user
+from design.lacunas import falha_de_acao
 
 
 def render_user_accounts():
@@ -36,8 +37,8 @@ def render_user_accounts():
                     change_password(old, new)
                 except ValueError as exc:
                     st.error(str(exc))
-                except Exception:
-                    st.error("Não foi possível alterar a senha.")
+                except Exception as exc:
+                    falha_de_acao("Não foi possível alterar a senha.", exc)
                 else:
                     from core.auth import encerrar_sessao
                     encerrar_sessao()
@@ -59,8 +60,8 @@ def render_user_accounts():
                     create_user(name, email, password)
                 except ValueError as exc:
                     st.error(str(exc))
-                except Exception:
-                    st.error("Não foi possível cadastrar o usuário.")
+                except Exception as exc:
+                    falha_de_acao("Não foi possível cadastrar o usuário.", exc)
                 else:
                     st.success("Usuário cadastrado. Ele já pode entrar com e-mail e senha.")
 
@@ -79,8 +80,8 @@ def render_registered_users():
         usuarios = list_users()
     except PermissionError:
         return
-    except Exception:
-        st.error("Não foi possível carregar os usuários cadastrados.")
+    except Exception as exc:
+        falha_de_acao("Não foi possível carregar os usuários cadastrados.", exc)
         return
     if not usuarios:
         st.caption("Nenhum usuário cadastrado.")

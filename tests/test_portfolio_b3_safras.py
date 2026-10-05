@@ -833,9 +833,12 @@ def test_ressalva_e_margem_chegam_a_tela_como_texto_e_nao_como_tooltip():
                 and isinstance(n.slice.value, str)}
 
     def chama_caption(no):
+        # Desde 05/10/2026 a ressalva sai da tela e vai para o log de lacunas
+        # (`detalhe_tecnico`): o que importa e que ela continue CABEADA, lida
+        # da medicao, e que nao volte para o tooltip.
         return any(isinstance(c, ast.Call)
-                   and isinstance(c.func, ast.Attribute)
-                   and c.func.attr == "caption"
+                   and isinstance(c.func, ast.Name)
+                   and c.func.id == "detalhe_tecnico"
                    for c in ast.walk(no))
 
     visiveis = set()
@@ -1524,8 +1527,8 @@ def test_ressalvas_do_vies_chegam_como_caption_e_nao_como_tooltip():
     visiveis = set()
     for no in ast.walk(desenha):
         if isinstance(no, ast.For) and any(
-                isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
-                and c.func.attr == "caption" for c in ast.walk(no)):
+                isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                and c.func.id == "detalhe_tecnico" for c in ast.walk(no)):
             visiveis |= chaves(no)
     assert "notas" in visiveis, (
         f"as notas nao chegam por st.caption -- visiveis: {sorted(visiveis)}"
@@ -1616,6 +1619,10 @@ class _Falso:
 
     def legendas(self):
         return [c[1][0] for c in self.chamadas if c[0] == "caption"]
+
+    def detalhes(self):
+        """Ressalvas que SAIRAM da tela e foram para o log de lacunas."""
+        return [c[1][0] for c in self.chamadas if c[0] == "detalhe"]
 
 
 def _tabela_vies(com, sem, safras=None):
@@ -1711,6 +1718,11 @@ def _tela_de_safras_falsa(monkeypatch, *, botao=False):
     monkeypatch.setattr(mod, "st", falso)
     monkeypatch.setattr(mod, "card_metrica",
                         lambda *a, **k: falso.chamadas.append(("card", a, k)))
+    # Ressalva técnica não é desenhada: vai para o log (pedido de 05/10/2026).
+    monkeypatch.setattr(mod, "detalhe_tecnico",
+                        lambda msg, **k: falso.chamadas.append(("detalhe", (msg,), k)))
+    monkeypatch.setattr(mod, "aviso_lacuna",
+                        lambda msg, **k: falso.chamadas.append(("lacuna", (msg,), k)))
     return mod, falso
 
 
@@ -1795,7 +1807,9 @@ def test_render_vies_universo_desenha_depois_do_clique(monkeypatch):
     assert "button" in nomes, "o botão do Bloco 2 nem chegou a ser desenhado"
     assert "card" in nomes, "clicou e o card do viés não foi desenhado"
     assert "dataframe" in nomes, "clicou e a tabela do viés não foi desenhada"
-    assert falso.legendas(), "clicou e nenhuma ressalva foi publicada"
+    assert falso.detalhes(), "clicou e nenhuma ressalva foi registrada"
+    assert not [c for c in falso.legendas() if "viés" in str(c).lower()
+                and "point-in-time" in str(c)], "a ressalva voltou para a tela"
     assert "pb3_vies_universo" in falso.session_state
 
 
@@ -2487,9 +2501,11 @@ def test_render_expectativa_desenha_de_fato(monkeypatch):
     )
     titulos = [c[1][0] for c in cartoes]
     assert "Ordena?" in titulos and "Fragilidade" in titulos
-    assert falso.legendas() or any(c[0] == "warning" for c in falso.chamadas), (
-        "o Bloco 3 desenhou os cards sem nenhuma ressalva ao lado"
+    assert falso.detalhes() or any(c[0] == "warning" for c in falso.chamadas), (
+        "o Bloco 3 desenhou os cards sem registrar nenhuma ressalva"
     )
+    # A ressalva não aparece na tela: nem como legenda, nem como aviso.
+    assert not any(c[0] == "warning" for c in falso.chamadas)
 
 
 def test_render_safras_executa_o_bloco_3_de_fato(monkeypatch):
@@ -2609,4 +2625,6 @@ def test_premissas_do_liquido_saem_das_constantes_e_vao_para_a_tela():
     assert "15%" in texto and "20 mil" in texto
     assert "brutos" in texto  # benchmarks
     fonte = (RAIZ / "views" / "portfolio_b3_safras.py").read_text(encoding="utf-8")
-    assert "st.caption(_texto_premissas_liquido_b3())" in fonte
+    # A premissa completa saiu da tela: vai para o log de lacunas.
+    assert "st.caption(_texto_premissas_liquido_b3())" not in fonte
+    assert "detalhe_tecnico(_texto_premissas_liquido_b3()," in fonte

@@ -22,6 +22,7 @@ from core.inteligencia_ativos import historico as hist
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import painel as pn
 from core.utils import fmt_moeda
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 
 logger = logging.getLogger(__name__)
 
@@ -107,18 +108,24 @@ def _vazio(texto: str) -> str:
 
 def cartao_resumo(r: pn.ResumoCarteira, comparacao: list[str] | None = None) -> str:
     """O resumo inteiro num bloco só. Puro."""
-    rent = ("sem cotação suficiente" if r.rentabilidade_pct is None else "")
+    if r.rentabilidade_pct is None:
+        aviso_lacuna("Rentabilidade da carteira sem cotação suficiente",
+                     codigo="tela.inteligencia.rentabilidade_sem_cotacao")
+    if r.renda_total is None:
+        aviso_lacuna("Renda gerada pela carteira sem proventos disponíveis",
+                     codigo="tela.inteligencia.renda_sem_proventos")
+    detalhe_tecnico(f"Estratégia versão {r.versao_politica}",
+                    codigo="inteligencia.versao_estrategia")
     kpis = "".join([
         _kpi("Patrimônio total", _moeda(r.patrimonio),
              f"investido {_moeda(r.total_investido)}" if r.total_investido else ""),
         _kpi("Rentabilidade", _pct(r.rentabilidade_pct),
-             rent or (f"resultado {_moeda(r.resultado)}"
-                      if r.resultado is not None else "")),
+             f"resultado {_moeda(r.resultado)}"
+             if r.resultado is not None else ""),
         _kpi("Renda gerada (12 meses)", _moeda(r.renda_12m),
              f"desde o início {_moeda(r.renda_total)}"
-             if r.renda_total is not None else "proventos indisponíveis"),
-        _kpi("Ativos que merecem revisão", str(len(r.revisao)),
-             f"estratégia versão {r.versao_politica}"),
+             if r.renda_total is not None else ""),
+        _kpi("Ativos que merecem revisão", str(len(r.revisao))),
     ])
 
     linhas = "".join(

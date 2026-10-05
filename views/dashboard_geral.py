@@ -31,6 +31,7 @@ from core.investimentos import (
 from core.us_portfolio_model import load_active_us_portfolio_model
 from core.utils import fmt_moeda, fmt_percentual
 from design import portao_inteligencia as _portao_ui
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 
 # Carteira-modelo de FIIs — recomputada com a mesma lógica da página Seleção de FIIs.
 _FIIS_N_MAX = 10          # nº de FIIs na carteira-modelo (default da página)
@@ -1166,7 +1167,9 @@ def _secao_raio_x_portfolio(carteira: dict, evolucao: dict, classes: list) -> No
                 key="dg_evolution_plot",
             )
         else:
-            st.caption("Sem snapshots patrimoniais suficientes.")
+            st.caption("A evolução dos investimentos ainda não está disponível.")
+            aviso_lacuna("Evolução patrimonial sem snapshots suficientes.",
+                         codigo="tela.dashboard.evolucao_sem_snapshots")
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1232,27 +1235,31 @@ def _secao_carteira_modelo(
     if modelo.get("is_stale"):
         versao_salva = (modelo.get("params_json") or {}).get("score_version") or "anterior"
         st.warning(
-            f"Esta carteira foi criada com uma metodologia anterior "
-            f"(score {versao_salva} × atual {modelo.get('current_score_version')}) e "
-            f"está marcada como desatualizada. Recalcule-a em {origem} antes de "
+            f"Esta carteira foi criada com uma metodologia anterior e está "
+            f"marcada como desatualizada. Recalcule-a em {origem} antes de "
             f"usá-la como referência."
         )
+        detalhe_tecnico(
+            f"Carteira salva com score {versao_salva}; versão atual "
+            f"{modelo.get('current_score_version')}.",
+            codigo="dashboard.carteira_metodologia_anterior",
+        )
     elif idade_dias is not None and idade_dias > _DIAS_MODELO_ANTIGO:
-        st.info(
-            f"A carteira salva tem {idade_dias} dias ({criado_txt}). Os "
-            f"fundamentos das empresas mudam a cada balanço — refaça a seleção "
-            f"em {origem} para reavaliar a lista.",
-            icon="🕗",
+        detalhe_tecnico(
+            f"Carteira salva há {idade_dias} dias ({criado_txt}); acima do limite "
+            f"de {_DIAS_MODELO_ANTIGO} dias.",
+            codigo="dashboard.carteira_idade",
         )
 
     col_frescor, col_acao = st.columns([3, 1], vertical_alignment="center")
     with col_frescor:
         idade_txt = (f" · há {idade_dias} dia{'s' if idade_dias != 1 else ''}"
                      if idade_dias is not None else "")
-        st.caption(
+        detalhe_tecnico(
             f"Fonte: carteira salva em {origem}"
             + (f" · atualizada em {criado_txt}{idade_txt}" if criado_txt else "")
-            + f" · {len(items)} empresas"
+            + f" · {len(items)} empresas",
+            codigo="dashboard.carteira_fonte",
         )
     with col_acao:
         if st.button("🔄 Recarregar", key=f"dg_reload_{chave}",
@@ -1397,10 +1404,12 @@ def _fiis_carteira_modelo() -> tuple[list[dict], bool]:
         # banco o usuário via uma carteira recalculada achando que era a
         # salva. Agora o desvio é avisado.
         st.warning(
-            "⚠️ Falha ao carregar a carteira-modelo de FIIs **salva** — "
-            "exibindo sugestão **recalculada** com dados atuais, que pode "
-            "diferir da que você salvou. Verifique a conexão com o banco."
+            "Exibindo a sugestão **recalculada** com dados atuais, que pode "
+            "diferir da carteira de FIIs que você salvou."
         )
+        aviso_lacuna("Falha ao carregar a carteira-modelo de FIIs salva; "
+                     "exibindo sugestão recalculada.",
+                     codigo="tela.dashboard.carteira_fii_salva_falhou")
     # 2) Fallback: recomputa a sugestão automática.
     try:
         import core.market_read as _mr
@@ -1703,10 +1712,8 @@ def _carteira_modelo_us() -> dict:
     try:
         return load_active_us_portfolio_model() or {}
     except Exception:  # noqa: BLE001 - fronteira de isolamento entre módulos
-        st.warning(
-            "⚠️ Não foi possível carregar a carteira-modelo americana salva. "
-            "As demais seções do dashboard continuam válidas."
-        )
+        aviso_lacuna("Não foi possível carregar a carteira-modelo americana salva.",
+                     codigo="tela.dashboard.carteira_us_salva_falhou")
         return {}
 
 
@@ -1734,7 +1741,11 @@ def render() -> None:
     try:
         d = get_visao_geral()
     except NotImplementedError as exc:
-        st.error(f"**Banco não configurado.** {exc}")
+        st.error("Esta tela não está disponível no momento.")
+        aviso_lacuna("Visão geral indisponível: banco não configurado.",
+                     codigo="tela.dashboard.banco_nao_configurado")
+        detalhe_tecnico(f"get_visao_geral levantou {type(exc).__name__}.",
+                        codigo="dashboard.visao_geral_erro")
         return
 
     hoje          = _datetime.now(ZoneInfo("America/Cayenne")).date()

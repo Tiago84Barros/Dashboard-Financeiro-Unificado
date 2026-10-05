@@ -173,8 +173,9 @@ def test_grau_de_decisao_nao_gera_ressalva():
 
 def test_expander_sinaliza_cobertura_antes_de_abrir():
     assert "score_status" in _FONTE_VIEW
-    assert "só triagem" in _FONTE_VIEW
-    assert "cobertura parcial" in _FONTE_VIEW
+    # A cobertura vai para o log de lacunas, nao para o titulo do expander.
+    assert "tela.portfolio_us.cobertura_de_dados" in _FONTE_VIEW
+    assert "só triagem" not in _FONTE_VIEW
 
 
 # ── Procedência dos dados ────────────────────────────────────────────────────
@@ -203,8 +204,8 @@ def test_prompt_consolidado_recebe_os_tres_blocos_novos():
 
 
 def test_tela_mostra_a_base_ao_usuario():
-    assert "última ingestão" in _FONTE_VIEW
-    assert "data de ingestão não informada" in _FONTE_VIEW
+    # Procedencia da base e detalhe tecnico: registrada, nao exibida.
+    assert "portfolio_us.base_procedencia" in _FONTE_VIEW
 
 
 # ── Exposição cambial ────────────────────────────────────────────────────────
@@ -270,8 +271,9 @@ def test_tela_alerta_quando_o_macro_e_so_premissa():
     app = _roda("{}")
     assert not app.exception
     avisos = "\n".join(w.value for w in app.warning)
-    assert "premissa de simulação" in avisos
-    assert "run_us_ingest.py macro" in avisos
+    # Premissa de simulacao e restricao: sai da tela e vai para o log.
+    assert "premissa de simulação" not in avisos
+    assert "run_us_ingest.py macro" not in avisos
 
 
 def test_tela_nao_alerta_quando_ha_serie_observada():
@@ -290,7 +292,7 @@ def test_tela_nao_alerta_quando_ha_serie_observada():
 def test_tela_mostra_procedencia_da_base():
     app = _roda("{}")
     markdown = "\n".join(str(m.value) for m in app.markdown)
-    assert "vitrine publicada" in markdown
-    assert "2026-08-03" in markdown
-    assert "512 empresas" in markdown
+    # Procedencia vai para o log (detalhe tecnico); a cotacao do bloco cambial fica.
+    assert "vitrine publicada" not in markdown
+    assert "512 empresas" not in markdown
     assert "R$ 5.42" in markdown

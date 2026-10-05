@@ -204,10 +204,22 @@ def criar(nome: str, tipo: str) -> tuple[bool, str]:
         with _engine().begin() as conn:
             conn.execute(text(_SQL_INSERIR),
                          {"uid": _uid(), "nome": limpo, "tipo": TIPOS[tipo]})
-    except Exception as exc:  # noqa: BLE001 - a mensagem volta para a tela
+    except Exception as exc:  # noqa: BLE001 - a frase volta para a tela
+        # O texto da excecao (driver, SQL) fica no log e no log de lacunas;
+        # a tela recebe so a frase (05/10/2026, Configuracoes -> Restricoes).
         logger.exception("falha ao criar categoria %r", limpo)
-        return False, f"Não foi possível criar: {exc}"
+        _registrar(exc)
+        return False, "Não foi possível criar a categoria. O detalhe técnico foi registrado para o administrador."
     return True, f"Categoria “{limpo}” criada."
+
+
+def _registrar(exc: BaseException) -> None:
+    try:
+        from core.lacunas import registrar_excecao
+
+        registrar_excecao(exc)
+    except Exception:  # noqa: BLE001 - lacuna e extra, nunca requisito
+        logger.warning("falha ao registrar a excecao como lacuna", exc_info=True)
 
 
 def arquivar(categoria_id: str) -> tuple[bool, str]:
@@ -224,7 +236,8 @@ def arquivar(categoria_id: str) -> tuple[bool, str]:
                 text(_SQL_ARQUIVAR), {"cid": categoria_id, "uid": _uid()}).rowcount
     except Exception as exc:  # noqa: BLE001
         logger.exception("falha ao arquivar categoria %s", categoria_id)
-        return False, f"Não foi possível arquivar: {exc}"
+        _registrar(exc)
+        return False, "Não foi possível arquivar a categoria. O detalhe técnico foi registrado para o administrador."
     if not linhas:
         return False, "Só dá para arquivar categoria criada por você."
     return True, "Categoria arquivada. Os lançamentos antigos continuam nela."

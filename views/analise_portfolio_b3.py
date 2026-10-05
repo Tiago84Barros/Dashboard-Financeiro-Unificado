@@ -62,6 +62,7 @@ from core.rag_b3 import (
 )
 from core.utils import escapar_cifrao
 from design import portao_inteligencia as _portao_ui
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.market_companies import render_company_logo
 from views.empresas_b3 import _logo_url
 
@@ -288,7 +289,9 @@ def _render_portfolio_salvo(model: dict, pesos_novos: dict[str, float] | None) -
 
 def _render_macro(macro_hist: dict) -> None:
     if not macro_hist:
-        st.caption("Cenário macro indisponível — configure a tabela `macro` no Supabase.")
+        st.caption("Esta análise não está disponível no momento.")
+        aviso_lacuna("Cenário macro indisponível — configure a tabela `macro` no Supabase.",
+                     codigo="tela.portfolio_b3.analise_macro_indisponivel")
         return
 
     anos = sorted(macro_hist.keys())
@@ -439,7 +442,8 @@ def _render_relatorio_consolidado(port_analise: dict) -> None:
     st.markdown(f'<div class="apb3-kpi-row">{cards_html}</div>', unsafe_allow_html=True)
 
     if port_analise.get("aviso_ancoragem"):
-        st.caption(port_analise["aviso_ancoragem"])
+        detalhe_tecnico(str(port_analise["aviso_ancoragem"]),
+                        codigo="portfolio_b3.analise_ancoragem_consolidado")
 
     with st.expander("📝 Resumo Executivo + Papel dos Ativos", expanded=True):
         resumo = port_analise.get("resumo_executivo", "")
@@ -605,10 +609,14 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
         elif quali_cls == "aprovar_com_ressalvas" and an.get("motivo_selecao"):
             st.caption(f"⚠️ Ressalva do parecer: {an['motivo_selecao']}")
         elif quali_cls == "nao_avaliado":
-            st.caption("⚪ Não avaliado pelo portão: "
-                       f"{an.get('motivo_selecao') or 'parecer indisponível'}")
+            detalhe_tecnico("Não avaliado pelo portão: "
+                            f"{an.get('motivo_selecao') or 'parecer indisponível'}",
+                            codigo="portfolio_b3.analise_nao_avaliado_portao",
+                            entidade=tk)
         if an.get("aviso_ancoragem"):
-            st.caption(an["aviso_ancoragem"])
+            detalhe_tecnico(str(an["aviso_ancoragem"]),
+                            codigo="portfolio_b3.analise_ancoragem_empresa",
+                            entidade=tk)
 
         # Síntese do parecer
         resumo = an.get("resumo", "")
@@ -692,7 +700,8 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
         if _grupos[SEVERIDADE_COBERTURA]:
             st.markdown(f"**{TITULO_SEVERIDADE[SEVERIDADE_COBERTURA]}**")
             for f_ in _grupos[SEVERIDADE_COBERTURA]:
-                st.caption(f_)
+                detalhe_tecnico(str(f_), codigo="portfolio_b3.analise_flag_cobertura",
+                                entidade=tk)
 
         c1, c2 = st.columns(2)
         # Riscos
@@ -835,10 +844,10 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
         if rag_stats and rag_stats.get("total_hits", 0) > 0:
             mode_lbl = {"semantic": "semântico", "temporal_fallback": "temporal"}.get(
                 rag_stats.get("mode", ""), rag_stats.get("mode", ""))
-            st.caption(
-                f"📄 RAG {mode_lbl}: {rag_stats['total_hits']} chunks recuperados "
-                f"(últimos {rag_stats.get('months_back', 36)} meses)"
-            )
+            detalhe_tecnico(
+                f"RAG {mode_lbl}: {rag_stats['total_hits']} chunks recuperados "
+                f"(últimos {rag_stats.get('months_back', 36)} meses)",
+                codigo="portfolio_b3.analise_rag_stats", entidade=tk)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1003,8 +1012,7 @@ def _executar_analise(
             # Tela e lista de erros recebem o motivo em categoria; o texto da
             # exceção (HTTP, id de requisição, organização) fica só no log.
             _motivo = motivo_falha_llm(exc, f"relatório da carteira B3 ({tk})")
-            st.warning(f"{tk}: relatório não gerado — {_motivo}. O detalhe "
-                       "técnico ficou no log do app.")
+            falha_de_acao(f"{tk}: relatório não gerado.", exc)
             erros.append(f"{tk}: relatório não gerado — {_motivo}.")
             from core.llm_b3 import _fallback_empresa
             analise = _fallback_empresa(tk, peso_pct_)
@@ -1043,8 +1051,7 @@ def _executar_analise(
                              "interpretada (JSON inválido).")
         except Exception as exc:
             _motivo = motivo_falha_llm(exc, "relatório consolidado da carteira B3")
-            st.warning(f"Análise de portfólio não gerada — {_motivo}. O detalhe "
-                       "técnico ficou no log do app.")
+            falha_de_acao("Análise de portfólio não gerada.", exc)
             erros.append(f"Relatório consolidado: não gerado — {_motivo}.")
             from core.llm_b3 import _fallback_portfolio
             port_analise = _fallback_portfolio()
@@ -1457,7 +1464,7 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
                     resposta = mensagem_falha_llm(exc, "chat da Avaliação de Portfólio B3")
             st.markdown(escapar_cifrao(resposta))
             if aviso:
-                st.caption(aviso)
+                detalhe_tecnico(str(aviso), codigo="portfolio_b3.analise_chat_ancoragem")
             if chart_directives:
                 try:
                     render_charts_from_directives(chart_directives, chart_meta)
@@ -1533,20 +1540,14 @@ def render(show_header: bool = True) -> None:
 
     _render_portfolio_salvo(model, pesos_exib)
 
-    # Cobertura RAG
+    # Cobertura RAG: detalhe técnico, fora da tela de uso.
     if n_com_docs > 0:
-        st.markdown(
-            f'<div style="font-size:.76rem;color:var(--app-primary);margin:-8px 0 12px;">'
-            f'📄 {n_com_docs}/{len(items)} empresas com documentos CVM '
-            f'({total_chunks:,} chunks) — RAG ativo</div>',
-            unsafe_allow_html=True,
-        )
+        detalhe_tecnico(f"{n_com_docs}/{len(items)} empresas com documentos CVM "
+                        f"({total_chunks:,} chunks) — RAG ativo",
+                        codigo="portfolio_b3.analise_cobertura_rag")
     else:
-        st.markdown(
-            '<div style="font-size:.76rem;color:var(--app-muted);margin:-8px 0 12px;">'
-            '📄 Sem documentos CVM — análise somente com dados quantitativos</div>',
-            unsafe_allow_html=True,
-        )
+        detalhe_tecnico("Sem documentos CVM — análise somente com dados quantitativos",
+                        codigo="portfolio_b3.analise_cobertura_rag")
 
     st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
     _render_macro(macro_hist)
@@ -1557,18 +1558,19 @@ def render(show_header: bool = True) -> None:
                 unsafe_allow_html=True)
 
     if not llm_disponivel():
-        st.warning(
+        st.warning("Esta análise não está disponível no momento.", icon="⚠️")
+        aviso_lacuna(
             "Nenhum provedor LLM configurado. Adicione `OPENAI_API_KEY` e/ou "
             "`GEMINI_API_KEY` no `.env` ou nos Streamlit Secrets para ativar a análise LLM.",
-            icon="⚠️",
-        )
+            codigo="tela.portfolio_b3.analise_sem_provedor_llm")
         return
 
     _provs = provedores_disponiveis()
     if _provs:
         _lbl = {"openai": "OpenAI", "gemini": "Gemini"}
         _txt = " → ".join(_lbl.get(p, p) for p in _provs)
-        st.caption(f"🤖 Provedores LLM ativos (com fallback automático): **{_txt}**")
+        detalhe_tecnico(f"Provedores LLM ativos (com fallback automático): {_txt}",
+                        codigo="portfolio_b3.analise_provedores_llm")
 
     st.caption(
         "A análise combina **duas fontes**: os fundamentos do banco interno e "
@@ -1601,11 +1603,10 @@ def render(show_header: bool = True) -> None:
                 web_ctx, web_sinal = get_web_evidence_context(tickers_tuple)
             except Exception:  # noqa: BLE001 - web nunca bloqueia a análise
                 logger.exception("analise_portfolio_b3: segunda fonte (web) falhou")
-                st.warning(
+                aviso_lacuna(
                     "Segunda fonte (web) indisponível — a análise segue apenas "
                     "com o banco interno.",
-                    icon="🌐",
-                )
+                    codigo="tela.portfolio_b3.analise_web_indisponivel")
                 web_ctx, web_sinal = "", {}
 
         result = _executar_analise(
@@ -1626,17 +1627,22 @@ def render(show_header: bool = True) -> None:
 
         # Erros de LLM persistem no state e reaparecem após o rerun — sem isso o
         # relatório saía em branco ("Relatório indisponível.") sem explicar a causa.
+        # Desde 05/10/2026 cada causa (tipo da exceção, provedor, cota) vai para
+        # Configurações → Restrições; a tela fica só com o efeito no relatório.
         if erros:
-            with st.expander(f"⚠️ {len(erros)} falha(s) na análise LLM — relatório pode estar incompleto",
-                             expanded=True):
-                for e in erros:
-                    st.markdown(f"- {e}")
-                st.caption(
-                    "Causas comuns: cota/limite atingido em **todos** os provedores "
-                    "(OpenAI e Gemini), chave sem acesso ao modelo, ou timeout. "
-                    "Configure `GEMINI_API_KEY` como fallback, verifique chave/cota e "
-                    "clique novamente em **Executar Análise LLM**."
-                )
+            st.warning(f"{len(erros)} parte(s) da análise não foram geradas — o relatório "
+                       "pode estar incompleto. Tente executar novamente em instantes.")
+            # O código não varia com a mensagem; a entidade (ticker ou "Relatório
+            # consolidado") separa uma impressão por parte que falhou.
+            for e in erros:
+                aviso_lacuna(e, codigo="tela.portfolio_b3.analise_llm_falhou",
+                             entidade=str(e).split(":", 1)[0])
+            detalhe_tecnico(
+                "Causas comuns: cota/limite atingido em **todos** os provedores "
+                "(OpenAI e Gemini), chave sem acesso ao modelo, ou timeout. "
+                "Configure `GEMINI_API_KEY` como fallback, verifique chave/cota e "
+                "clique novamente em **Executar Análise LLM**.",
+                codigo="portfolio_b3.analise_causas_falha_llm")
 
         st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
         _render_relatorio_consolidado(port_an)

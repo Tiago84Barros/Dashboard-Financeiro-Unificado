@@ -23,9 +23,9 @@ from core.inteligencia_ativos import veredito
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_carteira import chat_com_carteira
 from core.llm_dossie_carteira import gerar_dossie_classe
-from core.llm_falha import mensagem_falha_llm
 from core.llm_grounding import aviso_ancoragem
 from core.utils import escapar_cifrao
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 
 _PROVEDOR_LABEL = {"openai": "OpenAI", "gemini": "Gemini", "openrouter": "OpenRouter"}
 
@@ -144,14 +144,17 @@ def render_chat_carteira(
     st.markdown("---")
     st.markdown(f"#### 💬 Converse sobre {_TITULO.get(classe, 'esta classe')}")
     if not llm_disponivel():
-        st.info("Nenhum provedor LLM configurado. Adicione OPENAI_API_KEY ou "
-                "GEMINI_API_KEY para conversar sobre esta classe.")
+        st.info("Esta conversa não está disponível no momento.")
+        aviso_lacuna("Nenhum provedor LLM configurado para o chat da carteira",
+                     codigo="tela.inteligencia.chat_carteira_sem_provedor",
+                     entidade=classe)
         return
 
     provedores = provedores_disponiveis()
     if provedores:
-        st.caption("Provedor disponível: " + ", ".join(
-            _PROVEDOR_LABEL.get(p, p) for p in provedores))
+        detalhe_tecnico("Provedor disponível: " + ", ".join(
+            _PROVEDOR_LABEL.get(p, p) for p in provedores),
+            codigo="inteligencia.chat_provedor")
 
     hist_key = f"chat_carteira_{classe}_history"
     sig_key = f"chat_carteira_{classe}_signature"
@@ -250,8 +253,12 @@ def render_chat_carteira(
                         resposta, veredito.conferir_resposta(resposta, avaliacoes))
                     aviso = aviso_ancoragem(resposta, contexto, pedido)
                 except Exception as exc:  # provedor fora do ar, timeout, dado ausente
-                    resposta = mensagem_falha_llm(exc, "dossiê da carteira",
-                                                  acao="gerar o dossiê")
+                    resposta = None
+                    falha_de_acao("Não foi possível gerar o dossiê agora. "
+                                  "Tente de novo em instantes.", exc)
+            if resposta is None:
+                historico.pop()  # pedido sem resposta não vai ao histórico
+                return
             st.markdown(escapar_cifrao(resposta))
             if aviso:
                 st.caption(aviso)
@@ -284,7 +291,11 @@ def render_chat_carteira(
                     historico[:-1], pergunta, avaliacoes)
                 aviso = aviso_ancoragem(resposta, contexto, pergunta)
             except Exception as exc:  # provedor fora do ar, timeout, dado ausente
-                resposta = mensagem_falha_llm(exc, "chat da carteira")
+                resposta = None
+                falha_de_acao("Não foi possível responder agora. Tente de novo em instantes.", exc)
+        if resposta is None:
+            historico.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(resposta))
         if aviso:
             st.caption(aviso)

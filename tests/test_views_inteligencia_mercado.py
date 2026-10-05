@@ -97,7 +97,9 @@ def test_resposta_reprovada_aparece_como_descarte_e_nao_como_analise():
 
 def test_area_tecnica_publica_o_contexto_exato():
     corpo = inspect.getsource(V.render_explicacao)
-    assert "exp.contexto" in corpo and "expander" in corpo
+    # o contexto exato vai ao log (detalhe técnico), não a um expander
+    assert "exp.contexto" in corpo and "expander" not in corpo
+    assert "inteligencia.contexto_llm" in corpo
 
 
 def test_numero_inventado_nao_chega_a_tela():

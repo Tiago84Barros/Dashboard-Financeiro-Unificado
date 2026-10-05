@@ -58,7 +58,7 @@ from core.portfolio.repository import (
 from core.rebalancing import ThresholdRebalance
 from core.utils import escapar_cifrao
 from design.componentes import card_metrica
-from design.lacunas import aviso_lacuna
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.market_companies import render_company_logo
 from design.portfolio_global_cards import card_papel_html, card_recomendacao_html
 
@@ -226,6 +226,21 @@ def detalhe_cobertura(metrica) -> str:
     if not metrica.confiavel:
         return f"⚠️ cobertura {pct} — abaixo do mínimo confiável"
     return f"cobertura {pct} · {metrica.n_ativos} ativos"
+
+
+def _registrar_cobertura(rotulo: str, metrica) -> None:
+    """Cobertura da métrica vai para o log, não para o rodapé do card.
+
+    Sem dado ou abaixo do mínimo confiável é restrição (entra na fila); o
+    resto é só procedência.
+    """
+    texto = detalhe_cobertura(metrica)
+    if metrica.valor is None or not metrica.confiavel:
+        aviso_lacuna(f"{rotulo}: {texto}",
+                     codigo="tela.portfolio_global.cobertura_metrica", entidade=rotulo)
+    else:
+        detalhe_tecnico(f"{rotulo}: {texto}",
+                        codigo="portfolio_global.cobertura_metrica", entidade=rotulo)
 
 
 def _valor_inicial_total(total_brl: float | None) -> float:
@@ -397,9 +412,8 @@ def _cards_de_metricas(df: pd.DataFrame) -> None:
     ]
     for coluna, (rotulo, valor, metrica, cor) in zip(colunas, cartoes):
         with coluna:
-            card_metrica(rotulo, valor, delta=detalhe_cobertura(metrica),
-                         positivo=None if metrica.confiavel else False,
-                         accent=cor)
+            _registrar_cobertura(rotulo, metrica)
+            card_metrica(rotulo, valor, accent=cor)
 
     st.caption(
         "O P/L e o P/VP agregados usam **earnings yield ponderado**, invertido ao final. "
@@ -423,9 +437,8 @@ def _qualidade(df: pd.DataFrame) -> None:
     for coluna, classe in zip(colunas, sorted(por_classe)):
         metrica = por_classe[classe]
         with coluna:
+            _registrar_cobertura(f"Qualidade {get_spec(classe).label}", metrica)
             card_metrica(get_spec(classe).label, _fmt(metrica.valor, casas=1),
-                         delta=detalhe_cobertura(metrica),
-                         positivo=None if metrica.confiavel else False,
                          accent="#A78BFA")
 
 
@@ -700,10 +713,11 @@ def _tabela_de_exposicoes(exposicoes: list) -> pd.DataFrame:
 def _painel_correlacao(ret: pd.DataFrame, pesos: dict) -> None:
     st.markdown("#### Correlação e diversificação")
     if ret.empty or ret.shape[1] < 2:
-        st.info(
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna(
             "Menos de dois ativos com série de preços mensal suficiente — "
-            "sem base para calcular correlação entre eles."
-        )
+            "sem base para calcular correlação entre eles.",
+            codigo="tela.portfolio_global.correlacao_sem_serie")
         return
 
     colunas = st.columns(3)
@@ -732,20 +746,25 @@ def _painel_correlacao(ret: pd.DataFrame, pesos: dict) -> None:
 def _painel_fatores(ret: pd.DataFrame, pesos: dict) -> None:
     st.markdown("#### Exposição a fatores de risco")
     if ret.empty:
-        st.info("Sem série de preços mensal suficiente para estimar exposição a fatores.")
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna("Sem série de preços mensal suficiente para estimar exposição a fatores.",
+                     codigo="tela.portfolio_global.fatores_sem_serie")
         return
 
     serie_fatores = factors.series_de_fatores()
     if serie_fatores.empty:
-        st.info("Sem série dos fatores de referência (proxies via ETF na B3).")
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna("Sem série dos fatores de referência (proxies via ETF na B3).",
+                     codigo="tela.portfolio_global.fatores_sem_proxies")
         return
 
     resultado = factors.exposicao_do_portfolio(ret, pesos, serie_fatores)
     if not resultado.exposicoes:
-        st.info(
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna(
             "Amostra insuficiente para estimar exposição a fatores "
-            f"(mínimo de {factors.MIN_OBS_REGRESSAO} meses em comum)."
-        )
+            f"(mínimo de {factors.MIN_OBS_REGRESSAO} meses em comum).",
+            codigo="tela.portfolio_global.fatores_amostra_insuficiente")
         return
 
     st.dataframe(_tabela_de_exposicoes(resultado.exposicoes), width="stretch", hide_index=True)
@@ -758,25 +777,28 @@ def _painel_fatores(ret: pd.DataFrame, pesos: dict) -> None:
         nomes = ", ".join(
             factors.ROTULOS_FATOR.get(f, f) for f in resultado.fatores_excluidos
         )
-        st.caption(
+        aviso_lacuna(
             f"Fora da regressão por falta de dado em comum: {nomes}. "
             "Ausente da tabela não é o mesmo que irrelevante — é a série não "
-            "ter sustentado a estimativa."
-        )
+            "ter sustentado a estimativa.",
+            codigo="tela.portfolio_global.fatores_excluidos")
 
 
 def _painel_risco(ret: pd.DataFrame, pesos: dict) -> None:
     st.markdown("#### Risco do patrimônio")
     if ret.empty:
-        st.info("Sem série de preços mensal suficiente para estimar risco.")
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna("Sem série de preços mensal suficiente para estimar risco.",
+                     codigo="tela.portfolio_global.risco_sem_serie")
         return
 
     r = risk.metricas_de_risco(ret, pesos)
     if r is None:
-        st.info(
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna(
             "Série mensal curta demais para estimar risco com confiança "
-            f"(mínimo de {risk.MIN_OBS} meses)."
-        )
+            f"(mínimo de {risk.MIN_OBS} meses).",
+            codigo="tela.portfolio_global.risco_serie_curta")
         return
 
     # A cauda e que sustenta VaR e CVaR, nao o total de meses. Com poucos meses
@@ -814,10 +836,10 @@ def _painel_risco(ret: pd.DataFrame, pesos: dict) -> None:
     for coluna, (rotulo, valor, cor, ajuda) in zip(colunas, cartoes):
         with coluna:
             card_metrica(rotulo, _fmt(valor * 100, "%", casas=1), accent=cor, ajuda=ajuda)
-    st.caption(
+    detalhe_tecnico(
         f"Baseado em {r.n_obs} meses de retornos do patrimônio consolidado; "
-        f"VaR e CVaR repousam sobre {r.n_cauda} {plural} de cauda."
-    )
+        f"VaR e CVaR repousam sobre {r.n_cauda} {plural} de cauda.",
+        codigo="portfolio_global.risco_amostra")
 
 
 # Rotulos de exibicao dos limiares de roles.LIMIARES: so texto, a mesma
@@ -894,7 +916,7 @@ def _painel_papeis(df: pd.DataFrame, ret: pd.DataFrame) -> list[roles.PapelDoAti
         st.info("Sem posições para classificar por papel estratégico.")
         return []
 
-    st.caption(_texto_de_limiares())
+    detalhe_tecnico(_texto_de_limiares(), codigo="portfolio_global.limiares_papeis")
 
     resumo = _resumo_de_papeis(entradas)
 
@@ -1191,17 +1213,15 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
     if macro is None:
         macro = _carregar_macro_carteiras(df)
     if macro.falha is None:
-        with st.expander("Contexto macro das carteiras", expanded=False):
-            for texto in macro.textos:
-                st.text(texto)
-            registrar_limitacoes(macro.limitacoes,
-                                 modulo="views/portfolio_global.py:contexto_macro",
-                                 simbolos=df["symbol"] if "symbol" in df else ())
-            for limitation in macro.limitacoes:
-                st.caption(limitation)
-            st.caption("O ajuste global considera a mudança desde a criação, com limites e custos; requer revisão humana.")
+        for texto in macro.textos:
+            detalhe_tecnico(texto, codigo="portfolio_global.contexto_macro")
+        registrar_limitacoes(macro.limitacoes,
+                             modulo="views/portfolio_global.py:contexto_macro",
+                             simbolos=df["symbol"] if "symbol" in df else ())
+        st.caption("O ajuste global considera a mudança desde a criação, com limites e custos; requer revisão humana.")
     else:
-        st.caption("Contexto macro indisponível nesta consulta.")
+        aviso_lacuna(f"Contexto macro indisponível nesta consulta ({macro.falha}).",
+                     codigo="tela.portfolio_global.macro_indisponivel")
 
     # GLB-01: o alvo do motor pode vir do Black-Litterman. O tilt continua o
     # padrão -- os dois mudam o resultado, e trocar sem o usuário pedir seria
@@ -1219,21 +1239,19 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
         acoes = _gerar_recomendacoes(df, ret, pesos, alvos, total_brl,
                                      macro_impacts=macro.impactos,
                                      pesos_alvo=pesos_alvo)
-    except Exception:  # noqa: BLE001 - fronteira de isolamento do motor de recomendacao
-        st.warning(
-            "⚠️ Não foi possível gerar as recomendações do motor de movimentação. "
-            "As demais seções do Portfólio Global continuam válidas."
-        )
+    except Exception as exc:  # noqa: BLE001 - fronteira de isolamento do motor de recomendacao
+        falha_de_acao("Não foi possível gerar as recomendações do motor de movimentação.", exc)
         return []
 
     if not acoes:
-        st.info(
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna(
             "Sem série mensal suficiente para o motor combinar sinais e "
-            "recomendar movimentos."
-        )
+            "recomendar movimentos.",
+            codigo="tela.portfolio_global.motor_sem_serie")
         return []
 
-    st.caption(_texto_de_limiares_motor())
+    detalhe_tecnico(_texto_de_limiares_motor(), codigo="portfolio_global.limiares_motor")
 
     resumo = _resumo_de_acoes(acoes)
     colunas = st.columns(len(_ORDEM_RESUMO_ACOES))
@@ -1251,15 +1269,15 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
         len(nao_calibrados),
         positivo=(len(nao_calibrados) == 0),
         accent="#FC5C7D" if nao_calibrados else "#00C896",
-        ajuda="Classe sem parâmetros de custo calibrados (core.transaction_costs): "
+        ajuda="Classe sem parâmetros de custo calibrados: "
               "o motor recusa mexer até o custo real ser conhecido.",
     )
     if nao_calibrados:
-        st.warning(
-            f"⚠️ {len(nao_calibrados)} recomendação(ões) com custo não calibrado, "
+        aviso_lacuna(
+            f"{len(nao_calibrados)} recomendação(ões) com custo não calibrado, "
             "mantidas em vez de executadas: "
-            + ", ".join(a.symbol for a in nao_calibrados)
-        )
+            + ", ".join(a.symbol for a in nao_calibrados),
+            codigo="tela.portfolio_global.custo_nao_calibrado")
 
     # Cards abertos, duas colunas — não um expander por recomendação. Na
     # carteira real são 41 recomendações: lê-las custava 41 cliques, e o que
@@ -1274,6 +1292,12 @@ def _painel_recomendacoes(df: pd.DataFrame, ret: pd.DataFrame, pesos: dict,
     ordem = {chave: i for i, chave in enumerate(_ORDEM_RESUMO_ACOES)}
     ordenadas = sorted(
         acoes, key=lambda a: (ordem.get(a.acao, 99), -(a.peso_atual or 0.0), a.symbol))
+    for acao in ordenadas:
+        detalhe_tecnico(
+            "analisadores: " + (", ".join(sorted(acao.analisadores))
+                                if acao.analisadores else
+                                "nenhum produziu sinal para este ativo"),
+            codigo="portfolio_global.analisadores_do_sinal", entidade=acao.symbol)
     for inicio in range(0, len(ordenadas), 2):
         for coluna, acao in zip(st.columns(2), ordenadas[inicio:inicio + 2]):
             with coluna:
@@ -1435,9 +1459,11 @@ def _benchmark_bl(res, ret: pd.DataFrame, alvos: dict, renda_fixa: float | None)
     st.caption("Pesos: " + " · ".join(
         f"{benchmark.ROTULO_PROXY.get(c, c)} {p:.0%}" for c, p in pesos_classe.items()))
     for aviso in avisos:
-        st.caption(f"⚠️ {aviso}")
+        aviso_lacuna(str(aviso), codigo="tela.portfolio_global.benchmark_aviso")
     if bench.empty:
-        st.info("Sem série suficiente para montar o benchmark composto.")
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna("Sem série suficiente para montar o benchmark composto.",
+                     codigo="tela.portfolio_global.benchmark_sem_serie")
         return
 
     rf = renda_fixa if "renda_fixa" in pesos_classe else None
@@ -1450,7 +1476,9 @@ def _benchmark_bl(res, ret: pd.DataFrame, alvos: dict, renda_fixa: float | None)
     resumos = {r: benchmark.resumo(s, bench) for r, s in carteiras.items()}
     resumos = {r: x for r, x in resumos.items() if x is not None}
     if not resumos:
-        st.info("Menos de 12 meses em comum entre as carteiras e o benchmark.")
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna("Menos de 12 meses em comum entre as carteiras e o benchmark.",
+                     codigo="tela.portfolio_global.benchmark_janela_curta")
         return
 
     colunas = st.columns(len(resumos) + 1)
@@ -1470,13 +1498,14 @@ def _benchmark_bl(res, ret: pd.DataFrame, alvos: dict, renda_fixa: float | None)
     series = {"Benchmark composto": primeiro["acumulado"]["b"]}
     series.update({r: x["acumulado"]["c"] for r, x in resumos.items()})
     st.plotly_chart(_fig_acumulado(series), width="stretch")
-    st.caption(
+    st.caption("Resultado do passado: não é promessa de retorno futuro.")
+    detalhe_tecnico(
         "Retrospectivo e com viés de olhar para trás: os pesos de HOJE (meta e "
         "BL) aplicados ao passado, com a mesma janela que estimou Σ e os scores "
         "de agora. Mede se a seleção somou algo à decisão de alocação entre "
         "classes nesse passado; não promete nada para o futuro. Sem custo de "
-        "transação e com rebalanceamento mensal implícito."
-    )
+        "transação e com rebalanceamento mensal implícito.",
+        codigo="portfolio_global.benchmark_vies_retrospectivo")
 
 
 def _painel_black_litterman(df: pd.DataFrame, ret: pd.DataFrame, alvos: dict,
@@ -1497,13 +1526,13 @@ def _painel_black_litterman(df: pd.DataFrame, ret: pd.DataFrame, alvos: dict,
     try:
         restricoes = _ler_restricoes_da_politica(renda_fixa)
         res = alocacao_bl.black_litterman_global(df, ret, restricoes=restricoes)
-    except Exception:  # noqa: BLE001 - fronteira de isolamento do Black-Litterman
-        logger.exception("Falha no Black-Litterman do portfólio global")
-        st.warning("⚠️ Não foi possível calcular a alocação Black-Litterman. "
-                   "As demais seções continuam válidas.")
+    except Exception as exc:  # noqa: BLE001 - fronteira de isolamento do Black-Litterman
+        falha_de_acao("Não foi possível calcular a alocação Black-Litterman.", exc)
         return None
     if not res.disponivel:
-        st.info(f"Black-Litterman indisponível: {res.motivo}.")
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna(f"Black-Litterman indisponível: {res.motivo}.",
+                     codigo="tela.portfolio_global.bl_indisponivel")
         return res
 
     st.caption(_AVISO_TEORICO_BL)
@@ -1530,11 +1559,15 @@ def _painel_black_litterman(df: pd.DataFrame, ret: pd.DataFrame, alvos: dict,
             card_metrica(
                 f"Confiança · {alocacao_bl.ROTULO_MOTOR[motor]}", f"{c.confianca:.1%}",
                 positivo=c.efetiva, accent="#00C896" if c.efetiva else "#FC5C7D",
-                ajuda=f"{c.fonte}. Fração do caminho que μ anda até a view; "
-                      f"Ω = {c.omega_multiplo:.0f}·τ·σ².")
+                ajuda="Fração do caminho que μ anda até a view.")
+            detalhe_tecnico(
+                f"{c.fonte}. Ω = {c.omega_multiplo:.0f}·τ·σ².",
+                codigo="portfolio_global.bl_confianca_fonte",
+                entidade=alocacao_bl.ROTULO_MOTOR[motor])
     for aviso in res.avisos:
-        st.caption(f"⚠️ {aviso}")
-    st.caption(f"Restrições: {res.restricoes.fonte}.")
+        aviso_lacuna(str(aviso), codigo="tela.portfolio_global.bl_aviso")
+    detalhe_tecnico(f"Restrições: {res.restricoes.fonte}.",
+                    codigo="portfolio_global.bl_restricoes_fonte")
 
     carteira = _carregar_carteira_real()
     valores = ({} if carteira.get("data_source") == "error"
@@ -1595,10 +1628,12 @@ def _painel_black_litterman(df: pd.DataFrame, ret: pd.DataFrame, alvos: dict,
             "portão de excesso reprovou; 1% sem medição, com versão divergente "
             "ou IC não significativo. Ω = (1/c − 1)·τ·σ², de modo que μ anda a "
             "fração c do caminho até Q. Motor sem medição usa IC 0,05 só para "
-            "a view ter direção.\n\n"
-            # Gerado das confianças vigentes: o texto fixo envelheceu (GLB-N1).
-            + alocacao_bl.explicacao_numeros_de_hoje(res.motores)
+            "a view ter direção."
         )
+    # Gerado das confianças vigentes: o texto fixo envelheceu (GLB-N1). É
+    # procedência da medição, não fórmula: vai para o log.
+    detalhe_tecnico(alocacao_bl.explicacao_numeros_de_hoje(res.motores),
+                    codigo="portfolio_global.bl_numeros_de_hoje")
     _benchmark_bl(res, ret, alvos, renda_fixa)
     return res
 
@@ -1869,7 +1904,7 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                 resposta = mensagem_falha_llm(exc, "chat do Portfólio Global")
         st.markdown(escapar_cifrao(resposta))
         if aviso:
-            st.caption(aviso)
+            detalhe_tecnico(str(aviso), codigo="portfolio_global.ancoragem_chat")
 
     historico.append({"role": "assistant", "content": resposta})
     save_chat_history(_memory_key, historico, session_key=_CHAVE_CHAT)
@@ -1888,9 +1923,10 @@ def render() -> None:
         logger.exception("Falha ao carregar snapshots/alocacao do portfolio global")
         mensagem = mensagem_de_erro_ao_carregar(exc)
         if mensagem == MSG_SEM_SNAPSHOT:
-            st.info(mensagem)
+            st.info("Esta análise não está disponível no momento.")
+            aviso_lacuna(mensagem, codigo="tela.portfolio_global.sem_snapshot")
         else:
-            st.error(mensagem)
+            falha_de_acao(mensagem, exc)
         return
 
     alvos = alocacao.get("targets") or {}
@@ -1898,27 +1934,32 @@ def render() -> None:
 
     aviso = estado_vazio(snapshots, alvos)
     if aviso:
-        st.info(aviso)
+        if aviso == MSG_SEM_SNAPSHOT:
+            st.info("Esta análise não está disponível no momento.")
+            aviso_lacuna(aviso, codigo="tela.portfolio_global.sem_snapshot")
+        else:
+            st.info(aviso)
         return
 
     df = montar_posicoes(snapshots, alvos, total_brl=alocacao.get("total_brl"))
     if df.empty:
-        st.info(MSG_SEM_SNAPSHOT)
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna(MSG_SEM_SNAPSHOT, codigo="tela.portfolio_global.sem_snapshot")
         return
 
     sem_mapa = _setores_sem_mapa(df)
     if sem_mapa:
-        st.warning(
+        aviso_lacuna(
             "Setores sem mapeamento canônico (contabilizados como Outros): "
-            + ", ".join(f"{get_spec(c).label}/{s}" for c, s in sem_mapa)
-        )
+            + ", ".join(f"{get_spec(c).label}/{s}" for c, s in sem_mapa),
+            codigo="tela.portfolio_global.setores_sem_mapeamento")
 
     sem_posicao = classes_sem_posicao(snapshots, alvos)
     if sem_posicao:
-        st.warning(
+        aviso_lacuna(
             "Classes com alvo definido mas sem posições capturadas: "
-            + ", ".join(f"{get_spec(c).label} ({a * 100:.0f}%)" for c, a in sem_posicao)
-        )
+            + ", ".join(f"{get_spec(c).label} ({a * 100:.0f}%)" for c, a in sem_posicao),
+            codigo="tela.portfolio_global.classes_sem_posicao")
 
     _cards_de_concentracao(df, concentration.resumo(df))
     _cards_de_top_n(df)
@@ -1932,10 +1973,10 @@ def render() -> None:
     ret, cob = retornos_mensais(df)
     aviso = aviso_de_cobertura(cob)
     if aviso:
-        st.warning(aviso)
+        aviso_lacuna(aviso, codigo="tela.portfolio_global.cobertura_precos")
     fx_info = detalhe_fx(cob)
     if fx_info:
-        st.caption(fx_info)
+        detalhe_tecnico(fx_info, codigo="portfolio_global.cambio_pit")
     pesos = dict(zip(df["symbol"], df["weight_global"]))
     _painel_correlacao(ret, pesos)
     _painel_fatores(ret, pesos)

@@ -19,7 +19,7 @@ from core.bank_statement_import import (
 )
 from core.config import settings
 from core.utils import fmt_moeda
-from design.componentes import card_metrica
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 from design.tema_canvas import no_claro
 
 _COR_RECEITA = "var(--app-primary)"
@@ -187,37 +187,41 @@ def _render_diagnostics(parsed: dict) -> None:
     parse = parsed.get("parse_diagnostics") or {}
     if not extract and not parse:
         return
-    with st.expander("Diagnóstico da leitura do PDF", expanded=True):
-        cols = st.columns(4, gap="small")
-        with cols[0]:
-            card_metrica("Páginas", extract.get("n_pages", "-"), accent="#4A9EFF")
-        with cols[1]:
-            card_metrica("Caracteres", parse.get("n_chars", extract.get("n_chars", 0)),
-                         accent="#4A9EFF")
-        with cols[2]:
-            card_metrica("Linhas candidatas", parse.get("n_linhas_candidatas", 0),
-                         accent="#F6C90E")
-        with cols[3]:
-            card_metrica("Movimentos válidos", parse.get("n_movimentos_validos", 0),
-                         accent="#00C896")
+    detalhe_tecnico(
+        f"Leitura do PDF: {extract.get('n_pages', '-')} página(s), "
+        f"{parse.get('n_chars', extract.get('n_chars', 0))} caractere(s), "
+        f"{parse.get('n_linhas_candidatas', 0)} linha(s) candidata(s), "
+        f"{parse.get('n_movimentos_validos', 0)} movimento(s) válido(s); "
+        f"motor de extração: {extract.get('engine') or '-'}.",
+        codigo="controle.extrato_leitura_pdf",
+    )
+    motivos = parse.get("motivos_descarte") or {}
+    if motivos:
+        detalhe_tecnico(
+            "Motivos de descarte das linhas: "
+            + "; ".join(f"{k}={v}" for k, v in motivos.items()),
+            codigo="controle.extrato_descarte_linhas",
+        )
+    if extract.get("scanned"):
+        st.warning("O PDF parece ser escaneado ou uma imagem; não foi possível ler o texto.")
 
-        engine = extract.get("engine")
-        if engine:
-            st.caption(f"Motor de extração usado: {engine}.")
-        if extract.get("scanned"):
-            st.warning(
-                "O PDF parece ser escaneado/imagem (texto pesquisavel quase nulo)."
-            )
-        motivos = parse.get("motivos_descarte") or {}
-        if motivos:
-            st.caption("Motivos de descarte das linhas:")
-            st.dataframe(
-                pd.DataFrame(
-                    [{"Motivo": k, "Ocorrencias": v} for k, v in motivos.items()]
-                ),
-                hide_index=True,
-                width="stretch",
-            )
+
+# Mensagens que descrevem o arquivo do usuário (e que ele consegue corrigir).
+_MENSAGENS_DO_USUARIO = {"Extrato sem linhas validas.", "Nada para importar."}
+
+
+def _mostrar_falha(result: dict) -> None:
+    """Falha de importação: problema do arquivo fica na tela; configuração,
+    conta técnica e banco viram frase neutra e registro para o administrador."""
+    msg = result.get("message") or "Falha ao importar extrato."
+    if result.get("errors") or msg in _MENSAGENS_DO_USUARIO:
+        st.error(msg)
+        return
+    st.error("Não foi possível importar o extrato agora.")
+    aviso_lacuna(
+        "Importação de extrato recusada por configuração, banco ou conta de movimentação.",
+        codigo="tela.controle.extrato_importacao_recusada",
+    )
 
 
 def _render_upload(*, show_header: bool = True) -> None:
@@ -226,14 +230,16 @@ def _render_upload(*, show_header: bool = True) -> None:
         st.caption("Importe PDFs de movimentações bancárias. O padrão inicial suportado é C6 Bank.")
 
     if settings.MOCK_MODE:
-        st.warning("Modo mock ativo: a prévia funciona, mas a gravação no Supabase fica desabilitada.")
+        st.warning("A gravação está desabilitada neste ambiente; a prévia continua disponível.")
+        detalhe_tecnico("Modo mock ativo: gravação do extrato desabilitada.",
+                        codigo="controle.extrato_mock")
 
     last_result = st.session_state.get("bank_statement_import_result")
     if last_result:
         if last_result.get("ok"):
             st.success(last_result.get("message", "Extrato importado."))
         else:
-            st.error(last_result.get("message", "Falha ao importar extrato."))
+            _mostrar_falha(last_result)
 
     banco = st.selectbox("Banco", SUPPORTED_BANKS, key="bank_statement_bank")
     uploaded = st.file_uploader(
@@ -331,7 +337,7 @@ def _render_upload(*, show_header: bool = True) -> None:
         st.session_state["bank_statement_import_result"] = result
         if result.get("ok"):
             st.rerun()
-        st.error(result.get("message", "Falha ao importar extrato."))
+        _mostrar_falha(result)
 
 
 def render_upload_extrato_bancario(*, show_header: bool = True) -> None:

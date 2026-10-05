@@ -373,6 +373,6 @@ def test_cartao_mostra_cenario_e_diz_os_temas(carteira):
     assert "Cenário econômico e político" in html
     assert "Copom sinaliza corte da Selic" in html
     assert "Sable Offshore" not in html and "Petrobras" not in html
-    assert "não de outras empresas" in html and "Fonte: Acervo local" in html
+    assert "não de outras empresas" in html and "Fonte: Acervo local" not in html
     vazio = tela.cartao_noticias(a, ([GERAIS[0]], "Acervo local"))
     assert "Nenhuma manchete de juros" in vazio and "Sable" not in vazio

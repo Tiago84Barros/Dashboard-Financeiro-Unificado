@@ -43,11 +43,10 @@ from core.dossie_b3 import NAO_AVALIADO, avaliar_para_selecao, quali_gate_dispon
 from core.inteligencia_ativos import veredito
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
-from core.utils import escapar_cifrao
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design import portao_inteligencia as _portao_ui
 from design.componentes import card_metrica, cor_token
-from design.lacunas import aviso_lacuna
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.market_companies import company_logo_html
 
 # ── Importa engine compartilhado de empresas_b3 ───────────────────────────────
@@ -505,8 +504,10 @@ def _render_data_quality_box(summary: dict, audit: pd.DataFrame, hist_audit: pd.
         if not audit.empty:
             st.dataframe(audit.head(80), width="stretch", height=260)
         if not hist_audit.empty:
-            st.caption("Outliers removidos do historico usado no backtest")
-            st.dataframe(hist_audit.head(80), width="stretch", height=220)
+            detalhe_tecnico(
+                f"Outliers removidos do histórico usado no backtest: "
+                f"{int(hist_audit['Ocorrencias'].sum())} ocorrência(s).",
+                codigo="portfolio_b3.qualidade_outliers_historico")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1633,7 +1634,10 @@ def _bloco_segmento(res: dict, df_set: pd.DataFrame,
         res["participacao"].items(), key=lambda x: x[1], reverse=True
     )
     if not participantes:
-        st.caption("Sem dados suficientes para reconstrução histórica.")
+        st.caption("Sem histórico disponível para este segmento.")
+        aviso_lacuna("Sem dados suficientes para reconstrução histórica.",
+                     codigo="tela.portfolio_b3.segmento_sem_reconstrucao",
+                     entidade=str(res.get("segmento") or ""))
         return
 
     ano_atual = pd.Timestamp.now().year
@@ -1680,7 +1684,8 @@ def _render_paineis_app1(
     selecionados = {p["tk"] for p in proximos_uniq}
 
     st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>", unsafe_allow_html=True)
-    st.caption("Teste incremental: painéis analíticos equivalentes aos patches do app1.")
+    detalhe_tecnico("Teste incremental: painéis analíticos equivalentes aos patches do app1.",
+                    codigo="portfolio_b3.paineis_app1_nota")
 
     with st.expander("🧩 Patch 1 — Régua de Convicção", expanded=False):
         if score_global.empty:
@@ -1693,7 +1698,9 @@ def _render_paineis_app1(
                 & (score_global["ticker"].isin(selecionados))
             ].copy()
             if df_ano.empty:
-                st.info("Nenhum ticker selecionado encontrado no score mais recente.")
+                st.caption("Esta análise não está disponível no momento.")
+                aviso_lacuna("Nenhum ticker selecionado encontrado no score mais recente.",
+                             codigo="tela.portfolio_b3.regua_sem_ticker_no_score")
             else:
                 smin = float(df_ano["Score_Ajustado"].min())
                 smax = float(df_ano["Score_Ajustado"].max())
@@ -1958,7 +1965,9 @@ def _pos_class(v: object) -> str:
 
 def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFrame) -> None:
     if not proximos_uniq:
-        st.info("Sem líderes finais para exibir no Patch 5.")
+        st.caption("Esta análise não está disponível no momento.")
+        aviso_lacuna("Sem líderes finais para exibir no Patch 5.",
+                     codigo="tela.portfolio_b3.patch5_sem_lideres")
         return
 
     st.markdown(
@@ -1988,7 +1997,9 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
     tickers = list(dict.fromkeys([str(p.get("tk", "")).strip().upper() for p in proximos_uniq if p.get("tk")]))
     nomes = {str(p.get("tk", "")).strip().upper(): p.get("nome") or p.get("tk") for p in proximos_uniq}
     if not tickers:
-        st.info("Patch 5 indisponível: tickers inválidos.")
+        st.caption("Esta análise não está disponível no momento.")
+        aviso_lacuna("Patch 5 indisponível: tickers inválidos.",
+                     codigo="tela.portfolio_b3.patch5_tickers_invalidos")
         return
 
     with st.spinner("Carregando indicadores do Patch 5..."):
@@ -2005,7 +2016,7 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
     except Exception:  # noqa: BLE001 - diagnostico nao pode quebrar a tela
         _alerta = None
     if _alerta:
-        st.warning(_alerta)
+        aviso_lacuna(str(_alerta), codigo="tela.portfolio_b3.patch5_confianca_dados")
 
     st.markdown(
         """
@@ -2166,9 +2177,9 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
         c1.markdown(_quality_card("ROIC médio (5a)", _fmt_pct(row["roic"]), "Eficiência do capital (média 5 anos).", "cf-card-income"), unsafe_allow_html=True)
         fonte_div = str(row.get("fonte_dividendos") or "—")
         dy_lbl    = str(row.get("dy_label") or "DY médio (5a)")
-        c2.markdown(_quality_card(dy_lbl, _fmt_pct(row["dy"]), f"Dividend Yield. Fonte: {fonte_div}.", "cf-card-yield"), unsafe_allow_html=True)
-        c3.markdown(_quality_card("Cresc. anual dividendos (5a)", _fmt_growth(row["div_growth"]), f"Tendência robusta dos dividendos. Fonte: {fonte_div}.", _pos_class(row["div_growth"])), unsafe_allow_html=True)
-        c4.markdown(_quality_card(str(row["debt_label"]), _fmt_ratio(row["debt_ratio"]), "Último disponível no Supabase.", "cf-card-ratio"), unsafe_allow_html=True)
+        c2.markdown(_quality_card(dy_lbl, _fmt_pct(row["dy"]), "Dividend Yield.", "cf-card-yield"), unsafe_allow_html=True)
+        c3.markdown(_quality_card("Cresc. anual dividendos (5a)", _fmt_growth(row["div_growth"]), "Tendência robusta dos dividendos.", _pos_class(row["div_growth"])), unsafe_allow_html=True)
+        c4.markdown(_quality_card(str(row["debt_label"]), _fmt_ratio(row["debt_ratio"]), "Último disponível.", "cf-card-ratio"), unsafe_allow_html=True)
 
         c1, c2, c3, c4 = st.columns(4)
         c1.markdown(_quality_card("Cresc. anual receita (5a)", _fmt_growth(row["rec_growth"]), "Taxa anualizada implícita da tendência robusta da receita.", _pos_class(row["rec_growth"])), unsafe_allow_html=True)
@@ -2179,14 +2190,17 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
         c1, c2, c3 = st.columns(3)
         c1.markdown(_quality_card("Volatilidade (12m, a.a.)", _fmt_pct(row["vol_12m"]), "Desvio padrão anualizado do preço.", "cf-card-ratio"), unsafe_allow_html=True)
         c2.markdown(_quality_card("Máxima queda (5a)", _fmt_pct(row["max_drop_5y"], signed=True), "Pior queda do preço no período.", "cf-card-ratio"), unsafe_allow_html=True)
-        c3.markdown(_quality_card("Fonte", "DB + YF", "Supabase (primário) + yfinance (fallback).", "cf-card-ratio"), unsafe_allow_html=True)
+        detalhe_tecnico(
+            f"Fonte: DB + YF — Supabase (primário) + yfinance (fallback); "
+            f"dividendos: {fonte_div}.",
+            codigo="portfolio_b3.patch5_fonte", entidade=str(row["ticker"]))
 
         st.markdown("<hr style='border:0;border-top:1px solid var(--app-border);margin: 8px 0 18px;'>", unsafe_allow_html=True)
 
-    st.caption(
+    detalhe_tecnico(
         "Notas: crescimento usa inclinação log-linear anualizada quando há dados suficientes. "
-        "Preço, volatilidade e máxima queda usam a matriz de preços baixada para a criação do portfólio."
-    )
+        "Preço, volatilidade e máxima queda usam a matriz de preços baixada para a criação do portfólio.",
+        codigo="portfolio_b3.patch5_notas")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2255,11 +2269,12 @@ def _render_perfil_configuracao() -> None:
     # O resumo do perfil saiu da tela: o selo acima já nomeia a configuração
     # ativa, e a justificativa mora no expander de evidência logo abaixo, onde
     # vem acompanhada dos números que a sustentam.
-    with st.expander("Por que estes valores (evidência medida)", expanded=False):
-        for evidencia in preset.evidencias:
-            st.markdown(f"- {evidencia}")
-        if preset.ressalva:
-            st.warning(preset.ressalva, icon="⚠️")
+    for evidencia in preset.evidencias:
+        detalhe_tecnico(str(evidencia), codigo="portfolio_b3.perfil_evidencia",
+                        entidade=str(escolhido))
+    if preset.ressalva:
+        detalhe_tecnico(str(preset.ressalva), codigo="portfolio_b3.perfil_ressalva",
+                        entidade=str(escolhido))
 
     if ativo == PERSONALIZADO:
         st.caption(
@@ -2338,10 +2353,13 @@ def _render_resiliencia_medida(tickers: list[str], df_set: pd.DataFrame) -> None
         st.caption(
             "Margem operacional mediana nos anos de recessão dividida pela dos "
             "anos normais, no histórico da própria empresa. Acima de 1,00 a "
-            "margem SUBIU na crise. Isto informa e **não** altera o teto de "
-            "cíclicos: são duas recessões, e a de 2020 favoreceu exportador — "
-            "por ela, commodity mediria como mais defensiva que saneamento."
+            "margem SUBIU na crise."
         )
+        detalhe_tecnico(
+            "Isto informa e não altera o teto de cíclicos: são duas recessões, e "
+            "a de 2020 favoreceu exportador — por ela, commodity mediria como mais "
+            "defensiva que saneamento.",
+            codigo="portfolio_b3.resiliencia_limitacao")
         linhas = []
         for t in sorted(presentes, key=lambda x: -medidas[x].razao):
             m = medidas[t]
@@ -2362,10 +2380,13 @@ def _render_resiliencia_medida(tickers: list[str], df_set: pd.DataFrame) -> None
         for tk, classe, m in divergencias_de_ciclo(tax, medidas):
             st.info(
                 f"**{tk}** é {classe} pela taxonomia da B3, mas segurou a margem "
-                f"na crise ({m.razao:.2f}). O teto de cíclicos continua tratando "
-                "como cíclica — evidência de duas recessões não derruba "
-                "estrutura, mas vale saber ao julgar a concentração.",
+                f"na crise ({m.razao:.2f}).",
                 icon="🔎")
+            detalhe_tecnico(
+                "O teto de cíclicos continua tratando como cíclica — evidência de "
+                "duas recessões não derruba estrutura, mas vale saber ao julgar a "
+                "concentração.",
+                codigo="portfolio_b3.resiliencia_divergencia_ciclo", entidade=str(tk))
 
 
 def _render_saude_da_carteira(tickers: list[str], df_mult_todos: pd.DataFrame,
@@ -2482,12 +2503,12 @@ def _render_evidencia_universo(resultados: list[dict]) -> None:
     st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
     _sec_hdr("🔬 Evidência no universo — o teste com amplitude")
-    st.caption(
+    detalhe_tecnico(
         "Testar cada segmento isoladamente é inviável na B3: a mediana é de 3 "
         "empresas por segmento. Este teste agrupa TODAS as empresas de cada ano "
         "num único Rank-IC — mesma base, amplitude real, sem multiplicidade a "
-        "corrigir."
-    )
+        "corrigir.",
+        codigo="portfolio_b3.evidencia_universo_metodo")
 
     icone = {A_FAVOR: "✅", CONTRA: "❌"}.get(evidencia.estado, "🟡")
     c1, c2, c3, c4 = st.columns(4)
@@ -2547,10 +2568,10 @@ def _render_evidencia_universo(resultados: list[dict]) -> None:
         )
         _sem_dado = sum(1 for e in encolhidas if e.ic_bruto is None)
         if _sem_dado:
-            st.caption(
+            detalhe_tecnico(
                 f"{_sem_dado} segmento(s) sem observação própria receberam a "
-                "estimativa do universo."
-            )
+                "estimativa do universo.",
+                codigo="portfolio_b3.evidencia_segmentos_sem_observacao")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2588,7 +2609,9 @@ def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
     )
 
     if df_mult_todos is None or df_mult_todos.empty:
-        st.info("Sem fundamentos carregados para avaliar a rota de valor.")
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna("Sem fundamentos carregados para avaliar a rota de valor.",
+                     codigo="tela.portfolio_b3.rota_valor_sem_fundamentos")
         return
 
     col1, col2, col3 = st.columns(3)
@@ -2686,28 +2709,15 @@ def _render_rota_de_valor(df_mult_todos: pd.DataFrame, df_set: pd.DataFrame,
 
     bloqueadas = blocked_by_missing_data(ranked, policy=policy)
     if not bloqueadas.empty:
-        with st.expander(
-            f"🕳️ Teses não julgadas por falta de dado ({len(bloqueadas)})",
-            expanded=False,
-        ):
-            st.caption(
-                "Têm desconto relevante, mas falta insumo crítico de solvência — "
-                "não foram avaliadas e NÃO são recomendações. A lista mede o custo "
-                "da cobertura de fundamentos e serve para priorizar a ingestão."
-            )
-            faltantes = bloqueadas.copy()
-            faltantes["falta"] = faltantes["criticos_ausentes"].apply(
-                lambda v: ", ".join(v))
-            faltantes["margem_valor"] = faltantes["margem_valor"] * 100.0
-            st.dataframe(
-                faltantes[["Ticker", "margem_valor", "falta"]].head(40).rename(
-                    columns={"margem_valor": "Desconto aparente",
-                             "falta": "Dado ausente"}),
-                hide_index=True, width="stretch",
-                column_config={
-                    "Desconto aparente": st.column_config.NumberColumn(format="%.0f%%"),
-                },
-            )
+        faltantes = bloqueadas.copy()
+        faltantes["falta"] = faltantes["criticos_ausentes"].apply(
+            lambda v: ", ".join(v))
+        aviso_lacuna(
+            f"Teses não julgadas por falta de dado ({len(bloqueadas)}): desconto "
+            "relevante, mas falta insumo crítico de solvência — "
+            + "; ".join(f"{r['Ticker']} ({r['falta']})"
+                        for _, r in faltantes.head(40).iterrows()),
+            codigo="tela.portfolio_b3.rota_valor_teses_sem_dado")
 
 
 def _render_b3_portfolio_version_history(key: str) -> None:
@@ -2749,7 +2759,7 @@ def _render_b3_portfolio_version_history(key: str) -> None:
                 st.success("Versão restaurada e verificada transacionalmente.")
                 st.rerun()
             except (RuntimeError, ValueError) as exc:
-                st.error(f"Restauração bloqueada: {exc}")
+                falha_de_acao("Restauração bloqueada.", exc)
             except SQLAlchemyError:
                 st.error(
                     "Restauração bloqueada por uma falha transacional no banco; "
@@ -3119,10 +3129,12 @@ def render(show_header: bool = True) -> None:
                 "**e** tem **poder preditivo** consistente (≥ 2 anos de Rank-IC "
                 "positivo). É **neutro ao cenário macro** (se o segmento todo caiu, "
                 "os Pesos Iguais caíram junto). A **margem vs Selic** é "
-                "**diagnóstico** e **não reprova**. *Obs.: exige amplitude "
-                "estatística que a B3 raramente tem — se aprovar pouco, use o modo "
-                "Econômico (Brasil).*"
+                "**diagnóstico** e **não reprova**."
             )
+            detalhe_tecnico(
+                "Modo estatístico exige amplitude estatística que a B3 raramente "
+                "tem — se aprovar pouco, use o modo Econômico (Brasil).",
+                codigo="portfolio_b3.modo_estatistico_amplitude")
         st.caption(
             "📖 **Glossário:** *Pesos Iguais* = carteira que investe igualmente em "
             "todas as empresas do segmento (referência sem escolha). *Fora da "
@@ -3145,12 +3157,13 @@ def render(show_header: bool = True) -> None:
         df_mult_todos = _db.load_multiplos_todos()
 
     if df_set.empty:
-        st.warning(
+        st.warning("Esta análise não está disponível no momento.")
+        aviso_lacuna(
             "O cadastro de setores voltou vazio — sem ele não há universo para "
             "montar carteira. Confira `SUPABASE_UNIFICADO_URL` (ou "
             "`DATABASE_URL` / `SUPABASE_DB_URL`) no `.env` ou nos secrets do "
-            "Streamlit Cloud."
-        )
+            "Streamlit Cloud.",
+            codigo="tela.portfolio_b3.cadastro_setores_vazio")
         return
 
     # Filtro de LIQUIDEZ (negociabilidade): remove micro-caps e nomes sem valor de
@@ -3168,11 +3181,9 @@ def render(show_header: bool = True) -> None:
         try:
             _mcaps = _load_market_caps()
         except MarketCapDataError as exc:
-            st.error(
-                "Não foi possível validar o piso de liquidez de R$ 1 bilhão. "
-                "A seleção foi interrompida para não classificar dados ausentes "
-                f"como empresas ilíquidas. Detalhe: {exc}."
-            )
+            falha_de_acao(
+                "Não foi possível validar o piso de liquidez. A seleção foi "
+                "interrompida.", exc)
             return
 
         _n_antes = df_set["ticker"].nunique()
@@ -3180,12 +3191,14 @@ def render(show_header: bool = True) -> None:
             df_set["ticker"], _mcaps
         )
         if _n_universo and _cobertura_mcap < _MIN_MARKET_CAP_COVERAGE:
-            st.error(
+            st.error("Não foi possível validar o piso de liquidez. A seleção "
+                     "foi interrompida.")
+            aviso_lacuna(
                 "Cobertura de valor de mercado insuficiente para aplicar o piso "
                 f"de {_liq_label}: {_n_cobertos}/{_n_universo} empresas "
                 f"({_cobertura_mcap:.1%}). A seleção foi interrompida; atualize "
-                "a ingestão de `marketCap` antes de continuar."
-            )
+                "a ingestão de `marketCap` antes de continuar.",
+                codigo="tela.portfolio_b3.cobertura_marketcap_insuficiente")
             return
 
         _fora_tamanho_hoje = {
@@ -3193,12 +3206,12 @@ def render(show_header: bool = True) -> None:
             if _mcaps.get(_ticker_key(t), 0.0) < min_mcap
         }
         if _fora_tamanho_hoje:
-            st.caption(
-                f"🔒 Filtro de tamanho ({_liq_label}): {len(_fora_tamanho_hoje)} "
+            detalhe_tecnico(
+                f"Filtro de tamanho ({_liq_label}): {len(_fora_tamanho_hoje)} "
                 f"de {_n_antes} empresa(s) fora da carteira atual por valor de "
                 "mercado de hoje abaixo do piso ou ausente. Na reconstrução "
-                "histórica vale o valor de mercado de cada época."
-            )
+                "histórica vale o valor de mercado de cada época.",
+                codigo="portfolio_b3.filtro_tamanho")
 
     # Filtro de NEGOCIABILIDADE (volume financeiro mediano diário). Distinto do
     # filtro de tamanho acima: valor de mercado alto com free-float mínimo
@@ -3210,12 +3223,12 @@ def render(show_header: bool = True) -> None:
             _adtvs = _load_adtv()
         except LiquidezDataError as exc:
             _adtvs = {}
-            st.warning(
-                f"⚠️ Filtro de liquidez ({_adtv_label}) **não aplicado**: não foi "
+            aviso_lacuna(
+                f"Filtro de liquidez ({_adtv_label}) não aplicado: não foi "
                 f"possível consultar o volume negociado ({exc}). A seleção seguiu "
                 "sem esse piso — trate os nomes finais como não verificados quanto "
-                "à negociabilidade."
-            )
+                "à negociabilidade.",
+                codigo="tela.portfolio_b3.filtro_liquidez_sem_volume")
         if _adtvs:
             # Cobertura medida em quem passou no tamanho, como antes: o volume
             # das micro-caps falta mais, e contá-las desligaria o piso.
@@ -3227,12 +3240,12 @@ def render(show_header: bool = True) -> None:
                 _tks_adtv, _adtvs
             )
             if _tot_adtv and _ratio_adtv < _MIN_ADTV_COVERAGE:
-                st.warning(
-                    f"⚠️ Filtro de liquidez ({_adtv_label}) **não aplicado**: "
+                aviso_lacuna(
+                    f"Filtro de liquidez ({_adtv_label}) não aplicado: "
                     f"cobertura de volume insuficiente ({_cob_adtv}/{_tot_adtv} = "
                     f"{_ratio_adtv:.1%}). Atualize a ingestão de `volume` em "
-                    "`market.historical_prices`."
-                )
+                    "`market.historical_prices`.",
+                    codigo="tela.portfolio_b3.filtro_liquidez_cobertura")
             else:
                 _fora_liquidez_hoje = {
                     str(t) for t in df_set["ticker"].unique()
@@ -3242,13 +3255,13 @@ def render(show_header: bool = True) -> None:
                 if _novos_adtv:
                     _amostra = ", ".join(_novos_adtv[:12])
                     _reticencias = "…" if len(_novos_adtv) > 12 else ""
-                    st.caption(
-                        f"💧 Filtro de liquidez ({_adtv_label}): {len(_novos_adtv)} "
+                    detalhe_tecnico(
+                        f"Filtro de liquidez ({_adtv_label}): {len(_novos_adtv)} "
                         f"de {_n_antes_adtv} empresa(s) fora da carteira atual por "
                         "volume negociado de hoje abaixo do piso ou sem série de "
                         f"volume — {_amostra}{_reticencias}. Na reconstrução vale "
-                        "o volume de cada época."
-                    )
+                        "o volume de cada época.",
+                        codigo="portfolio_b3.filtro_liquidez")
 
     # df_set_hist: universo da reconstrução (todas as listadas; a época filtra
     # ano a ano). df_set: o que pode entrar na carteira de hoje.
@@ -3277,10 +3290,10 @@ def render(show_header: bool = True) -> None:
         _saidas_eleg = _saidas.elegibilidade(_doc_saidas, _anos_recon, float(min_mcap))
         _saidas_ult = {tk: fim for tk, (_ini, fim) in _saidas.periodo_listado(_doc_saidas).items()}
     elif incluir_saidas:
-        st.warning(
-            "⚠️ Arquivo das empresas que saíram da bolsa indisponível: a "
-            "reconstrução histórica usa só as listadas hoje (viés de sobrevivência)."
-        )
+        aviso_lacuna(
+            "Arquivo das empresas que saíram da bolsa indisponível: a "
+            "reconstrução histórica usa só as listadas hoje (viés de sobrevivência).",
+            codigo="tela.portfolio_b3.saidas_bolsa_indisponivel")
 
     # Papel PARADO (auditoria app4, B3-06/07): roda mesmo sem piso de volume.
     # Com "Sem filtro" a elegibilidade por época não era calculada, e um papel
@@ -3319,17 +3332,17 @@ def render(show_header: bool = True) -> None:
             # Sem a série da época, o conservador é o filtro de hoje em todos
             # os anos (o look-ahead antigo, declarado), não universo sem piso.
             df_set_hist = df_set
-            st.warning(
-                f"⚠️ Tamanho e liquidez por época **não aplicados** ({exc}): a "
+            aviso_lacuna(
+                f"Tamanho e liquidez por época não aplicados ({exc}): a "
                 "reconstrução histórica usa o universo filtrado pela foto de "
                 "HOJE em todos os anos — quem encolheu sumiu do passado e o "
-                "resultado histórico fica otimista."
-            )
+                "resultado histórico fica otimista.",
+                codigo="tela.portfolio_b3.universo_epoca_nao_aplicado")
         else:
-            st.warning(
-                f"⚠️ Filtro de papel parado **não aplicado** ({exc}): papéis sem "
-                "negócio podem concorrer na reconstrução e na carteira atual."
-            )
+            aviso_lacuna(
+                f"Filtro de papel parado não aplicado ({exc}): papéis sem "
+                "negócio podem concorrer na reconstrução e na carteira atual.",
+                codigo="tela.portfolio_b3.filtro_papel_parado")
     if _elegib_pit:
         _anos_med = [a for a, v in _elegib_pit.items() if v["medido"]]
         _tks_set = {_ticker_key(t) for t in df_set_hist["ticker"].unique()}
@@ -3364,23 +3377,23 @@ def render(show_header: bool = True) -> None:
             f"{'…' if len(_parados_hoje_set) > 12 else ''})."
             if _parados_hoje_set else ""
         )
-        st.caption(
-            f"🕰️ Universo por época: em {len(_anos_med)} de {len(_elegib_pit)} "
+        detalhe_tecnico(
+            f"Universo por época: em {len(_anos_med)} de {len(_elegib_pit)} "
             f"anos da reconstrução havia volume para medir; {_txt_piso}{_txt_tam}"
             f"{_pares_parados} combinação(ões) papel-ano ficaram fora por papel "
             f"parado (sem negócio há mais de {_upit.DIAS_PARADO} dias na data da "
             "decisão; quem já estava na carteira segue contando o retorno)."
-            f"{_txt_hoje}"
-        )
+            f"{_txt_hoje}",
+            codigo="portfolio_b3.universo_por_epoca")
     if _saidas_eleg:
         _n_conc = sum(1 for v in _saidas_eleg.values() if v)
         _pares_s = sum(len(v) for v in _saidas_eleg.values())
-        st.caption(
-            f"🪦 Sobrevivência: {_n_conc} de {len(_saidas_eleg)} empresas que saíram "
+        detalhe_tecnico(
+            f"Sobrevivência: {_n_conc} de {len(_saidas_eleg)} empresas que saíram "
             f"da bolsa concorrem na reconstrução ({_pares_s} combinações empresa-ano, "
             "só nos anos em que estavam listadas). Nenhuma concorre à carteira "
-            "atual. Saídas antes de 2016 e instituições financeiras ficam fora."
-        )
+            "atual. Saídas antes de 2016 e instituições financeiras ficam fora.",
+            codigo="portfolio_b3.sobrevivencia_saidas")
 
     taxa_selic_aa = (
         float(np.mean(list(selic_macro.values()))) if selic_macro else 0.1075
@@ -3596,11 +3609,11 @@ def render(show_header: bool = True) -> None:
                 )
                 if _run_id:
                     st.session_state["pb3_validation_run_id"] = _run_id
-                    st.caption(
+                    detalhe_tecnico(
                         f"Registro auditavel: `{_run_id[:8]}`. A execucao fica como "
                         "diligencia ate existirem PIT publicado e universo historico "
-                        "completo de deslistadas."
-                    )
+                        "completo de deslistadas.",
+                        codigo="portfolio_b3.registro_validacao")
         except Exception:
             # Persistencia e auditoria nunca podem impedir uma analise solicitada.
             pass
@@ -3633,7 +3646,9 @@ def render(show_header: bool = True) -> None:
         return
 
     if not resultados:
-        st.warning("Nenhum segmento retornou dados suficientes.")
+        st.warning("Esta análise não está disponível no momento.")
+        aviso_lacuna("Nenhum segmento retornou dados suficientes.",
+                     codigo="tela.portfolio_b3.nenhum_segmento_com_dados")
         return
 
     _render_data_quality_box(quality_summary, quality_audit, hist_audit)
@@ -3783,11 +3798,11 @@ def render(show_header: bool = True) -> None:
     st.markdown(_pit_card_html(cobertura_validacao_total, "Validação agregada"),
                 unsafe_allow_html=True)
     if cobertura_validacao_total.cobertura_medida < 1.0:
-        st.caption(
+        detalhe_tecnico(
             "A aprovação quantitativa abaixo permanece uma diligência/simulação "
             "metodológica na parcela sem vintage medido; não é validação "
-            "point-in-time integral. O risco de restatement está declarado no card."
-        )
+            "point-in-time integral. O risco de restatement está declarado no card.",
+            codigo="portfolio_b3.validacao_pit_parcial")
     if criterio_modo == "economico":
         _modo_txt = (
             "**Critério: Econômico (Brasil).** A aprovação é ECONÔMICA e medida "
@@ -3849,7 +3864,8 @@ def render(show_header: bool = True) -> None:
         "liderança recente; segmentos sem retornos mensais úteis ficam reprovados "
         "por dados insuficientes."
     )
-    st.caption(_modo_txt + _comum_txt + _resil_txt + _wf_txt)
+    detalhe_tecnico(_modo_txt + _comum_txt + _resil_txt + _wf_txt,
+                    codigo="portfolio_b3.criterio_de_aprovacao")
 
     # Descasamento decisão × exibição (corrigido): o modo econômico APROVA pela
     # margem do histórico cheio (val_est vs val_selic), mas a tabela mostrava
@@ -3987,10 +4003,12 @@ def render(show_header: bool = True) -> None:
     )
     st.caption(
         "**Efeito mín. detectável (Rank-IC)** é o menor poder preditivo que o "
-        "teste conseguiria enxergar com os dados disponíveis (80% de poder). "
-        "Valor alto significa teste cego para efeitos moderados — com mediana de "
-        "3 empresas por segmento na B3, é o caso frequente."
+        "teste conseguiria enxergar com os dados disponíveis (80% de poder)."
     )
+    detalhe_tecnico(
+        "Valor alto de efeito mínimo detectável significa teste cego para efeitos "
+        "moderados — com mediana de 3 empresas por segmento na B3, é o caso frequente.",
+        codigo="portfolio_b3.efeito_minimo_detectavel")
 
     # ── SEGMENTOS APROVADOS ───────────────────────────────────────────────────
     if aprovados and mostrar_audit:
@@ -4534,7 +4552,8 @@ def render(show_header: bool = True) -> None:
             )
             proposed = dict(zip(macro_frame["symbol"], macro_frame["weight"]))
             for warning in macro_frame.attrs.get("macro_warnings", []):
-                st.warning("Projeção macro: " + warning)
+                aviso_lacuna("Projeção macro: " + str(warning),
+                             codigo="tela.portfolio_b3.projecao_macro_aviso")
             macro_turnover = 0.5 * sum(
                 abs(float(proposed[ticker]) - base_weights[ticker])
                 for ticker in base_weights
@@ -4554,16 +4573,17 @@ def render(show_header: bool = True) -> None:
 
     if proximos_uniq:
         if macro_snapshot is None:
-            st.warning(
+            aviso_lacuna(
                 "Camada macro indisponível (sem Docker local e sem arquivo publicado recente); os pesos permanecem "
-                "fundamentalistas."
-            )
+                "fundamentalistas.",
+                codigo="tela.portfolio_b3.camada_macro_indisponivel")
         else:
-            st.info(
+            st.info("O ajuste macro não é previsão.")
+            detalhe_tecnico(
                 f"{descrever_fonte_macro(macro_fonte)} · corte {macro_snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
                 f"cobertura {macro_snapshot.coverage:.0%} · "
-                f"turnover macro {macro_turnover:.1%}. O ajuste não é previsão."
-            )
+                f"turnover macro {macro_turnover:.1%}.",
+                codigo="portfolio_b3.macro_fonte_corte")
             from functools import partial
 
             from core.macro_data.b3_weights import apply_b3_macro
@@ -4589,16 +4609,13 @@ def render(show_header: bool = True) -> None:
         for warning in (result.get("constraint_warnings") or [])
     })
     if _constraint_warnings:
-        with st.expander(
-            f"⚠️ Restrições inviáveis em {len(_constraint_warnings)} combinação(ões)",
-            expanded=False,
-        ):
-            st.caption(
-                "Esses casos usaram a carteira de Pesos Iguais apenas dentro do "
-                "diagnóstico do segmento. O limite máximo por ativo é reaplicado à "
-                "carteira global antes de salvar."
-            )
-            st.code("\n".join(_constraint_warnings[:100]))
+        detalhe_tecnico(
+            f"Restrições inviáveis em {len(_constraint_warnings)} combinação(ões): "
+            "esses casos usaram a carteira de Pesos Iguais apenas dentro do "
+            "diagnóstico do segmento. O limite máximo por ativo é reaplicado à "
+            "carteira global antes de salvar.\n"
+            + "\n".join(_constraint_warnings[:100]),
+            codigo="portfolio_b3.restricoes_inviaveis")
 
     if proximos_uniq:
         for i in range(0, len(proximos_uniq), 3):
@@ -4696,11 +4713,13 @@ def render(show_header: bool = True) -> None:
         if quali_log["nao_avaliados"]:
             st.warning(
                 f"{len(quali_log['nao_avaliados'])} ativo(s) da carteira NÃO "
-                "foram avaliados pelo portão (parecer LLM indisponível): "
-                + ", ".join(f"**{_tk}** ({_mot})"
-                            for _tk, _mot in quali_log["nao_avaliados"].items())
+                "foram avaliados pelo portão: "
+                + ", ".join(f"**{_tk}**" for _tk in quali_log["nao_avaliados"])
                 + ". Estão na carteira só pela estatística.",
                 icon="⚠️")
+            for _tk, _mot in quali_log["nao_avaliados"].items():
+                detalhe_tecnico(f"Não avaliado pelo portão (parecer LLM indisponível): {_mot}",
+                                codigo="portfolio_b3.gate_nao_avaliado", entidade=str(_tk))
         if not (quali_log["vetados"] or quali_log["substituicoes"]
                 or quali_log["ressalvas"] or quali_log["nao_avaliados"]):
             st.markdown("✅ Nenhum veto ou ressalva — todas as líderes "
@@ -4721,21 +4740,15 @@ def render(show_header: bool = True) -> None:
         # Conferência dos números do parecer (LLM-A9): alerta, não veto -- o
         # portão é fail-open e a classificação acima não muda por isso.
         _avisos_anc = quali_log.get("avisos_ancoragem") or {}
-        if _avisos_anc:
-            with st.expander(
-                f"🔢 Pareceres com número a conferir ({len(_avisos_anc)})",
-                expanded=False,
-            ):
-                st.caption("Números citados no parecer sem lastro no dossiê "
-                           "nem no contexto enviado ao modelo, ou tirados de "
-                           "manchete sem atribuição. Não "
-                           "mudam a classificação; confira antes de usar o "
-                           "motivo do veto ou da ressalva.")
-                for _tk, _aviso in _avisos_anc.items():
-                    st.markdown(f"• **{_tk}**: {escapar_cifrao(_aviso)}")
+        for _tk, _aviso in _avisos_anc.items():
+            detalhe_tecnico(
+                f"Parecer com número a conferir: {_aviso}",
+                codigo="portfolio_b3.gate_numero_a_conferir", entidade=str(_tk))
 
     # ── TRANSPARÊNCIA DO PISO DE NEGOCIABILIDADE ─────────────────────────────
-    if liq_trocas or liq_avisos:
+    for _av in liq_avisos:
+        aviso_lacuna(str(_av), codigo="tela.portfolio_b3.piso_negociabilidade_aviso")
+    if liq_trocas:
         st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                     unsafe_allow_html=True)
         from core.b3_liquidity import formata_reais as _liq_reais
@@ -4764,8 +4777,6 @@ def render(show_header: bool = True) -> None:
                 "diferem em direito a voto e em tag-along. A escolha aqui é por "
                 "negociabilidade, não por direitos de sócio."
             )
-        for _av in liq_avisos:
-            st.warning(_av, icon="⚠️")
 
     # ── TRANSPARÊNCIA DA DIVERSIFICAÇÃO POR CORRELAÇÃO ───────────────────────
     if diversificar_corr and proximos_uniq:
@@ -4773,12 +4784,12 @@ def render(show_header: bool = True) -> None:
                     unsafe_allow_html=True)
         _sec_hdr("🔗 Diversificação por correlação")
         if corr_diag.get("motivo_pulado"):
-            st.warning(
-                f"⚠️ Diversificação por correlação **não aplicada**: "
+            aviso_lacuna(
+                f"Diversificação por correlação não aplicada: "
                 f"{corr_diag['motivo_pulado']}. A carteira segue com os pesos "
                 "de orçamento por segmento, sem ajuste de correlação — trate "
-                "como não verificada quanto a risco redundante entre segmentos."
-            )
+                "como não verificada quanto a risco redundante entre segmentos.",
+                codigo="tela.portfolio_b3.diversificacao_correlacao_nao_aplicada")
         elif corr_diag.get("aplicado"):
             st.caption(
                 "Roda DEPOIS da estatística e do parecer qualitativo, sobre a "
@@ -4816,14 +4827,16 @@ def render(show_header: bool = True) -> None:
             # O que importa é se os pesos são confiáveis: só avisa quando NÃO
             # são, e em português.
             if corr_diag.get("markowitz_method") and not corr_diag.get("markowitz_convergiu"):
-                st.warning(
+                detalhe_tecnico(
                     "O ajuste fino de pesos não convergiu — a carteira usa uma "
                     "aproximação. Os ativos escolhidos não mudam; só a divisão "
-                    "entre eles fica menos precisa.", icon="⚠️")
+                    "entre eles fica menos precisa.",
+                    codigo="portfolio_b3.markowitz_nao_convergiu")
             if corr_diag.get("reponderacao_pulada"):
-                st.warning(
+                detalhe_tecnico(
                     f"{corr_diag['reponderacao_pulada']} — os pesos vieram só da "
-                    "substituição de ativos, sem ajuste fino.", icon="⚠️")
+                    "substituição de ativos, sem ajuste fino.",
+                    codigo="portfolio_b3.reponderacao_pulada")
             if corr_log:
                 for s in corr_log:
                     st.markdown(
@@ -4930,7 +4943,7 @@ def render(show_header: bool = True) -> None:
                     )
                     st.success(f"Portfólio padrão salvo no banco. ID: {model_id[:8]}")
                 except Exception as exc:
-                    st.error(f"Não foi possível salvar o portfólio padrão: {exc}")
+                    falha_de_acao("Não foi possível salvar o portfólio padrão.", exc)
         with c_info:
             _r1, _r2, _r3 = st.columns(3)
             with _r1:
@@ -5000,12 +5013,12 @@ def render(show_header: bool = True) -> None:
         "públicos até 31/03, e começar em janeiro mostraria o desempenho de "
         "uma carteira que ninguém poderia ter montado."
     )
-    st.caption(
-        "⚠️ Look-ahead residual: a carteira aqui simulada usa o piso de "
-        "liquidez e a diversificação por correlação com dados de **hoje**, "
+    detalhe_tecnico(
+        "Look-ahead residual: a carteira aqui simulada usa o piso de "
+        "liquidez e a diversificação por correlação com dados de hoje, "
         "não de abril. A distorção é a do intervalo abril→hoje, não a do ano "
-        "inteiro — mas não é zero."
-    )
+        "inteiro — mas não é zero.",
+        codigo="portfolio_b3.safra_vigente_lookahead_residual")
 
     if proximos_uniq:
         tks_prox = tuple(sorted({p["tk"] for p in proximos_uniq}))
@@ -5063,12 +5076,15 @@ def render(show_header: bool = True) -> None:
                                     config={"displayModeBar": False},
                                     key="pb3_perf_chart")
             else:
-                st.caption(
+                st.caption("Esta análise não está disponível no momento.")
+                aviso_lacuna(
                     f"Sem preços mensais na janela da safra {_safra_vig} "
-                    f"(a partir de abril/{_safra_vig})."
-                )
+                    f"(a partir de abril/{_safra_vig}).",
+                    codigo="tela.portfolio_b3.safra_vigente_sem_precos")
         else:
-            st.caption("Não foi possível baixar preços para as empresas selecionadas.")
+            st.caption("Esta análise não está disponível no momento.")
+            aviso_lacuna("Não foi possível baixar preços para as empresas selecionadas.",
+                         codigo="tela.portfolio_b3.safra_vigente_preco_indisponivel")
     else:
         st.caption("Nenhuma empresa selecionada para mostrar desempenho.")
 

@@ -29,6 +29,7 @@ from core.inteligencia import painel as P
 from core.inteligencia import qualificacao as qz
 from core.lacunas import registrar_limitacoes
 from core.seguranca import travas as tv
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 
 __all__ = [
     "selo_qualidade", "linha_valor", "card_valor", "grade_valores",
@@ -98,8 +99,6 @@ def linha_valor(valor: qz.Valor) -> str:
         extras.append(f"confiança {valor.confianca}")
     if valor.horizonte:
         extras.append(f"horizonte {valor.horizonte}")
-    if valor.fonte:
-        extras.append(f"fonte: {valor.fonte}")
     if valor.observacao:
         extras.append(valor.observacao)
     rodape = (f'<div class="app-kpi-delta" style="color:var(--app-muted)">'
@@ -113,6 +112,9 @@ def linha_valor(valor: qz.Valor) -> str:
 
 
 def card_valor(valor: qz.Valor) -> None:
+    if valor.fonte:
+        detalhe_tecnico(f"{valor.rotulo}: fonte {valor.fonte}",
+                        codigo="inteligencia.fonte_do_valor")
     st.markdown(linha_valor(valor), unsafe_allow_html=True)
 
 
@@ -134,65 +136,68 @@ def grade_valores(valores, colunas: int = 3) -> None:
 
 
 def barra_frescor(pn: P.Painel) -> None:
-    """Última atualização, fontes vencidas e estado dos provedores."""
+    """Última atualização, fontes vencidas e estado dos provedores.
+
+    Data de atualização e estado de provedor são detalhe técnico, e fonte
+    vencida ou fora do ar é restrição: nada disso fica na tela de uso. Vai
+    para o log de lacunas (Configurações -> Restrições).
+    """
     ultima = pn.ultima_atualizacao
     texto = (ultima.strftime("%d/%m/%Y %H:%M UTC") if ultima
              else "nenhuma fonte informou data de atualização")
-    selos = "".join(selo_frescor(f, pn.gerado_em) for f in pn.frescor)
-    selos += "".join(selo_provedor(p) for p in pn.provedores)
-    st.markdown(
-        '<div class="app-kpi-card" style="--app-kpi-accent:var(--app-info)">'
-        '<div class="app-kpi-label">Última atualização (fonte mais antiga)'
-        '</div>'
-        f'<div class="app-kpi-value">{_linha(texto)}</div>{selos}</div>',
-        unsafe_allow_html=True)
+    detalhe_tecnico(f"Última atualização (fonte mais antiga): {texto}",
+                    codigo="inteligencia.ultima_atualizacao")
+    for f in pn.frescor:
+        detalhe_tecnico(f"{f.rotulo}: {f.descrever(pn.gerado_em)}",
+                        codigo="inteligencia.frescor_fonte")
+    for p in pn.provedores:
+        detalhe_tecnico(f"{p.nome}: {p.descrever()}",
+                        codigo="inteligencia.estado_provedor")
 
-    if pn.desatualizados or pn.provedores_fora:
-        nomes = [f.rotulo for f in pn.desatualizados]
-        nomes += [p.nome for p in pn.provedores_fora]
-        st.warning(
-            "**Dados desatualizados ou indisponíveis:** " + ", ".join(nomes)
-            + ". A ausência de informação aqui não significa ausência de risco.")
+    for f in pn.desatualizados:
+        aviso_lacuna(f"Fonte desatualizada: {f.rotulo}",
+                     codigo="tela.inteligencia.fonte_desatualizada",
+                     entidade=f.rotulo)
+    for p in pn.provedores_fora:
+        aviso_lacuna(f"Provedor fora do ar: {p.nome}",
+                     codigo="tela.inteligencia.provedor_fora",
+                     entidade=p.nome)
 
 
 def cabecalho_bloco(bloco: qz.Bloco, agora: dt.datetime | None = None) -> None:
-    partes = [f'<span class="app-section-title">{_linha(bloco.titulo)}</span>']
-    partes.append(_selo("◑", f"cobertura {bloco.cobertura:.0%}", "var(--app-info)",
-                        "fração dos componentes que foi possível medir"))
+    detalhe_tecnico(f"{bloco.titulo}: cobertura {bloco.cobertura:.0%} dos "
+                    "componentes medidos",
+                    codigo="inteligencia.cobertura_bloco",
+                    entidade=bloco.titulo)
     if bloco.frescor is not None:
-        partes.append(selo_frescor(bloco.frescor, agora))
-    st.markdown('<div class="app-section-heading">' + "".join(partes) + "</div>",
-                unsafe_allow_html=True)
+        detalhe_tecnico(f"{bloco.titulo}: {bloco.frescor.descrever(agora)}",
+                        codigo="inteligencia.frescor_bloco",
+                        entidade=bloco.titulo)
+    st.markdown('<div class="app-section-heading">'
+                f'<span class="app-section-title">{_linha(bloco.titulo)}</span>'
+                "</div>", unsafe_allow_html=True)
     if bloco.explicacao_simples:
         st.caption(bloco.explicacao_simples)
 
 
 def area_tecnica(bloco: qz.Bloco, chave: str = "") -> None:
-    """A área que se expande. O simples fica fora; o técnico, dentro."""
-    registrar_limitacoes(bloco, modulo=f"design/inteligencia.py:{bloco.titulo}")
-    if not bloco.detalhe_tecnico and not bloco.limitacoes:
-        return
-    with st.expander(f"Detalhe técnico — {bloco.titulo}", expanded=False):
-        if bloco.detalhe_tecnico:
-            st.markdown("**Como este resultado foi obtido**")
-            for linha in bloco.detalhe_tecnico:
-                st.markdown(f"- {linha}")
-        if bloco.limitacoes:
-            st.markdown("**Limitações declaradas**")
-            for linha in bloco.limitacoes:
-                st.markdown(f"- {linha}")
-        if bloco.nao_medidos:
-            st.markdown("**Não medido nesta execução**")
-            for v in bloco.nao_medidos:
-                st.markdown(f"- {v.rotulo}: {v.observacao or 'sem fonte'}")
+    """Só registra. Procedência, limitação e não medido saem da tela de uso."""
+    modulo = f"design/inteligencia.py:{bloco.titulo}"
+    registrar_limitacoes(bloco, modulo=modulo)
+    for linha in bloco.detalhe_tecnico or ():
+        detalhe_tecnico(f"{bloco.titulo}: {linha}",
+                        codigo="inteligencia.como_foi_obtido",
+                        entidade=bloco.titulo)
+    for v in bloco.nao_medidos or ():
+        aviso_lacuna(f"{bloco.titulo} — {v.rotulo}: {v.observacao or 'sem fonte'}",
+                     codigo="tela.inteligencia.nao_medido",
+                     entidade=v.rotulo)
 
 
 def bloco_completo(bloco: qz.Bloco, *, colunas: int = 3,
                    agora: dt.datetime | None = None) -> None:
     cabecalho_bloco(bloco, agora)
     grade_valores(bloco.valores, colunas=colunas)
-    if bloco.limitacoes:
-        st.caption("Limitações: " + " · ".join(bloco.limitacoes))
     area_tecnica(bloco)
 
 
@@ -269,22 +274,19 @@ def _situacao_trava(trava) -> str:
 def selo_trava(trava) -> str:
     icone, cor, ajuda = APARENCIA_TRAVA[_situacao_trava(trava)]
     rotulo = ROTULO_TRAVA.get(trava.nome, trava.nome)
-    detalhe = f"{ajuda}: {trava.descrever()}"
-    return _selo(icone, rotulo, cor, detalhe)
+    return _selo(icone, rotulo, cor, ajuda)
 
 
 def _aviso_de_trava(trava) -> str:
-    """O texto da trava em markdown; o detalhe técnico, em código.
-
-    O detalhe é a mensagem do banco, e ela vem cheia de ``[...]`` e ``(...)``.
-    Solta no markdown ela vira sintaxe de link e chega truncada à tela -- o
-    aviso da auditoria terminava em ``[SQL: SELECT 1 FROM public)``, perdendo
-    justamente o nome da tabela que falta. Dentro de crase ela chega inteira, e
-    fica visualmente separada do texto que o APP4 escreveu.
+    """A frase da trava para a tela. A mensagem do banco, que vem cheia de SQL,
+    nome de tabela e ``[...]``, vai para o log de lacunas e nunca para a tela.
     """
-    corpo = " ".join(tv.TEXTO.get(trava.nome, trava.nome).split())
-    detalhe = " ".join(str(trava.detalhe).split()).replace("`", "'")
-    return f"{corpo} `{detalhe}`" if detalhe else corpo
+    detalhe = " ".join(str(trava.detalhe).split())
+    if detalhe:
+        detalhe_tecnico(f"Trava {trava.nome}: {detalhe}",
+                        codigo="inteligencia.detalhe_trava",
+                        entidade=trava.nome)
+    return " ".join(tv.TEXTO.get(trava.nome, trava.nome).split())
 
 
 def barra_travas(estado) -> None:
@@ -319,7 +321,5 @@ def barra_travas(estado) -> None:
     if estado.nao_verificadas:
         nomes = ", ".join(ROTULO_TRAVA.get(t.nome, t.nome)
                           for t in estado.nao_verificadas)
-        st.caption(
-            f"· Não verificadas nesta execução: {nomes}. Não verificada não é "
-            "o mesmo que em ordem -- é ausência de medição, e nada aqui "
-            "autoriza tratá-la como sinal de que está tudo bem.")
+        aviso_lacuna(f"Travas não verificadas nesta execução: {nomes}",
+                     codigo="tela.inteligencia.travas_nao_verificadas")

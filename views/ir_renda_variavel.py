@@ -19,6 +19,7 @@ from core.ir_renda_variavel import CESTAS, CODIGO_DARF, ROTULO_CESTA, apurar
 from core.user_context import user_cache_data
 from core.utils import fmt_moeda
 from design.componentes import card_metrica, secao_titulo
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 
 _MESES = ["", "jan", "fev", "mar", "abr", "mai", "jun",
           "jul", "ago", "set", "out", "nov", "dez"]
@@ -104,10 +105,12 @@ def render() -> None:
     try:
         res = _apuracao()
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Não foi possível carregar as operações: {type(exc).__name__}.", icon="🚫")
+        falha_de_acao("Não foi possível carregar as operações.", exc)
         return
     if res is None:
-        st.info("A apuração precisa do banco com as operações importadas.", icon="ℹ️")
+        aviso_lacuna("A apuração precisa do banco com as operações importadas.",
+                     codigo="tela.ir.sem_banco_ou_operacoes")
+        st.info("Esta análise não está disponível no momento.", icon="ℹ️")
         return
     meses = res["meses"]
     if not meses:
@@ -165,18 +168,23 @@ def render() -> None:
 
     if n_incompletos:
         sem = sorted({t for m in meses for c in CESTAS for t in m["cestas"][c]["sem_custo"]})
+        detalhe_tecnico(
+            "Ativos comprados antes do início do extrato da B3 (nov/2019): o ganho "
+            "dessas vendas não foi tratado nem como lucro nem como prejuízo.",
+            codigo="ir.venda_sem_custo_origem",
+        )
+        for t in sem:
+            aviso_lacuna(f"Venda de {t} sem custo de aquisição conhecido.",
+                         codigo="tela.ir.venda_sem_custo", entidade=t)
         st.warning(
             f"**{n_incompletos} mês(es) com venda sem custo de aquisição** — {', '.join(sem)}. "
-            "São ativos comprados antes do início do extrato da B3 (nov/2019). O ganho dessas "
-            "vendas não é conhecido, e não foi tratado nem como lucro nem como prejuízo: o "
-            "imposto desses meses cobre só o resto, e o prejuízo que eles carregam para a "
-            "frente fica incerto. Para fechar a conta, informe a posição que você tinha "
-            "antes do extrato (a linha do ativo em Bens e Direitos da declaração) em "
-            "Evolução Patrimonial › **Posição anterior ao extrato da B3**.",
+            "O imposto desses meses cobre só o resto. Informe a posição que você tinha "
+            "antes do extrato em Evolução Patrimonial › **Posição anterior ao extrato da B3**.",
             icon="⚠️",
         )
     if prej_incerto and not n_incompletos:
-        st.caption("O prejuízo acumulado herda uma venda sem custo de meses anteriores.")
+        aviso_lacuna("O prejuízo acumulado herda uma venda sem custo de meses anteriores.",
+                     codigo="tela.ir.prejuizo_incerto")
 
     st.markdown("<br>", unsafe_allow_html=True)
     secao_titulo("Apuração mensal", "📅", "Do mês mais recente para o mais antigo.")
@@ -191,7 +199,7 @@ def render() -> None:
                  column_config={c: _COLS_MOEDA for c in da.columns
                                 if c not in ("Ano", "Meses incompletos")})
 
-    with st.expander("Como o cálculo é feito e o que ele não cobre"):
+    with st.expander("Como o cálculo é feito"):
         st.markdown(f"""
 **Regras** (Lei 11.033/2004 e IN RFB 1.585/2015):
 - Operações comuns em ações, units, ETF e BDR: **15%** sobre o ganho líquido do mês.
@@ -207,18 +215,20 @@ def render() -> None:
 - Custo: preço médio ponderado, com a corretagem da compra no custo e a da venda descontada
   da receita. Desdobro, grupamento, bonificação e subscrição da Movimentação entram pelas
   mesmas regras do preço médio da carteira.
-
-**Limitações:**
-- O **IRRF é estimado** (0,005% da venda, 1% do ganho em day trade): o extrato da B3 não traz
-  as notas de corretagem. Confira com o informe da corretora.
-- O fisco só reconhece day trade na **mesma corretora**. O extrato consolida as corretoras,
-  então compra numa e venda noutra no mesmo dia aparece aqui como day trade.
-- O app não lê DARFs pagos: "em aberto" quer dizer "calculado e ainda não vencido".
-- Aluguel de ações, opções, termo, futuros e ativos no exterior ficam de fora.
-- Incorporação e transferência de outra corretora continuam sem custo conhecido.
 """)
+    for lim in (
+        "O IRRF é estimado (0,005% da venda, 1% do ganho em day trade): o extrato da B3 "
+        "não traz as notas de corretagem.",
+        "O fisco só reconhece day trade na mesma corretora; o extrato consolida as "
+        "corretoras, então compra numa e venda noutra no mesmo dia aparece como day trade.",
+        "O app não lê DARFs pagos: 'em aberto' quer dizer 'calculado e ainda não vencido'.",
+        "Aluguel de ações, opções, termo, futuros e ativos no exterior ficam de fora.",
+        "Incorporação e transferência de outra corretora continuam sem custo conhecido.",
+    ):
+        detalhe_tecnico(lim, codigo="ir.limitacoes_calculo")
     alertas = [a for a in res["alertas"] if a.get("type") != "fora_do_escopo"]
     if alertas:
-        with st.expander(f"{len(alertas)} evento(s) da Movimentação não aplicados"):
-            for a in alertas[:30]:
-                st.caption(f"{a.get('ticker')}: {a.get('detail')}")
+        for a in alertas[:30]:
+            aviso_lacuna(f"Evento da Movimentação não aplicado: {a.get('detail')}",
+                         codigo="tela.ir.evento_nao_aplicado",
+                         entidade=str(a.get("ticker") or "") or None)

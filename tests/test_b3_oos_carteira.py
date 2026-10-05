@@ -418,6 +418,12 @@ def test_tela_le_a_medicao_e_diz_quando_cruza_o_zero(tmp_path, monkeypatch):
         "perfis": {"Equilibrado (recomendado)": {"variantes": {v: var for v in oos.VARIANTES}}},
     }), encoding="utf-8")
     monkeypatch.setattr(oos, "CAMINHO_MEDICAO", caminho)
+    import views.portfolio_b3_oos_carteira as _v
+    registrados = []
+    monkeypatch.setattr(_v, "aviso_lacuna",
+                        lambda msg, *a, **k: registrados.append(str(msg)))
+    monkeypatch.setattr(_v, "detalhe_tecnico",
+                        lambda msg, *a, **k: registrados.append(str(msg)))
 
     def _app():
         from views.portfolio_b3_oos_carteira import render_oos_carteira
@@ -426,7 +432,9 @@ def test_tela_le_a_medicao_e_diz_quando_cruza_o_zero(tmp_path, monkeypatch):
     at = AppTest.from_function(_app).run(timeout=60)
     assert not at.exception
     avisos = " ".join(w.value for w in at.warning)
-    assert "VENCIDA" in avisos and "NÃO distingue" in avisos
+    assert "NÃO distingue" in avisos
+    assert "VENCIDA" not in avisos
+    assert "VENCIDA" in " ".join(registrados)
 
 
 # ── piso de qualidade e Score de Entrada da safra (2.32.0) ──────────────────

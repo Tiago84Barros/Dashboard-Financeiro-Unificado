@@ -297,7 +297,7 @@ def test_cartao_da_avaliacao_so_usa_tokens_e_escapa(an):
     h = tela.cartao_avaliacao(av.avaliar(a))
     assert _sem_cor_literal(h), h
     assert "&lt;b&gt;pede" in h and "<b>pede" not in h
-    assert "Alerta eliminatório" in h and "Régua setorial" in h
+    assert "Alerta eliminatório" in h and "Régua setorial" not in h
     assert "Qualidade e fundamentos" in h and "Mercado e notícias" in h
 
 

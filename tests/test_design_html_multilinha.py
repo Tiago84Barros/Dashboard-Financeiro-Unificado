@@ -83,7 +83,7 @@ def test_linha_aceita_nao_string():
 
 
 # -- O aviso em markdown, não só o selo em HTML ------------------------------
-def test_aviso_de_trava_mantem_a_mensagem_do_banco_inteira():
+def test_aviso_de_trava_mantem_a_mensagem_do_banco_inteira(monkeypatch):
     """O nome da tabela que falta é a parte útil, e era a que sumia.
 
     ``[SQL: ...]`` solto no markdown vira sintaxe de link: a tela mostrava
@@ -94,19 +94,27 @@ def test_aviso_de_trava_mantem_a_mensagem_do_banco_inteira():
 
     trava = tv.Trava(nome="auditoria_falhou", disparada=True,
                      detalhe=ERRO_DE_BANCO)
+    registrados = []
+    monkeypatch.setattr(di, "detalhe_tecnico",
+                        lambda msg, **kw: registrados.append((msg, kw)))
     aviso = di._aviso_de_trava(trava)
     assert _sem_quebra(aviso)
-    assert aviso.endswith("[SQL: SELECT 1 FROM public.recomendacao_auditoria]`")
-    assert aviso.count("`") == 2          # abre e fecha, uma vez só
+    assert "SQL" not in aviso and "`" not in aviso   # banco fora da tela
     assert aviso.startswith(tv.TEXTO["auditoria_falhou"][:20])
+    assert any("[SQL: SELECT 1 FROM public.recomendacao_auditoria]" in m
+               for m, _ in registrados)
 
 
-def test_crase_no_detalhe_nao_quebra_o_bloco_de_codigo():
+def test_crase_no_detalhe_nao_quebra_o_bloco_de_codigo(monkeypatch):
     from core.seguranca import travas as tv
 
+    registrados = []
+    monkeypatch.setattr(di, "detalhe_tecnico",
+                        lambda msg, **kw: registrados.append(msg))
     trava = tv.Trava(nome="auditoria_falhou", disparada=True,
                      detalhe="falhou em `SELECT 1`")
-    assert di._aviso_de_trava(trava).count("`") == 2
+    assert "`" not in di._aviso_de_trava(trava)
+    assert any("SELECT 1" in m for m in registrados)
 
 
 def test_trava_sem_detalhe_nao_ganha_bloco_de_codigo_vazio():

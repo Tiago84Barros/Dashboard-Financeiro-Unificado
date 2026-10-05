@@ -138,8 +138,13 @@ def test_explicacao_declara_o_peso_proprio():
 
 # ── integração com a interface ───────────────────────────────────────────────
 
-def test_secao_do_universo_renderiza_e_encolhe_segmentos():
+def test_secao_do_universo_renderiza_e_encolhe_segmentos(monkeypatch):
     from streamlit.testing.v1 import AppTest
+
+    import views.portfolio_b3 as _view
+    registrados = []
+    monkeypatch.setattr(_view, "detalhe_tecnico",
+                        lambda msg, *a, **k: registrados.append(str(msg)))
 
     app = AppTest.from_string("""
 import views.portfolio_b3 as view
@@ -162,7 +167,8 @@ view._render_evidencia_universo(resultados)
     assert "Evidência no universo" in rendered
     assert any("empirical Bayes" in exp.label for exp in app.expander)
     captions = "\n".join(item.value for item in app.caption)
-    assert "mediana é de 3 empresas" in captions
+    assert "mediana é de 3 empresas" not in captions
+    assert "mediana é de 3 empresas" in " ".join(registrados)
 
 
 def test_secao_do_universo_nao_renderiza_sem_pares():

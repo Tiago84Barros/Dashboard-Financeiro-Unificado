@@ -12,7 +12,7 @@ from core.portfolio_valuations import (
     load_valuation_fundamentals,
     metric_spec,
 )
-from design.lacunas import aviso_lacuna
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -39,12 +39,14 @@ def _card(titulo: str, valor: str, sub: str, cor: str) -> str:
     )
 
 
-def _cor_cobertura(coverage: float) -> str:
-    if coverage >= .80:
-        return 'var(--app-text)'
-    if coverage >= .50:
-        return 'var(--app-warning)'
-    return 'var(--app-muted)'
+def _registrar_cobertura(rotulo: str, item: dict, denominador: str) -> None:
+    """Contagem de ativos e cobertura da média vão para o log, não para o card."""
+    texto = (f"{rotulo}: {item['assets']} ativo(s) · {item['coverage']:.1%} "
+             f"do valor da {denominador}")
+    if item['value'] is None:
+        aviso_lacuna(texto, codigo='tela.carteira.valuation_sem_media', entidade=rotulo)
+    else:
+        detalhe_tecnico(texto, codigo='carteira.valuation_cobertura', entidade=rotulo)
 
 
 def render_portfolio_valuations(positions):
@@ -68,42 +70,44 @@ def render_portfolio_valuations(positions):
         data, unavailable, consulted = _load(tuple(sorted(stocks)), tuple(sorted(fiis)))
     fundamentals = {ticker: data.get(base, {}) for ticker, base in aliases.items()}
     result = aggregate_valuations(positions, fundamentals)
-    # Mesmos cards CSS dos painéis por classe: a cor do número é a cobertura,
-    # não enfeite. Aqui o denominador é a carteira INTEIRA — renda fixa e
-    # exterior incluídos —, então cobertura baixa é o estado normal, e o
-    # cinza é a informação: essa média descreve uma fatia, não o portfólio.
+    # Mesmos cards CSS dos painéis por classe. Aqui o denominador é a carteira
+    # INTEIRA — renda fixa e exterior incluídos —, então cobertura baixa é o
+    # estado normal; ela vai para o log de lacunas, não para o card.
     itens = list(METRICS.items())
     for offset in range(0, len(itens), 4):
         for col, (key, label) in zip(st.columns(4), itens[offset:offset + 4]):
             item = result[key]
             valor = item['value']
             sufixo = '%' if key == 'dy' else 'x'
+            _registrar_cobertura(label, item, 'carteira')
             with col:
                 st.markdown(_card(
                     label,
                     '—' if valor is None else f'{valor:.2f}{sufixo}',
-                    f"{item['assets']} ativo(s) · {item['coverage']:.1%} do valor da carteira",
-                    _cor_cobertura(item['coverage']),
+                    'média ponderada pelo valor',
+                    'var(--app-text)',
                 ), unsafe_allow_html=True)
     if unavailable:
         aviso_lacuna('Fonte indisponível para: ' + ', '.join(unavailable),
                      codigo='tela.carteira.fonte_valuation_indisponivel', nivel='warning')
     st.caption('Médias aritméticas ponderadas pelo valor de mercado em BRL dos ativos com dado válido. '
-               'Cobertura sobre o valor positivo conhecido da carteira, incluindo renda fixa. '
-               'Sem dado não significa zero; DY zero é incluído. Múltiplos nulos ou negativos são excluídos. '
-               'A cor do número acompanha a cobertura: branco acima de 80%, amarelo entre 50% e 80%, '
-               'cinza abaixo disso.')
-    with st.expander('Fontes e limitações dos valuations'):
-        st.write('Fontes: reconciliação B3/Fundamentus para ações e Fundamentus para FIIs, '
-                 'as mesmas da aba Análise. DY em percentual informado pela fonte, não yield on cost '
-                 'nem renda efetivamente recebida. Tesouro, renda fixa, ETFs, BDRs e exterior não '
-                 'entram enquanto não houver indicadores comparáveis integrados neste painel.')
-        st.write('Média dos múltiplos não equivale a preço total dividido por lucro ou patrimônio '
-                 'consolidado. EV/EBIT e EV/EBITDA são médias descritivas ponderadas por posição, '
-                 'não agregações de enterprise value. As fontes podem ter datas e janelas distintas; '
-                 'não se trata de uma fotografia contábil sincronizada nem previsão de retorno.')
-        st.caption(f'Consulta: {consulted} · cache de até 1 hora. '
-                   'Data-base contábil individual não disponível neste resumo.')
+               'Sem dado não significa zero; DY zero é incluído. Múltiplos nulos ou negativos são excluídos.')
+    detalhe_tecnico(
+        'Fontes: reconciliação B3/Fundamentus para ações e Fundamentus para FIIs, '
+        'as mesmas da aba Análise. DY em percentual informado pela fonte, não yield on cost '
+        'nem renda efetivamente recebida. Tesouro, renda fixa, ETFs, BDRs e exterior não '
+        'entram enquanto não houver indicadores comparáveis integrados neste painel. '
+        'Cobertura sobre o valor positivo conhecido da carteira, incluindo renda fixa.',
+        codigo='carteira.valuation_fontes')
+    detalhe_tecnico(
+        'Média dos múltiplos não equivale a preço total dividido por lucro ou patrimônio '
+        'consolidado. EV/EBIT e EV/EBITDA são médias descritivas ponderadas por posição, '
+        'não agregações de enterprise value. As fontes podem ter datas e janelas distintas; '
+        'não se trata de uma fotografia contábil sincronizada nem previsão de retorno.',
+        codigo='carteira.valuation_limitacoes')
+    detalhe_tecnico(f'Consulta: {consulted} · cache de até 1 hora. '
+                    'Data-base contábil individual não disponível neste resumo.',
+                    codigo='carteira.valuation_consulta')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -123,10 +127,13 @@ def render_valuations_classe(classe, positions, fundamentals, *, colunas: int = 
     apurados = [k for k in metricas if resultado[k]['value'] is not None]
     st.markdown(f'##### 📐 Médias de {CLASS_LABELS.get(classe, classe)} na carteira')
     if not apurados:
-        st.info('Nenhum indicador desta classe pôde ser agregado com os dados '
-                'carregados agora. Ausência de dado não é zero — a média não '
-                'existe, e não vale a pena exibir um número que não descreve '
-                'ativo nenhum.')
+        st.info('Esta análise não está disponível no momento.')
+        aviso_lacuna('Nenhum indicador desta classe pôde ser agregado com os dados '
+                     'carregados agora. Ausência de dado não é zero — a média não '
+                     'existe, e não vale a pena exibir um número que não descreve '
+                     'ativo nenhum.',
+                     codigo='tela.carteira.valuation_classe_sem_media',
+                     entidade=str(classe))
         return resultado
     for offset in range(0, len(metricas), colunas):
         fatia = list(metricas)[offset:offset + colunas]
@@ -135,16 +142,16 @@ def render_valuations_classe(classe, positions, fundamentals, *, colunas: int = 
             spec = metric_spec(chave)
             valor = item['value']
             texto = '—' if valor is None else f'{valor:.2f}{spec.unit}'
+            _registrar_cobertura(spec.label, item, 'classe')
             with col:
                 st.markdown(_card(
                     spec.label, texto,
-                    f"{item['assets']} ativo(s) · {item['coverage']:.0%} do valor da classe",
-                    _cor_cobertura(item['coverage']),
+                    'média ponderada pelo valor',
+                    'var(--app-text)',
                 ), unsafe_allow_html=True)
     st.caption(
         'Média aritmética ponderada pelo valor de mercado dos ativos COM dado '
-        'válido nesta classe. Cobertura é a fatia da classe que entrou em cada '
-        'média — abaixo de 100%, o número não descreve a classe inteira. '
+        'válido nesta classe. '
         'Múltiplo nulo ou negativo é excluído (indefinido, não barato); '
         'margem e crescimento negativos entram, porque são observação legítima. '
         'Não é múltiplo contábil consolidado nem previsão de retorno.'
@@ -169,9 +176,8 @@ def render_valuations_tesouro(positions, ano_atual: int):
         ('Títulos distintos', str(resumo['titulos']), 'posições agregadas por código', 'var(--app-text)'),
         ('Prazo médio',
          '—' if prazo is None else f'{prazo:.1f} anos',
-         f"cobertura {resumo['cobertura_prazo']:.0%} do valor"
-         + (' · Educa+ usa o ano de conversão' if 'Educa+' in composicao else ''),
-         _cor_cobertura(resumo['cobertura_prazo'])),
+         'ponderado pelo valor',
+         'var(--app-text)'),
         ('Retorno mercado/custo',
          '—' if retorno is None else f'{retorno:+.2f}%',
          'acumulado desde o aporte, não taxa ao ano',
@@ -181,6 +187,10 @@ def render_valuations_tesouro(positions, ano_atual: int):
          '—' if principal is None else principal[0],
          'var(--app-info)'),
     ]
+    detalhe_tecnico(
+        f"Prazo médio: cobertura {resumo['cobertura_prazo']:.0%} do valor"
+        + (' · Educa+ usa o ano de conversão' if 'Educa+' in composicao else ''),
+        codigo='carteira.tesouro_prazo_cobertura')
     for col, (titulo, valor, sub, cor) in zip(st.columns(len(cartoes)), cartoes):
         with col:
             st.markdown(_card(titulo, valor, sub, cor), unsafe_allow_html=True)
@@ -188,8 +198,10 @@ def render_valuations_tesouro(positions, ano_atual: int):
         st.caption('Composição por indexador: ' + ' · '.join(
             f'{nome} {peso:.1%}' for nome, peso in composicao.items()))
     if resumo['valor_sem_ano'] > 0:
-        st.caption('Parte do valor está em títulos sem ano identificável no código '
-                   'e ficou fora do prazo médio.')
-    st.caption('O valor de mercado vem do saldo informado pela corretora, não de '
-               'marcação a mercado independente título a título neste app.')
+        aviso_lacuna('Parte do valor está em títulos sem ano identificável no código '
+                     'e ficou fora do prazo médio.',
+                     codigo='tela.carteira.tesouro_titulo_sem_ano')
+    detalhe_tecnico('O valor de mercado vem do saldo informado pela corretora, não de '
+                    'marcação a mercado independente título a título neste app.',
+                    codigo='carteira.tesouro_valor_de_mercado')
     return resumo

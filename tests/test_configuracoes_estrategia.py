@@ -92,10 +92,20 @@ def test_nao_iniciada_mostra_zero_e_botao_de_iniciar(monkeypatch):
     assert not app.exception
 
 
-def test_tabela_ausente_pede_a_migration(monkeypatch):
+def test_tabela_ausente_nao_mostra_a_migration_e_registra(monkeypatch):
     _RepoFalso(monkeypatch, repo.Estado(tabela_ausente=True))
+    lacunas = []
+    monkeypatch.setattr(
+        tela, "aviso_lacuna",
+        lambda msg, *, codigo, **_k: lacunas.append((codigo, msg)))
     app = _rodar()
-    assert "migration 076" in app.warning[0].value
+    assert not app.exception
+    visiveis = [e.value for e in list(app.warning) + list(app.error)
+                + list(app.info)]
+    assert not any("migration" in v for v in visiveis)
+    assert "não está disponível" in app.info[0].value
+    assert lacunas[0][0] == "tela.estrategia.tabela_ausente"
+    assert "migration 076" in lacunas[0][1]
 
 
 def test_entrevista_grava_resposta_pergunta_e_valor(monkeypatch):

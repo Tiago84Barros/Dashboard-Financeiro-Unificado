@@ -49,7 +49,7 @@ from design.componentes import (
     frescor_da_vitrine,
     selo_de_frescor,
 )  # KPIs em cards CSS (visual coeso)
-from design.lacunas import aviso_lacuna
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 from design.market_companies import (
     render_company_logo,
     render_market_css,
@@ -756,10 +756,11 @@ def _so_acoes(df_set: pd.DataFrame) -> pd.DataFrame:
 
 def _tab_empresas(df_set: pd.DataFrame) -> None:
     if df_set.empty:
-        st.warning(
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna(
             "O cadastro de setores voltou vazio — o app não conseguiu ler o "
-            "banco. Confira " + VAR_CONEXAO + "."
-        )
+            "banco. Confira " + VAR_CONEXAO + ".",
+            codigo="tela.b3.cadastro_setores_vazio")
         return
     # Card mostra só AÇÕES — remove FIIs, ETFs, BDRs e subscrições.
     df_set = _so_acoes(df_set)
@@ -3479,17 +3480,19 @@ def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> Non
     dossie = build_dossie(ticker)
     label, tipo = classification(score_row.get("score"))
     badge_status(label, tipo)
-    st.caption(
-        f"Classificação quantitativa relativa a {referencia}, com "
+    st.caption(f"Classificação quantitativa relativa a {referencia}.")
+    detalhe_tecnico(
+        f"Classificação relativa a {referencia}, com "
         f"{float(score_row.get('coverage', 0)):.0f}% de cobertura. "
-        "Ausências ficam neutras e reduzem a cobertura."
-    )
+        "Ausências ficam neutras e reduzem a cobertura.",
+        codigo="b3.dossie_cobertura", entidade=ticker)
     # B3-02: o aviso de atualidade sai ao lado do score, e não só na lista de
     # limitações, porque é o score que fica velho. Em 04/10/2026, 344 dos 358
     # scores mensuráveis usavam o TTM até o 2026T1 com o 2026T2 já no banco.
     _aviso_atualidade = (dossie.get("atualidade") or {}).get("aviso")
     if _aviso_atualidade:
-        st.warning(_aviso_atualidade)
+        aviso_lacuna(_aviso_atualidade, codigo="tela.b3.score_desatualizado",
+                     entidade=ticker)
 
     if dossie.get("erro"):
         aviso_lacuna(f"Dossiê determinístico indisponível: {dossie['erro']}",
@@ -3506,7 +3509,8 @@ def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> Non
         for flag in _grupos[SEVERIDADE_CONTEXTO]:
             st.info(flag)
         for flag in _grupos[SEVERIDADE_COBERTURA]:
-            st.caption(flag)
+            aviso_lacuna(flag, codigo="tela.b3.dossie_cobertura_limitada",
+                         entidade=ticker)
 
     fortes: list[str] = []
     invalidacoes: list[str] = []
@@ -3600,12 +3604,15 @@ def _render_b3_score_dashboard(
         ),
     )
     st.plotly_chart(fig, width="stretch", key=f"b3_radar_{ticker}")
-    st.caption(f"Referência da comparação: {referencia}. Metodologia B3 {SCORE_VERSION}.")
+    st.caption(f"Referência da comparação: {referencia}.")
+    detalhe_tecnico(f"Metodologia B3 {SCORE_VERSION}.", codigo="b3.metodologia",
+                    entidade=ticker)
     aviso_escala_do_score()
     # A-152: `validation_readiness` ja apurava o estado e NOMEAVA os
     # bloqueadores; o unico chamador era o relatorio de confianca, que o
     # usuario nao le. Motor de diagnostico sem porta de entrada e decoracao.
-    st.caption(validacao_b3().texto)
+    detalhe_tecnico(validacao_b3().texto, codigo="b3.validacao_motor",
+                    entidade=ticker)
     # A-154: por quantos ativos esta nota fala.
     aviso_cobertura_do_universo("b3")
 
@@ -3743,11 +3750,17 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
     with col_preco:
         preco_str = f"R$ {preco:,.2f}" if preco else "—"
         if preco_status == "falha_rede":
-            preco_legenda = "Falha de rede/timeout ao consultar yfinance"
+            preco_legenda = "Cotação indisponível"
+            aviso_lacuna("Falha de rede/timeout ao consultar o yfinance.",
+                         codigo="tela.b3.cotacao_falha_rede", entidade=tk)
         elif preco_status == "sem_dado":
-            preco_legenda = "Sem cotação disponível (yfinance)"
+            preco_legenda = "Cotação indisponível"
+            aviso_lacuna("Sem cotação disponível no yfinance.",
+                         codigo="tela.b3.cotacao_sem_dado", entidade=tk)
         else:
-            preco_legenda = "Cotação (yfinance)"
+            preco_legenda = "Cotação"
+            detalhe_tecnico("Cotação vinda do yfinance.",
+                            codigo="b3.cotacao_fonte", entidade=tk)
         st.markdown(
             f'<div style="text-align:right;padding-top:8px;">'
             f'<div style="font-size:1.60rem;font-weight:800;color:{cor_token(_COR_POS)};">{preco_str}</div>'
@@ -3777,8 +3790,9 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
     # ══════════════════════════════════════════════════════════════════════════
     if not df_precos.empty:
         _sec_hdr("📉 Preço da Ação")
-        st.caption("Fonte: yfinance (histórico diário; ver nota de arquitetura A-011 "
-                   "— market.historical_prices só guarda 1 candle/mês)")
+        detalhe_tecnico("Fonte: yfinance (histórico diário; ver nota de arquitetura "
+                        "A-011 — market.historical_prices só guarda 1 candle/mês).",
+                        codigo="b3.preco_fonte", entidade=tk)
 
         periodos = {"1A": 365, "3A": 1095, "5A": 1825, "Máx": None}
         sel_per = st.radio("Período", list(periodos.keys()),
@@ -4044,26 +4058,26 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
 
     elif df_precos.empty:
         if df_precos.attrs.get("load_error") == "falha_rede":
-            st.warning(
+            st.info("O histórico de preços não está disponível no momento.")
+            aviso_lacuna(
                 "Não foi possível carregar o histórico de preços: falha de "
                 "rede/timeout ao consultar a yfinance. Não é um problema de "
-                "configuração de banco — tente novamente em instantes.",
-                icon="⚠️",
-            )
+                "configuração de banco.",
+                codigo="tela.b3.historico_precos_falha_rede", entidade=tk)
         elif sem_banco:
-            st.warning(
-                f"**{tk}** é um ticker conhecido, mas não há preço nem "
+            st.info(f"**{tk}** ainda não tem dados publicados para análise.")
+            aviso_lacuna(
+                f"{tk} é um ticker conhecido, mas não há preço nem "
                 "fundamentos publicados para ele. Costuma ser papel de baixa "
                 "liquidez ou recém-listado, ainda sem safra de dados.",
-                icon="⚠️",
-            )
+                codigo="tela.b3.ticker_sem_dados", entidade=tk)
         else:
-            st.warning(
-                f"Sem histórico de preços para **{tk}** na yfinance. Os "
-                "fundamentos abaixo seguem vindo do banco — só o gráfico de "
+            st.info("O gráfico de preço não está disponível no momento.")
+            aviso_lacuna(
+                f"Sem histórico de preços para {tk} na yfinance. Os "
+                "fundamentos seguem vindo do banco — só o gráfico de "
                 "preço ficou vazio.",
-                icon="⚠️",
-            )
+                codigo="tela.b3.historico_precos_vazio", entidade=tk)
 
     # ══════════════════════════════════════════════════════════════════════════
     # SEÇÃO 3 — Múltiplos Fundamentalistas (agrupados)
@@ -4074,6 +4088,8 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         _render_cards(inds_rent, n_cols=3)
     else:
         st.caption("Dados de rentabilidade não disponíveis.")
+        aviso_lacuna("Indicadores de rentabilidade sem dado para o ativo.",
+                     codigo="tela.b3.indicadores_rentabilidade_ausentes", entidade=tk)
 
     _sec_hdr("💹 Valuation")
     inds_val = _build_indicators(mult, fontes=fontes_recon, grupo="valuation")
@@ -4081,6 +4097,8 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         _render_cards(inds_val, n_cols=4)
     else:
         st.caption("Dados de valuation não disponíveis.")
+        aviso_lacuna("Indicadores de valuation sem dado para o ativo.",
+                     codigo="tela.b3.indicadores_valuation_ausentes", entidade=tk)
 
     _sec_hdr("🏗️ Estrutura de Capital")
     inds_est = _build_indicators(mult, fontes=fontes_recon, grupo="estrutura")
@@ -4088,6 +4106,8 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         _render_cards(inds_est, n_cols=3)
     else:
         st.caption("Dados de estrutura não disponíveis.")
+        aviso_lacuna("Indicadores de estrutura sem dado para o ativo.",
+                     codigo="tela.b3.indicadores_estrutura_ausentes", entidade=tk)
 
     _sec_hdr("🏆 Score e critérios de avaliação")
     _render_b3_score_dashboard(tk, mult, df_set)
@@ -4367,17 +4387,21 @@ def _render_calibracao_segmento(calib) -> None:
         st.caption(
             "ℹ️ Os **pesos** acima são aplicados diretamente ao ranking deste "
             "segmento. Os **critérios, limites de risco e winsorização** compõem "
-            "o perfil recomendado do segmento (normalização: "
-            f"{calib.normalizacao.lower()}). Fonte: {calib.fonte}."
+            "o perfil recomendado do segmento."
         )
+        detalhe_tecnico(
+            f"Calibração do segmento: normalização {calib.normalizacao.lower()}; "
+            f"fonte {calib.fonte}.",
+            codigo="b3.calibracao_segmento_fonte", entidade=str(calib.segmento or calib.setor))
 
 
 def _tab_avancada(df_set: pd.DataFrame) -> None:
     if df_set.empty:
-        st.warning(
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna(
             "O cadastro de setores voltou vazio — sem ele a análise avançada "
-            "não tem universo. Confira " + VAR_CONEXAO + "."
-        )
+            "não tem universo. Confira " + VAR_CONEXAO + ".",
+            codigo="tela.b3.avancada_cadastro_setores_vazio")
         return
 
     st.markdown(
@@ -4571,12 +4595,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             ].copy()
             _cortadas = _antes - len(df_mult_todos)
             if _cortadas > 0:
-                st.caption(
-                    f"🎯 Universo de decisão: {len(df_mult_todos)} empresas. "
+                detalhe_tecnico(
+                    f"Universo de decisão: {len(df_mult_todos)} empresas. "
                     f"{_cortadas} descartadas por dado insuficiente para "
                     "sustentar recomendação (confiança de dados abaixo do "
-                    "mínimo). Veja Configurações → Grau de Confiança."
-                )
+                    "mínimo). Veja Configurações → Grau de Confiança.",
+                    codigo="b3.universo_decisao_descartes")
     except Exception:  # noqa: BLE001 - filtro é melhoria, não pré-requisito
         import logging
         logging.getLogger(__name__).exception(
@@ -4599,10 +4623,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                   "anteriores ao versionamento não são point-in-time.")
     st.caption(
         f"📅 **Ano-base do score: {_ano_label}** — a seleção do ano atual "
-        f"({_ano_corrente}) usa os fundamentos consolidados do ano anterior. "
-        "Dados parciais do ano corrente são ignorados por metodologia."
-        + _fonte_pit
+        f"({_ano_corrente}) usa os fundamentos consolidados do ano anterior."
     )
+    detalhe_tecnico(
+        "Dados parciais do ano corrente são ignorados por metodologia."
+        + _fonte_pit,
+        codigo="b3.ano_base_metodologia")
 
     # Aplicar filtros
     df_filt  = df_ss if sel_seg == "Todos" else df_ss[df_ss["SEGMENTO"] == sel_seg]
@@ -4638,11 +4664,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             # Sem a leitura, NÃO filtra. O bloco de exclusão abaixo removeria
             # todos os tickers (get() devolve None para cada um) — trocar um
             # modo de falha por outro pior.
-            st.warning(
-                "⚠️ Filtro de liquidez **não aplicado**: não foi possível ler o "
+            aviso_lacuna(
+                "Filtro de liquidez não aplicado: não foi possível ler o "
                 "volume negociado. A análise segue com o universo completo — "
-                "trate os nomes como não verificados quanto à negociabilidade."
-            )
+                "trate os nomes como não verificados quanto à negociabilidade.",
+                codigo="tela.b3.filtro_liquidez_nao_aplicado")
         else:
             _antes_liq = len(tks_uni)
             _sem_liq = [tk for tk in tks_uni if liq_map.get(tk) is None]
@@ -4653,9 +4679,13 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             _n_iliq = _antes_liq - len(tks_uni)
             if _n_iliq:
                 st.caption(
-                    f"💧 {_n_iliq} ação(ões) abaixo do mínimo ou sem liquidez "
-                    f"verificável foram excluídas ({len(_sem_liq)} sem dado)."
+                    f"💧 {_n_iliq} ação(ões) abaixo do mínimo de liquidez "
+                    "foram excluídas."
                 )
+                detalhe_tecnico(
+                    f"{_n_iliq} ação(ões) abaixo do mínimo ou sem liquidez "
+                    f"verificável foram excluídas ({len(_sem_liq)} sem dado).",
+                    codigo="b3.filtro_liquidez_exclusoes")
 
     if not tks_uni:
         st.info("Nenhuma empresa encontrada com os filtros selecionados.")
@@ -4702,7 +4732,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             st.markdown("---")
             render_healing_panel(list(tks_uni), key_prefix="av_heal")
     except Exception as _exc_qa:  # nunca quebra a aba
-        st.caption(f"Painel de qualidade indisponível: {_exc_qa}")
+        st.caption("Painel de qualidade não disponível no momento.")
+        aviso_lacuna(f"Painel de qualidade indisponível ({type(_exc_qa).__name__}).",
+                     codigo="tela.b3.painel_qualidade_indisponivel")
 
     # Pesos por setor ou manuais
     setor_counts = (
@@ -4793,10 +4825,14 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                    if _comp_map.get(t, 0.0) >= _COMPLETUDE_MIN]
     if not tks_uni:
         st.warning(
-            "Nenhuma empresa do filtro atende à completude mínima de dados "
-            f"({_COMPLETUDE_MIN:.0%} dos indicadores do score). Ranking não "
-            "gerado — ranquear sem dados criaria posições sem sustentação."
+            "Nenhuma empresa do filtro tem dados suficientes para o ranking. "
+            "Ranking não gerado — ranquear sem dados criaria posições sem "
+            "sustentação."
         )
+        detalhe_tecnico(
+            "Nenhuma empresa do filtro atende à completude mínima de dados "
+            f"({_COMPLETUDE_MIN:.0%} dos indicadores do score).",
+            codigo="b3.completude_minima")
         return
 
     # Scoring v2 — coluna de grupo: mais granular que o filtro atual
@@ -4891,14 +4927,15 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         # uma exceção no ajuste, ela nomeava o passo errado.
         _causa_macro = (f"o ajuste falhou ({macro_erro_av})" if macro_erro_av
                         else "sem Docker local e sem arquivo publicado recente")
-        st.caption(f"Macro internacional indisponível ({_causa_macro}); "
-                   "ranking doméstico preservado.")
+        aviso_lacuna(f"Macro internacional indisponível ({_causa_macro}); "
+                     "ranking doméstico preservado.",
+                     codigo="tela.b3.macro_internacional_indisponivel")
     else:
-        st.caption(
+        detalhe_tecnico(
             f"{descrever_fonte_macro(macro_fonte_av)}: corte {macro_snapshot_av.as_of:%d/%m/%Y} · "
             f"cobertura {macro_snapshot_av.coverage:.0%}. O ajuste internacional "
-            "é separado do macro doméstico e limitado a ±10 pontos."
-        )
+            "é separado do macro doméstico e limitado a ±10 pontos.",
+            codigo="b3.macro_internacional_fonte")
     # A relação nominal das reprovadas por completude saiu da tela: quem chega
     # aqui quer o ranking, e a lista de quem não entrou não muda decisão alguma.
     # A contagem permanece no cabeçalho do universo, para o número de empresas
@@ -4914,7 +4951,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     if usar_pesos_setor and usar_fama_macbeth:
         with st.expander("Calibracao Fama-MacBeth MVP dos pesos"):
             if isinstance(fm_result, dict) and fm_result.get("erro"):
-                st.error(f"Falha na calibracao: {fm_result['erro']}")
+                st.info("A calibração Fama-MacBeth não está disponível no momento.")
+                aviso_lacuna(f"Falha na calibração Fama-MacBeth: {fm_result['erro']}",
+                             codigo="tela.b3.fama_macbeth_falha")
             elif fm_result is not None and getattr(fm_result, "ok", False):
                 fm_cols = st.columns(4)
                 with fm_cols[0]:
@@ -4944,7 +4983,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 )
             else:
                 motivo = ", ".join(getattr(fm_result, "warnings", ())) if fm_result is not None else "sem historico"
-                st.info(f"Calibracao nao aplicada: {motivo}.")
+                st.info("Calibração não aplicada.")
+                detalhe_tecnico(f"Calibração Fama-MacBeth não aplicada: {motivo}.",
+                                codigo="b3.fama_macbeth_nao_aplicada")
 
     with st.expander("Validacao cross-source (Banco x Fundamentus)"):
         st.caption(
@@ -4952,8 +4993,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             "canonicos. Divergencias criticas devem ser revisadas antes de "
             "confiar no ranking."
         )
-        st.caption("Auditoria cross-source (Fundamentus) desativada: fonte única "
-                   "brapi (market.*), monitorada pelos controles internos do pipeline.")
+        detalhe_tecnico("Auditoria cross-source (Fundamentus) desativada: fonte única "
+                        "brapi (market.*), monitorada pelos controles internos do pipeline.",
+                        codigo="b3.cross_source_desativada")
 
         show_cross_history = st.checkbox(
             "Mostrar historico salvo",
@@ -5188,10 +5230,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                                 ordered_tks = [cov_tks[i] for i in idx_map]
                                 cov_sub = cov_ff[np.ix_(idx_map, idx_map)]
                                 mk = min_variance_with_cov(ordered_tks, cov_sub, cap=cap_mk)
-                                st.caption(
+                                detalhe_tecnico(
                                     f"Modelo FF: {ff_model.n_obs} obs · fatores MKT/SMB/HML"
-                                    + (f" · avisos: {ff_model.warnings}" if ff_model.warnings else "")
-                                )
+                                    + (f" · avisos: {ff_model.warnings}" if ff_model.warnings else ""),
+                                    codigo="b3.markowitz_modelo_ff")
                             except Exception as _ff_err:
                                 aviso_lacuna(f"Fama-French indisponível ({_ff_err}); usando Ledoit-Wolf.",
                                              codigo="tela.b3.fama_french_indisponivel",
@@ -5203,7 +5245,8 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
 
                                 from core.dcc_garch import fit_dcc_garch
                                 if returns.shape[0] < 12:
-                                    st.warning("DCC-GARCH requer ≥ 12 observações; usando Ledoit-Wolf.")
+                                    aviso_lacuna("DCC-GARCH requer ≥ 12 observações; usando Ledoit-Wolf.",
+                                                 codigo="tela.b3.dcc_garch_poucas_obs")
                                 else:
                                     returns_df = _pd_dcc.DataFrame(returns, columns=top_tks)
                                     dcc = fit_dcc_garch(returns_df)
@@ -5218,11 +5261,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                                         result_summary,
                                     )
                                     summ = result_summary(dcc)
-                                    st.caption(
+                                    detalhe_tecnico(
                                         f"DCC-GARCH: α={dcc.alpha:.3f}, β={dcc.beta:.3f} · "
                                         f"ρ̄ atual={summ['avg_corr_latest']:.3f} · "
-                                        f"regime score={summ['regime_score']:.2f}"
-                                    )
+                                        f"regime score={summ['regime_score']:.2f}",
+                                        codigo="b3.markowitz_dcc_garch")
                             except Exception as _dcc_err:
                                 aviso_lacuna(f"DCC-GARCH indisponível ({_dcc_err}); usando Ledoit-Wolf.",
                                              codigo="tela.b3.dcc_garch_indisponivel",
@@ -5250,9 +5293,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                         st.markdown(_kpi_macro(
                             "Vol. anualizada (MV)",
                             f"{mk.expected_std * (12**0.5)*100:.1f}%",
-                            f"Método: {mk.method}",
+                            "Mínima variância com teto por ativo",
                             _COR_INF,
                         ), unsafe_allow_html=True)
+                        detalhe_tecnico(f"Método do solver: {mk.method}.",
+                                        codigo="b3.markowitz_metodo")
                     with ck2:
                         st.markdown(_kpi_macro(
                             "Diversificação",
@@ -5356,12 +5401,13 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 with _v3:
                     card_metrica("💧 Dividendo sustentável", f"{_n_sust} cias", accent="#4A9EFF",
                                  ajuda="Payout saudável + FCO positivo")
-                st.caption(
-                    "⚠️ Graham assume P/L e P/VP positivos (empresa lucrativa com "
+                detalhe_tecnico(
+                    "Graham assume P/L e P/VP positivos (empresa lucrativa com "
                     "patrimônio positivo) — empresas fora disso aparecem sem MS Graham. "
-                    "Valores extremos de DY/Payout podem indicar evento não recorrente."
-                )
+                    "Valores extremos de DY/Payout podem indicar evento não recorrente.",
+                    codigo="b3.valuation_ressalva_graham")
             except Exception as _val_err:
+                st.info("Esta análise não está disponível no momento.")
                 aviso_lacuna(f"Valuation indisponível: {_val_err}",
                              codigo="tela.b3.valuation_indisponivel", nivel="warning")
 
@@ -5438,11 +5484,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                     card_metrica("📈 Com bônus líquido", f"{_n_bonus} cias", accent="#00C896",
                                  ajuda="Empresas que se beneficiaram dos ajustes A ou C")
             else:
-                st.info(
+                st.info("Ajustes de resiliência não disponíveis no momento.")
+                aviso_lacuna(
                     "Ajustes de resiliência não disponíveis — é necessário "
                     "histórico por ticker (df_hist_batch) para calcular A e C. "
-                    "O ajuste B (saúde financeira) sempre é aplicado ao score."
-                )
+                    "O ajuste B (saúde financeira) sempre é aplicado ao score.",
+                    codigo="tela.b3.resiliencia_sem_historico")
 
     # ── Banca M4ui (2026-05-25): Waterfall Shapley dos engines ────────────────
     with st.expander("🧬 Atribuição Shapley do score — explainability"):
@@ -5518,25 +5565,29 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                          column_config={"φ (Shapley)": st.column_config.NumberColumn(format="%+.2f pts")})
             st.caption(
                 f"Σ φ = {sum(phis.values()):+.2f} pts (baseline 50, "
-                f"score final {50 + sum(phis.values()):.1f}). "
-                f"Atribuição satisfaz axiomas Lundberg-Lee 2017 "
-                f"(efficiency, symmetry, dummy, additivity)."
+                f"score final {50 + sum(phis.values()):.1f})."
             )
+            detalhe_tecnico(
+                "Atribuição satisfaz axiomas Lundberg-Lee 2017 "
+                "(efficiency, symmetry, dummy, additivity).",
+                codigo="b3.shapley_axiomas", entidade=str(ticker_sel))
 
     # ── Banca M3ui (2026-05-25): Black-Litterman views ────────────────────────
     with st.expander("🔮 Black-Litterman — incorporar suas views"):
         st.caption(
             "Combine um prior UNIFORME (o mesmo retorno esperado para todos "
             "os ativos, definido por você abaixo) com SUAS views via "
-            "formalismo Bayesiano. Nota de honestidade (auditoria 2026-07): "
-            "a reverse optimization dos pesos de mercado (prior de "
-            "equilíbrio CAPM/IBOV) ainda NÃO está implementada — sem "
-            "estrutura cross-sectional no prior, o posterior reflete apenas "
-            "a mecânica da sua view. Cada view tem confidence em (0, 1]: "
+            "formalismo Bayesiano. Cada view tem confidence em (0, 1]: "
             "alta = sobrepõe ao prior; baixa = prior domina. Views: "
             "absoluta ('PETR3 vai render X%') ou relativa ('PETR3 vai "
             "render X pp acima de VALE3')."
         )
+        detalhe_tecnico(
+            "Nota de honestidade (auditoria 2026-07): a reverse optimization "
+            "dos pesos de mercado (prior de equilíbrio CAPM/IBOV) ainda NÃO "
+            "está implementada — sem estrutura cross-sectional no prior, o "
+            "posterior reflete apenas a mecânica da sua view.",
+            codigo="b3.black_litterman_prior_uniforme")
         if df_scored.empty or len(df_scored) < 2:
             st.info("Precisa ao menos 2 empresas scoradas para usar BL.")
         else:
@@ -5544,7 +5595,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             _avisar_fonte_precos(df_precos, "o Black-Litterman")
             top_bl = [tk for tk in top_bl if tk in df_precos.columns]
             if len(top_bl) < 2:
-                st.warning("Top empresas sem séries históricas suficientes.")
+                st.info("Esta análise não está disponível no momento.")
+                aviso_lacuna("Top empresas sem séries históricas suficientes.",
+                             codigo="tela.b3.black_litterman_sem_series")
             else:
                 col_run, col_prior, col_tau = st.columns([1, 1, 1])
                 with col_run:
@@ -5949,9 +6002,12 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             "histórico anterior, aplica purge de 3m + embargo de 2m e mede a "
             "escolha no bloco futuro. O último fold fica intocado para "
             "auditoria final e não escolhe os parâmetros. Custos de turnover "
-            "entram no objetivo. Na fonte legada, as datas contábeis anteriores "
-            "ao corte PIT continuam aproximadas e o resultado é rotulado assim."
+            "entram no objetivo."
         )
+        detalhe_tecnico(
+            "Na fonte legada, as datas contábeis anteriores ao corte PIT "
+            "continuam aproximadas e o resultado é rotulado assim.",
+            codigo="b3.calibracao_pit_aproximado")
         if st.button("⚙️ Calibrar agora", key="b3_av_btn_cal"):
             from core.transaction_costs import CostConfig as _CalCost
             with st.spinner("Calibrando parâmetros (walk-forward purged)…"):
@@ -6190,11 +6246,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
         _avisar_fonte_precos(df_bt, "o backtest")
         _restricoes_bt = df_bt.attrs.get("restricoes_inviaveis") or []
         if _restricoes_bt:
-            st.warning(
+            aviso_lacuna(
                 "Alguns anos não tinham ativos suficientes para o cap "
                 "solicitado. O backtest usou equal-weight nesses anos: "
-                + "; ".join(_restricoes_bt[:8])
-            )
+                + "; ".join(_restricoes_bt[:8]),
+                codigo="tela.b3.backtest_cap_inviavel")
         _mk_falhas_bt = df_bt.attrs.get("markowitz_falhas") or []
         if _mk_falhas_bt:
             aviso_lacuna(
@@ -6214,10 +6270,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             df_bt.attrs.get("caixa_pendente_estrategia", 0.0) or 0.0
         )
         if _caixa_pendente > 0:
-            st.caption(
+            detalhe_tecnico(
                 f"Caixa pendente por falta de cotação no fim da janela: "
-                f"**R$ {_caixa_pendente:,.2f}** — preservado no patrimônio."
-            )
+                f"R$ {_caixa_pendente:,.2f} — preservado no patrimônio.",
+                codigo="b3.backtest_caixa_pendente")
         st.caption(
             "📅 **Rebalance anual em abril** — os balanços do exercício "
             "anterior são publicados até 31/03 (CVM); rebalancear em janeiro "
@@ -6243,30 +6299,30 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             _dt_ini_bt = pd.to_datetime(df_bt["Data"].iloc[0]).date()
             _sv = flag_survivorship_universe(list(tks_uni), data_ref=_dt_ini_bt)
             if _sv["n_delisted"] > 0:
-                st.caption(
-                    f"⚠️ **Viés de sobrevivência:** o universo simulado só contém "
+                detalhe_tecnico(
+                    f"Viés de sobrevivência: o universo simulado só contém "
                     f"empresas listadas hoje — {_sv['n_delisted']} empresa(s) da "
                     f"lista curada de deslistadas estavam vivas em "
                     f"{_dt_ini_bt.year} e não entram na simulação. A lista é "
                     "incompleta; por isso não é exibida uma falsa estimativa "
-                    "pontual de cobertura ou de bps de viés."
-                )
+                    "pontual de cobertura ou de bps de viés.",
+                    codigo="b3.backtest_vies_sobrevivencia")
         except Exception as exc:  # noqa: BLE001 - legenda informativa, falha nomeada
             # Sem legenda, lia-se "não há viés de sobrevivência a declarar".
             logger.exception("Checagem de viés de sobrevivência do backtest B3 falhou")
-            st.caption(
-                f"⚠️ Viés de sobrevivência **não verificado** ({type(exc).__name__}): "
-                "o universo simulado só contém empresas listadas hoje."
-            )
+            detalhe_tecnico(
+                f"Viés de sobrevivência não verificado ({type(exc).__name__}): "
+                "o universo simulado só contém empresas listadas hoje.",
+                codigo="b3.backtest_vies_sobrevivencia_nao_verificado")
         _anos_ss = df_bt.attrs.get("anos_sem_score") or []
         if _anos_ss:
-            st.caption(
-                f"ℹ️ **Início efetivo da simulação ajustado:** {len(_anos_ss)} "
+            aviso_lacuna(
+                f"Início efetivo da simulação ajustado: {len(_anos_ss)} "
                 f"ano(s) sem histórico contábil suficiente para score "
                 f"({', '.join(str(a) for a in _anos_ss)}) foram excluídos de "
                 "TODAS as séries (estratégia, benchmark e Selic) — sem "
-                "fallback para scores atuais, sem look-ahead."
-            )
+                "fallback para scores atuais, sem look-ahead.",
+                codigo="tela.b3.backtest_anos_sem_score")
 
         # KPI patrimônio final
         _sec_hdr("💰 Patrimônio Final")
@@ -6318,8 +6374,11 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             "público (Spearman). Referências práticas (Grinold & Kahn): "
             "|IC| < 0,03 ≈ nulo; 0,03–0,08 fraco; > 0,08 relevante. Amostras "
             "pequenas tornam o IC instável — leia como indício, não como "
-            "prova; e o universo de sobreviventes tende a SUPERESTIMAR o IC."
+            "prova."
         )
+        detalhe_tecnico(
+            "O universo de sobreviventes tende a SUPERESTIMAR o IC.",
+            codigo="b3.rank_ic_vies_sobrevivencia")
         if st.button("Calcular poder preditivo (Rank-IC)", key="b3_av_btn_ic"):
             with st.spinner("Calculando IC por ano…"):
                 _prec_ic = _batch_yf_precos_mensais(
@@ -6345,8 +6404,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
             df_ic = pd.DataFrame()
         _ic_meta = st.session_state.get("b3_av_ic_meta")
         if _ic_meta and not df_ic.empty:
-            st.caption(f"🧾 Calculado sobre: {_ic_meta}. Se você mudou "
-                       "filtros/período depois, recalcule.")
+            st.caption("Se você mudou filtros/período depois, recalcule.")
+            detalhe_tecnico(f"Rank-IC calculado sobre: {_ic_meta}.",
+                            codigo="b3.rank_ic_amostra")
         if not df_ic.empty:
             _ic_med     = float(df_ic["Rank-IC"].mean())
             _ic_pct_pos = float((df_ic["Rank-IC"] > 0).mean()) * 100
@@ -6388,7 +6448,9 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                 )
         elif "b3_av_ic_df" in st.session_state:
             st.info("Sem anos com dados suficientes para calcular o IC neste "
-                    "universo/período (mín. 5 empresas com score e retorno).")
+                    "universo/período.")
+            detalhe_tecnico("Rank-IC exige no mínimo 5 empresas com score e retorno.",
+                            codigo="b3.rank_ic_minimo_empresas")
 
     # ── COMPARAÇÃO DE MÚLTIPLOS ───────────────────────────────────────────────
     st.markdown("<hr style='margin:20px 0;border-color:var(--app-border);'>", unsafe_allow_html=True)
@@ -6664,10 +6726,10 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
                      height=min(300, 50 + 35 * len(df_fco_disp)))
         audit = st.session_state.get("b3_av_fco_audit", {})
         if audit.get("fallback_fcf_fci", 0):
-            st.caption(
+            detalhe_tecnico(
                 f"FCO calculado por FCF - FCI em {audit['fallback_fcf_fci']} empresa(s), "
-                "pois o App4 ainda não possui coluna FCO direta na tabela histórica."
-            )
+                "pois o App4 ainda não possui coluna FCO direta na tabela histórica.",
+                codigo="b3.fco_lucro_fallback_fcf_fci")
     else:
         st.caption("Clique **💵 Calcular FCO/Lucro** para gerar o gráfico.")
 
@@ -6740,9 +6802,11 @@ def render() -> None:
         "Empresas B3",
         "Análise fundamentalista e construção quantitativa de portfólios brasileiros.",
         "🏢",
-        metadados=[("Mercado", "B3 · Brasil"),
-                   ("Vitrine", resumo_curto(frescor) if frescor else "")],
+        metadados=[("Mercado", "B3 · Brasil")],
     )
+    if frescor:
+        detalhe_tecnico(f"Vitrine B3: {resumo_curto(frescor)}.",
+                        codigo="b3.vitrine_idade")
     selo_de_frescor("b3", frescor)
     # O selo acima mede a idade da PUBLICAÇÃO. Uma vitrine publicada ontem
     # pode carregar um trimestre a menos (B3-02), e é isso que o aviso abaixo
@@ -6757,17 +6821,17 @@ def render() -> None:
     df_set = _so_acoes(df_set)
 
     if df_set.empty:
-        st.caption(
-            "⚠️ Cadastro de setores vazio — o app não conseguiu ler o banco. "
-            "Confira " + VAR_CONEXAO + "."
-        )
+        aviso_lacuna(
+            "Cadastro de setores vazio — o app não conseguiu ler o banco. "
+            "Confira " + VAR_CONEXAO + ".",
+            codigo="tela.b3.cadastro_setores_vazio_cabecalho")
     elif fallback_legado:
-        st.caption(
-            "⚠️ Taxonomia setorial via fonte legada (`public.setores`, banco "
+        aviso_lacuna(
+            "Taxonomia setorial via fonte legada (`public.setores`, banco "
             "resolvido separadamente do restante do app) — a fonte primária "
             "(`market.*`) falhou ou está vazia. Classificação de setor/subsetor "
-            "pode divergir/estar desatualizada em relação às demais telas."
-        )
+            "pode divergir/estar desatualizada em relação às demais telas.",
+            codigo="tela.b3.taxonomia_fonte_legada")
 
     active = render_market_tabs(state_key="b3_active_tab", key_prefix="b3")
 
