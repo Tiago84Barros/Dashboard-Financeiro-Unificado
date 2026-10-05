@@ -142,6 +142,29 @@ def test_derivacao_mensal_cai_no_ultimo_pregao_com_close(armazem):
                        "KO": date(2026, 10, 2)}
 
 
+def test_poda_tira_o_mes_parcial_de_derivacao_anterior(armazem):
+    """EUA-N5: derivar em 04/09 e de novo em 30/09 deixava as duas linhas."""
+    from data_pipeline.us.scoring_history import _SQL_PODA_MES_PARCIAL
+
+    with armazem.begin() as conn:
+        conn.execute(text(
+            f"INSERT INTO {SCHEMA}.prices_monthly (symbol, month_end, close, source) "
+            "VALUES ('ZZ', '2026-07-17', 1, 'derived'), ('ZZ', '2026-07-30', 1, 'derived'), "
+            "('ZZ', '2026-07-31', 1, 'derived'), ('ZZ', '2026-08-20', 1, 'derived'), "
+            "('YY', '2026-07-17', 1, 'manual'), ('YY', '2026-07-31', 1, 'derived')"))
+        podadas = conn.execute(text(_no_schema_do_teste(_SQL_PODA_MES_PARCIAL))).rowcount
+        ficaram = conn.execute(text(
+            f"SELECT symbol, month_end FROM {SCHEMA}.prices_monthly "
+            "WHERE symbol IN ('ZZ', 'YY') ORDER BY 1, 2")).all()
+        conn.execute(text(f"DELETE FROM {SCHEMA}.prices_monthly WHERE symbol IN ('ZZ', 'YY')"))
+
+    assert podadas == 2
+    # Linha que não veio da derivação não é dela para apagar.
+    assert [tuple(r) for r in ficaram] == [
+        ("YY", date(2026, 7, 17)), ("YY", date(2026, 7, 31)),
+        ("ZZ", date(2026, 7, 31)), ("ZZ", date(2026, 8, 20))]
+
+
 # ── Ingestão: barra sem close não entra ───────────────────────────────────────
 def test_ingestao_pula_barra_sem_close_e_grava_as_outras(monkeypatch):
     from data_pipeline.us import repository as repo

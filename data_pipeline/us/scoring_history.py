@@ -117,6 +117,21 @@ _SQL_DERIVA_MENSAL = """
             volume = EXCLUDED.volume, total_return = EXCLUDED.total_return
     """
 
+# month_end é o último pregão COM DADO até a derivação, não o fim do calendário:
+# derivar em 04/09 grava (X, 2026-09-04); em 30/09, (X, 2026-09-30) é OUTRA
+# chave e a linha parcial ficava. Em 04/10/2026 eram 7.741 meses duplicados no
+# armazém (e 4.510 no Supabase), com o retorno do mês contado duas vezes por
+# quem itera as linhas (EUA-N5). Fica só o último pregão de cada mês.
+_SQL_PODA_MES_PARCIAL = """
+        DELETE FROM market_us.prices_monthly p
+        WHERE p.source = 'derived'
+          AND EXISTS (
+              SELECT 1 FROM market_us.prices_monthly q
+              WHERE q.symbol = p.symbol
+                AND q.month_end > p.month_end
+                AND date_trunc('month', q.month_end) = date_trunc('month', p.month_end))
+    """
+
 
 def derive_prices_monthly(engine) -> dict:
     """Deriva o fechamento MENSAL (último pregão do mês) de prices_daily.
@@ -131,8 +146,9 @@ def derive_prices_monthly(engine) -> dict:
     sql = _SQL_DERIVA_MENSAL
     with engine.begin() as conn:
         conn.execute(text(sql))
+        podadas = conn.execute(text(_SQL_PODA_MES_PARCIAL)).rowcount
         n = conn.execute(text("SELECT COUNT(*) FROM market_us.prices_monthly")).scalar()
-    return {"ok": True, "rows": int(n or 0)}
+    return {"ok": True, "rows": int(n or 0), "parciais_podadas": int(podadas or 0)}
 
 
 # ── Orquestração em banco (roda com warehouse) ────────────────────────────────
