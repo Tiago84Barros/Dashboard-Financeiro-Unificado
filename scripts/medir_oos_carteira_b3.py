@@ -155,27 +155,36 @@ def _rodar_perfil(nome: str, valores: dict, timeout: int = 1800):
     return resultados, precos, params
 
 
-def _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje):
-    import numpy as np
+def _segmentos_por_safra(resultados, precos, params, cost_cfg, hoje):
+    """Aprovação PIT e seleção de cada segmento, safra a safra.
+
+    Devolve ``(contexto, safras)``: o contexto da rodada (cap e Selic que a tela
+    usou) e, por safra, os segmentos aprovados no formato de
+    ``core.b3_oos_carteira.Segmento``, o universo e as saídas. O portão de
+    LLM medido (`core.b3_portao_pit`) lê o mesmo: os nomes que a carteira
+    mediria são os que o LLM avalia.
+    """
     import pandas as pd
 
     import core.b3_oos_carteira as oos
     import views.portfolio_b3 as view
-    from core.b3_safras import SafraCarteira, retorno_da_safra
-    from core.b3_vigencia import ano_base_do_score, janela_de_vigencia, safra_completa
+    from core.b3_vigencia import safra_completa
 
     resultados = [r for r in resultados if r.get("_oos_ctx")]
     if not resultados:
         raise SystemExit("nenhum resultado instrumentado: o embrulho nao pegou")
     ctx0 = resultados[0]["_oos_ctx"]
-    cap = float(ctx0["cap"])
-    selic_macro = ctx0["selic_macro"]
-    taxa_selic_aa = float(ctx0["taxa_selic_aa"])
+    contexto = {
+        "cap": float(ctx0["cap"]),
+        "selic_macro": ctx0["selic_macro"],
+        "taxa_selic_aa": float(ctx0["taxa_selic_aa"]),
+        "n_resultados": len(resultados),
+    }
     primeira = int(ctx0["ano_inicio"]) + int(params["janela_val_anos"])
     anos = sorted({int(a) for r in resultados for a in (r.get("lids_por_ano") or {})})
     safras = [s for s in anos if s >= primeira and safra_completa(s, hoje=hoje)]
 
-    linhas_por_variante = {v: [] for v in oos.VARIANTES}
+    saida = []
     for safra in safras:
         aprovados = []
         motivos: dict[str, int] = {}
@@ -206,7 +215,40 @@ def _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje):
                 pode_incluir_maior=view._pode_incluir_maior_participacao)
             if sel:
                 segmentos.append((str(res.get("setor") or ""), sel, pesos, ranking))
+        saida.append({"safra": safra, "segmentos": segmentos, "universo": universo,
+                      "saidas": saidas, "n_aprovados": len(aprovados),
+                      "motivos": motivos})
+    return contexto, saida
 
+
+def _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje, portao=None):
+    """Mede as variantes de `oos.VARIANTES` e, com ``portao``, a do portão real.
+
+    ``portao(segmentos, safra)`` devolve ``(itens, log)`` no formato de
+    ``oos.aplicar_portao_medido``: os vereditos do LLM sobre o dossiê da
+    época. Sem ele, só a banda (o comportamento até a 2.1.0).
+    """
+    import numpy as np
+
+    import core.b3_oos_carteira as oos
+    from core.b3_safras import SafraCarteira, retorno_da_safra
+    from core.b3_vigencia import ano_base_do_score, janela_de_vigencia
+
+    contexto, por_safra = _segmentos_por_safra(resultados, precos, params, cost_cfg, hoje)
+    if portao is not None and hasattr(portao, "preparar"):
+        # Busca na rede, em paralelo, todos os pareceres que o portão vai
+        # pedir; o laço abaixo só lê o cache.
+        portao.preparar(por_safra)
+    cap = contexto["cap"]
+    selic_macro = contexto["selic_macro"]
+    taxa_selic_aa = contexto["taxa_selic_aa"]
+    safras = [p["safra"] for p in por_safra]
+    variantes = oos.VARIANTES + ((oos.PORTAO_LLM_MEDIDO,) if portao else ())
+
+    linhas_por_variante = {v: [] for v in variantes}
+    for p in por_safra:
+        safra, segmentos = p["safra"], p["segmentos"]
+        universo, saidas, motivos = p["universo"], p["saidas"], p["motivos"]
         rets = oos.retornos_por_ticker(oos.tickers_da_banda(segmentos), universo,
                                        precos, safra, saidas)
         tetos = {"cap": cap, "teto_setor": params["teto_setor"],
@@ -214,11 +256,20 @@ def _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje):
 
         inicio, fim = janela_de_vigencia(safra)
         brutos: dict[str, float] = {}
-        for variante in oos.VARIANTES:
+        portao_log = None
+        for variante in variantes:
             veto = None
             if variante == oos.SEM_PORTAO:
                 itens, _ = oos.vetar_na_carteira(segmentos, None)
                 cart = oos.montar_carteira(itens, **tetos)
+            elif variante == oos.PORTAO_LLM_MEDIDO:
+                # O portão de verdade: o parecer do LLM sobre o dossiê da
+                # época decide quem sai e quem entra, como na tela.
+                itens, portao_log = portao(segmentos, safra)
+                cart = oos.montar_carteira(itens, **tetos)
+                trocas = [f"{t['sai']} → {t['entra'] or 'ninguém'}"
+                          for t in portao_log["trocas"]]
+                veto = "; ".join(trocas) or None
             else:
                 # Banda: o veto ÚNICO da safra que mais derruba (adversário)
                 # ou mais sobe (favorável) a carteira -- ver PORTAO_LLM.
@@ -243,7 +294,7 @@ def _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje):
                 # Mesma conta por dois caminhos: se divergirem, a carteira
                 # medida não é a que `core.b3_safras` mediria.
                 assert abs(bruto - base["retorno_estrategia"]) < 1e-9, (safra, variante)
-            if variante != oos.SEM_PORTAO:
+            if variante in (oos.PORTAO_VETA_O_MELHOR, oos.PORTAO_VETA_O_PIOR):
                 # O veto foi escolhido com os mesmos retornos que a carteira mede.
                 assert abs(bruto - esc["bruto"]) < 1e-9, (safra, variante)
             brutos[variante] = bruto
@@ -251,8 +302,8 @@ def _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje):
                 "safra": safra,
                 "pesos": pesos_fin,
                 "retornos": rets_cart,
-                "segmentos_avaliados": len(resultados),
-                "segmentos_aprovados": len(aprovados),
+                "segmentos_avaliados": contexto["n_resultados"],
+                "segmentos_aprovados": p["n_aprovados"],
                 "reprovacoes": motivos,
                 "n_ativos": len(pesos_fin),
                 "inviavel_no_cap": bool(cart["inviavel"]),
@@ -328,7 +379,16 @@ def main() -> int:
     ap.add_argument("--cache-dir", type=Path, default=None,
                     help="guarda/reaproveita a rodada da aba por perfil (pickle), "
                          "para refazer só a parte PIT sem reler o banco")
+    ap.add_argument("--portao-llm", action="store_true",
+                    help="mede também o portão de LLM de verdade (parecer sobre o "
+                         "dossiê da época, core.b3_portao_pit); chama o LLM")
+    ap.add_argument("--portao-cache", type=Path,
+                    default=ROOT / "data" / "portao_llm_b3_pareceres.json",
+                    help="cache dos pareceres da época (reaproveitado entre rodadas)")
+    ap.add_argument("--portao-workers", type=int, default=6)
     args = ap.parse_args()
+    # A lacuna de dado de uma rodada de medição não é lacuna do app.
+    os.environ["LACUNAS_DESTINO"] = "desligado"
 
     url = _apontar_para_armazem_local()
     print(f"armazem local: {url.split('@')[-1]}", flush=True)
@@ -344,8 +404,9 @@ def main() -> int:
     # numa medição isso seria escrita colateral. Desligado aqui.
     import core.b3_validation as _val
     _val.persist_validation_run = lambda *a, **k: None
-    _desligar_llm()
     import core.llm_b3 as _llm
+    cadeia_original = _llm._provider_chain
+    _desligar_llm()
     if _llm._provider_chain():
         raise SystemExit("LLM continua ligado: a medição travaria na rede")
 
@@ -364,11 +425,12 @@ def main() -> int:
     ibov = ibov_df["BOVA11"].dropna() if "BOVA11" in ibov_df.columns else None
 
     nomes = args.perfil or [RECOMENDADO, CONSERVADOR, AMPLO]
-    perfis: dict = {}
-    todas_safras: set[int] = set()
-    avaliadas: set[int] = set()
+    # Fase 1, LLM desligado: a aba roda sem cabeça por perfil (a tese
+    # narrativa dela travaria na rede). Fase 2: com o portão medido, a
+    # cadeia volta só para os pareceres da época.
+    rodadas: dict = {}
     for nome in nomes:
-        print(f"\n== perfil {nome} ==", flush=True)
+        print(f"\n== perfil {nome}: aba ==", flush=True)
         # hash() de str muda a cada processo; md5 do nome é estável.
         cache = (args.cache_dir / f"oos_{hashlib.md5(nome.encode()).hexdigest()[:10]}.pkl"
                  if args.cache_dir else None)
@@ -381,7 +443,30 @@ def main() -> int:
                 cache.parent.mkdir(parents=True, exist_ok=True)
                 with cache.open("wb") as fh:
                     pickle.dump((resultados, precos, params), fh)
-        medido, safras = _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje)
+        rodadas[nome] = (resultados, precos, params)
+
+    avaliador = None
+    if args.portao_llm:
+        import core.b3_portao_pit as pit
+        _llm._provider_chain = cadeia_original
+        if not _llm._provider_chain():
+            raise SystemExit("--portao-llm sem provedor de LLM configurado")
+        macro = pit.carregar_macro_por_ano()
+        avaliador = pit.AvaliadorPortaoPIT(
+            args.portao_cache,
+            lambda tk, safra: pit.montar_entrada_pit(tk, safra, macro),
+            pit.parecer_pit, pit.sonda_pit, workers=args.portao_workers, tentativas=3)
+
+    perfis: dict = {}
+    todas_safras: set[int] = set()
+    avaliadas: set[int] = set()
+    for nome in nomes:
+        print(f"\n== perfil {nome}: medição ==", flush=True)
+        resultados, precos, params = rodadas[nome]
+        medido, safras = _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje,
+                                       portao=avaliador)
+        if avaliador is not None:
+            medido["portao_llm_medido"] = avaliador.resumo(pares=avaliador.consultados)
         avaliadas.update(safras)
         # A janela declarada é a das safras que tiveram carteira: as primeiras
         # não têm líder anterior a elas (sem backtest, sem aprovação).
@@ -389,7 +474,7 @@ def main() -> int:
                             if not t.get("sem_carteira"))
         perfis[nome] = medido
         print(medido["leitura"], flush=True)
-        for v in oos.VARIANTES:
+        for v in medido["variantes"]:
             r = medido["variantes"][v]["vs_equal_weight"]
             print(f"  {v}: media={r['media']} ic95={r['ic95']} n={r['n_safras']} "
                   f"neg={r['safras_negativas']}", flush=True)
@@ -423,6 +508,11 @@ def main() -> int:
             "ibovespa": "BOVA11 (proxy; ETF com taxa de 0,10% a.a.)",
         },
         "portao_llm": oos.PORTAO_LLM,
+        "portao_llm_medido": (
+            {**avaliador.resumo(), "versao_dossie": pit.VERSAO_DOSSIE_PIT,
+             "cache": str(args.portao_cache.relative_to(ROOT)
+                          if args.portao_cache.is_relative_to(ROOT) else args.portao_cache)}
+            if avaliador is not None else None),
         "fora_do_pit": list(oos.FORA_DO_PIT),
         "perfis": perfis,
     }

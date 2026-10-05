@@ -142,6 +142,47 @@ def render_oos_carteira() -> None:
                     if vetos:
                         st.caption(f"{rotulo} por safra (sai → entra): " + "; ".join(vetos) + ".")
 
+            var_med = variantes.get(oos.PORTAO_LLM_MEDIDO) or {}
+            med_l = var_med.get("vs_equal_weight") or {}
+            med_b = var_med.get("vs_equal_weight_bruto") or {}
+            if med_l:
+                # O portão de verdade, medido sobre o dossiê da época. A banda
+                # acima vale para UM veto; este pode vetar mais de um.
+                res = medido.get("portao_llm_medido") or {}
+                st.markdown("**Portão de LLM medido** — o parecer do LLM sobre o "
+                            "dossiê remontado em março de cada safra, anonimizado.")
+                st.dataframe(pd.DataFrame([
+                    _linha_resumo("Com o portão (líquido)", med_l),
+                    _linha_resumo("Com o portão (bruto)", med_b),
+                ]), hide_index=True, width="stretch")
+                partes = []
+                if res.get("taxa_veto") is not None:
+                    partes.append(f"vetou {res['taxa_veto']:.0%} de {res.get('pareceres', 0)} "
+                                  "pareceres")
+                if res.get("falhas"):
+                    partes.append(f"{res['falhas']} sem parecer (não vetam)")
+                if res.get("concordancia_veto") is not None:
+                    partes.append(f"repetido, concordou consigo no veto em "
+                                  f"{res['concordancia_veto']:.0%} de {res.get('repeticoes')}")
+                if res.get("sonda_acerta_empresa") is not None:
+                    partes.append(
+                        f"na sonda de memória, o modelo reconheceu a empresa em "
+                        f"{res['sonda_acerta_empresa']:.0%} e o ano em "
+                        f"{res.get('sonda_acerta_ano') or 0:.0%} de {res.get('sondas')} dossiês")
+                if partes:
+                    st.caption("Portão medido: " + "; ".join(partes) + ". Sem portão "
+                               f"(líquido): {_pp(principal.get('media'))}.")
+                trocas = [f"{s['safra']} {s['veto']}" for s in var_med.get("safras") or []
+                          if s.get("veto") and not s.get("sem_carteira")]
+                if trocas:
+                    st.caption("Vetos do portão por safra (sai → entra): "
+                               + "; ".join(trocas) + ".")
+                elif var_med.get("safras"):
+                    st.caption("O portão não vetou nenhum nome desta carteira em safra "
+                               "alguma: com o portão é o mesmo que sem portão. Isso mede "
+                               "este modelo sobre o dossiê da época, mais pobre que o "
+                               "de hoje (sem notícias nem trechos da CVM).")
+
             marcadas = sorted(set(base.get("safras_inviaveis_no_cap") or [])
                               | set(base.get("safras_com_revisao") or []))
             if marcadas:
@@ -171,8 +212,10 @@ def render_oos_carteira() -> None:
 
     portao = dados.get("portao_llm") or oos.PORTAO_LLM
     with st.expander("O que esta medição NÃO cobre"):
-        st.markdown(f"**Portão de LLM — fora da medição.** {portao.get('por_que', '')} "
-                    f"{portao.get('como_medido', '')}")
+        st.markdown(f"**Portão de LLM — fora da métrica principal.** "
+                    f"{portao.get('por_que', '')} {portao.get('como_medido', '')}")
+        if portao.get("medicao_direta"):
+            st.markdown(portao["medicao_direta"])
         for nota in dados.get("fora_do_pit") or oos.FORA_DO_PIT:
             st.markdown(f"- {nota}")
         custos = dados.get("custos") or {}
