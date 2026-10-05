@@ -188,18 +188,23 @@ if modulo_nome:
             # mensagem, que e onde moram driver, host, porta e credencial.
             # Envolvido no proprio try: um diagnostico que falha nao pode
             # derrubar o tratamento do erro que ele veio explicar.
+            # So o administrador ve o bloco desde 05/10/2026: detalhe tecnico
+            # nao aparece na tela de uso, e a identidade do erro ja foi para
+            # Configuracoes -> Restricoes pelo `registrar_excecao` acima.
             try:
                 from core.erro_diagnostico import (
                     identidade_do_erro,
                     relatorio_tecnico,
                 )
+                from core.user_context import is_admin
 
-                with st.expander(f"Detalhes tecnicos - {identidade_do_erro(exc)}"):
-                    st.caption(
-                        "Copie este bloco ao reportar. Ele nao contem dados, "
-                        "credenciais nem endereco de banco."
-                    )
-                    st.code(relatorio_tecnico(exc), language="text")
+                if is_admin():
+                    with st.expander(f"Detalhes tecnicos - {identidade_do_erro(exc)}"):
+                        st.caption(
+                            "Copie este bloco ao reportar. Ele nao contem dados, "
+                            "credenciais nem endereco de banco."
+                        )
+                        st.code(relatorio_tecnico(exc), language="text")
             except Exception:  # noqa: BLE001 - diagnostico e extra, nunca requisito
                 logger.exception("falha ao montar o diagnostico da rota")
 else:

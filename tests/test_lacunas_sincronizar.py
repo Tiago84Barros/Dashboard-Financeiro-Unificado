@@ -255,3 +255,55 @@ def test_resumo_lista_legitimas_e_reincidentes():
     legitimas, reincidentes = md.split("## Reincidentes")
     assert "`leg`" in legitimas and "fundo novo" in legitimas and "sem VPA" in legitimas
     assert "`rei`" in reincidentes and "`leg`" not in reincidentes
+
+
+# ── detalhe tecnico e decisao do administrador (05/10/2026) ──────────────────
+
+def test_detalhe_tecnico_nasce_legitimo_na_fusao_e_fica_fora_da_fila():
+    local = fila.agregar_eventos([_ev("d", 1, fonte="tela", codigo="detalhe.fii.versao"),
+                                  _ev("r", 1, fonte="tela", codigo="tela.fii.sem_dados")],
+                                 AGORA)
+    itens = {i["impressao"]: i for i in fila.fundir(local, [], {}, {}, AGORA)}
+    assert itens["d"]["status"] == "legitima"
+    assert itens["r"]["status"] == "aberta"
+    assert [i["impressao"] for i in fila.fila(list(itens.values()))] == ["r"]
+
+
+def test_detalhe_resolvido_que_reaparece_volta_a_legitimo():
+    estado = {"d": {"status": "resolvida",
+                    "resolvida_em": (AGORA - timedelta(days=3)).isoformat()}}
+    local = fila.agregar_eventos([_ev("d", 1, codigo="detalhe.x")], AGORA)
+    itens = fila.fundir(local, [], estado, {}, AGORA)
+    assert (itens[0]["status"], itens[0]["reincidente"]) == ("legitima", True)
+    assert fila.atualizar_estado(estado, itens)["d"]["status"] == "legitima"
+
+
+def test_decisao_do_admin_na_nuvem_entra_no_estado_local():
+    estado = {"a": {"status": "aberta", "nota_triagem": None},
+              "b": {"status": "aberta", "nota_triagem": "[admin 2026-09-27] x"},
+              "c": {"status": "aberta"}}
+    cloud = [_nuvem("a", 1, 1, 1, status="legitima"),
+             _nuvem("b", 1, 1, 1, status="legitima"),
+             _nuvem("c", 1, 1, 1, status="legitima"),
+             _nuvem("novo", 1, 1, 1, status="legitima")]
+    cloud[0]["nota_triagem"] = "[admin 2026-09-28] limitacao conhecida"
+    cloud[1]["nota_triagem"] = "[admin 2026-09-27] x"          # ja importada
+    cloud[2]["nota_triagem"] = "triagem do corretor"           # nao e do admin
+    cloud[3]["nota_triagem"] = "[admin 2026-09-28] y"          # sem estado local
+    mudou = fila.importar_decisoes_admin(estado, cloud, AGORA)
+    assert mudou == ["a"]
+    assert estado["a"]["status"] == "legitima"
+    assert estado["a"]["nota_triagem"].startswith("[admin 2026-09-28]")
+    assert estado["b"]["status"] == "aberta" and estado["c"]["status"] == "aberta"
+    assert "novo" not in estado
+
+
+def test_decisao_resolvida_do_admin_marca_a_data():
+    estado = {"a": {"status": "aberta"}}
+    cloud = [_nuvem("a", 1, 1, 1, status="resolvida")]
+    cloud[0]["nota_triagem"] = "[admin 2026-09-28] corrigido no PR"
+    fila.importar_decisoes_admin(estado, cloud, AGORA)
+    assert estado["a"]["status"] == "resolvida" and estado["a"]["resolvida_em"]
+    cloud[0].update(status="aberta", nota_triagem="[admin 2026-09-29] voltou")
+    fila.importar_decisoes_admin(estado, cloud, AGORA)
+    assert estado["a"]["status"] == "aberta" and "resolvida_em" not in estado["a"]

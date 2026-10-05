@@ -56,8 +56,11 @@ def stubs_de_bootstrap(**overrides) -> dict[str, SimpleNamespace]:
         "core.config": SimpleNamespace(
             settings=SimpleNamespace(validate=lambda: []),
         ),
+        # O diagnostico tecnico da fronteira de rota so aparece para o admin
+        # desde 05/10/2026; o duble e admin para os testes que o leem.
         "core.user_context": SimpleNamespace(
             principal=lambda: dict(USUARIO_SINTETICO),
+            is_admin=lambda: True,
         ),
         "design.componentes": SimpleNamespace(
             mensagem_erro=lambda *_args: None,

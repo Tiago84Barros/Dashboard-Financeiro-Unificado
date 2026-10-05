@@ -141,3 +141,22 @@ def test_colunas_do_upsert_existem_na_migration():
         assert re.search(rf"^\s+{coluna}\s", ddl, re.MULTILINE), coluna
     for status in ("aberta", "legitima", "em_pr", "resolvida", "incerta"):
         assert f"'{status}'" in ddl
+
+
+# ── detalhe tecnico (05/10/2026) ─────────────────────────────────────────────
+
+def test_detalhe_tecnico_nasce_legitimo_e_fora_da_fila(engine):
+    lac = _lacuna(codigo="detalhe.fii.metodologia", fonte="tela")
+    gravar_banco(engine, lac)
+    assert _linha(engine, lac.impressao)["status"] == "legitima"
+
+
+def test_detalhe_resolvido_que_reaparece_volta_a_legitimo(engine):
+    lac = _lacuna(codigo="detalhe.fii.metodologia", fonte="tela")
+    gravar_banco(engine, lac)
+    with engine.begin() as con:
+        con.execute(text("UPDATE app_lacunas SET status = 'resolvida'"))
+    gravar_banco(engine, lac)
+    row = _linha(engine, lac.impressao)
+    assert row["status"] == "legitima"
+    assert row["reincidente"]

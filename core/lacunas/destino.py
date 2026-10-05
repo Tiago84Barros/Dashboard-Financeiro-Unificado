@@ -26,7 +26,7 @@ from typing import Mapping
 
 from sqlalchemy import text
 
-from core.lacunas.evento import Lacuna
+from core.lacunas.evento import Lacuna, status_inicial
 
 DESTINOS = ("local", "supabase", "desligado")
 
@@ -58,20 +58,22 @@ def gravar_local(lacuna: Lacuna, arquivo: Path | None = None) -> None:
 
 
 # Todas as expressoes do SET leem a linha ANTIGA (Postgres e SQLite), entao
-# `reincidente` ve o status de antes de o CASE reabrir a lacuna.
+# `reincidente` ve o status de antes de o CASE reabrir a lacuna. Reaberta volta
+# ao status de nascimento (`excluded.status`): lacuna volta a `aberta`, detalhe
+# tecnico volta a `legitima`.
 _UPSERT = """
 INSERT INTO app_lacunas (impressao, fonte, modulo, codigo, entidade,
     ultima_mensagem, contexto, primeira_vez, ultima_vez, ocorrencias,
     status, reincidente)
 VALUES (:impressao, :fonte, :modulo, :codigo, :entidade,
-    :mensagem, {contexto}, :ts, :ts, 1, 'aberta', FALSE)
+    :mensagem, {contexto}, :ts, :ts, 1, :status_inicial, FALSE)
 ON CONFLICT (impressao) DO UPDATE SET
     ocorrencias = app_lacunas.ocorrencias + 1,
     ultima_vez = excluded.ultima_vez,
     ultima_mensagem = excluded.ultima_mensagem,
     contexto = excluded.contexto,
     reincidente = app_lacunas.reincidente OR app_lacunas.status = 'resolvida',
-    status = CASE WHEN app_lacunas.status = 'resolvida' THEN 'aberta'
+    status = CASE WHEN app_lacunas.status = 'resolvida' THEN excluded.status
                   ELSE app_lacunas.status END
 """
 
@@ -82,5 +84,6 @@ def gravar_banco(engine, lacuna: Lacuna) -> None:
     sql = _UPSERT.format(contexto="CAST(:contexto AS jsonb)" if postgres else ":contexto")
     parametros = asdict(lacuna)
     parametros["contexto"] = json.dumps(lacuna.contexto, ensure_ascii=False)
+    parametros["status_inicial"] = status_inicial(lacuna.codigo)
     with engine.begin() as con:
         con.execute(text(sql), parametros)
