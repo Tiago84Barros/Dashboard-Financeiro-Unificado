@@ -99,7 +99,9 @@ def test_actual_portfolio_route_keeps_rich_panels_and_chat(mode):
 def test_no_history_and_no_provider_do_not_remove_details():
     app = preview(history=False, llm=False)
     assert not app.exception
-    assert any("Não há pelo menos dois FIIs" in e.value for e in app.info)
+    # A lacuna de correlacao sai da tela desde 05/10/2026 (vai para
+    # Configuracoes -> Restricoes); o resto do detalhe continua.
+    assert not any("Não há pelo menos dois FIIs" in e.value for e in app.info)
     assert any("Nenhum provedor LLM" in e.value for e in app.info)
     assert any("Por que estes FIIs avançaram" in e.value for e in app.markdown)
 

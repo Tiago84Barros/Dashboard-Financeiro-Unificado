@@ -87,3 +87,15 @@ def test_detalhe_tecnico_nao_exibe_e_ganha_prefixo(arquivo, exibidos):
     assert a["codigo"] == "detalhe.fii.metodologia"
     assert a["modulo"] == "tests/test_lacunas_aviso.py:_rodape_do_fii"
     assert b["codigo"] == "detalhe.b3.amostra"
+
+
+def test_falha_de_acao_mostra_frase_sem_a_excecao_e_registra_erro(arquivo, exibidos):
+    try:
+        raise RuntimeError("host=db.secreto senha=x")
+    except RuntimeError as exc:
+        dl.falha_de_acao("Não foi possível salvar.", exc)
+    assert [(n, m) for n, m, _ in exibidos] == [
+        ("error", f"Não foi possível salvar. {dl.AVISO_REGISTRADO}")]
+    (ev,) = _eventos(arquivo)
+    assert ev["fonte"] == "excecao" and ev["codigo"] == "RuntimeError"
+    assert "secreto" not in json.dumps(ev)
