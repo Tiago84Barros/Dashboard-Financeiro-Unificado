@@ -10,7 +10,7 @@ from dataclasses import replace
 
 import pytest
 
-from core.inteligencia_ativos import analise
+from core.inteligencia_ativos import analise, secoes
 from core.inteligencia_ativos import avaliacao as av
 from core.inteligencia_ativos import fundamentos as f
 from core.inteligencia_ativos import informacoes as inf
@@ -33,9 +33,16 @@ CARTEIRA = {"total_mercado": 11000.0, "posicoes": [
 
 @pytest.fixture(scope="module")
 def an():
-    ctx = _ctx(CARTEIRA)
-    return {pp["ticker"]: _analise(pp["ticker"], ctx)
-            for pp in CARTEIRA["posicoes"]}
+    # Provedores reais leem os artefatos publicados em data/public: quando a
+    # rotina noturna commitou notícias da WEGE3 (05/10/2026), o teste "sem
+    # dado" passou a ver dado. Aqui toda seção nasce vazia; quem precisa de
+    # dado injeta com _com.
+    with pytest.MonkeyPatch.context() as mp:
+        for chave in secoes.SECOES:
+            mp.setitem(secoes.PROVEDORES, chave, secoes._pendente(chave))
+        ctx = _ctx(CARTEIRA)
+        return {pp["ticker"]: _analise(pp["ticker"], ctx)
+                for pp in CARTEIRA["posicoes"]}
 
 
 def _fund(tipo=f.ACAO, **valores):

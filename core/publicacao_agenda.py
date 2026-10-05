@@ -373,10 +373,18 @@ ALVOS: tuple[Alvo, ...] = (
         # A compactação recusa apagar payload sem cópia local, então arquivar
         # antes é o que a destrava. Preserva o último por (endpoint, ticker), o
         # referenciado e as últimas 48 h. O VACUUM FULL continua manual.
+        #
+        # Arquivar não basta: o payload chega ao armazém e ninguém o
+        # normalizava. O `annual` local só cobre `public.setores` (quase só ON),
+        # e em 04/10/2026 103 tickers -- BBDC4, ITUB4, PETR4 -- seguiam no
+        # 2026T1 com o payload do 2T26 no disco desde 19/09. O segundo passo
+        # regrava as demonstrações a partir dele, sem rede (B3-02).
         chave="brapi_raw_poda",
         titulo="Poda do cache bruto da brapi",
         passos=(
             ("scripts/archive_remote_brapi_raw.py",),
+            ("run_market_ingest.py", "renormalize-demonstracoes", "--warehouse",
+             "--json"),
             ("scripts/compact_remote_brapi_raw.py", "--apply"),
         ),
         cadencia_dias=1,

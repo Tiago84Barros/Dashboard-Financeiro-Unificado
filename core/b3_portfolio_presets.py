@@ -41,7 +41,13 @@ from dataclasses import dataclass, field
 
 VERSION = "b3-presets-1.0.0"
 
-RECOMENDADO = "Equilibrado (recomendado)"
+# "Padrão", não "recomendado": a medição fora da amostra (seção "A carteira de
+# cada perfil, fora da amostra") não mostra este perfil batendo a carteira de
+# pesos iguais. Ele é o ponto de partida sem conflito entre restrições; chamá-lo
+# de recomendado prometia uma vantagem que a evidência não sustenta (N-B3-01).
+RECOMENDADO = "Equilibrado (padrão)"
+# Nomes antigos que ainda aparecem em medições já publicadas.
+NOMES_ANTIGOS = {"Equilibrado (recomendado)": RECOMENDADO}
 CONSERVADOR = "Conservador (mais defensivo)"
 AMPLO = "Amplo (diagnóstico, não para decidir)"
 PERSONALIZADO = "Personalizado"
@@ -86,6 +92,9 @@ PRESETS: dict[str, Preset] = {
             "remove nenhuma da carteira atual; R$ 1 mi cai para 203 e elimina a "
             "EUCA4, que tem saúde limpa e classificação de oportunidade.",
         ),
+        ressalva="Padrão não é recomendação: fora da amostra, este perfil não "
+                 "superou a carteira de pesos iguais com significância. Veja "
+                 "a seção \"A carteira de cada perfil, fora da amostra\".",
     ),
     CONSERVADOR: Preset(
         nome=CONSERVADOR,

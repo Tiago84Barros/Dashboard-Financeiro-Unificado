@@ -15,15 +15,16 @@ módulo é a alternativa com essas duas perguntas respondidas:
    score: ``Q_i = π_i + α_i``, com ``α_i = IC · σ_i · z_i`` (Grinold & Kahn,
    "alpha = IC × volatilidade × score padronizado"). ``z`` é o posto do score
    dentro da própria classe levado à normal padrão; ``σ`` sai da diagonal de
-   Σ. Exemplo com os números gravados em ``data/vantagem_oos.json`` (B3 em
-   24/09/2026): IC 0,075, σ 30% a.a. e o melhor de 20 ativos
+   Σ. Exemplo ilustrativo: IC 0,075, σ 30% a.a. e o melhor de 20 ativos
    (z = Φ⁻¹(19,5/20) ≈ 1,96) dão α ≈ 0,075 × 0,30 × 1,96 ≈ +4,4% a.a.
 3. **Confiança proporcional ao IC medido** (Ω de Idzorek 2005, já em
    `core.black_litterman`): ``c = 0,5 × min(IC / 0,10, 1)`` quando o IC é
    estatisticamente distinto de zero, metade disso se o portão de excesso
    reprovou, e ``c = 0,01`` -- Ω = 99·τ·pΣp, a view anda 1% do caminho --
    sem medição, com medição de outra versão do motor ou com IC não
-   significativo. Valores hoje: B3 0,375; EUA 0,25; FII 0,01.
+   significativo. Os valores vigentes saem de ``data/vantagem_oos.json`` a
+   cada execução -- `explicacao_numeros_de_hoje` os escreve para a tela, e
+   nenhum número de confiança fica fixo em texto (achado GLB-N1).
 4. **Σ com encolhimento Ledoit-Wolf** (`core.markowitz.ledoit_wolf_shrinkage`)
    sobre a janela comum que `returns.retornos_mensais` já publica (todo mês
    com retorno de todos os ativos), cortada nos últimos 60 meses.
@@ -212,6 +213,41 @@ def confianca_dos_motores(*, carregar=None, versao=None) -> dict[str, ConfiancaM
             atual = None
         saida[motor] = confianca_do_motor(motor, med, atual)
     return saida
+
+
+def _br(x: float, casas: int) -> str:
+    return f"{x:.{casas}f}".replace(".", ",")
+
+
+def explicacao_numeros_de_hoje(motores: Mapping[str, ConfiancaMotor],
+                               sigma: float = 0.30, n_ativos: int = 10) -> str:
+    """Parágrafo "Números de hoje" da tela, escrito a partir das confianças vigentes.
+
+    O texto era fixo e envelheceu: dizia B3 c = 37,5% (medição 2.28.0) quando a
+    2.31.0 levou o intervalo do IC a cruzar zero e o cálculo já dava 1% (achado
+    GLB-N1). O exemplo numérico usa o motor de maior confiança efetiva; sem
+    nenhum, diz que nenhuma view anda mais que o mínimo.
+    """
+    partes = []
+    for motor in MOTORES:
+        c = motores.get(motor)
+        if c is None:
+            continue
+        partes.append(f"{ROTULO_MOTOR[motor]} → c = {_br(c.confianca * 100, 1)}% ({c.fonte})")
+    texto = "**Números de hoje:** " + "; ".join(partes) + "."
+    efetivos = [c for c in motores.values() if c.efetiva and c.ic is not None]
+    if not efetivos:
+        return texto + (f" Nenhum motor tem IC medido distinto de zero: toda view anda "
+                        f"{_br(CONFIANCA_MINIMA * 100, 0)}% do caminho e a alocação fica "
+                        "praticamente na meta.")
+    m = max(efetivos, key=lambda c: c.confianca)
+    z = NormalDist().inv_cdf((n_ativos - 0.5) / n_ativos)
+    alfa = m.ic * sigma * z
+    return texto + (
+        f" Exemplo: um ativo de {ROTULO_MOTOR[m.motor]} com σ = {_br(sigma * 100, 0)}% a.a. "
+        f"no topo de {n_ativos} (z = +{_br(z, 2)}) recebe α = {_br(m.ic, 3)} × "
+        f"{_br(sigma, 2)} × {_br(z, 2)} ≈ {_br(alfa * 100, 1)} pp a.a., e μ anda "
+        f"{_br(m.confianca * 100, 1)}% disso ≈ {_br(alfa * m.confianca * 100, 1)} pp acima de π.")
 
 
 # ---------------------------------------------------------------------------

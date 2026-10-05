@@ -153,3 +153,35 @@ def test_lote_que_falha_nao_desfaz_os_anteriores(local, remoto, monkeypatch):
     pub._gravar(df, engine=remoto, lote=2)
     with remoto.connect() as c:
         assert c.execute(text("SELECT COUNT(*) FROM prices_monthly")).scalar() == 3
+
+
+def test_mes_parcial_de_publicacao_anterior_sai_do_destino(local, remoto):
+    """EUA-N5: a linha de 2024-02-15 (derivada no meio do mês) ficava ao lado
+    da de 2024-02-29 como outra chave, e o retorno do mês contava duas vezes."""
+    with remoto.begin() as c:
+        c.execute(text("INSERT INTO prices_monthly (symbol, month_end, close, "
+                       "adjusted_close, volume, total_return) VALUES "
+                       "('AAPL', '2024-02-15', 105, 104, 900, 0.05)"))
+    simulado: dict = {}
+    pub.publicar(local=local, remoto=remoto, apply=False, relatorio=simulado)
+    assert simulado["parciais_obsoletas"] == 1
+    with remoto.connect() as c:  # simular não apaga
+        assert c.execute(text("SELECT COUNT(*) FROM prices_monthly")).scalar() == 1
+
+    feito: dict = {}
+    pub.publicar(local=local, remoto=remoto, apply=True, relatorio=feito)
+    assert feito["parciais_obsoletas"] == 1
+    with remoto.connect() as c:
+        meses = c.execute(text("SELECT symbol, month_end FROM prices_monthly "
+                               "ORDER BY 1, 2")).all()
+    assert [tuple(m) for m in meses] == [("AAPL", "2024-01-31"), ("AAPL", "2024-02-29"),
+                                         ("MSFT", "2024-01-31")]
+
+
+def test_parciais_obsoletas_guarda_so_o_ultimo_pregao_do_mes():
+    import pandas as pd
+
+    chaves = pd.DataFrame({"symbol": ["X", "X", "X", "X", "Y"],
+                           "month_end": ["2026-07-17", "2026-07-30", "2026-07-31",
+                                         "2026-10-02", "2026-09-04"]})
+    assert pub.parciais_obsoletas(chaves) == [("X", "2026-07-17"), ("X", "2026-07-30")]
