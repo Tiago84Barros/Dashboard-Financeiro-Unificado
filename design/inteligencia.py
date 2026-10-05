@@ -182,8 +182,7 @@ def cabecalho_bloco(bloco: qz.Bloco, agora: dt.datetime | None = None) -> None:
 
 def area_tecnica(bloco: qz.Bloco, chave: str = "") -> None:
     """Só registra. Procedência, limitação e não medido saem da tela de uso."""
-    modulo = f"design/inteligencia.py:{bloco.titulo}"
-    registrar_limitacoes(bloco, modulo=modulo)
+    registrar_limitacoes(bloco, modulo=f"design/inteligencia.py:{bloco.titulo}")
     for linha in bloco.detalhe_tecnico or ():
         detalhe_tecnico(f"{bloco.titulo}: {linha}",
                         codigo="inteligencia.como_foi_obtido",
