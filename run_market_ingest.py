@@ -7,6 +7,7 @@ Comandos:
     python run_market_ingest.py daily        # atualização leve diária
     python run_market_ingest.py annual       # refresh de demonstrações
     python run_market_ingest.py reprocess    # recalcula indicadores (sem rede)
+    python run_market_ingest.py renormalize-demonstracoes  # payload arquivado -> demonstrações (sem rede)
 
 Opções comuns:
     --tickers PETR4 VALE3   processa só estes
@@ -86,7 +87,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Ingestão BRAPI Pro -> Supabase (market.*)")
     p.add_argument("command",
                    choices=["validate", "cadastro", "bootstrap", "daily", "annual",
-                            "reprocess", "renormalize", "integrity", "parity", "fiis",
+                            "reprocess", "renormalize", "renormalize-demonstracoes", "integrity", "parity", "fiis",
                             "fiis-reprocess", "fiis-cvm", "fiis-series",
                             "fiis-metrics", "fiis-vacancia", "fiis-cadastro-gaps",
                             "fiis-imoveis",
@@ -420,6 +421,14 @@ def main() -> int:
         prog = ingest.annual(tickers, args.source or "setores", args.limit)
     elif args.command == "renormalize":
         prog = ingest.renormalize(tickers, args.limit)
+    elif args.command == "renormalize-demonstracoes":
+        # Demonstração regravada sem indicador recalculado deixa o TTM velho
+        # na origem do b3_metrics: os dois passos andam juntos.
+        prog = ingest.renormalize_demonstracoes(tickers, args.limit)
+        if prog.get("atualizados"):
+            rep = ingest.reprocess_metrics(prog["atualizados"])
+            prog["indicadores"] = rep.get("indicadores", 0)
+            prog["erros"] += max(rep.get("erros", 0), 0)
     else:
         prog = ingest.reprocess_metrics(tickers, args.limit)
 
