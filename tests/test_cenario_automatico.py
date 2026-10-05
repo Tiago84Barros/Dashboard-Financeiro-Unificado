@@ -119,4 +119,6 @@ def test_cenario_atual_e_cartao_mostram_valor_fonte_e_ausencia():
     assert "Selic 15,00%" in html and "Sem dado" in html
     assert "#" not in html.replace("&#", "")
     assert rs.cenario_atual(None) == ()
-    assert "não puderam ser lidas" in tela.cartao_cenario(())
+    vazio = tela.cartao_cenario(())
+    assert "indisponível no momento" in vazio
+    assert "não puderam ser lidas" not in vazio   # motivo técnico só no log

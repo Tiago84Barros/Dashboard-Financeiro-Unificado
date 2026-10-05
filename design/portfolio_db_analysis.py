@@ -12,6 +12,8 @@ from html import escape
 
 import streamlit as st
 
+from design.lacunas import aviso_lacuna, detalhe_tecnico
+
 _BADGE_CORES = {
     "sucesso": "var(--app-primary)",
     "info": "var(--app-info)",
@@ -78,10 +80,14 @@ def _linha_html(linha: dict, extras: list[str]) -> str:
     )
 
 
-def _rodape_ausentes(ausentes, explicacao: str) -> None:
+def _rodape_ausentes(ausentes, explicacao: str, classe: str = "") -> None:
+    """Quais ativos ficaram sem nota continua na tela (é o resultado por
+    ativo); a causa técnica vai para o log de lacunas."""
     if not ausentes:
         return
-    st.caption("Sem nota apurada: " + ", ".join(ausentes) + ". " + explicacao)
+    st.caption("Sem nota apurada: " + ", ".join(ausentes) + ".")
+    aviso_lacuna("Sem nota apurada: " + ", ".join(ausentes) + ". " + explicacao,
+                 codigo="tela.carteira.db_sem_nota", entidade=classe or None)
 
 
 def render_db_analysis(classe: str, dados: dict) -> None:
@@ -96,8 +102,11 @@ def render_db_analysis(classe: str, dados: dict) -> None:
     st.markdown(f"##### {titulo}")
 
     if dados.get("erro"):
-        st.warning(dados["erro"] + " Os cards acima continuam válidos; o que "
-                   "falta é a comparação com os pares.")
+        st.warning("A comparação com os pares não está disponível no momento. "
+                   "Os cards acima continuam válidos.")
+        aviso_lacuna(str(dados["erro"]) + " Os cards acima continuam válidos; o que "
+                     "falta é a comparação com os pares.",
+                     codigo="tela.carteira.db_comparacao_indisponivel", entidade=classe)
         return
 
     linhas = dados.get("linhas") or []
@@ -111,18 +120,24 @@ def render_db_analysis(classe: str, dados: dict) -> None:
             extras.append(str(linha["classificacao"]))
         if linha.get("percentil") is not None:
             extras.append(f"acima de {_pct(linha['percentil'])} do universo")
+        ticker = str(linha.get("ticker") or "") or None
         if linha.get("cobertura") is not None:
-            extras.append(f"cobertura {_cobertura_txt(linha['cobertura'])}")
+            detalhe_tecnico(f"cobertura {_cobertura_txt(linha['cobertura'])}",
+                            codigo="carteira.db_cobertura", entidade=ticker)
         if linha.get("confianca") is not None:
-            extras.append(f"confiança {_pct(linha['confianca'])}")
+            detalhe_tecnico(f"confiança {_pct(linha['confianca'])}",
+                            codigo="carteira.db_confianca", entidade=ticker)
         if linha.get("pares_tipo"):
-            extras.append(f"{linha['pares_tipo']} pares do tipo {linha.get('tipo') or '—'}")
+            detalhe_tecnico(
+                f"{linha['pares_tipo']} pares do tipo {linha.get('tipo') or '—'}",
+                codigo="carteira.db_pares_do_tipo", entidade=ticker)
         status = linha.get("status_publicacao")
         if status:
             rotulo, _badge = _STATUS_FII.get(status, (status, "neutro"))
             extras.append(rotulo)
         if linha.get("faltantes"):
-            extras.append("faltam críticas: " + ", ".join(linha["faltantes"][:4]))
+            aviso_lacuna("faltam críticas: " + ", ".join(linha["faltantes"][:4]),
+                         codigo="tela.carteira.db_faltam_criticas", entidade=ticker)
         st.markdown(_linha_html(linha, extras), unsafe_allow_html=True)
 
     explicacao = {
@@ -133,17 +148,19 @@ def render_db_analysis(classe: str, dados: dict) -> None:
                     "não têm demonstração de companhia e por isso não são "
                     "pontuados. Não é falha de ingestão, é o escopo do módulo.",
     }.get(classe, "O ativo não está no universo consultado.")
-    _rodape_ausentes(dados.get("ausentes"), explicacao)
+    _rodape_ausentes(dados.get("ausentes"), explicacao, classe)
 
     if classe == "acoes" and not dados.get("crescimento_apurado", True):
-        st.caption(
+        aviso_lacuna(
             "O histórico não veio nesta sessão: a trilha de crescimento ficou "
             "sem cobertura e a nota encolheu para o neutro — é perda de "
-            "convicção, não penalidade.")
+            "convicção, não penalidade.",
+            codigo="tela.carteira.db_sem_historico_crescimento")
     elif classe == "fiis" and not dados.get("validacao_aplicavel", False):
-        st.caption("A metodologia de FIIs está sem validação point-in-time "
-                   "aprovada nesta sessão: as notas servem para diligência, "
-                   "não como recomendação publicada.")
+        detalhe_tecnico("A metodologia de FIIs está sem validação point-in-time "
+                        "aprovada nesta sessão: as notas servem para diligência, "
+                        "não como recomendação publicada.",
+                        codigo="carteira.db_fii_sem_validacao_pit")
 
 
 def render_db_macro(dados: dict) -> None:
@@ -152,7 +169,8 @@ def render_db_macro(dados: dict) -> None:
         return
     st.markdown("##### 🏦 Conjuntura no banco")
     if dados.get("erro"):
-        st.warning(dados["erro"])
+        st.warning("A conjuntura não está disponível no momento.")
+        aviso_lacuna(str(dados["erro"]), codigo="tela.carteira.db_macro_indisponivel")
         return
     atual = dados.get("atual") or {}
     campos = (("selic", "Selic"), ("ipca", "IPCA"),
@@ -181,11 +199,14 @@ def render_db_macro(dados: dict) -> None:
                   "Câmbio": a["cambio"]} for a in anos],
                 width="stretch", hide_index=True)
     st.caption(
-        f"Fonte: {dados.get('fonte', 'public.macro')}. Não existe nota de "
-        "Tesouro Direto: o emissor é único e não há corte transversal para "
-        "ranquear. As unidades são as gravadas na tabela — confira a escala "
-        "antes de comparar com a taxa contratada no seu extrato."
+        "Não existe nota de Tesouro Direto: o emissor é único e não há corte "
+        "transversal para ranquear."
     )
+    detalhe_tecnico(
+        f"Fonte: {dados.get('fonte', 'public.macro')}. As unidades são as "
+        "gravadas na tabela — confira a escala antes de comparar com a taxa "
+        "contratada no seu extrato.",
+        codigo="carteira.db_macro_fonte")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

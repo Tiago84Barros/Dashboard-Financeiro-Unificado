@@ -26,6 +26,7 @@ from core.auth import encerrar_sessao, esta_autenticado
 from core.config import settings
 from core.database import get_database_storage_status, get_db_status
 from design.componentes import card_metrica, container_pagina
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 from views.bank_statement_upload import render_upload_extrato_bancario
 from views.configuracoes_geral import render as render_geral
 from views.credit_card_invoice_upload import render_upload_fatura_cartao
@@ -307,7 +308,12 @@ def _render_investimentos() -> None:
         if settings.has_database:
             _render_import_investimentos()
         else:
-            st.warning("Banco não conectado. Configure `SUPABASE_UNIFICADO_URL` para habilitar as importações.")
+            st.info("As importações não estão disponíveis no momento.")
+            aviso_lacuna(
+                "Banco não conectado. Configure `SUPABASE_UNIFICADO_URL` para "
+                "habilitar as importações.",
+                codigo="tela.configuracoes.importacao_sem_banco",
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1370,9 +1376,9 @@ def _render_import_investimentos() -> None:
         with col_txt:
             st.markdown("**📊 Recalcular carteira agora**")
             st.caption(
-                "Recomputa `portfolio_positions` a partir de todas as "
-                "`investment_transactions` (custo médio ponderado). "
-                "É chamado automaticamente após cada importação, mas você "
+                "Refaz as posições da carteira a partir de todas as suas "
+                "operações (custo médio ponderado). "
+                "Acontece automaticamente após cada importação, mas você "
                 "pode forçar manualmente."
             )
         with col_btn:
@@ -1391,7 +1397,11 @@ def _render_import_investimentos() -> None:
             )
             engine = get_engine()
             if engine is None:
-                st.error("Banco não configurado.")
+                st.error("Não foi possível recalcular a carteira agora.")
+                aviso_lacuna(
+                    "Banco não configurado: recálculo da carteira não executou.",
+                    codigo="tela.configuracoes.recalculo_sem_banco",
+                )
             else:
                 with st.spinner("Recalculando carteira…"):
                     rec = recompute_for_user(engine, settings.OWNER_USER_ID)
@@ -1407,12 +1417,16 @@ def _render_import_investimentos() -> None:
                     f"recalculadas a partir de "
                     f"{rec.get('transactions_loaded', 0)} operações."
                 )
-                if rec.get("alerts"):
-                    with st.expander("Alertas"):
-                        for msg in rec["alerts"]:
-                            st.caption(msg)
+                for msg in rec.get("alerts") or []:
+                    detalhe_tecnico(
+                        str(msg), codigo="configuracoes.recalculo_alerta")
             else:
-                st.error(f"Falha: {rec.get('error', 'erro desconhecido')}")
+                st.error("Não foi possível recalcular a carteira.")
+                detalhe_tecnico(
+                    f"Falha no recálculo da carteira: "
+                    f"{rec.get('error', 'erro desconhecido')}",
+                    codigo="configuracoes.recalculo_falha",
+                )
 
 
 
@@ -1895,7 +1909,9 @@ def _render_import_result(summary: dict) -> None:
     elif status == "skipped":
         st.info("⚪ Importação não executada nesta rodada.")
     else:
-        st.error(f"❌ Falha na importação de {src}.")
+        st.error("❌ Falha na importação.")
+        detalhe_tecnico(f"Falha na importação da fonte {src}.",
+                        codigo="configuracoes.importacao_falha")
 
     # XP traz posições (snapshots); B3/Nomad trazem operações.
     positions = int(summary.get("positions_imported", 0))
@@ -1950,22 +1966,20 @@ def _render_import_result(summary: dict) -> None:
                 f"posições recalculadas a partir de "
                 f"{rec.get('transactions_loaded', 0)} operações."
             )
-            if rec.get("alerts"):
-                with st.expander("Alertas no cálculo da carteira"):
-                    for msg in rec["alerts"]:
-                        st.caption(msg)
+            for msg in rec.get("alerts") or []:
+                detalhe_tecnico(
+                    str(msg), codigo="configuracoes.recalculo_alerta")
         else:
-            st.warning(
-                f"📊 Recálculo da carteira falhou: {rec.get('error', 'erro desconhecido')}"
+            st.warning("📊 Não foi possível recalcular a carteira.")
+            detalhe_tecnico(
+                f"Recálculo da carteira falhou: "
+                f"{rec.get('error', 'erro desconhecido')}",
+                codigo="configuracoes.recalculo_falha",
             )
 
     errors = summary.get("errors") or []
-    if errors:
-        with st.expander(f"Detalhes técnicos ({len(errors)})"):
-            for err in errors[:50]:
-                st.code(err)
-            if len(errors) > 50:
-                st.caption(f"… e mais {len(errors) - 50} mensagens.")
+    for err in errors[:50]:
+        detalhe_tecnico(str(err), codigo="configuracoes.importacao_erro")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

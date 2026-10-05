@@ -68,7 +68,7 @@ from design.componentes import (
     secao_titulo,
     selo_de_frescor,
 )
-from design.lacunas import aviso_lacuna
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.market_companies import (
     render_company_logo,
     render_company_search,
@@ -120,6 +120,12 @@ _WEIGHTING_LABELS = {
 #
 # Por isso o aviso é derivado da medição em `core.us_survivorship`, não escrito
 # aqui: frase fixa sobre estado de dado envelhece continuando a soar como rigor.
+
+
+# Avisos do motor de criação que são retorno de solver, não decisão sobre a
+# carteira: vão ao log do administrador, não à tela de uso.
+_PREFIXOS_AVISO_SOLVER = ("Restrições incompatíveis", "Otimização indisponível",
+                          "Projeção por score não convergiu")
 
 
 def _motivo_sem_painel(painel) -> str:
@@ -370,7 +376,12 @@ def _company_plot_layout(height: int = 320) -> dict:
 
 def _tab_empresas_setor(status: dict) -> None:
     if _empty_if_offline(status, "Sem dados locais para listar as empresas.", "🏢"):
-        _tab_sincronizacao(status)
+        aviso_lacuna("Sem dados locais: a listagem de empresas depende da "
+                     "sincronização do armazém americano.",
+                     codigo="tela.eua.sem_dados_locais")
+        from core.user_context import is_admin
+        if is_admin():
+            _tab_sincronizacao(status)
         return
     companies = normalize_us_companies(us.companies(limit=5000))
     if companies is None or companies.empty:
@@ -548,7 +559,7 @@ def _tab_empresa(status: dict) -> None:
             f'<div style="font-size:1.60rem;font-weight:800;color:{cor_token(_COR_POS)}">'
             f'{price_text}</div>'
             f'<div style="font-size:.68rem;color:var(--app-subtle)">'
-            'Cotação no warehouse/snapshot</div></div>', unsafe_allow_html=True)
+            'Última cotação disponível</div></div>', unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     _analysis_header("📉 Preço da Ação")
@@ -570,7 +581,8 @@ def _tab_empresa(status: dict) -> None:
         st.plotly_chart(fig, width="stretch",
                         config={"displayModeBar": False}, key=f"us_price_{symbol}_{selected_period}")
     else:
-        st.info("Histórico de preços ainda não publicado para este ticker.")
+        aviso_lacuna("Histórico de preços ainda não publicado para este ticker.",
+                     codigo="tela.eua.precos_sem_historico", entidade=symbol)
 
     _analysis_header("📊 Retorno Anual do Preço")
     annual_returns = annual_price_returns(prices)
@@ -593,7 +605,8 @@ def _tab_empresa(status: dict) -> None:
         st.plotly_chart(fig, width="stretch",
                         config={"displayModeBar": False}, key=f"us_returns_{symbol}")
     else:
-        st.info("Retornos anuais serão exibidos após a publicação do histórico de preços.")
+        aviso_lacuna("Retornos anuais dependem da publicação do histórico de preços.",
+                     codigo="tela.eua.retornos_anuais_sem_precos", entidade=symbol)
 
     _analysis_header("📈 Crescimento Médio Anual (CAGR)")
     cagr_items = []
@@ -811,7 +824,9 @@ def _tab_empresa(status: dict) -> None:
 def _render_dossie_for(symbol: str) -> None:
     d = us.dossie(symbol)
     if d.get("erro"):
-        st.info(d["erro"])
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna(f"Dossiê indisponível para {symbol}: {d['erro']}",
+                     codigo="tela.eua.dossie_indisponivel", entidade=symbol)
         return
     label, tipo = _CLASS_BADGE.get(d.get("classification"), ("—", "neutro"))
     badge_status(label, tipo)
@@ -827,7 +842,8 @@ def _render_dossie_for(symbol: str) -> None:
     for flag in _grupos[SEVERIDADE_CONTEXTO]:
         st.info(flag)
     for flag in _grupos[SEVERIDADE_COBERTURA]:
-        st.caption(flag)
+        aviso_lacuna(flag, codigo="tela.eua.dossie_limitacao_cobertura",
+                     entidade=symbol)
     notes = d.get("notes", {})
     c1, c2 = st.columns(2)
     with c1:
@@ -868,17 +884,19 @@ def _macro_controls(key_prefix: str = "us_macro") -> dict:
         "high_yield_spread": observado.get("high_yield_spread", padrao.high_yield_spread),
     }
     if observado:
-        st.caption(
-            f"Cenário macro a partir de **séries oficiais (FRED)** no warehouse "
-            f"· data-base {observado.get('as_of') or 'não informada'}. "
-            "Alterar qualquer campo transforma a leitura em simulação."
-        )
+        detalhe_tecnico(
+            "Cenário macro a partir de séries oficiais (FRED) no warehouse "
+            f"· data-base {observado.get('as_of') or 'não informada'}.",
+            codigo="eua.macro_fonte_observada")
+        st.caption("Alterar qualquer campo transforma a leitura em simulação.")
     else:
-        st.caption(
-            "Cenário macro ajustável. Os valores são **premissas de simulação**, "
-            "não leitura de mercado — a interface não consulta fontes externas. "
-            "Para usar séries oficiais, rode `python run_us_ingest.py macro --warehouse`."
-        )
+        aviso_lacuna(
+            "Sem séries oficiais de macro EUA no warehouse; valores são premissas "
+            "de simulação (a interface não consulta fontes externas). Para usar "
+            "séries oficiais: python run_us_ingest.py macro --warehouse.",
+            codigo="tela.eua.macro_sem_serie_observada")
+        st.caption("Cenário macro ajustável: os valores são premissas de "
+                   "simulação, não leitura de mercado.")
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -979,11 +997,12 @@ def _render_us_filtro_liquidez(frame: pd.DataFrame, piso_usd: float) -> pd.DataF
 
     if piso <= 0:
         if nao_verificadas:
-            st.caption(
-                f"💧 Sem piso de negociabilidade (modo exploratório): "
-                f"{nao_verificadas} empresa(s) aparecem com a liquidez **não "
-                "validada** — ausência de medição não é prova de iliquidez, mas "
-                "também não é prova de negociabilidade.")
+            aviso_lacuna(
+                f"Sem piso de negociabilidade (modo exploratório): "
+                f"{nao_verificadas} empresa(s) aparecem com a liquidez não "
+                "validada: ausência de medição não é prova de iliquidez, mas "
+                "também não é prova de negociabilidade.",
+                codigo="tela.eua.liquidez_nao_validada_exploratorio")
         return frame
 
     c1, c2, c3 = st.columns(3)
@@ -1000,12 +1019,15 @@ def _render_us_filtro_liquidez(frame: pd.DataFrame, piso_usd: float) -> pd.DataF
                      ajuda="Sem série de volume: a negociabilidade nunca foi "
                            "medida. Com piso ligado elas ficam fora.")
     if not volume_col:
-        st.warning(
+        aviso_lacuna(
             f"Negociabilidade não verificada: esta vitrine não publica o volume "
             f"negociado, então nenhuma das {len(frame)} empresas pode ser "
-            f"verificada contra o piso de US$ {formata_usd_curto(piso)}/dia. "
-            "Escolha **Sem filtro** para explorar o universo sem validar "
-            "liquidez, ciente de que a negociabilidade não foi medida.")
+            f"verificada contra o piso de US$ {formata_usd_curto(piso)}/dia.",
+            codigo="tela.eua.vitrine_sem_volume")
+        st.warning(
+            "Nenhuma empresa pôde ser verificada contra o piso de "
+            f"negociabilidade escolhido (US$ {formata_usd_curto(piso)}/dia). "
+            "Escolha **Sem filtro** para explorar o universo.")
     elif nao_verificadas:
         st.caption(
             f"💧 {nao_verificadas} empresa(s) sem série de volume ou sem data "
@@ -1038,10 +1060,11 @@ def _tab_avancada_unificada(status: dict) -> None:
         "⚠️ **Ferramenta educacional — não é recomendação de investimento.** "
         "Pontuações, testes históricos e simulações usam dados históricos SEC/GAAP "
         "e premissas quantitativas. Rentabilidade passada não garante resultado futuro.")
-    st.caption(
-        "📅 O score usa o último exercício fiscal anual disponível e compara empresas "
+    detalhe_tecnico(
+        "O score usa o último exercício fiscal anual disponível e compara empresas "
         "por indústria. Fonte fundamentalista: SEC/GAAP; preços: vitrine local. "
-        "Disponibilidade histórica é respeitada quando o painel ponto-no-tempo existe.")
+        "Disponibilidade histórica é respeitada quando o painel ponto-no-tempo existe.",
+        codigo="eua.laboratorio_metodologia")
 
     # ── Filtros do universo ────────────────────────────────────────────────
     _analysis_header("⚙️ Filtros do Universo")
@@ -1185,15 +1208,19 @@ def _tab_avancada_unificada(status: dict) -> None:
                                       filtered[cov_col], errors="coerce").mean()})
         if track_cov:
             st.dataframe(pd.DataFrame(track_cov), hide_index=True, width="stretch")
-        st.caption("Ausência não vira zero: recebe posição neutra no score e reduz a cobertura.")
+        detalhe_tecnico(
+            "Ausência não vira zero: recebe posição neutra no score e reduz a cobertura.",
+            codigo="eua.laboratorio_ausencia_neutra")
         if macro_snapshot_lab is None:
-            st.caption("Camada macro indisponível (sem Docker local e sem arquivo publicado recente); score de entrada preservado.")
+            aviso_lacuna("Camada macro indisponível (sem Docker local e sem arquivo "
+                         "publicado recente); score de entrada preservado.",
+                         codigo="tela.eua.laboratorio_macro_indisponivel")
         else:
-            st.caption(
+            detalhe_tecnico(
                 f"{descrever_fonte_macro(macro_fonte)}: corte {macro_snapshot_lab.as_of:%d/%m/%Y} · "
                 f"cobertura {macro_snapshot_lab.coverage:.0%}. Score contextual "
-                "é exibido separadamente e limitado a ±10 pontos."
-            )
+                "é exibido separadamente e limitado a ±10 pontos.",
+                codigo="eua.laboratorio_macro_fonte")
 
     with st.expander("Empresas excluídas por completude de dados"):
         if excluded.empty:
@@ -1206,8 +1233,10 @@ def _tab_avancada_unificada(status: dict) -> None:
             st.dataframe(show, hide_index=True, width="stretch")
 
     with st.expander("Validação cross-source — SEC/GAAP × dados de mercado"):
-        st.caption("Fundamentos são derivados das demonstrações SEC/GAAP; múltiplos exigem "
-                   "também preço e ações em circulação. Divergências não são preenchidas com zero.")
+        detalhe_tecnico(
+            "Fundamentos são derivados das demonstrações SEC/GAAP; múltiplos exigem "
+            "também preço e ações em circulação. Divergências não são preenchidas com zero.",
+            codigo="eua.laboratorio_validacao_cross_source")
         validation_rows = []
         for metric, label in (("pe", "P/L"), ("ev_ebitda", "EV/EBITDA"),
                               ("fcf_yield", "Retorno do FCL"),
@@ -1241,8 +1270,10 @@ def _tab_avancada_unificada(status: dict) -> None:
                     card_metrica("Desvio", f"{result['std']:.1f}")
 
     with st.expander("🎯 Otimização pós-seleção — equivalente EUA"):
-        st.caption("Aplica limites por ativo e setor sobre a pontuação de entrada; "
-                   "a vitrine não inventa covariância quando não há histórico local.")
+        st.caption("Aplica limites por ativo e setor sobre a pontuação de entrada.")
+        detalhe_tecnico(
+            "A vitrine não inventa covariância quando não há histórico local.",
+            codigo="eua.laboratorio_otimizacao_sem_covariancia")
         if not entry.empty:
             opt_base = entry.copy()
             opt_base["score"] = opt_base["entry_score"]
@@ -1405,8 +1436,10 @@ def _render_us_ciclo(entry: pd.DataFrame) -> None:
     medidas = _resiliencia_do_frame(entry)
     st.markdown("**Travessia de recessão — medida, não inferida do setor**")
     if not medidas:
-        st.caption("Sem série anual suficiente neste recorte para medir margem de "
-                   "crise. No app publicado, exige vitrine republicada.")
+        st.caption("Esta análise não está disponível no momento.")
+        aviso_lacuna("Sem série anual suficiente neste recorte para medir margem de "
+                     "crise. No app publicado, exige vitrine republicada.",
+                     codigo="tela.eua.ciclo_sem_serie_anual")
         return
 
     cob = cobertura(medidas)
@@ -1677,6 +1710,7 @@ def _render_us_lab_backtest() -> None:
     if not result:
         st.caption("Configure os parâmetros e clique em ▶ Simular Backtest.")
     elif not result.get("ok"):
+        st.caption("Esta análise não está disponível no momento.")
         aviso_lacuna(result.get("reason", "Teste histórico indisponível."),
                      codigo="tela.eua.backtest_indisponivel")
     else:
@@ -1698,7 +1732,7 @@ def _render_us_lab_backtest() -> None:
                 card_metrica(label, text)
         st.caption("Cartões acima: retorno bruto em dólar, sem custo, imposto "
                    "nem câmbio.")
-        st.caption(_aviso_sobrevivencia())
+        detalhe_tecnico(_aviso_sobrevivencia(), codigo="eua.backtest_vies_sobrevivencia")
         _bloco_liquido_us(result)
         curve = list(result.get("equity_curve") or [])
         dates = list(result.get("dates") or [])
@@ -1734,9 +1768,11 @@ def _render_us_lab_backtest() -> None:
             st.caption("Comparação contra índice desativada explicitamente; pesos iguais "
                        "do universo continuam como baseline interno.")
         elif benchmark_state.get("modo") == "indice":
-            st.caption(f"Benchmark {benchmark_state.get('simbolo')} em USD, retorno total, "
-                       f"frequência mensal e mesmas janelas do painel PIT "
-                       f"({benchmark_state.get('horizonte_meses')} meses).")
+            detalhe_tecnico(
+                f"Benchmark {benchmark_state.get('simbolo')} em USD, retorno total, "
+                f"frequência mensal e mesmas janelas do painel PIT "
+                f"({benchmark_state.get('horizonte_meses')} meses).",
+                codigo="eua.backtest_benchmark_janelas")
         concentration = result.get("concentration") or {}
         if concentration and not concentration.get("eligible_for_conclusion", True):
             st.warning(
@@ -1746,8 +1782,10 @@ def _render_us_lab_backtest() -> None:
                 f"(HHI máximo {concentration.get('max_hhi', 0.0):.3f}). "
                 "Não use este backtest para concluir sobre uma carteira investível."
             )
-        st.caption(f"Taxa do Fed informada ({fed:.2f}% a.a.) é referência de cenário; "
-                   "o retorno exibido vem do painel ponto-no-tempo, sem substituição sintética.")
+        st.caption(f"Taxa do Fed informada ({fed:.2f}% a.a.) é referência de cenário.")
+        detalhe_tecnico(
+            "O retorno exibido vem do painel ponto-no-tempo, sem substituição sintética.",
+            codigo="eua.backtest_retorno_pit")
 
 
 _US_COMPARE_METRICS = {
@@ -1974,13 +2012,14 @@ def _tab_analise_fundamentalista(status: dict) -> None:
         estado_vazio("Sem empresas com demonstrações suficientes para a pontuação.", "📊")
         return
     secao_titulo("Pontuação fundamentalista — relativa por indústria", "🏆")
-    st.caption("Winsorização + percentil intra-indústria nas 6 trilhas de fatores. "
-               "Ausência = neutro. A pontuação não é garantia de retorno.")
+    detalhe_tecnico("Winsorização + percentil intra-indústria nas 6 trilhas de fatores. "
+                    "Ausência = neutro.", codigo="eua.pontuacao_metodologia")
+    st.caption("A pontuação não é garantia de retorno.")
     aviso_escala_do_score()
     # A-152: a nota aparece aqui, entao a evidencia que a sustenta tambem
     # precisa aparecer aqui. Ficava so num expander colapsado da aba de
     # Criacao de Portfolio, e so sobre o painel de backtest.
-    st.caption(validacao_us().texto)
+    detalhe_tecnico(validacao_us().texto, codigo="eua.pontuacao_validacao")
     # A-154: por quantos ativos esta nota fala.
     aviso_cobertura_do_universo("us")
     scored = localize_us_company_frame(scored)
@@ -2048,13 +2087,15 @@ def _tab_analise_avancada(status: dict) -> None:
     if snap.get("z_zone"):
         badge_status(f"Zona {snap['z_zone']}", _ZONE_TIPO.get(snap["z_zone"], "neutro"))
     elif snap.get("z_score") is None:
-        st.caption("Indicador Z indisponível: exige lucros acumulados e valor de mercado "
-                   "na base de dados (atualize os fundamentos após a migração 043).")
+        aviso_lacuna("Indicador Z indisponível: exige lucros acumulados e valor de "
+                     "mercado na base de dados (atualize os fundamentos após a "
+                     "migração 043).", codigo="tela.eua.altman_sem_insumos",
+                     entidade=symbol)
 
     if snap.get("f_partial"):
-        st.caption(f"⚠️ F-Score parcial: {snap.get('f_evaluable')} de 9 critérios "
-                   "puderam ser avaliados. Critérios sem dado **não** contam como "
-                   "atendidos.")
+        aviso_lacuna(f"F-Score parcial: {snap.get('f_evaluable')} de 9 critérios "
+                     "puderam ser avaliados. Critérios sem dado não contam como "
+                     "atendidos.", codigo="tela.eua.fscore_parcial", entidade=symbol)
 
     secao_titulo("Critérios de Piotroski", "✅")
     for key, val in (snap.get("f_signals") or {}).items():
@@ -2118,7 +2159,9 @@ def _tab_dossie(status: dict) -> None:
         return
     d = us.dossie(symbol)
     if d.get("erro"):
-        estado_vazio(f"{symbol}: {d['erro']}", "📄")
+        estado_vazio("Esta análise não está disponível no momento.", "📄")
+        aviso_lacuna(f"{symbol}: {d['erro']}", codigo="tela.eua.dossie_indisponivel",
+                     entidade=symbol)
         return
 
     label, tipo = _CLASS_BADGE.get(d.get("classification"), ("—", "neutro"))
@@ -2170,11 +2213,8 @@ def _tab_dossie(status: dict) -> None:
         st.caption(TITULO_SEVERIDADE[SEVERIDADE_CONTEXTO])
         for f in _grupos[SEVERIDADE_CONTEXTO]:
             st.markdown(f"- {f}")
-    if _grupos[SEVERIDADE_COBERTURA]:
-        secao_titulo("Limitações de cobertura", "🔍")
-        st.caption(TITULO_SEVERIDADE[SEVERIDADE_COBERTURA])
-        for f in _grupos[SEVERIDADE_COBERTURA]:
-            st.caption(f"- {f}")
+    for f in _grupos[SEVERIDADE_COBERTURA]:
+        aviso_lacuna(f, codigo="tela.eua.dossie_limitacao_cobertura", entidade=symbol)
 
     notes = d.get("notes", {})
     if notes.get("tese") or notes.get("condicoes_invalidacao"):
@@ -2370,7 +2410,7 @@ def _render_perfil_us() -> None:
         for evidencia in preset.evidencias:
             st.markdown(f"- {evidencia}")
         if preset.ressalva:
-            st.warning(preset.ressalva, icon="⚠️")
+            detalhe_tecnico(preset.ressalva, codigo="eua.perfil_ressalva")
 
     if ativo == PERSONALIZADO:
         st.caption(
@@ -2423,12 +2463,11 @@ def _render_us_portfolio_version_history(key: str) -> None:
                 st.success("Versão restaurada e verificada transacionalmente.")
                 st.rerun()
             except (RuntimeError, ValueError) as exc:
-                st.error(f"Restauração bloqueada: {exc}")
-            except SQLAlchemyError:
-                st.error(
-                    "Restauração bloqueada por uma falha transacional no banco; "
-                    "a versão ativa anterior foi preservada."
-                )
+                falha_de_acao("Restauração bloqueada: não foi possível restaurar "
+                              "a versão selecionada.", exc)
+            except SQLAlchemyError as exc:
+                falha_de_acao("Restauração bloqueada; a versão ativa anterior "
+                              "foi preservada.", exc)
 
 
 def _veredito_validacao_us(res: dict) -> tuple[str, str] | None:
@@ -2516,10 +2555,12 @@ def _tab_criacao_portfolio(status: dict) -> None:
         "A seleção usa demonstrações SEC/US GAAP e premissas quantitativas. "
         "Rentabilidade passada não garante resultado futuro."
     )
-    st.caption(
+    detalhe_tecnico(
         "A aplicação americana é feita em duas etapas para comportar milhares de "
         "empresas: filtro institucional vetorizado e revisão apenas dos líderes por "
-        "indústria. O universo é de **ações**: REITs, fundos, SPACs, preferenciais "
+        "indústria.", codigo="eua.criacao_duas_etapas")
+    st.caption(
+        "O universo é de **ações**: REITs, fundos, SPACs, preferenciais "
         "e units ficam de fora, e financeiras usam pesos setoriais próprios."
     )
 
@@ -2690,11 +2731,11 @@ def _tab_criacao_portfolio(status: dict) -> None:
                  "históricos. A vitrine publicada não inventa esse histórico.",
         )
         if not history_available:
-            st.caption(
-                "ℹ️ Painel histórico PIT indisponível: "
+            aviso_lacuna(
+                "Painel histórico PIT indisponível: "
                 + _motivo_sem_painel(score_panel)
-                + " A aprovação usa o sinal institucional atual SEC/GAAP."
-            )
+                + " A aprovação usa o sinal institucional atual SEC/GAAP.",
+                codigo="tela.eua.criacao_sem_painel_pit")
 
     market_caps = {
         "≥ US$ 300 mi": 300_000_000.0, "≥ US$ 1 bi": 1_000_000_000.0,
@@ -2801,8 +2842,13 @@ def _tab_criacao_portfolio(status: dict) -> None:
         # Não misturar composição anterior com limites novos no histórico ou salvamento.
         return
 
+    # Avisos do motor que são decisão sobre a carteira (teto ajustado, líder
+    # reprovado, nenhuma indústria aprovada) ficam; retorno de solver vai ao log.
     for warning in result.get("warnings", []):
-        st.warning(warning)
+        if str(warning).startswith(_PREFIXOS_AVISO_SOLVER):
+            detalhe_tecnico(str(warning), codigo="eua.criacao_solver")
+        else:
+            st.warning(warning)
     if result.get("review_portfolio") is not None:
         from design.portfolio_review import render_portfolio_review
 
@@ -2815,7 +2861,9 @@ def _tab_criacao_portfolio(status: dict) -> None:
         st.error(result["blocking_error"])
         return
     if result.get("history_required_unavailable"):
-        st.error("A validação histórica foi exigida, mas o painel PIT não está disponível.")
+        st.error("A validação histórica exigida não está disponível no momento.")
+        aviso_lacuna("A validação histórica foi exigida, mas o painel PIT não está "
+                     "disponível.", codigo="tela.eua.criacao_validacao_sem_pit")
         return
 
     audit = result.get("industry_audit", pd.DataFrame())
@@ -2825,17 +2873,17 @@ def _tab_criacao_portfolio(status: dict) -> None:
     macro_info = result.get("macro") or {}
     snapshot = result.get("macro_snapshot")
     if snapshot is None:
-        st.warning(
-            "Camada macro indisponível nesta execução (sem Docker local e sem arquivo publicado recente); a composição mantém "
-            "os pesos fundamentalistas."
-        )
+        aviso_lacuna(
+            "Camada macro indisponível nesta execução (sem Docker local e sem arquivo "
+            "publicado recente); a composição mantém os pesos fundamentalistas.",
+            codigo="tela.eua.criacao_macro_indisponivel")
     else:
-        st.info(
+        detalhe_tecnico(
             f"{result.get('macro_fonte') or 'Macro'} · corte {snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
             f"cobertura {macro_info.get('coverage', 0):.0%} · "
-            f"turnover atribuído ao macro {macro_info.get('turnover', 0):.1%}. "
-            "Impactos são contexto histórico, não previsão de retorno."
-        )
+            f"turnover atribuído ao macro {macro_info.get('turnover', 0):.1%}.",
+            codigo="eua.criacao_macro_fonte")
+        st.info("Impactos macro são contexto histórico, não previsão de retorno.")
         from functools import partial
 
         from core.us_portfolio_creation import apply_us_macro
@@ -2899,12 +2947,12 @@ def _tab_criacao_portfolio(status: dict) -> None:
 
     if not audit.empty:
         secao_titulo("Auditoria por Indústria", "📋")
-        st.caption(
+        detalhe_tecnico(
             "A aprovação atual combina tamanho de amostra, score dos líderes, "
             "vantagem relativa e resiliência opcional. Rank‑IC aparece somente "
             "quando existe histórico ponto-no-tempo — cujo universo inclui as "
-            "empresas que saíram da bolsa, nas safras em que estavam vivas."
-        )
+            "empresas que saíram da bolsa, nas safras em que estavam vivas.",
+            codigo="eua.criacao_auditoria_industria")
         audit_show = audit.copy()
         audit_show["Indústria"] = audit_show["industry_group"].map(translate_us_industry)
         audit_show["Setor"] = audit_show["sector_group"]
@@ -3058,7 +3106,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
                     f"ID: {model_id[:8]}"
                 )
             except Exception as exc:  # noqa: BLE001 - fronteira de persistência
-                st.error(f"Não foi possível salvar a carteira padrão: {exc}")
+                falha_de_acao("Não foi possível salvar a carteira padrão.", exc)
         _render_us_portfolio_version_history("us_create_persist_model")
     with info_col:
         st.info(
@@ -3098,16 +3146,17 @@ def _tab_criacao_portfolio(status: dict) -> None:
 
     with st.expander("🧪 Validação histórica e benchmarks"):
         if history_available:
-            st.caption(
+            detalhe_tecnico(
                 "O painel PIT está disponível. A auditoria acima exibe o Rank‑IC "
-                "por indústria, sem usar demonstrações publicadas após a data-base."
-            )
+                "por indústria, sem usar demonstrações publicadas após a data-base.",
+                codigo="eua.criacao_painel_pit_disponivel")
             _tab_backtests(status)
         else:
-            st.info(
+            st.info("Esta análise não está disponível no momento.")
+            aviso_lacuna(
                 "Nenhum retorno histórico foi simulado, por integridade "
-                "metodológica. " + _motivo_sem_painel(score_panel)
-            )
+                "metodológica. " + _motivo_sem_painel(score_panel),
+                codigo="tela.eua.criacao_validacao_sem_painel")
 
     with st.expander("📚 Metodologia e equivalências B3 × Estados Unidos"):
         st.markdown("""
@@ -3194,18 +3243,20 @@ def _tab_portfolio(status: dict) -> None:
             .sort_values(ascending=False)
         st.dataframe(alloc.rename("Peso %").reset_index().rename(
             columns={"sector": "Setor"}), hide_index=True, width="stretch")
-    st.caption("Limites iterativos por posição e setor (heurística de projeção, não "
-               "otimizador de média-variância). Índices de referência (S&P 500, Nasdaq-100 "
-               "e Russell 2000) e a carteira de pesos iguais entram no teste histórico "
-               "quando houver dados suficientes.")
+    detalhe_tecnico(
+        "Limites iterativos por posição e setor (heurística de projeção, não "
+        "otimizador de média-variância). Índices de referência (S&P 500, Nasdaq-100 "
+        "e Russell 2000) e a carteira de pesos iguais entram no teste histórico "
+        "quando houver dados suficientes.", codigo="eua.carteira_modelo_heuristica")
 
 
 # ── Testes históricos sem viés temporal ───────────────────────────────────────
 def _tab_backtests(status: dict) -> None:
     secao_titulo("Teste histórico com janela móvel — ponto no tempo", "🧪")
     st.caption("Pontuações recalculadas em cada data usando apenas informações já "
-               "disponíveis, evitando antecipação indevida. Requer histórico PIT: `python run_us_ingest.py "
-               "score-history --warehouse`.")
+               "disponíveis, evitando antecipação indevida.")
+    detalhe_tecnico("Requer histórico PIT: python run_us_ingest.py score-history "
+                    "--warehouse.", codigo="eua.backtests_requer_pit")
     c1, c2, c3 = st.columns(3)
     with c1:
         top_n = st.slider("Top N por período", 5, 40, 20, key="us_bt_topn")
@@ -3220,7 +3271,9 @@ def _tab_backtests(status: dict) -> None:
 
     res = us.backtest(top_n=top_n, weighting=wmode, benchmark=benchmark)
     if not res.get("ok"):
-        estado_vazio(res.get("reason", "teste histórico indisponível"), "🧪")
+        estado_vazio("Esta análise não está disponível no momento.", "🧪")
+        aviso_lacuna(res.get("reason", "teste histórico indisponível"),
+                     codigo="tela.eua.backtests_indisponivel")
         return
 
     ic = res["rank_ic"]
@@ -3239,7 +3292,7 @@ def _tab_backtests(status: dict) -> None:
         card_metrica("p-valor", "—" if ic["p_value"] is None else f"{ic['p_value']:.3f}")
     with c4:
         card_metrica("Taxa de acerto", _p(ic["hit_rate"]))
-    st.caption(_aviso_sobrevivencia())
+    detalhe_tecnico(_aviso_sobrevivencia(), codigo="eua.backtests_vies_sobrevivencia")
 
     _bloco_liquido_us(res)
 
@@ -3281,14 +3334,15 @@ def _tab_backtests(status: dict) -> None:
     from core.us_survivorship import frase_medicao_de_retorno
     _frase_retorno = frase_medicao_de_retorno()
     if _frase_retorno:
-        st.caption(_frase_retorno)
+        detalhe_tecnico(_frase_retorno, codigo="eua.backtests_medicao_retorno")
 
     benchmark_state = res.get("benchmark") or {}
     if benchmark_state.get("modo") == "indice" and benchmark_state.get("ok"):
         secao_titulo(f"Comparação contra {benchmark_state['simbolo']}", "📊")
         card_metrica("Excesso anualizado", _p(res.get("excess_ann_vs_benchmark")))
-        st.caption(f"Retorno total em USD, nas mesmas janelas de "
-                   f"{benchmark_state.get('horizonte_meses')} meses do painel PIT.")
+        detalhe_tecnico(f"Retorno total em USD, nas mesmas janelas de "
+                        f"{benchmark_state.get('horizonte_meses')} meses do painel PIT.",
+                        codigo="eua.backtests_benchmark_janelas")
     elif benchmark_state and not benchmark_state.get("ok"):
         aviso_lacuna(benchmark_state.get("mensagem", "Benchmark indisponível; "
                      "o excesso contra índice não foi calculado."),
@@ -3304,15 +3358,15 @@ def _tab_backtests(status: dict) -> None:
     censura = res.get("censura") or {}
     if censura.get("sem_saida"):
         # A-161: o silencio de antes era lido como "nao houve deslistagem".
-        st.warning(
+        detalhe_tecnico(
             f"Nenhuma das {censura.get('n_observacoes', 0)} observações, ao "
             f"longo de {censura.get('anos', 0)} anos, é de ação que parou de "
             "negociar. Isso não é ausência de deslistagem no mercado: é "
-            "ausência dela **neste painel**, cujo universo é montado a partir "
-            "de quem sobreviveu até hoje. O resultado abaixo é o de uma "
+            "ausência dela neste painel, cujo universo é montado a partir "
+            "de quem sobreviveu até hoje. O resultado é o de uma "
             "carteira que nunca teve uma posição quebrar. "
-            + _aviso_sobrevivencia()
-        )
+            + _aviso_sobrevivencia(),
+            codigo="eua.backtests_censura_sem_saida")
     if censura.get("n_censurado"):
         # "Elas entram pela última cotação" era o fecho FIXO desta frase. Com a
         # convenção de retorno de deslistagem ligada, parte destas linhas não
@@ -3340,13 +3394,13 @@ def _tab_backtests(status: dict) -> None:
                     " A causa de cada saída ainda não foi publicada na vitrine "
                     "(`scripts/classificar_saidas_us.py` e republicação), então "
                     "a convenção por desfecho não está valendo aqui.")
-        st.info(texto)
+        detalhe_tecnico(texto, codigo="eua.backtests_censura_deslistagem")
     if censura.get("n_inobservavel"):
-        st.caption(
+        detalhe_tecnico(
             f"{censura['n_inobservavel']} pares (data, ação) ficaram de fora por "
             "não haver preço no horizonte nem cotação de saída — retorno "
-            "inobservável, não retorno zero."
-        )
+            "inobservável, não retorno zero.",
+            codigo="eua.backtests_censura_inobservavel")
 
     concentration = res.get("concentration") or {}
     if concentration and not concentration.get("eligible_for_conclusion", True):
@@ -3371,13 +3425,17 @@ def _tab_backtests(status: dict) -> None:
 # ── Qualidade dos Dados ───────────────────────────────────────────────────────
 def _tab_qualidade() -> None:
     if not us.schema_ready():
-        estado_vazio("Estrutura de dados `market_us` ainda não aplicada.", "🔌")
+        estado_vazio("Esta análise não está disponível no momento.", "🔌")
+        aviso_lacuna("Estrutura de dados market_us ainda não aplicada.",
+                     codigo="tela.eua.qualidade_sem_schema")
         return
     secao_titulo("Auditoria de qualidade", "🩺")
     df = us.quality_audit(limit=200)
     if df is None or df.empty:
-        st.info("Nenhum registro de auditoria ainda. Rode `python run_us_ingest.py "
-                "validate --warehouse` após a carga.")
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna("Nenhum registro de auditoria ainda. Rode python "
+                     "run_us_ingest.py validate --warehouse após a carga.",
+                     codigo="tela.eua.qualidade_sem_auditoria")
         return
     show = df.rename(columns={
         "created_at": "Data", "symbol": "Ticker", "table_name": "Tabela",

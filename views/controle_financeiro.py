@@ -70,6 +70,7 @@ from design.componentes import (
     container_pagina,
     cor_token,
 )
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.tema_canvas import no_claro
 
 # Chat "Analista Financeiro Pessoal" (aba Análises) — importado localmente na
@@ -172,6 +173,12 @@ def _kpi_card(titulo: str, valor: str, descricao: str, cor: str) -> str:
         f'<div style="font-size:0.73rem;color:var(--app-subtle);line-height:1.35;">{descricao}</div>'
         f'</div>'
     )
+
+
+def _falha_gravacao(erros: list[str], frase: str) -> None:
+    """Erro de gravação: a tela recebe só a frase amigável; o texto cru que o
+    núcleo devolveu (pode trazer SQL ou valores) não é exibido nem registrado."""
+    falha_de_acao(frase, RuntimeError("falha de gravação"))
 
 
 def _secao_titulo(icone: str, titulo: str) -> None:
@@ -398,10 +405,12 @@ def _sidebar_render(ano: int, mes: int) -> None:
             # Nome que o seletor oferece mas o banco não tem: a migration 072
             # ainda não rodou. Dizer isto é o ponto — o comportamento antigo
             # era gravar sem categoria e não avisar ninguém.
-            st.caption(
-                f"⚠️ “{cat_escolhida}” ainda não existe no banco; o lançamento "
-                "ficará sem categoria. Rode a migration 072 no Supabase."
+            aviso_lacuna(
+                "Categoria oferecida no lançamento manual não existe no banco; "
+                "o lançamento é gravado sem categoria (migration 072 pendente).",
+                codigo="tela.controle.categoria_sem_id",
             )
+            st.caption("⚠️ A categoria escolhida ainda não está disponível; o lançamento ficará sem categoria.")
 
         data_tx = st.date_input(
             "Data",
@@ -869,8 +878,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
                 st.success(f"✅ {ok_count} lançamento(s) atualizado(s).")
                 st.rerun()
             if erros:
-                for e in erros:
-                    st.error(e)
+                _falha_gravacao(erros, "Não foi possível atualizar alguns lançamentos.")
             if ok_count == 0 and not erros:
                 st.info("Nenhuma alteração detectada.")
 
@@ -1012,10 +1020,14 @@ def _tab_analises(
     # ── Comparativo Ano a Ano (YOY) — do app original ─────────────────────────
     _secao_titulo("📅", "Comparativo Ano a Ano")
     if hist_anual.get("data_source") == "real_error":
-        st.warning(
-            "Não foi possível carregar o histórico real do banco — os dados de "
-            "demonstração foram desativados para não exibir valores fictícios.\n\n"
-            f"Detalhe técnico: {hist_anual.get('error', 'erro desconhecido')}"
+        st.warning("O histórico anual não está disponível no momento.")
+        aviso_lacuna(
+            "Histórico anual real não carregou do banco; demonstração desativada.",
+            codigo="tela.controle.historico_anual_indisponivel",
+        )
+        detalhe_tecnico(
+            "Falha ao carregar histórico anual (data_source=real_error).",
+            codigo="controle.historico_anual_erro",
         )
     anos     = hist_anual.get("anos", [])
     por_ano  = hist_anual.get("por_ano", {})
@@ -1037,7 +1049,10 @@ def _tab_analises(
             })
         st.dataframe(pd.DataFrame(rows_yoy), width="stretch", hide_index=True)
     elif len(anos) == 1:
-        st.caption(f"Apenas 1 ano de dados disponível ({anos[0]}). Aguarde mais histórico.")
+        aviso_lacuna(
+            "Comparativo ano a ano sem histórico: só há 1 ano de dados.",
+            codigo="tela.controle.historico_anual_curto",
+        )
     else:
         st.caption("Sem dados históricos disponíveis.")
 
@@ -1169,15 +1184,19 @@ def _render_chat_financeiro(
     )
 
     if not llm_disponivel():
-        st.info(
-            "IA indisponível: nenhum provedor LLM configurado. Defina `OPENAI_API_KEY` "
-            "e/ou `GEMINI_API_KEY` no `.env` local ou em Streamlit Secrets."
+        st.info("A análise não está disponível no momento.")
+        aviso_lacuna(
+            "IA indisponível: nenhum provedor LLM configurado.",
+            codigo="tela.controle.llm_indisponivel",
         )
         return
 
     provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
-    st.caption("Provedor(es): " + ", ".join(
-        provider_labels.get(p, p) for p in provedores_disponiveis()))
+    detalhe_tecnico(
+        "Provedor(es) LLM: " + ", ".join(
+            provider_labels.get(p, p) for p in provedores_disponiveis()),
+        codigo="controle.provedores_llm",
+    )
 
     # Reinicia o histórico quando o mês selecionado muda (o contexto muda junto).
     _ctx_sig = f"{ano_ref}-{mes_ref}-{d.get('data_source')}"
@@ -1270,7 +1289,7 @@ def _render_chat_financeiro(
             try:
                 desenhados = render_financas_charts(chart_directives, chart_meta)
             except Exception as exc:
-                st.caption(f"⚠️ Não foi possível gerar os gráficos: {exc}")
+                falha_de_acao("Não foi possível gerar os gráficos.", exc)
         st.caption("Análise educacional baseada nos seus dados; não é recomendação "
                    "de investimento nem garantia de resultado.")
 
@@ -1388,8 +1407,8 @@ def _editor_lancamentos(txs: list, form_key: str, editor_key: str, limit: int = 
     if ok_count > 0:
         st.success(f"✅ {ok_count} lançamento(s) atualizado(s).")
         st.rerun()
-    for e in erros:
-        st.error(e)
+    if erros:
+        _falha_gravacao(erros, "Não foi possível atualizar alguns lançamentos.")
     if ok_count == 0 and not erros:
         st.info("Nenhuma alteração detectada.")
 
@@ -1516,7 +1535,7 @@ def _tab_orcamento(d: dict, ano: int, mes: int, rotulo_mes: str) -> None:
         st.success(f"{len(mudou)} limite(s) gravado(s) a partir de {rotulo_mes}.")
         st.rerun()
     else:
-        st.error(f"Não foi possível gravar: {msg}")
+        falha_de_acao("Não foi possível gravar os limites.", RuntimeError("falha de gravação"))
 
 
 def _render_conciliacao(d: dict) -> None:
@@ -1898,8 +1917,8 @@ def _editor_extratos(rows: list, categories: list) -> None:
     if ok_count > 0:
         st.success(f"✅ {ok_count} movimento(s) de extrato atualizado(s).")
         st.rerun()
-    for e in erros:
-        st.error(e)
+    if erros:
+        _falha_gravacao(erros, "Não foi possível atualizar alguns lançamentos.")
     if ok_count == 0 and not erros:
         st.info("Nenhuma alteração detectada.")
 
@@ -1913,7 +1932,13 @@ def _render_bank_statement_section(ano: int | None, mes: int | None) -> None:
             get_bank_statement_review_rows,
         )
     except Exception as exc:
-        st.caption(f"Extratos bancarios indisponiveis: {exc}")
+        st.caption("Os extratos bancários não estão disponíveis no momento.")
+        aviso_lacuna(
+            "Módulo de extratos bancários não carregou.",
+            codigo="tela.controle.extratos_indisponiveis",
+        )
+        detalhe_tecnico(f"Import de core.bank_statement_import falhou: {type(exc).__name__}",
+                        codigo="controle.extratos_import")
         return
 
     st.divider()
@@ -1967,7 +1992,9 @@ def _render_bank_statement_section(ano: int | None, mes: int | None) -> None:
     if edit_extratos:
         cats_edit = get_bank_statement_categories()
         if not cats_edit:
-            st.warning("Categorias indisponíveis para editar extratos.")
+            st.warning("A edição não está disponível no momento.")
+            aviso_lacuna("Categorias de extrato indisponíveis para edição.",
+                         codigo="tela.controle.extrato_sem_categorias")
             return
         st.info(
             "Edite os campos e clique **Salvar alterações dos extratos**. "
@@ -2002,7 +2029,9 @@ def _render_bank_statement_section(ano: int | None, mes: int | None) -> None:
 
     categories = get_bank_statement_categories()
     if not categories:
-        st.warning("Categorias indisponíveis para revisar extratos.")
+        st.warning("A revisão não está disponível no momento.")
+        aviso_lacuna("Categorias de extrato indisponíveis para revisão.",
+                     codigo="tela.controle.extrato_sem_categorias")
         return
 
     with st.expander("Revisar e confirmar classificação"):
@@ -2039,7 +2068,7 @@ def _render_bank_statement_section(ano: int | None, mes: int | None) -> None:
             if ok:
                 st.success("Classificação confirmada.")
                 st.rerun()
-            st.error(msg or "Falha ao confirmar classificação.")
+            falha_de_acao("Falha ao confirmar classificação.", RuntimeError("falha de gravação"))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3124,8 +3153,8 @@ def _editor_cartao_detalhado(detail: pd.DataFrame) -> None:
     if ok_count > 0:
         st.success(f"✅ {ok_count} lançamento(s) atualizado(s).")
         st.rerun()
-    for e in erros:
-        st.error(e)
+    if erros:
+        _falha_gravacao(erros, "Não foi possível atualizar alguns lançamentos.")
     if ok_count == 0 and not erros:
         st.info("Nenhuma alteração detectada.")
 
@@ -3284,8 +3313,8 @@ def _render_cartao_a_revisar(df_all: pd.DataFrame) -> None:
         extra = f" · {regras} regra(s) aprendida(s)" if regras else ""
         st.success(f"✅ {ok_count} lançamento(s) categorizado(s){extra}.")
         st.rerun()
-    for e in erros:
-        st.error(e)
+    if erros:
+        _falha_gravacao(erros, "Não foi possível categorizar alguns lançamentos.")
     if ok_count == 0 and not erros:
         st.info("Escolha uma categoria (≠ “A revisar”) em pelo menos uma linha.")
 
@@ -3474,15 +3503,19 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
     )
 
     if not llm_disponivel():
-        st.info(
-            "IA indisponível: nenhum provedor LLM configurado. Defina `OPENAI_API_KEY` "
-            "e/ou `GEMINI_API_KEY` no `.env` local ou em Streamlit Secrets."
+        st.info("A análise não está disponível no momento.")
+        aviso_lacuna(
+            "IA indisponível: nenhum provedor LLM configurado.",
+            codigo="tela.controle.llm_indisponivel",
         )
         return
 
     provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
-    st.caption("Provedor(es): " + ", ".join(
-        provider_labels.get(p, p) for p in provedores_disponiveis()))
+    detalhe_tecnico(
+        "Provedor(es) LLM: " + ", ".join(
+            provider_labels.get(p, p) for p in provedores_disponiveis()),
+        codigo="controle.provedores_llm",
+    )
 
     # Descrição do filtro ativo + assinatura de contexto (reinicia o chat se mudar).
     anos = sorted({int(a) for a in df["ano_vencimento"].dropna().unique()})
@@ -3577,7 +3610,7 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
             try:
                 desenhados = render_financas_charts(chart_directives, chart_meta)
             except Exception as exc:
-                st.caption(f"⚠️ Não foi possível gerar os gráficos: {exc}")
+                falha_de_acao("Não foi possível gerar os gráficos.", exc)
         st.caption("Análise educacional baseada nos seus dados; não é recomendação "
                    "de investimento nem garantia de resultado.")
 

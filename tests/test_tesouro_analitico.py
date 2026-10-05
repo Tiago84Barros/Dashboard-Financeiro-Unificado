@@ -298,9 +298,15 @@ def test_card_do_titulo_diz_de_onde_veio_o_preco():
     assert "04/09/2026" not in do_extrato
 
 
-def test_card_avisa_quando_a_marcacao_e_aproximada():
-    assert "aproximação" in card_titulo_html(_titulo_fake(aproximado=True))
-    assert "aproximação" not in card_titulo_html(_titulo_fake())
+def test_card_nao_exibe_aviso_de_marcacao_aproximada_mas_registra(monkeypatch):
+    registros = []
+    monkeypatch.setattr("design.tesouro_mtm_cards.aviso_lacuna",
+                        lambda msg, **kw: registros.append(kw["codigo"]))
+    assert "aproximação" not in card_titulo_html(_titulo_fake(aproximado=True))
+    assert registros == ["tela.carteira.tesouro_marcacao_aproximada"]
+    registros.clear()
+    card_titulo_html(_titulo_fake())
+    assert registros == []
 
 
 def test_card_de_veredito_sem_alternativa_nao_imprime_grade_de_numeros():

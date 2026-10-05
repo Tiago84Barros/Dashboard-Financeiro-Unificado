@@ -27,6 +27,7 @@ import streamlit as st
 
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import portfolio_fit as pf
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 
 _COR_NIVEL = {
     "forte": "primary", "atrativo": "primary", "alto": "primary",
@@ -156,7 +157,7 @@ def cartao_detalhes(leitura: pf.Leitura) -> str:
             ("fundamental_analysis", "Fundamentos"),
             ("valuation_analysis", "Valuation"),
             ("peer_analysis", "Comparação com pares"),
-            ("market_behavior", "Liquidez, retorno e volatilidade (armazém)"),
+            ("market_behavior", "Liquidez, retorno e volatilidade"),
             ("reasoning_summary", "Resumo do raciocínio")):
         corpo += _paragrafo(titulo, leitura.textos.get(campo, pf.NAO_DISPONIVEL))
     corpo += _itens("Riscos", leitura.listas.get("risks", ()), "warning")
@@ -164,26 +165,27 @@ def cartao_detalhes(leitura: pf.Leitura) -> str:
                     "primary")
     corpo += _itens("Eventos a acompanhar",
                     leitura.listas.get("events_to_watch", ()))
-    corpo += _itens("Lacunas de dado", leitura.listas.get("data_gaps", ()),
-                    "subtle")
+    for lacuna in leitura.listas.get("data_gaps", ()):
+        aviso_lacuna(f"Portfolio Fit (leitura por LLM) — lacuna de dado: {lacuna}",
+                     codigo="tela.inteligencia.fit_lacuna_de_dado")
     return _caixa(corpo)
 
 
 def cartao_validacao(leitura: pf.Leitura) -> str:
     cor = _COR_STATUS.get(leitura.status, "text")
-    corpo = (_titulo("Validação da resposta",
-                     "O código confere formato, valores permitidos, dimensões "
-                     "sem dado e se cada número está no contexto enviado.")
+    corpo = (_titulo("Validação da resposta")
              + f'<div style="font-weight:800;color:var(--app-{cor})">'
              f'{escape(_ROTULO_STATUS.get(leitura.status, leitura.status))}'
              '</div>')
     if leitura.divergencia_regras:
         corpo += _paragrafo("Divergência com as regras",
                             leitura.divergencia_regras)
-    if leitura.correcoes:
-        corpo += _itens("Corrigido pelo validador", leitura.correcoes, "warning")
-    if leitura.problemas:
-        corpo += _itens("Problemas na resposta", leitura.problemas, "danger")
+    for x in leitura.correcoes:
+        detalhe_tecnico(f"Corrigido pelo validador: {x}",
+                        codigo="inteligencia.fit_correcao_validador")
+    for x in leitura.problemas:
+        detalhe_tecnico(f"Problema na resposta da LLM: {x}",
+                        codigo="inteligencia.fit_problema_resposta")
     if leitura.numeros_sem_ancora:
         corpo += _itens("Números que não estão no contexto (possível "
                         "invenção; confira antes de usar)",
@@ -236,7 +238,10 @@ def render(analise: m.AnaliseAtivo, ctx: m.ContextoInvestidor,
     chave = chave_sessao(analise, contexto)
 
     if not llm_disponivel():
-        st.caption("Leitura por LLM indisponível: nenhum provedor configurado.")
+        st.caption("A leitura por LLM não está disponível no momento.")
+        aviso_lacuna("Leitura de Portfolio Fit por LLM indisponível: nenhum "
+                     "provedor configurado",
+                     codigo="tela.inteligencia.fit_sem_provedor")
     elif st.button("Gerar leitura de Portfolio Fit", key=f"{chave}_botao",
                    type="primary"):
         with st.spinner("Lendo o ativo dentro da sua carteira…"):

@@ -54,10 +54,10 @@ render_portfolio_valuations([
     assert len(cards) == 7
     assert [c for c in cards if '8.00%' in c] and [c for c in cards if '12.00x' in c]
     assert [c for c in cards if '1.20x' in c]
-    # A cobertura vive DENTRO do card, e o card sai num bloco só: div aberta num
-    # `st.markdown` e fechada em outro já produziu moldura vazia neste projeto.
+    # A cobertura saiu da tela (vai para o log de lacunas); o card sai num bloco
+    # só: div aberta num `st.markdown` e fechada em outro já produziu moldura vazia.
     dy = next(c for c in cards if '8.00%' in c)
-    assert '20.0% do valor da carteira' in dy
+    assert 'do valor da carteira' not in dy
     assert dy.count('<div') == dy.count('</div>')
 
 

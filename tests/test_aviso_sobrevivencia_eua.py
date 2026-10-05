@@ -58,5 +58,7 @@ def test_aviso_e_derivado_da_medicao_e_nao_declarado(fonte: str) -> None:
 
 def test_aviso_acompanha_toda_evidencia_historica_exibida(fonte: str) -> None:
     # backtest do Laboratorio e tela de backtest dedicada.
-    assert fonte.count("st.caption(_aviso_sobrevivencia())") == 2
+    # O viés vai para o log do administrador (detalhe_tecnico), não para a tela.
+    assert fonte.count("detalhe_tecnico(_aviso_sobrevivencia(),") == 2
+    assert "st.caption(_aviso_sobrevivencia())" not in fonte
     assert "_AVISO_SOBREVIVENCIA" not in fonte, "constante virou derivação"

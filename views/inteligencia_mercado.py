@@ -42,6 +42,7 @@ from core.lacunas import registrar_limitacoes
 from core.seguranca import travas as tv
 from design import inteligencia as ui
 from design.componentes import abas_secao, container_pagina, estado_vazio, secao_titulo
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +86,11 @@ def secao_desligada(nome: str, estado: hom.Estado) -> None:
     chave = hom.CHAVES[nome]
     estado_vazio(
         f"**{chave.rotulo}** ainda não foi liberado nesta instalação.", "🚧")
-    st.caption(
+    detalhe_tecnico(
         f"Motivo: {estado.motivo(nome)}. Enquanto isso, {chave.efeito}. "
         f"Fase corrente: {hom.NOME_FASE[estado.fase]} — "
-        f"{hom.DESCRICAO_FASE[estado.fase]}")
+        f"{hom.DESCRICAO_FASE[estado.fase]}",
+        codigo="inteligencia.secao_desligada", entidade=nome)
 
 
 # ── Carregamento ─────────────────────────────────────────────────────────────
@@ -515,19 +517,20 @@ def render_explicacao(pn: P.Painel, estado: hom.Estado,
         exp = intel_llm.explicar(pn, simbolo=simbolo)
     else:
         exp = intel_llm.explicacao_deterministica(pn, simbolo=simbolo)
-        st.caption(f"⚙ Explicação por LLM desligada: {estado.motivo(hom.LLM)}. "
-                   "O texto abaixo é o do backend.")
+        detalhe_tecnico(f"Explicação por LLM desligada: {estado.motivo(hom.LLM)}. "
+                        "O texto é o do backend.",
+                        codigo="inteligencia.explicacao_llm_desligada")
     origem = ("gerada por LLM e validada contra o painel"
               if exp.gerada_por_llm else "gerada pelo backend, sem LLM")
-    st.caption(f"Explicação {origem}.")
+    detalhe_tecnico(f"Explicação {origem}.",
+                    codigo="inteligencia.explicacao_origem")
     st.markdown(exp.texto)
     if exp.validacao is not None and not exp.validacao.aprovada:
-        st.warning("A resposta da LLM foi **descartada**: "
-                   + exp.validacao.descrever())
-    with st.expander("Área técnica — contexto exato entregue à LLM"):
-        st.caption("A LLM recebe apenas este texto. Número que não estiver "
-                   "aqui é recusado antes de chegar à tela.")
-        st.code(exp.contexto, language="text")
+        detalhe_tecnico("A resposta da LLM foi descartada: "
+                        + exp.validacao.descrever(),
+                        codigo="inteligencia.explicacao_descartada")
+    detalhe_tecnico("Contexto entregue à LLM: " + str(exp.contexto),
+                    codigo="inteligencia.contexto_llm")
     ui.aviso_sem_garantia()
 
 
@@ -583,9 +586,9 @@ def estado_da_coleta():
 def bloco_agendamento(estado) -> None:
     """Quem atualiza, quando, e o que já rodou. Sem prometer o que não há."""
     if estado is None or not getattr(estado, "disponivel", False):
-        st.caption(
-            "⚠ Estado do coletor indisponível: esta tela não sabe dizer "
-            "quando foi a última coleta automática.")
+        aviso_lacuna("Estado do coletor indisponível: sem como dizer quando "
+                     "foi a última coleta automática.",
+                     codigo="tela.inteligencia.coletor_indisponivel")
         return
 
     from core.noticias import cadencia as cad
@@ -596,15 +599,16 @@ def bloco_agendamento(estado) -> None:
               else f"há {idade:.0f} min")
     proximo = (estado.proximo_ciclo_em.astimezone().strftime("%d/%m %H:%M")
                if estado.proximo_ciclo_em else "não previsto")
-    st.caption(
+    detalhe_tecnico(
         f"Coleta automática — {ritmo.descrever()}. Última bem-sucedida: "
         f"{quando}. Próximo ciclo previsto: {proximo}. "
-        f"Situação: {cad.ROTULO_STATUS.get(estado.status, estado.status)}.")
+        f"Situação: {cad.ROTULO_STATUS.get(estado.status, estado.status)}.",
+        codigo="inteligencia.coleta_automatica")
     if not cad.permite_recomendacao_emergencial(estado.status):
-        st.caption(
-            "⚠ Enquanto a coleta estiver nesta situação, o APP4 não emite "
-            "recomendação de emergência apoiada nestes dados — eles continuam "
-            "à vista, com o carimbo de idade.")
+        aviso_lacuna(
+            "Enquanto a coleta estiver nesta situação, o APP4 não emite "
+            "recomendação de emergência apoiada nestes dados.",
+            codigo="tela.inteligencia.coleta_sem_recomendacao_emergencial")
 
 
 def render_atualizacao(pn: P.Painel) -> None:
@@ -613,7 +617,8 @@ def render_atualizacao(pn: P.Painel) -> None:
 
     estado, motivo_estado = estado_da_coleta()
     if motivo_estado:
-        st.caption(f"⚠ {motivo_estado}")
+        aviso_lacuna(motivo_estado,
+                     codigo="tela.inteligencia.estado_coleta_ilegivel")
     bloco_agendamento(estado)
 
     from core.noticias import cadencia as cad
@@ -643,16 +648,15 @@ def render_atualizacao(pn: P.Painel) -> None:
         if coleta is None:
             # Falha NÃO apaga a última coleta boa: o painel continua exibindo
             # o que tinha, com a idade à vista, e o erro aparece à parte.
-            st.error(f"A atualização não foi concluída: {erro}. "
-                     "Os dados exibidos continuam sendo os da última coleta "
-                     "bem-sucedida.")
+            aviso_lacuna(f"A atualização de notícias não foi concluída: {erro}",
+                         codigo="tela.inteligencia.atualizacao_falhou")
+            st.error("A atualização não foi concluída. Os dados exibidos "
+                     "continuam sendo os da última coleta bem-sucedida.")
         else:
             st.session_state[CHAVE_COLETA] = (coleta, erro)
             st.rerun()
 
     registrar_limitacoes(pn, modulo="views/inteligencia_mercado.py:painel")
-    for linha in pn.limitacoes:
-        st.caption(f"⚠ {linha}")
 
 
 # ── Entrada ──────────────────────────────────────────────────────────────────
@@ -664,8 +668,9 @@ def render() -> None:
         icone="🧭")
 
     estado = fase_atual()
-    st.caption(
-        f"🚦 {hom.NOME_FASE[estado.fase]} — {hom.DESCRICAO_FASE[estado.fase]}")
+    detalhe_tecnico(
+        f"{hom.NOME_FASE[estado.fase]} — {hom.DESCRICAO_FASE[estado.fase]}",
+        codigo="inteligencia.fase_de_liberacao")
 
     montagem = montar_tudo()
     pn = montagem.painel

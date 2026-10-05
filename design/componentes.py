@@ -15,6 +15,8 @@ from html import escape
 import streamlit as st
 import streamlit.components.v1 as components
 
+from design.lacunas import aviso_lacuna, detalhe_tecnico
+
 
 def _linha(texto: object, *, aspas: bool = False) -> str:
     """Escapa **e** achata o texto que vai para dentro de uma tag.
@@ -507,7 +509,8 @@ def aviso_cobertura_do_universo(modulo: str) -> None:
     # `.capitalize()` minusculiza o RESTO: "DY", "P/VP" e "B3" viravam
     # "dy", "p/vp" e "b3" no meio da nota do gate.
     nota = f" {u.notas[0][:1].upper()}{u.notas[0][1:]}." if u.notas else ""
-    st.caption(f"Cobertura da recomendacao: {u.resumo()}.{nota}")
+    detalhe_tecnico(f"Cobertura da recomendacao: {u.resumo()}.{nota}",
+                    codigo=f"componentes.cobertura_universo.{modulo}")
 
 
 # ── Selo de frescor: de quando e o dado que esta tela esta mostrando ────────
@@ -549,12 +552,16 @@ def selo_de_frescor(modulo: str, dados: dict | None = None) -> None:
     if not dados:
         return
     if dados.get("vencida"):
-        mensagem_aviso("Vitrine fora do prazo de publicação", dados["texto"])
+        aviso_lacuna(f"Vitrine fora do prazo de publicação: {dados['texto']}",
+                     codigo=f"tela.componentes.vitrine_vencida.{modulo}")
     elif dados.get("idade") is None or dados.get("idade", 0) < 0:
-        st.caption(f"Frescor dos dados: {dados['texto']}")
+        detalhe_tecnico(f"Frescor dos dados: {dados['texto']}",
+                        codigo=f"componentes.frescor_vitrine.{modulo}")
     else:
-        st.caption(f"Vitrine publicada em {dados['as_of']} "
-                   f"(alvo de atualização: {dados['alvo']} dia(s)).")
+        detalhe_tecnico(
+            f"Vitrine publicada em {dados['as_of']} "
+            f"(alvo de atualização: {dados['alvo']} dia(s)).",
+            codigo=f"componentes.frescor_vitrine.{modulo}")
 
 
 # ── Atualidade trimestral da B3 (B3-02) ─────────────────────────────────────
@@ -600,9 +607,11 @@ def aviso_atualidade_trimestral_b3() -> None:
         partes = [universo.get("texto")] if universo.get("atrasada") else []
         if aviso_score:
             partes.append(aviso_score)
-        mensagem_aviso("Fundamentos com trimestre defasado", " ".join(partes))
+        aviso_lacuna("Fundamentos com trimestre defasado: " + " ".join(partes),
+                     codigo="tela.componentes.b3_trimestre_defasado")
     elif universo.get("texto"):
-        st.caption(universo["texto"])
+        detalhe_tecnico(str(universo["texto"]),
+                        codigo="componentes.b3_atualidade_trimestral")
 
 
 def _tinta(token: str, pct: int = 12) -> str:

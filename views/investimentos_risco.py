@@ -13,6 +13,7 @@ import streamlit as st
 
 from core.carteira_risco import BENCHMARK, get_risco_carteira
 from core.utils import fmt_percentual
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 
 # Cores literais no Plotly (o adaptador de tema troca as do tema escuro); no
 # HTML, só tokens — o tema claro só alcança o que passa por token.
@@ -90,21 +91,27 @@ def render_risco_carteira() -> None:
     st.markdown("#### Risco da carteira")
     risco = get_risco_carteira()
     if not risco.get("disponivel"):
-        st.info("Série diária da carteira indisponível: "
-                + str(risco.get("motivo") or "sem motivo informado") + ".")
+        aviso_lacuna("Série diária da carteira indisponível: "
+                     + str(risco.get("motivo") or "sem motivo informado") + ".",
+                     codigo="tela.investimentos.risco_indisponivel")
+        st.info("Esta análise não está disponível no momento.")
         return
 
     cob = risco.get("cobertura") or {}
-    st.caption(
-        f"Série **{risco['frequencia']}** de {risco['inicio']:%d/%m/%Y} a "
-        f"{risco['fim']:%d/%m/%Y} ({risco['n_dias']} pregões) — o histórico diário de "
+    detalhe_tecnico(
+        f"Série {risco['frequencia']} de {risco['inicio']:%d/%m/%Y} a "
+        f"{risco['fim']:%d/%m/%Y} ({risco['n_dias']} pregões); o histórico diário de "
         f"cotações no banco começa em abril de 2026. Cobertura: "
-        f"**{_pct(cob.get('pct_observado'))}** do patrimônio com cotação diária e "
-        f"**{_pct(cob.get('pct_modelado'))}** modelado pelo CDI (Tesouro Selic); "
+        f"{_pct(cob.get('pct_observado'))} do patrimônio com cotação diária e "
+        f"{_pct(cob.get('pct_modelado'))} modelado pelo CDI (Tesouro Selic); "
         f"{_pct(cob.get('pct_fora'))} fica fora da série e não entra no risco "
-        f"(não vira retorno zero). Retorno ponderado no tempo: aportes e resgates "
-        f"não contam como ganho."
+        "(não vira retorno zero).",
+        codigo="investimentos.risco.serie_cobertura",
     )
+    if (cob.get("pct_fora") or 0) > 0:
+        aviso_lacuna("Parte do patrimônio fica fora da série de risco por falta de "
+                     "preço diário.", codigo="tela.investimentos.risco_cobertura_parcial")
+    st.caption("Retorno ponderado no tempo: aportes e resgates não contam como ganho.")
 
     alerta = risco.get("alerta") or {}
     cor_alerta = _COR_ALERTA.get(alerta.get("nivel"), "var(--app-info)")
@@ -119,8 +126,13 @@ def render_risco_carteira() -> None:
     sub_dd = (f"atual {_pct(risco.get('drawdown_atual'))} · tolerância "
               + ("não declarada" if tol is None else f"{tol:.0f}%"))
     var_1m = risco.get("var_1m")
-    sub_var = ("1 mês: " + (_pct(var_1m, 2) if var_1m is not None else "amostra curta")
-               + f" ({risco.get('n_janelas_1m', 0)} janelas sobrepostas)")
+    sub_var = ("1 mês: " + (_pct(var_1m, 2) if var_1m is not None else "—"))
+    if var_1m is None:
+        aviso_lacuna("VaR de 1 mês sem amostra suficiente.",
+                     codigo="tela.investimentos.risco_var_amostra_curta")
+    detalhe_tecnico(f"VaR 1 mês: {risco.get('n_janelas_1m', 0)} janelas sobrepostas; "
+                    f"beta: {risco.get('n_beta', 0)} pregões.",
+                    codigo="investimentos.risco.amostras")
     sharpe = risco.get("sharpe")
     beta = risco.get("beta")
     cards = [
@@ -135,7 +147,7 @@ def render_risco_carteira() -> None:
         _card("Sharpe × CDI", _num(sharpe),
               "excesso diário sobre o CDI, anualizado"),
         _card(f"Beta × {BENCHMARK}", _num(beta),
-              f"proxy do Ibovespa · {risco.get('n_beta', 0)} pregões"),
+              "proxy do Ibovespa"),
     ]
     for linha in (cards[:3], cards[3:]):
         cols = st.columns(3)
@@ -148,38 +160,33 @@ def render_risco_carteira() -> None:
         st.plotly_chart(_grafico(serie), width="stretch",
                         config={"displayModeBar": False})
 
-    with st.expander("O que entra e o que fica fora da série"):
-        excluidos = risco.get("excluidos") or []
-        if excluidos:
-            st.markdown("**Fora da série** (patrimônio sem preço diário):")
-            st.dataframe(
-                [{"Ativo": e["ticker"], "Classe": e["classe"],
-                  "Valor (R$)": round(e["valor"], 2), "Motivo": e["motivo"]}
-                 for e in excluidos],
-                hide_index=True, width="stretch",
-            )
-        incl = risco.get("incluidos") or []
-        modelados = [i["ticker"] for i in incl if i["fonte"] != "cotação diária"]
-        qtd = risco.get("quantidade") or {}
-        notas = [
-            f"{len(incl)} ativos na série"
-            + (f"; {', '.join(modelados)} com preço modelado pelo CDI (PU de hoje "
-               "descontado pelo CDI diário)" if modelados else "") + ".",
-            f"Cobertura diária dentro dos ativos da série: mínima "
-            f"{_pct(cob.get('diaria_min'))}, mediana {_pct(cob.get('diaria_mediana'))} "
-            "(dia em que um ativo não tem cotação, ele sai daquele dia).",
-            "Quantidade ao longo do tempo ancorada nas fotos de posição; "
-            f"{qtd.get('conciliados', 0)} intervalos fecharam com os eventos e "
-            f"{qtd.get('degraus', 0)} entraram como degrau na foto seguinte "
-            + (f"({', '.join(qtd.get('com_degrau') or [])})" if qtd.get("com_degrau") else "")
-            + " — degrau é fluxo, não ganho.",
-            "Proventos entram como renda na data de pagamento (só os da B3, em "
-            "reais: os ETFs americanos não têm dividendos registrados no banco, "
-            "e o retorno deles fica sem essa renda).",
-            "VaR e queda máxima são de uma série de meses: não estimam a cauda "
-            "de uma crise que a amostra não viu.",
-        ]
-        if risco.get("saltos"):
-            notas.append("Dias descartados por salto acima de 35%: "
-                         + ", ".join(risco["saltos"]) + ".")
-        st.markdown("\n".join(f"- {n}" for n in notas))
+    for e in risco.get("excluidos") or []:
+        aviso_lacuna(f"{e['ticker']} ({e['classe']}) fora da série de risco: "
+                     f"{e['motivo']}.", codigo="tela.investimentos.risco_ativo_fora_da_serie",
+                     entidade=e["ticker"])
+    incl = risco.get("incluidos") or []
+    modelados = [i["ticker"] for i in incl if i["fonte"] != "cotação diária"]
+    qtd = risco.get("quantidade") or {}
+    notas = [
+        f"{len(incl)} ativos na série"
+        + (f"; {', '.join(modelados)} com preço modelado pelo CDI (PU de hoje "
+           "descontado pelo CDI diário)" if modelados else "") + ".",
+        f"Cobertura diária dentro dos ativos da série: mínima "
+        f"{_pct(cob.get('diaria_min'))}, mediana {_pct(cob.get('diaria_mediana'))} "
+        "(dia em que um ativo não tem cotação, ele sai daquele dia).",
+        "Quantidade ao longo do tempo ancorada nas fotos de posição; "
+        f"{qtd.get('conciliados', 0)} intervalos fecharam com os eventos e "
+        f"{qtd.get('degraus', 0)} entraram como degrau na foto seguinte "
+        + (f"({', '.join(qtd.get('com_degrau') or [])})" if qtd.get("com_degrau") else "")
+        + " — degrau é fluxo, não ganho.",
+        "Proventos entram como renda na data de pagamento (só os da B3, em "
+        "reais: os ETFs americanos não têm dividendos registrados no banco, "
+        "e o retorno deles fica sem essa renda).",
+        "VaR e queda máxima são de uma série de meses: não estimam a cauda "
+        "de uma crise que a amostra não viu.",
+    ]
+    if risco.get("saltos"):
+        notas.append("Dias descartados por salto acima de 35%: "
+                     + ", ".join(risco["saltos"]) + ".")
+    for n in notas:
+        detalhe_tecnico(n, codigo="investimentos.risco.o_que_entra")

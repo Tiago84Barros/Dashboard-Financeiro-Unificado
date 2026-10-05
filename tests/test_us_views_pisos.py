@@ -235,9 +235,13 @@ def _app_filtro_liquidez(tmp_path, frame: pd.DataFrame, piso: float):
     script.write_text(
         "import pandas as pd, streamlit as st\n"
         f"u = pd.read_pickle(r'{dados}')\n"
+        "import views.empresas_americanas as v\n"
+        "_reg = []\n"
+        "v.aviso_lacuna = lambda m, *, codigo, **k: _reg.append(codigo)\n"
         "from views.empresas_americanas import _render_us_filtro_liquidez\n"
         f"saida = _render_us_filtro_liquidez(u, {piso_expr})\n"
-        "st.text(','.join(sorted(saida['symbol'].astype(str))))\n",
+        "st.text(','.join(sorted(saida['symbol'].astype(str))))\n"
+        "st.text('|'.join(_reg))\n",
         encoding="utf-8")
     at = AppTest.from_file(str(script), default_timeout=60).run()
     assert not at.exception, at.exception
@@ -273,7 +277,9 @@ def test_tela_sem_piso_mantem_tudo_mas_avisa_que_nao_validou(tmp_path):
     at, restantes = _app_filtro_liquidez(tmp_path, u, 0.0)
 
     assert set(restantes) == set(u["symbol"])
-    assert any("não validada" in c.value for c in at.caption)
+    # Restrição não é exibida: vai para o log de lacunas.
+    assert not any("não validada" in c.value for c in at.caption)
+    assert "tela.eua.liquidez_nao_validada_exploratorio" in at.text[1].value
 
 
 @pytest.mark.parametrize("piso_invalido", [float("nan"), -1.0,
@@ -306,7 +312,10 @@ def test_tela_sem_a_coluna_de_volume_nao_finge_ter_aplicado_o_piso(tmp_path):
     at, restantes = _app_filtro_liquidez(tmp_path, u, 5e6)
 
     assert restantes == []
-    assert any("não publica o volume negociado" in w.value for w in at.warning)
+    # A causa técnica (vitrine sem volume) vai para o log; a tela só diz o efeito.
+    assert not any("não publica o volume negociado" in w.value for w in at.warning)
+    assert any("Nenhuma empresa pôde ser verificada" in w.value for w in at.warning)
+    assert "tela.eua.vitrine_sem_volume" in at.text[1].value
 
 
 def test_ciclo_sem_dado_declara_em_vez_de_sumir(tmp_path):
@@ -322,12 +331,19 @@ def test_ciclo_sem_dado_declara_em_vez_de_sumir(tmp_path):
     script.write_text(
         "import pandas as pd\n"
         f"u = pd.read_json(r'{dados}')\n"
-        "from views.empresas_americanas import _render_us_ciclo\n"
-        "_render_us_ciclo(u)\n", encoding="utf-8")
+        "import streamlit as st\n"
+        "import views.empresas_americanas as v\n"
+        "_reg = []\n"
+        "v.aviso_lacuna = lambda m, *, codigo, **k: _reg.append(codigo)\n"
+        "v._render_us_ciclo(u)\n"
+        "st.text('|'.join(_reg))\n", encoding="utf-8")
 
     at = AppTest.from_file(str(script), default_timeout=60).run()
     assert not at.exception, at.exception
-    assert any("Sem série anual suficiente" in c.value for c in at.caption)
+    # A seção declara a indisponibilidade com frase neutra; o motivo vai ao log.
+    assert any("não está disponível no momento" in c.value for c in at.caption)
+    assert not any("Sem série anual suficiente" in c.value for c in at.caption)
+    assert "tela.eua.ciclo_sem_serie_anual" in at.text[0].value
 
 
 def test_o_piso_de_qualidade_nao_reordena_por_conta_propria():

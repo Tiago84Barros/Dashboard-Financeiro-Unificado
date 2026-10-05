@@ -55,6 +55,7 @@ from core.inteligencia_ativos import pares as prs
 from core.inteligencia_ativos import referencia_modelo as refm
 from core.inteligencia_ativos import valuation as val
 from core.utils import fmt_moeda
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 from views import configuracoes_estrategia as tela_estrategia
 from views import inteligencia_ativos_fit as tela_fit
 from views import inteligencia_ativos_painel as tela_painel
@@ -143,10 +144,12 @@ def cartao_onboarding(liberacao: portao.Liberacao) -> str:
 
 def _render_onboarding(liberacao: portao.Liberacao) -> None:
     if liberacao.motivo == portao.ESTRATEGIA_INDISPONIVEL:
+        aviso_lacuna("Estratégia de investimentos ilegível (tabela da estratégia, "
+                     "migration 076)",
+                     codigo="tela.inteligencia.estrategia_ilegivel")
         st.info("Não foi possível ler sua estratégia de investimentos agora. "
                 "A análise dos ativos depende dela; tente de novo em "
-                "instantes. Se persistir, o administrador precisa conferir a "
-                "tabela da estratégia (migration 076).")
+                "instantes.")
         return
     st.markdown(cartao_onboarding(liberacao), unsafe_allow_html=True)
     if not st.session_state.get(ESTRATEGIA_ABERTA):
@@ -243,8 +246,18 @@ def _lista(itens) -> str:
                    for i in itens)
 
 
+def _indisponivel(secao: str, motivo: str | None, padrao: str) -> str:
+    """Seção sem dado: a tela diz só "não disponível"; o motivo vai ao log."""
+    aviso_lacuna(f"{secao}: {motivo or padrao}",
+                 codigo="tela.inteligencia.secao_sem_dado", entidade=secao)
+    return escape(padrao)
+
+
 def cartao_premissa(ctx: m.ContextoInvestidor) -> str:
-    """A estratégia que orienta todas as análises, no topo da aba. Puro."""
+    """A estratégia que orienta todas as análises, no topo da aba. A versão
+    da política vai para o log de lacunas, não para a tela."""
+    detalhe_tecnico(f"Estratégia versão {ctx.versao_politica}",
+                    codigo="inteligencia.versao_estrategia")
     def _rot(chave: str, valor) -> str:
         return pol.formatar(chave, valor) if valor is not None else "—"
     linhas = "".join(
@@ -271,7 +284,7 @@ def cartao_premissa(ctx: m.ContextoInvestidor) -> str:
         'margin:6px 0 14px 0">'
         '<div style="font-size:0.72rem;font-weight:700;letter-spacing:.05em;'
         'text-transform:uppercase;color:var(--app-info)">Premissa de toda '
-        f'análise · estratégia versão {ctx.versao_politica}</div>'
+        'análise</div>'
         f'<div style="margin-top:8px">{grade}</div>'
         '<table style="margin-top:10px;font-size:0.86rem;'
         f'border-collapse:collapse">{linhas}</table>{fora}</div>'
@@ -334,7 +347,11 @@ def cartao_calculos(c: calc.Calculos) -> str:
                    .replace(".", ","))
             detalhe = f"{hhi} · base {k.base}"
             if k.cobertura < 99.95:
-                detalhe += f" · identificado {_pct(k.cobertura)}"
+                aviso_lacuna(
+                    f"Concentração por {calc.ROTULO_DIMENSAO[dim]}: só "
+                    f"{_pct(k.cobertura)} da base identificado",
+                    codigo="tela.inteligencia.concentracao_cobertura_parcial",
+                    entidade=str(dim))
         conc += (
             '<div style="min-width:170px;flex:1 1 170px"><div style="font-size:'
             f'0.72rem;color:var(--app-muted)">{calc.ROTULO_DIMENSAO[dim]}</div>'
@@ -393,7 +410,7 @@ _VALIDADE = {
 def corpo_fundamentos(f: fund.Fundamentos) -> str:
     """DADO (tabela do sistema) separado de INTERPRETAÇÃO (da LLM). Puro."""
     if f.tipo is None:
-        return escape(f.motivo or fund.NAO_DISPONIVEL)
+        return _indisponivel("Fundamentos", f.motivo, fund.NAO_DISPONIVEL)
     sub_t = ('<div style="font-size:0.7rem;font-weight:700;letter-spacing:.05em;'
              'text-transform:uppercase;color:var(--app-subtle);margin-top:8px">')
     cel = 'style="padding:2px 10px 2px 0;vertical-align:top;'
@@ -401,21 +418,23 @@ def corpo_fundamentos(f: fund.Fundamentos) -> str:
     for i in f.indicadores:
         cor = "var(--app-text)" if i.disponivel else "var(--app-subtle)"
         origem = " · ".join(x for x in (i.referencia, i.nota) if x)
+        if origem:
+            detalhe_tecnico(f"{i.rotulo}: {origem}",
+                            codigo="inteligencia.fundamentos_origem")
         linhas += (
             f'<tr><td {cel}color:var(--app-muted)">{escape(i.rotulo)}</td>'
             f'<td {cel}color:{cor};font-weight:600">'
             f'{escape(i.texto(f.moeda))}</td>'
-            f'<td {cel}color:var(--app-subtle);font-size:0.76rem">'
-            f'{escape(origem)}</td></tr>')
-    fontes = "; ".join(f.fontes) or "nenhuma fonte com dado para este ativo"
+            '</tr>')
+    detalhe_tecnico("Fontes: " + ("; ".join(f.fontes)
+                                  or "nenhuma fonte com dado para este ativo"),
+                    codigo="inteligencia.fundamentos_fontes")
     return (
         f'<div>{escape(fund.ROTULO_TIPO[f.tipo])}: indicadores próprios da '
         f'classe ({len(f.disponiveis)} de {len(f.indicadores)} com dado).</div>'
         f'{sub_t}Dado · fornecido pelo sistema</div>'
         '<table style="font-size:0.84rem;border-collapse:collapse;'
         f'margin-top:4px">{linhas}</table>'
-        '<div style="font-size:0.76rem;color:var(--app-subtle);margin-top:4px">'
-        f'Fontes: {escape(fontes)}</div>'
         f'{sub_t}Interpretação</div>'
         '<div style="font-size:0.84rem;color:var(--app-muted)">Cabe à análise '
         'por LLM, usando só o bloco de dados acima; o que estiver como '
@@ -446,29 +465,39 @@ def corpo_valuation(v: val.Valuation) -> str:
     """Valor atual, histórico, pares, faixas e premissas (DADO) separados das
     frases de comparação (INTERPRETAÇÃO). Nunca "barato"/"caro". Puro."""
     if v.tipo is None or not v.linhas:
-        return escape(v.motivo or fund.NAO_DISPONIVEL)
+        return _indisponivel("Valuation", v.motivo, fund.NAO_DISPONIVEL)
     fmt = lambda x, ln: fund.formatar(x, ln.unidade, v.moeda)  # noqa: E731
     linhas, faixas, leituras = "", "", ""
     for ln in v.linhas:
         if not ln.aplicavel:
             linhas += (f'<tr><td {_TD}color:var(--app-muted)">{escape(ln.rotulo)}'
                        f'</td><td {_TD}color:var(--app-subtle)" colspan="4">'
-                       f'Não se aplica: {escape(ln.motivo or "")}</td></tr>')
+                       'Não se aplica a esta classe.</td></tr>')
+            detalhe_tecnico(f"{ln.rotulo}: não se aplica ({ln.motivo or ''})",
+                            codigo="inteligencia.valuation_nao_aplica")
             continue
         h, p = ln.historico, ln.pares
         cor = "var(--app-text)" if ln.atual is not None else "var(--app-subtle)"
-        hist = (f"{fmt(h.media, ln)} / {fmt(h.mediana, ln)} "
-                f"({h.n} obs., {h.inicio}–{h.fim})" if h else fund.NAO_DISPONIVEL)
-        par = (f"{fmt(p.mediana, ln)} ({p.n})" if p else fund.NAO_DISPONIVEL)
+        hist = (f"{fmt(h.media, ln)} / {fmt(h.mediana, ln)}"
+                if h else fund.NAO_DISPONIVEL)
+        par = fmt(p.mediana, ln) if p else fund.NAO_DISPONIVEL
+        if h:
+            detalhe_tecnico(f"{ln.rotulo}: histórico com {h.n} obs., "
+                            f"{h.inicio}–{h.fim}",
+                            codigo="inteligencia.valuation_amostra")
+        if p:
+            detalhe_tecnico(f"{ln.rotulo}: mediana dos pares com n={p.n}",
+                            codigo="inteligencia.valuation_amostra_pares")
         origem = " · ".join(x for x in (ln.referencia, ln.fonte) if x)
+        if origem:
+            detalhe_tecnico(f"{ln.rotulo}: {origem}",
+                            codigo="inteligencia.valuation_origem")
         linhas += (
             f'<tr><td {_TD}color:var(--app-muted)">{escape(ln.rotulo)}</td>'
             f'<td {_TD}color:{cor};font-weight:600">'
             f'{escape(ln.texto_atual(v.moeda))}</td>'
             f'<td {_TD}color:var(--app-text)">{escape(hist)}</td>'
-            f'<td {_TD}color:var(--app-text)">{escape(par)}</td>'
-            f'<td {_TD}color:var(--app-subtle);font-size:0.76rem">'
-            f'{escape(origem)}</td></tr>')
+            f'<td {_TD}color:var(--app-text)">{escape(par)}</td></tr>')
         for fx in ln.faixas:
             faixas += (f"<li>{escape(ln.rotulo)} — {escape(fx.rotulo)}: "
                        f"{escape(fmt(fx.minimo, ln))} a "
@@ -478,17 +507,18 @@ def corpo_valuation(v: val.Valuation) -> str:
                          f"<li>{escape(ln.comparacao_pares)}</li>")
     lista = ('<ul style="margin:2px 0 0 18px;padding:0;font-size:0.82rem;'
              'color:var(--app-muted)">')
+    for x in v.premissas:
+        detalhe_tecnico(f"Premissa de valuation: {x}",
+                        codigo="inteligencia.valuation_premissa")
     return (
         f'<div>{escape(fund.ROTULO_TIPO[v.tipo])}: métricas de valuation que '
         f'fazem sentido para a classe ({len(v.com_dado)} de {len(v.linhas)} '
         'com dado).</div>'
         f'{_SUB_T}Dado · fornecido pelo sistema</div>'
         + _tabela(["Métrica", "Atual", "Histórico: média / mediana",
-                   "Mediana dos pares (n)", "Referência"], linhas)
+                   "Mediana dos pares"], linhas)
         + (f'{_SUB_T}Faixas de referência (observadas, não alvo)</div>'
            f'{lista}{faixas}</ul>' if faixas else "")
-        + f'{_SUB_T}Premissas</div>{lista}'
-        + "".join(f"<li>{escape(x)}</li>" for x in v.premissas) + "</ul>"
         + f'{_SUB_T}Interpretação · comparação, não veredito</div>'
         + (f'{lista}{leituras}</ul>' if leituras
            else _nota("Sem valor atual para comparar."))
@@ -500,7 +530,7 @@ def corpo_pares(c: prs.ComparacaoPares) -> str:
     dos pares | Diferença | Interpretação. Puro."""
     g = c.grupo
     if not g.pares:
-        return escape(c.motivo or g.motivo or fund.NAO_DISPONIVEL)
+        return _indisponivel("Pares", c.motivo or g.motivo, fund.NAO_DISPONIVEL)
     lista = ('<ul style="margin:2px 0 0 18px;padding:0;font-size:0.82rem;'
              'color:var(--app-muted)">')
     pares_li = "".join(
@@ -522,11 +552,12 @@ def corpo_pares(c: prs.ComparacaoPares) -> str:
             f'{escape(ln.texto_diferenca(c.moeda))}</td>'
             f'<td {_TD}color:var(--app-muted);font-size:0.8rem">'
             f'{escape(ln.interpretacao)}</td></tr>')
+    for x in g.criterios + g.relaxamentos:
+        detalhe_tecnico(f"Critério do grupo de pares: {x}",
+                        codigo="inteligencia.pares_criterio")
     return (
         f'<div>{escape(g.descricao or "")}.</div>'
-        f'{_SUB_T}Como o grupo foi escolhido</div>{lista}'
-        + "".join(f"<li>{escape(x)}</li>" for x in g.criterios + g.relaxamentos)
-        + f'</ul>{_SUB_T}Pares</div>{lista}{pares_li}</ul>'
+        f'{_SUB_T}Pares</div>{lista}{pares_li}</ul>'
         f'{_SUB_T}Dado · comparação</div>'
         + _tabela(["Ativo", "Métrica", "Valor", "Mediana dos pares (n)",
                    "Diferença", "Interpretação"], linhas)
@@ -559,10 +590,13 @@ def corpo_noticias(n: inf.Noticias) -> str:
     """Tabela Data | Impacto | Dimensões | Manchete | Fonte, o que o filtro
     descartou e o aviso de que o nível vem da manchete. Puro."""
     if not n.itens:
-        return escape(n.motivo or inf.NAO_DISPONIVEL)
+        return _indisponivel("Notícias", n.motivo, inf.NAO_DISPONIVEL)
     linhas = ""
     for i in n.itens:
         dims = ", ".join(inf.ROTULO_DIMENSAO.get(d, d) for d in i.affected_dimension)
+        if i.motivo:
+            detalhe_tecnico(f"Notícia classificada: {i.motivo}",
+                            codigo="inteligencia.noticia_motivo")
         resumo = (f'<div style="font-size:0.78rem;color:var(--app-subtle)">'
                   f'{escape(i.summary)}</div>' if i.summary else "")
         linhas += (
@@ -570,25 +604,22 @@ def corpo_noticias(n: inf.Noticias) -> str:
             f'{_data(i.date)}</td>'
             f'<td {_TD}">{_nivel(i.impact_level)}</td>'
             f'<td {_TD}color:var(--app-muted);font-size:0.8rem">{escape(dims)}'
-            f'<div style="color:var(--app-subtle)">{escape(i.motivo)}</div></td>'
+            '</td>'
             f'<td {_TD}color:var(--app-text)">{_link(i.headline, i.url)}{resumo}</td>'
             f'<td {_TD}color:var(--app-subtle);font-size:0.78rem">'
             f'{escape(i.source or "—")}</td></tr>')
-    descartes = sum(n.descartadas.values())
-    lista = ('<ul style="margin:2px 0 0 18px;padding:0;font-size:0.8rem;'
-             'color:var(--app-muted)">')
+    for k, v in n.descartadas.items():
+        detalhe_tecnico(f"Filtro de relevância descartou {v}: {k}",
+                        codigo="inteligencia.noticias_descartadas")
+    detalhe_tecnico(f"Acervo até {_data(n.base_ate)}; janela de "
+                    f"{n.janela_dias} dias; fonte: {n.fonte or '—'}",
+                    codigo="inteligencia.noticias_base")
     return (
         f'<div>{escape(inf.resumo_noticias(n))}</div>'
         f'{_SUB_T}Dado · manchetes da fonte</div>'
         + _tabela(["Data", "Impacto", "Dimensões", "Manchete", "Fonte"], linhas)
-        + (f'{_SUB_T}Filtro de relevância · {descartes} descartada(s)</div>'
-           f'{lista}' + "".join(f"<li>{escape(k)}: {v}</li>"
-                               for k, v in n.descartadas.items()) + "</ul>"
-           if descartes else "")
         + _nota("Impacto e dimensões saem de regras sobre a manchete, não da "
-                "leitura da matéria. Acervo até "
-                f"{_data(n.base_ate)}; janela de {n.janela_dias} dias. "
-                f"Fonte: {n.fonte or '—'}."))
+                "leitura da matéria."))
 
 
 def corpo_relatorios(r: inf.Relatorios) -> str:
@@ -597,11 +628,13 @@ def corpo_relatorios(r: inf.Relatorios) -> str:
     só o aviso. Puro."""
     if not r.trechos:
         if not r.documentos:
-            return escape(r.motivo or inf.NAO_DISPONIVEL)
+            return _indisponivel("Relatórios", r.motivo, inf.NAO_DISPONIVEL)
+        aviso_lacuna("Relatórios: o texto dos documentos ainda não está no "
+                     f"acervo (base até {_data(r.base_ate)})",
+                     codigo="tela.inteligencia.relatorios_sem_texto")
         return (f'<div>{escape(inf.resumo_relatorios(r))}</div>'
-                + _nota("O texto destes documentos ainda não está no acervo; "
-                        "quando estiver, os fatos principais aparecem aqui, "
-                        "por tema. Base até " + _data(r.base_ate) + "."))
+                + _nota("Os fatos principais aparecem aqui, por tema, quando "
+                        "o texto dos documentos estiver disponível."))
     blocos, atual = "", None
     for t in r.trechos:
         if t.tema != atual:
@@ -616,21 +649,25 @@ def corpo_relatorios(r: inf.Relatorios) -> str:
             f'{_data(t.data)} · {escape(dr.titulo_curto(t.titulo, t.tipo))}'
             '</div></li>')
     blocos += "</ul>"
+    detalhe_tecnico("Frases literais dos documentos oficiais (CVM), escolhidas "
+                    "por regra e agrupadas por tema; base até "
+                    f"{_data(r.base_ate)}",
+                    codigo="inteligencia.relatorios_base")
     return (f'<div>{escape(inf.resumo_relatorios(r))}</div>' + blocos
-            + _nota("Frases literais dos documentos oficiais (CVM), escolhidas "
-                    "por regra por trazerem fato e número e agrupadas por "
-                    "tema; o mesmo fato publicado em dois documentos aparece "
-                    "uma vez. O que isso muda na tese fica para a análise. "
-                    f"Base até {_data(r.base_ate)}."))
+            + _nota("Frases literais dos documentos oficiais (CVM). O que "
+                    "isso muda na tese fica para a análise."))
 
 
 def corpo_eventos(e: inf.Eventos) -> str:
     """Linha do tempo Evento | Data | Relevância | Possível impacto, com a
     natureza da data e a fonte; e os tipos sem fonte de data. Puro."""
     sem = ", ".join(inf.TIPOS_EVENTO[t][0] for t in e.sem_dado)
-    rodape = _nota(f"Sem fonte de data para: {sem}.") if sem else ""
+    if sem:
+        aviso_lacuna(f"Eventos sem fonte de data: {sem}",
+                     codigo="tela.inteligencia.eventos_sem_data")
+    rodape = ""
     if not e.itens:
-        return escape(e.motivo or inf.NAO_DISPONIVEL) + rodape
+        return _indisponivel("Eventos", e.motivo, inf.NAO_DISPONIVEL)
     linhas = "".join(
         f'<tr><td {_TD}color:var(--app-text);font-weight:600">{escape(x.rotulo)}'
         f'<div style="font-weight:400;font-size:0.78rem;color:var(--app-muted)">'
@@ -661,9 +698,10 @@ def cartoes_analise(a: m.AnaliseAtivo) -> list[str]:
                      for f in papeis.em_linguagem_natural(a.papeis))
     origem = ""
     if a.papeis:
-        origem = ('<div style="color:var(--app-muted);font-size:0.82rem">'
-                  'Como foi identificado: '
-                  f'{escape("; ".join(p.motivo for p in a.papeis))}.</div>')
+        detalhe_tecnico("Como o papel foi identificado: "
+                        + "; ".join(p.motivo for p in a.papeis),
+                        codigo="inteligencia.papel_identificacao",
+                        entidade=i.ticker)
     cartoes.append(_cartao(2, "Papel na carteira", (
         frases + origem
         + '<div style="margin-top:10px;font-weight:700">Tese do ativo</div>'
@@ -772,6 +810,7 @@ def cartao_questoes(a: m.AnaliseAtivo) -> str:
 
 
 def _cartao_ref(titulo: str, corpo: str) -> str:
+    detalhe_tecnico(refm.AVISO, codigo="inteligencia.referencia_modelo_aviso")
     return (
         '<div style="background:var(--app-surface);border:1px dashed '
         'var(--app-border);border-radius:10px;padding:12px 16px;'
@@ -779,9 +818,7 @@ def _cartao_ref(titulo: str, corpo: str) -> str:
         'letter-spacing:.05em;text-transform:uppercase;'
         f'color:var(--app-subtle)">{escape(titulo)}</div>'
         '<div style="font-size:0.9rem;color:var(--app-text);margin-top:6px;'
-        f'line-height:1.5">{corpo}</div>'
-        '<div style="font-size:0.78rem;color:var(--app-muted);margin-top:8px">'
-        f'{escape(refm.AVISO)}</div></div>')
+        f'line-height:1.5">{corpo}</div></div>')
 
 
 def cartao_referencia_ativo(ref: refm.ReferenciaModelo, ticker: str) -> str:
@@ -789,7 +826,8 @@ def cartao_referencia_ativo(ref: refm.ReferenciaModelo, ticker: str) -> str:
     Fora das 13 etapas: é comparação, não etapa da decisão. Puro."""
     titulo = "Referência · carteira recomendada do Portfólio Global"
     if not ref.disponivel:
-        return _cartao_ref(titulo, escape(ref.motivo))
+        return _cartao_ref(titulo, _indisponivel(
+            "Referência do modelo", ref.motivo, "Não disponível."))
     linha = ref.linha(ticker)
     if linha is None:
         return _cartao_ref(titulo, escape(
@@ -799,9 +837,9 @@ def cartao_referencia_ativo(ref: refm.ReferenciaModelo, ticker: str) -> str:
              + _grade([("Peso no modelo", _pct(linha.peso_modelo)),
                        ("Peso real", _pct(linha.peso_real)),
                        ("Real − modelo", _pp(linha.diferenca))])
-             + '<div style="font-size:0.82rem;color:var(--app-muted);'
-             f'margin-top:6px">Base dos pesos: '
-             f'{escape(refm.ROTULO_BASE[ref.base])}.</div>')
+             )
+    detalhe_tecnico(f"Base dos pesos: {refm.ROTULO_BASE[ref.base]}",
+                    codigo="inteligencia.referencia_base_pesos")
     return _cartao_ref(titulo, corpo)
 
 
@@ -810,7 +848,8 @@ def cartao_referencia_carteira(ref: refm.ReferenciaModelo) -> str:
     carteira não tem. Puro."""
     titulo = "Referência · carteira recomendada do Portfólio Global"
     if not ref.disponivel:
-        return _cartao_ref(titulo, escape(ref.motivo))
+        return _cartao_ref(titulo, _indisponivel(
+            "Referência do modelo", ref.motivo, "Não disponível."))
     td = '<td style="padding:2px 10px 2px 0">'
     linhas = "".join(
         f"<tr>{td}{escape(c.rotulo)}</td>{td}{_pct(c.alvo)}</td>"
@@ -832,9 +871,8 @@ def cartao_referencia_carteira(ref: refm.ReferenciaModelo) -> str:
 
 def _render_liberada(liberacao: portao.Liberacao, carteira: dict,
                      proventos: dict | None = None) -> None:
-    versao = liberacao.politica.version
-    st.caption("A análise inteligente dos seus ativos já está disponível. "
-               f"Premissa: estratégia versão {versao}.")
+    detalhe_tecnico(f"Premissa: estratégia versão {liberacao.politica.version}",
+                    codigo="inteligencia.versao_estrategia")
     _render_painel(liberacao, carteira, proventos)
     _render_minha_estrategia()
 

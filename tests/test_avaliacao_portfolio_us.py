@@ -287,7 +287,7 @@ v.render(show_header=True)
     assert "Cenário Macroeconômico" in markdown
     assert "Etapa 3 de 3" in markdown
     # Sem provedor configurado, a tela avisa e para antes do painel de LLM.
-    assert any("provedor LLM" in w.value for w in app.warning)
+    assert any("não está disponível" in w.value for w in app.warning)
 
 
 def test_tela_bloqueia_carteira_com_metodologia_antiga():

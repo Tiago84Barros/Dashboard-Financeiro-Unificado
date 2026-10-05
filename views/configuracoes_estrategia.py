@@ -24,6 +24,7 @@ from core.estrategia import politica as pol
 from core.estrategia import repositorio as repo
 from core.user_context import user_cache_data
 from core.utils import escapar_cifrao
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 
 _MODO = "cfg_estrategia_modo"
 _FLASH = "cfg_estrategia_flash"
@@ -45,12 +46,14 @@ def render() -> None:
     try:
         estado = repo.carregar()
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Não foi possível ler a estratégia: {exc}")
+        falha_de_acao("Não foi possível ler a estratégia.", exc)
         return
     if estado.tabela_ausente:
-        st.warning(
+        st.info("A configuração da estratégia não está disponível no momento.")
+        aviso_lacuna(
             "A tabela da estratégia ainda não existe neste banco. Rode a "
-            f"migration 076 (`{repo.MIGRATION}`) no Supabase.")
+            f"migration 076 (`{repo.MIGRATION}`) no Supabase.",
+            codigo="tela.estrategia.tabela_ausente")
         return
 
     _render_situacao(estado)
@@ -209,12 +212,17 @@ def _render_rascunho(estado: repo.Estado) -> None:
 def _render_entrevista(rascunho: repo.Registro) -> None:
     disponivel = entrevista.llm_disponivel()
     if disponivel:
-        st.caption("Provedores de IA: "
-                   + ", ".join(entrevista.provedores_disponiveis())
-                   + ". A IA registra só o que você disser; nada é suposto.")
+        st.caption("A IA registra só o que você disser; nada é suposto.")
+        detalhe_tecnico(
+            "Provedores de IA da entrevista: "
+            + ", ".join(entrevista.provedores_disponiveis()),
+            codigo="estrategia.provedores_ia")
     else:
-        st.info("Nenhum provedor de IA configurado. Você ainda pode preencher "
-                f"tudo em **{_MODO_FORM}**.")
+        st.info("A entrevista com a IA não está disponível no momento. Você "
+                f"ainda pode preencher tudo em **{_MODO_FORM}**.")
+        aviso_lacuna("Nenhum provedor de IA configurado para a entrevista "
+                     "da estratégia.",
+                     codigo="tela.estrategia.sem_provedor_ia")
 
     perfil = _perfil_financeiro()
     with st.expander("📊 O que a IA vê das suas finanças"):
@@ -260,7 +268,7 @@ def _render_entrevista(rascunho: repo.Registro) -> None:
     try:
         repo.salvar_rascunho(rascunho.id, etapa.politica, historico)
     except Exception as exc:  # noqa: BLE001
-        st.error(f"A resposta não foi gravada: {exc}")
+        falha_de_acao("A resposta não foi gravada.", exc)
         return
     if etapa.aviso:
         _flash("warning", etapa.aviso)
@@ -369,7 +377,7 @@ def _render_formulario(rascunho: repo.Registro) -> None:
     try:
         repo.salvar_rascunho(rascunho.id, nova, rascunho.entrevista)
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Não foi possível salvar: {exc}")
+        falha_de_acao("Não foi possível salvar.", exc)
         return
     _flash("success", f"{len(mudancas) + len(remocoes)} resposta(s) atualizada(s).")
     st.rerun()
@@ -466,10 +474,12 @@ def iniciar() -> None:
     try:
         repo.iniciar()
     except repo.TabelaAusente:
-        st.error(f"Rode a migration 076 (`{repo.MIGRATION}`) no Supabase.")
+        st.error("Não foi possível iniciar a estratégia agora.")
+        aviso_lacuna(f"Rode a migration 076 (`{repo.MIGRATION}`) no Supabase.",
+                     codigo="tela.estrategia.tabela_ausente")
         return
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Não foi possível iniciar: {exc}")
+        falha_de_acao("Não foi possível iniciar.", exc)
         return
     st.session_state[_MODO] = _MODO_CHAT
     st.rerun()

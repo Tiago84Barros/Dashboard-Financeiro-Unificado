@@ -46,7 +46,9 @@ def test_tab_analise_tem_legenda_de_fonte_no_grafico_de_preco():
     idx_hdr = corpo.index('_sec_hdr("📉 Preço da Ação")')
     idx_chart = corpo.index("st.plotly_chart(fig_preco")
     trecho = corpo[idx_hdr:idx_chart]
-    assert "st.caption(" in trecho
+    # a fonte do preço é detalhe técnico: vai para o log, não para a tela
+    assert "detalhe_tecnico(" in trecho
+    assert "st.caption(" not in trecho
 
 
 # ── Nível comportamental: renderização real via AppTest ────────────────────
@@ -131,8 +133,12 @@ view._dividendos_anuais_market_first = lambda tk: (pd.DataFrame(), "yfinance")
 db.load_multiplos = lambda *a, **k: pd.Series(dtype=object)
 """)
 
-    assert "Falha de rede" in texto or "falha de rede" in texto.lower()
-    assert "Cotação (yfinance)" not in texto or "rede" in texto.lower()
+    # o motivo técnico não aparece na tela; vai para o log de lacunas
+    assert "falha de rede" not in texto.lower()
+    assert "yfinance" not in texto.lower()
+    assert "Cotação indisponível" in texto
+    corpo = inspect.getsource(b3._tab_analise)
+    assert 'codigo="tela.b3.cotacao_falha_rede"' in corpo
 
 
 def test_ui_usa_fonte_market_first_para_dividendos_quando_disponivel():

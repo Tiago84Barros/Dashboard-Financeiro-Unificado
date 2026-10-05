@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+from design.lacunas import detalhe_tecnico
+
 TITULO = "🧭 Inteligência dos Ativos — vetos e substituições"
 TITULO_SALVO = "🧭 Inteligência dos Ativos na criação desta carteira"
 
@@ -44,13 +46,18 @@ def render(log: dict, *, como_substitui: str, grupo: str = "segmento") -> None:
         st.markdown(f"⬜ Vaga de **{s['sai']}** ({s['segmento']}) ficou "
                     f"vazia: nenhum substituto do mesmo {grupo} passou.")
     for s in log.get("indisponiveis", ()):
+        detalhe_tecnico(f"Avaliação indisponível: {s['erro']}",
+                        codigo="inteligencia.portao_avaliacao_indisponivel",
+                        entidade=str(s["tk"]))
         st.markdown(f"⚠️ **{s['tk']}** ({s['segmento']}): avaliação "
-                    f"indisponível ({s['erro']}); entrou sem o portão.")
+                    "indisponível; entrou sem o portão.")
     for v in log.get("persistentes", ()):
+        detalhe_tecnico(f"Veto persistente: {v['motivo']}",
+                        codigo="inteligencia.portao_veto_persistente",
+                        entidade=str(v["tk"]))
         st.warning(f"**{v['tk']}** ({v['segmento']}) continua na carteira com "
-                   f"limite {v['limite']} ({v['motivo']}): o otimizador não "
-                   "fechou a carteira sem ele no número máximo de tentativas. "
-                   "Não aporte nele sem rever o alerta.")
+                   f"limite {v['limite']}: o otimizador não fechou a carteira "
+                   "sem ele. Não aporte nele sem rever o alerta.")
 
 
 def render_salvo(log: dict | None, *, tela: str,

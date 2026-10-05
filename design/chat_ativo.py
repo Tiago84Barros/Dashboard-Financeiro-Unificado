@@ -21,9 +21,9 @@ from core.chat_memory import (
 from core.inteligencia_ativos import veredito
 from core.llm_ativo import chat_com_ativo
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
-from core.llm_falha import mensagem_falha_llm
 from core.llm_grounding import aviso_ancoragem
 from core.utils import escapar_cifrao
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 
 _PROVEDOR_LABEL = {"openai": "OpenAI", "gemini": "Gemini", "openrouter": "OpenRouter"}
 
@@ -99,14 +99,17 @@ def render_chat_ativo(
     ), unsafe_allow_html=True)
 
     if not llm_disponivel():
-        st.info("Nenhum provedor LLM configurado. Adicione OPENAI_API_KEY ou "
-                "GEMINI_API_KEY para conversar sobre o ativo.")
+        st.info("Esta conversa não está disponível no momento.")
+        aviso_lacuna("Nenhum provedor LLM configurado para o chat do ativo",
+                     codigo="tela.inteligencia.chat_ativo_sem_provedor",
+                     entidade=tk)
         return
 
     provedores = provedores_disponiveis()
     if provedores:
-        st.caption("Provedor disponível: " + ", ".join(
-            _PROVEDOR_LABEL.get(p, p) for p in provedores))
+        detalhe_tecnico("Provedor disponível: " + ", ".join(
+            _PROVEDOR_LABEL.get(p, p) for p in provedores),
+            codigo="inteligencia.chat_provedor")
 
     hist_key = f"chat_ativo_{mercado}_history"
     sig_key = f"chat_ativo_{mercado}_signature"
@@ -175,7 +178,11 @@ def render_chat_ativo(
                     historico[:-1], pergunta, avaliacoes)
                 aviso = aviso_ancoragem(resposta, contexto, pergunta)
             except Exception as exc:  # provedor fora do ar, timeout, dado ausente
-                resposta = mensagem_falha_llm(exc, f"chat do ativo {tk}")
+                resposta = None
+                falha_de_acao("Não foi possível responder agora. Tente de novo em instantes.", exc)
+        if resposta is None:
+            historico.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(resposta))
         if aviso:
             st.caption(aviso)

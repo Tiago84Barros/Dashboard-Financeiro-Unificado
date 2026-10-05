@@ -102,7 +102,11 @@ def test_no_history_and_no_provider_do_not_remove_details():
     # A lacuna de correlacao sai da tela desde 05/10/2026 (vai para
     # Configuracoes -> Restricoes); o resto do detalhe continua.
     assert not any("Não há pelo menos dois FIIs" in e.value for e in app.info)
-    assert any("Nenhum provedor LLM" in e.value for e in app.info)
+    # A falta de provedor LLM também sai da tela (vai para o registro); fica
+    # só a frase neutra, sem nome de variável de ambiente.
+    assert not any("Nenhum provedor LLM" in e.value for e in app.info)
+    assert not any("OPENAI_API_KEY" in e.value for e in app.info)
+    assert any("O chat não está disponível" in e.value for e in app.info)
     assert any("Por que estes FIIs avançaram" in e.value for e in app.markdown)
 
 

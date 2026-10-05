@@ -313,5 +313,5 @@ def test_corpo_fundamentos_so_com_tokens():
     html = tela.corpo_fundamentos(fund)
     assert "Dado · fornecido pelo sistema" in html and "Interpretação" in html
     assert "0,90x" in html and html.count("Dado não disponível.") >= 13
-    assert "&lt;b&gt;" in html  # escapado
+    assert "<b>" not in html  # a nota de origem sai da tela (vai ao log)
     assert "#" not in html.replace("&#", "")

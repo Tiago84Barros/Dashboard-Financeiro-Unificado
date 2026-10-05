@@ -17,7 +17,6 @@ Dados: core/investimentos + core/proventos
 import html as _html
 import logging
 import re
-from datetime import datetime as _datetime
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -53,6 +52,7 @@ from core.tesouro_analysis import (
 from core.user_context import user_cache_data
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, container_pagina
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.tema_canvas import escala_correlacao
 from views.investimentos_atribuicao import render_atribuicao_carteira
 from views.investimentos_risco import render_risco_carteira
@@ -349,17 +349,14 @@ def _estado_carteira(carteira: dict, n_efetivo: float, pct_ext: float) -> list:
 
     # Resultado em BRL só é interpretado quando todos os custos cambiais são conhecidos.
     if not carteira.get("rentabilidade_total_disponivel", True):
-        analise.append({
-            "tipo": "info",
-            "titulo": "DADO INSUFICIENTE",
-            "texto": (
-                "Retorno consolidado em BRL indisponível: falta o câmbio histórico "
-                "de aquisição de " + (
-                    ", ".join(carteira.get("posicoes_sem_cambio_historico") or [])
-                    or "ao menos uma posição internacional"
-                ) + "."
-            ),
-        })
+        aviso_lacuna(
+            "Retorno consolidado em BRL indisponível: falta o câmbio histórico "
+            "de aquisição de " + (
+                ", ".join(carteira.get("posicoes_sem_cambio_historico") or [])
+                or "ao menos uma posição internacional"
+            ) + ".",
+            codigo="tela.investimentos.retorno_brl_sem_cambio_historico",
+        )
     elif rentab > 0:
         analise.append({"tipo": "positivo",
                         "titulo": "POSITIVO",
@@ -1698,7 +1695,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
             "Resultado de Mercado",
             f"{'+' if resultado >= 0 else ''}{fmt_moeda(resultado)}",
             (f"Mercado/custo: {'+' if rentab_pct >= 0 else ''}{rentab_pct:.2f}% · sem proventos"
-             if rentab_total_ok else "Estimado; retorno BRL indisponível por falta de câmbio histórico"),
+             if rentab_total_ok else "Estimado; retorno em BRL indisponível"),
             cor_res if rentab_total_ok else _COR_NEUTRO,
         ), unsafe_allow_html=True)
 
@@ -1755,13 +1752,15 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                             width="stretch",
                             config={"displayModeBar": False},
                             key="dash_evolucao_snapshot")
-            st.caption("Evolucao baseada nos snapshots importados do App2.")
+            detalhe_tecnico("Evolução baseada nos snapshots importados do App2.",
+                            codigo="investimentos.evolucao_patrimonial.fonte_snapshots")
         elif cashflow:
             st.plotly_chart(_fig_evolucao(cashflow, total),
                             width="stretch",
                             config={"displayModeBar": False},
                             key="dash_evolucao")
-            st.caption("Evolução estimada com base no fluxo de caixa mensal acumulado.")
+            detalhe_tecnico("Evolução estimada com base no fluxo de caixa mensal acumulado.",
+                            codigo="investimentos.evolucao_patrimonial.fonte_fluxo_caixa")
         else:
             st.caption("Sem dados de fluxo de caixa.")
 
@@ -1870,9 +1869,10 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                                "Índice S&P 500 (pts)", _COR_POSITIVO),
                     unsafe_allow_html=True)
 
-    st.caption(
-        "Fontes: BCB/SGS (SELIC, IPCA, CDI; PTAX como reserva do câmbio) · Yahoo Finance (câmbio, bolsas). "
-        "Fonte fora do ar aparece como indisponível — nunca como valor fixo."
+    detalhe_tecnico(
+        "Fontes: BCB/SGS (SELIC, IPCA, CDI; PTAX como reserva do câmbio) · Yahoo Finance "
+        "(câmbio, bolsas). Fonte fora do ar aparece como indisponível, nunca como valor fixo.",
+        codigo="investimentos.macro.fontes",
     )
 
     # ── Dependências Macro do Portfólio ────────────────────────────────────────
@@ -2084,12 +2084,13 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                 _, _inc = _legenda_par(_r)
                 n_incertos += int(_inc)
             if n_incertos:
-                st.caption(
+                detalhe_tecnico(
                     f"{n_incertos} de {len(pares)} pares têm IC 95% cruzando "
                     "zero: a correlação medida não é distinguível de "
                     "independência, e a proteção que ela sugere pode não "
                     "existir. Janela curta infla |correlação|, então o par de "
-                    "menos histórico tende a vencer o destaque."
+                    "menos histórico tende a vencer o destaque.",
+                    codigo="investimentos.correlacao.pares_ic_cruza_zero",
                 )
 
         st.plotly_chart(
@@ -2132,10 +2133,11 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                 )
         pulados = corr_data.get("skipped", [])
         if pulados:
-            st.caption(
-                "Fora da matriz: " + ", ".join(pulados[:12]) +
+            aviso_lacuna(
+                "Fora da matriz de correlação: " + ", ".join(pulados[:12]) +
                 ("..." if len(pulados) > 12 else "") +
-                ". Normalmente são Tesouro, renda fixa ou ativos sem série de preços comparável."
+                ". Normalmente são Tesouro, renda fixa ou ativos sem série de preços comparável.",
+                codigo="tela.investimentos.correlacao_fora_da_matriz",
             )
         obs_validas = [int(v) for v in pares.get("Observações", []) if pd.notna(v)]
         faixa_obs = (
@@ -2159,6 +2161,9 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         if medido:
             janela_txt += (f" ({medido[0]:%m/%Y} a {medido[1]:%m/%Y})")
         st.caption(
+            "Correlação de Pearson sobre retornos mensais; " + janela_txt + "."
+        )
+        detalhe_tecnico(
             f"Correlação de Pearson sobre retornos mensais ({corr_data.get('return_kind', 'preço')}); "
             f"{janela_txt}; "
             f"fonte: {corr_data.get('source', 'não identificada')}; moeda-base: "
@@ -2167,13 +2172,20 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
             + (f"; cobertura: {cobertura_peso:.1f}% do valor da carteira" if cobertura_peso is not None else "")
             + (f"; convertidos por {corr_data.get('fx_source')}: {', '.join(convertidos)}" if convertidos else "")
             + (f"; sem câmbio histórico e fora da matriz: {', '.join(sem_cambio)}" if sem_cambio else "")
-            + ". Pares insuficientes não são exibidos; os intervalos de 95% são aproximações de Fisher."
+            + ". Pares insuficientes não são exibidos; os intervalos de 95% são aproximações de Fisher.",
+            codigo="investimentos.correlacao.metodologia",
         )
+        if sem_cambio:
+            aviso_lacuna("Sem câmbio histórico e fora da matriz de correlação: "
+                         + ", ".join(sem_cambio) + ".",
+                         codigo="tela.investimentos.correlacao_sem_cambio")
     else:
-        st.caption(
+        aviso_lacuna(
             "Não há séries suficientes para montar a matriz de correlação. "
-            "Ativos de renda fixa e Tesouro entram na diversificação por classe, mas não possuem preço diário comparável."
+            "Ativos de renda fixa e Tesouro entram na diversificação por classe, mas não possuem preço diário comparável.",
+            codigo="tela.investimentos.correlacao_sem_series",
         )
+        st.caption("Esta análise não está disponível no momento.")
 
 def _fmt_pct_aa(v) -> str:
     if v is None:
@@ -2226,10 +2238,15 @@ def _bloco_ganho_parcelas(g: dict | None) -> None:
         ), unsafe_allow_html=True)
     st.caption(
         "Três parcelas, sem soma: o não realizado é da carteira de hoje, o realizado "
-        "vem do extrato de negociação da B3 (só renda variável) e os proventos são "
-        "pagamentos em dinheiro. Somá-las misturava populações e contradizia a TIR. "
-        "Renda fixa, fundos e FIP rendem dentro do valor de mercado e, quando a foto "
-        "da corretora não traz custo real, aparecem como “sem marcação” em vez de 0,0%."
+        "vem das vendas já feitas (só renda variável) e os proventos são "
+        "pagamentos em dinheiro."
+    )
+    detalhe_tecnico(
+        "O realizado vem do extrato de negociação da B3. Somar as parcelas misturava "
+        "populações e contradizia a TIR. Renda fixa, fundos e FIP rendem dentro do valor "
+        "de mercado e, quando a foto da corretora não traz custo real, aparecem como "
+        "'sem marcação' em vez de 0,0%.",
+        codigo="investimentos.ganho_total.metodologia",
     )
 
 
@@ -2298,11 +2315,14 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                 ]),
                 hide_index=True, width="stretch", height=380,
             )
-        st.caption(
+        detalhe_tecnico(
             "O histórico vem dos relatórios consolidados da Área do Investidor da B3, "
             "ações emprestadas incluídas, como na Evolução Patrimonial da B3. "
             "Cada ponto soma também o exterior (Nomad), que a B3 não mostra: quantidade "
-            "pelas notas de corretagem até a data, preço e dólar do fechamento da data. "
+            "pelas notas de corretagem até a data, preço e dólar do fechamento da data.",
+            codigo="investimentos.historico.procedencia",
+        )
+        st.caption(
             "Crescimento anual = taxa composta que leva o valor de mercado da primeira "
             "foto ao de hoje. Inclui os aportes, então não é rentabilidade: mede quanto "
             "o patrimônio cresceu, não quanto o dinheiro rendeu. Proventos = taxa composta "
@@ -2310,20 +2330,25 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
             "e o primeiro ano, se não começou em janeiro), também puxada por aportes."
         )
         if evolucao.get("exterior_historico_ok") is False:
-            st.warning("Não foi possível recompor o exterior (Nomad) nos meses passados; "
-                       "só o ponto de hoje o inclui.")
+            aviso_lacuna("Não foi possível recompor o exterior (Nomad) nos meses passados; "
+                         "só o ponto de hoje o inclui.",
+                         codigo="tela.investimentos.exterior_historico_nao_recomposto")
+            st.caption("O exterior só está incluído no ponto de hoje.")
         sem_preco = [f"{s['label']} ({', '.join(s['exterior_sem_preco'])})"
                      for s in snapshots if s.get("exterior_sem_preco")]
         if sem_preco:
-            st.caption("Exterior sem cotação na data, fora da soma: " + "; ".join(sem_preco) + ".")
+            aviso_lacuna("Exterior sem cotação na data, fora da soma: " + "; ".join(sem_preco) + ".",
+                         codigo="tela.investimentos.exterior_sem_cotacao_na_data")
+            st.caption("Em algumas datas o exterior ficou fora da soma.")
         _editor_posicao_anterior(realizado)
         sem_custo = [s["label"] for s in snapshots if s.get("valor_investido") is None]
         if sem_custo:
-            st.caption(
+            aviso_lacuna(
                 f"Valor Investido sem linha em {len(sem_custo)} foto(s) "
                 f"({sem_custo[0]} a {sem_custo[-1]}): o relatório da corretora não "
                 "trouxe o custo de todas as posições, e uma soma parcial pareceria "
-                "custo menor que o real."
+                "custo menor que o real.",
+                codigo="tela.investimentos.valor_investido_sem_custo_em_fotos",
             )
     else:
         st.info("Sem dados históricos de transações para exibir.", icon="📈")
@@ -2439,8 +2464,10 @@ def _proventos_por_ativo(proventos: dict, carteira: dict | None = None) -> None:
              "proventos, mas foram vendidos.",
     )
     if situacao != "Todos" and not em_carteira:
-        st.warning("Carteira atual indisponível — não dá para separar quem está "
-                   "e quem saiu. Mostrando todos os ativos.", icon="⚠️")
+        aviso_lacuna("Carteira atual indisponível: não dá para separar quem está "
+                     "e quem saiu.",
+                     codigo="tela.investimentos.proventos_sem_carteira_atual")
+        st.caption("Mostrando todos os ativos.")
         situacao = "Todos"
     opcoes = filtrar_por_situacao(base["ordem"], em_carteira, situacao)
     if not opcoes:
@@ -2800,10 +2827,12 @@ def _editor_preco_medio_manual(posicoes: list[dict]) -> None:
         # existisse. Sem isso a pessoa digita no escuro.
         fonte_atual = pos_sel.get("custo_fonte", "")
         if fonte_atual and fonte_atual != "informado_pelo_usuario":
-            st.caption(
-                f"Hoje este ativo usa **{_ROTULO_CUSTO_FONTE.get(fonte_atual, fonte_atual)}** "
-                f"— preço médio de {fmt_moeda(pos_sel.get('preco_medio', 0))}."
+            detalhe_tecnico(
+                f"Este ativo usa {_ROTULO_CUSTO_FONTE.get(fonte_atual, fonte_atual)} "
+                "como fonte do preço médio.",
+                codigo="investimentos.preco_medio.fonte_atual", entidade=tk,
             )
+            st.caption(f"Preço médio atual deste ativo: {fmt_moeda(pos_sel.get('preco_medio', 0))}.")
 
         b1, b2 = st.columns([1, 1], gap="small")
         with b1:
@@ -2812,7 +2841,7 @@ def _editor_preco_medio_manual(posicoes: list[dict]) -> None:
                 try:
                     salvar(uid, tk, valor, nota)
                 except Exception as exc:  # noqa: BLE001
-                    st.error(f"Não foi possível salvar: {exc}")
+                    falha_de_acao("Não foi possível salvar.", exc)
                 else:
                     st.cache_data.clear()
                     st.success(f"{tk}: preço médio informado por você gravado.")
@@ -2863,10 +2892,15 @@ def _editor_posicao_anterior(realizado: dict | None) -> None:
 
     total = sum(d["valor"] for d in pendentes.values())
     if pendentes:
+        aviso_lacuna(
+            "Vendas de ativos comprados antes do primeiro extrato da B3 (nov/2019) "
+            "ficaram fora do lucro de vendas: sem o custo de compra, o ganho delas "
+            "não é conhecido.",
+            codigo="tela.investimentos.vendas_sem_custo_pre_extrato",
+        )
         st.caption(
-            f"{fmt_moeda(total)} em vendas de ativos comprados antes do primeiro "
-            "extrato da B3 (nov/2019) ficaram fora do lucro de vendas: sem o custo "
-            "de compra, o ganho delas não é conhecido. Informe abaixo."
+            f"{fmt_moeda(total)} em vendas sem custo de compra conhecido ficaram fora "
+            "do lucro de vendas. Informe abaixo."
         )
 
     titulo = "🗂️ Posição anterior ao extrato da B3"
@@ -2939,7 +2973,7 @@ def _editor_posicao_anterior(realizado: dict | None) -> None:
                 try:
                     salvar(uid, tk, qtd, custo, nota)
                 except Exception as exc:  # noqa: BLE001
-                    st.error(f"Não foi possível salvar: {exc}")
+                    falha_de_acao("Não foi possível salvar.", exc)
                 else:
                     st.cache_data.clear()
                     st.success(f"{tk}: posição anterior ao extrato gravada.")
@@ -2985,11 +3019,12 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     if not carteira["cotacoes_disponiveis"]:
-        st.info(
-            "**Cotações não disponíveis** — acesse **Configurações > Atualização de Dados** "
-            "para baixar cotações via yfinance.",
-            icon="📊",
+        aviso_lacuna(
+            "Cotações não disponíveis: é preciso baixar cotações em Configurações > "
+            "Atualização de Dados (yfinance).",
+            codigo="tela.investimentos.sem_cotacoes",
         )
+        st.info("**Cotações não disponíveis no momento.**", icon="📊")
 
     # ── KPIs resumo ──────────────────────────────────────────────────────────
     dif_total = carteira.get("diferenca_reais", round(carteira["total_mercado"] - carteira["total_investido"], 2))
@@ -2999,7 +3034,10 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
     n_live    = carteira.get("n_cotacoes_live", 0)
     n_total   = carteira.get("num_ativos", 0)
     cotacao_sub = (f"{n_live}/{n_total} cotações ao vivo" if n_live else
-                   "Cotações do snapshot XP")
+                   "Cotações da última foto")
+    if not n_live:
+        detalhe_tecnico("Sem cotações ao vivo: valores pelas cotações do snapshot XP.",
+                        codigo="investimentos.carteira.cotacoes_snapshot")
 
     c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
@@ -3025,7 +3063,9 @@ def _tab_carteira(carteira: dict, proventos: dict) -> None:
                     unsafe_allow_html=True)
 
     if not posicoes:
-        st.info("Nenhuma posição encontrada. Execute o ETL de posições.", icon="💼")
+        detalhe_tecnico("Nenhuma posição encontrada: executar o ETL de posições.",
+                        codigo="investimentos.carteira.sem_posicoes")
+        st.info("Nenhuma posição encontrada.", icon="💼")
         return
 
     from design.portfolio_valuations import render_portfolio_valuations
@@ -3149,7 +3189,7 @@ def _stock_card_html(pos: dict, fd: dict, price_info: dict,
     if pm:
         rows += R("Preço médio", _f_brs(pm))
 
-    rows += S("Valuation  (Fundamentus)")
+    rows += S("Valuation")
     if pl:
         rows += R("P/L", f"{pl:.1f}x",
                   "fund-val-warn" if pl > T["stock_pl_alto"] else
@@ -3169,7 +3209,7 @@ def _stock_card_html(pos: dict, fd: dict, price_info: dict,
         rows += R("Dividend Yield", f"{dy:.2f}%",
                   "fund-val-warn" if dy > T["stock_dy_alto"] else "fund-val-pos")
 
-    rows += S("Rentabilidade  (Fundamentus)")
+    rows += S("Rentabilidade")
     if roe:
         rows += R("ROE", f"{roe:.1f}%", _f_color_pct(roe - T["stock_roe_baixo"]))
     if roic:
@@ -3182,7 +3222,7 @@ def _stock_card_html(pos: dict, fd: dict, price_info: dict,
     if cresc_r is not None:
         rows += R("Cresc. Receita 5a", f"{cresc_r:+.1f}%", _f_color_pct(cresc_r))
 
-    rows += S("Endividamento e Liquidez  (Fundamentus)")
+    rows += S("Endividamento e Liquidez")
     if div_p:
         rows += R("Dív.Bruta/Patrim.", f"{div_p:.2f}x",
                   "fund-val-neg" if div_p > T["stock_divida_alta"] else "fund-val")
@@ -3195,14 +3235,14 @@ def _stock_card_html(pos: dict, fd: dict, price_info: dict,
     if patrim:
         rows += R("Patrimônio Líq.", _f_big(patrim))
 
-    rows += S("Demonstrativos LTM  (Fundamentus)")
+    rows += S("Demonstrativos LTM")
     if receita:
         rows += R("Receita Líq.", _f_big(receita))
     if lucro is not None:
         rows += R("Lucro Líq.", _f_big(lucro),
                   "fund-val-pos" if lucro > 0 else "fund-val-neg")
 
-    rows += S("Preço e Variação  (yfinance)")
+    rows += S("Preço e Variação")
     rows += R("Var. no Mês",   f"{vm_mes:+.1f}%" if vm_mes is not None else "—", _f_color_pct(vm_mes))
     rows += R("Var. 12 Meses", f"{vm_12:+.1f}%"  if vm_12  is not None else "—", _f_color_pct(vm_12))
     rows += R("Setor", setor)
@@ -3222,8 +3262,6 @@ def _stock_card_html(pos: dict, fd: dict, price_info: dict,
         f'</div>'
         f'<div style="margin-bottom:8px;">{"".join(chips)}</div>'
         f'{rows}'
-        f'<p style="font-size:0.63rem;color:var(--app-border-strong);margin:7px 0 0;">'
-        f'Fundamentus · yfinance · {_datetime.now().strftime("%d/%m/%Y %H:%M")}</p>'
         f'</div>'
     )
 
@@ -3298,7 +3336,7 @@ def _fii_card_html(pos: dict, fd: dict, price_info: dict,
     rows += R("Custo investido", _f_brs(custo, 0))
     rows += R("Cotas", _f_br(qty, 0))
 
-    rows += S("Indicadores  (Fundamentus)")
+    rows += S("Indicadores")
     if pvp:
         rows += R("P/VP", f"{pvp:.2f}x",
                   "fund-val-warn" if pvp > T["fii_pvp_premium"] else
@@ -3316,7 +3354,7 @@ def _fii_card_html(pos: dict, fd: dict, price_info: dict,
     if renda_recebida > 0:
         rows += R("Renda recebida (12M)", _f_brs(renda_recebida, 0), "fund-val-pos")
 
-    rows += S("Ocupação e Diversificação  (Fundamentus)")
+    rows += S("Ocupação e Diversificação")
     if fii_tipo:
         rows += R("Tipo de FII", fii_tipo, "fund-val-pos")
     rows += R("Segmento", seg_raw or "—")
@@ -3336,7 +3374,7 @@ def _fii_card_html(pos: dict, fd: dict, price_info: dict,
     if liq:
         rows += R("Liq. Diária", _f_big(liq))
 
-    rows += S("Variação de Preço  (yfinance)")
+    rows += S("Variação de Preço")
     rows += R("Var. no Mês",   f"{vm_mes:+.1f}%" if vm_mes is not None else "—", _f_color_pct(vm_mes))
     rows += R("Var. 12 Meses", f"{vm_12:+.1f}%"  if vm_12  is not None else "—", _f_color_pct(vm_12))
 
@@ -3353,8 +3391,6 @@ def _fii_card_html(pos: dict, fd: dict, price_info: dict,
         f'</div>'
         f'<div style="margin-bottom:8px;">{"".join(chips)}</div>'
         f'{rows}'
-        f'<p style="font-size:0.63rem;color:var(--app-border-strong);margin:7px 0 0;">'
-        f'Fundamentus · yfinance · {_datetime.now().strftime("%d/%m/%Y %H:%M")}</p>'
         f'</div>'
     )
 
@@ -3973,14 +4009,16 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 if getattr(t, "mtm_pct", None) is not None
             }
             if not tem_mtm:
-                st.warning(
-                    "**MtM real indisponível:** o banco não tem a taxa contratada nem a data de "
+                aviso_lacuna(
+                    "MtM real indisponível: o banco não tem a taxa contratada nem a data de "
                     "liquidação de cada lote, e sem elas a diferença entre mercado e custo mistura "
-                    "carrego com marcação. Importe o **Extrato Analítico** em Configurações → "
-                    "Importar dados de investimentos para liberar a marcação a mercado e o "
+                    "carrego com marcação. Importar o Extrato Analítico em Configurações → "
+                    "Importar dados de investimentos libera a marcação a mercado e o "
                     "veredito de manter × trocar.",
-                    icon="⚠️",
+                    codigo="tela.investimentos.tesouro_sem_mtm",
                 )
+                st.warning("Marcação a mercado não disponível para estes títulos.",
+                           icon="⚠️")
 
             # Tabela com analise por titulo
             st.markdown("<br>", unsafe_allow_html=True)
@@ -4086,14 +4124,16 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 )
 
             st.caption(
-                "💡 Retorno mercado/custo inclui carrego, juros e variação de preço — não é marcação a "
-                "mercado. A marcação isolada, o IR/IOF por lote e o veredito de manter × trocar vivem na "
-                "seção acima e dependem do Extrato Analítico importado."
-                if tem_mtm else
-                "💡 Retorno mercado/custo inclui carrego, juros e variação de preço. MtM real exige comparar "
-                "o preço de mercado de hoje com o preço teórico de hoje pela taxa contratada em cada lote — "
-                "que é o que o Extrato Analítico traz."
+                "💡 Retorno mercado/custo inclui carrego, juros e variação de preço — não é "
+                "marcação a mercado."
             )
+            if not tem_mtm:
+                detalhe_tecnico(
+                    "MtM real exige comparar o preço de mercado de hoje com o preço teórico "
+                    "de hoje pela taxa contratada em cada lote, que é o que o Extrato "
+                    "Analítico traz.",
+                    codigo="investimentos.tesouro.mtm_exige_extrato_analitico",
+                )
 
             _bloco_analise_classe("tesouro", tesouros, {}, ano_atual=ano_atual)
 
@@ -4106,11 +4146,9 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         ext_pos = [p for p in posicoes if _is_exterior_position(p)]
 
         if not ext_pos:
-            st.info(
-                "Sem posições no exterior na carteira. "
-                "Importe um PDF Nomad em Configurações para adicionar ativos internacionais.",
-                icon="🌎",
-            )
+            detalhe_tecnico("Sem posições no exterior: importar um PDF Nomad em Configurações.",
+                            codigo="investimentos.exterior.sem_posicoes")
+            st.info("Sem posições no exterior na carteira.", icon="🌎")
         else:
             # ── KPIs consolidados ─────────────────────────────────────────────
             total_ext_brl = sum(p["valor_mercado"] for p in ext_pos)
@@ -4207,10 +4245,11 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
 
             # ── Nota sobre fonte de dados ─────────────────────────────────────
             st.markdown("<br>", unsafe_allow_html=True)
-            st.caption(
-                "💡 Posições exterior vêm do PDF Nomad consolidado. "
+            detalhe_tecnico(
+                "Posições exterior vêm do PDF Nomad consolidado. "
                 "Valores em BRL são convertidos usando USD/BRL do dia do snapshot. "
-                "Cotações diárias via yfinance."
+                "Cotações diárias via yfinance.",
+                codigo="investimentos.exterior.fonte",
             )
 
             _bloco_analise_classe(
@@ -4223,8 +4262,9 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
     # ══════════════════════════════════════════════════════════════════════════
     with td:
         st.markdown("<br>", unsafe_allow_html=True)
-        st.caption("Alertas gerados com base nos dados do Fundamentus. "
-                   "Carregue a aba Ações ou FIIs primeiro para atualizar os dados.")
+        detalhe_tecnico("Alertas gerados com base nos dados do Fundamentus. "
+                        "Carregue a aba Ações ou FIIs primeiro para atualizar os dados.",
+                        codigo="investimentos.alertas.fonte")
 
         # Coleta alertas dos dados já cacheados (sem refetch)
         all_alerts: list[tuple] = []
@@ -4276,7 +4316,9 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         try:
             from core.stress_tests import aplicar_todos_cenarios, cenario_pior_caso
         except Exception as exc:
-            st.error(f"Módulo de stress tests indisponível: {exc}")
+            aviso_lacuna(f"Módulo de stress tests indisponível ({type(exc).__name__}).",
+                         codigo="tela.investimentos.stress_modulo_indisponivel")
+            st.info("Esta análise não está disponível no momento.")
         else:
             if not posicoes:
                 st.info("Sem posições na carteira para simular cenários.", icon="ℹ️")
@@ -4409,16 +4451,19 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                         },
                     )
                     sem_dur = pior.get("renda_fixa_sem_duration") or []
-                    st.caption(
+                    detalhe_tecnico(
                         "Tesouro Selic recebe o choque de pós-fixado; IPCA+ e prefixado, o "
                         "choque de juros longos escalado pela duration (prazo residual; "
                         "referência de 5 anos). CDB, LCI e LCA se carregam na curva, sem "
                         "marcação a mercado: choque zero (o risco deles é de crédito, "
                         "fora deste modelo). Fundos de renda fixa e FIPs seguem o choque "
-                        "da própria classe."
-                        + (f" Sem vencimento legível, choque sem escala: {', '.join(sem_dur)}."
-                           if sem_dur else "")
+                        "da própria classe.",
+                        codigo="investimentos.stress.premissas_renda_fixa",
                     )
+                    for _tk in sem_dur:
+                        aviso_lacuna(f"{_tk}: sem vencimento legível, choque sem escala.",
+                                     codigo="tela.investimentos.stress_sem_vencimento",
+                                     entidade=str(_tk))
 
                 # ── Onde dói: perda por classe no pior cenário ────────────────
                 # O core já devolvia por_classe e a tela ignorava. É o dado que
@@ -4517,21 +4562,18 @@ def render() -> None:
     evolucao  = get_evolucao_patrimonial()
 
     if carteira.get("data_source") == "error":
-        st.error(
-            carteira.get("error_message", "Carteira real indisponível."),
-            icon="🚫",
-        )
-        st.caption("Nenhum dado mockado foi usado como substituto.")
+        aviso_lacuna(carteira.get("error_message", "Carteira real indisponível."),
+                     codigo="tela.investimentos.carteira_indisponivel")
+        st.error("Esta análise não está disponível no momento.", icon="🚫")
         return
 
     if proventos.get("data_source") == "error":
-        st.warning(
-            proventos.get("error_message", "Proventos reais indisponíveis."),
-            icon="⚠️",
-        )
+        aviso_lacuna(proventos.get("error_message", "Proventos reais indisponíveis."),
+                     codigo="tela.investimentos.proventos_indisponiveis")
+        st.warning("Proventos indisponíveis no momento.", icon="⚠️")
 
     for aviso in carteira.get("avisos_dados", []):
-        st.warning(aviso, icon="⚠️")
+        aviso_lacuna(str(aviso), codigo="tela.investimentos.aviso_dados_carteira")
 
     # ── Header ────────────────────────────────────────────────────────────────
     _fonte = carteira.get("data_source", "mock")
@@ -4674,23 +4716,28 @@ def _bloco_tesouro_mtm() -> list:
     _secao_titulo_orig(
         "🎯", "Marcação a Mercado — Extrato Analítico",
         f"{len(titulos)} título{'s' if len(titulos) != 1 else ''} com taxa contratada por lote"
-        + (f" · curva de {data_curva.strftime('%d/%m/%Y')}" if data_curva
-           else " · curva ainda não ingerida")
+    )
+    detalhe_tecnico(
+        "Curva do Tesouro de " + (data_curva.strftime('%d/%m/%Y') if data_curva
+                                  else "data indisponível (ainda não ingerida)"),
+        codigo="investimentos.tesouro.data_curva",
     )
 
     if data_curva is None:
-        st.warning(
-            "A curva oficial do Tesouro ainda não foi ingerida: os valores abaixo são os do "
-            "extrato, na data em que ele foi gerado. Rode a atualização `update_tesouro_curva` "
-            "para marcar a mercado com o preço de hoje.",
-            icon="⚠️",
+        aviso_lacuna(
+            "A curva oficial do Tesouro ainda não foi ingerida: os valores são os do "
+            "extrato, na data em que ele foi gerado. Rodar update_tesouro_curva para "
+            "marcar a mercado com o preço de hoje.",
+            codigo="tela.investimentos.tesouro_sem_curva",
         )
+        st.warning("Os valores abaixo são os do extrato, não os de hoje.", icon="⚠️")
     elif (hoje - data_curva).days > 5:
-        st.warning(
+        aviso_lacuna(
             f"A curva mais recente é de {data_curva.strftime('%d/%m/%Y')} — "
-            f"{(hoje - data_curva).days} dias atrás. A marcação abaixo é dessa data, não de hoje.",
-            icon="🕒",
+            f"{(hoje - data_curva).days} dias atrás.",
+            codigo="tela.investimentos.tesouro_curva_velha",
         )
+        st.warning("A marcação abaixo não usa o preço de hoje.", icon="🕒")
 
     bruto = sum(t.valor_bruto or 0.0 for t in titulos)
     investido = sum(t.valor_investido for t in titulos)

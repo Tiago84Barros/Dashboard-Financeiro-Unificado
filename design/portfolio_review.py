@@ -6,6 +6,8 @@ import json
 import pandas as pd
 import streamlit as st
 
+from design.lacunas import detalhe_tecnico
+
 
 def render_portfolio_review(result, *, key):
     st.subheader("Composição possível com proteção ao investidor")
@@ -24,7 +26,7 @@ def render_portfolio_review(result, *, key):
         st.info("O capital permanece 100% não alocado: não há candidato com evidência "
                 "suficiente que comporte os limites de proteção nesta execução.")
     for reason in result.get("reasons", []):
-        st.caption(reason)
+        detalhe_tecnico(str(reason), codigo="carteira.composicao_motivo")
     targets = result.get("category_targets") or {}
     if targets:
         with st.expander("Metas por categoria e composição obtida"):

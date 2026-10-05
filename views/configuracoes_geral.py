@@ -28,6 +28,7 @@ import streamlit as st
 from core import categorias as cat_repo
 from core import chat_repository
 from core.auth import encerrar_sessao
+from design.lacunas import aviso_lacuna, falha_de_acao
 
 _CONFIRMA_SAIDA = "cfg_geral_confirma_saida"
 _SECAO_LLM = "cfg_geral_secao_llm"
@@ -86,17 +87,18 @@ def _render_categorias() -> None:
         try:
             atuais = cat_repo.listar(tipo)
         except Exception as exc:  # noqa: BLE001
-            st.error(f"Não foi possível ler as categorias: {exc}")
+            falha_de_acao("Não foi possível ler as categorias.", exc)
             return
 
         # Categoria oferecida pelo seletor mas ausente do banco grava
         # lançamento SEM categoria. Antes isso acontecia calado; aqui tem nome.
         sem_banco = [c["nome"] for c in atuais if c["id"] is None]
         if sem_banco:
-            st.warning(
-                "Estas ainda não existem no banco e gravam lançamento sem "
+            aviso_lacuna(
+                "Categorias ainda não existem no banco e gravam lançamento sem "
                 f"categoria: {', '.join(sem_banco)}. Rode a migration 072 "
-                "(`supabase_unificado/schema/072_categorias.sql`) no Supabase."
+                "(`supabase_unificado/schema/072_categorias.sql`) no Supabase.",
+                codigo="tela.configuracoes.categorias_fora_do_banco",
             )
 
         st.caption(f"{len(atuais)} categoria(s) em {_ROTULO_TIPO.get(tipo, tipo)}: "
@@ -166,7 +168,7 @@ def _render_memoria_llm() -> None:
         try:
             contagens = chat_repository.contagens()
         except Exception as exc:  # noqa: BLE001
-            st.error(f"Não foi possível ler o histórico de conversas: {exc}")
+            falha_de_acao("Não foi possível ler o histórico de conversas.", exc)
             return
 
         total = sum(contagens.values())
@@ -199,7 +201,7 @@ def _render_memoria_llm() -> None:
             try:
                 apagadas = chat_repository.clear_prefixos(alvo)
             except Exception as exc:  # noqa: BLE001
-                st.error(f"Nada foi apagado: {exc}")
+                falha_de_acao("Nada foi apagado.", exc)
                 return
             # A sessão também, e não só o banco: a tela que estiver aberta com
             # o histórico em memória continuaria exibindo o que já morreu e o

@@ -20,6 +20,7 @@ import streamlit as st
 from core.inteligencia_ativos import informacoes as inf
 from core.inteligencia_ativos import leitura_relatorios as lr
 from core.inteligencia_ativos import modelos as m
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 
 _COR_STATUS = {lr.APROVADA: "primary", lr.COM_RESSALVAS: "warning",
                lr.REJEITADA: "danger"}
@@ -45,8 +46,11 @@ def cartao(resumo: lr.Resumo) -> str:
     """O resumo, com a validação no rodapé. Puro."""
     cor = _COR_STATUS.get(resumo.status, "text")
     if resumo.status == lr.REJEITADA:
+        for x in resumo.problemas:
+            detalhe_tecnico(f"Resumo dos relatórios rejeitado: {x}",
+                            codigo="inteligencia.relatorios_resumo_rejeitado")
         corpo = (f'<div style="font-weight:700;color:var(--app-{cor})">'
-                 'Resumo não gerado</div>' + _lista(resumo.problemas))
+                 'Resumo não gerado</div>')
     else:
         corpo = ('<div style="color:var(--app-text);line-height:1.5">'
                  f'{escape(resumo.sintese)}</div>')
@@ -73,15 +77,18 @@ def cartao(resumo: lr.Resumo) -> str:
         if resumo.numeros_sem_ancora:
             validacao += (" Números que não estão no contexto: "
                           + ", ".join(resumo.numeros_sem_ancora) + ".")
-        if resumo.problemas:
-            validacao += " " + " ".join(resumo.problemas)
-        modelo = f" Modelo: {resumo.modelo}." if resumo.modelo else ""
+        for x in resumo.problemas:
+            detalhe_tecnico(f"Problema no resumo dos relatórios: {x}",
+                            codigo="inteligencia.relatorios_resumo_problema")
+        if resumo.modelo:
+            detalhe_tecnico(f"Modelo do resumo dos relatórios: {resumo.modelo}",
+                            codigo="inteligencia.relatorios_modelo")
         corpo += (
             f'<div style="font-size:0.76rem;color:var(--app-{cor});'
             f'margin-top:10px">{escape(validacao)}</div>'
             '<div style="font-size:0.76rem;color:var(--app-subtle);'
             'margin-top:2px">Leitura da IA sobre os trechos acima e o contexto '
-            f'de mercado; não é recomendação.{escape(modelo)}</div>')
+            f'de mercado; não é recomendação.</div>')
     return ('<div style="background:var(--app-surface);border:1px solid '
             'var(--app-border);border-left:4px solid var(--app-'
             f'{cor});border-radius:10px;padding:12px 16px;margin:6px 0">'
@@ -100,8 +107,12 @@ def render(analise: m.AnaliseAtivo) -> lr.Resumo | None:
     ticker = str(analise.ativo.ticker or "")
     chave = chave_sessao(ticker, r)
     if not llm_disponivel():
-        st.caption("Resumo dos relatórios por IA indisponível: nenhum "
-                   "provedor configurado.")
+        st.caption("O resumo dos relatórios por IA não está disponível no "
+                   "momento.")
+        aviso_lacuna("Resumo dos relatórios por IA indisponível: nenhum "
+                     "provedor configurado",
+                     codigo="tela.inteligencia.relatorios_sem_provedor",
+                     entidade=ticker)
     else:
         # Resumo aceito fica na sessão; rejeitado pode ser pedido de novo.
         anterior = st.session_state.get(chave)

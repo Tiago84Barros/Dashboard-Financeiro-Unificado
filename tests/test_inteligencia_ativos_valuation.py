@@ -503,13 +503,13 @@ def test_cartoes_da_tela_so_com_tokens_e_escapados():
     from views import inteligencia_ativos as tela
     val, comp = _leitor(None)
     hv, hp = tela.corpo_valuation(val), tela.corpo_pares(comp)
-    assert "Faixas de referência" in hv and "Premissas" in hv
+    assert "Faixas de referência" in hv and "Premissas" not in hv
     assert "Interpretação" in hv and v.AVISO in hv
     assert "Fonte &lt;b&gt;" in hv or "Fonte <b>" not in hv
     for cab in ("Ativo", "Métrica", "Valor", "Mediana dos pares", "Diferença",
                 "Interpretação"):
         assert cab in hp
-    assert p.RODAPE in hp and "Como o grupo foi escolhido" in hp
+    assert p.RODAPE in hp and "Como o grupo foi escolhido" not in hp
     for html in (hv, hp):
         assert "#" not in html.replace("&#", "")
         assert not VEREDITO.search(re.sub(r"<[^>]+>", " ", html))
