@@ -72,7 +72,10 @@ logger = logging.getLogger(__name__)
 #: segmento, que empatava as duas variantes quando o segmento tem um só nome).
 #: 2.1.0: nome selecionado com peso 0 também é candidato a veto -- o portão
 #: real roda antes do filtro de peso, e o substituto entra com o PRÓPRIO peso.
-VERSAO_MEDICAO = "oos-carteira-2.1.0"
+#: 2.2.0: com ``--portao-llm``, o portão de verdade entra como variante à parte
+#: (``PORTAO_LLM_MEDIDO``): parecer do LLM sobre o dossiê da época,
+#: anonimizado (`core.b3_portao_pit`). A métrica principal segue sem portão.
+VERSAO_MEDICAO = "oos-carteira-2.2.0"
 CAMINHO_MEDICAO = Path(__file__).resolve().parents[1] / "data" / "oos_carteira_b3.json"
 
 #: Mesmo piso da view para a janela de validação valer: menos que 18 meses é
@@ -87,6 +90,8 @@ SEM_PORTAO = "sem_portao"
 PORTAO_VETA_O_MELHOR = "portao_veta_o_melhor"
 PORTAO_VETA_O_PIOR = "portao_veta_o_pior"
 VARIANTES = (SEM_PORTAO, PORTAO_VETA_O_MELHOR, PORTAO_VETA_O_PIOR)
+# Fora de VARIANTES: só existe quando a rodada chama o LLM (``--portao-llm``).
+PORTAO_LLM_MEDIDO = "portao_llm_medido"
 
 PORTAO_LLM = {
     "dentro_da_medicao": False,
@@ -116,6 +121,21 @@ PORTAO_LLM = {
         "só o líder, 'o melhor' e 'o pior' eram o mesmo papel, as duas "
         "variantes empatavam e mediam, na prática, 'trocar todos os líderes "
         "pelo segundo do ranking'."),
+    "medicao_direta": (
+        "Variante 'portão de LLM medido' (só nas rodadas com --portao-llm): o "
+        "LLM de produção, com o prompt de produção, lê o dossiê REMONTADO na "
+        "data da decisão (balanços até N-1, trimestres até o 4T de N-1, preço "
+        "e dividendos até 31/03/N) e o veredito decide quem sai, com a mesma "
+        "regra da tela (até 2 candidatos por veto, falha nunca veta). Para o "
+        "modelo não usar o que sabe do futuro, o dossiê sai anonimizado: "
+        "código e nome trocados, só o setor amplo, anos relativos, valores em "
+        "R$ e por ação multiplicados por fatores ocultos e o macro em faixas. "
+        "Uma sonda pergunta ao próprio modelo qual empresa e qual ano ele "
+        "acha que é; a taxa de acerto sai junto do número, porque anonimizar "
+        "não garante nada para empresa grande e conhecida. O dossiê da época "
+        "vê MENOS que o de produção: sem documentos CVM, notícias, métricas "
+        "do provedor e detalhe do armazém (o acervo não cobre as safras). Os "
+        "balanços são os de hoje, inclusive reapresentações posteriores."),
 }
 
 FORA_DO_PIT = (
@@ -381,6 +401,63 @@ def vetar_na_carteira(segmentos: list[Segmento],
             trocas.append({"sai": vetado, "entra": sub, "setor": setor})
         itens.append((setor, sel_v, pesos_v))
     return itens, trocas
+
+
+def aplicar_portao_medido(segmentos: list[Segmento], avaliar, *,
+                          max_substitutos: int = 2) -> tuple[list[tuple[str, list[str], dict]], dict]:
+    """O portão de LLM DE VERDADE, segmento a segmento, com a mesma mecânica
+    de `views.portfolio_b3._aplicar_gate_qualitativo`: o selecionado vetado
+    sai; os próximos do ranking do segmento que não estão na seleção nem já
+    entraram são avaliados, até ``max_substitutos``; o primeiro não vetado
+    herda a vaga com `pesos.get(sub) or pesos.get(vetado)`. Parecer
+    indisponível nunca veta (fica em ``nao_avaliados``).
+
+    ``avaliar(ticker) -> str`` devolve a classificação ('aprovar',
+    'aprovar_com_ressalvas', 'vetar' ou qualquer outra coisa = não avaliado).
+    Diferença declarada para a tela: o substituto não passa pelo Score de
+    Entrada (`FORA_DO_PIT`), a mesma régua da banda. Não muta a entrada.
+
+    Devolve os itens no formato de `montar_carteira` e o log
+    ``{"vetados", "trocas", "nao_avaliados", "avaliados"}``."""
+    itens: list[tuple[str, list[str], dict]] = []
+    log: dict = {"vetados": [], "trocas": [], "nao_avaliados": [], "avaliados": {}}
+
+    def _aval(tk: str) -> str:
+        if tk not in log["avaliados"]:
+            log["avaliados"][tk] = str(avaliar(tk))
+        cls = log["avaliados"][tk]
+        if (cls not in ("aprovar", "aprovar_com_ressalvas", "vetar")
+                and tk not in log["nao_avaliados"]):
+            log["nao_avaliados"].append(tk)
+        return cls
+
+    for setor, sel, pesos, ranking in segmentos:
+        sel = [str(tk) for tk in sel]
+        pesos_v = dict(pesos)
+        finais: list[str] = []
+        for tk in sel:
+            if _aval(tk) != "vetar":
+                finais.append(tk)
+                continue
+            log["vetados"].append({"tk": tk, "setor": setor})
+            substituto, avaliacoes = None, 0
+            for cand, _sc in ranking:
+                cand = str(cand)
+                if cand in finais or cand in sel:
+                    continue
+                avaliacoes += 1
+                if _aval(cand) != "vetar":
+                    substituto = cand
+                    break
+                log["vetados"].append({"tk": cand, "setor": setor})
+                if avaliacoes >= max_substitutos:
+                    break
+            if substituto:
+                finais.append(substituto)
+                pesos_v[substituto] = pesos_v.get(substituto) or pesos_v.get(tk, 0.0)
+            log["trocas"].append({"sai": tk, "entra": substituto, "setor": setor})
+        itens.append((setor, finais, pesos_v))
+    return itens, log
 
 
 def escolher_veto(segmentos: list[Segmento], retornos: dict[str, float | None], *,

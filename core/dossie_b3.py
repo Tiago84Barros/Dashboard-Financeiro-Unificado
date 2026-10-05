@@ -112,7 +112,9 @@ def _ident(tk: str) -> dict:
             "setor": None, "subsetor": None, "segmento": None}
 
 
-def _series_anuais(tk: str, max_anos: int = 12) -> list[dict]:
+def _series_anuais(tk: str, max_anos: int = 12, ate_ano: int | None = None) -> list[dict]:
+    """Série anual. ``ate_ano`` corta no exercício (dossiê de uma data
+    passada, `core.b3_portao_pit`); sem ele, tudo o que o banco tem."""
     rows = _rows(
         """
         SELECT i.year, i.revenue, i.ebit, i.ebitda, i.net_income, i.eps,
@@ -128,6 +130,8 @@ def _series_anuais(tk: str, max_anos: int = 12) -> list[dict]:
         """,
         t=tk,
     )
+    if ate_ano is not None:
+        rows = [r for r in rows if int(r["year"]) <= int(ate_ano)]
     out: list[dict] = []
     for r in rows[-max_anos:]:
         rec, ll, pl = _f(r["revenue"]), _f(r["net_income"]), _f(r["equity"])
@@ -179,15 +183,19 @@ def load_pl_lucro_anual_batch(
     return {ticker: serie[-max_anos:] for ticker, serie in por_ticker.items()}
 
 
-def _trimestres(tk: str, n: int = 6) -> dict:
+def _trimestres(tk: str, n: int = 6, ate_ano: int | None = None) -> dict:
+    corte = "" if ate_ano is None else " AND year <= :ate"
+    params = {"t": tk, "n": n + 4}
+    if ate_ano is not None:
+        params["ate"] = int(ate_ano)
     rows = _rows(
-        """
+        f"""
         SELECT year, quarter, revenue, net_income
         FROM market.income_statements
-        WHERE ticker = :t AND period <> 'annual' AND quarter BETWEEN 1 AND 4
+        WHERE ticker = :t AND period <> 'annual' AND quarter BETWEEN 1 AND 4{corte}
         ORDER BY year DESC, quarter DESC LIMIT :n
         """,
-        t=tk, n=n + 4,
+        **params,
     )
     rows = rows[::-1]
     tris = [{"ano": int(r["year"]), "tri": int(r["quarter"]),
@@ -236,7 +244,7 @@ def _atualidade(tk: str, hoje: date | None = None) -> dict:
     return out
 
 
-def _dividendos(tk: str, preco: float | None) -> dict:
+def _dividendos(tk: str, preco: float | None, ref: date | None = None) -> dict:
     """Provento por acao separando renda de devolucao de capital.
 
     A-130: o agrupamento anterior era so por data, e o ramo conservador tomava
@@ -246,6 +254,9 @@ def _dividendos(tk: str, preco: float | None) -> dict:
     lida. Agrupar por (data, tipo) mata o eco de classe sem apagar o segundo
     evento. A-128: amortizacao e restituicao de capital saem do yield e passam
     a ser reportadas a parte.
+
+    ``ref`` e a data do dossie: eventos depois dela ficam de fora e os
+    "ultimos 12 meses" contam ate ela (dossie de uma data passada).
     """
     from core.dividend_types import eh_renda, sql_safra_canonica
 
@@ -268,6 +279,8 @@ def _dividendos(tk: str, preco: float | None) -> dict:
         if not v:
             continue
         dt, tipo = str(r["dt"]), str(r["type"] or "")
+        if ref is not None and dt[:10] > ref.isoformat():
+            continue
         if eh_renda(r["type"]):
             por_chave[(dt, tipo)].append(v)
         else:
@@ -276,12 +289,12 @@ def _dividendos(tk: str, preco: float | None) -> dict:
     por_ano_bruto: dict[str, float] = defaultdict(float)
     por_ano_conserv: dict[str, float] = defaultdict(float)
     datas_duplicadas = 0
-    hoje = date.today()
+    hoje = ref or date.today()
     ult12_bruto = ult12_conserv = ult12_capital = 0.0
 
     def _recente(dt: str) -> bool:
         try:
-            return (hoje - date.fromisoformat(dt)).days <= 365
+            return (hoje - date.fromisoformat(dt[:10])).days <= 365
         except ValueError:
             return False
 
@@ -316,25 +329,29 @@ def _dividendos(tk: str, preco: float | None) -> dict:
     }
 
 
-def _precos(tk: str) -> dict:
+def _precos(tk: str, ref: date | None = None) -> dict:
+    """Preço, retorno de 12 meses e faixa de 52 semanas. ``ref`` é a data do
+    dossiê (uma data passada); sem ela, hoje."""
+    dia = "CURRENT_DATE" if ref is None else "CAST(:ref AS date)"
+    params = {"t": tk} if ref is None else {"t": tk, "ref": ref.isoformat()}
     rows = _rows(
-        """
+        f"""
         (SELECT date, close FROM market.historical_prices
-          WHERE ticker = :t ORDER BY date DESC LIMIT 1)
+          WHERE ticker = :t AND date <= {dia} ORDER BY date DESC LIMIT 1)
         UNION ALL
         (SELECT date, close FROM market.historical_prices
-          WHERE ticker = :t AND date <= CURRENT_DATE - INTERVAL '365 days'
+          WHERE ticker = :t AND date <= {dia} - INTERVAL '365 days'
           ORDER BY date DESC LIMIT 1)
         """,
-        t=tk,
+        **params,
     )
     stats = _rows(
-        """
-        SELECT MIN(close) FILTER (WHERE date >= CURRENT_DATE - INTERVAL '365 days') AS min52,
-               MAX(close) FILTER (WHERE date >= CURRENT_DATE - INTERVAL '365 days') AS max52
-        FROM market.historical_prices WHERE ticker = :t
+        f"""
+        SELECT MIN(close) FILTER (WHERE date >= {dia} - INTERVAL '365 days') AS min52,
+               MAX(close) FILTER (WHERE date >= {dia} - INTERVAL '365 days') AS max52
+        FROM market.historical_prices WHERE ticker = :t AND date <= {dia}
         """,
-        t=tk,
+        **params,
     )
     out: dict = {"preco": None, "data_preco": None, "ret_12m_pct": None,
                  "min_52s": None, "max_52s": None}

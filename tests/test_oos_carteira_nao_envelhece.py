@@ -16,7 +16,13 @@ from __future__ import annotations
 import json
 
 from core.b3_methodology import SCORE_VERSION
-from core.b3_oos_carteira import CAMINHO_MEDICAO, VARIANTES, carregar, vencida
+from core.b3_oos_carteira import (
+    CAMINHO_MEDICAO,
+    PORTAO_LLM_MEDIDO,
+    VARIANTES,
+    carregar,
+    vencida,
+)
 from core.b3_portfolio_presets import AMPLO, CONSERVADOR, RECOMENDADO
 from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
 
@@ -36,7 +42,8 @@ def test_os_tres_perfis_do_codigo_foram_medidos_com_as_variantes_do_portao():
     for nome in (RECOMENDADO, CONSERVADOR, AMPLO):
         assert nome in dados["perfis"], f"perfil {nome!r} sem medição. Remedir: {REMEDIR}"
         variantes = dados["perfis"][nome]["variantes"]
-        assert set(variantes) == set(VARIANTES)
+        # A variante do portão medido só existe nas rodadas com --portao-llm.
+        assert set(VARIANTES) <= set(variantes) <= set(VARIANTES) | {PORTAO_LLM_MEDIDO}
         principal = variantes["sem_portao"]["vs_equal_weight"]
         assert principal["n_safras"] >= 2, f"{nome}: amostra sem intervalo"
 
@@ -47,6 +54,7 @@ def test_portao_de_llm_declarado_fora_da_medicao():
     dados = json.loads(CAMINHO_MEDICAO.read_text(encoding="utf-8"))
     assert dados["portao_llm"]["dentro_da_medicao"] is False
     assert dados["portao_llm"]["por_que"]
+    assert dados["portao_llm"]["medicao_direta"]
     assert dados["fora_do_pit"]
 
 
