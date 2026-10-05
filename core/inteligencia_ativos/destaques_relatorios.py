@@ -76,9 +76,27 @@ class Destaque:
     frases: tuple[str, ...]
 
 
+class _SemAcento(dict):
+    """Tabela de ``str.translate``: cada caractere vira a sua decomposição
+    NFKD sem as marcas combinantes, calculada na primeira vez que aparece.
+
+    Dá o mesmo que normalizar a frase inteira (a reordenação canônica do
+    NFKD só mexe nas marcas, que saem), sem o laço em Python por caractere:
+    era o grosso do custo da análise da carteira (05/10/2026)."""
+
+    def __missing__(self, cod: int) -> str:
+        saida = "".join(c for c in unicodedata.normalize("NFKD", chr(cod))
+                        if not unicodedata.combining(c))
+        self[cod] = saida
+        return saida
+
+
+_TABELA_SEM_ACENTO = _SemAcento()
+
+
 def _sem_acento(t: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFKD", t.lower())
-                   if not unicodedata.combining(c))
+    t = t.lower()
+    return t if t.isascii() else t.translate(_TABELA_SEM_ACENTO)
 
 
 def _limpar(texto: str) -> str:
@@ -275,7 +293,25 @@ def ler(ticker: str, n_docs: int = N_DOCUMENTOS,
         return ()
 
 
+def _ler_trechos(ticker: str) -> tuple[Trecho, ...]:
+    return por_tema(ler(ticker, N_DOCS_TEMA, N_FRASES_TEMA))
+
+
+def _cache(fn):
+    try:
+        import streamlit as st
+        return st.cache_data(ttl=3600, show_spinner=False)(fn)
+    except Exception:  # pragma: no cover - contexto sem Streamlit
+        return fn
+
+
+_ler_trechos_cache = _cache(_ler_trechos)
+
+
 def ler_trechos(ticker: str) -> tuple[Trecho, ...]:
     """Trechos por tema dos documentos recentes do ativo. Sem corpus,
-    vazio."""
-    return por_tema(ler(ticker, N_DOCS_TEMA, N_FRASES_TEMA))
+    vazio.
+
+    Com cache de 1 h por ativo: a análise da carteira pede os trechos de
+    cada ação a cada recálculo, e o corpus só muda com um novo deploy."""
+    return _ler_trechos_cache(str(ticker or "").upper())

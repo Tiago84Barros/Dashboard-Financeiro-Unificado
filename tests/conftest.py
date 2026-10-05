@@ -492,7 +492,14 @@ def _destaques_relatorios_sem_corpus(monkeypatch):
         yield
         return
     monkeypatch.setattr(dr, "ler", lambda ticker, *a, **k: ())
+    # ``ler_trechos`` guarda o resultado por ativo: sem limpar, um teste
+    # herdaria os trechos que o anterior leu de um ``ler`` trocado.
+    limpar = getattr(getattr(dr, "_ler_trechos_cache", None), "clear", None)
+    if limpar:
+        limpar()
     yield
+    if limpar:
+        limpar()
 
 
 # A Inteligência dos Ativos compara com a carteira recomendada do Portfólio
