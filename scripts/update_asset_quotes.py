@@ -4,10 +4,21 @@ Atualiza asset_quotes via yfinance para todos os ativos cadastrados em `assets`.
 
 Uso:
     py -3.9 scripts/update_asset_quotes.py [--periodo 1mo] [--apenas-sem-cotacao]
+                                           [--moeda USD] [--bruto]
 
 Opcoes:
-    --periodo          Periodo yfinance: 1mo, 3mo, 6mo, 1y, 2y, 5y  (padrao: 1mo)
+    --periodo          Periodo yfinance: 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, max  (padrao: 1mo)
     --apenas-sem-cotacao  Processa apenas ativos sem nenhuma cotacao em asset_quotes
+    --moeda            Processa apenas ativos dessa moeda (BRL ou USD)
+    --bruto            Grava o fechamento negociado, sem ajuste por proventos
+
+Historico do exterior (Nomad) para a Evolucao Patrimonial:
+    py -3.9 scripts/update_asset_quotes.py --periodo max --moeda USD --bruto
+    A serie recompoe o exterior de cada mes por quantidade x fechamento x USDBRL;
+    sem cotacao na data o exterior entra como zero. --moeda USD baixa so os ETFs
+    da Nomad, sem reescrever o historico das acoes da B3. --bruto porque o
+    fechamento ajustado de um ETF que paga provento (SGOV, TFLO) fica abaixo do
+    preco daquele dia, e o patrimonio do passado sairia menor do que foi.
 
 Comportamento:
     - Idempotente: usa ON CONFLICT DO UPDATE — seguro para rodar mais de uma vez.
@@ -16,6 +27,8 @@ Comportamento:
     - Nao altera schema, nao deleta dados, nao expoe credenciais.
     - Requer SUPABASE_DB_URL (ou SUPABASE_UNIFICADO_URL) e MOCK_MODE=false no .env.
 """
+from __future__ import annotations
+
 import argparse
 import logging
 import sys
@@ -51,8 +64,24 @@ _SQL_SEM_COTACAO = """
     ORDER  BY ticker
 """
 
+_SQL_POR_MOEDA = """
+    SELECT id::text AS id, ticker, currency
+    FROM   assets
+    WHERE  upper(coalesce(currency, 'BRL')) = :moeda
+    ORDER  BY ticker
+"""
 
-def run(periodo: str = "1mo", apenas_sem_cotacao: bool = False) -> dict:
+
+def _sql_ativos(apenas_sem_cotacao: bool, moeda: str | None) -> tuple[str, dict]:
+    if moeda and apenas_sem_cotacao:
+        raise ValueError("--moeda e --apenas-sem-cotacao nao se combinam.")
+    if moeda:
+        return _SQL_POR_MOEDA, {"moeda": moeda.upper()}
+    return (_SQL_SEM_COTACAO if apenas_sem_cotacao else _SQL_TODOS), {}
+
+
+def run(periodo: str = "1mo", apenas_sem_cotacao: bool = False,
+        moeda: str | None = None, bruto: bool = False) -> dict:
     try:
         import yfinance as yf
     except ImportError:
@@ -72,9 +101,9 @@ def run(periodo: str = "1mo", apenas_sem_cotacao: bool = False) -> dict:
         print("[ERRO] Engine nao criado. Verifique SUPABASE_DB_URL no .env.")
         sys.exit(1)
 
-    sql = _SQL_SEM_COTACAO if apenas_sem_cotacao else _SQL_TODOS
+    sql, params = _sql_ativos(apenas_sem_cotacao, moeda)
     with engine.connect() as conn:
-        rows = conn.execute(text(sql)).fetchall()
+        rows = conn.execute(text(sql), params).fetchall()
 
     if not rows:
         print("[OK] Nenhum ativo para processar.")
@@ -89,8 +118,10 @@ def run(periodo: str = "1mo", apenas_sem_cotacao: bool = False) -> dict:
     sem_cotacao_list: list[str] = []
     com_erro_list:    list[str] = []
 
-    print(f"Processando {total} ativo(s) — periodo={periodo} "
-          f"({'apenas sem cotacao' if apenas_sem_cotacao else 'todos'})")
+    escopo = (f"moeda {moeda.upper()}" if moeda
+              else "apenas sem cotacao" if apenas_sem_cotacao else "todos")
+    print(f"Processando {total} ativo(s) — periodo={periodo} ({escopo}"
+          f"{', fechamento bruto' if bruto else ''})")
     print("-" * 60)
 
     for i, r in enumerate(rows, 1):
@@ -103,7 +134,7 @@ def run(periodo: str = "1mo", apenas_sem_cotacao: bool = False) -> dict:
                 ticker_yf,
                 period=periodo,
                 progress=False,
-                auto_adjust=True,
+                auto_adjust=not bruto,
                 actions=False,
             )
 
@@ -183,9 +214,14 @@ def run(periodo: str = "1mo", apenas_sem_cotacao: bool = False) -> dict:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Atualiza asset_quotes via yfinance")
     parser.add_argument("--periodo",            default="1mo",
-                        choices=["1mo","3mo","6mo","1y","2y","5y"],
+                        choices=["1mo","3mo","6mo","1y","2y","5y","10y","max"],
                         help="Periodo yfinance (padrao: 1mo)")
     parser.add_argument("--apenas-sem-cotacao", action="store_true",
                         help="Processa apenas ativos sem cotacao")
+    parser.add_argument("--moeda", choices=["BRL", "USD"],
+                        help="Processa apenas ativos dessa moeda")
+    parser.add_argument("--bruto", action="store_true",
+                        help="Fechamento negociado, sem ajuste por proventos")
     args = parser.parse_args()
-    run(periodo=args.periodo, apenas_sem_cotacao=args.apenas_sem_cotacao)
+    run(periodo=args.periodo, apenas_sem_cotacao=args.apenas_sem_cotacao,
+        moeda=args.moeda, bruto=args.bruto)
