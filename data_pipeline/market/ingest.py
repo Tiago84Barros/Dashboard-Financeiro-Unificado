@@ -678,6 +678,93 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
     return prog
 
 
+_TABELAS_DEMONSTRACAO = ("income_statements", "balance_sheets", "cash_flow_statements")
+
+# Por ticker, o payload mais novo QUE TRAZ demonstrações -- não o mais novo de
+# todos, que é a cotação diária (só preço) e normaliza para zero linha. Ordena
+# por fetched_at, e não por id: o arquivamento do Supabase dá id novo a payload
+# antigo. Só entra o ticker cujas demonstrações ainda não saíram dele.
+_SQL_PAYLOAD_DE_DEMONSTRACAO = """
+    WITH ultimo AS (
+        SELECT DISTINCT ON (ticker) ticker, id, fetched_at, payload_json
+        FROM market.brapi_raw_payloads
+        WHERE endpoint = 'quote' AND request_status = 'success'
+          AND payload_json ?| array['incomeStatementHistoryQuarterly',
+                                    'incomeStatementHistory']
+          {filtro}
+        ORDER BY ticker, fetched_at DESC, id DESC
+    )
+    SELECT u.ticker, u.id, u.payload_json FROM ultimo u
+    WHERE NOT EXISTS (
+        SELECT 1 FROM market.income_statements s
+        WHERE s.ticker = u.ticker AND s.raw_payload_id = u.id)
+    ORDER BY u.ticker
+"""
+
+
+def renormalize_demonstracoes(tickers: list[str] | None = None,
+                              limit: int | None = None) -> dict:
+    """Regrava as três demonstrações a partir do payload mais novo que as traz.
+
+    Por que existe: o armazém recebe do Supabase, todo dia, os payloads da
+    brapi (``archive_remote_brapi_raw``), mas só normaliza o que ele mesmo
+    baixa -- e o ``annual`` local roda sobre ``public.setores``, quase só a
+    classe ON. Em 04/10/2026 o armazém tinha o payload de 19/09 da BBDC4, com o
+    2T26, e as demonstrações dela ainda saíam do payload de julho: 103 tickers
+    (BBDC4, ITUB4, PETR4, CMIG4...) parados no 2026T1, e o vigia acusando o
+    universo um trimestre atrás com o dado já no disco.
+
+    Só as demonstrações: preço, dividendo e indicador do payload antigo
+    regravariam por cima do diário mais novo. Os indicadores derivados saem de
+    ``reprocess_metrics`` sobre ``prog["atualizados"]``. Sem rede.
+    """
+    import json
+    engine = _engine()
+    prog = {**_new_progress(), "atualizados": []}
+    if engine is None:
+        return {**prog, "erros": -1}
+    repo.reset_db_cols_cache()
+    params: dict = {}
+    filtro = ""
+    if tickers:
+        filtro = "AND ticker = ANY(:tks)"
+        params["tks"] = [t.upper().replace(".SA", "") for t in tickers]
+    with engine.connect() as conn:
+        if not repo.schema_exists(conn):
+            return {**prog, "erros": -1}
+        rows = conn.execute(text(_SQL_PAYLOAD_DE_DEMONSTRACAO.format(filtro=filtro)),
+                            params).fetchall()
+    if limit:
+        rows = rows[:limit]
+
+    for tk, pid, payload in rows:
+        try:
+            p = json.loads(payload) if isinstance(payload, str) else payload
+            quote = (p.get("results") or [p])[0] if isinstance(p, dict) else None
+            if not quote:
+                continue
+            data = nz.normalize_all(quote)
+            _reconcile_ticker(data, tk)
+            n = 0
+            with engine.begin() as conn:
+                for t in _TABELAS_DEMONSTRACAO:
+                    linhas = data.get(t) or []
+                    for r in linhas:
+                        r["raw_payload_id"] = pid
+                    n += repo.upsert(conn, t, linhas)
+            if n:
+                prog["demonstracoes"] += n
+                prog["atualizados"].append(tk)
+            prog["tickers"] += 1
+        except Exception as exc:
+            logger.warning("renormalize_demonstracoes %s: %s", tk, exc)
+            prog["erros"] += 1
+    logger.info("market/renormalize_demonstracoes: tickers=%d atualizados=%d "
+                "demonstracoes=%d erros=%d", prog["tickers"], len(prog["atualizados"]),
+                prog["demonstracoes"], prog["erros"])
+    return prog
+
+
 def _latest_annual(conn, table: str, cols: str, tk: str):
     row = conn.execute(text(
         f"SELECT {cols} FROM market.{table} WHERE ticker=:t AND period='annual' "
