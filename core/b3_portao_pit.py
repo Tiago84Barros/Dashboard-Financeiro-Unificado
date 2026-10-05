@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import threading
 from datetime import date
 
 VERSAO_DOSSIE_PIT = "dossie-pit-1.2.0"
@@ -143,6 +144,8 @@ def anonimizar(bruto: dict, tk: str, safra: int) -> dict:
                  for s in serie]
     docs = {"n_docs": 0}
     flags = _checks(serie_num, tris, dv, {}, docs, val) + list(COBERTURA_PIT)
+    if bruto.get("fonte") == "dfp_cvm_saida":
+        flags += list(COBERTURA_SAIDA)
     return {
         "ticker": codigo_anonimo(tk, safra),
         "nome": "(anonimizada)",
@@ -205,6 +208,13 @@ def coletar_dossie_pit(tk: str, safra: int) -> dict:
     corte = data_de_corte(safra)
     ano_base = ano_base_do_score(safra)
     serie = _series_anuais(tk, ate_ano=ano_base)
+    if not serie:
+        # Quem saiu da bolsa não tem DRE no market.*: entra pela DFP da CVM,
+        # a mesma fonte com que o score o reconstruiu (`core.b3_saidas`).
+        # Sem isto, o portão medido nunca vetaria justamente as saídas.
+        saida = coletar_dossie_saida_pit(tk, safra)
+        if saida is not None:
+            return saida
     tris = _trimestres(tk, ate_ano=ano_base)
     precos = _precos(tk, ref=corte)
 
@@ -240,6 +250,220 @@ def coletar_dossie_pit(tk: str, safra: int) -> dict:
         "segmento": ident.get("segmento"),
         "serie_anual": serie, "trimestres": tris, "dividendos": divs,
         "valuation": _valuation(mcap, serie, precos),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Empresas que saíram da B3: dossiê pela DFP da CVM
+# ─────────────────────────────────────────────────────────────────────────────
+
+COBERTURA_SAIDA = (
+    "COBERTURA: sem resultados trimestrais nesta reconstrução; proventos por "
+    "ação estimados pelo caixa pago no ano (DFC) sobre as ações implícitas no "
+    "LPA, por exercício civil.",
+)
+
+
+def _dir_cache_dfp():
+    """``data/cache/cvm/dfp`` da árvore ou de uma ancestral (o cache é
+    ignorado pelo git; num worktree ele só existe na árvore principal)."""
+    from pathlib import Path
+    raiz = Path(__file__).resolve().parents[1]
+    for p in (raiz, *raiz.parents):
+        d = p / "data" / "cache" / "cvm" / "dfp"
+        if d.is_dir():
+            return d
+    return None
+
+
+_DFP_TRAVA = threading.Lock()
+_DFP_CACHE: dict[int, dict] = {}
+
+
+def _dfps_das_saidas(ano: int) -> dict:
+    """{cd_cvm: DemonstracaoAnual} do exercício ``ano``, só das saídas.
+
+    Um zip por exercício, lido uma vez por processo (as threads do avaliador
+    pedem o mesmo ano ao mesmo tempo)."""
+    with _DFP_TRAVA:
+        if ano not in _DFP_CACHE:
+            from core import b3_saidas
+            from data_pipeline.market import b3_saidas as bs
+            d = _dir_cache_dfp()
+            zp = d / f"dfp_cia_aberta_{ano}.zip" if d else None
+            cds = {int(e["cd_cvm"]) for e in b3_saidas.empresas(b3_saidas.carregar())
+                   if e.get("cd_cvm")}
+            _DFP_CACHE[ano] = (bs.ler_dfp(zp.read_bytes(), ano, cds)
+                               if zp is not None and zp.exists() and cds else {})
+        return _DFP_CACHE[ano]
+
+
+def _mi_r(v):
+    return None if v is None else round(float(v) / 1e6, 1)
+
+
+def serie_anual_dfp(dems: dict, classe: str, corte: date, ano_base: int,
+                    max_anos: int = 12) -> list[dict]:
+    """Série anual no formato de `dossie_b3._series_anuais`, da DFP.
+
+    ``dems`` é {exercício: DemonstracaoAnual}. Só entra exercício até
+    ``ano_base`` cuja DFP (primeira versão) foi recebida até ``corte`` --
+    a DFP é a da época, sem reapresentação posterior."""
+    from data_pipeline.market import b3_saidas as bs
+    out: list[dict] = []
+    for ano in sorted(dems):
+        dem = dems[ano]
+        recebida = getattr(dem, "available_at", None)
+        if ano > int(ano_base):
+            continue
+        if recebida is not None and not _nulo(recebida) and recebida.date() > corte:
+            continue
+        f = bs.fundamentos(dem, classe)
+        rec, ll, pl = f.get("revenue"), f.get("net_income"), f.get("equity")
+        out.append({
+            "ano": int(ano),
+            "receita_mi": _mi_r(rec), "ebit_mi": _mi_r(f.get("ebit")),
+            "ebitda_mi": None, "lucro_mi": _mi_r(ll),
+            "pl_mi": _mi_r(pl), "caixa_mi": _mi_r(f.get("cash")),
+            "div_bruta_mi": _mi_r(f.get("gross_debt")),
+            "div_liq_mi": _mi_r(f.get("net_debt")),
+            "fco_mi": _mi_r(f.get("fco")), "lpa": f.get("lpa"),
+            "margem_liq_pct": round(ll / rec * 100, 1) if rec and ll is not None else None,
+            "roe_pct": round(ll / pl * 100, 1) if pl and ll is not None else None,
+            "_dividendos_pagos": f.get("dividendos_pagos"),
+        })
+    return out[-max_anos:]
+
+
+def _nulo(v) -> bool:
+    try:
+        return bool(v != v)  # NaT/NaN
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def dividendos_dfp(serie: list[dict], preco: float | None) -> dict:
+    """Provento por ação por exercício = dividendos+JCP pagos (DFC) / ações
+    implícitas (lucro / LPA). ``ult_12m_ps`` é o do último exercício: o ano
+    civil, não os 12 meses até o corte."""
+    from data_pipeline.market.b3_saidas import LPA_MINIMO
+    por_ano: dict[str, float] = {}
+    for s in serie:
+        pago, lpa, lucro = s.get("_dividendos_pagos"), s.get("lpa"), s.get("lucro_mi")
+        if pago is None or lpa is None or lucro is None or abs(lpa) < LPA_MINIMO:
+            continue
+        acoes = lucro * 1e6 / lpa
+        if acoes > 0:
+            por_ano[str(s["ano"])] = round(pago / acoes, 4)
+    ult = por_ano.get(str(serie[-1]["ano"])) if serie else None
+    return {
+        "por_ano": dict(sorted(por_ano.items())[-8:]),
+        "ult_12m_ps": ult,
+        "dy_12m_pct": round(ult / preco * 100, 1) if ult is not None and preco else None,
+        "dy_12m_bruto_pct": None,
+        "devolucao_capital_12m_ps": 0.0,
+        "suspeita_duplicacao_classe": False,
+        "n_eventos": len(por_ano),
+    }
+
+
+#: Mês com variação acima disto (ou abaixo do inverso) no índice de retorno
+#: total, ou faixa de 52 semanas mais larga que isto, denuncia evento de
+#: capital que a reconstrução não pegou (medido: grupamento da BRPR3 em
+#: fev/2023, índice de 64 para 2.544). O número some em vez de ir errado.
+SALTO_EVENTO = 3.0
+
+
+def _precos_saida(tk: str, corte: date, indice_tr: dict) -> dict:
+    """Preço não ajustado e faixa de 52 semanas do COTAHIST; retorno de 12
+    meses pelo índice de retorno total mensal de `data/b3_saidas.json`.
+    Faixa e retorno que atravessam evento de capital não detectado ficam
+    ``None`` (ver `SALTO_EVENTO`)."""
+    from datetime import timedelta
+
+    from core.dossie_b3 import _f, _rows, _table_exists
+    out: dict = {"preco": None, "data_preco": None, "ret_12m_pct": None,
+                 "min_52s": None, "max_52s": None}
+    preco, data = _preco_bruto(tk, corte)
+    out["preco"], out["data_preco"] = preco, data
+    if preco is not None and _table_exists("market.b3_security_history"):
+        st = _rows(
+            """
+            SELECT MIN(close_unitario) AS mn, MAX(close_unitario) AS mx
+            FROM market.b3_security_history
+            WHERE ticker = :t AND trade_date <= CAST(:ref AS date)
+              AND trade_date > CAST(:ini AS date) AND close_unitario IS NOT NULL
+            """,
+            t=tk, ref=corte.isoformat(), ini=(corte - timedelta(days=365)).isoformat(),
+        )
+        mn, mx = (_f(st[0]["mn"]), _f(st[0]["mx"])) if st else (None, None)
+        if mn and mx and mx / mn <= SALTO_EVENTO:
+            out["min_52s"], out["max_52s"] = mn, mx
+    out["ret_12m_pct"] = retorno_12m_indice(indice_tr, corte)
+    return out
+
+
+def retorno_12m_indice(indice_tr: dict, corte: date) -> float | None:
+    """Retorno de 12 meses até o mês do corte pelo índice mensal
+    ``{"AAAA-MM": nível}``; ``None`` se faltar ponta ou se algum mês da
+    janela saltar mais que `SALTO_EVENTO`."""
+    meses = [f"{corte.year - 1 + (corte.month + i - 1) // 12}-"
+             f"{(corte.month + i - 1) % 12 + 1:02d}" for i in range(13)]
+    niveis = [indice_tr.get(m) for m in meses]
+    if not niveis[0] or not niveis[-1]:
+        return None
+    validos = [v for v in niveis if v]
+    for a, b in zip(validos, validos[1:]):
+        if b / a > SALTO_EVENTO or a / b > SALTO_EVENTO:
+            return None
+    return round((niveis[-1] / niveis[0] - 1) * 100, 1)
+
+
+def coletar_dossie_saida_pit(tk: str, safra: int) -> dict | None:
+    """`coletar_dossie_pit` para quem saiu da B3; ``None`` se não for saída
+    curada ou se não houver DFP até o corte."""
+    from core import b3_saidas
+    from core.b3_vigencia import ano_base_do_score
+    from core.dossie_b3 import _valuation
+
+    e = next((x for x in b3_saidas.empresas(b3_saidas.carregar())
+              if x.get("ticker") == tk), None)
+    if e is None or not e.get("cd_cvm"):
+        return None
+    corte = data_de_corte(safra)
+    ano_base = ano_base_do_score(safra)
+    cd = int(e["cd_cvm"])
+    dems = {}
+    for ano in range(int(ano_base) - 11, int(ano_base) + 1):
+        dem = _dfps_das_saidas(ano).get(cd)
+        if dem is not None:
+            dems[ano] = dem
+    serie = serie_anual_dfp(dems, tk[4:], corte, ano_base)
+    if not serie:
+        return None
+
+    precos = _precos_saida(tk, corte, e.get("precos") or {})
+    # Valor de mercado de 31/12 do último exercício (o de `b3_saidas`, ações
+    # da DFP x fechamento) levado ao corte pela razão de preços não ajustados.
+    vm = {int(f["ano"]): f.get("valor_mercado") for f in e.get("fundamentos") or []}
+    mcap = vm.get(int(serie[-1]["ano"]))
+    preco_dez, _ = _preco_bruto(tk, date(int(serie[-1]["ano"]), 12, 31))
+    razao = (precos["preco"] / preco_dez) if preco_dez and precos.get("preco") else None
+    # Três meses não multiplicam o preço por 3: razão assim é evento de
+    # capital entre dez e o corte, e o valor de mercado sai em vez de sair errado.
+    sem_evento = bool(razao) and 1 / SALTO_EVENTO <= razao <= SALTO_EVENTO
+    mcap = float(mcap) * razao if mcap and sem_evento else None
+    # O provento por ação está nas ações de dezembro; com evento até o corte,
+    # dividir pelo preço do corte daria DY na unidade errada.
+    divs = dividendos_dfp(serie, precos.get("preco") if sem_evento else None)
+    serie = [{k: v for k, v in s.items() if not k.startswith("_")} for s in serie]
+    return {
+        "ticker": tk, "safra": int(safra), "corte": corte.isoformat(),
+        "setor": e.get("SETOR"), "subsetor": e.get("SUBSETOR"),
+        "segmento": e.get("SEGMENTO"),
+        "serie_anual": serie, "trimestres": {}, "dividendos": divs,
+        "valuation": _valuation(mcap, serie, precos),
+        "fonte": "dfp_cvm_saida",
     }
 
 
@@ -347,14 +571,48 @@ def acertou_sonda(resposta: dict, tk: str, safra: int) -> dict:
 # Chamadas ao LLM (o mesmo caminho da tela, sem o cache diário do Streamlit)
 # ─────────────────────────────────────────────────────────────────────────────
 
+# O timeout do cliente é de LEITURA (entre bytes), não total: o OpenRouter
+# mantém a conexão viva com espaços enquanto o modelo gratuito enfileira, e uma
+# chamada ficou pendurada 30+ min sem nunca estourar os 90 s. As chamadas
+# legítimas mais lentas medidas levaram ~430 s.
+PRAZO_LLM_S = 600.0
+
+
+def _com_prazo(fn, prazo: float):
+    """Roda `fn` numa thread daemon e desiste depois de `prazo` segundos.
+
+    A thread abandonada segue até o provedor soltar, mas não segura o processo
+    (daemon) nem o parecer: estouro é falha, e falha nunca veta."""
+    res: dict = {}
+
+    def _alvo():
+        try:
+            res["v"] = fn()
+        except BaseException as exc:  # noqa: BLE001 -- repassado abaixo
+            res["e"] = exc
+
+    t = threading.Thread(target=_alvo, daemon=True)
+    t.start()
+    t.join(prazo)
+    if t.is_alive():
+        raise TimeoutError(f"provedor não respondeu em {prazo:.0f} s")
+    if "e" in res:
+        raise res["e"]
+    return res["v"]
+
+
 def _llm_json(prompt: str) -> tuple[dict, str | None]:
     """Uma chamada pela cadeia de produção; devolve (json, "provedor/modelo")."""
     from core.llm_b3 import _call_llm, _parse_json, _report_model, ultimo_modelo
-    raw = _call_llm(prompt, model=_report_model())
+    # `ultimo_modelo` é por thread: lido na mesma thread da chamada.
+    raw, modelo = _com_prazo(
+        lambda: (_call_llm(prompt, model=_report_model()), ultimo_modelo()), PRAZO_LLM_S)
+    if not raw:
+        raise ValueError("resposta vazia do provedor")
     out = _parse_json(raw, None)
     if not isinstance(out, dict):
         raise ValueError("resposta não interpretável")
-    return out, ultimo_modelo()
+    return out, modelo
 
 
 def prompt_do_parecer(texto_dossie: str, macro_txt: str) -> str:
@@ -396,6 +654,13 @@ def parecer_pit(entrada: dict) -> dict:
     from core.dossie_b3 import _sanitizar_parecer
     prompt = prompt_do_parecer(entrada["texto"], entrada["macro"])
     out, modelo = _llm_json(prompt)
+    if out.get("classificacao_selecao") not in CLASSIFICACOES_VALIDAS:
+        # `_sanitizar_parecer` trocaria por "nao_avaliado" e apagaria o que o
+        # modelo de fato devolveu -- a falha registra o valor bruto.
+        raise ValueError(f"classificação fora do esquema: "
+                         f"{str(out.get('classificacao_selecao'))[:40]!r} "
+                         f"({len(out)} chaves: {', '.join(sorted(map(str, out))[:4])}; "
+                         f"{modelo})")
     p = _sanitizar_parecer(out, entrada["codigo"])
     return {"classificacao": p.get("classificacao_selecao"),
             "motivo": str(p.get("motivo_selecao") or "")[:400],
@@ -448,6 +713,7 @@ class AvaliadorPortaoPIT:
         self.registros: dict[str, dict] = {}
         self.falhas: dict[str, str] = {}
         self._entradas: dict[tuple[str, int], dict] = {}
+        self.consultados: set[tuple[str, int]] = set()
         self._trava = threading.Lock()
         self._ultimo_inicio = 0.0
         self.chamadas = 0
@@ -482,13 +748,19 @@ class AvaliadorPortaoPIT:
     def preparar(self, por_safra) -> None:
         """Ondas: aplica o portão com o que já se sabe, busca os pares que
         faltam (os selecionados e, onde houve veto, os substitutos) e repete
-        até nada faltar. Depois, repetição e sonda numa amostra fixa."""
+        até nada faltar. Depois, repetição e sonda numa amostra fixa.
+
+        Guarda em ``self.consultados`` os pares que o portão DESTE perfil
+        consultou: o cache é compartilhado entre perfis, e filtrar só pela
+        safra misturaria no resumo os nomes que outro perfil avaliou."""
         from core.b3_oos_carteira import aplicar_portao_medido
         onda = 0
         while True:
             faltam: set[tuple[str, int]] = set()
+            consultados: set[tuple[str, int]] = set()
             for p in por_safra:
                 def _av(tk, safra=p["safra"]):
+                    consultados.add((tk, safra))
                     cls = self.classificacao(tk, safra)
                     if cls == PENDENTE:
                         faltam.add((tk, safra))
@@ -499,12 +771,11 @@ class AvaliadorPortaoPIT:
             onda += 1
             self.log(f"  portão: onda {onda}, {len(faltam)} pareceres a buscar")
             self._paralelo(self._um_parecer, [(tk, s, 0) for tk, s in sorted(faltam)])
+        self.consultados = consultados
 
-        safras = {p["safra"] for p in por_safra}
-        base = sorted((k.split("|")[0], int(k.split("|")[1]))
-                      for k, r in self.registros.items()
-                      if k.endswith("|0") and int(k.split("|")[1]) in safras
-                      and r["classificacao"] in CLASSIFICACOES_VALIDAS)
+        base = sorted((tk, s) for tk, s in consultados
+                      if (self.registros.get(self.chave(tk, s)) or {}).get("classificacao")
+                      in CLASSIFICACOES_VALIDAS)
         reps = [(tk, s, 1) for tk, s in base
                 if _unitario(f"rep|{tk}|{s}") < self.frac_repeticao
                 and self.chave(tk, s, 1) not in self.registros
@@ -556,6 +827,9 @@ class AvaliadorPortaoPIT:
                     self.tentativas_falhas += 1
                     if tentativa == self.tentativas - 1:
                         self.falhas[chave] = f"{type(exc).__name__}: {str(exc)[:160]}"
+                        n_falhas = len(self.falhas)
+                if tentativa == self.tentativas - 1 and n_falhas <= 10:
+                    self.log(f"    falhou {chave}: {self.falhas[chave]}")
                 continue
             with self._trava:
                 self.registros[chave] = {**reg, "tentativa": tentativa + 1}
@@ -591,16 +865,25 @@ class AvaliadorPortaoPIT:
             regs = json.loads(json.dumps(dict(sorted(self.registros.items())), default=str))
         self.caminho.parent.mkdir(parents=True, exist_ok=True)
         self.caminho.write_text(json.dumps(
-            {"versao": VERSAO_DOSSIE_PIT, "registros": regs},
+            # As falhas não são reaproveitadas (a rodada seguinte tenta de
+            # novo); ficam no arquivo só para auditoria da última rodada.
+            {"versao": VERSAO_DOSSIE_PIT, "registros": regs,
+             "falhas_da_ultima_rodada": dict(sorted(self.falhas.items()))},
             indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
 
     # -- resumo ---------------------------------------------------------------
-    def resumo(self, safras=None) -> dict:
+    def resumo(self, safras=None, pares=None) -> dict:
+        """Resumo dos pareceres das ``safras`` -- ou, com ``pares``, só dos
+        (ticker, safra) que o portão de um perfil consultou."""
         from collections import Counter
 
-        def _da(k):
-            return safras is None or int(k.split("|")[1]) in safras
+        def _da(k):  # "TK|safra|rep" (falhas de sonda são filtradas antes)
+            tk, safra = k.split("|")[0], int(k.split("|")[1])
+            return ((safras is None or safra in safras)
+                    and (pares is None or (tk, safra) in pares))
         base = {k: r for k, r in self.registros.items() if k.endswith("|0") and _da(k)}
+        falhas = {k: m for k, m in self.falhas.items()
+                  if not k.startswith("sonda|") and _da(k)}
         cls = Counter(r["classificacao"] for r in base.values())
         modelos = Counter(str(r.get("modelo")) for k, r in self.registros.items() if _da(k))
         pares_rep = [(k, k[:-1] + "1") for k in base if k[:-1] + "1" in self.registros]
@@ -617,7 +900,13 @@ class AvaliadorPortaoPIT:
             "pareceres": len(base),
             "classificacoes": dict(cls),
             "taxa_veto": _taxa([r["classificacao"] == "vetar" for r in base.values()]),
-            "falhas": sum(1 for k in self.falhas if not k.startswith("sonda|")),
+            "falhas": len(falhas),
+            # Por causa: sem dossiê (sem DRE nem DFP até o corte), o modelo
+            # respondeu "não avaliado" em todas as tentativas, ou erro de rede.
+            "falhas_sem_dossie": sum(1 for m in falhas.values()
+                                     if m.startswith("LookupError")),
+            "falhas_modelo_nao_avaliou": sum(1 for m in falhas.values()
+                                             if "fora do esquema" in m),
             "tentativas_perdidas_nesta_rodada": self.tentativas_falhas,
             "pareceres_na_segunda_tentativa": sum(
                 1 for r in base.values() if int(r.get("tentativa") or 1) > 1),

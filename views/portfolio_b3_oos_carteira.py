@@ -175,6 +175,11 @@ def render_oos_carteira() -> None:
                 if trocas:
                     st.caption("Vetos do portão por safra (sai → entra): "
                                + "; ".join(trocas) + ".")
+                elif var_med.get("safras"):
+                    st.caption("O portão não vetou nenhum nome desta carteira em safra "
+                               "alguma: com o portão é o mesmo que sem portão. Isso mede "
+                               "este modelo sobre o dossiê da época, mais pobre que o "
+                               "de hoje (sem notícias nem trechos da CVM).")
 
             marcadas = sorted(set(base.get("safras_inviaveis_no_cap") or [])
                               | set(base.get("safras_com_revisao") or []))

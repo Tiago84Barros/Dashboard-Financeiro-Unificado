@@ -307,9 +307,142 @@ def test_repeticao_e_sonda_entram_no_resumo(tmp_path):
     assert av.resumo({2020})["pareceres"] == 0
 
 
+def test_resumo_do_perfil_so_conta_o_que_o_portao_dele_consultou(tmp_path):
+    # O cache é compartilhado entre perfis: o "amplo" avaliou EEEE3 na mesma
+    # safra, e o resumo do perfil enxuto não pode contá-lo nem sondá-lo.
+    sondados = []
+
+    def sonda(e, tk, safra):
+        sondados.append(tk)
+        return {"empresa": False, "ano": False, "ano_perto": False}
+    av, _ = _avaliador(tmp_path, lambda tk, s, n: {"classificacao": "vetar" if tk == "EEEE3"
+                                                   else "aprovar"},
+                       sonda=sonda, frac_repeticao=0, frac_sonda=1.0)
+    amplo = [{"safra": 2019, "segmentos": [
+        _seg("Energia", ["EEEE3"], {"EEEE3": 1.0}, ["EEEE3", "FFFF3"])]}]
+    av.preparar(amplo)
+    assert av.consultados == {("EEEE3", 2019), ("FFFF3", 2019)}
+    sondados.clear()
+    av.preparar(_por_safra())
+    assert av.consultados == {("AAAA3", 2019), ("BBBB3", 2019)}
+    assert sorted(sondados) == ["AAAA3", "BBBB3"]
+    res = av.resumo(pares=av.consultados)
+    assert res["pareceres"] == 2 and res["taxa_veto"] == 0.0
+    assert av.resumo({2019})["pareceres"] == 4             # a safra inteira, sem filtro
+
 def test_resumo_vazio_nao_divide_por_zero(tmp_path):
     av, _ = _avaliador(tmp_path, lambda tk, s, n: {"classificacao": "aprovar"})
     res = av.resumo()
     assert res["pareceres"] == 0 and res["taxa_veto"] is None
     assert all(v is None or not (isinstance(v, float) and math.isnan(v))
                for v in res.values())
+
+
+def test_falhas_separadas_por_causa(tmp_path):
+    def entrada(tk, s):
+        if tk == "AAAA3":
+            raise LookupError("sem série anual até o exercício N-1")
+        return {"tk": tk, "safra": s}
+
+    def parecer(e):
+        return {"classificacao": "nao_avaliado" if e["tk"] == "BBBB3" else "aprovar"}
+    av = pit.AvaliadorPortaoPIT(tmp_path / "c.json", entrada, parecer, workers=2,
+                                intervalo_s=0, frac_repeticao=0, log=lambda *_: None)
+    av.preparar(_por_safra())
+    res = av.resumo({2019})
+    assert res["falhas"] == 2
+    assert res["falhas_sem_dossie"] == 1 and res["falhas_modelo_nao_avaliou"] == 1
+    assert av.resumo({2020})["falhas"] == 0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Empresas que saíram da B3 — dossiê pela DFP
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _dem(ano, recebida, receita=1_000e6, lucro=100e6, lpa=0.5, pago=40e6):
+    import pandas as pd
+
+    from data_pipeline.market.b3_saidas import DemonstracaoAnual
+    contas = {"3.01": ("Receita", receita), "3.05": ("EBIT", receita * 0.2),
+              "3.11": ("Lucro", lucro), "2.03": ("PL", 1_000e6),
+              "1.01.01": ("Caixa", 50e6), "2.01.04": ("Empréstimos e Financiamentos", 200e6),
+              "6.01": ("FCO", 120e6), "3.99.01.01": ("ON", lpa),
+              "6.03.01": ("Dividendos pagos", -pago)}
+    return DemonstracaoAnual(cd_cvm=1, ano=ano, available_at=pd.Timestamp(recebida),
+                             consolidado=False, contas=contas)
+
+
+def test_serie_dfp_corta_no_exercicio_e_na_entrega():
+    from datetime import date
+    dems = {2016: _dem(2016, "2017-03-10"), 2017: _dem(2017, "2018-03-20"),
+            2018: _dem(2018, "2019-04-15"),          # entregue depois do corte
+            2019: _dem(2019, "2020-03-01")}          # exercício depois de N-1
+    serie = pit.serie_anual_dfp(dems, "3", date(2019, 3, 31), 2018)
+    assert [s["ano"] for s in serie] == [2016, 2017]
+    s = serie[-1]
+    assert s["receita_mi"] == 1000.0 and s["lucro_mi"] == 100.0 and s["ebitda_mi"] is None
+    assert s["div_liq_mi"] == 150.0 and s["margem_liq_pct"] == 10.0 and s["roe_pct"] == 10.0
+
+
+def test_dividendos_dfp_por_acao_implicita_no_lpa():
+    from datetime import date
+    serie = pit.serie_anual_dfp({2017: _dem(2017, "2018-03-01"),
+                                 2018: _dem(2018, "2019-03-01", pago=80e6)},
+                                "3", date(2019, 3, 31), 2018)
+    dv = pit.dividendos_dfp(serie, preco=4.0)
+    # 200 mi de ações (100 mi / 0,50): 0,20 e 0,40 por ação
+    assert dv["por_ano"] == {"2017": 0.2, "2018": 0.4}
+    assert dv["ult_12m_ps"] == 0.4 and dv["dy_12m_pct"] == 10.0
+    assert pit.dividendos_dfp(serie, preco=None)["dy_12m_pct"] is None
+
+
+def test_retorno_12m_some_quando_atravessa_evento_nao_detectado():
+    from datetime import date
+    idx = {f"2022-{m:02d}": 97.0 + m for m in range(3, 13)}   # 2022-03 = 100
+    idx.update({"2023-01": 110.0, "2023-02": 112.0, "2023-03": 115.0})
+    assert pit.retorno_12m_indice(idx, date(2023, 3, 31)) == 15.0
+    idx["2023-02"] = 4_000.0                              # grupamento não detectado
+    assert pit.retorno_12m_indice(idx, date(2023, 3, 31)) is None
+    assert pit.retorno_12m_indice({"2023-03": 1.0}, date(2023, 3, 31)) is None
+
+
+def test_anonimizar_declara_cobertura_da_saida(monkeypatch):
+    import core.dossie_b3 as d
+    monkeypatch.setattr(d, "_checks", lambda *a: [])
+    monkeypatch.setattr(d, "_sensibilidade_juros", lambda serie: {})
+    bruto = {**_bruto(), "trimestres": {}, "fonte": "dfp_cvm_saida"}
+    anon = pit.anonimizar(bruto, "WEGE3", 2019)
+    assert all(c in anon["red_flags"] for c in pit.COBERTURA_SAIDA)
+    assert anon["trimestres"] == {"serie": [], "yoy": {}}
+    assert not any(c in pit.anonimizar(_bruto(), "WEGE3", 2019)["red_flags"]
+                   for c in pit.COBERTURA_SAIDA)
+
+
+def test_parecer_fora_do_esquema_registra_o_valor_bruto(monkeypatch):
+    # `_sanitizar_parecer` trocaria "aprovado" por "nao_avaliado"; a falha
+    # precisa dizer o que o modelo devolveu de fato.
+    monkeypatch.setattr(pit, "prompt_do_parecer", lambda texto, macro: "prompt")
+    monkeypatch.setattr(pit, "_llm_json",
+                        lambda prompt: ({"classificacao_selecao": "aprovado"}, "m/x"))
+    with pytest.raises(ValueError, match="fora do esquema: 'aprovado'"):
+        pit.parecer_pit({"codigo": "EMPRESA-000001", "texto": "", "macro": ""})
+    monkeypatch.setattr(pit, "_llm_json",
+                        lambda prompt: ({"classificacao_selecao": "vetar",
+                                         "motivo_selecao": "x"}, "m/x"))
+    assert pit.parecer_pit({"codigo": "EMPRESA-000001", "texto": "",
+                            "macro": ""})["classificacao"] == "vetar"
+
+
+def test_chamada_pendurada_vira_falha_no_prazo_e_nao_segura_o_parecer():
+    import threading
+    import time
+
+    solta = threading.Event()
+    t0 = time.monotonic()
+    with pytest.raises(TimeoutError, match="não respondeu"):
+        pit._com_prazo(lambda: solta.wait(30), 0.2)
+    assert time.monotonic() - t0 < 5
+    solta.set()
+    assert pit._com_prazo(lambda: 7, 1.0) == 7
+    with pytest.raises(KeyError):
+        pit._com_prazo(lambda: {}["x"], 1.0)

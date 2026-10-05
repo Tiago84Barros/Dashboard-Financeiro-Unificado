@@ -455,7 +455,7 @@ def main() -> int:
         avaliador = pit.AvaliadorPortaoPIT(
             args.portao_cache,
             lambda tk, safra: pit.montar_entrada_pit(tk, safra, macro),
-            pit.parecer_pit, pit.sonda_pit, workers=args.portao_workers)
+            pit.parecer_pit, pit.sonda_pit, workers=args.portao_workers, tentativas=3)
 
     perfis: dict = {}
     todas_safras: set[int] = set()
@@ -466,7 +466,7 @@ def main() -> int:
         medido, safras = _medir_perfil(resultados, precos, params, ibov, cost_cfg, hoje,
                                        portao=avaliador)
         if avaliador is not None:
-            medido["portao_llm_medido"] = avaliador.resumo(set(safras))
+            medido["portao_llm_medido"] = avaliador.resumo(pares=avaliador.consultados)
         avaliadas.update(safras)
         # A janela declarada é a das safras que tiveram carteira: as primeiras
         # não têm líder anterior a elas (sem backtest, sem aprovação).

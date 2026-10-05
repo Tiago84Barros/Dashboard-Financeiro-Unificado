@@ -135,7 +135,12 @@ PORTAO_LLM = {
         "não garante nada para empresa grande e conhecida. O dossiê da época "
         "vê MENOS que o de produção: sem documentos CVM, notícias, métricas "
         "do provedor e detalhe do armazém (o acervo não cobre as safras). Os "
-        "balanços são os de hoje, inclusive reapresentações posteriores."),
+        "balanços são os de hoje, inclusive reapresentações posteriores. "
+        "Empresa que saiu da bolsa não está no market.*: o dossiê dela sai da "
+        "DFP da CVM (primeira versão entregue até o corte, a mesma fonte com "
+        "que o score a reconstrói), sem trimestres e com proventos estimados "
+        "pelo caixa pago; preço, faixa e valor de mercado que atravessam "
+        "evento de capital não detectado ficam em branco em vez de errados."),
 }
 
 FORA_DO_PIT = (
