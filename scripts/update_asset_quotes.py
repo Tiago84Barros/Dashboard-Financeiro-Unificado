@@ -13,12 +13,13 @@ Opcoes:
     --bruto            Grava o fechamento negociado, sem ajuste por proventos
 
 Historico do exterior (Nomad) para a Evolucao Patrimonial:
-    py -3.9 scripts/update_asset_quotes.py --periodo max --moeda USD --bruto
+    py -3.9 scripts/update_asset_quotes.py --periodo 5y --moeda USD --bruto
     A serie recompoe o exterior de cada mes por quantidade x fechamento x USDBRL;
     sem cotacao na data o exterior entra como zero. --moeda USD baixa so os ETFs
     da Nomad, sem reescrever o historico das acoes da B3. --bruto porque o
     fechamento ajustado de um ETF que paga provento (SGOV, TFLO) fica abaixo do
     preco daquele dia, e o patrimonio do passado sairia menor do que foi.
+    5y cobre desde out/21; max traria o SPY desde 1993 para um banco no limite.
 
 Comportamento:
     - Idempotente: usa ON CONFLICT DO UPDATE — seguro para rodar mais de uma vez.
