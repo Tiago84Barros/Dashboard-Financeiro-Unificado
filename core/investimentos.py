@@ -1825,11 +1825,18 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
                 THEN SUM(pps.invested_value) FILTER (WHERE pps.market_value > 0)
             END AS vi
         FROM ranked_snapshots pps
+        JOIN assets a ON a.id = pps.asset_id
         WHERE pps.asset_source_rank = 1
           AND NOT EXISTS (
               SELECT 1 FROM b3_encerrados e
               WHERE e.corte = pps.corte AND e.asset_id = pps.asset_id
           )
+          -- Exterior fica de fora: _exterior_nas_datas o recompoe pelas notas
+          -- da Nomad em cada data. A foto da Nomad (source_system 'nomad',
+          -- gravada com a data em que o script rodou) somada aqui contava o
+          -- exterior duas vezes da data dela em diante -- e, carregada para
+          -- frente, com preco e cambio daquele dia.
+          AND upper(coalesce(a.currency, 'BRL')) <> 'USD'
         GROUP BY pps.corte
     )
     SELECT

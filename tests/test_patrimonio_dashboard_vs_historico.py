@@ -142,6 +142,16 @@ def test_serie_le_todas_as_fontes_e_os_encerramentos_da_b3():
     assert "s.report_date <= c.corte" in sql
 
 
+def test_serie_nao_soma_o_exterior_que_ja_entra_pelas_notas():
+    # A foto da Nomad (moeda USD) mora em portfolio_position_snapshots. Se a
+    # serie a somasse, _exterior_nas_datas somaria o exterior de novo.
+    serie = " ".join(investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower().split())
+    exterior = " ".join(investimentos._SQL_EVOLUCAO_EXTERIOR_TX.lower().split())
+
+    assert "upper(coalesce(a.currency, 'brl')) = 'usd'" in exterior
+    assert "upper(coalesce(a.currency, 'brl')) <> 'usd'" in serie
+
+
 def test_foto_sem_custo_vira_lacuna_e_nao_zero():
     snaps = [
         SimpleNamespace(mes=date(2020, 12, 31), valor_mercado=600.0,
