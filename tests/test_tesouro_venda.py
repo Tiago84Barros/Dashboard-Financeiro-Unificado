@@ -27,6 +27,7 @@ from core.tesouro_mtm import (
     dias_uteis,
     projetar_carrego,
     taxa_de_indiferenca,
+    trajetoria_carrego,
 )
 from core.tesouro_venda import (
     AGIO,
@@ -418,11 +419,11 @@ def test_paleta_das_figuras_serve_aos_dois_temas():
     ter contraste nos dois fundos, senão a linha some no tema claro.
     """
     from design.tesouro_painel import (
+        _FIG_CURVA,
         _FIG_INVESTIDO,
         _FIG_VENCIMENTO,
         _FIG_VENDER,
         _GRAFICO_LINHA_ZERO,
-        _SERIE_CORES,
     )
 
     def luminancia(hexa: str) -> float:
@@ -435,7 +436,7 @@ def test_paleta_das_figuras_serve_aos_dois_temas():
         a, b = luminancia(cor), luminancia(fundo)
         return (max(a, b) + 0.05) / (min(a, b) + 0.05)
 
-    cores = (*_SERIE_CORES, _FIG_INVESTIDO, _FIG_VENDER, _FIG_VENCIMENTO,
+    cores = (_FIG_CURVA, _FIG_INVESTIDO, _FIG_VENDER, _FIG_VENCIMENTO,
              _GRAFICO_LINHA_ZERO)
     for cor in cores:
         assert contraste(cor, "#0E1117") >= 3.0, f"{cor} some no tema escuro"
@@ -450,3 +451,163 @@ def test_cards_fecham_o_artigo_de_cada_titulo():
     leitura = ler_venda(titulo, data_avaliacao=HOJE)
     html = cards_html([(leitura, extremos_da_serie([]))])
     assert html.count("<article") == html.count("</article>") == 1
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trajetória até o vencimento — a linha que o gráfico por título desenha
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _projecao_padrao():
+    aval = _avaliacao(_lote(taxa=0.1180), taxa_mercado=0.1360, pu=750.0)
+    return projetar_carrego([aval], vencimento=VENCIMENTO, data_avaliacao=HOJE,
+                            taxa_mercado_resgate=0.1360)
+
+
+def test_trajetoria_termina_no_mesmo_numero_que_o_card_mostra():
+    """A ponta da curva é o valor do vencimento, não uma recontagem dele.
+
+    Se a figura recalculasse o fim por fora, uma divergência de arredondamento
+    poria o gráfico e o texto contando valores diferentes para a mesma coisa —
+    e o usuário não teria como saber qual dos dois acreditar.
+    """
+    p = _projecao_padrao()
+    caminho = trajetoria_carrego(p, data_avaliacao=HOJE, vencimento=VENCIMENTO)
+
+    assert caminho[-1]["data"] == VENCIMENTO
+    assert caminho[-1]["valor_bruto"] == pytest.approx(
+        p.valor_bruto_vencimento, rel=1e-12)
+    assert caminho[0]["data"] == HOJE
+    assert caminho[0]["valor_bruto"] == pytest.approx(p.valor_bruto_hoje)
+
+
+def test_trajetoria_sobe_sempre_e_anda_para_frente():
+    caminho = trajetoria_carrego(_projecao_padrao(), data_avaliacao=HOJE,
+                                 vencimento=VENCIMENTO)
+    datas = [p["data"] for p in caminho]
+    valores = [p["valor_bruto"] for p in caminho]
+
+    assert len(caminho) >= 8
+    assert datas == sorted(datas)
+    assert len(set(datas)) == len(datas)
+    assert all(b > a for a, b in zip(valores, valores[1:]))
+
+
+def test_trajetoria_sem_preco_nao_desenha_nada():
+    aval = _avaliacao(_lote(taxa=0.1180), taxa_mercado=None, pu=None)
+    p = projetar_carrego([aval], vencimento=VENCIMENTO, data_avaliacao=HOJE,
+                         taxa_mercado_resgate=None)
+    assert trajetoria_carrego(p, data_avaliacao=HOJE,
+                              vencimento=VENCIMENTO) == []
+
+
+def test_trajetoria_recusa_janela_que_nao_foi_a_projetada():
+    """Projeção de uma janela desenhada noutra inventaria valor intermediário.
+
+    O fator capitaliza por um prazo fixo; aplicá-lo a um eixo mais curto ou
+    mais longo desenharia a mesma curva em cima de datas erradas.
+    """
+    p = _projecao_padrao()
+    assert trajetoria_carrego(p, data_avaliacao=HOJE,
+                              vencimento=date(2031, 1, 1)) == []
+
+
+def test_serie_expoe_a_curva_do_lote_e_ela_explica_a_marcacao():
+    lote = _lote(taxa=0.1180, aplicacao=date(2024, 5, 10))
+    serie = serie_mtm_posicao(
+        [lote], vencimento=VENCIMENTO,
+        cotacoes=[{"base_date": date(2026, 9, 30), "sell_rate_dec": 0.1360,
+                   "sell_pu": 750.0}])
+
+    ponto = serie[0]
+    assert ponto["valor_curva"] > 0
+    # A marcação não é um terceiro número: é a distância entre as duas linhas.
+    assert ponto["valor_bruto"] / ponto["valor_curva"] - 1.0 == pytest.approx(
+        ponto["mtm_pct"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# O gráfico por título
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _figura_padrao(*, com_serie: bool = True):
+    from design.tesouro_painel import fig_titulo
+
+    titulo = _Titulo()
+    leitura = ler_venda(titulo, data_avaliacao=HOJE)
+    serie = serie_mtm_posicao(
+        titulo.lotes, vencimento=VENCIMENTO,
+        cotacoes=[{"base_date": date(2026, 9, d), "sell_rate_dec": 0.1360,
+                   "sell_pu": 780.0 + d} for d in (1, 10, 20, 30)],
+    ) if com_serie else []
+    trajetoria = trajetoria_carrego(leitura.projecao, data_avaliacao=HOJE,
+                                    vencimento=VENCIMENTO)
+    return fig_titulo(leitura, serie, trajetoria), leitura
+
+
+def test_grafico_do_titulo_poe_passado_e_futuro_no_mesmo_quadro():
+    """O pedido é exatamente este: a marcação e o caminho até o fim, juntos."""
+    fig, leitura = _figura_padrao()
+    nomes = [t.name for t in fig.data]
+
+    assert "Valor de mercado" in nomes
+    assert "Levando até o vencimento" in nomes
+    assert "Líquido no vencimento" in nomes
+    assert "Marcação" in nomes  # o painel de baixo, em percentual
+
+    # A ponta da linha do futuro é o vencimento, e o losango marca o que sobra
+    # depois do imposto — abaixo do bruto, nunca acima.
+    futuro = next(t for t in fig.data if t.name == "Levando até o vencimento")
+    desfecho = next(t for t in fig.data if t.name == "Líquido no vencimento")
+    assert futuro.x[-1] == leitura.vencimento
+    assert desfecho.y[0] == pytest.approx(leitura.liquido_vencimento)
+    assert desfecho.y[0] < futuro.y[-1]
+
+
+def test_grafico_do_titulo_desenha_a_curva_contratada_ao_lado_do_mercado():
+    """Sem a linha de referência, a oscilação em reais não tem contra o quê."""
+    fig, _ = _figura_padrao()
+    mercado = next(t for t in fig.data if t.name == "Valor de mercado")
+    curva = next(t for t in fig.data
+                 if t.name == "Pela taxa que você contratou")
+    assert len(curva.x) == len(mercado.x)
+    assert all(v > 0 for v in curva.y)
+
+
+def test_grafico_sem_historico_nao_inventa_painel_de_oscilacao():
+    """Um ponto só não é oscilação; o painel de baixo some em vez de mentir."""
+    fig, _ = _figura_padrao(com_serie=False)
+    assert [t.name for t in fig.data if t.name == "Marcação"] == []
+    assert "Levando até o vencimento" in [t.name for t in fig.data]
+    assert fig.layout.height < 300
+
+
+def test_etiqueta_do_grafico_escapa_o_nome_do_titulo():
+    from design.tesouro_painel import nome_grafico_html
+
+    leitura = ler_venda(_Titulo(nome="Tesouro <b>IPCA+</b> 2029"),
+                        data_avaliacao=HOJE)
+    html = nome_grafico_html(leitura)
+    assert "<b>" not in html.replace("</div>", "")
+    assert "&lt;b&gt;" in html
+    assert VENCIMENTO.strftime("%d/%m/%Y") in html
+
+
+def test_legenda_aparece_so_onde_a_view_pedir():
+    """Seis gráficos iguais não precisam de seis cópias da mesma legenda."""
+    from design.tesouro_painel import fig_titulo
+
+    titulo = _Titulo()
+    leitura = ler_venda(titulo, data_avaliacao=HOJE)
+    trajetoria = trajetoria_carrego(leitura.projecao, data_avaliacao=HOJE,
+                                    vencimento=VENCIMENTO)
+
+    primeiro = fig_titulo(leitura, [], trajetoria, com_legenda=True)
+    demais = fig_titulo(leitura, [], trajetoria, com_legenda=False)
+
+    assert primeiro.layout.showlegend is True
+    assert demais.layout.showlegend is False
+    # Era a legenda que reservava a faixa dos rótulos do eixo x; sem ela, a
+    # margem de baixo precisa repor a folga, ou as datas saem cortadas.
+    assert demais.layout.margin.b > primeiro.layout.margin.b
+    assert demais.layout.height == primeiro.layout.height
+    assert [t.name for t in demais.data] == [t.name for t in primeiro.data]
