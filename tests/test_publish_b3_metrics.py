@@ -104,3 +104,23 @@ def test_cria_o_diretorio_de_destino(tmp_path):
     destino = tmp_path / "nao" / "existe" / "ainda" / "orfas.csv"
 
     assert _salvar_backup_orfas(conn, orfas, destino).exists()
+
+
+def test_ticker_fora_da_vitrine_e_retido_e_nao_derruba_o_upsert():
+    """ALSO3 (05/10/2026): fóssil de alias só no armazém violava a FK de assets."""
+    from scripts.publish_b3_metrics_to_supabase import _reter_fora_da_vitrine
+
+    origem = [{"ticker": "ALOS3", "v": 1}, {"ticker": "ALSO3", "v": 2},
+              {"ticker": "PETR4", "v": 3}]
+    linhas, tickers, retidos = _reter_fora_da_vitrine(
+        origem, ["ALOS3", "ALSO3", "PETR4"], {"ALOS3", "PETR4", "VALE3"})
+    assert [r["v"] for r in linhas] == [1, 3]
+    assert tickers == ["ALOS3", "PETR4"]
+    assert retidos == ["ALSO3"]
+
+
+def test_sem_ticker_ausente_nada_muda():
+    from scripts.publish_b3_metrics_to_supabase import _reter_fora_da_vitrine
+
+    origem = [{"ticker": "PETR4"}]
+    assert _reter_fora_da_vitrine(origem, ["PETR4"], {"PETR4"}) == (origem, ["PETR4"], [])
