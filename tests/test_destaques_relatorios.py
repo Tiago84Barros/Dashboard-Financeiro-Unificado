@@ -97,6 +97,51 @@ def test_sem_acento_igual_a_normalizar_a_frase_inteira():
         assert dr._sem_acento(t) == _sem_acento_por_frase(t), t
 
 
+def _pontuar_ordem_antiga(frase: str) -> int:
+    """A versão anterior: ``_parece_prosa`` antes de número e fato, com os
+    laços por caractere."""
+    if not dr.MIN_CHARS <= len(frase) <= dr.MAX_CHARS:
+        return 0
+    if not frase[:1].isupper() and not frase[:1].isdigit():
+        return 0
+    if dr._LETRAS_SOLTAS.search(frase):
+        return 0
+    letras = [c for c in frase if c.isalpha()]
+    if not letras or sum(c.isupper() for c in letras) > 0.5 * len(letras):
+        return 0
+    tokens = frase.split()
+    numericos = sum(1 for t in tokens if any(c.isdigit() for c in t))
+    palavras = sum(1 for t in tokens if len(t) >= 3 and t.isalpha())
+    if numericos > 6 or palavras < 2 * numericos or palavras < 6:
+        return 0
+    base = _sem_acento_por_frase(frase)
+    if sum(1 for w in dr._INGLES if w in f" {base} ") >= 2:
+        return 0
+    if not any(w in f" {base} " for w in dr._VERBOS):
+        return 0
+    fatos = sum(1 for p in dr._FATOS if p in base)
+    if not fatos or not dr._NUMERO.search(frase):
+        return 0
+    return fatos + 2 * len(dr._VALOR.findall(frase))
+
+
+def test_pontuar_igual_a_ordem_antiga():
+    # Filtros baratos primeiro não mudam a nota. Inclui caractere que é
+    # maiúsculo sem ser letra (Ⓐ) e dígito que não é decimal (²).
+    frases = [BOA, TABELA, INGLES, SEM_NUMERO, BOA.upper(), "receita " + BOA,
+              "Ⓐ ⒷⒸⒹ receita foi de R$ 10 milhões em 2025, alta de 3% no ano",
+              "A receita² foi de R$ 10 milhões, alta de 3% sobre o ano anterior",
+              "O lucro líquido totalizou R$ 2,3 bilhões e a dívida caiu 1,5x",
+              "R E S U L T A D O S do lucro foi 12% maior que o previsto hoje",
+              "Ação: o EBITDA ajustado atingiu R$ 500 milhões no 2º trimestre",
+              "12 13 14 15 16 17 18 lucro foi registrado com alta das vendas"]
+    for f in frases:
+        esperado = _pontuar_ordem_antiga(f)
+        assert dr.pontuar(f) == esperado, f
+        assert dr.pontuar(f, dr._sem_acento(f)) == esperado, f
+    assert dr.pontuar(BOA) > 0
+
+
 def test_ler_trechos_le_uma_vez_por_ativo(monkeypatch):
     chamadas: list[str] = []
 
