@@ -10,7 +10,8 @@ que ela se lê:
 2. **o que cada título entrega** — carregar até o fim × vender hoje, no gráfico;
 3. **o veredito por título** — com a taxa de indiferença, que é a única forma
    honesta de dizer "de quanto é a vantagem" sem escolher pelo usuário;
-4. **a oscilação da marcação** — quanto ela já variou nesta posição.
+4. **um gráfico por título** — para onde o papel vai se for carregado até
+   o fim, e quanto a marcação já oscilou nele.
 
 Toda função é pura e devolve HTML ou uma figura: o que a tela promete se
 verifica sem subir o Streamlit e sem tocar o banco. Cor sempre por token
@@ -25,6 +26,7 @@ import html
 from datetime import date
 
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from core.tesouro_venda import (
     AGIO,
@@ -50,9 +52,9 @@ _FIG_INVESTIDO = "#8792A6"
 _FIG_VENDER = "#3B82F6"
 _FIG_VENCIMENTO = "#0D9488"
 
-#: Uma cor por título na série da marcação. Seis chega para a carteira real e
-#: a lista cicla sem estourar.
-_SERIE_CORES = ("#3B82F6", "#0D9488", "#B8860B", "#DB2E54", "#8B5CF6", "#E2712A")
+#: A linha de referência do gráfico por título: o que a posição valeria pela
+#: taxa contratada, sem oscilação de mercado.
+_FIG_CURVA = "#8792A6"
 
 _TOM = {
     AGIO: "var(--app-primary, #00C896)",
@@ -213,6 +215,18 @@ TD_CSS = """
     font-size: .74rem; font-weight: 820;
 }
 .td-legenda-item b { color: var(--app-text, #E2E8F0); font-weight: 800; }
+
+/* Nome do título acima do gráfico dele. Com um gráfico por papel, sem esta
+   etiqueta a sequência vira uma pilha de curvas sem dono. */
+.td-grafico-nome {
+    margin: 14px 0 -8px; padding-left: 2px;
+    color: var(--app-text, #E2E8F0);
+    font-size: .92rem; font-weight: 800; letter-spacing: .01em;
+}
+.td-grafico-prazo {
+    color: var(--app-muted, #8A99AE);
+    font-size: .78rem; font-weight: 600;
+}
 </style>
 """
 
@@ -512,40 +526,136 @@ def fig_carregar_vs_vender(leituras) -> go.Figure:
     return fig
 
 
-def fig_oscilacao(series: list[tuple[str, list[dict]]]) -> go.Figure:
-    """A marcação da posição, dia a dia, em percentual.
+def nome_grafico_html(leitura: LeituraVenda) -> str:
+    """A etiqueta do título acima do gráfico dele, com o vencimento ao lado.
 
-    Uma linha por título e o zero tracejado: acima dele vender realiza ágio,
-    abaixo realiza deságio. É a série da **posição** — da razão entre o preço
-    do dia e a curva do lote do usuário —, não a da taxa publicada; duas
-    pessoas com o mesmo título e taxas contratadas diferentes têm linhas
-    diferentes aqui.
+    Vive aqui, e não na view, porque é apresentação: a view passou a desenhar
+    um gráfico por papel e precisa dizer de quem é cada um sem montar HTML.
     """
-    fig = go.Figure()
-    for i, (titulo, serie) in enumerate(series):
-        pontos = [p for p in serie if p.get("mtm_pct") is not None]
-        if not pontos:
-            continue
+    venc = leitura.vencimento
+    prazo = f" · vence em {venc.strftime('%d/%m/%Y')}" if venc else ""
+    return (f'<div class="td-grafico-nome">{_esc(leitura.titulo)}'
+            f'<span class="td-grafico-prazo">{prazo}</span></div>')
+
+
+def fig_titulo(leitura: LeituraVenda, serie: list[dict],
+               trajetoria: list[dict], *, com_legenda: bool = True) -> go.Figure:
+    """Um título, dois painéis: para onde ele vai, e quanto ele já oscilou.
+
+    O gráfico consolidado de antes empilhava seis linhas de marcação num eixo
+    só. Dava para ver que a carteira oscila; não dava para responder a pergunta
+    de quem olha um papel específico — *quanto eu terei neste aqui, e o que a
+    marcação já fez com ele*. Daí um gráfico por título, com as duas coisas no
+    mesmo quadro.
+
+    **Em cima, reais.** A linha cheia é o valor de mercado dia a dia; a
+    tracejada ao lado dela é o que a posição valeria pela taxa contratada. A
+    distância entre as duas *é* a marcação — ágio quando a cheia está por cima.
+    Da data da curva em diante vem a trajetória de carregar até o fim, e o
+    losango no vencimento marca o que sobra depois do imposto.
+
+    **Embaixo, a mesma história em percentual**, com o zero tracejado. Está num
+    painel próprio, e não no mesmo eixo, porque uma oscilação de 3% sobre uma
+    linha que sobe some; e com eixo x próprio, porque um papel de 2034 tem oito
+    anos de futuro contra um ano e meio de passado — compartilhar o eixo
+    espremeria a oscilação inteira contra a margem esquerda.
+
+    O futuro sai tracejado de propósito: ele é aritmética de carregar pela taxa
+    de hoje, não observação. Em título indexado, nem isso — depende do índice
+    que vier, e o rótulo do painel diz.
+
+    `com_legenda` existe porque a sequência é de gráficos iguais: as quatro
+    chaves são as mesmas em todos, e repeti-las seis vezes gasta uma faixa de
+    tela por papel para dizer o que já foi dito. A view liga no primeiro e
+    desliga nos demais.
+    """
+    pontos = [p for p in serie if p.get("mtm_pct") is not None]
+    com_oscilacao = len(pontos) > 1
+
+    titulo_reais = "Quanto você terá, em reais"
+    if leitura.depende_do_indice:
+        titulo_reais += "  (o trecho futuro depende do índice projetado)"
+
+    if com_oscilacao:
+        fig = make_subplots(
+            rows=2, cols=1, shared_xaxes=False, vertical_spacing=0.19,
+            row_heights=[0.62, 0.38],
+            subplot_titles=(titulo_reais, "Oscilação da marcação"))
+    else:
+        fig = make_subplots(rows=1, cols=1, subplot_titles=(titulo_reais,))
+
+    if pontos:
         fig.add_trace(go.Scatter(
-            name=_rotulo_curto(titulo),
-            x=[p["data"] for p in pontos],
-            y=[p["mtm_pct"] * 100 for p in pontos],
-            mode="lines",
-            line={"color": _SERIE_CORES[i % len(_SERIE_CORES)], "width": 1.9},
-            hovertemplate="<b>%{fullData.name}</b><br>%{x|%d/%m/%Y}"
-                          "<br>Marcação: %{y:+.2f}%<extra></extra>"))
-    fig.add_hline(y=0, line={"color": _GRAFICO_LINHA_ZERO, "width": 1,
-                             "dash": "dot"})
+            name="Valor de mercado", x=[p["data"] for p in pontos],
+            y=[p["valor_bruto"] for p in pontos], mode="lines",
+            line={"color": _FIG_VENDER, "width": 1.9},
+            hovertemplate="%{x|%d/%m/%Y}<br>Mercado: R$ %{y:,.2f}<extra></extra>"),
+            row=1, col=1)
+        curva = [p for p in pontos if p.get("valor_curva")]
+        if curva:
+            fig.add_trace(go.Scatter(
+                name="Pela taxa que você contratou",
+                x=[p["data"] for p in curva],
+                y=[p["valor_curva"] for p in curva], mode="lines",
+                line={"color": _FIG_CURVA, "width": 1.4, "dash": "dot"},
+                hovertemplate="%{x|%d/%m/%Y}<br>Pela taxa contratada: "
+                              "R$ %{y:,.2f}<extra></extra>"),
+                row=1, col=1)
+
+    if trajetoria:
+        fig.add_trace(go.Scatter(
+            name="Levando até o vencimento",
+            x=[p["data"] for p in trajetoria],
+            y=[p["valor_bruto"] for p in trajetoria], mode="lines",
+            line={"color": _FIG_VENCIMENTO, "width": 1.9, "dash": "dash"},
+            hovertemplate="%{x|%d/%m/%Y}<br>Carregando: R$ %{y:,.2f}"
+                          "<extra></extra>"),
+            row=1, col=1)
+
+    if leitura.liquido_vencimento is not None and leitura.vencimento:
+        fig.add_trace(go.Scatter(
+            name="Líquido no vencimento", x=[leitura.vencimento],
+            y=[leitura.liquido_vencimento], mode="markers+text",
+            marker={"color": _FIG_VENCIMENTO, "size": 10, "symbol": "diamond"},
+            text=[_reais(leitura.liquido_vencimento)],
+            textposition="middle left", cliponaxis=False,
+            textfont={"size": 11, "color": _GRAFICO_NEUTRO},
+            hovertemplate="No vencimento, já com IR: R$ %{y:,.2f}<extra></extra>"),
+            row=1, col=1)
+
+    if com_oscilacao:
+        fig.add_trace(go.Scatter(
+            name="Marcação", x=[p["data"] for p in pontos],
+            y=[p["mtm_pct"] * 100 for p in pontos], mode="lines",
+            line={"color": _FIG_VENDER, "width": 1.6}, showlegend=False,
+            hovertemplate="%{x|%d/%m/%Y}<br>Marcação: %{y:+.2f}%<extra></extra>"),
+            row=2, col=1)
+        fig.add_hline(y=0, line={"color": _GRAFICO_LINHA_ZERO, "width": 1,
+                                 "dash": "dot"}, row=2, col=1)
+
+    # Os títulos de painel vêm centralizados do plotly; à esquerda e menores
+    # eles se leem como rótulo da faixa, não como título do gráfico.
+    for nota in fig.layout.annotations:
+        nota.update(x=0, xanchor="left", font={"size": 11.5,
+                                               "color": _GRAFICO_NEUTRO})
+
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font_color=_GRAFICO_NEUTRO,
-        legend={"orientation": "h", "y": -0.16, "x": 0,
-                "font": {"size": 11}, "bgcolor": "rgba(0,0,0,0)"},
-        margin={"t": 10, "b": 10, "l": 0, "r": 10}, height=340,
-        hovermode="x unified",
-        xaxis={"showgrid": False},
-        yaxis={"showgrid": True, "gridcolor": _GRAFICO_GRADE,
-               "ticksuffix": "%", "tickformat": "+.1f",
-               "zeroline": False, "automargin": True},
+        font_color=_GRAFICO_NEUTRO, hovermode="x unified",
+        showlegend=com_legenda,
+        legend={"orientation": "h", "y": -0.13, "x": 0, "font": {"size": 11},
+                "bgcolor": "rgba(0,0,0,0)"},
+        # Sem legenda a margem de baixo cresce: era ela que reservava a faixa
+        # onde os rótulos do eixo x caem. Tirá-la sem repor a folga corta as
+        # datas pela metade — e a altura fica igual em todos para que a
+        # sequência de gráficos se leia como uma régua, não como degraus.
+        margin={"t": 26, "b": 10 if com_legenda else 36, "l": 0, "r": 20},
+        height=400 if com_oscilacao else 260,
     )
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(showgrid=True, gridcolor=_GRAFICO_GRADE, automargin=True)
+    fig.update_yaxes(tickformat=",.0f", tickprefix="R$ ", row=1, col=1)
+    if com_oscilacao:
+        fig.update_yaxes(ticksuffix="%", tickformat="+.1f", zeroline=False,
+                         row=2, col=1)
     return fig

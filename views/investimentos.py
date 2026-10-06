@@ -4941,6 +4941,7 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
         from core.database import get_engine
         from core.tesouro_curva import curva_disponivel, titulos_ofertados
         from core.tesouro_historico import extremos_da_serie, serie_mtm_posicao
+        from core.tesouro_mtm import trajetoria_carrego
         from core.tesouro_posicao import carregar_titulos
         from core.tesouro_venda import frase_da_carteira, ler_venda, resumo_da_carteira
         from design import tesouro_painel as _painel
@@ -4994,29 +4995,42 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
 
     # ── Faixa 3: um card por título, com a taxa de indiferença ───────────────
     pares = []
-    series = []
+    graficos = []
     for titulo, leitura in zip(titulos, leituras):
         serie = serie_mtm_posicao(
             titulo.lotes, vencimento=titulo.vencimento,
             cotacoes=_serie_marcacao(titulo.security_key, data_curva),
         )
         pares.append((leitura, extremos_da_serie(serie)))
-        if serie:
-            series.append((leitura.titulo, serie))
+        trajetoria = trajetoria_carrego(
+            leitura.projecao, data_avaliacao=data_avaliacao,
+            vencimento=titulo.vencimento,
+        )
+        if serie or trajetoria:
+            graficos.append((leitura, serie, trajetoria))
 
     st.markdown("<br>", unsafe_allow_html=True)
     _secao_titulo_orig("🎯", "Por título — dá para vender, e acima de quanto vale")
     st.markdown(_painel.cards_html(pares), unsafe_allow_html=True)
 
-    # ── Faixa 4: a oscilação já vivida pela posição ──────────────────────────
-    if series:
+    # ── Faixa 4: um gráfico por título — para onde vai e quanto já oscilou ───
+    if graficos:
         st.markdown("<br>", unsafe_allow_html=True)
         _secao_titulo_orig(
-            "📈", "Oscilação da marcação",
-            "quanto a venda antecipada já valeu e já custou nesta posição",
+            "📈", "Título por título — levar até o fim × a marcação de hoje",
+            "a linha cheia é o preço de recompra; a tracejada, o caminho até o "
+            "vencimento",
         )
-        st.plotly_chart(_painel.fig_oscilacao(series),
-                        width="stretch", config={"displayModeBar": False})
+        for ordem, (leitura, serie, trajetoria) in enumerate(graficos):
+            st.markdown(_painel.nome_grafico_html(leitura),
+                        unsafe_allow_html=True)
+            # A legenda só no primeiro: os gráficos seguintes usam as mesmas
+            # quatro chaves, e repeti-las custaria uma faixa de tela por papel.
+            st.plotly_chart(
+                _painel.fig_titulo(leitura, serie, trajetoria,
+                                   com_legenda=ordem == 0),
+                width="stretch", config={"displayModeBar": False},
+                key=f"td_fig_{leitura.security_key}")
     st.markdown(_painel.legenda_html(), unsafe_allow_html=True)
 
     # ── Faixa 5: a conta completa, fechada por padrão ────────────────────────

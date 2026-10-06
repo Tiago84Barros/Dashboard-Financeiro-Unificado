@@ -43,6 +43,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import Iterator
 
 DIAS_UTEIS_ANO = 252
 
@@ -105,18 +106,31 @@ def dias_uteis(inicio: date, fim: date) -> int:
     Retorna 0 quando ``fim`` não é posterior a ``inicio``: título vencido não
     tem prazo negativo, tem prazo zero.
     """
+    return sum(1 for _ in itera_dias_uteis(inicio, fim))
+
+
+def itera_dias_uteis(inicio: date, fim: date) -> Iterator[date]:
+    """Os dias úteis de ``[inicio, fim)``, um a um, na ordem do calendário.
+
+    Existe para que a contagem de `dias_uteis` e a amostragem de uma trajetória
+    ao longo do tempo saiam da **mesma** regra de calendário. Duas cópias dessa
+    regra divergiriam no primeiro feriado novo, e a divergência apareceria como
+    um valor de vencimento que não bate com a ponta do gráfico que o mostra.
+
+    Gerador, e não lista, porque `dias_uteis` roda uma vez por data da curva em
+    cada título: materializar milhares de datas só para contá-las seria pagar
+    memória por nada.
+    """
     if inicio is None or fim is None or fim <= inicio:
-        return 0
+        return
     feriados: set[date] = set()
     for ano in range(inicio.year, fim.year + 1):
         feriados |= feriados_nacionais(ano)
-    total = 0
     dia = inicio
     while dia < fim:
         if dia.weekday() < 5 and dia not in feriados:
-            total += 1
+            yield dia
         dia += timedelta(days=1)
-    return total
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -437,6 +451,55 @@ def projetar_carrego(
         aproximado=aproximado,
         depende_do_indice=depende,
     )
+
+
+def trajetoria_carrego(
+    projecao: ProjecaoCarrego,
+    *,
+    data_avaliacao: date,
+    vencimento: date,
+    pontos: int = 28,
+) -> list[dict]:
+    """O caminho de hoje até o vencimento, em reais, para desenhar no tempo.
+
+    `projetar_carrego` responde *quanto* o título entrega no fim; esta função
+    responde *por onde ele passa*, que é o que um gráfico precisa. Não é
+    projeção nova: é a mesma capitalização, amostrada em datas intermediárias.
+    O último ponto reusa `projecao.fator`, de modo que a ponta da curva e o
+    número do card são o mesmo valor por construção — recalcular o fim aqui
+    abriria espaço para o gráfico contar uma história e o texto outra.
+
+    O valor é **bruto**, como o da série histórica da marcação, para que as
+    duas pernas no mesmo gráfico sejam a mesma grandeza. O líquido do fim sai
+    de `projecao.valor_liquido_vencimento` e entra na tela como o desfecho de
+    bolso, separado — misturá-los na linha desenharia um degrau de imposto que
+    não acontece em data nenhuma.
+
+    Devolve lista vazia quando falta preço, prazo ou quando a janela pedida não
+    é a que foi projetada: curva sem conta por trás não é curva, é desenho.
+    """
+    bruto_hoje = projecao.valor_bruto_hoje
+    if (bruto_hoje is None or projecao.fator is None
+            or projecao.taxa_carrego is None or projecao.du_restante <= 0):
+        return []
+
+    uteis = list(itera_dias_uteis(data_avaliacao, vencimento))
+    if len(uteis) != projecao.du_restante:
+        return []
+
+    taxa = projecao.taxa_carrego
+    indice = projecao.taxa_indice or 0.0
+    du_total = len(uteis)
+    passo = max(1, du_total // max(1, pontos - 1))
+
+    marcos: list[tuple[date, int]] = [(data_avaliacao, 0)]
+    marcos += [(uteis[k], k) for k in range(passo, du_total, passo)]
+
+    caminho = [{"data": d, "valor_bruto": bruto_hoje * _fator_capitalizacao(taxa, indice, du)}
+               for d, du in marcos]
+    caminho.append({"data": vencimento,
+                    "valor_bruto": bruto_hoje * projecao.fator})
+    return caminho
 
 
 def taxa_de_indiferenca(
