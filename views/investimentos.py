@@ -3953,62 +3953,13 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             from datetime import date as _date_today
             ano_atual = _date_today.today().year
 
-            # KPIs consolidados
-            total_mv_ts = sum(p["valor_mercado"] for p in tesouros)
-            total_vi_ts = sum(p["total_investido"] for p in tesouros)
-            resultado_mercado = total_mv_ts - total_vi_ts
-            retorno_total = retorno_mercado_sobre_custo(total_mv_ts, total_vi_ts)
-            retorno_total_pct = retorno_total * 100 if retorno_total is not None else None
-            cor_resultado = _COR_POSITIVO if resultado_mercado >= 0 else _COR_NEGATIVO
-
-            _secao_titulo_orig(
-                "🏦", "Tesouro Direto — Retorno e Marcação a Mercado",
-                f"{len(tesouros)} títulos · resultado de mercado sobre custo "
-                f"{fmt_moeda(resultado_mercado)}"
-            )
-
-            c1, c2, c3, c4 = st.columns(4, gap="small")
-            with c1:
-                st.markdown(_kpi(
-                    "Valor de Mercado", fmt_moeda(total_mv_ts),
-                    f"{len(tesouros)} títulos em carteira",
-                    "var(--app-text)",
-                ), unsafe_allow_html=True)
-            with c2:
-                st.markdown(_kpi(
-                    "Custo Investido", fmt_moeda(total_vi_ts),
-                    "Valor de compra acumulado",
-                    _COR_INFO,
-                ), unsafe_allow_html=True)
-            with c3:
-                st.markdown(_kpi(
-                    "Resultado de Mercado",
-                    f"{'+' if resultado_mercado >= 0 else ''}{fmt_moeda(resultado_mercado)}",
-                    "Mercado − custo; inclui carrego e não é MtM isolado",
-                    cor_resultado,
-                ), unsafe_allow_html=True)
-            with c4:
-                st.markdown(_kpi(
-                    "Retorno Mercado/Custo",
-                    f"{retorno_total_pct:+.2f}%" if retorno_total_pct is not None else "Indisponível",
-                    "Retorno de preço acumulado; não inclui imposto",
-                    cor_resultado if retorno_total_pct is not None else _COR_NEUTRO,
-                ), unsafe_allow_html=True)
-
-            st.markdown("<br>", unsafe_allow_html=True)
-            titulos_mtm = _bloco_tesouro_mtm()
-            tem_mtm = bool(titulos_mtm)
-            # A marcação medida ali em cima alimenta a "Análise por Título" logo
-            # abaixo. Antes ela chamava `analise_suficiencia_tesouro(tipo, None)`
-            # com o None fixo no código: o painel dizia "MTM INDISPONÍVEL" mesmo
-            # com o Extrato Analítico importado, porque a pergunta nunca chegava
-            # a ser feita.
-            mtm_por_chave = {
-                t.security_key: t.mtm_pct
-                for t in titulos_mtm
-                if getattr(t, "mtm_pct", None) is not None
-            }
-            if not tem_mtm:
+            # A tela abre pela decisão — dá para vender pela marcação, e vale? —
+            # e guarda a conta inteira no expander. O painel depende do Extrato
+            # Analítico: sem a taxa contratada de cada lote não existe marcação,
+            # só mercado × custo, que mistura carrego com preço. É nesse caminho
+            # mais pobre que a tela cai quando o extrato não foi importado.
+            if not _painel_tesouro_venda(tesouros, ano_atual=ano_atual):
+                _tesouro_kpis_carteira(tesouros)
                 aviso_lacuna(
                     "MtM real indisponível: o banco não tem a taxa contratada nem a data de "
                     "liquidação de cada lote, e sem elas a diferença entre mercado e custo mistura "
@@ -4019,115 +3970,9 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 )
                 st.warning("Marcação a mercado não disponível para estes títulos.",
                            icon="⚠️")
-
-            # Tabela com analise por titulo
-            st.markdown("<br>", unsafe_allow_html=True)
-            _secao_titulo_orig("📊", "Análise por Título")
-
-            # Ordena apenas para leitura pelo retorno de mercado/custo, sem inferir oportunidade.
-            tesouros_ord = sorted(
-                tesouros,
-                key=lambda p: ((p["valor_mercado"] - p["total_investido"]) / p["total_investido"] * 100
-                               if p["total_investido"] > 0 else 0),
-                reverse=True,
-            )
-
-            for p in tesouros_ord:
-                meta = tesouro_meta(p["ticker"])
-                mv   = float(p["valor_mercado"])
-                vi   = float(p["total_investido"])
-                resultado_abs = mv - vi
-                retorno = retorno_mercado_sobre_custo(mv, vi)
-                retorno_pct = retorno * 100 if retorno is not None else None
-                anos_ref = (meta.ano_referencia - ano_atual) if meta.ano_referencia else None
-                mtm_titulo = mtm_por_chave.get(str(p["ticker"]).upper())
-                rec = analise_suficiencia_tesouro(meta.tipo, mtm_titulo)
-                rec_cor = {
-                    "info": _COR_INFO,
-                    "alerta": _COR_ALERTA,
-                    "neutro": _COR_NEUTRO,
-                }.get(rec["nivel"], _COR_NEUTRO)
-
-                # Data de conversão do Educa+ não é tratada como vencimento.
-                papel_data = "Conversão" if meta.papel_ano == "conversao" else "Vencimento"
-                if anos_ref is not None:
-                    if anos_ref > 0:
-                        prazo_str = f"{papel_data} {meta.ano_referencia} ({anos_ref} ano{'s' if anos_ref != 1 else ''} a frente)"
-                    elif anos_ref == 0:
-                        prazo_str = f"{papel_data} {meta.ano_referencia} (este ano)"
-                    else:
-                        prazo_str = f"{papel_data} em {meta.ano_referencia} já ocorreu"
-                else:
-                    prazo_str = "Data de referência não identificada"
-
-                # A coluna de marcação só existe quando há marcação: uma célula
-                # com "—" em toda linha pareceria dado faltando, quando o que
-                # falta é o extrato.
-                if tem_mtm:
-                    cor_mtm_col = (
-                        _COR_NEUTRO if mtm_titulo is None
-                        else (_COR_POSITIVO if mtm_titulo >= 0 else _COR_NEGATIVO)
-                    )
-                    celula_mtm = (
-                        f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">MARCAÇÃO</div>'
-                        f'    <div style="font-size:0.85rem;font-weight:700;color:{_cor_texto(cor_mtm_col)};">'
-                        f'{"—" if mtm_titulo is None else f"{mtm_titulo * 100:+.2f}%"}</div></div>'
-                    )
-                else:
-                    celula_mtm = ""
-                colunas_grid = 5 if tem_mtm else 4
-
-                # Card individual
-                st.markdown(
-                    f'<div style="background:var(--app-surface);border:1px solid var(--app-border);'
-                    f'border-left:4px solid {_cor_texto(rec_cor)};border-radius:10px;'
-                    f'padding:16px 18px;margin-bottom:12px;">'
-                    # Header
-                    f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">'
-                    f'  <div>'
-                    f'    <div style="font-size:1.05rem;font-weight:800;color:var(--app-text);">'
-                    f'      {meta.label} {meta.ano_referencia or ""}'
-                    f'    </div>'
-                    f'    <div style="font-size:0.72rem;color:var(--app-muted);margin-top:2px;">'
-                    f'      {p["ticker"]} · {prazo_str}'
-                    f'    </div>'
-                    f'  </div>'
-                    f'  <div style="text-align:right;">'
-                    f'    <div style="font-size:0.65rem;font-weight:800;color:{_cor_texto(_COR_INFO)};'
-                    f'      text-transform:uppercase;letter-spacing:0.06em;">'
-                    f'      RETORNO MERCADO/CUSTO'
-                    f'    </div>'
-                    f'    <div style="font-size:1.15rem;font-weight:800;color:{_cor_texto(_COR_INFO)};margin-top:4px;">'
-                    f'      {f"{retorno_pct:+.2f}%" if retorno_pct is not None else "—"}'
-                    f'    </div>'
-                    f'  </div>'
-                    f'</div>'
-                    # Grid 4 colunas
-                    f'<div style="display:grid;grid-template-columns:repeat({colunas_grid},1fr);gap:10px;'
-                    f'  padding:8px 0;border-top:1px solid var(--app-border);margin-bottom:8px;">'
-                    f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">CUSTO</div>'
-                    f'    <div style="font-size:0.85rem;font-weight:700;color:var(--app-muted);">{fmt_moeda(vi)}</div></div>'
-                    f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">MERCADO</div>'
-                    f'    <div style="font-size:0.85rem;font-weight:700;color:var(--app-muted);">{fmt_moeda(mv)}</div></div>'
-                    f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">RESULTADO R$</div>'
-                    f'    <div style="font-size:0.85rem;font-weight:700;color:{_cor_texto(cor_resultado)};">{"+" if resultado_abs >= 0 else ""}{fmt_moeda(resultado_abs)}</div></div>'
-                    f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">% NA CARTEIRA</div>'
-                    f'    <div style="font-size:0.85rem;font-weight:700;color:var(--app-muted);">{p["pct_carteira"]:.2f}%</div></div>'
-                    f'{celula_mtm}'
-                    f'</div>'
-                    # Análise de suficiência, sem recomendação automática.
-                    f'<div style="font-size:0.80rem;color:var(--app-muted);line-height:1.5;">'
-                    f'  <strong style="color:{_cor_texto(rec_cor)};">{rec["icone"]} {rec["label"]}:</strong> {rec["msg"]}'
-                    f'</div>'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-            st.caption(
-                "💡 Retorno mercado/custo inclui carrego, juros e variação de preço — não é "
-                "marcação a mercado."
-            )
-            if not tem_mtm:
+                st.markdown("<br>", unsafe_allow_html=True)
+                _tesouro_analise_por_titulo(tesouros, {}, tem_mtm=False,
+                                            ano_atual=ano_atual)
                 detalhe_tecnico(
                     "MtM real exige comparar o preço de mercado de hoje com o preço teórico "
                     "de hoje pela taxa contratada em cada lote, que é o que o Extrato "
@@ -4677,12 +4522,14 @@ def _vertices_prefixados(ofertados, hoje):
     return linhas[0], linhas[-1]
 
 
-def _bloco_tesouro_mtm() -> list:
-    """Renderiza a seção de MtM e devolve os títulos avaliados.
+def _bloco_tesouro_mtm(titulos=None, *, engine=None, data_curva=None,
+                       ofertados=None) -> list:
+    """Renderiza a conta completa da marcação e devolve os títulos avaliados.
 
-    Devolve a lista — e não um booleano — porque a "Análise por Título" logo
-    abaixo precisa da MESMA avaliação. Carregar de novo lá daria dois números
-    para o mesmo título, e a divergência não apareceria na tela.
+    Aceita o contexto já carregado porque o painel de decisão o carrega antes,
+    para responder "dá para vender?" no alto da tela. Recarregar aqui daria
+    dois números para o mesmo título — e a divergência não apareceria, porque
+    cada um sairia num lugar diferente da mesma página.
     """
     from datetime import date as _date_hoje
 
@@ -4700,18 +4547,20 @@ def _bloco_tesouro_mtm() -> list:
     except Exception:
         return []
 
-    engine = get_engine()
-    owner = getattr(settings, "OWNER_USER_ID", None)
-    if engine is None or not owner:
-        return []
-
-    titulos = carregar_titulos(engine, owner)
-    if not titulos:
-        return []
-
     hoje = _date_hoje.today()
-    data_curva = curva_disponivel(engine)
-    ofertados = titulos_ofertados(engine)
+
+    if titulos is None:
+        engine = get_engine()
+        owner = getattr(settings, "OWNER_USER_ID", None)
+        if engine is None or not owner:
+            return []
+        titulos = carregar_titulos(engine, owner)
+        if not titulos:
+            return []
+        data_curva = curva_disponivel(engine)
+        ofertados = titulos_ofertados(engine)
+    elif not titulos:
+        return []
 
     _secao_titulo_orig(
         "🎯", "Marcação a Mercado — Extrato Analítico",
@@ -4850,3 +4699,301 @@ def _bloco_tesouro_mtm() -> list:
             )
 
     return titulos
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Sub-aba Tesouro Direto — a decisão primeiro, a conta depois
+#
+# A tela antiga abria com oito KPIs e dois cards por título, em duas linguagens
+# visuais, e a pergunta de quem tem o papel — "dá para vender pela marcação, e
+# vale?" — não aparecia em lugar nenhum. A ordem aqui é a da decisão: o que a
+# marcação vale hoje líquida, quanto cada título entrega se for até o fim, o
+# veredito por título com a taxa de indiferença e a oscilação já vivida. A
+# conta inteira continua na tela, dentro do expander, porque ela é a prova.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@user_cache_data(ttl=1800)
+def _serie_marcacao(security_key: str, data_curva) -> list:
+    """Cotações do título, em memória, para desenhar a oscilação da posição.
+
+    `data_curva` entra na chave só para invalidar: quando a curva do dia é
+    ingerida, a série precisa de um ponto novo. Sem isso o gráfico congelaria
+    no último dia visto na primeira renderização da sessão.
+    """
+    from core.database import get_engine
+    from core.tesouro_curva import serie_titulo
+
+    engine = get_engine()
+    if engine is None:
+        return []
+    quadro = serie_titulo(engine, security_key)
+    if quadro is None or quadro.empty:
+        return []
+    return quadro.to_dict("records")
+
+
+def _tesouro_kpis_carteira(tesouros) -> None:
+    """Mercado × custo da classe — o que o banco permite dizer sem o extrato."""
+    total_mv_ts = sum(p["valor_mercado"] for p in tesouros)
+    total_vi_ts = sum(p["total_investido"] for p in tesouros)
+    resultado_mercado = total_mv_ts - total_vi_ts
+    retorno_total = retorno_mercado_sobre_custo(total_mv_ts, total_vi_ts)
+    retorno_total_pct = retorno_total * 100 if retorno_total is not None else None
+    cor_resultado = _COR_POSITIVO if resultado_mercado >= 0 else _COR_NEGATIVO
+
+    _secao_titulo_orig(
+        "🏦", "Tesouro Direto — Retorno e Marcação a Mercado",
+        f"{len(tesouros)} títulos · resultado de mercado sobre custo "
+        f"{fmt_moeda(resultado_mercado)}"
+    )
+
+    c1, c2, c3, c4 = st.columns(4, gap="small")
+    with c1:
+        st.markdown(_kpi(
+            "Valor de Mercado", fmt_moeda(total_mv_ts),
+            f"{len(tesouros)} títulos em carteira",
+            "var(--app-text)",
+        ), unsafe_allow_html=True)
+    with c2:
+        st.markdown(_kpi(
+            "Custo Investido", fmt_moeda(total_vi_ts),
+            "Valor de compra acumulado",
+            _COR_INFO,
+        ), unsafe_allow_html=True)
+    with c3:
+        st.markdown(_kpi(
+            "Resultado de Mercado",
+            f"{'+' if resultado_mercado >= 0 else ''}{fmt_moeda(resultado_mercado)}",
+            "Mercado − custo; inclui carrego e não é MtM isolado",
+            cor_resultado,
+        ), unsafe_allow_html=True)
+    with c4:
+        st.markdown(_kpi(
+            "Retorno Mercado/Custo",
+            f"{retorno_total_pct:+.2f}%" if retorno_total_pct is not None else "Indisponível",
+            "Retorno de preço acumulado; não inclui imposto",
+            cor_resultado if retorno_total_pct is not None else _COR_NEUTRO,
+        ), unsafe_allow_html=True)
+
+
+def _tesouro_analise_por_titulo(tesouros, mtm_por_chave, *, tem_mtm, ano_atual) -> None:
+    """Peso na carteira e suficiência de dado, título por título."""
+    _secao_titulo_orig("📊", "Análise por Título")
+
+    # Ordena apenas para leitura pelo retorno de mercado/custo, sem inferir oportunidade.
+    tesouros_ord = sorted(
+        tesouros,
+        key=lambda p: ((p["valor_mercado"] - p["total_investido"]) / p["total_investido"] * 100
+                       if p["total_investido"] > 0 else 0),
+        reverse=True,
+    )
+
+    for p in tesouros_ord:
+        meta = tesouro_meta(p["ticker"])
+        mv   = float(p["valor_mercado"])
+        vi   = float(p["total_investido"])
+        resultado_abs = mv - vi
+        retorno = retorno_mercado_sobre_custo(mv, vi)
+        retorno_pct = retorno * 100 if retorno is not None else None
+        anos_ref = (meta.ano_referencia - ano_atual) if meta.ano_referencia else None
+        mtm_titulo = mtm_por_chave.get(str(p["ticker"]).upper())
+        rec = analise_suficiencia_tesouro(meta.tipo, mtm_titulo)
+        rec_cor = {
+            "info": _COR_INFO,
+            "alerta": _COR_ALERTA,
+            "neutro": _COR_NEUTRO,
+        }.get(rec["nivel"], _COR_NEUTRO)
+        # A cor do resultado é a do próprio título: a da carteira, que este
+        # trecho usava antes por vir do escopo de fora, pintava de verde o
+        # prejuízo de um papel só porque a classe estava positiva.
+        cor_res_titulo = _COR_POSITIVO if resultado_abs >= 0 else _COR_NEGATIVO
+
+        # Data de conversão do Educa+ não é tratada como vencimento.
+        papel_data = "Conversão" if meta.papel_ano == "conversao" else "Vencimento"
+        if anos_ref is not None:
+            if anos_ref > 0:
+                prazo_str = f"{papel_data} {meta.ano_referencia} ({anos_ref} ano{'s' if anos_ref != 1 else ''} a frente)"
+            elif anos_ref == 0:
+                prazo_str = f"{papel_data} {meta.ano_referencia} (este ano)"
+            else:
+                prazo_str = f"{papel_data} em {meta.ano_referencia} já ocorreu"
+        else:
+            prazo_str = "Data de referência não identificada"
+
+        # A coluna de marcação só existe quando há marcação: uma célula
+        # com "—" em toda linha pareceria dado faltando, quando o que
+        # falta é o extrato.
+        if tem_mtm:
+            cor_mtm_col = (
+                _COR_NEUTRO if mtm_titulo is None
+                else (_COR_POSITIVO if mtm_titulo >= 0 else _COR_NEGATIVO)
+            )
+            celula_mtm = (
+                f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">MARCAÇÃO</div>'
+                f'    <div style="font-size:0.85rem;font-weight:700;color:{_cor_texto(cor_mtm_col)};">'
+                f'{"—" if mtm_titulo is None else f"{mtm_titulo * 100:+.2f}%"}</div></div>'
+            )
+        else:
+            celula_mtm = ""
+        colunas_grid = 5 if tem_mtm else 4
+
+        # Card individual
+        st.markdown(
+            f'<div style="background:var(--app-surface);border:1px solid var(--app-border);'
+            f'border-left:4px solid {_cor_texto(rec_cor)};border-radius:10px;'
+            f'padding:16px 18px;margin-bottom:12px;">'
+            # Header
+            f'<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">'
+            f'  <div>'
+            f'    <div style="font-size:1.05rem;font-weight:800;color:var(--app-text);">'
+            f'      {meta.label} {meta.ano_referencia or ""}'
+            f'    </div>'
+            f'    <div style="font-size:0.72rem;color:var(--app-muted);margin-top:2px;">'
+            f'      {p["ticker"]} · {prazo_str}'
+            f'    </div>'
+            f'  </div>'
+            f'  <div style="text-align:right;">'
+            f'    <div style="font-size:0.65rem;font-weight:800;color:{_cor_texto(_COR_INFO)};'
+            f'      text-transform:uppercase;letter-spacing:0.06em;">'
+            f'      RETORNO MERCADO/CUSTO'
+            f'    </div>'
+            f'    <div style="font-size:1.15rem;font-weight:800;color:{_cor_texto(_COR_INFO)};margin-top:4px;">'
+            f'      {f"{retorno_pct:+.2f}%" if retorno_pct is not None else "—"}'
+            f'    </div>'
+            f'  </div>'
+            f'</div>'
+            # Grid 4 colunas
+            f'<div style="display:grid;grid-template-columns:repeat({colunas_grid},1fr);gap:10px;'
+            f'  padding:8px 0;border-top:1px solid var(--app-border);margin-bottom:8px;">'
+            f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">CUSTO</div>'
+            f'    <div style="font-size:0.85rem;font-weight:700;color:var(--app-muted);">{fmt_moeda(vi)}</div></div>'
+            f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">MERCADO</div>'
+            f'    <div style="font-size:0.85rem;font-weight:700;color:var(--app-muted);">{fmt_moeda(mv)}</div></div>'
+            f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">RESULTADO R$</div>'
+            f'    <div style="font-size:0.85rem;font-weight:700;color:{_cor_texto(cor_res_titulo)};">{"+" if resultado_abs >= 0 else ""}{fmt_moeda(resultado_abs)}</div></div>'
+            f'  <div><div style="font-size:0.65rem;color:var(--app-subtle);">% NA CARTEIRA</div>'
+            f'    <div style="font-size:0.85rem;font-weight:700;color:var(--app-muted);">{p["pct_carteira"]:.2f}%</div></div>'
+            f'{celula_mtm}'
+            f'</div>'
+            # Análise de suficiência, sem recomendação automática.
+            f'<div style="font-size:0.80rem;color:var(--app-muted);line-height:1.5;">'
+            f'  <strong style="color:{_cor_texto(rec_cor)};">{rec["icone"]} {rec["label"]}:</strong> {rec["msg"]}'
+            f'</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
+    st.caption(
+        "💡 Retorno mercado/custo inclui carrego, juros e variação de preço — não é "
+        "marcação a mercado."
+    )
+
+
+def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
+    """A sub-aba inteira: passível de venda a mercado, e de quanto é a vantagem.
+
+    Devolve ``False`` — e não renderiza nada — quando o Extrato Analítico não
+    está importado. Sem a taxa contratada de cada lote não há marcação, e
+    desenhar "oscilação da marcação" a partir de mercado × custo seria mostrar
+    carrego com nome de marcação.
+    """
+    from datetime import date as _date_hoje
+
+    try:
+        from core.config import settings
+        from core.database import get_engine
+        from core.tesouro_curva import curva_disponivel, titulos_ofertados
+        from core.tesouro_historico import extremos_da_serie, serie_mtm_posicao
+        from core.tesouro_posicao import carregar_titulos
+        from core.tesouro_venda import frase_da_carteira, ler_venda, resumo_da_carteira
+        from design import tesouro_painel as _painel
+    except Exception:
+        return False
+
+    engine = get_engine()
+    owner = getattr(settings, "OWNER_USER_ID", None)
+    if engine is None or not owner:
+        return False
+    titulos = carregar_titulos(engine, owner)
+    if not titulos:
+        return False
+
+    hoje = _date_hoje.today()
+    data_curva = curva_disponivel(engine)
+    ofertados = titulos_ofertados(engine)
+
+    # Cardápio do dia: só o que está de pé. `titulos_ofertados` devolve a
+    # tabela inteira, vencidos incluídos, e um vencido entraria na comparação
+    # como alternativa comprável.
+    cardapio = []
+    if ofertados is not None and not ofertados.empty:
+        cardapio = [linha for linha in ofertados.to_dict("records")
+                    if linha.get("maturity_date") and linha["maturity_date"] > hoje]
+
+    data_avaliacao = data_curva or hoje
+    leituras = [ler_venda(t, data_avaliacao=data_avaliacao, cardapio=cardapio)
+                for t in titulos]
+    resumo = resumo_da_carteira(leituras)
+
+    _secao_titulo_orig(
+        "🏦", "Tesouro Direto — vender pela marcação ou levar ao vencimento",
+        f"{len(titulos)} título{'s' if len(titulos) != 1 else ''} "
+        "com taxa contratada por lote",
+    )
+
+    # ── Faixa 1: de que dia é o preço, de que dia é a posição, e o veredito ──
+    extrato = max((t.report_date for t in titulos if t.report_date), default=None)
+    st.markdown(
+        _painel.TD_CSS
+        + _painel.estado_html(data_curva=data_curva, data_extrato=extrato, hoje=hoje)
+        + _painel.hero_html(resumo, frase=frase_da_carteira(resumo)),
+        unsafe_allow_html=True,
+    )
+
+    # ── Faixa 2: levar até o fim × vender hoje, título por título ────────────
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.plotly_chart(_painel.fig_carregar_vs_vender(leituras),
+                    width="stretch", config={"displayModeBar": False})
+
+    # ── Faixa 3: um card por título, com a taxa de indiferença ───────────────
+    pares = []
+    series = []
+    for titulo, leitura in zip(titulos, leituras):
+        serie = serie_mtm_posicao(
+            titulo.lotes, vencimento=titulo.vencimento,
+            cotacoes=_serie_marcacao(titulo.security_key, data_curva),
+        )
+        pares.append((leitura, extremos_da_serie(serie)))
+        if serie:
+            series.append((leitura.titulo, serie))
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    _secao_titulo_orig("🎯", "Por título — dá para vender, e acima de quanto vale")
+    st.markdown(_painel.cards_html(pares), unsafe_allow_html=True)
+
+    # ── Faixa 4: a oscilação já vivida pela posição ──────────────────────────
+    if series:
+        st.markdown("<br>", unsafe_allow_html=True)
+        _secao_titulo_orig(
+            "📈", "Oscilação da marcação",
+            "quanto a venda antecipada já valeu e já custou nesta posição",
+        )
+        st.plotly_chart(_painel.fig_oscilacao(series),
+                        width="stretch", config={"displayModeBar": False})
+    st.markdown(_painel.legenda_html(), unsafe_allow_html=True)
+
+    # ── Faixa 5: a conta completa, fechada por padrão ────────────────────────
+    with st.expander(
+        "🔬 Ver a conta completa — curva, conjuntura e comparação com alternativa",
+        expanded=False,
+    ):
+        mtm_por_chave = {t.security_key: t.mtm_pct for t in titulos
+                         if getattr(t, "mtm_pct", None) is not None}
+        _bloco_tesouro_mtm(titulos, engine=engine, data_curva=data_curva,
+                           ofertados=ofertados)
+        st.markdown("<br>", unsafe_allow_html=True)
+        _tesouro_kpis_carteira(tesouros)
+        st.markdown("<br>", unsafe_allow_html=True)
+        _tesouro_analise_por_titulo(tesouros, mtm_por_chave,
+                                    tem_mtm=bool(mtm_por_chave), ano_atual=ano_atual)
+    return True

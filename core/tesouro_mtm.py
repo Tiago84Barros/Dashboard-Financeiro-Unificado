@@ -334,6 +334,165 @@ def avaliar_lote(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Levar até o fim: quanto o título entrega se nada for feito
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _fator_capitalizacao(taxa: float, indice: float, du: int) -> float:
+    """Fator que leva um valor de hoje até o vencimento, em ``du`` dias úteis.
+
+    O índice entra multiplicando porque ``taxa`` é cupom **sobre** o índice:
+    um Selic + 0,10% rende a Selic *e* o ágio, e um IPCA+ 7,7% rende a inflação
+    *e* a taxa real. No prefixado o índice é zero e o fator vira só a taxa.
+    """
+    return ((1.0 + indice) * (1.0 + taxa)) ** (du / DIAS_UTEIS_ANO)
+
+
+@dataclass(frozen=True)
+class ProjecaoCarrego:
+    """Quanto a posição entrega no vencimento se for carregada até lá.
+
+    Não é previsão de mercado: é a aritmética de carregar **pela taxa de hoje**,
+    que é a que o título paga daqui para frente. A taxa contratada já está paga
+    — ela está embutida no preço de hoje, e é justamente isso que a marcação
+    mede. Um título pós ou indexado depende do índice futuro, e aí o número é
+    condicional ao índice projetado que entrou em ``taxa_indice``; o campo
+    ``depende_do_indice`` existe para a tela nunca apresentar os dois casos com
+    a mesma cara de certeza.
+    """
+
+    du_restante: int
+    taxa_carrego: float | None
+    taxa_indice: float | None
+    fator: float | None
+    valor_bruto_hoje: float | None
+    valor_liquido_hoje: float | None
+    valor_bruto_vencimento: float | None
+    valor_liquido_vencimento: float | None
+    imposto_no_vencimento: float | None
+    imposto_antecipado: float | None
+    aproximado: bool
+    depende_do_indice: bool
+
+
+def projetar_carrego(
+    avaliacoes: list[AvaliacaoLote],
+    *,
+    vencimento: date,
+    data_avaliacao: date,
+    taxa_mercado_resgate: float | None,
+    taxa_indice: float | None = None,
+    aproximado: bool = False,
+) -> ProjecaoCarrego:
+    """Perna "não fazer nada": capitaliza o bruto de hoje até o vencimento.
+
+    É a **mesma** conta que `comparar_carregar_vs_vender` usa na perna A, e por
+    isso vive aqui numa função só: a tela precisa do valor no vencimento mesmo
+    quando não há alternativa escolhida, e recalcular por fora daria dois
+    números para a mesma pergunta — a divergência não apareceria em lugar
+    nenhum.
+
+    O IR do fim sai da alíquota do **prazo total** de cada lote (aplicação até
+    vencimento), não do prazo já corrido: é exatamente o ganho de carregar que
+    a venda antecipada abre mão.
+    """
+    du = dias_uteis(data_avaliacao, vencimento)
+    validas = [a for a in avaliacoes
+               if a.valor_bruto is not None and a.valor_liquido is not None]
+    idx = taxa_indice or 0.0
+    depende = bool(idx)
+
+    bruto_hoje = sum(a.valor_bruto for a in validas) if validas else None
+    liquido_hoje = sum(a.valor_liquido for a in validas) if validas else None
+    antecipado = (sum((a.ir or 0.0) + (a.iof or 0.0) for a in validas)
+                  if validas else None)
+
+    if not validas or taxa_mercado_resgate is None or du <= 0:
+        return ProjecaoCarrego(du, taxa_mercado_resgate, taxa_indice, None,
+                               bruto_hoje, liquido_hoje, None, None, None,
+                               antecipado, aproximado, depende)
+
+    fator = _fator_capitalizacao(taxa_mercado_resgate, idx, du)
+    bruto_venc = 0.0
+    liquido_venc = 0.0
+    for a in validas:
+        valor_venc = a.valor_bruto * fator
+        dias_totais = a.dias_corridos + (vencimento - data_avaliacao).days
+        aliq_final = aliquota_ir(dias_totais) or 0.15
+        investido = a.valor_bruto - (a.rendimento_bruto or 0.0)
+        bruto_venc += valor_venc
+        liquido_venc += valor_venc - max(valor_venc - investido, 0.0) * aliq_final
+
+    return ProjecaoCarrego(
+        du_restante=du,
+        taxa_carrego=taxa_mercado_resgate,
+        taxa_indice=taxa_indice,
+        fator=fator,
+        valor_bruto_hoje=bruto_hoje,
+        valor_liquido_hoje=liquido_hoje,
+        valor_bruto_vencimento=bruto_venc,
+        valor_liquido_vencimento=liquido_venc,
+        imposto_no_vencimento=bruto_venc - liquido_venc,
+        imposto_antecipado=antecipado,
+        aproximado=aproximado,
+        depende_do_indice=depende,
+    )
+
+
+def taxa_de_indiferenca(
+    avaliacoes: list[AvaliacaoLote],
+    *,
+    vencimento: date,
+    data_avaliacao: date,
+    taxa_mercado_resgate: float | None,
+    taxa_indice: float | None = None,
+) -> float | None:
+    """A taxa que a alternativa precisa pagar para a venda apenas empatar.
+
+    Existe para responder "de quanto é a vantagem de vender?" **sem** escolher
+    uma alternativa no lugar de quem lê. A pergunta não tem resposta em reais
+    sozinha — o resultado da venda depende inteiramente de onde o dinheiro vai
+    parar. Tem resposta em **taxa**: há um valor acima do qual trocar ganha e
+    abaixo do qual perde, e esse valor é comparável de cabeça com o cardápio do
+    dia. É a mesma lógica do breakeven de inflação implícita, aplicada à troca.
+
+    Inversão exata, não busca numérica. Com a alíquota final da perna de venda
+    igual para todos os lotes (ela depende só do prazo restante), vale::
+
+        final_vendendo(F) = L · [F·(1 − a) + a]        para F > 1
+
+    com ``L`` o líquido de hoje e ``a`` a alíquota do prazo restante. Igualando
+    ao final de carregar ``C`` e isolando ``F``, a taxa sai de
+    ``F ** (252/du) / (1 + índice) − 1``.
+
+    Devolve ``None`` quando falta preço, lote ou prazo. O valor pode vir
+    **negativo**: significa que carregar termina abaixo do líquido de hoje sem
+    render nada, o que só acontece com deságio grande o bastante para o IR
+    antecipado não compensar — e é informação, não erro.
+    """
+    projecao = projetar_carrego(
+        avaliacoes, vencimento=vencimento, data_avaliacao=data_avaliacao,
+        taxa_mercado_resgate=taxa_mercado_resgate, taxa_indice=taxa_indice)
+    alvo = projecao.valor_liquido_vencimento
+    liquido = projecao.valor_liquido_hoje
+    du = projecao.du_restante
+    if alvo is None or not liquido or liquido <= 0 or du <= 0:
+        return None
+
+    aliq = aliquota_ir((vencimento - data_avaliacao).days) or 0.15
+    bruta = alvo / liquido
+    fator = (bruta - aliq) / (1.0 - aliq) if aliq < 1.0 else bruta
+    if fator <= 1.0:
+        # Sem ganho na perna de venda não há IR para descontar, e a equação
+        # perde o termo de imposto: o fator é a razão nua. Resolver sempre pelo
+        # ramo tributado jogaria a taxa de indiferença para baixo do que ela é.
+        fator = bruta
+    if fator <= 0.0:
+        return None
+    return fator ** (DIAS_UTEIS_ANO / du) / (1.0 + (taxa_indice or 0.0)) - 1.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Carregar × vender: a comparação só existe contra alternativa nomeada
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -407,26 +566,25 @@ def comparar_carregar_vs_vender(
                           "título perde por definição: antecipa IR e cruza o spread.")
 
     idx = taxa_indice or 0.0
-    fator_carrego = ((1.0 + idx) * (1.0 + taxa_mercado_resgate)) ** (du / DIAS_UTEIS_ANO)
-    fator_alt = ((1.0 + idx) * (1.0 + taxa_alternativa)) ** (du / DIAS_UTEIS_ANO)
+    fator_alt = _fator_capitalizacao(taxa_alternativa, idx, du)
 
-    final_carregando = 0.0
+    # Perna A — carregar: bruto de hoje rende a taxa de mercado até o fim.
+    # A conta mora em `projetar_carrego` porque a tela também a mostra sozinha,
+    # sem alternativa escolhida; duas cópias divergiriam em silêncio.
+    projecao = projetar_carrego(
+        avaliacoes, vencimento=vencimento, data_avaliacao=data_avaliacao,
+        taxa_mercado_resgate=taxa_mercado_resgate, taxa_indice=taxa_indice,
+        aproximado=aproximado)
+    final_carregando = projecao.valor_liquido_vencimento
+    imposto_antecipado = projecao.imposto_antecipado or 0.0
+
+    # Perna B — vender hoje e aplicar o líquido na alternativa até a mesma data.
     final_vendendo = 0.0
-    imposto_antecipado = 0.0
     for a in validas:
-        # Perna A — carregar: bruto de hoje rende a taxa de mercado até o fim.
-        bruto_venc = a.valor_bruto * fator_carrego
-        dias_totais = a.dias_corridos + (vencimento - data_avaliacao).days
-        aliq_final = aliquota_ir(dias_totais) or 0.15
-        investido = a.valor_bruto - (a.rendimento_bruto or 0.0)
-        final_carregando += bruto_venc - max(bruto_venc - investido, 0.0) * aliq_final
-
-        # Perna B — vender hoje e aplicar o líquido na alternativa até a mesma data.
         liquido = a.valor_liquido
         bruto_alt = liquido * fator_alt
         aliq_alt = aliquota_ir((vencimento - data_avaliacao).days) or 0.15
         final_vendendo += bruto_alt - max(bruto_alt - liquido, 0.0) * aliq_alt
-        imposto_antecipado += (a.ir or 0.0) + (a.iof or 0.0)
 
     vantagem = final_vendendo - final_carregando
     base = sum(a.valor_bruto for a in validas)
