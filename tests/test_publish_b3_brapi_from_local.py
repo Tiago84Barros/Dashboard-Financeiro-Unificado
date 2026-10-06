@@ -85,3 +85,42 @@ def test_estado_ausente_ou_corrompido_vira_vazio(tmp_path):
     lista = tmp_path / "lista.json"
     lista.write_text("[1, 2]", encoding="utf-8")
     assert pub.ler_estado(lista) == {}
+
+
+def test_cabe_no_disco_soma_o_pior_caso_ao_usado():
+    # 463,9 MB usados, 28 mil linhas a 400 bytes = +11,2 MB.
+    assert pub.cabe_no_disco(463_900_000, 28_000, 400.0, 485)
+    # A mesma tabela a 1 KB por linha passaria de 485 MB.
+    assert not pub.cabe_no_disco(463_900_000, 28_000, 1000.0, 485)
+
+
+def test_cabe_no_disco_teto_em_megabytes_decimais():
+    assert pub.cabe_no_disco(484_000_000, 1, 1_000_000.0, 485)
+    assert not pub.cabe_no_disco(484_000_001, 1, 1_000_000.0, 485)
+
+
+def test_cabe_no_disco_sem_linhas_ou_com_guarda_desligada():
+    assert pub.cabe_no_disco(600_000_000, 0, 1000.0, 485)
+    assert pub.cabe_no_disco(600_000_000, 10**6, 1000.0, 0)
+
+
+def test_main_sai_com_erro_quando_o_disco_parou_a_publicacao(monkeypatch, tmp_path):
+    parado = {"modo": "APLICADO", "tabelas": {},
+              "parado_por_disco": {"tabela": "balance_sheets"}}
+    monkeypatch.setattr(pub, "publish", lambda **kw: parado)
+    assert pub.main(["--apply", "--estado", str(tmp_path / "m.json")]) == 1
+
+    monkeypatch.setattr(pub, "publish", lambda **kw: {"modo": "APLICADO", "tabelas": {}})
+    assert pub.main(["--apply", "--estado", str(tmp_path / "m.json")]) == 0
+
+
+def test_main_repassa_o_teto(monkeypatch, tmp_path):
+    visto = {}
+
+    def falso(**kw):
+        visto.update(kw)
+        return {"tabelas": {}}
+
+    monkeypatch.setattr(pub, "publish", falso)
+    pub.main(["--teto-disco-mb", "490", "--estado", str(tmp_path / "m.json")])
+    assert visto["teto_disco_mb"] == 490
