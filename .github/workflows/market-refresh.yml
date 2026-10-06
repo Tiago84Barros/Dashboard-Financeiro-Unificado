@@ -21,8 +21,21 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Empresas B3 saiu do agendamento em 05/10/2026 (caminho A). `daily`,
+  # `annual`, `setores` e o snapshot de prontidao rodam agora com --warehouse
+  # em `scripts/atualizar_vitrines.py` (alvos `b3_brapi` e `b3_brapi_anual`),
+  # e `scripts/publish_b3_brapi_from_local.py` leva a vitrine so as tabelas
+  # que o app le. Aqui, cada recalculo de indicador lia demonstracoes e precos
+  # do Supabase (egress, numa conta que estourou a cota) e cada consulta a
+  # brapi gravava o payload bruto la (`brapi_raw_payloads`, 64 MB de 500).
+  #
+  # O job fica so como reserva manual (workflow_dispatch) ate o DROP de
+  # `brapi_raw_payloads` no Supabase: ele grava payload bruto na nuvem e deixa
+  # de funcionar quando a tabela sair. Com o computador desligado, Empresas B3
+  # para e a vitrine aparece como velha -- custo aceito.
   refresh-b3:
     name: Atualizacao Empresas B3
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -79,7 +92,8 @@ jobs:
   refresh-fiis:
     name: Atualizacao FIIs
     needs: refresh-b3
-    if: always() && needs.refresh-b3.result == 'success'
+    # No agendamento o refresh-b3 sai como `skipped`; os FIIs seguem.
+    if: always() && (needs.refresh-b3.result == 'success' || needs.refresh-b3.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:

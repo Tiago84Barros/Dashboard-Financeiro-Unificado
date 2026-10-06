@@ -37,7 +37,8 @@ def test_carimbo_aponta_para_a_base_que_o_alvo_escreve(chave, onde):
     armazém de 11/08. O espelho também escreve no armazém (lê o Supabase).
     """
     escreve_no_armazem = {"fii_ingest", "espelho_supabase", "brapi_raw_poda",
-                          "b3_pregao", "fii_documentos", "cvm_ipe"}
+                          "b3_pregao", "fii_documentos", "cvm_ipe",
+                          "b3_brapi", "b3_brapi_anual"}
     escreve_arquivo = {"macro_insumos", "cdi_diario", "macro_brasil", "valuation_historico",
                        "informacoes_recentes", "rag_corpus", "fii_metrics_monthly",
                        "b3_linhagem"}

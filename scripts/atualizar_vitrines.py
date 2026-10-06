@@ -226,6 +226,11 @@ CARIMBO = {
                        "SELECT max(completed_at) FROM market.fii_cvm_archive_loads "
                        "WHERE archive_kind = 'eventual'"),
     "cvm_ipe": ("armazem", "SELECT max(created_at) FROM public.docs_corporativos"),
+    # A cadeia brapi grava no armazém; o carimbo lê o que ELA produz, e não o
+    # que o job do GitHub deixou na vitrine até 05/10/2026.
+    "b3_brapi": ("armazem",
+                 "SELECT max(observed_at) FROM market.b3_data_readiness_snapshots"),
+    "b3_brapi_anual": ("armazem", "SELECT max(updated_at) FROM market.balance_sheets"),
     "fii_selection": ("supabase",
                       "SELECT max(generated_at) FROM market.fii_selection_inputs"),
     "b3_metrics": ("supabase", "SELECT max(updated_at) FROM market.calculated_metrics"),
@@ -342,6 +347,7 @@ def versao_corrente(alvo) -> str | None:
 
 def executar(alvo, ambiente: dict) -> tuple[bool, str]:
     """Roda os passos do alvo em ordem. Um passo que falha aborta os seguintes."""
+    teto = (alvo.timeout_passo_min or 0) * 60 or TIMEOUT_PASSO
     for indice, passo in enumerate(alvo.passos, start=1):
         rotulo = " ".join(passo)
         if len(alvo.passos) > 1:
@@ -349,9 +355,9 @@ def executar(alvo, ambiente: dict) -> tuple[bool, str]:
         try:
             proc = subprocess.run([_python(), *passo], cwd=str(ROOT), env=ambiente,
                                   capture_output=True, text=True, encoding="utf-8",
-                                  errors="replace", timeout=TIMEOUT_PASSO, check=False)
+                                  errors="replace", timeout=teto, check=False)
         except subprocess.TimeoutExpired:
-            return False, f"passo {indice} ({rotulo}) estourou {TIMEOUT_PASSO}s"
+            return False, f"passo {indice} ({rotulo}) estourou {teto}s"
         except OSError as exc:
             return False, f"passo {indice} ({rotulo}) não executou: {exc}"
         if proc.returncode != 0:

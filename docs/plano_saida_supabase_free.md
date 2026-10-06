@@ -93,6 +93,7 @@ FII).
 | `score_panel`, `scored_universe`, `asymmetry_universe`, múltiplos B3 | TTL de 12 h (PRs #444/#445) | — |
 | `fii_metrics_monthly`, macro, `valuation_historico` | artefatos em `data/public/` | sem leitura remota |
 | PR #501 | vitrine de FIIs sem leitura descartada; `companies`/`overview` e `load_mercado_retorno_mensal` com TTL de 12 h | ~−560 MB/dia por processo, no pior caso |
+| Ingestão brapi da B3 (caminho A, 05/10/2026) | saiu do GitHub (`refresh-b3` só por disparo manual) para os alvos locais `b3_brapi`/`b3_brapi_anual`, com `--warehouse`; `scripts/publish_b3_brapi_from_local.py` leva só o que o app lê, por marca d'água | sem leitura de demonstrações e preços a cada recálculo; nenhum payload bruto da B3 gravado no Supabase |
 | PR seguinte (INF-A2, parte 2) | `us_data.dossie()` com cache de 12 h por ticker; `us_data._use_snapshot()` guarda o "sim" por 12 h; linhagem B3 desacoplada de `brapi_raw_payloads` | ~7 KB e 2–3 consultas a menos por rerun da aba EUA; a tabela pode sair sem quebrar a validação |
 
 ## 3. O que ainda falta
@@ -120,6 +121,10 @@ Tamanho do banco:
    `market.brapi_raw_payloads` na conexão que recebe, e o crescimento de
    ~2,6 MB/dia que motivou o alvo `brapi_raw_poda` indica que alguma ainda
    grava. Sem a tabela, essa ingestão falharia.
+   **Atualização de 05/10/2026:** a ingestão da B3 saiu do Supabase (caminho A,
+   §2). Resta o job `refresh-fiis` do `market-refresh.yml`: o passo
+   `run_market_ingest.py fiis` roda contra o Supabase e grava lá o payload
+   `quote_fii_full`. O `DROP` depende de mudá-lo também.
 2. **16,8 MB de índices mortos** e os 3 índices únicos duplicados sobre
    `docs_corporativos.doc_hash`. O SQL está pronto em
    `warehouse/remote_cleanup.md` (§5.3).
