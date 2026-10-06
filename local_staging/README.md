@@ -187,6 +187,13 @@ Duas regras que existem por incidente:
 - **Falha não vira silêncio.** Um alvo cujo último desfecho foi erro está sempre
   devendo, seja qual for a cadência -- sem isso, uma falha em alvo mensal
   esperaria um mês pela próxima tentativa.
+- **Prazo antes do limite da tarefa.** A tarefa agendada tem limite de execução
+  de 4 h e *mata* a rotina ao estourá-lo; processo morto não notifica. Em
+  05/10/2026 isso deixou sete alvos sem rodar, em silêncio. Depois de
+  `--prazo-min` (padrão 225) nenhum alvo novo começa: os que sobram seguem
+  vencidos e entram na notificação de falha. Por isso `b3_brapi` e
+  `b3_brapi_anual`, os mais longos, são os últimos da fila. Ao subir o limite da
+  tarefa, passe `--prazo-min` correspondente nos argumentos dela.
 - **Safra PIT não tem cadência de calendário.** Republicar a mesma versão de
   metodologia todo dia grava exatamente as mesmas linhas; o gatilho é a versão
   mudar.

@@ -340,3 +340,54 @@ def test_falha_do_vigia_nao_muda_o_desfecho_da_rotina(monkeypatch):
     monkeypatch.setattr(av, "registrar", avisos.append)
     _VIGIAR_REAL()
     assert any("vigia de automações falhou" in a for a in avisos)
+
+
+@pytest.mark.parametrize("decorrido_min, prazo_min, esperado", [
+    (224, 225, False), (225, 225, True), (600, 0, False),
+])
+def test_prazo_esgotado(decorrido_min, prazo_min, esperado):
+    assert av.prazo_esgotado(1000.0, prazo_min, 1000.0 + decorrido_min * 60) is esperado
+
+
+class _AtualizacaoOk:
+    ok = True
+
+    def resumo(self):
+        return "main local já em dia"
+
+
+def test_prazo_esgotado_adia_o_resto_e_notifica_em_vez_de_morrer_calado(monkeypatch):
+    """Em 05/10/2026 a tarefa agendada (limite de 4 h) matou a rotina no meio do
+    `us_snapshot`: sete alvos não rodaram e ninguém foi avisado."""
+    devidos = [(POR_CHAVE[c], "vencido") for c in ("cdi_diario", "macro_brasil", "b3_brapi")]
+    relogio = iter([0.0, 0.0, 300 * 60])  # início, antes do 1º, antes do 2º
+    monkeypatch.setenv(av._RECARREGADA, "1")
+    monkeypatch.setattr(av.time, "monotonic", lambda: next(relogio))
+    monkeypatch.setattr(av, "registrar", lambda _m: None)
+    monkeypatch.setattr(av, "ler_estado", lambda: {})
+    monkeypatch.setattr(av, "alvos_devidos", lambda *a, **k: devidos)
+    monkeypatch.setattr(av, "atualizar_main", lambda _r: _AtualizacaoOk())
+    gravados = []
+    monkeypatch.setattr(av, "gravar_estado", lambda e: gravados.append(dict(e)))
+    executados = []
+    monkeypatch.setattr(av, "executar",
+                        lambda alvo, _amb: executados.append(alvo.chave) or (True, ""))
+    monkeypatch.setattr(av, "levar_artefatos_ao_repositorio", lambda _a: [])
+    monkeypatch.setattr(av, "verificar", lambda *_a: (True, ""))
+    avisos = []
+    monkeypatch.setattr(av, "notificar", lambda msg, _titulo: avisos.append(msg))
+
+    assert av.main(["--sem-armazem", "--sem-vigia"]) == 1
+    assert executados == ["cdi_diario"]
+    assert "macro_brasil, b3_brapi" in avisos[0]
+    # Adiado não ganha registro: segue vencido para a próxima execução.
+    assert "cdi_diario" in gravados[-1]
+    assert "macro_brasil" not in gravados[-1] and "b3_brapi" not in gravados[-1]
+
+
+def test_ingestao_brapi_e_a_ultima_da_fila():
+    """O `daily` leva cerca de 2 h; quem o prazo adia tem de ser ele, não notícias
+    e macro. E depois da poda, que renormaliza o que o publicador leva."""
+    ordem = [a.chave for a in ALVOS]
+    assert ordem[-2:] == ["b3_brapi", "b3_brapi_anual"]
+    assert ordem.index("brapi_raw_poda") < ordem.index("b3_brapi")
