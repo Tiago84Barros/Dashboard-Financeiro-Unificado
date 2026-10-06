@@ -440,6 +440,25 @@ ALVOS: tuple[Alvo, ...] = (
         modulo="us",
     ),
     Alvo(
+        # O painel PIT dos EUA publicado também no ARMAZÉM, para o app rodando
+        # na máquina contra ele (`scripts/abrir_app_armazem.bat`). Sem isto a
+        # Criação de Portfólio dos EUA montava o painel ao vivo: 34,5 s por cache
+        # frio no armazém, mais lento que a Cloud lendo o publicado do Supabase.
+        # Alvo próprio, e não passo a mais nos alvos dos EUA, para que uma falha
+        # aqui não reprove -- e faça repetir -- a publicação no Supabase. Diário
+        # porque o armazém recebe preço e safra por várias rotinas; quando nada
+        # mudou, a regravação é local e não gasta egress. Painel velho nunca é
+        # servido: a impressão do armazém diverge e o leitor monta ao vivo.
+        # Depois de todos os alvos dos EUA e antes dos longos da brapi, que
+        # ficam no fim da fila.
+        chave="us_painel_armazem",
+        titulo="Painel PIT dos EUA no armazém local",
+        passos=(("-m", "scripts.publish_us_score_panel", "--apply",
+                 "--armazem"),),
+        cadencia_dias=1,
+        modulo="us",
+    ),
+    Alvo(
         # Últimos da fila, de propósito. O `daily` leva cerca de 2 h, e logo
         # depois de `b3_pregao` empurrava notícias, macro e espelho para além
         # do limite de 4 h da tarefa agendada (ver PRAZO_ROTINA_MIN). No fim, o
