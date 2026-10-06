@@ -66,8 +66,11 @@ def serie_mtm_posicao(
         a taxa de recompra do dia e a média contratada da posição viva, em
         decimal. São o *por quê* da marcação: ela é positiva exatamente quando
         a contratada está acima da de mercado;
-    ``valor_bruto`` / ``investido``
-        o valor de mercado e o custo dos lotes vivos naquele dia;
+    ``valor_bruto`` / ``valor_curva`` / ``investido``
+        o valor de mercado daquele dia, o valor que a posição teria pela taxa
+        contratada (a "curva do lote") e o custo dos lotes vivos. A distância
+        entre os dois primeiros **é** a marcação em reais: desenhados juntos,
+        eles mostram o ágio sem precisar de porcentagem;
     ``lotes``
         quantos lotes compunham a posição — é o que permite distinguir queda de
         marcação de entrada de lote novo com taxa diferente.
@@ -122,6 +125,7 @@ def serie_mtm_posicao(
             "taxa_mercado": taxa_mercado,
             "taxa_contratada": contratada_ponderada / bruto,
             "valor_bruto": bruto,
+            "valor_curva": curva,
             "investido": investido,
             "lotes": len(vivos),
         })

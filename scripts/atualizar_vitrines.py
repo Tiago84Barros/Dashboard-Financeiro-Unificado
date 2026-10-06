@@ -254,6 +254,10 @@ CARIMBO = {
     "us_vintages": ("supabase", "SELECT max(created_at) FROM market_us.score_vintages"),
     "us_delistings": ("supabase", "SELECT max(derived_at) FROM market_us.delistings"),
     "us_prices": ("supabase", "SELECT max(ingested_at) FROM market_us.prices_monthly"),
+    # `--armazem` apaga e regrava a meta a cada publicação; `publicado_em`
+    # nasce com NOW() no armazém, que é onde este alvo escreve.
+    "us_painel_armazem": ("armazem",
+                          "SELECT max(publicado_em) FROM market_us.score_panel_pub_meta"),
     "noticias_vitrine": ("supabase", "SELECT max(gerada_em) FROM noticias_vitrine_meta"),
     "espelho_supabase": ("armazem", "SELECT max(executado_em) FROM public.espelho_supabase_meta"),
     # A poda apaga no Supabase e não deixa carimbo lá; o rastro é o manifesto
