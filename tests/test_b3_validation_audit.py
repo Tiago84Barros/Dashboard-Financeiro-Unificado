@@ -57,3 +57,17 @@ def test_market_refresh_runs_b3_before_fii_job():
     assert "needs: refresh-b3" in workflow
     assert workflow.index("Daily B3") < workflow.index("Ranking FIIs")
     assert "Snapshot de prontidao B3" in workflow
+
+
+def test_refresh_b3_so_roda_por_disparo_manual():
+    """Caminho A: a ingestão brapi da B3 roda no armazém, pela rotina local.
+
+    Agendado, o job voltaria a ler demonstrações e preços do Supabase a cada
+    recálculo e a gravar payload bruto lá. O FII continua agendado, e por isso
+    não pode depender de o job da B3 ter rodado.
+    """
+    workflow = open(".github/workflows/market-refresh.yml", encoding="utf-8").read()
+    bloco_b3 = workflow[workflow.index("refresh-b3:"):workflow.index("refresh-fiis:")]
+    assert "if: github.event_name == 'workflow_dispatch'" in bloco_b3
+    bloco_fii = workflow[workflow.index("refresh-fiis:"):]
+    assert "needs.refresh-b3.result == 'skipped'" in bloco_fii

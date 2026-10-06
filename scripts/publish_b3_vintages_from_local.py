@@ -53,6 +53,35 @@ COLS = (
 )
 
 
+def publicar_prontidao(source, target) -> bool:
+    """Copia o snapshot de prontidão mais recente do armazém, se o hash faltar.
+
+    Compartilhado com ``publish_b3_brapi_from_local.py``, que publica o snapshot
+    do dia logo depois da ingestão local.
+    """
+    with source.connect() as conn:
+        readiness = conn.execute(text("""
+            SELECT observed_at,universe_definition,snapshot_json,artifact_hash
+            FROM market.b3_data_readiness_snapshots ORDER BY observed_at DESC LIMIT 1
+        """)).mappings().first()
+    if not readiness:
+        return False
+    with target.begin() as conn:
+        exists = conn.execute(text("""
+            SELECT 1 FROM market.b3_data_readiness_snapshots
+            WHERE artifact_hash=:artifact_hash
+        """), dict(readiness)).scalar()
+        if not exists:
+            conn.execute(text("""
+                INSERT INTO market.b3_data_readiness_snapshots
+                (observed_at,universe_definition,snapshot_json,artifact_hash)
+                VALUES (:observed_at,:universe_definition,CAST(:snapshot_json AS jsonb),:artifact_hash)
+            """), {**dict(readiness), "snapshot_json": json.dumps(
+                readiness["snapshot_json"], ensure_ascii=False, default=str
+            )})
+    return True
+
+
 def publish() -> dict:
     if not settings.db_url:
         raise RuntimeError("Supabase não configurado")
@@ -103,25 +132,7 @@ def publish() -> dict:
             print(f"vintages B3 {processed}/{local_count}", flush=True)
 
     # Publica também a evidência de readiness mais recente, sem duplicar hash.
-    with source.connect() as conn:
-        readiness = conn.execute(text("""
-            SELECT observed_at,universe_definition,snapshot_json,artifact_hash
-            FROM market.b3_data_readiness_snapshots ORDER BY observed_at DESC LIMIT 1
-        """)).mappings().first()
-    if readiness:
-        with target.begin() as conn:
-            exists = conn.execute(text("""
-                SELECT 1 FROM market.b3_data_readiness_snapshots
-                WHERE artifact_hash=:artifact_hash
-            """), dict(readiness)).scalar()
-            if not exists:
-                conn.execute(text("""
-                    INSERT INTO market.b3_data_readiness_snapshots
-                    (observed_at,universe_definition,snapshot_json,artifact_hash)
-                    VALUES (:observed_at,:universe_definition,CAST(:snapshot_json AS jsonb),:artifact_hash)
-                """), {**dict(readiness), "snapshot_json": json.dumps(
-                    readiness["snapshot_json"], ensure_ascii=False, default=str
-                )})
+    readiness = publicar_prontidao(source, target)
     with target.connect() as conn:
         remote_count = int(conn.execute(text(
             "SELECT count(*) FROM market.calculated_metric_vintages"

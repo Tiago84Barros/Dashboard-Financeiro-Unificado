@@ -80,6 +80,10 @@ class Alvo:
     declarado é `data/public/rag`, do corpus RAG, porque o número de partições
     varia com o dado (letra e ano) e partição removida também precisa ir para
     o commit. Quem os commita é `core.publicacao_git`.
+
+    ``timeout_passo_min`` sobrepõe o teto por passo do agendador. Só para quem
+    varre o universo inteiro na brapi: o `daily` levava 74-80 min no GitHub com
+    1,0 s de intervalo, e o teto padrão é 90.
     """
 
     chave: str
@@ -90,6 +94,7 @@ class Alvo:
     versao_de: str | None = None
     precisa_armazem: bool = True
     artefatos: tuple[str, ...] = ()
+    timeout_passo_min: int | None = None
 
     @property
     def por_versao(self) -> bool:
@@ -138,6 +143,28 @@ _CADEIA_CVM_IPE = (
     ("scripts/drenar_cvm_fulltext.py", "--ciclos", "5", "--por-ciclo", "20",
      "--delay", "1.5"),
 )
+
+# Empresas B3 pela brapi (caminho A, 05/10/2026). Rodava no GitHub contra o
+# Supabase: cada recálculo de indicador lia demonstrações e preços de lá
+# (egress, numa conta que estourou a cota) e cada consulta gravava o payload
+# bruto em `brapi_raw_payloads` (64 MB de 500). Agora ingere no armazém e o
+# publicador leva à vitrine só o que o app lê, incrementalmente por marca
+# d'água. Ele não cria ativo nem empresa: ticker que a vitrine não conhece é
+# retido e relatado -- o armazém tem fósseis de alias (BRML3, CARD3).
+_CADEIA_B3_BRAPI = (
+    ("run_market_ingest.py", "daily", "--source", "market", "--warehouse",
+     "--json"),
+    ("run_market_ingest.py", "setores", "--warehouse", "--json"),
+    ("-m", "scripts.snapshot_b3_readiness", "--warehouse"),
+    ("scripts/publish_b3_brapi_from_local.py", "--apply"),
+)
+_CADEIA_B3_BRAPI_ANUAL = (
+    ("run_market_ingest.py", "annual", "--source", "market", "--warehouse",
+     "--json"),
+    # `range=1y` reescreve um ano de preço; a janela padrão leva só 35 dias.
+    ("scripts/publish_b3_brapi_from_local.py", "--apply", "--dias-precos",
+     "400"),
+)
 ALVOS: tuple[Alvo, ...] = (
     Alvo(
         # Primeiro da fila: quem vem depois (FIIs, valuation) lê esta fita.
@@ -146,6 +173,23 @@ ALVOS: tuple[Alvo, ...] = (
         passos=_CADEIA_PREGAO,
         cadencia_dias=1,
         modulo="b3",
+    ),
+    Alvo(
+        # Antes de `b3_metrics` e `b3_vintages`, que leem o que esta grava.
+        chave="b3_brapi",
+        titulo="Empresas B3 pela brapi (armazém → vitrine)",
+        passos=_CADEIA_B3_BRAPI,
+        cadencia_dias=1,
+        modulo="b3",
+        timeout_passo_min=180,
+    ),
+    Alvo(
+        chave="b3_brapi_anual",
+        titulo="Demonstrações B3 pela brapi (refresh anual)",
+        passos=_CADEIA_B3_BRAPI_ANUAL,
+        cadencia_dias=7,
+        modulo="b3",
+        timeout_passo_min=240,
     ),
     Alvo(
         # Documentos de FIIs (FNET) em `market.fii_documents`: saem do arquivo
