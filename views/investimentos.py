@@ -24,6 +24,7 @@ import streamlit as st
 
 import core.data_reconciliacao as _recon
 import core.fundamentus as _fund
+from core.carteira_tabela import get_extras_tabela, montar_tabela
 from core.correlation_analysis import (
     DEFAULT_CORR_PERIOD,
     JANELA_CORR_MESES,
@@ -53,6 +54,7 @@ from core.user_context import user_cache_data
 from core.utils import fmt_moeda, fmt_percentual
 from design.componentes import badge_status, container_pagina
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
+from design.tabela_posicoes import render_tabela_posicoes
 from design.tema_canvas import escala_correlacao
 from views.investimentos_atribuicao import render_atribuicao_carteira
 from views.investimentos_risco import render_risco_carteira
@@ -3653,6 +3655,18 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             for i, cls in enumerate(por_classe[:n_cls]):
                 with cols_cls[i]:
                     st.markdown(_kpi_classe(cls), unsafe_allow_html=True)
+
+        if posicoes:
+            st.markdown("<br>", unsafe_allow_html=True)
+            _secao_titulo_orig("🗂️", "Posições da Carteira")
+            extras_tab = get_extras_tabela()
+            st.markdown(
+                render_tabela_posicoes(
+                    montar_tabela(posicoes, renda_por_ticker, extras_tab),
+                    extras_tab.get("fontes_ausentes"),
+                ),
+                unsafe_allow_html=True,
+            )
 
         st.markdown("<br>", unsafe_allow_html=True)
         _secao_titulo_orig("🏆", "Destaques da Carteira")
