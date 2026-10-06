@@ -536,16 +536,55 @@ def _yf_symbol_for_pos(pos: dict) -> str | None:
     return None
 
 
+def _eh_tesouro(pos: dict) -> bool:
+    return "tesouro" in str(pos.get("classe") or "").lower()
+
+
+def _pu_tesouro(tesouro: tuple[str, ...]) -> pd.DataFrame:
+    """PU diário de venda dos títulos, lido de `tesouro_market_rates`."""
+    try:
+        from core.database import get_engine
+        from core.tesouro_curva import pu_diario
+        return pu_diario(get_engine(), list(tesouro))
+    except Exception:
+        return pd.DataFrame()
+
+
+def _juntar_pu_tesouro(precos: pd.DataFrame, tesouro: tuple[str, ...]) -> pd.DataFrame:
+    """Acrescenta o PU do Tesouro à grade diária de preços em BRL.
+
+    O Tesouro não tem símbolo no provedor público, mas a curva oficial guarda
+    o PU diário de cada título com a mesma chave do ticker da carteira. Sem
+    esta junção a matriz excluía por classe títulos cuja série estava no banco.
+    Título sem PU não vira coluna: a ausência é declarada por quem chama.
+    """
+    if not tesouro:
+        return precos
+    pu = _pu_tesouro(tuple(tesouro))
+    if pu is None or pu.empty:
+        return precos
+    pu = pu[[c for c in pu.columns if c in tesouro]].copy()
+    pu.index = pd.to_datetime(pu.index, errors="coerce")
+    if precos is None or precos.empty:
+        return pu
+    base = precos.copy()
+    base.index = pd.to_datetime(base.index, errors="coerce")
+    if getattr(base.index, "tz", None) is not None:
+        base.index = base.index.tz_localize(None)
+    return base.join(pu, how="outer").sort_index()
+
+
 @user_cache_data(ttl=3600, show_spinner=False)
 def _load_corr_precos_db(
     symbol_map: tuple[tuple[str, str, str], ...],
     period: str = DEFAULT_CORR_PERIOD,
+    tesouro: tuple[str, ...] = (),
 ) -> dict:
     """Fallback: usa asset_quotes/snapshots do banco quando yfinance nao esta disponivel."""
     tickers = [tk for tk, _, _ in symbol_map]
     moedas = {tk: moeda for tk, _, moeda in symbol_map}
     precisa_usd = any(moeda == "USD" for moeda in moedas.values())
-    if len(tickers) < 2:
+    if len(tickers) + len(tesouro) < 2:
         return {"corr": pd.DataFrame(), "returns": pd.DataFrame(), "symbols_ok": []}
 
     try:
@@ -600,7 +639,8 @@ def _load_corr_precos_db(
                 .sort_index()
             )
             conversao = converter_precos_para_brl(daily, moedas, cambio_para_brl)
-            diag = calcular_correlacao_mensal(conversao["prices"], MIN_CORR_MONTHS)
+            diag = calcular_correlacao_mensal(
+                _juntar_pu_tesouro(conversao["prices"], tesouro), MIN_CORR_MONTHS)
             corr = diag["corr"]
             if corr.shape[1] >= 2:
                 return {
@@ -642,21 +682,21 @@ def _load_corr_precos_db(
         except Exception:
             pass
 
-    if not frames:
+    close = pd.DataFrame()
+    if frames:
+        df = pd.concat(frames, ignore_index=True)
+        df["data"] = pd.to_datetime(df["data"], errors="coerce")
+        df["preco"] = pd.to_numeric(df["preco"], errors="coerce")
+        df = df.dropna(subset=["data", "ticker", "preco"])
+        if not df.empty:
+            close = (
+                _preco_por_ticker_base(df, _com_fracionario(tickers))
+                .pivot(index="data", columns="ticker", values="preco")
+                .sort_index()
+            )
+    close = _juntar_pu_tesouro(close, tesouro)
+    if close.empty:
         return {"corr": pd.DataFrame(), "returns": pd.DataFrame(), "symbols_ok": []}
-
-    df = pd.concat(frames, ignore_index=True)
-    df["data"] = pd.to_datetime(df["data"], errors="coerce")
-    df["preco"] = pd.to_numeric(df["preco"], errors="coerce")
-    df = df.dropna(subset=["data", "ticker", "preco"])
-    if df.empty:
-        return {"corr": pd.DataFrame(), "returns": pd.DataFrame(), "symbols_ok": []}
-
-    close = (
-        _preco_por_ticker_base(df, _com_fracionario(tickers))
-        .pivot(index="data", columns="ticker", values="preco")
-        .sort_index()
-    )
     diag = calcular_correlacao_mensal(close, MIN_CORR_MONTHS)
     corr = diag["corr"]
     return {
@@ -675,14 +715,19 @@ def _load_corr_precos_db(
 def _load_corr_precos(
     symbol_map: tuple[tuple[str, str, str], ...],
     period: str = DEFAULT_CORR_PERIOD,
+    tesouro: tuple[str, ...] = (),
 ) -> dict:
-    """Baixa preços públicos e calcula correlação mensal na moeda-base BRL."""
-    if len(symbol_map) < 2:
+    """Baixa preços públicos e calcula correlação mensal na moeda-base BRL.
+
+    ``tesouro`` são títulos do Tesouro Direto: entram pelo PU diário da curva
+    oficial, não pelo provedor público.
+    """
+    if len(symbol_map) + len(tesouro) < 2:
         return {"corr": pd.DataFrame(), "returns": pd.DataFrame(), "symbols_ok": []}
     try:
         import yfinance as yf
     except Exception:
-        return _load_corr_precos_db(symbol_map, period)
+        return _load_corr_precos_db(symbol_map, period, tesouro)
 
     asset_symbols = [sym for _, sym, _ in symbol_map]
     symbol_to_ticker = {sym: tk for tk, sym, _ in symbol_map}
@@ -716,7 +761,7 @@ def _load_corr_precos(
             threads=True,
         )
     except Exception:
-        return _load_corr_precos_db(symbol_map, period)
+        return _load_corr_precos_db(symbol_map, period, tesouro)
 
     close = _close_from_download(raw, download_symbols)
     ativos_disponiveis = [c for c in close.columns if c in moedas]
@@ -760,11 +805,12 @@ def _load_corr_precos(
                 pass
 
     close = close[[c for c in close.columns if c in moedas]].dropna(axis=1, thresh=30)
-    if close.shape[1] < 2:
-        return _load_corr_precos_db(symbol_map, period)
+    if close.shape[1] + len(tesouro) < 2:
+        return _load_corr_precos_db(symbol_map, period, tesouro)
 
     conversao = converter_precos_para_brl(close, moedas, cambio_para_brl)
-    diag = calcular_correlacao_mensal(conversao["prices"], MIN_CORR_MONTHS)
+    diag = calcular_correlacao_mensal(
+        _juntar_pu_tesouro(conversao["prices"], tesouro), MIN_CORR_MONTHS)
     corr = diag["corr"]
     metadata = {
         "symbols_ok": list(corr.columns),
@@ -776,7 +822,7 @@ def _load_corr_precos(
         "missing_fx": conversao["missing_fx"],
     }
     if corr.shape[1] < 2:
-        db_data = _load_corr_precos_db(symbol_map, period)
+        db_data = _load_corr_precos_db(symbol_map, period, tesouro)
         return db_data if not db_data.get("corr", pd.DataFrame()).empty else {
             **diag,
             **metadata,
@@ -789,8 +835,15 @@ def _build_corr_data(posicoes: list) -> dict:
     pesos = {}
     seen = set()
     skipped = []
+    tesouro = []
     for pos in sorted(posicoes, key=lambda p: float(p.get("valor_mercado") or 0), reverse=True):
         tk = str(pos.get("ticker") or "").upper().strip()
+        if tk and _eh_tesouro(pos):
+            if tk not in seen:
+                tesouro.append(tk)
+                pesos[tk] = float(pos.get("valor_mercado") or 0.0)
+                seen.add(tk)
+            continue
         sym = _yf_symbol_for_pos(pos)
         if sym:
             if tk not in seen:
@@ -803,10 +856,20 @@ def _build_corr_data(posicoes: list) -> dict:
                 seen.add(tk)
         elif tk:
             skipped.append(tk)
-    data = _load_corr_precos(tuple(symbol_map[:28]))
+    data = _load_corr_precos(tuple(symbol_map[:28]), tesouro=tuple(tesouro))
+    # Título pedido que não chegou à matriz continua declarado, com o motivo:
+    # PU ausente na curva ou menos meses que o mínimo exigido.
+    na_matriz = set(data.get("corr", pd.DataFrame()).columns)
+    skipped.extend(
+        f"{tk} (PU do Tesouro sem {MIN_CORR_MONTHS} meses de histórico)"
+        for tk in tesouro if tk not in na_matriz
+    )
     data["skipped"] = skipped
-    data["requested"] = [tk for tk, _, _ in symbol_map[:28]]
-    data["weights"] = {tk: pesos[tk] for tk, _, _ in symbol_map[:28]}
+    data["requested"] = [tk for tk, _, _ in symbol_map[:28]] + tesouro
+    data["weights"] = {
+        **{tk: pesos[tk] for tk, _, _ in symbol_map[:28]},
+        **{tk: pesos[tk] for tk in tesouro},
+    }
     data["portfolio_market_total"] = sum(
         max(float(pos.get("valor_mercado") or 0.0), 0.0) for pos in posicoes
     )
@@ -2136,7 +2199,8 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
             aviso_lacuna(
                 "Fora da matriz de correlação: " + ", ".join(pulados[:12]) +
                 ("..." if len(pulados) > 12 else "") +
-                ". Normalmente são Tesouro, renda fixa ou ativos sem série de preços comparável.",
+                ". Normalmente são renda fixa privada, Tesouro com histórico curto de PU "
+                "ou ativos sem série de preços comparável.",
                 codigo="tela.investimentos.correlacao_fora_da_matriz",
             )
         obs_validas = [int(v) for v in pares.get("Observações", []) if pd.notna(v)]
