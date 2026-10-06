@@ -175,23 +175,6 @@ ALVOS: tuple[Alvo, ...] = (
         modulo="b3",
     ),
     Alvo(
-        # Antes de `b3_metrics` e `b3_vintages`, que leem o que esta grava.
-        chave="b3_brapi",
-        titulo="Empresas B3 pela brapi (armazém → vitrine)",
-        passos=_CADEIA_B3_BRAPI,
-        cadencia_dias=1,
-        modulo="b3",
-        timeout_passo_min=180,
-    ),
-    Alvo(
-        chave="b3_brapi_anual",
-        titulo="Demonstrações B3 pela brapi (refresh anual)",
-        passos=_CADEIA_B3_BRAPI_ANUAL,
-        cadencia_dias=7,
-        modulo="b3",
-        timeout_passo_min=240,
-    ),
-    Alvo(
         # Documentos de FIIs (FNET) em `market.fii_documents`: saem do arquivo
         # EVENTUAL da CVM, lido pela carga estruturada. Ela não estava na
         # cadeia diária -- em 29/09/2026 o último documento era de 15/07, a
@@ -455,6 +438,29 @@ ALVOS: tuple[Alvo, ...] = (
                 ("-m", "scripts.publish_us_score_panel", "--apply")),
         cadencia_dias=30,
         modulo="us",
+    ),
+    Alvo(
+        # Últimos da fila, de propósito. O `daily` leva cerca de 2 h, e logo
+        # depois de `b3_pregao` empurrava notícias, macro e espelho para além
+        # do limite de 4 h da tarefa agendada (ver PRAZO_ROTINA_MIN). No fim, o
+        # que o prazo adia é esta ingestão, retomada no dia seguinte. E rodam
+        # depois de `brapi_raw_poda`: o publicador leva na mesma noite as
+        # demonstrações que `renormalize-demonstracoes` regravou.
+        # `b3_metrics`/`b3_vintages` (semanais) leem o armazém da véspera.
+        chave="b3_brapi",
+        titulo="Empresas B3 pela brapi (armazém → vitrine)",
+        passos=_CADEIA_B3_BRAPI,
+        cadencia_dias=1,
+        modulo="b3",
+        timeout_passo_min=180,
+    ),
+    Alvo(
+        chave="b3_brapi_anual",
+        titulo="Demonstrações B3 pela brapi (refresh anual)",
+        passos=_CADEIA_B3_BRAPI_ANUAL,
+        cadencia_dias=7,
+        modulo="b3",
+        timeout_passo_min=240,
     ),
 )
 

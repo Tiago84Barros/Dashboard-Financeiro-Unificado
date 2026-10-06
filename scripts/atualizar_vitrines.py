@@ -71,8 +71,21 @@ DOCKER_DESKTOP = Path(r"C:\Program Files\Docker\Docker\Docker Desktop.exe")
 # Um alvo travado não pode segurar a fila para sempre: sem teto, um passo que
 # nunca retorna deixa todos os alvos seguintes vencidos e silenciosos.
 TIMEOUT_PASSO = 90 * 60
+# A tarefa agendada "DFU - Atualizar vitrines" tem limite de execução de 4 h e
+# MATA a rotina ao estourá-lo: em 05/10/2026 ela caiu às 23:30 no meio do
+# `us_snapshot`, e notícias, macro, espelho e CDI não rodaram -- sem
+# notificação, porque processo morto não notifica. Depois deste prazo nenhum
+# alvo novo começa; os que sobram ficam vencidos para a próxima execução e
+# entram na notificação de falha. Quem subir o limite da tarefa passa
+# `--prazo-min` junto; 0 desliga.
+PRAZO_ROTINA_MIN = 225
 # Marca a execução filha de `recarregar`, para ela não recarregar de novo.
 _RECARREGADA = "DFU_ROTINA_RECARREGADA"
+
+
+def prazo_esgotado(inicio: float, prazo_min: int, agora: float) -> bool:
+    """Se o prazo da rotina, contado em segundos monotônicos, já passou."""
+    return prazo_min > 0 and agora - inicio >= prazo_min * 60
 
 
 def registrar(mensagem: str) -> None:
@@ -480,6 +493,9 @@ def main(argv=None) -> int:
                         "sem registro e grava o estado inicial.")
     p.add_argument("--sem-vigia", action="store_true",
                    help="Não roda o vigia de automações no fim.")
+    p.add_argument("--prazo-min", type=int, default=PRAZO_ROTINA_MIN,
+                   help="Depois de tantos minutos, não começa alvo novo "
+                        f"(padrão {PRAZO_ROTINA_MIN}; 0 desliga).")
     args = p.parse_args(argv)
 
     # Antes de decidir o que venceu: a decisão tem de usar a agenda mergeada.
@@ -516,6 +532,7 @@ def vigiar() -> None:
 
 def _publicar(args) -> int:
     agora = datetime.now(timezone.utc)
+    inicio = time.monotonic()
     estado = ler_estado()
     apenas = tuple(args.apenas or ())
     versoes = {a.chave: versao_corrente(a) for a in ALVOS if a.por_versao}
@@ -565,7 +582,11 @@ def _publicar(args) -> int:
     publicados_alvos: list = []
     modulos: set[str] = set()
 
+    adiados: list[str] = []
     for alvo, motivo in devidos:
+        if adiados or prazo_esgotado(inicio, args.prazo_min, time.monotonic()):
+            adiados.append(alvo.chave)
+            continue
         registrar(f"  {alvo.chave}: {alvo.titulo} -- {motivo}")
         ok, detalhe = executar(alvo, ambiente)
         # Gravado a cada alvo, não no fim: hibernar no meio não pode desfazer o
@@ -581,6 +602,12 @@ def _publicar(args) -> int:
         else:
             falhas.append(f"{alvo.chave}: {detalhe}")
             registrar(f"  {alvo.chave}: FALHOU -- {detalhe}")
+    if adiados:
+        # Sem registro no estado: seguem vencidos e a próxima execução os pega.
+        aviso = (f"prazo de {args.prazo_min} min esgotado; adiados para a "
+                 f"próxima execução: {', '.join(adiados)}")
+        registrar(f"  {aviso}")
+        falhas.append(aviso)
 
     # Antes de verificar, porque a verificação lê a vitrine e não o repositório:
     # a ordem entre as duas não muda o resultado de nenhuma, mas um artefato que
