@@ -3003,95 +3003,31 @@ def _editor_posicao_anterior(realizado: dict | None) -> None:
             )
 
 
-def _tab_carteira(carteira: dict, proventos: dict) -> None:
+def _cards_por_classe(posicoes: list[dict], por_classe: list[dict],
+                      renda_por_ticker: dict[str, float]) -> None:
+    """Cards por ativo, agrupados por classe — herança da antiga aba Carteira.
+
+    A tabela de Posições da Visão Geral cobre os mesmos números; os cards
+    ficam atrás de um toggle porque trazem o que a tabela não traz (logo,
+    retorno com proventos por ativo, cabeçalho de resultado por classe).
+    """
     from collections import defaultdict as _dd
-    posicoes   = carteira.get("posicoes", [])
-    por_classe = carteira.get("por_classe", [])
 
-    # Renda recebida nos últimos 12 meses por ticker.
-    renda_por_ticker: dict[str, float] = {
-        a["ticker"]: a["total"]
-        for a in proventos.get("por_ativo_12m", [])
-    }
-    # Renda total por classe (para header)
     renda_por_classe: dict[str, float] = _dd(float)
-    for p in posicoes:
-        renda_por_classe[p["classe"]] += renda_por_ticker.get(p["ticker"], 0.0)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    if not carteira["cotacoes_disponiveis"]:
-        aviso_lacuna(
-            "Cotações não disponíveis: é preciso baixar cotações em Configurações > "
-            "Atualização de Dados (yfinance).",
-            codigo="tela.investimentos.sem_cotacoes",
-        )
-        st.info("**Cotações não disponíveis no momento.**", icon="📊")
-
-    # ── KPIs resumo ──────────────────────────────────────────────────────────
-    dif_total = carteira.get("diferenca_reais", round(carteira["total_mercado"] - carteira["total_investido"], 2))
-    dif_cor_k = _COR_POSITIVO if dif_total >= 0 else _COR_NEGATIVO
-    dif_sign  = "+" if dif_total >= 0 else ""
-    rent      = carteira["rentabilidade_total_pct"]
-    n_live    = carteira.get("n_cotacoes_live", 0)
-    n_total   = carteira.get("num_ativos", 0)
-    cotacao_sub = (f"{n_live}/{n_total} cotações ao vivo" if n_live else
-                   "Cotações da última foto")
-    if not n_live:
-        detalhe_tecnico("Sem cotações ao vivo: valores pelas cotações do snapshot XP.",
-                        codigo="investimentos.carteira.cotacoes_snapshot")
-
-    c1, c2, c3, c4 = st.columns(4, gap="small")
-    with c1:
-        st.markdown(_kpi("Custo / Investido", fmt_moeda(carteira["total_investido"]),
-                         "Custo histórico total aportado.", "var(--app-text)"),
-                    unsafe_allow_html=True)
-    with c2:
-        st.markdown(_kpi("Valor de Mercado Atual", fmt_moeda(carteira["total_mercado"]),
-                         cotacao_sub, _COR_INFO),
-                    unsafe_allow_html=True)
-    with c3:
-        st.markdown(_kpi(
-            "Valoriz./Desvalorização",
-            f"{dif_sign}{fmt_moeda(dif_total)}",
-            f"Mercado − Custo · {'+' if rent >= 0 else ''}{rent:.2f}%",
-            dif_cor_k,
-        ), unsafe_allow_html=True)
-    with c4:
-        st.markdown(_kpi("Ativos na Carteira",
-                         str(carteira["num_ativos"]),
-                         f"N efetivo: {_calc_n_efetivo(posicoes)}",
-                         _COR_NEUTRO),
-                    unsafe_allow_html=True)
-
-    if not posicoes:
-        detalhe_tecnico("Nenhuma posição encontrada: executar o ETL de posições.",
-                        codigo="investimentos.carteira.sem_posicoes")
-        st.info("Nenhuma posição encontrada.", icon="💼")
-        return
-
-    from design.portfolio_valuations import render_portfolio_valuations
-
-    render_portfolio_valuations(posicoes)
-
-    _editor_preco_medio_manual(posicoes)
-
-    # Busca logos em lote (cache 24h) — falha silenciosa
-    tickers_tuple = tuple(p["ticker"] for p in posicoes)
-    logos = _get_logos(tickers_tuple)
-
-    # ── Cards agrupados por classe ────────────────────────────────────────────
     pos_por_classe: dict[str, list] = _dd(list)
     for p in posicoes:
+        renda_por_classe[p["classe"]] += renda_por_ticker.get(p["ticker"], 0.0)
         pos_por_classe[p["classe"]].append(p)
+
+    # Busca logos em lote (cache 24h) — falha silenciosa
+    logos = _get_logos(tuple(p["ticker"] for p in posicoes))
 
     for cls_info in por_classe:
         cls_nome   = cls_info["nome"]
         cls_pos    = pos_por_classe.get(cls_nome, [])
         if not cls_pos:
             continue
-        renda_cls  = renda_por_classe.get(cls_nome, 0.0)
-        _header_classe(cls_info, renda_cls)
+        _header_classe(cls_info, renda_por_classe.get(cls_nome, 0.0))
 
         for i in range(0, len(cls_pos), 4):
             chunk = cls_pos[i:i + 4]
@@ -3618,25 +3554,47 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
     # ══════════════════════════════════════════════════════════════════════════
     with ta:
         st.markdown("<br>", unsafe_allow_html=True)
+
+        if not carteira.get("cotacoes_disponiveis", True):
+            aviso_lacuna(
+                "Cotações não disponíveis: é preciso baixar cotações em Configurações > "
+                "Atualização de Dados (yfinance).",
+                codigo="tela.investimentos.sem_cotacoes",
+            )
+            st.info("**Cotações não disponíveis no momento.**", icon="📊")
+
         _secao_titulo_orig("📋", "Resumo do Portfólio")
+
+        # Contagem de cotações ao vivo, valorização em R$ e N efetivo vieram
+        # da antiga aba Carteira, que repetia estes quatro KPIs.
+        n_live = carteira.get("n_cotacoes_live", 0)
+        if not n_live:
+            detalhe_tecnico("Sem cotações ao vivo: valores pelas cotações do snapshot XP.",
+                            codigo="investimentos.carteira.cotacoes_snapshot")
+        cotacao_sub = (f"{n_live}/{carteira.get('num_ativos', 0)} cotações ao vivo"
+                       if n_live else "Cotações da última foto")
+        dif_total = carteira.get("diferenca_reais", round(total_mkt - total_inv, 2))
+        dif_txt = f"{'+' if dif_total >= 0 else ''}{fmt_moeda(dif_total)}"
 
         c1, c2, c3, c4 = st.columns(4, gap="small")
         cor_r = _COR_POSITIVO if rentab >= 0 else _COR_NEGATIVO
         seta_r = "▲" if rentab >= 0 else "▼"
         with c1:
             st.markdown(_kpi("Valor Total Investido", fmt_moeda(total_inv),
-                             f"{carteira['num_ativos']} ativos na carteira", "var(--app-text)"),
+                             f"{carteira['num_ativos']} ativos · N efetivo: "
+                             f"{_calc_n_efetivo(posicoes)}", "var(--app-text)"),
                         unsafe_allow_html=True)
         with c2:
             st.markdown(_kpi("Valor de Mercado", fmt_moeda(total_mkt),
-                             "Ativos com cotação disponível", _COR_INFO),
+                             cotacao_sub, _COR_INFO),
                         unsafe_allow_html=True)
         with c3:
             _rent_total_ok = carteira.get("rentabilidade_total_disponivel", True)
             st.markdown(_kpi(
                 "Retorno Mercado/Custo",
                 f"{seta_r} {abs(rentab):.1f}%" if _rent_total_ok else "Indisponível em BRL",
-                ("Não inclui proventos nem ajusta aportes/resgates" if _rent_total_ok else
+                (f"Mercado − Custo: {dif_txt} · sem proventos nem ajuste de aportes"
+                 if _rent_total_ok else
                  "Falta câmbio histórico de aquisição: " + (
                      ", ".join(carteira.get("posicoes_sem_cambio_historico") or [])
                      or "posição USD")),
@@ -3667,6 +3625,20 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 ),
                 unsafe_allow_html=True,
             )
+
+            # Vindos da antiga aba Carteira.
+            if st.toggle("Ver posições em cards, por classe", key="analise_vg_cards"):
+                _cards_por_classe(posicoes, por_classe, renda_por_ticker)
+
+            st.markdown("<br>", unsafe_allow_html=True)
+            from design.portfolio_valuations import render_portfolio_valuations
+            render_portfolio_valuations(posicoes)
+
+            _editor_preco_medio_manual(posicoes)
+        else:
+            detalhe_tecnico("Nenhuma posição encontrada: executar o ETL de posições.",
+                            codigo="investimentos.carteira.sem_posicoes")
+            st.info("Nenhuma posição encontrada.", icon="💼")
 
         st.markdown("<br>", unsafe_allow_html=True)
         _secao_titulo_orig("🏆", "Destaques da Carteira")
@@ -4425,10 +4397,13 @@ def _aba_mantida(atual: object, rotulo_ia: str) -> str | None:
     Streamlit esquece a seleção e volta ao Dashboard, mesmo para quem estava
     em outra aba. Reescrever a seleção pela chave, a cada execução, a carrega
     para o id novo; a aba da IA com o ícone antigo vira a do ícone atual.
-    Rótulo que não existe mais cai no default dentro do próprio ``st.tabs``.
+    A antiga Carteira vira a Análise, que absorveu o conteúdo dela; outro
+    rótulo que não existe mais cai no default dentro do próprio ``st.tabs``.
     """
     if not isinstance(atual, str) or not atual:
         return None
+    if atual == "💼  Carteira":  # aba absorvida pela Análise → Visão Geral
+        return "🔍  Análise"
     _, _, nome = rotulo_ia.partition("  ")
     if nome and atual.endswith(f"  {nome}"):
         return rotulo_ia
@@ -4501,10 +4476,11 @@ def render() -> None:
     # usuário descobre o que falta.
     #
     # Abas sob demanda (``on_change="rerun"`` + ``if tabN.open``): sem isso o
-    # Streamlit executa as seis em todo rerun, e cada clique dentro da
+    # Streamlit executa todas em todo rerun, e cada clique dentro da
     # Inteligência dos Ativos refazia Dashboard, Histórico, Carteira, Análise e
     # Imposto de Renda antes de responder (05/10/2026). Trocar de aba passa a
-    # custar um rerun só da aba aberta.
+    # custar um rerun só da aba aberta. A Carteira foi absorvida pela Análise
+    # → Visão Geral em 06/10/2026.
     from core.estrategia import portao as _portao
     from views import inteligencia_ativos as _ia
     _liberacao = _portao.verificar()
@@ -4513,10 +4489,9 @@ def render() -> None:
     if _aba is not None:
         st.session_state[ABA_INVESTIMENTOS_KEY] = _aba
 
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📊  Dashboard",
         "📈  Histórico",
-        "💼  Carteira",
         "🔍  Análise",
         _rotulo_ia,
         "🧾  Imposto de Renda",
@@ -4534,18 +4509,14 @@ def render() -> None:
 
     if tab3.open:
         with tab3:
-            _tab_carteira(carteira, proventos)
+            _tab_analise(carteira, proventos)
 
     if tab4.open:
         with tab4:
-            _tab_analise(carteira, proventos)
+            _ia.render(_liberacao, carteira, proventos)
 
     if tab5.open:
         with tab5:
-            _ia.render(_liberacao, carteira, proventos)
-
-    if tab6.open:
-        with tab6:
             from views.ir_renda_variavel import render as _render_ir
             _render_ir()
 
