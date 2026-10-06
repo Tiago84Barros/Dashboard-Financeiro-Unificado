@@ -126,8 +126,8 @@ def test_armazem_monta_e_grava_no_armazem_sem_tocar_no_supabase(ambiente,
                                                                  monkeypatch):
     """`--armazem` usa a URL do armazém e nunca a da vitrine."""
     import scripts.publish_fii_selection_from_local as fii
-    import scripts.publish_us_snapshot as snap
     import scripts.publish_us_score_panel as pub
+    import scripts.publish_us_snapshot as snap
     from core.config import settings
 
     ur, eng = ambiente
