@@ -29,11 +29,20 @@ espaço num banco que está a 50 MB do limite.
 Depois de gravar, o script relê o painel pelo caminho do app e confere que é
 idêntico ao montado. Se não for, sai com erro.
 
+**Também no armazém local (`--armazem`).** O app rodando na máquina contra o
+armazém (`scripts/abrir_app_armazem.bat`) não achava as tabelas publicadas e
+montava o painel ao vivo: 34,5 s a cada cache frio, contra ~1 s lendo o
+publicado. Com `--armazem` o script monta das tabelas DO ARMAZÉM e grava NO
+ARMAZÉM -- o mesmo princípio de cima, aplicado ao outro banco: o painel servido
+é o que o app montaria ao vivo ali, e a impressão é a do armazém, de modo que
+dado novo no armazém derruba o publicado do mesmo jeito. Não toca no Supabase.
+
 Simulação por padrão; grava somente com --apply.
 
 Uso:
     python -m scripts.publish_us_score_panel
     python -m scripts.publish_us_score_panel --apply
+    python -m scripts.publish_us_score_panel --apply --armazem
 """
 from __future__ import annotations
 
@@ -169,16 +178,22 @@ def main(argv=None) -> int:
                     help="grava de fato (sem esta flag, apenas simula)")
     ap.add_argument("--versao", default=None,
                     help="metodologia a publicar (padrão: a corrente)")
+    ap.add_argument("--armazem", action="store_true",
+                    help="monta e grava no armazém local, não no Supabase")
     args = ap.parse_args(argv)
 
-    from core.config import settings
     from scripts.publish_us_snapshot import _engine
 
-    if not settings.db_url:
-        print("Vitrine (Supabase) não configurada: DATABASE_URL ausente.",
-              file=sys.stderr)
-        return 2
-    remoto = _engine(settings.db_url)
+    if args.armazem:
+        from scripts.publish_fii_selection_from_local import _warehouse_url
+        remoto = _engine(_warehouse_url())
+    else:
+        from core.config import settings
+        if not settings.db_url:
+            print("Vitrine (Supabase) não configurada: DATABASE_URL ausente.",
+                  file=sys.stderr)
+            return 2
+        remoto = _engine(settings.db_url)
     try:
         resumo = publicar(remoto=remoto, aplicar=args.aplicar, versao=args.versao)
     finally:

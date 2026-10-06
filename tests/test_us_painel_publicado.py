@@ -120,3 +120,24 @@ def test_republicar_substitui_sem_duplicar(ambiente):
         n = c.execute(text("SELECT COUNT(*) FROM market_us.score_panel_pub")).scalar()
         m = c.execute(text("SELECT COUNT(*) FROM market_us.score_panel_pub_meta")).scalar()
     assert (n, m) == (3, 1)
+
+
+def test_armazem_monta_e_grava_no_armazem_sem_tocar_no_supabase(ambiente,
+                                                                 monkeypatch):
+    """`--armazem` usa a URL do armazém e nunca a da vitrine."""
+    import scripts.publish_fii_selection_from_local as fii
+    import scripts.publish_us_snapshot as snap
+    import scripts.publish_us_score_panel as pub
+    from core.config import settings
+
+    ur, eng = ambiente
+    urls = []
+    monkeypatch.setattr(fii, "_warehouse_url", lambda: "postgresql://armazem")
+    monkeypatch.setattr(snap, "_engine", lambda url: urls.append(url) or eng)
+    monkeypatch.setattr(type(settings), "db_url", property(
+        lambda self: pytest.fail("leu a URL do Supabase")), raising=False)
+    monkeypatch.setattr(eng, "dispose", lambda: None)
+
+    assert pub.main(["--apply", "--armazem", "--versao", VERSAO]) == 0
+    assert urls == ["postgresql://armazem"]
+    assert ur.load_score_panel(score_version=VERSAO).attrs["fonte"] == "publicado"
