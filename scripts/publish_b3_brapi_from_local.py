@@ -39,6 +39,13 @@ Indicadores passam pelo mesmo portão de atualidade do ``b3_metrics`` (achado
 B3-02): se o armazém tiver trimestre vigente anterior ao da vitrine, os
 indicadores ficam de fora e o resto segue.
 
+Teto de disco: o plano free do Supabase tem 500 MB e, passando disso, o banco
+vira somente leitura. Antes de gravar cada tabela o script mede o banco e soma
+o pior caso: toda linha candidata reescrita, ao custo médio por linha daquela
+tabela (heap, índices e TOAST). Se a soma passar de ``--teto-disco-mb``, ele
+para ali, não grava o resto, sai com código 1 e a rotina notifica. A marca das
+tabelas não gravadas não avança, então nada se perde: volta na próxima.
+
 Padrão da casa: DRY-RUN por omissão; nada é escrito sem ``--apply``, e só o
 ``--apply`` avança a marca.
 
@@ -78,6 +85,11 @@ SOBREPOSICAO = timedelta(days=1)
 # armazém em 05/10/2026 (B3-02), que nunca chegaram à vitrine.
 JANELA_INICIAL = timedelta(days=30)
 DIAS_PRECOS_PADRAO = 35
+# Megabytes decimais, a unidade do plano (500 MB). Em 06/10/2026 o banco estava
+# em 463,9 MB e o pior caso da primeira publicação era +55 MB.
+TETO_DISCO_MB_PADRAO = 485
+# Tabela que o ANALYZE nunca viu (reltuples < 0) não tem custo médio medido.
+BYTES_POR_LINHA_SEM_ESTATISTICA = 2048
 
 
 # ── Partes puras ────────────────────────────────────────────────────────────
@@ -152,6 +164,17 @@ def reter_ausentes(linhas: list[dict], presentes: set[str], chave: str = "ticker
     return publicaveis, retidos
 
 
+def cabe_no_disco(usado: int, linhas: int, bytes_por_linha: float,
+                  teto_mb: float) -> bool:
+    """Se o pior caso (toda linha reescrita) ainda deixa o banco abaixo do teto.
+
+    Teto zero ou negativo desliga a guarda.
+    """
+    if teto_mb <= 0 or linhas <= 0:
+        return True
+    return usado + linhas * bytes_por_linha <= teto_mb * 1_000_000
+
+
 # ── Acesso ao banco ─────────────────────────────────────────────────────────
 
 def _columns(conn, table: str) -> list[str]:
@@ -181,6 +204,22 @@ def _maximo(src, tabela: str, coluna: str, desde: datetime):
     ), {"desde": desde}).scalar()
 
 
+def _usado(dst) -> int:
+    return int(dst.execute(text(
+        "SELECT pg_database_size(current_database())")).scalar() or 0)
+
+
+def _bytes_por_linha(dst, tabela: str) -> float:
+    """Custo médio de uma linha da tabela no destino, com índices e TOAST."""
+    total, tuplas = dst.execute(text(
+        "SELECT pg_total_relation_size(c.oid), c.reltuples "
+        "FROM pg_class c WHERE c.oid = to_regclass(:t)"
+    ), {"t": f"market.{tabela}"}).one()
+    if not tuplas or tuplas <= 0:
+        return float(BYTES_POR_LINHA_SEM_ESTATISTICA)
+    return float(total) / float(tuplas)
+
+
 def _bloqueio_atualidade(src, dst) -> str | None:
     from core import b3_atualidade_trimestral as atualidade
     desde = atualidade.desde_ano(datetime.now(timezone.utc).date())
@@ -208,7 +247,8 @@ def _inserir_safras(dst, linhas: list[dict]) -> int:
 # ── Publicação ──────────────────────────────────────────────────────────────
 
 def publish(*, apply: bool = False, dias_precos: int = DIAS_PRECOS_PADRAO,
-            estado_path: Path = ESTADO_PADRAO, hoje: date | None = None) -> dict:
+            estado_path: Path = ESTADO_PADRAO, hoje: date | None = None,
+            teto_disco_mb: float = TETO_DISCO_MB_PADRAO) -> dict:
     from data_pipeline.market import repository
     from scripts.publish_b3_tickers_from_local import _remote_url
     from scripts.publish_b3_vintages_from_local import publicar_prontidao
@@ -295,33 +335,66 @@ def publish(*, apply: bool = False, dias_precos: int = DIAS_PRECOS_PADRAO,
             for tabela, linhas in lotes.items():
                 resultado["tabelas"][tabela] = {"linhas": len(linhas)}
 
+            usado = _usado(dst)
+            pior = sum(len(linhas) * _bytes_por_linha(dst, t)
+                       for t, linhas in lotes.items() if linhas)
+            dst.rollback()
+            resultado["disco_mb"] = {"usado": round(usado / 1e6, 1),
+                                     "pior_caso": round(pior / 1e6, 1),
+                                     "teto": teto_disco_mb}
             if not apply:
                 return resultado
 
             # Cada tabela na sua transação; a marca dela só avança depois do
-            # COMMIT.
-            with dst.begin():
-                dst.execute(text("SET LOCAL statement_timeout='300s'"))
-                repository.upsert(dst, "companies", lotes["companies"])
-            novo_estado = avancar_marca(novo_estado, "companies", maximos["companies"])
-            gravar_estado(estado_path, novo_estado)
+            # COMMIT. Antes de cada uma, o teto de disco.
+            # Tamanho do banco antes de cada tabela e no fim: a diferença é o
+            # que cada uma custou de fato.
+            disco: dict[str, int] = {}
+            resultado["disco_bytes"] = disco
 
-            for tabela in ("historical_prices", *TABELAS_MARCA):
+            def cabe(tabela: str, linhas: list[dict]) -> bool:
+                usado = _usado(dst)
+                por_linha = _bytes_por_linha(dst, tabela)
+                dst.rollback()
+                disco[tabela] = usado
+                if cabe_no_disco(usado, len(linhas), por_linha, teto_disco_mb):
+                    return True
+                resultado["parado_por_disco"] = {
+                    "tabela": tabela,
+                    "linhas": len(linhas),
+                    "usado_mb": round(usado / 1e6, 1),
+                    "pior_caso_mb": round(len(linhas) * por_linha / 1e6, 1),
+                    "teto_mb": teto_disco_mb,
+                }
+                return False
+
+            def gravar(tabela: str, escrever) -> bool:
+                nonlocal novo_estado
+                if not cabe(tabela, lotes[tabela]):
+                    return False
                 with dst.begin():
                     dst.execute(text("SET LOCAL statement_timeout='300s'"))
-                    repository.upsert(dst, tabela, lotes[tabela])
+                    escrever(lotes[tabela])
                 if tabela in maximos:
                     novo_estado = avancar_marca(novo_estado, tabela, maximos[tabela])
                     gravar_estado(estado_path, novo_estado)
+                return True
 
-            with dst.begin():
-                dst.execute(text("SET LOCAL statement_timeout='300s'"))
-                _inserir_safras(dst, lotes["calculated_metric_vintages"])
-            if "calculated_metric_vintages" in maximos:
-                novo_estado = avancar_marca(novo_estado, "calculated_metric_vintages",
-                                            maximos["calculated_metric_vintages"])
-                gravar_estado(estado_path, novo_estado)
+            seguiu = True
+            for tabela in ("companies", "historical_prices", *TABELAS_MARCA):
+                seguiu = gravar(tabela, lambda linhas, t=tabela:
+                                repository.upsert(dst, t, linhas))
+                if not seguiu:
+                    break
+            if seguiu:
+                seguiu = gravar("calculated_metric_vintages",
+                                lambda linhas: _inserir_safras(dst, linhas))
+            disco["fim"] = _usado(dst)
+            dst.rollback()
 
+        if "parado_por_disco" in resultado:
+            resultado["marcas"] = novo_estado
+            return resultado
         resultado["prontidao_publicada"] = publicar_prontidao(source, target)
         resultado["marcas"] = novo_estado
     finally:
@@ -340,11 +413,15 @@ def main(argv=None) -> int:
                         "a rodada semanal do annual usa 400)")
     p.add_argument("--estado", default=str(ESTADO_PADRAO),
                    help="arquivo da marca por tabela (fora do git)")
+    p.add_argument("--teto-disco-mb", type=float, default=TETO_DISCO_MB_PADRAO,
+                   help=f"para antes de a tabela seguinte poder levar o Supabase "
+                        f"acima disto, em MB decimais (padrão {TETO_DISCO_MB_PADRAO}; "
+                        "0 desliga)")
     args = p.parse_args(argv)
     saida = publish(apply=bool(args.apply), dias_precos=args.dias_precos,
-                    estado_path=Path(args.estado))
+                    estado_path=Path(args.estado), teto_disco_mb=args.teto_disco_mb)
     print(json.dumps(saida, ensure_ascii=False, indent=2, default=str))
-    return 0
+    return 1 if "parado_por_disco" in saida else 0
 
 
 if __name__ == "__main__":
