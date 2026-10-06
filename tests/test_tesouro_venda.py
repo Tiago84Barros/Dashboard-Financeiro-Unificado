@@ -592,22 +592,28 @@ def test_etiqueta_do_grafico_escapa_o_nome_do_titulo():
     assert VENCIMENTO.strftime("%d/%m/%Y") in html
 
 
-def test_legenda_aparece_so_onde_a_view_pedir():
-    """Seis gráficos iguais não precisam de seis cópias da mesma legenda."""
-    from design.tesouro_painel import fig_titulo
+def test_caixa_de_escolha_usa_o_nome_limpo_quando_ele_basta():
+    """Carregar o vencimento em todos para desempatar nenhum é ruído."""
+    from design.tesouro_painel import rotulos_escolha
 
-    titulo = _Titulo()
-    leitura = ler_venda(titulo, data_avaliacao=HOJE)
-    trajetoria = trajetoria_carrego(leitura.projecao, data_avaliacao=HOJE,
-                                    vencimento=VENCIMENTO)
+    leituras = [ler_venda(_Titulo(nome=n, key=k), data_avaliacao=HOJE)
+                for n, k in (("Tesouro Prefixado 2029", "PRE29"),
+                             ("Tesouro Selic 2031", "SELIC31"))]
+    assert rotulos_escolha(leituras) == ["Tesouro Prefixado 2029",
+                                         "Tesouro Selic 2031"]
 
-    primeiro = fig_titulo(leitura, [], trajetoria, com_legenda=True)
-    demais = fig_titulo(leitura, [], trajetoria, com_legenda=False)
 
-    assert primeiro.layout.showlegend is True
-    assert demais.layout.showlegend is False
-    # Era a legenda que reservava a faixa dos rótulos do eixo x; sem ela, a
-    # margem de baixo precisa repor a folga, ou as datas saem cortadas.
-    assert demais.layout.margin.b > primeiro.layout.margin.b
-    assert demais.layout.height == primeiro.layout.height
-    assert [t.name for t in demais.data] == [t.name for t in primeiro.data]
+def test_caixa_de_escolha_desempata_nome_repetido_e_so_ele():
+    """Dois papéis com o mesmo nome deixariam quem escolhe no escuro."""
+    from design.tesouro_painel import rotulos_escolha
+
+    leituras = [ler_venda(_Titulo(nome=n, key=k), data_avaliacao=HOJE)
+                for n, k in (("Tesouro Prefixado 2029", "A"),
+                             ("Tesouro Prefixado 2029", "B"),
+                             ("Tesouro Selic 2031", "C"))]
+    rotulos = rotulos_escolha(leituras)
+
+    data = VENCIMENTO.strftime("%d/%m/%Y")
+    assert rotulos[0] == rotulos[1] == f"Tesouro Prefixado 2029 · vence em {data}"
+    assert rotulos[2] == "Tesouro Selic 2031"  # o não-repetido fica limpo
+    assert len(rotulos) == 3

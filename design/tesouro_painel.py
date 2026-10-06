@@ -526,6 +526,26 @@ def fig_carregar_vs_vender(leituras) -> go.Figure:
     return fig
 
 
+def rotulos_escolha(leituras: list[LeituraVenda]) -> list[str]:
+    """Os nomes que a caixa de escolha do gráfico oferece, sem ambiguidade.
+
+    O nome do papel basta na quase totalidade dos casos. Quando dois títulos
+    da carteira repetem o nome, só ele deixaria quem escolhe no escuro — aí o
+    vencimento entra para desempatar, e entra **só nos repetidos**: carregar
+    a data em todos para resolver dois seria pagar no lugar errado.
+    """
+    nomes = [leitura.titulo for leitura in leituras]
+    repetidos = {nome for nome in nomes if nomes.count(nome) > 1}
+    saida = []
+    for leitura in leituras:
+        if leitura.titulo in repetidos and leitura.vencimento:
+            saida.append(f"{leitura.titulo} · vence em "
+                         f"{leitura.vencimento.strftime('%d/%m/%Y')}")
+        else:
+            saida.append(leitura.titulo)
+    return saida
+
+
 def nome_grafico_html(leitura: LeituraVenda) -> str:
     """A etiqueta do título acima do gráfico dele, com o vencimento ao lado.
 
@@ -539,7 +559,7 @@ def nome_grafico_html(leitura: LeituraVenda) -> str:
 
 
 def fig_titulo(leitura: LeituraVenda, serie: list[dict],
-               trajetoria: list[dict], *, com_legenda: bool = True) -> go.Figure:
+               trajetoria: list[dict]) -> go.Figure:
     """Um título, dois painéis: para onde ele vai, e quanto ele já oscilou.
 
     O gráfico consolidado de antes empilhava seis linhas de marcação num eixo
@@ -563,11 +583,6 @@ def fig_titulo(leitura: LeituraVenda, serie: list[dict],
     O futuro sai tracejado de propósito: ele é aritmética de carregar pela taxa
     de hoje, não observação. Em título indexado, nem isso — depende do índice
     que vier, e o rótulo do painel diz.
-
-    `com_legenda` existe porque a sequência é de gráficos iguais: as quatro
-    chaves são as mesmas em todos, e repeti-las seis vezes gasta uma faixa de
-    tela por papel para dizer o que já foi dito. A view liga no primeiro e
-    desliga nos demais.
     """
     pontos = [p for p in serie if p.get("mtm_pct") is not None]
     com_oscilacao = len(pontos) > 1
@@ -642,14 +657,11 @@ def fig_titulo(leitura: LeituraVenda, serie: list[dict],
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font_color=_GRAFICO_NEUTRO, hovermode="x unified",
-        showlegend=com_legenda,
         legend={"orientation": "h", "y": -0.13, "x": 0, "font": {"size": 11},
                 "bgcolor": "rgba(0,0,0,0)"},
-        # Sem legenda a margem de baixo cresce: era ela que reservava a faixa
-        # onde os rótulos do eixo x caem. Tirá-la sem repor a folga corta as
-        # datas pela metade — e a altura fica igual em todos para que a
-        # sequência de gráficos se leia como uma régua, não como degraus.
-        margin={"t": 26, "b": 10 if com_legenda else 36, "l": 0, "r": 20},
+        # A legenda é quem reserva a faixa onde os rótulos do eixo x caem; a
+        # margem de baixo só completa o que falta.
+        margin={"t": 26, "b": 10, "l": 0, "r": 20},
         height=400 if com_oscilacao else 260,
     )
     fig.update_xaxes(showgrid=False)
