@@ -5027,24 +5027,26 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
     _secao_titulo_orig("🎯", "Por título — dá para vender, e acima de quanto vale")
     st.markdown(_painel.cards_html(pares), unsafe_allow_html=True)
 
-    # ── Faixa 4: um gráfico por título — para onde vai e quanto já oscilou ───
+    # ── Faixa 4: o gráfico do título que o usuário escolher ─────────────────
     if graficos:
         st.markdown("<br>", unsafe_allow_html=True)
         _secao_titulo_orig(
             "📈", "Título por título — levar até o fim × a marcação de hoje",
-            "a linha cheia é o preço de recompra; a tracejada, o caminho até o "
-            "vencimento",
+            "escolha o papel: a linha cheia é o preço de recompra; a tracejada, "
+            "o caminho até o vencimento",
         )
-        for ordem, (leitura, serie, trajetoria) in enumerate(graficos):
-            st.markdown(_painel.nome_grafico_html(leitura),
-                        unsafe_allow_html=True)
-            # A legenda só no primeiro: os gráficos seguintes usam as mesmas
-            # quatro chaves, e repeti-las custaria uma faixa de tela por papel.
-            st.plotly_chart(
-                _painel.fig_titulo(leitura, serie, trajetoria,
-                                   com_legenda=ordem == 0),
-                width="stretch", config={"displayModeBar": False},
-                key=f"td_fig_{leitura.security_key}")
+        rotulos = _painel.rotulos_escolha([leitura for leitura, _, _ in graficos])
+        # Papel que sai da carteira não precisa de guarda aqui: medido no
+        # Streamlit 1.63, a escolha guardada que não está mais entre as opções
+        # cai sozinha na primeira, sem erro.
+        escolhido = st.selectbox("Qual título você quer ver no gráfico",
+                                 rotulos, key="td_grafico_escolha")
+        leitura, serie, trajetoria = graficos[rotulos.index(escolhido)]
+        st.markdown(_painel.nome_grafico_html(leitura), unsafe_allow_html=True)
+        st.plotly_chart(
+            _painel.fig_titulo(leitura, serie, trajetoria),
+            width="stretch", config={"displayModeBar": False},
+            key=f"td_fig_{leitura.security_key}")
     st.markdown(_painel.legenda_html(), unsafe_allow_html=True)
 
     # ── Faixa 5: a conta completa, fechada por padrão ────────────────────────
