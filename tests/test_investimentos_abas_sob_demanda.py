@@ -31,7 +31,7 @@ def test_abas_tem_estado_e_reexecutam_ao_trocar():
 
 def test_cada_aba_so_roda_quando_aberta():
     render = _render()
-    abas = [f"tab{i}" for i in range(1, 7)]
+    abas = [f"tab{i}" for i in range(1, 6)]
     guardadas = set()
     for no in ast.walk(render):
         if isinstance(no, ast.If) and ast.unparse(no.test) in {
@@ -68,6 +68,12 @@ def test_outras_abas_sao_reafirmadas_pela_chave():
     # Imposto de Renda voltaria ao Dashboard quando a Estratégia libera.
     assert inv._aba_mantida("🧾  Imposto de Renda", _rotulo(True)) == \
         "🧾  Imposto de Renda"
+
+
+def test_quem_estava_na_carteira_cai_na_analise():
+    # A Carteira foi absorvida pela Análise → Visão Geral (06/10/2026).
+    assert inv._aba_mantida("💼  Carteira", _rotulo(True)) == "🔍  Análise"
+    assert "💼  Carteira" not in inspect.getsource(inv.render)
 
 
 def test_sem_selecao_nao_escreve_nada():
