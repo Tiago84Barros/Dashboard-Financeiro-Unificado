@@ -592,6 +592,65 @@ def test_etiqueta_do_grafico_escapa_o_nome_do_titulo():
     assert VENCIMENTO.strftime("%d/%m/%Y") in html
 
 
+def _agio(nome, key, *, contratada=0.1600, mercado=0.1200, cardapio=()):
+    """Um papel com ágio: taxa de mercado abaixo da contratada."""
+    return ler_venda(_Titulo(nome=nome, key=key, taxa_contratada=contratada,
+                             taxa_mercado=mercado),
+                     data_avaliacao=HOJE, cardapio=cardapio)
+
+
+def test_caixa_abre_em_quem_tem_para_onde_levar_o_dinheiro():
+    """Ágio maior sem destino perde para ágio menor que supera a indiferença.
+
+    É a régua que a própria sub-aba afirma: o ágio só vira vantagem se o
+    dinheiro for para algo que renda mais que a taxa de indiferença.
+    """
+    from core.tesouro_venda import mais_vantajoso_de_vender
+    boa = _oferta("PRE2031", "Tesouro Prefixado 2031", date(2031, 1, 1), 0.90)
+    com_destino = _agio("Tesouro Prefixado 2031", "B", contratada=0.1300,
+                        mercado=0.1250, cardapio=[boa])
+    sem_destino = _agio("Tesouro Prefixado 2029", "A")  # ágio bem maior, e nenhuma oferta
+
+    assert com_destino.alternativa_supera is True
+    assert sem_destino.ganho_mtm_liquido > com_destino.ganho_mtm_liquido
+    assert mais_vantajoso_de_vender([sem_destino, com_destino]) == 1
+
+
+def test_caixa_desempata_por_reais_no_bolso_e_nao_por_porcentagem():
+    """3% de um lote pequeno não decide o mesmo que 1% de um grande."""
+    from core.tesouro_venda import mais_vantajoso_de_vender
+    pequeno = replace(_agio("Tesouro Prefixado 2029", "A"),
+                      ganho_mtm_liquido=180.0, mtm_pct=0.031)
+    grande = replace(_agio("Tesouro Selic 2031", "B"),
+                     ganho_mtm_liquido=2_400.0, mtm_pct=0.011)
+    assert mais_vantajoso_de_vender([pequeno, grande]) == 1
+
+
+def test_caixa_nao_destaca_quem_so_realizaria_desagio():
+    """Abrir num deságio seria a tela sugerindo o movimento que ela desaconselha."""
+    from core.tesouro_venda import mais_vantajoso_de_vender
+    perdendo = ler_venda(_Titulo(taxa_contratada=0.1180, taxa_mercado=0.1360),
+                         data_avaliacao=HOJE)
+    assert perdendo.situacao == DESAGIO
+    assert mais_vantajoso_de_vender([perdendo]) is None
+
+
+def test_sem_agio_nenhum_a_frase_nao_inventa_destaque():
+    """Sem candidato, a tela diz que abriu no primeiro — não finge vantagem."""
+    from core.tesouro_venda import frase_do_destaque
+    frase = frase_do_destaque(None)
+    assert "ágio" in frase.lower() and "primeiro" in frase.lower()
+    assert "vantajoso" not in frase.lower()
+
+
+def test_frase_do_destaque_sem_oferta_nao_promete_troca_melhor():
+    """Maior ágio da carteira não é promessa de que trocar compensa."""
+    from core.tesouro_venda import frase_do_destaque
+    frase = frase_do_destaque(_agio("Tesouro Prefixado 2029", "A"))
+    assert "Tesouro Prefixado 2029" in frase
+    assert "indiferen" in frase.lower()
+
+
 def test_caixa_de_escolha_usa_o_nome_limpo_quando_ele_basta():
     """Carregar o vencimento em todos para desempatar nenhum é ruído."""
     from design.tesouro_painel import rotulos_escolha

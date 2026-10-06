@@ -4928,7 +4928,13 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
         from core.tesouro_historico import extremos_da_serie, serie_mtm_posicao
         from core.tesouro_mtm import trajetoria_carrego
         from core.tesouro_posicao import carregar_titulos
-        from core.tesouro_venda import frase_da_carteira, ler_venda, resumo_da_carteira
+        from core.tesouro_venda import (
+            frase_da_carteira,
+            frase_do_destaque,
+            ler_venda,
+            mais_vantajoso_de_vender,
+            resumo_da_carteira,
+        )
         from design import tesouro_painel as _painel
     except Exception:
         return False
@@ -5006,12 +5012,18 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
             "escolha o papel: a linha cheia é o preço de recompra; a tracejada, "
             "o caminho até o vencimento",
         )
-        rotulos = _painel.rotulos_escolha([leitura for leitura, _, _ in graficos])
+        candidatos = [leitura for leitura, _, _ in graficos]
+        rotulos = _painel.rotulos_escolha(candidatos)
+        destaque = mais_vantajoso_de_vender(candidatos)
         # Papel que sai da carteira não precisa de guarda aqui: medido no
         # Streamlit 1.63, a escolha guardada que não está mais entre as opções
-        # cai sozinha na primeira, sem erro.
+        # cai sozinha na primeira, sem erro. O `index` só vale na abertura: a
+        # partir da primeira escolha é o `key` que manda, como deve ser.
         escolhido = st.selectbox("Qual título você quer ver no gráfico",
-                                 rotulos, key="td_grafico_escolha")
+                                 rotulos, index=destaque or 0,
+                                 key="td_grafico_escolha")
+        st.caption(frase_do_destaque(
+            candidatos[destaque] if destaque is not None else None))
         leitura, serie, trajetoria = graficos[rotulos.index(escolhido)]
         st.markdown(_painel.nome_grafico_html(leitura), unsafe_allow_html=True)
         st.plotly_chart(

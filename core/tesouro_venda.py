@@ -323,6 +323,54 @@ def resumo_da_carteira(leituras: Sequence[LeituraVenda]) -> dict:
     }
 
 
+def mais_vantajoso_de_vender(leituras: Sequence[LeituraVenda]) -> int | None:
+    """Em qual papel a tela deve abrir: o que mais compensa vender hoje.
+
+    A régua é a que o resto da sub-aba afirma, e ela não é "quem subiu mais".
+    Ágio só vira vantagem quando o dinheiro tem para onde ir: por isso quem tem
+    oferta do dia passando da taxa de indiferença vem antes de quem tem ágio sem
+    destino melhor. Dentro de cada grupo o desempate é o ganho **líquido** em
+    reais — 3% de um lote de R$ 1.600 não decide o mesmo que 1% de um de
+    R$ 51.000, e o imposto antecipado já saiu do número.
+
+    Devolve ``None`` quando ninguém está com ágio relevante. Abrir num deságio
+    seria a tela destacando justamente o movimento que ela desaconselha, e
+    inventar destaque onde não há é pior do que abrir no primeiro da lista.
+    """
+    candidatos = [(i, lv) for i, lv in enumerate(leituras)
+                  if lv.pode_marcar and lv.situacao == AGIO]
+    if not candidatos:
+        return None
+    # `-i` no fim: empate exato fica com o primeiro da carteira, para a caixa
+    # não trocar de papel sozinha entre dois reruns idênticos.
+    return max(candidatos,
+               key=lambda par: (1 if par[1].alternativa_supera else 0,
+                                par[1].ganho_mtm_liquido or 0.0,
+                                -par[0]))[0]
+
+
+def frase_do_destaque(leitura: LeituraVenda | None) -> str:
+    """Por que a caixa abriu onde abriu — dito antes que o usuário pergunte.
+
+    Sem isso o destaque viraria recomendação muda: o papel aparece em primeiro
+    e a tela não diz com que régua ele chegou lá, nem que a régua tem limite.
+    """
+    if leitura is None:
+        return ("Nenhum título está com ágio relevante hoje: a caixa abre no "
+                "primeiro da carteira.")
+    if leitura.alternativa_supera:
+        return (f"Mais vantajoso de vender hoje: {leitura.titulo} — é o maior "
+                "ágio líquido entre os papéis cuja melhor oferta de hoje passa "
+                "da taxa de indiferença.")
+    if leitura.alternativa_supera is False:
+        return (f"Maior ágio líquido hoje: {leitura.titulo} — nenhuma oferta do "
+                "dia alcança a taxa de indiferença, então trocar termina abaixo "
+                "de carregar.")
+    return (f"Maior ágio líquido hoje: {leitura.titulo} — sem oferta do mesmo "
+            "indexador e prazo para comparar, não dá para dizer se trocar "
+            "supera a taxa de indiferença.")
+
+
 def frase_da_carteira(resumo: dict) -> str:
     """A leitura de topo, tirada do medido e não de texto fixo.
 
