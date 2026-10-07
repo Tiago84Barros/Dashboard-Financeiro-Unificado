@@ -273,6 +273,7 @@ def test_o_tema_e_aplicado_antes_do_portao_de_autenticacao(monkeypatch):
     sessão falhar na execução seguinte.
     """
     temas: list[str] = []
+    lembrados: list[str] = []
 
     def portao():
         raise _PortaoInterrompeu
@@ -286,6 +287,7 @@ def test_o_tema_e_aplicado_antes_do_portao_de_autenticacao(monkeypatch):
         design_theme_selector=SimpleNamespace(
             current_theme=lambda: "light",
             tema_para_pintar=lambda: "light",
+            lembrar_no_navegador=lembrados.append,
             render_theme_selector=lambda: None,
         ),
     )
@@ -294,6 +296,10 @@ def test_o_tema_e_aplicado_antes_do_portao_de_autenticacao(monkeypatch):
     assert temas == ["light"], (
         "o tema não foi aplicado antes do portão: a tela que o portão desenha "
         "sai com o tema base do config.toml, que é escuro"
+    )
+    assert lembrados == ["light"], (
+        "o tema pintado não foi lembrado no navegador: a execução seguinte que "
+        "perder a conta da sessão volta a cair para dark"
     )
 
 
@@ -345,3 +351,110 @@ def test_sessao_nova_do_mesmo_usuario_nao_cai_para_dark_sozinha(monkeypatch):
     assert nova.session_state["_tema_resolvido"] == "light", (
         "sessão nova com leitura falhando caiu para dark e repintou o app"
     )
+
+
+def _cookies_do_navegador(monkeypatch, **valores):
+    """Finge os cookies que o servidor recebeu no aperto de mão do websocket."""
+    import streamlit as st
+
+    monkeypatch.setattr(type(st.context), "cookies", valores, raising=False)
+
+
+def test_sem_conta_identificada_pinta_o_tema_lembrado_pelo_navegador(monkeypatch):
+    """Era o que escurecia a tela ao anexar o PDF da Nomad.
+
+    ``principal()`` devolve ``{}`` em mais situações do que a tela de login:
+    a sessão expira em 12 h e nunca é renovada, e uma sessão nova do Streamlit
+    -- reconexão do websocket no meio de uma execução longa -- nasce com o
+    ``session_state`` vazio. Nesse ponto ``tema_para_pintar`` devolvia ``dark``
+    e repintava de escuro quem tinha escolhido claro, sem autorização nenhuma.
+
+    Nem ``_LEMBRADO`` (do processo) nem ``st.session_state`` (da sessão)
+    alcançam esse caso: os dois só respondem com conta identificada. O cookie
+    é do navegador e sobrevive.
+    """
+    import design.theme_selector as selector
+
+    monkeypatch.setattr(selector, "_LEMBRADO", {})
+    _cookies_do_navegador(monkeypatch, app4_tema="light")
+    assert selector.tema_para_pintar() == "light", (
+        "execução sem conta na sessão caiu para dark e repintou o app de quem "
+        "escolheu claro"
+    )
+
+
+def test_sem_conta_e_sem_cookie_nao_chuta_preferencia(monkeypatch):
+    """Navegador que nunca pintou nada continua no tema base do config.toml."""
+    import design.theme_selector as selector
+
+    monkeypatch.setattr(selector, "_LEMBRADO", {})
+    _cookies_do_navegador(monkeypatch)
+    assert selector.tema_para_pintar() == "dark"
+    _cookies_do_navegador(monkeypatch, app4_tema="sepia")
+    assert selector.tema_para_pintar() == "dark"
+
+
+def test_processo_novo_com_leitura_falhando_usa_o_cookie(monkeypatch):
+    """Deploy reinicia o processo e zera ``_LEMBRADO``; o navegador não zera.
+
+    Primeira execução depois de um deploy, com o pool ocupado por uma
+    importação longa: não há tema em cache de sessão nem de processo. Sem o
+    cookie, a única resposta possível era ``dark``.
+    """
+    import design.theme_selector as selector
+
+    monkeypatch.setattr(selector, "_LEMBRADO", {})
+    monkeypatch.setattr(selector, "require_user", lambda: "conta-1")
+    monkeypatch.setattr(selector, "principal", lambda: {"id": "conta-1"})
+
+    def fail():
+        raise RuntimeError("pool ocupado pela importacao")
+
+    monkeypatch.setattr(selector, "load_theme", fail)
+    _cookies_do_navegador(monkeypatch, app4_tema="light")
+    assert selector.tema_para_pintar() == "light"
+
+
+def test_lembrete_no_navegador_e_um_elemento_fixo_nos_dois_temas(monkeypatch):
+    """O número de elementos acima da página não pode depender do tema.
+
+    Mesma armadilha do ``st.warning`` que morava em ``current_theme``: um
+    elemento que aparece só num dos temas desloca o ``st.tabs`` de
+    Configurações e devolve a seleção para a primeira aba. Por isso o lembrete
+    é emitido em toda execução e nos dois temas.
+    """
+    import streamlit.components.v1 as componentes
+
+    import design.theme_selector as selector
+
+    chamadas: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        componentes, "html",
+        lambda corpo, **kwargs: chamadas.append((corpo, kwargs.get("height"))),
+    )
+
+    selector.lembrar_no_navegador("light")
+    selector.lembrar_no_navegador("dark")
+    assert len(chamadas) == 2, "o lembrete deixou de ser emitido em um dos temas"
+    assert [altura for _, altura in chamadas] == [0, 0], (
+        "o lembrete ocupa espaço na tela"
+    )
+    claro, escuro = chamadas[0][0], chamadas[1][0]
+    assert "app4_tema=light" in claro and "app4_tema=dark" in escuro
+    for corpo in (claro, escuro):
+        # O componente roda num iframe, e o cookie do iframe não é o da
+        # aplicação: sem `window.parent` o servidor nunca recebe o cookie.
+        assert "window.parent.document.cookie" in corpo
+
+
+def test_lembrete_no_navegador_nao_derruba_a_execucao(monkeypatch):
+    """Lembrar é conveniência; falhar nisso não pode interromper o app."""
+    import streamlit.components.v1 as componentes
+
+    import design.theme_selector as selector
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("componente indisponivel")
+
+    monkeypatch.setattr(componentes, "html", explode)
+    selector.lembrar_no_navegador("light")

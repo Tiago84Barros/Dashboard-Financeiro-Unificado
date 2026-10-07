@@ -41,7 +41,7 @@ if not _APP_TEST_MODE:
     from core.config import settings
     from design.componentes import mensagem_erro, transicao_de_pagina
     from design.tema import aplicar_tema
-    from design.theme_selector import tema_para_pintar
+    from design.theme_selector import lembrar_no_navegador, tema_para_pintar
 
     # O tema é aplicado ANTES do portão: toda execução que o portão interrompe
     # -- tela de login, ou o aviso de sessão que não deu para validar -- saía
@@ -51,7 +51,14 @@ if not _APP_TEST_MODE:
     # na execução seguinte não consegue conexão.
     # Continua sendo UM `st.markdown` só, na mesma posição: o número de
     # elementos acima da página não pode depender do tema (ver `aplicar_tema`).
-    aplicar_tema(tema_para_pintar())
+    _tema = tema_para_pintar()
+    aplicar_tema(_tema)
+    # E fica lembrado no NAVEGADOR. O tema é preferência de conta, mas a conta
+    # some da sessão quando ela expira ou quando o websocket reconecta -- e a
+    # execução sem conta não tinha de onde saber que a pessoa estava no claro.
+    # Também emitido em toda execução e nos dois temas, para que a contagem de
+    # elementos acima da página não mude com o tema.
+    lembrar_no_navegador(_tema)
     verificar_autenticacao()
 
 # ── Mapeamento: label da sidebar → módulo em views/ ──────────────────────────

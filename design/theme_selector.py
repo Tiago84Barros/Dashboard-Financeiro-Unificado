@@ -13,6 +13,7 @@ _CACHE = "_app4_theme_preference"
 _ERROR = "_app4_theme_error"
 _LOAD_ERROR = "_app4_theme_load_error"
 _ULTIMO_OK = "_app4_theme_last_ok"
+_COOKIE = "app4_tema"
 
 # Último tema lido com sucesso de cada conta, no processo -- e não na
 # sessão. Uma sessão nova (reconexão do navegador, aba reaberta, app que
@@ -27,6 +28,50 @@ _LEMBRADO: dict[str, str] = {}
 def _lembrar(uid: str, theme: str) -> None:
     if theme in ("dark", "light"):
         _LEMBRADO[uid] = theme
+
+
+def tema_do_navegador() -> str | None:
+    """Último tema que ESTE navegador pintou, lido do cookie da sessão HTTP.
+
+    ``_LEMBRADO`` é do processo e ``st.session_state`` é da sessão -- e os dois
+    só respondem quando há conta identificada. O cookie é do navegador e
+    sobrevive ao que derruba a sessão (expiração das 12 h, reconexão do
+    websocket, aba reaberta): é o único lugar de onde uma execução sem conta
+    consegue saber que a pessoa estava no claro.
+    """
+    try:
+        valor = st.context.cookies.get(_COOKIE)
+    except Exception:
+        return None
+    return valor if valor in ("dark", "light") else None
+
+
+def lembrar_no_navegador(theme: str) -> None:
+    """Grava o tema no cookie do navegador, SEMPRE e na mesma posição.
+
+    Emitido em toda execução e nos dois temas, de propósito. Um elemento que
+    só aparecesse num deles mudaria a contagem de elementos acima da página
+    conforme o tema -- e é exatamente isso que devolve o ``st.tabs`` de
+    Configurações para a primeira aba (ver :func:`current_theme`).
+
+    O cookie é escrito no documento PAI: ``components.html`` roda num iframe,
+    e o cookie do iframe não é o da aplicação. Guarda só ``dark``/``light``,
+    nada que identifique a conta.
+    """
+    marcado = theme if theme in ("dark", "light") else "dark"
+    try:
+        from streamlit.components.v1 import html as _html
+    except Exception:
+        return
+    try:
+        _html(
+            "<script>try{window.parent.document.cookie="
+            f'"{_COOKIE}={marcado}; path=/; max-age=31536000; samesite=lax";'
+            "}catch(e){}</script>",
+            height=0,
+        )
+    except Exception:
+        logger.debug("não foi possível lembrar o tema no navegador", exc_info=True)
 
 
 def current_theme() -> str:
@@ -65,7 +110,11 @@ def current_theme() -> str:
             # relê, e cair para "dark" em cada falha repintava o app inteiro no
             # meio do trabalho -- foi o que acontecia ao clicar num botão de
             # atualização em Configurações, que ocupa a única conexão do pool.
-            ultimo = st.session_state.get(_ULTIMO_OK) or _LEMBRADO.get(uid)
+            ultimo = (
+                st.session_state.get(_ULTIMO_OK)
+                or _LEMBRADO.get(uid)
+                or tema_do_navegador()
+            )
             return ultimo if ultimo in ("dark", "light") else "dark"
         st.session_state.pop(_LOAD_ERROR, None)
         st.session_state[_CACHE] = (uid, theme)
@@ -85,17 +134,22 @@ def tema_para_pintar() -> str:
     validação da sessão na execução seguinte não consegue conexão e o app
     aparecia escuro, sem autorização de ninguém.
 
-    Sem conta na sessão (tela de login) devolve ``dark``: preferência de conta
-    é dado de conta, e ninguém se identificou ainda.
+    Sem conta na sessão sobrou o caminho que escurecia a tela ao anexar o PDF
+    da Nomad: ``principal()`` devolve ``{}`` assim que a sessão expira (12 h,
+    nunca renovadas) e numa sessão nova do Streamlit -- reconexão do websocket
+    durante uma execução longa, por exemplo -- o ``session_state`` nasce vazio.
+    Devolver ``dark`` nesse ponto repintava de escuro quem tinha escolhido
+    claro. O cookie do navegador é o único lembrete que atravessa a perda da
+    sessão, e ele guarda só ``dark``/``light``.
     """
     uid = str(principal().get("id", ""))
     if not uid:
-        return "dark"
+        return tema_do_navegador() or "dark"
     try:
         return current_theme()
     except Exception:
         logger.exception("falha ao resolver o tema antes do portão")
-        return _LEMBRADO.get(uid, "dark")
+        return _LEMBRADO.get(uid) or tema_do_navegador() or "dark"
 
 
 def _persist_choice() -> None:
