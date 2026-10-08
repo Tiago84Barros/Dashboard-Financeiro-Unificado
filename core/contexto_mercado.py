@@ -97,6 +97,26 @@ REGRA_CONTEXTO_MERCADO = (
     "pergunta sobre cenário quando o bloco traz dado para respondê-la."
 )
 
+#: Só nos chats de texto livre. Os prompts que devolvem JSON ou vetam (portão
+#: PIT, dossiê, Portfolio Fit, relatórios) não recebem: regra nova num prompt
+#: que veta muda o veto, e isso exige medição própria.
+REGRA_CADEIA_TRANSMISSAO = (
+    "CADEIA DE TRANSMISSÃO: quando a pergunta envolver cenário, rumo do "
+    "mercado, juros, câmbio, inflação ou se vale a pena investir agora, a "
+    "resposta TERMINA com duas seções, mesmo que já tenha falado de riscos "
+    "antes. **Cadeia de transmissão**: de 2 a 4 "
+    "elos no formato causa → efeito → impacto no que o usuário pergunta, e "
+    "CADA elo cita um número do contexto com fonte e data — de preferência a "
+    "variação e o percentil da seção TRAJETÓRIA (ex.: 'dólar −6,4% em 12 "
+    "meses, percentil 22 de 5,1 anos'). Elo sem número no contexto "
+    "é marcado como hipótese. **Contraponto**: o elo mais frágil da cadeia e "
+    "qual dado, se mudasse, invalidaria a conclusão. Percentil nunca sai "
+    "sozinho: vem com os anos da janela, e o de série com histórico curto não "
+    "sustenta 'recorde', 'máxima histórica' nem 'ciclo longo'. A cadeia explica "
+    "o cenário: não substitui nem contradiz o veredito ou a decisão que o "
+    "contexto já traz."
+)
+
 
 def _limpo(valor: object, limite: int = _MAX_TITULO) -> str:
     return " ".join(str(valor or "").replace("\x00", " ").split())[:limite]
@@ -324,6 +344,27 @@ def _macro_brasil() -> list[str]:
     """
     from core import macro_brasil as mb
 
+    obs, origem, motivo = _observacoes_bcb()
+    try:
+        from core.rentabilidade import ler_cdi_publicado
+
+        cdi = ler_cdi_publicado()
+    except Exception:  # noqa: BLE001 - a linha do CDI nomeia a ausência
+        cdi = {}
+    if obs is None:
+        return [f"  Banco Central do Brasil (Selic meta, IPCA 12m, Focus): indisponível "
+                f"({motivo}; sem arquivo publicado recente).", mb.linha_cdi(cdi)]
+    return mb.linhas_macro_brasil(mb.resumo(obs), cdi, origem=origem)
+
+
+def _observacoes_bcb() -> tuple[list | None, str | None, str | None]:
+    """Observações do BCB: armazém local primeiro, depois o arquivo publicado.
+
+    Devolve ``(observações, origem, motivo)``; ``observações`` é ``None`` quando
+    nenhuma das duas fontes respondeu, e ``motivo`` diz por quê.
+    """
+    from core import macro_brasil as mb
+
     obs, origem, motivo = None, None, None
     engine = None
     try:
@@ -351,16 +392,7 @@ def _macro_brasil() -> list[str]:
         if publicado is not None:
             obs = list(publicado.observacoes)
             origem = (f"arquivo publicado em {publicado.gerado_em:%d/%m/%Y}; {motivo}")
-    try:
-        from core.rentabilidade import ler_cdi_publicado
-
-        cdi = ler_cdi_publicado()
-    except Exception:  # noqa: BLE001 - a linha do CDI nomeia a ausência
-        cdi = {}
-    if obs is None:
-        return [f"  Banco Central do Brasil (Selic meta, IPCA 12m, Focus): indisponível "
-                f"({motivo}; sem arquivo publicado recente).", mb.linha_cdi(cdi)]
-    return mb.linhas_macro_brasil(mb.resumo(obs), cdi, origem=origem)
+    return obs, origem, motivo
 
 
 def _macro_local() -> list[str]:
@@ -418,6 +450,67 @@ def _macro_publicado(motivo: str) -> list[str]:
     origem = (f"Armazém macro, publicado em {insumos.gerado_em:%d/%m/%Y} "
               f"({motivo})")
     return _linhas_macro_local(_sem_secao_propria(published_macro_context(insumos)), origem)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trajetória das séries (agora, 1/3/12 meses, posição na janela)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=_TTL_REMOTO, show_spinner=False)
+def _trajetoria_cache() -> list[str]:
+    """Uma consulta agregada por grupo no Supabase; o resto é arquivo ou armazém."""
+    return _trajetoria()
+
+
+def _trajetoria() -> list[str]:
+    from core import trajetoria_mercado as tm
+
+    return tm.linhas_trajetoria(supabase=_supabase, cdi=_cdi_publicado,
+                                bcb=_bcb_para_trajetoria, eua=_series_eua)
+
+
+def _cdi_publicado():
+    from core.rentabilidade import ler_cdi_publicado
+
+    return ler_cdi_publicado()
+
+
+def _bcb_para_trajetoria():
+    obs, origem, motivo = _observacoes_bcb()
+    return obs, (origem if obs is not None else motivo or "sem fonte")
+
+
+def _series_eua():
+    """FRED do armazém (décadas); sem ele, os insumos publicados (24 obs.)."""
+    from core import trajetoria_mercado as tm
+
+    motivo = "armazém local não configurado neste ambiente"
+    engine = None
+    try:
+        from core.macro_data.database import get_local_macro_engine
+
+        engine = get_local_macro_engine()
+        if engine is not None:
+            series = tm.series_eua_do_armazem(engine)
+            if series:
+                return series, "armazém local"
+            motivo = "armazém local sem as séries do FRED"
+    except Exception as exc:  # noqa: BLE001 - cai para o arquivo publicado
+        motivo = f"armazém local: falha na leitura ({_limpo(exc, 100)})"
+    finally:
+        if engine is not None:
+            engine.dispose()
+    try:
+        from core.macro_data.insumos_publicados import carregar_insumos_publicados
+
+        insumos = carregar_insumos_publicados()
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{motivo}; arquivo publicado ilegível ({_limpo(exc, 80)})"
+    if insumos is None:
+        return None, f"{motivo}; sem arquivo publicado recente"
+    return (tm.series_eua_publicadas(insumos),
+            f"insumos publicados em {insumos.gerado_em:%d/%m/%Y}, só as últimas 24 "
+            f"observações por série ({motivo})")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -821,6 +914,7 @@ def bloco_contexto_mercado(
     partes += _macro_supabase_cache()
     partes += _macro_brasil()
     partes += _macro_local()
+    partes += [""] + _trajetoria_cache()
 
     if noticias_gerais:
         partes += ["", "NOTICIÁRIO GERAL DO MERCADO:"]

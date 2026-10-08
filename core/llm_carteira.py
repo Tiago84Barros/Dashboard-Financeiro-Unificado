@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+from core.contexto_mercado import REGRA_CADEIA_TRANSMISSAO, REGRA_CONTEXTO_MERCADO
 from core.inteligencia_ativos.veredito import REGRA_VEREDITO
 from core.llm_b3 import _chat_complete, _report_model
 
@@ -120,6 +120,7 @@ def chat_com_carteira(context: str, history: Iterable[dict], user_message: str,
         "FORMATO: responda diretamente à pergunta. Quando útil, use as seções "
         "**Resposta objetiva**, **Evidências**, **Riscos e contrapontos** e "
         "**Dados ausentes**. Evite texto genérico de manual.\n\n"
+        f"{REGRA_CADEIA_TRANSMISSAO}\n\n"
         f"=== {titulo} ===\n{context}"
     )
     messages = [{"role": "system", "content": system}]
