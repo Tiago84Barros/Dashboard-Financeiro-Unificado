@@ -200,6 +200,7 @@ _CLASSE_TO_SHOCK = {
     "ETF":                "shock_etf_intl",
     "ETF Brasil":         "shock_stock_br",
     "ETF Internacional":  "shock_etf_intl",
+    "Ações EUA":          "shock_etf_intl",
     "Renda Fixa":         "shock_renda_fixa",
     "Tesouro Direto":     "shock_tesouro",
     "Fundo RF":           "shock_fundo_rf",

@@ -78,6 +78,7 @@ _CLASS_LABEL: dict[str, str] = {
     "etf":          "ETF",
     "etf_br":       "ETF Brasil",
     "etf_intl":     "ETF Internacional",
+    "stock_us":     "Ações EUA",
     "bdr":          "BDR",
     "crypto":       "Cripto",
     "other":        "Outros",
@@ -95,6 +96,7 @@ _CLASS_COR: dict[str, str] = {
     "etf":          "#F5A623",
     "etf_br":       "#F5A623",
     "etf_intl":     "#63cab7",
+    "stock_us":     "#3B82F6",
     "bdr":          "#4C9BE8",
     "crypto":       "#FF6B35",
     "other":        "#8b9ab0",
@@ -572,6 +574,19 @@ def _sem_cambio_historico(posicoes: list) -> list[str]:
             if p.get("retorno_brl_disponivel") is False]
 
 
+def _classe_extra(r) -> str:
+    """Classe de uma posição USD fora do snapshot XP.
+
+    O importador da Nomad grava ``assets.class`` como ``stock`` ou ``etf``.
+    Ação americana vira ``stock_us`` ("Ações EUA"), não ``stock`` ("Ações BR")
+    nem ``etf_intl``: com o rótulo de ETF, a Inteligência dos Ativos lia MELI
+    pelo catálogo de ETF e mostrava fundamentos, valuation e pares vazios.
+    Qualquer outra classe segue como ETF Internacional, o comportamento antigo.
+    """
+    classe = str(getattr(r, "asset_class", None) or "").strip().lower()
+    return "stock_us" if classe == "stock" else "etf_intl"
+
+
 def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list,
                                   fx_compra: dict | None = None) -> None:
     """Acrescenta posições USD fora do snapshot XP (ETFs Nomad) ao dict de carteira.
@@ -644,13 +659,14 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list,
         rentab = round(retorno_local * 100, 2) if retorno_local is not None else None
         retorno_brl = retorno_em_brl(valor_atual_usd, custo_usd, fx_rate,
                                      taxa_custo if custo_historico else None)
-        classe_raw = "etf_intl"
+        classe_raw = _classe_extra(r)
+        rotulo = _CLASS_LABEL[classe_raw]
 
         novas.append({
             "ticker":          ticker,
             "nome":            r.asset_name or ticker,
-            "classe":          _CLASS_LABEL.get(classe_raw, "ETF Internacional"),
-            "setor":           _SETOR_LABEL.get(r.sector or "other", r.sector or "ETF Internacional"),
+            "classe":          rotulo,
+            "setor":           _SETOR_LABEL.get(r.sector or "other", r.sector or rotulo),
             "moeda":           ccy,
             "pais":            "US" if ccy == "USD" else "BR",
             "quantidade":      qty,
@@ -1935,7 +1951,8 @@ def ganho_total(evolucao: dict, realizado: dict | None = None) -> dict | None:
 #: Classes cujo rendimento aparece como provento em ``dividends``. Renda fixa,
 #: fundo e FIP rendem dentro do valor de mercado e não geram linha de provento.
 _CLASSES_COM_PROVENTO = frozenset({
-    "Ações BR", "FII", "ETF", "ETF Brasil", "ETF Internacional", "BDR",
+    "Ações BR", "FII", "ETF", "ETF Brasil", "ETF Internacional", "Ações EUA",
+    "BDR",
 })
 
 

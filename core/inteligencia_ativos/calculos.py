@@ -110,6 +110,7 @@ CLASSE_POLITICA: dict[str, str] = {
     "Ações BR": "acoes_br",
     "ETF Brasil": "acoes_br",
     "ETF Internacional": "exterior",
+    "Ações EUA": "exterior",
     "BDR": "exterior",
 }
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+from core.contexto_mercado import REGRA_CADEIA_TRANSMISSAO, REGRA_CONTEXTO_MERCADO
 from core.inteligencia_ativos.veredito import REGRA_VEREDITO
 from core.llm_b3 import _chat_complete, _report_model
 
@@ -57,6 +57,7 @@ def chat_com_ativo(context: str, history: Iterable[dict], user_message: str,
         "**Resposta objetiva**, **Evidências**, **Riscos e contrapontos** e "
         "**Dados ausentes**. Evite texto genérico e evite repetir o contexto inteiro.\n\n"
         f"{REGRA_CONTEXTO_MERCADO}\n\n"
+        f"{REGRA_CADEIA_TRANSMISSAO}\n\n"
         f"{REGRA_VEREDITO}\n\n"
         f"=== CONTEXTO DO ATIVO {ticker} ===\n{context}"
     )

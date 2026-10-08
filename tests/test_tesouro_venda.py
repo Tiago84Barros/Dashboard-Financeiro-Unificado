@@ -449,7 +449,7 @@ def test_cards_fecham_o_artigo_de_cada_titulo():
 
     titulo = _Titulo()
     leitura = ler_venda(titulo, data_avaliacao=HOJE)
-    html = cards_html([(leitura, extremos_da_serie([]))])
+    html = cards_html([leitura])
     assert html.count("<article") == html.count("</article>") == 1
 
 
@@ -676,3 +676,96 @@ def test_caixa_de_escolha_desempata_nome_repetido_e_so_ele():
     assert rotulos[0] == rotulos[1] == f"Tesouro Prefixado 2029 · vence em {data}"
     assert rotulos[2] == "Tesouro Selic 2031"  # o não-repetido fica limpo
     assert len(rotulos) == 3
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Veredito — levar até o vencimento ou vender antes, com todas as letras
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_agio_sem_oferta_para_reaplicar_e_levar():
+    """Ágio sem destino que o pague não justifica vender: carregar ganha."""
+    from core.tesouro_venda import LEVAR
+    leitura = _agio("Tesouro Prefixado 2029", "A")
+    assert leitura.situacao == AGIO and leitura.alternativa is None
+    assert leitura.veredito == LEVAR
+    assert leitura.veredito_rotulo == "Leve até o vencimento"
+    assert "não oferta hoje" in leitura.veredito_motivo
+
+
+def test_agio_com_oferta_abaixo_da_indiferenca_e_levar_e_diz_a_oferta():
+    from core.tesouro_venda import LEVAR
+    fraca = _oferta("PRE2031", "Tesouro Prefixado 2031", date(2031, 1, 1), 0.10)
+    leitura = _agio("Tesouro Prefixado 2029", "A", cardapio=[fraca])
+    assert leitura.alternativa_supera is False
+    assert leitura.veredito == LEVAR
+    assert "Tesouro Prefixado 2031" in leitura.veredito_motivo
+    assert "10,00% a.a." in leitura.veredito_motivo
+
+
+def test_oferta_acima_da_indiferenca_e_vender_e_nomeia_a_troca():
+    from core.tesouro_venda import VENDER
+    boa = _oferta("PRE2031", "Tesouro Prefixado 2031", date(2031, 1, 1), 0.90)
+    leitura = _agio("Tesouro Prefixado 2029", "A", cardapio=[boa])
+    assert leitura.alternativa_supera is True
+    assert leitura.veredito == VENDER
+    assert "Tesouro Prefixado 2031" in leitura.veredito_motivo
+
+
+def test_desagio_sem_troca_melhor_e_levar():
+    from core.tesouro_venda import LEVAR
+    leitura = ler_venda(_Titulo(taxa_contratada=0.1180, taxa_mercado=0.1360),
+                        data_avaliacao=HOJE)
+    assert leitura.situacao == DESAGIO and leitura.veredito == LEVAR
+    assert "perda" in leitura.veredito_motivo
+
+
+def test_sem_preco_nao_inventa_veredito():
+    """Lacuna não vira "leve": sem preço de hoje a tela diz que não decide."""
+    from core.tesouro_venda import SEM_RESPOSTA
+    leitura = ler_venda(_Titulo(taxa_mercado=None, pu=None, fonte="extrato"),
+                        data_avaliacao=HOJE)
+    assert leitura.veredito == SEM_RESPOSTA
+
+
+def test_selic_neutro_e_levar_e_explica_o_selic():
+    from core.tesouro_venda import LEVAR
+    leitura = ler_venda(_Titulo(nome="Tesouro Selic 2029", key="SEL2029",
+                                indexador="SELIC", taxa_contratada=0.00101,
+                                taxa_mercado=0.0010, pu=790.0),
+                        data_avaliacao=HOJE)
+    assert leitura.situacao == NEUTRA and leitura.veredito == LEVAR
+    assert "Selic" in leitura.veredito_motivo
+
+
+def test_manchete_da_carteira_e_a_resposta_e_nomeia_a_excecao():
+    from core.tesouro_venda import (
+        LEVAR,
+        VENDER,
+        manchete_do_veredito,
+        veredito_da_carteira,
+    )
+    boa = _oferta("PRE2031", "Tesouro Prefixado 2031", date(2031, 1, 1), 0.90)
+    levar = [_agio("Tesouro Prefixado 2029", "A"), _agio("Tesouro IPCA+ 2032", "B")]
+    assert manchete_do_veredito(levar) == "Leve os 2 títulos até o vencimento"
+    assert veredito_da_carteira(levar) == LEVAR
+
+    vender = _agio("Tesouro Prefixado 2028", "C", cardapio=[boa])
+    manchete = manchete_do_veredito(levar + [vender])
+    assert manchete.startswith("Vale vender Tesouro Prefixado 2028")
+    assert "os demais, leve até o vencimento" in manchete
+    assert veredito_da_carteira(levar + [vender]) == VENDER
+
+
+def test_hero_e_card_mostram_o_veredito_escapado():
+    from core.tesouro_venda import frase_do_veredito, manchete_do_veredito
+    from design.tesouro_painel import card_html, hero_html
+    leitura = _agio("Tesouro <b>Pre</b> 2029", "A")
+    resumo = resumo_da_carteira([leitura])
+    hero = hero_html(resumo, veredito=leitura.veredito,
+                     manchete=manchete_do_veredito([leitura]),
+                     frase=frase_do_veredito([leitura]))
+    assert "Leve até o vencimento" in hero
+    assert "Levar até o vencimento ou vender antes?" in hero
+    card = card_html(leitura)
+    assert "Leve até o vencimento" in card
+    assert "&lt;b&gt;" in card and "<b>Pre" not in card
