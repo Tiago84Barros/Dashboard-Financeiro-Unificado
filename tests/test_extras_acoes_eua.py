@@ -277,3 +277,36 @@ def test_visao_geral_sem_carteira_migrada_soma_patrimonio_em_reais(monkeypatch):
     assert dados["patrimonio"]["total"] == 1420.0
     nomes = [c["nome"] for c in dados["classes_ativo"]]
     assert nomes == ["Ações EUA", "Ações BR"]
+
+
+def test_migration_081_views_em_reais_preservam_contrato_da_007():
+    """CREATE OR REPLACE VIEW exige as mesmas colunas, na mesma ordem.
+
+    A 081 foi validada contra um Postgres 16 ao ser escrita; aqui ficam as
+    garantias que o texto consegue dar.
+    """
+    from pathlib import Path
+
+    schema = Path(__file__).resolve().parents[1] / "supabase_unificado" / "schema"
+    sql = (schema / "081_views_investimento_em_reais.sql").read_text(encoding="utf-8")
+
+    def _select_final(view: str) -> str:
+        corpo = sql.split(f"CREATE OR REPLACE VIEW {view}", 1)[1].split(";", 1)[0]
+        return corpo.rsplit("\nSELECT", 1)[1].split("\nFROM", 1)[0]
+
+    def _em_ordem(texto: str, colunas: list[str]) -> bool:
+        posicoes = [texto.find(c) for c in colunas]
+        return -1 not in posicoes and posicoes == sorted(posicoes)
+
+    assert _em_ordem(_select_final("v_investment_summary"), [
+        "user_id", "asset_class", "AS asset_count", "AS total_invested",
+        "AS current_market_value", "AS unrealized_pnl", "AS return_pct"])
+    assert _em_ordem(_select_final("v_net_worth"), [
+        "AS user_id", "AS bank_balance", "AS investment_total", "AS net_worth",
+        "AS usd_positions_without_fx"])
+    # a 027 deixou as views como security_invoker; CREATE OR REPLACE desfaria
+    for view in ("v_investment_summary", "v_net_worth"):
+        assert f"VIEW {view}\nWITH (security_invoker = true) AS" in sql
+    assert "fx.taxa >= 2.0" in sql                      # câmbio corrompido fica fora
+    assert "HAVING count(*) = count(taxa)" in sql        # só cobertura total
+    assert "::VARCHAR(50) AS asset_class" in sql         # mesmo tipo da 007

@@ -364,7 +364,7 @@ def _visao_geral_real() -> dict:
         # ── 5. Posições para o resumo por classe ──────────────────────────
         # Mesmo cálculo de v_investment_summary, mas por ativo: a view agrupa
         # só por assets.class e põe ação americana em "Ações BR" (stock) ou
-        # "ETF" (cadastro errado da Nomad), e soma dólar como real.
+        # "ETF" (cadastro errado da Nomad), e antes da 081 somava dólar como real.
         # _resumo_por_classe separa as classes e converte.
         inv_rows = conn.execute(
             text(
@@ -412,7 +412,8 @@ def _visao_geral_real() -> dict:
         resumo_classes, num_ativos_resumo, total_resumo = _resumo_por_classe(
             inv_rows, fx_compra=fx_compra)
         if inv_rows:
-            # v_net_worth herda a soma sem câmbio de v_investment_summary.
+            # Sem a 081 aplicada, v_net_worth soma dólar como real; com ela,
+            # ainda não tem o fallback do yfinance quando falta USDBRL.
             investment_total = total_resumo
             net_worth_total = bank_balance + investment_total
 
