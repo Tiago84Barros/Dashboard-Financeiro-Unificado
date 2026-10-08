@@ -12,8 +12,8 @@ Chave "data_source" sempre presente no dict retornado:
   "mock_fallback" → banco falhou, caiu no mock automaticamente
 
 Views consultadas (Fase 4.9):
-  v_net_worth, v_monthly_cashflow, v_category_spending_mtd,
-  portfolio_positions (resumo por classe); proventos via core.proventos; budgets via core.orcamento
+  v_net_worth, v_account_balance (saldo bancário em reais), v_monthly_cashflow,
+  v_category_spending_mtd, portfolio_positions (resumo por classe); proventos via core.proventos; budgets via core.orcamento
 
 Padrão de uso nas páginas:
     from core.financeiro import get_visao_geral
@@ -239,6 +239,39 @@ def _resumo_por_classe(linhas, universo=None, fx_compra=None,
     return classes, sum(len(g["ids"]) for g in grupos.values()), total_val
 
 
+def _cambio_hoje(taxa_banco) -> float | None:
+    """USDBRL de hoje: o do banco se válido (>= 2.0), senão yfinance."""
+    taxa = float(taxa_banco) if taxa_banco is not None else 0.0
+    if taxa >= 2.0:
+        return taxa
+    from core.investimentos import _get_usd_brl_live
+    return _get_usd_brl_live()
+
+
+def _saldo_bancario_brl(contas, cambio_hoje) -> float:
+    """Saldo das contas de caixa em reais.
+
+    Conta em USD entra pelo câmbio de hoje. Em outra moeda (o banco só cota
+    USDBRL) ou em USD sem câmbio válido, fica fora da soma, com warning no
+    log -- a mesma regra da 081, que o resumo não pode pressupor aplicada:
+    sem ela, ``v_net_worth.bank_balance`` soma dólar como real.
+    """
+    total, fora = 0.0, []
+    for c in contas:
+        moeda = (c.currency or "BRL").upper()
+        saldo = float(c.current_balance or 0)
+        if moeda == "BRL":
+            total += saldo
+        elif moeda == "USD" and cambio_hoje is not None and cambio_hoje >= 2.0:
+            total += saldo * cambio_hoje
+        else:
+            fora.append(f"{c.account_name} ({moeda})")
+    if fora:
+        logger.warning("[financeiro] sem câmbio: %s fora do saldo bancário",
+                       ", ".join(fora))
+    return total
+
+
 def patrimonio_investido_confiavel(
     carteira: dict | None,
     patrimonio: dict | None = None,
@@ -314,21 +347,17 @@ def _visao_geral_real() -> dict:
     with engine.connect() as conn:
 
         # ── 1. Patrimônio (v_net_worth) ───────────────────────────────────
+        # Só o investido sai daqui, e só quando não há carteira nem posições.
+        # O saldo bancário é refeito em reais no passo 6.
         nw_row = conn.execute(
             text(
-                "SELECT bank_balance, investment_total, net_worth "
+                "SELECT investment_total "
                 "FROM v_net_worth WHERE user_id = :uid"
             ),
             {"uid": owner},
         ).fetchone()
 
-        if nw_row is None:
-            from types import SimpleNamespace
-            nw_row = SimpleNamespace(bank_balance=0, investment_total=0, net_worth=0)
-
-        bank_balance     = float(nw_row.bank_balance     or 0)
-        investment_total = float(nw_row.investment_total or 0)
-        net_worth_total  = float(nw_row.net_worth        or 0)
+        investment_total = float(getattr(nw_row, "investment_total", 0) or 0)
 
         # ── 2. Fluxo de caixa mensal (v_monthly_cashflow) ─────────────────
         cashflow_rows = conn.execute(
@@ -394,6 +423,34 @@ def _visao_geral_real() -> dict:
                      if any((r.currency or "").upper() == "USD" for r in inv_rows)
                      else {})
 
+        # ── 6. Contas de caixa, para o saldo bancário em reais ────────────
+        # Mesmo filtro de v_net_worth (ativas, sem cartão), mas a conversão
+        # fica aqui: sem a 081, a view soma conta em dólar como real.
+        contas = conn.execute(
+            text(
+                "SELECT account_name, currency, current_balance "
+                "FROM v_account_balance "
+                "WHERE user_id = :uid AND active = TRUE "
+                "  AND account_type != 'credit_card'"
+            ),
+            {"uid": owner},
+        ).fetchall()
+        usd_brl_banco = conn.execute(
+            text(
+                "SELECT q.close FROM asset_quotes q "
+                "JOIN assets a ON a.id = q.asset_id "
+                "WHERE a.ticker = 'USDBRL' "
+                "ORDER BY q.timestamp DESC LIMIT 1"
+            )
+        ).scalar()
+
+    # Um câmbio só para contas e posições: yfinance no máximo uma vez.
+    usa_dolar = any((r.currency or "").upper() == "USD"
+                    for r in [*inv_rows, *contas])
+    cambio_hoje = _cambio_hoje(usd_brl_banco) if usa_dolar else None
+    bank_balance = _saldo_bancario_brl(contas, cambio_hoje)
+    net_worth_total = bank_balance + investment_total
+
     carteira_migrada = None
     proventos_migrados = None
     try:
@@ -409,8 +466,10 @@ def _visao_geral_real() -> dict:
         investment_total = float(carteira_migrada.get("total_mercado") or investment_total)
         net_worth_total = bank_balance + investment_total
     else:
+        # 0.0, e não None, quando não há câmbio válido: None faria o resumo
+        # tentar o yfinance de novo.
         resumo_classes, num_ativos_resumo, total_resumo = _resumo_por_classe(
-            inv_rows, fx_compra=fx_compra)
+            inv_rows, fx_compra=fx_compra, cambio_hoje=cambio_hoje or 0.0)
         if inv_rows:
             # Sem a 081 aplicada, v_net_worth soma dólar como real; com ela,
             # ainda não tem o fallback do yfinance quando falta USDBRL.

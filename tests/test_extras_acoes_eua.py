@@ -237,7 +237,7 @@ def test_resumo_do_financeiro_usa_cambio_ao_vivo_sem_cotacao_no_banco(monkeypatc
 
 
 def test_visao_geral_sem_carteira_migrada_soma_patrimonio_em_reais(monkeypatch):
-    """v_net_worth soma dólar como real; o fallback usa o total convertido."""
+    """v_net_worth soma dólar como real; o resumo converte contas e posições."""
     import core.investimentos as inv_mod
     import core.proventos as prov_mod
     from core import classe_exterior, database, financeiro
@@ -245,6 +245,13 @@ def test_visao_geral_sem_carteira_migrada_soma_patrimonio_em_reais(monkeypatch):
     posicoes = [
         _posicao_db("1", "PETR4", "Petrobras", "stock", "BRL", 100.0, 120.0),
         _posicao_db("2", "AAPL", "Apple Inc", "etf", "USD", 50.0, 60.0, 5.0),
+    ]
+    # v_net_worth sem a 081 diria 1000 de saldo (800 + 200 somando dólar
+    # como real); convertido, são 800 + 40 * 5, e a conta em euro fica fora.
+    contas = [
+        SimpleNamespace(account_name="Itaú", currency="BRL", current_balance=800),
+        SimpleNamespace(account_name="Nomad", currency="USD", current_balance=40),
+        SimpleNamespace(account_name="Wise", currency="EUR", current_balance=50),
     ]
 
     class _Conn:
@@ -262,6 +269,10 @@ def test_visao_geral_sem_carteira_migrada_soma_patrimonio_em_reais(monkeypatch):
                 return SimpleNamespace(fetchone=lambda: linha)
             if "portfolio_positions" in q:
                 return SimpleNamespace(fetchall=lambda: posicoes)
+            if "v_account_balance" in q:
+                return SimpleNamespace(fetchall=lambda: contas)
+            if "USDBRL" in q:
+                return SimpleNamespace(scalar=lambda: 5.0)
             return SimpleNamespace(fetchall=lambda: [], fetchone=lambda: None)
 
     monkeypatch.setattr(financeiro.settings, "OWNER_USER_ID", "u")
@@ -274,6 +285,7 @@ def test_visao_geral_sem_carteira_migrada_soma_patrimonio_em_reais(monkeypatch):
 
     dados = financeiro._visao_geral_real()
     assert dados["patrimonio"]["investido"] == 420.0     # 120 + 60 * 5
+    assert dados["patrimonio"]["saldo_bancario"] == 1000.0
     assert dados["patrimonio"]["total"] == 1420.0
     nomes = [c["nome"] for c in dados["classes_ativo"]]
     assert nomes == ["Ações EUA", "Ações BR"]
@@ -311,3 +323,30 @@ def test_migration_081_views_em_reais_preservam_contrato_da_007():
     assert "WHEN 'USD' THEN fx.taxa" in sql              # conta em dólar convertida
     assert "HAVING count(*) = count(taxa)" in sql        # só cobertura total
     assert "::VARCHAR(50) AS asset_class" in sql         # mesmo tipo da 007
+
+
+def test_saldo_bancario_converte_dolar_e_deixa_fora_moeda_sem_cotacao():
+    from core import financeiro
+
+    contas = [
+        SimpleNamespace(account_name="Itaú", currency="BRL", current_balance=1000),
+        SimpleNamespace(account_name="Nomad", currency="usd", current_balance=200),
+        SimpleNamespace(account_name="Sem moeda", currency=None, current_balance=10),
+        SimpleNamespace(account_name="Wise", currency="EUR", current_balance=50),
+    ]
+    assert financeiro._saldo_bancario_brl(contas, 5.0) == 2010.0
+    # câmbio ausente ou corrompido: o dólar sai em vez de entrar como real
+    assert financeiro._saldo_bancario_brl(contas, None) == 1010.0
+    assert financeiro._saldo_bancario_brl(contas, 0.19) == 1010.0
+
+
+def test_cambio_de_hoje_so_vai_ao_yfinance_sem_taxa_valida_no_banco(monkeypatch):
+    from core import financeiro
+
+    chamadas = []
+    monkeypatch.setattr(investimentos, "_get_usd_brl_live",
+                        lambda: chamadas.append(1) or 5.5)
+    assert financeiro._cambio_hoje(5.2) == 5.2
+    assert chamadas == []
+    assert financeiro._cambio_hoje(0.19) == 5.5
+    assert financeiro._cambio_hoje(None) == 5.5
