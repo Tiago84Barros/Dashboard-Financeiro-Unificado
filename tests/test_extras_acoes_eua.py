@@ -173,3 +173,33 @@ def test_script_regrava_so_acao_cadastrada_como_etf():
     assert [a["ticker"] for a in acoes] == ["MELI", "XYZQ", "EQR"]
     assert [e["ticker"] for e in etfs] == ["SPY", "IEFA", "XYZW"]
     assert "class = 'etf'" in mod.SQL_REGRAVA  # guarda de idempotência
+
+
+def _posicao_db(asset_id, ticker, nome, classe, moeda, investido, mercado):
+    return SimpleNamespace(
+        asset_id=asset_id, ticker=ticker, asset_name=nome, asset_class=classe,
+        currency=moeda, total_invested=investido, current_market_value=mercado)
+
+
+def test_resumo_do_financeiro_separa_acao_eua_de_acao_br_e_etf():
+    from core import financeiro
+
+    linhas = [
+        _posicao_db("1", "PETR4", "Petrobras", "stock", "BRL", 100.0, 120.0),
+        _posicao_db("2", "AAPL", "Apple Inc", "stock", "USD", 50.0, 60.0),
+        _posicao_db("3", "MELI", "MERCADOLIBRE INC", "etf", "USD", 50.0, 40.0),
+        _posicao_db("4", "SPY", "SPDR S&P 500 ETF Trust", "etf", "USD", 30.0, 30.0),
+        _posicao_db("5", "BOVA11", "iShares Ibovespa", "etf", "BRL", 10.0, 10.0),
+        _posicao_db("5", "BOVA11", "iShares Ibovespa", "etf", "BRL", 10.0, 10.0),
+    ]
+    classes, num_ativos = financeiro._resumo_por_classe(
+        linhas, universo={"AAPL", "MELI"})
+    por_nome = {c["nome"]: c for c in classes}
+    assert [c["nome"] for c in classes] == \
+        ["Ações BR", "Ações EUA", "ETF Internacional", "ETF"]
+    assert por_nome["Ações EUA"]["valor"] == 100.0
+    assert por_nome["Ações EUA"]["rentab_mes_pct"] == 0.0
+    assert por_nome["Ações BR"]["rentab_mes_pct"] == 20.0
+    assert por_nome["ETF"]["valor"] == 20.0          # duas carteiras, um ativo
+    assert round(sum(c["pct_carteira"] for c in classes)) == 100
+    assert num_ativos == 5

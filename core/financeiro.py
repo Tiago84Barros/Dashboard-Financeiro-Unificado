@@ -13,7 +13,7 @@ Chave "data_source" sempre presente no dict retornado:
 
 Views consultadas (Fase 4.9):
   v_net_worth, v_monthly_cashflow, v_category_spending_mtd,
-  v_investment_summary; proventos via core.proventos; budgets via core.orcamento
+  portfolio_positions (resumo por classe); proventos via core.proventos; budgets via core.orcamento
 
 Padrão de uso nas páginas:
     from core.financeiro import get_visao_geral
@@ -147,6 +147,8 @@ _CLASS_LABEL: dict[str, str] = {
     "stock":        "Ações BR",
     "fixed_income": "Renda Fixa",
     "etf":          "ETF",
+    "stock_us":     "Ações EUA",
+    "etf_intl":     "ETF Internacional",
     "bdr":          "BDR",
     "crypto":       "Cripto",
 }
@@ -161,6 +163,7 @@ _CLASS_COR: dict[str, str] = {
     "etf":          "#F5A623",
     "etf_br":       "#F5A623",
     "etf_intl":     "#63cab7",
+    "stock_us":     "#3B82F6",
     "bdr":          "#4C9BE8",
     "crypto":       "#FF6B35",
     "other":        "#8b9ab0",
@@ -170,6 +173,43 @@ _MESES_PT = {
     5: "Mai", 6: "Jun", 7: "Jul", 8: "Ago",
     9: "Set", 10: "Out", 11: "Nov", 12: "Dez",
 }
+
+
+def _resumo_por_classe(linhas, universo=None) -> tuple[list[dict], int]:
+    """(classes_ativo, num_ativos) a partir das posições, uma linha por ativo.
+
+    Em dólar, ``stock`` e ``etf`` do cadastro não dizem "Ações BR" nem "ETF"
+    da B3: a classe sai de ``classe_ativo_usd`` (ticker, nome, cadastro).
+    ``universo`` existe para teste. Valores como na view: sem câmbio.
+    """
+    from core.classe_exterior import classe_ativo_usd, universo_acoes_eua
+
+    def _f(v) -> float:
+        return float(v) if v is not None else 0.0
+
+    grupos: dict[str, dict] = {}
+    for r in linhas:
+        classe = r.asset_class or "other"
+        if (r.currency or "BRL").upper() == "USD" and classe in {"stock", "etf"}:
+            if universo is None:
+                universo = universo_acoes_eua()
+            classe = classe_ativo_usd(r.ticker, r.asset_name, r.asset_class, universo)
+        g = grupos.setdefault(classe, {"ids": set(), "inv": 0.0, "val": 0.0})
+        g["ids"].add(r.asset_id)
+        g["inv"] += _f(r.total_invested)
+        g["val"] += _f(r.current_market_value)
+
+    total_val = sum(g["val"] for g in grupos.values())
+    classes = []
+    for classe, g in sorted(grupos.items(), key=lambda kv: kv[1]["inv"], reverse=True):
+        classes.append({
+            "nome":           _CLASS_LABEL.get(classe, classe.title()),
+            "valor":          g["val"],
+            "pct_carteira":   round(g["val"] / total_val * 100, 1) if total_val > 0 else 0.0,
+            "rentab_mes_pct": round((g["val"] - g["inv"]) * 100 / g["inv"], 2) if g["inv"] else 0.0,
+            "cor":            _CLASS_COR.get(classe, "#718096"),
+        })
+    return classes, sum(len(g["ids"]) for g in grupos.values())
 
 
 def patrimonio_investido_confiavel(
@@ -294,14 +334,25 @@ def _visao_geral_real() -> dict:
         _hoje = _date_cls.today()
         budget_map = orcamento.carregar_vigentes(conn, owner, _date_cls(_hoje.year, _hoje.month, 1))
 
-        # ── 5. Resumo de investimentos (v_investment_summary) ─────────────
+        # ── 5. Posições para o resumo por classe ──────────────────────────
+        # Mesmo cálculo de v_investment_summary, mas por ativo: a view agrupa
+        # só por assets.class e põe ação americana em "Ações BR" (stock) ou
+        # "ETF" (cadastro errado da Nomad). _resumo_por_classe separa.
         inv_rows = conn.execute(
             text(
-                "SELECT asset_class, asset_count, total_invested, "
-                "       current_market_value, return_pct "
-                "FROM v_investment_summary "
-                "WHERE user_id = :uid "
-                "ORDER BY total_invested DESC"
+                "SELECT a.id::text AS asset_id, a.class AS asset_class, "
+                "       a.ticker, a.name AS asset_name, a.currency, "
+                "       pp.total_invested, "
+                "       pp.quantity * COALESCE(lq.close, pp.average_price) "
+                "           AS current_market_value "
+                "FROM portfolio_positions pp "
+                "JOIN assets a ON a.id = pp.asset_id "
+                "LEFT JOIN LATERAL ( "
+                "    SELECT close FROM asset_quotes aq "
+                "    WHERE aq.asset_id = pp.asset_id "
+                "    ORDER BY aq.timestamp DESC LIMIT 1 "
+                ") lq ON TRUE "
+                "WHERE pp.user_id = :uid"
             ),
             {"uid": owner},
         ).fetchall()
@@ -422,20 +473,7 @@ def _visao_geral_real() -> dict:
             })
         num_ativos = int(carteira_migrada.get("num_ativos") or 0)
     else:
-        total_val_all = sum(_f(r.current_market_value) for r in inv_rows)
-        for r in inv_rows:
-            cls_val  = _f(r.current_market_value)
-            cls_pct  = (cls_val / total_val_all * 100) if total_val_all > 0 else 0.0
-            classes_ativo.append(
-                {
-                    "nome":           _CLASS_LABEL.get(r.asset_class, r.asset_class.title()),
-                    "valor":          cls_val,
-                    "pct_carteira":   round(cls_pct, 1),
-                    "rentab_mes_pct": _f(r.return_pct),
-                    "cor":            _CLASS_COR.get(r.asset_class, "#718096"),
-                }
-            )
-        num_ativos = sum(r.asset_count for r in inv_rows) if inv_rows else 0
+        classes_ativo, num_ativos = _resumo_por_classe(inv_rows)
     maior_cls  = classes_ativo[0] if classes_ativo else {"nome": "—", "pct_carteira": 0.0}
 
     # ── Portfolio ─────────────────────────────────────────────────────────
