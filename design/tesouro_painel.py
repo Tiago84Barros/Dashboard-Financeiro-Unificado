@@ -3,13 +3,13 @@ design/tesouro_painel.py — a sub-aba "Tesouro" como resposta, não como planil
 
 A tela antiga empilhava oito KPIs e dois cards por título em duas linguagens
 visuais, e quem lia terminava sem resposta para a única pergunta que importa:
-*dá para vender, e vale?* Este módulo monta a resposta em faixas, na ordem em
-que ela se lê:
+*levo este título até o vencimento ou vendo antes, pela marcação?* Este módulo
+monta a resposta em faixas, na ordem em que ela se lê:
 
-1. **o que a marcação vale hoje** — em reais líquidos, não em porcentagem solta;
-2. **o que cada título entrega** — carregar até o fim × vender hoje, no gráfico;
-3. **o veredito por título** — com a taxa de indiferença, que é a única forma
-   honesta de dizer "de quanto é a vantagem" sem escolher pelo usuário;
+1. **o veredito da carteira** — "leve até o vencimento" ou "vale vender X";
+2. **o veredito por título** — com o motivo numa frase, que já traz a taxa
+   de indiferença e a melhor oferta do dia;
+3. **o que cada título entrega** — carregar até o fim × vender hoje;
 4. **um gráfico por título** — para onde o papel vai se for carregado até
    o fim, e quanto a marcação já oscilou nele.
 
@@ -29,12 +29,10 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 from core.tesouro_venda import (
-    AGIO,
-    DESAGIO,
-    NEUTRA,
-    SEM_PRECO,
+    LEVAR,
+    SEM_RESPOSTA,
+    VENDER,
     LeituraVenda,
-    rotulo_taxa,
 )
 
 # A moldura (fundo, grade, eixo, fonte) é convertida pelo adaptador de tema.
@@ -56,14 +54,15 @@ _FIG_VENCIMENTO = "#0D9488"
 #: taxa contratada, sem oscilação de mercado.
 _FIG_CURVA = "#8792A6"
 
+#: Tom do veredito. Levar é o desfecho calmo (a taxa contratada segue
+#: valendo); vender é o que pede ação, por isso o tom de destaque.
 _TOM = {
-    AGIO: "var(--app-primary, #00C896)",
-    DESAGIO: "var(--app-danger, #FC5C7D)",
-    NEUTRA: "var(--app-info, #4A9EFF)",
-    SEM_PRECO: "var(--app-subtle, #6B7280)",
+    LEVAR: "var(--app-primary, #00C896)",
+    VENDER: "var(--app-warning, #F6C90E)",
+    SEM_RESPOSTA: "var(--app-subtle, #6B7280)",
 }
 
-_ICONE = {AGIO: "▲", DESAGIO: "▼", NEUTRA: "=", SEM_PRECO: "?"}
+_ICONE = {LEVAR: "✓", VENDER: "⇄", SEM_RESPOSTA: "?"}
 
 TD_CSS = """
 <style>
@@ -96,10 +95,9 @@ TD_CSS = """
     text-transform: uppercase;
 }
 .td-hero-valor {
-    margin: 4px 0 2px;
+    margin: 6px 0 6px;
     color: var(--td-tom);
-    font-size: 2.1rem; font-weight: 860; line-height: 1.05;
-    font-variant-numeric: tabular-nums;
+    font-size: 1.7rem; font-weight: 860; line-height: 1.15;
 }
 .td-hero-frase {
     color: var(--app-text, #E2E8F0);
@@ -196,26 +194,6 @@ TD_CSS = """
     font-size: .74rem; line-height: 1.45;
 }
 .td-regra b { color: var(--td-tom); font-weight: 840; }
-.td-frase {
-    color: var(--app-muted, #8A99AE);
-    font-size: .72rem; line-height: 1.5;
-}
-.td-legenda {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-    gap: 9px 16px; margin: 4px 0 2px;
-}
-.td-legenda-item {
-    display: flex; align-items: flex-start; gap: 8px;
-    color: var(--app-muted, #8A99AE);
-    font-size: .72rem; line-height: 1.45;
-}
-.td-legenda-marca {
-    flex: 0 0 auto; margin-top: 1px;
-    font-size: .74rem; font-weight: 820;
-}
-.td-legenda-item b { color: var(--app-text, #E2E8F0); font-weight: 800; }
-
 /* Nome do título acima do gráfico dele. Com um gráfico por papel, sem esta
    etiqueta a sequência vira uma pilha de curvas sem dono. */
 .td-grafico-nome {
@@ -243,14 +221,6 @@ def _reais(valor: float | None, *, sinal: bool = False) -> str:
         marca = "+" if valor >= 0 else "−"
         return f"{marca} R$ {corpo}"
     return f"{'−' if valor < 0 else ''}R$ {corpo}"
-
-
-def _pct(valor: float | None, *, casas: int = 2, sinal: bool = True) -> str:
-    """Recebe fração (0,0135), devolve "+1,35%"."""
-    if valor is None:
-        return "—"
-    texto = f"{valor * 100:{'+' if sinal else ''}.{casas}f}%"
-    return texto.replace(".", ",").replace("+-", "−").replace("-", "−")
 
 
 def _esc(texto) -> str:
@@ -295,60 +265,40 @@ def estado_html(*, data_curva: date | None, data_extrato: date | None,
     return f'<div class="td-estado">{"".join(chips)}</div>'
 
 
-def hero_html(resumo: dict, *, frase: str) -> str:
-    """O que a marcação vale hoje, em reais líquidos, e o que isso significa.
+def hero_html(resumo: dict, *, veredito: str, manchete: str, frase: str) -> str:
+    """A resposta da sub-aba: levar até o vencimento ou vender antes.
 
-    Em reais e **líquido** porque é o que decide: um ágio de 1,2% sobre a maior
-    posição da carteira soa grande e virou R$ 293 depois do imposto. A
-    porcentagem fica ao lado, como escala, não como manchete.
+    A manchete é o veredito, não um número. O ágio em reais existe, mas sozinho
+    ele não responde nada — R$ 1.000 de ágio que não paga a troca continua
+    sendo motivo para carregar. Os números ficam na faixa de baixo, como prova.
     """
-    liquido = resumo.get("ganho_mtm_liquido")
-    tom = ("var(--app-primary, #00C896)" if (liquido or 0) > 0
-           else "var(--app-danger, #FC5C7D)" if (liquido or 0) < 0
-           else "var(--app-info, #4A9EFF)")
-    if liquido is None:
-        tom = "var(--app-subtle, #6B7280)"
-
-    contagem = []
-    for chave, rotulo in (("com_agio", "com ágio"), ("com_desagio", "com deságio"),
-                          ("neutros", "sem efeito prático"),
-                          ("sem_preco", "sem preço")):
-        quantos = resumo.get(chave) or 0
-        if quantos:
-            contagem.append(f"{quantos} {rotulo}")
-    linha_contagem = " · ".join(contagem)
-
-    partes = [
-        '<div class="td-hero" style="--td-tom: %s;">' % tom,
-        '<div class="td-hero-rotulo">O que a marcação a mercado vale hoje,'
-        ' depois do imposto</div>',
-        f'<div class="td-hero-valor">{_reais(liquido, sinal=liquido is not None)}</div>',
+    tom = _TOM.get(veredito, _TOM[SEM_RESPOSTA])
+    return "".join([
+        f'<div class="td-hero" style="--td-tom: {tom};">',
+        '<div class="td-hero-rotulo">Levar até o vencimento ou vender antes?</div>',
+        f'<div class="td-hero-valor">{_esc(manchete)}</div>',
         f'<div class="td-hero-frase">{_esc(frase)}</div>',
-    ]
-    if contagem:
-        partes.insert(3, '<div class="td-kpi-nota" style="margin:0 0 8px;">'
-                         f'{_pct(resumo.get("mtm_pct"))} da posição marcada · '
-                         f'{_esc(linha_contagem)}</div>')
-    partes.append(_faixa_kpis_html(resumo))
-    partes.append("</div>")
-    return "".join(partes)
+        _faixa_kpis_html(resumo),
+        "</div>",
+    ])
 
 
 def _faixa_kpis_html(resumo: dict) -> str:
     venc = resumo.get("liquido_vencimento")
     nota_venc = ("projeção parcial: algum título ficou sem preço"
                  if resumo.get("projecao_parcial")
-                 else "pela taxa de recompra de hoje até o vencimento")
+                 else "pela taxa de recompra de hoje até cada vencimento")
     if resumo.get("depende_do_indice"):
-        nota_venc += "; indexado projetado pelo índice implícito do cardápio"
+        nota_venc += "; indexado projetado pelo índice implícito"
     celulas = [
         ("Se vender tudo hoje", _reais(resumo.get("liquido_hoje")),
          "líquido de IR e IOF, pelo preço de recompra"),
-        ("Se carregar até o vencimento", _reais(venc), nota_venc),
-        ("Ágio bruto de marcação", _reais(resumo.get("ganho_mtm"), sinal=True),
-         "antes do imposto sobre o ganho"),
-        ("Imposto antecipado se vender", _reais(resumo.get("imposto_antecipado")),
-         "IR que carregar deixaria para o fim"),
+        ("Se levar tudo até o vencimento", _reais(venc), nota_venc),
+        ("Ganho de marcação hoje", _reais(resumo.get("ganho_mtm_liquido"),
+                                          sinal=resumo.get("ganho_mtm_liquido") is not None),
+         "já descontado o IR sobre o ganho"),
+        ("Imposto que a venda anteciparia", _reais(resumo.get("imposto_antecipado")),
+         "IR que carregar deixa para o vencimento"),
     ]
     blocos = "".join(
         f'<div class="td-kpi"><div class="td-kpi-rotulo">{_esc(r)}</div>'
@@ -362,110 +312,48 @@ def _faixa_kpis_html(resumo: dict) -> str:
 # Faixa 3 — veredito por título
 # ─────────────────────────────────────────────────────────────────────────────
 
-def card_html(leitura: LeituraVenda, extremos: dict | None = None) -> str:
-    """Um título: pode vender, quanto rende a marcação e acima de quanto vale.
+def card_html(leitura: LeituraVenda) -> str:
+    """Um título: o veredito, o motivo em uma frase e os dois valores.
 
-    A linha da **taxa de indiferença** é o centro do card. Ela responde "de
-    quanto é a vantagem" de forma verificável — acima dela trocar ganha, abaixo
-    perde — sem fingir uma recomendação que depende de onde o dinheiro vai
-    parar. O veredito em reais existe na mesma tela, mas só dentro do expander,
-    porque lá ele tem a alternativa escolhida pelo usuário.
+    O motivo já carrega a taxa de indiferença e a melhor oferta do dia — a
+    régua que decide. Faixa de marcação, histórico de oscilação e comparação
+    com alternativa escolhida à mão saíram: nenhum deles muda a resposta.
     """
-    tom = _TOM[leitura.situacao]
+    tom = _TOM[leitura.veredito]
     venc = (f"vence em {leitura.vencimento:%d/%m/%Y}"
             if leitura.vencimento else "sem vencimento no extrato")
-
     celulas = [
         ("Se vender hoje", _reais(leitura.liquido_hoje), "líquido de IR e IOF"),
-        ("Se carregar até o fim", _reais(leitura.liquido_vencimento),
-         f"{leitura.du_restante} dias úteis restantes"
-         if leitura.du_restante else "sem prazo restante"),
+        ("Se levar até o fim", _reais(leitura.liquido_vencimento),
+         f"líquido, em {leitura.vencimento:%m/%Y}" if leitura.vencimento
+         else "sem prazo restante"),
     ]
-    if leitura.pode_marcar:
-        positivo = (leitura.ganho_mtm_reais or 0.0) > 0
-        celulas.append((
-            "Ágio de marcação" if positivo else "Deságio de marcação",
-            f"{_reais(leitura.ganho_mtm_reais, sinal=True)} "
-            f"({_pct(leitura.mtm_pct)})",
-            f"{_reais(leitura.ganho_mtm_liquido, sinal=True)} depois do IR"
-            if positivo else
-            "realizar o deságio não gera crédito de imposto"))
-        celulas.append((
-            "Imposto antecipado", _reais(leitura.imposto_antecipado),
-            "pago agora em vez de no vencimento"))
-
     grade = "".join(
         f'<div><div class="td-celula-rotulo">{_esc(r)}</div>'
         f'<div class="td-celula-valor">{v}</div>'
         f'<div class="td-celula-nota">{_esc(n)}</div></div>'
         for r, v, n in celulas)
-
-    partes = [
+    return "".join([
         f'<article class="td-card" style="--td-tom: {tom};">',
         '<div class="td-card-topo">'
         f'<span class="td-card-nome">{_esc(leitura.titulo)}</span>'
         f'<span class="td-card-venc">{_esc(venc)}</span></div>',
-        f'<span class="td-selo">{_ICONE[leitura.situacao]} '
-        f'{_esc(leitura.rotulo)}</span>',
+        f'<span class="td-selo">{_ICONE[leitura.veredito]} '
+        f'{_esc(leitura.veredito_rotulo)}</span>',
+        f'<div class="td-regra">{_esc(leitura.veredito_motivo)}</div>',
         f'<div class="td-grade">{grade}</div>',
-    ]
-
-    if leitura.taxa_indiferenca is not None:
-        alvo = rotulo_taxa(leitura.indexador, leitura.taxa_indiferenca)
-        hoje = rotulo_taxa(leitura.indexador, leitura.taxa_mercado)
-        custo = leitura.custo_anual_do_ir
-        complemento = ""
-        if custo is not None:
-            complemento = (" O mesmo papel está sendo ofertado a "
-                           f"{hoje}: a distância de {_pct(custo)} é o preço "
-                           "anual de antecipar o imposto.")
-        partes.append(
-            f'<div class="td-regra">Vender só compensa se o dinheiro for para '
-            f'algo que renda <b>mais de {_esc(alvo)}</b> até '
-            f'{leitura.vencimento:%m/%Y}.{_esc(complemento)}</div>')
-
-    if extremos:
-        partes.append(
-            '<div class="td-frase">Nesta posição a marcação já foi de '
-            f'{_pct(extremos["minimo"])} ({extremos["data_minimo"]:%m/%Y}) a '
-            f'{_pct(extremos["maximo"])} ({extremos["data_maximo"]:%m/%Y}) — '
-            f'{extremos["pontos"]} dias medidos desde '
-            f'{extremos["inicio"]:%m/%Y}.</div>')
-
-    partes.append(f'<div class="td-frase">{_esc(leitura.frase)}</div>')
-    partes.append("</article>")
-    return "".join(partes)
+        "</article>",
+    ])
 
 
-def cards_html(pares) -> str:
+def cards_html(leituras) -> str:
     """Grade CSS com um card por título.
 
     Grade, e não ``st.columns``: coluna empilha na própria altura e a fileira
-    sai desencontrada quando um título tem série histórica e o vizinho não.
+    sai desencontrada quando um card tem motivo mais longo que o vizinho.
     """
-    corpo = "".join(card_html(leitura, extremos) for leitura, extremos in pares)
+    corpo = "".join(card_html(leitura) for leitura in leituras)
     return f'<div class="td-cards">{corpo}</div>'
-
-
-def legenda_html() -> str:
-    """Como ler os selos — e o que a tela não promete."""
-    itens = [
-        (_ICONE[AGIO], _TOM[AGIO], "Vendável com ágio",
-         "a taxa de mercado caiu abaixo da contratada; o preço de recompra "
-         "está acima da curva do lote."),
-        (_ICONE[DESAGIO], _TOM[DESAGIO], "Venda realizaria deságio",
-         "a taxa de mercado subiu; vender agora abre mão da taxa contratada."),
-        (_ICONE[NEUTRA], _TOM[NEUTRA], "Marcação sem efeito prático",
-         "o ágio está dentro da faixa de ruído de PU, calendário e spread."),
-        (_ICONE[SEM_PRECO], _TOM[SEM_PRECO], "Sem preço de mercado",
-         "a curva do dia não tem o título; o valor exibido é o do extrato."),
-    ]
-    corpo = "".join(
-        f'<div class="td-legenda-item">'
-        f'<span class="td-legenda-marca" style="color: {tom};">{marca}</span>'
-        f'<span><b>{_esc(nome)}</b> — {_esc(texto)}</span></div>'
-        for marca, tom, nome, texto in itens)
-    return f'<div class="td-legenda">{corpo}</div>'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
