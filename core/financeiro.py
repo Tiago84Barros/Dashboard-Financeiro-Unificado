@@ -27,6 +27,7 @@ from datetime import date
 
 from core import orcamento
 from core.config import settings
+from core.fx_aquisicao import cambio_medio_de_aquisicao
 from core.user_context import user_cache_data
 
 logger = logging.getLogger(__name__)
@@ -175,29 +176,55 @@ _MESES_PT = {
 }
 
 
-def _resumo_por_classe(linhas, universo=None) -> tuple[list[dict], int]:
-    """(classes_ativo, num_ativos) a partir das posições, uma linha por ativo.
+def _resumo_por_classe(linhas, universo=None, fx_compra=None,
+                       cambio_hoje=None) -> tuple[list[dict], int, float]:
+    """(classes_ativo, num_ativos, total_mercado_brl), uma linha por ativo.
 
     Em dólar, ``stock`` e ``etf`` do cadastro não dizem "Ações BR" nem "ETF"
     da B3: a classe sai de ``classe_ativo_usd`` (ticker, nome, cadastro).
-    ``universo`` existe para teste. Valores como na view: sem câmbio.
+
+    Posição em dólar entra em reais pela regra de ``core.investimentos``:
+    mercado pelo câmbio de hoje (``usd_brl_rate`` da linha, senão yfinance),
+    custo pelo câmbio da compra (``fx_compra``, de ``core.fx_aquisicao``) e,
+    sem ele, pelo de hoje. Sem câmbio válido a posição fica fora do resumo
+    -- somar dólar como real era o defeito da view.
+
+    ``universo`` e ``cambio_hoje`` existem para teste.
     """
     from core.classe_exterior import classe_ativo_usd, universo_acoes_eua
+    from core.fx_aquisicao import taxa_para
 
     def _f(v) -> float:
         return float(v) if v is not None else 0.0
 
+    usd = [r for r in linhas if (r.currency or "BRL").upper() == "USD"]
+    if usd and cambio_hoje is None:
+        cambio_hoje = max((_f(getattr(r, "usd_brl_rate", None)) for r in usd),
+                          default=0.0)
+        if cambio_hoje < 2.0:
+            from core.investimentos import _get_usd_brl_live
+            cambio_hoje = _get_usd_brl_live()
+    if usd and (cambio_hoje is None or cambio_hoje < 2.0):
+        logger.warning("[financeiro] sem USD/BRL válido: %s fora do resumo por classe",
+                       ", ".join(sorted({str(r.ticker) for r in usd})))
+
     grupos: dict[str, dict] = {}
     for r in linhas:
         classe = r.asset_class or "other"
-        if (r.currency or "BRL").upper() == "USD" and classe in {"stock", "etf"}:
-            if universo is None:
-                universo = universo_acoes_eua()
-            classe = classe_ativo_usd(r.ticker, r.asset_name, r.asset_class, universo)
+        investido, mercado = _f(r.total_invested), _f(r.current_market_value)
+        if (r.currency or "BRL").upper() == "USD":
+            if cambio_hoje is None or cambio_hoje < 2.0:
+                continue
+            taxa_custo = taxa_para(fx_compra or {}, r.ticker) or cambio_hoje
+            investido, mercado = investido * taxa_custo, mercado * cambio_hoje
+            if classe in {"stock", "etf"}:
+                if universo is None:
+                    universo = universo_acoes_eua()
+                classe = classe_ativo_usd(r.ticker, r.asset_name, r.asset_class, universo)
         g = grupos.setdefault(classe, {"ids": set(), "inv": 0.0, "val": 0.0})
         g["ids"].add(r.asset_id)
-        g["inv"] += _f(r.total_invested)
-        g["val"] += _f(r.current_market_value)
+        g["inv"] += investido
+        g["val"] += mercado
 
     total_val = sum(g["val"] for g in grupos.values())
     classes = []
@@ -209,7 +236,7 @@ def _resumo_por_classe(linhas, universo=None) -> tuple[list[dict], int]:
             "rentab_mes_pct": round((g["val"] - g["inv"]) * 100 / g["inv"], 2) if g["inv"] else 0.0,
             "cor":            _CLASS_COR.get(classe, "#718096"),
         })
-    return classes, sum(len(g["ids"]) for g in grupos.values())
+    return classes, sum(len(g["ids"]) for g in grupos.values()), total_val
 
 
 def patrimonio_investido_confiavel(
@@ -337,12 +364,13 @@ def _visao_geral_real() -> dict:
         # ── 5. Posições para o resumo por classe ──────────────────────────
         # Mesmo cálculo de v_investment_summary, mas por ativo: a view agrupa
         # só por assets.class e põe ação americana em "Ações BR" (stock) ou
-        # "ETF" (cadastro errado da Nomad). _resumo_por_classe separa.
+        # "ETF" (cadastro errado da Nomad), e soma dólar como real.
+        # _resumo_por_classe separa as classes e converte.
         inv_rows = conn.execute(
             text(
                 "SELECT a.id::text AS asset_id, a.class AS asset_class, "
                 "       a.ticker, a.name AS asset_name, a.currency, "
-                "       pp.total_invested, "
+                "       pp.total_invested, fx.usd_brl_rate, "
                 "       pp.quantity * COALESCE(lq.close, pp.average_price) "
                 "           AS current_market_value "
                 "FROM portfolio_positions pp "
@@ -352,10 +380,19 @@ def _visao_geral_real() -> dict:
                 "    WHERE aq.asset_id = pp.asset_id "
                 "    ORDER BY aq.timestamp DESC LIMIT 1 "
                 ") lq ON TRUE "
+                "LEFT JOIN LATERAL ( "
+                "    SELECT aq2.close AS usd_brl_rate FROM asset_quotes aq2 "
+                "    JOIN assets a2 ON a2.id = aq2.asset_id "
+                "    WHERE a2.ticker = 'USDBRL' "
+                "    ORDER BY aq2.timestamp DESC LIMIT 1 "
+                ") fx ON TRUE "
                 "WHERE pp.user_id = :uid"
             ),
             {"uid": owner},
         ).fetchall()
+        fx_compra = (cambio_medio_de_aquisicao(conn, owner)
+                     if any((r.currency or "").upper() == "USD" for r in inv_rows)
+                     else {})
 
     carteira_migrada = None
     proventos_migrados = None
@@ -371,6 +408,13 @@ def _visao_geral_real() -> dict:
     if carteira_migrada and carteira_migrada.get("data_source") == "real":
         investment_total = float(carteira_migrada.get("total_mercado") or investment_total)
         net_worth_total = bank_balance + investment_total
+    else:
+        resumo_classes, num_ativos_resumo, total_resumo = _resumo_por_classe(
+            inv_rows, fx_compra=fx_compra)
+        if inv_rows:
+            # v_net_worth herda a soma sem câmbio de v_investment_summary.
+            investment_total = total_resumo
+            net_worth_total = bank_balance + investment_total
 
     # ── Helpers ───────────────────────────────────────────────────────────
     def _f(v) -> float:
@@ -473,7 +517,7 @@ def _visao_geral_real() -> dict:
             })
         num_ativos = int(carteira_migrada.get("num_ativos") or 0)
     else:
-        classes_ativo, num_ativos = _resumo_por_classe(inv_rows)
+        classes_ativo, num_ativos = resumo_classes, num_ativos_resumo
     maior_cls  = classes_ativo[0] if classes_ativo else {"nome": "—", "pct_carteira": 0.0}
 
     # ── Portfolio ─────────────────────────────────────────────────────────

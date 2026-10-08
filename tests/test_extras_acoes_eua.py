@@ -175,31 +175,105 @@ def test_script_regrava_so_acao_cadastrada_como_etf():
     assert "class = 'etf'" in mod.SQL_REGRAVA  # guarda de idempotência
 
 
-def _posicao_db(asset_id, ticker, nome, classe, moeda, investido, mercado):
+def _posicao_db(asset_id, ticker, nome, classe, moeda, investido, mercado,
+                fx=None):
     return SimpleNamespace(
         asset_id=asset_id, ticker=ticker, asset_name=nome, asset_class=classe,
-        currency=moeda, total_invested=investido, current_market_value=mercado)
+        currency=moeda, total_invested=investido, current_market_value=mercado,
+        usd_brl_rate=fx)
 
 
-def test_resumo_do_financeiro_separa_acao_eua_de_acao_br_e_etf():
+def test_resumo_do_financeiro_separa_classes_e_converte_dolar():
     from core import financeiro
 
     linhas = [
         _posicao_db("1", "PETR4", "Petrobras", "stock", "BRL", 100.0, 120.0),
-        _posicao_db("2", "AAPL", "Apple Inc", "stock", "USD", 50.0, 60.0),
-        _posicao_db("3", "MELI", "MERCADOLIBRE INC", "etf", "USD", 50.0, 40.0),
-        _posicao_db("4", "SPY", "SPDR S&P 500 ETF Trust", "etf", "USD", 30.0, 30.0),
+        _posicao_db("2", "AAPL", "Apple Inc", "stock", "USD", 50.0, 60.0, 5.0),
+        _posicao_db("3", "MELI", "MERCADOLIBRE INC", "etf", "USD", 50.0, 40.0, 5.0),
+        _posicao_db("4", "SPY", "SPDR S&P 500 ETF Trust", "etf", "USD", 30.0, 30.0, 5.0),
         _posicao_db("5", "BOVA11", "iShares Ibovespa", "etf", "BRL", 10.0, 10.0),
         _posicao_db("5", "BOVA11", "iShares Ibovespa", "etf", "BRL", 10.0, 10.0),
     ]
-    classes, num_ativos = financeiro._resumo_por_classe(
-        linhas, universo={"AAPL", "MELI"})
+    classes, num_ativos, total = financeiro._resumo_por_classe(
+        linhas, universo={"AAPL", "MELI"},
+        fx_compra={"AAPL": {"taxa_media": 4.0, "cobertura": 1.0}})
     por_nome = {c["nome"]: c for c in classes}
     assert [c["nome"] for c in classes] == \
-        ["Ações BR", "Ações EUA", "ETF Internacional", "ETF"]
-    assert por_nome["Ações EUA"]["valor"] == 100.0
-    assert por_nome["Ações EUA"]["rentab_mes_pct"] == 0.0
-    assert por_nome["Ações BR"]["rentab_mes_pct"] == 20.0
+        ["Ações EUA", "ETF Internacional", "Ações BR", "ETF"]
+    # mercado pelo câmbio de hoje (5): (60 + 40) * 5
+    assert por_nome["Ações EUA"]["valor"] == 500.0
+    # custo: AAPL pelo câmbio da compra (4), MELI sem ele pelo de hoje (5)
+    assert por_nome["Ações EUA"]["rentab_mes_pct"] == round((500 - 450) / 450 * 100, 2)
+    assert por_nome["ETF Internacional"]["valor"] == 150.0
+    assert por_nome["Ações BR"]["valor"] == 120.0
     assert por_nome["ETF"]["valor"] == 20.0          # duas carteiras, um ativo
+    assert total == 790.0
     assert round(sum(c["pct_carteira"] for c in classes)) == 100
     assert num_ativos == 5
+
+
+def test_resumo_do_financeiro_sem_cambio_deixa_dolar_de_fora(monkeypatch):
+    from core import financeiro
+
+    monkeypatch.setattr(investimentos, "_get_usd_brl_live", lambda: None)
+    linhas = [
+        _posicao_db("1", "PETR4", "Petrobras", "stock", "BRL", 100.0, 120.0),
+        _posicao_db("2", "AAPL", "Apple Inc", "stock", "USD", 50.0, 60.0, None),
+    ]
+    classes, num_ativos, total = financeiro._resumo_por_classe(
+        linhas, universo={"AAPL"})
+    assert [c["nome"] for c in classes] == ["Ações BR"]
+    assert (num_ativos, total) == (1, 120.0)
+
+
+def test_resumo_do_financeiro_usa_cambio_ao_vivo_sem_cotacao_no_banco(monkeypatch):
+    from core import financeiro
+
+    monkeypatch.setattr(investimentos, "_get_usd_brl_live", lambda: 5.5)
+    linhas = [_posicao_db("2", "AAPL", "Apple Inc", "stock", "USD", 50.0, 60.0)]
+    classes, _, total = financeiro._resumo_por_classe(linhas, universo={"AAPL"})
+    assert classes[0]["nome"] == "Ações EUA"
+    assert total == 330.0
+
+
+def test_visao_geral_sem_carteira_migrada_soma_patrimonio_em_reais(monkeypatch):
+    """v_net_worth soma dólar como real; o fallback usa o total convertido."""
+    import core.investimentos as inv_mod
+    import core.proventos as prov_mod
+    from core import classe_exterior, database, financeiro
+
+    posicoes = [
+        _posicao_db("1", "PETR4", "Petrobras", "stock", "BRL", 100.0, 120.0),
+        _posicao_db("2", "AAPL", "Apple Inc", "etf", "USD", 50.0, 60.0, 5.0),
+    ]
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, sql, *a, **k):
+            q = str(sql)
+            if "v_net_worth" in q:
+                linha = SimpleNamespace(bank_balance=1000, investment_total=180,
+                                        net_worth=1180)
+                return SimpleNamespace(fetchone=lambda: linha)
+            if "portfolio_positions" in q:
+                return SimpleNamespace(fetchall=lambda: posicoes)
+            return SimpleNamespace(fetchall=lambda: [], fetchone=lambda: None)
+
+    monkeypatch.setattr(financeiro.settings, "OWNER_USER_ID", "u")
+    monkeypatch.setattr(database, "get_engine",
+                        lambda: SimpleNamespace(connect=_Conn))
+    monkeypatch.setattr(inv_mod, "get_carteira", lambda: {"data_source": "mock"})
+    monkeypatch.setattr(prov_mod, "get_proventos", lambda: {})
+    monkeypatch.setattr(classe_exterior, "universo_acoes_eua",
+                        lambda: frozenset({"AAPL"}))
+
+    dados = financeiro._visao_geral_real()
+    assert dados["patrimonio"]["investido"] == 420.0     # 120 + 60 * 5
+    assert dados["patrimonio"]["total"] == 1420.0
+    nomes = [c["nome"] for c in dados["classes_ativo"]]
+    assert nomes == ["Ações EUA", "Ações BR"]
