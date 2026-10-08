@@ -55,7 +55,7 @@ import re
 from collections import defaultdict
 
 from core.categorias import SQL_INVESTIMENTO
-from core.classe_exterior import classe_ativo_usd
+from core.classe_exterior import classe_ativo_usd, classe_por_evidencia
 from core.config import settings
 from core.currency_returns import retorno_em_brl, retorno_moeda_origem
 from core.fx_aquisicao import cambio_medio_de_aquisicao, taxa_para
@@ -1032,9 +1032,11 @@ def _class_key_from_snapshot(raw_type: str | None, ticker: str, country: str | N
     t = (ticker or "").upper().strip()
     c = (country or "BR").upper().strip()
     if c not in ("", "BR"):
-        if raw in {"etf", "etf_intl", "stock", "stock_us", ""}:
+        if raw in {"etf", "etf_intl", "stock", "stock_us"}:
             return classe_ativo_usd(t, nome, raw)
-        return raw or "other"
+        if not raw:  # tipo ausente: só sai de "other" com sinal positivo
+            return classe_por_evidencia(t, nome, None) or "other"
+        return raw
     if raw in {"renda_fixa", "fixed_income", "fundo_rf", "other", ""} and eh_fip(t, nome):
         return "fip"
     if raw == "tesouro":

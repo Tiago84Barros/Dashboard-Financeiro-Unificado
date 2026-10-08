@@ -13,10 +13,13 @@ A decisão, em ordem:
 1. ticker no universo de ações americanas do arquivo publicado
    (``data/public/valuation_historico.json.gz``, empresas da SEC; ETF não
    entra lá) → ação;
-2. ticker de ETF conhecido, ou nome de fundo (ETF, iShares, SPDR...) → ETF;
-3. nome com sufixo de empresa (Inc, Corp, Ltd, PLC...) → ação;
-4. cadastro dizendo ``stock`` → ação;
-5. qualquer outra coisa → ETF, o comportamento antigo.
+2. ticker de ETF conhecido, ou a palavra ETF/ETN/Fund no nome → ETF;
+3. cadastro dizendo ``stock`` → ação (antes da marca de gestora: "The
+   Charles Schwab Corporation" e "WisdomTree, Inc." são empresas);
+4. marca de gestora no nome (iShares, SPDR, Vanguard...) → ETF;
+5. nome com sufixo de empresa (Inc, Corp, Ltd, PLC...) → ação;
+6. nenhum sinal → ETF, o comportamento antigo. ``classe_por_evidencia``
+   para antes desta regra e devolve ``None``.
 """
 from __future__ import annotations
 
@@ -37,9 +40,10 @@ ETFS_CONHECIDOS = frozenset({
     "JEPI", "JEPQ", "QQQM", "SPLG", "VGT", "IBIT", "FBTC", "ETHA",
 })
 
-_RE_FUNDO = re.compile(
-    r"\b(ETF|ETN|FUND|ISHARES|SPDR|VANGUARD|INVESCO|PROSHARES|WISDOMTREE|"
-    r"DIREXION|GLOBAL X|SCHWAB|INDEX)\b",
+_RE_FUNDO = re.compile(r"\b(ETF|ETN|FUND|INDEX)\b", re.IGNORECASE)
+_RE_GESTORA = re.compile(
+    r"\b(ISHARES|SPDR|VANGUARD|INVESCO|PROSHARES|WISDOMTREE|DIREXION|"
+    r"GLOBAL X|SCHWAB)\b",
     re.IGNORECASE,
 )
 _RE_EMPRESA = re.compile(
@@ -63,10 +67,11 @@ def universo_acoes_eua() -> frozenset[str]:
         return frozenset()
 
 
-def classe_ativo_usd(ticker: str | None, nome: str | None,
-                     classe_cadastro: str | None,
-                     universo: frozenset[str] | set[str] | None = None) -> str:
-    """``stock_us`` ou ``etf_intl`` para um ativo em dólar.
+def classe_por_evidencia(ticker: str | None, nome: str | None,
+                         classe_cadastro: str | None,
+                         universo: frozenset[str] | set[str] | None = None,
+                         ) -> str | None:
+    """``stock_us``, ``etf_intl`` ou ``None`` quando nada aponta para um lado.
 
     ``universo`` existe para teste; sem ele, lê o arquivo publicado.
     """
@@ -78,8 +83,18 @@ def classe_ativo_usd(ticker: str | None, nome: str | None,
         return ACAO_EUA
     if t in ETFS_CONHECIDOS or _RE_FUNDO.search(n):
         return ETF_EXTERIOR
-    if n and n.upper() != t and _RE_EMPRESA.search(n):
-        return ACAO_EUA
     if (classe_cadastro or "").strip().lower() in {"stock", "stock_us"}:
         return ACAO_EUA
-    return ETF_EXTERIOR
+    if _RE_GESTORA.search(n):
+        return ETF_EXTERIOR
+    if n and n.upper() != t and _RE_EMPRESA.search(n):
+        return ACAO_EUA
+    return None
+
+
+def classe_ativo_usd(ticker: str | None, nome: str | None,
+                     classe_cadastro: str | None,
+                     universo: frozenset[str] | set[str] | None = None) -> str:
+    """``stock_us`` ou ``etf_intl`` para um ativo em dólar; sem sinal, ETF."""
+    return (classe_por_evidencia(ticker, nome, classe_cadastro, universo)
+            or ETF_EXTERIOR)

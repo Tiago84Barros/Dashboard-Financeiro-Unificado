@@ -83,6 +83,9 @@ def test_acao_cadastrada_como_etf_vira_acoes_eua_no_grafico_por_classe():
     ("SPY", "SPY", "stock", "etf_intl"),                 # ETF conhecido
     ("XYZQ", "Some Bond ETF", "stock", "etf_intl"),      # nome de fundo
     ("XYZQ", "XYZQ", "etf", "etf_intl"),                 # sem sinal: ETF
+    ("SCHW", "The Charles Schwab Corporation", "stock", "stock_us"),
+    ("WT", "WisdomTree, Inc.", "stock", "stock_us"),     # gestora, mas empresa
+    ("XYZQ", "Vanguard Total Market", "etf", "etf_intl"),  # marca de gestora
     ("XYZQ", None, None, "etf_intl"),
 ])
 def test_classe_ativo_usd(ticker, nome, classe, esperado):
@@ -100,6 +103,9 @@ def test_universo_publicado_tem_acoes_e_nao_tem_etfs():
     ("stock", "AAPL", "Apple Inc", "stock_us"),
     ("etf", "MELI", "MercadoLibre Inc", "stock_us"),
     ("etf", "SPY", "SPDR S&P 500 ETF Trust", "etf_intl"),
+    ("", "SPY", None, "etf_intl"),                       # tipo ausente, ETF
+    ("", "AAPL", "Apple Inc", "stock_us"),
+    (None, "XYZQ", "XYZQ", "other"),                     # sem sinal: desconhecido
 ])
 def test_snapshot_do_exterior_separa_acao_de_etf(raw, ticker, nome, esperado):
     assert investimentos._class_key_from_snapshot(raw, ticker, "US", nome) \
