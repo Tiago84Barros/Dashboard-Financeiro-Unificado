@@ -739,7 +739,11 @@ def test_selic_neutro_e_levar_e_explica_o_selic():
 
 def test_manchete_da_carteira_e_a_resposta_e_nomeia_a_excecao():
     from core.tesouro_venda import (
-        LEVAR, VENDER, manchete_do_veredito, veredito_da_carteira)
+        LEVAR,
+        VENDER,
+        manchete_do_veredito,
+        veredito_da_carteira,
+    )
     boa = _oferta("PRE2031", "Tesouro Prefixado 2031", date(2031, 1, 1), 0.90)
     levar = [_agio("Tesouro Prefixado 2029", "A"), _agio("Tesouro IPCA+ 2032", "B")]
     assert manchete_do_veredito(levar) == "Leve os 2 títulos até o vencimento"
