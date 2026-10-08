@@ -64,6 +64,21 @@ _ROTULO = {
     SEM_PRECO: "Sem preço de mercado",
 }
 
+# A resposta à pergunta de quem abre a sub-aba: levar até o vencimento ou
+# vender antes. Ela sai da mesma régua que a tela já afirmava — a taxa de
+# indiferença contra a melhor oferta do dia —, só que dita com todas as letras.
+# Deixar o leitor cruzar indiferença com cardápio de cabeça foi o que fez a tela
+# parecer uma planilha sem resposta.
+LEVAR = "LEVAR"
+VENDER = "VENDER"
+SEM_RESPOSTA = "SEM_RESPOSTA"
+
+_ROTULO_VEREDITO = {
+    LEVAR: "Leve até o vencimento",
+    VENDER: "Vale vender e reaplicar",
+    SEM_RESPOSTA: "Sem preço de hoje para decidir",
+}
+
 
 _PREFIXO_TAXA = {
     "IPCA": "IPCA + ",
@@ -134,6 +149,10 @@ class LeituraVenda:
 
     projecao: ProjecaoCarrego
     frase: str
+
+    veredito: str
+    veredito_rotulo: str
+    veredito_motivo: str
 
 
 def _melhor_alternativa(
@@ -208,6 +227,62 @@ def _frase(situacao: str, *, indexador: str, liquidez_diaria: bool,
             "indiferença: trocar termina abaixo de carregar.")
 
 
+def _veredito(situacao: str, *, indexador: str, liquidez_diaria: bool,
+              supera: bool | None, alternativa: dict | None,
+              taxa_indiferenca: float | None, vencimento: date | None,
+              ganho_liquido: float | None,
+              imposto_antecipado: float | None) -> tuple[str, str]:
+    """Levar ou vender, e o motivo em uma frase.
+
+    Vender só ganha de carregar quando o dinheiro tem para onde ir rendendo
+    mais que a taxa de indiferença — é a única régua que já desconta o imposto
+    antecipado e a marcação. Sem oferta que passe dela, o ágio não paga a troca
+    e o deságio seria perda realizada; nos dois casos a resposta é carregar.
+    """
+    if situacao == SEM_PRECO:
+        return SEM_RESPOSTA, ("A curva do Tesouro do dia não tem este título: "
+                              "sem o preço de recompra de hoje não há como "
+                              "comparar vender com carregar.")
+
+    alvo = rotulo_taxa(indexador, taxa_indiferenca)
+    prazo = f" até {vencimento:%m/%Y}" if vencimento else ""
+    if supera and alternativa is not None:
+        return VENDER, (
+            f"Vendendo hoje e comprando {rotulo_alternativa(alternativa)} a "
+            f"{rotulo_taxa(indexador, alternativa.get('buy_rate_dec'))}, você "
+            f"termina acima de carregar: a troca precisa render mais de {alvo}"
+            f"{prazo}, e essa oferta passa disso.")
+
+    if situacao == DESAGIO:
+        perda = (f" de {_reais_simples(abs(ganho_liquido))}"
+                 if ganho_liquido is not None else "")
+        return LEVAR, (f"Vender hoje realizaria a perda{perda} da marcação; "
+                       "carregando até o vencimento você recebe a taxa que "
+                       "contratou.")
+    if situacao == NEUTRA:
+        if liquidez_diaria:
+            return LEVAR, ("Tesouro Selic quase não marca: vender antes não "
+                           "rende nada a mais e só antecipa "
+                           f"{_reais_simples(imposto_antecipado)} de imposto. "
+                           "Venda só quando precisar do dinheiro.")
+        return LEVAR, ("A marcação de hoje é praticamente zero: vender antes "
+                       f"só anteciparia {_reais_simples(imposto_antecipado)} "
+                       "de imposto.")
+
+    # Ágio sem destino que o pague.
+    premio = (f"O ágio de hoje ({_reais_simples(ganho_liquido)} depois do IR) "
+              if ganho_liquido is not None else "O ágio de hoje ")
+    if alternativa is None:
+        return LEVAR, (premio + "não compensa sozinho: vender só valeria "
+                       f"reaplicando a mais de {alvo}{prazo}, e o Tesouro não "
+                       "oferta hoje título do mesmo indexador com prazo igual "
+                       "ou maior para isso.")
+    return LEVAR, (premio + "não compensa: vender só valeria reaplicando a "
+                   f"mais de {alvo}{prazo}, e a melhor oferta de hoje paga "
+                   f"{rotulo_taxa(indexador, alternativa.get('buy_rate_dec'))} "
+                   f"({rotulo_alternativa(alternativa)}).")
+
+
 def ler_venda(titulo, *, data_avaliacao: date,
               cardapio: Sequence[dict] = ()) -> LeituraVenda:
     """Monta a leitura de venda de um `core.tesouro_posicao.TituloAnalitico`.
@@ -260,6 +335,11 @@ def ler_venda(titulo, *, data_avaliacao: date,
         supera = alternativa["buy_rate_dec"] > indiferenca
 
     liquidez = titulo.indexador == "SELIC"
+    veredito, motivo = _veredito(
+        situacao, indexador=titulo.indexador, liquidez_diaria=liquidez,
+        supera=supera, alternativa=alternativa, taxa_indiferenca=indiferenca,
+        vencimento=titulo.vencimento, ganho_liquido=ganho_liquido,
+        imposto_antecipado=projecao.imposto_antecipado)
     return LeituraVenda(
         security_key=titulo.security_key,
         titulo=titulo.titulo,
@@ -287,6 +367,9 @@ def ler_venda(titulo, *, data_avaliacao: date,
         frase=_frase(situacao, indexador=titulo.indexador,
                      liquidez_diaria=liquidez, supera=supera,
                      alternativa=alternativa),
+        veredito=veredito,
+        veredito_rotulo=_ROTULO_VEREDITO[veredito],
+        veredito_motivo=motivo,
     )
 
 
@@ -371,43 +454,57 @@ def frase_do_destaque(leitura: LeituraVenda | None) -> str:
             "supera a taxa de indiferença.")
 
 
-def frase_da_carteira(resumo: dict) -> str:
-    """A leitura de topo, tirada do medido e não de texto fixo.
+def veredito_da_carteira(leituras: Sequence[LeituraVenda]) -> str:
+    """O tom da carteira: basta um título valendo a troca para pedir atenção."""
+    if any(lv.veredito == VENDER for lv in leituras):
+        return VENDER
+    if leituras and all(lv.veredito == SEM_RESPOSTA for lv in leituras):
+        return SEM_RESPOSTA
+    return LEVAR
 
-    Existe porque o número grande sozinho não diz se é muito ou pouco: R$ 173
-    de ágio líquido podem ser um prêmio e tanto numa posição de R$ 5 mil e
-    ruído numa de R$ 108 mil. A frase ancora o valor na posição e diz se a
-    marcação muda alguma decisão hoje — e quando não muda, diz isso, em vez de
-    deixar a tela sugerindo movimento que ela não sustenta.
+
+def frase_do_veredito(leituras: Sequence[LeituraVenda]) -> str:
+    """Por que a resposta é essa — a régua, dita uma vez para a carteira."""
+    if not leituras:
+        return "Nada a decidir."
+    if all(lv.veredito == SEM_RESPOSTA for lv in leituras):
+        return ("A curva do Tesouro do dia ainda não foi coletada: os valores "
+                "são os do extrato, e sem o preço de recompra de hoje não há "
+                "como comparar vender com carregar.")
+    regra = ("Vender antes só compensa se o dinheiro for para algo que renda "
+             "mais do que o título já entrega até o vencimento, descontado o "
+             "imposto que a venda antecipa.")
+    if any(lv.veredito == VENDER for lv in leituras):
+        return regra + (" Há oferta do Tesouro hoje que passa dessa conta — o "
+                        "card do título diz qual.")
+    return regra + (" Nenhuma oferta do Tesouro hoje passa dessa conta; o "
+                    "motivo de cada título está no card dele.")
+
+
+def manchete_do_veredito(leituras: Sequence[LeituraVenda]) -> str:
+    """A resposta da carteira inteira, numa linha.
+
+    "Leve todos até o vencimento" quando é o que vale para todos; quando algum
+    título vale a troca, ele é nomeado — a manchete não pode esconder a
+    exceção atrás de uma contagem.
     """
-    if not resumo.get("titulos"):
-        return ("Sem títulos do Tesouro Direto na carteira — nada a marcar a "
-                "mercado.")
-    if not resumo.get("marcados"):
-        return ("Nenhum título tem preço de mercado hoje: os valores vêm do "
-                "extrato importado, na data em que ele foi gerado. Sem a curva "
-                "do dia não há marcação a mercado para avaliar.")
-
-    liquido = resumo.get("ganho_mtm_liquido") or 0.0
-    pct = resumo.get("mtm_pct")
-    relevante = pct is not None and abs(pct) >= LIMIAR_MARCACAO
-    base = ("É o que sobraria da marcação se você vendesse hoje a posição "
-            "inteira, já descontado o imposto sobre o ganho")
-    if pct is not None:
-        base += f" — {abs(pct) * 100:.2f}%".replace(".", ",") + " da posição marcada"
-    base += "."
-
-    if not relevante:
-        return (base + " Nenhum título está com ágio relevante: hoje a marcação "
-                "não muda a decisão, e o que pesa em vender é antecipar o "
-                f"imposto ({_reais_simples(resumo.get('imposto_antecipado'))}).")
-    if liquido > 0:
-        return (base + " Há ágio a realizar, mas ele só vira vantagem se o "
-                "dinheiro for para algo que renda mais que a taxa de "
-                "indiferença de cada título — ela está em cada card abaixo.")
-    return (base + " A posição está marcada abaixo da curva dos seus lotes: "
-            "vender agora realizaria o deságio, enquanto carregar até o "
-            "vencimento entrega a taxa que você contratou.")
+    if not leituras:
+        return "Sem títulos do Tesouro Direto na carteira"
+    vender = [lv for lv in leituras if lv.veredito == VENDER]
+    sem = [lv for lv in leituras if lv.veredito == SEM_RESPOSTA]
+    if vender:
+        nomes = ", ".join(lv.titulo for lv in vender)
+        return f"Vale vender {nomes}" + (
+            "; os demais, leve até o vencimento"
+            if len(vender) < len(leituras) - len(sem) else "")
+    if len(sem) == len(leituras):
+        return "Sem preço de hoje para decidir"
+    if sem:
+        return (f"Leve até o vencimento — {len(sem)} "
+                f"título{'s' if len(sem) != 1 else ''} sem preço de hoje")
+    if len(leituras) == 1:
+        return "Leve até o vencimento"
+    return f"Leve os {len(leituras)} títulos até o vencimento"
 
 
 def _reais_simples(valor: float | None) -> str:

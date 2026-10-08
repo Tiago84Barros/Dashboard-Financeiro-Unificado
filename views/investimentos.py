@@ -4522,216 +4522,16 @@ def render() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Tesouro Direto — marcação a mercado a partir do Extrato Analítico
+# Sub-aba Tesouro Direto — a resposta primeiro
 #
-# Este bloco só aparece quando existem lotes importados. Sem o Extrato
-# Analítico não há taxa contratada por lote, e sem ela qualquer "MtM" seria a
-# diferença entre mercado e custo — que mistura carrego com marcação. A recusa
-# anterior da tela estava certa; o que mudou foi a entrada de dado, não a régua.
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _vertices_prefixados(ofertados, hoje):
-    """Prefixados zero-cupom vivos: o vértice mais curto e o mais longo."""
-    if ofertados is None or ofertados.empty:
-        return None, None
-    nomes = ofertados["title_name"].astype(str).str.lower()
-    vivos = ofertados[nomes.str.startswith("tesouro prefixado")
-                      & ~nomes.str.contains("juros semestrais")
-                      & (ofertados["maturity_date"] > hoje)]
-    if vivos.empty:
-        return None, None
-    linhas = sorted(vivos.to_dict("records"), key=lambda r: r["maturity_date"])
-    return linhas[0], linhas[-1]
-
-
-def _bloco_tesouro_mtm(titulos=None, *, engine=None, data_curva=None,
-                       ofertados=None) -> list:
-    """Renderiza a conta completa da marcação e devolve os títulos avaliados.
-
-    Aceita o contexto já carregado porque o painel de decisão o carrega antes,
-    para responder "dá para vender?" no alto da tela. Recarregar aqui daria
-    dois números para o mesmo título — e a divergência não apareceria, porque
-    cada um sairia num lugar diferente da mesma página.
-    """
-    from datetime import date as _date_hoje
-
-    try:
-        from core.config import settings
-        from core.database import get_engine
-        from core.tesouro_curva import (
-            curva_disponivel,
-            indexador_do_titulo,
-            indice_implicito,
-            titulos_ofertados,
-        )
-        from core.tesouro_posicao import carregar_titulos
-        from design import tesouro_mtm_cards as _cards
-    except Exception:
-        return []
-
-    hoje = _date_hoje.today()
-
-    if titulos is None:
-        engine = get_engine()
-        owner = getattr(settings, "OWNER_USER_ID", None)
-        if engine is None or not owner:
-            return []
-        titulos = carregar_titulos(engine, owner)
-        if not titulos:
-            return []
-        data_curva = curva_disponivel(engine)
-        ofertados = titulos_ofertados(engine)
-    elif not titulos:
-        return []
-
-    _secao_titulo_orig(
-        "🎯", "Marcação a Mercado — Extrato Analítico",
-        f"{len(titulos)} título{'s' if len(titulos) != 1 else ''} com taxa contratada por lote"
-    )
-    detalhe_tecnico(
-        "Curva do Tesouro de " + (data_curva.strftime('%d/%m/%Y') if data_curva
-                                  else "data indisponível (ainda não ingerida)"),
-        codigo="investimentos.tesouro.data_curva",
-    )
-
-    if data_curva is None:
-        aviso_lacuna(
-            "A curva oficial do Tesouro ainda não foi ingerida: os valores são os do "
-            "extrato, na data em que ele foi gerado. Rodar update_tesouro_curva para "
-            "marcar a mercado com o preço de hoje.",
-            codigo="tela.investimentos.tesouro_sem_curva",
-        )
-        st.warning("Os valores abaixo são os do extrato, não os de hoje.", icon="⚠️")
-    elif (hoje - data_curva).days > 5:
-        aviso_lacuna(
-            f"A curva mais recente é de {data_curva.strftime('%d/%m/%Y')} — "
-            f"{(hoje - data_curva).days} dias atrás.",
-            codigo="tela.investimentos.tesouro_curva_velha",
-        )
-        st.warning("A marcação abaixo não usa o preço de hoje.", icon="🕒")
-
-    bruto = sum(t.valor_bruto or 0.0 for t in titulos)
-    investido = sum(t.valor_investido for t in titulos)
-    liquido = sum(t.valor_liquido or 0.0 for t in titulos)
-    ganho_mtm = sum(t.ganho_mtm_reais or 0.0 for t in titulos if t.ganho_mtm_reais is not None)
-    marcados = [t for t in titulos if t.marcado_a_mercado]
-    base_mtm = sum((t.valor_bruto or 0.0) - (t.ganho_mtm_reais or 0.0) for t in marcados)
-    mtm_pct = (ganho_mtm / base_mtm) if base_mtm > 0 else None
-    cor_mtm = _COR_NEUTRO if mtm_pct is None else (_COR_POSITIVO if mtm_pct >= 0 else _COR_NEGATIVO)
-
-    k1, k2, k3, k4 = st.columns(4, gap="small")
-    with k1:
-        st.markdown(_kpi("Bruto Hoje", fmt_moeda(bruto),
-                         f"Custo de {fmt_moeda(investido)}", "var(--app-text)"),
-                    unsafe_allow_html=True)
-    with k2:
-        st.markdown(_kpi("Líquido se Resgatar Hoje", fmt_moeda(liquido),
-                         f"Já sem {fmt_moeda(bruto - liquido)} de IR, IOF e taxas",
-                         _COR_INFO), unsafe_allow_html=True)
-    with k3:
-        st.markdown(_kpi("Ganho de Marcação",
-                         f"{'+' if ganho_mtm >= 0 else ''}{fmt_moeda(ganho_mtm)}",
-                         f"{len(marcados)} de {len(titulos)} títulos com preço de mercado",
-                         cor_mtm), unsafe_allow_html=True)
-    with k4:
-        st.markdown(_kpi("MtM da Posição",
-                         f"{mtm_pct * 100:+.2f}%" if mtm_pct is not None else "Indisponível",
-                         "Preço de hoje ÷ preço pela taxa contratada − 1",
-                         cor_mtm), unsafe_allow_html=True)
-
-    st.caption(
-        "A marcação isola o efeito da **taxa**: é o preço de mercado de hoje contra o preço que "
-        "o mesmo título teria hoje pela taxa que você contratou. Ela não é o seu retorno — o "
-        "carrego já corrido está no bruto, não aqui."
-    )
-
-    # ── Conjuntura, datada ────────────────────────────────────────────────────
-    pre_curto, pre_longo = _vertices_prefixados(ofertados, hoje)
-    inflacao = indice_implicito(ofertados, "IPCA", pre_longo["maturity_date"]) if pre_longo else None
-
-    # `public.macro` é **anual**: serve de referência rotulada pelo ano, nunca
-    # como leitura de hoje. Só a Selic entra — `load_macro_history` normaliza
-    # essa coluna para fração e o resto vem do banco como está gravado, então
-    # exibir IPCA aqui seria adivinhar a unidade.
-    macro_ano = None
-    try:
-        from core.b3_db import load_macro_history
-        historico = load_macro_history()
-        if historico:
-            ano = max(historico)
-            selic = historico[ano].get("selic")
-            macro_ano = {"ano": ano,
-                         "selic": selic * 100 if selic is not None else None}
-    except Exception:
-        macro_ano = None
-
-    st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown(_cards.card_conjuntura_html(
-        data_curva=data_curva, pre_curto=pre_curto, pre_longo=pre_longo,
-        inflacao_implicita=inflacao, macro_ano=macro_ano,
-    ), unsafe_allow_html=True)
-
-    # ── Um card por título, com veredito contra alternativa nomeada ───────────
-    for titulo in titulos:
-        st.markdown(_cards.card_titulo_html(titulo), unsafe_allow_html=True)
-
-        candidatos = []
-        if ofertados is not None and not ofertados.empty:
-            for linha in ofertados.to_dict("records"):
-                if linha.get("security_key") == titulo.security_key:
-                    continue
-                if indexador_do_titulo(linha.get("title_name")) != titulo.indexador:
-                    continue
-                venc_alt = linha.get("maturity_date")
-                if not venc_alt or venc_alt < titulo.vencimento:
-                    continue
-                if linha.get("buy_rate_dec") is None or pd.isna(linha["buy_rate_dec"]):
-                    continue
-                candidatos.append(linha)
-        candidatos.sort(key=lambda r: r["maturity_date"])
-
-        rotulos = ["— escolha uma alternativa —"] + [
-            f"{c['title_name']} {c['maturity_date'].strftime('%d/%m/%Y')} "
-            f"({c['buy_rate_dec'] * 100:.2f}% na compra)" for c in candidatos
-        ]
-        escolha = st.selectbox(
-            f"Comparar {titulo.titulo} com:", rotulos,
-            key=f"tesouro_alt_{titulo.security_key}",
-            help=("Só entram títulos do mesmo indexador e com vencimento igual ou posterior: "
-                  "comparar ágio de Selic com taxa cheia de prefixado somaria grandezas "
-                  "diferentes, e pernas que terminam em datas diferentes não se comparam."),
-        )
-        posicao = rotulos.index(escolha) - 1
-        alternativa = candidatos[posicao] if posicao >= 0 else None
-
-        comparacao = titulo.comparar(
-            alternativa["buy_rate_dec"] if alternativa is not None else None,
-            data_avaliacao=data_curva or hoje,
-        )
-        st.markdown(_cards.card_veredito_html(
-            titulo, comparacao, alternativa=(escolha if alternativa is not None else None),
-        ), unsafe_allow_html=True)
-
-        if alternativa is not None and alternativa["maturity_date"] > titulo.vencimento:
-            st.caption(
-                f"A alternativa vence em {alternativa['maturity_date'].strftime('%d/%m/%Y')}, "
-                f"depois deste título. A conta a leva até {titulo.vencimento.strftime('%d/%m/%Y')} "
-                "pela taxa de hoje — na prática seria uma venda antecipada, sujeita à marcação "
-                "daquele dia, que ninguém sabe hoje."
-            )
-
-    return titulos
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# Sub-aba Tesouro Direto — a decisão primeiro, a conta depois
-#
-# A tela antiga abria com oito KPIs e dois cards por título, em duas linguagens
-# visuais, e a pergunta de quem tem o papel — "dá para vender pela marcação, e
-# vale?" — não aparecia em lugar nenhum. A ordem aqui é a da decisão: o que a
-# marcação vale hoje líquida, quanto cada título entrega se for até o fim, o
-# veredito por título com a taxa de indiferença e a oscilação já vivida. A
-# conta inteira continua na tela, dentro do expander, porque ela é a prova.
+# A pergunta de quem tem o papel é uma só: "levo até o vencimento ou vendo
+# antes, pela marcação?". A tela abre com o veredito, depois o veredito por
+# título com o motivo numa frase, e só então os números e gráficos. A "conta
+# completa" que vinha num expander (KPIs de marcação, conjuntura, comparação
+# com alternativa escolhida à mão, mercado × custo) saiu a pedido do usuário em
+# 08/10/2026: repetia a mesma conta em outras linguagens e não mudava a
+# resposta. A melhor alternativa do dia já entra no veredito sozinha.
+# Sem o Extrato Analítico, mercado × custo continua sendo o que a sub-aba mostra.
 # ══════════════════════════════════════════════════════════════════════════════
 
 @user_cache_data(ttl=1800)
@@ -4912,7 +4712,7 @@ def _tesouro_analise_por_titulo(tesouros, mtm_por_chave, *, tem_mtm, ano_atual) 
 
 
 def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
-    """A sub-aba inteira: passível de venda a mercado, e de quanto é a vantagem.
+    """A sub-aba inteira: levar até o vencimento ou vender antes, e por quê.
 
     Devolve ``False`` — e não renderiza nada — quando o Extrato Analítico não
     está importado. Sem a taxa contratada de cada lote não há marcação, e
@@ -4925,15 +4725,17 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
         from core.config import settings
         from core.database import get_engine
         from core.tesouro_curva import curva_disponivel, titulos_ofertados
-        from core.tesouro_historico import extremos_da_serie, serie_mtm_posicao
+        from core.tesouro_historico import serie_mtm_posicao
         from core.tesouro_mtm import trajetoria_carrego
         from core.tesouro_posicao import carregar_titulos
         from core.tesouro_venda import (
-            frase_da_carteira,
             frase_do_destaque,
+            frase_do_veredito,
             ler_venda,
             mais_vantajoso_de_vender,
+            manchete_do_veredito,
             resumo_da_carteira,
+            veredito_da_carteira,
         )
         from design import tesouro_painel as _painel
     except Exception:
@@ -4951,6 +4753,22 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
     data_curva = curva_disponivel(engine)
     ofertados = titulos_ofertados(engine)
 
+    # Na tela, os chips de procedência já dizem de que dia é o preço; o
+    # registro é para Configurações → Restrições não perder a lacuna.
+    if data_curva is None:
+        aviso_lacuna(
+            "A curva oficial do Tesouro ainda não foi ingerida: os valores são os do "
+            "extrato, na data em que ele foi gerado. Rodar update_tesouro_curva para "
+            "marcar a mercado com o preço de hoje.",
+            codigo="tela.investimentos.tesouro_sem_curva",
+        )
+    elif (hoje - data_curva).days > 5:
+        aviso_lacuna(
+            f"A curva mais recente é de {data_curva.strftime('%d/%m/%Y')} — "
+            f"{(hoje - data_curva).days} dias atrás.",
+            codigo="tela.investimentos.tesouro_curva_velha",
+        )
+
     # Cardápio do dia: só o que está de pé. `titulos_ofertados` devolve a
     # tabela inteira, vencidos incluídos, e um vencido entraria na comparação
     # como alternativa comprável.
@@ -4965,34 +4783,38 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
     resumo = resumo_da_carteira(leituras)
 
     _secao_titulo_orig(
-        "🏦", "Tesouro Direto — vender pela marcação ou levar ao vencimento",
+        "🏦", "Tesouro Direto — levar até o vencimento ou vender antes",
         f"{len(titulos)} título{'s' if len(titulos) != 1 else ''} "
         "com taxa contratada por lote",
     )
 
-    # ── Faixa 1: de que dia é o preço, de que dia é a posição, e o veredito ──
+    # ── A resposta: de que dia é o preço, e o veredito da carteira ───────────
     extrato = max((t.report_date for t in titulos if t.report_date), default=None)
     st.markdown(
         _painel.TD_CSS
         + _painel.estado_html(data_curva=data_curva, data_extrato=extrato, hoje=hoje)
-        + _painel.hero_html(resumo, frase=frase_da_carteira(resumo)),
+        + _painel.hero_html(resumo, veredito=veredito_da_carteira(leituras),
+                            manchete=manchete_do_veredito(leituras),
+                            frase=frase_do_veredito(leituras)),
         unsafe_allow_html=True,
     )
 
-    # ── Faixa 2: levar até o fim × vender hoje, título por título ────────────
+    # ── O veredito por título, com o motivo ──────────────────────────────────
+    _secao_titulo_orig("🎯", "Por título")
+    st.markdown(_painel.cards_html(leituras), unsafe_allow_html=True)
+
+    # ── Levar até o fim × vender hoje, lado a lado ───────────────────────────
     st.markdown("<br>", unsafe_allow_html=True)
     st.plotly_chart(_painel.fig_carregar_vs_vender(leituras),
                     width="stretch", config={"displayModeBar": False})
 
-    # ── Faixa 3: um card por título, com a taxa de indiferença ───────────────
-    pares = []
+    # ── O gráfico do título que o usuário escolher ──────────────────────────
     graficos = []
     for titulo, leitura in zip(titulos, leituras):
         serie = serie_mtm_posicao(
             titulo.lotes, vencimento=titulo.vencimento,
             cotacoes=_serie_marcacao(titulo.security_key, data_curva),
         )
-        pares.append((leitura, extremos_da_serie(serie)))
         trajetoria = trajetoria_carrego(
             leitura.projecao, data_avaliacao=data_avaliacao,
             vencimento=titulo.vencimento,
@@ -5000,11 +4822,6 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
         if serie or trajetoria:
             graficos.append((leitura, serie, trajetoria))
 
-    st.markdown("<br>", unsafe_allow_html=True)
-    _secao_titulo_orig("🎯", "Por título — dá para vender, e acima de quanto vale")
-    st.markdown(_painel.cards_html(pares), unsafe_allow_html=True)
-
-    # ── Faixa 4: o gráfico do título que o usuário escolher ─────────────────
     if graficos:
         st.markdown("<br>", unsafe_allow_html=True)
         _secao_titulo_orig(
@@ -5030,20 +4847,4 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
             _painel.fig_titulo(leitura, serie, trajetoria),
             width="stretch", config={"displayModeBar": False},
             key=f"td_fig_{leitura.security_key}")
-    st.markdown(_painel.legenda_html(), unsafe_allow_html=True)
-
-    # ── Faixa 5: a conta completa, fechada por padrão ────────────────────────
-    with st.expander(
-        "🔬 Ver a conta completa — curva, conjuntura e comparação com alternativa",
-        expanded=False,
-    ):
-        mtm_por_chave = {t.security_key: t.mtm_pct for t in titulos
-                         if getattr(t, "mtm_pct", None) is not None}
-        _bloco_tesouro_mtm(titulos, engine=engine, data_curva=data_curva,
-                           ofertados=ofertados)
-        st.markdown("<br>", unsafe_allow_html=True)
-        _tesouro_kpis_carteira(tesouros)
-        st.markdown("<br>", unsafe_allow_html=True)
-        _tesouro_analise_por_titulo(tesouros, mtm_por_chave,
-                                    tem_mtm=bool(mtm_por_chave), ano_atual=ano_atual)
     return True
