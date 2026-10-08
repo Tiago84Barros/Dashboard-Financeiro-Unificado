@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import core.investimentos as investimentos
-from core import stress_tests
+from core import classe_exterior, stress_tests
 from core.global_portfolio import carteira_real
 from core.inteligencia_ativos import calculos, fundamentos
 
@@ -55,3 +55,52 @@ def test_acoes_eua_entra_nos_mapas_de_classe():
     assert stress_tests._CLASSE_TO_SHOCK["Ações EUA"] == "shock_etf_intl"
     assert carteira_real.classe_global(pos) == "us"
     assert "Ações EUA" in investimentos._CLASSES_COM_PROVENTO
+
+
+# ── Cadastro com classe errada ──────────────────────────────────────────────
+# O importador de PDF da Nomad gravava todo ativo como "etf", e o cadastro
+# nunca é reescrito: a classe do banco não basta para separar ação de ETF.
+
+def _posicao_nomeada(ticker, asset_class, nome):
+    linha = _linha(ticker, asset_class)
+    linha.asset_name = nome
+    carteira = _carteira_vazia()
+    investimentos._adicionar_extras_ao_snapshot(carteira, [linha])
+    return carteira
+
+
+def test_acao_cadastrada_como_etf_vira_acoes_eua_no_grafico_por_classe():
+    carteira = _posicao_nomeada("MELI", "etf", "MERCADOLIBRE INC")
+    assert carteira["posicoes"][0]["classe"] == "Ações EUA"
+    nomes = {c["nome"] for c in carteira["por_classe"]}
+    assert nomes == {"Ações EUA"}
+
+
+@pytest.mark.parametrize("ticker,nome,classe,esperado", [
+    ("MELI", "MELI", "etf", "stock_us"),                 # universo da SEC
+    ("XYZQ", "Some Company Inc", "etf", "stock_us"),     # sufixo de empresa
+    ("XYZQ", "XYZQ", "stock", "stock_us"),               # cadastro de ação
+    ("SPY", "SPY", "stock", "etf_intl"),                 # ETF conhecido
+    ("XYZQ", "Some Bond ETF", "stock", "etf_intl"),      # nome de fundo
+    ("XYZQ", "XYZQ", "etf", "etf_intl"),                 # sem sinal: ETF
+    ("XYZQ", None, None, "etf_intl"),
+])
+def test_classe_ativo_usd(ticker, nome, classe, esperado):
+    assert classe_exterior.classe_ativo_usd(
+        ticker, nome, classe, universo={"MELI", "AAPL"}) == esperado
+
+
+def test_universo_publicado_tem_acoes_e_nao_tem_etfs():
+    universo = classe_exterior.universo_acoes_eua()
+    assert {"MELI", "AAPL"} <= universo
+    assert not {"SPY", "IEFA", "SGOV"} & universo
+
+
+@pytest.mark.parametrize("raw,ticker,nome,esperado", [
+    ("stock", "AAPL", "Apple Inc", "stock_us"),
+    ("etf", "MELI", "MercadoLibre Inc", "stock_us"),
+    ("etf", "SPY", "SPDR S&P 500 ETF Trust", "etf_intl"),
+])
+def test_snapshot_do_exterior_separa_acao_de_etf(raw, ticker, nome, esperado):
+    assert investimentos._class_key_from_snapshot(raw, ticker, "US", nome) \
+        == esperado

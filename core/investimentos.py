@@ -55,6 +55,7 @@ import re
 from collections import defaultdict
 
 from core.categorias import SQL_INVESTIMENTO
+from core.classe_exterior import classe_ativo_usd
 from core.config import settings
 from core.currency_returns import retorno_em_brl, retorno_moeda_origem
 from core.fx_aquisicao import cambio_medio_de_aquisicao, taxa_para
@@ -577,14 +578,15 @@ def _sem_cambio_historico(posicoes: list) -> list[str]:
 def _classe_extra(r) -> str:
     """Classe de uma posição USD fora do snapshot XP.
 
-    O importador da Nomad grava ``assets.class`` como ``stock`` ou ``etf``.
     Ação americana vira ``stock_us`` ("Ações EUA"), não ``stock`` ("Ações BR")
     nem ``etf_intl``: com o rótulo de ETF, a Inteligência dos Ativos lia MELI
     pelo catálogo de ETF e mostrava fundamentos, valuation e pares vazios.
-    Qualquer outra classe segue como ETF Internacional, o comportamento antigo.
+    Não basta ``assets.class``: o importador de PDF da Nomad gravava tudo como
+    ``etf``. A decisão está em ``core.classe_exterior``.
     """
-    classe = str(getattr(r, "asset_class", None) or "").strip().lower()
-    return "stock_us" if classe == "stock" else "etf_intl"
+    return classe_ativo_usd(getattr(r, "ticker", None),
+                            getattr(r, "asset_name", None),
+                            getattr(r, "asset_class", None))
 
 
 def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list,
@@ -870,6 +872,8 @@ def _carteira_real() -> dict:
             retorno_brl_disponivel = rentab is not None
 
         classe_raw = r.asset_class or "other"
+        if ccy == "USD" and classe_raw in {"etf", "etf_intl", "stock"}:
+            classe_raw = classe_ativo_usd(r.ticker, r.asset_name, r.asset_class)
         setor_raw  = r.sector or "other"
 
         total_investido += ti
@@ -1028,7 +1032,9 @@ def _class_key_from_snapshot(raw_type: str | None, ticker: str, country: str | N
     t = (ticker or "").upper().strip()
     c = (country or "BR").upper().strip()
     if c not in ("", "BR"):
-        return "etf_intl" if raw == "etf" else raw or "other"
+        if raw in {"etf", "etf_intl", "stock", "stock_us", ""}:
+            return classe_ativo_usd(t, nome, raw)
+        return raw or "other"
     if raw in {"renda_fixa", "fixed_income", "fundo_rf", "other", ""} and eh_fip(t, nome):
         return "fip"
     if raw == "tesouro":
