@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+from core.contexto_mercado import REGRA_CADEIA_TRANSMISSAO, REGRA_CONTEXTO_MERCADO
 from core.llm_b3 import _chat_complete, parse_chart_directives  # noqa: F401 (reexport)
 
 _MODEL_CHAT_DEFAULT = "gpt-4o-mini"
@@ -92,7 +92,8 @@ def chat_com_financas(context: str, history: Iterable[dict], user_message: str,
     """
     # Concatenação (NÃO str.format): o prompt contém chaves { } literais dos
     # exemplos de diretiva JSON, que o str.format interpretaria como campos.
-    system = _SYSTEM.replace("{regra_mercado}", REGRA_CONTEXTO_MERCADO) + (context or "")
+    system = (_SYSTEM.replace("{regra_mercado}", REGRA_CONTEXTO_MERCADO
+                              + "\n10. " + REGRA_CADEIA_TRANSMISSAO) + (context or ""))
     messages = [{"role": "system", "content": system}]
     for message in list(history)[-10:]:
         role = str(message.get("role") or "")
