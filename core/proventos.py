@@ -38,7 +38,7 @@ from collections import defaultdict
 from datetime import date as _date
 from datetime import timedelta as _timedelta
 
-from core.classe_exterior import classe_ativo_usd
+from core.classe_exterior import classe_ativo_usd, universo_acoes_eua
 from core.config import settings
 from core.user_context import user_cache_data
 
@@ -251,12 +251,15 @@ def _proventos_real() -> dict:
         return float(v) if v is not None else 0.0
 
     eventos = []
+    universo = None  # lido uma vez, e só se houver provento em dólar
     for r in rows:
         classe_raw = r.asset_class or "other"
         # Em dólar, "stock" e "etf" do cadastro não dizem Ações BR nem ETF da B3.
         if (getattr(r, "currency", None) or "BRL").upper() == "USD" \
                 and classe_raw in {"stock", "etf"}:
-            classe_raw = classe_ativo_usd(r.ticker, r.asset_name, r.asset_class)
+            if universo is None:
+                universo = universo_acoes_eua()
+            classe_raw = classe_ativo_usd(r.ticker, r.asset_name, r.asset_class, universo)
         tipo_raw   = r.type or "other"
         eventos.append({
             "id":              r.id,

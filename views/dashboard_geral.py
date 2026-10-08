@@ -1814,6 +1814,14 @@ def render() -> None:
         d.get("portfolio"),
         hoje,
     )
+    # Conta ou posição sem câmbio válido fica fora da soma; o total exibido é
+    # menor que o real e precisa dizer o que deixou de fora.
+    fora_do_total = pat.get("fora_do_total") or []
+    if fora_do_total:
+        mensagem = ("Fora do patrimônio por falta de câmbio válido: "
+                    + ", ".join(fora_do_total) + ".")
+        st.caption(f"⚠️ {mensagem}")
+        aviso_lacuna(mensagem, codigo="patrimonio.sem_cambio")
     # ══════════════════════════════════════════════════════════════════════════
     # BLOCO 0 — Leitura do mês
     # ══════════════════════════════════════════════════════════════════════════

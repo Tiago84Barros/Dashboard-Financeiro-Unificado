@@ -202,14 +202,32 @@ def test_resumo_do_financeiro_separa_classes_e_converte_dolar():
         ["Ações EUA", "ETF Internacional", "Ações BR", "ETF"]
     # mercado pelo câmbio de hoje (5): (60 + 40) * 5
     assert por_nome["Ações EUA"]["valor"] == 500.0
-    # custo: AAPL pelo câmbio da compra (4), MELI sem ele pelo de hoje (5)
-    assert por_nome["Ações EUA"]["rentab_mes_pct"] == round((500 - 450) / 450 * 100, 2)
+    # custo: AAPL pelo câmbio da compra (4), MELI sem ele pelo de hoje (5) --
+    # e então a rentabilidade da classe não existe: seria retorno em dólar
+    # com rótulo de real.
+    assert por_nome["Ações EUA"]["rentab_mes_pct"] is None
+    assert por_nome["Ações BR"]["rentab_mes_pct"] == 20.0
     assert por_nome["ETF Internacional"]["valor"] == 150.0
     assert por_nome["Ações BR"]["valor"] == 120.0
     assert por_nome["ETF"]["valor"] == 20.0          # duas carteiras, um ativo
     assert total == 790.0
     assert round(sum(c["pct_carteira"] for c in classes)) == 100
     assert num_ativos == 5
+
+
+def test_rentabilidade_da_classe_em_dolar_so_com_cambio_da_compra():
+    from core import financeiro
+
+    linhas = [
+        _posicao_db("2", "AAPL", "Apple Inc", "stock", "USD", 50.0, 60.0),
+        _posicao_db("3", "MELI", "MERCADOLIBRE INC", "etf", "USD", 50.0, 40.0),
+    ]
+    fx = {"AAPL": {"taxa_media": 4.0, "cobertura": 1.0},
+          "MELI": {"taxa_media": 6.0, "cobertura": 1.0}}
+    classes, _, _ = financeiro._resumo_por_classe(
+        linhas, universo={"AAPL", "MELI"}, fx_compra=fx, cambio_hoje=5.0)
+    # custo 50*4 + 50*6 = 500; mercado (60 + 40) * 5 = 500
+    assert classes[0]["rentab_mes_pct"] == 0.0
 
 
 def test_resumo_do_financeiro_sem_cambio_deixa_dolar_de_fora(monkeypatch):
@@ -236,8 +254,7 @@ def test_resumo_do_financeiro_usa_cambio_ao_vivo_sem_cotacao_no_banco(monkeypatc
     assert total == 330.0
 
 
-def test_visao_geral_sem_carteira_migrada_soma_patrimonio_em_reais(monkeypatch):
-    """v_net_worth soma dólar como real; o resumo converte contas e posições."""
+def _visao_geral_sem_carteira_migrada(monkeypatch, usd_brl_banco):
     import core.investimentos as inv_mod
     import core.proventos as prov_mod
     from core import classe_exterior, database, financeiro
@@ -272,7 +289,7 @@ def test_visao_geral_sem_carteira_migrada_soma_patrimonio_em_reais(monkeypatch):
             if "v_account_balance" in q:
                 return SimpleNamespace(fetchall=lambda: contas)
             if "USDBRL" in q:
-                return SimpleNamespace(scalar=lambda: 5.0)
+                return SimpleNamespace(scalar=lambda: usd_brl_banco)
             return SimpleNamespace(fetchall=lambda: [], fetchone=lambda: None)
 
     monkeypatch.setattr(financeiro.settings, "OWNER_USER_ID", "u")
@@ -283,12 +300,28 @@ def test_visao_geral_sem_carteira_migrada_soma_patrimonio_em_reais(monkeypatch):
     monkeypatch.setattr(classe_exterior, "universo_acoes_eua",
                         lambda: frozenset({"AAPL"}))
 
-    dados = financeiro._visao_geral_real()
+    return financeiro._visao_geral_real()
+
+
+def test_visao_geral_sem_carteira_migrada_soma_patrimonio_em_reais(monkeypatch):
+    """v_net_worth soma dólar como real; o resumo converte contas e posições."""
+    dados = _visao_geral_sem_carteira_migrada(monkeypatch, 5.0)
     assert dados["patrimonio"]["investido"] == 420.0     # 120 + 60 * 5
     assert dados["patrimonio"]["saldo_bancario"] == 1000.0
     assert dados["patrimonio"]["total"] == 1420.0
+    assert dados["patrimonio"]["fora_do_total"] == ["Wise (EUR)"]
     nomes = [c["nome"] for c in dados["classes_ativo"]]
     assert nomes == ["Ações EUA", "Ações BR"]
+
+
+def test_visao_geral_nomeia_o_que_ficou_fora_sem_cambio(monkeypatch):
+    """Sem USDBRL no banco nem no yfinance, o total encolhe -- e diz por quê."""
+    monkeypatch.setattr(investimentos, "_get_usd_brl_live", lambda: None)
+    dados = _visao_geral_sem_carteira_migrada(monkeypatch, None)
+    assert dados["patrimonio"]["saldo_bancario"] == 800.0
+    assert dados["patrimonio"]["investido"] == 120.0
+    assert dados["patrimonio"]["fora_do_total"] == \
+        ["Nomad (USD)", "Wise (EUR)", "AAPL (USD)"]
 
 
 def test_migration_081_views_em_reais_preservam_contrato_da_007():
@@ -322,6 +355,9 @@ def test_migration_081_views_em_reais_preservam_contrato_da_007():
     assert "fx.taxa >= 2.0" in sql                      # câmbio corrompido fica fora
     assert "WHEN 'USD' THEN fx.taxa" in sql              # conta em dólar convertida
     assert "HAVING count(*) = count(taxa)" in sql        # só cobertura total
+    assert "q.close >= 2.0" in sql                       # taxa histórica corrompida
+    assert "z.saldo <= 0.0001" in sql                    # só o lote atual
+    assert "bool_or(custo_estimado)" in sql              # sem retorno com custo estimado
     assert "::VARCHAR(50) AS asset_class" in sql         # mesmo tipo da 007
 
 
@@ -334,10 +370,12 @@ def test_saldo_bancario_converte_dolar_e_deixa_fora_moeda_sem_cotacao():
         SimpleNamespace(account_name="Sem moeda", currency=None, current_balance=10),
         SimpleNamespace(account_name="Wise", currency="EUR", current_balance=50),
     ]
-    assert financeiro._saldo_bancario_brl(contas, 5.0) == 2010.0
-    # câmbio ausente ou corrompido: o dólar sai em vez de entrar como real
-    assert financeiro._saldo_bancario_brl(contas, None) == 1010.0
-    assert financeiro._saldo_bancario_brl(contas, 0.19) == 1010.0
+    assert financeiro._saldo_bancario_brl(contas, 5.0) == (2010.0, ["Wise (EUR)"])
+    # câmbio ausente ou corrompido: o dólar sai em vez de entrar como real,
+    # e sai nomeado
+    fora = ["Nomad (USD)", "Wise (EUR)"]
+    assert financeiro._saldo_bancario_brl(contas, None) == (1010.0, fora)
+    assert financeiro._saldo_bancario_brl(contas, 0.19) == (1010.0, fora)
 
 
 def test_cambio_de_hoje_so_vai_ao_yfinance_sem_taxa_valida_no_banco(monkeypatch):

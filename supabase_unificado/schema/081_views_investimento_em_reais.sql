@@ -14,10 +14,15 @@
 -- Regra de câmbio, a mesma de core/investimentos.py e core/financeiro.py:
 --   * mercado pelo câmbio de hoje: último USDBRL de asset_quotes, válido se
 --     >= 2.0 (abaixo disso é cotação corrompida, não câmbio);
---   * custo pelo câmbio da compra: média das taxas USDBRL das compras
---     (janela de 5 dias para trás, como core/fx_aquisicao.py), ponderada pelo
---     custo, e só quando TODAS as compras do ativo acharam taxa -- cobertura
---     parcial daria um custo que não existiu; sem ela, câmbio de hoje;
+--   * custo pelo câmbio da compra: média das taxas USDBRL (>= 2.0, janela
+--     de 5 dias para trás) das compras do LOTE ATUAL, como
+--     core/fx_aquisicao.py. Lote atual = o que veio depois da última venda que
+--     zerou a posição; venda parcial tira a mesma fração de cada compra
+--     anterior, como o custo médio de positions.py. Só vale quando TODAS as
+--     compras do lote acharam taxa -- cobertura parcial daria um custo que não
+--     existiu; sem ela, o custo vai pelo câmbio de hoje e o retorno da classe
+--     (return_pct e unrealized_pnl) sai NULL, porque seria retorno em dólar
+--     com rótulo de real;
 --   * sem câmbio de hoje válido, a posição em dólar fica FORA da soma, e
 --     v_net_worth conta quantas ficaram em `usd_positions_without_fx`.
 --     O app tem o fallback do yfinance; a view não tem como buscá-lo.
@@ -54,33 +59,80 @@ WITH usd_brl_hoje AS (
     ORDER BY q.timestamp DESC
     LIMIT 1
 ),
-compras_usd AS (
+movs_usd AS (
+    -- Compras e vendas em dólar na ordem de positions.py::_compute.
     SELECT it.user_id,
            upper(a.ticker)               AS ticker,
+           lower(it.type)                AS tipo,
+           it.quantity                   AS qtd,
            it.quantity * it.unit_price   AS custo_usd,
-           fx.close                      AS taxa
+           it.transaction_date           AS data,
+           row_number() OVER w           AS ordem,
+           sum(CASE WHEN lower(it.type) = 'buy' THEN it.quantity
+                    ELSE -it.quantity END)
+               OVER (w ROWS UNBOUNDED PRECEDING) AS saldo_bruto
     FROM investment_transactions it
     JOIN assets a ON a.id = it.asset_id
+    WHERE lower(it.type) IN ('buy', 'sell')
+      AND upper(coalesce(a.currency, 'BRL')) = 'USD'
+      AND it.quantity > 0
+    WINDOW w AS (PARTITION BY it.user_id, upper(a.ticker)
+                 ORDER BY it.transaction_date, it.created_at, it.id)
+),
+saldo_usd AS (
+    -- Quantidade corrente com piso em zero: venda sem cobertura zera, como
+    -- em positions.py, em vez de deixar a quantidade negativa.
+    SELECT m.*,
+           m.saldo_bruto - LEAST(0, min(m.saldo_bruto) OVER (
+               PARTITION BY m.user_id, m.ticker ORDER BY m.ordem
+               ROWS UNBOUNDED PRECEDING))  AS saldo
+    FROM movs_usd m
+),
+lote_usd AS (
+    -- Só o lote atual: o que veio depois da última venda que zerou.
+    SELECT s.*,
+           sum(CASE WHEN s.tipo = 'sell' THEN ln(s.saldo / (s.saldo + s.qtd))
+                    ELSE 0 END) OVER (
+               PARTITION BY s.user_id, s.ticker ORDER BY s.ordem
+               ROWS UNBOUNDED PRECEDING)   AS ln_retido
+    FROM saldo_usd s
+    WHERE s.ordem > COALESCE((
+        SELECT max(z.ordem) FROM saldo_usd z
+        WHERE z.user_id = s.user_id AND z.ticker = s.ticker
+          AND z.tipo = 'sell' AND z.saldo <= 0.0001), 0)
+),
+compras_usd AS (
+    -- Venda parcial tira a mesma fração de tudo o que havia: o peso de uma
+    -- compra é seu custo vezes a fração retida pelas vendas posteriores,
+    -- exp(ln_retido final - ln_retido da compra).
+    SELECT l.user_id,
+           l.ticker,
+           l.custo_usd * exp(
+               last_value(l.ln_retido) OVER (
+                     PARTITION BY l.user_id, l.ticker ORDER BY l.ordem
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+               - l.ln_retido)            AS peso,
+           l.tipo,
+           fx.close                      AS taxa
+    FROM lote_usd l
     LEFT JOIN LATERAL (
         SELECT q.close
         FROM asset_quotes q
         JOIN assets fa ON fa.id = q.asset_id
-        WHERE fa.ticker = 'USDBRL'
-          AND q.close > 0
-          AND q.timestamp::date <= it.transaction_date
-          AND q.timestamp::date >= it.transaction_date - 5
+        WHERE l.tipo = 'buy'
+          AND fa.ticker = 'USDBRL'
+          AND q.close >= 2.0
+          AND q.timestamp::date <= l.data
+          AND q.timestamp::date >= l.data - 5
         ORDER BY q.timestamp DESC
         LIMIT 1
     ) fx ON TRUE
-    WHERE lower(it.type) = 'buy'
-      AND upper(coalesce(a.currency, 'BRL')) = 'USD'
-      AND it.quantity > 0
-      AND it.unit_price > 0
 ),
 usd_brl_compra AS (
     SELECT user_id, ticker,
-           sum(custo_usd * taxa) / sum(custo_usd) AS taxa
+           sum(peso * taxa) / NULLIF(sum(peso), 0) AS taxa
     FROM compras_usd
+    WHERE tipo = 'buy' AND peso > 0
     GROUP BY user_id, ticker
     HAVING count(*) = count(taxa)
 ),
@@ -98,7 +150,8 @@ posicoes AS (
                    THEN COALESCE(fc.taxa, fx.taxa) ELSE 1 END AS investido,
         pp.quantity * COALESCE(lq.close, pp.average_price)
             * CASE WHEN upper(a.currency) = 'USD'
-                   THEN fx.taxa ELSE 1 END                    AS mercado
+                   THEN fx.taxa ELSE 1 END                    AS mercado,
+        (upper(a.currency) = 'USD' AND fc.taxa IS NULL)       AS custo_estimado
     FROM portfolio_positions pp
     JOIN assets a ON a.id = pp.asset_id
     LEFT JOIN LATERAL (
@@ -119,19 +172,21 @@ SELECT
     COUNT(DISTINCT asset_id)                        AS asset_count,
     SUM(investido)                                  AS total_invested,
     SUM(mercado)                                    AS current_market_value,
-    SUM(mercado) - SUM(investido)                   AS unrealized_pnl,
-    ROUND(
+    CASE WHEN NOT bool_or(custo_estimado)
+         THEN SUM(mercado) - SUM(investido) END     AS unrealized_pnl,
+    CASE WHEN NOT bool_or(custo_estimado) THEN ROUND(
         (SUM(mercado) - SUM(investido)) * 100.0 / NULLIF(SUM(investido), 0),
         2
-    )                                               AS return_pct
+    ) END                                           AS return_pct
 FROM posicoes
 GROUP BY user_id, asset_class;
 
 COMMENT ON VIEW v_investment_summary IS
     'Posição consolidada por classe de ativo, em reais. '
     'Dólar: mercado pelo último USDBRL (>= 2.0), custo pelo câmbio médio das '
-    'compras (cobertura total) ou, sem ele, pelo de hoje; sem USDBRL válido a '
-    'posição fica fora. Em dólar, stock -> stock_us e etf -> etf_intl. '
+    'compras do lote atual (cobertura total) ou, sem ele, pelo de hoje -- e '
+    'então unrealized_pnl e return_pct da classe saem NULL; sem USDBRL válido '
+    'a posição fica fora. Em dólar, stock -> stock_us e etf -> etf_intl. '
     'current_market_value usa a cotação mais recente; fallback = average_price.';
 
 CREATE OR REPLACE VIEW v_net_worth

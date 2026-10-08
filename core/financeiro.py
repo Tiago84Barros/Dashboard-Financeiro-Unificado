@@ -83,7 +83,8 @@ def get_visao_geral() -> dict:
     Chaves retornadas:
         data_source       str   "real" | "mock" | "mock_fallback"
         mes_referencia    str
-        patrimonio        dict  (total, investido, saldo_bancario, delta_mes_pct, saude_score)
+        patrimonio        dict  (total, investido, saldo_bancario, delta_mes_pct, saude_score,
+                                 fora_do_total: o que ficou fora por falta de câmbio)
         fluxo_mes         dict  (receitas, despesas, economia, taxa_poupanca_pct, ...)
         historico_mensal  list  (6 meses: mes, receitas, despesas, economia, patrimonio)
         categorias_despesa list (nome, gasto, orcamento, pct_usado)
@@ -186,8 +187,9 @@ def _resumo_por_classe(linhas, universo=None, fx_compra=None,
     Posição em dólar entra em reais pela regra de ``core.investimentos``:
     mercado pelo câmbio de hoje (``usd_brl_rate`` da linha, senão yfinance),
     custo pelo câmbio da compra (``fx_compra``, de ``core.fx_aquisicao``) e,
-    sem ele, pelo de hoje. Sem câmbio válido a posição fica fora do resumo
-    -- somar dólar como real era o defeito da view.
+    sem ele, pelo de hoje -- e então a rentabilidade da classe sai ``None``.
+    Sem câmbio válido a posição fica fora do resumo -- somar dólar como real
+    era o defeito da view.
 
     ``universo`` e ``cambio_hoje`` existem para teste.
     """
@@ -212,16 +214,21 @@ def _resumo_por_classe(linhas, universo=None, fx_compra=None,
     for r in linhas:
         classe = r.asset_class or "other"
         investido, mercado = _f(r.total_invested), _f(r.current_market_value)
+        custo_estimado = False
         if (r.currency or "BRL").upper() == "USD":
             if cambio_hoje is None or cambio_hoje < 2.0:
                 continue
-            taxa_custo = taxa_para(fx_compra or {}, r.ticker) or cambio_hoje
+            taxa_compra = taxa_para(fx_compra or {}, r.ticker)
+            custo_estimado = taxa_compra is None
+            taxa_custo = taxa_compra or cambio_hoje
             investido, mercado = investido * taxa_custo, mercado * cambio_hoje
             if classe in {"stock", "etf"}:
                 if universo is None:
                     universo = universo_acoes_eua()
                 classe = classe_ativo_usd(r.ticker, r.asset_name, r.asset_class, universo)
-        g = grupos.setdefault(classe, {"ids": set(), "inv": 0.0, "val": 0.0})
+        g = grupos.setdefault(classe, {"ids": set(), "inv": 0.0, "val": 0.0,
+                                       "estimado": False})
+        g["estimado"] = g["estimado"] or custo_estimado
         g["ids"].add(r.asset_id)
         g["inv"] += investido
         g["val"] += mercado
@@ -233,7 +240,11 @@ def _resumo_por_classe(linhas, universo=None, fx_compra=None,
             "nome":           _CLASS_LABEL.get(classe, classe.title()),
             "valor":          g["val"],
             "pct_carteira":   round(g["val"] / total_val * 100, 1) if total_val > 0 else 0.0,
-            "rentab_mes_pct": round((g["val"] - g["inv"]) * 100 / g["inv"], 2) if g["inv"] else 0.0,
+            # None = indisponível: custo em dólar sem câmbio da compra faria
+            # deste o retorno em USD com rótulo de BRL.
+            "rentab_mes_pct": (None if g["estimado"]
+                               else round((g["val"] - g["inv"]) * 100 / g["inv"], 2)
+                               if g["inv"] else 0.0),
             "cor":            _CLASS_COR.get(classe, "#718096"),
         })
     return classes, sum(len(g["ids"]) for g in grupos.values()), total_val
@@ -248,13 +259,13 @@ def _cambio_hoje(taxa_banco) -> float | None:
     return _get_usd_brl_live()
 
 
-def _saldo_bancario_brl(contas, cambio_hoje) -> float:
-    """Saldo das contas de caixa em reais.
+def _saldo_bancario_brl(contas, cambio_hoje) -> tuple[float, list[str]]:
+    """(saldo das contas de caixa em reais, contas que ficaram fora).
 
     Conta em USD entra pelo câmbio de hoje. Em outra moeda (o banco só cota
-    USDBRL) ou em USD sem câmbio válido, fica fora da soma, com warning no
-    log -- a mesma regra da 081, que o resumo não pode pressupor aplicada:
-    sem ela, ``v_net_worth.bank_balance`` soma dólar como real.
+    USDBRL) ou em USD sem câmbio válido, fica fora da soma e é nomeada -- a
+    mesma regra da 081, que o resumo não pode pressupor aplicada: sem ela,
+    ``v_net_worth.bank_balance`` soma dólar como real.
     """
     total, fora = 0.0, []
     for c in contas:
@@ -269,7 +280,7 @@ def _saldo_bancario_brl(contas, cambio_hoje) -> float:
     if fora:
         logger.warning("[financeiro] sem câmbio: %s fora do saldo bancário",
                        ", ".join(fora))
-    return total
+    return total, fora
 
 
 def patrimonio_investido_confiavel(
@@ -448,7 +459,7 @@ def _visao_geral_real() -> dict:
     usa_dolar = any((r.currency or "").upper() == "USD"
                     for r in [*inv_rows, *contas])
     cambio_hoje = _cambio_hoje(usd_brl_banco) if usa_dolar else None
-    bank_balance = _saldo_bancario_brl(contas, cambio_hoje)
+    bank_balance, fora_do_total = _saldo_bancario_brl(contas, cambio_hoje)
     net_worth_total = bank_balance + investment_total
 
     carteira_migrada = None
@@ -475,6 +486,9 @@ def _visao_geral_real() -> dict:
             # ainda não tem o fallback do yfinance quando falta USDBRL.
             investment_total = total_resumo
             net_worth_total = bank_balance + investment_total
+            if not cambio_hoje or cambio_hoje < 2.0:
+                fora_do_total += sorted({f"{r.ticker} (USD)" for r in inv_rows
+                                         if (r.currency or "").upper() == "USD"})
 
     # ── Helpers ───────────────────────────────────────────────────────────
     def _f(v) -> float:
@@ -613,6 +627,8 @@ def _visao_geral_real() -> dict:
             "delta_mes_pct":   round(delta_mes_pct, 1),
             "delta_mes_valor": round(delta_mes_valor, 2),
             "saude_score":     saude_score,
+            # Nomeados, não somados: o total acima é menor que o real.
+            "fora_do_total":   fora_do_total,
         },
         "fluxo_mes": {
             "receitas":               receitas,
