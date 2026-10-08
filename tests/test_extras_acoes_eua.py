@@ -86,6 +86,12 @@ def test_acao_cadastrada_como_etf_vira_acoes_eua_no_grafico_por_classe():
     ("SCHW", "The Charles Schwab Corporation", "stock", "stock_us"),
     ("WT", "WisdomTree, Inc.", "stock", "stock_us"),     # gestora, mas empresa
     ("XYZQ", "Vanguard Total Market", "etf", "etf_intl"),  # marca de gestora
+    ("MSDL", "Morgan Stanley Direct Lending Fund", "stock", "stock_us"),
+    ("MSDL", "Morgan Stanley Direct Lending Fund", None, "etf_intl"),
+    ("PSA", "Public Storage", "etf", "stock_us"),         # REIT conhecido
+    ("XYZR", "EQUITY RESIDENTIAL", "etf", "stock_us"),    # termo de REIT
+    ("XYZR", "Some Realty Trust", None, "stock_us"),
+    ("GBTC", "Grayscale Bitcoin Trust", None, "etf_intl"),
     ("XYZQ", None, None, "etf_intl"),
 ])
 def test_classe_ativo_usd(ticker, nome, classe, esperado):
@@ -161,8 +167,9 @@ def test_script_regrava_so_acao_cadastrada_como_etf():
               {"id": "2", "ticker": "XYZQ", "name": "Some Company Inc"},
               {"id": "3", "ticker": "SPY", "name": "SPDR S&P 500 ETF Trust"},
               {"id": "4", "ticker": "IEFA", "name": "IEFA"},
-              {"id": "5", "ticker": "XYZW", "name": "XYZW"}]
+              {"id": "5", "ticker": "XYZW", "name": "XYZW"},
+              {"id": "6", "ticker": "EQR", "name": "EQUITY RESIDENTIAL"}]
     acoes, etfs = mod.separar(linhas, {"MELI", "AAPL"})
-    assert [a["ticker"] for a in acoes] == ["MELI", "XYZQ"]
+    assert [a["ticker"] for a in acoes] == ["MELI", "XYZQ", "EQR"]
     assert [e["ticker"] for e in etfs] == ["SPY", "IEFA", "XYZW"]
     assert "class = 'etf'" in mod.SQL_REGRAVA  # guarda de idempotência

@@ -15,7 +15,8 @@ Alvo (todas as condições)
 * ``currency = 'USD'`` e ``class = 'etf'``;
 * ``classe_ativo_usd(ticker, nome, None)`` diz ``stock_us`` -- o cadastro não
   entra no voto, porque é ele que está errado. Ativo sem sinal de ação
-  (ticker fora do universo da SEC e nome sem sufixo de empresa) fica ETF.
+  (ticker fora do universo da SEC e dos REITs conhecidos, nome sem sufixo de
+  empresa nem termo de REIT) fica ETF; nome com "Fund" também fica.
 
 Só existe o sentido ``etf`` → ``stock``. O inverso não é tocado: um
 ``stock`` em dólar fora do universo publicado pode ser ação legítima.

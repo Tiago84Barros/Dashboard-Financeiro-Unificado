@@ -12,12 +12,15 @@ A decisão, em ordem:
 
 1. ticker no universo de ações americanas do arquivo publicado
    (``data/public/valuation_historico.json.gz``, empresas da SEC; ETF não
-   entra lá) → ação;
-2. ticker de ETF conhecido, ou a palavra ETF/ETN/Fund no nome → ETF;
-3. cadastro dizendo ``stock`` → ação (antes da marca de gestora: "The
-   Charles Schwab Corporation" e "WisdomTree, Inc." são empresas);
-4. marca de gestora no nome (iShares, SPDR, Vanguard...) → ETF;
-5. nome com sufixo de empresa (Inc, Corp, Ltd, PLC...) → ação;
+   entra lá, e REIT também não -- ``publish_valuation_historico`` os
+   exclui) ou na lista de REITs conhecidos → ação;
+2. ticker de ETF conhecido, ou a palavra ETF/ETN no nome → ETF;
+3. cadastro dizendo ``stock`` → ação (antes da marca de gestora e de "Fund":
+   "The Charles Schwab Corporation", "WisdomTree, Inc." e "Morgan Stanley
+   Direct Lending Fund" são empresas);
+4. marca de gestora ou Fund/Index no nome (iShares, SPDR, Vanguard...) → ETF;
+5. nome de empresa: sufixo (Inc, Corp, Ltd, PLC...) ou termo de REIT
+   (Realty, Properties, Residential, Storage...) → ação;
 6. nenhum sinal → ETF, o comportamento antigo. ``classe_por_evidencia``
    para antes desta regra e devolve ``None``.
 """
@@ -40,15 +43,26 @@ ETFS_CONHECIDOS = frozenset({
     "JEPI", "JEPQ", "QQQM", "SPLG", "VGT", "IBIT", "FBTC", "ETHA",
 })
 
-_RE_FUNDO = re.compile(r"\b(ETF|ETN|FUND|INDEX)\b", re.IGNORECASE)
+# REITs americanos: fora do universo publicado, e vários sem sufixo de
+# empresa no nome ("Public Storage", "EQUITY RESIDENTIAL").
+REITS_CONHECIDOS = frozenset({
+    "O", "PSA", "EQR", "AVB", "SPG", "PLD", "AMT", "CCI", "EQIX", "DLR",
+    "VICI", "WELL", "VTR", "ARE", "MAA", "ESS", "UDR", "CPT", "INVH", "AMH",
+    "EXR", "CUBE", "NNN", "ADC", "STAG", "WPC", "KIM", "REG", "FRT", "BXP",
+    "VNO", "SLG", "HST", "IRM", "SBAC", "WY", "LAMR", "OHI", "MPW", "DOC",
+    "GLPI", "ELS", "SUI", "REXR", "EGP", "COLD", "NSA", "EPR", "STOR",
+})
+
+_RE_ETF = re.compile(r"\b(ETF|ETN)S?\b", re.IGNORECASE)
 _RE_GESTORA = re.compile(
     r"\b(ISHARES|SPDR|VANGUARD|INVESCO|PROSHARES|WISDOMTREE|DIREXION|"
-    r"GLOBAL X|SCHWAB)\b",
+    r"GLOBAL X|SCHWAB|GRAYSCALE|FUND|INDEX)\b",
     re.IGNORECASE,
 )
 _RE_EMPRESA = re.compile(
     r"\b(INC|INCORPORATED|CORP|CORPORATION|LTD|LIMITED|PLC|CO|COMPANY|"
-    r"HOLDINGS?|GROUP|N\.?V|S\.?A|AG|SE|ADR|ADS)\b\.?",
+    r"HOLDINGS?|GROUP|N\.?V|S\.?A|AG|SE|ADR|ADS|"
+    r"REIT|REALTY|PROPERTIES|RESIDENTIAL|STORAGE)\b\.?",
     re.IGNORECASE,
 )
 
@@ -79,9 +93,9 @@ def classe_por_evidencia(ticker: str | None, nome: str | None,
     n = (nome or "").strip()
     if universo is None:
         universo = universo_acoes_eua()
-    if t and t in universo:
+    if t and (t in universo or t in REITS_CONHECIDOS):
         return ACAO_EUA
-    if t in ETFS_CONHECIDOS or _RE_FUNDO.search(n):
+    if t in ETFS_CONHECIDOS or _RE_ETF.search(n):
         return ETF_EXTERIOR
     if (classe_cadastro or "").strip().lower() in {"stock", "stock_us"}:
         return ACAO_EUA
