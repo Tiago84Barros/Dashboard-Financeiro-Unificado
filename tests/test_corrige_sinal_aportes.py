@@ -31,3 +31,19 @@ def test_resgate_e_recebimento_ficam_fora_do_alvo():
     ]
     alvos = [linha["descricao"] for linha in script.filtrar_alvos(linhas)]
     assert alvos == ["Tesouro Direto [Renda Fixa]", "Transferido para a Rico [Renda Variável]"]
+
+
+def test_saldo_e_somas_separados_por_moeda():
+    """Conta em dólar não entra como real no saldo nem na soma dos aportes."""
+    assert "GROUP BY upper(currency)" in script.SQL_SALDO_CAIXA
+    assert "upper(a.currency) AS moeda" in script.SQL_CANDIDATAS
+    alvos = [
+        {"valor": 100, "moeda": "BRL", "status": "settled"},
+        {"valor": 30, "moeda": "BRL", "status": "pending"},
+        {"valor": 50, "moeda": "USD", "status": "settled"},
+        {"valor": 7, "moeda": None, "status": "settled"},
+    ]
+    assert script.somar_por_moeda(alvos) == {"BRL": 137.0, "USD": 50.0}
+    assert script.somar_por_moeda(alvos, so_liquidadas=True) == {"BRL": 107.0, "USD": 50.0}
+    assert script._fmt("USD", 1234.5) == "USD 1,234.50"
+    assert script._fmt("BRL", 10) == "R$ 10.00"

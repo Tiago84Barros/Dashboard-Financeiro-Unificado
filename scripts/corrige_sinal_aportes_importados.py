@@ -28,6 +28,11 @@ Alvo (todas as condições)
 * descrição sem marca de volta do dinheiro (resgate, "recebido", rendimento,
   dividendo...) -- a mesma régua do importador.
 
+Valores por moeda: conta em dólar (Nomad, por exemplo) tem saldo e
+transações em dólar, e somar com real daria um "saldo" que não existe. O
+script mostra soma e saldo previsto separados por ``accounts.currency``, sem
+converter -- a previsão é exata em cada moeda e não depende de câmbio.
+
 Idempotente: depois de invertida, a linha deixa de ser ``amount > 0`` e não é
 mais alvo; o UPDATE também repete a guarda ``amount > 0``.
 
@@ -59,6 +64,7 @@ SELECT t.id::text        AS id,
        t.description     AS descricao,
        c.name            AS categoria,
        t.amount          AS valor,
+       upper(a.currency) AS moeda,
        t.status          AS status,
        t.source          AS origem
 FROM transactions t
@@ -72,9 +78,11 @@ ORDER BY t.due_date, t.description
 """
 
 SQL_SALDO_CAIXA = f"""
-SELECT COALESCE(SUM(current_balance), 0)
+SELECT upper(currency) AS moeda, COALESCE(SUM(current_balance), 0) AS saldo
 FROM v_account_balance
 WHERE account_type IN ({",".join(f"'{tipo}'" for tipo in CONTAS_DE_CAIXA)})
+GROUP BY upper(currency)
+ORDER BY 1
 """
 
 SQL_INVERTE = """
@@ -105,6 +113,29 @@ def filtrar_alvos(linhas: list[dict]) -> list[dict]:
     return alvos
 
 
+def somar_por_moeda(linhas: list[dict], so_liquidadas: bool = False
+                    ) -> dict[str, float]:
+    """Soma de ``valor`` por ``moeda``; real e dólar nunca se misturam."""
+    somas: dict[str, float] = {}
+    for linha in linhas:
+        if so_liquidadas and linha["status"] != "settled":
+            continue
+        moeda = (linha.get("moeda") or "BRL").strip().upper()
+        somas[moeda] = somas.get(moeda, 0.0) + float(linha["valor"])
+    return somas
+
+
+def _saldos(conn) -> dict[str, float]:
+    from sqlalchemy import text
+
+    return {(r.moeda or "BRL").strip(): float(r.saldo or 0)
+            for r in conn.execute(text(SQL_SALDO_CAIXA))}
+
+
+def _fmt(moeda: str, valor: float) -> str:
+    return f"{'R$' if moeda == 'BRL' else moeda} {valor:,.2f}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--apply", action="store_true",
@@ -122,20 +153,26 @@ def main(argv: list[str] | None = None) -> int:
     engine = get_engine()
     with engine.connect() as conn:
         linhas = [dict(r._mapping) for r in conn.execute(text(SQL_CANDIDATAS))]
-        saldo_antes = float(conn.execute(text(SQL_SALDO_CAIXA)).scalar() or 0)
+        saldos_antes = _saldos(conn)
 
     alvos = filtrar_alvos(linhas)
-    total = sum(float(a["valor"]) for a in alvos)
-    liquidadas = sum(float(a["valor"]) for a in alvos if a["status"] == "settled")
+    totais = somar_por_moeda(alvos)
+    liquidadas = somar_por_moeda(alvos, so_liquidadas=True)
 
     for a in alvos:
-        print(f"  {a['data']}  {a['conta']:<18} {float(a['valor']):>12,.2f}  "
+        print(f"  {a['data']}  {a['conta']:<18} {a['moeda'] or 'BRL':>3} "
+              f"{float(a['valor']):>12,.2f}  "
               f"[{a['status']}/{a['origem']}] {a['descricao']} ({a['categoria']})")
     descartadas = len(linhas) - len(alvos)
     print(f"\nLinhas a inverter: {len(alvos)}  (descartadas como resgate/recebimento: {descartadas})")
-    print(f"Soma dos valores: R$ {total:,.2f}  (liquidadas: R$ {liquidadas:,.2f})")
-    print(f"Saldo das contas de caixa: R$ {saldo_antes:,.2f} -> "
-          f"R$ {saldo_antes - 2 * liquidadas:,.2f} (previsto)")
+    for moeda in sorted(set(saldos_antes) | set(totais)):
+        liq = liquidadas.get(moeda, 0.0)
+        antes = saldos_antes.get(moeda, 0.0)
+        if moeda in totais:
+            print(f"[{moeda}] Soma dos valores: {_fmt(moeda, totais[moeda])}  "
+                  f"(liquidadas: {_fmt(moeda, liq)})")
+        print(f"[{moeda}] Saldo das contas de caixa: {_fmt(moeda, antes)} -> "
+              f"{_fmt(moeda, antes - 2 * liq)} (previsto)")
 
     if not alvos:
         print("Nada a corrigir.")
@@ -146,8 +183,10 @@ def main(argv: list[str] | None = None) -> int:
 
     with engine.begin() as conn:
         n = conn.execute(text(SQL_INVERTE), {"ids": [a["id"] for a in alvos]}).rowcount
-        saldo_depois = float(conn.execute(text(SQL_SALDO_CAIXA)).scalar() or 0)
-    print(f"\nInvertidas: {n}. Saldo das contas de caixa agora: R$ {saldo_depois:,.2f}")
+        saldos_depois = _saldos(conn)
+    print(f"\nInvertidas: {n}.")
+    for moeda, saldo in saldos_depois.items():
+        print(f"[{moeda}] Saldo das contas de caixa agora: {_fmt(moeda, saldo)}")
     return 0
 
 
