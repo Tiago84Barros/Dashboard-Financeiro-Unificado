@@ -303,10 +303,11 @@ def test_migration_081_views_em_reais_preservam_contrato_da_007():
         "AS current_market_value", "AS unrealized_pnl", "AS return_pct"])
     assert _em_ordem(_select_final("v_net_worth"), [
         "AS user_id", "AS bank_balance", "AS investment_total", "AS net_worth",
-        "AS usd_positions_without_fx"])
+        "AS usd_positions_without_fx", "AS accounts_without_fx"])
     # a 027 deixou as views como security_invoker; CREATE OR REPLACE desfaria
     for view in ("v_investment_summary", "v_net_worth"):
         assert f"VIEW {view}\nWITH (security_invoker = true) AS" in sql
     assert "fx.taxa >= 2.0" in sql                      # câmbio corrompido fica fora
+    assert "WHEN 'USD' THEN fx.taxa" in sql              # conta em dólar convertida
     assert "HAVING count(*) = count(taxa)" in sql        # só cobertura total
     assert "::VARCHAR(50) AS asset_class" in sql         # mesmo tipo da 007

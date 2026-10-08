@@ -1,5 +1,5 @@
 -- 081_views_investimento_em_reais.sql — v_investment_summary e v_net_worth
--- passam a somar posição em dólar convertida para reais.
+-- passam a somar posição e conta em dólar convertidas para reais.
 --
 -- Idempotente (CREATE OR REPLACE VIEW). Rodar à mão no SQL Editor do
 -- Supabase, depois da 007 e da 027.
@@ -22,19 +22,26 @@
 --     v_net_worth conta quantas ficaram em `usd_positions_without_fx`.
 --     O app tem o fallback do yfinance; a view não tem como buscá-lo.
 --
+-- Contas: a 007 somava `current_balance` de toda conta como real; conta em
+-- dólar entrava no saldo bancário pelo valor de face (US$ 1.000 = R$ 1.000).
+-- Agora conta em USD vai pelo câmbio de hoje (mesma guarda >= 2.0); moeda
+-- sem cotação no banco (só existe USDBRL) ou USD sem câmbio válido fica fora
+-- da soma, e v_net_worth conta quantas em `accounts_without_fx`. Saldo de conta não tem
+-- "câmbio da compra": é dinheiro, vale o de hoje.
+--
 -- Classe: em dólar, `stock` vira `stock_us` e `etf` vira `etf_intl`, as
 -- chaves de exibição do app. A view confia no cadastro (corrigido por
 -- scripts/corrige_classe_acoes_eua.py); o classificador por ticker e nome de
 -- core/classe_exterior.py só existe em Python.
 --
 -- Mesmas colunas, na mesma ordem e com os mesmos tipos da 007 -- exigência
--- de CREATE OR REPLACE VIEW. v_net_worth ganha uma coluna no fim.
+-- de CREATE OR REPLACE VIEW. v_net_worth ganha duas colunas no fim.
 --
 -- `WITH (security_invoker = true)` repete a 027: CREATE OR REPLACE VIEW
 -- substitui as opções da view, e sem isto a 027 seria desfeita.
 --
--- Desfazer: rodar de novo os blocos das views 5 e 6 da 007. Para isso, a
--- coluna nova de v_net_worth precisa sair antes (DROP VIEW v_net_worth e
+-- Desfazer: rodar de novo os blocos das views 5 e 6 da 007. Para isso, as
+-- colunas novas de v_net_worth precisam sair antes (DROP VIEW v_net_worth e
 -- recriar), porque CREATE OR REPLACE não remove coluna.
 
 CREATE OR REPLACE VIEW v_investment_summary
@@ -129,13 +136,33 @@ COMMENT ON VIEW v_investment_summary IS
 
 CREATE OR REPLACE VIEW v_net_worth
 WITH (security_invoker = true) AS
-WITH bank AS (
+WITH usd_brl_hoje AS (
+    SELECT q.close AS taxa
+    FROM asset_quotes q
+    JOIN assets fa ON fa.id = q.asset_id
+    WHERE fa.ticker = 'USDBRL'
+    ORDER BY q.timestamp DESC
+    LIMIT 1
+),
+contas AS (
+    SELECT
+        ab.user_id,
+        ab.current_balance,
+        CASE upper(coalesce(ab.currency, 'BRL'))
+            WHEN 'BRL' THEN 1
+            WHEN 'USD' THEN fx.taxa
+        END AS taxa
+    FROM v_account_balance ab
+    LEFT JOIN usd_brl_hoje fx ON fx.taxa >= 2.0
+    WHERE ab.active = TRUE
+      AND ab.account_type != 'credit_card'
+),
+bank AS (
     SELECT
         user_id,
-        SUM(current_balance) AS bank_balance
-    FROM v_account_balance
-    WHERE active = TRUE
-      AND account_type != 'credit_card'
+        SUM(current_balance * taxa)   AS bank_balance,
+        COUNT(*) - COUNT(taxa)        AS sem_cambio
+    FROM contas
     GROUP BY user_id
 ),
 investments AS (
@@ -150,18 +177,7 @@ sem_cambio AS (
     FROM portfolio_positions pp
     JOIN assets a ON a.id = pp.asset_id
     WHERE upper(a.currency) = 'USD'
-      AND NOT EXISTS (
-          SELECT 1
-          FROM (
-              SELECT q.close
-              FROM asset_quotes q
-              JOIN assets fa ON fa.id = q.asset_id
-              WHERE fa.ticker = 'USDBRL'
-              ORDER BY q.timestamp DESC
-              LIMIT 1
-          ) fx
-          WHERE fx.close >= 2.0
-      )
+      AND NOT EXISTS (SELECT 1 FROM usd_brl_hoje WHERE taxa >= 2.0)
     GROUP BY pp.user_id
 )
 SELECT
@@ -170,15 +186,17 @@ SELECT
     COALESCE(i.investment_total, 0)         AS investment_total,
     COALESCE(b.bank_balance, 0)
         + COALESCE(i.investment_total, 0)   AS net_worth,
-    COALESCE(s.n, 0)                        AS usd_positions_without_fx
+    COALESCE(s.n, 0)                        AS usd_positions_without_fx,
+    COALESCE(b.sem_cambio, 0)               AS accounts_without_fx
 FROM bank b
 FULL OUTER JOIN investments i ON i.user_id = b.user_id
 FULL OUTER JOIN sem_cambio s ON s.user_id = COALESCE(b.user_id, i.user_id);
 
 COMMENT ON VIEW v_net_worth IS
-    'Patrimônio líquido total: bank_balance (contas ativas) + investment_total '
-    '(v_investment_summary, em reais). usd_positions_without_fx conta as '
-    'posições em dólar fora da soma por falta de USDBRL válido.';
+    'Patrimônio líquido total, em reais: bank_balance (contas ativas, exceto '
+    'cartão; conta em dólar pelo último USDBRL >= 2.0) + investment_total '
+    '(v_investment_summary). usd_positions_without_fx e accounts_without_fx '
+    'contam posições e contas fora da soma por falta de câmbio válido.';
 
 REVOKE ALL PRIVILEGES ON TABLE v_investment_summary FROM PUBLIC, anon, authenticated;
 REVOKE ALL PRIVILEGES ON TABLE v_net_worth FROM PUBLIC, anon, authenticated;
