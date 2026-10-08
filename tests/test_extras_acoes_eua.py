@@ -110,3 +110,59 @@ def test_universo_publicado_tem_acoes_e_nao_tem_etfs():
 def test_snapshot_do_exterior_separa_acao_de_etf(raw, ticker, nome, esperado):
     assert investimentos._class_key_from_snapshot(raw, ticker, "US", nome) \
         == esperado
+
+
+# ── Proventos e correção do cadastro ────────────────────────────────────────
+
+def _provento(ticker, nome, classe, moeda):
+    return SimpleNamespace(
+        id="1", type="dividend", amount_per_unit=0.25, quantity=10.0,
+        total_amount=2.5, ex_date=None, payment_date=None, external_id=None,
+        ticker=ticker, asset_name=nome, asset_class=classe, currency=moeda)
+
+
+def test_provento_em_dolar_separa_acao_eua_de_etf(monkeypatch):
+    from core import database, proventos
+
+    linhas = [_provento("AAPL", "Apple Inc", "stock", "USD"),
+              _provento("SPY", "SPDR S&P 500 ETF Trust", "etf", "USD"),
+              _provento("PETR4", "Petrobras", "stock", "BRL")]
+
+    class _Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def execute(self, *a, **k):
+            return SimpleNamespace(fetchall=lambda: linhas)
+
+    monkeypatch.setattr(proventos.settings, "OWNER_USER_ID", "u")
+    monkeypatch.setattr(database, "get_engine",
+                        lambda: SimpleNamespace(connect=_Conn))
+    classes = {e["ticker"]: e["classe"]
+               for e in proventos._proventos_real()["eventos"]}
+    assert classes == {"AAPL": "Ações EUA", "SPY": "ETF Internacional",
+                       "PETR4": "Ações BR"}
+
+
+def test_script_regrava_so_acao_cadastrada_como_etf():
+    import importlib.util
+    from pathlib import Path
+
+    caminho = Path(__file__).resolve().parents[1] / "scripts" / \
+        "corrige_classe_acoes_eua.py"
+    spec = importlib.util.spec_from_file_location("corrige_classe", caminho)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    linhas = [{"id": "1", "ticker": "MELI", "name": "MELI"},
+              {"id": "2", "ticker": "XYZQ", "name": "Some Company Inc"},
+              {"id": "3", "ticker": "SPY", "name": "SPDR S&P 500 ETF Trust"},
+              {"id": "4", "ticker": "IEFA", "name": "IEFA"},
+              {"id": "5", "ticker": "XYZW", "name": "XYZW"}]
+    acoes, etfs = mod.separar(linhas, {"MELI", "AAPL"})
+    assert [a["ticker"] for a in acoes] == ["MELI", "XYZQ"]
+    assert [e["ticker"] for e in etfs] == ["SPY", "IEFA", "XYZW"]
+    assert "class = 'etf'" in mod.SQL_REGRAVA  # guarda de idempotência

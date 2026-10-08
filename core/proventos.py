@@ -38,6 +38,7 @@ from collections import defaultdict
 from datetime import date as _date
 from datetime import timedelta as _timedelta
 
+from core.classe_exterior import classe_ativo_usd
 from core.config import settings
 from core.user_context import user_cache_data
 
@@ -63,6 +64,8 @@ _CLASS_LABEL: dict[str, str] = {
     "stock":        "Ações BR",
     "fixed_income": "Renda Fixa",
     "etf":          "ETF",
+    "etf_intl":     "ETF Internacional",
+    "stock_us":     "Ações EUA",
     "bdr":          "BDR",
     "other":        "Outros",
 }
@@ -78,6 +81,7 @@ _CLASS_COR: dict[str, str] = {
     "etf":          "#F5A623",
     "etf_br":       "#F5A623",
     "etf_intl":     "#63cab7",
+    "stock_us":     "#3B82F6",
     "bdr":          "#4C9BE8",
     "crypto":       "#FF6B35",
     "other":        "#8b9ab0",
@@ -144,7 +148,8 @@ _SQL_PROVENTOS = """
         d.external_id,
         a.ticker,
         a.name      AS asset_name,
-        a.class     AS asset_class
+        a.class     AS asset_class,
+        a.currency  AS currency
     FROM   dedup d
     JOIN   assets a ON a.id = d.asset_id
     WHERE  d.rn = 1
@@ -248,6 +253,10 @@ def _proventos_real() -> dict:
     eventos = []
     for r in rows:
         classe_raw = r.asset_class or "other"
+        # Em dólar, "stock" e "etf" do cadastro não dizem Ações BR nem ETF da B3.
+        if (getattr(r, "currency", None) or "BRL").upper() == "USD" \
+                and classe_raw in {"stock", "etf"}:
+            classe_raw = classe_ativo_usd(r.ticker, r.asset_name, r.asset_class)
         tipo_raw   = r.type or "other"
         eventos.append({
             "id":              r.id,
