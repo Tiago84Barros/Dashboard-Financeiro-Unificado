@@ -466,7 +466,25 @@ def _trajetoria() -> list[str]:
     from core import trajetoria_mercado as tm
 
     return tm.linhas_trajetoria(supabase=_supabase, cdi=_cdi_publicado,
-                                bcb=_bcb_para_trajetoria, eua=_series_eua)
+                                bcb=_bcb_para_trajetoria, eua=_series_eua,
+                                valuation=_valuation_publicado)
+
+
+def _valuation_publicado():
+    """P/L mediano do mercado, do arquivo que a rotina noturna publica."""
+    from core.inteligencia_ativos.fontes_valuation import arquivo
+
+    art = arquivo()
+    if not art:
+        return None, "arquivo valuation_historico ausente ou ilegível"
+    if "mercado_b3" not in art:
+        return None, "arquivo valuation_historico ainda sem a série mercado_b3"
+    gerado = str(art.get("gerado_em") or "")[:10]
+    try:
+        gerado = datetime.fromisoformat(gerado).strftime("%d/%m/%Y")
+    except ValueError:
+        gerado = gerado or "data desconhecida"
+    return art["mercado_b3"], f"gerado em {gerado}"
 
 
 def _cdi_publicado():
