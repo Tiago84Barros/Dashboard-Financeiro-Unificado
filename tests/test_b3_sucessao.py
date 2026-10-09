@@ -7,7 +7,8 @@ from datetime import date
 import pandas as pd
 
 from data_pipeline.market import b3_sucessao as bs
-from scripts.publish_valuation_historico import fita_pelo_universo
+from scripts.publish_valuation_historico import (fita_pelo_universo,
+                                                 mercado_pela_sucessao)
 
 D = date
 
@@ -118,3 +119,28 @@ def test_sem_sucessao_a_fita_passa_igual():
                         columns=["ticker", "trade_date", "close"])
     out = fita_pelo_universo(fita, {}, {"PETR4"}, ["ticker"])
     assert out.to_dict("records") == fita.to_dict("records")
+
+
+def test_mercado_conta_a_empresa_renomeada_uma_vez_so():
+    fech = pd.DataFrame([
+        ("ELET3", D(2025, 10, 31), 60.0),
+        ("ELET3", D(2025, 11, 7), 61.0),
+        ("AXIA3", D(2025, 11, 28), 58.0),
+        ("AXIA3", D(2026, 9, 30), 55.0),
+    ], columns=["ticker", "data", "close"])
+    vol = pd.DataFrame([("ELET3", 2025, 100.0), ("AXIA3", 2025, 30.0),
+                        ("AXIA3", 2026, 50.0)], columns=["ticker", "ano", "vol"])
+
+    f, v = mercado_pela_sucessao(fech, vol, {"ELET3": "AXIA3"},
+                                 {"ELET3", "AXIA3"})
+
+    assert set(f["ticker"]) == set(v["ticker"]) == {"ELET3"}
+    # novembro: fica o último pregão do mês, já sob o código novo
+    nov = f[pd.to_datetime(f["data"]).dt.month == 11]
+    assert nov["close"].tolist() == [58.0]
+    assert dict(zip(v["ano"], v["vol"])) == {2025: 130.0, 2026: 50.0}
+
+
+def test_representante_e_o_primeiro_da_cadeia_com_dado():
+    assert bs.representantes({"A3": "B3"}, {"A3", "B3"}) == {"A3": "A3", "B3": "A3"}
+    assert bs.representantes({"A3": "B3"}, {"B3"}) == {"A3": "B3", "B3": "B3"}

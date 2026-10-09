@@ -576,7 +576,7 @@ _SQL_FECHAMENTO_MENSAL = """
 """
 
 
-def coletar_mercado_b3(conn) -> dict:
+def coletar_mercado_b3(conn, sucessoes=None) -> dict:
     fech = _ler(conn, _SQL_FECHAMENTO_MENSAL, ini=ANO_INICIAL + 1)
     vol = _ler(conn, """
         SELECT ticker, EXTRACT(YEAR FROM trade_date)::int AS ano,
@@ -594,7 +594,32 @@ def coletar_mercado_b3(conn) -> dict:
     fech["close"] = fech["close"].astype(float)
     vol["vol"] = vol["vol"].astype(float)
     lpa["lpa"] = lpa["lpa"].astype(float)
+    fech, vol = mercado_pela_sucessao(
+        fech, vol, sucessoes if sucessoes is not None else _sucessoes(conn),
+        set(lpa["ticker"].astype(str)))
     return mercado_b3(fech, vol, lpa)
+
+
+def mercado_pela_sucessao(fech, vol, sucessoes: dict, com_lpa):
+    """Uma empresa, um código: a cadeia renomeada vira o seu representante.
+
+    Sem isso ELET3 sai do universo de 2026 sem preço (a fita passou a AXIA3)
+    e, com as duas na base de demonstrações, as duas podiam entrar no top
+    como empresas diferentes. Volume do ano soma; fechamento do mês fica o
+    do pregão mais recente. Puro sobre DataFrames.
+    """
+    import pandas as pd
+    from data_pipeline.market.b3_sucessao import canonizar_fita
+    if not sucessoes:
+        return fech, vol
+    fech = canonizar_fita(fech, sucessoes, com_lpa)
+    mes = pd.to_datetime(fech["data"]).dt.to_period("M")
+    fech = (fech.assign(_mes=mes).sort_values("data", kind="stable")
+            .drop_duplicates(["ticker", "_mes"], keep="last")
+            .drop(columns="_mes").reset_index(drop=True))
+    vol = (canonizar_fita(vol, sucessoes, com_lpa)
+           .groupby(["ticker", "ano"], as_index=False)["vol"].sum())
+    return fech, vol
 
 
 # -- FII ----------------------------------------------------------------------------

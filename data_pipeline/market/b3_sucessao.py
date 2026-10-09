@@ -130,6 +130,34 @@ def expandir_fita(df, sucessoes: dict[str, str], universo, *,
     return pd.concat([df, *copias], ignore_index=True)
 
 
+def representantes(sucessoes: dict[str, str], com_dado) -> dict[str, str]:
+    """{ticker da cadeia: o código que responde por ela}.
+
+    O primeiro da cadeia (o antigo, identidade do universo) que tenha dado em
+    ``com_dado``; sem nenhum, o primeiro. Para quem precisa de UMA linha por
+    empresa -- uma mediana de mercado que contasse ELET3 e AXIA3 em separado
+    pesaria a Eletrobras duas vezes.
+    """
+    com_dado = set(com_dado)
+    saida: dict[str, str] = {}
+    for tk, cadeia in cadeias(sucessoes).items():
+        saida[tk] = next((t for t in cadeia if t in com_dado), cadeia[0])
+    return saida
+
+
+def canonizar_fita(df, sucessoes: dict[str, str], com_dado, *,
+                   coluna: str = "ticker"):
+    """Renomeia cada código da cadeia para o representante (não copia).
+
+    Quem consome agrega ou deduplica pela chave que usar.
+    """
+    if df.empty or not sucessoes:
+        return df
+    rep = representantes(sucessoes, com_dado)
+    return df.assign(**{coluna: df[coluna].astype(str).map(
+        lambda t: rep.get(t, t))})
+
+
 _SQL_INTERVALOS = """
     WITH f AS (
         SELECT ticker, trade_date,
