@@ -695,15 +695,21 @@ _SQL_PAYLOAD_DE_DEMONSTRACAO = """
         ORDER BY ticker, fetched_at DESC, id DESC
     )
     SELECT u.ticker, u.id, u.payload_json FROM ultimo u
-    WHERE NOT EXISTS (
-        SELECT 1 FROM market.income_statements s
-        WHERE s.ticker = u.ticker AND s.raw_payload_id = u.id)
+    {so_pendentes}
     ORDER BY u.ticker
 """
 
+# Pula o ticker cujas demonstrações já saíram do payload mais novo. Com
+# ``forcar`` o filtro cai: correção no normalizador não muda o payload, e sem
+# isso nunca alcançaria a linha já gravada.
+_SO_PENDENTES = """WHERE NOT EXISTS (
+        SELECT 1 FROM market.income_statements s
+        WHERE s.ticker = u.ticker AND s.raw_payload_id = u.id)"""
+
 
 def renormalize_demonstracoes(tickers: list[str] | None = None,
-                              limit: int | None = None) -> dict:
+                              limit: int | None = None,
+                              forcar: bool = False) -> dict:
     """Regrava as três demonstrações a partir do payload mais novo que as traz.
 
     Por que existe: o armazém recebe do Supabase, todo dia, os payloads da
@@ -717,6 +723,9 @@ def renormalize_demonstracoes(tickers: list[str] | None = None,
     Só as demonstrações: preço, dividendo e indicador do payload antigo
     regravariam por cima do diário mais novo. Os indicadores derivados saem de
     ``reprocess_metrics`` sobre ``prog["atualizados"]``. Sem rede.
+
+    ``forcar`` regrava também o que já saiu do payload mais novo -- o caminho
+    de uma correção do normalizador chegar às linhas existentes.
     """
     import json
     engine = _engine()
@@ -732,7 +741,8 @@ def renormalize_demonstracoes(tickers: list[str] | None = None,
     with engine.connect() as conn:
         if not repo.schema_exists(conn):
             return {**prog, "erros": -1}
-        rows = conn.execute(text(_SQL_PAYLOAD_DE_DEMONSTRACAO.format(filtro=filtro)),
+        rows = conn.execute(text(_SQL_PAYLOAD_DE_DEMONSTRACAO.format(
+            filtro=filtro, so_pendentes="" if forcar else _SO_PENDENTES)),
                             params).fetchall()
     if limit:
         rows = rows[:limit]

@@ -119,6 +119,9 @@ def main() -> int:
                    help="fiis-enrich: documentos máximos por execução")
     p.add_argument("--document-budget-mb", type=int, default=250,
                    help="fiis-enrich: orçamento de PDFs por execução")
+    p.add_argument("--forcar", action="store_true",
+                   help="renormalize-demonstracoes: regrava também o que já saiu "
+                        "do payload mais novo (correção do normalizador)")
     p.add_argument("--json", action="store_true")
     p.add_argument("--warehouse", action="store_true",
                    help="usa o PostgreSQL local warehouse em 127.0.0.1:5433")
@@ -424,7 +427,7 @@ def main() -> int:
     elif args.command == "renormalize-demonstracoes":
         # Demonstração regravada sem indicador recalculado deixa o TTM velho
         # na origem do b3_metrics: os dois passos andam juntos.
-        prog = ingest.renormalize_demonstracoes(tickers, args.limit)
+        prog = ingest.renormalize_demonstracoes(tickers, args.limit, forcar=args.forcar)
         if prog.get("atualizados"):
             rep = ingest.reprocess_metrics(prog["atualizados"])
             prog["indicadores"] = rep.get("indicadores", 0)

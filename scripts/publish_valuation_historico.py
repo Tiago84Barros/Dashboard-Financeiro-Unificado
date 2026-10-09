@@ -54,6 +54,12 @@ demonstrativo anual do mesmo payload (EBIT ÷ despesas financeiras). A base
 contábil do armazém não tem EBITDA, e sem ele o critério eliminatório de
 endividamento nunca disparava.
 
+Ticker renomeado (desde 08/10/2026): a fita da B3 troca de código na
+renomeação (ELET3 → AXIA3, EMBR3 → EMBJ3) e o universo não. Os pregões de
+cada código da cadeia valem para todos os da mesma cadeia presentes no
+universo; a cadeia sai de ``data_pipeline.market.b3_sucessao`` (mesmo código
+CVM, mesma classe, um código para de negociar dias antes de o outro começar).
+
 Mercado B3 (desde 08/10/2026): P/L mediano ponto-no-tempo, mês a mês desde
 2011, das ``UNIVERSO_MERCADO`` ações mais negociadas no ano anterior (uma
 classe por empresa). É a régua de "a bolsa está cara ou barata contra a
@@ -384,11 +390,35 @@ def historico_b3(fechamentos, demos, proventos) -> tuple[dict, dict]:
     return saida, exclusoes
 
 
-def coletar_b3(conn, precos_supabase=None, hoje=None
+def fita_pelo_universo(df, sucessoes: dict, universo, chave: list[str]):
+    """Leva o pregão do código novo ao ticker do universo, e vice-versa.
+
+    A fita registra ELET3 até 07/11/2025 e AXIA3 dali em diante; o universo
+    (demonstrações, ``public.setores``) segue com ELET3. Sem isso, ELET3 fica
+    sem fechamento de 2026 e sem preço recente, e AXIA3 sem o histórico de
+    antes da troca. Depois de copiar, fica o pregão mais recente por
+    ``chave``. Puro sobre DataFrame com ``ticker`` e ``trade_date``.
+    """
+    from data_pipeline.market.b3_sucessao import expandir_fita
+    df = expandir_fita(df, sucessoes, universo)
+    return (df.sort_values("trade_date", kind="stable")
+            .drop_duplicates(chave, keep="last").reset_index(drop=True))
+
+
+def _sucessoes(conn) -> dict:
+    from data_pipeline.market.b3_sucessao import carregar_sucessoes
+    try:
+        return carregar_sucessoes(conn)
+    except Exception as exc:  # sem a tabela, segue sem sucessão, e diz
+        print(f"sucessão de tickers indisponível: {type(exc).__name__}: {exc}")
+        return {}
+
+
+def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None
                ) -> tuple[dict, dict, str | None]:
     fech = _ler(conn, """
         SELECT DISTINCT ON (ticker, EXTRACT(YEAR FROM trade_date))
-               ticker, EXTRACT(YEAR FROM trade_date)::int AS ano,
+               ticker, EXTRACT(YEAR FROM trade_date)::int AS ano, trade_date,
                COALESCE(close_unitario, close / NULLIF(fator_cotacao, 0)) AS close
           FROM market.b3_security_history
          WHERE close > 0 AND trade_date >= make_date(:ini, 1, 1)
@@ -418,6 +448,11 @@ def coletar_b3(conn, precos_supabase=None, hoje=None
                  WHERE ex_date IS NOT NULL AND amount > 0) d
          GROUP BY 1, 2
     """)
+    # Ticker renomeado: a fita troca de código, o universo não.
+    sucessoes = _sucessoes(conn) if sucessoes is None else sucessoes
+    universo = set(demos["ticker"].astype(str))
+    fech = fita_pelo_universo(fech, sucessoes, universo, ["ticker", "ano"])
+    ultimo = fita_pelo_universo(ultimo, sucessoes, universo, ["ticker"])
     precos = (precos_supabase if precos_supabase is not None
               else _ler(conn, _SQL_PRECOS_MENSAIS))
     for c in ("close", "lucro", "lpa", "patrimonio", "total"):
@@ -425,6 +460,7 @@ def coletar_b3(conn, precos_supabase=None, hoje=None
             if c in df:
                 df[c] = df[c].astype(float)
     hist, exclusoes = historico_b3(fech, demos, prov)
+    exclusoes["sucessoes_de_ticker"] = dict(sorted(sucessoes.items()))
     hoje = hoje or datetime.now(timezone.utc)
     precos["preco"] = precos["preco"].astype(float)
     vol = volatilidade(precos)
@@ -540,7 +576,7 @@ _SQL_FECHAMENTO_MENSAL = """
 """
 
 
-def coletar_mercado_b3(conn) -> dict:
+def coletar_mercado_b3(conn, sucessoes=None) -> dict:
     fech = _ler(conn, _SQL_FECHAMENTO_MENSAL, ini=ANO_INICIAL + 1)
     vol = _ler(conn, """
         SELECT ticker, EXTRACT(YEAR FROM trade_date)::int AS ano,
@@ -558,7 +594,33 @@ def coletar_mercado_b3(conn) -> dict:
     fech["close"] = fech["close"].astype(float)
     vol["vol"] = vol["vol"].astype(float)
     lpa["lpa"] = lpa["lpa"].astype(float)
+    fech, vol = mercado_pela_sucessao(
+        fech, vol, sucessoes if sucessoes is not None else _sucessoes(conn),
+        set(lpa["ticker"].astype(str)))
     return mercado_b3(fech, vol, lpa)
+
+
+def mercado_pela_sucessao(fech, vol, sucessoes: dict, com_lpa):
+    """Uma empresa, um código: a cadeia renomeada vira o seu representante.
+
+    Sem isso ELET3 sai do universo de 2026 sem preço (a fita passou a AXIA3)
+    e, com as duas na base de demonstrações, as duas podiam entrar no top
+    como empresas diferentes. Volume do ano soma; fechamento do mês fica o
+    do pregão mais recente. Puro sobre DataFrames.
+    """
+    import pandas as pd
+
+    from data_pipeline.market.b3_sucessao import canonizar_fita
+    if not sucessoes:
+        return fech, vol
+    fech = canonizar_fita(fech, sucessoes, com_lpa)
+    mes = pd.to_datetime(fech["data"]).dt.to_period("M")
+    fech = (fech.assign(_mes=mes).sort_values("data", kind="stable")
+            .drop_duplicates(["ticker", "_mes"], keep="last")
+            .drop(columns="_mes").reset_index(drop=True))
+    vol = (canonizar_fita(vol, sucessoes, com_lpa)
+           .groupby(["ticker", "ano"], as_index=False)["vol"].sum())
+    return fech, vol
 
 
 # -- FII ----------------------------------------------------------------------------
