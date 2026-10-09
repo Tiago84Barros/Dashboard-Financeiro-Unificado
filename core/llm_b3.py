@@ -20,6 +20,7 @@ import re
 import sys
 import threading
 import time
+from typing import Sequence
 
 import pandas as pd
 import streamlit as st
@@ -193,6 +194,86 @@ def ultimo_modelo() -> str | None:
     return getattr(_ULTIMO, "modelo", None)
 
 
+def ultimas_ferramentas() -> list[dict]:
+    """Ferramentas que a última chamada desta thread executou, em ordem.
+
+    Cada item: ``{"nome", "argumentos", "chars"}``. Lista vazia quando a LLM
+    respondeu sem chamar nada ou o provedor não aceitou ferramentas.
+    """
+    return list(getattr(_ULTIMO, "ferramentas", None) or [])
+
+
+#: Rodadas de ferramenta antes da resposta final, e chamadas por rodada. A
+#: pergunta típica pede uma ou duas séries; o teto segura laço de modelo que
+#: chama a mesma ferramenta de novo, e cada rodada paga o prompt inteiro.
+MAX_RODADAS_FERRAMENTA = 3
+MAX_CHAMADAS_POR_RODADA = 4
+
+
+def _mensagem_assistente(msg) -> dict:
+    """A mensagem com ``tool_calls`` como volta ao provedor.
+
+    ``model_dump`` preserva o que o provedor exige de volta -- a
+    ``thought_signature`` do Gemini 3 vem em ``extra_content`` de cada
+    chamada, e sem ela a rodada seguinte é recusada.
+    """
+    if hasattr(msg, "model_dump"):
+        return msg.model_dump(exclude_none=True)
+    return {"role": "assistant", "content": getattr(msg, "content", None),
+            "tool_calls": [{"id": c.id, "type": "function",
+                            "function": {"name": c.function.name,
+                                         "arguments": c.function.arguments}}
+                           for c in msg.tool_calls]}
+
+
+def _com_ferramentas(client, modelo: str, messages: list[dict], temperature: float,
+                     ferramentas: Sequence) -> str:
+    """Laço de function calling: a LLM pede, o app executa, a LLM responde.
+
+    A regra das ferramentas entra no system prompt só aqui: o provedor que
+    responde sem tools não lê instrução sobre ferramenta que não tem.
+    Esgotadas as rodadas, a última chamada sai com ``tool_choice="none"``.
+    """
+    from core.llm_ferramentas import REGRA_FERRAMENTAS, executar
+
+    msgs = [dict(m) for m in messages]
+    if msgs and msgs[0].get("role") == "system":
+        msgs[0]["content"] = (msgs[0].get("content") or "") + "\n\n" + REGRA_FERRAMENTAS
+    else:
+        msgs.insert(0, {"role": "system", "content": REGRA_FERRAMENTAS})
+    esquemas = [f.esquema() for f in ferramentas]
+    usadas: list[dict] = []
+    _ULTIMO.ferramentas = usadas
+    for rodada in range(MAX_RODADAS_FERRAMENTA + 1):
+        extra = {"tool_choice": "none"} if rodada == MAX_RODADAS_FERRAMENTA else {}
+        resp = client.chat.completions.create(model=modelo, messages=msgs,
+                                              temperature=temperature, tools=esquemas,
+                                              **extra)
+        msg = resp.choices[0].message
+        chamadas = list(getattr(msg, "tool_calls", None) or [])
+        if not chamadas or extra:
+            conteudo = getattr(msg, "content", None)
+            if not (conteudo or "").strip():
+                raise ValueError("resposta vazia depois das ferramentas")
+            return conteudo
+        msgs.append(_mensagem_assistente(msg))
+        # Toda chamada pedida recebe resposta (o provedor exige uma por id);
+        # as que passam do teto recebem a recusa, não o silêncio.
+        for i, chamada in enumerate(chamadas):
+            if i >= MAX_CHAMADAS_POR_RODADA:
+                resultado = (f"Não executada: teto de {MAX_CHAMADAS_POR_RODADA} "
+                             "chamadas por rodada.")
+            else:
+                resultado = executar(chamada.function.name, chamada.function.arguments,
+                                     ferramentas)
+                usadas.append({"nome": chamada.function.name,
+                               "argumentos": chamada.function.arguments,
+                               "chars": len(resultado)})
+            msgs.append({"role": "tool", "tool_call_id": chamada.id,
+                         "content": resultado})
+    raise RuntimeError("laço de ferramentas sem resposta final")  # inalcançável
+
+
 def _modulo_lacuna() -> str:
     """Quem chamou ``_chat_complete`` -- e ele o dono da lacuna, nao este ponto unico."""
     try:
@@ -244,6 +325,7 @@ def _sem_lacunas(texto: str | None, modulo: str) -> str | None:
 _PAUSA_PROVEDOR_S = 15 * 60
 _PAUSADOS: dict[str, float] = {}
 _SEM_JSON: set[tuple[str, str]] = set()
+_SEM_TOOLS: set[tuple[str, str]] = set()
 
 
 def _status(exc: Exception) -> int | None:
@@ -278,6 +360,7 @@ def _limpar_estado_provedores() -> None:
     """Esquece pausas e modos JSON aprendidos (teste e troca de chave)."""
     _PAUSADOS.clear()
     _SEM_JSON.clear()
+    _SEM_TOOLS.clear()
 
 
 def _chat_complete(
@@ -287,6 +370,7 @@ def _chat_complete(
     primary_model: str | None = None,
     timeout: float | None = None,
     pessoal: bool = False,
+    ferramentas: Sequence | None = None,
 ) -> str:
     """
     Executa um chat completion com fallback entre provedores. Tenta OpenAI e,
@@ -300,6 +384,11 @@ def _chat_complete(
     `pessoal=True` usa a cadeia sem modelos ``:free`` (ver ``_provider_chain``):
     é o que passam os chats com dado do usuário. Se só houver modelo gratuito,
     recusa em vez de mandar o dado para ele.
+
+    `ferramentas` (``core.llm_ferramentas.Ferramenta``) liga o function
+    calling: a LLM pode pedir uma série antes de responder (ver
+    ``_com_ferramentas``). Provedor que recusa ``tools`` responde sem elas,
+    com o mesmo contexto. Só em texto livre: em ``json_mode`` é ignorado.
     """
     modulo_lacuna = _modulo_lacuna()
     if not json_mode:
@@ -325,6 +414,7 @@ def _chat_complete(
     chain = ativos or chain
     erros: list[str] = []
     _ULTIMO.modelo = None
+    _ULTIMO.ferramentas = []
     for nome, client, modelo in chain:
         if timeout is not None and hasattr(client, "with_options"):
             client = client.with_options(timeout=timeout, max_retries=0)
@@ -351,6 +441,24 @@ def _chat_complete(
                         _SEM_JSON.add((nome, modelo))
                     logger.warning("JSON mode falhou em %s (%s) — tentando sem response_format.",
                                    nome, exc_json)
+            if ferramentas and not json_mode and (nome, modelo) not in _SEM_TOOLS:
+                try:
+                    conteudo = _com_ferramentas(client, modelo, messages, temperature,
+                                                ferramentas)
+                    _ULTIMO.modelo = f"{nome}/{modelo}"
+                    return _sem_lacunas(conteudo, modulo_lacuna)
+                except Exception as exc_tools:
+                    # Mesma triagem do modo JSON: cota e lentidão não mudam sem
+                    # tools. Só o 4xx (parâmetro recusado) desliga as tools
+                    # daquele modelo; resposta vazia é tropeço daquela rodada.
+                    if (_status(exc_tools) in (401, 403, 429)
+                            or _sem_credito(exc_tools) or _passageiro(exc_tools)):
+                        raise
+                    if 400 <= (_status(exc_tools) or 0) < 500:
+                        _SEM_TOOLS.add((nome, modelo))
+                    _ULTIMO.ferramentas = []
+                    logger.warning("Function calling falhou em %s (%s) — tentando sem "
+                                   "ferramentas.", nome, exc_tools)
             resp = client.chat.completions.create(
                 model=modelo, messages=messages, temperature=temperature,
             )
@@ -360,6 +468,7 @@ def _chat_complete(
             return _sem_lacunas(resp.choices[0].message.content, modulo_lacuna)
         except Exception as exc:
             erros.append(f"{nome}({modelo}): {exc}")
+            _ULTIMO.ferramentas = []
             if _sem_credito(exc):
                 _PAUSADOS[nome] = time.monotonic() + _PAUSA_PROVEDOR_S
                 logger.warning("Provedor LLM %s sem crédito ou chave recusada; "
@@ -842,7 +951,10 @@ def chat_com_portfolio(
     messages.append({"role": "user", "content": user_message})
 
     # Chat livre (markdown), sem JSON mode. Usa a cadeia OpenAI → Gemini.
-    return _chat_complete(messages, temperature=0.3, json_mode=False, primary_model=model)
+    from core.llm_ferramentas import FERRAMENTAS_MERCADO
+
+    return _chat_complete(messages, temperature=0.3, json_mode=False, primary_model=model,
+                          ferramentas=FERRAMENTAS_MERCADO)
 
 
 def chat_coerente(

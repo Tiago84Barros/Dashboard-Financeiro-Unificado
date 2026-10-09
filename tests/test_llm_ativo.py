@@ -10,7 +10,7 @@ import core.llm_context_ativo as ctx
 def capturar_mensagens(monkeypatch):
     capturado: dict = {}
 
-    def _fake(messages, temperature=.25, json_mode=False, primary_model=None):
+    def _fake(messages, temperature=.25, json_mode=False, primary_model=None, **kw):
         capturado["messages"] = messages
         capturado["temperature"] = temperature
         capturado["json_mode"] = json_mode

@@ -6,6 +6,7 @@ from typing import Iterable
 from core.contexto_mercado import REGRA_CADEIA_TRANSMISSAO, REGRA_CONTEXTO_MERCADO
 from core.inteligencia_ativos.veredito import REGRA_VEREDITO
 from core.llm_b3 import _chat_complete, _report_model
+from core.llm_ferramentas import FERRAMENTAS_MERCADO
 
 _ESCOPOS = {
     "acoes": (
@@ -131,4 +132,5 @@ def chat_com_carteira(context: str, history: Iterable[dict], user_message: str,
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user_message})
     return _chat_complete(messages, temperature=.25, json_mode=False,
-                          primary_model=model or _report_model(), pessoal=True)
+                          primary_model=model or _report_model(), pessoal=True,
+                          ferramentas=FERRAMENTAS_MERCADO)

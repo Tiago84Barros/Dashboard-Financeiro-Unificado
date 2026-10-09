@@ -17,6 +17,7 @@ from typing import Iterable
 
 from core.contexto_mercado import REGRA_CADEIA_TRANSMISSAO, REGRA_CONTEXTO_MERCADO
 from core.llm_b3 import _chat_complete, parse_chart_directives  # noqa: F401 (reexport)
+from core.llm_ferramentas import FERRAMENTAS_MERCADO
 
 _MODEL_CHAT_DEFAULT = "gpt-4o-mini"
 
@@ -102,7 +103,8 @@ def chat_com_financas(context: str, history: Iterable[dict], user_message: str,
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user_message})
     return _chat_complete(messages, temperature=0.25, json_mode=False,
-                          primary_model=model or _MODEL_CHAT_DEFAULT, pessoal=True)
+                          primary_model=model or _MODEL_CHAT_DEFAULT, pessoal=True,
+                          ferramentas=FERRAMENTAS_MERCADO)
 
 
 _SYSTEM_CARTAO = """Você é um ANALISTA FINANCEIRO PESSOAL focado na FATURA DE CARTÃO \
