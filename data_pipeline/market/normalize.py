@@ -9,6 +9,7 @@ ausente (nunca quebra, nunca inventa).
 """
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 
 
@@ -192,14 +193,110 @@ def _statement_items(quote: dict, annual_key: str, quarterly_key: str) -> list[t
     return items
 
 
+# Lucro líquido: alguns bancos (ITUB4, BPAC11) vêm sem netIncome e com o lucro
+# só nos campos de operações continuadas / atribuível.
+_LUCRO = ("netIncome", "netIncomeCommonStockholders",
+          "netIncomeFromContinuingOps", "netIncomeApplicableToCommonShares")
+# Lucro usado para o LPA implícito (lucro / ações): o atribuível aos
+# controladores é o numerador do LPA da DFP.
+_LUCRO_LPA = ("netIncomeApplicableToCommonShares", "netIncome",
+              "netIncomeFromContinuingOps", "netIncomeCommonStockholders")
+# Campos de LPA que a brapi copia da DFP multiplicados pela ESCALA_MOEDA.
+_LPA_ON = ("basicEarningsPerCommonShare", "dilutedEarningsPerCommonShare")
+_LPA_PN = ("basicEarningsPerPreferredShare", "dilutedEarningsPerPreferredShare")
+# Campos já em reais por ação.
+_LPA_REAIS = ("earningsPerShare", "basicEarningsPerShare", "dilutedEarningsPerShare")
+# Janela (em log10) para casar uma razão LPA/implícito com 1, 1000 ou 1e6, e a
+# faixa em que um exercício isolado está por lote de mil ações (mesma ideia de
+# b3_saidas.LOTE_DE_MIL, aqui medida contra o lucro/ações do próprio payload).
+_TOL_ESCALA = 0.5
+_LOTE_DE_MIL = (2.5, 3.5)
+
+
+def _nao_zero(d: dict, names: tuple[str, ...]):
+    """Como _first, mas 0 conta como ausente (a brapi grava 0 no lugar de nulo)."""
+    for n in names:
+        x = _f((d or {}).get(n))
+        if x:
+            return x
+    return None
+
+
+def _vazio(it: dict) -> bool:
+    """Demonstração devolvida com todos os números em 0 (TIMS3 2024/2025): é
+    ausência do provedor, não resultado zero."""
+    nums = [v for k, v in it.items()
+            if k not in ("endDate", "date") and isinstance(v, (int, float))
+            and not isinstance(v, bool)]
+    return bool(nums) and not any(nums)
+
+
+def _classe_pn(tk: str) -> bool:
+    return tk[-1:] in ("4", "5", "6", "7", "8")
+
+
+def _lpa_bruto(it: dict, pn: bool):
+    """(valor, escalado). Classe do ticker primeiro, a outra como reserva (VALE3
+    tem 0 no ordinário e o LPA no preferencial); depois os campos em reais."""
+    v = _nao_zero(it, (_LPA_PN + _LPA_ON) if pn else (_LPA_ON + _LPA_PN))
+    if v is not None:
+        return v, True
+    return _nao_zero(it, _LPA_REAIS), False
+
+
+def _acoes(quote: dict):
+    dks = (quote or {}).get("defaultKeyStatistics") or {}
+    return _nao_zero(dks, ("sharesOutstanding",)) or _nao_zero(quote, ("sharesOutstanding",))
+
+
+def _escala_lpa(items: list[tuple[dict, bool]], pn: bool, acoes):
+    """(divisor, base_confiavel) dos campos escalados de LPA desta empresa.
+
+    A brapi multiplica o LPA da DFP pela ESCALA_MOEDA: empresa em MIL sai x1000
+    (PETR4 8540), em UNIDADE sai em reais (VIVA3 2,63529). Decide-se pelo
+    exercício mais recente com LPA e lucro: razão LPA / (lucro / ações) perto de
+    1 => UNIDADE; perto de 1000 (ou 1e6, LPA por lote de mil) => MIL. Sem ações
+    ou sem razão limpa, mantém /1000 (a maioria) e marca a base de ações como
+    não confiável — emissão/grupamento grande (AZUL3) quebra o implícito.
+    """
+    if not acoes:
+        return 1000.0, False
+    anuais = sorted((it for it, a in items if a), key=lambda it: str(it.get("endDate")), reverse=True)
+    trims = sorted((it for it, a in items if not a), key=lambda it: str(it.get("endDate")), reverse=True)
+    for it in anuais + trims:
+        if _vazio(it):
+            continue
+        bruto, escalado = _lpa_bruto(it, pn)
+        lucro = _nao_zero(it, _LUCRO_LPA)
+        if not escalado or bruto is None or lucro is None:
+            continue
+        if bruto * lucro <= 0:
+            return 1000.0, False
+        r = math.log10(abs(bruto / (lucro / acoes)))
+        if abs(r) < _TOL_ESCALA:
+            return 1.0, True
+        if abs(r - 3) < _TOL_ESCALA or abs(r - 6) < _TOL_ESCALA:
+            return 1000.0, True
+        return 1000.0, False
+    return 1000.0, False
+
+
 def income_rows(quote: dict) -> list[dict]:
     tk = _ticker(quote)
+    pn = _classe_pn(tk)
+    acoes = _acoes(quote)
+    items = _statement_items(quote, "incomeStatementHistory", "incomeStatementHistoryQuarterly")
+    escala, base_ok = _escala_lpa(items, pn, acoes)
     out: list[dict] = []
-    for it, annual in _statement_items(quote, "incomeStatementHistory", "incomeStatementHistoryQuarterly"):
+    for it, annual in items:
         peq = _end_year_quarter(it.get("endDate") or it.get("date"), annual)
         if not peq:
             continue
         period_end, year, quarter = peq
+        if _vazio(it):
+            # Linha com tudo nulo (não pular): o upsert sobrescreve os zeros já
+            # gravados em vez de deixá-los como fóssil.
+            it = {}
         out.append({
             "ticker": tk, "period": "annual" if annual else "quarterly",
             "year": year, "quarter": quarter,
@@ -210,26 +307,32 @@ def income_rows(quote: dict) -> list[dict]:
             "gross_profit": _first(it, ("grossProfit",)),
             "ebit": _first(it, ("ebit", "operatingIncome")),
             "ebitda": _first(it, ("ebitda", "normalizedEBITDA")),
-            "net_income": _first(it, ("netIncome", "netIncomeCommonStockholders")),
-            "eps": _eps(it),
+            "net_income": _first(it, _LUCRO),
+            "eps": _eps(it, pn, escala, acoes if base_ok else None),
         })
     return out
 
 
-def _eps(it: dict):
+def _eps(it: dict, pn: bool = False, escala: float = 1000.0, acoes=None):
     """
-    LPA do ano. A BRAPI B3 reporta basicEarningsPerCommonShare em milireais
-    (LPA×1000: PETR4 8540 => 8,54); divide por 1000. Fallbacks p/ campos já em
-    reais. 0/None => None (algumas empresas, ex. VALE, não reportam).
+    LPA do exercício, em reais por ação. Campos escalados divididos pela escala
+    da empresa (ver _escala_lpa); campos em reais como estão. Com base de ações
+    confiável, um exercício cuja razão LPA/(lucro/ações) caia em ~1000 está por
+    lote de mil ações (ITUB4 2019) e é dividido por mais 1000. 0/None => None.
     """
-    scaled = _first(it, ("basicEarningsPerCommonShare", "dilutedEarningsPerCommonShare"))
-    value = (scaled / 1000.0) if scaled else (
-        _first(it, ("earningsPerShare", "basicEarningsPerShare",
-                    "dilutedEarningsPerShare")) or None)
+    bruto, escalado = _lpa_bruto(it, pn)
+    if bruto is None:
+        return None
+    value = bruto / escala if escalado else bruto
+    lucro = _nao_zero(it, _LUCRO_LPA)
+    if acoes and lucro and value * lucro > 0:
+        r = math.log10(abs(value / (lucro / acoes)))
+        if _LOTE_DE_MIL[0] <= r <= _LOTE_DE_MIL[1]:
+            value /= 1000.0
     # Alguns payloads históricos da BRAPI trazem sentinelas/erros de escala
     # (ex.: 2,7e16 por ação). Ausência é preferível a contaminar a linha
     # inteira ou exceder NUMERIC(20,6). O limite é deliberadamente amplo.
-    if value is None or abs(value) > 1_000_000:
+    if abs(value) > 1_000_000:
         return None
     return value
 
