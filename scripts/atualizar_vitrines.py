@@ -270,6 +270,7 @@ CARIMBO = {
     "cdi_diario": ("arquivo", "data/public/cdi_diario.json.gz"),
     "macro_brasil": ("arquivo", "data/public/macro_brasil.json.gz"),
     "valuation_historico": ("arquivo", "data/public/valuation_historico.json.gz"),
+    "cenarios_analogos": ("arquivo", "data/public/cenarios_analogos.json.gz"),
     "informacoes_recentes": ("arquivo", "data/public/informacoes_recentes.json.gz"),
     "fii_metrics_monthly": ("arquivo", "data/public/fii_metrics_monthly.json.gz"),
     "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),

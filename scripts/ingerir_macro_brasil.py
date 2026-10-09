@@ -28,13 +28,21 @@ if str(ROOT) not in sys.path:
 _FREQ_SGS = {"daily": "daily", "monthly": "monthly"}
 
 
-def coletar(hoje: date) -> tuple[list[dict], dict[str, str]]:
+def coletar(hoje: date, desde: date | None = None) -> tuple[list[dict], dict[str, str]]:
+    """``desde`` estende a janela do SGS para trás (carga do histórico).
+
+    A rotina diária não passa ``desde``: a janela curta de cada série basta
+    para a revisão, e o histórico já gravado fica (a tabela é append-only).
+    """
     from core import macro_brasil as mb
 
     obs: list[dict] = []
     falhas: dict[str, str] = {}
     for codigo, (_nome, _unidade, _freq, janela) in mb.SERIES_SGS.items():
-        serie, motivo = mb.baixar_sgs(codigo, hoje - timedelta(days=janela), hoje)
+        inicio = hoje - timedelta(days=janela)
+        if desde is not None:
+            inicio = min(inicio, desde)
+        serie, motivo = mb.baixar_sgs(codigo, inicio, hoje)
         if motivo:
             falhas[f"sgs_{codigo}"] = motivo
         obs += [{"provider": mb.PROVEDOR_SGS, "provider_code": codigo,
@@ -86,10 +94,13 @@ def main(argv=None) -> int:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--dry-run", action="store_true",
                    help="baixa e relata, sem gravar no armazém")
+    p.add_argument("--desde", type=date.fromisoformat, default=None,
+                   help="AAAA-MM-DD: carrega o SGS desde esta data (histórico "
+                        "dos cenários análogos, core.memoria_mercado.cenarios_macro)")
     args = p.parse_args(argv)
 
     agora = datetime.now(timezone.utc)
-    obs, falhas = coletar(agora.date())
+    obs, falhas = coletar(agora.date(), args.desde)
     relatorio = {"observacoes": len(obs), "falhas": falhas, "dry_run": args.dry_run}
     if not args.dry_run and obs:
         from core.macro_data.database import get_local_macro_engine
