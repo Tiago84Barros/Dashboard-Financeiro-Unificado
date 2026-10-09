@@ -609,6 +609,7 @@ def mercado_pela_sucessao(fech, vol, sucessoes: dict, com_lpa):
     do pregão mais recente. Puro sobre DataFrames.
     """
     import pandas as pd
+
     from data_pipeline.market.b3_sucessao import canonizar_fita
     if not sucessoes:
         return fech, vol

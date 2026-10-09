@@ -7,8 +7,10 @@ from datetime import date
 import pandas as pd
 
 from data_pipeline.market import b3_sucessao as bs
-from scripts.publish_valuation_historico import (fita_pelo_universo,
-                                                 mercado_pela_sucessao)
+from scripts.publish_valuation_historico import (
+    fita_pelo_universo,
+    mercado_pela_sucessao,
+)
 
 D = date
 
