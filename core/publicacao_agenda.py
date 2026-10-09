@@ -352,6 +352,20 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/valuation_historico.json.gz",),
     ),
     Alvo(
+        # Painel mensal dos cenários análogos (Memória de Mercado aplicada ao
+        # macro): "da última vez que a Selic começou a cair com a bolsa
+        # subindo, o que aconteceu?". Depois de `macro_brasil` (Selic e IPCA
+        # do dia) e de `valuation_historico` (P/L mediano), que vêm antes na
+        # fila; o publicador recusa Selic ou BOVA11 parados. Lê só o armazém
+        # e arquivos; o casamento roda na hora da pergunta.
+        chave="cenarios_analogos",
+        titulo="Cenários análogos para as LLMs (Memória de Mercado)",
+        passos=(("scripts/publish_cenarios_analogos.py",),),
+        cadencia_dias=1,
+        modulo="macro",
+        artefatos=("data/public/cenarios_analogos.json.gz",),
+    ),
+    Alvo(
         # Série mensal de fundamentos dos FIIs (VPA, patrimônio, cotistas,
         # composição) com o fechamento mensal da fita da B3 para o P/VP. No
         # Supabase a market.fii_metrics_monthly parou em 05/2026 (sem espaço
