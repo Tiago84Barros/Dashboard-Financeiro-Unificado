@@ -124,6 +124,28 @@ def current_theme() -> str:
     return st.session_state[_CACHE][1]
 
 
+def limpar_sessao_preservando_o_tema() -> None:
+    """``st.session_state.clear()`` sem levar junto o tema que está na tela.
+
+    Trocar de usuário e invalidar a sessão limpam o estado inteiro, e levavam
+    junto a única memória de tema que uma execução sem conta alcança DENTRO da
+    sessão -- a tela de entrada aparecia escura para quem estava no claro.
+
+    O cookie do navegador não cobre este caso. ``st.context.cookies`` é
+    capturado no aperto de mão do websocket, e nem ``st.rerun()`` nem a limpeza
+    abrem conexão nova: o cookie escrito nesta sessão só chega ao servidor na
+    PRÓXIMA. Medido em 12/10/2026 -- três execuções depois de escrever
+    ``app4_tema=light``, o servidor ainda listava só o ``_streamlit_xsrf``.
+
+    Não é usada quando alguém ENTRA: aí a conta muda, e herdar o tema de quem
+    estava antes seria mostrar a preferência de outra pessoa.
+    """
+    ultimo = st.session_state.get(_ULTIMO_OK)
+    st.session_state.clear()
+    if ultimo in ("dark", "light"):
+        st.session_state[_ULTIMO_OK] = ultimo
+
+
 def tema_para_pintar() -> str:
     """Tema a aplicar ANTES do portão de autenticação, e que nunca levanta.
 
@@ -144,6 +166,11 @@ def tema_para_pintar() -> str:
     """
     uid = str(principal().get("id", ""))
     if not uid:
+        # O último tema desta sessão vem ANTES do cookie: o cookie é a memória
+        # entre sessões, e dentro da sessão ele chega atrasado uma conexão.
+        ultimo = st.session_state.get(_ULTIMO_OK)
+        if ultimo in ("dark", "light"):
+            return ultimo
         return tema_do_navegador() or "dark"
     try:
         return current_theme()

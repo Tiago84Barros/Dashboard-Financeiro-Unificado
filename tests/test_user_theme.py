@@ -458,3 +458,75 @@ def test_lembrete_no_navegador_nao_derruba_a_execucao(monkeypatch):
 
     monkeypatch.setattr(componentes, "html", explode)
     selector.lembrar_no_navegador("light")
+
+
+def test_trocar_de_usuario_nao_volta_para_dark(monkeypatch):
+    """Clicar em "Trocar de usuário" repintava a tela de escuro.
+
+    ``encerrar_sessao`` limpa o ``session_state`` inteiro e dá ``st.rerun()``.
+    A execução seguinte não tem conta, e o cookie do navegador -- que o #552
+    pôs justamente para este caso -- **não alcança**: ``st.context.cookies`` é
+    capturado no aperto de mão do websocket, e ``st.rerun()`` não abre conexão
+    nova. Medido em 12/10/2026: três execuções depois de escrever
+    ``app4_tema=light``, o servidor ainda listava só o ``_streamlit_xsrf``.
+
+    Quem lembra dentro da sessão é ``_ULTIMO_OK`` -- e era exatamente ele que
+    a limpeza levava junto.
+    """
+    import streamlit as st
+
+    import core.auth as auth
+    import design.theme_selector as selector
+
+    monkeypatch.setattr(selector, "_LEMBRADO", {})
+    _cookies_do_navegador(monkeypatch)
+    monkeypatch.setattr(st, "rerun", lambda *a, **k: None)
+    st.session_state.clear()
+    st.session_state["_app4_user"] = {"id": "conta-1", "expires_at": 1 << 40}
+    st.session_state[selector._ULTIMO_OK] = "light"
+
+    auth.encerrar_sessao()
+
+    assert "_app4_user" not in st.session_state, "a sessão não foi encerrada"
+    assert selector.tema_para_pintar() == "light", (
+        "a tela de entrada depois de trocar de usuário voltou para dark"
+    )
+    st.session_state.clear()
+
+
+def test_sessao_invalidada_tambem_mantem_o_tema(monkeypatch):
+    """Mesmo buraco no portão: sessão que não vale mais limpa tudo."""
+    import streamlit as st
+
+    import design.theme_selector as selector
+
+    st.session_state.clear()
+    st.session_state["_app4_user"] = {"id": "conta-1", "expires_at": 1 << 40}
+    st.session_state[selector._ULTIMO_OK] = "light"
+    st.session_state["rascunho_qualquer"] = 1
+
+    selector.limpar_sessao_preservando_o_tema()
+
+    assert st.session_state[selector._ULTIMO_OK] == "light"
+    assert "_app4_user" not in st.session_state
+    assert "rascunho_qualquer" not in st.session_state, (
+        "a limpeza deixou de limpar o resto da sessão"
+    )
+    st.session_state.clear()
+
+
+def test_entrar_nao_herda_o_tema_de_quem_estava_antes(monkeypatch):
+    """Quem ENTRA traz a própria preferência, não a da conta anterior.
+
+    Por isso o caminho de login continua com ``st.session_state.clear()`` puro:
+    preservar o tema ali mostraria a preferência de outra pessoa se a leitura
+    da conta nova falhasse.
+    """
+    import inspect
+
+    import core.auth as auth
+
+    fonte = inspect.getsource(auth._renderizar_login)
+    assert "st.session_state.clear()" in fonte, (
+        "o login passou a preservar o tema e pode herdar o da conta anterior"
+    )
