@@ -54,6 +54,24 @@ def _rotas() -> set[str]:
             if isinstance(c, ast.Constant) and isinstance(c.value, str)}
 
 
+def _rotulos_de_abas(caminho: str) -> list[str]:
+    """Os rótulos que o módulo passa a ``st.tabs``, lidos por AST.
+
+    Contar a string na fonte crua contava também o comentário que explica a
+    fusão das duas telas de Configurações: texto *sobre* o código não é código,
+    e um teste que confunde os dois quebra na próxima vez que alguém escrever
+    um comentário honesto.
+    """
+    arvore = ast.parse(Path(caminho).read_text(encoding="utf-8"))
+    rotulos: list[str] = []
+    for node in ast.walk(arvore):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "tabs"):
+            for arg in node.args:
+                rotulos.extend(_constantes(arg))
+    return rotulos
+
+
 def _menu_de_producao() -> set[str]:
     """As opções do ramo real -- ``_APP_TEST_MODE`` tem menu próprio e menor."""
     nomes = ("opcoes_visao", "opcoes_financas", "opcoes_invest", "opcoes_sistema")
@@ -113,17 +131,19 @@ def test_grau_de_confianca_e_aba_de_configuracoes():
 def test_documentacao_e_aba_de_configuracoes():
     """Mesmo caminho do Grau de Confiança, em 24/09/2026.
 
-    Vale para as duas barras de Configurações -- a do admin e a do usuário
-    comum --, porque as duas viam a Documentação quando ela era rota da
-    sidebar. Tirá-la de uma só fecharia a porta para quem não é admin.
+    Eram duas barras de Configurações até 12/10/2026 -- a do admin e a do
+    usuário comum --, e o teste contava a Documentação nas duas, porque
+    tirá-la de uma só fecharia a porta para quem não administra. Agora a barra
+    é uma só, e a conta é uma só: a porta continua existindo, que é o que este
+    teste guarda (``memoria: diagnostico-precisa-porta-de-entrada``).
     """
     assert "📚 Documentação" not in _rotas()
     fonte = Path("views/configuracoes.py").read_text(encoding="utf-8")
-    assert fonte.count('"📚 Documentação"') == 2
+    assert _rotulos_de_abas("views/configuracoes.py").count("📚 Documentação") == 1
     assert "from views.documentacao import render_corpo" in fonte
     chamadas = (fonte.count("_render_documentacao()")
                 - fonte.count("def _render_documentacao()"))
-    assert chamadas == 2
+    assert chamadas == 1
     assert hasattr(__import__("views.documentacao", fromlist=["render_corpo"]),
                    "render_corpo")
 
