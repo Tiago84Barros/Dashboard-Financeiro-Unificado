@@ -408,13 +408,23 @@ def _noticiario_geral() -> tuple[list[dict], str]:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _destaques(ticker: str) -> tuple[dr.Destaque, ...]:
-    """Frases de fato dos documentos do ativo, do corpus RAG. Falha vira
-    vazio: a caixa cai na lista de documentos."""
+def _destaques_crus(ticker: str) -> tuple[tuple, ...]:
+    """Frases de fato dos documentos do ativo, do corpus RAG, em tuplas
+    simples. Falha vira vazio: a caixa cai na lista de documentos.
+
+    O cache guarda tuplas, e não ``dr.Destaque``: no deploy,
+    ``core/modulos_frescos`` descarta o módulo enquanto outra sessão ainda
+    roda o velho, e o pickle recusa o ``Destaque`` dele por não ser o objeto
+    do módulo novo (``UnserializableReturnValueError``, 03/10/2026)."""
     try:
-        return dr.ler(ticker)
+        return tuple((d.titulo, d.data, d.tipo, tuple(d.frases))
+                     for d in dr.ler(ticker))
     except Exception:  # noqa: BLE001 - corpus ilegível não derruba a página
         return ()
+
+
+def _destaques(ticker: str) -> tuple[dr.Destaque, ...]:
+    return tuple(dr.Destaque(*c) for c in _destaques_crus(ticker))
 
 
 def cartao_relatorios(a: m.AnaliseAtivo,
