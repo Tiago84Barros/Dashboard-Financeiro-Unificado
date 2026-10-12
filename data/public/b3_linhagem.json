@@ -1,34 +1,34 @@
 {
   "schema": "b3_linhagem.v1",
-  "gerado_em": "2026-10-05T01:40:03+00:00",
+  "gerado_em": "2026-10-12T13:08:33+00:00",
   "base": "armazém local (dfu_warehouse)",
   "metodo": "demonstrações anuais (period='annual') juntadas a market.brapi_raw_payloads pelo raw_payload_id; rastreada = payload existe e é anterior a first_seen_at",
   "payloads": {
-    "linhas": 109691,
+    "linhas": 118766,
     "fetched_de": "2026-07-02T12:13:50.418050+00:00",
-    "fetched_ate": "2026-10-04T23:25:13.411261+00:00"
+    "fetched_ate": "2026-10-12T11:51:24.613978+00:00"
   },
   "tabelas": {
     "market.income_statements": {
-      "rows": 6081,
-      "traced_rows": 89,
-      "pointer_rows": 5379,
+      "rows": 6088,
+      "traced_rows": 96,
+      "pointer_rows": 6056,
       "dangling_rows": 0,
-      "impossible_rows": 5290
+      "impossible_rows": 5960
     },
     "market.balance_sheets": {
-      "rows": 6081,
-      "traced_rows": 89,
-      "pointer_rows": 5379,
+      "rows": 6088,
+      "traced_rows": 96,
+      "pointer_rows": 6056,
       "dangling_rows": 0,
-      "impossible_rows": 5290
+      "impossible_rows": 5960
     },
     "market.cash_flow_statements": {
-      "rows": 5960,
-      "traced_rows": 89,
-      "pointer_rows": 5259,
+      "rows": 5967,
+      "traced_rows": 96,
+      "pointer_rows": 5935,
       "dangling_rows": 0,
-      "impossible_rows": 5170
+      "impossible_rows": 5839
     }
   }
 }
