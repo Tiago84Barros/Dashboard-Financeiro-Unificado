@@ -35,6 +35,22 @@ def test_dashboard_header_is_responsive_and_escapes_context(monkeypatch):
     assert "<script>alert(1)</script>" not in html
 
 
+def test_cabecalho_sem_mes_parcial_nao_vira_bloco_de_codigo(monkeypatch):
+    """Sem o chip parcial, a linha `{chip_parcial}` ficava em branco: o Markdown
+    encerrava o HTML ali e o resto do card saía como bloco de código."""
+    rendered = _capture_markdown(monkeypatch)
+    dashboard._render_dashboard_header("Set/2026", "Supabase", "#00C896", date(2026, 10, 12))
+    hero = next(b for b in rendered if "dg-hero" in b and "<style" not in b)
+    assert "\n" not in hero
+    assert "Atualizado&nbsp;·&nbsp;12/10/2026</span></div></section></div>" in hero
+
+    rendered.clear()
+    dashboard._render_dashboard_header("Out/2026", "Supabase", "#00C896", date(2026, 10, 12),
+                                       parcial_ate=date(2026, 10, 12))
+    hero = next(b for b in rendered if "dg-hero" in b and "<style" not in b)
+    assert "\n" not in hero and "Mês parcial" in hero
+
+
 def test_kpi_grid_uses_deterministic_financial_inputs(monkeypatch):
     rendered = _capture_markdown(monkeypatch)
 
