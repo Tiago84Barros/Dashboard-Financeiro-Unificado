@@ -1491,39 +1491,38 @@ def _secao_fiis_sugeridos(port: list[dict] | None = None, salvo: bool = False) -
     with m4:
         st.markdown(_mini_metric("Tipo líder", f"{tipo_top[1] * 100:.0f}%", str(tipo_top[0]).capitalize(), _COR_INVEST), unsafe_allow_html=True)
 
-    tickers = ", ".join(p["ticker"] for p in port)
+    tickers = ", ".join(str(p["ticker"]) for p in port)
+    # Marcação numa linha só, sem recuo: interpolação sozinha numa linha do HTML
+    # recuado vira linha em branco quando vazia, e o Markdown passa a mostrar o
+    # resto do card como bloco de código (mesmo defeito do cabeçalho).
     c1, c2 = st.columns([1.2, 0.8], gap="medium")
     with c1:
         st.markdown(
-            f"""
-            <div style="background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;
-                        padding:16px 18px;">
-                <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
-                            color:var(--app-info);font-weight:800;margin-bottom:10px;">FIIs selecionados</div>
-                <div style="font-size:1.05rem;font-weight:850;color:var(--app-text);line-height:1.55;">
-                    {tickers}
-                </div>
-                <div style="font-size:0.76rem;color:var(--app-muted);margin-top:10px;">
-                    Diversificada por tipo (tijolo · papel · fof · híbrido), com teto por FII e por tipo.
-                </div>
-            </div>
-            """,
+            '<div style="background:var(--app-surface);border:1px solid var(--app-border);'
+            'border-radius:12px;padding:16px 18px;">'
+            '<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;'
+            'color:var(--app-info);font-weight:800;margin-bottom:10px;">FIIs selecionados</div>'
+            '<div style="font-size:1.05rem;font-weight:850;color:var(--app-text);line-height:1.55;">'
+            f'{escape(tickers)}'
+            '</div>'
+            '<div style="font-size:0.76rem;color:var(--app-muted);margin-top:10px;">'
+            'Diversificada por tipo (tijolo · papel · fof · híbrido), com teto por FII e por tipo.'
+            '</div>'
+            '</div>',
             unsafe_allow_html=True,
         )
     with c2:
         rows_html = ""
         for p in port[:5]:
             seg = str(p.get("segmento") or p.get("tipo") or "")[:18]
-            rows_html += _linha_kv(f"{p['ticker']} · {seg}", f"{p['peso'] * 100:.1f}%", _COR_FLUXO)
+            rows_html += _linha_kv(escape(f"{p['ticker']} · {seg}"), f"{p['peso'] * 100:.1f}%", _COR_FLUXO)
         st.markdown(
-            f"""
-            <div style="background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;
-                        padding:16px 18px;">
-                <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
-                            color:var(--app-primary);font-weight:800;margin-bottom:10px;">Pesos sugeridos</div>
-                {rows_html}
-            </div>
-            """,
+            '<div style="background:var(--app-surface);border:1px solid var(--app-border);'
+            'border-radius:12px;padding:16px 18px;">'
+            '<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;'
+            'color:var(--app-primary);font-weight:800;margin-bottom:10px;">Pesos sugeridos</div>'
+            f'{rows_html}'
+            '</div>',
             unsafe_allow_html=True,
         )
 
