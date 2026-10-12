@@ -39,7 +39,7 @@ def verificar_autenticacao() -> None:
         except Exception:
             st.error("Não foi possível validar sua sessão. Tente novamente.")
             st.stop()
-        st.session_state.clear()
+        _limpar_sessao()
 
     _renderizar_login()
     st.stop()
@@ -47,8 +47,19 @@ def verificar_autenticacao() -> None:
 
 def encerrar_sessao() -> None:
     """Encerra a sessão autenticada e recarrega o app."""
-    st.session_state.clear()
+    _limpar_sessao()
     st.rerun()
+
+
+def _limpar_sessao() -> None:
+    """Limpa a sessão mantendo o tema que a tela está pintando.
+
+    Import local: ``design`` depende de ``core``, e o caminho inverso no topo
+    do módulo fecharia o ciclo.
+    """
+    from design.theme_selector import limpar_sessao_preservando_o_tema
+
+    limpar_sessao_preservando_o_tema()
 
 
 def esta_autenticado() -> bool:
