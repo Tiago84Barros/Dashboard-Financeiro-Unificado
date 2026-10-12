@@ -51,6 +51,29 @@ def test_cabecalho_sem_mes_parcial_nao_vira_bloco_de_codigo(monkeypatch):
     assert "\n" not in hero and "Mês parcial" in hero
 
 
+def test_cards_da_carteira_de_fiis_saem_numa_linha_so(monkeypatch):
+    """Mesmo defeito do cabeçalho: `{tickers}` e `{rows_html}` sozinhos numa
+    linha do HTML recuado viravam bloco de código se ficassem vazios."""
+    rendered = _capture_markdown(monkeypatch)
+    monkeypatch.setattr(dashboard, "_titulo_secao", lambda *a, **k: None)
+    monkeypatch.setattr(
+        dashboard.st, "columns",
+        lambda spec, **k: [contextlib.nullcontext()] * (
+            spec if isinstance(spec, int) else len(spec)),
+    )
+    port = [{"ticker": "HGLG11", "peso": 0.6, "tipo": "tijolo", "segmento": "Log<í>stica",
+             "dy_12m": 0.09, "pvp": 0.95},
+            {"ticker": "KNCR11", "peso": 0.4, "tipo": "papel", "dy_12m": 0.12, "pvp": 1.01}]
+    dashboard._secao_fiis_sugeridos(port, salvo=False)
+
+    lista = next(b for b in rendered if "FIIs selecionados" in b)
+    pesos = next(b for b in rendered if "Pesos sugeridos" in b)
+    for bloco in (lista, pesos):
+        assert "\n" not in bloco and bloco.endswith("</div>")
+    assert "HGLG11, KNCR11" in lista
+    assert "Log&lt;í&gt;stica" in pesos and "60.0%" in pesos
+
+
 def test_kpi_grid_uses_deterministic_financial_inputs(monkeypatch):
     rendered = _capture_markdown(monkeypatch)
 
