@@ -13,6 +13,10 @@ Configurações do sistema — oito abas organizadas por finalidade.
   🗄️ Banco de dados       — conexão, capacidade, schema e diagnóstico técnico
   🔒 Segurança            — sessão e autenticação
   📚 Documentação         — fluxogramas e explicações do app (era rota da sidebar)
+
+A tela é a mesma para quem administra e para quem não administra desde
+12/10/2026: as oito abas aparecem para todo mundo. O que ainda separa os dois
+é o dado que cada guarda de ``core`` entrega, não o que a tela desenha.
 """
 from __future__ import annotations
 
@@ -33,25 +37,19 @@ from views.credit_card_invoice_upload import render_upload_fatura_cartao
 
 
 def render() -> None:
-    from core.user_context import is_admin, require_user
+    from core.user_context import require_user
     require_user()
-    if not is_admin():
-        from design.user_accounts import render_user_accounts
-        st.title("Minhas configurações")
-        # A estratégia e o cenário são de cada conta e moram na aba
-        # Investimentos → Inteligência dos Ativos desde 27/09/2026.
-        st.caption("A Estratégia e o Cenário de Investimentos se configuram "
-                   "em Investimentos → Inteligência dos Ativos.")
-        personal, account, docs = st.tabs(
-            ["Importar meus dados", "Minha conta", "📚 Documentação"]
-        )
-        with personal:
-            _render_atualizacao_de_dados()
-        with account:
-            render_user_accounts()
-        with docs:
-            _render_documentacao()
-        return
+    # Uma tela só, para quem administra e para quem não administra (12/10/2026,
+    # a pedido do usuário). Até aqui, quem não era administrador via um título
+    # próprio e três abas -- "Importar meus dados", "Minha conta" e
+    # "📚 Documentação". Nada se perde na fusão: importar é a aba 🔁 Atualização
+    # de dados, a conta é o primeiro bloco de 🔒 Segurança, a documentação
+    # continua sendo a última aba, e o aviso de que Estratégia e Cenário moram
+    # em Investimentos → Inteligência dos Ativos abre a aba ⚙️ Geral.
+    #
+    # O que continua dependendo de ser administrador é o DADO, não a tela: as
+    # guardas de ``core`` (``require_admin``) seguem onde estavam, e o bloco
+    # que elas recusam aparece dizendo por quê -- não some calado.
     container_pagina(
         "Central de Configurações",
         "Importações, atualização de dados e integridade do ambiente em um único lugar.",
@@ -1987,7 +1985,6 @@ def _render_import_result(summary: dict) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _render_seguranca() -> None:
-    from core.user_context import is_admin
     from design.user_accounts import render_registered_users, render_user_accounts
     render_user_accounts()
     with st.container(border=True, key="cfg_security_session"):
@@ -2030,14 +2027,15 @@ def _render_seguranca() -> None:
                 h = hashlib.sha256(senha.encode()).hexdigest()
                 st.code(h)
 
-    # Fecha a página, e não o topo: o administrador chega aqui depois de ver o
-    # estado da sessão e da credencial. Quem não é administrador não vê nem o
-    # container -- ``render_registered_users`` sai sem desenhar nada.
-    if is_admin():
-        with st.container(border=True, key="cfg_security_users"):
-            _render_workflow_header(
-                "03", "Usuários cadastrados",
-                "Quem tem acesso ao aplicativo, com data de cadastro e situação.",
-                "Somente leitura", "Visível só ao admin",
-            )
-            render_registered_users()
+    # Fecha a página, e não o topo: chega-se aqui depois de ver o estado da
+    # sessão e da credencial. O container existe para todo mundo desde
+    # 12/10/2026; quem não administra lê, no lugar da lista, por que ela não
+    # veio -- ``list_users`` chama ``require_admin`` antes de tocar no banco, e
+    # essa guarda é de dado de outras pessoas, não de layout.
+    with st.container(border=True, key="cfg_security_users"):
+        _render_workflow_header(
+            "03", "Usuários cadastrados",
+            "Quem tem acesso ao aplicativo, com data de cadastro e situação.",
+            "Somente leitura", "Lista restrita ao admin",
+        )
+        render_registered_users()
