@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 # Métricas-chave usadas nas agregações de universo/setor
 _KEY_COLS = ("P/L", "P/VP", "DY", "ROE", "ROIC", "Margem_Liquida", "Endividamento_Total")
+_PEER_COLS = ("P/L", "P/VP", "DY", "Payout", "ROE", "Margem_Liquida")
 _PCT_COLS = {"DY", "ROE", "ROA", "ROIC", "Margem_Liquida", "Margem_Operacional", "Payout"}
 _LABEL = {
     "P/L": "P/L", "P/VP": "P/VP", "DY": "DY", "ROE": "ROE", "ROA": "ROA", "ROIC": "ROIC",
@@ -469,9 +470,11 @@ def get_peers_context(tickers: list[str], max_tickers: int = 2) -> tuple[str, di
             if not dfm.empty and "Ticker" in dfm.columns:
                 mrow = dfm[dfm["Ticker"] == p]
                 if not mrow.empty:
+                    # P/VP, DY e Payout já vêm no universo; sem eles a LLM
+                    # declarava ausente a comparação de valuation e proventos.
                     m = " | " + " ".join(
                         f"{_LABEL.get(c, c)}={_fmt_val(c, mrow[c].iloc[0])}"
-                        for c in ("P/L", "ROE", "Margem_Liquida") if c in mrow.columns)
+                        for c in _PEER_COLS if c in mrow.columns)
             m = (m or " |") + " " + _fmt_alavancagem(p)
             lines.append(f"  {p} [{nm}]{m}")
     if not lines:
