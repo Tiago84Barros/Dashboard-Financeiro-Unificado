@@ -410,30 +410,31 @@ def _render_dashboard_header(
         if parcial_ate else ""
     )
     st.markdown(_DASHBOARD_STYLES, unsafe_allow_html=True)
+    # Marcação numa linha só, sem recuo: com o HTML recuado, o chip parcial
+    # vazio deixava uma linha em branco, o Markdown encerrava o bloco de HTML
+    # ali e o resto do card saía como bloco de código.
     st.markdown(
-        f"""
-        <div class="dg-shell">
-          <section class="dg-hero" aria-labelledby="dg-page-title">
-            <div>
-              <div class="dg-eyebrow">Visão financeira consolidada</div>
-              <h1 class="dg-title" id="dg-page-title">Seu dinheiro, em perspectiva.</h1>
-              <div class="dg-subtitle">
-                Caixa, patrimônio e decisões de investimento reunidos em uma leitura
-                executiva — do mês atual ao histórico da carteira.
-              </div>
-            </div>
-            <div class="dg-hero-meta" aria-label="Contexto dos dados">
-              <span class="dg-chip">
-                <span class="dg-chip-dot" style="--chip-color:{escape(fonte_cor)}"></span>
-                {escape(fonte_label)}
-              </span>
-              <span class="dg-chip">Período&nbsp;·&nbsp;{escape(mes_ref)}</span>
-              {chip_parcial}
-              <span class="dg-chip">Atualizado&nbsp;·&nbsp;{atualizado_em.strftime("%d/%m/%Y")}</span>
-            </div>
-          </section>
-        </div>
-        """,
+        '<div class="dg-shell">'
+        '<section class="dg-hero" aria-labelledby="dg-page-title">'
+        '<div>'
+        '<div class="dg-eyebrow">Visão financeira consolidada</div>'
+        '<h1 class="dg-title" id="dg-page-title">Seu dinheiro, em perspectiva.</h1>'
+        '<div class="dg-subtitle">'
+        'Caixa, patrimônio e decisões de investimento reunidos em uma leitura '
+        'executiva — do mês atual ao histórico da carteira.'
+        '</div>'
+        '</div>'
+        '<div class="dg-hero-meta" aria-label="Contexto dos dados">'
+        '<span class="dg-chip">'
+        f'<span class="dg-chip-dot" style="--chip-color:{escape(fonte_cor)}"></span>'
+        f'{escape(fonte_label)}'
+        '</span>'
+        f'<span class="dg-chip">Período&nbsp;·&nbsp;{escape(mes_ref)}</span>'
+        f'{chip_parcial}'
+        f'<span class="dg-chip">Atualizado&nbsp;·&nbsp;{atualizado_em.strftime("%d/%m/%Y")}</span>'
+        '</div>'
+        '</section>'
+        '</div>',
         unsafe_allow_html=True,
     )
 
