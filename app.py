@@ -58,7 +58,12 @@ if not _APP_TEST_MODE:
     # execução sem conta não tinha de onde saber que a pessoa estava no claro.
     # Também emitido em toda execução e nos dois temas, para que a contagem de
     # elementos acima da página não mude com o tema.
-    lembrar_no_navegador(_tema)
+    # Com a conta junto: o cookie é do navegador, e num navegador usado por
+    # mais de uma conta ele entregava à seguinte o tema da anterior. Vai só a
+    # etiqueta opaca da conta, nunca o id (ver `theme_selector._etiqueta`).
+    from core.user_context import principal as _principal
+
+    lembrar_no_navegador(_tema, str(_principal().get("id", "")))
     verificar_autenticacao()
 
 # ── Mapeamento: label da sidebar → módulo em views/ ──────────────────────────

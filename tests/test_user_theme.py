@@ -287,7 +287,7 @@ def test_o_tema_e_aplicado_antes_do_portao_de_autenticacao(monkeypatch):
         design_theme_selector=SimpleNamespace(
             current_theme=lambda: "light",
             tema_para_pintar=lambda: "light",
-            lembrar_no_navegador=lembrados.append,
+            lembrar_no_navegador=lambda tema, uid="": lembrados.append((tema, uid)),
             render_theme_selector=lambda: None,
         ),
     )
@@ -297,7 +297,7 @@ def test_o_tema_e_aplicado_antes_do_portao_de_autenticacao(monkeypatch):
         "o tema não foi aplicado antes do portão: a tela que o portão desenha "
         "sai com o tema base do config.toml, que é escuro"
     )
-    assert lembrados == ["light"], (
+    assert [tema for tema, _ in lembrados] == ["light"], (
         "o tema pintado não foi lembrado no navegador: a execução seguinte que "
         "perder a conta da sessão volta a cair para dark"
     )
@@ -400,6 +400,10 @@ def test_processo_novo_com_leitura_falhando_usa_o_cookie(monkeypatch):
     Primeira execução depois de um deploy, com o pool ocupado por uma
     importação longa: não há tema em cache de sessão nem de processo. Sem o
     cookie, a única resposta possível era ``dark``.
+
+    O cookie vem com a etiqueta da conta desde 12/10/2026: o mesmo navegador
+    serve mais de uma conta, e sem a marca ele entregava à seguinte o tema da
+    anterior (``test_cookie_de_uma_conta_nao_pinta_a_outra``).
     """
     import design.theme_selector as selector
 
@@ -411,7 +415,8 @@ def test_processo_novo_com_leitura_falhando_usa_o_cookie(monkeypatch):
         raise RuntimeError("pool ocupado pela importacao")
 
     monkeypatch.setattr(selector, "load_theme", fail)
-    _cookies_do_navegador(monkeypatch, app4_tema="light")
+    _cookies_do_navegador(
+        monkeypatch, app4_tema=f"light.{selector._etiqueta('conta-1')}")
     assert selector.tema_para_pintar() == "light"
 
 
@@ -530,3 +535,180 @@ def test_entrar_nao_herda_o_tema_de_quem_estava_antes(monkeypatch):
     assert "st.session_state.clear()" in fonte, (
         "o login passou a preservar o tema e pode herdar o da conta anterior"
     )
+
+
+# -- nada no caminho do tema pode depender de ser administrador ---------------
+
+def _contas():
+    """A conta que administra e uma que não administra."""
+    from core.config import settings
+
+    return [settings.ADMIN_USER_ID or "conta-admin", "conta-comum-2"]
+
+
+@pytest.mark.parametrize("uid", _contas())
+def test_trocar_de_usuario_mantem_o_tema_em_qualquer_conta(monkeypatch, uid):
+    """As correções do tema valem para quem administra e para quem não.
+
+    O relato de 12/10/2026 foi que os defeitos de tema corrigidos na conta do
+    administrador reapareciam nas outras contas. Estes três casos repetem, com
+    uma conta comum, exatamente as cenas que #552 e #562 corrigiram -- e falham
+    se alguma correção futura nascer presa ao ``ADMIN_USER_ID``.
+    """
+    import streamlit as st
+
+    import core.auth as auth
+    import design.theme_selector as selector
+
+    monkeypatch.setattr(selector, "_LEMBRADO", {})
+    _cookies_do_navegador(monkeypatch)
+    monkeypatch.setattr(st, "rerun", lambda *a, **k: None)
+    st.session_state.clear()
+    st.session_state["_app4_user"] = {"id": uid, "expires_at": 1 << 40}
+    st.session_state[selector._ULTIMO_OK] = "light"
+
+    auth.encerrar_sessao()
+
+    assert selector.tema_para_pintar() == "light"
+    st.session_state.clear()
+
+
+@pytest.mark.parametrize("uid", _contas())
+def test_leitura_que_falha_mantem_o_tema_em_qualquer_conta(monkeypatch, uid):
+    """O pool ocupado por uma importação longa não distingue conta."""
+    import streamlit as st
+
+    import design.theme_selector as selector
+
+    def fail():
+        raise RuntimeError("pool ocupado pela importacao")
+
+    monkeypatch.setattr(selector, "_LEMBRADO", {})
+    monkeypatch.setattr(selector, "require_user", lambda: uid)
+    monkeypatch.setattr(selector, "principal", lambda: {"id": uid})
+    monkeypatch.setattr(selector, "load_theme", fail)
+    _cookies_do_navegador(
+        monkeypatch, app4_tema=f"light.{selector._etiqueta(uid)}")
+    st.session_state.clear()
+
+    assert selector.tema_para_pintar() == "light"
+    st.session_state.clear()
+
+
+@pytest.mark.parametrize("uid", _contas())
+def test_sessao_perdida_mantem_o_tema_em_qualquer_conta(monkeypatch, uid):
+    """Anexar arquivo com o websocket reconectando: sem conta na sessão."""
+    import streamlit as st
+
+    import design.theme_selector as selector
+
+    monkeypatch.setattr(selector, "_LEMBRADO", {})
+    _cookies_do_navegador(
+        monkeypatch, app4_tema=f"light.{selector._etiqueta(uid)}")
+    st.session_state.clear()
+
+    assert selector.tema_para_pintar() == "light"
+    st.session_state.clear()
+
+
+def test_cookie_de_uma_conta_nao_pinta_a_outra(monkeypatch):
+    """Um navegador, duas contas -- e o cookie é do navegador.
+
+    A #552 pôs o cookie no caminho para que a execução sem conta não caísse
+    para dark. Num navegador usado por mais de uma conta isso virou o defeito
+    oposto: a conta que entrava depois herdava o tema da anterior sempre que a
+    leitura dela falhava. Mudar o tema de alguém porque OUTRA pessoa escolheu
+    assim é mudança sem consentimento igual.
+    """
+    import streamlit as st
+
+    import design.theme_selector as selector
+
+    def fail():
+        raise RuntimeError("pool ocupado pela importacao")
+
+    monkeypatch.setattr(selector, "_LEMBRADO", {})
+    monkeypatch.setattr(selector, "load_theme", fail)
+    # A conta 1 acabou de pintar claro NESTE navegador.
+    _cookies_do_navegador(
+        monkeypatch, app4_tema=f"light.{selector._etiqueta('conta-1')}")
+
+    def _pinta(uid: str) -> str:
+        monkeypatch.setattr(selector, "require_user", lambda: uid)
+        monkeypatch.setattr(selector, "principal", lambda: {"id": uid})
+        st.session_state.clear()
+        tema = selector.tema_para_pintar()
+        st.session_state.clear()
+        return tema
+
+    # Para o dono do cookie ele continua valendo: é a memória que atravessa o
+    # deploy, e tirá-la devolveria o escuro que a #552 veio corrigir.
+    assert _pinta("conta-1") == "light", (
+        "o cookie deixou de servir à própria conta que o escreveu"
+    )
+    assert _pinta("conta-2") == "dark", (
+        "a conta seguinte foi pintada com o tema que outra conta escolheu "
+        "neste navegador"
+    )
+
+
+def test_cookie_sem_etiqueta_nao_pinta_conta_nenhuma(monkeypatch):
+    """O cookie que a versão anterior escrevia não dizia de quem era.
+
+    Escrito como ``light`` e nada mais, ele era entregue a qualquer conta que
+    entrasse neste navegador. É a forma do defeito relatado em 12/10/2026, e
+    está escrita aqui com o vocabulário da versão que o produzia: sem conta a
+    quem atribuí-lo, o cookie não pinta ninguém.
+    """
+    import streamlit as st
+
+    import design.theme_selector as selector
+
+    def fail():
+        raise RuntimeError("pool ocupado pela importacao")
+
+    monkeypatch.setattr(selector, "_LEMBRADO", {})
+    monkeypatch.setattr(selector, "load_theme", fail)
+    monkeypatch.setattr(selector, "require_user", lambda: "conta-2")
+    monkeypatch.setattr(selector, "principal", lambda: {"id": "conta-2"})
+    _cookies_do_navegador(monkeypatch, app4_tema="light")
+    st.session_state.clear()
+
+    assert selector.tema_para_pintar() == "dark", (
+        "o cookie sem dono pintou uma conta que nunca escolheu claro"
+    )
+    st.session_state.clear()
+
+
+def test_execucao_sem_conta_nao_apaga_a_etiqueta_do_cookie(monkeypatch):
+    """A tela de entrada é a execução anterior a outra conta entrar.
+
+    Regravar o cookie sem etiqueta ali deixaria a marca em branco, e cookie
+    sem marca é aceito por qualquer conta: a proteção morreria exatamente no
+    momento em que ela precisa valer.
+    """
+    import streamlit.components.v1 as componentes
+
+    import design.theme_selector as selector
+
+    corpos: list[str] = []
+    monkeypatch.setattr(componentes, "html",
+                        lambda corpo, **kwargs: corpos.append(corpo))
+    etiqueta = selector._etiqueta("conta-1")
+    _cookies_do_navegador(monkeypatch, app4_tema=f"light.{etiqueta}")
+
+    selector.lembrar_no_navegador("light", "")
+
+    assert f"app4_tema=light.{etiqueta}" in corpos[0]
+
+
+def test_etiqueta_do_cookie_nao_devolve_a_conta():
+    """O cookie ganhou uma marca, não um identificador."""
+    import design.theme_selector as selector
+
+    uid = "11111111-2222-3333-4444-555555555555"
+    etiqueta = selector._etiqueta(uid)
+    assert etiqueta and uid not in etiqueta
+    assert etiqueta == selector._etiqueta(uid)
+    assert etiqueta != selector._etiqueta(uid[:-1] + "6")
+    assert selector._etiqueta("") == ""
