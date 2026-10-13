@@ -1075,6 +1075,39 @@ def _fig_cashflow_hist(cashflow: list) -> go.Figure:
 _PERIODOS_EVOLUCAO = ("Anos", "12 M", "Tudo")
 
 
+def _meses_por_ativo(snapshots: list, campo: str) -> str:
+    """``"TPRE2029 (jun/23 a ago/26, 39 meses); LCI (jun/26 a set/26, 4 meses)"``."""
+    por_ativo: dict[str, list[str]] = {}
+    for s in snapshots:
+        for tk in s.get(campo) or []:
+            por_ativo.setdefault(tk, []).append(s["label"])
+    partes = []
+    for tk in sorted(por_ativo):
+        meses = por_ativo[tk]
+        faixa = meses[0] if len(meses) == 1 else f"{meses[0]} a {meses[-1]}"
+        partes.append(f"{tk} ({faixa}, {len(meses)} {'mês' if len(meses) == 1 else 'meses'})")
+    return "; ".join(partes)
+
+
+def _avisos_historico_reconstruido(evolucao: dict, snapshots: list) -> None:
+    if evolucao.get("tesouro_historico_ok") is False:
+        aviso_lacuna("Não foi possível remontar o Tesouro Direto nos meses passados; "
+                     "só o ponto de hoje o inclui.",
+                     codigo="tela.investimentos.tesouro_historico_nao_recomposto")
+        st.caption("O Tesouro Direto só está incluído no ponto de hoje.")
+    sem_preco = _meses_por_ativo(snapshots, "sem_preco")
+    if sem_preco:
+        aviso_lacuna("Sem fechamento da B3 no mês, avaliado pelo custo: " + sem_preco + ".",
+                     codigo="tela.investimentos.historico_sem_fechamento_b3")
+    a_custo = _meses_por_ativo(snapshots, "a_custo")
+    if a_custo:
+        aviso_lacuna("Sem preço publicado no mês (renda fixa, ou Tesouro antes da série "
+                     "do Tesouro Transparente), avaliado pelo custo: " + a_custo + ".",
+                     codigo="tela.investimentos.historico_avaliado_pelo_custo")
+    if sem_preco or a_custo:
+        st.caption("Alguns meses têm ativos avaliados pelo custo.")
+
+
 def _recorte_evolucao(snapshots: list, periodo: str) -> list:
     """Pontos do gráfico conforme o período, no formato da Área do Investidor.
 
@@ -1754,8 +1787,13 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                             width="stretch",
                             config={"displayModeBar": False},
                             key="dash_evolucao_snapshot")
-            detalhe_tecnico("Evolução baseada nos snapshots importados do App2.",
-                            codigo="investimentos.evolucao_patrimonial.fonte_snapshots")
+            if evolucao.get("procedencia") == "negociacoes":
+                detalhe_tecnico("Evolução remontada mês a mês pelos extratos de Negociação "
+                                "e Movimentação, a preço de fechamento da B3.",
+                                codigo="investimentos.evolucao_patrimonial.fonte_negociacoes")
+            else:
+                detalhe_tecnico("Evolução baseada nos snapshots importados do App2.",
+                                codigo="investimentos.evolucao_patrimonial.fonte_snapshots")
         elif cashflow:
             st.plotly_chart(_fig_evolucao(cashflow, total),
                             width="stretch",
@@ -2317,13 +2355,25 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                 ]),
                 hide_index=True, width="stretch", height=380,
             )
-        detalhe_tecnico(
-            "O histórico vem dos relatórios consolidados da Área do Investidor da B3, "
-            "ações emprestadas incluídas, como na Evolução Patrimonial da B3. "
-            "Cada ponto soma também o exterior (Nomad), que a B3 não mostra: quantidade "
-            "pelas notas de corretagem até a data, preço e dólar do fechamento da data.",
-            codigo="investimentos.historico.procedencia",
-        )
+        if evolucao.get("procedencia") == "negociacoes":
+            detalhe_tecnico(
+                "Sem extrato de posição da B3, o histórico é remontado no fim de cada mês "
+                "pelos extratos de Negociação e Movimentação: quantidade e custo médio com "
+                "desdobramentos, grupamentos, bonificações e trocas de código. Ações e FIIs "
+                "valem o fechamento do último pregão do mês na fita oficial da B3 "
+                "(COTAHIST, sem retroajuste); Tesouro Direto, o preço de resgate do "
+                "Tesouro Transparente no último dia do mês. O ponto de hoje é a carteira "
+                "atual. Dinheiro de venda ainda não reinvestido sai da curva.",
+                codigo="investimentos.historico.procedencia_negociacoes",
+            )
+        else:
+            detalhe_tecnico(
+                "O histórico vem dos relatórios consolidados da Área do Investidor da B3, "
+                "ações emprestadas incluídas, como na Evolução Patrimonial da B3. "
+                "Cada ponto soma também o exterior (Nomad), que a B3 não mostra: quantidade "
+                "pelas notas de corretagem até a data, preço e dólar do fechamento da data.",
+                codigo="investimentos.historico.procedencia",
+            )
         st.caption(
             "Crescimento anual = taxa composta que leva o valor de mercado da primeira "
             "foto ao de hoje. Inclui os aportes, então não é rentabilidade: mede quanto "
@@ -2342,6 +2392,8 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
             aviso_lacuna("Exterior sem cotação na data, fora da soma: " + "; ".join(sem_preco) + ".",
                          codigo="tela.investimentos.exterior_sem_cotacao_na_data")
             st.caption("Em algumas datas o exterior ficou fora da soma.")
+        if evolucao.get("procedencia") == "negociacoes":
+            _avisos_historico_reconstruido(evolucao, snapshots)
         _editor_posicao_anterior(realizado)
         sem_custo = [s["label"] for s in snapshots if s.get("valor_investido") is None]
         if sem_custo:

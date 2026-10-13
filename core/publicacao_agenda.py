@@ -380,6 +380,19 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/fii_metrics_monthly.json.gz",),
     ),
     Alvo(
+        # Fechamento do último pregão de cada mês (COTAHIST, sem retroajuste)
+        # para a Evolução Patrimonial de quem não tem foto de custódia: a
+        # carteira é remontada pelas negociações e avaliada mês a mês. A fita
+        # mora no armazém; market.historical_prices do Supabase mistura séries
+        # ajustadas e brutas. Depois de b3_pregao, que traz o pregão novo.
+        chave="precos_mensais_b3",
+        titulo="Fechamento mensal bruto da B3",
+        passos=(("scripts/publish_precos_mensais_b3.py",),),
+        cadencia_dias=7,
+        modulo="b3",
+        artefatos=("data/public/precos_mensais_b3.json.gz",),
+    ),
+    Alvo(
         # Notícias filtradas por relevância, relatórios (documentos CVM/SEC) e
         # eventos datados por ativo, para a Inteligência dos Ativos. Lê o
         # acervo de notícias e os documentos que só existem no armazém; o

@@ -273,6 +273,7 @@ CARIMBO = {
     "cenarios_analogos": ("arquivo", "data/public/cenarios_analogos.json.gz"),
     "informacoes_recentes": ("arquivo", "data/public/informacoes_recentes.json.gz"),
     "fii_metrics_monthly": ("arquivo", "data/public/fii_metrics_monthly.json.gz"),
+    "precos_mensais_b3": ("arquivo", "data/public/precos_mensais_b3.json.gz"),
     "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),
     "b3_linhagem": ("arquivo", "data/public/b3_linhagem.json"),
 }
