@@ -551,6 +551,20 @@ _SQL_POSICOES_EXTRAS_FORA_SNAPSHOT = """
 """
 
 
+# Foto de custódia = extrato da B3 ou consolidado da corretora. A do Tesouro
+# (td-snap-, inclusive as seis linhas antigas rotuladas xp_consolidado) não
+# conta: ela não diz nada sobre ações e FIIs.
+_SQL_TEM_FOTO_DE_CUSTODIA = """
+    SELECT EXISTS (
+        SELECT 1
+        FROM   portfolio_position_snapshots
+        WHERE  user_id = :uid
+          AND  COALESCE(source_id, '') NOT LIKE 'td-snap-%'
+          AND  source_table IN ('b3_posicao_detalhada', 'xp_consolidado', 'xp_positions')
+    )
+"""
+
+
 def _get_usd_brl_live() -> float | None:
     """Tenta buscar USD/BRL via yfinance; ausência permanece explícita."""
     try:
@@ -701,6 +715,16 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list,
         return
 
     carteira["posicoes"].extend(novas)
+    _recalcular_totais_carteira(carteira)
+    novos_stale = sum(1 for p in novas if p.get("cotacao_fonte") == "stale")
+    if novos_stale:
+        carteira.setdefault("avisos_dados", []).append(
+            f"{novos_stale} posição(ões) USD usam cotação desatualizada com sinalização explícita."
+        )
+
+
+def _recalcular_totais_carteira(carteira: dict) -> None:
+    """Refaz totais, pesos e agregados depois que entram posições novas."""
     carteira["posicoes"].sort(key=lambda p: p["valor_mercado"], reverse=True)
 
     ti_total = sum(p["total_investido"] for p in carteira["posicoes"])
@@ -729,13 +753,46 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list,
     )
     carteira["data_referencia_min"] = data_ref_min
     carteira["data_referencia_max"] = data_ref_max
-    novos_stale = sum(1 for p in novas if p.get("cotacao_fonte") == "stale")
-    if novos_stale:
-        carteira.setdefault("avisos_dados", []).append(
-            f"{novos_stale} posição(ões) USD usam cotação desatualizada com sinalização explícita."
-        )
+    carteira["diferenca_reais"] = round(vm_total - ti_total, 2)
     carteira["por_classe"] = _agregar_por_classe(carteira["posicoes"])
     carteira["por_setor"]  = _agregar_por_setor(carteira["posicoes"])
+
+
+def _adicionar_recalculo_ao_snapshot(carteira: dict, rows: list,
+                                     fx_compra: dict) -> None:
+    """Renda variável do recálculo para quem só tem a foto do Tesouro.
+
+    O snapshot manda na carteira assim que existe uma linha dele -- e a foto
+    do Tesouro Direto é uma linha. Quem subiu o relatório do Tesouro mas nunca
+    o extrato de custódia da B3 (nem o consolidado da corretora) ficava só com
+    os títulos públicos na tela: as ações e os FIIs, que para essa pessoa só
+    existem no recálculo das negociações, sumiam. Aqui eles voltam, menos o
+    que a foto já cobre pelo ticker-base. USD fica com
+    `_adicionar_extras_ao_snapshot`.
+
+    Só é chamada quando NÃO há foto de custódia: com ela, o recálculo é o que
+    a custódia desmente (posição vendida em outra corretora continua nele).
+    """
+    if not rows:
+        return
+    cobertos = {_base_ticker(p.get("ticker") or "") for p in carteira.get("posicoes", [])}
+    brl = [r for r in rows
+           if (r.currency or "BRL").upper() != "USD"
+           and float(r.quantity or 0) > 0.000001
+           and _base_ticker(r.ticker or "") not in cobertos]
+    novas, avisos = _posicoes_do_recalculo(brl, fx_compra)
+    if not novas:
+        return
+    carteira["posicoes"].extend(novas)
+    _recalcular_totais_carteira(carteira)
+    if any(r.current_price is not None for r in brl):
+        carteira["cotacoes_disponiveis"] = True
+    carteira.setdefault("avisos_dados", []).extend(avisos)
+    n_stale = sum(1 for p in novas if p.get("cotacao_fonte") == "stale")
+    if n_stale:
+        carteira["avisos_dados"].append(
+            f"{n_stale} cotação(ões) excedem o limite de frescor e foram marcadas como desatualizadas."
+        )
 
 
 def _carteira_snapshot_consolidada(conn, owner: str, rows: list) -> dict:
@@ -761,6 +818,13 @@ def _carteira_snapshot_consolidada(conn, owner: str, rows: list) -> dict:
     ).fetchall()
     if extra_rows:
         _adicionar_extras_ao_snapshot(carteira, extra_rows, fx_compra)
+    # Sem extrato de custódia, ações e FIIs só existem no recálculo.
+    if not conn.execute(text(_SQL_TEM_FOTO_DE_CUSTODIA), {"uid": owner}).scalar():
+        _adicionar_recalculo_ao_snapshot(
+            carteira,
+            conn.execute(text(_SQL_POSICOES), {"uid": owner}).fetchall(),
+            fx_compra,
+        )
     return carteira
 
 
@@ -814,15 +878,64 @@ def _carteira_real() -> dict:
             "Verifique OWNER_USER_ID e importe as negociações (recompute_for_user em data_pipeline/importers/investments/positions.py recalcula as posições)."
         )
 
+    cotacoes_disponiveis = any(r.current_price is not None for r in rows)
+    posicoes, avisos_dados = _posicoes_do_recalculo(rows, fx_compra)
+    total_investido = sum(p["total_investido"] for p in posicoes)
+    total_mercado   = sum(p["valor_mercado"] for p in posicoes)
+
+    # Preenche pct_carteira com base no total_mercado consolidado
+    base = total_mercado if total_mercado > 0 else total_investido
+    n_live = sum(1 for p in posicoes if p.get("cotacao_fonte") == "live")
+    n_stale = sum(1 for p in posicoes if p.get("cotacao_fonte") == "stale")
+    for p in posicoes:
+        p["pct_carteira"] = p["valor_mercado"] / base * 100 if base > 0 else 0.0
+
+    diferenca_total = round(total_mercado - total_investido, 2)
+    rentabilidade_total = round(
+        diferenca_total / total_investido * 100, 2
+    ) if total_investido > 0 else 0.0
+    data_ref_min, data_ref_max = intervalo_referencia(
+        [p.get("data_referencia") for p in posicoes]
+    )
+    if n_stale:
+        avisos_dados.append(
+            f"{n_stale} cotação(ões) excedem o limite de frescor e foram marcadas como desatualizadas."
+        )
+
+    return {
+        "total_investido":         round(total_investido, 2),
+        "total_mercado":           round(total_mercado, 2),
+        "diferenca_reais":         diferenca_total,
+        "rentabilidade_total_pct": rentabilidade_total,
+        "rentabilidade_total_disponivel": not _sem_cambio_historico(posicoes),
+        "posicoes_sem_cambio_historico": _sem_cambio_historico(posicoes),
+        "num_ativos":              len(posicoes),
+        "cotacoes_disponiveis":    cotacoes_disponiveis,
+        "n_cotacoes_live":         n_live,
+        "n_cotacoes_stale":        n_stale,
+        "data_referencia_min":     data_ref_min,
+        "data_referencia_max":     data_ref_max,
+        "posicoes":                posicoes,
+        "por_classe":              _agregar_por_classe(posicoes),
+        "por_setor":               _agregar_por_setor(posicoes),
+        "avisos_dados":            avisos_dados,
+        # data_source injetado pelo caller
+    }
+
+
+def _posicoes_do_recalculo(rows: list, fx_compra: dict) -> tuple[list, list]:
+    """Posições lidas de portfolio_positions (o recálculo das negociações).
+
+    Uma por ticker-base, já convertidas para BRL. Devolve também os avisos
+    das posições USD que ficaram fora por falta de câmbio. Serve ao caminho
+    de reserva de `_carteira_real` (sem snapshot) e à renda variável de quem
+    só tem a foto do Tesouro (`_adicionar_recalculo_ao_snapshot`).
+    """
     def _f(v) -> float:
         return float(v) if v is not None else 0.0
 
-    cotacoes_disponiveis = any(r.current_price is not None for r in rows)
-
-    total_investido = 0.0
-    total_mercado   = 0.0
-    posicoes        = []
-    avisos_dados    = []
+    posicoes: list[dict] = []
+    avisos_dados: list[str] = []
 
     for r in rows:
         qty    = _f(r.quantity)
@@ -876,8 +989,6 @@ def _carteira_real() -> dict:
             classe_raw = classe_ativo_usd(r.ticker, r.asset_name, r.asset_class)
         setor_raw  = r.sector or "other"
 
-        total_investido += ti
-        total_mercado   += vm
 
         cotacao_ts = getattr(r, "current_price_timestamp", None)
         status_cotacao = classificar_cotacao(cotacao_ts) if r.current_price is not None else "missing"
@@ -914,46 +1025,7 @@ def _carteira_real() -> dict:
             "cor":               _CLASS_COR.get(classe_raw, "#718096"),
         })
 
-    posicoes = _juntar_fracionario_posicoes(posicoes)
-
-    # Preenche pct_carteira com base no total_mercado consolidado
-    base = total_mercado if total_mercado > 0 else total_investido
-    n_live = sum(1 for p in posicoes if p.get("cotacao_fonte") == "live")
-    n_stale = sum(1 for p in posicoes if p.get("cotacao_fonte") == "stale")
-    for p in posicoes:
-        p["pct_carteira"] = p["valor_mercado"] / base * 100 if base > 0 else 0.0
-
-    diferenca_total = round(total_mercado - total_investido, 2)
-    rentabilidade_total = round(
-        diferenca_total / total_investido * 100, 2
-    ) if total_investido > 0 else 0.0
-    data_ref_min, data_ref_max = intervalo_referencia(
-        [p.get("data_referencia") for p in posicoes]
-    )
-    if n_stale:
-        avisos_dados.append(
-            f"{n_stale} cotação(ões) excedem o limite de frescor e foram marcadas como desatualizadas."
-        )
-
-    return {
-        "total_investido":         round(total_investido, 2),
-        "total_mercado":           round(total_mercado, 2),
-        "diferenca_reais":         diferenca_total,
-        "rentabilidade_total_pct": rentabilidade_total,
-        "rentabilidade_total_disponivel": not _sem_cambio_historico(posicoes),
-        "posicoes_sem_cambio_historico": _sem_cambio_historico(posicoes),
-        "num_ativos":              len(posicoes),
-        "cotacoes_disponiveis":    cotacoes_disponiveis,
-        "n_cotacoes_live":         n_live,
-        "n_cotacoes_stale":        n_stale,
-        "data_referencia_min":     data_ref_min,
-        "data_referencia_max":     data_ref_max,
-        "posicoes":                posicoes,
-        "por_classe":              _agregar_por_classe(posicoes),
-        "por_setor":               _agregar_por_setor(posicoes),
-        "avisos_dados":            avisos_dados,
-        # data_source injetado pelo caller
-    }
+    return _juntar_fracionario_posicoes(posicoes), avisos_dados
 
 
 def _juntar_fracionario_posicoes(posicoes: list) -> list:
