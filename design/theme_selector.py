@@ -1,4 +1,5 @@
 """Preferência visual da sessão, sempre vinculada ao usuário autenticado."""
+import hashlib
 import logging
 
 import streamlit as st
@@ -30,7 +31,32 @@ def _lembrar(uid: str, theme: str) -> None:
         _LEMBRADO[uid] = theme
 
 
-def tema_do_navegador() -> str | None:
+def _etiqueta(uid: str) -> str:
+    """Marca opaca da conta, para o cookie saber de quem é o tema que guarda.
+
+    O cookie é do NAVEGADOR e o tema é preferência de CONTA. Num navegador
+    compartilhado -- que é como as contas deste app são testadas -- o cookie
+    que o administrador acabou de escrever era entregue à conta seguinte como
+    se fosse dela: a conta comum, com a leitura falhando, aparecia pintada com
+    o tema de outra pessoa. Isso é mudança de tema sem consentimento, e nasceu
+    justamente da correção #552, que pôs o cookie no caminho.
+
+    ``sha256`` truncado do identificador, nunca o identificador. Não dá para
+    voltar dele à conta, e o cookie continua sem nome, e-mail ou id -- o que
+    ele ganha é só a capacidade de dizer "este tema não é seu".
+    """
+    return hashlib.sha256(str(uid).encode()).hexdigest()[:12] if uid else ""
+
+
+def _cookie_cru() -> str:
+    try:
+        valor = st.context.cookies.get(_COOKIE)
+    except Exception:
+        return ""
+    return valor if isinstance(valor, str) else ""
+
+
+def tema_do_navegador(uid: str = "") -> str | None:
     """Último tema que ESTE navegador pintou, lido do cookie da sessão HTTP.
 
     ``_LEMBRADO`` é do processo e ``st.session_state`` é da sessão -- e os dois
@@ -38,15 +64,28 @@ def tema_do_navegador() -> str | None:
     sobrevive ao que derruba a sessão (expiração das 12 h, reconexão do
     websocket, aba reaberta): é o único lugar de onde uma execução sem conta
     consegue saber que a pessoa estava no claro.
+
+    Com ``uid``, o cookie só responde se a etiqueta for da mesma conta. Sem
+    ``uid`` -- tela de entrada, sessão perdida -- responde sempre: ali não há
+    conta a quem atribuir preferência, e o que importa é não piscar escuro no
+    meio do que o navegador já estava pintando.
+
+    Cookie sem etiqueta -- anterior a esta correção -- é recusado quando há
+    conta: não dá para saber de quem ele é, e pintar alguém com a preferência
+    possivelmente de outra pessoa é o defeito que esta função existe para
+    fechar. Custa uma execução escura, só para quem tem o cookie antigo E a
+    leitura falhando na primeira execução depois do deploy; a execução seguinte
+    já reescreve o cookie com etiqueta.
     """
-    try:
-        valor = st.context.cookies.get(_COOKIE)
-    except Exception:
+    tema, _, etiqueta = _cookie_cru().partition(".")
+    if tema not in ("dark", "light"):
         return None
-    return valor if valor in ("dark", "light") else None
+    if uid and etiqueta != _etiqueta(uid):
+        return None
+    return tema
 
 
-def lembrar_no_navegador(theme: str) -> None:
+def lembrar_no_navegador(theme: str, uid: str = "") -> None:
     """Grava o tema no cookie do navegador, SEMPRE e na mesma posição.
 
     Emitido em toda execução e nos dois temas, de propósito. Um elemento que
@@ -55,10 +94,19 @@ def lembrar_no_navegador(theme: str) -> None:
     Configurações para a primeira aba (ver :func:`current_theme`).
 
     O cookie é escrito no documento PAI: ``components.html`` roda num iframe,
-    e o cookie do iframe não é o da aplicação. Guarda só ``dark``/``light``,
-    nada que identifique a conta.
+    e o cookie do iframe não é o da aplicação. Guarda ``dark``/``light`` e a
+    etiqueta opaca de :func:`_etiqueta`, nada que identifique a conta.
+
+    Sem ``uid`` a etiqueta que já está no cookie é MANTIDA. Regravar sem ela
+    apagaria a marca justamente nas execuções sem conta -- a tela de entrada,
+    que é a execução imediatamente anterior a outra conta entrar -- e o cookie
+    sem marca é aceito por qualquer uma: a proteção morreria no único momento
+    em que ela precisa valer.
     """
     marcado = theme if theme in ("dark", "light") else "dark"
+    etiqueta = _etiqueta(uid) or _cookie_cru().partition(".")[2]
+    if etiqueta:
+        marcado = f"{marcado}.{etiqueta}"
     try:
         from streamlit.components.v1 import html as _html
     except Exception:
@@ -113,7 +161,7 @@ def current_theme() -> str:
             ultimo = (
                 st.session_state.get(_ULTIMO_OK)
                 or _LEMBRADO.get(uid)
-                or tema_do_navegador()
+                or tema_do_navegador(uid)
             )
             return ultimo if ultimo in ("dark", "light") else "dark"
         st.session_state.pop(_LOAD_ERROR, None)
@@ -176,7 +224,7 @@ def tema_para_pintar() -> str:
         return current_theme()
     except Exception:
         logger.exception("falha ao resolver o tema antes do portão")
-        return _LEMBRADO.get(uid) or tema_do_navegador() or "dark"
+        return _LEMBRADO.get(uid) or tema_do_navegador(uid) or "dark"
 
 
 def _persist_choice() -> None:
