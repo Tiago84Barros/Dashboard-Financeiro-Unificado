@@ -264,6 +264,7 @@ class _Titulo:
         self.ganho_mtm_reais = aval.ganho_mtm_reais
         self.mtm_pct = aval.mtm
         self._fonte = fonte
+        self.fonte_preco = fonte
 
     @property
     def marcado_a_mercado(self) -> bool:
@@ -725,6 +726,24 @@ def test_sem_preco_nao_inventa_veredito():
     leitura = ler_venda(_Titulo(taxa_mercado=None, pu=None, fonte="extrato"),
                         data_avaliacao=HOJE)
     assert leitura.veredito == SEM_RESPOSTA
+
+
+def test_lote_sem_taxa_com_preco_de_hoje_nomeia_a_taxa_que_falta():
+    """Lote da Movimentação sem curva no dia da compra: há preço, falta a taxa."""
+    from dataclasses import replace
+
+    from core.tesouro_venda import SEM_RESPOSTA
+    titulo = _Titulo()
+    lote = replace(titulo.lotes[0], taxa_contratada=None)
+    titulo.lotes = [lote]
+    titulo.avaliacoes = [_avaliacao(lote, taxa_mercado=0.1360, pu=790.0)]
+    titulo.mtm_pct = titulo.avaliacoes[0].mtm
+    titulo.ganho_mtm_reais = titulo.avaliacoes[0].ganho_mtm_reais
+    leitura = ler_venda(titulo, data_avaliacao=HOJE)
+    assert leitura.veredito == SEM_RESPOSTA
+    assert leitura.veredito_rotulo == "Sem a taxa da compra para decidir"
+    assert "curva do Tesouro do dia" not in leitura.veredito_motivo
+    assert "extrato" not in leitura.frase.split(";")[0]
 
 
 def test_selic_neutro_e_levar_e_explica_o_selic():

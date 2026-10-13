@@ -232,7 +232,8 @@ def _esc(texto) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def estado_html(*, data_curva: date | None, data_extrato: date | None,
-                hoje: date, dias_curva_velha: int = 5) -> str:
+                hoje: date, dias_curva_velha: int = 5,
+                data_movimentacao: date | None = None) -> str:
     """Chips de procedência: de que dia é o preço e de que dia é a posição.
 
     As duas datas são diferentes e a diferença importa: a posição vem do
@@ -262,6 +263,11 @@ def estado_html(*, data_curva: date | None, data_extrato: date | None,
         chips.append(
             '<span class="td-chip" style="--td-tom: var(--app-info, #4A9EFF);">'
             f'Posição do extrato <b>{data_extrato:%d/%m/%Y}</b></span>')
+    elif data_movimentacao is not None:
+        chips.append(
+            '<span class="td-chip" style="--td-tom: var(--app-info, #4A9EFF);">'
+            f'Compras da movimentação até <b>{data_movimentacao:%d/%m/%Y}</b>'
+            '</span>')
     return f'<div class="td-estado">{"".join(chips)}</div>'
 
 

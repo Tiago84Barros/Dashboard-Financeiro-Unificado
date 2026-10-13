@@ -79,6 +79,16 @@ _ROTULO_VEREDITO = {
     SEM_RESPOSTA: "Sem preço de hoje para decidir",
 }
 
+# Lote remontado da Movimentação cuja curva do dia da compra não está no banco:
+# o preço de hoje existe, falta a taxa contratada. Dizer "sem preço de hoje"
+# aqui apontaria a causa errada.
+_ROTULO_SEM_TAXA = "Sem a taxa da compra para decidir"
+_MOTIVO_SEM_TAXA = ("Falta a taxa que você contratou neste título: sem ela não "
+                    "há como comparar vender com carregar. Importar o Extrato "
+                    "Analítico do Tesouro traz a taxa de cada compra.")
+_FRASE_SEM_TAXA = ("O valor mostrado é o preço de recompra de hoje; falta só a "
+                   "taxa da compra para medir a marcação.")
+
 
 _PREFIXO_TAXA = {
     "IPCA": "IPCA + ",
@@ -340,6 +350,14 @@ def ler_venda(titulo, *, data_avaliacao: date,
         supera=supera, alternativa=alternativa, taxa_indiferenca=indiferenca,
         vencimento=titulo.vencimento, ganho_liquido=ganho_liquido,
         imposto_antecipado=projecao.imposto_antecipado)
+    frase = _frase(situacao, indexador=titulo.indexador,
+                   liquidez_diaria=liquidez, supera=supera,
+                   alternativa=alternativa)
+    rotulo_veredito = _ROTULO_VEREDITO[veredito]
+    falta_taxa = (situacao == SEM_PRECO and titulo.fonte_preco == "curva"
+                  and any(lote.taxa_contratada is None for lote in titulo.lotes))
+    if falta_taxa:
+        rotulo_veredito, motivo, frase = _ROTULO_SEM_TAXA, _MOTIVO_SEM_TAXA, _FRASE_SEM_TAXA
     return LeituraVenda(
         security_key=titulo.security_key,
         titulo=titulo.titulo,
@@ -364,11 +382,9 @@ def ler_venda(titulo, *, data_avaliacao: date,
         alternativa=alternativa,
         alternativa_supera=supera,
         projecao=projecao,
-        frase=_frase(situacao, indexador=titulo.indexador,
-                     liquidez_diaria=liquidez, supera=supera,
-                     alternativa=alternativa),
+        frase=frase,
         veredito=veredito,
-        veredito_rotulo=_ROTULO_VEREDITO[veredito],
+        veredito_rotulo=rotulo_veredito,
         veredito_motivo=motivo,
     )
 
@@ -501,7 +517,7 @@ def manchete_do_veredito(leituras: Sequence[LeituraVenda]) -> str:
         return "Sem preço de hoje para decidir"
     if sem:
         return (f"Leve até o vencimento — {len(sem)} "
-                f"título{'s' if len(sem) != 1 else ''} sem preço de hoje")
+                f"título{'s' if len(sem) != 1 else ''} sem como decidir hoje")
     if len(leituras) == 1:
         return "Leve até o vencimento"
     return f"Leve os {len(leituras)} títulos até o vencimento"

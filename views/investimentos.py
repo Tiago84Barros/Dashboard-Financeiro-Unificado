@@ -4797,9 +4797,37 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
     owner = getattr(settings, "OWNER_USER_ID", None)
     if engine is None or not owner:
         return False
-    titulos = carregar_titulos(engine, owner)
+    origem: dict = {}
+    titulos = carregar_titulos(engine, owner, diagnostico=origem)
     if not titulos:
         return False
+    da_movimentacao = origem.get("origem") == "movimentacao"
+    if da_movimentacao:
+        detalhe_tecnico(
+            "Sem Extrato Analítico importado: os lotes do Tesouro foram remontados "
+            "das compras da Movimentação da B3 e a taxa de cada lote foi deduzida "
+            "do PU pago contra a taxa e o PU de compra da curva oficial no dia "
+            "(erro medido de até 0,004 p.p. contra 24 lotes com extrato). "
+            "Importar o Extrato Analítico substitui a dedução pela taxa impressa.",
+            codigo="investimentos.tesouro.lotes_da_movimentacao",
+        )
+        if origem.get("sem_taxa"):
+            aviso_lacuna(
+                "Sem curva do Tesouro no dia da compra de "
+                f"{', '.join(origem['sem_taxa'])}: esses lotes ficam sem marcação "
+                "até update_tesouro_curva recarregar a janela longa desses títulos "
+                "ou o Extrato Analítico ser importado.",
+                codigo="tela.investimentos.tesouro_lote_sem_taxa",
+            )
+        if origem.get("divergentes"):
+            aviso_lacuna(
+                "Lotes da Movimentação que não fecham com a custódia do Tesouro "
+                "ficaram de fora do painel: " + "; ".join(
+                    f"{chave} {lotes:.2f} remontado × {custodia:.2f} na custódia"
+                    for chave, lotes, custodia in origem["divergentes"])
+                + ". Importar a Movimentação completa ou o Extrato Analítico.",
+                codigo="tela.investimentos.tesouro_lotes_divergem_da_custodia",
+            )
 
     hoje = _date_hoje.today()
     data_curva = curva_disponivel(engine)
@@ -4837,14 +4865,17 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
     _secao_titulo_orig(
         "🏦", "Tesouro Direto — levar até o vencimento ou vender antes",
         f"{len(titulos)} título{'s' if len(titulos) != 1 else ''} "
-        "com taxa contratada por lote",
+        + ("com a taxa de cada compra" if da_movimentacao
+           else "com taxa contratada por lote"),
     )
 
     # ── A resposta: de que dia é o preço, e o veredito da carteira ───────────
     extrato = max((t.report_date for t in titulos if t.report_date), default=None)
     st.markdown(
         _painel.TD_CSS
-        + _painel.estado_html(data_curva=data_curva, data_extrato=extrato, hoje=hoje)
+        + _painel.estado_html(
+            data_curva=data_curva, data_extrato=extrato, hoje=hoje,
+            data_movimentacao=origem.get("ultima_movimentacao") if da_movimentacao else None)
         + _painel.hero_html(resumo, veredito=veredito_da_carteira(leituras),
                             manchete=manchete_do_veredito(leituras),
                             frase=frase_do_veredito(leituras)),
