@@ -53,6 +53,7 @@ _SETOR_SCHEMA:   { nome, valor_mercado, pct_carteira }
 import logging
 import re
 from collections import defaultdict
+from types import SimpleNamespace
 
 from core.categorias import SQL_INVESTIMENTO
 from core.classe_exterior import classe_ativo_usd, classe_por_evidencia
@@ -2262,6 +2263,18 @@ def _evolucao_real() -> dict:
                     _carteira_snapshot_consolidada(conn, owner, current_rows)
                     if current_rows else None
                 )
+                # Sem foto de custodia (so o relatorio do Tesouro), as fotos dao
+                # um ponto so; a carteira e remontada mes a mes pelas
+                # negociacoes e movimentacoes.
+                reconstruidos = None
+                if not conn.execute(text(_SQL_TEM_FOTO_DE_CUSTODIA), {"uid": owner}).scalar():
+                    reconstruidos = _pontos_reconstruidos(conn, owner)
+                    if reconstruidos:
+                        snap_rows = [
+                            SimpleNamespace(mes=p["mes"], valor_mercado=p["valor_mercado"],
+                                            valor_investido_snapshot=p["valor_investido"])
+                            for p in reconstruidos
+                        ]
                 try:
                     exterior = _exterior_nas_datas(conn, owner, [r.mes for r in snap_rows])
                     exterior_ok = True
@@ -2272,6 +2285,8 @@ def _evolucao_real() -> dict:
                 d = _montar_evolucao_snapshot(snap_rows, div_rows, current_totals, tx_rows,
                                               exterior)
                 d["exterior_historico_ok"] = exterior_ok
+                if reconstruidos:
+                    _anotar_reconstrucao(d, reconstruidos)
                 return d
         tx_rows   = conn.execute(text(_SQL_EVOLUCAO_TX),    {"uid": owner}).fetchall()
         div_rows  = conn.execute(text(_SQL_EVOLUCAO_DIV),   {"uid": owner}).fetchall()
@@ -2321,6 +2336,31 @@ def _evolucao_real() -> dict:
         "total_mercado":    round(total_mkt_atual, 2),
         "total_dividendos": round(cum_div, 2),
     }
+
+
+def _pontos_reconstruidos(conn, owner: str) -> list[dict] | None:
+    from core import evolucao_reconstruida
+
+    # Savepoint: consulta que falha aqui nao pode abortar a transacao que o
+    # resto da curva (exterior, proventos) ainda vai usar.
+    try:
+        with conn.begin_nested():
+            return evolucao_reconstruida.reconstruir_do_banco(conn, owner)
+    except Exception as exc:  # sem reconstrucao, fica a curva das fotos
+        logger.warning("[investimentos] historico reconstruido indisponivel (%s).",
+                       type(exc).__name__)
+        return None
+
+
+def _anotar_reconstrucao(d: dict, pontos: list[dict]) -> None:
+    """Procedencia da curva remontada e o que entrou pelo custo em cada mes."""
+    por_mes = {p["mes"].strftime("%Y-%m"): p for p in pontos}
+    for s in d.get("snapshots", []):
+        p = por_mes.get(s["mes_str"])
+        s["sem_preco"] = list(p["sem_preco"]) if p else []
+        s["a_custo"] = list(p["a_custo"]) if p else []
+    d["procedencia"] = "negociacoes"
+    d["tesouro_historico_ok"] = all(p.get("tesouro_ok", True) for p in pontos)
 
 
 def _exterior_nas_datas(conn, owner: str, datas: list) -> dict:
