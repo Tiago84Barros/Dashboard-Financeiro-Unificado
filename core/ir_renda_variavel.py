@@ -22,9 +22,9 @@ unificava as alíquotas, perdeu a vigência sem ser votada):
     prazo.
   - IRRF ("dedo-duro"): 0,005% sobre a venda em operação comum e FII, 1% sobre
     o ganho do day trade; deduz do imposto do mês. O extrato da B3 não traz
-    as notas de corretagem, então aqui ele é ESTIMADO. O saldo não usado
-    passa para os meses seguintes do mesmo ano; o que sobra em dezembro vai
-    para a declaração anual.
+    as notas de corretagem, então aqui ele é ESTIMADO. Cada ficha do
+    programa guarda o seu saldo (ver `apurar`), que passa para os meses
+    seguintes do mesmo ano; o que sobra em dezembro vai para a declaração.
   - DARF código 6015, vencimento no último dia útil do mês seguinte. Abaixo
     de R$ 10 não se paga: o valor acumula para o próximo DARF.
 
@@ -51,11 +51,13 @@ Tudo aqui é puro: sem banco, sem rede. O carregamento fica em
 from __future__ import annotations
 
 import calendar
+import json
 import logging
 import re
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -75,6 +77,8 @@ ROTULO_CESTA = {"comum": "Operações comuns", "day_trade": "Day trade", "fii": 
 _ZERO = Decimal("0")
 _EPS = Decimal("0.0001")
 
+CAMINHO_CNPJ = Path(__file__).resolve().parents[1] / "data" / "public" / "cnpj_emissores.json"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Classificação
@@ -86,6 +90,10 @@ def _base(ticker: str) -> str:
 
 
 _DIREITO_ACAO = re.compile(r"^[A-Z]{4}[12]$")
+# Código de negociação da B3 (PETR4, TAEE11, AAPL34, FAMB11B). O que não tem
+# esse formato ("CDB", código de cota de fundo fechado) não é renda variável:
+# renda fixa tem IR retido na fonte e não entra na apuração mensal.
+_TICKER_B3 = re.compile(r"^[A-Z0-9]{4}\d{1,2}[A-Z]?$")
 
 
 def e_direito(ticker: str, tipo: str | None) -> bool:
@@ -106,6 +114,8 @@ def tipo_fiscal(ticker: str, classe: str | None) -> str | None:
     """
     c = (classe or "").strip().lower()
     t = _base(ticker)
+    if not _TICKER_B3.match(t):
+        return None
     if c == "reit":
         return "fii"
     if c == "etf":
@@ -182,6 +192,21 @@ def _realizacoes(transacoes: list[dict], eventos: list[dict] | None,
     Cada realização: mes, data, ticker, tipo, cesta, valor_venda, ganho
     (só da parte com custo), qtd_sem_custo e valor_sem_custo.
     """
+    realizacoes, alertas, _ = _percorrer(transacoes, eventos)
+    return realizacoes, alertas
+
+
+def _percorrer(transacoes: list[dict], eventos: list[dict] | None,
+               cortes: tuple[str, ...] | list[str] = (),
+               ) -> tuple[list[dict], list[dict], dict[str, dict]]:
+    """`_realizacoes` com a foto da posição em cada data de ``cortes``.
+
+    A foto ('AAAA-MM-DD') é o que sobra DEPOIS de tudo o que aconteceu
+    naquele dia: {ticker: {"qtd", "custo", "tipo", "sem_custo"}} -- é o saldo
+    a custo de aquisição que vai para Bens e Direitos em 31/12. ``sem_custo``
+    marca o ativo que, até a data, já teve venda sem custo conhecido: a parte
+    comprada antes do extrato não está na foto.
+    """
     from data_pipeline.importers.investments.positions import (
         _aplicar_evento,
         _liquidar_reorganizacoes,
@@ -214,8 +239,21 @@ def _realizacoes(transacoes: list[dict], eventos: list[dict] | None,
         agenda.append((dia, 1, b, None))
     agenda.sort(key=lambda x: (x[0], x[1], x[2]))
 
+    pendentes = sorted({str(c)[:10] for c in cortes})
+    fotos: dict[str, dict] = {}
+    com_venda_sem_custo: set[str] = set()
+
+    def fotografar(corte: str) -> None:
+        fotos[corte] = {
+            b: {"qtd": s["qty"], "custo": s["qty"] * s["avg_price"],
+                "tipo": tipos.get(b), "sem_custo": b in com_venda_sem_custo}
+            for b, s in sorted(state.items()) if s["qty"] > _EPS
+        }
+
     realizacoes: list[dict] = []
     for dia, ordem, b, ev in agenda:
+        while pendentes and dia[:10] > pendentes[0]:
+            fotografar(pendentes.pop(0))
         if ordem == 0:
             _aplicar_evento(ev, state, grupos, alertas)
             continue
@@ -261,6 +299,8 @@ def _realizacoes(transacoes: list[dict], eventos: list[dict] | None,
             if sem > _EPS and e_direito(b, tipo):
                 # Direito recebido da empresa: custo zero, ganho integral.
                 receita_coberta, sem = receita, _ZERO
+            if sem > _EPS:
+                com_venda_sem_custo.add(b)
             realizacoes.append({
                 "mes": _mes(dia), "data": dia, "ticker": b, "tipo": tipo,
                 "cesta": _cesta_comum(tipo), "day_trade": False,
@@ -272,7 +312,9 @@ def _realizacoes(transacoes: list[dict], eventos: list[dict] | None,
             s["qty"] -= coberta
             if s["qty"] <= _EPS:
                 s["qty"], s["avg_price"] = _ZERO, _ZERO
-    return realizacoes, alertas
+    for corte in pendentes:
+        fotografar(corte)
+    return realizacoes, alertas, fotos
 
 
 def resultado_realizado(transacoes: list[dict], eventos: list[dict] | None = None,
@@ -323,18 +365,46 @@ def _meses_entre(primeiro: str, ultimo: str) -> list[str]:
     return out
 
 
+def _pote(anteriores: Decimal, no_mes: Decimal) -> dict:
+    return {"no_mes": no_mes, "meses_anteriores": anteriores,
+            "usado": _ZERO, "a_compensar": anteriores + no_mes}
+
+
+def _usar(pote: dict, devido: Decimal) -> Decimal:
+    """Abate o pote do imposto e devolve o que sobra a pagar."""
+    usado = min(pote["a_compensar"], max(devido, _ZERO))
+    pote["usado"] += usado
+    pote["a_compensar"] -= usado
+    return devido - usado
+
+
 def apurar(transacoes: list[dict], eventos: list[dict] | None = None,
-           hoje: date | None = None) -> dict:
+           hoje: date | None = None, cortes: tuple[str, ...] | list[str] = ()) -> dict:
     """Apuração mês a mês, do primeiro mês com venda até o mês corrente.
 
     ``transacoes``: dicts com transaction_date, ticker, classe ('stock',
     'reit', 'etf', ...), type ('buy'/'sell'), quantity, unit_price, fees.
     ``eventos``: linhas da Movimentação, como ``positions._load_events``.
+    ``cortes``: datas ('AAAA-MM-DD') em que fotografar a posição a custo;
+    a foto sai em ``fotos`` (ver `_percorrer`).
+
+    O IRRF segue as fichas do programa da Receita, cada uma com o seu saldo:
+
+      RENDA VARIÁVEL  "IR fonte de Day-Trade" (1% do ganho) e "IR fonte
+                      (Lei nº 11.033/2004)" (0,005% da venda comum), abatidos
+                      nessa ordem do imposto de ações + day trade;
+      FII/FIAGRO      "Imposto retido" (0,005% da venda), só contra o
+                      imposto dos fundos.
+
+    Os saldos zeram em janeiro. O que sobra da Lei 11.033 em dezembro
+    (renda variável e FII) vai para Imposto Pago/Retido, linha 03; o de
+    day trade não vai -- só por pedido de restituição (P&R 2026, 714).
     """
     hoje = hoje or date.today()
-    realizacoes, alertas = _realizacoes(transacoes, eventos)
+    realizacoes, alertas, fotos = _percorrer(transacoes, eventos, cortes)
     if not realizacoes:
-        return {"meses": [], "anos": [], "alertas": alertas, "pendente": None}
+        return {"meses": [], "anos": [], "alertas": alertas, "pendente": None,
+                "fotos": fotos}
 
     por_mes: dict[str, list[dict]] = defaultdict(list)
     for r in realizacoes:
@@ -343,27 +413,27 @@ def apurar(transacoes: list[dict], eventos: list[dict] | None = None,
     ultimo = max(max(por_mes), f"{hoje.year:04d}-{hoje.month:02d}")
     prejuizo = {c: _ZERO for c in CESTAS}
     incerto = {c: False for c in CESTAS}
-    irrf_saldo = _ZERO
-    acumulado = _ZERO          # DARF abaixo de R$ 10 que passa adiante
+    saldo = {"day_trade": _ZERO, "lei_11033": _ZERO, "fii": _ZERO}
+    acumulado = {"rv": _ZERO, "fii": _ZERO}   # DARF abaixo de R$ 10 que passa adiante
     ano_corrente = None
-    irrf_a_declarar: dict[int, Decimal] = defaultdict(lambda: _ZERO)
+    sobra_ano: dict[int, dict] = {}
     meses: list[dict] = []
 
     for mes in _meses_entre(min(por_mes), ultimo):
         ano, m = int(mes[:4]), int(mes[5:7])
         if ano != ano_corrente:
-            if ano_corrente is not None and irrf_saldo > 0:
-                irrf_a_declarar[ano_corrente] += irrf_saldo
-            irrf_saldo, ano_corrente = _ZERO, ano
+            if ano_corrente is not None:
+                sobra_ano[ano_corrente] = dict(saldo)
+            saldo = {k: _ZERO for k in saldo}
+            ano_corrente = ano
         rs = por_mes.get(mes, [])
-        if not rs and acumulado == 0:
+        if not rs and acumulado["rv"] + acumulado["fii"] == 0:
             continue
 
         vendas_acoes = sum((r["valor_venda"] for r in rs
                             if r["tipo"] == "acao" and not r["day_trade"]), _ZERO)
         isento = vendas_acoes <= LIMITE_ISENCAO_ACOES
         cestas: dict[str, dict] = {}
-        irrf_mes = _ZERO
         for c in CESTAS:
             rc = [r for r in rs if r["cesta"] == c]
             # No mês isento, as ações se compensam ENTRE SI primeiro: o ganho
@@ -381,6 +451,7 @@ def apurar(transacoes: list[dict], eventos: list[dict] | None = None,
             carregado_incerto = incerto[c]
             if sem_custo:
                 incerto[c] = True
+            anterior = prejuizo[c]
             usado = _ZERO
             if resultado > 0:
                 usado = min(resultado, prejuizo[c])
@@ -396,14 +467,15 @@ def apurar(transacoes: list[dict], eventos: list[dict] | None = None,
                 vendido = sum((r["valor_venda"] for r in rc), _ZERO)
                 irrf = vendido * IRRF_VENDA
             irrf = irrf if irrf >= IRRF_MINIMO else _ZERO
-            irrf_mes += irrf
             cestas[c] = {
                 "vendas": sum((r["valor_venda"] for r in rc), _ZERO),
                 "resultado": resultado,
                 "ganho_isento": ganho_isento,
+                "prejuizo_anterior": anterior,
                 "prejuizo_compensado": usado,
                 "base": base,
                 "imposto": imposto,
+                "irrf": irrf,
                 "prejuizo_a_compensar": prejuizo[c],
                 "sem_custo": sem_custo,
                 "valor_sem_custo": sum((r["valor_sem_custo"] for r in rc), _ZERO),
@@ -411,15 +483,30 @@ def apurar(transacoes: list[dict], eventos: list[dict] | None = None,
                 "prejuizo_incerto": incerto[c] or carregado_incerto,
             }
 
-        imposto_total = sum((cestas[c]["imposto"] for c in CESTAS), _ZERO)
-        irrf_saldo += irrf_mes
-        irrf_usado = min(irrf_saldo, imposto_total)
-        irrf_saldo -= irrf_usado
-        devido = imposto_total - irrf_usado + acumulado
+        potes = {
+            "day_trade": _pote(saldo["day_trade"], cestas["day_trade"]["irrf"]),
+            "lei_11033": _pote(saldo["lei_11033"], cestas["comum"]["irrf"]),
+            "fii": _pote(saldo["fii"], cestas["fii"]["irrf"]),
+        }
+        rv_devido = cestas["comum"]["imposto"] + cestas["day_trade"]["imposto"]
+        rv_a_pagar = _usar(potes["lei_11033"], _usar(potes["day_trade"], rv_devido))
+        fii_devido = cestas["fii"]["imposto"]
+        fii_a_pagar = _usar(potes["fii"], fii_devido)
+        for k in saldo:
+            saldo[k] = potes[k]["a_compensar"]
+
+        imposto_total = rv_devido + fii_devido
+        irrf_mes = sum((p["no_mes"] for p in potes.values()), _ZERO)
+        irrf_usado = sum((p["usado"] for p in potes.values()), _ZERO)
+        devido = rv_a_pagar + fii_a_pagar + acumulado["rv"] + acumulado["fii"]
         if devido >= DARF_MINIMO:
-            darf, acumulado = devido, _ZERO
+            pago = {"rv": rv_a_pagar + acumulado["rv"], "fii": fii_a_pagar + acumulado["fii"]}
+            darf, acumulado = devido, {"rv": _ZERO, "fii": _ZERO}
         else:
-            darf, acumulado = _ZERO, devido
+            pago = {"rv": _ZERO, "fii": _ZERO}
+            darf = _ZERO
+            acumulado = {"rv": rv_a_pagar + acumulado["rv"],
+                         "fii": fii_a_pagar + acumulado["fii"]}
         em_curso = (ano, m) == (hoje.year, hoje.month)
         meses.append({
             "mes": mes,
@@ -430,36 +517,78 @@ def apurar(transacoes: list[dict], eventos: list[dict] | None = None,
             "imposto": imposto_total,
             "irrf_estimado": irrf_mes,
             "irrf_deduzido": irrf_usado,
+            "irrf": potes,
+            "rv": {"imposto_devido": rv_devido, "a_pagar": rv_a_pagar, "pago": pago["rv"]},
+            "fii": {"imposto_devido": fii_devido, "a_pagar": fii_a_pagar, "pago": pago["fii"]},
             "darf": darf,
-            "acumulado_proximo": acumulado,
+            "acumulado_proximo": acumulado["rv"] + acumulado["fii"],
             "vencimento": vencimento_darf(ano, m),
             "incompleto": any(cestas[c]["incompleta"] for c in CESTAS),
         })
-    if irrf_saldo > 0 and ano_corrente is not None:
-        irrf_a_declarar[ano_corrente] += irrf_saldo
+    if ano_corrente is not None:
+        sobra_ano[ano_corrente] = dict(saldo)
 
     anos: list[dict] = []
     for ano in sorted({int(x["mes"][:4]) for x in meses}):
         ms = [x for x in meses if x["mes"].startswith(f"{ano:04d}")]
         fim = ms[-1]["cestas"]
+        sobra = sobra_ano.get(ano) or {}
         anos.append({
             "ano": ano,
             "ganho_isento": sum((x["cestas"]["comum"]["ganho_isento"] for x in ms), _ZERO),
             "darf": sum((x["darf"] for x in ms), _ZERO),
+            "imposto_devido": sum((x["imposto"] for x in ms), _ZERO),
             "prejuizo_fim": {c: fim[c]["prejuizo_a_compensar"] for c in CESTAS},
-            "irrf_a_declarar": irrf_a_declarar.get(ano, _ZERO),
+            "irrf_a_declarar": sobra.get("lei_11033", _ZERO) + sobra.get("fii", _ZERO),
+            "irrf_day_trade_restituir": sobra.get("day_trade", _ZERO),
             "meses_incompletos": [x["mes"] for x in ms if x["incompleto"]],
         })
 
     pendente = next((x for x in reversed(meses)
                      if x["darf"] > 0 and not x["em_curso"]
                      and x["vencimento"] >= hoje), None)
-    return {"meses": meses, "anos": anos, "alertas": alertas, "pendente": pendente}
+    return {"meses": meses, "anos": anos, "alertas": alertas, "pendente": pendente,
+            "fotos": fotos}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Carregamento
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _tickers_etf(conn) -> set[str]:
+    """ETFs da B3 no cadastro de mercado; vazio se o schema não existe."""
+    from sqlalchemy import text
+
+    try:
+        with conn.begin_nested():
+            rows = conn.execute(text(
+                "SELECT UPPER(ticker) FROM market.assets "
+                "WHERE asset_type = 'etf' AND exchange = 'B3'")).fetchall()
+    except Exception as exc:  # noqa: BLE001
+        logger.info("ir_renda_variavel: cadastro de ETFs indisponível: %s", exc)
+        return set()
+    return {r[0] for r in rows}
+
+
+def ler_cnpj_emissores(caminho: Path = CAMINHO_CNPJ) -> dict[str, list[str]]:
+    """{ticker: [CNPJ, razão social]} das companhias abertas (CVM), publicado
+    por ``scripts/publicar_cnpj_emissores.py``; vazio se o arquivo falta."""
+    try:
+        return json.loads(caminho.read_text(encoding="utf-8")).get("tickers") or {}
+    except (OSError, ValueError) as exc:
+        logger.info("ir_renda_variavel: cnpj_emissores indisponível: %s", exc)
+        return {}
+
+
+def _classe_fiscal(ticker: str, classe: str | None, etfs: set[str],
+                   companhias: set[str]) -> str | None:
+    t = _base(ticker)
+    if t in etfs:
+        return "etf"
+    if (classe or "").strip().lower() == "reit" and t in companhias:
+        return "stock"
+    return classe
+
 
 def carregar_operacoes(engine, user_id: str) -> tuple[list[dict], list[dict]]:
     """Negociações da B3 com a classe do ativo, e os eventos da Movimentação.
@@ -467,6 +596,12 @@ def carregar_operacoes(engine, user_id: str) -> tuple[list[dict], list[dict]]:
     A posição anterior ao extrato que o investidor declarou entra como
     compra sintética na frente de tudo (`core.posicao_anterior`): sem ela,
     venda de lote comprado antes de nov/2019 não tem custo.
+
+    A classe sai do cadastro do usuário, que grava todo XXXX11 como 'reit';
+    quando o cadastro de mercado diz que o ticker é ETF (BOVA11, BITH11), vale
+    o ETF: a venda vai para operações comuns a 15%, não para a cesta de FII.
+    E quando a CVM lista o ticker como valor mobiliário de companhia aberta
+    (SAPR11, unit da Sanepar), é ação: FII não é companhia aberta.
     """
     from sqlalchemy import text
 
@@ -489,8 +624,11 @@ def carregar_operacoes(engine, user_id: str) -> tuple[list[dict], list[dict]]:
         ).fetchall()
         eventos = _load_events(conn, user_id)
         abertura = listar_abertura(user_id, conn)
+        etfs = _tickers_etf(conn)
+    companhias = set(ler_cnpj_emissores())
     transacoes = [
-        {"transaction_date": r[0], "ticker": r[1], "classe": r[2], "type": r[3],
+        {"transaction_date": r[0], "ticker": r[1],
+         "classe": _classe_fiscal(str(r[1] or ""), r[2], etfs, companhias), "type": r[3],
          "quantity": r[4], "unit_price": r[5], "fees": r[6] or 0}
         for r in rows
     ]

@@ -1,9 +1,11 @@
 """
 views/ir_renda_variavel.py
-Aba "Imposto de Renda" de Investimentos: apuração mensal do ganho de capital
-em renda variável, DARF e prejuízo a compensar.
+Aba "Imposto de Renda" de Investimentos: a situação do DARF no topo, depois a
+declaração do ano-calendário ficha a ficha, com o nome das linhas e os
+códigos do programa IRPF (exercício 2026), e por fim a apuração mês a mês.
 
-O cálculo mora em ``core/ir_renda_variavel.py``; aqui só se carrega, formata
+O cálculo mora em ``core/ir_renda_variavel.py`` (apuração) e em
+``core/irpf_declaracao.py`` (layout das fichas); aqui só se carrega, formata
 e explica. A tela precisa dizer com a mesma ênfase o que sabe e o que não
 sabe: mês com venda sem custo de aquisição não tem imposto conhecido.
 """
@@ -16,6 +18,10 @@ import pandas as pd
 import streamlit as st
 
 from core.ir_renda_variavel import CESTAS, CODIGO_DARF, ROTULO_CESTA, apurar
+from core.irpf_declaracao import (
+    DIGITAR, DIGITAR_EM_JANEIRO, DIGITAR_FII, LINHAS_FII, LINHAS_RV,
+    LINHAS_RV_CONSOLIDACAO, _fmt_qtd, anos_disponiveis, montar,
+)
 from core.user_context import user_cache_data
 from core.utils import fmt_moeda
 from design.componentes import card_metrica, secao_titulo
@@ -23,20 +29,28 @@ from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 
 _MESES = ["", "jan", "fev", "mar", "abr", "mai", "jun",
           "jul", "ago", "set", "out", "nov", "dez"]
+_DIGITA = "✍️ "
 
 
 @user_cache_data(ttl=900, show_spinner=False)
-def _apuracao() -> dict | None:
+def _dados() -> dict | None:
+    """Insumos da declaração + a apuração com a foto de 31/12 de cada ano."""
     from core.config import settings
     from core.database import get_engine
-    from core.ir_renda_variavel import carregar_operacoes
+    from core.irpf_declaracao import carregar_insumos
 
     engine = get_engine()
     owner = getattr(settings, "OWNER_USER_ID", None)
     if engine is None or not owner:
         return None
-    transacoes, eventos = carregar_operacoes(engine, owner)
-    return apurar(transacoes, eventos)
+    ins = carregar_insumos(engine, owner)
+    datas = ([str(t["transaction_date"]) for t in ins["transacoes"]]
+             + [str(p["data"]) for p in ins["proventos"] + ins["posicoes"]])
+    hoje = date.today()
+    primeiro = int(min(datas)[:4]) if datas else hoje.year
+    cortes = tuple(f"{a:04d}-12-31" for a in range(primeiro - 1, hoje.year + 1))
+    ins["apuracao"] = apurar(ins["transacoes"], ins["eventos"], cortes=cortes)
+    return ins
 
 
 def _rotulo_mes(mes: str) -> str:
@@ -45,6 +59,11 @@ def _rotulo_mes(mes: str) -> str:
 
 def _f(v: Decimal) -> float:
     return float(v or 0)
+
+
+def _n(v) -> str:
+    """Valor como o programa mostra e aceita colar: 1.234,56."""
+    return f"{_f(v):_.2f}".replace(".", ",").replace("_", ".")
 
 
 def _situacao(m: dict) -> str:
@@ -96,27 +115,286 @@ def _tabela_anual(anos: list[dict]) -> pd.DataFrame:
 _COLS_MOEDA = st.column_config.NumberColumn(format="R$ %.2f")
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Fichas da declaração
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _rotulo_linha(chave: str, rotulo: str, digitar: set[str]) -> str:
+    if chave in digitar:
+        return _DIGITA + rotulo
+    if chave in DIGITAR_EM_JANEIRO:
+        return f"{rotulo} ({_DIGITA.strip()} só em JAN)"
+    return rotulo
+
+
+def _grade(meses: list[dict], linhas: tuple, valores, digitar: set[str]) -> pd.DataFrame:
+    """Linhas da ficha x 12 meses, como o programa as lista."""
+    dados = {}
+    for chave, rotulo in linhas:
+        dados[_rotulo_linha(chave, rotulo, digitar)] = [
+            f"{_f(valores(m)[chave]) * 100:.0f}%" if chave == "aliquota" else _n(valores(m)[chave])
+            for m in meses]
+    df = pd.DataFrame(dados, index=[m["rotulo"] for m in meses]).T
+    df.index.name = "Linha da ficha"
+    return df.reset_index()
+
+
+def ficha_rv_tabelas(rv: list[dict]) -> dict[str, pd.DataFrame]:
+    return {
+        "comum": _grade(rv, LINHAS_RV, lambda m: m["comum"], DIGITAR),
+        "day_trade": _grade(rv, LINHAS_RV, lambda m: m["day_trade"], DIGITAR),
+        "consolidacao": _grade(rv, LINHAS_RV_CONSOLIDACAO, lambda m: m["consolidacao"], DIGITAR),
+    }
+
+
+def _mostrar_grade(df: pd.DataFrame) -> None:
+    st.dataframe(df, hide_index=True, use_container_width=True,
+                 column_config={"Linha da ficha": st.column_config.TextColumn(width="large")})
+
+
+def _ha_valor(meses: list[dict], valores) -> bool:
+    return any(v != 0 for m in meses for k, v in valores(m).items() if k != "aliquota")
+
+
+def _codigo(item: dict) -> str:
+    return item["codigo"] + ("*" if item.get("conferir") else "")
+
+
+def _fontes_pagadoras(item: dict) -> pd.DataFrame:
+    return pd.DataFrame([{
+        "Beneficiário": "Titular",
+        "CNPJ da fonte pagadora": x["cnpj"] or "— (consta no informe)",
+        "Nome da fonte pagadora": x["nome"] or "",
+        "Ativos": ", ".join(x["tickers"]),
+        "Valor": _n(x["valor"]),
+    } for x in item["linhas"]])
+
+
+def _bloco_rendimento(item: dict, vazio: str) -> None:
+    st.markdown(f"**{_codigo(item)} — {item['descricao']}** · total **R\\$ {_n(item['total'])}**")
+    if item["linhas"]:
+        st.dataframe(_fontes_pagadoras(item), hide_index=True, use_container_width=True)
+    else:
+        st.caption(vazio)
+
+
+def tabela_bens(bens: list[dict], ano: int) -> pd.DataFrame:
+    return pd.DataFrame([{
+        "Grupo": b["grupo"],
+        "Código": b["codigo"] + ("*" if b["conferir"] else ""),
+        "Discriminação": b["discriminacao"],
+        "CNPJ": b["cnpj"] or "—",
+        "Código de negociação": b["codigo_negociacao"] or "",
+        f"Situação em 31/12/{ano - 1}": _n(b["situacao_anterior"]),
+        f"Situação em 31/12/{ano}": _n(b["situacao_atual"]),
+        "Observação": ("custo incompleto: venda de cota anterior ao extrato" if b["sem_custo"]
+                       else "vendido no ano: situação final zerada" if b["situacao_atual"] == 0
+                       else ""),
+    } for b in bens])
+
+
+def _conferencias(d: dict) -> list[str]:
+    """O que precisa de olho humano antes de transmitir, em frases."""
+    tipos = {b["ticker"]: b["tipo"] for b in d["bens"]}
+
+    def un(t: str) -> str:
+        # Ação, unit e BDR em "ações"; fundo em "cotas"
+        return "ações" if tipos.get(t, "acao") in ("acao", "bdr", "direito") else "cotas"
+
+    out = []
+    for p in d["proventos_a_classificar"]["linhas"]:
+        out.append(
+            f"**{', '.join(p['tickers'])}** — R\\$ {_n(p['valor'])} lançados no extrato da B3 como "
+            "*Rendimento*. O informe de rendimentos da empresa diz se é dividendo "
+            "(Isentos 09) ou JCP (Exclusiva 10); por isso não entrou em nenhuma ficha.")
+    for c in d["custodia_maior"]:
+        if c["troca_de_codigo"]:
+            novo, antigo = c["ticker"], c["troca_de_codigo"]
+            out.append(
+                f"**{antigo} → {novo}**: a corretora tem {_fmt_qtd(c['custodia'])} {un(novo)} de "
+                f"{novo} em 31/12; a apuração tem {_fmt_qtd(c['apurado'])} de {novo} e as "
+                f"outras {_fmt_qtd(c['custodia'] - c['apurado'])} ainda como {antigo}. Troca "
+                "de código sem o evento na Movimentação: declare tudo num item só, com o "
+                "código novo e a soma dos dois custos.")
+        else:
+            out.append(
+                f"**{c['ticker']}**: a corretora tem {_fmt_qtd(c['custodia'])} "
+                f"{un(c['ticker'])} em 31/12 e a apuração, {_fmt_qtd(c['apurado'])}. A diferença "
+                "foi comprada antes do extrato da B3 e está sem custo em Bens e Direitos.")
+    for c in d["custodia_menor"]:
+        out.append(
+            f"**{c['ticker']}**: a apuração tem {_fmt_qtd(c['apurado'])} {un(c['ticker'])} em "
+            "31/12 e a posição da corretora não mostra nenhuma. Confira se houve venda ou "
+            "transferência fora do extrato antes de declarar o saldo.")
+    for t in [b["ticker"] for b in d["bens"]
+              if b["negociado_em_bolsa"] and not b["cnpj"] and b["situacao_atual"] > 0]:
+        out.append(f"**{t}**: sem CNPJ no cadastro da CVM; copie do informe de rendimentos.")
+    if d["meses_incompletos"]:
+        out.append("Meses com venda sem custo de aquisição: "
+                   + ", ".join(_rotulo_mes(m) for m in d["meses_incompletos"])
+                   + ". O resultado desses meses está subestimado.")
+    return out
+
+
+def _render_declaracao(ins: dict) -> None:
+    apuracao = ins["apuracao"]
+    anos = anos_disponiveis(apuracao, ins["proventos"])
+    if not anos:
+        return
+    hoje = date.today()
+    padrao = anos.index(hoje.year - 1) if hoje.year - 1 in anos else 0
+    secao_titulo(
+        "Declaração IRPF", "📑",
+        "As fichas do programa da Receita, na ordem e com o nome de cada linha. "
+        f"{_DIGITA.strip()} marca o que você digita; o resto o programa calcula sozinho.",
+    )
+    ano = st.selectbox("Ano-calendário", anos, index=padrao, key="irpf_ano",
+                       format_func=lambda a: f"{a} · declaração {a + 1}")
+    d = montar(apuracao, ano, ins["proventos"], ins["posicoes"], ins["emissores"],
+               ins["mercado"], ins["etfs"], ins["nomes_fii"])
+    if ins["falhas"]:
+        aviso_lacuna("IRPF: fonte não carregou: " + ", ".join(ins["falhas"]),
+                     codigo="tela.ir.fonte_da_declaracao")
+        st.warning("Parte dos dados não carregou (" + ", ".join(ins["falhas"])
+                   + "); as fichas que dependem dela estão incompletas.", icon="⚠️")
+    if ano == hoje.year:
+        st.info(f"{ano} ainda não terminou: as fichas mostram o ano até hoje.", icon="ℹ️")
+
+    conferir = _conferencias(d)
+    abas = st.tabs([
+        "Renda Variável", "FII / Fiagro", "Rendimentos Isentos",
+        "Tributação Exclusiva", "Imposto Pago/Retido", "Bens e Direitos",
+        f"Conferir antes de enviar ({len(conferir)})",
+    ])
+    rv, fii = d["renda_variavel"], d["fii"]
+
+    with abas[0]:
+        st.caption("Ficha **Renda Variável › Operações Comuns / Day-Trade**, mês a mês. "
+                   "No programa, abra cada mês e copie a coluna dele.")
+        tabelas = ficha_rv_tabelas(rv)
+        st.markdown("**Operações comuns**")
+        _mostrar_grade(tabelas["comum"])
+        st.markdown("**Day-trade**")
+        if _ha_valor(rv, lambda m: m["day_trade"]):
+            _mostrar_grade(tabelas["day_trade"])
+        else:
+            st.caption(f"Nenhuma operação de day-trade em {ano}: os campos ficam zerados.")
+        st.markdown("**Consolidação do mês**")
+        _mostrar_grade(tabelas["consolidacao"])
+        isento = d["isentos"]["acoes_ate_20mil"]["valor"]
+        if isento:
+            st.caption(f"Ganho isento das vendas de ações até R\\$ 20 mil no mês: R\\$ {_n(isento)}. "
+                       "Não entra nesta ficha: vai em Rendimentos Isentos, código 20.")
+        oi = d["outras_informacoes"]
+        st.markdown("**Outras informações** (o programa soma sozinho)")
+        st.dataframe(pd.DataFrame([
+            {"Linha": "Total do imposto devido", "Valor": _n(oi["imposto_devido"])},
+            {"Linha": "Total do imposto pago", "Valor": _n(oi["imposto_pago"])},
+            {"Linha": "Imposto retido na fonte (Lei nº 11.033/2004)",
+             "Valor": _n(oi["irrf_lei_11033"])},
+        ]), hide_index=True, use_container_width=True)
+
+    with abas[1]:
+        st.caption("Ficha **Renda Variável › Fundos de Investimento Imobiliário ou nas Cadeias "
+                   "Produtivas Agroindustriais**, mês a mês.")
+        if _ha_valor(fii, lambda m: m["linhas"]):
+            _mostrar_grade(_grade(fii, LINHAS_FII, lambda m: m["linhas"], DIGITAR_FII))
+        else:
+            st.caption(f"Nenhuma venda de FII ou Fiagro em {ano} e nenhum prejuízo a carregar.")
+
+    with abas[2]:
+        st.caption("Ficha **Rendimentos Isentos e Não Tributáveis**. Uma linha por fonte "
+                   "pagadora.")
+        ac = d["isentos"]["acoes_ate_20mil"]
+        st.markdown(f"**{_codigo(ac)} — {ac['descricao']}** · valor **R\\$ {_n(ac['valor'])}**")
+        _bloco_rendimento(d["isentos"]["dividendos"], f"Nenhum dividendo recebido em {ano}.")
+        _bloco_rendimento(d["isentos"]["fii"], f"Nenhum rendimento de FII ou Fiagro em {ano}.")
+        if d["isentos"]["fip_ie"]["linhas"]:
+            _bloco_rendimento(d["isentos"]["fip_ie"], "")
+
+    with abas[3]:
+        st.caption("Ficha **Rendimentos Sujeitos à Tributação Exclusiva/Definitiva**.")
+        _bloco_rendimento(d["exclusiva"]["jcp"],
+                          f"Nenhum juro sobre capital próprio recebido em {ano}.")
+        st.caption("JCP vai pelo valor líquido (já descontados os 15% retidos). Os rendimentos "
+                   "de Tesouro Direto e CDB resgatados (código 06) vêm do informe de "
+                   "rendimentos da corretora.")
+
+    with abas[4]:
+        pr = d["pago_retido"]
+        st.caption("Ficha **Imposto Pago/Retido**.")
+        st.markdown(f"**{_codigo(pr)} — {pr['descricao']}** · valor **R\\$ {_n(pr['valor'])}**")
+        st.caption("É o IR fonte (0,005% das vendas) que sobrou em dezembro sem abater imposto "
+                   "de renda variável nem de FII.")
+        if d["irrf_day_trade_restituir"]:
+            st.markdown(f"IR fonte de day-trade que sobrou no ano: "
+                        f"**R\\$ {_n(d['irrf_day_trade_restituir'])}**. Não vai nesta ficha: "
+                        "recupera-se por pedido de restituição (PER/DCOMP).")
+
+    with abas[5]:
+        st.caption("Ficha **Bens e Direitos**, a custo de aquisição (nunca a valor de mercado). "
+                   "Em ações e fundos marque *negociados em bolsa* e informe o código de "
+                   "negociação.")
+        if d["bens"]:
+            st.dataframe(tabela_bens(d["bens"], ano), hide_index=True, use_container_width=True,
+                         column_config={"Discriminação": st.column_config.TextColumn(
+                             width="large")})
+        else:
+            st.caption(f"Nenhum bem em 31/12/{ano - 1} nem em 31/12/{ano}.")
+
+    with abas[6]:
+        if conferir:
+            for frase in conferir:
+                st.markdown(f"- {frase}")
+        else:
+            st.caption("Nada a conferir: custódia, proventos e CNPJs fecham com a apuração.")
+
+    if any(i.get("conferir") for i in [*d["isentos"].values(), d["pago_retido"], *d["bens"]]):
+        st.caption("\\* Código que as fontes oficiais não confirmam por inteiro: confira se a "
+                   "descrição bate com a da lista do programa.")
+        detalhe_tecnico(
+            "Códigos marcados conferir=True no IRPF: Isentos 20 e 99 (FII, FIP-IE), "
+            "Bens 04-04 (BDR/direito), 07-05 (ETF/FIP) e 07-06 (FIP-IE).",
+            codigo="ir.codigos_a_conferir")
+    for lim in (
+        "Bonificação em ações (Isentos 18) não é calculada.",
+        "FIP e FIP-IE saem sem CNPJ: a posição consolidada não traz o do fundo.",
+        "Tributação Exclusiva 06 (Tesouro/CDB resgatados) não é calculada: vem do informe.",
+    ):
+        detalhe_tecnico(lim, codigo="ir.limitacoes_declaracao")
+
+
 def render() -> None:
     secao_titulo(
         "Imposto de Renda — renda variável", "🧾",
-        "Ganho de capital mês a mês, DARF (código 6015) e prejuízo a compensar, "
-        "a partir do extrato de Negociação e da Movimentação da B3.",
+        "DARF do mês (código 6015), as fichas da declaração anual prontas para digitar e a "
+        "apuração mês a mês, a partir dos extratos da B3 e da posição da corretora.",
     )
     try:
-        res = _apuracao()
+        ins = _dados()
     except Exception as exc:  # noqa: BLE001
         falha_de_acao("Não foi possível carregar as operações.", exc)
         return
-    if res is None:
+    if ins is None:
         aviso_lacuna("A apuração precisa do banco com as operações importadas.",
                      codigo="tela.ir.sem_banco_ou_operacoes")
         st.info("Esta análise não está disponível no momento.", icon="ℹ️")
         return
+    res = ins["apuracao"]
     meses = res["meses"]
-    if not meses:
-        st.info("Nenhuma venda de ações, FII, ETF ou BDR no extrato importado.", icon="ℹ️")
+    if not meses and not ins["proventos"] and not ins["posicoes"]:
+        st.info("Nenhuma venda, provento ou posição no extrato importado.", icon="ℹ️")
         return
 
+    if meses:
+        _render_darf(res)
+    _render_declaracao(ins)
+    if meses:
+        _render_apuracao(res)
+
+
+def _render_darf(res: dict) -> None:
+    meses = res["meses"]
     hoje = date.today()
     ultimo = meses[-1]
     pend = res["pendente"]
@@ -185,7 +463,11 @@ def render() -> None:
     if prej_incerto and not n_incompletos:
         aviso_lacuna("O prejuízo acumulado herda uma venda sem custo de meses anteriores.",
                      codigo="tela.ir.prejuizo_incerto")
+    st.markdown("<br>", unsafe_allow_html=True)
 
+
+def _render_apuracao(res: dict) -> None:
+    meses = res["meses"]
     st.markdown("<br>", unsafe_allow_html=True)
     secao_titulo("Apuração mensal", "📅", "Do mês mais recente para o mais antigo.")
     df = _tabela_mensal(meses)
@@ -193,7 +475,7 @@ def render() -> None:
              if c not in ("Mês", "Isenção", "Situação")}
     st.dataframe(df, hide_index=True, use_container_width=True, column_config=moeda)
 
-    secao_titulo("Resumo para a declaração anual", "📑")
+    secao_titulo("Resumo por ano", "🗂️")
     da = _tabela_anual(res["anos"])
     st.dataframe(da, hide_index=True, use_container_width=True,
                  column_config={c: _COLS_MOEDA for c in da.columns
@@ -204,17 +486,22 @@ def render() -> None:
 **Regras** (Lei 11.033/2004 e IN RFB 1.585/2015):
 - Operações comuns em ações, units, ETF e BDR: **15%** sobre o ganho líquido do mês.
 - Day trade: **20%**. FII, comum ou day trade: **20%**.
-- Ganho em **ações** é isento no mês em que o total vendido de ações fica em até R$ 20 mil.
+- Ganho em **ações** é isento no mês em que o total vendido de ações fica em até R\\$ 20 mil.
   ETF, BDR, FII, day trade e direito de subscrição não têm isenção. No mês isento, as ações se compensam entre si
   primeiro, e só o prejuízo líquido passa adiante.
 - O prejuízo só compensa dentro da mesma cesta (comum, day trade, FII), sem prazo.
 - Direito de subscrição recebido da empresa (GMAT1, HGLG12) tem custo zero: a venda é
   ganho integral, sem isenção.
-- DARF código **{CODIGO_DARF}**, até o último dia útil do mês seguinte. Abaixo de R$ 10 o
+- DARF código **{CODIGO_DARF}**, até o último dia útil do mês seguinte. Abaixo de R\\$ 10 o
   valor acumula para o próximo DARF.
 - Custo: preço médio ponderado, com a corretagem da compra no custo e a da venda descontada
   da receita. Desdobro, grupamento, bonificação e subscrição da Movimentação entram pelas
   mesmas regras do preço médio da carteira.
+- IR fonte: cada ficha tem o seu saldo, zerado em janeiro. O de day-trade abate primeiro,
+  depois o da Lei 11.033; o de FII só abate imposto de FII. A sobra da Lei 11.033 em
+  dezembro vai para Imposto Pago/Retido (03).
+- Bens e Direitos: custo médio em 31/12; ativo vendido no ano continua com a situação final
+  zerada. Tesouro, CDB e FIP saem do valor investido da posição da corretora em dezembro.
 """)
     for lim in (
         "O IRRF é estimado (0,005% da venda, 1% do ganho em day trade): o extrato da B3 "
