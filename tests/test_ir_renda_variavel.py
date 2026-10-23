@@ -222,7 +222,9 @@ def test_tela_renderiza_com_mes_incompleto_e_darf_pendente(monkeypatch):
     res = apurar([tx("2025-01-10", "BBAS3", "sell", 1000, 30),
                   tx("2026-08-03", "PETR4", "buy", 2000, 10),
                   tx("2026-08-20", "PETR4", "sell", 2000, 12.5)], hoje=date.today())
-    monkeypatch.setattr(tela, "_apuracao", lambda: res)
+    monkeypatch.setattr(tela, "_dados", lambda: {
+        "apuracao": res, "transacoes": [], "eventos": [], "proventos": [], "posicoes": [],
+        "emissores": {}, "mercado": {}, "etfs": set(), "nomes_fii": {}, "falhas": []})
     avisos = []
     monkeypatch.setattr(tela.st, "warning", lambda msg, **k: avisos.append(msg))
     tela.render()
