@@ -19,6 +19,10 @@ pelo layout do programa. O programa calcula sozinho a maior parte das linhas;
 Código que as fontes não fecham entre si sai com ``conferir=True`` e a
 descrição oficial do item, que é o que aparece na lista do programa.
 
+O que o app não sabe fica ``None``, nunca zero: *Imposto pago* (o DARF que o
+mês gera não prova que foi recolhido; vai em ``darf_calculado``) e o custo de
+posição que a corretora não informou.
+
 Tudo aqui é puro, menos ``carregar_insumos``.
 """
 from __future__ import annotations
@@ -37,6 +41,10 @@ logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
 _CENTAVO = Decimal("0.01")
+# Primeiro ano-calendário no layout destas fichas (exercício 2026). Os anos
+# antes continuam na apuração -- carregam prejuízo e IRRF --, mas não viram
+# declaração: os códigos de Bens e Direitos eram outros.
+ANO_MINIMO = 2025
 MESES = ("JAN", "FEV", "MAR", "ABR", "MAI", "JUN",
          "JUL", "AGO", "SET", "OUT", "NOV", "DEZ")
 
@@ -106,7 +114,9 @@ EXCLUSIVA_JCP = {"codigo": "10", "conferir": False,
 # Tributação Exclusiva com valor zero.
 ISENTO_FIP_IE = {"codigo": "99", "conferir": True,
                  "descricao": "Outros (rendimentos de FIP-IE, alíquota zero)"}
-PAGO_RETIDO_LEI = {"codigo": "03", "conferir": False,
+# O valor é ESTIMADO (0,005% das vendas, 1% do ganho de day-trade): o retido
+# de verdade está nas notas de corretagem e no informe da corretora.
+PAGO_RETIDO_LEI = {"codigo": "03", "conferir": True, "estimado": True,
                    "descricao": "Imposto sobre a renda na fonte (Lei nº 11.033/2004)"}
 
 BENS = {
@@ -128,6 +138,11 @@ BENS = {
                          "sem tributação periódica (come-cotas), ETF - Entidade de investimento"},
     "fip_ie": {"grupo": "07", "codigo": "06", "conferir": True,
                "descricao": "FIP-IE e FIP-PD&I"},
+    # Fundo da posição consolidada que o nome não diz qual é: o código do
+    # grupo 07 depende do tipo e da tributação, que só o informe traz.
+    "fundo": {"grupo": "07", "codigo": None, "conferir": True,
+              "descricao": "Fundo: o código depende do tipo e da tributação "
+                           "(informe do administrador)"},
     "renda_fixa": {"grupo": "04", "codigo": "02", "conferir": False,
                    "descricao": "Títulos Públicos e Privados sujeitos à Tributação "
                                 "(Tesouro Direto, CDB, RDB e outros)"},
@@ -230,7 +245,7 @@ def ficha_renda_variavel(apuracao: dict, ano: int) -> list[dict]:
             cestas = {c: _cesta_vazia(prejuizo[c], c) for c in ("comum", "day_trade")}
             potes = {k: {"no_mes": _ZERO, "meses_anteriores": saldo[k],
                          "a_compensar": saldo[k]} for k in saldo}
-            rv = {"imposto_devido": _ZERO, "a_pagar": _ZERO, "pago": _ZERO}
+            rv = {"imposto_devido": _ZERO, "a_pagar": _ZERO, "darf": _ZERO}
         else:
             cestas, potes, rv = m["cestas"], m["irrf"], m["rv"]
         for c in ("comum", "day_trade"):
@@ -251,8 +266,9 @@ def ficha_renda_variavel(apuracao: dict, ano: int) -> list[dict]:
                 "irrf_lei_anteriores": _c(potes["lei_11033"]["meses_anteriores"]),
                 "irrf_lei_compensar": _c(potes["lei_11033"]["a_compensar"]),
                 "imposto_a_pagar": _c(rv["a_pagar"]),
-                "imposto_pago": _c(rv["pago"]),
+                "imposto_pago": None,
             },
+            "darf_calculado": _c(rv["darf"]),
             "ganho_isento": _c(cestas["comum"].get("ganho_isento", _ZERO)),
             "vendas_acoes": _c(m["vendas_acoes"] if m else _ZERO),
             "sem_custo": sorted(set(cestas["comum"]["sem_custo"])
@@ -273,7 +289,7 @@ def ficha_fii(apuracao: dict, ano: int) -> list[dict]:
         if m is None:
             c = _cesta_vazia(prejuizo, "fii")
             pote = {"no_mes": _ZERO, "meses_anteriores": saldo, "a_compensar": saldo}
-            fii = {"imposto_devido": _ZERO, "a_pagar": _ZERO, "pago": _ZERO}
+            fii = {"imposto_devido": _ZERO, "a_pagar": _ZERO, "darf": _ZERO}
         else:
             c, pote, fii = m["cestas"]["fii"], m["irrf"]["fii"], m["fii"]
         prejuizo, saldo = c["prejuizo_a_compensar"], pote["a_compensar"]
@@ -291,8 +307,9 @@ def ficha_fii(apuracao: dict, ano: int) -> list[dict]:
                 "retido_anteriores": _c(pote["meses_anteriores"]),
                 "retido_compensar": _c(pote["a_compensar"]),
                 "imposto_a_pagar": _c(fii["a_pagar"]),
-                "imposto_pago": _c(fii["pago"]),
+                "imposto_pago": None,
             },
+            "darf_calculado": _c(fii["darf"]),
             "sem_custo": list(c["sem_custo"]),
             "em_curso": bool(m and m["em_curso"]),
             "com_operacao": m is not None,
@@ -301,10 +318,13 @@ def ficha_fii(apuracao: dict, ano: int) -> list[dict]:
 
 
 def outras_informacoes(rv: list[dict], fii: list[dict]) -> dict:
-    """Totais do quadro OUTRAS INFORMAÇÕES das duas fichas."""
-    return {k: _c(v) for k, v in {
-        "imposto_pago": sum((m["consolidacao"]["imposto_pago"] for m in rv), _ZERO)
-        + sum((m["linhas"]["imposto_pago"] for m in fii), _ZERO),
+    """Totais do quadro OUTRAS INFORMAÇÕES das duas fichas.
+
+    O total pago é a soma dos DARFs recolhidos, que o app não tem: fica
+    ``None``, e ``darf_calculado`` diz quanto as fichas mandariam recolher.
+    """
+    return {"imposto_pago": None} | {k: _c(v) for k, v in {
+        "darf_calculado": sum((m["darf_calculado"] for m in rv + fii), _ZERO),
         "imposto_devido": sum((m["consolidacao"]["total_imposto_devido"] for m in rv), _ZERO)
         + sum((m["linhas"]["imposto_devido"] for m in fii), _ZERO),
         "irrf_lei_11033": sum((m["consolidacao"]["irrf_lei_mes"] for m in rv), _ZERO)
@@ -411,14 +431,16 @@ def rendimentos(proventos: list[dict], ano: int, emissores: dict, mercado: dict,
         cnpj, nome = cnpj_de(t, emissores, mercado)
         if _e_fii(t, etfs, emissores) and tipo in ("dividend", "reit_income", "other"):
             ficha = "fii"
+        elif not _TICKER_B3.match(t) and _e_fip_ie(p.get("nome")):
+            # Antes de jcp/dividend: o extrato pode rotular a distribuição do
+            # FIP-IE como dividendo, e ela tem alíquota zero (não é lucro de S.A.)
+            ficha = "fip_ie"
+            # "4606422UNA - PATRIA INFRAESTRUTURA ..." -> sem o código interno
+            nome = _limpar(re.sub(r"^\S*\d\S*\s*\W\s*", "", str(p.get("nome"))))
         elif tipo == "jcp":
             ficha = "jcp"
         elif tipo == "dividend":
             ficha = "dividendos"
-        elif not _TICKER_B3.match(t) and _e_fip_ie(p.get("nome")):
-            ficha = "fip_ie"
-            # "4606422UNA - PATRIA INFRAESTRUTURA ..." -> sem o código interno
-            nome = _limpar(re.sub(r"^\S*\d\S*\s*\W\s*", "", str(p.get("nome"))))
         else:
             ficha = "a_classificar"
         chave = (t, tipo) if ficha == "a_classificar" else (cnpj or nome or f"?{t}",)
@@ -506,13 +528,46 @@ def _discriminacao_rf(ticker: str, nome: str) -> str:
     return f"{_limpar(nome).replace(' - ', ' ')} {t}".strip()
 
 
+# Desempate entre origens da posição: a mesma ordem do CASE de
+# core.investimentos._SQL_POSICOES_SNAPSHOT (um teste prende as duas juntas).
+PRIORIDADE_FONTE = {"tesouro_direto": 0, "b3_posicao_detalhada": 1,
+                    "xp_consolidado": 2, "xp_positions": 3}
+
+
 def _ultimo_ate(posicoes: list[dict], corte: str) -> list[dict]:
-    """Linhas da última data de posição até ``corte``, no mesmo ano."""
-    datas = sorted({str(p["data"])[:10] for p in posicoes
-                    if str(p["data"])[:10] <= corte and str(p["data"])[:4] == corte[:4]})
-    if not datas:
-        return []
-    return [p for p in posicoes if str(p["data"])[:10] == datas[-1]]
+    """A posição em ``corte`` montada como a carteira a monta: a última data
+    de CADA fonte até o corte (no mesmo ano) e, por ativo, a fonte da linha
+    mais recente -- empatada a data, a de maior autoridade. Ficar só com a
+    última data geral perde o ativo que a fonte mais nova não cobre (o
+    Tesouro de 30/12 atrás de um consolidado de 31/12 só de ações)."""
+    no_ano = [p for p in posicoes
+              if str(p["data"])[:10] <= corte and str(p["data"])[:4] == corte[:4]]
+    ultima: dict[Any, str] = {}
+    for p in no_ano:
+        f = p.get("fonte")
+        ultima[f] = max(ultima.get(f, ""), str(p["data"])[:10])
+    vigentes = [p for p in no_ano if str(p["data"])[:10] == ultima[p.get("fonte")]]
+
+    def ativo(p: dict) -> str:
+        return str(p.get("ativo") or p["ticker"])
+
+    def ordem(p: dict) -> tuple:
+        return (str(p["data"])[:10], -PRIORIDADE_FONTE.get(p.get("fonte"), 9))
+
+    vence: dict[str, dict] = {}
+    for p in vigentes:
+        if ativo(p) not in vence or ordem(p) > ordem(vence[ativo(p)]):
+            vence[ativo(p)] = p
+    # Todas as linhas do ativo na fonte e data vencedoras (custódia em duas
+    # contas da mesma origem soma).
+    return [p for p in vigentes
+            if (ordem(p), p.get("fonte")) == (ordem(vence[ativo(p)]), vence[ativo(p)].get("fonte"))]
+
+
+def _custo_posicao(p: dict | None) -> Decimal | None:
+    if p is None:
+        return _c(_ZERO)
+    return None if p.get("investido") is None else _c(p["investido"])
 
 
 def bens_posicao_consolidada(posicoes: list[dict], ano: int, emissores: dict) -> list[dict]:
@@ -520,7 +575,10 @@ def bens_posicao_consolidada(posicoes: list[dict], ano: int, emissores: dict) ->
     corretora no último dia do ano (o investido; não o valor de mercado).
 
     ``posicoes``: dicts com data, ticker, nome, tipo ('fixed_income',
-    'fundo_rf'), quantidade, investido, instituicao.
+    'tesouro', 'fundo_rf'), quantidade, investido, instituicao e fonte.
+
+    Investido que a corretora não informou fica ``None`` (a tela pede o
+    custo do informe); zero seria declarar um bem sem custo.
     """
     antes = {p["ticker"]: p for p in _ultimo_ate(posicoes, f"{ano - 1:04d}-12-31")}
     depois = {p["ticker"]: p for p in _ultimo_ate(posicoes, f"{ano:04d}-12-31")}
@@ -531,7 +589,12 @@ def bens_posicao_consolidada(posicoes: list[dict], ano: int, emissores: dict) ->
         nome = str(ref.get("nome") or "")
         n = _sem_acento(nome).upper()
         if ref["tipo"] == "fundo_rf":
-            tipo = "fip_ie" if "INFRAESTRUTURA" in n and "PARTICIPAC" in n else "fip"
+            # Só o nome diz que é FIP; "fundo_rf" do consolidado também é
+            # fundo de renda fixa, multimercado... -- código pelo informe.
+            if "PARTICIPAC" in n:
+                tipo = "fip_ie" if "INFRAESTRUTURA" in n else "fip"
+            else:
+                tipo = "fundo"
             cnpj, razao = None, None
             fundo = re.sub(r"^CFF\b\W*", "", _limpar(nome)).strip(" -")
             disc = f"{_fmt_qtd(ref['quantidade'])} COTAS DO {fundo}"
@@ -552,8 +615,8 @@ def bens_posicao_consolidada(posicoes: list[dict], ano: int, emissores: dict) ->
             "nome": razao,
             "qtd_anterior": _d(a["quantidade"]) if a else _ZERO,
             "qtd_atual": _d(d["quantidade"]) if d else _ZERO,
-            "situacao_anterior": _c(a["investido"] if a else _ZERO),
-            "situacao_atual": _c(d["investido"] if d else _ZERO),
+            "situacao_anterior": _custo_posicao(a),
+            "situacao_atual": _custo_posicao(d),
             "codigo_negociacao": None,
             "negociado_em_bolsa": False,
             "sem_custo": False,
@@ -617,12 +680,36 @@ def apurado_sem_custodia(bens_rv: list[dict], posicoes_rv: list[dict], ano: int,
 # Declaração
 # ─────────────────────────────────────────────────────────────────────────────
 
-def anos_disponiveis(apuracao: dict, proventos: list[dict]) -> list[int]:
+def _marcar_amortizacao(bens: list[dict], proventos: list[dict], ano: int) -> list[dict]:
+    """Põe em cada bem a amortização recebida até 31/12 do ano.
+
+    Amortização devolve capital e reduz o custo, e nenhuma das duas fontes
+    de custo daqui a abate com certeza: a apuração não a conhece, e o
+    investido da corretora pode ou não estar líquido dela. O valor não é
+    descontado (seria adivinhar desde quando o ativo é do investidor); vai
+    para a tela conferir com o informe do administrador.
+    """
+    corte = f"{ano:04d}-12-31"
+    amort: dict[str, Decimal] = defaultdict(lambda: _ZERO)
+    for p in proventos:
+        if str(p.get("tipo") or "").lower() == "amortization" and str(p["data"])[:10] <= corte:
+            amort[_base(str(p["ticker"] or ""))] += _d(p["valor"])
+    for b in bens:
+        b["amortizacao"] = _c(amort[_base(b["ticker"])]) if _base(b["ticker"]) in amort else None
+    return bens
+
+
+def anos_disponiveis(apuracao: dict, proventos: list[dict],
+                     posicoes: list[dict] | None = None) -> list[int]:
+    """Anos com algo a declarar -- operação, provento, ativo na foto de 31/12
+    ou posição de dezembro (quem só tem Tesouro/CDB também declara) --, a
+    partir de ``ANO_MINIMO``."""
     anos = {int(m["mes"][:4]) for m in apuracao.get("meses") or []}
     anos |= {int(str(p["data"])[:4]) for p in proventos}
+    anos |= {int(str(p["data"])[:4]) for p in posicoes or []}
     anos |= {int(c[:4]) for c in apuracao.get("fotos") or {}
              if (apuracao["fotos"][c])}
-    return sorted(anos, reverse=True)
+    return sorted((a for a in anos if a >= ANO_MINIMO), reverse=True)
 
 
 def montar(apuracao: dict, ano: int, proventos: list[dict], posicoes: list[dict],
@@ -638,7 +725,7 @@ def montar(apuracao: dict, ano: int, proventos: list[dict], posicoes: list[dict]
     rend = rendimentos(proventos, ano, emissores, mercado, etfs)
     bens_rv = bens_renda_variavel(apuracao.get("fotos") or {}, ano, emissores, mercado,
                                   nomes_fii)
-    rf = [p for p in posicoes if p["tipo"] in ("fixed_income", "fundo_rf")]
+    rf = [p for p in posicoes if p["tipo"] in ("fixed_income", "tesouro", "fundo_rf")]
     rv_custodia = [p for p in posicoes if p["tipo"] in ("stock", "fii", "etf")]
     maior = conferir_custodia(bens_rv, rv_custodia, ano)
     return {
@@ -658,7 +745,8 @@ def montar(apuracao: dict, ano: int, proventos: list[dict], posicoes: list[dict]
         "pago_retido": {**PAGO_RETIDO_LEI,
                         "valor": _c(ano_ap["irrf_a_declarar"] if ano_ap else _ZERO)},
         "irrf_day_trade_restituir": _c((ano_ap or {}).get("irrf_day_trade_restituir", _ZERO)),
-        "bens": bens_rv + bens_posicao_consolidada(rf, ano, emissores),
+        "bens": _marcar_amortizacao(bens_rv + bens_posicao_consolidada(rf, ano, emissores),
+                                    proventos, ano),
         "custodia_maior": maior,
         "custodia_menor": apurado_sem_custodia(bens_rv, rv_custodia, ano, maior),
         "proventos_a_classificar": rend["a_classificar"],
@@ -699,7 +787,11 @@ _SQL_PROVENTOS = """
 
 _SQL_POSICOES = """
     SELECT s.report_date, a.ticker, s.asset_name, s.asset_type, s.quantity,
-           s.invested_value, s.institution
+           s.invested_value, s.institution,
+           -- mesma normalização de core.investimentos._SQL_POSICOES_SNAPSHOT
+           CASE WHEN s.source_id LIKE 'td-snap-%' THEN 'tesouro_direto'
+                ELSE s.source_table END AS fonte,
+           s.asset_id
     FROM portfolio_position_snapshots s
     JOIN assets a ON a.id = s.asset_id
     WHERE s.user_id = :uid
@@ -755,7 +847,8 @@ def carregar_insumos(engine, user_id: str) -> dict:
         "proventos": [{"data": r[0], "ticker": r[1], "tipo": r[2], "valor": r[3],
                        "nome": r[4]} for r in prov or []],
         "posicoes": [{"data": r[0], "ticker": r[1], "nome": r[2], "tipo": r[3],
-                      "quantidade": r[4], "investido": r[5], "instituicao": r[6]}
+                      "quantidade": r[4], "investido": r[5], "instituicao": r[6],
+                      "fonte": r[7], "ativo": r[8]}
                      for r in pos or []],
         "mercado": mercado,
         "nomes_fii": {r[0]: r[2] or "" for r in fiis or []},

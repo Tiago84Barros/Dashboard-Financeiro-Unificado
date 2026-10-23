@@ -499,11 +499,13 @@ def apurar(transacoes: list[dict], eventos: list[dict] | None = None,
         irrf_mes = sum((p["no_mes"] for p in potes.values()), _ZERO)
         irrf_usado = sum((p["usado"] for p in potes.values()), _ZERO)
         devido = rv_a_pagar + fii_a_pagar + acumulado["rv"] + acumulado["fii"]
+        # O DARF que o mês gera (com o acumulado abaixo de R$ 10), por ficha.
+        # É o que DEVERIA ser recolhido; se foi, só o comprovante diz.
         if devido >= DARF_MINIMO:
-            pago = {"rv": rv_a_pagar + acumulado["rv"], "fii": fii_a_pagar + acumulado["fii"]}
+            darf_ficha = {"rv": rv_a_pagar + acumulado["rv"], "fii": fii_a_pagar + acumulado["fii"]}
             darf, acumulado = devido, {"rv": _ZERO, "fii": _ZERO}
         else:
-            pago = {"rv": _ZERO, "fii": _ZERO}
+            darf_ficha = {"rv": _ZERO, "fii": _ZERO}
             darf = _ZERO
             acumulado = {"rv": rv_a_pagar + acumulado["rv"],
                          "fii": fii_a_pagar + acumulado["fii"]}
@@ -518,8 +520,9 @@ def apurar(transacoes: list[dict], eventos: list[dict] | None = None,
             "irrf_estimado": irrf_mes,
             "irrf_deduzido": irrf_usado,
             "irrf": potes,
-            "rv": {"imposto_devido": rv_devido, "a_pagar": rv_a_pagar, "pago": pago["rv"]},
-            "fii": {"imposto_devido": fii_devido, "a_pagar": fii_a_pagar, "pago": pago["fii"]},
+            "rv": {"imposto_devido": rv_devido, "a_pagar": rv_a_pagar, "darf": darf_ficha["rv"]},
+            "fii": {"imposto_devido": fii_devido, "a_pagar": fii_a_pagar,
+                    "darf": darf_ficha["fii"]},
             "darf": darf,
             "acumulado_proximo": acumulado["rv"] + acumulado["fii"],
             "vencimento": vencimento_darf(ano, m),

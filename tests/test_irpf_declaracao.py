@@ -234,3 +234,141 @@ def test_tela_monta_as_fichas_com_os_rotulos_do_programa(monkeypatch):
     assert any("SAPR11" in c and "Rendimento" in c for c in conferir)
     # Comprado e vendido no mesmo ano: zero nas duas datas, nada a declarar em Bens
     assert d["bens"] == [] and tela.tabela_bens(d["bens"], ano).empty
+
+
+# ── Revisão: o que o app não sabe fica sem número ────────────────────────────
+
+def test_darf_calculado_nao_vira_imposto_pago():
+    import views.ir_renda_variavel as tela
+
+    r = ap([tx("2025-01-10", "PETR4", "buy", 3000, 10),
+            tx("2025-03-10", "PETR4", "sell", 3000, 12)])     # 36.000 vendidos, +6.000
+    d = montar(r, 2025, [], [], EMISSORES, MERCADO, set())
+    mar = d["renda_variavel"][2]
+    assert mar["consolidacao"]["imposto_pago"] is None
+    assert mar["darf_calculado"] == mar["consolidacao"]["imposto_a_pagar"] > 0
+    assert d["outras_informacoes"]["imposto_pago"] is None
+    assert d["outras_informacoes"]["darf_calculado"] == mar["darf_calculado"]
+    t = tela.ficha_rv_tabelas(d["renda_variavel"])["consolidacao"]
+    pago = t[t["Linha da ficha"] == "✍️ Imposto pago"].iloc[0]
+    assert pago["MAR"] == f"confirmar: DARF {tela._n(mar['darf_calculado'])}"
+    assert pago["ABR"] == "—"
+    assert any("MAR" in c and "não sabe se foi pago" in c for c in tela._conferencias(d))
+
+
+def test_pago_retido_e_estimado():
+    r = ap([tx("2025-01-10", "PETR4", "buy", 3000, 10),
+            tx("2025-03-10", "PETR4", "sell", 3000, 9)])
+    pr = montar(r, 2025, [], [], EMISSORES, MERCADO, set())["pago_retido"]
+    assert pr["estimado"] is True and pr["conferir"] is True
+
+
+def _pos(dia, ticker, investido, fonte=None, ativo=None, tipo="tesouro", qtd=1, nome=""):
+    return {"data": date.fromisoformat(dia), "ticker": ticker, "nome": nome, "tipo": tipo,
+            "quantidade": qtd, "investido": investido, "instituicao": "XP", "fonte": fonte,
+            "ativo": ativo or ticker}
+
+
+def test_posicao_de_cada_fonte_na_sua_ultima_data():
+    from core.irpf_declaracao import _ultimo_ate
+
+    pos = [
+        # Tesouro só no extrato do Tesouro Direto, de 30/12
+        _pos("2025-12-30", "TIPCA2035", 4000, "tesouro_direto"),
+        # Consolidado de 31/12 sem o Tesouro, mas com um CDB
+        _pos("2025-12-31", "CDBXYZ", 1000, "xp_consolidado", tipo="fixed_income"),
+        # Mesmo ativo, mesma data, duas origens: vence a de maior autoridade
+        _pos("2025-12-31", "TPRE2027", 900, "xp_consolidado"),
+        _pos("2025-12-31", "TPRE2027", 950, "b3_posicao_detalhada"),
+        # Data antiga da mesma fonte não volta
+        _pos("2025-12-15", "CDBVELHO", 500, "xp_consolidado", tipo="fixed_income"),
+    ]
+    vigentes = {(p["ticker"], p["fonte"]) for p in _ultimo_ate(pos, "2025-12-31")}
+    assert vigentes == {("TIPCA2035", "tesouro_direto"), ("CDBXYZ", "xp_consolidado"),
+                        ("TPRE2027", "b3_posicao_detalhada")}
+
+
+def test_prioridade_de_fonte_igual_a_da_carteira():
+    import re
+
+    from core.investimentos import _SQL_POSICOES_SNAPSHOT
+    from core.irpf_declaracao import PRIORIDADE_FONTE
+
+    case = dict((f, int(n)) for f, n in
+                re.findall(r"WHEN '(\w+)' THEN (\d+)", _SQL_POSICOES_SNAPSHOT))
+    assert PRIORIDADE_FONTE == case
+
+
+def test_fundo_sem_participacoes_nao_vira_fip():
+    pos = [_pos("2025-12-31", "FUNDORF", 2000, tipo="fundo_rf",
+                nome="CFF XYZ FUNDO DE INVESTIMENTO RENDA FIXA"),
+           _pos("2025-12-31", "FIPABC", 3000, tipo="fundo_rf",
+                nome="ABC FUNDO DE INV EM PARTICIPACOES MULTIESTRATEGIA"),
+           _pos("2025-12-31", "FIPIE", 3000, tipo="fundo_rf",
+                nome="PATRIA INFRAESTRUTURA FUNDO DE INV EM PARTICIPACOES")]
+    bens = {b["ticker"]: b for b in bens_posicao_consolidada(pos, 2025, {})}
+    assert bens["FUNDORF"]["tipo"] == "fundo" and bens["FUNDORF"]["codigo"] is None
+    assert bens["FUNDORF"]["conferir"] is True
+    assert bens["FIPABC"]["tipo"] == "fip"
+    assert bens["FIPIE"]["tipo"] == "fip_ie"
+
+
+def test_investido_desconhecido_fica_sem_valor():
+    import views.ir_renda_variavel as tela
+
+    pos = [_pos("2025-12-31", "CDBXYZ", None, tipo="fixed_income")]
+    d = montar(ap([]), 2025, [], pos, EMISSORES, MERCADO, set())
+    b = d["bens"][0]
+    assert b["situacao_atual"] is None and b["situacao_anterior"] == Decimal("0.00")
+    linha = tela.tabela_bens(d["bens"], 2025).iloc[0]
+    assert "—" in linha.astype(str).tolist()
+    assert "custo não informado" in linha["Observação"]
+    assert any("CDBXYZ" in c and "valor investido" in c for c in tela._conferencias(d))
+
+
+def test_tesouro_da_b3_entra_em_bens():
+    pos = [_pos("2025-12-31", "TIPCA2035", 4000, "b3_posicao_detalhada", tipo="tesouro")]
+    d = montar(ap([]), 2025, [], pos, EMISSORES, MERCADO, set())
+    assert [(b["ticker"], b["situacao_atual"]) for b in d["bens"]] == [
+        ("TIPCA2035", Decimal("4000.00"))]
+
+
+def test_anos_so_com_posicao_e_desde_o_minimo():
+    from core.irpf_declaracao import ANO_MINIMO, anos_disponiveis
+
+    pos = [_pos("2025-12-31", "TIPCA2035", 4000), _pos("2023-12-29", "TIPCA2035", 3000)]
+    assert anos_disponiveis(ap([]), [], pos) == [2025]
+    assert ANO_MINIMO == 2025
+
+
+def test_amortizacao_e_marcada_no_bem_sem_mexer_no_custo():
+    import views.ir_renda_variavel as tela
+
+    r = ap([tx("2024-05-10", "HGLG11", "buy", 10, 160, classe="reit")])
+    ps = [prov("2025-06-01", "HGLG11", "amortization", 30),
+          prov("2026-02-01", "HGLG11", "amortization", 99)]      # depois do corte
+    d = montar(r, 2025, ps, [], EMISSORES, MERCADO, set())
+    b = d["bens"][0]
+    assert b["amortizacao"] == Decimal("30.00")
+    assert b["situacao_atual"] == Decimal("1600.00")
+    assert "amortização" in tela.tabela_bens(d["bens"], 2025).iloc[0]["Observação"]
+    assert any("HGLG11" in c and "amortização" in c for c in tela._conferencias(d))
+
+
+def test_cnpj_faltante_conferido_tambem_fora_da_bolsa():
+    import views.ir_renda_variavel as tela
+
+    pos = [_pos("2025-12-31", "CDBDESCONHECIDO", 1000, tipo="fixed_income",
+                nome="CDB BANCO QUE NAO EXISTE S/A")]
+    d = montar(ap([]), 2025, [], pos, {}, {}, set())
+    assert d["bens"][0]["cnpj"] is None
+    assert any("CDBDESCONHECIDO" in c and "posição da corretora" in c
+               for c in tela._conferencias(d))
+
+
+def test_fip_ie_rotulado_dividendo_vai_para_fip_ie():
+    ps = [prov("2025-08-01", "4606422UNA", "dividend", 300,
+               nome="4606422UNA - PATRIA INFRAESTRUTURA FUNDO DE INV EM PARTICIPACOES")]
+    r = rendimentos(ps, 2025, EMISSORES, MERCADO, set())
+    assert r["fip_ie"]["total"] == Decimal("300.00")
+    assert r["dividendos"]["total"] == Decimal("0.00")

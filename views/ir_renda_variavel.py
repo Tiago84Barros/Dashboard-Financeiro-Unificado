@@ -69,7 +69,10 @@ def _f(v: Decimal) -> float:
 
 
 def _n(v) -> str:
-    """Valor como o programa mostra e aceita colar: 1.234,56."""
+    """Valor como o programa mostra e aceita colar: 1.234,56. ``None`` é o
+    que o app não sabe: "—", nunca 0,00."""
+    if v is None:
+        return "—"
     return f"{_f(v):_.2f}".replace(".", ",").replace("_", ".")
 
 
@@ -134,13 +137,21 @@ def _rotulo_linha(chave: str, rotulo: str, digitar: set[str]) -> str:
     return rotulo
 
 
+def _celula(m: dict, chave: str, v) -> str:
+    if chave == "aliquota":
+        return f"{_f(v) * 100:.0f}%"
+    if chave == "imposto_pago" and v is None:
+        # O app não sabe o que foi recolhido; mostra o DARF que o mês gera
+        return f"confirmar: DARF {_n(m['darf_calculado'])}" if m["darf_calculado"] else "—"
+    return _n(v)
+
+
 def _grade(meses: list[dict], linhas: tuple, valores, digitar: set[str]) -> pd.DataFrame:
     """Linhas da ficha x 12 meses, como o programa as lista."""
     dados = {}
     for chave, rotulo in linhas:
         dados[_rotulo_linha(chave, rotulo, digitar)] = [
-            f"{_f(valores(m)[chave]) * 100:.0f}%" if chave == "aliquota" else _n(valores(m)[chave])
-            for m in meses]
+            _celula(m, chave, valores(m)[chave]) for m in meses]
     df = pd.DataFrame(dados, index=[m["rotulo"] for m in meses]).T
     df.index.name = "Linha da ficha"
     return df.reset_index()
@@ -160,11 +171,12 @@ def _mostrar_grade(df: pd.DataFrame) -> None:
 
 
 def _ha_valor(meses: list[dict], valores) -> bool:
-    return any(v != 0 for m in meses for k, v in valores(m).items() if k != "aliquota")
+    return any(v is not None and v != 0
+               for m in meses for k, v in valores(m).items() if k != "aliquota")
 
 
 def _codigo(item: dict) -> str:
-    return item["codigo"] + ("*" if item.get("conferir") else "")
+    return (item["codigo"] or "?") + ("*" if item.get("conferir") else "")
 
 
 def _fontes_pagadoras(item: dict) -> pd.DataFrame:
@@ -185,18 +197,31 @@ def _bloco_rendimento(item: dict, vazio: str) -> None:
         st.caption(vazio)
 
 
+def _observacao_bem(b: dict) -> str:
+    obs = []
+    if b["sem_custo"]:
+        obs.append("custo incompleto: venda de cota anterior ao extrato")
+    elif b["situacao_atual"] is None or b["situacao_anterior"] is None:
+        obs.append("custo não informado pela corretora: copie do informe")
+    elif b["situacao_atual"] == 0:
+        obs.append("vendido no ano: situação final zerada")
+    if b["codigo"] is None:
+        obs.append("código do fundo pelo informe do administrador")
+    if b.get("amortizacao"):
+        obs.append(f"amortização de R$ {_n(b['amortizacao'])} recebida: confira o custo")
+    return "; ".join(obs)
+
+
 def tabela_bens(bens: list[dict], ano: int) -> pd.DataFrame:
     return pd.DataFrame([{
         "Grupo": b["grupo"],
-        "Código": b["codigo"] + ("*" if b["conferir"] else ""),
+        "Código": _codigo(b),
         "Discriminação": b["discriminacao"],
         "CNPJ": b["cnpj"] or "—",
         "Código de negociação": b["codigo_negociacao"] or "",
         f"Situação em 31/12/{ano - 1}": _n(b["situacao_anterior"]),
         f"Situação em 31/12/{ano}": _n(b["situacao_atual"]),
-        "Observação": ("custo incompleto: venda de cota anterior ao extrato" if b["sem_custo"]
-                       else "vendido no ano: situação final zerada" if b["situacao_atual"] == 0
-                       else ""),
+        "Observação": _observacao_bem(b),
     } for b in bens])
 
 
@@ -233,9 +258,40 @@ def _conferencias(d: dict) -> list[str]:
             f"**{c['ticker']}**: a apuração tem {_fmt_qtd(c['apurado'])} {un(c['ticker'])} em "
             "31/12 e a posição da corretora não mostra nenhuma. Confira se houve venda ou "
             "transferência fora do extrato antes de declarar o saldo.")
-    for t in [b["ticker"] for b in d["bens"]
-              if b["negociado_em_bolsa"] and not b["cnpj"] and b["situacao_atual"] > 0]:
-        out.append(f"**{t}**: sem CNPJ no cadastro da CVM; copie do informe de rendimentos.")
+    for b in d["bens"]:
+        em_carteira = b["situacao_atual"] is None or b["situacao_atual"] > 0 or b["qtd_atual"] > 0
+        if not b["cnpj"] and em_carteira:
+            out.append(f"**{b['ticker']}**: sem CNPJ "
+                       + ("no cadastro da CVM" if b["negociado_em_bolsa"]
+                          else "na posição da corretora")
+                       + "; copie do informe de rendimentos.")
+        if b["situacao_atual"] is None or b["situacao_anterior"] is None:
+            out.append(f"**{b['ticker']}**: a posição da corretora não traz o valor investido; "
+                       "o custo de aquisição está no informe de rendimentos.")
+        if b["codigo"] is None:
+            out.append(f"**{b['ticker']}**: fundo sem tipo no nome. O código do grupo 07 "
+                       "depende do tipo e da tributação; está no informe do administrador.")
+        if b.get("amortizacao"):
+            fonte = ("a apuração não a desconta" if b["negociado_em_bolsa"]
+                     else "a corretora pode ou não já tê-la descontado")
+            out.append(f"**{b['ticker']}**: R\\$ {_n(b['amortizacao'])} de amortização recebida "
+                       f"até 31/12/{d['ano']}. Amortização devolve capital e reduz o custo, e "
+                       f"{fonte}: confira a situação com o informe do administrador.")
+    darfs = [(m, f) for f, meses in (("Renda Variável", d["renda_variavel"]),
+                                     ("FII", d["fii"]))
+             for m in meses if m["darf_calculado"]]
+    if darfs:
+        out.append("DARF calculado em "
+                   + ", ".join(f"{m['rotulo']} ({f}, R\\$ {_n(m['darf_calculado'])})"
+                               for m, f in darfs)
+                   + ". O app não sabe se foi pago: em *Imposto pago* digite o valor de cada "
+                   "DARF efetivamente recolhido, pelo comprovante.")
+    if d["pago_retido"]["valor"] or any(
+            m["consolidacao"]["irrf_lei_mes"] or m["consolidacao"]["irrf_dt_mes"]
+            for m in d["renda_variavel"]) or any(m["linhas"]["retido_mes"] for m in d["fii"]):
+        out.append("IR fonte **estimado** (0,005% das vendas, 1% do ganho no day-trade), na "
+                   "ficha mensal e em Imposto Pago/Retido. O retido de verdade está nas notas "
+                   "de corretagem e no informe da corretora: digite o deles.")
     if d["meses_incompletos"]:
         out.append("Meses com venda sem custo de aquisição: "
                    + ", ".join(_rotulo_mes(m) for m in d["meses_incompletos"])
@@ -245,7 +301,7 @@ def _conferencias(d: dict) -> list[str]:
 
 def _render_declaracao(ins: dict) -> None:
     apuracao = ins["apuracao"]
-    anos = anos_disponiveis(apuracao, ins["proventos"])
+    anos = anos_disponiveis(apuracao, ins["proventos"], ins["posicoes"])
     if not anos:
         return
     hoje = date.today()
@@ -288,6 +344,8 @@ def _render_declaracao(ins: dict) -> None:
             st.caption(f"Nenhuma operação de day-trade em {ano}: os campos ficam zerados.")
         st.markdown("**Consolidação do mês**")
         _mostrar_grade(tabelas["consolidacao"])
+        st.caption("IR fonte estimado pelas vendas: confira nas notas de corretagem. "
+                   "*Imposto pago* é o que foi recolhido; o app só sabe o DARF que o mês gera.")
         isento = d["isentos"]["acoes_ate_20mil"]["valor"]
         if isento:
             st.caption(f"Ganho isento das vendas de ações até R\\$ 20 mil no mês: R\\$ {_n(isento)}. "
@@ -296,7 +354,9 @@ def _render_declaracao(ins: dict) -> None:
         st.markdown("**Outras informações** (o programa soma sozinho)")
         st.dataframe(pd.DataFrame([
             {"Linha": "Total do imposto devido", "Valor": _n(oi["imposto_devido"])},
-            {"Linha": "Total do imposto pago", "Valor": _n(oi["imposto_pago"])},
+            {"Linha": "Total do imposto pago",
+             "Valor": (f"confirmar: DARFs de {_n(oi['darf_calculado'])}"
+                       if oi["darf_calculado"] else "—")},
             {"Linha": "Imposto retido na fonte (Lei nº 11.033/2004)",
              "Valor": _n(oi["irrf_lei_11033"])},
         ]), hide_index=True, use_container_width=True)
@@ -330,9 +390,11 @@ def _render_declaracao(ins: dict) -> None:
     with abas[4]:
         pr = d["pago_retido"]
         st.caption("Ficha **Imposto Pago/Retido**.")
-        st.markdown(f"**{_codigo(pr)} — {pr['descricao']}** · valor **R\\$ {_n(pr['valor'])}**")
-        st.caption("É o IR fonte (0,005% das vendas) que sobrou em dezembro sem abater imposto "
-                   "de renda variável nem de FII.")
+        st.markdown(f"**{_codigo(pr)} — {pr['descricao']}** · valor **estimado** "
+                    f"**R\\$ {_n(pr['valor'])}**")
+        st.caption("É o IR fonte que sobrou em dezembro sem abater imposto de renda variável "
+                   "nem de FII, estimado em 0,005% das vendas. O retido de verdade está nas "
+                   "notas de corretagem e no informe da corretora: digite o deles.")
         if d["irrf_day_trade_restituir"]:
             st.markdown(f"IR fonte de day-trade que sobrou no ano: "
                         f"**R\\$ {_n(d['irrf_day_trade_restituir'])}**. Não vai nesta ficha: "
@@ -354,7 +416,8 @@ def _render_declaracao(ins: dict) -> None:
             for frase in conferir:
                 st.markdown(f"- {frase}")
         else:
-            st.caption("Nada a conferir: custódia, proventos e CNPJs fecham com a apuração.")
+            st.caption("Nada a conferir: custódia, proventos, CNPJs, custos, DARFs e IR fonte "
+                       "fecham com a apuração.")
 
     if any(i.get("conferir") for i in [*d["isentos"].values(), d["pago_retido"], *d["bens"]]):
         st.caption("\\* Código que as fontes oficiais não confirmam por inteiro: confira se a "
