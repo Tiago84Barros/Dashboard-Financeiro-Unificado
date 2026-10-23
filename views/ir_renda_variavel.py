@@ -19,8 +19,15 @@ import streamlit as st
 
 from core.ir_renda_variavel import CESTAS, CODIGO_DARF, ROTULO_CESTA, apurar
 from core.irpf_declaracao import (
-    DIGITAR, DIGITAR_EM_JANEIRO, DIGITAR_FII, LINHAS_FII, LINHAS_RV,
-    LINHAS_RV_CONSOLIDACAO, _fmt_qtd, anos_disponiveis, montar,
+    DIGITAR,
+    DIGITAR_EM_JANEIRO,
+    DIGITAR_FII,
+    LINHAS_FII,
+    LINHAS_RV,
+    LINHAS_RV_CONSOLIDACAO,
+    _fmt_qtd,
+    anos_disponiveis,
+    montar,
 )
 from core.user_context import user_cache_data
 from core.utils import fmt_moeda

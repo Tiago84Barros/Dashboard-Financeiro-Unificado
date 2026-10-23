@@ -9,8 +9,14 @@ from decimal import Decimal
 
 from core.ir_renda_variavel import _classe_fiscal, apurar, tipo_fiscal
 from core.irpf_declaracao import (
-    _discriminacao_rf, _limpar, bens_posicao_consolidada, bens_renda_variavel,
-    ficha_fii, ficha_renda_variavel, montar, rendimentos,
+    _discriminacao_rf,
+    _limpar,
+    bens_posicao_consolidada,
+    bens_renda_variavel,
+    ficha_fii,
+    ficha_renda_variavel,
+    montar,
+    rendimentos,
 )
 
 HOJE = date(2026, 9, 24)
@@ -186,7 +192,8 @@ def test_classe_fiscal_unit_e_etf():
 
 
 def test_publicar_cnpj_emissores_monta_do_fca_e_do_cadastro():
-    from scripts.publicar_cnpj_emissores import formatar_cnpj, montar as montar_cnpj
+    from scripts.publicar_cnpj_emissores import formatar_cnpj
+    from scripts.publicar_cnpj_emissores import montar as montar_cnpj
     from tests.test_cvm_cadastro import _CAD, _FCA
 
     out = montar_cnpj(_CAD, {2026: _FCA})
