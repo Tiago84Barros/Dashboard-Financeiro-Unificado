@@ -30,6 +30,7 @@ from collections import defaultdict
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from core.fii_ticker import e_ticker_fii
 from core.ir_renda_variavel import _TICKER_B3, ALIQUOTA, _base, ler_cnpj_emissores
 
 logger = logging.getLogger(__name__)
@@ -324,7 +325,7 @@ def cnpj_de(ticker: str, emissores: dict, mercado: dict) -> tuple[str | None, st
     if t not in mercado:
         raiz = t[:4]
         for k, v in emissores.items():
-            if k[:4] == raiz and not re.match(r"^[A-Z]{4}11$", t):
+            if k[:4] == raiz and not e_ticker_fii(t):
                 return tuple(v)  # type: ignore[return-value]
     if t in mercado:
         return mercado[t]
