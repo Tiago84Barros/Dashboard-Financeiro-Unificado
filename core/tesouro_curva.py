@@ -124,6 +124,48 @@ def serie_titulo(engine, security_key: str, desde: date | None = None) -> pd.Dat
     return _consultar(engine, sql, params)
 
 
+def pu_diario(engine, security_keys: list[str], desde: date | None = None) -> pd.DataFrame:
+    """PU de **venda** diário por título, em formato largo (data × chave).
+
+    É a série de preço que a correlação da carteira usa para o Tesouro: quem
+    já tem o título marca pela ponta de venda, a mesma de `taxas_mais_recentes`.
+    Título sem linha na tabela simplesmente não vira coluna — quem chama deve
+    declarar a ausência, não presumir um preço.
+    """
+    colunas = pd.DataFrame()
+    if engine is None or not security_keys:
+        return colunas
+    params: dict = {"chaves": list(security_keys)}
+    onde = "WHERE security_key = ANY(:chaves) AND sell_pu IS NOT NULL"
+    if desde is not None:
+        onde += " AND base_date >= :desde"
+        params["desde"] = desde
+    sql = f"""
+        SELECT security_key, base_date, sell_pu
+        FROM tesouro_market_rates
+        {onde}
+        ORDER BY base_date
+    """
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(text(sql), conn, params=params)
+    except Exception as exc:
+        logger.info("tesouro_curva: PU diário falhou (%s)", exc)
+        return colunas
+    if df.empty:
+        return colunas
+    df["base_date"] = pd.to_datetime(df["base_date"], errors="coerce")
+    df["sell_pu"] = pd.to_numeric(df["sell_pu"], errors="coerce")
+    df = df.dropna(subset=["base_date", "sell_pu"])
+    if df.empty:
+        return colunas
+    return (
+        df.pivot_table(index="base_date", columns="security_key",
+                       values="sell_pu", aggfunc="last")
+        .sort_index()
+    )
+
+
 def titulos_ofertados(engine, ate: date | None = None) -> pd.DataFrame:
     """Títulos com cotação recente — o cardápio de alternativas.
 
