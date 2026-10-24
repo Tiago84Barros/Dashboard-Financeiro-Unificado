@@ -938,9 +938,12 @@ def _tab_analises(
             (f"(Sobra do mês {fmt_moeda(saldo)} + aportes {fmt_moeda(investido_mes)})"
              " / renda, com teto na renda"
              + (" · no teto" if indicadores["poupanca_no_teto"] else "")
-             + " · meta de referência: 30%.")
+             + " · meta de referência: 30%."
+             + (" Mês em déficit: o aporte veio de caixa anterior."
+                if indicadores["poupanca_de_caixa_anterior"] else ""))
             if taxa_poupanca is not None else "Sem renda positiva para calcular a taxa.",
             _COR_NEUTRO if taxa_poupanca is None else
+            "#F6C90E"    if indicadores["poupanca_de_caixa_anterior"] else
             _COR_RECEITA if taxa_poupanca >= 30 else
             "#F6C90E"    if taxa_poupanca >= 15 else _COR_DESPESA,
         ), unsafe_allow_html=True)
