@@ -524,7 +524,8 @@ def _render_kpi_grid(
         _kpi_html(
             "Taxa de poupança",
             fmt_percentual(taxa, sinal=False),
-            f'Sobra do mês + aportes{" · no teto da renda" if ind["poupanca_no_teto"] else ""}'
+            f'Sobra do mês {escape(fmt_moeda(saldo))} + aportes {escape(fmt_moeda(investimentos))}'
+            f'{" · no teto da renda" if ind["poupanca_no_teto"] else ""}'
             f' · meta 30% · <strong style="color:{taxa_cor}">'
             f'{"atingida" if taxa >= 30 else "em acompanhamento"}</strong>',
             "%",
@@ -1016,6 +1017,9 @@ def _secao_resumo_modulos(
                     ("Receitas", fmt_moeda(receitas_mes), _COR_FLUXO),
                     ("Despesas", fmt_moeda(despesas_mes), _COR_NEGATIVO),
                     ("Saldo líquido", fmt_moeda(saldo_mes), cor_saldo_mes),
+                    # A taxa soma o aporte à sobra; sem ele visível, saldo
+                    # negativo ao lado de taxa positiva parece erro de conta.
+                    ("Aportes no mês", fmt_moeda(investimentos_mes), _COR_PATRIMONIO),
                     ("Taxa de poupança", fmt_percentual(taxa_poupanca, sinal=False), _COR_ALERTA if taxa_poupanca < 30 else _COR_FLUXO),
                 ],
                 _COR_FLUXO,

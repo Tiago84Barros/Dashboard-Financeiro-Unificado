@@ -935,7 +935,8 @@ def _tab_analises(
         st.markdown(_kpi_card(
             "Taxa de Poupança",
             fmt_percentual(taxa_poupanca, sinal=False),
-            ("(Sobra do mês + aportes) / renda, com teto na renda"
+            (f"(Sobra do mês {fmt_moeda(saldo)} + aportes {fmt_moeda(investido_mes)})"
+             " / renda, com teto na renda"
              + (" · no teto" if indicadores["poupanca_no_teto"] else "")
              + " · meta de referência: 30%.")
             if taxa_poupanca is not None else "Sem renda positiva para calcular a taxa.",
