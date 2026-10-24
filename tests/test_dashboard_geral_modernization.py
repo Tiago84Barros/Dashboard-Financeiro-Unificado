@@ -100,7 +100,7 @@ def test_kpi_grid_uses_deterministic_financial_inputs(monkeypatch):
     # à sobra: (5.000 + 2.000) / 10.000 = 70%, abaixo do teto da renda.
     assert "R$ 5.000,00" in html
     assert "70,00%" in html
-    assert "Sobra do mês + aportes" in html
+    assert "Sobra do mês R$ 5.000,00 + aportes R$ 2.000,00" in html
     assert "no teto da renda" not in html
     assert "+7.25%" in html
     assert "atingida" in html
@@ -386,3 +386,25 @@ def test_o_rotulo_do_kpi_reserva_as_duas_linhas():
     """
     regra = _bloco_css(".dg-kpi-label")
     assert "min-height:" in regra
+
+
+def test_resumo_controle_mostra_aporte_que_explica_taxa_com_saldo_negativo(monkeypatch):
+    """Despesa acima da renda + aporte de caixa anterior: saldo negativo e taxa
+    positiva. Sem a linha de aportes no card, o par parece erro de cálculo."""
+    rendered = _capture_markdown(monkeypatch)
+    monkeypatch.setattr(dashboard, "_faixa_destaque", lambda *a, **k: None)
+    monkeypatch.setattr(
+        dashboard.st, "columns",
+        lambda *a, **k: [contextlib.nullcontext(), contextlib.nullcontext()],
+    )
+
+    dashboard._secao_resumo_modulos(
+        25_619.56, 26_077.65, 9_998.81, {"investido": 0.0, "total": 0.0}, [], 0.0,
+        {}, {}, {}, [], False,
+    )
+
+    card = next(b for b in rendered if "Controle Financeiro" in b)
+    assert "-R$ 458,09" in card
+    assert "Aportes no mês" in card and "R$ 9.998,81" in card
+    assert card.index("Aportes no mês") < card.index("Taxa de poupança")
+    assert "37,24%" in card
