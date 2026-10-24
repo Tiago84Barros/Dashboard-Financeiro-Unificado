@@ -29,12 +29,10 @@ from __future__ import annotations
 
 import argparse
 import gzip
-import io
 import json
 import os
 import sys
 import time
-import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -62,6 +60,7 @@ def _log(msg: str) -> None:
 
 def _engine():
     import sqlalchemy as sa
+
     from scripts.publish_fii_selection_from_local import _warehouse_url
     return sa.create_engine(os.getenv("DFU_WAREHOUSE_URL") or _warehouse_url())
 
@@ -165,7 +164,7 @@ def etapa_dev(painel: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     for s in por_safra:
         _log(f"dev safra {s['safra']}: n={s['n']} " + " ".join(
             f"{k}={s[k]['mae']:.4f}" for k in modelos))
-    _log(f"dev agregado MAE: " + " ".join(f"{k}={agregado[k]['mae']:.4f}" for k in modelos))
+    _log("dev agregado MAE: " + " ".join(f"{k}={agregado[k]['mae']:.4f}" for k in modelos))
     _log(f"escolha: {escolha['modelo']} (mlp elegivel: {escolha['mlp_elegivel']})")
     return preds, {"por_safra": por_safra, "agregado": agregado, "escolha": escolha,
                    "comparacoes": {k: pl.comparar_com_ingenuo(preds, k)
@@ -175,8 +174,12 @@ def etapa_dev(painel: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 def etapa_pares(destino: Path) -> None:
     """Roda a aba de Portfolio B3 sem cabeca (mesmo codigo e configuracao da
     medicao oficial do Rank-IC) e guarda os pares com ticker."""
-    from scripts.medir_vantagem_oos import B3_CONFIG, _apontar_para_armazem_local, \
-        _fonte_efetiva_b3, _rodar_aba_b3
+    from scripts.medir_vantagem_oos import (
+        B3_CONFIG,
+        _apontar_para_armazem_local,
+        _fonte_efetiva_b3,
+        _rodar_aba_b3,
+    )
     _apontar_para_armazem_local()
     os.chdir(ROOT)
     t = time.time()
