@@ -67,12 +67,19 @@ NAV_ITEMS = (
     ("🧠", "Avaliação de Portfólio"),
 )
 
+# Só a vitrine B3 tem a previsão de lucros: a americana despacha o índice 5
+# no ``else`` da Avaliação de Portfólio, então o item não entra em NAV_ITEMS.
+NAV_ITEMS_B3 = NAV_ITEMS + (("🔮", "Previsão de Lucros"),)
+
+_LARGURAS = {5: [2, 2, 2.5, 2.5, 2.5], 6: [2, 2, 2.2, 2.3, 2.4, 2.2]}
+
 
 def render_market_css() -> None:
     st.markdown(MARKET_COMPANIES_CSS, unsafe_allow_html=True)
 
 
-def render_market_tabs(*, state_key: str, key_prefix: str) -> int:
+def render_market_tabs(*, state_key: str, key_prefix: str,
+                       itens: tuple = NAV_ITEMS) -> int:
     """Trilho de abas das vitrines B3/EUA. Trocar de aba sempre volta ao topo.
 
     O Streamlit preserva a rolagem entre reruns, e as abas com chat (Avaliação
@@ -81,8 +88,8 @@ def render_market_tabs(*, state_key: str, key_prefix: str) -> int:
     """
     active = int(st.session_state.get(state_key, 0))
     rolar_flag = f"_{state_key}_rolar"
-    widths = [2, 2, 2.5, 2.5, 2.5]
-    for idx, (col, (icon, label)) in enumerate(zip(st.columns(widths), NAV_ITEMS)):
+    widths = _LARGURAS.get(len(itens), [1] * len(itens))
+    for idx, (col, (icon, label)) in enumerate(zip(st.columns(widths), itens)):
         with col:
             if st.button(
                 f"{icon} {label}", width="stretch",
