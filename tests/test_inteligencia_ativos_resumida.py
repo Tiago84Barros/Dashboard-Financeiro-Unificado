@@ -376,3 +376,32 @@ def test_cartao_mostra_cenario_e_diz_os_temas(carteira):
     assert "não de outras empresas" in html and "Fonte: Acervo local" not in html
     vazio = tela.cartao_noticias(a, ([GERAIS[0]], "Acervo local"))
     assert "Nenhuma manchete de juros" in vazio and "Sable" not in vazio
+
+
+def test_destaques_sobrevivem_ao_descarte_do_modulo_no_deploy(monkeypatch,
+                                                             carteira):
+    """Lacuna 8ec855d9 (03/10/2026, 7 min depois do merge do PR #463): a
+    caixa de relatórios caiu em ``UnserializableReturnValueError``. No deploy,
+    ``core/modulos_frescos`` tira ``destaques_relatorios`` do ``sys.modules``
+    enquanto outra sessão ainda roda o módulo velho; o ``Destaque`` que ele cria
+    deixa de ser o ``Destaque`` que o pickle do ``st.cache_data`` encontra."""
+    from dataclasses import dataclass
+
+    from core.inteligencia_ativos import destaques_relatorios as dr
+
+    @dataclass(frozen=True)
+    class Destaque:  # a classe do módulo velho: mesmo nome, outro objeto
+        titulo: str
+        data: str | None
+        tipo: str
+        frases: tuple[str, ...]
+    Destaque.__module__, Destaque.__qualname__ = dr.__name__, "Destaque"
+
+    velho = Destaque("Release 2T26", "2026-08-10", "Release",
+                     ("O lucro foi de R$ 3 bilhões, alta de 8%.",))
+    monkeypatch.setattr(tela.dr, "ler", lambda ticker: (velho,))
+    out = tela._destaques("ZZDEPLOY3")
+    assert out == (dr.Destaque("Release 2T26", "2026-08-10", "Release",
+                               ("O lucro foi de R$ 3 bilhões, alta de 8%.",)),)
+    assert "Release 2T26" in tela.cartao_relatorios(
+        _por(carteira[1], "BBAS3"), out)
