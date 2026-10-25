@@ -127,7 +127,7 @@ def test_rank_ic_nao_medido_nao_inventa_numero(monkeypatch, registros):
 
 def test_aba_so_existe_na_vitrine_b3():
     import design.market_companies as mc
-    assert mc.NAV_ITEMS_B3[-1] == ("🔮", "Previsão de Lucros")
+    assert mc.NAV_ITEMS_B3[5] == ("🔮", "Previsão de Lucros")
     assert ("🔮", "Previsão de Lucros") not in mc.NAV_ITEMS
     b3 = (RAIZ / "views" / "empresas_b3.py").read_text(encoding="utf-8")
     usa = (RAIZ / "views" / "empresas_americanas.py").read_text(encoding="utf-8")
@@ -135,14 +135,14 @@ def test_aba_so_existe_na_vitrine_b3():
     assert "NAV_ITEMS_B3" not in usa
 
 
-def test_trilho_b3_desenha_seis_abas():
+def test_trilho_b3_desenha_sete_abas():
     app = AppTest.from_string("""
 from design.market_companies import NAV_ITEMS_B3, render_market_tabs
 render_market_tabs(state_key='t_active', key_prefix='t', itens=NAV_ITEMS_B3)
 """).run(timeout=60)
     assert not app.exception
-    assert [b.label for b in app.button][-1] == "🔮 Previsão de Lucros"
-    assert len(app.button) == 6
+    assert [b.label for b in app.button][5] == "🔮 Previsão de Lucros"
+    assert len(app.button) == 7
 
 
 def test_artefato_publicado_e_legivel_pelo_nucleo():

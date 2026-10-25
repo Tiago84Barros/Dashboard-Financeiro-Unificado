@@ -6851,7 +6851,11 @@ def render() -> None:
         from views import analise_portfolio_b3
 
         analise_portfolio_b3.render(show_header=False)
-    else:
+    elif active == 5:
         from views import previsao_lucros_b3
 
         previsao_lucros_b3.render(show_header=False)
+    else:
+        from views import carteira20_b3
+
+        carteira20_b3.render(show_header=False)
