@@ -6858,4 +6858,4 @@ def render() -> None:
     else:
         from views import carteira20_b3
 
-        carteira20_b3.render(show_header=False)
+        carteira20_b3.render(show_header=False, cadastro=df_set)

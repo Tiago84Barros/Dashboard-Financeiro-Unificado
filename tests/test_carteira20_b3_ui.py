@@ -29,10 +29,15 @@ def registros_publicados():
     return regs
 
 
-def _rodar(monkeypatch, regs, hoje="2026-10-25"):
+def _rodar(monkeypatch, regs, hoje="2026-10-25", desempenho=None, lacunas=None):
     monkeypatch.chdir(RAIZ)
     monkeypatch.setattr(vc, "carregar", lambda: regs)
-    monkeypatch.setattr(vc, "aviso_lacuna", lambda msg, *, codigo, **kw: None)
+    monkeypatch.setattr(vc, "carregar_desempenho", lambda: desempenho)
+    # o logo real faz HEAD na CDN; aqui basta o marcador
+    monkeypatch.setattr(vc, "company_logo_html",
+                        lambda tk, url, **kw: f'<span class="logo-teste">{tk}</span>')
+    monkeypatch.setattr(vc, "aviso_lacuna", lambda msg, *, codigo, **kw:
+                        lacunas.append(codigo) if lacunas is not None else None)
     app = AppTest.from_string(_SCRIPT)
     app.session_state["_hoje"] = hoje
     return app.run(timeout=60)
@@ -43,16 +48,47 @@ def _texto(app) -> str:
     return "\n".join(str(p) for p in partes)
 
 
+def _cards_html(app) -> str:
+    return next(str(m.value) for m in app.markdown if 'class="c20-grid"' in str(m.value))
+
+
+def _desempenho(regs, dados_ate="2026-10-30", hash_=None) -> dict:
+    """Artefato no formato do publicador: 4 pregões depois da execução de 26/10."""
+    atual = c20.vigente(regs)
+    carteira = atual["corpo"]["carteira"]
+    datas = ["2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", dados_ate]
+    return {
+        "schema": 1, "pregoes": 4, "dados_ate": dados_ate, "datas": datas,
+        "revisao": {"seq": atual["registro"]["seq"], "pregao_execucao": "2026-10-26",
+                    "hash": hash_ or atual["registro"]["hash"]},
+        "curvas": {"carteira20": [994.01, 1003.0, 1010.0, 1021.5, 1030.2],
+                   "pesos_iguais": [994.01, 999.0, 1004.0, 1009.0, 1012.0],
+                   "bova11": [994.01, 996.0, 1001.0, 1003.0, 1005.0],
+                   "cdi": [1000.0, 1000.4, 1000.8, 1001.2, 1001.6]},
+        "ativos": [{"id": c["id"], "ticker": c["ticker"],
+                    "retorno": 0.042 if i == 0 else -0.013, "peso_atual": 0.05}
+                   for i, c in enumerate(carteira)],
+        "avisos": ["CDI publicado só até 29/10/2026; as curvas param na mesma data"]}
+
+
 def test_mostra_carteira_vigente_e_cadeia_integra(monkeypatch, registros_publicados):
     app = _rodar(monkeypatch, registros_publicados)
     assert not app.exception
     txt = _texto(app)
     assert "Cadeia íntegra" in txt
     assert "o primeiro fecha em 30/11/2026" in txt
-    carteira = app.dataframe[0].value
+    cards = _cards_html(app)
     corpo = c20.vigente(registros_publicados)["corpo"]
-    assert list(carteira["Ticker"]) == [c["ticker"] for c in corpo["carteira"]]
-    assert len(carteira) == c20.N_ACOES
+    tickers = [c["ticker"] for c in corpo["carteira"]]
+    assert cards.count('class="b3-card"') == c20.N_ACOES
+    posicoes = [cards.index(f'b3-card-ticker">{tk}<') for tk in tickers]
+    assert posicoes == sorted(posicoes)  # na ordem do registro
+    assert "#1<" in cards and f"#{c20.N_ACOES}<" in cards
+    assert "5,0%" in cards and "1º pregão" in cards
+    # antes da execução: nada de gráfico, e o aviso de período curto já aparece
+    assert not app.get("plotly_chart")
+    assert "Período curto demais para concluir" in txt
+    assert "começa no primeiro pregão seguinte" in txt
     historico = app.dataframe[-1].value
     assert list(historico["Hash"]) == [r["hash"] for r in registros_publicados]
 
@@ -117,4 +153,67 @@ def test_aba_despachada_na_vitrine_b3():
     assert mc.NAV_ITEMS_B3[6] == ("📒", "Carteira 20")
     assert ("📒", "Carteira 20") not in mc.NAV_ITEMS
     b3 = (RAIZ / "views" / "empresas_b3.py").read_text(encoding="utf-8")
-    assert "carteira20_b3.render" in b3
+    assert "carteira20_b3.render(show_header=False, cadastro=df_set)" in b3
+
+
+def test_grafico_e_cards_com_desempenho_publicado(monkeypatch, registros_publicados):
+    lacunas = []
+    app = _rodar(monkeypatch, registros_publicados, hoje="2026-11-02",
+                 desempenho=_desempenho(registros_publicados), lacunas=lacunas)
+    assert not app.exception
+    txt = _texto(app)
+    assert "Período curto demais para concluir" in txt
+    assert "4 pregão(ões) desde o fechamento de 26/10/2026" in txt
+    assert "CDI publicado só até 29/10/2026" in txt
+    assert "R\\$ 1.000" in txt and "R\\$ 20 mil" in txt  # sem virar LaTeX
+    assert lacunas == []
+    grafico = app.get("plotly_chart")
+    assert len(grafico) == 1
+    fig = __import__("json").loads(grafico[0].proto.spec)
+    nomes = [t["name"] for t in fig["data"]]
+    assert nomes == ["Carteira 20", "Pesos iguais do universo", "BOVA11", "CDI"]
+    assert fig["data"][0]["y"][0] == pytest.approx(-0.00599)  # só o custo de compra
+    assert fig["data"][0]["y"][-1] == pytest.approx(0.0302)
+    cards = _cards_html(app)
+    assert "+4,2%" in cards and "c20-pos" in cards and "−" not in cards
+    assert "-1,3%" in cards and "c20-neg" in cards
+    assert "Peso em 30/10" in cards and "1º pregão" not in cards
+
+
+def test_desempenho_de_outra_revisao_e_ignorado(monkeypatch, registros_publicados):
+    lacunas = []
+    app = _rodar(monkeypatch, registros_publicados, hoje="2026-11-02", lacunas=lacunas,
+                 desempenho=_desempenho(registros_publicados, hash_="0" * 64))
+    assert not app.exception
+    assert not app.get("plotly_chart")
+    assert "ainda não foi publicado" in _texto(app)
+    assert lacunas == ["tela.b3.carteira20.desempenho_ausente"]
+
+
+def test_desempenho_parado_nao_finge_estar_em_dia(monkeypatch, registros_publicados):
+    lacunas = []
+    app = _rodar(monkeypatch, registros_publicados, hoje="2026-11-20", lacunas=lacunas,
+                 desempenho=_desempenho(registros_publicados))
+    assert not app.exception
+    assert "Dados até 30/10/2026" in _texto(app)
+    assert lacunas == ["tela.b3.carteira20.desempenho_parado"]
+    assert len(app.get("plotly_chart")) == 1
+
+
+def test_cards_levam_nome_e_setor_do_cadastro(registros_publicados):
+    import pandas as pd
+    corpo = c20.vigente(registros_publicados)["corpo"]
+    tk = corpo["carteira"][0]["ticker"]
+    cadastro = vc.cadastro_por_ticker(pd.DataFrame([
+        {"ticker": f"{tk}.SA", "nome_empresa": "Empresa <Teste>", "SETOR": "Energia",
+         "SUBSETOR": "Elétricas", "SEGMENTO": "x"}]))
+    html = vc.cards_carteira(corpo, cadastro, None)
+    assert "Empresa &lt;Teste&gt;" in html
+    assert "Energia · Elétricas" in html
+    assert "Setor não cadastrado" in html  # as outras 19 não vieram no cadastro
+
+
+def test_titulos_de_secao_usam_o_token_de_texto():
+    tema = (RAIZ / "design" / "tema.py").read_text(encoding="utf-8")
+    bloco = tema[tema.index(".app-section-title {"):]
+    assert "color: var(--app-text)" in bloco[:bloco.index("}")]

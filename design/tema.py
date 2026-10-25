@@ -514,7 +514,7 @@ hr {
     background: rgba(74,158,255,.075);
 }
 .app-section-title {
-    color: #E7EDF6;
+    color: var(--app-text);
     font-size: .98rem;
     font-weight: 760;
     letter-spacing: -.015em;
