@@ -1,0 +1,3 @@
+# O registro da Carteira 20 é texto canônico com LF: a cadeia de hashes e o
+# teste de prefixo comparam bytes, e o autocrlf do Windows trocaria o fim de linha.
+data/public/carteira20_registro.jsonl text eol=lf
