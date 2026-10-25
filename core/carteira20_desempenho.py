@@ -138,9 +138,13 @@ def calcular(execucao: date, retornos: pd.DataFrame, bova11: pd.Series,
     largo = r.pivot_table(index="data", columns="id", values="ret", aggfunc="sum").fillna(0.0)
     fatores = (1 + largo).cumprod()
     base = pd.DataFrame(1.0, index=[execucao], columns=fatores.columns)
-    fatores = pd.concat([base, fatores]).reindex(datas, method="ffill")
-
+    # ação cujo primeiro negócio cai depois do corte não tem linha até aqui:
+    # é buraco no meio da série, fator 1 desde a execução
     ids_uni = [u["id"] for u in universo]
+    fatores = (pd.concat([base, fatores]).reindex(datas, method="ffill")
+               .reindex(columns=list(dict.fromkeys([*fatores.columns, *ids_c20, *ids_uni])),
+                        fill_value=1.0))
+
     if "suspeito" in r.columns:
         n_susp = int(r[r["id"].isin(ids_c20) & r["suspeito"].fillna(False).astype(bool)].shape[0])
         if n_susp:

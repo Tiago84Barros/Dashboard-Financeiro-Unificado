@@ -170,6 +170,25 @@ def test_montar_grava_revisao_vigente_e_regras():
     assert set(art["curvas"]) == set(cd.SERIES)
 
 
+def test_acao_que_so_negocia_depois_do_corte_do_cdi_entra_com_fator_um():
+    # B só negocia em 28/10 e o CDI só cobre 26/10: a curva para em 27/10
+    ret = _retornos([("A", DIAS[0], 0.01), ("A", DIAS[1], 0.0), ("C", DIAS[0], 0.0),
+                     ("C", DIAS[1], 0.0), ("B", DIAS[1], 0.02)])
+    r = cd.calcular(EXEC, ret, _bova([100.0, 100.0, 100.0]), _cdi(dias=(EXEC,)),
+                    CARTEIRA, UNIVERSO)
+    assert r["datas"] == [EXEC.isoformat(), DIAS[0].isoformat()]
+    assert {a["id"]: a["retorno"] for a in r["ativos"]} == {"A": 0.01, "B": 0.0}
+
+
+def test_nenhuma_acao_negociou_ate_o_corte():
+    ret = _retornos([(i, DIAS[1], 0.02) for i in "ABC"])
+    r = cd.calcular(EXEC, ret, _bova([100.0, 101.0, 102.0]), _cdi(dias=(EXEC,)),
+                    CARTEIRA, UNIVERSO)
+    assert r["pregoes"] == 1
+    assert [a["retorno"] for a in r["ativos"]] == [0.0, 0.0]
+    assert r["curvas"]["pesos_iguais"] == r["curvas"]["carteira20"]
+
+
 def test_publicador_grava_sem_a_curva_de_pesos_iguais(monkeypatch, tmp_path, capsys):
     regs = c20.ler(c20.REGISTRO)
     if not c20.vigente(regs):
