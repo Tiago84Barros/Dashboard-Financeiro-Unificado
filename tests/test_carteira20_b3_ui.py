@@ -65,6 +65,18 @@ def test_cadeia_adulterada_aparece_quebrada(monkeypatch, registros_publicados):
     assert "Cadeia QUEBRADA" in _texto(app)
 
 
+def test_data_adulterada_nao_derruba_o_historico(monkeypatch, registros_publicados):
+    regs = copy.deepcopy(registros_publicados)
+    regs[1]["registrado_em"] = "ontem à noite"
+    regs[1]["corpo"]["data_formacao"] = "30/09"
+    app = _rodar(monkeypatch, regs)
+    assert not app.exception
+    assert "Cadeia QUEBRADA" in _texto(app)
+    historico = app.dataframe[-1].value
+    assert "inválido (ontem à noite)" in list(historico["Registrado em"])
+    assert len(historico) == len(regs)
+
+
 def test_mes_fechado_sem_medicao_nao_finge_estar_em_dia(monkeypatch, registros_publicados):
     app = _rodar(monkeypatch, registros_publicados, hoje="2026-12-05")
     assert not app.exception
@@ -81,8 +93,23 @@ def test_registro_ausente_mostra_estado_vazio(monkeypatch):
 
 def test_proxima_revisao_e_primeiro_fechamento(registros_publicados):
     prox = vc.proxima_revisao(registros_publicados, date(2026, 10, 25))
-    assert prox["data_formacao"] == "2027-04-30"
+    assert prox["data_formacao"] == "2027-04-30" and not prox["atrasada"]
     assert vc.primeiro_fechamento(registros_publicados) == date(2026, 11, 30)
+
+
+def test_revisao_formada_segue_visivel_ate_o_prazo_e_depois_atrasada(registros_publicados):
+    # formação 30/04/2027 já passou, mas o registro vale até a abertura de 03/05
+    prox = vc.proxima_revisao(registros_publicados, date(2027, 5, 1))
+    assert prox["data_formacao"] == "2027-04-30" and not prox["atrasada"]
+    # passado o prazo sem registro, não pula para outubro: fica marcada
+    prox = vc.proxima_revisao(registros_publicados, date(2027, 5, 10))
+    assert prox["data_formacao"] == "2027-04-30" and prox["atrasada"]
+
+
+def test_card_mostra_revisao_atrasada(monkeypatch, registros_publicados):
+    app = _rodar(monkeypatch, registros_publicados, hoje="2027-05-10")
+    assert not app.exception
+    assert "ATRASADA: o prazo era a abertura de 03/05/2027" in _texto(app)
 
 
 def test_aba_despachada_na_vitrine_b3():

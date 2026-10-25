@@ -39,13 +39,20 @@ def carregar(caminho: Path = c20.REGISTRO) -> list[dict] | None:
 def _data(iso: str | None) -> str:
     if not iso:
         return "—"
-    return date.fromisoformat(iso[:10]).strftime("%d/%m/%Y")
+    try:
+        return date.fromisoformat(str(iso)[:10]).strftime("%d/%m/%Y")
+    except ValueError:  # registro adulterado: a cadeia já acusa, a tela não cai
+        return f"inválida ({iso})"
 
 
 def _momento(iso: str | None) -> str:
     if not iso:
         return "—"
-    return datetime.fromisoformat(iso).astimezone(c20.FUSO_B3).strftime("%d/%m/%Y %H:%M")
+    try:
+        return datetime.fromisoformat(str(iso)).astimezone(c20.FUSO_B3).strftime(
+            "%d/%m/%Y %H:%M")
+    except ValueError:
+        return f"inválido ({iso})"
 
 
 def _curto(h: str | None) -> str:
@@ -62,12 +69,16 @@ def _frase(texto: str) -> str:
 
 
 def proxima_revisao(registros: list[dict], hoje: date) -> dict | None:
-    """Primeira formação do calendário ainda sem revisão e que não passou."""
+    """Primeira formação do calendário ainda sem revisão.
+
+    Fica visível até o prazo (abertura do pregão de execução) e, passado ele sem
+    registro, continua visível marcada ``atrasada`` -- nunca é pulada em silêncio.
+    """
     proto = c20.protocolo(registros) or {}
     feitas = {r["corpo"].get("data_formacao") for r in c20.revisoes(registros)}
     for c in (proto.get("calendario") or {}).get("planejado") or []:
-        if c["data_formacao"] not in feitas and date.fromisoformat(c["data_formacao"]) >= hoje:
-            return c
+        if c["data_formacao"] not in feitas:
+            return {**c, "atrasada": hoje > date.fromisoformat(c["pregao_execucao"])}
     return None
 
 
@@ -98,8 +109,10 @@ def _cards(registros: list[dict], hoje: date) -> None:
     with c2:
         card_metrica("Próxima revisão",
                      f"Formação {_data(prox['data_formacao'])}" if prox else "—",
-                     delta=(f"Registro antes da abertura de {_data(prox['pregao_execucao'])}"
-                            if prox else None),
+                     delta=(None if not prox else
+                            f"ATRASADA: o prazo era a abertura de {_data(prox['pregao_execucao'])}"
+                            if prox["atrasada"] else
+                            f"Registro antes da abertura de {_data(prox['pregao_execucao'])}"),
                      positivo=None,
                      ajuda="Último pregão de abril e de outubro; o calendário está no protocolo.")
     with c3:
@@ -175,7 +188,10 @@ def primeiro_fechamento(registros: list[dict]) -> date | None:
     rv = c20.revisoes(registros)
     if not rv:
         return None
-    execucao = date.fromisoformat(rv[0]["corpo"]["pregao_execucao"])
+    try:
+        execucao = date.fromisoformat(rv[0]["corpo"]["pregao_execucao"])
+    except (KeyError, TypeError, ValueError):
+        return None
     ano, mes = (execucao.year + 1, 1) if execucao.month == 12 else (execucao.year,
                                                                    execucao.month + 1)
     return c20.ultimo_pregao_do_mes(ano, mes)
