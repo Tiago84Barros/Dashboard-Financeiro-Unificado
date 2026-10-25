@@ -6,6 +6,11 @@ Subcomandos:
 
     python scripts/carteira20_revisao.py protocolo   # registro 0, uma vez só
     python scripts/carteira20_revisao.py verificar   # confere a cadeia inteira
+    python scripts/carteira20_revisao.py validar     # refaz 2026 do teste final
+    python scripts/carteira20_revisao.py revisar --formacao AAAA-MM-DD [--seco]
+
+``validar`` e ``revisar`` treinam os modelos: rodam no ambiente da pesquisa
+(lightgbm e torch), não no do app.
 
 O protocolo congela, ANTES da primeira revisão, tudo o que a medição vai
 usar: a receita, o calendário, a operação entre revisões, a medição, a
@@ -337,6 +342,115 @@ def cmd_validar(args) -> int:
     return 1 if falhou else 0
 
 
+def _sem_nan(x):
+    import math
+    return None if x is None or (isinstance(x, float) and math.isnan(x)) else round(float(x), 6)
+
+
+def execucao_devida(proto: dict, formacao: str, agora) -> tuple[str, bool]:
+    """Pregão de execução de uma formação do protocolo e se ela está atrasada.
+
+    No prazo, vale o pregão do calendário. Depois da abertura dele, vale o
+    primeiro pregão que abre depois de ``agora`` (regra de atraso do protocolo).
+    """
+    from datetime import date
+    cal = proto["calendario"]
+    previstas = {c["data_formacao"]: c["pregao_execucao"]
+                 for c in [cal["inaugural"], *cal["planejado"]]}
+    if formacao not in previstas:
+        raise SystemExit(f"{formacao} não é data de formação do protocolo")
+    execucao = previstas[formacao]
+    if agora < c20.abertura_do_pregao(execucao):
+        return execucao, False
+    dia = agora.date()
+    if not (c20.e_pregao(dia) and agora < c20.abertura_do_pregao(dia.isoformat())):
+        dia = c20.proximo_pregao(dia)
+    return date.isoformat(dia), True
+
+
+def _versoes() -> dict:
+    import platform
+    from importlib import metadata
+    saida = {"python": platform.python_version()}
+    for pacote in ("numpy", "pandas", "scikit-learn", "lightgbm", "torch", "pyarrow"):
+        try:
+            saida[pacote] = metadata.version(pacote)
+        except metadata.PackageNotFoundError:
+            saida[pacote] = None
+    return saida
+
+
+def corpo_revisao(formacao: str, execucao: str, atrasada: bool, registros: list[dict],
+                  painel: Path | None = None) -> dict:
+    import pandas as pd
+    pasta = pasta_pesquisa()
+    proto = c20.protocolo(registros)
+    hashes = hashes_da_pesquisa(pasta)
+    mudaram = sorted(k for k, v in proto["origem"]["sha256"].items() if hashes.get(k) != v)
+    if mudaram:
+        raise SystemExit(f"a receita mudou desde o protocolo ({mudaram}); uma receita "
+                         "nova é outro protocolo, não uma revisão")
+    painel = painel or pasta / "dados" / "b3_painel_mensal.parquet"
+    ini_teste = (pd.Timestamp(formacao) + pd.Timedelta(days=1)).date().isoformat()
+    quadro, _, treinos, feats = pontuar(pasta, ini_teste, [formacao],
+                                        so_com_alvo=False, painel=painel)
+    dia = quadro[quadro["data"] == pd.Timestamp(formacao)].copy()
+    if dia["ticker"].isna().any() or dia["ticker"].duplicated().any():
+        raise SystemExit("ticker ausente ou repetido no universo da formação")
+    dia["pontuacao"] = dia["pontuacao"].round(6)
+    dia = dia.sort_values(["pontuacao", "ticker"], ascending=[False, True])
+    escolhidas = dia.head(c20.N_ACOES)
+    peso = round(1 / c20.N_ACOES, 6)
+    componentes = [*FAMILIAS, "momento"]
+    return {
+        "versao_receita": VERSAO_RECEITA,
+        "protocolo_hash": registros[0]["hash"],
+        "data_formacao": formacao,
+        "pregao_execucao": execucao,
+        "atrasada": atrasada,
+        "carteira": [{"ticker": r.ticker, "id": r.id, "pontuacao": _sem_nan(r.pontuacao),
+                      "peso_alvo": peso} for r in escolhidas.itertuples()],
+        "universo": {
+            "n": len(dia),
+            "componentes": componentes,
+            "pontuacoes": [{"ticker": r["ticker"], "id": r["id"],
+                            "pontuacao": _sem_nan(r["pontuacao"]),
+                            "postos": [_sem_nan(r[c]) for c in componentes]}
+                           for _, r in dia.iterrows()],
+        },
+        "treino": {"corte": ini_teste, "entradas": len(feats), "modelos": treinos},
+        "entradas": {"painel": painel.name, "painel_sha256": c20.sha256_arquivo(painel)},
+        "codigo": {"pesquisa_sha256": hashes,
+                   "scripts/carteira20_revisao.py": c20.sha256_arquivo(Path(__file__)),
+                   "core/carteira20.py": c20.sha256_arquivo(ROOT / "core" / "carteira20.py")},
+        "ambiente": _versoes(),
+    }
+
+
+def cmd_revisar(args) -> int:
+    from datetime import datetime
+    registros = c20.ler(args.registro)
+    status = c20.verificar_cadeia(registros)
+    if not status.integra or not c20.protocolo(registros):
+        raise SystemExit("cadeia quebrada ou sem protocolo: " + "; ".join(status.erros))
+    feitas = {r["corpo"]["data_formacao"] for r in c20.revisoes(registros)}
+    if args.formacao in feitas:
+        raise SystemExit(f"a formação {args.formacao} já foi registrada; mudança é correção")
+    agora = datetime.now(c20.FUSO_B3).replace(microsecond=0)
+    execucao, atrasada = execucao_devida(c20.protocolo(registros), args.formacao, agora)
+    corpo = corpo_revisao(args.formacao, execucao, atrasada, registros, args.painel)
+    print(f"formação {args.formacao}, execução {execucao}"
+          f"{' (ATRASADA)' if atrasada else ''}, universo {corpo['universo']['n']}")
+    for i, c in enumerate(corpo["carteira"], start=1):
+        print(f"  {i:2d}. {c['ticker']:<7} {c['pontuacao']:.6f}")
+    if args.seco:
+        print("--seco: nada foi gravado")
+        return 0
+    reg = c20.anexar("revisao", corpo, caminho=args.registro)
+    print(f"revisão gravada: seq {reg['seq']}, hash {reg['hash']}, em {reg['registrado_em']}")
+    return 0
+
+
 def cmd_protocolo(args) -> int:
     registros = c20.ler(args.registro)
     if registros:
@@ -369,6 +483,11 @@ def main(argv=None) -> int:
     v = sub.add_parser("validar", help="refaz 2026 do teste final e compara")
     v.add_argument("--tolerancia", type=float, default=1e-6)
     v.set_defaults(func=cmd_validar)
+    r = sub.add_parser("revisar", help="pontua o universo e grava a revisão")
+    r.add_argument("--formacao", required=True, help="data de formação do protocolo (AAAA-MM-DD)")
+    r.add_argument("--painel", type=Path, default=None)
+    r.add_argument("--seco", action="store_true", help="mostra a carteira sem gravar")
+    r.set_defaults(func=cmd_revisar)
     args = ap.parse_args(argv)
     return args.func(args)
 

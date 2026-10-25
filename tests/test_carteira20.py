@@ -23,6 +23,7 @@ from core import carteira20 as c20
 #: Só se acrescenta no fim.
 HASHES_REGISTRADOS: list[str] = [
     "6230d78028503324f9c2402a48540452ae9a76f29efb82fdc0d1958b0bfc6080",  # 0 protocolo
+    "958b9b309f5817a1dc80b4a95da150520d3779f5458635bce6f9c36c27231c9e",  # 1 revisão 2026-09-30
 ]
 
 QUANDO = datetime(2026, 10, 25, 12, 0, tzinfo=c20.FUSO_B3)
@@ -284,3 +285,33 @@ def test_main_e_prefixo_do_registro_atual():
         pytest.skip("registro ainda não está na origin/main (ou ela não foi buscada)")
     publicado = r.stdout.decode("utf-8").replace("\r\n", "\n")
     assert c20.verificar_prefixo(publicado, c20.ler_texto()) == []
+
+
+# -- Prazo da revisão (scripts/carteira20_revisao.py) ---------------------------
+
+def _proto():
+    from scripts import carteira20_revisao as rev
+    return rev, rev.corpo_protocolo({})
+
+
+def test_execucao_no_prazo():
+    rev, proto = _proto()
+    antes = datetime(2026, 10, 26, 9, 59, tzinfo=c20.FUSO_B3)
+    assert rev.execucao_devida(proto, "2026-09-30", antes) == ("2026-10-26", False)
+    assert rev.execucao_devida(proto, "2027-04-30", antes) == ("2027-05-03", False)
+
+
+def test_execucao_atrasada_vai_para_o_primeiro_pregao_depois_do_registro():
+    rev, proto = _proto()
+    # Segunda 26/10 depois da abertura: o próximo pregão é terça 27/10.
+    tarde = datetime(2026, 10, 26, 10, 0, tzinfo=c20.FUSO_B3)
+    assert rev.execucao_devida(proto, "2026-09-30", tarde) == ("2026-10-27", True)
+    # Sábado: segunda seguinte, que ainda não abriu.
+    sabado = datetime(2026, 10, 31, 15, 0, tzinfo=c20.FUSO_B3)
+    assert rev.execucao_devida(proto, "2026-09-30", sabado) == ("2026-11-03", True)
+
+
+def test_formacao_fora_do_protocolo_e_recusada():
+    rev, proto = _proto()
+    with pytest.raises(SystemExit, match="não é data de formação"):
+        rev.execucao_devida(proto, "2026-10-30", QUANDO)
