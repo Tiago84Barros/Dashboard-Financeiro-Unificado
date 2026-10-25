@@ -68,11 +68,18 @@ def carregar_desempenho(caminho: Path = DESEMPENHO) -> dict | None:
 
 
 def desempenho_da_vigente(registros: list[dict], desempenho: dict | None) -> dict | None:
-    """O artefato só vale para a revisão de que ele fala (mesmo hash)."""
+    """O artefato só vale para a revisão de que ele fala: mesmo hash e mesmo corpo vigente.
+
+    O corpo conta à parte porque uma correção o substitui sem mudar o hash da
+    revisão original.
+    """
     atual = c20.vigente(registros)
     if not (atual and desempenho and desempenho.get("pregoes")):
         return None
-    if (desempenho.get("revisao") or {}).get("hash") != atual["registro"].get("hash"):
+    rev = desempenho.get("revisao") or {}
+    if rev.get("hash") != atual["registro"].get("hash"):
+        return None
+    if rev.get("corpo_sha256") != cd.impressao_corpo(atual["corpo"]):
         return None
     return desempenho
 

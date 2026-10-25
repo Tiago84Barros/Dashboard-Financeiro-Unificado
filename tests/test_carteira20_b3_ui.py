@@ -60,7 +60,8 @@ def _desempenho(regs, dados_ate="2026-10-30", hash_=None) -> dict:
     return {
         "schema": 1, "pregoes": 4, "dados_ate": dados_ate, "datas": datas,
         "revisao": {"seq": atual["registro"]["seq"], "pregao_execucao": "2026-10-26",
-                    "hash": hash_ or atual["registro"]["hash"]},
+                    "hash": hash_ or atual["registro"]["hash"],
+                    "corpo_sha256": vc.cd.impressao_corpo(atual["corpo"])},
         "curvas": {"carteira20": [994.01, 1003.0, 1010.0, 1021.5, 1030.2],
                    "pesos_iguais": [994.01, 999.0, 1004.0, 1009.0, 1012.0],
                    "bova11": [994.01, 996.0, 1001.0, 1003.0, 1005.0],
@@ -188,6 +189,20 @@ def test_desempenho_de_outra_revisao_e_ignorado(monkeypatch, registros_publicado
     assert not app.get("plotly_chart")
     assert "ainda não foi publicado" in _texto(app)
     assert lacunas == ["tela.b3.carteira20.desempenho_ausente"]
+
+
+def test_desempenho_de_corpo_substituido_por_correcao_e_ignorado(registros_publicados):
+    desempenho = _desempenho(registros_publicados)
+    assert vc.desempenho_da_vigente(registros_publicados, desempenho) is desempenho
+    # a correção troca o corpo vigente sem mudar o hash da revisão original
+    atual = c20.vigente(registros_publicados)
+    novo = copy.deepcopy(atual["corpo"])
+    novo["pregao_execucao"] = "2026-10-27"
+    correcao = {"tipo": "correcao", "seq": len(registros_publicados),
+                "corpo": {"referencia": {"seq": atual["registro"]["seq"]}, "substitui": novo}}
+    regs = [*registros_publicados, correcao]
+    assert c20.vigente(regs)["registro"]["hash"] == atual["registro"]["hash"]
+    assert vc.desempenho_da_vigente(regs, desempenho) is None
 
 
 def test_desempenho_parado_nao_finge_estar_em_dia(monkeypatch, registros_publicados):

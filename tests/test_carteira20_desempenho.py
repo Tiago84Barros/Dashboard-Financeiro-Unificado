@@ -72,11 +72,50 @@ def test_lacuna_do_cdi_corta_as_curvas_e_avisa():
     assert any("CDI publicado só até 27/10/2026" in a for a in r["avisos"])
 
 
-def test_acao_sem_dado_conta_zero_e_e_nomeada():
+def test_acao_da_carteira_sem_dado_impede_a_curva():
     ret = _retornos([("A", DIAS[0], 0.05), ("C", DIAS[0], 0.0)])
     r = cd.calcular(EXEC, ret, _bova([100.0, 100.0]), _cdi(), CARTEIRA, UNIVERSO)
+    assert r["pregoes"] == 0 and r["curvas"] == {} and r["ativos"] == []
     assert any("BBBB4" in a for a in r["avisos"])
-    assert {a["ticker"]: a["retorno"] for a in r["ativos"]}["BBBB4"] == 0.0
+
+
+def test_buraco_no_meio_e_dia_sem_negocio_mas_o_fim_da_fonte_corta_a_curva():
+    # B não negocia em DIAS[1] (o retorno de DIAS[2] cobre o intervalo) e para
+    # de aparecer depois de DIAS[2]; A segue até DIAS[3]
+    dias = [*DIAS, date(2026, 10, 30)]
+    ret = _retornos([("A", d, 0.01) for d in dias]
+                    + [("B", DIAS[0], 0.0), ("B", DIAS[2], 0.02)]
+                    + [("C", d, 0.0) for d in dias])
+    bova = pd.Series(100.0, index=[EXEC, *dias], dtype=float)
+    r = cd.calcular(EXEC, ret, bova, _cdi(dias=(EXEC, *dias)), CARTEIRA, UNIVERSO)
+    assert r["datas"][-1] == "2026-10-29" and r["pregoes"] == 3
+    assert any("BBBB4 sem negócio na fonte depois de 29/10/2026" in a for a in r["avisos"])
+    assert {a["ticker"]: a["retorno"] for a in r["ativos"]}["BBBB4"] == pytest.approx(0.02)
+
+
+def test_pregao_sem_bova11_nao_apaga_o_retorno_das_acoes():
+    # BOVA11 sem fechamento em DIAS[0]: A sobe 10% nele e fica parada em DIAS[1]
+    ret = _retornos([(i, DIAS[0], 0.10 if i == "A" else 0.0) for i in "ABC"]
+                    + [(i, DIAS[1], 0.0) for i in "ABC"])
+    bova = pd.Series([100.0, 103.0], index=[EXEC, DIAS[1]], dtype=float)
+    r = cd.calcular(EXEC, ret, bova, _cdi(), CARTEIRA, UNIVERSO)
+    assert r["datas"] == ["2026-10-26", "2026-10-28"]
+    assert {a["ticker"]: a["retorno"] for a in r["ativos"]}["AAAA3"] == pytest.approx(0.10)
+    assert any("BOVA11 sem fechamento em 27/10/2026" in a for a in r["avisos"])
+
+
+def test_lacuna_no_universo_esvazia_so_a_curva_de_pesos_iguais():
+    ret = _retornos([(i, d, 0.01) for d in DIAS[:2] for i in "AB"] + [("C", DIAS[0], 0.0)])
+    r = cd.calcular(EXEC, ret, _bova([100.0, 100.0, 100.0]), _cdi(), CARTEIRA, UNIVERSO)
+    assert r["pregoes"] == 2
+    assert r["curvas"]["pesos_iguais"][-1] is None and r["curvas"]["pesos_iguais"][1] is not None
+    assert all(v is not None for v in r["curvas"]["carteira20"])
+    assert any("pesos iguais só até 27/10/2026" in a for a in r["avisos"])
+    sem_c = cd.calcular(EXEC, ret[ret["id"] != "C"], _bova([100.0, 100.0, 100.0]), _cdi(),
+                        CARTEIRA, UNIVERSO)
+    assert sem_c["curvas"]["pesos_iguais"] is None
+    assert any("CCCC3 sem nenhum pregão" in a for a in sem_c["avisos"])
+    assert cd.retorno_acumulado([1000.0, None]) == [0.0, None]
 
 
 def test_sem_pregao_depois_da_execucao_nao_publica():
@@ -115,6 +154,7 @@ def test_montar_grava_revisao_vigente_e_regras():
                      agora=datetime(2026, 10, 27, 21, tzinfo=c20.FUSO_B3))
     assert art["revisao"]["hash"] == atual["registro"]["hash"]
     assert art["revisao"]["pregao_execucao"] == "2026-10-26"
+    assert art["revisao"]["corpo_sha256"] == cd.impressao_corpo(atual["corpo"])
     assert art["dados_ate"] == "2026-10-27" and art["pregoes"] == 1
     assert art["regras"]["custo_por_lado"] == cd.CUSTO_LADO
     assert set(art["curvas"]) == set(cd.SERIES)
