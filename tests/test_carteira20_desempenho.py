@@ -69,7 +69,17 @@ def test_lacuna_do_cdi_corta_as_curvas_e_avisa():
                     CARTEIRA, UNIVERSO)
     assert r["pregoes"] == 1 and r["datas"][-1] == "2026-10-27"
     assert all(len(v) == 2 for v in r["curvas"].values())
-    assert any("CDI publicado só até 27/10/2026" in a for a in r["avisos"])
+    assert any("CDI sem a taxa de 27/10/2026; as curvas param em 27/10/2026" in a
+               for a in r["avisos"])
+
+
+def test_pregao_pulado_pelo_bova11_tambem_exige_cdi():
+    # o intervalo 26/10 → 28/10 cobre o 27/10, que só existe no calendário das ações
+    ret = _retornos([(i, d, 0.0) for d in DIAS[:2] for i in "ABC"])
+    bova = pd.Series([100.0, 100.0], index=[EXEC, DIAS[1]], dtype=float)
+    r = cd.calcular(EXEC, ret, bova, _cdi(dias=(EXEC, DIAS[1])), CARTEIRA, UNIVERSO)
+    assert r["pregoes"] == 0
+    assert any("CDI sem a taxa de 27/10/2026" in a for a in r["avisos"])
 
 
 def test_acao_da_carteira_sem_dado_impede_a_curva():
@@ -158,6 +168,20 @@ def test_montar_grava_revisao_vigente_e_regras():
     assert art["dados_ate"] == "2026-10-27" and art["pregoes"] == 1
     assert art["regras"]["custo_por_lado"] == cd.CUSTO_LADO
     assert set(art["curvas"]) == set(cd.SERIES)
+
+
+def test_publicador_grava_sem_a_curva_de_pesos_iguais(monkeypatch, tmp_path, capsys):
+    regs = c20.ler(c20.REGISTRO)
+    if not c20.vigente(regs):
+        pytest.skip("registro sem revisão publicada")
+    art = {"pregoes": 1, "dados_ate": "2026-10-27", "avisos": [],
+           "curvas": {"carteira20": [994.0, 1001.0], "pesos_iguais": None}}
+    monkeypatch.setattr(pub, "montar", lambda registros, execucao=None: art)
+    monkeypatch.setattr(pub, "ROOT", tmp_path)
+    monkeypatch.setattr(pub, "ARTEFATO", tmp_path / "d.json")
+    assert pub.main([]) == 0
+    assert "'pesos_iguais': None" in capsys.readouterr().out
+    assert (tmp_path / "d.json").exists()
 
 
 def test_montar_sem_pregao_devolve_none():

@@ -125,7 +125,7 @@ def main(argv=None) -> int:
         print("nenhum pregão depois da execução ainda; nada a publicar")
         return 0
     texto = json.dumps(art, ensure_ascii=False, indent=1) + "\n"
-    finais = {k: v[-1] for k, v in art["curvas"].items()}
+    finais = {k: v[-1] if v else None for k, v in art["curvas"].items()}
     print(f"{art['pregoes']} pregão(ões), dados até {art['dados_ate']}: {finais}")
     for aviso in art["avisos"]:
         print(f"aviso: {aviso}")

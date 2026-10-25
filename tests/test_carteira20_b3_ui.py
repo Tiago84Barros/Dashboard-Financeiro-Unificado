@@ -69,7 +69,7 @@ def _desempenho(regs, dados_ate="2026-10-30", hash_=None) -> dict:
         "ativos": [{"id": c["id"], "ticker": c["ticker"],
                     "retorno": 0.042 if i == 0 else -0.013, "peso_atual": 0.05}
                    for i, c in enumerate(carteira)],
-        "avisos": ["CDI publicado só até 29/10/2026; as curvas param na mesma data"]}
+        "avisos": ["CDI sem a taxa de 29/10/2026; as curvas param em 29/10/2026"]}
 
 
 def test_mostra_carteira_vigente_e_cadeia_integra(monkeypatch, registros_publicados):
@@ -165,7 +165,7 @@ def test_grafico_e_cards_com_desempenho_publicado(monkeypatch, registros_publica
     txt = _texto(app)
     assert "Período curto demais para concluir" in txt
     assert "4 pregão(ões) desde o fechamento de 26/10/2026" in txt
-    assert "CDI publicado só até 29/10/2026" in txt
+    assert "CDI sem a taxa de 29/10/2026" in txt
     assert "R\\$ 1.000" in txt and "R\\$ 20 mil" in txt  # sem virar LaTeX
     assert lacunas == []
     grafico = app.get("plotly_chart")

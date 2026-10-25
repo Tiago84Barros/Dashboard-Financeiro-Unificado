@@ -51,24 +51,28 @@ def _carteira_de_acoes(fatores: pd.DataFrame, ids: list[str]) -> tuple[pd.Series
     return posicoes.sum(axis=1), posicoes.iloc[-1]
 
 
-def _fator_cdi(cdi: dict[date, float], datas: list[date]) -> tuple[list[float], int]:
-    """Fator acumulado do CDI em cada data e quantos pregões a série cobre.
+def _fator_cdi(cdi: dict[date, float], datas: list[date],
+               calendario: set[date] | None = None) -> tuple[list[float], int, date | None]:
+    """Fator acumulado do CDI em cada data, quantos pregões a série cobre e o dia que faltou.
 
     A taxa de ``d`` (em % ao dia útil, série 12 do BCB) remunera de ``d`` até o
     próximo dia útil: o valor no fechamento de ``t`` leva as taxas de
-    ``[execução, t)``. Intervalo entre pregões sem nenhuma taxa é lacuna e a
-    série para ali -- nunca se inventa CDI.
+    ``[execução, t)``. Todo pregão do ``calendario`` dentro do intervalo
+    precisa de taxa -- inclusive o que o BOVA11 pulou e por isso não está em
+    ``datas``. Sem ela a série para ali; nunca se inventa CDI.
     """
+    exigidos = sorted(set(calendario or ()) | set(datas))
     ordenado = sorted(cdi.items())
     fatores, f = [1.0], 1.0
     for anterior, atual in zip(datas, datas[1:]):
-        taxas = [v for d, v in ordenado if anterior <= d < atual]
-        if not taxas:
-            break
-        for v in taxas:
-            f *= 1.0 + v / 100.0
+        faltante = next((d for d in exigidos if anterior <= d < atual and d not in cdi), None)
+        if faltante is not None:
+            return fatores, len(fatores), faltante
+        for d, v in ordenado:
+            if anterior <= d < atual:
+                f *= 1.0 + v / 100.0
         fatores.append(f)
-    return fatores, len(fatores)
+    return fatores, len(fatores), None
 
 
 def calcular(execucao: date, retornos: pd.DataFrame, bova11: pd.Series,
@@ -115,10 +119,10 @@ def calcular(execucao: date, retornos: pd.DataFrame, bova11: pd.Series,
     if not pregoes:
         return _vazio(execucao, avisos)
     datas = [execucao, *pregoes]
-    fatores_cdi, cobertos = _fator_cdi(cdi, datas)
-    if cobertos < len(datas):
-        avisos.append(f"CDI publicado só até {datas[cobertos - 1]:%d/%m/%Y}; "
-                      "as curvas param na mesma data")
+    fatores_cdi, cobertos, faltante = _fator_cdi(cdi, datas, set(r["data"]))
+    if faltante is not None:
+        avisos.append(f"CDI sem a taxa de {faltante:%d/%m/%Y}; as curvas param em "
+                      f"{datas[cobertos - 1]:%d/%m/%Y}")
         datas = datas[:cobertos]
         pregoes = datas[1:]
     if not pregoes:
