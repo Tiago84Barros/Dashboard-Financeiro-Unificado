@@ -1,4 +1,5 @@
 """Preferência visual isolada, durável e sem sobrescrita de memória dos chats."""
+import re
 import runpy
 from contextlib import nullcontext
 from types import ModuleType, SimpleNamespace
@@ -36,6 +37,97 @@ def test_tema_isolado_e_preserva_outras_preferencias(postgres, user_state):
         extra = conn.execute(text("SELECT extra_settings FROM user_settings WHERE user_id=:uid"),
                              {"uid": ADMIN}).scalar()
     assert extra["app4_private_chats_v2"] == {"synthetic": {"messages": []}}
+
+
+class _ConexaoEspiada:
+    """Registra SQL e parâmetros, e delega o resto para a conexão real."""
+
+    def __init__(self, conexao, registro):
+        self._conexao = conexao
+        self._registro = registro
+
+    def execute(self, comando, parametros=None, *args, **kwargs):
+        self._registro.append((str(comando), parametros or {}))
+        if parametros is None:
+            return self._conexao.execute(comando, *args, **kwargs)
+        return self._conexao.execute(comando, parametros, *args, **kwargs)
+
+    def __getattr__(self, nome):
+        return getattr(self._conexao, nome)
+
+
+class _ContextoEspiado:
+    def __init__(self, contexto, registro):
+        self._contexto = contexto
+        self._registro = registro
+
+    def __enter__(self):
+        return _ConexaoEspiada(self._contexto.__enter__(), self._registro)
+
+    def __exit__(self, *erro):
+        return self._contexto.__exit__(*erro)
+
+
+class _EngineEspiada:
+    def __init__(self, engine, registro):
+        self._engine = engine
+        self._registro = registro
+
+    def connect(self):
+        return _ContextoEspiado(self._engine.connect(), self._registro)
+
+    def begin(self):
+        return _ContextoEspiado(self._engine.begin(), self._registro)
+
+
+def test_tema_nao_carrega_nem_reescreve_o_documento_inteiro(postgres, user_state, monkeypatch):
+    """O custo do tema não pode crescer com o que NÃO é tema.
+
+    ``extra_settings`` é um documento só por conta: o tema divide a coluna com
+    o histórico dos chats e o das análises. Ler e gravar o documento inteiro
+    para mexer numa palavra fazia a conta grande pagar pelo que tem dentro --
+    medido em 25/10/2026 contra o Supabase, 480 KB de ``extra_settings``
+    custavam 225 ms de leitura e 561 ms de gravação (picos de 1,95 s), contra
+    47 ms e 242 ms de uma conta pequena. Na única conexão do pool do Cloud é
+    tempo suficiente para a escolha do tema não chegar ao banco: o claro "não
+    entrava" exatamente na conta que tem conversa guardada.
+
+    O que este teste tranca não é o tempo -- que depende da rede -- e sim a
+    causa dele: nem a leitura nem a gravação do tema podem trazer ou mandar o
+    documento. Por isso a asserção é sobre o SQL e os parâmetros, e não sobre
+    o relógio.
+    """
+    login_as(user_state, ADMIN)
+    conversa = {"synthetic": {"messages": ["x" * 200_000], "updated": 2_000_000_000}}
+    with postgres.begin() as conn:
+        extra = accounts.locked_preferences(conn, ADMIN)
+        extra["app4_private_chats_v2"] = conversa
+        accounts.write_preferences(conn, ADMIN, extra)
+
+    registro: list[tuple[str, object]] = []
+    monkeypatch.setattr(preferences, "_engine",
+                        lambda: _EngineEspiada(postgres, registro))
+    preferences.save_theme("light")
+    assert preferences.load_theme() == "light"
+
+    # Nenhum parâmetro carrega o documento: a gravação de hoje mandava os
+    # 200 KB da conversa de volta só para trocar "dark" por "light".
+    gordos = [(sql, chave) for sql, parametros in registro
+              for chave, valor in dict(parametros).items()
+              if len(str(valor)) > 1_000]
+    assert not gordos, f"parâmetro grande demais para trocar o tema: {gordos}"
+    # E nenhuma consulta pede a coluna crua: o documento não sai do servidor.
+    cruas = [sql for sql, _ in registro
+             if re.search(r"select\s+extra_settings\s+from", sql, re.IGNORECASE)]
+    assert not cruas, f"o tema leu o documento inteiro: {cruas}"
+
+    # O resto da coluna continua de pé, byte por byte.
+    with postgres.connect() as conn:
+        extra = conn.execute(text(
+            "SELECT extra_settings FROM user_settings WHERE user_id=:uid"
+        ), {"uid": ADMIN}).scalar()
+    assert extra["app4_private_chats_v2"] == conversa
+    assert extra["app4_theme"] == "light"
 
 
 def test_tema_rejeita_entrada_e_sessao_invalida(user_state):
