@@ -393,6 +393,22 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/precos_mensais_b3.json.gz",),
     ),
     Alvo(
+        # Curvas diárias da Carteira 20 contra BOVA11, CDI e pesos iguais, que a
+        # aba 📒 Carteira 20 lê. O retorno das ações estende a série da
+        # pesquisa com o COTAHIST que `b3_pregao` acabou de baixar e os
+        # proventos de `market.dividends`; o CDI é o arquivo de `cdi_diario`.
+        # Os dois vêm antes na fila. Os proventos que `b3_brapi` (fim da fila)
+        # traz hoje entram amanhã: a extensão é recalculada inteira a cada
+        # rodada e marca como suspeito o dia ex ainda sem provento. Antes do
+        # primeiro pregão depois da execução, não grava nada e sai com 0.
+        chave="carteira20_desempenho",
+        titulo="Desempenho diário da Carteira 20",
+        passos=(("scripts/carteira20_desempenho.py",),),
+        cadencia_dias=1,
+        modulo="b3",
+        artefatos=("data/public/carteira20_desempenho.json",),
+    ),
+    Alvo(
         # Notícias filtradas por relevância, relatórios (documentos CVM/SEC) e
         # eventos datados por ativo, para a Inteligência dos Ativos. Lê o
         # acervo de notícias e os documentos que só existem no armazém; o
