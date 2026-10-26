@@ -18,7 +18,15 @@ Roda localmente; o app publicado só lê o arquivo. As curvas saem de
   buracos de semanas, fechamentos até 5% fora do da B3 e o pregão de 23/10
   gravado às 11 h -- cotação intradiária que nenhuma rodada noturna corrigiu,
   e o gráfico parava ali;
-- CDI: ``data/public/cdi_diario.json.gz`` e, depois dele, o BCB.
+- CDI: ``data/public/cdi_diario.json.gz`` e, depois dele, o BCB;
+- ações inteiras: o fechamento do lote padrão no pregão de execução dá o preço
+  de compra, e o spread vem das melhores ofertas que o COTAHIST grava no fim de
+  cada pregão (``PREOFC``/``PREOFV``). Para cada ação, a mediana dos últimos
+  ``PREGOES_SPREAD`` pregões até a execução de ``oferta de venda do fracionário
+  / fechamento do lote padrão - 1`` (o que se paga a mais comprando no
+  fracionário) e de ``1 - oferta de compra do fracionário / fechamento`` (o que
+  se deixa vendendo). Sem fracionário suficiente vale o spread do lote padrão,
+  com aviso. O BOVA11 não tem fracionário: usa o do próprio lote padrão.
 
     python scripts/carteira20_desempenho.py [--seco] [--execucao AAAA-MM-DD]
 
@@ -29,9 +37,11 @@ existem (exige ``--seco``: o artefato nunca leva uma data que o registro não te
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import sys
+import zipfile
 from datetime import date, datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
@@ -56,6 +66,13 @@ JANELA_PROVENTOS = timedelta(days=400)
 TOLERANCIA_ZIP_DO_ANO = 10
 FONTE_PESQUISA = "pesquisa: dados/b3_retornos_diarios.parquet (retorno total)"
 COLUNAS = ["id", "data", "ret", "suspeito"]
+BDI_FRACIONARIO = "96"
+TPMERC_FRACIONARIO = "020"
+# ~3 meses de pregões para a mediana do spread; abaixo do mínimo a amostra do
+# fracionário não basta e vale o spread do lote padrão.
+PREGOES_SPREAD = 63
+MINIMO_SPREAD = 10
+JANELA_SPREAD = timedelta(days=100)
 
 
 def _parquet_pesquisa() -> Path:
@@ -107,12 +124,24 @@ def pasta_cotahist() -> Path:
 
 @lru_cache(maxsize=4)
 def _linhas_do_zip(caminho: str, mtime: float) -> tuple[dict, ...]:
-    """Ações e ETFs de um ZIP; lido uma vez para as ações e o BOVA11 (8 s por ano)."""
+    """Ações e ETFs de um ZIP; lido uma vez para as ações e o BOVA11 (8 s por ano).
+
+    Vem com as ofertas de fim de pregão, que o spread usa, e com o fracionário
+    (``TPMERC 020``), cujos códigos terminam em "F" e por isso não se misturam
+    à cadeia de códigos das ações.
+    """
     from core import carteira20_retornos as cr
-    from data_pipeline.market.b3_cotahist import ler_linhas
+    from data_pipeline.market.b3_cotahist import ler_texto
 
     del mtime
-    return tuple(ler_linhas(Path(caminho).read_bytes(), bdi_codes=cr.BDIS_ACOES + (BDI_ETF,)))
+    with zipfile.ZipFile(io.BytesIO(Path(caminho).read_bytes())) as compactado:
+        nomes = [n for n in compactado.namelist() if n.upper().endswith(".TXT")]
+        if not nomes:
+            return ()
+        texto = compactado.read(nomes[0]).decode("latin-1").splitlines()
+    return tuple(ler_texto(texto, bdi_codes=cr.BDIS_ACOES + (BDI_ETF,), ofertas=True)
+                 + ler_texto(texto, bdi_codes=(BDI_FRACIONARIO,), tpmerc=TPMERC_FRACIONARIO,
+                             ofertas=True))
 
 
 def linhas_do_cotahist(desde: date, hoje: date) -> list[dict]:
@@ -190,6 +219,78 @@ def bova11_do_cotahist(desde: date, *, cotahist=linhas_do_cotahist,
     return pd.Series(dict(sorted(serie.items())), dtype=float)
 
 
+def _mediana(valores: list[float]) -> float | None:
+    return float(pd.Series(valores[-PREGOES_SPREAD:]).median()) if valores else None
+
+
+def lotes_do_cotahist(execucao: date, carteira: list[dict], *, cotahist=linhas_do_cotahist,
+                      hoje: date | None = None) -> dict:
+    """Preço de compra na execução e spread de cada ação, e o do BOVA11.
+
+    Devolve ``precos`` (id -> fechamento unitário do lote padrão na execução),
+    ``custos`` (id -> ``(compra, venda)``), ``custo_bova11`` (``None`` quando
+    o livro do ETF não tem os dois lados), ``padrao`` (os tickers que ficaram
+    com o spread do lote padrão) e ``pregoes`` (quantos pregões cada mediana
+    usou, pelo menor). Como em ``pregoes_de_acoes``, o fechamento de uma ação
+    vem do BDI 02 e, sem ele no dia, de um regime especial (BDI 05 a 09).
+    """
+    from core import carteira20_retornos as cr
+
+    hoje = hoje or datetime.now(c20.FUSO_B3).date()
+    desde = execucao - JANELA_SPREAD
+    por_ticker = {c["ticker"]: c["id"] for c in carteira}
+    fracionarios = {t + "F": t for t in por_ticker}
+    padrao: dict[tuple[str, date], dict] = {}
+    fracao: dict[tuple[str, date], dict] = {}
+    for x in cotahist(desde, hoje):
+        dia = date.fromisoformat(str(x["trade_date"])[:10])
+        if not desde <= dia <= execucao or not x.get("close"):
+            continue
+        fator = max(float(x.get("fator_cotacao") or 1), 1.0)
+        if x["ticker"] in fracionarios and x["bdi"] == BDI_FRACIONARIO:
+            fracao[(fracionarios[x["ticker"]], dia)] = {**x, "fator": fator}
+        elif ((x["ticker"] in por_ticker and x["bdi"] in cr.BDIS_ACOES)
+              or (x["ticker"] == "BOVA11" and x["bdi"] == BDI_ETF)):
+            visto = padrao.get((x["ticker"], dia))
+            if not visto or (visto["bdi"] != "02" and x["bdi"] == "02"):
+                padrao[(x["ticker"], dia)] = {**x, "fator": fator}
+
+    def _lados(t: str, livro: dict) -> tuple[list[float], list[float]]:
+        """Custo de cada lado, pregão a pregão, das ofertas de ``livro`` contra o fechamento.
+
+        Cada registro vem dividido pelo próprio fator de cotação: o fracionário
+        e o lote padrão podem cotar em unidades diferentes.
+        """
+        compra, venda = [], []
+        for (tk, dia), lp in sorted(padrao.items(), key=lambda kv: kv[0][1]):
+            o = livro.get((tk, dia))
+            if tk != t or not o:
+                continue
+            fech = float(lp["close"]) / lp["fator"]
+            if o.get("best_ask") and o["best_ask"] > 0:
+                compra.append(float(o["best_ask"]) / o["fator"] / fech - 1)
+            if o.get("best_bid") and o["best_bid"] > 0:
+                venda.append(1 - float(o["best_bid"]) / o["fator"] / fech)
+        return compra, venda
+
+    precos, custos, usou_padrao, amostras = {}, {}, [], []
+    for t, i in por_ticker.items():
+        lp = padrao.get((t, execucao))
+        if lp:
+            precos[i] = float(lp["close"]) / lp["fator"]
+        compra, venda = _lados(t, fracao)
+        if min(len(compra), len(venda)) < MINIMO_SPREAD:
+            compra, venda = _lados(t, padrao)
+            usou_padrao.append(t)
+        if compra and venda:
+            custos[i] = (_mediana(compra), _mediana(venda))
+            amostras.append(min(len(compra), len(venda), PREGOES_SPREAD))
+    compra, venda = _lados("BOVA11", padrao)
+    custo_bova11 = (_mediana(compra), _mediana(venda)) if compra and venda else None
+    return {"precos": precos, "custos": custos, "custo_bova11": custo_bova11,
+            "padrao": usou_padrao, "pregoes": min(amostras) if amostras else 0}
+
+
 def cdi_diario(desde: date, ate: date) -> tuple[dict[date, float], str]:
     from core.rentabilidade import obter_cdi
 
@@ -199,7 +300,7 @@ def cdi_diario(desde: date, ate: date) -> tuple[dict[date, float], str]:
 
 def montar(registros: list[dict], execucao: date | None = None, *,
            retornos=retornos_das_acoes, bova=bova11_do_cotahist, cdi=cdi_diario,
-           agora: datetime | None = None) -> dict | None:
+           lotes=lotes_do_cotahist, agora: datetime | None = None) -> dict | None:
     """Artefato da revisão vigente, ou None quando ainda não há pregão depois dela."""
     atual = c20.vigente(registros)
     if not atual:
@@ -214,21 +315,35 @@ def montar(registros: list[dict], execucao: date | None = None, *,
     ret = retornos(ids, execucao)
     serie_bova = bova(execucao)
     serie_cdi, fonte_cdi = cdi(execucao, agora.date())
-    calc = cd.calcular(execucao, ret, serie_bova, serie_cdi, carteira, universo)
+    lt = lotes(execucao, carteira)
+    calc = cd.calcular(execucao, ret, serie_bova, serie_cdi, carteira, universo,
+                       precos=lt["precos"], custos=lt["custos"], custo_bova11=lt["custo_bova11"])
     if not calc["pregoes"]:
         return None
+    if lt["padrao"]:
+        calc["avisos"].append("spread do lote padrão, por falta de fracionário no COTAHIST: "
+                              + ", ".join(lt["padrao"]))
+    fonte_spread = (f"COTAHIST da B3: mediana de até {PREGOES_SPREAD} pregões até a execução "
+                    "das melhores ofertas do fracionário (BDI 96) contra o fechamento do lote "
+                    "padrão; BOVA11, as do próprio lote padrão")
     return {
-        "schema": 1,
+        "schema": 2,
         "gerado_em": agora.isoformat(timespec="seconds"),
         "revisao": {"seq": atual["registro"]["seq"], "hash": atual["registro"]["hash"],
                     "corpo_sha256": cd.impressao_corpo(corpo),
                     "data_formacao": corpo["data_formacao"], "pregao_execucao": execucao.isoformat()},
         "dados_ate": calc["datas"][-1],
         "regras": {"capital": cd.CAPITAL, "custo_por_lado": cd.CUSTO_LADO,
-                   "aliquota_ir": cd.ALIQUOTA_IR, "isencao_mensal_acoes": cd.ISENCAO_MENSAL_ACOES},
+                   "aliquota_ir": cd.ALIQUOTA_IR, "isencao_mensal_acoes": cd.ISENCAO_MENSAL_ACOES,
+                   "lote": 1, "caixa_rende": False,
+                   "spread_bova11": None if lt["custo_bova11"] is None else
+                   {"compra": round(lt["custo_bova11"][0], 6),
+                    "venda": round(lt["custo_bova11"][1], 6)},
+                   "pregoes_spread": lt["pregoes"]},
         "fontes": {"acoes": ret.attrs.get("fonte") or FONTE_PESQUISA,
                    "bova11": "COTAHIST da B3: fechamento oficial (BDI 14)",
-                   "cdi": f"BCB/SGS 12 ({fonte_cdi})"},
+                   "cdi": f"BCB/SGS 12 ({fonte_cdi})",
+                   "spread": fonte_spread},
         **calc,
     }
 
@@ -252,6 +367,7 @@ def main(argv=None) -> int:
     texto = json.dumps(art, ensure_ascii=False, indent=1) + "\n"
     finais = {k: v[-1] if v else None for k, v in art["curvas"].items()}
     print(f"{art['pregoes']} pregão(ões), dados até {art['dados_ate']}: {finais}")
+    print(f"caixa que sobrou: {art.get('caixa')}; cotas de BOVA11: {art.get('cotas_bova11')}")
     for aviso in art["avisos"]:
         print(f"aviso: {aviso}")
     if a.seco:

@@ -19,7 +19,8 @@ def _campo(linha, inicio, fim, valor):
 
 
 def _linha(*, bdi="02", ticker="PETR4", data="20260130", tpmerc="010",
-           fechamento="0000000010500", fator="0000001", especificacao="ON"):
+           fechamento="0000000010500", fator="0000001", especificacao="ON",
+           compra="0000000010490", venda="0000000010520"):
     linha = list(" " * 245)
     _campo(linha, 0, 2, "01")
     _campo(linha, 2, 10, data)
@@ -33,6 +34,8 @@ def _linha(*, bdi="02", ticker="PETR4", data="20260130", tpmerc="010",
     _campo(linha, 82, 95, "0000000009000")
     _campo(linha, 95, 108, "0000000010000")
     _campo(linha, 108, 121, fechamento)
+    _campo(linha, 121, 134, compra)
+    _campo(linha, 134, 147, venda)
     _campo(linha, 147, 152, "00010")
     _campo(linha, 152, 170, "000000000000001000")
     _campo(linha, 170, 188, "000000000010500000")
@@ -80,6 +83,19 @@ def test_parser_de_fii_devolve_as_mesmas_chaves_de_antes_da_separacao():
     assert "bdi" not in linhas[0] and "fator_cotacao" not in linhas[0]
     assert linhas[0]["ticker"] == "HGLG11"
     assert linhas[0]["close"] == 105.0
+
+
+def test_ofertas_do_fim_do_pregao_so_quando_pedidas():
+    conteudo = _zip(_linha(), _linha(bdi="96", ticker="PETR4F", tpmerc="020",
+                                     compra="0000000000000", venda="0000000010600"))
+    [padrao] = b3_cotahist.ler_linhas(conteudo)
+    assert "best_bid" not in padrao and "best_ask" not in padrao
+    [padrao] = b3_cotahist.ler_linhas(conteudo, ofertas=True)
+    assert (padrao["best_bid"], padrao["close"], padrao["best_ask"]) == (104.9, 105.0, 105.2)
+    [fracao] = b3_cotahist.ler_linhas(conteudo, bdi_codes=("96",), tpmerc="020", ofertas=True)
+    # livro vazio de um lado sai zero, e quem consome lê zero como "sem oferta"
+    assert fracao["ticker"] == "PETR4F" and fracao["best_bid"] == 0.0
+    assert fracao["best_ask"] == 106.0
 
 
 def test_preco_unitario_desfaz_o_lote_de_mil():

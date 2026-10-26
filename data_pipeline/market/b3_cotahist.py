@@ -24,6 +24,8 @@ Layout (posicoes 0-indexadas, registro tipo "01", linha de 245 colunas)
    82:95  PREMIN      minima
    95:108 PREMED      media
   108:121 PREULT      fechamento
+  121:134 PREOFC      melhor oferta de compra no fim do pregao (``ofertas=True``)
+  134:147 PREOFV      melhor oferta de venda no fim do pregao (``ofertas=True``)
   147:152 TOTNEG      numero de negocios
   152:170 QUATOT      quantidade negociada
   170:188 VOLTOT      volume financeiro, em centavos
@@ -74,18 +76,23 @@ def ler_linhas(
     *,
     bdi_codes: tuple[str, ...] = (BDI_LOTE_PADRAO,),
     tpmerc: str = TPMERC_VISTA,
+    ofertas: bool = False,
 ) -> list[dict]:
     """Le um ZIP do COTAHIST e devolve as linhas dos BDIs pedidos.
 
     `bdi_codes` vazio significa **todos os BDIs**, nao nenhum: a diferenca
     aparece na chamada, e recusar tudo em silencio seria o defeito caro.
+
+    `ofertas` acrescenta ``best_bid`` e ``best_ask`` (as melhores ofertas que
+    ficaram no livro no fechamento). Fica fora por padrao para que as linhas
+    dos consumidores antigos nao ganhem chaves.
     """
     with zipfile.ZipFile(io.BytesIO(conteudo)) as compactado:
         nomes = [n for n in compactado.namelist() if n.upper().endswith(".TXT")]
         if not nomes:
             return []
         linhas = compactado.read(nomes[0]).decode("latin-1").splitlines()
-    return ler_texto(linhas, bdi_codes=bdi_codes, tpmerc=tpmerc)
+    return ler_texto(linhas, bdi_codes=bdi_codes, tpmerc=tpmerc, ofertas=ofertas)
 
 
 def ler_texto(
@@ -93,6 +100,7 @@ def ler_texto(
     *,
     bdi_codes: tuple[str, ...] = (BDI_LOTE_PADRAO,),
     tpmerc: str = TPMERC_VISTA,
+    ofertas: bool = False,
 ) -> list[dict]:
     """Mesma leitura, a partir das linhas ja descompactadas."""
     aceitos = set(bdi_codes)
@@ -112,7 +120,7 @@ def ler_texto(
             data = datetime.strptime(linha[2:10], "%Y%m%d").date().isoformat()
         except ValueError:
             continue
-        saida.append({
+        item = {
             "ticker": ticker,
             "trade_date": data,
             "bdi": bdi,
@@ -128,5 +136,9 @@ def ler_texto(
             "quantity": _inteiro(linha, 152, 170),
             "financial_volume": _dinheiro(linha, 170, 188),
             "fator_cotacao": _inteiro(linha, 210, 217),
-        })
+        }
+        if ofertas:
+            item["best_bid"] = _dinheiro(linha, 121, 134)
+            item["best_ask"] = _dinheiro(linha, 134, 147)
+        saida.append(item)
     return saida
