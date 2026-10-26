@@ -185,7 +185,7 @@ def _resumo_por_classe(linhas, universo=None, fx_compra=None,
     da B3: a classe sai de ``classe_ativo_usd`` (ticker, nome, cadastro).
 
     Posição em dólar entra em reais pela regra de ``core.investimentos``:
-    mercado pelo câmbio de hoje (``usd_brl_rate`` da linha, senão yfinance),
+    mercado pelo câmbio de hoje (ao vivo, senão ``usd_brl_rate`` da linha),
     custo pelo câmbio da compra (``fx_compra``, de ``core.fx_aquisicao``) e,
     sem ele, pelo de hoje -- e então a rentabilidade da classe sai ``None``.
     Sem câmbio válido a posição fica fora do resumo -- somar dólar como real
@@ -201,11 +201,8 @@ def _resumo_por_classe(linhas, universo=None, fx_compra=None,
 
     usd = [r for r in linhas if (r.currency or "BRL").upper() == "USD"]
     if usd and cambio_hoje is None:
-        cambio_hoje = max((_f(getattr(r, "usd_brl_rate", None)) for r in usd),
-                          default=0.0)
-        if cambio_hoje < 2.0:
-            from core.investimentos import _get_usd_brl_live
-            cambio_hoje = _get_usd_brl_live()
+        cambio_hoje = _cambio_hoje(
+            max((_f(getattr(r, "usd_brl_rate", None)) for r in usd), default=0.0))
     if usd and (cambio_hoje is None or cambio_hoje < 2.0):
         logger.warning("[financeiro] sem USD/BRL válido: %s fora do resumo por classe",
                        ", ".join(sorted({str(r.ticker) for r in usd})))
@@ -251,12 +248,13 @@ def _resumo_por_classe(linhas, universo=None, fx_compra=None,
 
 
 def _cambio_hoje(taxa_banco) -> float | None:
-    """USDBRL de hoje: o do banco se válido (>= 2.0), senão yfinance."""
-    taxa = float(taxa_banco) if taxa_banco is not None else 0.0
-    if taxa >= 2.0:
-        return taxa
-    from core.investimentos import _get_usd_brl_live
-    return _get_usd_brl_live()
+    """USDBRL de hoje: o ao vivo (cache de 15 min), senão o do banco (>= 2.0).
+
+    O do banco vinha primeiro e é o fechamento da rotina noturna: em
+    26/10/2026 valia R$ 4,97 com o dólar a R$ 5,55 na abertura.
+    """
+    from core.cotacao_viva import cambio_de_hoje
+    return cambio_de_hoje(taxa_banco)
 
 
 def _saldo_bancario_brl(contas, cambio_hoje) -> tuple[float, list[str]]:

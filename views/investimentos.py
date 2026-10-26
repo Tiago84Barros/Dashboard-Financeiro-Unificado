@@ -1400,7 +1400,22 @@ def _legenda_par(row) -> tuple[str, bool]:
     return texto, incerto
 
 
-@user_cache_data(ttl=1800)
+def _rotulo_cotacao_viva(cv: dict | None) -> str:
+    """Origem das cotações da carteira: ao vivo (com hora) ou o fechamento do banco."""
+    momento = (cv or {}).get("atualizado_em")
+    if not (cv or {}).get("n_ao_vivo") or momento is None:
+        return "Fechamento gravado"
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+    # Fora do pregão a barra mais nova é a do último dia útil, datada à
+    # meia-noite UTC (core.cotacao_viva._momento): é fechamento, não ao vivo.
+    if datetime.now(timezone.utc) - momento > timedelta(hours=1):
+        return f"Fechamento de {momento.astimezone(timezone.utc):%d/%m}"
+    local = momento.astimezone(ZoneInfo("America/Sao_Paulo"))
+    return f"Ao vivo às {local:%H:%M} (atraso ~15 min)"
+
+
+@user_cache_data(ttl=900)
 def _get_macro_dados() -> dict:
     """Busca indicadores macro: BCB (SELIC, IPCA) + yfinance (câmbio, bolsas)."""
     try:
@@ -1874,7 +1889,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
     # ── Cenário Macroeconômico ─────────────────────────────────────────────────
     _secao_titulo_orig(
         "🌐", "Cenário Macroeconômico",
-        "Dados atualizados a cada 30 minutos",
+        "Dados atualizados a cada 15 minutos",
     )
 
     macro = _get_macro_dados()
@@ -4497,6 +4512,7 @@ def render() -> None:
         "📈",
         metadados=[
             ("Referência", _data_ref_label),
+            ("Cotações", _rotulo_cotacao_viva(carteira.get("cotacao_viva"))),
             ("Fonte", _fonte_label),
         ],
     )

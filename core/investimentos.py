@@ -55,6 +55,7 @@ import re
 from collections import defaultdict
 from types import SimpleNamespace
 
+from core import cotacao_viva
 from core.categorias import SQL_INVESTIMENTO
 from core.classe_exterior import classe_ativo_usd, classe_por_evidencia
 from core.config import settings
@@ -567,16 +568,8 @@ _SQL_TEM_FOTO_DE_CUSTODIA = """
 
 
 def _get_usd_brl_live() -> float | None:
-    """Tenta buscar USD/BRL via yfinance; ausência permanece explícita."""
-    try:
-        import yfinance as yf
-        df = yf.download("USDBRL=X", period="3d", interval="1d",
-                         auto_adjust=True, progress=False)
-        if not df.empty:
-            return float(df["Close"].dropna().iloc[-1])
-    except Exception:
-        pass
-    return None
+    """USD/BRL ao vivo (cache de 15 min em core.cotacao_viva); ausência explícita."""
+    return cotacao_viva.cambio_ao_vivo()
 
 
 def _sem_cambio_historico(posicoes: list) -> list[str]:
@@ -809,23 +802,35 @@ def _carteira_snapshot_consolidada(conn, owner: str, rows: list) -> dict:
 
     tx_costs = _calcular_custos_transacoes(conn, owner)
     fx_compra = cambio_medio_de_aquisicao(conn, owner)
-    carteira = _montar_carteira_snapshot(
-        rows, tx_costs, listar_precos_manuais(owner, conn)
-    )
-    # Adiciona posições que existem em portfolio_positions mas NÃO
-    # no snapshot XP (ex: ETFs Nomad — SPY, IEFA — importados via PDF).
+    # Posições que existem em portfolio_positions mas NÃO no snapshot XP
+    # (ex: ETFs Nomad — SPY, IEFA — importados via PDF).
     extra_rows = conn.execute(
         text(_SQL_POSICOES_EXTRAS_FORA_SNAPSHOT), {"uid": owner}
     ).fetchall()
+    # Sem extrato de custódia, ações e FIIs só existem no recálculo.
+    recalculo = None
+    if not conn.execute(text(_SQL_TEM_FOTO_DE_CUSTODIA), {"uid": owner}).scalar():
+        recalculo = conn.execute(text(_SQL_POSICOES), {"uid": owner}).fetchall()
+
+    # Uma busca ao vivo para as três listas: o preço e o câmbio do banco são
+    # de ontem (ou de antes), e o card de câmbio da tela é de agora.
+    cotacoes = cotacao_viva.buscar(cotacao_viva.simbolos(rows, extra_rows, recalculo))
+    rows, n_snap = cotacao_viva.aplicar(rows, "live_price", "live_timestamp", cotacoes)
+    extra_rows, n_extra = cotacao_viva.aplicar(
+        extra_rows, "current_price", "current_price_timestamp", cotacoes)
+    n_recalc = 0
+    if recalculo is not None:
+        recalculo, n_recalc = cotacao_viva.aplicar(
+            recalculo, "current_price", "current_price_timestamp", cotacoes)
+
+    carteira = _montar_carteira_snapshot(
+        rows, tx_costs, listar_precos_manuais(owner, conn)
+    )
     if extra_rows:
         _adicionar_extras_ao_snapshot(carteira, extra_rows, fx_compra)
-    # Sem extrato de custódia, ações e FIIs só existem no recálculo.
-    if not conn.execute(text(_SQL_TEM_FOTO_DE_CUSTODIA), {"uid": owner}).scalar():
-        _adicionar_recalculo_ao_snapshot(
-            carteira,
-            conn.execute(text(_SQL_POSICOES), {"uid": owner}).fetchall(),
-            fx_compra,
-        )
+    if recalculo is not None:
+        _adicionar_recalculo_ao_snapshot(carteira, recalculo, fx_compra)
+    carteira["cotacao_viva"] = cotacao_viva.resumo(cotacoes, n_snap + n_extra + n_recalc)
     return carteira
 
 
@@ -872,6 +877,10 @@ def _carteira_real() -> dict:
                 return _carteira_snapshot_consolidada(conn, owner, rows)
         rows = conn.execute(text(_SQL_POSICOES), {"uid": owner}).fetchall()
         fx_compra = cambio_medio_de_aquisicao(conn, owner)
+
+    cotacoes = cotacao_viva.buscar(cotacao_viva.simbolos(rows))
+    rows, n_ao_vivo = cotacao_viva.aplicar(
+        rows, "current_price", "current_price_timestamp", cotacoes)
 
     if not rows:
         raise RuntimeError(
@@ -920,6 +929,7 @@ def _carteira_real() -> dict:
         "por_classe":              _agregar_por_classe(posicoes),
         "por_setor":               _agregar_por_setor(posicoes),
         "avisos_dados":            avisos_dados,
+        "cotacao_viva":            cotacao_viva.resumo(cotacoes, n_ao_vivo),
         # data_source injetado pelo caller
     }
 
