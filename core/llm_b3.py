@@ -45,7 +45,18 @@ def _report_model() -> str:
     except Exception:
         pass
     return os.getenv("LLM_REPORT_MODEL", "").strip() or _REPORT_MODEL_DEFAULT
-_OPENROUTER_MODEL_DEFAULT = "nvidia/nemotron-3-super-120b-a12b:free"
+_OPENROUTER_MODEL_DEFAULT = "nvidia/nemotron-3.5-super-vl:free"
+#: Modelos gratuitos que o OpenRouter tenta, em ordem, quando o pedido falha.
+#: Em 26/10/2026 o endpoint do `nemotron-3-super-120b-a12b:free` sumiu na NVIDIA
+#: (404 "Function not found") com o modelo ainda listado no OpenRouter: o elo
+#: inteiro caía e o chat mostrava o erro do provedor seguinte (OpenAI sem
+#: crédito). Os dois desta lista passaram em 4/4 julgamentos em
+#: `scripts/avaliar_provedor_llm.py` naquele dia. O OpenRouter aceita no máximo
+#: três modelos em `models`.
+_OPENROUTER_RESERVA_GRATUITA = (
+    "nvidia/nemotron-3.5-super-vl:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+)
 _OPENROUTER_BASE_URL_DEFAULT = "https://openrouter.ai/api/v1"
 _GEMINI_MODEL_DEFAULT = "gemini-3.6-flash"
 _GEMINI_BASE_URL_DEFAULT = "https://generativelanguage.googleapis.com/v1beta/openai/"
@@ -144,6 +155,25 @@ def _modelo_gratuito(modelo: str | None) -> bool:
     return ":free" in str(modelo or "").lower()
 
 
+def _extra_openrouter(nome: str, modelo: str | None) -> dict:
+    """``extra_body`` com a reserva gratuita, só para modelo ``:free`` do OpenRouter.
+
+    Modelo gratuito some sem aviso (ver ``_OPENROUTER_RESERVA_GRATUITA``); com
+    ``models`` o próprio OpenRouter passa ao próximo na mesma requisição. Modelo
+    pago não ganha reserva gratuita: trocaria em silêncio o que foi escolhido.
+    """
+    if nome != "openrouter" or not _modelo_gratuito(modelo):
+        return {}
+    modelos = [modelo] + [m for m in _OPENROUTER_RESERVA_GRATUITA if m != modelo]
+    return {"extra_body": {"models": modelos[:3]}}
+
+
+def _quem_respondeu(nome: str, pedido: str, resp) -> str:
+    """"provedor/modelo" de quem respondeu de fato (a reserva pode ter entrado)."""
+    real = getattr(resp, "model", None)
+    return f"{nome}/{real if isinstance(real, str) and real else pedido}"
+
+
 def _provider_chain(primary_model: str | None = None, *,
                     pessoal: bool = False) -> list[tuple]:
     """
@@ -227,7 +257,7 @@ def _mensagem_assistente(msg) -> dict:
 
 
 def _com_ferramentas(client, modelo: str, messages: list[dict], temperature: float,
-                     ferramentas: Sequence) -> str:
+                     ferramentas: Sequence, extra: dict | None = None) -> str:
     """Laço de function calling: a LLM pede, o app executa, a LLM responde.
 
     A regra das ferramentas entra no system prompt só aqui: o provedor que
@@ -245,13 +275,13 @@ def _com_ferramentas(client, modelo: str, messages: list[dict], temperature: flo
     usadas: list[dict] = []
     _ULTIMO.ferramentas = usadas
     for rodada in range(MAX_RODADAS_FERRAMENTA + 1):
-        extra = {"tool_choice": "none"} if rodada == MAX_RODADAS_FERRAMENTA else {}
+        parada = {"tool_choice": "none"} if rodada == MAX_RODADAS_FERRAMENTA else {}
         resp = client.chat.completions.create(model=modelo, messages=msgs,
                                               temperature=temperature, tools=esquemas,
-                                              **extra)
+                                              **parada, **(extra or {}))
         msg = resp.choices[0].message
         chamadas = list(getattr(msg, "tool_calls", None) or [])
-        if not chamadas or extra:
+        if not chamadas or parada:
             conteudo = getattr(msg, "content", None)
             if not (conteudo or "").strip():
                 raise ValueError("resposta vazia depois das ferramentas")
@@ -418,17 +448,18 @@ def _chat_complete(
     for nome, client, modelo in chain:
         if timeout is not None and hasattr(client, "with_options"):
             client = client.with_options(timeout=timeout, max_retries=0)
+        reserva = _extra_openrouter(nome, modelo)
         try:
             if json_mode and (nome, modelo) not in _SEM_JSON:
                 try:
                     resp = client.chat.completions.create(
                         model=modelo, messages=messages, temperature=temperature,
-                        response_format={"type": "json_object"},
+                        response_format={"type": "json_object"}, **reserva,
                     )
                     conteudo = resp.choices[0].message.content
                     if not (conteudo or "").strip():
                         raise ValueError("resposta vazia em modo JSON")
-                    _ULTIMO.modelo = f"{nome}/{modelo}"
+                    _ULTIMO.modelo = _quem_respondeu(nome, modelo, resp)
                     return _sem_lacunas(conteudo, modulo_lacuna)
                 except Exception as exc_json:
                     # Cota, chave, limite de taxa e lentidão não mudam sem
@@ -444,7 +475,7 @@ def _chat_complete(
             if ferramentas and not json_mode and (nome, modelo) not in _SEM_TOOLS:
                 try:
                     conteudo = _com_ferramentas(client, modelo, messages, temperature,
-                                                ferramentas)
+                                                ferramentas, reserva)
                     _ULTIMO.modelo = f"{nome}/{modelo}"
                     return _sem_lacunas(conteudo, modulo_lacuna)
                 except Exception as exc_tools:
@@ -460,11 +491,11 @@ def _chat_complete(
                     logger.warning("Function calling falhou em %s (%s) — tentando sem "
                                    "ferramentas.", nome, exc_tools)
             resp = client.chat.completions.create(
-                model=modelo, messages=messages, temperature=temperature,
+                model=modelo, messages=messages, temperature=temperature, **reserva,
             )
             if nome != "openai":
                 logger.info("LLM respondido pelo provedor de fallback: %s (%s)", nome, modelo)
-            _ULTIMO.modelo = f"{nome}/{modelo}"
+            _ULTIMO.modelo = _quem_respondeu(nome, modelo, resp)
             return _sem_lacunas(resp.choices[0].message.content, modulo_lacuna)
         except Exception as exc:
             erros.append(f"{nome}({modelo}): {exc}")
