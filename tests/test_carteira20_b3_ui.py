@@ -58,16 +58,19 @@ def _desempenho(regs, dados_ate="2026-10-30", hash_=None) -> dict:
     carteira = atual["corpo"]["carteira"]
     datas = ["2026-10-26", "2026-10-27", "2026-10-28", "2026-10-29", dados_ate]
     return {
-        "schema": 1, "pregoes": 4, "dados_ate": dados_ate, "datas": datas,
+        "schema": 2, "pregoes": 4, "dados_ate": dados_ate, "datas": datas,
         "revisao": {"seq": atual["registro"]["seq"], "pregao_execucao": "2026-10-26",
                     "hash": hash_ or atual["registro"]["hash"],
                     "corpo_sha256": vc.cd.impressao_corpo(atual["corpo"])},
         "curvas": {"carteira20": [994.01, 1003.0, 1010.0, 1021.5, 1030.2],
+                   "carteira20_fracoes": [994.01, 1004.0, 1011.0, 1022.5, 1031.4],
                    "pesos_iguais": [994.01, 999.0, 1004.0, 1009.0, 1012.0],
                    "bova11": [994.01, 996.0, 1001.0, 1003.0, 1005.0],
                    "cdi": [1000.0, 1000.4, 1000.8, 1001.2, 1001.6]},
+        "caixa": {"carteira20": 115.24, "bova11": 193.62}, "cotas_bova11": 4,
         "ativos": [{"id": c["id"], "ticker": c["ticker"],
-                    "retorno": 0.042 if i == 0 else -0.013, "peso_atual": 0.05}
+                    "retorno": 0.042 if i == 0 else -0.013, "peso_atual": 0.05,
+                    "quantidade": 0 if i == 0 else 3 if i == 1 else 1, "preco_compra": 13.62}
                    for i, c in enumerate(carteira)],
         "avisos": ["CDI sem a taxa de 29/10/2026; as curvas param em 29/10/2026"]}
 
@@ -172,13 +175,34 @@ def test_grafico_e_cards_com_desempenho_publicado(monkeypatch, registros_publica
     assert len(grafico) == 1
     fig = __import__("json").loads(grafico[0].proto.spec)
     nomes = [t["name"] for t in fig["data"]]
-    assert nomes == ["Carteira 20", "Pesos iguais do universo", "BOVA11", "CDI"]
+    assert nomes == ["Carteira 20", "Carteira 20 em frações", "Pesos iguais do universo",
+                     "BOVA11", "CDI"]
     assert fig["data"][0]["y"][0] == pytest.approx(-0.00599)  # só o custo de compra
     assert fig["data"][0]["y"][-1] == pytest.approx(0.0302)
     cards = _cards_html(app)
     assert "+4,2%" in cards and "c20-pos" in cards and "−" not in cards
     assert "-1,3%" in cards and "c20-neg" in cards
     assert "Peso em 30/10" in cards and "1º pregão" not in cards
+    assert "0 ações" in cards and "3 ações" in cards and "1 ação<" in cards
+    assert "R$ 13,62" in cards
+    assert "ações inteiras pelo fracionário" in txt and "mede a escolha das ações" in txt
+    ajudas = " ".join(m.value for m in app.markdown)
+    assert "115,24 de troco em caixa" in ajudas and "4 cotas inteiras e" in ajudas
+    assert "193,62 de troco em caixa" in ajudas
+
+
+def test_desempenho_de_antes_dos_lotes_ainda_abre(monkeypatch, registros_publicados):
+    """Artefato schema 1: sem quantidade, sem caixa e sem a curva em frações."""
+    antigo = _desempenho(registros_publicados)
+    antigo["schema"] = 1
+    del antigo["caixa"], antigo["cotas_bova11"], antigo["curvas"]["carteira20_fracoes"]
+    for a in antigo["ativos"]:
+        del a["quantidade"], a["preco_compra"]
+    app = _rodar(monkeypatch, registros_publicados, hoje="2026-11-02", desempenho=antigo)
+    assert not app.exception
+    assert "Ações compradas" not in _cards_html(app)
+    fig = __import__("json").loads(app.get("plotly_chart")[0].proto.spec)
+    assert "Carteira 20 em frações" not in [t["name"] for t in fig["data"]]
 
 
 def test_desempenho_de_outra_revisao_e_ignorado(monkeypatch, registros_publicados):
