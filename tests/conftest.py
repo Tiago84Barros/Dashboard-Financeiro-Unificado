@@ -524,6 +524,24 @@ def _referencia_modelo_sem_banco(monkeypatch):
     yield
 
 
+# A carteira busca cotação ao vivo no yfinance (core/cotacao_viva.py). Em
+# teste a fonte não responde e vale o banco, como em produção com o Yahoo fora.
+# Sem limpar o cache e a espera após falha, um teste herdaria as cotações (ou
+# a espera) do anterior. Quem testa a busca troca ``_baixar``.
+@pytest.fixture(autouse=True)
+def _cotacao_viva_sem_rede(monkeypatch):
+    try:
+        from core import cotacao_viva as cv
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(cv, "_baixar", lambda simbolos: {})
+    monkeypatch.setattr(cv, "_falha_ate", 0.0)
+    cv._buscar_em_cache.clear()
+    yield
+    cv._buscar_em_cache.clear()
+
+
 # Estratégia de Investimentos em memória. A aba Inteligência dos Ativos
 # mostra o bloco da estratégia (abaixo do onboarding, ou em "Minha estratégia"
 # quando liberada), e o bloco lê o repositório. Não é autouse porque os testes

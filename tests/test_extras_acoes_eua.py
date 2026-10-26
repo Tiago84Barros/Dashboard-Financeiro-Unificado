@@ -3,6 +3,7 @@
 Com o rótulo de ETF, a Inteligência dos Ativos lia MELI pelo catálogo de ETF
 e mostrava fundamentos, valuation e pares vazios.
 """
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -233,7 +234,6 @@ def test_rentabilidade_da_classe_em_dolar_so_com_cambio_da_compra():
 def test_resumo_do_financeiro_sem_cambio_deixa_dolar_de_fora(monkeypatch):
     from core import financeiro
 
-    monkeypatch.setattr(investimentos, "_get_usd_brl_live", lambda: None)
     linhas = [
         _posicao_db("1", "PETR4", "Petrobras", "stock", "BRL", 100.0, 120.0),
         _posicao_db("2", "AAPL", "Apple Inc", "stock", "USD", 50.0, 60.0, None),
@@ -244,10 +244,22 @@ def test_resumo_do_financeiro_sem_cambio_deixa_dolar_de_fora(monkeypatch):
     assert (num_ativos, total) == (1, 120.0)
 
 
+def _cambio_ao_vivo(monkeypatch, taxa):
+    from core import cotacao_viva as cv
+
+    chamadas = []
+
+    def _baixar(simbolos):
+        chamadas.append(simbolos)
+        return {cv.SIMBOLO_CAMBIO: cv.Cotacao(taxa, datetime.now(timezone.utc))}
+    monkeypatch.setattr(cv, "_baixar", _baixar)
+    return chamadas
+
+
 def test_resumo_do_financeiro_usa_cambio_ao_vivo_sem_cotacao_no_banco(monkeypatch):
     from core import financeiro
 
-    monkeypatch.setattr(investimentos, "_get_usd_brl_live", lambda: 5.5)
+    _cambio_ao_vivo(monkeypatch, 5.5)
     linhas = [_posicao_db("2", "AAPL", "Apple Inc", "stock", "USD", 50.0, 60.0)]
     classes, _, total = financeiro._resumo_por_classe(linhas, universo={"AAPL"})
     assert classes[0]["nome"] == "Ações EUA"
@@ -378,13 +390,21 @@ def test_saldo_bancario_converte_dolar_e_deixa_fora_moeda_sem_cotacao():
     assert financeiro._saldo_bancario_brl(contas, 0.19) == (1010.0, fora)
 
 
-def test_cambio_de_hoje_so_vai_ao_yfinance_sem_taxa_valida_no_banco(monkeypatch):
+def test_cambio_de_hoje_prefere_o_ao_vivo_ao_fechamento_do_banco(monkeypatch):
+    """26/10/2026: banco com o R$ 4,97 de domingo, dólar a R$ 5,55 na abertura.
+    O fechamento do banco vinha primeiro e a carteira saía R$ 11 mil menor."""
     from core import financeiro
 
-    chamadas = []
-    monkeypatch.setattr(investimentos, "_get_usd_brl_live",
-                        lambda: chamadas.append(1) or 5.5)
+    chamadas = _cambio_ao_vivo(monkeypatch, 5.55)
+    assert financeiro._cambio_hoje(4.9652) == 5.55
+    assert financeiro._cambio_hoje(0.19) == 5.55
+    assert financeiro._cambio_hoje(None) == 5.55
+    assert len(chamadas) == 1  # 15 minutos de cache
+
+
+def test_cambio_de_hoje_cai_no_banco_sem_resposta_ao_vivo():
+    from core import financeiro
+
     assert financeiro._cambio_hoje(5.2) == 5.2
-    assert chamadas == []
-    assert financeiro._cambio_hoje(0.19) == 5.5
-    assert financeiro._cambio_hoje(None) == 5.5
+    assert financeiro._cambio_hoje(0.19) is None
+    assert financeiro._cambio_hoje(None) is None
