@@ -211,3 +211,99 @@ def test_montar_sem_pregao_devolve_none():
                      bova=lambda desde: _bova([100.0]), cdi=lambda a, b: ({}, "teste"),
                      agora=datetime(2026, 10, 26, 12, tzinfo=c20.FUSO_B3))
     assert art is None
+
+
+def _cotahist(tickers, dias, close=10.0, bdi="02"):
+    return [{"ticker": t, "trade_date": d.isoformat(), "bdi": bdi, "specification": "ON      NM",
+             "close": close, "fator_cotacao": 1} for t in tickers for d in dias]
+
+
+def test_acoes_juntam_a_pesquisa_ate_o_fim_dela_e_a_extensao_depois():
+    fim = date(2026, 10, 22)
+    pregoes = [d.date() for d in pd.bdate_range("2026-09-01", "2026-10-27")]
+    chamadas = {}
+
+    def cotahist(desde, hoje):
+        chamadas["cotahist"] = desde
+        return _cotahist(["AAAA3", "BBBB4"], pregoes)
+
+    def proventos(tickers, desde):
+        chamadas["proventos"] = (tickers, desde)
+        return pd.DataFrame(columns=["ticker", "ex_date", "payment_date", "amount", "type"])
+
+    # a pesquisa traz um dia além do fim declarado: fica de fora
+    pesquisa = _retornos([("A", date(2026, 10, 21), 0.01), ("A", date(2026, 10, 22), 0.02),
+                          ("A", date(2026, 10, 23), 0.99)]).assign(suspeito=False)
+    df = pub.retornos_das_acoes({"A", "B"}, date(2026, 10, 20), pesquisa=lambda ids, d: pesquisa,
+                                fim_pesquisa=lambda: fim,
+                                cadeias=lambda ids: {"AAAA3": "A", "BBBB4": "B"},
+                                cotahist=cotahist, proventos=proventos, hoje=date(2026, 10, 27))
+    assert chamadas["cotahist"] == fim - pub.JANELA_PREGOES
+    assert chamadas["proventos"] == ({"AAAA3", "BBBB4"}, fim - pub.JANELA_PROVENTOS)
+    a = df[df["id"] == "A"].set_index("data")["ret"]
+    assert a[date(2026, 10, 22)] == 0.02 and a[date(2026, 10, 23)] == 0.0
+    assert sorted(df.loc[df["id"] == "B", "data"]) == [date(2026, 10, 23), date(2026, 10, 26),
+                                                        date(2026, 10, 27)]
+    assert "até 22/10/2026" in df.attrs["fonte"] and "COTAHIST" in df.attrs["fonte"]
+
+
+def test_extensao_comeca_na_execucao_quando_ela_e_depois_da_pesquisa():
+    pregoes = [d.date() for d in pd.bdate_range("2026-09-01", "2026-10-28")]
+    chamadas = {}
+
+    def cotahist(desde, hoje):
+        chamadas["desde"] = desde
+        return _cotahist(["AAAA3"], pregoes)
+
+    df = pub.retornos_das_acoes({"A"}, EXEC, pesquisa=lambda ids, d: _retornos([]).assign(suspeito=False),
+                                fim_pesquisa=lambda: date(2026, 10, 22),
+                                cadeias=lambda ids: {"AAAA3": "A"}, cotahist=cotahist,
+                                proventos=lambda t, d: pd.DataFrame(
+                                    columns=["ticker", "ex_date", "payment_date", "amount", "type"]),
+                                hoje=date(2026, 10, 28))
+    assert chamadas["desde"] == EXEC - pub.JANELA_PREGOES
+    assert sorted(df["data"]) == DIAS[:2]
+
+
+def test_bova11_e_o_fechamento_oficial_do_cotahist():
+    linhas = (_cotahist(["BOVA11"], [date(2026, 10, 23), *DIAS[:2]], close=150.0, bdi="14")
+              + _cotahist(["BOVA11"], [EXEC], close=999.0, bdi="96")       # fracionário
+              + _cotahist(["XXXX11"], [EXEC], close=1.0, bdi="14")
+              + _cotahist(["BOVA11"], [EXEC], close=151.0, bdi="14"))
+    s = pub.bova11_do_cotahist(EXEC, cotahist=lambda d, h: linhas, hoje=DIAS[1])
+    assert list(s.index) == [EXEC, *DIAS[:2]]
+    assert s[EXEC] == 151.0 and s[DIAS[0]] == 150.0
+
+
+def test_zip_do_cotahist_ausente_e_erro(monkeypatch, tmp_path):
+    monkeypatch.setenv("CARTEIRA20_COTAHIST_DIR", str(tmp_path))
+    monkeypatch.setattr(pub, "_linhas_do_zip", lambda caminho, mtime: ({"ano": caminho[-8:-4]},))
+    (tmp_path / "COTAHIST_A2026.ZIP").write_bytes(b"")
+    with pytest.raises(SystemExit, match="COTAHIST_A2025.ZIP"):
+        pub.linhas_do_cotahist(date(2025, 12, 1), date(2026, 10, 27))
+    assert pub.linhas_do_cotahist(date(2026, 9, 1), date(2026, 10, 27)) == [{"ano": "2026"}]
+
+
+def test_zip_do_ano_novo_pode_faltar_nos_primeiros_dias_de_janeiro(monkeypatch, tmp_path):
+    monkeypatch.setenv("CARTEIRA20_COTAHIST_DIR", str(tmp_path))
+    monkeypatch.setattr(pub, "_linhas_do_zip", lambda caminho, mtime: ({"ano": caminho[-8:-4]},))
+    (tmp_path / "COTAHIST_A2026.ZIP").write_bytes(b"")
+    assert pub.linhas_do_cotahist(date(2026, 12, 1), date(2027, 1, 5)) == [{"ano": "2026"}]
+    with pytest.raises(SystemExit, match="COTAHIST_A2027.ZIP"):
+        pub.linhas_do_cotahist(date(2026, 12, 1), date(2027, 1, 20))
+
+
+def test_montar_registra_a_fonte_das_acoes():
+    regs = c20.ler(c20.REGISTRO)
+    atual = c20.vigente(regs)
+    if not atual:
+        pytest.skip("registro sem revisão publicada")
+    ids = [c["id"] for c in atual["corpo"]["carteira"]]
+    ret = _retornos([(i, DIAS[0], 0.01) for i in ids])
+    ret.attrs["fonte"] = "pesquisa até X; depois, COTAHIST"
+    art = pub.montar(regs, retornos=lambda ids_, desde: ret,
+                     bova=lambda desde: _bova([100.0, 101.0]),
+                     cdi=lambda a, b: (_cdi(), "teste"),
+                     agora=datetime(2026, 10, 27, 21, tzinfo=c20.FUSO_B3))
+    assert art["fontes"]["acoes"] == "pesquisa até X; depois, COTAHIST"
+    assert "COTAHIST" in art["fontes"]["bova11"]
