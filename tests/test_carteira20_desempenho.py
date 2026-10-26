@@ -299,6 +299,21 @@ def test_spread_do_fracionario_contra_o_fechamento_do_lote_padrao():
     assert "C" not in lt["custos"]
 
 
+def test_spread_compara_fracionario_e_lote_padrao_na_mesma_unidade():
+    dias = [d.date() for d in pd.bdate_range("2026-09-01", EXEC)]
+    linhas = []
+    for d in dias:
+        # lote padrão cotado por mil ações, fracionário por ação
+        linhas += [_oferta("AAAA3", d, bdi="02", close=10_000.0, bid=9_990.0, ask=10_010.0,
+                           fator=1000),
+                   _oferta("AAAA3F", d, bdi="96", close=10.0, bid=9.99, ask=10.01)]
+    lt = pub.lotes_do_cotahist(EXEC, CARTEIRA[:1], cotahist=lambda d, h: linhas, hoje=EXEC)
+    compra, venda = lt["custos"]["A"]
+    assert compra == pytest.approx(0.001) and venda == pytest.approx(0.001)
+    assert lt["precos"] == {"A": 10.0}
+    assert lt["padrao"] == []
+
+
 def test_preco_da_execucao_aceita_regime_especial_e_prefere_o_lote_padrao():
     linhas = [_oferta("AAAA3", EXEC, bdi="05", close=11.0),
               _oferta("AAAA3", EXEC, bdi="02", close=10.0),

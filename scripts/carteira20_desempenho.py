@@ -248,7 +248,7 @@ def lotes_do_cotahist(execucao: date, carteira: list[dict], *, cotahist=linhas_d
             continue
         fator = max(float(x.get("fator_cotacao") or 1), 1.0)
         if x["ticker"] in fracionarios and x["bdi"] == BDI_FRACIONARIO:
-            fracao[(fracionarios[x["ticker"]], dia)] = x
+            fracao[(fracionarios[x["ticker"]], dia)] = {**x, "fator": fator}
         elif ((x["ticker"] in por_ticker and x["bdi"] in cr.BDIS_ACOES)
               or (x["ticker"] == "BOVA11" and x["bdi"] == BDI_ETF)):
             visto = padrao.get((x["ticker"], dia))
@@ -256,17 +256,21 @@ def lotes_do_cotahist(execucao: date, carteira: list[dict], *, cotahist=linhas_d
                 padrao[(x["ticker"], dia)] = {**x, "fator": fator}
 
     def _lados(t: str, livro: dict) -> tuple[list[float], list[float]]:
-        """Custo de cada lado, pregão a pregão, das ofertas de ``livro`` contra o fechamento."""
+        """Custo de cada lado, pregão a pregão, das ofertas de ``livro`` contra o fechamento.
+
+        Cada registro vem dividido pelo próprio fator de cotação: o fracionário
+        e o lote padrão podem cotar em unidades diferentes.
+        """
         compra, venda = [], []
         for (tk, dia), lp in sorted(padrao.items(), key=lambda kv: kv[0][1]):
             o = livro.get((tk, dia))
             if tk != t or not o:
                 continue
-            fech = float(lp["close"])
+            fech = float(lp["close"]) / lp["fator"]
             if o.get("best_ask") and o["best_ask"] > 0:
-                compra.append(float(o["best_ask"]) / fech - 1)
+                compra.append(float(o["best_ask"]) / o["fator"] / fech - 1)
             if o.get("best_bid") and o["best_bid"] > 0:
-                venda.append(1 - float(o["best_bid"]) / fech)
+                venda.append(1 - float(o["best_bid"]) / o["fator"] / fech)
         return compra, venda
 
     precos, custos, usou_padrao, amostras = {}, {}, [], []
