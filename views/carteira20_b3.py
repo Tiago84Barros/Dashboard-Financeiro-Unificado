@@ -272,10 +272,12 @@ def _secao_carteira(registros: list[dict], cadastro: dict[str, dict],
     st.caption(
         f"Ordem e pontuação da formação de {_data(corpo.get('data_formacao'))}: média dos "
         f"postos dos 4 modelos e do momento 12-2, entre {universo or '—'} ações líquidas. "
-        "O retorno da ação é total (proventos reinvestidos), sem custos. Ações compradas é "
-        "quantas ações inteiras cabem no alvo de 5% por ação, pelo fechamento da execução "
-        "mais spread e corretagem; o peso atual é quanto essa posição representa hoje. "
-        "Entre revisões, os aportes vão para as ações "
+        "O retorno da ação é total (proventos reinvestidos), sem custos. "
+        + ("Ações compradas é quantas ações inteiras cabem no alvo de 5% por ação, pelo "
+           "fechamento da execução mais spread e corretagem; o peso atual é quanto essa "
+           "posição representa hoje. " if em_lotes(desempenho) else
+           "O peso atual é quanto a posição comprada a 5% representa hoje. ")
+        + "Entre revisões, os aportes vão para as ações "
         "mais abaixo do peso-alvo, sem venda. Acompanhamento de pesquisa, não recomendação de "
         "compra ou venda.")
     if atual["correcoes"]:
@@ -326,11 +328,24 @@ def primeiro_fechamento(registros: list[dict]) -> date | None:
     return c20.ultimo_pregao_do_mes(ano, mes)
 
 
+def em_lotes(desempenho: dict | None) -> bool:
+    """Artefato com a curva em ações inteiras; o ``schema`` 1 só tinha frações."""
+    return bool(desempenho) and (desempenho.get("schema") or 1) >= 2
+
+
 _SERIES = (("carteira20", "Carteira 20", "#00C896", 2.8, "solid"),
            ("carteira20_fracoes", "Carteira 20 em frações", "#00C896", 1.4, "dot"),
            ("pesos_iguais", "Pesos iguais do universo", "#F6C90E", 1.8, "solid"),
            ("bova11", "BOVA11", "#4A9EFF", 1.8, "solid"),
            ("cdi", "CDI", "#9CA3AF", 1.6, "dash"))
+
+
+def _series(desempenho: dict) -> tuple:
+    """No ``schema`` 1 a curva "carteira20" era a em frações: o rótulo diz isso."""
+    if em_lotes(desempenho):
+        return _SERIES
+    return tuple(("carteira20", "Carteira 20 em frações", *s[2:]) if s[0] == "carteira20"
+                 else s for s in _SERIES if s[0] != "carteira20_fracoes")
 
 
 def figura_desempenho(desempenho: dict) -> go.Figure:
@@ -340,7 +355,7 @@ def figura_desempenho(desempenho: dict) -> go.Figure:
     x = [datas[i] for i in idx]
     modo = "lines+markers" if len(idx) <= 40 else "lines"
     fig = go.Figure()
-    for chave, rotulo, cor, largura, traco in _SERIES:
+    for chave, rotulo, cor, largura, traco in _series(desempenho):
         valores = (desempenho.get("curvas") or {}).get(chave)
         if not valores:
             continue
@@ -370,7 +385,8 @@ def _cards_desempenho(desempenho: dict) -> None:
                        f"{_reais(caixa['bova11'])} de troco em caixa."
                        if desempenho.get("cotas_bova11") is not None
                        and caixa.get("bova11") is not None else ""}
-    for col, (chave, rotulo, _cor, _l, _t) in zip(st.columns(len(_SERIES)), _SERIES):
+    series = _series(desempenho)
+    for col, (chave, rotulo, _cor, _l, _t) in zip(st.columns(len(series)), series):
         v = finais.get(chave)
         with col:
             if v is None:
@@ -412,13 +428,18 @@ def _secao_desempenho(registros: list[dict], hoje: date, desempenho: dict | None
             f"dados até {dados_ate:%d/%m/%Y}. Cada curva é R\\$ 1.000 aplicados no fechamento "
             "da execução e o que sobraria vendendo tudo no fechamento do dia: ações e BOVA11 "
             "pagam 0,30% na compra e na venda; BOVA11 e CDI pagam 15% de IR sobre o ganho; a "
-            "venda de até R\\$ 20 mil de ações no mês é isenta. A Carteira 20 compra ações "
-            "inteiras pelo fracionário, paga o spread medido no livro da B3 e guarda o troco "
-            "em caixa, sem render; o BOVA11, cotas inteiras com o mesmo tratamento. A Carteira "
-            "20 em frações e os pesos iguais compram frações, sem spread: comparar as duas mede "
-            "a escolha das ações; comparar a Carteira 20 com BOVA11 e CDI mede o que dá para "
-            "obter de verdade. Sem aporte nem rebalanceamento até a próxima revisão; os "
-            "proventos são reinvestidos na própria ação.")
+            "venda de até R\\$ 20 mil de ações no mês é isenta. "
+            + ("A Carteira 20 compra ações inteiras pelo fracionário, paga o spread medido no "
+               "livro da B3 e guarda o troco em caixa, sem render; o BOVA11, cotas inteiras com "
+               "o mesmo tratamento. A Carteira 20 em frações e os pesos iguais compram frações, "
+               "sem spread: comparar as duas mede a escolha das ações; comparar a Carteira 20 "
+               "com BOVA11 e CDI mede o que dá para obter de verdade. "
+               if em_lotes(desempenho) else
+               "Publicado antes da compra em ações inteiras: todas as curvas compram frações, "
+               "sem spread e sem troco em caixa, e por isso não medem o que R\\$ 1.000 "
+               "obteriam de verdade. ")
+            + "Sem aporte nem rebalanceamento até a próxima revisão; os proventos são "
+            "reinvestidos na própria ação.")
         for aviso in desempenho.get("avisos") or []:
             st.caption(f"⚠️ {_frase(aviso[:1].upper() + aviso[1:])}")
     elif execucao and hoje <= date.fromisoformat(execucao):

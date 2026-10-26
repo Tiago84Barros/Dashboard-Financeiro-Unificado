@@ -202,7 +202,13 @@ def test_desempenho_de_antes_dos_lotes_ainda_abre(monkeypatch, registros_publica
     assert not app.exception
     assert "Ações compradas" not in _cards_html(app)
     fig = __import__("json").loads(app.get("plotly_chart")[0].proto.spec)
-    assert "Carteira 20 em frações" not in [t["name"] for t in fig["data"]]
+    # a curva "carteira20" do schema 1 é a em frações, e o rótulo e a legenda dizem isso
+    assert [t["name"] for t in fig["data"]] == [
+        "Carteira 20 em frações", "Pesos iguais do universo", "BOVA11", "CDI"]
+    txt = _texto(app)
+    assert "Publicado antes da compra em ações inteiras" in txt
+    assert "ações inteiras pelo fracionário" not in txt
+    assert "peso atual é quanto a posição comprada a 5%" in txt
 
 
 def test_desempenho_de_outra_revisao_e_ignorado(monkeypatch, registros_publicados):

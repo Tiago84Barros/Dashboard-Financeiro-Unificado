@@ -119,7 +119,7 @@ def calcular(execucao: date, retornos: pd.DataFrame, bova11: pd.Series,
              cdi: dict[date, float], carteira: list[dict], universo: list[dict], *,
              precos: dict[str, float] | None = None,
              custos: dict[str, tuple[float, float]] | None = None,
-             custo_bova11: tuple[float, float] = (0.0, 0.0)) -> dict:
+             custo_bova11: tuple[float, float] | None = (0.0, 0.0)) -> dict:
     """Curvas e retorno por ação desde o fechamento de ``execucao``.
 
     ``retornos``: colunas ``id``, ``data`` e ``ret`` (retorno total do dia,
@@ -130,7 +130,8 @@ def calcular(execucao: date, retornos: pd.DataFrame, bova11: pd.Series,
     ele a curva em ações inteiras não sai (fica ``None``, com aviso).
     ``custos``: ``(compra, venda)`` de cada ação, a fração do fechamento que o
     spread custa em cada lado; o que faltar entra como zero, com aviso.
-    ``custo_bova11``: o mesmo para o ETF.
+    ``custo_bova11``: o mesmo para o ETF; ``None`` é spread não medido, que
+    entra como zero e vai nomeado nos avisos.
 
     Os pregões são os do BOVA11 depois da execução, até a última data que as
     três fontes cobrem. A fonte das ações só tem linha em dia com negócio, e o
@@ -215,7 +216,10 @@ def calcular(execucao: date, retornos: pd.DataFrame, bova11: pd.Series,
                           "negócio na fonte depois disso")
             pesos_iguais = pesos_iguais.where(pesos_iguais.index <= fim_uni)
     cota = bova.reindex(datas).ffill()
-    etf, caixa_etf, cotas = _bova11_em_cotas(cota, custo_bova11)
+    if custo_bova11 is None:
+        avisos.append("sem spread medido do BOVA11: o livro do COTAHIST não tem os dois "
+                      "lados; entra só com a corretagem")
+    etf, caixa_etf, cotas = _bova11_em_cotas(cota, custo_bova11 or (0.0, 0.0))
     bruto_cdi = pd.Series([CAPITAL * f for f in fatores_cdi], index=datas)
     cdi_liq = bruto_cdi - (bruto_cdi - CAPITAL).clip(lower=0) * ALIQUOTA_IR
 

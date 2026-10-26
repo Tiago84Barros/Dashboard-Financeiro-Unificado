@@ -299,6 +299,25 @@ def test_spread_do_fracionario_contra_o_fechamento_do_lote_padrao():
     assert "C" not in lt["custos"]
 
 
+def test_preco_da_execucao_aceita_regime_especial_e_prefere_o_lote_padrao():
+    linhas = [_oferta("AAAA3", EXEC, bdi="05", close=11.0),
+              _oferta("AAAA3", EXEC, bdi="02", close=10.0),
+              _oferta("BBBB4", EXEC, bdi="06", close=20.0),
+              _oferta("BBBB4", EXEC, bdi="12", close=99.0)]
+    lt = pub.lotes_do_cotahist(EXEC, CARTEIRA, cotahist=lambda d, h: linhas, hoje=EXEC)
+    assert lt["precos"] == {"A": 10.0, "B": 20.0}
+    # sem oferta nenhuma do BOVA11, o spread dele não vira zero calado
+    assert lt["custo_bova11"] is None
+
+
+def test_spread_do_bova11_nao_medido_entra_como_zero_e_avisa():
+    medido = _com_lotes()
+    sem = _com_lotes(custo_bova11=None)
+    assert sem["curvas"]["bova11"] == medido["curvas"]["bova11"]
+    assert any("sem spread medido do BOVA11" in a for a in sem["avisos"])
+    assert not any("BOVA11" in a for a in medido["avisos"])
+
+
 def test_acao_que_so_negocia_depois_do_corte_do_cdi_entra_com_fator_um():
     # B só negocia em 28/10 e o CDI só cobre 26/10: a curva para em 27/10
     ret = _retornos([("A", DIAS[0], 0.01), ("A", DIAS[1], 0.0), ("C", DIAS[0], 0.0),

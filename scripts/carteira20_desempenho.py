@@ -228,10 +228,14 @@ def lotes_do_cotahist(execucao: date, carteira: list[dict], *, cotahist=linhas_d
     """Preço de compra na execução e spread de cada ação, e o do BOVA11.
 
     Devolve ``precos`` (id -> fechamento unitário do lote padrão na execução),
-    ``custos`` (id -> ``(compra, venda)``), ``custo_bova11``, ``padrao`` (os
-    tickers que ficaram com o spread do lote padrão) e ``pregoes`` (quantos
-    pregões cada mediana usou, pelo menor).
+    ``custos`` (id -> ``(compra, venda)``), ``custo_bova11`` (``None`` quando
+    o livro do ETF não tem os dois lados), ``padrao`` (os tickers que ficaram
+    com o spread do lote padrão) e ``pregoes`` (quantos pregões cada mediana
+    usou, pelo menor). Como em ``pregoes_de_acoes``, o fechamento de uma ação
+    vem do BDI 02 e, sem ele no dia, de um regime especial (BDI 05 a 09).
     """
+    from core import carteira20_retornos as cr
+
     hoje = hoje or datetime.now(c20.FUSO_B3).date()
     desde = execucao - JANELA_SPREAD
     por_ticker = {c["ticker"]: c["id"] for c in carteira}
@@ -245,9 +249,11 @@ def lotes_do_cotahist(execucao: date, carteira: list[dict], *, cotahist=linhas_d
         fator = max(float(x.get("fator_cotacao") or 1), 1.0)
         if x["ticker"] in fracionarios and x["bdi"] == BDI_FRACIONARIO:
             fracao[(fracionarios[x["ticker"]], dia)] = x
-        elif ((x["ticker"] in por_ticker and x["bdi"] == "02")
+        elif ((x["ticker"] in por_ticker and x["bdi"] in cr.BDIS_ACOES)
               or (x["ticker"] == "BOVA11" and x["bdi"] == BDI_ETF)):
-            padrao[(x["ticker"], dia)] = {**x, "fator": fator}
+            visto = padrao.get((x["ticker"], dia))
+            if not visto or (visto["bdi"] != "02" and x["bdi"] == "02"):
+                padrao[(x["ticker"], dia)] = {**x, "fator": fator}
 
     def _lados(t: str, livro: dict) -> tuple[list[float], list[float]]:
         """Custo de cada lado, pregão a pregão, das ofertas de ``livro`` contra o fechamento."""
@@ -276,7 +282,7 @@ def lotes_do_cotahist(execucao: date, carteira: list[dict], *, cotahist=linhas_d
             custos[i] = (_mediana(compra), _mediana(venda))
             amostras.append(min(len(compra), len(venda), PREGOES_SPREAD))
     compra, venda = _lados("BOVA11", padrao)
-    custo_bova11 = (_mediana(compra) or 0.0, _mediana(venda) or 0.0)
+    custo_bova11 = (_mediana(compra), _mediana(venda)) if compra and venda else None
     return {"precos": precos, "custos": custos, "custo_bova11": custo_bova11,
             "padrao": usou_padrao, "pregoes": min(amostras) if amostras else 0}
 
@@ -326,8 +332,9 @@ def montar(registros: list[dict], execucao: date | None = None, *,
         "regras": {"capital": cd.CAPITAL, "custo_por_lado": cd.CUSTO_LADO,
                    "aliquota_ir": cd.ALIQUOTA_IR, "isencao_mensal_acoes": cd.ISENCAO_MENSAL_ACOES,
                    "lote": 1, "caixa_rende": False,
-                   "spread_bova11": {"compra": round(lt["custo_bova11"][0], 6),
-                                     "venda": round(lt["custo_bova11"][1], 6)},
+                   "spread_bova11": None if lt["custo_bova11"] is None else
+                   {"compra": round(lt["custo_bova11"][0], 6),
+                    "venda": round(lt["custo_bova11"][1], 6)},
                    "pregoes_spread": lt["pregoes"]},
         "fontes": {"acoes": ret.attrs.get("fonte") or FONTE_PESQUISA,
                    "bova11": "COTAHIST da B3: fechamento oficial (BDI 14)",
