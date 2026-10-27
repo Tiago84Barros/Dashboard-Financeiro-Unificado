@@ -14,6 +14,7 @@ _CACHE = "_app4_theme_preference"
 _ERROR = "_app4_theme_error"
 _LOAD_ERROR = "_app4_theme_load_error"
 _ULTIMO_OK = "_app4_theme_last_ok"
+_PINTADO = "_app4_theme_painted"
 _COOKIE = "app4_tema"
 
 # Último tema lido com sucesso de cada conta, no processo -- e não na
@@ -122,6 +123,29 @@ def lembrar_no_navegador(theme: str, uid: str = "") -> None:
         logger.debug("não foi possível lembrar o tema no navegador", exc_info=True)
 
 
+def _repintar_se_divergiu(theme: str) -> None:
+    """Refaz a execução quando a tela já saiu pintada com o OUTRO tema.
+
+    O tema é resolvido DUAS vezes na mesma execução, por caminhos
+    independentes: ``tema_para_pintar()`` no topo de ``app.py``, que pinta, e
+    ``current_theme()`` de novo lá embaixo, dentro da aba Geral, quando o
+    seletor é desenhado. Quando a leitura falha na primeira (a única conexão
+    do pool ocupada -- o caso que :func:`current_theme` descreve) e dá certo na
+    segunda, a segunda adota a preferência de verdade, preenche o cache e ainda
+    limpa a marca de falha: a execução terminava com "🌙 Dark (escuro)" escrito
+    sobre uma página clara, sem aviso e sem erro. Foi a tela relatada em
+    27/10/2026, com ``app4_theme = dark`` gravado no banco desde as 07:26.
+
+    Repintar não é possível -- o CSS já foi emitido acima de tudo. O que
+    resolve é rodar de novo: o cache da sessão já está preenchido com o tema
+    certo, então a execução seguinte pinta certo e não volta aqui. Sem laço.
+    """
+    pintado = st.session_state.get(_PINTADO)
+    if pintado in ("dark", "light") and pintado != theme:
+        st.session_state.pop(_PINTADO, None)
+        st.rerun()
+
+
 def current_theme() -> str:
     """Resolve o tema da conta **sem desenhar nada na tela**.
 
@@ -169,6 +193,7 @@ def current_theme() -> str:
         st.session_state[_CHOICE] = theme
         st.session_state[_ULTIMO_OK] = theme
         _lembrar(uid, theme)
+        _repintar_se_divergiu(theme)
     return st.session_state[_CACHE][1]
 
 
@@ -212,6 +237,17 @@ def tema_para_pintar() -> str:
     claro. O cookie do navegador é o único lembrete que atravessa a perda da
     sessão, e ele guarda só ``dark``/``light``.
     """
+    # A marca da execução anterior sai ANTES de resolver: o ``current_theme()``
+    # chamado aqui dentro não pode se comparar com o que foi pintado no run
+    # passado -- quem compara é o seletor, depois que esta função registrar o
+    # tema que ESTA execução pintou.
+    st.session_state.pop(_PINTADO, None)
+    tema = _resolver_o_tema_para_pintar()
+    st.session_state[_PINTADO] = tema
+    return tema
+
+
+def _resolver_o_tema_para_pintar() -> str:
     uid = str(principal().get("id", ""))
     if not uid:
         # O último tema desta sessão vem ANTES do cookie: o cookie é a memória
