@@ -20,7 +20,9 @@ user_state = fixtures.user_state
 def test_tema_isolado_e_preserva_outras_preferencias(postgres, user_state):
     login_as(user_state, ADMIN)
     other = accounts.create_user("Pessoa tema", "theme@example.test", PASSWORD)
-    assert preferences.load_theme() == "dark"
+    # Conta que nunca escolheu tema responde ausência, não "dark": são duas
+    # respostas diferentes e confundi-las apagava a memória de quem está no claro.
+    assert preferences.load_theme() is None
     with postgres.begin() as conn:
         extra = accounts.locked_preferences(conn, ADMIN)
         extra["app4_private_chats_v2"] = {"synthetic": {"messages": []}}
@@ -28,7 +30,7 @@ def test_tema_isolado_e_preserva_outras_preferencias(postgres, user_state):
     preferences.save_theme("light")
     assert preferences.load_theme() == "light"
     login_as(user_state, other)
-    assert preferences.load_theme() == "dark"
+    assert preferences.load_theme() is None
     preferences.save_theme("dark")
     user_state.clear()
     login_as(user_state, ADMIN)
@@ -175,20 +177,144 @@ def test_interface_salva_recarrega_e_nao_herda_tema_ao_trocar_usuario(monkeypatc
     assert stored == {"A": "light", "B": "dark"}
 
 
-def test_falha_de_gravacao_nao_confirma_nem_muda_tema(monkeypatch):
+def test_falha_de_gravacao_aplica_o_comando_e_avisa_sem_desfazer(monkeypatch):
+    """Banco indisponível no clique não desfaz o comando de quem clicou.
+
+    Era o contrário: a exceção devolvia o seletor ao tema anterior. Então um
+    comando explícito era descartado por disputa de conexão -- a única do pool
+    do Cloud, que a mesma execução gasta revalidando a sessão e rodando o que
+    Configurações faz --, e a pessoa via "cliquei e ele não obedece", com o app
+    seguindo (corretamente) no tema antigo para sempre depois disso. Agora a
+    escolha vale na hora, em todas as memórias locais, e o aviso diz a única
+    coisa que de fato falhou: guardar na conta.
+    """
     import design.theme_selector as selector
     monkeypatch.setattr(selector, "load_theme", lambda: "dark")
+    monkeypatch.setattr(selector, "_ESPERA_ENTRE_TENTATIVAS", ())
+    tentativas: list[str] = []
 
     def fail(theme):
+        tentativas.append(theme)
         raise RuntimeError("sensitive details must never be rendered")
 
     monkeypatch.setattr(selector, "save_theme", fail)
     app = AppTest.from_string(SCRIPT).run()
     app.selectbox[0].select("light").run()
     assert not app.exception
-    assert app.session_state["_app4_theme_preference"] == ("A", "dark")
-    assert len(app.error) == 1
-    assert "sensitive" not in app.error[0].value
+    # O comando valeu: cache da sessão, seletor e tema pintado estão em light.
+    assert app.session_state["_app4_theme_preference"] == ("A", "light")
+    assert app.session_state["_app4_theme_choice"] == "light"
+    assert app.session_state["_app4_theme_not_saved"] == "light"
+    # Insistiu antes de desistir, em vez de amarrar o comando a um instante.
+    assert len(tentativas) >= selector._TENTATIVAS_DE_GRAVACAO
+    assert all(t == "light" for t in tentativas)
+    # Aviso, não erro -- e sem vazar o detalhe da exceção.
+    assert not app.error
+    assert len(app.warning) == 1
+    assert "sensitive" not in app.warning[0].value
+
+
+def test_comando_de_tema_sobrevive_a_uma_falha_passageira(monkeypatch):
+    """A gravação que falhou no clique é retomada na próxima vez que a tela abre."""
+    import design.theme_selector as selector
+    monkeypatch.setattr(selector, "load_theme", lambda: "dark")
+    monkeypatch.setattr(selector, "_ESPERA_ENTRE_TENTATIVAS", ())
+    gravado: list[str] = []
+    indisponivel = {"sim": True}
+
+    def save(theme):
+        if indisponivel["sim"]:
+            raise RuntimeError("conexão ocupada")
+        gravado.append(theme)
+
+    monkeypatch.setattr(selector, "save_theme", save)
+    app = AppTest.from_string(SCRIPT).run()
+    app.selectbox[0].select("light").run()
+    assert app.session_state["_app4_theme_not_saved"] == "light"
+    indisponivel["sim"] = False
+    app.run()
+    assert not app.exception
+    assert gravado == ["light"]
+    assert "_app4_theme_not_saved" not in app.session_state
+    assert not app.warning
+
+
+def test_tema_ausente_na_conta_nao_apaga_o_que_a_sessao_ja_sabia(monkeypatch):
+    """Leitura que deu certo e não achou preferência não é comando de escurecer.
+
+    ``load_theme`` devolvia "dark" para a ausência, e esse "dark" era adotado
+    como escolha de verdade: entrava no cache, no lembrete do processo e no
+    cookie, apagando a memória de quem estava no claro.
+    """
+    import design.theme_selector as selector
+    monkeypatch.setattr(selector, "load_theme", lambda: None)
+    monkeypatch.setattr(selector, "save_theme", lambda theme: None)
+    selector._LEMBRADO["A"] = "light"
+    try:
+        app = AppTest.from_string(SCRIPT).run()
+        assert not app.exception
+        assert app.selectbox[0].value == "light"
+        assert app.session_state["_app4_theme_preference"] == ("A", "light")
+        assert selector._LEMBRADO["A"] == "light"
+    finally:
+        selector._LEMBRADO.pop("A", None)
+
+
+def test_conta_sem_preferencia_registra_o_tema_que_ja_esta_na_tela(monkeypatch):
+    """Quem está no claro e quer continuar no claro também precisa conseguir.
+
+    O ``selectbox`` não dispara ``on_change`` quando se escolhe o valor que já
+    está marcado. Então a conta sem tema gravado, pintada de claro pelo cookie,
+    não tinha nenhum gesto capaz de registrar essa preferência: ficava para
+    sempre sem linha no banco e voltava ao escuro em qualquer outro navegador.
+    Abrir o seletor grava a cor que já está na tela -- gravar o que já se vê
+    não muda cor nenhuma.
+    """
+    import design.theme_selector as selector
+    gravado: list[str] = []
+    monkeypatch.setattr(selector, "load_theme", lambda: None)
+    monkeypatch.setattr(selector, "save_theme", lambda theme: gravado.append(theme))
+    selector._LEMBRADO["A"] = "light"
+    try:
+        app = AppTest.from_string(SCRIPT).run()
+        assert not app.exception
+        assert gravado == ["light"], "a preferência ausente não foi registrada"
+        assert "_app4_theme_unset" not in app.session_state
+        assert not app.warning
+    finally:
+        selector._LEMBRADO.pop("A", None)
+
+
+def test_ultimo_tema_bom_nao_atravessa_de_uma_conta_para_outra(monkeypatch):
+    """O último tema bom carrega dono; sem isso ele era a memória anônima.
+
+    Com a leitura falhando, trocar de conta no mesmo navegador pintava a conta
+    nova com a preferência da anterior -- a mesma mudança de tema sem
+    consentimento que a #566 fechou no cookie.
+    """
+    import design.theme_selector as selector
+    monkeypatch.setattr(selector, "load_theme", lambda: "light")
+    monkeypatch.setattr(selector, "save_theme", lambda theme: None)
+    app = AppTest.from_string(SCRIPT).run()
+    assert app.session_state["_app4_theme_last_ok"] == ("A", "light")
+
+    def fail():
+        raise RuntimeError("banco fora")
+
+    monkeypatch.setattr(selector, "load_theme", fail)
+    selector._LEMBRADO.pop("B", None)
+    user = dict(app.session_state["_app4_user"])
+    user["id"] = "B"
+    app.session_state["_app4_user"] = user
+    app.run()
+    assert not app.exception
+    # Nada de herdar "light" da conta A: sem preferência conhecida, escuro.
+    # A asserção é sobre o que foi PINTADO -- o seletor fica desabilitado e
+    # ainda exibe o rótulo da conta anterior, que é cosmético; o que mudaria
+    # a cor da tela sem consentimento é o CSS.
+    assert selector._ultimo_ok("B") is None
+    pintado = " ".join(bloco.value for bloco in app.markdown)
+    assert "#f5f7fb" not in pintado, "a conta B foi pintada com o claro da conta A"
 
 
 def test_falha_de_leitura_bloqueia_gravacao_e_permite_retry(monkeypatch):

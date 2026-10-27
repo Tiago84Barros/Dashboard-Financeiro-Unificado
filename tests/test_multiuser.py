@@ -348,3 +348,92 @@ ui.render_registered_users()
     assert not app.exception
     assert len(app.dataframe) == 1
 
+
+
+_SCRIPT_REVALIDACAO = '''
+import time
+import streamlit as st
+from core.auth import verificar_autenticacao
+st.session_state.setdefault("_app4_user", {
+    "id": "U", "credential_version": "v1", "expires_at": time.time() + 600,
+})
+verificar_autenticacao()
+st.button("Interagir")
+'''
+
+
+def test_revalidacao_nao_vai_ao_banco_em_toda_interacao(monkeypatch):
+    """Cada clique gastava um SELECT em ``profiles`` na única conexão do Cloud.
+
+    É a mesma conexão que a mesma execução usa para ler ou gravar o tema. Em
+    Configurações, onde quase toda interação dispara rerun e algumas ainda
+    rodam ETL, era essa disputa que fazia a escolha de tema não chegar ao
+    banco -- e a pessoa ver "cliquei e ele não obedece". Revalidar é guarda de
+    segurança, não contador de cliques.
+    """
+    from streamlit.testing.v1 import AppTest
+
+    idas: list[dict] = []
+
+    def contando(user):
+        idas.append(user)
+        return True
+
+    monkeypatch.setattr(accounts, "session_valid", contando)
+    app = AppTest.from_string(_SCRIPT_REVALIDACAO).run(timeout=30)
+    assert not app.exception
+    assert len(idas) == 1
+    for _ in range(3):
+        app.button[0].click().run(timeout=30)
+        assert not app.exception
+    assert len(idas) == 1, f"revalidou {len(idas)} vezes em 4 execuções"
+
+
+def test_troca_de_credencial_invalida_a_revalidacao_guardada(monkeypatch):
+    """A marca guarda uid E credencial: senha nova não herda a validação velha."""
+    from streamlit.testing.v1 import AppTest
+
+    idas: list[dict] = []
+    monkeypatch.setattr(accounts, "session_valid",
+                        lambda user: bool(idas.append(user)) or True)
+    app = AppTest.from_string(_SCRIPT_REVALIDACAO).run(timeout=30)
+    assert len(idas) == 1
+    user = dict(app.session_state["_app4_user"])
+    user["credential_version"] = "v2"
+    app.session_state["_app4_user"] = user
+    app.run(timeout=30)
+    assert not app.exception
+    assert len(idas) == 2
+
+
+def test_banco_fora_do_ar_nao_derruba_quem_ja_foi_revalidado(monkeypatch):
+    """Indisponibilidade não é credencial inválida.
+
+    Antes, qualquer exceção na revalidação trocava a página por uma tarja de
+    erro e parava a execução -- inclusive quando a sessão tinha sido validada
+    segundos antes.
+    """
+    from streamlit.testing.v1 import AppTest
+
+    monkeypatch.setattr(accounts, "session_valid", lambda user: True)
+    app = AppTest.from_string(_SCRIPT_REVALIDACAO).run(timeout=30)
+    assert not app.exception
+
+    def indisponivel(user):
+        raise RuntimeError("connection pool exhausted")
+
+    monkeypatch.setattr(accounts, "session_valid", indisponivel)
+    import core.auth as auth
+    # Fora da janela curta, dentro da tolerância de banco fora do ar.
+    monkeypatch.setattr(auth, "_VALIDADE_DA_REVALIDACAO", 0.0)
+    app.run(timeout=30)
+    assert not app.exception
+    assert not app.error
+    assert app.button[0].label == "Interagir"
+
+    # Passada a tolerância, aí sim a sessão para -- sem vazar o detalhe.
+    monkeypatch.setattr(auth, "_TOLERANCIA_SEM_BANCO", 0.0)
+    app.run(timeout=30)
+    assert not app.exception
+    assert len(app.error) == 1
+    assert "pool" not in app.error[0].value

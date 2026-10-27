@@ -28,14 +28,32 @@ THEMES = ("dark", "light")
 FIELD = "app4_theme"
 
 
-def load_theme() -> str:
+def load_theme() -> str | None:
+    """Tema gravado na conta, ou ``None`` quando a conta nunca escolheu um.
+
+    Devolver ``"dark"`` para a ausência misturava duas respostas que não são a
+    mesma: "esta conta escolheu escuro" e "esta conta não escolheu nada". Quem
+    chama trata as duas igual -- e a segunda era adotada como preferência de
+    verdade, gravada no cache da sessão, no lembrete do processo e no cookie do
+    navegador. Uma leitura que não achou a chave apagava a memória de quem
+    estava no claro, em silêncio e sem erro nenhum para mostrar.
+
+    Ausência acontece de verdade: a linha de ``user_settings`` nasce sem a
+    chave, e é criada por qualquer preferência -- cenário, histórico, chat --,
+    não só pelo tema. Conta nova que nunca abriu Configurações → Geral tem
+    linha, tem documento e não tem ``app4_theme``.
+
+    ``None`` não é um tema: quem pinta decide o que fazer com a ausência (ver
+    :func:`design.theme_selector.current_theme`), e o padrão escuro continua
+    existindo -- só deixou de ser confundido com uma escolha.
+    """
     uid = require_user()
     with _engine().connect() as conn:
         theme = conn.execute(text(
             "SELECT extra_settings ->> CAST(:field AS text) FROM user_settings "
             "WHERE user_id = :uid"
         ), {"uid": uid, "field": FIELD}).scalar()
-    return theme if theme in THEMES else "dark"
+    return theme if theme in THEMES else None
 
 
 def save_theme(theme: str) -> None:
