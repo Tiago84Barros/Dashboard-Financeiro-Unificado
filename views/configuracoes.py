@@ -1254,6 +1254,22 @@ _B3_JOBS: dict[str, dict[str, str]] = {
         "source_name": "B3 — Posição Detalhada (manual)",
         "skip_recompute": True,
     },
+    # `needs_filename` aqui é obrigatório, não conveniência: o extrato
+    # "Posição" é o único que não declara a data em NENHUMA célula — ela vive
+    # no nome do download ("posicao-2026-10-27-08-15-29.xlsx"), com a data de
+    # exportação em docProps como reserva. Sem o nome, só a reserva sobra, e um
+    # arquivo renomeado ficaria sem data nenhuma.
+    "b3_posi": {
+        "key":         "b3_posi",
+        "label":       "B3 — Posição (por classe de ativo)",
+        "file_types":  "xlsx",
+        "parser_attr": "parse_b3_posicao",
+        "job_name":    "import_b3_posicao",
+        "table_name":  "portfolio_position_snapshots",
+        "source_name": "B3 — Posição (manual)",
+        "needs_filename": True,
+        "skip_recompute": True,
+    },
     # `needs_filename` não é cosmético: `_parse_report_date` infere a data do
     # snapshot do NOME do arquivo (mensal-2026-janeiro → 31/01/2026). Entregar
     # só os bytes faria todo relatório cair em `date.today()`, e a chave única
@@ -1280,9 +1296,12 @@ _B3_JOBS: dict[str, dict[str, str]] = {
 # O Consolidado vem por último porque a aba "Proventos Recebidos" deduplica
 # contra os proventos da Movimentação: rodando antes dela, o lote gravaria o
 # mesmo provento duas vezes quando os dois arquivos cobrissem o mesmo mês.
-# A Posição Detalhada é uma foto e não deduplica contra nada: entra por
-# último, junto do Consolidado, depois das duas fontes de evento.
-_B3_ORDEM: tuple[str, ...] = ("b3_neg", "b3_mov", "xp_csl", "b3_pos")
+# A Posição Detalhada e a Posição são fotos e não deduplicam contra nada:
+# entram por último, junto do Consolidado, depois das duas fontes de evento.
+# Entre as duas fotos a ordem não muda resultado — cada uma grava com a sua
+# própria `source_table` e nenhuma sobrescreve a outra —, mas fica fixa para o
+# mesmo lote produzir sempre o mesmo log.
+_B3_ORDEM: tuple[str, ...] = ("b3_neg", "b3_mov", "xp_csl", "b3_pos", "b3_posi")
 
 
 # Jobs do lote do Tesouro Direto. Mesma mecânica dos extratos da B3: um único
@@ -1595,13 +1614,18 @@ _LOTE_B3: dict = {
     "key":        "b3_unificado",
     "titulo":     "📊 Dados Históricos B3 (.xlsx)",
     "caption":    "investidor.b3.com.br → Extratos e Informativos → "
-                  "Negociação, Movimentação, Relatório Consolidado (o da XP) "
-                  "**ou** Posição Detalhada. Envie quantos arquivos quiser, "
-                  "dos quatro tipos misturados — o app identifica cada um "
-                  "pelo conteúdo. A Posição Detalhada é uma foto da carteira: "
-                  "linha sem quantidade (CDB, fundo fechado) e ativo já "
-                  "vendido não entram, e a seção Custódia Remunerada é "
-                  "ignorada porque repete as mesmas ações de \"Ações\".",
+                  "Negociação, Movimentação, Relatório Consolidado (o da XP), "
+                  "Posição Detalhada **ou** Posição. Envie quantos arquivos "
+                  "quiser, dos cinco tipos misturados — o app identifica cada "
+                  "um pelo conteúdo. A Posição Detalhada é uma foto da "
+                  "carteira: linha sem quantidade (CDB, fundo fechado) e "
+                  "ativo já vendido não entram, e a seção Custódia Remunerada "
+                  "é ignorada porque repete as mesmas ações de \"Ações\". A "
+                  "Posição (uma aba por classe: Ações, Empréstimos, ETF, "
+                  "Fundo de Investimento, Renda Fixa, Tesouro Direto) também "
+                  "é uma foto, e **mantenha o nome do arquivo** — a data dela "
+                  "não está em nenhuma célula, só no nome "
+                  "(`posicao-AAAA-MM-DD-…`).",
     "file_types": ["xlsx"],
     "fonte":      "Dados Históricos B3",
     "assunto":    "da B3",
@@ -1796,6 +1820,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
     from data_pipeline.importers.investments import (
         parse_b3_movimentacao,
         parse_b3_negociacao,
+        parse_b3_posicao,
         parse_b3_posicao_detalhada,
         parse_nomad_pdf,
         parse_tesouro_analitico,
@@ -1811,6 +1836,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
     parsers = {
         "parse_b3_negociacao":   parse_b3_negociacao,
         "parse_b3_movimentacao": parse_b3_movimentacao,
+        "parse_b3_posicao":      parse_b3_posicao,
         "parse_b3_posicao_detalhada": parse_b3_posicao_detalhada,
         "parse_xp_consolidado":  parse_xp_consolidado,
         "parse_tesouro_direto":  parse_tesouro_direto,

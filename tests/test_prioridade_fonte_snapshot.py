@@ -112,6 +112,33 @@ def test_tesouro_continua_na_frente():
             < _posicao_no_desempate("b3_posicao_detalhada"))
 
 
+def test_numero_lido_ganha_de_numero_derivado():
+    """Os dois extratos da Area do Investidor nao valem o mesmo.
+
+    O extrato "Posicao" declara a quantidade de cada classe numa coluna
+    propria. O "Posicao Detalhada" nao tem coluna de quantidade para FII:
+    ela sai de saldo/cotacao, e a divisao arredonda. Empatados na data, vale
+    o numero que foi lido, nao o que foi calculado.
+
+    O teste e explicito de proposito: a varredura automatica garante que
+    `b3_posicao` esta NOMEADA no CASE, mas nao onde. Nomeada depois da
+    Detalhada, ela nunca venceria um empate -- e nada quebraria.
+    """
+    assert (_posicao_no_desempate("b3_posicao")
+            < _posicao_no_desempate("b3_posicao_detalhada"))
+
+
+def test_a_posicao_nao_passa_na_frente_do_tesouro():
+    """O extrato da B3 traz o titulo publico sem o PU dele.
+
+    Ele nao publica preco unitario, so o valor total. O extrato do Tesouro
+    traz os dois. Deixar a foto da B3 ganhar apagaria o PU de quem tem os
+    dois arquivos importados.
+    """
+    assert (_posicao_no_desempate("tesouro_direto")
+            < _posicao_no_desempate("b3_posicao"))
+
+
 def test_o_corte_por_rank_continua_existindo():
     """Sem `asset_source_rank = 1` o desempate nao filtra nada.
 

@@ -49,6 +49,17 @@ def _xlsx(*abas: str) -> bytes:
         # Posição Detalhada da Área do Investidor: aba única.
         (("Sua carteira",), "b3_pos"),
         (("SUA CARTEIRA",), "b3_pos"),
+        # Extrato "Posição": uma aba por classe, com o nome nu da classe.
+        ((
+            "Acoes", "Empréstimos", "ETF", "Fundo de Investimento",
+            "Renda Fixa", "Tesouro Direto",
+        ), "b3_posi"),
+        (("Ações", "Renda Fixa"), "b3_posi"),        # com acento
+        (("Fundos de Investimento",), "b3_posi"),    # plural que a B3 já usou
+        # Uma aba conhecida basta: quem não tem empréstimo nem ETF exporta
+        # menos abas, e exigir todas recusaria o arquivo de quem tem menos.
+        (("Tesouro Direto",), "b3_posi"),
+        (("Plan1", "Renda Fixa"), "b3_posi"),        # aba estranha ao lado
     ],
 )
 def test_detect_reconhece_assinaturas(abas, esperado):
@@ -84,6 +95,38 @@ def test_detect_desempata_a_favor_de_negociacao():
     """Arquivo com as duas abas vira Negociação: ela é a fonte canônica das
     compras e vendas, e a Movimentação ignora compra/venda de qualquer forma."""
     assert detect(_xlsx("Movimentação", "Negociação")) == "b3_neg"
+
+
+@pytest.mark.parametrize(
+    "abas, esperado",
+    [
+        (("Posição - Tesouro Direto",), "xp_csl"),
+        (("Posição - Ações", "Posição - Renda Fixa"), "xp_csl"),
+    ],
+)
+def test_o_consolidado_nao_e_roubado_pelos_nomes_nus(abas, esperado):
+    """"TESOURO DIRETO" está DENTRO de "POSIÇÃO - TESOURO DIRETO".
+
+    O extrato "Posição" é reconhecido por nome exato de aba justamente por
+    isso: procurando por substring junto das outras assinaturas, o Consolidado
+    da XP cairia no parser errado — e ele é o único que traz proventos, que
+    viriam a desaparecer sem nenhum erro na tela.
+    """
+    assert detect(_xlsx(*abas)) == esperado
+
+
+def test_abas_conhecidas_vem_do_importador():
+    """A lista de nomes nus é uma só.
+
+    Uma cópia no sniffer divergiria na primeira aba nova que ganhasse leitor:
+    o importador leria a classe e a tela recusaria o arquivo.
+    """
+    from data_pipeline.importers.investments.b3_posicao import ABAS_CONHECIDAS
+
+    assert "RENDA FIXA" in ABAS_CONHECIDAS
+    assert "EXTRATO" not in ABAS_CONHECIDAS   # Tesouro tem uploader próprio
+    for nome in ABAS_CONHECIDAS:
+        assert detect(_xlsx(nome.title())) == "b3_posi", nome
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -212,6 +255,58 @@ def test_o_consolidado_chega_ao_parser_com_o_nome_do_arquivo(monkeypatch):
     # Os extratos da B3 seguem recebendo bytes puros: seus parsers não usam o
     # nome, e mudar o contrato deles sem motivo seria outro defeito.
     assert por_chave["b3_neg"] == xlsx_neg
+
+
+def test_a_posicao_chega_ao_parser_com_o_nome_do_arquivo(monkeypatch):
+    """O extrato "Posição" é o único sem a data em nenhuma célula.
+
+    Ela vive no nome do download ("posicao-2026-10-27-08-15-29.xlsx"). Se o
+    lote entregasse só os bytes, a data da foto sairia de docProps na melhor
+    hipótese e o arquivo renomeado seria recusado na pior — nunca a data que o
+    usuário vê no nome.
+    """
+    from views import configuracoes as cfgmod
+
+    recebidos: list[tuple[str, object]] = []
+
+    def _fake(cfg, payload):
+        recebidos.append((cfg["key"], payload))
+        return {"status": "success"}
+
+    monkeypatch.setattr(cfgmod, "_executar_importacao_investimento", _fake)
+    monkeypatch.setattr(cfgmod.settings, "OWNER_USER_ID", None, raising=False)
+
+    xlsx_posi = _xlsx("Ações", "Renda Fixa", "Tesouro Direto")
+    cfgmod._executar_lote_b3([
+        ("posicao-2026-10-27-08-15-29.xlsx", xlsx_posi),
+    ])
+
+    assert recebidos == [
+        ("b3_posi", ("posicao-2026-10-27-08-15-29.xlsx", xlsx_posi)),
+    ]
+
+
+def test_lote_aceita_a_posicao_junto_dos_outros_extratos():
+    """Os cinco tipos sobem na mesma caixa, misturados.
+
+    Duas fotos no mesmo lote não disputam nada: cada uma grava em
+    `portfolio_position_snapshots` sob a própria `source_table`, e o
+    desempate por fonte acontece na leitura, não na gravação.
+    """
+    from views.configuracoes import planejar_lote_b3
+
+    arquivos = [
+        ("posicao-2026-10-27-08-15-29.xlsx", _xlsx("Ações", "Renda Fixa")),
+        ("neg.xlsx", _xlsx("Negociação")),
+        ("PosicaoDetalhada.xlsx", _xlsx("Sua carteira")),
+        ("mov.xlsx", _xlsx("Movimentação")),
+    ]
+    planejados, recusados = planejar_lote_b3(arquivos)
+
+    assert recusados == []
+    assert [chave for chave, _n, _b in planejados] == [
+        "b3_neg", "b3_mov", "b3_pos", "b3_posi",
+    ]
 
 
 def test_o_consolidado_nao_tem_mais_caixa_propria():

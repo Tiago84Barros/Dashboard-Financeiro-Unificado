@@ -343,8 +343,16 @@ _SQL_POSICOES_SNAPSHOT = """
                     -- ordem e por autoridade da fonte, nao por antiguidade
                     -- do importador:
                     --   tesouro_direto       -- unica fonte com o titulo
-                    --   b3_posicao_detalhada -- custodia central, TODAS as
-                    --                           corretoras
+                    --   b3_posicao           -- custodia central, TODAS as
+                    --                           corretoras, com a
+                    --                           quantidade de cada classe
+                    --                           numa coluna propria
+                    --   b3_posicao_detalhada -- tambem central, mas sem
+                    --                           coluna de quantidade para
+                    --                           FII: ela sai de
+                    --                           saldo/cotacao. Numero
+                    --                           derivado perde para numero
+                    --                           lido no empate
                     --   xp_consolidado       -- uma corretora
                     --   xp_positions         -- legado
                     -- ELSE existe so para nao quebrar com dado antigo. Uma
@@ -354,10 +362,11 @@ _SQL_POSICOES_SNAPSHOT = """
                     -- esta nomeado aqui.
                     CASE pps.effective_source_table
                         WHEN 'tesouro_direto' THEN 0
-                        WHEN 'b3_posicao_detalhada' THEN 1
-                        WHEN 'xp_consolidado' THEN 2
-                        WHEN 'xp_positions' THEN 3
-                        ELSE 4
+                        WHEN 'b3_posicao' THEN 1
+                        WHEN 'b3_posicao_detalhada' THEN 2
+                        WHEN 'xp_consolidado' THEN 3
+                        WHEN 'xp_positions' THEN 4
+                        ELSE 5
                     END,
                     pps.source_system,
                     pps.effective_source_table
@@ -1886,10 +1895,11 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
                     pps.report_date DESC,
                     CASE pps.effective_source_table
                         WHEN 'tesouro_direto' THEN 0
-                        WHEN 'b3_posicao_detalhada' THEN 1
-                        WHEN 'xp_consolidado' THEN 2
-                        WHEN 'xp_positions' THEN 3
-                        ELSE 4
+                        WHEN 'b3_posicao' THEN 1
+                        WHEN 'b3_posicao_detalhada' THEN 2
+                        WHEN 'xp_consolidado' THEN 3
+                        WHEN 'xp_positions' THEN 4
+                        ELSE 5
                     END,
                     pps.source_system,
                     pps.effective_source_table
