@@ -804,3 +804,52 @@ def test_etiqueta_do_cookie_nao_devolve_a_conta():
     assert etiqueta == selector._etiqueta(uid)
     assert etiqueta != selector._etiqueta(uid[:-1] + "6")
     assert selector._etiqueta("") == ""
+
+
+SCRIPT_PINTA_E_ESCOLHE = '''
+import time
+import streamlit as st
+from design.theme_selector import render_theme_selector, tema_para_pintar
+from design.tema import aplicar_tema
+st.session_state.setdefault('_app4_user', {'id': 'A', 'expires_at': time.time()+600})
+_tema = tema_para_pintar()
+st.session_state['_tema_pintado'] = _tema
+aplicar_tema(_tema)
+render_theme_selector()
+'''
+
+
+def test_leitura_boa_depois_da_pintura_repinta_a_tela(monkeypatch):
+    """O seletor não pode acabar o run dizendo um tema e a tela mostrando outro.
+
+    ``aplicar_tema`` roda no topo de ``app.py``; o seletor mora dentro da aba
+    Geral, muito depois. Quando a leitura falha na pintura -- a única conexão
+    do pool ocupada, o caso que ``test_falha_de_leitura_mantem_o_ultimo_tema``
+    descreve -- a tela sai no tema lembrado, e a leitura do seletor, se der
+    certo no mesmo run, adota a preferência de verdade e ainda limpa a marca
+    de falha. O run terminava com "🌙 Dark (escuro)" escrito sobre uma página
+    clara, sem aviso e sem erro: exatamente a tela relatada em 27/10/2026, com
+    ``app4_theme = dark`` gravado no banco desde as 07:26 daquele dia.
+    """
+    import design.theme_selector as selector
+
+    chamadas = {"n": 0}
+
+    def primeira_leitura_do_run_falha():
+        chamadas["n"] += 1
+        if chamadas["n"] % 2 == 1:
+            raise RuntimeError("pool sem conexao")
+        return "dark"
+
+    monkeypatch.setattr(selector, "_LEMBRADO", {})
+    monkeypatch.setattr(selector, "load_theme", primeira_leitura_do_run_falha)
+    app = AppTest.from_string(SCRIPT_PINTA_E_ESCOLHE)
+    app.session_state["_app4_theme_last_ok"] = "light"
+    app.run()
+    assert not app.exception
+    assert app.selectbox[0].value == "dark"
+    assert app.session_state["_tema_pintado"] == "dark", (
+        "o seletor diz dark e a tela foi pintada de claro no mesmo run"
+    )
+    css = "".join(bloco.value for bloco in app.markdown)
+    assert "#f5f7fb" not in css, "a camada do tema claro continuou na tela"
