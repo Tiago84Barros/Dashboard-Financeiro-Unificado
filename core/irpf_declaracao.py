@@ -530,8 +530,9 @@ def _discriminacao_rf(ticker: str, nome: str) -> str:
 
 # Desempate entre origens da posição: a mesma ordem do CASE de
 # core.investimentos._SQL_POSICOES_SNAPSHOT (um teste prende as duas juntas).
-PRIORIDADE_FONTE = {"tesouro_direto": 0, "b3_posicao_detalhada": 1,
-                    "xp_consolidado": 2, "xp_positions": 3}
+PRIORIDADE_FONTE = {"tesouro_direto": 0, "b3_posicao": 1,
+                    "b3_posicao_detalhada": 2, "xp_consolidado": 3,
+                    "xp_positions": 4}
 
 
 def _ultimo_ate(posicoes: list[dict], corte: str) -> list[dict]:
