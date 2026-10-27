@@ -1075,6 +1075,39 @@ def _fig_cashflow_hist(cashflow: list) -> go.Figure:
 _PERIODOS_EVOLUCAO = ("Anos", "12 M", "Tudo")
 
 
+def _meses_por_ativo(snapshots: list, campo: str) -> str:
+    """``"TPRE2029 (jun/23 a ago/26, 39 meses); LCI (jun/26 a set/26, 4 meses)"``."""
+    por_ativo: dict[str, list[str]] = {}
+    for s in snapshots:
+        for tk in s.get(campo) or []:
+            por_ativo.setdefault(tk, []).append(s["label"])
+    partes = []
+    for tk in sorted(por_ativo):
+        meses = por_ativo[tk]
+        faixa = meses[0] if len(meses) == 1 else f"{meses[0]} a {meses[-1]}"
+        partes.append(f"{tk} ({faixa}, {len(meses)} {'mês' if len(meses) == 1 else 'meses'})")
+    return "; ".join(partes)
+
+
+def _avisos_historico_reconstruido(evolucao: dict, snapshots: list) -> None:
+    if evolucao.get("tesouro_historico_ok") is False:
+        aviso_lacuna("Não foi possível remontar o Tesouro Direto nos meses passados; "
+                     "só o ponto de hoje o inclui.",
+                     codigo="tela.investimentos.tesouro_historico_nao_recomposto")
+        st.caption("O Tesouro Direto só está incluído no ponto de hoje.")
+    sem_preco = _meses_por_ativo(snapshots, "sem_preco")
+    if sem_preco:
+        aviso_lacuna("Sem fechamento da B3 no mês, avaliado pelo custo: " + sem_preco + ".",
+                     codigo="tela.investimentos.historico_sem_fechamento_b3")
+    a_custo = _meses_por_ativo(snapshots, "a_custo")
+    if a_custo:
+        aviso_lacuna("Sem preço publicado no mês (renda fixa, ou Tesouro antes da série "
+                     "do Tesouro Transparente), avaliado pelo custo: " + a_custo + ".",
+                     codigo="tela.investimentos.historico_avaliado_pelo_custo")
+    if sem_preco or a_custo:
+        st.caption("Alguns meses têm ativos avaliados pelo custo.")
+
+
 def _recorte_evolucao(snapshots: list, periodo: str) -> list:
     """Pontos do gráfico conforme o período, no formato da Área do Investidor.
 
@@ -1367,7 +1400,22 @@ def _legenda_par(row) -> tuple[str, bool]:
     return texto, incerto
 
 
-@user_cache_data(ttl=1800)
+def _rotulo_cotacao_viva(cv: dict | None) -> str:
+    """Origem das cotações da carteira: ao vivo (com hora) ou o fechamento do banco."""
+    momento = (cv or {}).get("atualizado_em")
+    if not (cv or {}).get("n_ao_vivo") or momento is None:
+        return "Fechamento gravado"
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+    # Fora do pregão a barra mais nova é a do último dia útil, datada à
+    # meia-noite UTC (core.cotacao_viva._momento): é fechamento, não ao vivo.
+    if datetime.now(timezone.utc) - momento > timedelta(hours=1):
+        return f"Fechamento de {momento.astimezone(timezone.utc):%d/%m}"
+    local = momento.astimezone(ZoneInfo("America/Sao_Paulo"))
+    return f"Ao vivo às {local:%H:%M} (atraso ~15 min)"
+
+
+@user_cache_data(ttl=900)
 def _get_macro_dados() -> dict:
     """Busca indicadores macro: BCB (SELIC, IPCA) + yfinance (câmbio, bolsas)."""
     try:
@@ -1754,8 +1802,13 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                             width="stretch",
                             config={"displayModeBar": False},
                             key="dash_evolucao_snapshot")
-            detalhe_tecnico("Evolução baseada nos snapshots importados do App2.",
-                            codigo="investimentos.evolucao_patrimonial.fonte_snapshots")
+            if evolucao.get("procedencia") == "negociacoes":
+                detalhe_tecnico("Evolução remontada mês a mês pelos extratos de Negociação "
+                                "e Movimentação, a preço de fechamento da B3.",
+                                codigo="investimentos.evolucao_patrimonial.fonte_negociacoes")
+            else:
+                detalhe_tecnico("Evolução baseada nos snapshots importados do App2.",
+                                codigo="investimentos.evolucao_patrimonial.fonte_snapshots")
         elif cashflow:
             st.plotly_chart(_fig_evolucao(cashflow, total),
                             width="stretch",
@@ -1836,7 +1889,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
     # ── Cenário Macroeconômico ─────────────────────────────────────────────────
     _secao_titulo_orig(
         "🌐", "Cenário Macroeconômico",
-        "Dados atualizados a cada 30 minutos",
+        "Dados atualizados a cada 15 minutos",
     )
 
     macro = _get_macro_dados()
@@ -2317,13 +2370,25 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                 ]),
                 hide_index=True, width="stretch", height=380,
             )
-        detalhe_tecnico(
-            "O histórico vem dos relatórios consolidados da Área do Investidor da B3, "
-            "ações emprestadas incluídas, como na Evolução Patrimonial da B3. "
-            "Cada ponto soma também o exterior (Nomad), que a B3 não mostra: quantidade "
-            "pelas notas de corretagem até a data, preço e dólar do fechamento da data.",
-            codigo="investimentos.historico.procedencia",
-        )
+        if evolucao.get("procedencia") == "negociacoes":
+            detalhe_tecnico(
+                "Sem extrato de posição da B3, o histórico é remontado no fim de cada mês "
+                "pelos extratos de Negociação e Movimentação: quantidade e custo médio com "
+                "desdobramentos, grupamentos, bonificações e trocas de código. Ações e FIIs "
+                "valem o fechamento do último pregão do mês na fita oficial da B3 "
+                "(COTAHIST, sem retroajuste); Tesouro Direto, o preço de resgate do "
+                "Tesouro Transparente no último dia do mês. O ponto de hoje é a carteira "
+                "atual. Dinheiro de venda ainda não reinvestido sai da curva.",
+                codigo="investimentos.historico.procedencia_negociacoes",
+            )
+        else:
+            detalhe_tecnico(
+                "O histórico vem dos relatórios consolidados da Área do Investidor da B3, "
+                "ações emprestadas incluídas, como na Evolução Patrimonial da B3. "
+                "Cada ponto soma também o exterior (Nomad), que a B3 não mostra: quantidade "
+                "pelas notas de corretagem até a data, preço e dólar do fechamento da data.",
+                codigo="investimentos.historico.procedencia",
+            )
         st.caption(
             "Crescimento anual = taxa composta que leva o valor de mercado da primeira "
             "foto ao de hoje. Inclui os aportes, então não é rentabilidade: mede quanto "
@@ -2342,6 +2407,8 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
             aviso_lacuna("Exterior sem cotação na data, fora da soma: " + "; ".join(sem_preco) + ".",
                          codigo="tela.investimentos.exterior_sem_cotacao_na_data")
             st.caption("Em algumas datas o exterior ficou fora da soma.")
+        if evolucao.get("procedencia") == "negociacoes":
+            _avisos_historico_reconstruido(evolucao, snapshots)
         _editor_posicao_anterior(realizado)
         sem_custo = [s["label"] for s in snapshots if s.get("valor_investido") is None]
         if sem_custo:
@@ -4445,6 +4512,7 @@ def render() -> None:
         "📈",
         metadados=[
             ("Referência", _data_ref_label),
+            ("Cotações", _rotulo_cotacao_viva(carteira.get("cotacao_viva"))),
             ("Fonte", _fonte_label),
         ],
     )
@@ -4745,9 +4813,37 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
     owner = getattr(settings, "OWNER_USER_ID", None)
     if engine is None or not owner:
         return False
-    titulos = carregar_titulos(engine, owner)
+    origem: dict = {}
+    titulos = carregar_titulos(engine, owner, diagnostico=origem)
     if not titulos:
         return False
+    da_movimentacao = origem.get("origem") == "movimentacao"
+    if da_movimentacao:
+        detalhe_tecnico(
+            "Sem Extrato Analítico importado: os lotes do Tesouro foram remontados "
+            "das compras da Movimentação da B3 e a taxa de cada lote foi deduzida "
+            "do PU pago contra a taxa e o PU de compra da curva oficial no dia "
+            "(erro medido de até 0,004 p.p. contra 24 lotes com extrato). "
+            "Importar o Extrato Analítico substitui a dedução pela taxa impressa.",
+            codigo="investimentos.tesouro.lotes_da_movimentacao",
+        )
+        if origem.get("sem_taxa"):
+            aviso_lacuna(
+                "Sem curva do Tesouro no dia da compra de "
+                f"{', '.join(origem['sem_taxa'])}: esses lotes ficam sem marcação "
+                "até update_tesouro_curva recarregar a janela longa desses títulos "
+                "ou o Extrato Analítico ser importado.",
+                codigo="tela.investimentos.tesouro_lote_sem_taxa",
+            )
+        if origem.get("divergentes"):
+            aviso_lacuna(
+                "Lotes da Movimentação que não fecham com a custódia do Tesouro "
+                "ficaram de fora do painel: " + "; ".join(
+                    f"{chave} {lotes:.2f} remontado × {custodia:.2f} na custódia"
+                    for chave, lotes, custodia in origem["divergentes"])
+                + ". Importar a Movimentação completa ou o Extrato Analítico.",
+                codigo="tela.investimentos.tesouro_lotes_divergem_da_custodia",
+            )
 
     hoje = _date_hoje.today()
     data_curva = curva_disponivel(engine)
@@ -4785,14 +4881,17 @@ def _painel_tesouro_venda(tesouros, *, ano_atual) -> bool:
     _secao_titulo_orig(
         "🏦", "Tesouro Direto — levar até o vencimento ou vender antes",
         f"{len(titulos)} título{'s' if len(titulos) != 1 else ''} "
-        "com taxa contratada por lote",
+        + ("com a taxa de cada compra" if da_movimentacao
+           else "com taxa contratada por lote"),
     )
 
     # ── A resposta: de que dia é o preço, e o veredito da carteira ───────────
     extrato = max((t.report_date for t in titulos if t.report_date), default=None)
     st.markdown(
         _painel.TD_CSS
-        + _painel.estado_html(data_curva=data_curva, data_extrato=extrato, hoje=hoje)
+        + _painel.estado_html(
+            data_curva=data_curva, data_extrato=extrato, hoje=hoje,
+            data_movimentacao=origem.get("ultima_movimentacao") if da_movimentacao else None)
         + _painel.hero_html(resumo, veredito=veredito_da_carteira(leituras),
                             manchete=manchete_do_veredito(leituras),
                             frase=frase_do_veredito(leituras)),

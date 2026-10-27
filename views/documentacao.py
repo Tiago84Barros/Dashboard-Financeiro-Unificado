@@ -2100,15 +2100,17 @@ FLOW_CONFIGURACOES = FlowSpec(
             (
                 "Aba 🔒 Segurança, bloco 03",
                 "Data de cadastro e situação por usuário",
-                "Quem não administra não vê o bloco",
+                "Quem não administra vê o bloco e a razão, não a lista",
             ),
             "A lista fecha a página, e não abre: o administrador chega nela depois de conferir "
             "o estado da sessão e da credencial.",
         ),
     },
     notes=(
-        "Quem não administra o app vê uma versão reduzida desta tela, com duas abas: "
-        "importar os próprios dados e a própria conta.",
+        "A tela é a mesma para todo mundo desde 12/10/2026: as oito abas aparecem para "
+        "quem administra e para quem não administra. O que separa os dois é o dado que "
+        "cada guarda entrega — a lista de usuários cadastrados, por exemplo, continua só "
+        "do administrador, e o bloco diz isso em vez de desaparecer.",
         "As duas entradas do Controle Financeiro são irmãs na mesma sub-aba, mas nunca se "
         "somam: a fatura é fluxo futuro e o extrato é o mês corrente.",
     ),

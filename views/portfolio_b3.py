@@ -1392,6 +1392,11 @@ def _processar_segmento(
         # UNIVERSO — onde há amplitude real (N>300) em vez de 78 testes com
         # mediana de 3 empresas. Ver core/b3_pooled_evidence.py e auditoria §16.
         ic_pairs: list[tuple[int, float, float]] = []
+        # Os mesmos pares com o ticker, numa chave A PARTE: os consumidores de
+        # `ic_pairs` desempacotam tres campos (core.b3_oos_carteira._ic_medio).
+        # A previsao de lucros (core.b3_previsao_lucros.efeito_rank_ic) precisa
+        # saber DE QUEM e cada par para combinar o score com a previsao.
+        ic_pairs_tk: list[tuple[int, str, float, float]] = []
         if not score_frame.empty:
             for year in sorted(score_frame["Ano"].unique()):
                 scores_year = score_frame[score_frame["Ano"] == year].set_index(
@@ -1420,6 +1425,10 @@ def _processar_segmento(
                 ic_pairs.extend(
                     (int(year), float(s), float(r))
                     for s, r in zip(aligned["score"], aligned["return"]))
+                ic_pairs_tk.extend(
+                    (int(year), str(tk), float(s), float(r))
+                    for tk, s, r in zip(aligned.index, aligned["score"],
+                                        aligned["return"]))
                 if len(aligned) < 5:
                     continue
                 ic = aligned["score"].corr(aligned["return"], method="spearman")
@@ -1525,6 +1534,7 @@ def _processar_segmento(
         # detectável — ver core/b3_evidence.py e auditoria §16.
         "rank_ic_values": list(ic_values),
         "ic_pairs": ic_pairs,
+        "ic_pairs_tk": ic_pairs_tk,
         "n_empresas_medio": (
             float(score_frame.groupby("Ano")["ticker"].nunique().mean())
             if not score_frame.empty and "Ano" in score_frame.columns else 0.0

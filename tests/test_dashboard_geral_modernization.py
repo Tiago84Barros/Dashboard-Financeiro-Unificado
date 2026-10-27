@@ -35,6 +35,45 @@ def test_dashboard_header_is_responsive_and_escapes_context(monkeypatch):
     assert "<script>alert(1)</script>" not in html
 
 
+def test_cabecalho_sem_mes_parcial_nao_vira_bloco_de_codigo(monkeypatch):
+    """Sem o chip parcial, a linha `{chip_parcial}` ficava em branco: o Markdown
+    encerrava o HTML ali e o resto do card saía como bloco de código."""
+    rendered = _capture_markdown(monkeypatch)
+    dashboard._render_dashboard_header("Set/2026", "Supabase", "#00C896", date(2026, 10, 12))
+    hero = next(b for b in rendered if "dg-hero" in b and "<style" not in b)
+    assert "\n" not in hero
+    assert "Atualizado&nbsp;·&nbsp;12/10/2026</span></div></section></div>" in hero
+
+    rendered.clear()
+    dashboard._render_dashboard_header("Out/2026", "Supabase", "#00C896", date(2026, 10, 12),
+                                       parcial_ate=date(2026, 10, 12))
+    hero = next(b for b in rendered if "dg-hero" in b and "<style" not in b)
+    assert "\n" not in hero and "Mês parcial" in hero
+
+
+def test_cards_da_carteira_de_fiis_saem_numa_linha_so(monkeypatch):
+    """Mesmo defeito do cabeçalho: `{tickers}` e `{rows_html}` sozinhos numa
+    linha do HTML recuado viravam bloco de código se ficassem vazios."""
+    rendered = _capture_markdown(monkeypatch)
+    monkeypatch.setattr(dashboard, "_titulo_secao", lambda *a, **k: None)
+    monkeypatch.setattr(
+        dashboard.st, "columns",
+        lambda spec, **k: [contextlib.nullcontext()] * (
+            spec if isinstance(spec, int) else len(spec)),
+    )
+    port = [{"ticker": "HGLG11", "peso": 0.6, "tipo": "tijolo", "segmento": "Log<í>stica",
+             "dy_12m": 0.09, "pvp": 0.95},
+            {"ticker": "KNCR11", "peso": 0.4, "tipo": "papel", "dy_12m": 0.12, "pvp": 1.01}]
+    dashboard._secao_fiis_sugeridos(port, salvo=False)
+
+    lista = next(b for b in rendered if "FIIs selecionados" in b)
+    pesos = next(b for b in rendered if "Pesos sugeridos" in b)
+    for bloco in (lista, pesos):
+        assert "\n" not in bloco and bloco.endswith("</div>")
+    assert "HGLG11, KNCR11" in lista
+    assert "Log&lt;í&gt;stica" in pesos and "60.0%" in pesos
+
+
 def test_kpi_grid_uses_deterministic_financial_inputs(monkeypatch):
     rendered = _capture_markdown(monkeypatch)
 
@@ -61,7 +100,7 @@ def test_kpi_grid_uses_deterministic_financial_inputs(monkeypatch):
     # à sobra: (5.000 + 2.000) / 10.000 = 70%, abaixo do teto da renda.
     assert "R$ 5.000,00" in html
     assert "70,00%" in html
-    assert "Sobra do mês + aportes" in html
+    assert "Sobra do mês R$ 5.000,00 + aportes R$ 2.000,00" in html
     assert "no teto da renda" not in html
     assert "+7.25%" in html
     assert "atingida" in html
@@ -347,3 +386,25 @@ def test_o_rotulo_do_kpi_reserva_as_duas_linhas():
     """
     regra = _bloco_css(".dg-kpi-label")
     assert "min-height:" in regra
+
+
+def test_resumo_controle_mostra_aporte_que_explica_taxa_com_saldo_negativo(monkeypatch):
+    """Despesa acima da renda + aporte de caixa anterior: saldo negativo e taxa
+    positiva. Sem a linha de aportes no card, o par parece erro de cálculo."""
+    rendered = _capture_markdown(monkeypatch)
+    monkeypatch.setattr(dashboard, "_faixa_destaque", lambda *a, **k: None)
+    monkeypatch.setattr(
+        dashboard.st, "columns",
+        lambda *a, **k: [contextlib.nullcontext(), contextlib.nullcontext()],
+    )
+
+    dashboard._secao_resumo_modulos(
+        25_619.56, 26_077.65, 9_998.81, {"investido": 0.0, "total": 0.0}, [], 0.0,
+        {}, {}, {}, [], False,
+    )
+
+    card = next(b for b in rendered if "Controle Financeiro" in b)
+    assert "-R$ 458,09" in card
+    assert "Aportes no mês" in card and "R$ 9.998,81" in card
+    assert card.index("Aportes no mês") < card.index("Taxa de poupança")
+    assert "37,24%" in card

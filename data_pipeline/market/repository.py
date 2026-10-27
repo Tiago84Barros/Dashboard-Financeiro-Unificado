@@ -16,6 +16,12 @@ logger = logging.getLogger(__name__)
 _QUALITY_SEVERITIES = frozenset({"info", "warn", "critical"})
 _QUALITY_SEVERITY_ALIASES = {"warning": "warn", "error": "critical"}
 
+# tabelas cujo updated_at não tem gatilho: o UPSERT carimba a hora quando a
+# linha muda de fato. Sem isso o carimbo ficava na hora da inserção, e a
+# cotação intradiária corrigida depois pelo fechamento parecia intradiária
+# para sempre (scripts/carteira20_desempenho.py lê o carimbo).
+_CARIMBA_UPDATED_AT = frozenset({"historical_prices"})
+
 # colunas atualizadas no ON CONFLICT (exclui chaves e created_at)
 _UPDATE_COLS = {
     "companies": ("name", "cnpj", "sector", "subsector", "segment", "website",
@@ -261,6 +267,8 @@ def _upsert(conn, table: str, rows: list[dict], page_size: int = 500) -> int:
         # dividends e 718 mil em historical_prices, cada um deixando uma
         # tupla morta para o autovacuum num banco com teto de 500 MB.
         setlist = ", ".join(f'"{c}" = {e}' for c, e in novos.items())
+        if table in _CARIMBA_UPDATED_AT and "updated_at" in db_cols:
+            setlist += ', "updated_at" = now()'
         atuais = ", ".join(f'alvo."{c}"' for c in novos)
         action = (f"DO UPDATE SET {setlist} "
                   f"WHERE ({atuais}) IS DISTINCT FROM ({', '.join(novos.values())})")

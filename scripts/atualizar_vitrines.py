@@ -270,8 +270,11 @@ CARIMBO = {
     "cdi_diario": ("arquivo", "data/public/cdi_diario.json.gz"),
     "macro_brasil": ("arquivo", "data/public/macro_brasil.json.gz"),
     "valuation_historico": ("arquivo", "data/public/valuation_historico.json.gz"),
+    "cenarios_analogos": ("arquivo", "data/public/cenarios_analogos.json.gz"),
     "informacoes_recentes": ("arquivo", "data/public/informacoes_recentes.json.gz"),
     "fii_metrics_monthly": ("arquivo", "data/public/fii_metrics_monthly.json.gz"),
+    "precos_mensais_b3": ("arquivo", "data/public/precos_mensais_b3.json.gz"),
+    "carteira20_desempenho": ("arquivo", "data/public/carteira20_desempenho.json"),
     "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),
     "b3_linhagem": ("arquivo", "data/public/b3_linhagem.json"),
 }
@@ -295,7 +298,7 @@ def _carimbo_do_arquivo(relativo: str):
     if isinstance(dados, dict) and isinstance(dados.get("gerado_em"), str):
         return datetime.fromisoformat(dados["gerado_em"])
     if isinstance(dados, dict) and "gerado_em" in dados:
-        return None  # arquivo à espera da primeira publicação (CDI)
+        return None  # arquivo à espera da primeira publicação (CDI, Carteira 20)
     from core.macro_data.insumos_publicados import desserializar
     return desserializar(bruto).gerado_em
 

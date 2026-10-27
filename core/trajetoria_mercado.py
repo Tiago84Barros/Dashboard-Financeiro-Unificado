@@ -10,10 +10,15 @@ são "o histórico", e a linha diz quantos anos são.
 
 Nada aqui ingere dado novo. As fontes são as que já existem:
 
-``Supabase`` -- dólar, SPY e BOVA11 (``asset_quotes``) e os títulos do Tesouro
-    com mais história (``tesouro_market_rates``). O plano free estourou o
-    egress (restrição de 14/10/2026): a conta é feita no SQL e volta UMA linha
-    por série, não a série diária.
+``Supabase`` -- dólar e SPY (``asset_quotes``), BOVA11 e SMAL11 em fechamento
+    mensal desde 2009 (``market.historical_prices``; ``asset_quotes`` só tem
+    meio ano) e os títulos do Tesouro (``tesouro_market_rates``). O plano free
+    estourou o egress (restrição de 14/10/2026): a conta é feita no SQL e
+    volta UMA linha por série, não a série diária.
+``valuation_historico`` -- o P/L mediano ponto-no-tempo das 50 ações mais
+    negociadas da B3, mês a mês desde 2011, e o prêmio do lucro sobre o juro
+    real de hoje: a régua de "a bolsa está cara ou barata contra a própria
+    história". NÃO é o P/L do Ibovespa, e a linha diz isso colado ao número.
 ``Arquivos publicados`` -- o CDI diário desde 2010 (``cdi_diario``, a trajetória
     efetiva da Selic) e o IPCA 12m (``macro_brasil``).
 ``Armazém local`` -- juros, inflação e crédito dos EUA (FRED) com décadas de
@@ -49,12 +54,17 @@ class Serie:
     """Como uma série é lida e escrita na linha do prompt."""
     nome: str
     fonte: str
-    #: ``taxa`` (% e variação em p.p.), ``preco`` (variação em %) ou ``spread``
-    #: (pontos percentuais, variação em p.p.).
+    #: ``taxa`` (% e variação em p.p.), ``preco`` (variação em %), ``spread``
+    #: (pontos percentuais, variação em p.p.) ou ``multiplo`` (P/L: "20,9x",
+    #: variação em %).
     tipo: str
     prefixo: str = ""
     casas: int = 2
     mensal: bool = False
+    #: Dias sem ponto novo até a linha avisar; ``None``: 80 se mensal, senão 10.
+    atraso_max: int | None = None
+    #: Vai colada ao percentil: a LLM copia o trecho, não a linha.
+    ressalva: str = ""
 
 
 @dataclass(frozen=True)
@@ -114,12 +124,12 @@ def _num(valor: float, casas: int) -> str:
 
 
 def _valor(s: Serie, v: float) -> str:
-    sufixo = "%" if s.tipo in ("taxa", "spread") else ""
+    sufixo = {"taxa": "%", "spread": "%", "multiplo": "x"}.get(s.tipo, "")
     return f"{s.prefixo}{_num(v, s.casas)}{sufixo}"
 
 
 def _variacao(s: Serie, de: float, para: float) -> str:
-    if s.tipo == "preco":
+    if s.tipo in ("preco", "multiplo"):
         if not de:
             return "variação indefinida"
         return f"{100.0 * (para / de - 1):+.1f}%".replace(".", ",")
@@ -147,7 +157,11 @@ def linha(s: Serie, r: Resumo | None, *, hoje: date | None = None) -> str:
             comparacoes.append(f"{rotulo}: sem dado (último ponto antes do alvo "
                                f"é de {_como_data(ponto[0]):%d/%m/%Y})")
         else:
-            comparacoes.append(f"{rotulo} {_valor(s, ponto[1])} "
+            # Série mensal datada no último pregão: "há 1 mês" de 07/10 cai em
+            # 31/08, e a linha diz a data em vez de fingir que é 07/09.
+            em = (f" em {_como_data(ponto[0]):%d/%m/%Y}"
+                  if alvo - _como_data(ponto[0]) > timedelta(days=3) else "")
+            comparacoes.append(f"{rotulo} {_valor(s, ponto[1])}{em} "
                                f"({_variacao(s, ponto[1], r.valor)})")
     partes.append("; ".join(comparacoes))
     anos = _anos(r.inicio, r.data)
@@ -159,11 +173,14 @@ def linha(s: Serie, r: Resumo | None, *, hoje: date | None = None) -> str:
     # larga o resto da linha (medido com o Nemotron: "Ibovespa em recorde
     # (percentil 99)" sobre meio ano de BOVA11).
     curto = ", histórico curto" if anos < ANOS_HISTORICO_CURTO else ""
+    ressalva = f", {s.ressalva}" if s.ressalva else ""
     partes.append(f"{janela}: mín. {_valor(s, r.minimo)}, máx. {_valor(s, r.maximo)}, "
-                  f"hoje no percentil {r.percentil:.0f} de {_num(anos, 1)} anos{curto}")
+                  f"hoje no percentil {r.percentil:.0f} de {_num(anos, 1)} anos"
+                  f"{curto}{ressalva}")
     linha_txt = " · ".join(partes)
     # Mensal: o IPCA e o CPI saem ~40 dias depois do mês, que fica no dia 1.
-    if hoje is not None and (hoje - r.data).days > (80 if s.mensal else 10):
+    atraso = s.atraso_max if s.atraso_max is not None else (80 if s.mensal else 10)
+    if hoje is not None and (hoje - r.data).days > atraso:
         linha_txt += f" · ÚLTIMO PONTO HÁ {(hoje - r.data).days} DIAS"
     return linha_txt + "."
 
@@ -175,13 +192,14 @@ def linha(s: Serie, r: Resumo | None, *, hoje: date | None = None) -> str:
 #: Séries de ``asset_quotes``: ticker -> descrição.
 COTACOES: dict[str, Serie] = {
     "USDBRL": Serie("Dólar (USDBRL)", "asset_quotes, Supabase", "preco", "R$ ", 4),
-    "BOVA11": Serie("BOVA11 (ETF do Ibovespa)", "asset_quotes, Supabase", "preco", "R$ "),
     "SPY": Serie("SPY (ETF do S&P 500)", "asset_quotes, Supabase", "preco", "US$ "),
 }
 #: Títulos com mais história em ``tesouro_market_rates`` (taxa de compra).
 TITULOS: dict[str, Serie] = {
     "TIPCA2029": Serie("Tesouro IPCA+ 2029 (juro real)", "tesouro_market_rates, Supabase",
                        "taxa"),
+    "TIPCA2035": Serie("Tesouro IPCA+ 2035 (juro real longo)",
+                       "tesouro_market_rates, Supabase", "taxa"),
     "TPRE2028": Serie("Tesouro Prefixado 2028", "tesouro_market_rates, Supabase", "taxa"),
     "TPRE2032": Serie("Tesouro Prefixado 2032", "tesouro_market_rates, Supabase", "taxa"),
 }
@@ -202,6 +220,24 @@ SELECT u.chave, u.d0, u.v0, agg.n, agg.inicio, agg.minimo, agg.maximo, agg.perce
   LEFT JOIN LATERAL (SELECT d, v FROM s WHERE s.chave = u.chave
                       AND s.d <= u.d0 - interval '12 months' ORDER BY d DESC LIMIT 1) a12 ON true
 """
+#: Fechamento mensal longo de ``market.historical_prices``: o histórico antigo
+#: tem um ponto por mês e o último ano tem vários, e o percentil sobre os pontos
+#: crus pesaria o ano recente; por isso o último pregão de cada mês.
+HISTORICO: dict[str, Serie] = {
+    "BOVA11": Serie("BOVA11 (ETF do Ibovespa, fechamento mensal)",
+                    "market.historical_prices, Supabase", "preco", "R$ ",
+                    mensal=True, atraso_max=10),
+    "SMAL11": Serie("SMAL11 (ETF de small caps, fechamento mensal)",
+                    "market.historical_prices, Supabase", "preco", "R$ ",
+                    mensal=True, atraso_max=10),
+}
+_FONTE_HISTORICO = (
+    "SELECT DISTINCT ON (ticker, date_trunc('month', date)) ticker AS chave, "
+    "date AS d, COALESCE(adjusted_close, close)::float8 AS v "
+    "FROM market.historical_prices WHERE ticker = ANY(:chaves) "
+    "AND COALESCE(adjusted_close, close) IS NOT NULL "
+    "AND date >= current_date - interval '{anos} years' "
+    "ORDER BY ticker, date_trunc('month', date), date DESC")
 _FONTE_COTACOES = (
     "SELECT a.ticker AS chave, aq.timestamp::date AS d, aq.close::float8 AS v "
     "FROM asset_quotes aq JOIN assets a ON a.id = aq.asset_id "
@@ -233,14 +269,17 @@ def resumos_sql(conn, fonte: str, chaves: Iterable[str]) -> dict[str, Resumo]:
     return {str(r["chave"]): _resumo_da_linha(r) for r in linhas}
 
 
-def linhas_supabase(engine, *, hoje: date | None = None) -> list[str]:
+def linhas_supabase(engine, *, hoje: date | None = None,
+                    resumos_out: dict[str, Resumo] | None = None) -> list[str]:
+    """Linhas do Supabase; ``resumos_out`` recebe os resumos (o prêmio usa o juro real)."""
     if engine is None:
         return ["  Dólar, bolsa e Tesouro: banco Supabase indisponível."]
     saida: list[str] = []
     try:
         # Uma conexão para as duas consultas: daqui, abrir conexão custa mais que a conta.
         with engine.connect() as conn:
-            for fonte, series in ((_FONTE_COTACOES, COTACOES), (_FONTE_TITULOS, TITULOS)):
+            for fonte, series in ((_FONTE_COTACOES, COTACOES), (_FONTE_HISTORICO, HISTORICO),
+                                  (_FONTE_TITULOS, TITULOS)):
                 try:
                     resumos = resumos_sql(conn, fonte, series)
                 except Exception as exc:  # noqa: BLE001 - ausência declarada
@@ -248,6 +287,8 @@ def linhas_supabase(engine, *, hoje: date | None = None) -> list[str]:
                     nomes = ", ".join(s.nome for s in series.values())
                     saida.append(f"  {nomes}: falha na leitura ({_limpo(exc)}).")
                     continue
+                if resumos_out is not None:
+                    resumos_out.update(resumos)
                 saida += [linha(s, resumos.get(chave), hoje=hoje)
                           for chave, s in series.items()]
     except Exception as exc:  # noqa: BLE001
@@ -354,6 +395,67 @@ def linhas_eua(series: Mapping[str, Mapping[date, float]], origem: str,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Bolsa cara ou barata: P/L mediano publicado em valuation_historico
+# ─────────────────────────────────────────────────────────────────────────────
+
+VALUATION_B3 = Serie(
+    "P/L mediano das 50 ações mais negociadas da B3 (ponto-no-tempo)",
+    "arquivo valuation_historico", "multiplo", casas=1, mensal=True, atraso_max=45,
+    ressalva="mediana das 50 mais negociadas, NÃO o P/L do Ibovespa")
+#: Juro real para o prêmio: o mais longo primeiro (a ação é ativo de prazo longo).
+JUROS_REAIS = ("TIPCA2035", "TIPCA2029")
+
+
+def _lista(tickers, limite: int = 10) -> str:
+    tickers = list(tickers or ())
+    mais = f" e mais {len(tickers) - limite}" if len(tickers) > limite else ""
+    return ", ".join(tickers[:limite]) + mais
+
+
+def linhas_valuation_b3(mercado: Mapping | None, juros: Mapping[str, Resumo] | None = None,
+                        *, origem: str = "", hoje: date | None = None) -> list[str]:
+    """P/L mediano contra a própria história e prêmio sobre o juro real de hoje."""
+    fonte = VALUATION_B3.fonte + (f", {origem}" if origem else "")
+    s = Serie(VALUATION_B3.nome, fonte, VALUATION_B3.tipo, casas=VALUATION_B3.casas,
+              mensal=True, atraso_max=VALUATION_B3.atraso_max, ressalva=VALUATION_B3.ressalva)
+    serie = (mercado or {}).get("serie") or []
+    pontos = {date.fromisoformat(str(d)): float(pl) for d, pl, *_ in serie if pl}
+    if not pontos:
+        return [f"  {s.nome} ({fonte}): sem a série mercado_b3 no arquivo."]
+    r = resumir(pontos, hoje=hoje)
+    ultimo = (mercado or {}).get("ultimo") or {}
+    fora = []
+    if ultimo.get("sem_lpa"):
+        fora.append(f"sem LPA do exercício {ultimo.get('exercicio')} na base: "
+                    f"{_lista(ultimo['sem_lpa'])}")
+    if ultimo.get("sem_preco"):
+        fora.append(f"sem preço no mês (ticker mudou?): {_lista(ultimo['sem_preco'])}")
+    if ultimo.get("implausiveis"):
+        fora.append(f"LPA em escala errada: {_lista(ultimo['implausiveis'])}")
+    composicao = (f"  Composição de hoje: {ultimo.get('validas')} de {ultimo.get('universo')} "
+                  f"ações na conta, {ultimo.get('negativas', 0)} com prejuízo; fora da "
+                  f"conta -- " + ("; ".join(fora) if fora else "nenhuma") + ".")
+    saida = [linha(s, r, hoje=hoje), composicao]
+    # Prêmio: lucro ÷ preço é rendimento real (o lucro acompanha a inflação),
+    # então se compara com o juro real. Só hoje: o juro real tem 1 a 3 anos.
+    ey = next((float(e) for d, pl, e, *_ in reversed(serie) if e is not None), None)
+    juro = next(((k, (juros or {})[k]) for k in JUROS_REAIS if k in (juros or {})), None)
+    if ey is None or juro is None:
+        saida.append("  Prêmio do lucro sobre o juro real: sem o juro real do Tesouro "
+                     "IPCA+ nesta leitura.")
+    else:
+        chave, jr = juro
+        premio = f"{ey - jr.valor:+.2f}".replace(".", ",")
+        saida.append(
+            f"  Prêmio do lucro sobre o juro real (só o valor de hoje, sem série histórica "
+            f"comparável): lucro ÷ preço mediano {_num(ey, 2)}% − {TITULOS[chave].nome} "
+            f"{_num(jr.valor, 2)}% em {jr.data:%d/%m/%Y} = {premio} p.p. (mediana das 50 "
+            "mais negociadas, NÃO o Ibovespa; prêmio negativo = a renda fixa real paga mais "
+            "que o lucro corrente da ação mediana).")
+    return saida
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Montagem
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -375,15 +477,25 @@ def linhas_trajetoria(
     cdi: Callable[[], Mapping[date, float]] | None = None,
     bcb: Callable[[], tuple[Iterable[Mapping] | None, str]] | None = None,
     eua: Callable[[], tuple[Mapping[str, Mapping[date, float]] | None, str]] | None = None,
+    valuation: Callable[[], tuple[Mapping | None, str]] | None = None,
     hoje: date | None = None,
 ) -> list[str]:
     """Todas as linhas da seção; cada leitor é injetável e cada falha é nomeada."""
     hoje = hoje or date.today()
     saida = [CABECALHO]
+    resumos: dict[str, Resumo] = {}
     try:
-        saida += linhas_supabase(supabase() if supabase else None, hoje=hoje)
+        saida += linhas_supabase(supabase() if supabase else None, hoje=hoje,
+                                 resumos_out=resumos)
     except Exception as exc:  # noqa: BLE001
         saida.append(f"  Dólar, bolsa e Tesouro: falha na leitura ({_limpo(exc)}).")
+    try:
+        mercado, origem = valuation() if valuation else (None, "leitor ausente")
+        saida += (linhas_valuation_b3(mercado, resumos, origem=origem, hoje=hoje)
+                  if mercado is not None
+                  else [f"  {VALUATION_B3.nome}: indisponível ({origem})."])
+    except Exception as exc:  # noqa: BLE001
+        saida.append(f"  {VALUATION_B3.nome}: falha na leitura ({_limpo(exc)}).")
     try:
         saida.append(linha_cdi(cdi() if cdi else {}, hoje=hoje))
     except Exception as exc:  # noqa: BLE001

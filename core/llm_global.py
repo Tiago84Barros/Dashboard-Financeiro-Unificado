@@ -18,6 +18,7 @@ from typing import Iterable
 from core.contexto_mercado import REGRA_CADEIA_TRANSMISSAO, REGRA_CONTEXTO_MERCADO
 from core.inteligencia_ativos.veredito import REGRA_VEREDITO
 from core.llm_b3 import _chat_complete, _report_model
+from core.llm_ferramentas import FERRAMENTAS_MERCADO
 
 _HISTORICO_MAX = 10
 
@@ -84,4 +85,5 @@ def chat_com_portfolio_global(
     messages.append({"role": "user", "content": user_message})
 
     return _chat_complete(messages, temperature=0.25, json_mode=False,
-                          primary_model=model or _report_model())
+                          primary_model=model or _report_model(),
+                          ferramentas=FERRAMENTAS_MERCADO)

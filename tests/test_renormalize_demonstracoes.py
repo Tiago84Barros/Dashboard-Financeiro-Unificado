@@ -127,7 +127,7 @@ def test_cli_recalcula_indicadores_so_dos_atualizados(monkeypatch):
 
     chamadas = []
     monkeypatch.setattr(ig, "renormalize_demonstracoes",
-                        lambda t, lim: {**ig._new_progress(), "atualizados": ["BBDC4"]})
+                        lambda t, lim, forcar=False: {**ig._new_progress(), "atualizados": ["BBDC4"]})
     monkeypatch.setattr(ig, "reprocess_metrics",
                         lambda t, lim=None: chamadas.append(t) or {"indicadores": 12, "erros": 0})
     monkeypatch.setattr(sys, "argv", ["run_market_ingest.py", "renormalize-demonstracoes"])
@@ -141,10 +141,36 @@ def test_cli_sem_atualizado_nao_recalcula(monkeypatch):
 
     chamadas = []
     monkeypatch.setattr(ig, "renormalize_demonstracoes",
-                        lambda t, lim: {**ig._new_progress(), "atualizados": []})
+                        lambda t, lim, forcar=False: {**ig._new_progress(), "atualizados": []})
     monkeypatch.setattr(ig, "reprocess_metrics",
                         lambda t, lim=None: chamadas.append(t) or {})
     monkeypatch.setattr(sys, "argv", ["run_market_ingest.py", "renormalize-demonstracoes"])
 
     assert cli.main() == 0
     assert chamadas == []
+
+
+def test_forcar_regrava_o_que_ja_saiu_do_payload(monkeypatch):
+    # Correção do normalizador não muda o payload: sem forçar, a linha gravada
+    # dele nunca seria reescrita.
+    conn, _ = _patch(monkeypatch, [], {})
+
+    ig.renormalize_demonstracoes(["VIVA3"], forcar=True)
+
+    sql = next(s for s, _ in conn.executed if "brapi_raw_payloads" in s)
+    assert "s.raw_payload_id = u.id" not in sql
+    assert "ORDER BY ticker, fetched_at DESC, id DESC" in sql
+
+
+def test_cli_repassa_forcar(monkeypatch):
+    import run_market_ingest as cli
+
+    vistos = []
+    monkeypatch.setattr(ig, "renormalize_demonstracoes",
+                        lambda t, lim, forcar=False: vistos.append(forcar)
+                        or {**ig._new_progress(), "atualizados": []})
+    monkeypatch.setattr(sys, "argv", ["run_market_ingest.py",
+                                      "renormalize-demonstracoes", "--forcar"])
+
+    assert cli.main() == 0
+    assert vistos == [True]

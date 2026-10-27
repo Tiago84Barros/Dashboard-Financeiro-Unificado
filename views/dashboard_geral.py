@@ -410,30 +410,31 @@ def _render_dashboard_header(
         if parcial_ate else ""
     )
     st.markdown(_DASHBOARD_STYLES, unsafe_allow_html=True)
+    # Marcação numa linha só, sem recuo: com o HTML recuado, o chip parcial
+    # vazio deixava uma linha em branco, o Markdown encerrava o bloco de HTML
+    # ali e o resto do card saía como bloco de código.
     st.markdown(
-        f"""
-        <div class="dg-shell">
-          <section class="dg-hero" aria-labelledby="dg-page-title">
-            <div>
-              <div class="dg-eyebrow">Visão financeira consolidada</div>
-              <h1 class="dg-title" id="dg-page-title">Seu dinheiro, em perspectiva.</h1>
-              <div class="dg-subtitle">
-                Caixa, patrimônio e decisões de investimento reunidos em uma leitura
-                executiva — do mês atual ao histórico da carteira.
-              </div>
-            </div>
-            <div class="dg-hero-meta" aria-label="Contexto dos dados">
-              <span class="dg-chip">
-                <span class="dg-chip-dot" style="--chip-color:{escape(fonte_cor)}"></span>
-                {escape(fonte_label)}
-              </span>
-              <span class="dg-chip">Período&nbsp;·&nbsp;{escape(mes_ref)}</span>
-              {chip_parcial}
-              <span class="dg-chip">Atualizado&nbsp;·&nbsp;{atualizado_em.strftime("%d/%m/%Y")}</span>
-            </div>
-          </section>
-        </div>
-        """,
+        '<div class="dg-shell">'
+        '<section class="dg-hero" aria-labelledby="dg-page-title">'
+        '<div>'
+        '<div class="dg-eyebrow">Visão financeira consolidada</div>'
+        '<h1 class="dg-title" id="dg-page-title">Seu dinheiro, em perspectiva.</h1>'
+        '<div class="dg-subtitle">'
+        'Caixa, patrimônio e decisões de investimento reunidos em uma leitura '
+        'executiva — do mês atual ao histórico da carteira.'
+        '</div>'
+        '</div>'
+        '<div class="dg-hero-meta" aria-label="Contexto dos dados">'
+        '<span class="dg-chip">'
+        f'<span class="dg-chip-dot" style="--chip-color:{escape(fonte_cor)}"></span>'
+        f'{escape(fonte_label)}'
+        '</span>'
+        f'<span class="dg-chip">Período&nbsp;·&nbsp;{escape(mes_ref)}</span>'
+        f'{chip_parcial}'
+        f'<span class="dg-chip">Atualizado&nbsp;·&nbsp;{atualizado_em.strftime("%d/%m/%Y")}</span>'
+        '</div>'
+        '</section>'
+        '</div>',
         unsafe_allow_html=True,
     )
 
@@ -523,7 +524,8 @@ def _render_kpi_grid(
         _kpi_html(
             "Taxa de poupança",
             fmt_percentual(taxa, sinal=False),
-            f'Sobra do mês + aportes{" · no teto da renda" if ind["poupanca_no_teto"] else ""}'
+            f'Sobra do mês {escape(fmt_moeda(saldo))} + aportes {escape(fmt_moeda(investimentos))}'
+            f'{" · no teto da renda" if ind["poupanca_no_teto"] else ""}'
             f' · meta 30% · <strong style="color:{taxa_cor}">'
             f'{"atingida" if taxa >= 30 else "em acompanhamento"}</strong>',
             "%",
@@ -1015,6 +1017,9 @@ def _secao_resumo_modulos(
                     ("Receitas", fmt_moeda(receitas_mes), _COR_FLUXO),
                     ("Despesas", fmt_moeda(despesas_mes), _COR_NEGATIVO),
                     ("Saldo líquido", fmt_moeda(saldo_mes), cor_saldo_mes),
+                    # A taxa soma o aporte à sobra; sem ele visível, saldo
+                    # negativo ao lado de taxa positiva parece erro de conta.
+                    ("Aportes no mês", fmt_moeda(investimentos_mes), _COR_PATRIMONIO),
                     ("Taxa de poupança", fmt_percentual(taxa_poupanca, sinal=False), _COR_ALERTA if taxa_poupanca < 30 else _COR_FLUXO),
                 ],
                 _COR_FLUXO,
@@ -1490,39 +1495,38 @@ def _secao_fiis_sugeridos(port: list[dict] | None = None, salvo: bool = False) -
     with m4:
         st.markdown(_mini_metric("Tipo líder", f"{tipo_top[1] * 100:.0f}%", str(tipo_top[0]).capitalize(), _COR_INVEST), unsafe_allow_html=True)
 
-    tickers = ", ".join(p["ticker"] for p in port)
+    tickers = ", ".join(str(p["ticker"]) for p in port)
+    # Marcação numa linha só, sem recuo: interpolação sozinha numa linha do HTML
+    # recuado vira linha em branco quando vazia, e o Markdown passa a mostrar o
+    # resto do card como bloco de código (mesmo defeito do cabeçalho).
     c1, c2 = st.columns([1.2, 0.8], gap="medium")
     with c1:
         st.markdown(
-            f"""
-            <div style="background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;
-                        padding:16px 18px;">
-                <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
-                            color:var(--app-info);font-weight:800;margin-bottom:10px;">FIIs selecionados</div>
-                <div style="font-size:1.05rem;font-weight:850;color:var(--app-text);line-height:1.55;">
-                    {tickers}
-                </div>
-                <div style="font-size:0.76rem;color:var(--app-muted);margin-top:10px;">
-                    Diversificada por tipo (tijolo · papel · fof · híbrido), com teto por FII e por tipo.
-                </div>
-            </div>
-            """,
+            '<div style="background:var(--app-surface);border:1px solid var(--app-border);'
+            'border-radius:12px;padding:16px 18px;">'
+            '<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;'
+            'color:var(--app-info);font-weight:800;margin-bottom:10px;">FIIs selecionados</div>'
+            '<div style="font-size:1.05rem;font-weight:850;color:var(--app-text);line-height:1.55;">'
+            f'{escape(tickers)}'
+            '</div>'
+            '<div style="font-size:0.76rem;color:var(--app-muted);margin-top:10px;">'
+            'Diversificada por tipo (tijolo · papel · fof · híbrido), com teto por FII e por tipo.'
+            '</div>'
+            '</div>',
             unsafe_allow_html=True,
         )
     with c2:
         rows_html = ""
         for p in port[:5]:
             seg = str(p.get("segmento") or p.get("tipo") or "")[:18]
-            rows_html += _linha_kv(f"{p['ticker']} · {seg}", f"{p['peso'] * 100:.1f}%", _COR_FLUXO)
+            rows_html += _linha_kv(escape(f"{p['ticker']} · {seg}"), f"{p['peso'] * 100:.1f}%", _COR_FLUXO)
         st.markdown(
-            f"""
-            <div style="background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;
-                        padding:16px 18px;">
-                <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
-                            color:var(--app-primary);font-weight:800;margin-bottom:10px;">Pesos sugeridos</div>
-                {rows_html}
-            </div>
-            """,
+            '<div style="background:var(--app-surface);border:1px solid var(--app-border);'
+            'border-radius:12px;padding:16px 18px;">'
+            '<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;'
+            'color:var(--app-primary);font-weight:800;margin-bottom:10px;">Pesos sugeridos</div>'
+            f'{rows_html}'
+            '</div>',
             unsafe_allow_html=True,
         )
 

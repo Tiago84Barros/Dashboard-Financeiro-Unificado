@@ -267,10 +267,12 @@ def _data_curta(valor: str | None) -> str:
 
 
 def render() -> None:
-    from core.user_context import is_admin
+    """O painel de restrições, para qualquer conta.
 
-    if not is_admin():
-        return
+    Era exclusivo de quem administra até 12/10/2026. O que ele mostra —
+    limitação de dado, erro e detalhe técnico que saíram das telas de uso — já
+    descreve o app inteiro, não a conta de ninguém: nada aqui é pessoal.
+    """
     render_painel(_carregar())
 
 

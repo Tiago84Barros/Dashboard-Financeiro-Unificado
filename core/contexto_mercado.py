@@ -114,7 +114,12 @@ REGRA_CADEIA_TRANSMISSAO = (
     "sozinho: vem com os anos da janela, e o de série com histórico curto não "
     "sustenta 'recorde', 'máxima histórica' nem 'ciclo longo'. A cadeia explica "
     "o cenário: não substitui nem contradiz o veredito ou a decisão que o "
-    "contexto já traz."
+    "contexto já traz. Quando o contexto trouxer a seção CENÁRIOS ANÁLOGOS, "
+    "a cadeia vem precedida de uma terceira seção, **Da última vez**: a "
+    "'Síntese para citar' de lá, copiada inteira, com o episódio mais recente, "
+    "o mais parecido, o n e o contraponto de todos os meses. Um episódio "
+    "sozinho é um caso, não um padrão; nunca descreva 'da última vez' de "
+    "memória."
 )
 
 
@@ -466,7 +471,41 @@ def _trajetoria() -> list[str]:
     from core import trajetoria_mercado as tm
 
     return tm.linhas_trajetoria(supabase=_supabase, cdi=_cdi_publicado,
-                                bcb=_bcb_para_trajetoria, eua=_series_eua)
+                                bcb=_bcb_para_trajetoria, eua=_series_eua,
+                                valuation=_valuation_publicado)
+
+
+def _valuation_publicado():
+    """P/L mediano do mercado, do arquivo que a rotina noturna publica."""
+    from core.inteligencia_ativos.fontes_valuation import arquivo
+
+    art = arquivo()
+    if not art:
+        return None, "arquivo valuation_historico ausente ou ilegível"
+    if "mercado_b3" not in art:
+        return None, "arquivo valuation_historico ainda sem a série mercado_b3"
+    gerado = str(art.get("gerado_em") or "")[:10]
+    try:
+        gerado = datetime.fromisoformat(gerado).strftime("%d/%m/%Y")
+    except ValueError:
+        gerado = gerado or "data desconhecida"
+    return art["mercado_b3"], f"gerado em {gerado}"
+
+
+def _cenarios_analogos() -> list[str]:
+    """Seção CENÁRIOS ANÁLOGOS: o painel publicado, casado com o mês de hoje.
+
+    Sempre do arquivo (ver ``scripts/publish_cenarios_analogos.py``): o painel
+    junta armazém e arquivos que a produção não alcança juntos. Falha vira
+    linha que nomeia a falha.
+    """
+    from core.memoria_mercado import cenarios_macro as cmac
+
+    try:
+        carga, origem = cmac.carregar_publicado()
+        return cmac.linhas_cenarios(carga, origem)
+    except Exception as exc:  # noqa: BLE001
+        return cmac.linhas_cenarios(None, f"falha na leitura: {_limpo(exc, 120)}")
 
 
 def _cdi_publicado():
@@ -915,6 +954,7 @@ def bloco_contexto_mercado(
     partes += _macro_brasil()
     partes += _macro_local()
     partes += [""] + _trajetoria_cache()
+    partes += [""] + _cenarios_analogos()
 
     if noticias_gerais:
         partes += ["", "NOTICIÁRIO GERAL DO MERCADO:"]

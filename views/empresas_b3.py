@@ -51,6 +51,7 @@ from design.componentes import (
 )  # KPIs em cards CSS (visual coeso)
 from design.lacunas import aviso_lacuna, detalhe_tecnico
 from design.market_companies import (
+    NAV_ITEMS_B3,
     render_company_logo,
     render_market_css,
     render_market_tabs,
@@ -6833,7 +6834,8 @@ def render() -> None:
             "pode divergir/estar desatualizada em relação às demais telas.",
             codigo="tela.b3.taxonomia_fonte_legada")
 
-    active = render_market_tabs(state_key="b3_active_tab", key_prefix="b3")
+    active = render_market_tabs(state_key="b3_active_tab", key_prefix="b3",
+                                itens=NAV_ITEMS_B3)
 
     if active == 0:
         _tab_empresas(df_set)
@@ -6845,7 +6847,15 @@ def render() -> None:
         from views import portfolio_b3
 
         portfolio_b3.render(show_header=False)
-    else:
+    elif active == 4:
         from views import analise_portfolio_b3
 
         analise_portfolio_b3.render(show_header=False)
+    elif active == 5:
+        from views import previsao_lucros_b3
+
+        previsao_lucros_b3.render(show_header=False)
+    else:
+        from views import carteira20_b3
+
+        carteira20_b3.render(show_header=False, cadastro=df_set)

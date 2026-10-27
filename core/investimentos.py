@@ -53,7 +53,9 @@ _SETOR_SCHEMA:   { nome, valor_mercado, pct_carteira }
 import logging
 import re
 from collections import defaultdict
+from types import SimpleNamespace
 
+from core import cotacao_viva
 from core.categorias import SQL_INVESTIMENTO
 from core.classe_exterior import classe_ativo_usd, classe_por_evidencia
 from core.config import settings
@@ -341,8 +343,16 @@ _SQL_POSICOES_SNAPSHOT = """
                     -- ordem e por autoridade da fonte, nao por antiguidade
                     -- do importador:
                     --   tesouro_direto       -- unica fonte com o titulo
-                    --   b3_posicao_detalhada -- custodia central, TODAS as
-                    --                           corretoras
+                    --   b3_posicao           -- custodia central, TODAS as
+                    --                           corretoras, com a
+                    --                           quantidade de cada classe
+                    --                           numa coluna propria
+                    --   b3_posicao_detalhada -- tambem central, mas sem
+                    --                           coluna de quantidade para
+                    --                           FII: ela sai de
+                    --                           saldo/cotacao. Numero
+                    --                           derivado perde para numero
+                    --                           lido no empate
                     --   xp_consolidado       -- uma corretora
                     --   xp_positions         -- legado
                     -- ELSE existe so para nao quebrar com dado antigo. Uma
@@ -352,10 +362,11 @@ _SQL_POSICOES_SNAPSHOT = """
                     -- esta nomeado aqui.
                     CASE pps.effective_source_table
                         WHEN 'tesouro_direto' THEN 0
-                        WHEN 'b3_posicao_detalhada' THEN 1
-                        WHEN 'xp_consolidado' THEN 2
-                        WHEN 'xp_positions' THEN 3
-                        ELSE 4
+                        WHEN 'b3_posicao' THEN 1
+                        WHEN 'b3_posicao_detalhada' THEN 2
+                        WHEN 'xp_consolidado' THEN 3
+                        WHEN 'xp_positions' THEN 4
+                        ELSE 5
                     END,
                     pps.source_system,
                     pps.effective_source_table
@@ -551,17 +562,23 @@ _SQL_POSICOES_EXTRAS_FORA_SNAPSHOT = """
 """
 
 
+# Foto de custódia = extrato da B3 ou consolidado da corretora. A do Tesouro
+# (td-snap-, inclusive as seis linhas antigas rotuladas xp_consolidado) não
+# conta: ela não diz nada sobre ações e FIIs.
+_SQL_TEM_FOTO_DE_CUSTODIA = """
+    SELECT EXISTS (
+        SELECT 1
+        FROM   portfolio_position_snapshots
+        WHERE  user_id = :uid
+          AND  COALESCE(source_id, '') NOT LIKE 'td-snap-%'
+          AND  source_table IN ('b3_posicao_detalhada', 'xp_consolidado', 'xp_positions')
+    )
+"""
+
+
 def _get_usd_brl_live() -> float | None:
-    """Tenta buscar USD/BRL via yfinance; ausência permanece explícita."""
-    try:
-        import yfinance as yf
-        df = yf.download("USDBRL=X", period="3d", interval="1d",
-                         auto_adjust=True, progress=False)
-        if not df.empty:
-            return float(df["Close"].dropna().iloc[-1])
-    except Exception:
-        pass
-    return None
+    """USD/BRL ao vivo (cache de 15 min em core.cotacao_viva); ausência explícita."""
+    return cotacao_viva.cambio_ao_vivo()
 
 
 def _sem_cambio_historico(posicoes: list) -> list[str]:
@@ -701,6 +718,16 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list,
         return
 
     carteira["posicoes"].extend(novas)
+    _recalcular_totais_carteira(carteira)
+    novos_stale = sum(1 for p in novas if p.get("cotacao_fonte") == "stale")
+    if novos_stale:
+        carteira.setdefault("avisos_dados", []).append(
+            f"{novos_stale} posição(ões) USD usam cotação desatualizada com sinalização explícita."
+        )
+
+
+def _recalcular_totais_carteira(carteira: dict) -> None:
+    """Refaz totais, pesos e agregados depois que entram posições novas."""
     carteira["posicoes"].sort(key=lambda p: p["valor_mercado"], reverse=True)
 
     ti_total = sum(p["total_investido"] for p in carteira["posicoes"])
@@ -729,13 +756,46 @@ def _adicionar_extras_ao_snapshot(carteira: dict, extra_rows: list,
     )
     carteira["data_referencia_min"] = data_ref_min
     carteira["data_referencia_max"] = data_ref_max
-    novos_stale = sum(1 for p in novas if p.get("cotacao_fonte") == "stale")
-    if novos_stale:
-        carteira.setdefault("avisos_dados", []).append(
-            f"{novos_stale} posição(ões) USD usam cotação desatualizada com sinalização explícita."
-        )
+    carteira["diferenca_reais"] = round(vm_total - ti_total, 2)
     carteira["por_classe"] = _agregar_por_classe(carteira["posicoes"])
     carteira["por_setor"]  = _agregar_por_setor(carteira["posicoes"])
+
+
+def _adicionar_recalculo_ao_snapshot(carteira: dict, rows: list,
+                                     fx_compra: dict) -> None:
+    """Renda variável do recálculo para quem só tem a foto do Tesouro.
+
+    O snapshot manda na carteira assim que existe uma linha dele -- e a foto
+    do Tesouro Direto é uma linha. Quem subiu o relatório do Tesouro mas nunca
+    o extrato de custódia da B3 (nem o consolidado da corretora) ficava só com
+    os títulos públicos na tela: as ações e os FIIs, que para essa pessoa só
+    existem no recálculo das negociações, sumiam. Aqui eles voltam, menos o
+    que a foto já cobre pelo ticker-base. USD fica com
+    `_adicionar_extras_ao_snapshot`.
+
+    Só é chamada quando NÃO há foto de custódia: com ela, o recálculo é o que
+    a custódia desmente (posição vendida em outra corretora continua nele).
+    """
+    if not rows:
+        return
+    cobertos = {_base_ticker(p.get("ticker") or "") for p in carteira.get("posicoes", [])}
+    brl = [r for r in rows
+           if (r.currency or "BRL").upper() != "USD"
+           and float(r.quantity or 0) > 0.000001
+           and _base_ticker(r.ticker or "") not in cobertos]
+    novas, avisos = _posicoes_do_recalculo(brl, fx_compra)
+    if not novas:
+        return
+    carteira["posicoes"].extend(novas)
+    _recalcular_totais_carteira(carteira)
+    if any(r.current_price is not None for r in brl):
+        carteira["cotacoes_disponiveis"] = True
+    carteira.setdefault("avisos_dados", []).extend(avisos)
+    n_stale = sum(1 for p in novas if p.get("cotacao_fonte") == "stale")
+    if n_stale:
+        carteira["avisos_dados"].append(
+            f"{n_stale} cotação(ões) excedem o limite de frescor e foram marcadas como desatualizadas."
+        )
 
 
 def _carteira_snapshot_consolidada(conn, owner: str, rows: list) -> dict:
@@ -751,16 +811,35 @@ def _carteira_snapshot_consolidada(conn, owner: str, rows: list) -> dict:
 
     tx_costs = _calcular_custos_transacoes(conn, owner)
     fx_compra = cambio_medio_de_aquisicao(conn, owner)
-    carteira = _montar_carteira_snapshot(
-        rows, tx_costs, listar_precos_manuais(owner, conn)
-    )
-    # Adiciona posições que existem em portfolio_positions mas NÃO
-    # no snapshot XP (ex: ETFs Nomad — SPY, IEFA — importados via PDF).
+    # Posições que existem em portfolio_positions mas NÃO no snapshot XP
+    # (ex: ETFs Nomad — SPY, IEFA — importados via PDF).
     extra_rows = conn.execute(
         text(_SQL_POSICOES_EXTRAS_FORA_SNAPSHOT), {"uid": owner}
     ).fetchall()
+    # Sem extrato de custódia, ações e FIIs só existem no recálculo.
+    recalculo = None
+    if not conn.execute(text(_SQL_TEM_FOTO_DE_CUSTODIA), {"uid": owner}).scalar():
+        recalculo = conn.execute(text(_SQL_POSICOES), {"uid": owner}).fetchall()
+
+    # Uma busca ao vivo para as três listas: o preço e o câmbio do banco são
+    # de ontem (ou de antes), e o card de câmbio da tela é de agora.
+    cotacoes = cotacao_viva.buscar(cotacao_viva.simbolos(rows, extra_rows, recalculo))
+    rows, n_snap = cotacao_viva.aplicar(rows, "live_price", "live_timestamp", cotacoes)
+    extra_rows, n_extra = cotacao_viva.aplicar(
+        extra_rows, "current_price", "current_price_timestamp", cotacoes)
+    n_recalc = 0
+    if recalculo is not None:
+        recalculo, n_recalc = cotacao_viva.aplicar(
+            recalculo, "current_price", "current_price_timestamp", cotacoes)
+
+    carteira = _montar_carteira_snapshot(
+        rows, tx_costs, listar_precos_manuais(owner, conn)
+    )
     if extra_rows:
         _adicionar_extras_ao_snapshot(carteira, extra_rows, fx_compra)
+    if recalculo is not None:
+        _adicionar_recalculo_ao_snapshot(carteira, recalculo, fx_compra)
+    carteira["cotacao_viva"] = cotacao_viva.resumo(cotacoes, n_snap + n_extra + n_recalc)
     return carteira
 
 
@@ -808,21 +887,75 @@ def _carteira_real() -> dict:
         rows = conn.execute(text(_SQL_POSICOES), {"uid": owner}).fetchall()
         fx_compra = cambio_medio_de_aquisicao(conn, owner)
 
+    cotacoes = cotacao_viva.buscar(cotacao_viva.simbolos(rows))
+    rows, n_ao_vivo = cotacao_viva.aplicar(
+        rows, "current_price", "current_price_timestamp", cotacoes)
+
     if not rows:
         raise RuntimeError(
             "Nenhuma posição encontrada em portfolio_positions para este usuário. "
             "Verifique OWNER_USER_ID e importe as negociações (recompute_for_user em data_pipeline/importers/investments/positions.py recalcula as posições)."
         )
 
+    cotacoes_disponiveis = any(r.current_price is not None for r in rows)
+    posicoes, avisos_dados = _posicoes_do_recalculo(rows, fx_compra)
+    total_investido = sum(p["total_investido"] for p in posicoes)
+    total_mercado   = sum(p["valor_mercado"] for p in posicoes)
+
+    # Preenche pct_carteira com base no total_mercado consolidado
+    base = total_mercado if total_mercado > 0 else total_investido
+    n_live = sum(1 for p in posicoes if p.get("cotacao_fonte") == "live")
+    n_stale = sum(1 for p in posicoes if p.get("cotacao_fonte") == "stale")
+    for p in posicoes:
+        p["pct_carteira"] = p["valor_mercado"] / base * 100 if base > 0 else 0.0
+
+    diferenca_total = round(total_mercado - total_investido, 2)
+    rentabilidade_total = round(
+        diferenca_total / total_investido * 100, 2
+    ) if total_investido > 0 else 0.0
+    data_ref_min, data_ref_max = intervalo_referencia(
+        [p.get("data_referencia") for p in posicoes]
+    )
+    if n_stale:
+        avisos_dados.append(
+            f"{n_stale} cotação(ões) excedem o limite de frescor e foram marcadas como desatualizadas."
+        )
+
+    return {
+        "total_investido":         round(total_investido, 2),
+        "total_mercado":           round(total_mercado, 2),
+        "diferenca_reais":         diferenca_total,
+        "rentabilidade_total_pct": rentabilidade_total,
+        "rentabilidade_total_disponivel": not _sem_cambio_historico(posicoes),
+        "posicoes_sem_cambio_historico": _sem_cambio_historico(posicoes),
+        "num_ativos":              len(posicoes),
+        "cotacoes_disponiveis":    cotacoes_disponiveis,
+        "n_cotacoes_live":         n_live,
+        "n_cotacoes_stale":        n_stale,
+        "data_referencia_min":     data_ref_min,
+        "data_referencia_max":     data_ref_max,
+        "posicoes":                posicoes,
+        "por_classe":              _agregar_por_classe(posicoes),
+        "por_setor":               _agregar_por_setor(posicoes),
+        "avisos_dados":            avisos_dados,
+        "cotacao_viva":            cotacao_viva.resumo(cotacoes, n_ao_vivo),
+        # data_source injetado pelo caller
+    }
+
+
+def _posicoes_do_recalculo(rows: list, fx_compra: dict) -> tuple[list, list]:
+    """Posições lidas de portfolio_positions (o recálculo das negociações).
+
+    Uma por ticker-base, já convertidas para BRL. Devolve também os avisos
+    das posições USD que ficaram fora por falta de câmbio. Serve ao caminho
+    de reserva de `_carteira_real` (sem snapshot) e à renda variável de quem
+    só tem a foto do Tesouro (`_adicionar_recalculo_ao_snapshot`).
+    """
     def _f(v) -> float:
         return float(v) if v is not None else 0.0
 
-    cotacoes_disponiveis = any(r.current_price is not None for r in rows)
-
-    total_investido = 0.0
-    total_mercado   = 0.0
-    posicoes        = []
-    avisos_dados    = []
+    posicoes: list[dict] = []
+    avisos_dados: list[str] = []
 
     for r in rows:
         qty    = _f(r.quantity)
@@ -876,8 +1009,6 @@ def _carteira_real() -> dict:
             classe_raw = classe_ativo_usd(r.ticker, r.asset_name, r.asset_class)
         setor_raw  = r.sector or "other"
 
-        total_investido += ti
-        total_mercado   += vm
 
         cotacao_ts = getattr(r, "current_price_timestamp", None)
         status_cotacao = classificar_cotacao(cotacao_ts) if r.current_price is not None else "missing"
@@ -914,46 +1045,7 @@ def _carteira_real() -> dict:
             "cor":               _CLASS_COR.get(classe_raw, "#718096"),
         })
 
-    posicoes = _juntar_fracionario_posicoes(posicoes)
-
-    # Preenche pct_carteira com base no total_mercado consolidado
-    base = total_mercado if total_mercado > 0 else total_investido
-    n_live = sum(1 for p in posicoes if p.get("cotacao_fonte") == "live")
-    n_stale = sum(1 for p in posicoes if p.get("cotacao_fonte") == "stale")
-    for p in posicoes:
-        p["pct_carteira"] = p["valor_mercado"] / base * 100 if base > 0 else 0.0
-
-    diferenca_total = round(total_mercado - total_investido, 2)
-    rentabilidade_total = round(
-        diferenca_total / total_investido * 100, 2
-    ) if total_investido > 0 else 0.0
-    data_ref_min, data_ref_max = intervalo_referencia(
-        [p.get("data_referencia") for p in posicoes]
-    )
-    if n_stale:
-        avisos_dados.append(
-            f"{n_stale} cotação(ões) excedem o limite de frescor e foram marcadas como desatualizadas."
-        )
-
-    return {
-        "total_investido":         round(total_investido, 2),
-        "total_mercado":           round(total_mercado, 2),
-        "diferenca_reais":         diferenca_total,
-        "rentabilidade_total_pct": rentabilidade_total,
-        "rentabilidade_total_disponivel": not _sem_cambio_historico(posicoes),
-        "posicoes_sem_cambio_historico": _sem_cambio_historico(posicoes),
-        "num_ativos":              len(posicoes),
-        "cotacoes_disponiveis":    cotacoes_disponiveis,
-        "n_cotacoes_live":         n_live,
-        "n_cotacoes_stale":        n_stale,
-        "data_referencia_min":     data_ref_min,
-        "data_referencia_max":     data_ref_max,
-        "posicoes":                posicoes,
-        "por_classe":              _agregar_por_classe(posicoes),
-        "por_setor":               _agregar_por_setor(posicoes),
-        "avisos_dados":            avisos_dados,
-        # data_source injetado pelo caller
-    }
+    return _juntar_fracionario_posicoes(posicoes), avisos_dados
 
 
 def _juntar_fracionario_posicoes(posicoes: list) -> list:
@@ -1803,10 +1895,11 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
                     pps.report_date DESC,
                     CASE pps.effective_source_table
                         WHEN 'tesouro_direto' THEN 0
-                        WHEN 'b3_posicao_detalhada' THEN 1
-                        WHEN 'xp_consolidado' THEN 2
-                        WHEN 'xp_positions' THEN 3
-                        ELSE 4
+                        WHEN 'b3_posicao' THEN 1
+                        WHEN 'b3_posicao_detalhada' THEN 2
+                        WHEN 'xp_consolidado' THEN 3
+                        WHEN 'xp_positions' THEN 4
+                        ELSE 5
                     END,
                     pps.source_system,
                     pps.effective_source_table
@@ -2190,6 +2283,18 @@ def _evolucao_real() -> dict:
                     _carteira_snapshot_consolidada(conn, owner, current_rows)
                     if current_rows else None
                 )
+                # Sem foto de custodia (so o relatorio do Tesouro), as fotos dao
+                # um ponto so; a carteira e remontada mes a mes pelas
+                # negociacoes e movimentacoes.
+                reconstruidos = None
+                if not conn.execute(text(_SQL_TEM_FOTO_DE_CUSTODIA), {"uid": owner}).scalar():
+                    reconstruidos = _pontos_reconstruidos(conn, owner)
+                    if reconstruidos:
+                        snap_rows = [
+                            SimpleNamespace(mes=p["mes"], valor_mercado=p["valor_mercado"],
+                                            valor_investido_snapshot=p["valor_investido"])
+                            for p in reconstruidos
+                        ]
                 try:
                     exterior = _exterior_nas_datas(conn, owner, [r.mes for r in snap_rows])
                     exterior_ok = True
@@ -2200,6 +2305,8 @@ def _evolucao_real() -> dict:
                 d = _montar_evolucao_snapshot(snap_rows, div_rows, current_totals, tx_rows,
                                               exterior)
                 d["exterior_historico_ok"] = exterior_ok
+                if reconstruidos:
+                    _anotar_reconstrucao(d, reconstruidos)
                 return d
         tx_rows   = conn.execute(text(_SQL_EVOLUCAO_TX),    {"uid": owner}).fetchall()
         div_rows  = conn.execute(text(_SQL_EVOLUCAO_DIV),   {"uid": owner}).fetchall()
@@ -2249,6 +2356,31 @@ def _evolucao_real() -> dict:
         "total_mercado":    round(total_mkt_atual, 2),
         "total_dividendos": round(cum_div, 2),
     }
+
+
+def _pontos_reconstruidos(conn, owner: str) -> list[dict] | None:
+    from core import evolucao_reconstruida
+
+    # Savepoint: consulta que falha aqui nao pode abortar a transacao que o
+    # resto da curva (exterior, proventos) ainda vai usar.
+    try:
+        with conn.begin_nested():
+            return evolucao_reconstruida.reconstruir_do_banco(conn, owner)
+    except Exception as exc:  # sem reconstrucao, fica a curva das fotos
+        logger.warning("[investimentos] historico reconstruido indisponivel (%s).",
+                       type(exc).__name__)
+        return None
+
+
+def _anotar_reconstrucao(d: dict, pontos: list[dict]) -> None:
+    """Procedencia da curva remontada e o que entrou pelo custo em cada mes."""
+    por_mes = {p["mes"].strftime("%Y-%m"): p for p in pontos}
+    for s in d.get("snapshots", []):
+        p = por_mes.get(s["mes_str"])
+        s["sem_preco"] = list(p["sem_preco"]) if p else []
+        s["a_custo"] = list(p["a_custo"]) if p else []
+    d["procedencia"] = "negociacoes"
+    d["tesouro_historico_ok"] = all(p.get("tesouro_ok", True) for p in pontos)
 
 
 def _exterior_nas_datas(conn, owner: str, datas: list) -> dict:
