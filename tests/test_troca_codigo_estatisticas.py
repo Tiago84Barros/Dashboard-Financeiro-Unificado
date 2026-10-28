@@ -14,8 +14,8 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import create_engine, text
 
-from core import market_read
-from views.portfolio_b3 import _PREGOES_MES, _load_adtv
+from core import b3_troca_codigo, market_read
+from views.portfolio_b3 import _PREGOES_MES, _load_adtv, _load_volume_mensal_historico
 
 _TROCA = (("ELET3", "AXIA3"),)
 
@@ -70,6 +70,13 @@ def _barra(engine, ticker, meses_atras, giro):
                      {"t": ticker, "k": meses_atras, "g": giro})
 
 
+def _pregao(engine, ticker, data, close, volume):
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO market.historical_prices (ticker, date, close, volume) "
+                          "VALUES (:t, :d, :c, :v)"),
+                     {"t": ticker, "d": data, "c": close, "v": volume})
+
+
 def _exercicios(engine, ticker, anos):
     with engine.begin() as conn:
         for ano in anos:
@@ -115,6 +122,35 @@ def test_giro_diario_tira_a_mediana_da_fita_unida(banco):
     assert giro["AXIA3"] == pytest.approx(210e6 / market_read._PREGOES_POR_MES)
     assert "ELET3" not in giro
     assert market_read.load_giro_diario.__wrapped__()["AXIA3"] == pytest.approx(1e6)
+
+
+def test_volume_mensal_soma_o_mes_da_troca_nas_duas_fitas(banco):
+    # a elegibilidade por época tira a mediana destes meses: no mês da troca
+    # o pregão do antigo e o do atual são dias diferentes e somam
+    _pregao(banco, "ELET3", "2025-02-27", 30, 0.7e6)    # R$ 21 mi, mês só do antigo
+    _pregao(banco, "ELET3", "2025-03-03", 40, 0.6e6)    # R$ 24 mi
+    _pregao(banco, "ELET3", "2025-03-14", 45, 0.4e6)    # R$ 18 mi
+    _pregao(banco, "AXIA3", "2025-03-17", 42, 0.5e6)    # R$ 21 mi
+    _pregao(banco, "ELET3", "2025-04-01", 99, 1e6)      # colide com a do atual: sai
+    _pregao(banco, "AXIA3", "2025-04-01", 50, 1.26e6)   # R$ 63 mi
+
+    def _meses(df):
+        return {(r.ticker, str(r.mes)): (float(r.financeiro), r.fechamento)
+                for r in df.itertuples()}
+
+    unido = _load_volume_mensal_historico.__wrapped__(2025, trocas=_TROCA)
+    assert _meses(unido) == {
+        ("AXIA3", "2025-02-01"): (pytest.approx(21e6), 30),
+        ("AXIA3", "2025-03-01"): (pytest.approx(63e6), 42),
+        ("AXIA3", "2025-04-01"): (pytest.approx(63e6), 50),
+    }
+
+    # sem a troca, cada código fica com o próprio mês; dobrar esses totais
+    # prontos (o caminho antigo) deixava o mês da troca com R$ 21 mi
+    separado = _load_volume_mensal_historico.__wrapped__(2025)
+    assert _meses(separado)[("ELET3", "2025-03-01")][0] == pytest.approx(42e6)
+    dobrado = b3_troca_codigo.dobrar_linhas(separado, dict(_TROCA))
+    assert _meses(dobrado)[("AXIA3", "2025-03-01")][0] == pytest.approx(21e6)
 
 
 def test_anos_de_balanco_somam_as_duas_fitas(banco):

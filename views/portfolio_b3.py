@@ -257,12 +257,18 @@ def _load_adtv(meses: int = 6,
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _load_volume_mensal_historico(desde_ano: int) -> pd.DataFrame:
+def _load_volume_mensal_historico(desde_ano: int,
+                                  trocas: tuple[tuple[str, str], ...] = ()) -> pd.DataFrame:
     """Volume financeiro mensal (R$) e último fechamento do mês por ticker.
 
     Desde ``desde_ano`` - 1. Alimenta a elegibilidade por ÉPOCA
     (core.b3_universo_pit): o piso de liquidez e o de tamanho de hoje não dizem
     se o papel era negociável, nem se era grande, no ano da decisão.
+
+    ``trocas`` ((antigo, atual), ...) une a fita dos dois códigos ANTES de somar
+    o mês, como em ``_load_adtv``: no mês da troca, R$ 42 mi sob o antigo e
+    R$ 21 mi sob o atual são R$ 63 mi, não os R$ 21 mi que sobrariam dobrando
+    os totais prontos. Na mesma data fica a barra do atual.
     """
     from sqlalchemy import text
 
@@ -271,21 +277,29 @@ def _load_volume_mensal_historico(desde_ano: int) -> pd.DataFrame:
     eng = get_engine()
     if eng is None:
         raise LiquidezDataError("conexão com o banco indisponível")
-    query = text("""
-        SELECT ticker,
+    query = text(f"""
+        WITH barras AS (
+            SELECT DISTINCT ON (dono, date) dono, date, preco, volume
+            FROM (SELECT {_troca.sql_dono()} AS dono,
+                         {_troca.sql_ticker()} AS tk, date,
+                         COALESCE(close, adjusted_close) AS preco, volume
+                  FROM market.historical_prices
+                  WHERE volume IS NOT NULL AND volume > 0
+                    AND COALESCE(close, adjusted_close) IS NOT NULL
+                    AND date >= make_date(:ano, 1, 1)) b
+            ORDER BY dono, date, (tk = dono) DESC
+        )
+        SELECT dono AS ticker,
                date_trunc('month', date)::date AS mes,
-               SUM(COALESCE(close, adjusted_close) * volume) AS financeiro,
-               (ARRAY_AGG(COALESCE(close, adjusted_close)
-                          ORDER BY date DESC))[1] AS fechamento
-        FROM market.historical_prices
-        WHERE volume IS NOT NULL AND volume > 0
-          AND COALESCE(close, adjusted_close) IS NOT NULL
-          AND date >= make_date(:ano, 1, 1)
+               SUM(preco * volume) AS financeiro,
+               (ARRAY_AGG(preco ORDER BY date DESC))[1] AS fechamento
+        FROM barras
         GROUP BY 1, 2
     """)
     try:
         with eng.connect() as conn:
-            rows = conn.execute(query, {"ano": int(desde_ano) - 1}).fetchall()
+            rows = conn.execute(query, {"ano": int(desde_ano) - 1,
+                                        "trocas": _troca.trocas_json(trocas)}).fetchall()
     except Exception as exc:
         raise LiquidezDataError(
             f"consulta do volume histórico falhou ({type(exc).__name__})"
@@ -3186,7 +3200,7 @@ def render(show_header: bool = True) -> None:
         # fica o código atual, e o dado que ainda mora no antigo (o preço de
         # antes da troca) é dobrado nele. ON/PN/Unit da mesma empresa seguem
         # separadas — não são troca (core.b3_troca_codigo). O que é estatística
-        # da fita (anos de balanço, mediana de giro) recebe as trocas e une as
+        # da fita (anos de balanço, mediana de giro, volume do mês) recebe as trocas e une as
         # duas fitas no SQL: dobrar o número pronto contaria max(8, 3) anos.
         df_set, _mapa_troca = _troca.deduplicar_por_empresa(df_set)
         _trocas       = tuple(sorted(_mapa_troca.items()))
@@ -3340,8 +3354,7 @@ def render(show_header: bool = True) -> None:
     _elegib_pit: dict[int, dict] | None = None
     _parados_hoje: set[str] = set()
     try:
-        _vol_hist = _troca.dobrar_linhas(
-            _load_volume_mensal_historico(int(ano_inicio)), _mapa_troca)
+        _vol_hist = _load_volume_mensal_historico(int(ano_inicio), trocas=_trocas)
         # Só o universo desta tela: a referência do "parado" é o último mês com
         # negócio no quadro, e market.historical_prices também traz FII. Se a
         # ingestão de ações atrasar enquanto a de FII segue em dia, a régua
