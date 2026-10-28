@@ -13,7 +13,6 @@ import pytest
 
 from core import b3_troca_codigo as tc
 
-
 # ── Mapa de trocas ───────────────────────────────────────────────────────────
 
 

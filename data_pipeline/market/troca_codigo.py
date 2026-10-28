@@ -36,8 +36,14 @@ from datetime import datetime, timezone
 
 from sqlalchemy import text
 
-from core.b3_troca_codigo import (MOTIVO_TROCA, PARES_CONHECIDOS, escolher_classificacao,
-                                  fechar_cadeias, mesma_classe, normalizar)
+from core.b3_troca_codigo import (
+    MOTIVO_TROCA,
+    PARES_CONHECIDOS,
+    escolher_classificacao,
+    fechar_cadeias,
+    mesma_classe,
+    normalizar,
+)
 from data_pipeline.market.repository import _NATURAL_KEY
 
 logger = logging.getLogger(__name__)
