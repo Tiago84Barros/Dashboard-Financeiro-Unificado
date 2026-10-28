@@ -206,11 +206,14 @@ _LPA_ON = ("basicEarningsPerCommonShare", "dilutedEarningsPerCommonShare")
 _LPA_PN = ("basicEarningsPerPreferredShare", "dilutedEarningsPerPreferredShare")
 # Campos já em reais por ação.
 _LPA_REAIS = ("earningsPerShare", "basicEarningsPerShare", "dilutedEarningsPerShare")
-# Janela (em log10) para casar uma razão LPA/implícito com 1, 1000 ou 1e6, e a
-# faixa em que um exercício isolado está por lote de mil ações (mesma ideia de
-# b3_saidas.LOTE_DE_MIL, aqui medida contra o lucro/ações do próprio payload).
+# Janela (em log10) para casar uma razão LPA/implícito com 1, 1000 ou 1e6, e as
+# faixas em que um exercício isolado está fora da escala da empresa (mesma
+# ideia de b3_saidas.LOTE_DE_MIL, aqui medida contra o lucro/ações do próprio
+# payload): ~1000x é lote de mil ações; ~1e6x é lote de mil num exercício em
+# MIL de empresa que passou a reportar em reais (ITUB4: 2025 em reais, 2019
+# 2.780.000). Razão 4 ou 5 mistura escala com desdobramento e fica como está.
 _TOL_ESCALA = 0.5
-_LOTE_DE_MIL = (2.5, 3.5)
+_LOTE_DE_MIL = ((2.5, 3.5, 1e3), (5.5, 6.5, 1e6))
 
 
 def _nao_zero(d: dict, names: tuple[str, ...]):
@@ -317,8 +320,9 @@ def _eps(it: dict, pn: bool = False, escala: float = 1000.0, acoes=None):
     """
     LPA do exercício, em reais por ação. Campos escalados divididos pela escala
     da empresa (ver _escala_lpa); campos em reais como estão. Com base de ações
-    confiável, um exercício cuja razão LPA/(lucro/ações) caia em ~1000 está por
-    lote de mil ações (ITUB4 2019) e é dividido por mais 1000. 0/None => None.
+    confiável, um exercício cuja razão LPA/(lucro/ações) caia em ~1000 ou ~1e6
+    está por lote de mil ações e é dividido por essa razão (ver _LOTE_DE_MIL).
+    0/None => None.
     """
     bruto, escalado = _lpa_bruto(it, pn)
     if bruto is None:
@@ -327,8 +331,7 @@ def _eps(it: dict, pn: bool = False, escala: float = 1000.0, acoes=None):
     lucro = _nao_zero(it, _LUCRO_LPA)
     if acoes and lucro and value * lucro > 0:
         r = math.log10(abs(value / (lucro / acoes)))
-        if _LOTE_DE_MIL[0] <= r <= _LOTE_DE_MIL[1]:
-            value /= 1000.0
+        value /= next((d for lo, hi, d in _LOTE_DE_MIL if lo <= r <= hi), 1.0)
     # Alguns payloads históricos da BRAPI trazem sentinelas/erros de escala
     # (ex.: 2,7e16 por ação). Ausência é preferível a contaminar a linha
     # inteira ou exceder NUMERIC(20,6). O limite é deliberadamente amplo.
