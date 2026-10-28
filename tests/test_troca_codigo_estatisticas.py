@@ -77,6 +77,16 @@ def _pregao(engine, ticker, data, close, volume):
                      {"t": ticker, "d": data, "c": close, "v": volume})
 
 
+def _ajustado(engine, ticker, linhas):
+    """linhas: (data, adjusted_close); o close bruto acompanha o ajustado."""
+    with engine.begin() as conn:
+        for data, ajustado in linhas:
+            conn.execute(text("INSERT INTO market.historical_prices "
+                              "(ticker, date, close, adjusted_close, volume) "
+                              "VALUES (:t, :d, :a, :a, 1)"),
+                         {"t": ticker, "d": data, "a": ajustado})
+
+
 def _exercicios(engine, ticker, anos):
     with engine.begin() as conn:
         for ano in anos:
@@ -164,3 +174,49 @@ def test_anos_de_balanco_somam_as_duas_fitas(banco):
     assert anos["PETR4"] == 15
     assert market_read.load_historico_anos.__wrapped__() == {
         "ELET3": 8, "AXIA3": 4, "PETR4": 15}
+
+
+def _mensal(df, ticker):
+    return {d.strftime("%Y-%m"): round(v, 6) for d, v in df[ticker].dropna().items()}
+
+
+def test_preco_mensal_sem_pregao_comum_nao_reescala(banco):
+    # O antigo fechou outubro e o começo de novembro a 40; o atual abriu no
+    # fim de novembro a 44. O mês é comum, o pregão não: a migração não
+    # reescala, e a alta de 10% de novembro fica.
+    _ajustado(banco, "ELET3", [("2025-10-31", 40.0), ("2025-11-05", 40.0)])
+    _ajustado(banco, "AXIA3", [("2025-11-20", 44.0)])
+
+    unido = market_read.load_precos_mensais.__wrapped__(("AXIA3",), trocas=_TROCA)
+    assert list(unido.columns) == ["AXIA3"]          # pedir um código traz os dois
+    assert _mensal(unido, "AXIA3") == {"2025-10": 40.0, "2025-11": 44.0}
+
+    # sem a troca, cada código fica com a própria fita (o default não muda)
+    separado = market_read.load_precos_mensais.__wrapped__(("AXIA3", "ELET3"))
+    assert _mensal(separado, "ELET3") == {"2025-10": 40.0, "2025-11": 40.0}
+    assert _mensal(separado, "AXIA3") == {"2025-11": 44.0}
+
+
+def test_preco_mensal_reescala_pelo_fator_da_migracao(banco):
+    from data_pipeline.market.troca_codigo import _base_ajuste
+
+    # Base do atual 4% acima nos pregões comuns. Em 28/11 os dois códigos
+    # têm linha e a razão foge da mediana: fica a do atual, como na migração.
+    _ajustado(banco, "ELET3", [("2025-09-30", 38.0), ("2025-10-31", 40.0),
+                               ("2025-11-03", 41.0), ("2025-11-04", 42.0),
+                               ("2025-11-28", 50.0)])
+    _ajustado(banco, "AXIA3", [("2025-11-03", 41.0 * 1.04), ("2025-11-04", 42.0 * 1.04),
+                               ("2025-11-28", 44.0 * 1.04)])
+
+    with banco.connect() as conn:
+        base = _base_ajuste(conn, {"market.historical_prices": {"adjusted_close"}},
+                            {"a": "ELET3", "n": "AXIA3"})
+    assert base["reescala"] and base["fator"] == pytest.approx(1.04)
+
+    unido = market_read.load_precos_mensais.__wrapped__(("AXIA3", "ELET3"), trocas=_TROCA)
+    assert list(unido.columns) == ["AXIA3"]
+    assert _mensal(unido, "AXIA3") == {"2025-09": round(38.0 * base["fator"], 6),
+                                       "2025-10": round(40.0 * base["fator"], 6),
+                                       "2025-11": round(44.0 * 1.04, 6)}
+    ret = unido["AXIA3"].pct_change()
+    assert ret.loc["2025-11"].item() == pytest.approx(0.10)   # sem os 4% da base

@@ -543,13 +543,16 @@ def _yf_ibov_mensal(period: str = "5y") -> pd.Series:
         return pd.Series(dtype=float)
 
 
-def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y") -> pd.DataFrame:
+def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y",
+                             trocas: tuple[tuple[str, str], ...] = ()) -> pd.DataFrame:
     """
     Preços mensais de fechamento AJUSTADOS (retorno total) p/ múltiplos tickers.
 
     market-first: lê de market.historical_prices (sem rede) quando o market.*
     está ativo; senão cai no yfinance (auto_adjust=True). Retorna DataFrame com
-    DatetimeIndex mensal e colunas = tickers sem .SA.
+    DatetimeIndex mensal e colunas = tickers sem .SA. ``trocas`` ((antigo,
+    atual), ...) chega só ao banco, que une as duas fitas no diário
+    (``market_read.load_precos_mensais``); do yfinance as colunas vêm separadas.
 
     Procedência (B3-05): ``attrs["fonte_precos"]`` diz de onde a série veio
     (``market.historical_prices`` | ``yfinance`` | ``indisponivel``) e
@@ -562,7 +565,8 @@ def _batch_yf_precos_mensais(tickers: tuple[str, ...], period: str = "5y") -> pd
     erro_market: str | None = None
     # Fonte primária: banco (market.*) — adjusted_close, sem rede.
     try:
-        df_db = _mr.load_precos_mensais(tuple(tickers))
+        kw = {"trocas": tuple(trocas)} if trocas else {}
+        df_db = _mr.load_precos_mensais(tuple(tickers), **kw)
         if not df_db.empty:
             anos = _period_to_years(period)
             if anos and df_db.index.notna().any():

@@ -40,6 +40,7 @@ from sqlalchemy import text
 from core.b3_troca_codigo import (
     MOTIVO_TROCA,
     PARES_CONHECIDOS,
+    TOLERANCIA_BASE,
     escolher_classificacao,
     fechar_cadeias,
     mesma_classe,
@@ -84,9 +85,6 @@ CREATE INDEX IF NOT EXISTS troca_codigo_backup_lote_idx ON {BACKUP} (lote);
 _ESTADO = (("market.assets", "ticker IN (:a, :n)"),
            ("market.ticker_alias", "brapi_symbol IN (:a, :n)"),
            ("public.setores", f"{_TK_SETORES} IN (:a, :n)"))
-
-# Razão de base do adjusted_close abaixo disto é arredondamento, não base.
-TOLERANCIA_BASE = 1e-6
 
 
 def carregar_trocas(conn) -> dict[str, str]:

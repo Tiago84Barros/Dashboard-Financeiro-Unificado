@@ -3529,11 +3529,13 @@ def render(show_header: bool = True) -> None:
             )
 
         with st.spinner("Carregando preços mensais ajustados…"):
-            # O código novo só tem preço desde a troca; o antigo, encadeado,
-            # completa a série (core.b3_troca_codigo.dobrar_colunas).
+            # O código novo só tem preço desde a troca; o antigo completa a
+            # série. Do banco a fita vem unida no diário, com a base da
+            # migração (market_read.load_precos_mensais); do yfinance, mensal,
+            # a coluna antiga preenche a atual (core.b3_troca_codigo.dobrar_colunas).
             df_precos_all = _troca.dobrar_colunas(
                 _batch_yf_precos_mensais(all_tickers + tuple(sorted(_mapa_troca)),
-                                         period="10y"),
+                                         period="10y", trocas=_trocas),
                 _mapa_troca)
             _avisar_fonte_precos(df_precos_all, "a seleção histórica")
             if _saidas_eleg and not df_precos_all.empty:

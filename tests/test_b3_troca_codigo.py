@@ -136,23 +136,22 @@ def test_dedup_sem_a_coluna_nao_mexe():
 # ── Dobras: o histórico do antigo passa a responder pelo atual ───────────────
 
 
-def test_preco_encadeado_nao_inventa_retorno_na_emenda():
-    idx = pd.date_range("2024-01-31", periods=24, freq="ME")
-    velho = pd.Series(10.0 * np.cumprod(np.full(24, 1.01)), index=idx)
-    # o código novo começa no mês 18, numa base de ajuste 4% acima
-    novo = (velho * 1.04).where(idx >= idx[18])
-    df = pd.DataFrame({"ELET3": velho, "AXIA3": novo, "PETR4": 5.0}, index=idx)
+def test_mes_em_comum_nao_reescala_o_antigo():
+    # Mês comum não é pregão comum: o antigo fechou outubro e o começo de
+    # novembro a 40; o atual abriu no fim de novembro a 44. Reescalar o antigo
+    # pela razão de novembro (1,1) apagaria a alta de 10% que houve. A base de
+    # ajuste se mede no diário, em market_read.load_precos_mensais(trocas=...).
+    idx = pd.to_datetime(["2025-09-30", "2025-10-31", "2025-11-30"])
+    df = pd.DataFrame({"ELET3": [38.0, 40.0, 40.0], "AXIA3": [np.nan, np.nan, 44.0],
+                       "PETR4": 5.0}, index=idx)
     df.attrs["fonte"] = "teste"
 
     out = tc.dobrar_colunas(df, {"ELET3": "AXIA3"})
 
     assert "ELET3" not in out.columns and out.attrs == {"fonte": "teste"}
-    serie = out["AXIA3"]
-    assert serie.notna().all()                       # o histórico do antigo veio
-    pd.testing.assert_series_equal(serie.iloc[18:], novo.iloc[18:], check_names=False)
-    ret = serie.pct_change().dropna()
-    assert ret.round(10).nunique() == 1              # sem salto de 4% na emenda
-    assert ret.iloc[17] == pytest.approx(0.01)
+    assert out["AXIA3"].tolist() == [38.0, 40.0, 44.0]   # o atual prevalece no mês dos dois
+    assert out["AXIA3"].pct_change().iloc[-1] == pytest.approx(0.10)
+    assert out["PETR4"].tolist() == [5.0, 5.0, 5.0]
 
 
 def test_preco_so_do_antigo_passa_para_o_atual():
@@ -266,6 +265,26 @@ def test_dois_baselines_emprestam_e_seguem_baseline():
     hist = {k: v.drop(columns="AvailableAt") for k, v in hist.items()}
     h = tc.dobrar_historico(hist, {"ELET3": "AXIA3"})["AXIA3"]
     assert _ano(h, 2024, "P/L") == 8.0 and "AvailableAt" not in h.columns
+
+
+def _hist_pl(tk, roe, pl_negativo, disp):
+    return pd.DataFrame({"Ticker": tk, "Data": [pd.Timestamp(2024, 12, 31)],
+                         "ROE": [roe], "P/VP": [roe], "Endividamento_Total": [roe],
+                         "P/L": [8.0], "Patrimonio_Negativo": [pl_negativo],
+                         "AvailableAt": [disp]})
+
+
+@pytest.mark.parametrize("disp", [pd.NaT, pd.Timestamp("2025-05-10", tz="UTC")])
+def test_patrimonio_negativo_do_atual_nao_ganha_razao_do_antigo(disp):
+    # A leitura anulou ROE, P/VP e Endividamento_Total do atual por PL negativo;
+    # para o combine_first isso é lacuna, e o ROE positivo do antigo voltava.
+    hist = {"AXIA3": _hist_pl("AXIA3", np.nan, 1, disp),
+            "ELET3": _hist_pl("ELET3", 0.12, 0, disp)}
+    h = tc.dobrar_historico(hist, {"ELET3": "AXIA3"})["AXIA3"]
+    assert _ano(h, 2024, "Patrimonio_Negativo") == 1
+    for col in ("ROE", "P/VP", "Endividamento_Total"):
+        assert np.isnan(_ano(h, 2024, col)), col
+    assert _ano(h, 2024, "P/L") == 8.0                     # fora da regra, segue igual
 
 
 def test_escalares_irmas():

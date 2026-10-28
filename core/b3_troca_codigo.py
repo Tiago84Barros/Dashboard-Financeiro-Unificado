@@ -38,6 +38,8 @@ from collections.abc import Iterable, Mapping
 
 import pandas as pd
 
+from core.data_quality import suprimir_razoes_sobre_patrimonio_negativo
+
 logger = logging.getLogger(__name__)
 
 # Motivo gravado em market.ticker_alias quando a troca está PROVADA (mesma
@@ -64,6 +66,11 @@ PARES_CONHECIDOS: dict[str, str] = {
     "EMBR3": "EMBJ3", "CRDE3": "FIEI3", "GUAR3": "RIAA3", "RRRP3": "BRAV3",
     "ARZZ3": "AZZA3", "WIZS3": "WIZC3", "ODPV3": "SAUD3", "NINJ3": "ARND3",
 }
+
+# Razão de base do adjusted_close abaixo disto é arredondamento, não base. A
+# migração (``data_pipeline.market.troca_codigo``) e a leitura da fita unida
+# (``market_read.load_precos_mensais``) reescalam pelo mesmo critério.
+TOLERANCIA_BASE = 1e-6
 
 _TICKER = re.compile(r"^([A-Z0-9]{4})(\d{1,2})F?$")
 
@@ -316,26 +323,20 @@ def dobrar_escalares(d: Mapping | None, mapa: dict[str, str], modo: str = "novo"
     return out
 
 
-def _encadear(atual: pd.Series, velho: pd.Series) -> pd.Series:
-    """Reescala ``velho`` para casar com ``atual`` no primeiro ponto comum.
-
-    Preço ajustado do código antigo e do novo é a mesma companhia, mas em bases
-    de ajuste que diferem alguns por cento (cada código foi ingerido num dia).
-    Emendar sem reescalar transforma essa diferença num retorno que não houve.
-    """
-    comum = atual.notna() & velho.notna() & (velho != 0)
-    if not bool(comum.any()):
-        return velho
-    i = comum[comum].index[0]
-    try:
-        return velho * (float(atual.loc[i]) / float(velho.loc[i]))
-    except (TypeError, ValueError, ZeroDivisionError):
-        return velho
-
-
 def dobrar_colunas(df: pd.DataFrame, mapa: dict[str, str]) -> pd.DataFrame:
-    """Quadro largo de PREÇO (uma coluna por ticker): a coluna antiga, encadeada
-    no primeiro mês comum, completa a atual antes do início dela."""
+    """Quadro largo de PREÇO (uma coluna por ticker): a coluna antiga completa
+    a atual antes do início dela, sem reescalar.
+
+    A base de ajuste dos dois códigos só se mede em PREGÃO comum, e é assim
+    que a migração mede (``data_pipeline.market.troca_codigo._base_ajuste``):
+    ``market_read.load_precos_mensais(trocas=...)`` une as duas fitas no
+    diário, com esse fator, antes de fechar o mês. Aqui, num quadro já
+    mensal, o mês comum não é pregão comum: o último preço de cada código no
+    mês da troca cai em dias diferentes, e a razão entre eles toma movimento
+    de preço por diferença de base (fechamento de out. 40, último do antigo
+    em nov. 40 e do atual 44 zeravam a alta de 10% de novembro). Sem pregão
+    comum a migração não reescala, e a leitura também não.
+    """
     if df is None or df.empty or not mapa:
         return df
     antigos = [a for a in mapa if a in df.columns]
@@ -345,7 +346,7 @@ def dobrar_colunas(df: pd.DataFrame, mapa: dict[str, str]) -> pd.DataFrame:
     for antigo in antigos:
         novo = mapa[antigo]
         if novo in out.columns:
-            out[novo] = out[novo].combine_first(_encadear(out[novo], out[antigo]))
+            out[novo] = out[novo].combine_first(out[antigo])
         else:
             out[novo] = out[antigo]
     out = out.drop(columns=antigos)
@@ -431,6 +432,9 @@ def dobrar_historico(hist: Mapping | None, mapa: dict[str, str], col_data: str =
 
     Na mesma data o atual prevalece; o antigo só preenche o que falta, e a
     linha nunca fica disponível antes do valor emprestado (``_completar_por_data``).
+    A razão sobre PL que a leitura anulou por patrimônio negativo é lacuna
+    para o ``combine_first``; a supressão roda de novo na linha unida, senão o
+    ROE positivo do código antigo voltaria por ela.
     """
     if not hist or not mapa:
         return hist
@@ -454,6 +458,7 @@ def dobrar_historico(hist: Mapping | None, mapa: dict[str, str], col_data: str =
                        .drop_duplicates(subset=[col_data], keep="first"))
         colunas = list(atual.columns) + [c for c in junto.columns if c not in atual.columns]
         junto = junto[colunas].sort_values(col_data, kind="stable").reset_index(drop=True)
+        junto = suprimir_razoes_sobre_patrimonio_negativo(junto)
         if col_ticker in junto.columns:
             junto[col_ticker] = novo
         out[novo] = junto
