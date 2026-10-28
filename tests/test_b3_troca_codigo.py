@@ -181,6 +181,86 @@ def test_historico_do_antigo_completa_os_anos_do_atual():
     assert set(h["Ticker"]) == {"AXIA3"}
 
 
+def _hist_disp(tk, linhas):
+    """linhas: (ano, ROE, P/L, AvailableAt)."""
+    return pd.DataFrame({
+        "Ticker": tk,
+        "Data": [pd.Timestamp(a, 12, 31) for a, *_ in linhas],
+        "ROE": [r for _, r, _, _ in linhas],
+        "P/L": [pl for _, _, pl, _ in linhas],
+        "AvailableAt": [d for *_, d in linhas],
+    })
+
+
+def _ano(h, ano, col):
+    return h.loc[h["Data"].dt.year == ano, col].item()
+
+
+def test_valor_emprestado_do_antigo_adia_a_disponibilidade():
+    # O atual publicou 2024 em março sem P/L; o antigo trouxe o P/L em maio.
+    # Emprestar o P/L e manter março anteciparia em dois meses um dado que
+    # só existia em maio.
+    marco, maio = pd.Timestamp("2025-03-10", tz="UTC"), pd.Timestamp("2025-05-10", tz="UTC")
+    hist = {"AXIA3": _hist_disp("AXIA3", [(2024, 0.20, np.nan, marco), (2023, 0.15, 7.0, marco)]),
+            "ELET3": _hist_disp("ELET3", [(2024, 0.19, 8.0, maio), (2023, 0.14, 6.0, maio)])}
+    h = tc.dobrar_historico(hist, {"ELET3": "AXIA3"})["AXIA3"]
+    assert _ano(h, 2024, "P/L") == 8.0
+    assert _ano(h, 2024, "AvailableAt") == maio
+    # nada emprestado: a linha do atual fica com a própria data
+    assert _ano(h, 2023, "P/L") == 7.0 and _ano(h, 2023, "AvailableAt") == marco
+
+
+def test_rebalanceamento_de_abril_nao_consome_o_valor_de_maio():
+    import views.empresas_b3 as emp
+
+    marco, maio = pd.Timestamp("2025-03-10", tz="UTC"), pd.Timestamp("2025-05-10", tz="UTC")
+    hist = {"AXIA3": _hist_disp("AXIA3", [(2024, 0.20, np.nan, marco)]),
+            "ELET3": _hist_disp("ELET3", [(2024, 0.19, 8.0, maio)])}
+    h = tc.dobrar_historico(hist, {"ELET3": "AXIA3"})["AXIA3"].assign(_ano=2024)
+    _, aceita = emp._classificar_disponibilidade_pit(h, pd.Timestamp(2025, 4, 1))
+    assert not aceita.any()
+    _, aceita = emp._classificar_disponibilidade_pit(h, pd.Timestamp(2025, 6, 1))
+    assert aceita.all()
+
+
+def test_baseline_e_medido_nao_se_misturam_na_mesma_data():
+    maio = pd.Timestamp("2025-05-10", tz="UTC")
+    # atual baseline (prazo legal), antigo medido: as disponibilidades não se
+    # comparam, então o antigo não empresta — e vice-versa
+    hist = {"AXIA3": _hist_disp("AXIA3", [(2024, 0.20, np.nan, pd.NaT)]),
+            "ELET3": _hist_disp("ELET3", [(2024, 0.19, 8.0, maio), (2022, 0.10, 5.0, maio)])}
+    h = tc.dobrar_historico(hist, {"ELET3": "AXIA3"})["AXIA3"]
+    assert np.isnan(_ano(h, 2024, "P/L")) and pd.isna(_ano(h, 2024, "AvailableAt"))
+    # a data que só o antigo tem entra inteira, com a disponibilidade dele
+    assert _ano(h, 2022, "P/L") == 5.0 and _ano(h, 2022, "AvailableAt") == maio
+
+    hist = {"AXIA3": _hist_disp("AXIA3", [(2024, 0.20, np.nan, maio)]),
+            "ELET3": _hist_disp("ELET3", [(2024, 0.19, 8.0, pd.NaT)])}
+    h = tc.dobrar_historico(hist, {"ELET3": "AXIA3"})["AXIA3"]
+    assert np.isnan(_ano(h, 2024, "P/L")) and _ano(h, 2024, "AvailableAt") == maio
+
+
+def test_carimbo_malformado_nao_empresta():
+    maio = pd.Timestamp("2025-05-10", tz="UTC")
+    hist = {"AXIA3": pd.DataFrame({"Ticker": "AXIA3", "Data": [pd.Timestamp(2024, 12, 31)],
+                                   "ROE": [0.20], "P/L": [np.nan], "AvailableAt": [maio]}),
+            "ELET3": pd.DataFrame({"Ticker": "ELET3", "Data": [pd.Timestamp(2024, 12, 31)],
+                                   "ROE": [0.19], "P/L": [8.0], "AvailableAt": ["lixo"]})}
+    h = tc.dobrar_historico(hist, {"ELET3": "AXIA3"})["AXIA3"]
+    assert np.isnan(_ano(h, 2024, "P/L")) and _ano(h, 2024, "AvailableAt") == maio
+
+
+def test_dois_baselines_emprestam_e_seguem_baseline():
+    hist = {"AXIA3": _hist_disp("AXIA3", [(2024, 0.20, np.nan, pd.NaT)]),
+            "ELET3": _hist_disp("ELET3", [(2024, 0.19, 8.0, pd.NaT)])}
+    h = tc.dobrar_historico(hist, {"ELET3": "AXIA3"})["AXIA3"]
+    assert _ano(h, 2024, "P/L") == 8.0 and pd.isna(_ano(h, 2024, "AvailableAt"))
+    # sem a coluna (contrato de market_read: ausência = tudo baseline)
+    hist = {k: v.drop(columns="AvailableAt") for k, v in hist.items()}
+    h = tc.dobrar_historico(hist, {"ELET3": "AXIA3"})["AXIA3"]
+    assert _ano(h, 2024, "P/L") == 8.0 and "AvailableAt" not in h.columns
+
+
 def test_escalares_irmas():
     mapa = {"ELET3": "AXIA3", "CARD3": "CSUD3"}
     assert tc.dobrar_escalares({"ELET3": 1.0, "AXIA3": 2.0, "CARD3": 3.0}, mapa) == {

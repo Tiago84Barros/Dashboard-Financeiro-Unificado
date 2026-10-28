@@ -199,6 +199,34 @@ def test_renormalize_tambem_unifica_a_troca_provada(monkeypatch, falso):
     assert not _alias_legado(cp)
 
 
+def test_codigo_atual_herda_o_cvm_do_antigo_trocado(monkeypatch, falso):
+    # A referência da CVM só conhece ELET3. Depois da unificação a ingestão
+    # pede AXIA3: sem o elo da troca, o codigo_cvm sairia vazio e o upsert
+    # apagaria o company_id do ativo.
+    conn, upserts, _ = falso
+    _ingerir(monkeypatch, conn, "AXIA3", _data("AXIA3"), {"ELET3": 2437},
+             trocas={"ELET3": "AXIA3"})
+    assert upserts["companies"][0]["codigo_cvm"] == 2437
+    assert upserts["assets"][0]["company_id"] == 1
+
+
+def test_sem_codigo_cvm_o_ativo_mantem_o_company_id(monkeypatch, falso):
+    _, upserts, _ = falso
+
+    class _ConnAtivo(_Conn):
+        def execute(self, clause, params=None):
+            r = super().execute(clause, params)
+            if "SELECT company_id FROM market.assets" in str(clause):
+                r.scalar = lambda: 42
+            return r
+
+    monkeypatch.setattr(ig.repo, "company_id_by_codigo",
+                        lambda c, cod: pytest.fail("sem código não há o que buscar"))
+    _ingerir(monkeypatch, _ConnAtivo(), "AXIA3", _data("AXIA3"), {})
+    assert "companies" not in upserts
+    assert upserts["assets"][0]["company_id"] == 42
+
+
 # ── Com banco: armazém local, banco descartável ──────────────────────────────
 
 _DDL = """
@@ -456,6 +484,151 @@ def test_ingestao_da_troca_nao_deixa_dois_ativos_da_mesma_classe(banco, monkeypa
     assert _ativos_por_classe(banco)[(1, "3")] == ["AXIA3"]
 
 
+@pytest.mark.parametrize("cvm", [{"ELET3": 2437}, {}], ids=["cvm-so-do-antigo", "sem-cvm"])
+def test_ingestao_do_codigo_atual_nao_apaga_a_companhia(banco, monkeypatch, cvm):
+    _unificar(banco, "ELET3", "AXIA3", aplicar=True, codigo_cvm=2437)
+    monkeypatch.setattr(ig.sched, "with_backoff", lambda fetch, **k: {"results": [{}]})
+    monkeypatch.setattr(ig.nz, "normalize_all", lambda q: _data(
+        "AXIA3", precos=(("2025-01-06", 42.0),)))
+    monkeypatch.setattr(ig.repo, "save_raw_payload", lambda *a, **k: None)
+    monkeypatch.setattr(ig.repo, "append_metric_vintages", lambda *a, **k: 0)
+
+    ig.ingest_ticker(banco, "AXIA3", range_="1mo", full=False, cvm_map=cvm,
+                     prog=ig._new_progress(), trocas=ig._carregar_trocas(banco))
+    assert _linhas(banco, "SELECT company_id FROM market.assets WHERE ticker = 'AXIA3'") == [(1,)]
+    assert _ativos_por_classe(banco)[(1, "3")] == ["AXIA3"]
+
+
+# ── Backup e reversão ────────────────────────────────────────────────────────
+
+def _reverter(engine, lote):
+    with engine.begin() as conn:
+        return tc.reverter(conn, lote)
+
+
+def test_aplicado_guarda_cada_linha_que_mexe(banco):
+    rel = _unificar(banco, "ELET3", "AXIA3", aplicar=True, codigo_cvm=2437)
+    lote = rel["backup"]["lote"]
+    guardado = dict(((t, a), c) for t, a, c in _linhas(
+        banco, "SELECT tabela, acao, count(*) FROM market.troca_codigo_backup "
+               "WHERE lote = :l GROUP BY tabela, acao", l=lote))
+    assert guardado.pop(("market.troca_codigo_backup", "abrir")) == 1
+    assert guardado == {
+        ("market.assets", "antes"): 2,
+        ("market.ticker_alias", "antes"): 1,          # o legado invertido AXIA3 -> ELET3
+        ("public.setores", "antes"): 2,
+        ("market.historical_prices", "mover"): 2,
+        ("market.historical_prices", "descartar"): 1,
+        ("market.dividends", "mover"): 1,
+        ("market.calculated_metrics", "mover"): 1,
+        ("market.calculated_metrics", "descartar"): 1,
+        ("market.calculated_metric_vintages", "mover"): 1,
+    }
+    assert rel["backup"]["linhas"] == sum(guardado.values())
+    # a linha descartada fica inteira no backup
+    assert _linhas(banco, "SELECT linha->>'close' FROM market.troca_codigo_backup "
+                          "WHERE lote = :l AND acao = 'descartar' "
+                          "AND tabela = 'market.historical_prices'", l=lote) == [("39",)]
+
+
+def test_reverter_devolve_o_banco_ao_que_era(banco):
+    antes = _foto(banco)
+    lote = _unificar(banco, "ELET3", "AXIA3", aplicar=True, codigo_cvm=2437)["backup"]["lote"]
+    assert _foto(banco) != antes
+
+    rel = _reverter(banco, lote)
+    assert _foto(banco) == antes
+    assert rel["fatos"]["historical_prices"] == {"tiradas_do_atual": 2, "restauradas": 3}
+    assert rel["ativo_novo"] == "restaurado"
+    with banco.connect() as conn:
+        assert tc.lotes(conn)[0]["revertido_em"] is not None
+
+    with pytest.raises(ValueError, match="já foi revertido"):
+        _reverter(banco, lote)
+    with pytest.raises(ValueError, match="desconhecido"):
+        _reverter(banco, "nao-existe")
+    assert _foto(banco) == antes
+
+
+def test_reverter_apaga_o_ativo_que_a_troca_criou(banco):
+    antes = _foto(banco)
+    lote = _unificar(banco, "CARD3", "CSUD3", aplicar=True)["backup"]["lote"]
+    rel = _reverter(banco, lote)
+    assert rel["ativo_novo"] == "apagado (não existia antes)"
+    assert _foto(banco) == antes
+
+
+def test_reverter_mantem_o_ativo_novo_que_ganhou_dado_depois(banco):
+    # Apagar o ativo levaria em cascata o que a ingestão gravou depois.
+    lote = _unificar(banco, "CARD3", "CSUD3", aplicar=True)["backup"]["lote"]
+    with banco.begin() as conn:
+        conn.execute(text("INSERT INTO market.historical_prices (ticker, date, close) "
+                          "VALUES ('CSUD3', '2026-10-27', 25)"))
+    rel = _reverter(banco, lote)
+    assert rel["ativo_novo"].startswith("mantido: 1 linhas")
+    assert _linhas(banco, "SELECT ticker, date::text FROM market.historical_prices "
+                          "WHERE ticker IN ('CARD3', 'CSUD3') ORDER BY date") == [
+        ("CARD3", "2020-01-02"), ("CSUD3", "2026-10-27")]
+    assert _ativos_por_classe(banco)[(2, "3")] == ["CARD3", "CSUD3"]
+
+
+@pytest.mark.parametrize("axia_ajustado, fator", [(42.0, 1.05), (40.0, 1.0)],
+                         ids=["outra-base", "mesma-base"])
+def test_adjusted_close_movido_vai_para_a_base_do_codigo_atual(banco, axia_ajustado, fator):
+    # O provedor ajusta cada código na própria base: emendar sem reescalar
+    # deixaria um salto de 5% em 2025-01-02.
+    with banco.begin() as conn:
+        conn.execute(text("ALTER TABLE market.historical_prices ADD COLUMN adjusted_close numeric"))
+        conn.execute(text("""
+            UPDATE market.historical_prices h SET adjusted_close = v.aj
+            FROM (VALUES ('ELET3', date '2010-01-04', 20.0), ('ELET3', date '2024-12-30', 38.0),
+                         ('ELET3', date '2025-01-02', 40.0),
+                         ('AXIA3', date '2025-01-02', CAST(:ax AS numeric)),
+                         ('AXIA3', date '2025-01-03', 43.0)) AS v(tk, d, aj)
+            WHERE h.ticker = v.tk AND h.date = v.d"""), {"ax": axia_ajustado})
+    antes = _foto(banco)
+
+    dry = _unificar(banco, "ELET3", "AXIA3", aplicar=False)
+    assert dry["base_ajuste"]["fator"] == pytest.approx(fator)
+    assert dry["base_ajuste"]["comuns"] == 1
+    assert dry["base_ajuste"]["reescala"] is (fator != 1.0)
+
+    lote = _unificar(banco, "ELET3", "AXIA3", aplicar=True, codigo_cvm=2437)["backup"]["lote"]
+    assert _linhas(banco, "SELECT date::text, close::float, adjusted_close::float "
+                          "FROM market.historical_prices WHERE ticker = 'AXIA3' "
+                          "ORDER BY date") == [
+        ("2010-01-04", 20.0, pytest.approx(20.0 * fator)),
+        ("2024-12-30", 38.0, pytest.approx(38.0 * fator)),
+        ("2025-01-02", 40.0, axia_ajustado),
+        ("2025-01-03", 41.0, 43.0)]
+
+    _reverter(banco, lote)
+    assert _foto(banco) == antes
+
+
+def test_adjusted_close_sem_pregao_comum_nao_e_reescalado(banco):
+    with banco.begin() as conn:
+        conn.execute(text("ALTER TABLE market.historical_prices ADD COLUMN adjusted_close numeric"))
+        conn.execute(text("UPDATE market.historical_prices SET adjusted_close = close"))
+    rel = _unificar(banco, "CARD3", "CSUD3", aplicar=True)
+    assert rel["base_ajuste"] == {"fator": None, "comuns": 0, "reescala": False}
+    assert _linhas(banco, "SELECT adjusted_close::float FROM market.historical_prices "
+                          "WHERE ticker = 'CSUD3'") == [(10.0,)]
+
+
+def test_falha_no_meio_nao_deixa_nada_gravado(banco, monkeypatch):
+    antes = _foto(banco)
+
+    def _quebra(*a, **k):
+        raise RuntimeError("caiu no meio")
+
+    monkeypatch.setattr(tc, "_setores", _quebra)
+    with pytest.raises(RuntimeError):
+        _unificar(banco, "ELET3", "AXIA3", aplicar=True, codigo_cvm=2437)
+    assert _foto(banco) == antes
+    assert _linhas(banco, "SELECT to_regclass('market.troca_codigo_backup') IS NULL") == [(True,)]
+
+
 # ── O script de migração ─────────────────────────────────────────────────────
 
 def _script(monkeypatch, engine, capsys, *argv):
@@ -492,6 +665,37 @@ def test_script_aplicado_e_idempotente(banco, monkeypatch, capsys):
     assert codigo == 0 and "pares pendentes: 0 de 12" in saida
     _script(monkeypatch, banco, capsys, "--alvo", "warehouse", "--apply")
     assert _foto(banco) == depois
+
+
+def test_script_imprime_o_lote_lista_e_reverte(banco, monkeypatch, capsys):
+    antes = _foto(banco)
+    codigo, saida = _script(monkeypatch, banco, capsys, "--alvo", "warehouse", "--apply")
+    assert codigo == 0
+    with banco.connect() as conn:
+        ids = [x["lote"] for x in tc.lotes(conn)]
+    # um lote por par: os 10 sem ativo na semente só ganham o alias, e esse
+    # alias também tem de poder ser desfeito
+    assert len(ids) == 12
+    assert all(f"--reverter {i} --apply" in saida for i in ids)
+
+    # par já unificado não abre lote novo
+    _script(monkeypatch, banco, capsys, "--alvo", "warehouse", "--apply")
+    codigo, saida = _script(monkeypatch, banco, capsys, "--alvo", "warehouse", "--lotes")
+    assert codigo == 0 and len(saida.strip().splitlines()) == 12
+
+    depois = _foto(banco)
+    codigo, saida = _script(monkeypatch, banco, capsys, "--alvo", "warehouse",
+                            "--reverter", *ids)
+    assert codigo == 0 and "dry-run" in saida
+    assert _foto(banco) == depois
+
+    codigo, saida = _script(monkeypatch, banco, capsys, "--alvo", "warehouse",
+                            "--reverter", *ids, "--apply")
+    assert codigo == 0
+    assert _foto(banco) == antes
+    codigo, saida = _script(monkeypatch, banco, capsys, "--alvo", "warehouse",
+                            "--reverter", ids[0], "--apply")
+    assert codigo == 1 and "já foi revertido" in saida
 
 
 def test_script_recusa_aplicar_no_supabase_sem_confirmacao(monkeypatch, capsys):

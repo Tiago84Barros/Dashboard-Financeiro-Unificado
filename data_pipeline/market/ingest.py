@@ -177,6 +177,33 @@ def _troca_provada(conn, cvm_map, tk: str, alias_sym: str | None,
     return None
 
 
+def _codigo_cvm(cvm_map: dict, tk: str, novo: str | None,
+                trocas: dict[str, str] | None):
+    """codigo_cvm do código que fica: o do atual, o do requisitado e, na falta
+    dos dois, o de um código antigo trocado por ele. A referência da CVM às
+    vezes só conhece o código antigo (ELET3); sem o elo da troca o atual
+    ficaria sem companhia."""
+    for t in (novo, tk):
+        if t and cvm_map.get(t) is not None:
+            return cvm_map[t]
+    dono = novo or tk
+    for antigo, atual in sorted((trocas or {}).items()):
+        if atual == dono and cvm_map.get(antigo) is not None:
+            return cvm_map[antigo]
+    return None
+
+
+def _company_id(conn, cod, ticker: str):
+    """company_id pelo codigo_cvm; sem ele, o que o ativo já tem. O upsert de
+    assets grava ``company_id = EXCLUDED.company_id``: um None aqui apagaria a
+    identidade, e o ativo sairia do universo (load_setores exige company_id)."""
+    cid = repo.company_id_by_codigo(conn, cod) if cod is not None else None
+    if cid is None:
+        cid = conn.execute(text("SELECT company_id FROM market.assets WHERE ticker = :t"),
+                           {"t": ticker}).scalar()
+    return cid
+
+
 def _unificar_troca(conn, antigo: str, novo: str, cod, prog: dict) -> None:
     _ensure_ticker_alias(conn)
     unificar(conn, antigo, novo, aplicar=True, codigo_cvm=cod)
@@ -245,15 +272,15 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
                 _r_pit["raw_payload_id"] = pid
         # empresa (enriquece codigo_cvm pelo mapa CVM)
         comp = data["companies"]
-        cod = cvm_map.get(novo) if novo and cvm_map.get(novo) is not None else cvm_map.get(tk)
+        cod = _codigo_cvm(cvm_map, tk, novo, trocas)
         if comp and cod is not None:
             comp[0]["codigo_cvm"] = cod
             repo.upsert(conn, "companies", comp)
             prog["empresas"] += 1
-        # asset (liga company_id se houver)
+        # asset (liga company_id se houver; sem código, mantém o que tinha)
         ast = data["assets"]
         if ast:
-            ast[0]["company_id"] = repo.company_id_by_codigo(conn, cod) if cod is not None else None
+            ast[0]["company_id"] = _company_id(conn, cod, ast[0]["ticker"])
             repo.upsert(conn, "assets", ast)
         # fatos
         prog["precos"] += repo.upsert(conn, "historical_prices", data["historical_prices"])
@@ -699,12 +726,11 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
             for _t_pit in ("income_statements", "balance_sheets", "cash_flow_statements"):
                 for _r_pit in data.get(_t_pit) or []:
                     _r_pit["raw_payload_id"] = pid
-            cod = cvm_map.get(tk)
             with engine.begin() as conn:
                 novo = _troca_provada(conn, cvm_map, tk, alias_sym, trocas)
+                cod = _codigo_cvm(cvm_map, tk, novo, trocas)
                 if novo:
                     _reconcile_ticker(data, novo)
-                    cod = cvm_map.get(novo) if cvm_map.get(novo) is not None else cod
                 elif alias_sym:
                     _ensure_ticker_alias(conn)
                     conn.execute(text("""
@@ -720,7 +746,7 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
                     prog["empresas"] += 1
                 ast = data["assets"]
                 if ast:
-                    ast[0]["company_id"] = repo.company_id_by_codigo(conn, cod) if cod is not None else None
+                    ast[0]["company_id"] = _company_id(conn, cod, ast[0]["ticker"])
                     repo.upsert(conn, "assets", ast)
                 prog["precos"] += repo.upsert(conn, "historical_prices", data["historical_prices"])
                 for t in ("income_statements", "balance_sheets", "cash_flow_statements"):
@@ -740,31 +766,36 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
 
 _TABELAS_DEMONSTRACAO = ("income_statements", "balance_sheets", "cash_flow_statements")
 
-# Por ticker, o payload mais novo QUE TRAZ demonstrações -- não o mais novo de
+# Por dono, o payload mais novo QUE TRAZ demonstrações -- não o mais novo de
 # todos, que é a cotação diária (só preço) e normaliza para zero linha. Ordena
 # por fetched_at, e não por id: o arquivamento do Supabase dá id novo a payload
-# antigo. Só entra o ticker cujas demonstrações ainda não saíram dele.
+# antigo. O dono é o código atual (``:trocas`` = {antigo: atual}): o payload
+# gravado sob ELET3 antes da troca ser descoberta é da AXIA3, e pode ser o
+# único com as demonstrações. Só entra o dono cujas demonstrações ainda não
+# saíram dele.
 _SQL_PAYLOAD_DE_DEMONSTRACAO = """
     WITH ultimo AS (
-        SELECT DISTINCT ON (ticker) ticker, id, fetched_at, payload_json
-        FROM market.brapi_raw_payloads
-        WHERE endpoint = 'quote' AND request_status = 'success'
-          AND payload_json ?| array['incomeStatementHistoryQuarterly',
-                                    'incomeStatementHistory']
-          {filtro}
-        ORDER BY ticker, fetched_at DESC, id DESC
+        SELECT DISTINCT ON (dono) dono, ticker, id, payload_json
+        FROM (SELECT COALESCE(CAST(:trocas AS jsonb) ->> ticker, ticker) AS dono,
+                     ticker, id, fetched_at, payload_json
+              FROM market.brapi_raw_payloads
+              WHERE endpoint = 'quote' AND request_status = 'success'
+                AND payload_json ?| array['incomeStatementHistoryQuarterly',
+                                          'incomeStatementHistory']
+                {filtro}) p
+        ORDER BY dono, fetched_at DESC, id DESC
     )
-    SELECT u.ticker, u.id, u.payload_json FROM ultimo u
+    SELECT u.dono, u.ticker, u.id, u.payload_json FROM ultimo u
     {so_pendentes}
-    ORDER BY u.ticker
+    ORDER BY u.dono
 """
 
-# Pula o ticker cujas demonstrações já saíram do payload mais novo. Com
+# Pula o dono cujas demonstrações já saíram do payload mais novo. Com
 # ``forcar`` o filtro cai: correção no normalizador não muda o payload, e sem
 # isso nunca alcançaria a linha já gravada.
 _SO_PENDENTES = """WHERE NOT EXISTS (
         SELECT 1 FROM market.income_statements s
-        WHERE s.ticker = u.ticker AND s.raw_payload_id = u.id)"""
+        WHERE s.ticker = u.dono AND s.raw_payload_id = u.id)"""
 
 
 def renormalize_demonstracoes(tickers: list[str] | None = None,
@@ -786,40 +817,46 @@ def renormalize_demonstracoes(tickers: list[str] | None = None,
 
     ``forcar`` regrava também o que já saiu do payload mais novo -- o caminho
     de uma correção do normalizador chegar às linhas existentes.
+
+    Código trocado (ELET3 -> AXIA3): os payloads dos dois códigos concorrem
+    pelo mesmo dono, o atual, e o escolhido grava sob ele com o id original
+    -- ``unificar`` não move payload, e o da troca fica sob o código antigo.
     """
     import json
     engine = _engine()
-    prog = {**_new_progress(), "atualizados": []}
+    prog = {**_new_progress(), "atualizados": [], "payloads_de_codigo_antigo": 0}
     if engine is None:
         return {**prog, "erros": -1}
     repo.reset_db_cols_cache()
-    params: dict = {}
+    trocas = _carregar_trocas(engine)
+    params: dict = {"trocas": json.dumps(trocas)}
     filtro = ""
     if tickers:
+        # pedir ELET3 ou AXIA3 é pedir o dono, com os payloads dos dois códigos
+        donos = {trocas.get(t, t) for t in (x.upper().replace(".SA", "") for x in tickers)}
         filtro = "AND ticker = ANY(:tks)"
-        params["tks"] = [t.upper().replace(".SA", "") for t in tickers]
+        params["tks"] = sorted(donos | {a for a, n in trocas.items() if n in donos})
     with engine.connect() as conn:
         if not repo.schema_exists(conn):
             return {**prog, "erros": -1}
         rows = conn.execute(text(_SQL_PAYLOAD_DE_DEMONSTRACAO.format(
             filtro=filtro, so_pendentes="" if forcar else _SO_PENDENTES)),
                             params).fetchall()
-    # o payload antigo de um código trocado regravaria as demonstrações sob
-    # ele; as do código atual saem do payload do código atual
-    trocas = _carregar_trocas(engine)
     if limit:
         rows = rows[:limit]
 
-    for tk, pid, payload in rows:
-        if _pular_substituido(tk, trocas, prog):
-            continue
+    for dono, tk, pid, payload in rows:
         try:
             p = json.loads(payload) if isinstance(payload, str) else payload
             quote = (p.get("results") or [p])[0] if isinstance(p, dict) else None
             if not quote:
                 continue
             data = nz.normalize_all(quote)
-            _reconcile_ticker(data, tk)
+            _reconcile_ticker(data, dono)
+            if tk != dono:
+                logger.info("%s: demonstrações do payload %s, gravado sob %s antes da troca",
+                            dono, pid, tk)
+                prog["payloads_de_codigo_antigo"] += 1
             n = 0
             with engine.begin() as conn:
                 for t in _TABELAS_DEMONSTRACAO:
@@ -829,10 +866,10 @@ def renormalize_demonstracoes(tickers: list[str] | None = None,
                     n += repo.upsert(conn, t, linhas)
             if n:
                 prog["demonstracoes"] += n
-                prog["atualizados"].append(tk)
+                prog["atualizados"].append(dono)
             prog["tickers"] += 1
         except Exception as exc:
-            logger.warning("renormalize_demonstracoes %s: %s", tk, exc)
+            logger.warning("renormalize_demonstracoes %s: %s", dono, exc)
             prog["erros"] += 1
     logger.info("market/renormalize_demonstracoes: tickers=%d atualizados=%d "
                 "demonstracoes=%d erros=%d", prog["tickers"], len(prog["atualizados"]),

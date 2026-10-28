@@ -26,12 +26,21 @@ o par; ON/PN/Unit nunca são troca.
 Dry-run por padrão, numa transação SÓ LEITURA. Idempotente: a segunda
 execução não acha linha a mover nem ativo a desativar.
 
+Backup e reversão: cada par aplicado vira um lote em
+``market.troca_codigo_backup`` com a linha inteira de tudo o que mudou
+(ver ``data_pipeline.market.troca_codigo``). O script imprime o lote e o
+comando que o desfaz. ``adjusted_close`` do código antigo é reescalado para a
+base do atual quando a mediana da razão nos pregões comuns não é 1.
+
 Uso:
   python scripts/unificar_trocas_de_codigo_b3.py --alvo warehouse            # dry-run
   python scripts/unificar_trocas_de_codigo_b3.py --alvo supabase             # dry-run
   python scripts/unificar_trocas_de_codigo_b3.py --alvo warehouse --apply
   python scripts/unificar_trocas_de_codigo_b3.py --alvo supabase --apply --confirmo-producao
   python scripts/unificar_trocas_de_codigo_b3.py --alvo warehouse --pares ELET3:AXIA3
+  python scripts/unificar_trocas_de_codigo_b3.py --alvo warehouse --lotes
+  python scripts/unificar_trocas_de_codigo_b3.py --alvo warehouse --reverter LOTE           # mostra
+  python scripts/unificar_trocas_de_codigo_b3.py --alvo warehouse --reverter LOTE --apply   # desfaz
 """
 from __future__ import annotations
 
@@ -132,6 +141,16 @@ def _imprimir(rel: dict) -> None:
         estado = "sem ativo" if at is None else (
             f"company_id={at['company_id']} ativo={'sim' if at['ativo'] else 'não'}")
         print(f"  {tk:6s} {estado}")
+    base = rel.get("base_ajuste")
+    if isinstance(base, dict):
+        if base["fator"] is None:
+            print("  adjusted_close: sem pregão comum, base não conferida")
+        else:
+            print(f"  adjusted_close: razão {n}/{a} = {base['fator']:.6f} em {base['comuns']} "
+                  f"pregões comuns" + ("; REESCALA o histórico movido" if base["reescala"]
+                                       else " (mesma base)"))
+    elif base:
+        print(f"  adjusted_close: {base}")
     for tabela, v in (rel.get("fatos") or {}).items():
         if isinstance(v, dict):
             if v["mover"] or v["descartar"]:
@@ -156,6 +175,57 @@ def _imprimir(rel: dict) -> None:
               + (f"; inserir linha de {setores['inserir']}" if setores.get("inserir") else ""))
     else:
         print(f"  setores: {setores if setores is not None else 'nenhum dos dois códigos'}")
+    backup = rel.get("backup")
+    if backup:
+        print(f"  backup: lote {backup['lote']} ({backup['linhas']} linhas); desfaz com "
+              f"--reverter {backup['lote']} --apply")
+
+
+def _listar_lotes(engine) -> int:
+    from data_pipeline.market.troca_codigo import lotes
+
+    with engine.connect() as conn:
+        _somente_leitura(conn)
+        todos = lotes(conn)
+    if not todos:
+        print("nenhum lote de backup")
+    for x in todos:
+        estado = f"revertido em {x['revertido_em']:%Y-%m-%d %H:%M}" if x["revertido_em"] else "aplicado"
+        print(f"{x['lote']}  {x['antigo']} -> {x['novo']}  {x['criado_em']:%Y-%m-%d %H:%M}  "
+              f"{estado}  linhas {x['linhas']} (mover {x['mover']}, descartar {x['descartar']})")
+    return 0
+
+
+def _reverter(engine, ids: list[str], aplicar: bool) -> int:
+    from data_pipeline.market.troca_codigo import lotes, reverter
+
+    if not aplicar:
+        with engine.connect() as conn:
+            _somente_leitura(conn)
+            por_id = {x["lote"]: x for x in lotes(conn)}
+        for lote in ids:
+            x = por_id.get(lote)
+            if x is None:
+                print(f"{lote}: lote desconhecido")
+            elif x["revertido_em"]:
+                print(f"{lote}: já revertido em {x['revertido_em']:%Y-%m-%d %H:%M}")
+            else:
+                print(f"{lote}: {x['antigo']} -> {x['novo']}; a reversão devolve "
+                      f"{x['mover']} linhas movidas e {x['descartar']} descartadas a "
+                      f"{x['antigo']} (dry-run; --apply desfaz)")
+        return 0
+    falhas = 0
+    for lote in ids:
+        try:
+            with engine.begin() as conn:
+                rel = reverter(conn, lote)
+        except ValueError as exc:
+            print(f"{lote}: {exc}")
+            falhas += 1
+            continue
+        print(f"{lote}: {rel['antigo']} -> {rel['novo']} revertido; fatos {rel['fatos']}; "
+              f"ativo {rel['novo']}: {rel['ativo_novo']}")
+    return 1 if falhas else 0
 
 
 def main() -> int:
@@ -170,6 +240,9 @@ def main() -> int:
                     help="obrigatório com --apply --alvo supabase")
     ap.add_argument("--pares", nargs="*", default=None,
                     help="restringe a estes pares ANTIGO:NOVO (ou só ANTIGO)")
+    ap.add_argument("--lotes", action="store_true", help="lista os lotes de backup")
+    ap.add_argument("--reverter", nargs="+", metavar="LOTE",
+                    help="desfaz estes lotes (sem --apply só mostra o que voltaria)")
     args = ap.parse_args()
 
     if args.apply and args.alvo == "supabase" and not args.confirmo_producao:
@@ -180,6 +253,10 @@ def main() -> int:
     if engine is None:
         print("ERRO: banco não configurado.")
         return 1
+    if args.lotes:
+        return _listar_lotes(engine)
+    if args.reverter:
+        return _reverter(engine, args.reverter, args.apply)
 
     with engine.connect() as conn:
         _somente_leitura(conn)
@@ -197,8 +274,11 @@ def main() -> int:
         try:
             if args.apply:
                 with engine.begin() as conn:
-                    rel = unificar(conn, antigo, novo, aplicar=True,
-                                   codigo_cvm=_codigo_cvm(conn, antigo, novo))
+                    # par já unificado não abre lote vazio
+                    rel = unificar(conn, antigo, novo, aplicar=False)
+                    if _pendente(rel):
+                        rel = unificar(conn, antigo, novo, aplicar=True,
+                                       codigo_cvm=_codigo_cvm(conn, antigo, novo))
             else:
                 with engine.connect() as conn:
                     _somente_leitura(conn)

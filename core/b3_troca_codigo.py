@@ -339,9 +339,64 @@ def dobrar_linhas(df: pd.DataFrame, mapa: dict[str, str], col_ticker: str = "tic
     return out
 
 
+def _completar_por_data(atual: pd.DataFrame, velho: pd.DataFrame, col_disp: str,
+                        col_ticker: str) -> pd.DataFrame:
+    """``atual.combine_first(velho)`` (índice = data) sem antecipar disponibilidade.
+
+    Na data que os dois têm, o valor que falta no atual e o antigo empresta só
+    ficou disponível quando o antigo ficou. O portão point-in-time
+    (``views.empresas_b3._classificar_disponibilidade_pit``) lê UM
+    ``AvailableAt`` por linha — vazio é baseline (prazo legal da CVM), medido
+    só passa até a data de decisão, malformado barra. Então:
+
+    * dois baselines: empresta, a linha continua baseline;
+    * dois medidos: empresta e, se emprestou algo, a linha passa a valer a
+      partir do MAIS TARDIO dos dois;
+    * medido com baseline, ou carimbo malformado: não empresta — as duas
+      disponibilidades não se comparam, e o atual fica como está.
+    """
+    if col_disp not in atual.columns and col_disp not in velho.columns:
+        return atual.combine_first(velho)
+    if (col_disp in atual.columns and col_disp in velho.columns
+            and atual[col_disp].dtype != velho[col_disp].dtype):
+        # NaT puro (naive) contra carimbo com fuso: combine_first não junta
+        atual = atual.assign(**{col_disp: atual[col_disp].astype(object)})
+        velho = velho.assign(**{col_disp: velho[col_disp].astype(object)})
+    comuns = atual.index.intersection(velho.index)
+    if comuns.empty:
+        return atual.combine_first(velho)
+    vazio = pd.Series(None, index=comuns, dtype=object)
+    disp_a = atual[col_disp].reindex(comuns) if col_disp in atual.columns else vazio
+    disp_v = velho[col_disp].reindex(comuns) if col_disp in velho.columns else vazio
+    t_a = pd.to_datetime(disp_a, errors="coerce", utc=True)
+    t_v = pd.to_datetime(disp_v, errors="coerce", utc=True)
+    medido_a, medido_v = disp_a.notna() & t_a.notna(), disp_v.notna() & t_v.notna()
+    ambos_baseline = disp_a.isna() & disp_v.isna()
+    ambos_medidos = medido_a & medido_v
+    velho = velho.drop(index=comuns[~(ambos_baseline | ambos_medidos).to_numpy()])
+
+    # data em que o antigo preenche algum valor que falta no atual
+    valores = [c for c in velho.columns if c not in (col_disp, col_ticker)]
+    v_com = velho.reindex(comuns)[valores]
+    a_com = atual.reindex(columns=valores).reindex(comuns)
+    empresta = (a_com.isna() & v_com.notna()).any(axis=1)
+    adiar = comuns[(ambos_medidos & empresta & (t_v > t_a)).to_numpy()]
+
+    junto = atual.combine_first(velho)
+    if len(adiar):
+        if junto[col_disp].dtype != disp_v.dtype:
+            junto[col_disp] = junto[col_disp].astype(object)
+        junto.loc[adiar, col_disp] = disp_v.loc[adiar].to_numpy()
+    return junto
+
+
 def dobrar_historico(hist: Mapping | None, mapa: dict[str, str], col_data: str = "Data",
-                     col_ticker: str = "Ticker") -> dict:
-    """{ticker: quadro por data}: as datas do antigo completam as do atual."""
+                     col_ticker: str = "Ticker", col_disp: str = "AvailableAt") -> dict:
+    """{ticker: quadro por data}: as datas do antigo completam as do atual.
+
+    Na mesma data o atual prevalece; o antigo só preenche o que falta, e a
+    linha nunca fica disponível antes do valor emprestado (``_completar_por_data``).
+    """
     if not hist or not mapa:
         return hist
     out = dict(hist)
@@ -357,9 +412,8 @@ def dobrar_historico(hist: Mapping | None, mapa: dict[str, str], col_data: str =
         if col_data not in atual.columns or col_data not in velho.columns:
             continue
         if atual[col_data].is_unique and velho[col_data].is_unique:
-            junto = (atual.set_index(col_data)
-                          .combine_first(velho.set_index(col_data))
-                          .reset_index())
+            junto = _completar_por_data(atual.set_index(col_data), velho.set_index(col_data),
+                                        col_disp, col_ticker).reset_index()
         else:
             junto = (pd.concat([atual, velho], ignore_index=True)
                        .drop_duplicates(subset=[col_data], keep="first"))
