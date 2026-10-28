@@ -19,7 +19,8 @@ mesmo ano e entrando duas vezes no benchmark. A leitura já deduplica
   (LISTAGEM preenchida prevalece; empate, a do código novo).
 
 Os pares vêm da mesma regra que o app usa (``mapa_de_trocas``): os 12 pares
-conferidos em ``PARES_CONHECIDOS``, as trocas já gravadas e o alias legado
+conferidos em ``PARES_CONHECIDOS``, as trocas já gravadas (inclusive as que a
+ingestão provou e deixou pendentes — ela não migra sozinha) e o alias legado
 quando os dois códigos são da mesma companhia. Companhias diferentes vetam
 o par; ON/PN/Unit nunca são troca.
 
@@ -192,7 +193,8 @@ def _listar_lotes(engine) -> int:
     for x in todos:
         estado = f"revertido em {x['revertido_em']:%Y-%m-%d %H:%M}" if x["revertido_em"] else "aplicado"
         print(f"{x['lote']}  {x['antigo']} -> {x['novo']}  {x['criado_em']:%Y-%m-%d %H:%M}  "
-              f"{estado}  linhas {x['linhas']} (mover {x['mover']}, descartar {x['descartar']})")
+              f"{estado}  linhas {x['linhas']} (mover {x['mover']}, descartar {x['descartar']})"
+              + (f", arquivadas na reversão {x['retiradas']}" if x["retiradas"] else ""))
     return 0
 
 

@@ -31,6 +31,7 @@ Regra de classificação setorial (documentada também no PR):
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from collections.abc import Iterable, Mapping
@@ -45,6 +46,13 @@ logger = logging.getLogger(__name__)
 # inversa (brapi_symbol = o símbolo novo que a brapi devolvia para o
 # ticker antigo do universo) e motivos livres.
 MOTIVO_TROCA = "troca de código B3 (mesma companhia e classe)"
+
+# Troca que a ingestão provou (mesma companhia e classe, mesma direção do
+# MOTIVO_TROCA) e ainda NÃO migrou: o histórico continua sob os dois códigos
+# até alguém aprovar ``scripts/unificar_trocas_de_codigo_b3.py --apply``. Já
+# basta para a tela tratar os dois como uma empresa e para o dry-run listar o
+# par; a ingestão não pula o código antigo por causa dela.
+MOTIVO_TROCA_PENDENTE = "troca de código B3 provada na ingestão (aguarda --apply)"
 
 # Trocas de código conferidas em 28/10/2026 (antigo → novo): mesma companhia
 # no armazém (company_id) e mesma classe. Ficam aqui porque o cadastro não
@@ -133,7 +141,8 @@ def mapa_de_trocas(df: pd.DataFrame | None, aliases=None) -> dict[str, str]:
     ``aliases``: linhas de ``market.ticker_alias`` (brapi_symbol, b3_ticker,
     motivo). Ordem de decisão:
 
-    1. alias com ``MOTIVO_TROCA`` (já provado quando foi gravado);
+    1. alias com ``MOTIVO_TROCA`` ou ``MOTIVO_TROCA_PENDENTE`` (já provado
+       quando foi gravado);
     2. ``PARES_CONHECIDOS``;
     3. alias legado (brapi_symbol = novo, b3_ticker = antigo) só quando os
        dois códigos estão em ``df`` com o MESMO company_id — o que descarta
@@ -163,14 +172,15 @@ def mapa_de_trocas(df: pd.DataFrame | None, aliases=None) -> dict[str, str]:
             return
         mapa[antigo] = novo
 
+    provados = (MOTIVO_TROCA, MOTIVO_TROCA_PENDENTE)
     linhas = _linhas_alias(aliases)
     for s, b, motivo in linhas:
-        if motivo == MOTIVO_TROCA:
+        if motivo in provados:
             _aceitar(s, b)
     for antigo, novo in PARES_CONHECIDOS.items():
         _aceitar(antigo, novo)
     for novo, antigo, motivo in linhas:
-        if motivo == MOTIVO_TROCA:
+        if motivo in provados:
             continue
         cn, ca = empresa.get(novo), empresa.get(antigo)
         if cn is not None and cn == ca:
@@ -256,6 +266,31 @@ def deduplicar_por_empresa(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, st
     logger.info("universo B3: %d código(s) substituído(s) saem: %s", len(mapa),
                 ", ".join(f"{a}->{n}" for a, n in sorted(mapa.items())))
     return df.loc[~substituido].reset_index(drop=True), mapa
+
+
+# ── Dobras no SQL: para o que é estatística SOBRE a fita ─────────────────────
+# Mediana de giro e contagem de exercícios não se dobram depois de prontas:
+# a mediana de 5 meses do código antigo e a de 1 mês do atual não dão a
+# mediana dos 6, e 8 anos sob um código e 3 sob o outro são 11, não
+# max(8, 3). A fita tem de ser unida ANTES da conta — o que estas duas peças
+# fazem, com o mesmo critério da migração (na mesma data fica a linha do
+# código atual), para o número sair igual antes e depois do ``--apply``.
+
+def sql_ticker(coluna: str = "ticker") -> str:
+    """O ``normalizar`` em SQL."""
+    return f"TRIM(REPLACE(UPPER({coluna}), '.SA', ''))"
+
+
+def sql_dono(coluna: str = "ticker") -> str:
+    """Expressão SQL do código que responde pela linha: o atual, quando o
+    parâmetro ``:trocas`` (JSON {antigo: atual}) traz o ticker; senão ele mesmo."""
+    tk = sql_ticker(coluna)
+    return f"COALESCE(CAST(:trocas AS jsonb) ->> {tk}, {tk})"
+
+
+def trocas_json(trocas: Mapping | Iterable | None) -> str:
+    """O valor de ``:trocas``: aceita o mapa ou os pares (chave de cache)."""
+    return json.dumps(dict(trocas or ()), sort_keys=True)
 
 
 # ── Dobras: o dado do código antigo passa a responder pelo atual ─────────────

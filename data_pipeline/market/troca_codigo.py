@@ -21,7 +21,8 @@ vai mexer: ativos, alias e setores dos dois códigos como estavam, e cada linha
 de fato do código antigo, marcada ``mover`` ou ``descartar``. Confere o backup
 contra a contagem antes de gravar e a gravação contra o backup depois; se não
 fecham, levanta e a transação inteira volta. ``reverter(lote)`` devolve o
-banco ao que o lote guardou.
+banco ao que o lote guardou — e arquiva no mesmo lote o que tira do código
+atual, para uma revisão gravada depois da migração não sumir.
 
 O ``adjusted_close`` de cada código vem com a base de ajuste do provedor. Se
 o do código atual estiver noutra base, o histórico movido emendaria com um
@@ -71,7 +72,7 @@ CREATE TABLE IF NOT EXISTS {BACKUP} (
     antigo       text NOT NULL,
     novo         text NOT NULL,
     tabela       text NOT NULL,
-    acao         text NOT NULL,      -- abrir | antes | mover | descartar
+    acao         text NOT NULL,      -- abrir | antes | mover | descartar | retirada
     linha        jsonb NOT NULL,
     criado_em    timestamptz NOT NULL DEFAULT now(),
     revertido_em timestamptz
@@ -461,13 +462,15 @@ def lotes(conn) -> list[dict]:
         return []
     rows = conn.execute(text(f"""
         SELECT lote, antigo, novo, MIN(criado_em), MAX(revertido_em),
-               COUNT(*) FILTER (WHERE acao <> 'abrir'),
+               COUNT(*) FILTER (WHERE acao NOT IN ('abrir', 'retirada')),
                COUNT(*) FILTER (WHERE acao = 'mover'),
-               COUNT(*) FILTER (WHERE acao = 'descartar')
+               COUNT(*) FILTER (WHERE acao = 'descartar'),
+               COUNT(*) FILTER (WHERE acao = 'retirada')
         FROM {BACKUP} GROUP BY lote, antigo, novo
         ORDER BY MIN(criado_em) DESC, lote""")).fetchall()
     return [{"lote": r[0], "antigo": r[1], "novo": r[2], "criado_em": r[3],
-             "revertido_em": r[4], "linhas": r[5], "mover": r[6], "descartar": r[7]}
+             "revertido_em": r[4], "linhas": r[5], "mover": r[6], "descartar": r[7],
+             "retiradas": r[8]}
             for r in rows]
 
 
@@ -476,7 +479,10 @@ def reverter(conn, lote: str) -> dict:
 
     Fatos: as linhas movidas saem do código atual (pela chave) e todas as
     guardadas voltam inteiras ao antigo — ``adjusted_close`` original
-    incluído. Ativos voltam com o ``is_active`` e o ``company_id`` de antes; o
+    incluído. O que sai do código atual vai antes para o lote como
+    ``retirada``, do jeito que estava: se a ingestão revisou um preço ou
+    indicador movido depois da migração, a revisão fica guardada em vez de
+    sumir. Ativos voltam com o ``is_active`` e o ``company_id`` de antes; o
     ativo novo que ``unificar`` criou sai, a menos que tenha ganhado dado
     depois (o DELETE em cascata apagaria esse dado). Alias e setores dos dois
     códigos voltam a ser exatamente as linhas guardadas. Lote desconhecido ou
@@ -518,9 +524,13 @@ def reverter(conn, lote: str) -> dict:
         if mover:
             casa = " AND ".join(f"d.{c} IS NOT DISTINCT FROM b.{c}" for c in chave)
             movidas = _do_lote(nome, "'mover'")
-            tirar = conn.execute(text(
-                f"DELETE FROM {nome} d USING {movidas} b WHERE d.ticker = :n AND {casa}"),
-                p).rowcount
+            tirar = conn.execute(text(f"""
+                WITH tirou AS (
+                    DELETE FROM {nome} d USING {movidas} b WHERE d.ticker = :n AND {casa}
+                    RETURNING d.*)
+                INSERT INTO {BACKUP} (lote, antigo, novo, tabela, acao, linha)
+                SELECT :l, :a, :n, :t, 'retirada', to_jsonb(tirou) FROM tirou"""),
+                {**p, "t": nome}).rowcount
         voltar = _restaurar(conn, nome, "'mover', 'descartar'", lote)
         if voltar != mover + descartar:
             raise RuntimeError(f"{nome}: voltaram {voltar} de {mover + descartar} "

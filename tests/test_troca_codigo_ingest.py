@@ -5,8 +5,10 @@ códigos, a ingestão reativava os dois em market.assets e a aba de portfólio
 contava a mesma companhia duas vezes. Aqui:
 
 * sem banco: a ingestão grava sob o código atual quando a troca é provada
-  (mesma companhia e classe), pula o código já substituído antes da rede e
-  mantém o caminho legado para o que não é troca (AZUL4 → AZUL3 é classe);
+  (mesma companhia e classe) e só REGISTRA a troca como pendente — mover o
+  histórico antigo é do script, com aprovação; pula o código já substituído
+  antes da rede e mantém o caminho legado para o que não é troca (AZUL4 →
+  AZUL3 é classe);
 * com banco (armazém local, banco descartável): ``unificar`` em dry-run não
   grava, aplicado deixa um ativo por (companhia, classe), é idempotente e não
   mistura classes nem companhias.
@@ -19,7 +21,7 @@ import uuid
 import pytest
 from sqlalchemy import create_engine, text
 
-from core.b3_troca_codigo import MOTIVO_TROCA
+from core.b3_troca_codigo import MOTIVO_TROCA, MOTIVO_TROCA_PENDENTE, mapa_de_trocas
 from data_pipeline.market import ingest as ig
 from data_pipeline.market import repository as repo
 from data_pipeline.market import troca_codigo as tc
@@ -79,10 +81,10 @@ class _Engine:
 
 @pytest.fixture
 def falso(monkeypatch):
-    """ingest_ticker com brapi, repositório e unificar trocados por gravadores."""
+    """ingest_ticker com brapi e repositório trocados por gravadores; a
+    migração do histórico (``unificar``) não pode ser chamada pela ingestão."""
     conn = _Conn()
     upserts: dict[str, list] = {}
-    unificados: list[tuple] = []
 
     def _upsert(c, table, rows):
         upserts.setdefault(table, []).extend(copy.deepcopy(rows or []))
@@ -92,9 +94,9 @@ def falso(monkeypatch):
     monkeypatch.setattr(ig.repo, "save_raw_payload", lambda *a, **k: 7)
     monkeypatch.setattr(ig.repo, "company_id_by_codigo", lambda c, cod: 1)
     monkeypatch.setattr(ig.repo, "append_metric_vintages", lambda c, rows: 0)
-    monkeypatch.setattr(ig, "unificar",
-                        lambda c, a, n, **k: unificados.append((a, n, k)) or {})
-    return conn, upserts, unificados
+    monkeypatch.setattr(tc, "unificar", lambda *a, **k: pytest.fail(
+        "a ingestão não migra o histórico: só o script, com aprovação"))
+    return conn, upserts
 
 
 def _ingerir(monkeypatch, conn, tk, data, cvm, trocas=None):
@@ -107,25 +109,33 @@ def _ingerir(monkeypatch, conn, tk, data, cvm, trocas=None):
 
 
 def _alias_legado(conn):
-    return [p for s, p in conn.executed if "INSERT INTO market.ticker_alias" in s]
+    return [p for s, p in conn.executed
+            if "INSERT INTO market.ticker_alias" in s and "s" in p]
 
 
-def test_troca_provada_grava_sob_o_codigo_atual_e_unifica(monkeypatch, falso):
-    conn, upserts, unificados = falso
+def _alias_pendente(conn):
+    return [{k: p[k] for k in ("a", "n", "c", "m")} for s, p in conn.executed
+            if "INSERT INTO market.ticker_alias" in s and p.get("m") == MOTIVO_TROCA_PENDENTE]
+
+
+def test_troca_provada_grava_sob_o_codigo_atual_e_fica_pendente(monkeypatch, falso):
+    conn, upserts = falso
     prog = _ingerir(monkeypatch, conn, "ELET3", _data("AXIA3"), CVM)
 
     for tabela in ("assets", "historical_prices"):
         assert {r["ticker"] for r in upserts[tabela]} == {"AXIA3"}, tabela
     assert upserts["companies"][0]["codigo_cvm"] == 2437
-    assert unificados == [("ELET3", "AXIA3", {"aplicar": True, "codigo_cvm": 2437})]
-    assert prog["trocas_unificadas"] == 1
-    # o alias legado (brapi_symbol = novo) não é gravado: a unificação grava
-    # o antigo → atual
+    # o histórico do ELET3 não muda de dono aqui (AGENTS.md: migração só com
+    # confirmação humana): a troca fica registrada, à espera do --apply
+    assert prog["trocas_pendentes"] == 1
+    assert _alias_pendente(conn) == [
+        {"a": "ELET3", "n": "AXIA3", "c": 2437, "m": MOTIVO_TROCA_PENDENTE}]
+    # nem o alias legado invertido (brapi_symbol = novo)
     assert not _alias_legado(conn)
 
 
 def test_codigo_substituido_e_pulado_antes_da_rede(monkeypatch, falso):
-    conn, upserts, _ = falso
+    conn, upserts = falso
 
     def _rede(*a, **k):
         raise AssertionError("código substituído não pode ir à brapi")
@@ -142,26 +152,26 @@ def test_codigo_substituido_e_pulado_antes_da_rede(monkeypatch, falso):
 def test_troca_de_classe_nao_e_troca_de_codigo(monkeypatch, falso):
     # AZUL4 → AZUL3: a brapi devolve a ON para a PN. Mesma companhia, classe
     # diferente — continua o caminho legado, PN gravada sob AZUL4.
-    conn, upserts, unificados = falso
+    conn, upserts = falso
     _ingerir(monkeypatch, conn, "AZUL4", _data("AZUL3"), {"AZUL4": 24112, "AZUL3": 24112})
     assert {r["ticker"] for r in upserts["assets"]} == {"AZUL4"}
-    assert not unificados
+    assert not _alias_pendente(conn)
     assert _alias_legado(conn)[0] == {"s": "AZUL3", "b": "AZUL4", "c": 24112}
 
 
 def test_companhia_diferente_nao_e_troca(monkeypatch, falso):
-    conn, upserts, unificados = falso
+    conn, upserts = falso
     _ingerir(monkeypatch, conn, "ELET3", _data("AXIA3"), {"ELET3": 2437, "AXIA3": 9999})
     assert {r["ticker"] for r in upserts["assets"]} == {"ELET3"}
-    assert not unificados
+    assert not _alias_pendente(conn)
 
 
 def test_sem_prova_de_companhia_fica_o_caminho_legado(monkeypatch, falso):
     # sem o CVM do símbolo novo e sem ativos no banco: não adivinha
-    conn, upserts, unificados = falso
+    conn, upserts = falso
     _ingerir(monkeypatch, conn, "ELET3", _data("AXIA3"), {"ELET3": 2437})
     assert {r["ticker"] for r in upserts["assets"]} == {"ELET3"}
-    assert not unificados
+    assert not _alias_pendente(conn)
     assert _alias_legado(conn)
 
 
@@ -174,8 +184,8 @@ def test_brapi_nao_inverte_uma_troca_conhecida():
     assert not tc.e_troca(conn, CVM, "ELET3", "ELET6")
 
 
-def test_renormalize_tambem_unifica_a_troca_provada(monkeypatch, falso):
-    conn, upserts, unificados = falso
+def test_renormalize_tambem_registra_a_troca_provada(monkeypatch, falso):
+    conn, upserts = falso
 
     class _ConnPayload(_Conn):
         def execute(self, clause, params=None):
@@ -195,7 +205,8 @@ def test_renormalize_tambem_unifica_a_troca_provada(monkeypatch, falso):
     prog = ig.renormalize()
     assert prog["erros"] == 0
     assert {r["ticker"] for r in upserts["assets"]} == {"AXIA3"}
-    assert unificados and unificados[0][:2] == ("ELET3", "AXIA3")
+    assert prog["trocas_pendentes"] == 1
+    assert [(p["a"], p["n"]) for p in _alias_pendente(cp)] == [("ELET3", "AXIA3")]
     assert not _alias_legado(cp)
 
 
@@ -203,7 +214,7 @@ def test_codigo_atual_herda_o_cvm_do_antigo_trocado(monkeypatch, falso):
     # A referência da CVM só conhece ELET3. Depois da unificação a ingestão
     # pede AXIA3: sem o elo da troca, o codigo_cvm sairia vazio e o upsert
     # apagaria o company_id do ativo.
-    conn, upserts, _ = falso
+    conn, upserts = falso
     _ingerir(monkeypatch, conn, "AXIA3", _data("AXIA3"), {"ELET3": 2437},
              trocas={"ELET3": "AXIA3"})
     assert upserts["companies"][0]["codigo_cvm"] == 2437
@@ -211,7 +222,7 @@ def test_codigo_atual_herda_o_cvm_do_antigo_trocado(monkeypatch, falso):
 
 
 def test_sem_codigo_cvm_o_ativo_mantem_o_company_id(monkeypatch, falso):
-    _, upserts, _ = falso
+    _, upserts = falso
 
     class _ConnAtivo(_Conn):
         def execute(self, clause, params=None):
@@ -448,40 +459,85 @@ def test_recusa_classe_diferente_e_companhia_diferente(banco):
     assert _ativos_por_classe(banco)[(1, "3")] == ["AXIA3", "ELET3"]
 
 
-def test_ingestao_da_troca_nao_deixa_dois_ativos_da_mesma_classe(banco, monkeypatch):
+def test_ingestao_registra_a_troca_e_so_o_script_move_o_historico(banco, monkeypatch):
     # A brapi devolve AXIA3 para ELET3 (foi assim que o alias legado nasceu).
+    # A ingestão roda desatendida no GitHub Actions: ela prova a troca e grava
+    # o dado novo sob AXIA3, mas mover o histórico do ELET3 é migração —
+    # AGENTS.md pede confirmação humana, então fica pendente para o script.
     monkeypatch.setattr(ig.sched, "with_backoff", lambda fetch, **k: {"results": [{}]})
     monkeypatch.setattr(ig.nz, "normalize_all", lambda q: _data(
         "AXIA3", precos=(("2025-01-03", 41.0), ("2025-01-06", 42.0))))
     monkeypatch.setattr(ig.repo, "save_raw_payload", lambda *a, **k: None)
     monkeypatch.setattr(ig.repo, "append_metric_vintages", lambda *a, **k: 0)
+    script_unificar = tc.unificar
+    monkeypatch.setattr(tc, "unificar", lambda *a, **k: pytest.fail("ingestão não migra"))
 
-    prog = ig._new_progress()
-    ig.ingest_ticker(banco, "ELET3", range_="1mo", full=False, cvm_map=CVM, prog=prog,
-                     trocas=ig._carregar_trocas(banco))
-    assert prog["trocas_unificadas"] == 1
-    por_classe = _ativos_por_classe(banco)
-    assert por_classe[(1, "3")] == ["AXIA3"]
-    assert por_classe[(1, "6")] == ["ELET6"]
-    assert _linhas(banco, "SELECT count(*) FROM market.historical_prices "
-                          "WHERE ticker = 'ELET3'") == [(0,)]
-    assert _linhas(banco, "SELECT min(date)::text, max(date)::text FROM "
-                          "market.historical_prices WHERE ticker = 'AXIA3'") == [
-        ("2010-01-04", "2025-01-06")]
+    def _rodada():
+        prog = ig._new_progress()
+        ig.ingest_ticker(banco, "ELET3", range_="1mo", full=False, cvm_map=CVM, prog=prog,
+                         trocas=ig._carregar_trocas(banco))
+        return prog
 
-    # Rodada seguinte: a troca está registrada, o código antigo nem vai à rede
-    # e o ativo dele não volta a ficar ativo.
+    def _precos():
+        return _linhas(banco, "SELECT ticker, min(date)::text, max(date)::text, count(*) "
+                              "FROM market.historical_prices WHERE ticker IN ('ELET3', 'AXIA3') "
+                              "GROUP BY ticker ORDER BY ticker")
+
+    def _alias_elet3():
+        return _linhas(banco, "SELECT b3_ticker, codigo_cvm, motivo FROM market.ticker_alias "
+                              "WHERE brapi_symbol = 'ELET3'")
+
+    assert _rodada()["trocas_pendentes"] == 1
+    assert _precos() == [("AXIA3", "2025-01-02", "2025-01-06", 3),
+                         ("ELET3", "2010-01-04", "2025-01-02", 3)]
+    assert _alias_elet3() == [("AXIA3", 2437, MOTIVO_TROCA_PENDENTE)]
+    assert _linhas(banco, "SELECT is_active FROM market.assets WHERE ticker = 'ELET3'") == [(True,)]
+    # Pendente não pula o código antigo na rodada seguinte (o histórico ainda
+    # é dele)... e regravar a mesma prova não muda nada.
+    assert ig._carregar_trocas(banco) == {}
+    antes = _foto(banco)
+    _rodada()
+    assert _foto(banco) == antes
+
+    # A tela já trata o par como troca, mesmo antes do --apply.
+    with banco.connect() as conn:
+        aliases = conn.execute(text(
+            "SELECT brapi_symbol, b3_ticker, motivo FROM market.ticker_alias")).fetchall()
+    assert mapa_de_trocas(None, aliases)["ELET3"] == "AXIA3"
+
+    # Aprovado o script, o histórico muda de dono e a troca deixa de ser pendente.
+    monkeypatch.setattr(tc, "unificar", script_unificar)
+    lote = _unificar(banco, "ELET3", "AXIA3", aplicar=True, codigo_cvm=2437)["backup"]["lote"]
+    assert _alias_elet3() == [("AXIA3", 2437, MOTIVO_TROCA)]
+    assert _ativos_por_classe(banco)[(1, "3")] == ["AXIA3"]
+    assert _precos() == [("AXIA3", "2010-01-04", "2025-01-06", 5)]
+
+    # Rodada seguinte: o código antigo nem vai à rede e o ativo dele não volta.
     def _rede(*a, **k):
         raise AssertionError("código substituído não pode ir à brapi")
 
     monkeypatch.setattr(ig.sched, "with_backoff", _rede)
-    trocas = ig._carregar_trocas(banco)
-    assert trocas == {"ELET3": "AXIA3"}
-    prog = ig._new_progress()
-    ig.ingest_ticker(banco, "ELET3", range_="1mo", full=False, cvm_map=CVM, prog=prog,
-                     trocas=trocas)
+    prog = _rodada()
     assert prog["codigos_substituidos"] == 1
     assert _ativos_por_classe(banco)[(1, "3")] == ["AXIA3"]
+
+    # A reversão devolve a troca ao estado pendente, não a apaga.
+    _reverter(banco, lote)
+    assert _alias_elet3() == [("AXIA3", 2437, MOTIVO_TROCA_PENDENTE)]
+
+
+def test_ingestao_nao_rebaixa_troca_ja_aplicada(banco, monkeypatch):
+    # Rodada chamada sem o mapa de trocas (trocas=None): a prova se repete,
+    # mas o alias já aplicado não pode voltar a pendente.
+    _unificar(banco, "ELET3", "AXIA3", aplicar=True, codigo_cvm=2437)
+    monkeypatch.setattr(ig.sched, "with_backoff", lambda fetch, **k: {"results": [{}]})
+    monkeypatch.setattr(ig.nz, "normalize_all", lambda q: _data("AXIA3"))
+    monkeypatch.setattr(ig.repo, "save_raw_payload", lambda *a, **k: None)
+    monkeypatch.setattr(ig.repo, "append_metric_vintages", lambda *a, **k: 0)
+    ig.ingest_ticker(banco, "ELET3", range_="1mo", full=False, cvm_map=CVM,
+                     prog=ig._new_progress(), trocas=None)
+    assert _linhas(banco, "SELECT b3_ticker, motivo FROM market.ticker_alias "
+                          "WHERE brapi_symbol = 'ELET3'") == [("AXIA3", MOTIVO_TROCA)]
 
 
 @pytest.mark.parametrize("cvm", [{"ELET3": 2437}, {}], ids=["cvm-so-do-antigo", "sem-cvm"])
@@ -577,6 +633,32 @@ def test_reverter_devolve_o_banco_ao_que_era(banco):
     with pytest.raises(ValueError, match="desconhecido"):
         _reverter(banco, "nao-existe")
     assert _foto(banco) == antes
+
+
+def test_reverter_arquiva_a_revisao_gravada_depois_da_migracao(banco):
+    # A ingestão revisou um pregão movido (2024-12-30) depois do --apply. A
+    # reversão tira a linha do código atual pela chave — sem arquivar, o
+    # valor revisado sumiria e só o de antes da migração voltaria.
+    backup = _unificar(banco, "ELET3", "AXIA3", aplicar=True, codigo_cvm=2437)["backup"]
+    lote = backup["lote"]
+    with banco.begin() as conn:
+        conn.execute(text("UPDATE market.historical_prices SET close = 38.5, source = 'brapi' "
+                          "WHERE ticker = 'AXIA3' AND date = '2024-12-30'"))
+    rel = _reverter(banco, lote)
+    assert rel["fatos"]["historical_prices"] == {"tiradas_do_atual": 2, "restauradas": 3}
+    assert _linhas(banco, "SELECT linha->>'date', linha->>'close', linha->>'source' "
+                          "FROM market.troca_codigo_backup WHERE lote = :l "
+                          "AND acao = 'retirada' AND tabela = 'market.historical_prices' "
+                          "ORDER BY 1", l=lote) == [
+        ("2010-01-04", "20", None), ("2024-12-30", "38.5", "brapi")]
+    assert _linhas(banco, "SELECT close::float FROM market.historical_prices "
+                          "WHERE ticker = 'ELET3' AND date = '2024-12-30'") == [(38.0,)]
+    with banco.connect() as conn:
+        (x,) = [x for x in tc.lotes(conn) if x["lote"] == lote]
+    # cada linha movida que saiu do código atual: 2 preços, 1 provento,
+    # 1 indicador, 1 safra — e o que a unificação guardou não muda
+    assert x["retiradas"] == 5
+    assert x["linhas"] == backup["linhas"]
 
 
 def test_reverter_apaga_o_ativo_que_a_troca_criou(banco):

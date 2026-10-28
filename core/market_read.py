@@ -32,7 +32,13 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.b3_precos_saneamento import neutralizar_saltos_mensais
-from core.b3_troca_codigo import mapa_de_trocas, unificar_classificacao
+from core.b3_troca_codigo import (
+    mapa_de_trocas,
+    sql_dono,
+    sql_ticker,
+    trocas_json,
+    unificar_classificacao,
+)
 from core.data_quality import clean_multiples_frame
 from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
 from core.fii_ticker import sql_ticker_fii as _sql_ticker_fii
@@ -1868,14 +1874,18 @@ def load_fii_segmentos() -> list[str]:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_historico_anos() -> dict[str, int]:
-    """{ticker: nº de anos de demonstração anual} a partir de market.income_statements."""
-    df = _q("""
-        SELECT ticker, COUNT(DISTINCT year)::int AS anos
+def load_historico_anos(trocas: tuple[tuple[str, str], ...] = ()) -> dict[str, int]:
+    """{ticker: nº de anos de demonstração anual} a partir de market.income_statements.
+
+    ``trocas`` ((antigo, atual), ...) conta sob o código atual os exercícios
+    das duas fitas: 8 anos do antigo e 3 do atual são 11 (core.b3_troca_codigo).
+    """
+    df = _q(f"""
+        SELECT {sql_dono()} AS ticker, COUNT(DISTINCT year)::int AS anos
         FROM market.income_statements
         WHERE period = 'annual' AND ticker IS NOT NULL AND year IS NOT NULL
-        GROUP BY ticker
-    """)
+        GROUP BY 1
+    """, {"trocas": trocas_json(trocas)})
     if df.empty:
         return {}
     out: dict[str, int] = {}
@@ -1895,23 +1905,34 @@ _PREGOES_POR_MES = 21
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_giro_diario(dias: int = 400) -> dict[str, float]:
+def load_giro_diario(dias: int = 400,
+                     trocas: tuple[tuple[str, str], ...] = ()) -> dict[str, float]:
     """{ticker: giro financeiro diário estimado em R$}.
 
     Usa a MEDIANA das barras mensais, não a média: um único mês de leilão ou de
     entrada em índice multiplica o volume e faria um papel ilíquido parecer
     negociável. Validação cruzada em 30/07/2026 — EUCA4 deu ~R$ 570 mil/dia
     aqui contra R$ 766 mil de ADTV publicado, mesma ordem de grandeza.
+
+    ``trocas`` ((antigo, atual), ...) tira a mediana da fita unida sob o código
+    atual; na mesma data fica a barra do atual (core.b3_troca_codigo).
     """
-    df = _q("""
-        SELECT p.ticker,
-               percentile_cont(0.5) WITHIN GROUP (ORDER BY p.close * p.volume)
-                 AS giro_mensal
-        FROM market.historical_prices p
-        WHERE p.date >= CURRENT_DATE - make_interval(days => :dias)
-          AND p.volume > 0 AND p.close > 0
-        GROUP BY p.ticker
-    """, {"dias": int(dias)})
+    df = _q(f"""
+        WITH barras AS (
+            SELECT DISTINCT ON (dono, date) dono, giro
+            FROM (SELECT {sql_dono('p.ticker')} AS dono,
+                         {sql_ticker('p.ticker')} AS tk,
+                         p.date, p.close * p.volume AS giro
+                  FROM market.historical_prices p
+                  WHERE p.date >= CURRENT_DATE - make_interval(days => :dias)
+                    AND p.volume > 0 AND p.close > 0) b
+            ORDER BY dono, date, (tk = dono) DESC
+        )
+        SELECT dono AS ticker,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY giro) AS giro_mensal
+        FROM barras
+        GROUP BY dono
+    """, {"dias": int(dias), "trocas": trocas_json(trocas)})
     if df.empty:
         return {}
     out: dict[str, float] = {}

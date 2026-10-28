@@ -65,6 +65,14 @@ def test_alias_de_troca_provada_vale_sem_os_dois_ativos():
         "VELH3": "NOVO3"}
 
 
+def test_troca_pendente_ja_vale_na_leitura_e_na_direcao_certa():
+    # A ingestão provou a troca e espera o --apply: a tela já conta a
+    # companhia uma vez. Lida como alias legado, a direção sairia invertida.
+    aliases = [("VELH3", "NOVO3", tc.MOTIVO_TROCA_PENDENTE)]
+    for ativos in (_ativos(("VELH3", 3), ("NOVO3", 3)), _ativos(("NOVO3", 3))):
+        assert _sem_conhecidos(tc.mapa_de_trocas(ativos, aliases)) == {"VELH3": "NOVO3"}
+
+
 def test_cadeia_de_trocas_aponta_para_o_ultimo_codigo():
     aliases = [("AAAA3", "BBBB3", tc.MOTIVO_TROCA), ("BBBB3", "CCCC3", tc.MOTIVO_TROCA)]
     assert _sem_conhecidos(tc.mapa_de_trocas(None, aliases)) == {

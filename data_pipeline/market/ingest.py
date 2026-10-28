@@ -23,9 +23,10 @@ import os
 from sqlalchemy import text
 
 import core.brapi as brapi
+from core.b3_troca_codigo import MOTIVO_TROCA, MOTIVO_TROCA_PENDENTE
 from data_pipeline.market import normalize as nz
 from data_pipeline.market import repository as repo
-from data_pipeline.market.troca_codigo import carregar_trocas, e_troca, unificar
+from data_pipeline.market.troca_codigo import carregar_trocas, e_troca
 from data_pipeline.quality import scheduler as sched
 
 logger = logging.getLogger(__name__)
@@ -204,10 +205,32 @@ def _company_id(conn, cod, ticker: str):
     return cid
 
 
-def _unificar_troca(conn, antigo: str, novo: str, cod, prog: dict) -> None:
+def _registrar_troca_pendente(conn, antigo: str, novo: str, cod, prog: dict) -> None:
+    """Troca provada na ingestão fica PENDENTE, não migrada.
+
+    Mover o histórico, descartar o que colide e desativar o código antigo é
+    migração: exige ``scripts/unificar_trocas_de_codigo_b3.py --apply`` (com
+    backup e, no Supabase, ``--confirmo-producao``), nunca a rotina agendada
+    (AGENTS.md: confirmação humana). Aqui só fica o alias antigo -> atual com
+    ``MOTIVO_TROCA_PENDENTE`` — a tela já deduplica e o dry-run lista o par —
+    e o aviso com o comando. Alias do código antigo para outro destino, ou a
+    troca já migrada (``MOTIVO_TROCA``), não é sobrescrito.
+    """
     _ensure_ticker_alias(conn)
-    unificar(conn, antigo, novo, aplicar=True, codigo_cvm=cod)
-    prog["trocas_unificadas"] = prog.get("trocas_unificadas", 0) + 1
+    conn.execute(text("""
+        INSERT INTO market.ticker_alias (brapi_symbol, b3_ticker, codigo_cvm, motivo)
+        VALUES (:a, :n, :c, :m)
+        ON CONFLICT (brapi_symbol) DO UPDATE
+            SET motivo = EXCLUDED.motivo,
+                codigo_cvm = COALESCE(EXCLUDED.codigo_cvm, market.ticker_alias.codigo_cvm)
+            WHERE market.ticker_alias.b3_ticker = EXCLUDED.b3_ticker
+              AND market.ticker_alias.motivo IS DISTINCT FROM EXCLUDED.motivo
+              AND market.ticker_alias.motivo IS DISTINCT FROM :t
+    """), {"a": antigo, "n": novo, "c": cod, "m": MOTIVO_TROCA_PENDENTE, "t": MOTIVO_TROCA})
+    prog["trocas_pendentes"] = prog.get("trocas_pendentes", 0) + 1
+    logger.warning("%s -> %s: troca de código provada e NÃO migrada; revise com "
+                   "scripts/unificar_trocas_de_codigo_b3.py --pares %s:%s e aplique "
+                   "com --apply", antigo, novo, antigo, novo)
 
 
 def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
@@ -222,7 +245,8 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
 
     ``trocas`` ({antigo: atual}, de ``carregar_trocas``): o código antigo é
     pulado antes da rede. Quando a brapi devolve outro símbolo e ele é troca
-    de código provada, grava sob o código atual e unifica o histórico.
+    de código provada, grava sob o código atual e registra a troca como
+    pendente — o histórico antigo só muda de dono pelo script, com aprovação.
     """
     tk = ticker.upper().replace(".SA", "")
     if _pular_substituido(tk, trocas, prog):
@@ -292,7 +316,7 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
         repo.append_metric_vintages(conn, data["calculated_metrics"])
         prog["indicadores"] += repo.upsert(conn, "calculated_metrics", data["calculated_metrics"])
         if novo:
-            _unificar_troca(conn, tk, novo, cod, prog)
+            _registrar_troca_pendente(conn, tk, novo, cod, prog)
         # qualidade: sinaliza ausências relevantes
         if full and dem == 0:
             repo.log_quality(conn, ticker=novo or tk, table_name="income_statements",
@@ -755,7 +779,7 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
                 repo.append_metric_vintages(conn, data["calculated_metrics"])
                 prog["indicadores"] += repo.upsert(conn, "calculated_metrics", data["calculated_metrics"])
                 if novo:
-                    _unificar_troca(conn, tk, novo, cod, prog)
+                    _registrar_troca_pendente(conn, tk, novo, cod, prog)
             prog["tickers"] += 1
         except Exception as exc:
             logger.warning("renormalize %s: %s", tk, exc)

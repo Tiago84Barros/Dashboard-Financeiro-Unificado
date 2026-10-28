@@ -182,7 +182,8 @@ def _market_cap_coverage(
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def _load_adtv(meses: int = 6) -> dict[str, float]:
+def _load_adtv(meses: int = 6,
+               trocas: tuple[tuple[str, str], ...] = ()) -> dict[str, float]:
     """Volume financeiro DIÁRIO típico (R$/dia) por ticker.
 
     Mediana do volume financeiro MENSAL dos últimos ``meses`` ÷ 21 pregões.
@@ -198,6 +199,11 @@ def _load_adtv(meses: int = 6) -> dict[str, float]:
     A agregação por mês é agnóstica à granularidade da série: se as barras de
     ``market.historical_prices`` forem diárias, a soma do mês é o volume
     financeiro mensal; se já forem mensais, a soma é a própria barra.
+
+    ``trocas`` ((antigo, atual), ...) une a fita dos dois códigos ANTES da
+    mediana: 5 meses de R$ 210 mi sob o antigo e 1 de R$ 21 mi sob o atual são
+    R$ 10 mi/dia, não o R$ 1 mi/dia do mês do atual sozinho. Na mesma data
+    fica a barra do atual, como na migração (core.b3_troca_codigo).
     """
     from sqlalchemy import text
 
@@ -207,15 +213,23 @@ def _load_adtv(meses: int = 6) -> dict[str, float]:
     if eng is None:
         raise LiquidezDataError("conexão com o banco indisponível")
 
-    query = text("""
-        WITH mensal AS (
-            SELECT ticker,
+    query = text(f"""
+        WITH barras AS (
+            SELECT DISTINCT ON (dono, date) dono, date, financeiro
+            FROM (SELECT {_troca.sql_dono()} AS dono,
+                         {_troca.sql_ticker()} AS tk, date,
+                         COALESCE(close, adjusted_close) * volume AS financeiro
+                  FROM market.historical_prices
+                  WHERE volume IS NOT NULL AND volume > 0
+                    AND COALESCE(close, adjusted_close) IS NOT NULL
+                    AND date >= (CURRENT_DATE - make_interval(months => :m))) b
+            ORDER BY dono, date, (tk = dono) DESC
+        ),
+        mensal AS (
+            SELECT dono AS ticker,
                    date_trunc('month', date) AS mes,
-                   SUM(COALESCE(close, adjusted_close) * volume) AS financeiro
-            FROM market.historical_prices
-            WHERE volume IS NOT NULL AND volume > 0
-              AND COALESCE(close, adjusted_close) IS NOT NULL
-              AND date >= (CURRENT_DATE - make_interval(months => :m))
+                   SUM(financeiro) AS financeiro
+            FROM barras
             GROUP BY 1, 2
         )
         SELECT ticker,
@@ -225,7 +239,8 @@ def _load_adtv(meses: int = 6) -> dict[str, float]:
     """)
     try:
         with eng.connect() as conn:
-            rows = conn.execute(query, {"m": int(meses)}).fetchall()
+            rows = conn.execute(query, {"m": int(meses),
+                                        "trocas": _troca.trocas_json(trocas)}).fetchall()
     except Exception as exc:
         raise LiquidezDataError(
             f"consulta de volume negociado falhou ({type(exc).__name__})"
@@ -3164,16 +3179,18 @@ def render(show_header: bool = True) -> None:
         df_set        = _so_acoes(_db.load_setores())
         selic_macro   = _db.load_selic_macro()
         macro_history = _db.load_macro_history()
-        anos_hist     = _db.load_historico_anos()
         df_mult_todos = _db.load_multiplos_todos()
         # Troca de código (ELET3 -> AXIA3): a mesma companhia e classe sob dois
         # códigos ativos disputava a liderança do segmento consigo mesma e
         # contava duas vezes no benchmark. A unidade aqui é companhia + classe:
         # fica o código atual, e o dado que ainda mora no antigo (o preço de
         # antes da troca) é dobrado nele. ON/PN/Unit da mesma empresa seguem
-        # separadas — não são troca (core.b3_troca_codigo).
+        # separadas — não são troca (core.b3_troca_codigo). O que é estatística
+        # da fita (anos de balanço, mediana de giro) recebe as trocas e une as
+        # duas fitas no SQL: dobrar o número pronto contaria max(8, 3) anos.
         df_set, _mapa_troca = _troca.deduplicar_por_empresa(df_set)
-        anos_hist     = _troca.dobrar_escalares(anos_hist, _mapa_troca, modo="max")
+        _trocas       = tuple(sorted(_mapa_troca.items()))
+        anos_hist     = _db.load_historico_anos(trocas=_trocas)
         df_mult_todos = _troca.dobrar_linhas(df_mult_todos, _mapa_troca,
                                              col_ticker="Ticker", chaves=())
 
@@ -3241,7 +3258,7 @@ def render(show_header: bool = True) -> None:
     # ausente como "ilíquido" derrubaria o universo inteiro em silêncio.
     if min_adtv > 0:
         try:
-            _adtvs = _troca.dobrar_escalares(_load_adtv(), _mapa_troca)
+            _adtvs = _load_adtv(trocas=_trocas)
         except LiquidezDataError as exc:
             _adtvs = {}
             aviso_lacuna(
@@ -4281,7 +4298,7 @@ def render(show_header: bool = True) -> None:
         from core.b3_holdings_health import CRITICO, check_holdings
         from core.b3_liquidity import LiquidityPolicy, aplicar_piso_de_liquidez
         try:
-            _giro = _troca.dobrar_escalares(_db.load_giro_diario(), _mapa_troca)
+            _giro = _db.load_giro_diario(trocas=_trocas)
             # o código substituído ainda ativo não é classe irmã do atual
             _irmas = _troca.dobrar_irmas(_db.load_classes_irmas(), _mapa_troca)
         except Exception:  # noqa: BLE001 - dado ausente não decide, mas é nomeado
