@@ -531,6 +531,35 @@ def test_aplicado_guarda_cada_linha_que_mexe(banco):
                           "AND tabela = 'market.historical_prices'", l=lote) == [("39",)]
 
 
+def test_indice_unico_que_a_chave_nao_cobre_descarta_em_vez_de_mover(banco):
+    # O Supabase tem uq_metric_vintage_artifact nas safras; o armazém não. Lá
+    # a ODPV3 e a SAUD3 gravaram LPA no mesmo instante com valores diferentes:
+    # não é a mesma safra pela chave de FATOS, mas mover viola o índice.
+    with banco.begin() as conn:
+        conn.exec_driver_sql("""
+            ALTER TABLE market.calculated_metric_vintages
+                ADD COLUMN recorded_at timestamptz NOT NULL DEFAULT now();
+            CREATE UNIQUE INDEX uq_metric_vintage_artifact
+                ON market.calculated_metric_vintages
+                   (ticker, period, year, quarter, metric_name, available_at, recorded_at);
+            INSERT INTO market.calculated_metric_vintages
+                (ticker, period, year, quarter, metric_name, metric_value,
+                 available_at, recorded_at) VALUES
+                ('ELET3', 'spot', 0, 0, 'LPA', 1.10, '2026-07-06', '2026-07-06'),
+                ('AXIA3', 'spot', 0, 0, 'LPA', 1.25, '2026-07-06', '2026-07-06');
+        """)
+    rel = _unificar(banco, "ELET3", "AXIA3", aplicar=False)
+    assert rel["fatos"]["calculated_metric_vintages"] == {"mover": 1, "descartar": 1}
+
+    lote = _unificar(banco, "ELET3", "AXIA3", aplicar=True, codigo_cvm=2437)["backup"]["lote"]
+    assert _linhas(banco, "SELECT metric_name, metric_value::float FROM "
+                          "market.calculated_metric_vintages WHERE ticker = 'AXIA3' "
+                          "ORDER BY metric_name") == [("LPA", 1.25), ("ROE", 0.10)]
+    assert _linhas(banco, "SELECT acao, linha->>'metric_value' FROM market.troca_codigo_backup "
+                          "WHERE lote = :l AND tabela = 'market.calculated_metric_vintages' "
+                          "ORDER BY acao", l=lote) == [("descartar", "1.10"), ("mover", "0.10")]
+
+
 def test_reverter_devolve_o_banco_ao_que_era(banco):
     antes = _foto(banco)
     lote = _unificar(banco, "ELET3", "AXIA3", aplicar=True, codigo_cvm=2437)["backup"]["lote"]

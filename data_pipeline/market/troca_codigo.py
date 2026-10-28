@@ -49,8 +49,9 @@ from data_pipeline.market.repository import _NATURAL_KEY
 logger = logging.getLogger(__name__)
 
 # Tabelas de fato e o que identifica a linha além do ticker (as restrições
-# únicas de repository). As safras de indicadores não têm chave única: mesma
-# métrica, mesmo período, mesmo valor e mesma disponibilidade é a mesma safra.
+# únicas de repository). As safras de indicadores não têm chave única no
+# armazém: mesma métrica, mesmo período, mesmo valor e mesma disponibilidade
+# é a mesma safra. Índices únicos que o banco tenha a mais: _chaves_unicas.
 FATOS: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
     (t, tuple(c for c in _NATURAL_KEY[t] if c != "ticker"))
     for t in ("historical_prices", "historical_price_observations",
@@ -151,6 +152,32 @@ def _colunas(conn) -> dict[str, set[str]]:
     return out
 
 
+def _chaves_unicas(conn) -> dict[str, list[tuple[str, ...]]]:
+    """Índices únicos com ticker de cada tabela de fato, lidos do banco.
+
+    A chave de ``FATOS`` vem de repository, mas o banco pode ter mais: no
+    Supabase as safras têm ``uq_metric_vintage_artifact`` (o publicador a
+    cria), que o armazém não tem. Mover a linha que bate num desses índices
+    viola o índice, então ela é descartada como as outras colisões."""
+    lista = ", ".join(f"'{t}'" for t, _ in FATOS)
+    rows = conn.execute(text(f"""
+        SELECT c.relname, array_agg(a.attname::text ORDER BY k.ord)
+        FROM pg_index x
+        JOIN pg_class c ON c.oid = x.indrelid
+        JOIN pg_namespace s ON s.oid = c.relnamespace
+        CROSS JOIN LATERAL unnest(x.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum = k.attnum
+        WHERE s.nspname = 'market' AND c.relname IN ({lista}) AND x.indisunique
+          AND x.indpred IS NULL AND x.indexprs IS NULL AND k.ord <= x.indnkeyatts
+        GROUP BY c.relname, x.indexrelid
+    """)).fetchall()
+    out: dict[str, list[tuple[str, ...]]] = {}
+    for tabela, colunas in rows:
+        if "ticker" in colunas:
+            out.setdefault(tabela, []).append(tuple(c for c in colunas if c != "ticker"))
+    return out
+
+
 def _base_ajuste(conn, cols: dict[str, set[str]], p: dict) -> dict | str:
     """Razão adjusted_close atual/antigo nos pregões comuns (mediana).
 
@@ -176,6 +203,7 @@ def _base_ajuste(conn, cols: dict[str, set[str]], p: dict) -> dict | str:
 def _fatos(conn, cols: dict[str, set[str]], p: dict, aplicar: bool,
            lote: str | None = None, base: dict | str | None = None) -> dict:
     reescala = isinstance(base, dict) and base["reescala"]
+    unicas = _chaves_unicas(conn)
     out = {}
     for tabela, chave in FATOS:
         tem = cols.get(f"market.{tabela}")
@@ -185,8 +213,14 @@ def _fatos(conn, cols: dict[str, set[str]], p: dict, aplicar: bool,
         if not {"ticker", *chave} <= tem:
             out[tabela] = "sem as colunas da chave"
             continue
-        casa = " AND ".join(f"n.{c} IS NOT DISTINCT FROM o.{c}" for c in chave)
-        existe = f"EXISTS (SELECT 1 FROM market.{tabela} n WHERE n.ticker = :n AND {casa})"
+        # Mesmo fato pela chave de FATOS, ou colisão num índice único que ela
+        # não cobre (índice que contém a chave já é coberto por ela). No
+        # índice, NULL não colide: igualdade estrita, como o próprio índice.
+        bate = [" AND ".join(f"n.{c} IS NOT DISTINCT FROM o.{c}" for c in chave)]
+        bate += [" AND ".join(f"n.{c} = o.{c}" for c in k)
+                 for k in unicas.get(tabela, []) if k and not set(chave) <= set(k)]
+        casa = " OR ".join(f"({b})" for b in bate)
+        existe = f"EXISTS (SELECT 1 FROM market.{tabela} n WHERE n.ticker = :n AND ({casa}))"
         if aplicar:
             fator = base["fator"] if reescala and tabela == "historical_prices" else None
             out[tabela] = _mover_com_backup(conn, tabela, existe, p, lote, fator)
