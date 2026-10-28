@@ -47,12 +47,34 @@ reescreve histórico, não cria commit de merge e não sobrescreve trabalho loca
 `main` local com commits que a remota não tem -- continua sendo de quem está
 trabalhando: a função recusa e diz quantos commits de cada lado.
 
+Sem a origin/main inteira no HEAD, a rotina não publica
+-------------------------------------------------------
+Até 28/10/2026 a recusa acima só ia para a notificação, e a rotina publicava
+assim mesmo com o código que estivesse no disco. Em 26 e 27/10 o checkout
+estava divergente e sem o PR #558, e os publicadores regravaram ~26,7 mil
+linhas de `market.income_statements` com o LPA 1000x que aquele PR corrigia
+(a limpeza foi o PR #590). Uma correção mergeada que a rotina não roda não
+corrigiu nada; pior, ela desfaz a correção que outra pessoa já aplicou nos
+dados.
+
+Por isso `ResultadoAtualizacao.pode_publicar` só é verdadeiro quando a função
+**comprovou** que o HEAD contém a origin/main recém-buscada. O padrão é falso:
+qualquer caminho novo, ou esquecido, bloqueia em vez de liberar. Estar à
+frente é normal -- são os commits de artefato que a própria rotina faz e
+ainda não subiu -- e não bloqueia. O que bloqueia é faltar commit da origin:
+divergência, fast-forward recusado, merge pela metade e fetch que não
+completou. Sem rede não dá para saber se a origin andou; e os publicadores
+precisariam da rede de qualquer jeito, para o Supabase e para as fontes.
+Bloquear ali não custa uma vitrine que fosse sair, e o alvo segue vencido
+para a execução seguinte.
+
 Sem Streamlit, sem banco, sem rede própria -- só `git` no diretório que recebe.
 """
 from __future__ import annotations
 
 import os
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -60,6 +82,10 @@ from pathlib import Path
 #: e avisar do que segurar a fila até o teto de 90 min do orquestrador.
 TIMEOUT_GIT = 180
 RAMO_PUBLICADO = "main"
+#: Segundos entre tentativas de `git fetch`. Fetch que falha agora bloqueia a
+#: rotina inteira, então um soluço de DNS na hora do disparo não pode custar a
+#: noite; cinco minutos de espera cabem no prazo de 225 min da rotina.
+PAUSAS_FETCH = (30, 90, 180)
 
 
 @dataclass
@@ -140,15 +166,31 @@ def artefatos_mudados(raiz: Path, caminhos: list[str]) -> list[str]:
 
 @dataclass
 class ResultadoAtualizacao:
-    """O que `atualizar_main` fez com a `main` local."""
+    """O que `atualizar_main` fez com a `main` local, e se dá para publicar."""
 
     avancou: int = 0
+    #: Commits do HEAD que a origin/main não tem, e da origin/main que o HEAD
+    #: não tem, medidos depois do fetch e de um eventual avanço.
+    frente: int = 0
+    atras: int = 0
     motivo: str = ""
     erro: str = ""
+    #: Só `atualizar_main` liga, e só depois de comprovar. Ver `pode_publicar`.
+    contem_origin: bool = False
 
     @property
     def ok(self) -> bool:
         return not self.erro
+
+    @property
+    def pode_publicar(self) -> bool:
+        """Se o HEAD comprovadamente contém a origin/main recém-buscada.
+
+        Falso por padrão: um resultado que ninguém confirmou bloqueia. `ok` é
+        outra pergunta -- um ramo de trabalho que já contém a origin pode
+        publicar, mas segue com `erro`, porque o artefato não será commitado.
+        """
+        return self.contem_origin
 
     def resumo(self) -> str:
         if self.erro:
@@ -159,64 +201,132 @@ class ResultadoAtualizacao:
 
 
 def _contagem(raiz: Path) -> tuple[int, int] | None:
-    """(à frente, atrás) da `main` local em relação à `origin/main`."""
+    """(à frente, atrás) do HEAD em relação à `origin/main`.
+
+    HEAD, e não `main`: os publicadores executam o código do HEAD, esteja o
+    checkout na `main` ou num ramo de trabalho.
+    """
     proc = _git(raiz, "rev-list", "--left-right", "--count",
-                f"{RAMO_PUBLICADO}...origin/{RAMO_PUBLICADO}")
+                f"HEAD...origin/{RAMO_PUBLICADO}")
     partes = (proc.stdout or "").split()
     if proc.returncode != 0 or len(partes) != 2:
         return None
     return int(partes[0]), int(partes[1])
 
 
-def atualizar_main(raiz: Path) -> ResultadoAtualizacao:
+def _buscar_origin(raiz: Path, pausas) -> tuple[subprocess.CompletedProcess, int]:
+    """`git fetch` com novas tentativas. Devolve a última resposta e quantas foram.
+
+    Fetch que estoura `TIMEOUT_GIT` conta como tentativa falha, não como exceção:
+    rede pela metade costuma pendurar em vez de recusar.
+    """
+    tentativas = 0
+    for pausa in (0, *pausas):
+        if tentativas:
+            time.sleep(pausa)
+        tentativas += 1
+        try:
+            proc = _git(raiz, "fetch", "origin", RAMO_PUBLICADO)
+        except subprocess.TimeoutExpired:
+            proc = subprocess.CompletedProcess(
+                ["git", "fetch"], 1, "", f"sem resposta em {TIMEOUT_GIT} s")
+        if proc.returncode == 0:
+            break
+    return proc, tentativas
+
+
+def _motivo_da_recusa(proc: subprocess.CompletedProcess) -> str:
+    """O que o git disse ao recusar o merge, com os arquivos que ele nomeou.
+
+    `merge --ff-only` barrado por arquivo modificado termina em "Aborting", e
+    a última linha não diz nada. O que serve é o cabeçalho do erro e a lista
+    indentada logo abaixo dele -- quem lê o Telegram precisa saber qual
+    arquivo destravar.
+    """
+    linhas = [linha for linha in (proc.stderr or "").splitlines() if linha.strip()]
+    arquivos = [linha.strip() for linha in linhas if linha.startswith("\t")]
+    cabecalho = next((linha.strip() for linha in linhas
+                      if not linha.startswith("\t")), "")
+    if arquivos:
+        return f"{cabecalho} {', '.join(arquivos)}".strip()
+    return cabecalho or _ultima_linha(proc)
+
+
+def atualizar_main(raiz: Path, *, pausas=PAUSAS_FETCH) -> ResultadoAtualizacao:
     """Avança a `main` local até a `origin/main`, só por fast-forward.
 
     Roda antes dos publicadores, para eles usarem o código mergeado e o push
     do artefato não ser rejeitado por a `main` local estar para trás. Ver o
-    cabeçalho do módulo para o que ela se recusa a fazer.
+    cabeçalho do módulo para o que ela se recusa a fazer e para quando
+    `pode_publicar` fica falso. `pausas` são os segundos entre tentativas de
+    fetch; ``()`` tenta uma vez só.
     """
     resultado = ResultadoAtualizacao()
-    ramo = ramo_atual(raiz)
-    if ramo != RAMO_PUBLICADO:
-        resultado.erro = (f"ramo atual é {ramo or 'desconhecido'}, não "
-                          f"{RAMO_PUBLICADO}; main local não atualizada")
-        return resultado
+    try:
+        _atualizar(raiz, resultado, pausas)
+    except (OSError, subprocess.SubprocessError) as exc:
+        # git ausente, ou que não respondeu no prazo. Sem resposta não há prova
+        # de nada; e exceção aqui mataria a rotina antes de ela poder avisar.
+        resultado.contem_origin = False
+        resultado.erro = f"git não respondeu: {exc}"
+    return resultado
+
+
+def _atualizar(raiz: Path, resultado: ResultadoAtualizacao, pausas) -> None:
     em_curso = operacao_em_curso(raiz)
     if em_curso:
         resultado.erro = f"{em_curso} em andamento; main local não atualizada"
-        return resultado
+        return
+    ramo = ramo_atual(raiz)
 
-    proc = _git(raiz, "fetch", "origin", RAMO_PUBLICADO)
+    # O fetch vem antes da regra do ramo: fora da `main` não se avança nada,
+    # mas ainda é preciso saber se o HEAD tem tudo o que a origin tem.
+    proc, tentativas = _buscar_origin(raiz, pausas)
     if proc.returncode != 0:
-        resultado.erro = f"git fetch falhou: {_ultima_linha(proc)}"
-        return resultado
+        resultado.erro = (
+            f"git fetch falhou ({tentativas} tentativa(s)): {_ultima_linha(proc)}. "
+            "Sem a origin/main não dá para saber se o código do disco está em dia.")
+        return
     contagem = _contagem(raiz)
     if contagem is None:
-        resultado.erro = "não deu para comparar a main local com a origin/main"
-        return resultado
+        resultado.erro = "não deu para comparar o HEAD com a origin/main"
+        return
     frente, atras = contagem
+    resultado.frente, resultado.atras = frente, atras
+
+    if ramo != RAMO_PUBLICADO:
+        # Avançar aqui seria merge num ramo de trabalho alheio. Publica só se o
+        # ramo já contém a origin; o artefato, de todo modo, não será commitado.
+        resultado.contem_origin = not atras
+        resultado.erro = (f"ramo atual é {ramo or 'desconhecido'}, não "
+                          f"{RAMO_PUBLICADO}; main local não atualizada")
+        if atras:
+            resultado.erro += f", e faltam {atras} commit(s) da origin/main no HEAD"
+        return
     if not atras:
+        resultado.contem_origin = True
         resultado.motivo = ("main local já em dia" if not frente else
                             f"main local {frente} commit(s) à frente; o próximo "
                             "push os leva")
-        return resultado
+        return
     if frente:
         resultado.erro = (
             f"main local divergiu: {frente} commit(s) à frente e {atras} atrás "
             "da origin/main. Avanço só por fast-forward é impossível; resolva à "
-            "mão (nada foi reescrito). Até lá o push do artefato é rejeitado e "
-            "os publicadores rodam com o código antigo.")
-        return resultado
+            "mão (nada foi reescrito). Até lá a rotina não publica, porque "
+            "rodaria o código antigo.")
+        return
 
     proc = _git(raiz, "merge", "--ff-only", f"origin/{RAMO_PUBLICADO}")
     if proc.returncode != 0:
         resultado.erro = (
             f"fast-forward recusado ({atras} commit(s) atrás): "
-            f"{_ultima_linha(proc)}. Provável arquivo modificado na árvore de "
-            "trabalho que a origin também mudou; nada foi sobrescrito.")
-        return resultado
+            f"{_motivo_da_recusa(proc)}. Provável mudança na árvore de trabalho "
+            "em arquivo que a origin também mudou; nada foi sobrescrito.")
+        return
     resultado.avancou = atras
-    return resultado
+    resultado.atras = 0
+    resultado.contem_origin = True
 
 
 def publicar_artefatos(raiz: Path, caminhos, mensagem: str,
