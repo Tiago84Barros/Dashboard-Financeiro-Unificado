@@ -32,7 +32,18 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.b3_precos_saneamento import neutralizar_saltos_mensais
+from core.b3_troca_codigo import (
+    TOLERANCIA_BASE,
+    mapa_de_trocas,
+    sql_dono,
+    sql_ticker,
+    trocas_json,
+    unificar_classificacao,
+)
 from core.data_quality import clean_multiples_frame
+from core.data_quality import (
+    suprimir_razoes_sobre_patrimonio_negativo as _suprime_razoes_sobre_patrimonio_negativo,
+)
 from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
 from core.fii_ticker import sql_ticker_fii as _sql_ticker_fii
 from core.liquidez import procedencia_liquidez
@@ -106,43 +117,9 @@ def _pivot_metrics(long_df: pd.DataFrame) -> pd.DataFrame:
             wide[c] = pd.NA
     for c in _MULT_COLS:
         wide[c] = pd.to_numeric(wide[c], errors="coerce")
+    # A regra e o porquê moram em core.data_quality, com quem mais junta linhas.
     return _suprime_razoes_sobre_patrimonio_negativo(
         wide[["Ticker", "year", *_MULT_COLS]])
-
-
-# Razões cujo DENOMINADOR é o patrimônio líquido. Com PL negativo o quociente
-# inverte de sinal e desastre vira destaque.
-_RAZOES_SOBRE_PL = ("ROE", "P/VP", "Endividamento_Total")
-
-
-def _suprime_razoes_sobre_patrimonio_negativo(wide: pd.DataFrame) -> pd.DataFrame:
-    """Anula ROE/P-VP/Endividamento quando o patrimônio líquido é negativo.
-
-    Por que na LEITURA e não só no cálculo: ``calculated_metrics`` tem mais de
-    uma fonte para a mesma métrica. O ETL calcula (``market.compute``) e a brapi
-    entrega a dela pronta (``brapi_trailing``). Guardar apenas o cálculo deixava
-    passar a versão da brapi — medido em 30/07/2026, MWET4 exibia ROE de +4,23
-    com patrimônio negativo e prejuízo de R$ 28,6 mi, e o método gravado era
-    ``brapi_trailing``. Das 45 empresas com patrimônio negativo, 32 mostravam
-    ROE POSITIVO, até +423%; a faixa canônica de ROE (-3, 5) aceita o número,
-    porque os dois sinais se cancelam antes de ela olhar.
-
-    Suprimir aqui cobre todo consumidor do frame, seja qual for a fonte que
-    gravou. O veredito sobre a empresa não se perde: fica no sinal
-    ``Patrimonio_Negativo``, que é justamente a coluna consultada para saber
-    disso.
-    """
-    if wide.empty or "Patrimonio_Negativo" not in wide.columns:
-        return wide
-    insolvente = pd.to_numeric(wide["Patrimonio_Negativo"],
-                               errors="coerce").fillna(0) == 1
-    if not bool(insolvente.any()):
-        return wide
-    wide = wide.copy()
-    for coluna in _RAZOES_SOBRE_PL:
-        if coluna in wide.columns:
-            wide.loc[insolvente, coluna] = float("nan")
-    return wide
 
 
 # ── Loaders ───────────────────────────────────────────────────────────────────
@@ -150,24 +127,33 @@ def _suprime_razoes_sobre_patrimonio_negativo(wide: pd.DataFrame) -> pd.DataFram
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_setores() -> pd.DataFrame:
     """
-    ticker, nome_empresa, SETOR, SUBSETOR, SEGMENTO.
+    ticker, nome_empresa, SETOR, SUBSETOR, SEGMENTO, company_id, codigo_atual.
     Universo/nomes vêm do market.* (assets+companies); a TAXONOMIA B3
     (Setor/Subsetor/Segmento) vem de public.setores — a brapi não traz a
     classificação B3 de forma consistente. public.setores é dado de
     referência (como cvm_to_ticker), não os fundamentos legados.
+
+    Troca de código (ELET3 → AXIA3): enquanto o código antigo continuar ativo
+    na base, os dois aparecem aqui, com UMA classificação (regra em
+    ``core.b3_troca_codigo``) e ``codigo_atual`` apontando o código vigente.
+    Quem conta empresas (a aba de portfólio) tira o substituído com
+    ``deduplicar_por_empresa``.
     """
     df = _q("""
-        SELECT a.ticker,
+        SELECT a.ticker, a.company_id,
                COALESCE(c.name, s.nome_empresa, a.ticker) AS nome_empresa,
                COALESCE(NULLIF(s."SETOR", ''),    NULLIF(c.sector, ''))    AS "SETOR",
                COALESCE(NULLIF(s."SUBSETOR", ''), NULLIF(c.subsector, '')) AS "SUBSETOR",
-               COALESCE(NULLIF(s."SEGMENTO", ''), NULLIF(c.segment, ''))   AS "SEGMENTO"
+               COALESCE(NULLIF(s."SEGMENTO", ''), NULLIF(c.segment, ''))   AS "SEGMENTO",
+               s.listagem
         FROM market.assets a
         LEFT JOIN market.companies c ON c.id = a.company_id
         -- taxonomia B3: casa por ticker exato; senão pela RAIZ de 4 letras
         -- (PN/Unit herdam o setor do ON: BBDC4->BBDC3, ITUB4->ITUB3).
         LEFT JOIN LATERAL (
-            SELECT s2."SETOR", s2."SUBSETOR", s2."SEGMENTO", s2.nome_empresa
+            SELECT s2."SETOR", s2."SUBSETOR", s2."SEGMENTO", s2.nome_empresa,
+                   -- via jsonb: nem toda base tem a coluna LISTAGEM
+                   to_jsonb(s2)->>'LISTAGEM' AS listagem
             FROM public.setores s2
             WHERE s2."SETOR" IS NOT NULL
               AND (UPPER(REPLACE(s2.ticker, '.SA', '')) = a.ticker
@@ -189,7 +175,20 @@ def load_setores() -> pd.DataFrame:
         if col not in df.columns:
             df[col] = ""
         df[col] = df[col].fillna("").astype(str)
-    return df
+    return _com_codigo_atual(df)
+
+
+def _com_codigo_atual(df: pd.DataFrame) -> pd.DataFrame:
+    """Dá aos dois códigos de uma troca a mesma classificação e marca o atual.
+
+    O alias é tabela pequena (dezenas de linhas). Sem ela (base sem a
+    migration), vale só ``PARES_CONHECIDOS``.
+    """
+    aliases = _q("SELECT brapi_symbol, b3_ticker, motivo FROM market.ticker_alias")
+    mapa = mapa_de_trocas(df, aliases)
+    df = unificar_classificacao(df, mapa)
+    df["codigo_atual"] = df["ticker"].map(lambda t: mapa.get(t, t))
+    return df.drop(columns=["listagem"], errors="ignore")
 
 
 def _multiplos_long(ticker: str | None = None) -> pd.DataFrame:
@@ -1748,7 +1747,8 @@ def load_mercado_retorno_mensal() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
+def load_precos_mensais(tickers: tuple[str, ...],
+                        trocas: tuple[tuple[str, str], ...] = ()) -> pd.DataFrame:
     """
     Preços MENSAIS (último pregão do mês) AJUSTADOS por proventos+splits
     (adjusted_close = retorno total), a partir de market.historical_prices.
@@ -1756,6 +1756,15 @@ def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     Espelha a saída de views._batch_yf_precos_mensais: DataFrame com
     DatetimeIndex mensal × colunas = tickers (sem .SA). Substitui o download
     do yfinance no backtest do portfólio B3.
+
+    ``trocas`` ((antigo, atual), ...) une as duas fitas no DIÁRIO, sob o
+    código atual, com o critério da migração
+    (``data_pipeline.market.troca_codigo``): o adjusted_close do antigo vai
+    multiplicado pela mediana da razão atual/antigo nos pregões comuns (sem
+    pregão comum, nada se reescala) e, na mesma data, fica a linha do atual.
+    A série sai igual antes e depois do ``--apply``. Unir só com o mês já
+    fechado mediria a base em dias diferentes (o último pregão de cada código
+    no mês da troca) e tomaria movimento de preço por diferença de base.
     """
     if not tickers:
         return pd.DataFrame()
@@ -1766,10 +1775,44 @@ def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     # números impossíveis exibidos como medição -- queda máxima de -2.638%
     # em MMAQ4, -104% em RSUL3, volatilidade de 361% em NEMO3. Descartar a
     # observação devolve o mês como ausente, que todo consumidor já trata.
-    df = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c, "
-            "close AS b FROM market.historical_prices WHERE ticker = ANY(:t) "
-            "AND COALESCE(adjusted_close, close) > 0 ORDER BY ticker, date",
-            {"t": tks})
+    if trocas:
+        # Pedir um dos dois códigos traz a fita dos dois. O filtro de preço
+        # vem depois da escolha da linha, como no banco já migrado: a linha
+        # do atual descarta a do antigo na mesma data mesmo sem preço.
+        pedidos = set(tks)
+        tks += sorted({c for par in trocas for c in par if pedidos & set(par)} - pedidos)
+        df = _q(f"""
+            WITH fita AS (
+                SELECT {sql_dono('p.ticker')} AS dono, {sql_ticker('p.ticker')} AS tk,
+                       p.date, p.adjusted_close, p.close
+                FROM market.historical_prices p
+                WHERE p.ticker = ANY(:t)
+            ),
+            base AS (
+                SELECT o.tk, percentile_cont(0.5) WITHIN GROUP (
+                           ORDER BY (n.adjusted_close / o.adjusted_close)::float8) AS fator
+                FROM fita o
+                JOIN fita n ON n.tk = o.dono AND n.date = o.date
+                WHERE o.tk <> o.dono AND o.adjusted_close > 0 AND n.adjusted_close > 0
+                GROUP BY o.tk
+            ),
+            unida AS (
+                SELECT DISTINCT ON (f.dono, f.date) f.dono AS ticker, f.date,
+                       COALESCE(f.adjusted_close * CASE WHEN ABS(b.fator - 1) > :tol
+                                                        THEN b.fator ELSE 1 END,
+                                f.close) AS c,
+                       f.close AS b
+                FROM fita f
+                LEFT JOIN base b ON b.tk = f.tk
+                ORDER BY f.dono, f.date, (f.tk = f.dono) DESC
+            )
+            SELECT ticker, date, c, b FROM unida WHERE c > 0 ORDER BY ticker, date
+        """, {"t": tks, "trocas": trocas_json(trocas), "tol": TOLERANCIA_BASE})
+    else:
+        df = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c, "
+                "close AS b FROM market.historical_prices WHERE ticker = ANY(:t) "
+                "AND COALESCE(adjusted_close, close) > 0 ORDER BY ticker, date",
+                {"t": tks})
     if df.empty:
         return pd.DataFrame()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
@@ -1845,14 +1888,18 @@ def load_fii_segmentos() -> list[str]:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_historico_anos() -> dict[str, int]:
-    """{ticker: nº de anos de demonstração anual} a partir de market.income_statements."""
-    df = _q("""
-        SELECT ticker, COUNT(DISTINCT year)::int AS anos
+def load_historico_anos(trocas: tuple[tuple[str, str], ...] = ()) -> dict[str, int]:
+    """{ticker: nº de anos de demonstração anual} a partir de market.income_statements.
+
+    ``trocas`` ((antigo, atual), ...) conta sob o código atual os exercícios
+    das duas fitas: 8 anos do antigo e 3 do atual são 11 (core.b3_troca_codigo).
+    """
+    df = _q(f"""
+        SELECT {sql_dono()} AS ticker, COUNT(DISTINCT year)::int AS anos
         FROM market.income_statements
         WHERE period = 'annual' AND ticker IS NOT NULL AND year IS NOT NULL
-        GROUP BY ticker
-    """)
+        GROUP BY 1
+    """, {"trocas": trocas_json(trocas)})
     if df.empty:
         return {}
     out: dict[str, int] = {}
@@ -1872,23 +1919,34 @@ _PREGOES_POR_MES = 21
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_giro_diario(dias: int = 400) -> dict[str, float]:
+def load_giro_diario(dias: int = 400,
+                     trocas: tuple[tuple[str, str], ...] = ()) -> dict[str, float]:
     """{ticker: giro financeiro diário estimado em R$}.
 
     Usa a MEDIANA das barras mensais, não a média: um único mês de leilão ou de
     entrada em índice multiplica o volume e faria um papel ilíquido parecer
     negociável. Validação cruzada em 30/07/2026 — EUCA4 deu ~R$ 570 mil/dia
     aqui contra R$ 766 mil de ADTV publicado, mesma ordem de grandeza.
+
+    ``trocas`` ((antigo, atual), ...) tira a mediana da fita unida sob o código
+    atual; na mesma data fica a barra do atual (core.b3_troca_codigo).
     """
-    df = _q("""
-        SELECT p.ticker,
-               percentile_cont(0.5) WITHIN GROUP (ORDER BY p.close * p.volume)
-                 AS giro_mensal
-        FROM market.historical_prices p
-        WHERE p.date >= CURRENT_DATE - make_interval(days => :dias)
-          AND p.volume > 0 AND p.close > 0
-        GROUP BY p.ticker
-    """, {"dias": int(dias)})
+    df = _q(f"""
+        WITH barras AS (
+            SELECT DISTINCT ON (dono, date) dono, giro
+            FROM (SELECT {sql_dono('p.ticker')} AS dono,
+                         {sql_ticker('p.ticker')} AS tk,
+                         p.date, p.close * p.volume AS giro
+                  FROM market.historical_prices p
+                  WHERE p.date >= CURRENT_DATE - make_interval(days => :dias)
+                    AND p.volume > 0 AND p.close > 0) b
+            ORDER BY dono, date, (tk = dono) DESC
+        )
+        SELECT dono AS ticker,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY giro) AS giro_mensal
+        FROM barras
+        GROUP BY dono
+    """, {"dias": int(dias), "trocas": trocas_json(trocas)})
     if df.empty:
         return {}
     out: dict[str, float] = {}

@@ -18,6 +18,15 @@ símbolo órfão para o ticker-B3 (pulando as que já existem sob o B3, para nã
 violar as UNIQUE) e apaga o asset órfão — o ON DELETE CASCADE das FKs remove as
 linhas duplicadas que sobraram. Idempotente.
 
+Alias que toca um código de troca de código B3 (a mesma companhia e classe
+sob outro código: motivo de troca, provada ou pendente, e
+``PARES_CONHECIDOS``) fica de fora, nas duas direções. Troca é migração com
+backup e reversão (``scripts/unificar_trocas_de_codigo_b3.py``) e não pode ser
+consolidada aqui sem eles — o legado AXIA3 -> ELET3, ao lado da troca
+ELET3 -> AXIA3 que a ingestão registra pendente, faria esta limpeza mover a
+fita para o lado errado e apagar o ativo; o legado ALOS3 -> BRML3 levaria a
+fita do ALOS3, que já guarda a do ALSO3, para o código incorporado.
+
 Uso:
   python scripts/fix_orphan_alias_tickers.py            # dry-run (só relata)
   python scripts/fix_orphan_alias_tickers.py --apply    # remapeia + apaga órfão
@@ -33,6 +42,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import text
 
+from core.b3_troca_codigo import (
+    MOTIVO_TROCA,
+    MOTIVO_TROCA_PENDENTE,
+    mapa_de_trocas,
+    normalizar,
+)
+
 # Tabela-fato -> colunas da chave natural (além de ticker). Usadas para remapear
 # sem colidir com a UNIQUE quando o ticker-B3 já tem a mesma linha.
 _FACT_KEYS = {
@@ -46,23 +62,34 @@ _FACT_KEYS = {
 
 
 def _load_aliases(conn, symbols):
-    """(brapi_symbol -> b3_ticker) de market.ticker_alias, só os divergentes."""
+    """({brapi_symbol: b3_ticker} dos divergentes a limpar, [(brapi_symbol,
+    b3_ticker)] das trocas de código que ficam para a migração)."""
     try:
+        tem_motivo = conn.execute(text("""
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = 'market' AND table_name = 'ticker_alias'
+              AND column_name = 'motivo'
+        """)).scalar()
+        motivo = "motivo" if tem_motivo else "NULL"
         rows = conn.execute(text(
-            "SELECT brapi_symbol, b3_ticker FROM market.ticker_alias")).fetchall()
+            f"SELECT brapi_symbol, b3_ticker, {motivo} FROM market.ticker_alias")).fetchall()
     except Exception:
-        return {}
-    want = {s.upper().replace(".SA", "") for s in symbols} if symbols else None
-    out = {}
-    for sym, b3 in rows:
-        sym = str(sym or "").upper().replace(".SA", "")
-        b3 = str(b3 or "").upper().replace(".SA", "")
+        return {}, []
+    trocas = mapa_de_trocas(None, rows)
+    em_troca = set(trocas) | set(trocas.values())
+    want = {normalizar(s) for s in symbols} if symbols else None
+    out, trocas_puladas = {}, []
+    for sym, b3, mot in rows:
+        sym, b3 = normalizar(sym), normalizar(b3)
         if not sym or not b3 or sym == b3:
             continue
         if want and sym not in want:
             continue
+        if mot in (MOTIVO_TROCA, MOTIVO_TROCA_PENDENTE) or {sym, b3} & em_troca:
+            trocas_puladas.append((sym, b3))
+            continue
         out[sym] = b3
-    return out
+    return out, trocas_puladas
 
 
 def _orphan_counts(conn, sym):
@@ -121,7 +148,10 @@ def main() -> int:
         return 1
 
     with engine.connect() as conn:
-        aliases = _load_aliases(conn, args.symbols)
+        aliases, trocas_puladas = _load_aliases(conn, args.symbols)
+    for sym, b3 in sorted(trocas_puladas):
+        print(f"  {sym} -> {b3}: toca troca de código B3, fica de fora — é com "
+              "scripts/unificar_trocas_de_codigo_b3.py (backup e reversão)")
     if not aliases:
         print("nenhum alias divergente em market.ticker_alias — nada a fazer.")
         return 0
