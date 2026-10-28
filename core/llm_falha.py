@@ -20,6 +20,7 @@ acionável pelo usuário e sai como está.
 from __future__ import annotations
 
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -28,18 +29,58 @@ logger = logging.getLogger(__name__)
 _DO_APP = ("Nenhum provedor LLM configurado", "Só há provedor LLM gratuito")
 
 
-def _motivo(exc: BaseException) -> str:
-    nome = type(exc).__name__.lower()
-    texto = str(exc).lower()
+#: Prefixo do erro de ``core.llm_b3._chat_complete`` quando a cadeia inteira
+#: falha; cada elo vem como ``nome(modelo): erro``, separados por `` | ``.
+_CADEIA = "Todos os provedores LLM falharam — "
+_NOME_PROVEDOR = {"openrouter": "OpenRouter", "openai": "OpenAI", "gemini": "Gemini"}
+
+
+def _categoria(nome: str, texto: str) -> str | None:
+    """Categoria curta de rede/cota/chave/modelo, ou None se não é nenhuma."""
     if "timeout" in nome or "timed out" in texto or "timeout" in texto:
-        return "o provedor de IA demorou demais para responder"
+        return "demorou demais"
     if any(m in texto for m in ("429", "rate limit", "quota", "insufficient",
                                 "crédito", "credit", "billing")):
-        return "o provedor de IA recusou por limite de uso ou falta de crédito"
+        return "limite de uso ou falta de crédito"
     if any(m in texto for m in ("401", "403", "api key", "invalid_api_key",
                                 "unauthorized", "permission")):
-        return "o provedor de IA recusou a chave de acesso"
+        return "chave de acesso recusada"
+    if "404" in texto or "not found" in texto:
+        return "modelo fora do ar"
     if "connection" in nome or "connect" in texto or "network" in texto:
+        return "sem conexão"
+    return None
+
+
+def _motivo_da_cadeia(bruto: str) -> str:
+    """Um motivo por provedor: antes valia o primeiro marcador achado no texto
+    inteiro, e o "sem crédito" da OpenAI escondia o modelo gratuito do
+    OpenRouter fora do ar (26/10/2026)."""
+    partes = []
+    for elo in bruto[len(_CADEIA):].split(" | "):
+        # Só nome conhecido vai à tela: o resto do elo é texto do provedor.
+        cabeca = re.match(r"\s*([a-z]+)\s*[(:]", elo, re.I)
+        nome = _NOME_PROVEDOR.get(cabeca.group(1).lower(), "provedor") if cabeca else "provedor"
+        partes.append(f"{nome}: {_categoria('', elo.lower()) or 'falhou'}")
+    return "nenhum provedor de IA respondeu (" + "; ".join(partes) + ")"
+
+
+def _motivo(exc: BaseException) -> str:
+    nome = type(exc).__name__.lower()
+    bruto = str(exc)
+    if bruto.startswith(_CADEIA):
+        return _motivo_da_cadeia(bruto)
+    texto = bruto.lower()
+    categoria = _categoria(nome, texto)
+    if categoria == "demorou demais":
+        return "o provedor de IA demorou demais para responder"
+    if categoria == "limite de uso ou falta de crédito":
+        return "o provedor de IA recusou por limite de uso ou falta de crédito"
+    if categoria == "chave de acesso recusada":
+        return "o provedor de IA recusou a chave de acesso"
+    if categoria == "modelo fora do ar":
+        return "o modelo de IA escolhido está fora do ar"
+    if categoria == "sem conexão":
         return "não houve conexão com o provedor de IA"
     if "não interpretável" in texto or nome == "jsondecodeerror":
         # core/dossie_b3._parecer_llm_cached levanta ValueError("resposta não
