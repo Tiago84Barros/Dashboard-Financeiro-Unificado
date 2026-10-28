@@ -32,6 +32,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from core.b3_precos_saneamento import neutralizar_saltos_mensais
+from core.b3_troca_codigo import mapa_de_trocas, unificar_classificacao
 from core.data_quality import clean_multiples_frame
 from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
 from core.fii_ticker import sql_ticker_fii as _sql_ticker_fii
@@ -150,24 +151,33 @@ def _suprime_razoes_sobre_patrimonio_negativo(wide: pd.DataFrame) -> pd.DataFram
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_setores() -> pd.DataFrame:
     """
-    ticker, nome_empresa, SETOR, SUBSETOR, SEGMENTO.
+    ticker, nome_empresa, SETOR, SUBSETOR, SEGMENTO, company_id, codigo_atual.
     Universo/nomes vêm do market.* (assets+companies); a TAXONOMIA B3
     (Setor/Subsetor/Segmento) vem de public.setores — a brapi não traz a
     classificação B3 de forma consistente. public.setores é dado de
     referência (como cvm_to_ticker), não os fundamentos legados.
+
+    Troca de código (ELET3 → AXIA3): enquanto o código antigo continuar ativo
+    na base, os dois aparecem aqui, com UMA classificação (regra em
+    ``core.b3_troca_codigo``) e ``codigo_atual`` apontando o código vigente.
+    Quem conta empresas (a aba de portfólio) tira o substituído com
+    ``deduplicar_por_empresa``.
     """
     df = _q("""
-        SELECT a.ticker,
+        SELECT a.ticker, a.company_id,
                COALESCE(c.name, s.nome_empresa, a.ticker) AS nome_empresa,
                COALESCE(NULLIF(s."SETOR", ''),    NULLIF(c.sector, ''))    AS "SETOR",
                COALESCE(NULLIF(s."SUBSETOR", ''), NULLIF(c.subsector, '')) AS "SUBSETOR",
-               COALESCE(NULLIF(s."SEGMENTO", ''), NULLIF(c.segment, ''))   AS "SEGMENTO"
+               COALESCE(NULLIF(s."SEGMENTO", ''), NULLIF(c.segment, ''))   AS "SEGMENTO",
+               s.listagem
         FROM market.assets a
         LEFT JOIN market.companies c ON c.id = a.company_id
         -- taxonomia B3: casa por ticker exato; senão pela RAIZ de 4 letras
         -- (PN/Unit herdam o setor do ON: BBDC4->BBDC3, ITUB4->ITUB3).
         LEFT JOIN LATERAL (
-            SELECT s2."SETOR", s2."SUBSETOR", s2."SEGMENTO", s2.nome_empresa
+            SELECT s2."SETOR", s2."SUBSETOR", s2."SEGMENTO", s2.nome_empresa,
+                   -- via jsonb: nem toda base tem a coluna LISTAGEM
+                   to_jsonb(s2)->>'LISTAGEM' AS listagem
             FROM public.setores s2
             WHERE s2."SETOR" IS NOT NULL
               AND (UPPER(REPLACE(s2.ticker, '.SA', '')) = a.ticker
@@ -189,7 +199,20 @@ def load_setores() -> pd.DataFrame:
         if col not in df.columns:
             df[col] = ""
         df[col] = df[col].fillna("").astype(str)
-    return df
+    return _com_codigo_atual(df)
+
+
+def _com_codigo_atual(df: pd.DataFrame) -> pd.DataFrame:
+    """Dá aos dois códigos de uma troca a mesma classificação e marca o atual.
+
+    O alias é tabela pequena (dezenas de linhas). Sem ela (base sem a
+    migration), vale só ``PARES_CONHECIDOS``.
+    """
+    aliases = _q("SELECT brapi_symbol, b3_ticker, motivo FROM market.ticker_alias")
+    mapa = mapa_de_trocas(df, aliases)
+    df = unificar_classificacao(df, mapa)
+    df["codigo_atual"] = df["ticker"].map(lambda t: mapa.get(t, t))
+    return df.drop(columns=["listagem"], errors="ignore")
 
 
 def _multiplos_long(ticker: str | None = None) -> pd.DataFrame:

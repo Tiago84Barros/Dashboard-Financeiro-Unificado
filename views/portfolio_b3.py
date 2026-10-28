@@ -18,6 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 import core.b3_data as _db  # facade c/ feature flag MARKET_READ_SOURCE (default: legacy)
 import core.b3_saidas as _saidas
 import core.b3_selecao as _selecao
+import core.b3_troca_codigo as _troca
 import core.b3_universo_pit as _upit
 import core.data_reconciliacao as _recon
 from core.b3_evidence import sinal_significante, teste_t_unilateral
@@ -3165,6 +3166,16 @@ def render(show_header: bool = True) -> None:
         macro_history = _db.load_macro_history()
         anos_hist     = _db.load_historico_anos()
         df_mult_todos = _db.load_multiplos_todos()
+        # Troca de código (ELET3 -> AXIA3): a mesma companhia e classe sob dois
+        # códigos ativos disputava a liderança do segmento consigo mesma e
+        # contava duas vezes no benchmark. A unidade aqui é companhia + classe:
+        # fica o código atual, e o dado que ainda mora no antigo (o preço de
+        # antes da troca) é dobrado nele. ON/PN/Unit da mesma empresa seguem
+        # separadas — não são troca (core.b3_troca_codigo).
+        df_set, _mapa_troca = _troca.deduplicar_por_empresa(df_set)
+        anos_hist     = _troca.dobrar_escalares(anos_hist, _mapa_troca, modo="max")
+        df_mult_todos = _troca.dobrar_linhas(df_mult_todos, _mapa_troca,
+                                             col_ticker="Ticker", chaves=())
 
     if df_set.empty:
         st.warning("Esta análise não está disponível no momento.")
@@ -3189,7 +3200,7 @@ def render(show_header: bool = True) -> None:
     _mcaps: dict[str, float] = {}
     if min_mcap > 0:
         try:
-            _mcaps = _load_market_caps()
+            _mcaps = _troca.dobrar_escalares(_load_market_caps(), _mapa_troca)
         except MarketCapDataError as exc:
             falha_de_acao(
                 "Não foi possível validar o piso de liquidez. A seleção foi "
@@ -3230,7 +3241,7 @@ def render(show_header: bool = True) -> None:
     # ausente como "ilíquido" derrubaria o universo inteiro em silêncio.
     if min_adtv > 0:
         try:
-            _adtvs = _load_adtv()
+            _adtvs = _troca.dobrar_escalares(_load_adtv(), _mapa_troca)
         except LiquidezDataError as exc:
             _adtvs = {}
             aviso_lacuna(
@@ -3312,7 +3323,8 @@ def render(show_header: bool = True) -> None:
     _elegib_pit: dict[int, dict] | None = None
     _parados_hoje: set[str] = set()
     try:
-        _vol_hist = _load_volume_mensal_historico(int(ano_inicio))
+        _vol_hist = _troca.dobrar_linhas(
+            _load_volume_mensal_historico(int(ano_inicio)), _mapa_troca)
         # Só o universo desta tela: a referência do "parado" é o último mês com
         # negócio no quadro, e market.historical_prices também traz FII. Se a
         # ingestão de ações atrasar enquanto a de FII segue em dia, a régua
@@ -3436,7 +3448,11 @@ def render(show_header: bool = True) -> None:
         all_tickers = tuple(sorted(df_set_hist["ticker"].unique()))
 
         with st.spinner("Carregando histórico de múltiplos de todos os tickers…"):
-            hist_batch_raw = _db.load_multiplos_historico_batch(all_tickers)
+            # + os códigos substituídos, dobrados no atual: os anos de antes
+            # da troca moram no código antigo.
+            hist_batch_raw = _troca.dobrar_historico(
+                _db.load_multiplos_historico_batch(all_tickers + tuple(sorted(_mapa_troca))),
+                _mapa_troca)
             if _saidas_eleg:
                 # Só quem não está no market.*: um ticker vivo homônimo manda.
                 hist_batch_raw = dict(hist_batch_raw)
@@ -3483,7 +3499,12 @@ def render(show_header: bool = True) -> None:
             )
 
         with st.spinner("Carregando preços mensais ajustados…"):
-            df_precos_all = _batch_yf_precos_mensais(all_tickers, period="10y")
+            # O código novo só tem preço desde a troca; o antigo, encadeado,
+            # completa a série (core.b3_troca_codigo.dobrar_colunas).
+            df_precos_all = _troca.dobrar_colunas(
+                _batch_yf_precos_mensais(all_tickers + tuple(sorted(_mapa_troca)),
+                                         period="10y"),
+                _mapa_troca)
             _avisar_fonte_precos(df_precos_all, "a seleção histórica")
             if _saidas_eleg and not df_precos_all.empty:
                 _p_s = _saidas.precos_mensais(_doc_saidas)
@@ -4260,8 +4281,9 @@ def render(show_header: bool = True) -> None:
         from core.b3_holdings_health import CRITICO, check_holdings
         from core.b3_liquidity import LiquidityPolicy, aplicar_piso_de_liquidez
         try:
-            _giro = _db.load_giro_diario()
-            _irmas = _db.load_classes_irmas()
+            _giro = _troca.dobrar_escalares(_db.load_giro_diario(), _mapa_troca)
+            # o código substituído ainda ativo não é classe irmã do atual
+            _irmas = _troca.dobrar_irmas(_db.load_classes_irmas(), _mapa_troca)
         except Exception:  # noqa: BLE001 - dado ausente não decide, mas é nomeado
             logger.exception("Giro diário/classes irmãs indisponíveis; piso de "
                              "negociabilidade não aplicado")
