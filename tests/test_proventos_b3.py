@@ -285,6 +285,63 @@ def test_load_dividendos_anuais_carrega_a_fonte_para_o_rotulo(monkeypatch, banco
     assert list(out["Dividendos"]) == [0.1, 1.4]
     assert list(out["Data"]) == [pd.Timestamp("2023-12-31"), pd.Timestamp("2024-12-31")]
     assert out.attrs["fonte"] == pb.FONTE_ARQUIVO
+    assert out.attrs["foto_em"] == {"AAAA3": "2026-10-20"}
+
+
+def test_exercicio_no_ano_civil_aberto_fica_sem_total_de_proventos(monkeypatch):
+    """O exercício encerrado fora de dezembro já tem demonstração do ano civil
+    em curso; a soma de proventos desse ano é parcial e não vira o total."""
+    import datetime as dt
+
+    import core.market_read as mr
+
+    ano = dt.date.today().year
+    numericas = ("Receita_Liquida", "EBIT", "EBITDA", "Lucro_Liquido", "LPA",
+                 "Patrimonio_Liquido", "Divida_Liquida", "Divida_Total",
+                 "Ativo_Total", "Caixa", "FCO", "FCI", "FCF")
+    demo = pd.DataFrame({"Ticker": ["AAAA3", "AAAA3"], "_year": [ano - 1, ano],
+                         **{c: [1.0, 1.0] for c in numericas}})
+    monkeypatch.setattr(mr, "_q", lambda sql, params=None, engine=None: demo.copy())
+    monkeypatch.setattr(mr, "_renda_anual", lambda tks: pd.DataFrame(
+        {"ticker": ["AAAA3", "AAAA3"], "ano": [ano - 1, ano], "total": [1.4, 0.6]}))
+    mr.load_demonstracoes.clear()
+    mr.load_demonstracoes_batch.clear()
+    try:
+        um = mr.load_demonstracoes("AAAA3")
+        lote = mr.load_demonstracoes_batch(("AAAA3",))["AAAA3"]
+    finally:
+        mr.load_demonstracoes.clear()
+        mr.load_demonstracoes_batch.clear()
+
+    for out in (um, lote):
+        assert out["Dividendos"].iloc[0] == 1.4
+        assert pd.isna(out["Dividendos"].iloc[1])
+        assert out["Receita_Liquida"].notna().all()  # o exercício fica, sem o total parcial
+
+
+def test_renda_anual_traz_o_dia_da_resposta_so_de_quem_o_arquivo_cobre(monkeypatch, banco):
+    monkeypatch.setattr(pb, "carregar", lambda: PUBLICADO)
+    out = pb.renda_anual(["AAAA3", "BBBB4", "CCCC11"])
+    assert out.attrs["foto_em"] == {"AAAA3": "2026-10-20", "CCCC11": "2026-10-20"}
+
+
+def test_procedencia_data_a_resposta_e_marca_a_que_parou_de_renovar():
+    attrs = {"fonte": pb.FONTE_ARQUIVO, "foto_em": {"AAAA3": "2026-10-20"}}
+    no_limite = date(2026, 10, 20) + timedelta(days=pb.FOTO_MAXIMA_DIAS)
+    assert pb.procedencia(attrs, hoje=no_limite) == "brapi, resposta de 20/10/2026"
+    assert pb.procedencia(attrs, hoje=no_limite + timedelta(days=1)) == (
+        f"brapi, resposta de 20/10/2026 — VELHA: {pb.FOTO_MAXIMA_DIAS + 1} dias sem renovação")
+
+
+def test_procedencia_pela_resposta_mais_velha_e_sem_arquivo_inalterada():
+    misto = {"fonte": f"{pb.FONTE_ARQUIVO} + {pb.FONTE_BANCO}",
+             "foto_em": {"AAAA3": "2026-10-20", "DDDD3": "2026-07-03", "EEEE3": None}}
+    assert pb.idade_da_foto(misto, hoje=date(2026, 10, 29)) == (date(2026, 7, 3), 118)
+    assert pb.procedencia(misto, hoje=date(2026, 10, 29)) == (
+        f"brapi, resposta de 03/07/2026 — VELHA: 118 dias sem renovação + {pb.FONTE_BANCO}")
+    assert pb.procedencia({"fonte": pb.FONTE_BANCO, "foto_em": {}}) == pb.FONTE_BANCO
+    assert pb.idade_da_foto({"foto_em": {"EEEE3": None}}) is None
+    assert pb.procedencia({}) == ""
 
 
 def test_eventos_do_armazem_partilha_como_a_leitura(monkeypatch):

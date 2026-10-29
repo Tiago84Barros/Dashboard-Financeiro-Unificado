@@ -50,6 +50,7 @@ from core.crescimento import (
 )
 from core.llm_context_ativo import build_b3_ativo_context
 from core.market_companies import normalize_b3_companies
+from core.proventos_b3 import FOTO_MAXIMA_DIAS, idade_da_foto, procedencia
 from core.validacao_motor import validacao_b3
 from design.chat_ativo import render_chat_ativo
 from design.componentes import (
@@ -388,14 +389,26 @@ def _dividendos_anuais_market_first(ticker: str) -> tuple[pd.DataFrame, str]:
     quando ``market.*`` está indisponível ou não cobre o ticker. Sem perda de
     granularidade (são somas anuais dos dois lados), diferente do gráfico de
     preço. Retorna (DataFrame [Data, Dividendos], fonte) para rótulo na UI.
+
+    O dia da resposta da brapi é procedência: vai para o registro, e a
+    resposta que parou de renovar entra na fila de Restrições.
     """
     try:
         df_market = _mr.load_dividendos_anuais(ticker)
-        if not df_market.empty:
-            return df_market, df_market.attrs.get("fonte") or "market.dividends"
     except Exception:
-        pass
-    return _yf_dividendos_anuais(ticker), "yfinance"
+        df_market = pd.DataFrame()
+    if df_market.empty:
+        return _yf_dividendos_anuais(ticker), "yfinance"
+    foto = idade_da_foto(df_market.attrs)
+    if foto is not None:
+        detalhe_tecnico(f"Proventos anuais de {ticker}: {procedencia(df_market.attrs)}.",
+                        codigo="b3.proventos_procedencia", entidade=ticker)
+        if foto[1] > FOTO_MAXIMA_DIAS:
+            aviso_lacuna(
+                f"Proventos de {ticker}: a resposta mais nova da brapi é de "
+                f"{foto[0]:%d/%m/%Y}, {foto[1]} dias sem renovação.",
+                codigo="tela.b3.proventos_foto_velha", entidade=ticker)
+    return df_market, df_market.attrs.get("fonte") or "market.dividends"
 
 
 @st.cache_data(ttl=600, show_spinner=False)

@@ -30,9 +30,8 @@ if str(ROOT) not in sys.path:
 
 CAMINHO_PADRAO = ROOT / "data" / "public" / "proventos_b3.json.gz"
 VERSAO = 1
-# `b3_brapi` renova a resposta de cada ticker toda noite. Dez dias corridos
-# cobrem algumas noites perdidas sem deixar passar coleta realmente parada.
-FOTO_MAXIMA_DIAS = 10
+# O mesmo limite põe na fila de Restrições o ticker cuja resposta parou de renovar.
+from core.proventos_b3 import FOTO_MAXIMA_DIAS  # noqa: E402
 
 METODO = ("Anual, por ticker. Resposta mais nova da brapi (market.brapi_raw_payloads, "
           "endpoint quote), normalizada como na ingestão: sem o eco de classe, "

@@ -80,7 +80,8 @@ def anos_de_datas(datas) -> pd.Series:
 
 def sem_ano_em_curso(frame: pd.DataFrame, coluna_ano: str, hoje=None) -> pd.DataFrame:
     """Tira o ano civil corrente de uma soma anual de eventos (proventos):
-    o ano que ainda não acabou entra no CAGR como queda."""
+    o ano que ainda não acabou entra no CAGR como queda. Tira também os anos
+    seguintes, que só têm o pagamento declarado e ainda não feito."""
     if frame is None or frame.empty or coluna_ano not in frame:
         return frame
     ano = (pd.Timestamp(hoje) if hoje is not None else pd.Timestamp.now()).year

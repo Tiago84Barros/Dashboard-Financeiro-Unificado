@@ -70,6 +70,16 @@ def test_sem_ano_em_curso_numerico_e_data():
     assert sem_ano_em_curso(pd.DataFrame(), "Data").empty
 
 
+def test_sem_ano_em_curso_tira_o_pagamento_declarado_para_o_ano_seguinte():
+    """A resposta da brapi traz o provento declarado e ainda não pago: o
+    arquivo de 29/10/2026 tinha 41 tickers com total em 2027."""
+    anual = pd.DataFrame({"Data": pd.to_datetime(["2024-12-31", "2025-12-31",
+                                                  "2026-12-31", "2027-12-31"]),
+                          "Dividendos": [1.0, 1.1, 0.6, 0.3]})
+    out = sem_ano_em_curso(anual, "Data", hoje="2026-10-29")
+    assert out["Data"].dt.year.tolist() == [2024, 2025]
+
+
 def test_retorno_do_ano_aberto_e_rotulado():
     datas = ["2024-12-30", "2025-12-30", "2026-10-28"]
     out = retornos_anuais(datas, [10.0, 12.0, 15.0])
