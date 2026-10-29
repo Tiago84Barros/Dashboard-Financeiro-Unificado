@@ -1,8 +1,10 @@
 """
 views/ir_renda_variavel.py
-Aba "Imposto de Renda" de Investimentos: a situação do DARF no topo, depois a
-declaração do ano-calendário ficha a ficha, com o nome das linhas e os
-códigos do programa IRPF (exercício 2026), e por fim a apuração mês a mês.
+Aba "Imposto de Renda" de Investimentos. O ano-calendário escolhido no topo
+recorta a tela inteira: os números do ano, a declaração ficha a ficha, com o
+nome das linhas e os códigos do programa IRPF (exercício 2026), e a apuração
+mês a mês daquele ano. A opção "Visão geral" junta todos os anos: a situação
+do DARF hoje, a apuração inteira e o resumo por ano.
 
 O cálculo mora em ``core/ir_renda_variavel.py`` (apuração) e em
 ``core/irpf_declaracao.py`` (layout das fichas); aqui só se carrega, formata
@@ -37,6 +39,7 @@ from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 _MESES = ["", "jan", "fev", "mar", "abr", "mai", "jun",
           "jul", "ago", "set", "out", "nov", "dez"]
 _DIGITA = "✍️ "
+_VISAO_GERAL = "geral"
 
 
 @user_cache_data(ttl=900, show_spinner=False)
@@ -62,6 +65,16 @@ def _dados() -> dict | None:
 
 def _rotulo_mes(mes: str) -> str:
     return f"{_MESES[int(mes[5:7])]}/{mes[:4]}"
+
+
+def _rotulo_ano(ano) -> str:
+    if ano == _VISAO_GERAL:
+        return "Visão geral · todos os anos"
+    return f"{ano} · declaração {ano + 1}"
+
+
+def _do_ano(meses: list[dict], ano: int) -> list[dict]:
+    return [m for m in meses if m["mes"].startswith(f"{ano:04d}")]
 
 
 def _f(v: Decimal) -> float:
@@ -295,33 +308,26 @@ def _conferencias(d: dict) -> list[str]:
     if d["meses_incompletos"]:
         out.append("Meses com venda sem custo de aquisição: "
                    + ", ".join(_rotulo_mes(m) for m in d["meses_incompletos"])
-                   + ". O resultado desses meses está subestimado.")
+                   + ". O resultado desses meses está subestimado. Informe a posição que "
+                   "você tinha antes do extrato em Evolução Patrimonial › **Posição "
+                   "anterior ao extrato da B3**.")
     return out
 
 
-def _render_declaracao(ins: dict) -> None:
-    apuracao = ins["apuracao"]
-    anos = anos_disponiveis(apuracao, ins["proventos"], ins["posicoes"])
-    if not anos:
-        return
-    hoje = date.today()
-    padrao = anos.index(hoje.year - 1) if hoje.year - 1 in anos else 0
+def _render_declaracao(ins: dict, ano: int) -> None:
     secao_titulo(
-        "Declaração IRPF", "📑",
-        "As fichas do programa da Receita, na ordem e com o nome de cada linha. "
-        f"{_DIGITA.strip()} marca o que você digita; o resto o programa calcula sozinho.",
+        f"Declaração IRPF {ano + 1}", "📑",
+        f"Ano-calendário {ano}. As fichas do programa da Receita, na ordem e com o nome de "
+        f"cada linha. {_DIGITA.strip()} marca o que você digita; o resto o programa calcula "
+        "sozinho.",
     )
-    ano = st.selectbox("Ano-calendário", anos, index=padrao, key="irpf_ano",
-                       format_func=lambda a: f"{a} · declaração {a + 1}")
-    d = montar(apuracao, ano, ins["proventos"], ins["posicoes"], ins["emissores"],
+    d = montar(ins["apuracao"], ano, ins["proventos"], ins["posicoes"], ins["emissores"],
                ins["mercado"], ins["etfs"], ins["nomes_fii"])
     if ins["falhas"]:
         aviso_lacuna("IRPF: fonte não carregou: " + ", ".join(ins["falhas"]),
                      codigo="tela.ir.fonte_da_declaracao")
         st.warning("Parte dos dados não carregou (" + ", ".join(ins["falhas"])
                    + "); as fichas que dependem dela estão incompletas.", icon="⚠️")
-    if ano == hoje.year:
-        st.info(f"{ano} ainda não terminou: as fichas mostram o ano até hoje.", icon="ℹ️")
 
     conferir = _conferencias(d)
     abas = st.tabs([
@@ -437,8 +443,9 @@ def _render_declaracao(ins: dict) -> None:
 def render() -> None:
     secao_titulo(
         "Imposto de Renda — renda variável", "🧾",
-        "DARF do mês (código 6015), as fichas da declaração anual prontas para digitar e a "
-        "apuração mês a mês, a partir dos extratos da B3 e da posição da corretora.",
+        "As fichas da declaração do ano-calendário escolhido, prontas para digitar, e a "
+        "apuração mês a mês daquele ano (DARF código 6015), a partir dos extratos da B3 e "
+        "da posição da corretora.",
     )
     try:
         ins = _dados()
@@ -456,22 +463,72 @@ def render() -> None:
         st.info("Nenhuma venda, provento ou posição no extrato importado.", icon="ℹ️")
         return
 
-    if meses:
-        _render_darf(res)
-    _render_declaracao(ins)
-    if meses:
-        _render_apuracao(res)
-
-
-def _render_darf(res: dict) -> None:
-    meses = res["meses"]
+    _registrar_lacunas(res)
     hoje = date.today()
-    ultimo = meses[-1]
+    anos = anos_disponiveis(res, ins["proventos"], ins["posicoes"])
+    padrao = anos.index(hoje.year - 1) if hoje.year - 1 in anos else 0
+    ano = st.selectbox("Ano-calendário", [*anos, _VISAO_GERAL], index=padrao,
+                       key="irpf_ano", format_func=_rotulo_ano)
+
+    if ano == _VISAO_GERAL:
+        if not meses:
+            st.caption("Nenhuma venda no extrato importado: não há imposto a apurar.")
+            return
+        _render_darf(res)
+        _render_apuracao(res)
+        return
+
+    if ano == hoje.year:
+        st.info(f"{ano} ainda não terminou: a tela mostra o ano até hoje.", icon="ℹ️")
+    if meses:
+        _render_darf(res, ano)
+    _render_declaracao(ins, ano)
+    _render_apuracao(res, ano)
+
+
+def _registrar_lacunas(res: dict) -> None:
+    """O que a apuração não sabe vai para o administrador, em qualquer ano
+    escolhido; nada daqui aparece na tela de uso."""
+    meses = res["meses"]
+    if meses:
+        n_incompletos = sum(1 for m in meses if m["incompleto"])
+        prej_incerto = any(meses[-1]["cestas"][c]["prejuizo_incerto"] for c in CESTAS)
+        if n_incompletos:
+            sem = sorted({t for m in meses for c in CESTAS for t in m["cestas"][c]["sem_custo"]})
+            detalhe_tecnico(
+                "Ativos comprados antes do início do extrato da B3 (nov/2019): o ganho "
+                "dessas vendas não foi tratado nem como lucro nem como prejuízo.",
+                codigo="ir.venda_sem_custo_origem",
+            )
+            for t in sem:
+                aviso_lacuna(f"Venda de {t} sem custo de aquisição conhecido.",
+                             codigo="tela.ir.venda_sem_custo", entidade=t)
+        elif prej_incerto:
+            aviso_lacuna("O prejuízo acumulado herda uma venda sem custo de meses anteriores.",
+                         codigo="tela.ir.prejuizo_incerto")
+    alertas = [a for a in res["alertas"] if a.get("type") != "fora_do_escopo"]
+    for a in alertas[:30]:
+        aviso_lacuna(f"Evento da Movimentação não aplicado: {a.get('detail')}",
+                     codigo="tela.ir.evento_nao_aplicado",
+                     entidade=str(a.get("ticker") or "") or None)
+
+
+def _render_darf(res: dict, ano: int | None = None) -> None:
+    """Os quatro números do topo. Sem ``ano`` (visão geral), a situação de
+    hoje; com ``ano``, a daquele ano-calendário: até hoje no ano em curso, em
+    31/12 nos anteriores."""
+    hoje = date.today()
+    ref = hoje.year if ano is None else ano
+    corrente = ref == hoje.year
+    meses = [m for m in res["meses"] if m["mes"] <= f"{ref:04d}-12"]
     pend = res["pendente"]
-    ano = next((a for a in res["anos"] if a["ano"] == hoje.year), None)
-    prej = {c: ultimo["cestas"][c]["prejuizo_a_compensar"] for c in CESTAS}
-    prej_incerto = any(ultimo["cestas"][c]["prejuizo_incerto"] for c in CESTAS)
-    n_incompletos = sum(1 for m in meses if m["incompleto"])
+    if ano is not None and pend and not pend["mes"].startswith(f"{ano:04d}"):
+        pend = None
+    resumo = next((a for a in res["anos"] if a["ano"] == ref), None)
+    ultimo = meses[-1] if meses else None
+    prej = {c: ultimo["cestas"][c]["prejuizo_a_compensar"] if ultimo else Decimal(0)
+            for c in CESTAS}
+    prej_incerto = bool(ultimo) and any(ultimo["cestas"][c]["prejuizo_incerto"] for c in CESTAS)
 
     c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
@@ -483,22 +540,43 @@ def _render_darf(res: dict) -> None:
                 ajuda="Último mês fechado com imposto cujo vencimento ainda não passou. "
                       "Confira se já foi pago: o app não lê pagamentos.",
             )
-        else:
+        elif corrente:
             card_metrica("DARF em aberto", "Nenhum", "sem mês fechado com imposto a vencer",
                          positivo=True)
+        else:
+            n_darf = sum(1 for m in _do_ano(meses, ref) if m["darf"] > 0)
+            card_metrica(
+                f"DARFs de {ref}", fmt_moeda(_f(resumo["darf"]) if resumo else 0),
+                f"{n_darf} mês(es) com imposto a recolher" if n_darf
+                else "nenhum mês com imposto a recolher",
+                positivo=None,
+                ajuda="Soma dos DARFs que a apuração calcula para o ano. O app não lê "
+                      "pagamentos: confira com os comprovantes.",
+            )
     with c2:
-        em_curso = ultimo if ultimo["em_curso"] else None
-        card_metrica(
-            "Mês em curso", fmt_moeda(_f(em_curso["imposto"])) if em_curso else "Sem vendas",
-            (f"vendas de ações {fmt_moeda(_f(em_curso['vendas_acoes']))} de "
-             f"{fmt_moeda(20000)} isentos") if em_curso else "nenhuma venda neste mês",
-            positivo=None,
-            ajuda="Imposto parcial do mês corrente, antes da compensação do IRRF.",
-        )
+        if corrente:
+            em_curso = ultimo if ultimo and ultimo["em_curso"] else None
+            card_metrica(
+                "Mês em curso", fmt_moeda(_f(em_curso["imposto"])) if em_curso else "Sem vendas",
+                (f"vendas de ações {fmt_moeda(_f(em_curso['vendas_acoes']))} de "
+                 f"{fmt_moeda(20000)} isentos") if em_curso else "nenhuma venda neste mês",
+                positivo=None,
+                ajuda="Imposto parcial do mês corrente, antes da compensação do IRRF.",
+            )
+        else:
+            card_metrica(
+                "IR fonte a declarar",
+                fmt_moeda(_f(resumo["irrf_a_declarar"]) if resumo else 0),
+                "ficha Imposto Pago/Retido · estimado",
+                positivo=None,
+                ajuda="IR fonte que sobrou em dezembro sem abater imposto, estimado em "
+                      "0,005% das vendas. O retido de verdade está no informe da corretora.",
+            )
     with c3:
         total_prej = sum(prej.values(), Decimal(0))
         card_metrica(
-            "Prejuízo a compensar", fmt_moeda(_f(total_prej)),
+            "Prejuízo a compensar" if corrente else f"Prejuízo em 31/12/{ref}",
+            fmt_moeda(_f(total_prej)),
             " · ".join(f"{ROTULO_CESTA[c]} {fmt_moeda(_f(v))}" for c, v in prej.items() if v)
             or "nenhum",
             positivo=None,
@@ -508,48 +586,35 @@ def _render_darf(res: dict) -> None:
         )
     with c4:
         card_metrica(
-            f"Ganho isento em {hoje.year}",
-            fmt_moeda(_f(ano["ganho_isento"])) if ano else fmt_moeda(0),
+            f"Ganho isento em {ref}",
+            fmt_moeda(_f(resumo["ganho_isento"])) if resumo else fmt_moeda(0),
             "vai na ficha de rendimentos isentos da declaração",
             positivo=True,
         )
-
-    if n_incompletos:
-        sem = sorted({t for m in meses for c in CESTAS for t in m["cestas"][c]["sem_custo"]})
-        detalhe_tecnico(
-            "Ativos comprados antes do início do extrato da B3 (nov/2019): o ganho "
-            "dessas vendas não foi tratado nem como lucro nem como prejuízo.",
-            codigo="ir.venda_sem_custo_origem",
-        )
-        for t in sem:
-            aviso_lacuna(f"Venda de {t} sem custo de aquisição conhecido.",
-                         codigo="tela.ir.venda_sem_custo", entidade=t)
-        st.warning(
-            f"**{n_incompletos} mês(es) com venda sem custo de aquisição** — {', '.join(sem)}. "
-            "O imposto desses meses cobre só o resto. Informe a posição que você tinha "
-            "antes do extrato em Evolução Patrimonial › **Posição anterior ao extrato da B3**.",
-            icon="⚠️",
-        )
-    if prej_incerto and not n_incompletos:
-        aviso_lacuna("O prejuízo acumulado herda uma venda sem custo de meses anteriores.",
-                     codigo="tela.ir.prejuizo_incerto")
     st.markdown("<br>", unsafe_allow_html=True)
 
 
-def _render_apuracao(res: dict) -> None:
-    meses = res["meses"]
+def _render_apuracao(res: dict, ano: int | None = None) -> None:
+    """Sem ``ano``, a apuração inteira e o resumo por ano; com ``ano``, só os
+    meses dele."""
+    meses = res["meses"] if ano is None else _do_ano(res["meses"], ano)
     st.markdown("<br>", unsafe_allow_html=True)
-    secao_titulo("Apuração mensal", "📅", "Do mês mais recente para o mais antigo.")
-    df = _tabela_mensal(meses)
-    moeda = {c: _COLS_MOEDA for c in df.columns
-             if c not in ("Mês", "Isenção", "Situação")}
-    st.dataframe(df, hide_index=True, width="stretch", column_config=moeda)
+    secao_titulo("Apuração mensal" if ano is None else f"Apuração mensal de {ano}", "📅",
+                 "Do mês mais recente para o mais antigo.")
+    if meses:
+        df = _tabela_mensal(meses)
+        moeda = {c: _COLS_MOEDA for c in df.columns
+                 if c not in ("Mês", "Isenção", "Situação")}
+        st.dataframe(df, hide_index=True, width="stretch", column_config=moeda)
+    else:
+        st.caption(f"Nenhuma venda em {ano}: não há imposto de renda variável a apurar.")
 
-    secao_titulo("Resumo por ano", "🗂️")
-    da = _tabela_anual(res["anos"])
-    st.dataframe(da, hide_index=True, width="stretch",
-                 column_config={c: _COLS_MOEDA for c in da.columns
-                                if c not in ("Ano", "Meses incompletos")})
+    if ano is None:
+        secao_titulo("Resumo por ano", "🗂️")
+        da = _tabela_anual(res["anos"])
+        st.dataframe(da, hide_index=True, width="stretch",
+                     column_config={c: _COLS_MOEDA for c in da.columns
+                                    if c not in ("Ano", "Meses incompletos")})
 
     with st.expander("Como o cálculo é feito"):
         st.markdown(f"""
@@ -583,9 +648,3 @@ def _render_apuracao(res: dict) -> None:
         "Incorporação e transferência de outra corretora continuam sem custo conhecido.",
     ):
         detalhe_tecnico(lim, codigo="ir.limitacoes_calculo")
-    alertas = [a for a in res["alertas"] if a.get("type") != "fora_do_escopo"]
-    if alertas:
-        for a in alertas[:30]:
-            aviso_lacuna(f"Evento da Movimentação não aplicado: {a.get('detail')}",
-                         codigo="tela.ir.evento_nao_aplicado",
-                         entidade=str(a.get("ticker") or "") or None)
