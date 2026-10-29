@@ -14,7 +14,12 @@ declara cada critério:
    → mesma família). Sobe de nível só se o estreito não tem pares mínimos;
 3. tamanho e risco -- dentro do nível, primeiro só candidatos com porte
    entre 1/10x e 10x e risco entre 1/2x e 2x do ativo; afrouxa o risco,
-   depois o porte, e registra o afrouxamento;
+   depois alarga o porte para 1/100x a 100x, e registra o afrouxamento. O
+   porte nunca deixa de filtrar quando é conhecido: a Apple comparada com
+   fabricantes mil vezes menores tinha "ROE acima da mediana de 0,2%", e
+   mediana de empresa de outro tamanho não descreve o ativo. Candidato sem
+   porte conhecido não entra no grupo de um ativo com porte: não há como
+   dizer que é do mesmo tamanho. Sem pares no porte alargado, sobe de nível;
 4. ordem -- distância |ln porte| + |ln risco| em relação ao ativo, empate
    pelo ticker. Até ``N_MAXIMO`` pares.
 
@@ -59,6 +64,7 @@ from core.inteligencia_ativos.valuation import (
 N_MINIMO = 3
 N_MAXIMO = 10
 BANDA_PORTE = 10.0     # 1/10x a 10x
+BANDA_PORTE_LARGA = 100.0  # afrouxamento máximo do porte: 1/100x a 100x
 BANDA_RISCO = 2.0      # 1/2x a 2x
 
 # Métricas que cruzam o zero comparam por diferença absoluta (pontos
@@ -263,14 +269,11 @@ def selecionar(alvo: Candidato, universo, *, n_maximo: int = N_MAXIMO,
         relaxamentos.append("Ativo sem porte conhecido: tamanho não filtra.")
     if not tem_risco and alvo.rotulo_risco:
         relaxamentos.append(f"Ativo sem {alvo.rotulo_risco}: risco não filtra.")
-    bandas = []
-    if tem_porte and tem_risco:
-        bandas.append((True, True))
-    if tem_porte:
-        bandas.append((True, False))
-    if tem_risco:
-        bandas.append((False, True))
-    bandas.append((False, False))
+    # (banda de porte, usa risco). Com porte conhecido, a banda só alarga:
+    # nunca some.
+    portes = (BANDA_PORTE, BANDA_PORTE_LARGA) if tem_porte else (None,)
+    bandas = [(bp, ur) for bp in portes
+              for ur in ((True, False) if tem_risco else (False,))]
 
     for i, (nivel, valor) in enumerate(alvo.taxonomia):
         if not valor:
@@ -278,10 +281,10 @@ def selecionar(alvo: Candidato, universo, *, n_maximo: int = N_MAXIMO,
             continue
         mesmo = [c for c in base if len(c.taxonomia) > i
                  and c.taxonomia[i][1] == valor]
-        for usa_porte, usa_risco in bandas:
+        for banda_porte, usa_risco in bandas:
             filtrados = [c for c in mesmo
-                         if (not usa_porte or _dentro(_razao(alvo.porte, c.porte),
-                                                      BANDA_PORTE))
+                         if (banda_porte is None
+                             or _dentro(_razao(alvo.porte, c.porte), banda_porte))
                          and (not usa_risco or _dentro(_razao(alvo.risco, c.risco),
                                                        BANDA_RISCO))]
             ordenados = sorted(filtrados,
@@ -296,14 +299,18 @@ def selecionar(alvo: Candidato, universo, *, n_maximo: int = N_MAXIMO,
             if len(escolhidos) >= n_minimo:
                 crit = list(criterios)
                 crit.append(f"Modelo de negócio: mesmo {nivel} ({valor}).")
-                if usa_porte:
-                    crit.append("Tamanho: porte entre 1/10x e 10x o do ativo.")
+                if banda_porte is not None:
+                    crit.append(f"Tamanho: porte entre 1/{banda_porte:g}x e "
+                                f"{banda_porte:g}x o do ativo.")
                 if usa_risco:
                     crit.append(f"Risco: {alvo.rotulo_risco} entre 1/2x e 2x "
                                 "o do ativo.")
-                if tem_porte and not usa_porte:
-                    relaxamentos.append(f"Menos de {n_minimo} pares no porte "
-                                        "do ativo: tamanho não filtra.")
+                if banda_porte == BANDA_PORTE_LARGA:
+                    relaxamentos.append(
+                        f"Menos de {n_minimo} pares entre 1/{BANDA_PORTE:g}x "
+                        f"e {BANDA_PORTE:g}x o porte do ativo: porte alargado "
+                        f"para 1/{BANDA_PORTE_LARGA:g}x a "
+                        f"{BANDA_PORTE_LARGA:g}x.")
                 if tem_risco and not usa_risco:
                     relaxamentos.append(f"Menos de {n_minimo} pares com "
                                         f"{alvo.rotulo_risco} próximo: risco "
@@ -315,12 +322,23 @@ def selecionar(alvo: Candidato, universo, *, n_maximo: int = N_MAXIMO,
                         _motivo_par(alvo, c, nivel, valor), dict(c.metricas))
                     for c in escolhidos[:n_maximo]), tuple(crit),
                     tuple(relaxamentos))
-        relaxamentos.append(f"Menos de {n_minimo} pares no mesmo {nivel} "
-                            f"({valor}): nível mais largo.")
+        porte_barrou = (tem_porte and len({c.raiz or c.ticker for c in mesmo})
+                        >= n_minimo)
+        relaxamentos.append(f"Menos de {n_minimo} pares "
+                            f"{'de porte comparável ' if porte_barrou else ''}"
+                            f"no mesmo {nivel} ({valor}): nível mais largo.")
+    if tem_porte:
+        motivo = (f"Menos de {n_minimo} pares do mesmo negócio e de porte "
+                  f"comparável (de 1/{BANDA_PORTE_LARGA:g}x a "
+                  f"{BANDA_PORTE_LARGA:g}x o do ativo) mesmo no nível mais "
+                  "largo da classificação; sem grupo, para não comparar com "
+                  "ativos de outro negócio ou de outro tamanho.")
+    else:
+        motivo = (f"Menos de {n_minimo} pares comparáveis mesmo no nível mais "
+                  "largo da classificação; sem grupo, para não comparar com "
+                  "ativos de outro negócio.")
     return GrupoPares(criterios=tuple(criterios), relaxamentos=tuple(relaxamentos),
-                      motivo=(f"Menos de {n_minimo} pares comparáveis mesmo no "
-                              "nível mais largo da classificação; sem grupo, "
-                              "para não comparar com ativos de outro negócio."))
+                      motivo=motivo)
 
 
 # -- comparação ----------------------------------------------------------------------

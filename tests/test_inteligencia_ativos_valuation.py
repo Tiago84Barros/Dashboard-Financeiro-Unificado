@@ -172,23 +172,62 @@ def test_nivel_mais_largo_quando_o_estreito_nao_tem_pares():
 
 def test_afrouxamento_de_porte_e_risco_fica_registrado():
     alvo = _c("AAAA3", porte=100, risco=30)
-    # porte fora da banda de 10x; risco dentro
+    # porte fora da banda de 10x mas dentro de 100x; risco dentro
     so_risco = [_c(t, porte=5000, risco=31) for t in ("BBBB3", "CCCC3", "DDDD3")]
     g = p.selecionar(alvo, so_risco)
     assert len(g.pares) == 3
-    assert any("tamanho não filtra" in r for r in g.relaxamentos)
+    assert any("porte alargado para 1/100x a 100x" in r for r in g.relaxamentos)
+    assert "Tamanho: porte entre 1/100x e 100x o do ativo." in g.criterios
     assert not any("risco não filtra" in r for r in g.relaxamentos)
     assert any(c.startswith("Risco:") for c in g.criterios)
     # risco fora da banda de 2x; porte dentro
     so_porte = [_c(t, porte=100, risco=200) for t in ("BBBB3", "CCCC3", "DDDD3")]
     g = p.selecionar(alvo, so_porte)
     assert any("risco não filtra" in r for r in g.relaxamentos)
-    assert not any("tamanho não filtra" in r for r in g.relaxamentos)
+    assert not any("porte alargado" in r for r in g.relaxamentos)
+    assert "Tamanho: porte entre 1/10x e 10x o do ativo." in g.criterios
+
+
+def test_porte_conhecido_nunca_deixa_de_filtrar():
+    """A Apple comparada com fabricantes mil vezes menores: mesmo negócio,
+    outro tamanho. Sem par dentro de 100x em nenhum nível, não há grupo."""
+    alvo = _c("AAAA3", porte=1e12)
+    minusculos = [_c(t, porte=1e8) for t in ("BBBB3", "CCCC3", "DDDD3")]
+    g = p.selecionar(alvo, minusculos)
+    assert not g.pares
+    assert "de porte comparável" in g.motivo and "1/100x a 100x" in g.motivo
+    assert any("pares de porte comparável no mesmo segmento (S1)" in r
+               for r in g.relaxamentos)
+
+
+def test_sobe_de_nivel_para_achar_pares_do_mesmo_tamanho():
+    alvo = _c("AAAA3", porte=1e12)
+    universo = ([_c(t, porte=1e8) for t in ("BBBB3", "CCCC3", "DDDD3")]
+                + [_c(t, seg="S2", porte=2e12) for t in ("GGGG3", "HHHH3", "IIII3")])
+    g = p.selecionar(alvo, universo)
+    assert g.nivel == "subsetor"
+    assert {x.ticker for x in g.pares} == {"GGGG3", "HHHH3", "IIII3"}
+    # sem porte conhecido, não há como dizer que é do mesmo tamanho
+    g = p.selecionar(alvo, universo + [_c("JJJJ3", porte=None)])
+    assert "JJJJ3" not in {x.ticker for x in g.pares}
+    assert any("pares de porte comparável no mesmo segmento (S1): nível mais "
+               "largo" in r for r in g.relaxamentos)
+
+
+def test_ativo_sem_porte_nao_filtra_por_tamanho():
+    alvo = _c("AAAA3", porte=None)
+    universo = [_c("BBBB3", porte=1e6), _c("CCCC3", porte=1e12),
+                _c("DDDD3", porte=None)]
+    g = p.selecionar(alvo, universo)
+    assert len(g.pares) == 3
+    assert "Ativo sem porte conhecido: tamanho não filtra." in g.relaxamentos
+    assert not any(c.startswith("Tamanho:") for c in g.criterios)
 
 
 def test_menos_de_tres_pares_nao_forma_grupo():
     g = p.selecionar(_c("AAAA3"), [_c("BBBB3"), _c("CCCC3")])
     assert not g.pares and "Menos de 3 pares" in g.motivo
+    assert "de porte comparável" not in g.relaxamentos[-1]
     assert g.descricao is None
 
 
