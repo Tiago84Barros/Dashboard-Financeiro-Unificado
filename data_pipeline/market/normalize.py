@@ -206,14 +206,29 @@ _LPA_ON = ("basicEarningsPerCommonShare", "dilutedEarningsPerCommonShare")
 _LPA_PN = ("basicEarningsPerPreferredShare", "dilutedEarningsPerPreferredShare")
 # Campos já em reais por ação.
 _LPA_REAIS = ("earningsPerShare", "basicEarningsPerShare", "dilutedEarningsPerShare")
-# Janela (em log10) para casar uma razão LPA/implícito com 1, 1000 ou 1e6, e as
-# faixas em que um exercício isolado está fora da escala da empresa (mesma
-# ideia de b3_saidas.LOTE_DE_MIL, aqui medida contra o lucro/ações do próprio
-# payload): ~1000x é lote de mil ações; ~1e6x é lote de mil num exercício em
-# MIL de empresa que passou a reportar em reais (ITUB4: 2025 em reais, 2019
-# 2.780.000). Razão 4 ou 5 mistura escala com desdobramento e fica como está.
-_TOL_ESCALA = 0.5
-_LOTE_DE_MIL = ((2.5, 3.5, 1e3), (5.5, 6.5, 1e6))
+# O LPA bruto de cada exercício sai em 1000**k vezes o da DFP: k=0 em UNIDADE
+# (VIVA3), 1 em MIL (PETR4 8540), 2 em MIL e por lote de mil ações (ITUB4 2019
+# 2.780.000) e -1 em BRSR3/6 de 2010 a 2014 (0,0024). lucro / LPA bruto é a
+# quantidade de ações implícita vezes 1000**-k, e a quantidade de ações de um
+# exercício para o vizinho só muda por desdobramento, grupamento ou emissão —
+# 1:3 da SBSP3 em 2013, 1:8 da MGLU3 em 2017, 10:1 dela em 2024 —, nunca por
+# 1000. Daí o k de cada exercício: o que deixa as ações implícitas mais perto
+# das do exercício seguinte, em log10.
+_ESCALAS = (-1, 0, 1, 2)
+_TOL_ESCALA = 0.5      # âncora: o exercício recente fecha com lucro / ações de hoje
+# Troca de k só quando a escala do vizinho deixaria as ações mudarem mais de
+# ~56x (log10 1,75) num ano: grupamento de 15:1 junto com a passagem de MIL a
+# UNIDADE (HAPV3 2024, razão 1,89) troca; base 40x menor (CEED3 2016, 1,6),
+# não. Nenhum k abaixo disso: LPA lixo (AMAR3 2021, -2,7e16), que não vira
+# referência para os exercícios anteriores.
+_TOL_TROCA = 1.75
+# k=-1 e k=2 são raros e só valem com encaixe justo (_TOL_ESCALA): BRSR3 2014,
+# CBEE3 2012 e ITUB4 2019 fecham com o vizinho a menos de 0,1; a ENEV3 2015
+# (ações 93x as de 2016, que teve grupamento de 25:1) caía em k=-1 com 1,03 e
+# a PETZ3 2024 (31.350, lixo) em k=2 com 0,95.
+_ESCALAS_RARAS = (-1, 2)
+_TOL_VIZINHOS = 0.15   # os dois vizinhos concordam entre si (log10)...
+_TOL_PICO = 0.3        # ... e o exercício foge dos dois por mais de 2x: lixo
 
 
 def _nao_zero(d: dict, names: tuple[str, ...]):
@@ -252,50 +267,105 @@ def _acoes(quote: dict):
     return _nao_zero(dks, ("sharesOutstanding",)) or _nao_zero(quote, ("sharesOutstanding",))
 
 
-def _escala_lpa(items: list[tuple[dict, bool]], pn: bool, acoes):
-    """(divisor, base_confiavel) dos campos escalados de LPA desta empresa.
+def _divisores_lpa(items: list[tuple[dict, bool]], pn: bool, acoes) -> dict | None:
+    """{id(demonstração): divisor do LPA bruto, ou None se o LPA é lixo}.
 
-    A brapi multiplica o LPA da DFP pela ESCALA_MOEDA: empresa em MIL sai x1000
-    (PETR4 8540), em UNIDADE sai em reais (VIVA3 2,63529). Decide-se pelo
-    exercício mais recente com LPA e lucro: razão LPA / (lucro / ações) perto de
-    1 => UNIDADE; perto de 1000 (ou 1e6, LPA por lote de mil) => MIL. Sem ações
-    ou sem razão limpa, mantém /1000 (a maioria) e marca a base de ações como
-    não confiável — emissão/grupamento grande (AZUL3) quebra o implícito.
+    None (a função toda) quando não há base de ações confiável: sem ações ou
+    quando o exercício mais recente não fecha com lucro / ações de hoje —
+    emissão maciça (AZUL3) quebra o implícito, e aí vale a regra antiga (campo
+    escalado ÷ 1000, a maioria está em MIL).
+
+    Âncora: o exercício anual mais recente com LPA escalado e lucro, ou um
+    trimestre posterior a ele — a SBSP3 desdobrou 1:5 em abr/2026 e a DFP de
+    2025 saiu na base antiga (razão 5); o ITR de 2026 já fecha. A referência
+    começa nas ações de hoje, e dali para trás cada demonstração fica com o k
+    (ver _ESCALAS) do exercício anual seguinte enquanto as ações implícitas não
+    fugirem mais de _TOL_TROCA da referência; só então vale o k que deixa as
+    ações mais perto. Assim desdobramento vira mudança de base e não de escala
+    — razão 4,5 da MGLU3 em 2015-16 é MIL com 1:8 e 1:4 depois, não lote de
+    mil —, e k=-1 ou k=2 só entra com encaixe justo (_ESCALAS_RARAS). Nenhum k
+    serve: LPA nulo, e a referência não se move. Campo em reais só admite k=0.
+    Trimestres não movem a referência (lucro pequeno, razão ruidosa). Fica nulo
+    o LPA de sinal oposto ao do lucro e o do exercício cujas ações implícitas
+    fogem das dos dois vizinhos, que concordam entre si: é pico isolado, não
+    mudança de base (BRSR3 2020, 310.665).
+
+    Limite: grupamento ou emissão de ~56x ou mais no mesmo ano em que a escala
+    muda é indistinguível de troca de k (ENEV3 2015) e vira nulo.
     """
     if not acoes:
-        return 1000.0, False
-    anuais = sorted((it for it, a in items if a), key=lambda it: str(it.get("endDate")), reverse=True)
-    trims = sorted((it for it, a in items if not a), key=lambda it: str(it.get("endDate")), reverse=True)
-    for it in anuais + trims:
-        if _vazio(it):
-            continue
+        return None
+    ordem = sorted(((it, a) for it, a in items if not _vazio(it)),
+                   key=lambda p: (str(p[0].get("endDate") or p[0].get("date")), p[1]),
+                   reverse=True)
+
+    def razao(it):
         bruto, escalado = _lpa_bruto(it, pn)
         lucro = _nao_zero(it, _LUCRO_LPA)
-        if not escalado or bruto is None or lucro is None:
+        if bruto is None or lucro is None:
+            return bruto, escalado, None
+        return bruto, escalado, (math.log10(abs(lucro / bruto)) if bruto * lucro > 0 else False)
+
+    hoje = math.log10(acoes)
+    ref = k_atual = None
+    for it, anual in ordem:
+        _, escalado, n = razao(it)
+        if not escalado or n is None or n is False:
             continue
-        if bruto * lucro <= 0:
-            return 1000.0, False
-        r = math.log10(abs(bruto / (lucro / acoes)))
-        if abs(r) < _TOL_ESCALA:
-            return 1.0, True
-        if abs(r - 3) < _TOL_ESCALA or abs(r - 6) < _TOL_ESCALA:
-            return 1000.0, True
-        return 1000.0, False
-    return 1000.0, False
+        k = min(_ESCALAS[1:], key=lambda k: abs(n + 3 * k - hoje))
+        if abs(n + 3 * k - hoje) < _TOL_ESCALA:
+            # a referência é a das ações de hoje, não a do trimestre: o LPA do
+            # ITR pode vir acumulado no ano (AVLL3 2T26, -7,08 = 1S26 / ações)
+            ref, k_atual = hoje, k
+            break
+        if anual:
+            break
+    if ref is None:
+        return None
+
+    div: dict = {}
+    anuais: list[tuple[int, float, int]] = []
+    for it, anual in ordem:
+        bruto, escalado, n = razao(it)
+        if bruto is None:
+            continue
+        if n is False:
+            div[id(it)] = None
+            continue
+        if n is None:
+            div[id(it)] = 1000.0 ** k_atual if escalado else 1.0
+            continue
+        ks = ((k_atual, *sorted(_ESCALAS, key=lambda k: abs(n + 3 * k - ref)))
+              if escalado else (0,))
+        k = next((k for k in ks if abs(n + 3 * k - ref)
+                  <= (_TOL_ESCALA if k in _ESCALAS_RARAS else _TOL_TROCA)), None)
+        if k is None:
+            div[id(it)] = None
+            continue
+        div[id(it)] = 1000.0 ** k
+        if anual:
+            ref = n + 3 * k
+            k_atual = k if escalado else k_atual
+            anuais.append((id(it), ref, k))
+    for (_, a, ka), (i, b, kb), (_, c, kc) in zip(anuais, anuais[1:], anuais[2:]):
+        if (ka == kc != kb and abs(a - c) <= _TOL_VIZINHOS
+                and min(abs(b - a), abs(b - c)) > _TOL_PICO):
+            div[i] = None
+    return div
 
 
 def income_rows(quote: dict) -> list[dict]:
     tk = _ticker(quote)
     pn = _classe_pn(tk)
-    acoes = _acoes(quote)
     items = _statement_items(quote, "incomeStatementHistory", "incomeStatementHistoryQuarterly")
-    escala, base_ok = _escala_lpa(items, pn, acoes)
+    divisores = _divisores_lpa(items, pn, _acoes(quote))
     out: list[dict] = []
     for it, annual in items:
         peq = _end_year_quarter(it.get("endDate") or it.get("date"), annual)
         if not peq:
             continue
         period_end, year, quarter = peq
+        eps = _eps(it, pn, divisores)
         if _vazio(it):
             # Linha com tudo nulo (não pular): o upsert sobrescreve os zeros já
             # gravados em vez de deixá-los como fóssil.
@@ -311,27 +381,28 @@ def income_rows(quote: dict) -> list[dict]:
             "ebit": _first(it, ("ebit", "operatingIncome")),
             "ebitda": _first(it, ("ebitda", "normalizedEBITDA")),
             "net_income": _first(it, _LUCRO),
-            "eps": _eps(it, pn, escala, acoes if base_ok else None),
+            "eps": eps,
         })
     return out
 
 
-def _eps(it: dict, pn: bool = False, escala: float = 1000.0, acoes=None):
+def _eps(it: dict, pn: bool = False, divisores: dict | None = None):
     """
-    LPA do exercício, em reais por ação. Campos escalados divididos pela escala
-    da empresa (ver _escala_lpa); campos em reais como estão. Com base de ações
-    confiável, um exercício cuja razão LPA/(lucro/ações) caia em ~1000 ou ~1e6
-    está por lote de mil ações e é dividido por essa razão (ver _LOTE_DE_MIL).
-    0/None => None.
+    LPA do exercício, em reais por ação e na base de ações da DFP (desdobramento
+    posterior não entra: o preço da fita na data também não o tem). Divisor da
+    demonstração em ``divisores`` (ver _divisores_lpa); sem base confiável,
+    campo escalado ÷ 1000 e campo em reais como está. 0/None => None.
     """
     bruto, escalado = _lpa_bruto(it, pn)
     if bruto is None:
         return None
-    value = bruto / escala if escalado else bruto
-    lucro = _nao_zero(it, _LUCRO_LPA)
-    if acoes and lucro and value * lucro > 0:
-        r = math.log10(abs(value / (lucro / acoes)))
-        value /= next((d for lo, hi, d in _LOTE_DE_MIL if lo <= r <= hi), 1.0)
+    if divisores is None:
+        value = bruto / 1000.0 if escalado else bruto
+    else:
+        d = divisores.get(id(it), 1.0)
+        if d is None:
+            return None
+        value = bruto / d
     # Alguns payloads históricos da BRAPI trazem sentinelas/erros de escala
     # (ex.: 2,7e16 por ação). Ausência é preferível a contaminar a linha
     # inteira ou exceder NUMERIC(20,6). O limite é deliberadamente amplo.
