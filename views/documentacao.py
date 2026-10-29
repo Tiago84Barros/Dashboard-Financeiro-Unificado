@@ -2565,8 +2565,10 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
             ),
             "Somar market.dividends direto contaria duas vezes cada revisão da brapi, porque "
             "o upsert não apaga a linha antiga. Medida contra a própria brapi, a soma crua "
-            "bate em 60% dos ticker-anos e a regra de leitura em 86%; a CVM mostra quanto a "
-            "própria fonte pode errar.",
+            "bate em 60% dos ticker-anos e a regra de leitura em 86%, mas essa régua é "
+            "circular. Diante da CVM, a única independente e só para FII, o arquivo fica de 8 "
+            "a 9 pontos acima da soma crua e empata com a regra; a CVM também erra, e o "
+            "desacordo com ela não mede o erro da brapi.",
         ),
         "b3_relatorio": _node(
             "b3_relatorio", "Relatório do analista e chat do ativo", "Consulta",
@@ -2999,8 +3001,9 @@ _FLOW_DETAIL_OVERRIDES = {
         "limitacao": (
             "Fonte única: a brapi. Na ação não há fonte independente para conferir. Nos FIIs "
             "a régua é a CVM (rendimento implícito do informe mensal): na medição de "
-            "29/10/2026, cerca de 3 em cada 10 ticker-anos ficaram a mais de 5% dela e 2 em "
-            "cada 10 a mais de 10%. A CVM também erra, ao deslocar valor entre dezembro e "
+            "29/10/2026, de 3 a 4 em cada 10 ticker-anos ficaram a mais de 5% dela e de 2 a 3 "
+            "em cada 10 a mais de 10%, conforme o mês em que se supõe pago o rendimento de "
+            "cada competência. A CVM também erra, ao deslocar valor entre dezembro e "
             "janeiro: o desacordo é entre duas fontes imperfeitas, não o erro da brapi nem "
             "um limite para ele, porque as duas podem errar no mesmo sentido.\n"
             "O ano civil em curso e os seguintes ficam fora do CAGR; na série por exercício, "

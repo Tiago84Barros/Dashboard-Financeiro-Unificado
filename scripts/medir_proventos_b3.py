@@ -30,6 +30,14 @@ Definições
    O desacordo medido é entre duas fontes imperfeitas; não é o erro da brapi
    nem um limite para ele, porque as duas podem errar no mesmo sentido.
 
+   O número depende dessas convenções, e o relatório traz a faixa: o mesmo
+   cálculo com o pagamento no próprio mês da competência, um mês e dois meses
+   depois, cada um pela junção interna e pela junção esquerda (todo ano da CVM
+   dos FIIs do arquivo, com o ano que o arquivo não tem contando como zero).
+   Ano com menos de doze competências não entra em nenhuma variante: falta
+   rendimento de algum mês, e o total da CVM sai menor por falta de dado, não
+   por convenção.
+
 Uso::
 
     python scripts/medir_proventos_b3.py [--json saida.json]
@@ -48,6 +56,11 @@ if str(ROOT) not in sys.path:
 
 TOLERANCIA = 0.01
 FAIXAS_CVM = (0.05, 0.10)
+
+#: Meses entre a competência e o pagamento, e as junções com o arquivo, da
+#: faixa de sensibilidade. A medida principal é um mês, junção interna.
+DEFASAGENS_CVM = (0, 1, 2)
+JUNCOES_CVM = ("interna", "esquerda")
 
 SQL_CRUA = """
     SELECT upper(trim(ticker)) AS ticker, EXTRACT(YEAR FROM event_date)::int AS ano,
@@ -111,13 +124,14 @@ def concordancia(referencia, candidato, tickers, *, ate_ano: int | None = None,
             "fracao": batem / len(m) if len(m) else None}
 
 
-def rendimento_cvm(obs, *, ate_ano: int):
+def rendimento_cvm(obs, *, ate_ano: int, defasagem: int = 1):
     """``ticker, ano, total`` do rendimento implícito do informe mensal.
 
     ``obs``: ``ticker, reference_date, metric_name, source, value_numeric``,
     como :data:`SQL_CVM` devolve. Só observações de :data:`FONTE_CVM` e só o
-    ano com as doze competências. Métrica que falta inteira não derruba a
-    medida: o ano só não fecha."""
+    ano com as doze competências. O pagamento cai ``defasagem`` meses depois
+    da competência. Métrica que falta inteira não derruba a medida: o ano só
+    não fecha."""
     import pandas as pd
 
     obs = obs[obs["source"] == FONTE_CVM]
@@ -128,18 +142,26 @@ def rendimento_cvm(obs, *, ate_ano: int):
     if w.empty:
         return pd.DataFrame(columns=["ticker", "ano", "total"])
     w["rend"] = w["dy_patrimonial_mes"].astype(float) * w["nav_per_share"].astype(float)
-    w["ano"] = (pd.to_datetime(w["reference_date"]) + pd.offsets.MonthBegin(1)).dt.year
+    w["ano"] = (pd.to_datetime(w["reference_date"]).dt.to_period("M") + defasagem).dt.year
     g = w.groupby(["ticker", "ano"])["rend"].agg(["sum", "size"]).reset_index()
     g = g[(g["size"] == 12) & (g["sum"] > 0) & (g["ano"] <= ate_ano)]
     return g.rename(columns={"sum": "total"})[["ticker", "ano", "total"]].reset_index(drop=True)
 
 
-def contra_cvm(cvm, metodos: dict, base) -> dict:
-    """Erro relativo de cada método diante da CVM, nos ticker-anos que a CVM
-    e ``base`` (o arquivo) têm em comum. Método sem o ano conta como zero.
-    Sem ticker-ano em comum, as frações e o erro mediano saem ``None``."""
-    m = cvm.rename(columns={"total": "cvm"}).merge(
-        base[["ticker", "ano"]], on=["ticker", "ano"], how="inner")
+def contra_cvm(cvm, metodos: dict, base, *, juncao: str = "interna") -> dict:
+    """Erro relativo de cada método diante da CVM. Método sem o ano conta como
+    zero. Sem ticker-ano, as frações e o erro mediano saem ``None``.
+
+    ``juncao="interna"``: os ticker-anos que a CVM e ``base`` (o arquivo) têm
+    em comum. ``"esquerda"``: todo ticker-ano da CVM de um ticker de ``base``,
+    tenha ``base`` o ano ou não."""
+    m = cvm.rename(columns={"total": "cvm"})
+    if juncao == "interna":
+        m = m.merge(base[["ticker", "ano"]], on=["ticker", "ano"], how="inner")
+    elif juncao == "esquerda":
+        m = m[m["ticker"].isin(base["ticker"])]
+    else:
+        raise ValueError(f"junção desconhecida: {juncao!r}")
     out = {"ticker_anos": len(m), "tickers": int(m["ticker"].nunique())}
     for nome, df in metodos.items():
         v = m.merge(df.rename(columns={"total": "v"}), on=["ticker", "ano"], how="left")
@@ -169,7 +191,21 @@ def medir(publicado: dict, crua, bruto, obs, *, hoje: date) -> dict:
                "anos fechados": concordancia(arquivo, df, tickers, ate_ano=fechado)}
         for nome, df in metodos.items()}
     fiis = {tk for tk in tickers if tk.endswith("11")}
-    cvm = rendimento_cvm(obs[obs["ticker"].isin(fiis)], ate_ano=fechado)
+    obs_fii = obs[obs["ticker"].isin(fiis)]
+    todos = {"arquivo": arquivo, **metodos}
+    sensibilidade = []
+    for defasagem in DEFASAGENS_CVM:
+        cvm = rendimento_cvm(obs_fii, ate_ano=fechado, defasagem=defasagem)
+        for juncao in JUNCOES_CVM:
+            sensibilidade.append({"defasagem_meses": defasagem, "juncao": juncao,
+                                  **contra_cvm(cvm, todos, arquivo, juncao=juncao)})
+    principal = next(s for s in sensibilidade
+                     if (s["defasagem_meses"], s["juncao"]) == (1, "interna"))
+    faixa = {}
+    for f in FAIXAS_CVM:
+        chave = f"ate_{int(f * 100)}pct"
+        fracoes = [s["arquivo"][chave] for s in sensibilidade if s["arquivo"][chave] is not None]
+        faixa[chave] = {"min": min(fracoes), "max": max(fracoes)} if fracoes else None
     return {
         "medido_em": hoje.isoformat(),
         "arquivo": {"gerado_em": publicado.get("gerado_em"),
@@ -177,7 +213,9 @@ def medir(publicado: dict, crua, bruto, obs, *, hoje: date) -> dict:
                     "tickers": len(tickers)},
         "tolerancia": TOLERANCIA,
         "contra_a_brapi_circular": circular,
-        "contra_a_cvm_fii": contra_cvm(cvm, {"arquivo": arquivo, **metodos}, arquivo),
+        "contra_a_cvm_fii": {k: v for k, v in principal.items()
+                             if k not in ("defasagem_meses", "juncao")},
+        "contra_a_cvm_sensibilidade": {"variantes": sensibilidade, "faixa_do_arquivo": faixa},
     }
 
 
@@ -198,11 +236,26 @@ def _imprime(r: dict) -> None:
     print(f"\n2. Contra a CVM (FII, {c['ticker_anos']} ticker-anos, {c['tickers']} fundos)")
     if not c["ticker_anos"]:
         print("   nenhum ticker-ano da CVM com as doze competências: comparação indisponível")
-        return
-    for nome, v in c.items():
-        if isinstance(v, dict):
-            print(f"   {nome:40s} até 5%: {_pct(v['ate_5pct'])} | até 10%: {_pct(v['ate_10pct'])}"
-                  f" | erro mediano: {_pct(v['erro_mediano'])}")
+    else:
+        for nome, v in c.items():
+            if isinstance(v, dict):
+                print(f"   {nome:40s} até 5%: {_pct(v['ate_5pct'])}"
+                      f" | até 10%: {_pct(v['ate_10pct'])}"
+                      f" | erro mediano: {_pct(v['erro_mediano'])}")
+    # Outra convenção pode fechar o ano que a principal não fecha: a faixa sai
+    # mesmo com a principal vazia.
+    s = r["contra_a_cvm_sensibilidade"]
+    print("\n   Sensibilidade à convenção (fração até 5% da CVM)")
+    for v in s["variantes"]:
+        d = v["defasagem_meses"]
+        rotulo = f"pagamento +{d} {'mês' if d == 1 else 'meses'}, junção {v['juncao']}"
+        print(f"   {rotulo:40s} n={v['ticker_anos']:5d} | arquivo {_pct(v['arquivo']['ate_5pct'])}"
+              f" | renda_por_evento {_pct(v['renda_por_evento']['ate_5pct'])}"
+              f" | soma crua {_pct(v['soma crua de market.dividends']['ate_5pct'])}")
+    for chave, faixa in s["faixa_do_arquivo"].items():
+        if faixa:
+            print(f"   faixa do arquivo até {chave.removeprefix('ate_').removesuffix('pct')}%:"
+                  f" {_pct(faixa['min'])} a {_pct(faixa['max'])}")
 
 
 def main() -> int:
@@ -222,6 +275,7 @@ def main() -> int:
         print("arquivo publicado ausente ou vazio", file=sys.stderr)
         return 1
     with create_engine(_warehouse_url()).connect() as conn:
+        conn.execute(text("SET TRANSACTION READ ONLY"))
         crua = pd.read_sql_query(text(SQL_CRUA), conn)
         bruto = pd.read_sql_query(text(sql_proventos_de_renda("true")), conn)
         obs = pd.read_sql_query(text(SQL_CVM), conn)

@@ -3,7 +3,8 @@
 Os números citados em ``core.proventos_b3`` e em
 ``core.dividend_types.renda_por_evento`` saem deste script. Cada teste fixa uma
 das definições do docstring dele: junção externa, tolerância, corte dos anos
-fechados, as doze competências da CVM e o pagamento no mês seguinte.
+fechados, as doze competências da CVM, o pagamento no mês seguinte e a faixa
+de sensibilidade a essas convenções.
 """
 from __future__ import annotations
 
@@ -96,6 +97,22 @@ def test_ano_aberto_fica_fora_da_cvm():
     assert m.rendimento_cvm(obs, ate_ano=2022).empty
 
 
+def test_defasagem_desloca_o_ano_do_pagamento():
+    # jan a dez/2023: pago no mês fecha 2023; um mês depois, nenhum ano fecha
+    obs = _obs("AAAA11", _meses("2023-01-01", 12))
+    assert m.rendimento_cvm(obs, ate_ano=2025, defasagem=0)["ano"].tolist() == [2023]
+    assert m.rendimento_cvm(obs, ate_ano=2025, defasagem=1).empty
+    # nov/2022 a out/2023, pago dois meses depois: jan a dez/2023
+    obs = _obs("AAAA11", _meses("2022-11-01", 12))
+    assert m.rendimento_cvm(obs, ate_ano=2025, defasagem=2)["ano"].tolist() == [2023]
+
+
+def test_competencia_no_fim_do_mes_cai_no_mesmo_ano_de_pagamento():
+    # o informe pode datar a competência no último dia do mês
+    obs = _obs("AAAA11", pd.date_range("2022-12-31", periods=12, freq="ME"))
+    assert m.rendimento_cvm(obs, ate_ano=2025)["ano"].tolist() == [2023]
+
+
 def test_contra_cvm_junta_pelo_arquivo_e_ano_ausente_erra_cem_por_cento():
     cvm = _anual(("AAAA11", 2023, 10.0), ("BBBB11", 2023, 10.0), ("CCCC11", 2023, 10.0))
     arquivo = _anual(("AAAA11", 2023, 10.2), ("BBBB11", 2023, 9.2))  # CCCC11 fora
@@ -105,6 +122,19 @@ def test_contra_cvm_junta_pelo_arquivo_e_ano_ausente_erra_cem_por_cento():
     assert (r["arquivo"]["ate_5pct"], r["arquivo"]["ate_10pct"]) == (0.5, 1.0)
     assert (r["metodo"]["ate_5pct"], r["metodo"]["ate_10pct"]) == (0.5, 0.5)
     assert r["metodo"]["erro_mediano"] == pytest.approx((0.02 + 1.0) / 2)
+
+
+def test_juncao_esquerda_conta_o_ano_que_o_arquivo_nao_tem():
+    cvm = _anual(("AAAA11", 2022, 10.0), ("AAAA11", 2023, 10.0), ("CCCC11", 2023, 10.0))
+    arquivo = _anual(("AAAA11", 2023, 10.2))  # sem 2022; CCCC11 fora do arquivo
+    interna = m.contra_cvm(cvm, {"arquivo": arquivo}, arquivo)
+    esquerda = m.contra_cvm(cvm, {"arquivo": arquivo}, arquivo, juncao="esquerda")
+    assert (interna["ticker_anos"], interna["arquivo"]["ate_5pct"]) == (1, 1.0)
+    # 2022 entra e o arquivo, sem o ano, erra 100%; CCCC11 continua fora
+    assert (esquerda["ticker_anos"], esquerda["tickers"]) == (2, 1)
+    assert esquerda["arquivo"]["ate_5pct"] == 0.5
+    with pytest.raises(ValueError):
+        m.contra_cvm(cvm, {"arquivo": arquivo}, arquivo, juncao="externa")
 
 
 # ── regra do mínimo e medição de ponta a ponta ──────────────────────────────
@@ -141,7 +171,7 @@ def _crua():
     return _anual(("AAAA3", 2023, 2.0), ("AAAA3", 2024, 1.0), ("AAAA11", 2023, 12.0))
 
 
-def test_medir_de_ponta_a_ponta():
+def test_medir_de_ponta_a_ponta(capsys):
     obs = _obs("AAAA11", _meses("2022-12-01", 12))
 
     r = m.medir(_publicado(), _crua(), _bruto(), obs, hoje=date(2025, 6, 1))
@@ -156,6 +186,20 @@ def test_medir_de_ponta_a_ponta():
     assert cvm["arquivo"]["ate_5pct"] == 1.0
     json.dumps(r, allow_nan=False)  # o --json grava este dicionário
 
+    sens = r["contra_a_cvm_sensibilidade"]
+    variantes = {(v["defasagem_meses"], v["juncao"]): v for v in sens["variantes"]}
+    assert set(variantes) == {(d, j) for d in m.DEFASAGENS_CVM for j in m.JUNCOES_CVM}
+    # a medida principal é a variante de um mês pela junção interna
+    principal = {k: v for k, v in variantes[(1, "interna")].items()
+                 if k not in ("defasagem_meses", "juncao")}
+    assert principal == cvm
+    # dez/2022 a nov/2023 só fecha um ano com o pagamento um mês depois: as
+    # outras variantes ficam sem ticker-ano e não entram na faixa
+    assert variantes[(0, "interna")]["ticker_anos"] == 0
+    assert sens["faixa_do_arquivo"]["ate_5pct"] == {"min": 1.0, "max": 1.0}
+    m._imprime(r)
+    assert "faixa do arquivo até 5%: 100.0% a 100.0%" in capsys.readouterr().out
+
 
 def test_sem_ticker_ano_da_cvm_o_relatorio_sai_e_diz_indisponivel(capsys):
     # só o valor patrimonial da brapi: nenhum ano da CVM fecha
@@ -165,8 +209,24 @@ def test_sem_ticker_ano_da_cvm_o_relatorio_sai_e_diz_indisponivel(capsys):
     cvm = r["contra_a_cvm_fii"]
     assert (cvm["ticker_anos"], cvm["tickers"]) == (0, 0)
     assert cvm["arquivo"] == {"ate_5pct": None, "ate_10pct": None, "erro_mediano": None}
+    assert r["contra_a_cvm_sensibilidade"]["faixa_do_arquivo"] == {
+        "ate_5pct": None, "ate_10pct": None}
     json.dumps(r, allow_nan=False)
     m._imprime(r)
     saida = capsys.readouterr().out
     assert "comparação indisponível" in saida
     assert "renda_por_evento" in saida  # a parte circular continua no relatório
+
+
+def test_principal_vazia_nao_esconde_a_variante_que_fecha_o_ano(capsys):
+    # jan a dez/2023 fecha 2023 com o pagamento no mesmo mês, não um mês depois
+    r = m.medir(_publicado(), _crua(), _bruto(), _obs("AAAA11", _meses("2023-01-01", 12)),
+                hoje=date(2025, 6, 1))
+    assert r["contra_a_cvm_fii"]["ticker_anos"] == 0
+    assert r["contra_a_cvm_sensibilidade"]["faixa_do_arquivo"]["ate_5pct"] == {
+        "min": 1.0, "max": 1.0}
+    m._imprime(r)
+    saida = capsys.readouterr().out
+    assert "comparação indisponível" in saida
+    assert "pagamento +0 meses, junção interna" in saida
+    assert "faixa do arquivo até 5%: 100.0% a 100.0%" in saida
