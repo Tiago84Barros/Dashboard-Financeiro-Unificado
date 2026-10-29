@@ -1244,7 +1244,7 @@ def render(show_header: bool = True) -> None:
 
     provedores = provedores_disponiveis()
     if provedores:
-        rotulos = {"openai": "OpenAI", "gemini": "Gemini"}
+        rotulos = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
         detalhe_tecnico(
             "Provedores LLM ativos (com fallback automático): "
             + " → ".join(rotulos.get(p, p) for p in provedores),

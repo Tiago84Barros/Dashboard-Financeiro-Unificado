@@ -119,6 +119,20 @@ def _sem_pausa_de_provedor_herdada():
         mod._limpar_estado_provedores()
 
 
+# ── o Claude nao responde teste nenhum ───────────────────────────────────────
+# O elo Claude entra na cadeia so em sessao do navegador, e o `AppTest` e uma:
+# com a chave real vazada do .env (`load_dotenv`), um teste de tela gastaria
+# credito pago. Os testes do proprio elo religam o getter com cliente falso.
+@pytest.fixture(autouse=True)
+def _sem_claude(monkeypatch):
+    try:
+        import core.llm_b3 as llm
+    except Exception:  # o modulo pode nao existir neste checkout
+        return
+    if hasattr(llm, "_get_anthropic_client"):
+        monkeypatch.setattr(llm, "_get_anthropic_client", lambda: None)
+
+
 # ── nenhum teste herda a leitura em voo de outro ─────────────────────────────
 # `core.market_read._FII_SNAPSHOT_JOB` e um slot global do processo, e a leitura
 # real o preenche sem esperar (`timeout_seconds=0`) quando o artefato local

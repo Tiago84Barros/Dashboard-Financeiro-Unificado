@@ -1289,7 +1289,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
         return
 
     providers = provedores_disponiveis()
-    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
+    provider_labels = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
     detalhe_tecnico("Provedor disponível: " + ", ".join(
         provider_labels.get(provider, provider) for provider in providers),
         codigo="fii.chat_provedor")
