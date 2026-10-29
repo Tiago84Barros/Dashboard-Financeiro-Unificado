@@ -658,7 +658,7 @@ def render_corpo() -> None:
     estado, acao = st.columns([1, 0.18], vertical_alignment="center")
     estado.markdown(_carimbo_html(medido_em, secoes), unsafe_allow_html=True)
     if acao.button("🔄 Recalcular", key="confianca_recalcular",
-                   use_container_width=True,
+                   width="stretch",
                    help="Remede as sete seções e os três motores. Consulta o "
                         "banco e leva alguns minutos."):
         try:

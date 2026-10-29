@@ -23,6 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 import core.us_data as us
 from core.busca_empresa import buscar_empresas
+from core.crescimento import sem_ano_em_curso
 from core.inteligencia_ativos import veredito
 from core.llm_context_ativo import build_us_ativo_context
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
@@ -49,7 +50,7 @@ from core.us_company_analysis import (
     derive_metric_history,
     last_value,
     numeric_financials,
-    regression_cagr,
+    regression_growth,
 )
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
 from core.validacao_motor import validacao_us
@@ -588,7 +589,8 @@ def _tab_empresa(status: dict) -> None:
     annual_returns = annual_price_returns(prices)
     if not annual_returns.empty:
         annual_returns = annual_returns.sort_values("Ano")
-        annual_returns["Ano"] = annual_returns["Ano"].astype(str)
+        # "2026 (até 28/10)": o ano aberto é acumulado no ano, não o do ano.
+        annual_returns["Ano"] = annual_returns["Rotulo"]
         annual_returns["Positivo"] = annual_returns["Retorno"] >= 0
         annual_returns["Texto"] = annual_returns["Retorno"].map(lambda value: f"{value:+.2f}%")
         fig = px.bar(
@@ -610,15 +612,21 @@ def _tab_empresa(status: dict) -> None:
 
     _analysis_header("📈 Crescimento Médio Anual (CAGR)")
     cagr_items = []
+    # Proventos somados por ano civil: o ano em curso ainda não acabou e
+    # entraria no CAGR como queda. A série GAAP é por exercício fiscal, fechado.
+    dividend_cagr_source = (sem_ano_em_curso(dividend_history, "fiscal_year")
+                            if dividends is not None and not dividends.empty
+                            else dividend_history)
     for label, field, source in (
         ("Receita Líquida", "revenue", financials),
         ("EBIT", "ebit", financials),
         ("Lucro Líquido", "net_income", financials),
-        ("Dividendos", "dividends_per_share", dividend_history),
+        ("Dividendos", "dividends_per_share", dividend_cagr_source),
     ):
-        growth = regression_cagr(source, field)
-        cagr_items.append((label, _fmt_growth(growth), "Regressão log histórica",
-                           _value_color(growth)))
+        growth = regression_growth(source, field)
+        rate = growth.taxa if growth is not None else None
+        caption = growth.legenda() if growth is not None else "Sem histórico"
+        cagr_items.append((label, _fmt_growth(rate), caption, _value_color(rate)))
     _analysis_cards(cagr_items)
 
     _analysis_header("📋 Último Exercício Disponível")
@@ -1531,22 +1539,33 @@ def _render_us_lab_universe(entry: pd.DataFrame) -> None:
                         f'{years_text}</span></div>', unsafe_allow_html=True)
 
 
+def _nota(valor: object) -> float | None:
+    """Nota numérica finita, ou None — zero continua sendo zero."""
+    numero = pd.to_numeric(valor, errors="coerce")
+    return float(numero) if pd.notna(numero) and np.isfinite(numero) else None
+
+
 def _entry_detail_card(row: pd.Series) -> str:
     status = str(row.get("entry_status", "Observação"))
     colors = {"Aprovada": _COR_POS, "Observação": _COR_ALT, "Excluída": _COR_NEG}
     color = cor_token(colors.get(status, _COR_NEU))
     base = float(row.get("score_base_adv", 0) or 0)
     entry = float(row.get("entry_score", 0) or 0)
-    fundamental_entry = float(row.get("entry_score_fundamental", entry) or entry)
+    fundamental_entry = _nota(row.get("entry_score_fundamental"))
+    if fundamental_entry is None:
+        fundamental_entry = entry
     macro_adjustment = pd.to_numeric(
         row.get("macro_score_adjustment"), errors="coerce"
     )
-    quality = float(row.get("score_quality", 50) or 50)
-    growth = float(row.get("score_growth", 50) or 50)
-    cash = float(row.get("cash_quality", 50) or 50)
+    # Zero é nota (pior posição); ``or 50`` a pintava como neutra. Ausência
+    # sai como travessão, não como 50.
+    quality = _nota(row.get("score_quality"))
+    growth = _nota(row.get("score_growth"))
+    cash = _nota(row.get("cash_quality"))
 
-    def bar(label: str, value: float, bar_color: str) -> str:
-        width = max(0, min(100, value))
+    def bar(label: str, value: float | None, bar_color: str) -> str:
+        width = 0 if value is None else max(0, min(100, value))
+        texto = "—" if value is None else f"{value:.0f}"
         return (f'<div style="display:grid;grid-template-columns:98px 1fr 34px;gap:8px;'
                 f'align-items:center;font-size:.67rem;color:var(--app-muted);'
                 f'margin:8px 0">'
@@ -1554,7 +1573,7 @@ def _entry_detail_card(row: pd.Series) -> str:
                 f'<span style="background:var(--app-surface-raised);height:7px;'
                 f'border-radius:5px;overflow:hidden"><i style="display:block;width:{width:.0f}%;'
                 f'height:100%;background:{bar_color};border-radius:5px"></i></span>'
-                f'<strong style="color:var(--app-text);text-align:right">{value:.0f}</strong></div>')
+                f'<strong style="color:var(--app-text);text-align:right">{texto}</strong></div>')
 
     return (
         f'<div style="background:var(--app-surface);border-radius:13px;'

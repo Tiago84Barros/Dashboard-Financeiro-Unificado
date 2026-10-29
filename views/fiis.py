@@ -1370,7 +1370,14 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                 aviso = aviso_ancoragem(answer, context, user_input)
             except Exception as exc:
                 from core.llm_falha import mensagem_falha_llm
-                answer = mensagem_falha_llm(exc, "chat da Seleção de FIIs")
+                answer = None
+                falha = mensagem_falha_llm(exc, "chat da Seleção de FIIs")
+        if answer is None:
+            # A falha é aviso, não fala do assistente: gravada, voltava no
+            # contexto do turno seguinte como resposta dele (LLM-A11).
+            st.warning(falha)
+            history.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(answer))
         if aviso:
             st.caption(aviso)

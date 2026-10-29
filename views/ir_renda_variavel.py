@@ -166,7 +166,7 @@ def ficha_rv_tabelas(rv: list[dict]) -> dict[str, pd.DataFrame]:
 
 
 def _mostrar_grade(df: pd.DataFrame) -> None:
-    st.dataframe(df, hide_index=True, use_container_width=True,
+    st.dataframe(df, hide_index=True, width="stretch",
                  column_config={"Linha da ficha": st.column_config.TextColumn(width="large")})
 
 
@@ -192,7 +192,7 @@ def _fontes_pagadoras(item: dict) -> pd.DataFrame:
 def _bloco_rendimento(item: dict, vazio: str) -> None:
     st.markdown(f"**{_codigo(item)} — {item['descricao']}** · total **R\\$ {_n(item['total'])}**")
     if item["linhas"]:
-        st.dataframe(_fontes_pagadoras(item), hide_index=True, use_container_width=True)
+        st.dataframe(_fontes_pagadoras(item), hide_index=True, width="stretch")
     else:
         st.caption(vazio)
 
@@ -359,7 +359,7 @@ def _render_declaracao(ins: dict) -> None:
                        if oi["darf_calculado"] else "—")},
             {"Linha": "Imposto retido na fonte (Lei nº 11.033/2004)",
              "Valor": _n(oi["irrf_lei_11033"])},
-        ]), hide_index=True, use_container_width=True)
+        ]), hide_index=True, width="stretch")
 
     with abas[1]:
         st.caption("Ficha **Renda Variável › Fundos de Investimento Imobiliário ou nas Cadeias "
@@ -405,7 +405,7 @@ def _render_declaracao(ins: dict) -> None:
                    "Em ações e fundos marque *negociados em bolsa* e informe o código de "
                    "negociação.")
         if d["bens"]:
-            st.dataframe(tabela_bens(d["bens"], ano), hide_index=True, use_container_width=True,
+            st.dataframe(tabela_bens(d["bens"], ano), hide_index=True, width="stretch",
                          column_config={"Discriminação": st.column_config.TextColumn(
                              width="large")})
         else:
@@ -543,11 +543,11 @@ def _render_apuracao(res: dict) -> None:
     df = _tabela_mensal(meses)
     moeda = {c: _COLS_MOEDA for c in df.columns
              if c not in ("Mês", "Isenção", "Situação")}
-    st.dataframe(df, hide_index=True, use_container_width=True, column_config=moeda)
+    st.dataframe(df, hide_index=True, width="stretch", column_config=moeda)
 
     secao_titulo("Resumo por ano", "🗂️")
     da = _tabela_anual(res["anos"])
-    st.dataframe(da, hide_index=True, use_container_width=True,
+    st.dataframe(da, hide_index=True, width="stretch",
                  column_config={c: _COLS_MOEDA for c in da.columns
                                 if c not in ("Ano", "Meses incompletos")})
 

@@ -330,7 +330,7 @@ def render_painel(dados: painel.Painel) -> None:
     estado, recarregar = st.columns([1, 0.16], vertical_alignment="center")
     estado.markdown(_chips_estado_html(dados), unsafe_allow_html=True)
     if recarregar.button("↻ Recarregar", key="cfg_restr_recarregar",
-                         use_container_width=True,
+                         width="stretch",
                          help="Relê o log local e o do Supabase, ignorando o cache."):
         _limpar_cache()
         st.rerun()
@@ -409,7 +409,7 @@ def render_painel(dados: painel.Painel) -> None:
         "Última vez": _data_curta(i.get("ultima_vez")),
     } for i in vistos])
     st.dataframe(
-        tabela, hide_index=True, use_container_width=True,
+        tabela, hide_index=True, width="stretch",
         height=min(430, 60 + 35 * len(tabela)),
         column_config={
             "!": st.column_config.TextColumn(

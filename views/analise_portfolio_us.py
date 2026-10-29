@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import logging
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -30,6 +29,7 @@ from core.chat_memory import (
     save_chat_history,
     visible_chat_history,
 )
+from core.data_quality import to_float
 from core.inteligencia_ativos import veredito
 from core.llm_b3 import (
     chat_coerente,
@@ -46,11 +46,13 @@ from core.market_companies import (
     us_logo_url,
 )
 from core.portfolio_report_us import (
+    CAMBIO_VELHO_DIAS,
     GRAU_LABEL,
     MARCA_LABEL,
     analyze_us_portfolio_report,
     generate_company_us_report,
     grau_de_confianca,
+    idade_do_cambio,
     motivo_do_grau,
 )
 from core.portfolio_staleness import texto_defasagem
@@ -80,8 +82,10 @@ from views.analise_portfolio_b3 import (
     _delta_str,
     _kpi_card,
     _macro_card,
+    _media_das_notas,
     _persp_badge,
     _score_mod,
+    _texto_nota,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,8 +109,7 @@ def _render_portfolio_salvo(model: dict, pesos_novos: dict[str, float] | None) -
 
     entrada = metrics.get("entry_score")
     if entrada is None and items:
-        notas = [float(it.get("entry_score") or 0) for it in items]
-        entrada = sum(notas) / len(notas) if notas else None
+        entrada = _media_das_notas(items, "entry_score")
     setores = {str(it.get("setor") or "—") for it in items}
     nome = model.get("name") or "Portfólio EUA Modelo"
 
@@ -756,11 +759,13 @@ def _linha_do_score(scored: pd.DataFrame, ticker: str):
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def _usd_brl_da_base() -> float | None:
-    """Última cotação USD/BRL do banco unificado (asset_quotes).
+def _usd_brl_da_base() -> tuple[float | None, object]:
+    """Última cotação USD/BRL do banco unificado (asset_quotes) e a data dela.
 
     Número real, não estimativa: a exposição cambial só é dizível se a taxa
-    tiver origem. Sem a cotação, o relatório declara a ausência.
+    tiver origem. A data vai junto porque a última linha da tabela pode ser de
+    semanas atrás, e sem ela a tela e o prompt a liam como a taxa de hoje.
+    Sem a cotação, ``(None, None)`` e o relatório declara a ausência.
     """
     try:
         from sqlalchemy import text
@@ -768,19 +773,35 @@ def _usd_brl_da_base() -> float | None:
         from core.database import get_engine
         engine = get_engine()
         if engine is None:
-            return None
+            return None, None
         with engine.connect() as conn:
-            valor = conn.execute(text("""
-                SELECT q.close
+            linha = conn.execute(text("""
+                SELECT q.close, q.date
                 FROM asset_quotes q
                 JOIN assets a ON a.id = q.asset_id
                 WHERE UPPER(a.ticker) IN ('USDBRL', 'USDBRL=X', 'USD/BRL')
                 ORDER BY q.date DESC
                 LIMIT 1
-            """)).scalar()
-        return float(valor) if valor is not None else None
+            """)).first()
+        if linha is None or linha[0] is None:
+            return None, None
+        return float(linha[0]), linha[1]
     except Exception:  # noqa: BLE001 - câmbio é contexto, não bloqueio
-        return None
+        return None, None
+
+
+def _referencia_cambio(taxa: float | None, data) -> str:
+    """Fim da frase do câmbio: taxa e data do fechamento, marcando a velha."""
+    if not taxa:
+        return "."
+    idade = idade_do_cambio(data)
+    if idade is None:
+        return f" (referência na base: R$ {taxa:.2f}, sem data do fechamento)."
+    quando = f"{pd.Timestamp(data):%d/%m/%Y}"
+    if idade > CAMBIO_VELHO_DIAS:
+        return (f" (referência na base: R$ {taxa:.2f}, fechamento de {quando} — "
+                f"{idade} dias atrás, não é a taxa de hoje).")
+    return f" (referência na base: R$ {taxa:.2f}, fechamento de {quando})."
 
 
 def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
@@ -789,9 +810,8 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
     """Relatório por empresa + consolidado + redistribuição de pesos."""
     contexto_carteira = (
         f"Portfólio americano com {len(items)} empresas. "
-        f"Score de entrada médio: "
-        f"{float(np.mean([it.get('entry_score') or 0 for it in items])):.1f}. "
-        f"Benchmark de referência: S&P 500. Custo de oportunidade: Treasury."
+        + _texto_nota("Score de entrada médio:", _media_das_notas(items, "entry_score"))
+        + ". Benchmark de referência: S&P 500. Custo de oportunidade: Treasury."
     )
 
     items_analisados: list[dict] = []
@@ -819,7 +839,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
         setor = it.get("setor") or "N/D"
         industria = it.get("industria") or "N/D"
         peso_pct = float(it.get("weight") or 0) * 100.0
-        entrada = float(it.get("entry_score") or 0)
+        entrada = to_float(it.get("entry_score"))
 
         progresso.progress((idx + 1) / len(items), text=f"Carregando dados de {tk}…")
         try:
@@ -840,7 +860,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
             contexto_empresa = (
                 f"{contexto_carteira} Empresa avaliada: {nome} | setor {setor} / "
                 f"indústria {industria}. Peso atual na carteira: {peso_pct:.1f}% | "
-                f"score de entrada {entrada:.1f}."
+                + _texto_nota("score de entrada", entrada) + "."
             )
             analise, dossie = generate_company_us_report(
                 tk,
@@ -904,6 +924,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
 
     progresso.empty()
 
+    usd_brl, usd_brl_data = _usd_brl_da_base()
     with st.spinner("Gerando relatório consolidado do portfólio…"):
         try:
             port_analise = analyze_us_portfolio_report(
@@ -911,7 +932,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 avaliacao_quant=avaliacao_quant,
                 status=status,
                 financials=financials,
-                usd_brl=_usd_brl_da_base(),
+                usd_brl=usd_brl, usd_brl_data=usd_brl_data,
                 conjuntura=conjuntura_da_carteira("us", items, as_of=corte_conjuntura),
                 detalhe_armazem=detalhe_do_consolidado(detalhes, items_analisados),
             )
@@ -1073,7 +1094,14 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
                 aviso = aviso_ancoragem(resposta, contexto, pergunta)
             except Exception as exc:  # noqa: BLE001
                 from core.llm_falha import mensagem_falha_llm
-                resposta = mensagem_falha_llm(exc, "chat da Avaliação de Portfólio EUA")
+                resposta = None
+                falha = mensagem_falha_llm(exc, "chat da Avaliação de Portfólio EUA")
+        if resposta is None:
+            # A falha é aviso, não fala do assistente: gravada, voltava no
+            # contexto do turno seguinte como resposta dele (LLM-A11).
+            st.warning(falha)
+            historico.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(resposta))
         if aviso:
             detalhe_tecnico(str(aviso), codigo="portfolio_us.ancoragem_chat")
@@ -1164,7 +1192,7 @@ def render(show_header: bool = True) -> None:
     modo_txt = {"warehouse": "warehouse local completo",
                 "snapshot": "vitrine publicada"}.get(str(status.get("mode") or ""), "origem não identificada")
     ultima = status.get("last_update")
-    usd_brl = _usd_brl_da_base()
+    usd_brl, usd_brl_data = _usd_brl_da_base()
     detalhe_tecnico(
         f"Base: {modo_txt}"
         + (f"; última ingestão {str(ultima)[:19]}" if ultima else
@@ -1186,7 +1214,7 @@ def render(show_header: bool = True) -> None:
         '💱 <b>Carteira em dólares.</b> Seu retorno em reais é o retorno do '
         'ativo combinado com a variação do câmbio — o USD/BRL é um segundo '
         'ativo embutido nesta carteira'
-        + (f' (referência na base: R$ {usd_brl:.2f}).' if usd_brl else '.')
+        + _referencia_cambio(usd_brl, usd_brl_data)
         + '</div>',
         unsafe_allow_html=True,
     )
