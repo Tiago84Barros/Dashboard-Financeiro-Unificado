@@ -725,7 +725,7 @@
     {
       "nome": "Inteligência dos Ativos",
       "resumo": "Cada ativo avaliado à luz da sua estratégia",
-      "explicacao": "Avalia cada ativo da carteira de acordo com a sua estratégia (objetivo, prazo, risco e alocação desejada) e sugere manter, comprar ou vender. Enquanto a estratégia não estiver concluída, a aba aparece com um cadeado e mostra só a configuração; depois, ganha o ícone de cérebro e libera a análise.",
+      "explicacao": "Avalia cada ativo da carteira de acordo com a sua estratégia (objetivo, prazo, risco e alocação desejada) e sugere uma de sete ações: manter, comprar, acompanhar, rebalancear, reduzir parcialmente, vender ou substituir. Peso ou preço acima de um limite vira alerta para investigar, nunca ordem de venda. Enquanto a estratégia não estiver concluída, a aba aparece com um cadeado e mostra só a configuração; depois, ganha o ícone de cérebro e libera a análise.",
       "so_admin": false,
       "fonte": "views/investimentos.py:4579 (views/inteligencia_ativos.py:81)",
       "filhos": [
@@ -799,7 +799,7 @@
           "resumo": "Resumo da economia que a análise considera",
           "explicacao": "Caixa recolhida, no topo da aba liberada, com a leitura do momento da economia que serve de pano de fundo para as sugestões.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos_resumida.py:599",
+          "fonte": "views/inteligencia_ativos_resumida.py:662",
           "filhos": []
         },
         {
@@ -807,30 +807,46 @@
           "resumo": "Lista dos títulos com valor e peso",
           "explicacao": "Para esses dois grupos a tela mostra só uma lista simples de cada título, com valor e porcentagem da carteira; o cabeçalho traz o alvo da renda fixa e a meta da reserva.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos_resumida.py:604-609",
+          "fonte": "views/inteligencia_ativos_resumida.py:664-670",
           "filhos": []
         },
         {
           "nome": "Ações · Fundos imobiliários · Internacional · Outros ativos",
-          "resumo": "Uma caixa por ativo: manter, comprar ou vender",
-          "explicacao": "Cada ativo vira uma caixa recolhida com um título do tipo 'BBAS3 · 8,5% → 2,3% · Vender' (peso atual, peso sugerido e decisão). Abrindo, aparece a análise resumida daquele ativo.",
+          "resumo": "Uma caixa por ativo: a ação sugerida e por quê",
+          "explicacao": "Cada ativo vira uma caixa recolhida com um título do tipo 'BBAS3 · 8,5% → 2,3% · Rebalancear' (peso atual, peso sugerido e ação sugerida). Abrindo, aparece a análise resumida daquele ativo.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos_resumida.py:577 (_render_ativo)",
+          "fonte": "views/inteligencia_ativos_resumida.py:640 (_render_ativo)",
           "filhos": [
             {
-              "nome": "Porcentagem atual · Porcentagem devida · Manter, comprar ou vender",
-              "resumo": "Peso hoje, peso ideal e a decisão",
-              "explicacao": "Três números lado a lado e o motivo da decisão, com o lembrete de que é uma avaliação por regras, não uma recomendação.",
+              "nome": "Porcentagem atual · Porcentagem devida · Ação sugerida · Convicção",
+              "resumo": "Peso hoje, peso ideal, a ação e o grau de convicção",
+              "explicacao": "Quatro números lado a lado: o peso hoje, o peso ideal, a ação sugerida (manter, comprar, acompanhar, rebalancear, reduzir parcialmente, vender ou substituir) e a convicção (alta, moderada ou baixa, com o porquê), seguidos do motivo e do lembrete de que é uma avaliação por regras, não uma recomendação.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos_resumida.py:126",
+              "fonte": "views/inteligencia_ativos_resumida.py:135",
               "filhos": []
             },
             {
-              "nome": "Se vender, qual substituir?",
-              "resumo": "Sugestões de troca quando a decisão é vender",
-              "explicacao": "Só aparece quando a decisão é vender: lista ativos que poderiam ocupar o lugar.",
+              "nome": "Alertas para investigar (não são ordens de compra ou venda)",
+              "resumo": "Sinais que pedem olhar mais de perto",
+              "explicacao": "Caixa à parte, só quando há alerta: peso acima da meta, preço no topo do histórico, manchete ainda não confirmada em documento oficial. Um alerta pede análise; sozinho, não vira venda.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos_resumida.py:216",
+              "fonte": "views/inteligencia_ativos_resumida.py:200",
+              "filhos": []
+            },
+            {
+              "nome": "Justificativa · Proporção e custo · Condições · Dados ausentes e limitações · Contexto",
+              "resumo": "O porquê da ação sugerida",
+              "explicacao": "Os fatores que sustentam a ação (qualidade, tese, valuation contra o próprio histórico, peso na carteira). Quando a ação é reduzir ou vender, a proporção sugerida e o custo estimado da venda (imposto e spread, quando o app tem esses dados). Depois: o que mudaria a recomendação, os dados que faltaram e o pano de fundo de cenário, noticiário e valorização.",
+              "so_admin": false,
+              "fonte": "views/inteligencia_ativos_resumida.py:173",
+              "filhos": []
+            },
+            {
+              "nome": "Se sair, qual substituir?",
+              "resumo": "Sugestões de troca quando a ação é vender ou substituir",
+              "explicacao": "Só aparece quando a ação sugerida é vender ou substituir: lista ativos que poderiam ocupar o lugar. A troca só é sugerida quando o substituto é claramente superior em qualidade, sem preço nem risco piores.",
+              "so_admin": false,
+              "fonte": "views/inteligencia_ativos_resumida.py:279",
               "filhos": []
             },
             {
@@ -838,7 +854,7 @@
               "resumo": "Notas do ativo e comparação com concorrentes",
               "explicacao": "Avaliação por dimensões (por exemplo, se está caro ou barato) e uma tabela comparando o ativo com dois parecidos.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos_resumida.py:197, :280",
+              "fonte": "views/inteligencia_ativos_resumida.py:260, :343",
               "filhos": []
             },
             {
@@ -846,7 +862,7 @@
               "resumo": "Função do ativo, notícias e efeito da economia",
               "explicacao": "Para que o ativo serve na sua carteira, notícias recentes, trechos de relatórios da empresa e como juros, inflação e câmbio o afetam.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos_resumida.py:313, :351, :420, :469",
+              "fonte": "views/inteligencia_ativos_resumida.py:376, :414, :483, :532",
               "filhos": []
             },
             {
@@ -854,7 +870,7 @@
               "resumo": "Abre o estudo detalhado deste ativo",
               "explicacao": "Botão que liga a 'Análise detalhada' mais abaixo já com este ativo escolhido.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos_resumida.py:592",
+              "fonte": "views/inteligencia_ativos_resumida.py:656",
               "filhos": []
             }
           ]
