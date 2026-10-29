@@ -252,6 +252,10 @@ def _x(x: float) -> str:
     return f"{_br(x, 2 if abs(x) < 10 else 1)}x"
 
 
+def _pares(n: int) -> str:
+    return f"{n} par" if n == 1 else f"{n} pares"
+
+
 def _fmt(x: float, unidade: str) -> str:
     return _pct(x) if unidade == fnd.PCT else _x(x)
 
@@ -334,7 +338,7 @@ def _contra_pares(c: prs.ComparacaoPares | None, chave: str, rotulo: str,
     melhor = (ln.posicao == val.ACIMA) == maior_melhor
     rel = "acima" if ln.posicao == val.ACIMA else "abaixo"
     return Criterio(
-        f"{rotulo} {_pct(ln.valor)} {rel} da mediana de {ln.n_pares} pares "
+        f"{rotulo} {_pct(ln.valor)} {rel} da mediana de {_pares(ln.n_pares)} "
         f"({_pct(ln.mediana_pares)})", 1 if melhor else -1)
 
 
@@ -564,7 +568,7 @@ def _qualidade_fii(f: fnd.Fundamentos, c, crits: list[Criterio],
     liq = c.linha("liquidez_diaria") if c is not None else None
     if liq is not None and liq.posicao == val.ABAIXO:
         crits.append(Criterio(f"Liquidez diária abaixo da mediana de "
-                              f"{liq.n_pares} pares", -1))
+                              f"{_pares(liq.n_pares)}", -1))
 
 
 def _leitura_qualidade(crits, alertas) -> str:
@@ -695,10 +699,10 @@ def _momento(c, crits: list[Criterio], alertas: list[Alerta]) -> None:
         sinal = (1 if dif >= MOMENTO_DIFERENCA_PP else
                  -1 if dif <= -MOMENTO_DIFERENCA_PP else 0)
         rel = ("acima da" if sinal > 0 else "abaixo da" if sinal < 0 else
-               "em linha com")
+               "em linha com a")
         crits.append(Criterio(
             f"Retorno de 12 meses de {_pct(r)}, {rel} mediana de "
-            f"{ln.n_pares} pares ({_pct(med)}; diferença de "
+            f"{_pares(ln.n_pares)} ({_pct(med)}; diferença de "
             f"{_br(dif)} p.p.)", sinal))
     if r <= MOMENTO_QUEDA_ALERTA:
         alertas.append(Alerta(f"preço caiu {_pct(-r)} em 12 meses (com "
@@ -783,8 +787,9 @@ def _mercado(a: m.AnaliseAtivo, c, crits: list[Criterio],
         maior = ln.posicao == val.ACIMA
         crits.append(Criterio(
             f"{rotulo} de {_pct(abs(ln.valor))} "
-            f"{'acima' if maior else 'abaixo'} da mediana de {ln.n_pares} "
-            f"pares ({_pct(abs(ln.mediana_pares))})", -1 if maior else 1))
+            f"{'acima' if maior else 'abaixo'} da mediana de "
+            f"{_pares(ln.n_pares)} ({_pct(abs(ln.mediana_pares))})",
+            -1 if maior else 1))
     _momento(c, crits, alertas)
 
     assinados = [x.sinal for x in crits if x.sinal]

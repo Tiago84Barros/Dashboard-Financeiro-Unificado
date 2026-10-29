@@ -104,6 +104,8 @@ view.us.company_financials = lambda symbol: financials
 view.us.company_market_data = lambda symbol: market
 view.us.dossie = lambda symbol: {"classification":"consolidada","classification_reason":"ok",
     "red_flags":[],"notes":{}}
+# O relatório tem teste próprio; aqui ele não pode sair para o banco.
+view.secao_relatorio = lambda *a, **k: "RELATORIO SINTETICO"
 view.st.session_state["us_active_tab"] = 1
 view.st.session_state["us_selected_ticker"] = "AAPL"
 view.render()
@@ -115,6 +117,7 @@ view.render()
             "Último Exercício Disponível", "Demonstrações Financeiras", "Dividendos por ação",
             "Gráfico de Múltiplos", "Fluxo de Caixa", "Estrutura de Capital e Dívida",
             "Rentabilidade", "Valuation", "Score e critérios de avaliação",
+            "Relatório do analista",
         ):
             assert label in rendered
         assert "Eletrônicos de Consumo" in rendered

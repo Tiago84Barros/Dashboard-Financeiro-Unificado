@@ -77,6 +77,7 @@ from design.market_companies import (
     render_market_tabs,
     render_sector_grid,
 )
+from design.relatorio_analista import secao_relatorio
 
 _PLOT_LAYOUT = dict(
     template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
@@ -819,12 +820,18 @@ def _tab_empresa(status: dict) -> None:
     with st.expander("📄 Dossiê, classificação e critérios avançados"):
         _render_dossie_for(symbol)
 
+    # Sem setor, como o portão da Inteligência dos Ativos lê o ativo americano:
+    # o relatório e o portão chegam ao mesmo veredito.
+    _analysis_header("🧭 Relatório do analista")
+    relatorio = secao_relatorio(symbol, str(row.get("name", "") or "") or None,
+                                None, mercado="us")
+
     render_chat_ativo(
         mercado="us", ticker=symbol, nome=str(row.get("name", "") or ""),
         accent="#00C896",
         build_context=lambda pergunta: build_us_ativo_context(
             symbol, user_question=pergunta, row=row, financials=financials,
-            current_price=current_price,
+            current_price=current_price, relatorio=relatorio,
         ),
     )
 
