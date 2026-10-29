@@ -136,15 +136,18 @@ def rendimento_cvm(obs, *, ate_ano: int):
 
 def contra_cvm(cvm, metodos: dict, base) -> dict:
     """Erro relativo de cada método diante da CVM, nos ticker-anos que a CVM
-    e ``base`` (o arquivo) têm em comum. Método sem o ano conta como zero."""
+    e ``base`` (o arquivo) têm em comum. Método sem o ano conta como zero.
+    Sem ticker-ano em comum, as frações e o erro mediano saem ``None``."""
     m = cvm.rename(columns={"total": "cvm"}).merge(
         base[["ticker", "ano"]], on=["ticker", "ano"], how="inner")
     out = {"ticker_anos": len(m), "tickers": int(m["ticker"].nunique())}
     for nome, df in metodos.items():
         v = m.merge(df.rename(columns={"total": "v"}), on=["ticker", "ano"], how="left")
         erro = (v["v"].fillna(0.0) - v["cvm"]).abs() / v["cvm"]
-        out[nome] = {f"ate_{int(f * 100)}pct": float((erro <= f).mean()) for f in FAIXAS_CVM}
-        out[nome]["erro_mediano"] = float(erro.median()) if len(erro) else None
+        vazio = not len(erro)
+        out[nome] = {f"ate_{int(f * 100)}pct": None if vazio else float((erro <= f).mean())
+                     for f in FAIXAS_CVM}
+        out[nome]["erro_mediano"] = None if vazio else float(erro.median())
     return out
 
 
@@ -178,20 +181,28 @@ def medir(publicado: dict, crua, bruto, obs, *, hoje: date) -> dict:
     }
 
 
+def _pct(x) -> str:
+    return "indisponível" if x is None else f"{x:.1%}"
+
+
 def _imprime(r: dict) -> None:
     a = r["arquivo"]
     print(f"Arquivo gerado em {a['gerado_em']}, resposta mais nova {a['foto_mais_nova']}, "
           f"{a['tickers']} tickers. Tolerância {r['tolerancia']:.0%}.")
     print("\n1. Contra a resposta mais nova da brapi (CIRCULAR: o arquivo bate 100%)")
     for nome, cortes in r["contra_a_brapi_circular"].items():
-        partes = [f"{corte}: {c['fracao']:.1%} de {c['ticker_anos']}" for corte, c in cortes.items()]
+        partes = [f"{corte}: {_pct(c['fracao'])} de {c['ticker_anos']}"
+                  for corte, c in cortes.items()]
         print(f"   {nome:40s} " + " | ".join(partes))
     c = r["contra_a_cvm_fii"]
     print(f"\n2. Contra a CVM (FII, {c['ticker_anos']} ticker-anos, {c['tickers']} fundos)")
+    if not c["ticker_anos"]:
+        print("   nenhum ticker-ano da CVM com as doze competências: comparação indisponível")
+        return
     for nome, v in c.items():
         if isinstance(v, dict):
-            print(f"   {nome:40s} até 5%: {v['ate_5pct']:.1%} | até 10%: {v['ate_10pct']:.1%}"
-                  f" | erro mediano: {v['erro_mediano']:.1%}")
+            print(f"   {nome:40s} até 5%: {_pct(v['ate_5pct'])} | até 10%: {_pct(v['ate_10pct'])}"
+                  f" | erro mediano: {_pct(v['erro_mediano'])}")
 
 
 def main() -> int:
@@ -216,9 +227,10 @@ def main() -> int:
         obs = pd.read_sql_query(text(SQL_CVM), conn)
     obs["ticker"] = obs["ticker"].str.strip().str.upper()
     r = medir(publicado, crua, bruto, obs, hoje=date.today())
-    _imprime(r)
     if args.json:
-        args.json.write_text(json.dumps(r, ensure_ascii=False, indent=2), encoding="utf-8")
+        args.json.write_text(json.dumps(r, ensure_ascii=False, indent=2, allow_nan=False),
+                             encoding="utf-8")
+    _imprime(r)
     return 0
 
 

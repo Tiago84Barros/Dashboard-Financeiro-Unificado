@@ -131,14 +131,20 @@ def _bruto():
     return d.assign(event_date=d["payment_date"])
 
 
+def _publicado():
+    return {"gerado_em": "2025-05-31T00:00:00+00:00", "foto_mais_nova": "2025-05-30",
+            "por_ticker": {"AAAA3": {"anos": {"2023": 1.0, "2024": 1.0}},
+                           "AAAA11": {"anos": {"2023": 12.0}}}}
+
+
+def _crua():
+    return _anual(("AAAA3", 2023, 2.0), ("AAAA3", 2024, 1.0), ("AAAA11", 2023, 12.0))
+
+
 def test_medir_de_ponta_a_ponta():
-    publicado = {"gerado_em": "2025-05-31T00:00:00+00:00", "foto_mais_nova": "2025-05-30",
-                 "por_ticker": {"AAAA3": {"anos": {"2023": 1.0, "2024": 1.0}},
-                                "AAAA11": {"anos": {"2023": 12.0}}}}
-    crua = _anual(("AAAA3", 2023, 2.0), ("AAAA3", 2024, 1.0), ("AAAA11", 2023, 12.0))
     obs = _obs("AAAA11", _meses("2022-12-01", 12))
 
-    r = m.medir(publicado, crua, _bruto(), obs, hoje=date(2025, 6, 1))
+    r = m.medir(_publicado(), _crua(), _bruto(), obs, hoje=date(2025, 6, 1))
 
     assert r["arquivo"]["tickers"] == 2
     circ = r["contra_a_brapi_circular"]
@@ -148,4 +154,19 @@ def test_medir_de_ponta_a_ponta():
     cvm = r["contra_a_cvm_fii"]
     assert (cvm["ticker_anos"], cvm["tickers"]) == (1, 1)
     assert cvm["arquivo"]["ate_5pct"] == 1.0
-    json.dumps(r)  # o --json grava este dicionário
+    json.dumps(r, allow_nan=False)  # o --json grava este dicionário
+
+
+def test_sem_ticker_ano_da_cvm_o_relatorio_sai_e_diz_indisponivel(capsys):
+    # só o valor patrimonial da brapi: nenhum ano da CVM fecha
+    brapi = _obs("AAAA11", _meses("2022-12-01", 12), source="brapi_fii_v2")
+    r = m.medir(_publicado(), _crua(), _bruto(), brapi[brapi["metric_name"] == "nav_per_share"],
+                hoje=date(2025, 6, 1))
+    cvm = r["contra_a_cvm_fii"]
+    assert (cvm["ticker_anos"], cvm["tickers"]) == (0, 0)
+    assert cvm["arquivo"] == {"ate_5pct": None, "ate_10pct": None, "erro_mediano": None}
+    json.dumps(r, allow_nan=False)
+    m._imprime(r)
+    saida = capsys.readouterr().out
+    assert "comparação indisponível" in saida
+    assert "renda_por_evento" in saida  # a parte circular continua no relatório
