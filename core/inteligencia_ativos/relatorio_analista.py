@@ -12,6 +12,13 @@ mercado e a aba Inteligência não podem dar vereditos diferentes sobre o mesmo
 ativo. Não usa o score de ranking da B3, que não foi validado como previsor.
 Puro: os leitores são os da Inteligência, injetáveis.
 
+O relatório descreve o ativo; não estima quanto ele vai render. Nenhuma das
+regras dele foi testada contra o retorno seguinte, e ele não usa os scores de
+ranking dos mercados (B3, EUA, FII). O aviso da tela diz isso em uma frase; o
+que a medição gravada diz do score do mercado vai para as limitações
+(``limitacao_previsao``, lido de ``data/vantagem_oos.json``), que a tela manda
+para Configurações → Restrições e o texto da LLM carrega inteiro.
+
 Decisões de método:
 
 * **Faixa observada, não alvo.** A faixa de preço é o que o preço seria se o
@@ -65,9 +72,107 @@ _DENOMINADOR = {"p_l": "o lucro por ação", "p_vp": "o patrimônio por ação",
 _DENOMINADOR_FII = {"p_vp": "o valor patrimonial da cota",
                     "dividend_yield": "o rendimento dos últimos 12 meses"}
 
-AVISO = ("Apoio analítico por regras sobre os dados do app, não recomendação: "
-         "as faixas são observadas no histórico, não preço-alvo; os gatilhos "
-         "são as regras eliminatórias da avaliação. A decisão é sua.")
+AVISO = ("Apoio analítico por regras sobre os dados do app, não recomendação "
+         "nem previsão de retorno: as regras descrevem o ativo e não foram "
+         "testadas como previsoras; as faixas são observadas no histórico, não "
+         "preço-alvo; os gatilhos são as regras eliminatórias da avaliação. A "
+         "decisão é sua.")
+
+_PREFIXO_PREVISAO = (
+    "Previsão de retorno: nenhuma regra deste relatório foi testada contra o "
+    "retorno seguinte do ativo, e leitura favorável não é expectativa de "
+    "retorno maior. O relatório não usa o score de ranking do mercado.")
+_SCORE_DO_MERCADO = {"b3": "O score de ranking da B3",
+                     "us": "O score de ranking das ações americanas",
+                     "fii": "O score de ranking dos FIIs"}
+
+
+def _num_br(x: float, casas: int) -> str:
+    return f"{x:.{casas}f}".replace("-", "−").replace(".", ",")
+
+
+def _coef(x: float) -> str:
+    # 4 casas perto do zero, onde mora a decisão: −0,0004 com 3 casas sairia
+    # "−0,000" e o número que sustenta o veredito sumiria.
+    return _num_br(x, 3 if abs(x) >= 0.001 else 4)
+
+
+def _pct(x: float) -> str:
+    return _num_br(x * 100, 1 if abs(x) >= 0.001 else 2) + "%"
+
+
+def _float(v) -> float | None:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return None if x != x else x
+
+
+def _data_br(iso: str) -> str:
+    partes = str(iso).split("-")
+    return "/".join(reversed(partes)) if len(partes) == 3 else str(iso)
+
+
+def limitacao_previsao(mercado: str, caminho=None) -> str:
+    """O que a medição gravada diz sobre o score de ranking do mercado.
+
+    Lida de ``data/vantagem_oos.json`` a cada chamada, nunca escrita à mão: um
+    texto fixo com o número de uma medição envelhece invertido quando o motor
+    é remedido (``memoria: aviso-que-envelhece-invertido``). O veredito é o de
+    ``vantagem_oos.avaliar``, o mesmo do Grau de Confiança. Sem medição desta
+    versão do motor, o texto diz que não há evidência, nunca que há.
+    """
+    from core import vantagem_oos as vo
+
+    if mercado not in _SCORE_DO_MERCADO:
+        return _PREFIXO_PREVISAO
+    motor, score = mercado, _SCORE_DO_MERCADO[mercado]
+    try:
+        versao = vo.versao_corrente(motor)
+    except Exception:  # noqa: BLE001 -- motor que não importa não tem versão
+        versao = ""
+    estado, _ = vo.avaliar(motor, versao, caminho)
+    med = vo.carregar_medicao(motor, caminho) or {}
+    low, high = _float(med.get("ic_low")), _float(med.get("ic_high"))
+    if low is None or high is None:
+        estado = vo.NAO_APURADO
+    if estado is vo.NAO_APURADO:
+        medida = str(med.get("versao_metodologia") or "")
+        if med and medida and versao and medida != versao:
+            motivo = (f"a última medição de vantagem fora da amostra "
+                      f"({_data_br(med.get('medido_em') or '?')}) é da "
+                      f"metodologia {medida}, e ele roda a {versao}")
+        else:
+            motivo = "não tem medição de vantagem fora da amostra"
+        return (f"{_PREFIXO_PREVISAO} {score} {motivo}: não há evidência de "
+                f"que ele preveja retorno.")
+
+    coef = str(med.get("formato")) == vo.FORMATO_COEFICIENTE
+    fmt = _coef if coef else _pct
+    metrica = ("o Rank-IC médio (correlação entre o score e o retorno do "
+               "período seguinte, no universo)" if coef else
+               "o excesso médio por período sobre a carteira igualmente "
+               "ponderada do universo")
+    media = _float(med.get("media"))
+    numeros = (f"na medição de {_data_br(med.get('medido_em') or '?')} "
+               f"(metodologia {med.get('versao_metodologia')}, "
+               f"{int(med.get('n_periodos') or 0)} períodos), {metrica} foi "
+               f"{fmt(media) if media is not None else 'não informado'}, com "
+               f"intervalo de 95% de {fmt(low)} a {fmt(high)}")
+    if estado is vo.APROVADO:
+        return (f"{_PREFIXO_PREVISAO} {score} demonstrou vantagem fora da "
+                f"amostra: {numeros}, acima do zero. É vantagem do ranking "
+                f"sobre o universo, não de um ativo isolado.")
+    lado = "inteiro abaixo do zero" if high < 0 else "que cruza o zero"
+    texto = (f"{_PREFIXO_PREVISAO} {score} não demonstrou vantagem fora da "
+             f"amostra: {numeros}, {lado}.")
+    sig = vo.rank_ic_significativo(med)
+    if sig is not None and not coef:
+        texto += (f" Ainda assim ele ordena o universo (Rank-IC médio "
+                  f"{_coef(sig[0])}, t = {_num_br(sig[1], 2)}), mas a carteira "
+                  f"montada com ele não superou a igualmente ponderada.")
+    return texto
 
 
 @dataclass(frozen=True)
@@ -452,6 +557,7 @@ def relatorio_dos_insumos(ins, *, mercado: str = "b3") -> RelatorioAnalista:
         lim.append("Indicadores sem dado: "
                    + ", ".join(i.rotulo for i in f.ausentes) + ".")
     lim += list(lim_faixas)
+    lim.append(limitacao_previsao(mercado))
     if av.perfil == av_.FINANCEIRA:
         lim.append("Banco e seguradora: o app não tem regra eliminatória de "
                    "balanço (a dívida é matéria-prima); só o noticiário "

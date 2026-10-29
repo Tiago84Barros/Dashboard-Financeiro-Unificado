@@ -5,6 +5,7 @@ O relatório sai da mesma avaliação por regras da Inteligência dos Ativos; os
 gatilhos são as regras eliminatórias dela, com o número de hoje; a faixa de
 preço é observada no histórico do próprio ativo, não alvo. Dados sintéticos.
 """
+import json
 from dataclasses import replace
 
 import pytest
@@ -289,6 +290,75 @@ def test_texto_para_a_llm_carrega_limite_gatilho_e_aviso(an):  # noqa: F811
     assert "Gatilho Dívida líquida/EBITDA" in t and "[DISPARADO]" in t
     assert "Faixa pelo P/L" in t and "não alvo" in t
     assert "não recomendação" in t
+
+
+def test_relatorio_diz_que_nao_preve_retorno(an):  # noqa: F811
+    """As regras do relatório nunca foram testadas contra o retorno: a tela diz
+    em uma frase, o que a medição gravada diz do score vai para as limitações
+    (Restrições) e o texto da LLM leva as duas. Falha se a limitação voltar a
+    ser texto fixo em vez de sair de ``data/vantagem_oos.json``."""
+    rel = ra.relatorio_dos_insumos(_com(an["WEGE3"], _fund(**BOA)))
+    assert "nem previsão de retorno" in rel.aviso
+    assert "não foram testadas como previsoras" in rel.aviso
+    assert "Rank-IC" not in rel.aviso
+    lim = ra.limitacao_previsao("b3")
+    assert lim in rel.limitacoes
+    t = ra.texto(rel)
+    assert f"Limitação: {lim}" in t and rel.aviso in t
+
+
+def _medicao(tmp_path, motor, **campos):
+    from core import vantagem_oos as vo
+    reg = {"motor": motor, "medido_em": "2026-10-05",
+           "versao_metodologia": vo.versao_corrente(motor),
+           "formato": vo.FORMATO_COEFICIENTE, "n_periodos": 10,
+           "media": 0.068, "ic_low": -0.0137, "ic_high": 0.1447}
+    reg.update(campos)
+    caminho = tmp_path / "vantagem_oos.json"
+    caminho.write_text(json.dumps({motor: reg}), encoding="utf-8")
+    return caminho
+
+
+def test_limitacao_previsao_sai_da_medicao_gravada(tmp_path):
+    """Cada veredito do portão vira a frase certa, com o número e a data da
+    medição. Falha se o texto perder o número, inventar vantagem sem medição
+    desta versão ou dizer "cruza o zero" quando o intervalo é todo negativo."""
+    reprovado = ra.limitacao_previsao("b3", _medicao(tmp_path, "b3"))
+    assert "não demonstrou vantagem" in reprovado
+    assert "05/10/2026" in reprovado and "0,068" in reprovado
+    assert "−0,014 a 0,145" in reprovado and "cruza o zero" in reprovado
+
+    negativo = ra.limitacao_previsao(
+        "b3", _medicao(tmp_path, "b3", media=-0.05, ic_low=-0.09, ic_high=-0.0004))
+    assert "inteiro abaixo do zero" in negativo and "−0,0004" in negativo
+
+    aprovado = ra.limitacao_previsao(
+        "b3", _medicao(tmp_path, "b3", ic_low=0.02, ic_high=0.11))
+    assert "demonstrou vantagem fora da amostra" in aprovado
+    assert "não demonstrou" not in aprovado and "acima do zero" in aprovado
+
+    velha = ra.limitacao_previsao(
+        "b3", _medicao(tmp_path, "b3", versao_metodologia="0.0.1"))
+    assert "metodologia 0.0.1" in velha and "não há evidência" in velha
+    assert "0,068" not in velha
+
+    ausente = ra.limitacao_previsao("fii", tmp_path / "nao_existe.json")
+    assert "não tem medição" in ausente and "não há evidência" in ausente
+
+
+def test_limitacao_previsao_us_diz_que_ordena_sem_superar(tmp_path):
+    """Nos EUA o excesso reprova mas o Rank-IC é significativo: a frase diz as
+    duas coisas. Falha se omitir a ordenação (o score pareceria inútil) ou o
+    excesso (pareceria que bate a carteira igualmente ponderada)."""
+    from core import vantagem_oos as vo
+    caminho = _medicao(tmp_path, "us", formato=vo.FORMATO_PERCENTUAL,
+                       media=-0.0405, ic_low=-0.1384, ic_high=0.0510,
+                       extras={"rank_ic_medio": 0.1069, "rank_ic_t": 3.96})
+    us = ra.limitacao_previsao("us", caminho)
+    assert "ações americanas" in us and "−4,0%" in us and "5,1%" in us
+    assert "cruza o zero" in us
+    assert "Rank-IC médio 0,107, t = 3,96" in us
+    assert "não superou a igualmente ponderada" in us
 
 
 @pytest.mark.parametrize("palavra", ["preço-alvo de", "compre", "venda já"])
