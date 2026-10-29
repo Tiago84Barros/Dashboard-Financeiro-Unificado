@@ -4049,7 +4049,7 @@ def render(show_header: bool = True) -> None:
         return "color: #FC5C7D"
 
     st.dataframe(
-        df_tbl.style.applymap(_cor_status, subset=["Situação"]),
+        df_tbl.style.map(_cor_status, subset=["Situação"]),
         width="stretch",
         height=min(500, 60 + 35 * len(df_tbl)),
     )

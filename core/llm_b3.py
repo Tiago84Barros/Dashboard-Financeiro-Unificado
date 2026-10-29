@@ -25,6 +25,7 @@ from typing import Sequence
 import pandas as pd
 import streamlit as st
 
+import core.data_quality as _dq
 from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
 from core.inteligencia_ativos import veredito as _veredito
 from core.inteligencia_ativos.veredito import REGRA_VEREDITO
@@ -854,8 +855,12 @@ def redistribuir_pesos(
         an   = it.get("analise", {}) or {}
         persp = an.get("perspectiva", "moderada")
 
-        score_q   = float(it.get("score", 50) or 0) / 100.0
         score_llm = float(an.get("score_qualitativo", 50) or 0) / 100.0
+        # Sem nota quantitativa, a leitura qualitativa responde sozinha. Antes
+        # ``score`` None virava 0 e a empresa caía para o piso por falta de
+        # dado, não por desempenho.
+        score_q   = _dq.to_float(it.get("score"))
+        score_q   = score_llm if score_q is None else score_q / 100.0
         conviccao = max(float(an.get("confianca", 50) or 0) / 100.0, _CONVICCAO_MIN)
         alpha_n   = min(max(float(it.get("alpha_selic", 0) or 0) / 100.0, -0.5), 1.0)
 

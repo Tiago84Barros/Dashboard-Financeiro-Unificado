@@ -1766,7 +1766,7 @@ def _painel_aporte(alvos: dict, renda_fixa: float | None) -> None:
         ["Aportar (R$)", "Classe"], ascending=[False, True]
     )
     st.dataframe(
-        tabela, hide_index=True, use_container_width=True,
+        tabela, hide_index=True, width="stretch",
         column_config={
             "Peso atual": st.column_config.NumberColumn(format="%.2f%%"),
             "Alvo": st.column_config.NumberColumn(format="%.2f%%"),
@@ -1901,7 +1901,14 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                 aviso = aviso_ancoragem(resposta, contexto, pergunta)
             except Exception as exc:  # noqa: BLE001 - fronteira de isolamento do provedor
                 from core.llm_falha import mensagem_falha_llm
-                resposta = mensagem_falha_llm(exc, "chat do Portfólio Global")
+                resposta = None
+                falha = mensagem_falha_llm(exc, "chat do Portfólio Global")
+        if resposta is None:
+            # A falha é aviso, não fala do assistente: gravada, voltava no
+            # contexto do turno seguinte como resposta dele (LLM-A11).
+            st.warning(falha)
+            historico.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(resposta))
         if aviso:
             detalhe_tecnico(str(aviso), codigo="portfolio_global.ancoragem_chat")

@@ -26,7 +26,7 @@ def synthetic_rows(mode="partial"):
     return rows
 
 
-def render_preview(mode="partial", history=True, llm=True):
+def render_preview(mode="partial", history=True, llm=True, falha_llm=False):
     import views.fiis as view
 
     st.session_state["_app4_user"] = {
@@ -49,6 +49,9 @@ def render_preview(mode="partial", history=True, llm=True):
 
     def answer(context, _history, question):
         st.session_state["synthetic_chat_context"] = context
+        if falha_llm:
+            raise RuntimeError("Todos os provedores LLM falharam — simulado(x): "
+                               "429 org-sintetica-segredo")
         return "Resposta simulada, sem serviço externo: " + question
 
     with ExitStack() as stack:

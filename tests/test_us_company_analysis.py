@@ -34,7 +34,7 @@ def test_retornos_e_dividendos_anuais():
         "price": [10, 20, 30],
     })
     returns = annual_price_returns(prices)
-    assert returns.to_dict("records") == [{"Ano": 2023, "Retorno": 50.0}]
+    assert returns.to_dict("records") == [{"Ano": 2023, "Retorno": 50.0, "Rotulo": "2023"}]
     dividends = pd.DataFrame({
         "date": ["2023-03-01", "2023-09-01"], "amount": [0.20, 0.30],
     })

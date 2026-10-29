@@ -1281,7 +1281,14 @@ def _render_chat_financeiro(
                 aviso_ancoragem = _aviso_ancoragem(resposta, context, user_input)
             except Exception as exc:
                 from core.llm_falha import mensagem_falha_llm
-                resposta = mensagem_falha_llm(exc, "chat do fluxo de caixa")
+                resposta = None
+                falha = mensagem_falha_llm(exc, "chat do fluxo de caixa")
+        if resposta is None:
+            # A falha é aviso, não fala do assistente: gravada, voltava no
+            # contexto do turno seguinte como resposta dele (LLM-A11).
+            st.warning(falha)
+            history.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(resposta))
         if aviso_ancoragem:
             st.caption(aviso_ancoragem)
@@ -3602,7 +3609,14 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
                 aviso_ancoragem = _aviso_ancoragem(resposta, context, user_input)
             except Exception as exc:
                 from core.llm_falha import mensagem_falha_llm
-                resposta = mensagem_falha_llm(exc, "chat do cartão de crédito")
+                resposta = None
+                falha = mensagem_falha_llm(exc, "chat do cartão de crédito")
+        if resposta is None:
+            # A falha é aviso, não fala do assistente: gravada, voltava no
+            # contexto do turno seguinte como resposta dele (LLM-A11).
+            st.warning(falha)
+            history.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(resposta))
         if aviso_ancoragem:
             st.caption(aviso_ancoragem)
