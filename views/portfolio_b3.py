@@ -44,6 +44,7 @@ from core.dossie_b3 import NAO_AVALIADO, avaliar_para_selecao, quali_gate_dispon
 from core.inteligencia_ativos import veredito
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
+from core.proventos_b3 import FOTO_MAXIMA_DIAS, idade_da_foto
 from data_pipeline.utils.date_utils import fmt_datetime_br
 from design import portao_inteligencia as _portao_ui
 from design.componentes import card_metrica, cor_token
@@ -1900,6 +1901,22 @@ def _first_annual_series(df: pd.DataFrame, cols: tuple[str, ...]) -> pd.Series:
     return pd.Series(dtype=float)
 
 
+def _avisar_proventos_velhos(dre_batch: dict) -> None:
+    """A resposta da brapi que parou de renovar entra na fila de Restrições.
+
+    O crescimento dos dividendos do Patch 5 sai da coluna ``Dividendos`` de
+    ``load_demonstracoes_batch``; o ticker que a brapi deixou de renovar segue
+    nela com o valor antigo. O mesmo aviso da Análise de Empresa.
+    """
+    for tk, df in (dre_batch or {}).items():
+        foto = idade_da_foto(getattr(df, "attrs", None) or {})
+        if foto is not None and foto[1] > FOTO_MAXIMA_DIAS:
+            aviso_lacuna(
+                f"Proventos de {tk}: a resposta mais nova da brapi é de "
+                f"{foto[0]:%d/%m/%Y}, {foto[1]} dias sem renovação.",
+                codigo="tela.portfolio_b3.proventos_foto_velha", entidade=tk)
+
+
 def _growth_from_annual(s: pd.Series) -> float:
     vals = pd.to_numeric(s, errors="coerce").dropna()
     vals = vals[vals > 0].tail(6)
@@ -2045,6 +2062,7 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
     with st.spinner("Carregando indicadores do Patch 5..."):
         mult_batch = _db.load_multiplos_historico_batch(tuple(tickers))
         dre_batch = _db.load_demonstracoes_batch(tuple(tickers))
+    _avisar_proventos_velhos(dre_batch)
 
     # A-125: o indice de confianca de dados nao tinha consumidor nenhum desde
     # que a pagina "Saude dos Dados" saiu (a7bbe35). Aqui ele fala sobre os

@@ -59,7 +59,12 @@ def _carregar_metricas_mensais(tickers: tuple[str, ...]) -> dict:
 
 
 def _carregar_proventos(tickers: tuple[str, ...]) -> dict:
-    """Proventos anuais por FII: a mesma agregacao de load_demonstracoes_batch."""
+    """Proventos anuais por FII: a mesma agregacao de load_demonstracoes_batch.
+
+    ``{ticker: {"anos": {ano: total}, "resposta_em": "AAAA-MM-DD" | None}}``.
+    ``resposta_em`` e o dia da resposta da brapi que o arquivo publicado
+    guardou; ``None`` quando o ticker veio da reserva (market.dividends).
+    """
     if not tickers:
         return {}
     from core.proventos_b3 import renda_anual
@@ -69,10 +74,12 @@ def _carregar_proventos(tickers: tuple[str, ...]) -> dict:
     divs = renda_anual(tickers)
     if divs.empty:
         return {}
+    foto_em = divs.attrs.get("foto_em") or {}
     saida: dict = {}
     for r in divs.itertuples():
         tk = str(r.ticker).strip().upper()
-        saida.setdefault(tk, {})[int(r.ano)] = float(r.total)
+        bloco = saida.setdefault(tk, {"anos": {}, "resposta_em": foto_em.get(tk)})
+        bloco["anos"][int(r.ano)] = float(r.total)
     return saida
 
 
@@ -85,18 +92,25 @@ def _default_loaders() -> dict:
     }
 
 
-def _historico_fii(tk: str, metricas: dict, proventos: dict) -> dict:
+def _historico_fii(tk: str, metricas: dict, proventos: dict, as_of: dt.date) -> dict:
     """Monta o bloco history a partir dos loaders de serie mensal e proventos.
 
     FII sem serie ou sem proventos ainda produz um snapshot valido: listas
     vazias, nunca chave ausente.
+
+    So entram os anos antes do de ``as_of``: o ano de ``as_of`` esta pela
+    metade e os seguintes sao pagamento declarado e ainda nao feito (o arquivo
+    traz totais de anos futuros). O mesmo corte de
+    ``core.crescimento.sem_ano_em_curso`` e de ``load_demonstracoes``.
     """
     serie = metricas.get(tk)
     mensal = registros(serie) if serie is not None else []
-    anuais = proventos.get(tk) or {}
+    bloco = proventos.get(tk) or {}
+    anuais = bloco.get("anos") or {}
     proventos_anuais = [{"ano": ano, "total": total}
-                        for ano, total in sorted(anuais.items())]
-    return {"metricas_mensais": mensal, "proventos_anuais": proventos_anuais}
+                        for ano, total in sorted(anuais.items()) if ano < as_of.year]
+    return {"metricas_mensais": mensal, "proventos_anuais": proventos_anuais,
+            "proventos_resposta_em": bloco.get("resposta_em")}
 
 
 def _ticker(item: dict) -> str:
@@ -157,7 +171,7 @@ def build_snapshots(items: list[dict], *, model_id: str, params: dict,
                               else item.get("weight"),
                 },
                 "classification": {"composition": composition},
-                "history": _historico_fii(tk, metricas, proventos),
+                "history": _historico_fii(tk, metricas, proventos, as_of),
                 "assumptions": {"params": dict(params or {})},
                 "evidence": {},
                 "notes": "",
