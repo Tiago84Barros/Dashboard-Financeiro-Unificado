@@ -22,6 +22,7 @@ duas metades:
 """
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 ARQUIVO = Path(__file__).resolve().parents[1] / "data" / "public" / "proventos_b3.json.gz"
@@ -29,6 +30,12 @@ ARQUIVO = Path(__file__).resolve().parents[1] / "data" / "public" / "proventos_b
 #: Rótulos de procedência em ``attrs["fonte"]`` de :func:`renda_anual`.
 FONTE_ARQUIVO = "brapi (resposta mais nova)"
 FONTE_BANCO = "market.dividends"
+
+#: `b3_brapi` renova a resposta de cada ticker toda noite. Dez dias corridos
+#: cobrem algumas noites perdidas sem deixar passar coleta realmente parada.
+#: O publicador recusa o arquivo quando a resposta mais nova de todas passa
+#: disso; :func:`procedencia` marca o ticker cuja resposta passou.
+FOTO_MAXIMA_DIAS = 10
 
 #: Colunas de :func:`eventos_das_fotos`.
 COLUNAS = ("ticker", "type", "ex_date", "payment_date", "event_date", "amount", "foto_em")
@@ -137,7 +144,15 @@ def renda_anual(tickers):
     o arquivo não cobre -- ou todos, sem arquivo -- vem de ``market.dividends``
     pela regra de leitura :func:`core.dividend_types.renda_por_ano`. Falha do
     banco chega em ``attrs["load_error"]``; ``attrs["fonte"]`` nomeia de onde
-    o resultado veio, para o rótulo da tela.
+    o resultado veio e ``attrs["foto_em"]`` traz o dia da resposta de cada
+    ticker coberto, para o rótulo da tela (:func:`procedencia`).
+
+    ``ano`` pode passar do ano corrente: é o pagamento declarado e ainda não
+    feito (41 tickers com total em 2027 no arquivo de 29/10/2026). O ano
+    corrente também está pela metade. Quem compara anos corta os dois
+    (:func:`core.crescimento.sem_ano_em_curso`). A série por exercício
+    (``core.market_read.load_demonstracoes``) só lê os anos com demonstração
+    publicada e deixa vazio o ano civil que não fechou.
     """
     import pandas as pd
 
@@ -163,6 +178,41 @@ def renda_anual(tickers):
         fontes.append(FONTE_BANCO)
     out = out.sort_values(["ticker", "ano"]).reset_index(drop=True)
     out.attrs["fonte"] = " + ".join(fontes)
+    out.attrs["foto_em"] = {tk: publicado[tk].get("foto_em") for tk in tks if tk in publicado}
     if erro:
         out.attrs["load_error"] = erro
     return out
+
+
+def idade_da_foto(attrs: dict, hoje: date | None = None) -> tuple[date, int] | None:
+    """A resposta mais velha entre os tickers que o arquivo cobriu e a idade
+    dela em dias, ou ``None`` sem nenhum ticker coberto com data."""
+    dias = []
+    for v in (attrs.get("foto_em") or {}).values():
+        try:
+            dias.append(date.fromisoformat(str(v)))
+        except ValueError:
+            continue
+    if not dias:
+        return None
+    dia = min(dias)
+    return dia, ((hoje or date.today()) - dia).days
+
+
+def procedencia(attrs: dict, hoje: date | None = None) -> str:
+    """``attrs["fonte"]`` de :func:`renda_anual` com o dia da resposta da brapi.
+
+    O publicador só recusa a coleta parada do conjunto. O ticker que a brapi
+    deixou de renovar segue no arquivo com a resposta antiga (32 de 883 com
+    mais de :data:`FOTO_MAXIMA_DIAS` dias em 29/10/2026, a mais velha com
+    118), e sem a data passaria por atual.
+    """
+    fonte = attrs.get("fonte") or ""
+    foto = idade_da_foto(attrs, hoje)
+    if foto is None or FONTE_ARQUIVO not in fonte:
+        return fonte
+    dia, idade = foto
+    rotulo = f"brapi, resposta de {dia:%d/%m/%Y}"
+    if idade > FOTO_MAXIMA_DIAS:
+        rotulo += f" — VELHA: {idade} dias sem renovação"
+    return fonte.replace(FONTE_ARQUIVO, rotulo)

@@ -345,6 +345,20 @@ def _demo_finalize(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=["_year"])
 
 
+def _proventos_do_exercicio(datas: pd.Series, total_do_ano) -> pd.Series:
+    """Soma de proventos do ano civil de cada exercício.
+
+    O ano civil que ainda não fechou fica vazio: a soma dele é parcial e
+    entraria no gráfico, no CAGR e no contexto das LLMs como o total do ano.
+    Só chega aqui o exercício encerrado fora de dezembro (cinco tickers em
+    29/10/2026, com exercício fechado entre fevereiro e junho).
+    """
+    aberto = _dt.date.today().year
+    return pd.to_numeric(datas.dt.year.map(
+        lambda y: total_do_ano(int(y)) if pd.notna(y) and int(y) < aberto else None),
+        errors="coerce")
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_demonstracoes(ticker: str) -> pd.DataFrame:
     """Demonstrações anuais (market.*) com colunas PT iguais ao legado."""
@@ -357,7 +371,7 @@ def load_demonstracoes(ticker: str) -> pd.DataFrame:
     # (ver core.proventos_b3).
     divs = _renda_anual([tk])
     dmap = {int(r.ano): float(r.total) for r in divs.itertuples()} if not divs.empty else {}
-    df["Dividendos"] = df["Data"].dt.year.map(dmap)
+    df["Dividendos"] = _proventos_do_exercicio(df["Data"], dmap.get)
     return df.sort_values("Data").reset_index(drop=True)
 
 
@@ -381,9 +395,8 @@ def load_demonstracoes_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame
     for tk in tks:
         sub = df[df["Ticker"] == tk].copy().reset_index(drop=True)
         if not sub.empty:
-            sub["Dividendos"] = sub["Data"].dt.year.map(
-                lambda y, t=tk: dmap.get((t, int(y))) if pd.notna(y) else None
-            )
+            sub["Dividendos"] = _proventos_do_exercicio(
+                sub["Data"], lambda y, t=tk: dmap.get((t, y)))
             out[tk] = sub.sort_values("Data").reset_index(drop=True)
     return out
 
@@ -1864,6 +1877,7 @@ def load_dividendos_anuais(ticker: str) -> pd.DataFrame:
     })
     out = out.dropna().reset_index(drop=True)
     out.attrs["fonte"] = df.attrs.get("fonte", "")
+    out.attrs["foto_em"] = df.attrs.get("foto_em", {})
     return out
 
 

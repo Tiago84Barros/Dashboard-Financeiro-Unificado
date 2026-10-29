@@ -157,3 +157,60 @@ db.load_multiplos = lambda *a, **k: pd.Series({"P/L": 10.0})
 """)
 
     assert "market.dividends" in texto
+
+
+# ── Procedência dos proventos: registrada, e a resposta parada vira lacuna ──
+
+# Os scripts de AppTest acima reatribuem `view._dividendos_anuais_market_first`
+# em definitivo (rodam no mesmo processo). A função real é guardada na coleta,
+# antes de qualquer teste rodar.
+_MARKET_FIRST = b3._dividendos_anuais_market_first
+
+def _proventos_com_resposta_de(monkeypatch, dias_atras: int):
+    import datetime as dt
+
+    import pandas as pd
+
+    from core.proventos_b3 import FONTE_ARQUIVO
+
+    df = pd.DataFrame({"Data": pd.to_datetime(["2024-12-31"]), "Dividendos": [1.0]})
+    df.attrs["fonte"] = FONTE_ARQUIVO
+    df.attrs["foto_em"] = {
+        "TESTE3": (dt.date.today() - dt.timedelta(days=dias_atras)).isoformat()}
+    registros: list[tuple[str, str, str]] = []
+    monkeypatch.setattr(b3._mr, "load_dividendos_anuais", lambda tk: df)
+    monkeypatch.setattr(b3, "aviso_lacuna", lambda msg, **k: registros.append(
+        ("lacuna", k["codigo"], msg)))
+    monkeypatch.setattr(b3, "detalhe_tecnico", lambda msg, **k: registros.append(
+        ("detalhe", k["codigo"], msg)))
+    _, fonte = _MARKET_FIRST("TESTE3")
+    return fonte, registros
+
+
+def test_resposta_em_dia_so_registra_a_procedencia(monkeypatch):
+    fonte, registros = _proventos_com_resposta_de(monkeypatch, 2)
+    assert fonte == "brapi (resposta mais nova)"  # a tela não ganha data nem idade
+    assert [(r[0], r[1]) for r in registros] == [("detalhe", "b3.proventos_procedencia")]
+    assert "resposta de" in registros[0][2] and "VELHA" not in registros[0][2]
+
+
+def test_resposta_parada_entra_na_fila_de_restricoes(monkeypatch):
+    from core.proventos_b3 import FOTO_MAXIMA_DIAS
+
+    fonte, registros = _proventos_com_resposta_de(monkeypatch, FOTO_MAXIMA_DIAS + 1)
+    assert fonte == "brapi (resposta mais nova)"
+    assert [(r[0], r[1]) for r in registros] == [
+        ("detalhe", "b3.proventos_procedencia"), ("lacuna", "tela.b3.proventos_foto_velha")]
+    assert f"{FOTO_MAXIMA_DIAS + 1} dias sem renovação" in registros[1][2]
+
+
+def test_sem_proventos_no_banco_cai_no_yfinance_sem_registro(monkeypatch):
+    import pandas as pd
+
+    registros = []
+    monkeypatch.setattr(b3._mr, "load_dividendos_anuais", lambda tk: pd.DataFrame())
+    monkeypatch.setattr(b3, "_yf_dividendos_anuais", lambda tk: pd.DataFrame())
+    monkeypatch.setattr(b3, "aviso_lacuna", lambda *a, **k: registros.append(a))
+    monkeypatch.setattr(b3, "detalhe_tecnico", lambda *a, **k: registros.append(a))
+    assert _MARKET_FIRST("TESTE3")[1] == "yfinance"
+    assert registros == []
