@@ -307,3 +307,16 @@ def test_noticia_da_saida_da_recuperacao_nao_elimina(an):
                  "recuperacao_judicial")]))
     assert not a.criticos and a.qualidade == av.FORTE
     assert any("fala da saída" in al.texto for al in a.alertas)
+
+
+def test_um_par_sai_no_singular():
+    from types import SimpleNamespace
+
+    def comparacao(n):
+        linha = SimpleNamespace(posicao=val.ACIMA, valor=20.0,
+                                mediana_pares=10.0, n_pares=n)
+        return SimpleNamespace(linha=lambda _chave: linha)
+
+    um, tres = comparacao(1), comparacao(3)
+    assert "mediana de 1 par (" in av._contra_pares(um, "roe", "ROE").texto
+    assert "mediana de 3 pares (" in av._contra_pares(tres, "roe", "ROE").texto

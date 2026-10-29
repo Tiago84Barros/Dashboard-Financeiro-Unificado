@@ -90,6 +90,7 @@ from design.componentes import (
 )
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.market_companies import company_logo_html
+from design.relatorio_analista import secao_relatorio
 
 # Metadados por tipo de FII: emoji, rótulo e cor de destaque do card.
 _TIPO_META = {
@@ -2181,10 +2182,17 @@ def _tab_busca(df: pd.DataFrame) -> None:
                          "`python run_market_ingest.py fiis-imoveis` (coleta best-effort por scraping).",
                          codigo="tela.fii.imoveis_nao_coletados", entidade=tk)
 
+    st.divider()
+    st.markdown("#### 🧭 Relatório do analista")
+    # Sem setor, como o portão da Inteligência dos Ativos lê o FII.
+    relatorio = secao_relatorio(tk, str(d.get("Nome") or "") or None, None,
+                                mercado="fii")
+
     render_chat_ativo(
         mercado="fii", ticker=tk, nome=str(d.get("Nome") or ""), accent="#B084F6",
         build_context=lambda pergunta: build_fii_ativo_context(
             tk, user_question=pergunta, dados=d, universo=df, imoveis=imoveis,
+            relatorio=relatorio,
         ),
     )
 
