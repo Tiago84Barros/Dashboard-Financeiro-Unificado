@@ -89,3 +89,14 @@ def test_item_sem_ticker_e_ignorado_sem_quebrar():
     out = build_snapshots(itens, model_id="m01", params={}, as_of=dt.date(2026, 8, 5),
                           loaders=_loaders())
     assert [s.symbol for s in out] == ["PETR4", "VALE3"]
+
+
+def test_history_guarda_o_dia_da_resposta_da_brapi_por_tras_dos_dividendos():
+    demo = pd.DataFrame({"ano": [2025], "Dividendos": [1.2]})
+    demo.attrs.update(fonte="arquivo", foto_em={"PETR4": "2026-07-03"})
+    loaders = {"multiplos": lambda tks: {},
+               "demonstracoes": lambda tks: {"PETR4": demo}}
+    out = build_snapshots(ITENS, model_id="m01", params={}, as_of=dt.date(2026, 8, 5),
+                          loaders=loaders)
+    assert out[0].payload["history"]["proventos_resposta_em"] == "2026-07-03"
+    assert out[1].payload["history"]["proventos_resposta_em"] is None

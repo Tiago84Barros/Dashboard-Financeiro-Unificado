@@ -319,6 +319,44 @@ def test_exercicio_no_ano_civil_aberto_fica_sem_total_de_proventos(monkeypatch):
         assert out["Receita_Liquida"].notna().all()  # o exercício fica, sem o total parcial
 
 
+def test_demonstracoes_levam_a_procedencia_dos_dividendos_por_ticker(monkeypatch):
+    """Patch 5, LLM e snapshot leem Dividendos daqui: sem o dia da resposta, a
+    que a brapi parou de renovar passaria por atual."""
+    import core.market_read as mr
+
+    numericas = ("Receita_Liquida", "EBIT", "EBITDA", "Lucro_Liquido", "LPA",
+                 "Patrimonio_Liquido", "Divida_Liquida", "Divida_Total",
+                 "Ativo_Total", "Caixa", "FCO", "FCI", "FCF")
+    demo = pd.DataFrame({"Ticker": ["AAAA3", "BBBB4"], "_year": [2023, 2023],
+                         **{c: [1.0, 1.0] for c in numericas}})
+
+    def _divs(tks):
+        out = pd.DataFrame({"ticker": ["AAAA3", "BBBB4"], "ano": [2023, 2023],
+                            "total": [1.4, 0.6]})
+        out = out[out["ticker"].isin(tks)].reset_index(drop=True)
+        out.attrs["foto_em"] = {"AAAA3": "2026-07-03"}
+        return out
+
+    def _q(sql, params=None, engine=None):
+        pedidos = params.get("tks") or [params.get("t")]
+        return demo[demo["Ticker"].isin(pedidos)].copy()
+
+    monkeypatch.setattr(mr, "_q", _q)
+    monkeypatch.setattr(mr, "_renda_anual", _divs)
+    mr.load_demonstracoes.clear()
+    mr.load_demonstracoes_batch.clear()
+    try:
+        um = mr.load_demonstracoes("AAAA3")
+        lote = mr.load_demonstracoes_batch(("AAAA3", "BBBB4"))
+    finally:
+        mr.load_demonstracoes.clear()
+        mr.load_demonstracoes_batch.clear()
+
+    for out in (um, lote["AAAA3"]):
+        assert out.attrs == {"fonte": pb.FONTE_ARQUIVO, "foto_em": {"AAAA3": "2026-07-03"}}
+    assert lote["BBBB4"].attrs == {"fonte": pb.FONTE_BANCO, "foto_em": {}}
+
+
 def test_renda_anual_traz_o_dia_da_resposta_so_de_quem_o_arquivo_cobre(monkeypatch, banco):
     monkeypatch.setattr(pb, "carregar", lambda: PUBLICADO)
     out = pb.renda_anual(["AAAA3", "BBBB4", "CCCC11"])
@@ -512,3 +550,77 @@ def test_leitores_anuais_passam_pela_mesma_fonte():
     for nome in ("load_demonstracoes", "load_demonstracoes_batch", "load_dividendos_anuais"):
         corpo = fonte.split(f"def {nome}(", 1)[1].split("\ndef ", 1)[0]
         assert "_renda_anual(" in corpo, nome
+
+
+# --------------------------------------------------------------------------
+# a resposta velha da brapi chega a quem lê Dividendos das demonstrações
+# --------------------------------------------------------------------------
+
+def test_patch5_registra_a_resposta_velha_em_restricoes(monkeypatch):
+    import views.portfolio_b3 as view
+
+    avisos = []
+    monkeypatch.setattr(view, "aviso_lacuna", lambda msg, **k: avisos.append((msg, k)))
+    hoje = date.today()
+    velha = pd.DataFrame({"Dividendos": [1.0]})
+    velha.attrs.update(fonte=pb.FONTE_ARQUIVO, foto_em={
+        "AAAA3": (hoje - timedelta(days=pb.FOTO_MAXIMA_DIAS + 1)).isoformat()})
+    nova = pd.DataFrame({"Dividendos": [1.0]})
+    nova.attrs.update(fonte=pb.FONTE_ARQUIVO, foto_em={"BBBB4": hoje.isoformat()})
+    do_banco = pd.DataFrame({"Dividendos": [1.0]})
+    do_banco.attrs.update(fonte=pb.FONTE_BANCO, foto_em={})
+
+    view._avisar_proventos_velhos({"AAAA3": velha, "BBBB4": nova, "CCCC3": do_banco,
+                                   "DDDD3": pd.DataFrame()})
+
+    assert len(avisos) == 1
+    msg, k = avisos[0]
+    assert f"{pb.FOTO_MAXIMA_DIAS + 1} dias sem renovação" in msg
+    assert k == {"codigo": "tela.portfolio_b3.proventos_foto_velha", "entidade": "AAAA3"}
+
+
+def _lote_com_uma_resposta_velha(hoje):
+    velha = pd.DataFrame({"Dividendos": [1.0]})
+    velha.attrs.update(fonte=pb.FONTE_ARQUIVO, foto_em={
+        "AAAA3": (hoje - timedelta(days=pb.FOTO_MAXIMA_DIAS + 1)).isoformat()})
+    no_limite = pd.DataFrame({"Dividendos": [1.0]})
+    no_limite.attrs.update(fonte=pb.FONTE_ARQUIVO, foto_em={
+        "BBBB4": (hoje - timedelta(days=pb.FOTO_MAXIMA_DIAS)).isoformat()})
+    do_banco = pd.DataFrame({"Dividendos": [1.0]})
+    do_banco.attrs.update(fonte=pb.FONTE_BANCO, foto_em={})
+    return {"AAAA3": velha, "BBBB4": no_limite, "CCCC3": do_banco, "DDDD3": pd.DataFrame()}
+
+
+def test_fotos_velhas_lista_so_a_resposta_que_passou_do_limite():
+    hoje = date(2026, 10, 29)
+    velhas = pb.fotos_velhas(_lote_com_uma_resposta_velha(hoje), hoje)
+
+    assert [tk for tk, _ in velhas] == ["AAAA3"]
+    dia = hoje - timedelta(days=pb.FOTO_MAXIMA_DIAS + 1)
+    assert velhas[0][1] == (f"Proventos de AAAA3: a resposta mais nova da brapi é de "
+                            f"{dia:%d/%m/%Y}, {pb.FOTO_MAXIMA_DIAS + 1} dias sem renovação.")
+    assert pb.fotos_velhas({}) == [] and pb.fotos_velhas(None) == []
+
+
+def test_comparacao_de_dre_registra_a_resposta_velha_so_em_dividendos(monkeypatch):
+    import views.empresas_b3 as view
+
+    avisos = []
+    monkeypatch.setattr(view, "aviso_lacuna", lambda msg, **k: avisos.append((msg, k)))
+    lote = _lote_com_uma_resposta_velha(date.today())
+
+    view._avisar_comparacao_dre(lote, "Receita_Liquida")
+    assert avisos == []
+
+    view._avisar_comparacao_dre(lote, "Dividendos")
+    assert len(avisos) == 1
+    assert avisos[0][1] == {"codigo": "tela.b3.proventos_foto_velha", "entidade": "AAAA3"}
+
+
+def test_comparacao_de_dre_avisa_antes_do_grafico():
+    # O lote volta do session_state a cada rerun; o aviso vale para o gráfico
+    # que ele desenha, então é chamado sobre o mesmo lote antes do px.bar.
+    fonte = (ROOT / "views/empresas_b3.py").read_text(encoding="utf-8")
+    trecho = fonte.split('batch_dre = st.session_state.get("b3_av_dre_batch"', 1)[1]
+    trecho = trecho.split('key="b3_av_dre_chart"', 1)[0]
+    assert trecho.index("_avisar_comparacao_dre(batch_dre, dre_col_s)") < trecho.index("px.bar(")

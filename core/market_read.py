@@ -48,6 +48,8 @@ from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
 from core.fii_ticker import sql_ticker_fii as _sql_ticker_fii
 from core.liquidez import procedencia_liquidez
 from core.observacao_ausente import valor_observado
+from core.proventos_b3 import FONTE_ARQUIVO as _FONTE_ARQUIVO
+from core.proventos_b3 import FONTE_BANCO as _FONTE_BANCO
 from core.proventos_b3 import renda_anual as _renda_anual
 
 logger = logging.getLogger(__name__)
@@ -359,6 +361,18 @@ def _proventos_do_exercicio(datas: pd.Series, total_do_ano) -> pd.Series:
         errors="coerce")
 
 
+def _procedencia_dos_proventos(df: pd.DataFrame, divs: pd.DataFrame, tk: str) -> None:
+    """Põe em ``df.attrs`` a procedência da coluna ``Dividendos`` de ``tk``.
+
+    As mesmas chaves de :func:`load_dividendos_anuais`, para que o leitor
+    (gráfico, LLM, snapshot) nomeie a fonte e marque a resposta velha da brapi
+    com ``core.proventos_b3.procedencia``.
+    """
+    foto_em = divs.attrs.get("foto_em") or {}
+    df.attrs["fonte"] = _FONTE_ARQUIVO if tk in foto_em else _FONTE_BANCO
+    df.attrs["foto_em"] = {tk: foto_em[tk]} if tk in foto_em else {}
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_demonstracoes(ticker: str) -> pd.DataFrame:
     """Demonstrações anuais (market.*) com colunas PT iguais ao legado."""
@@ -372,7 +386,9 @@ def load_demonstracoes(ticker: str) -> pd.DataFrame:
     divs = _renda_anual([tk])
     dmap = {int(r.ano): float(r.total) for r in divs.itertuples()} if not divs.empty else {}
     df["Dividendos"] = _proventos_do_exercicio(df["Data"], dmap.get)
-    return df.sort_values("Data").reset_index(drop=True)
+    df = df.sort_values("Data").reset_index(drop=True)
+    _procedencia_dos_proventos(df, divs, tk)
+    return df
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -398,6 +414,7 @@ def load_demonstracoes_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame
             sub["Dividendos"] = _proventos_do_exercicio(
                 sub["Data"], lambda y, t=tk: dmap.get((t, y)))
             out[tk] = sub.sort_values("Data").reset_index(drop=True)
+            _procedencia_dos_proventos(out[tk], divs, tk)
     return out
 
 

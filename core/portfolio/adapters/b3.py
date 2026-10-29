@@ -44,6 +44,9 @@ def build_snapshots(items: list[dict], *, model_id: str, params: dict,
     for item, tk in validos:
         mult = registros(multiplos.get(tk))
         demo = registros(demonstracoes.get(tk))
+        # O dia da resposta da brapi por trás da coluna Dividendos; registros()
+        # descarta os attrs do DataFrame.
+        foto_em = (getattr(demonstracoes.get(tk), "attrs", None) or {}).get("foto_em") or {}
         saida.append(AssetSnapshot.from_blocks(
             asset_class=SPEC.key,
             model_id=model_id,
@@ -78,6 +81,7 @@ def build_snapshots(items: list[dict], *, model_id: str, params: dict,
                 "history": {
                     "multiplos_anuais": mult,
                     "demonstracoes_anuais": demo,
+                    "proventos_resposta_em": foto_em.get(tk),
                 },
                 "assumptions": {"params": dict(params or {})},
                 "evidence": {},

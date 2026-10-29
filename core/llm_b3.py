@@ -725,7 +725,14 @@ def _fmt_dre(df: pd.DataFrame) -> str:
                     vals.append(f"{c}={v:.2f}")
         if vals:
             lines.append(f"  {ano} {', '.join(vals)}")
-    return "\n".join(lines) if lines else "  Insuficiente."
+    if not lines:
+        return "  Insuficiente."
+    # A resposta da brapi que a brapi parou de renovar segue no arquivo com o
+    # valor antigo; sem a data ela passaria por atual também para a LLM.
+    if "Dividendos" in cols and d["Dividendos"].notna().any() and df.attrs.get("fonte"):
+        from core.proventos_b3 import procedencia
+        lines.append(f"  Dividendos: {procedencia(df.attrs)}.")
+    return "\n".join(lines)
 
 
 def _fmt_macro(macro_hist: dict) -> str:
