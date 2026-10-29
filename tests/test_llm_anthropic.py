@@ -350,6 +350,17 @@ def test_tela_nomeia_o_claude_sem_credito():
     assert "Gemini: falhou" in motivo
 
 
+@pytest.mark.parametrize("modulo", ["design.chat_ativo", "design.chat_carteira"])
+def test_chat_nomeia_todo_provedor_da_cadeia(modulo):
+    # A produção listou "Provedor disponível: anthropic, OpenAI, Gemini".
+    import importlib
+
+    from core.llm_falha import _NOME_PROVEDOR
+
+    rotulos = importlib.import_module(modulo)._PROVEDOR_LABEL
+    assert {p: rotulos.get(p) for p in _NOME_PROVEDOR} == _NOME_PROVEDOR
+
+
 def test_so_a_chave_da_anthropic_ja_liga_a_ia():
     from core.config import Settings
 
