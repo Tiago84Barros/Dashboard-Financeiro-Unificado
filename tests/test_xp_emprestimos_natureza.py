@@ -202,3 +202,31 @@ def test_natureza_desconhecida_nao_grava_e_registra(engine):
     assert _linhas(engine) == [("asset-AAAA3", 40.0, 100.0, True)]
     assert resumo["rows_skipped"] == 1
     assert any("CCCC3" in e and "(vazia)" in e for e in resumo["errors"])
+
+
+def test_tomador_nao_apaga_doador_da_mesma_planilha(engine):
+    """Doador e Tomador do mesmo papel e quantidade convivem no mesmo arquivo:
+    a limpeza da linha antiga não pode levar o Doador recém-gravado."""
+    conteudo = _planilha(emprestimos=[
+        _linha_emprestimo("AAAA3 - FICTICIA A", "Doador", 10, 3.0, 30.0),
+        _linha_emprestimo("AAAA3 - FICTICIA A", "Tomador", 10, 3.0, 30.0),
+    ])
+    _importar(engine, conteudo)
+    _importar(engine, conteudo)
+
+    assert _linhas(engine) == [
+        ("asset-AAAA3", -10.0, -30.0, True),
+        ("asset-AAAA3", 10.0, 30.0, True),
+    ]
+
+
+def test_tomador_antes_do_doador_tambem_convive(engine):
+    _importar(engine, _planilha(emprestimos=[
+        _linha_emprestimo("AAAA3 - FICTICIA A", "Tomador", 10, 3.0, 30.0),
+        _linha_emprestimo("AAAA3 - FICTICIA A", "Doador", 10, 3.0, 30.0),
+    ]))
+
+    assert _linhas(engine) == [
+        ("asset-AAAA3", -10.0, -30.0, True),
+        ("asset-AAAA3", 10.0, 30.0, True),
+    ]

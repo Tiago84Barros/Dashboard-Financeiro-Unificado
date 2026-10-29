@@ -709,6 +709,11 @@ def _parse_single(
                 )
                 return finalize_summary(summary)
 
+            # Chaves que esta importação gravou positivas: o Doador da aba de
+            # aluguel usa a mesma chave que o Tomador gravado positivo antes da
+            # Natureza, e a limpeza desse fóssil não pode levar o Doador.
+            chaves_gravadas: set[str] = set()
+
             # Processa cada aba de posição
             for sheet_key, parser_fn in _SHEET_PARSERS:
                 ws = sheet_map.get(sheet_key)
@@ -751,10 +756,13 @@ def _parse_single(
                                 # que o importador gravava positiva antes de
                                 # ler a Natureza sai, ou a reimportação a
                                 # deixaria como fóssil ao lado da negativa.
-                                _apagar_tomado_gravado_positivo(
-                                    conn, portfolio_id, asset_id,
-                                    report_date, source_id,
-                                )
+                                # Se o Doador do mesmo papel e quantidade já
+                                # entrou nesta importação, a linha é dele.
+                                if source_id not in chaves_gravadas:
+                                    _apagar_tomado_gravado_positivo(
+                                        conn, portfolio_id, asset_id,
+                                        report_date, source_id,
+                                    )
                                 source_id = make_external_id(
                                     "xpcsl-snap", [*chave, "tomador"],
                                 )
@@ -768,6 +776,8 @@ def _parse_single(
                                 institution=institution,
                                 source_id=source_id,
                             )
+                            if pos["quantity"] >= 0:
+                                chaves_gravadas.add(source_id)
                             summary["positions_imported"] += 1
                         if pos["quantity"] < 0:
                             summary["files_skipped_notes"].append(
