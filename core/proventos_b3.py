@@ -7,7 +7,7 @@ própria brapi limpou depois) deixa a linha antiga ao lado da nova. Medido em
 29/10/2026 no armazém local, contra a resposta mais nova da brapi arquivada em
 ``market.brapi_raw_payloads``: a soma crua por ano batia em 65,6% dos
 ticker-anos, e a melhor regra de leitura
-(:func:`core.dividend_types.renda_por_evento`) em 86,0%. Nenhuma regra de
+(:func:`core.dividend_types.renda_por_evento`) em 86,1%. Nenhuma regra de
 leitura reconstrói o que a fonte respondeu por último; a resposta arquivada é
 esse dado.
 

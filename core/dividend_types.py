@@ -234,7 +234,7 @@ def renda_por_evento(df):
     data-ex e o mesmo pagamento. Ficar com o minimo desse grupo (a regra do
     A-129) parecia matar o eco de classe, mas a resposta mais nova da brapi
     tem 306 grupos assim, todos declaracoes distintas, e o eco ja sai na
-    ingestao. Medido em 29/10/2026 contra essa resposta: 86,0% dos
+    ingestao. Medido em 29/10/2026 contra essa resposta: 86,1% dos
     ticker-anos batem a 1% sem o minimo, 84,2% com ele.
     """
     import numpy as np
@@ -262,6 +262,9 @@ def renda_por_evento(df):
     d["_criado"] = criado.dt.tz_localize(None)
 
     # Faixas de valor: vizinhos a ate 0,1% um do outro, dentro de (ticker, tipo).
+    # A faixa so separa quem nunca pode ser o mesmo provento: 1,0000 -> 1,0009
+    # -> 1,0018 cabe numa faixa so, e as pontas ficam a 0,18%. Quem decide e o
+    # par, com o proprio valor (`_mesmo_valor`).
     d = d.sort_values(["ticker", "_tipo", "amount"], kind="mergesort").reset_index(drop=True)
     salto = d["amount"] / d["amount"].shift() - 1 > TOLERANCIA_VALOR
     d["_faixa"] = ((d["ticker"] != d["ticker"].shift()) | (d["_tipo"] != d["_tipo"].shift())
@@ -269,6 +272,11 @@ def renda_por_evento(df):
     valido = (d["payment_date"].notna() & (d["payment_date"] > d["_ex"])).to_numpy()
     ex = d["_ex"].to_numpy("datetime64[D]").astype("int64")
     pag = d["payment_date"].to_numpy("datetime64[D]").astype("int64")
+    valor = d["amount"].to_numpy("float64")
+
+    def _mesmo_valor(a, b):
+        # a regra B de `core.brapi.dedup_cash_dividends`
+        return abs(valor[a] - valor[b]) <= TOLERANCIA_VALOR * max(valor[a], valor[b])
 
     raiz = np.arange(len(d))
 
@@ -289,19 +297,21 @@ def renda_por_evento(df):
         for a_pos, a in enumerate(reais):
             for b in reais[a_pos + 1:]:
                 if (abs(ex[a] - ex[b]) <= JANELA_EX_DIAS
-                        and abs(pag[a] - pag[b]) <= JANELA_PAGAMENTO_DIAS):
+                        and abs(pag[a] - pag[b]) <= JANELA_PAGAMENTO_DIAS
+                        and _mesmo_valor(a, b)):
                     une(a, b)
         # 2. Sem pagamento real: junta a UMA linha real na janela de data-ex,
         # a mais proxima. Sem nenhuma, as sem data se juntam entre si.
         sem_data = [i for i in idx if not valido[i]]
         orfas = []
         for a in sem_data:
-            perto = [b for b in reais if abs(ex[a] - ex[b]) <= JANELA_EX_DIAS]
+            perto = [b for b in reais
+                     if abs(ex[a] - ex[b]) <= JANELA_EX_DIAS and _mesmo_valor(a, b)]
             if perto:
                 une(a, min(perto, key=lambda b: abs(ex[a] - ex[b])))
                 continue
             for b in orfas:
-                if abs(ex[a] - ex[b]) <= JANELA_EX_DIAS:
+                if abs(ex[a] - ex[b]) <= JANELA_EX_DIAS and _mesmo_valor(a, b):
                     une(a, b)
             orfas.append(a)
 

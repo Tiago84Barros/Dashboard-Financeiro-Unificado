@@ -6,7 +6,7 @@ lado da nova, e a soma crua por ano conta o mesmo provento duas vezes -- ou o
 conta no ano errado, quando a correcao atravessa a virada do ano. Medido em
 29/10/2026 no armazem local contra a resposta mais nova arquivada em
 ``market.brapi_raw_payloads``: a soma crua batia em 65,6% dos ticker-anos, e a
-melhor regra de leitura em 86,0%.
+melhor regra de leitura em 86,1%.
 
 Por isso o card de dividendos, o grafico, a serie da LLM, o adaptador de FII
 e o DY do valuation leem o arquivo publicado a partir dessa resposta, e o
@@ -147,6 +147,32 @@ def test_valores_distintos_na_mesma_data_somam():
         _linha_banco("BBBB4", 0.3, "2024-03-10", "2024-04-15"),
     ])
     assert sorted(renda_por_evento(df)["amount"]) == [0.3, 0.5]
+
+
+def test_faixa_encadeada_nao_funde_valores_a_mais_de_0_1_por_cento():
+    """1,0000 -> 1,0009 -> 1,0018 cai numa faixa so, porque cada vizinho fica a
+    0,1% do anterior. O par das pontas, nas mesmas datas, fica a 0,18% e e
+    outra declaracao; a do meio, de outro ano, nao o torna o mesmo provento."""
+    df = pd.DataFrame([
+        _linha_banco("BBBB4", 1.0000, "2024-03-10", "2024-04-15"),
+        _linha_banco("BBBB4", 1.0018, "2024-03-10", "2024-04-15"),
+        _linha_banco("BBBB4", 1.0009, "2022-03-10", "2022-04-15"),
+    ])
+    ev = renda_por_evento(df)
+    assert sorted(ev["amount"]) == [1.0, 1.0009, 1.0018]
+
+
+def test_linha_sem_pagamento_nao_se_junta_por_faixa_encadeada():
+    df = pd.DataFrame([
+        _linha_banco("BBBB4", 1.0000, "2024-03-10", "2024-04-15"),
+        _linha_banco("BBBB4", 1.0018, "2024-03-10", None),
+        _linha_banco("BBBB4", 1.0009, "2022-03-10", "2022-04-15"),
+        _linha_banco("BBBB4", 2.0000, "2023-03-10", None),
+        _linha_banco("BBBB4", 2.0036, "2023-03-10", None),
+        _linha_banco("BBBB4", 2.0018, "2021-03-10", "2021-04-15"),
+    ])
+    assert sorted(renda_por_evento(df)["amount"]) == [1.0, 1.0009, 1.0018,
+                                                      2.0, 2.0018, 2.0036]
 
 
 def test_regra_de_leitura_aceita_quadro_sem_created_at():
