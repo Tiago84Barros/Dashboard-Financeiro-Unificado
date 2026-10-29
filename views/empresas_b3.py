@@ -40,6 +40,7 @@ from core.crescimento import (
     cagr_regressao,
     retornos_anuais,
     sem_ano_em_curso,
+    ultimo_preco_nao_positivo,
 )
 from core.llm_context_ativo import build_b3_ativo_context
 from core.market_companies import normalize_b3_companies
@@ -3801,6 +3802,19 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
                         if k not in ("Ticker", "data")}
         df_yf_divs, fonte_divs = _dividendos_anuais_market_first(tk)
         df_precos    = _yf_precos(tk)
+
+    # Provento maior que o preço do dia deixa o fator de ajuste negativo e o
+    # histórico anterior noutra escala: o gráfico e o retorno anual usam só o
+    # trecho depois do último preço ≤ 0.
+    corte_preco = (ultimo_preco_nao_positivo(df_precos["Data"], df_precos["Preco"])
+                   if not df_precos.empty else None)
+    if corte_preco is not None:
+        df_precos = df_precos[df_precos["Data"] > corte_preco]
+        aviso_lacuna(
+            f"Preço ajustado do yfinance chega a ≤ 0 até {corte_preco:%d/%m/%Y} "
+            "(provento maior que o preço do dia): o histórico anterior foi "
+            "omitido do gráfico e do retorno anual.",
+            codigo="tela.b3.preco_ajustado_quebrado", entidade=tk)
 
     sem_banco = df_fin.empty and mult.empty
 
