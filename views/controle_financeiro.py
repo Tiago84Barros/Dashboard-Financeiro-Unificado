@@ -1192,7 +1192,7 @@ def _render_chat_financeiro(
         )
         return
 
-    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
+    provider_labels = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
     detalhe_tecnico(
         "Provedor(es) LLM: " + ", ".join(
             provider_labels.get(p, p) for p in provedores_disponiveis()),
@@ -3518,7 +3518,7 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
         )
         return
 
-    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
+    provider_labels = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
     detalhe_tecnico(
         "Provedor(es) LLM: " + ", ".join(
             provider_labels.get(p, p) for p in provedores_disponiveis()),

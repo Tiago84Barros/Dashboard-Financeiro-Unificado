@@ -153,6 +153,18 @@ class Settings:
     AI_TIMEOUT_S: int = int(_get_secret("AI_TIMEOUT_S", "45"))
     AI_MAX_RETRIES: int = int(_get_secret("AI_MAX_RETRIES", "2"))
 
+    # ── Claude (Anthropic) — primeiro elo dos chats e relatórios ──────────────
+    # Pago por crédito pré-carregado no Console da Anthropic. Entra na cadeia só
+    # em sessão do navegador e em pedido do usuário (core/llm_b3._provider_chain):
+    # rotina noturna, script e a explicação automática do painel não gastam o
+    # crédito. Acabado o crédito, a Anthropic responde 400 "credit balance is
+    # too low" e o elo sai da cadeia por 15 min; o Gemini responde no lugar.
+    ANTHROPIC_API_KEY: str = _get_secret("ANTHROPIC_API_KEY")
+    ANTHROPIC_MODEL: str = _get_secret("ANTHROPIC_MODEL", "claude-sonnet-5-5")
+    # low | medium | high | xhigh | max. "medium" dá o raciocínio de várias
+    # etapas que os relatórios pedem sem o custo de pensar tudo em "high".
+    ANTHROPIC_EFFORT: str = _get_secret("ANTHROPIC_EFFORT", "medium")
+
     # ── OpenRouter / Nemotron (provedor primário) ─────────────────────────────
     # Substitui a OpenAI como primeiro da cadeia. A troca não foi feita por
     # reputação do modelo: `scripts/avaliar_provedor_llm.py` rodou o prompt de
@@ -375,10 +387,14 @@ class Settings:
         return bool(self.OPENROUTER_API_KEY)
 
     @property
+    def has_anthropic(self) -> bool:
+        return bool(self.ANTHROPIC_API_KEY)
+
+    @property
     def has_llm(self) -> bool:
         """True se houver ao menos um provedor LLM configurado."""
-        return bool(self.OPENROUTER_API_KEY or self.OPENAI_API_KEY
-                    or self.GEMINI_API_KEY)
+        return bool(self.ANTHROPIC_API_KEY or self.OPENROUTER_API_KEY
+                    or self.OPENAI_API_KEY or self.GEMINI_API_KEY)
 
     @property
     def has_owner(self) -> bool:
@@ -512,8 +528,9 @@ class Settings:
             # desativada" para quem roda so com OpenRouter — um alarme falso que
             # convida a comprar credito sem necessidade.
             warnings.append(
-                "Nenhum provedor LLM configurado (OPENROUTER_API_KEY, "
-                "OPENAI_API_KEY ou GEMINI_API_KEY) — IA desativada.")
+                "Nenhum provedor LLM configurado (ANTHROPIC_API_KEY, "
+                "OPENROUTER_API_KEY, OPENAI_API_KEY ou GEMINI_API_KEY) — IA "
+                "desativada.")
         if self.MOCK_MODE:
             warnings.append("MOCK_MODE=true — dados mockados em uso.")
         if not self.has_owner and not self.MOCK_MODE:

@@ -1590,7 +1590,7 @@ def render(show_header: bool = True) -> None:
 
     _provs = provedores_disponiveis()
     if _provs:
-        _lbl = {"openai": "OpenAI", "gemini": "Gemini"}
+        _lbl = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
         _txt = " → ".join(_lbl.get(p, p) for p in _provs)
         detalhe_tecnico(f"Provedores LLM ativos (com fallback automático): {_txt}",
                         codigo="portfolio_b3.analise_provedores_llm")
