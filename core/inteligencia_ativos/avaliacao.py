@@ -156,6 +156,9 @@ class Criterio:
 class Alerta:
     texto: str
     critico: bool       # eliminatório: põe a qualidade em frágil
+    # Veio de manchete, não do balanço: pede confirmação no documento
+    # oficial antes de virar venda (``resumida.decisao``).
+    noticia: bool = False
 
 
 @dataclass(frozen=True)
@@ -731,7 +734,7 @@ def _mercado(a: m.AnaliseAtivo, c, crits: list[Criterio],
         if n.categoria in CATEGORIAS_CRITICAS:
             alertas.append(Alerta(f"{n.rotulo_categoria.lower()} no noticiário"
                                   f" ({(n.date or '')[:10]}): {n.headline}",
-                                  True))
+                                  True, noticia=True))
             crits.append(Criterio(f"{n.rotulo_categoria}: {n.headline}", -1))
             escores.append(-1.0)
             metodos["categoria"] += 1

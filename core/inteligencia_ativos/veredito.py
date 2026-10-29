@@ -14,13 +14,12 @@ limite que ela impõe à recomendação — para ação da B3, ação americana 
 Duas profundidades:
 
 * Carteiras modelo (Empresas B3/EUA, FIIs, Global) e chat por ativo: só o
-  limite que vem do ativo em si — alerta eliminatório e qualidade frágil, os
-  mesmos passos de ``resumida.com_avaliacao``. Não há política nem peso do
-  usuário para decidir mais que isso.
+  limite que vem do ativo em si — alerta eliminatório e qualidade frágil.
+  Não há política nem peso do usuário para decidir mais que isso.
 * Carteira do usuário (Investimentos): a decisão inteira da Inteligência
-  (``resumida.decisao``: peso contra a % devida + avaliação), em
-  ``Veredito``. Só existe com a Estratégia liberada; sem ela, vale o limite
-  do ativo.
+  (``resumida.decisao``: a ação sugerida, com justificativa, convicção,
+  condições, limitações e alertas), em ``Veredito``. Só existe com a
+  Estratégia liberada; sem ela, vale o limite do ativo.
 """
 from __future__ import annotations
 
@@ -53,23 +52,32 @@ REGRA_VEREDITO = (
     "COERÊNCIA COM A INTELIGÊNCIA DOS ATIVOS (obrigatória): o bloco "
     "'AVALIAÇÃO POR REGRAS' traz, por ativo (ação da B3, ação americana ou "
     "FII), o mesmo veredito que a aba Inteligência dos Ativos mostra ao "
-    "usuário, com a mesma dívida e a mesma régua setorial. Sua recomendação "
-    "não pode contradizê-lo:\n"
-    "- LIMITE = avaliar troca: há alerta eliminatório (ou a decisão é avaliar "
-    "troca). É proibido recomendar comprar, comprar mais, aumentar ou manter "
-    "sem ressalva; cite o alerta com o número.\n"
-    "- LIMITE = reduzir: a posição está acima da % devida pela estratégia do "
-    "usuário. É proibido recomendar comprar ou aumentar; manter só com a "
-    "ressalva de reduzir (ou de parar de aportar até o peso voltar).\n"
-    "- LIMITE = não aportar: qualidade frágil ou posição já na % devida. É "
-    "proibido recomendar comprar, comprar mais ou aumentar; manter só com a "
-    "ressalva de não reforçar.\n"
+    "usuário, com a mesma dívida e a mesma régua setorial. O LIMITE é o teto "
+    "da sua recomendação, não uma ordem de venda; ela não pode "
+    "contradizê-lo:\n"
+    "- LIMITE = avaliar troca: há alerta eliminatório (ou a decisão é vender "
+    "ou substituir). É proibido recomendar comprar, comprar mais, aumentar ou "
+    "manter sem ressalva; cite o alerta com o número. Alerta que veio só do "
+    "noticiário pede confirmação em documento oficial: diga isso.\n"
+    "- LIMITE = reduzir: a decisão é reduzir parte da posição (peso acima do "
+    "devido com preço esticado, gatilho da tese disparado, qualidade frágil "
+    "com preço caro). É proibido recomendar comprar ou aumentar; manter só "
+    "com a ressalva de reduzir parte, na proporção da decisão.\n"
+    "- LIMITE = não aportar: qualidade frágil, peso já na % devida ou acima "
+    "dela (rebalancear pelos aportes) ou ativo em acompanhamento. É proibido "
+    "recomendar comprar, comprar mais ou aumentar; manter só com a ressalva "
+    "de não reforçar.\n"
     "- LIMITE = livre: siga os critérios do bloco.\n"
-    "Se houver linha 'DECISÃO da Inteligência', ela é a decisão que o "
-    "usuário vê na aba (Manter, Comprar ou Vender, com o porquê): repita-a, "
-    "não a troque por outra. Se os dados do contexto parecerem contradizer o "
-    "veredito, diga qual número diverge e de qual fonte vem cada um, sem "
-    "trocar o veredito. Use os números do bloco para dívida (dívida "
+    "Se houver linha 'DECISÃO da Inteligência', ela é a ação que o usuário vê "
+    "na aba (manter, comprar, acompanhar, rebalancear, reduzir parcialmente, "
+    "vender ou substituir): repita-a com a justificativa, o grau de "
+    "convicção, as condições que a mudariam e as limitações do bloco, sem "
+    "trocá-la por outra. Alertas para investigar não são ordens: peso acima "
+    "da meta, preço-alvo atingido ou um indicador isolado não viram "
+    "recomendação de venda. Com a empresa sólida e a tese válida, manter ou "
+    "rebalancear pelos aportes vem antes de vender. Se os dados do contexto "
+    "parecerem contradizer o veredito, diga qual número diverge e de qual "
+    "fonte vem cada um, sem trocar o veredito. Use os números do bloco para dívida (dívida "
     "líquida/EBITDA, dívida bruta/patrimônio): são os do balanço da base. "
     "Ativo citado sem avaliação no bloco não tem veredito: não invente um."
 )
@@ -145,14 +153,23 @@ def avaliar_acao_b3(ticker: str, nome: str | None = None,
 
 
 def limite(av: av_.Avaliacao) -> tuple[str, str]:
-    """(limite, motivo): a recomendação máxima que a avaliação permite.
+    """(limite, motivo): a recomendação máxima que a avaliação permite,
+    sem a carteira do usuário (carteiras modelo, chat por ativo, portão da
+    seleção).
 
-    Mesmos passos de ``resumida.com_avaliacao``: alerta eliminatório e
-    qualidade frágil com preço caro ou mercado negativo viram "avaliar
-    troca"; qualidade frágil sozinha barra o aporte.
+    Alerta eliminatório e qualidade frágil com preço caro ou mercado
+    negativo viram "avaliar troca" — teto, não ordem: na carteira do usuário
+    ``resumida.decisao`` pesa ainda o peso, a tese e o par superior, e pode
+    sair reduzir parte ou acompanhar. Qualidade frágil sozinha barra o
+    aporte. Alerta só do noticiário mantém o teto (comprar no meio dele não
+    é prudente) e diz que falta a confirmação oficial.
     """
     if av.criticos:
-        return TROCAR, f"alerta eliminatório: {av.criticos[0].texto}"
+        al = av.criticos[0]
+        if all(getattr(x, "noticia", False) for x in av.criticos):
+            return TROCAR, ("alerta eliminatório no noticiário, a confirmar "
+                            f"em documento oficial: {al.texto}")
+        return TROCAR, f"alerta eliminatório: {al.texto}"
     if av.qualidade == av_.FRAGIL:
         piora = [t for t, ok in (("preço acima do normal",
                                   av.preco == av_.CARO),
@@ -175,26 +192,21 @@ class Veredito:
     ticker: str
     limite: str
     motivo: str
-    decisao: str          # rótulo: Manter | Comprar | Vender
+    decisao: str          # rótulo da ação: Manter, Comprar, Acompanhar...
     detalhe: str          # o porquê curto que a aba mostra
     avaliacao: av_.Avaliacao
+    recomendacao: object | None = None   # a ``resumida.Decisao`` inteira
 
 
 def veredito_de_decisao(ticker: str, d) -> Veredito:
-    """``resumida.Decisao`` → ``Veredito``. Vender que pede avaliar (troca
-    ou venda: alerta, tese em dúvida, alternativa) vira "avaliar troca";
-    vender parte pelo peso vira "reduzir"; Manter barra o aporte; Comprar
-    fica livre (com os critérios da avaliação)."""
-    from core.inteligencia_ativos import resumida as rs
+    """``resumida.Decisao`` → ``Veredito``. Vender e substituir viram
+    "avaliar troca"; reduzir parcialmente vira "reduzir"; manter,
+    acompanhar e rebalancear barram o aporte; comprar fica livre (com os
+    critérios da avaliação)."""
     av = d.avaliacao
     cod_av, motivo_av = limite(av) if av is not None else (LIVRE, "")
     detalhe = str(d.detalhe or "")
-    if d.codigo == rs.VENDER:
-        cod = TROCAR if detalhe.startswith("avaliar") else REDUZIR
-    elif d.codigo == rs.MANTER:
-        cod = NAO_APORTAR
-    else:
-        cod = LIVRE
+    cod = _LIMITE_DA_DECISAO.get(d.codigo, NAO_APORTAR)
     if cod == TROCAR and cod_av == TROCAR:
         motivo = motivo_av
     else:
@@ -202,7 +214,38 @@ def veredito_de_decisao(ticker: str, d) -> Veredito:
                                        and motivo_av not in detalhe else "")
                            if x)
     return Veredito(ticker, cod, motivo if cod != LIVRE else "", d.rotulo,
-                    detalhe, av)
+                    detalhe, av, d)
+
+
+# ``resumida.Decisao.codigo`` → limite. Código desconhecido barra o aporte.
+_LIMITE_DA_DECISAO = {"vender": TROCAR, "substituir": TROCAR,
+                      "reduzir_parcial": REDUZIR, "rebalancear": NAO_APORTAR,
+                      "acompanhar": NAO_APORTAR, "manter": NAO_APORTAR,
+                      "comprar": LIVRE}
+
+
+def _texto_recomendacao(d) -> str:
+    """As linhas da recomendação para a LLM: convicção, proporção, custos,
+    justificativa, alertas, condições e limitações — o que a aba mostra."""
+    linhas = [f"Convicção: {d.rotulo_conviccao}"
+              + (f" ({d.porque_conviccao})" if d.porque_conviccao else "")]
+    if d.proporcao:
+        linhas.append(f"Proporção sugerida: {d.proporcao * 100:.0f}% da "
+                      "posição.")
+    if d.custos is not None:
+        linhas += [f"Custo estimado da venda: {x}" for x in d.custos.linhas]
+    if d.substituto is not None:
+        linhas.append(f"Substituto: {d.substituto.resumo}.")
+    if d.motivo:
+        linhas.append(f"Justificativa: {d.motivo}")
+    for rot, itens in (("Alertas para investigar (não são ordens)",
+                        d.alertas),
+                       ("Condições que mudariam a recomendação", d.condicoes),
+                       ("Dados ausentes e limitações", d.limitacoes),
+                       ("Contexto", d.contexto)):
+        if itens:
+            linhas.append(f"{rot}: " + " | ".join(itens))
+    return "\n".join(linhas)
 
 
 def _limite_de(x) -> tuple[str, str]:
@@ -225,6 +268,8 @@ def texto_ticker(x, ticker: str) -> str:
         cab += (f"\nDECISÃO da Inteligência dos Ativos para {ticker} (pela "
                 f"estratégia e pelo peso na carteira do usuário): "
                 f"{x.decisao} — {x.detalhe}")
+        if x.recomendacao is not None:
+            cab += "\n" + _texto_recomendacao(x.recomendacao)
     av = _avaliacao_de(x)
     return cab + ("\n" + av_.texto(av, ticker) if av is not None else "")
 
@@ -240,6 +285,7 @@ def vereditos_da_carteira(resultado: dict | None
     if not resultado or not resultado.get("analysis_available"):
         return {}
     ctx, analises = resultado.get("contexto"), resultado.get("analises") or ()
+    na_carteira = {a.ativo.ticker for a in analises}
     saida: dict[str, Veredito] = {}
     for b in rs.blocos(analises, ctx):
         if b.chave in rs.GRUPOS_EM_LISTA:
@@ -249,7 +295,8 @@ def vereditos_da_carteira(resultado: dict | None
             tk = str(a.ativo.ticker or "").strip().upper()
             try:
                 av = av_.avaliar(a)
-                d = rs.decisao(a, alvos.get(a.ativo.ticker), av)
+                d = rs.decisao(a, alvos.get(a.ativo.ticker), av,
+                               na_carteira=na_carteira, ctx=ctx)
             except Exception as exc:  # um ativo não derruba os outros
                 logger.warning("Decisão de %s falhou: %s", tk, exc)
                 continue
@@ -434,7 +481,8 @@ _NEGACAO_RE = re.compile(
     r"\b(nao|nem|evite|evitar|sem|proibido|jamais|nunca|antes de|deixar de|"
     r"em vez de|ao inves de|so|desaconselh\w*)\b")
 _RESSALVA_RE = re.compile(
-    r"alerta|eliminatori|troca|trocar|vender|venda|reduzir|reduza|sair|saida")
+    r"alerta|eliminatori|troca|trocar|vender|venda|reduzir|reduza|sair|saida"
+    r"|parcial|realizar|rebalance")
 
 # Ticker americano curto colide com palavra em maiúscula ("A dívida", "O
 # fundo", "DE"): esses não são procurados no texto (o bloco ainda os avalia).
