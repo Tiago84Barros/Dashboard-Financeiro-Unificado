@@ -1035,7 +1035,13 @@ def _optimize_sob_politica(
     utility = utility + np.nan_to_num(macro_vector / 100.0, nan=0.0) * macro_scale
     correlation_risk, correlation_info = _correlation_risk_matrix(rows, correlation_matrix)
 
-    constraints: list[dict] = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}]
+    # Toda restrição é linear, então cada uma leva o gradiente exato. Sem
+    # "jac", o SLSQP deriva cada restrição por diferenças finitas a cada
+    # iteração -- com ~300 restrições, isso era ~95% do tempo da carteira.
+    constraints: list[dict] = [{
+        "type": "eq", "fun": lambda w: np.sum(w) - 1.0,
+        "jac": lambda w: np.ones(len(w)),
+    }]
     linear_ub: list[tuple[np.ndarray, float]] = []
     unresolved: list[str] = []
     dimension_info: dict[str, dict] = {}
@@ -1048,7 +1054,8 @@ def _optimize_sob_politica(
             continue
         for column in range(len(labels)):
             exposure = matrix[:, column].copy()
-            constraints.append({"type": "ineq", "fun": lambda w, e=exposure, lim=limit: lim - float(w @ e)})
+            constraints.append({"type": "ineq", "fun": lambda w, e=exposure, lim=limit: lim - float(w @ e),
+                                "jac": lambda w, e=exposure: -e})
             linear_ub.append((exposure, limit))
 
     for fii_type, (lower, upper) in bands.items():
@@ -1057,17 +1064,21 @@ def _optimize_sob_politica(
             unresolved.append(f"categoria:{fii_type}")
             continue
         constraints.extend([
-            {"type": "ineq", "fun": lambda w, m=mask, lo=lower: float(w @ m) - lo},
-            {"type": "ineq", "fun": lambda w, m=mask, hi=upper: hi - float(w @ m)},
+            {"type": "ineq", "fun": lambda w, m=mask, lo=lower: float(w @ m) - lo,
+             "jac": lambda w, m=mask: m},
+            {"type": "ineq", "fun": lambda w, m=mask, hi=upper: hi - float(w @ m),
+             "jac": lambda w, m=mask: -m},
         ])
         linear_ub.extend([(-mask, -lower), (mask, upper)])
 
     illiquid = np.array([1.0 if _num(r.get("liquidez_diaria")) < policy.min_daily_liquidity else 0.0 for r in rows])
-    constraints.append({"type": "ineq", "fun": lambda w: policy.max_illiquid - float(w @ illiquid)})
+    constraints.append({"type": "ineq", "fun": lambda w: policy.max_illiquid - float(w @ illiquid),
+                        "jac": lambda w: -illiquid})
     linear_ub.append((illiquid, policy.max_illiquid))
     constraints.append({
         "type": "ineq",
         "fun": lambda w: policy.max_weighted_uncertainty - float(w @ uncertainty),
+        "jac": lambda w: -uncertainty,
     })
     linear_ub.append((uncertainty, policy.max_weighted_uncertainty))
 

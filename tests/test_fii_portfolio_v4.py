@@ -612,6 +612,36 @@ def test_selecao_inteira_nao_resolve_o_mesmo_problema_duas_vezes(monkeypatch):
     assert len(chaves) == len(set(chaves))
 
 
+def test_toda_restricao_do_slsqp_leva_o_gradiente_exato(monkeypatch):
+    """Sem "jac", o SLSQP deriva cada restrição por diferenças finitas a cada
+    iteração. O gradiente declarado precisa ser o da própria restrição."""
+    import numpy as np
+    import scipy.optimize as otimizador
+
+    original = otimizador.minimize
+    vistas: list[tuple[np.ndarray, list[dict]]] = []
+
+    def minimize_espiao(fun, x0, *args, **kwargs):
+        vistas.append((np.asarray(x0, dtype=float).copy(), kwargs["constraints"]))
+        return original(fun, x0, *args, **kwargs)
+
+    monkeypatch.setattr(otimizador, "minimize", minimize_espiao)
+    types = ["tijolo", "papel", "fof", "hibrido"] * 3
+    rows = [_candidate(i, fii_type) for i, fii_type in enumerate(types)]
+    result = optimize_diligence_portfolio(
+        rows, MacroScenario(selic=11, ipca=4, selic_change_12m=-2.5),
+        policy=PortfolioPolicy(max_assets=12, max_asset=.15),
+    )
+
+    assert result["items"] and vistas
+    rng = np.random.default_rng(0)
+    for x0, restricoes in vistas:
+        assert restricoes and all("jac" in restricao for restricao in restricoes)
+        ponto = x0 + rng.normal(0, .01, len(x0))
+        for restricao in restricoes:
+            numerico = otimizador.approx_fprime(ponto, restricao["fun"], 1e-7)
+            assert np.allclose(restricao["jac"](ponto), numerico, atol=1e-5)
+
 
 def test_carteira_reporta_o_yield_recorrente_alem_do_divulgado():
     from core.fii_portfolio_v4 import _resumo_de_renda
