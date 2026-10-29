@@ -74,7 +74,7 @@ def montar(pasta: Path = AREAS_DIR, *, data_mapa: str) -> tuple[dict, list[str]]
         n.update(grupo=grupo, cor=cor, bastidores=bastidores)
         areas.append(n)
     raiz = {
-        "nome": "App4 · Dashboard Financeiro Unificado",
+        "nome": "Dashboard Financeiro Unificado",
         "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de "
                       "empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, "
                       "o que funciona por trás delas.",
