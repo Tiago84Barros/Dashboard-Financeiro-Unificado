@@ -936,40 +936,49 @@
     },
     {
       "nome": "Imposto de Renda",
-      "resumo": "DARF do mês, fichas da declaração e apuração",
-      "explicacao": "Com o título 'Imposto de Renda — renda variável', calcula o imposto sobre vendas de ações, FIIs e ETFs a partir dos extratos da B3, mostra o DARF (a guia de pagamento do imposto, código 6015) e entrega as fichas da declaração anual prontas para copiar. Sem operações importadas, aparece um aviso de que não há dados.",
+      "resumo": "DARF, fichas da declaração e apuração, por ano",
+      "explicacao": "Com o título 'Imposto de Renda — renda variável', calcula o imposto sobre vendas de ações, FIIs e ETFs a partir dos extratos da B3, mostra o DARF (a guia de pagamento do imposto, código 6015) e entrega as fichas da declaração anual prontas para copiar. Tudo abaixo do seletor de ano-calendário vale para o ano escolhido. Sem operações importadas, aparece um aviso de que não há dados.",
       "so_admin": false,
-      "fonte": "views/investimentos.py:4583 (views/ir_renda_variavel.py:437)",
+      "fonte": "views/investimentos.py:4588 (views/ir_renda_variavel.py:443)",
       "filhos": [
+        {
+          "nome": "Ano-calendário",
+          "resumo": "Escolhe o ano que a tela inteira mostra",
+          "explicacao": "Seletor no topo, que recorta a tela toda. Abre no ano passado, que é o da declaração deste ano. Se o ano escolhido ainda não terminou, um aviso diz que a tela mostra o ano até hoje.",
+          "so_admin": false,
+          "fonte": "views/ir_renda_variavel.py:470",
+          "filhos": [
+            {
+              "nome": "Visão geral · todos os anos",
+              "resumo": "Histórico inteiro, sem declaração",
+              "explicacao": "Última opção do seletor. Troca a declaração pelo histórico completo: mostra só os cartões do DARF, a apuração de todos os meses e o resumo por ano.",
+              "so_admin": false,
+              "fonte": "views/ir_renda_variavel.py:472",
+              "filhos": []
+            }
+          ]
+        },
         {
           "nome": "DARF em aberto · Mês em curso · Prejuízo a compensar · Ganho isento",
           "resumo": "Imposto a pagar, prejuízo e ganho isento",
-          "explicacao": "Só aparece se houver vendas. 'DARF em aberto' é o último mês com imposto ainda a vencer (o app não sabe se você já pagou); 'Prejuízo a compensar' são perdas antigas que reduzem imposto futuro; 'Ganho isento' é o lucro de meses com vendas de ações até R$ 20 mil. Se houver venda sem custo conhecido, um aviso amarelo manda informar a 'Posição anterior ao extrato da B3' na aba Histórico.",
+          "explicacao": "Só aparece se houver vendas. No ano em curso (e na visão geral): 'DARF em aberto' é o último mês fechado com imposto ainda a vencer (o app não sabe se você já pagou), 'Mês em curso' é o imposto parcial deste mês, 'Prejuízo a compensar' são perdas antigas que reduzem imposto futuro e 'Ganho isento' é o lucro de meses com vendas de ações até R$ 20 mil. Num ano já fechado, os cartões viram 'DARFs de {ano}', 'IR fonte a declarar', 'Prejuízo em 31/12/{ano}' e 'Ganho isento em {ano}'. Se há venda sem custo conhecido, a ajuda do cartão de prejuízo avisa que o valor é incerto.",
           "so_admin": false,
-          "fonte": "views/ir_renda_variavel.py:466 (_render_darf)",
+          "fonte": "views/ir_renda_variavel.py:516 (_render_darf)",
           "filhos": []
         },
         {
           "nome": "Declaração IRPF",
           "resumo": "Fichas da declaração prontas para digitar",
-          "explicacao": "As fichas do programa da Receita, na ordem e com o nome de cada linha, marcando o que você precisa digitar. Se o ano escolhido ainda não terminou, um aviso diz que os números vão até hoje.",
+          "explicacao": "Só com um ano escolhido, com o título 'Declaração IRPF {ano + 1}'. As fichas do programa da Receita, na ordem e com o nome de cada linha, marcando o que você precisa digitar.",
           "so_admin": false,
-          "fonte": "views/ir_renda_variavel.py:302 (sub-abas :327)",
+          "fonte": "views/ir_renda_variavel.py:317 (sub-abas :333)",
           "filhos": [
-            {
-              "nome": "Ano-calendário",
-              "resumo": "Escolhe o ano da declaração",
-              "explicacao": "Seletor do ano; abre no ano passado, que é o da declaração deste ano.",
-              "so_admin": false,
-              "fonte": "views/ir_renda_variavel.py:314",
-              "filhos": []
-            },
             {
               "nome": "Renda Variável",
               "resumo": "Ganhos mês a mês: comuns e day-trade",
               "explicacao": "Tabelas mês a mês das operações comuns, de day-trade (compra e venda no mesmo dia) e a consolidação, para copiar em cada mês do programa.",
               "so_admin": false,
-              "fonte": "views/ir_renda_variavel.py:331",
+              "fonte": "views/ir_renda_variavel.py:340",
               "filhos": []
             },
             {
@@ -977,7 +986,7 @@
               "resumo": "Vendas de fundos imobiliários mês a mês",
               "explicacao": "Tabela mensal das vendas de fundos imobiliários e do agronegócio e dos prejuízos a carregar.",
               "so_admin": false,
-              "fonte": "views/ir_renda_variavel.py:356",
+              "fonte": "views/ir_renda_variavel.py:370",
               "filhos": []
             },
             {
@@ -985,7 +994,7 @@
               "resumo": "Dividendos, rendimentos de FII e vendas isentas",
               "explicacao": "Linhas da ficha de rendimentos sem imposto, uma por fonte pagadora: ganho das vendas de ações até R$ 20 mil, dividendos e rendimentos de FIIs.",
               "so_admin": false,
-              "fonte": "views/ir_renda_variavel.py:364",
+              "fonte": "views/ir_renda_variavel.py:378",
               "filhos": []
             },
             {
@@ -993,7 +1002,7 @@
               "resumo": "JCP recebido, com o imposto já descontado",
               "explicacao": "JCP (juros sobre capital próprio, uma forma de a empresa pagar o acionista) recebidos, pelo valor líquido.",
               "so_admin": false,
-              "fonte": "views/ir_renda_variavel.py:374",
+              "fonte": "views/ir_renda_variavel.py:388",
               "filhos": []
             },
             {
@@ -1001,7 +1010,7 @@
               "resumo": "Imposto descontado na fonte, estimado",
               "explicacao": "Valor estimado do imposto retido nas vendas que sobrou no ano; o texto lembra de conferir pelo informe da corretora.",
               "so_admin": false,
-              "fonte": "views/ir_renda_variavel.py:382",
+              "fonte": "views/ir_renda_variavel.py:396",
               "filhos": []
             },
             {
@@ -1009,7 +1018,7 @@
               "resumo": "Seus bens pelo custo, para declarar",
               "explicacao": "Tabela de cada bem pelo custo de compra (nunca pelo valor de mercado), com a situação no fim do ano anterior e do ano escolhido.",
               "so_admin": false,
-              "fonte": "views/ir_renda_variavel.py:394",
+              "fonte": "views/ir_renda_variavel.py:409",
               "filhos": []
             },
             {
@@ -1017,7 +1026,7 @@
               "resumo": "Lista de pontos a revisar",
               "explicacao": "O número no nome da aba indica quantos pontos há para conferir; se estiver tudo certo, aparece 'Nada a conferir'.",
               "so_admin": false,
-              "fonte": "views/ir_renda_variavel.py:405",
+              "fonte": "views/ir_renda_variavel.py:420",
               "filhos": []
             }
           ]
@@ -1025,17 +1034,17 @@
         {
           "nome": "Apuração mensal",
           "resumo": "Tabela do imposto de cada mês",
-          "explicacao": "Só aparece se houver vendas: do mês mais recente para o mais antigo, com vendas, ganhos, isenção, imposto e situação de cada mês.",
+          "explicacao": "Do mês mais recente para o mais antigo, com vendas, ganhos, isenção, imposto e situação de cada mês. Com um ano escolhido vira 'Apuração mensal de {ano}' e mostra só os meses dele; sem venda no ano, diz que não há imposto a apurar.",
           "so_admin": false,
-          "fonte": "views/ir_renda_variavel.py:542",
+          "fonte": "views/ir_renda_variavel.py:606",
           "filhos": []
         },
         {
           "nome": "Resumo por ano",
           "resumo": "Totais de imposto e ganho por ano",
-          "explicacao": "Tabela com os totais de cada ano, incluindo quantos meses ficaram incompletos por falta de custo de compra.",
+          "explicacao": "Só na visão geral: tabela com os totais de cada ano, incluindo quantos meses ficaram incompletos por falta de custo de compra.",
           "so_admin": false,
-          "fonte": "views/ir_renda_variavel.py:548",
+          "fonte": "views/ir_renda_variavel.py:617",
           "filhos": []
         },
         {
@@ -1043,7 +1052,7 @@
           "resumo": "As regras do imposto explicadas",
           "explicacao": "Caixa recolhida com as regras usadas: 15% sobre o ganho em operações comuns, 20% em day-trade e FIIs, isenção de vendas de ações até R$ 20 mil no mês, prazo do DARF e como o preço médio é calculado.",
           "so_admin": false,
-          "fonte": "views/ir_renda_variavel.py:554",
+          "fonte": "views/ir_renda_variavel.py:623",
           "filhos": []
         }
       ]

@@ -88,7 +88,7 @@
         {
           "nome": "Ações e empresas da B3",
           "resumo": "Pregão, balanços, documentos e indicadores B3",
-          "explicacao": "Todo dia: preço do pregão, documentos da CVM e dados da brapi. Toda semana: indicadores das empresas, histórico de notas, fechamento mensal de preços e a origem de cada balanço. Telas que dependem: Empresas B3, Investimentos e Portfólio Global.",
+          "explicacao": "Todo dia: preço do pregão, documentos da CVM, a poda do cache bruto da brapi (arquiva, regrava as demonstrações e compacta) e, logo depois dela, os dados da brapi. Toda semana: indicadores das empresas, histórico de notas, fechamento mensal de preços e a origem de cada balanço. Telas que dependem: Empresas B3, Investimentos e Portfólio Global.",
           "so_admin": false,
           "fonte": "core/publicacao_agenda.py:169",
           "filhos": []
@@ -104,7 +104,7 @@
         {
           "nome": "Empresas americanas",
           "resumo": "Preços, resumo das empresas e saídas de bolsa",
-          "explicacao": "A cada 2 dias: preços e resumo de cada empresa americana. A cada 30 dias: preços mensais e empresas que saíram da bolsa. O histórico de notas só é republicado quando o método de cálculo muda. Telas que dependem: Empresas Americanas e Portfólio Global.",
+          "explicacao": "Todo dia: o painel de notas dos EUA também no armazém local. A cada 2 dias: preços e resumo de cada empresa americana. A cada 30 dias: preços mensais e empresas que saíram da bolsa. O histórico de notas só é republicado quando o método de cálculo muda. Telas que dependem: Empresas Americanas e Portfólio Global.",
           "so_admin": false,
           "fonte": "core/publicacao_agenda.py:231",
           "filhos": []

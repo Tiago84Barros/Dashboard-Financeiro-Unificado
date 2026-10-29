@@ -24,6 +24,7 @@ perfeicao no que nao se olhou foi o defeito A-124, e ele nao se repete aqui.
 from __future__ import annotations
 
 import logging
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
@@ -106,9 +107,40 @@ def _declarar_nao_medidos(comps: list["Componente"], motivo: str,
 FAIXA_ALTA = 75.0
 FAIXA_MEDIA = 55.0
 
-# Secoes que nao fazem afirmacao sobre dado (navegacao, texto, ajuste).
-# Declarar "nao se aplica" e diferente de declarar 0%.
-SECOES_SEM_AFIRMACAO = ("Documentacao", "Configuracoes")
+# Telas do menu que nao fazem afirmacao sobre dado (ajuste, texto, mapa).
+# Declarar "nao se aplica" e diferente de declarar 0%, e a tela de Grau de
+# Confianca escreve a declaracao: tela ausente pareceria tela sem problema.
+# A Documentacao saiu daqui em 29/10/2026: deixou de ser rota em 24/09 e
+# vive dentro de Configuracoes.
+SECOES_SEM_AFIRMACAO = ("Configurações",)
+
+# Subabas cujo numero a nota da tela NAO mede. A nota de uma tela e a do dado
+# que o motor dela le; subaba que mostra outro dado fica fora, e o card diz
+# isso -- sem a declaracao, 80% em "Empresas B3" parece valer tambem para a
+# Previsao de Lucros, que nenhum componente olha.
+#   * Previsao de Lucros: projecao de LPA, modelo proprio fora do indice.
+#   * Carteira 20: registro imutavel e desempenho diario publicados a parte.
+#   * Inteligencia dos Ativos: estrategia, politicas e LLM; a nota de
+#     Investimentos so mede o registro de operacoes.
+# Subaba nova entra aqui ou fica coberta pela nota, decidido no mesmo PR
+# (``tests/test_configuracoes_sincronizadas.py``).
+SUBABAS_FORA_DA_NOTA: dict[str, tuple[str, ...]] = {
+    "Empresas B3": ("Previsão de Lucros", "Carteira 20"),
+    "Investimentos": ("Inteligência dos Ativos",),
+}
+
+
+def _dobra(nome: str) -> str:
+    base = unicodedata.normalize("NFKD", nome)
+    return "".join(c for c in base if not unicodedata.combining(c)).casefold()
+
+
+def fora_da_nota(secao: str) -> tuple[str, ...]:
+    """Subabas fora da nota de ``secao``. Compara sem acento porque a medicao
+    gravada antes de 29/10/2026 traz "Selecao de FIIs" e "Portfolio Global"."""
+    alvo = _dobra(secao)
+    return next((abas for nome, abas in SUBABAS_FORA_DA_NOTA.items()
+                 if _dobra(nome) == alvo), ())
 
 
 @dataclass(frozen=True)
@@ -306,10 +338,10 @@ def _frescor_pct(dias: int | None, fresco: int, velho: int) -> float | None:
 
 def _abrangencia(u: Universo | None) -> Componente:
     if u is None or not u.investivel:
-        return Componente("Abrangencia", None, 0.15,
+        return Componente("Abrangência", None, 0.15,
                           "universo nao pode ser medido")
     return Componente(
-        "Abrangencia", u.share_apto * 100.0, 0.15,
+        "Abrangência", u.share_apto * 100.0, 0.15,
         f"{u.apto} de {u.investivel} ativos negociaveis sustentam decisao",
     )
 
@@ -425,7 +457,7 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Metodologia validada", None, 0.25,
                                 f"nao medido: {type(exc).__name__}"))
-    return ConfiancaSecao("Selecao de FIIs", tuple(comps), u, tuple(notas))
+    return ConfiancaSecao("Seleção de FIIs", tuple(comps), u, tuple(notas))
 
 
 def confianca_us(engine=None) -> ConfiancaSecao:
@@ -490,15 +522,15 @@ def confianca_us(engine=None) -> ConfiancaSecao:
             # Vitrine na versao corrente vale 100 e decai com a idade da
             # geracao; fora da versao corrente e teto de 50 por construcao.
             comps.append(Componente(
-                "Vitrine na versao corrente", _frescor_pct(idade, 30, 180), 0.10,
+                "Vitrine na versão corrente", _frescor_pct(idade, 30, 180), 0.10,
                 f"vitrine score_version {_ver} gerada ha {idade} dias, "
                 f"{na_versao} empresas"))
         else:
             comps.append(Componente(
-                "Vitrine na versao corrente", 50.0, 0.10,
+                "Vitrine na versão corrente", 50.0, 0.10,
                 f"nenhuma empresa na versao corrente {_ver}"))
     except Exception as exc:  # noqa: BLE001
-        comps.append(Componente("Vitrine na versao corrente", None, 0.10,
+        comps.append(Componente("Vitrine na versão corrente", None, 0.10,
                                 f"nao medido: {type(exc).__name__}"))
 
     # A-153: ate 27/08/2026 o componente ACIMA se chamava "Metodologia
@@ -547,7 +579,7 @@ def confianca_portfolio_global(engine=None) -> ConfiancaSecao:
             dias = _dias_desde(_scalar(conn,
                                "SELECT max(updated_at) FROM public.portfolio_positions"))
         comps.append(Componente(
-            "Posicoes registradas", 100.0 if posicoes else 0.0, 0.20,
+            "Posições registradas", 100.0 if posicoes else 0.0, 0.20,
             f"{posicoes} posicoes na carteira"))
         comps.append(Componente(
             "Frescor", _frescor_pct(dias, 7, 60), 0.20,
@@ -560,7 +592,7 @@ def confianca_portfolio_global(engine=None) -> ConfiancaSecao:
     comps.append(Componente(
         "Cobertura de risco declarada", 100.0, 0.15,
         "painel informa peso coberto e motivo por simbolo (A-133)"))
-    return ConfiancaSecao("Portfolio Global", tuple(comps), None, tuple(notas))
+    return ConfiancaSecao("Portfólio Global", tuple(comps), None, tuple(notas))
 
 
 # ── secoes de controle pessoal ───────────────────────────────────────────────
@@ -589,10 +621,10 @@ def _confianca_pessoal(engine, secao: str, tabela: str, col_data: str,
                 cat = int(_scalar(conn, f"""SELECT count(*) FROM {tabela}
                                             WHERE {col_categoria} IS NOT NULL""") or 0)
                 comps.append(Componente(
-                    "Classificacao", 100.0 * cat / n, 0.35,
+                    "Classificação", 100.0 * cat / n, 0.35,
                     f"{cat} de {n} lancamentos categorizados"))
             elif col_categoria:
-                comps.append(Componente("Classificacao", None, 0.35,
+                comps.append(Componente("Classificação", None, 0.35,
                                         "sem lancamento para classificar"))
     except Exception as exc:  # noqa: BLE001
         logger.warning("confianca %s: %s", secao, exc)
@@ -639,7 +671,7 @@ def confianca_controle_financeiro(engine=None) -> ConfiancaSecao:
                 # monotona possivel aqui.
                 relevancia = (_frescor_pct(dias, 30, 240) or 0.0) / 100.0
                 comps.append(Componente(
-                    "Conciliacao bancaria", 100.0 * conf / n, 0.20 * relevancia,
+                    "Conciliação bancária", 100.0 * conf / n, 0.20 * relevancia,
                     f"{conf} de {n} movimentos conferidos; ultimo ha {dias} "
                     f"dias, entao pesa {relevancia:.0%} do previsto"))
                 if dias is not None and dias > 90:
@@ -683,8 +715,8 @@ _SECOES = (
     ("Investimentos", confianca_investimentos),
     ("Empresas B3", confianca_b3),
     ("Empresas Americanas", confianca_us),
-    ("Selecao de FIIs", confianca_fii),
-    ("Portfolio Global", confianca_portfolio_global),
+    ("Seleção de FIIs", confianca_fii),
+    ("Portfólio Global", confianca_portfolio_global),
 )
 
 
@@ -699,7 +731,7 @@ def relatorio(engine=None) -> list[ConfiancaSecao]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("relatorio: secao %s falhou: %s", nome, exc)
             saida.append(ConfiancaSecao(
-                nome, (Componente("Medicao", None, 1.0,
+                nome, (Componente("Medição", None, 1.0,
                                   f"falhou: {type(exc).__name__}"),),
                 notas=("secao nao pode ser medida nesta execucao",)))
     return saida

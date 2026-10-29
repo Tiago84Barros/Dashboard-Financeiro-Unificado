@@ -145,3 +145,19 @@ def test_a_tela_nao_usa_metrica_nativa():
 
     fonte = inspect.getsource(conf)
     assert "st.metric" not in fonte
+
+
+def test_card_declara_a_subaba_que_a_nota_nao_mede():
+    """80% em Empresas B3 nao vale para a Previsao de Lucros, que nenhum
+    componente olha; o card diz isso, e acha a tela tambem pelo nome sem acento
+    que a medicao gravada antes de 29/10/2026 traz."""
+    for nome in ("Empresas B3", "empresas b3"):
+        html = conf._card(_secao(nome))
+        assert "Fora desta nota: Previsão de Lucros, Carteira 20." in html
+    assert "Fora desta nota" not in conf._card(_secao("Seleção de FIIs"))
+
+
+def test_tela_sem_nota_e_declarada_e_nunca_vira_zero():
+    html = conf._sem_afirmacao_html()
+    assert "<b>Configurações</b>: não se aplica" in html
+    assert "0%" not in html
