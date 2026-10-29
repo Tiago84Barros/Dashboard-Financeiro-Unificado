@@ -64,6 +64,7 @@ from design.market_companies import (
     render_market_tabs,
     render_sector_grid,
 )
+from design.relatorio_analista import secao_relatorio
 
 logger = logging.getLogger(__name__)
 
@@ -4128,13 +4129,17 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
     _sec_hdr("🏆 Score e critérios de avaliação")
     _render_b3_score_dashboard(tk, mult, df_set)
 
+    _sec_hdr("🧭 Relatório do analista")
+    relatorio = secao_relatorio(tk, str(nome_emp or "") or None,
+                                str(setor or "") or None, mercado="b3")
+
     render_chat_ativo(
         mercado="b3", ticker=tk, nome=str(nome_emp or ""), accent="#4A9EFF",
         build_context=lambda pergunta: build_b3_ativo_context(
             tk, user_question=pergunta, nome=str(nome_emp or ""),
             setor=str(setor or ""), subsetor=str(subsetor or ""),
             preco=preco, preco_status=preco_status, mult=mult, df_fin=df_fin,
-            fontes=fontes_recon,
+            fontes=fontes_recon, relatorio=relatorio,
         ),
     )
 
