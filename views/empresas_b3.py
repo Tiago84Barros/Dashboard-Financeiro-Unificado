@@ -376,7 +376,7 @@ def _yf_dividendos_anuais(ticker: str) -> pd.DataFrame:
 
 def _dividendos_anuais_market_first(ticker: str) -> tuple[pd.DataFrame, str]:
     """Dividendos anuais para a aba "Análise de Empresa" — market-first
-    (A-011): lê ``market.dividends`` via ``core.market_read`` quando o
+    (A-011): lê ``core.market_read.load_dividendos_anuais`` quando o
     warehouse está saudável; cai no yfinance ao vivo (``_yf_dividendos_anuais``,
     inalterada — segue usada como fallback também pelo Portfólio B3) só
     quando ``market.*`` está indisponível ou não cobre o ticker. Sem perda de
@@ -386,7 +386,7 @@ def _dividendos_anuais_market_first(ticker: str) -> tuple[pd.DataFrame, str]:
     try:
         df_market = _mr.load_dividendos_anuais(ticker)
         if not df_market.empty:
-            return df_market, "market.dividends"
+            return df_market, df_market.attrs.get("fonte") or "market.dividends"
     except Exception:
         pass
     return _yf_dividendos_anuais(ticker), "yfinance"

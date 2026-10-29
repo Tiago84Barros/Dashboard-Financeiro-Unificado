@@ -42,7 +42,8 @@ def test_carimbo_aponta_para_a_base_que_o_alvo_escreve(chave, onde):
     escreve_arquivo = {"macro_insumos", "cdi_diario", "macro_brasil", "valuation_historico",
                        "cenarios_analogos",
                        "informacoes_recentes", "rag_corpus", "fii_metrics_monthly",
-                       "b3_linhagem", "precos_mensais_b3", "carteira20_desempenho"}
+                       "b3_linhagem", "precos_mensais_b3", "carteira20_desempenho",
+                       "proventos_b3"}
     esperado = ("armazem" if chave in escreve_no_armazem
                 else "arquivo" if chave in escreve_arquivo else "supabase")
     assert onde == esperado
