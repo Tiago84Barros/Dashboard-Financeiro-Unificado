@@ -25,7 +25,8 @@ from core.llm_grounding import aviso_ancoragem
 from core.utils import escapar_cifrao
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 
-_PROVEDOR_LABEL = {"openai": "OpenAI", "gemini": "Gemini", "openrouter": "OpenRouter"}
+_PROVEDOR_LABEL = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini",
+                   "openrouter": "OpenRouter"}
 
 _SUGESTOES_PADRAO: dict[str, tuple[str, ...]] = {
     "b3": (
