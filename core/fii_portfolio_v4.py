@@ -248,6 +248,7 @@ def _afrouxa_ate_viavel(
     policy: PortfolioPolicy,
     *,
     iteracoes: int = 8,
+    solucao_inicial: Any = None,
 ) -> tuple[np.ndarray, Any, float | None]:
     """Busca binária pelo menor afrouxamento do teto de opacidade que resolve.
 
@@ -265,6 +266,11 @@ def _afrouxa_ate_viavel(
     para o quanto do intervalo até o teto cheio foi necessário, ou ``None``
     quando nem o teto cheio resolve — nesse caso a inviabilidade não vem da
     opacidade, e quem chamou decide o que fazer com a falha original.
+
+    ``solucao_inicial`` é a resolução que quem chamou já fez sob
+    ``tetos_base``. Os dois chamadores só chegam aqui depois dela falhar, e
+    resolvê-la de novo repetia o problema inteiro — no MILP, até o limite de
+    tempo do solver — para chegar à mesma falha.
     """
     tetos_base = np.asarray(tetos_base, dtype=float)
     descontados = tetos_base < policy.max_asset - 1e-9
@@ -278,7 +284,7 @@ def _afrouxa_ate_viavel(
     def _ok(sol: Any) -> bool:
         return bool(getattr(sol, "success", False)) and getattr(sol, "x", None) is not None
 
-    solucao = resolver(tetos_base)
+    solucao = resolver(tetos_base) if solucao_inicial is None else solucao_inicial
     if _ok(solucao) or not descontados.any():
         return tetos_base, solucao, 0.0
 
@@ -593,7 +599,7 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
                 # concentração por devedor/emissor —, o afrouxamento cede pelo
                 # mínimo necessário para existir, nunca de uma vez só.
                 tetos_afrouxados, solucao_afrouxada, fracao = _afrouxa_ate_viavel(
-                    tetos, _resolve_no_piso, policy)
+                    tetos, _resolve_no_piso, policy, solucao_inicial=tentativa)
                 if fracao is not None:
                     tentativa = solucao_afrouxada
                     tickers_afetados = sorted({
@@ -981,7 +987,6 @@ def _optimize_sob_politica(
     n = len(rows)
     tetos, notas_de_viabilidade = _afrouxa_teto_por_viabilidade(
         _teto_por_ativo(rows, policy), rows, policy, bands)
-    limites = [(policy.min_asset_weight, float(teto)) for teto in tetos]
     caps_por_ticker = {
         str(rows[i].get("ticker")): float(tetos[i]) for i in range(n)
     }
@@ -1128,16 +1133,16 @@ def _optimize_sob_politica(
                 _triple=(feasible_, baseline_, result_),
             )
 
-        feasible, baseline, result = _resolve_continuo(limites)
-        if not (feasible.success and baseline is not None and baseline.success
-                and result is not None and result.success):
+        primeira = _tentar_continuo(tetos)
+        feasible, baseline, result = primeira._triple
+        if not primeira.success:
             # O desconto de opacidade é custo, não veto: se o teto reduzido
             # (já afrouxado pelo piso de banda) ainda assim esvazia a carteira
             # no otimizador contínuo — por interação com outros limites, como
             # concentração por devedor/emissor —, o afrouxamento cede pelo
             # mínimo necessário para existir, nunca de uma vez só.
             tetos_afrouxados, solucao_afrouxada, fracao = _afrouxa_ate_viavel(
-                tetos, _tentar_continuo, policy)
+                tetos, _tentar_continuo, policy, solucao_inicial=primeira)
             if fracao is not None:
                 feasible, baseline, result = solucao_afrouxada._triple
                 tickers_afetados = sorted({
@@ -1146,7 +1151,6 @@ def _optimize_sob_politica(
                     and tetos_afrouxados[i] > tetos[i] + 1e-9
                 })
                 tetos = tetos_afrouxados
-                limites = [(policy.min_asset_weight, float(c)) for c in tetos]
                 caps_por_ticker = {
                     str(rows[i].get("ticker")): float(tetos[i]) for i in range(n)
                 }
