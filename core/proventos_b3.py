@@ -14,13 +14,16 @@ de leitura reconstrói o que a fonte respondeu por último; a resposta arquivada
 Essa medida é circular: a referência é a própria fonte do arquivo, que bate
 100% por construção. Ela mede a distância até o que a brapi responde hoje, não
 se a brapi está certa. A única referência independente é a CVM, e só para FII
-(rendimento implícito do informe mensal, 1.450 ticker-anos de 327 fundos): o
-arquivo fica a até 5% dela em 69,7% dos ticker-anos, a regra de leitura em
-69,5% e a soma crua em 60,4%. O arquivo corrige a soma crua; diante da CVM, ele
-e a regra empatam. A CVM também erra -- o fundo que não paga no mês seguinte ao
-da competência desloca valor entre anos --, e o desacordo é entre duas fontes
-imperfeitas: não é o erro da brapi nem um limite para ele, porque as duas podem
-errar no mesmo sentido. Na ação não há fonte independente para conferir.
+(rendimento implícito do informe mensal, pago no mês seguinte ao da
+competência, 1.450 ticker-anos de 327 fundos): o arquivo fica a até 5% dela em
+69,7% dos ticker-anos, a regra de leitura em 69,5% e a soma crua em 60,4%. O
+número depende da convenção: com o pagamento no próprio mês ou dois meses
+depois, e contando o ano que o arquivo não tem, o arquivo fica a até 5% em
+56,1% a 69,7%. Em todas as variantes ele e a regra empatam, e a soma crua fica
+8 a 9 pontos abaixo. A CVM também erra -- o fundo que não paga no mês suposto
+desloca valor entre anos --, e o desacordo é entre duas fontes imperfeitas: não
+é o erro da brapi nem um limite para ele, porque as duas podem errar no mesmo
+sentido. Na ação não há fonte independente para conferir.
 
 O publicador (``scripts/publish_proventos_b3.py``) lê a foto no armazém e grava
 a soma anual em ``data/public/proventos_b3.json.gz``. Este módulo guarda as
