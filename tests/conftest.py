@@ -538,6 +538,21 @@ def _referencia_modelo_sem_banco(monkeypatch):
     yield
 
 
+# Os proventos da B3 saem do arquivo publicado (data/public/proventos_b3.json.gz),
+# que a rotina noturna regrava. Deixado solto, o mesmo teste mudaria de resultado
+# conforme o que a brapi respondeu ontem. Sem arquivo, todo ticker cai no banco
+# -- que o teste já controla. Quem testa a leitura do arquivo troca ``carregar``.
+@pytest.fixture(autouse=True)
+def _proventos_sem_arquivo_publicado(monkeypatch):
+    try:
+        from core import proventos_b3
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(proventos_b3, "carregar", lambda: {})
+    yield
+
+
 # A carteira busca cotação ao vivo no yfinance (core/cotacao_viva.py). Em
 # teste a fonte não responde e vale o banco, como em produção com o Yahoo fora.
 # Sem limpar o cache e a espera após falha, um teste herdaria as cotações (ou

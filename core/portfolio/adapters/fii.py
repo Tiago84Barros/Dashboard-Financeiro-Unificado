@@ -59,35 +59,20 @@ def _carregar_metricas_mensais(tickers: tuple[str, ...]) -> dict:
 
 
 def _carregar_proventos(tickers: tuple[str, ...]) -> dict:
-    """Proventos anuais por FII: mesma agregacao que load_demonstracoes_batch usa."""
+    """Proventos anuais por FII: a mesma agregacao de load_demonstracoes_batch."""
     if not tickers:
         return {}
-    from core.dividend_types import sql_apenas_renda, sql_safra_canonica
-    from core.market_read import _q
-    tks = list(tickers)
-    # A-128/A-129: em FII o desvio e maior, porque amortizacao de cota e comum
-    # e o rendimento e a metrica de manchete da decisao. RBRI11/2026 exibia
-    # 252,20 de "provento" com renda real zero. Ver core.dividend_types.
-    divs = _q(
-        "SELECT ticker, y, SUM(valor) AS d FROM ("
-        "  SELECT ticker, EXTRACT(YEAR FROM event_date)::int AS y,"
-        "         event_date, type, MIN(amount) AS valor"
-        "  FROM market.dividends d WHERE ticker = ANY(:tks) AND event_date IS NOT NULL"
-        f"   AND {sql_apenas_renda()}"
-        # A-131: o MIN abaixo agrupa por event_date, e e justamente nele que as
-        # duas safras do mesmo pagamento DIVERGEM (01/09 contra 12/09). Este
-        # bloco achava que deduplicava e nao deduplicava nada.
-        f"   AND {sql_safra_canonica('d')}"
-        "  GROUP BY 1, 2, 3, 4"
-        ") AS renda GROUP BY 1, 2",
-        {"tks": tks},
-    )
+    from core.proventos_b3 import renda_anual
+    # A-128/A-129/A-131: em FII o desvio e maior, porque amortizacao de cota e
+    # comum e o rendimento e a metrica de manchete da decisao. RBRI11/2026
+    # exibia 252,20 de "provento" com renda real zero. Ver core.proventos_b3.
+    divs = renda_anual(tickers)
     if divs.empty:
         return {}
     saida: dict = {}
     for r in divs.itertuples():
         tk = str(r.ticker).strip().upper()
-        saida.setdefault(tk, {})[int(r.y)] = float(r.d)
+        saida.setdefault(tk, {})[int(r.ano)] = float(r.total)
     return saida
 
 

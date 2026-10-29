@@ -393,6 +393,19 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/precos_mensais_b3.json.gz",),
     ),
     Alvo(
+        # Proventos de renda por ano para o card e o gráfico de dividendos da
+        # Empresas B3, a série da LLM e o adapter de FII. Lê a resposta mais
+        # nova da brapi arquivada no armazém, não `market.dividends`, onde o
+        # upsert guarda cada revisão ao lado da anterior. A resposta que
+        # `b3_brapi` (fim da fila) traz hoje entra amanhã.
+        chave="proventos_b3",
+        titulo="Proventos de renda da B3 por ano",
+        passos=(("scripts/publish_proventos_b3.py",),),
+        cadencia_dias=1,
+        modulo="b3",
+        artefatos=("data/public/proventos_b3.json.gz",),
+    ),
+    Alvo(
         # Curvas diárias da Carteira 20 contra BOVA11, CDI e pesos iguais, que a
         # aba 📒 Carteira 20 lê. O retorno das ações estende a série da
         # pesquisa com o COTAHIST que `b3_pregao` acabou de baixar e os
