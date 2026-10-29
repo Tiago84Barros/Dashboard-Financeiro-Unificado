@@ -109,17 +109,17 @@ def info_acao_b3(ticker: str, nome: str | None = None,
     return info_ativo(ticker, nome, setor, mercado="b3")
 
 
-def avaliar_ativo(ticker: str, nome: str | None = None,
-                  setor: str | None = None, *, mercado: str = "b3",
-                  ler_fundamentos=None, ler_valuation=None,
-                  ler_informacoes=None) -> av_.Avaliacao:
-    """A ``Avaliacao`` da Inteligência para o ativo, pelos mesmos provedores.
-    Os leitores são injetáveis (testes); o padrão é o de ``secoes``, que
-    despacha por classe (B3, EUA, FII)."""
+def insumos_do_ativo(ticker: str, nome: str | None = None,
+                     setor: str | None = None, *, mercado: str = "b3",
+                     ler_fundamentos=None, ler_valuation=None,
+                     ler_informacoes=None) -> _Insumos:
+    """As seções que ``avaliacao.avaliar`` lê, pelos provedores da
+    Inteligência. Os leitores são injetáveis (testes); o padrão é o de
+    ``secoes``, que despacha por classe (B3, EUA, FII)."""
     info = info_ativo(ticker, nome, setor, mercado=mercado)
     vp = (ler_valuation or secoes._ler_valuation_e_pares)(info)
     infos = (ler_informacoes or secoes._ler_informacoes)(info)
-    insumos = _Insumos(
+    return _Insumos(
         ativo=info,
         fundamentos=secoes.provedor_fundamentos(info, None,
                                                 leitor=ler_fundamentos),
@@ -128,7 +128,15 @@ def avaliar_ativo(ticker: str, nome: str | None = None,
         noticias=secoes.provedor_noticias(info, None,
                                           leitor=lambda _: infos),
     )
-    return av_.avaliar(insumos)
+
+
+def avaliar_ativo(ticker: str, nome: str | None = None,
+                  setor: str | None = None, *, mercado: str = "b3",
+                  **leitores) -> av_.Avaliacao:
+    """A ``Avaliacao`` da Inteligência para o ativo, pelos mesmos provedores
+    (``insumos_do_ativo``)."""
+    return av_.avaliar(insumos_do_ativo(ticker, nome, setor, mercado=mercado,
+                                        **leitores))
 
 
 def avaliar_acao_b3(ticker: str, nome: str | None = None,

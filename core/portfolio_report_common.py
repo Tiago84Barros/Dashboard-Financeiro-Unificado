@@ -56,6 +56,12 @@ def safe_float(value: Any) -> float | None:
     return number if np.isfinite(number) else None
 
 
+def _nota_ou_nd(value: Any) -> str:
+    """Nota com uma casa, ou N/D — ``or 0`` imprimia "0.0" para nota ausente."""
+    number = safe_float(value)
+    return "N/D" if number is None else f"{number:.1f}"
+
+
 def format_number(value: Any) -> str:
     number = safe_float(value)
     if number is None:
@@ -364,7 +370,7 @@ def company_summary_for_portfolio(item: dict) -> str:
     catalysts = analysis.get("catalisadores") or []
     return (
         f"{item.get('ticker')}: peso={float(item.get('peso_pct') or 0):.1f}% | "
-        f"score quant={float(item.get('score') or 0):.1f} | score quali={analysis.get('score_qualitativo', 50)} | "
+        f"score quant={_nota_ou_nd(item.get('score'))} | score quali={analysis.get('score_qualitativo', 50)} | "
         f"valuation={conclusion.get('faixa_valor', 'indeterminada')} | "
         f"mercado={conclusion.get('percepcao_mercado', 'indeterminada')} | "
         f"resumo={analysis.get('resumo', '')} | cenários={scenario_text or 'N/D'} | "

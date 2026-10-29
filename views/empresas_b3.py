@@ -34,6 +34,13 @@ from core.b3_renda_sustentavel import enrich_decision_universe
 from core.b3_slopes import SLOPE_COLS, compute_slope_log, enrich_com_slopes
 from core.b3_vigencia import REBAL_MONTH as _REBAL_MONTH
 from core.busca_empresa import buscar_empresas, normalizar_ticker
+from core.crescimento import (
+    Crescimento,
+    anos_de_datas,
+    cagr_regressao,
+    retornos_anuais,
+    sem_ano_em_curso,
+)
 from core.llm_context_ativo import build_b3_ativo_context
 from core.market_companies import normalize_b3_companies
 from core.validacao_motor import validacao_b3
@@ -57,6 +64,7 @@ from design.market_companies import (
     render_market_tabs,
     render_sector_grid,
 )
+from design.relatorio_analista import secao_relatorio
 
 logger = logging.getLogger(__name__)
 
@@ -147,18 +155,14 @@ def _stable_signature(payload: dict) -> str:
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
 
-# Limites máximos razoáveis em escala decimal para cada campo %.
-# Se o valor do BD exceder o limite, assume-se que foi armazenado em escala raw %
-# (ex: 7.13 em vez de 0.0713) e o valor é usado sem multiplicar por 100.
-_MAX_DECIMAL_PCT: dict[str, float] = {
-    "Margem_Liquida":     1.0,   # margens reais: -100% a +100%
-    "Margem_Operacional": 1.0,
-    "DY":                 1.0,   # yield > 100% é impossível
-    "ROA":                1.0,   # ROA > 100% é praticamente impossível
-    "ROE":                5.0,   # bancos podem ter ROE > 100%
-    "ROIC":               3.0,
-    "Payout":             5.0,   # pode superar 100% em anos de distribuição especial
-}
+# Campos % do market.* — decimal por contrato (``core.data_quality.PCT_FIELDS``:
+# 0.15 = 15%). Antes a tela adivinhava a escala valor a valor: acima de um teto
+# por campo o número era tomado como "já em %" e saía sem ×100. Medido em
+# 29/10/2026 no snapshot ttm do armazém, todos os sete campos são decimais
+# (DY máx. 0,49; margens dentro de ±0,95) — e o teto só errava: o ROA de 1,149
+# da HAGA3 (114,9%, dentro da faixa canônica) aparecia como 1,1%.
+_PCT_DECIMAL = _dq.PCT_FIELDS
+
 _COR_POS = "#00C896"
 _COR_NEG = "#FC5C7D"
 _COR_ALT = "#F6C90E"
@@ -282,23 +286,11 @@ def _cor_val(v, invert: bool = False) -> str:
 # CAGR via regressão em log
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _cagr(df: pd.DataFrame, col: str) -> float | None:
-    try:
-        if df is None or df.empty or col not in df.columns or "Data" not in df.columns:
-            return None
-        tmp = df[["Data", col]].copy()
-        tmp["Data"] = pd.to_datetime(tmp["Data"], errors="coerce")
-        tmp[col]    = pd.to_numeric(tmp[col], errors="coerce")
-        tmp = tmp.dropna().query(f"`{col}` > 0").sort_values("Data")
-        if len(tmp) < 2:
-            return None
-        X  = (tmp["Data"] - tmp["Data"].iloc[0]).dt.days / 365.25
-        yL = np.log(tmp[col].values.astype(float))
-        slope, _ = np.polyfit(X.values.astype(float), yL, deg=1)
-        g = float(np.exp(slope) - 1.0)
-        return g if np.isfinite(g) else None
-    except Exception:
+def _cagr(df: pd.DataFrame, col: str) -> Crescimento | None:
+    """CAGR por regressão log (``core.crescimento``) com janela e motivo."""
+    if df is None or df.empty or col not in df.columns or "Data" not in df.columns:
         return None
+    return cagr_regressao(anos_de_datas(df["Data"]), df[col])
 
 
 def _last_val(df: pd.DataFrame, col: str) -> float | None:
@@ -416,17 +408,17 @@ def _yf_multiplos_dividendos(ticker: str) -> dict[str, float]:
             # ── DY: 3 caminhos em ordem de confiabilidade ──────────────────
             dy: float | None = None
 
-            # Caminho 1: campo direto do info
-            for key in ("dividendYield", "trailingAnnualDividendYield"):
-                raw = info.get(key)
-                if raw is not None:
-                    try:
-                        v = float(raw)
-                        if np.isfinite(v) and v >= 0:
-                            dy = v
-                            break
-                    except (TypeError, ValueError):
-                        pass
+            # Caminho 1: campo direto do info. Só o trailing é decimal: no
+            # yfinance 0.2.66 ``dividendYield`` vem em % (WEGE3 3.36 = 3,36%),
+            # e lido aqui como decimal virava DY de 336%.
+            raw = info.get("trailingAnnualDividendYield")
+            if raw is not None:
+                try:
+                    v = float(raw)
+                    if np.isfinite(v) and v >= 0:
+                        dy = v
+                except (TypeError, ValueError):
+                    pass
 
             # Caminho 2: trailingAnnualDividendRate / preço atual
             if dy is None:
@@ -445,7 +437,11 @@ def _yf_multiplos_dividendos(ticker: str) -> dict[str, float]:
                 try:
                     divs = ytk.dividends
                     if divs is not None and not divs.empty:
-                        last12 = float(divs.last("365D").sum())
+                        # 12 meses contados de hoje: ``last("365D")`` contava do
+                        # último provento, e quem parou de pagar há anos saía
+                        # com o DY do último ano em que pagou.
+                        corte = pd.Timestamp.now(tz=divs.index.tz) - pd.Timedelta(days=365)
+                        last12 = float(divs[divs.index >= corte].sum())
                         price  = info.get("currentPrice") or info.get("regularMarketPrice")
                         if price and last12 > 0:
                             p = float(price)
@@ -3223,15 +3219,9 @@ def _build_indicators(mult: pd.Series, fontes: dict | None = None,
         return None
 
     def _g_pct(key: str):
-        """Retorna valor % em escala display (×100 — BD armazena decimal).
-        Se |v| excede o limite razoável para o campo, assume raw % e não multiplica."""
+        """Valor % em escala de exibição (×100 — o banco guarda decimal)."""
         v = _g(key)
-        if v is None:
-            return None
-        threshold = _MAX_DECIMAL_PCT.get(key, 2.0)
-        if abs(v) > threshold:
-            return v   # BD armazenou em raw % — não duplicar a escala
-        return v * 100.0
+        return None if v is None else v * 100.0
 
     def _badge(db_key: str) -> str:
         if not fontes:
@@ -3247,6 +3237,11 @@ def _build_indicators(mult: pd.Series, fontes: dict | None = None,
         else:
             val = fmt_fn(v) if fmt_fn else (_fp(v) if pct else f"{v:.2f}")
             cor = _cor_val(v, invert=inv)
+            # O número aparece como está no banco; o rótulo avisa que ele é
+            # implausível (a faixa canônica o tira do score) em vez de escondê-lo.
+            if (pct and db_key in _PCT_DECIMAL and v != 0
+                    and not _score_value_usable(db_key, v / 100.0)):
+                sub, cor = "Fora da faixa plausível — fora do score", _COR_ALT
         inds.append((lbl_b, val, sub, cor))
 
     inds: list[tuple] = []
@@ -3456,9 +3451,7 @@ def _metric_decimal_pct(mult: pd.Series, key: str) -> str:
         value = float(mult.get(key))
         if not np.isfinite(value):
             return "—"
-        threshold = _MAX_DECIMAL_PCT.get(key, 2.0)
-        display = value if abs(value) > threshold else value * 100.0
-        return f"{display:.1f}%"
+        return f"{value * 100.0:.1f}%"
     except (TypeError, ValueError):
         return "—"
 
@@ -3519,13 +3512,15 @@ def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> Non
 
     fortes: list[str] = []
     invalidacoes: list[str] = []
-    for coluna, trilha in TRACK_LABELS.items():
-        valor = float(score_row.get(coluna, 50) or 50)
+    trilhas = _trilhas_observadas(score_row, TRACK_LABELS)
+    for trilha, valor in trilhas:
         if valor >= 65:
             fortes.append(f"{trilha}: {valor:.1f}/100 entre os pares.")
         elif valor < 40:
             invalidacoes.append(f"{trilha}: {valor:.1f}/100; exige acompanhamento.")
-    if not fortes:
+    if not trilhas:
+        fortes.append("Sem nota por trilha para este ativo.")
+    elif not fortes:
         fortes.append("Nenhuma trilha superou 65 pontos; a leitura permanece equilibrada.")
     if not invalidacoes:
         invalidacoes.append("Reavaliar se fundamentos, preço ou cobertura se deteriorarem.")
@@ -3545,7 +3540,7 @@ def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> Non
         key = coluna.removeprefix("score_")
         criterios.append({
             "Trilha": trilha,
-            "Pontuação": float(score_row.get(coluna, 50) or 50),
+            "Pontuação": _dq.to_float(score_row.get(coluna)),
             "Cobertura (%)": float(score_row.get(f"coverage_{key}", 0) or 0),
             "Indicadores B3": ", ".join(nome for nome, _ in FACTOR_TRACKS[key]),
         })
@@ -3561,6 +3556,40 @@ def _render_b3_dossie(ticker: str, score_row: pd.Series, referencia: str) -> Non
         if eventos:
             st.markdown("**Eventos societários recentes (CVM)**")
             st.dataframe(pd.DataFrame(eventos[:6]), hide_index=True, width="stretch")
+
+
+def _trilhas_observadas(score_row, labels: dict[str, str]) -> list[tuple[str, float]]:
+    """(rótulo, nota) das trilhas com nota; ausência fica de fora.
+
+    0,0 é a pior posição entre os pares (percentil mínimo com cobertura
+    cheia), não ausência — ``float(x or 50)`` a exibia como nota neutra no
+    radar, na tese e na tabela de critérios.
+    """
+    out = []
+    for coluna, rotulo in labels.items():
+        valor = _dq.to_float(score_row.get(coluna))
+        if valor is not None:
+            out.append((rotulo, valor))
+    return out
+
+
+def _render_radar_trilhas(ticker: str, tracks: list[tuple[str, float]]) -> None:
+    fig = go.Figure(go.Scatterpolar(
+        r=[valor for _, valor in tracks] + [tracks[0][1]],
+        theta=[nome for nome, _ in tracks] + [tracks[0][0]],
+        fill="toself", line=dict(color=_COR_INF),
+        fillcolor="rgba(74,158,255,.22)",
+    ))
+    fig.update_layout(
+        template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#CBD5E0"),
+        height=360, margin=dict(l=20, r=20, t=20, b=20), showlegend=False,
+        polar=dict(
+            radialaxis=dict(range=[0, 100], gridcolor="#2D3748", tickfont=dict(size=10)),
+            angularaxis=dict(gridcolor="#4A5568"), bgcolor="rgba(0,0,0,0)",
+        ),
+    )
+    st.plotly_chart(fig, width="stretch", key=f"b3_radar_{ticker}")
 
 
 def _render_b3_score_dashboard(
@@ -3591,24 +3620,9 @@ def _render_b3_score_dashboard(
             caixa_yield = "—"
         card_metrica("Retorno do fluxo de caixa operacional", caixa_yield)
 
-    tracks = [(rotulo, float(score_row.get(coluna, 50) or 50))
-              for coluna, rotulo in TRACK_LABELS.items()]
-    fig = go.Figure(go.Scatterpolar(
-        r=[valor for _, valor in tracks] + [tracks[0][1]],
-        theta=[nome for nome, _ in tracks] + [tracks[0][0]],
-        fill="toself", line=dict(color=_COR_INF),
-        fillcolor="rgba(74,158,255,.22)",
-    ))
-    fig.update_layout(
-        template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)", font=dict(color="#CBD5E0"),
-        height=360, margin=dict(l=20, r=20, t=20, b=20), showlegend=False,
-        polar=dict(
-            radialaxis=dict(range=[0, 100], gridcolor="#2D3748", tickfont=dict(size=10)),
-            angularaxis=dict(gridcolor="#4A5568"), bgcolor="rgba(0,0,0,0)",
-        ),
-    )
-    st.plotly_chart(fig, width="stretch", key=f"b3_radar_{ticker}")
+    tracks = _trilhas_observadas(score_row, TRACK_LABELS)
+    if tracks:
+        _render_radar_trilhas(ticker, tracks)
     st.caption(f"Referência da comparação: {referencia}.")
     detalhe_tecnico(f"Metodologia B3 {SCORE_VERSION}.", codigo="b3.metodologia",
                     entidade=ticker)
@@ -3819,12 +3833,9 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
 
         # Retorno anual
         _sec_hdr("📊 Retorno Anual do Preço")
-        tmp = df_precos.copy()
-        tmp["Ano"] = tmp["Data"].dt.year
-        yr   = tmp.groupby("Ano")["Preco"].last()
-        ret  = (yr.pct_change().dropna() * 100).reset_index()
-        ret.columns = ["Ano", "Retorno"]
-        ret["Ano"]      = ret["Ano"].astype(str)
+        ret = retornos_anuais(df_precos["Data"], df_precos["Preco"])
+        # "2026 (até 28/10)": o ano aberto é acumulado no ano, não o do ano.
+        ret["Ano"]      = ret["Rotulo"]
         ret["Positivo"] = ret["Retorno"] >= 0
         ret["Texto"]    = ret["Retorno"].map(lambda v: f"{v:+.2f}%")
         ret_sorted = ret.sort_values("Ano")
@@ -3863,11 +3874,15 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
             (c4, "Dividendos",      "Dividendos"),
         ]:
             df_src = df_fin
-            subtitulo = "Regressão log histórico"
+            fonte = ""
             if field == "Dividendos" and (df_fin.empty or "Dividendos" not in df_fin.columns):
-                df_src = df_yf_divs
-                subtitulo = f"Regressão log histórico · fonte: {fonte_divs}"
-            g = _cagr(df_src, field)
+                # Soma de proventos por ano civil: o ano em curso entraria
+                # no CAGR como queda.
+                df_src = sem_ano_em_curso(df_yf_divs, "Data")
+                fonte = f" · fonte: {fonte_divs}"
+            cres = _cagr(df_src, field)
+            g = cres.taxa if cres is not None else None
+            subtitulo = (cres.legenda() if cres is not None else "Sem histórico") + fonte
             with col:
                 st.markdown(
                     _ind_card(lbl, _fg(g), subtitulo,
@@ -3962,10 +3977,7 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
                     pm = df_mult_hist[["Data"] + sel_cols].copy()
                     for c in sel_cols:
                         pm[c] = pd.to_numeric(pm[c], errors="coerce")
-                        # Normaliza para display % (mesma lógica _g_pct)
-                        th = _MAX_DECIMAL_PCT.get(c, 2.0)
-                        pm[c] = pm[c].apply(
-                            lambda v: v if (v != v or abs(v) > th) else v * 100.0)
+                        pm[c] = pm[c] * 100.0  # decimal → % (ver _PCT_DECIMAL)
                     melt_m = pm.melt("Data", value_vars=sel_cols,
                                       var_name="Indicador", value_name="Valor (%)")
                     melt_m["Indicador"] = melt_m["Indicador"].str.replace("_", " ")
@@ -4117,13 +4129,17 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
     _sec_hdr("🏆 Score e critérios de avaliação")
     _render_b3_score_dashboard(tk, mult, df_set)
 
+    _sec_hdr("🧭 Relatório do analista")
+    relatorio = secao_relatorio(tk, str(nome_emp or "") or None,
+                                str(setor or "") or None, mercado="b3")
+
     render_chat_ativo(
         mercado="b3", ticker=tk, nome=str(nome_emp or ""), accent="#4A9EFF",
         build_context=lambda pergunta: build_b3_ativo_context(
             tk, user_question=pergunta, nome=str(nome_emp or ""),
             setor=str(setor or ""), subsetor=str(subsetor or ""),
             preco=preco, preco_status=preco_status, mult=mult, df_fin=df_fin,
-            fontes=fontes_recon,
+            fontes=fontes_recon, relatorio=relatorio,
         ),
     )
 
@@ -6486,17 +6502,14 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
 
     if batch_mh:
         rows_mh: list[pd.DataFrame] = []
-        is_pct_m = ind_m_show in _MAX_DECIMAL_PCT
+        is_pct_m = ind_m_show in _PCT_DECIMAL
         for tk_mh, df_mh in batch_mh.items():
             if "Data" not in df_mh.columns or ind_m_show not in df_mh.columns:
                 continue
             tmp = df_mh[["Data", ind_m_show]].copy()
             tmp[ind_m_show] = pd.to_numeric(tmp[ind_m_show], errors="coerce")
             if is_pct_m:
-                th = _MAX_DECIMAL_PCT.get(ind_m_show, 2.0)
-                tmp[ind_m_show] = tmp[ind_m_show].apply(
-                    lambda v: v if (pd.isna(v) or abs(v) > th) else v * 100.0
-                )
+                tmp[ind_m_show] = tmp[ind_m_show] * 100.0
             tmp = tmp.rename(columns={ind_m_show: "Valor"})
             tmp["Empresa"] = tk_mh
             rows_mh.append(tmp)

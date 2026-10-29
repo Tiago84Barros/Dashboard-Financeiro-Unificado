@@ -217,7 +217,12 @@ def build_entry_scores(scored: pd.DataFrame,
 
 def factor_contributions(row: pd.Series,
                          weights: dict[str, float] | None = None) -> pd.DataFrame:
-    """Contribuição aditiva de cada trilha em relação ao ponto neutro (50)."""
+    """Contribuição aditiva de cada trilha em relação ao ponto neutro (50).
+
+    Segue ``build_entry_scores``: trilha ausente entra na nota como 50 e
+    contribui zero — mas a pontuação exibida fica vazia, não 50. Zero é nota:
+    ``or 50`` transformava a pior posição em contribuição nula.
+    """
     w = normalize_weights(weights)
     labels = {
         "quality": "Qualidade", "growth": "Crescimento", "solidity": "Solidez",
@@ -226,10 +231,12 @@ def factor_contributions(row: pd.Series,
     }
     records = []
     for track, column in TRACK_COLUMNS.items():
-        value = float(row.get(column, 50) or 50)
-        records.append({"Trilha": labels[track], "Pontuação": value,
+        value = pd.to_numeric(row.get(column), errors="coerce")
+        observed = bool(pd.notna(value) and np.isfinite(value))
+        records.append({"Trilha": labels[track],
+                        "Pontuação": float(value) if observed else None,
                         "Peso (%)": w[track] * 100,
-                        "Contribuição": (value - 50) * w[track]})
+                        "Contribuição": (float(value) - 50) * w[track] if observed else 0.0})
     return pd.DataFrame(records)
 
 

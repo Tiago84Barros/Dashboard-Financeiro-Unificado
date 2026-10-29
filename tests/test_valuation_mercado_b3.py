@@ -84,7 +84,60 @@ def test_mediana_ponto_no_tempo_e_quem_ficou_fora():
 def test_mes_com_poucas_validas_fica_fora_da_serie():
     tickers = _nomes(pv.MERCADO_MIN_VALIDAS - 1)
     fech, vol, lpa = _quadros(tickers, meses=[date(2020, 5, 29)])
-    assert pv.mercado_b3(fech, vol, lpa, ano_inicial=2020) == {"serie": [], "ultimo": None}
+    m = pv.mercado_b3(fech, vol, lpa, ano_inicial=2020)
+    assert m["serie"] == [] and m["ultimo"] is None
+    assert m["descartado"]["data"] == "2020-05-29"
+    assert m["descartado"]["validas"] == pv.MERCADO_MIN_VALIDAS - 1
+
+
+def _lpa_mil_vezes(tickers, n, ano=2019):
+    """LPA de ``n`` tickers 1000x maior: o que o normalizador velho gravou."""
+    lpas = {(tk, ano): 1.0 for tk in tickers}
+    lpas.update({(tk, ano): 1000.0 for tk in tickers[:n]})
+    return lpas
+
+
+def test_mes_recente_fora_da_serie_e_nomeado_e_recusa_publicar():
+    # 26-27/10/2026: demonstrações regravadas com o LPA 1000x tiraram de abril
+    # em diante da série calculada do armazém, e `ultimo` seguia descrevendo
+    # março -- ponto parado em silêncio por sete meses.
+    tickers = _nomes(30)
+    meses = [date(2020, 3, 31), date(2020, 4, 30), date(2020, 5, 29)]
+    fech, vol, lpa = _quadros(tickers, meses=meses, lpas=_lpa_mil_vezes(tickers, 15))
+    m = pv.mercado_b3(fech, vol, lpa, ano_inicial=2020)
+    assert [p[0] for p in m["serie"]] == ["2020-03-31"]
+    assert m["ultimo"]["data"] == "2020-03-31"
+    d = m["descartado"]
+    assert d["data"] == "2020-05-29" and d["validas"] == 15
+    assert d["implausiveis"] == tickers[:15]
+    motivo = pv.motivo_para_recusar("2020-05-29", m, date(2020, 6, 1))
+    assert "2020-05-29 ficou fora da série" in motivo
+    assert "15 de 30 ações válidas" in motivo
+    assert "a série pararia em 2020-03-31" in motivo
+
+
+def test_implausiveis_demais_no_ultimo_mes_recusa_publicar():
+    tickers = _nomes(50)
+    n = pv.MERCADO_IMPLAUSIVEIS_MAX + 1
+    fech, vol, lpa = _quadros(tickers, meses=[date(2020, 5, 29)],
+                              lpas=_lpa_mil_vezes(tickers, n))
+    m = pv.mercado_b3(fech, vol, lpa, ano_inicial=2020)
+    assert m["descartado"] is None and m["ultimo"]["validas"] == 50 - n
+    motivo = pv.motivo_para_recusar("2020-05-29", m, date(2020, 6, 1))
+    assert f"{n} ações com LPA em escala errada em 2020-05-29" in motivo
+
+
+def test_mes_normal_publica_e_fita_parada_recusa():
+    tickers = _nomes(50)
+    fech, vol, lpa = _quadros(tickers, meses=[date(2020, 5, 29)],
+                              lpas=_lpa_mil_vezes(tickers, pv.MERCADO_IMPLAUSIVEIS_MAX))
+    m = pv.mercado_b3(fech, vol, lpa, ano_inicial=2020)
+    assert pv.motivo_para_recusar("2020-05-29", m, date(2020, 6, 1)) is None
+    assert "fita da B3 parada" in pv.motivo_para_recusar(
+        "2020-05-29", m, date(2020, 5, 29) + pd.Timedelta(days=pv.FITA_MAXIMA_DIAS + 1))
+    assert "fita da B3 parada" in pv.motivo_para_recusar(None, m, date(2020, 6, 1))
+    assert "série vazia" in pv.motivo_para_recusar(
+        "2020-05-29", {"serie": [], "ultimo": None, "descartado": None}, date(2020, 6, 1))
 
 
 def _mercado(pls, *, ultimo=None):

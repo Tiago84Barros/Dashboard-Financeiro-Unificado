@@ -154,8 +154,10 @@ def build_b3_ativo_context(
     ticker: str, *, user_question: str = "", nome: str = "", setor: str = "",
     subsetor: str = "", preco=None, preco_status: str = "", mult=None,
     df_fin: pd.DataFrame | None = None, fontes: dict | None = None,
+    relatorio: str = "",
 ) -> str:
-    """Identidade, múltiplos, DRE, pares de segmento, documentos CVM e macro."""
+    """Identidade, relatório de analista, múltiplos, DRE, pares de segmento,
+    documentos CVM e macro. O relatório entra cedo para o ``_cap`` não cortá-lo."""
     from core.llm_context_b3 import (
         get_chunks_context,
         get_company_fundamentals_context,
@@ -176,6 +178,8 @@ def build_b3_ativo_context(
         _cadastro_cvm_linha(tk),
         f"  Preço corrente: {preco_txt}",
     ]
+    if relatorio:
+        blocos.append("\n" + relatorio + "\n")
     if mult is not None and getattr(mult, "empty", True) is False:
         itens = [f"{k}={_fmt(v)}" for k, v in mult.to_dict().items()
                  if k not in ("Ticker", "data") and v is not None]
@@ -247,8 +251,10 @@ _US_CAMPOS = [
 def build_us_ativo_context(
     symbol: str, *, user_question: str = "", row=None,
     financials: pd.DataFrame | None = None, current_price=None,
+    relatorio: str = "",
 ) -> str:
-    """Cadastro pontuado, série de demonstrações, pares de indústria e dossiê."""
+    """Relatório de analista, cadastro pontuado, série de demonstrações, pares
+    de indústria e dossiê."""
     from core.llm_context_us import get_peers_context, get_sector_context
     sym = str(symbol or "").strip().upper()
     blocos = [
@@ -258,6 +264,8 @@ def build_us_ativo_context(
         "  Universo: apenas ações ordinárias; REIT, fundo, SPAC e preferencial "
         "estão fora do módulo por regra.",
     ]
+    if relatorio:
+        blocos.append("\n" + relatorio + "\n")
     if row is not None:
         blocos.append(_series_block(row, _US_CAMPOS, "  Cadastro pontuado:"))
     if financials is not None and not financials.empty:
@@ -337,11 +345,15 @@ _TIPOS_SEM_IMOVEL = ("papel", "fof", "fundo de fundos")
 def build_fii_ativo_context(
     ticker: str, *, user_question: str = "", dados=None,
     universo: pd.DataFrame | None = None, imoveis: pd.DataFrame | None = None,
+    relatorio: str = "",
 ) -> str:
-    """Cadastro do fundo, carteira de imóveis quando houver e pares do mesmo tipo."""
+    """Relatório de analista, cadastro do fundo, carteira de imóveis quando
+    houver e pares do mesmo tipo."""
     tk = str(ticker or "").strip().upper()
     blocos = ["ATIVO EM ANÁLISE (tela Seleção de FIIs → Busca de ativo):",
               f"  Ticker: {tk}"]
+    if relatorio:
+        blocos.append("\n" + relatorio + "\n")
     if dados is not None:
         blocos.append(_series_block(dados, _FII_CAMPOS, "  Cadastro do fundo:"))
     try:

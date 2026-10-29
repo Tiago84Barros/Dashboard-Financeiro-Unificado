@@ -49,6 +49,19 @@ def _registrar_cobertura(rotulo: str, item: dict, denominador: str) -> None:
         detalhe_tecnico(texto, codigo='carteira.valuation_cobertura', entidade=rotulo)
 
 
+def _metricas_aplicaveis(tem_acoes: bool, tem_fiis: bool) -> set[str]:
+    """Indicadores que descrevem algum ativo da carteira.
+
+    Carteira só de Tesouro e exterior não tem P/L a apurar, e uma só de FIIs não
+    tem EV/EBIT: o "—" ali é não se aplicar, não dado faltando, e registrá-lo
+    como lacuna enchia a aba Restrições de falsos positivos.
+    """
+    out = set(METRICS) if tem_acoes else set()
+    if tem_fiis:
+        out |= set(METRICS_BY_CLASS['fiis']) & set(METRICS)
+    return out
+
+
 def render_portfolio_valuations(positions):
     st.subheader('Valuation médio do portfólio')
     stocks, fiis, aliases = set(), set(), {}
@@ -66,6 +79,11 @@ def render_portfolio_valuations(positions):
             base = ticker[:-1] if ticker.endswith('F') and len(ticker) > 4 else ticker
             stocks.add(base)
             aliases[ticker] = base
+    if not stocks and not fiis:
+        st.info('Sem ações ou FIIs brasileiros na carteira — é a eles que este '
+                'resumo se aplica.')
+        return
+    aplicaveis = _metricas_aplicaveis(bool(stocks), bool(fiis))
     with st.spinner('Consolidando valuations disponíveis…'):
         data, unavailable, consulted = _load(tuple(sorted(stocks)), tuple(sorted(fiis)))
     fundamentals = {ticker: data.get(base, {}) for ticker, base in aliases.items()}
@@ -79,12 +97,15 @@ def render_portfolio_valuations(positions):
             item = result[key]
             valor = item['value']
             sufixo = '%' if key == 'dy' else 'x'
-            _registrar_cobertura(label, item, 'carteira')
+            aplicavel = key in aplicaveis
+            if aplicavel:
+                _registrar_cobertura(label, item, 'carteira')
             with col:
                 st.markdown(_card(
                     label,
                     '—' if valor is None else f'{valor:.2f}{sufixo}',
-                    'média ponderada pelo valor',
+                    'média ponderada pelo valor' if aplicavel
+                    else 'não se aplica aos ativos da carteira',
                     'var(--app-text)',
                 ), unsafe_allow_html=True)
     if unavailable:

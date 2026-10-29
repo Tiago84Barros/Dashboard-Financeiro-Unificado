@@ -449,12 +449,20 @@ ALVOS: tuple[Alvo, ...] = (
         # e em 04/10/2026 103 tickers -- BBDC4, ITUB4, PETR4 -- seguiam no
         # 2026T1 com o payload do 2T26 no disco desde 19/09. O segundo passo
         # regrava as demonstrações a partir dele, sem rede (B3-02).
+        #
+        # E regrava à força: o modo comum pula o dono cujo payload mais novo já
+        # foi normalizado, então linha gravada por normalizador velho nunca
+        # sarava. Em 26-27/10/2026 a rotina rodou do checkout sem o PR #558,
+        # gravou 26,7 mil demonstrações com o LPA 1000x e o P/L mediano B3
+        # calculado do armazém passou a parar em março. Custa ~70 s; o upsert só toca a linha que muda, e
+        # só ela ganha updated_at novo -- é o que a publicação B3 leva ao
+        # Supabase pela marca d'água.
         chave="brapi_raw_poda",
         titulo="Poda do cache bruto da brapi",
         passos=(
             ("scripts/archive_remote_brapi_raw.py",),
             ("run_market_ingest.py", "renormalize-demonstracoes", "--warehouse",
-             "--json"),
+             "--json", "--forcar"),
             ("scripts/compact_remote_brapi_raw.py", "--apply"),
         ),
         cadencia_dias=1,

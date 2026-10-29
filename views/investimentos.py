@@ -2906,7 +2906,7 @@ def _editor_preco_medio_manual(posicoes: list[dict]) -> None:
         b1, b2 = st.columns([1, 1], gap="small")
         with b1:
             if st.button("Salvar preço médio", type="primary",
-                         use_container_width=True, key="pmm_salvar"):
+                         width="stretch", key="pmm_salvar"):
                 try:
                     salvar(uid, tk, valor, nota)
                 except Exception as exc:  # noqa: BLE001
@@ -2916,7 +2916,7 @@ def _editor_preco_medio_manual(posicoes: list[dict]) -> None:
                     st.success(f"{tk}: preço médio informado por você gravado.")
                     st.rerun()
         with b2:
-            if vigente and st.button("Apagar declaração", use_container_width=True,
+            if vigente and st.button("Apagar declaração", width="stretch",
                                      key="pmm_apagar"):
                 remover(uid, tk)
                 st.cache_data.clear()

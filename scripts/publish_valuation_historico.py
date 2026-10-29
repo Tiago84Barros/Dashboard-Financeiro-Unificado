@@ -73,7 +73,9 @@ mediana resiste a LPA em escala errada, a média ponderada por liquidez não
 por valor de mercado e fica bem abaixo por causa de bancos, Petrobras e Vale.
 
 Recusa publicar (saída 1) se a fita da B3 estiver parada há mais de
-``FITA_MAXIMA_DIAS``.
+``FITA_MAXIMA_DIAS``, se o mês mais recente da fita ficar fora da série do
+P/L mediano ou se ele tiver mais de ``MERCADO_IMPLAUSIVEIS_MAX`` ações com LPA
+em escala errada (``motivo_para_recusar``).
 """
 from __future__ import annotations
 
@@ -82,7 +84,7 @@ import gzip
 import json
 import math
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -102,6 +104,7 @@ UNIVERSO_MERCADO = 50           # ações mais negociadas no ano anterior
 MERCADO_MIN_VALIDAS = 20        # mês com menos que isso não entra na série
 MERCADO_PL_MAXIMO = 200.0       # P/L acima disso: LPA em escala errada
 MERCADO_PL_MINIMO = 1.0         # abaixo disso também (ITUB4 2019, LPA 2.780)
+MERCADO_IMPLAUSIVEIS_MAX = 10   # no último mês: de 2023 em diante foram 0 a 2
 
 METODO = {
     "b3": ("Anual. P/L = fechamento do último pregão do ano na fita da B3 "
@@ -521,7 +524,9 @@ def mercado_b3(fechamentos, volumes, lpa, *, n: int = UNIVERSO_MERCADO,
     ``fechamentos``: ticker, data (último pregão do mês), close (fita, sem
     ajuste). ``volumes``: ticker, ano, vol. ``lpa``: ticker, ano, lpa.
     Devolve {"serie": [[data, p_l, lucro_sobre_preco_pct, n], ...],
-    "ultimo": {...}} -- ``ultimo`` diz quem ficou fora no último mês e por quê.
+    "ultimo": {...}, "descartado": {...} | None} -- ``ultimo`` diz quem ficou
+    fora no último mês da série e por quê; ``descartado``, o mesmo do mês mais
+    recente da fita quando ele não entrou (menos de MERCADO_MIN_VALIDAS).
     """
     import pandas as pd
     lpa_d = {(str(r.ticker), int(r.ano)): float(r.lpa) for r in lpa.itertuples()
@@ -530,7 +535,7 @@ def mercado_b3(fechamentos, volumes, lpa, *, n: int = UNIVERSO_MERCADO,
     f = fechamentos.copy()
     f["data"] = pd.to_datetime(f["data"])
     f["mes"] = f["data"].dt.to_period("M")
-    serie, ultimo = [], None
+    serie, ultimo, descartado = [], None, None
     for mes, g in f.groupby("mes"):
         if mes.year < ano_inicial or mes.year not in universo:
             continue
@@ -551,18 +556,49 @@ def mercado_b3(fechamentos, volumes, lpa, *, n: int = UNIVERSO_MERCADO,
                 implausiveis.append(tk)
                 continue
             eys.append(ey)
+        data = max(d for _, d in px.values()).date().isoformat()
+        quem = {"data": data, "exercicio": exerc,
+                "universo": len(universo[mes.year]), "validas": len(eys),
+                "negativas": sum(1 for y in eys if y < 0),
+                "sem_lpa": sem_lpa, "sem_preco": sem_preco,
+                "implausiveis": implausiveis}
         if len(eys) < MERCADO_MIN_VALIDAS:
+            descartado = quem
             continue
         mediana = float(pd.Series(eys).median())
-        data = max(d for _, d in px.values()).date().isoformat()
         serie.append([data, _r(1 / mediana, 2) if mediana > 0 else None,
                       _r(100 * mediana, 2), len(eys)])
-        ultimo = {"data": data, "exercicio": exerc,
-                  "universo": len(universo[mes.year]), "validas": len(eys),
-                  "negativas": sum(1 for y in eys if y < 0),
-                  "sem_lpa": sem_lpa, "sem_preco": sem_preco,
-                  "implausiveis": implausiveis}
-    return {"serie": serie, "ultimo": ultimo}
+        ultimo, descartado = quem, None
+    return {"serie": serie, "ultimo": ultimo, "descartado": descartado}
+
+
+def motivo_para_recusar(fita, mercado: dict, hoje) -> str | None:
+    """Por que o arquivo não pode sair hoje, ou None. Puro.
+
+    O mês com menos de MERCADO_MIN_VALIDAS ações válidas fica fora da série,
+    e o leitor vê só o último que entrou: em 26-27/10/2026, demonstrações
+    regravadas com o LPA 1000x tiraram abril a outubro da série calculada do
+    armazém, e ela parava em março sem erro nenhum. Recusar faz a rotina
+    noturna acusar a falha em vez de publicar o ponto velho como atual.
+    """
+    if fita is None or (hoje - date.fromisoformat(fita)).days > FITA_MAXIMA_DIAS:
+        return (f"fita da B3 parada há mais de {FITA_MAXIMA_DIAS} dias; o porte "
+                "sairia com preço velho.")
+    d, u = mercado.get("descartado"), mercado.get("ultimo")
+    if d:
+        ate = mercado["serie"][-1][0] if mercado["serie"] else "nenhum mês"
+        return (f"P/L mediano B3: {d['data']} ficou fora da série, só "
+                f"{d['validas']} de {d['universo']} ações válidas (LPA em escala "
+                f"errada: {', '.join(d['implausiveis']) or '-'}; sem LPA do "
+                f"exercício {d['exercicio']}: {', '.join(d['sem_lpa']) or '-'}); "
+                f"a série pararia em {ate}.")
+    if u is None:
+        return "P/L mediano B3: série vazia."
+    if len(u["implausiveis"]) > MERCADO_IMPLAUSIVEIS_MAX:
+        return (f"P/L mediano B3: {len(u['implausiveis'])} ações com LPA em escala "
+                f"errada em {u['data']} ({', '.join(u['implausiveis'])}), mais que "
+                f"{MERCADO_IMPLAUSIVEIS_MAX}; a mediana sairia de amostra torta.")
+    return None
 
 
 _SQL_FECHAMENTO_MENSAL = """
@@ -913,12 +949,12 @@ def main(argv=None) -> int:
         "exclusoes_fii": excl_fii, "exclusoes_eua": excl_eua,
         "mercado_b3": {"meses": len(mercado["serie"]),
                        "ultimo": (mercado["serie"] or [None])[-1],
-                       "fora": mercado["ultimo"]},
+                       "fora": mercado["ultimo"],
+                       "descartado": mercado["descartado"]},
     }
-    if fita is None or (agora.date() - datetime.fromisoformat(fita).date()).days \
-            > FITA_MAXIMA_DIAS:
-        relatorio["erro"] = (f"fita da B3 parada há mais de {FITA_MAXIMA_DIAS} "
-                             "dias; o porte sairia com preço velho.")
+    motivo = motivo_para_recusar(fita, mercado, agora.date())
+    if motivo:
+        relatorio["erro"] = motivo
         print(json.dumps(relatorio, ensure_ascii=False, indent=2))
         return 1
     payload = {
