@@ -1,6 +1,6 @@
 {
  "schema": 2,
- "gerado_em": "2026-10-28T21:23:04-03:00",
+ "gerado_em": "2026-10-29T10:57:44-03:00",
  "revisao": {
   "seq": 1,
   "hash": "958b9b309f5817a1dc80b4a95da150520d3779f5458635bce6f9c36c27231c9e",
@@ -25,7 +25,7 @@
  "fontes": {
   "acoes": "pesquisa: dados/b3_retornos_diarios.parquet até 22/10/2026; depois, COTAHIST da B3 + market.dividends do armazém com as regras da pesquisa (retorno total)",
   "bova11": "COTAHIST da B3: fechamento oficial (BDI 14)",
-  "cdi": "BCB/SGS 12 (arquivo publicado até 27/10/2026)",
+  "cdi": "BCB/SGS 12 (arquivo publicado até 28/10/2026)",
   "spread": "COTAHIST da B3: mediana de até 63 pregões até a execução das melhores ofertas do fracionário (BDI 96) contra o fechamento do lote padrão; BOVA11, as do próprio lote padrão"
  },
  "pregoes": 1,
