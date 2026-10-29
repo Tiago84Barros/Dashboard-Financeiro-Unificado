@@ -141,9 +141,13 @@ def render_chat_ativo(
                              width="stretch"):
                     sugerida = pergunta
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     historico = load_chat_history(memory_key, session_key=hist_key)
     for mensagem in visible_chat_history(historico, hist_key):
-        with st.chat_message(mensagem["role"]):
+        with conversa.chat_message(mensagem["role"]):
             st.markdown(escapar_cifrao(mensagem["content"]))
 
     digitada = st.chat_input(
@@ -155,9 +159,9 @@ def render_chat_ativo(
         return
 
     historico.append({"role": "user", "content": pergunta})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(pergunta))
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         aviso = ""
         with st.spinner(f"Consultando os dados de {tk}, pares e qualidade…"):
             try:

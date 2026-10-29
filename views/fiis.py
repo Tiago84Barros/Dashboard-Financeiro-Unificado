@@ -1327,9 +1327,13 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                          width="stretch"):
                 suggested_input = question
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     history = load_chat_history(memory_key, session_key="fii_chat_history")
     for message in visible_chat_history(history, "fii_chat_history"):
-        with st.chat_message(message["role"]):
+        with conversa.chat_message(message["role"]):
             st.markdown(escapar_cifrao(message["content"]))
 
     typed_input = st.chat_input(
@@ -1339,9 +1343,9 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
         return
 
     history.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(user_input))
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         aviso = ""
         with st.spinner("Consultando seleção, pares, cenário e qualidade dos dados…"):
             try:

@@ -1843,9 +1843,13 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
             st.rerun()
 
     _memory_key = conversation_key("portfolio_global", ",".join(sorted(df["symbol"].astype(str))))
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     historico = load_chat_history(_memory_key, session_key=_CHAVE_CHAT)
     for mensagem in visible_chat_history(historico, _CHAVE_CHAT):
-        with st.chat_message(mensagem["role"]):
+        with conversa.chat_message(mensagem["role"]):
             st.markdown(escapar_cifrao(mensagem["content"]))
 
     pergunta = st.chat_input(
@@ -1856,10 +1860,10 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
         return
 
     historico.append({"role": "user", "content": pergunta})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(pergunta))
 
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         aviso = ""
         with st.spinner("Consultando os dados do patrimônio consolidado…"):
             try:
