@@ -279,6 +279,18 @@ def test_ano_escolhido_recorta_a_tela_inteira(monkeypatch):
     assert visto["opcoes"][-1] == "Visão geral · todos os anos"
 
 
+def test_ano_fechado_com_darf_de_dezembro_a_vencer_mantem_o_total_do_ano(monkeypatch):
+    # Em janeiro, o DARF de dezembro ainda não venceu: o card segue no total do ano
+    ano = date.today().year - 1
+    res = apurar([tx(f"{ano}-03-10", "PETR4", "buy", 2000, 10),
+                  tx(f"{ano}-12-10", "PETR4", "sell", 2000, 15)],
+                 hoje=date(ano + 1, 1, 15))
+    assert res["pendente"]["mes"] == f"{ano}-12"
+    visto = _tela_com(monkeypatch, res)
+    assert f"DARFs de {ano}" in visto["cards"]
+    assert "DARF em aberto" not in visto["cards"]
+
+
 def test_visao_geral_junta_todos_os_anos_sem_as_fichas(monkeypatch):
     import views.ir_renda_variavel as tela
 

@@ -532,10 +532,11 @@ def _render_darf(res: dict, ano: int | None = None) -> None:
 
     c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
-        if pend:
+        vence = (f"{_rotulo_mes(pend['mes'])} · vence {pend['vencimento'].strftime('%d/%m/%Y')}"
+                 if pend else "")
+        if corrente and pend:
             card_metrica(
-                "DARF em aberto", fmt_moeda(_f(pend["darf"])),
-                f"{_rotulo_mes(pend['mes'])} · vence {pend['vencimento'].strftime('%d/%m/%Y')}",
+                "DARF em aberto", fmt_moeda(_f(pend["darf"])), vence,
                 positivo=False,
                 ajuda="Último mês fechado com imposto cujo vencimento ainda não passou. "
                       "Confira se já foi pago: o app não lê pagamentos.",
@@ -544,12 +545,15 @@ def _render_darf(res: dict, ano: int | None = None) -> None:
             card_metrica("DARF em aberto", "Nenhum", "sem mês fechado com imposto a vencer",
                          positivo=True)
         else:
+            # Ano fechado fica no total do ano; o DARF de dezembro que ainda não
+            # venceu (em janeiro) vai no subtítulo, sem trocar o card
             n_darf = sum(1 for m in _do_ano(meses, ref) if m["darf"] > 0)
             card_metrica(
                 f"DARFs de {ref}", fmt_moeda(_f(resumo["darf"]) if resumo else 0),
-                f"{n_darf} mês(es) com imposto a recolher" if n_darf
+                f"em aberto: {vence}" if pend
+                else f"{n_darf} mês(es) com imposto a recolher" if n_darf
                 else "nenhum mês com imposto a recolher",
-                positivo=None,
+                positivo=False if pend else None,
                 ajuda="Soma dos DARFs que a apuração calcula para o ano. O app não lê "
                       "pagamentos: confira com os comprovantes.",
             )
