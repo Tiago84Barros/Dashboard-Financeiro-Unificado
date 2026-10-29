@@ -515,13 +515,15 @@ _SQL_POSICOES_SNAPSHOT = """
     b3_encerrados AS (
         -- Soma lote padrao + fracionario da mesma data: encerrado e o ativo
         -- cuja ultima linha na custodia central nao tem nem quantidade nem
-        -- saldo.
+        -- saldo. O aluguel tomado (Tomador, negativo) e divida e fica fora
+        -- da soma: somado, zeraria a acao propria do mesmo papel.
         SELECT s.asset_id
         FROM normalized_snapshots s
         JOIN b3_ultima_linha u
           ON u.asset_id = s.asset_id
          AND u.report_date = s.report_date
         WHERE s.effective_source_table = 'b3_posicao_detalhada'
+          AND NOT (COALESCE(s.is_loaned, FALSE) AND s.quantity < 0)
         GROUP BY s.asset_id
         HAVING COALESCE(SUM(s.quantity), 0) = 0
            AND COALESCE(SUM(s.market_value), 0) = 0
@@ -2100,6 +2102,8 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
           ON s.asset_id = u.asset_id
          AND s.report_date = u.report_date
         WHERE s.effective_source_table = 'b3_posicao_detalhada'
+          -- Tomador fora da soma, como no ponto de hoje.
+          AND NOT (COALESCE(s.is_loaned, FALSE) AND s.quantity < 0)
         GROUP BY u.corte, s.asset_id
         HAVING COALESCE(SUM(s.quantity), 0) = 0
            AND COALESCE(SUM(s.market_value), 0) = 0

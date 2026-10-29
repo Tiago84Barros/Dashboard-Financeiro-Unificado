@@ -486,6 +486,9 @@ _SQL_FOTOS = """
     JOIN assets a ON a.id = s.asset_id
     WHERE s.user_id = :uid
       AND s.report_date BETWEEN :ini AND :fim
+      -- Aluguel tomado (BTC Tomador) entra negativo: é dívida, não posição.
+      -- Somado, zeraria a ação própria do mesmo papel na mesma corretora.
+      AND NOT (COALESCE(s.is_loaned, FALSE) AND s.quantity < 0)
     GROUP BY 1, 2, 3, 4
 """
 

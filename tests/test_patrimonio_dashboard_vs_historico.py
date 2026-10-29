@@ -115,9 +115,13 @@ def test_sql_so_soma_custo_quando_toda_posicao_tem_custo():
 
 def test_historico_inclui_acoes_emprestadas():
     # Dez/23 da B3 (R$ 590.520,23) so fecha somando a aba de emprestimos.
-    sql = investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower()
+    # So o aluguel TOMADO (negativo, e divida) sai, e so da soma que encerra
+    # o ativo; a acao emprestada (Doador, positiva) continua no patrimonio.
+    sql = " ".join(investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower().split())
+    tomador = "not (coalesce(s.is_loaned, false) and s.quantity < 0)"
 
-    assert "is_loaned" not in sql
+    assert tomador in sql
+    assert "is_loaned" not in sql.replace(tomador, "")
 
 
 def _case_de_prioridade(sql: str) -> str:
