@@ -23,7 +23,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 import core.us_data as us
 from core.busca_empresa import buscar_empresas
-from core.crescimento import sem_ano_em_curso
+from core.crescimento import sem_ano_em_curso, ultimo_preco_nao_positivo
 from core.inteligencia_ativos import veredito
 from core.llm_context_ativo import build_us_ativo_context
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
@@ -538,6 +538,16 @@ def _tab_empresa(status: dict) -> None:
         prices["date"] = pd.to_datetime(prices["date"], errors="coerce")
         prices["price"] = pd.to_numeric(prices["price"], errors="coerce")
         prices = prices.dropna().sort_values("date")
+        # Mesmo corte da Empresas B3: antes do último preço ≤ 0 o ajuste por
+        # proventos quebrou e a série está noutra escala.
+        corte_preco = ultimo_preco_nao_positivo(prices["date"], prices["price"])
+        if corte_preco is not None:
+            prices = prices[prices["date"] > corte_preco]
+            aviso_lacuna(
+                f"Preço ajustado chega a ≤ 0 até {corte_preco:%d/%m/%Y}: o histórico "
+                "anterior foi omitido do gráfico, do retorno anual e dos múltiplos "
+                "históricos.",
+                codigo="tela.eua.preco_ajustado_quebrado", entidade=symbol)
     history = derive_metric_history(financials, prices, dividends)
     dividend_history = annual_dividends(financials, dividends)
     current_price = last_value(prices.rename(columns={"price": "value"}), "value") \
