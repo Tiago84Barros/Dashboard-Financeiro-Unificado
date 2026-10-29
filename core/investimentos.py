@@ -2011,7 +2011,9 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
     --      test_patrimonio_dashboard_vs_historico.py falha se divergir;
     --   3. ativo cuja ultima linha da B3 ate D veio zerada esta vendido;
     --   4. ativo cuja saida a Movimentacao da B3 prova entre a foto e D
-    --      tambem (mov_encerrados).
+    --      tambem (mov_encerrados);
+    --   5. se 3 e 4 encerram tudo o que havia no pais, D sai com zero
+    --      (cortes_zerados), e nao some da curva.
     -- As linhas do Tesouro gravadas com rotulo xp_consolidado (source_id
     -- td-snap-%) contam como tesouro_direto, como no ponto de hoje: na mesma
     -- data do consolidado o desempate fica com uma so, e o Tesouro nao soma
@@ -2118,6 +2120,24 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
           -- frente, com preco e cambio daquele dia.
           AND upper(coalesce(a.currency, 'BRL')) <> 'USD'
         GROUP BY pps.corte
+    ),
+    -- Corte em que tudo o que havia no pais foi encerrado, pelo zero do
+    -- extrato ou pela Movimentacao: e carteira vazia, nao falta de foto. O
+    -- ponto fica, com zero, e _exterior_nas_datas soma o exterior da data --
+    -- sem a data ele nem e recomposto. Linha que sobra sem valor (foto sem
+    -- preco) nao e encerramento, e o corte continua de fora.
+    cortes_zerados AS (
+        SELECT pps.corte
+        FROM ranked_snapshots pps
+        JOIN assets a ON a.id = pps.asset_id
+        LEFT JOIN b3_encerrados be
+          ON be.corte = pps.corte AND be.asset_id = pps.asset_id
+        LEFT JOIN mov_encerrados me
+          ON me.corte = pps.corte AND me.asset_id = pps.asset_id
+        WHERE pps.asset_source_rank = 1
+          AND upper(coalesce(a.currency, 'BRL')) <> 'USD'
+        GROUP BY pps.corte
+        HAVING BOOL_AND(be.asset_id IS NOT NULL OR me.asset_id IS NOT NULL)
     )
     SELECT
         x.report_date AS mes,
@@ -2125,7 +2145,10 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
         x.vi AS valor_investido_snapshot
     FROM xp_snaps x
     WHERE x.vm > 0
-    ORDER BY x.report_date
+    UNION ALL
+    SELECT z.corte, 0, 0
+    FROM cortes_zerados z
+    ORDER BY 1
 """
 
 _SQL_EVOLUCAO_SNAPSHOTS_SEM_MOVIMENTACAO = _SQL_EVOLUCAO_SNAPSHOTS.replace(

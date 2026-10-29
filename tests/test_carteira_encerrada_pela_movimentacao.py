@@ -113,6 +113,22 @@ _EVENTOS_SEM_RF = [
      "CDB - CDBSEMCOBERTURA - EMISSOR H", 1000),
 ]
 
+# Terceiro investidor: o CDB da Posição da B3 de janeiro sai inteiro em
+# fevereiro, e o extrato antigo de fevereiro só traz uma ação zerada. Em
+# fevereiro não sobra nada no país: o ponto sai com zero, em vez de sumir. Em
+# março a corretora traz um fundo sem preço. Isso é falta de dado, e o ponto
+# continua de fora.
+U_ZERADO = str(uuid.uuid4())
+_FOTOS_ZERADO = {
+    "CDBZERADO": ("fixed_income", "b3_posicao", "2021-01-29", 500, 505.00),
+    "ACAO7": ("stock", "b3_posicao_detalhada", "2021-02-26", 0, 0.00),
+    "FUNDOSEMPRECO": ("fund", "xp_consolidado", "2021-03-31", 10, 0.00),
+}
+_EVENTOS_ZERADO = [
+    ("2021-02-10", "resgate antecipado", "Debito", "CDB",
+     "CDB - CDBZERADO - EMISSOR J", 500),
+]
+
 
 @pytest.fixture()
 def banco():
@@ -129,7 +145,8 @@ def banco():
         pytest.skip(f"armazém local indisponível: {exc}")
     with motor.begin() as conn:
         for usuario, fotos, eventos in ((U, _FOTOS, _EVENTOS),
-                                        (U_SEM_RF, _FOTOS_SEM_RF, _EVENTOS_SEM_RF)):
+                                        (U_SEM_RF, _FOTOS_SEM_RF, _EVENTOS_SEM_RF),
+                                        (U_ZERADO, _FOTOS_ZERADO, _EVENTOS_ZERADO)):
             for ticker, (classe, fonte, data, qtd, vm) in fotos.items():
                 ativo = str(uuid.uuid4())
                 conn.execute(text(
@@ -199,6 +216,20 @@ def test_posicao_da_b3_sem_a_aba_renda_fixa_nao_confirma_a_saida(banco):
         "nao prova que o CDB saiu da custodia"
     )
     assert curva["2021-06-30"] == round(1010.00 + 100.00 + 60.00, 2)
+
+
+def test_corte_com_tudo_encerrado_fica_na_curva_com_zero(banco):
+    with banco.connect() as conn:
+        linhas = conn.execute(text(inv._SQL_EVOLUCAO_SNAPSHOTS),
+                              {"uid": U_ZERADO}).fetchall()
+    curva = {str(r.mes): round(float(r.valor_mercado), 2) for r in linhas}
+    assert curva == {"2021-01-29": 505.00, "2021-02-26": 0.00}, (
+        "fevereiro e carteira vazia e fica, com zero; marco, com uma linha "
+        "sem preco que nada encerrou, e falta de dado e fica de fora"
+    )
+    # Carteira vazia custa zero, e nao "custo desconhecido".
+    assert [float(r.valor_investido_snapshot) for r in linhas
+            if str(r.mes) == "2021-02-26"] == [0.0]
 
 
 def test_sem_a_tabela_da_movimentacao_a_carteira_continua_de_pe(banco):
@@ -274,6 +305,17 @@ def test_so_a_posicao_da_b3_com_renda_fixa_confirma_a_saida():
         # qualquer Posicao voltaria a confirmar.
         assert cte.count("WHERE " + inv._SQL_B3_COM_RENDA_FIXA) == 1
         assert cte.count("WHERE s." + inv._SQL_FONTE_CUSTODIA_B3) == 1
+
+
+def test_corte_todo_encerrado_entra_na_curva_pelas_duas_provas():
+    for sql in (inv._SQL_EVOLUCAO_SNAPSHOTS, inv._SQL_EVOLUCAO_SNAPSHOTS_SEM_MOVIMENTACAO):
+        trecho = sql.split("cortes_zerados AS (")[1]
+        assert "LEFT JOIN b3_encerrados be" in trecho
+        assert "LEFT JOIN mov_encerrados me" in trecho
+        assert "HAVING BOOL_AND(be.asset_id IS NOT NULL OR me.asset_id IS NOT NULL)" in trecho
+        assert "FROM cortes_zerados z" in trecho, (
+            "a CTE existir nao basta: o corte zerado precisa sair na curva"
+        )
 
 
 # ── Carteira inteira encerrada: vazia, não o recálculo de portfolio_positions.
