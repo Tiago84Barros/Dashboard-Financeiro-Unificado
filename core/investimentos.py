@@ -306,8 +306,8 @@ _SQL_POSICOES = """
 # publica a linha zerada que o extrato antigo (`b3_posicao_detalhada`) publicava
 # e que `b3_encerrados` lê. Um CDB resgatado depois da última foto da corretora
 # some da Posição seguinte, e o DENSE_RANK volta a cair na foto da Rico, que
-# ainda o mostra. Em 2026-10-27 eram três CDBs, R$ 23,9 mil, resgatados
-# antecipadamente em outubro e de volta na renda fixa.
+# ainda o mostra. Foi assim que CDBs resgatados antecipadamente voltavam à
+# renda fixa.
 #
 # A Movimentação registra a saída explicitamente, e só duas provas encerram:
 #   1. direito de subscrição que venceu sem exercício;
@@ -336,7 +336,7 @@ _SQL_POSICOES = """
 # liquidação" é a venda da Negociação, não custódia, e fica de fora.
 #
 # Na Movimentação o CDB vem com ticker 'CDB' e o código no produto
-# ("CDB - CDB8266EXTI - BANCO ..."); o direito vem com o próprio ticker.
+# ("CDB - <código> - <emissor>"); o direito vem com o próprio ticker.
 _SQL_MOV_DO_ATIVO = "(m.ticker = a.ticker OR split_part(m.product, ' - ', 2) = a.ticker)"
 
 _SQL_MOV_QUANTIDADE = """lower(m.movement) IN (

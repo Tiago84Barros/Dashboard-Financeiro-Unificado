@@ -1,15 +1,17 @@
 """Posição resgatada sai da carteira pela Movimentação da B3.
 
-2026-10-29: três CDBs resgatados antecipadamente em outubro (R$ 23,9 mil)
-continuavam na renda fixa. O relatório de Posição novo da B3 (`b3_posicao`)
-não publica linha zerada -- só deixa de listar o ativo --, então
-`b3_encerrados` não tinha o que ler, e o DENSE_RANK caía na foto da Rico de
-2026-09-30, que ainda mostrava os três. A saída estava gravada na Movimentação
-desde o upload de 25/10.
+CDB resgatado antecipadamente continuava na renda fixa. O relatório de
+Posição novo da B3 (`b3_posicao`) não publica linha zerada -- só deixa de
+listar o ativo --, então `b3_encerrados` não tinha o que ler, e o DENSE_RANK
+caía na foto anterior da corretora, que ainda o mostrava. A saída estava
+gravada na Movimentação.
 
 A primeira metade roda as duas consultas de verdade contra o armazém local,
 num schema descartável, porque a regra mora num HAVING que só o Postgres
 avalia. Sem armazém, ela é pulada e sobra a segunda metade, estrutural.
+
+Os dados são sintéticos (AGENTS.md): tickers, datas e valores fictícios, que
+só preservam as relações de data e quantidade de cada caso.
 """
 from __future__ import annotations
 
@@ -43,57 +45,57 @@ _DDL = [
 
 # ticker -> (classe, fonte, data da foto, quantidade, valor de mercado)
 _FOTOS = {
-    "BBAS3": ("stock", "b3_posicao", "2026-10-27", 100, 2500.00),
-    "CDB8266EXTI": ("fixed_income", "xp_consolidado", "2026-09-30", 12101, 12324.09),
-    "CDB9260UQ0S": ("fixed_income", "xp_consolidado", "2026-09-30", 10000, 10104.58),
-    "CDB826EAKY2": ("fixed_income", "xp_consolidado", "2026-09-30", 1500, 1516.48),
-    "ITSA4": ("stock", "xp_consolidado", "2026-09-30", 100, 1000.00),
-    "KNCR12": ("reit", "b3_posicao_detalhada", "2026-10-06", 18, 7.92),
-    # resgate depois da última Posição da B3: só a Rico o via, nada confirma
-    "CDBOUTRACORR": ("fixed_income", "xp_consolidado", "2026-09-30", 800, 808.00),
+    "ACAO3": ("stock", "b3_posicao", "2021-06-25", 10, 300.00),
+    "CDBRESGTOTAL": ("fixed_income", "xp_consolidado", "2021-05-31", 1000, 1010.00),
+    "CDBRESGPARC": ("fixed_income", "xp_consolidado", "2021-05-31", 2000, 2020.00),
+    "CDBMESMODIA": ("fixed_income", "xp_consolidado", "2021-05-31", 400, 404.00),
+    "ACAO4": ("stock", "xp_consolidado", "2021-05-31", 20, 200.00),
+    "FUND12": ("reit", "b3_posicao_detalhada", "2021-06-04", 10, 5.00),
+    # resgate depois da última Posição da B3: só a corretora o via, nada confirma
+    "CDBOUTRACORR": ("fixed_income", "xp_consolidado", "2021-05-31", 800, 808.00),
     # a foto vencedora já é a custódia da B3: mesmo escopo da Movimentação
-    "CDBCUSTODIAB3": ("fixed_income", "b3_posicao", "2026-10-27", 500, 505.00),
+    "CDBCUSTODIAB3": ("fixed_income", "b3_posicao", "2021-06-25", 500, 505.00),
     # recebe transferência de fora e resgata só o que chegou
-    "CDBCHEGOU": ("fixed_income", "b3_posicao", "2026-10-27", 300, 303.00),
+    "CDBCHEGOU": ("fixed_income", "b3_posicao", "2021-06-25", 300, 303.00),
     # troca de corretora e depois resgata tudo
-    "CDBTROCOU": ("fixed_income", "b3_posicao", "2026-10-27", 200, 202.00),
+    "CDBTROCOU": ("fixed_income", "b3_posicao", "2021-06-25", 200, 202.00),
 }
 
 # (data, movimento, sentido, ticker, produto, quantidade)
 _EVENTOS = [
     # resgate integral depois da foto: encerra
-    ("2026-10-07", "resgate antecipado", "Debito", "CDB",
-     "CDB - CDB8266EXTI - BANCO A", 12101),
+    ("2021-06-07", "resgate antecipado", "Debito", "CDB",
+     "CDB - CDBRESGTOTAL - EMISSOR A", 1000),
     # resgate parcial: não encerra
-    ("2026-10-07", "resgate antecipado", "Debito", "CDB",
-     "CDB - CDB9260UQ0S - BANCO B", 4000),
+    ("2021-06-07", "resgate antecipado", "Debito", "CDB",
+     "CDB - CDBRESGPARC - EMISSOR B", 800),
     # resgate no próprio dia da foto: a foto já pode tê-lo; não encerra
-    ("2026-09-30", "resgate antecipado", "Debito", "CDB",
-     "CDB - CDB826EAKY2 - BANCO C", 1500),
+    ("2021-05-31", "resgate antecipado", "Debito", "CDB",
+     "CDB - CDBMESMODIA - EMISSOR C", 400),
     # ação: a regra da renda fixa não vale, nem com rótulo de venda
-    ("2026-10-10", "venda", "Debito", "ITSA4", "ITSA4 - ITAUSA S.A.", 100),
+    ("2021-06-10", "venda", "Debito", "ACAO4", "ACAO4 - EMPRESA FICTICIA S.A.", 20),
     # direito que venceu sem exercício: encerra, qualquer que seja a classe
-    ("2026-10-19", "direitos de subscrição - não exercido", "Debito", "KNCR12",
-     "KNCR12 - KINEA RENDIMENTOS IMOBILIÁRIOS FII", 18),
-    # resgate integral depois da última Posição da B3 (27/10), foto da Rico:
-    # pode ter sido o mesmo código em outra corretora; não encerra
-    ("2026-10-28", "resgate antecipado", "Debito", "CDB",
-     "CDB - CDBOUTRACORR - BANCO D", 800),
+    ("2021-06-15", "direitos de subscrição - não exercido", "Debito", "FUND12",
+     "FUND12 - FUNDO FICTICIO FII", 10),
+    # resgate integral depois da última Posição da B3 (25/06), foto da
+    # corretora: pode ter sido o mesmo código em outra corretora; não encerra
+    ("2021-06-28", "resgate antecipado", "Debito", "CDB",
+     "CDB - CDBOUTRACORR - EMISSOR D", 800),
     # resgate integral depois de foto que é da própria B3: encerra
-    ("2026-10-28", "resgate antecipado", "Debito", "CDB",
-     "CDB - CDBCUSTODIAB3 - BANCO E", 500),
+    ("2021-06-28", "resgate antecipado", "Debito", "CDB",
+     "CDB - CDBCUSTODIAB3 - EMISSOR E", 500),
     # entraram 300 de fora e saíram 300: os 300 da foto continuam
-    ("2026-10-28", "transferencia", "Credito", "CDB",
-     "CDB - CDBCHEGOU - BANCO F", 300),
-    ("2026-10-28", "resgate antecipado", "Debito", "CDB",
-     "CDB - CDBCHEGOU - BANCO F", 300),
+    ("2021-06-28", "transferencia", "Credito", "CDB",
+     "CDB - CDBCHEGOU - EMISSOR F", 300),
+    ("2021-06-28", "resgate antecipado", "Debito", "CDB",
+     "CDB - CDBCHEGOU - EMISSOR F", 300),
     # a troca de corretora soma zero, e o resgate integral encerra
-    ("2026-10-28", "transf. sem financeiro", "Debito", "CDB",
-     "CDB - CDBTROCOU - BANCO G", 200),
-    ("2026-10-28", "transf. sem financeiro", "Credito", "CDB",
-     "CDB - CDBTROCOU - BANCO G", 200),
-    ("2026-10-28", "resgate antecipado", "Debito", "CDB",
-     "CDB - CDBTROCOU - BANCO G", 200),
+    ("2021-06-28", "transf. sem financeiro", "Debito", "CDB",
+     "CDB - CDBTROCOU - EMISSOR G", 200),
+    ("2021-06-28", "transf. sem financeiro", "Credito", "CDB",
+     "CDB - CDBTROCOU - EMISSOR G", 200),
+    ("2021-06-28", "resgate antecipado", "Debito", "CDB",
+     "CDB - CDBTROCOU - EMISSOR G", 200),
 ]
 
 
@@ -149,7 +151,7 @@ def test_so_a_saida_provada_sai_da_carteira_de_hoje(banco):
     with banco.connect() as conn:
         assert inv._tem_movimentacao(conn)
         tickers = _carteira(conn, inv._SQL_POSICOES_SNAPSHOT)
-    assert tickers == {"BBAS3", "CDB9260UQ0S", "CDB826EAKY2", "ITSA4",
+    assert tickers == {"ACAO3", "CDBRESGPARC", "CDBMESMODIA", "ACAO4",
                        "CDBOUTRACORR", "CDBCHEGOU"}, (
         "sai o resgate integral que a custodia da B3 confirma (com ou sem "
         "troca de corretora antes) e o direito vencido; ficam o resgate "
@@ -161,13 +163,13 @@ def test_so_a_saida_provada_sai_da_carteira_de_hoje(banco):
 def test_curva_so_tira_o_cdb_do_corte_posterior_ao_resgate(banco):
     with banco.connect() as conn:
         curva = _curva(conn, inv._SQL_EVOLUCAO_SNAPSHOTS)
-    # Setembro ainda tinha o CDB resgatado em outubro.
-    assert curva["2026-09-30"] == round(
-        12324.09 + 10104.58 + 1516.48 + 1000.00 + 808.00, 2)
-    # Outubro: sem o CDB resgatado e sem o direito vencido. Os eventos de
-    # 28/10 sao posteriores ao corte de 27/10 e nao entram nele.
-    assert curva["2026-10-27"] == round(
-        2500.00 + 10104.58 + 1516.48 + 1000.00 + 808.00 + 505.00
+    # Maio ainda tinha o CDB resgatado em junho.
+    assert curva["2021-05-31"] == round(
+        1010.00 + 2020.00 + 404.00 + 200.00 + 808.00, 2)
+    # Junho: sem o CDB resgatado e sem o direito vencido. Os eventos de
+    # 28/06 sao posteriores ao corte de 25/06 e nao entram nele.
+    assert curva["2021-06-25"] == round(
+        300.00 + 2020.00 + 404.00 + 200.00 + 808.00 + 505.00
         + 303.00 + 202.00, 2)
 
 
@@ -178,8 +180,8 @@ def test_sem_a_tabela_da_movimentacao_a_carteira_continua_de_pe(banco):
         assert not inv._tem_movimentacao(conn)
         tickers = _carteira(conn, inv._SQL_POSICOES_SNAPSHOT_SEM_MOVIMENTACAO)
         curva = _curva(conn, inv._SQL_EVOLUCAO_SNAPSHOTS_SEM_MOVIMENTACAO)
-    assert "CDB8266EXTI" in tickers
-    assert "2026-10-27" in curva
+    assert "CDBRESGTOTAL" in tickers
+    assert "2021-06-25" in curva
 
 
 # ── Estrutura: vale também onde não há armazém (CI).
@@ -225,7 +227,7 @@ def test_variante_sem_tabela_nao_cita_a_tabela():
 
 
 def test_saida_da_renda_fixa_so_vale_com_a_custodia_da_b3_confirmando():
-    # A Movimentação soma todas as corretoras; a foto da Rico vê só a Rico.
+    # A Movimentação soma todas as corretoras; a foto de uma corretora vê só ela.
     assert "r.foto_da_custodia_b3" in inv._SQL_MOV_PROVA_ENCERRAMENTO
     assert "<= r.custodia_b3" in inv._SQL_MOV_PROVA_ENCERRAMENTO
     trecho = inv._SQL_EVOLUCAO_SNAPSHOTS.split("mov_encerrados AS (")[1].split("xp_snaps AS (")[0]
