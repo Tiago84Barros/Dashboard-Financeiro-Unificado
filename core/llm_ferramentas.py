@@ -518,21 +518,50 @@ def preco_diario_recente(tickers=None, pregoes=PREGOES_PADRAO) -> str:
     except (TypeError, ValueError):
         n = min(PREGOES_PADRAO, len(datas))
     blocos = [pr.cabecalho(art, datetime.now(timezone.utc)).rstrip(":") + "."]
+    series: list[tuple[int, str, list[str]]] = []
     for tk in pedidos:
         m = pr.movimento(art, tk)
         if m is None:
             blocos.append(f"{tk}: sem pregão no COTAHIST nos últimos 21 pregões (ticker "
                           "antigo, sem negócio, ou ação americana: para ela use preco_ativo).")
             continue
-        dias = "; ".join(f"{date.fromisoformat(d):%d/%m} "
-                         + (f"R$ {_br(c)}" if c else "sem negócio")
-                         for d, c in pr.fechamentos(art, tk, n))
-        blocos.append(pr.linha_ativo(m).strip() + f"\nFechamentos ({n} pregões): {dias}.")
+        dias = [f"{date.fromisoformat(d):%d/%m} " + (f"R$ {_br(c)}" if c else "sem negócio")
+                for d, c in pr.fechamentos(art, tk, n)]
+        series.append((len(blocos), pr.linha_ativo(m).strip(), dias))
+        blocos.append("")
     if excedentes:
         blocos.append(f"Não consultados (teto de {MAX_TICKERS} por chamada): "
                       f"{', '.join(excedentes)}.")
     blocos.append("Fechamento bruto: provento e desdobramento não estão descontados.")
+    for pos, texto in _fechamentos_no_teto(series, n, len("\n\n".join(blocos))):
+        blocos[pos] = texto
     return "\n\n".join(blocos)
+
+
+def _fechamentos_no_teto(series: Sequence[tuple[int, str, list[str]]], n: int,
+                         fixo: int) -> list[tuple[int, str]]:
+    """Reparte o teto do ``executar`` entre as séries, sem cortar ativo nenhum.
+
+    Com 4 ativos e 63 pregões o texto inteiro passava do teto, e o corte do fim
+    levava o 4º ativo e a ponta mais nova do 3º. Aqui cada ativo fica com o
+    resumo e os pregões mais novos que cabem na sua parte; a série mais curta
+    devolve o que não usou às seguintes, e a encurtada diz que foi encurtada.
+    """
+    sobra = MAX_CHARS_RESULTADO - fixo
+    saida: list[tuple[int, str]] = []
+    ordem = sorted(series, key=lambda s: len("; ".join(s[2])))
+    for k, (pos, resumo, dias) in enumerate(ordem):
+        cota = sobra // (len(ordem) - k)
+        ponta = len(dias)
+        texto = f"{resumo}\nFechamentos ({n} pregões): {'; '.join(dias)}."
+        while len(texto) > cota and ponta > 1:
+            ponta -= 1
+            texto = (f"{resumo}\nFechamentos (últimos {ponta} de {n} pregões; os mais "
+                     f"velhos não couberam no teto da resposta — peça menos ativos "
+                     f"para vê-los): {'; '.join(dias[-ponta:])}.")
+        sobra -= len(texto)
+        saida.append((pos, texto))
+    return saida
 
 
 # ─────────────────────────────────────────────────────────────────────────────

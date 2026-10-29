@@ -235,7 +235,7 @@ def amplitude(art: Mapping, *, top: int = AMPLITUDE_TOP, pregoes: int = 5) -> di
             "pregoes": pregoes, "desde": (art.get("pregoes") or [])[-1 - pregoes]}
 
 
-def _dias_uteis_entre(inicio: date, fim: date) -> int:
+def dias_uteis_entre(inicio: date, fim: date) -> int:
     n, d = 0, inicio
     while d < fim:
         d += timedelta(days=1)
@@ -280,7 +280,7 @@ def cabecalho(art: Mapping, agora: datetime) -> str:
             avisos.append(f"VELHO: arquivo gerado há {horas:.0f} h")
     except (TypeError, ValueError):
         avisos.append("data de geração ilegível")
-    atraso = _dias_uteis_entre(date.fromisoformat(base), agora.date())
+    atraso = dias_uteis_entre(date.fromisoformat(base), agora.date())
     if atraso > ATRASO_UTEIS:
         avisos.append(f"ÚLTIMO PREGÃO HÁ {atraso} DIAS ÚTEIS: não descreve a bolsa de hoje")
     if avisos:
@@ -291,8 +291,9 @@ def cabecalho(art: Mapping, agora: datetime) -> str:
 NOTA_LEITURA = (
     "  Leitura: é o \"agora\" do preço. Prevalece sobre o fechamento mensal da "
     "TRAJETÓRIA e da ferramenta preco_ativo quando eles forem mais velhos. "
-    "Manchete que o movimento de preço confirma é fato medido: cite a variação "
-    "com data e fonte em vez de descartá-la. Fechamento bruto: provento e "
+    "O pregão confirma o movimento que a manchete descreve, não a causa que ela "
+    "aponta: cite a variação com data junto da manchete, com a explicação "
+    "atribuída à fonte, em vez de descartá-la. Fechamento bruto: provento e "
     "desdobramento não estão descontados."
 )
 

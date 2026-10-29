@@ -2211,6 +2211,9 @@ FLOW_CONFIGURACOES = FlowSpec(
                 "que não é 0% (SECOES_SEM_AFIRMACAO)",
                 "Subabas fora da nota, nomeadas no card da seção: Previsão de Lucros e "
                 "Carteira 20 (Empresas B3), Inteligência dos Ativos (Investimentos)",
+                "Empresas B3 e Seleção de FIIs medem também o 'Pregão diário (chat)': a "
+                "idade dos pregões do COTAHIST que o chat do ativo cita (peso 0,05, "
+                "tirado do bloco de frescor, que segue somando 0,25)",
                 "Apoio analítico — não é recomendação",
             ),
             "Medir a cada abertura custava uma varredura inteira do banco por clique de menu. "

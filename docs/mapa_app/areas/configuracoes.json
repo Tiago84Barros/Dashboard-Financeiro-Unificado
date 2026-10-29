@@ -72,9 +72,9 @@
         {
           "nome": "Confiança por seção",
           "resumo": "Um cartão para cada tela do menu",
-          "explicacao": "Sete cartões: Dashboard Geral, Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global. Cada cartão abre os itens que formam a nota e a prova por trás de cada um.",
+          "explicacao": "Sete cartões: Dashboard Geral, Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global. Cada cartão abre os itens que formam a nota e a prova por trás de cada um. Em Empresas B3 e Seleção de FIIs, o item 'Pregão diário (chat)' mede a idade dos pregões que o chat do ativo cita.",
           "so_admin": false,
-          "fonte": "views/confianca.py:675; core/confianca_secao.py:680",
+          "fonte": "views/confianca.py:675; core/confianca_secao.py:754",
           "filhos": []
         },
         {

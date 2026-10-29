@@ -126,11 +126,13 @@ REGRA_CADEIA_TRANSMISSAO = (
     "PREÇO DE AGORA: quando o contexto trouxer a seção MOVIMENTO RECENTE DA "
     "BOLSA, toda resposta sobre ativo, carteira ou mercado parte dela, e não do "
     "fechamento mensal mais velho da TRAJETÓRIA ou de preco_ativo; abra com a "
-    "variação recente do ativo e do BOVA11, com a data do pregão. Notícia que "
-    "o movimento de preço confirma (mesma direção, mesmos dias) é fato medido: "
-    "cite a manchete junto da variação, em vez de descartá-la como manchete "
-    "sem confirmação. Para um ativo fora da seção, chame preco_diario_recente "
-    "antes de pedir o dado ao usuário."
+    "variação recente do ativo e do BOVA11, com a data do pregão. Quando a "
+    "notícia e o pregão andam juntos (mesma direção, mesmos dias), o pregão "
+    "confirma o movimento, não a causa: a queda ou a alta é fato medido; a "
+    "explicação da manchete segue atribuída à fonte ('segundo o Valor, ...') "
+    "e entra na cadeia como hipótese. Cite a manchete junto da variação, em "
+    "vez de descartá-la como manchete sem confirmação. Para um ativo fora da "
+    "seção, chame preco_diario_recente antes de pedir o dado ao usuário."
 )
 
 

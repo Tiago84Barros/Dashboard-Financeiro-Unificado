@@ -432,6 +432,20 @@ def test_bloco_traz_o_movimento_entre_trajetoria_e_cenarios(monkeypatch):
     assert "em vez de descartá-la como manchete sem confirmação" in regra
 
 
+def test_preco_confirma_o_movimento_nao_a_causa_da_manchete():
+    """O pregão mede a queda; a explicação da manchete segue atribuída à fonte.
+
+    Promover a causa a fato medido apagaria a fronteira entre fato e inferência
+    (AGENTS.md); descartar a manchete repetiria a análise de 29/10/2026.
+    """
+    import core.contexto_mercado as cm
+
+    for texto in (cm.REGRA_CADEIA_TRANSMISSAO, pr.NOTA_LEITURA):
+        assert "confirma é fato medido" not in texto
+        assert "confirma (mesma direção, mesmos dias) é fato medido" not in texto
+        assert "não a causa" in texto and "atribuída à fonte" in texto
+
+
 def test_movimento_recebe_so_os_ativos_da_b3(monkeypatch):
     import core.contexto_mercado as cm
 
@@ -523,6 +537,29 @@ def test_preco_diario_recente(monkeypatch, art):
     assert blocos[-1] == "Fechamento bruto: provento e desdobramento não estão descontados."
 
 
+def test_preco_diario_recente_cabe_inteiro_com_4_ativos_e_63_pregoes(monkeypatch):
+    """O teto do ``executar`` cortava o 4º ativo e a ponta da série do 3º.
+
+    Cada ativo leva o resumo inteiro e a ponta mais nova da série; o que sobra
+    do teto é dividido entre eles, e a série encurtada diz que foi encurtada.
+    """
+    longas = {tk: ("acao", [1234.56 + i for i in range(63)])
+              for tk in ("AAAA3", "BBBB4", "DDDD3", "EEEE3")}
+    art63 = _art(longas, n=63)
+    monkeypatch.setattr(pr, "carregar", lambda: art63)
+    texto = lf.executar("preco_diario_recente",
+                        {"tickers": list(longas), "pregoes": 63})
+    assert len(texto) <= lf.MAX_CHARS_RESULTADO
+    assert "resultado cortado" not in texto
+    ultimo = f"{date.fromisoformat(art63['pregoes'][-1]):%d/%m}"
+    blocos = texto.split("\n\n")
+    for tk, bloco in zip(longas, blocos[1:5]):
+        assert bloco.startswith(f"{tk} (NOME {tk}, ação)")
+        assert "Fechamentos (últimos " in bloco and " de 63 pregões" in bloco
+        assert bloco.endswith(f"{ultimo} R$ 1.296,56.")
+    assert blocos[-1] == "Fechamento bruto: provento e desdobramento não estão descontados."
+
+
 def test_preco_diario_recente_argumentos_ruins(monkeypatch, art):
     monkeypatch.setattr(pr, "carregar", lambda: art)
     assert "Fechamentos (21 pregões)" in lf.preco_diario_recente("AAAA3; BBBB4", "x")
@@ -584,3 +621,46 @@ def test_ferramenta_registrada_entre_as_de_mercado():
     nomes = [f.nome for f in lf.FERRAMENTAS_MERCADO]
     assert nomes.index("preco_ativo") < nomes.index("preco_diario_recente")
     assert "preco_diario_recente" in lf.REGRA_FERRAMENTAS
+
+
+# -- 🎯 Grau de Confiança ------------------------------------------------------
+
+def test_grau_de_confianca_mede_o_pregao_que_o_chat_cita(monkeypatch, art):
+    """O chat do ativo cita o pregão diário; a nota mede a idade dele.
+
+    Mesma régua do cabeçalho que o chat lê: até ``ATRASO_UTEIS`` dias úteis é o
+    atraso normal da B3; com duas semanas úteis o chat fala de outra bolsa.
+    """
+    import core.confianca_secao as cs
+
+    monkeypatch.setattr(pr, "carregar", lambda: art)
+    fresco = cs._pregao_do_chat(hoje=date(2026, 10, 14))
+    assert (fresco.nome, fresco.pct, fresco.peso) == (cs.PREGAO_DO_CHAT, 100.0, 0.05)
+    assert "COTAHIST" in fresco.evidencia and "12/10" in fresco.evidencia
+    assert "fechamento bruto" in fresco.evidencia and "B3 e FII" in fresco.evidencia
+    assert cs._pregao_do_chat(hoje=date(2026, 10, 30)).pct == 0.0
+
+    monkeypatch.setattr(pr, "carregar", lambda: {})
+    ausente = cs._pregao_do_chat(hoje=date(2026, 10, 14))
+    assert ausente.pct == 0.0 and "ausente" in ausente.evidencia
+
+
+def test_b3_e_fii_repartem_o_frescor_com_o_pregao_do_chat(monkeypatch, art):
+    """O bloco de frescor (0,25) foi repartido, não ampliado; e o pregão é lido
+    do arquivo publicado, então segue medido com o banco fora do ar."""
+    import core.confianca_secao as cs
+
+    class _Morta:
+        def connect(self):
+            raise RuntimeError("sem banco")
+
+        begin = connect
+
+    monkeypatch.setattr("core.database.get_engine", lambda *a, **k: _Morta())
+    monkeypatch.setattr(pr, "carregar", lambda: art)
+    for secao in (cs.confianca_b3, cs.confianca_fii):
+        s = secao(engine=_Morta())
+        pesos = {c.nome: c.peso for c in s.componentes}
+        assert abs(pesos["Frescor"] + pesos[cs.PREGAO_DO_CHAT] - 0.25) < 1e-9, s.secao
+        assert abs(sum(pesos.values()) - 1.0) < 1e-9, s.secao
+        assert next(c for c in s.componentes if c.nome == cs.PREGAO_DO_CHAT).medido

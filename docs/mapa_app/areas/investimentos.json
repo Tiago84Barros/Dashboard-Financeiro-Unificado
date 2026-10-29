@@ -435,9 +435,9 @@
             {
               "nome": "Converse sobre sua carteira",
               "resumo": "Chat com IA sobre a carteira inteira",
-              "explicacao": "Conversa com a inteligência artificial, que responde usando os dados desta aba, juros, inflação, câmbio e notícias. Tem perguntas sugeridas, o botão 'Limpar chat' e uma caixa para enviar os valores em reais (por padrão vão só porcentagens). Sem IA configurada, aparece 'Esta conversa não está disponível no momento'.",
+              "explicacao": "Conversa com a inteligência artificial, que responde usando os dados desta aba, juros, inflação, câmbio, notícias e os pregões diários recentes da bolsa de cada ação e fundo da carteira. Tem perguntas sugeridas, o botão 'Limpar chat' e uma caixa para enviar os valores em reais (por padrão vão só porcentagens). Sem IA configurada, aparece 'Esta conversa não está disponível no momento'.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3901 (design/chat_carteira.py:113)",
+              "fonte": "views/investimentos.py:3901 (design/chat_carteira.py:114); core/pregoes_recentes.py",
               "filhos": []
             }
           ]
