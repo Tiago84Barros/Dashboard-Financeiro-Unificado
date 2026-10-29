@@ -238,7 +238,7 @@ def renda_por_evento(df):
     (``scripts/medir_proventos_b3.py``): 86,0% dos ticker-anos batem a 1% sem
     o minimo, 83,9% com ele. A medida e circular -- a resposta mais nova e a
     referencia, nao a verdade --; diante da CVM, nos FIIs, as duas variantes
-    empatam (69,4% e 69,5% a ate 5%).
+    empatam (69,5% e 69,6% a ate 5%).
 
     Dois limites do desenho, ambos so no caminho de reserva (o ticker que o
     arquivo publicado de ``core.proventos_b3`` nao cobre):

@@ -16,10 +16,11 @@ Essa medida é circular: a referência é a própria fonte do arquivo, que bate
 se a brapi está certa. A única referência independente é a CVM, e só para FII
 (rendimento implícito do informe mensal, 1.450 ticker-anos de 327 fundos): o
 arquivo fica a até 5% dela em 69,7% dos ticker-anos, a regra de leitura em
-69,4% e a soma crua em 60,3%. O arquivo corrige a soma crua; diante da CVM, ele
+69,5% e a soma crua em 60,4%. O arquivo corrige a soma crua; diante da CVM, ele
 e a regra empatam. A CVM também erra -- o fundo que não paga no mês seguinte ao
-da competência desloca valor entre anos --, e o desacordo é teto para o erro
-da brapi. Na ação não há fonte independente para conferir.
+da competência desloca valor entre anos --, e o desacordo é entre duas fontes
+imperfeitas: não é o erro da brapi nem um limite para ele, porque as duas podem
+errar no mesmo sentido. Na ação não há fonte independente para conferir.
 
 O publicador (``scripts/publish_proventos_b3.py``) lê a foto no armazém e grava
 a soma anual em ``data/public/proventos_b3.json.gz``. Este módulo guarda as

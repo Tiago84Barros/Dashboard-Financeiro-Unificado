@@ -20,12 +20,12 @@ def _anual(*linhas):
     return pd.DataFrame(list(linhas), columns=["ticker", "ano", "total"])
 
 
-def _obs(ticker, competencias, *, dy=0.01, nav=100.0):
-    linhas = [(ticker, ref, metrica, valor)
+def _obs(ticker, competencias, *, dy=0.01, nav=100.0, source=m.FONTE_CVM):
+    linhas = [(ticker, ref, metrica, source, valor)
               for ref in competencias
               for metrica, valor in (("dy_patrimonial_mes", dy), ("nav_per_share", nav))]
     return pd.DataFrame(linhas, columns=["ticker", "reference_date", "metric_name",
-                                         "value_numeric"])
+                                         "source", "value_numeric"])
 
 
 def _meses(inicio, n):
@@ -70,6 +70,25 @@ def test_mes_sem_uma_das_metricas_nao_fecha_o_ano():
     obs = obs[~((obs["reference_date"] == "2023-05-01")
                 & (obs["metric_name"] == "nav_per_share"))]
     assert m.rendimento_cvm(obs, ate_ano=2025).empty
+
+
+def test_valor_patrimonial_de_outra_fonte_nao_entra_na_referencia():
+    cvm = _obs("AAAA11", _meses("2022-12-01", 12))
+    # a brapi grava nav_per_share na mesma tabela, no mesmo mês, com outro valor
+    brapi = _obs("AAAA11", _meses("2022-12-01", 12), nav=500.0, source="brapi_fii_v2")
+    brapi = brapi[brapi["metric_name"] == "nav_per_share"]
+    r = m.rendimento_cvm(pd.concat([brapi, cvm]), ate_ano=2025)
+    assert r.to_dict("records") == [{"ticker": "AAAA11", "ano": 2023, "total": 12.0}]
+
+
+def test_metrica_ausente_inteira_nao_derruba_a_medida():
+    obs = _obs("AAAA11", _meses("2022-12-01", 12))
+    so_nav = obs[obs["metric_name"] == "nav_per_share"]
+    assert m.rendimento_cvm(so_nav, ate_ano=2025).empty
+    # só o valor patrimonial da brapi, sem nada da CVM
+    brapi = _obs("AAAA11", _meses("2022-12-01", 12), source="brapi_fii_v2")
+    assert m.rendimento_cvm(brapi[brapi["metric_name"] == "nav_per_share"],
+                            ate_ano=2025).empty
 
 
 def test_ano_aberto_fica_fora_da_cvm():

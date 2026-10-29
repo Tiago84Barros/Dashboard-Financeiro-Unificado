@@ -24,9 +24,11 @@ Definições
    informe mensal (``Percentual_Dividend_Yield_Mes`` sobre o valor patrimonial
    da cota), com o pagamento suposto no mês seguinte ao da competência. Só ano
    fechado com as doze competências e rendimento positivo, e só ticker-ano que
-   o arquivo tem (junção interna). A CVM também erra: o fundo que paga no mês
-   da competência, ou dois meses depois, desloca valor entre dezembro e
-   janeiro. O desacordo medido é teto para o erro da brapi, não o erro.
+   o arquivo tem (junção interna). Só observações de ``source =
+   'cvm_informe_mensal'``. A CVM também erra: o fundo que paga no mês da
+   competência, ou dois meses depois, desloca valor entre dezembro e janeiro.
+   O desacordo medido é entre duas fontes imperfeitas; não é o erro da brapi
+   nem um limite para ele, porque as duas podem errar no mesmo sentido.
 
 Uso::
 
@@ -54,14 +56,20 @@ SQL_CRUA = """
      WHERE event_date IS NOT NULL
      GROUP BY 1, 2"""
 
-#: O valor mais novo de cada mês: o informe reapresentado substitui o original.
+#: Só a fonte da CVM entra na referência: a ingestão da brapi grava
+#: ``nav_per_share`` na mesma tabela, e misturá-lo tiraria a independência.
+FONTE_CVM = "cvm_informe_mensal"
+
+#: O valor mais novo de cada mês e fonte: o informe reapresentado substitui o
+#: original. :func:`rendimento_cvm` descarta o que não é da CVM.
 SQL_CVM = """
-    SELECT DISTINCT ON (ticker, reference_date, metric_name)
-           ticker, reference_date, metric_name, value_numeric
+    SELECT DISTINCT ON (ticker, reference_date, metric_name, source)
+           ticker, reference_date, metric_name, source, value_numeric
       FROM market.fii_metric_observations
      WHERE metric_name IN ('dy_patrimonial_mes', 'nav_per_share')
        AND value_numeric IS NOT NULL
-     ORDER BY ticker, reference_date, metric_name, knowledge_at DESC NULLS LAST, id DESC"""
+     ORDER BY ticker, reference_date, metric_name, source,
+              knowledge_at DESC NULLS LAST, id DESC"""
 
 
 def anuais_do_arquivo(publicado: dict):
@@ -106,12 +114,16 @@ def concordancia(referencia, candidato, tickers, *, ate_ano: int | None = None,
 def rendimento_cvm(obs, *, ate_ano: int):
     """``ticker, ano, total`` do rendimento implícito do informe mensal.
 
-    ``obs``: ``ticker, reference_date, metric_name, value_numeric``, como
-    :data:`SQL_CVM` devolve. Só o ano com as doze competências."""
+    ``obs``: ``ticker, reference_date, metric_name, source, value_numeric``,
+    como :data:`SQL_CVM` devolve. Só observações de :data:`FONTE_CVM` e só o
+    ano com as doze competências. Métrica que falta inteira não derruba a
+    medida: o ano só não fecha."""
     import pandas as pd
 
+    obs = obs[obs["source"] == FONTE_CVM]
     w = (obs.pivot_table(index=["ticker", "reference_date"], columns="metric_name",
                          values="value_numeric", aggfunc="first")
+            .reindex(columns=["dy_patrimonial_mes", "nav_per_share"])
             .dropna().reset_index())
     if w.empty:
         return pd.DataFrame(columns=["ticker", "ano", "total"])
