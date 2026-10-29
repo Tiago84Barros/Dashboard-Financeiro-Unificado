@@ -678,18 +678,31 @@ _SQL_POSICOES_EXTRAS_FORA_SNAPSHOT = """
 """
 
 
-# Foto de custódia = extrato da B3 ou consolidado da corretora. A do Tesouro
-# (td-snap-, inclusive as seis linhas antigas rotuladas xp_consolidado) não
-# conta: ela não diz nada sobre ações e FIIs.
-_SQL_TEM_FOTO_DE_CUSTODIA = """
+# Foto de custódia = Posição ou extrato da B3, ou consolidado da corretora. A
+# do Tesouro (td-snap-, inclusive as seis linhas antigas rotuladas
+# xp_consolidado) não conta: ela não diz nada sobre ações e FIIs.
+_TEM_FOTO_DAS_FONTES = """
     SELECT EXISTS (
         SELECT 1
         FROM   portfolio_position_snapshots
         WHERE  user_id = :uid
           AND  COALESCE(source_id, '') NOT LIKE 'td-snap-%'
-          AND  source_table IN ('b3_posicao_detalhada', 'xp_consolidado', 'xp_positions')
+          AND  source_table IN ({fontes})
     )
 """
+
+# Carteira de hoje: com custódia, o recálculo das negociações não completa a
+# foto. A Posição da B3 consolida todas as corretoras; sem ela na lista, quem
+# só tinha a Posição recebia de volta pelo recálculo o CDB que a Movimentação
+# encerrou.
+_SQL_TEM_FOTO_DE_CUSTODIA = _TEM_FOTO_DAS_FONTES.format(
+    fontes="'b3_posicao', 'b3_posicao_detalhada', 'xp_consolidado', 'xp_positions'")
+
+# Curva: sem estas fontes, ela é remontada mês a mês pelas negociações. A
+# Posição da B3 segue de fora, como sempre esteve: uma exportação dá um ponto
+# só, e quem só tem ela perderia o histórico mensal.
+_SQL_TEM_CURVA_DE_CUSTODIA = _TEM_FOTO_DAS_FONTES.format(
+    fontes="'b3_posicao_detalhada', 'xp_consolidado', 'xp_positions'")
 
 # Foto existe mas a consulta volta vazia: tudo foi encerrado (zero da B3 ou
 # saída provada na Movimentação). É carteira vazia, não falta de dado -- cair
@@ -2482,7 +2495,7 @@ def _evolucao_real() -> dict:
                 # um ponto so; a carteira e remontada mes a mes pelas
                 # negociacoes e movimentacoes.
                 reconstruidos = None
-                if not conn.execute(text(_SQL_TEM_FOTO_DE_CUSTODIA), {"uid": owner}).scalar():
+                if not conn.execute(text(_SQL_TEM_CURVA_DE_CUSTODIA), {"uid": owner}).scalar():
                     reconstruidos = _pontos_reconstruidos(conn, owner)
                     if reconstruidos:
                         snap_rows = [

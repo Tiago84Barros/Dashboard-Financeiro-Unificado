@@ -129,6 +129,19 @@ _EVENTOS_ZERADO = [
      "CDB - CDBZERADO - EMISSOR J", 500),
 ]
 
+# Quarto investidor: só tem a Posição nova da B3. O CDB dela sai inteiro depois
+# da foto. Se a Posição não contasse como custódia, o recálculo das negociações
+# completaria a carteira e traria o CDB de volta.
+U_SO_POSICAO = str(uuid.uuid4())
+_FOTOS_SO_POSICAO = {
+    "CDBSOPOSICAO": ("fixed_income", "b3_posicao", "2021-07-30", 200, 204.00),
+    "ACAO8": ("stock", "b3_posicao", "2021-07-30", 10, 90.00),
+}
+_EVENTOS_SO_POSICAO = [
+    ("2021-08-05", "resgate antecipado", "Debito", "CDB",
+     "CDB - CDBSOPOSICAO - EMISSOR K", 200),
+]
+
 
 @pytest.fixture()
 def banco():
@@ -146,7 +159,9 @@ def banco():
     with motor.begin() as conn:
         for usuario, fotos, eventos in ((U, _FOTOS, _EVENTOS),
                                         (U_SEM_RF, _FOTOS_SEM_RF, _EVENTOS_SEM_RF),
-                                        (U_ZERADO, _FOTOS_ZERADO, _EVENTOS_ZERADO)):
+                                        (U_ZERADO, _FOTOS_ZERADO, _EVENTOS_ZERADO),
+                                        (U_SO_POSICAO, _FOTOS_SO_POSICAO,
+                                         _EVENTOS_SO_POSICAO)):
             for ticker, (classe, fonte, data, qtd, vm) in fotos.items():
                 ativo = str(uuid.uuid4())
                 conn.execute(text(
@@ -230,6 +245,21 @@ def test_corte_com_tudo_encerrado_fica_na_curva_com_zero(banco):
     # Carteira vazia custa zero, e nao "custo desconhecido".
     assert [float(r.valor_investido_snapshot) for r in linhas
             if str(r.mes) == "2021-02-26"] == [0.0]
+
+
+def test_so_com_a_posicao_da_b3_o_recalculo_nao_devolve_o_resgatado(banco):
+    with banco.connect() as conn:
+        carteira = _carteira(conn, inv._SQL_POSICOES_SNAPSHOT, U_SO_POSICAO)
+        custodia = conn.execute(text(inv._SQL_TEM_FOTO_DE_CUSTODIA),
+                                {"uid": U_SO_POSICAO}).scalar()
+        curva_pela_foto = conn.execute(text(inv._SQL_TEM_CURVA_DE_CUSTODIA),
+                                       {"uid": U_SO_POSICAO}).scalar()
+    assert carteira == {"ACAO8"}
+    # Com custódia, _carteira_snapshot_consolidada não completa a foto com o
+    # recálculo, que ainda tem o CDB.
+    assert custodia is True, "a Posicao da B3 e custodia: o recalculo devolveria o CDB"
+    # A curva continua remontada pelas negociações: uma Posição é um ponto só.
+    assert curva_pela_foto is False
 
 
 def test_sem_a_tabela_da_movimentacao_a_carteira_continua_de_pe(banco):
