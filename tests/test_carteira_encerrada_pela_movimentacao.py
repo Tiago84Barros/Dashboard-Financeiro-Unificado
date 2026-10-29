@@ -98,6 +98,21 @@ _EVENTOS = [
      "CDB - CDBTROCOU - EMISSOR G", 200),
 ]
 
+# Segundo investidor: a Posição da B3 posterior ao resgate veio só com ações
+# (a aba Renda Fixa falhou ou não foi exportada), e o extrato antigo, que
+# nunca lista renda fixa, também é posterior. Nenhum dos dois lista CDB, então
+# nenhum confirma a saída: o CDB que só a corretora via fica.
+U_SEM_RF = str(uuid.uuid4())
+_FOTOS_SEM_RF = {
+    "CDBSEMCOBERTURA": ("fixed_income", "xp_consolidado", "2021-05-31", 1000, 1010.00),
+    "ACAO5": ("stock", "b3_posicao", "2021-06-30", 10, 100.00),
+    "ACAO6": ("stock", "b3_posicao_detalhada", "2021-06-29", 10, 60.00),
+}
+_EVENTOS_SEM_RF = [
+    ("2021-06-07", "resgate antecipado", "Debito", "CDB",
+     "CDB - CDBSEMCOBERTURA - EMISSOR H", 1000),
+]
+
 
 @pytest.fixture()
 def banco():
@@ -112,39 +127,41 @@ def banco():
                 conn.execute(text(ddl))
     except Exception as exc:  # noqa: BLE001 - sem armazém, não medimos
         pytest.skip(f"armazém local indisponível: {exc}")
-    ids = {t: str(uuid.uuid4()) for t in _FOTOS}
     with motor.begin() as conn:
-        for ticker, (classe, fonte, data, qtd, vm) in _FOTOS.items():
-            conn.execute(text(
-                "INSERT INTO assets VALUES (:id, :t, :c, 'other', 'BRL')"
-            ), {"id": ids[ticker], "t": ticker, "c": classe})
+        for usuario, fotos, eventos in ((U, _FOTOS, _EVENTOS),
+                                        (U_SEM_RF, _FOTOS_SEM_RF, _EVENTOS_SEM_RF)):
+            for ticker, (classe, fonte, data, qtd, vm) in fotos.items():
+                ativo = str(uuid.uuid4())
+                conn.execute(text(
+                    "INSERT INTO assets VALUES (:id, :t, :c, 'other', 'BRL')"
+                ), {"id": ativo, "t": ticker, "c": classe})
+                conn.execute(text("""
+                    INSERT INTO portfolio_position_snapshots
+                        (user_id, asset_id, source_system, source_table, source_id,
+                         report_date, quantity, market_value, asset_type, asset_name,
+                         currency, country)
+                    VALUES (:u, :a, 'b3', :f, :sid, :d, :q, :vm, :c, :t, 'BRL', 'BR')
+                """), {"u": usuario, "a": ativo, "f": fonte, "sid": f"teste-{ticker}",
+                       "d": data, "q": qtd, "vm": vm, "c": classe, "t": ticker})
             conn.execute(text("""
-                INSERT INTO portfolio_position_snapshots
-                    (user_id, asset_id, source_system, source_table, source_id,
-                     report_date, quantity, market_value, asset_type, asset_name,
-                     currency, country)
-                VALUES (:u, :a, 'b3', :f, :sid, :d, :q, :vm, :c, :t, 'BRL', 'BR')
-            """), {"u": U, "a": ids[ticker], "f": fonte, "sid": f"teste-{ticker}",
-                   "d": data, "q": qtd, "vm": vm, "c": classe, "t": ticker})
-        conn.execute(text("""
-            INSERT INTO investment_movement_events
-                (user_id, event_date, movement, direction, ticker, product, quantity)
-            VALUES (:u, :d, :m, :s, :t, :p, :q)
-        """), [{"u": U, "d": d, "m": m, "s": s, "t": t, "p": p, "q": q}
-               for d, m, s, t, p, q in _EVENTOS])
+                INSERT INTO investment_movement_events
+                    (user_id, event_date, movement, direction, ticker, product, quantity)
+                VALUES (:u, :d, :m, :s, :t, :p, :q)
+            """), [{"u": usuario, "d": d, "m": m, "s": s, "t": t, "p": p, "q": q}
+                   for d, m, s, t, p, q in eventos])
     yield motor
     with motor.begin() as conn:
         conn.execute(text(f"DROP SCHEMA IF EXISTS {SCHEMA} CASCADE"))
     motor.dispose()
 
 
-def _carteira(conn, sql) -> set[str]:
-    return {r.ticker for r in conn.execute(text(sql), {"uid": U})}
+def _carteira(conn, sql, usuario=U) -> set[str]:
+    return {r.ticker for r in conn.execute(text(sql), {"uid": usuario})}
 
 
-def _curva(conn, sql) -> dict[str, float]:
+def _curva(conn, sql, usuario=U) -> dict[str, float]:
     return {str(r.mes): round(float(r.valor_mercado), 2)
-            for r in conn.execute(text(sql), {"uid": U})}
+            for r in conn.execute(text(sql), {"uid": usuario})}
 
 
 def test_so_a_saida_provada_sai_da_carteira_de_hoje(banco):
@@ -171,6 +188,17 @@ def test_curva_so_tira_o_cdb_do_corte_posterior_ao_resgate(banco):
     assert curva["2021-06-25"] == round(
         300.00 + 2020.00 + 404.00 + 200.00 + 808.00 + 505.00
         + 303.00 + 202.00, 2)
+
+
+def test_posicao_da_b3_sem_a_aba_renda_fixa_nao_confirma_a_saida(banco):
+    with banco.connect() as conn:
+        tickers = _carteira(conn, inv._SQL_POSICOES_SNAPSHOT, U_SEM_RF)
+        curva = _curva(conn, inv._SQL_EVOLUCAO_SNAPSHOTS, U_SEM_RF)
+    assert tickers == {"CDBSEMCOBERTURA", "ACAO5", "ACAO6"}, (
+        "Posicao so com acoes e extrato antigo nao listam CDB: a data deles "
+        "nao prova que o CDB saiu da custodia"
+    )
+    assert curva["2021-06-30"] == round(1010.00 + 100.00 + 60.00, 2)
 
 
 def test_sem_a_tabela_da_movimentacao_a_carteira_continua_de_pe(banco):
@@ -234,6 +262,18 @@ def test_saida_da_renda_fixa_so_vale_com_a_custodia_da_b3_confirmando():
     assert "s.report_date <= rs.corte" in trecho, (
         "na curva, so a Posicao da B3 ate o corte confirma a saida"
     )
+
+
+def test_so_a_posicao_da_b3_com_renda_fixa_confirma_a_saida():
+    # Exportação só com Ações (ou com a aba Renda Fixa falhando) e o extrato
+    # antigo não listam CDB: a data deles não prova nada sobre CDB.
+    assert "s.asset_type = 'fixed_income'" in inv._SQL_B3_COM_RENDA_FIXA
+    trecho = inv._SQL_EVOLUCAO_SNAPSHOTS.split("mov_encerrados AS (")[1].split("xp_snaps AS (")[0]
+    for cte in (inv._CTE_MOV_ENCERRADOS, trecho):
+        # Toda leitura da data da B3 leva o filtro; sem ele, a data de
+        # qualquer Posicao voltaria a confirmar.
+        assert cte.count("WHERE " + inv._SQL_B3_COM_RENDA_FIXA) == 1
+        assert cte.count("WHERE s." + inv._SQL_FONTE_CUSTODIA_B3) == 1
 
 
 # ── Carteira inteira encerrada: vazia, não o recálculo de portfolio_positions.

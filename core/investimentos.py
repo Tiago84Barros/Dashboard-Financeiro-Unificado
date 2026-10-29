@@ -327,6 +327,16 @@ _SQL_POSICOES = """
 # B3 posterior ao último evento -- se o título continuasse em qualquer
 # corretora, essa Posição o listaria, e ela teria ganhado o ranking.
 #
+# Essa Posição só confirma se trouxe a aba Renda Fixa. O importador grava aba
+# por aba: uma exportação só com Ações, ou em que a aba Renda Fixa falhou, não
+# lista CDB nenhum, e a data dela não prova que o CDB saiu. O extrato antigo
+# também não serve: ele não publica quantidade de renda fixa e pula a seção.
+# Conta como cobertura a data com ao menos uma linha `asset_type =
+# 'fixed_income'`, que só a aba Renda Fixa grava. O Tesouro tem aba própria e
+# não chega aqui: na Movimentação ele vem pelo nome ("TESOURO IPCA+ 2035"), que
+# não casa com o ticker da carteira. Quem resgatou a renda fixa inteira recebe
+# a Posição seguinte sem a aba, e o CDB fica até a próxima foto da corretora.
+#
 # Transferência de custódia entra na conta com o sinal dela, como em
 # core.movimentacao_b3.interpretar. A troca de corretora (débito numa,
 # crédito noutra, no mesmo dia) soma zero; um crédito de fora depois da foto
@@ -347,6 +357,8 @@ _SQL_MOV_QUANTIDADE = """lower(m.movement) IN (
                         'transf. sem financeiro')"""
 
 _SQL_FONTE_CUSTODIA_B3 = "effective_source_table IN ('b3_posicao', 'b3_posicao_detalhada')"
+
+_SQL_B3_COM_RENDA_FIXA = "s." + _SQL_FONTE_CUSTODIA_B3 + " AND s.asset_type = 'fixed_income'"
 
 _SQL_MOV_PROVA_ENCERRAMENTO = """
         BOOL_OR(lower(m.movement) = 'direitos de subscrição - não exercido')
@@ -370,7 +382,7 @@ _CTE_MOV_ENCERRADOS = """
             SELECT asset_id, MAX(report_date) AS report_date, SUM(quantity) AS quantity,
                    BOOL_AND(""" + _SQL_FONTE_CUSTODIA_B3 + """) AS foto_da_custodia_b3,
                    (SELECT MAX(s.report_date) FROM normalized_snapshots s
-                    WHERE s.""" + _SQL_FONTE_CUSTODIA_B3 + """) AS custodia_b3
+                    WHERE """ + _SQL_B3_COM_RENDA_FIXA + """) AS custodia_b3
             FROM ranked_snapshots
             WHERE asset_source_rank = 1
             GROUP BY asset_id
@@ -1954,8 +1966,8 @@ _SQL_EVOLUCAO_RATIO = """
 """
 
 # A mesma prova de _CTE_MOV_ENCERRADOS, vista de cada data de corte: só conta
-# o evento entre a foto vencedora e o corte, e só a Posição da B3 até o corte
-# confirma. Resgate de outubro não apaga o CDB de setembro da curva.
+# o evento entre a foto vencedora e o corte, e só a Posição da B3 com Renda
+# Fixa até o corte confirma. Resgate de outubro não apaga o CDB de setembro da curva.
 _CTE_MOV_ENCERRADOS_POR_CORTE = """
     mov_encerrados AS (
         SELECT r.corte, r.asset_id
@@ -1964,7 +1976,7 @@ _CTE_MOV_ENCERRADOS_POR_CORTE = """
                    SUM(rs.quantity) AS quantity,
                    BOOL_AND(rs.""" + _SQL_FONTE_CUSTODIA_B3 + """) AS foto_da_custodia_b3,
                    (SELECT MAX(s.report_date) FROM normalized_snapshots s
-                    WHERE s.""" + _SQL_FONTE_CUSTODIA_B3 + """
+                    WHERE """ + _SQL_B3_COM_RENDA_FIXA + """
                       AND s.report_date <= rs.corte) AS custodia_b3
             FROM ranked_snapshots rs
             WHERE rs.asset_source_rank = 1
