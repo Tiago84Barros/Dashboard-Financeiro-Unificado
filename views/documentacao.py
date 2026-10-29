@@ -2515,7 +2515,7 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
     tela="Empresas B3",
     abas=("Empresas por Setor", "Análise de Empresa", "Previsão de Lucros", "Carteira 20"),
     rows=(
-        ("Consulta", ("b3_setor", "b3_empresa", "b3_relatorio")),
+        ("Consulta", ("b3_setor", "b3_empresa", "b3_proventos", "b3_relatorio")),
         ("Previsão", ("b3_prev_modelo", "b3_prev_tela")),
         ("Registro", ("b3_c20_registro", "b3_c20_tela")),
     ),
@@ -2550,6 +2550,23 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
             ),
             "Nome digitado com erro ou ticker de outra classe não pode abrir a empresa errada "
             "em silêncio: quando há mais de um candidato, quem escolhe é você.",
+        ),
+        "b3_proventos": _node(
+            "b3_proventos", "Dividendos por ação: de onde vem a soma anual", "Consulta",
+            "A seção Dividendos por ação soma os proventos de renda por ano de pagamento a "
+            "partir da resposta mais nova da brapi, publicada em arquivo pela rotina noturna. "
+            "A mesma soma alimenta o CAGR de proventos e o contexto das LLMs.",
+            (
+                "core.proventos_b3.renda_anual(), que lê data/public/proventos_b3.json.gz",
+                "Publicador: scripts/publish_proventos_b3.py (armazém local → arquivo)",
+                "Ticker que o arquivo não cobre: market.dividends pela regra renda_por_evento()",
+                "Resposta com mais de 10 dias sem renovação: fila de Configurações → Restrições",
+                "Medição reproduzível: scripts/medir_proventos_b3.py",
+            ),
+            "Somar market.dividends direto contaria duas vezes cada revisão da brapi, porque "
+            "o upsert não apaga a linha antiga. Medida contra a própria brapi, a soma crua "
+            "bate em 60% dos ticker-anos e a regra de leitura em 86%; a CVM mostra quanto a "
+            "própria fonte pode errar.",
         ),
         "b3_relatorio": _node(
             "b3_relatorio", "Relatório do analista e chat do ativo", "Consulta",
@@ -2968,6 +2985,33 @@ def _flow_sequence(flow: FlowSpec) -> tuple[tuple[str, str], ...]:
 
 
 _FLOW_DETAIL_OVERRIDES = {
+    "b3_proventos": {
+        "formula": (
+            "Soma do ano = Σ proventos de renda (dividendo, JCP, rendimento) pagos no ano\n"
+            "Amortização e restituição de capital ficam de fora\n"
+            "Concordância medida = |a − b| / máx(a, b) ≤ 1% por ticker-ano"
+        ),
+        "exemplo": (
+            "Dividendo de R$ 0,50 pago em março e JCP de R$ 0,20 pago em setembro\n"
+            "Soma do ano = 0,50 + 0,20 = R$ 0,70 por ação\n"
+            "A mesma declaração regravada com outra data de pagamento conta uma vez"
+        ),
+        "limitacao": (
+            "Fonte única: a brapi. Na ação não há fonte independente para conferir. Nos FIIs "
+            "a régua é a CVM (rendimento implícito do informe mensal): na medição de "
+            "29/10/2026, cerca de 3 em cada 10 ticker-anos ficaram a mais de 5% dela e 2 em "
+            "cada 10 a mais de 10%. A CVM também erra, ao deslocar valor entre dezembro e "
+            "janeiro: o desacordo é entre duas fontes imperfeitas, não o erro da brapi nem "
+            "um limite para ele, porque as duas podem errar no mesmo sentido.\n"
+            "O ano civil em curso e os seguintes ficam fora do CAGR; na série por exercício, "
+            "o ano civil ainda aberto fica vazio.\n"
+            "Empresa com exercício encerrado fora de dezembro (cinco em 29/10/2026, como "
+            "RAIZ4 e SMTO3) tem os proventos lidos pelo ano civil: a coluna do exercício traz "
+            "o que foi pago no ano civil de mesmo número.\n"
+            "Valor por ação alto não é conferido contra o preço: um provento implausível da "
+            "fonte passa adiante."
+        ),
+    },
     "aportes_sp": {
         "formula": "Capital novo do mês = aporte mensal configurado\nCotas compradas = aporte mensal / preço do ativo",
         "exemplo": "Aporte mensal = R$ 1.000\nPreço do ativo = R$ 25\nCotas compradas = 1.000 / 25 = 40 cotas",
