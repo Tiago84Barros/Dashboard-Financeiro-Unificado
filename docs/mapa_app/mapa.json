@@ -1399,28 +1399,36 @@
         },
         {
           "nome": "Imposto de Renda",
-          "resumo": "DARF do mês, fichas da declaração e apuração",
-          "explicacao": "Com o título 'Imposto de Renda — renda variável', calcula o imposto sobre vendas de ações, FIIs e ETFs a partir dos extratos da B3, mostra o DARF (a guia de pagamento do imposto, código 6015) e entrega as fichas da declaração anual prontas para copiar. Sem operações importadas, aparece um aviso de que não há dados.",
+          "resumo": "DARF, fichas da declaração e apuração, por ano",
+          "explicacao": "Com o título 'Imposto de Renda — renda variável', calcula o imposto sobre vendas de ações, FIIs e ETFs a partir dos extratos da B3, mostra o DARF (a guia de pagamento do imposto, código 6015) e entrega as fichas da declaração anual prontas para copiar. Tudo abaixo do seletor de ano-calendário vale para o ano escolhido. Sem operações importadas, aparece um aviso de que não há dados.",
           "so_admin": false,
           "filhos": [
             {
+              "nome": "Ano-calendário",
+              "resumo": "Escolhe o ano que a tela inteira mostra",
+              "explicacao": "Seletor no topo, que recorta a tela toda. Abre no ano passado, que é o da declaração deste ano. Se o ano escolhido ainda não terminou, um aviso diz que a tela mostra o ano até hoje.",
+              "so_admin": false,
+              "filhos": [
+                {
+                  "nome": "Visão geral · todos os anos",
+                  "resumo": "Histórico inteiro, sem declaração",
+                  "explicacao": "Última opção do seletor. Troca a declaração pelo histórico completo: mostra só os cartões do DARF, a apuração de todos os meses e o resumo por ano.",
+                  "so_admin": false
+                }
+              ]
+            },
+            {
               "nome": "DARF em aberto · Mês em curso · Prejuízo a compensar · Ganho isento",
               "resumo": "Imposto a pagar, prejuízo e ganho isento",
-              "explicacao": "Só aparece se houver vendas. 'DARF em aberto' é o último mês com imposto ainda a vencer (o app não sabe se você já pagou); 'Prejuízo a compensar' são perdas antigas que reduzem imposto futuro; 'Ganho isento' é o lucro de meses com vendas de ações até R$ 20 mil. Se houver venda sem custo conhecido, um aviso amarelo manda informar a 'Posição anterior ao extrato da B3' na aba Histórico.",
+              "explicacao": "Só aparece se houver vendas. No ano em curso (e na visão geral): 'DARF em aberto' é o último mês fechado com imposto ainda a vencer (o app não sabe se você já pagou), 'Mês em curso' é o imposto parcial deste mês, 'Prejuízo a compensar' são perdas antigas que reduzem imposto futuro e 'Ganho isento' é o lucro de meses com vendas de ações até R$ 20 mil. Num ano já fechado, os cartões viram 'DARFs de {ano}', 'IR fonte a declarar', 'Prejuízo em 31/12/{ano}' e 'Ganho isento em {ano}'. Se há venda sem custo conhecido, a ajuda do cartão de prejuízo avisa que o valor é incerto.",
               "so_admin": false
             },
             {
               "nome": "Declaração IRPF",
               "resumo": "Fichas da declaração prontas para digitar",
-              "explicacao": "As fichas do programa da Receita, na ordem e com o nome de cada linha, marcando o que você precisa digitar. Se o ano escolhido ainda não terminou, um aviso diz que os números vão até hoje.",
+              "explicacao": "Só com um ano escolhido, com o título 'Declaração IRPF {ano + 1}'. As fichas do programa da Receita, na ordem e com o nome de cada linha, marcando o que você precisa digitar.",
               "so_admin": false,
               "filhos": [
-                {
-                  "nome": "Ano-calendário",
-                  "resumo": "Escolhe o ano da declaração",
-                  "explicacao": "Seletor do ano; abre no ano passado, que é o da declaração deste ano.",
-                  "so_admin": false
-                },
                 {
                   "nome": "Renda Variável",
                   "resumo": "Ganhos mês a mês: comuns e day-trade",
@@ -1468,13 +1476,13 @@
             {
               "nome": "Apuração mensal",
               "resumo": "Tabela do imposto de cada mês",
-              "explicacao": "Só aparece se houver vendas: do mês mais recente para o mais antigo, com vendas, ganhos, isenção, imposto e situação de cada mês.",
+              "explicacao": "Do mês mais recente para o mais antigo, com vendas, ganhos, isenção, imposto e situação de cada mês. Com um ano escolhido vira 'Apuração mensal de {ano}' e mostra só os meses dele; sem venda no ano, diz que não há imposto a apurar.",
               "so_admin": false
             },
             {
               "nome": "Resumo por ano",
               "resumo": "Totais de imposto e ganho por ano",
-              "explicacao": "Tabela com os totais de cada ano, incluindo quantos meses ficaram incompletos por falta de custo de compra.",
+              "explicacao": "Só na visão geral: tabela com os totais de cada ano, incluindo quantos meses ficaram incompletos por falta de custo de compra.",
               "so_admin": false
             },
             {
@@ -3397,7 +3405,7 @@
         {
           "nome": "Restrições",
           "resumo": "Lista do que o app não sabe ou errou",
-          "explicacao": "Painel de trabalho com falta de dados, erros e detalhes técnicos que foram tirados das telas de uso. Você filtra a lista, lê cada item e registra o que fazer com ele. A faixa da aba ainda diz 'Visível só ao admin', mas pelo código ela aparece para todas as contas desde 12/10/2026.",
+          "explicacao": "Painel de trabalho com falta de dados, erros e detalhes técnicos que foram tirados das telas de uso. Você filtra a lista, lê cada item e registra o que fazer com ele. A mesma para todas as contas desde 12/10/2026.",
           "so_admin": false,
           "filhos": [
             {
@@ -3493,6 +3501,12 @@
           "so_admin": false,
           "filhos": [
             {
+              "nome": "Inicializar pipeline",
+              "resumo": "Preparação feita uma única vez",
+              "explicacao": "Só aparece se a estrutura que controla as atualizações ainda não existe, e então é a única coisa da aba: os cartões e a tabela abaixo só surgem depois. Um clique a cria; depois disso o botão não aparece mais.",
+              "so_admin": false
+            },
+            {
               "nome": "Fontes OK · Precisam atualizar · Última atualização (BRT)",
               "resumo": "Três cartões de resumo",
               "explicacao": "Quantas fontes estão em dia, quantas pedem atenção e quando foi a última atualização, no horário de Brasília.",
@@ -3520,12 +3534,6 @@
               "nome": "Log de execuções recentes",
               "resumo": "Histórico das últimas 20 rodadas",
               "explicacao": "Tabela com início, nome da tarefa, resultado, quantos registros entraram, falhas, tempo gasto e mensagem de erro.",
-              "so_admin": false
-            },
-            {
-              "nome": "Inicializar pipeline",
-              "resumo": "Preparação feita uma única vez",
-              "explicacao": "Só aparece se a estrutura que controla as atualizações ainda não existe. Um clique a cria; depois disso o botão não aparece mais.",
               "so_admin": false
             }
           ]
@@ -3623,9 +3631,15 @@
         {
           "nome": "Documentação",
           "resumo": "Guia ilustrado de como o app funciona",
-          "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 12 sub-abas.",
+          "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 15 sub-abas, na ordem do menu lateral.",
           "so_admin": false,
           "filhos": [
+            {
+              "nome": "Dashboard Geral",
+              "resumo": "Fatos do período primeiro, referências depois",
+              "explicacao": "Fluxograma da primeira tela do menu: como o caixa do Controle Financeiro e a carteira de Investimentos se juntam num painel só, com as carteiras recomendadas no fim, marcadas como referência.",
+              "so_admin": false
+            },
             {
               "nome": "Controle financeiro",
               "resumo": "Como entram e se somam receitas e gastos",
@@ -3635,45 +3649,43 @@
             {
               "nome": "Carteira atual",
               "resumo": "Como a carteira de investimentos é analisada",
-              "explicacao": "Fluxograma da análise da sua carteira atual de investimentos, da importação dos arquivos até os números da tela.",
+              "explicacao": "Fluxograma das subabas Dashboard, Histórico e Análise de Investimentos, da importação dos arquivos até os números da tela.",
               "so_admin": false
             },
             {
-              "nome": "Empresas B3 (4 fluxogramas)",
-              "resumo": "Análise, simulação e montagem de carteiras B3",
-              "explicacao": "Agrupamento deste mapa (não é texto da tela): quatro sub-abas sobre as ferramentas da tela Empresas B3.",
-              "so_admin": false,
-              "filhos": [
-                {
-                  "nome": "Análise avançada (B3)",
-                  "resumo": "Como cada empresa é avaliada",
-                  "explicacao": "Fluxograma da análise avançada de empresas da bolsa brasileira.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Simulador (B3)",
-                  "resumo": "Como a simulação de carteira funciona",
-                  "explicacao": "Fluxograma do modelo que simula o comportamento de uma carteira de ações.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Criação de portfólio (B3)",
-                  "resumo": "Como o app monta uma carteira",
-                  "explicacao": "Fluxograma das etapas que o app segue para sugerir uma carteira de ações brasileiras.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Análise de portfólio (B3)",
-                  "resumo": "Como uma carteira pronta é avaliada",
-                  "explicacao": "Fluxograma da análise qualitativa de uma carteira de ações brasileiras.",
-                  "so_admin": false
-                }
-              ]
+              "nome": "Inteligência e IR",
+              "resumo": "As duas últimas subabas de Investimentos",
+              "explicacao": "Fluxograma da Inteligência dos Ativos, que lê a carteira pela sua estratégia, e do Imposto de Renda, que apura o imposto sobre renda variável.",
+              "so_admin": false
             },
             {
-              "nome": "Seleção de FIIs",
-              "resumo": "Dos dados publicados à carteira-modelo de FIIs",
-              "explicacao": "Fluxograma de como os fundos imobiliários são escolhidos e organizados numa carteira-modelo.",
+              "nome": "Empresas e Carteira 20 (B3)",
+              "resumo": "Consulta, Previsão de Lucros e Carteira 20",
+              "explicacao": "Fluxograma das quatro subabas de Empresas B3 que não têm fluxo próprio: Empresas por Setor, Análise de Empresa, Previsão de Lucros e Carteira 20.",
+              "so_admin": false
+            },
+            {
+              "nome": "Análise avançada (B3)",
+              "resumo": "Como cada empresa é avaliada",
+              "explicacao": "Fluxograma da análise avançada de empresas da bolsa brasileira.",
+              "so_admin": false
+            },
+            {
+              "nome": "Criação de portfólio (B3)",
+              "resumo": "Como o app monta uma carteira",
+              "explicacao": "Fluxograma das etapas que o app segue para sugerir uma carteira de ações brasileiras.",
+              "so_admin": false
+            },
+            {
+              "nome": "Simulação (B3)",
+              "resumo": "Como a simulação de carteira funciona",
+              "explicacao": "Por dentro da subaba Criação de Portfólio: o modelo que simula a trajetória de uma carteira de ações, com aportes, preço ajustado e comparação com índices.",
+              "so_admin": false
+            },
+            {
+              "nome": "Avaliação de portfólio (B3)",
+              "resumo": "Como uma carteira pronta é avaliada",
+              "explicacao": "Fluxograma da subaba Avaliação de Portfólio: como a carteira salva vira relatório, redistribuição de pesos e conversa com o portfólio.",
               "so_admin": false
             },
             {
@@ -3683,9 +3695,15 @@
               "so_admin": false
             },
             {
+              "nome": "Seleção de FIIs",
+              "resumo": "Dos dados publicados à carteira-modelo de FIIs",
+              "explicacao": "Fluxograma das cinco subabas de Seleção de FIIs: como os fundos imobiliários são pontuados e quando o que sai é Carteira-Modelo ou só Lista de Diligência.",
+              "so_admin": false
+            },
+            {
               "nome": "Portfólio Global",
               "resumo": "Tudo o que você tem, numa visão só",
-              "explicacao": "Fluxograma de como o app junta investimentos do Brasil e do exterior numa visão única.",
+              "explicacao": "Fluxograma de como o app junta investimentos do Brasil e do exterior numa visão única, da consolidação à alocação.",
               "so_admin": false
             },
             {
@@ -3696,8 +3714,8 @@
             },
             {
               "nome": "Configurações",
-              "resumo": "O que você ajusta, envia e confere",
-              "explicacao": "Fluxograma desta própria Central de Configurações: preferências, envio de arquivos, diagnóstico e segurança.",
+              "resumo": "As nove abas desta Central",
+              "explicacao": "Fluxograma desta própria Central de Configurações, aba por aba: preferências, envio de arquivos, diagnóstico, mapa, documentação e segurança.",
               "so_admin": false
             },
             {
@@ -3784,7 +3802,7 @@
             {
               "nome": "Ações e empresas da B3",
               "resumo": "Pregão, balanços, documentos e indicadores B3",
-              "explicacao": "Todo dia: preço do pregão, documentos da CVM e dados da brapi. Toda semana: indicadores das empresas, histórico de notas, fechamento mensal de preços e a origem de cada balanço. Telas que dependem: Empresas B3, Investimentos e Portfólio Global.",
+              "explicacao": "Todo dia: preço do pregão, documentos da CVM, a poda do cache bruto da brapi (arquiva, regrava as demonstrações e compacta) e, logo depois dela, os dados da brapi. Toda semana: indicadores das empresas, histórico de notas, fechamento mensal de preços e a origem de cada balanço. Telas que dependem: Empresas B3, Investimentos e Portfólio Global.",
               "so_admin": false
             },
             {
@@ -3796,7 +3814,7 @@
             {
               "nome": "Empresas americanas",
               "resumo": "Preços, resumo das empresas e saídas de bolsa",
-              "explicacao": "A cada 2 dias: preços e resumo de cada empresa americana. A cada 30 dias: preços mensais e empresas que saíram da bolsa. O histórico de notas só é republicado quando o método de cálculo muda. Telas que dependem: Empresas Americanas e Portfólio Global.",
+              "explicacao": "Todo dia: o painel de notas dos EUA também no armazém local. A cada 2 dias: preços e resumo de cada empresa americana. A cada 30 dias: preços mensais e empresas que saíram da bolsa. O histórico de notas só é republicado quando o método de cálculo muda. Telas que dependem: Empresas Americanas e Portfólio Global.",
               "so_admin": false
             },
             {

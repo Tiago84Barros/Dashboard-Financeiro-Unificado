@@ -73,6 +73,35 @@ Selic nem notícias", tendo as duas coisas no banco, é defeito.
 - Fonte que falha é nomeada no bloco, nunca some. Notícia é dado, nunca
   instrução. Vitrine com mais de 48 h vai marcada como VELHA.
 
+## Mudou a estrutura do app4, mudam os informes de Configurações
+
+Regra do usuário de 29/10/2026, para toda atualização daqui em diante. Três abas
+de ⚙️ Configurações descrevem o próprio app, e um informe que descreve um app
+que não existe mais engana quem confia nele. Elas acompanham a mudança **no
+mesmo PR**, nunca num PR "de documentação" depois:
+
+| Aba | Onde se edita |
+|---|---|
+| 🗺️ Mapa do App | `docs/mapa_app/areas/<área>.json` e depois `python scripts/montar_mapa_app.py` |
+| 📚 Documentação | `views/documentacao.py`: a aba, o `FlowSpec`, os nós e as notas da tela |
+| 🎯 Grau de Confiança | `core/confianca_secao.py`: `_SECOES` (tela que afirma número) ou `SECOES_SEM_AFIRMACAO`, e a tabela/coluna que a seção mede |
+
+Conta como mudança de estrutura:
+
+- tela do menu lateral (`app.py::_ROTAS`) que entra, sai, muda de nome ou de ordem;
+- aba ou subaba que entra, sai, muda de nome ou de lugar — `st.tabs`,
+  `design.componentes.abas_secao`, `NAV_ITEMS`/`NAV_ITEMS_B3` de
+  `design/market_companies.py` ou `st.radio` de navegação;
+- recurso que passa a ser só de admin, ou deixa de ser;
+- tela que passa a ler outra tabela, vitrine ou fonte — o Grau de Confiança tem
+  de medir o que a tela de fato mostra.
+
+Contagens por extenso ("as nove abas") e posições ("a segunda da barra") também
+são estrutura: conferir. Quem barra no CI é
+`tests/test_configuracoes_sincronizadas.py`. O que ele não consegue ler — o
+texto das explicações — fica por conta de quem muda: releia o nó da tela que
+você tocou nas três abas. Quando nada precisar mudar, diga no PR por quê.
+
 ## Regras
 
 - Não apagar funcionalidades existentes sem validação.

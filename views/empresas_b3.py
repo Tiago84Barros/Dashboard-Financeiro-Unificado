@@ -1,10 +1,16 @@
 """
 views/empresas_b3.py  — Dashboard Fundamentalista B3
-  Tab 1 — Empresas por Setor   (listagem por setor + logos)
-  Tab 2 — Análise de Empresa   (drilldown: crescimento, DRE, múltiplos)
+  Tab 1 — Empresas por Setor     (listagem por setor + logos)
+  Tab 2 — Análise de Empresa     (drilldown: crescimento, DRE, múltiplos)
+  Tab 3 — Análise Avançada       (banco de testes por segmento: filtro, score)
+  Tab 4 — Criação de Portfólio   (views/portfolio_b3.py)
+  Tab 5 — Avaliação de Portfólio (views/analise_portfolio_b3.py)
+  Tab 6 — Previsão de Lucros     (views/previsao_lucros_b3.py)
+  Tab 7 — Carteira 20            (views/carteira20_b3.py)
 
 Banco de dados:  core.b3_data (facade c/ MARKET_READ_SOURCE) → b3_db legado ou market.*
-Preços:          yfinance     (sem dependência de DB)
+Preços:          market.historical_prices; yfinance só como reserva, com aviso
+                 na tela (_avisar_fonte_precos)
 Logos:           thefintz/icones-b3 CDN (público, sem auth)
 """
 from __future__ import annotations

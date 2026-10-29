@@ -12,8 +12,8 @@ nem ranking. Cada conclusão separa fato, interpretação, impacto na carteira
 e ação a considerar.
 
 O Cenário de Investimentos entra só como premissa. Quando os dados publicados
-ou a própria LLM apontam contradição, a tela avisa (``aviso_cenario``) e manda
-o usuário a Configurações; nada aqui altera o cenário.
+ou a própria LLM apontam contradição, a tela avisa (``aviso_cenario``); desde
+30/09/2026 o cenário é lido dos dados e se atualiza sozinho, e nada aqui o altera.
 
 Cada cartão sai num st.markdown só e usa apenas var(--app-*).
 Coberto por tests/test_inteligencia_ativos_portfolio_fit.py.

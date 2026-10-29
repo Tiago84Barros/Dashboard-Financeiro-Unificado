@@ -2,7 +2,8 @@
 views/configuracoes.py
 Configurações do sistema — nove abas organizadas por finalidade.
 
-  ⚙️ Geral                — tema, troca de usuário e memória da LLM
+  ⚙️ Geral                — tema, troca de usuário, memória da LLM e as
+                            categorias do lançamento manual
   🎯 Grau de Confiança    — quanto o app confia em cada seção, e por quê
   🧭 Restrições           — limitações, erros e detalhes técnicos que saíram
                             das telas de uso (05/10/2026), para decisão do admin
@@ -99,7 +100,7 @@ def render() -> None:
             "Limitações de dado, erros e detalhes técnicos que as telas de uso "
             "não mostram mais ao usuário. Decida cada item: aceitar, corrigir "
             "ou acompanhar.",
-            "Visível só ao admin",
+            "Diagnóstico do app",
             "var(--app-warning, #F6C90E)",
         )
         _render_restricoes()
@@ -231,7 +232,8 @@ def _render_atualizacao_de_dados() -> None:
 
 
 def _render_confianca() -> None:
-    """Aba do Grau de Confiança, a primeira da barra desde 17/09/2026.
+    """Aba do Grau de Confiança, a segunda da barra: foi a primeira de 17/09/2026
+    até a ⚙️ Geral entrar à frente dela em 21/09.
 
     Import tardio de propósito: mantém ``core.confianca_secao`` e suas leituras
     fora do custo de importar este módulo, e prende o erro aqui em vez de
@@ -655,7 +657,7 @@ def _render_atualizacao() -> None:
 | **Documentos corporativos** — fatos relevantes, resultados trimestrais e atas de empresas listadas | Semanal |
 
 > Transações, operações e proventos **não** são atualizados automaticamente —
-> eles vêm de importação manual (aba **Atualizar Controle Financeiro**) ou lançamento direto no app.
+> eles vêm de importação manual (aba **🔁 Atualização de dados › 💳 Controle Financeiro**) ou lançamento direto no app.
         """)
 
     # ── Botões de execução ─────────────────────────────────────────────────────

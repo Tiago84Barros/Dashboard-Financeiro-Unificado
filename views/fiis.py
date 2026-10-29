@@ -9,7 +9,9 @@ Abas (como Empresas B3, com as particularidades de FII):
   2. Busca de ativo — detalhe por FII: histórico (P/VP·VPA), vacância, composição
                       e carteira de imóveis com região (tijolo/logística).
   3. Carteira-modelo — seleção diversificada por tipo (tijolo/papel/fof/híbrido).
-  4. Backtest        — retorno total (preço + proventos reinvestidos) da carteira.
+  4. Retrospectiva   — retorno total (preço + proventos reinvestidos) da carteira.
+  5. Revisão de dados — decisão humana, versionada, sobre valores extraídos de
+                        relatório gerencial antes de virarem dado aceito.
 
 Fonte nativa do market.* (BRAPI Pro + CVM Informe Mensal). FII não tem DRE/ROE.
 """
