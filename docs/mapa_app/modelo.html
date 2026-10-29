@@ -1,4 +1,4 @@
-<title>Mapa do App4</title>
+<title>Mapa do Dashboard Financeiro</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -152,7 +152,7 @@ footer p { margin: 0; }
 <div class="pagina">
   <header>
     <div class="sobretitulo">Dashboard Financeiro Unificado</div>
-    <h1>Mapa do App4</h1>
+    <h1>Mapa do Dashboard Financeiro</h1>
     <p class="intro">O fluxograma começa pelas telas do menu. Toque numa caixa para abrir o fluxograma do que existe dentro dela; caixas marcadas com "ler" são a última parte do ramo e mostram a explicação ali mesmo. Para voltar, use o caminho logo acima do desenho.</p>
     <div class="numeros" id="numeros"></div>
   </header>
@@ -215,7 +215,7 @@ footer p { margin: 0; }
   })(dados, null, 0, 0);
 
   function caminho(n) { var c = []; while (n) { c.unshift(n); n = n.pai; } return c; }
-  function nomeCurto(n) { return n.nivel === 0 ? "App4" : n.nome; }
+  function nomeCurto(n) { return n.nivel === 0 ? "Dashboard Financeiro" : n.nome; }
 
   function irPara(n, foco) {
     atual = n; lendo = {};
@@ -351,7 +351,7 @@ footer p { margin: 0; }
   [[telas, "telas no menu"], [nos.length - 1, "partes no mapa"], [admin, "só para administrador"]].forEach(function (p) {
     var s = el("span"); s.appendChild(el("b", null, String(p[0]))); s.appendChild(document.createTextNode(" " + p[1])); numeros.appendChild(s);
   });
-  document.getElementById("rodape-data").textContent = dados.data_mapa ? "Montado a partir do código do app4 em " + dados.data_mapa + "." : "";
+  document.getElementById("rodape-data").textContent = dados.data_mapa ? "Montado a partir do código do Dashboard Financeiro em " + dados.data_mapa + "." : "";
 
   var busca = document.getElementById("busca");
   var achados = document.getElementById("achados");
