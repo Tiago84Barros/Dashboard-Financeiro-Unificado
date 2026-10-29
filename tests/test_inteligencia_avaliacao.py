@@ -15,6 +15,7 @@ from core.inteligencia_ativos import avaliacao as av
 from core.inteligencia_ativos import fundamentos as f
 from core.inteligencia_ativos import informacoes as inf
 from core.inteligencia_ativos import modelos as m
+from core.inteligencia_ativos import recomendacao as rec
 from core.inteligencia_ativos import resumida as rs
 from core.inteligencia_ativos import valuation as val
 from tests.test_inteligencia_ativos_adequacao import _analise, _ctx, _pos
@@ -230,17 +231,30 @@ def _peso(a, peso):
                    acao=m.Acao(m.EXPOSICAO_ADEQUADA, ("x",), False))
 
 
-def test_alerta_eliminatorio_vira_avaliar_troca(an):
-    a = _com(_peso(an["WEGE3"], 2.0), _fund(**BOA), noticias=[
-        _noticia("Empresa pede recuperação judicial", "recuperacao_judicial")])
+def test_alerta_eliminatorio_do_balanco_vira_vender(an):
+    a = _com(_peso(an["WEGE3"], 2.0),
+             _fund(**{**BOA, "divida_liquida_ebitda": 9.0}))
     d = rs.decisao(a, _sug(5.0))     # o peso pedia comprar
     assert d.codigo == rs.VENDER and "eliminatório" in d.detalhe
-    assert "Nenhum ponto bom compensa" in d.motivo and "custo" in d.motivo
-    # já acima do peso: o alerta vence o "vender parte"
+    assert "Nenhum ponto bom compensa" in d.motivo
+    assert d.proporcao == 1.0 and d.custos is not None
+    # já acima do peso: o alerta vence o rebalancear
     d = rs.decisao(replace(a, ativo=replace(a.ativo, peso_atual=20.0)),
                    _sug(5.0))
-    assert d.detalhe == "avaliar troca: alerta eliminatório"
-    assert d.motivo.lower().startswith("recuperação judicial")
+    assert d.codigo == rs.VENDER
+    assert d.motivo.lower().startswith("alavancagem")
+
+
+def test_alerta_eliminatorio_so_do_noticiario_pede_investigar(an):
+    # 29/10/2026: manchete não é fato confirmado; a venda espera o documento
+    # oficial, e o alerta fica na caixa de alertas, não vira ordem.
+    a = _com(_peso(an["WEGE3"], 2.0), _fund(**BOA), noticias=[
+        _noticia("Empresa pede recuperação judicial", "recuperacao_judicial")])
+    d = rs.decisao(a, _sug(5.0))
+    assert d.codigo == rs.ACOMPANHAR and "noticiário" in d.detalhe
+    assert d.conviccao != rec.ALTA and not d.movimenta
+    assert any("documento oficial" in x for x in d.alertas)
+    assert any("passa a vender" in x for x in d.condicoes)
 
 
 def test_qualidade_fragil_nao_deixa_aportar(an):
@@ -248,17 +262,19 @@ def test_qualidade_fragil_nao_deixa_aportar(an):
                  fluxo_caixa_livre=-10.0)
     a = _com(_peso(an["WEGE3"], 2.0), fund)
     d = rs.decisao(a, _sug(5.0))
-    assert d.codigo == rs.MANTER and "não aportar" in d.detalhe
+    assert d.codigo == rs.ACOMPANHAR and "não aportar" in d.detalhe
     assert d.motivo.startswith("Qualidade frágil:")
 
 
-def test_fragil_e_caro_vira_vender(an):
+def test_fragil_e_caro_reduz_parte_sem_par_superior(an):
     fund = _fund(roe=4.0, roic=3.0, crescimento_receita=-5.0,
                  fluxo_caixa_livre=-10.0)
     a = _com(_peso(an["WEGE3"], 5.0), fund,
              [_linha("p_l", "P/L", 30.0, [15, 15, 15], [14, 14, 14])])
     d = rs.decisao(a, _sug(5.0))
-    assert d.codigo == rs.VENDER and "preço acima do normal" in d.detalhe
+    assert d.codigo == rs.REDUZIR_PARCIAL
+    assert "preço acima do normal" in d.detalhe and "1/3" in d.detalhe
+    assert d.proporcao == pytest.approx(1 / 3)
 
 
 def test_comprar_com_preco_caro_aporta_aos_poucos(an):

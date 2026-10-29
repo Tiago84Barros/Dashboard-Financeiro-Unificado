@@ -155,7 +155,7 @@ def test_aba_mostra_resumo_cartoes_e_abre_a_analise(_historico_em_memoria):
     assert not app.exception
     htmls = [md.value for md in app.markdown]
     assert any("Patrimônio total" in h for h in htmls)
-    cartoes = [h for h in htmls if "Manter, comprar ou vender" in h
+    cartoes = [h for h in htmls if "Ação sugerida" in h
                and "Porcentagem devida" in h]
     assert len(cartoes) == 2
     # a primeira visita grava a foto de cada ativo e a da carteira
