@@ -1,0 +1,627 @@
+{
+  "nome": "Empresas Americanas",
+  "resumo": "Ações dos EUA: pesquisar, comparar e montar carteira",
+  "explicacao": "Área dedicada às ações da bolsa americana (NYSE, Nasdaq e AMEX), com números oficiais das empresas. No topo há cinco botões que funcionam como abas e seguem um caminho: conhecer as empresas, estudar uma delas, testar critérios, montar uma carteira e avaliar essa carteira. É ferramenta de estudo, não recomendação de compra.",
+  "so_admin": false,
+  "fonte": "views/empresas_americanas.py:230 (abas em design/market_companies.py:60 e :83)",
+  "filhos": [
+    {
+      "nome": "Empresas por Setor",
+      "resumo": "Vitrine de todas as empresas, separadas por setor",
+      "explicacao": "Mostra cartões de todas as empresas americanas disponíveis, agrupados por setor (tecnologia, saúde etc.), com logo, código e nome. Serve para explorar o mercado e escolher uma empresa para estudar a fundo.",
+      "so_admin": false,
+      "fonte": "views/empresas_americanas.py:379",
+      "filhos": [
+        {
+          "nome": "Buscar por ticker, nome ou setor (ex.: AAPL, Microsoft)",
+          "resumo": "Campo de busca que filtra os cartões",
+          "explicacao": "Digite o código da ação (ticker, como AAPL), o nome ou o setor e pressione Enter. Se a busca apontar uma única empresa, o app abre direto a aba Análise de Empresa; se houver erro de digitação, mostra nomes parecidos.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:392"
+        },
+        {
+          "nome": "Cartões das empresas por setor",
+          "resumo": "Cartões com botão Analisar em cada empresa",
+          "explicacao": "Cada setor tem um título com a quantidade de empresas e, abaixo, cartões de quatro em quatro. O botão Analisar de cada cartão leva para a aba Análise de Empresa já com aquela empresa escolhida. Os cartões aparecem aos poucos.",
+          "so_admin": false,
+          "fonte": "design/market_companies.py:237 (chamado em views/empresas_americanas.py:417)",
+          "filhos": [
+            {
+              "nome": "Analisar",
+              "resumo": "Abre o estudo completo da empresa",
+              "explicacao": "Botão em cada cartão. Leva para a aba Análise de Empresa com a empresa já selecionada.",
+              "so_admin": false,
+              "fonte": "design/market_companies.py:301"
+            },
+            {
+              "nome": "Mostrar mais empresas",
+              "resumo": "Carrega mais cartões na tela",
+              "explicacao": "Aparece no fim da lista quando há mais empresas do que as exibidas; mostra quantas faltam e carrega o próximo bloco.",
+              "so_admin": false,
+              "fonte": "design/market_companies.py:313"
+            }
+          ]
+        },
+        {
+          "nome": "Sincronização de Dados Americanos",
+          "resumo": "Painel de atualização, só quando faltam dados",
+          "explicacao": "Só aparece quando não há dados das empresas americanas e quem está usando é o administrador. Mostra as últimas atualizações feitas e os comandos para buscar os dados de novo. Para os outros usuários aparece apenas um aviso de que não há dados.",
+          "so_admin": true,
+          "fonte": "views/empresas_americanas.py:384 e :3484"
+        }
+      ]
+    },
+    {
+      "nome": "Análise de Empresa",
+      "resumo": "Raio-x completo de uma empresa escolhida",
+      "explicacao": "Mostra tudo sobre uma empresa: preço, lucros, dívidas, dividendos, indicadores, uma nota de qualidade, um relatório do analista e um chat com a inteligência artificial. No topo aparecem logo, nome, setor e a última cotação em dólares. Serve para decidir se a empresa merece entrar no seu radar.",
+      "so_admin": false,
+      "fonte": "views/empresas_americanas.py:461",
+      "filhos": [
+        {
+          "nome": "Ticker ou nome da empresa",
+          "resumo": "Escolha a empresa e clique em Analisar",
+          "explicacao": "Campo para digitar o código ou o nome e botão Analisar. Se várias empresas combinarem com o texto, elas aparecem como botões para você escolher a certa. Também é preenchido automaticamente quando você vem de um cartão da aba Empresas por Setor.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:476"
+        },
+        {
+          "nome": "Preço da Ação",
+          "resumo": "Gráfico do preço com período ajustável",
+          "explicacao": "Linha com o histórico do preço da ação em dólares. Você escolhe o período: 1 ano, 3 anos, 5 anos ou o máximo disponível.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:567"
+        },
+        {
+          "nome": "Retorno Anual do Preço",
+          "resumo": "Quanto a ação subiu ou caiu por ano",
+          "explicacao": "Barras verdes (alta) e vermelhas (queda) com a variação do preço em cada ano. O ano atual aparece como acumulado até a data.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:589"
+        },
+        {
+          "nome": "Crescimento Médio Anual (CAGR)",
+          "resumo": "Ritmo médio de crescimento de receita e lucro",
+          "explicacao": "Cartões com o crescimento médio por ano (CAGR) da receita, do lucro operacional (EBIT), do lucro líquido e dos dividendos, para ver se a empresa vem crescendo de forma constante.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:614"
+        },
+        {
+          "nome": "Resultados, caixa e dívidas",
+          "resumo": "Números do balanço, último ano e histórico",
+          "explicacao": "Agrupamento de quatro seções seguidas da tela com os números contábeis da empresa: o último ano, a evolução histórica, o dinheiro que entra e sai do caixa e o tamanho das dívidas.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:633 a :775",
+          "filhos": [
+            {
+              "nome": "Último Exercício Disponível",
+              "resumo": "Receita, lucros e dívida do último ano",
+              "explicacao": "Cartões com receita, EBIT (lucro da operação), lucro líquido e dívida líquida do último ano fechado.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:633"
+            },
+            {
+              "nome": "Demonstrações Financeiras — Histórico",
+              "resumo": "Gráfico ano a ano de itens à escolha",
+              "explicacao": "Você escolhe quais itens ver (receita, lucro, patrimônio, dívida, ativo total etc.) e o gráfico mostra a evolução ano a ano.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:648"
+            },
+            {
+              "nome": "Fluxo de Caixa",
+              "resumo": "Dinheiro gerado, investido e livre",
+              "explicacao": "Cartões e barras com o caixa gerado pela operação, o caixa usado em investimentos e o caixa livre (o que sobra depois de investir).",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:720"
+            },
+            {
+              "nome": "Estrutura de Capital e Dívida",
+              "resumo": "Caixa, dívidas de curto e longo prazo",
+              "explicacao": "Cartões e gráfico com caixa, dívida de curto prazo, dívida de longo prazo, dívida total, dívida líquida e patrimônio da empresa.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:745"
+            }
+          ]
+        },
+        {
+          "nome": "Dividendos por ação",
+          "resumo": "Quanto a empresa pagou por ação a cada ano",
+          "explicacao": "Barras com a soma dos dividendos pagos por ação em cada ano, em dólares. Bom para quem busca renda.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:679"
+        },
+        {
+          "nome": "Indicadores de rentabilidade e preço",
+          "resumo": "Margens, retornos e se a ação está cara",
+          "explicacao": "Agrupamento de quatro seções seguidas da tela com os indicadores que medem quanto a empresa ganha e se o preço da ação parece caro ou barato.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:691 a :816",
+          "filhos": [
+            {
+              "nome": "Gráfico de Múltiplos — Histórico",
+              "resumo": "Evolução de margens e retornos por ano",
+              "explicacao": "Você escolhe indicadores como margem líquida, ROE (retorno sobre o patrimônio), ROIC (retorno sobre o capital investido), dividend yield e payout, e vê a evolução ano a ano.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:691"
+            },
+            {
+              "nome": "Rentabilidade",
+              "resumo": "Margens e retornos mais recentes",
+              "explicacao": "Cartões com margem líquida, margem operacional, ROE, ROA, ROIC e dividend yield (dividendos divididos pelo preço).",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:777"
+            },
+            {
+              "nome": "Valuation",
+              "resumo": "A ação está cara ou barata?",
+              "explicacao": "Cartões com P/VP (preço sobre valor patrimonial), P/L (preço sobre lucro), EV/EBIT, P/FCL e payout (parte do lucro distribuída).",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:790"
+            },
+            {
+              "nome": "Estrutura de Capital",
+              "resumo": "Endividamento e folga de caixa",
+              "explicacao": "Cartões com endividamento (dívida sobre patrimônio), alavancagem e liquidez corrente (capacidade de pagar contas de curto prazo).",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:805"
+            }
+          ]
+        },
+        {
+          "nome": "Score e critérios de avaliação",
+          "resumo": "Nota de 0 a 100 e gráfico de qualidade",
+          "explicacao": "Mostra a nota fundamentalista da empresa (0 a 100), quanto dos dados estava disponível, sinais como diluição de ações e um gráfico em forma de radar com as seis áreas avaliadas.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:818 (cartões em :423)",
+          "filhos": [
+            {
+              "nome": "Dossiê, classificação e critérios avançados",
+              "resumo": "Classificação, alertas, tese e riscos",
+              "explicacao": "Seção que abre ao clicar. Mostra a classificação da empresa, alertas de risco, pontos fortes da tese e as condições que fariam a tese deixar de valer.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:820 (conteúdo em :839)"
+            }
+          ]
+        },
+        {
+          "nome": "Relatório do analista",
+          "resumo": "Conclusão pronta: tese, riscos e gatilhos",
+          "explicacao": "Relatório automático com a conclusão sobre a empresa, a tese de investimento, os riscos e os sinais a acompanhar, montado com as mesmas regras do restante do app.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:825 (design/relatorio_analista.py:267)"
+        },
+        {
+          "nome": "Converse sobre a empresa",
+          "resumo": "Chat com a IA sobre esta empresa",
+          "explicacao": "Caixa de conversa com a inteligência artificial focada na empresa aberta: pergunte sobre resultados, dívidas, concorrentes e riscos. Ela responde só com os dados que o app tem e avisa quando falta informação. Só funciona quando a IA está configurada; senão aparece um aviso. Na tela o título traz o código da empresa (Converse sobre AAPL, por exemplo).",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:829 (design/chat_ativo.py:92)"
+        }
+      ]
+    },
+    {
+      "nome": "Análise Avançada",
+      "resumo": "Laboratório para testar filtros e notas",
+      "explicacao": "Etapa 1 de 3. Um laboratório onde você filtra o universo de empresas, ajusta o peso de cada critério da nota e vê quais empresas se destacam, além de simulações e comparações. Serve para validar a regra de escolha antes de montar a carteira.",
+      "so_admin": false,
+      "fonte": "views/empresas_americanas.py:1055",
+      "filhos": [
+        {
+          "nome": "Filtros do Universo",
+          "resumo": "Filtros que mudam toda a análise abaixo",
+          "explicacao": "Escolha setor, indústria, bolsa, perfil (qualidade, crescimento, valor, renda, solidez), liquidez mínima (quanto a ação negocia por dia) e cobertura mínima dos dados. Tudo o que aparece abaixo passa a considerar só as empresas filtradas.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:1085"
+        },
+        {
+          "nome": "Pesos do Scoring",
+          "resumo": "Ajuste quanto vale cada critério da nota",
+          "explicacao": "Seção que abre ao clicar, com controles deslizantes para o peso de seis critérios (qualidade, crescimento, solidez, eficiência de capital, avaliação e retorno ao acionista) e a escolha de quanto o cenário econômico influencia a nota.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:1142"
+        },
+        {
+          "nome": "Conferência dos dados",
+          "resumo": "Quantas empresas entraram e quais ficaram fora",
+          "explicacao": "Agrupamento de três seções que abrem ao clicar, para conferir a qualidade dos dados antes de confiar no ranking.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:1207 a :1264",
+          "filhos": [
+            {
+              "nome": "Qualidade & saneamento dos dados (antes do ranking)",
+              "resumo": "Contagem de empresas e cobertura dos dados",
+              "explicacao": "Cartões com o total filtrado, as elegíveis, as excluídas e a cobertura média, mais uma tabela de cobertura por critério.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1207"
+            },
+            {
+              "nome": "Empresas excluídas por completude de dados",
+              "resumo": "Lista de quem ficou fora por falta de dados",
+              "explicacao": "Tabela com as empresas que não atingiram a cobertura mínima de dados escolhida nos filtros.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1240"
+            },
+            {
+              "nome": "Validação cross-source — SEC/GAAP × dados de mercado",
+              "resumo": "Quantas empresas têm cada indicador",
+              "explicacao": "Tabela que mostra, para indicadores como P/L e EV/EBITDA, quantas empresas têm o dado completo cruzando balanço oficial e preço de mercado.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1250"
+            }
+          ]
+        },
+        {
+          "nome": "Análises extras",
+          "resumo": "Sete estudos opcionais que abrem ao clicar",
+          "explicacao": "Agrupamento de sete seções opcionais que abrem ao clicar, para aprofundar o estudo das empresas filtradas.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:1266 a :1366",
+          "filhos": [
+            {
+              "nome": "Análise de incerteza (bootstrap) — opcional",
+              "resumo": "Faixa provável da nota de uma empresa",
+              "explicacao": "Escolha uma empresa e clique em Calcular intervalo: o app refaz a conta muitas vezes e mostra a média e a faixa em que a nota provavelmente está.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1266"
+            },
+            {
+              "nome": "Otimização pós-seleção — equivalente EUA",
+              "resumo": "Carteira de teste com limites por ativo e setor",
+              "explicacao": "Monta uma carteira de teste com as empresas filtradas, respeitando limites de peso por ação e por setor, e mostra a tabela de pesos.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1287"
+            },
+            {
+              "nome": "Avaliação e retorno ao acionista",
+              "resumo": "Preço e quanto a empresa devolve ao sócio",
+              "explicacao": "Tabela com múltiplos de preço e o retorno ao acionista (dividendos e recompras), incluindo se a quantidade de ações aumentou (diluição) ou caiu (recompra).",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1302"
+            },
+            {
+              "nome": "Resiliência histórica e saúde financeira — sensibilidade EUA",
+              "resumo": "Quem aguentou crises e saúde das contas",
+              "explicacao": "Mostra o piso mínimo de qualidade, como as empresas passaram pela última recessão, uma tabela de saúde financeira e controles do cenário econômico americano (juros, inflação, PIB, desemprego) com uma nota do momento econômico.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1320"
+            },
+            {
+              "nome": "Atribuição do score por trilha — explicabilidade",
+              "resumo": "De onde vem a nota de uma empresa",
+              "explicacao": "Escolha uma empresa e veja num gráfico quanto cada critério somou ou tirou da nota final.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1333"
+            },
+            {
+              "nome": "Black-Litterman — incorporar suas visões",
+              "resumo": "Some sua opinião pessoal à nota",
+              "explicacao": "Escolha até cinco empresas e dê a cada uma um ajuste entre -20 e +20 conforme sua convicção; a tabela mostra a nota ajustada sem alterar os números da empresa.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1346"
+            },
+            {
+              "nome": "Diagnósticos avançados — Piotroski, Altman, Sloan e ROIC incremental",
+              "resumo": "Testes clássicos de saúde de uma empresa",
+              "explicacao": "Digite um código e veja quatro testes conhecidos: Piotroski (saúde em 9 critérios), Altman (risco de falência), Sloan (qualidade do lucro contábil) e retorno do capital novo, com a lista de critérios atendidos.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1365 (conteúdo em :2077)"
+            }
+          ]
+        },
+        {
+          "nome": "Universo Filtrado",
+          "resumo": "As 12 melhores empresas do recorte",
+          "explicacao": "Cartões com as 12 primeiras empresas do recorte, na ordem da nota. O título mostra quantas empresas passaram nos filtros.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:1509"
+        },
+        {
+          "nome": "Score de Entrada — Composição Avançada",
+          "resumo": "Aprovadas, em observação e excluídas",
+          "explicacao": "Cartões com quantas empresas foram aprovadas, ficaram em observação ou foram excluídas e a nota média. Logo abaixo há uma tabela completa que abre ao clicar e a seção Detalhamento por Empresa, com cartões das 12 primeiras.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:1616 (detalhamento em :1641)"
+        },
+        {
+          "nome": "Simulação de Patrimônio e Teste Histórico",
+          "resumo": "Como a estratégia teria rendido no passado",
+          "explicacao": "Defina aporte mensal, quantas empresas comprar, forma de dividir os pesos e índice de comparação, e clique em Simular Backtest. Mostra o resultado passado da estratégia, um gráfico e o retorno líquido em reais. Resultado passado não garante futuro.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:1714"
+        },
+        {
+          "nome": "Comparações entre empresas",
+          "resumo": "Gráficos e tabelas lado a lado",
+          "explicacao": "Agrupamento de cinco seções seguidas da tela para comparar empresas do recorte. Os gráficos aparecem depois de clicar no botão de cada seção.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:1832 a :1924",
+          "filhos": [
+            {
+              "nome": "Comparação de Múltiplos e Indicadores",
+              "resumo": "Um indicador, até cinco empresas",
+              "explicacao": "Escolha até cinco empresas e um indicador (P/L, ROE, margem etc.) e clique em Comparar Múltiplos.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1832"
+            },
+            {
+              "nome": "Comparação de Demonstrações Financeiras",
+              "resumo": "Um item do balanço ao longo dos anos",
+              "explicacao": "Escolha um item (receita, lucro etc.) e as empresas, e clique em Comparar Demonstrações para ver a evolução lado a lado.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1848"
+            },
+            {
+              "nome": "Quadro Comparativo — Indicadores por Empresa",
+              "resumo": "Tabela colorida com melhores e piores",
+              "explicacao": "Tabela com vários indicadores por empresa; verde marca as 25% melhores e vermelho as 25% piores.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1878"
+            },
+            {
+              "nome": "Scatter Plot — Correlação entre Indicadores",
+              "resumo": "Gráfico de pontos com dois indicadores",
+              "explicacao": "Escolha um indicador para cada eixo e clique em Gerar Scatter para ver se um anda junto com o outro.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1891"
+            },
+            {
+              "nome": "FCO / Lucro Líquido — Qualidade do Resultado",
+              "resumo": "O lucro vira dinheiro no caixa?",
+              "explicacao": "Clique em Calcular FCO/Lucro: compara o caixa gerado pela operação com o lucro contábil. Acima de 1 indica lucro que vira dinheiro de verdade.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1908"
+            }
+          ]
+        },
+        {
+          "nome": "Metodologia e referências científicas",
+          "resumo": "Como as contas são feitas e as fontes",
+          "explicacao": "Texto explicando o passo a passo do laboratório, com uma seção que abre ao clicar e lista todas as análises aplicadas e os estudos que as embasam.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:1926"
+        }
+      ]
+    },
+    {
+      "nome": "Criação de Portfólio",
+      "resumo": "Monta a carteira americana com regras claras",
+      "explicacao": "Etapa 2 de 3. Aplica a regra testada no laboratório a todo o mercado americano, escolhe as melhores empresas de cada indústria e monta uma carteira com limites de concentração. No fim você pode salvar essa carteira como a sua carteira padrão.",
+      "so_admin": false,
+      "fonte": "views/empresas_americanas.py:2553",
+      "filhos": [
+        {
+          "nome": "Validação histórica",
+          "resumo": "Aviso: a regra funcionou no passado?",
+          "explicacao": "Quadro no topo com o resumo do teste histórico: se a nota ordenou bem as empresas e se a carteira teria rendido mais do que dividir igualmente. Só aparece quando o histórico necessário existe.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:2601 (texto em :2499)"
+        },
+        {
+          "nome": "Perfil de configuração",
+          "resumo": "Escolha um conjunto de regras pronto",
+          "explicacao": "Selo mostrando o perfil ativo, uma lista de perfis prontos e o botão Aplicar perfil, que preenche todos os parâmetros de uma vez. Há uma explicação que abre ao clicar (Por que estes valores) e alertas quando um ajuste seu tem custo conhecido.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:2606 (conteúdo em :2387)"
+        },
+        {
+          "nome": "Parâmetros",
+          "resumo": "Todos os ajustes finos da carteira",
+          "explicacao": "Seção fechada por padrão. Reúne índice de comparação, taxa livre de risco americana (Treasury), tamanho mínimo da empresa, capital simulado, número de ações, pesos máximos por ação, indústria e setor, nota mínima, aporte mensal, volume mínimo negociado, piso de qualidade e exigências de resiliência.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:2610"
+        },
+        {
+          "nome": "Rodar Criação de Portfólio",
+          "resumo": "Botão principal que monta a carteira",
+          "explicacao": "Logo acima do botão você escolhe quanto o cenário econômico influencia os pesos (Uso da camada macro nos pesos). Ao clicar, o app filtra, avalia as indústrias e calcula os pesos. Se você mudar algum parâmetro depois, a tela avisa que o resultado ficou desatualizado.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:2815 (escolha do cenário em :2804)"
+        },
+        {
+          "nome": "Composição de Entrada — Mercado Americano",
+          "resumo": "Quantas empresas e indústrias foram aprovadas",
+          "explicacao": "Aparece depois de rodar. Cartões com empresas elegíveis, indústrias aprovadas, em observação e excluídas. Abaixo há uma seção que abre ao clicar com a qualidade dos dados e a Auditoria por Indústria.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:2930 (auditoria em :2975)"
+        },
+        {
+          "nome": "Empresas Selecionadas",
+          "resumo": "Cartões das empresas que entraram",
+          "explicacao": "Um cartão por empresa da carteira, com setor, peso, nota e valor investido. Quando há, aparecem também seções que abrem ao clicar com as empresas barradas pelo piso de qualidade e com as trocas feitas pela Inteligência dos Ativos.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:3009 (barradas em :3019, Inteligência dos Ativos em :3066)"
+        },
+        {
+          "nome": "Travessia de Recessão",
+          "resumo": "Como estas empresas passaram pela última crise",
+          "explicacao": "Mostra, com dados medidos, como as margens das empresas escolhidas se comportaram na última recessão, da pior para a melhor.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:3072 (conteúdo em :1440)"
+        },
+        {
+          "nome": "Resumo do Portfólio",
+          "resumo": "Números da carteira e botões para salvar",
+          "explicacao": "Cartões com número de ações, nota média, maior posição, capital, setores e indústrias, seguidos dos botões de uso e de dois gráficos de alocação.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:3075",
+          "filhos": [
+            {
+              "nome": "Usar na Avaliação de Portfólio",
+              "resumo": "Envia a carteira para a próxima aba",
+              "explicacao": "Botão que guarda a carteira montada para a avaliação. Fica bloqueado quando a carteira não passa nas checagens. Atenção: pela leitura do código, a aba Avaliação de Portfólio lê apenas a carteira salva como padrão, não a enviada por este botão.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:3103"
+            },
+            {
+              "nome": "Salvar como carteira padrão",
+              "resumo": "Grava a carteira para o Dashboard e a avaliação",
+              "explicacao": "Salva a carteira de forma permanente. Ela passa a aparecer no Dashboard Geral e é a que a aba Avaliação de Portfólio usa. Fica bloqueado quando a carteira não passa nas checagens.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:3110"
+            },
+            {
+              "nome": "Histórico e restauração do Portfólio EUA",
+              "resumo": "Volte a uma carteira salva antes",
+              "explicacao": "Só aparece quando existem versões antigas. Escolha uma versão, marque a confirmação e clique em Restaurar versão selecionada para trocá-la pela atual.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:2449"
+            },
+            {
+              "nome": "Alocação por ativo e Alocação por setor",
+              "resumo": "Gráficos de pizza e barras dos pesos",
+              "explicacao": "Dois gráficos lado a lado: quanto cada ação pesa na carteira e quanto cada setor pesa.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:3144"
+            },
+            {
+              "nome": "Relação entre Score e Cobertura",
+              "resumo": "Nota versus quantidade de dados",
+              "explicacao": "Gráfico de pontos logo abaixo do resumo, comparando a nota de cada empresa com o quanto de dados ela tinha.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:3162"
+            }
+          ]
+        },
+        {
+          "nome": "Validação histórica e benchmarks",
+          "resumo": "Teste completo da regra no passado",
+          "explicacao": "Seção que abre ao clicar. Refaz a nota em datas passadas usando só o que se sabia em cada data e compara o resultado com índices de mercado. Só funciona quando o histórico necessário existe; caso contrário avisa que a análise não está disponível.",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:3173 (conteúdo em :3280)",
+          "filhos": [
+            {
+              "nome": "Teste histórico com janela móvel — ponto no tempo",
+              "resumo": "Configure o teste histórico",
+              "explicacao": "Escolha quantas empresas comprar em cada período, a forma de dividir os pesos e o índice de comparação.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:3281"
+            },
+            {
+              "nome": "Correlação entre classificação e retorno",
+              "resumo": "A nota acertou quem rendeu mais?",
+              "explicacao": "Cartões que mostram se as empresas com nota mais alta de fato renderam mais depois, e com que frequência isso aconteceu.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:3311"
+            },
+            {
+              "nome": "Desempenho bruto em dólar versus pesos iguais",
+              "resumo": "Retorno, quedas e oscilação da estratégia",
+              "explicacao": "Cartões com retorno anual, ganho sobre dividir igualmente, maior queda, oscilação (volatilidade) e giro da carteira, em dólar e sem custos.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:3325"
+            },
+            {
+              "nome": "Comparação contra o índice",
+              "resumo": "Ganho sobre o índice escolhido",
+              "explicacao": "Mostra quanto a estratégia ganhou ou perdeu por ano contra o índice escolhido (como o S&P 500). Na tela o título traz o nome do índice.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:3367"
+            },
+            {
+              "nome": "Retorno líquido em reais (padrão)",
+              "resumo": "Resultado depois de custos, câmbio e IR",
+              "explicacao": "Mostra o resultado convertido para reais, descontando custos e imposto, com as premissas usadas.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:1686 (chamado em :3323)"
+            },
+            {
+              "nome": "Curva de capital",
+              "resumo": "Gráfico da evolução do dinheiro",
+              "explicacao": "Linha que mostra como o dinheiro teria evoluído ao longo do teste.",
+              "so_admin": false,
+              "fonte": "views/empresas_americanas.py:3442"
+            }
+          ]
+        },
+        {
+          "nome": "Metodologia e equivalências B3 × Estados Unidos",
+          "resumo": "O que muda da regra brasileira para a americana",
+          "explicacao": "Seção que abre ao clicar, explicando o que foi mantido da metodologia da bolsa brasileira e o que foi adaptado ao mercado americano (índices, juros de referência, contabilidade).",
+          "so_admin": false,
+          "fonte": "views/empresas_americanas.py:3187"
+        }
+      ]
+    },
+    {
+      "nome": "Avaliação de Portfólio",
+      "resumo": "Avalia a carteira salva, com ajuda da IA",
+      "explicacao": "Etapa 3 de 3. Avalia a carteira americana salva como padrão: diversificação, concentração, riscos, cenário econômico e uma análise escrita pela inteligência artificial, além de um chat. Sem carteira salva, a tela pede para criar e salvar uma na aba Criação de Portfólio; se a carteira estiver desatualizada, mostra um aviso e para.",
+      "so_admin": false,
+      "fonte": "views/empresas_americanas.py:3212 (conteúdo em views/analise_portfolio_us.py:1117)",
+      "filhos": [
+        {
+          "nome": "Portfolio EUA Modelo",
+          "resumo": "Resumo da carteira salva com os logos",
+          "explicacao": "Título com o nome da carteira salva (por padrão Portfolio EUA Modelo e o ano), cartões com número de empresas, ano-base e setores, e os logos das empresas. Logo abaixo, um lembrete de que a carteira é em dólares e de que o câmbio também afeta o resultado em reais.",
+          "so_admin": false,
+          "fonte": "views/analise_portfolio_us.py:101 (nome padrão em views/empresas_americanas.py:3126)"
+        },
+        {
+          "nome": "Cenário Macroeconômico — Estados Unidos",
+          "resumo": "Juros, inflação, PIB e momento econômico",
+          "explicacao": "Cartões com a taxa de juros americana, inflação, PIB, desemprego, curva de juros e uma nota do momento econômico.",
+          "so_admin": false,
+          "fonte": "views/analise_portfolio_us.py:215",
+          "filhos": [
+            {
+              "nome": "Ajustar o cenário macro usado na análise",
+              "resumo": "Mude os números e simule outro cenário",
+              "explicacao": "Seção que abre ao clicar com campos para alterar juros, inflação e outros números. Ao mudar, a avaliação passa a ser uma simulação.",
+              "so_admin": false,
+              "fonte": "views/analise_portfolio_us.py:305"
+            }
+          ]
+        },
+        {
+          "nome": "Avaliação Quantitativa (determinística)",
+          "resumo": "Nota da carteira e diversificação",
+          "explicacao": "Cartões com a nota consolidada da carteira, a diversificação, o peso do maior setor e quanto da carteira tem nota, já considerando o cenário econômico escolhido.",
+          "so_admin": false,
+          "fonte": "views/analise_portfolio_us.py:172"
+        },
+        {
+          "nome": "Análise Qualitativa via LLM",
+          "resumo": "Botão que pede o relatório à IA",
+          "explicacao": "Botões Executar Análise LLM (a IA escreve a análise da carteira) e Limpar. Se a IA não estiver configurada, aparece apenas um aviso e o restante da tela, inclusive o chat, não é exibido.",
+          "so_admin": false,
+          "fonte": "views/analise_portfolio_us.py:1233 (botões em :1262)"
+        },
+        {
+          "nome": "Relatório Consolidado do Portfólio",
+          "resumo": "Resumo, forças, fraquezas e estratégia",
+          "explicacao": "Aparece depois de rodar a análise da IA. Traz três seções que abrem ao clicar: Resumo Executivo + Papel dos Ativos, Pontos Fortes / Fracos e Relatório Estratégico Completo (riscos e catalisadores).",
+          "so_admin": false,
+          "fonte": "views/analise_portfolio_us.py:346"
+        },
+        {
+          "nome": "Alocação do Modelo (Quanti + Quali)",
+          "resumo": "Pesos sugeridos juntando números e IA",
+          "explicacao": "Aparece depois de rodar a análise da IA. Cartões com o peso sugerido para cada empresa, combinando a nota numérica e a avaliação escrita.",
+          "so_admin": false,
+          "fonte": "views/analise_portfolio_us.py:455"
+        },
+        {
+          "nome": "Relatórios por Empresa",
+          "resumo": "Uma ficha detalhada por empresa",
+          "explicacao": "Aparece depois de rodar a análise da IA. Uma seção que abre ao clicar para cada empresa, com indicadores, alertas, riscos, sensibilidade a juros e economia, catalisadores e a nota qualitativa.",
+          "so_admin": false,
+          "fonte": "views/analise_portfolio_us.py:1291 (fichas em :500)"
+        },
+        {
+          "nome": "Conclusão Estratégica",
+          "resumo": "Fecho com a opinião final da IA",
+          "explicacao": "Aparece depois de rodar a análise, quando a IA devolve uma conclusão: um parágrafo final sobre a carteira.",
+          "so_admin": false,
+          "fonte": "views/analise_portfolio_us.py:736"
+        },
+        {
+          "nome": "Tire Dúvidas sobre o Portfólio",
+          "resumo": "Chat com a IA sobre a carteira",
+          "explicacao": "Caixa de conversa para perguntar sobre múltiplos, setores, comparações com empresas fora da carteira ou efeito dos juros americanos. Funciona mesmo sem rodar a análise completa. Botão Limpar chat apaga a conversa.",
+          "so_admin": false,
+          "fonte": "views/analise_portfolio_us.py:1036"
+        }
+      ]
+    }
+  ]
+}

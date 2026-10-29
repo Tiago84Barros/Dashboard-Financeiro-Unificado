@@ -1,0 +1,289 @@
+{
+  "nome": "Seleção de FIIs",
+  "resumo": "Fundos imobiliários: explorar, estudar e montar carteira",
+  "explicacao": "Área dos fundos imobiliários (FIIs), fundos que investem em imóveis ou em títulos ligados a imóveis e repassam renda mensal. O cabeçalho mostra se o método já foi validado e quanto ele rendeu acima do IFIX (o índice dos FIIs). Cinco botões no topo funcionam como abas: ver os fundos, estudar um fundo, montar a carteira, ver o desempenho passado e revisar dados.",
+  "so_admin": false,
+  "fonte": "views/fiis.py:285 (abas em :219 e :370)",
+  "filhos": [
+    {
+      "nome": "FIIs Disponíveis",
+      "resumo": "Vitrine de todos os fundos, por categoria",
+      "explicacao": "Lista todos os fundos com nota, em cartões agrupados por categoria (lajes, logística, papel etc.). Cada cartão mostra dividend yield (renda dos últimos 12 meses dividida pelo preço), P/VP (preço sobre o valor patrimonial da cota), liquidez e nota. Serve para explorar e escolher um fundo para estudar.",
+      "so_admin": false,
+      "fonte": "views/fiis.py:1972",
+      "filhos": [
+        {
+          "nome": "Filtros: Categoria, Tipo, DY 12m mín. (%) e P/VP máx.",
+          "resumo": "Filtros que mudam os cartões exibidos",
+          "explicacao": "Escolha a categoria, o tipo (tijolo = imóveis, papel = títulos de crédito imobiliário, fof = cotas de outros FIIs, híbrido), a renda mínima e o P/VP máximo. A tela informa quantos fundos sobraram.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:1975"
+        },
+        {
+          "nome": "Cartões dos FIIs por categoria",
+          "resumo": "Cartões com botão Analisar em cada fundo",
+          "explicacao": "Um título por categoria com a quantidade de fundos e cartões de quatro em quatro. O botão Analisar leva à aba Busca de ativo com o fundo já escolhido; o botão Mostrar mais FIIs carrega o próximo bloco.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:1919 (Analisar em :1953, Mostrar mais em :1964)"
+        }
+      ]
+    },
+    {
+      "nome": "Busca de ativo",
+      "resumo": "Raio-x completo de um fundo escolhido",
+      "explicacao": "Mostra tudo sobre um fundo: indicadores, histórico, composição, imóveis, relatório do analista e chat com a inteligência artificial. Serve para entender o fundo antes de pensar em investir.",
+      "so_admin": false,
+      "fonte": "views/fiis.py:2036",
+      "filhos": [
+        {
+          "nome": "FII",
+          "resumo": "Lista para escolher o fundo",
+          "explicacao": "Lista com todos os fundos, os de maior nota primeiro. Já vem preenchida quando você chega pelo botão Analisar da aba FIIs Disponíveis.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2051"
+        },
+        {
+          "nome": "Ticker · Nome do fundo",
+          "resumo": "Os números principais do fundo",
+          "explicacao": "Título com código e nome do fundo, tipo e gestão, e oito cartões: preço, P/VP, DY 12m, VPA (valor patrimonial por cota), patrimônio, número de cotistas, vacância (parte dos imóveis vazia, só para fundos de imóveis) e liquidez diária.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2063"
+        },
+        {
+          "nome": "Histórico fundamentalista",
+          "resumo": "P/VP, valor da cota e proventos no tempo",
+          "explicacao": "Gráficos mensais do P/VP e do valor patrimonial da cota, mais as barras dos proventos pagos por cota em reais.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2101"
+        },
+        {
+          "nome": "Composição de ativos",
+          "resumo": "Imóveis, títulos, caixa e cotas de FII",
+          "explicacao": "Barras com quanto do fundo está em imóveis, em títulos de crédito imobiliário, em caixa e em cotas de outros fundos. Só aparece quando esse dado existe.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2145"
+        },
+        {
+          "nome": "Imóveis do fundo",
+          "resumo": "Lista de imóveis e regiões",
+          "explicacao": "Para fundos de imóveis (tijolo ou híbrido): número de imóveis, regiões, área total, tabela com cada imóvel e um gráfico de imóveis por região. Para fundos de papel ou de cotas, avisa que o fundo não tem imóveis diretamente.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2152"
+        },
+        {
+          "nome": "Relatório do analista",
+          "resumo": "Conclusão pronta: tese, riscos e gatilhos",
+          "explicacao": "Relatório automático com a conclusão sobre o fundo, a tese, os riscos e os sinais a acompanhar.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2186 (design/relatorio_analista.py:267)"
+        },
+        {
+          "nome": "Converse sobre o fundo",
+          "resumo": "Chat com a IA sobre este fundo",
+          "explicacao": "Caixa de conversa com a inteligência artificial focada no fundo aberto. Responde só com os dados do app e avisa quando falta informação. Só funciona quando a IA está configurada. Na tela o título traz o código do fundo.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2191 (design/chat_ativo.py:92)"
+        }
+      ]
+    },
+    {
+      "nome": "Carteira-modelo",
+      "resumo": "Monta automaticamente uma carteira de FIIs",
+      "explicacao": "Você define suas preferências e o app monta na hora uma carteira diversificada de fundos, sem botão de rodar: cada ajuste refaz o resultado. Mostra por que cada fundo entrou ou saiu, riscos, desempenho passado e um chat, e permite salvar a carteira.",
+      "so_admin": false,
+      "fonte": "views/fiis.py:2202 (montagem em :2251)",
+      "filhos": [
+        {
+          "nome": "Preferências da seleção",
+          "resumo": "Regras e cenário que definem a carteira",
+          "explicacao": "Quadro com os ajustes que mudam toda a carteira, divididos em duas seções que abrem ao clicar.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2203 (controles em :1524)",
+          "filhos": [
+            {
+              "nome": "Carteira e elegibilidade",
+              "resumo": "Quantidade de fundos, limites e filtros",
+              "explicacao": "Já vem aberta. Número máximo de fundos, peso máximo por fundo, liquidez mínima, histórico mínimo, renda recorrente mínima, maior queda tolerada, penalidade para fundos que oscilam juntos, exigir P/VP abaixo de 1 e filtros opcionais para fundos de imóveis (regiões, número de imóveis).",
+              "so_admin": false,
+              "fonte": "views/fiis.py:1530"
+            },
+            {
+              "nome": "Cenário macroeconômico e estresse",
+              "resumo": "Selic, inflação e choques simulados",
+              "explicacao": "Campos de Selic, IPCA e variação da Selic, já preenchidos com valores observados quando existem, mais choques de vacância e de calote. Também define quanto o histórico econômico influencia os pesos.",
+              "so_admin": false,
+              "fonte": "views/fiis.py:1573"
+            }
+          ]
+        },
+        {
+          "nome": "Resultado da seleção",
+          "resumo": "Quantos fundos passaram e por quê",
+          "explicacao": "Cartões com o momento econômico e com quantos fundos passaram nos filtros. Inclui seções que abrem ao clicar: Por que os fundos ficaram de fora e, quando houver trocas, Inteligência dos Ativos — vetos e substituições. Se nenhuma carteira for possível, mostra um diagnóstico.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2255 (fora em :497, trocas em :2466, diagnóstico em :2487)"
+        },
+        {
+          "nome": "Carteira apta à publicação / Rascunho não publicável",
+          "resumo": "Diz se a carteira já pode ser salva",
+          "explicacao": "Cartões de prontidão e confiança dos dados, seguidos de uma faixa verde (Carteira apta à publicação) ou amarela (Rascunho não publicável). Só uma carteira apta pode ser salva.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2539"
+        },
+        {
+          "nome": "Ativos selecionados",
+          "resumo": "Tabela da carteira e indicadores gerais",
+          "explicacao": "Tabela com cada fundo, tipo, peso, nota, confiança, renda e P/VP, e cartões com número de fundos, P/VP médio, número efetivo de fundos (quantos fundos de mesmo peso dariam a mesma diversificação) e confiança média. Pode trazer avisos de concentração.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2634 (cartões em :2642)"
+        },
+        {
+          "nome": "Correlação entre os FIIs selecionados",
+          "resumo": "Quais fundos oscilam juntos",
+          "explicacao": "Mapa de cores que mostra quais fundos da carteira costumam subir e cair ao mesmo tempo, o que reduz a diversificação.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:1666"
+        },
+        {
+          "nome": "Cenários estruturais",
+          "resumo": "Efeito de cenários e mistura por tipo",
+          "explicacao": "Cartões com o impacto estimado de cenários econômicos na carteira (não são previsões) e, ao lado, a composição da carteira por tipo de fundo.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2690"
+        },
+        {
+          "nome": "Por que estes FIIs avançaram para a seleção",
+          "resumo": "Ficha explicando cada escolha",
+          "explicacao": "Cartões, em duas colunas, explicando por que cada fundo entrou: posição no ranking, pontos fortes e cuidados.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2714"
+        },
+        {
+          "nome": "Retrospectiva da seleção vs. mercado",
+          "resumo": "Como a seleção teria rendido contra o IFIX",
+          "explicacao": "Cartões comparando o retorno anual da seleção com o IFIX e com o conjunto dos fundos, e o gráfico Risco × número de fundos, que mostra como o risco cai ao adicionar fundos. Depende de haver histórico suficiente.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:1730 (risco em :1755)"
+        },
+        {
+          "nome": "Tire dúvidas sobre os FIIs e a seleção",
+          "resumo": "Chat com a IA sobre a carteira",
+          "explicacao": "Caixa de conversa com perguntas sugeridas em botões. A conversa recomeça quando a seleção ou o cenário muda. Só funciona quando a IA está configurada.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:1275"
+        },
+        {
+          "nome": "Publicação da carteira-modelo",
+          "resumo": "Salvar a carteira e ver versões antigas",
+          "explicacao": "Explica que a carteira salva passa a ser usada no Dashboard Geral. Traz o botão principal da aba e, quando existirem, as informações da carteira já salva e das versões anteriores.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2781",
+          "filhos": [
+            {
+              "nome": "Salvar carteira-modelo",
+              "resumo": "Grava a carteira para o Dashboard",
+              "explicacao": "Salva a carteira montada. Fica bloqueado enquanto a carteira não estiver apta à publicação.",
+              "so_admin": false,
+              "fonte": "views/fiis.py:2800"
+            },
+            {
+              "nome": "Inteligência dos Ativos na carteira-modelo salva (ativa)",
+              "resumo": "Trocas registradas na carteira já salva",
+              "explicacao": "Mostra os vetos e substituições feitos quando a carteira atualmente salva foi criada, que pode ser diferente da carteira montada acima. Só aparece se já existe carteira salva.",
+              "so_admin": false,
+              "fonte": "views/fiis.py:2819"
+            },
+            {
+              "nome": "Histórico e restauração da Carteira-modelo",
+              "resumo": "Volte a uma carteira salva antes",
+              "explicacao": "Seção que abre ao clicar, só quando existem versões antigas. Escolha a versão, confirme e clique para restaurar.",
+              "so_admin": false,
+              "fonte": "views/fiis.py:2846"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nome": "Retrospectiva",
+      "resumo": "O método funcionou no passado?",
+      "explicacao": "Mostra o resultado do teste do método de seleção no passado, usando só informação que já existia em cada data, e como a carteira atual teria se saído. Serve para saber se dá para confiar no método.",
+      "so_admin": false,
+      "fonte": "views/fiis.py:2998",
+      "filhos": [
+        {
+          "nome": "Validação point-in-time da metodologia",
+          "resumo": "Situação e números do teste histórico",
+          "explicacao": "Cartões com a situação do teste (aprovada, bloqueada ou não executada), número de períodos, dados verificados e a faixa provável do ganho sobre o IFIX. Abaixo, aviso de validação bloqueada ou aprovada, lembrando quando o ganho não é estatisticamente confiável.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2999"
+        },
+        {
+          "nome": "Excesso sobre o IFIX: bruto × líquido",
+          "resumo": "Ganho sobre o IFIX antes e depois de custos",
+          "explicacao": "Cartões com o ganho médio por período acima do IFIX, antes e depois de custos e impostos.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2973"
+        },
+        {
+          "nome": "Padrão da casa × carteiras de exceção",
+          "resumo": "Regra padrão contra casos especiais",
+          "explicacao": "Compara o desempenho das carteiras montadas pela regra padrão com o das carteiras em que a regra precisou ser afrouxada.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:2896"
+        },
+        {
+          "nome": "Retrospectiva da seleção atual",
+          "resumo": "A carteira de hoje no passado",
+          "explicacao": "Cartões com o retorno total da carteira atual, do IFIX, a diferença entre os dois e o período, mais um gráfico partindo de 100. Só funciona depois de montar a carteira na aba Carteira-modelo.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:3077"
+        }
+      ]
+    },
+    {
+      "nome": "Revisão de dados",
+      "resumo": "Aprovar ou corrigir dados lidos de relatórios",
+      "explicacao": "Fila de dados extraídos automaticamente dos relatórios dos fundos, que só passam a valer depois de uma decisão humana (aceitar, corrigir ou rejeitar). É uma tarefa de manutenção dos dados, mas o código não restringe esta aba ao administrador: qualquer usuário a vê.",
+      "so_admin": false,
+      "fonte": "views/fiis.py:807",
+      "filhos": [
+        {
+          "nome": "Revisão auditável de evidências documentais",
+          "resumo": "Resumo da fila de pendências",
+          "explicacao": "Explicação da etapa e cinco cartões: dados pendentes, fundos na fila, revisões já feitas, empreendimentos pendentes e achados pendentes.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:818"
+        },
+        {
+          "nome": "Tipo de evidência",
+          "resumo": "Escolhe o que revisar",
+          "explicacao": "Botões Métricas, Empreendimentos e Achados qualitativos. Cada opção troca o conteúdo abaixo.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:847"
+        },
+        {
+          "nome": "Métricas",
+          "resumo": "Revisar números extraídos dos relatórios",
+          "explicacao": "Filtre por fundo e por métrica, escolha um item, veja o valor extraído e o trecho do documento, e registre a decisão (Aceitar, Corrigir com o valor certo ou Rejeitar) com seu nome e uma justificativa no botão Registrar decisão.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:866 (formulário em :911)"
+        },
+        {
+          "nome": "Empreendimentos",
+          "resumo": "Revisar imóveis e projetos extraídos",
+          "explicacao": "Escolha um empreendimento pendente, confira os dados e o trecho do documento e registre a decisão no botão Registrar decisão.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:677"
+        },
+        {
+          "nome": "Achados qualitativos",
+          "resumo": "Revisar informações em texto",
+          "explicacao": "Escolha um achado pendente (informação descritiva tirada de relatório), confira e registre a decisão no botão Registrar decisão.",
+          "so_admin": false,
+          "fonte": "views/fiis.py:748"
+        }
+      ]
+    }
+  ]
+}

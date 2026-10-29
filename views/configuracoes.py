@@ -1,6 +1,6 @@
 """
 views/configuracoes.py
-Configurações do sistema — oito abas organizadas por finalidade.
+Configurações do sistema — nove abas organizadas por finalidade.
 
   ⚙️ Geral                — tema, troca de usuário e memória da LLM
   🎯 Grau de Confiança    — quanto o app confia em cada seção, e por quê
@@ -12,10 +12,11 @@ Configurações do sistema — oito abas organizadas por finalidade.
   🔄 Dados de mercado     — CVM, YFinance, Banco Central, macro (orquestração)
   🗄️ Banco de dados       — conexão, capacidade, schema e diagnóstico técnico
   🔒 Segurança            — sessão e autenticação
+  🗺️ Mapa do App          — fluxograma de todas as telas, em linguagem simples
   📚 Documentação         — fluxogramas e explicações do app (era rota da sidebar)
 
 A tela é a mesma para quem administra e para quem não administra desde
-12/10/2026: as oito abas aparecem para todo mundo. O que ainda separa os dois
+12/10/2026: todas as abas aparecem para todo mundo. O que ainda separa os dois
 é o dado que cada guarda de ``core`` entrega, não o que a tela desenha.
 """
 from __future__ import annotations
@@ -59,7 +60,7 @@ def render() -> None:
     st.markdown(_CONFIG_CSS + _CARD_CSS, unsafe_allow_html=True)
 
     (tab_geral, tab_conf, tab_restr, tab_atualizacao, tab_dados, tab_banco,
-     tab_seg, tab_docs) = st.tabs([
+     tab_seg, tab_mapa, tab_docs) = st.tabs([
         "⚙️ Geral",
         "🎯 Grau de Confiança",
         "🧭 Restrições",
@@ -67,6 +68,7 @@ def render() -> None:
         "🔄 Dados de mercado",
         "🗄️ Banco de dados",
         "🔒 Segurança",
+        "🗺️ Mapa do App",
         "📚 Documentação",
     ])
 
@@ -132,6 +134,16 @@ def render() -> None:
         )
         _render_seguranca()
 
+    with tab_mapa:
+        _render_tab_intro(
+            "Mapa do App",
+            "Todas as telas do app num fluxograma só, em linguagem simples. "
+            "Toque numa caixa para ver o que existe dentro dela.",
+            "Todas as telas",
+            "var(--app-primary, #00C896)",
+        )
+        _render_mapa_app()
+
     with tab_docs:
         _render_tab_intro(
             "Documentação",
@@ -149,6 +161,36 @@ def _render_restricoes() -> None:
     from views.configuracoes_restricoes import render as render_restricoes
 
     render_restricoes()
+
+
+#: Altura do iframe do Mapa do App, em px. Fixa e com rolagem própria: a
+#: página cresce e encolhe conforme o ramo aberto, e um iframe que mudasse de
+#: altura a cada toque empurraria a tela inteira para cima e para baixo.
+_ALTURA_MAPA_APP = 900
+
+
+def _render_mapa_app() -> None:
+    """Aba do Mapa do App: o fluxograma de todas as telas, para toda conta.
+
+    O mapa só descreve o app -- não lê banco nem conta de ninguém --, então
+    não há guarda de administrador aqui: a mesma página para todo mundo.
+
+    Vai num iframe (``components.html``) porque é uma página inteira, com
+    estilo e script próprios, que o CSS do app não alcança. A cor segue o tema
+    escolhido no app (``tema_pintado``), não o do sistema operacional.
+
+    Nada aqui muda a posição das abas: a aba desenha sempre os mesmos dois
+    elementos (a faixa e o iframe), em toda execução. Trocar o tema muda só o conteúdo do
+    iframe, não quantos elementos existem -- e é a contagem acima do
+    ``st.tabs`` que devolveria a seleção para a primeira aba (ver ``app.py``).
+    """
+    import streamlit.components.v1 as components
+
+    from design.mapa_app import pagina_html
+    from design.theme_selector import tema_pintado
+
+    components.html(pagina_html(tema_pintado()), height=_ALTURA_MAPA_APP,
+                    scrolling=True)
 
 
 def _render_documentacao() -> None:

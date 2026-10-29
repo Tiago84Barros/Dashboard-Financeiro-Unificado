@@ -1,0 +1,326 @@
+{
+  "nome": "Bastidores",
+  "resumo": "O que trabalha sozinho para as telas terem dados",
+  "explicacao": "Tudo o que roda sem ninguém clicar: a coleta nas fontes de dados, a rotina diária que atualiza e publica, e os 'motores' de análise que as telas consultam. A maior parte roda no computador do dono do app (que guarda a base de dados completa) e publica um resumo na versão online do app; uma parte menor roda na nuvem do GitHub em horários fixos, mesmo com o computador desligado.",
+  "so_admin": false,
+  "fonte": "scripts/registrar_tarefas.ps1:1; scripts/atualizar_vitrines.py:1; .github/workflows/",
+  "filhos": [
+    {
+      "nome": "De onde vêm os dados",
+      "resumo": "As fontes externas que abastecem o app",
+      "explicacao": "Lugares de onde o app busca dados sozinho. Seus lançamentos, faturas e extratos não estão aqui: eles entram pelos arquivos que você envia em Configurações → Atualização de dados.",
+      "so_admin": false,
+      "fonte": "core/publicacao_agenda.py:168; data_pipeline/update_registry.py:17",
+      "filhos": [
+        {
+          "nome": "B3 (bolsa brasileira)",
+          "resumo": "Preço diário de ações e FIIs",
+          "explicacao": "O arquivo oficial de cada pregão da B3, com o preço de fechamento de ações e fundos imobiliários. É o primeiro item da rotina diária, porque quase tudo depois depende dele. Telas que dependem: Empresas B3, Seleção de FIIs, Investimentos (evolução do patrimônio) e Portfólio Global.",
+          "so_admin": false,
+          "fonte": "core/publicacao_agenda.py:169",
+          "filhos": []
+        },
+        {
+          "nome": "brapi (empresas da B3)",
+          "resumo": "Balanços, cotações e setores das empresas",
+          "explicacao": "Serviço pago que entrega balanços, cotações e setores das empresas da B3. Atualização diária, mais uma revisão semanal dos balanços. Telas que dependem: Empresas B3, Investimentos → Inteligência dos Ativos e Portfólio Global.",
+          "so_admin": false,
+          "fonte": "core/publicacao_agenda.py:512; run_market_ingest.py:1",
+          "filhos": []
+        },
+        {
+          "nome": "CVM (documentos oficiais)",
+          "resumo": "Fatos relevantes, resultados e documentos de FIIs",
+          "explicacao": "A CVM é quem fiscaliza o mercado no Brasil. O app baixa todo dia os documentos das empresas (resultados, fatos relevantes, proventos) e dos fundos imobiliários, e lê o texto deles. Telas que dependem: Seleção de FIIs, Empresas B3 (assistente de IA e relatórios) e Investimentos → Inteligência dos Ativos.",
+          "so_admin": false,
+          "fonte": "core/publicacao_agenda.py:177",
+          "filhos": []
+        },
+        {
+          "nome": "Banco Central e Tesouro Nacional",
+          "resumo": "Selic, inflação, CDI, câmbio e títulos públicos",
+          "explicacao": "Do Banco Central vêm Selic, IPCA, câmbio, PIB, CDI diário e as projeções do Boletim Focus; do Tesouro vêm os preços diários de cada título do Tesouro Direto. Telas que dependem: Investimentos (Tesouro e rentabilidade), Controle Financeiro e Dashboard Geral pelo assistente de IA, e todas as análises de carteira.",
+          "so_admin": false,
+          "fonte": "data_pipeline/update_registry.py:37; core/publicacao_agenda.py:311",
+          "filhos": []
+        },
+        {
+          "nome": "Yahoo Finance (cotações e dólar)",
+          "resumo": "Cotações dos seus ativos e dólar diário",
+          "explicacao": "Cotações de ativos brasileiros e estrangeiros e a cotação diária do dólar, usada para converter em reais o que você tem fora. Telas que dependem: Investimentos, Portfólio Global e Dashboard Geral.",
+          "so_admin": false,
+          "fonte": "data_pipeline/update_registry.py:17",
+          "filhos": []
+        },
+        {
+          "nome": "Mercado americano (SEC e Yahoo Finance)",
+          "resumo": "Balanços e preços das empresas dos EUA",
+          "explicacao": "Os balanços vêm da SEC, o órgão que fiscaliza o mercado americano, e os preços vêm do Yahoo Finance. Também são registradas as empresas que saíram da bolsa. Telas que dependem: Empresas Americanas e Portfólio Global.",
+          "so_admin": false,
+          "fonte": "run_us_ingest.py:1; core/publicacao_agenda.py:231",
+          "filhos": []
+        },
+        {
+          "nome": "Economia mundial (FRED, Banco Mundial e outros)",
+          "resumo": "Indicadores econômicos de outros países",
+          "explicacao": "Juros, inflação e atividade de outros países, vindos de fontes oficiais como o FRED (banco central americano), o Banco Mundial, o BIS e o Eurostat. Viram o ajuste pelo cenário econômico nas notas e pesos das carteiras. Telas que dependem: Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global.",
+          "so_admin": false,
+          "fonte": "core/macro_data/providers.py:183; run_macro_updates.py:1",
+          "filhos": []
+        },
+        {
+          "nome": "Notícias (Alpha Vantage, Marketaux e RSS)",
+          "resumo": "Manchetes do mercado coletadas o dia todo",
+          "explicacao": "Serviços de notícias e canais RSS de veículos. A coleta tenta a cada 30 minutos, mas só gasta a cota quando o modo atual (normal, vigilância ou crise) pede. Telas que dependem: os assistentes de IA de todas as telas e Investimentos → Inteligência dos Ativos (informações recentes).",
+          "so_admin": false,
+          "fonte": "core/noticias/provedores/; scripts/registrar_tarefas.ps1:86",
+          "filhos": []
+        }
+      ]
+    },
+    {
+      "nome": "Rotina diária no computador do dono",
+      "resumo": "Atualiza tudo e publica na versão online",
+      "explicacao": "Tarefa agendada no Windows chamada 'DFU - Atualizar vitrines'. Roda todo dia às 19:30 e também 3 minutos depois de o dono entrar no computador. Ela vê o que está vencido, atualiza a base de dados do computador e publica um resumo na versão online do app; se o computador ficou desligado, ao ligar ela recupera o que venceu. Tem um prazo de 3h45: o que não couber fica para a próxima rodada.",
+      "so_admin": false,
+      "fonte": "scripts/registrar_tarefas.ps1:73; scripts/atualizar_vitrines.py:1; core/publicacao_agenda.py:168",
+      "filhos": [
+        {
+          "nome": "Ações e empresas da B3",
+          "resumo": "Pregão, balanços, documentos e indicadores B3",
+          "explicacao": "Todo dia: preço do pregão, documentos da CVM e dados da brapi. Toda semana: indicadores das empresas, histórico de notas, fechamento mensal de preços e a origem de cada balanço. Telas que dependem: Empresas B3, Investimentos e Portfólio Global.",
+          "so_admin": false,
+          "fonte": "core/publicacao_agenda.py:169",
+          "filhos": []
+        },
+        {
+          "nome": "Fundos imobiliários (FIIs)",
+          "resumo": "Cadeia de sete etapas e ranking de FIIs",
+          "explicacao": "Todo dia: documentos dos fundos, uma cadeia de sete etapas (coleta, cadastro, confiança, séries, monitoramento) e a publicação da seleção de FIIs. Toda semana: série mensal de patrimônio, cotistas e preço sobre valor patrimonial. Telas que dependem: Seleção de FIIs e Portfólio Global.",
+          "so_admin": false,
+          "fonte": "core/publicacao_agenda.py:199",
+          "filhos": []
+        },
+        {
+          "nome": "Empresas americanas",
+          "resumo": "Preços, resumo das empresas e saídas de bolsa",
+          "explicacao": "A cada 2 dias: preços e resumo de cada empresa americana. A cada 30 dias: preços mensais e empresas que saíram da bolsa. O histórico de notas só é republicado quando o método de cálculo muda. Telas que dependem: Empresas Americanas e Portfólio Global.",
+          "so_admin": false,
+          "fonte": "core/publicacao_agenda.py:231",
+          "filhos": []
+        },
+        {
+          "nome": "Cenário econômico",
+          "resumo": "Macro das carteiras, CDI e cenários parecidos",
+          "explicacao": "Todo dia: ajuste das carteiras pelo cenário econômico, CDI diário, Selic, IPCA e Focus para os assistentes de IA, e os 'cenários análogos' (o que aconteceu em momentos parecidos). Toda semana: histórico de preços justos e múltiplos. Telas que dependem: Empresas B3, Empresas Americanas, Seleção de FIIs, Portfólio Global e Investimentos → Inteligência dos Ativos.",
+          "so_admin": false,
+          "fonte": "core/publicacao_agenda.py:292",
+          "filhos": []
+        },
+        {
+          "nome": "Notícias e informações recentes",
+          "resumo": "Resumo de notícias e documentos por ativo",
+          "explicacao": "Todo dia: publica as notícias mais relevantes e as informações recentes de cada ativo (notícias, relatórios e datas importantes). Toda semana: a coleção de documentos da CVM que o assistente de IA consulta. Telas que dependem: assistentes de IA de todas as telas e Investimentos → Inteligência dos Ativos.",
+          "so_admin": false,
+          "fonte": "core/publicacao_agenda.py:271",
+          "filhos": []
+        },
+        {
+          "nome": "Desempenho da Carteira 20",
+          "resumo": "Curva diária da Carteira 20",
+          "explicacao": "Todo dia calcula como a Carteira 20 se saiu contra o BOVA11, o CDI e uma carteira de pesos iguais. Tela que depende: Empresas B3 (aba Carteira 20).",
+          "so_admin": false,
+          "fonte": "core/publicacao_agenda.py:395; views/empresas_b3.py:6876",
+          "filhos": []
+        },
+        {
+          "nome": "Cópia dos seus dados para o computador",
+          "resumo": "Traz da versão online seus lançamentos e carteira",
+          "explicacao": "Caminho inverso dos outros: todo dia copia da versão online para o computador do dono os dados de controle financeiro e de carteira que só a versão online recebe. Assim as análises feitas no computador usam os mesmos dados que você vê.",
+          "so_admin": false,
+          "fonte": "core/publicacao_agenda.py:282",
+          "filhos": []
+        },
+        {
+          "nome": "Avisos no Telegram",
+          "resumo": "Avisa quando algo falha ou atrasa",
+          "explicacao": "No fim de cada rodada, um 'vigia' manda mensagem no Telegram quando uma publicação falhou ou passou do prazo, quando uma tarefa agendada na nuvem falhou 2 vezes seguidas ou quando os balanços da B3 estão atrasados. Não avisa quando está tudo bem, e só repete o aviso se o problema mudar ou depois de 24 horas.",
+          "so_admin": false,
+          "fonte": "scripts/vigia_automacoes.py:1; scripts/notificar.py:1",
+          "filhos": []
+        }
+      ]
+    },
+    {
+      "nome": "Outras tarefas automáticas",
+      "resumo": "Coletas, ponte de leitura e rotinas na nuvem",
+      "explicacao": "Tarefas que rodam fora da rotina das 19:30: algumas no computador do dono, outras na nuvem do GitHub. As da nuvem funcionam mesmo com o computador desligado.",
+      "so_admin": false,
+      "fonte": "scripts/registrar_tarefas.ps1:86; .github/workflows/",
+      "filhos": [
+        {
+          "nome": "Coleta de notícias",
+          "resumo": "A cada 30 minutos no computador do dono",
+          "explicacao": "Tarefa 'DFU - Coleta de noticias': tenta a cada 30 minutos e também ao ligar o computador, e grava as notícias na base de dados do computador. Existe uma versão na nuvem, mas ela vem desligada. Telas que dependem: assistentes de IA e Inteligência dos Ativos, através da publicação diária.",
+          "so_admin": false,
+          "fonte": "scripts/registrar_tarefas.ps1:86; .github/workflows/noticias.yml:19",
+          "filhos": []
+        },
+        {
+          "nome": "Documentos de FIIs aos sábados",
+          "resumo": "Leitura extra de documentos, sábado 9h",
+          "explicacao": "Tarefa 'DFU - Backfill documentos FII', todo sábado às 9h no computador do dono. Lê com calma os PDFs dos fundos imobiliários para completar informações. Tela que depende: Seleção de FIIs.",
+          "so_admin": false,
+          "fonte": "scripts/registrar_tarefas.ps1:123",
+          "filhos": []
+        },
+        {
+          "nome": "Ponte de leitura para a versão online",
+          "resumo": "Deixa a versão online ler o computador do dono",
+          "explicacao": "Serviço que liga quando o dono entra no computador e deixa a versão online do app ler, só para consulta, as notícias e séries econômicas guardadas lá. Com o computador desligado, a versão online usa o último resumo publicado e avisa isso.",
+          "so_admin": false,
+          "fonte": "scripts/registrar_armazem_leitura.ps1:1; core/armazem_remoto.py:1",
+          "filhos": []
+        },
+        {
+          "nome": "Atualização na nuvem duas vezes ao dia",
+          "resumo": "Cotações, dólar, Banco Central e Tesouro",
+          "explicacao": "Duas tarefas no GitHub rodam a mesma atualização: às 9h e às 18h30 (horário de Brasília). Buscam cotações, dólar, indicadores do Banco Central e preços do Tesouro, e fazem a limpeza do histórico de recomendações (hoje só em simulação). É o que aparece em Configurações → Dados de mercado.",
+          "so_admin": false,
+          "fonte": ".github/workflows/update-data.yml:25; .github/workflows/data_pipeline.yml:6; data_pipeline/update_registry.py:17",
+          "filhos": []
+        },
+        {
+          "nome": "Ranking de FIIs na nuvem",
+          "resumo": "Ranking e índice IFIX todo dia às 6h",
+          "explicacao": "Tarefa no GitHub que todo dia, às 6h (horário de Brasília), atualiza o ranking de FIIs e o índice de referência IFIX na versão online. Aos sábados ela também dispara às 5h, mas nesse modo nenhuma etapa de FIIs parece rodar. Tela que depende: Seleção de FIIs.",
+          "so_admin": false,
+          "fonte": ".github/workflows/market-refresh.yml:12",
+          "filhos": []
+        },
+        {
+          "nome": "Correção de lacunas por assistente de IA",
+          "resumo": "Propõe correção para um problema por vez",
+          "explicacao": "Um assistente de IA lê a fila da aba Configurações → Restrições, escolhe o problema mais importante e propõe uma correção para o dono aprovar. Nunca aplica nada sozinho, e para se já houver 3 propostas abertas. Frequência não confirmada: o guia fala em 'rotina diária', mas o agendamento não está no código.",
+          "so_admin": false,
+          "fonte": ".claude/skills/corrigir-lacuna/SKILL.md:1; scripts/lacunas_sincronizar.py:1",
+          "filhos": []
+        }
+      ]
+    },
+    {
+      "nome": "Motores de análise",
+      "resumo": "Cálculos que as telas e os assistentes consultam",
+      "explicacao": "Partes do app que não têm tela própria no menu, mas fazem as contas e juntam as informações que as telas mostram e que os assistentes de IA usam para responder. Nenhum deles compra ou vende nada.",
+      "so_admin": false,
+      "fonte": "core/",
+      "filhos": [
+        {
+          "nome": "Motor Conjuntural (notícias)",
+          "resumo": "Avalia relevância e tom de cada notícia",
+          "explicacao": "Coleta as notícias, junta as repetidas e avalia relevância, sentimento e impacto provável de cada uma. Telas que dependem: os assistentes de IA de todas as telas e Investimentos → Inteligência dos Ativos.",
+          "so_admin": false,
+          "fonte": "core/noticias/__init__.py:1; core/contexto_mercado.py:1",
+          "filhos": []
+        },
+        {
+          "nome": "Dados macroeconômicos",
+          "resumo": "Como o cenário econômico afeta cada ativo",
+          "explicacao": "Organiza os indicadores do Brasil e do mundo e calcula como o cenário econômico pesa sobre cada ativo, o que ajusta notas e pesos das carteiras sugeridas. Telas que dependem: Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global.",
+          "so_admin": false,
+          "fonte": "core/macro_data/__init__.py:1",
+          "filhos": []
+        },
+        {
+          "nome": "Memória de Mercado",
+          "resumo": "O que os preços fizeram em casos parecidos",
+          "explicacao": "Responde 'da última vez que algo assim aconteceu, o que os preços fizeram?', sempre dizendo quantos casos usou e dando uma faixa, nunca um número exato. No máximo sugere reduzir a prioridade de um aporte. Telas que dependem: Portfólio Global (plano de aporte) e os assistentes de IA (cenários análogos).",
+          "so_admin": false,
+          "fonte": "core/memoria_mercado/__init__.py:1",
+          "filhos": []
+        },
+        {
+          "nome": "Conjuntura",
+          "resumo": "Junta cenário, notícias e memória para a decisão",
+          "explicacao": "Liga os três motores anteriores ao plano de aporte e ao texto de contexto dos assistentes de IA por ativo. Com pouca evidência, como hoje, ele não mexe em nada e diz o que falta. Telas que dependem: Portfólio Global e os assistentes de Empresas B3, Empresas Americanas, Seleção de FIIs e Investimentos.",
+          "so_admin": false,
+          "fonte": "core/conjuntura/__init__.py:1",
+          "filhos": []
+        },
+        {
+          "nome": "Inteligência dos Ativos",
+          "resumo": "A ficha completa de cada ativo",
+          "explicacao": "Monta a ficha de cada ativo: fundamentos, preço justo, comparação com parecidos, informações recentes, encaixe na sua carteira e um veredito por regras. Esse veredito também barra ativos ruins na criação de carteiras. Telas que dependem: Investimentos (aba Inteligência dos Ativos), Dashboard Geral, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global.",
+          "so_admin": false,
+          "fonte": "core/inteligencia_ativos/; views/investimentos.py:4553",
+          "filhos": []
+        },
+        {
+          "nome": "Eventos Extremos e Antifragilidade",
+          "resumo": "Reconhece crises e mede a exposição",
+          "explicacao": "Classifica o momento em níveis de 0 a 4 (de normal a crise), mede quanto a carteira está exposta e prepara um plano para confirmação humana. Não prevê crises e não executa nada. Hoje nenhuma tela do menu mostra esse painel; o nível de crise é usado para decidir com que frequência coletar notícias.",
+          "so_admin": false,
+          "fonte": "core/eventos_extremos/__init__.py:1; core/noticias/estado_coleta.py:362",
+          "filhos": []
+        },
+        {
+          "nome": "Registro de lacunas",
+          "resumo": "Anota o que o app não sabe ou errou",
+          "explicacao": "Toda vez que falta um dado, uma tela dá erro ou uma análise tem limitação, isso é anotado em silêncio em vez de aparecer para você. Tela que depende: Configurações → Restrições; também abastece a correção por assistente de IA.",
+          "so_admin": false,
+          "fonte": "core/lacunas/__init__.py:1; app.py:189",
+          "filhos": []
+        },
+        {
+          "nome": "Trilha de auditoria das recomendações",
+          "resumo": "Guarda por que o app recomendou algo",
+          "explicacao": "Registra cada recomendação com o motivo, a ação proposta, a data e as versões dos dados e do cálculo. Uma limpeza diária olha registros com mais de 365 dias (hoje só simulando). Pelo código, só as telas retiradas do menu usam essa trilha.",
+          "so_admin": false,
+          "fonte": "core/auditoria/__init__.py:1; data_pipeline/update_registry.py:199",
+          "filhos": []
+        },
+        {
+          "nome": "Liberação gradual (fases e chaves)",
+          "resumo": "Limita o quanto o app pode afirmar",
+          "explicacao": "Define em que fase o app está (de 1, só observar, a 4, modo crise completo) e nove chaves que ligam ou desligam recursos. A fase é o teto: uma chave não liga algo acima da fase atual. É mudado na configuração do app, não por botão.",
+          "so_admin": false,
+          "fonte": "core/homologacao/__init__.py:1; core/conjuntura/ponte.py:57",
+          "filhos": []
+        }
+      ]
+    },
+    {
+      "nome": "Telas retiradas do menu",
+      "resumo": "Saíram do menu, mas seus motores seguem ativos",
+      "explicacao": "Três telas saíram do menu lateral a pedido do dono. Pelo código, nenhuma outra tela leva até elas hoje; o que continua funcionando são os motores que elas mostravam.",
+      "so_admin": false,
+      "fonte": "app.py:119",
+      "filhos": [
+        {
+          "nome": "Inteligência de Mercado",
+          "resumo": "Notícias, crise, memória e antifragilidade",
+          "explicacao": "Mostrava o painel de notícias, nível de crise, Memória de Mercado e antifragilidade, com coleta de notícias por botão. Os motores por trás seguem alimentando os assistentes de IA e o Portfólio Global.",
+          "so_admin": false,
+          "fonte": "views/inteligencia_mercado.py:1",
+          "filhos": []
+        },
+        {
+          "nome": "Macro Internacional",
+          "resumo": "Indicadores econômicos de outros países",
+          "explicacao": "Mostrava, só para leitura, os indicadores oficiais de outros países e a origem de cada um. Os dados seguem entrando no ajuste macro de Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global.",
+          "so_admin": false,
+          "fonte": "views/macro_internacional.py:1",
+          "filhos": []
+        },
+        {
+          "nome": "Homologação",
+          "resumo": "Fase atual e as nove chaves",
+          "explicacao": "Mostrava em que fase de liberação o app está, quais chaves estão ligadas e o que falta para avançar. As regras continuam valendo nos bastidores.",
+          "so_admin": false,
+          "fonte": "views/homologacao.py:1",
+          "filhos": []
+        }
+      ]
+    }
+  ]
+}
