@@ -236,11 +236,14 @@ def _imprime(r: dict) -> None:
     print(f"\n2. Contra a CVM (FII, {c['ticker_anos']} ticker-anos, {c['tickers']} fundos)")
     if not c["ticker_anos"]:
         print("   nenhum ticker-ano da CVM com as doze competências: comparação indisponível")
-        return
-    for nome, v in c.items():
-        if isinstance(v, dict):
-            print(f"   {nome:40s} até 5%: {_pct(v['ate_5pct'])} | até 10%: {_pct(v['ate_10pct'])}"
-                  f" | erro mediano: {_pct(v['erro_mediano'])}")
+    else:
+        for nome, v in c.items():
+            if isinstance(v, dict):
+                print(f"   {nome:40s} até 5%: {_pct(v['ate_5pct'])}"
+                      f" | até 10%: {_pct(v['ate_10pct'])}"
+                      f" | erro mediano: {_pct(v['erro_mediano'])}")
+    # Outra convenção pode fechar o ano que a principal não fecha: a faixa sai
+    # mesmo com a principal vazia.
     s = r["contra_a_cvm_sensibilidade"]
     print("\n   Sensibilidade à convenção (fração até 5% da CVM)")
     for v in s["variantes"]:

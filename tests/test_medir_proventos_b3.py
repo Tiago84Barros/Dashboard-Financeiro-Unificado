@@ -216,3 +216,17 @@ def test_sem_ticker_ano_da_cvm_o_relatorio_sai_e_diz_indisponivel(capsys):
     saida = capsys.readouterr().out
     assert "comparação indisponível" in saida
     assert "renda_por_evento" in saida  # a parte circular continua no relatório
+
+
+def test_principal_vazia_nao_esconde_a_variante_que_fecha_o_ano(capsys):
+    # jan a dez/2023 fecha 2023 com o pagamento no mesmo mês, não um mês depois
+    r = m.medir(_publicado(), _crua(), _bruto(), _obs("AAAA11", _meses("2023-01-01", 12)),
+                hoje=date(2025, 6, 1))
+    assert r["contra_a_cvm_fii"]["ticker_anos"] == 0
+    assert r["contra_a_cvm_sensibilidade"]["faixa_do_arquivo"]["ate_5pct"] == {
+        "min": 1.0, "max": 1.0}
+    m._imprime(r)
+    saida = capsys.readouterr().out
+    assert "comparação indisponível" in saida
+    assert "pagamento +0 meses, junção interna" in saida
+    assert "faixa do arquivo até 5%: 100.0% a 100.0%" in saida
