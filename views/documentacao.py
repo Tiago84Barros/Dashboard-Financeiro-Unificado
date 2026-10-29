@@ -2560,7 +2560,11 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
                 "core.proventos_b3.renda_anual(), que lê data/public/proventos_b3.json.gz",
                 "Publicador: scripts/publish_proventos_b3.py (armazém local → arquivo)",
                 "Ticker que o arquivo não cobre: market.dividends pela regra renda_por_evento()",
-                "Resposta com mais de 10 dias sem renovação: fila de Configurações → Restrições",
+                "Resposta com mais de 10 dias sem renovação: fila de Configurações → Restrições "
+                "(Análise de Empresa e Portfólio B3) e marca VELHA no bloco de demonstrações "
+                "das LLMs",
+                "Snapshots de carteira B3 e FII: history.proventos_resposta_em guarda o dia da "
+                "resposta por trás dos dividendos",
                 "Medição reproduzível: scripts/medir_proventos_b3.py",
             ),
             "Somar market.dividends direto contaria duas vezes cada revisão da brapi, porque "
@@ -3007,7 +3011,8 @@ _FLOW_DETAIL_OVERRIDES = {
             "janeiro: o desacordo é entre duas fontes imperfeitas, não o erro da brapi nem "
             "um limite para ele, porque as duas podem errar no mesmo sentido.\n"
             "O ano civil em curso e os seguintes ficam fora do CAGR; na série por exercício, "
-            "o ano civil ainda aberto fica vazio.\n"
+            "o ano civil ainda aberto fica vazio; no snapshot de FII da carteira, o ano da "
+            "data de referência e os seguintes ficam fora dos proventos anuais.\n"
             "Empresa com exercício encerrado fora de dezembro (cinco em 29/10/2026, como "
             "RAIZ4 e SMTO3) tem os proventos lidos pelo ano civil: a coluna do exercício traz "
             "o que foi pago no ano civil de mesmo número.\n"
