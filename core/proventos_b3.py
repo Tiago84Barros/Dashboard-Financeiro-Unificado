@@ -230,3 +230,20 @@ def procedencia(attrs: dict, hoje: date | None = None) -> str:
     if idade > FOTO_MAXIMA_DIAS:
         rotulo += f" — VELHA: {idade} dias sem renovação"
     return fonte.replace(FONTE_ARQUIVO, rotulo)
+
+
+def fotos_velhas(lote: dict, hoje: date | None = None) -> list[tuple[str, str]]:
+    """``(ticker, aviso)`` de cada tabela do lote cuja resposta da brapi passou
+    de :data:`FOTO_MAXIMA_DIAS` dias sem renovação.
+
+    ``lote`` é o de ``load_demonstracoes_batch``: cada tabela leva no próprio
+    ``attrs`` o dia da resposta do seu ticker. Quem lê a coluna ``Dividendos``
+    do lote manda cada aviso para a fila de Restrições.
+    """
+    out = []
+    for tk, df in (lote or {}).items():
+        foto = idade_da_foto(getattr(df, "attrs", None) or {}, hoje)
+        if foto is not None and foto[1] > FOTO_MAXIMA_DIAS:
+            out.append((tk, f"Proventos de {tk}: a resposta mais nova da brapi é de "
+                            f"{foto[0]:%d/%m/%Y}, {foto[1]} dias sem renovação."))
+    return out

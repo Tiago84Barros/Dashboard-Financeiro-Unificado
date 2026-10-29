@@ -577,3 +577,50 @@ def test_patch5_registra_a_resposta_velha_em_restricoes(monkeypatch):
     msg, k = avisos[0]
     assert f"{pb.FOTO_MAXIMA_DIAS + 1} dias sem renovação" in msg
     assert k == {"codigo": "tela.portfolio_b3.proventos_foto_velha", "entidade": "AAAA3"}
+
+
+def _lote_com_uma_resposta_velha(hoje):
+    velha = pd.DataFrame({"Dividendos": [1.0]})
+    velha.attrs.update(fonte=pb.FONTE_ARQUIVO, foto_em={
+        "AAAA3": (hoje - timedelta(days=pb.FOTO_MAXIMA_DIAS + 1)).isoformat()})
+    no_limite = pd.DataFrame({"Dividendos": [1.0]})
+    no_limite.attrs.update(fonte=pb.FONTE_ARQUIVO, foto_em={
+        "BBBB4": (hoje - timedelta(days=pb.FOTO_MAXIMA_DIAS)).isoformat()})
+    do_banco = pd.DataFrame({"Dividendos": [1.0]})
+    do_banco.attrs.update(fonte=pb.FONTE_BANCO, foto_em={})
+    return {"AAAA3": velha, "BBBB4": no_limite, "CCCC3": do_banco, "DDDD3": pd.DataFrame()}
+
+
+def test_fotos_velhas_lista_so_a_resposta_que_passou_do_limite():
+    hoje = date(2026, 10, 29)
+    velhas = pb.fotos_velhas(_lote_com_uma_resposta_velha(hoje), hoje)
+
+    assert [tk for tk, _ in velhas] == ["AAAA3"]
+    dia = hoje - timedelta(days=pb.FOTO_MAXIMA_DIAS + 1)
+    assert velhas[0][1] == (f"Proventos de AAAA3: a resposta mais nova da brapi é de "
+                            f"{dia:%d/%m/%Y}, {pb.FOTO_MAXIMA_DIAS + 1} dias sem renovação.")
+    assert pb.fotos_velhas({}) == [] and pb.fotos_velhas(None) == []
+
+
+def test_comparacao_de_dre_registra_a_resposta_velha_so_em_dividendos(monkeypatch):
+    import views.empresas_b3 as view
+
+    avisos = []
+    monkeypatch.setattr(view, "aviso_lacuna", lambda msg, **k: avisos.append((msg, k)))
+    lote = _lote_com_uma_resposta_velha(date.today())
+
+    view._avisar_comparacao_dre(lote, "Receita_Liquida")
+    assert avisos == []
+
+    view._avisar_comparacao_dre(lote, "Dividendos")
+    assert len(avisos) == 1
+    assert avisos[0][1] == {"codigo": "tela.b3.proventos_foto_velha", "entidade": "AAAA3"}
+
+
+def test_comparacao_de_dre_avisa_antes_do_grafico():
+    # O lote volta do session_state a cada rerun; o aviso vale para o gráfico
+    # que ele desenha, então é chamado sobre o mesmo lote antes do px.bar.
+    fonte = (ROOT / "views/empresas_b3.py").read_text(encoding="utf-8")
+    trecho = fonte.split('batch_dre = st.session_state.get("b3_av_dre_batch"', 1)[1]
+    trecho = trecho.split('key="b3_av_dre_chart"', 1)[0]
+    assert trecho.index("_avisar_comparacao_dre(batch_dre, dre_col_s)") < trecho.index("px.bar(")

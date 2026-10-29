@@ -50,7 +50,7 @@ from core.crescimento import (
 )
 from core.llm_context_ativo import build_b3_ativo_context
 from core.market_companies import normalize_b3_companies
-from core.proventos_b3 import FOTO_MAXIMA_DIAS, idade_da_foto, procedencia
+from core.proventos_b3 import FOTO_MAXIMA_DIAS, fotos_velhas, idade_da_foto, procedencia
 from core.validacao_motor import validacao_b3
 from design.chat_ativo import render_chat_ativo
 from design.componentes import (
@@ -409,6 +409,19 @@ def _dividendos_anuais_market_first(ticker: str) -> tuple[pd.DataFrame, str]:
                 f"{foto[0]:%d/%m/%Y}, {foto[1]} dias sem renovação.",
                 codigo="tela.b3.proventos_foto_velha", entidade=ticker)
     return df_market, df_market.attrs.get("fonte") or "market.dividends"
+
+
+def _avisar_comparacao_dre(batch_dre: dict, coluna: str) -> None:
+    """A Comparação de DRE plota a coluna escolhida de ``load_demonstracoes_batch``.
+
+    Em ``Dividendos``, o ticker que a brapi deixou de renovar segue no gráfico
+    com o valor antigo; a resposta velha entra na fila de Restrições, com o
+    mesmo aviso da Análise de Empresa.
+    """
+    if coluna != "Dividendos":
+        return
+    for tk, msg in fotos_velhas(batch_dre):
+        aviso_lacuna(msg, codigo="tela.b3.proventos_foto_velha", entidade=tk)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -6610,6 +6623,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     dre_lbl_s = st.session_state.get("b3_av_dre_lbl",   "Receita Líquida")
 
     if batch_dre:
+        _avisar_comparacao_dre(batch_dre, dre_col_s)
         rows_d: list[pd.DataFrame] = []
         for tk_d, df_d in batch_dre.items():
             if "Data" not in df_d.columns or dre_col_s not in df_d.columns:

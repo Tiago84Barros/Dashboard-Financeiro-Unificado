@@ -2561,8 +2561,8 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
                 "Publicador: scripts/publish_proventos_b3.py (armazém local → arquivo)",
                 "Ticker que o arquivo não cobre: market.dividends pela regra renda_por_evento()",
                 "Resposta com mais de 10 dias sem renovação: fila de Configurações → Restrições "
-                "(Análise de Empresa e Portfólio B3) e marca VELHA no bloco de demonstrações "
-                "das LLMs",
+                "(Análise de Empresa, Comparação de DRE e Portfólio B3) e marca VELHA no "
+                "bloco de demonstrações das LLMs",
                 "Snapshots de carteira B3 e FII: history.proventos_resposta_em guarda o dia da "
                 "resposta por trás dos dividendos",
                 "Medição reproduzível: scripts/medir_proventos_b3.py",
@@ -3007,7 +3007,9 @@ _FLOW_DETAIL_OVERRIDES = {
             "a régua é a CVM (rendimento implícito do informe mensal): na medição de "
             "29/10/2026, de 3 a 4 em cada 10 ticker-anos ficaram a mais de 5% dela e de 2 a 3 "
             "em cada 10 a mais de 10%, conforme o mês em que se supõe pago o rendimento de "
-            "cada competência. A CVM também erra, ao deslocar valor entre dezembro e "
+            "cada competência. Só entra na medição o ano em que o informe traz as doze "
+            "competências: um mês faltando deixaria o total da CVM baixo por falta de dado, "
+            "e o desacordo pareceria maior do que é. A CVM também erra, ao deslocar valor entre dezembro e "
             "janeiro: o desacordo é entre duas fontes imperfeitas, não o erro da brapi nem "
             "um limite para ele, porque as duas podem errar no mesmo sentido.\n"
             "O ano civil em curso e os seguintes ficam fora do CAGR; na série por exercício, "
