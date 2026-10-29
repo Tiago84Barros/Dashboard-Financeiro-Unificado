@@ -4,12 +4,22 @@
 por (ticker, event_date, tipo, valor) e o upsert não apaga: cada revisão da
 brapi (data de pagamento corrigida, data-ex deslocada, a duplicata que a
 própria brapi limpou depois) deixa a linha antiga ao lado da nova. Medido em
-29/10/2026 no armazém local, contra a resposta mais nova da brapi arquivada em
-``market.brapi_raw_payloads``: a soma crua por ano batia em 65,6% dos
-ticker-anos, e a melhor regra de leitura
-(:func:`core.dividend_types.renda_por_evento`) em 86,1%. Nenhuma regra de
-leitura reconstrói o que a fonte respondeu por último; a resposta arquivada é
-esse dado.
+29/10/2026 por ``scripts/medir_proventos_b3.py`` (ticker-ano dos 883 tickers do
+arquivo, 1% de tolerância, junção externa): contra a resposta mais nova da
+brapi, a soma crua por ano bate em 60,3% dos ticker-anos e a melhor regra de
+leitura (:func:`core.dividend_types.renda_por_evento`) em 86,0%. Nenhuma regra
+de leitura reconstrói o que a fonte respondeu por último; a resposta arquivada
+é esse dado.
+
+Essa medida é circular: a referência é a própria fonte do arquivo, que bate
+100% por construção. Ela mede a distância até o que a brapi responde hoje, não
+se a brapi está certa. A única referência independente é a CVM, e só para FII
+(rendimento implícito do informe mensal, 1.450 ticker-anos de 327 fundos): o
+arquivo fica a até 5% dela em 69,7% dos ticker-anos, a regra de leitura em
+69,4% e a soma crua em 60,3%. O arquivo corrige a soma crua; diante da CVM, ele
+e a regra empatam. A CVM também erra -- o fundo que não paga no mês seguinte ao
+da competência desloca valor entre anos --, e o desacordo é teto para o erro
+da brapi. Na ação não há fonte independente para conferir.
 
 O publicador (``scripts/publish_proventos_b3.py``) lê a foto no armazém e grava
 a soma anual em ``data/public/proventos_b3.json.gz``. Este módulo guarda as

@@ -234,8 +234,22 @@ def renda_por_evento(df):
     data-ex e o mesmo pagamento. Ficar com o minimo desse grupo (a regra do
     A-129) parecia matar o eco de classe, mas a resposta mais nova da brapi
     tem 306 grupos assim, todos declaracoes distintas, e o eco ja sai na
-    ingestao. Medido em 29/10/2026 contra essa resposta: 86,1% dos
-    ticker-anos batem a 1% sem o minimo, 84,2% com ele.
+    ingestao. Medido em 29/10/2026 contra essa resposta
+    (``scripts/medir_proventos_b3.py``): 86,0% dos ticker-anos batem a 1% sem
+    o minimo, 83,9% com ele. A medida e circular -- a resposta mais nova e a
+    referencia, nao a verdade --; diante da CVM, nos FIIs, as duas variantes
+    empatam (69,4% e 69,5% a ate 5%).
+
+    Dois limites do desenho, ambos so no caminho de reserva (o ticker que o
+    arquivo publicado de ``core.proventos_b3`` nao cobre):
+
+    * o par decide, mas a uniao e transitiva: 1,0000, 1,0009 e 1,0018 com as
+      mesmas datas viram um evento so (1,0018), embora as pontas fiquem a 0,18%;
+    * a revisao que muda o valor em mais de 0,1% e tambem o pagamento conta
+      duas vezes: 0,50 e depois 0,51 viram dois proventos. ``created_at`` nao
+      separa revisao de declaracao nova, que tambem e gravada depois; separar
+      exigiria saber se a linha antiga continuou na resposta seguinte, e o
+      upsert nao registra isso.
     """
     import numpy as np
     import pandas as pd
