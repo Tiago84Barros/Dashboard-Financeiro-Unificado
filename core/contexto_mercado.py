@@ -119,7 +119,18 @@ REGRA_CADEIA_TRANSMISSAO = (
     "'Síntese para citar' de lá, copiada inteira, com o episódio mais recente, "
     "o mais parecido, o n e o contraponto de todos os meses. Um episódio "
     "sozinho é um caso, não um padrão; nunca descreva 'da última vez' de "
-    "memória."
+    "memória. "
+    # Vale para toda resposta do chat, não só para a pergunta de cenário: a
+    # análise de GMAT3 e BBAS3 de 29/10/2026 partiu do fechamento mensal de
+    # 05/10 e chamou de manchete a queda que o pregão de 26/10 já tinha medido.
+    "PREÇO DE AGORA: quando o contexto trouxer a seção MOVIMENTO RECENTE DA "
+    "BOLSA, toda resposta sobre ativo, carteira ou mercado parte dela, e não do "
+    "fechamento mensal mais velho da TRAJETÓRIA ou de preco_ativo; abra com a "
+    "variação recente do ativo e do BOVA11, com a data do pregão. Notícia que "
+    "o movimento de preço confirma (mesma direção, mesmos dias) é fato medido: "
+    "cite a manchete junto da variação, em vez de descartá-la como manchete "
+    "sem confirmação. Para um ativo fora da seção, chame preco_diario_recente "
+    "antes de pedir o dado ao usuário."
 )
 
 
@@ -472,7 +483,36 @@ def _trajetoria() -> list[str]:
 
     return tm.linhas_trajetoria(supabase=_supabase, cdi=_cdi_publicado,
                                 bcb=_bcb_para_trajetoria, eua=_series_eua,
-                                valuation=_valuation_publicado)
+                                valuation=_valuation_publicado,
+                                recentes=_fechamentos_recentes)
+
+
+def _fechamentos_recentes():
+    """Último pregão de BOVA11 e SMAL11: corrige a linha mensal que ficou velha."""
+    from core import pregoes_recentes as pr
+    from core import trajetoria_mercado as tm
+
+    return pr.ultimos_fechamentos(pr.carregar(), tm.HISTORICO)
+
+
+def _movimento_recente(ativos: Mapping[str, Mapping[str, str]] | None,
+                       tickers: Iterable[str] = ()) -> list[str]:
+    """Seção MOVIMENTO RECENTE DA BOLSA: os pregões diários do COTAHIST.
+
+    Os ativos B3 e FII em questão ganham linha própria; os EUA não estão no
+    COTAHIST. ``tickers`` soma ativos que não vieram em ``ativos`` (o chat de
+    um ativo só, que já tem o noticiário dele). Falha vira linha que nomeia a
+    falha.
+    """
+    from core import pregoes_recentes as pr
+
+    pedidos = [tk for classe in ("b3", "fii") for tk in (ativos or {}).get(classe) or {}]
+    pedidos += list(tickers)
+    try:
+        return pr.linhas(pedidos)
+    except Exception as exc:  # noqa: BLE001
+        return [f"MOVIMENTO RECENTE DA BOLSA: falha na leitura ({_limpo(exc, 120)}). "
+                "Não trate como mercado parado: diga que faltou o dado diário."]
 
 
 def _valuation_publicado():
@@ -934,6 +974,7 @@ def bloco_contexto_mercado(
     noticias_gerais: bool = True,
     max_itens_por_classe: int = 10,
     as_of: datetime | None = None,
+    tickers_movimento: Iterable[str] = (),
 ) -> str:
     """Bloco CONTEXTO DE MERCADO pronto para anexar a qualquer contexto de LLM.
 
@@ -941,6 +982,8 @@ def bloco_contexto_mercado(
     noticiário por ativo sai de :func:`core.conjuntura.bloco_para_prompt`, que
     escolhe acervo local ou vitrine e carimba a data. ``noticias_gerais`` junta
     as manchetes do mercado sem filtro de ativo, para perguntas de cenário.
+    ``tickers_movimento`` dá pregão diário próprio a ativos B3/FII sem puxar o
+    noticiário deles — para o chat que já traz esse noticiário no contexto.
     """
     partes = [
         "=== CONTEXTO DE MERCADO ===",
@@ -954,6 +997,7 @@ def bloco_contexto_mercado(
     partes += _macro_brasil()
     partes += _macro_local()
     partes += [""] + _trajetoria_cache()
+    partes += [""] + _movimento_recente(ativos, tickers_movimento)
     partes += [""] + _cenarios_analogos()
 
     if noticias_gerais:

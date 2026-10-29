@@ -274,6 +274,7 @@ CARIMBO = {
     "informacoes_recentes": ("arquivo", "data/public/informacoes_recentes.json.gz"),
     "fii_metrics_monthly": ("arquivo", "data/public/fii_metrics_monthly.json.gz"),
     "precos_mensais_b3": ("arquivo", "data/public/precos_mensais_b3.json.gz"),
+    "pregoes_recentes_b3": ("arquivo", "data/public/pregoes_recentes_b3.json.gz"),
     "proventos_b3": ("arquivo", "data/public/proventos_b3.json.gz"),
     "carteira20_desempenho": ("arquivo", "data/public/carteira20_desempenho.json"),
     "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),
