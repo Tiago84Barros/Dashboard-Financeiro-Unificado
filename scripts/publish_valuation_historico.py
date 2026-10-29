@@ -18,12 +18,15 @@ da média". Aqui cada ano usa o fechamento da fita oficial
 Métodos (repetidos no campo ``metodo`` do arquivo):
 
 - B3, anual: P/L = fechamento do último pregão do ano ÷ LPA; valor de mercado
-  = fechamento × ações implícitas (lucro ÷ LPA); P/VP = valor de mercado ÷
-  patrimônio; DY = proventos com data-ex no ano ÷ fechamento. P/L que foge
-  mais de 20x da mediana do próprio ticker é descartado (LPA gravado em escala
-  errada: ITUB4 2019 tinha LPA 2.780); o mesmo teste sobre o valor de mercado
-  implícito vale para o P/VP. O P/L não depende do lucro absoluto -- bancos
-  não o têm na base (ITUB4 em todos os anos, BBAS3 antes de 2020).
+  do exercício = fechamento × ações implícitas (lucro ÷ LPA); P/VP = esse
+  valor ÷ patrimônio; DY = proventos com data-ex no ano ÷ fechamento. P/L que
+  foge mais de 20x da mediana do próprio ticker é descartado (LPA gravado em
+  escala errada: ITUB4 2019 tinha LPA 2.780); o mesmo teste sobre o valor de
+  mercado implícito vale para o P/VP. O P/L não depende do lucro absoluto --
+  bancos não o têm na base (ITUB4 em todos os anos, BBAS3 antes de 2020).
+- B3, porte (seleção de pares): valor de mercado do quote mais recente da
+  brapi, de até 30 dias. Não usa as ações implícitas: ver
+  ``valor_de_mercado_brapi``.
 - FII, mensal: P/VP = fechamento do mês na fita da B3 ÷ VPA; DY 12m =
   rendimentos com data-ex nos 12 meses ÷ fechamento. Mês com VPA que salta e
   volta é descartado; janela de DY que atravessa grupamento/desdobramento
@@ -100,6 +103,7 @@ JANELA_VOL_MESES = 36
 MOMENTO_MAX_IDADE_DIAS = 45     # preço mais velho que isso não mede momento
 MOMENTO_SALTO = 3.0             # mês que muda mais que 3x: ajuste faltando
 ALAVANCAGEM_MAX_IDADE_DIAS = 200
+PORTE_MAX_IDADE_DIAS = 30       # valor de mercado mais velho que isso não é porte
 UNIVERSO_MERCADO = 50           # ações mais negociadas no ano anterior
 MERCADO_MIN_VALIDAS = 20        # mês com menos que isso não entra na série
 MERCADO_PL_MAXIMO = 200.0       # P/L acima disso: LPA em escala errada
@@ -109,11 +113,14 @@ MERCADO_IMPLAUSIVEIS_MAX = 10   # no último mês: de 2023 em diante foram 0 a 2
 METODO = {
     "b3": ("Anual. P/L = fechamento do último pregão do ano na fita da B3 "
            "(sem retroajuste) ÷ LPA publicado do exercício; valor de mercado "
-           "= fechamento × (lucro ÷ LPA); P/VP = valor de mercado ÷ "
+           "do exercício = fechamento × (lucro ÷ LPA); P/VP = esse valor ÷ "
            "patrimônio líquido; DY = proventos com data-ex no ano ÷ "
            "fechamento. P/L fora de 1/20x a 20x da mediana do ticker é "
            "descartado; o mesmo teste sobre o valor de mercado implícito "
-           "vale para o P/VP."),
+           "vale para o P/VP. Porte (tamanho na seleção de pares) = valor de "
+           "mercado do quote mais recente da brapi, de até "
+           f"{PORTE_MAX_IDADE_DIAS} dias; sem ele (unit, quote velho), o "
+           "ticker fica sem porte e o tamanho não filtra os pares dele."),
     "fii": ("Mensal. P/VP = fechamento do último pregão do mês na fita da B3 "
             "÷ VPA do informe mensal; DY 12m = rendimentos com data-ex nos "
             "12 meses ÷ fechamento. Descartados: VPA que salta e volta e "
@@ -323,6 +330,65 @@ def alavancagem_brapi(linhas, hoje, *, max_idade: int = ALAVANCAGEM_MAX_IDADE_DI
     return saida, excl
 
 
+def valor_de_mercado_brapi(linhas, universo, hoje, *, sucessoes=None,
+                           max_idade: int = PORTE_MAX_IDADE_DIAS
+                           ) -> tuple[dict[str, dict], dict]:
+    """Porte de cada ticker do ``universo``: o ``marketCap`` do quote mais
+    recente da brapi. ``linhas``: dicts com ticker, fetched_at e market_cap,
+    uma por ticker. Puro.
+
+    Por que não fechamento × ações implícitas (lucro ÷ LPA) do último
+    exercício: em 29/10/2026, 46 dos 322 tickers que tinham as duas medidas
+    divergiam mais de 3x. PRIO3 saía com 0,0002x o valor de mercado, AERI3
+    com 987x, e SBSP3 com 0,19x depois do desdobramento. O LPA da base
+    mistura escalas, e as ações do exercício não acompanham desdobramento.
+    Sem valor de mercado recente, o ticker fica sem porte, e a seleção de
+    pares diz que o tamanho não filtrou. Uma estimativa que erra 1000x
+    não entra no lugar dele. A brapi não dá marketCap de unit (BPAC11,
+    TAEE11).
+
+    Ticker renomeado (ELET3 → AXIA3): vale o quote mais recente da cadeia.
+    """
+    from data_pipeline.market.b3_sucessao import cadeias
+    fotos = {}
+    for r in linhas:
+        mc = _f(r.get("market_cap"))
+        if mc is not None and mc > 0:
+            fotos[str(r["ticker"]).upper()] = (r["fetched_at"], mc)
+    por_tk = cadeias(sucessoes or {})
+    hoje_d = hoje.date() if hasattr(hoje, "date") else hoje
+    excl = {"foto_velha": 0, "sem_valor_de_mercado": 0}
+    saida: dict[str, dict] = {}
+    for tk in sorted(universo):
+        da_cadeia = [(fotos[c], c) for c in por_tk.get(tk, [tk]) if c in fotos]
+        if not da_cadeia:
+            excl["sem_valor_de_mercado"] += 1
+            continue
+        (quando, mc), codigo = max(da_cadeia, key=lambda x: x[0][0])
+        if (hoje_d - quando.date()).days > max_idade:
+            excl["foto_velha"] += 1
+            continue
+        de = "" if codigo == tk else f"{codigo} em "
+        saida[tk] = {"porte": _r(mc, 0),
+                     "porte_ref": (f"valor de mercado da brapi (quote de "
+                                   f"{de}{quando.date().isoformat()})")}
+    return saida, excl
+
+
+def coletar_valor_de_mercado(conn, universo, hoje, sucessoes
+                             ) -> tuple[dict, dict]:
+    from sqlalchemy import text
+    linhas = [dict(r._mapping) for r in conn.execute(text("""
+        SELECT DISTINCT ON (ticker) ticker, fetched_at,
+               (payload_json->>'marketCap')::float8 AS market_cap
+          FROM market.brapi_raw_payloads
+         WHERE endpoint = 'quote' AND request_status = 'success'
+           AND jsonb_typeof(payload_json->'marketCap') = 'number'
+         ORDER BY ticker, fetched_at DESC
+    """))]
+    return valor_de_mercado_brapi(linhas, universo, hoje, sucessoes=sucessoes)
+
+
 def coletar_alavancagem(conn, hoje) -> tuple[dict, dict]:
     from sqlalchemy import text
     linhas = [dict(r._mapping) for r in conn.execute(text("""
@@ -345,8 +411,7 @@ def historico_b3(fechamentos, demos, proventos) -> tuple[dict, dict]:
     ``fechamentos``: ticker, ano, close (fita, sem ajuste).
     ``demos``: ticker, ano, lucro, lpa, patrimonio.
     ``proventos``: ticker, ano, total (soma por ação, data-ex no ano).
-    Devolve ({ticker: {"historico": {...}, "acoes": float, "ano_acoes": int}},
-    {motivo: contagem}).
+    Devolve ({ticker: {"historico": {...}}}, {motivo: contagem}).
     """
     import pandas as pd
     df = (fechamentos.merge(demos, on=["ticker", "ano"], how="inner")
@@ -382,14 +447,8 @@ def historico_b3(fechamentos, demos, proventos) -> tuple[dict, dict]:
                if pd.notna(r.mc) and pd.notna(r.patrimonio) and r.patrimonio > 0]
         dy = [(int(r.ano), 100.0 * r.total / r.close) for r in g.itertuples()
               if pd.notna(r.total) and r.total > 0 and r.close > 0]
-        com_acoes = g.dropna(subset=["acoes"])
-        item = {"historico": {"p_l": _serie(pl), "p_vp": _serie(pvp),
-                              "dividend_yield": _serie(dy)}}
-        if not com_acoes.empty:
-            ult = com_acoes.iloc[-1]
-            item["acoes"] = float(ult["acoes"])
-            item["ano_acoes"] = int(ult["ano"])
-        saida[str(tk)] = item
+        saida[str(tk)] = {"historico": {"p_l": _serie(pl), "p_vp": _serie(pvp),
+                                        "dividend_yield": _serie(dy)}}
     return saida, exclusoes
 
 
@@ -471,15 +530,10 @@ def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None
     exclusoes["momento"] = excl_mom
     alav, excl_alav = coletar_alavancagem(conn, hoje)
     exclusoes["alavancagem"] = excl_alav
-    px = {str(r.ticker): (float(r.close), str(r.trade_date)[:10])
-          for r in ultimo.itertuples()}
+    porte, excl_porte = coletar_valor_de_mercado(conn, hist, hoje, sucessoes)
+    exclusoes["porte"] = excl_porte
     for tk, item in hist.items():
-        acoes = item.pop("acoes", None)
-        ano = item.pop("ano_acoes", None)
-        if acoes and tk in px:
-            item["porte"] = _r(px[tk][0] * acoes, 0)
-            item["porte_ref"] = (f"fechamento de {px[tk][1]} × ações implícitas "
-                                 f"do exercício {ano}")
+        item.update(porte.get(tk, {}))
         if tk in vol:
             item["volatilidade"] = _r(vol[tk], 2)
         item.update(mom.get(tk, {}))
@@ -582,8 +636,8 @@ def motivo_para_recusar(fita, mercado: dict, hoje) -> str | None:
     noturna acusar a falha em vez de publicar o ponto velho como atual.
     """
     if fita is None or (hoje - date.fromisoformat(fita)).days > FITA_MAXIMA_DIAS:
-        return (f"fita da B3 parada há mais de {FITA_MAXIMA_DIAS} dias; o porte "
-                "sairia com preço velho.")
+        return (f"fita da B3 parada há mais de {FITA_MAXIMA_DIAS} dias; o P/L "
+                "mediano e os múltiplos sairiam com preço velho.")
     d, u = mercado.get("descartado"), mercado.get("ultimo")
     if d:
         ate = mercado["serie"][-1][0] if mercado["serie"] else "nenhum mês"

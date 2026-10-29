@@ -448,6 +448,34 @@ def test_publicador_historico_b3_descarta_lpa_implausivel():
     assert excl["lpa_implausivel"] == 1
     assert h["dividend_yield"] == [[2020, 5.0]]
     assert h["p_vp"][0] == [2015, 2.0]
+    # O porte não sai mais das ações implícitas: ver valor_de_mercado_brapi.
+    assert set(saida["AAAA3"]) == {"historico"}
+
+
+def test_publicador_porte_b3_vem_do_valor_de_mercado_da_brapi():
+    from datetime import datetime, timedelta, timezone
+
+    from scripts import publish_valuation_historico as pub
+    hoje = datetime(2026, 10, 29, 12, tzinfo=timezone.utc)
+
+    def q(tk, dias, mc):
+        return {"ticker": tk, "fetched_at": hoje - timedelta(days=dias),
+                "market_cap": mc}
+
+    linhas = [q("AAAA3", 0, 5e10), q("BBBB3", 45, 1e9), q("CCCC11", 0, None),
+              q("DDDD3", 1, -3.0), q("VELH3", 40, 6e9), q("NOVO3", 2, 7e9)]
+    universo = ["AAAA3", "BBBB3", "CCCC11", "DDDD3", "VELH3", "EEEE3"]
+    porte, excl = pub.valor_de_mercado_brapi(linhas, universo, hoje,
+                                             sucessoes={"VELH3": "NOVO3"})
+    assert porte["AAAA3"] == {
+        "porte": 5e10,
+        "porte_ref": "valor de mercado da brapi (quote de 2026-10-29)"}
+    # ticker renomeado: vale o quote mais recente da cadeia, e diz de quem
+    assert porte["VELH3"]["porte"] == 7e9
+    assert "NOVO3 em 2026-10-27" in porte["VELH3"]["porte_ref"]
+    # quote velho, unit sem marketCap, valor não positivo e ausência: sem porte
+    assert set(porte) == {"AAAA3", "VELH3"}
+    assert excl == {"foto_velha": 1, "sem_valor_de_mercado": 3}
 
 
 def test_publicador_volatilidade_precisa_da_janela():
