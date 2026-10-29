@@ -327,14 +327,24 @@ _SQL_POSICOES = """
 # B3 posterior ao último evento -- se o título continuasse em qualquer
 # corretora, essa Posição o listaria, e ela teria ganhado o ranking.
 #
+# Transferência de custódia entra na conta com o sinal dela, como em
+# core.movimentacao_b3.interpretar. A troca de corretora (débito numa,
+# crédito noutra, no mesmo dia) soma zero; um crédito de fora depois da foto
+# aumenta a posição, e o resgate dele não pode encerrar o que ficou. A B3
+# grava o rótulo com e sem acento ("transferência" nas ações, "transferencia"
+# no Tesouro) e "transf. sem financeiro" no CFF. A "transferência -
+# liquidação" é a venda da Negociação, não custódia, e fica de fora.
+#
 # Na Movimentação o CDB vem com ticker 'CDB' e o código no produto
 # ("CDB - CDB8266EXTI - BANCO ..."); o direito vem com o próprio ticker.
 _SQL_MOV_DO_ATIVO = "(m.ticker = a.ticker OR split_part(m.product, ' - ', 2) = a.ticker)"
 
-_SQL_MOV_SAIDA = """lower(m.movement) IN (
+_SQL_MOV_QUANTIDADE = """lower(m.movement) IN (
                         'aplicação', 'aplicação/depósito', 'compra',
                         'compra / venda', 'venda', 'resgate',
-                        'resgate antecipado', 'vencimento')"""
+                        'resgate antecipado', 'vencimento',
+                        'transferência', 'transferencia',
+                        'transf. sem financeiro')"""
 
 _SQL_FONTE_CUSTODIA_B3 = "effective_source_table IN ('b3_posicao', 'b3_posicao_detalhada')"
 
@@ -344,10 +354,10 @@ _SQL_MOV_PROVA_ENCERRAMENTO = """
             AND r.quantity > 0
             AND SUM(CASE WHEN lower(m.direction) LIKE 'd%' THEN m.quantity
                          WHEN lower(m.direction) LIKE 'c%' THEN -m.quantity
-                    END) FILTER (WHERE """ + _SQL_MOV_SAIDA + """)
+                    END) FILTER (WHERE """ + _SQL_MOV_QUANTIDADE + """)
                 >= r.quantity
             AND (r.foto_da_custodia_b3
-                 OR MAX(m.event_date) FILTER (WHERE """ + _SQL_MOV_SAIDA + """)
+                 OR MAX(m.event_date) FILTER (WHERE """ + _SQL_MOV_QUANTIDADE + """)
                     <= r.custodia_b3))
 """
 

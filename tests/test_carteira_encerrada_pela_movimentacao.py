@@ -53,6 +53,10 @@ _FOTOS = {
     "CDBOUTRACORR": ("fixed_income", "xp_consolidado", "2026-09-30", 800, 808.00),
     # a foto vencedora já é a custódia da B3: mesmo escopo da Movimentação
     "CDBCUSTODIAB3": ("fixed_income", "b3_posicao", "2026-10-27", 500, 505.00),
+    # recebe transferência de fora e resgata só o que chegou
+    "CDBCHEGOU": ("fixed_income", "b3_posicao", "2026-10-27", 300, 303.00),
+    # troca de corretora e depois resgata tudo
+    "CDBTROCOU": ("fixed_income", "b3_posicao", "2026-10-27", 200, 202.00),
 }
 
 # (data, movimento, sentido, ticker, produto, quantidade)
@@ -78,6 +82,18 @@ _EVENTOS = [
     # resgate integral depois de foto que é da própria B3: encerra
     ("2026-10-28", "resgate antecipado", "Debito", "CDB",
      "CDB - CDBCUSTODIAB3 - BANCO E", 500),
+    # entraram 300 de fora e saíram 300: os 300 da foto continuam
+    ("2026-10-28", "transferencia", "Credito", "CDB",
+     "CDB - CDBCHEGOU - BANCO F", 300),
+    ("2026-10-28", "resgate antecipado", "Debito", "CDB",
+     "CDB - CDBCHEGOU - BANCO F", 300),
+    # a troca de corretora soma zero, e o resgate integral encerra
+    ("2026-10-28", "transf. sem financeiro", "Debito", "CDB",
+     "CDB - CDBTROCOU - BANCO G", 200),
+    ("2026-10-28", "transf. sem financeiro", "Credito", "CDB",
+     "CDB - CDBTROCOU - BANCO G", 200),
+    ("2026-10-28", "resgate antecipado", "Debito", "CDB",
+     "CDB - CDBTROCOU - BANCO G", 200),
 ]
 
 
@@ -134,10 +150,11 @@ def test_so_a_saida_provada_sai_da_carteira_de_hoje(banco):
         assert inv._tem_movimentacao(conn)
         tickers = _carteira(conn, inv._SQL_POSICOES_SNAPSHOT)
     assert tickers == {"BBAS3", "CDB9260UQ0S", "CDB826EAKY2", "ITSA4",
-                       "CDBOUTRACORR"}, (
-        "sai o resgate integral que a custodia da B3 confirma e o direito "
-        "vencido; ficam o resgate parcial, o do proprio dia, a acao e o "
-        "resgate que so a foto da corretora enxergava"
+                       "CDBOUTRACORR", "CDBCHEGOU"}, (
+        "sai o resgate integral que a custodia da B3 confirma (com ou sem "
+        "troca de corretora antes) e o direito vencido; ficam o resgate "
+        "parcial, o do proprio dia, a acao, o resgate que so a foto da "
+        "corretora enxergava e o resgate do que chegou por transferencia"
     )
 
 
@@ -147,10 +164,11 @@ def test_curva_so_tira_o_cdb_do_corte_posterior_ao_resgate(banco):
     # Setembro ainda tinha o CDB resgatado em outubro.
     assert curva["2026-09-30"] == round(
         12324.09 + 10104.58 + 1516.48 + 1000.00 + 808.00, 2)
-    # Outubro: sem o CDB resgatado e sem o direito vencido. Os dois resgates de
+    # Outubro: sem o CDB resgatado e sem o direito vencido. Os eventos de
     # 28/10 sao posteriores ao corte de 27/10 e nao entram nele.
     assert curva["2026-10-27"] == round(
-        2500.00 + 10104.58 + 1516.48 + 1000.00 + 808.00 + 505.00, 2)
+        2500.00 + 10104.58 + 1516.48 + 1000.00 + 808.00 + 505.00
+        + 303.00 + 202.00, 2)
 
 
 def test_sem_a_tabela_da_movimentacao_a_carteira_continua_de_pe(banco):
@@ -189,6 +207,14 @@ def test_data_do_evento_e_estrita_e_a_regra_liquida_e_so_da_renda_fixa():
     assert "m.event_date > r.report_date" in inv._CTE_MOV_ENCERRADOS
     assert "m.event_date >= r.report_date" not in inv._CTE_MOV_ENCERRADOS
     assert "a.class = 'fixed_income'" in inv._SQL_MOV_PROVA_ENCERRAMENTO
+
+
+def test_transferencia_de_custodia_entra_na_conta_e_a_de_liquidacao_nao():
+    # As tres grafias que a B3 usa para custodia; a de liquidacao e a venda
+    # da Negociacao.
+    for rotulo in ("'transferência'", "'transferencia'", "'transf. sem financeiro'"):
+        assert rotulo in inv._SQL_MOV_QUANTIDADE
+    assert "liquidação" not in inv._SQL_MOV_QUANTIDADE
 
 
 def test_variante_sem_tabela_nao_cita_a_tabela():
