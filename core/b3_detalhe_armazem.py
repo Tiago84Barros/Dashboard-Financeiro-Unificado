@@ -94,8 +94,12 @@ def ler_detalhe(engine, tickers, *, hoje: date | None = None,
 
     ``engine`` é o banco do COTAHIST; ``engine_eventos`` o da safra da Memória
     de Mercado (:func:`core.memoria_mercado.destino.url_memoria`), outro banco
-    do mesmo container. Sem ela, os eventos saem de ``engine`` -- que guarda
-    uma safra 1.0.0 abandonada, deixada de fora pelo filtro de versão.
+    do mesmo container. Sem ela, ``eventos`` volta ``None``: não consultados.
+
+    Até 29/10/2026 a falta dela caía para ``engine``, que só guarda uma safra
+    1.0.0 abandonada. O filtro de versão a escondia, a lista voltava vazia e o
+    resumo afirmava à LLM que a Memória não tinha eventos do papel -- WEGE3
+    tinha 16 na safra corrente. Falta de configuração não é ausência de dado.
 
     Ticker sem nenhuma linha volta com listas vazias -- ausência também é
     resposta, e o resumo diz que o armazém não tem, em vez de omitir.
@@ -104,17 +108,21 @@ def ler_detalhe(engine, tickers, *, hoje: date | None = None,
 
     alvo = normalizar_tickers(tickers)[:TICKERS_MAX]
     hoje = hoje or date.today()
-    saida = {t: {"nome": None, "pregoes": [], "eventos": []} for t in alvo}
+    saida = {t: {"nome": None, "pregoes": [],
+                 "eventos": [] if engine_eventos is not None else None}
+             for t in alvo}
     if not alvo:
         return saida
     with engine.connect() as conn:
         pregoes = conn.execute(text(_SQL_PREGAO), {
             "t": alvo, "hoje": hoje,
             "desde": hoje - timedelta(days=DIAS_PREGAO)}).mappings().all()
-    with (engine_eventos or engine).connect() as conn:
-        eventos = conn.execute(text(_SQL_EVENTOS), {
-            "t": alvo, "hoje": hoje, "n": EVENTOS_POR_TICKER,
-            "versao": MEMORIA_MERCADO_VERSAO}).mappings().all()
+    eventos = []
+    if engine_eventos is not None:
+        with engine_eventos.connect() as conn:
+            eventos = conn.execute(text(_SQL_EVENTOS), {
+                "t": alvo, "hoje": hoje, "n": EVENTOS_POR_TICKER,
+                "versao": MEMORIA_MERCADO_VERSAO}).mappings().all()
 
     # Linha curta: são ~250 por papel e tudo passa pelo túnel.
     for r in pregoes:
@@ -343,8 +351,13 @@ def resumo_para_prompt(detalhe: dict[str, dict], *, origem: str,
                 f"    Preço bruto {preco}; retorno de mercado (sem proventos) 1m "
                 f"{_pct(p['r1m'])}, 3m {_pct(p['r3m'])}, 12m {_pct(p['r12m'])}; "
                 f"volatilidade anualizada {_pct(p['vol_anual'], sinal=False)}{saltos}.")
-        eventos = d.get("eventos") or []
-        if not eventos:
+        eventos = d.get("eventos")
+        if eventos is None:
+            linhas.append("    Reação a resultados: não consultada — o banco da "
+                          "Memória de Mercado não está configurado onde o armazém foi "
+                          "lido (MEMORIA_LOCAL_DB_URL ou NOTICIAS_LOCAL_DB_URL). Não "
+                          "trate como papel sem eventos.")
+        elif not eventos:
             linhas.append("    Reação a resultados: a Memória de Mercado não tem "
                           "eventos medidos deste papel.")
         else:
