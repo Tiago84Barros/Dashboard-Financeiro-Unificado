@@ -136,8 +136,12 @@ def test_serie_desempata_fontes_como_o_ponto_de_hoje():
 
 def test_serie_le_todas_as_fontes_e_os_encerramentos_da_b3():
     sql = " ".join(investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower().split())
+    # A única lista de fontes mora em mov_encerrados e não filtra a série: só
+    # marca se a custódia da B3 confirma a saída de um resgate.
+    cte = " ".join(investimentos._CTE_MOV_ENCERRADOS_POR_CORTE.lower().split())
 
-    assert "source_table in" not in sql
+    assert cte in sql
+    assert "source_table in" not in sql.replace(cte, "")
     assert "b3_encerrados" in sql
     assert "s.report_date <= c.corte" in sql
 

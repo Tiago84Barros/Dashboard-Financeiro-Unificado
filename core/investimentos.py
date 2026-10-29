@@ -319,9 +319,24 @@ _SQL_POSICOES = """
 # Negociação, e na Movimentação a venda aparece como transferência de
 # liquidação, que não é a posição.
 #
+# A regra 2 compara escopos diferentes quando a foto vencedora é de uma
+# corretora: a Movimentação soma todas, a foto da Rico vê só a Rico. O mesmo
+# código resgatado em outra corretora zeraria a da Rico sem ela ter saído.
+# Por isso ela só vale se a custódia consolidada da B3 confirma a saída: ou a
+# foto vencedora já é dela (mesmo escopo da Movimentação), ou há Posição da
+# B3 posterior ao último evento -- se o título continuasse em qualquer
+# corretora, essa Posição o listaria, e ela teria ganhado o ranking.
+#
 # Na Movimentação o CDB vem com ticker 'CDB' e o código no produto
 # ("CDB - CDB8266EXTI - BANCO ..."); o direito vem com o próprio ticker.
 _SQL_MOV_DO_ATIVO = "(m.ticker = a.ticker OR split_part(m.product, ' - ', 2) = a.ticker)"
+
+_SQL_MOV_SAIDA = """lower(m.movement) IN (
+                        'aplicação', 'aplicação/depósito', 'compra',
+                        'compra / venda', 'venda', 'resgate',
+                        'resgate antecipado', 'vencimento')"""
+
+_SQL_FONTE_CUSTODIA_B3 = "effective_source_table IN ('b3_posicao', 'b3_posicao_detalhada')"
 
 _SQL_MOV_PROVA_ENCERRAMENTO = """
         BOOL_OR(lower(m.movement) = 'direitos de subscrição - não exercido')
@@ -329,11 +344,11 @@ _SQL_MOV_PROVA_ENCERRAMENTO = """
             AND r.quantity > 0
             AND SUM(CASE WHEN lower(m.direction) LIKE 'd%' THEN m.quantity
                          WHEN lower(m.direction) LIKE 'c%' THEN -m.quantity
-                    END) FILTER (WHERE lower(m.movement) IN (
-                        'aplicação', 'aplicação/depósito', 'compra',
-                        'compra / venda', 'venda', 'resgate',
-                        'resgate antecipado', 'vencimento'))
-                >= r.quantity)
+                    END) FILTER (WHERE """ + _SQL_MOV_SAIDA + """)
+                >= r.quantity
+            AND (r.foto_da_custodia_b3
+                 OR MAX(m.event_date) FILTER (WHERE """ + _SQL_MOV_SAIDA + """)
+                    <= r.custodia_b3))
 """
 
 _CTE_MOV_ENCERRADOS = """
@@ -342,7 +357,10 @@ _CTE_MOV_ENCERRADOS = """
         -- o ranking (ver _SQL_MOV_PROVA_ENCERRAMENTO).
         SELECT r.asset_id
         FROM (
-            SELECT asset_id, MAX(report_date) AS report_date, SUM(quantity) AS quantity
+            SELECT asset_id, MAX(report_date) AS report_date, SUM(quantity) AS quantity,
+                   BOOL_AND(""" + _SQL_FONTE_CUSTODIA_B3 + """) AS foto_da_custodia_b3,
+                   (SELECT MAX(s.report_date) FROM normalized_snapshots s
+                    WHERE s.""" + _SQL_FONTE_CUSTODIA_B3 + """) AS custodia_b3
             FROM ranked_snapshots
             WHERE asset_source_rank = 1
             GROUP BY asset_id
@@ -352,7 +370,7 @@ _CTE_MOV_ENCERRADOS = """
           ON m.user_id = :uid
          AND m.event_date > r.report_date
          AND """ + _SQL_MOV_DO_ATIVO + """
-        GROUP BY r.asset_id, r.quantity, a.class
+        GROUP BY r.asset_id, r.quantity, r.foto_da_custodia_b3, r.custodia_b3, a.class
         HAVING""" + _SQL_MOV_PROVA_ENCERRAMENTO + """    ),
 """
 
@@ -648,6 +666,15 @@ _SQL_TEM_FOTO_DE_CUSTODIA = """
         WHERE  user_id = :uid
           AND  COALESCE(source_id, '') NOT LIKE 'td-snap-%'
           AND  source_table IN ('b3_posicao_detalhada', 'xp_consolidado', 'xp_positions')
+    )
+"""
+
+# Foto existe mas a consulta volta vazia: tudo foi encerrado (zero da B3 ou
+# saída provada na Movimentação). É carteira vazia, não falta de dado -- cair
+# em portfolio_positions traria de volta o que a foto e a Movimentação fecharam.
+_SQL_TEM_FOTO = """
+    SELECT EXISTS (
+        SELECT 1 FROM portfolio_position_snapshots WHERE user_id = :uid
     )
 """
 
@@ -960,7 +987,7 @@ def _carteira_real() -> dict:
             sql_snapshot = (_SQL_POSICOES_SNAPSHOT if _tem_movimentacao(conn)
                             else _SQL_POSICOES_SNAPSHOT_SEM_MOVIMENTACAO)
             rows = conn.execute(text(sql_snapshot), {"uid": owner}).fetchall()
-            if rows:
+            if rows or conn.execute(text(_SQL_TEM_FOTO), {"uid": owner}).scalar():
                 return _carteira_snapshot_consolidada(conn, owner, rows)
         rows = conn.execute(text(_SQL_POSICOES), {"uid": owner}).fetchall()
         fx_compra = cambio_medio_de_aquisicao(conn, owner)
@@ -1917,16 +1944,21 @@ _SQL_EVOLUCAO_RATIO = """
 """
 
 # A mesma prova de _CTE_MOV_ENCERRADOS, vista de cada data de corte: só conta
-# o evento entre a foto vencedora e o corte. Resgate de outubro não apaga o CDB
-# de setembro da curva.
+# o evento entre a foto vencedora e o corte, e só a Posição da B3 até o corte
+# confirma. Resgate de outubro não apaga o CDB de setembro da curva.
 _CTE_MOV_ENCERRADOS_POR_CORTE = """
     mov_encerrados AS (
         SELECT r.corte, r.asset_id
         FROM (
-            SELECT corte, asset_id, MAX(report_date) AS report_date, SUM(quantity) AS quantity
-            FROM ranked_snapshots
-            WHERE asset_source_rank = 1
-            GROUP BY corte, asset_id
+            SELECT rs.corte, rs.asset_id, MAX(rs.report_date) AS report_date,
+                   SUM(rs.quantity) AS quantity,
+                   BOOL_AND(rs.""" + _SQL_FONTE_CUSTODIA_B3 + """) AS foto_da_custodia_b3,
+                   (SELECT MAX(s.report_date) FROM normalized_snapshots s
+                    WHERE s.""" + _SQL_FONTE_CUSTODIA_B3 + """
+                      AND s.report_date <= rs.corte) AS custodia_b3
+            FROM ranked_snapshots rs
+            WHERE rs.asset_source_rank = 1
+            GROUP BY rs.corte, rs.asset_id
         ) r
         JOIN assets a ON a.id = r.asset_id
         JOIN investment_movement_events m
@@ -1934,7 +1966,7 @@ _CTE_MOV_ENCERRADOS_POR_CORTE = """
          AND m.event_date > r.report_date
          AND m.event_date <= r.corte
          AND """ + _SQL_MOV_DO_ATIVO + """
-        GROUP BY r.corte, r.asset_id, r.quantity, a.class
+        GROUP BY r.corte, r.asset_id, r.quantity, r.foto_da_custodia_b3, r.custodia_b3, a.class
         HAVING""" + _SQL_MOV_PROVA_ENCERRAMENTO + """    ),
 """
 
@@ -2397,11 +2429,10 @@ def _evolucao_real() -> dict:
                 # inexplicavel no grafico.
                 # O ponto de hoje e o mesmo Patrimonio Total do Dashboard,
                 # exterior incluido: a mesma pergunta com duas montagens dava
-                # dois numeros.
-                current_totals = (
-                    _carteira_snapshot_consolidada(conn, owner, current_rows)
-                    if current_rows else None
-                )
+                # dois numeros. Ha foto (snap_rows), entao current_rows vazio
+                # e carteira encerrada, e o ponto de hoje vale o que ela vale
+                # -- como em _carteira_real (_SQL_TEM_FOTO).
+                current_totals = _carteira_snapshot_consolidada(conn, owner, current_rows)
                 # Sem foto de custodia (so o relatorio do Tesouro), as fotos dao
                 # um ponto so; a carteira e remontada mes a mes pelas
                 # negociacoes e movimentacoes.
