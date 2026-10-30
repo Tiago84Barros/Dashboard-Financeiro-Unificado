@@ -2111,8 +2111,8 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
                 "Limitação derivada do que foi medido",
                 "Texto revisto quando a medição muda",
                 "Só Configurações não faz afirmação de confiança: aparece como 'não se aplica', que não é 0%",
-                "Subabas fora da nota, declaradas no card: Previsão de Lucros e Carteira 20 "
-                "(Empresas B3), Inteligência dos Ativos (Investimentos)",
+                "Subabas fora da nota, declaradas no card: Carteira 20 (Empresas B3), "
+                "Inteligência dos Ativos (Investimentos)",
             ),
             "Aviso escrito a mão envelhece invertido: vira falso e continua soando como "
             "rigor. Por isso a limitação sai da medição.",
@@ -2209,8 +2209,8 @@ FLOW_CONFIGURACOES = FlowSpec(
                 "Média (55–75%) e Baixa (< 55%)",
                 "Configurações não faz afirmação de confiança: aparece como 'não se aplica', "
                 "que não é 0% (SECOES_SEM_AFIRMACAO)",
-                "Subabas fora da nota, nomeadas no card da seção: Previsão de Lucros e "
-                "Carteira 20 (Empresas B3), Inteligência dos Ativos (Investimentos)",
+                "Subabas fora da nota, nomeadas no card da seção: Carteira 20 "
+                "(Empresas B3), Inteligência dos Ativos (Investimentos)",
                 "Empresas B3 e Seleção de FIIs medem também o 'Pregão diário (chat)': a "
                 "idade dos pregões do COTAHIST que o chat do ativo cita (peso 0,05, "
                 "tirado do bloco de frescor, que segue somando 0,25)",
@@ -2509,17 +2509,16 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
 
 FLOW_EMPRESAS_B3_TELAS = FlowSpec(
     key="empresas_b3_telas",
-    title="Empresas B3 — consulta, Previsão de Lucros e Carteira 20",
+    title="Empresas B3 — consulta e Carteira 20",
     subtitle=(
-        "Empresas B3 tem sete subabas. Análise Avançada, Criação de Portfólio e Avaliação "
-        "de Portfólio têm fluxos próprios nesta documentação; este cobre as outras quatro: "
-        "Empresas por Setor, Análise de Empresa, Previsão de Lucros e Carteira 20."
+        "Empresas B3 tem seis subabas. Análise Avançada, Criação de Portfólio e Avaliação "
+        "de Portfólio têm fluxos próprios nesta documentação; este cobre as outras três: "
+        "Empresas por Setor, Análise de Empresa e Carteira 20."
     ),
     tela="Empresas B3",
-    abas=("Empresas por Setor", "Análise de Empresa", "Previsão de Lucros", "Carteira 20"),
+    abas=("Empresas por Setor", "Análise de Empresa", "Carteira 20"),
     rows=(
         ("Consulta", ("b3_setor", "b3_empresa", "b3_proventos", "b3_relatorio")),
-        ("Previsão", ("b3_prev_modelo", "b3_prev_tela")),
         ("Registro", ("b3_c20_registro", "b3_c20_tela")),
     ),
     default="b3_setor",
@@ -2591,39 +2590,6 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
             ),
             "O relatório lê o ativo com o mesmo nome e setor que o portão da Inteligência dos "
             "Ativos usa: os dois chegam ao mesmo veredito.",
-        ),
-        "b3_prev_modelo": _node(
-            "b3_prev_modelo", "Subaba 🔮 Previsão de Lucros: a medição", "Previsão",
-            "Responde a uma pergunta só: prever a variação do lucro do próximo exercício vence "
-            "o modelo ingênuo 'lucro do ano que vem = lucro deste ano'? E essa previsão melhora "
-            "o Rank-IC do score B3?",
-            (
-                "core/b3_previsao_lucros.py; o treino roda em scripts/treinar_previsao_lucros_b3.py",
-                "Alvo sem escala: y = (LL_s − LL_b) / AtivoTotal_b, e o sinal da variação",
-                "Um modelo de painel só, com todas as empresas; nada por empresa",
-                "Walk-forward por safra respeitando AvailableAt",
-                "Comparado com o ingênuo, ridge e gradient boosting; o ensemble de MLP só entra "
-                "se vencer os três no desenvolvimento",
-                "Holdout (safras ≥ 2022) usado uma vez e amarrado ao config_hash",
-            ),
-            "Uma rede por empresa, com poucos pontos e sem comparação com o ingênuo, acerta "
-            "algumas empresas por acaso. Painel único, comparação obrigatória e holdout usado "
-            "uma vez existem para não repetir isso.",
-        ),
-        "b3_prev_tela": _node(
-            "b3_prev_tela", "Previsão de Lucros: o que a tela mostra", "Previsão",
-            "A aba só lê o artefato publicado e mostra o Veredito do holdout, inclusive "
-            "REPROVADO, sem afrouxar a régua. Nada é treinado na aba.",
-            (
-                "Lê data/public/previsao_lucros_b3.json.gz (views/previsao_lucros_b3.py)",
-                "Erro vs. modelo ingênuo, com o IC95% da diferença",
-                "Acerto do sinal da variação: aprovado só se vencer 50% (binomial) e o chute do "
-                "sinal mais frequente no treino (McNemar), ambos com p < 0,05",
-                "Efeito no Rank-IC do score, a tabela por safra e as previsões",
-            ),
-            "Ler o artefato publicado deixa o veredito igual para todo mundo e amarrado à "
-            "configuração que o produziu. Um REPROVADO escondido faria o modelo parecer melhor "
-            "do que é.",
         ),
         "b3_c20_registro": _node(
             "b3_c20_registro", "Subaba 📒 Carteira 20: o registro", "Registro",
@@ -3186,8 +3152,8 @@ def _generic_flow_detail(flow: FlowSpec, node: FlowNode) -> dict[str, str]:
         )
     elif flow.key == "empresas_b3_telas":
         detail["impacto"] = (
-            "Afeta a empresa que você abre para analisar, o veredito que a Previsão de Lucros "
-            "publica e o registro que permite medir a Carteira 20 sem reescrever o passado."
+            "Afeta a empresa que você abre para analisar e o registro que permite medir a "
+            "Carteira 20 sem reescrever o passado."
         )
     elif flow.key == "inteligencia_ir":
         detail["impacto"] = (

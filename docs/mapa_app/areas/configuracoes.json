@@ -423,8 +423,8 @@
         },
         {
           "nome": "Empresas e Carteira 20 (B3)",
-          "resumo": "Consulta, Previsão de Lucros e Carteira 20",
-          "explicacao": "Fluxograma das quatro subabas de Empresas B3 que não têm fluxo próprio: Empresas por Setor, Análise de Empresa, Previsão de Lucros e Carteira 20.",
+          "resumo": "Consulta e Carteira 20",
+          "explicacao": "Fluxograma das três subabas de Empresas B3 que não têm fluxo próprio: Empresas por Setor, Análise de Empresa e Carteira 20.",
           "so_admin": false,
           "fonte": "views/documentacao.py:2507",
           "filhos": []

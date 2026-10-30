@@ -148,12 +148,12 @@ def test_a_tela_nao_usa_metrica_nativa():
 
 
 def test_card_declara_a_subaba_que_a_nota_nao_mede():
-    """80% em Empresas B3 nao vale para a Previsao de Lucros, que nenhum
+    """80% em Empresas B3 nao vale para a Carteira 20, que nenhum
     componente olha; o card diz isso, e acha a tela tambem pelo nome sem acento
     que a medicao gravada antes de 29/10/2026 traz."""
     for nome in ("Empresas B3", "empresas b3"):
         html = conf._card(_secao(nome))
-        assert "Fora desta nota: Previsão de Lucros, Carteira 20." in html
+        assert "Fora desta nota: Carteira 20." in html
     assert "Fora desta nota" not in conf._card(_secao("Seleção de FIIs"))
 
 
