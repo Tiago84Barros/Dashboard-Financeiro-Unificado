@@ -59,17 +59,16 @@ MARKET_COMPANIES_CSS = """
 """
 
 
+# NAV_ITEMS é da vitrine americana, NAV_ITEMS_B3 da B3. As duas perderam a
+# Análise Avançada em 30/10/2026, quando a Criação de Portfólio deixou de ser
+# "etapa 2" de um fluxo de teste; só a B3 tem a Carteira 20.
 NAV_ITEMS = (
     ("🏢", "Empresas por Setor"),
     ("🔍", "Análise de Empresa"),
-    ("🔬", "Análise Avançada"),
     ("🚀", "Criação de Portfólio"),
     ("🧠", "Avaliação de Portfólio"),
 )
 
-# NAV_ITEMS acima é da vitrine americana. A B3 tem a própria barra: perdeu a
-# Análise Avançada em 30/10/2026, quando a Criação de Portfólio deixou de ser
-# "etapa 2" de um fluxo de teste, e só ela tem a Carteira 20.
 NAV_ITEMS_B3 = (
     ("🏢", "Empresas por Setor"),
     ("🔍", "Análise de Empresa"),
@@ -78,7 +77,7 @@ NAV_ITEMS_B3 = (
     ("📒", "Carteira 20"),
 )
 
-_LARGURAS = {5: [2, 2, 2.5, 2.5, 2.5], 6: [2, 2, 2.2, 2.3, 2.4, 2.2]}
+_LARGURAS = {4: [2, 2, 2.5, 2.5], 5: [2, 2, 2.5, 2.5, 2.5], 6: [2, 2, 2.2, 2.3, 2.4, 2.2]}
 
 
 def render_market_css() -> None:

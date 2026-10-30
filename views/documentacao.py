@@ -1178,20 +1178,19 @@ FLOW_EMPRESAS_EUA = FlowSpec(
     title="Empresas Americanas — do arquivo da SEC ao ranking",
     subtitle=(
         "O módulo dos EUA repete a casca da B3 (Empresas por Setor, Análise de Empresa, "
-        "Criação de Portfólio e Avaliação de Portfólio) e ainda tem a Análise Avançada, "
-        "que a B3 deixou de ter em 30/10/2026, mas com outra fonte, outro universo e "
-        "outra forma de medir crescimento."
+        "Criação de Portfólio e Avaliação de Portfólio), mas com outra fonte, outro "
+        "universo e outra forma de medir crescimento."
     ),
     tela="Empresas Americanas",
-    abas=("Empresas por Setor", "Análise de Empresa", "Análise Avançada",
-          "Criação de Portfólio", "Avaliação de Portfólio"),
+    abas=("Empresas por Setor", "Análise de Empresa", "Criação de Portfólio",
+          "Avaliação de Portfólio"),
     rows=(
         ("Universo", ("sec_universo", "so_acoes", "vitrine_us")),
         ("Métricas", ("gaap_us", "trilhas_us", "crescimento_us")),
         ("Score", ("percentil_industria_us", "cobertura_us", "piso_us")),
         ("Validação", ("pit_us", "saidas_us")),
         ("Consulta", ("setor_us", "empresa_us")),
-        ("Aplicação", ("avancada_us", "carteira_us", "avaliacao_us")),
+        ("Aplicação", ("carteira_us", "avaliacao_us")),
     ),
     default="sec_universo",
     nodes={
@@ -1246,9 +1245,9 @@ FLOW_EMPRESAS_EUA = FlowSpec(
         "trilhas_us": _node(
             "trilhas_us", "Trilhas de fatores", "Métricas",
             "As métricas se agrupam em trilhas: qualidade, crescimento, solidez, eficiência "
-            "de capital, valuation e retorno ao acionista. O score de entrada da Análise "
-            "Avançada e da Criação de Portfólio soma mais duas trilhas de estilo: momento de "
-            "12 meses e pesquisa e desenvolvimento.",
+            "de capital, valuation e retorno ao acionista. O score de entrada da Criação "
+            "de Portfólio soma mais duas trilhas de estilo: momento de 12 meses e pesquisa "
+            "e desenvolvimento.",
             (
                 "Qualidade, crescimento e solidez",
                 "Eficiência de capital e valuation",
@@ -1360,22 +1359,10 @@ FLOW_EMPRESAS_EUA = FlowSpec(
             "O relatório do analista lê o ativo como o portão da Inteligência dos Ativos "
             "lê: os dois chegam ao mesmo veredito.",
         ),
-        "avancada_us": _node(
-            "avancada_us", "Análise avançada", "Aplicação",
-            "O laboratório equivalente ao da B3: mexer em pesos, ver o efeito no ranking "
-            "e comparar com o comportamento fora da amostra.",
-            (
-                "Pesos ajustáveis por trilha",
-                "Efeito imediato no ranking",
-                "Comparação dentro e fora da amostra",
-            ),
-            "Ver o ranking mudar quando você mexe no peso mostra de quanto julgamento "
-            "aquele resultado depende.",
-        ),
         "carteira_us": _node(
             "carteira_us", "Criação de portfólio", "Aplicação",
-            "Segunda etapa: transformar o ranking em carteira, com limites por setor e "
-            "por ativo definidos por você.",
+            "Transforma o ranking em carteira, com limites por setor e por ativo "
+            "definidos por você.",
             (
                 "Limites por setor e por ativo",
                 "Piso de liquidez",
@@ -1385,7 +1372,7 @@ FLOW_EMPRESAS_EUA = FlowSpec(
         ),
         "avaliacao_us": _node(
             "avaliacao_us", "Avaliação de portfólio", "Aplicação",
-            "Terceira etapa, espelho da Avaliação de Portfólio da B3: sobre a carteira "
+            "Espelho da Avaliação de Portfólio da B3: sobre a carteira "
             "salva, monta o Cenário Macroeconômico dos EUA, a Avaliação Quantitativa, a "
             "Análise Qualitativa via LLM, o Relatório Consolidado, a Alocação do Modelo "
             "(Quanti + Quali), os Relatórios por Empresa, a Conclusão Estratégica e o chat "
@@ -1395,7 +1382,8 @@ FLOW_EMPRESAS_EUA = FlowSpec(
                 "Carteira salva: load_active_us_portfolio_model() (us_portfolio_models)",
                 "Macro do Fed: juros, CPI, PIB real, desemprego, curva e crédito",
                 "Benchmark S&P 500; custo de oportunidade: Treasury",
-                "Sem RAG documental: a evidência é o dossiê determinístico e o laboratório avançado",
+                "Sem RAG documental: a evidência é o dossiê determinístico e Piotroski, "
+                "Altman e Sloan",
             ),
             "A avaliação roda sobre a carteira SALVA, não sobre uma seleção improvisada, e "
             "existe para mostrar concentração e adequação ANTES do aporte.",

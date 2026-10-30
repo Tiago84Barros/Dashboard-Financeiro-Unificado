@@ -1,6 +1,6 @@
 """
 views/analise_portfolio_us.py
-Avaliação de Portfólio das Empresas Americanas — etapa 3 de 3.
+Avaliação de Portfólio das Empresas Americanas.
 
 Espelho de ``views/analise_portfolio_b3.py``: mesmas seções, mesma ordem, mesmo
 CSS (importado de lá, não copiado) e mesmo contrato de relatório. O que difere é
@@ -10,7 +10,7 @@ o que é intrínseco ao mercado americano:
 * o macro é o do Fed — juros, CPI, PIB real, desemprego, curva e crédito;
 * os pares são por indústria SEC e o benchmark é o S&P 500;
 * não há RAG documental (sem equivalente de CVM/IPE): a camada de evidência é o
-  dossiê determinístico mais o laboratório avançado, calculados em código;
+  dossiê determinístico mais Piotroski, Altman e Sloan, calculados em código;
 * não há segunda fonte web: o módulo americano é offline-first por contrato.
 """
 from __future__ import annotations
@@ -1133,7 +1133,6 @@ def render(show_header: bool = True) -> None:
 
     st.markdown(
         '<p style="font-size:0.80rem;color:var(--app-muted);margin-bottom:20px;">'
-        '<strong style="color:var(--app-text);">Etapa 3 de 3 · Avaliação do conjunto.</strong> '
         'Julga a carteira criada na aba <strong>Criação de Portfólio</strong> como um '
         'todo — diversificação, concentração por ativo, indústria e setor, exposição a '
         'risco, geração de caixa e crescimento consolidados, qualidade contábil e '
@@ -1206,7 +1205,7 @@ def render(show_header: bool = True) -> None:
     )
     detalhe_tecnico(
         "Sem base documental indexada para o mercado americano: a evidência vem "
-        "do dossiê determinístico e do laboratório avançado (Piotroski, Altman, "
+        "do dossiê determinístico e dos indicadores de qualidade (Piotroski, Altman, "
         "Sloan), calculados em código sobre as demonstrações SEC.",
         codigo="portfolio_us.sem_base_documental",
     )

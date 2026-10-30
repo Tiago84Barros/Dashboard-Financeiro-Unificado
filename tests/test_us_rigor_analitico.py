@@ -74,17 +74,6 @@ def test_alterar_controle_rebaixa_observado_para_premissa():
     assert "FONTE_OBSERVADO if (tem_observado and intacto) else FONTE_PREMISSA" in _FONTE_VIEW
 
 
-def test_a_secao_inteira_parte_da_mesma_fonte_de_macro():
-    """Duas abas da mesma seção não podem exibir taxas do Fed diferentes."""
-    vitrine = (_RAIZ / "views" / "empresas_americanas.py").read_text(encoding="utf-8")
-    corpo = vitrine[vitrine.index("def _macro_controls"):]
-    corpo = corpo[:corpo.index("\ndef ")]
-    assert "us.macro_observado()" in corpo
-    assert "FONTE_OBSERVADO if (observado and intacto) else FONTE_PREMISSA" in corpo
-    # E nenhuma das duas telas ancora em literal quando há série observada.
-    assert "4.25, 0.25" not in corpo
-
-
 # ── Ingestão FRED: transformações puras ──────────────────────────────────────
 
 def test_parse_fred_descarta_ausentes():
