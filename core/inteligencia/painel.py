@@ -583,8 +583,7 @@ def bloco_memoria(est=None, *, evento_atual: str = "",
         titulo="Memória de mercado", valores=tuple(valores), frescor=frescor,
         limitacoes=tuple(limitacoes),
         explicacao_simples=(
-            "Como o mercado reagiu a eventos parecidos no passado. "
-            "Comportamento passado não garante o futuro."),
+            "Como o mercado reagiu a eventos parecidos no passado."),
         detalhe_tecnico=tuple(est.fatores_ampliam) + tuple(est.fatores_reduzem))
 
 
@@ -737,7 +736,7 @@ def _diferenca(decisao, anterior, situacao: str) -> tuple[bool, tuple[str, ...]]
 
 
 def _explicacao_simples(situacao: str, decisao) -> str:
-    base = {
+    return {
         SIT_NORMAL: "Nada no cenário atual muda o plano para este ativo.",
         SIT_OBSERVACAO: "Há algo acontecendo que merece acompanhamento, mas "
                         "nada que exija ação agora.",
@@ -746,7 +745,6 @@ def _explicacao_simples(situacao: str, decisao) -> str:
         SIT_SUSPENSAO: "Novos aportes neste ativo estão suspensos até o cenário "
                        "ficar mais claro. Nenhuma venda foi sugerida.",
     }[situacao]
-    return base + " Isto não é garantia de retorno nem recomendação de compra."
 
 
 # ── O painel completo ────────────────────────────────────────────────────────

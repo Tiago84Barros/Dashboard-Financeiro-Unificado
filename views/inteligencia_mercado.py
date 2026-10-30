@@ -487,7 +487,6 @@ def render_antifragilidade(pn: P.Painel, estado: hom.Estado) -> None:
         return
     secao_titulo("Antifragilidade da carteira", "🧱")
     ui.bloco_completo(pn.antifragilidade, agora=pn.gerado_em)
-    ui.aviso_sem_garantia()
 
 
 def render_memoria(pn: P.Painel, estado: hom.Estado) -> None:
@@ -499,8 +498,7 @@ def render_memoria(pn: P.Painel, estado: hom.Estado) -> None:
         return
     secao_titulo("Memória de mercado", "🕰️")
     ui.bloco_completo(pn.memoria, agora=pn.gerado_em)
-    st.caption("Comportamento passado não garante o futuro. A faixa é dispersão "
-               "observada, não previsão.")
+    st.caption("A faixa é dispersão observada, não previsão.")
 
 
 def render_explicacao(pn: P.Painel, estado: hom.Estado,
@@ -531,7 +529,6 @@ def render_explicacao(pn: P.Painel, estado: hom.Estado,
                         codigo="inteligencia.explicacao_descartada")
     detalhe_tecnico("Contexto entregue à LLM: " + str(exp.contexto),
                     codigo="inteligencia.contexto_llm")
-    ui.aviso_sem_garantia()
 
 
 def render_fundamentos_cenario(bloco: P.BlocoEmpresa,
@@ -561,7 +558,6 @@ def render_fundamentos_cenario(bloco: P.BlocoEmpresa,
             st.markdown(f"- {linha}")
 
     ui.area_tecnica(bloco.bloco)
-    ui.aviso_sem_garantia()
 
 
 def render_empresas(pn: P.Painel) -> None:
@@ -663,8 +659,7 @@ def render_atualizacao(pn: P.Painel) -> None:
 def render() -> None:
     container_pagina(
         "Inteligência de Mercado",
-        "Notícias, crise, memória de mercado e resistência da carteira. "
-        "Nada aqui é recomendação de compra ou venda.",
+        "Notícias, crise, memória de mercado e resistência da carteira.",
         icone="🧭")
 
     estado = fase_atual()

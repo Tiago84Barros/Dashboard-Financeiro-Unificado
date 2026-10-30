@@ -278,7 +278,7 @@ def test_recommended_portfolio_detail_has_a_heading(monkeypatch):
     dashboard._destaque_carteira_recomendada()
     html = "\n".join(rendered)
     assert "Detalhes da carteira recomendada" in html
-    assert "não são a sua posição investida" in html.replace("\n", "")
+    assert "não a sua posição investida" in html.replace("\n", "")
 
 
 def test_os_blocos_de_conclusao_abrem_na_mesma_faixa():

@@ -289,7 +289,8 @@ def test_texto_para_a_llm_carrega_limite_gatilho_e_aviso(an):  # noqa: F811
     assert "LIMITE da recomendação: avaliar troca" in t
     assert "Gatilho Dívida líquida/EBITDA" in t and "[DISPARADO]" in t
     assert "Faixa pelo P/L" in t and "não alvo" in t
-    assert "não recomendação" in t
+    assert "sem previsão de retorno" in t
+    assert "não recomendação" not in t and "decisão é sua" not in t
 
 
 def test_relatorio_diz_que_nao_preve_retorno(an):  # noqa: F811
@@ -298,7 +299,7 @@ def test_relatorio_diz_que_nao_preve_retorno(an):  # noqa: F811
     (Restrições) e o texto da LLM leva as duas. Falha se a limitação voltar a
     ser texto fixo em vez de sair de ``data/vantagem_oos.json``."""
     rel = ra.relatorio_dos_insumos(_com(an["WEGE3"], _fund(**BOA)))
-    assert "nem previsão de retorno" in rel.aviso
+    assert "sem previsão de retorno" in rel.aviso
     assert "não foram testadas como previsoras" in rel.aviso
     assert "Rank-IC" not in rel.aviso
     lim = ra.limitacao_previsao("b3")

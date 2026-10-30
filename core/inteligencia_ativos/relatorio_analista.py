@@ -72,11 +72,10 @@ _DENOMINADOR = {"p_l": "o lucro por ação", "p_vp": "o patrimônio por ação",
 _DENOMINADOR_FII = {"p_vp": "o valor patrimonial da cota",
                     "dividend_yield": "o rendimento dos últimos 12 meses"}
 
-AVISO = ("Apoio analítico por regras sobre os dados do app, não recomendação "
-         "nem previsão de retorno: as regras descrevem o ativo e não foram "
-         "testadas como previsoras; as faixas são observadas no histórico, não "
-         "preço-alvo; os gatilhos são as regras eliminatórias da avaliação. A "
-         "decisão é sua.")
+AVISO = ("Relatório por regras sobre os dados do app, sem previsão de "
+         "retorno: as regras descrevem o ativo e não foram testadas como "
+         "previsoras; as faixas são observadas no histórico, não preço-alvo; "
+         "os gatilhos são as regras eliminatórias da avaliação.")
 
 _PREFIXO_PREVISAO = (
     "Previsão de retorno: nenhuma regra deste relatório foi testada contra o "

@@ -1302,8 +1302,6 @@ def _render_chat_financeiro(
                 desenhados = render_financas_charts(chart_directives, chart_meta)
             except Exception as exc:
                 falha_de_acao("Não foi possível gerar os gráficos.", exc)
-        st.caption("Análise educacional baseada nos seus dados; não é recomendação "
-                   "de investimento nem garantia de resultado.")
 
     msg_assistant = {"role": "assistant", "content": resposta}
     if desenhados and chart_directives:
@@ -3634,8 +3632,6 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
                 desenhados = render_financas_charts(chart_directives, chart_meta)
             except Exception as exc:
                 falha_de_acao("Não foi possível gerar os gráficos.", exc)
-        st.caption("Análise educacional baseada nos seus dados; não é recomendação "
-                   "de investimento nem garantia de resultado.")
 
     msg_assistant = {"role": "assistant", "content": resposta}
     if desenhados and chart_directives:

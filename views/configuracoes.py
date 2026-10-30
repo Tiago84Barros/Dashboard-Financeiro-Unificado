@@ -87,8 +87,7 @@ def render() -> None:
     with tab_conf:
         _render_tab_intro(
             "Grau de Confiança",
-            "Quanto o app confia em cada seção, e a evidência por trás de cada "
-            "nota. Apoio analítico — não é recomendação.",
+            "Quanto o app confia em cada seção, e a evidência por trás de cada nota.",
             "Medição por seção",
             "var(--app-primary, #00C896)",
         )

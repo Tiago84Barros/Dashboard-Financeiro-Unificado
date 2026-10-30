@@ -1831,7 +1831,6 @@ FLOW_CONFIGURACOES = FlowSpec(
                 "Empresas B3 e Seleção de FIIs medem também o 'Pregão diário (chat)': a "
                 "idade dos pregões do COTAHIST que o chat do ativo cita (peso 0,05, "
                 "tirado do bloco de frescor, que segue somando 0,25)",
-                "Apoio analítico — não é recomendação",
             ),
             "Medir a cada abertura custava uma varredura inteira do banco por clique de menu. "
             "Ler a última medição e remedir sob comando deixa o custo onde a decisão está. "
@@ -2045,7 +2044,7 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
             "dg_leitura", "Leitura do mês", "Fatos do período",
             "Uma frase que classifica o caixa do período: déficit, aporte acima da sobra, "
             "equilíbrio ou sobra. Logo depois vem a ressalva de que metas e modelos mais "
-            "abaixo são referências analíticas, não garantias de resultado.",
+            "abaixo são referências analíticas.",
             (
                 "indicadores_caixa() (core.controle_indicadores)",
                 "Situações: deficit, aportes_excedem_sobra e equilibrio; qualquer outra lê "
@@ -2101,7 +2100,7 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
             "dg_recomendadas", "Detalhes da carteira recomendada", "Referência",
             "Fecha a página com as carteiras que o app recomenda: Portfólio B3 padrão, "
             "Portfólio EUA padrão e Carteira-modelo de Fundos Imobiliários. São referências "
-            "analíticas — não são a sua posição investida nem garantia de resultado.",
+            "analíticas, não a sua posição investida.",
             (
                 "_secao_sugestoes_carteira()",
                 "Modelos salvos: load_active_b3_portfolio_model() e "

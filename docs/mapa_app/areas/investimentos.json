@@ -3,14 +3,14 @@
   "resumo": "Sua carteira: resumo, histórico, análises, IA e imposto",
   "explicacao": "É a área que reúne tudo sobre os seus investimentos: quanto você tem, como evoluiu, onde estão os riscos, o que a inteligência do app sugere e quanto imposto há a pagar. No topo aparecem a data de referência dos números, se as cotações são de hoje e selos com a contagem de cotações atualizadas e de proventos (dividendos e rendimentos) registrados. O conteúdo fica dividido em cinco abas.",
   "so_admin": false,
-  "fonte": "app.py:73; views/investimentos.py:4480 (cabeçalho :4508, abas :4560)",
+  "fonte": "app.py:73; views/investimentos.py:4479 (cabeçalho :4508, abas :4560)",
   "filhos": [
     {
       "nome": "Dashboard",
       "resumo": "Painel rápido: patrimônio, risco, economia e diversificação",
       "explicacao": "É a primeira aba, com a fotografia geral da carteira hoje. Mostra o valor total, quanto está no Brasil e no exterior, a renda do último ano, gráficos de risco e de distribuição, os indicadores da economia e o quanto seus ativos andam juntos. É só para leitura: serve para entender a situação num relance.",
       "so_admin": false,
-      "fonte": "views/investimentos.py:4561 (_tab_dashboard em :1705)",
+      "fonte": "views/investimentos.py:4560 (_tab_dashboard em :1705)",
       "filhos": [
         {
           "nome": "Cartões de resumo",
@@ -116,14 +116,14 @@
           "resumo": "Quais ativos puxam cada fator da economia",
           "explicacao": "Mostra quanto cada ativo contribui para a sensibilidade da carteira a um fator escolhido, levando em conta o peso dele na carteira. Só aparece quando há posições para calcular.",
           "so_admin": false,
-          "fonte": "views/investimentos.py:2006",
+          "fonte": "views/investimentos.py:2005",
           "filhos": [
             {
               "nome": "Fator macro",
               "resumo": "Escolha o fator que o gráfico e a tabela mostram",
               "explicacao": "Seletor que troca o fator analisado (por exemplo, juros ou bolsa). Abre já no fator ao qual a carteira é mais sensível.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:2018",
+              "fonte": "views/investimentos.py:2017",
               "filhos": []
             },
             {
@@ -131,7 +131,7 @@
               "resumo": "Peso, sensibilidade e contribuição de cada ativo",
               "explicacao": "Um gráfico e uma tabela com os 12 ativos que mais contribuem, mostrando o peso na carteira, o quanto a classe do ativo reage ao fator e a contribuição final em pontos percentuais.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:2041-2088",
+              "fonte": "views/investimentos.py:2040-2088",
               "filhos": []
             }
           ]
@@ -141,14 +141,14 @@
           "resumo": "Seus ativos sobem e caem juntos?",
           "explicacao": "Mede se os ativos costumam se mover juntos, o que reduz a proteção da diversificação, ou em sentidos opostos. Usa só ativos com histórico de preço; Tesouro e renda fixa ficam de fora. Sem histórico suficiente, aparece 'Esta análise não está disponível no momento'.",
           "so_admin": false,
-          "fonte": "views/investimentos.py:2091",
+          "fonte": "views/investimentos.py:2090",
           "filhos": [
             {
               "nome": "Dependência ponderada · Maior positiva · Inversa mais forte",
               "resumo": "Três números que resumem a diversificação",
               "explicacao": "Cartões com a ligação média entre os ativos (considerando o peso de cada um), o par que mais anda junto e o par que mais anda em sentido contrário.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:2111-2140",
+              "fonte": "views/investimentos.py:2110-2140",
               "filhos": []
             },
             {
@@ -156,7 +156,7 @@
               "resumo": "Quadro colorido com todos os pares de ativos",
               "explicacao": "Uma grade em que cada quadrado mostra, por cor, o quanto dois ativos se movem juntos. Não tem título próprio na tela.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:2151",
+              "fonte": "views/investimentos.py:2150",
               "filhos": []
             },
             {
@@ -164,14 +164,14 @@
               "resumo": "Tabelas dos pares mais ligados e mais independentes",
               "explicacao": "Três sub-abas com os oito pares de cada tipo, com o grau de ligação, quantos meses foram usados e uma leitura em palavras.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:2158",
+              "fonte": "views/investimentos.py:2157",
               "filhos": [
                 {
                   "nome": "Positivas",
                   "resumo": "Pares que sobem e caem juntos",
                   "explicacao": "Pares com maior ligação positiva: quando um cai, o outro tende a cair também.",
                   "so_admin": false,
-                  "fonte": "views/investimentos.py:2168",
+                  "fonte": "views/investimentos.py:2167",
                   "filhos": []
                 },
                 {
@@ -179,7 +179,7 @@
                   "resumo": "Pares que andam em sentidos opostos",
                   "explicacao": "Pares em que, quando um sobe, o outro tende a cair, o que ajuda a proteger a carteira.",
                   "so_admin": false,
-                  "fonte": "views/investimentos.py:2175",
+                  "fonte": "views/investimentos.py:2174",
                   "filhos": []
                 },
                 {
@@ -187,7 +187,7 @@
                   "resumo": "Pares que quase não se influenciam",
                   "explicacao": "Pares com ligação próxima de zero, que se movem de forma independente.",
                   "so_admin": false,
-                  "fonte": "views/investimentos.py:2182",
+                  "fonte": "views/investimentos.py:2181",
                   "filhos": []
                 }
               ]
@@ -201,21 +201,21 @@
       "resumo": "Evolução, ganhos, proventos, risco e comparação com a meta",
       "explicacao": "Mostra o passado da carteira: como o patrimônio cresceu, quanto você ganhou, os proventos recebidos mês a mês e por ativo, o risco medido no período e de onde veio a diferença entre a carteira e a sua meta de alocação.",
       "so_admin": false,
-      "fonte": "views/investimentos.py:4567-4571 (_tab_historico :2308, render_risco_carteira, render_atribuicao_carteira)",
+      "fonte": "views/investimentos.py:4566-4571 (_tab_historico :2308, render_risco_carteira, render_atribuicao_carteira)",
       "filhos": [
         {
           "nome": "Evolução Patrimonial",
           "resumo": "Crescimento do patrimônio e ganhos separados",
           "explicacao": "Valor de mercado, custo e ganhos ao longo do tempo. Só aparece se houver histórico de posições importado; sem ele, surge 'Sem dados históricos de transações para exibir'.",
           "so_admin": false,
-          "fonte": "views/investimentos.py:2315",
+          "fonte": "views/investimentos.py:2314",
           "filhos": [
             {
               "nome": "Valor de Mercado Atual · Crescimento anual do patrimônio · Crescimento anual dos proventos",
               "resumo": "Valor de hoje e ritmo de crescimento",
               "explicacao": "Três cartões: o valor atual da carteira, a taxa média de crescimento do patrimônio por ano e a dos proventos. O crescimento inclui o dinheiro que você aplicou, então mostra quanto o patrimônio cresceu, não quanto o dinheiro rendeu.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:2320-2349",
+              "fonte": "views/investimentos.py:2319-2349",
               "filhos": []
             },
             {
@@ -223,7 +223,7 @@
               "resumo": "O ganho dividido em três partes, sem somar",
               "explicacao": "Ganho não realizado é a valorização do que você ainda tem; realizado é o lucro das vendas já feitas; proventos é o dinheiro recebido em dividendos e rendimentos. Cada cartão diz que parte da carteira entrou na conta.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:2351 (_bloco_ganho_parcelas :2255)",
+              "fonte": "views/investimentos.py:2350 (_bloco_ganho_parcelas :2255)",
               "filhos": []
             },
             {
@@ -231,7 +231,7 @@
               "resumo": "Escolha o período do gráfico e da tabela",
               "explicacao": "Botões que mudam o período do gráfico de evolução e da tabela ao lado, que lista o valor de mercado em cada data.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:2354-2373",
+              "fonte": "views/investimentos.py:2353-2373",
               "filhos": []
             },
             {
@@ -239,7 +239,7 @@
               "resumo": "Informe o que tinha antes de nov/2019",
               "explicacao": "Caixa recolhida onde você informa a quantidade e o custo total de um ativo que já tinha antes do primeiro extrato da B3 (nov/2019), copiando da declaração de IR. Assim o lucro dessas vendas entra no ganho e no cálculo do imposto. Só aparece quando há venda sem custo conhecido ou uma declaração já gravada; tem os botões 'Salvar posição' e 'Apagar declaração'.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:2412 (_editor_posicao_anterior :2940)",
+              "fonte": "views/investimentos.py:2411 (_editor_posicao_anterior :2940)",
               "filhos": []
             }
           ]
@@ -249,7 +249,7 @@
           "resumo": "Gráfico dos dividendos recebidos, mensal ou anual",
           "explicacao": "Barras com os dividendos e rendimentos recebidos. No seletor ao lado você troca entre Mensal (últimos 12 meses com pagamento) e Anual (histórico completo); o total do período aparece embaixo.",
           "so_admin": false,
-          "fonte": "views/investimentos.py:2436",
+          "fonte": "views/investimentos.py:2435",
           "filhos": []
         },
         {
@@ -257,14 +257,14 @@
           "resumo": "Compare quanto cada ativo pagou",
           "explicacao": "Compara os pagadores de proventos ao longo do histórico ou dentro de um ano. Se nenhum ativo tiver pago proventos, aparece 'Sem proventos por ativo para comparar'.",
           "so_admin": false,
-          "fonte": "views/investimentos.py:2519",
+          "fonte": "views/investimentos.py:2518",
           "filhos": [
             {
               "nome": "Todos · Na carteira · Saíram da carteira",
               "resumo": "Filtra ativos atuais ou já vendidos",
               "explicacao": "Escolhe se a comparação mostra todos os ativos, só os que você tem hoje ou só os que já vendeu.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:2529",
+              "fonte": "views/investimentos.py:2528",
               "filhos": []
             },
             {
@@ -272,7 +272,7 @@
               "resumo": "Escolha ativos, ano e tipo de gráfico",
               "explicacao": "Filtros para marcar os ativos (os 5 maiores pagadores já vêm marcados), escolher todo o histórico ou um ano, agrupar por ano ou mês e trocar entre barras lado a lado, barras empilhadas ou linhas.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:2556-2585",
+              "fonte": "views/investimentos.py:2555-2585",
               "filhos": []
             },
             {
@@ -280,7 +280,7 @@
               "resumo": "Proventos de cada ativo e quanto pesam no total",
               "explicacao": "O gráfico com os ativos escolhidos e, abaixo, uma tabela com o total de cada um, a fatia no conjunto, a média por período e em quantos períodos houve pagamento.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:2600-2658",
+              "fonte": "views/investimentos.py:2599-2658",
               "filhos": []
             }
           ]
@@ -358,21 +358,21 @@
       "resumo": "Raio-x por classe: ações, FIIs, Tesouro, exterior",
       "explicacao": "Abre com o título 'Análise do Portfólio' e sete sub-abas. Cada uma olha uma parte da carteira em detalhe, com cartões por ativo, médias, comparação com outros ativos do mercado e um chat com IA para tirar dúvidas; há também alertas e simulações de crises.",
       "so_admin": false,
-      "fonte": "views/investimentos.py:4573 (_tab_analise :3584, sub-abas :3614)",
+      "fonte": "views/investimentos.py:4572 (_tab_analise :3584, sub-abas :3614)",
       "filhos": [
         {
           "nome": "Visão Geral",
           "resumo": "Tabela de posições, destaques e concentração",
           "explicacao": "Resumo da carteira inteira: totais, a tabela com todas as posições, destaques, alertas de concentração, gráficos de distribuição e um chat. Ações, FIIs e ativos do exterior valem pela cotação do dia; os títulos do Tesouro Direto valem pelo preço que o Tesouro paga para recomprá-los hoje, publicado na curva oficial, e só ficam com o preço do extrato da B3 quando a curva for mais antiga que ele. Se as cotações não estiverem disponíveis, um aviso aparece no topo.",
           "so_admin": false,
-          "fonte": "views/investimentos.py:3622; core/investimentos.py (_montar_carteira_snapshot); core/tesouro_curva.py (pu_de_recompra)",
+          "fonte": "views/investimentos.py:3621; core/investimentos.py (_montar_carteira_snapshot); core/tesouro_curva.py (pu_de_recompra)",
           "filhos": [
             {
               "nome": "Resumo do Portfólio",
               "resumo": "Totais investido, de mercado, retorno e renda",
               "explicacao": "Quatro cartões (Valor Total Investido, Valor de Mercado, Retorno Mercado/Custo e Renda Total Recebida (12M)) e, abaixo, um cartão por classe de ativo, até seis.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3633",
+              "fonte": "views/investimentos.py:3632",
               "filhos": []
             },
             {
@@ -380,14 +380,14 @@
               "resumo": "Tabela de todos os ativos, agrupados por tipo",
               "explicacao": "Tabela com cada ativo agrupado por tipo (ações, FIIs, americanas, renda fixa), com subtotais, peso na carteira, corretora e resultado. Se não houver posições, aparece 'Nenhuma posição encontrada'.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3686 (design/tabela_posicoes.py)",
+              "fonte": "views/investimentos.py:3685 (design/tabela_posicoes.py)",
               "filhos": [
                 {
                   "nome": "Ver posições em cards, por classe",
                   "resumo": "Liga cartões individuais com logo e retorno",
                   "explicacao": "Botão de ligar e desligar que mostra, abaixo da tabela, um cartão por ativo agrupado por classe, com logo e retorno incluindo proventos. A linha 'Cotação' diz de onde veio o preço: mercado atual, mercado desatualizado, curva do Tesouro, curva do Tesouro desatualizada (curva oficial com mais de 5 dias) ou snapshot (o extrato importado).",
                   "so_admin": false,
-                  "fonte": "views/investimentos.py:3697 (_cards_por_classe :3073)",
+                  "fonte": "views/investimentos.py:3696 (_cards_por_classe :3073)",
                   "filhos": []
                 }
               ]
@@ -397,7 +397,7 @@
               "resumo": "Médias de preço/lucro, dividendos e outros indicadores",
               "explicacao": "Valuation é o quanto um ativo está caro ou barato em relação aos números dele. Aqui aparecem as médias de indicadores como DY (dividendos sobre preço), P/L (preço sobre lucro) e P/VP (preço sobre patrimônio) das suas ações e FIIs brasileiros, ponderadas pelo valor de cada posição.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3702 (design/portfolio_valuations.py:65)",
+              "fonte": "views/investimentos.py:3701 (design/portfolio_valuations.py:65)",
               "filhos": []
             },
             {
@@ -405,7 +405,7 @@
               "resumo": "Corrija o preço médio de um ativo",
               "explicacao": "Caixa recolhida para quando nem as notas nem o extrato da B3 sabem o preço médio real de um ativo. Você escolhe o ativo, digita o preço médio e de onde veio o número e clica em 'Salvar preço médio' (ou 'Apagar declaração'). O cartão do ativo passa a mostrar 'informado por você'.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3704 (_editor_preco_medio_manual :2831)",
+              "fonte": "views/investimentos.py:3703 (_editor_preco_medio_manual :2831)",
               "filhos": []
             },
             {
@@ -413,7 +413,7 @@
               "resumo": "Maiores altas, maiores quedas e maiores pesos",
               "explicacao": "Três listas de cinco ativos: Maior valorização mercado/custo, Maior queda mercado/custo e Maior Peso na carteira.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3711",
+              "fonte": "views/investimentos.py:3710",
               "filhos": []
             },
             {
@@ -421,7 +421,7 @@
               "resumo": "Ativos com mais de 10% da carteira",
               "explicacao": "Só aparece quando algum ativo passa de 10% do total. Cada aviso diz o ativo, a classe e o peso, lembrando que posições grandes aumentam o risco de um único ativo.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3786",
+              "fonte": "views/investimentos.py:3785",
               "filhos": []
             },
             {
@@ -429,7 +429,7 @@
               "resumo": "Rosca por classe e as 15 maiores posições",
               "explicacao": "Dois gráficos lado a lado: a fatia de cada classe de ativo e as 15 posições em que você mais investiu dinheiro.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3809, :3818",
+              "fonte": "views/investimentos.py:3808, :3818",
               "filhos": []
             },
             {
@@ -437,7 +437,7 @@
               "resumo": "Barras de peso por classe e por setor",
               "explicacao": "Barras com o peso de cada classe de ativo e dos oito maiores setores, que ficam amarelas ou vermelhas quando o peso está alto.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3828",
+              "fonte": "views/investimentos.py:3827",
               "filhos": []
             },
             {
@@ -445,7 +445,7 @@
               "resumo": "Chat com IA sobre a carteira inteira",
               "explicacao": "Conversa com a inteligência artificial, que responde usando os dados desta aba, juros, inflação, câmbio, notícias e os pregões diários recentes da bolsa de cada ação e fundo da carteira. Tem perguntas sugeridas, o botão 'Limpar chat' e uma caixa para enviar os valores em reais (por padrão vão só porcentagens). Sem IA configurada, aparece 'Esta conversa não está disponível no momento'.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3901 (design/chat_carteira.py:114); core/pregoes_recentes.py",
+              "fonte": "views/investimentos.py:3900 (design/chat_carteira.py:114); core/pregoes_recentes.py",
               "filhos": []
             }
           ]
@@ -455,14 +455,14 @@
           "resumo": "Cartões de cada ação com indicadores e alertas",
           "explicacao": "Mostra só as ações brasileiras da carteira, com os números de cada empresa, médias e comparação com outras empresas da bolsa. Se não houver ações, aparece 'Sem posições de ações na carteira'.",
           "so_admin": false,
-          "fonte": "views/investimentos.py:3910",
+          "fonte": "views/investimentos.py:3909",
           "filhos": [
             {
               "nome": "Cartões por ação",
               "resumo": "Indicadores e alertas de cada empresa",
               "explicacao": "Um cartão por ação, três por linha, com preço, indicadores da empresa (lucro, dividendos, dívida etc.) e alertas coloridos. Não tem título de seção na tela.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3935-3949",
+              "fonte": "views/investimentos.py:3934-3949",
               "filhos": []
             },
             {
@@ -470,7 +470,7 @@
               "resumo": "Médias dos indicadores das suas ações",
               "explicacao": "Cartões com a média de indicadores como dividendos e preço sobre lucro das suas ações, ponderada pelo valor de cada uma.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3529 (design/portfolio_valuations.py:140)",
+              "fonte": "views/investimentos.py:3528 (design/portfolio_valuations.py:140)",
               "filhos": []
             },
             {
@@ -478,7 +478,7 @@
               "resumo": "Suas ações comparadas às demais da bolsa",
               "explicacao": "Tabela que dá nota a cada ação comparando com as outras empresas da B3. Se a comparação falhar, aparece um aviso e os cartões acima continuam valendo.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3532 (design/portfolio_db_analysis.py:93)",
+              "fonte": "views/investimentos.py:3531 (design/portfolio_db_analysis.py:93)",
               "filhos": []
             },
             {
@@ -486,7 +486,7 @@
               "resumo": "Chat com IA e botão de dossiê",
               "explicacao": "O mesmo chat, focado nas ações, com perguntas sugeridas e o botão 'Gerar dossiê da classe', um relatório com concentração por setor, comparação com empresas parecidas, possíveis trocas e plano de aporte (novo investimento).",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3577 (design/chat_carteira.py:113)",
+              "fonte": "views/investimentos.py:3576 (design/chat_carteira.py:113)",
               "filhos": []
             }
           ]
@@ -496,14 +496,14 @@
           "resumo": "Cartões de cada fundo imobiliário",
           "explicacao": "FIIs são fundos imobiliários negociados na bolsa. A sub-aba mostra os números de cada fundo, médias e comparação com fundos do mesmo tipo. Se não houver FIIs, aparece 'Sem posições de FIIs na carteira'.",
           "so_admin": false,
-          "fonte": "views/investimentos.py:3961",
+          "fonte": "views/investimentos.py:3960",
           "filhos": [
             {
               "nome": "Cartões por FII",
               "resumo": "Preço, renda e alertas de cada fundo",
               "explicacao": "Um cartão por fundo, três por linha, com preço, renda recebida, indicadores (como P/VP, preço sobre patrimônio) e alertas. Não tem título de seção na tela.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3976-3987",
+              "fonte": "views/investimentos.py:3975-3987",
               "filhos": []
             },
             {
@@ -511,7 +511,7 @@
               "resumo": "Médias dos indicadores dos seus fundos",
               "explicacao": "Cartões com a média dos indicadores dos seus FIIs, ponderada pelo valor de cada um.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3529 (design/portfolio_valuations.py:140)",
+              "fonte": "views/investimentos.py:3528 (design/portfolio_valuations.py:140)",
               "filhos": []
             },
             {
@@ -519,7 +519,7 @@
               "resumo": "Seus fundos comparados a fundos parecidos",
               "explicacao": "Tabela que compara cada fundo com outros do mesmo tipo (por exemplo, galpões ou shoppings).",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3532 (design/portfolio_db_analysis.py:93)",
+              "fonte": "views/investimentos.py:3531 (design/portfolio_db_analysis.py:93)",
               "filhos": []
             },
             {
@@ -527,7 +527,7 @@
               "resumo": "Chat com IA e botão de dossiê",
               "explicacao": "Chat focado nos FIIs, com perguntas sugeridas e o botão 'Gerar dossiê da classe'.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3577 (design/chat_carteira.py:113)",
+              "fonte": "views/investimentos.py:3576 (design/chat_carteira.py:113)",
               "filhos": []
             }
           ]
@@ -537,21 +537,21 @@
           "resumo": "Levar até o vencimento ou vender antes?",
           "explicacao": "Responde à dúvida de quem tem títulos do Tesouro Direto: vale mais segurar até o vencimento ou vender hoje pelo preço de mercado ('marcação a mercado', o valor do título se vendido hoje)? Se não houver títulos, aparece 'Sem títulos do Tesouro Direto na carteira'.",
           "so_admin": false,
-          "fonte": "views/investimentos.py:3997",
+          "fonte": "views/investimentos.py:3996",
           "filhos": [
             {
               "nome": "Tesouro Direto — levar até o vencimento ou vender antes",
               "resumo": "Veredito da carteira e de cada título",
               "explicacao": "Aparece quando o app conhece a taxa de cada compra, seja pelo Extrato Analítico importado, seja remontada pelas compras do extrato de Movimentação da B3. Começa dizendo de que dia é o preço usado.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:4782 (_painel_tesouro_venda; título :4881)",
+              "fonte": "views/investimentos.py:4781 (_painel_tesouro_venda; título :4881)",
               "filhos": [
                 {
                   "nome": "Levar até o vencimento ou vender antes?",
                   "resumo": "Veredito geral para seus títulos",
                   "explicacao": "Quadro de destaque com a resposta para a carteira de Tesouro como um todo, em uma manchete e uma frase.",
                   "so_admin": false,
-                  "fonte": "views/investimentos.py:4891 (design/tesouro_painel.py:274)",
+                  "fonte": "views/investimentos.py:4890 (design/tesouro_painel.py:274)",
                   "filhos": []
                 },
                 {
@@ -559,7 +559,7 @@
                   "resumo": "Veredito e motivo de cada título",
                   "explicacao": "Um cartão por título com a decisão sugerida e o motivo em uma frase.",
                   "so_admin": false,
-                  "fonte": "views/investimentos.py:4902",
+                  "fonte": "views/investimentos.py:4901",
                   "filhos": []
                 },
                 {
@@ -567,7 +567,7 @@
                   "resumo": "Barras comparando vender hoje e esperar",
                   "explicacao": "Gráfico sem título próprio que mostra, para cada título, quanto você investiu, quanto receberia vendendo hoje e quanto receberia no vencimento.",
                   "so_admin": false,
-                  "fonte": "views/investimentos.py:4907 (design/tesouro_painel.py:374)",
+                  "fonte": "views/investimentos.py:4906 (design/tesouro_painel.py:374)",
                   "filhos": []
                 },
                 {
@@ -575,7 +575,7 @@
                   "resumo": "Escolha um título e veja o gráfico",
                   "explicacao": "No seletor 'Qual título você quer ver no gráfico' você escolhe o título; a tela já abre no que mais vale a pena vender. O gráfico mostra 'Quanto você terá, em reais' até o vencimento e a oscilação do preço de mercado.",
                   "so_admin": false,
-                  "fonte": "views/investimentos.py:4926",
+                  "fonte": "views/investimentos.py:4925",
                   "filhos": []
                 }
               ]
@@ -585,7 +585,7 @@
               "resumo": "Versão simples quando falta a taxa das compras",
               "explicacao": "Aparece no lugar do painel acima quando o app não conhece a taxa de cada compra. Mostra Valor de Mercado, Custo Investido, Resultado de Mercado e Retorno Mercado/Custo, um aviso de que a marcação a mercado não está disponível e a 'Análise por Título', com um cartão por título. Importar o Extrato Analítico em Configurações libera o painel completo.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:4013-4034 (_tesouro_kpis_carteira :4625, _tesouro_analise_por_titulo :4669)",
+              "fonte": "views/investimentos.py:4012-4034 (_tesouro_kpis_carteira :4625, _tesouro_analise_por_titulo :4669)",
               "filhos": []
             },
             {
@@ -593,7 +593,7 @@
               "resumo": "Prazo, indexadores e números médios dos títulos",
               "explicacao": "Cartões com números médios dos seus títulos e a composição por indexador, que é o que corrige o título (Selic, IPCA ou taxa prefixada).",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3526 (design/portfolio_valuations.py:183)",
+              "fonte": "views/investimentos.py:3525 (design/portfolio_valuations.py:183)",
               "filhos": []
             },
             {
@@ -601,7 +601,7 @@
               "resumo": "Selic, inflação, juro real e câmbio",
               "explicacao": "Cartões com Selic, IPCA, juro real e câmbio, os números da economia que mais mexem no preço dos títulos, e uma caixa 'Série recente' com os valores dos últimos anos.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3528 (design/portfolio_db_analysis.py:166)",
+              "fonte": "views/investimentos.py:3527 (design/portfolio_db_analysis.py:166)",
               "filhos": []
             },
             {
@@ -609,7 +609,7 @@
               "resumo": "Chat com IA e botão de dossiê",
               "explicacao": "Chat focado nos títulos públicos, com perguntas sugeridas (por exemplo, o efeito de vender antes do vencimento) e o botão 'Gerar dossiê da classe'.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3577 (design/chat_carteira.py:113)",
+              "fonte": "views/investimentos.py:3576 (design/chat_carteira.py:113)",
               "filhos": []
             }
           ]
@@ -619,14 +619,14 @@
           "resumo": "Investimentos fora do Brasil, em reais",
           "explicacao": "Mostra os ativos no exterior (por exemplo, fundos de índice americanos), convertidos para reais. Se não houver nenhum, aparece 'Sem posições no exterior na carteira'.",
           "so_admin": false,
-          "fonte": "views/investimentos.py:4041",
+          "fonte": "views/investimentos.py:4040",
           "filhos": [
             {
               "nome": "Investimentos no Exterior",
               "resumo": "Valor, custo, retorno e exposição ao dólar",
               "explicacao": "Seis cartões: Valor de Mercado, Custo de Referência, Retorno em BRL, Exposição Cambial (quanto do patrimônio está em moeda estrangeira), Renda Registrada (12M) e Yield sobre Custo (renda do último ano dividida pelo que foi investido).",
               "so_admin": false,
-              "fonte": "views/investimentos.py:4071",
+              "fonte": "views/investimentos.py:4070",
               "filhos": []
             },
             {
@@ -634,7 +634,7 @@
               "resumo": "Um cartão para cada ativo no exterior",
               "explicacao": "Cartões por ativo, três por linha, com valor, resultado e renda.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:4127",
+              "fonte": "views/investimentos.py:4126",
               "filhos": []
             },
             {
@@ -642,7 +642,7 @@
               "resumo": "Médias dos indicadores dos ativos de fora",
               "explicacao": "Cartões com a média dos indicadores disponíveis para os ativos no exterior.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3529 (design/portfolio_valuations.py:140)",
+              "fonte": "views/investimentos.py:3528 (design/portfolio_valuations.py:140)",
               "filhos": []
             },
             {
@@ -650,7 +650,7 @@
               "resumo": "Comparação com as ações americanas",
               "explicacao": "Tabela que compara suas posições com as demais ações dos Estados Unidos.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3532 (design/portfolio_db_analysis.py:93)",
+              "fonte": "views/investimentos.py:3531 (design/portfolio_db_analysis.py:93)",
               "filhos": []
             },
             {
@@ -658,7 +658,7 @@
               "resumo": "Chat com IA e botão de dossiê",
               "explicacao": "Chat focado no exterior, com perguntas sobre câmbio e composição e o botão 'Gerar dossiê da classe'.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:3577 (design/chat_carteira.py:113)",
+              "fonte": "views/investimentos.py:3576 (design/chat_carteira.py:113)",
               "filhos": []
             }
           ]
@@ -668,7 +668,7 @@
           "resumo": "Lista de alertas das ações e FIIs",
           "explicacao": "Junta numa lista os alertas de todas as ações e FIIs, dos mais graves (vermelho) aos informativos (azul), como indicadores fora do esperado. Se nada chamar atenção, aparece 'Nenhum alerta identificado — portfólio dentro dos parâmetros'.",
           "so_admin": false,
-          "fonte": "views/investimentos.py:4161",
+          "fonte": "views/investimentos.py:4160",
           "filhos": []
         },
         {
@@ -676,14 +676,14 @@
           "resumo": "Quanto perderia se uma crise passada voltasse",
           "explicacao": "Com o título 'Stress Tests Históricos', simula crises do passado aplicadas à carteira de hoje. É um exercício de ordem de grandeza, não uma previsão. Sem posições, aparece um aviso.",
           "so_admin": false,
-          "fonte": "views/investimentos.py:4204",
+          "fonte": "views/investimentos.py:4203",
           "filhos": [
             {
               "nome": "Cenário mais severo para esta carteira",
               "resumo": "A pior crise: queda, valor restante, recuperação",
               "explicacao": "Uma frase dizendo quanto a carteira cairia na pior crise e em quanto tempo costuma se recuperar, seguida dos cartões Queda no pior cenário, Valor restante e Tempo de recuperação.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:4238-4271",
+              "fonte": "views/investimentos.py:4237-4271",
               "filhos": []
             },
             {
@@ -691,7 +691,7 @@
               "resumo": "Barras comparando todas as crises",
               "explicacao": "Gráfico com a queda estimada da carteira em cada crise histórica; passando o mouse aparecem o período, a perda em reais e o tempo de recuperação.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:4278",
+              "fonte": "views/investimentos.py:4277",
               "filhos": []
             },
             {
@@ -699,7 +699,7 @@
               "resumo": "Efeito da pior crise na renda fixa",
               "explicacao": "Só aparece se houver renda fixa. Tabela com o valor de hoje, o valor depois do choque, a queda e o prazo médio (duration) de cada tipo de correção (Selic, IPCA, prefixado).",
               "so_admin": false,
-              "fonte": "views/investimentos.py:4331",
+              "fonte": "views/investimentos.py:4330",
               "filhos": []
             },
             {
@@ -707,7 +707,7 @@
               "resumo": "Qual classe mais pesa na perda",
               "explicacao": "Tabela por classe com a queda de cada uma e a 'Contribuição', ou seja, quanto ela responde pela perda total. Ajuda a ver o que reduzir para sofrer menos no próximo choque.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:4374",
+              "fonte": "views/investimentos.py:4373",
               "filhos": []
             },
             {
@@ -715,7 +715,7 @@
               "resumo": "Tabela completa de todas as crises",
               "explicacao": "Caixa recolhida com a tabela de cada crise: período, valor antes e depois, queda, perda e meses de recuperação.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:4415",
+              "fonte": "views/investimentos.py:4414",
               "filhos": []
             },
             {
@@ -723,7 +723,7 @@
               "resumo": "Explicação do método em poucas linhas",
               "explicacao": "Caixa recolhida que explica como cada crise vira um choque por classe de ativo e quais são os limites da simulação.",
               "so_admin": false,
-              "fonte": "views/investimentos.py:4437",
+              "fonte": "views/investimentos.py:4436",
               "filhos": []
             }
           ]
@@ -735,7 +735,7 @@
       "resumo": "Cada ativo avaliado à luz da sua estratégia",
       "explicacao": "Avalia cada ativo da carteira de acordo com a sua estratégia (objetivo, prazo, risco e alocação desejada) e sugere uma de sete ações: manter, comprar, acompanhar, rebalancear, reduzir parcialmente, vender ou substituir. Peso ou preço acima de um limite vira alerta para investigar, nunca ordem de venda. Enquanto a estratégia não estiver concluída, a aba aparece com um cadeado e mostra só a configuração; depois, ganha o ícone de cérebro e libera a análise.",
       "so_admin": false,
-      "fonte": "views/investimentos.py:4579 (views/inteligencia_ativos.py:81)",
+      "fonte": "views/investimentos.py:4578 (views/inteligencia_ativos.py:81)",
       "filhos": [
         {
           "nome": "Configure sua estratégia para liberar esta análise",
@@ -947,7 +947,7 @@
       "resumo": "DARF, fichas da declaração e apuração, por ano",
       "explicacao": "Com o título 'Imposto de Renda — renda variável', calcula o imposto sobre vendas de ações, FIIs e ETFs a partir dos extratos da B3, mostra o DARF (a guia de pagamento do imposto, código 6015) e entrega as fichas da declaração anual prontas para copiar. Tudo abaixo do seletor de ano-calendário vale para o ano escolhido. Sem operações importadas, aparece um aviso de que não há dados.",
       "so_admin": false,
-      "fonte": "views/investimentos.py:4588 (views/ir_renda_variavel.py:443)",
+      "fonte": "views/investimentos.py:4587 (views/ir_renda_variavel.py:443)",
       "filhos": [
         {
           "nome": "Ano-calendário",
