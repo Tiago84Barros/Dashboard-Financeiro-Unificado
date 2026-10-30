@@ -439,7 +439,8 @@ def bloco_risco_para_prompt(risco: dict | None) -> str:
            or "nada") + ").",
         f"- TWR do período: {_pct(risco.get('twr'), 2)} | CDI no mesmo período: "
         f"{_pct(risco.get('cdi_periodo'), 2)}",
-        f"- Volatilidade anualizada: {_pct(risco.get('vol_anual'))}",
+        f"- Volatilidade anualizada: {_pct(risco.get('vol_anual'))} | {BENCHMARK} no "
+        f"mesmo período: {_pct(risco.get('vol_benchmark'))}",
         f"- Queda máxima (drawdown): {_pct(risco.get('max_drawdown'))} | "
         f"queda atual desde o pico: {_pct(risco.get('drawdown_atual'))}",
         f"- VaR histórico 95%: 1 dia {_pct(risco.get('var_1d'), 2)} | 1 mês (21 pregões) "
@@ -866,6 +867,8 @@ def _risco_carteira_real() -> dict:
         "twr": twr(rets),
         "cdi_periodo": cdi_periodo,
         "vol_anual": volatilidade_anual(rets) if len(validos) >= _MIN_DIAS else None,
+        # Régua para quem não sabe se 15% é muito: a bolsa, nos mesmos pregões.
+        "vol_benchmark": volatilidade_anual(ref) if len(_validos(ref)) >= _MIN_DIAS else None,
         "max_drawdown": dd["max"],
         "drawdown_atual": dd["atual"],
         "pico_data": serie[dd["i_pico"]]["data"] if dd["i_pico"] >= 0 else inicio,

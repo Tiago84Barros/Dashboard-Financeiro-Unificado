@@ -1175,6 +1175,8 @@ FLOW_INVESTIMENTOS = FlowSpec(
             "(render_atribuicao_carteira).",
             ("_tab_historico()", "Risco: TWR vs CDI, volatilidade, queda máxima vs tolerância, "
              "VaR, Sharpe e beta, com cobertura declarada",
+             "Cada card com o nome simples antes da sigla e o painel 📖 Como ler estes "
+             "números, que explica cada medida com o valor da carteira",
              "Atribuição Brinson-Fachler por mês fechado: alocação, seleção e interação",
              "core.carteira_risco", "core.carteira_atribuicao"),
             "O risco diz quanto a carteira oscila; a atribuição diz de onde veio a diferença "
