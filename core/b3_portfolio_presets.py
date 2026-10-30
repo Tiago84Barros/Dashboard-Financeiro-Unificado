@@ -93,7 +93,7 @@ PRESETS: dict[str, Preset] = {
             "remove nenhuma da carteira atual; R$ 1 mi cai para 203 e elimina a "
             "EUCA4, que tem saúde limpa e classificação de oportunidade.",
         ),
-        ressalva="Padrão não é recomendação: fora da amostra, este perfil não "
+        ressalva="Fora da amostra, este perfil não "
                  "superou a carteira de pesos iguais com significância.",
     ),
     CONSERVADOR: Preset(

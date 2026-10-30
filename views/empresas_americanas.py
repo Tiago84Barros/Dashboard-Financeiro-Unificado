@@ -1093,7 +1093,6 @@ def _tab_analise_fundamentalista(status: dict) -> None:
     secao_titulo("Pontuação fundamentalista — relativa por indústria", "🏆")
     detalhe_tecnico("Winsorização + percentil intra-indústria nas 6 trilhas de fatores. "
                     "Ausência = neutro.", codigo="eua.pontuacao_metodologia")
-    st.caption("A pontuação não é garantia de retorno.")
     aviso_escala_do_score()
     # A-152: a nota aparece aqui, entao a evidencia que a sustenta tambem
     # precisa aparecer aqui. Ficava so num expander colapsado da aba de
@@ -1542,11 +1541,6 @@ def _tab_criacao_portfolio(status: dict) -> None:
         'audita as indústrias, seleciona seus líderes e monta uma carteira '
         'multissetorial. A carteira segue para <strong>Avaliação de Portfólio</strong>.'
         '</div>', unsafe_allow_html=True,
-    )
-    st.info(
-        "⚠️ **Ferramenta educacional — não é recomendação de investimento.** "
-        "A seleção usa demonstrações SEC/US GAAP e premissas quantitativas. "
-        "Rentabilidade passada não garante resultado futuro."
     )
     detalhe_tecnico(
         "A aplicação americana é feita em duas etapas para comportar milhares de "
@@ -2592,8 +2586,7 @@ TTM) são rotulados explicitamente; divergência entre ticker solicitado e retor
 é rejeitada, não gravada sob o símbolo errado.
 
 **Pontuação.** Fundamentalista v{US_FUNDAMENTAL_SCORE_VERSION}, relativa por
-setor/indústria, versionada por ponto no tempo em `market_us.score_vintages`. **Não** é
-garantia de retorno.
+setor/indústria, versionada por ponto no tempo em `market_us.score_vintages`.
 
 **Macro EUA.** O cenário separa a pontuação fundamentalista do ajuste de regime e
 considera juros básicos do Fed, inflação ao consumidor (CPI), PIB real, desemprego,

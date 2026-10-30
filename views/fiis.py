@@ -1389,7 +1389,6 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
         st.markdown(escapar_cifrao(answer))
         if aviso:
             st.caption(aviso)
-        st.caption("Análise educacional baseada nos dados disponíveis; não constitui recomendação.")
     history.append({"role": "assistant", "content": answer})
     save_chat_history(memory_key, history, session_key="fii_chat_history")
 

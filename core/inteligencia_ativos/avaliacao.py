@@ -128,7 +128,7 @@ _TERMOS_SAIDA = ("pagina virada", "sai da", "saida da", "deixa a", "encerra",
                  "encerramento", "fim da", "termino", "emerge",
                  "exits", "emerges")
 
-AVISO = ("Avaliação por regras sobre os dados do app, não recomendação: cada "
+AVISO = ("Avaliação por regras sobre os dados do app: cada "
          "critério traz o número e a referência. Sentimento vem do provedor "
          "da notícia quando ele mede (o do ticker, ou na falta dele o do "
          "artigo inteiro), senão do léxico do app (termômetro, não "

@@ -204,98 +204,98 @@
       "resumo": "Monta a carteira americana com regras claras",
       "explicacao": "Aplica a regra de seleção a todo o mercado americano, escolhe as melhores empresas de cada indústria e monta uma carteira com limites de concentração. A nota de cada empresa também olha o momento dos últimos 12 meses e quanto ela investe em pesquisa e desenvolvimento, os dois estilos que mais renderam nos EUA ao longo de décadas. No fim você pode salvar essa carteira como a sua carteira padrão.",
       "so_admin": false,
-      "fonte": "views/empresas_americanas.py:1520",
+      "fonte": "views/empresas_americanas.py:1519",
       "filhos": [
         {
           "nome": "Validação histórica",
           "resumo": "Aviso: a regra funcionou no passado?",
           "explicacao": "Quadro no topo com o resumo do teste histórico: se a nota ordenou bem as empresas e se a carteira teria rendido mais do que dividir igualmente. Só aparece quando o histórico necessário existe.",
           "so_admin": false,
-          "fonte": "views/empresas_americanas.py:1568 (texto em :1466)"
+          "fonte": "views/empresas_americanas.py:1562 (texto em :1466)"
         },
         {
           "nome": "Perfil de configuração",
           "resumo": "Escolha um conjunto de regras pronto",
           "explicacao": "Selo mostrando o perfil ativo, uma lista de perfis prontos e o botão Aplicar perfil, que preenche todos os parâmetros de uma vez. Há uma explicação que abre ao clicar (Por que estes valores) e alertas quando um ajuste seu tem custo conhecido.",
           "so_admin": false,
-          "fonte": "views/empresas_americanas.py:1573 (conteúdo em :1354)"
+          "fonte": "views/empresas_americanas.py:1567 (conteúdo em :1354)"
         },
         {
           "nome": "Parâmetros",
           "resumo": "Todos os ajustes finos da carteira",
           "explicacao": "Seção fechada por padrão. Reúne índice de comparação, taxa livre de risco americana (Treasury), tamanho mínimo da empresa, capital simulado, número de ações, pesos máximos por ação, indústria e setor, nota mínima, aporte mensal, volume mínimo negociado, piso de qualidade e exigências de resiliência.",
           "so_admin": false,
-          "fonte": "views/empresas_americanas.py:1577"
+          "fonte": "views/empresas_americanas.py:1571"
         },
         {
           "nome": "Rodar Criação de Portfólio",
           "resumo": "Botão principal que monta a carteira",
           "explicacao": "Logo acima do botão você escolhe quanto o cenário econômico influencia os pesos (Uso da camada macro nos pesos). Ao clicar, o app filtra, avalia as indústrias e calcula os pesos. Se você mudar algum parâmetro depois, a tela avisa que o resultado ficou desatualizado.",
           "so_admin": false,
-          "fonte": "views/empresas_americanas.py:1782 (escolha do cenário em :1771)"
+          "fonte": "views/empresas_americanas.py:1776 (escolha do cenário em :1771)"
         },
         {
           "nome": "Composição de Entrada — Mercado Americano",
           "resumo": "Quantas empresas e indústrias foram aprovadas",
           "explicacao": "Aparece depois de rodar. Cartões com empresas elegíveis, indústrias aprovadas, em observação e excluídas. Abaixo há uma seção que abre ao clicar com a qualidade dos dados e a Auditoria por Indústria.",
           "so_admin": false,
-          "fonte": "views/empresas_americanas.py:1897 (auditoria em :1942)"
+          "fonte": "views/empresas_americanas.py:1891 (auditoria em :1942)"
         },
         {
           "nome": "Empresas Selecionadas",
           "resumo": "Cartões das empresas que entraram",
           "explicacao": "Um cartão por empresa da carteira, com setor, peso, nota e valor investido. Quando há, aparecem também seções que abrem ao clicar com as empresas barradas pelo piso de qualidade e com as trocas feitas pela Inteligência dos Ativos.",
           "so_admin": false,
-          "fonte": "views/empresas_americanas.py:1976 (barradas em :1986, Inteligência dos Ativos em :2033)"
+          "fonte": "views/empresas_americanas.py:1970 (barradas em :1986, Inteligência dos Ativos em :2033)"
         },
         {
           "nome": "Travessia de Recessão",
           "resumo": "Como estas empresas passaram pela última crise",
           "explicacao": "Mostra, com dados medidos, como as margens das empresas escolhidas se comportaram na última recessão, da pior para a melhor.",
           "so_admin": false,
-          "fonte": "views/empresas_americanas.py:2039 (conteúdo em :905)"
+          "fonte": "views/empresas_americanas.py:2033 (conteúdo em :905)"
         },
         {
           "nome": "Resumo do Portfólio",
           "resumo": "Números da carteira e botões para salvar",
           "explicacao": "Cartões com número de ações, nota média, maior posição, capital, setores e indústrias, seguidos dos botões de uso e de dois gráficos de alocação.",
           "so_admin": false,
-          "fonte": "views/empresas_americanas.py:2043",
+          "fonte": "views/empresas_americanas.py:2037",
           "filhos": [
             {
               "nome": "Usar na Avaliação de Portfólio",
               "resumo": "Envia a carteira para a próxima aba",
               "explicacao": "Botão que guarda a carteira montada para a avaliação. Fica bloqueado quando a carteira não passa nas checagens. Atenção: pela leitura do código, a aba Avaliação de Portfólio lê apenas a carteira salva como padrão, não a enviada por este botão.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2071"
+              "fonte": "views/empresas_americanas.py:2065"
             },
             {
               "nome": "Salvar como carteira padrão",
               "resumo": "Grava a carteira para o Dashboard e a avaliação",
               "explicacao": "Salva a carteira de forma permanente. Ela passa a aparecer no Dashboard Geral e é a que a aba Avaliação de Portfólio usa. Fica bloqueado quando a carteira não passa nas checagens.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2078"
+              "fonte": "views/empresas_americanas.py:2072"
             },
             {
               "nome": "Histórico e restauração do Portfólio EUA",
               "resumo": "Volte a uma carteira salva antes",
               "explicacao": "Só aparece quando existem versões antigas. Escolha uma versão, marque a confirmação e clique em Restaurar versão selecionada para trocá-la pela atual.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:1416"
+              "fonte": "views/empresas_americanas.py:1415"
             },
             {
               "nome": "Alocação por ativo e Alocação por setor",
               "resumo": "Gráficos de pizza e barras dos pesos",
               "explicacao": "Dois gráficos lado a lado: quanto cada ação pesa na carteira e quanto cada setor pesa.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2112"
+              "fonte": "views/empresas_americanas.py:2106"
             },
             {
               "nome": "Relação entre Score e Cobertura",
               "resumo": "Nota versus quantidade de dados",
               "explicacao": "Gráfico de pontos logo abaixo do resumo, comparando a nota de cada empresa com o quanto de dados ela tinha.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2130"
+              "fonte": "views/empresas_americanas.py:2124"
             }
           ]
         },
@@ -304,35 +304,35 @@
           "resumo": "Teste completo da regra no passado",
           "explicacao": "Seção que abre ao clicar. Refaz a nota em datas passadas usando só o que se sabia em cada data e compara o resultado com índices de mercado. Só funciona quando o histórico necessário existe; caso contrário avisa que a análise não está disponível.",
           "so_admin": false,
-          "fonte": "views/empresas_americanas.py:2141 (conteúdo em :2278)",
+          "fonte": "views/empresas_americanas.py:2135 (conteúdo em :2278)",
           "filhos": [
             {
               "nome": "Teste histórico com janela móvel — ponto no tempo",
               "resumo": "Configure o teste histórico",
               "explicacao": "Escolha quantas empresas comprar em cada período, a forma de dividir os pesos e o índice de comparação.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2279"
+              "fonte": "views/empresas_americanas.py:2273"
             },
             {
               "nome": "Correlação entre classificação e retorno",
               "resumo": "A nota acertou quem rendeu mais?",
               "explicacao": "Cartões que mostram se as empresas com nota mais alta de fato renderam mais depois, e com que frequência isso aconteceu.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2309"
+              "fonte": "views/empresas_americanas.py:2303"
             },
             {
               "nome": "Desempenho bruto em dólar versus pesos iguais",
               "resumo": "Retorno, quedas e oscilação da estratégia",
               "explicacao": "Cartões com retorno anual, ganho sobre dividir igualmente, maior queda, oscilação (volatilidade) e giro da carteira, em dólar e sem custos.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2323"
+              "fonte": "views/empresas_americanas.py:2317"
             },
             {
               "nome": "Comparação contra o índice",
               "resumo": "Ganho sobre o índice escolhido",
               "explicacao": "Mostra quanto a estratégia ganhou ou perdeu por ano contra o índice escolhido (como o S&P 500). Na tela o título traz o nome do índice.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2365"
+              "fonte": "views/empresas_americanas.py:2359"
             },
             {
               "nome": "Retorno líquido em reais (padrão)",
@@ -346,7 +346,7 @@
               "resumo": "Gráfico da evolução do dinheiro",
               "explicacao": "Linha que mostra como o dinheiro teria evoluído ao longo do teste.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2440"
+              "fonte": "views/empresas_americanas.py:2434"
             }
           ]
         },
@@ -355,7 +355,7 @@
           "resumo": "O que muda da regra brasileira para a americana",
           "explicacao": "Seção que abre ao clicar, explicando o que foi mantido da metodologia da bolsa brasileira e o que foi adaptado ao mercado americano (índices, juros de referência, contabilidade).",
           "so_admin": false,
-          "fonte": "views/empresas_americanas.py:2155"
+          "fonte": "views/empresas_americanas.py:2149"
         }
       ]
     },
@@ -364,14 +364,14 @@
       "resumo": "Avalia a carteira salva, com ajuda da IA",
       "explicacao": "Avalia a carteira americana salva como padrão: diversificação, concentração, riscos, cenário econômico e uma análise escrita pela inteligência artificial, além de um chat. Sem carteira salva, a tela pede para criar e salvar uma na aba Criação de Portfólio; se a carteira estiver desatualizada, mostra um aviso e para.",
       "so_admin": false,
-      "fonte": "views/empresas_americanas.py:2180 (conteúdo em views/analise_portfolio_us.py:1121)",
+      "fonte": "views/empresas_americanas.py:2174 (conteúdo em views/analise_portfolio_us.py:1121)",
       "filhos": [
         {
           "nome": "Portfolio EUA Modelo",
           "resumo": "Resumo da carteira salva com os logos",
           "explicacao": "Título com o nome da carteira salva (por padrão Portfolio EUA Modelo e o ano), cartões com número de empresas, ano-base e setores, e os logos das empresas. Logo abaixo, um lembrete de que a carteira é em dólares e de que o câmbio também afeta o resultado em reais.",
           "so_admin": false,
-          "fonte": "views/analise_portfolio_us.py:101 (nome padrão em views/empresas_americanas.py:2096)"
+          "fonte": "views/analise_portfolio_us.py:101 (nome padrão em views/empresas_americanas.py:2090)"
         },
         {
           "nome": "Cenário Macroeconômico — Estados Unidos",

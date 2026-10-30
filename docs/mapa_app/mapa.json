@@ -56,7 +56,7 @@
         {
           "nome": "Leitura do mês",
           "resumo": "Frase pronta que resume como foi o mês",
-          "explicacao": "Um quadro com uma frase que interpreta o mês: se sobrou dinheiro, se houve déficit, ou se o que passou da renda foi aplicação e não gasto. Lembra também que os números de cima são fatos, enquanto as carteiras mostradas mais abaixo são só referências, não garantia de resultado.",
+          "explicacao": "Um quadro com uma frase que interpreta o mês: se sobrou dinheiro, se houve déficit, ou se o que passou da renda foi aplicação e não gasto. Lembra também que os números de cima são fatos, enquanto as carteiras mostradas mais abaixo são só referências analíticas.",
           "so_admin": false
         },
         {

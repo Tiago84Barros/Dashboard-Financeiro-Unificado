@@ -100,7 +100,7 @@
       "resumo": "Lista do que o app não sabe ou errou",
       "explicacao": "Painel de trabalho com falta de dados, erros e detalhes técnicos que foram tirados das telas de uso. Você filtra a lista, lê cada item e registra o que fazer com ele. A mesma para todas as contas desde 12/10/2026.",
       "so_admin": false,
-      "fonte": "views/configuracoes.py:96 → views/configuracoes_restricoes.py:269",
+      "fonte": "views/configuracoes.py:95 → views/configuracoes_restricoes.py:269",
       "filhos": [
         {
           "nome": "Recarregar",
@@ -141,14 +141,14 @@
       "resumo": "Enviar seus arquivos de cartão, banco e corretoras",
       "explicacao": "É onde você sobe os arquivos baixados do cartão, do banco e das corretoras. Sempre há uma prévia para conferir antes de gravar. Tem duas sub-abas: Controle Financeiro e Investimentos.",
       "so_admin": false,
-      "fonte": "views/configuracoes.py:107 → views/configuracoes.py:208",
+      "fonte": "views/configuracoes.py:106 → views/configuracoes.py:207",
       "filhos": [
         {
           "nome": "Controle Financeiro",
           "resumo": "Fatura do cartão e extrato do banco",
           "explicacao": "Dois blocos: fatura do cartão (arquivo CSV) e extrato bancário (arquivo PDF). Os dois alimentam a tela Controle Financeiro e ficam separados de propósito, para não somar o gasto do mês com a fatura que ainda vai vencer.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:311",
+          "fonte": "views/configuracoes.py:310",
           "filhos": [
             {
               "nome": "Fatura do cartão",
@@ -173,14 +173,14 @@
           "resumo": "Arquivos da B3, do Tesouro e da Nomad",
           "explicacao": "Bloco 'Arquivos da carteira'. Um aviso lembra que o app usa só arquivos exportados e nunca pede senha da B3, XP, Nomad ou banco. Depois de cada importação a carteira é recalculada sozinha.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:338",
+          "fonte": "views/configuracoes.py:337",
           "filhos": [
             {
               "nome": "Dados Históricos B3 (.xlsx)",
               "resumo": "Planilhas da área do investidor da B3",
               "explicacao": "Aceita vários arquivos de uma vez: Negociação, Movimentação, Relatório Consolidado (o da XP), Posição Detalhada ou Posição. O app descobre sozinho o tipo de cada arquivo. Depois do botão 'Importar', mostra o que entrou, o que já existia e o que foi recusado.",
               "so_admin": false,
-              "fonte": "views/configuracoes.py:1655",
+              "fonte": "views/configuracoes.py:1654",
               "filhos": []
             },
             {
@@ -188,7 +188,7 @@
               "resumo": "Extratos do Tesouro Direto",
               "explicacao": "Aceita o Extrato Consolidado (quanto você tem) e o Extrato Analítico (taxa e data de cada compra, necessários para calcular quanto o título vale hoje). Pode misturar os dois tipos no mesmo envio.",
               "so_admin": false,
-              "fonte": "views/configuracoes.py:1678",
+              "fonte": "views/configuracoes.py:1677",
               "filhos": []
             },
             {
@@ -196,7 +196,7 @@
               "resumo": "Notas de compra e venda da Nomad",
               "explicacao": "Envie as notas de negociação em PDF exportadas pela Nomad, várias de uma vez, e receba um resumo único. Alimenta a parte internacional da sua carteira.",
               "so_admin": false,
-              "fonte": "views/configuracoes.py:1392",
+              "fonte": "views/configuracoes.py:1391",
               "filhos": []
             },
             {
@@ -204,7 +204,7 @@
               "resumo": "Refazer as posições da carteira",
               "explicacao": "O botão 'Recalcular' refaz as posições a partir de todas as suas operações, pelo preço médio. Isso já acontece sozinho após cada importação; use quando você lançou algo por outro caminho.",
               "so_admin": false,
-              "fonte": "views/configuracoes.py:1436",
+              "fonte": "views/configuracoes.py:1435",
               "filhos": []
             }
           ]
@@ -216,14 +216,14 @@
       "resumo": "Ver e mandar atualizar cotações e indicadores",
       "explicacao": "Mostra se as fontes automáticas (cotações, dólar, indicadores do Banco Central, preços do Tesouro) estão em dia e permite mandar atualizar na hora. Transações, operações e proventos não entram aqui: eles vêm dos seus arquivos.",
       "so_admin": false,
-      "fonte": "views/configuracoes.py:110 → views/configuracoes.py:585",
+      "fonte": "views/configuracoes.py:109 → views/configuracoes.py:584",
       "filhos": [
         {
           "nome": "Inicializar pipeline",
           "resumo": "Preparação feita uma única vez",
           "explicacao": "Só aparece se a estrutura que controla as atualizações ainda não existe, e então é a única coisa da aba: os cartões e a tabela abaixo só surgem depois. Um clique a cria; depois disso o botão não aparece mais.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:608",
+          "fonte": "views/configuracoes.py:607",
           "filhos": []
         },
         {
@@ -231,7 +231,7 @@
           "resumo": "Três cartões de resumo",
           "explicacao": "Quantas fontes estão em dia, quantas pedem atenção e quando foi a última atualização, no horário de Brasília.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:634",
+          "fonte": "views/configuracoes.py:633",
           "filhos": []
         },
         {
@@ -239,7 +239,7 @@
           "resumo": "Botões para atualizar agora",
           "explicacao": "'Atualizar tudo' roda só o que já venceu pela frequência de cada fonte. 'Forçar atualização' ignora a frequência e roda tudo. No fim aparece quantas deram certo, falharam ou foram puladas. Um quadro recolhível explica o que é atualizado e com que frequência.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:664",
+          "fonte": "views/configuracoes.py:663",
           "filhos": []
         },
         {
@@ -247,7 +247,7 @@
           "resumo": "Situação de cada fonte de dados",
           "explicacao": "Uma linha por fonte, com as colunas O que atualiza, Frequência, Status, Última OK, Registros e Erro. Os ícones mostram se a fonte está atualizada, em atenção, desatualizada ou com erro.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:686",
+          "fonte": "views/configuracoes.py:685",
           "filhos": []
         },
         {
@@ -255,7 +255,7 @@
           "resumo": "Atualizar uma fonte só",
           "explicacao": "Um botão para cada fonte automática, que roda aquela fonte na hora, mesmo fora da frequência normal.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:732",
+          "fonte": "views/configuracoes.py:731",
           "filhos": []
         },
         {
@@ -263,7 +263,7 @@
           "resumo": "Histórico das últimas 20 rodadas",
           "explicacao": "Tabela com início, nome da tarefa, resultado, quantos registros entraram, falhas, tempo gasto e mensagem de erro.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:741",
+          "fonte": "views/configuracoes.py:740",
           "filhos": []
         }
       ]
@@ -273,14 +273,14 @@
       "resumo": "Saúde e espaço da base de dados do app",
       "explicacao": "Diagnóstico da base de dados da versão online do app, onde ficam seus lançamentos e sua carteira. Não mostra senhas nem endereços. Um comentário no código ainda diz que só o administrador vê esta aba, mas hoje ela aparece para todos.",
       "so_admin": false,
-      "fonte": "views/configuracoes.py:119 → views/configuracoes.py:810",
+      "fonte": "views/configuracoes.py:118 → views/configuracoes.py:809",
       "filhos": [
         {
           "nome": "Conexão e contexto",
           "resumo": "Conectado? Dados reais ou de exemplo?",
           "explicacao": "Três sinais: se a base de dados está conectada, se os dados são reais ou de demonstração e se o dono do app está configurado. Avisos sobre a configuração do ambiente ficam num quadro recolhível.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:814",
+          "fonte": "views/configuracoes.py:813",
           "filhos": []
         },
         {
@@ -288,7 +288,7 @@
           "resumo": "Quanto espaço já foi usado",
           "explicacao": "Cartões com uso atual, limite acompanhado (500 MB no plano gratuito) e espaço livre, uma barra de progresso e a lista das maiores tabelas.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:856",
+          "fonte": "views/configuracoes.py:855",
           "filhos": []
         },
         {
@@ -296,7 +296,7 @@
           "resumo": "Conferir se a estrutura está completa",
           "explicacao": "Compara as tabelas que o app espera com as que existem. Se faltar alguma, aparece o botão 'Criar N tabela(s)'; se estiver tudo certo, aparece 'Schema completo ✓'.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:866",
+          "fonte": "views/configuracoes.py:865",
           "filhos": []
         },
         {
@@ -304,14 +304,14 @@
           "resumo": "Importar planilhas ou dados de outra base",
           "explicacao": "Duas portas para trazer dados antigos, sempre com simulação antes de gravar. As importações da B3, XP e Nomad não ficam aqui, e sim em Atualização de dados.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:894",
+          "fonte": "views/configuracoes.py:893",
           "filhos": [
             {
               "nome": "Importar dados de arquivo (CSV / Excel)",
               "resumo": "Subir planilha de transações, operações ou proventos",
               "explicacao": "Escolha o tipo de dado, envie a planilha e rode primeiro a 'Simulação' para ver o que entraria. Desligando a simulação, o botão vira 'GRAVAR NO BANCO'. Sem arquivo, a tela mostra o modelo de colunas para baixar.",
               "so_admin": false,
-              "fonte": "views/configuracoes.py:1011",
+              "fonte": "views/configuracoes.py:1010",
               "filhos": []
             },
             {
@@ -319,7 +319,7 @@
               "resumo": "Trazer histórico de uma base antiga",
               "explicacao": "Escolha a fonte, use 'Testar conexão' e 'Listar tabelas' e indique qual coluna vai para onde. Também roda em simulação antes de gravar de verdade.",
               "so_admin": false,
-              "fonte": "views/configuracoes.py:1134",
+              "fonte": "views/configuracoes.py:1133",
               "filhos": []
             }
           ]
@@ -331,7 +331,7 @@
       "resumo": "Senha, sessão e quem tem acesso",
       "explicacao": "Cuida do acesso ao app: trocar a sua senha, encerrar a sessão e gerar a senha protegida do app. O cadastro de pessoas e a lista de usuários só funcionam para o administrador; os demais veem um aviso no lugar.",
       "so_admin": false,
-      "fonte": "views/configuracoes.py:128 → views/configuracoes.py:2055",
+      "fonte": "views/configuracoes.py:127 → views/configuracoes.py:2054",
       "filhos": [
         {
           "nome": "Minha conta",
@@ -354,7 +354,7 @@
           "resumo": "Senha do app ligada? Sessão ativa?",
           "explicacao": "Mostra se o app está protegido por senha e se a sessão deste navegador está ativa. O botão 'Encerrar sessão' faz sair.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:2059",
+          "fonte": "views/configuracoes.py:2058",
           "filhos": []
         },
         {
@@ -362,7 +362,7 @@
           "resumo": "Gerar a senha protegida do app",
           "explicacao": "Em 'Gerar hash de senha (APP_PASSWORD)', você digita uma senha e o app mostra a versão embaralhada dela, que é a que deve ser guardada na configuração do app. Assim a senha nunca fica gravada como texto legível.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:2079",
+          "fonte": "views/configuracoes.py:2078",
           "filhos": []
         },
         {
@@ -370,7 +370,7 @@
           "resumo": "Lista de quem tem acesso",
           "explicacao": "Tabela com nome, e-mail, data de cadastro, situação (ativo ou inativo) e perfil. Só o administrador vê a lista; os demais veem um aviso explicando que ela é restrita.",
           "so_admin": true,
-          "fonte": "views/configuracoes.py:2104; design/user_accounts.py:76",
+          "fonte": "views/configuracoes.py:2103; design/user_accounts.py:76",
           "filhos": []
         }
       ]
@@ -380,21 +380,21 @@
       "resumo": "Este mapa, com todas as telas do app",
       "explicacao": "É este mapa que você está lendo. Ele mostra, em forma de fluxograma, as telas do menu, o que existe dentro de cada uma e, por último, o que funciona por trás delas. Toque numa caixa para abrir o que tem dentro, ou use a busca para achar uma parte pelo nome. Aparece para todas as pessoas e acompanha o tema claro ou escuro escolhido na aba Geral. O mapa só descreve o app: ele não abre telas nem muda nada.",
       "so_admin": false,
-      "fonte": "views/configuracoes.py:137 → design/mapa_app.py:47"
+      "fonte": "views/configuracoes.py:136 → design/mapa_app.py:47"
     },
     {
       "nome": "Documentação",
       "resumo": "Guia ilustrado de como o app funciona",
       "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 14 sub-abas, na ordem do menu lateral.",
       "so_admin": false,
-      "fonte": "views/configuracoes.py:196 → views/documentacao.py:3017",
+      "fonte": "views/configuracoes.py:195 → views/documentacao.py:3016",
       "filhos": [
         {
           "nome": "Dashboard Geral",
           "resumo": "Fatos do período primeiro, referências depois",
           "explicacao": "Fluxograma da primeira tela do menu: como o caixa do Controle Financeiro e a carteira de Investimentos se juntam num painel só, com as carteiras recomendadas no fim, marcadas como referência.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:1984",
+          "fonte": "views/documentacao.py:1983",
           "filhos": []
         },
         {
@@ -418,7 +418,7 @@
           "resumo": "As duas últimas subabas de Investimentos",
           "explicacao": "Fluxograma da Inteligência dos Ativos, que lê a carteira pela sua estratégia, e do Imposto de Renda, que apura o imposto sobre renda variável.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:2237",
+          "fonte": "views/documentacao.py:2236",
           "filhos": []
         },
         {
@@ -426,7 +426,7 @@
           "resumo": "Consulta e Carteira 20",
           "explicacao": "Fluxograma das três subabas de Empresas B3 que não têm fluxo próprio: Empresas por Setor, Análise de Empresa e Carteira 20.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:2110",
+          "fonte": "views/documentacao.py:2109",
           "filhos": []
         },
         {
@@ -498,7 +498,7 @@
           "resumo": "Dicionário de indicadores e demonstrações",
           "explicacao": "Glossário dos indicadores usados nas notas e análises, com filtro por grupo, e explicação das demonstrações financeiras.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:2900",
+          "fonte": "views/documentacao.py:2899",
           "filhos": []
         }
       ]

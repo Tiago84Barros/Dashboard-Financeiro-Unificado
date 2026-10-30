@@ -1993,8 +1993,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         st.caption(
             "Como é calculado: cada classe de ativo tem uma sensibilidade fixa "
             "(0 a 1) a cada fator; a barra é a média dessas sensibilidades "
-            "ponderada pelo peso das classes na carteira. Estimativa indicativa "
-            "— não constitui recomendação de investimento."
+            "ponderada pelo peso das classes na carteira. Estimativa indicativa."
         )
     else:
         st.caption("Sem dados de alocação para calcular dependências macro.")

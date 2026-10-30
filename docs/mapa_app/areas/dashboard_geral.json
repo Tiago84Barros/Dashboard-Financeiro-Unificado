@@ -3,7 +3,7 @@
   "resumo": "Resumo do seu dinheiro e dos investimentos numa página",
   "explicacao": "É a primeira tela do app: uma página única, de rolar, que junta o mês atual (quanto entrou, quanto saiu, quanto sobrou), o histórico, a carteira que você tem investida e as carteiras sugeridas pelo app. Aqui você só consulta: nada é digitado nem salvo. Para lançar ou corrigir valores, use os outros itens do menu.",
   "so_admin": false,
-  "fonte": "views/dashboard_geral.py:1757",
+  "fonte": "views/dashboard_geral.py:1756",
   "filhos": [
     {
       "nome": "Seu dinheiro, em perspectiva.",
@@ -65,9 +65,9 @@
     {
       "nome": "Leitura do mês",
       "resumo": "Frase pronta que resume como foi o mês",
-      "explicacao": "Um quadro com uma frase que interpreta o mês: se sobrou dinheiro, se houve déficit, ou se o que passou da renda foi aplicação e não gasto. Lembra também que os números de cima são fatos, enquanto as carteiras mostradas mais abaixo são só referências, não garantia de resultado.",
+      "explicacao": "Um quadro com uma frase que interpreta o mês: se sobrou dinheiro, se houve déficit, ou se o que passou da renda foi aplicação e não gasto. Lembra também que os números de cima são fatos, enquanto as carteiras mostradas mais abaixo são só referências analíticas.",
       "so_admin": false,
-      "fonte": "views/dashboard_geral.py:1845",
+      "fonte": "views/dashboard_geral.py:1844",
       "filhos": []
     },
     {
@@ -124,14 +124,14 @@
       "resumo": "Caixa dos últimos meses, categorias e anos",
       "explicacao": "Bloco do caixa: como receitas, despesas e aplicações se comportaram nos últimos meses e anos. Tudo vem dos lançamentos do Controle Financeiro.",
       "so_admin": false,
-      "fonte": "views/dashboard_geral.py:1874",
+      "fonte": "views/dashboard_geral.py:1873",
       "filhos": [
         {
           "nome": "Receitas, despesas e investimentos (6 meses)",
           "resumo": "Gráfico mês a mês dos últimos seis meses",
           "explicacao": "Gráfico de barras com receitas e despesas de cada um dos últimos seis meses e uma linha com o que foi aplicado. Este gráfico não tem título próprio; fica logo abaixo da faixa 'Evolução financeira'.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1881",
+          "fonte": "views/dashboard_geral.py:1880",
           "filhos": []
         },
         {
@@ -139,7 +139,7 @@
           "resumo": "Onde você mais gastou no ano",
           "explicacao": "Gráfico de rosca com as categorias que mais pesaram no ano (o título mostra o ano, por exemplo '(2026)') e a lista das cinco maiores, com valor e porcentagem. Compras feitas no cartão de crédito ficam de fora, pois têm análise própria.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1899",
+          "fonte": "views/dashboard_geral.py:1898",
           "filhos": []
         },
         {
@@ -147,7 +147,7 @@
           "resumo": "Receitas, aplicações e despesas de cada ano",
           "explicacao": "Gráfico e tabela com o total de receitas, investimentos e despesas de cada ano, para comparar um ano com o outro.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1935",
+          "fonte": "views/dashboard_geral.py:1934",
           "filhos": []
         }
       ]

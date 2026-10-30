@@ -88,7 +88,7 @@ def cartao(resumo: lr.Resumo) -> str:
             f'margin-top:10px">{escape(validacao)}</div>'
             '<div style="font-size:0.76rem;color:var(--app-subtle);'
             'margin-top:2px">Leitura da IA sobre os trechos acima e o contexto '
-            f'de mercado; não é recomendação.</div>')
+            'de mercado.</div>')
     return ('<div style="background:var(--app-surface);border:1px solid '
             'var(--app-border);border-left:4px solid var(--app-'
             f'{cor});border-radius:10px;padding:12px 16px;margin:6px 0">'

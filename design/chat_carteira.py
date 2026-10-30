@@ -273,8 +273,6 @@ def render_chat_carteira(
             st.markdown(escapar_cifrao(resposta))
             if aviso:
                 st.caption(aviso)
-            st.caption("Análise educacional baseada nos dados carregados nesta "
-                       "aba. A decisão é sua.")
         historico.append({"role": "assistant", "content": resposta})
         save_chat_history(memory_key, historico, session_key=hist_key)
         return
@@ -306,7 +304,5 @@ def render_chat_carteira(
         st.markdown(escapar_cifrao(resposta))
         if aviso:
             st.caption(aviso)
-        st.caption("Análise educacional baseada nos dados carregados nesta "
-                   "aba. A decisão é sua.")
     historico.append({"role": "assistant", "content": resposta})
     save_chat_history(memory_key, historico, session_key=hist_key)

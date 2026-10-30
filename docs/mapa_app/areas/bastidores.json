@@ -260,7 +260,7 @@
           "resumo": "A ficha completa de cada ativo",
           "explicacao": "Monta a ficha de cada ativo: fundamentos, preço justo, comparação com parecidos, informações recentes, encaixe na sua carteira e um veredito por regras. Esse veredito também barra ativos ruins na criação de carteiras. Telas que dependem: Investimentos (aba Inteligência dos Ativos), Dashboard Geral, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global.",
           "so_admin": false,
-          "fonte": "core/inteligencia_ativos/; views/investimentos.py:4553",
+          "fonte": "core/inteligencia_ativos/; views/investimentos.py:4552",
           "filhos": []
         },
         {

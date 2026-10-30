@@ -193,7 +193,5 @@ def render_chat_ativo(
         st.markdown(escapar_cifrao(resposta))
         if aviso:
             st.caption(aviso)
-        st.caption("Análise educacional baseada nos dados disponíveis; "
-                   "não constitui recomendação de compra ou venda.")
     historico.append({"role": "assistant", "content": resposta})
     save_chat_history(memory_key, historico, session_key=hist_key)

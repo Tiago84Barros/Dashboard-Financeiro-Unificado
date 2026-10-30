@@ -3,21 +3,21 @@
   "resumo": "Lançar, conferir e analisar receitas, despesas e cartão",
   "explicacao": "Tela do dia a dia do dinheiro: você escolhe o mês, lança entradas e saídas pela barra lateral e navega por quatro abas (Dashboard, Análises, Tabelas e Cartão de Crédito). Dá para corrigir lançamentos, conferir extratos importados, categorizar compras do cartão e conversar com um assistente de IA. A importação do extrato do banco e da fatura do cartão não fica aqui: é feita em Configurações → Atualização de dados → Controle Financeiro.",
   "so_admin": false,
-  "fonte": "views/controle_financeiro.py:3677",
+  "fonte": "views/controle_financeiro.py:3673",
   "filhos": [
     {
       "nome": "Período de análise",
       "resumo": "Escolha do mês que vale para a tela",
       "explicacao": "Faixa no alto, logo abaixo do título da tela, para escolher o mês. O mês escolhido vale para os números e gráficos das abas Dashboard e Análises, para o aviso de lançamentos em dobro e como ponto de partida do filtro do Cartão; a consulta da aba Tabelas tem filtros próprios. Ao lado aparece um selo 'Dados reais' (ou outro selo quando são dados de exemplo) e, se o mês não tem lançamentos, um aviso de que os números ficarão zerados.",
       "so_admin": false,
-      "fonte": "views/controle_financeiro.py:3692",
+      "fonte": "views/controle_financeiro.py:3688",
       "filhos": [
         {
           "nome": "Mês de referência",
           "resumo": "Lista dos últimos 12 meses",
           "explicacao": "Lista com os últimos 12 meses. Ao abrir a tela, já vem marcado o mês mais recente que tem lançamentos.",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:3699",
+          "fonte": "views/controle_financeiro.py:3695",
           "filhos": []
         }
       ]
@@ -200,14 +200,14 @@
       "resumo": "Procurar, corrigir lançamentos e conferir extratos",
       "explicacao": "Aba para achar e arrumar registros: procure qualquer lançamento por tipo, categoria, data ou palavra, corrija o que precisar e confira os movimentos dos extratos bancários importados.",
       "so_admin": false,
-      "fonte": "views/controle_financeiro.py:1590",
+      "fonte": "views/controle_financeiro.py:1588",
       "filhos": [
         {
           "nome": "Possíveis lançamentos em dobro no mês",
           "resumo": "Aviso de movimento contado duas vezes",
           "explicacao": "Aviso que só aparece quando o app encontra, no mês escolhido no topo, um lançamento feito à mão e um do extrato com a mesma conta, o mesmo valor e datas a até 3 dias. Ao abrir, mostra cada par lado a lado para você decidir se é a mesma movimentação contada duas vezes. Na tela o título traz a quantidade e o valor, por exemplo '2 possível(is) lançamento(s) em dobro no mês'.",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:1560",
+          "fonte": "views/controle_financeiro.py:1558",
           "filhos": []
         },
         {
@@ -215,14 +215,14 @@
           "resumo": "Busca com filtros em todos os lançamentos",
           "explicacao": "Busca com filtros sobre todos os seus lançamentos, de qualquer mês. Não depende do mês escolhido no topo da tela.",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:1595",
+          "fonte": "views/controle_financeiro.py:1593",
           "filhos": [
             {
               "nome": "Tipo de lançamento",
               "resumo": "Todos, Receitas, Despesas ou Investimentos",
               "explicacao": "Botões Todos, Receitas, Despesas ou Investimentos. Recortam a lista e o 'Total Filtrado'.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:1598",
+              "fonte": "views/controle_financeiro.py:1596",
               "filhos": []
             },
             {
@@ -230,7 +230,7 @@
               "resumo": "Junta as compras do cartão à consulta",
               "explicacao": "Caixa de marcar, desligada de início, porque compras do cartão ainda não saíram da conta. Marque para incluí-las na consulta.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:1605",
+              "fonte": "views/controle_financeiro.py:1603",
               "filhos": []
             },
             {
@@ -238,7 +238,7 @@
               "resumo": "Filtros por categoria, data e palavra",
               "explicacao": "Filtros de categoria e de data (o dia só pode ser escolhido depois de ano e mês) e uma caixa para procurar por palavra, como 'mercado' ou 'aluguel'. O ano já vem no mais recente.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:1624",
+              "fonte": "views/controle_financeiro.py:1622",
               "filhos": []
             },
             {
@@ -246,7 +246,7 @@
               "resumo": "Totais do resultado da busca",
               "explicacao": "Quatro cartões com totais. Entradas, Saídas e Investimentos mostram sempre o total de cada tipo no período filtrado, mesmo que você tenha marcado só um tipo; o Total Filtrado segue o tipo marcado.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:1680",
+              "fonte": "views/controle_financeiro.py:1678",
               "filhos": []
             },
             {
@@ -254,7 +254,7 @@
               "resumo": "Resultado da busca, até 200 linhas",
               "explicacao": "Tabela com até 200 lançamentos encontrados (data, descrição, categoria, tipo, valor e conta) e a contagem no rodapé. Não tem título próprio na tela.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:1744",
+              "fonte": "views/controle_financeiro.py:1742",
               "filhos": []
             },
             {
@@ -262,7 +262,7 @@
               "resumo": "Corrige os lançamentos encontrados",
               "explicacao": "Caixa de marcar que abre os lançamentos filtrados (até 200) para corrigir tipo, categoria, data, valor, descrição e conta. Confirme com 'Salvar alterações'.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:1714",
+              "fonte": "views/controle_financeiro.py:1712",
               "filhos": []
             }
           ]
@@ -272,14 +272,14 @@
           "resumo": "Conferir e classificar movimentos do extrato",
           "explicacao": "Conferência dos movimentos que vieram dos extratos do banco que você importou (a importação é feita em Configurações → Atualização de dados). Usa o ano e o mês escolhidos nos filtros da consulta acima. Aqui você filtra, corrige e confirma a categoria de cada movimento.",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:1953",
+          "fonte": "views/controle_financeiro.py:1951",
           "filhos": [
             {
               "nome": "Status do extrato, Banco, Direção e Categoria",
               "resumo": "Filtros dos movimentos do extrato",
               "explicacao": "Filtros por situação da classificação (pendente, sugerida ou confirmada), pelo banco de onde veio, por entrada ou saída e por categoria.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:1958",
+              "fonte": "views/controle_financeiro.py:1956",
               "filhos": []
             },
             {
@@ -287,7 +287,7 @@
               "resumo": "Lista dos movimentos importados",
               "explicacao": "Lista com data, banco, descrição, entrada ou saída, categoria, situação e valor de cada movimento. Não tem título próprio na tela.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:2026",
+              "fonte": "views/controle_financeiro.py:2024",
               "filhos": []
             },
             {
@@ -295,7 +295,7 @@
               "resumo": "Corrige movimentos do extrato",
               "explicacao": "Caixa de marcar que permite mudar descrição, entrada/saída, valor e categoria. Escolher uma categoria confirma o movimento e o faz contar no Controle Financeiro. Botão: 'Salvar alterações dos extratos'.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:1995",
+              "fonte": "views/controle_financeiro.py:1993",
               "filhos": []
             },
             {
@@ -303,7 +303,7 @@
               "resumo": "Confirma a categoria, um movimento por vez",
               "explicacao": "Seção de abrir e fechar para confirmar, um por vez, os movimentos ainda pendentes ou sugeridos: escolha o lançamento, a 'Categoria real' e, se quiser, salve uma regra com uma palavra-chave para que as próximas importações já venham classificadas. Botão: 'Confirmar lançamento importado'.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:2045",
+              "fonte": "views/controle_financeiro.py:2043",
               "filhos": []
             }
           ]
@@ -315,14 +315,14 @@
       "resumo": "Análise da fatura, parcelas, tarifas e IA",
       "explicacao": "Painel da fatura do cartão: o que você comprou, em quais categorias e lojas, parcelas que ainda vão cair, tarifas e estornos, além de um assistente de IA. Os dados vêm das faturas importadas em Configurações → Atualização de dados → Controle Financeiro; sem nenhuma fatura, a aba mostra só um aviso pedindo a importação.",
       "so_admin": false,
-      "fonte": "views/controle_financeiro.py:3330",
+      "fonte": "views/controle_financeiro.py:3328",
       "filhos": [
         {
           "nome": "Lançamentos a categorizar",
           "resumo": "Compras que o app não soube classificar",
           "explicacao": "Aparece só quando a importação não reconheceu alguma loja. Mostra essas compras numa tabela para você escolher a categoria; marcando 'Criar regra', as próximas faturas da mesma loja já entram na categoria certa. Botão: 'Salvar categorizações'. Na tela o título traz a quantidade, por exemplo '3 lançamento(s) a categorizar'.",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:3266",
+          "fonte": "views/controle_financeiro.py:3264",
           "filhos": []
         },
         {
@@ -330,7 +330,7 @@
           "resumo": "Oito filtros que mudam toda a aba",
           "explicacao": "Ano, Mês de referência (do vencimento da fatura), Final do cartão, Categoria, Tipo de lançamento (compra, tarifa, estorno, pagamento, ajuste), Buscar por descrição, Apenas parceladas e Valor mínimo. Tudo o que vem abaixo obedece a esses filtros. Ano e mês já vêm no mês escolhido no topo da tela, se houver fatura nele.",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:3349",
+          "fonte": "views/controle_financeiro.py:3347",
           "filhos": []
         },
         {
@@ -338,7 +338,7 @@
           "resumo": "Oito números que resumem a fatura",
           "explicacao": "Total de compras, total líquido da fatura, valor médio por compra, maior compra, compras parceladas, tarifas e encargos (anuidade, IOF, juros), estornos e a categoria que mais pesou.",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:3357",
+          "fonte": "views/controle_financeiro.py:3355",
           "filhos": []
         },
         {
@@ -346,14 +346,14 @@
           "resumo": "Onde o dinheiro do cartão foi parar",
           "explicacao": "Três gráficos para ver em que categorias e em quais lojas você mais gastou no cartão.",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:3364",
+          "fonte": "views/controle_financeiro.py:3362",
           "filhos": [
             {
               "nome": "Distribuição dos gastos por categoria",
               "resumo": "Rosca com a divisão por categoria",
               "explicacao": "Gráfico de rosca com a divisão das compras por categoria.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:3367",
+              "fonte": "views/controle_financeiro.py:3365",
               "filhos": []
             },
             {
@@ -361,7 +361,7 @@
               "resumo": "Categorias em ordem de valor",
               "explicacao": "Barras com as categorias da maior para a menor.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:3373",
+              "fonte": "views/controle_financeiro.py:3371",
               "filhos": []
             },
             {
@@ -369,7 +369,7 @@
               "resumo": "Lojas onde você mais gastou",
               "explicacao": "Barras com as lojas e serviços onde você mais gastou.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:3379",
+              "fonte": "views/controle_financeiro.py:3377",
               "filhos": []
             }
           ]
@@ -379,14 +379,14 @@
           "resumo": "Parcelas em aberto e próximas faturas",
           "explicacao": "Mostra as compras divididas em parcelas e o peso delas nas próximas faturas. Se não houver parcelas no filtro, aparece só um aviso.",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:3386",
+          "fonte": "views/controle_financeiro.py:3384",
           "filhos": [
             {
               "nome": "Gráfico e tabela das compras parceladas",
               "resumo": "Quanto falta pagar de cada compra",
               "explicacao": "Barras com quanto ainda falta pagar de cada compra parcelada e uma tabela com o valor da parcela no mês e o saldo pendente estimado. Não tem título próprio na tela.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:3394",
+              "fonte": "views/controle_financeiro.py:3392",
               "filhos": []
             },
             {
@@ -394,7 +394,7 @@
               "resumo": "Peso das parcelas nas próximas faturas",
               "explicacao": "Gráfico e tabela com quanto as parcelas já assumidas vão somar em cada uma das próximas faturas (até 6 meses).",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:3397",
+              "fonte": "views/controle_financeiro.py:3395",
               "filhos": []
             }
           ]
@@ -404,7 +404,7 @@
           "resumo": "O que entrou na fatura sem ser compra",
           "explicacao": "Gráfico e tabela com o que não é compra: tarifas, estornos (dinheiro devolvido), pagamentos da fatura e ajustes.",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:3408",
+          "fonte": "views/controle_financeiro.py:3406",
           "filhos": []
         },
         {
@@ -412,7 +412,7 @@
           "resumo": "Compras no cartão mês a mês",
           "explicacao": "Gráfico das compras mês a mês. Só aparece quando há pelo menos dois meses para comparar.",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:3420",
+          "fonte": "views/controle_financeiro.py:3418",
           "filhos": []
         },
         {
@@ -420,14 +420,14 @@
           "resumo": "Todos os lançamentos do filtro, linha a linha",
           "explicacao": "Seção de abrir e fechar com todos os lançamentos do filtro: vencimento, data da compra, final do cartão, tipo, descrição, categoria, parcela, se é recorrente, valor e origem.",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:3428",
+          "fonte": "views/controle_financeiro.py:3426",
           "filhos": [
             {
               "nome": "Editar lançamentos",
               "resumo": "Corrige lançamentos da fatura",
               "explicacao": "Chave de liga/desliga que permite corrigir vencimento, data da compra, descrição, categoria, cartão, valor, parcela atual/total e situação. Confirme com 'Salvar alterações'.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:3431",
+              "fonte": "views/controle_financeiro.py:3429",
               "filhos": []
             }
           ]
@@ -437,7 +437,7 @@
           "resumo": "Alertas prontos sobre a fatura",
           "explicacao": "Até cinco avisos gerados pelo app, por exemplo: uma categoria concentra muito da fatura, há tarifas a conferir, parcelas passam de 30% das compras, quanto as parcelas vão somar num mês futuro, ou uma loja que se repete todo mês.",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:3462",
+          "fonte": "views/controle_financeiro.py:3460",
           "filhos": []
         },
         {
@@ -445,14 +445,14 @@
           "resumo": "Converse com uma IA sobre a fatura",
           "explicacao": "Assistente de inteligência artificial para perguntas sobre a fatura (assinaturas, onde cortar, parcelas, lojas). Usa só os lançamentos do cartão e respeita os filtros acima; a conversa recomeça quando os filtros mudam. Se estiver fora do ar, aparece 'A análise não está disponível no momento.'",
           "so_admin": false,
-          "fonte": "views/controle_financeiro.py:3503",
+          "fonte": "views/controle_financeiro.py:3501",
           "filhos": [
             {
               "nome": "Perguntas prontas",
               "resumo": "Seis botões com perguntas sugeridas",
               "explicacao": "Seis botões com perguntas como 'Quais assinaturas recorrentes eu tenho e quanto somam por mês?'. Clicar envia a pergunta.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:3539",
+              "fonte": "views/controle_financeiro.py:3537",
               "filhos": []
             },
             {
@@ -460,7 +460,7 @@
               "resumo": "Apaga a conversa",
               "explicacao": "Botão que apaga a conversa e começa do zero.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:3556",
+              "fonte": "views/controle_financeiro.py:3554",
               "filhos": []
             },
             {
@@ -468,7 +468,7 @@
               "resumo": "Caixa para digitar sua pergunta",
               "explicacao": "Caixa no pé da página para escrever sua própria pergunta sobre a fatura.",
               "so_admin": false,
-              "fonte": "views/controle_financeiro.py:3570",
+              "fonte": "views/controle_financeiro.py:3568",
               "filhos": []
             }
           ]

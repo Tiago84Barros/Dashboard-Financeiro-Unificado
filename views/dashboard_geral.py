@@ -1585,8 +1585,7 @@ def _destaque_carteira_recomendada() -> None:
         "★ Recomendação do aplicativo",
         "Detalhes da carteira recomendada",
         "Composição sugerida por Empresas B3, Empresas Americanas e Seleção "
-        "de FIIs. São referências analíticas — não são a sua posição investida "
-        "nem garantia de resultado.",
+        "de FIIs. São referências analíticas, não a sua posição investida.",
         _COR_PATRIMONIO,
     )
 
@@ -1832,7 +1831,7 @@ def render() -> None:
     # Os dois cards executivos saíram daqui: repetiam o grid de KPIs acima
     # (saldo, taxa de poupança, patrimônio) e os cards de Controle Financeiro e
     # Investimentos do "Resumo por área". A leitura fica — é texto, e carrega a
-    # ressalva de que o que vem abaixo é referência analítica, não garantia.
+    # ressalva de que o que vem abaixo é referência analítica, não fato.
     _ind_leitura = indicadores_caixa(receitas_mes, despesas_mes, investimentos_mes)
     leitura = {
         "deficit": "As despesas superaram as receitas no período: houve déficit de caixa.",
@@ -1847,7 +1846,7 @@ def render() -> None:
         '<div class="dg-callout-icon" aria-hidden="true">◎</div>'
         f'<div class="dg-callout-copy"><strong>Leitura do mês.</strong> {escape(leitura)} '
         'Os valores acima são fatos do período; metas e modelos exibidos abaixo são '
-        'referências analíticas, não garantias de resultado.</div></div></div>',
+        'referências analíticas.</div></div></div>',
         unsafe_allow_html=True,
     )
 
