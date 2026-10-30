@@ -341,11 +341,14 @@ def build_carteira_geral_context(carteira: dict, proventos: dict | None = None,
     por_classe = list(carteira.get("por_classe") or ())
     por_setor = list(carteira.get("por_setor") or ())
 
+    n_curva = int(carteira.get("n_cotacoes_curva") or 0)
+
     blocos: list[str] = [
         "ESCOPO: carteira inteira (todas as classes), como carregada na Visão Geral.",
         f"Ativos com posição: {len(posicoes)}",
-        "Cotações ao vivo: " + ("disponíveis" if carteira.get("cotacoes_disponiveis")
-                                else "indisponíveis — valor de mercado pode ser o custo"),
+        "Cotações do dia: " + ("disponíveis" if carteira.get("cotacoes_disponiveis")
+                               else "indisponíveis — valor de mercado pode ser o custo")
+        + (f" ({n_curva} título(s) do Tesouro pela curva oficial)" if n_curva else ""),
         "",
         "ALOCAÇÃO POR CLASSE (percentual do valor de mercado):",
     ]

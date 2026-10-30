@@ -36,7 +36,8 @@ Schema do dict retornado por get_carteira():
   total_mercado            float  Valor de mercado (= total_investido sem cotações)
   rentabilidade_total_pct  float  Rentabilidade total (0.0 sem cotações)
   num_ativos               int    Número de posições ativas
-  cotacoes_disponiveis     bool   True quando asset_quotes estiver populado
+  cotacoes_disponiveis     bool   True quando ha cotacao viva ou Tesouro pela curva
+  n_cotacoes_curva         int    Titulos do Tesouro marcados pela curva oficial
   posicoes                 list   Ver _POSICAO_SCHEMA abaixo
   por_classe               list   Ver _CLASSE_SCHEMA abaixo
   por_setor                list   Ver _SETOR_SCHEMA abaixo
@@ -892,6 +893,9 @@ def _recalcular_totais_carteira(carteira: dict) -> None:
     carteira["n_cotacoes_stale"] = sum(
         1 for p in carteira["posicoes"] if p.get("cotacao_fonte") == "stale"
     )
+    carteira["n_cotacoes_curva"] = sum(
+        1 for p in carteira["posicoes"] if p.get("cotacao_fonte") == "curva_tesouro"
+    )
     data_ref_min, data_ref_max = intervalo_referencia(
         [p.get("data_referencia") for p in carteira["posicoes"]]
     )
@@ -939,6 +943,31 @@ def _adicionar_recalculo_ao_snapshot(carteira: dict, rows: list,
         )
 
 
+def _marcacao_pela_curva(conn, rows: list) -> dict:
+    """``{ticker-base: (pu, data_base)}`` da curva para o Tesouro da foto.
+
+    A carteira agrupa pelo ticker-base, e a curva é chaveada pelo título:
+    a chave de cada linha sai de `chave_da_curva`, que separa o título de
+    cupom do principal. Um grupo que junta os dois (mesmo ticker, títulos
+    diferentes) fica fora: qualquer PU que se escolhesse marcaria uma parte
+    da quantidade pelo preço de outro título, e a foto, que soma o valor de
+    cada um, erra menos.
+    """
+    from core.tesouro_curva import chave_da_curva, pu_de_recompra
+
+    chaves_do_grupo: dict[str, set[str]] = {}
+    for r in rows:
+        if str(getattr(r, "asset_type", "") or "").lower() not in _TIPOS_TESOURO:
+            continue
+        base = _base_ticker(r.ticker)
+        chaves_do_grupo.setdefault(base, set()).add(
+            chave_da_curva(base, getattr(r, "asset_name", None)))
+    chave_unica = {base: next(iter(chaves))
+                   for base, chaves in chaves_do_grupo.items() if len(chaves) == 1}
+    pus = pu_de_recompra(conn, set(chave_unica.values()))
+    return {base: pus[chave] for base, chave in chave_unica.items() if chave in pus}
+
+
 def _carteira_snapshot_consolidada(conn, owner: str, rows: list) -> dict:
     """Carteira de hoje: ultimo snapshot XP + posicoes USD fora dele.
 
@@ -975,11 +1004,7 @@ def _carteira_snapshot_consolidada(conn, owner: str, rows: list) -> dict:
 
     # O Tesouro não tem cotação viva: a foto da B3 traz um PU de dias antes da
     # data do relatório, e a curva oficial é o preço do emissor.
-    from core.tesouro_curva import pu_de_recompra
-    curva_tesouro = pu_de_recompra(conn, {
-        _base_ticker(r.ticker) for r in rows
-        if str(getattr(r, "asset_type", "") or "").lower() in _TIPOS_TESOURO
-    })
+    curva_tesouro = _marcacao_pela_curva(conn, rows)
 
     carteira = _montar_carteira_snapshot(
         rows, tx_costs, listar_precos_manuais(owner, conn), curva_tesouro=curva_tesouro
@@ -1328,9 +1353,11 @@ def sem_marcacao_renda_fixa(classe_raw: str, custo_fonte: str, cotacao_fonte: st
     veio da foto e é igual ao valor da foto até o centavo -- um papel que rende
     não fecha assim, é o relatório da corretora repetindo o mesmo número nas
     duas colunas. Medido em 04/10/2026: 5 CDBs e 2 fundos (16,8% do valor)
-    apareciam com 0,0%. Papel com cotação viva (``live``) nunca cai aqui.
+    apareciam com 0,0%. Papel com cotação viva (``live``) ou marcado pela
+    curva do Tesouro nunca cai aqui.
     """
-    if classe_raw not in _CLASSES_SEM_COTACAO or cotacao_fonte in ("live", "stale"):
+    if classe_raw not in _CLASSES_SEM_COTACAO or cotacao_fonte in (
+            "live", "stale", "curva_tesouro"):
         return False
     if custo_fonte == "mercado_fallback":
         return True
@@ -1698,6 +1725,7 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
     base_total = total_mercado if total_mercado > 0 else total_investido
     n_live = sum(1 for p in posicoes if p.get("cotacao_fonte") == "live")
     n_stale = sum(1 for p in posicoes if p.get("cotacao_fonte") == "stale")
+    n_curva = sum(1 for p in posicoes if p.get("cotacao_fonte") == "curva_tesouro")
     for p in posicoes:
         p["pct_carteira"] = p["valor_mercado"] / base_total * 100 if base_total > 0 else 0.0
 
@@ -1721,9 +1749,12 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
         "rentabilidade_total_pct": rentabilidade_total,
         "rentabilidade_total_disponivel": True,
         "num_ativos":              len(posicoes),
-        "cotacoes_disponiveis":    n_live > 0,
+        # A curva do Tesouro é preço do dia, como a cotação viva: uma carteira
+        # só de títulos públicos não está "sem cotações".
+        "cotacoes_disponiveis":    n_live > 0 or n_curva > 0,
         "n_cotacoes_live":         n_live,
         "n_cotacoes_stale":        n_stale,
+        "n_cotacoes_curva":        n_curva,
         "data_referencia_min":     data_ref_min,
         "data_referencia_max":     data_ref_max,
         "posicoes":                posicoes,

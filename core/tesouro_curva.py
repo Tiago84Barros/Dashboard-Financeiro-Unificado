@@ -20,6 +20,7 @@ em silêncio quando espalhadas:
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 
 import pandas as pd
@@ -116,6 +117,26 @@ SQL_PU_DE_RECOMPRA = """
      WHERE security_key = ANY(:chaves) AND COALESCE(sell_pu, base_pu) > 0
      ORDER BY security_key, base_date DESC
 """
+
+
+def chave_da_curva(ticker, nome) -> str:
+    """`security_key` da curva para uma posição da carteira.
+
+    O ticker das fotos (`xp_consolidado._tesouro_ticker`) junta o título de
+    cupom ao principal: "IPCA+ com Juros Semestrais 2032" e "IPCA+ 2032" saem
+    os dois TIPCA2032, enquanto a curva os guarda como TIPCAJ2032 e TIPCA2032.
+    A diferença só sobrevive no nome. Só esse caso troca de chave, e só quando
+    o nome, lido pela mesma função do job da curva, diz cupom: qualquer outra
+    leitura do nome poderia levar um CDB "Pré 2030" para a curva do Tesouro.
+    """
+    from data_pipeline.importers.investments.tesouro_direto import tesouro_security_key
+
+    ticker = str(ticker or "").upper().strip()
+    familia = re.fullmatch(r"(TIPCA|TPRE)(20\d{2})", ticker)
+    if not familia or not nome:
+        return ticker
+    cupom = f"{familia.group(1)}J{familia.group(2)}"
+    return cupom if tesouro_security_key(nome, familia.group(2)) == cupom else ticker
 
 
 def pu_de_recompra(conn, security_keys) -> dict[str, tuple[float, date]]:

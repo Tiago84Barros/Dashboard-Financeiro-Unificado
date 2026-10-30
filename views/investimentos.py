@@ -3637,11 +3637,16 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         # Contagem de cotações ao vivo, valorização em R$ e N efetivo vieram
         # da antiga aba Carteira, que repetia estes quatro KPIs.
         n_live = carteira.get("n_cotacoes_live", 0)
-        if not n_live:
+        n_curva = carteira.get("n_cotacoes_curva", 0)
+        n_ativos = carteira.get("num_ativos", 0)
+        if not n_live and not n_curva:
             detalhe_tecnico("Sem cotações ao vivo: valores pelas cotações do snapshot XP.",
                             codigo="investimentos.carteira.cotacoes_snapshot")
-        cotacao_sub = (f"{n_live}/{carteira.get('num_ativos', 0)} cotações ao vivo"
-                       if n_live else "Cotações da última foto")
+        # O Tesouro marcado pela curva oficial vale pelo PU do dia, não pela foto.
+        cotacao_sub = " · ".join(
+            ([f"{n_live}/{n_ativos} cotações ao vivo"] if n_live else [])
+            + ([f"{n_curva}/{n_ativos} pela curva do Tesouro"] if n_curva else [])
+        ) or "Cotações da última foto"
         dif_total = carteira.get("diferenca_reais", round(total_mkt - total_inv, 2))
         dif_txt = f"{'+' if dif_total >= 0 else ''}{fmt_moeda(dif_total)}"
 
@@ -4527,13 +4532,15 @@ def render() -> None:
             "sucesso" if _fonte == "real" else "alerta",
         )
     with col_b2:
-        _n_live  = carteira.get("n_cotacoes_live", 0)
+        # Tesouro pela curva oficial conta como atual: é o PU do dia.
+        _n_atuais = (carteira.get("n_cotacoes_live", 0)
+                     + carteira.get("n_cotacoes_curva", 0))
         _n_stale = carteira.get("n_cotacoes_stale", 0)
         _n_tot   = carteira.get("num_ativos", 0)
         badge_status(
-            (f"Cotações atuais {_n_live}/{_n_tot}" if not _n_stale else
-             f"Atuais {_n_live} · antigas {_n_stale}"),
-            "sucesso" if _n_live and not _n_stale else "alerta",
+            (f"Cotações atuais {_n_atuais}/{_n_tot}" if not _n_stale else
+             f"Atuais {_n_atuais} · antigas {_n_stale}"),
+            "sucesso" if _n_atuais and not _n_stale else "alerta",
         )
     with col_b3:
         badge_status(f"{proventos['num_eventos']} proventos", "neutro")

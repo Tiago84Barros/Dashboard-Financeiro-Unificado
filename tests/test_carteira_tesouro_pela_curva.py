@@ -21,10 +21,11 @@ from core import investimentos, tesouro_curva
 from core.investimentos import _montar_carteira_snapshot
 
 
-def _row(ticker, *, qty, vm, invested, tipo="tesouro", report=date(2026, 10, 27)):
+def _row(ticker, *, qty, vm, invested, tipo="tesouro", report=date(2026, 10, 27),
+         nome=None):
     return SimpleNamespace(
         ticker=ticker, quantity=qty, market_value=vm, invested_value=invested,
-        asset_type=tipo, asset_name=ticker, sector="other", currency="BRL",
+        asset_type=tipo, asset_name=nome or ticker, sector="other", currency="BRL",
         country="BR", report_date=report, live_price=None, live_timestamp=None,
         usd_brl_rate=None, pp_quantity=0, pp_total_invested=0,
         pp_average_price=0, b3_avg_price=0, b3_quantity=0, b3_report_date=None,
@@ -262,3 +263,165 @@ def test_grau_de_confianca_falha_na_leitura_vira_nao_medido():
 
     curva = next(c for c in secao.componentes if c.nome == "Curva do Tesouro")
     assert curva.pct is None
+
+
+# ── título de cupom: o ticker da foto não é a chave da curva ────────────────
+#
+# A foto junta "IPCA+ com Juros Semestrais 2032" e "IPCA+ 2032" no mesmo
+# TIPCA2032; a curva os guarda separados (TIPCAJ2032 e TIPCA2032). Pedir o
+# ticker da foto deixava o título de cupom na foto — ou, havendo o principal
+# do mesmo ano, marcava-o pelo PU de outro título.
+
+@pytest.mark.parametrize("ticker, nome, chave", [
+    ("TIPCA2032", "Tesouro IPCA+ com Juros Semestrais 2032", "TIPCAJ2032"),
+    ("TPRE2035", "Tesouro Prefixado com Juros Semestrais 2035", "TPREJ2035"),
+    ("TIPCA2045", "NTN-B 2045", "TIPCAJ2045"),
+    ("TIPCA2032", "Tesouro IPCA+ 2032", "TIPCA2032"),
+    ("TIPCA2045", "NTN-B Principal 2045", "TIPCA2045"),
+    ("TPRE2028", "Tesouro Prefixado 2028", "TPRE2028"),
+    # O nome do Educa+ traz o ano da primeira parcela; a chave é a do ticker.
+    ("TEDUCA2030", "Tesouro Educa+ 2026", "TEDUCA2030"),
+    ("TSELIC2029", "Tesouro Selic 2029", "TSELIC2029"),
+    ("TIPCA2032", None, "TIPCA2032"),
+    # fixed_income também cobre CDB: o nome nunca o leva para a curva.
+    ("CDB-BANCO-X", "CDB Banco X Pré 2030", "CDB-BANCO-X"),
+])
+def test_chave_da_curva_separa_o_cupom_pelo_nome(ticker, nome, chave):
+    assert tesouro_curva.chave_da_curva(ticker, nome) == chave
+
+
+def _curva_que_responde(pedidas, curva):
+    def _pu(conn, chaves):
+        pedidas.append(sorted(chaves))
+        return {k: v for k, v in curva.items() if k in chaves}
+    return _pu
+
+
+_CURVA_DOS_DOIS = {
+    "TIPCA2032": (4000.0, date(2026, 10, 28)),
+    "TIPCAJ2032": (3900.0, date(2026, 10, 28)),
+}
+
+
+def test_titulo_de_cupom_e_marcado_pela_sua_chave(monkeypatch):
+    pedidas = []
+    monkeypatch.setattr(tesouro_curva, "pu_de_recompra",
+                        _curva_que_responde(pedidas, _CURVA_DOS_DOIS))
+    rows = [_row("TIPCA2032", qty=1.0, vm=4100.0, invested=3500.0,
+                 nome="Tesouro IPCA+ com Juros Semestrais 2032")]
+
+    curva = investimentos._marcacao_pela_curva(object(), rows)
+
+    assert pedidas == [["TIPCAJ2032"]]
+    # A carteira continua chaveada pelo ticker da foto.
+    assert curva == {"TIPCA2032": (3900.0, date(2026, 10, 28))}
+    _, p = _pos(rows, "TIPCA2032", curva)
+    assert p["valor_mercado"] == 3900.0
+    assert p["cotacao_fonte"] == "curva_tesouro"
+
+
+def test_grupo_que_junta_cupom_e_principal_fica_na_foto(monkeypatch):
+    # Mesmo ticker, dois títulos: um PU só marcaria parte da quantidade pelo
+    # preço do outro.
+    pedidas = []
+    monkeypatch.setattr(tesouro_curva, "pu_de_recompra",
+                        _curva_que_responde(pedidas, _CURVA_DOS_DOIS))
+    rows = [
+        _row("TIPCA2032", qty=1.0, vm=4100.0, invested=3500.0,
+             nome="Tesouro IPCA+ 2032"),
+        _row("TIPCA2032", qty=1.0, vm=4000.0, invested=3500.0,
+             nome="Tesouro IPCA+ com Juros Semestrais 2032"),
+        _row("TPRE2030", qty=3.0, vm=2600.0, invested=2000.0),
+    ]
+
+    curva = investimentos._marcacao_pela_curva(object(), rows)
+
+    assert pedidas == [["TPRE2030"]]
+    assert "TIPCA2032" not in curva
+    _, p = _pos(rows, "TIPCA2032", curva)
+    assert p["cotacao_fonte"] == "snapshot"
+
+
+def test_carteira_consolidada_pede_a_chave_do_cupom(monkeypatch):
+    rows = [_row("TIPCA2032", qty=1.0, vm=4100.0, invested=3500.0,
+                 nome="Tesouro IPCA+ com Juros Semestrais 2032")]
+    pedidas = []
+
+    class _Conn:
+        def execute(self, stmt, params=None):
+            return SimpleNamespace(fetchall=lambda: [], scalar=lambda: True)
+
+    monkeypatch.setattr(tesouro_curva, "pu_de_recompra",
+                        _curva_que_responde(pedidas, _CURVA_DOS_DOIS))
+    monkeypatch.setattr(investimentos, "_calcular_custos_transacoes", lambda conn, owner: {})
+    monkeypatch.setattr(investimentos, "cambio_medio_de_aquisicao", lambda conn, owner: {})
+    monkeypatch.setattr(investimentos, "listar_precos_manuais", lambda owner, conn: {})
+    monkeypatch.setattr(investimentos.cotacao_viva, "buscar", lambda simbolos: {})
+
+    carteira = investimentos._carteira_snapshot_consolidada(_Conn(), "u1", rows)
+
+    assert pedidas == [["TIPCAJ2032"]]
+    assert carteira["posicoes"][0]["valor_mercado"] == 3900.0
+
+
+# ── a curva é cotação do dia, não a foto ─────────────────────────────────────
+
+def test_carteira_so_pela_curva_tem_cotacoes():
+    rows = [_row("TPRE2030", qty=3.0, vm=2600.0, invested=2000.0)]
+
+    carteira = _montar_carteira_snapshot(
+        rows, curva_tesouro={"TPRE2030": (850.0, date(2026, 10, 28))})
+
+    assert carteira["cotacoes_disponiveis"] is True
+    assert carteira["n_cotacoes_curva"] == 1
+    assert carteira["n_cotacoes_live"] == 0
+
+
+def test_carteira_so_pela_foto_continua_sem_cotacoes():
+    carteira = _montar_carteira_snapshot(
+        [_row("TPRE2030", qty=3.0, vm=2600.0, invested=2000.0)])
+
+    assert carteira["cotacoes_disponiveis"] is False
+    assert carteira["n_cotacoes_curva"] == 0
+
+
+def test_recalculo_dos_totais_conta_a_curva():
+    carteira = {"posicoes": [
+        {"ticker": "TPRE2030", "valor_mercado": 2550.0, "total_investido": 2000.0,
+         "cotacao_fonte": "curva_tesouro", "classe": "Tesouro Direto",
+         "setor": "Tesouro Direto", "moeda": "BRL", "cor": "#000000"},
+    ]}
+
+    investimentos._recalcular_totais_carteira(carteira)
+
+    assert carteira["n_cotacoes_curva"] == 1
+
+
+def test_papel_pela_curva_nao_e_sem_marcacao():
+    assert not investimentos.sem_marcacao_renda_fixa(
+        "renda_fixa", "snapshot", "curva_tesouro", 1000.0, 1000.0)
+    assert investimentos.sem_marcacao_renda_fixa(
+        "renda_fixa", "snapshot", "snapshot", 1000.0, 1000.0)
+
+
+def test_visao_geral_e_selo_nao_chamam_a_curva_de_foto():
+    import inspect
+
+    from views import investimentos as inv
+
+    corpo = inspect.getsource(inv._tab_analise)
+    visao_geral = corpo[corpo.index("with ta:"):corpo.index("with tb:")]
+    assert "n_cotacoes_curva" in visao_geral
+    assert "pela curva do Tesouro" in visao_geral
+    assert 'carteira.get("n_cotacoes_curva", 0)' in inspect.getsource(inv)
+
+
+def test_contexto_da_llm_diz_quantos_titulos_vieram_da_curva():
+    from core.llm_context_carteira import build_carteira_geral_context
+
+    texto = build_carteira_geral_context({
+        "posicoes": [], "por_classe": [], "por_setor": [],
+        "cotacoes_disponiveis": True, "n_cotacoes_curva": 2,
+    })
+
+    assert "Cotações do dia: disponíveis (2 título(s) do Tesouro pela curva oficial)" in texto
