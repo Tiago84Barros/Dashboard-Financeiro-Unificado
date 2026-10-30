@@ -277,6 +277,7 @@ CARIMBO = {
     "pregoes_recentes_b3": ("arquivo", "data/public/pregoes_recentes_b3.json.gz"),
     "proventos_b3": ("arquivo", "data/public/proventos_b3.json.gz"),
     "carteira20_desempenho": ("arquivo", "data/public/carteira20_desempenho.json"),
+    "carteira20_medicao": ("arquivo", "data/public/carteira20_medicao.json"),
     "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),
     "b3_linhagem": ("arquivo", "data/public/b3_linhagem.json"),
 }

@@ -2611,12 +2611,15 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
         "b3_c20_tela": _node(
             "b3_c20_tela", "Carteira 20: o que a tela mostra", "Registro",
             "O estado da cadeia, a revisão vigente, a próxima revisão, a carteira vigente, o "
-            "desempenho contra BOVA11, CDI e pesos iguais do universo e o histórico do "
-            "registro. Nada é calculado na aba.",
+            "desempenho contra BOVA11, CDI e pesos iguais do universo, a medição mensal do "
+            "protocolo e o histórico do registro. Nada é calculado na aba.",
             (
                 "views/carteira20_b3.py",
-                "Lê o registro (escrito por scripts/carteira20_revisao.py) e "
-                "data/public/carteira20_desempenho.json (scripts/carteira20_desempenho.py)",
+                "Lê o registro (escrito por scripts/carteira20_revisao.py), "
+                "data/public/carteira20_desempenho.json (scripts/carteira20_desempenho.py) e "
+                "data/public/carteira20_medicao.json (scripts/carteira20_medicao.py)",
+                "Medição mensal: curva por aportes (R$ 1.000 + R$ 500 por fechamento) e teórica, "
+                "em reais ou em reais do início pelo IPCA (core/carteira20_medicao.py)",
                 "Card Revisões registradas: conclusão só com 12 meses; veredito com 24",
             ),
             "Desempenho de poucos meses é ruído. A tela diz quanto falta para concluir em vez "

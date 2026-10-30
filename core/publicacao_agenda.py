@@ -436,6 +436,21 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/carteira20_desempenho.json",),
     ),
     Alvo(
+        # Medição mensal do protocolo da Carteira 20 (curva por aportes e
+        # teórica, IR por preço médio, IPCA), que a aba 📒 Carteira 20 lê. As
+        # mesmas fontes do desempenho diário, mais o IPCA do `macro_brasil`
+        # (antes na fila). Roda todo dia porque refaz a conta inteira desde a
+        # inaugural: provento que chega depois do fechamento corrige o mês. Antes
+        # do primeiro fechamento (30/11/2026) grava o arquivo sem meses; uma
+        # rodada que mede menos meses do que o publicado não grava e falha.
+        chave="carteira20_medicao",
+        titulo="Medição mensal da Carteira 20",
+        passos=(("scripts/carteira20_medicao.py",),),
+        cadencia_dias=1,
+        modulo="b3",
+        artefatos=("data/public/carteira20_medicao.json",),
+    ),
+    Alvo(
         # Notícias filtradas por relevância, relatórios (documentos CVM/SEC) e
         # eventos datados por ativo, para a Inteligência dos Ativos. Lê o
         # acervo de notícias e os documentos que só existem no armazém; o

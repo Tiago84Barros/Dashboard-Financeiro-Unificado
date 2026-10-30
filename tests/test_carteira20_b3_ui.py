@@ -29,10 +29,12 @@ def registros_publicados():
     return regs
 
 
-def _rodar(monkeypatch, regs, hoje="2026-10-25", desempenho=None, lacunas=None):
+def _rodar(monkeypatch, regs, hoje="2026-10-25", desempenho=None, lacunas=None,
+           medicao=None, estado=None):
     monkeypatch.chdir(RAIZ)
     monkeypatch.setattr(vc, "carregar", lambda: regs)
     monkeypatch.setattr(vc, "carregar_desempenho", lambda: desempenho)
+    monkeypatch.setattr(vc, "carregar_medicao", lambda: medicao)
     # o logo real faz HEAD na CDN; aqui basta o marcador
     monkeypatch.setattr(vc, "company_logo_html",
                         lambda tk, url, **kw: f'<span class="logo-teste">{tk}</span>')
@@ -40,6 +42,8 @@ def _rodar(monkeypatch, regs, hoje="2026-10-25", desempenho=None, lacunas=None):
                         lacunas.append(codigo) if lacunas is not None else None)
     app = AppTest.from_string(_SCRIPT)
     app.session_state["_hoje"] = hoje
+    for chave, valor in (estado or {}).items():
+        app.session_state[chave] = valor
     return app.run(timeout=60)
 
 
@@ -275,3 +279,101 @@ def test_titulos_de_secao_usam_o_token_de_texto():
     tema = (RAIZ / "design" / "tema.py").read_text(encoding="utf-8")
     bloco = tema[tema.index(".app-section-title {"):]
     assert "color: var(--app-text)" in bloco[:bloco.index("}")]
+
+
+def _medicao(regs, meses=("2026-11-30",), fator=1.004, protocolo=None) -> dict:
+    """Artefato no formato de scripts/carteira20_medicao.py."""
+    def carteiras(base):
+        return {"carteira20": {"liquido": base, "caixa": 42.5, "ir_pago": 0.0, "custos": 6.1},
+                "pesos_iguais": {"liquido": base - 20}, "bova11": {"liquido": base - 10},
+                "cdi": {"liquido": base - 30}}
+
+    return {
+        "schema": 1,
+        "protocolo": {"seq": 0, "hash": protocolo or regs[0]["hash"]},
+        "revisoes": [{"seq": r["registro"]["seq"], "hash": r["registro"]["hash"],
+                      "corpo_sha256": vc.cd.impressao_corpo(r["corpo"])}
+                     for r in c20.revisoes(regs)],
+        "meses": [{"fechamento": f, "ipca_fator": fator if i == 0 else None,
+                   "aportes": {"aportado": 1000.0 + 500 * i,
+                               "aportado_real": 1000.0 if i == 0 else None,
+                               **carteiras(1050.0 + 500 * i)},
+                   "teorica": {"aportado": 1000.0, "aportado_real": 1000.0,
+                               **carteiras(1040.0)}}
+                  for i, f in enumerate(meses)],
+        "posicoes_aportes": [{"id": "X", "ticker": "PETR4", "quantidade": 3.0, "valor": 160.5}],
+        "avisos": ["fechamento de 30/12/2026 ainda sem o pregão de PETR4 na fonte"],
+    }
+
+
+def _tabela_medicao(app):
+    return next(d.value for d in app.dataframe if "Fechamento" in d.value.columns)
+
+
+def _da_medicao(lacunas):
+    return [c for c in lacunas if ".medicao" in c]
+
+
+def test_medicao_publicada_vira_tabela_por_fechamento(monkeypatch, registros_publicados):
+    lacunas = []
+    app = _rodar(monkeypatch, registros_publicados, hoje="2026-12-02", lacunas=lacunas,
+                 medicao=_medicao(registros_publicados))
+    assert not app.exception
+    assert _da_medicao(lacunas) == []
+    tabela = _tabela_medicao(app)
+    assert list(tabela.columns) == ["Fechamento", "Aportado", "Carteira 20", "Pesos iguais",
+                                    "BOVA11", "CDI"]
+    assert tabela.iloc[0].tolist() == ["30/11/2026", "R$ 1.000,00", "R$ 1.050,00",
+                                       "R$ 1.030,00", "R$ 1.040,00", "R$ 1.020,00"]
+    txt = _texto(app)
+    assert "a medição ainda não foi publicada" not in txt
+    assert "R\\$ 42,50 em caixa" in txt and "R\\$ 500 entram" in txt
+    assert "Fechamento de 30/12/2026 ainda sem o pregão de PETR4" in txt
+
+
+def test_medicao_em_reais_do_inicio_divide_pelo_ipca_e_nao_inventa_mes(registros_publicados):
+    med = _medicao(registros_publicados, meses=("2026-11-30", "2026-12-30"))
+    t = vc.tabela_medicao(med, "aportes", real=True)
+    assert t.iloc[0]["Carteira 20"] == vc._reais(1050.0 / 1.004)
+    assert t.iloc[0]["Aportado"] == "R$ 1.000,00"
+    # dezembro sem IPCA divulgado: nada de nominal no lugar do real
+    assert t.iloc[1]["Carteira 20"] == "—" and t.iloc[1]["Aportado"] == "—"
+    nominal = vc.tabela_medicao(med, "aportes", real=False)
+    assert nominal.iloc[1]["Aportado"] == "R$ 1.500,00"
+
+
+def test_medicao_de_outro_registro_e_ignorada(monkeypatch, registros_publicados):
+    lacunas = []
+    app = _rodar(monkeypatch, registros_publicados, hoje="2026-12-05", lacunas=lacunas,
+                 medicao=_medicao(registros_publicados, protocolo="0" * 64))
+    assert not app.exception
+    assert "a medição ainda não foi publicada" in _texto(app)
+    assert _da_medicao(lacunas) == ["tela.b3.carteira20.medicao_pendente"]
+
+
+def test_medicao_atrasada_nao_finge_estar_em_dia(monkeypatch, registros_publicados):
+    lacunas = []
+    app = _rodar(monkeypatch, registros_publicados, hoje="2027-01-08", lacunas=lacunas,
+                 medicao=_medicao(registros_publicados))
+    assert not app.exception
+    assert "O fechamento de 30/12/2026 ainda não foi medido" in _texto(app)
+    assert _da_medicao(lacunas) == ["tela.b3.carteira20.medicao_atrasada"]
+
+
+def test_curva_teorica_na_tela(monkeypatch, registros_publicados):
+    app = _rodar(monkeypatch, registros_publicados, hoje="2026-12-02",
+                 medicao=_medicao(registros_publicados),
+                 estado={"c20_medicao_curva": "Teórica"})
+    assert not app.exception
+    assert _tabela_medicao(app).iloc[0]["Carteira 20"] == "R$ 1.040,00"
+    assert "Sem aporte; os proventos voltam para a própria ação" in _texto(app)
+
+
+def test_aviso_com_dois_cifroes_nao_vira_formula(monkeypatch, registros_publicados):
+    des = _desempenho(registros_publicados)
+    des["avisos"] = ["fora da compra, uma ação passa do dobro do alvo: CLSC4 (1 ação custa "
+                     "R$ 169,87, o alvo é R$ 50,00)"]
+    app = _rodar(monkeypatch, registros_publicados, hoje="2026-11-02", desempenho=des)
+    assert not app.exception
+    aviso = next(c.value for c in app.caption if "CLSC4" in c.value)
+    assert "R\\$ 169,87" in aviso and "R\\$ 50,00" in aviso
