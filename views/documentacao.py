@@ -1624,11 +1624,15 @@ FLOW_EMPRESAS_EUA = FlowSpec(
         "trilhas_us": _node(
             "trilhas_us", "Trilhas de fatores", "Métricas",
             "As métricas se agrupam em trilhas: qualidade, crescimento, solidez, eficiência "
-            "de capital, valuation e retorno ao acionista.",
+            "de capital, valuation e retorno ao acionista. O score de entrada da Análise "
+            "Avançada e da Criação de Portfólio soma mais duas trilhas de estilo: momento de "
+            "12 meses e pesquisa e desenvolvimento.",
             (
                 "Qualidade, crescimento e solidez",
                 "Eficiência de capital e valuation",
                 "Retorno ao acionista (dividendo e recompra)",
+                "Momento 12-1 e P&D sobre valor de mercado, em percentil no universo "
+                "(core/us_estilos.py)",
             ),
             "Agrupar evita que dez métricas correlacionadas da mesma família dominem o "
             "score só por serem muitas.",

@@ -2470,7 +2470,7 @@
             {
               "nome": "Pesos do Scoring",
               "resumo": "Ajuste quanto vale cada critério da nota",
-              "explicacao": "Seção que abre ao clicar, com controles deslizantes para o peso de seis critérios (qualidade, crescimento, solidez, eficiência de capital, avaliação e retorno ao acionista) e a escolha de quanto o cenário econômico influencia a nota.",
+              "explicacao": "Seção que abre ao clicar, com controles deslizantes para o peso de oito critérios (qualidade, crescimento, solidez, eficiência de capital, avaliação, retorno ao acionista, momento de 12 meses e pesquisa e desenvolvimento) e a escolha de quanto o cenário econômico influencia a nota.",
               "so_admin": false
             },
             {
@@ -2616,7 +2616,7 @@
         {
           "nome": "Criação de Portfólio",
           "resumo": "Monta a carteira americana com regras claras",
-          "explicacao": "Etapa 2 de 3. Aplica a regra testada no laboratório a todo o mercado americano, escolhe as melhores empresas de cada indústria e monta uma carteira com limites de concentração. No fim você pode salvar essa carteira como a sua carteira padrão.",
+          "explicacao": "Etapa 2 de 3. Aplica a regra testada no laboratório a todo o mercado americano, escolhe as melhores empresas de cada indústria e monta uma carteira com limites de concentração. A nota de cada empresa também olha o momento dos últimos 12 meses e quanto ela investe em pesquisa e desenvolvimento, os dois estilos que mais renderam nos EUA ao longo de décadas. No fim você pode salvar essa carteira como a sua carteira padrão.",
           "so_admin": false,
           "filhos": [
             {
