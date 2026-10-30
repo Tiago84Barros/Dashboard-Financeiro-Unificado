@@ -56,8 +56,9 @@ def test_relatorio_americano_devolve_o_schema_que_a_ui_consome():
 def test_as_duas_telas_tem_as_mesmas_secoes():
     for secao in ("Relatório Consolidado do Portfólio", "Alocação do Modelo",
                   "Relatórios por Empresa", "Conclusão Estratégica",
-                  "Tire Dúvidas sobre o Portfólio", "Análise Qualitativa via LLM",
-                  "Etapa 3 de 3"):
+                  "Tire Dúvidas sobre o Portfólio", "Análise Qualitativa via LLM"):
+        # "Etapa 3 de 3" saiu da B3 com a Análise Avançada em 30/10/2026; a
+        # tela americana ainda mantém o marcador.
         assert secao in _FONTE_B3, f"a B3 perdeu: {secao}"
         assert secao in _FONTE_US, f"falta na tela americana: {secao}"
 

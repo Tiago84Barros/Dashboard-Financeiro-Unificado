@@ -385,16 +385,16 @@
     {
       "nome": "Documentação",
       "resumo": "Guia ilustrado de como o app funciona",
-      "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 15 sub-abas, na ordem do menu lateral.",
+      "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 14 sub-abas, na ordem do menu lateral.",
       "so_admin": false,
-      "fonte": "views/configuracoes.py:196 → views/documentacao.py:3451",
+      "fonte": "views/configuracoes.py:196 → views/documentacao.py:3027",
       "filhos": [
         {
           "nome": "Dashboard Geral",
           "resumo": "Fatos do período primeiro, referências depois",
           "explicacao": "Fluxograma da primeira tela do menu: como o caixa do Controle Financeiro e a carteira de Investimentos se juntam num painel só, com as carteiras recomendadas no fim, marcadas como referência.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:2381",
+          "fonte": "views/documentacao.py:1994",
           "filhos": []
         },
         {
@@ -402,7 +402,7 @@
           "resumo": "Como entram e se somam receitas e gastos",
           "explicacao": "Fluxograma da tela Controle Financeiro: de onde vêm os lançamentos, o cartão e o extrato, e como o app chega aos totais.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:1193",
+          "fonte": "views/documentacao.py:805",
           "filhos": []
         },
         {
@@ -410,7 +410,7 @@
           "resumo": "Como a carteira de investimentos é analisada",
           "explicacao": "Fluxograma das subabas Dashboard, Histórico e Análise de Investimentos, da importação dos arquivos até os números da tela.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:1075",
+          "fonte": "views/documentacao.py:687",
           "filhos": []
         },
         {
@@ -418,7 +418,7 @@
           "resumo": "As duas últimas subabas de Investimentos",
           "explicacao": "Fluxograma da Inteligência dos Ativos, que lê a carteira pela sua estratégia, e do Imposto de Renda, que apura o imposto sobre renda variável.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:2634",
+          "fonte": "views/documentacao.py:2247",
           "filhos": []
         },
         {
@@ -426,15 +426,7 @@
           "resumo": "Consulta e Carteira 20",
           "explicacao": "Fluxograma das três subabas de Empresas B3 que não têm fluxo próprio: Empresas por Setor, Análise de Empresa e Carteira 20.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:2507",
-          "filhos": []
-        },
-        {
-          "nome": "Análise avançada (B3)",
-          "resumo": "Como cada empresa é avaliada",
-          "explicacao": "Fluxograma da análise avançada de empresas da bolsa brasileira.",
-          "so_admin": false,
-          "fonte": "views/documentacao.py:3256",
+          "fonte": "views/documentacao.py:2120",
           "filhos": []
         },
         {
@@ -442,7 +434,7 @@
           "resumo": "Como o app monta uma carteira",
           "explicacao": "Fluxograma das etapas que o app segue para sugerir uma carteira de ações brasileiras.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:736",
+          "fonte": "views/documentacao.py:348",
           "filhos": []
         },
         {
@@ -450,7 +442,7 @@
           "resumo": "Como a simulação de carteira funciona",
           "explicacao": "Por dentro da subaba Criação de Portfólio: o modelo que simula a trajetória de uma carteira de ações, com aportes, preço ajustado e comparação com índices.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:867",
+          "fonte": "views/documentacao.py:479",
           "filhos": []
         },
         {
@@ -458,7 +450,7 @@
           "resumo": "Como uma carteira pronta é avaliada",
           "explicacao": "Fluxograma da subaba Avaliação de Portfólio: como a carteira salva vira relatório, redistribuição de pesos e conversa com o portfólio.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:970",
+          "fonte": "views/documentacao.py:582",
           "filhos": []
         },
         {
@@ -466,7 +458,7 @@
           "resumo": "Do balanço oficial dos EUA ao ranking",
           "explicacao": "Fluxograma de como as empresas americanas são analisadas, a partir dos balanços entregues ao órgão regulador dos EUA (SEC), até o ranking.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:1552",
+          "fonte": "views/documentacao.py:1164",
           "filhos": []
         },
         {
@@ -474,7 +466,7 @@
           "resumo": "Dos dados publicados à carteira-modelo de FIIs",
           "explicacao": "Fluxograma das cinco subabas de Seleção de FIIs: como os fundos imobiliários são pontuados e quando o que sai é Carteira-Modelo ou só Lista de Diligência.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:1315",
+          "fonte": "views/documentacao.py:927",
           "filhos": []
         },
         {
@@ -482,7 +474,7 @@
           "resumo": "Tudo o que você tem, numa visão só",
           "explicacao": "Fluxograma de como o app junta investimentos do Brasil e do exterior numa visão única, da consolidação à alocação.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:1782",
+          "fonte": "views/documentacao.py:1395",
           "filhos": []
         },
         {
@@ -490,7 +482,7 @@
           "resumo": "De onde vem cada número e quanto vale",
           "explicacao": "Fluxograma de como o app confere a origem e a confiabilidade dos números que mostra.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:1971",
+          "fonte": "views/documentacao.py:1584",
           "filhos": []
         },
         {
@@ -498,7 +490,7 @@
           "resumo": "As nove abas desta Central",
           "explicacao": "Fluxograma desta própria Central de Configurações, aba por aba: preferências, envio de arquivos, diagnóstico, mapa, documentação e segurança.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:2128",
+          "fonte": "views/documentacao.py:1741",
           "filhos": []
         },
         {
@@ -506,7 +498,7 @@
           "resumo": "Dicionário de indicadores e demonstrações",
           "explicacao": "Glossário dos indicadores usados nas notas e análises, com filtro por grupo, e explicação das demonstrações financeiras.",
           "so_admin": false,
-          "fonte": "views/documentacao.py:3334",
+          "fonte": "views/documentacao.py:2910",
           "filhos": []
         }
       ]

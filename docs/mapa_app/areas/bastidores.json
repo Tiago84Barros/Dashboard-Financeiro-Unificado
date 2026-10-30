@@ -130,7 +130,7 @@
           "resumo": "Curva diária da Carteira 20",
           "explicacao": "Todo dia calcula como a Carteira 20 se saiu contra o BOVA11, o CDI e uma carteira de pesos iguais. Tela que depende: Empresas B3 (aba Carteira 20).",
           "so_admin": false,
-          "fonte": "core/publicacao_agenda.py:395; views/empresas_b3.py:6876",
+          "fonte": "core/publicacao_agenda.py:395; views/empresas_b3.py:3275",
           "filhos": []
         },
         {

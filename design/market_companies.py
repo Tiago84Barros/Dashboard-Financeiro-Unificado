@@ -67,9 +67,16 @@ NAV_ITEMS = (
     ("🧠", "Avaliação de Portfólio"),
 )
 
-# Só a vitrine B3 tem a Carteira 20: a americana despacha o índice 5 no
-# ``else`` da Avaliação de Portfólio, então o item não entra em NAV_ITEMS.
-NAV_ITEMS_B3 = NAV_ITEMS + (("📒", "Carteira 20"),)
+# NAV_ITEMS acima é da vitrine americana. A B3 tem a própria barra: perdeu a
+# Análise Avançada em 30/10/2026, quando a Criação de Portfólio deixou de ser
+# "etapa 2" de um fluxo de teste, e só ela tem a Carteira 20.
+NAV_ITEMS_B3 = (
+    ("🏢", "Empresas por Setor"),
+    ("🔍", "Análise de Empresa"),
+    ("🚀", "Criação de Portfólio"),
+    ("🧠", "Avaliação de Portfólio"),
+    ("📒", "Carteira 20"),
+)
 
 _LARGURAS = {5: [2, 2, 2.5, 2.5, 2.5], 6: [2, 2, 2.2, 2.3, 2.4, 2.2]}
 

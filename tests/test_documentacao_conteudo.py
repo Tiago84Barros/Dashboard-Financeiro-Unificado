@@ -54,11 +54,6 @@ def _textos_visiveis():
                 yield f"{flow.key}/{nid}.contains", item
             for campo, valor in doc._generic_flow_detail(flow, no).items():
                 yield f"{flow.key}/{nid}.{campo}", valor
-    for chave, rotulo in doc.ORDEM_ANALISE_AVANCADA:
-        yield f"ordem/{chave}", rotulo
-    for chave, etapa in doc.ETAPAS_ANALISE_AVANCADA.items():
-        for campo, valor in etapa.items():
-            yield f"etapa/{chave}.{campo}", valor
 
 
 def test_nenhum_texto_da_documentacao_sai_sem_acento():

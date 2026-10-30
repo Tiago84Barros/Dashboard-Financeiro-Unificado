@@ -103,7 +103,7 @@ não de marcação a mercado independente título a título.
 Decisões que o painel declara na tela:
 
 - **Ações**: é a mesma decomposição em seis trilhas do painel individual de
-  Empresas B3, **não** o ranking da Análise Avançada, que pondera por setor. O
+  Empresas B3, **não** o ranking da Criação de Portfólio, que pondera por setor. O
   percentil é contra o universo inteiro, não contra o setor. Quando o histórico
   não vem na sessão, a trilha de crescimento fica sem cobertura e a nota encolhe
   para o neutro — isso é perda de convicção, não penalidade, e o rodapé diz.
