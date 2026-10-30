@@ -301,6 +301,107 @@ _SQL_POSICOES = """
     ORDER  BY pp.total_invested DESC
 """
 
+# ── Encerramento pela Movimentação da B3 ─────────────────────────────────────
+# O relatório de Posição novo da B3 (`b3_posicao`) lista só o que existe: não
+# publica a linha zerada que o extrato antigo (`b3_posicao_detalhada`) publicava
+# e que `b3_encerrados` lê. Um CDB resgatado depois da última foto da corretora
+# some da Posição seguinte, e o DENSE_RANK volta a cair na foto da Rico, que
+# ainda o mostra. Foi assim que CDBs resgatados antecipadamente voltavam à
+# renda fixa.
+#
+# A Movimentação registra a saída explicitamente, e só duas provas encerram:
+#   1. direito de subscrição que venceu sem exercício;
+#   2. renda fixa cuja saída líquida DEPOIS da data da foto vencedora cobre a
+#      quantidade inteira dela. Data estrita: o evento do próprio dia já pode
+#      estar na foto.
+# Resgate parcial não encerra: a foto fica, com a quantidade dela, até a
+# próxima. Ação e FII ficam de fora da regra 2 -- a saída deles vem pela
+# Negociação, e na Movimentação a venda aparece como transferência de
+# liquidação, que não é a posição.
+#
+# A regra 2 compara escopos diferentes quando a foto vencedora é de uma
+# corretora: a Movimentação soma todas, a foto da Rico vê só a Rico. O mesmo
+# código resgatado em outra corretora zeraria a da Rico sem ela ter saído.
+# Por isso ela só vale se a custódia consolidada da B3 confirma a saída: ou a
+# foto vencedora já é dela (mesmo escopo da Movimentação), ou há Posição da
+# B3 posterior ao último evento -- se o título continuasse em qualquer
+# corretora, essa Posição o listaria, e ela teria ganhado o ranking.
+#
+# Essa Posição só confirma se trouxe a aba Renda Fixa. O importador grava aba
+# por aba: uma exportação só com Ações, ou em que a aba Renda Fixa falhou, não
+# lista CDB nenhum, e a data dela não prova que o CDB saiu. O extrato antigo
+# também não serve: ele não publica quantidade de renda fixa e pula a seção.
+# Conta como cobertura a data com ao menos uma linha `asset_type =
+# 'fixed_income'`, que só a aba Renda Fixa grava. O Tesouro tem aba própria e
+# não chega aqui: na Movimentação ele vem pelo nome ("TESOURO IPCA+ 2035"), que
+# não casa com o ticker da carteira. Quem resgatou a renda fixa inteira recebe
+# a Posição seguinte sem a aba, e o CDB fica até a próxima foto da corretora.
+#
+# Transferência de custódia entra na conta com o sinal dela, como em
+# core.movimentacao_b3.interpretar. A troca de corretora (débito numa,
+# crédito noutra, no mesmo dia) soma zero; um crédito de fora depois da foto
+# aumenta a posição, e o resgate dele não pode encerrar o que ficou. A B3
+# grava o rótulo com e sem acento ("transferência" nas ações, "transferencia"
+# no Tesouro) e "transf. sem financeiro" no CFF. A "transferência -
+# liquidação" é a venda da Negociação, não custódia, e fica de fora.
+#
+# Na Movimentação o CDB vem com ticker 'CDB' e o código no produto
+# ("CDB - <código> - <emissor>"); o direito vem com o próprio ticker.
+_SQL_MOV_DO_ATIVO = "(m.ticker = a.ticker OR split_part(m.product, ' - ', 2) = a.ticker)"
+
+_SQL_MOV_QUANTIDADE = """lower(m.movement) IN (
+                        'aplicação', 'aplicação/depósito', 'compra',
+                        'compra / venda', 'venda', 'resgate',
+                        'resgate antecipado', 'vencimento',
+                        'transferência', 'transferencia',
+                        'transf. sem financeiro')"""
+
+_SQL_FONTE_CUSTODIA_B3 = "effective_source_table IN ('b3_posicao', 'b3_posicao_detalhada')"
+
+_SQL_B3_COM_RENDA_FIXA = "s." + _SQL_FONTE_CUSTODIA_B3 + " AND s.asset_type = 'fixed_income'"
+
+_SQL_MOV_PROVA_ENCERRAMENTO = """
+        BOOL_OR(lower(m.movement) = 'direitos de subscrição - não exercido')
+        OR (a.class = 'fixed_income'
+            AND r.quantity > 0
+            AND SUM(CASE WHEN lower(m.direction) LIKE 'd%' THEN m.quantity
+                         WHEN lower(m.direction) LIKE 'c%' THEN -m.quantity
+                    END) FILTER (WHERE """ + _SQL_MOV_QUANTIDADE + """)
+                >= r.quantity
+            AND (r.foto_da_custodia_b3
+                 OR MAX(m.event_date) FILTER (WHERE """ + _SQL_MOV_QUANTIDADE + """)
+                    <= r.custodia_b3))
+"""
+
+_CTE_MOV_ENCERRADOS = """
+    mov_encerrados AS (
+        -- Prova de saida na Movimentacao da B3, posterior a foto que ganhou
+        -- o ranking (ver _SQL_MOV_PROVA_ENCERRAMENTO).
+        SELECT r.asset_id
+        FROM (
+            SELECT asset_id, MAX(report_date) AS report_date, SUM(quantity) AS quantity,
+                   BOOL_AND(""" + _SQL_FONTE_CUSTODIA_B3 + """) AS foto_da_custodia_b3,
+                   (SELECT MAX(s.report_date) FROM normalized_snapshots s
+                    WHERE """ + _SQL_B3_COM_RENDA_FIXA + """) AS custodia_b3
+            FROM ranked_snapshots
+            WHERE asset_source_rank = 1
+            GROUP BY asset_id
+        ) r
+        JOIN assets a ON a.id = r.asset_id
+        JOIN investment_movement_events m
+          ON m.user_id = :uid
+         AND m.event_date > r.report_date
+         AND """ + _SQL_MOV_DO_ATIVO + """
+        GROUP BY r.asset_id, r.quantity, r.foto_da_custodia_b3, r.custodia_b3, a.class
+        HAVING""" + _SQL_MOV_PROVA_ENCERRAMENTO + """    ),
+"""
+
+# Sem a tabela (ela nasce no primeiro upload da Movimentação, SQL 075) a CTE
+# fica vazia: o Postgres não aceita citar tabela ausente nem em ramo morto.
+_CTE_MOV_ENCERRADOS_VAZIA = """
+    mov_encerrados AS (SELECT asset_id FROM ranked_snapshots WHERE false),
+"""
+
 _SQL_POSICOES_SNAPSHOT = """
     -- Compatibilidade: a primeira versao do importador do Tesouro reutilizou
     -- o insert da XP e rotulou seis linhas como xp_consolidado. A origem real
@@ -414,18 +515,19 @@ _SQL_POSICOES_SNAPSHOT = """
     b3_encerrados AS (
         -- Soma lote padrao + fracionario da mesma data: encerrado e o ativo
         -- cuja ultima linha na custodia central nao tem nem quantidade nem
-        -- saldo.
+        -- saldo. O aluguel tomado (Tomador, negativo) e divida e fica fora
+        -- da soma: somado, zeraria a acao propria do mesmo papel.
         SELECT s.asset_id
         FROM normalized_snapshots s
         JOIN b3_ultima_linha u
           ON u.asset_id = s.asset_id
          AND u.report_date = s.report_date
         WHERE s.effective_source_table = 'b3_posicao_detalhada'
+          AND NOT (COALESCE(s.is_loaned, FALSE) AND s.quantity < 0)
         GROUP BY s.asset_id
         HAVING COALESCE(SUM(s.quantity), 0) = 0
            AND COALESCE(SUM(s.market_value), 0) = 0
-    ),
-    b3_cost_latest AS (
+    ),""" + _CTE_MOV_ENCERRADOS + """    b3_cost_latest AS (
         SELECT
             REGEXP_REPLACE(a.ticker, 'F$', '') AS base_ticker,
             MAX(s.report_date) AS report_date
@@ -515,8 +617,24 @@ _SQL_POSICOES_SNAPSHOT = """
     WHERE pps.user_id = :uid
       AND pps.asset_source_rank = 1
       AND pps.asset_id NOT IN (SELECT asset_id FROM b3_encerrados)
+      AND pps.asset_id NOT IN (SELECT asset_id FROM mov_encerrados)
     ORDER BY pps.market_value DESC
 """
+
+_SQL_POSICOES_SNAPSHOT_SEM_MOVIMENTACAO = _SQL_POSICOES_SNAPSHOT.replace(
+    _CTE_MOV_ENCERRADOS, _CTE_MOV_ENCERRADOS_VAZIA)
+
+
+def _tem_movimentacao(conn) -> bool:
+    """A tabela da Movimentação existe? `to_regclass` pergunta sem falhar.
+
+    Um SELECT na tabela ausente abortaria a transação inteira da carteira.
+    """
+    from sqlalchemy import text
+
+    return bool(conn.execute(
+        text("SELECT to_regclass('investment_movement_events') IS NOT NULL")
+    ).scalar())
 
 
 _SQL_POSICOES_EXTRAS_FORA_SNAPSHOT = """
@@ -562,16 +680,38 @@ _SQL_POSICOES_EXTRAS_FORA_SNAPSHOT = """
 """
 
 
-# Foto de custódia = extrato da B3 ou consolidado da corretora. A do Tesouro
-# (td-snap-, inclusive as seis linhas antigas rotuladas xp_consolidado) não
-# conta: ela não diz nada sobre ações e FIIs.
-_SQL_TEM_FOTO_DE_CUSTODIA = """
+# Foto de custódia = Posição ou extrato da B3, ou consolidado da corretora. A
+# do Tesouro (td-snap-, inclusive as seis linhas antigas rotuladas
+# xp_consolidado) não conta: ela não diz nada sobre ações e FIIs.
+_TEM_FOTO_DAS_FONTES = """
     SELECT EXISTS (
         SELECT 1
         FROM   portfolio_position_snapshots
         WHERE  user_id = :uid
           AND  COALESCE(source_id, '') NOT LIKE 'td-snap-%'
-          AND  source_table IN ('b3_posicao_detalhada', 'xp_consolidado', 'xp_positions')
+          AND  source_table IN ({fontes})
+    )
+"""
+
+# Carteira de hoje: com custódia, o recálculo das negociações não completa a
+# foto. A Posição da B3 consolida todas as corretoras; sem ela na lista, quem
+# só tinha a Posição recebia de volta pelo recálculo o CDB que a Movimentação
+# encerrou.
+_SQL_TEM_FOTO_DE_CUSTODIA = _TEM_FOTO_DAS_FONTES.format(
+    fontes="'b3_posicao', 'b3_posicao_detalhada', 'xp_consolidado', 'xp_positions'")
+
+# Curva: sem estas fontes, ela é remontada mês a mês pelas negociações. A
+# Posição da B3 segue de fora, como sempre esteve: uma exportação dá um ponto
+# só, e quem só tem ela perderia o histórico mensal.
+_SQL_TEM_CURVA_DE_CUSTODIA = _TEM_FOTO_DAS_FONTES.format(
+    fontes="'b3_posicao_detalhada', 'xp_consolidado', 'xp_positions'")
+
+# Foto existe mas a consulta volta vazia: tudo foi encerrado (zero da B3 ou
+# saída provada na Movimentação). É carteira vazia, não falta de dado -- cair
+# em portfolio_positions traria de volta o que a foto e a Movimentação fecharam.
+_SQL_TEM_FOTO = """
+    SELECT EXISTS (
+        SELECT 1 FROM portfolio_position_snapshots WHERE user_id = :uid
     )
 """
 
@@ -881,8 +1021,10 @@ def _carteira_real() -> dict:
             )
         """)).scalar())
         if has_snapshots:
-            rows = conn.execute(text(_SQL_POSICOES_SNAPSHOT), {"uid": owner}).fetchall()
-            if rows:
+            sql_snapshot = (_SQL_POSICOES_SNAPSHOT if _tem_movimentacao(conn)
+                            else _SQL_POSICOES_SNAPSHOT_SEM_MOVIMENTACAO)
+            rows = conn.execute(text(sql_snapshot), {"uid": owner}).fetchall()
+            if rows or conn.execute(text(_SQL_TEM_FOTO), {"uid": owner}).scalar():
                 return _carteira_snapshot_consolidada(conn, owner, rows)
         rows = conn.execute(text(_SQL_POSICOES), {"uid": owner}).fetchall()
         fx_compra = cambio_medio_de_aquisicao(conn, owner)
@@ -1838,6 +1980,37 @@ _SQL_EVOLUCAO_RATIO = """
     WHERE pp.user_id = :uid
 """
 
+# A mesma prova de _CTE_MOV_ENCERRADOS, vista de cada data de corte: só conta
+# o evento entre a foto vencedora e o corte, e só a Posição da B3 com Renda
+# Fixa até o corte confirma. Resgate de outubro não apaga o CDB de setembro da curva.
+_CTE_MOV_ENCERRADOS_POR_CORTE = """
+    mov_encerrados AS (
+        SELECT r.corte, r.asset_id
+        FROM (
+            SELECT rs.corte, rs.asset_id, MAX(rs.report_date) AS report_date,
+                   SUM(rs.quantity) AS quantity,
+                   BOOL_AND(rs.""" + _SQL_FONTE_CUSTODIA_B3 + """) AS foto_da_custodia_b3,
+                   (SELECT MAX(s.report_date) FROM normalized_snapshots s
+                    WHERE """ + _SQL_B3_COM_RENDA_FIXA + """
+                      AND s.report_date <= rs.corte) AS custodia_b3
+            FROM ranked_snapshots rs
+            WHERE rs.asset_source_rank = 1
+            GROUP BY rs.corte, rs.asset_id
+        ) r
+        JOIN assets a ON a.id = r.asset_id
+        JOIN investment_movement_events m
+          ON m.user_id = :uid
+         AND m.event_date > r.report_date
+         AND m.event_date <= r.corte
+         AND """ + _SQL_MOV_DO_ATIVO + """
+        GROUP BY r.corte, r.asset_id, r.quantity, r.foto_da_custodia_b3, r.custodia_b3, a.class
+        HAVING""" + _SQL_MOV_PROVA_ENCERRAMENTO + """    ),
+"""
+
+_CTE_MOV_ENCERRADOS_POR_CORTE_VAZIA = """
+    mov_encerrados AS (SELECT corte, asset_id FROM ranked_snapshots WHERE false),
+"""
+
 _SQL_EVOLUCAO_SNAPSHOTS = """
     -- Serie temporal de patrimonio: cada ponto e a carteira montada com a
     -- MESMA regra de _SQL_POSICOES_SNAPSHOT (o ponto de hoje), so que vista
@@ -1851,7 +2024,11 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
     --   2. por ativo, a foto mais recente; empate na data vai para a fonte de
     --      mais autoridade -- o CASE e o mesmo de _SQL_POSICOES_SNAPSHOT, e
     --      test_patrimonio_dashboard_vs_historico.py falha se divergir;
-    --   3. ativo cuja ultima linha da B3 ate D veio zerada esta vendido.
+    --   3. ativo cuja ultima linha da B3 ate D veio zerada esta vendido;
+    --   4. ativo cuja saida a Movimentacao da B3 prova entre a foto e D
+    --      tambem (mov_encerrados);
+    --   5. se 3 e 4 encerram tudo o que havia no pais, D sai com zero
+    --      (cortes_zerados), e nao some da curva.
     -- As linhas do Tesouro gravadas com rotulo xp_consolidado (source_id
     -- td-snap-%) contam como tesouro_direto, como no ponto de hoje: na mesma
     -- data do consolidado o desempate fica com uma so, e o Tesouro nao soma
@@ -1925,11 +2102,12 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
           ON s.asset_id = u.asset_id
          AND s.report_date = u.report_date
         WHERE s.effective_source_table = 'b3_posicao_detalhada'
+          -- Tomador fora da soma, como no ponto de hoje.
+          AND NOT (COALESCE(s.is_loaned, FALSE) AND s.quantity < 0)
         GROUP BY u.corte, s.asset_id
         HAVING COALESCE(SUM(s.quantity), 0) = 0
            AND COALESCE(SUM(s.market_value), 0) = 0
-    ),
-    xp_snaps AS (
+    ),""" + _CTE_MOV_ENCERRADOS_POR_CORTE + """    xp_snaps AS (
         SELECT
             pps.corte AS report_date,
             SUM(pps.market_value) FILTER (WHERE pps.market_value > 0) AS vm,
@@ -1948,6 +2126,10 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
               SELECT 1 FROM b3_encerrados e
               WHERE e.corte = pps.corte AND e.asset_id = pps.asset_id
           )
+          AND NOT EXISTS (
+              SELECT 1 FROM mov_encerrados e
+              WHERE e.corte = pps.corte AND e.asset_id = pps.asset_id
+          )
           -- Exterior fica de fora: _exterior_nas_datas o recompoe pelas notas
           -- da Nomad em cada data. A foto da Nomad (source_system 'nomad',
           -- gravada com a data em que o script rodou) somada aqui contava o
@@ -1955,6 +2137,24 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
           -- frente, com preco e cambio daquele dia.
           AND upper(coalesce(a.currency, 'BRL')) <> 'USD'
         GROUP BY pps.corte
+    ),
+    -- Corte em que tudo o que havia no pais foi encerrado, pelo zero do
+    -- extrato ou pela Movimentacao: e carteira vazia, nao falta de foto. O
+    -- ponto fica, com zero, e _exterior_nas_datas soma o exterior da data --
+    -- sem a data ele nem e recomposto. Linha que sobra sem valor (foto sem
+    -- preco) nao e encerramento, e o corte continua de fora.
+    cortes_zerados AS (
+        SELECT pps.corte
+        FROM ranked_snapshots pps
+        JOIN assets a ON a.id = pps.asset_id
+        LEFT JOIN b3_encerrados be
+          ON be.corte = pps.corte AND be.asset_id = pps.asset_id
+        LEFT JOIN mov_encerrados me
+          ON me.corte = pps.corte AND me.asset_id = pps.asset_id
+        WHERE pps.asset_source_rank = 1
+          AND upper(coalesce(a.currency, 'BRL')) <> 'USD'
+        GROUP BY pps.corte
+        HAVING BOOL_AND(be.asset_id IS NOT NULL OR me.asset_id IS NOT NULL)
     )
     SELECT
         x.report_date AS mes,
@@ -1962,8 +2162,14 @@ _SQL_EVOLUCAO_SNAPSHOTS = """
         x.vi AS valor_investido_snapshot
     FROM xp_snaps x
     WHERE x.vm > 0
-    ORDER BY x.report_date
+    UNION ALL
+    SELECT z.corte, 0, 0
+    FROM cortes_zerados z
+    ORDER BY 1
 """
+
+_SQL_EVOLUCAO_SNAPSHOTS_SEM_MOVIMENTACAO = _SQL_EVOLUCAO_SNAPSHOTS.replace(
+    _CTE_MOV_ENCERRADOS_POR_CORTE, _CTE_MOV_ENCERRADOS_POR_CORTE_VAZIA)
 
 # Exterior (Nomad) nas datas das fotos da B3. A B3 nao enxerga a Nomad, entao
 # o ponto historico e recomposto: quantidade pelas notas de corretagem ate a
@@ -2267,27 +2473,33 @@ def _evolucao_real() -> dict:
             )
         """)).scalar())
         if has_snapshots:
-            snap_rows = conn.execute(text(_SQL_EVOLUCAO_SNAPSHOTS), {"uid": owner}).fetchall()
+            tem_movimentacao = _tem_movimentacao(conn)
+            snap_rows = conn.execute(text(
+                _SQL_EVOLUCAO_SNAPSHOTS if tem_movimentacao
+                else _SQL_EVOLUCAO_SNAPSHOTS_SEM_MOVIMENTACAO
+            ), {"uid": owner}).fetchall()
             if snap_rows:
                 div_rows = conn.execute(text(_SQL_EVOLUCAO_DIV), {"uid": owner}).fetchall()
                 tx_rows = conn.execute(text(_SQL_EVOLUCAO_TX), {"uid": owner}).fetchall()
-                current_rows = conn.execute(text(_SQL_POSICOES_SNAPSHOT), {"uid": owner}).fetchall()
+                current_rows = conn.execute(text(
+                    _SQL_POSICOES_SNAPSHOT if tem_movimentacao
+                    else _SQL_POSICOES_SNAPSHOT_SEM_MOVIMENTACAO
+                ), {"uid": owner}).fetchall()
                 # A evolucao compara custo com mercado; se o custo da tela
                 # vem da declaracao do usuario, o da curva tem de vir dela
                 # tambem -- duas respostas para "quanto custou" e um degrau
                 # inexplicavel no grafico.
                 # O ponto de hoje e o mesmo Patrimonio Total do Dashboard,
                 # exterior incluido: a mesma pergunta com duas montagens dava
-                # dois numeros.
-                current_totals = (
-                    _carteira_snapshot_consolidada(conn, owner, current_rows)
-                    if current_rows else None
-                )
+                # dois numeros. Ha foto (snap_rows), entao current_rows vazio
+                # e carteira encerrada, e o ponto de hoje vale o que ela vale
+                # -- como em _carteira_real (_SQL_TEM_FOTO).
+                current_totals = _carteira_snapshot_consolidada(conn, owner, current_rows)
                 # Sem foto de custodia (so o relatorio do Tesouro), as fotos dao
                 # um ponto so; a carteira e remontada mes a mes pelas
                 # negociacoes e movimentacoes.
                 reconstruidos = None
-                if not conn.execute(text(_SQL_TEM_FOTO_DE_CUSTODIA), {"uid": owner}).scalar():
+                if not conn.execute(text(_SQL_TEM_CURVA_DE_CUSTODIA), {"uid": owner}).scalar():
                     reconstruidos = _pontos_reconstruidos(conn, owner)
                     if reconstruidos:
                         snap_rows = [

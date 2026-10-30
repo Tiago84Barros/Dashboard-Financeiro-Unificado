@@ -24,6 +24,7 @@ perfeicao no que nao se olhou foi o defeito A-124, e ele nao se repete aqui.
 from __future__ import annotations
 
 import logging
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
@@ -85,6 +86,18 @@ def _metodologia(est, peso: float, sufixo: str = "") -> "Componente":
 # "confianca" de uma tela que ninguem tinha medido.
 PESOS_MEDICAO = {"Integridade": 0.35, "Frescor": 0.25}
 
+# Desde 29/10/2026 o chat do ativo de Empresas B3 e de FIIs cita o pregao diario
+# do COTAHIST (``core/pregoes_recentes.py``), e nao mais so o preco que o motor
+# da tela le. A tela passou a mostrar dois precos, entao o bloco de frescor
+# (0,25) foi repartido entre os dois -- repartido, nao ampliado, como no EUA
+# (A-153). O pregao vem de arquivo publicado: segue medido com o banco fora,
+# entao fica fora dos pesos que ``_declarar_nao_medidos`` completa.
+PREGAO_DO_CHAT = "Pregão diário (chat)"
+PESO_PREGAO_DO_CHAT = 0.05
+PESOS_COM_PREGAO = {"Integridade": 0.35, "Frescor": 0.20}  # 0,20 + 0,05 = 0,25
+#: Dias uteis de atraso com que o pregao do chat ja vale zero.
+PREGAO_VELHO_UTEIS = 10
+
 
 def _declarar_nao_medidos(comps: list["Componente"], motivo: str,
                           pesos: dict[str, float] | None = None
@@ -106,9 +119,40 @@ def _declarar_nao_medidos(comps: list["Componente"], motivo: str,
 FAIXA_ALTA = 75.0
 FAIXA_MEDIA = 55.0
 
-# Secoes que nao fazem afirmacao sobre dado (navegacao, texto, ajuste).
-# Declarar "nao se aplica" e diferente de declarar 0%.
-SECOES_SEM_AFIRMACAO = ("Documentacao", "Configuracoes")
+# Telas do menu que nao fazem afirmacao sobre dado (ajuste, texto, mapa).
+# Declarar "nao se aplica" e diferente de declarar 0%, e a tela de Grau de
+# Confianca escreve a declaracao: tela ausente pareceria tela sem problema.
+# A Documentacao saiu daqui em 29/10/2026: deixou de ser rota em 24/09 e
+# vive dentro de Configuracoes.
+SECOES_SEM_AFIRMACAO = ("Configurações",)
+
+# Subabas cujo numero a nota da tela NAO mede. A nota de uma tela e a do dado
+# que o motor dela le; subaba que mostra outro dado fica fora, e o card diz
+# isso -- sem a declaracao, 80% em "Empresas B3" parece valer tambem para a
+# Previsao de Lucros, que nenhum componente olha.
+#   * Previsao de Lucros: projecao de LPA, modelo proprio fora do indice.
+#   * Carteira 20: registro imutavel e desempenho diario publicados a parte.
+#   * Inteligencia dos Ativos: estrategia, politicas e LLM; a nota de
+#     Investimentos so mede o registro de operacoes.
+# Subaba nova entra aqui ou fica coberta pela nota, decidido no mesmo PR
+# (``tests/test_configuracoes_sincronizadas.py``).
+SUBABAS_FORA_DA_NOTA: dict[str, tuple[str, ...]] = {
+    "Empresas B3": ("Previsão de Lucros", "Carteira 20"),
+    "Investimentos": ("Inteligência dos Ativos",),
+}
+
+
+def _dobra(nome: str) -> str:
+    base = unicodedata.normalize("NFKD", nome)
+    return "".join(c for c in base if not unicodedata.combining(c)).casefold()
+
+
+def fora_da_nota(secao: str) -> tuple[str, ...]:
+    """Subabas fora da nota de ``secao``. Compara sem acento porque a medicao
+    gravada antes de 29/10/2026 traz "Selecao de FIIs" e "Portfolio Global"."""
+    alvo = _dobra(secao)
+    return next((abas for nome, abas in SUBABAS_FORA_DA_NOTA.items()
+                 if _dobra(nome) == alvo), ())
 
 
 @dataclass(frozen=True)
@@ -306,12 +350,35 @@ def _frescor_pct(dias: int | None, fresco: int, velho: int) -> float | None:
 
 def _abrangencia(u: Universo | None) -> Componente:
     if u is None or not u.investivel:
-        return Componente("Abrangencia", None, 0.15,
+        return Componente("Abrangência", None, 0.15,
                           "universo nao pode ser medido")
     return Componente(
-        "Abrangencia", u.share_apto * 100.0, 0.15,
+        "Abrangência", u.share_apto * 100.0, 0.15,
         f"{u.apto} de {u.investivel} ativos negociaveis sustentam decisao",
     )
+
+
+def _pregao_do_chat(hoje: date | None = None) -> Componente:
+    """Idade do pregao diario que o chat do ativo cita.
+
+    Le o mesmo arquivo que o chat le, com a regua do cabecalho que ele recebe:
+    ate ``ATRASO_UTEIS`` dias uteis e o atraso normal da B3. Arquivo ausente e
+    medicao, nao falta dela: o chat fica so com o fechamento mensal, e diz isso.
+    """
+    from core import pregoes_recentes as pr
+    peso = PESO_PREGAO_DO_CHAT
+    art = pr.carregar()
+    base = art.get("base_ate") or (art.get("pregoes") or [None])[-1]
+    if not base:
+        return Componente(PREGAO_DO_CHAT, 0.0, peso,
+                          "arquivo pregoes_recentes_b3 ausente ou ilegivel: o chat "
+                          "do ativo fica so com o fechamento mensal")
+    ref = date.fromisoformat(base)
+    atraso = pr.dias_uteis_entre(ref, hoje or date.today())
+    return Componente(
+        PREGAO_DO_CHAT, _frescor_pct(atraso, pr.ATRASO_UTEIS, PREGAO_VELHO_UTEIS), peso,
+        f"chat do ativo cita {len(art.get('pregoes') or [])} pregoes do COTAHIST ate "
+        f"{ref:%d/%m}, {atraso} dias uteis atras; fechamento bruto, so B3 e FII")
 
 
 def _scalar(conn, sql: str, params: dict | None = None):
@@ -356,14 +423,18 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
                     # calibracao apertada: e o feed de cotacoes parado, e a
                     # acao correspondente e rodar a ingestao.
                     comps.append(Componente(
-                        "Frescor", _frescor_pct(mediana, 3, 30), 0.25,
+                        "Frescor", _frescor_pct(mediana, 3, 30),
+                        PESOS_COM_PREGAO["Frescor"],
                         f"preco mediano com {mediana} dias"
                         + (" - ingestao de cotacoes parada" if mediana > 30 else "")))
     except Exception as exc:  # noqa: BLE001
         logger.warning("confianca B3: %s", exc)
         notas.append(f"indice de confianca indisponivel: {type(exc).__name__}")
-        _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}")
-    _declarar_nao_medidos(comps, "nao medido: sem ticker apto no indice")
+        _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}",
+                              PESOS_COM_PREGAO)
+    comps.append(_pregao_do_chat())
+    _declarar_nao_medidos(comps, "nao medido: sem ticker apto no indice",
+                          PESOS_COM_PREGAO)
 
     comps.append(_abrangencia(u))
 
@@ -393,7 +464,7 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
             dias = _dias_desde(_scalar(conn, """
                 SELECT max(updated_at) FROM market.fiis WHERE price > 0"""))
             comps.append(Componente(
-                "Frescor", _frescor_pct(dias, 3, 30), 0.25,
+                "Frescor", _frescor_pct(dias, 3, 30), PESOS_COM_PREGAO["Frescor"],
                 (f"cadastro atualizado ha {dias} dias"
                  + (" - ingestao parada" if dias > 30 else ""))
                 if dias is not None else "sem carimbo de atualizacao"))
@@ -406,8 +477,11 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         logger.warning("confianca FII: %s", exc)
         notas.append(f"medicao parcial: {type(exc).__name__}")
-        _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}")
-    _declarar_nao_medidos(comps, "nao medido: universo investivel vazio")
+        _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}",
+                              PESOS_COM_PREGAO)
+    comps.append(_pregao_do_chat())
+    _declarar_nao_medidos(comps, "nao medido: universo investivel vazio",
+                          PESOS_COM_PREGAO)
 
     comps.append(_abrangencia(u))
     # Le o certificado que a PRODUCAO enxerga, nao o que o armazem local sabe.
@@ -425,7 +499,7 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Metodologia validada", None, 0.25,
                                 f"nao medido: {type(exc).__name__}"))
-    return ConfiancaSecao("Selecao de FIIs", tuple(comps), u, tuple(notas))
+    return ConfiancaSecao("Seleção de FIIs", tuple(comps), u, tuple(notas))
 
 
 def confianca_us(engine=None) -> ConfiancaSecao:
@@ -490,15 +564,15 @@ def confianca_us(engine=None) -> ConfiancaSecao:
             # Vitrine na versao corrente vale 100 e decai com a idade da
             # geracao; fora da versao corrente e teto de 50 por construcao.
             comps.append(Componente(
-                "Vitrine na versao corrente", _frescor_pct(idade, 30, 180), 0.10,
+                "Vitrine na versão corrente", _frescor_pct(idade, 30, 180), 0.10,
                 f"vitrine score_version {_ver} gerada ha {idade} dias, "
                 f"{na_versao} empresas"))
         else:
             comps.append(Componente(
-                "Vitrine na versao corrente", 50.0, 0.10,
+                "Vitrine na versão corrente", 50.0, 0.10,
                 f"nenhuma empresa na versao corrente {_ver}"))
     except Exception as exc:  # noqa: BLE001
-        comps.append(Componente("Vitrine na versao corrente", None, 0.10,
+        comps.append(Componente("Vitrine na versão corrente", None, 0.10,
                                 f"nao medido: {type(exc).__name__}"))
 
     # A-153: ate 27/08/2026 o componente ACIMA se chamava "Metodologia
@@ -547,7 +621,7 @@ def confianca_portfolio_global(engine=None) -> ConfiancaSecao:
             dias = _dias_desde(_scalar(conn,
                                "SELECT max(updated_at) FROM public.portfolio_positions"))
         comps.append(Componente(
-            "Posicoes registradas", 100.0 if posicoes else 0.0, 0.20,
+            "Posições registradas", 100.0 if posicoes else 0.0, 0.20,
             f"{posicoes} posicoes na carteira"))
         comps.append(Componente(
             "Frescor", _frescor_pct(dias, 7, 60), 0.20,
@@ -560,7 +634,7 @@ def confianca_portfolio_global(engine=None) -> ConfiancaSecao:
     comps.append(Componente(
         "Cobertura de risco declarada", 100.0, 0.15,
         "painel informa peso coberto e motivo por simbolo (A-133)"))
-    return ConfiancaSecao("Portfolio Global", tuple(comps), None, tuple(notas))
+    return ConfiancaSecao("Portfólio Global", tuple(comps), None, tuple(notas))
 
 
 # ── secoes de controle pessoal ───────────────────────────────────────────────
@@ -589,10 +663,10 @@ def _confianca_pessoal(engine, secao: str, tabela: str, col_data: str,
                 cat = int(_scalar(conn, f"""SELECT count(*) FROM {tabela}
                                             WHERE {col_categoria} IS NOT NULL""") or 0)
                 comps.append(Componente(
-                    "Classificacao", 100.0 * cat / n, 0.35,
+                    "Classificação", 100.0 * cat / n, 0.35,
                     f"{cat} de {n} lancamentos categorizados"))
             elif col_categoria:
-                comps.append(Componente("Classificacao", None, 0.35,
+                comps.append(Componente("Classificação", None, 0.35,
                                         "sem lancamento para classificar"))
     except Exception as exc:  # noqa: BLE001
         logger.warning("confianca %s: %s", secao, exc)
@@ -639,7 +713,7 @@ def confianca_controle_financeiro(engine=None) -> ConfiancaSecao:
                 # monotona possivel aqui.
                 relevancia = (_frescor_pct(dias, 30, 240) or 0.0) / 100.0
                 comps.append(Componente(
-                    "Conciliacao bancaria", 100.0 * conf / n, 0.20 * relevancia,
+                    "Conciliação bancária", 100.0 * conf / n, 0.20 * relevancia,
                     f"{conf} de {n} movimentos conferidos; ultimo ha {dias} "
                     f"dias, entao pesa {relevancia:.0%} do previsto"))
                 if dias is not None and dias > 90:
@@ -683,8 +757,8 @@ _SECOES = (
     ("Investimentos", confianca_investimentos),
     ("Empresas B3", confianca_b3),
     ("Empresas Americanas", confianca_us),
-    ("Selecao de FIIs", confianca_fii),
-    ("Portfolio Global", confianca_portfolio_global),
+    ("Seleção de FIIs", confianca_fii),
+    ("Portfólio Global", confianca_portfolio_global),
 )
 
 
@@ -699,7 +773,7 @@ def relatorio(engine=None) -> list[ConfiancaSecao]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("relatorio: secao %s falhou: %s", nome, exc)
             saida.append(ConfiancaSecao(
-                nome, (Componente("Medicao", None, 1.0,
+                nome, (Componente("Medição", None, 1.0,
                                   f"falhou: {type(exc).__name__}"),),
                 notas=("secao nao pode ser medida nesta execucao",)))
     return saida

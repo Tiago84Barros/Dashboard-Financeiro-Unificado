@@ -1192,7 +1192,7 @@ def _render_chat_financeiro(
         )
         return
 
-    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
+    provider_labels = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
     detalhe_tecnico(
         "Provedor(es) LLM: " + ", ".join(
             provider_labels.get(p, p) for p in provedores_disponiveis()),
@@ -1228,9 +1228,13 @@ def _render_chat_financeiro(
             clear_chat_history(_memory_key, session_key="cf_chat_history")
             st.rerun()
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     history = load_chat_history(_memory_key, session_key="cf_chat_history")
     for msg in visible_chat_history(history, "cf_chat_history"):
-        with st.chat_message(msg["role"]):
+        with conversa.chat_message(msg["role"]):
             st.markdown(escapar_cifrao(msg["content"]))
             for direc in msg.get("_charts", []) or []:
                 try:
@@ -1247,10 +1251,10 @@ def _render_chat_financeiro(
         return
 
     history.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(user_input))
 
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         chart_directives: list[dict] = []
         chart_meta: dict = {}
         aviso_ancoragem = ""
@@ -3518,7 +3522,7 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
         )
         return
 
-    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
+    provider_labels = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
     detalhe_tecnico(
         "Provedor(es) LLM: " + ", ".join(
             provider_labels.get(p, p) for p in provedores_disponiveis()),
@@ -3557,9 +3561,13 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
             clear_chat_history(_memory_key, session_key="cc_chat_history")
             st.rerun()
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     history = load_chat_history(_memory_key, session_key="cc_chat_history")
     for msg in visible_chat_history(history, "cc_chat_history"):
-        with st.chat_message(msg["role"]):
+        with conversa.chat_message(msg["role"]):
             st.markdown(escapar_cifrao(msg["content"]))
             for direc in msg.get("_charts", []) or []:
                 try:
@@ -3573,10 +3581,10 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
         return
 
     history.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(user_input))
 
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         chart_directives: list[dict] = []
         chart_meta: dict = {}
         aviso_ancoragem = ""

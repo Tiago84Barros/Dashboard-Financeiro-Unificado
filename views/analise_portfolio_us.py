@@ -1055,9 +1055,13 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
 
     _memory_key = conversation_key("apus", ",".join(
         sorted(str(item.get("ticker") or "") for item in model.get("items", []))))
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     historico = load_chat_history(_memory_key, session_key=_CHAT)
     for msg in visible_chat_history(historico, _CHAT):
-        with st.chat_message(msg["role"]):
+        with conversa.chat_message(msg["role"]):
             st.markdown(escapar_cifrao(msg["content"]))
 
     pergunta = st.chat_input("Pergunte sobre o portfólio…", key="apus_chat_input")
@@ -1065,10 +1069,10 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
         return
 
     historico.append({"role": "user", "content": pergunta})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(pergunta))
 
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         aviso = ""
         with st.spinner("Consultando carteira, universo americano e indústrias…"):
             try:
@@ -1244,7 +1248,7 @@ def render(show_header: bool = True) -> None:
 
     provedores = provedores_disponiveis()
     if provedores:
-        rotulos = {"openai": "OpenAI", "gemini": "Gemini"}
+        rotulos = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
         detalhe_tecnico(
             "Provedores LLM ativos (com fallback automático): "
             + " → ".join(rotulos.get(p, p) for p in provedores),

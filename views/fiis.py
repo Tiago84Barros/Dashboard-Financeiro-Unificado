@@ -9,7 +9,9 @@ Abas (como Empresas B3, com as particularidades de FII):
   2. Busca de ativo — detalhe por FII: histórico (P/VP·VPA), vacância, composição
                       e carteira de imóveis com região (tijolo/logística).
   3. Carteira-modelo — seleção diversificada por tipo (tijolo/papel/fof/híbrido).
-  4. Backtest        — retorno total (preço + proventos reinvestidos) da carteira.
+  4. Retrospectiva   — retorno total (preço + proventos reinvestidos) da carteira.
+  5. Revisão de dados — decisão humana, versionada, sobre valores extraídos de
+                        relatório gerencial antes de virarem dado aceito.
 
 Fonte nativa do market.* (BRAPI Pro + CVM Informe Mensal). FII não tem DRE/ROE.
 """
@@ -1289,7 +1291,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
         return
 
     providers = provedores_disponiveis()
-    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
+    provider_labels = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
     detalhe_tecnico("Provedor disponível: " + ", ".join(
         provider_labels.get(provider, provider) for provider in providers),
         codigo="fii.chat_provedor")
@@ -1325,9 +1327,13 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                          width="stretch"):
                 suggested_input = question
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     history = load_chat_history(memory_key, session_key="fii_chat_history")
     for message in visible_chat_history(history, "fii_chat_history"):
-        with st.chat_message(message["role"]):
+        with conversa.chat_message(message["role"]):
             st.markdown(escapar_cifrao(message["content"]))
 
     typed_input = st.chat_input(
@@ -1337,9 +1343,9 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
         return
 
     history.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(user_input))
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         aviso = ""
         with st.spinner("Consultando seleção, pares, cenário e qualidade dos dados…"):
             try:
@@ -1360,7 +1366,8 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                 detalhe = get_warehouse_detail_context(alvos)
                 if detalhe:
                     context = context + "\n\n" + detalhe
-                context = context + "\n\n" + bloco_contexto_mercado()
+                context = context + "\n\n" + bloco_contexto_mercado(
+                    tickers_movimento=alvos)
                 # Citados primeiro, depois a seleção por peso: o mesmo
                 # veredito da Inteligência dos Ativos, conferido na resposta.
                 context, avaliacoes = veredito.anexar(

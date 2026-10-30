@@ -27,7 +27,8 @@ from core.llm_grounding import aviso_ancoragem
 from core.utils import escapar_cifrao
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 
-_PROVEDOR_LABEL = {"openai": "OpenAI", "gemini": "Gemini", "openrouter": "OpenRouter"}
+_PROVEDOR_LABEL = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini",
+                   "openrouter": "OpenRouter"}
 
 _SUGESTOES: dict[str, tuple[str, ...]] = {
     "acoes": (
@@ -229,17 +230,27 @@ def render_chat_carteira(
                              width="stretch"):
                     sugerida = pergunta
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     historico = load_chat_history(memory_key, session_key=hist_key)
     for mensagem in visible_chat_history(historico, hist_key):
-        with st.chat_message(mensagem["role"]):
+        with conversa.chat_message(mensagem["role"]):
             st.markdown(escapar_cifrao(mensagem["content"]))
+
+    # Sempre desenhada, também no dossiê: antes ela sumia enquanto ele era gerado.
+    digitada = st.chat_input(
+        _PLACEHOLDER.get(classe, _PLACEHOLDER["acoes"]),
+        key=f"chat_carteira_{classe}_input",
+    )
 
     if gerar:
         pedido = "Gerar o dossiê completo desta classe."
         historico.append({"role": "user", "content": pedido})
-        with st.chat_message("user"):
+        with conversa.chat_message("user"):
             st.markdown(pedido)
-        with st.chat_message("assistant"):
+        with conversa.chat_message("assistant"):
             aviso = ""
             with st.spinner("Montando o dossiê — concentração, pares, "
                             "substituições, tributação e plano de aporte…"):
@@ -268,18 +279,14 @@ def render_chat_carteira(
         save_chat_history(memory_key, historico, session_key=hist_key)
         return
 
-    digitada = st.chat_input(
-        _PLACEHOLDER.get(classe, _PLACEHOLDER["acoes"]),
-        key=f"chat_carteira_{classe}_input",
-    )
     pergunta = sugerida or digitada
     if not pergunta:
         return
 
     historico.append({"role": "user", "content": pergunta})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(pergunta))
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         aviso = ""
         with st.spinner("Consultando carteira, macro, curva e noticiário…"):
             try:

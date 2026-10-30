@@ -1,6 +1,6 @@
 """
 views/configuracoes_restricoes.py
-Aba "Restrições" de Configurações — só o administrador vê.
+Aba "Restrições" de Configurações — a mesma para toda conta desde 12/10/2026.
 
 Desde 05/10/2026 nenhuma tela de uso mostra limitação técnica, fonte fora do
 ar, procedência ou versão de metodologia: tudo isso é registrado em silêncio

@@ -13,7 +13,7 @@ Desde 21/09/2026 a tela **lê** a última medição gravada em
 ``confianca_snapshots`` e só remede quando o usuário pede. Ela vive dentro de
 uma aba, e ``st.tabs`` executa o corpo de todas as abas em toda execução do
 script: enquanto ``relatorio()`` era chamado daqui, abrir Configurações para
-qualquer outra coisa pagava as sete seções e os três motores.
+qualquer outra coisa pagava todas as seções e os três motores.
 
 Apresentação
 ------------
@@ -38,8 +38,10 @@ from core import confianca_snapshot
 from core.confianca_secao import (
     FAIXA_ALTA,
     FAIXA_MEDIA,
+    SECOES_SEM_AFIRMACAO,
     ConfiancaSecao,
     confianca_global,
+    fora_da_nota,
     relatorio,
 )
 from core.user_context import user_cache_data
@@ -293,6 +295,13 @@ _CONF_CSS = """
     line-height: 1.4;
 }
 .conf-card-rodape div + div { margin-top: 4px; }
+.conf-nao-aplica {
+    margin-top: 12px;
+    color: var(--app-muted, #8A99AE);
+    font-size: .74rem;
+    line-height: 1.45;
+}
+.conf-nao-aplica b { color: var(--app-text, #E2E8F0); }
 .conf-rigor {
     overflow-x: auto;
     border: 1px solid var(--app-border, rgba(148,163,184,.14));
@@ -413,6 +422,12 @@ def _card(sec: ConfiancaSecao) -> str:
             f'<div>Percentual apoiado em {cobertura * 100:.0f}% '
             'do peso avaliado — o restante não pôde ser medido.</div>')
     rodape += [f'<div>⚠ {html.escape(n)}</div>' for n in sec.notas]
+    fora = fora_da_nota(sec.secao)
+    if fora:
+        # A nota e do dado que o motor da tela le; subaba que mostra outro dado
+        # nao herda o percentual, e o card diz qual e.
+        rodape.append('<div>Fora desta nota: '
+                      f'{html.escape(", ".join(fora))}.</div>')
     rodape_html = (f'<div class="conf-card-rodape">{"".join(rodape)}</div>'
                    if rodape else "")
     return (
@@ -435,6 +450,18 @@ def _cards_html(secoes) -> str:
     """
     return ('<section class="conf-cards">'
             + "".join(_card(s) for s in secoes) + "</section>")
+
+
+def _sem_afirmacao_html() -> str:
+    """As telas do menu sem nota, escritas -- tela ausente parece tela sem
+    problema, e "não se aplica" é diferente de 0%."""
+    if not SECOES_SEM_AFIRMACAO:
+        return ""
+    nomes = ", ".join(SECOES_SEM_AFIRMACAO)
+    return ('<div class="conf-nao-aplica">'
+            f'<b>{html.escape(nomes)}</b>: não se aplica. A tela ajusta, explica '
+            "e mapeia o app; não afirma número sobre dado, e por isso não tem "
+            "nota — o que é diferente de nota zero.</div>")
 
 
 _SIMBOLO = {True: ("✓", "var(--app-primary)"),
@@ -520,7 +547,7 @@ def _medir_e_gravar() -> None:
     Fica atrás do botão porque ``st.tabs`` não adia nada: o Streamlit executa o
     corpo de todas as abas em toda execução do script. Enquanto esta função era
     chamada direto do corpo da tela, abrir Configurações para mexer em qualquer
-    outra coisa pagava as sete seções e os três motores.
+    outra coisa pagava todas as seções e os três motores.
     """
     with st.spinner("Medindo cada seção — isto consulta o banco e demora."):
         secoes = relatorio()
@@ -568,7 +595,7 @@ def _carimbo_html(medido_em, secoes) -> str:
 def _hero_html(geral: float | None, secoes) -> str:
     """O número do app, com a distribuição que o sustenta ao lado.
 
-    A manchete sozinha não diz se o 71% vem de sete seções parecidas ou de duas
+    A manchete sozinha não diz se o 71% vem de seções parecidas ou de duas
     altas carregando três baixas. Os chips por faixa respondem isso sem exigir
     que se leia a grade inteira.
     """
@@ -659,8 +686,8 @@ def render_corpo() -> None:
     estado.markdown(_carimbo_html(medido_em, secoes), unsafe_allow_html=True)
     if acao.button("🔄 Recalcular", key="confianca_recalcular",
                    width="stretch",
-                   help="Remede as sete seções e os três motores. Consulta o "
-                        "banco e leva alguns minutos."):
+                   help="Remede todas as seções e os três motores. Consulta "
+                        "o banco e leva alguns minutos."):
         try:
             _medir_e_gravar()
         except confianca_snapshot.TabelaAusente as exc:
@@ -678,7 +705,7 @@ def render_corpo() -> None:
             "zero.",
             f"{len(secoes)} seções",
             "var(--app-primary, #00C896)",
-        ) + _cards_html(secoes),
+        ) + _cards_html(secoes) + _sem_afirmacao_html(),
         unsafe_allow_html=True,
     )
 

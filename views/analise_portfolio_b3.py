@@ -1417,18 +1417,22 @@ def _render_chat(model: dict, state: dict, macro_hist: dict,
             st.rerun()
 
     _memory_key = conversation_key("apb3", ",".join(tickers_tuple))
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     history = load_chat_history(_memory_key, session_key="apb3_chat_history")
     for msg in visible_chat_history(history, "apb3_chat_history"):
-        with st.chat_message(msg["role"]):
+        with conversa.chat_message(msg["role"]):
             st.markdown(escapar_cifrao(msg["content"]))
 
     user_input = st.chat_input("Pergunte sobre o portfólio…", key="apb3_chat_input")
     if user_input:
         history.append({"role": "user", "content": user_input})
-        with st.chat_message("user"):
+        with conversa.chat_message("user"):
             st.markdown(escapar_cifrao(user_input))
 
-        with st.chat_message("assistant"):
+        with conversa.chat_message("assistant"):
             chart_directives: list[dict] = []
             chart_meta: dict = {}
             aviso = ""
@@ -1590,7 +1594,7 @@ def render(show_header: bool = True) -> None:
 
     _provs = provedores_disponiveis()
     if _provs:
-        _lbl = {"openai": "OpenAI", "gemini": "Gemini"}
+        _lbl = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
         _txt = " → ".join(_lbl.get(p, p) for p in _provs)
         detalhe_tecnico(f"Provedores LLM ativos (com fallback automático): {_txt}",
                         codigo="portfolio_b3.analise_provedores_llm")

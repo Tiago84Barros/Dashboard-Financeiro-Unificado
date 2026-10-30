@@ -328,6 +328,27 @@ def _resolver_o_tema_para_pintar() -> str:
         return _LEMBRADO.get(uid) or tema_do_navegador(uid) or "dark"
 
 
+def tema_pintado() -> str:
+    """O tema que ESTA execução pintou no topo de ``app.py``.
+
+    Para quem desenha fora do alcance de ``aplicar_tema``: o ``components.html``
+    roda num iframe, que não herda o CSS do app, e precisa receber a cor
+    escolhida por fora -- senão segue o tema do sistema operacional e fica
+    escuro dentro de uma página clara.
+
+    Lê a marca que :func:`tema_para_pintar` deixou em vez de resolver de novo.
+    Resolver duas vezes na mesma execução pode dar duas respostas -- é o caso
+    que :func:`_repintar_se_divergiu` existe para consertar --, e o iframe
+    precisa da cor que a página em volta recebeu, não de uma segunda opinião.
+    Sem a marca (execução que não passou pelo topo de ``app.py``), resolve
+    pelo mesmo caminho.
+    """
+    pintado = st.session_state.get(_PINTADO)
+    if pintado in ("dark", "light"):
+        return pintado
+    return tema_para_pintar()
+
+
 def _persist_choice() -> None:
     """Grava a escolha no callback do widget, e não depois de lê-lo.
 

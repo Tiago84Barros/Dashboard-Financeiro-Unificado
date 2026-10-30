@@ -114,8 +114,9 @@ METODO = {
     "b3": ("Anual. P/L = fechamento do último pregão do ano na fita da B3 "
            "(sem retroajuste) ÷ LPA publicado do exercício; valor de mercado "
            "do exercício = fechamento × (lucro ÷ LPA); P/VP = esse valor ÷ "
-           "patrimônio líquido; DY = proventos com data-ex no ano ÷ "
-           "fechamento. P/L fora de 1/20x a 20x da mediana do ticker é "
+           "patrimônio líquido; DY = proventos de renda com data-ex no ano "
+           "(resposta mais nova da brapi) ÷ fechamento. P/L fora de 1/20x "
+           "a 20x da mediana do ticker é "
            "descartado; o mesmo teste sobre o valor de mercado implícito "
            "vale para o P/VP. Porte (tamanho na seleção de pares) = valor de "
            "mercado do quote mais recente da brapi, de até "
@@ -476,8 +477,11 @@ def _sucessoes(conn) -> dict:
         return {}
 
 
-def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None
-               ) -> tuple[dict, dict, str | None]:
+def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None,
+               proventos=None) -> tuple[dict, dict, str | None]:
+    from core.dividend_types import soma_por_ano
+    from core.proventos_b3 import eventos_do_armazem
+
     fech = _ler(conn, """
         SELECT DISTINCT ON (ticker, EXTRACT(YEAR FROM trade_date))
                ticker, EXTRACT(YEAR FROM trade_date)::int AS ano, trade_date,
@@ -504,12 +508,11 @@ def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None
            AND i.year < EXTRACT(YEAR FROM now())::int
          ORDER BY i.ticker, i.year, i.updated_at DESC
     """, ini=ANO_INICIAL)
-    prov = _ler(conn, """
-        SELECT ticker, EXTRACT(YEAR FROM ex_date)::int AS ano, SUM(amount) AS total
-          FROM (SELECT DISTINCT ticker, ex_date, amount FROM market.dividends
-                 WHERE ex_date IS NOT NULL AND amount > 0) d
-         GROUP BY 1, 2
-    """)
+    # A resposta mais nova da brapi (core.proventos_b3): o DISTINCT por
+    # (ticker, ex_date, amount) em market.dividends deixava passar a
+    # amortização, a cópia por lote de mil e as revisões que o upsert não apaga.
+    eventos = eventos_do_armazem(conn) if proventos is None else proventos
+    prov = soma_por_ano(eventos, data="ex_date")
     # Ticker renomeado: a fita troca de código, o universo não.
     sucessoes = _sucessoes(conn) if sucessoes is None else sucessoes
     universo = set(demos["ticker"].astype(str))
@@ -764,8 +767,11 @@ def historico_fii(vpa, fechamentos, proventos) -> tuple[dict, dict]:
     return saida, exclusoes
 
 
-def coletar_fii(conn, precos=None, hoje=None) -> tuple[dict, dict]:
+def coletar_fii(conn, precos=None, hoje=None, proventos=None) -> tuple[dict, dict]:
     import pandas as pd
+
+    from core.proventos_b3 import eventos_do_armazem
+
     vpa = _ler(conn, """
         SELECT ticker, ref_month AS mes, vpa FROM market.fii_metrics_monthly
          WHERE vpa > 0
@@ -778,11 +784,13 @@ def coletar_fii(conn, precos=None, hoje=None) -> tuple[dict, dict]:
          ORDER BY ticker, date_trunc('month', trade_date), trade_date DESC,
                   collected_at DESC, id DESC
     """)
-    prov = _ler(conn, """
-        SELECT DISTINCT ticker, ex_date, amount FROM market.dividends
-         WHERE ex_date >= make_date(2022, 1, 1) AND amount > 0
-           AND ticker IN (SELECT DISTINCT ticker FROM market.fii_metrics_monthly)
-    """)
+    # Só rendimento, da mesma fonte da B3: o DISTINCT em market.dividends
+    # deixava a amortização e as revisões entrarem no DY.
+    fiis = set(_ler(conn, "SELECT DISTINCT ticker FROM market.fii_metrics_monthly")["ticker"])
+    eventos = eventos_do_armazem(conn) if proventos is None else proventos
+    datas = pd.to_datetime(eventos["ex_date"])
+    prov = eventos.loc[(datas >= pd.Timestamp(2022, 1, 1)) & eventos["ticker"].isin(fiis),
+                       ["ticker", "ex_date", "amount"]]
     for df, c in ((vpa, "mes"), (fech, "mes")):
         df[c] = pd.to_datetime(df[c]).dt.tz_localize(None)
     fech["close"] = fech["close"].astype(float)
@@ -979,6 +987,7 @@ def main(argv=None) -> int:
 
     from sqlalchemy import create_engine, text
 
+    from core.proventos_b3 import eventos_do_armazem
     from scripts.publish_fii_selection_from_local import _warehouse_url
     try:
         engine = create_engine(_warehouse_url())
@@ -990,8 +999,9 @@ def main(argv=None) -> int:
     precos = precos_mensais_supabase()
     with conn:
         conn.execute(text("SET TRANSACTION READ ONLY"))
-        b3, excl_b3, fita = coletar_b3(conn, precos, agora)
-        fii, excl_fii = coletar_fii(conn, precos, agora)
+        proventos = eventos_do_armazem(conn)
+        b3, excl_b3, fita = coletar_b3(conn, precos, agora, proventos=proventos)
+        fii, excl_fii = coletar_fii(conn, precos, agora, proventos=proventos)
         eua, excl_eua = coletar_eua(conn)
         mercado = coletar_mercado_b3(conn)
 

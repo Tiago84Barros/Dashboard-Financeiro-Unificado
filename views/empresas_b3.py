@@ -1,10 +1,16 @@
 """
 views/empresas_b3.py  — Dashboard Fundamentalista B3
-  Tab 1 — Empresas por Setor   (listagem por setor + logos)
-  Tab 2 — Análise de Empresa   (drilldown: crescimento, DRE, múltiplos)
+  Tab 1 — Empresas por Setor     (listagem por setor + logos)
+  Tab 2 — Análise de Empresa     (drilldown: crescimento, DRE, múltiplos)
+  Tab 3 — Análise Avançada       (banco de testes por segmento: filtro, score)
+  Tab 4 — Criação de Portfólio   (views/portfolio_b3.py)
+  Tab 5 — Avaliação de Portfólio (views/analise_portfolio_b3.py)
+  Tab 6 — Previsão de Lucros     (views/previsao_lucros_b3.py)
+  Tab 7 — Carteira 20            (views/carteira20_b3.py)
 
 Banco de dados:  core.b3_data (facade c/ MARKET_READ_SOURCE) → b3_db legado ou market.*
-Preços:          yfinance     (sem dependência de DB)
+Preços:          market.historical_prices; yfinance só como reserva, com aviso
+                 na tela (_avisar_fonte_precos)
 Logos:           thefintz/icones-b3 CDN (público, sem auth)
 """
 from __future__ import annotations
@@ -40,9 +46,11 @@ from core.crescimento import (
     cagr_regressao,
     retornos_anuais,
     sem_ano_em_curso,
+    ultimo_preco_nao_positivo,
 )
 from core.llm_context_ativo import build_b3_ativo_context
 from core.market_companies import normalize_b3_companies
+from core.proventos_b3 import FOTO_MAXIMA_DIAS, fotos_velhas, idade_da_foto, procedencia
 from core.validacao_motor import validacao_b3
 from design.chat_ativo import render_chat_ativo
 from design.componentes import (
@@ -375,20 +383,45 @@ def _yf_dividendos_anuais(ticker: str) -> pd.DataFrame:
 
 def _dividendos_anuais_market_first(ticker: str) -> tuple[pd.DataFrame, str]:
     """Dividendos anuais para a aba "Análise de Empresa" — market-first
-    (A-011): lê ``market.dividends`` via ``core.market_read`` quando o
+    (A-011): lê ``core.market_read.load_dividendos_anuais`` quando o
     warehouse está saudável; cai no yfinance ao vivo (``_yf_dividendos_anuais``,
     inalterada — segue usada como fallback também pelo Portfólio B3) só
     quando ``market.*`` está indisponível ou não cobre o ticker. Sem perda de
     granularidade (são somas anuais dos dois lados), diferente do gráfico de
     preço. Retorna (DataFrame [Data, Dividendos], fonte) para rótulo na UI.
+
+    O dia da resposta da brapi é procedência: vai para o registro, e a
+    resposta que parou de renovar entra na fila de Restrições.
     """
     try:
         df_market = _mr.load_dividendos_anuais(ticker)
-        if not df_market.empty:
-            return df_market, "market.dividends"
     except Exception:
-        pass
-    return _yf_dividendos_anuais(ticker), "yfinance"
+        df_market = pd.DataFrame()
+    if df_market.empty:
+        return _yf_dividendos_anuais(ticker), "yfinance"
+    foto = idade_da_foto(df_market.attrs)
+    if foto is not None:
+        detalhe_tecnico(f"Proventos anuais de {ticker}: {procedencia(df_market.attrs)}.",
+                        codigo="b3.proventos_procedencia", entidade=ticker)
+        if foto[1] > FOTO_MAXIMA_DIAS:
+            aviso_lacuna(
+                f"Proventos de {ticker}: a resposta mais nova da brapi é de "
+                f"{foto[0]:%d/%m/%Y}, {foto[1]} dias sem renovação.",
+                codigo="tela.b3.proventos_foto_velha", entidade=ticker)
+    return df_market, df_market.attrs.get("fonte") or "market.dividends"
+
+
+def _avisar_comparacao_dre(batch_dre: dict, coluna: str) -> None:
+    """A Comparação de DRE plota a coluna escolhida de ``load_demonstracoes_batch``.
+
+    Em ``Dividendos``, o ticker que a brapi deixou de renovar segue no gráfico
+    com o valor antigo; a resposta velha entra na fila de Restrições, com o
+    mesmo aviso da Análise de Empresa.
+    """
+    if coluna != "Dividendos":
+        return
+    for tk, msg in fotos_velhas(batch_dre):
+        aviso_lacuna(msg, codigo="tela.b3.proventos_foto_velha", entidade=tk)
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -3802,6 +3835,19 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         df_yf_divs, fonte_divs = _dividendos_anuais_market_first(tk)
         df_precos    = _yf_precos(tk)
 
+    # Provento maior que o preço do dia deixa o fator de ajuste negativo e o
+    # histórico anterior noutra escala: o gráfico e o retorno anual usam só o
+    # trecho depois do último preço ≤ 0.
+    corte_preco = (ultimo_preco_nao_positivo(df_precos["Data"], df_precos["Preco"])
+                   if not df_precos.empty else None)
+    if corte_preco is not None:
+        df_precos = df_precos[df_precos["Data"] > corte_preco]
+        aviso_lacuna(
+            f"Preço ajustado do yfinance chega a ≤ 0 até {corte_preco:%d/%m/%Y} "
+            "(provento maior que o preço do dia): o histórico anterior foi "
+            "omitido do gráfico e do retorno anual.",
+            codigo="tela.b3.preco_ajustado_quebrado", entidade=tk)
+
     sem_banco = df_fin.empty and mult.empty
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -6577,6 +6623,7 @@ def _tab_avancada(df_set: pd.DataFrame) -> None:
     dre_lbl_s = st.session_state.get("b3_av_dre_lbl",   "Receita Líquida")
 
     if batch_dre:
+        _avisar_comparacao_dre(batch_dre, dre_col_s)
         rows_d: list[pd.DataFrame] = []
         for tk_d, df_d in batch_dre.items():
             if "Data" not in df_d.columns or dre_col_s not in df_d.columns:

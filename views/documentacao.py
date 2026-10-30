@@ -330,6 +330,12 @@ class FlowSpec:
     nodes: dict[str, FlowNode]
     default: str
     notes: tuple[str, ...] = ()
+    # Tela do menu que o fluxo explica, sem emoji ("" = transversal, como
+    # Qualidade dos dados) e as subabas dela que ele cobre, com o nome exato
+    # da tela. A guarda ``tests/test_configuracoes_sincronizadas.py`` cobra
+    # que cada subaba do menu seja declarada e nomeada no texto do fluxo.
+    tela: str = ""
+    abas: tuple[str, ...] = ()
 
 
 def _node(
@@ -347,9 +353,12 @@ FLOW_ANALISE_AVANCADA = FlowSpec(
     key="analise_avancada",
     title="Análise avançada de empresas B3",
     subtitle=(
-        "Mostra como o app transforma dados brutos de empresas em score comparável, "
-        "ranking, simulação histórica e uma leitura de entrada."
+        "Subaba Análise Avançada de Empresas B3: mostra como o app transforma dados "
+        "brutos de empresas em score comparável, ranking, simulação histórica e uma "
+        "leitura de entrada."
     ),
+    tela="Empresas B3",
+    abas=("Análise Avançada",),
     rows=(
         ("Universo", ("setores", "multiplos", "dre_macro")),
         ("Tratamento", ("limpeza", "slopes", "pesos_setoriais")),
@@ -375,7 +384,7 @@ FLOW_ANALISE_AVANCADA = FlowSpec(
             (
                 "ROE, ROIC, margens, DY, P/L, P/VP, EV/EBIT",
                 "Histórico por ano",
-                "Auditoria de campos substituidos por Fundamentus",
+                "Auditoria de campos substituídos por Fundamentus",
             ),
             "Os múltiplos são a primeira camada quantitativa: condensam preço, lucro, patrimônio, dividendos e rentabilidade do capital.",
         ),
@@ -408,11 +417,11 @@ FLOW_ANALISE_AVANCADA = FlowSpec(
                 "Margem_Líquida_slope_log",
                 "Margem_Operacional_slope_log",
             ),
-            "Uma foto atual pode enganar; a tendência mostra se a qualidade esta melhorando, piorando ou apenas parecendo boa.",
+            "Uma foto atual pode enganar; a tendência mostra se a qualidade está melhorando, piorando ou apenas parecendo boa.",
         ),
         "pesos_setoriais": _node(
             "pesos_setoriais", "Pesos por setor", "Preparação",
-            "Escolhe pesos diferentes por tipo de negócio: financeiro, energia, consumo, saúde, utilidade publica e outros.",
+            "Escolhe pesos diferentes por tipo de negócio: financeiro, energia, consumo, saúde, utilidade pública e outros.",
             (
                 "ROE mais relevante em bancos",
                 "DY e endividamento mais fortes em utilities",
@@ -459,9 +468,9 @@ FLOW_ANALISE_AVANCADA = FlowSpec(
                 "Aportes mensais com custos",
                 "Pesos Iguais = referência de habilidade (macro-neutra)",
                 "Selic = diagnóstico de timing (não critério)",
-                "Rank-IC: score preve o retorno do ano seguinte",
+                "Rank-IC: o score prevê o retorno do ano seguinte",
             ),
-            "Bater os Pesos Iguais mostra habilidade de seleção mesmo em ciclo ruim (se o setor caiu, os pares cairam junto); a Selic é apenas referência de timing, não de qualidade.",
+            "Bater os Pesos Iguais mostra habilidade de seleção mesmo em ciclo ruim (se o setor caiu, os pares caíram junto); a Selic é apenas referência de timing, não de qualidade.",
         ),
         "calibracao": _node(
             "calibracao", "Calibração", "Validação",
@@ -728,9 +737,12 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
     key="criacao_portfolio",
     title="Criação de portfólio B3",
     subtitle=(
-        "Fluxo inspirado nos seus rascunhos: setores, subsetores e segmentos entram no motor; "
-        "o app encontra líderes, testa desempenho e salva uma carteira modelo."
+        "Subaba Criação de Portfólio de Empresas B3: setores, subsetores e segmentos "
+        "entram no motor; o app encontra líderes, testa desempenho e salva uma "
+        "carteira modelo."
     ),
+    tela="Empresas B3",
+    abas=("Criação de Portfólio",),
     rows=(
         ("Dados", ("setores_cp", "historico_cp", "macro_cp")),
         ("Segmentação", ("setor_cp", "subsetor_cp", "segmento_cp")),
@@ -744,19 +756,19 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "setores_cp", "Escolha do universo", "Dados",
             "Carrega todas as empresas B3 cobertas e organiza por setor, subsetor e segmento.",
             ("load_setores()", "Tickers elegíveis", "Nome da empresa e classificação setorial"),
-            "E o ponto de partida para que cada empresa seja julgada dentro de um grupo econômico justo.",
+            "É o ponto de partida para que cada empresa seja julgada dentro de um grupo econômico justo.",
         ),
         "historico_cp": _node(
             "historico_cp", "Histórico de indicadores", "Dados",
-            "Busca múltiplos e DRE históricos para cada ticker, exigindo um mínimo de anos validos.",
-            ("load_múltiplos_todos()", "load_múltiplos_histórico_batch()", "Histórico DRE mínimo"),
+            "Busca múltiplos e DRE históricos para cada ticker, exigindo um mínimo de anos válidos.",
+            ("load_multiplos_todos()", "load_multiplos_historico_batch()", "Histórico DRE mínimo"),
             "Sem histórico suficiente, o modelo evita aprovar segmentos que parecem bons por uma única observação.",
         ),
         "macro_cp": _node(
             "macro_cp", "Cenário macro", "Dados",
             "Carrega Selic e demais variáveis macro para simular benchmark e ajustar o score.",
             ("load_selic_macro()", "load_macro_history()", "Taxa Selic média de fallback"),
-            "A comparação contra Selic e essencial porque o investidor brasileiro sempre tem uma alternativa de renda fixa.",
+            "A comparação contra Selic é essencial porque o investidor brasileiro sempre tem uma alternativa de renda fixa.",
         ),
         "setor_cp": _node(
             "setor_cp", "Setor", "Segmentação",
@@ -767,14 +779,14 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         "subsetor_cp": _node(
             "subsetor_cp", "Subsetor", "Segmentação",
             "Nível intermediário que refina empresas com dinâmicas econômicas parecidas.",
-            ("Grupo operacional", "Filtro de comparabilidade", "Fallback quando segmento e pequeno"),
+            ("Grupo operacional", "Filtro de comparabilidade", "Fallback quando o segmento é pequeno"),
             "Ajuda a evitar comparações grosseiras dentro de setores grandes.",
         ),
         "segmento_cp": _node(
             "segmento_cp", "Segmento", "Segmentação",
             "Menor unidade do motor: cada segmento passa por score, líderes e backtest.",
             ("Tickers do segmento", "Score anual", "Histórico de liderança"),
-            "E a camada mais próxima do desenho manual: segmento gera variáveis, score, empresas e líder.",
+            "É a camada mais próxima do desenho manual: segmento gera variáveis, score, empresas e líder.",
         ),
         "variacao_cp": _node(
             "variacao_cp", "Variáveis do segmento", "Motor",
@@ -788,7 +800,7 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "score_cp", "Score e pesos", "Motor",
             "Ordena empresas, aplica penalidade de liderança recorrente e calcula pesos proporcionais ao score.",
             ("Decay penalty", "Heurística top-N", "Gamma tilt", "Cap e soft cap"),
-            "O objetivo e escolher líderes sem deixar a carteira virar uma aposta concentrada em uma única empresa.",
+            "O objetivo é escolher líderes sem deixar a carteira virar uma aposta concentrada em uma única empresa.",
         ),
         "lideres_cp": _node(
             "lideres_cp", "Líderes", "Motor",
@@ -798,9 +810,15 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         ),
         "backtest_cp": _node(
             "backtest_cp", "Simulação mensal", "Simulação",
-            "Reconstrui aportes mensais nos líderes de cada ano e reinveste dividendos quando há dados.",
-            ("Preços mensais yfinance", "Dividendos mensais", "Aporte mensal", "Rebalanceamento anual dos novos aportes"),
-            "Transforma a ideia em uma trilha de patrimônio acumulado.",
+            "Reconstrói aportes mensais nos líderes de cada ano com preço mensal ajustado: "
+            "primeiro do banco de mercado (market.historical_prices) e, na falta dele, do "
+            "yfinance. O backtest roda com dividendos=None, porque o adjusted_close já é "
+            "retorno total.",
+            ("_batch_yf_precos_mensais()", "adjusted_close (retorno total)",
+             "dividendos=None, sem dupla contagem", "Aporte mensal",
+             "Rebalanceamento anual dos novos aportes"),
+            "Transforma a ideia em uma trilha de patrimônio acumulado. Somar dividendos ao "
+            "preço ajustado contaria o mesmo provento duas vezes.",
         ),
         "comparacao_cp": _node(
             "comparacao_cp", "Comparação", "Simulação",
@@ -812,28 +830,35 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         ),
         "aprovacao_cp": _node(
             "aprovacao_cp", "Aprovação do segmento", "Simulação",
-            "Aprova por HABILIDADE DE SELEÇÃO: bater o Equal-Weight do próprio "
-            "segmento com significância estatística no holdout OOS de ~24 meses. "
-            "Neutro ao macro — se o cenário derrubou o segmento todo, o EW caiu junto.",
-            ("Significância vs Equal-Weight (p-value OOS + FDR q <= 10%)",
-             "Rank-IC >= 2 anos positivo (qualidade preve retorno)",
-             "Margem vs EW (piso de magnitude opcional)",
-             "Margem vs Selic = DIAGNÓSTICO (não reprova)", "Recência de liderança"),
-            "Só entram segmentos cujos líderes superaram os pares (habilidade), com "
-            "evidência preditiva (Rank-IC) e significância fora da amostra. Bater a "
-            "Selic e decisão de timing do investidor, não critério de qualidade.",
+            "O seletor Critério de aprovação tem três modos. Econômico (Brasil), o padrão "
+            "dos perfis, aprova pela margem contra a Selic no histórico cheio (e contra "
+            "Pesos Iguais, se o piso estiver ligado), e a estatística só serve de trava: "
+            "reprova apenas sinal claramente antipreditivo (Rank-IC < −0,05). Sinal "
+            "fundamental (Rank-IC) e Retorno de 24m (FDR), o mais frágil, exigem poder "
+            "preditivo positivo e significância, e neles a margem contra a Selic vira "
+            "diagnóstico.",
+            ("Econômico (Brasil): margem vs Selic decide; padrão dos perfis",
+             "Sinal fundamental (Rank-IC): Rank-IC médio positivo em 2 anos ou mais e p-valor do IC significante",
+             "Retorno de 24m (FDR): Rank-IC positivo e retorno de validação aprovado pela correção FDR (q ≤ 10%)",
+             "Em todos: o excesso mensal sobre Pesos Iguais na validação vira intervalo de 90%; intervalo inteiro abaixo de zero reprova",
+             "Em todos: liderança recente; resiliência (ROIC > Selic) é filtro opcional",
+             "Status do bloco: ✅ Aprovado, ⚠️ Abaixo da margem ou ❌ Falhou vs Selic"),
+            "O modo econômico responde à pergunta do investidor brasileiro (vale mais que a "
+            "renda fixa?); os modos estatísticos respondem se o score tem habilidade de "
+            "seleção. O teste de seleção vale nos três, para que nenhum modo aprove um "
+            "segmento que perdeu dos próprios pares na validação.",
         ),
         "pesos_cp": _node(
             "pesos_cp", "Montagem do portfólio", "Portfólio",
             "Remove duplicatas, consolida motivos e distribui empresas selecionadas por peso e setor.",
             ("Lista de empresas líderes", "Score médio", "Alpha médio", "Distribuição setorial"),
-            "E a transição do motor por segmento para uma carteira única e acionável.",
+            "É a transição do motor por segmento para uma carteira única e acionável.",
         ),
         "salvar_cp": _node(
             "salvar_cp", "Salvar modelo", "Portfólio",
             "Persiste a carteira sugerida como portfólio B3 ativo do usuário.",
             ("b3_portfolio_models", "b3_portfolio_model_items", "Parâmetros e métricas JSON"),
-            "Esse registro vira a base da análise qualitativa e aparece no Dashboard Geral.",
+            "Esse registro vira a base da Avaliação de Portfólio e aparece no Dashboard Geral.",
         ),
     },
 )
@@ -841,11 +866,14 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
 
 FLOW_SIMULADOR = FlowSpec(
     key="simulador_portfolio",
-    title="Modelo de simulação de portfólio",
+    title="Simulação (Criação de portfólio B3)",
     subtitle=(
-        "Mostra como o app transforma líderes por segmento em trajetórias de patrimônio, "
-        "com aportes, dividendos, benchmarks e regras de aprovação."
+        "Por dentro da subaba Criação de Portfólio: o motor _simular_seg_backtest "
+        "transforma líderes por segmento em trajetórias de patrimônio, com aportes, "
+        "preço ajustado, benchmarks e regras de aprovação."
     ),
+    tela="Empresas B3",
+    abas=("Criação de Portfólio",),
     rows=(
         ("Preparação", ("precos_sp", "dividendos_sp", "aportes_sp")),
         ("Carteiras paralelas", ("estrategia_sp", "selic_sp", "equal_weight_sp")),
@@ -856,9 +884,11 @@ FLOW_SIMULADOR = FlowSpec(
     nodes={
         "precos_sp": _node(
             "precos_sp", "Preços mensais", "Preparação",
-            "Le fechamentos mensais AJUSTADOS (retorno total) do banco market.* "
-            "(market.historical_prices); cai no yfinance só se o market.* não estiver ativo.",
-            ("_batch_yf_preços_mensais()", "Colunas por ticker", "adjusted_close (retorno total)"),
+            "Lê fechamentos mensais AJUSTADOS (retorno total) do banco market.* "
+            "(market.historical_prices); cai no yfinance só se o market.* não estiver ativo "
+            "ou falhar, e a fonte usada fica rotulada na série.",
+            ("_batch_yf_precos_mensais()", "Colunas por ticker", "adjusted_close (retorno total)",
+             "Rótulo de fonte: market.historical_prices, yfinance ou indisponível"),
             "Preço ajustado é a ponte entre score teórico e retorno realmente simulado.",
         ),
         "dividendos_sp": _node(
@@ -876,15 +906,16 @@ FLOW_SIMULADOR = FlowSpec(
         ),
         "estrategia_sp": _node(
             "estrategia_sp", "Estratégia", "Carteiras paralelas",
-            "Compra os líderes definidos pelo score do segmento, com pesos ajustados por score e limites.",
-            ("Líderes por ano", "Pesos por score", "Cap por ativo", "Soft cap"),
+            "Compra os líderes definidos pelo score do segmento, com pesos ajustados por score e "
+            "limites. Quem executa mês a mês é _simular_seg_backtest.",
+            ("_simular_seg_backtest()", "Líderes por ano", "Pesos por score", "Cap por ativo", "Soft cap"),
             "Mostra o resultado da tese principal do modelo.",
         ),
         "selic_sp": _node(
             "selic_sp", "Tesouro Selic", "Carteiras paralelas",
             "Acumula o mesmo aporte pela taxa Selic mensalizada de cada ano.",
             ("Selic anual", "Taxa mensal equivalente", "Benchmark de baixo risco"),
-            "E a barra mínima para justificar risco de ações no contexto brasileiro.",
+            "É a barra mínima para justificar risco de ações no contexto brasileiro.",
         ),
         "equal_weight_sp": _node(
             "equal_weight_sp", "Equal-weight", "Carteiras paralelas",
@@ -906,15 +937,18 @@ FLOW_SIMULADOR = FlowSpec(
         ),
         "custos_sp": _node(
             "custos_sp", "Custos e limites", "Tempo",
-            "A análise avançada também possui suporte para overhead de transação, limites e Markowitz.",
-            ("Corretagem/spread/IR estimados", "Cap de concentração", "Min-variance híbrido"),
+            "O custo de transação vem ligado por padrão (CostConfig.brasil_pf_default): "
+            "cada compra paga corretagem e meia-spread. A Análise Avançada também usa "
+            "limites de concentração e Markowitz.",
+            ("Corretagem/spread/IR estimados", "Custo ligado por padrão", "Cap de concentração",
+             "Min-variance híbrido"),
             "Custos e concentração impedem que o backtest fique bonito demais e pouco executável.",
         ),
         "montante_sp": _node(
             "montante_sp", "Montante final", "Resultado",
             "Calcula o valor acumulado de cada carteira paralela no fim da simulação.",
             ("Valor estratégia", "Valor Selic", "Valor equal-weight", "Contribuição por ativo"),
-            "E o número que aparece no desenho como montante antes da comparação.",
+            "É o número que aparece no desenho como montante antes da comparação.",
         ),
         "margem_sp": _node(
             "margem_sp", "Margens", "Resultado",
@@ -924,9 +958,10 @@ FLOW_SIMULADOR = FlowSpec(
         ),
         "stress_sp": _node(
             "stress_sp", "Stress tests", "Resultado",
-            "Na aba Análise de Investimentos, a carteira atual também pode passar por choques históricos.",
+            "Em Investimentos › 🔍 Análise › 🌪️ Stress, a carteira atual também passa por "
+            "choques históricos; o simulador da B3 não roda stress próprio.",
             ("Cenários adversos", "Perda estimada", "Tempo de recuperação"),
-            "E a ponte entre retorno esperado e risco suportável.",
+            "É a ponte entre retorno esperado e risco suportável.",
         ),
     },
 )
@@ -934,11 +969,14 @@ FLOW_SIMULADOR = FlowSpec(
 
 FLOW_ANALISE_PORTFOLIO = FlowSpec(
     key="analise_portfolio",
-    title="Análise qualitativa de portfólio B3",
+    title="Avaliação de Portfólio (B3)",
     subtitle=(
-        "Explica como a carteira salva e enriquecida com dados, documentos e LLM para gerar relatório, "
-        "redistribuição de pesos e conversa com o portfólio."
+        "Subaba Avaliação de Portfólio de Empresas B3: explica como a carteira salva é "
+        "enriquecida com dados, documentos e LLM para gerar relatório, redistribuição de "
+        "pesos e conversa com o portfólio."
     ),
+    tela="Empresas B3",
+    abas=("Avaliação de Portfólio",),
     rows=(
         ("Base", ("modelo_ap", "items_ap", "macro_ap")),
         ("Enriquecimento", ("multiplos_ap", "dre_ap", "rag_ap")),
@@ -950,8 +988,8 @@ FLOW_ANALISE_PORTFOLIO = FlowSpec(
         "modelo_ap": _node(
             "modelo_ap", "Portfólio salvo", "Base",
             "Carrega o portfólio B3 ativo salvo na criação de portfólio.",
-            ("load_active_b3_portfólio_model()", "Parâmetros", "Métricas", "Ano-base"),
-            "Sem uma carteira modelo salva, a análise qualitativa não tem composição para avaliar.",
+            ("load_active_b3_portfolio_model()", "Parâmetros", "Métricas", "Ano-base"),
+            "Sem uma carteira modelo salva, a Avaliação de Portfólio não tem composição para avaliar.",
         ),
         "items_ap": _node(
             "items_ap", "Empresas e pesos", "Base",
@@ -968,13 +1006,13 @@ FLOW_ANALISE_PORTFOLIO = FlowSpec(
         "multiplos_ap": _node(
             "multiplos_ap", "Múltiplos recentes", "Enriquecimento",
             "Carrega histórico de múltiplos de cada empresa para o prompt e para auditoria.",
-            ("load_múltiplos_histórico_batch()", "Últimos 3 anos", "ROE, ROIC, margens, DY, valuation"),
-            "Da ao LLM a base numérica de rentabilidade, preço e balanço.",
+            ("load_multiplos_historico_batch()", "Últimos 3 anos", "ROE, ROIC, margens, DY, valuation"),
+            "Dá ao LLM a base numérica de rentabilidade, preço e balanço.",
         ),
         "dre_ap": _node(
             "dre_ap", "DRE", "Enriquecimento",
             "Busca demonstrações financeiras por empresa para mostrar crescimento, lucro, EBITDA e dívida.",
-            ("load_financials_batch()", "Receita", "EBITDA", "Lucro", "Dívida"),
+            ("load_demonstracoes_batch()", "Receita", "EBITDA", "Lucro", "Dívida"),
             "Ajuda a diferenciar empresa barata de empresa deteriorando.",
         ),
         "rag_ap": _node(
@@ -985,29 +1023,34 @@ FLOW_ANALISE_PORTFOLIO = FlowSpec(
         ),
         "empresa_ap": _node(
             "empresa_ap", "Análise por empresa", "LLM",
-            "Chama o modelo para cada ativo e pede perspectiva, riscos, catalisadores, confiança e alocação sugerida.",
-            ("analisar_empresa()", "JSON estruturado", "Perspectiva forte/moderada/fraca", "Ação sugerida"),
+            "Chama o modelo para cada ativo, com o dossiê da empresa, e pede perspectiva, "
+            "riscos, catalisadores, confiança e alocação sugerida.",
+            ("generate_company_portfolio_report() (core/portfolio_report_b3.py)", "JSON estruturado",
+             "Perspectiva forte/moderada/fraca", "Ação sugerida"),
             "Transforma dados quantitativos em uma tese legível e comparável por ativo.",
         ),
         "portfolio_ap": _node(
             "portfolio_ap", "Análise consolidada", "LLM",
             "Depois das empresas, o LLM avalia o portfólio como conjunto.",
-            ("analisar_portfólio()", "Qualidade da carteira", "Perspectiva 12m", "Pontos fortes e fracos"),
+            ("analyze_portfolio_report() (core/portfolio_report_b3.py)", "Qualidade da carteira",
+             "Perspectiva 12m", "Pontos fortes e fracos"),
             "Uma boa lista de empresas não garante uma boa carteira; o conjunto precisa ser coerente.",
         ),
         "json_ap": _node(
             "json_ap", "Fallback e validação", "LLM",
-            "A resposta e parseada como JSON; se falhar, o app usa fallback estruturado para não quebrar a tela.",
-            ("_parse_json()", "Fallback empresa", "Fallback portfólio"),
+            "A resposta é lida como JSON; se falhar, o app usa fallback estruturado para não quebrar a tela.",
+            ("_parse_json()", "_fallback_company()", "_fallback_portfolio()"),
             "Mantém a experiência estável mesmo quando a IA responde fora do formato esperado.",
         ),
         "pesos_ap": _node(
             "pesos_ap", "Redistribuição", "Decisão",
             "Combina score quantitativo, score qualitativo, confiança, alpha, perspectiva e a "
             "corroboração entre banco e web para sugerir novos pesos.",
-            ("60% quanti + 40% quali", "Multiplicador por perspectiva",
-             "Modelo único (sem escolha de modo)", "Corroboração banco x web",
-             "Min 2% e max 25% por ativo"),
+            ("redistribuir_pesos()", "60% quanti + 40% quali",
+             "Multiplicador por perspectiva: forte 1,20 · moderada 1,00 · fraca 0,65",
+             "Modelo único (sem escolha de modo)",
+             "Corroboração banco x web (get_web_evidence_context)",
+             "Mín. 2% e máx. 25% por ativo; com poucos ativos o teto acompanha o peso igual"),
             "Ajuda a transformar análise em ação: manter, aumentar, reduzir ou revisar.",
         ),
         "relatorio_ap": _node(
@@ -1018,8 +1061,11 @@ FLOW_ANALISE_PORTFOLIO = FlowSpec(
         ),
         "chat_ap": _node(
             "chat_ap", "Chat com portfólio", "Decisão",
-            "Permite tirar dúvidas sobre a carteira usando o contexto já montado.",
-            ("chat_com_portfólio()", "Histórico da conversa", "Contexto do portfólio"),
+            "Permite tirar dúvidas sobre a carteira usando o contexto já montado. "
+            "chat_coerente() envolve chat_com_portfolio() e confere a resposta contra os "
+            "limites da Inteligência dos Ativos.",
+            ("chat_coerente()", "chat_com_portfolio()", "build_llm_context_for_portfolio_chat()",
+             "Histórico da conversa"),
             "Fecha o ciclo educativo: o usuário pode perguntar por que algo foi sugerido.",
         ),
     },
@@ -1030,22 +1076,27 @@ FLOW_INVESTIMENTOS = FlowSpec(
     key="analise_investimentos",
     title="Análise da carteira atual de investimentos",
     subtitle=(
-        "Mostra como a aba Investimentos le a carteira real, consolida posições e apresenta risco, "
-        "distribuição, exposição macro e stress tests."
+        "Mostra como a tela Investimentos lê a carteira real, consolida posições e "
+        "apresenta, nas subabas Dashboard, Histórico e Análise, risco, distribuição, "
+        "exposição macro e stress tests."
     ),
+    tela="Investimentos",
+    abas=("Dashboard", "Histórico", "Análise"),
     rows=(
         ("Fontes", ("positions_ai", "quotes_ai", "dividends_ai")),
         ("Consolidação", ("snapshot_ai", "classes_ai", "setores_ai")),
         ("Análise", ("rentabilidade_ai", "risco_ai", "stress_ai")),
-        ("Saída", ("dashboard_ai", "tabelas_ai", "alertas_ai")),
+        ("Saída", ("dashboard_ai", "historico_ai", "analise_ai", "alertas_ai")),
     ),
     default="positions_ai",
     nodes={
         "positions_ai": _node(
             "positions_ai", "Posições", "Fontes",
-            "Le portfólio_positions ou snapshots importados da corretora para montar a carteira atual.",
-            ("Quantidade", "Preço médio", "Total investido", "Moeda"),
-            "E a base patrimonial: sem posição correta, toda análise fica torta.",
+            "Lê os snapshots importados (portfolio_position_snapshots) e, na falta deles, a "
+            "tabela portfolio_positions, recalculada pelas negociações, para montar a carteira atual.",
+            ("portfolio_position_snapshots", "portfolio_positions", "Quantidade", "Preço médio",
+             "Total investido", "Moeda"),
+            "É a base patrimonial: sem posição correta, toda análise fica torta.",
         ),
         "quotes_ai": _node(
             "quotes_ai", "Cotações", "Fontes",
@@ -1057,7 +1108,7 @@ FLOW_INVESTIMENTOS = FlowSpec(
             "dividends_ai", "Proventos", "Fontes",
             "Carrega dividendos e JCP para mostrar renda, yield on cost e histórico.",
             ("dividends", "Eventos", "YoC", "Proventos por ativo"),
-            "Renda recebida e parte relevante do retorno total.",
+            "Renda recebida é parte relevante do retorno total.",
         ),
         "snapshot_ai": _node(
             "snapshot_ai", "Snapshot consolidado", "Consolidação",
@@ -1091,25 +1142,47 @@ FLOW_INVESTIMENTOS = FlowSpec(
         ),
         "stress_ai": _node(
             "stress_ai", "Stress tests", "Análise",
-            "Aplica choques históricos simplificados para estimar perda e recuperação.",
-            ("Crises históricas", "Perda percentual", "Perda em R$", "Tempo de recuperação"),
+            "Em Análise › 🌪️ Stress (Stress Tests Históricos), aplica à carteira de hoje os "
+            "choques de crises passadas, calibrados em dados públicos da B3 e do BCB, para "
+            "estimar perda e tempo de recuperação.",
+            ("core/stress_tests.py", "aplicar_todos_cenarios()", "cenario_pior_caso()",
+             "Perda percentual", "Perda em R$", "Tempo de recuperação"),
             "Responde a pergunta que importa no susto: quanto isso pode cair?",
         ),
         "dashboard_ai": _node(
-            "dashboard_ai", "Dashboard", "Saída",
-            "Resume patrimônio, retorno, proventos, distribuição e alertas visuais.",
-            ("KPIs", "Gráficos", "Badges de fonte", "Atualização"),
-            "Da uma visão rápida para quem quer decidir o próximo passo.",
+            "dashboard_ai", "Subaba 📊 Dashboard", "Saída",
+            "Resume a carteira em seções: Visão Geral, Análise de Risco, Distribuição do "
+            "Portfólio, Cenário Macroeconômico, Dependências Macro do Portfólio, Ativos "
+            "expostos aos fatores macro e Correlação entre ativos.",
+            ("_tab_dashboard()", "KPIs", "Radar de risco", "Dependências e correlação",
+             "Badges de fonte"),
+            "Dá uma visão rápida para quem quer decidir o próximo passo.",
         ),
-        "tabelas_ai": _node(
-            "tabelas_ai", "Tabelas", "Saída",
-            "Permite auditar cada posição com quantidade, preço médio, mercado, lucro e participação.",
-            ("Carteira detalhada", "Filtros", "Ordenação", "Download visual via dataframe"),
-            "A transparência fica no nível do ativo.",
+        "historico_ai": _node(
+            "historico_ai", "Subaba 📈 Histórico", "Saída",
+            "Mostra Evolução Patrimonial, Proventos e Proventos por ativo; abaixo, o Risco "
+            "da carteira (render_risco_carteira) e a Atribuição contra a meta "
+            "(render_atribuicao_carteira).",
+            ("_tab_historico()", "Risco: TWR vs CDI, volatilidade, queda máxima vs tolerância, "
+             "VaR, Sharpe e beta, com cobertura declarada",
+             "Atribuição Brinson-Fachler por mês fechado: alocação, seleção e interação",
+             "core.carteira_risco", "core.carteira_atribuicao"),
+            "O risco diz quanto a carteira oscila; a atribuição diz de onde veio a diferença "
+            "para a meta de alocação da política.",
+        ),
+        "analise_ai": _node(
+            "analise_ai", "Subaba 🔍 Análise", "Saída",
+            "Análise do Portfólio em sete subabas: 📋 Visão Geral (com as Posições da "
+            "Carteira), 📈 Ações, 🏢 FIIs, 🏦 Tesouro, 🌎 Exterior, 🔔 Alertas e 🌪️ Stress. "
+            "Tabelas não é aba desta tela: as posições moram em Visão Geral.",
+            ("_tab_analise()", "Posições da Carteira", "Uma subaba por classe",
+             "Alertas", "Stress Tests Históricos"),
+            "A transparência fica no nível do ativo, separada por classe.",
         ),
         "alertas_ai": _node(
             "alertas_ai", "Alertas", "Saída",
-            "Aponta concentração, falta de cotação, queda, dependência e outras situações relevantes.",
+            "Em Análise › 🔔 Alertas, aponta concentração, falta de cotação, queda, "
+            "dependência e outras situações relevantes.",
             ("Severidade", "Mensagem", "Módulo de origem"),
             "Transforma análise em lista de pontos que merecem atenção.",
         ),
@@ -1125,6 +1198,8 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
         "caixa) da fatura futura do cartão (fluxo a vencer) — duas naturezas que "
         "nunca se misturam."
     ),
+    tela="Controle Financeiro",
+    abas=("Dashboard", "Análises", "Tabelas", "Cartão de Crédito"),
     rows=(
         ("Entrada", ("lanc_manual", "extrato", "fatura_cc")),
         ("Classificação", ("conta", "categoria")),
@@ -1141,7 +1216,7 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
                 "Valor, data, categoria e descrição",
                 "Grava source='manual'",
             ),
-            "E dinheiro que entra e sai no ato do lançamento — fluxo de caixa do presente.",
+            "É dinheiro que entra e sai no ato do lançamento — fluxo de caixa do presente.",
         ),
         "extrato": _node(
             "extrato", "Importação de extrato", "Entrada",
@@ -1166,21 +1241,22 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
                 "Revisão de vencimento e conta antes de publicar",
                 "Grava source='csv'",
             ),
-            "E dinheiro que ainda NÃO saiu (fatura a vencer) — fluxo futuro, não do mês corrente.",
+            "É dinheiro que ainda NÃO saiu (fatura a vencer) — fluxo futuro, não do mês corrente.",
         ),
         "conta": _node(
             "conta", "Resolução de conta", "Classificação",
-            "O lançamento manual e gravado na Conta Corrente (checking), nunca em conta de investimento.",
+            "O lançamento manual é gravado na Conta Corrente (checking), nunca em conta de investimento.",
             (
                 "Prioriza type='checking'",
                 "Exclui contas de cartão de crédito",
                 "Fallback seguro se não houver checking",
             ),
-            "Fluxo de caixa e movimentação da conta corrente — não aporte em investimento como B3/XP.",
+            "Fluxo de caixa é movimentação da conta corrente — não aporte em investimento como B3/XP.",
         ),
         "categoria": _node(
             "categoria", "Categorias", "Classificação",
-            "Classifica cada lançamento; 'Pagamento de Cartão' representa a quitação da fatura pela conta.",
+            "Classifica cada lançamento; 'Pagamento de Cartão' representa a quitação da fatura pela conta. "
+            "Categoria nova se cria em Configurações › ⚙️ Geral › 🏷️ Categorias.",
             (
                 "Entrada / saída / investimento",
                 "'Pagamento de Cartão' permitido no manual",
@@ -1196,7 +1272,7 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
                 "Dinheiro já movimentado",
                 "Base do Dashboard e das Tabelas",
             ),
-            "E a foto do dinheiro real do mês corrente — o que você de fato tem.",
+            "É a foto do dinheiro real do mês corrente — o que você de fato tem.",
         ),
         "fluxo_futuro": _node(
             "fluxo_futuro", "Cartão de crédito (futuro)", "Natureza do fluxo",
@@ -1238,23 +1314,29 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
 
 FLOW_SELECAO_FIIS = FlowSpec(
     key="selecao_fiis",
-    title="Seleção de FIIs — da vitrine publicada a carteira-modelo",
+    title="Seleção de FIIs — da vitrine publicada à carteira-modelo",
     subtitle=(
-        "Como o app pontua fundos imobiliarios, mede a própria confiança e decide "
-        "se o que sai na tela é uma Carteira-Modelo ou apenas uma Lista de Diligência."
+        "Como o app pontua fundos imobiliários, mede a própria confiança e decide "
+        "se o que sai na tela é uma Carteira-Modelo ou apenas uma Lista de Diligência. "
+        "A tela tem cinco subabas: FIIs Disponíveis, Busca de ativo, Carteira-modelo, "
+        "Retrospectiva e Revisão de dados."
     ),
+    tela="Seleção de FIIs",
+    abas=("FIIs Disponíveis", "Busca de ativo", "Carteira-modelo", "Retrospectiva",
+          "Revisão de dados"),
     rows=(
         ("Universo", ("vitrine_fii", "tipos_fii", "integridade_fii")),
         ("Métricas", ("renda_fii", "valuation_fii", "risco_fii", "governanca_fii")),
         ("Score", ("percentil_fii", "cobertura_fii", "confianca_fii")),
         ("Validação", ("pit_fii", "gate_fii")),
         ("Carteira", ("preferencias_fii", "otimizacao_fii", "monitor_fii")),
+        ("Consulta", ("disponiveis_fii", "busca_fii")),
     ),
     default="vitrine_fii",
     nodes={
         "vitrine_fii": _node(
             "vitrine_fii", "Vitrine publicada", "Universo",
-            "A tela não calcula nada ao vivo: ela le uma vitrine já publicada, gerada no "
+            "A tela não calcula nada ao vivo: ela lê uma vitrine já publicada, gerada no "
             "armazém local e enviada para o banco de produção com data e versão de metodologia.",
             (
                 "Snapshot com versão de metodologia e data de geração",
@@ -1279,11 +1361,11 @@ FLOW_SELECAO_FIIS = FlowSpec(
         "integridade_fii": _node(
             "integridade_fii", "Integridade da leitura", "Universo",
             "Antes de pontuar, o app confere se o quadro lido tem as colunas esperadas. "
-            "Quadro sem coluna e falha de leitura, não fundo inelegível.",
+            "Quadro sem coluna é falha de leitura, não fundo inelegível.",
             (
                 "Checagem de colunas obrigatórias",
                 "Erro de leitura levanta erro, não vira lista vazia",
-                "Aba Revisão de dados expoe as lacunas por fundo",
+                "Aba 🧾 Revisão de dados expõe as lacunas por fundo",
             ),
             "Já aconteceu de uma falha de leitura virar 'todos os fundos são inelegíveis'. "
             "Erro tem que parecer erro.",
@@ -1310,7 +1392,7 @@ FLOW_SELECAO_FIIS = FlowSpec(
                 "Preço de mercado com prazo de validade próprio",
             ),
             "Ordenar por 'P/VP mais baixo' é uma armadilha clássica: a ponta barata concentra "
-            "fundos com vacância alta ou crédito problematico.",
+            "fundos com vacância alta ou crédito problemático.",
         ),
         "risco_fii": _node(
             "risco_fii", "Liquidez e risco", "Métricas",
@@ -1377,8 +1459,8 @@ FLOW_SELECAO_FIIS = FlowSpec(
             "A aba Retrospectiva refaz a seleção safra a safra usando SÓ o que era "
             "conhecido naquela data e mede o que a regra teria escolhido.",
             (
-                "Safras reconstruidas com dado da época",
-                "Mínimo metodologico de períodos para valer",
+                "Safras reconstruídas com dado da época",
+                "Mínimo metodológico de períodos para valer",
                 "Snapshots verificados e contados na tela",
             ),
             "Sem point-in-time, o backtest lê o futuro e aprova qualquer regra. Mudar a "
@@ -1433,6 +1515,32 @@ FLOW_SELECAO_FIIS = FlowSpec(
             "Painel que só ganha ativos e nunca perde é assinatura de amostra sobrevivente. "
             "Contar as saídas é o teste barato.",
         ),
+        "disponiveis_fii": _node(
+            "disponiveis_fii", "Subaba 📋 FIIs Disponíveis", "Consulta",
+            "Mostra o universo da vitrine em cards, filtrável por categoria, tipo, DY 12m "
+            "mínimo e P/VP máximo. Só apresenta o que existe, sem aplicar elegibilidade: é "
+            "o equivalente da Empresas por Setor das vitrines B3 e EUA.",
+            (
+                "_tab_ranking()",
+                "Filtros: Categoria, Tipo, DY 12m mín., P/VP máx.",
+                "Cards por fundo, com o botão que abre a Busca de ativo",
+                "Sem mediana de DY ou P/VP sobre o recorte filtrado",
+            ),
+            "Mediana de um recorte filtrado não descreve o mercado nem uma carteira; quem "
+            "decide alocação é a Carteira-modelo, com os próprios números.",
+        ),
+        "busca_fii": _node(
+            "busca_fii", "Subaba 🔎 Busca de ativo", "Consulta",
+            "Detalhe de um fundo: histórico fundamentalista (P/VP e VPA), vacância, "
+            "composição e a carteira de imóveis com a região, para tijolo e logística.",
+            (
+                "_tab_busca()",
+                "core.market_read.load_fii_one()",
+                "Seleção do FII ordenada pela nota",
+                "Fundo sem dado vira aviso de lacuna, não tela vazia",
+            ),
+            "O score resume; a busca mostra o que está por trás dele, fundo a fundo.",
+        ),
     },
     notes=(
         "Carteira-Modelo e Lista de Diligência não são sinônimos: a primeira passou no "
@@ -1445,21 +1553,26 @@ FLOW_EMPRESAS_EUA = FlowSpec(
     key="empresas_eua",
     title="Empresas Americanas — do arquivo da SEC ao ranking",
     subtitle=(
-        "O módulo dos EUA repete a casca da B3, mas com outra fonte, outro universo "
-        "e outra forma de medir crescimento."
+        "O módulo dos EUA repete a casca da B3 (Empresas por Setor, Análise de Empresa, "
+        "Análise Avançada, Criação de Portfólio e Avaliação de Portfólio), mas com outra "
+        "fonte, outro universo e outra forma de medir crescimento."
     ),
+    tela="Empresas Americanas",
+    abas=("Empresas por Setor", "Análise de Empresa", "Análise Avançada",
+          "Criação de Portfólio", "Avaliação de Portfólio"),
     rows=(
         ("Universo", ("sec_universo", "so_acoes", "vitrine_us")),
         ("Métricas", ("gaap_us", "trilhas_us", "crescimento_us")),
         ("Score", ("percentil_industria_us", "cobertura_us", "piso_us")),
         ("Validação", ("pit_us", "saidas_us")),
+        ("Consulta", ("setor_us", "empresa_us")),
         ("Aplicação", ("avancada_us", "carteira_us", "avaliacao_us")),
     ),
     default="sec_universo",
     nodes={
         "sec_universo": _node(
             "sec_universo", "Arquivos da SEC", "Universo",
-            "A base vem dos próprios arquivos entregues a SEC (10-K, 10-Q, 8-K), não de "
+            "A base vem dos próprios arquivos entregues à SEC (10-K, 10-Q, 8-K), não de "
             "um provedor que já mastigou o número.",
             (
                 "10-K e 10-Q: demonstrações auditadas",
@@ -1483,7 +1596,7 @@ FLOW_EMPRESAS_EUA = FlowSpec(
         ),
         "vitrine_us": _node(
             "vitrine_us", "Vitrine publicada", "Universo",
-            "Como nos FIIs, a tela le uma vitrine publicada com versão de metodologia. "
+            "Como nos FIIs, a tela lê uma vitrine publicada com versão de metodologia. "
             "Trocar a versão sem republicar deixa a tela lendo safra que não existe mais.",
             (
                 "Versão de metodologia gravada na vitrine",
@@ -1495,14 +1608,14 @@ FLOW_EMPRESAS_EUA = FlowSpec(
         ),
         "gaap_us": _node(
             "gaap_us", "Contabilidade americana", "Métricas",
-            "As linhas vem em US GAAP, que não casa linha a linha com o padrão brasileiro. "
-            "O app trabalha com os conceitos da fonte, sem forcar equivalência.",
+            "As linhas vêm em US GAAP, que não casa linha a linha com o padrão brasileiro. "
+            "O app trabalha com os conceitos da fonte, sem forçar equivalência.",
             (
                 "Linhas em US GAAP, na moeda de reporte",
-                "Sem tradução forcada para o plano de contas da B3",
+                "Sem tradução forçada para o plano de contas da B3",
                 "Faixa de validação registra o valor recusado",
             ),
-            "Forcar equivalência entre padrões contábeis cria comparação que parece válida "
+            "Forçar equivalência entre padrões contábeis cria comparação que parece válida "
             "e não é. Melhor duas réguas honestas que uma régua falsa.",
         ),
         "trilhas_us": _node(
@@ -1514,7 +1627,7 @@ FLOW_EMPRESAS_EUA = FlowSpec(
                 "Eficiência de capital e valuation",
                 "Retorno ao acionista (dividendo e recompra)",
             ),
-            "Agrupar evita que dez métricas correlacionadas da mesma familia dominem o "
+            "Agrupar evita que dez métricas correlacionadas da mesma família dominem o "
             "score só por serem muitas.",
         ),
         "crescimento_us": _node(
@@ -1539,7 +1652,7 @@ FLOW_EMPRESAS_EUA = FlowSpec(
                 "Substituição dentro do mesmo segmento",
             ),
             "Comparar margem de software com margem de varejo alimentar produz um ranking "
-            "que só mede em que setor a empresa esta.",
+            "que só mede em que setor a empresa está.",
         ),
         "cobertura_us": _node(
             "cobertura_us", "Cobertura e confiança", "Score",
@@ -1551,7 +1664,7 @@ FLOW_EMPRESAS_EUA = FlowSpec(
                 "Ausente fora da média, nunca zero",
             ),
             "Sem isso, a empresa com menos divulgação sobe no ranking por falta de "
-            "informação contraria.",
+            "informação contrária.",
         ),
         "piso_us": _node(
             "piso_us", "Piso de qualidade", "Score",
@@ -1559,15 +1672,15 @@ FLOW_EMPRESAS_EUA = FlowSpec(
             "ranking — mas a tela diz quantas saíram e por que.",
             (
                 "Piso de cobertura para entrar no ranking",
-                "Sinais eliminatórios explicitos",
-                "Contagem de excluidos visível",
+                "Sinais eliminatórios explícitos",
+                "Contagem de excluídos visível",
             ),
             "Portão que só podia dar False nunca é revisto. No dia em que a fonte chega, "
             "ele promove a base inteira de uma vez.",
         ),
         "pit_us": _node(
             "pit_us", "Painel point-in-time", "Validação",
-            "Safras reconstruidas com o dado conhecido na época, para medir se a ordenação "
+            "Safras reconstruídas com o dado conhecido na época, para medir se a ordenação "
             "do motor antecipou alguma coisa.",
             (
                 "Safras com dado da época",
@@ -1588,6 +1701,35 @@ FLOW_EMPRESAS_EUA = FlowSpec(
             ),
             "Zero deslistagem em 16 anos não é limpeza: é assinatura de universo "
             "sobrevivente, e infla todo retorno histórico.",
+        ),
+        "setor_us": _node(
+            "setor_us", "Subaba 🏢 Empresas por Setor", "Consulta",
+            "Lista as ações americanas da vitrine em grade por setor, com busca por "
+            "ticker, nome ou setor. Ticker exato, ou nome que aponta uma empresa só, abre "
+            "direto a Análise de Empresa.",
+            (
+                "_tab_empresas_setor()",
+                "core.us_data.companies()",
+                "render_sector_grid()",
+                "Busca aproximada quando o nome vem com erro de digitação",
+            ),
+            "É a porta de entrada do universo: mostra o que existe antes de qualquer "
+            "ranking ou filtro de carteira.",
+        ),
+        "empresa_us": _node(
+            "empresa_us", "Subaba 🔍 Análise de Empresa", "Consulta",
+            "Análise de uma empresa pelo campo Ticker ou nome da empresa: Preço da Ação, "
+            "Retorno Anual, CAGR, Último Exercício, Demonstrações Financeiras, Dividendos "
+            "por ação, Múltiplos, Fluxo de Caixa, Estrutura de Capital e Dívida, "
+            "Rentabilidade, Valuation, Score e o Relatório do analista.",
+            (
+                "_tab_empresa()",
+                "core.us_data.scored_universe()",
+                "Dossiê, classificação e critérios avançados (expander)",
+                "Chat do ativo: render_chat_ativo() com build_us_ativo_context()",
+            ),
+            "O relatório do analista lê o ativo como o portão da Inteligência dos Ativos "
+            "lê: os dois chegam ao mesmo veredito.",
         ),
         "avancada_us": _node(
             "avancada_us", "Análise avançada", "Aplicação",
@@ -1614,15 +1756,20 @@ FLOW_EMPRESAS_EUA = FlowSpec(
         ),
         "avaliacao_us": _node(
             "avaliacao_us", "Avaliação de portfólio", "Aplicação",
-            "Terceira etapa: submeter a carteira pronta as mesmas métricas de risco, "
-            "concentração e fatores.",
+            "Terceira etapa, espelho da Avaliação de Portfólio da B3: sobre a carteira "
+            "salva, monta o Cenário Macroeconômico dos EUA, a Avaliação Quantitativa, a "
+            "Análise Qualitativa via LLM, o Relatório Consolidado, a Alocação do Modelo "
+            "(Quanti + Quali), os Relatórios por Empresa, a Conclusão Estratégica e o chat "
+            "Tire Dúvidas sobre o Portfólio.",
             (
-                "Risco e concentração da carteira montada",
-                "Exposição por fator",
-                "Comparação com a carteira atual",
+                "views/analise_portfolio_us.py",
+                "Carteira salva: load_active_us_portfolio_model() (us_portfolio_models)",
+                "Macro do Fed: juros, CPI, PIB real, desemprego, curva e crédito",
+                "Benchmark S&P 500; custo de oportunidade: Treasury",
+                "Sem RAG documental: a evidência é o dossiê determinístico e o laboratório avançado",
             ),
-            "Carteira montada por ranking pode concentrar fator sem ninguém perceber. "
-            "A avaliação existe para mostrar isso ANTES do aporte.",
+            "A avaliação roda sobre a carteira SALVA, não sobre uma seleção improvisada, e "
+            "existe para mostrar concentração e adequação ANTES do aporte.",
         ),
     },
     notes=(
@@ -1639,10 +1786,12 @@ FLOW_PORTFOLIO_GLOBAL = FlowSpec(
         "Junta B3, FIIs, renda fixa e exterior num único retrato: concentração, fatores, "
         "risco, papel de cada ativo e o que fazer com o próximo aporte."
     ),
+    tela="Portfólio Global",
     rows=(
         ("Consolidação", ("snapshots_pg", "alvos_pg", "cambio_pg")),
         ("Estrutura", ("concentracao_pg", "correlacao_pg", "fatores_pg")),
         ("Risco", ("risco_pg", "papeis_pg", "qualidade_pg")),
+        ("Alocação", ("black_litterman_pg",)),
         ("Ação", ("recomendacoes_pg", "aporte_pg", "chat_pg")),
     ),
     default="snapshots_pg",
@@ -1654,10 +1803,10 @@ FLOW_PORTFOLIO_GLOBAL = FlowSpec(
             (
                 "Ações, FIIs, renda fixa e exterior na mesma tabela",
                 "Classe, país, moeda, setor e símbolo por posição",
-                "Aviso explicito para setor não mapeado",
+                "Aviso explícito para setor não mapeado",
             ),
             "Avaliar cada classe na sua própria tela esconde a concentração que só aparece "
-            "quando tudo esta junto.",
+            "quando tudo está junto.",
         ),
         "alvos_pg": _node(
             "alvos_pg", "Alocação-alvo", "Consolidação",
@@ -1713,7 +1862,7 @@ FLOW_PORTFOLIO_GLOBAL = FlowSpec(
             "A carteira é projetada contra fatores representados por fundos negociados em "
             "bolsa: dólar, inflação, juros, mercado local, ouro e small cap.",
             (
-                "Fatores representados por ETFs reais, não índices teoricos",
+                "Fatores representados por ETFs reais, não índices teóricos",
                 "Small cap medido como diferença contra o mercado",
                 "Exposição por fator e por ativo",
             ),
@@ -1737,9 +1886,9 @@ FLOW_PORTFOLIO_GLOBAL = FlowSpec(
             "Cada posição recebe um papel — renda, crescimento, hedge cambial, proteção "
             "contra inflação, reserva de valor, baixa volatilidade ou diversificação.",
             (
-                "Papel atribuido com evidência numérica",
+                "Papel atribuído com evidência numérica",
                 "Indeterminado carrega a causa nomeada",
-                "Cobertura de papeis na carteira",
+                "Cobertura de papéis na carteira",
             ),
             "Papel sem evidência é rótulo. Quando não dá para determinar, dizer POR QUE "
             "vale mais que chutar uma categoria.",
@@ -1756,16 +1905,35 @@ FLOW_PORTFOLIO_GLOBAL = FlowSpec(
             "Uma medida de risco que cobre 60% da carteira não é a medida de risco da "
             "carteira — e precisa dizer isso.",
         ),
+        "black_litterman_pg": _node(
+            "black_litterman_pg", "Alocação Black-Litterman", "Alocação",
+            "Parte da sua meta (prior de equilíbrio π = δΣw) e a inclina pelos scores dos "
+            "três motores (B3, FII e EUA), cada um com a confiança que o próprio IC fora da "
+            "amostra justifica. Mostra a tabela por ativo e por classe (Meta, "
+            "Black-Litterman e Real) e a fronteira eficiente, marcada como TEÓRICA.",
+            (
+                "_painel_black_litterman() (views/portfolio_global.py)",
+                "core/global_portfolio/alocacao_bl.py",
+                "Cards: Aversão a risco (δ), Incerteza do prior (τ), Encolhimento Ledoit-Wolf, Janela comum",
+                "Confiança por motor; sem IC medido e significante, a view anda 1% do caminho",
+                "Restrições lidas da política de investimento (investment_policies)",
+                "Radio Alvo do motor: Tilt por sinais (padrão) ou Black-Litterman",
+            ),
+            "O tilt por sinais dá o mesmo peso a um score com IC medido e a um sem medição. "
+            "O Black-Litterman só sai da meta quando um motor com evidência empurra; "
+            "escolhido como alvo do motor, ainda passa por custo, banda e tetos.",
+        ),
         "recomendacoes_pg": _node(
             "recomendacoes_pg", "Recomendações", "Ação",
-            "Os sinais viram inclinação no peso-alvo, passam pelos tetos por ativo e por "
-            "classe, e só então viram sugestão de movimento com custo estimado.",
+            "Os sinais viram inclinação no peso-alvo (ou o alvo vem do Black-Litterman, se "
+            "você escolher), passam pelos tetos por ativo e por classe, e só então viram "
+            "sugestão de movimento com custo estimado.",
             (
                 "Sinal inclina o peso-alvo, não decide sozinho",
                 "Teto por ativo e por classe sobre o resultado acumulado",
                 "Custo de transação entra na decisão",
             ),
-            "Movimento menor que o custo de fazer vira 'manter'. E quando o custo não esta "
+            "Movimento menor que o custo de fazer vira 'manter'. E quando o custo não está "
             "calibrado, a resposta também é 'manter'.",
         ),
         "aporte_pg": _node(
@@ -1830,11 +1998,11 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
         "vitrine_publicada": _node(
             "vitrine_publicada", "Vitrine publicada", "Origem",
             "Do armazém sai um resumo — a vitrine — que é publicado na nuvem. É ela que a "
-            "tela le. O cálculo pesado já aconteceu antes.",
+            "tela lê. O cálculo pesado já aconteceu antes.",
             (
                 "Resumo gerado a partir do armazém",
                 "Publicado com data e versão de metodologia",
-                "A tela le a vitrine, não recalcula",
+                "A tela lê a vitrine, não recalcula",
             ),
             "Separar geração de leitura deixa a tela rápida e torna auditável QUANDO cada "
             "número foi produzido.",
@@ -1845,7 +2013,7 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
             "topo da tela compara a data da publicação com esses dois prazos.",
             (
                 "Cadência alvo: de quanto em quanto tempo deveria atualizar",
-                "Limite de validade: a partir de quando esta velho",
+                "Limite de validade: a partir de quando está velho",
                 "Selo visível na cabeça da tela",
             ),
             "Dado velho não levanta erro — ele só fica parado. Sem selo, parado é "
@@ -1860,7 +2028,7 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
                 "Validação e conciliação entre fontes",
                 "Idade do dado dentro da própria validade",
             ),
-            "E a pergunta 'da para confiar neste número?', separada da pergunta 'quantos "
+            "É a pergunta 'dá para confiar neste número?', separada da pergunta 'quantos "
             "ativos ele cobre?'.",
         ),
         "abrangencia": _node(
@@ -1873,7 +2041,7 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
                 "Lacuna de ingestão aparece aqui primeiro",
             ),
             "Cobrir muito com fonte fraca é pior que cobrir menos com fonte forte. Por isso "
-            "os dois eixos não tem o mesmo peso.",
+            "os dois eixos não têm o mesmo peso.",
         ),
         "nao_medido": _node(
             "nao_medido", "O que não foi medido", "Medição",
@@ -1904,11 +2072,11 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
             "As retrospectivas usam SÓ o que era conhecido em cada data. Versão de "
             "metodologia nova exige safra nova.",
             (
-                "Safras reconstruidas com dado da época",
+                "Safras reconstruídas com dado da época",
                 "Mínimo de períodos para a validação valer",
                 "Versão sem safra correspondente desliga o painel",
             ),
-            "Backtest que le o futuro aprova qualquer regra. E painel vazio precisa dizer "
+            "Backtest que lê o futuro aprova qualquer regra. E painel vazio precisa dizer "
             "o motivo, em vez de parecer 'sem dado'.",
         ),
         "piso_qualidade": _node(
@@ -1928,7 +2096,7 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
             "A aba Grau de Confiança, dentro de Configurações, mostra a nota por seção e "
             "o detalhe critério a critério.",
             (
-                "Configurações > Grau de Confiança",
+                "Configurações › 🎯 Grau de Confiança",
                 "Nota por seção do app",
                 "Detalhe por critério, com o que não foi medido",
             ),
@@ -1942,7 +2110,9 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
             (
                 "Limitação derivada do que foi medido",
                 "Texto revisto quando a medição muda",
-                "Documentação e Configurações não fazem afirmação de confiança",
+                "Só Configurações não faz afirmação de confiança: aparece como 'não se aplica', que não é 0%",
+                "Subabas fora da nota, declaradas no card: Previsão de Lucros e Carteira 20 "
+                "(Empresas B3), Inteligência dos Ativos (Investimentos)",
             ),
             "Aviso escrito a mão envelhece invertido: vira falso e continua soando como "
             "rigor. Por isso a limitação sai da medição.",
@@ -1959,16 +2129,18 @@ FLOW_CONFIGURACOES = FlowSpec(
     key="configuracoes",
     title="Configurações — o que você ajusta, o que você sobe e o que você audita",
     subtitle=(
-        "A Central de Configurações reúne quatro tarefas diferentes sob a mesma barra: "
-        "preferência da conta, entrada de arquivo, diagnóstico do ambiente e segurança. "
-        "Saber qual aba faz o quê evita procurar o upload no lugar errado. "
-        "Esta documentação é a última aba da mesma barra."
+        "A Central de Configurações reúne nove abas sob a mesma barra: preferências da "
+        "conta, diagnóstico do app e do ambiente, entrada de arquivo, segurança e a "
+        "referência do próprio app. Saber qual aba faz o quê evita procurar o upload no "
+        "lugar errado. Esta documentação é a última aba da mesma barra."
     ),
+    tela="Configurações",
     rows=(
-        ("Preferências", ("cfg_tema", "cfg_trocar_usuario", "cfg_memoria_llm")),
+        ("Preferências", ("cfg_tema", "cfg_categorias", "cfg_trocar_usuario", "cfg_memoria_llm")),
+        ("Diagnóstico", ("cfg_confianca", "cfg_restricoes", "cfg_mercado", "cfg_banco")),
         ("Entrada de arquivo", ("cfg_fatura", "cfg_extrato", "cfg_carteira")),
-        ("Diagnóstico", ("cfg_confianca", "cfg_mercado", "cfg_banco")),
-        ("Segurança", ("cfg_sessao", "cfg_usuarios")),
+        ("Segurança", ("cfg_conta", "cfg_sessao", "cfg_usuarios")),
+        ("Referência", ("cfg_mapa", "cfg_documentacao")),
     ),
     default="cfg_tema",
     nodes={
@@ -1977,20 +2149,36 @@ FLOW_CONFIGURACOES = FlowSpec(
             "Escolha entre o tema escuro e o claro. A escolha é gravada na conta e "
             "vale nas próximas aberturas, em qualquer tela.",
             (
-                "Aba ⚙️ Geral, primeiro bloco",
+                "Aba ⚙️ Geral, a primeira da barra, bloco 01 (🎨 Tema do aplicativo)",
                 "Escolha gravada por usuário",
                 "O seletor morava na barra lateral até 21/09/2026",
             ),
             "O tema é preferência de quem usa, e preferência pertence à conta — não ao "
             "menu de navegação, onde disputava espaço com as rotas do app.",
         ),
+        "cfg_categorias": _node(
+            "cfg_categorias", "Categorias do Controle Financeiro", "Preferências",
+            "Cria as categorias que aparecem ao lançar entrada, saída ou investimento no "
+            "Controle Financeiro, e arquiva as que você criou e não usa mais.",
+            (
+                "Aba ⚙️ Geral, bloco 02 (🏷️ Categorias do Controle Financeiro)",
+                "Seletor Tipo: Entrada, Saída ou Investimento",
+                "Campo Nova categoria e botão ➕ Criar categoria",
+                "📦 Arquivar só para categoria criada por você; as de sistema não se arquivam",
+                "core.categorias (listar, criar, arquivar)",
+                "Categoria que falta no banco vira aviso para rodar a migration 072 "
+                "(supabase_unificado/schema/072_categorias.sql)",
+            ),
+            "Arquivar, nunca apagar: a categoria some do seletor e os lançamentos antigos "
+            "continuam classificados nela. Apagar levaria a classificação junto, sem volta.",
+        ),
         "cfg_trocar_usuario": _node(
             "cfg_trocar_usuario", "Trocar de usuário", "Preferências",
             "Encerra a sessão deste navegador e devolve a tela de entrada. Exige marcar "
-            "uma confirmação explícita antes do botão ficar disponível.",
+            "uma confirmação explícita antes do botão Sair / trocar usuário ficar disponível.",
             (
-                "Aba ⚙️ Geral, segundo bloco",
-                "Confirmação obrigatória antes de sair",
+                "Aba ⚙️ Geral, bloco 03 (👤 Trocar de usuário)",
+                "Confirmação obrigatória: Entendi que a sessão atual será encerrada",
                 "Limpa a sessão inteira do navegador",
             ),
             "Sair apaga tudo o que a sessão guardava em memória, inclusive filtros e "
@@ -2002,12 +2190,75 @@ FLOW_CONFIGURACOES = FlowSpec(
             "Apaga o histórico de conversa com o assistente — de uma seção específica "
             "ou de todas. A contagem aparece antes do clique.",
             (
-                "Aba ⚙️ Geral, terceiro bloco",
+                "Aba ⚙️ Geral, bloco 04 (🧹 Limpar histórico da LLM)",
                 "Contagem de conversas exibida antes de apagar",
                 "Limpa o banco e também a sessão aberta",
             ),
             "Apagar só o banco deixaria a conversa viva na tela até o próximo recarregamento, "
             "e o usuário concluiria que a limpeza falhou. As duas cópias somem juntas.",
+        ),
+        "cfg_confianca": _node(
+            "cfg_confianca", "Grau de Confiança", "Diagnóstico",
+            "Mostra quanto o app confia em cada tela do menu e a evidência por trás de cada "
+            "nota. A tela lê a última medição gravada e só remede quando você clica em "
+            "🔄 Medir agora.",
+            (
+                "Aba 🎯 Grau de Confiança, a segunda da barra",
+                "Última medição lida de confianca_snapshots",
+                "Nota por seção, com o detalhe por critério; faixas Alta (≥ 75%), "
+                "Média (55–75%) e Baixa (< 55%)",
+                "Configurações não faz afirmação de confiança: aparece como 'não se aplica', "
+                "que não é 0% (SECOES_SEM_AFIRMACAO)",
+                "Subabas fora da nota, nomeadas no card da seção: Previsão de Lucros e "
+                "Carteira 20 (Empresas B3), Inteligência dos Ativos (Investimentos)",
+                "Empresas B3 e Seleção de FIIs medem também o 'Pregão diário (chat)': a "
+                "idade dos pregões do COTAHIST que o chat do ativo cita (peso 0,05, "
+                "tirado do bloco de frescor, que segue somando 0,25)",
+                "Apoio analítico — não é recomendação",
+            ),
+            "Medir a cada abertura custava uma varredura inteira do banco por clique de menu. "
+            "Ler a última medição e remedir sob comando deixa o custo onde a decisão está. "
+            "E subaba que a nota não cobre é declarada, para que a nota não pareça falar dela.",
+        ),
+        "cfg_restricoes": _node(
+            "cfg_restricoes", "Restrições", "Diagnóstico",
+            "Desde 05/10/2026 nenhuma tela de uso mostra limitação técnica, fonte fora do ar "
+            "ou procedência: tudo é registrado e aparece aqui, item a item, para decidir o "
+            "que fazer com cada um. A aba é a mesma para toda conta desde 12/10/2026.",
+            (
+                "Aba 🧭 Restrições",
+                "Painel lido de core.lacunas.painel, com cache de 5 minutos",
+                "Três naturezas: Restrição, Erro e Detalhe técnico",
+                "Decisão por item: Pendente, Em análise, Aceita ou Resolvida",
+                "Aceita tira o item da fila do corretor diário; Resolvida reabre sozinha se o "
+                "item voltar a aparecer",
+            ),
+            "Aviso técnico espalhado pelas telas atrapalha quem só quer ler o número. "
+            "Reunido numa fila com decisão, ele vira trabalho rastreável em vez de ruído.",
+        ),
+        "cfg_mercado": _node(
+            "cfg_mercado", "Dados de mercado", "Diagnóstico",
+            "Acompanha cotações, fundamentos e indicadores macroeconômicos: quantas fontes "
+            "estão em dia, quantas pedem atenção e quando foi a última atualização.",
+            (
+                "Aba 🔄 Dados de mercado",
+                "Cotações e indicadores diários; macro consolidado mensal",
+                "Documentos corporativos, semanais",
+            ),
+            "Transações, operações e proventos ficam de fora de propósito: eles vêm do arquivo "
+            "que você sobe ou do lançamento manual, e não de coleta automática.",
+        ),
+        "cfg_banco": _node(
+            "cfg_banco", "Banco de dados", "Diagnóstico",
+            "Conexão, capacidade e schema do banco publicado, além das rotas controladas de "
+            "importação. Diagnóstico técnico, sem conteúdo financeiro.",
+            (
+                "Aba 🗄️ Banco de dados",
+                "Estado da conexão e avisos de ambiente",
+                "Uso do espaço e maiores tabelas",
+            ),
+            "O plano gratuito da nuvem tem teto de espaço, e estourar o teto derruba a leitura "
+            "do app inteiro. Ver a margem antes de publicar carga nova é o que evita a parada.",
         ),
         "cfg_fatura": _node(
             "cfg_fatura", "Fatura do cartão", "Entrada de arquivo",
@@ -2045,41 +2296,21 @@ FLOW_CONFIGURACOES = FlowSpec(
             "O nome do arquivo às vezes carrega parte da chave — a data do lote, por exemplo. "
             "Por isso a importação lê os arquivos um a um, e não como um bloco único de bytes.",
         ),
-        "cfg_confianca": _node(
-            "cfg_confianca", "Grau de Confiança", "Diagnóstico",
-            "Mostra quanto o app confia em cada seção e a evidência por trás de cada nota. "
-            "A tela lê a última medição gravada e só remede quando você clica.",
+        "cfg_conta": _node(
+            "cfg_conta", "Minha conta e cadastro", "Segurança",
+            "Abre a aba Segurança. Em Minha conta, você troca a própria senha; em Cadastrar "
+            "usuário, quem administra cria a conta de outra pessoa, que terá os próprios "
+            "dados financeiros e a própria memória de conversas.",
             (
-                "Aba 🎯 Grau de Confiança, a primeira da barra",
-                "Nota por seção, com o detalhe por critério",
-                "Apoio analítico — não é recomendação",
+                "Aba 🔒 Segurança, Minha conta e Cadastrar usuário",
+                "render_user_accounts() (design/user_accounts.py)",
+                "Nova senha com exatamente 8 caracteres; a sessão é encerrada depois da troca",
+                "Cadastrar usuário é do administrador: create_user chama require_admin, e "
+                "quem não administra vê a explicação no lugar do formulário",
             ),
-            "Medir a cada abertura custava uma varredura inteira do banco por clique de menu. "
-            "Ler a última medição e remedir sob comando deixa o custo onde a decisão está.",
-        ),
-        "cfg_mercado": _node(
-            "cfg_mercado", "Dados de mercado", "Diagnóstico",
-            "Acompanha cotações, fundamentos e indicadores macroeconômicos: quantas fontes "
-            "estão em dia, quantas pedem atenção e quando foi a última atualização.",
-            (
-                "Aba 🔄 Dados de mercado",
-                "Cotações e indicadores diários; macro consolidado mensal",
-                "Documentos corporativos, semanais",
-            ),
-            "Transações, operações e proventos ficam de fora de propósito: eles vêm do arquivo "
-            "que você sobe ou do lançamento manual, e não de coleta automática.",
-        ),
-        "cfg_banco": _node(
-            "cfg_banco", "Banco de dados", "Diagnóstico",
-            "Conexão, capacidade e schema do banco publicado, além das rotas controladas de "
-            "importação. Diagnóstico técnico, sem conteúdo financeiro.",
-            (
-                "Aba 🗄️ Banco de dados",
-                "Estado da conexão e avisos de ambiente",
-                "Uso do espaço e maiores tabelas",
-            ),
-            "O plano gratuito da nuvem tem teto de espaço, e estourar o teto derruba a leitura "
-            "do app inteiro. Ver a margem antes de publicar carga nova é o que evita a parada.",
+            "O bloco Cadastrar usuário não some para quem não administra desde 12/10/2026: "
+            "pedaço que desaparece sem explicação parece defeito, e o formulário só "
+            "entregaria um botão que sempre falha, porque quem recusa de fato é create_user.",
         ),
         "cfg_sessao": _node(
             "cfg_sessao", "Proteção e sessão", "Segurança",
@@ -2099,15 +2330,48 @@ FLOW_CONFIGURACOES = FlowSpec(
             "leitura, e visível apenas para quem administra.",
             (
                 "Aba 🔒 Segurança, bloco 03",
+                "render_registered_users(); list_users chama require_admin",
                 "Data de cadastro e situação por usuário",
                 "Quem não administra vê o bloco e a razão, não a lista",
             ),
             "A lista fecha a página, e não abre: o administrador chega nela depois de conferir "
             "o estado da sessão e da credencial.",
         ),
+        "cfg_mapa": _node(
+            "cfg_mapa", "Mapa do App", "Referência",
+            "Fluxograma de todas as telas do app em linguagem simples: cada tela, aba e "
+            "subaba vira um ramo com a explicação do que mostra.",
+            (
+                "Aba 🗺️ Mapa do App",
+                "Uma área por tela em docs/mapa_app/areas/*.json",
+                "scripts/montar_mapa_app.py junta as áreas em docs/mapa_app/mapa.json",
+                "design/mapa_app.py::pagina_html(tema) junta o desenho (docs/mapa_app/modelo.html) "
+                "e os dados",
+                "Desenhado num iframe que segue o tema escolhido no app, não o do sistema",
+                "tests/test_configuracoes_mapa_do_app.py falha se mapa.json ficar fora de sincronia",
+            ),
+            "Mapa que descreve um app que não existe mais não quebra nada na tela, só engana. "
+            "Por isso ele sai de arquivos versionados, montados por script e cobrados por teste.",
+        ),
+        "cfg_documentacao": _node(
+            "cfg_documentacao", "Documentação", "Referência",
+            "Esta aba: fluxogramas clicáveis das partes complexas do app, com objetivo, "
+            "dados, regra, exemplo, interpretação e cuidados de cada etapa.",
+            (
+                "Aba 📚 Documentação, a nona da barra",
+                "Era rota da barra lateral; virou aba de Configurações em 24/09/2026",
+                "Abas: Dashboard Geral, Controle financeiro, Carteira atual, Inteligência e IR, "
+                "Empresas e Carteira 20 (B3), Análise avançada (B3), Criação de portfólio (B3), "
+                "Simulação (B3), Avaliação de portfólio (B3), Empresas Americanas, Seleção de "
+                "FIIs, Portfólio Global, Qualidade dos dados, Configurações e Indicadores",
+                "render_corpo() desenha as abas; cada fluxo declara a tela e as subabas que explica",
+            ),
+            "Documentação que não acompanha a tela engana mais do que ajuda. Cada fluxo diz de "
+            "que tela é e quais subabas cobre, e o teste cobra quando a tela muda.",
+        ),
     },
     notes=(
-        "A tela é a mesma para todo mundo desde 12/10/2026: as oito abas aparecem para "
+        "A tela é a mesma para todo mundo desde 12/10/2026: as nove abas aparecem para "
         "quem administra e para quem não administra. O que separa os dois é o dado que "
         "cada guarda entrega — a lista de usuários cadastrados, por exemplo, continua só "
         "do administrador, e o bloco diz isso em vez de desaparecer.",
@@ -2117,12 +2381,434 @@ FLOW_CONFIGURACOES = FlowSpec(
 )
 
 
+FLOW_DASHBOARD_GERAL = FlowSpec(
+    key="dashboard_geral",
+    title="Dashboard Geral — fatos do período primeiro, referências depois",
+    subtitle=(
+        "A primeira tela do menu junta o caixa do Controle Financeiro e a carteira de "
+        "Investimentos num painel só. A ordem é fixa: o que aconteceu de fato vem em cima, "
+        "e as carteiras que o app recomenda fecham a página, marcadas como referência."
+    ),
+    tela="Dashboard Geral",
+    rows=(
+        ("Cabeçalho", ("dg_cabecalho", "dg_kpis")),
+        ("Fatos do período", ("dg_leitura", "dg_resumo_areas", "dg_evolucao", "dg_raio_x")),
+        ("Referência", ("dg_recomendadas",)),
+    ),
+    default="dg_cabecalho",
+    nodes={
+        "dg_cabecalho": _node(
+            "dg_cabecalho", "Cabeçalho e origem dos dados", "Cabeçalho",
+            "Abre com o título 'Seu dinheiro, em perspectiva.' e com chips que dizem de onde "
+            "vêm os números, qual é o período, se o mês ainda está em curso e quando os dados "
+            "foram atualizados.",
+            (
+                "render() (views/dashboard_geral.py)",
+                "Chip de fonte: Dados reais, Fallback demonstrativo ou Dados de demonstração",
+                "Chip Mês parcial · até dd/mm quando os números são do mês corrente, ainda aberto",
+                "Chip Atualizado com a data",
+            ),
+            "Número de demonstração com a mesma cara de número real engana. O chip de fonte "
+            "diz, antes de qualquer cartão, se o que está na tela é o seu dado.",
+        ),
+        "dg_kpis": _node(
+            "dg_kpis", "Indicadores do topo", "Cabeçalho",
+            "Cinco cartões: Patrimônio investido, Saldo líquido do mês, Taxa de poupança "
+            "(comparada à meta de 30%), Rentabilidade da carteira e Proventos recebidos.",
+            (
+                "_render_kpi_grid()",
+                "Dados de get_visao_geral(), get_cashflow_mensal() e get_carteira()",
+                "Conta ou posição sem câmbio válido fica fora do patrimônio, e a tela nomeia "
+                "o que ficou de fora",
+            ),
+            "Somar posição em moeda estrangeira sem câmbio válido distorceria o patrimônio sem "
+            "aviso. Deixar de fora e nomear mantém o total honesto.",
+        ),
+        "dg_leitura": _node(
+            "dg_leitura", "Leitura do mês", "Fatos do período",
+            "Uma frase que classifica o caixa do período: déficit, aporte acima da sobra, "
+            "equilíbrio ou sobra. Logo depois vem a ressalva de que metas e modelos mais "
+            "abaixo são referências analíticas, não garantias de resultado.",
+            (
+                "indicadores_caixa() (core.controle_indicadores)",
+                "Situações: deficit, aportes_excedem_sobra e equilibrio; qualquer outra lê "
+                "como sobra de caixa",
+                "Receitas, despesas e investimentos do mês corrente",
+            ),
+            "Aporte que passa da renda do mês não é consumo. Sem essa distinção, um mês de "
+            "aporte grande pareceria um mês de gasto descontrolado.",
+        ),
+        "dg_resumo_areas": _node(
+            "dg_resumo_areas", "Resumo por área", "Fatos do período",
+            "Um cartão por área do app — Controle Financeiro, Investimentos, B3, EUA e FIIs — "
+            "com os números principais de cada uma e o selo da carteira recomendada quando "
+            "ela existe.",
+            (
+                "_secao_resumo_modulos()",
+                "Faixa ◆ Mapa do aplicativo",
+                "Controle Financeiro · Investimentos · B3 · EUA · FIIs",
+            ),
+            "Dá a volta pelo app inteiro sem abrir tela por tela e mostra onde está o número "
+            "que pede atenção.",
+        ),
+        "dg_evolucao": _node(
+            "dg_evolucao", "Evolução financeira", "Fatos do período",
+            "Receitas, despesas e investimentos dos últimos 6 meses, as categorias de despesa "
+            "que mais pesam no ano e o comparativo ano a ano. Tudo sai do caixa do Controle "
+            "Financeiro.",
+            (
+                "Últimos 6 meses: get_cashflow_mensal()",
+                "Despesas por categoria do ano: get_gastos_categoria_anual(), compras de "
+                "cartão excluídas",
+                "Comparativo Ano a Ano: get_historico_anual()",
+            ),
+            "O cartão é fluxo futuro e chega ao caixa pelo Pagamento de Cartão. Somar a "
+            "compra de novo na despesa por categoria misturaria as duas linhas do tempo que "
+            "o Controle Financeiro mantém separadas.",
+        ),
+        "dg_raio_x": _node(
+            "dg_raio_x", "Raio X do portfólio investido", "Fatos do período",
+            "Alocação, diversificação, concentração e evolução do patrimônio, apuradas sobre "
+            "o que você tem de fato em carteira: rentabilidade, fatia no exterior, N efetivo, "
+            "Top 5 com a maior posição, Brasil vs Exterior e a evolução.",
+            (
+                "_secao_raio_x_portfolio()",
+                "Dados de get_carteira() e get_evolucao_patrimonial()",
+                "N efetivo: ativos equivalentes por diversificação; abaixo de 10 sai em alerta",
+                "Top 5 acima de 50% sai em alerta",
+            ),
+            "Contar ativos não mede diversificação: dez posições com uma pesando metade da "
+            "carteira se comportam como poucas. O N efetivo e o Top 5 mostram isso direto.",
+        ),
+        "dg_recomendadas": _node(
+            "dg_recomendadas", "Detalhes da carteira recomendada", "Referência",
+            "Fecha a página com as carteiras que o app recomenda: Portfólio B3 padrão, "
+            "Portfólio EUA padrão e Carteira-modelo de Fundos Imobiliários. São referências "
+            "analíticas — não são a sua posição investida nem garantia de resultado.",
+            (
+                "_secao_sugestoes_carteira()",
+                "Modelos salvos: load_active_b3_portfolio_model() e "
+                "load_active_us_portfolio_model()",
+                "FIIs: o modelo salvo em Seleção de FIIs (load_active_fii_portfolio_model()); "
+                "sem ele, a sugestão é recalculada com 10 fundos, teto de 20% por FII e de 50% "
+                "por tipo",
+                "Falha ao ler o modelo de FIIs salvo vira aviso de sugestão recalculada",
+                "Expander 🧭 Inteligência dos Ativos na criação desta carteira (render_salvo)",
+                "Em modo de demonstração (MOCK_MODE) os modelos salvos não são carregados",
+            ),
+            "Peso sugerido lido como posição real leva a conclusão errada sobre a própria "
+            "carteira. Por isso a recomendação vem por último, sob uma faixa que diz o que ela é.",
+        ),
+    },
+    notes=(
+        "A ordem das seções é regra da tela, registrada na docstring de "
+        "views/dashboard_geral.py: fatos primeiro, referências depois.",
+    ),
+)
+
+
+FLOW_EMPRESAS_B3_TELAS = FlowSpec(
+    key="empresas_b3_telas",
+    title="Empresas B3 — consulta, Previsão de Lucros e Carteira 20",
+    subtitle=(
+        "Empresas B3 tem sete subabas. Análise Avançada, Criação de Portfólio e Avaliação "
+        "de Portfólio têm fluxos próprios nesta documentação; este cobre as outras quatro: "
+        "Empresas por Setor, Análise de Empresa, Previsão de Lucros e Carteira 20."
+    ),
+    tela="Empresas B3",
+    abas=("Empresas por Setor", "Análise de Empresa", "Previsão de Lucros", "Carteira 20"),
+    rows=(
+        ("Consulta", ("b3_setor", "b3_empresa", "b3_proventos", "b3_relatorio")),
+        ("Previsão", ("b3_prev_modelo", "b3_prev_tela")),
+        ("Registro", ("b3_c20_registro", "b3_c20_tela")),
+    ),
+    default="b3_setor",
+    nodes={
+        "b3_setor": _node(
+            "b3_setor", "Subaba 🏢 Empresas por Setor", "Consulta",
+            "Grade das empresas da B3 por setor, só com ações: FIIs, ETFs, BDRs e direitos de "
+            "subscrição saem antes. O botão Analisar de cada card abre a Análise de Empresa.",
+            (
+                "_tab_empresas() (views/empresas_b3.py)",
+                "_so_acoes() filtra o universo antes da grade",
+                "normalize_b3_companies() e render_sector_grid()",
+                "Sem campo de busca: a navegação é por setor",
+            ),
+            "FII e ETF não têm o balanço de empresa que as subabas seguintes leem. Misturá-los "
+            "na grade abriria uma análise sem dado.",
+        ),
+        "b3_empresa": _node(
+            "b3_empresa", "Subaba 🔍 Análise de Empresa", "Consulta",
+            "Análise de uma empresa pelo campo Ticker ou nome da empresa: preço, retorno "
+            "anual, CAGR, último exercício, demonstrações, dividendos por ação, múltiplos, "
+            "fluxo de caixa, estrutura de capital e dívida, rentabilidade, valuation e o score.",
+            (
+                "_tab_analise()",
+                "buscar_empresas(): um candidato abre direto; vários viram escolha",
+                "Seções, na ordem: Preço da Ação, Retorno Anual do Preço, CAGR, Último "
+                "Exercício Disponível, Demonstrações Financeiras — Histórico, Dividendos por "
+                "ação, Gráfico de Múltiplos, Fluxo de Caixa, Estrutura de Capital e Dívida, "
+                "Rentabilidade, Valuation e Estrutura de Capital",
+                "🏆 Score e critérios de avaliação",
+            ),
+            "Nome digitado com erro ou ticker de outra classe não pode abrir a empresa errada "
+            "em silêncio: quando há mais de um candidato, quem escolhe é você.",
+        ),
+        "b3_proventos": _node(
+            "b3_proventos", "Dividendos por ação: de onde vem a soma anual", "Consulta",
+            "A seção Dividendos por ação soma os proventos de renda por ano de pagamento a "
+            "partir da resposta mais nova da brapi, publicada em arquivo pela rotina noturna. "
+            "A mesma soma alimenta o CAGR de proventos e o contexto das LLMs.",
+            (
+                "core.proventos_b3.renda_anual(), que lê data/public/proventos_b3.json.gz",
+                "Publicador: scripts/publish_proventos_b3.py (armazém local → arquivo)",
+                "Ticker que o arquivo não cobre: market.dividends pela regra renda_por_evento()",
+                "Resposta com mais de 10 dias sem renovação: fila de Configurações → Restrições "
+                "(Análise de Empresa, Comparação de DRE e Portfólio B3) e marca VELHA no "
+                "bloco de demonstrações das LLMs",
+                "Snapshots de carteira B3 e FII: history.proventos_resposta_em guarda o dia da "
+                "resposta por trás dos dividendos",
+                "Medição reproduzível: scripts/medir_proventos_b3.py",
+            ),
+            "Somar market.dividends direto contaria duas vezes cada revisão da brapi, porque "
+            "o upsert não apaga a linha antiga. Medida contra a própria brapi, a soma crua "
+            "bate em 60% dos ticker-anos e a regra de leitura em 86%, mas essa régua é "
+            "circular. Diante da CVM, a única independente e só para FII, o arquivo fica de 8 "
+            "a 9 pontos acima da soma crua e empata com a regra; a CVM também erra, e o "
+            "desacordo com ela não mede o erro da brapi.",
+        ),
+        "b3_relatorio": _node(
+            "b3_relatorio", "Relatório do analista e chat do ativo", "Consulta",
+            "Fecha a Análise de Empresa com o Relatório do analista e com o chat do ativo, que "
+            "recebe a empresa, os pares, os documentos da CVM, o macro, as notícias e os "
+            "pregões diários da B3 (COTAHIST) — o preço de agora, não só o fechamento do mês.",
+            (
+                "secao_relatorio(..., mercado=\"b3\") (design/relatorio_analista.py)",
+                "render_chat_ativo() com build_b3_ativo_context()",
+                "bloco_contexto_mercado(tickers_movimento=[tk]): os pregões diários do ativo, "
+                "do BOVA11 e do SMAL11, de data/public/pregoes_recentes_b3.json.gz",
+                "O relatório entra cedo no contexto, para o corte de tamanho não alcançá-lo",
+            ),
+            "O relatório lê o ativo com o mesmo nome e setor que o portão da Inteligência dos "
+            "Ativos usa: os dois chegam ao mesmo veredito.",
+        ),
+        "b3_prev_modelo": _node(
+            "b3_prev_modelo", "Subaba 🔮 Previsão de Lucros: a medição", "Previsão",
+            "Responde a uma pergunta só: prever a variação do lucro do próximo exercício vence "
+            "o modelo ingênuo 'lucro do ano que vem = lucro deste ano'? E essa previsão melhora "
+            "o Rank-IC do score B3?",
+            (
+                "core/b3_previsao_lucros.py; o treino roda em scripts/treinar_previsao_lucros_b3.py",
+                "Alvo sem escala: y = (LL_s − LL_b) / AtivoTotal_b, e o sinal da variação",
+                "Um modelo de painel só, com todas as empresas; nada por empresa",
+                "Walk-forward por safra respeitando AvailableAt",
+                "Comparado com o ingênuo, ridge e gradient boosting; o ensemble de MLP só entra "
+                "se vencer os três no desenvolvimento",
+                "Holdout (safras ≥ 2022) usado uma vez e amarrado ao config_hash",
+            ),
+            "Uma rede por empresa, com poucos pontos e sem comparação com o ingênuo, acerta "
+            "algumas empresas por acaso. Painel único, comparação obrigatória e holdout usado "
+            "uma vez existem para não repetir isso.",
+        ),
+        "b3_prev_tela": _node(
+            "b3_prev_tela", "Previsão de Lucros: o que a tela mostra", "Previsão",
+            "A aba só lê o artefato publicado e mostra o Veredito do holdout, inclusive "
+            "REPROVADO, sem afrouxar a régua. Nada é treinado na aba.",
+            (
+                "Lê data/public/previsao_lucros_b3.json.gz (views/previsao_lucros_b3.py)",
+                "Erro vs. modelo ingênuo, com o IC95% da diferença",
+                "Acerto do sinal da variação: aprovado só se vencer 50% (binomial) e o chute do "
+                "sinal mais frequente no treino (McNemar), ambos com p < 0,05",
+                "Efeito no Rank-IC do score, a tabela por safra e as previsões",
+            ),
+            "Ler o artefato publicado deixa o veredito igual para todo mundo e amarrado à "
+            "configuração que o produziu. Um REPROVADO escondido faria o modelo parecer melhor "
+            "do que é.",
+        ),
+        "b3_c20_registro": _node(
+            "b3_c20_registro", "Subaba 📒 Carteira 20: o registro", "Registro",
+            "Carteira de 20 ações da B3 com revisão semestral, acompanhada ao vivo. Cada "
+            "revisão é gravada antes de os retornos acontecerem, num registro que só cresce e "
+            "é encadeado por hash.",
+            (
+                "core/carteira20.py",
+                "data/public/carteira20_registro.jsonl, append-only, um registro por linha",
+                "Cadeia SHA-256: cada registro carrega o hash do anterior (hash_anterior)",
+                "Campo tipo (core/carteira20.py::TIPOS): protocolo, revisao ou correcao; "
+                "correção é registro novo, nunca edição",
+                "Formação no último pregão de abril e de outubro, execução no pregão seguinte",
+            ),
+            "No laboratório o sinal foi promissor, mas não comprovado. Só um registro feito "
+            "antes dos retornos separa sinal de sorte, e a cadeia impede reescrevê-lo depois "
+            "sem que se perceba.",
+        ),
+        "b3_c20_tela": _node(
+            "b3_c20_tela", "Carteira 20: o que a tela mostra", "Registro",
+            "O estado da cadeia, a revisão vigente, a próxima revisão, a carteira vigente, o "
+            "desempenho contra BOVA11, CDI e pesos iguais do universo e o histórico do "
+            "registro. Nada é calculado na aba.",
+            (
+                "views/carteira20_b3.py",
+                "Lê o registro (escrito por scripts/carteira20_revisao.py) e "
+                "data/public/carteira20_desempenho.json (scripts/carteira20_desempenho.py)",
+                "Card Revisões registradas: conclusão só com 12 meses; veredito com 24",
+            ),
+            "Desempenho de poucos meses é ruído. A tela diz quanto falta para concluir em vez "
+            "de sugerir conclusão antes da hora.",
+        ),
+    },
+)
+
+
+FLOW_INTELIGENCIA_IR = FlowSpec(
+    key="inteligencia_ir",
+    title="Inteligência dos Ativos e Imposto de Renda — as duas últimas subabas de Investimentos",
+    subtitle=(
+        "Investimentos tem cinco subabas. Dashboard, Histórico e Análise estão no fluxo da "
+        "carteira atual; este cobre as outras duas. A Inteligência dos Ativos lê a carteira "
+        "pela sua estratégia; o Imposto de Renda apura o imposto sobre renda variável."
+    ),
+    tela="Investimentos",
+    abas=("Inteligência dos Ativos", "Imposto de Renda"),
+    rows=(
+        ("Portão", ("ia_portao",)),
+        ("Painel", ("ia_painel", "ia_detalhe", "ia_referencia")),
+        ("Apuração", ("ir_apuracao", "ir_cobertura")),
+        ("Declaração", ("ir_darf", "ir_fichas")),
+    ),
+    default="ia_portao",
+    nodes={
+        "ia_portao": _node(
+            "ia_portao", "Subaba Inteligência dos Ativos: o portão da estratégia", "Portão",
+            "A aba só analisa depois que a sua Estratégia de Investimentos está concluída. Sem "
+            "ela, a aba continua visível, com 🔒 no rótulo, e mostra o que falta, quanto já foi "
+            "feito e um botão que abre a configuração ali mesmo.",
+            (
+                "views/inteligencia_ativos.py; o ícone sai de rotulo_aba(): 🧠 liberada, "
+                "🔒 bloqueada",
+                "A decisão é de portao.verificar(); banco fora do ar fecha a aba, nunca a abre",
+                "Botões: Configurar minha estratégia, Continuar configuração ou Revisar minha "
+                "estratégia",
+                "Liberada, a aba termina com Minha estratégia, onde a configuração pode ser "
+                "alterada",
+                "Até 27/09/2026 a estratégia morava em Configurações → Geral",
+            ),
+            "Análise sem a estratégia do usuário seria genérica e pareceria pessoal. Sem "
+            "conseguir ler a política, não há premissa para a análise usar — por isso a falha "
+            "fecha a aba em vez de liberá-la.",
+        ),
+        "ia_painel": _node(
+            "ia_painel", "Painel da carteira", "Painel",
+            "Liberada, a aba abre a página resumida — reserva, renda fixa e uma caixa por "
+            "ativo — e, num expander, a 📊 Visão geral da carteira, com a premissa, os cálculos "
+            "e a tabela dos ativos. O cenário econômico entra lido dos dados, sem pergunta.",
+            (
+                "views/inteligencia_ativos_resumida.py e views/inteligencia_ativos_painel.py",
+                "Cenário lido por core/cenario/automatico.py desde 30/09/2026, quando o "
+                "'Meu cenário' saiu",
+                "A análise é refeita depois de 15 minutos, o mesmo prazo das fontes",
+                "Cada foto é gravada no histórico, que não aparece na tela",
+            ),
+            "A primeira pergunta é 'como está a minha carteira?'. O resumo responde isso de "
+            "cara; o detalhe fica fechado até ser pedido.",
+        ),
+        "ia_detalhe": _node(
+            "ia_detalhe", "Análise detalhada e Portfolio Fit", "Painel",
+            "O toggle 🔎 Análise detalhada (13 etapas e Portfolio Fit) abre a escolha de um "
+            "ativo, as 13 etapas da análise, os relatórios e o Portfolio Fit, com três "
+            "dimensões lado a lado, sem nota geral nem ranking.",
+            (
+                "core/inteligencia_ativos.py pergunta ao portão de novo antes de analisar",
+                "Portfolio Fit (views/inteligencia_ativos_fit.py): pré-leitura pelas regras da "
+                "política sempre; leitura por LLM só no botão",
+                "Cada conclusão separa fato, interpretação, impacto na carteira e ação a "
+                "considerar",
+                "O cenário entra só como premissa; contradição vira aviso, e nada ali altera o "
+                "cenário",
+            ),
+            "LLM chamada na renderização trava a tela. No botão, ela só roda quando alguém "
+            "pede, e a pré-leitura pelas regras já está na tela antes disso.",
+        ),
+        "ia_referencia": _node(
+            "ia_referencia", "Referência do Portfólio Global", "Painel",
+            "A carteira recomendada do Portfólio Global aparece como referência comparativa, "
+            "em cartão próprio: na visão geral, para a carteira, e no detalhe, para o ativo "
+            "escolhido.",
+            (
+                "core/inteligencia_ativos/referencia_modelo.py",
+                "Fora das 13 etapas e da Ação a considerar",
+                "Também entra no Portfolio Fit como contexto da LLM",
+            ),
+            "Modelo é referência, não ordem. Fora das etapas, ele não pesa na conclusão sobre "
+            "o ativo e ainda deixa a comparação à vista.",
+        ),
+        "ir_apuracao": _node(
+            "ir_apuracao", "Subaba Imposto de Renda: a apuração mensal", "Apuração",
+            "Apura mês a mês o imposto sobre ganho em renda variável da B3, por cesta: "
+            "operações comuns a 15%, day trade a 20% e FII a 20%. O ano-calendário escolhido "
+            "no topo recorta a tela inteira; a opção Visão geral junta todos os anos.",
+            (
+                "views/ir_renda_variavel.py; o cálculo é core/ir_renda_variavel.py::apurar()",
+                "Isenção: ações vendidas até R$ 20.000 no mês (não vale para ETF, BDR, FII, day "
+                "trade nem direito de subscrição)",
+                "Prejuízo compensa só dentro da mesma cesta, sem prazo",
+                "Custo pelo preço médio ponderado, com as mesmas regras de evento do preço "
+                "médio da carteira",
+                "IRRF estimado: 0,005% sobre a venda comum e de FII, 1% sobre o ganho do day trade",
+            ),
+            "O extrato da B3 não traz as notas de corretagem, então o IRRF é estimado e a tela "
+            "diz isso. E o custo do IR segue as regras do preço médio exibido na carteira, para "
+            "os dois números não divergirem.",
+        ),
+        "ir_cobertura": _node(
+            "ir_cobertura", "Cobertura do extrato", "Apuração",
+            "O extrato de Negociação da B3 começa em nov/2019. Venda de ativo comprado antes "
+            "disso chega sem custo: a cesta do mês fica marcada como incompleta, e o prejuízo "
+            "que ela carrega para a frente também.",
+            (
+                "Venda sem custo de aquisição: imposto desconhecido, nunca custo zero",
+                "Direito de subscrição recebido da empresa tem custo zero de verdade",
+                "Compra numa corretora e venda em outra no mesmo dia sai como day trade, com aviso",
+            ),
+            "Tratar custo desconhecido como zero inventaria imposto; tratá-lo como ganho zero "
+            "esconderia imposto devido. Marcar a cesta como incompleta é a leitura que não mente.",
+        ),
+        "ir_darf": _node(
+            "ir_darf", "DARF", "Declaração",
+            "O imposto do mês vira DARF código 6015, com vencimento no último dia útil do mês "
+            "seguinte. Abaixo de R$ 10 não se paga: o valor acumula para o próximo DARF.",
+            (
+                "CODIGO_DARF = 6015",
+                "A Visão geral mostra a situação do DARF hoje",
+                "Ano escolhido: apuração mês a mês daquele ano",
+            ),
+            "DARF pequeno não é emitido, mas o valor não some: carregá-lo adiante evita pagar a "
+            "menos no mês seguinte.",
+        ),
+        "ir_fichas": _node(
+            "ir_fichas", "Declaração ficha a ficha", "Declaração",
+            "Mostra a declaração do ano escolhido ficha a ficha, com o nome das linhas e os "
+            "códigos do programa IRPF (exercício 2026).",
+            (
+                "Layout das fichas em core/irpf_declaracao.py",
+                "O IRRF que sobra em dezembro vai para a declaração",
+            ),
+            "A tela só carrega, formata e explica: a declaração sai da mesma apuração mensal e "
+            "não tem como divergir dela.",
+        ),
+    },
+)
+
+
 FLOWS = (
+    FLOW_DASHBOARD_GERAL,
+    FLOW_EMPRESAS_B3_TELAS,
     FLOW_ANALISE_AVANCADA,
     FLOW_SIMULADOR,
     FLOW_CRIACAO_PORTFOLIO,
     FLOW_ANALISE_PORTFOLIO,
     FLOW_INVESTIMENTOS,
+    FLOW_INTELIGENCIA_IR,
     FLOW_CONTROLE_FINANCEIRO,
     FLOW_SELECAO_FIIS,
     FLOW_EMPRESAS_EUA,
@@ -2311,6 +2997,37 @@ def _flow_sequence(flow: FlowSpec) -> tuple[tuple[str, str], ...]:
 
 
 _FLOW_DETAIL_OVERRIDES = {
+    "b3_proventos": {
+        "formula": (
+            "Soma do ano = Σ proventos de renda (dividendo, JCP, rendimento) pagos no ano\n"
+            "Amortização e restituição de capital ficam de fora\n"
+            "Concordância medida = |a − b| / máx(a, b) ≤ 1% por ticker-ano"
+        ),
+        "exemplo": (
+            "Dividendo de R$ 0,50 pago em março e JCP de R$ 0,20 pago em setembro\n"
+            "Soma do ano = 0,50 + 0,20 = R$ 0,70 por ação\n"
+            "A mesma declaração regravada com outra data de pagamento conta uma vez"
+        ),
+        "limitacao": (
+            "Fonte única: a brapi. Na ação não há fonte independente para conferir. Nos FIIs "
+            "a régua é a CVM (rendimento implícito do informe mensal): na medição de "
+            "29/10/2026, de 3 a 4 em cada 10 ticker-anos ficaram a mais de 5% dela e de 2 a 3 "
+            "em cada 10 a mais de 10%, conforme o mês em que se supõe pago o rendimento de "
+            "cada competência. Só entra na medição o ano em que o informe traz as doze "
+            "competências: um mês faltando deixaria o total da CVM baixo por falta de dado, "
+            "e o desacordo pareceria maior do que é. A CVM também erra, ao deslocar valor entre dezembro e "
+            "janeiro: o desacordo é entre duas fontes imperfeitas, não o erro da brapi nem "
+            "um limite para ele, porque as duas podem errar no mesmo sentido.\n"
+            "O ano civil em curso e os seguintes ficam fora do CAGR; na série por exercício, "
+            "o ano civil ainda aberto fica vazio; no snapshot de FII da carteira, o ano da "
+            "data de referência e os seguintes ficam fora dos proventos anuais.\n"
+            "Empresa com exercício encerrado fora de dezembro (cinco em 29/10/2026, como "
+            "RAIZ4 e SMTO3) tem os proventos lidos pelo ano civil: a coluna do exercício traz "
+            "o que foi pago no ano civil de mesmo número.\n"
+            "Valor por ação alto não é conferido contra o preço: um provento implausível da "
+            "fonte passa adiante."
+        ),
+    },
     "aportes_sp": {
         "formula": "Capital novo do mês = aporte mensal configurado\nCotas compradas = aporte mensal / preço do ativo",
         "exemplo": "Aporte mensal = R$ 1.000\nPreço do ativo = R$ 25\nCotas compradas = 1.000 / 25 = 40 cotas",
@@ -2342,9 +3059,18 @@ _FLOW_DETAIL_OVERRIDES = {
         "interpretacao": "A comparação mostra se a carteira criada gerou retorno adicional depois de considerar alternativas simples.",
     },
     "aprovacao_cp": {
-        "formula": "Segmento aprovado se margem mínima, recência e critérios de benchmark forem atendidos",
-        "exemplo": "Margem mínima exigida = 5 p.p.\nMargem observada = 8 p.p.\nUltima liderança recente = sim\nResultado: segmento aprovado",
-        "interpretacao": "A aprovação impede que um segmento entre na carteira apenas por um resultado isolado.",
+        "formula": (
+            "Econômico (Brasil), padrão: margem vs Selic ≥ mínimo e Rank-IC ≥ −0,05\n"
+            "Sinal fundamental (Rank-IC): Rank-IC > 0 em 2 anos ou mais e p-valor do IC significante\n"
+            "Retorno de 24m (FDR): Rank-IC > 0 em 2 anos ou mais e q (FDR) ≤ 10%\n"
+            "Todos: reprova se o intervalo de 90% do excesso sobre Pesos Iguais ficar inteiro abaixo de zero"
+        ),
+        "exemplo": "Margem mínima exigida = 5 p.p.\nMargem observada = 8 p.p.\nÚltima liderança recente = sim\nResultado: segmento aprovado",
+        "interpretacao": (
+            "A aprovação impede que um segmento entre na carteira apenas por um resultado "
+            "isolado. O modo econômico pergunta se o segmento rendeu mais que a renda fixa; "
+            "os estatísticos perguntam se a escolha das empresas tem habilidade."
+        ),
     },
     "pesos_cp": {
         "formula": "Peso do ativo = score relativo do ativo / soma dos scores selecionados",
@@ -2386,7 +3112,7 @@ _FLOW_DETAIL_OVERRIDES = {
     "stress_ai": {
         "formula": "Perda estimada = valor atual da carteira x choque do cenário",
         "exemplo": "Carteira = R$ 200.000\nChoque = -18%\nPerda estimada = 200.000 x 18% = R$ 36.000",
-        "interpretacao": "O stress test ajuda a medir se a carteira e compativel com o risco que o usuário suporta.",
+        "interpretacao": "O stress test ajuda a medir se a carteira é compatível com o risco que o usuário suporta.",
     },
 }
 
@@ -2452,6 +3178,21 @@ def _generic_flow_detail(flow: FlowSpec, node: FlowNode) -> dict[str, str]:
         detail["impacto"] = (
             "Afeta o que entra no banco pela sua mão, a preferência gravada na conta e o "
             "diagnóstico que você consulta antes de confiar num painel."
+        )
+    elif flow.key == "dashboard_geral":
+        detail["impacto"] = (
+            "Afeta a primeira leitura que você faz do mês: o que é fato do período e o que é "
+            "referência analítica das carteiras recomendadas."
+        )
+    elif flow.key == "empresas_b3_telas":
+        detail["impacto"] = (
+            "Afeta a empresa que você abre para analisar, o veredito que a Previsão de Lucros "
+            "publica e o registro que permite medir a Carteira 20 sem reescrever o passado."
+        )
+    elif flow.key == "inteligencia_ir":
+        detail["impacto"] = (
+            "Afeta se a análise dos ativos libera, a premissa que ela usa e o imposto apurado "
+            "mês a mês, com o que ele sabe e o que não sabe."
         )
     return detail
 
@@ -2771,15 +3512,19 @@ def render_corpo() -> None:
     """CSS e abas da documentação, sem o cabeçalho da página."""
     st.markdown(_CSS, unsafe_allow_html=True)
 
+    # Na ordem do menu lateral; Qualidade dos dados e Indicadores são transversais.
     tab_labels = [
+        "Dashboard Geral",
         "Controle financeiro",
         "Carteira atual",
+        "Inteligência e IR",
+        "Empresas e Carteira 20 (B3)",
         "Análise avançada (B3)",
-        "Simulador (B3)",
         "Criação de portfólio (B3)",
-        "Análise de portfólio (B3)",
-        "Seleção de FIIs",
+        "Simulação (B3)",
+        "Avaliação de portfólio (B3)",
         "Empresas Americanas",
+        "Seleção de FIIs",
         "Portfólio Global",
         "Qualidade dos dados",
         "Configurações",
@@ -2788,26 +3533,32 @@ def render_corpo() -> None:
     tabs = st.tabs(tab_labels)
 
     with tabs[0]:
-        _render_flow(FLOW_CONTROLE_FINANCEIRO)
+        _render_flow(FLOW_DASHBOARD_GERAL)
     with tabs[1]:
-        _render_flow(FLOW_INVESTIMENTOS)
+        _render_flow(FLOW_CONTROLE_FINANCEIRO)
     with tabs[2]:
-        render_fluxograma_analise_avancada()
+        _render_flow(FLOW_INVESTIMENTOS)
     with tabs[3]:
-        _render_flow(FLOW_SIMULADOR)
+        _render_flow(FLOW_INTELIGENCIA_IR)
     with tabs[4]:
-        _render_flow(FLOW_CRIACAO_PORTFOLIO)
+        _render_flow(FLOW_EMPRESAS_B3_TELAS)
     with tabs[5]:
-        _render_flow(FLOW_ANALISE_PORTFOLIO)
+        render_fluxograma_analise_avancada()
     with tabs[6]:
-        _render_flow(FLOW_SELECAO_FIIS)
+        _render_flow(FLOW_CRIACAO_PORTFOLIO)
     with tabs[7]:
-        _render_flow(FLOW_EMPRESAS_EUA)
+        _render_flow(FLOW_SIMULADOR)
     with tabs[8]:
-        _render_flow(FLOW_PORTFOLIO_GLOBAL)
+        _render_flow(FLOW_ANALISE_PORTFOLIO)
     with tabs[9]:
-        _render_flow(FLOW_QUALIDADE_DADOS)
+        _render_flow(FLOW_EMPRESAS_EUA)
     with tabs[10]:
-        _render_flow(FLOW_CONFIGURACOES)
+        _render_flow(FLOW_SELECAO_FIIS)
     with tabs[11]:
+        _render_flow(FLOW_PORTFOLIO_GLOBAL)
+    with tabs[12]:
+        _render_flow(FLOW_QUALIDADE_DADOS)
+    with tabs[13]:
+        _render_flow(FLOW_CONFIGURACOES)
+    with tabs[14]:
         _render_indicadores()

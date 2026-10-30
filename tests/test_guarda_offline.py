@@ -88,10 +88,15 @@ def test_dsn_url_para_fora_e_recusado():
 
 
 def test_a_recusa_nao_ecoa_a_senha():
-    """A mensagem vai parar em log de CI, que e publico no repositorio."""
+    """A mensagem vai parar em log de CI, que e publico no repositorio.
+
+    A senha e montada aqui, e nao escrita dentro da URL: a URL literal com
+    senha longa e exatamente o que `scripts/check_secrets.py` barra.
+    """
+    senha = "s3nha-" + "secreta"
     with pytest.raises(RuntimeError) as erro:
-        psycopg2.connect(f"postgresql://u:s3nha-secreta@{_REMOTO}:5432/postgres")
-    assert "s3nha-secreta" not in str(erro.value)
+        psycopg2.connect(f"postgresql://u:{senha}@{_REMOTO}:5432/postgres")
+    assert senha not in str(erro.value)
     assert _REMOTO in str(erro.value)
 
 

@@ -14,6 +14,7 @@ from core.crescimento import (
     cagr_regressao,
     retornos_anuais,
     sem_ano_em_curso,
+    ultimo_preco_nao_positivo,
 )
 
 
@@ -69,6 +70,16 @@ def test_sem_ano_em_curso_numerico_e_data():
     assert sem_ano_em_curso(pd.DataFrame(), "Data").empty
 
 
+def test_sem_ano_em_curso_tira_o_pagamento_declarado_para_o_ano_seguinte():
+    """A resposta da brapi traz o provento declarado e ainda não pago: o
+    arquivo de 29/10/2026 tinha 41 tickers com total em 2027."""
+    anual = pd.DataFrame({"Data": pd.to_datetime(["2024-12-31", "2025-12-31",
+                                                  "2026-12-31", "2027-12-31"]),
+                          "Dividendos": [1.0, 1.1, 0.6, 0.3]})
+    out = sem_ano_em_curso(anual, "Data", hoje="2026-10-29")
+    assert out["Data"].dt.year.tolist() == [2024, 2025]
+
+
 def test_retorno_do_ano_aberto_e_rotulado():
     datas = ["2024-12-30", "2025-12-30", "2026-10-28"]
     out = retornos_anuais(datas, [10.0, 12.0, 15.0])
@@ -79,6 +90,34 @@ def test_retorno_do_ano_aberto_e_rotulado():
 
 def test_retorno_sem_dado():
     assert retornos_anuais([], []).columns.tolist() == ["Ano", "Retorno", "Rotulo"]
+
+
+def test_preco_ajustado_negativo_corta_o_historico_anterior():
+    # Forma de uma série ajustada do yfinance em que um provento maior que o
+    # preço do dia deixou o fator negativo: o gráfico mostrava retornos abaixo de −100%.
+    datas = ["2004-12-30", "2005-12-29", "2006-12-28", "2007-04-30",
+             "2007-12-28", "2008-12-30", "2009-12-30"]
+    precos = [4.00, 4.00, -0.30, -0.20, 30.00, 20.00, 8.00]
+    out = retornos_anuais(datas, precos)
+    assert out["Ano"].tolist() == [2008, 2009]
+    assert out["Retorno"].tolist() == pytest.approx([20.00 / 30.00 * 100 - 100,
+                                                      8.00 / 20.00 * 100 - 100])
+    assert (out["Retorno"] > -100).all()
+    assert out.attrs["corte"] == pd.Timestamp("2007-04-30")
+
+
+def test_serie_toda_positiva_nao_tem_corte():
+    datas = ["2024-12-30", "2025-12-30"]
+    assert ultimo_preco_nao_positivo(datas, [10.0, 12.0]) is None
+    assert retornos_anuais(datas, [10.0, 12.0]).attrs["corte"] is None
+
+
+def test_ultimo_preco_nao_positivo_devolve_o_mais_recente():
+    datas = ["2006-01-02", "2006-06-01", "2007-01-02", "2007-02-01"]
+    assert ultimo_preco_nao_positivo(datas, [1.0, 0.0, -2.0, 3.0]) == pd.Timestamp("2007-01-02")
+    # Preço ≤ 0 no último dia: não sobra trecho coerente.
+    out = retornos_anuais(datas, [1.0, 2.0, 3.0, -1.0])
+    assert out.empty and out.attrs["corte"] == pd.Timestamp("2007-02-01")
 
 
 def test_legenda_sem_taxa_com_motivo_desconhecido():

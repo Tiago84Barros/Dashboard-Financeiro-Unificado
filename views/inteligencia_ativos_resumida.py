@@ -4,9 +4,12 @@ Página resumida da Inteligência dos Ativos (30/09/2026).
 
 Segue o rascunho do usuário: reserva de emergência e renda fixa numa lista
 curta; ações, FIIs e internacional com uma caixa por ativo. Dentro da caixa,
-na ordem do rascunho: quanto tem e quanto deveria ter, manter / comprar /
-vender, o substituto se for vender, dois pares numa tabela, o papel na
-carteira, notícias, relatórios e o que do macro pesa. O detalhe completo
+na ordem do rascunho: quanto tem e quanto deveria ter, a ação sugerida
+(manter, comprar, acompanhar, rebalancear, reduzir parcialmente, vender ou
+substituir) com justificativa, convicção, condições e limitações, os alertas
+para investigar numa caixa à parte (não são ordens), o substituto se for
+sair, dois pares numa tabela, o papel na carteira, notícias, relatórios e o
+que do macro pesa. O detalhe completo
 (13 etapas e Portfolio Fit) segue na aba, sob "Análise detalhada".
 
 Os cartões saem num st.markdown só e só usam tokens var(--app-*).
@@ -32,8 +35,12 @@ SELECAO_KEY = "ia_ativo"     # o mesmo seletor da análise detalhada
 _ICONE = {rs.RESERVA: "🛟", rs.RENDA_FIXA: "🏦", rs.ACOES: "📈",
           rs.FIIS: "🏢", rs.EXTERIOR: "🌎", rs.OUTROS: "📦"}
 _COR_DECISAO = {rs.COMPRAR: "var(--app-info)",
+                rs.MANTER: "var(--app-muted)",
+                rs.ACOMPANHAR: "var(--app-warning)",
+                rs.REBALANCEAR: "var(--app-info)",
+                rs.REDUZIR_PARCIAL: "var(--app-warning)",
                 rs.VENDER: "var(--app-danger)",
-                rs.MANTER: "var(--app-muted)"}
+                rs.SUBSTITUIR: "var(--app-danger)"}
 
 _CAIXA = ('border:1px solid var(--app-border);border-radius:10px;'
           'background:var(--app-surface);padding:10px 14px;margin:6px 0;')
@@ -113,9 +120,11 @@ def cartao_lista(b: rs.Bloco) -> str:
 
 def rotulo_expander(a: m.AnaliseAtivo,
                     sugerido: rs.AlvoSugerido | None = None,
-                    avaliacao: av_.Avaliacao | None = None) -> str:
-    """"BBAS3 · 8,5% → 2,3% · Vender": peso atual, % devida e a decisão."""
-    d = rs.decisao(a, sugerido, avaliacao)
+                    avaliacao: av_.Avaliacao | None = None,
+                    d: rs.Decisao | None = None) -> str:
+    """"BBAS3 · 8,5% → 2,3% · Rebalancear": peso atual, % devida e a ação.
+    ``d`` reaproveita a decisão já calculada."""
+    d = d if d is not None else rs.decisao(a, sugerido, avaliacao)
     alvo = rs.alvo_do_ativo(a, sugerido)
     peso = _pct(a.ativo.peso_atual)
     if alvo is not None:
@@ -125,9 +134,10 @@ def rotulo_expander(a: m.AnaliseAtivo,
 
 def cartao_posicao(a: m.AnaliseAtivo,
                    sugerido: rs.AlvoSugerido | None = None,
-                   avaliacao: av_.Avaliacao | None = None) -> str:
-    """% atual, % devida e manter / comprar / vender. Puro."""
-    d = rs.decisao(a, sugerido, avaliacao)
+                   avaliacao: av_.Avaliacao | None = None,
+                   d: rs.Decisao | None = None) -> str:
+    """% atual, % devida, a ação sugerida e o grau de convicção. Puro."""
+    d = d if d is not None else rs.decisao(a, sugerido, avaliacao)
     devido = rs.peso_devido(a, sugerido)
     cor = _COR_DECISAO[d.codigo]
 
@@ -144,12 +154,57 @@ def cartao_posicao(a: m.AnaliseAtivo,
         + _kpi("Porcentagem atual", _pct(a.ativo.peso_atual),
                _moeda(a.ativo.valor_mercado, a.ativo.moeda))
         + _kpi("Porcentagem devida", devido.valor, devido.detalhe)
-        + _kpi("Manter, comprar ou vender", d.rotulo, d.detalhe,
-               f"color:{cor}")
+        + _kpi("Ação sugerida", d.rotulo, d.detalhe, f"color:{cor}")
+        + _kpi("Convicção", d.rotulo_conviccao, d.porque_conviccao)
         + "</div>"
         + (f'<div style="font-size:0.82rem;color:var(--app-muted);'
            f'margin-top:6px">{escape(d.motivo)}</div>' if d.motivo else "")
         + _nota(rs.AVISO_DECISAO) + "</div>")
+
+
+def _itens(itens) -> str:
+    return "".join(
+        f'<div style="display:flex;gap:6px;margin:2px 0;font-size:0.82rem;'
+        f'color:var(--app-text)"><span style="flex:none;'
+        f'color:var(--app-subtle)">•</span><span>{escape(x)}</span></div>'
+        for x in itens)
+
+
+def cartao_recomendacao(d: rs.Decisao) -> str:
+    """O porquê da ação: fatores pesados, proporção e custo da venda,
+    substituto, o que mudaria a recomendação, dados ausentes e o pano de
+    fundo. Puro."""
+    partes = [_secao("Justificativa"), _itens(d.justificativas)]
+    if d.proporcao:
+        venda = [f"Vender cerca de {d.proporcao * 100:.0f}% da posição."]
+        if d.custos is not None:
+            venda += list(d.custos.linhas)
+        partes += [_secao("Proporção e custo estimado da venda"),
+                   _itens(venda)]
+    if d.substituto is not None:
+        partes += [_secao("Substituto comparado"),
+                   _itens((d.substituto.resumo + ".",))]
+    for titulo, itens in (("Condições que mudariam a recomendação",
+                           d.condicoes),
+                          ("Dados ausentes e limitações", d.limitacoes),
+                          ("Contexto: cenário, noticiário e valorização",
+                           d.contexto)):
+        if itens:
+            partes += [_secao(titulo), _itens(itens)]
+    return f'<div style="{_CAIXA}">{"".join(partes)}</div>'
+
+
+TITULO_ALERTAS = "Alertas para investigar (não são ordens de compra ou venda)"
+
+
+def cartao_alertas(d: rs.Decisao) -> str:
+    """Os sinais que pedem olhar mais de perto, separados da ação: peso acima
+    da meta, preço no topo do histórico, manchete a confirmar. Vazio sem
+    alerta. Puro."""
+    if not d.alertas:
+        return ""
+    return (f'<div style="{_CAIXA}border-left:3px solid var(--app-warning);">'
+            f'{_secao(TITULO_ALERTAS)}{_itens(d.alertas)}</div>')
 
 
 AVISO_AVALIACAO = ("Avaliação por regras sobre os dados do app, não "
@@ -194,6 +249,14 @@ def _bloco_dimensao(d: av_.Dimensao) -> str:
         + "</div>")
 
 
+def _rotulo_alerta(al: av_.Alerta) -> str:
+    if not al.critico:
+        return "Alerta"
+    if al.noticia:
+        return "Alerta eliminatório no noticiário (a confirmar)"
+    return "Alerta eliminatório"
+
+
 def cartao_avaliacao(av: av_.Avaliacao) -> str:
     """Qualidade, preço e mercado com os critérios que pesaram e os alertas.
     Puro."""
@@ -203,7 +266,7 @@ def cartao_avaliacao(av: av_.Avaliacao) -> str:
     alertas = "".join(
         f'<div style="margin:3px 0;font-size:0.84rem;color:'
         f'{"var(--app-danger)" if al.critico else "var(--app-warning)"}">'
-        f'<b>{"Alerta eliminatório" if al.critico else "Alerta"}:</b> '
+        f'<b>{_rotulo_alerta(al)}:</b> '
         f'{escape(al.texto)}</div>' for al in av.alertas)
     grade = "".join(_bloco_dimensao(d) for d in av.dimensoes)
     return (f'<div style="{_CAIXA}">{_secao("Avaliação do ativo")}'
@@ -214,7 +277,7 @@ def cartao_avaliacao(av: av_.Avaliacao) -> str:
 
 
 def cartao_substitutos(subs: tuple[prs.Par, ...]) -> str:
-    """Só aparece quando a leitura é vender. Puro."""
+    """Só aparece quando a ação é vender ou substituir. Puro."""
     if not subs:
         corpo = ('<div style="color:var(--app-muted)">Nenhum par do mesmo '
                  'grupo fora da sua carteira para comparar.</div>')
@@ -225,7 +288,7 @@ def cartao_substitutos(subs: tuple[prs.Par, ...]) -> str:
             f'{escape(p.nome or "")}</span><div style="font-size:0.78rem;'
             f'color:var(--app-subtle)">{escape(p.motivo)}</div></div>'
             for p in subs)
-    return (f'<div style="{_CAIXA}">{_secao("Se vender, qual substituir?")}'
+    return (f'<div style="{_CAIXA}">{_secao("Se sair, qual substituir?")}'
             f'{corpo}{_nota(rs.AVISO_SUBSTITUTO)}</div>')
 
 
@@ -578,10 +641,11 @@ def _render_ativo(a: m.AnaliseAtivo, ctx: m.ContextoInvestidor,
                   na_carteira: tuple[str, ...],
                   sugerido: rs.AlvoSugerido | None = None) -> None:
     av = av_.avaliar(a)
-    with st.expander(rotulo_expander(a, sugerido, av)):
-        d = rs.decisao(a, sugerido, av)
-        html = cartao_posicao(a, sugerido, av)
-        if d.codigo == rs.VENDER:
+    d = rs.decisao(a, sugerido, av, na_carteira=na_carteira, ctx=ctx)
+    with st.expander(rotulo_expander(a, sugerido, av, d)):
+        html = (cartao_posicao(a, sugerido, av, d) + cartao_alertas(d)
+                + cartao_recomendacao(d))
+        if d.codigo in (rs.VENDER, rs.SUBSTITUIR):
             html += cartao_substitutos(rs.substitutos(a, na_carteira))
         html += (cartao_avaliacao(av) + cartao_pares(rs.tabela_pares(a)) + cartao_papel(a)
                  + cartao_noticias(a, _noticiario_geral()
