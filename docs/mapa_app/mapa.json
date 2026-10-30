@@ -2024,7 +2024,7 @@
     {
       "nome": "Empresas Americanas",
       "resumo": "Ações dos EUA: pesquisar, comparar e montar carteira",
-      "explicacao": "Área dedicada às ações da bolsa americana (NYSE, Nasdaq e AMEX), com números oficiais das empresas. No topo há cinco botões que funcionam como abas e seguem um caminho: conhecer as empresas, estudar uma delas, testar critérios, montar uma carteira e avaliar essa carteira. É ferramenta de estudo, não recomendação de compra.",
+      "explicacao": "Área dedicada às ações da bolsa americana (NYSE, Nasdaq e AMEX), com números oficiais das empresas. No topo há quatro botões que funcionam como abas e seguem um caminho: conhecer as empresas, estudar uma delas, montar uma carteira e avaliar essa carteira. É ferramenta de estudo, não recomendação de compra.",
       "so_admin": false,
       "filhos": [
         {
@@ -2196,167 +2196,9 @@
           ]
         },
         {
-          "nome": "Análise Avançada",
-          "resumo": "Laboratório para testar filtros e notas",
-          "explicacao": "Etapa 1 de 3. Um laboratório onde você filtra o universo de empresas, ajusta o peso de cada critério da nota e vê quais empresas se destacam, além de simulações e comparações. Serve para validar a regra de escolha antes de montar a carteira.",
-          "so_admin": false,
-          "filhos": [
-            {
-              "nome": "Filtros do Universo",
-              "resumo": "Filtros que mudam toda a análise abaixo",
-              "explicacao": "Escolha setor, indústria, bolsa, perfil (qualidade, crescimento, valor, renda, solidez), liquidez mínima (quanto a ação negocia por dia) e cobertura mínima dos dados. Tudo o que aparece abaixo passa a considerar só as empresas filtradas.",
-              "so_admin": false
-            },
-            {
-              "nome": "Pesos do Scoring",
-              "resumo": "Ajuste quanto vale cada critério da nota",
-              "explicacao": "Seção que abre ao clicar, com controles deslizantes para o peso de oito critérios (qualidade, crescimento, solidez, eficiência de capital, avaliação, retorno ao acionista, momento de 12 meses e pesquisa e desenvolvimento) e a escolha de quanto o cenário econômico influencia a nota.",
-              "so_admin": false
-            },
-            {
-              "nome": "Conferência dos dados",
-              "resumo": "Quantas empresas entraram e quais ficaram fora",
-              "explicacao": "Agrupamento de três seções que abrem ao clicar, para conferir a qualidade dos dados antes de confiar no ranking.",
-              "so_admin": false,
-              "filhos": [
-                {
-                  "nome": "Qualidade & saneamento dos dados (antes do ranking)",
-                  "resumo": "Contagem de empresas e cobertura dos dados",
-                  "explicacao": "Cartões com o total filtrado, as elegíveis, as excluídas e a cobertura média, mais uma tabela de cobertura por critério.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Empresas excluídas por completude de dados",
-                  "resumo": "Lista de quem ficou fora por falta de dados",
-                  "explicacao": "Tabela com as empresas que não atingiram a cobertura mínima de dados escolhida nos filtros.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Validação cross-source — SEC/GAAP × dados de mercado",
-                  "resumo": "Quantas empresas têm cada indicador",
-                  "explicacao": "Tabela que mostra, para indicadores como P/L e EV/EBITDA, quantas empresas têm o dado completo cruzando balanço oficial e preço de mercado.",
-                  "so_admin": false
-                }
-              ]
-            },
-            {
-              "nome": "Análises extras",
-              "resumo": "Sete estudos opcionais que abrem ao clicar",
-              "explicacao": "Agrupamento de sete seções opcionais que abrem ao clicar, para aprofundar o estudo das empresas filtradas.",
-              "so_admin": false,
-              "filhos": [
-                {
-                  "nome": "Análise de incerteza (bootstrap) — opcional",
-                  "resumo": "Faixa provável da nota de uma empresa",
-                  "explicacao": "Escolha uma empresa e clique em Calcular intervalo: o app refaz a conta muitas vezes e mostra a média e a faixa em que a nota provavelmente está.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Otimização pós-seleção — equivalente EUA",
-                  "resumo": "Carteira de teste com limites por ativo e setor",
-                  "explicacao": "Monta uma carteira de teste com as empresas filtradas, respeitando limites de peso por ação e por setor, e mostra a tabela de pesos.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Avaliação e retorno ao acionista",
-                  "resumo": "Preço e quanto a empresa devolve ao sócio",
-                  "explicacao": "Tabela com múltiplos de preço e o retorno ao acionista (dividendos e recompras), incluindo se a quantidade de ações aumentou (diluição) ou caiu (recompra).",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Resiliência histórica e saúde financeira — sensibilidade EUA",
-                  "resumo": "Quem aguentou crises e saúde das contas",
-                  "explicacao": "Mostra o piso mínimo de qualidade, como as empresas passaram pela última recessão, uma tabela de saúde financeira e controles do cenário econômico americano (juros, inflação, PIB, desemprego) com uma nota do momento econômico.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Atribuição do score por trilha — explicabilidade",
-                  "resumo": "De onde vem a nota de uma empresa",
-                  "explicacao": "Escolha uma empresa e veja num gráfico quanto cada critério somou ou tirou da nota final.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Black-Litterman — incorporar suas visões",
-                  "resumo": "Some sua opinião pessoal à nota",
-                  "explicacao": "Escolha até cinco empresas e dê a cada uma um ajuste entre -20 e +20 conforme sua convicção; a tabela mostra a nota ajustada sem alterar os números da empresa.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Diagnósticos avançados — Piotroski, Altman, Sloan e ROIC incremental",
-                  "resumo": "Testes clássicos de saúde de uma empresa",
-                  "explicacao": "Digite um código e veja quatro testes conhecidos: Piotroski (saúde em 9 critérios), Altman (risco de falência), Sloan (qualidade do lucro contábil) e retorno do capital novo, com a lista de critérios atendidos.",
-                  "so_admin": false
-                }
-              ]
-            },
-            {
-              "nome": "Universo Filtrado",
-              "resumo": "As 12 melhores empresas do recorte",
-              "explicacao": "Cartões com as 12 primeiras empresas do recorte, na ordem da nota. O título mostra quantas empresas passaram nos filtros.",
-              "so_admin": false
-            },
-            {
-              "nome": "Score de Entrada — Composição Avançada",
-              "resumo": "Aprovadas, em observação e excluídas",
-              "explicacao": "Cartões com quantas empresas foram aprovadas, ficaram em observação ou foram excluídas e a nota média. Logo abaixo há uma tabela completa que abre ao clicar e a seção Detalhamento por Empresa, com cartões das 12 primeiras.",
-              "so_admin": false
-            },
-            {
-              "nome": "Simulação de Patrimônio e Teste Histórico",
-              "resumo": "Como a estratégia teria rendido no passado",
-              "explicacao": "Defina aporte mensal, quantas empresas comprar, forma de dividir os pesos e índice de comparação, e clique em Simular Backtest. Mostra o resultado passado da estratégia, um gráfico e o retorno líquido em reais. Resultado passado não garante futuro.",
-              "so_admin": false
-            },
-            {
-              "nome": "Comparações entre empresas",
-              "resumo": "Gráficos e tabelas lado a lado",
-              "explicacao": "Agrupamento de cinco seções seguidas da tela para comparar empresas do recorte. Os gráficos aparecem depois de clicar no botão de cada seção.",
-              "so_admin": false,
-              "filhos": [
-                {
-                  "nome": "Comparação de Múltiplos e Indicadores",
-                  "resumo": "Um indicador, até cinco empresas",
-                  "explicacao": "Escolha até cinco empresas e um indicador (P/L, ROE, margem etc.) e clique em Comparar Múltiplos.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Comparação de Demonstrações Financeiras",
-                  "resumo": "Um item do balanço ao longo dos anos",
-                  "explicacao": "Escolha um item (receita, lucro etc.) e as empresas, e clique em Comparar Demonstrações para ver a evolução lado a lado.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Quadro Comparativo — Indicadores por Empresa",
-                  "resumo": "Tabela colorida com melhores e piores",
-                  "explicacao": "Tabela com vários indicadores por empresa; verde marca as 25% melhores e vermelho as 25% piores.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Scatter Plot — Correlação entre Indicadores",
-                  "resumo": "Gráfico de pontos com dois indicadores",
-                  "explicacao": "Escolha um indicador para cada eixo e clique em Gerar Scatter para ver se um anda junto com o outro.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "FCO / Lucro Líquido — Qualidade do Resultado",
-                  "resumo": "O lucro vira dinheiro no caixa?",
-                  "explicacao": "Clique em Calcular FCO/Lucro: compara o caixa gerado pela operação com o lucro contábil. Acima de 1 indica lucro que vira dinheiro de verdade.",
-                  "so_admin": false
-                }
-              ]
-            },
-            {
-              "nome": "Metodologia e referências científicas",
-              "resumo": "Como as contas são feitas e as fontes",
-              "explicacao": "Texto explicando o passo a passo do laboratório, com uma seção que abre ao clicar e lista todas as análises aplicadas e os estudos que as embasam.",
-              "so_admin": false
-            }
-          ]
-        },
-        {
           "nome": "Criação de Portfólio",
           "resumo": "Monta a carteira americana com regras claras",
-          "explicacao": "Etapa 2 de 3. Aplica a regra testada no laboratório a todo o mercado americano, escolhe as melhores empresas de cada indústria e monta uma carteira com limites de concentração. A nota de cada empresa também olha o momento dos últimos 12 meses e quanto ela investe em pesquisa e desenvolvimento, os dois estilos que mais renderam nos EUA ao longo de décadas. No fim você pode salvar essa carteira como a sua carteira padrão.",
+          "explicacao": "Aplica a regra de seleção a todo o mercado americano, escolhe as melhores empresas de cada indústria e monta uma carteira com limites de concentração. A nota de cada empresa também olha o momento dos últimos 12 meses e quanto ela investe em pesquisa e desenvolvimento, os dois estilos que mais renderam nos EUA ao longo de décadas. No fim você pode salvar essa carteira como a sua carteira padrão.",
           "so_admin": false,
           "filhos": [
             {
@@ -2494,7 +2336,7 @@
         {
           "nome": "Avaliação de Portfólio",
           "resumo": "Avalia a carteira salva, com ajuda da IA",
-          "explicacao": "Etapa 3 de 3. Avalia a carteira americana salva como padrão: diversificação, concentração, riscos, cenário econômico e uma análise escrita pela inteligência artificial, além de um chat. Sem carteira salva, a tela pede para criar e salvar uma na aba Criação de Portfólio; se a carteira estiver desatualizada, mostra um aviso e para.",
+          "explicacao": "Avalia a carteira americana salva como padrão: diversificação, concentração, riscos, cenário econômico e uma análise escrita pela inteligência artificial, além de um chat. Sem carteira salva, a tela pede para criar e salvar uma na aba Criação de Portfólio; se a carteira estiver desatualizada, mostra um aviso e para.",
           "so_admin": false,
           "filhos": [
             {

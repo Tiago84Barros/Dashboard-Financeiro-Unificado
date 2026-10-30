@@ -13,7 +13,6 @@ import pytest
 
 import core.llm_b3 as llm
 import views.analise_portfolio_b3 as apb3
-import views.empresas_americanas as us
 import views.empresas_b3 as b3
 from core.b3_company_score import TRACK_LABELS
 from core.portfolio_report_common import _nota_ou_nd
@@ -29,33 +28,6 @@ def test_trilha_zero_fica_e_ausente_sai():
 
 def test_trilhas_de_linha_vazia():
     assert b3._trilhas_observadas(pd.Series(dtype=object), TRACK_LABELS) == []
-
-
-@pytest.mark.parametrize("valor, esperado", [
-    (0, 0.0), (0.0, 0.0), (37.5, 37.5), (None, None), (float("nan"), None), ("x", None),
-])
-def test_nota_eua(valor, esperado):
-    assert us._nota(valor) == esperado
-
-
-def _linha_entrada(**extra) -> pd.Series:
-    base = {"symbol": "XPTO", "entry_status": "Observação", "score_base_adv": 40.0,
-            "entry_score": 35.0, "risk_penalty": 0.0, "risk_driver": "sem alerta crítico"}
-    base.update(extra)
-    return pd.Series(base)
-
-
-def test_card_de_entrada_mostra_zero_e_travessao():
-    html = us._entry_detail_card(_linha_entrada(score_quality=0.0, cash_quality=80.0))
-    assert "width:0%" in html
-    assert ">0</strong>" in html  # Qualidade = 0, não 50
-    assert ">—</strong>" in html  # Consistência ausente
-    assert ">50</strong>" not in html
-
-
-def test_entrada_fundamental_zero_nao_vira_contextual():
-    html = us._entry_detail_card(_linha_entrada(entry_score_fundamental=0.0))
-    assert "Entrada fundamental: 0" in html
 
 
 def test_contribuicao_da_trilha_zero_e_negativa():

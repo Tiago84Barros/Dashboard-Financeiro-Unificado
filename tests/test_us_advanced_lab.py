@@ -55,37 +55,3 @@ def test_campos_ausentes_ficam_neutros():
     assert result.iloc[0]["score_base_adv"] == 50
     assert result.iloc[0]["risk_penalty"] == 0
 
-
-def test_laboratorio_avancado_renderiza_fluxo_continuo():
-    from streamlit.testing.v1 import AppTest
-
-    app = AppTest.from_string(r'''
-import pandas as pd
-import views.empresas_americanas as view
-
-rows = []
-for i, symbol in enumerate(["AAPL", "MSFT", "NVDA", "GOOG", "META", "AMZN"]):
-    rows.append({
-        "symbol":symbol, "name":symbol + " Inc.", "sector":"Technology",
-        "industry":"Software", "score":80-i, "coverage":90,
-        "score_quality":85-i, "score_growth":80-i, "score_solidity":75-i,
-        "score_capital_efficiency":82-i, "score_valuation":70-i,
-        "score_shareholder":65-i, "gross_margin":.6, "operating_margin":.3,
-        "net_margin":.22, "fcf_margin":.20, "cash_conversion":1.1,
-        "roe":.35, "roa":.18, "roic":.25, "revenue_cagr_3y":.15,
-        "net_debt_ebitda":.5, "interest_coverage":12, "current_ratio":1.5,
-        "debt_to_equity":.7, "pe":22+i, "ev_ebit":18+i,
-        "ev_ebitda":16+i, "p_fcf":20+i, "fcf_yield":.05,
-        "shareholder_yield":.03, "_years":8,
-    })
-scored = pd.DataFrame(rows)
-view.us.scored_universe = lambda: scored
-view._tab_avancada_unificada({"offline":False, "schema_ready":True})
-''').run(timeout=60)
-
-    assert not app.exception
-    rendered = "\n".join(item.value for item in app.markdown)
-    for label in ("Etapa 1 de 3", "Filtros do Universo", "Universo Filtrado",
-                  "Score de Entrada", "Simulação de Patrimônio",
-                  "Quadro Comparativo", "Metodologia e referências científicas"):
-        assert label in rendered

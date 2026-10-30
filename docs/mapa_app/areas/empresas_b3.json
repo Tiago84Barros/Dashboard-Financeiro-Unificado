@@ -3,21 +3,21 @@
   "resumo": "Estudar ações brasileiras e montar carteiras",
   "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há cinco abas, em forma de botões: navegar pelas empresas, estudar uma empresa, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada.",
   "so_admin": false,
-  "fonte": "app.py:74; views/empresas_b3.py:3253 (abas: design/market_companies.py:73 e :88; despacho em views/empresas_b3.py:3253-3317)",
+  "fonte": "app.py:74; views/empresas_b3.py:3253 (abas: design/market_companies.py:72 e :87; despacho em views/empresas_b3.py:3253-3317)",
   "filhos": [
     {
       "nome": "Empresas por Setor",
       "resumo": "Vitrine de todas as empresas, separadas por setor",
       "explicacao": "Mostra as ações da bolsa em cartões, organizadas por setor da economia (fundos imobiliários, ETFs e BDRs ficam de fora). É a aba que abre primeiro e serve de porta de entrada: você passeia pelos setores e escolhe uma empresa para estudar.",
       "so_admin": false,
-      "fonte": "views/empresas_b3.py:667 -> design/market_companies.py:244",
+      "fonte": "views/empresas_b3.py:667 -> design/market_companies.py:243",
       "filhos": [
         {
           "nome": "Faixas de setor",
           "resumo": "Nome do setor e quantas empresas tem",
           "explicacao": "Cada setor (por exemplo, Petróleo ou Energia Elétrica) ganha uma faixa com o nome e a quantidade de empresas. Empresas sem setor definido aparecem juntas no fim, em \"Sem classificação setorial B3\".",
           "so_admin": false,
-          "fonte": "design/market_companies.py:266",
+          "fonte": "design/market_companies.py:265",
           "filhos": []
         },
         {
@@ -25,14 +25,14 @@
           "resumo": "Logo, código, nome e segmento da empresa",
           "explicacao": "Cada cartão mostra o logotipo, o código da ação (como PETR4), o nome e o segmento em que a empresa atua. Ficam quatro cartões por linha.",
           "so_admin": false,
-          "fonte": "design/market_companies.py:294",
+          "fonte": "design/market_companies.py:293",
           "filhos": [
             {
               "nome": "Analisar",
               "resumo": "Abre o raio-x desta empresa",
               "explicacao": "Botão embaixo de cada cartão. Leva direto para a aba Análise de Empresa, já com a empresa escolhida carregada.",
               "so_admin": false,
-              "fonte": "design/market_companies.py:308",
+              "fonte": "design/market_companies.py:307",
               "filhos": []
             }
           ]
@@ -42,7 +42,7 @@
           "resumo": "Carrega mais cartões no fim da lista",
           "explicacao": "Aparece no fim da página quando há mais de 160 empresas para mostrar e diz, entre parênteses, quantas ainda faltam. Cada clique carrega mais 160.",
           "so_admin": false,
-          "fonte": "design/market_companies.py:320",
+          "fonte": "design/market_companies.py:319",
           "filhos": []
         }
       ]

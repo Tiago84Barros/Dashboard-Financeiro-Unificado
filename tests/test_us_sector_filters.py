@@ -1,4 +1,6 @@
-"""Filtros de setor/indústria da aba Análise Avançada (Empresas Americanas).
+"""Rótulos de setor/indústria das empresas americanas (`sector_industry_labels`).
+
+Nasceram para os filtros da aba Análise Avançada, que saiu em 30/10/2026.
 
 Bug real observado no deploy: a lista de Setor mostrava "Consumo Defensivo" 3×,
 "Indústria" 5× e "Outros setores" repetido. Causa: as opções eram os valores
@@ -77,16 +79,6 @@ def test_sem_sector_ou_industry_nao_quebra():
     setor, industria = sector_industry_labels(pd.DataFrame({"symbol": ["X", "Y"]}))
     assert len(setor) == 2 and len(industria) == 2
     assert all(isinstance(v, str) for v in setor)
-
-
-def test_view_usa_rotulo_no_filtro_e_nao_o_bruto():
-    """Trava a regressão: a aba não pode voltar a listar valores brutos."""
-    fonte = (_ROOT / "views" / "empresas_americanas.py").read_text(encoding="utf-8")
-    trecho = fonte.split("Filtros do Universo", 1)[1][:2500]
-    assert "sector_industry_labels(scored)" in trecho
-    assert "setor_label == sector" in trecho, "filtro de setor deve casar pelo rótulo"
-    # o format_func traduzindo o bruto era exatamente o que gerava as duplicatas
-    assert "format_func=lambda x: x if x == \"Todos\"" not in trecho
 
 
 def test_nan_em_setor_vira_rotulo_valido():

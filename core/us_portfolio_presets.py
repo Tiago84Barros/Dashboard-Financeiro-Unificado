@@ -258,7 +258,7 @@ def avaliar_configuracao(valores: dict) -> list[str]:
             "Piso absoluto de qualidade DESLIGADO. No universo de 03/08/2026 "
             "isso não muda a carteira — o score de entrada já ordena as "
             "'Excluída' para fora antes do corte —, mas remove a única guarda "
-            "contra uma empresa marcada como excluída pelo laboratório entrar "
+            "contra uma empresa marcada como excluída pela qualidade contábil entrar "
             "caso score e penalidade de risco se descolem.")
     return alertas
 
