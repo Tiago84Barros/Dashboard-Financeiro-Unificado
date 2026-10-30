@@ -729,10 +729,42 @@ def confianca_controle_financeiro(engine=None) -> ConfiancaSecao:
                           notas=tuple(notas))
 
 
+CURVA_DO_TESOURO = "Curva do Tesouro"
+PESO_CURVA_DO_TESOURO = 0.15
+
+
+def _curva_do_tesouro(conn) -> Componente:
+    """Idade da curva oficial que marca o Tesouro da carteira (desde 30/10/2026).
+
+    Curva parada nao derruba o valor: o titulo segue pela ultima curva, rotulado
+    desatualizado, ou volta ao PU da foto da B3 quando a foto e mais nova. Por
+    isso tabela vazia vale zero, e nao "nao medido" -- o numero da tela
+    continua de pe, so que velho.
+    """
+    dias = _dias_desde(_scalar(conn, "SELECT max(base_date) FROM tesouro_market_rates"))
+    if dias is None:
+        return Componente(CURVA_DO_TESOURO, 0.0, PESO_CURVA_DO_TESOURO,
+                          "sem curva: o Tesouro fica com o PU da foto da B3")
+    return Componente(
+        CURVA_DO_TESOURO, _frescor_pct(dias, 4, 15), PESO_CURVA_DO_TESOURO,
+        f"PU de recompra de {dias} dias atras marca os titulos publicos")
+
+
 def confianca_investimentos(engine=None) -> ConfiancaSecao:
-    return _confianca_pessoal(engine, "Investimentos",
+    """Registro de operacoes mais a curva que marca o Tesouro da carteira."""
+    from core.database import get_engine
+    base = _confianca_pessoal(engine, "Investimentos",
                               "public.investment_transactions",
                               "transaction_date", None)
+    comps = list(base.componentes)
+    try:
+        eng = engine or get_engine()
+        with eng.connect() as conn:
+            comps.append(_curva_do_tesouro(conn))
+    except Exception as exc:  # noqa: BLE001
+        comps.append(Componente(CURVA_DO_TESOURO, None, PESO_CURVA_DO_TESOURO,
+                                f"nao medido: {type(exc).__name__}"))
+    return ConfiancaSecao("Investimentos", tuple(comps), base.universo, base.notas)
 
 
 def confianca_dashboard_geral(engine=None) -> ConfiancaSecao:

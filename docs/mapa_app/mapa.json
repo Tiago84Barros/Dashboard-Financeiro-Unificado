@@ -948,7 +948,7 @@
             {
               "nome": "Visão Geral",
               "resumo": "Tabela de posições, destaques e concentração",
-              "explicacao": "Resumo da carteira inteira: totais, a tabela com todas as posições, destaques, alertas de concentração, gráficos de distribuição e um chat. Se as cotações não estiverem disponíveis, um aviso aparece no topo.",
+              "explicacao": "Resumo da carteira inteira: totais, a tabela com todas as posições, destaques, alertas de concentração, gráficos de distribuição e um chat. Ações, FIIs e ativos do exterior valem pela cotação do dia; os títulos do Tesouro Direto valem pelo preço que o Tesouro paga para recomprá-los hoje, publicado na curva oficial, e só ficam com o preço do extrato da B3 quando a curva for mais antiga que ele. Se as cotações não estiverem disponíveis, um aviso aparece no topo.",
               "so_admin": false,
               "filhos": [
                 {
@@ -966,7 +966,7 @@
                     {
                       "nome": "Ver posições em cards, por classe",
                       "resumo": "Liga cartões individuais com logo e retorno",
-                      "explicacao": "Botão de ligar e desligar que mostra, abaixo da tabela, um cartão por ativo agrupado por classe, com logo e retorno incluindo proventos.",
+                      "explicacao": "Botão de ligar e desligar que mostra, abaixo da tabela, um cartão por ativo agrupado por classe, com logo e retorno incluindo proventos. A linha 'Cotação' diz de onde veio o preço: mercado atual, mercado desatualizado, curva do Tesouro, curva do Tesouro desatualizada (curva oficial com mais de 5 dias) ou snapshot (o extrato importado).",
                       "so_admin": false
                     }
                   ]
