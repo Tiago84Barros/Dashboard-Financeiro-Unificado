@@ -134,6 +134,14 @@
           "filhos": []
         },
         {
+          "nome": "Medição mensal da Carteira 20",
+          "resumo": "Fechamento de cada mês da Carteira 20",
+          "explicacao": "Todo dia refaz a conta de cada fim de mês desde a primeira carteira: quanto a Carteira 20, o BOVA11, o CDI e as ações em partes iguais valeriam com R$ 500 aplicados por mês e sem eles, com imposto e descontada a inflação. Tela que depende: Empresas B3 (aba Carteira 20).",
+          "so_admin": false,
+          "fonte": "core/publicacao_agenda.py (carteira20_medicao); scripts/carteira20_medicao.py",
+          "filhos": []
+        },
+        {
           "nome": "Cópia dos seus dados para o computador",
           "resumo": "Traz da versão online seus lançamentos e carteira",
           "explicacao": "Caminho inverso dos outros: todo dia copia da versão online para o computador do dono os dados de controle financeiro e de carteira que só a versão online recebe. Assim as análises feitas no computador usam os mesmos dados que você vê.",

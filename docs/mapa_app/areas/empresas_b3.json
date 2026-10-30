@@ -1025,7 +1025,7 @@
         {
           "nome": "Desempenho",
           "resumo": "Rendimento contra Ibovespa, CDI e média",
-          "explicacao": "Gráfico de quanto R$ 1.000 aplicados na carteira teriam virado, ao lado do BOVA11 (fundo que segue o Ibovespa), do CDI e das ações em partes iguais, já com custos e imposto. Embaixo, \"Medição mensal do protocolo\" diz se já há mês fechado para medir.",
+          "explicacao": "Gráfico de quanto R$ 1.000 aplicados na carteira teriam virado, ao lado do BOVA11 (fundo que segue o Ibovespa), do CDI e das ações em partes iguais, já com custos e imposto. Embaixo, a \"Medição mensal do protocolo\": uma linha por fim de mês com quanto cada carteira valeria, em duas versões -- com R$ 500 aplicados todo mês ou só com os R$ 1.000 do início -- e, se quiser, descontada a inflação.",
           "so_admin": false,
           "fonte": "views/carteira20_b3.py:406 (medição mensal :454)",
           "filhos": []

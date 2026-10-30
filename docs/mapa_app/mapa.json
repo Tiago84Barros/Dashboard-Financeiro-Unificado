@@ -1,7 +1,7 @@
 {
   "nome": "Dashboard Financeiro Unificado",
   "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, o que funciona por trás delas.",
-  "data_mapa": "29/10/2026",
+  "data_mapa": "30/10/2026",
   "filhos": [
     {
       "nome": "Dashboard Geral",
@@ -2303,7 +2303,7 @@
             {
               "nome": "Desempenho",
               "resumo": "Rendimento contra Ibovespa, CDI e média",
-              "explicacao": "Gráfico de quanto R$ 1.000 aplicados na carteira teriam virado, ao lado do BOVA11 (fundo que segue o Ibovespa), do CDI e das ações em partes iguais, já com custos e imposto. Embaixo, \"Medição mensal do protocolo\" diz se já há mês fechado para medir.",
+              "explicacao": "Gráfico de quanto R$ 1.000 aplicados na carteira teriam virado, ao lado do BOVA11 (fundo que segue o Ibovespa), do CDI e das ações em partes iguais, já com custos e imposto. Embaixo, a \"Medição mensal do protocolo\": uma linha por fim de mês com quanto cada carteira valeria, em duas versões -- com R$ 500 aplicados todo mês ou só com os R$ 1.000 do início -- e, se quiser, descontada a inflação.",
               "so_admin": false
             },
             {
@@ -3801,6 +3801,12 @@
               "nome": "Desempenho da Carteira 20",
               "resumo": "Curva diária da Carteira 20",
               "explicacao": "Todo dia calcula como a Carteira 20 se saiu contra o BOVA11, o CDI e uma carteira de pesos iguais. Tela que depende: Empresas B3 (aba Carteira 20).",
+              "so_admin": false
+            },
+            {
+              "nome": "Medição mensal da Carteira 20",
+              "resumo": "Fechamento de cada mês da Carteira 20",
+              "explicacao": "Todo dia refaz a conta de cada fim de mês desde a primeira carteira: quanto a Carteira 20, o BOVA11, o CDI e as ações em partes iguais valeriam com R$ 500 aplicados por mês e sem eles, com imposto e descontada a inflação. Tela que depende: Empresas B3 (aba Carteira 20).",
               "so_admin": false
             },
             {
