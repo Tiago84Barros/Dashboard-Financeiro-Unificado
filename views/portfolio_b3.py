@@ -3924,6 +3924,13 @@ def render(show_header: bool = True) -> None:
     )
     detalhe_tecnico(_modo_txt + _comum_txt + _resil_txt + _wf_txt,
                     codigo="portfolio_b3.criterio_de_aprovacao")
+    # A tabela que mostrava o efeito mínimo detectável saiu da tela; o limite
+    # do teste continua valendo e segue registrado em Restrições.
+    detalhe_tecnico(
+        "O teste de poder preditivo (Rank-IC) por segmento tem efeito mínimo "
+        "detectável alto: com mediana de 3 empresas por segmento na B3, fica "
+        "cego para efeitos moderados.",
+        codigo="portfolio_b3.efeito_minimo_detectavel")
 
     # ── SEGMENTOS APROVADOS ───────────────────────────────────────────────────
     if aprovados and mostrar_audit:
