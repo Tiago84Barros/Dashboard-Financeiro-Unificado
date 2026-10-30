@@ -898,9 +898,15 @@
               "so_admin": false,
               "filhos": [
                 {
-                  "nome": "TWR no período · Volatilidade anual · Queda máxima · VaR 95% · 1 dia · Sharpe × CDI · Beta",
-                  "resumo": "Seis medidas de risco e retorno",
-                  "explicacao": "TWR é o rendimento da carteira descontando aportes, comparado ao CDI; volatilidade é o quanto ela oscila; queda máxima é o maior tombo desde um pico; VaR é a perda que só deve ser superada em 5% dos dias; Sharpe mostra quanto rendeu acima do CDI para cada unidade de risco; Beta mostra o quanto ela acompanha o Ibovespa.",
+                  "nome": "Rendimento · Oscilação · Queda máxima · Perda em dia ruim · Retorno por risco · Sensibilidade à bolsa",
+                  "resumo": "Seis medidas de risco e retorno, cada uma com o nome simples antes da sigla",
+                  "explicacao": "Rendimento (TWR) é quanto a carteira rendeu sem contar aportes, comparado ao CDI; Oscilação (volatilidade) é o quanto ela sobe e desce, ao lado da do BOVA11 nos mesmos dias; Queda máxima (drawdown) é o maior tombo desde um pico; Perda em dia ruim (VaR 95%) é a perda que só é superada em 1 de cada 20 dias; Retorno por risco (Sharpe) compara quanto cada dia rendeu, em média, acima do CDI com o sobe e desce da carteira; Sensibilidade à bolsa (beta) diz quanto a carteira tende a se mover quando o Ibovespa varia 10%.",
+                  "so_admin": false
+                },
+                {
+                  "nome": "📖 Como ler estes números",
+                  "resumo": "Cada medida explicada para quem não é do mercado",
+                  "explicacao": "Painel recolhido abaixo dos cards. Explica em linguagem simples cada uma das seis medidas e o gráfico, sempre com o valor da sua carteira: quanto R$ 100 viraram, e quanto teriam virado no CDI; o pior tombo, com as datas; quanto se perde num dia ruim a cada R$ 100; e quanto a carteira tende a mexer se o Ibovespa variar 10%.",
                   "so_admin": false
                 },
                 {
