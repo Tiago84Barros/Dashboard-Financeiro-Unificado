@@ -80,9 +80,9 @@
         {
           "nome": "Converse sobre o fundo",
           "resumo": "Chat com a IA sobre este fundo",
-          "explicacao": "Caixa de conversa com a inteligência artificial focada no fundo aberto. Responde só com os dados do app e avisa quando falta informação. Só funciona quando a IA está configurada. Na tela o título traz o código do fundo.",
+          "explicacao": "Caixa de conversa com a inteligência artificial focada no fundo aberto. Responde só com os dados do app e avisa quando falta informação. Só funciona quando a IA está configurada. Na tela o título traz o código do fundo. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês.",
           "so_admin": false,
-          "fonte": "views/fiis.py:2191 (design/chat_ativo.py:92)"
+          "fonte": "views/fiis.py:2194 (design/chat_ativo.py:70); core/pregoes_recentes.py"
         }
       ]
     },
@@ -168,9 +168,9 @@
         {
           "nome": "Tire dúvidas sobre os FIIs e a seleção",
           "resumo": "Chat com a IA sobre a carteira",
-          "explicacao": "Caixa de conversa com perguntas sugeridas em botões. A conversa recomeça quando a seleção ou o cenário muda. Só funciona quando a IA está configurada.",
+          "explicacao": "Caixa de conversa com perguntas sugeridas em botões. A conversa recomeça quando a seleção ou o cenário muda. Só funciona quando a IA está configurada. Os fundos citados na pergunta chegam com os pregões diários recentes da bolsa.",
           "so_admin": false,
-          "fonte": "views/fiis.py:1275"
+          "fonte": "views/fiis.py:1277; core/pregoes_recentes.py"
         },
         {
           "nome": "Publicação da carteira-modelo",

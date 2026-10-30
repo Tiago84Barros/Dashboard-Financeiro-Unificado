@@ -166,10 +166,12 @@ def render_chat_ativo(
         with st.spinner(f"Consultando os dados de {tk}, pares e qualidade…"):
             try:
                 # O bloco do ativo já traz o noticiário dele; aqui entram macro,
-                # curva, câmbio e manchetes gerais — premissa do app.
+                # curva, câmbio, manchetes gerais e os pregões diários do
+                # próprio ativo (só B3/FII estão no COTAHIST) — premissa do app.
                 from core.contexto_mercado import bloco_contexto_mercado
 
-                contexto = build_context(pergunta) + "\n\n" + bloco_contexto_mercado()
+                contexto = build_context(pergunta) + "\n\n" + bloco_contexto_mercado(
+                    tickers_movimento=[tk] if mercado in ("b3", "fii") else ())
                 # O veredito da Inteligência dos Ativos para este ativo, e a
                 # resposta conferida contra ele.
                 avaliacoes: dict = {}

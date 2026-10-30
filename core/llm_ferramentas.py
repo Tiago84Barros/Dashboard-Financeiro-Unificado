@@ -7,7 +7,7 @@ fez depois das vezes em que o IPCA passou de 6%?" -- ficava sem resposta, ou
 pior, com número de memória. Com function calling a LLM pede a série e recebe
 o dado com fonte, janela e n, no mesmo formato do resto do contexto.
 
-Três ferramentas, todas lendo o que a produção alcança:
+Quatro ferramentas, todas lendo o que a produção alcança:
 
 ``serie_macro``
     Séries macro e de mercado mês a mês: o painel publicado da Memória de
@@ -18,6 +18,10 @@ Três ferramentas, todas lendo o que a produção alcança:
     Fechamento mensal de até quatro ativos: B3 e FII em
     ``market.historical_prices``, ações americanas em
     ``market_us.prices_monthly``. Devolve retornos, máxima queda e os pontos.
+``preco_diario_recente``
+    Fechamento de cada pregão (até 63) de até quatro ações, ETFs ou FIIs da B3,
+    do COTAHIST publicado em ``data/public/pregoes_recentes_b3.json.gz``. O
+    fechamento mensal não mostra a queda de um pregão nem chega até ontem.
 ``meses_com_condicao``
     Os meses do painel em que uma condição macro valeu, agrupados em
     episódios, com o que veio depois e o contraponto de todos os meses.
@@ -32,7 +36,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Callable, Iterable, Mapping, Sequence
 
 logger = logging.getLogger(__name__)
@@ -48,7 +52,9 @@ MAX_TICKERS = 4
 REGRA_FERRAMENTAS = (
     "FERRAMENTAS DE DADOS: você tem ferramentas que consultam o banco do app — "
     "séries macro mês a mês desde 2010 (serie_macro), o preço mensal de qualquer "
-    "ação ou FII da B3 e de ações americanas (preco_ativo) e os meses do "
+    "ação ou FII da B3 e de ações americanas (preco_ativo), o fechamento de cada "
+    "pregão recente da B3 (preco_diario_recente: use para 'o que houve nos "
+    "últimos dias', a queda de um pregão, o preço de ontem) e os meses do "
     "histórico em que uma condição macro valeu, com o que veio depois "
     "(meses_com_condicao). Quando a resposta precisar de um número que o "
     "contexto não traz — a trajetória ou a maior queda de um ativo, a comparação "
@@ -453,8 +459,109 @@ def preco_ativo(tickers=None, anos=5) -> str:
     if excedentes:
         blocos.append(f"Não consultados (teto de {MAX_TICKERS} por chamada): "
                       f"{', '.join(excedentes)}.")
+    nota = _nota_pregao_mais_novo({tk: series[tk][2] for tk in pedidos
+                                   if tk in series and "historical_prices" in series[tk][0]})
+    if nota:
+        blocos.append(nota)
     blocos.append("Retorno passado não é previsão.")
     return "\n\n".join(blocos)
+
+
+def _nota_pregao_mais_novo(ultimas: Mapping[str, date | None]) -> str | None:
+    """Pregão do COTAHIST mais novo que o último ponto mensal, colado ao resultado.
+
+    O resultado mensal dizia "último ponto 05/10" e a LLM pediu ao usuário os
+    fechamentos de outubro, que o app tinha.
+    """
+    if not ultimas:
+        return None
+    try:
+        from core import pregoes_recentes as pr
+
+        recentes = pr.ultimos_fechamentos(pr.carregar(), ultimas)
+    except Exception:  # noqa: BLE001 - a nota é acessória
+        logger.info("pregões recentes indisponíveis para preco_ativo", exc_info=True)
+        return None
+    novos = [f"{tk} R$ {_br(c)} em {d:%d/%m/%Y}" for tk, (d, c) in recentes.items()
+             if ultimas.get(tk) is None or d > ultimas[tk]]
+    if not novos:
+        return None
+    return ("Há pregão mais novo que o último ponto mensal acima (COTAHIST da B3, "
+            f"fechamento bruto): {'; '.join(novos)}. Para os dias recentes, chame "
+            "preco_diario_recente.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# preco_diario_recente
+# ─────────────────────────────────────────────────────────────────────────────
+
+PREGOES_PADRAO = 21
+
+
+def preco_diario_recente(tickers=None, pregoes=PREGOES_PADRAO) -> str:
+    from core import pregoes_recentes as pr
+
+    if isinstance(tickers, str):
+        tickers = tickers.replace(";", ",").split(",")
+    pedidos = list(dict.fromkeys(t for t in map(_normalizar_ticker, tickers or ()) if t))
+    if not pedidos:
+        return "Nenhum ticker informado: passe de 1 a 4 tickers (ex.: ['BOVA11', 'ITUB4'])."
+    excedentes = pedidos[MAX_TICKERS:]
+    pedidos = pedidos[:MAX_TICKERS]
+    art = pr.carregar()
+    datas = art.get("pregoes") or []
+    if not datas:
+        return ("Pregões diários: arquivo pregoes_recentes_b3 ausente ou ilegível neste "
+                "ambiente — sem preço diário da B3. Não trate como mercado parado.")
+    try:
+        n = min(max(1, int(pregoes)), len(datas))
+    except (TypeError, ValueError):
+        n = min(PREGOES_PADRAO, len(datas))
+    blocos = [pr.cabecalho(art, datetime.now(timezone.utc)).rstrip(":") + "."]
+    series: list[tuple[int, str, list[str]]] = []
+    for tk in pedidos:
+        m = pr.movimento(art, tk)
+        if m is None:
+            blocos.append(f"{tk}: sem pregão no COTAHIST nos últimos 21 pregões (ticker "
+                          "antigo, sem negócio, ou ação americana: para ela use preco_ativo).")
+            continue
+        dias = [f"{date.fromisoformat(d):%d/%m} " + (f"R$ {_br(c)}" if c else "sem negócio")
+                for d, c in pr.fechamentos(art, tk, n)]
+        series.append((len(blocos), pr.linha_ativo(m).strip(), dias))
+        blocos.append("")
+    if excedentes:
+        blocos.append(f"Não consultados (teto de {MAX_TICKERS} por chamada): "
+                      f"{', '.join(excedentes)}.")
+    blocos.append("Fechamento bruto: provento e desdobramento não estão descontados.")
+    for pos, texto in _fechamentos_no_teto(series, n, len("\n\n".join(blocos))):
+        blocos[pos] = texto
+    return "\n\n".join(blocos)
+
+
+def _fechamentos_no_teto(series: Sequence[tuple[int, str, list[str]]], n: int,
+                         fixo: int) -> list[tuple[int, str]]:
+    """Reparte o teto do ``executar`` entre as séries, sem cortar ativo nenhum.
+
+    Com 4 ativos e 63 pregões o texto inteiro passava do teto, e o corte do fim
+    levava o 4º ativo e a ponta mais nova do 3º. Aqui cada ativo fica com o
+    resumo e os pregões mais novos que cabem na sua parte; a série mais curta
+    devolve o que não usou às seguintes, e a encurtada diz que foi encurtada.
+    """
+    sobra = MAX_CHARS_RESULTADO - fixo
+    saida: list[tuple[int, str]] = []
+    ordem = sorted(series, key=lambda s: len("; ".join(s[2])))
+    for k, (pos, resumo, dias) in enumerate(ordem):
+        cota = sobra // (len(ordem) - k)
+        ponta = len(dias)
+        texto = f"{resumo}\nFechamentos ({n} pregões): {'; '.join(dias)}."
+        while len(texto) > cota and ponta > 1:
+            ponta -= 1
+            texto = (f"{resumo}\nFechamentos (últimos {ponta} de {n} pregões; os mais "
+                     f"velhos não couberam no teto da resposta — peça menos ativos "
+                     f"para vê-los): {'; '.join(dias[-ponta:])}.")
+        sobra -= len(texto)
+        saida.append((pos, texto))
+    return saida
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -625,6 +732,21 @@ FERRAMENTAS_MERCADO: tuple[Ferramenta, ...] = (
                       "padrão 5."}},
          "required": ["tickers"]},
         preco_ativo,
+    ),
+    Ferramenta(
+        "preco_diario_recente",
+        "Fechamento de cada pregão recente (até 63, padrão 21) de 1 a 4 ações, ETFs "
+        "ou FIIs da B3, do COTAHIST: variação em 1/5/21 pregões, queda desde a "
+        "máxima, maior pregão e os fechamentos dia a dia. Use para os últimos dias "
+        "e semanas; BOVA11 é o proxy do Ibovespa, SMAL11 o das small caps.",
+        {"type": "object",
+         "properties": {
+             "tickers": {"type": "array", "items": {"type": "string"},
+                         "description": f"De 1 a {MAX_TICKERS} códigos da B3."},
+             "pregoes": {"type": "integer", "description": "Quantos pregões listar "
+                         f"(1 a 63); padrão {PREGOES_PADRAO}."}},
+         "required": ["tickers"]},
+        preco_diario_recente,
     ),
     Ferramenta(
         "meses_com_condicao",

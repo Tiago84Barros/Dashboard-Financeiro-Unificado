@@ -2211,6 +2211,9 @@ FLOW_CONFIGURACOES = FlowSpec(
                 "que não é 0% (SECOES_SEM_AFIRMACAO)",
                 "Subabas fora da nota, nomeadas no card da seção: Previsão de Lucros e "
                 "Carteira 20 (Empresas B3), Inteligência dos Ativos (Investimentos)",
+                "Empresas B3 e Seleção de FIIs medem também o 'Pregão diário (chat)': a "
+                "idade dos pregões do COTAHIST que o chat do ativo cita (peso 0,05, "
+                "tirado do bloco de frescor, que segue somando 0,25)",
                 "Apoio analítico — não é recomendação",
             ),
             "Medir a cada abertura custava uma varredura inteira do banco por clique de menu. "
@@ -2577,10 +2580,13 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
         "b3_relatorio": _node(
             "b3_relatorio", "Relatório do analista e chat do ativo", "Consulta",
             "Fecha a Análise de Empresa com o Relatório do analista e com o chat do ativo, que "
-            "recebe a empresa, os pares, os documentos da CVM, o macro e as notícias.",
+            "recebe a empresa, os pares, os documentos da CVM, o macro, as notícias e os "
+            "pregões diários da B3 (COTAHIST) — o preço de agora, não só o fechamento do mês.",
             (
                 "secao_relatorio(..., mercado=\"b3\") (design/relatorio_analista.py)",
                 "render_chat_ativo() com build_b3_ativo_context()",
+                "bloco_contexto_mercado(tickers_movimento=[tk]): os pregões diários do ativo, "
+                "do BOVA11 e do SMAL11, de data/public/pregoes_recentes_b3.json.gz",
                 "O relatório entra cedo no contexto, para o corte de tamanho não alcançá-lo",
             ),
             "O relatório lê o ativo com o mesmo nome e setor que o portão da Inteligência dos "

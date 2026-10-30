@@ -393,6 +393,20 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/precos_mensais_b3.json.gz",),
     ),
     Alvo(
+        # Fechamento de cada um dos últimos 63 pregões, para o bloco de
+        # contexto das LLMs e a ferramenta `preco_diario_recente`. Em 29/10/2026
+        # o chat só tinha o fechamento mensal de 05/10 e não viu a queda de
+        # 26/10 (BOVA11 −14,5%). Lê os ZIPs do COTAHIST que `b3_pregao` deixa no
+        # cache, sem tocar no armazém.
+        chave="pregoes_recentes_b3",
+        titulo="Pregões recentes da B3 para as LLMs (COTAHIST)",
+        passos=(("scripts/publish_pregoes_recentes_b3.py",),),
+        cadencia_dias=1,
+        modulo="b3",
+        precisa_armazem=False,
+        artefatos=("data/public/pregoes_recentes_b3.json.gz",),
+    ),
+    Alvo(
         # Proventos de renda por ano para o card e o gráfico de dividendos da
         # Empresas B3, a série da LLM e o adapter de FII. Lê a resposta mais
         # nova da brapi arquivada no armazém, não `market.dividends`, onde o

@@ -15,6 +15,13 @@ import pytest
 
 import core.llm_b3 as llm
 import core.llm_ferramentas as lf
+import core.pregoes_recentes as pr
+
+
+@pytest.fixture(autouse=True)
+def _sem_pregoes_diarios(monkeypatch):
+    """O arquivo real de pregões mudaria o texto do ``preco_ativo`` a cada dia."""
+    monkeypatch.setattr(pr, "carregar", lambda: {})
 
 # ── dublês ───────────────────────────────────────────────────────────────────
 
@@ -271,7 +278,8 @@ def test_esquemas_sao_tools_da_api_openai():
         assert esq["type"] == "function"
         assert esq["function"]["parameters"]["required"]
     nomes = [f.nome for f in lf.FERRAMENTAS_MERCADO]
-    assert nomes == ["serie_macro", "preco_ativo", "meses_com_condicao"]
+    assert nomes == ["serie_macro", "preco_ativo", "preco_diario_recente",
+                     "meses_com_condicao"]
 
 
 # ── o laço em core.llm_b3 ────────────────────────────────────────────────────

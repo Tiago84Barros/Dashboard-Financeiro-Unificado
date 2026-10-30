@@ -229,9 +229,9 @@
         {
           "nome": "Converse sobre (código da empresa)",
           "resumo": "Chat com inteligência artificial sobre a empresa",
-          "explicacao": "Chat em que você pergunta sobre resultados, dívidas, concorrentes ou riscos e recebe respostas baseadas só no que o app sabe da empresa, que avisam quando falta informação. Há perguntas prontas em botões e o botão \"Limpar chat\" para recomeçar.",
+          "explicacao": "Chat em que você pergunta sobre resultados, dívidas, concorrentes ou riscos e recebe respostas baseadas só no que o app sabe da empresa, que avisam quando falta informação. Há perguntas prontas em botões e o botão \"Limpar chat\" para recomeçar. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês.",
           "so_admin": false,
-          "fonte": "views/empresas_b3.py:4136 -> design/chat_ativo.py:92",
+          "fonte": "views/empresas_b3.py:4169 -> design/chat_ativo.py:70; core/pregoes_recentes.py",
           "filhos": []
         }
       ]

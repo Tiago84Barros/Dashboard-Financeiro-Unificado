@@ -1366,7 +1366,8 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                 detalhe = get_warehouse_detail_context(alvos)
                 if detalhe:
                     context = context + "\n\n" + detalhe
-                context = context + "\n\n" + bloco_contexto_mercado()
+                context = context + "\n\n" + bloco_contexto_mercado(
+                    tickers_movimento=alvos)
                 # Citados primeiro, depois a seleção por peso: o mesmo
                 # veredito da Inteligência dos Ativos, conferido na resposta.
                 context, avaliacoes = veredito.anexar(

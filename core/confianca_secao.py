@@ -86,6 +86,18 @@ def _metodologia(est, peso: float, sufixo: str = "") -> "Componente":
 # "confianca" de uma tela que ninguem tinha medido.
 PESOS_MEDICAO = {"Integridade": 0.35, "Frescor": 0.25}
 
+# Desde 29/10/2026 o chat do ativo de Empresas B3 e de FIIs cita o pregao diario
+# do COTAHIST (``core/pregoes_recentes.py``), e nao mais so o preco que o motor
+# da tela le. A tela passou a mostrar dois precos, entao o bloco de frescor
+# (0,25) foi repartido entre os dois -- repartido, nao ampliado, como no EUA
+# (A-153). O pregao vem de arquivo publicado: segue medido com o banco fora,
+# entao fica fora dos pesos que ``_declarar_nao_medidos`` completa.
+PREGAO_DO_CHAT = "Pregão diário (chat)"
+PESO_PREGAO_DO_CHAT = 0.05
+PESOS_COM_PREGAO = {"Integridade": 0.35, "Frescor": 0.20}  # 0,20 + 0,05 = 0,25
+#: Dias uteis de atraso com que o pregao do chat ja vale zero.
+PREGAO_VELHO_UTEIS = 10
+
 
 def _declarar_nao_medidos(comps: list["Componente"], motivo: str,
                           pesos: dict[str, float] | None = None
@@ -346,6 +358,29 @@ def _abrangencia(u: Universo | None) -> Componente:
     )
 
 
+def _pregao_do_chat(hoje: date | None = None) -> Componente:
+    """Idade do pregao diario que o chat do ativo cita.
+
+    Le o mesmo arquivo que o chat le, com a regua do cabecalho que ele recebe:
+    ate ``ATRASO_UTEIS`` dias uteis e o atraso normal da B3. Arquivo ausente e
+    medicao, nao falta dela: o chat fica so com o fechamento mensal, e diz isso.
+    """
+    from core import pregoes_recentes as pr
+    peso = PESO_PREGAO_DO_CHAT
+    art = pr.carregar()
+    base = art.get("base_ate") or (art.get("pregoes") or [None])[-1]
+    if not base:
+        return Componente(PREGAO_DO_CHAT, 0.0, peso,
+                          "arquivo pregoes_recentes_b3 ausente ou ilegivel: o chat "
+                          "do ativo fica so com o fechamento mensal")
+    ref = date.fromisoformat(base)
+    atraso = pr.dias_uteis_entre(ref, hoje or date.today())
+    return Componente(
+        PREGAO_DO_CHAT, _frescor_pct(atraso, pr.ATRASO_UTEIS, PREGAO_VELHO_UTEIS), peso,
+        f"chat do ativo cita {len(art.get('pregoes') or [])} pregoes do COTAHIST ate "
+        f"{ref:%d/%m}, {atraso} dias uteis atras; fechamento bruto, so B3 e FII")
+
+
 def _scalar(conn, sql: str, params: dict | None = None):
     from sqlalchemy import text
     return conn.execute(text(sql), params or {}).scalar()
@@ -388,14 +423,18 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
                     # calibracao apertada: e o feed de cotacoes parado, e a
                     # acao correspondente e rodar a ingestao.
                     comps.append(Componente(
-                        "Frescor", _frescor_pct(mediana, 3, 30), 0.25,
+                        "Frescor", _frescor_pct(mediana, 3, 30),
+                        PESOS_COM_PREGAO["Frescor"],
                         f"preco mediano com {mediana} dias"
                         + (" - ingestao de cotacoes parada" if mediana > 30 else "")))
     except Exception as exc:  # noqa: BLE001
         logger.warning("confianca B3: %s", exc)
         notas.append(f"indice de confianca indisponivel: {type(exc).__name__}")
-        _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}")
-    _declarar_nao_medidos(comps, "nao medido: sem ticker apto no indice")
+        _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}",
+                              PESOS_COM_PREGAO)
+    comps.append(_pregao_do_chat())
+    _declarar_nao_medidos(comps, "nao medido: sem ticker apto no indice",
+                          PESOS_COM_PREGAO)
 
     comps.append(_abrangencia(u))
 
@@ -425,7 +464,7 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
             dias = _dias_desde(_scalar(conn, """
                 SELECT max(updated_at) FROM market.fiis WHERE price > 0"""))
             comps.append(Componente(
-                "Frescor", _frescor_pct(dias, 3, 30), 0.25,
+                "Frescor", _frescor_pct(dias, 3, 30), PESOS_COM_PREGAO["Frescor"],
                 (f"cadastro atualizado ha {dias} dias"
                  + (" - ingestao parada" if dias > 30 else ""))
                 if dias is not None else "sem carimbo de atualizacao"))
@@ -438,8 +477,11 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         logger.warning("confianca FII: %s", exc)
         notas.append(f"medicao parcial: {type(exc).__name__}")
-        _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}")
-    _declarar_nao_medidos(comps, "nao medido: universo investivel vazio")
+        _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}",
+                              PESOS_COM_PREGAO)
+    comps.append(_pregao_do_chat())
+    _declarar_nao_medidos(comps, "nao medido: universo investivel vazio",
+                          PESOS_COM_PREGAO)
 
     comps.append(_abrangencia(u))
     # Le o certificado que a PRODUCAO enxerga, nao o que o armazem local sabe.
