@@ -1524,7 +1524,6 @@ def render(show_header: bool = True) -> None:
 
     st.markdown(
         '<p style="font-size:0.80rem;color:var(--app-muted);margin-bottom:20px;">'
-        '<strong style="color:var(--app-text);">Etapa 3 de 3 · Avaliação do conjunto.</strong> '
         'Julga a carteira criada na aba <strong>Criação de Portfólio</strong> como um '
         'todo — diversificação, concentração por ativo e por setor, exposição a risco, '
         'dividendos e crescimento consolidados, qualidade média e adequação ao objetivo. '

@@ -1501,7 +1501,7 @@
     {
       "nome": "Empresas B3",
       "resumo": "Estudar ações brasileiras e montar carteiras",
-      "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há seis abas, em forma de botões: navegar pelas empresas, estudar uma empresa, testar critérios, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada.",
+      "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há cinco abas, em forma de botões: navegar pelas empresas, estudar uma empresa, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada.",
       "so_admin": false,
       "filhos": [
         {
@@ -1687,275 +1687,9 @@
           ]
         },
         {
-          "nome": "Análise Avançada",
-          "resumo": "Laboratório para testar o ranking num segmento",
-          "explicacao": "É a etapa 1 de 3: você escolhe um setor ou segmento e confere de perto como o ranking de empresas se comporta ali, com filtros, pesos e simulações com dados do passado. Os cálculos são pesados e só rodam depois do clique em \"Executar análise\"; mudar qualquer filtro pede uma nova execução.",
-          "so_admin": false,
-          "filhos": [
-            {
-              "nome": "Filtros do Universo",
-              "resumo": "Escolhe setor, segmento, perfil e liquidez",
-              "explicacao": "Caixas de escolha para Setor, Subsetor, Segmento, Perfil (empresas mais novas ou estabelecidas) e \"Liquidez mínima (negociação)\", que tira ações pouco negociadas. Definem quais empresas entram na análise.",
-              "so_admin": false
-            },
-            {
-              "nome": "Pesos do Scoring",
-              "resumo": "Decide quanto cada indicador pesa na nota",
-              "explicacao": "Quadro que abre ao clicar, para definir como a nota das empresas é calculada. Dá para usar pesos prontos por setor (recomendado) ou ajustar tudo à mão.",
-              "so_admin": false,
-              "filhos": [
-                {
-                  "nome": "Usar pesos calibrados por setor (recomendado)",
-                  "resumo": "Pesos prontos para o setor escolhido",
-                  "explicacao": "Usa pesos já ajustados para o setor. Fica desligado quando o setor escolhido é \"Todos\".",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Calibração automática ótima por segmento (recomendado)",
-                  "resumo": "Ajusta a nota ao tipo de negócio",
-                  "explicacao": "Adapta pesos e regras ao tipo de negócio do segmento; por exemplo, bancos são avaliados de forma diferente de lojas.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Calibrar pesos com Fama-MacBeth MVP",
-                  "resumo": "Ajuste estatístico pelos retornos passados",
-                  "explicacao": "Opção avançada que ajusta os pesos olhando quais indicadores explicaram os retornos no passado. A régua \"Mistura Fama-MacBeth\" define quanto desse ajuste entra.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Pesos manuais (ROE, ROIC, Margem Líquida, DY, Endividamento, Liquidez)",
-                  "resumo": "Seis réguas para pesar cada indicador",
-                  "explicacao": "Réguas para dar peso a cada indicador à mão. Só ficam ativas quando os pesos por setor estão desligados.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Peso de barganha no score (%)",
-                  "resumo": "Valoriza ações que estão baratas",
-                  "explicacao": "Mistura na nota o quanto a ação está barata (P/L, P/VP, EV/EBIT). Em 0% a nota olha só a qualidade da empresa.",
-                  "so_admin": false
-                }
-              ]
-            },
-            {
-              "nome": "Executar análise",
-              "resumo": "Botão que roda todos os cálculos",
-              "explicacao": "Botão principal da aba: só depois dele aparecem as checagens, o ranking e as simulações abaixo. Se algum filtro mudar, um aviso pede para executar de novo.",
-              "so_admin": false
-            },
-            {
-              "nome": "Checagens antes do ranking",
-              "resumo": "Qualidade dos dados e alertas sobre empresas",
-              "explicacao": "Série de quadros, a maioria fechados até você clicar, que conferem os dados e apontam cuidados antes de confiar no ranking. Aparecem depois de executar a análise; alguns só surgem se houver casos a mostrar.",
-              "so_admin": false,
-              "filhos": [
-                {
-                  "nome": "Qualidade & saneamento dos dados (antes do ranking)",
-                  "resumo": "Dados estranhos, incompletos ou repetidos",
-                  "explicacao": "Conta empresas com dados fora do normal, incompletos, repetidos ou sem setor, e lista os indicadores descartados por estarem fora de uma faixa razoável.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Calibração ótima automática",
-                  "resumo": "Como a nota foi ajustada ao segmento",
-                  "explicacao": "Aparece aberto quando a calibração automática está ligada. Mostra o tipo de negócio identificado, os pesos aplicados e os critérios recomendados para o segmento.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Camada macro internacional no ranking avançado",
-                  "resumo": "Quanto o cenário externo influencia o ranking",
-                  "explicacao": "Caixa para escolher se juros, câmbio e outros fatores do exterior entram no ranking: só o cenário brasileiro, moderado (recomendado) ou ampliado.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Piso de qualidade sobre as primeiras do ranking",
-                  "resumo": "Alerta sobre as mais bem colocadas",
-                  "explicacao": "Confere as primeiras colocadas e conta quantas estão em situação crítica ou de atenção, como dívida alta ou prejuízo.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Classe mais negociada da mesma empresa",
-                  "resumo": "Outra classe da ação é mais negociada",
-                  "explicacao": "Avisa quando outra classe de ação da mesma empresa (por exemplo, ON em vez de PN) é bem mais negociada. Só aparece se houver casos.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Dependência de governo e comportamento em recessão",
-                  "resumo": "Risco de governo e desempenho em crises",
-                  "explicacao": "Mostra empresas que dependem de governo ou de órgão regulador e como suas margens se comportaram nas recessões de 2015-16 e 2020. Só informa, não muda o ranking.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Calibracao Fama-MacBeth MVP dos pesos",
-                  "resumo": "Resultado do ajuste estatístico dos pesos",
-                  "explicacao": "Só aparece se essa opção foi ligada em Pesos do Scoring. Mostra quantos anos e empresas foram usados e o peso final de cada indicador.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Validacao cross-source (Banco x Fundamentus)",
-                  "resumo": "Confere os números com outra fonte",
-                  "explicacao": "Compara os números do app com os do site Fundamentus. A comparação automática hoje está desligada; marcando \"Mostrar historico salvo\" dá para ver comparações antigas.",
-                  "so_admin": false
-                }
-              ]
-            },
-            {
-              "nome": "Ferramentas opcionais",
-              "resumo": "Análises extras que você liga quando quiser",
-              "explicacao": "Seis quadros que abrem ao clicar, cada um com uma análise mais aprofundada das empresas do ranking. Algumas só calculam quando você marca a opção dentro delas, porque são lentas.",
-              "so_admin": false,
-              "filhos": [
-                {
-                  "nome": "Análise de incerteza (bootstrap) — opcional, lento",
-                  "resumo": "A nota de cada empresa é firme?",
-                  "explicacao": "Refaz a nota muitas vezes trocando as empresas de comparação, para mostrar se a nota é estável ou muda muito. Só calcula ao marcar \"Calcular IC dos scores\".",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Otimização Markowitz pós-seleção — opcional",
-                  "resumo": "Pesos que reduzem o risco de concentração",
-                  "explicacao": "Sugere quanto colocar em cada uma das melhores empresas levando em conta quais sobem e descem juntas, para diminuir o risco. Só calcula ao marcar \"Calcular\".",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Preço justo e sustentabilidade de dividendos",
-                  "resumo": "Cara ou barata, e o dividendo se sustenta?",
-                  "explicacao": "Estima se a ação está cara ou barata em termos absolutos, pelos métodos de Graham e Bazin (autores clássicos de investimento em valor), e se o dividendo cabe no caixa que a empresa gera.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Resiliência histórica e saúde financeira — sensibilidade Brasil",
-                  "resumo": "Bônus e penalidades por saúde financeira",
-                  "explicacao": "Dá pontos extras a empresas boas que estão temporariamente em baixa e tira pontos de empresas com dívida crítica e prejuízo.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Atribuição Shapley do score — explainability",
-                  "resumo": "O que somou ou tirou pontos da nota",
-                  "explicacao": "Para uma empresa escolhida, mostra em pontos quanto cada parte do cálculo aumentou ou diminuiu a nota final.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Black-Litterman — incorporar suas views",
-                  "resumo": "Coloca a sua opinião nos pesos sugeridos",
-                  "explicacao": "Permite registrar uma opinião sua, como \"esta ação vai subir X%\" ou \"vai se sair melhor que aquela\", com um grau de confiança, e ver como isso muda os pesos sugeridos. Só calcula ao marcar \"Aplicar BL\".",
-                  "so_admin": false
-                }
-              ]
-            },
-            {
-              "nome": "Universo Filtrado — N empresa(s) ranqueada(s)",
-              "resumo": "Ranking das até 20 melhores do filtro",
-              "explicacao": "Cartões com até 20 empresas em ordem de nota, cada um com a posição, o logotipo, o nome, a nota colorida (verde, amarela ou vermelha) e quantos anos de balanço existem. É o resultado principal da aba.",
-              "so_admin": false
-            },
-            {
-              "nome": "Score de Entrada — Composição Avançada",
-              "resumo": "Quem está aprovada, em observação ou excluída",
-              "explicacao": "Junta a nota com análises de qualidade, risco, consistência e caixa para dizer se cada empresa está \"Aprovada\", em \"Observação\" ou \"Excluída\" para compra, com a contagem de cada grupo.",
-              "so_admin": false,
-              "filhos": [
-                {
-                  "nome": "Breakdown completo — todas as empresas",
-                  "resumo": "Tabela com cada parte da nota",
-                  "explicacao": "Tabela que abre ao clicar, com todas as partes da nota de cada empresa.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Detalhamento por Empresa",
-                  "resumo": "Cartões com nota, situação e penalidades",
-                  "explicacao": "Cartões das 20 primeiras com a nota final, a nota de base, a situação e as penalidades de risco aplicadas.",
-                  "so_admin": false
-                }
-              ]
-            },
-            {
-              "nome": "Simulação de Patrimônio — Aportes Mensais",
-              "resumo": "Quanto teria rendido investir todo mês",
-              "explicacao": "Simula quanto teria rendido aplicar um valor por mês nas melhores empresas do ranking, comparando com comprar todas em partes iguais, com o Ibovespa e com o Tesouro Selic. Você escolhe o aporte mensal, quantas empresas (5 ou 10), o período (1 a 10 anos) e a taxa Selic usada quando falta dado.",
-              "so_admin": false,
-              "filhos": [
-                {
-                  "nome": "Auto-calibração de parâmetros (γ, cap, soft)",
-                  "resumo": "Ajuste automático dos limites da simulação",
-                  "explicacao": "Ao clicar em \"Calibrar agora\", testa no passado e escolhe sozinho três ajustes técnicos da simulação, ligados a concentração e limite por ação.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Modo de rebalanceamento anual (abril)",
-                  "resumo": "Custos e se a carteira vende para reequilibrar",
-                  "explicacao": "Junto com a opção de descontar custos de compra (corretagem e diferença entre preço de compra e de venda), define se a cada abril a carteira só direciona os novos aportes ou também vende o que passou do peso, pagando custos e 15% de imposto.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Simular Backtest",
-                  "resumo": "Roda a simulação e desenha o gráfico",
-                  "explicacao": "Botão que roda a simulação e mostra o gráfico com a evolução do patrimônio de cada carteira. Backtest é testar uma estratégia com dados do passado.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Patrimônio Final",
-                  "resumo": "Valor final e retorno de cada carteira",
-                  "explicacao": "Cartões com o valor final de cada carteira simulada e o retorno sobre o total aportado, além das empresas escolhidas. Aparece depois de simular.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Poder preditivo do score (Rank-IC) — por ano",
-                  "resumo": "A nota acertou quem rendeu mais?",
-                  "explicacao": "Ao clicar em \"Calcular poder preditivo (Rank-IC)\", mede ano a ano se as empresas com nota maior de fato renderam mais depois. Valores acima de zero indicam que a nota acertou a ordem.",
-                  "so_admin": false
-                }
-              ]
-            },
-            {
-              "nome": "Comparações entre empresas",
-              "resumo": "Indicadores e balanços lado a lado",
-              "explicacao": "Ferramentas para colocar empresas do filtro lado a lado: você escolhe as empresas e o indicador e clica no botão de cada seção. Ajudam a ver quem se destaca dentro do mesmo segmento.",
-              "so_admin": false,
-              "filhos": [
-                {
-                  "nome": "Comparação de Múltiplos Históricos",
-                  "resumo": "Um indicador de várias empresas no tempo",
-                  "explicacao": "Escolha as empresas e um indicador (P/L, ROE, DY etc.) e clique em \"Comparar Múltiplos\" para ver as linhas ao longo dos anos.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Comparação de Demonstrações Financeiras",
-                  "resumo": "Receita ou lucro de várias empresas",
-                  "explicacao": "Escolha uma linha do resultado (como receita ou lucro) e as empresas, e clique em \"Comparar DRE\". DRE é o demonstrativo com receitas, custos e lucro.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Quadro Comparativo — Indicadores por Empresa",
-                  "resumo": "Tabela colorida com todos os indicadores",
-                  "explicacao": "Tabela com os indicadores de todas as empresas do filtro, em verde as 25% melhores e em vermelho as 25% piores em cada indicador.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Scatter Plot — Correlação entre Indicadores",
-                  "resumo": "Gráfico de pontos cruzando dois indicadores",
-                  "explicacao": "Escolha um indicador para o \"Eixo X\" e outro para o \"Eixo Y\" e clique em \"Gerar Scatter\" para ver padrões e empresas fora da curva.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "FCO / Lucro Líquido — Qualidade do Resultado",
-                  "resumo": "O lucro vira dinheiro de verdade?",
-                  "explicacao": "Ao clicar em \"Calcular FCO/Lucro\", compara o dinheiro gerado pela operação (FCO) com o lucro contábil. Lucro que não vira caixa é sinal de alerta.",
-                  "so_admin": false
-                }
-              ]
-            },
-            {
-              "nome": "Metodologia e referências científicas",
-              "resumo": "Os métodos usados e os estudos de base",
-              "explicacao": "Diz quantas análises a aba encadeia e, num quadro que abre ao clicar, descreve cada etapa com o estudo acadêmico que a fundamenta, mais a lista de referências.",
-              "so_admin": false
-            }
-          ]
-        },
-        {
           "nome": "Criação de Portfólio",
           "resumo": "Monta a carteira sugerida com toda a bolsa",
-          "explicacao": "É a etapa 2 de 3: aplica o método testado na Análise Avançada a todos os segmentos da bolsa de uma vez, escolhe as empresas líderes dos segmentos aprovados e monta uma carteira com várias áreas da economia. Você escolhe um perfil, clica em \"Rodar Criação de Portfólio\" e, no fim, pode salvar a carteira. Quase tudo só aparece depois de rodar.",
+          "explicacao": "Aplica o método de seleção a todos os segmentos da bolsa de uma vez, escolhe as empresas líderes dos segmentos aprovados e monta uma carteira com várias áreas da economia. Você escolhe um perfil, clica em \"Rodar Criação de Portfólio\" e, no fim, pode salvar a carteira. Quase tudo só aparece depois de rodar.",
           "so_admin": false,
           "filhos": [
             {
@@ -2159,7 +1893,7 @@
         {
           "nome": "Avaliação de Portfólio",
           "resumo": "Avalia a carteira salva como um todo",
-          "explicacao": "É a etapa 3 de 3: julga a carteira salva na Criação de Portfólio como conjunto (diversificação, concentração, riscos, dividendos e qualidade) e responde se ela é coerente e defensável. Só funciona se houver uma carteira salva; se ela estiver desatualizada, aparece apenas um aviso.",
+          "explicacao": "Julga a carteira salva na Criação de Portfólio como conjunto (diversificação, concentração, riscos, dividendos e qualidade) e responde se ela é coerente e defensável. Só funciona se houver uma carteira salva; se ela estiver desatualizada, aparece apenas um aviso.",
           "so_admin": false,
           "filhos": [
             {
@@ -3555,7 +3289,7 @@
         {
           "nome": "Documentação",
           "resumo": "Guia ilustrado de como o app funciona",
-          "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 15 sub-abas, na ordem do menu lateral.",
+          "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 14 sub-abas, na ordem do menu lateral.",
           "so_admin": false,
           "filhos": [
             {
@@ -3586,12 +3320,6 @@
               "nome": "Empresas e Carteira 20 (B3)",
               "resumo": "Consulta e Carteira 20",
               "explicacao": "Fluxograma das três subabas de Empresas B3 que não têm fluxo próprio: Empresas por Setor, Análise de Empresa e Carteira 20.",
-              "so_admin": false
-            },
-            {
-              "nome": "Análise avançada (B3)",
-              "resumo": "Como cada empresa é avaliada",
-              "explicacao": "Fluxograma da análise avançada de empresas da bolsa brasileira.",
               "so_admin": false
             },
             {

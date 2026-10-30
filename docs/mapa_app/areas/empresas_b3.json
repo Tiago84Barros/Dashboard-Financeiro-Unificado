@@ -1,23 +1,23 @@
 {
   "nome": "Empresas B3",
   "resumo": "Estudar ações brasileiras e montar carteiras",
-  "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há seis abas, em forma de botões: navegar pelas empresas, estudar uma empresa, testar critérios, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada.",
+  "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há cinco abas, em forma de botões: navegar pelas empresas, estudar uma empresa, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada.",
   "so_admin": false,
-  "fonte": "app.py:74; views/empresas_b3.py:6808 (abas: design/market_companies.py:75 e :83; despacho em views/empresas_b3.py:6854-6878)",
+  "fonte": "app.py:74; views/empresas_b3.py:3253 (abas: design/market_companies.py:73 e :88; despacho em views/empresas_b3.py:3253-3317)",
   "filhos": [
     {
       "nome": "Empresas por Setor",
       "resumo": "Vitrine de todas as empresas, separadas por setor",
       "explicacao": "Mostra as ações da bolsa em cartões, organizadas por setor da economia (fundos imobiliários, ETFs e BDRs ficam de fora). É a aba que abre primeiro e serve de porta de entrada: você passeia pelos setores e escolhe uma empresa para estudar.",
       "so_admin": false,
-      "fonte": "views/empresas_b3.py:758 -> design/market_companies.py:237",
+      "fonte": "views/empresas_b3.py:667 -> design/market_companies.py:244",
       "filhos": [
         {
           "nome": "Faixas de setor",
           "resumo": "Nome do setor e quantas empresas tem",
           "explicacao": "Cada setor (por exemplo, Petróleo ou Energia Elétrica) ganha uma faixa com o nome e a quantidade de empresas. Empresas sem setor definido aparecem juntas no fim, em \"Sem classificação setorial B3\".",
           "so_admin": false,
-          "fonte": "design/market_companies.py:259",
+          "fonte": "design/market_companies.py:266",
           "filhos": []
         },
         {
@@ -25,14 +25,14 @@
           "resumo": "Logo, código, nome e segmento da empresa",
           "explicacao": "Cada cartão mostra o logotipo, o código da ação (como PETR4), o nome e o segmento em que a empresa atua. Ficam quatro cartões por linha.",
           "so_admin": false,
-          "fonte": "design/market_companies.py:287",
+          "fonte": "design/market_companies.py:294",
           "filhos": [
             {
               "nome": "Analisar",
               "resumo": "Abre o raio-x desta empresa",
               "explicacao": "Botão embaixo de cada cartão. Leva direto para a aba Análise de Empresa, já com a empresa escolhida carregada.",
               "so_admin": false,
-              "fonte": "design/market_companies.py:301",
+              "fonte": "design/market_companies.py:308",
               "filhos": []
             }
           ]
@@ -42,7 +42,7 @@
           "resumo": "Carrega mais cartões no fim da lista",
           "explicacao": "Aparece no fim da página quando há mais de 160 empresas para mostrar e diz, entre parênteses, quantas ainda faltam. Cada clique carrega mais 160.",
           "so_admin": false,
-          "fonte": "design/market_companies.py:313",
+          "fonte": "design/market_companies.py:320",
           "filhos": []
         }
       ]
@@ -52,14 +52,14 @@
       "resumo": "Raio-x completo de uma empresa",
       "explicacao": "Você digita o código ou o nome de uma empresa e vê tudo sobre ela numa página só: preço, resultados ao longo dos anos, indicadores, uma nota de qualidade, um relatório e um chat para tirar dúvidas. Serve para estudar uma empresa antes de decidir investir. Enquanto nenhuma empresa é escolhida, só aparece a busca.",
       "so_admin": false,
-      "fonte": "views/empresas_b3.py:3681",
+      "fonte": "views/empresas_b3.py:2738",
       "filhos": [
         {
           "nome": "Ticker ou nome da empresa",
           "resumo": "Busca por código ou nome, com botão Analisar",
           "explicacao": "Campo de busca com o botão \"Analisar\" (ticker é o código da ação na bolsa, como PETR4). Se o texto combinar com várias empresas, aparecem botões para escolher uma; se o código não existir, o app avisa e sugere códigos parecidos.",
           "so_admin": false,
-          "fonte": "views/empresas_b3.py:3684",
+          "fonte": "views/empresas_b3.py:2741",
           "filhos": []
         },
         {
@@ -67,7 +67,7 @@
           "resumo": "Logo, nome, setor e cotação atual",
           "explicacao": "Mostra o logotipo, o código e o nome da empresa, o setor e o subsetor e, à direita, a cotação atual em reais. Quando não dá para obter a cotação, aparece \"Cotação indisponível\".",
           "so_admin": false,
-          "fonte": "views/empresas_b3.py:3758",
+          "fonte": "views/empresas_b3.py:2815",
           "filhos": []
         },
         {
@@ -75,14 +75,14 @@
           "resumo": "Gráfico do preço e retorno de cada ano",
           "explicacao": "Gráfico de linha com a evolução do preço da ação, com escolha de período (1A, 3A, 5A ou Máx). Só aparece se houver histórico de preços para a empresa.",
           "so_admin": false,
-          "fonte": "views/empresas_b3.py:3811",
+          "fonte": "views/empresas_b3.py:2868",
           "filhos": [
             {
               "nome": "Retorno Anual do Preço",
               "resumo": "Barras de alta ou queda por ano",
               "explicacao": "Barras verdes (ano de alta) e vermelhas (ano de queda) com quanto a ação variou em cada ano. O ano em andamento mostra o acumulado até a data.",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:3835",
+              "fonte": "views/empresas_b3.py:2892",
               "filhos": []
             }
           ]
@@ -92,14 +92,14 @@
           "resumo": "Crescimento, resultados, dividendos, caixa e dívidas",
           "explicacao": "Conjunto de seções com o histórico financeiro: quanto a empresa cresceu, vendeu e lucrou, quanto pagou de dividendos, quanto dinheiro gerou e quanto deve. Só aparece quando o app tem os balanços da empresa; algumas seções só surgem se o dado específico existir.",
           "so_admin": false,
-          "fonte": "views/empresas_b3.py:3866-4097",
+          "fonte": "views/empresas_b3.py:2923-3154",
           "filhos": [
             {
               "nome": "Crescimento Médio Anual (CAGR)",
               "resumo": "Quanto receita, lucro e dividendos crescem por ano",
               "explicacao": "Quatro cartões com o crescimento médio por ano (CAGR) da receita, do EBIT (lucro da operação), do lucro líquido e dos dividendos.",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:3868",
+              "fonte": "views/empresas_b3.py:2925",
               "filhos": []
             },
             {
@@ -107,7 +107,7 @@
               "resumo": "Resultados do último ano fechado",
               "explicacao": "Cartões com receita, EBIT, lucro líquido e dívida líquida do último ano completo publicado.",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:3894",
+              "fonte": "views/empresas_b3.py:2951",
               "filhos": []
             },
             {
@@ -115,7 +115,7 @@
               "resumo": "Gráfico de receita, lucro e outras linhas",
               "explicacao": "Gráfico com a evolução das principais linhas do resultado ao longo dos anos. Na caixa \"Indicadores\" você escolhe quais linhas ver.",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:3912",
+              "fonte": "views/empresas_b3.py:2969",
               "filhos": []
             },
             {
@@ -123,7 +123,7 @@
               "resumo": "Quanto foi pago por ação em cada ano",
               "explicacao": "Gráfico com os dividendos pagos por ação ano a ano. Aparece quando a empresa tem esse histórico.",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:3954",
+              "fonte": "views/empresas_b3.py:3011",
               "filhos": []
             },
             {
@@ -131,7 +131,7 @@
               "resumo": "Indicadores em % ao longo dos anos",
               "explicacao": "Gráfico com a evolução de indicadores em porcentagem, como ROE (lucro sobre o patrimônio), margens e dividend yield. Em \"Indicadores (%)\" você escolhe quais mostrar.",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:3965",
+              "fonte": "views/empresas_b3.py:3022",
               "filhos": []
             },
             {
@@ -139,7 +139,7 @@
               "resumo": "Dinheiro gerado, investido e financiado",
               "explicacao": "Cartões e gráfico do dinheiro que a empresa gerou com a operação, gastou em investimentos e movimentou com empréstimos e pagamentos a acionistas.",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:4000",
+              "fonte": "views/empresas_b3.py:3057",
               "filhos": []
             },
             {
@@ -147,7 +147,7 @@
               "resumo": "Caixa, dívidas e patrimônio da empresa",
               "explicacao": "Cartões e gráfico com caixa, dívidas de curto e de longo prazo e patrimônio, para ver se a empresa está endividada demais.",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:4047",
+              "fonte": "views/empresas_b3.py:3104",
               "filhos": []
             }
           ]
@@ -157,14 +157,14 @@
           "resumo": "Cartões de rentabilidade, preço e endividamento",
           "explicacao": "Três blocos de cartões com os indicadores mais recentes da empresa. Se faltar dado, o bloco diz que a informação não está disponível.",
           "so_admin": false,
-          "fonte": "views/empresas_b3.py:4102-4127",
+          "fonte": "views/empresas_b3.py:3159-3184",
           "filhos": [
             {
               "nome": "Rentabilidade",
               "resumo": "Quanto a empresa ganha com o que tem",
               "explicacao": "Indicadores como ROE, ROIC (retorno sobre o dinheiro investido no negócio) e margens de lucro.",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:4102",
+              "fonte": "views/empresas_b3.py:3159",
               "filhos": []
             },
             {
@@ -172,7 +172,7 @@
               "resumo": "Se a ação está cara ou barata",
               "explicacao": "Indicadores que comparam o preço da ação com os resultados, como P/L (preço dividido pelo lucro), P/VP (preço dividido pelo patrimônio) e dividend yield (dividendos sobre o preço).",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:4111",
+              "fonte": "views/empresas_b3.py:3168",
               "filhos": []
             },
             {
@@ -180,7 +180,7 @@
               "resumo": "Endividamento e folga de caixa",
               "explicacao": "Indicadores de dívida em relação ao patrimônio e de liquidez corrente (se o dinheiro de curto prazo cobre as contas de curto prazo).",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:4120",
+              "fonte": "views/empresas_b3.py:3177",
               "filhos": []
             }
           ]
@@ -190,14 +190,14 @@
           "resumo": "Nota de qualidade comparada às concorrentes",
           "explicacao": "Dá à empresa uma nota de 0 a 100, comparando-a com empresas parecidas, e diz em que faixa ela fica. Ajuda a saber rapidamente se a empresa está entre as melhores ou as piores do seu grupo.",
           "so_admin": false,
-          "fonte": "views/empresas_b3.py:4129 -> :3595",
+          "fonte": "views/empresas_b3.py:3186 -> :2652",
           "filhos": [
             {
               "nome": "Pontuação fundamentalista",
               "resumo": "Nota, cobertura, ROIC e retorno do caixa",
               "explicacao": "Cartões com a nota e a classificação, a \"Cobertura\" (quanto dos dados necessários existia) e dois indicadores de qualidade: ROIC e \"Retorno do fluxo de caixa operacional\".",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:3605",
+              "fonte": "views/empresas_b3.py:2662",
               "filhos": []
             },
             {
@@ -205,7 +205,7 @@
               "resumo": "Pontos fortes e fracos num só desenho",
               "explicacao": "Gráfico em forma de teia que mostra a nota da empresa em cada critério avaliado. Aparece quando há critérios com nota.",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:3625",
+              "fonte": "views/empresas_b3.py:2682",
               "filhos": []
             },
             {
@@ -213,7 +213,7 @@
               "resumo": "Tese, alertas e critérios em detalhe",
               "explicacao": "Quadro que abre ao clicar. Traz a tese (pontos fortes), as condições que derrubariam a tese, alertas, a tabela de critérios, a sensibilidade aos juros e eventos recentes informados à CVM (órgão que fiscaliza a bolsa).",
               "so_admin": false,
-              "fonte": "views/empresas_b3.py:3638",
+              "fonte": "views/empresas_b3.py:2695",
               "filhos": []
             }
           ]
@@ -223,7 +223,7 @@
           "resumo": "Parecer pronto com tese, riscos e contexto",
           "explicacao": "Relatório automático, escrito por regras fixas a partir dos dados da empresa: um resumo, as leituras principais, \"Tese — o que sustenta\" ao lado de \"Riscos — o que pode dar errado\" e um bloco de contexto. Ajuda a formar uma opinião sem precisar ler todos os números.",
           "so_admin": false,
-          "fonte": "views/empresas_b3.py:4132 -> design/relatorio_analista.py:234",
+          "fonte": "views/empresas_b3.py:3189 -> design/relatorio_analista.py:234",
           "filhos": []
         },
         {
@@ -231,350 +231,7 @@
           "resumo": "Chat com inteligência artificial sobre a empresa",
           "explicacao": "Chat em que você pergunta sobre resultados, dívidas, concorrentes ou riscos e recebe respostas baseadas só no que o app sabe da empresa, que avisam quando falta informação. Há perguntas prontas em botões e o botão \"Limpar chat\" para recomeçar. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês.",
           "so_admin": false,
-          "fonte": "views/empresas_b3.py:4169 -> design/chat_ativo.py:70; core/pregoes_recentes.py",
-          "filhos": []
-        }
-      ]
-    },
-    {
-      "nome": "Análise Avançada",
-      "resumo": "Laboratório para testar o ranking num segmento",
-      "explicacao": "É a etapa 1 de 3: você escolhe um setor ou segmento e confere de perto como o ranking de empresas se comporta ali, com filtros, pesos e simulações com dados do passado. Os cálculos são pesados e só rodam depois do clique em \"Executar análise\"; mudar qualquer filtro pede uma nova execução.",
-      "so_admin": false,
-      "fonte": "views/empresas_b3.py:4419",
-      "filhos": [
-        {
-          "nome": "Filtros do Universo",
-          "resumo": "Escolhe setor, segmento, perfil e liquidez",
-          "explicacao": "Caixas de escolha para Setor, Subsetor, Segmento, Perfil (empresas mais novas ou estabelecidas) e \"Liquidez mínima (negociação)\", que tira ações pouco negociadas. Definem quais empresas entram na análise.",
-          "so_admin": false,
-          "fonte": "views/empresas_b3.py:4453",
-          "filhos": []
-        },
-        {
-          "nome": "Pesos do Scoring",
-          "resumo": "Decide quanto cada indicador pesa na nota",
-          "explicacao": "Quadro que abre ao clicar, para definir como a nota das empresas é calculada. Dá para usar pesos prontos por setor (recomendado) ou ajustar tudo à mão.",
-          "so_admin": false,
-          "fonte": "views/empresas_b3.py:4491",
-          "filhos": [
-            {
-              "nome": "Usar pesos calibrados por setor (recomendado)",
-              "resumo": "Pesos prontos para o setor escolhido",
-              "explicacao": "Usa pesos já ajustados para o setor. Fica desligado quando o setor escolhido é \"Todos\".",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:4492",
-              "filhos": []
-            },
-            {
-              "nome": "Calibração automática ótima por segmento (recomendado)",
-              "resumo": "Ajusta a nota ao tipo de negócio",
-              "explicacao": "Adapta pesos e regras ao tipo de negócio do segmento; por exemplo, bancos são avaliados de forma diferente de lojas.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:4504",
-              "filhos": []
-            },
-            {
-              "nome": "Calibrar pesos com Fama-MacBeth MVP",
-              "resumo": "Ajuste estatístico pelos retornos passados",
-              "explicacao": "Opção avançada que ajusta os pesos olhando quais indicadores explicaram os retornos no passado. A régua \"Mistura Fama-MacBeth\" define quanto desse ajuste entra.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:4514",
-              "filhos": []
-            },
-            {
-              "nome": "Pesos manuais (ROE, ROIC, Margem Líquida, DY, Endividamento, Liquidez)",
-              "resumo": "Seis réguas para pesar cada indicador",
-              "explicacao": "Réguas para dar peso a cada indicador à mão. Só ficam ativas quando os pesos por setor estão desligados.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:4528",
-              "filhos": []
-            },
-            {
-              "nome": "Peso de barganha no score (%)",
-              "resumo": "Valoriza ações que estão baratas",
-              "explicacao": "Mistura na nota o quanto a ação está barata (P/L, P/VP, EV/EBIT). Em 0% a nota olha só a qualidade da empresa.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:4540",
-              "filhos": []
-            }
-          ]
-        },
-        {
-          "nome": "Executar análise",
-          "resumo": "Botão que roda todos os cálculos",
-          "explicacao": "Botão principal da aba: só depois dele aparecem as checagens, o ranking e as simulações abaixo. Se algum filtro mudar, um aviso pede para executar de novo.",
-          "so_admin": false,
-          "fonte": "views/empresas_b3.py:4575",
-          "filhos": []
-        },
-        {
-          "nome": "Checagens antes do ranking",
-          "resumo": "Qualidade dos dados e alertas sobre empresas",
-          "explicacao": "Série de quadros, a maioria fechados até você clicar, que conferem os dados e apontam cuidados antes de confiar no ranking. Aparecem depois de executar a análise; alguns só surgem se houver casos a mostrar.",
-          "so_admin": false,
-          "fonte": "views/empresas_b3.py:4746-5056",
-          "filhos": [
-            {
-              "nome": "Qualidade & saneamento dos dados (antes do ranking)",
-              "resumo": "Dados estranhos, incompletos ou repetidos",
-              "explicacao": "Conta empresas com dados fora do normal, incompletos, repetidos ou sem setor, e lista os indicadores descartados por estarem fora de uma faixa razoável.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:4748 -> views/data_quality_panel.py:21",
-              "filhos": []
-            },
-            {
-              "nome": "Calibração ótima automática",
-              "resumo": "Como a nota foi ajustada ao segmento",
-              "explicacao": "Aparece aberto quando a calibração automática está ligada. Mostra o tipo de negócio identificado, os pesos aplicados e os critérios recomendados para o segmento.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:4800 -> :4357",
-              "filhos": []
-            },
-            {
-              "nome": "Camada macro internacional no ranking avançado",
-              "resumo": "Quanto o cenário externo influencia o ranking",
-              "explicacao": "Caixa para escolher se juros, câmbio e outros fatores do exterior entram no ranking: só o cenário brasileiro, moderado (recomendado) ou ampliado.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:4868",
-              "filhos": []
-            },
-            {
-              "nome": "Piso de qualidade sobre as primeiras do ranking",
-              "resumo": "Alerta sobre as mais bem colocadas",
-              "explicacao": "Confere as primeiras colocadas e conta quantas estão em situação crítica ou de atenção, como dívida alta ou prejuízo.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:4191",
-              "filhos": []
-            },
-            {
-              "nome": "Classe mais negociada da mesma empresa",
-              "resumo": "Outra classe da ação é mais negociada",
-              "explicacao": "Avisa quando outra classe de ação da mesma empresa (por exemplo, ON em vez de PN) é bem mais negociada. Só aparece se houver casos.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:4251",
-              "filhos": []
-            },
-            {
-              "nome": "Dependência de governo e comportamento em recessão",
-              "resumo": "Risco de governo e desempenho em crises",
-              "explicacao": "Mostra empresas que dependem de governo ou de órgão regulador e como suas margens se comportaram nas recessões de 2015-16 e 2020. Só informa, não muda o ranking.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:4335",
-              "filhos": []
-            },
-            {
-              "nome": "Calibracao Fama-MacBeth MVP dos pesos",
-              "resumo": "Resultado do ajuste estatístico dos pesos",
-              "explicacao": "Só aparece se essa opção foi ligada em Pesos do Scoring. Mostra quantos anos e empresas foram usados e o peso final de cada indicador.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:4973",
-              "filhos": []
-            },
-            {
-              "nome": "Validacao cross-source (Banco x Fundamentus)",
-              "resumo": "Confere os números com outra fonte",
-              "explicacao": "Compara os números do app com os do site Fundamentus. A comparação automática hoje está desligada; marcando \"Mostrar historico salvo\" dá para ver comparações antigas.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:5011",
-              "filhos": []
-            }
-          ]
-        },
-        {
-          "nome": "Ferramentas opcionais",
-          "resumo": "Análises extras que você liga quando quiser",
-          "explicacao": "Seis quadros que abrem ao clicar, cada um com uma análise mais aprofundada das empresas do ranking. Algumas só calculam quando você marca a opção dentro delas, porque são lentas.",
-          "so_admin": false,
-          "fonte": "views/empresas_b3.py:5058-5790",
-          "filhos": [
-            {
-              "nome": "Análise de incerteza (bootstrap) — opcional, lento",
-              "resumo": "A nota de cada empresa é firme?",
-              "explicacao": "Refaz a nota muitas vezes trocando as empresas de comparação, para mostrar se a nota é estável ou muda muito. Só calcula ao marcar \"Calcular IC dos scores\".",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:5058",
-              "filhos": []
-            },
-            {
-              "nome": "Otimização Markowitz pós-seleção — opcional",
-              "resumo": "Pesos que reduzem o risco de concentração",
-              "explicacao": "Sugere quanto colocar em cada uma das melhores empresas levando em conta quais sobem e descem juntas, para diminuir o risco. Só calcula ao marcar \"Calcular\".",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:5123",
-              "filhos": []
-            },
-            {
-              "nome": "Preço justo e sustentabilidade de dividendos",
-              "resumo": "Cara ou barata, e o dividendo se sustenta?",
-              "explicacao": "Estima se a ação está cara ou barata em termos absolutos, pelos métodos de Graham e Bazin (autores clássicos de investimento em valor), e se o dividendo cabe no caixa que a empresa gera.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:5368",
-              "filhos": []
-            },
-            {
-              "nome": "Resiliência histórica e saúde financeira — sensibilidade Brasil",
-              "resumo": "Bônus e penalidades por saúde financeira",
-              "explicacao": "Dá pontos extras a empresas boas que estão temporariamente em baixa e tira pontos de empresas com dívida crítica e prejuízo.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:5436",
-              "filhos": []
-            },
-            {
-              "nome": "Atribuição Shapley do score — explainability",
-              "resumo": "O que somou ou tirou pontos da nota",
-              "explicacao": "Para uma empresa escolhida, mostra em pontos quanto cada parte do cálculo aumentou ou diminuiu a nota final.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:5516",
-              "filhos": []
-            },
-            {
-              "nome": "Black-Litterman — incorporar suas views",
-              "resumo": "Coloca a sua opinião nos pesos sugeridos",
-              "explicacao": "Permite registrar uma opinião sua, como \"esta ação vai subir X%\" ou \"vai se sair melhor que aquela\", com um grau de confiança, e ver como isso muda os pesos sugeridos. Só calcula ao marcar \"Aplicar BL\".",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:5597",
-              "filhos": []
-            }
-          ]
-        },
-        {
-          "nome": "Universo Filtrado — N empresa(s) ranqueada(s)",
-          "resumo": "Ranking das até 20 melhores do filtro",
-          "explicacao": "Cartões com até 20 empresas em ordem de nota, cada um com a posição, o logotipo, o nome, a nota colorida (verde, amarela ou vermelha) e quantos anos de balanço existem. É o resultado principal da aba.",
-          "so_admin": false,
-          "fonte": "views/empresas_b3.py:5793",
-          "filhos": []
-        },
-        {
-          "nome": "Score de Entrada — Composição Avançada",
-          "resumo": "Quem está aprovada, em observação ou excluída",
-          "explicacao": "Junta a nota com análises de qualidade, risco, consistência e caixa para dizer se cada empresa está \"Aprovada\", em \"Observação\" ou \"Excluída\" para compra, com a contagem de cada grupo.",
-          "so_admin": false,
-          "fonte": "views/empresas_b3.py:5835",
-          "filhos": [
-            {
-              "nome": "Breakdown completo — todas as empresas",
-              "resumo": "Tabela com cada parte da nota",
-              "explicacao": "Tabela que abre ao clicar, com todas as partes da nota de cada empresa.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:5869",
-              "filhos": []
-            },
-            {
-              "nome": "Detalhamento por Empresa",
-              "resumo": "Cartões com nota, situação e penalidades",
-              "explicacao": "Cartões das 20 primeiras com a nota final, a nota de base, a situação e as penalidades de risco aplicadas.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:5915",
-              "filhos": []
-            }
-          ]
-        },
-        {
-          "nome": "Simulação de Patrimônio — Aportes Mensais",
-          "resumo": "Quanto teria rendido investir todo mês",
-          "explicacao": "Simula quanto teria rendido aplicar um valor por mês nas melhores empresas do ranking, comparando com comprar todas em partes iguais, com o Ibovespa e com o Tesouro Selic. Você escolhe o aporte mensal, quantas empresas (5 ou 10), o período (1 a 10 anos) e a taxa Selic usada quando falta dado.",
-          "so_admin": false,
-          "fonte": "views/empresas_b3.py:5994",
-          "filhos": [
-            {
-              "nome": "Auto-calibração de parâmetros (γ, cap, soft)",
-              "resumo": "Ajuste automático dos limites da simulação",
-              "explicacao": "Ao clicar em \"Calibrar agora\", testa no passado e escolhe sozinho três ajustes técnicos da simulação, ligados a concentração e limite por ação.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:6020",
-              "filhos": []
-            },
-            {
-              "nome": "Modo de rebalanceamento anual (abril)",
-              "resumo": "Custos e se a carteira vende para reequilibrar",
-              "explicacao": "Junto com a opção de descontar custos de compra (corretagem e diferença entre preço de compra e de venda), define se a cada abril a carteira só direciona os novos aportes ou também vende o que passou do peso, pagando custos e 15% de imposto.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:6065-6078",
-              "filhos": []
-            },
-            {
-              "nome": "Simular Backtest",
-              "resumo": "Roda a simulação e desenha o gráfico",
-              "explicacao": "Botão que roda a simulação e mostra o gráfico com a evolução do patrimônio de cada carteira. Backtest é testar uma estratégia com dados do passado.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:6124",
-              "filhos": []
-            },
-            {
-              "nome": "Patrimônio Final",
-              "resumo": "Valor final e retorno de cada carteira",
-              "explicacao": "Cartões com o valor final de cada carteira simulada e o retorno sobre o total aportado, além das empresas escolhidas. Aparece depois de simular.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:6349",
-              "filhos": []
-            },
-            {
-              "nome": "Poder preditivo do score (Rank-IC) — por ano",
-              "resumo": "A nota acertou quem rendeu mais?",
-              "explicacao": "Ao clicar em \"Calcular poder preditivo (Rank-IC)\", mede ano a ano se as empresas com nota maior de fato renderam mais depois. Valores acima de zero indicam que a nota acertou a ordem.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:6380",
-              "filhos": []
-            }
-          ]
-        },
-        {
-          "nome": "Comparações entre empresas",
-          "resumo": "Indicadores e balanços lado a lado",
-          "explicacao": "Ferramentas para colocar empresas do filtro lado a lado: você escolhe as empresas e o indicador e clica no botão de cada seção. Ajudam a ver quem se destaca dentro do mesmo segmento.",
-          "so_admin": false,
-          "fonte": "views/empresas_b3.py:6478-6750",
-          "filhos": [
-            {
-              "nome": "Comparação de Múltiplos Históricos",
-              "resumo": "Um indicador de várias empresas no tempo",
-              "explicacao": "Escolha as empresas e um indicador (P/L, ROE, DY etc.) e clique em \"Comparar Múltiplos\" para ver as linhas ao longo dos anos.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:6478",
-              "filhos": []
-            },
-            {
-              "nome": "Comparação de Demonstrações Financeiras",
-              "resumo": "Receita ou lucro de várias empresas",
-              "explicacao": "Escolha uma linha do resultado (como receita ou lucro) e as empresas, e clique em \"Comparar DRE\". DRE é o demonstrativo com receitas, custos e lucro.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:6542",
-              "filhos": []
-            },
-            {
-              "nome": "Quadro Comparativo — Indicadores por Empresa",
-              "resumo": "Tabela colorida com todos os indicadores",
-              "explicacao": "Tabela com os indicadores de todas as empresas do filtro, em verde as 25% melhores e em vermelho as 25% piores em cada indicador.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:6610",
-              "filhos": []
-            },
-            {
-              "nome": "Scatter Plot — Correlação entre Indicadores",
-              "resumo": "Gráfico de pontos cruzando dois indicadores",
-              "explicacao": "Escolha um indicador para o \"Eixo X\" e outro para o \"Eixo Y\" e clique em \"Gerar Scatter\" para ver padrões e empresas fora da curva.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:6656",
-              "filhos": []
-            },
-            {
-              "nome": "FCO / Lucro Líquido — Qualidade do Resultado",
-              "resumo": "O lucro vira dinheiro de verdade?",
-              "explicacao": "Ao clicar em \"Calcular FCO/Lucro\", compara o dinheiro gerado pela operação (FCO) com o lucro contábil. Lucro que não vira caixa é sinal de alerta.",
-              "so_admin": false,
-              "fonte": "views/empresas_b3.py:6708",
-              "filhos": []
-            }
-          ]
-        },
-        {
-          "nome": "Metodologia e referências científicas",
-          "resumo": "Os métodos usados e os estudos de base",
-          "explicacao": "Diz quantas análises a aba encadeia e, num quadro que abre ao clicar, descreve cada etapa com o estudo acadêmico que a fundamenta, mais a lista de referências.",
-          "so_admin": false,
-          "fonte": "views/empresas_b3.py:6758",
+          "fonte": "views/empresas_b3.py:3226 -> design/chat_ativo.py:70; core/pregoes_recentes.py",
           "filhos": []
         }
       ]
@@ -582,16 +239,16 @@
     {
       "nome": "Criação de Portfólio",
       "resumo": "Monta a carteira sugerida com toda a bolsa",
-      "explicacao": "É a etapa 2 de 3: aplica o método testado na Análise Avançada a todos os segmentos da bolsa de uma vez, escolhe as empresas líderes dos segmentos aprovados e monta uma carteira com várias áreas da economia. Você escolhe um perfil, clica em \"Rodar Criação de Portfólio\" e, no fim, pode salvar a carteira. Quase tudo só aparece depois de rodar.",
+      "explicacao": "Aplica o método de seleção a todos os segmentos da bolsa de uma vez, escolhe as empresas líderes dos segmentos aprovados e monta uma carteira com várias áreas da economia. Você escolhe um perfil, clica em \"Rodar Criação de Portfólio\" e, no fim, pode salvar a carteira. Quase tudo só aparece depois de rodar.",
       "so_admin": false,
-      "fonte": "views/empresas_b3.py:6863 -> views/portfolio_b3.py:2814",
+      "fonte": "views/empresas_b3.py:3262 -> views/portfolio_b3.py:2814",
       "filhos": [
         {
           "nome": "Montar a carteira",
           "resumo": "Perfil, ajustes finos e botão de rodar",
           "explicacao": "Parte de cima da aba, sempre visível: escolha do perfil, ajustes opcionais e o botão que inicia o cálculo. Na primeira visita o perfil recomendado já vem selecionado.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:2836-3189",
+          "fonte": "views/portfolio_b3.py:2835-3188",
           "filhos": [
             {
               "nome": "Perfil de configuração",
@@ -606,14 +263,14 @@
               "resumo": "Cerca de 25 ajustes finos, opcionais",
               "explicacao": "Quadro fechado com os ajustes detalhados, já preenchidos pelo perfil. Mexer é opcional, e o app avisa quando uma mudança tem custo conhecido.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:2846",
+              "fonte": "views/portfolio_b3.py:2845",
               "filhos": [
                 {
                   "nome": "Régua de aprovação dos segmentos",
                   "resumo": "Quanto é preciso bater a Selic e o mercado",
                   "explicacao": "Controles como \"Margem mín. vs Selic\", \"Margem mín. vs Pesos Iguais\", \"Critério de aprovação\" e \"Janela de validação\": definem quanto a estratégia precisa ter superado a Selic e a compra de todas em partes iguais para um segmento ser aprovado.",
                   "so_admin": false,
-                  "fonte": "views/portfolio_b3.py:2852-3180",
+                  "fonte": "views/portfolio_b3.py:2851-3179",
                   "filhos": []
                 },
                 {
@@ -621,7 +278,7 @@
                   "resumo": "Tamanho, liquidez e qualidade mínimos",
                   "explicacao": "Tamanho mínimo (valor de mercado), liquidez mínima, histórico mínimo de balanços, exigir retorno acima da Selic, piso absoluto de qualidade e incluir no teste as empresas que já saíram da bolsa.",
                   "so_admin": false,
-                  "fonte": "views/portfolio_b3.py:2852-3180",
+                  "fonte": "views/portfolio_b3.py:2851-3179",
                   "filhos": []
                 },
                 {
@@ -629,7 +286,7 @@
                   "resumo": "Tetos por setor, por ação e correlação",
                   "explicacao": "Teto por setor, teto para setores cíclicos (os que sobem e caem com a economia), limite por ação adaptável e diversificação por correlação, que evita ações que andam juntas.",
                   "so_admin": false,
-                  "fonte": "views/portfolio_b3.py:2852-3180",
+                  "fonte": "views/portfolio_b3.py:2851-3179",
                   "filhos": []
                 },
                 {
@@ -637,7 +294,7 @@
                   "resumo": "Aporte, ano inicial e parecer por IA",
                   "explicacao": "Aporte mensal, ano de início do teste, \"Mostrar segmentos aprovados\", peso de barganha, uso do histórico macro e \"Parecer qualitativo (LLM)\", em que uma inteligência artificial de texto pode vetar e substituir empresas.",
                   "so_admin": false,
-                  "fonte": "views/portfolio_b3.py:2852-3180",
+                  "fonte": "views/portfolio_b3.py:2851-3179",
                   "filhos": []
                 }
               ]
@@ -647,7 +304,7 @@
               "resumo": "Botão que calcula a carteira",
               "explicacao": "Botão principal da aba. Antes do primeiro clique nada aparece abaixo dele; depois, o resultado fica guardado enquanto você navega pelo app.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:3188 (resultado só após :3453)",
+              "fonte": "views/portfolio_b3.py:3187 (resultado só após :3452)",
               "filhos": []
             }
           ]
@@ -657,7 +314,7 @@
           "resumo": "Detalhe de cada segmento que passou no teste",
           "explicacao": "Um bloco por segmento aprovado com os resultados do teste no passado. Só aparece se \"Mostrar segmentos aprovados\" estiver marcado nos parâmetros avançados. Os segmentos reprovados ou inconclusivos não são listados: a tabela que os mostrava saiu da tela em 30/10/2026.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:3929-3936",
+          "fonte": "views/portfolio_b3.py:3931-3938",
           "filhos": []
         },
         {
@@ -665,14 +322,14 @@
           "resumo": "A nota acerta olhando a bolsa inteira?",
           "explicacao": "Uma leitura que olha a bolsa por outro ângulo, além do teste segmento a segmento.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:3939",
+          "fonte": "views/portfolio_b3.py:3941",
           "filhos": [
             {
               "nome": "Evidência no universo — o teste com amplitude",
               "resumo": "A nota acerta olhando a bolsa inteira?",
               "explicacao": "Junta todas as empresas para medir se a nota acertou quem rendeu mais no ano seguinte, com cartões de resultado e um selo a favor ou contra.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:3939 -> :2544",
+              "fonte": "views/portfolio_b3.py:3941 -> :2544",
               "filhos": []
             }
           ]
@@ -682,14 +339,14 @@
           "resumo": "A carteira sugerida para comprar este ano",
           "explicacao": "Lista as empresas escolhidas, só de segmentos aprovados, para comprar no ano corrente. É o resultado principal da aba.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:3944",
+          "fonte": "views/portfolio_b3.py:3946",
           "filhos": [
             {
               "nome": "Cartões das líderes",
               "resumo": "Cada empresa escolhida, motivo e peso",
               "explicacao": "Logotipo, código, nome, motivos da escolha e peso sugerido de cada empresa na carteira. Quem entrou no lugar de outra pelo piso de qualidade ou pela Inteligência dos Ativos vem marcado nos motivos.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4548",
+              "fonte": "views/portfolio_b3.py:4550",
               "filhos": []
             },
             {
@@ -697,7 +354,7 @@
               "resumo": "Proposta parcial quando a carteira não fecha",
               "explicacao": "Aparece no lugar do resto da página quando não há empresas suficientes para respeitar os limites de concentração. Mostra uma proposta parcial, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\".",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4402/4421/4432 -> design/portfolio_review.py:13",
+              "fonte": "views/portfolio_b3.py:4404/4421/4432 -> design/portfolio_review.py:13",
               "filhos": []
             },
             {
@@ -705,7 +362,7 @@
               "resumo": "Como os pesos mudariam em outros cenários",
               "explicacao": "Quadro que abre ao clicar e, com o botão \"Calcular trajetória desde 2010\", reaplica a carteira ao cenário econômico de cada ano para ver o quanto os pesos mudariam. Só aparece quando os dados de cenário econômico estão disponíveis.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4507 -> design/macro_portfolio.py:16",
+              "fonte": "views/portfolio_b3.py:4509 -> design/macro_portfolio.py:16",
               "filhos": []
             }
           ]
@@ -715,14 +372,14 @@
           "resumo": "Saúde, vetos da IA e trocas das escolhidas",
           "explicacao": "Seções que mostram a saúde das escolhidas e as trocas feitas pelo parecer de inteligência artificial, por negociabilidade e por correlação. Cada uma só aparece se o filtro correspondente estiver ligado ou se houver algo a mostrar. As trocas do piso de qualidade e da Inteligência dos Ativos aparecem nos cartões das líderes.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:4593-4760",
+          "fonte": "views/portfolio_b3.py:4595-4762",
           "filhos": [
             {
               "nome": "Saúde das empresas selecionadas",
               "resumo": "Solvência e dividendos de cada escolhida",
               "explicacao": "Confere cada empresa escolhida quanto a dívidas, dividendo sustentável e retorno acima da Selic, com cartões de críticos e atenção. Inclui o quadro \"Como se comportaram nas recessões (2015-16 e 2020)\".",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4593 -> :2462 e :2390",
+              "fonte": "views/portfolio_b3.py:4595 -> :2462 e :2390",
               "filhos": []
             },
             {
@@ -730,7 +387,7 @@
               "resumo": "Vetos feitos pela inteligência artificial",
               "explicacao": "Só aparece se o \"Parecer qualitativo (LLM)\" estiver ligado: mostra as empresas que a inteligência artificial vetou e quem as substituiu.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4606",
+              "fonte": "views/portfolio_b3.py:4608",
               "filhos": []
             },
             {
@@ -738,7 +395,7 @@
               "resumo": "Troca por ação mais negociada da empresa",
               "explicacao": "Mostra quando a carteira trocou uma ação por outra classe da mesma empresa que é mais negociada. Só aparece se houver trocas.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4657",
+              "fonte": "views/portfolio_b3.py:4659",
               "filhos": []
             },
             {
@@ -746,7 +403,7 @@
               "resumo": "Ajustes para evitar ações que andam juntas",
               "explicacao": "Só aparece se a diversificação por correlação estiver ligada: mostra pesos reduzidos e empresas trocadas por andarem demais junto com outras.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4687",
+              "fonte": "views/portfolio_b3.py:4689",
               "filhos": []
             }
           ]
@@ -756,14 +413,14 @@
           "resumo": "Guarda a carteira como a oficial",
           "explicacao": "Torna esta carteira a sua carteira-modelo, que aparece resumida no Dashboard Geral e é a usada na aba Avaliação de Portfólio. Ao lado ficam cartões com número de empresas, segmentos aprovados e nota média.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:4769",
+          "fonte": "views/portfolio_b3.py:4771",
           "filhos": [
             {
               "nome": "Salvar portfólio padrão",
               "resumo": "Botão que grava a carteira",
               "explicacao": "Grava a carteira como modelo ativo. Fica desligado quando a carteira não respeita os limites de concentração.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4834",
+              "fonte": "views/portfolio_b3.py:4836",
               "filhos": []
             },
             {
@@ -771,7 +428,7 @@
               "resumo": "Volta para uma carteira salva antes",
               "explicacao": "Aparece quando existem versões antigas: escolha uma, marque a caixa de confirmação e clique em \"Restaurar versão selecionada\".",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4861 -> :2762",
+              "fonte": "views/portfolio_b3.py:4863 -> :2762",
               "filhos": []
             }
           ]
@@ -781,7 +438,7 @@
           "resumo": "Pizza com o peso de cada setor",
           "explicacao": "Gráfico de pizza que mostra quanto da carteira sugerida está em cada setor da economia.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:4867",
+          "fonte": "views/portfolio_b3.py:4869",
           "filhos": []
         },
         {
@@ -789,7 +446,7 @@
           "resumo": "Cinco painéis extras sobre a seleção",
           "explicacao": "Cinco quadros que abrem ao clicar: \"Régua de Convicção\", \"Dominância\", \"Diversificação e Concentração\", \"Benchmark do Segmento\" e \"Qualidade das Empresas\". Trazem leituras adicionais sobre a força e o equilíbrio das escolhas.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:4894 -> :1700-1804",
+          "fonte": "views/portfolio_b3.py:4896 -> :1700-1804",
           "filhos": []
         },
         {
@@ -797,14 +454,14 @@
           "resumo": "Como carteiras assim teriam rendido",
           "explicacao": "Blocos que mostram como as carteiras montadas por este método teriam se saído em anos anteriores, comparadas com a Selic e com a compra de todas as empresas em partes iguais.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:4907-5001",
+          "fonte": "views/portfolio_b3.py:4909-5003",
           "filhos": [
             {
               "nome": "Desempenho da safra (ano)",
               "resumo": "Rendimento da carteira do ano vigente",
               "explicacao": "Gráfico de quanto teriam rendido aportes de R$ 1.000 por mês desde abril, quando a carteira do ano (a \"safra\") entrou em vigor.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4907",
+              "fonte": "views/portfolio_b3.py:4909",
               "filhos": []
             },
             {
@@ -812,7 +469,7 @@
               "resumo": "Resultado de cada carteira anual passada",
               "explicacao": "Cartões, tabela e gráfico de barras com o resultado da carteira de cada ano contra a Selic e contra as ações em partes iguais, já descontando custos e imposto.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4996 -> views/portfolio_b3_safras.py:264",
+              "fonte": "views/portfolio_b3.py:4998 -> views/portfolio_b3_safras.py:264",
               "filhos": [
                 {
                   "nome": "O que esperar da safra vigente",
@@ -831,7 +488,7 @@
           "resumo": "Os métodos usados e os estudos de base",
           "explicacao": "Diz quantas análises foram encadeadas para chegar à carteira e, num quadro que abre ao clicar, explica cada uma com o estudo acadêmico que a fundamenta.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:5021",
+          "fonte": "views/portfolio_b3.py:5023",
           "filhos": []
         }
       ]
@@ -839,16 +496,16 @@
     {
       "nome": "Avaliação de Portfólio",
       "resumo": "Avalia a carteira salva como um todo",
-      "explicacao": "É a etapa 3 de 3: julga a carteira salva na Criação de Portfólio como conjunto (diversificação, concentração, riscos, dividendos e qualidade) e responde se ela é coerente e defensável. Só funciona se houver uma carteira salva; se ela estiver desatualizada, aparece apenas um aviso.",
+      "explicacao": "Julga a carteira salva na Criação de Portfólio como conjunto (diversificação, concentração, riscos, dividendos e qualidade) e responde se ela é coerente e defensável. Só funciona se houver uma carteira salva; se ela estiver desatualizada, aparece apenas um aviso.",
       "so_admin": false,
-      "fonte": "views/empresas_b3.py:6867 -> views/analise_portfolio_b3.py:1508",
+      "fonte": "views/empresas_b3.py:3266 -> views/analise_portfolio_b3.py:1508",
       "filhos": [
         {
           "nome": "Portfolio B3 Modelo (ano)",
           "resumo": "Resumo da carteira salva",
           "explicacao": "Cartões com número de empresas, ano-base, ganho médio sobre a Selic e nota média, mais os logotipos das empresas e o registro dos vetos feitos quando a carteira foi criada.",
           "so_admin": false,
-          "fonte": "views/analise_portfolio_b3.py:1564 -> :238",
+          "fonte": "views/analise_portfolio_b3.py:1563 -> :238",
           "filhos": []
         },
         {
@@ -864,7 +521,7 @@
           "resumo": "Pede um parecer da carteira à IA",
           "explicacao": "O botão \"Executar Análise LLM\" pede a uma inteligência artificial de texto (LLM) um parecer sobre a carteira, conferindo os números do app com os sites Fundamentus e Status Invest; \"Limpar\" apaga o resultado. Se a inteligência artificial não estiver disponível, aparece um aviso e o resto da aba, inclusive o chat, não é mostrado.",
           "so_admin": false,
-          "fonte": "views/analise_portfolio_b3.py:1580",
+          "fonte": "views/analise_portfolio_b3.py:1579",
           "filhos": []
         },
         {
@@ -913,7 +570,7 @@
           "resumo": "Um parecer para cada empresa da carteira",
           "explicacao": "Um quadro por empresa, que abre ao clicar, com faixa de valor, peso, preço, dívida, dividendos, principal ponto positivo, principal risco e uma conclusão. Só aparece depois de executar a análise.",
           "so_admin": false,
-          "fonte": "views/analise_portfolio_b3.py:1677 -> :607",
+          "fonte": "views/analise_portfolio_b3.py:1676 -> :607",
           "filhos": []
         },
         {
@@ -929,7 +586,7 @@
           "resumo": "Chat com IA sobre a sua carteira",
           "explicacao": "Chat para perguntar sobre a carteira, com o botão \"Limpar chat\". Funciona mesmo antes de executar a análise, usando os números reais das empresas, e pode responder com gráficos.",
           "so_admin": false,
-          "fonte": "views/analise_portfolio_b3.py:1693 -> :1397",
+          "fonte": "views/analise_portfolio_b3.py:1692 -> :1397",
           "filhos": []
         }
       ]
@@ -939,7 +596,7 @@
       "resumo": "Acompanha uma carteira-teste de 20 ações",
       "explicacao": "Acompanha uma carteira de pesquisa com as 20 ações de maior nota, 5% em cada, revista no fim de abril e de outubro. As escolhas são registradas antes de os resultados acontecerem, para um teste honesto, e nenhuma conclusão é tirada antes de 12 meses. Se ainda não houver registro publicado, aparece apenas um aviso.",
       "so_admin": false,
-      "fonte": "views/empresas_b3.py:6875 -> views/carteira20_b3.py:499",
+      "fonte": "views/empresas_b3.py:3274 -> views/carteira20_b3.py:499",
       "filhos": [
         {
           "nome": "Cadeia íntegra",

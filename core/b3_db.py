@@ -306,7 +306,7 @@ def load_portfolio_snapshot() -> tuple[dict, pd.DataFrame]:
     return header, items
 
 
-# ── Batch loaders (Análise Avançada) ─────────────────────────────────────────
+# ── Batch loaders ─────────────────────────────────────────────────────────────
 
 def _safe_in_clause(tickers: tuple[str, ...]) -> tuple[list[str], str] | None:
     """Constrói cláusula IN segura com tickers sanitizados (apenas alnum + dígito)."""

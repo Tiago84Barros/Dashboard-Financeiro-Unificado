@@ -3,7 +3,7 @@
   "resumo": "Ações dos EUA: pesquisar, comparar e montar carteira",
   "explicacao": "Área dedicada às ações da bolsa americana (NYSE, Nasdaq e AMEX), com números oficiais das empresas. No topo há cinco botões que funcionam como abas e seguem um caminho: conhecer as empresas, estudar uma delas, testar critérios, montar uma carteira e avaliar essa carteira. É ferramenta de estudo, não recomendação de compra.",
   "so_admin": false,
-  "fonte": "views/empresas_americanas.py:230 (abas em design/market_companies.py:60 e :83)",
+  "fonte": "views/empresas_americanas.py:230 (abas em design/market_companies.py:60 e :90)",
   "filhos": [
     {
       "nome": "Empresas por Setor",
@@ -24,21 +24,21 @@
           "resumo": "Cartões com botão Analisar em cada empresa",
           "explicacao": "Cada setor tem um título com a quantidade de empresas e, abaixo, cartões de quatro em quatro. O botão Analisar de cada cartão leva para a aba Análise de Empresa já com aquela empresa escolhida. Os cartões aparecem aos poucos.",
           "so_admin": false,
-          "fonte": "design/market_companies.py:237 (chamado em views/empresas_americanas.py:417)",
+          "fonte": "design/market_companies.py:244 (chamado em views/empresas_americanas.py:417)",
           "filhos": [
             {
               "nome": "Analisar",
               "resumo": "Abre o estudo completo da empresa",
               "explicacao": "Botão em cada cartão. Leva para a aba Análise de Empresa com a empresa já selecionada.",
               "so_admin": false,
-              "fonte": "design/market_companies.py:301"
+              "fonte": "design/market_companies.py:308"
             },
             {
               "nome": "Mostrar mais empresas",
               "resumo": "Carrega mais cartões na tela",
               "explicacao": "Aparece no fim da lista quando há mais empresas do que as exibidas; mostra quantas faltam e carrega o próximo bloco.",
               "so_admin": false,
-              "fonte": "design/market_companies.py:313"
+              "fonte": "design/market_companies.py:320"
             }
           ]
         },

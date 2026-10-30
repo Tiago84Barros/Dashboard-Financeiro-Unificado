@@ -2825,10 +2825,9 @@ def render(show_header: bool = True) -> None:
 
     st.markdown(
         '<p style="font-size:0.80rem;color:var(--app-muted);margin-bottom:20px;">'
-        '<strong style="color:var(--app-text);">Etapa 2 de 3 · Aplicação em escala.</strong> '
-        'Roda a metodologia validada na aba <strong>Análise Avançada</strong> em '
-        '<strong>todos os segmentos</strong> da B3 de uma vez, identifica as empresas '
-        'vencedoras de cada segmento e consolida uma carteira inicial multissetorial.'
+        'Roda a metodologia de seleção em <strong>todos os segmentos</strong> da B3 '
+        'de uma vez, identifica as empresas vencedoras de cada segmento e consolida '
+        'uma carteira inicial multissetorial.'
         '</p>',
         unsafe_allow_html=True,
     )
@@ -3455,12 +3454,15 @@ def render(show_header: bool = True) -> None:
         # Repetir a instrução embaixo dele era ruído.
         return
 
-    # Gamma/cap/soft calibrados (ou defaults). Definidos FORA do `if rodar:`
-    # porque as seções de exibição (líderes do próximo ano) usam `cap`/`gamma`/
-    # `soft` a cada rerun, mesmo sem reprocessar — senão dá UnboundLocalError.
-    gamma = st.session_state.get("b3_av_gamma", _GAMMA_DEF)
-    cap   = st.session_state.get("b3_av_cap",   _CAP_DEF)
-    soft  = st.session_state.get("b3_av_soft",  _SOFT_DEF)
+    # Gamma/cap/soft são os padrões do motor. Até 30/10/2026 a calibração
+    # walk-forward da Análise Avançada os gravava na sessão e esta tela os
+    # herdava: a mesma carteira saía diferente conforme o usuário tivesse ou não
+    # calibrado um segmento antes. A aba saiu e a herança com ela. Definidos FORA
+    # do `if rodar:` porque as seções de exibição (líderes do próximo ano) usam
+    # `cap`/`gamma`/`soft` a cada rerun, mesmo sem reprocessar.
+    gamma = _GAMMA_DEF
+    cap   = _CAP_DEF
+    soft  = _SOFT_DEF
     # Teto por setor: 100% = desligado. Lido aqui (fora do `if rodar:`) pelo
     # mesmo motivo dos demais — as seções de exibição usam a cada rerun.
     teto_setor = float(st.session_state.get("pb3_teto_setor", 100)) / 100.0
@@ -3493,8 +3495,8 @@ def render(show_header: bool = True) -> None:
             # Política única de fontes (fix auditoria 2026-07): com market.*
             # ativo a fonte é limpa — web (Fundamentus/Status Invest) NÃO
             # sobrescreve o banco; passar fund_data={} faz a reconciliação
-            # virar apenas saneamento por ranges (nulo fica nulo), alinhado
-            # à regra da Análise Avançada ("vazio fica vazio").
+            # virar apenas saneamento por ranges (nulo fica nulo): vazio fica
+            # vazio.
             # Scraping descontinuado (2026-07): fonte única = market.* (brapi).
             # include_status=False e fund_data={} fazem a reconciliação virar só
             # saneamento por faixas canônicas (nulo fica nulo).

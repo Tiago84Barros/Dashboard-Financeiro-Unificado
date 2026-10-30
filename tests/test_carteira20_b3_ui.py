@@ -158,14 +158,14 @@ def test_card_mostra_revisao_atrasada(monkeypatch, registros_publicados):
 
 def test_aba_despachada_na_vitrine_b3():
     import design.market_companies as mc
-    assert mc.NAV_ITEMS_B3[5] == ("📒", "Carteira 20")
+    assert mc.NAV_ITEMS_B3[-1] == ("📒", "Carteira 20")
     assert ("📒", "Carteira 20") not in mc.NAV_ITEMS
     b3 = (RAIZ / "views" / "empresas_b3.py").read_text(encoding="utf-8")
     assert "carteira20_b3.render(show_header=False, cadastro=df_set)" in b3
     assert "previsao_lucros_b3" not in b3
 
 
-def test_trilho_b3_desenha_seis_abas():
+def test_trilho_b3_desenha_cinco_abas():
     app = AppTest.from_string("""
 from design.market_companies import NAV_ITEMS_B3, render_market_tabs
 render_market_tabs(state_key='t_active', key_prefix='t', itens=NAV_ITEMS_B3)
@@ -173,8 +173,9 @@ render_market_tabs(state_key='t_active', key_prefix='t', itens=NAV_ITEMS_B3)
     assert not app.exception
     rotulos = [b.label for b in app.button]
     assert rotulos[-1] == "📒 Carteira 20"
-    assert len(rotulos) == 6
+    assert len(rotulos) == 5
     assert not any("Previsão de Lucros" in r for r in rotulos)
+    assert not any("Análise Avançada" in r for r in rotulos)
 
 
 def test_grafico_e_cards_com_desempenho_publicado(monkeypatch, registros_publicados):
