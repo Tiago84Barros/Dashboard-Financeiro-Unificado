@@ -900,7 +900,7 @@
                 {
                   "nome": "Rendimento · Oscilação · Queda máxima · Perda em dia ruim · Retorno por risco · Sensibilidade à bolsa",
                   "resumo": "Seis medidas de risco e retorno, cada uma com o nome simples antes da sigla",
-                  "explicacao": "Rendimento (TWR) é quanto a carteira rendeu sem contar aportes, comparado ao CDI; Oscilação (volatilidade) é o quanto ela sobe e desce, ao lado da do BOVA11 nos mesmos dias; Queda máxima (drawdown) é o maior tombo desde um pico; Perda em dia ruim (VaR 95%) é a perda que só é superada em 1 de cada 20 dias; Retorno por risco (Sharpe) diz se o risco foi pago acima do CDI; Sensibilidade à bolsa (beta) diz quanto a carteira tende a se mover quando o Ibovespa varia 10%.",
+                  "explicacao": "Rendimento (TWR) é quanto a carteira rendeu sem contar aportes, comparado ao CDI; Oscilação (volatilidade) é o quanto ela sobe e desce, ao lado da do BOVA11 nos mesmos dias; Queda máxima (drawdown) é o maior tombo desde um pico; Perda em dia ruim (VaR 95%) é a perda que só é superada em 1 de cada 20 dias; Retorno por risco (Sharpe) compara quanto cada dia rendeu, em média, acima do CDI com o sobe e desce da carteira; Sensibilidade à bolsa (beta) diz quanto a carteira tende a se mover quando o Ibovespa varia 10%.",
                   "so_admin": false
                 },
                 {

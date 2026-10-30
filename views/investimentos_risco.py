@@ -46,11 +46,14 @@ def _data(d) -> str:
 
 
 def _leitura_sharpe(s: float) -> str:
+    # O Sharpe é a média do excesso DIÁRIO sobre o CDI; quem diz se o período
+    # bateu o CDI é o acumulado (TWR). Com vaivém forte os dois discordam, então
+    # a leitura fala da média dos dias e nunca diz "superou".
     if s < 0:
-        return "rendeu menos que o CDI"
+        return "abaixo do CDI na média dos dias"
     if s < 1:
-        return "superou o CDI, mas pouco para o risco"
-    return "o risco foi bem pago"
+        return "acima do CDI na média dos dias, mas pouco para o risco"
+    return "acima do CDI na média dos dias, com folga para o risco"
 
 
 def _leitura_beta(b: float) -> str:
@@ -195,14 +198,21 @@ def explicacoes(risco: dict) -> list[tuple[str, str]]:
     out.append(("Perda em dia ruim (VaR 95%)", t))
 
     s = risco.get("sharpe")
-    t = ("Diz se o risco valeu a pena. Compara quanto a carteira rendeu acima do CDI "
-         "com o quanto ela balançou para chegar lá. Pela régua usual do mercado: "
-         "abaixo de 0, rendeu menos que o CDI, ou seja, você correu risco e ganhou "
-         "menos do que ganharia sem correr; entre 0 e 1, superou o CDI, mas pouco para "
-         "o sobe e desce; acima de 1, o risco foi bem pago. O nome vem do economista "
-         "William Sharpe.")
+    t = ("Diz se o risco valeu a pena. Compara quanto a carteira rendeu por dia, em "
+         "média, acima do CDI com o quanto ela balançou para chegar lá. Pela régua "
+         "usual do mercado: abaixo de 0, os dias renderam em média menos que o CDI, "
+         "ou seja, você correu risco e ganhou menos do que ganharia sem correr; entre "
+         "0 e 1, renderam acima do CDI, mas pouco para o sobe e desce; acima de 1, o "
+         "risco foi bem pago. O nome vem do economista William Sharpe.")
     if s is not None:
         t += f" **Na sua carteira:** {_num(s)}, ou seja, {_leitura_sharpe(s)}."
+        if twr is not None and cdi is not None and (s >= 0) != (twr >= cdi):
+            t += (" Repare que no acumulado do período a carteira rendeu "
+                  f"{_pct(twr, 2, sinal=True)}, {'mais' if twr >= cdi else 'menos'} que "
+                  f"o CDI ({_pct(cdi, 2)}). A média dos dias e o acumulado discordam "
+                  "quando a carteira balança muito: cair 2% e depois subir 2% não "
+                  "devolve tudo (R\\$ 100 viram R\\$ 98 e depois R\\$ 99,96). Para saber "
+                  "se o período bateu o CDI, vale o card Rendimento.")
     out.append(("Retorno por risco (índice de Sharpe)", t))
 
     b = risco.get("beta")
@@ -288,7 +298,8 @@ def render_risco_carteira() -> None:
         aviso_lacuna("VaR de 1 mês sem amostra suficiente.",
                      codigo="tela.investimentos.risco_var_amostra_curta")
     detalhe_tecnico(f"VaR 1 mês: {risco.get('n_janelas_1m', 0)} janelas sobrepostas; "
-                    f"beta: {risco.get('n_beta', 0)} pregões.",
+                    f"beta: {risco.get('n_beta', 0)} pregões; volatilidade do {BENCHMARK}: "
+                    f"{risco.get('n_vol_benchmark', 0)} pregões em comum com a carteira.",
                     codigo="investimentos.risco.amostras")
     detalhe_tecnico("Fórmulas: TWR é o produto de (1 + retorno diário); volatilidade "
                     "é o desvio-padrão diário × √252; VaR 95% é a estatística de ordem "

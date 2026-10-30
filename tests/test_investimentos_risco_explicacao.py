@@ -53,7 +53,7 @@ def test_explicacao_usa_os_valores_da_carteira():
     assert "1,40%" in var and "R\\$ 1,40 a cada" in var and "4,20%" in var
     assert "19 de cada 20" in var and "Não é a perda máxima" in var
     assert "-0,80" in tx["Retorno por risco (índice de Sharpe)"]
-    assert "rendeu menos que o CDI" in tx["Retorno por risco (índice de Sharpe)"]
+    assert "abaixo do CDI na média dos dias" in tx["Retorno por risco (índice de Sharpe)"]
     beta = tx["Sensibilidade à bolsa (beta)"]
     assert "0,60" in beta and "cerca de 6,0%" in beta
 
@@ -73,9 +73,34 @@ def test_medida_ausente_explica_sem_inventar_valor():
 
 
 def test_leituras_de_sharpe_e_beta_nos_tres_lados():
-    assert vr._leitura_sharpe(-0.2) == "rendeu menos que o CDI"
+    assert vr._leitura_sharpe(-0.2) == "abaixo do CDI na média dos dias"
     assert "pouco" in vr._leitura_sharpe(0.5)
-    assert "bem pago" in vr._leitura_sharpe(1.4)
+    assert "folga" in vr._leitura_sharpe(1.4)
+    for s in (-0.2, 0.5, 1.4):
+        assert "superou" not in vr._leitura_sharpe(s)
+
+
+def test_sharpe_positivo_com_acumulado_abaixo_do_cdi_nao_diz_que_superou():
+    # Sharpe é média do excesso DIÁRIO; TWR e CDI são acumulados. Com vaivém
+    # forte os dois discordam: +2% e -1,95% alternados, CDI de 0,02% ao dia.
+    rets = [0.02 if i % 2 == 0 else -0.0195 for i in range(20)]
+    cdi = [0.0002] * 20
+    s, tw = cr.sharpe(rets, cdi), cr.twr(rets)
+    cdi_periodo = (1.0002 ** 20) - 1.0
+    assert s > 0 and tw < cdi_periodo
+
+    r = _risco(sharpe=s, twr=tw, cdi_periodo=cdi_periodo)
+    sh = _texto(r)["Retorno por risco (índice de Sharpe)"]
+    card = vr.cartoes(r)[4]
+    assert "superou" not in sh and "superou" not in card
+    assert "acima do CDI na média dos dias" in card
+    assert "no acumulado do período" in sh and "menos que o CDI" in sh
+    assert not re.search(r"(?<!\\)\$", sh)
+
+
+def test_sharpe_que_concorda_com_o_acumulado_nao_ganha_ressalva():
+    sh = _texto(_risco())["Retorno por risco (índice de Sharpe)"]
+    assert "no acumulado do período" not in sh
     assert "direção contrária" in vr._leitura_beta(-0.3)
     assert "cerca de 3,0%" in vr._leitura_beta(-0.3)
     assert "subir ou cair cerca de 12,0%" in vr._leitura_beta(1.2)
