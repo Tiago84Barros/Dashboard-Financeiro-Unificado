@@ -42,7 +42,7 @@ def test_pesos_customizados_renormalizam():
 def test_atribuicao_e_bootstrap_sao_deterministicos():
     row = _rows().iloc[0]
     contrib = factor_contributions(row)
-    assert len(contrib) == 6
+    assert len(contrib) == 8  # seis fundamentalistas + momento + P&D
     assert contrib["Contribuição"].sum() > 0
     first = bootstrap_track_score(row, n=500, seed=7)
     second = bootstrap_track_score(row, n=500, seed=7)

@@ -1148,14 +1148,12 @@ def _tab_avancada_unificada(status: dict) -> None:
     filtered = _render_us_filtro_liquidez(filtered, liquidity_floor)
 
     # ── Pesos e score de entrada ──────────────────────────────────────────
-    from core.us_advanced_lab import DEFAULT_WEIGHTS, build_entry_scores
+    from core.us_advanced_lab import DEFAULT_WEIGHTS, TRACK_LABELS, build_entry_scores
     with st.expander("⚖️ Pesos do Scoring"):
-        st.caption("Pesos das seis trilhas americanas. Os valores são renormalizados para 100%.")
-        weight_labels = {
-            "quality": "Qualidade", "growth": "Crescimento", "solidity": "Solidez",
-            "capital_efficiency": "Eficiência de capital", "valuation": "Avaliação",
-            "shareholder": "Retorno ao acionista",
-        }
+        st.caption("Pesos das oito trilhas americanas: as seis fundamentalistas, o momento "
+                   "de 12 meses e a pesquisa e desenvolvimento. Os valores são "
+                   "renormalizados para 100%.")
+        weight_labels = TRACK_LABELS
         weight_cols = st.columns(3)
         custom_weights = {}
         for idx, (track, default) in enumerate(DEFAULT_WEIGHTS.items()):
@@ -1638,12 +1636,14 @@ def _render_us_lab_entry(entry: pd.DataFrame) -> None:
     with st.expander("📊 Breakdown completo — todas as empresas"):
         cols = [c for c in ("symbol", "name", "sector", "industry", "score_base_adv",
                             "entry_score", "entry_status", "score_quality", "score_growth",
+                            "score_momentum", "score_pd",
                             "cash_quality", "risk_penalty", "risk_driver", "coverage") if c in entry]
         show = localize_us_company_frame(entry[cols]).rename(columns={
             "symbol": "Ticker", "name": "Nome", "sector": "Setor", "industry": "Indústria",
             "score_base_adv": "Score base", "entry_score": "Score entrada",
             "entry_status": "Situação", "score_quality": "Qualidade",
-            "score_growth": "Consistência", "cash_quality": "Caixa",
+            "score_growth": "Consistência", "score_momentum": "Momento",
+            "score_pd": "P&D", "cash_quality": "Caixa",
             "risk_penalty": "Penalidade", "risk_driver": "Motivo",
             "coverage": "Cobertura (%)"})
         st.dataframe(show, hide_index=True, width="stretch")
@@ -1959,6 +1959,7 @@ def _render_us_lab_methodology() -> None:
 - **Eficiência de capital** — ROIC após imposto federal aproximado.
 - **Avaliação** — earnings yield, EV/EBIT, EV/EBITDA, P/FCL e P/Vendas.
 - **Retorno ao acionista** — dividendos + recompras − emissões, sobre valor de mercado.
+- **Momento e P&D** — no score de entrada, duas trilhas de estilo somam-se às seis: retorno de 12 meses sem o último mês e P&D sobre valor de mercado, em percentil no universo avaliado. Quem não declara P&D fica neutro nessa trilha.
 - **Score de entrada** — nota base + qualidade + consistência + caixa − penalidades de risco.
 
 ### 3 · Risco, validação e explicabilidade
@@ -3081,6 +3082,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
 
     secao_titulo("Travessia de Recessão", "🛡️")
     _render_us_ciclo(holdings)
+    _render_us_estilos(holdings)
 
     secao_titulo("Resumo do Portfólio", "📊")
     m1, m2, m3, m4 = st.columns(4)
@@ -3231,6 +3233,36 @@ def _tab_avaliacao_portfolio(status: dict) -> None:
     from views import analise_portfolio_us
 
     analise_portfolio_us.render(show_header=False)
+
+
+def _render_us_estilos(holdings: pd.DataFrame) -> None:
+    """Momento e P&D de cada ação escolhida: as duas trilhas de estilo da nota."""
+    cols = [c for c in ("symbol", "name", "momento_12_1", "score_momentum",
+                        "pd_valor_mercado", "score_pd") if c in holdings]
+    if "symbol" not in cols or not {"score_momentum", "score_pd"} & set(cols):
+        return
+    show = holdings[cols].copy()
+    for coluna in ("momento_12_1", "pd_valor_mercado"):
+        if coluna in show:
+            show[coluna] = pd.to_numeric(show[coluna], errors="coerce") * 100
+    with st.expander("🚀 Momento e pesquisa e desenvolvimento das escolhidas"):
+        st.dataframe(
+            localize_us_company_frame(show).rename(columns={
+                "symbol": "Ticker", "name": "Nome", "momento_12_1": "Momento 12m (%)",
+                "score_momentum": "Nota momento", "pd_valor_mercado": "P&D / valor de mercado (%)",
+                "score_pd": "Nota P&D"}),
+            hide_index=True, width="stretch",
+            column_config={c: st.column_config.NumberColumn(format="%.1f")
+                           for c in ("Momento 12m (%)", "Nota momento",
+                                     "P&D / valor de mercado (%)", "Nota P&D")})
+        st.caption(
+            "Momento: retorno total de 12 meses até 1 mês antes do último pregão. P&D: "
+            "despesa de pesquisa e desenvolvimento do último exercício sobre o valor de "
+            "mercado. As notas são o percentil no universo elegível; vazio é neutro (50) "
+            "na nota de entrada -- a empresa não declara P&D ou não tem 12 meses de preço. "
+            "Nos EUA, de 1927 a 2025, o terço com mais momento rendeu 4,1% a.a. acima do "
+            "mercado e o terço com mais P&D, 3,7% a.a. (base acadêmica sem viés de "
+            "sobrevivência, antes de custos).")
 
 
 # ── Criação de Portfólio ──────────────────────────────────────────────────────

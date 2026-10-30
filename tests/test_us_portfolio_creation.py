@@ -292,7 +292,9 @@ def test_params_registram_a_versao_da_metodologia_de_liquidez():
 
     params = params_to_dict(USPortfolioCreationParams())
     assert params["liquidity_version"] == LIQ
-    assert params["schema_version"] == "us_portfolio_creation_v3"
+    assert params["schema_version"] == "us_portfolio_creation_v4"
+    # e com quais pesos de trilha a nota de entrada foi montada
+    assert params["entry_weights"]["momentum"] > 0 and params["entry_weights"]["rd"] > 0
 
 
 @pytest.mark.parametrize("piso_invalido", [float("nan"), -1.0,
