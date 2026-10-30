@@ -1104,7 +1104,9 @@ FLOW_INVESTIMENTOS = FlowSpec(
             "O Tesouro Direto não tem cotação de bolsa: vale pelo PU de recompra da curva "
             "oficial (tesouro_market_rates), a mesma ponta do painel do Tesouro e da "
             "Evolução, e só fica com o PU do extrato da B3 quando a curva é mais antiga "
-            "que ele — o extrato traz um preço de dias antes da data do relatório.",
+            "que ele — o extrato traz um preço de dias antes da data do relatório. Curva "
+            "com mais de 5 dias continua marcando, mas sai como desatualizada, igual à "
+            "cotação de bolsa antiga.",
             ("asset_quotes", "tesouro_market_rates", "Preço atual", "FX USD/BRL",
              "Fallbacks"),
             "Marca a carteira a mercado e permite comparar custo com valor atual.",

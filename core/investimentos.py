@@ -38,6 +38,7 @@ Schema do dict retornado por get_carteira():
   num_ativos               int    Número de posições ativas
   cotacoes_disponiveis     bool   True quando ha cotacao viva ou Tesouro pela curva
   n_cotacoes_curva         int    Titulos do Tesouro marcados pela curva oficial
+  n_cotacoes_curva_antiga  int    Titulos do Tesouro pela ultima curva, fora do limite de frescor
   posicoes                 list   Ver _POSICAO_SCHEMA abaixo
   por_classe               list   Ver _CLASSE_SCHEMA abaixo
   por_setor                list   Ver _SETOR_SCHEMA abaixo
@@ -194,6 +195,10 @@ def get_carteira() -> dict:
 
 
 _TIPOS_TESOURO = {"tesouro", "fixed_income", "renda_fixa"}
+
+# Cotação que passou do limite de frescor: a viva antiga e a curva do
+# Tesouro parada (job sem rodar) — o preço segue, mas não é o do dia.
+_FONTES_DESATUALIZADAS = frozenset({"stale", "curva_tesouro_antiga"})
 
 
 def _nome_exibicao(nome: str | None, ticker: str, asset_type: str | None) -> str:
@@ -891,10 +896,15 @@ def _recalcular_totais_carteira(carteira: dict) -> None:
         1 for p in carteira["posicoes"] if p.get("cotacao_fonte") == "live"
     )
     carteira["n_cotacoes_stale"] = sum(
-        1 for p in carteira["posicoes"] if p.get("cotacao_fonte") == "stale"
+        1 for p in carteira["posicoes"]
+        if p.get("cotacao_fonte") in _FONTES_DESATUALIZADAS
     )
     carteira["n_cotacoes_curva"] = sum(
         1 for p in carteira["posicoes"] if p.get("cotacao_fonte") == "curva_tesouro"
+    )
+    carteira["n_cotacoes_curva_antiga"] = sum(
+        1 for p in carteira["posicoes"]
+        if p.get("cotacao_fonte") == "curva_tesouro_antiga"
     )
     data_ref_min, data_ref_max = intervalo_referencia(
         [p.get("data_referencia") for p in carteira["posicoes"]]
@@ -1357,7 +1367,7 @@ def sem_marcacao_renda_fixa(classe_raw: str, custo_fonte: str, cotacao_fonte: st
     curva do Tesouro nunca cai aqui.
     """
     if classe_raw not in _CLASSES_SEM_COTACAO or cotacao_fonte in (
-            "live", "stale", "curva_tesouro"):
+            "live", "stale", "curva_tesouro", "curva_tesouro_antiga"):
         return False
     if custo_fonte == "mercado_fallback":
         return True
@@ -1404,6 +1414,8 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
          da foto ou mais nova. A foto "Posicao" da B3 traz um PU de dias antes
          da data do relatorio: num pregao de queda forte, a carteira afirmava
          um ganho que o painel do Tesouro, marcado pela curva, nao reconhecia.
+         Curva mais velha que o limite de frescor (MAX_QUOTE_AGE_DAYS) segue
+         marcando, mas como ``curva_tesouro_antiga``: preco, nao cotacao do dia.
     """
     precos_manuais = precos_manuais or {}
     curva_tesouro = curva_tesouro or {}
@@ -1658,7 +1670,11 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
         elif pela_curva:
             preco_atual = float(marcacao[0])
             vm_calc = round(qty * preco_atual, 2)
-            cotacao_fonte = "curva_tesouro"
+            # Curva parada continua sendo o preço mais novo, mas não é o do
+            # dia: mesmo limite de frescor da cotação viva.
+            cotacao_fonte = ("curva_tesouro"
+                             if classificar_cotacao(marcacao[1]) == "fresh"
+                             else "curva_tesouro_antiga")
         else:
             # Fallback: preço implícito do snapshot
             preco_atual = (vm / qty) if qty > 0 else 0.0
@@ -1703,7 +1719,7 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
             "total_investido":    round(ti, 2),
             "custo_estimado":     custo_estimado,
             "custo_fonte":        custo_fonte,
-            "cotacao_fonte":      cotacao_fonte,  # "live" | "stale" | "curva_tesouro" | "snapshot"
+            "cotacao_fonte":      cotacao_fonte,  # "live" | "stale" | "curva_tesouro" | "curva_tesouro_antiga" | "snapshot"
             "cotacao_timestamp":  g.get("live_ts"),
             "snapshot_report_date": report_date,
             "data_referencia":    data_referencia,
@@ -1724,8 +1740,11 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
 
     base_total = total_mercado if total_mercado > 0 else total_investido
     n_live = sum(1 for p in posicoes if p.get("cotacao_fonte") == "live")
-    n_stale = sum(1 for p in posicoes if p.get("cotacao_fonte") == "stale")
+    n_stale = sum(1 for p in posicoes if p.get("cotacao_fonte") in _FONTES_DESATUALIZADAS)
     n_curva = sum(1 for p in posicoes if p.get("cotacao_fonte") == "curva_tesouro")
+    n_curva_antiga = sum(
+        1 for p in posicoes if p.get("cotacao_fonte") == "curva_tesouro_antiga"
+    )
     for p in posicoes:
         p["pct_carteira"] = p["valor_mercado"] / base_total * 100 if base_total > 0 else 0.0
 
@@ -1755,6 +1774,7 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
         "n_cotacoes_live":         n_live,
         "n_cotacoes_stale":        n_stale,
         "n_cotacoes_curva":        n_curva,
+        "n_cotacoes_curva_antiga": n_curva_antiga,
         "data_referencia_min":     data_ref_min,
         "data_referencia_max":     data_ref_max,
         "posicoes":                posicoes,

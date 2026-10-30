@@ -736,9 +736,10 @@ PESO_CURVA_DO_TESOURO = 0.15
 def _curva_do_tesouro(conn) -> Componente:
     """Idade da curva oficial que marca o Tesouro da carteira (desde 30/10/2026).
 
-    Curva parada nao derruba o valor: a carteira volta ao PU da foto da B3, que
-    e de dias antes da data do relatorio. Por isso tabela vazia vale zero, e
-    nao "nao medido" -- o numero da tela continua de pe, so que velho.
+    Curva parada nao derruba o valor: o titulo segue pela ultima curva, rotulado
+    desatualizado, ou volta ao PU da foto da B3 quando a foto e mais nova. Por
+    isso tabela vazia vale zero, e nao "nao medido" -- o numero da tela
+    continua de pe, so que velho.
     """
     dias = _dias_desde(_scalar(conn, "SELECT max(base_date) FROM tesouro_market_rates"))
     if dias is None:

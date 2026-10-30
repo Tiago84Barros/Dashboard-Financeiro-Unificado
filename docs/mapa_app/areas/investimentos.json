@@ -377,7 +377,7 @@
                 {
                   "nome": "Ver posições em cards, por classe",
                   "resumo": "Liga cartões individuais com logo e retorno",
-                  "explicacao": "Botão de ligar e desligar que mostra, abaixo da tabela, um cartão por ativo agrupado por classe, com logo e retorno incluindo proventos. A linha 'Cotação' diz de onde veio o preço: mercado atual, mercado desatualizado, curva do Tesouro ou snapshot (o extrato importado).",
+                  "explicacao": "Botão de ligar e desligar que mostra, abaixo da tabela, um cartão por ativo agrupado por classe, com logo e retorno incluindo proventos. A linha 'Cotação' diz de onde veio o preço: mercado atual, mercado desatualizado, curva do Tesouro, curva do Tesouro desatualizada (curva oficial com mais de 5 dias) ou snapshot (o extrato importado).",
                   "so_admin": false,
                   "fonte": "views/investimentos.py:3697 (_cards_por_classe :3073)",
                   "filhos": []

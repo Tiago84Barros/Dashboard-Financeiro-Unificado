@@ -12,13 +12,25 @@ painel do Tesouro já usam. Os números abaixo são sintéticos.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
 
 from core import investimentos, tesouro_curva
 from core.investimentos import _montar_carteira_snapshot
+from core.market_freshness import MAX_QUOTE_AGE_DAYS, classificar_cotacao
+
+_HOJE = date(2026, 10, 30)
+
+
+@pytest.fixture(autouse=True)
+def _hoje_fixo(monkeypatch):
+    # As curvas daqui são do fim de outubro de 2026, e o frescor é medido
+    # contra hoje: sem um hoje fixo, o teste apodrece com o calendário.
+    monkeypatch.setattr(investimentos, "classificar_cotacao",
+                        partial(classificar_cotacao, agora=_HOJE))
 
 
 def _row(ticker, *, qty, vm, invested, tipo="tesouro", report=date(2026, 10, 27),
@@ -425,3 +437,78 @@ def test_contexto_da_llm_diz_quantos_titulos_vieram_da_curva():
     })
 
     assert "Cotações do dia: disponíveis (2 título(s) do Tesouro pela curva oficial)" in texto
+
+
+# ── curva parada é preço antigo, não do dia ──────────────────────────────────
+
+def test_curva_parada_continua_marcando_mas_como_antiga():
+    # O job da curva parou em 02/08 e a última foto é de 01/08: o PU da curva
+    # ainda é o mais novo que existe, mas no fim de outubro não é preço do dia.
+    rows = [_row("TPRE2030", qty=3.0, vm=2600.0, invested=2000.0,
+                 report=date(2026, 8, 1))]
+
+    carteira, p = _pos(rows, "TPRE2030", {"TPRE2030": (850.0, date(2026, 8, 2))})
+
+    assert p["valor_mercado"] == 2550.0
+    assert p["cotacao_fonte"] == "curva_tesouro_antiga"
+    assert p["data_referencia"] == date(2026, 8, 2)
+    assert carteira["n_cotacoes_curva"] == 0
+    assert carteira["n_cotacoes_curva_antiga"] == 1
+    assert carteira["n_cotacoes_stale"] == 1
+    assert carteira["cotacoes_disponiveis"] is False
+
+
+@pytest.mark.parametrize("idade, fonte", [
+    (MAX_QUOTE_AGE_DAYS, "curva_tesouro"),
+    (MAX_QUOTE_AGE_DAYS + 1, "curva_tesouro_antiga"),
+])
+def test_curva_usa_o_mesmo_limite_de_frescor_da_cotacao_viva(idade, fonte):
+    dia = _HOJE - timedelta(days=idade)
+    rows = [_row("TPRE2030", qty=3.0, vm=2600.0, invested=2000.0, report=dia)]
+
+    _, p = _pos(rows, "TPRE2030", {"TPRE2030": (850.0, dia)})
+
+    assert p["cotacao_fonte"] == fonte
+
+
+def test_recalculo_dos_totais_conta_a_curva_antiga_como_antiga():
+    carteira = {"posicoes": [
+        {"ticker": "TPRE2030", "valor_mercado": 2550.0, "total_investido": 2000.0,
+         "cotacao_fonte": "curva_tesouro_antiga", "classe": "Tesouro Direto",
+         "setor": "Tesouro Direto", "moeda": "BRL", "cor": "#000000"},
+    ]}
+
+    investimentos._recalcular_totais_carteira(carteira)
+
+    assert carteira["n_cotacoes_curva"] == 0
+    assert carteira["n_cotacoes_curva_antiga"] == 1
+    assert carteira["n_cotacoes_stale"] == 1
+
+
+def test_papel_pela_curva_antiga_nao_e_sem_marcacao():
+    assert not investimentos.sem_marcacao_renda_fixa(
+        "renda_fixa", "snapshot", "curva_tesouro_antiga", 1000.0, 1000.0)
+
+
+def test_tela_diz_que_a_curva_esta_desatualizada():
+    import inspect
+
+    from views import investimentos as inv
+
+    assert "curva do Tesouro desatualizada" in inspect.getsource(inv._card_ativo)
+    corpo = inspect.getsource(inv._tab_analise)
+    visao_geral = corpo[corpo.index("with ta:"):corpo.index("with tb:")]
+    assert "n_cotacoes_curva_antiga" in visao_geral
+    assert "pela curva do Tesouro desatualizada" in visao_geral
+
+
+def test_contexto_da_llm_nao_chama_a_curva_parada_de_cotacao_do_dia():
+    from core.llm_context_carteira import build_carteira_geral_context
+
+    texto = build_carteira_geral_context({
+        "posicoes": [], "por_classe": [], "por_setor": [],
+        "cotacoes_disponiveis": False, "n_cotacoes_curva_antiga": 1,
+    })
+
+    assert "Cotações do dia: indisponíveis" in texto
+    assert "1 título(s) do Tesouro pela última curva oficial, desatualizada" in texto
