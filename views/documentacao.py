@@ -1100,8 +1100,13 @@ FLOW_INVESTIMENTOS = FlowSpec(
         ),
         "quotes_ai": _node(
             "quotes_ai", "Cotações", "Fontes",
-            "Busca a cotação mais recente de cada ativo e converte USD quando necessário.",
-            ("asset_quotes", "Preço atual", "FX USD/BRL", "Fallbacks"),
+            "Busca a cotação mais recente de cada ativo e converte USD quando necessário. "
+            "O Tesouro Direto não tem cotação de bolsa: vale pelo PU de recompra da curva "
+            "oficial (tesouro_market_rates), a mesma ponta do painel do Tesouro e da "
+            "Evolução, e só fica com o PU do extrato da B3 quando a curva é mais antiga "
+            "que ele — o extrato traz um preço de dias antes da data do relatório.",
+            ("asset_quotes", "tesouro_market_rates", "Preço atual", "FX USD/BRL",
+             "Fallbacks"),
             "Marca a carteira a mercado e permite comparar custo com valor atual.",
         ),
         "dividends_ai": _node(
@@ -3061,7 +3066,10 @@ _FLOW_DETAIL_OVERRIDES = {
     "snapshot_ai": {
         "formula": "Valor de mercado = quantidade consolidada x cotação atual",
         "exemplo": "Quantidade = 300\nCotação atual = R$ 18\nValor de mercado = 300 x 18 = R$ 5.400",
-        "interpretacao": "O snapshot transforma operações dispersas em uma posição única e auditável.",
+        "interpretacao": "O snapshot transforma operações dispersas em uma posição única e auditável. "
+                         "No Tesouro Direto a cotação atual é o PU de recompra da curva oficial, e o "
+                         "retorno da carteira é bruto e desde a compra; o 'Se vender hoje' do painel do "
+                         "Tesouro é o mesmo valor já líquido de IR e IOF.",
     },
     "classes_ai": {
         "formula": "Peso da classe = valor da classe / valor total da carteira",

@@ -2748,6 +2748,8 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
         fonte_icon, fonte_label = "🟢", "mercado atual"
     elif cotacao_fonte == "stale":
         fonte_icon, fonte_label = "🟠", "mercado desatualizado"
+    elif cotacao_fonte == "curva_tesouro":
+        fonte_icon, fonte_label = "🟢", "curva do Tesouro"
     else:
         fonte_icon, fonte_label = "🟡", "snapshot"
 

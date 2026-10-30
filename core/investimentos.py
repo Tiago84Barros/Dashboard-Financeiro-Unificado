@@ -53,6 +53,7 @@ _SETOR_SCHEMA:   { nome, valor_mercado, pct_carteira }
 import logging
 import re
 from collections import defaultdict
+from datetime import datetime
 from types import SimpleNamespace
 
 from core import cotacao_viva
@@ -972,8 +973,16 @@ def _carteira_snapshot_consolidada(conn, owner: str, rows: list) -> dict:
         recalculo, n_recalc = cotacao_viva.aplicar(
             recalculo, "current_price", "current_price_timestamp", cotacoes)
 
+    # O Tesouro não tem cotação viva: a foto da B3 traz um PU de dias antes da
+    # data do relatório, e a curva oficial é o preço do emissor.
+    from core.tesouro_curva import pu_de_recompra
+    curva_tesouro = pu_de_recompra(conn, {
+        _base_ticker(r.ticker) for r in rows
+        if str(getattr(r, "asset_type", "") or "").lower() in _TIPOS_TESOURO
+    })
+
     carteira = _montar_carteira_snapshot(
-        rows, tx_costs, listar_precos_manuais(owner, conn)
+        rows, tx_costs, listar_precos_manuais(owner, conn), curva_tesouro=curva_tesouro
     )
     if extra_rows:
         _adicionar_extras_ao_snapshot(carteira, extra_rows, fx_compra)
@@ -1339,7 +1348,8 @@ def resumo_sem_marcacao(posicoes: list) -> dict:
 
 
 def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
-                              precos_manuais: dict | None = None) -> dict:
+                              precos_manuais: dict | None = None,
+                              curva_tesouro: dict | None = None) -> dict:
     """Monta a carteira real a partir do ultimo snapshot XP + custo da B3.
 
     Estrategia de unificacao (corrige bug 2026-05-22 onde card misturava
@@ -1362,8 +1372,14 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
          porque so e preenchido quando a pessoa sabe que as outras fontes
          estao erradas ou ausentes -- e vai rotulado como "informado por
          voce", nunca como declarado pela B3.
+      5. Para o PRECO do Tesouro: o PU de recompra da curva oficial
+         (`curva_tesouro`, ``{ticker: (pu, data_base)}``) quando ela e do dia
+         da foto ou mais nova. A foto "Posicao" da B3 traz um PU de dias antes
+         da data do relatorio: num pregao de queda forte, a carteira afirmava
+         um ganho que o painel do Tesouro, marcado pela curva, nao reconhecia.
     """
     precos_manuais = precos_manuais or {}
+    curva_tesouro = curva_tesouro or {}
     # ── 1. Agrupa rows por base_ticker
     grupos: dict[str, dict] = {}
     for r in rows:
@@ -1594,6 +1610,15 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
             "fixed_income", "tesouro", "renda_fixa", "fundo_rf"
         )
 
+        report_date = max((d for d in g["report_dates"] if d is not None), default=None)
+        foto_em = report_date.date() if isinstance(report_date, datetime) else report_date
+        marcacao = curva_tesouro.get(base)
+        pela_curva = (
+            marcacao is not None and qty > 0
+            and str(primary.asset_type or "").lower() in _TIPOS_TESOURO
+            and (foto_em is None or marcacao[1] >= foto_em)
+        )
+
         status_cotacao = classificar_cotacao(g.get("live_ts")) if live_price else "missing"
         if live_price and not is_rf:
             ccy_snap = str(primary.currency or "BRL").upper()
@@ -1603,13 +1628,21 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
                 preco_atual = live_price
             vm_calc = round(qty * preco_atual, 2)
             cotacao_fonte = "live" if status_cotacao == "fresh" else "stale"
+        elif pela_curva:
+            preco_atual = float(marcacao[0])
+            vm_calc = round(qty * preco_atual, 2)
+            cotacao_fonte = "curva_tesouro"
         else:
             # Fallback: preço implícito do snapshot
             preco_atual = (vm / qty) if qty > 0 else 0.0
             vm_calc = round(vm, 2)
             cotacao_fonte = "snapshot"
-        report_date = max((d for d in g["report_dates"] if d is not None), default=None)
-        data_referencia = g.get("live_ts") if cotacao_fonte in {"live", "stale"} else report_date
+        if cotacao_fonte in {"live", "stale"}:
+            data_referencia = g.get("live_ts")
+        elif pela_curva:
+            data_referencia = marcacao[1]
+        else:
+            data_referencia = report_date
 
         rentab = round((vm_calc - ti) / ti * 100, 2) if ti > 0 else 0.0
         # Custo declarado pela corretora nao e estimativa -- e o unico numero
@@ -1643,7 +1676,7 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
             "total_investido":    round(ti, 2),
             "custo_estimado":     custo_estimado,
             "custo_fonte":        custo_fonte,
-            "cotacao_fonte":      cotacao_fonte,  # "live" | "snapshot"
+            "cotacao_fonte":      cotacao_fonte,  # "live" | "stale" | "curva_tesouro" | "snapshot"
             "cotacao_timestamp":  g.get("live_ts"),
             "snapshot_report_date": report_date,
             "data_referencia":    data_referencia,

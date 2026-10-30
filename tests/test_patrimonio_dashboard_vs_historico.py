@@ -23,7 +23,7 @@ _ETF_NOMAD = SimpleNamespace(
 _POSICAO_XP = object()
 
 
-def _carteira_so_do_snapshot(rows, tx_costs=None, precos_manuais=None):
+def _carteira_so_do_snapshot(rows, tx_costs=None, precos_manuais=None, curva_tesouro=None):
     return {
         "posicoes": [{"ticker": "ITUB4", "classe": "Ações", "setor": "Bancos",
                       "cor": "#fff", "total_investido": 800.0,
