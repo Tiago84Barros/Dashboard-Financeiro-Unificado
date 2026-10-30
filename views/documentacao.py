@@ -850,7 +850,10 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         ),
         "pesos_cp": _node(
             "pesos_cp", "Montagem do portfólio", "Portfólio",
-            "Remove duplicatas, consolida motivos e distribui empresas selecionadas por peso e setor.",
+            "Remove duplicatas, consolida motivos e distribui empresas selecionadas por peso e setor. "
+            "Quem entrou pelo piso de qualidade ou pela Inteligência dos Ativos vem etiquetado "
+            "no card da líder; o afrouxamento do piso e a vaga que ficou sem substituto vão "
+            "para Configurações → Restrições.",
             ("Lista de empresas líderes", "Score médio", "Alpha médio", "Distribuição setorial"),
             "É a transição do motor por segmento para uma carteira única e acionável.",
         ),
@@ -953,7 +956,7 @@ FLOW_SIMULADOR = FlowSpec(
         "margem_sp": _node(
             "margem_sp", "Margens", "Resultado",
             "Transforma montantes em alpha percentual para aprovar ou reprovar segmentos.",
-            ("Alpha vs Selic", "Alpha vs equal-weight", "Tabela de auditoria"),
+            ("Alpha vs Selic", "Alpha vs equal-weight", "Bloco de cada segmento aprovado"),
             "Ajuda o usuário a entender não só quem ganhou, mas por quanto ganhou.",
         ),
         "stress_sp": _node(
