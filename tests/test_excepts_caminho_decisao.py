@@ -490,7 +490,7 @@ def test_criacao_de_portfolio_avisa_degradacoes_da_guarda_na_tela():
 
     import views.portfolio_b3 as pb3
     corpo = inspect.getsource(pb3.render)
-    i = corpo.index("_render_data_quality_box(quality_summary")
+    i = corpo.index("_registrar_qualidade_dos_fundamentos(quality_summary")
     assert '_avisar_degradacoes(st.session_state.get("pb3_entry_guard_df"' in corpo[i:i + 400]
 
 
@@ -605,5 +605,5 @@ def test_render_chama_aviso_de_segmentos_sem_resiliencia():
 
     import views.portfolio_b3 as pb3
     corpo = inspect.getsource(pb3.render)
-    i = corpo.index("_render_data_quality_box(quality_summary")
+    i = corpo.index("_registrar_qualidade_dos_fundamentos(quality_summary")
     assert "_avisar_segmentos_sem_resiliencia(resultados)" in corpo[i:i + 500]

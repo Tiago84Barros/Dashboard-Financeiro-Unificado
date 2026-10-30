@@ -8,8 +8,7 @@ verificador (ele so conclui morte quando o valor e constante em tempo de
 leitura) e apaga a tela inteira de safras com a suite verde.
 
 Este arquivo fecha essa lacuna EXECUTANDO `render()` sob dubles e exigindo
-que `render_safras` tenha sido chamada de fato, com a carteira aprovada e
-com `resultados_todos`.
+que `render_safras` tenha sido chamada de fato, com a carteira aprovada.
 
 Nao usa AppTest (`apptest-vaza-atribuicao-de-modulo`): o padrao desta base e
 trocar o modulo `st` da view por um duble. O duble base e o `_Falso` ja
@@ -336,7 +335,7 @@ def test_render_chama_render_safras_de_fato(tela, monkeypatch):
 
     assert chamou, (
         "render() terminou sem chamar render_safras -- a tela de safras "
-        "(Blocos 1, 2 e 3) nao chega a ser desenhada em producao"
+        "(Blocos 1 e 3) nao chega a ser desenhada em producao"
     )
     args, kwargs = chamou[0]
     aprovados, precos = args[0], args[1]
@@ -345,14 +344,6 @@ def test_render_chama_render_safras_de_fato(tela, monkeypatch):
         "mas sem safra nenhuma"
     )
     assert isinstance(precos, pd.DataFrame) and not precos.empty
-    assert "resultados_todos" in kwargs and kwargs["resultados_todos"], (
-        "sem `resultados_todos` o Bloco 2 (vies do gate de aprovacao) nao "
-        "tem a lista nao filtrada e sai zerado"
-    )
-    assert len(kwargs["resultados_todos"]) >= len(aprovados), (
-        "a lista nao filtrada saiu menor que a aprovada -- os dois "
-        "argumentos foram trocados"
-    )
     assert not tela.yf_proibido.acessos, (
         "render() tocou o yfinance ao vivo (rede) em: "
         f"{sorted(set(tela.yf_proibido.acessos))} -- falta dublar esse caminho"

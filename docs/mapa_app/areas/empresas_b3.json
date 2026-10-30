@@ -606,7 +606,7 @@
               "resumo": "Cerca de 25 ajustes finos, opcionais",
               "explicacao": "Quadro fechado com os ajustes detalhados, já preenchidos pelo perfil. Mexer é opcional, e o app avisa quando uma mudança tem custo conhecido.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:2847",
+              "fonte": "views/portfolio_b3.py:2846",
               "filhos": [
                 {
                   "nome": "Régua de aprovação dos segmentos",
@@ -635,7 +635,7 @@
                 {
                   "nome": "Simulação e camadas extras",
                   "resumo": "Aporte, ano inicial e parecer por IA",
-                  "explicacao": "Aporte mensal, ano de início do teste, \"Mostrar auditoria dos segmentos\", peso de barganha, uso do histórico macro e \"Parecer qualitativo (LLM)\", em que uma inteligência artificial de texto pode vetar e substituir empresas.",
+                  "explicacao": "Aporte mensal, ano de início do teste, \"Mostrar segmentos aprovados\", peso de barganha, uso do histórico macro e \"Parecer qualitativo (LLM)\", em que uma inteligência artificial de texto pode vetar e substituir empresas.",
                   "so_admin": false,
                   "fonte": "views/portfolio_b3.py:2852-3180",
                   "filhos": []
@@ -647,57 +647,32 @@
               "resumo": "Botão que calcula a carteira",
               "explicacao": "Botão principal da aba. Antes do primeiro clique nada aparece abaixo dele; depois, o resultado fica guardado enquanto você navega pelo app.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:3189 (resultado só após :3454)",
+              "fonte": "views/portfolio_b3.py:3188 (resultado só após :3453)",
               "filhos": []
             }
           ]
         },
         {
-          "nome": "Auditoria de Segmentos — N analisados · N aprovados",
-          "resumo": "Quais segmentos passaram no teste e por quê",
-          "explicacao": "Tabela com todos os segmentos analisados, a situação de cada um (aprovado, reprovado ou inconclusivo) e os números do teste no passado, com uma legenda de como ler. Inconclusivo não é reprovação: significa que faltaram dados para concluir.",
+          "nome": "Segmentos Aprovados (N)",
+          "resumo": "Detalhe de cada segmento que passou no teste",
+          "explicacao": "Um bloco por segmento aprovado com os resultados do teste no passado. Só aparece se \"Mostrar segmentos aprovados\" estiver marcado nos parâmetros avançados. Os segmentos reprovados ou inconclusivos não são listados: a tabela que os mostrava saiu da tela em 30/10/2026.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:3854",
-          "filhos": [
-            {
-              "nome": "Qualidade dos fundamentos usados pela carteira",
-              "resumo": "Quantos dados foram corrigidos ou descartados",
-              "explicacao": "Quadro que abre ao clicar, logo antes da auditoria, com a contagem de dados corrigidos ou inválidos usados no cálculo.",
-              "so_admin": false,
-              "fonte": "views/portfolio_b3.py:3717 -> :517",
-              "filhos": []
-            },
-            {
-              "nome": "Segmentos Aprovados",
-              "resumo": "Detalhe de cada segmento aprovado",
-              "explicacao": "Um bloco por segmento aprovado com os resultados do teste. Só aparece se \"Mostrar auditoria dos segmentos\" estiver marcado nos parâmetros avançados.",
-              "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4080",
-              "filhos": []
-            }
-          ]
+          "fonte": "views/portfolio_b3.py:3929-3936",
+          "filhos": []
         },
         {
           "nome": "Testes complementares",
-          "resumo": "Evidência geral e ações baratas e sólidas",
-          "explicacao": "Duas leituras que olham a bolsa por outro ângulo, além do teste segmento a segmento.",
+          "resumo": "A nota acerta olhando a bolsa inteira?",
+          "explicacao": "Uma leitura que olha a bolsa por outro ângulo, além do teste segmento a segmento.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:4087-4090",
+          "fonte": "views/portfolio_b3.py:3939",
           "filhos": [
             {
               "nome": "Evidência no universo — o teste com amplitude",
               "resumo": "A nota acerta olhando a bolsa inteira?",
               "explicacao": "Junta todas as empresas para medir se a nota acertou quem rendeu mais no ano seguinte, com cartões de resultado e um selo a favor ou contra.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:2545",
-              "filhos": []
-            },
-            {
-              "nome": "Rota de valor — distorção com solvência",
-              "resumo": "Ações baratas que não estão quebrando",
-              "explicacao": "Procura empresas negociadas abaixo do valor estimado que também têm saúde financeira para sobreviver; você ajusta a margem de segurança mínima e outros limites. Separa oportunidade de \"armadilha de valor\" (ação barata porque a empresa vai mal).",
-              "so_admin": false,
-              "fonte": "views/portfolio_b3.py:2644",
+              "fonte": "views/portfolio_b3.py:3939 -> :2544",
               "filhos": []
             }
           ]
@@ -707,14 +682,14 @@
           "resumo": "A carteira sugerida para comprar este ano",
           "explicacao": "Lista as empresas escolhidas, só de segmentos aprovados, para comprar no ano corrente. É o resultado principal da aba.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:4095",
+          "fonte": "views/portfolio_b3.py:3944",
           "filhos": [
             {
               "nome": "Cartões das líderes",
               "resumo": "Cada empresa escolhida, motivo e peso",
-              "explicacao": "Logotipo, código, nome, motivos da escolha e peso sugerido de cada empresa na carteira.",
+              "explicacao": "Logotipo, código, nome, motivos da escolha e peso sugerido de cada empresa na carteira. Quem entrou no lugar de outra pelo piso de qualidade ou pela Inteligência dos Ativos vem marcado nos motivos.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4684",
+              "fonte": "views/portfolio_b3.py:4548",
               "filhos": []
             },
             {
@@ -722,7 +697,7 @@
               "resumo": "Proposta parcial quando a carteira não fecha",
               "explicacao": "Aparece no lugar do resto da página quando não há empresas suficientes para respeitar os limites de concentração. Mostra uma proposta parcial, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\".",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4551/4570/4581 -> design/portfolio_review.py:13",
+              "fonte": "views/portfolio_b3.py:4402/4421/4432 -> design/portfolio_review.py:13",
               "filhos": []
             },
             {
@@ -730,40 +705,24 @@
               "resumo": "Como os pesos mudariam em outros cenários",
               "explicacao": "Quadro que abre ao clicar e, com o botão \"Calcular trajetória desde 2010\", reaplica a carteira ao cenário econômico de cada ano para ver o quanto os pesos mudariam. Só aparece quando os dados de cenário econômico estão disponíveis.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4656 -> design/macro_portfolio.py:38",
+              "fonte": "views/portfolio_b3.py:4507 -> design/macro_portfolio.py:16",
               "filhos": []
             }
           ]
         },
         {
           "nome": "Ajustes e verificações da carteira",
-          "resumo": "Vetos, trocas e saúde das escolhidas",
-          "explicacao": "Seções que mostram empresas reprovadas ou trocadas pelos filtros de segurança e a saúde das escolhidas. Cada uma só aparece se o filtro correspondente estiver ligado ou se houver algo a mostrar.",
+          "resumo": "Saúde, vetos da IA e trocas das escolhidas",
+          "explicacao": "Seções que mostram a saúde das escolhidas e as trocas feitas pelo parecer de inteligência artificial, por negociabilidade e por correlação. Cada uma só aparece se o filtro correspondente estiver ligado ou se houver algo a mostrar. As trocas do piso de qualidade e da Inteligência dos Ativos aparecem nos cartões das líderes.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:4709-4925",
+          "fonte": "views/portfolio_b3.py:4593-4760",
           "filhos": [
-            {
-              "nome": "Piso absoluto de qualidade — reprovações e substituições",
-              "resumo": "Empresas barradas por baixa qualidade",
-              "explicacao": "Lista as empresas reprovadas pelo piso de qualidade e quem entrou no lugar, no mesmo segmento.",
-              "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4713",
-              "filhos": []
-            },
             {
               "nome": "Saúde das empresas selecionadas",
               "resumo": "Solvência e dividendos de cada escolhida",
               "explicacao": "Confere cada empresa escolhida quanto a dívidas, dividendo sustentável e retorno acima da Selic, com cartões de críticos e atenção. Inclui o quadro \"Como se comportaram nas recessões (2015-16 e 2020)\".",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4746 -> :2463 e :2391",
-              "filhos": []
-            },
-            {
-              "nome": "Inteligência dos Ativos — vetos e substituições",
-              "resumo": "Empresas vetadas pela análise de notícias",
-              "explicacao": "Mostra empresas vetadas ou substituídas depois de uma leitura de fundamentos, preço e notícias de cada candidata.",
-              "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4759 -> design/portao_inteligencia.py:10",
+              "fonte": "views/portfolio_b3.py:4593 -> :2462 e :2390",
               "filhos": []
             },
             {
@@ -771,7 +730,7 @@
               "resumo": "Vetos feitos pela inteligência artificial",
               "explicacao": "Só aparece se o \"Parecer qualitativo (LLM)\" estiver ligado: mostra as empresas que a inteligência artificial vetou e quem as substituiu.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4768",
+              "fonte": "views/portfolio_b3.py:4606",
               "filhos": []
             },
             {
@@ -779,7 +738,7 @@
               "resumo": "Troca por ação mais negociada da empresa",
               "explicacao": "Mostra quando a carteira trocou uma ação por outra classe da mesma empresa que é mais negociada. Só aparece se houver trocas.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4819",
+              "fonte": "views/portfolio_b3.py:4657",
               "filhos": []
             },
             {
@@ -787,7 +746,7 @@
               "resumo": "Ajustes para evitar ações que andam juntas",
               "explicacao": "Só aparece se a diversificação por correlação estiver ligada: mostra pesos reduzidos e empresas trocadas por andarem demais junto com outras.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4849",
+              "fonte": "views/portfolio_b3.py:4687",
               "filhos": []
             }
           ]
@@ -797,14 +756,14 @@
           "resumo": "Guarda a carteira como a oficial",
           "explicacao": "Torna esta carteira a sua carteira-modelo, que aparece resumida no Dashboard Geral e é a usada na aba Avaliação de Portfólio. Ao lado ficam cartões com número de empresas, segmentos aprovados e nota média.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:4931",
+          "fonte": "views/portfolio_b3.py:4769",
           "filhos": [
             {
               "nome": "Salvar portfólio padrão",
               "resumo": "Botão que grava a carteira",
               "explicacao": "Grava a carteira como modelo ativo. Fica desligado quando a carteira não respeita os limites de concentração.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4995",
+              "fonte": "views/portfolio_b3.py:4834",
               "filhos": []
             },
             {
@@ -812,7 +771,7 @@
               "resumo": "Volta para uma carteira salva antes",
               "explicacao": "Aparece quando existem versões antigas: escolha uma, marque a caixa de confirmação e clique em \"Restaurar versão selecionada\".",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:5023 -> :2777",
+              "fonte": "views/portfolio_b3.py:4861 -> :2762",
               "filhos": []
             }
           ]
@@ -822,7 +781,7 @@
           "resumo": "Pizza com o peso de cada setor",
           "explicacao": "Gráfico de pizza que mostra quanto da carteira sugerida está em cada setor da economia.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:5029",
+          "fonte": "views/portfolio_b3.py:4867",
           "filhos": []
         },
         {
@@ -830,7 +789,7 @@
           "resumo": "Cinco painéis extras sobre a seleção",
           "explicacao": "Cinco quadros que abrem ao clicar: \"Régua de Convicção\", \"Dominância\", \"Diversificação e Concentração\", \"Benchmark do Segmento\" e \"Qualidade das Empresas\". Trazem leituras adicionais sobre a força e o equilíbrio das escolhas.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:5056 -> :1730-1816",
+          "fonte": "views/portfolio_b3.py:4894 -> :1700-1804",
           "filhos": []
         },
         {
@@ -838,14 +797,14 @@
           "resumo": "Como carteiras assim teriam rendido",
           "explicacao": "Blocos que mostram como as carteiras montadas por este método teriam se saído em anos anteriores, comparadas com a Selic e com a compra de todas as empresas em partes iguais.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:5069-5171",
+          "fonte": "views/portfolio_b3.py:4907-5001",
           "filhos": [
             {
               "nome": "Desempenho da safra (ano)",
               "resumo": "Rendimento da carteira do ano vigente",
               "explicacao": "Gráfico de quanto teriam rendido aportes de R$ 1.000 por mês desde abril, quando a carteira do ano (a \"safra\") entrou em vigor.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:5069",
+              "fonte": "views/portfolio_b3.py:4907",
               "filhos": []
             },
             {
@@ -853,33 +812,17 @@
               "resumo": "Resultado de cada carteira anual passada",
               "explicacao": "Cartões, tabela e gráfico de barras com o resultado da carteira de cada ano contra a Selic e contra as ações em partes iguais, já descontando custos e imposto.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:5160 -> views/portfolio_b3_safras.py:264",
+              "fonte": "views/portfolio_b3.py:4996 -> views/portfolio_b3_safras.py:264",
               "filhos": [
                 {
                   "nome": "O que esperar da safra vigente",
                   "resumo": "Expectativa e fragilidade da carteira atual",
                   "explicacao": "Quatro cartões: se a nota ordena bem as empresas, se a carteira tende a superar a Selic e o mercado, e quão frágil é essa conclusão.",
                   "so_admin": false,
-                  "fonte": "views/portfolio_b3_safras.py:776",
-                  "filhos": []
-                },
-                {
-                  "nome": "Tamanho do viés de universo",
-                  "resumo": "Quanto a escolha dos segmentos inflou o resultado",
-                  "explicacao": "Ao clicar em \"Medir o viés de universo\", refaz as carteiras passadas sem o filtro de aprovação de segmentos, para mostrar quanto esse filtro pode ter favorecido o resultado.",
-                  "so_admin": false,
-                  "fonte": "views/portfolio_b3_safras.py:1325",
+                  "fonte": "views/portfolio_b3_safras.py:344 -> :765",
                   "filhos": []
                 }
               ]
-            },
-            {
-              "nome": "A carteira de cada perfil, fora da amostra",
-              "resumo": "Resultado medido de cada perfil",
-              "explicacao": "Um quadro por perfil (o perfil em uso vem aberto) com o resultado medido em anos que não foram usados para montar o método, contra pesos iguais, Selic e Ibovespa.",
-              "so_admin": false,
-              "fonte": "views/portfolio_b3.py:5171 -> views/portfolio_b3_oos_carteira.py:56",
-              "filhos": []
             }
           ]
         },
@@ -888,7 +831,7 @@
           "resumo": "Os métodos usados e os estudos de base",
           "explicacao": "Diz quantas análises foram encadeadas para chegar à carteira e, num quadro que abre ao clicar, explica cada uma com o estudo acadêmico que a fundamenta.",
           "so_admin": false,
-          "fonte": "views/portfolio_b3.py:5177",
+          "fonte": "views/portfolio_b3.py:5021",
           "filhos": []
         }
       ]

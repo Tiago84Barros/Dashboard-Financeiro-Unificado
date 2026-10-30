@@ -41,8 +41,9 @@ from dataclasses import dataclass, field
 
 VERSION = "b3-presets-1.0.0"
 
-# "Padrão", não "recomendado": a medição fora da amostra (seção "A carteira de
-# cada perfil, fora da amostra") não mostra este perfil batendo a carteira de
+# "Padrão", não "recomendado": a medição fora da amostra
+# (`views/portfolio_b3_oos_carteira.py`, fora da tela desde 30/10/2026 por
+# pedido do dono do projeto) não mostra este perfil batendo a carteira de
 # pesos iguais. Ele é o ponto de partida sem conflito entre restrições; chamá-lo
 # de recomendado prometia uma vantagem que a evidência não sustenta (N-B3-01).
 RECOMENDADO = "Equilibrado (padrão)"
@@ -93,8 +94,7 @@ PRESETS: dict[str, Preset] = {
             "EUCA4, que tem saúde limpa e classificação de oportunidade.",
         ),
         ressalva="Padrão não é recomendação: fora da amostra, este perfil não "
-                 "superou a carteira de pesos iguais com significância. Veja "
-                 "a seção \"A carteira de cada perfil, fora da amostra\".",
+                 "superou a carteira de pesos iguais com significância.",
     ),
     CONSERVADOR: Preset(
         nome=CONSERVADOR,

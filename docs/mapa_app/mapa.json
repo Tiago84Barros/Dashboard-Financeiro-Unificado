@@ -1997,7 +1997,7 @@
                     {
                       "nome": "Simulação e camadas extras",
                       "resumo": "Aporte, ano inicial e parecer por IA",
-                      "explicacao": "Aporte mensal, ano de início do teste, \"Mostrar auditoria dos segmentos\", peso de barganha, uso do histórico macro e \"Parecer qualitativo (LLM)\", em que uma inteligência artificial de texto pode vetar e substituir empresas.",
+                      "explicacao": "Aporte mensal, ano de início do teste, \"Mostrar segmentos aprovados\", peso de barganha, uso do histórico macro e \"Parecer qualitativo (LLM)\", em que uma inteligência artificial de texto pode vetar e substituir empresas.",
                       "so_admin": false
                     }
                   ]
@@ -2011,41 +2011,21 @@
               ]
             },
             {
-              "nome": "Auditoria de Segmentos — N analisados · N aprovados",
-              "resumo": "Quais segmentos passaram no teste e por quê",
-              "explicacao": "Tabela com todos os segmentos analisados, a situação de cada um (aprovado, reprovado ou inconclusivo) e os números do teste no passado, com uma legenda de como ler. Inconclusivo não é reprovação: significa que faltaram dados para concluir.",
-              "so_admin": false,
-              "filhos": [
-                {
-                  "nome": "Qualidade dos fundamentos usados pela carteira",
-                  "resumo": "Quantos dados foram corrigidos ou descartados",
-                  "explicacao": "Quadro que abre ao clicar, logo antes da auditoria, com a contagem de dados corrigidos ou inválidos usados no cálculo.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Segmentos Aprovados",
-                  "resumo": "Detalhe de cada segmento aprovado",
-                  "explicacao": "Um bloco por segmento aprovado com os resultados do teste. Só aparece se \"Mostrar auditoria dos segmentos\" estiver marcado nos parâmetros avançados.",
-                  "so_admin": false
-                }
-              ]
+              "nome": "Segmentos Aprovados (N)",
+              "resumo": "Detalhe de cada segmento que passou no teste",
+              "explicacao": "Um bloco por segmento aprovado com os resultados do teste no passado. Só aparece se \"Mostrar segmentos aprovados\" estiver marcado nos parâmetros avançados. Os segmentos reprovados ou inconclusivos não são listados: a tabela que os mostrava saiu da tela em 30/10/2026.",
+              "so_admin": false
             },
             {
               "nome": "Testes complementares",
-              "resumo": "Evidência geral e ações baratas e sólidas",
-              "explicacao": "Duas leituras que olham a bolsa por outro ângulo, além do teste segmento a segmento.",
+              "resumo": "A nota acerta olhando a bolsa inteira?",
+              "explicacao": "Uma leitura que olha a bolsa por outro ângulo, além do teste segmento a segmento.",
               "so_admin": false,
               "filhos": [
                 {
                   "nome": "Evidência no universo — o teste com amplitude",
                   "resumo": "A nota acerta olhando a bolsa inteira?",
                   "explicacao": "Junta todas as empresas para medir se a nota acertou quem rendeu mais no ano seguinte, com cartões de resultado e um selo a favor ou contra.",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Rota de valor — distorção com solvência",
-                  "resumo": "Ações baratas que não estão quebrando",
-                  "explicacao": "Procura empresas negociadas abaixo do valor estimado que também têm saúde financeira para sobreviver; você ajusta a margem de segurança mínima e outros limites. Separa oportunidade de \"armadilha de valor\" (ação barata porque a empresa vai mal).",
                   "so_admin": false
                 }
               ]
@@ -2059,7 +2039,7 @@
                 {
                   "nome": "Cartões das líderes",
                   "resumo": "Cada empresa escolhida, motivo e peso",
-                  "explicacao": "Logotipo, código, nome, motivos da escolha e peso sugerido de cada empresa na carteira.",
+                  "explicacao": "Logotipo, código, nome, motivos da escolha e peso sugerido de cada empresa na carteira. Quem entrou no lugar de outra pelo piso de qualidade ou pela Inteligência dos Ativos vem marcado nos motivos.",
                   "so_admin": false
                 },
                 {
@@ -2078,26 +2058,14 @@
             },
             {
               "nome": "Ajustes e verificações da carteira",
-              "resumo": "Vetos, trocas e saúde das escolhidas",
-              "explicacao": "Seções que mostram empresas reprovadas ou trocadas pelos filtros de segurança e a saúde das escolhidas. Cada uma só aparece se o filtro correspondente estiver ligado ou se houver algo a mostrar.",
+              "resumo": "Saúde, vetos da IA e trocas das escolhidas",
+              "explicacao": "Seções que mostram a saúde das escolhidas e as trocas feitas pelo parecer de inteligência artificial, por negociabilidade e por correlação. Cada uma só aparece se o filtro correspondente estiver ligado ou se houver algo a mostrar. As trocas do piso de qualidade e da Inteligência dos Ativos aparecem nos cartões das líderes.",
               "so_admin": false,
               "filhos": [
-                {
-                  "nome": "Piso absoluto de qualidade — reprovações e substituições",
-                  "resumo": "Empresas barradas por baixa qualidade",
-                  "explicacao": "Lista as empresas reprovadas pelo piso de qualidade e quem entrou no lugar, no mesmo segmento.",
-                  "so_admin": false
-                },
                 {
                   "nome": "Saúde das empresas selecionadas",
                   "resumo": "Solvência e dividendos de cada escolhida",
                   "explicacao": "Confere cada empresa escolhida quanto a dívidas, dividendo sustentável e retorno acima da Selic, com cartões de críticos e atenção. Inclui o quadro \"Como se comportaram nas recessões (2015-16 e 2020)\".",
-                  "so_admin": false
-                },
-                {
-                  "nome": "Inteligência dos Ativos — vetos e substituições",
-                  "resumo": "Empresas vetadas pela análise de notícias",
-                  "explicacao": "Mostra empresas vetadas ou substituídas depois de uma leitura de fundamentos, preço e notícias de cada candidata.",
                   "so_admin": false
                 },
                 {
@@ -2175,20 +2143,8 @@
                       "resumo": "Expectativa e fragilidade da carteira atual",
                       "explicacao": "Quatro cartões: se a nota ordena bem as empresas, se a carteira tende a superar a Selic e o mercado, e quão frágil é essa conclusão.",
                       "so_admin": false
-                    },
-                    {
-                      "nome": "Tamanho do viés de universo",
-                      "resumo": "Quanto a escolha dos segmentos inflou o resultado",
-                      "explicacao": "Ao clicar em \"Medir o viés de universo\", refaz as carteiras passadas sem o filtro de aprovação de segmentos, para mostrar quanto esse filtro pode ter favorecido o resultado.",
-                      "so_admin": false
                     }
                   ]
-                },
-                {
-                  "nome": "A carteira de cada perfil, fora da amostra",
-                  "resumo": "Resultado medido de cada perfil",
-                  "explicacao": "Um quadro por perfil (o perfil em uso vem aberto) com o resultado medido em anos que não foram usados para montar o método, contra pesos iguais, Selic e Ibovespa.",
-                  "so_admin": false
                 }
               ]
             },
