@@ -104,6 +104,23 @@ def test_quantidade_zerada_pela_corretora_fica_com_o_valor_da_foto():
     assert p["cotacao_fonte"] == "snapshot"
 
 
+def test_grupo_com_uma_linha_sem_quantidade_fica_com_o_valor_da_foto():
+    # O mesmo título em duas linhas da foto, uma delas com a quantidade
+    # zerada pela corretora. A soma das quantidades (1) vezes o PU perderia
+    # o valor da linha sem quantidade.
+    rows = [
+        _row("TSELIC2029", qty=1.0, vm=18000.0, invested=17000.0),
+        _row("TSELIC2029", qty=0.0, vm=5400.0, invested=5000.0),
+    ]
+    curva = {"TSELIC2029": (18000.0, date(2026, 10, 28))}
+
+    carteira, p = _pos(rows, "TSELIC2029", curva)
+
+    assert p["valor_mercado"] == 23400.0
+    assert p["cotacao_fonte"] == "snapshot"
+    assert carteira["total_mercado"] == 23400.0
+
+
 def test_papel_fora_da_curva_e_acao_nao_mudam():
     rows = [
         _row("CDB-BANCO-X", qty=1.0, vm=1100.0, invested=1000.0, tipo="fixed_income"),

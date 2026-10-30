@@ -1450,9 +1450,11 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
                 "live_ts":        None,   # timestamp do preço live
                 "usd_brl_rate":   None,   # taxa USD/BRL (apenas para USD assets)
                 "report_dates":   [],
+                "sem_quantidade": False,  # alguma row so com valor (qty=0)
             }
         g = grupos[base]
         g["rows"].append(r)
+        g["sem_quantidade"] = g["sem_quantidade"] or qty <= 0
         g["qty_snap_sum"] += qty
         g["vm_sum"]       += vm
         g["vi_snap_sum"]  += float(r.invested_value or 0)
@@ -1652,8 +1654,11 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
         report_date = max((d for d in g["report_dates"] if d is not None), default=None)
         foto_em = report_date.date() if isinstance(report_date, datetime) else report_date
         marcacao = curva_tesouro.get(base)
+        # Row com qty=0 e valor cheio nao tem quantidade para multiplicar
+        # pelo PU: remarcar o grupo pela soma das quantidades jogaria fora o
+        # valor dela. O grupo inteiro fica com o valor da foto.
         pela_curva = (
-            marcacao is not None and qty > 0
+            marcacao is not None and qty > 0 and not g["sem_quantidade"]
             and str(primary.asset_type or "").lower() in _TIPOS_TESOURO
             and (foto_em is None or marcacao[1] >= foto_em)
         )
