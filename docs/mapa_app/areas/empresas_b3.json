@@ -1,7 +1,7 @@
 {
   "nome": "Empresas B3",
   "resumo": "Estudar ações brasileiras e montar carteiras",
-  "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há sete abas, em forma de botões: navegar pelas empresas, estudar uma empresa, testar critérios, montar uma carteira, avaliá-la, ver a previsão de lucros e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada.",
+  "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há seis abas, em forma de botões: navegar pelas empresas, estudar uma empresa, testar critérios, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada.",
   "so_admin": false,
   "fonte": "app.py:74; views/empresas_b3.py:6808 (abas: design/market_companies.py:75 e :83; despacho em views/empresas_b3.py:6854-6878)",
   "filhos": [
@@ -987,47 +987,6 @@
           "explicacao": "Chat para perguntar sobre a carteira, com o botão \"Limpar chat\". Funciona mesmo antes de executar a análise, usando os números reais das empresas, e pode responder com gráficos.",
           "so_admin": false,
           "fonte": "views/analise_portfolio_b3.py:1693 -> :1397",
-          "filhos": []
-        }
-      ]
-    },
-    {
-      "nome": "Previsão de Lucros",
-      "resumo": "Testa se dá para prever o lucro seguinte",
-      "explicacao": "Mostra o resultado de um modelo que tenta prever se o lucro das empresas vai subir ou cair no próximo ano e se ele acerta mais que o palpite simples \"o lucro fica igual\". É só leitura de um resultado já medido; nada é calculado na hora. Se a previsão ainda não foi publicada, aparece apenas um aviso.",
-      "so_admin": false,
-      "fonte": "views/empresas_b3.py:6871 -> views/previsao_lucros_b3.py:223",
-      "filhos": [
-        {
-          "nome": "Veredito do holdout",
-          "resumo": "O modelo foi aprovado ou reprovado",
-          "explicacao": "Selo com o veredito final, medido num período de teste guardado à parte e usado uma única vez (o \"holdout\"), e três cartões: \"Erro vs. modelo ingênuo\", \"Acerto do sinal da variação\" e \"Efeito no Rank-IC do score\".",
-          "so_admin": false,
-          "fonte": "views/previsao_lucros_b3.py:235 e :51",
-          "filhos": []
-        },
-        {
-          "nome": "Veredito por safra",
-          "resumo": "Acertos e erros ano a ano",
-          "explicacao": "Tabela ano a ano com quantas empresas foram previstas e o erro do modelo comparado ao palpite simples.",
-          "so_admin": false,
-          "fonte": "views/previsao_lucros_b3.py:115",
-          "filhos": []
-        },
-        {
-          "nome": "Previsão para o exercício (ano)",
-          "resumo": "Lucro previsto de cada empresa",
-          "explicacao": "Tabela com o lucro do último ano, o lucro previsto e uma faixa de incerteza para cada empresa; a caixa \"Filtrar por ticker ou empresa\" ajuda a encontrar uma. É estatística, não recomendação de compra ou venda.",
-          "so_admin": false,
-          "fonte": "views/previsao_lucros_b3.py:156",
-          "filhos": []
-        },
-        {
-          "nome": "Efeito no Rank-IC do score B3",
-          "resumo": "A previsão melhora a nota das empresas?",
-          "explicacao": "Compara se a nota da B3 sozinha, a previsão sozinha ou as duas juntas acertam melhor quais ações vão subir mais. Só aparece quando essa medição existe.",
-          "so_admin": false,
-          "fonte": "views/previsao_lucros_b3.py:182",
           "filhos": []
         }
       ]

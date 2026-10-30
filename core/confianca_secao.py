@@ -129,15 +129,14 @@ SECOES_SEM_AFIRMACAO = ("Configurações",)
 # Subabas cujo numero a nota da tela NAO mede. A nota de uma tela e a do dado
 # que o motor dela le; subaba que mostra outro dado fica fora, e o card diz
 # isso -- sem a declaracao, 80% em "Empresas B3" parece valer tambem para a
-# Previsao de Lucros, que nenhum componente olha.
-#   * Previsao de Lucros: projecao de LPA, modelo proprio fora do indice.
+# Carteira 20, que nenhum componente olha.
 #   * Carteira 20: registro imutavel e desempenho diario publicados a parte.
 #   * Inteligencia dos Ativos: estrategia, politicas e LLM; a nota de
 #     Investimentos so mede o registro de operacoes.
 # Subaba nova entra aqui ou fica coberta pela nota, decidido no mesmo PR
 # (``tests/test_configuracoes_sincronizadas.py``).
 SUBABAS_FORA_DA_NOTA: dict[str, tuple[str, ...]] = {
-    "Empresas B3": ("Previsão de Lucros", "Carteira 20"),
+    "Empresas B3": ("Carteira 20",),
     "Investimentos": ("Inteligência dos Ativos",),
 }
 

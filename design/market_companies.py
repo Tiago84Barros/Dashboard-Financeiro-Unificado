@@ -67,13 +67,11 @@ NAV_ITEMS = (
     ("🧠", "Avaliação de Portfólio"),
 )
 
-# Só a vitrine B3 tem a previsão de lucros e a Carteira 20: a americana
-# despacha o índice 5 no ``else`` da Avaliação de Portfólio, então os itens
-# não entram em NAV_ITEMS.
-NAV_ITEMS_B3 = NAV_ITEMS + (("🔮", "Previsão de Lucros"), ("📒", "Carteira 20"))
+# Só a vitrine B3 tem a Carteira 20: a americana despacha o índice 5 no
+# ``else`` da Avaliação de Portfólio, então o item não entra em NAV_ITEMS.
+NAV_ITEMS_B3 = NAV_ITEMS + (("📒", "Carteira 20"),)
 
-_LARGURAS = {5: [2, 2, 2.5, 2.5, 2.5], 6: [2, 2, 2.2, 2.3, 2.4, 2.2],
-             7: [2, 2, 2.2, 2.3, 2.4, 2.2, 1.9]}
+_LARGURAS = {5: [2, 2, 2.5, 2.5, 2.5], 6: [2, 2, 2.2, 2.3, 2.4, 2.2]}
 
 
 def render_market_css() -> None:

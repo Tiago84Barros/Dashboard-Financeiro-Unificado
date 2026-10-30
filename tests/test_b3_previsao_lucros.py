@@ -220,3 +220,12 @@ def test_portfolio_b3_entrega_pares_com_ticker_sem_quebrar_os_de_tres():
     src = (RAIZ / "views" / "portfolio_b3.py").read_text(encoding="utf-8")
     assert '"ic_pairs_tk": ic_pairs_tk' in src
     assert "ic_pairs: list[tuple[int, float, float]]" in src
+
+
+def test_artefato_publicado_e_legivel_pelo_nucleo():
+    p = RAIZ / pl.ARTEFATO
+    if not p.exists():
+        pytest.skip("artefato ainda não publicado")
+    art = pl.carregar_artefato(str(p))
+    assert art["holdout"]["veredito"]["veredito"] in {"APROVADO", "REPROVADO"}
+    assert art["holdout_execucoes"] >= 1

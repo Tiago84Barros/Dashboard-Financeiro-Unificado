@@ -5,8 +5,7 @@ views/empresas_b3.py  — Dashboard Fundamentalista B3
   Tab 3 — Análise Avançada       (banco de testes por segmento: filtro, score)
   Tab 4 — Criação de Portfólio   (views/portfolio_b3.py)
   Tab 5 — Avaliação de Portfólio (views/analise_portfolio_b3.py)
-  Tab 6 — Previsão de Lucros     (views/previsao_lucros_b3.py)
-  Tab 7 — Carteira 20            (views/carteira20_b3.py)
+  Tab 6 — Carteira 20            (views/carteira20_b3.py)
 
 Banco de dados:  core.b3_data (facade c/ MARKET_READ_SOURCE) → b3_db legado ou market.*
 Preços:          market.historical_prices; yfinance só como reserva, com aviso
@@ -6915,10 +6914,6 @@ def render() -> None:
         from views import analise_portfolio_b3
 
         analise_portfolio_b3.render(show_header=False)
-    elif active == 5:
-        from views import previsao_lucros_b3
-
-        previsao_lucros_b3.render(show_header=False)
     else:
         from views import carteira20_b3
 
