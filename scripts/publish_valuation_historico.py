@@ -604,7 +604,11 @@ def desdobramentos(marcas) -> dict[str, list]:
     import pandas as pd
 
     from data_pipeline.market.b3_saidas import (
-        FATORES_REDONDOS, TOL_MARCADOR, EventoCapital, marcador_b3)
+        FATORES_REDONDOS,
+        TOL_MARCADOR,
+        EventoCapital,
+        marcador_b3,
+    )
     saida: dict[str, list] = {}
     if marcas.empty:
         return saida
