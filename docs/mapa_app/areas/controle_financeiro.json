@@ -48,7 +48,7 @@
         {
           "nome": "Categoria, Data, Valor (R$) e Descrição (opcional)",
           "resumo": "Os dados do lançamento",
-          "explicacao": "As categorias são as cadastradas em Configurações → Geral. A data já vem dentro do mês escolhido. Se a descrição ficar vazia, o nome da categoria é usado no lugar.",
+          "explicacao": "As categorias são as cadastradas em Configurações → Geral, menos as que você retirou de lá. A data já vem dentro do mês escolhido. Se a descrição ficar vazia, o nome da categoria é usado no lugar.",
           "so_admin": false,
           "fonte": "views/controle_financeiro.py:396",
           "filhos": []

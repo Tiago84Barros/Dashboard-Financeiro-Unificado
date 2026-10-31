@@ -880,7 +880,8 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
         "categoria": _node(
             "categoria", "Categorias", "Classificação",
             "Classifica cada lançamento; 'Pagamento de Cartão' representa a quitação da fatura pela conta. "
-            "Categoria nova se cria em Configurações › ⚙️ Geral › 🏷️ Categorias.",
+            "Categoria nova se cria — e a que você não usa se retira do seletor — em "
+            "Configurações › ⚙️ Geral › 🏷️ Categorias.",
             (
                 "Entrada / saída / investimento",
                 "'Pagamento de Cartão' permitido no manual",
@@ -1776,18 +1777,25 @@ FLOW_CONFIGURACOES = FlowSpec(
         "cfg_categorias": _node(
             "cfg_categorias", "Categorias do Controle Financeiro", "Preferências",
             "Cria as categorias que aparecem ao lançar entrada, saída ou investimento no "
-            "Controle Financeiro, e arquiva as que você criou e não usa mais.",
+            "Controle Financeiro, retira do seu seletor as que você não usa — as de "
+            "sistema também — e devolve as retiradas.",
             (
                 "Aba ⚙️ Geral, bloco 02 (🏷️ Categorias do Controle Financeiro)",
                 "Seletor Tipo: Entrada, Saída ou Investimento",
                 "Campo Nova categoria e botão ➕ Criar categoria",
-                "📦 Arquivar só para categoria criada por você; as de sistema não se arquivam",
-                "core.categorias (listar, criar, arquivar)",
+                "Retirar do seletor (várias de uma vez) e botão ➖ Retirar categoria; "
+                "a última categoria do tipo não sai",
+                "Retiradas do tipo e botão ↩️ Devolver ao seletor",
+                "core.categorias (listar, criar, retirar, devolver)",
+                "Retiradas gravadas na conta: user_settings.extra_settings → "
+                "cf_categorias_retiradas (lista de ids), sem migration",
                 "Categoria que falta no banco vira aviso para rodar a migration 072 "
                 "(supabase_unificado/schema/072_categorias.sql)",
             ),
-            "Arquivar, nunca apagar: a categoria some do seletor e os lançamentos antigos "
-            "continuam classificados nela. Apagar levaria a classificação junto, sem volta.",
+            "Retirar, nunca apagar: a opção some do SEU seletor e os lançamentos antigos "
+            "continuam classificados nela. A categoria de sistema é de todas as contas, "
+            "por isso o que se retira é a preferência de quem pediu, não a linha do banco. "
+            "Apagar levaria a classificação junto, sem volta.",
         ),
         "cfg_trocar_usuario": _node(
             "cfg_trocar_usuario", "Trocar de usuário", "Preferências",
