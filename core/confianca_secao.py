@@ -750,8 +750,44 @@ def _curva_do_tesouro(conn) -> Componente:
         f"PU de recompra de {dias} dias atras marca os titulos publicos")
 
 
+TAXA_CONTRATADA_TESOURO = "Taxa contratada do Tesouro"
+PESO_TAXA_CONTRATADA_TESOURO = 0.10
+
+_SQL_TAXAS_DO_ULTIMO_EXTRATO = """
+SELECT l.contracted_rate
+  FROM tesouro_lots l
+  JOIN (SELECT user_id, security_key, max(report_date) AS report_date
+          FROM tesouro_lots GROUP BY user_id, security_key) u
+    ON u.user_id = l.user_id AND u.security_key = l.security_key
+   AND u.report_date = l.report_date
+"""
+
+
+def _taxa_contratada_do_tesouro(conn) -> Componente:
+    """Lotes do extrato mais recente cuja taxa contratada o app consegue ler.
+
+    E a taxa que o painel do Tesouro usa para marcar cada compra e que o chat da
+    sub-aba Tesouro repete (desde 31/10/2026). Mede-se com o mesmo leitor do
+    painel: texto que ele nao entende e lote sem taxa, nao taxa zero. Sem
+    extrato importado fica "nao medido" -- o chat deduz a taxa pela
+    Movimentacao e diz que e aproximacao.
+    """
+    from sqlalchemy import text
+
+    from core.tesouro_mtm import parse_taxa_contratada
+    taxas = [linha[0] for linha in conn.execute(text(_SQL_TAXAS_DO_ULTIMO_EXTRATO))]
+    if not taxas:
+        return Componente(TAXA_CONTRATADA_TESOURO, None, PESO_TAXA_CONTRATADA_TESOURO,
+                          "nenhum Extrato Analitico do Tesouro importado")
+    lidas = sum(parse_taxa_contratada(t) is not None for t in taxas)
+    return Componente(
+        TAXA_CONTRATADA_TESOURO, 100.0 * lidas / len(taxas),
+        PESO_TAXA_CONTRATADA_TESOURO,
+        f"{lidas} de {len(taxas)} lotes do ultimo extrato com taxa contratada legivel")
+
+
 def confianca_investimentos(engine=None) -> ConfiancaSecao:
-    """Registro de operacoes mais a curva que marca o Tesouro da carteira."""
+    """Registro de operacoes, a curva que marca o Tesouro e a taxa de cada compra."""
     from core.database import get_engine
     base = _confianca_pessoal(engine, "Investimentos",
                               "public.investment_transactions",
@@ -763,6 +799,15 @@ def confianca_investimentos(engine=None) -> ConfiancaSecao:
             comps.append(_curva_do_tesouro(conn))
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente(CURVA_DO_TESOURO, None, PESO_CURVA_DO_TESOURO,
+                                f"nao medido: {type(exc).__name__}"))
+    # Conexao propria: uma falha aqui nao pode levar junto a medida da curva.
+    try:
+        eng = engine or get_engine()
+        with eng.connect() as conn:
+            comps.append(_taxa_contratada_do_tesouro(conn))
+    except Exception as exc:  # noqa: BLE001
+        comps.append(Componente(TAXA_CONTRATADA_TESOURO, None,
+                                PESO_TAXA_CONTRATADA_TESOURO,
                                 f"nao medido: {type(exc).__name__}"))
     return ConfiancaSecao("Investimentos", tuple(comps), base.universo, base.notas)
 

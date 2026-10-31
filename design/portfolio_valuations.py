@@ -11,6 +11,7 @@ from core.portfolio_valuations import (
     aggregate_valuations,
     load_valuation_fundamentals,
     metric_spec,
+    texto_marcacao_tesouro,
 )
 from design.lacunas import aviso_lacuna, detalhe_tecnico
 
@@ -222,7 +223,7 @@ def render_valuations_tesouro(positions, ano_atual: int):
         aviso_lacuna('Parte do valor está em títulos sem ano identificável no código '
                      'e ficou fora do prazo médio.',
                      codigo='tela.carteira.tesouro_titulo_sem_ano')
-    detalhe_tecnico('O valor de mercado vem do saldo informado pela corretora, não de '
-                    'marcação a mercado independente título a título neste app.',
-                    codigo='carteira.tesouro_valor_de_mercado')
+    marcacao = texto_marcacao_tesouro(resumo['marcacao'])
+    if marcacao:
+        detalhe_tecnico(marcacao, codigo='carteira.tesouro_valor_de_mercado')
     return resumo

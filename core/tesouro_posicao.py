@@ -544,3 +544,22 @@ def carregar_titulos(engine, user_id: str,
         ))
 
     return sorted(titulos, key=lambda t: (t.vencimento, t.security_key))
+
+
+def lotes_para_contexto(engine, user_id: str) -> dict:
+    """Lotes do Tesouro para o contexto da LLM: ``{"titulos", "diagnostico"}``.
+
+    Falha vira ``{"erro": ...}`` em vez de lista vazia: a LLM precisa poder
+    dizer "não foi carregado" sem afirmar "não existe".
+    """
+    if engine is None:
+        return {"erro": "sem conexão com o banco"}
+    if not user_id:
+        return {"erro": "sem usuário identificado na sessão"}
+    diagnostico: dict = {}
+    try:
+        titulos = carregar_titulos(engine, user_id, diagnostico=diagnostico)
+    except Exception as exc:  # noqa: BLE001 - o chat segue sem os lotes
+        logger.warning("tesouro_posicao: lotes para o contexto falharam (%s)", exc)
+        return {"erro": f"{type(exc).__name__}: {exc}"}
+    return {"titulos": titulos, "diagnostico": diagnostico}

@@ -89,8 +89,17 @@ No lugar do confronto com um universo, a sub-aba mostra a **conjuntura** de
 porque o emissor é único e não existe corte transversal para ranquear — e o
 painel diz isso, em vez de exibir um score vazio.
 
-Limitação preservada: o valor de mercado vem do saldo informado pela corretora,
-não de marcação a mercado independente título a título.
+O valor de mercado de cada título vem da curva oficial do Tesouro (PU de
+recompra da data-base mais recente). Curva fora da janela de cotação marca, mas
+é dita desatualizada; título que a curva não alcança fica com o saldo da foto
+da corretora/B3, e a sub-aba conta quantos títulos saíram de cada fonte.
+
+O chat da sub-aba recebe também os **lotes** do Tesouro (`tesouro_lots`, do
+Extrato Analítico; na falta dele, as compras da Movimentação, com a taxa
+deduzida do PU pago): data de cada compra, taxa contratada, taxa de hoje e
+marcação a mercado por título, com a cobertura dos lotes contra a posição
+atual. O peso de cada lote vai em percentual; quantidade e reais, só com o
+"mostrar valores" ligado.
 
 ## 3. Confronto com o universo do banco
 

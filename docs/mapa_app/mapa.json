@@ -1132,7 +1132,7 @@
                 {
                   "nome": "Médias do Tesouro Direto na carteira",
                   "resumo": "Prazo, indexadores e números médios dos títulos",
-                  "explicacao": "Cartões com números médios dos seus títulos e a composição por indexador, que é o que corrige o título (Selic, IPCA ou taxa prefixada).",
+                  "explicacao": "Cartões com números médios dos seus títulos e a composição por indexador, que é o que corrige o título (Selic, IPCA ou taxa prefixada). Uma nota técnica diz de onde veio o valor de mercado de cada título: da curva oficial do Tesouro, da última curva quando ela está desatualizada, ou do saldo da corretora quando a curva não alcança o título.",
                   "so_admin": false
                 },
                 {
@@ -1144,7 +1144,7 @@
                 {
                   "nome": "Converse sobre seu Tesouro Direto",
                   "resumo": "Chat com IA e botão de dossiê",
-                  "explicacao": "Chat focado nos títulos públicos, com perguntas sugeridas (por exemplo, o efeito de vender antes do vencimento) e o botão 'Gerar dossiê da classe'.",
+                  "explicacao": "Chat focado nos títulos públicos, com perguntas sugeridas (por exemplo, o efeito de vender antes do vencimento) e o botão 'Gerar dossiê da classe'. A IA conhece cada compra que você fez: a data, a taxa contratada impressa no Extrato Analítico do Tesouro e a taxa de hoje. Sem extrato importado, ela usa as compras registradas na B3 e avisa que a taxa é aproximada.",
                   "so_admin": false
                 }
               ]
