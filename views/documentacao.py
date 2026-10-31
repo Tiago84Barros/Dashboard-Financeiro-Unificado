@@ -798,12 +798,17 @@ FLOW_INVESTIMENTOS = FlowSpec(
             "analise_ai", "Subaba 🔍 Análise", "Saída",
             "Análise do Portfólio em sete subabas: 📋 Visão Geral (com as Posições da "
             "Carteira), 📈 Ações, 🏢 FIIs, 🏦 Tesouro, 🌎 Exterior, 🔔 Alertas e 🌪️ Stress. "
-            "Tabelas não é aba desta tela: as posições moram em Visão Geral. O chat do "
+            "Tabelas não é aba desta tela: as posições moram em Visão Geral. A Visão Geral "
+            "traz também o Desempenho por Categoria: linhas de retorno de Ações, FIIs, "
+            "Empresas Americanas, ETFs Americanos, Tesouro Direto e Renda Fixa, com as "
+            "posições de hoje, cada linha a partir do seu primeiro preço no período e "
+            "seleção do que comparar (core.desempenho_categorias). O chat do "
             "🏦 Tesouro recebe os lotes de cada título (tesouro_lots, do Extrato Analítico; "
             "na falta dele, as compras da Movimentação com a taxa deduzida): data de cada "
             "compra, taxa contratada, taxa de hoje na curva e marcação a mercado, além de "
             "quanto da posição atual esses lotes cobrem.",
-            ("_tab_analise()", "Posições da Carteira", "Uma subaba por classe",
+            ("_tab_analise()", "Desempenho por Categoria", "Posições da Carteira",
+             "Uma subaba por classe",
              "tesouro_lots no chat do Tesouro", "Alertas", "Stress Tests Históricos"),
             "A transparência fica no nível do ativo, separada por classe.",
         ),

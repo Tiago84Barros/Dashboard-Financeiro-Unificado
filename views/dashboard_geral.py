@@ -541,7 +541,11 @@ def _render_kpi_grid(
     patrimonio_investido = patrimonio_investido_confiavel(carteira, pat)
     num_ativos = int(carteira.get("num_ativos") or 0)
     saldo_cor = _cor_saldo_caixa(ind["status"])
-    taxa_cor = _COR_FLUXO if taxa >= 30 else _COR_ALERTA if taxa >= 15 else _COR_NEGATIVO
+    de_caixa_anterior = ind["poupanca_de_caixa_anterior"]
+    taxa_cor = (_COR_ALERTA if de_caixa_anterior else
+                _COR_FLUXO if taxa >= 30 else _COR_ALERTA if taxa >= 15 else _COR_NEGATIVO)
+    taxa_status = ("déficit no mês · aporte veio de caixa anterior" if de_caixa_anterior else
+                   "atingida" if taxa >= 30 else "em acompanhamento")
     rentab_cor = _COR_FLUXO if rentab >= 0 else _COR_NEGATIVO
     patrimonio_valor = (
         fmt_moeda(patrimonio_investido)
@@ -593,7 +597,7 @@ def _render_kpi_grid(
             f'Sobra do mês {escape(fmt_moeda(saldo))} + aportes {escape(fmt_moeda(investimentos))}'
             f'{" · no teto da renda" if ind["poupanca_no_teto"] else ""}'
             f' · meta 30% · <strong style="color:{_cor_texto(taxa_cor)}">'
-            f'{"atingida" if taxa >= 30 else "em acompanhamento"}</strong>',
+            f'{taxa_status}</strong>',
             "%",
             taxa_cor,
         )),
@@ -1096,7 +1100,9 @@ def _secao_resumo_modulos(
                 # A taxa soma o aporte à sobra; sem ele visível, saldo
                 # negativo ao lado de taxa positiva parece erro de conta.
                 ("Aportes no mês", fmt_moeda(investimentos_mes), _COR_PATRIMONIO),
-                ("Taxa de poupança", fmt_percentual(taxa_poupanca, sinal=False), _COR_ALERTA if taxa_poupanca < 30 else _COR_FLUXO),
+                ("Taxa de poupança", fmt_percentual(taxa_poupanca, sinal=False),
+                 _COR_ALERTA if taxa_poupanca < 30 or ind_caixa["poupanca_de_caixa_anterior"]
+                 else _COR_FLUXO),
             ],
             _COR_FLUXO,
         )),

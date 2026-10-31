@@ -74,6 +74,10 @@ DFP). Mediana do lucro ÷ preço, negativos inclusos, e P/L = 1 ÷ mediana: a
 mediana resiste a LPA em escala errada, a média ponderada por liquidez não
 (saía P/L 0,1 e 331 em meses vizinhos). NÃO é o P/L do Ibovespa, que pondera
 por valor de mercado e fica bem abaixo por causa de bancos, Petrobras e Vale.
+Desde 28/10/2026 o prejuízo entra de qualquer tamanho (a CSAN3 de 2025 ficava
+fora por ser maior que o preço) e o LPA é rebaseado pelo desdobramento ou
+grupamento que a B3 marcou na fita depois da DFP (``desdobramentos``): a
+brapi dá o LPA na base de ações do exercício e nunca o retroajusta.
 
 Recusa publicar (saída 1) se a fita da B3 estiver parada há mais de
 ``FITA_MAXIMA_DIAS``, se o mês mais recente da fita ficar fora da série do
@@ -109,6 +113,8 @@ MERCADO_MIN_VALIDAS = 20        # mês com menos que isso não entra na série
 MERCADO_PL_MAXIMO = 200.0       # P/L acima disso: LPA em escala errada
 MERCADO_PL_MINIMO = 1.0         # abaixo disso também (ITUB4 2019, LPA 2.780)
 MERCADO_IMPLAUSIVEIS_MAX = 10   # no último mês: de 2023 em diante foram 0 a 2
+MERCADO_MARCA_DIAS = 30         # depois de um desdobramento aceito, a marca que segue é a dele
+MERCADO_SALTO_MINIMO = 2.5      # salto sem fator redondo que ainda é desdobramento
 
 METODO = {
     "b3": ("Anual. P/L = fechamento do último pregão do ano na fita da B3 "
@@ -155,10 +161,14 @@ METODO = {
                    "fita, uma classe por empresa): fechamento do último "
                    "pregão do mês na fita ÷ LPA do último exercício publicado "
                    "(ano anterior a partir de abril, senão o retrasado). "
-                   "P/L = 1 ÷ mediana do lucro ÷ preço, prejuízos inclusos. "
+                   "P/L = 1 ÷ mediana do lucro ÷ preço, prejuízos de "
+                   "qualquer tamanho inclusos. Desdobramento ou grupamento "
+                   "marcado pela B3 (EB/EG) depois de março do ano seguinte "
+                   "ao exercício divide o LPA pelo fator, porque ele vem na "
+                   "base de ações da DFP. "
                    f"Fora da conta: sem LPA do exercício, P/L acima de "
                    f"{MERCADO_PL_MAXIMO:.0f} ou abaixo de "
-                   f"{MERCADO_PL_MINIMO:.0f} e prejuízo maior que o preço "
+                   f"{MERCADO_PL_MINIMO:.0f} "
                    "(LPA em escala errada). Mês com menos de "
                    f"{MERCADO_MIN_VALIDAS} ações válidas fica fora. NÃO é o "
                    "P/L do Ibovespa (ponderado por valor de mercado)."),
@@ -574,18 +584,86 @@ def exercicio_publicado(mes) -> int:
     return mes.year - 1 if mes.month >= 4 else mes.year - 2
 
 
-def mercado_b3(fechamentos, volumes, lpa, *, n: int = UNIVERSO_MERCADO,
-               ano_inicial: int = ANO_INICIAL + 1) -> dict:
+def desdobramentos(marcas) -> dict[str, list]:
+    """{ticker: [EventoCapital]} dos desdobramentos e grupamentos marcados pela B3.
+
+    ``marcas``: ticker, data, espec, close, anterior -- os pregões com B ou G
+    na marcação "ex" (``b3_saidas.marcador_b3``) e o fechamento do pregão
+    anterior. Todo pregão marcado é candidato: fator = anterior ÷
+    fechamento, levado ao fator redondo mais próximo a ``TOL_MARCADOR``; sem
+    redondo, o próprio salto, se passar de ``MERCADO_SALTO_MINIMO`` no
+    sentido da marca (grupamento de 15:1 da HAPV3 em 06/2025). A B3 mantém
+    a marca por dias, então um evento aceito cala os candidatos dos
+    ``MERCADO_MARCA_DIAS`` seguintes. O salto decide, não o começo da
+    sequência de marcas: a marca de juros ou bonificação de semanas antes
+    escondia o desdobramento (SBSP3 1:5 em 04/2026, a 29 dias de um EJB;
+    CIEL3 3:1 em 05/2011). Bonificação (até 1,5x) fica fora: não tira P/L
+    plausível da faixa, e com a marca intermitente um pregão de 5% virava
+    bonificação de 5% (SBSP3, 12/2025).
+    """
+    import pandas as pd
+
+    from data_pipeline.market.b3_saidas import (
+        FATORES_REDONDOS,
+        TOL_MARCADOR,
+        EventoCapital,
+        marcador_b3,
+    )
+    saida: dict[str, list] = {}
+    if marcas.empty:
+        return saida
+    m = marcas.assign(marca=marcas["espec"].map(marcador_b3),
+                      data=pd.to_datetime(marcas["data"]))
+    m = (m[m["marca"].str.contains("[BG]")]
+         .sort_values(["ticker", "data"]).drop_duplicates(["ticker", "data"]))
+    janela = pd.Timedelta(days=MERCADO_MARCA_DIAS)
+    for r in m.itertuples():
+        k = float(r.anterior) / float(r.close)
+        cands = ([1.0 / f for f in FATORES_REDONDOS] if "G" in r.marca else []) \
+            + ([float(f) for f in FATORES_REDONDOS] if "B" in r.marca else [])
+        c = min(cands, key=lambda c: abs(math.log(c / k)))
+        if abs(math.log(c / k)) <= TOL_MARCADOR:
+            fator = c
+        elif (("G" in r.marca and 1e-3 <= k <= 1 / MERCADO_SALTO_MINIMO)
+              or ("B" in r.marca and MERCADO_SALTO_MINIMO <= k <= 1e3)):
+            fator = round(k, 4)
+        else:
+            continue
+        aceitos = saida.setdefault(str(r.ticker), [])
+        if aceitos and r.data - aceitos[-1].data <= janela:
+            continue
+        aceitos.append(EventoCapital(r.data, fator, "marcador_b3"))
+    return saida
+
+
+def mercado_b3(fechamentos, volumes, lpa, *, eventos: dict | None = None,
+               n: int = UNIVERSO_MERCADO, ano_inicial: int = ANO_INICIAL + 1) -> dict:
     """Série mensal do P/L mediano ponto-no-tempo. Puro sobre DataFrames.
 
     ``fechamentos``: ticker, data (último pregão do mês), close (fita, sem
     ajuste). ``volumes``: ticker, ano, vol. ``lpa``: ticker, ano, lpa.
+    ``eventos``: {ticker: [EventoCapital]} (``desdobramentos``). O LPA vem
+    na base de ações da DFP; desdobramento ou grupamento depois dela (abril
+    do ano seguinte ao exercício) e até o pregão divide o LPA pelo fator --
+    sem isso o 1:5 da SBSP3 em 04/2026 e o da ASAI3 em 08/2021 davam P/L 5x
+    menor até a DFP seguinte.
     Devolve {"serie": [[data, p_l, lucro_sobre_preco_pct, n], ...],
     "ultimo": {...}, "descartado": {...} | None} -- ``ultimo`` diz quem ficou
-    fora no último mês da série e por quê; ``descartado``, o mesmo do mês mais
-    recente da fita quando ele não entrou (menos de MERCADO_MIN_VALIDAS).
+    fora no último mês da série e por quê (e o fator de quem foi rebaseado);
+    ``descartado``, o mesmo do mês mais recente da fita quando ele não entrou
+    (menos de MERCADO_MIN_VALIDAS).
+
+    Prejuízo entra de qualquer tamanho: a mediana só depende do sinal dele,
+    e cortá-lo puxava o P/L mediano para baixo (a CSAN3 de 2025, prejuízo
+    maior que o preço, é real). LPA em escala errada ainda cai pelo lado
+    positivo -- e lá a faixa fica, porque lucro real minúsculo (VALE3 2013,
+    P/L 900-1600) e LPA na base errada (CSNA3 2017, 10x menor; AZUL4, LPA
+    da ON, que vale 1/75 da PN) dão P/L na mesma faixa.
     """
     import pandas as pd
+
+    from data_pipeline.market.b3_saidas import fator_acumulado
+    eventos = eventos or {}
     lpa_d = {(str(r.ticker), int(r.ano)): float(r.lpa) for r in lpa.itertuples()
              if pd.notna(r.lpa)}
     universo = universo_mercado(volumes, set(lpa["ticker"].astype(str)), n=n)
@@ -598,7 +676,9 @@ def mercado_b3(fechamentos, volumes, lpa, *, n: int = UNIVERSO_MERCADO,
             continue
         px = {str(r.ticker): (float(r.close), r.data) for r in g.itertuples()}
         exerc = exercicio_publicado(mes)
+        dfp = pd.Timestamp(exerc + 1, 3, 31)
         eys, sem_lpa, sem_preco, implausiveis = [], [], [], []
+        rebaseadas = {}
         for tk in universo[mes.year]:
             if tk not in px or not px[tk][0] > 0:
                 sem_preco.append(tk)
@@ -607,9 +687,12 @@ def mercado_b3(fechamentos, volumes, lpa, *, n: int = UNIVERSO_MERCADO,
             if lucro is None or lucro == 0:
                 sem_lpa.append(tk)
                 continue
+            fator = fator_acumulado(eventos.get(tk, []), dfp, px[tk][1])
+            if fator != 1.0:
+                lucro /= fator
+                rebaseadas[tk] = _r(fator)
             ey = lucro / px[tk][0]
-            if ey < -1 or (ey > 0 and not
-                           MERCADO_PL_MINIMO <= 1 / ey <= MERCADO_PL_MAXIMO):
+            if ey > 0 and not MERCADO_PL_MINIMO <= 1 / ey <= MERCADO_PL_MAXIMO:
                 implausiveis.append(tk)
                 continue
             eys.append(ey)
@@ -618,7 +701,7 @@ def mercado_b3(fechamentos, volumes, lpa, *, n: int = UNIVERSO_MERCADO,
                 "universo": len(universo[mes.year]), "validas": len(eys),
                 "negativas": sum(1 for y in eys if y < 0),
                 "sem_lpa": sem_lpa, "sem_preco": sem_preco,
-                "implausiveis": implausiveis}
+                "implausiveis": implausiveis, "rebaseadas": rebaseadas}
         if len(eys) < MERCADO_MIN_VALIDAS:
             descartado = quem
             continue
@@ -669,6 +752,26 @@ _SQL_FECHAMENTO_MENSAL = """
 """
 
 
+# Pregões com B ou G na marca "ex" e o fechamento do pregão anterior; o
+# filtro de texto é largo e ``desdobramentos`` refaz com ``marcador_b3``.
+_SQL_DESDOBRAMENTOS = r"""
+    WITH d AS (
+        SELECT DISTINCT ON (ticker, trade_date) ticker, trade_date, specification,
+               COALESCE(close_unitario, close / NULLIF(fator_cotacao, 0)) AS close
+          FROM market.b3_security_history
+         WHERE close > 0 AND trade_date >= make_date(:ini, 1, 1)
+         ORDER BY ticker, trade_date, collected_at DESC
+    ), l AS (
+        SELECT ticker, trade_date, specification, close,
+               LAG(close) OVER (PARTITION BY ticker ORDER BY trade_date) AS anterior
+          FROM d
+    )
+    SELECT ticker, trade_date AS data, specification AS espec, close, anterior
+      FROM l
+     WHERE specification ~ '(^| )\*?E[A-Z]*[BG]' AND anterior > 0
+"""
+
+
 def coletar_mercado_b3(conn, sucessoes=None) -> dict:
     fech = _ler(conn, _SQL_FECHAMENTO_MENSAL, ini=ANO_INICIAL + 1)
     vol = _ler(conn, """
@@ -684,13 +787,17 @@ def coletar_mercado_b3(conn, sucessoes=None) -> dict:
          WHERE period = 'annual' AND year >= :ini
          ORDER BY ticker, year, updated_at DESC
     """, ini=ANO_INICIAL)
+    marcas = _ler(conn, _SQL_DESDOBRAMENTOS, ini=ANO_INICIAL)
     fech["close"] = fech["close"].astype(float)
     vol["vol"] = vol["vol"].astype(float)
     lpa["lpa"] = lpa["lpa"].astype(float)
-    fech, vol = mercado_pela_sucessao(
-        fech, vol, sucessoes if sucessoes is not None else _sucessoes(conn),
-        set(lpa["ticker"].astype(str)))
-    return mercado_b3(fech, vol, lpa)
+    suc = sucessoes if sucessoes is not None else _sucessoes(conn)
+    com_lpa = set(lpa["ticker"].astype(str))
+    fech, vol = mercado_pela_sucessao(fech, vol, suc, com_lpa)
+    if suc:
+        from data_pipeline.market.b3_sucessao import canonizar_fita
+        marcas = canonizar_fita(marcas, suc, com_lpa)
+    return mercado_b3(fech, vol, lpa, eventos=desdobramentos(marcas))
 
 
 def mercado_pela_sucessao(fech, vol, sucessoes: dict, com_lpa):
