@@ -227,6 +227,7 @@ def test_so_alvo_com_artefato_declarado_chega_ao_git(monkeypatch):
     """
     chamados = []
     monkeypatch.setattr(av, "registrar", lambda _: None)
+    monkeypatch.setattr(av, "atualizar_main", lambda _r, **_k: _AtualizacaoOk())
     monkeypatch.setattr(av, "publicar_artefatos",
                         lambda raiz, caminhos, msg: chamados.append(caminhos)
                         or _ResultadoFalso(True, "ok"))
@@ -248,6 +249,7 @@ def test_recusa_do_git_vira_falha_e_nao_some_no_log(monkeypatch):
     de 31/08/2026 voltando pela porta dos fundos.
     """
     monkeypatch.setattr(av, "registrar", lambda _: None)
+    monkeypatch.setattr(av, "atualizar_main", lambda _r, **_k: _AtualizacaoOk())
     monkeypatch.setattr(
         av, "publicar_artefatos",
         lambda *_: _ResultadoFalso(False, "ramo atual é trabalho, não main"))
@@ -257,6 +259,34 @@ def test_recusa_do_git_vira_falha_e_nao_some_no_log(monkeypatch):
 
     assert len(avisos) == 1
     assert "fii_selection" in avisos[0] and "não main" in avisos[0]
+
+
+def test_artefato_avanca_a_main_antes_do_commit(monkeypatch):
+    """A rotina leva horas e o merge da noite cai no meio dela.
+
+    Commitar o artefato em cima da main que ficou para trás dá push rejeitado e,
+    na noite seguinte, divergência -- que a guarda agora trata como bloqueio.
+    O avanço vem antes do commit e tenta uma vez só.
+    """
+    ordem = []
+    monkeypatch.setattr(av, "registrar", lambda _: None)
+    monkeypatch.setattr(av, "atualizar_main",
+                        lambda _r, **k: ordem.append(("git", k)) or _AtualizacaoOk())
+    monkeypatch.setattr(av, "publicar_artefatos",
+                        lambda *_: ordem.append(("commit", {}))
+                        or _ResultadoFalso(True, "ok"))
+
+    av.levar_artefatos_ao_repositorio(
+        [_AlvoFalso("fii_selection", ("data/public/vitrine.json.gz",))])
+
+    assert ordem == [("git", {"pausas": ()}), ("commit", {})]
+
+
+def test_sem_artefato_nao_busca_a_origin(monkeypatch):
+    monkeypatch.setattr(av, "registrar", lambda _: None)
+    monkeypatch.setattr(av, "atualizar_main", _nunca)
+    monkeypatch.setattr(av, "publicar_artefatos", _nunca)
+    assert av.levar_artefatos_ao_repositorio([_AlvoFalso("us_prices", ())]) == []
 
 
 def test_cdi_a_espera_da_primeira_publicacao_fica_devido(tmp_path, monkeypatch):
@@ -354,6 +384,8 @@ def test_prazo_esgotado(decorrido_min, prazo_min, esperado):
 
 class _AtualizacaoOk:
     ok = True
+    pode_publicar = True
+    avancou = 0
 
     def resumo(self):
         return "main local já em dia"
@@ -386,6 +418,131 @@ def test_prazo_esgotado_adia_o_resto_e_notifica_em_vez_de_morrer_calado(monkeypa
     # Adiado não ganha registro: segue vencido para a próxima execução.
     assert "cdi_diario" in gravados[-1]
     assert "macro_brasil" not in gravados[-1] and "b3_brapi" not in gravados[-1]
+
+
+# --- a guarda: sem a origin/main inteira no HEAD, nenhum publicador roda -----
+
+_DEVIDOS_DA_GUARDA = ("cdi_diario", "brapi_raw_poda", "b3_brapi")
+
+
+def _rotina_vigiada(monkeypatch, atualizacao, *, recarregada=False):
+    """Prepara `main` com três alvos vencidos e devolve o que ela fez.
+
+    `atualizacao` é o que `atualizar_main` devolve; as chamadas a ele ficam em
+    `feito["git"]`. Nada aqui sobe Docker, roda publicador ou fala com o git.
+    """
+    feito = {"git": 0, "executados": [], "gravados": [], "avisos": []}
+    devidos = [(POR_CHAVE[c], "vencido") for c in _DEVIDOS_DA_GUARDA]
+    if recarregada:
+        monkeypatch.setenv(av._RECARREGADA, "1")
+    else:
+        monkeypatch.delenv(av._RECARREGADA, raising=False)
+
+    def _atualizar(_raiz, **_k):
+        feito["git"] += 1
+        return atualizacao
+
+    monkeypatch.setattr(av, "atualizar_main", _atualizar)
+    monkeypatch.setattr(av, "registrar", lambda _m: None)
+    monkeypatch.setattr(av, "ler_estado", lambda: {})
+    monkeypatch.setattr(av, "alvos_devidos", lambda *a, **k: devidos)
+    monkeypatch.setattr(av, "gravar_estado", lambda e: feito["gravados"].append(dict(e)))
+    monkeypatch.setattr(av, "armazem_pronto", lambda: True)
+    monkeypatch.setattr(av, "executar",
+                        lambda alvo, _amb: feito["executados"].append(alvo.chave)
+                        or (True, ""))
+    monkeypatch.setattr(av, "levar_artefatos_ao_repositorio", lambda _a: [])
+    monkeypatch.setattr(av, "verificar", lambda *_a: (True, ""))
+    monkeypatch.setattr(av, "notificar",
+                        lambda msg, titulo: feito["avisos"].append((titulo, msg)))
+    return feito
+
+
+@pytest.mark.parametrize("erro", [
+    "main local divergiu: 9 commit(s) à frente e 3 atrás da origin/main.",
+    "fast-forward recusado (3 commit(s) atrás): error: ... README.md.",
+    "git fetch falhou (4 tentativa(s)): Could not resolve host: github.com.",
+    "merge em andamento; main local não atualizada",
+])
+@pytest.mark.parametrize("recarregada", [False, True])
+def test_guarda_bloqueia_antes_de_qualquer_publicador(monkeypatch, erro, recarregada):
+    """26-27/10/2026: o checkout divergente, sem o PR #558, regravou ~26,7 mil
+    demonstrações com o LPA 1000x que aquele PR corrigia.
+
+    Bloqueado, nenhum alvo roda -- nem o armazém sobe --, o estado não é
+    gravado (os alvos seguem vencidos) e o Telegram diz por quê.
+    """
+    from core.publicacao_git import ResultadoAtualizacao
+
+    feito = _rotina_vigiada(monkeypatch, ResultadoAtualizacao(erro=erro),
+                            recarregada=recarregada)
+    monkeypatch.setattr(av, "armazem_pronto", _nunca)
+
+    assert av.main(["--sem-vigia"]) == 1
+    assert feito["executados"] == [] and feito["gravados"] == []
+    assert feito["git"] == 1
+    [(titulo, msg)] = feito["avisos"]
+    assert titulo == "Dashboard: atualização bloqueada"
+    assert erro in msg
+    assert ", ".join(_DEVIDOS_DA_GUARDA) in msg
+
+
+def test_resultado_que_ninguem_confirmou_bloqueia(monkeypatch):
+    """Falha-fechada: sem `contem_origin`, nem um resultado sem erro libera."""
+    from core.publicacao_git import ResultadoAtualizacao
+
+    feito = _rotina_vigiada(monkeypatch, ResultadoAtualizacao(), recarregada=True)
+    assert av.main(["--sem-vigia"]) == 1
+    assert feito["executados"] == []
+
+
+def test_main_a_frente_da_origin_publica(monkeypatch):
+    """À frente é o normal: os commits de artefato que a rotina ainda não subiu."""
+    from core.publicacao_git import ResultadoAtualizacao
+
+    feito = _rotina_vigiada(monkeypatch, ResultadoAtualizacao(
+        frente=4, contem_origin=True,
+        motivo="main local 4 commit(s) à frente; o próximo push os leva"))
+
+    assert av.main(["--sem-vigia"]) == 0
+    assert feito["executados"] == list(_DEVIDOS_DA_GUARDA)
+    assert [titulo for titulo, _ in feito["avisos"]] == ["Dashboard: vitrines atualizadas"]
+
+
+def test_guarda_busca_a_origin_uma_vez_por_processo(monkeypatch):
+    """`main` já buscou; `_publicar` usa o resultado em vez de buscar de novo --
+    sem rede, isso repetiria as novas tentativas do fetch."""
+    from core.publicacao_git import ResultadoAtualizacao
+
+    feito = _rotina_vigiada(monkeypatch, ResultadoAtualizacao(contem_origin=True))
+    assert av.main(["--sem-vigia"]) == 0
+    assert feito["git"] == 1
+
+
+def test_ramo_de_trabalho_em_dia_publica_mas_acusa_o_artefato(monkeypatch):
+    """O código do ramo contém a origin, então roda; mas o artefato não vai
+    para a main, e isso tem de chegar à notificação."""
+    from core.publicacao_git import ResultadoAtualizacao
+
+    feito = _rotina_vigiada(monkeypatch, ResultadoAtualizacao(
+        contem_origin=True,
+        erro="ramo atual é trabalho, não main; main local não atualizada"))
+
+    assert av.main(["--sem-vigia"]) == 1
+    assert feito["executados"] == list(_DEVIDOS_DA_GUARDA)
+    [(titulo, msg)] = feito["avisos"]
+    assert titulo == "Dashboard: atualização com falha"
+    assert "ramo atual é trabalho" in msg
+
+
+def test_dry_run_e_listar_nao_passam_pela_guarda(monkeypatch, capsys):
+    from core.publicacao_git import ResultadoAtualizacao
+
+    feito = _rotina_vigiada(monkeypatch, ResultadoAtualizacao(erro="divergiu"))
+    monkeypatch.setattr(av, "atualizar_main", _nunca)
+    assert av.main(["--dry-run"]) == 0
+    assert av.main(["--listar"]) == 0
+    assert feito["avisos"] == []
 
 
 def test_ingestao_brapi_e_a_ultima_da_fila():
