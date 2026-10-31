@@ -27,6 +27,59 @@ _COOKIE = "app4_tema"
 _TENTATIVAS_DE_GRAVACAO = 3
 _ESPERA_ENTRE_TENTATIVAS = (0.25, 0.75)
 
+
+def _anotar(codigo: str, mensagem: str, funcao: str, *,
+            detalhe: bool = False) -> None:
+    """Grava no log de lacunas o que só o servidor via.
+
+    ``logger.exception`` resolve o diagnóstico aqui na máquina e não resolve
+    nada na Streamlit Cloud, onde ninguém lê o stderr do contêiner. Então toda
+    falha de tema que acontecia com a pessoa usando o app publicado terminava
+    em "mudou sozinho" sem uma única linha de evidência -- e foram cinco
+    correções procurando no lugar errado por falta dessa linha.
+        memória: diagnostico-precisa-de-porta-de-entrada
+
+    ``registrar_lacuna`` é a porta certa: nunca levanta, grava uma vez por
+    impressão digital por sessão (e não por clique), e na nuvem o UPSERT em
+    ``app_lacunas`` sai numa thread, sem somar latência ao render.
+
+    TODO acesso a ``core.lacunas`` é tardio, inclusive para a constante do
+    prefixo: ``core.lacunas.evento`` custa 87 µs sozinho, mas alcançá-lo pelo
+    ``__init__`` do pacote importa ``captura`` -> ``registro`` -> ``destino``
+    -> **sqlalchemy**, ~1,6 s a frio. Um ``from core.lacunas.evento import …``
+    no topo deste módulo arrastaria a pilha de banco inteira para dentro do
+    import do seletor de tema -- e anotar é acessório: um problema no log de
+    lacunas não pode impedir o seletor de carregar, nem pesar no primeiro
+    render (foi o que estourou o orçamento de 3 s do AppTest).
+
+    ``detalhe`` marca o código com o prefixo que faz a lacuna nascer
+    *legítima*: registro de algo que já se resolveu, fora da fila de correção
+    e fora da tela de quem usa.
+    """
+    try:
+        from core.lacunas.evento import PREFIXO_DETALHE
+        from core.lacunas.registro import registrar_lacuna
+
+        prefixo = PREFIXO_DETALHE if detalhe else ""
+        registrar_lacuna("excecao", f"{prefixo}{codigo}", mensagem,
+                         modulo=f"design/theme_selector.py:{funcao}")
+    except Exception:  # noqa: BLE001 - anotar a falha não pode virar falha
+        logger.exception("falha ao anotar o diagnóstico do tema")
+
+
+def _motivo(erro: BaseException | None) -> str:
+    """Classe e texto da exceção, para a mensagem da lacuna.
+
+    A classe é o que distingue timeout de conexão (``OperationalError``) de
+    erro de schema ou de permissão, que pedem correções opostas. A mensagem
+    sai sanitizada pelo log de lacunas -- URL, e por dentro dela a string de
+    conexão, nunca chegam à tabela.
+    """
+    if erro is None:
+        return "sem exceção registrada"
+    return f"{type(erro).__name__}: {erro}"
+
+
 # Último tema lido com sucesso de cada conta, no processo -- e não na
 # sessão. Uma sessão nova (reconexão do navegador, aba reaberta, app que
 # voltou a aceitar conexão) começa sem `st.session_state`: a primeira
@@ -216,10 +269,12 @@ def current_theme() -> str:
     if not cached or cached[0] != uid:
         try:
             theme = load_theme()
-        except Exception:
+        except Exception as erro:
             # O log é o que faltava para diagnosticar: até aqui a exceção era
             # engolida inteira e a única pista que sobrava era o app escuro.
             logger.exception("falha ao ler o tema da conta")
+            _anotar("tema.leitura_falhou",
+                    f"tema da conta não lido; {_motivo(erro)}", "current_theme")
             st.session_state[_LOAD_ERROR] = True
             # Falha de leitura não é troca de preferência. Enquanto o cache da
             # sessão não existe (a primeira leitura falhou), toda execução
@@ -404,16 +459,34 @@ def _gravar_com_insistencia(choice: str) -> bool:
     do clique. A segunda tentativa cai depois de a execução concorrente ter
     devolvido a conexão, e é ela que faz a escolha chegar ao banco na prática.
     """
+    ultima: BaseException | None = None
     for numero in range(_TENTATIVAS_DE_GRAVACAO):
         try:
             save_theme(choice)
-        except Exception:
+        except Exception as erro:
+            ultima = erro
             logger.exception("falha ao gravar o tema (tentativa %d de %d)",
                              numero + 1, _TENTATIVAS_DE_GRAVACAO)
             if numero < len(_ESPERA_ENTRE_TENTATIVAS):
                 time.sleep(_ESPERA_ENTRE_TENTATIVAS[numero])
         else:
+            if numero:
+                # Canário. A escolha chegou ao banco, então não há nada a
+                # corrigir nesta execução -- por isso nasce como DETALHE, fora
+                # da fila de correção e fora da tela de quem usa. Mas é a
+                # medida de que a disputa pela única conexão do pool continua
+                # viva: sem esta linha, a insistência esconderia exatamente o
+                # defeito que ela existe para absorver.
+                _anotar("tema.gravacao_insistiu",
+                        f"tema gravado na tentativa {numero + 1} de "
+                        f"{_TENTATIVAS_DE_GRAVACAO}; a anterior falhou com "
+                        f"{_motivo(ultima)}", "_gravar_com_insistencia",
+                        detalhe=True)
             return True
+    _anotar("tema.gravacao_falhou",
+            f"tema não gravado depois de {_TENTATIVAS_DE_GRAVACAO} "
+            f"tentativas; última falha {_motivo(ultima)}",
+            "_gravar_com_insistencia")
     return False
 
 
@@ -453,8 +526,11 @@ def render_theme_selector() -> None:
         # sem isso essa conta nunca conseguia registrar a preferência.
         try:
             save_theme(theme)
-        except Exception:
+        except Exception as erro:
             logger.exception("falha ao registrar a preferência ausente")
+            _anotar("tema.preferencia_ausente_nao_registrada",
+                    f"conta sem tema gravado e o registro falhou; "
+                    f"{_motivo(erro)}", "render_theme_selector")
         else:
             st.session_state.pop(_SEM_PREFERENCIA, None)
     nao_guardado = st.session_state.get(_NAO_GUARDADO)
@@ -465,8 +541,11 @@ def render_theme_selector() -> None:
         # em toda tela que a pessoa abrir.
         try:
             save_theme(nao_guardado)
-        except Exception:
+        except Exception as erro:
             logger.exception("falha ao regravar o tema pendente")
+            _anotar("tema.pendencia_nao_regravada",
+                    f"tema pendente de uma execução anterior continua sem "
+                    f"gravar; {_motivo(erro)}", "render_theme_selector")
         else:
             st.session_state.pop(_NAO_GUARDADO, None)
             st.session_state.pop(_SEM_PREFERENCIA, None)
