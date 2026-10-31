@@ -428,10 +428,13 @@ def test_bloco_de_secoes_vem_logo_depois_do_tema_e_os_numeros_seguem():
                 if isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
                 and isinstance(n.value.func, ast.Name)]
     assert chamadas == ["_render_tema", "_render_secoes", "_render_categorias",
-                        "_render_trocar_usuario", "_render_memoria_llm"]
+                        "_render_orcamento", "_render_trocar_usuario",
+                        "_render_memoria_llm"]
     cabecalhos = [n.args[1].value for n in ast.walk(arvore)
                   if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_cabecalho"]
     indices = [n.args[0].value for n in ast.walk(arvore)
                if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "_cabecalho"]
     assert dict(zip(indices, cabecalhos))["02"] == "🧭 Seções do aplicativo"
-    assert sorted(indices) == ["01", "02", "03", "04", "05"]
+    # Um número por bloco, sem buraco nem repetição: dois PRs que acrescentam
+    # bloco ao mesmo tempo (Seções e Orçamento, 31/10/2026) colidiam no "03".
+    assert sorted(indices) == [f"{n:02d}" for n in range(1, len(chamadas) + 1)]

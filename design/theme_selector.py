@@ -70,6 +70,60 @@ _TENTATIVAS_DE_GRAVACAO = 3
 _ESPERA_ENTRE_TENTATIVAS = (0.25, 0.75)
 
 
+def _anotar(codigo: str, mensagem: str, funcao: str, *,
+            detalhe: bool = False) -> None:
+    """Grava no log de lacunas o que só o servidor via.
+
+    ``logger.exception`` resolve o diagnóstico aqui na máquina e não resolve
+    nada na Streamlit Cloud, onde ninguém lê o stderr do contêiner. Então toda
+    falha de tema que acontecia com a pessoa usando o app publicado terminava
+    em "mudou sozinho" sem uma única linha de evidência -- e foram cinco
+    correções procurando no lugar errado por falta dessa linha.
+        memória: diagnostico-precisa-de-porta-de-entrada
+
+    ``registrar_lacuna`` é a porta certa: nunca levanta, grava uma vez por
+    impressão digital por sessão (e não por clique, então a contagem mede
+    fatos e não cliques), e na nuvem o UPSERT em ``app_lacunas`` sai numa
+    thread, sem somar latência ao render.
+
+    O acesso a ``core.lacunas`` é tardio, inclusive para a constante do
+    prefixo: ``core.lacunas.evento`` custa 87 µs sozinho, mas alcançá-lo pelo
+    ``__init__`` do pacote importa ``captura`` -> ``registro`` -> ``destino``
+    -> **sqlalchemy**, ~1,6 s a frio. Um ``from core.lacunas.evento import …``
+    no topo deste módulo arrastaria a pilha de banco inteira para dentro do
+    import do seletor de tema -- que roda em TODA execução do script, porque
+    ``app.py`` pinta o tema no topo. Anotar é acessório: um problema no log de
+    lacunas não pode impedir o seletor de carregar, nem pesar no primeiro
+    render (foi o que estourou o orçamento de 3 s do AppTest).
+
+    ``detalhe`` marca o código com o prefixo que faz a lacuna nascer
+    *legítima*: registro de algo que já se resolveu, fora da fila de correção
+    e fora da tela de quem usa.
+    """
+    try:
+        from core.lacunas.evento import PREFIXO_DETALHE
+        from core.lacunas.registro import registrar_lacuna
+
+        prefixo = PREFIXO_DETALHE if detalhe else ""
+        registrar_lacuna("excecao", f"{prefixo}{codigo}", mensagem,
+                         modulo=f"design/theme_selector.py:{funcao}")
+    except Exception:  # noqa: BLE001 - anotar a falha não pode virar falha
+        logger.exception("falha ao anotar o diagnóstico do tema")
+
+
+def _motivo(erro: BaseException | None) -> str:
+    """Classe e texto da exceção, para a mensagem da lacuna.
+
+    A classe é o que distingue timeout de conexão (``OperationalError``) de
+    erro de schema ou de permissão, que pedem correções opostas. A mensagem
+    sai sanitizada pelo log de lacunas -- URL, e por dentro dela a string de
+    conexão, nunca chegam à tabela.
+    """
+    if erro is None:
+        return "sem exceção registrada"
+    return f"{type(erro).__name__}: {erro}"
+
+
 class Escolha(NamedTuple):
     """Um comando de tema: qual tema, e quando a pessoa o deu."""
 
@@ -317,10 +371,12 @@ def _escolha_em_vigor(uid: str) -> "Escolha | None":
         return em_cache
     try:
         da_conta = _escolha(load_theme_choice())
-    except Exception:
+    except Exception as erro:
         # O log é o que faltava para diagnosticar: a exceção era engolida
         # inteira e a única pista que sobrava era a cor da tela.
         logger.exception("falha ao ler o tema da conta")
+        _anotar("tema.leitura_falhou",
+                f"tema da conta não lido; {_motivo(erro)}", "_escolha_em_vigor")
         st.session_state[_LOAD_ERROR] = True
         return _escolha_local(uid)
     st.session_state.pop(_LOAD_ERROR, None)
@@ -348,8 +404,11 @@ def _levar_a_conta(escolha: Escolha) -> None:
     """
     try:
         save_theme(escolha.tema, at=escolha.instante)
-    except Exception:
+    except Exception as erro:
         logger.exception("falha ao levar a escolha de tema à conta")
+        _anotar("tema.escolha_local_nao_chegou_a_conta",
+                f"escolha de {escolha.tema} feita neste navegador não chegou "
+                f"à conta; {_motivo(erro)}", "_levar_a_conta")
         st.session_state[_NAO_GUARDADO] = (escolha.tema, escolha.instante)
     else:
         st.session_state.pop(_NAO_GUARDADO, None)
@@ -414,8 +473,11 @@ def _resolver_a_escolha_para_pintar() -> "Escolha | None":
         return _mais_recente(_ultimo_ok_escolha(), escolha_do_navegador())
     try:
         return _escolha_em_vigor(uid)
-    except Exception:
+    except Exception as erro:
         logger.exception("falha ao resolver o tema antes do portão")
+        _anotar("tema.resolucao_antes_do_portao_falhou",
+                f"tema não resolvido antes do portão; {_motivo(erro)}",
+                "_resolver_a_escolha_para_pintar")
         return _escolha_local(uid)
 
 
@@ -482,16 +544,34 @@ def _gravar_com_insistencia(escolha: Escolha) -> bool:
     A segunda tentativa cai depois de a execução concorrente ter devolvido a
     conexão, e é ela que faz a escolha chegar ao banco na prática.
     """
+    ultima: BaseException | None = None
     for numero in range(_TENTATIVAS_DE_GRAVACAO):
         try:
             save_theme(escolha.tema, at=escolha.instante)
-        except Exception:
+        except Exception as erro:
+            ultima = erro
             logger.exception("falha ao gravar o tema (tentativa %d de %d)",
                              numero + 1, _TENTATIVAS_DE_GRAVACAO)
             if numero < len(_ESPERA_ENTRE_TENTATIVAS):
                 time.sleep(_ESPERA_ENTRE_TENTATIVAS[numero])
         else:
+            if numero:
+                # Canário. A escolha chegou ao banco, então não há nada a
+                # corrigir nesta execução -- por isso nasce como DETALHE, fora
+                # da fila de correção e fora da tela de quem usa. Mas é a
+                # medida de que a disputa pela única conexão do pool continua
+                # viva: sem esta linha, a insistência esconderia exatamente o
+                # defeito que ela existe para absorver.
+                _anotar("tema.gravacao_insistiu",
+                        f"tema gravado na tentativa {numero + 1} de "
+                        f"{_TENTATIVAS_DE_GRAVACAO}; a anterior falhou com "
+                        f"{_motivo(ultima)}", "_gravar_com_insistencia",
+                        detalhe=True)
             return True
+    _anotar("tema.gravacao_falhou",
+            f"tema não gravado depois de {_TENTATIVAS_DE_GRAVACAO} "
+            f"tentativas; última falha {_motivo(ultima)}",
+            "_gravar_com_insistencia")
     return False
 
 
@@ -547,8 +627,12 @@ def render_theme_selector() -> None:
         # e só aqui, para não virar tráfego de banco em toda tela.
         try:
             save_theme(pendente.tema, at=pendente.instante)
-        except Exception:
+        except Exception as erro:
             logger.exception("falha ao regravar o tema pendente")
+            _anotar("tema.pendencia_nao_regravada",
+                    f"escolha pendente de {pendente.tema} não guardada na "
+                    f"conta na segunda chance; {_motivo(erro)}",
+                    "render_theme_selector")
         else:
             st.session_state.pop(_NAO_GUARDADO, None)
             st.session_state.pop(_SEM_PREFERENCIA, None)

@@ -14,9 +14,11 @@ LIGHT_CSS = """
  --app-bg:#f5f7fb; --app-surface:#ffffff; --app-surface-raised:#eef2f7;
  --app-border:#d1d9e4; --app-border-strong:#a5b4c7;
  --app-text:#172033; --app-muted:#46566e; --app-subtle:#52627a;
- --app-primary:#007e60; --app-info:#175eac; --app-danger:#b42342;
- --app-warning:#875e00; --app-accent:#6d28d9; --app-alert:#b4530a;
+ --app-primary:#007659; --app-info:#175eac; --app-danger:#b42342;
+ --app-warning:#875e00; --app-accent:#6d28d9; --app-alert:#ad500a;
  --app-on-accent:#ffffff;
+ /* Só o claro define: ver design.componentes.tinta_legivel. */
+ --app-escurece-tinta:55%;
  --app-shadow:0 8px 24px rgba(30,45,70,.08);
  color-scheme:light;
 }
@@ -30,8 +32,10 @@ LIGHT_CSS = """
 /* Ícones e rótulos do cabeçalho (status "Stop", Share, ajuda, menu) chegam
    em branco do tema do config e somem na barra clara. `currentColor` cobre
    o SVG que herda a cor; quem já vem preto não muda. */
-[data-testid="stHeader"] :is(button,span,svg,path,circle),
-[data-testid="stToolbar"] :is(button,span,svg,path,circle) {
+/* `label` entrou em 31/10/2026: o "Running..." do status vem num <label>
+   e saía branco sobre a barra clara (1,03:1). */
+[data-testid="stHeader"] :is(button,span,svg,path,circle,label),
+[data-testid="stToolbar"] :is(button,span,svg,path,circle,label) {
  color:var(--app-text)!important;
 }
 [data-testid="stHeader"] svg, [data-testid="stToolbar"] svg {fill:currentColor!important;}
@@ -237,7 +241,7 @@ button:disabled {opacity:.55;}
 .app-brand-mark {background:#ffffff!important; border-color:#cfdcea!important;
  box-shadow:0 2px 6px rgba(15,35,70,.08);}
 .app-brand-badge {background:rgba(0,126,96,.08)!important;
- border-color:rgba(0,126,96,.30)!important; color:var(--app-primary)!important;}
+ border-color:rgba(0,126,96,.30)!important; color:#005a44!important;}
 .app-brand-title {color:var(--app-text)!important;}
 .app-brand-subtitle {color:var(--app-muted)!important;}
 .app-brand-tags {border-top-color:#dbe4ee!important;}
@@ -416,6 +420,43 @@ button:disabled {opacity:.55;}
  :is(p,li,h1,h2,h3,h4,h5,h6) {
  color:#fafafa!important;
 }
+/* Varredura de contraste de 31/10/2026: todas as telas e abas, no app real,
+   medindo cor do texto contra o fundo efetivo (transparências e gradientes
+   compostos). Cada regra abaixo desfaz uma medida, não uma suspeita.
+   Legendas (st.caption): o Streamlit esmaece o contêiner (opacity .6) e o
+   claro já pinta a legenda de --app-muted -- esmaecida duas vezes, 2,7:1 em
+   toda legenda do app. A cor já diz que é legenda: 7:1. */
+[data-testid="stCaptionContainer"] {opacity:1!important;}
+/* Link no texto: o azul do tema escuro (#3D9DF3) dá 2,9:1 no branco. Só o link
+   cru do markdown; quem tem classe ou estilo próprio decide a própria cor. */
+:is([data-testid="stMarkdownContainer"], [data-testid="stCaptionContainer"])
+ a:not([class]):not([style]) {color:var(--app-info)!important;}
+/* Código inline dentro de legenda escapava da regra do markdown: etiqueta
+   quase preta (#1A1C24) no meio da legenda clara. */
+[data-testid="stCaptionContainer"] :not(pre) > code {
+ background:var(--app-surface-raised)!important; color:#0a4a63!important;
+}
+/* Ícone de âncora dos títulos (aparece no hover): traço branco, 1:1. */
+[data-testid="stHeaderActionElements"] svg,
+[data-testid="stHeaderActionElements"] svg * {stroke:var(--app-muted)!important;}
+/* Botão "-" do campo numérico no mínimo: desabilitado, o SVG recebe
+   rgba(250,250,250,.4) por atributo e some (1,02:1). Desabilitado continua
+   parecendo desabilitado -- pela opacidade de `button:disabled` --, mas aparece. */
+[data-testid="stNumberInputContainer"] button:disabled svg {color:var(--app-subtle)!important;}
+/* Texto de exemplo do multiselect vazio: rgba(250,250,250,.6), 1,03:1. As
+   etiquetas escolhidas são `span` com regra própria e ficam de fora. */
+[data-testid="stMultiSelect"] [data-baseweb="select"] div:not(:has(*)) {
+ color:var(--app-muted)!important;
+}
+/* Rótulo acima do título de cada tela: #60A5FA cravado em tema.py, 2,5:1. */
+.app-page-eyebrow {color:var(--app-info)!important;}
+/* Estado vazio: #718096 cravado em tema.py, 3,7:1. */
+.empty-state .empty-text {color:var(--app-muted)!important;}
+/* Variação positiva na tabela de posições: #16a34a, 3,3:1 no branco. */
+.tp-wrap {--tp-pos:#087548!important;}
+/* Rótulo das mini-métricas do Dashboard Geral: o `opacity:.85` embutido
+   derruba o verde e o azul do claro para 3,8:1 e 4,3:1 em letra de 10px. */
+.dg-mini-label {opacity:1!important;}
 </style>
 """
 

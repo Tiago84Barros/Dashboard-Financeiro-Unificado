@@ -1308,3 +1308,215 @@ def test_simulacao_o_tema_pintado_e_sempre_a_ultima_escolha(monkeypatch, semente
     else:
         assert conta.gravacoes == []
 
+
+
+# ── Diagnóstico que chega a quem corrige ──────────────────────────────────────
+#
+# Na Streamlit Cloud ninguém lê o stderr do contêiner, então `logger.exception`
+# diagnostica para um leitor que não existe. Cinco correções procuraram no lugar
+# errado por falta de uma linha de evidência vinda de produção. O log de lacunas
+# (`app_lacunas`, migration 077) é o caminho que existe para isso.
+#     memória: diagnostico-precisa-de-porta-de-entrada
+
+
+@pytest.fixture
+def lacunas_espiadas(monkeypatch):
+    """Intercepta ``registrar_lacuna`` no módulo de onde ``_anotar`` o importa."""
+    registradas: list[dict] = []
+
+    def espiao(fonte, codigo, mensagem, **extra):
+        registradas.append({"fonte": fonte, "codigo": codigo,
+                            "mensagem": mensagem, **extra})
+
+    monkeypatch.setattr("core.lacunas.registro.registrar_lacuna", espiao)
+    return registradas
+
+
+@pytest.fixture
+def processo_sem_memoria_de_tema(monkeypatch):
+    """Zera a memória de PROCESSO para este teste.
+
+    ``_LEMBRADO`` é um dicionário de módulo: vive entre testes. Sujo de um
+    instante real (``_agora_ms``), ele faz uma conta de instante fictício
+    parecer sempre atrasada, e o caminho exercitado passa a ser
+    ``_levar_a_conta`` em vez do clique -- o teste mediria outro ponto do
+    módulo sem avisar. Pedido só por quem simula a conta com instante fixo.
+    """
+    monkeypatch.setattr("design.theme_selector._LEMBRADO", {})
+
+
+def test_falha_de_gravacao_fica_registrada_no_log_de_lacunas(monkeypatch, lacunas_espiadas,
+                                                             processo_sem_memoria_de_tema):
+    """A falha que a pessoa vê como "mudou sozinho" precisa deixar rastro.
+
+    O aviso na tela resolve para quem está olhando; não resolve para quem vai
+    corrigir depois, e era exatamente essa a lacuna do diagnóstico: o defeito
+    acontecia no app publicado, com uma conta que não é a minha, e eu só tinha
+    o relato. A classe da exceção entra na mensagem porque é ela que separa
+    disputa de conexão (``OperationalError``) de erro de schema ou permissão --
+    correções opostas, sintoma idêntico na tela.
+    """
+    import design.theme_selector as selector
+    monkeypatch.setattr(selector, "load_theme_choice", lambda: ("dark", 1_000))
+    monkeypatch.setattr(selector, "_ESPERA_ENTRE_TENTATIVAS", ())
+
+    def fail(theme, at=None):
+        raise TimeoutError("pool exhausted")
+
+    monkeypatch.setattr(selector, "save_theme", fail)
+    app = AppTest.from_string(SCRIPT).run()
+    app.selectbox[0].select("light").run()
+    assert not app.exception
+    falhas = [r for r in lacunas_espiadas if r["codigo"] == "tema.gravacao_falhou"]
+    assert len(falhas) == 1
+    assert falhas[0]["fonte"] == "excecao"
+    assert "TimeoutError" in falhas[0]["mensagem"]
+    assert str(selector._TENTATIVAS_DE_GRAVACAO) in falhas[0]["mensagem"]
+    assert falhas[0]["modulo"].endswith(":_gravar_com_insistencia")
+
+
+def test_gravacao_que_so_passa_na_insistencia_nasce_como_detalhe(monkeypatch, lacunas_espiadas,
+                                                                 processo_sem_memoria_de_tema):
+    """O canário da disputa de conexão: insistir não pode esconder a disputa.
+
+    A insistência absorve o defeito -- e, absorvendo, apagaria a única medida
+    de que ele continua vivo. Nasce com o prefixo de DETALHE porque não há
+    nada a corrigir nesta execução: a escolha chegou ao banco. Fica fora da
+    fila de correção e fora da tela de quem usa, e dentro da tabela que eu leio.
+    """
+    import design.theme_selector as selector
+    from core.lacunas.evento import e_detalhe
+    monkeypatch.setattr(selector, "load_theme_choice", lambda: ("dark", 1_000))
+    monkeypatch.setattr(selector, "_ESPERA_ENTRE_TENTATIVAS", ())
+    tentativas: list[str] = []
+
+    def falha_uma_vez(theme, at=None):
+        tentativas.append(theme)
+        if len(tentativas) == 1:
+            raise ConnectionError("connection reset")
+
+    monkeypatch.setattr(selector, "save_theme", falha_uma_vez)
+    app = AppTest.from_string(SCRIPT).run()
+    app.selectbox[0].select("light").run()
+    assert not app.exception
+    canarios = [r for r in lacunas_espiadas
+                if r["codigo"].endswith("tema.gravacao_insistiu")]
+    assert len(canarios) == 1
+    assert e_detalhe(canarios[0]["codigo"])
+    assert "ConnectionError" in canarios[0]["mensagem"]
+    # E nenhuma lacuna de falha: o comando chegou ao banco.
+    assert not [r for r in lacunas_espiadas if r["codigo"] == "tema.gravacao_falhou"]
+
+
+def test_gravacao_de_primeira_nao_registra_nada(monkeypatch, lacunas_espiadas,
+                                                processo_sem_memoria_de_tema):
+    """O caminho normal é silencioso. Log que registra sucesso mede cliques."""
+    import design.theme_selector as selector
+    monkeypatch.setattr(selector, "load_theme_choice", lambda: ("dark", 1_000))
+    monkeypatch.setattr(selector, "save_theme", lambda theme, at=None: None)
+    app = AppTest.from_string(SCRIPT).run()
+    app.selectbox[0].select("light").run()
+    assert not app.exception
+    assert lacunas_espiadas == []
+
+
+def test_falha_de_leitura_fica_registrada_no_log_de_lacunas(monkeypatch, lacunas_espiadas):
+    """Leitura que falha pinta pela memória -- e precisa dizer que pintou."""
+    import design.theme_selector as selector
+
+    def fail():
+        raise TimeoutError("read timeout")
+
+    monkeypatch.setattr(selector, "load_theme_choice", fail)
+    monkeypatch.setattr(selector, "save_theme", lambda theme, at=None: None)
+    app = AppTest.from_string(SCRIPT).run()
+    assert not app.exception
+    leituras = [r for r in lacunas_espiadas if r["codigo"] == "tema.leitura_falhou"]
+    assert len(leituras) >= 1
+    assert "TimeoutError" in leituras[0]["mensagem"]
+    assert leituras[0]["modulo"].endswith(":_escolha_em_vigor")
+
+
+def test_escolha_que_nao_alcanca_a_conta_fica_registrada(monkeypatch, lacunas_espiadas):
+    """A escolha presa no navegador é a cena que mais enganou o diagnóstico.
+
+    O clique valeu na tela, o banco não recebeu, e na sessão seguinte a conta
+    respondia a escolha ANTERIOR: para quem usa, "mudou sozinho". Agora o
+    modelo leva a escolha nova à conta assim que der -- e quando essa viagem
+    falha outra vez, é esta linha que diz por quê, nomeando o tema que ficou
+    só no navegador.
+    """
+    import design.theme_selector as selector
+    monkeypatch.setattr(selector, "load_theme_choice", lambda: ("dark", 1_000))
+    monkeypatch.setattr(selector, "_LEMBRADO",
+                        {"A": selector.Escolha("light", 2_000)})
+
+    def fail(theme, at=None):
+        raise TimeoutError("pool exhausted")
+
+    monkeypatch.setattr(selector, "save_theme", fail)
+    app = AppTest.from_string(SCRIPT).run()
+    assert not app.exception
+    presas = [r for r in lacunas_espiadas
+              if r["codigo"] == "tema.escolha_local_nao_chegou_a_conta"]
+    assert len(presas) == 1
+    assert "light" in presas[0]["mensagem"]
+    assert "TimeoutError" in presas[0]["mensagem"]
+    assert presas[0]["modulo"].endswith(":_levar_a_conta")
+
+
+def test_falha_ao_anotar_nao_derruba_a_tela(monkeypatch,
+                                           processo_sem_memoria_de_tema):
+    """Anotar é acessório. Um problema no log de lacunas não pode virar o erro.
+
+    Garantia que o próprio log de lacunas já dá na porta pública; repetida aqui
+    porque o ponto de chamada é o topo do ``app.py``, onde uma exceção não
+    deixaria sobrar tela nenhuma.
+    """
+    import design.theme_selector as selector
+    monkeypatch.setattr(selector, "load_theme_choice", lambda: ("dark", 1_000))
+    monkeypatch.setattr(selector, "_ESPERA_ENTRE_TENTATIVAS", ())
+    monkeypatch.setattr(selector, "save_theme",
+                        lambda theme, at=None: (_ for _ in ()).throw(TimeoutError("x")))
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("log de lacunas fora do ar")
+
+    monkeypatch.setattr("core.lacunas.registro.registrar_lacuna", explode)
+    app = AppTest.from_string(SCRIPT).run()
+    app.selectbox[0].select("light").run()
+    assert not app.exception
+    # O comando continua valendo, que é o que esta correção garantiu.
+    assert app.session_state["_app4_theme_choice"] == "light"
+    assert app.session_state["_app4_theme_not_saved"][0] == "light"
+
+
+def test_anotar_nao_arrasta_o_pacote_de_lacunas_para_o_import_do_seletor():
+    """O seletor de tema não paga o import do log de lacunas para carregar.
+
+    ``core.lacunas.evento`` custa 87 µs sozinho, mas alcançá-lo pelo
+    ``__init__`` do pacote importa ``captura`` -> ``registro`` -> ``destino``
+    -> sqlalchemy: ~1,6 s a frio. Um ``from core.lacunas.evento import
+    PREFIXO_DETALHE`` no topo de ``design/theme_selector.py`` -- que foi o que
+    eu escrevi primeiro -- arrastava essa pilha inteira para dentro do import
+    do seletor e somava ~2 s ao primeiro run de script, estourando o orçamento
+    de 3 s do AppTest.  O conserto é o acesso tardio, prefixo incluído.
+
+    O teste roda em subprocesso porque ``sys.modules`` da suíte já tem tudo
+    importado por outros testes: aqui a pergunta é o que o import DESTE módulo
+    exige, e ela só se responde num processo limpo.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+    raiz = Path(__file__).resolve().parents[1]
+    codigo = (
+        "import sys; import design.theme_selector; "
+        "print('sim' if 'core.lacunas' in sys.modules else 'nao')"
+    )
+    saida = subprocess.run([sys.executable, "-c", codigo], capture_output=True,
+                           text=True, cwd=str(raiz), timeout=120)
+    assert saida.returncode == 0, saida.stderr
+    assert saida.stdout.strip() == "nao", (
+        "design/theme_selector.py voltou a importar core.lacunas no topo; "
+        "o acesso tem de ser tardio, dentro de _anotar")

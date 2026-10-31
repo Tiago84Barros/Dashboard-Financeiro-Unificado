@@ -15,7 +15,7 @@ Duas decisões deliberadas:
 """
 from __future__ import annotations
 
-from core.portfolio_valuations import CLASS_LABELS, metric_spec
+from core.portfolio_valuations import CLASS_LABELS, metric_spec, texto_marcacao_tesouro
 
 
 def _n(value):
@@ -207,10 +207,9 @@ def _bloco_tesouro(tesouro, macro) -> list[str]:
         if composicao:
             linhas.append("- Composição por indexador: " + ", ".join(
                 f"{k} {v:.1%}" for k, v in composicao.items()))
-        linhas.append(
-            "- LIMITAÇÃO: o valor de mercado destas posições vem do saldo "
-            "informado pela corretora, não de marcação a mercado independente "
-            "título a título neste app.")
+        marcacao = texto_marcacao_tesouro(tesouro.get("marcacao"))
+        if marcacao:
+            linhas.append(f"- MARCAÇÃO: {marcacao}")
     if macro and not macro.get("erro"):
         atual = macro.get("atual") or {}
         linhas.append(f"CONJUNTURA (public.macro, ano {atual.get('ano', '—')}):")
@@ -232,6 +231,140 @@ def _bloco_tesouro(tesouro, macro) -> list[str]:
     return linhas
 
 
+def _data_br(dia) -> str:
+    return dia.strftime("%d/%m/%Y") if hasattr(dia, "strftime") else "data ausente"
+
+
+def _qtd_hoje_por_chave(posicoes) -> dict:
+    """Quantidade da carteira de hoje por chave do Tesouro; None se a foto não a traz.
+
+    A chave é a da curva e do extrato: a foto chama o título de cupom pelo
+    ticker do principal (TIPCA2032), o extrato o chama de TIPCAJ2032.
+    """
+    from core.tesouro_curva import chave_da_curva
+
+    qtd: dict = {}
+    for pos in posicoes or ():
+        if (_n(pos.get("valor_mercado")) or 0.0) <= 0:
+            continue
+        chave = chave_da_curva(pos.get("ticker"), pos.get("nome"))
+        valor = _n(pos.get("quantidade"))
+        # Uma linha sem quantidade (a corretora arredonda) torna a soma da
+        # chave desconhecida, não menor.
+        if valor is None or valor <= 0 or (chave in qtd and qtd[chave] is None):
+            qtd[chave] = None
+        else:
+            qtd[chave] = (qtd.get(chave) or 0.0) + valor
+    return qtd
+
+
+def _cobertura_dos_lotes(chave: str, qtd_lotes: float, qtd_hoje: dict) -> str:
+    if chave not in qtd_hoje:
+        return ("cobertura: o título não está na carteira atual (vendido, resgatado ou "
+                "vencido depois do extrato); os lotes descrevem uma posição passada.")
+    hoje = qtd_hoje[chave]
+    if hoje is None or qtd_lotes <= 0:
+        return "cobertura não medida: a posição atual não traz a quantidade."
+    # A fração mínima do Tesouro é 0,01: diferença maior que meio passo é
+    # título que entrou ou saiu depois do extrato, não arredondamento.
+    from core.tesouro_posicao import _TOLERANCIA_QTD
+
+    if abs(qtd_lotes - hoje) <= _TOLERANCIA_QTD:
+        return "cobertura: os lotes cobrem a posição atual inteira."
+    razao = qtd_lotes / hoje
+    if razao < 1:
+        return (f"cobertura: os lotes somam {razao:.0%} da quantidade da posição atual; o "
+                "restante foi comprado depois do extrato ou não está nele, e para essa "
+                "parte a taxa contratada e a data de compra são desconhecidas.")
+    return (f"cobertura: os lotes somam {razao:.0%} da quantidade da posição atual; parte "
+            "foi vendida ou resgatada depois, e não se sabe de quais lotes.")
+
+
+def _bloco_lotes_tesouro(lotes_tesouro, posicoes, valores_reais: bool) -> list[str]:
+    """Data e taxa contratada de cada compra, título a título.
+
+    Sem este bloco a LLM via só o agregado e respondia que a taxa contratada e
+    a data de compra não existiam, com o Extrato Analítico importado no banco.
+    O peso de cada lote vai em percentual; quantidade e reais, só a pedido.
+    """
+    if lotes_tesouro is None:
+        return []
+    cabeca = "LOTES DO TESOURO DIRETO (data de compra e TAXA CONTRATADA de cada aplicação)"
+    if lotes_tesouro.get("erro"):
+        return [f"{cabeca}: a leitura falhou nesta sessão ({lotes_tesouro['erro']}). "
+                "O dado pode existir no banco: diga que não foi carregado aqui, NÃO que "
+                "não existe."]
+    from core.tesouro_posicao import _texto_taxa
+
+    titulos = list(lotes_tesouro.get("titulos") or ())
+    diagnostico = lotes_tesouro.get("diagnostico") or {}
+    divergentes = [str(d[0]) for d in diagnostico.get("divergentes") or ()]
+    fora = ([f"- Fora dos lotes por não fecharem com a custódia da B3: "
+             f"{', '.join(divergentes)}. A Movimentação não explica a quantidade de "
+             "hoje; para eles a taxa contratada e a data de compra são desconhecidas."]
+            if divergentes else [])
+    if not titulos:
+        return [f"{cabeca}: nenhum lote lido. Não há Extrato Analítico do Tesouro "
+                "importado nem compras do Tesouro na Movimentação que fechem com a "
+                "custódia. A taxa contratada e a data de compra destes títulos são "
+                "desconhecidas; o caminho é importar o Extrato Analítico."] + fora
+
+    qtd_hoje = _qtd_hoje_por_chave(posicoes)
+    linhas = [f"{cabeca}:"]
+    for titulo in titulos:
+        lotes = sorted(titulo.lotes, key=lambda lote: lote.data_aplicacao)
+        qtd_lotes = sum(_n(lote.quantidade) or 0.0 for lote in lotes)
+        if titulo.origem_lotes == "movimentacao":
+            fonte = ("compras da Movimentação da B3; taxa DEDUZIDA do PU pago contra a "
+                     "curva do Tesouro do dia da compra (aproximação, não a taxa impressa)")
+        else:
+            fonte = (f"Extrato Analítico de {_data_br(titulo.report_date)} (taxa impressa "
+                     "pelo Tesouro)")
+        linhas.append(f"- {titulo.security_key} ({titulo.titulo}) | vence "
+                      f"{_data_br(titulo.vencimento)} | {len(lotes)} lote(s) | fonte: {fonte}")
+        venda = _n(titulo.taxa_mercado_venda)
+        if venda is None:
+            linhas.append("  taxa de hoje: ausente na curva do Tesouro; sem marcação.")
+        else:
+            compra = _n(titulo.taxa_mercado_compra)
+            linhas.append(
+                f"  taxa de hoje (curva de {_data_br(titulo.data_curva)}): venda (recompra) "
+                f"{_texto_taxa(titulo.indexador, venda)}"
+                + (f" | compra {_texto_taxa(titulo.indexador, compra)}"
+                   if compra is not None else ""))
+        mtm = _n(titulo.mtm_pct)
+        if titulo.marcado_a_mercado and mtm is not None:
+            linhas.append(
+                f"  marcação a mercado: {mtm * 100:+.2f}%".replace(".", ",")
+                + " sobre o valor do título na taxa contratada (positivo = taxa de hoje "
+                "abaixo da contratada)" + ("; aproximada" if titulo.aproximado else ""))
+        for lote in lotes:
+            taxa = lote.taxa_contratada
+            partes = [f"  - aplicado em {_data_br(lote.data_aplicacao)} a "
+                      + (taxa.texto if taxa is not None else "taxa não lida")]
+            qtd = _n(lote.quantidade) or 0.0
+            if qtd_lotes > 0:
+                partes.append(f"{qtd / qtd_lotes:.0%} da quantidade do título")
+            if valores_reais:
+                partes.append(f"quantidade {qtd:.2f}".replace(".", ","))
+                investido = _n(lote.valor_investido)
+                if investido is not None:
+                    partes.append(f"investido {_brl(investido)}")
+            linhas.append(" | ".join(partes))
+        linhas.append("  " + _cobertura_dos_lotes(titulo.security_key, qtd_lotes, qtd_hoje))
+
+    com_lote = {titulo.security_key for titulo in titulos}
+    sem_lote = sorted(chave for chave in qtd_hoje if chave not in com_lote)
+    if sem_lote:
+        linhas.append(f"- Posições do Tesouro sem nenhum lote lido: {', '.join(sem_lote)}. "
+                      "Para elas a taxa contratada e a data de compra são desconhecidas.")
+    linhas += fora
+    linhas.append("- Use estes lotes para responder sobre taxa contratada, data de compra "
+                  "e carregar até o vencimento vs. vender. Com eles aqui, NÃO diga que "
+                  "esses dados não existem.")
+    return linhas
+
+
 def build_carteira_classe_context(
     classe: str,
     posicoes,
@@ -243,8 +376,13 @@ def build_carteira_classe_context(
     fundamentos=None,
     documentos=None,
     valores_reais: bool = False,
+    lotes_tesouro=None,
 ) -> str:
-    """Monta o contexto textual de uma sub-aba da Análise do Portfólio."""
+    """Monta o contexto textual de uma sub-aba da Análise do Portfólio.
+
+    ``lotes_tesouro`` é a saída de ``core.tesouro_posicao.lotes_para_contexto``
+    e só vale para a classe Tesouro.
+    """
     rotulo = CLASS_LABELS.get(classe, classe)
     pesos = _pesos(posicoes)
     blocos: list[str] = [
@@ -267,6 +405,10 @@ def build_carteira_classe_context(
     blocos.append("")
     if classe == "tesouro":
         blocos += _bloco_tesouro(tesouro, macro)
+        lotes = _bloco_lotes_tesouro(lotes_tesouro, posicoes, valores_reais)
+        if lotes:
+            blocos.append("")
+            blocos += lotes
     else:
         blocos += _bloco_valuations(valuations)
     blocos.append("")

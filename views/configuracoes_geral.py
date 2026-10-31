@@ -6,6 +6,7 @@ Aba "Geral" de Configurações — o que era da sidebar, mais o que não tinha l
   🧭 Seções            — quais telas aparecem no menu lateral desta conta
   🏷️ Categorias        — criar, retirar e devolver as opções do lançamento
                          manual do Controle Financeiro
+  🎯 Orçamento         — o teto mensal de gasto por categoria de despesa
   👤 Trocar de usuário — encerrar a sessão deste navegador
   🧹 Memória da LLM    — apagar o histórico de conversa, por seção
 
@@ -28,6 +29,7 @@ mais -- regra e cache em ``core/secoes_app.py``.
 """
 from __future__ import annotations
 
+from datetime import date
 from html import escape
 
 import streamlit as st
@@ -45,6 +47,7 @@ _NOME_CAT = "cfg_geral_nome_categoria"
 _RECADO_CAT = "cfg_geral_recado_categoria"
 _RECADO_SECOES = "cfg_geral_recado_secoes"
 _INTERRUPTOR = "cfg_geral_secao_{}"
+_RECADO_ORC = "cfg_geral_recado_orcamento"
 
 
 def render() -> None:
@@ -53,6 +56,7 @@ def render() -> None:
     _render_tema()
     _render_secoes()
     _render_categorias()
+    _render_orcamento()
     _render_trocar_usuario()
     _render_memoria_llm()
 
@@ -274,6 +278,95 @@ def _depois_da_acao(ok: bool, msg: str, chave_widget: str) -> None:
     st.rerun()
 
 
+# -- limites de orçamento -----------------------------------------------------
+
+def _render_orcamento() -> None:
+    """Teto mensal de gasto por categoria de despesa.
+
+    Mora aqui desde 31/10/2026. A aba Orçamento saiu do Controle Financeiro em
+    30/09/2026, a pedido do usuário, e levou junto o único lugar onde se
+    gravava limite -- mas os limites continuaram valendo para ``core.alertas``
+    (R1) e para os painéis. O editor volta em Configurações, ao lado das
+    categorias, e o Controle Financeiro segue com as suas quatro abas.
+
+    Categoria retirada do seletor não é oferecida. Exceção: a retirada que
+    ainda tem limite em vigor aparece, marcada. Escondê-la deixaria um limite
+    que continua disparando alerta e que ninguém mais consegue zerar.
+    """
+    from core.controle import (
+        get_orcamentos_vigentes,
+        is_investment_category,
+        salvar_orcamentos,
+    )
+
+    with st.container(border=True, key="cfg_geral_orcamento"):
+        _cabecalho(
+            "04", "🎯 Limites de orçamento",
+            "O teto mensal de gasto por categoria de despesa que os alertas e os "
+            "painéis usam.",
+        )
+        recado = st.session_state.pop(_RECADO_ORC, None)
+        if recado:
+            st.success(recado)
+
+        hoje = date.today()
+        rotulo_mes = f"{hoje.month:02d}/{hoje.year}"
+        try:
+            categorias = cat_repo.listar("saida", com_retiradas=True)
+            vigentes = get_orcamentos_vigentes(hoje.year, hoje.month, estrito=True)
+        except Exception as exc:  # noqa: BLE001
+            falha_de_acao("Não foi possível ler os limites de orçamento.", exc)
+            return
+
+        # Aporte não é gasto: a categoria de investimento não leva teto.
+        oferecidas = [
+            c for c in categorias
+            if c["id"] and not is_investment_category(c["nome"])
+            and (not c["retirada"] or vigentes.get(c["id"], 0.0) > 0)
+        ]
+        if not oferecidas:
+            st.caption("Nenhuma categoria de despesa no seu seletor.")
+            return
+
+        st.caption(
+            f"O limite gravado vale de {rotulo_mes} em diante, até você gravar outro "
+            "valor num mês seguinte. Zerar encerra o limite daqui para a frente, sem "
+            "mexer nos meses anteriores. Categoria retirada do seletor não aparece aqui."
+        )
+        with st.form("cfg_geral_form_orcamento"):
+            cols = st.columns(3, gap="small")
+            valores: dict[str, float] = {}
+            for n, cat in enumerate(oferecidas):
+                cid = cat["id"]
+                with cols[n % 3]:
+                    valores[cid] = st.number_input(
+                        f"{cat['nome']} (retirada)" if cat["retirada"] else cat["nome"],
+                        min_value=0.0,
+                        step=50.0,
+                        value=float(vigentes.get(cid, 0.0)),
+                        help=("Retirada do seletor, mas com limite em vigor: zere "
+                              "para encerrá-lo." if cat["retirada"] else None),
+                        key=f"cfg_orc_{cid}",
+                    )
+            gravar = st.form_submit_button("Salvar limites", type="primary")
+        if not gravar:
+            return
+        mudou = {
+            cid: v for cid, v in valores.items()
+            if round(v, 2) != round(float(vigentes.get(cid, 0.0)), 2)
+        }
+        if not mudou:
+            st.info("Nenhum limite mudou.")
+            return
+        ok, msg = salvar_orcamentos(hoje.year, hoje.month, mudou)
+        if not ok:
+            st.error(msg or "Não foi possível gravar os limites.")
+            return
+        st.session_state[_RECADO_ORC] = (
+            f"{len(mudou)} limite(s) gravado(s) a partir de {rotulo_mes}.")
+        st.rerun()
+
+
 # -- trocar de usuário --------------------------------------------------------
 
 def _render_trocar_usuario() -> None:
@@ -281,7 +374,7 @@ def _render_trocar_usuario() -> None:
 
     with st.container(border=True, key="cfg_geral_usuario"):
         _cabecalho(
-            "04", "👤 Trocar de usuário",
+            "05", "👤 Trocar de usuário",
             "Encerra a sessão deste navegador e volta para a tela de entrada.",
         )
         nome = str(principal().get("name") or principal().get("email") or "")
@@ -304,7 +397,7 @@ def _render_trocar_usuario() -> None:
 def _render_memoria_llm() -> None:
     with st.container(border=True, key="cfg_geral_llm"):
         _cabecalho(
-            "05", "🧹 Limpar histórico da LLM",
+            "06", "🧹 Limpar histórico da LLM",
             "Escolha a seção cuja conversa deve ser apagada. Nada é apagado "
             "sem a escolha e o clique.",
         )

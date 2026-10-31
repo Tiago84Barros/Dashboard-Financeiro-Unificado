@@ -563,7 +563,7 @@ def _render_kpi_grid(
         prov_valor = fmt_moeda(float(prov_mes))
         prov_detalhe = (
             f"Pagos em {_MESES_PT[hoje.month]}/{hoje.year} · no ano: "
-            f'<strong style="color:{_COR_FLUXO}">{fmt_moeda(float(prov_ano))}</strong>'
+            f'<strong style="color:{_cor_texto(_COR_FLUXO)}">{fmt_moeda(float(prov_ano))}</strong>'
         )
 
     cards = [
@@ -578,7 +578,7 @@ def _render_kpi_grid(
             "Saldo líquido do mês",
             fmt_moeda(saldo),
             f'Receitas menos despesas (aportes não são despesa) · '
-            f'<strong style="color:{saldo_cor}">{_ROTULO_STATUS_CAIXA[ind["status"]]}'
+            f'<strong style="color:{_cor_texto(saldo_cor)}">{_ROTULO_STATUS_CAIXA[ind["status"]]}'
             f'</strong>',
             "↘" if ind["status"] == "deficit" else "↗",
             saldo_cor,
@@ -588,7 +588,7 @@ def _render_kpi_grid(
             fmt_percentual(taxa, sinal=False),
             f'Sobra do mês {escape(fmt_moeda(saldo))} + aportes {escape(fmt_moeda(investimentos))}'
             f'{" · no teto da renda" if ind["poupanca_no_teto"] else ""}'
-            f' · meta 30% · <strong style="color:{taxa_cor}">'
+            f' · meta 30% · <strong style="color:{_cor_texto(taxa_cor)}">'
             f'{"atingida" if taxa >= 30 else "em acompanhamento"}</strong>',
             "%",
             taxa_cor,
@@ -596,7 +596,7 @@ def _render_kpi_grid(
         (_CARTEIRA, _kpi_html(
             "Rentabilidade da carteira",
             f"{rentab:+.2f}%",
-            f'Sobre o custo consolidado · <strong style="color:{rentab_cor}">'
+            f'Sobre o custo consolidado · <strong style="color:{_cor_texto(rentab_cor)}">'
             f'{"resultado positivo" if rentab >= 0 else "resultado negativo"}</strong>',
             "⌁",
             rentab_cor,
@@ -648,7 +648,11 @@ def _cor_texto(cor: str) -> str:
     Os literais seguem existindo porque o Plotly não resolve `var(--…)`; em
     texto HTML, porém, amarelo #F6C90E sobre fundo claro fica ilegível.
     """
-    return _TOKEN_POR_COR.get(cor.upper(), cor)
+    # Cor fora do mapa (classe de ativo, paleta de grupo) também precisa
+    # ser legível no claro: ver ``design.componentes.tinta_legivel``.
+    from design.componentes import tinta_legivel
+
+    return _TOKEN_POR_COR.get(cor.upper()) or tinta_legivel(cor)
 
 
 def _linha_kv(label: str, valor: str, cor_val: str = "var(--app-text)") -> str:
@@ -865,9 +869,9 @@ def _mini_metric(label: str, valor: str, detalhe: str, cor: str) -> str:
                 border:1px solid var(--app-border);border-left:4px solid {cor};
                 border-radius:12px;padding:16px 16px;min-height:100px;
                 box-shadow:var(--app-shadow);">
-        <div style="font-size:0.64rem;text-transform:uppercase;letter-spacing:0.14em;
-                    color:{cor};font-weight:800;margin-bottom:10px;opacity:0.85">{label}</div>
-        <div style="font-size:1.45rem;font-weight:900;color:{cor};line-height:1;
+        <div class="dg-mini-label" style="font-size:0.64rem;text-transform:uppercase;letter-spacing:0.14em;
+                    color:{_cor_texto(cor)};font-weight:800;margin-bottom:10px;opacity:0.85">{label}</div>
+        <div style="font-size:1.45rem;font-weight:900;color:{_cor_texto(cor)};line-height:1;
                     text-shadow:0 0 18px {cor}55">{valor}</div>
         <div style="font-size:0.74rem;color:var(--app-subtle);margin-top:9px;line-height:1.3">{detalhe}</div>
     </div>
@@ -877,7 +881,7 @@ def _mini_metric(label: str, valor: str, detalhe: str, cor: str) -> str:
 def _status_chip(texto: str, cor: str) -> str:
     return (
         f'<span style="display:inline-flex;align-items:center;border:1px solid {cor};'
-        f'background:{cor}1F;color:{cor};border-radius:999px;padding:3px 9px;'
+        f'background:{cor}1F;color:{_cor_texto(cor)};border-radius:999px;padding:3px 9px;'
         f'font-size:0.70rem;font-weight:800;white-space:nowrap;flex-shrink:0;">{texto}</span>'
     )
 
@@ -918,7 +922,7 @@ def _modulo_card(
         'box-shadow:var(--app-shadow);">'
         '<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">'
         '<div style="display:flex;gap:10px;align-items:center;min-width:0;">'
-        f'<div style="width:28px;height:28px;border-radius:8px;background:{cor}22;color:{cor};'
+        f'<div style="width:28px;height:28px;border-radius:8px;background:{cor}22;color:{_cor_texto(cor)};'
         f'display:flex;align-items:center;justify-content:center;font-weight:900;'
         f'font-size:0.85rem;border:1px solid {cor}55;flex-shrink:0;">{numero}</div>'
         f'<div style="font-size:0.96rem;font-weight:850;color:var(--app-text);line-height:1.2;min-width:0;">{titulo}</div>'
@@ -1163,7 +1167,7 @@ def _secao_resumo_modulos(
 def _grafico_container_open(icone: str, titulo: str, cor: str) -> None:
     st.markdown(
         f'<div class="dg-shell"><div class="dg-chart-label" '
-        f'style="--chart-color:{escape(cor)}">'
+        f'style="--chart-color:{escape(_cor_texto(cor))}">'
         f'<span aria-hidden="true">{escape(icone)}</span>{escape(titulo)}</div></div>',
         unsafe_allow_html=True,
     )
@@ -1279,7 +1283,7 @@ def _card_lista_html(titulo: str, cor: str, corpo: str, rodape: str) -> str:
         '<div style="background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;'
         'padding:16px 18px;">'
         f'<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;'
-        f'color:{cor};font-weight:800;margin-bottom:10px;">{escape(titulo)}</div>'
+        f'color:{_cor_texto(cor)};font-weight:800;margin-bottom:10px;">{escape(titulo)}</div>'
         f'{corpo}'
         + (f'<div style="font-size:0.76rem;color:var(--app-muted);margin-top:10px;">{escape(rodape)}</div>'
            if rodape else "")
