@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "gerado_em": "2026-10-30T08:25:29-03:00",
+ "gerado_em": "2026-10-30T21:43:39-03:00",
  "protocolo": {
   "seq": 0,
   "hash": "6230d78028503324f9c2402a48540452ae9a76f29efb82fdc0d1958b0bfc6080"
@@ -28,14 +28,14 @@
  "fontes": {
   "acoes": "pesquisa: dados/b3_retornos_diarios.parquet (fechamento, fator e proventos) até o fim dela; depois, COTAHIST da B3 + market.dividends do armazém com as regras da pesquisa",
   "bova11": "COTAHIST da B3: fechamento oficial (BDI 14)",
-  "cdi": "BCB/SGS 12 (arquivo publicado até 28/10/2026)",
+  "cdi": "BCB/SGS 12 (arquivo publicado até 29/10/2026)",
   "ipca": "BCB/SGS 433 (data/public/macro_brasil.json.gz)",
   "spread": "o da curva diária, medido no COTAHIST na execução de cada revisão"
  },
  "ipca": {},
  "meses": [],
  "avisos": [],
- "dados_ate": "2026-10-28",
+ "dados_ate": "2026-10-29",
  "posicoes_aportes": [],
  "proximo_fechamento": "2026-11-30"
 }
