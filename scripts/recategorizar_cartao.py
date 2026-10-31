@@ -5,7 +5,7 @@ Recategorização (limpeza) das transações da fatura de cartão de crédito.
 As categorias importadas do CSV da operadora são as categorias "MCC" do
 processador (ex.: "Elétrico", "Marketing Direto", "Associação"), genéricas e
 frequentemente mal colocadas. Este script remapeia os lançamentos de cartão para
-uma taxonomia enxuta de 13 categorias, decidindo por ESTABELECIMENTO (merchant)
+uma taxonomia enxuta de 14 categorias, decidindo por ESTABELECIMENTO (merchant)
 quando a categoria da operadora é ambígua, e por categoria de origem no restante.
 
 SEGURANÇA / REVERSIBILIDADE:

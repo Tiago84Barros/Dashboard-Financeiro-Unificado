@@ -12,10 +12,13 @@ import pandas as pd
 import streamlit as st
 
 from core.bank_statement_import import (
+    ROTULO_PENDENTE,
     SUPPORTED_BANKS,
     get_bank_statement_categories,
     import_bank_statement_rows,
     preview_bank_statement_pdf,
+    rotulo_da_linha,
+    rotulos_de_categoria,
 )
 from core.config import settings
 from core.utils import fmt_moeda
@@ -267,12 +270,13 @@ def _render_upload(*, show_header: bool = True) -> None:
     _summary_cards(parsed.get("summary", {}), uploaded.name)
 
     categories = get_bank_statement_categories()
-    cat_by_name = {c["nome"]: c for c in categories}
-    category_options = ["Pendente"] + list(cat_by_name.keys())
+    # Rótulo único por categoria e resolução pelo id: o nome se repete entre
+    # tipos (há três "Outros"), e resolver pelo nome gravava o tipo errado.
+    cat_por_rotulo, rotulo_por_id = rotulos_de_categoria(categories)
+    category_options = [ROTULO_PENDENTE] + list(cat_por_rotulo.keys())
 
     def _row_category(row: dict) -> str:
-        name = row.get("categoria_nome") or row.get("categoria_sugerida_texto")
-        return name if name in cat_by_name else "Pendente"
+        return rotulo_da_linha(row, rotulo_por_id)
 
     edit_df = pd.DataFrame(
         [
@@ -319,7 +323,7 @@ def _render_upload(*, show_header: bool = True) -> None:
             row["descricao_original"] = str(e["Descrição"] or "")[:500]
             row["direcao"] = str(e["Direção"] or base.get("direcao") or "saida")
             row["valor"] = round(float(e["Valor (R$)"] or 0.0), 2)
-            cat = cat_by_name.get(str(e["Categoria"] or "Pendente"))
+            cat = cat_por_rotulo.get(str(e["Categoria"] or ROTULO_PENDENTE))
             if cat:
                 row["categoria_id"] = cat["id"]
                 row["categoria_nome"] = cat["nome"]

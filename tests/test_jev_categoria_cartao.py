@@ -178,7 +178,7 @@ def _it(desc, cat, regra="merchant:X", valor=10.0):
 def test_rotulados_unicos_agrega_e_descarta_ambiguos():
     items = [
         _it("IFOOD", "Alimentação"), _it("ifood", "Alimentação"),
-        _it("LOJA X", "Compras / Varejo"), _it("LOJA X", "Casa & Construção"),
+        _it("LOJA X", "Compras"), _it("LOJA X", "Casa & Construção"),
         _it("PAG FATURA", "Pagamento de Cartão"), _it("NOVO", REVIEW_SENTINEL),
     ]
     out, ambiguos = rotulados_unicos(items, DESCRICAO_CATEGORIA_JEV)
