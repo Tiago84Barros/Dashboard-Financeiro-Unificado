@@ -173,7 +173,7 @@ def test_build_envia_ao_provedor_apenas_simbolos_e_moedas_publicas(monkeypatch):
 
     recebido = {}
 
-    def fake_loader(symbol_map):
+    def fake_loader(symbol_map, period=None, tesouro=()):
         recebido["symbol_map"] = symbol_map
         return {
             "corr": pd.DataFrame(),
