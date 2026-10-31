@@ -324,20 +324,24 @@ def build_financas_chat_context(
 # Essencialidade por categoria-alvo do cartão (taxonomia limpa). Heurística
 # assumida — a IA deve tratar como premissa, não verdade absoluta.
 _CARD_ESSENCIAL = {
-    "Alimentação", "Mercado", "Transporte & Combustível",
-    "Saúde & Bem-estar", "Educação & Profissional", "Tarifas & Anuidade",
+    "Alimentação", "Mercado", "Transporte", "Combustível",
+    "Saúde", "Educação", "Tarifas & Anuidade",
     "Casa & Construção",
 }
 _CARD_NAO_ESSENCIAL = {
-    "Compras / Varejo", "Assinaturas & Serviços digitais",
-    "Lazer & Entretenimento", "Cuidados pessoais",
+    "Compras", "Assinaturas", "Lazer", "Cuidados pessoais",
 }
 # Não são consumo (não entram na análise essencial × não essencial).
 _CARD_NAO_CONSUMO = {"Pagamento de Cartão", "Créditos e Estornos"}
 
 
 def _card_essencialidade(nome: object) -> str:
-    n = str(nome or "").strip()
+    # O nome antigo da fatura (``NOMES_LEGADOS``) ainda aparece enquanto os
+    # lançamentos não forem migrados; o nome sem descrição basta, porque as
+    # duas metades do antigo "Transporte e Combustível" são essenciais.
+    from core.card_categorization import nome_unificado
+
+    n = nome_unificado(nome)
     if n in _CARD_ESSENCIAL:
         return "essencial"
     if n in _CARD_NAO_ESSENCIAL:

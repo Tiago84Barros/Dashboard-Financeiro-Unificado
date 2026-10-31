@@ -293,7 +293,7 @@
             {
               "nome": "Habilitar edição dos extratos",
               "resumo": "Corrige movimentos do extrato",
-              "explicacao": "Caixa de marcar que permite mudar descrição, entrada/saída, valor e categoria. Escolher uma categoria confirma o movimento e o faz contar no Controle Financeiro. Botão: 'Salvar alterações dos extratos'.",
+              "explicacao": "Caixa de marcar que permite mudar descrição, entrada/saída, valor e categoria. Escolher uma categoria confirma o movimento e o faz contar no Controle Financeiro. Categorias com o mesmo nome em tipos diferentes aparecem com o tipo entre parênteses, como 'Outros (despesa)' e 'Outros (receita)'. Botão: 'Salvar alterações dos extratos'.",
               "so_admin": false,
               "fonte": "views/controle_financeiro.py:1993",
               "filhos": []

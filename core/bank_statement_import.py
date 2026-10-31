@@ -15,6 +15,7 @@ import logging
 import re
 import threading
 import unicodedata
+from collections import Counter
 from datetime import date, datetime
 from typing import Any
 
@@ -715,6 +716,74 @@ def _category_type(category: dict) -> str:
     return str(category.get("tipo") or category.get("type") or "")
 
 
+#: Rótulo da opção "sem categoria" nos seletores das telas de extrato.
+ROTULO_PENDENTE = "Pendente"
+
+_TIPO_NA_TELA = {
+    "income": "receita",
+    "expense": "despesa",
+    "transfer": "transferência",
+    "investment": "investimento",
+}
+
+
+def rotulos_de_categoria(categories: list[dict]) -> tuple[dict[str, dict], dict[str, str]]:
+    """Um rótulo ÚNICO por categoria, para os seletores das telas de extrato.
+
+    Devolve ``(por_rotulo, rotulo_por_id)``. Os seletores do Streamlit trocam
+    texto, e as telas resolviam o texto de volta com ``{nome: categoria}``: o
+    banco tem três ``Outros`` (despesa, receita e investimento, migration 072)
+    e o dicionário guardava um só, qual deles dependia da ordem do Postgres. Uma
+    saída classificada em ``Outros`` podia ser gravada apontando para o
+    ``Outros`` de receita, e bastava editar a DESCRIÇÃO na fila de revisão para
+    trocar o id da categoria sem ninguém pedir.
+
+    Nome que aparece uma vez fica como está. Nome repetido ganha o tipo
+    (``Outros (despesa)``); se ainda repetir — a mesma categoria de sistema e
+    uma criada pela pessoa —, a da pessoa ganha ``, sua``. Nenhum rótulo
+    coincide com ``ROTULO_PENDENTE``.
+    """
+    validas = [c for c in categories or [] if c.get("id")]
+    contagem = Counter(_norm(_category_name(c)) for c in validas)
+
+    def _com_tipo(cat: dict) -> str:
+        tipo = _category_type(cat)
+        return f"{_category_name(cat)} ({_TIPO_NA_TELA.get(tipo, tipo or 'sem tipo')})"
+
+    candidatos: list[tuple[dict, str]] = []
+    for cat in validas:
+        nome = _category_name(cat)
+        rotulo = nome if contagem[_norm(nome)] == 1 else _com_tipo(cat)
+        if rotulo == ROTULO_PENDENTE:
+            rotulo = _com_tipo(cat)
+        candidatos.append((cat, rotulo))
+
+    repetidos = Counter(rotulo for _, rotulo in candidatos)
+    por_rotulo: dict[str, dict] = {}
+    rotulo_por_id: dict[str, str] = {}
+    for cat, rotulo in candidatos:
+        if repetidos[rotulo] > 1 and cat.get("minha"):
+            rotulo = f"{rotulo[:-1]}, sua)" if rotulo.endswith(")") else f"{rotulo} (sua)"
+        if rotulo in por_rotulo:
+            # Último recurso, para que nenhuma categoria suma do seletor.
+            rotulo = f"{rotulo} · {str(cat['id'])[:8]}"
+        por_rotulo[rotulo] = cat
+        rotulo_por_id[str(cat["id"])] = rotulo
+    return por_rotulo, rotulo_por_id
+
+
+def rotulo_da_linha(row: dict, rotulo_por_id: dict[str, str]) -> str:
+    """Rótulo da categoria de um movimento, pelo ID — nunca pelo nome.
+
+    Vale a confirmada, quando houver; sem id conhecido, ``ROTULO_PENDENTE``.
+    """
+    for chave in ("categoria_confirmada_id", "categoria_id"):
+        cid = row.get(chave)
+        if cid and str(cid) in rotulo_por_id:
+            return rotulo_por_id[str(cid)]
+    return ROTULO_PENDENTE
+
+
 def _find_category(
     categories: list[dict],
     aliases: list[str],
@@ -1113,15 +1182,20 @@ def _fetch_categories(conn, owner: str) -> list[dict]:
     rows = conn.execute(
         text(
             """
-            SELECT id::text, name, type, parent_id::text
+            SELECT id::text, name, type, parent_id::text,
+                   (user_id IS NOT NULL) AS minha
             FROM categories
             WHERE user_id = CAST(:uid AS uuid) OR user_id IS NULL
-            ORDER BY name
+            ORDER BY name, type
             """
         ),
         {"uid": owner},
     ).fetchall()
-    return [{"id": r.id, "nome": r.name, "tipo": r.type, "parent_id": r.parent_id} for r in rows]
+    return [
+        {"id": r.id, "nome": r.name, "tipo": r.type, "parent_id": r.parent_id,
+         "minha": bool(getattr(r, "minha", False))}
+        for r in rows
+    ]
 
 
 def _fetch_rules(conn, owner: str, banco: str = "C6 Bank") -> list[dict]:

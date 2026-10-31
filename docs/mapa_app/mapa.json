@@ -515,7 +515,7 @@
                 {
                   "nome": "Habilitar edição dos extratos",
                   "resumo": "Corrige movimentos do extrato",
-                  "explicacao": "Caixa de marcar que permite mudar descrição, entrada/saída, valor e categoria. Escolher uma categoria confirma o movimento e o faz contar no Controle Financeiro. Botão: 'Salvar alterações dos extratos'.",
+                  "explicacao": "Caixa de marcar que permite mudar descrição, entrada/saída, valor e categoria. Escolher uma categoria confirma o movimento e o faz contar no Controle Financeiro. Categorias com o mesmo nome em tipos diferentes aparecem com o tipo entre parênteses, como 'Outros (despesa)' e 'Outros (receita)'. Botão: 'Salvar alterações dos extratos'.",
                   "so_admin": false
                 },
                 {
@@ -2961,7 +2961,7 @@
                 {
                   "nome": "Extrato bancário",
                   "resumo": "Importar o extrato em PDF com revisão",
-                  "explicacao": "Escolha o banco (hoje só C6 Bank), envie o PDF e revise numa grade a descrição, se é entrada ou saída, a categoria e o valor de cada movimento. Depois clique em 'Importar extrato'.",
+                  "explicacao": "Escolha o banco (hoje só C6 Bank), envie o PDF e revise numa grade a descrição, se é entrada ou saída, a categoria e o valor de cada movimento. A categoria vem sugerida entre as que já existem (o extrato não cria categoria); nome repetido em tipos diferentes aparece com o tipo entre parênteses, como 'Outros (despesa)'. Depois clique em 'Importar extrato'.",
                   "so_admin": false
                 }
               ]

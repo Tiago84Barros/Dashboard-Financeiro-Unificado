@@ -642,7 +642,8 @@ def _parse_installment(value: object) -> tuple[int, int, str]:
 def _invoice_category(raw_category: object, description: object, value_brl: float,
                       user_rules: list | None = None) -> str:
     """
-    Categoria de um lançamento da fatura usando a taxonomia limpa (13 categorias).
+    Categoria de um lançamento da fatura usando a taxonomia limpa (14 categorias,
+    com os nomes das categorias de sistema).
     Delega a core.card_categorization.classify — fonte única de regras, também
     usada pelo script scripts/recategorizar_cartao.py. `user_rules` são as regras
     aprendidas pelo usuário (palavra-chave -> categoria) e têm prioridade sobre as
