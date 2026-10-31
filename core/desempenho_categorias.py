@@ -62,6 +62,10 @@ CATEGORIAS: tuple[Categoria, ...] = (
 
 POR_NOME = {c.nome: c for c in CATEGORIAS}
 
+# O gráfico abre só com estas; as outras ficam na legenda, a um clique.
+# Seis linhas de saída poluíam a leitura (pedido do usuário, 31/10/2026).
+INICIAIS = frozenset({"Ações", "ETFs Americanos", "Tesouro Direto"})
+
 
 def posicoes_por_categoria(posicoes: list[dict]) -> dict[str, list[dict]]:
     """``{categoria: [posições com quantidade > 0]}``, só as que têm posição."""
@@ -107,9 +111,48 @@ def retorno_encadeado(precos: pd.DataFrame, quantidades: dict[str, float]) -> pd
     ambos = valor.notna() & anterior.notna()
     num = valor.where(ambos).sum(axis=1)
     den = anterior.where(ambos).sum(axis=1)
-    r = (num / den.where(den > 0) - 1).fillna(0.0)
+    # Passo sem ativo com preço nas duas pontas não foi medido: a data sai da
+    # curva em vez de entrar como retorno zero. Sem nenhum passo medido não
+    # há série -- dois ativos com uma foto cada, em datas diferentes, não
+    # dizem retorno nenhum.
+    r = num / den.where(den > 0) - 1
+    if r.iloc[1:].notna().sum() == 0:
+        return pd.Series(dtype=float)
     r.iloc[0] = 0.0
+    r = r.dropna()
     return ((1 + r).cumprod() - 1) * 100
+
+
+def quantidades_pelo_valor(precos: pd.DataFrame, valores: dict[str, float]) -> dict[str, float]:
+    """Quantidade na unidade da série: valor de mercado de hoje ÷ último preço.
+
+    Para a renda fixa, cuja posição de hoje pode vir de uma fonte que conta
+    quantidade de outro jeito que a série escolhida (uma cota de R$ 1 contra
+    uma nota de R$ 1.000): multiplicar a série por essa quantidade distorce
+    o peso de cada ativo. Ativo sem preço ou sem valor fica de fora.
+    """
+    saida = {}
+    for c in precos.columns:
+        serie = pd.to_numeric(precos[c], errors="coerce").dropna()
+        serie = serie[serie > 0]
+        valor = float(valores.get(c) or 0)
+        if not serie.empty and valor > 0:
+            saida[c] = valor / float(serie.iloc[-1])
+    return saida
+
+
+def chave_unica_tesouro(ticker: str, nomes) -> str | None:
+    """Chave da curva de uma posição do Tesouro; ``None`` se ambígua.
+
+    A carteira agrupa pelo ticker, e "IPCA+ 2032" e "IPCA+ com Juros
+    Semestrais 2032" chegam somados como TIPCA2032. Um PU só daria a uma parte
+    da quantidade a trajetória de outro título, por isso o grupo fica fora --
+    a mesma regra de ``core.investimentos._marcacao_pela_curva``.
+    """
+    from core.tesouro_curva import chave_da_curva
+
+    chaves = {chave_da_curva(ticker, n) for n in (nomes or [None])}
+    return next(iter(chaves)) if len(chaves) == 1 else None
 
 
 def _sem_fuso(indice) -> pd.DatetimeIndex:
@@ -159,13 +202,19 @@ def unitario_de_fonte_unica(linhas: pd.DataFrame) -> pd.DataFrame:
 # ── Leitura do banco ─────────────────────────────────────────────────────────
 
 def precos_tesouro(engine, posicoes: list[dict], desde: date) -> pd.DataFrame:
-    """PU de recompra diário de cada título, colunas pelo ticker da posição."""
-    from core.tesouro_curva import chave_da_curva, serie_titulo
+    """PU de recompra diário de cada título, colunas pelo ticker da posição.
+
+    ``posicoes``: ``{"ticker", "nomes"}``, com os nomes de todos os títulos que
+    a carteira somou sob o ticker. Grupo ambíguo fica sem série.
+    """
+    from core.tesouro_curva import serie_titulo
 
     series = {}
     for p in posicoes:
         ticker = str(p.get("ticker") or "").strip()
-        chave = chave_da_curva(ticker, p.get("nome"))
+        chave = chave_unica_tesouro(ticker, p.get("nomes"))
+        if chave is None:
+            continue
         df = serie_titulo(engine, chave, desde)
         if df.empty:
             continue

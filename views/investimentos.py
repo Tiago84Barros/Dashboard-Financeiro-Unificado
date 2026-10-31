@@ -1778,11 +1778,12 @@ _CHAVE_USDBRL = "USDBRL"
 
 
 @user_cache_data(ttl=3600, show_spinner=False)
-def _precos_tesouro_categoria(titulos: tuple[tuple[str, str], ...], desde) -> pd.DataFrame:
+def _precos_tesouro_categoria(titulos: tuple[tuple[str, tuple[str, ...]], ...],
+                              desde) -> pd.DataFrame:
     from core.database import get_engine
     from core.desempenho_categorias import precos_tesouro
 
-    posicoes = [{"ticker": tk, "nome": nome} for tk, nome in titulos]
+    posicoes = [{"ticker": tk, "nomes": list(nomes)} for tk, nomes in titulos]
     return precos_tesouro(get_engine(), posicoes, desde)
 
 
@@ -1845,18 +1846,26 @@ def _series_desempenho_categorias(posicoes: list, period_key: str) -> tuple[dict
                 else:
                     precos = em_brl
         elif cat.fonte == "tesouro":
-            titulos = tuple(sorted({(str(p["ticker"]).strip(), str(p.get("nome") or ""))
-                                    for p in lista}))
+            # Os nomes de TODAS as linhas do grupo, não o do representante: um
+            # ticker que junta cupom e principal fica sem série.
+            titulos = tuple(sorted(
+                (str(p["ticker"]).strip(),
+                 tuple(p.get("nomes_do_grupo") or [str(p.get("nome") or "")]))
+                for p in lista))
             for p in lista:
                 tk = str(p["ticker"]).strip()
                 quantidades[tk] = quantidades.get(tk, 0.0) + float(p["quantidade"])
             precos = _precos_tesouro_categoria(titulos, desde)
             fonte = "PU de recompra diário da curva do Tesouro"
         else:
+            valores: dict[str, float] = {}
             for p in lista:
                 tk = str(p["ticker"]).strip()
-                quantidades[tk] = quantidades.get(tk, 0.0) + float(p["quantidade"])
-            precos = _precos_renda_fixa_categoria(tuple(sorted(quantidades)), desde)
+                valores[tk] = valores.get(tk, 0.0) + float(p.get("valor_mercado") or 0)
+            precos = _precos_renda_fixa_categoria(tuple(sorted(valores)), desde)
+            # A quantidade de hoje pode estar em outra unidade que a da fonte
+            # da série; o peso sai do valor de mercado de hoje.
+            quantidades = dc.quantidades_pelo_valor(precos, valores)
             fonte = "Valor unitário das fotos de custódia"
 
         if not precos.empty:
@@ -1885,98 +1894,231 @@ def _series_desempenho_categorias(posicoes: list, period_key: str) -> tuple[dict
     return series, info
 
 
-def _fig_desempenho_categorias(series: dict, selecionadas: list) -> go.Figure:
+_ROTULO_PERIODO_CURTO = {"6M": "6M", "12M": "12M", "24M": "24M", "5Y": "5A", "YTD": "No ano"}
+
+_CSS_DESEMPENHO_CATEGORIAS = """
+<style>
+.dcat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));
+  gap:10px;margin:4px 0 14px;}
+.dcat-card{position:relative;background:var(--app-surface);border:1px solid var(--app-border);
+  border-radius:10px;padding:12px 14px 8px;overflow:hidden;transition:opacity .15s ease;}
+.dcat-card::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:var(--dcat-cor);}
+.dcat-nome{display:flex;align-items:center;gap:6px;font-size:.72rem;font-weight:700;
+  letter-spacing:.02em;color:var(--app-subtle);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;}
+.dcat-pos{font-size:.62rem;font-weight:800;color:var(--app-subtle);opacity:.75;}
+.dcat-ret{font-size:1.45rem;font-weight:800;letter-spacing:-.02em;line-height:1.15;
+  margin-top:4px;font-variant-numeric:tabular-nums;}
+.dcat-meta{font-size:.64rem;color:var(--app-subtle);margin-top:1px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;}
+.dcat-spark{display:block;width:100%;height:30px;margin-top:6px;}
+.dcat-rodape{font-size:.68rem;color:var(--app-subtle);margin:-2px 0 6px;}
+</style>
+"""
+
+
+def _fmt_retorno(v: float, casas: int = 1) -> str:
+    return fmt_percentual(v, casas)
+
+
+def _sparkline_svg(serie: pd.Series, cor: str, pontos: int = 48) -> str:
+    """Minigráfico SVG da série, só a forma: sem eixo, sem número."""
+    s = serie.dropna()
+    if len(s) < 2:
+        return ""
+    if len(s) > pontos:
+        s = s.iloc[[round(i * (len(s) - 1) / (pontos - 1)) for i in range(pontos)]]
+    vmin, vmax = float(s.min()), float(s.max())
+    amp = (vmax - vmin) or 1.0
+    n = len(s) - 1
+    xy = " ".join(f"{100 * i / n:.2f},{28 - 26 * (float(v) - vmin) / amp:.2f}"
+                  for i, v in enumerate(s.values))
+    zero = ""
+    if vmin < 0 < vmax:
+        yz = 28 - 26 * (0 - vmin) / amp
+        zero = (f'<line x1="0" x2="100" y1="{yz:.2f}" y2="{yz:.2f}" '
+                f'stroke="var(--app-border)" stroke-width="1" stroke-dasharray="2 2" '
+                f'vector-effect="non-scaling-stroke"/>')
+    return (f'<svg class="dcat-spark" viewBox="0 0 100 30" preserveAspectRatio="none">'
+            f'{zero}<polyline points="{xy}" fill="none" stroke="{cor}" stroke-width="1.6" '
+            f'stroke-linejoin="round" stroke-linecap="round" '
+            f'vector-effect="non-scaling-stroke"/></svg>')
+
+
+def _cards_desempenho_categorias(series: dict, info: dict) -> str:
+    """Placar das categorias, da melhor para a pior no período."""
     from core.desempenho_categorias import POR_NOME
 
+    ordem = sorted(info, key=lambda n: info[n]["retorno"], reverse=True)
+    cards = []
+    for pos, nome in enumerate(ordem, start=1):
+        i = info[nome]
+        # A cor da linha do gráfico, crua: faixa e minigráfico não são texto, e
+        # escurecê-los no claro desfazia a ligação card ↔ linha.
+        cor = POR_NOME[nome].cor
+        cor_ret = _cor_texto(_COR_POSITIVO if i["retorno"] >= 0 else _COR_NEGATIVO)
+        moeda = " · em USD" if i["moeda"] != "BRL" else ""
+        cards.append(
+            f'<div class="dcat-card" style="--dcat-cor:{cor};">'
+            f'<div class="dcat-nome"><span class="dcat-pos">{pos}º</span>'
+            f'{_html.escape(nome)}</div>'
+            f'<div class="dcat-ret" style="color:{cor_ret};">{_fmt_retorno(i["retorno"])}</div>'
+            f'<div class="dcat-meta">desde {i["inicio"].strftime("%d/%m/%y")} · '
+            f'{i["cobertos"]}/{i["total"]} ativos{moeda}</div>'
+            f'{_sparkline_svg(series[nome], cor)}'
+            f'</div>'
+        )
+    return f'<div class="dcat-grid">{"".join(cards)}</div>'
+
+
+def _rotulos_sem_colisao(finais: list[tuple[str, float]], folga: float) -> dict[str, float]:
+    """Posição vertical do rótulo de fim de linha, afastando os que se tocam.
+
+    Só empurra para cima quem encosta no de baixo: rótulo sem vizinho fica na
+    ponta da própria linha.
+    """
+    pos: dict[str, float] = {}
+    anterior = None
+    for nome, y in sorted(finais, key=lambda t: t[1]):
+        alvo = y if anterior is None else max(y, anterior + folga)
+        pos[nome] = alvo
+        anterior = alvo
+    return pos
+
+
+def _visiveis_de_inicio(nomes: list[str]) -> set[str]:
+    """As categorias que o gráfico abre mostrando; sem nenhuma delas, todas."""
+    from core.desempenho_categorias import INICIAIS
+
+    return (set(nomes) & INICIAIS) or set(nomes)
+
+
+def _fig_desempenho_categorias(series: dict) -> go.Figure:
+    """Uma linha por categoria; a legenda, abaixo, liga e desliga cada uma.
+
+    Linha, ponto final e rótulo de cada categoria formam um ``legendgroup``:
+    o clique na legenda esconde os três juntos. As que não estão entre as
+    iniciais nascem ``legendonly`` -- fora do gráfico e da escala do eixo,
+    mas a um clique.
+    """
+    from core.desempenho_categorias import CATEGORIAS, POR_NOME
+
+    nomes = [c.nome for c in CATEGORIAS if c.nome in series and not series[c.nome].empty]
+    visiveis = _visiveis_de_inicio(nomes)
     fig = go.Figure()
-    for nome in selecionadas:
-        s = series.get(nome)
-        if s is None or s.empty:
-            continue
-        final = float(s.iloc[-1])
+    if not nomes:
+        return fig
+    ultimo_x = max(series[n].index[-1] for n in nomes)
+    todos = [v for n in nomes for v in (float(series[n].min()), float(series[n].max()))]
+    folga = max((max(todos) - min(todos)) * 0.045, 0.5)
+    rotulos = _rotulos_sem_colisao([(n, float(series[n].iloc[-1])) for n in nomes], folga)
+
+    for nome in nomes:
+        s = series[nome]
+        cor = POR_NOME[nome].cor
+        visivel = True if nome in visiveis else "legendonly"
+        grupo = {"legendgroup": nome, "visible": visivel}
+        mensal = len(s) < 40   # fotos mensais: o ponto mostra onde há dado
         fig.add_trace(go.Scatter(
-            x=s.index, y=s.values, mode="lines",
-            name=f"{nome} ({'+' if final >= 0 else ''}{final:.1f}%)",
-            line={"color": POR_NOME[nome].cor, "width": 2},
-            hovertemplate=f"<b>{_html.escape(nome)}</b><br>"
-                          "%{x|%d/%m/%Y}: %{y:+.2f}%<extra></extra>",
+            x=s.index, y=s.values, name=nome, **grupo,
+            mode="lines+markers" if mensal else "lines",
+            line={"color": cor, "width": 2.2},
+            marker={"size": 5, "color": cor},
+            hovertemplate=f"{_html.escape(nome)}: %{{y:+.2f}}%<extra></extra>",
         ))
-    fig.add_hline(y=0, line_dash="dot", line_color="#4A5568", line_width=1, opacity=0.7)
+        fig.add_trace(go.Scatter(
+            x=[s.index[-1]], y=[float(s.iloc[-1])], mode="markers", **grupo,
+            marker={"size": 8, "color": cor, "line": {"color": "#0E1117", "width": 2}},
+            hoverinfo="skip", showlegend=False,
+        ))
+        fig.add_trace(go.Scatter(
+            x=[ultimo_x], y=[rotulos[nome]], mode="text", **grupo,
+            text=[f"<b>{_fmt_retorno(float(s.iloc[-1]))}</b>"],
+            textposition="middle right", textfont={"size": 12, "color": cor},
+            cliponaxis=False, hoverinfo="skip", showlegend=False,
+        ))
+
+    fig.add_hline(y=0, line_color="#4A5568", line_width=1, opacity=0.9)
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font_color=_COR_NEUTRO,
-        legend={"orientation": "h", "y": -0.15, "font": {"size": 11},
-                "bgcolor": "rgba(0,0,0,0)"},
-        margin={"t": 10, "b": 10, "l": 0, "r": 0},
-        height=420,
-        xaxis={"showgrid": True, "gridcolor": "#1E2533", "title": None},
-        yaxis={"showgrid": True, "gridcolor": "#1E2533", "ticksuffix": "%",
-               "title": "Retorno acumulado no período", "tickfont": {"size": 10}},
-        hovermode="closest",
+        font={"color": _COR_NEUTRO, "size": 12},
+        showlegend=True,
+        legend={"orientation": "h", "x": 0, "y": -0.1, "yanchor": "top",
+                "font": {"size": 13, "color": _COR_NEUTRO}, "bgcolor": "rgba(0,0,0,0)",
+                "itemclick": "toggle", "itemdoubleclick": "toggleothers",
+                "itemwidth": 40, "traceorder": "normal"},
+        margin={"t": 12, "b": 8, "l": 8, "r": 70},
+        height=480,
+        hovermode="x unified",
+        hoverlabel={"font": {"size": 12}, "bordercolor": "#2D3748"},
+        # Sem arrastar para dar zoom: no celular, rolar a página por cima do
+        # gráfico virava zoom e deixava a área em branco.
+        dragmode=False,
+        xaxis={"showgrid": False, "showline": True, "linecolor": "#2D3748",
+               "ticks": "outside", "tickcolor": "#2D3748", "ticklen": 4,
+               "tickformat": "%m/%y", "hoverformat": "%d/%m/%Y", "title": None,
+               "fixedrange": True, "showspikes": True, "spikemode": "across",
+               "spikethickness": 1, "spikedash": "dot", "spikecolor": "#4A5568"},
+        yaxis={"showgrid": True, "gridcolor": "#1E2533", "zeroline": False,
+               "ticksuffix": "%", "tickformat": "+.0f", "title": None,
+               "tickfont": {"size": 11}, "nticks": 7, "fixedrange": True},
+        separators=",.",
     )
     return fig
 
 
 def _secao_desempenho_categorias(posicoes: list) -> None:
-    """Linhas de retorno por categoria, com escolha do que comparar."""
+    """Placar e linhas de retorno por categoria; a legenda escolhe o que comparar."""
     from core.desempenho_categorias import CATEGORIAS
 
     _secao_titulo_orig(
         "📈", "Desempenho por Categoria",
-        "Retorno de preço das posições atuais de cada categoria; "
-        "cada linha começa no primeiro dado que tem no período",
+        "Retorno de preço das posições atuais, categoria a categoria",
     )
-    col_p, col_s = st.columns([1, 3], gap="medium")
-    with col_p:
-        period_key = st.radio(
-            "Período", _PERIODOS_CATEGORIAS, index=1, horizontal=True,
-            key="analise_vg_categorias_periodo",
-            format_func=lambda k: _PERFORMANCE_PERIODS[k]["label"],
-        )
+    st.markdown(_CSS_DESEMPENHO_CATEGORIAS, unsafe_allow_html=True)
+
+    period_key = st.segmented_control(
+        "Período", _PERIODOS_CATEGORIAS, default="12M",
+        key="analise_vg_categorias_periodo",
+        format_func=lambda k: _ROTULO_PERIODO_CURTO[k],
+    ) or "12M"
     with st.spinner("Carregando séries por categoria…"):
         series, info = _series_desempenho_categorias(posicoes, period_key)
     if not series:
         st.info("Nenhuma categoria da carteira tem série de preço neste período.", icon="📈")
         return
-    opcoes = [c.nome for c in CATEGORIAS if c.nome in series]
-    with col_s:
-        chave = "analise_vg_categorias_sel"
-        # Trocar o período pode tirar uma categoria das opções; a escolha
-        # guardada perde o que sumiu em vez de quebrar o widget.
-        if chave in st.session_state:
-            st.session_state[chave] = [c for c in st.session_state[chave] if c in opcoes]
-            padrao = {}
-        else:
-            padrao = {"default": opcoes}
-        selecionadas = st.multiselect(
-            "Comparar", opcoes, key=chave,
-            help="Escolha quais categorias aparecem no gráfico.", **padrao,
-        )
-    if not selecionadas:
-        st.info("Selecione ao menos uma categoria para comparar.", icon="☝️")
-        return
-    st.plotly_chart(_fig_desempenho_categorias(series, selecionadas),
-                    width="stretch", config={"displayModeBar": False},
-                    key="analise_vg_categorias_graf")
 
-    linhas = []
-    for nome in selecionadas:
-        i = info[nome]
-        linhas.append({
-            "Categoria": nome,
-            "Retorno no período": f"{'+' if i['retorno'] >= 0 else ''}{i['retorno']:.2f}%",
-            "Início da série": i["inicio"].strftime("%d/%m/%Y"),
-            "Ativos com série": f"{i['cobertos']}/{i['total']}",
-            "Moeda": i["moeda"],
-            "Fonte": i["fonte"],
-        })
-    st.dataframe(pd.DataFrame(linhas), hide_index=True, width="stretch")
-    st.caption(
-        "Não é a rentabilidade da conta: usa a quantidade de hoje de cada ativo e "
-        "ignora aportes e vendas. FIIs e ações pelo fechamento ajustado incluem "
-        "proventos; Tesouro com cupom cai no pagamento do cupom. Categorias "
-        "americanas em reais pelo câmbio do dia, salvo quando a coluna Moeda diz USD."
+    st.markdown(_cards_desempenho_categorias(series, info), unsafe_allow_html=True)
+    st.plotly_chart(_fig_desempenho_categorias(series),
+                    width="stretch", config={"displayModeBar": False, "scrollZoom": False},
+                    key="analise_vg_categorias_graf")
+    st.markdown(
+        f'<div class="dcat-rodape">Período: {_PERFORMANCE_PERIODS[period_key]["label"]} · '
+        'toque no nome de uma categoria na legenda para mostrar ou esconder a linha · '
+        'cada linha começa no primeiro preço disponível</div>',
+        unsafe_allow_html=True,
     )
+
+    with st.expander("Fontes e metodologia"):
+        linhas = []
+        for nome in [c.nome for c in CATEGORIAS if c.nome in info]:
+            i = info[nome]
+            linhas.append({
+                "Categoria": nome,
+                "Retorno no período": _fmt_retorno(i["retorno"], 2),
+                "Início da série": i["inicio"].strftime("%d/%m/%Y"),
+                "Ativos com série": f"{i['cobertos']}/{i['total']}",
+                "Moeda": i["moeda"],
+                "Fonte": i["fonte"],
+            })
+        st.dataframe(pd.DataFrame(linhas), hide_index=True, width="stretch")
+        st.caption(
+            "Não é a rentabilidade da conta: usa a quantidade de hoje de cada ativo e "
+            "ignora aportes e vendas. Cada passo do retorno usa só os ativos com preço "
+            "nas duas datas. FIIs e ações pelo fechamento ajustado incluem proventos; "
+            "Tesouro com cupom cai no pagamento do cupom. Categorias americanas em reais "
+            "pelo câmbio do dia, salvo quando a coluna Moeda diz USD."
+        )
 
 
 def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: dict) -> None:

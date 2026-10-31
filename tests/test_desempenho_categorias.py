@@ -93,21 +93,63 @@ def test_inicio_do_periodo():
     assert dc.inicio_do_periodo(10, date(2026, 10, 31)) == date(2026, 10, 21)
 
 
-def test_tela_tem_selecao_do_que_comparar_na_visao_geral():
+def test_selecao_e_pela_legenda_e_nao_por_widget():
+    """Pedido de 31/10/2026: sem pílulas verdes; a legenda liga e desliga."""
     import views.investimentos as inv
 
     secao = inspect.getsource(inv._secao_desempenho_categorias)
-    assert "st.multiselect(" in secao
-    assert "analise_vg_categorias_sel" in secao
+    assert "st.pills(" not in secao and "st.multiselect(" not in secao
     corpo = inspect.getsource(inv._tab_analise)
     trecho = corpo[corpo.index("with ta:"):corpo.index("with tb:")]
     assert "_secao_desempenho_categorias(posicoes)" in trecho
 
 
-def test_figura_desenha_so_as_selecionadas():
+def _serie(fim: float) -> pd.Series:
+    return pd.Series([0.0, fim], index=pd.to_datetime(["2026-01-01", "2026-02-01"]))
+
+
+def test_grafico_abre_com_acoes_etf_e_tesouro_e_o_resto_na_legenda():
     import views.investimentos as inv
 
-    s = pd.Series([0.0, 5.0], index=pd.to_datetime(["2026-01-01", "2026-02-01"]))
-    fig = inv._fig_desempenho_categorias(
-        {"Empresas Americanas": s, "ETFs Americanos": s * 2}, ["ETFs Americanos"])
-    assert [t.name for t in fig.data] == ["ETFs Americanos (+10.0%)"]
+    series = {c.nome: _serie(i + 1.0) for i, c in enumerate(dc.CATEGORIAS)}
+    fig = inv._fig_desempenho_categorias(series)
+    linhas = {t.name: t.visible for t in fig.data if t.showlegend is not False}
+    assert set(linhas) == {c.nome for c in dc.CATEGORIAS}
+    assert {n for n, v in linhas.items() if v is True} == set(dc.INICIAIS)
+    assert all(v == "legendonly" for n, v in linhas.items() if n not in dc.INICIAIS)
+    # Ponto final e rótulo seguem a linha: mesmo grupo, mesma visibilidade.
+    for t in fig.data:
+        dono = next(x for x in fig.data if x.name == t.legendgroup)
+        assert t.visible == dono.visible
+    assert fig.layout.dragmode is False
+
+
+def test_sem_nenhuma_inicial_o_grafico_mostra_tudo():
+    import views.investimentos as inv
+
+    fig = inv._fig_desempenho_categorias({"Empresas Americanas": _serie(-3.0),
+                                          "Renda Fixa": _serie(1.0)})
+    assert all(t.visible is True for t in fig.data)
+    textos = [t.text[0] for t in fig.data if t.mode == "text"]
+    assert textos == ["<b>-3,0%</b>", "<b>+1,0%</b>"]
+
+
+def test_rotulos_de_fim_de_linha_nao_se_sobrepoem():
+    import views.investimentos as inv
+
+    pos = inv._rotulos_sem_colisao([("A", 5.0), ("B", 5.1), ("C", 20.0)], folga=1.0)
+    assert pos["B"] - pos["A"] >= 1.0 - 1e-9
+    assert pos["A"] < pos["B"] < pos["C"]
+
+
+def test_placar_ordena_do_melhor_para_o_pior():
+    import views.investimentos as inv
+
+    s = pd.Series([0.0, 1.0], index=pd.to_datetime(["2026-01-01", "2026-02-01"]))
+    base = {"inicio": s.index[0], "cobertos": 1, "total": 1, "moeda": "BRL", "fonte": "x"}
+    info = {"Empresas Americanas": {**base, "retorno": -3.0},
+            "ETFs Americanos": {**base, "retorno": 7.5}}
+    html = inv._cards_desempenho_categorias(
+        {"Empresas Americanas": s, "ETFs Americanos": s}, info)
+    assert html.index("ETFs Americanos") < html.index("Empresas Americanas")
+    assert "+7,5%" in html and "-3,0%" in html
