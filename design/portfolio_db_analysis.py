@@ -12,6 +12,7 @@ from html import escape
 
 import streamlit as st
 
+from core.user_context import user_cache_data
 from design.lacunas import aviso_lacuna, detalhe_tecnico
 
 _BADGE_CORES = {
@@ -252,3 +253,37 @@ def carregar_documentos(classe: str, chaves: tuple) -> dict:
     except Exception:  # noqa: BLE001 - ausência vira erro declarado lá dentro
         engine = None
     return documentos_da_classe(classe, chaves, engine=engine)
+
+
+class _LeituraDosLotesFalhou(Exception):
+    """Sobe de dentro do cache para que a falha não fique guardada no TTL."""
+
+
+@user_cache_data(ttl=900)
+def _lotes_tesouro_cacheado() -> dict:
+    from core.config import settings
+    from core.tesouro_posicao import lotes_para_contexto
+
+    engine = None
+    try:
+        from core.database import get_engine
+
+        engine = get_engine()
+    except Exception:  # noqa: BLE001 - ausência vira erro declarado lá dentro
+        engine = None
+    saida = lotes_para_contexto(engine, str(settings.OWNER_USER_ID or ""))
+    if saida.get("erro"):
+        raise _LeituraDosLotesFalhou(saida["erro"])
+    return saida
+
+
+def carregar_lotes_tesouro() -> dict:
+    """Lotes do Tesouro do dono da sessão (data e taxa contratada), para o chat.
+
+    O cache é por usuário; uma leitura que falhou volta como ``{"erro"}`` e
+    não é guardada, para a próxima pergunta tentar de novo.
+    """
+    try:
+        return _lotes_tesouro_cacheado()
+    except _LeituraDosLotesFalhou as exc:
+        return {"erro": str(exc)}

@@ -32,6 +32,9 @@ python-dotenv==1.2.2
 # O mesmo SDK atende OpenAI, OpenRouter e Gemini (endpoint compatível) —
 # ver core/llm_b3.py.
 openai==2.37.0
+# Claude (Anthropic) fala outro protocolo: tem SDK próprio, traduzido para a
+# cadeia em core/llm_anthropic.py. Usa httpx2, que não conflita com o httpx.
+anthropic==2.3.0
 yfinance==0.2.66
 requests==2.34.2
 beautifulsoup4==4.14.3

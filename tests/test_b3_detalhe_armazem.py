@@ -166,7 +166,8 @@ def test_pregao_velho_e_avisado():
 
 
 def test_acao_sem_dado_diz_que_nao_tem():
-    texto = det.resumo_para_prompt({"XXXX3": {}}, origem="x", hoje=HOJE)
+    texto = det.resumo_para_prompt({"XXXX3": {"pregoes": [], "eventos": []}},
+                                   origem="x", hoje=HOJE)
     assert "não tem negócios deste papel" in texto
     assert "não tem eventos medidos" in texto
 
@@ -230,7 +231,8 @@ _LINHA_PREGAO = {"ticker": "WEGE3", "trade_date": date(2026, 9, 1),
 
 def test_leitura_monta_linhas_curtas_por_ticker():
     eng = _Engine({"tipo_evento": [_LINHA_EVENTO], "trades": [_LINHA_PREGAO]})
-    d = det.ler_detalhe(eng, ["wege3", "WEGE3", " petr4 "], hoje=HOJE)
+    d = det.ler_detalhe(eng, ["wege3", "WEGE3", " petr4 "], hoje=HOJE,
+                        engine_eventos=eng)
     assert list(d) == ["WEGE3", "PETR4"]
     assert d["WEGE3"]["nome"] == "WEG"
     assert d["WEGE3"]["pregoes"] == [{"date": date(2026, 9, 1), "preco": Decimal("49.7"),
@@ -258,6 +260,22 @@ def test_eventos_saem_do_banco_da_safra_e_so_da_versao_corrente():
     assert "versao_metodologia = :versao" in det._SQL_EVENTOS
     assert memoria.params[-1]["versao"] == MEMORIA_MERCADO_VERSAO
     assert all("tipo_evento" not in sql for sql, _ in precos.consultas)
+
+
+def test_sem_banco_da_safra_eventos_nao_consultados_e_o_prompt_diz():
+    """Sem a engine da Memória, os eventos não saem do banco de preços (que só
+    tem a safra abandonada) e o resumo não afirma que o papel não tem eventos:
+    falta de configuração não é ausência de dado."""
+    precos = _Engine({"trades": [_LINHA_PREGAO],
+                      "tipo_evento": [{**_LINHA_EVENTO, "versao_metodologia": "1.0.0"}]})
+    d = det.ler_detalhe(precos, ["WEGE3", "PETR4"], hoje=HOJE)
+    assert d["WEGE3"]["pregoes"] and d["WEGE3"]["eventos"] is None
+    assert d["PETR4"] == {"nome": None, "pregoes": [], "eventos": None}
+    assert all("tipo_evento" not in sql for sql, _ in precos.consultas)
+    texto = det.resumo_para_prompt(d, origem="x", hoje=HOJE)
+    assert "não tem eventos medidos" not in texto
+    assert texto.count("Reação a resultados: não consultada") == 2
+    assert "NOTICIAS_LOCAL_DB_URL" in texto
 
 
 def test_rota_recusa_pedido_sem_ticker_ou_largo_demais():
@@ -381,8 +399,7 @@ def test_chat_da_carteira_recebe_o_bloco(monkeypatch):
     assert pedidos == [["VALE3", "WEGE3", "ITUB4"]]
 
 
-def test_sql_roda_no_armazem_de_verdade():
-    """As consultas só se provam executando; só leitura, pulado sem armazém."""
+def _armazem_de_verdade():
     try:
         from sqlalchemy import create_engine, text
 
@@ -392,16 +409,40 @@ def test_sql_roda_no_armazem_de_verdade():
             conn.execute(text("SELECT 1"))
     except Exception as erro:  # noqa: BLE001
         pytest.skip(f"sem armazem local ({erro})")
+    return engine
+
+
+def test_sql_roda_no_armazem_de_verdade():
+    """As consultas só se provam executando; só leitura, pulado sem armazém."""
+    engine = _armazem_de_verdade()
+    try:
+        d = det.ler_detalhe(engine, ["WEGE3", "XXXX3"])
+    finally:
+        engine.dispose()
+    assert d["WEGE3"]["pregoes"] and d["WEGE3"]["eventos"] is None
+    assert not any(d["XXXX3"].values())
+    texto = det.resumo_para_prompt(d, origem="x")
+    assert "WEGE3 (WEG" in texto and "Liquidez" in texto
+
+
+def test_eventos_saem_da_safra_de_verdade():
+    """A safra mora noutro banco do container (``url_memoria``); sem ele
+    configurado nesta máquina, o pulo diz qual variável falta."""
     from core.memoria_mercado.destino import engine_memoria
+
+    engine = _armazem_de_verdade()
     memoria = engine_memoria()
+    if memoria is None:
+        engine.dispose()
+        pytest.skip("banco da Memória de Mercado não configurado "
+                    "(MEMORIA_LOCAL_DB_URL ou NOTICIAS_LOCAL_DB_URL)")
     try:
         d = det.ler_detalhe(engine, ["WEGE3", "XXXX3"], engine_eventos=memoria)
     finally:
         engine.dispose()
-        if memoria is not None:
-            memoria.dispose()
+        memoria.dispose()
     assert d["WEGE3"]["pregoes"] and d["WEGE3"]["eventos"]
     assert {e["versao"] for e in d["WEGE3"]["eventos"]} == {MEMORIA_MERCADO_VERSAO}
-    assert not any(d["XXXX3"].values())
+    assert d["XXXX3"] == {"nome": None, "pregoes": [], "eventos": []}
     texto = det.resumo_para_prompt(d, origem="x")
-    assert "WEGE3 (WEG" in texto and "Liquidez" in texto
+    assert "Reação a resultados anuais" in texto

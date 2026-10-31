@@ -24,6 +24,7 @@ Aplicação Streamlit unificada para controle financeiro, investimentos, carteir
 - Usar dados sintéticos em testes, exemplos, prompts, logs e validação visual.
 - Executar testes, lint/checks configurados, varredura de segredos e inicialização do Streamlit antes de concluir.
 - Registrar comandos executados, resultados, falhas, verificações não realizadas e riscos pendentes.
+- Mudou a estrutura do app (tela, aba, subaba, restrição de admin ou fonte de dado de uma tela): no mesmo PR, atualizar em Configurações as abas 🎯 Grau de Confiança (`core/confianca_secao.py`), 🗺️ Mapa do App (`docs/mapa_app/areas/` + `scripts/montar_mapa_app.py`) e 📚 Documentação (`views/documentacao.py`). Detalhes em `CLAUDE.md`; guarda em `tests/test_configuracoes_sincronizadas.py`.
 
 ## Roteamento de Skills
 

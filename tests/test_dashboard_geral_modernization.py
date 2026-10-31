@@ -272,13 +272,15 @@ def test_recommended_portfolio_detail_has_a_heading(monkeypatch):
     corpo = inspect.getsource(dashboard._secao_sugestoes_carteira)
     for secao in ("_secao_portfolio_modelo_b3(", "_secao_portfolio_modelo_us(",
                   "_secao_fiis_sugeridos("):
-        assert corpo.index("_destaque_carteira_recomendada()") < corpo.index(secao), secao
+        # A chamada leva as origens visíveis desde 31/10/2026 (seções do menu):
+        # o que importa aqui é a ordem, não os argumentos.
+        assert corpo.index("_destaque_carteira_recomendada(") < corpo.index(secao), secao
 
     rendered = _capture_markdown(monkeypatch)
     dashboard._destaque_carteira_recomendada()
     html = "\n".join(rendered)
     assert "Detalhes da carteira recomendada" in html
-    assert "não são a sua posição investida" in html.replace("\n", "")
+    assert "não a sua posição investida" in html.replace("\n", "")
 
 
 def test_os_blocos_de_conclusao_abrem_na_mesma_faixa():

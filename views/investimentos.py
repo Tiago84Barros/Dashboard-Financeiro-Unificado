@@ -87,7 +87,11 @@ _TOKEN_POR_COR = {
 
 def _cor_texto(cor: str) -> str:
     """Traduz a cor semântica para o token do tema (texto e bordas em HTML)."""
-    return _TOKEN_POR_COR.get(str(cor).upper(), cor)
+    # Cor fora do mapa (classe de ativo, paleta de grupo) também precisa
+    # ser legível no claro: ver ``design.componentes.tinta_legivel``.
+    from design.componentes import tinta_legivel
+
+    return _TOKEN_POR_COR.get(str(cor).upper()) or tinta_legivel(cor)
 
 
 _ICONES_B3_CDN = (
@@ -1400,7 +1404,22 @@ def _legenda_par(row) -> tuple[str, bool]:
     return texto, incerto
 
 
-@user_cache_data(ttl=1800)
+def _rotulo_cotacao_viva(cv: dict | None) -> str:
+    """Origem das cotações da carteira: ao vivo (com hora) ou o fechamento do banco."""
+    momento = (cv or {}).get("atualizado_em")
+    if not (cv or {}).get("n_ao_vivo") or momento is None:
+        return "Fechamento gravado"
+    from datetime import datetime, timedelta, timezone
+    from zoneinfo import ZoneInfo
+    # Fora do pregão a barra mais nova é a do último dia útil, datada à
+    # meia-noite UTC (core.cotacao_viva._momento): é fechamento, não ao vivo.
+    if datetime.now(timezone.utc) - momento > timedelta(hours=1):
+        return f"Fechamento de {momento.astimezone(timezone.utc):%d/%m}"
+    local = momento.astimezone(ZoneInfo("America/Sao_Paulo"))
+    return f"Ao vivo às {local:%H:%M} (atraso ~15 min)"
+
+
+@user_cache_data(ttl=900)
 def _get_macro_dados() -> dict:
     """Busca indicadores macro: BCB (SELIC, IPCA) + yfinance (câmbio, bolsas)."""
     try:
@@ -1874,7 +1893,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
     # ── Cenário Macroeconômico ─────────────────────────────────────────────────
     _secao_titulo_orig(
         "🌐", "Cenário Macroeconômico",
-        "Dados atualizados a cada 30 minutos",
+        "Dados atualizados a cada 15 minutos",
     )
 
     macro = _get_macro_dados()
@@ -1978,8 +1997,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         st.caption(
             "Como é calculado: cada classe de ativo tem uma sensibilidade fixa "
             "(0 a 1) a cada fator; a barra é a média dessas sensibilidades "
-            "ponderada pelo peso das classes na carteira. Estimativa indicativa "
-            "— não constitui recomendação de investimento."
+            "ponderada pelo peso das classes na carteira. Estimativa indicativa."
         )
     else:
         st.caption("Sem dados de alocação para calcular dependências macro.")
@@ -2733,6 +2751,10 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
         fonte_icon, fonte_label = "🟢", "mercado atual"
     elif cotacao_fonte == "stale":
         fonte_icon, fonte_label = "🟠", "mercado desatualizado"
+    elif cotacao_fonte == "curva_tesouro":
+        fonte_icon, fonte_label = "🟢", "curva do Tesouro"
+    elif cotacao_fonte == "curva_tesouro_antiga":
+        fonte_icon, fonte_label = "🟠", "curva do Tesouro desatualizada"
     else:
         fonte_icon, fonte_label = "🟡", "snapshot"
 
@@ -2891,7 +2913,7 @@ def _editor_preco_medio_manual(posicoes: list[dict]) -> None:
         b1, b2 = st.columns([1, 1], gap="small")
         with b1:
             if st.button("Salvar preço médio", type="primary",
-                         use_container_width=True, key="pmm_salvar"):
+                         width="stretch", key="pmm_salvar"):
                 try:
                     salvar(uid, tk, valor, nota)
                 except Exception as exc:  # noqa: BLE001
@@ -2901,7 +2923,7 @@ def _editor_preco_medio_manual(posicoes: list[dict]) -> None:
                     st.success(f"{tk}: preço médio informado por você gravado.")
                     st.rerun()
         with b2:
-            if vigente and st.button("Apagar declaração", use_container_width=True,
+            if vigente and st.button("Apagar declaração", width="stretch",
                                      key="pmm_apagar"):
                 remover(uid, tk)
                 st.cache_data.clear()
@@ -3500,6 +3522,7 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
     from design.portfolio_db_analysis import (
         carregar_db,
         carregar_documentos,
+        carregar_lotes_tesouro,
         carregar_macro,
         render_db_analysis,
         render_db_macro,
@@ -3542,6 +3565,9 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
             tesouro=tesouro, macro=macro, fundamentos=fundamentos,
             documentos=carregar_documentos(classe, chaves),
             valores_reais=valores_reais,
+            # Data e taxa contratada de cada compra: sem elas a LLM dizia que
+            # esses dados não existiam, com o Extrato Analítico no banco.
+            lotes_tesouro=carregar_lotes_tesouro() if classe == "tesouro" else None,
         ) + "\n\n" + bloco_contexto_mercado(ativos)
         if conj:
             # Liquidez, preço, proventos, trimestres e score mês a mês: o
@@ -3620,11 +3646,19 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         # Contagem de cotações ao vivo, valorização em R$ e N efetivo vieram
         # da antiga aba Carteira, que repetia estes quatro KPIs.
         n_live = carteira.get("n_cotacoes_live", 0)
-        if not n_live:
+        n_curva = carteira.get("n_cotacoes_curva", 0)
+        n_curva_antiga = carteira.get("n_cotacoes_curva_antiga", 0)
+        n_ativos = carteira.get("num_ativos", 0)
+        if not n_live and not n_curva and not n_curva_antiga:
             detalhe_tecnico("Sem cotações ao vivo: valores pelas cotações do snapshot XP.",
                             codigo="investimentos.carteira.cotacoes_snapshot")
-        cotacao_sub = (f"{n_live}/{carteira.get('num_ativos', 0)} cotações ao vivo"
-                       if n_live else "Cotações da última foto")
+        # O Tesouro marcado pela curva oficial vale pelo PU do dia, não pela foto.
+        cotacao_sub = " · ".join(
+            ([f"{n_live}/{n_ativos} cotações ao vivo"] if n_live else [])
+            + ([f"{n_curva}/{n_ativos} pela curva do Tesouro"] if n_curva else [])
+            + ([f"{n_curva_antiga}/{n_ativos} pela curva do Tesouro desatualizada"]
+               if n_curva_antiga else [])
+        ) or "Cotações da última foto"
         dif_total = carteira.get("diferenca_reais", round(total_mkt - total_inv, 2))
         dif_txt = f"{'+' if dif_total >= 0 else ''}{fmt_moeda(dif_total)}"
 
@@ -4497,6 +4531,7 @@ def render() -> None:
         "📈",
         metadados=[
             ("Referência", _data_ref_label),
+            ("Cotações", _rotulo_cotacao_viva(carteira.get("cotacao_viva"))),
             ("Fonte", _fonte_label),
         ],
     )
@@ -4509,13 +4544,15 @@ def render() -> None:
             "sucesso" if _fonte == "real" else "alerta",
         )
     with col_b2:
-        _n_live  = carteira.get("n_cotacoes_live", 0)
+        # Tesouro pela curva oficial conta como atual: é o PU do dia.
+        _n_atuais = (carteira.get("n_cotacoes_live", 0)
+                     + carteira.get("n_cotacoes_curva", 0))
         _n_stale = carteira.get("n_cotacoes_stale", 0)
         _n_tot   = carteira.get("num_ativos", 0)
         badge_status(
-            (f"Cotações atuais {_n_live}/{_n_tot}" if not _n_stale else
-             f"Atuais {_n_live} · antigas {_n_stale}"),
-            "sucesso" if _n_live and not _n_stale else "alerta",
+            (f"Cotações atuais {_n_atuais}/{_n_tot}" if not _n_stale else
+             f"Atuais {_n_atuais} · antigas {_n_stale}"),
+            "sucesso" if _n_atuais and not _n_stale else "alerta",
         )
     with col_b3:
         badge_status(f"{proventos['num_eventos']} proventos", "neutro")

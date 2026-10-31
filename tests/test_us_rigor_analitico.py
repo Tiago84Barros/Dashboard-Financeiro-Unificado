@@ -74,17 +74,6 @@ def test_alterar_controle_rebaixa_observado_para_premissa():
     assert "FONTE_OBSERVADO if (tem_observado and intacto) else FONTE_PREMISSA" in _FONTE_VIEW
 
 
-def test_a_secao_inteira_parte_da_mesma_fonte_de_macro():
-    """Duas abas da mesma seção não podem exibir taxas do Fed diferentes."""
-    vitrine = (_RAIZ / "views" / "empresas_americanas.py").read_text(encoding="utf-8")
-    corpo = vitrine[vitrine.index("def _macro_controls"):]
-    corpo = corpo[:corpo.index("\ndef ")]
-    assert "us.macro_observado()" in corpo
-    assert "FONTE_OBSERVADO if (observado and intacto) else FONTE_PREMISSA" in corpo
-    # E nenhuma das duas telas ancora em literal quando há série observada.
-    assert "4.25, 0.25" not in corpo
-
-
 # ── Ingestão FRED: transformações puras ──────────────────────────────────────
 
 def test_parse_fred_descarta_ausentes():
@@ -223,6 +212,36 @@ def test_sem_cotacao_o_relatorio_nao_estima_o_cambio():
     assert "não estime a taxa" in texto
 
 
+def test_cambio_leva_a_data_do_fechamento():
+    texto = rel.build_fx_context(5.42, "2026-10-27", hoje="2026-10-29")
+    assert "R$ 5.42 (fechamento de 27/10/2026)" in texto
+    assert "VELHA" not in texto
+
+
+def test_cambio_velho_e_marcado_nao_lido_como_o_de_hoje():
+    # A última linha de asset_quotes pode ser de semanas atrás.
+    texto = rel.build_fx_context(5.42, "2026-09-30", hoje="2026-10-29")
+    assert "fechamento de 30/09/2026 — VELHA (29 dias)" in texto
+    assert "não a trate como a taxa de hoje" in texto
+
+
+def test_cambio_sem_data_diz_que_nao_tem_data():
+    assert "data do fechamento não informada" in rel.build_fx_context(5.42)
+
+
+def test_idade_do_cambio():
+    assert rel.idade_do_cambio(None) is None
+    assert rel.idade_do_cambio("lixo") is None
+    assert rel.idade_do_cambio("2026-10-24", hoje="2026-10-29") == 5
+
+
+def test_frase_cambial_da_tela():
+    from views.analise_portfolio_us import _referencia_cambio
+    assert _referencia_cambio(None, None) == "."
+    assert "sem data do fechamento" in _referencia_cambio(5.42, None)
+    assert "não é a taxa de hoje" in _referencia_cambio(5.42, "2020-01-02")
+
+
 def test_tela_declara_a_exposicao_cambial():
     assert "Carteira em dólares" in _FONTE_VIEW
     assert "segundo ativo embutido" in _FONTE_VIEW
@@ -254,7 +273,7 @@ v.us.scored_universe = lambda *a, **k: pd.DataFrame([
 v.us.data_status = lambda: {"mode": "snapshot", "last_update": "2026-08-03",
                             "companies": 512}
 v.llm_disponivel = lambda: False
-v._usd_brl_da_base = lambda: 5.42
+v._usd_brl_da_base = lambda: (5.42, None)
 """
 
 

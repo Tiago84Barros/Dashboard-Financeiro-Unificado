@@ -74,6 +74,25 @@ def test_exercicio_por_lote_de_mil_acoes():
     assert abs(_eps(rows, 2019) - 2.78) < 1e-9
 
 
+def test_empresa_que_passou_a_reportar_em_reais_corrige_o_lote_antigo():
+    # Payload real do ITUB4 (28/10/2026): 2025 já em reais, 2024 em MIL e 2019
+    # em MIL e por lote de mil ações -- 1e6 acima do implícito. Com a escala
+    # decidida por 2025 (1.0), 2019 saía 2.780.000, passava do teto e virava
+    # nulo: o ITUB4 sumia do P/L mediano de abr/2020 a mar/2021.
+    anuais = [
+        {"endDate": "2025-12-31", "netIncomeApplicableToCommonShares": 44_857_000_000,
+         "basicEarningsPerPreferredShare": 4.05},
+        {"endDate": "2024-12-31", "netIncomeApplicableToCommonShares": 41_085_000_000,
+         "basicEarningsPerPreferredShare": 4200},
+        {"endDate": "2019-12-31", "netIncomeApplicableToCommonShares": 27_113_000_000,
+         "basicEarningsPerPreferredShare": 2_780_000},
+    ]
+    rows = nz.income_rows(_q("ITUB4", anuais, shares=11_026_869_000))
+    assert abs(_eps(rows, 2025) - 4.05) < 1e-9
+    assert abs(_eps(rows, 2024) - 4.2) < 1e-9
+    assert abs(_eps(rows, 2019) - 2.78) < 1e-9
+
+
 def test_sem_acoes_mantem_a_regra_antiga():
     # Sem sharesOutstanding não há como decidir: mantém /1000 (maioria em MIL)
     q = _q("PETR4", [{"endDate": "2025-12-31", "netIncome": 100.0,

@@ -18,12 +18,15 @@ da média". Aqui cada ano usa o fechamento da fita oficial
 Métodos (repetidos no campo ``metodo`` do arquivo):
 
 - B3, anual: P/L = fechamento do último pregão do ano ÷ LPA; valor de mercado
-  = fechamento × ações implícitas (lucro ÷ LPA); P/VP = valor de mercado ÷
-  patrimônio; DY = proventos com data-ex no ano ÷ fechamento. P/L que foge
-  mais de 20x da mediana do próprio ticker é descartado (LPA gravado em escala
-  errada: ITUB4 2019 tinha LPA 2.780); o mesmo teste sobre o valor de mercado
-  implícito vale para o P/VP. O P/L não depende do lucro absoluto -- bancos
-  não o têm na base (ITUB4 em todos os anos, BBAS3 antes de 2020).
+  do exercício = fechamento × ações implícitas (lucro ÷ LPA); P/VP = esse
+  valor ÷ patrimônio; DY = proventos com data-ex no ano ÷ fechamento. P/L que
+  foge mais de 20x da mediana do próprio ticker é descartado (LPA gravado em
+  escala errada: ITUB4 2019 tinha LPA 2.780); o mesmo teste sobre o valor de
+  mercado implícito vale para o P/VP. O P/L não depende do lucro absoluto --
+  bancos não o têm na base (ITUB4 em todos os anos, BBAS3 antes de 2020).
+- B3, porte (seleção de pares): valor de mercado do quote mais recente da
+  brapi, de até 30 dias. Não usa as ações implícitas: ver
+  ``valor_de_mercado_brapi``.
 - FII, mensal: P/VP = fechamento do mês na fita da B3 ÷ VPA; DY 12m =
   rendimentos com data-ex nos 12 meses ÷ fechamento. Mês com VPA que salta e
   volta é descartado; janela de DY que atravessa grupamento/desdobramento
@@ -73,7 +76,9 @@ mediana resiste a LPA em escala errada, a média ponderada por liquidez não
 por valor de mercado e fica bem abaixo por causa de bancos, Petrobras e Vale.
 
 Recusa publicar (saída 1) se a fita da B3 estiver parada há mais de
-``FITA_MAXIMA_DIAS``.
+``FITA_MAXIMA_DIAS``, se o mês mais recente da fita ficar fora da série do
+P/L mediano ou se ele tiver mais de ``MERCADO_IMPLAUSIVEIS_MAX`` ações com LPA
+em escala errada (``motivo_para_recusar``).
 """
 from __future__ import annotations
 
@@ -82,7 +87,7 @@ import gzip
 import json
 import math
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,19 +103,25 @@ JANELA_VOL_MESES = 36
 MOMENTO_MAX_IDADE_DIAS = 45     # preço mais velho que isso não mede momento
 MOMENTO_SALTO = 3.0             # mês que muda mais que 3x: ajuste faltando
 ALAVANCAGEM_MAX_IDADE_DIAS = 200
+PORTE_MAX_IDADE_DIAS = 30       # valor de mercado mais velho que isso não é porte
 UNIVERSO_MERCADO = 50           # ações mais negociadas no ano anterior
 MERCADO_MIN_VALIDAS = 20        # mês com menos que isso não entra na série
 MERCADO_PL_MAXIMO = 200.0       # P/L acima disso: LPA em escala errada
 MERCADO_PL_MINIMO = 1.0         # abaixo disso também (ITUB4 2019, LPA 2.780)
+MERCADO_IMPLAUSIVEIS_MAX = 10   # no último mês: de 2023 em diante foram 0 a 2
 
 METODO = {
     "b3": ("Anual. P/L = fechamento do último pregão do ano na fita da B3 "
            "(sem retroajuste) ÷ LPA publicado do exercício; valor de mercado "
-           "= fechamento × (lucro ÷ LPA); P/VP = valor de mercado ÷ "
-           "patrimônio líquido; DY = proventos com data-ex no ano ÷ "
-           "fechamento. P/L fora de 1/20x a 20x da mediana do ticker é "
+           "do exercício = fechamento × (lucro ÷ LPA); P/VP = esse valor ÷ "
+           "patrimônio líquido; DY = proventos de renda com data-ex no ano "
+           "(resposta mais nova da brapi) ÷ fechamento. P/L fora de 1/20x "
+           "a 20x da mediana do ticker é "
            "descartado; o mesmo teste sobre o valor de mercado implícito "
-           "vale para o P/VP."),
+           "vale para o P/VP. Porte (tamanho na seleção de pares) = valor de "
+           "mercado do quote mais recente da brapi, de até "
+           f"{PORTE_MAX_IDADE_DIAS} dias; sem ele (unit, quote velho), o "
+           "ticker fica sem porte e o tamanho não filtra os pares dele."),
     "fii": ("Mensal. P/VP = fechamento do último pregão do mês na fita da B3 "
             "÷ VPA do informe mensal; DY 12m = rendimentos com data-ex nos "
             "12 meses ÷ fechamento. Descartados: VPA que salta e volta e "
@@ -320,6 +331,65 @@ def alavancagem_brapi(linhas, hoje, *, max_idade: int = ALAVANCAGEM_MAX_IDADE_DI
     return saida, excl
 
 
+def valor_de_mercado_brapi(linhas, universo, hoje, *, sucessoes=None,
+                           max_idade: int = PORTE_MAX_IDADE_DIAS
+                           ) -> tuple[dict[str, dict], dict]:
+    """Porte de cada ticker do ``universo``: o ``marketCap`` do quote mais
+    recente da brapi. ``linhas``: dicts com ticker, fetched_at e market_cap,
+    uma por ticker. Puro.
+
+    Por que não fechamento × ações implícitas (lucro ÷ LPA) do último
+    exercício: em 29/10/2026, 46 dos 322 tickers que tinham as duas medidas
+    divergiam mais de 3x. PRIO3 saía com 0,0002x o valor de mercado, AERI3
+    com 987x, e SBSP3 com 0,19x depois do desdobramento. O LPA da base
+    mistura escalas, e as ações do exercício não acompanham desdobramento.
+    Sem valor de mercado recente, o ticker fica sem porte, e a seleção de
+    pares diz que o tamanho não filtrou. Uma estimativa que erra 1000x
+    não entra no lugar dele. A brapi não dá marketCap de unit (BPAC11,
+    TAEE11).
+
+    Ticker renomeado (ELET3 → AXIA3): vale o quote mais recente da cadeia.
+    """
+    from data_pipeline.market.b3_sucessao import cadeias
+    fotos = {}
+    for r in linhas:
+        mc = _f(r.get("market_cap"))
+        if mc is not None and mc > 0:
+            fotos[str(r["ticker"]).upper()] = (r["fetched_at"], mc)
+    por_tk = cadeias(sucessoes or {})
+    hoje_d = hoje.date() if hasattr(hoje, "date") else hoje
+    excl = {"foto_velha": 0, "sem_valor_de_mercado": 0}
+    saida: dict[str, dict] = {}
+    for tk in sorted(universo):
+        da_cadeia = [(fotos[c], c) for c in por_tk.get(tk, [tk]) if c in fotos]
+        if not da_cadeia:
+            excl["sem_valor_de_mercado"] += 1
+            continue
+        (quando, mc), codigo = max(da_cadeia, key=lambda x: x[0][0])
+        if (hoje_d - quando.date()).days > max_idade:
+            excl["foto_velha"] += 1
+            continue
+        de = "" if codigo == tk else f"{codigo} em "
+        saida[tk] = {"porte": _r(mc, 0),
+                     "porte_ref": (f"valor de mercado da brapi (quote de "
+                                   f"{de}{quando.date().isoformat()})")}
+    return saida, excl
+
+
+def coletar_valor_de_mercado(conn, universo, hoje, sucessoes
+                             ) -> tuple[dict, dict]:
+    from sqlalchemy import text
+    linhas = [dict(r._mapping) for r in conn.execute(text("""
+        SELECT DISTINCT ON (ticker) ticker, fetched_at,
+               (payload_json->>'marketCap')::float8 AS market_cap
+          FROM market.brapi_raw_payloads
+         WHERE endpoint = 'quote' AND request_status = 'success'
+           AND jsonb_typeof(payload_json->'marketCap') = 'number'
+         ORDER BY ticker, fetched_at DESC
+    """))]
+    return valor_de_mercado_brapi(linhas, universo, hoje, sucessoes=sucessoes)
+
+
 def coletar_alavancagem(conn, hoje) -> tuple[dict, dict]:
     from sqlalchemy import text
     linhas = [dict(r._mapping) for r in conn.execute(text("""
@@ -342,8 +412,7 @@ def historico_b3(fechamentos, demos, proventos) -> tuple[dict, dict]:
     ``fechamentos``: ticker, ano, close (fita, sem ajuste).
     ``demos``: ticker, ano, lucro, lpa, patrimonio.
     ``proventos``: ticker, ano, total (soma por ação, data-ex no ano).
-    Devolve ({ticker: {"historico": {...}, "acoes": float, "ano_acoes": int}},
-    {motivo: contagem}).
+    Devolve ({ticker: {"historico": {...}}}, {motivo: contagem}).
     """
     import pandas as pd
     df = (fechamentos.merge(demos, on=["ticker", "ano"], how="inner")
@@ -379,14 +448,8 @@ def historico_b3(fechamentos, demos, proventos) -> tuple[dict, dict]:
                if pd.notna(r.mc) and pd.notna(r.patrimonio) and r.patrimonio > 0]
         dy = [(int(r.ano), 100.0 * r.total / r.close) for r in g.itertuples()
               if pd.notna(r.total) and r.total > 0 and r.close > 0]
-        com_acoes = g.dropna(subset=["acoes"])
-        item = {"historico": {"p_l": _serie(pl), "p_vp": _serie(pvp),
-                              "dividend_yield": _serie(dy)}}
-        if not com_acoes.empty:
-            ult = com_acoes.iloc[-1]
-            item["acoes"] = float(ult["acoes"])
-            item["ano_acoes"] = int(ult["ano"])
-        saida[str(tk)] = item
+        saida[str(tk)] = {"historico": {"p_l": _serie(pl), "p_vp": _serie(pvp),
+                                        "dividend_yield": _serie(dy)}}
     return saida, exclusoes
 
 
@@ -414,8 +477,11 @@ def _sucessoes(conn) -> dict:
         return {}
 
 
-def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None
-               ) -> tuple[dict, dict, str | None]:
+def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None,
+               proventos=None) -> tuple[dict, dict, str | None]:
+    from core.dividend_types import soma_por_ano
+    from core.proventos_b3 import eventos_do_armazem
+
     fech = _ler(conn, """
         SELECT DISTINCT ON (ticker, EXTRACT(YEAR FROM trade_date))
                ticker, EXTRACT(YEAR FROM trade_date)::int AS ano, trade_date,
@@ -442,12 +508,11 @@ def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None
            AND i.year < EXTRACT(YEAR FROM now())::int
          ORDER BY i.ticker, i.year, i.updated_at DESC
     """, ini=ANO_INICIAL)
-    prov = _ler(conn, """
-        SELECT ticker, EXTRACT(YEAR FROM ex_date)::int AS ano, SUM(amount) AS total
-          FROM (SELECT DISTINCT ticker, ex_date, amount FROM market.dividends
-                 WHERE ex_date IS NOT NULL AND amount > 0) d
-         GROUP BY 1, 2
-    """)
+    # A resposta mais nova da brapi (core.proventos_b3): o DISTINCT por
+    # (ticker, ex_date, amount) em market.dividends deixava passar a
+    # amortização, a cópia por lote de mil e as revisões que o upsert não apaga.
+    eventos = eventos_do_armazem(conn) if proventos is None else proventos
+    prov = soma_por_ano(eventos, data="ex_date")
     # Ticker renomeado: a fita troca de código, o universo não.
     sucessoes = _sucessoes(conn) if sucessoes is None else sucessoes
     universo = set(demos["ticker"].astype(str))
@@ -468,15 +533,10 @@ def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None
     exclusoes["momento"] = excl_mom
     alav, excl_alav = coletar_alavancagem(conn, hoje)
     exclusoes["alavancagem"] = excl_alav
-    px = {str(r.ticker): (float(r.close), str(r.trade_date)[:10])
-          for r in ultimo.itertuples()}
+    porte, excl_porte = coletar_valor_de_mercado(conn, hist, hoje, sucessoes)
+    exclusoes["porte"] = excl_porte
     for tk, item in hist.items():
-        acoes = item.pop("acoes", None)
-        ano = item.pop("ano_acoes", None)
-        if acoes and tk in px:
-            item["porte"] = _r(px[tk][0] * acoes, 0)
-            item["porte_ref"] = (f"fechamento de {px[tk][1]} × ações implícitas "
-                                 f"do exercício {ano}")
+        item.update(porte.get(tk, {}))
         if tk in vol:
             item["volatilidade"] = _r(vol[tk], 2)
         item.update(mom.get(tk, {}))
@@ -521,7 +581,9 @@ def mercado_b3(fechamentos, volumes, lpa, *, n: int = UNIVERSO_MERCADO,
     ``fechamentos``: ticker, data (último pregão do mês), close (fita, sem
     ajuste). ``volumes``: ticker, ano, vol. ``lpa``: ticker, ano, lpa.
     Devolve {"serie": [[data, p_l, lucro_sobre_preco_pct, n], ...],
-    "ultimo": {...}} -- ``ultimo`` diz quem ficou fora no último mês e por quê.
+    "ultimo": {...}, "descartado": {...} | None} -- ``ultimo`` diz quem ficou
+    fora no último mês da série e por quê; ``descartado``, o mesmo do mês mais
+    recente da fita quando ele não entrou (menos de MERCADO_MIN_VALIDAS).
     """
     import pandas as pd
     lpa_d = {(str(r.ticker), int(r.ano)): float(r.lpa) for r in lpa.itertuples()
@@ -530,7 +592,7 @@ def mercado_b3(fechamentos, volumes, lpa, *, n: int = UNIVERSO_MERCADO,
     f = fechamentos.copy()
     f["data"] = pd.to_datetime(f["data"])
     f["mes"] = f["data"].dt.to_period("M")
-    serie, ultimo = [], None
+    serie, ultimo, descartado = [], None, None
     for mes, g in f.groupby("mes"):
         if mes.year < ano_inicial or mes.year not in universo:
             continue
@@ -551,18 +613,49 @@ def mercado_b3(fechamentos, volumes, lpa, *, n: int = UNIVERSO_MERCADO,
                 implausiveis.append(tk)
                 continue
             eys.append(ey)
+        data = max(d for _, d in px.values()).date().isoformat()
+        quem = {"data": data, "exercicio": exerc,
+                "universo": len(universo[mes.year]), "validas": len(eys),
+                "negativas": sum(1 for y in eys if y < 0),
+                "sem_lpa": sem_lpa, "sem_preco": sem_preco,
+                "implausiveis": implausiveis}
         if len(eys) < MERCADO_MIN_VALIDAS:
+            descartado = quem
             continue
         mediana = float(pd.Series(eys).median())
-        data = max(d for _, d in px.values()).date().isoformat()
         serie.append([data, _r(1 / mediana, 2) if mediana > 0 else None,
                       _r(100 * mediana, 2), len(eys)])
-        ultimo = {"data": data, "exercicio": exerc,
-                  "universo": len(universo[mes.year]), "validas": len(eys),
-                  "negativas": sum(1 for y in eys if y < 0),
-                  "sem_lpa": sem_lpa, "sem_preco": sem_preco,
-                  "implausiveis": implausiveis}
-    return {"serie": serie, "ultimo": ultimo}
+        ultimo, descartado = quem, None
+    return {"serie": serie, "ultimo": ultimo, "descartado": descartado}
+
+
+def motivo_para_recusar(fita, mercado: dict, hoje) -> str | None:
+    """Por que o arquivo não pode sair hoje, ou None. Puro.
+
+    O mês com menos de MERCADO_MIN_VALIDAS ações válidas fica fora da série,
+    e o leitor vê só o último que entrou: em 26-27/10/2026, demonstrações
+    regravadas com o LPA 1000x tiraram abril a outubro da série calculada do
+    armazém, e ela parava em março sem erro nenhum. Recusar faz a rotina
+    noturna acusar a falha em vez de publicar o ponto velho como atual.
+    """
+    if fita is None or (hoje - date.fromisoformat(fita)).days > FITA_MAXIMA_DIAS:
+        return (f"fita da B3 parada há mais de {FITA_MAXIMA_DIAS} dias; o P/L "
+                "mediano e os múltiplos sairiam com preço velho.")
+    d, u = mercado.get("descartado"), mercado.get("ultimo")
+    if d:
+        ate = mercado["serie"][-1][0] if mercado["serie"] else "nenhum mês"
+        return (f"P/L mediano B3: {d['data']} ficou fora da série, só "
+                f"{d['validas']} de {d['universo']} ações válidas (LPA em escala "
+                f"errada: {', '.join(d['implausiveis']) or '-'}; sem LPA do "
+                f"exercício {d['exercicio']}: {', '.join(d['sem_lpa']) or '-'}); "
+                f"a série pararia em {ate}.")
+    if u is None:
+        return "P/L mediano B3: série vazia."
+    if len(u["implausiveis"]) > MERCADO_IMPLAUSIVEIS_MAX:
+        return (f"P/L mediano B3: {len(u['implausiveis'])} ações com LPA em escala "
+                f"errada em {u['data']} ({', '.join(u['implausiveis'])}), mais que "
+                f"{MERCADO_IMPLAUSIVEIS_MAX}; a mediana sairia de amostra torta.")
+    return None
 
 
 _SQL_FECHAMENTO_MENSAL = """
@@ -674,8 +767,11 @@ def historico_fii(vpa, fechamentos, proventos) -> tuple[dict, dict]:
     return saida, exclusoes
 
 
-def coletar_fii(conn, precos=None, hoje=None) -> tuple[dict, dict]:
+def coletar_fii(conn, precos=None, hoje=None, proventos=None) -> tuple[dict, dict]:
     import pandas as pd
+
+    from core.proventos_b3 import eventos_do_armazem
+
     vpa = _ler(conn, """
         SELECT ticker, ref_month AS mes, vpa FROM market.fii_metrics_monthly
          WHERE vpa > 0
@@ -688,11 +784,13 @@ def coletar_fii(conn, precos=None, hoje=None) -> tuple[dict, dict]:
          ORDER BY ticker, date_trunc('month', trade_date), trade_date DESC,
                   collected_at DESC, id DESC
     """)
-    prov = _ler(conn, """
-        SELECT DISTINCT ticker, ex_date, amount FROM market.dividends
-         WHERE ex_date >= make_date(2022, 1, 1) AND amount > 0
-           AND ticker IN (SELECT DISTINCT ticker FROM market.fii_metrics_monthly)
-    """)
+    # Só rendimento, da mesma fonte da B3: o DISTINCT em market.dividends
+    # deixava a amortização e as revisões entrarem no DY.
+    fiis = set(_ler(conn, "SELECT DISTINCT ticker FROM market.fii_metrics_monthly")["ticker"])
+    eventos = eventos_do_armazem(conn) if proventos is None else proventos
+    datas = pd.to_datetime(eventos["ex_date"])
+    prov = eventos.loc[(datas >= pd.Timestamp(2022, 1, 1)) & eventos["ticker"].isin(fiis),
+                       ["ticker", "ex_date", "amount"]]
     for df, c in ((vpa, "mes"), (fech, "mes")):
         df[c] = pd.to_datetime(df[c]).dt.tz_localize(None)
     fech["close"] = fech["close"].astype(float)
@@ -889,6 +987,7 @@ def main(argv=None) -> int:
 
     from sqlalchemy import create_engine, text
 
+    from core.proventos_b3 import eventos_do_armazem
     from scripts.publish_fii_selection_from_local import _warehouse_url
     try:
         engine = create_engine(_warehouse_url())
@@ -900,8 +999,9 @@ def main(argv=None) -> int:
     precos = precos_mensais_supabase()
     with conn:
         conn.execute(text("SET TRANSACTION READ ONLY"))
-        b3, excl_b3, fita = coletar_b3(conn, precos, agora)
-        fii, excl_fii = coletar_fii(conn, precos, agora)
+        proventos = eventos_do_armazem(conn)
+        b3, excl_b3, fita = coletar_b3(conn, precos, agora, proventos=proventos)
+        fii, excl_fii = coletar_fii(conn, precos, agora, proventos=proventos)
         eua, excl_eua = coletar_eua(conn)
         mercado = coletar_mercado_b3(conn)
 
@@ -913,12 +1013,12 @@ def main(argv=None) -> int:
         "exclusoes_fii": excl_fii, "exclusoes_eua": excl_eua,
         "mercado_b3": {"meses": len(mercado["serie"]),
                        "ultimo": (mercado["serie"] or [None])[-1],
-                       "fora": mercado["ultimo"]},
+                       "fora": mercado["ultimo"],
+                       "descartado": mercado["descartado"]},
     }
-    if fita is None or (agora.date() - datetime.fromisoformat(fita).date()).days \
-            > FITA_MAXIMA_DIAS:
-        relatorio["erro"] = (f"fita da B3 parada há mais de {FITA_MAXIMA_DIAS} "
-                             "dias; o porte sairia com preço velho.")
+    motivo = motivo_para_recusar(fita, mercado, agora.date())
+    if motivo:
+        relatorio["erro"] = motivo
         print(json.dumps(relatorio, ensure_ascii=False, indent=2))
         return 1
     payload = {

@@ -14,6 +14,8 @@ import re
 import views.documentacao as doc
 
 # "meses" e "medida" estão fora porque são grafia correta; "mes" e "media" não.
+# "Portfolio Fit" é nome próprio: é assim que a aba Inteligência dos Ativos o
+# escreve (toggle e cabeçalho em views/inteligencia_ativos.py).
 _SEM_ACENTO = re.compile(
     r"\b(nao|sao|ha|ate|mes|voce|tambem|analise|analises|posicao|posicoes|"
     r"criterio|criterios|periodo|periodos|metrica|metricas|media|medias|"
@@ -24,10 +26,11 @@ _SEM_ACENTO = re.compile(
     r"validacao|limitacao|limitacoes|restricao|restricoes|otimizacao|"
     r"simulacao|exposicao|concentracao|alocacao|avaliacao|projecao|"
     r"publicacao|ingestao|evidencia|frequencia|tendencia|patrimonio|"
-    r"portfolio|dolar|inflacao|calculo|maximo|minimo|proximo|ultimo|unico|"
+    r"portfolio(?!\s+fit\b)|dolar|inflacao|calculo|maximo|minimo|proximo|ultimo|unico|"
     r"obvio|codigo|modulo|rotulo|rotulos|possivel|disponivel|variavel|"
     r"estavel|confiavel|comparavel|cadencia|recencia|correlacao|saida|"
-    r"saidas|abrangencia|diligencia|so|ja)\b", re.I)
+    r"saidas|abrangencia|diligencia|validos|expoe|imobiliarios|explicito|"
+    r"explicitos|reconstruidas|so|ja)\b", re.I)
 
 _CAMPOS_DETALHE = ("titulo", "objetivo", "dados", "formula", "exemplo",
                    "interpretacao", "impacto", "limitacao")
@@ -51,11 +54,6 @@ def _textos_visiveis():
                 yield f"{flow.key}/{nid}.contains", item
             for campo, valor in doc._generic_flow_detail(flow, no).items():
                 yield f"{flow.key}/{nid}.{campo}", valor
-    for chave, rotulo in doc.ORDEM_ANALISE_AVANCADA:
-        yield f"ordem/{chave}", rotulo
-    for chave, etapa in doc.ETAPAS_ANALISE_AVANCADA.items():
-        for campo, valor in etapa.items():
-            yield f"etapa/{chave}.{campo}", valor
 
 
 def test_nenhum_texto_da_documentacao_sai_sem_acento():

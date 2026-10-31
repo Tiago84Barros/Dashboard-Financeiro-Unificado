@@ -393,6 +393,64 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/precos_mensais_b3.json.gz",),
     ),
     Alvo(
+        # Fechamento de cada um dos últimos 63 pregões, para o bloco de
+        # contexto das LLMs e a ferramenta `preco_diario_recente`. Em 29/10/2026
+        # o chat só tinha o fechamento mensal de 05/10 e não viu a queda de
+        # 26/10 (BOVA11 −14,5%). Lê os ZIPs do COTAHIST que `b3_pregao` deixa no
+        # cache, sem tocar no armazém.
+        chave="pregoes_recentes_b3",
+        titulo="Pregões recentes da B3 para as LLMs (COTAHIST)",
+        passos=(("scripts/publish_pregoes_recentes_b3.py",),),
+        cadencia_dias=1,
+        modulo="b3",
+        precisa_armazem=False,
+        artefatos=("data/public/pregoes_recentes_b3.json.gz",),
+    ),
+    Alvo(
+        # Proventos de renda por ano para o card e o gráfico de dividendos da
+        # Empresas B3, a série da LLM e o adapter de FII. Lê a resposta mais
+        # nova da brapi arquivada no armazém, não `market.dividends`, onde o
+        # upsert guarda cada revisão ao lado da anterior. A resposta que
+        # `b3_brapi` (fim da fila) traz hoje entra amanhã.
+        chave="proventos_b3",
+        titulo="Proventos de renda da B3 por ano",
+        passos=(("scripts/publish_proventos_b3.py",),),
+        cadencia_dias=1,
+        modulo="b3",
+        artefatos=("data/public/proventos_b3.json.gz",),
+    ),
+    Alvo(
+        # Curvas diárias da Carteira 20 contra BOVA11, CDI e pesos iguais, que a
+        # aba 📒 Carteira 20 lê. O retorno das ações estende a série da
+        # pesquisa com o COTAHIST que `b3_pregao` acabou de baixar e os
+        # proventos de `market.dividends`; o CDI é o arquivo de `cdi_diario`.
+        # Os dois vêm antes na fila. Os proventos que `b3_brapi` (fim da fila)
+        # traz hoje entram amanhã: a extensão é recalculada inteira a cada
+        # rodada e marca como suspeito o dia ex ainda sem provento. Antes do
+        # primeiro pregão depois da execução, não grava nada e sai com 0.
+        chave="carteira20_desempenho",
+        titulo="Desempenho diário da Carteira 20",
+        passos=(("scripts/carteira20_desempenho.py",),),
+        cadencia_dias=1,
+        modulo="b3",
+        artefatos=("data/public/carteira20_desempenho.json",),
+    ),
+    Alvo(
+        # Medição mensal do protocolo da Carteira 20 (curva por aportes e
+        # teórica, IR por preço médio, IPCA), que a aba 📒 Carteira 20 lê. As
+        # mesmas fontes do desempenho diário, mais o IPCA do `macro_brasil`
+        # (antes na fila). Roda todo dia porque refaz a conta inteira desde a
+        # inaugural: provento que chega depois do fechamento corrige o mês. Antes
+        # do primeiro fechamento (30/11/2026) grava o arquivo sem meses; uma
+        # rodada que mede menos meses do que o publicado não grava e falha.
+        chave="carteira20_medicao",
+        titulo="Medição mensal da Carteira 20",
+        passos=(("scripts/carteira20_medicao.py",),),
+        cadencia_dias=1,
+        modulo="b3",
+        artefatos=("data/public/carteira20_medicao.json",),
+    ),
+    Alvo(
         # Notícias filtradas por relevância, relatórios (documentos CVM/SEC) e
         # eventos datados por ativo, para a Inteligência dos Ativos. Lê o
         # acervo de notícias e os documentos que só existem no armazém; o
@@ -433,12 +491,20 @@ ALVOS: tuple[Alvo, ...] = (
         # e em 04/10/2026 103 tickers -- BBDC4, ITUB4, PETR4 -- seguiam no
         # 2026T1 com o payload do 2T26 no disco desde 19/09. O segundo passo
         # regrava as demonstrações a partir dele, sem rede (B3-02).
+        #
+        # E regrava à força: o modo comum pula o dono cujo payload mais novo já
+        # foi normalizado, então linha gravada por normalizador velho nunca
+        # sarava. Em 26-27/10/2026 a rotina rodou do checkout sem o PR #558,
+        # gravou 26,7 mil demonstrações com o LPA 1000x e o P/L mediano B3
+        # calculado do armazém passou a parar em março. Custa ~70 s; o upsert só toca a linha que muda, e
+        # só ela ganha updated_at novo -- é o que a publicação B3 leva ao
+        # Supabase pela marca d'água.
         chave="brapi_raw_poda",
         titulo="Poda do cache bruto da brapi",
         passos=(
             ("scripts/archive_remote_brapi_raw.py",),
             ("run_market_ingest.py", "renormalize-demonstracoes", "--warehouse",
-             "--json"),
+             "--json", "--forcar"),
             ("scripts/compact_remote_brapi_raw.py", "--apply"),
         ),
         cadencia_dias=1,

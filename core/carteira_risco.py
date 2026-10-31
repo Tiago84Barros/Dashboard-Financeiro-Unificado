@@ -257,6 +257,21 @@ def volatilidade_anual(retornos: Iterable[float | None]) -> float | None:
     return math.sqrt(var) * math.sqrt(_DIAS_ANO)
 
 
+def volatilidade_referencia(retornos: Iterable[float | None],
+                            referencia: Iterable[float | None]) -> tuple[float | None, int]:
+    """Volatilidade da referência só nos pregões em que a carteira também tem retorno.
+
+    A série da referência cobre a janela inteira; a da carteira pode ter buracos
+    (antes do primeiro aporte, preço faltando, salto descartado). Medir a bolsa em
+    pregões que a carteira não viveu compara oscilações de períodos diferentes.
+    """
+    pares = [b for r, b in zip(retornos, referencia)
+             if r is not None and b is not None and math.isfinite(r) and math.isfinite(b)]
+    if len(pares) < _MIN_DIAS:
+        return None, len(pares)
+    return volatilidade_anual(pares), len(pares)
+
+
 def drawdown(retornos: Sequence[float | None]) -> dict:
     """Queda máxima e atual do índice de TWR, a partir de 1 antes do 1º dia.
 
@@ -439,7 +454,8 @@ def bloco_risco_para_prompt(risco: dict | None) -> str:
            or "nada") + ").",
         f"- TWR do período: {_pct(risco.get('twr'), 2)} | CDI no mesmo período: "
         f"{_pct(risco.get('cdi_periodo'), 2)}",
-        f"- Volatilidade anualizada: {_pct(risco.get('vol_anual'))}",
+        f"- Volatilidade anualizada: {_pct(risco.get('vol_anual'))} | {BENCHMARK} no "
+        f"mesmo período: {_pct(risco.get('vol_benchmark'))}",
         f"- Queda máxima (drawdown): {_pct(risco.get('max_drawdown'))} | "
         f"queda atual desde o pico: {_pct(risco.get('drawdown_atual'))}",
         f"- VaR histórico 95%: 1 dia {_pct(risco.get('var_1d'), 2)} | 1 mês (21 pregões) "
@@ -486,6 +502,9 @@ _SQL_FOTOS = """
     JOIN assets a ON a.id = s.asset_id
     WHERE s.user_id = :uid
       AND s.report_date BETWEEN :ini AND :fim
+      -- Aluguel tomado (BTC Tomador) entra negativo: é dívida, não posição.
+      -- Somado, zeraria a ação própria do mesmo papel na mesma corretora.
+      AND NOT (COALESCE(s.is_loaned, FALSE) AND s.quantity < 0)
     GROUP BY 1, 2, 3, 4
 """
 
@@ -833,6 +852,7 @@ def _risco_carteira_real() -> dict:
 
     dd = drawdown(rets)
     b, n_beta = beta(rets, ref)
+    vol_ref, n_vol_ref = volatilidade_referencia(rets, ref)
     tol, status_pol = _tolerancia_politica(engine, owner)
     observado = sum(posicao[tk]["valor"] for tk, f in fonte_de.items() if f == FONTE_OBSERVADA)
     modelado = sum(posicao[tk]["valor"] for tk, f in fonte_de.items() if f == FONTE_MODELADA)
@@ -863,6 +883,10 @@ def _risco_carteira_real() -> dict:
         "twr": twr(rets),
         "cdi_periodo": cdi_periodo,
         "vol_anual": volatilidade_anual(rets) if len(validos) >= _MIN_DIAS else None,
+        # Régua para quem não sabe se 15% é muito: a bolsa, só nos pregões em
+        # que a carteira tem retorno, para não comparar períodos diferentes.
+        "vol_benchmark": vol_ref,
+        "n_vol_benchmark": n_vol_ref,
         "max_drawdown": dd["max"],
         "drawdown_atual": dd["atual"],
         "pico_data": serie[dd["i_pico"]]["data"] if dd["i_pico"] >= 0 else inicio,

@@ -1,4 +1,4 @@
-"""Configurações é uma tela só: quem não administra vê as mesmas oito abas.
+"""Configurações é uma tela só: quem não administra vê as mesmas abas.
 
 Até 12/10/2026 quem não era administrador recebia outra tela — título próprio e
 três abas. O pedido foi explícito: mesmo layout, todas as abas. O que separa as
@@ -21,6 +21,7 @@ ROTULOS_ESPERADOS = [
     "🔄 Dados de mercado",
     "🗄️ Banco de dados",
     "🔒 Segurança",
+    "🗺️ Mapa do App",
     "📚 Documentação",
 ]
 
@@ -61,7 +62,8 @@ def tela(monkeypatch):
     for nome in ("container_pagina", "_render_tab_intro", "render_geral",
                  "_render_confianca", "_render_restricoes",
                  "_render_atualizacao_de_dados", "_render_atualizacao",
-                 "_render_banco", "_render_seguranca", "_render_documentacao"):
+                 "_render_banco", "_render_seguranca", "_render_mapa_app",
+                 "_render_documentacao"):
         monkeypatch.setattr(configuracoes, nome,
                             lambda *a, _n=nome, **k: chamadas.append(_n))
 
@@ -79,7 +81,7 @@ def tela(monkeypatch):
     return falso, _rodar
 
 
-def test_quem_nao_administra_ve_as_mesmas_oito_abas(tela):
+def test_quem_nao_administra_ve_as_mesmas_nove_abas(tela):
     _falso, rodar = tela
     assert rodar(admin=False)[0] == ROTULOS_ESPERADOS
 
@@ -95,17 +97,17 @@ def test_as_abas_de_quem_administra_e_de_quem_nao_administra_sao_as_mesmas(tela)
 
 
 def test_nenhuma_aba_fica_sem_corpo(tela):
-    """Oito abas abertas e oito corpos chamados — rótulo sem conteúdo é pior
+    """Nove abas abertas e nove corpos chamados — rótulo sem conteúdo é pior
     do que aba escondida: promete e não entrega."""
     _falso, rodar = tela
     rotulos, chamadas = rodar(admin=False)
     corpos = [c for c in chamadas if c not in ("container_pagina",
                                                "_render_tab_intro")]
-    assert len(rotulos) == len(corpos) == 8
+    assert len(rotulos) == len(corpos) == 9
     assert corpos == ["render_geral", "_render_confianca", "_render_restricoes",
                       "_render_atualizacao_de_dados", "_render_atualizacao",
                       "_render_banco", "_render_seguranca",
-                      "_render_documentacao"]
+                      "_render_mapa_app", "_render_documentacao"]
 
 
 def test_a_tela_nao_tem_mais_titulo_proprio_de_nao_admin(tela):

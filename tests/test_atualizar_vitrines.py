@@ -42,7 +42,9 @@ def test_carimbo_aponta_para_a_base_que_o_alvo_escreve(chave, onde):
     escreve_arquivo = {"macro_insumos", "cdi_diario", "macro_brasil", "valuation_historico",
                        "cenarios_analogos",
                        "informacoes_recentes", "rag_corpus", "fii_metrics_monthly",
-                       "b3_linhagem", "precos_mensais_b3"}
+                       "b3_linhagem", "precos_mensais_b3", "carteira20_desempenho",
+                       "carteira20_medicao",
+                       "proventos_b3", "pregoes_recentes_b3"}
     esperado = ("armazem" if chave in escreve_no_armazem
                 else "arquivo" if chave in escreve_arquivo else "supabase")
     assert onde == esperado
@@ -392,3 +394,16 @@ def test_ingestao_brapi_e_a_ultima_da_fila():
     ordem = [a.chave for a in ALVOS]
     assert ordem[-2:] == ["b3_brapi", "b3_brapi_anual"]
     assert ordem.index("brapi_raw_poda") < ordem.index("b3_brapi")
+
+
+def test_poda_regrava_as_demonstracoes_a_forca():
+    """Sem `--forcar`, linha gravada por normalizador velho nunca se corrige.
+
+    Em 26-27/10/2026 a rotina rodou do checkout sem o PR #558 e regravou 26,7
+    mil demonstrações com o LPA 1000x errado; o renormalize comum pula o dono
+    cujo payload mais novo já foi normalizado, e o P/L mediano calculado do
+    armazém passou a parar em março com 14 ações descartadas.
+    """
+    passo = next(p for p in POR_CHAVE["brapi_raw_poda"].passos
+                 if "renormalize-demonstracoes" in p)
+    assert "--forcar" in passo

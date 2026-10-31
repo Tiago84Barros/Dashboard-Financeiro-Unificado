@@ -12,7 +12,7 @@ import pytest
 from core import database, investimentos
 
 
-def _carteira_so_do_tesouro(rows, tx_costs, manuais):
+def _carteira_so_do_tesouro(rows, tx_costs, manuais, curva_tesouro=None):
     return {
         "posicoes": [{"ticker": "TIPCA2029", "classe": "Tesouro Direto",
                       "setor": "Tesouro Direto", "moeda": "BRL",

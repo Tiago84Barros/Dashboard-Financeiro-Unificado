@@ -23,8 +23,10 @@ import os
 from sqlalchemy import text
 
 import core.brapi as brapi
+from core.b3_troca_codigo import MOTIVO_TROCA, MOTIVO_TROCA_PENDENTE
 from data_pipeline.market import normalize as nz
 from data_pipeline.market import repository as repo
+from data_pipeline.market.troca_codigo import carregar_trocas, e_troca
 from data_pipeline.quality import scheduler as sched
 
 logger = logging.getLogger(__name__)
@@ -150,17 +152,105 @@ def _reconcile_ticker(data: dict, tk: str) -> str | None:
     return devolvido
 
 
+def _carregar_trocas(engine) -> dict[str, str]:
+    # conexão própria: load_cvm_to_ticker engole erro de tabela ausente e pode
+    # deixar a transação dele abortada
+    with engine.connect() as conn:
+        return carregar_trocas(conn)
+
+
+def _pular_substituido(tk: str, trocas: dict[str, str] | None, prog: dict) -> bool:
+    """Código já trocado não é mais ingerido: a brapi devolve o histórico dele
+    sob o código atual, e regravá-lo recriaria o ativo duplicado."""
+    if not trocas or tk not in trocas:
+        return False
+    logger.info("%s: código substituído por %s — fica de fora da ingestão", tk, trocas[tk])
+    prog["codigos_substituidos"] = prog.get("codigos_substituidos", 0) + 1
+    return True
+
+
+def _troca_provada(conn, cvm_map, tk: str, alias_sym: str | None,
+                   trocas: dict[str, str] | None) -> str | None:
+    """O símbolo divergente é o código novo da MESMA companhia e classe?
+    Então é troca de código, e o histórico passa a ser dele (não do antigo)."""
+    if alias_sym and e_troca(conn, cvm_map, tk, alias_sym, trocas):
+        return alias_sym
+    return None
+
+
+def _codigo_cvm(cvm_map: dict, tk: str, novo: str | None,
+                trocas: dict[str, str] | None):
+    """codigo_cvm do código que fica: o do atual, o do requisitado e, na falta
+    dos dois, o de um código antigo trocado por ele. A referência da CVM às
+    vezes só conhece o código antigo (ELET3); sem o elo da troca o atual
+    ficaria sem companhia."""
+    for t in (novo, tk):
+        if t and cvm_map.get(t) is not None:
+            return cvm_map[t]
+    dono = novo or tk
+    for antigo, atual in sorted((trocas or {}).items()):
+        if atual == dono and cvm_map.get(antigo) is not None:
+            return cvm_map[antigo]
+    return None
+
+
+def _company_id(conn, cod, ticker: str):
+    """company_id pelo codigo_cvm; sem ele, o que o ativo já tem. O upsert de
+    assets grava ``company_id = EXCLUDED.company_id``: um None aqui apagaria a
+    identidade, e o ativo sairia do universo (load_setores exige company_id)."""
+    cid = repo.company_id_by_codigo(conn, cod) if cod is not None else None
+    if cid is None:
+        cid = conn.execute(text("SELECT company_id FROM market.assets WHERE ticker = :t"),
+                           {"t": ticker}).scalar()
+    return cid
+
+
+def _registrar_troca_pendente(conn, antigo: str, novo: str, cod, prog: dict) -> None:
+    """Troca provada na ingestão fica PENDENTE, não migrada.
+
+    Mover o histórico, descartar o que colide e desativar o código antigo é
+    migração: exige ``scripts/unificar_trocas_de_codigo_b3.py --apply`` (com
+    backup e, no Supabase, ``--confirmo-producao``), nunca a rotina agendada
+    (AGENTS.md: confirmação humana). Aqui só fica o alias antigo -> atual com
+    ``MOTIVO_TROCA_PENDENTE`` — a tela já deduplica e o dry-run lista o par —
+    e o aviso com o comando. Alias do código antigo para outro destino, ou a
+    troca já migrada (``MOTIVO_TROCA``), não é sobrescrito.
+    """
+    _ensure_ticker_alias(conn)
+    conn.execute(text("""
+        INSERT INTO market.ticker_alias (brapi_symbol, b3_ticker, codigo_cvm, motivo)
+        VALUES (:a, :n, :c, :m)
+        ON CONFLICT (brapi_symbol) DO UPDATE
+            SET motivo = EXCLUDED.motivo,
+                codigo_cvm = COALESCE(EXCLUDED.codigo_cvm, market.ticker_alias.codigo_cvm)
+            WHERE market.ticker_alias.b3_ticker = EXCLUDED.b3_ticker
+              AND market.ticker_alias.motivo IS DISTINCT FROM EXCLUDED.motivo
+              AND market.ticker_alias.motivo IS DISTINCT FROM :t
+    """), {"a": antigo, "n": novo, "c": cod, "m": MOTIVO_TROCA_PENDENTE, "t": MOTIVO_TROCA})
+    prog["trocas_pendentes"] = prog.get("trocas_pendentes", 0) + 1
+    logger.warning("%s -> %s: troca de código provada e NÃO migrada; revise com "
+                   "scripts/unificar_trocas_de_codigo_b3.py --pares %s:%s e aplique "
+                   "com --apply", antigo, novo, antigo, novo)
+
+
 def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
                   cvm_map: dict[str, int], prog: dict,
-                  interval: str = "1mo") -> None:
+                  interval: str = "1mo", trocas: dict[str, str] | None = None) -> None:
     """Busca 1 ticker na brapi e grava tudo em market.* (1 transação).
 
     ``interval`` é a granularidade das velas e precisa acompanhar ``range_``.
     O default da brapi é mensal: pedir range=1mo sem dizer o intervalo devolve
     as duas bordas do mês, não os pregões dele — foi assim que o refresh
     diário passou meses sem trazer preço novo.
+
+    ``trocas`` ({antigo: atual}, de ``carregar_trocas``): o código antigo é
+    pulado antes da rede. Quando a brapi devolve outro símbolo e ele é troca
+    de código provada, grava sob o código atual e registra a troca como
+    pendente — o histórico antigo só muda de dono pelo script, com aprovação.
     """
     tk = ticker.upper().replace(".SA", "")
+    if _pular_substituido(tk, trocas, prog):
+        return
     fetch = (lambda: brapi.fetch_quote_full(tk, range_=range_, interval=interval)) if full else \
             (lambda: brapi.fetch_quote(tk, range_=range_, interval=interval,
                                        dividends=True, fundamental=True))
@@ -190,7 +280,10 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
         # point-in-time (019): id do payload bruto vira proveniência das
         # linhas de demonstrações (raw_payload_id)
         pid = repo.save_raw_payload(conn, tk, "quote", quote, status="success")
-        if alias_sym:
+        novo = _troca_provada(conn, cvm_map, tk, alias_sym, trocas)
+        if novo:
+            _reconcile_ticker(data, novo)
+        elif alias_sym:
             _ensure_ticker_alias(conn)
             conn.execute(text("""
                 INSERT INTO market.ticker_alias (brapi_symbol, b3_ticker, codigo_cvm, motivo)
@@ -203,15 +296,15 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
                 _r_pit["raw_payload_id"] = pid
         # empresa (enriquece codigo_cvm pelo mapa CVM)
         comp = data["companies"]
-        cod = cvm_map.get(tk)
+        cod = _codigo_cvm(cvm_map, tk, novo, trocas)
         if comp and cod is not None:
             comp[0]["codigo_cvm"] = cod
             repo.upsert(conn, "companies", comp)
             prog["empresas"] += 1
-        # asset (liga company_id se houver)
+        # asset (liga company_id se houver; sem código, mantém o que tinha)
         ast = data["assets"]
         if ast:
-            ast[0]["company_id"] = repo.company_id_by_codigo(conn, cod) if cod is not None else None
+            ast[0]["company_id"] = _company_id(conn, cod, ast[0]["ticker"])
             repo.upsert(conn, "assets", ast)
         # fatos
         prog["precos"] += repo.upsert(conn, "historical_prices", data["historical_prices"])
@@ -222,9 +315,11 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
         prog["dividendos"] += repo.upsert(conn, "dividends", data["dividends"])
         repo.append_metric_vintages(conn, data["calculated_metrics"])
         prog["indicadores"] += repo.upsert(conn, "calculated_metrics", data["calculated_metrics"])
+        if novo:
+            _registrar_troca_pendente(conn, tk, novo, cod, prog)
         # qualidade: sinaliza ausências relevantes
         if full and dem == 0:
-            repo.log_quality(conn, ticker=tk, table_name="income_statements",
+            repo.log_quality(conn, ticker=novo or tk, table_name="income_statements",
                              issue_type="missing", severity="warn",
                              new_value="sem demonstrações no payload")
     prog["tickers"] += 1
@@ -243,12 +338,13 @@ def _run(engine, tickers: list[str], *, range_: str, full: bool,
             prog["erros"] = -1
             return prog
         cvm_map = repo.load_cvm_to_ticker(conn)
+    trocas = _carregar_trocas(engine)
 
     blocks = 0
     for i, tk in enumerate(tickers):
         try:
             ingest_ticker(engine, tk, range_=range_, full=full, cvm_map=cvm_map,
-                          prog=prog, interval=interval)
+                          prog=prog, interval=interval, trocas=trocas)
             blocks = 0
         except Exception as exc:
             if brapi.is_rate_limited(exc):
@@ -300,6 +396,9 @@ def bootstrap(tickers: list[str] | None = None, source: str = "setores",
         done = _bootstrap_done(conn)
         carteira = _carteira_tickers(conn)
         cvm_map = repo.load_cvm_to_ticker(conn)
+    trocas = _carregar_trocas(engine)
+    # código substituído não conta como pendente: nunca seria baixado
+    universe = [t for t in universe if t not in trocas]
     pending = [t for t in universe if t not in done]
     pending.sort(key=lambda t: (t not in carteira, t))  # carteira primeiro
     lote = pending[:batch]
@@ -309,7 +408,8 @@ def bootstrap(tickers: list[str] | None = None, source: str = "setores",
     blocks = 0
     for i, tk in enumerate(lote):
         try:
-            ingest_ticker(engine, tk, range_="max", full=True, cvm_map=cvm_map, prog=prog)
+            ingest_ticker(engine, tk, range_="max", full=True, cvm_map=cvm_map, prog=prog,
+                          trocas=trocas)
             _mark_bootstrap(engine, tk, "ok")
             blocks = 0
         except Exception as exc:
@@ -450,6 +550,7 @@ def validate(tickers: list[str], persist: bool = True) -> dict:
     with engine.connect() as conn:
         schema_ok = repo.schema_exists(conn)
         cvm_map = repo.load_cvm_to_ticker(conn) if schema_ok else {}
+    trocas = _carregar_trocas(engine) if schema_ok else {}
     report["schema_market"] = schema_ok
     do_persist = persist and schema_ok
 
@@ -486,7 +587,8 @@ def validate(tickers: list[str], persist: bool = True) -> dict:
         if do_persist:
             try:
                 prog = _new_progress()
-                ingest_ticker(engine, tk, range_="max", full=True, cvm_map=cvm_map, prog=prog)
+                ingest_ticker(engine, tk, range_="max", full=True, cvm_map=cvm_map, prog=prog,
+                              trocas=trocas)
                 entry["persistido"] = True
                 report["persistido"] = True
                 # registra ausências relevantes
@@ -627,10 +729,13 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
             params["tks"] = [t.upper().replace(".SA", "") for t in tickers]
         q += " ORDER BY ticker, id DESC"
         rows = conn.execute(text(q), params).fetchall()
+    trocas = _carregar_trocas(engine)
     if limit:
         rows = rows[:limit]
 
     for tk, pid, payload in rows:
+        if _pular_substituido(tk, trocas, prog):
+            continue
         try:
             p = json.loads(payload) if isinstance(payload, str) else payload
             quote = (p.get("results") or [p])[0] if isinstance(p, dict) else None
@@ -645,9 +750,12 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
             for _t_pit in ("income_statements", "balance_sheets", "cash_flow_statements"):
                 for _r_pit in data.get(_t_pit) or []:
                     _r_pit["raw_payload_id"] = pid
-            cod = cvm_map.get(tk)
             with engine.begin() as conn:
-                if alias_sym:
+                novo = _troca_provada(conn, cvm_map, tk, alias_sym, trocas)
+                cod = _codigo_cvm(cvm_map, tk, novo, trocas)
+                if novo:
+                    _reconcile_ticker(data, novo)
+                elif alias_sym:
                     _ensure_ticker_alias(conn)
                     conn.execute(text("""
                         INSERT INTO market.ticker_alias (brapi_symbol, b3_ticker, codigo_cvm, motivo)
@@ -662,7 +770,7 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
                     prog["empresas"] += 1
                 ast = data["assets"]
                 if ast:
-                    ast[0]["company_id"] = repo.company_id_by_codigo(conn, cod) if cod is not None else None
+                    ast[0]["company_id"] = _company_id(conn, cod, ast[0]["ticker"])
                     repo.upsert(conn, "assets", ast)
                 prog["precos"] += repo.upsert(conn, "historical_prices", data["historical_prices"])
                 for t in ("income_statements", "balance_sheets", "cash_flow_statements"):
@@ -670,6 +778,8 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
                 prog["dividendos"] += repo.upsert(conn, "dividends", data["dividends"])
                 repo.append_metric_vintages(conn, data["calculated_metrics"])
                 prog["indicadores"] += repo.upsert(conn, "calculated_metrics", data["calculated_metrics"])
+                if novo:
+                    _registrar_troca_pendente(conn, tk, novo, cod, prog)
             prog["tickers"] += 1
         except Exception as exc:
             logger.warning("renormalize %s: %s", tk, exc)
@@ -680,31 +790,36 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
 
 _TABELAS_DEMONSTRACAO = ("income_statements", "balance_sheets", "cash_flow_statements")
 
-# Por ticker, o payload mais novo QUE TRAZ demonstrações -- não o mais novo de
+# Por dono, o payload mais novo QUE TRAZ demonstrações -- não o mais novo de
 # todos, que é a cotação diária (só preço) e normaliza para zero linha. Ordena
 # por fetched_at, e não por id: o arquivamento do Supabase dá id novo a payload
-# antigo. Só entra o ticker cujas demonstrações ainda não saíram dele.
+# antigo. O dono é o código atual (``:trocas`` = {antigo: atual}): o payload
+# gravado sob ELET3 antes da troca ser descoberta é da AXIA3, e pode ser o
+# único com as demonstrações. Só entra o dono cujas demonstrações ainda não
+# saíram dele.
 _SQL_PAYLOAD_DE_DEMONSTRACAO = """
     WITH ultimo AS (
-        SELECT DISTINCT ON (ticker) ticker, id, fetched_at, payload_json
-        FROM market.brapi_raw_payloads
-        WHERE endpoint = 'quote' AND request_status = 'success'
-          AND payload_json ?| array['incomeStatementHistoryQuarterly',
-                                    'incomeStatementHistory']
-          {filtro}
-        ORDER BY ticker, fetched_at DESC, id DESC
+        SELECT DISTINCT ON (dono) dono, ticker, id, payload_json
+        FROM (SELECT COALESCE(CAST(:trocas AS jsonb) ->> ticker, ticker) AS dono,
+                     ticker, id, fetched_at, payload_json
+              FROM market.brapi_raw_payloads
+              WHERE endpoint = 'quote' AND request_status = 'success'
+                AND payload_json ?| array['incomeStatementHistoryQuarterly',
+                                          'incomeStatementHistory']
+                {filtro}) p
+        ORDER BY dono, fetched_at DESC, id DESC
     )
-    SELECT u.ticker, u.id, u.payload_json FROM ultimo u
+    SELECT u.dono, u.ticker, u.id, u.payload_json FROM ultimo u
     {so_pendentes}
-    ORDER BY u.ticker
+    ORDER BY u.dono
 """
 
-# Pula o ticker cujas demonstrações já saíram do payload mais novo. Com
+# Pula o dono cujas demonstrações já saíram do payload mais novo. Com
 # ``forcar`` o filtro cai: correção no normalizador não muda o payload, e sem
 # isso nunca alcançaria a linha já gravada.
 _SO_PENDENTES = """WHERE NOT EXISTS (
         SELECT 1 FROM market.income_statements s
-        WHERE s.ticker = u.ticker AND s.raw_payload_id = u.id)"""
+        WHERE s.ticker = u.dono AND s.raw_payload_id = u.id)"""
 
 
 def renormalize_demonstracoes(tickers: list[str] | None = None,
@@ -726,18 +841,25 @@ def renormalize_demonstracoes(tickers: list[str] | None = None,
 
     ``forcar`` regrava também o que já saiu do payload mais novo -- o caminho
     de uma correção do normalizador chegar às linhas existentes.
+
+    Código trocado (ELET3 -> AXIA3): os payloads dos dois códigos concorrem
+    pelo mesmo dono, o atual, e o escolhido grava sob ele com o id original
+    -- ``unificar`` não move payload, e o da troca fica sob o código antigo.
     """
     import json
     engine = _engine()
-    prog = {**_new_progress(), "atualizados": []}
+    prog = {**_new_progress(), "atualizados": [], "payloads_de_codigo_antigo": 0}
     if engine is None:
         return {**prog, "erros": -1}
     repo.reset_db_cols_cache()
-    params: dict = {}
+    trocas = _carregar_trocas(engine)
+    params: dict = {"trocas": json.dumps(trocas)}
     filtro = ""
     if tickers:
+        # pedir ELET3 ou AXIA3 é pedir o dono, com os payloads dos dois códigos
+        donos = {trocas.get(t, t) for t in (x.upper().replace(".SA", "") for x in tickers)}
         filtro = "AND ticker = ANY(:tks)"
-        params["tks"] = [t.upper().replace(".SA", "") for t in tickers]
+        params["tks"] = sorted(donos | {a for a, n in trocas.items() if n in donos})
     with engine.connect() as conn:
         if not repo.schema_exists(conn):
             return {**prog, "erros": -1}
@@ -747,14 +869,18 @@ def renormalize_demonstracoes(tickers: list[str] | None = None,
     if limit:
         rows = rows[:limit]
 
-    for tk, pid, payload in rows:
+    for dono, tk, pid, payload in rows:
         try:
             p = json.loads(payload) if isinstance(payload, str) else payload
             quote = (p.get("results") or [p])[0] if isinstance(p, dict) else None
             if not quote:
                 continue
             data = nz.normalize_all(quote)
-            _reconcile_ticker(data, tk)
+            _reconcile_ticker(data, dono)
+            if tk != dono:
+                logger.info("%s: demonstrações do payload %s, gravado sob %s antes da troca",
+                            dono, pid, tk)
+                prog["payloads_de_codigo_antigo"] += 1
             n = 0
             with engine.begin() as conn:
                 for t in _TABELAS_DEMONSTRACAO:
@@ -764,10 +890,10 @@ def renormalize_demonstracoes(tickers: list[str] | None = None,
                     n += repo.upsert(conn, t, linhas)
             if n:
                 prog["demonstracoes"] += n
-                prog["atualizados"].append(tk)
+                prog["atualizados"].append(dono)
             prog["tickers"] += 1
         except Exception as exc:
-            logger.warning("renormalize_demonstracoes %s: %s", tk, exc)
+            logger.warning("renormalize_demonstracoes %s: %s", dono, exc)
             prog["erros"] += 1
     logger.info("market/renormalize_demonstracoes: tickers=%d atualizados=%d "
                 "demonstracoes=%d erros=%d", prog["tickers"], len(prog["atualizados"]),
