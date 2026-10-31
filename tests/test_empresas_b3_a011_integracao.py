@@ -13,7 +13,9 @@ direto) quebre a suíte em vez de passar despercebida.
 """
 from __future__ import annotations
 
+import importlib
 import inspect
+from contextlib import contextmanager
 
 import views.empresas_b3 as b3
 
@@ -111,11 +113,47 @@ view._tab_analise(pd.DataFrame())
 """
 
 
+# Módulos em que o preâmbulo e o corpo de cada teste trocam funções.
+#
+# O AppTest roda o script NO MESMO PROCESSO da suíte, sobre os mesmos objetos
+# de módulo: ``chat_repo.save = lambda *a, **k: None`` não é um dublê local do
+# script, é a troca de ``core.chat_repository.save`` para todo teste que rodar
+# depois. Foi assim que ``test_multiuser.py::test_memoria_privada_restaurada_
+# oculta_e_limpeza`` passou a falhar na suíte inteira com Postgres configurado
+# (e só nela): o histórico "salvo" ia para o lambda e a leitura voltava vazia.
+# O mesmo vazava ``core.database.get_engine`` devolvendo ``None``.
+_MODULOS_TOCADOS = (
+    "core.database",
+    "core.market_read",
+    "core.b3_data",
+    "core.chat_repository",
+    "views.empresas_b3",
+)
+
+
+@contextmanager
+def _modulos_devolvidos():
+    """Devolve cada nome dos módulos tocados ao objeto que tinha antes.
+
+    Restaura só o que já existia: nome novo criado pelo script não é apagado,
+    porque apagar atributo de módulo em tempo de execução é mais arriscado do
+    que deixar um nome que nada do resto da suíte procura.
+    """
+    modulos = [importlib.import_module(nome) for nome in _MODULOS_TOCADOS]
+    retratos = [dict(vars(modulo)) for modulo in modulos]
+    try:
+        yield
+    finally:
+        for modulo, retrato in zip(modulos, retratos):
+            vars(modulo).update(retrato)
+
+
 def _rodar(corpo: str):
     """Roda a aba de análise isolada do banco e devolve (app, texto)."""
     from streamlit.testing.v1 import AppTest
 
-    app = AppTest.from_string(_PREAMBULO + corpo + _EPILOGO).run(timeout=60)
+    with _modulos_devolvidos():
+        app = AppTest.from_string(_PREAMBULO + corpo + _EPILOGO).run(timeout=60)
     assert not app.exception
     texto = "\n".join(item.value for item in app.markdown)
     # O isolamento é afirmado pelo comportamento, não pela leitura do
@@ -159,11 +197,52 @@ db.load_multiplos = lambda *a, **k: pd.Series({"P/L": 10.0})
     assert "market.dividends" in texto
 
 
+def test_rodar_devolve_os_modulos_como_encontrou():
+    """O que o script troca vale só durante o script.
+
+    Sem isto, o dublê de ``core.chat_repository`` e o ``get_engine`` que
+    devolve ``None`` ficavam valendo para a suíte inteira depois deste arquivo
+    -- e um teste de outro arquivo falhava sem nada ter mudado nele.
+    """
+    import core.b3_data as db
+    import core.chat_repository as chat_repo
+    import core.database as cdb
+    import core.market_read as mr
+
+    antes = {
+        "chat_repo.load": chat_repo.load,
+        "chat_repo.save": chat_repo.save,
+        "chat_repo.clear": chat_repo.clear,
+        "cdb.get_engine": cdb.get_engine,
+        "mr._engine": mr._engine,
+        "db.market_active": db.market_active,
+        "view._preco_atual_com_status": b3._preco_atual_com_status,
+        "view._dividendos_anuais_market_first": b3._dividendos_anuais_market_first,
+    }
+    _rodar("""
+view._preco_atual_com_status = lambda tk: (None, "falha_rede")
+view._dividendos_anuais_market_first = lambda tk: (pd.DataFrame(), "yfinance")
+db.load_multiplos = lambda *a, **k: pd.Series(dtype=object)
+""")
+    depois = {
+        "chat_repo.load": chat_repo.load,
+        "chat_repo.save": chat_repo.save,
+        "chat_repo.clear": chat_repo.clear,
+        "cdb.get_engine": cdb.get_engine,
+        "mr._engine": mr._engine,
+        "db.market_active": db.market_active,
+        "view._preco_atual_com_status": b3._preco_atual_com_status,
+        "view._dividendos_anuais_market_first": b3._dividendos_anuais_market_first,
+    }
+    vazaram = [nome for nome in antes if depois[nome] is not antes[nome]]
+    assert not vazaram, f"o script do AppTest deixou trocado para a suíte: {vazaram}"
+
+
 # ── Procedência dos proventos: registrada, e a resposta parada vira lacuna ──
 
-# Os scripts de AppTest acima reatribuem `view._dividendos_anuais_market_first`
-# em definitivo (rodam no mesmo processo). A função real é guardada na coleta,
-# antes de qualquer teste rodar.
+# A função real, guardada na coleta. Desde que ``_rodar`` devolve os módulos
+# (``_modulos_devolvidos``), os scripts acima não a deixam mais trocada -- a
+# cópia fica por garantia, para estes testes não dependerem da ordem.
 _MARKET_FIRST = b3._dividendos_anuais_market_first
 
 def _proventos_com_resposta_de(monkeypatch, dias_atras: int):

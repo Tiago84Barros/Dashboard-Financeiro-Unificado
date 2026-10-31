@@ -7,25 +7,41 @@
   "filhos": [
     {
       "nome": "Geral",
-      "resumo": "Tema, categorias, sair e apagar conversas",
-      "explicacao": "Preferências da sua conta, em quatro blocos numerados. No topo, um lembrete avisa que a Estratégia e o Cenário de Investimentos agora se ajustam em Investimentos → Inteligência dos Ativos.",
+      "resumo": "Tema, seções do menu, categorias, orçamento, sair e apagar conversas",
+      "explicacao": "Preferências da sua conta, em seis blocos numerados. No topo, um lembrete avisa que a Estratégia e o Cenário de Investimentos agora se ajustam em Investimentos → Inteligência dos Ativos.",
       "so_admin": false,
-      "fonte": "views/configuracoes.py:75 → views/configuracoes_geral.py:42",
+      "fonte": "views/configuracoes.py:75 → views/configuracoes_geral.py:53",
       "filhos": [
         {
           "nome": "Tema do aplicativo",
           "resumo": "Escolher visual claro ou escuro",
-          "explicacao": "Uma lista 'Tema da minha conta' com as opções Dark (escuro) e Light (claro). A escolha fica guardada na sua conta e muda o visual na hora, em todas as telas.",
+          "explicacao": "Uma lista 'Tema da minha conta' com as opções Dark (escuro) e Light (claro). O tema muda só quando você escolhe aqui: o app nunca troca sozinho. A escolha fica guardada na sua conta e muda o visual na hora, em todas as telas. Sem escolha, o app usa o escuro padrão e a lista aparece vazia.",
           "so_admin": false,
-          "fonte": "views/configuracoes_geral.py:53",
+          "fonte": "views/configuracoes_geral.py:66",
+          "filhos": []
+        },
+        {
+          "nome": "Seções do aplicativo",
+          "resumo": "Escolher quais telas aparecem no menu",
+          "explicacao": "Um interruptor para cada seção que pode sair do menu lateral: Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global. Dashboard Geral e Configurações ficam sempre, e uma linha acima dos interruptores diz isso. Desligue o que você não usa e clique em 'Salvar seções'; antes do clique aparecem quantas estão ligadas e o que sai ou volta ao menu. A escolha fica na sua conta e não muda o menu de outras pessoas. Tirar do menu não apaga nada: dados, carteiras salvas e conversas continuam guardados, e a seção volta inteira quando você liga o interruptor de novo. O Dashboard Geral passa a mostrar só os blocos das seções ligadas.",
+          "so_admin": false,
+          "fonte": "views/configuracoes_geral.py:82",
           "filhos": []
         },
         {
           "nome": "Categorias do Controle Financeiro",
           "resumo": "Criar, retirar e devolver categorias de lançamento",
-          "explicacao": "Escolha o tipo (Entrada, Saída ou Investimento) e veja quais categorias estão no seu seletor de lançamento. Crie uma nova com o botão 'Criar categoria'. Para tirar do seletor as que você não usa, escolha uma ou mais em 'Retirar do seletor' e clique em 'Retirar categoria': vale para as categorias padrão do app e para as que você criou, e só muda o seu seletor, não o de outras contas. Os lançamentos antigos continuam com a categoria e os totais não mudam. As retiradas aparecem logo abaixo e voltam com 'Devolver ao seletor'. O app não deixa retirar a última categoria de um tipo.",
+          "explicacao": "Escolha o tipo (Entrada, Saída ou Investimento) e veja quais categorias estão no seu seletor de lançamento. Crie uma nova com o botão 'Criar categoria'. Para tirar do seletor as que você não usa, escolha uma ou mais em 'Retirar do seletor' e clique em 'Retirar categoria': vale para as categorias padrão do app e para as que você criou, e só muda o seu seletor, não o de outras contas. Os lançamentos antigos continuam com a categoria e os totais não mudam. A categoria retirada também sai dos Limites de orçamento. As retiradas aparecem logo abaixo e voltam com 'Devolver ao seletor'. O app não deixa retirar a última categoria de um tipo.",
           "so_admin": false,
-          "fonte": "views/configuracoes_geral.py:73",
+          "fonte": "views/configuracoes_geral.py:167",
+          "filhos": []
+        },
+        {
+          "nome": "Limites de orçamento",
+          "resumo": "Teto mensal de gasto por categoria",
+          "explicacao": "Um campo por categoria de despesa com o limite de gasto do mês, que os alertas e os painéis usam. Mude os valores e clique em 'Salvar limites': o limite vale do mês atual em diante, e zerar encerra o limite sem mexer nos meses anteriores. Categorias retiradas do seletor não aparecem, a não ser a que ainda tem limite gravado: ela vem marcada '(retirada)' para você poder zerá-la. Categorias de investimento não têm limite, porque aporte não é gasto.",
+          "so_admin": false,
+          "fonte": "views/configuracoes_geral.py:283",
           "filhos": []
         },
         {
@@ -33,7 +49,7 @@
           "resumo": "Sair da conta, com confirmação",
           "explicacao": "Mostra 'Conectado como' e o seu nome. Para sair, marque 'Entendi que a sessão atual será encerrada' e clique em 'Sair / trocar usuário'. A confirmação existe porque sair descarta tudo o que estava aberto e ainda não salvo em outras telas.",
           "so_admin": false,
-          "fonte": "views/configuracoes_geral.py:189",
+          "fonte": "views/configuracoes_geral.py:372",
           "filhos": []
         },
         {
@@ -41,7 +57,7 @@
           "resumo": "Apagar conversas com o assistente de IA",
           "explicacao": "Escolha a seção do app (ou todas) e veja quantas conversas com o assistente de IA serão apagadas antes de clicar. O botão 'Apagar histórico' apaga de vez, sem como desfazer.",
           "so_admin": false,
-          "fonte": "views/configuracoes_geral.py:214",
+          "fonte": "views/configuracoes_geral.py:397",
           "filhos": []
         }
       ]

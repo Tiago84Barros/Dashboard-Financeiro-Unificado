@@ -9,8 +9,8 @@ Replica FIELMENTE as 4 seções do app original controlefinanceirotsb.streamlit.
 
 Adições do app unificado preservadas (não existiam no original):
   - Pizza de despesas na aba Análises
-  - Orçamento por categoria: a aba saiu da navegação em 30/09/2026; o cálculo
-    segue vivo para os alertas e o Dashboard Geral
+  - Orçamento por categoria: a aba saiu da navegação em 30/09/2026; os limites
+    se editam em Configurações → Geral e seguem valendo para alertas e Dashboard
   - Conciliação lançamento manual × extrato importado (aba Tabelas)
   - Barras de progresso por categoria
   - (Taxa de poupança mensal histórica removida)
@@ -3776,7 +3776,7 @@ def render() -> None:
     # A aba "Orçamento" saiu da navegação a pedido do usuário (30/09/2026).
     # `_tab_orcamento` continua no módulo, sem rota, porque o orçamento em si
     # não foi desligado: `core.alertas` (R1) e o Dashboard Geral seguem lendo
-    # os limites gravados. Sem a aba, porém, não há mais onde cadastrá-los.
+    # os limites, editados em Configurações → Geral desde 31/10/2026.
     _SECOES = ["📊  Dashboard", "📈  Análises", "🧾  Tabelas",
                "💳  Cartão de Crédito"]
     secao = abas_secao(_SECOES, key="cf_secao_ativa", default=_SECOES[0])

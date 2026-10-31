@@ -276,7 +276,7 @@
           "resumo": "Anota o que o app não sabe ou errou",
           "explicacao": "Toda vez que falta um dado, uma tela dá erro ou uma análise tem limitação, isso é anotado em silêncio em vez de aparecer para você. Tela que depende: Configurações → Restrições; também abastece a correção por assistente de IA.",
           "so_admin": false,
-          "fonte": "core/lacunas/__init__.py:1; app.py:189",
+          "fonte": "core/lacunas/__init__.py:1; app.py:206",
           "filhos": []
         },
         {

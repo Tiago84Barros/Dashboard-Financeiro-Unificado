@@ -6,19 +6,25 @@
     {
       "nome": "Dashboard Geral",
       "resumo": "Resumo do seu dinheiro e dos investimentos numa página",
-      "explicacao": "É a primeira tela do app: uma página única, de rolar, que junta o mês atual (quanto entrou, quanto saiu, quanto sobrou), o histórico, a carteira que você tem investida e as carteiras sugeridas pelo app. Aqui você só consulta: nada é digitado nem salvo. Para lançar ou corrigir valores, use os outros itens do menu.",
+      "explicacao": "É a primeira tela do app: uma página única, de rolar, que junta o mês atual (quanto entrou, quanto saiu, quanto sobrou), o histórico, a carteira que você tem investida e as carteiras sugeridas pelo app. Ela se monta com as seções que você mantém no menu (Configurações → Geral → Seções do aplicativo): o bloco de uma seção desligada não aparece, e o que sobra continua na mesma ordem. Aqui você só consulta: nada é digitado nem salvo. Para lançar ou corrigir valores, use os outros itens do menu.",
       "so_admin": false,
       "filhos": [
         {
           "nome": "Seu dinheiro, em perspectiva.",
           "resumo": "Título da página, mês de referência e origem dos dados",
-          "explicacao": "Faixa de abertura com o título e pequenas etiquetas: se os números são seus dados reais ou de demonstração, o mês a que se referem e a data de hoje. Se o mês atual já tem lançamentos, aparece também 'Mês parcial · até dd/mm', lembrando que o mês ainda não fechou. Se o mês atual ainda não tem lançamentos, os números e a etiqueta passam a ser do último mês com movimento.",
+          "explicacao": "Faixa de abertura com o título e pequenas etiquetas: se os números são seus dados reais ou de demonstração, o mês a que se referem e a data de hoje. Se o mês atual já tem lançamentos, aparece também 'Mês parcial · até dd/mm', lembrando que o mês ainda não fechou. Se o mês atual ainda não tem lançamentos, os números e a etiqueta passam a ser do último mês com movimento. A frase abaixo do título diz o que a página reúne; com seções fora do menu, ela lista só o que ficou (por exemplo, 'o caixa do mês e as carteiras recomendadas'). Sem o Controle Financeiro no menu, a etiqueta de período é sempre a do mês atual, que é o mês dos números que sobram no topo.",
+          "so_admin": false
+        },
+        {
+          "nome": "Painel sem seções",
+          "resumo": "Aviso quando nenhuma seção com resumo está no menu",
+          "explicacao": "Se Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas e Seleção de FIIs estiverem todos fora do menu, a página mostra só o título e um quadro dizendo que nada foi apagado e que as seções se ligam de novo em Configurações → Geral → Seções do aplicativo.",
           "so_admin": false
         },
         {
           "nome": "Indicadores financeiros principais",
-          "resumo": "Cinco números-chave do mês e da carteira",
-          "explicacao": "Uma fileira de cinco cartões com os números mais importantes: quanto você tem investido, quanto sobrou no mês, quanto conseguiu poupar, quanto a carteira rende e quanto recebeu de rendimentos. Esse nome não aparece escrito na tela (é o nome que o app dá à fileira para leitores de tela). Se alguma conta ou aplicação em moeda estrangeira ficou fora do total por falta de cotação, aparece um aviso logo abaixo dizendo qual.",
+          "resumo": "Até cinco números-chave do mês e da carteira",
+          "explicacao": "Uma fileira de até cinco cartões com os números mais importantes: quanto você tem investido, quanto sobrou no mês, quanto conseguiu poupar, quanto a carteira rende e quanto recebeu de rendimentos. Saldo e taxa de poupança são do Controle Financeiro; patrimônio, rentabilidade e rendimentos são de Investimentos. Com uma dessas seções fora do menu, os cartões dela saem e os que ficam ocupam a largura toda. Esse nome não aparece escrito na tela (é o nome que o app dá à fileira para leitores de tela). Se alguma conta ou aplicação em moeda estrangeira ficou fora do total por falta de cotação, aparece um aviso logo abaixo dizendo qual.",
           "so_admin": false,
           "filhos": [
             {
@@ -56,13 +62,13 @@
         {
           "nome": "Leitura do mês",
           "resumo": "Frase pronta que resume como foi o mês",
-          "explicacao": "Um quadro com uma frase que interpreta o mês: se sobrou dinheiro, se houve déficit, ou se o que passou da renda foi aplicação e não gasto. Lembra também que os números de cima são fatos, enquanto as carteiras mostradas mais abaixo são só referências analíticas.",
+          "explicacao": "Um quadro com uma frase que interpreta o mês: se sobrou dinheiro, se houve déficit, ou se o que passou da renda foi aplicação e não gasto. Lembra também que os números de cima são fatos, enquanto as carteiras mostradas mais abaixo são só referências analíticas. Só aparece com o Controle Financeiro no menu.",
           "so_admin": false
         },
         {
           "nome": "Resumo por área",
           "resumo": "Um cartão por área do app, com poucos números",
-          "explicacao": "Cinco cartões numerados que mostram como está cada parte do app: o caixa do mês, os investimentos e as três carteiras sugeridas (ações brasileiras, ações americanas e fundos imobiliários). Os cartões só informam; para mexer em algo, abra o item correspondente no menu.",
+          "explicacao": "Até cinco cartões numerados que mostram como está cada parte do app: o caixa do mês, os investimentos e as três carteiras sugeridas (ações brasileiras, ações americanas e fundos imobiliários). Só entram as seções que estão no seu menu, numeradas na ordem em que aparecem (1, 2, 3...). Os cartões só informam; para mexer em algo, abra o item correspondente no menu.",
           "so_admin": false,
           "filhos": [
             {
@@ -100,7 +106,7 @@
         {
           "nome": "Evolução financeira",
           "resumo": "Caixa dos últimos meses, categorias e anos",
-          "explicacao": "Bloco do caixa: como receitas, despesas e aplicações se comportaram nos últimos meses e anos. Tudo vem dos lançamentos do Controle Financeiro.",
+          "explicacao": "Bloco do caixa: como receitas, despesas e aplicações se comportaram nos últimos meses e anos. Tudo vem dos lançamentos do Controle Financeiro. Só aparece com o Controle Financeiro no menu.",
           "so_admin": false,
           "filhos": [
             {
@@ -126,7 +132,7 @@
         {
           "nome": "Raio X do portfólio investido",
           "resumo": "Como está dividida a carteira que você tem",
-          "explicacao": "Retrato da carteira que você realmente tem aplicada: quanto rende, quanto está fora do Brasil, se está bem dividida e como evoluiu. Só aparece se houver investimentos registrados.",
+          "explicacao": "Retrato da carteira que você realmente tem aplicada: quanto rende, quanto está fora do Brasil, se está bem dividida e como evoluiu. Só aparece se houver investimentos registrados e com Investimentos no menu.",
           "so_admin": false,
           "filhos": [
             {
@@ -164,7 +170,7 @@
         {
           "nome": "Detalhes da carteira recomendada",
           "resumo": "Carteiras sugeridas pelo app, para consulta",
-          "explicacao": "Último bloco da página: a composição das carteiras que o app sugere e que você salvou nas telas Empresas B3, Empresas Americanas e Seleção de FIIs. São sugestões para consulta, não o que você tem investido. Só aparece se existir ao menos uma dessas carteiras, e nunca no modo de demonstração.",
+          "explicacao": "Último bloco da página: a composição das carteiras que o app sugere e que você salvou nas telas Empresas B3, Empresas Americanas e Seleção de FIIs. São sugestões para consulta, não o que você tem investido. Cada carteira só aparece com a tela dela no menu, e a faixa de abertura cita só as que vêm logo abaixo. O bloco só aparece se existir ao menos uma dessas carteiras, e nunca no modo de demonstração.",
           "so_admin": false,
           "filhos": [
             {
@@ -383,7 +389,7 @@
             {
               "nome": "Taxa de Poupança, Despesa Média / Dia, Maior Categoria e Saldo Acumulado",
               "resumo": "Quatro indicadores do mês escolhido",
-              "explicacao": "Quanto da renda foi poupado (meta de referência 30%), a despesa do mês dividida por 30 dias, a categoria em que mais se gastou (com a porcentagem do limite, se houver um limite cadastrado) e o saldo de receitas menos despesas.",
+              "explicacao": "Quanto da renda foi poupado (meta de referência 30%), a despesa do mês dividida por 30 dias, a categoria em que mais se gastou (com a porcentagem do limite, se houver um limite cadastrado em Configurações → Geral → Limites de orçamento) e o saldo de receitas menos despesas.",
               "so_admin": false
             },
             {
@@ -1132,7 +1138,7 @@
                 {
                   "nome": "Médias do Tesouro Direto na carteira",
                   "resumo": "Prazo, indexadores e números médios dos títulos",
-                  "explicacao": "Cartões com números médios dos seus títulos e a composição por indexador, que é o que corrige o título (Selic, IPCA ou taxa prefixada).",
+                  "explicacao": "Cartões com números médios dos seus títulos e a composição por indexador, que é o que corrige o título (Selic, IPCA ou taxa prefixada). Uma nota técnica diz de onde veio o valor de mercado de cada título: da curva oficial do Tesouro, da última curva quando ela está desatualizada, ou do saldo da corretora quando a curva não alcança o título.",
                   "so_admin": false
                 },
                 {
@@ -1144,7 +1150,7 @@
                 {
                   "nome": "Converse sobre seu Tesouro Direto",
                   "resumo": "Chat com IA e botão de dossiê",
-                  "explicacao": "Chat focado nos títulos públicos, com perguntas sugeridas (por exemplo, o efeito de vender antes do vencimento) e o botão 'Gerar dossiê da classe'.",
+                  "explicacao": "Chat focado nos títulos públicos, com perguntas sugeridas (por exemplo, o efeito de vender antes do vencimento) e o botão 'Gerar dossiê da classe'. A IA conhece cada compra que você fez: a data, a taxa contratada impressa no Extrato Analítico do Tesouro e a taxa de hoje. Sem extrato importado, ela usa as compras registradas na B3 e avisa que a taxa é aproximada.",
                   "so_admin": false
                 }
               ]
@@ -2840,20 +2846,32 @@
       "filhos": [
         {
           "nome": "Geral",
-          "resumo": "Tema, categorias, sair e apagar conversas",
-          "explicacao": "Preferências da sua conta, em quatro blocos numerados. No topo, um lembrete avisa que a Estratégia e o Cenário de Investimentos agora se ajustam em Investimentos → Inteligência dos Ativos.",
+          "resumo": "Tema, seções do menu, categorias, orçamento, sair e apagar conversas",
+          "explicacao": "Preferências da sua conta, em seis blocos numerados. No topo, um lembrete avisa que a Estratégia e o Cenário de Investimentos agora se ajustam em Investimentos → Inteligência dos Ativos.",
           "so_admin": false,
           "filhos": [
             {
               "nome": "Tema do aplicativo",
               "resumo": "Escolher visual claro ou escuro",
-              "explicacao": "Uma lista 'Tema da minha conta' com as opções Dark (escuro) e Light (claro). A escolha fica guardada na sua conta e muda o visual na hora, em todas as telas.",
+              "explicacao": "Uma lista 'Tema da minha conta' com as opções Dark (escuro) e Light (claro). O tema muda só quando você escolhe aqui: o app nunca troca sozinho. A escolha fica guardada na sua conta e muda o visual na hora, em todas as telas. Sem escolha, o app usa o escuro padrão e a lista aparece vazia.",
+              "so_admin": false
+            },
+            {
+              "nome": "Seções do aplicativo",
+              "resumo": "Escolher quais telas aparecem no menu",
+              "explicacao": "Um interruptor para cada seção que pode sair do menu lateral: Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global. Dashboard Geral e Configurações ficam sempre, e uma linha acima dos interruptores diz isso. Desligue o que você não usa e clique em 'Salvar seções'; antes do clique aparecem quantas estão ligadas e o que sai ou volta ao menu. A escolha fica na sua conta e não muda o menu de outras pessoas. Tirar do menu não apaga nada: dados, carteiras salvas e conversas continuam guardados, e a seção volta inteira quando você liga o interruptor de novo. O Dashboard Geral passa a mostrar só os blocos das seções ligadas.",
               "so_admin": false
             },
             {
               "nome": "Categorias do Controle Financeiro",
               "resumo": "Criar, retirar e devolver categorias de lançamento",
-              "explicacao": "Escolha o tipo (Entrada, Saída ou Investimento) e veja quais categorias estão no seu seletor de lançamento. Crie uma nova com o botão 'Criar categoria'. Para tirar do seletor as que você não usa, escolha uma ou mais em 'Retirar do seletor' e clique em 'Retirar categoria': vale para as categorias padrão do app e para as que você criou, e só muda o seu seletor, não o de outras contas. Os lançamentos antigos continuam com a categoria e os totais não mudam. As retiradas aparecem logo abaixo e voltam com 'Devolver ao seletor'. O app não deixa retirar a última categoria de um tipo.",
+              "explicacao": "Escolha o tipo (Entrada, Saída ou Investimento) e veja quais categorias estão no seu seletor de lançamento. Crie uma nova com o botão 'Criar categoria'. Para tirar do seletor as que você não usa, escolha uma ou mais em 'Retirar do seletor' e clique em 'Retirar categoria': vale para as categorias padrão do app e para as que você criou, e só muda o seu seletor, não o de outras contas. Os lançamentos antigos continuam com a categoria e os totais não mudam. A categoria retirada também sai dos Limites de orçamento. As retiradas aparecem logo abaixo e voltam com 'Devolver ao seletor'. O app não deixa retirar a última categoria de um tipo.",
+              "so_admin": false
+            },
+            {
+              "nome": "Limites de orçamento",
+              "resumo": "Teto mensal de gasto por categoria",
+              "explicacao": "Um campo por categoria de despesa com o limite de gasto do mês, que os alertas e os painéis usam. Mude os valores e clique em 'Salvar limites': o limite vale do mês atual em diante, e zerar encerra o limite sem mexer nos meses anteriores. Categorias retiradas do seletor não aparecem, a não ser a que ainda tem limite gravado: ela vem marcada '(retirada)' para você poder zerá-la. Categorias de investimento não têm limite, porque aporte não é gasto.",
               "so_admin": false
             },
             {

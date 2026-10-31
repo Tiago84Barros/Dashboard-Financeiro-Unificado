@@ -539,11 +539,16 @@ def get_contas_cartao_credito() -> list[dict]:
 
 
 @user_cache_data(ttl=60)
-def get_orcamentos_vigentes(ano: int, mes: int) -> dict[str, float]:
+def get_orcamentos_vigentes(ano: int, mes: int, *,
+                            estrito: bool = False) -> dict[str, float]:
     """{category_id: limite} em vigor no mês, para o editor de orçamento.
 
     Vazio em mock ou em falha: o editor abre em branco em vez de derrubar a
     página, e a tela de consumo continua lendo `get_controle`.
+
+    ``estrito=True`` deixa a falha subir. O editor de Configurações precisa
+    distinguir "nenhum limite" de "não consegui ler": em branco por falha, ele
+    mostraria R$ 0 onde há limite gravado, sem dizer que a leitura quebrou.
     """
     if settings.MOCK_MODE:
         return {}
@@ -564,6 +569,8 @@ def get_orcamentos_vigentes(ano: int, mes: int) -> dict[str, float]:
         return {r.category_id: float(r.amount_limit) for r in rows
                 if r.amount_limit is not None and float(r.amount_limit) > 0}
     except Exception as exc:
+        if estrito:
+            raise
         logger.warning("[controle] Falha ao carregar orçamentos: %s", exc)
         return {}
 

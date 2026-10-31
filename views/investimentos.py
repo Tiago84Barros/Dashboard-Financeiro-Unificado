@@ -87,7 +87,11 @@ _TOKEN_POR_COR = {
 
 def _cor_texto(cor: str) -> str:
     """Traduz a cor semântica para o token do tema (texto e bordas em HTML)."""
-    return _TOKEN_POR_COR.get(str(cor).upper(), cor)
+    # Cor fora do mapa (classe de ativo, paleta de grupo) também precisa
+    # ser legível no claro: ver ``design.componentes.tinta_legivel``.
+    from design.componentes import tinta_legivel
+
+    return _TOKEN_POR_COR.get(str(cor).upper()) or tinta_legivel(cor)
 
 
 _ICONES_B3_CDN = (
@@ -3518,6 +3522,7 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
     from design.portfolio_db_analysis import (
         carregar_db,
         carregar_documentos,
+        carregar_lotes_tesouro,
         carregar_macro,
         render_db_analysis,
         render_db_macro,
@@ -3560,6 +3565,9 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
             tesouro=tesouro, macro=macro, fundamentos=fundamentos,
             documentos=carregar_documentos(classe, chaves),
             valores_reais=valores_reais,
+            # Data e taxa contratada de cada compra: sem elas a LLM dizia que
+            # esses dados não existiam, com o Extrato Analítico no banco.
+            lotes_tesouro=carregar_lotes_tesouro() if classe == "tesouro" else None,
         ) + "\n\n" + bloco_contexto_mercado(ativos)
         if conj:
             # Liquidez, preço, proventos, trimestres e score mês a mês: o
