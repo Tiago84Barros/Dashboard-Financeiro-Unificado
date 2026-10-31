@@ -47,6 +47,7 @@ _NOME_CAT = "cfg_geral_nome_categoria"
 _RECADO_CAT = "cfg_geral_recado_categoria"
 _RECADO_SECOES = "cfg_geral_recado_secoes"
 _INTERRUPTOR = "cfg_geral_secao_{}"
+_BASE_INTERRUPTORES = "cfg_geral_secoes_base"
 _RECADO_ORC = "cfg_geral_recado_orcamento"
 
 
@@ -99,14 +100,19 @@ def _render_secoes() -> None:
         recado = st.session_state.pop(_RECADO_SECOES, None)
         if recado:
             st.success(recado)
-        if secoes_app.leitura_falhou():
+        # Ler ANTES de perguntar se a leitura falhou: é aqui dentro que a nova
+        # tentativa acontece, e a pergunta feita antes respondia pela execução
+        # anterior.
+        ocultas = secoes_app.ocultas_da_sessao()
+        falhou = secoes_app.leitura_falhou()
+        if falhou:
             st.warning("Não foi possível ler a sua escolha salva. Por segurança, "
                        "o menu mostra todas as seções até a leitura voltar.")
             if st.button("🔄 Ler de novo", key="cfg_geral_secoes_reler"):
                 secoes_app.esquecer_leitura()
                 st.rerun()
+        _reconciliar_interruptores(ocultas, st.session_state)
 
-        ocultas = secoes_app.ocultas_da_sessao()
         ligadas: dict[str, bool] = {}
         fixas = [f"**{s.rotulo}**" for s in secoes_app.SECOES if s.fixa]
         st.markdown(f"Sempre no menu: {' e '.join(fixas)} — a porta de "
@@ -133,10 +139,17 @@ def _render_secoes() -> None:
             if voltam:
                 partes.append("voltam ao menu: " + _nomes(voltam))
             resumo += " Ao salvar, " + "; ".join(partes) + "."
+        if falhou:
+            # Gravar agora trocaria a escolha guardada pelo que esta tela
+            # mostra -- tudo ligado, porque a escolha não foi lida. Quem tinha
+            # escondido três seções e só quis esconder mais uma perderia as
+            # três (mesma regra do tema: leitura falha bloqueia gravação).
+            resumo += (" Salvar fica bloqueado até a escolha salva ser lida: "
+                       "gravar agora apagaria o que você já tinha tirado do menu.")
         st.caption(resumo)
 
         if st.button("💾 Salvar seções", key="cfg_geral_salvar_secoes",
-                     type="primary", disabled=not (saem or voltam)):
+                     type="primary", disabled=falhou or not (saem or voltam)):
             ok, msg = secoes_app.gravar(novas)
             if not ok:
                 st.error(msg)
@@ -145,6 +158,27 @@ def _render_secoes() -> None:
             # Novo run para o menu lateral, desenhado antes desta tela, já
             # nascer com a escolha nova.
             st.rerun()
+
+
+def _reconciliar_interruptores(ocultas: frozenset[str], estado) -> None:
+    """Realinha os interruptores quando a escolha carregada muda.
+
+    Interruptor com ``key`` guarda o próprio valor entre execuções e ignora o
+    ``value=`` dali em diante. Se a leitura falhou com a tela aberta, eles
+    nasceram todos ligados; quando a leitura volta (sozinha, depois da espera,
+    ou por "Ler de novo"), o menu já obedece à escolha salva, mas os
+    interruptores continuariam ligados -- e o próximo Salvar devolveria ao
+    menu o que a pessoa tinha tirado. Apontado pela revisão do PR #630.
+
+    Roda antes de os interruptores existirem nesta execução, que é quando o
+    Streamlit aceita tirar a chave de um widget. Depois de salvar, a escolha
+    carregada também muda: os interruptores renascem com os mesmos valores.
+    """
+    if estado.get(_BASE_INTERRUPTORES) == ocultas:
+        return
+    for modulo in secoes_app.OPCIONAIS:
+        estado.pop(_INTERRUPTOR.format(modulo), None)
+    estado[_BASE_INTERRUPTORES] = ocultas
 
 
 def _interruptor(secao: secoes_app.Secao, ocultas: frozenset[str]) -> dict[str, bool]:

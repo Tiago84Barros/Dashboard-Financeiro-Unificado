@@ -438,3 +438,87 @@ def test_bloco_de_secoes_vem_logo_depois_do_tema_e_os_numeros_seguem():
     # Um número por bloco, sem buraco nem repetição: dois PRs que acrescentam
     # bloco ao mesmo tempo (Seções e Orçamento, 31/10/2026) colidiam no "03".
     assert sorted(indices) == [f"{n:02d}" for n in range(1, len(chamadas) + 1)]
+
+
+# -- leitura que falha com Configurações aberta (revisão do PR #630) ----------
+
+def _tela_de_secoes():
+    """Script do AppTest: o bloco de seções com um banco de mentira na sessão.
+
+    ``_falhar`` liga e desliga a leitura; ``_banco`` é o que está gravado.
+    """
+    import time
+
+    import streamlit as st
+
+    from core import user_preferences as prefs
+
+    banco = st.session_state.setdefault("_banco", {"ocultas": ["fiis", "empresas_b3"]})
+
+    def ler():
+        if st.session_state.get("_falhar"):
+            raise RuntimeError("pool ocupado")
+        return list(banco["ocultas"])
+
+    def gravar(lista):
+        banco["ocultas"] = list(lista)
+
+    prefs.load_secoes_ocultas = ler
+    prefs.save_secoes_ocultas = gravar
+    from core import secoes_app
+
+    # Sem espera entre tentativas: cada execução tenta ler de novo, que é o
+    # que acontece de verdade quando os 60 s passam com a tela aberta.
+    secoes_app._ESPERA_APOS_FALHA_S = st.session_state.get("_espera", 60.0)
+    st.session_state["_app4_user"] = {"id": "u1", "expires_at": time.time() + 600}
+    from views import configuracoes_geral as cg
+
+    cg._render_secoes()
+
+
+def _interruptores(at) -> dict[str, bool]:
+    return {t.label: t.value for t in at.toggle}
+
+
+def _salvar(at):
+    return next(b for b in at.button if "Salvar" in b.label)
+
+
+def test_leitura_que_volta_realinha_os_interruptores_e_nao_desfaz_a_escolha(monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    # O script mexe na espera do módulo; o monkeypatch a devolve no fim.
+    monkeypatch.setattr(secoes_app, "_ESPERA_APOS_FALHA_S", 60.0)
+
+    at = AppTest.from_function(_tela_de_secoes, default_timeout=30)
+    at.session_state["_falhar"] = True
+    at.run()
+    assert not at.exception
+    # Leitura falhou: tudo ligado, aviso na tela e Salvar bloqueado -- gravar
+    # agora apagaria FIIs e B3 da escolha guardada.
+    assert all(_interruptores(at).values())
+    assert any("Não foi possível ler" in w.value for w in at.warning)
+    assert _salvar(at).disabled
+    at.toggle(key="cfg_geral_secao_portfolio_global").set_value(False).run()
+    assert _salvar(at).disabled, "salvar durante a falha sobrescreveria a escolha"
+
+    # A leitura volta SOZINHA, passada a espera, na mesma execução em que os
+    # interruptores são desenhados -- o caminho que a revisão apontou. (O botão
+    # "Ler de novo" interrompe a execução com st.rerun antes dos interruptores,
+    # e por isso o Streamlit já descartava o estado deles.)
+    at.session_state["_falhar"] = False
+    at.session_state["_espera"] = 0.0
+    at.run()
+    assert not at.exception
+    estado = _interruptores(at)
+    assert estado["🏬 Seleção de FIIs"] is False
+    assert estado["🏢 Empresas B3"] is False
+    assert estado["🌐 Portfólio Global"] is True
+    assert not at.warning
+    # Nada pendente: o que está na tela é o que está gravado.
+    assert _salvar(at).disabled
+
+    # E uma mudança de verdade grava sem devolver as outras ao menu.
+    at.toggle(key="cfg_geral_secao_investimentos").set_value(False).run()
+    _salvar(at).click().run()
+    assert at.session_state["_banco"]["ocultas"] == ["investimentos", "empresas_b3", "fiis"]
