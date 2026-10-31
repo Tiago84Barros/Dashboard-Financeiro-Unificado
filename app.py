@@ -128,6 +128,23 @@ with st.sidebar:
         # de Configurações.
         opcoes_sistema = ["⚙️ Configurações"]
         opcoes_menu = opcoes_visao + opcoes_financas + opcoes_invest + opcoes_sistema
+        # Cada conta escolhe, em Configurações → Geral → Seções do aplicativo,
+        # o que fica no menu (pedido do dono do app em 31/10/2026). Esconder
+        # não tira a rota de ``_ROTAS`` nem apaga dado: só a porta de entrada
+        # desta conta. Dashboard Geral e Configurações não saem nunca -- quem
+        # filtra é ``core.secoes_app``, que descarta os dois de qualquer lista.
+        from core.secoes_app import filtrar_menu, ocultas_da_sessao
+
+        opcoes_menu = filtrar_menu(opcoes_menu, _ROTAS, ocultas_da_sessao())
+        # Defesa: o valor guardado do rádio pode ter deixado de ser uma opção
+        # (a seção saiu do menu nesta sessão). Sem a chave, o rádio volta ao
+        # Dashboard Geral em vez de apontar para uma tela que não está mais
+        # na lista.
+        # ``getattr``: os testes trocam ``streamlit`` por um dublê sem sessão.
+        _estado_nav = getattr(st, "session_state", None)
+        if (_estado_nav is not None
+                and _estado_nav.get("app_main_navigation") not in (None, *opcoes_menu)):
+            _estado_nav.pop("app_main_navigation", None)
 
     menu = st.radio(
         "Navegação",

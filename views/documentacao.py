@@ -1754,7 +1754,8 @@ FLOW_CONFIGURACOES = FlowSpec(
     ),
     tela="Configurações",
     rows=(
-        ("Preferências", ("cfg_tema", "cfg_categorias", "cfg_trocar_usuario", "cfg_memoria_llm")),
+        ("Preferências", ("cfg_tema", "cfg_secoes", "cfg_categorias", "cfg_trocar_usuario",
+                          "cfg_memoria_llm")),
         ("Diagnóstico", ("cfg_confianca", "cfg_restricoes", "cfg_mercado", "cfg_banco")),
         ("Entrada de arquivo", ("cfg_fatura", "cfg_extrato", "cfg_carteira")),
         ("Segurança", ("cfg_conta", "cfg_sessao", "cfg_usuarios")),
@@ -1774,13 +1775,34 @@ FLOW_CONFIGURACOES = FlowSpec(
             "O tema é preferência de quem usa, e preferência pertence à conta — não ao "
             "menu de navegação, onde disputava espaço com as rotas do app.",
         ),
+        "cfg_secoes": _node(
+            "cfg_secoes", "Seções do aplicativo", "Preferências",
+            "Escolhe quais telas aparecem no menu lateral desta conta. Desligar uma seção "
+            "tira a porta de entrada dela e o bloco dela do Dashboard Geral; nada é apagado, "
+            "e a seção volta inteira quando o interruptor é ligado de novo.",
+            (
+                "Aba ⚙️ Geral, bloco 02 (🧭 Seções do aplicativo), logo depois do tema",
+                "Um interruptor por seção opcional: Controle Financeiro, Investimentos, "
+                "Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global",
+                "Dashboard Geral e Configurações ficam sempre no menu, sem interruptor",
+                "Botão 💾 Salvar seções; antes do clique, a contagem de ligadas e o que sai "
+                "ou volta ao menu",
+                "core.secoes_app: catálogo das seções, filtro do menu e cache da sessão",
+                "Escolha gravada na conta: user_settings.extra_settings → "
+                "app4_secoes_ocultas (lista dos módulos fora do menu), sem migration",
+                "Falha ao ler a escolha mostra o menu completo e avisa aqui, com 🔄 Ler de novo",
+            ),
+            "Guardar o que SAIU, e não o que fica, faz uma tela nova do app aparecer para "
+            "todas as contas sem editar a preferência de ninguém. E Configurações não sai "
+            "nunca: é onde a escolha se desfaz, e quem escondesse tudo ficaria sem volta.",
+        ),
         "cfg_categorias": _node(
             "cfg_categorias", "Categorias do Controle Financeiro", "Preferências",
             "Cria as categorias que aparecem ao lançar entrada, saída ou investimento no "
             "Controle Financeiro, retira do seu seletor as que você não usa — as de "
             "sistema também — e devolve as retiradas.",
             (
-                "Aba ⚙️ Geral, bloco 02 (🏷️ Categorias do Controle Financeiro)",
+                "Aba ⚙️ Geral, bloco 03 (🏷️ Categorias do Controle Financeiro)",
                 "Seletor Tipo: Entrada, Saída ou Investimento",
                 "Campo Nova categoria e botão ➕ Criar categoria",
                 "Retirar do seletor (várias de uma vez) e botão ➖ Retirar categoria; "
@@ -1802,7 +1824,7 @@ FLOW_CONFIGURACOES = FlowSpec(
             "Encerra a sessão deste navegador e devolve a tela de entrada. Exige marcar "
             "uma confirmação explícita antes do botão Sair / trocar usuário ficar disponível.",
             (
-                "Aba ⚙️ Geral, bloco 03 (👤 Trocar de usuário)",
+                "Aba ⚙️ Geral, bloco 04 (👤 Trocar de usuário)",
                 "Confirmação obrigatória: Entendi que a sessão atual será encerrada",
                 "Limpa a sessão inteira do navegador",
             ),
@@ -1815,7 +1837,7 @@ FLOW_CONFIGURACOES = FlowSpec(
             "Apaga o histórico de conversa com o assistente — de uma seção específica "
             "ou de todas. A contagem aparece antes do clique.",
             (
-                "Aba ⚙️ Geral, bloco 04 (🧹 Limpar histórico da LLM)",
+                "Aba ⚙️ Geral, bloco 05 (🧹 Limpar histórico da LLM)",
                 "Contagem de conversas exibida antes de apagar",
                 "Limpa o banco e também a sessão aberta",
             ),
@@ -2011,7 +2033,9 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
     subtitle=(
         "A primeira tela do menu junta o caixa do Controle Financeiro e a carteira de "
         "Investimentos num painel só. A ordem é fixa: o que aconteceu de fato vem em cima, "
-        "e as carteiras que o app recomenda fecham a página, marcadas como referência."
+        "e as carteiras que o app recomenda fecham a página, marcadas como referência. "
+        "Cada bloco pertence a uma seção do menu e sai junto com ela quando a conta a "
+        "desliga em Configurações → Geral."
     ),
     tela="Dashboard Geral",
     rows=(
@@ -2031,6 +2055,8 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
                 "Chip de fonte: Dados reais, Fallback demonstrativo ou Dados de demonstração",
                 "Chip Mês parcial · até dd/mm quando os números são do mês corrente, ainda aberto",
                 "Chip Atualizado com a data",
+                "Subtítulo conforme as seções no menu (_subtitulo_do_cabecalho); sem "
+                "nenhuma seção com resumo, o aviso Painel sem seções aponta onde ligá-las",
             ),
             "Número de demonstração com a mesma cara de número real engana. O chip de fonte "
             "diz, antes de qualquer cartão, se o que está na tela é o seu dado.",
@@ -2042,6 +2068,9 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
             (
                 "_render_kpi_grid()",
                 "Dados de get_visao_geral(), get_cashflow_mensal() e get_carteira()",
+                "Saldo e Taxa de poupança saem com o Controle Financeiro fora do menu; "
+                "Patrimônio, Rentabilidade e Proventos, com Investimentos fora; a grade "
+                "ganha tantas colunas quantos cartões sobram",
                 "Conta ou posição sem câmbio válido fica fora do patrimônio, e a tela nomeia "
                 "o que ficou de fora",
             ),
@@ -2058,6 +2087,7 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
                 "Situações: deficit, aportes_excedem_sobra e equilibrio; qualquer outra lê "
                 "como sobra de caixa",
                 "Receitas, despesas e investimentos do mês corrente",
+                "Só com o Controle Financeiro no menu",
             ),
             "Aporte que passa da renda do mês não é consumo. Sem essa distinção, um mês de "
             "aporte grande pareceria um mês de gasto descontrolado.",
@@ -2071,6 +2101,7 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
                 "_secao_resumo_modulos()",
                 "Faixa ◆ Mapa do aplicativo",
                 "Controle Financeiro · Investimentos · B3 · EUA · FIIs",
+                "Só as seções do menu, numeradas na ordem em que sobram (1, 2, 3...)",
             ),
             "Dá a volta pelo app inteiro sem abrir tela por tela e mostra onde está o número "
             "que pede atenção.",
@@ -2085,6 +2116,7 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
                 "Despesas por categoria do ano: get_gastos_categoria_anual(), compras de "
                 "cartão excluídas",
                 "Comparativo Ano a Ano: get_historico_anual()",
+                "Só com o Controle Financeiro no menu; sem ele, nada disso é lido do banco",
             ),
             "O cartão é fluxo futuro e chega ao caixa pelo Pagamento de Cartão. Somar a "
             "compra de novo na despesa por categoria misturaria as duas linhas do tempo que "
@@ -2100,6 +2132,7 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
                 "Dados de get_carteira() e get_evolucao_patrimonial()",
                 "N efetivo: ativos equivalentes por diversificação; abaixo de 10 sai em alerta",
                 "Top 5 acima de 50% sai em alerta",
+                "Só com Investimentos no menu; sem ele, a carteira nem é lida",
             ),
             "Contar ativos não mede diversificação: dez posições com uma pesando metade da "
             "carteira se comportam como poucas. O N efetivo e o Top 5 mostram isso direto.",
@@ -2119,6 +2152,7 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
                 "Falha ao ler o modelo de FIIs salvo vira aviso de sugestão recalculada",
                 "Expander 🧭 Inteligência dos Ativos na criação desta carteira (render_salvo)",
                 "Em modo de demonstração (MOCK_MODE) os modelos salvos não são carregados",
+                "Tela de seleção fora do menu: o modelo dela não é lido e a faixa não a cita",
             ),
             "Peso sugerido lido como posição real leva a conclusão errada sobre a própria "
             "carteira. Por isso a recomendação vem por último, sob uma faixa que diz o que ela é.",
@@ -2127,6 +2161,8 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
     notes=(
         "A ordem das seções é regra da tela, registrada na docstring de "
         "views/dashboard_geral.py: fatos primeiro, referências depois.",
+        "Desde 31/10/2026 a tela se monta com as seções do menu da conta "
+        "(core.secoes_app). Esconder não apaga: o bloco volta com a seção.",
     ),
 )
 

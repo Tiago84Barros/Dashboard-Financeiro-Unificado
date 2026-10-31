@@ -15,6 +15,10 @@ from __future__ import annotations
 import sys
 from types import SimpleNamespace
 
+# Importado AQUI, antes de o dublê ocupar ``sys.modules["core.secoes_app"]``:
+# importado de dentro do dublê, o nome resolveria para o próprio dublê.
+from core.secoes_app import filtrar_menu as _filtrar_menu_real
+
 # Módulos que os testes de bootstrap deixam executar de verdade. Não são
 # dublados de propósito: `core.app_test_mode` é a regra sob teste, e
 # `core.erro_diagnostico` produz o texto que o teste do handler de erro
@@ -66,6 +70,13 @@ def stubs_de_bootstrap(**overrides) -> dict[str, SimpleNamespace]:
             mensagem_erro=lambda *_args: None,
             transicao_de_pagina=lambda *_args: None,
             marca_sidebar_html=lambda *_args: "",
+        ),
+        # O filtro é a regra pura e roda de verdade (não importa streamlit no
+        # topo); a leitura da escolha da conta iria ao ``st.session_state`` e
+        # ao banco, e devolve "nada oculto" -- o menu completo de sempre.
+        "core.secoes_app": SimpleNamespace(
+            filtrar_menu=_filtrar_menu_real,
+            ocultas_da_sessao=lambda: frozenset(),
         ),
         "design.tema": SimpleNamespace(aplicar_tema=lambda theme="dark": None),
         # Importado com o ``streamlit`` falso em sys.modules, o módulo real
