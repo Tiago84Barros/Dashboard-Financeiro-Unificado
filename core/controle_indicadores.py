@@ -16,6 +16,10 @@ Duas taxas de poupança, e elas não se substituem:
                         impede que dinheiro de fora do mês vire "poupei mais
                         de 100% da renda"; quando ele morde, `poupanca_no_teto`
                         fica True para a tela poder dizer isso.
+
+Mês em déficit com aporte: a taxa com aporte sai positiva, mas todo o aporte
+veio de caixa de meses anteriores. `poupanca_de_caixa_anterior` marca esse
+caso para a tela não declarar a meta de poupança atingida num mês deficitário.
 """
 from decimal import Decimal, InvalidOperation
 
@@ -41,5 +45,6 @@ def indicadores_caixa(receitas: float, despesas: float, aportes: float = 0) -> d
         "poupanca_alocada": float(alocado_efetivo),
         "poupanca_alocada_pct": float(alocado_efetivo / r * 100) if r > 0 else None,
         "poupanca_no_teto": no_teto,
+        "poupanca_de_caixa_anterior": bool(saldo < 0 and alocado_efetivo > 0),
         "status": status,
     }

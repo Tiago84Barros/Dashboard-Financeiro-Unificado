@@ -24,7 +24,8 @@ import core.trajetoria_mercado as tm  # noqa: E402
 import scripts.publish_valuation_historico as pv  # noqa: E402
 
 
-def _quadros(tickers, *, meses, precos=None, lpas=None, vol_ano=2019):
+def _quadros(tickers, *, meses, precos=None, lpas=None, vol_ano=2019,
+             anos=range(2015, 2021)):
     """Fita mensal, volume do ano anterior e LPA anual de um universo sintético."""
     precos = precos or {}
     lpas = lpas or {}
@@ -33,7 +34,7 @@ def _quadros(tickers, *, meses, precos=None, lpas=None, vol_ano=2019):
     vol = pd.DataFrame([{"ticker": tk, "ano": vol_ano, "vol": 1000.0 - i}
                         for i, tk in enumerate(tickers)])
     lpa = pd.DataFrame([{"ticker": tk, "ano": ano, "lpa": lpas.get((tk, ano), 1.0)}
-                        for tk in tickers for ano in range(2015, 2021)])
+                        for tk in tickers for ano in anos])
     return fech, vol, lpa
 
 
@@ -66,8 +67,8 @@ def test_mediana_ponto_no_tempo_e_quem_ficou_fora():
     lpas.update({(tk, 2019): 1.0 for tk in tickers})    # P/L 10 de abril em diante
     lpas[(tickers[0], 2019)] = 0.0001                   # escala errada: P/L 100.000
     lpas[(tickers[1], 2019)] = 50.0                     # escala errada: P/L 0,2
-    lpas[(tickers[2], 2019)] = -20.0                    # prejuízo maior que o preço
-    lpas[(tickers[3], 2019)] = -1.0                     # prejuízo plausível: entra
+    lpas[(tickers[2], 2019)] = -20.0                    # prejuízo maior que o preço: entra
+    lpas[(tickers[3], 2019)] = -1.0                     # prejuízo menor: entra
     del lpas[(tickers[4], 2019)]
     fech, vol, lpa = _quadros(tickers, meses=meses, lpas=lpas)
     lpa = lpa[~((lpa["ticker"] == tickers[4]) & (lpa["ano"] == 2019))]
@@ -76,9 +77,108 @@ def test_mediana_ponto_no_tempo_e_quem_ficou_fora():
     assert m["serie"][0] == ["2020-03-31", 20.0, 5.0, 25]
     assert m["serie"][1][:2] == ["2020-04-30", 10.0]
     u = m["ultimo"]
-    assert u["exercicio"] == 2019 and u["validas"] == 20 and u["negativas"] == 1
-    assert u["implausiveis"] == tickers[:3]
+    assert u["exercicio"] == 2019 and u["validas"] == 21 and u["negativas"] == 2
+    assert u["implausiveis"] == tickers[:2]
     assert u["sem_lpa"] == [tickers[4]] and u["sem_preco"] == [tickers[5]]
+    assert u["rebaseadas"] == {}
+
+
+def test_prejuizo_maior_que_o_preco_entra_e_so_o_sinal_pesa():
+    # CSAN3 2025: prejuízo real maior que o preço caía como "escala errada" e
+    # puxava a mediana para cima. Na mediana do lucro ÷ preço só pesam o sinal
+    # e a ordem do prejuízo; LPA 1000x continua caindo pelo lado positivo.
+    tickers = _nomes(21)
+    meses = [date(2020, 5, 29)]
+    series = []
+    for prejuizo in (-1.0, -30.0):
+        lpas = {(tk, 2019): (prejuizo if i < 10 else 1.0)
+                for i, tk in enumerate(tickers)}
+        m = pv.mercado_b3(*_quadros(tickers, meses=meses, lpas=lpas), ano_inicial=2020)
+        assert m["ultimo"]["validas"] == 21 and m["ultimo"]["negativas"] == 10
+        assert m["ultimo"]["implausiveis"] == []
+        series.append(m["serie"])
+    assert series[0] == series[1] == [["2020-05-29", 10.0, 10.0, 21]]
+
+
+def _evento(data, fator):
+    from data_pipeline.market.b3_saidas import EventoCapital
+    return EventoCapital(pd.Timestamp(data), fator, "marcador_b3")
+
+
+def test_desdobramento_depois_da_dfp_divide_o_lpa():
+    # SBSP3: LPA 2025 de 12,37 na base de 683 milhões de ações; o 1:5 de
+    # 29/04/2026 levou o preço a 32,99 e, sem rebase, o P/L a 2,7 -- dentro
+    # da faixa, então ninguém o pegava. Aqui o universo inteiro desdobra.
+    tickers = _nomes(25)
+    meses = [date(2020, 4, 30), date(2020, 5, 29)]
+    precos = {(tk, meses[1]): 2.0 for tk in tickers}
+    fech, vol, lpa = _quadros(tickers, meses=meses, precos=precos)
+    sem = pv.mercado_b3(fech, vol, lpa, ano_inicial=2020)
+    assert [p[1] for p in sem["serie"]] == [10.0, 2.0]
+    eventos = {tk: [_evento("2020-05-15", 5.0)] for tk in tickers}
+    com = pv.mercado_b3(fech, vol, lpa, eventos=eventos, ano_inicial=2020)
+    assert [p[1] for p in com["serie"]] == [10.0, 10.0]
+    assert com["ultimo"]["rebaseadas"] == {tk: 5.0 for tk in tickers}
+
+
+def test_rebase_so_pega_o_evento_entre_a_dfp_e_o_pregao():
+    # ASAI3: 1:5 em 12/08/2021. O LPA de 2020 (DFP de fev/2021) vem na base
+    # velha e é dividido de agosto/2021 a março/2022; o de 2021 (DFP de
+    # 2022) já sai na base nova, e de abril/2022 em diante nada se divide.
+    # Evento até 31/03 do ano seguinte ao exercício conta como já na DFP.
+    tickers = ["ASAI3"] + _nomes(20)
+    meses = [date(2021, 3, 31), date(2021, 7, 30), date(2021, 8, 31),
+             date(2022, 3, 31), date(2022, 4, 29)]
+    fech, _, lpa = _quadros(tickers, meses=meses, anos=range(2018, 2022))
+    vol = pd.DataFrame([{"ticker": tk, "ano": ano, "vol": 1000.0 - i}
+                        for ano in (2020, 2021) for i, tk in enumerate(tickers)])
+    # o 2:1 de março/2021 vale para o exercício 2019, não para o 2020
+    eventos = {"ASAI3": [_evento("2021-08-12", 5.0)],
+               tickers[1]: [_evento("2021-03-15", 2.0)]}
+
+    def rebaseadas(d):
+        m = pv.mercado_b3(fech[fech["data"] == d], vol, lpa, eventos=eventos,
+                          ano_inicial=2021)
+        return m["ultimo"]["exercicio"], m["ultimo"]["rebaseadas"]
+
+    assert rebaseadas(meses[0]) == (2019, {tickers[1]: 2.0})
+    assert rebaseadas(meses[1]) == (2020, {})
+    assert rebaseadas(meses[2]) == (2020, {"ASAI3": 5.0})
+    assert rebaseadas(meses[3]) == (2020, {"ASAI3": 5.0})
+    assert rebaseadas(meses[4]) == (2021, {})
+
+
+def test_desdobramentos_le_a_marca_da_b3():
+    marcas = pd.DataFrame([
+        # SBSP3: 1:5 em 29/04/2026; a marca dura dias e volta depois de um ATZ
+        ("SBSP3", "2026-04-29", "ON  EB  NM", 32.99, 167.00),
+        ("SBSP3", "2026-04-30", "ON  EB  NM", 33.40, 32.99),
+        ("SBSP3", "2026-05-06", "ON  EB  NM", 33.10, 32.20),
+        # marca intermitente num pregão de 5%: não é bonificação de 5%
+        ("SBSP3", "2025-12-26", "ON  EJB NM", 100.00, 105.20),
+        # marca de juros 29 dias antes não esconde o 1:5 (o dado de 2026)
+        ("SBSP3", "2026-03-31", "ON  EJB NM", 154.10, 158.24),
+        ("MGLU3", "2024-05-27", "ON  EG  NM", 13.00, 1.30),       # 10:1
+        # dia seguinte de +85% ainda marcado: o evento já foi aceito
+        ("MGLU3", "2024-05-28", "ON  EG  NM", 2.40, 1.30),
+        ("HAPV3", "2025-06-06", "ON  EG  NM", 39.91, 2.70),       # 15:1, sem redondo
+        ("CPFE3", "2011-06-29", "ON  EBG NM", 22.22, 44.50),      # B e G juntos
+        ("WEGE3", "2018-04-02", "ON  EB  NM", 30.00, 40.00),      # bonificação 1,33
+        ("XPTO3", "2020-01-02", "ON  EB  NM", 10.00, 17.00),      # salto 1,7 sem redondo
+        # bonificação marcada até 19 dias antes do grupamento 3:1
+        ("CIEL3", "2011-05-11", "ON  EB  NM", 13.16, 13.27),
+        ("CIEL3", "2011-05-30", "ON  EG  NM", 39.00, 13.10),
+    ], columns=["ticker", "data", "espec", "close", "anterior"])
+    ev = {tk: [(e.data.date().isoformat(), round(e.fator, 4), e.status) for e in lst]
+          for tk, lst in pv.desdobramentos(marcas).items()}
+    assert ev == {
+        "SBSP3": [("2026-04-29", 5.0, "marcador_b3")],
+        "MGLU3": [("2024-05-27", 0.1, "marcador_b3")],
+        "HAPV3": [("2025-06-06", 0.0677, "marcador_b3")],
+        "CPFE3": [("2011-06-29", 2.0, "marcador_b3")],
+        "CIEL3": [("2011-05-30", 0.3333, "marcador_b3")],
+    }
+    assert pv.desdobramentos(marcas.iloc[:0]) == {}
 
 
 def test_mes_com_poucas_validas_fica_fora_da_serie():

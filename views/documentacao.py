@@ -890,11 +890,15 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
             "categoria", "Categorias", "Classificação",
             "Classifica cada lançamento; 'Pagamento de Cartão' representa a quitação da fatura pela conta. "
             "Categoria nova se cria — e a que você não usa se retira do seletor — em "
-            "Configurações › ⚙️ Geral › 🏷️ Categorias.",
+            "Configurações › ⚙️ Geral › 🏷️ Categorias. Extrato e fatura falam a mesma lista: o "
+            "extrato só escolhe entre as categorias que existem, e a fatura usa os mesmos nomes "
+            "(Saúde, Lazer, Combustível...), criando na conta só as que não têm par — Cuidados "
+            "pessoais, Casa & Construção, Tarifas & Anuidade, Créditos e Estornos e 'A revisar'.",
             (
                 "Entrada / saída / investimento",
                 "'Pagamento de Cartão' permitido no manual",
                 "Bloqueia consumo de cartão digitado a mão",
+                "Débito e cartão caem na mesma categoria",
             ),
             "Separa a QUITAÇÃO da fatura (fluxo de caixa) do CONSUMO do cartão (que vem só do CSV).",
         ),

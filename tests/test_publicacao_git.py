@@ -263,6 +263,7 @@ def test_atualizar_main_avanca_quem_ficou_para_tras(repositorio, tmp_path):
     resultado = atualizar_main(repositorio)
 
     assert resultado.ok and resultado.avancou == 2
+    assert resultado.pode_publicar and resultado.atras == 0
     assert (repositorio / "b.txt").exists()
     assert (repositorio / "meu_rascunho.txt").exists()
     # Depois de avançar, o artefato chega ao remoto: era o push rejeitado.
@@ -274,7 +275,19 @@ def test_atualizar_main_em_dia_nao_faz_nada(repositorio):
     resultado = atualizar_main(repositorio)
 
     assert resultado.ok and resultado.avancou == 0
+    assert resultado.pode_publicar
     assert resultado.resumo() == "main local já em dia"
+
+
+def test_atualizar_main_a_frente_publica(repositorio):
+    """O estado normal do checkout da rotina: artefato commitado, push pendente."""
+    _escrever(repositorio, ARTEFATO, "conteudo")
+    publicar_artefatos(repositorio, [ARTEFATO], MENSAGEM, empurrar=False)
+
+    resultado = atualizar_main(repositorio)
+
+    assert resultado.ok and resultado.pode_publicar
+    assert (resultado.frente, resultado.atras) == (1, 0)
 
 
 def test_atualizar_main_divergente_recusa_sem_reescrever(repositorio, tmp_path):
@@ -285,7 +298,7 @@ def test_atualizar_main_divergente_recusa_sem_reescrever(repositorio, tmp_path):
 
     resultado = atualizar_main(repositorio)
 
-    assert not resultado.ok
+    assert not resultado.ok and not resultado.pode_publicar
     assert "1 commit(s) à frente e 1 atrás" in resultado.resumo()
     assert _git(repositorio, "rev-parse", "HEAD") == antes
 
@@ -296,14 +309,85 @@ def test_atualizar_main_nao_sobrescreve_arquivo_modificado(repositorio, tmp_path
 
     resultado = atualizar_main(repositorio)
 
-    assert not resultado.ok and "fast-forward recusado" in resultado.resumo()
+    assert not resultado.ok and not resultado.pode_publicar
+    assert "fast-forward recusado" in resultado.resumo()
+    # O "Aborting" final do git não diz o que destravar; o arquivo, sim.
+    assert "README.md" in resultado.resumo()
     assert ((repositorio / "README.md").read_text(encoding="utf-8")
             == "trabalho local nao commitado\n")
 
 
-def test_atualizar_main_fora_da_main_recusa(repositorio):
+def test_atualizar_main_fora_da_main_em_dia_publica_mas_acusa(repositorio):
     _git(repositorio, "checkout", "-b", "trabalho")
 
     resultado = atualizar_main(repositorio)
 
     assert not resultado.ok and "não main" in resultado.resumo()
+    assert resultado.pode_publicar
+
+
+def test_atualizar_main_fora_da_main_atras_bloqueia(repositorio, tmp_path):
+    _git(repositorio, "checkout", "-b", "trabalho")
+    _commit_de_outro(tmp_path, "a.txt")
+    antes = _git(repositorio, "rev-parse", "HEAD")
+
+    resultado = atualizar_main(repositorio)
+
+    assert not resultado.pode_publicar
+    assert "faltam 1 commit(s) da origin/main" in resultado.resumo()
+    # Ramo de trabalho alheio não é avançado.
+    assert _git(repositorio, "rev-parse", "HEAD") == antes
+
+
+def test_atualizar_main_com_merge_pela_metade_bloqueia(repositorio):
+    cabeca = _git(repositorio, "rev-parse", "HEAD")
+    (repositorio / ".git" / "MERGE_HEAD").write_text(cabeca, encoding="utf-8")
+
+    resultado = atualizar_main(repositorio)
+
+    assert not resultado.pode_publicar and "merge em andamento" in resultado.resumo()
+
+
+def test_atualizar_main_sem_rede_bloqueia_depois_das_tentativas(repositorio, tmp_path):
+    """Sem fetch não há como saber se a origin andou; os publicadores
+    precisariam da rede de todo jeito. Bloqueia, e diz quantas tentativas."""
+    _git(repositorio, "remote", "set-url", "origin", str(tmp_path / "sumiu.git"))
+
+    resultado = atualizar_main(repositorio, pausas=(0, 0))
+
+    assert not resultado.pode_publicar
+    assert "git fetch falhou (3 tentativa(s))" in resultado.resumo()
+
+
+def test_atualizar_main_tenta_de_novo_e_fetch_pendurado_nao_derruba(monkeypatch, tmp_path):
+    """Rede pela metade pendura em vez de recusar. Exceção aqui mataria a rotina
+    antes de ela avisar -- e processo morto não notifica."""
+    from core import publicacao_git as pg
+
+    pausas = []
+    monkeypatch.setattr(pg.time, "sleep", pausas.append)
+    monkeypatch.setattr(pg, "ramo_atual", lambda _r: "main")
+
+    def _git_pendurado(_raiz, *argumentos):
+        raise subprocess.TimeoutExpired(["git", *argumentos], pg.TIMEOUT_GIT)
+
+    monkeypatch.setattr(pg, "_git", _git_pendurado)
+
+    resultado = pg.atualizar_main(tmp_path)
+
+    assert pausas == list(pg.PAUSAS_FETCH)
+    assert not resultado.pode_publicar
+    assert f"{1 + len(pg.PAUSAS_FETCH)} tentativa(s)" in resultado.resumo()
+
+
+def test_atualizar_main_sem_git_bloqueia_sem_excecao(monkeypatch, tmp_path):
+    from core import publicacao_git as pg
+
+    def _sem_git(_raiz, *_argumentos):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(pg, "_git", _sem_git)
+
+    resultado = pg.atualizar_main(tmp_path)
+
+    assert not resultado.pode_publicar and "git não respondeu" in resultado.resumo()

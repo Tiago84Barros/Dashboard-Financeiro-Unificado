@@ -410,3 +410,22 @@ def test_resumo_controle_mostra_aporte_que_explica_taxa_com_saldo_negativo(monke
     assert "Aportes no mês" in card and "R$ 9.998,81" in card
     assert card.index("Aportes no mês") < card.index("Taxa de poupança")
     assert "37,24%" in card
+
+
+def test_kpi_taxa_em_mes_deficitario_nao_declara_meta_atingida(monkeypatch):
+    """37% com saldo negativo: a meta não foi atingida, o aporte saiu de caixa
+    de meses anteriores — a tela precisa dizer isso em vez de 'atingida'."""
+    rendered = _capture_markdown(monkeypatch)
+
+    dashboard._render_kpi_grid(
+        {"total": 0, "delta_mes_pct": None},
+        receitas=25_619.56,
+        despesas=26_077.65,
+        investimentos=9_998.81,
+        carteira={},
+    )
+
+    html = "\n".join(rendered)
+    assert "37,24%" in html
+    assert "atingida" not in html
+    assert "déficit no mês · aporte veio de caixa anterior" in html

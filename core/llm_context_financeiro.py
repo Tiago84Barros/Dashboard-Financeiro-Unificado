@@ -176,6 +176,7 @@ def build_financas_chat_context(
         "taxa_poupanca_pct": taxa_poupanca,
         "taxa_renda_nao_consumida_pct": taxa_nao_consumida,
         "poupanca_no_teto": _ind["poupanca_no_teto"],
+        "poupanca_de_caixa_anterior": _ind["poupanca_de_caixa_anterior"],
         "renda_comprometida_pct": comprometido,
         "categorias_mes": cats_mes,
         "receitas_categorias_mes": receitas_cats,
@@ -213,6 +214,9 @@ def build_financas_chat_context(
              + (" O teto está ativo neste mês." if _ind["poupanca_no_teto"] else ""))
     L.append(f"    Só a renda não consumida (Saldo / Receitas), sem os aportes: "
              f"{_pct(taxa_nao_consumida)}")
+    if _ind["poupanca_de_caixa_anterior"]:
+        L.append("    ATENÇÃO: mês em déficit — o aporte saiu de caixa de meses anteriores; "
+                 "não trate a taxa com aporte como meta de poupança atingida.")
     L.append("  Aporte em investimento é alocação da sobra, não despesa: não entra "
              "no saldo nem na renda comprometida. Só há déficit quando as despesas "
              "superam as receitas.")
@@ -324,20 +328,24 @@ def build_financas_chat_context(
 # Essencialidade por categoria-alvo do cartão (taxonomia limpa). Heurística
 # assumida — a IA deve tratar como premissa, não verdade absoluta.
 _CARD_ESSENCIAL = {
-    "Alimentação", "Mercado", "Transporte & Combustível",
-    "Saúde & Bem-estar", "Educação & Profissional", "Tarifas & Anuidade",
+    "Alimentação", "Mercado", "Transporte", "Combustível",
+    "Saúde", "Educação", "Tarifas & Anuidade",
     "Casa & Construção",
 }
 _CARD_NAO_ESSENCIAL = {
-    "Compras / Varejo", "Assinaturas & Serviços digitais",
-    "Lazer & Entretenimento", "Cuidados pessoais",
+    "Compras", "Assinaturas", "Lazer", "Cuidados pessoais",
 }
 # Não são consumo (não entram na análise essencial × não essencial).
 _CARD_NAO_CONSUMO = {"Pagamento de Cartão", "Créditos e Estornos"}
 
 
 def _card_essencialidade(nome: object) -> str:
-    n = str(nome or "").strip()
+    # O nome antigo da fatura (``NOMES_LEGADOS``) ainda aparece enquanto os
+    # lançamentos não forem migrados; o nome sem descrição basta, porque as
+    # duas metades do antigo "Transporte e Combustível" são essenciais.
+    from core.card_categorization import nome_unificado
+
+    n = nome_unificado(nome)
     if n in _CARD_ESSENCIAL:
         return "essencial"
     if n in _CARD_NAO_ESSENCIAL:

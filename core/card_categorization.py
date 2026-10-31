@@ -15,6 +15,15 @@ Ordem de decisão em classify():
   3. Regras internas por ESTABELECIMENTO (MERCHANT_RULES).
   4. Fallback pela categoria da operadora (CATEGORY_MAP).
   5. Nada casou -> REVIEW_SENTINEL ("A revisar"): a UI pede a categoria ao usuário.
+
+Os nomes da taxonomia são os MESMOS das categorias de sistema que o extrato
+bancário e o lançamento manual usam (``Saúde``, ``Lazer``, ``Combustível``...).
+Até 31/10/2026 a fatura tinha nomes próprios (``Saúde & Bem-estar``,
+``Transporte & Combustível``...), criados pelo importador na conta de cada
+usuário, e o mesmo gasto caía em duas categorias conforme fosse pago no débito
+ou no cartão. ``NOMES_LEGADOS`` traduz os nomes antigos — que continuam
+gravados em regras aprendidas e em lançamentos ainda não migrados por
+``scripts/unificar_categorias_cartao.py``.
 """
 from __future__ import annotations
 
@@ -24,20 +33,23 @@ import unicodedata
 # ── Sentinela para itens não catalogados (revisão manual) ─────────────────────
 REVIEW_SENTINEL = "A revisar"
 
-# ── Taxonomia-alvo (13) + tipo de cada categoria ─────────────────────────────
+# ── Taxonomia-alvo (14) + tipo de cada categoria ─────────────────────────────
 # 'Pagamento de Cartão' e 'Créditos e Estornos' são preservados: o primeiro é
 # hardcoded em SQL do app (_SQL_GASTOS_CARTAO_MENSAL) e ambos representam transfer.
+# 'Cuidados pessoais', 'Casa & Construção' e 'Tarifas & Anuidade' não têm par
+# entre as categorias de sistema e continuam só do cartão.
 CATEGORY_TYPE = {
     "Alimentação": "expense",
     "Mercado": "expense",
-    "Compras / Varejo": "expense",
-    "Assinaturas & Serviços digitais": "expense",
-    "Saúde & Bem-estar": "expense",
+    "Compras": "expense",
+    "Assinaturas": "expense",
+    "Saúde": "expense",
     "Cuidados pessoais": "expense",
     "Casa & Construção": "expense",
-    "Transporte & Combustível": "expense",
-    "Lazer & Entretenimento": "expense",
-    "Educação & Profissional": "expense",
+    "Transporte": "expense",
+    "Combustível": "expense",
+    "Lazer": "expense",
+    "Educação": "expense",
     "Tarifas & Anuidade": "expense",
     "Pagamento de Cartão": "transfer",
     "Créditos e Estornos": "transfer",
@@ -61,21 +73,21 @@ def categorias_disponiveis(incluir_estruturais: bool = True) -> list[str]:
 # ── Regras por ESTABELECIMENTO (prioridade alta -> baixa) ────────────────────
 MERCHANT_RULES = [
     ("SCARDINO", "Casa & Construção"),        # toldo p/ reforma (informado pelo usuário)
-    ("WELLHUB", "Saúde & Bem-estar"),
-    ("GYMPASS", "Saúde & Bem-estar"),
-    ("CLAUDE", "Assinaturas & Serviços digitais"),
-    ("ANTHROPIC", "Assinaturas & Serviços digitais"),
-    ("OPENAI", "Assinaturas & Serviços digitais"),
-    ("CHATGPT", "Assinaturas & Serviços digitais"),
-    ("SUPABASE", "Assinaturas & Serviços digitais"),
-    ("BRAPI", "Assinaturas & Serviços digitais"),
+    ("WELLHUB", "Saúde"),
+    ("GYMPASS", "Saúde"),
+    ("CLAUDE", "Assinaturas"),
+    ("ANTHROPIC", "Assinaturas"),
+    ("OPENAI", "Assinaturas"),
+    ("CHATGPT", "Assinaturas"),
+    ("SUPABASE", "Assinaturas"),
+    ("BRAPI", "Assinaturas"),
     # 123Comprou (MERCADO*123COMPROU) é MARKETPLACE, não assinatura → varejo.
-    ("123COMPROU", "Compras / Varejo"),
-    ("LIVELO", "Assinaturas & Serviços digitais"),
-    ("SMILES", "Assinaturas & Serviços digitais"),
-    ("IFOOD CLUB", "Assinaturas & Serviços digitais"),
-    ("JUSBRASIL", "Assinaturas & Serviços digitais"),
-    ("GOOGLE", "Assinaturas & Serviços digitais"),
+    ("123COMPROU", "Compras"),
+    ("LIVELO", "Assinaturas"),
+    ("SMILES", "Assinaturas"),
+    ("IFOOD CLUB", "Assinaturas"),
+    ("JUSBRASIL", "Assinaturas"),
+    ("GOOGLE", "Assinaturas"),
     ("IFOOD", "Alimentação"),
     ("TUCUPI", "Alimentação"),
     ("PESCADO", "Alimentação"),
@@ -84,44 +96,49 @@ MERCHANT_RULES = [
     ("ATACADISTA", "Mercado"),
     ("TIP HOME", "Casa & Construção"),
     ("HOME CENTER", "Casa & Construção"),
-    ("CASAS BAHIA", "Compras / Varejo"),
-    ("TEMU", "Compras / Varejo"),
-    ("MERCADOLIVRE", "Compras / Varejo"),
-    ("MERCADO LIVRE", "Compras / Varejo"),
-    ("KALUNGA", "Compras / Varejo"),
-    ("QUADROSDECORA", "Compras / Varejo"),
-    ("POSTO", "Transporte & Combustível"),
-    ("PBADMINISTRADORA", "Transporte & Combustível"),
+    ("CASAS BAHIA", "Compras"),
+    ("TEMU", "Compras"),
+    ("MERCADOLIVRE", "Compras"),
+    ("MERCADO LIVRE", "Compras"),
+    ("KALUNGA", "Compras"),
+    ("QUADROSDECORA", "Compras"),
+    ("POSTO", "Combustível"),
+    ("PBADMINISTRADORA", "Combustível"),
+    # Nomes de posto sem a palavra "posto" ("SHELL BOX", "XYZ COMBUSTIVEIS
+    # LTDA"). Também decidem a divisão do nome antigo "Transporte & Combustível".
+    ("COMBUSTIV", "Combustível"),
+    ("SHELL", "Combustível"),
+    ("PETROBRAS", "Combustível"),
     ("BARBEARIA", "Cuidados pessoais"),
     ("CABELO", "Cuidados pessoais"),
-    ("NAUTINST", "Educação & Profissional"),
-    ("CENTRO DE TR", "Educação & Profissional"),
-    ("PLANET PARK", "Lazer & Entretenimento"),
-    ("ANANIN PARK", "Lazer & Entretenimento"),
-    ("CINESYSTEM", "Lazer & Entretenimento"),
-    ("CINEMARK", "Lazer & Entretenimento"),
-    ("KINOPLEX", "Lazer & Entretenimento"),
+    ("NAUTINST", "Educação"),
+    ("CENTRO DE TR", "Educação"),
+    ("PLANET PARK", "Lazer"),
+    ("ANANIN PARK", "Lazer"),
+    ("CINESYSTEM", "Lazer"),
+    ("CINEMARK", "Lazer"),
+    ("KINOPLEX", "Lazer"),
 ]
 
 # ── Fallback pela categoria da operadora (MCC) -> categoria-alvo ──────────────
 CATEGORY_MAP = {
     "Restaurante / Lanchonete / Bar": "Alimentação",
     "Supermercados / Mercearia / Padarias / Lojas de Conveniência": "Mercado",
-    "Entretenimento": "Lazer & Entretenimento",
-    "Recreativo": "Lazer & Entretenimento",
-    "Arte / Artesanato / Passatempo": "Lazer & Entretenimento",
-    "Vestuário / Roupas": "Compras / Varejo",
-    "Departamento / Desconto": "Compras / Varejo",
-    "Especialidade varejo": "Compras / Varejo",
-    "Serviços Profissionais": "Compras / Varejo",
-    "Empresa para empresa": "Compras / Varejo",
+    "Entretenimento": "Lazer",
+    "Recreativo": "Lazer",
+    "Arte / Artesanato / Passatempo": "Lazer",
+    "Vestuário / Roupas": "Compras",
+    "Departamento / Desconto": "Compras",
+    "Especialidade varejo": "Compras",
+    "Serviços Profissionais": "Compras",
+    "Empresa para empresa": "Compras",
     "Construção": "Casa & Construção",
     "Casa / Escritório Mobiliário": "Casa & Construção",
     "Materiais de construção para casa": "Casa & Construção",
-    "Transporte": "Transporte & Combustível",
-    "Relacionados a Automotivo": "Transporte & Combustível",
+    "Transporte": "Transporte",
+    "Relacionados a Automotivo": "Transporte",
     # Telecom é serviço genuinamente recorrente → assinatura.
-    "Serviços de telecomunicações": "Assinaturas & Serviços digitais",
+    "Serviços de telecomunicações": "Assinaturas",
     # MCC "grab-bag": misturam SaaS real (pego pelas MERCHANT_RULES) com
     # marketplaces e compras avulsas. NÃO devem cair automaticamente em
     # "Assinaturas": o que não casar uma marca conhecida vai para revisão do
@@ -130,14 +147,53 @@ CATEGORY_MAP = {
     "Marketing Direto": REVIEW_SENTINEL,
     "Elétrico": REVIEW_SENTINEL,
     "Serviços pessoais": "Cuidados pessoais",
-    "Educacional": "Educação & Profissional",
-    "Associação": "Educação & Profissional",
+    "Educacional": "Educação",
+    "Associação": "Educação",
     "Anuidade": "Tarifas & Anuidade",
     "T&E": "Alimentação",
     # Preservadas (mapeiam para si mesmas):
     "Pagamento de Cartão": "Pagamento de Cartão",
     "Créditos e Estornos": "Créditos e Estornos",
 }
+
+# ── Nomes antigos da fatura -> nomes de sistema ──────────────────────────────
+# A fatura usava nomes próprios até 31/10/2026. Eles seguem gravados em regras
+# aprendidas (``card_category_rules``) e em lançamentos ainda não migrados, e
+# por isso continuam reconhecidos. ``None`` marca o único nome que se divide:
+# ``Transporte & Combustível`` vira ``Combustível`` quando a descrição é de
+# posto e ``Transporte`` no resto (ver ``nome_unificado``).
+NOMES_LEGADOS: dict[str, str | None] = {
+    "Compras / Varejo": "Compras",
+    "Assinaturas & Serviços digitais": "Assinaturas",
+    "Saúde & Bem-estar": "Saúde",
+    "Lazer & Entretenimento": "Lazer",
+    "Educação & Profissional": "Educação",
+    "Transporte & Combustível": None,
+}
+
+#: Estabelecimentos de combustível, tirados das próprias MERCHANT_RULES: a
+#: divisão do nome antigo segue exatamente a regra que classifica o novo.
+_TERMOS_COMBUSTIVEL = tuple(kw for kw, cat in MERCHANT_RULES if cat == "Combustível")
+
+
+def nome_unificado(nome: object, descricao: object = "") -> str:
+    """Nome de sistema para um nome de categoria, antigo ou atual.
+
+    ``descricao`` só importa para ``Transporte & Combustível``: o lançamento de
+    posto vai para ``Combustível``, o resto para ``Transporte``. Nome que não é
+    legado volta como veio (sem espaços nas pontas).
+    """
+    texto = str(nome or "").strip()
+    if texto not in NOMES_LEGADOS:
+        return texto
+    destino = NOMES_LEGADOS[texto]
+    if destino is not None:
+        return destino
+    desc_up = _norm_up(descricao)
+    if any(_norm_up(kw) in desc_up for kw in _TERMOS_COMBUSTIVEL):
+        return "Combustível"
+    return "Transporte"
+
 
 # ── Termos estruturais (detecção por descrição) ──────────────────────────────
 _PAYMENT_TERMS = (
@@ -184,9 +240,11 @@ def classify(
     if any(t in desc_low for t in _ANUIDADE_TERMS):
         return "Tarifas & Anuidade", "estrutural:anuidade"
 
-    # 2) Regras do usuário (aprendidas)
+    # 2) Regras do usuário (aprendidas). A regra gravada antes da unificação
+    # guarda o nome antigo; a palavra-chave decide a divisão de Transporte.
     for palavra, categoria in (user_rules or []):
         pk = _norm_up(palavra)
+        categoria = nome_unificado(categoria, palavra)
         if pk and pk in desc_up and categoria in CATEGORY_TYPE:
             return categoria, f"usuario:{palavra}"
 
@@ -200,7 +258,10 @@ def classify(
     if raw in CATEGORY_MAP:
         return CATEGORY_MAP[raw], "categoria"
 
-    # 4.5) Idempotência: se já vier numa categoria-alvo válida, mantém.
+    # 4.5) Idempotência: se já vier numa categoria-alvo válida, mantém — e o
+    # nome antigo da fatura vira o de sistema.
+    if raw in NOMES_LEGADOS:
+        return nome_unificado(raw, description), "nome-legado"
     if raw in CATEGORY_TYPE and raw != REVIEW_SENTINEL:
         return raw, "ja-catalogada"
 
@@ -216,14 +277,15 @@ def classify(
 DESCRICAO_CATEGORIA_JEV = {
     "Alimentação": "Restaurante, lanchonete, bar, padaria para consumo no local, delivery de comida",
     "Mercado": "Supermercado, atacadista, hortifruti, mercearia: compra de mantimentos para casa",
-    "Compras / Varejo": "Loja física ou online, marketplace, roupas, eletrônicos, presentes, compra avulsa de produto",
-    "Assinaturas & Serviços digitais": "Cobrança recorrente de software, streaming, nuvem, telefonia, programa de pontos",
-    "Saúde & Bem-estar": "Farmácia, médico, exame, plano de saúde, academia",
+    "Compras": "Loja física ou online, marketplace, roupas, eletrônicos, presentes, compra avulsa de produto",
+    "Assinaturas": "Cobrança recorrente de software, streaming, nuvem, telefonia, programa de pontos",
+    "Saúde": "Farmácia, médico, exame, plano de saúde, academia",
     "Cuidados pessoais": "Barbearia, salão de beleza, estética, cosméticos",
     "Casa & Construção": "Material de construção, reforma, móveis, decoração, utilidades para casa",
-    "Transporte & Combustível": "Posto de combustível, pedágio, estacionamento, aplicativo de transporte, oficina",
-    "Lazer & Entretenimento": "Cinema, parque, show, viagem, hotel, jogos, passeio",
-    "Educação & Profissional": "Curso, escola, livro técnico, conselho ou associação profissional",
+    "Transporte": "Pedágio, estacionamento, aplicativo de transporte, oficina, peças do carro",
+    "Combustível": "Posto de combustível, abastecimento",
+    "Lazer": "Cinema, parque, show, viagem, hotel, jogos, passeio",
+    "Educação": "Curso, escola, livro técnico, conselho ou associação profissional",
 }
 
 _INSTRUCAO_JEV = ("Em qual categoria de gasto pessoal se encaixa esta compra no cartão de "

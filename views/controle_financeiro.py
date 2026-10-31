@@ -34,7 +34,11 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core import orcamento as orc
-from core.card_categorization import REVIEW_SENTINEL, categorias_disponiveis
+from core.card_categorization import (
+    REVIEW_SENTINEL,
+    categorias_disponiveis,
+    nome_unificado,
+)
 from core.categorias import listar as listar_categorias
 from core.chat_memory import (
     clear_chat_history,
@@ -938,9 +942,12 @@ def _tab_analises(
             (f"(Sobra do mês {fmt_moeda(saldo)} + aportes {fmt_moeda(investido_mes)})"
              " / renda, com teto na renda"
              + (" · no teto" if indicadores["poupanca_no_teto"] else "")
-             + " · meta de referência: 30%.")
+             + " · meta de referência: 30%."
+             + (" Mês em déficit: o aporte veio de caixa anterior."
+                if indicadores["poupanca_de_caixa_anterior"] else ""))
             if taxa_poupanca is not None else "Sem renda positiva para calcular a taxa.",
             _COR_NEUTRO if taxa_poupanca is None else
+            "#F6C90E"    if indicadores["poupanca_de_caixa_anterior"] else
             _COR_RECEITA if taxa_poupanca >= 30 else
             "#F6C90E"    if taxa_poupanca >= 15 else _COR_DESPESA,
         ), unsafe_allow_html=True)
@@ -1845,18 +1852,21 @@ def _editor_extratos(rows: list, categories: list) -> None:
     """Editor in-place dos movimentos de extrato importados.
     Permite editar Descrição, Direção, Valor e Categoria e grava via
     update_bank_statement_movement (sincroniza a transação publicada)."""
-    from core.bank_statement_import import update_bank_statement_movement
+    from core.bank_statement_import import (
+        ROTULO_PENDENTE,
+        rotulo_da_linha,
+        rotulos_de_categoria,
+        update_bank_statement_movement,
+    )
 
-    cat_by_name = {c["nome"]: c for c in categories}
-    options = ["Pendente"] + list(cat_by_name.keys())
+    # Pelo id, nunca pelo nome: com três "Outros" no banco, o dicionário por
+    # nome guardava um só, e editar só a descrição de um movimento trocava a
+    # categoria dele pela de outro tipo.
+    cat_por_rotulo, rotulo_por_id = rotulos_de_categoria(categories)
+    options = [ROTULO_PENDENTE] + list(cat_por_rotulo.keys())
 
     def _cat_label(r: dict) -> str:
-        name = (
-            r.get("categoria_confirmada_nome")
-            or r.get("categoria_nome")
-            or r.get("categoria_sugerida_texto")
-        )
-        return name if name in cat_by_name else "Pendente"
+        return rotulo_da_linha(r, rotulo_por_id)
 
     df = pd.DataFrame([
         {
@@ -1911,7 +1921,7 @@ def _editor_extratos(rows: list, categories: list) -> None:
         )
         if not mudou:
             continue
-        cat = cat_by_name.get(str(row["Categoria"]))
+        cat = cat_por_rotulo.get(str(row["Categoria"]))
         ok, msg = update_bank_statement_movement(
             movement_id=str(row["ID"]),
             category_id=cat["id"] if cat else None,
@@ -2171,7 +2181,7 @@ def _best_merchant_label(values: pd.Series) -> str:
 # SUBSCRIPTION SA" vs "ANTHROPIC* CLAUDE SUB SA"), o que quebra a detecção de
 # recorrência por estabelecimento. Este mapa canoniza variantes conhecidas para
 # um nome único, e também identifica marcas de assinatura fora da categoria
-# "Assinaturas & Serviços digitais" (ex.: Wellhub, que fica em Saúde).
+# "Assinaturas" (ex.: Wellhub, que fica em Saúde).
 # (palavra-chave em MAIÚSCULO sem acento) -> nome exibido
 _SUBSCRIPTION_BRANDS = [
     ("ANTHROPIC", "Claude (Anthropic)"), ("CLAUDE", "Claude (Anthropic)"),
@@ -2198,8 +2208,8 @@ def _subscription_brand(description: object) -> str | None:
 def _prepare_subscriptions(df: pd.DataFrame) -> list[dict]:
     """
     Lista consolidada de ASSINATURAS/serviços recorrentes, agrupada por marca
-    canônica. Fonte confiável: tudo na categoria 'Assinaturas & Serviços digitais'
-    MAIS qualquer compra cuja descrição case uma marca de assinatura conhecida
+    canônica. Fonte confiável: tudo na categoria 'Assinaturas' (ou no nome antigo
+    da fatura, ainda não migrado) MAIS qualquer compra cuja descrição case uma marca de assinatura conhecida
     (ex.: Wellhub, que fica em Saúde). Agrega as linhas de IOF junto do principal.
     """
     if df.empty:
@@ -2208,7 +2218,7 @@ def _prepare_subscriptions(df: pd.DataFrame) -> list[dict]:
     if compras.empty:
         return []
     marca = compras["descricao"].map(_subscription_brand)
-    eh_assinatura_cat = compras["categoria"] == "Assinaturas & Serviços digitais"
+    eh_assinatura_cat = compras["categoria"].map(nome_unificado) == "Assinaturas"
     # Guarda anti-marketplace: uma compra PARCELADA (installment_total > 1) sem
     # marca de assinatura conhecida quase nunca é assinatura — é compra avulsa
     # que pode ter caído na categoria por engano. Só entra por marca conhecida.
