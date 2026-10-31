@@ -13,8 +13,12 @@ A tela se monta com as seções que a conta mantém no menu lateral (Configuraç
 → Geral → Seções do aplicativo, desde 31/10/2026). Cada bloco pertence a uma
 seção e sai junto com ela -- o caixa ao Controle Financeiro, a carteira real a
 Investimentos, cada carteira recomendada à sua tela de seleção. A ORDEM não
-muda: o que sobra continua fatos primeiro, referências depois. E o dado de uma
-seção oculta nem é lido: esconder também poupa a consulta.
+muda: o que sobra continua fatos primeiro, referências depois. As consultas
+próprias de cada bloco (histórico, categorias, comparativo, evolução, carteiras
+recomendadas) só acontecem com a seção no menu. O resumo agregado do topo
+(``get_visao_geral``) é uma leitura só, que junta caixa e carteira para o
+patrimônio: é lido sempre que alguma seção com resumo está no menu, e só fica
+de fora quando nenhuma está.
 """
 from collections.abc import Callable
 from datetime import date as _date
@@ -1658,6 +1662,21 @@ def _aviso_painel_sem_secoes() -> None:
     )
 
 
+def _render_painel_sem_secoes(hoje: _date) -> None:
+    """Cabeçalho e aviso, sem tocar em dado nenhum.
+
+    O chip de fonte diz o modo do app, não a origem de números -- não há
+    número na tela.
+    """
+    rotulo, cor = (("Dados de demonstração", _COR_ALERTA) if settings.MOCK_MODE
+                   else ("Dados reais", _COR_FLUXO))
+    _render_dashboard_header(
+        f"{_MESES_PT[hoje.month]} {hoje.year}", rotulo, cor, hoje,
+        subtitulo=_subtitulo_do_cabecalho(frozenset()),
+    )
+    _aviso_painel_sem_secoes()
+
+
 def _destaque_carteira_recomendada(origens: tuple[str, ...] = (_B3, _EUA, _FIIS)) -> None:
     """Abre o último bloco do dashboard.
 
@@ -1861,6 +1880,17 @@ def mes_parcial_ate(tem_mes_corrente: bool, hoje: _date) -> _date | None:
 
 
 def render() -> None:
+    hoje  = _datetime.now(ZoneInfo("America/Cayenne")).date()
+    # As seções que a conta mantém no menu (Configurações → Geral), lidas
+    # ANTES de qualquer dado: sem nenhuma seção com resumo, o painel é só o
+    # aviso, e o resumo agregado nem é consultado -- uma falha numa leitura
+    # que a pessoa escondeu não pode impedir o aviso de aparecer (revisão do
+    # PR #630).
+    areas = visiveis_da_sessao()
+    if not areas & (_SELECAO | {_CAIXA, _CARTEIRA}):
+        _render_painel_sem_secoes(hoje)
+        return
+
     # ── Dados ─────────────────────────────────────────────────────────────────
     try:
         d = get_visao_geral()
@@ -1872,13 +1902,11 @@ def render() -> None:
                         codigo="dashboard.visao_geral_erro")
         return
 
-    hoje          = _datetime.now(ZoneInfo("America/Cayenne")).date()
-    # As seções que a conta mantém no menu (Configurações → Geral). Bloco de
-    # seção oculta não aparece, e o dado dele nem é lido: o caixa é do
-    # Controle Financeiro, a carteira real é de Investimentos. O aportado no
-    # ano sai do histórico anual do caixa, mas aparece no cartão de
-    # Investimentos -- por isso o histórico anual serve aos dois.
-    areas         = visiveis_da_sessao()
+    # Bloco de seção oculta não aparece, e a consulta própria dele não é
+    # feita: o caixa é do Controle Financeiro, a carteira real é de
+    # Investimentos. O aportado no ano sai do histórico anual do caixa, mas
+    # aparece no cartão de Investimentos -- por isso o histórico anual serve
+    # aos dois.
     tem_caixa     = _CAIXA in areas
     tem_carteira  = _CARTEIRA in areas
     hist_cashflow = get_cashflow_mensal() if tem_caixa else []   # list[{ano, mes, receitas, despesas, investimentos}]
@@ -1916,7 +1944,7 @@ def render() -> None:
         ("Fallback demonstrativo", _COR_NEGATIVO) if fonte == "mock_fallback" else
         ("Dados de demonstração", _COR_ALERTA)
     )
-    # Sem o Controle Financeiro, o caixa nem é lido e ``cur`` fica vazio -- e
+    # Sem o Controle Financeiro, o histórico do caixa não é lido e ``cur`` fica vazio -- e
     # o rótulo cairia no último mês com lançamento ("Maio") ao lado de
     # proventos de outubro. O que sobra no topo (patrimônio, rentabilidade,
     # proventos do mês) é do mês corrente.
@@ -1929,9 +1957,6 @@ def render() -> None:
         parcial_ate=mes_parcial_ate(mes_corrente, hoje),
         subtitulo=_subtitulo_do_cabecalho(areas),
     )
-    if not areas & (_SELECAO | {_CAIXA, _CARTEIRA}):
-        _aviso_painel_sem_secoes()
-        return
     _render_kpi_grid(
         pat,
         receitas_mes,

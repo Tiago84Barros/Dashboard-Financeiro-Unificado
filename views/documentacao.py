@@ -2085,6 +2085,9 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
                 "Chip Atualizado com a data",
                 "Subtítulo conforme as seções no menu (_subtitulo_do_cabecalho); sem "
                 "nenhuma seção com resumo, o aviso Painel sem seções aponta onde ligá-las",
+                "O resumo agregado (get_visao_geral) junta caixa e carteira numa leitura só "
+                "e é lido sempre que alguma seção com resumo está no menu; sem nenhuma, nem "
+                "ele é consultado",
             ),
             "Número de demonstração com a mesma cara de número real engana. O chip de fonte "
             "diz, antes de qualquer cartão, se o que está na tela é o seu dado.",
@@ -2144,7 +2147,8 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
                 "Despesas por categoria do ano: get_gastos_categoria_anual(), compras de "
                 "cartão excluídas",
                 "Comparativo Ano a Ano: get_historico_anual()",
-                "Só com o Controle Financeiro no menu; sem ele, nada disso é lido do banco",
+                "Só com o Controle Financeiro no menu; sem ele, histórico, categorias e "
+                "comparativo não são consultados",
             ),
             "O cartão é fluxo futuro e chega ao caixa pelo Pagamento de Cartão. Somar a "
             "compra de novo na despesa por categoria misturaria as duas linhas do tempo que "
@@ -2160,7 +2164,8 @@ FLOW_DASHBOARD_GERAL = FlowSpec(
                 "Dados de get_carteira() e get_evolucao_patrimonial()",
                 "N efetivo: ativos equivalentes por diversificação; abaixo de 10 sai em alerta",
                 "Top 5 acima de 50% sai em alerta",
-                "Só com Investimentos no menu; sem ele, a carteira nem é lida",
+                "Só com Investimentos no menu; sem ele, a carteira detalhada e a evolução "
+                "não são consultadas",
             ),
             "Contar ativos não mede diversificação: dez posições com uma pesando metade da "
             "carteira se comportam como poucas. O N efetivo e o Top 5 mostram isso direto.",

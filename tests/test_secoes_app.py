@@ -406,8 +406,30 @@ def test_render_le_o_menu_e_cada_bloco_obedece_a_sua_secao():
     # ao lado de proventos do mês corrente.
     assert "mes_corrente = cur is not None or not tem_caixa" in corpo
     assert "_rotulo_do_periodo(mes_corrente, d, hoje)" in corpo
-    # Painel sem seção nenhuma avisa onde se desfaz, em vez de ficar em branco.
-    assert "_aviso_painel_sem_secoes()" in corpo
+    # Painel sem seção nenhuma avisa onde se desfaz, em vez de ficar em branco,
+    # e decide isso ANTES de ler qualquer dado.
+    assert corpo.index("_render_painel_sem_secoes(hoje)") < corpo.index("get_visao_geral()")
+
+
+def test_painel_sem_secoes_nao_consulta_o_resumo_agregado(monkeypatch):
+    """Revisão do PR #630: o resumo agregado junta caixa e carteira numa leitura
+    só. Quem escondeu todas as seções com resumo não pode ficar sem o aviso
+    porque uma dessas leituras falhou."""
+    rendered = _capture_markdown(monkeypatch)
+    monkeypatch.setattr(dashboard, "visiveis_da_sessao",
+                        lambda: frozenset(secoes_app.FIXAS) | {"portfolio_global"})
+
+    def proibido(*_a, **_k):
+        raise AssertionError("o painel sem seções não lê dado nenhum")
+
+    for nome in ("get_visao_geral", "get_cashflow_mensal", "get_historico_anual",
+                 "get_carteira", "get_evolucao_patrimonial",
+                 "get_gastos_categoria_anual", "_load_decision_models"):
+        monkeypatch.setattr(dashboard, nome, proibido)
+    dashboard.render()
+    html = "".join(rendered)
+    assert "Painel sem seções" in html and "Seu dinheiro, em perspectiva." in html
+    assert 'class="dg-kpi-grid"' not in html
 
 
 def test_aviso_de_painel_vazio_aponta_onde_se_desfaz(monkeypatch):
