@@ -56,7 +56,7 @@ def _render_tema() -> None:
     with st.container(border=True, key="cfg_geral_tema"):
         _cabecalho(
             "01", "🎨 Tema do aplicativo",
-            "Claro ou escuro, salvo na sua conta e aplicado na hora.",
+            "Claro ou escuro: muda só quando você escolhe, e fica salvo na sua conta.",
         )
         # A lógica de persistência não muda de lugar junto: o callback
         # ``_persist_choice`` resolve um bug documentado de rerun que revertia a
