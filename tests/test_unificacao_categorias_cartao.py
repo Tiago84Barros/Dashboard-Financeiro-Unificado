@@ -173,3 +173,94 @@ def test_migracao_nao_roda_em_mock(monkeypatch, capsys):
     monkeypatch.setattr(settings, "MOCK_MODE", True)
     assert script.main(["--aplicar"]) == 1
     assert "MOCK_MODE" in capsys.readouterr().out
+
+
+# ── orçamento: os cronogramas se fundem (revisão do Codex no PR #636) ─────────
+
+def _vigentes_por_mes(cronogramas, meses):
+    from datetime import date
+
+    from core.orcamento import vigentes
+
+    regs = [{"categoria": f"c{i}", "limite": v, "mes": date.fromisoformat(m)}
+            for i, cron in enumerate(cronogramas) for m, v in cron]
+    return [sum(vigentes(regs, date.fromisoformat(m)).values()) for m in meses]
+
+
+def test_fusao_preserva_o_limite_somado_em_todo_mes():
+    """Antigo R$100 desde janeiro + novo R$200 desde fevereiro valem R$300 em
+    março. Casar só o mesmo mês deixava R$200: o registro de fevereiro da
+    nova superava o de janeiro movido."""
+    from decimal import Decimal as D
+
+    from scripts.unificar_categorias_cartao import mesclar_orcamentos
+
+    alvo = [("2026-02-01", D("200")), ("2026-10-01", D("500"))]
+    antigo = [("2026-01-01", D("100")), ("2026-09-01", D("150")), ("2026-10-01", D("200"))]
+    fundido = mesclar_orcamentos([alvo, antigo])
+    assert fundido == [("2026-01-01", D("100")), ("2026-02-01", D("300")),
+                       ("2026-09-01", D("350")), ("2026-10-01", D("700"))]
+    meses = [f"2026-{m:02d}-01" for m in range(1, 13)]
+    assert _vigentes_por_mes([fundido], meses) == _vigentes_por_mes([alvo, antigo], meses)
+
+
+def test_fusao_respeita_encerramento():
+    """Limite 0 encerra (``core.orcamento.vigentes``): vale zero na soma."""
+    from decimal import Decimal as D
+
+    from scripts.unificar_categorias_cartao import mesclar_orcamentos
+
+    alvo = [("2026-01-01", D("400"))]
+    antigo = [("2026-03-01", D("300")), ("2026-06-01", D("0"))]
+    fundido = mesclar_orcamentos([alvo, antigo])
+    assert fundido == [("2026-01-01", D("400")), ("2026-03-01", D("700")),
+                       ("2026-06-01", D("400"))]
+    assert mesclar_orcamentos([[], antigo]) == [("2026-03-01", D("300")), ("2026-06-01", D("0"))]
+
+
+# ── alvo do tipo certo e reversão que conta referências ──────────────────────
+
+def test_busca_do_alvo_poe_o_tipo_esperado_na_frente():
+    """Uma "Saúde" de receita da pessoa não pode vencer a de despesa do sistema
+    — nem no script, nem no importador."""
+    import inspect
+
+    from core import controle
+    from scripts.unificar_categorias_cartao import _SQL_ALVO
+
+    for sql in (_SQL_ALVO, inspect.getsource(controle._get_or_create_category)):
+        ordem = sql[sql.index("ORDER"):]
+        assert ordem.index("type") < ordem.index("user_id"), sql
+
+
+def test_importador_passa_o_tipo_para_a_busca():
+    from types import SimpleNamespace
+
+    from core import controle
+
+    chamadas = []
+
+    class Conn:
+        def execute(self, stmt, params=None):
+            chamadas.append((str(stmt), dict(params or {})))
+            return SimpleNamespace(fetchone=lambda: SimpleNamespace(id="x"))
+
+    assert controle._get_or_create_category(Conn(), "u1", "Saúde", "expense") == "x"
+    busca = [p for sql, p in chamadas if "FROM categories" in sql]
+    assert busca and busca[0]["type"] == "expense"
+
+
+def test_categoria_so_e_apagada_depois_de_contar_referencias():
+    """Movimento do extrato usa ON DELETE SET NULL e regra do extrato, CASCADE:
+    o DELETE passa calado e leva a classificação junto. Os dois caminhos que
+    apagam categoria contam as referências pelo catálogo antes."""
+    import inspect
+
+    from scripts import unificar_categorias_cartao as script
+
+    assert "pg_constraint" in script._SQL_FKS_PARA_CATEGORIES
+    for funcao in (script.executar, script.cmd_reverter):
+        fonte = inspect.getsource(funcao)
+        assert "DELETE FROM categories" in fonte
+        assert fonte.index("referencias_a(") < fonte.index("DELETE FROM categories")
+        assert "begin_nested" not in fonte  # nada de confiar no erro do DELETE
