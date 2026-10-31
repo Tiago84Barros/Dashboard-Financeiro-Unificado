@@ -156,6 +156,19 @@ def test_posicao_sem_quantidade_nao_inventa_cobertura():
     assert "cobertura não medida" in texto
 
 
+@pytest.mark.parametrize("qtd_lotes,qtd_hoje,inteira", [
+    (0.01, 0.02, False),   # meio título de diferença não é "inteira"
+    (0.03, 0.02, False),
+    (2.0, 2.004, True),    # resto de arredondamento abaixo da fração mínima
+])
+def test_cobertura_usa_a_fracao_minima_do_tesouro(qtd_lotes, qtd_hoje, inteira):
+    titulo = _titulo("TPRE2033", "Tesouro Prefixado 2033", [
+        _lote(date(2029, 2, 3), qtd_lotes, TaxaContratada("PRE", 0.1111, "11,11%"))])
+    texto = _contexto({"titulos": [titulo], "diagnostico": {"origem": "extrato"}},
+                      [_pos("TPRE2033", qtd_hoje, "Tesouro Prefixado 2033")])
+    assert ("cobrem a posição atual inteira" in texto) is inteira
+
+
 # ── ausência e falha ditas, nunca caladas ───────────────────────────────────
 
 
@@ -222,7 +235,8 @@ def test_carregador_devolve_erro_declarado(monkeypatch):
         raise RuntimeError("banco fora")
 
     monkeypatch.setattr(tesouro_posicao, "carregar_titulos", explode)
-    assert tesouro_posicao.lotes_para_contexto(object(), "u")["erro"].startswith("RuntimeError")
+    erro = tesouro_posicao.lotes_para_contexto(object(), "u")["erro"]
+    assert erro.startswith("RuntimeError") and "banco fora" not in erro
     assert "erro" in tesouro_posicao.lotes_para_contexto(None, "u")
     assert "erro" in tesouro_posicao.lotes_para_contexto(object(), "")
 
@@ -237,6 +251,62 @@ def test_carregador_repassa_titulos_e_diagnostico(monkeypatch):
     monkeypatch.setattr(tesouro_posicao, "carregar_titulos", falso)
     saida = tesouro_posicao.lotes_para_contexto(object(), "u")
     assert saida == {"titulos": [PRE], "diagnostico": {"origem": "extrato"}}
+
+
+class _EngineQuebrado:
+    def connect(self):
+        raise RuntimeError("host secreto")
+
+
+def test_leitura_que_falha_nao_vira_extrato_ausente():
+    from core import tesouro_posicao
+
+    saida = tesouro_posicao.lotes_para_contexto(_EngineQuebrado(), "u")
+    assert "titulos" not in saida
+    assert "lotes do Extrato Analítico" in saida["erro"]
+    assert "Movimentação do Tesouro" in saida["erro"]
+    # A mensagem crua do driver pode trazer host e usuário: vai só o tipo.
+    assert "host secreto" not in saida["erro"]
+
+
+class _Resultado:
+    def __init__(self, linhas):
+        self.linhas = linhas
+
+    def fetchall(self):
+        return self.linhas
+
+
+class _EngineComMovimentos:
+    def connect(self):
+        return self
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_a):
+        return False
+
+    def execute(self, sql, _params=None):
+        from types import SimpleNamespace
+
+        if "investment_movement_events" not in str(sql):
+            return _Resultado([])
+        return _Resultado([SimpleNamespace(
+            event_date=date(2029, 2, 3), movement="Compra",
+            product="Tesouro Prefixado 2033", quantity=1.0, unit_price=900.0,
+            total_value=900.0)])
+
+
+def test_curva_ilegivel_com_compras_nao_vira_extrato_ausente(monkeypatch):
+    import pandas as pd
+
+    from core import tesouro_posicao
+
+    monkeypatch.setattr(tesouro_posicao, "taxas_mais_recentes", lambda engine: pd.DataFrame())
+    saida = tesouro_posicao.lotes_para_contexto(_EngineComMovimentos(), "u")
+    assert "titulos" not in saida
+    assert "curva do Tesouro" in saida["erro"]
 
 
 def test_falha_de_leitura_nao_fica_no_cache_do_chat(monkeypatch):

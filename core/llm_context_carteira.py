@@ -265,7 +265,11 @@ def _cobertura_dos_lotes(chave: str, qtd_lotes: float, qtd_hoje: dict) -> str:
     hoje = qtd_hoje[chave]
     if hoje is None or qtd_lotes <= 0:
         return "cobertura não medida: a posição atual não traz a quantidade."
-    if abs(qtd_lotes - hoje) <= max(0.01, 0.01 * hoje):
+    # A fração mínima do Tesouro é 0,01: diferença maior que meio passo é
+    # título que entrou ou saiu depois do extrato, não arredondamento.
+    from core.tesouro_posicao import _TOLERANCIA_QTD
+
+    if abs(qtd_lotes - hoje) <= _TOLERANCIA_QTD:
         return "cobertura: os lotes cobrem a posição atual inteira."
     razao = qtd_lotes / hoje
     if razao < 1:
