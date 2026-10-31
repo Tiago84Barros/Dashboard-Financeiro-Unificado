@@ -1765,15 +1765,21 @@ FLOW_CONFIGURACOES = FlowSpec(
     nodes={
         "cfg_tema": _node(
             "cfg_tema", "Tema do aplicativo", "Preferências",
-            "Escolha entre o tema escuro e o claro. A escolha é gravada na conta e "
-            "vale nas próximas aberturas, em qualquer tela.",
+            "Escolha entre o tema escuro e o claro. O tema muda só quando você escolhe "
+            "aqui — o app nunca troca sozinho, nem por falha do banco, sessão nova ou "
+            "tema do sistema operacional. A escolha é gravada na conta e vale nas "
+            "próximas aberturas, em qualquer tela; sem escolha, o app usa o escuro "
+            "padrão e mostra o seletor vazio.",
             (
                 "Aba ⚙️ Geral, a primeira da barra, bloco 01 (🎨 Tema do aplicativo)",
-                "Escolha gravada por usuário",
+                "Escolha gravada por usuário, com o instante em que foi feita",
+                "Vale a escolha mais recente, de qualquer aparelho",
                 "O seletor morava na barra lateral até 21/09/2026",
             ),
             "O tema é preferência de quem usa, e preferência pertence à conta — não ao "
-            "menu de navegação, onde disputava espaço com as rotas do app.",
+            "menu de navegação, onde disputava espaço com as rotas do app. Desde "
+            "31/10/2026 só a escolha entra na memória do tema: a cor que a tela "
+            "pintou por padrão nunca vira preferência.",
         ),
         "cfg_secoes": _node(
             "cfg_secoes", "Seções do aplicativo", "Preferências",

@@ -2853,7 +2853,7 @@
             {
               "nome": "Tema do aplicativo",
               "resumo": "Escolher visual claro ou escuro",
-              "explicacao": "Uma lista 'Tema da minha conta' com as opções Dark (escuro) e Light (claro). A escolha fica guardada na sua conta e muda o visual na hora, em todas as telas.",
+              "explicacao": "Uma lista 'Tema da minha conta' com as opções Dark (escuro) e Light (claro). O tema muda só quando você escolhe aqui: o app nunca troca sozinho. A escolha fica guardada na sua conta e muda o visual na hora, em todas as telas. Sem escolha, o app usa o escuro padrão e a lista aparece vazia.",
               "so_admin": false
             },
             {

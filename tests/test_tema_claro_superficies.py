@@ -599,3 +599,31 @@ def test_dia_escolhido_continua_verde_sob_o_cursor():
     seletor, corpo = por_rotulo[0]
     assert ":hover" in seletor and "--app-primary" in corpo, (
         f"regra por aria-label que não é a devolução do verde no hover: {seletor.strip()}")
+
+
+def test_tema_claro_alcanca_o_icone_e_o_balao_de_ajuda():
+    """Cada asserção desfaz uma cor medida no DOM em 31/10/2026.
+
+    Todo widget com ``help=`` estava ilegível no claro, nas duas pontas: o "?"
+    saía com o traço rgba(250,250,250,.6) do tema escuro (1,03:1 sobre o
+    fundo) e, ao passar o mouse, o balão escuro mostrava o texto em --app-text
+    (1,01:1 sobre #1A1F2E). Depois da correção: 6,95:1 e 15,7:1.
+    """
+    from design.theme_light import LIGHT_CSS
+
+    css = re.sub(r"/\*.*?\*/", "", LIGHT_CSS, flags=re.S)
+    # O ícone é só contorno: é o `stroke` que precisa mudar, não o `fill`.
+    assert re.search(
+        r'\[data-testid="stTooltipIcon"\] svg, \[data-testid="stTooltipIcon"\] svg \* '
+        r'\{\s*stroke:var\(--app-muted\)', css), "o traço do \"?\" voltou a herdar o branco"
+    # A regra de fundo branco dos botões do selectbox pega o botão do ícone.
+    # O desfazer precisa vir DEPOIS dela: mesma especificidade, vence a última.
+    fundo_branco = css.index('[data-testid="stSelectbox"] button')
+    transparente = css.index('[data-testid="stTooltipIcon"] button {background:transparent')
+    assert transparente > fundo_branco, "o quadrado branco no lugar do \"?\" voltou"
+    # O balão continua escuro; o texto markdown dele é que precisa ser claro --
+    # e com seletor mais específico que a regra de texto do claro.
+    regra_texto = re.search(
+        r'\[data-testid="stTooltipContent"\] \[data-testid="stMarkdownContainer"\]\s*'
+        r':is\(p,li,h1,h2,h3,h4,h5,h6\) \{\s*color:#fafafa!important', css)
+    assert regra_texto, "o texto do balão de ajuda voltou a ser escuro sobre escuro"
