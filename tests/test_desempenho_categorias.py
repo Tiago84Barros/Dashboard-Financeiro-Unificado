@@ -97,7 +97,7 @@ def test_tela_tem_selecao_do_que_comparar_na_visao_geral():
     import views.investimentos as inv
 
     secao = inspect.getsource(inv._secao_desempenho_categorias)
-    assert "st.multiselect(" in secao
+    assert "st.pills(" in secao and 'selection_mode="multi"' in secao
     assert "analise_vg_categorias_sel" in secao
     corpo = inspect.getsource(inv._tab_analise)
     trecho = corpo[corpo.index("with ta:"):corpo.index("with tb:")]
@@ -110,7 +110,29 @@ def test_figura_desenha_so_as_selecionadas():
     s = pd.Series([0.0, 5.0], index=pd.to_datetime(["2026-01-01", "2026-02-01"]))
     fig = inv._fig_desempenho_categorias(
         {"Empresas Americanas": s, "ETFs Americanos": s * 2}, ["ETFs Americanos"])
-    assert [t.name for t in fig.data] == ["ETFs Americanos (+10.0%)"]
+    assert [t.name for t in fig.data if t.showlegend is not False] == ["ETFs Americanos"]
+    assert [a.text for a in fig.layout.annotations] == ["<b>+10,0%</b>"]
+
+
+def test_rotulos_de_fim_de_linha_nao_se_sobrepoem():
+    import views.investimentos as inv
+
+    pos = inv._rotulos_sem_colisao([("A", 5.0), ("B", 5.1), ("C", 20.0)], folga=1.0)
+    assert pos["B"] - pos["A"] >= 1.0 - 1e-9
+    assert pos["A"] < pos["B"] < pos["C"]
+
+
+def test_placar_ordena_do_melhor_para_o_pior_e_apaga_o_nao_selecionado():
+    import views.investimentos as inv
+
+    s = pd.Series([0.0, 1.0], index=pd.to_datetime(["2026-01-01", "2026-02-01"]))
+    base = {"inicio": s.index[0], "cobertos": 1, "total": 1, "moeda": "BRL", "fonte": "x"}
+    info = {"Empresas Americanas": {**base, "retorno": -3.0},
+            "ETFs Americanos": {**base, "retorno": 7.5}}
+    html = inv._cards_desempenho_categorias(
+        {"Empresas Americanas": s, "ETFs Americanos": s}, info, ["ETFs Americanos"])
+    assert html.index("ETFs Americanos") < html.index("Empresas Americanas")
+    assert html.count("dcat-off") == 1 and "+7,5%" in html and "-3,0%" in html
 
 
 # ── achados da revisão do PR #637 ────────────────────────────────────────────
