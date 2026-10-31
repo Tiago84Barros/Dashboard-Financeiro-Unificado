@@ -3518,6 +3518,7 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
     from design.portfolio_db_analysis import (
         carregar_db,
         carregar_documentos,
+        carregar_lotes_tesouro,
         carregar_macro,
         render_db_analysis,
         render_db_macro,
@@ -3560,6 +3561,9 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
             tesouro=tesouro, macro=macro, fundamentos=fundamentos,
             documentos=carregar_documentos(classe, chaves),
             valores_reais=valores_reais,
+            # Data e taxa contratada de cada compra: sem elas a LLM dizia que
+            # esses dados não existiam, com o Extrato Analítico no banco.
+            lotes_tesouro=carregar_lotes_tesouro() if classe == "tesouro" else None,
         ) + "\n\n" + bloco_contexto_mercado(ativos)
         if conj:
             # Liquidez, preço, proventos, trimestres e score mês a mês: o
