@@ -9,11 +9,15 @@ from core.portfolio_constraints import (
     project_capped_simplex,
 )
 from views.empresas_b3 import (
-    _aplicar_diversificacao_setorial,
     _apply_cap_soft,
-    _score_historico_ano,
-    _simular_backtest,
+    _score_historico_ano_com_cobertura,
 )
+
+
+def _score_historico_ano(*args, **kwargs):
+    # A versão só-mapa saiu com a Análise Avançada em 30/10/2026; o contrato
+    # point-in-time testado aqui é o da função que a Criação de Portfólio usa.
+    return _score_historico_ano_com_cobertura(*args, **kwargs)[0]
 
 
 def test_capped_simplex_respeita_invariantes():
@@ -32,12 +36,6 @@ def test_cap_inviavel_nao_e_relaxado_silenciosamente(n, cap):
     with pytest.raises(InfeasiblePortfolioConstraint):
         _apply_cap_soft(weights, cap=cap)
     assert minimum_assets_for_cap(cap) == 4
-
-
-def test_diversificacao_setorial_nao_completa_com_overflow():
-    ranked = ["A", "B", "C", "D"]
-    groups = {"A": "X", "B": "X", "C": "X", "D": "Y"}
-    assert _aplicar_diversificacao_setorial(ranked, groups, 4, 1) == ["A", "D"]
 
 
 def test_walk_forward_tem_holdouts_separados_e_pesos_viaveis():
@@ -126,43 +124,6 @@ def test_score_historico_barra_baseline_quando_prazo_cvm_nao_venceu():
                                 rebal_month=4, **kwargs) != {}
 
 
-def test_backtest_nao_roda_quando_a_decisao_antecede_a_publicacao():
-    tickers = ["AAAA3", "BBBB3", "CCCC3", "DDDD3", "EEEE3"]
-    index = pd.date_range("2022-01-31", periods=3, freq="ME")
-    prices = pd.DataFrame(
-        [[10.0] * 5] * 3, index=index, columns=tickers,
-    )
-    history = {
-        ticker: pd.DataFrame([{
-            "Ticker": ticker,
-            "Data": pd.Timestamp("2021-12-31"),
-            "ROE": 0.10 + idx * 0.01,
-        }])
-        for idx, ticker in enumerate(tickers)
-    }
-    comum = dict(
-        aporte=1000.0, data_inicio=pd.Timestamp("2022-01-01"),
-        taxa_selic_aa=0.0, pesos={"ROE": (1.0, True)},
-        tk_grupos={ticker: {} for ticker in tickers}, top_n_max=5, cap=0.25,
-    )
-    # janeiro/2022: o balanço FY2021 ainda não é público e não há vintage real
-    vazio, _, _ = _simular_backtest(
-        prices, pd.DataFrame(), history, tickers, rebal_month=1, **comum)
-    assert vazio.empty
-    # abril/2022: prazo vencido — a simulação existe, mas MODELADA
-    prices_abr = pd.DataFrame(
-        [[10.0] * 5] * 3,
-        index=pd.date_range("2022-04-30", periods=3, freq="ME"),
-        columns=tickers,
-    )
-    cheio, _, _ = _simular_backtest(
-        prices_abr, pd.DataFrame(), history, tickers, rebal_month=4, **comum)
-    assert not cheio.empty
-    assert cheio.iloc[-1]["Estratégia"] == pytest.approx(3000.0)
-    assert cheio.attrs["pit_disponibilidade"] == "modelada"
-    assert cheio.attrs["pit_cobertura_medida"] == 0.0
-
-
 def test_plan_hash_muda_quando_peso_ou_score_muda():
     from core.b3_portfolio_model import _plan_hash
 
@@ -197,42 +158,6 @@ def test_inferencia_ticker_11_nao_chama_fundo_de_unit():
         "DESCON11",
         {"longName": "Ativo sem classificação confiável"},
     ) == "other"
-
-
-def test_backtest_preserva_aporte_sem_cotacao_como_caixa():
-    tickers = ["AAAA3", "BBBB3", "CCCC3", "DDDD3", "EEEE3"]
-    index = pd.to_datetime(["2022-04-30", "2022-05-31", "2022-06-30"])
-    prices = pd.DataFrame(
-        [[10.0] * 5, [np.nan] * 5, [10.0] * 5],
-        index=index,
-        columns=tickers,
-    )
-    history = {
-        ticker: pd.DataFrame([{
-            "Ticker": ticker,
-            "Data": pd.Timestamp("2021-12-31"),
-            "ROE": 0.10 + idx * 0.01,
-        }])
-        for idx, ticker in enumerate(tickers)
-    }
-    result, _, _ = _simular_backtest(
-        prices,
-        pd.DataFrame(),
-        history,
-        tickers,
-        aporte=1000.0,
-        data_inicio=pd.Timestamp("2022-01-01"),
-        taxa_selic_aa=0.0,
-        pesos={"ROE": (1.0, True)},
-        tk_grupos={ticker: {} for ticker in tickers},
-        top_n_max=5,
-        usar_gamma=True,
-        cap=0.25,
-    )
-    assert result.iloc[1]["Estratégia"] == pytest.approx(2000.0)
-    assert result.iloc[-1]["Estratégia"] == pytest.approx(3000.0)
-    assert result.iloc[-1]["Benchmark"] == pytest.approx(3000.0)
-    assert result.iloc[-1]["Tesouro Selic"] == pytest.approx(3000.0)
 
 
 def test_benjamini_hochberg_monotono_e_conservador():

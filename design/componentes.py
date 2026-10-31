@@ -10,10 +10,13 @@ Uso padrão em cada página:
         with col1:
             card_metrica("Saldo", "R$ 12.300,00", delta="+5,2%", positivo=True)
 """
+import re
 from html import escape
 
 import streamlit as st
 import streamlit.components.v1 as components
+
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 
 
 def _linha(texto: object, *, aspas: bool = False) -> str:
@@ -394,9 +397,33 @@ _TOKEN_POR_COR = {
 }
 
 
+_HEX_OPACO = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})")
+
+
+def tinta_legivel(cor: str) -> str:
+    """Cor literal usada como TEXTO, legível nos dois temas.
+
+    O mapa ``_TOKEN_POR_COR`` só conhece as cores semânticas; qualquer outra
+    -- a cor de cada classe de ativo, de cada grupo, de cada paleta -- saía
+    crua no HTML. Desenhada para o fundo escuro, ela some no claro: a varredura
+    de contraste de 31/10/2026 mediu 1,3:1 a 2,9:1 em cores assim (``#CBD5E0``,
+    ``#4C9BE8``, ``#9B59B6``...). Enumerar cor por cor nunca fecha a lista.
+
+    No escuro, ``--app-escurece-tinta`` não existe e a mistura é com 0% de
+    preto: a cor sai idêntica, byte a byte no que se vê. O tema claro define
+    55%, que leva o pior caso medido (o amarelo ``#F6C90E``) a 5,3:1 sobre as
+    superfícies claras. Só hex opaco: transparência é fundo, não texto, e
+    escurecer um véu o deixaria sujo.
+    """
+    cor = str(cor).strip()
+    if not _HEX_OPACO.fullmatch(cor):
+        return cor
+    return f"color-mix(in srgb, {cor}, #000 var(--app-escurece-tinta, 0%))"
+
+
 def cor_token(cor: str) -> str:
-    """Traduz a cor semântica literal para o token equivalente do tema."""
-    return _TOKEN_POR_COR.get(str(cor).upper(), cor)
+    """Traduz a cor literal para o token do tema; sem token, para tinta legível."""
+    return _TOKEN_POR_COR.get(str(cor).upper()) or tinta_legivel(cor)
 
 
 def card_metrica(
@@ -507,7 +534,8 @@ def aviso_cobertura_do_universo(modulo: str) -> None:
     # `.capitalize()` minusculiza o RESTO: "DY", "P/VP" e "B3" viravam
     # "dy", "p/vp" e "b3" no meio da nota do gate.
     nota = f" {u.notas[0][:1].upper()}{u.notas[0][1:]}." if u.notas else ""
-    st.caption(f"Cobertura da recomendacao: {u.resumo()}.{nota}")
+    detalhe_tecnico(f"Cobertura da recomendacao: {u.resumo()}.{nota}",
+                    codigo=f"componentes.cobertura_universo.{modulo}")
 
 
 # ── Selo de frescor: de quando e o dado que esta tela esta mostrando ────────
@@ -549,12 +577,16 @@ def selo_de_frescor(modulo: str, dados: dict | None = None) -> None:
     if not dados:
         return
     if dados.get("vencida"):
-        mensagem_aviso("Vitrine fora do prazo de publicação", dados["texto"])
+        aviso_lacuna(f"Vitrine fora do prazo de publicação: {dados['texto']}",
+                     codigo=f"tela.componentes.vitrine_vencida.{modulo}")
     elif dados.get("idade") is None or dados.get("idade", 0) < 0:
-        st.caption(f"Frescor dos dados: {dados['texto']}")
+        detalhe_tecnico(f"Frescor dos dados: {dados['texto']}",
+                        codigo=f"componentes.frescor_vitrine.{modulo}")
     else:
-        st.caption(f"Vitrine publicada em {dados['as_of']} "
-                   f"(alvo de atualização: {dados['alvo']} dia(s)).")
+        detalhe_tecnico(
+            f"Vitrine publicada em {dados['as_of']} "
+            f"(alvo de atualização: {dados['alvo']} dia(s)).",
+            codigo=f"componentes.frescor_vitrine.{modulo}")
 
 
 # ── Atualidade trimestral da B3 (B3-02) ─────────────────────────────────────
@@ -600,9 +632,11 @@ def aviso_atualidade_trimestral_b3() -> None:
         partes = [universo.get("texto")] if universo.get("atrasada") else []
         if aviso_score:
             partes.append(aviso_score)
-        mensagem_aviso("Fundamentos com trimestre defasado", " ".join(partes))
+        aviso_lacuna("Fundamentos com trimestre defasado: " + " ".join(partes),
+                     codigo="tela.componentes.b3_trimestre_defasado")
     elif universo.get("texto"):
-        st.caption(universo["texto"])
+        detalhe_tecnico(str(universo["texto"]),
+                        codigo="componentes.b3_atualidade_trimestral")
 
 
 def _tinta(token: str, pct: int = 12) -> str:

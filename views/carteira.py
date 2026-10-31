@@ -23,6 +23,7 @@ from design.componentes import (
     indicador_linha,
     secao_titulo,
 )
+from design.lacunas import aviso_lacuna
 
 # ── Helpers de gráfico ────────────────────────────────────────────────────────
 
@@ -132,10 +133,14 @@ def render() -> None:
 
     # ── Aviso sem cotações ────────────────────────────────────────────────────
     if not cotacoes:
+        aviso_lacuna(
+            "Cotações de mercado não disponíveis: valores de mercado e rentabilidade "
+            "são estimativas pelo preço médio de aquisição (custo histórico). "
+            "A tabela asset_quotes precisa ser alimentada.",
+            codigo="tela.carteira.sem_cotacoes",
+        )
         st.info(
-            "**Cotações de mercado não disponíveis** — os valores de mercado e a "
-            "rentabilidade exibidos são estimativas pelo preço médio de aquisição (custo histórico). "
-            "Alimente a tabela `asset_quotes` via yfinance para ativar valores reais.",
+            "Valores de mercado e rentabilidade estimados pelo custo de aquisição.",
             icon="📈",
         )
 

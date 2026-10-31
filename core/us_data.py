@@ -170,6 +170,35 @@ def _anexa_negociabilidade_e_ciclo(frame):
     return out
 
 
+def _anexa_estilos(frame):
+    """Momento 12-1 e P&D (core.us_estilos) como COLUNAS do cross-section.
+
+    Na vitrine já chegam do blob ``metrics``; no armazém local, saem do diário
+    e da DRE. Vitrine publicada antes delas fica com as colunas vazias, e as
+    duas trilhas entram neutras na nota de entrada -- nunca como zero.
+    """
+    import pandas as pd
+
+    from core.us_estilos import ESTILOS_COLS
+
+    if frame is None or frame.empty or "symbol" not in frame.columns:
+        return frame
+    if all(c in frame.columns for c in ESTILOS_COLS):
+        return frame
+    try:
+        estilos = _read.load_us_estilos()
+    except Exception:  # noqa: BLE001 - dado ausente não pode zerar a aba
+        logger.exception("Momento/P&D EUA indisponíveis; trilhas de estilo neutras")
+        estilos = {}
+    chaves = frame["symbol"].astype(str).str.strip().str.upper()
+    out = frame.copy()
+    for coluna in ESTILOS_COLS:
+        out[coluna] = chaves.map(lambda s, _c=coluna: (estilos.get(s) or {}).get(_c))
+    for coluna in ("momento_12_1", "pd_anual_usd"):
+        out[coluna] = pd.to_numeric(out[coluna], errors="coerce")
+    return out
+
+
 @_cache_pesado
 def scored_universe(limit_companies: int | None = None):
     """Cross-section com score fundamentalista calculado (para as abas de análise).
@@ -179,12 +208,12 @@ def scored_universe(limit_companies: int | None = None):
     """
     import pandas as pd
     if _use_snapshot():
-        return _anexa_negociabilidade_e_ciclo(_read.load_snapshot_scored())
+        return _anexa_estilos(_anexa_negociabilidade_e_ciclo(_read.load_snapshot_scored()))
     import core.us_score as _score
     frame = _read.load_scoring_frame(limit_companies=limit_companies)
     if frame is None or frame.empty:
         return frame if frame is not None else pd.DataFrame()
-    return _anexa_negociabilidade_e_ciclo(_score.score_cross_section(frame))
+    return _anexa_estilos(_anexa_negociabilidade_e_ciclo(_score.score_cross_section(frame)))
 
 
 def portfolio_candidates_with_renda_sustentavel(scored, params):

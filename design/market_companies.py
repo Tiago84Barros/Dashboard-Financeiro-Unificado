@@ -59,20 +59,33 @@ MARKET_COMPANIES_CSS = """
 """
 
 
+# NAV_ITEMS é da vitrine americana, NAV_ITEMS_B3 da B3. As duas perderam a
+# Análise Avançada em 30/10/2026, quando a Criação de Portfólio deixou de ser
+# "etapa 2" de um fluxo de teste; só a B3 tem a Carteira 20.
 NAV_ITEMS = (
     ("🏢", "Empresas por Setor"),
     ("🔍", "Análise de Empresa"),
-    ("🔬", "Análise Avançada"),
     ("🚀", "Criação de Portfólio"),
     ("🧠", "Avaliação de Portfólio"),
 )
+
+NAV_ITEMS_B3 = (
+    ("🏢", "Empresas por Setor"),
+    ("🔍", "Análise de Empresa"),
+    ("🚀", "Criação de Portfólio"),
+    ("🧠", "Avaliação de Portfólio"),
+    ("📒", "Carteira 20"),
+)
+
+_LARGURAS = {4: [2, 2, 2.5, 2.5], 5: [2, 2, 2.5, 2.5, 2.5], 6: [2, 2, 2.2, 2.3, 2.4, 2.2]}
 
 
 def render_market_css() -> None:
     st.markdown(MARKET_COMPANIES_CSS, unsafe_allow_html=True)
 
 
-def render_market_tabs(*, state_key: str, key_prefix: str) -> int:
+def render_market_tabs(*, state_key: str, key_prefix: str,
+                       itens: tuple = NAV_ITEMS) -> int:
     """Trilho de abas das vitrines B3/EUA. Trocar de aba sempre volta ao topo.
 
     O Streamlit preserva a rolagem entre reruns, e as abas com chat (Avaliação
@@ -81,8 +94,8 @@ def render_market_tabs(*, state_key: str, key_prefix: str) -> int:
     """
     active = int(st.session_state.get(state_key, 0))
     rolar_flag = f"_{state_key}_rolar"
-    widths = [2, 2, 2.5, 2.5, 2.5]
-    for idx, (col, (icon, label)) in enumerate(zip(st.columns(widths), NAV_ITEMS)):
+    widths = _LARGURAS.get(len(itens), [1] * len(itens))
+    for idx, (col, (icon, label)) in enumerate(zip(st.columns(widths), itens)):
         with col:
             if st.button(
                 f"{icon} {label}", width="stretch",

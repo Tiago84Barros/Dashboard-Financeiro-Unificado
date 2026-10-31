@@ -3,6 +3,7 @@ import streamlit as st
 
 from core.user_accounts import change_password, create_user, list_users
 from core.user_context import is_admin, principal, require_user
+from design.lacunas import falha_de_acao
 
 
 def render_user_accounts():
@@ -36,15 +37,22 @@ def render_user_accounts():
                     change_password(old, new)
                 except ValueError as exc:
                     st.error(str(exc))
-                except Exception:
-                    st.error("Não foi possível alterar a senha.")
+                except Exception as exc:
+                    falha_de_acao("Não foi possível alterar a senha.", exc)
                 else:
                     from core.auth import encerrar_sessao
                     encerrar_sessao()
 
-    if not is_admin():
-        return
     st.subheader("Cadastrar usuário")
+    if not is_admin():
+        # O bloco deixou de sumir em 12/10/2026: a tela de Configurações é a
+        # mesma para todo mundo, e um pedaço que desaparece sem explicação
+        # parece defeito. Quem recusa de fato é ``create_user``, que chama
+        # ``require_admin`` antes de escrever -- mostrar o formulário aqui só
+        # entregaria um botão que sempre falha.
+        st.caption("Criar conta para outra pessoa é ação de quem administra o "
+                   "aplicativo. Sua própria senha você troca no bloco acima.")
+        return
     st.caption("Cada pessoa terá seus próprios dados financeiros e memória de conversas.")
     with st.form("new_app_user", clear_on_submit=True):
         name = st.text_input("Nome da pessoa")
@@ -59,8 +67,8 @@ def render_user_accounts():
                     create_user(name, email, password)
                 except ValueError as exc:
                     st.error(str(exc))
-                except Exception:
-                    st.error("Não foi possível cadastrar o usuário.")
+                except Exception as exc:
+                    falha_de_acao("Não foi possível cadastrar o usuário.", exc)
                 else:
                     st.success("Usuário cadastrado. Ele já pode entrar com e-mail e senha.")
 
@@ -68,19 +76,26 @@ def render_user_accounts():
 def render_registered_users():
     """Lista de quem tem acesso ao app. Só o administrador vê, e só ele chama.
 
-    Dupla checagem de propósito: ``is_admin`` aqui decide se o bloco aparece, e
+    Dupla checagem de propósito: ``is_admin`` aqui decide se a lista aparece, e
     ``core.user_accounts.list_users`` chama ``require_admin`` antes de tocar no
     banco. Se um dia esta função for chamada de outro lugar sem o guarda da
     tela, a consulta continua recusando.
+
+    Desde 12/10/2026 quem não administra chega até aqui — o container da aba
+    Segurança existe para todo mundo. Em vez de sair sem desenhar nada, a
+    função diz por que a lista não veio: ela é de outras pessoas, e a guarda
+    que a segura é de dado, não de tela.
     """
     if not is_admin():
+        st.caption("A lista de quem tem acesso ao aplicativo é visível apenas "
+                   "para quem o administra.")
         return
     try:
         usuarios = list_users()
     except PermissionError:
         return
-    except Exception:
-        st.error("Não foi possível carregar os usuários cadastrados.")
+    except Exception as exc:
+        falha_de_acao("Não foi possível carregar os usuários cadastrados.", exc)
         return
     if not usuarios:
         st.caption("Nenhum usuário cadastrado.")

@@ -15,13 +15,16 @@ class _Cap:
     def __init__(self):
         self.textos = []
 
-    def __call__(self, txt):
+    def __call__(self, txt, **_k):
         self.textos.append(txt)
 
 
 def _render(monkeypatch, universo=None, erro=None):
     cap = _Cap()
-    monkeypatch.setattr(dc.st, "caption", cap)
+    caption = _Cap()
+    # Cobertura e detalhe tecnico: nao vai a tela, vai ao registro.
+    monkeypatch.setattr(dc, "detalhe_tecnico", cap)
+    monkeypatch.setattr(dc.st, "caption", caption)
 
     def fake(_modulo):
         if erro is not None:
@@ -30,6 +33,7 @@ def _render(monkeypatch, universo=None, erro=None):
 
     monkeypatch.setattr(dc, "_universo_cacheado", fake)
     dc.aviso_cobertura_do_universo("us")
+    assert caption.textos == []
     return cap.textos
 
 

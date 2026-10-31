@@ -222,23 +222,37 @@ ON CONFLICT (security_key, base_date) DO UPDATE SET
 
 
 def chaves_detidas(engine) -> frozenset[str]:
-    """Títulos que o usuário tem em carteira, segundo o Extrato Analítico.
+    """Títulos que algum usuário tem ou teve: Extrato Analítico e Movimentação.
 
-    Se `tesouro_lots` ainda não existe (nenhum extrato importado), devolve
-    vazio — a curva curta de todos os títulos já basta para a tela.
+    A Movimentação conta porque, sem extrato, a taxa de cada lote é deduzida
+    da curva do dia da compra (``core.tesouro_posicao.taxa_da_compra``); com a
+    janela curta, a curva daquele dia já teria sido podada. Tabela ausente
+    devolve vazio — a curva curta de todos os títulos já basta para a tela.
     """
     from sqlalchemy import text
 
+    from data_pipeline.importers.investments.tesouro_direto import tesouro_security_key
+
+    chaves: set[str] = set()
     try:
         with engine.connect() as conn:
             linhas = conn.execute(text(
                 "SELECT DISTINCT security_key FROM tesouro_lots "
                 "WHERE security_key IS NOT NULL"
             )).fetchall()
-        return frozenset(str(linha[0]) for linha in linhas)
+        chaves.update(str(linha[0]) for linha in linhas)
     except Exception as exc:  # tabela ausente é o caso esperado, não um erro
         logger.info("update_tesouro_curva: sem lotes importados (%s)", exc)
-        return frozenset()
+    try:
+        with engine.connect() as conn:
+            linhas = conn.execute(text(
+                "SELECT DISTINCT product FROM investment_movement_events "
+                "WHERE product ILIKE 'tesouro%'"
+            )).fetchall()
+        chaves.update(tesouro_security_key(linha[0], linha[0]) for linha in linhas)
+    except Exception as exc:
+        logger.info("update_tesouro_curva: sem movimentação do Tesouro (%s)", exc)
+    return frozenset(chaves)
 
 
 def gravar(

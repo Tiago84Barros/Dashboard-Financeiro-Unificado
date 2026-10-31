@@ -54,10 +54,10 @@ render_portfolio_valuations([
     assert len(cards) == 7
     assert [c for c in cards if '8.00%' in c] and [c for c in cards if '12.00x' in c]
     assert [c for c in cards if '1.20x' in c]
-    # A cobertura vive DENTRO do card, e o card sai num bloco só: div aberta num
-    # `st.markdown` e fechada em outro já produziu moldura vazia neste projeto.
+    # A cobertura saiu da tela (vai para o log de lacunas); o card sai num bloco
+    # só: div aberta num `st.markdown` e fechada em outro já produziu moldura vazia.
     dy = next(c for c in cards if '8.00%' in c)
-    assert '20.0% do valor da carteira' in dy
+    assert 'do valor da carteira' not in dy
     assert dy.count('<div') == dy.count('</div>')
 
 
@@ -71,3 +71,29 @@ def test_class_failure_does_not_erase_other_source(monkeypatch):
     data, failures = load_valuation_fundamentals(('SYNTH3',), ('FII11',))
     assert data == {'FII11': {'dy': 9}}
     assert failures == ['Ações B3']
+
+
+def test_carteira_sem_acoes_nem_fiis_nao_registra_lacuna(monkeypatch):
+    from streamlit.testing.v1 import AppTest
+
+    registros = []
+    monkeypatch.setattr('design.lacunas.registrar_lacuna',
+                        lambda *a, **k: registros.append(a))
+    monkeypatch.setattr('design.portfolio_valuations._load',
+                        lambda *a: (_ for _ in ()).throw(AssertionError('não deveria consultar')))
+    app = AppTest.from_string('''
+from design.portfolio_valuations import render_portfolio_valuations
+render_portfolio_valuations([
+    {'ticker': 'TESOURO', 'classe': 'Tesouro Direto', 'valor_mercado': 800}])
+''').run()
+    assert not app.exception
+    assert any('Sem ações ou FIIs' in i.value for i in app.info)
+    assert not [r for r in registros if 'valuation_sem_media' in str(r)]
+
+
+def test_so_fiis_marca_multiplo_de_empresa_como_nao_aplicavel():
+    from design.portfolio_valuations import _metricas_aplicaveis
+
+    assert _metricas_aplicaveis(False, True) == {'dy', 'pvp'}
+    assert 'ev_ebit' in _metricas_aplicaveis(True, False)
+    assert _metricas_aplicaveis(False, False) == set()

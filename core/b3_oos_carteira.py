@@ -22,6 +22,12 @@ Este módulo refaz essas quatro decisões safra a safra, point-in-time:
   (score com lag=1, dados até N-1), a maior participação vem do backtest
   recortado, e o resto é a montagem da tela (orçamento por segmento,
   `project_capped_simplex`, `project_dual_capped`).
+- **Portões determinísticos PIT (desde a 2.32.0).** O piso de qualidade (nos
+  perfis que o ligam) e o Score de Entrada julgam a safra com o retrato que
+  ela teria lido: múltiplos e série de PL cortados em N-1 pela regra de
+  vintage do score (`core.b3_retrato_pit`). `aplicar_piso` roda antes dos
+  portões; a guarda (``exclui``) barra o substituto de cada veto e, em
+  `montar_carteira`, quem sobrou -- a ordem da tela.
 - **Retorno líquido.** O retorno bruto de cada papel na janela é o de
   `core.b3_safras.retorno_da_safra` (mesmas pontas, mesma winsorização); o
   líquido desconta o giro do rebalanceamento de abril com
@@ -50,6 +56,7 @@ import pandas as pd
 from core import b3_selecao as _selecao
 from core.b3_holdings_health import classify_cycle
 from core.b3_precos_saneamento import limites_winsor
+from core.b3_quality_floor import apply_with_substitution
 from core.b3_safras import (
     WINSOR_MIN_PAPEIS,
     WINSOR_PCT_ALTO,
@@ -75,7 +82,11 @@ logger = logging.getLogger(__name__)
 #: 2.2.0: com ``--portao-llm``, o portão de verdade entra como variante à parte
 #: (``PORTAO_LLM_MEDIDO``): parecer do LLM sobre o dossiê da época,
 #: anonimizado (`core.b3_portao_pit`). A métrica principal segue sem portão.
-VERSAO_MEDICAO = "oos-carteira-2.2.0"
+#: 2.3.0: piso de qualidade e Score de Entrada entram com o retrato da safra
+#: (`core.b3_retrato_pit`, score 2.32.0); o substituto de qualquer veto -- da
+#: banda ou do portão medido -- passa a pular quem a guarda da safra exclui, e
+#: o excluído sai no fim, como no laço final da tela.
+VERSAO_MEDICAO = "oos-carteira-2.3.0"
 CAMINHO_MEDICAO = Path(__file__).resolve().parents[1] / "data" / "oos_carteira_b3.json"
 
 #: Mesmo piso da view para a janela de validação valer: menos que 18 meses é
@@ -96,11 +107,14 @@ PORTAO_LLM_MEDIDO = "portao_llm_medido"
 PORTAO_LLM = {
     "dentro_da_medicao": False,
     "por_que": (
-        "O parecer de LLM lê o dossiê de HOJE (notícias, fatos relevantes e "
-        "balanços até a data da chamada). Aplicá-lo a uma safra passada seria "
-        "vetar com o que só se soube depois -- o número sairia melhor do que "
-        "qualquer investidor teria conseguido. Além disso o portão é opcional "
-        "(desligado por padrão) e não determinístico."),
+        "O parecer de LLM e o portão da Inteligência dos Ativos leem o dossiê "
+        "de HOJE (notícias, fatos relevantes, veredito e balanços até a data "
+        "da chamada). Aplicá-los a uma safra passada seria vetar com o que só "
+        "se soube depois -- o número sairia melhor do que qualquer investidor "
+        "teria conseguido. O de LLM ainda é opcional (desligado por padrão) e "
+        "não determinístico, e tem medição direta à parte (medicao_direta); "
+        "o da Inteligência fica sempre ligado, então a carteira entregue "
+        "passa por ele e a medição só o cobre pela banda."),
     "como_medido": (
         "Banda de ATÉ UM veto por safra, no nível da carteira. Em cada safra a "
         "medição testa todas as opções -- não vetar e vetar cada nome "
@@ -115,8 +129,9 @@ PORTAO_LLM = {
         "safra, e o sem-portão fica sempre entre eles. No líquido não são: o "
         "veto muda o giro, e os números líquidos dessas variantes são os dos "
         "cenários escolhidos pelo bruto. Portão que vete mais de um nome por safra pode "
-        "sair da banda. O substituto não passa pelo Score de Entrada (ele lê "
-        "o retrato de hoje e o sem-portão também não passa). Até a medição "
+        "sair da banda. O substituto pula quem o Score de Entrada da SAFRA "
+        "exclui e o excluído sai no fim, como na tela (desde a 2.3.0; antes "
+        "a guarda lia o retrato de hoje e ficava fora). Até a medição "
         "1.0.0 o veto era um por SEGMENTO; como quase todo segmento escolhe "
         "só o líder, 'o melhor' e 'o pior' eram o mesmo papel, as duas "
         "variantes empatavam e mediam, na prática, 'trocar todos os líderes "
@@ -144,19 +159,25 @@ PORTAO_LLM = {
 }
 
 FORA_DO_PIT = (
-    "Piso de qualidade e portão da Inteligência dos Ativos: leem os múltiplos "
-    "e o veredito de HOJE, não os da safra.",
-    "Score de Entrada (entry guard), troca por classe de liquidez e "
-    "substituição por correlação/Markowitz: dependem do retrato atual.",
+    "Portão da Inteligência dos Ativos (sempre ligado) e parecer de LLM: leem "
+    "o veredito e o dossiê de HOJE. Ficam para a banda das variantes 'veta o "
+    "melhor'/'veta o pior'; o de LLM tem ainda a medição direta sobre o "
+    "dossiê da época (--portao-llm) -- ver portao_llm.",
+    "Piso de qualidade e Score de Entrada ENTRAM desde a 2.32.0, com o "
+    "retrato da safra (exercícios até N-1, vintage do score). Duas "
+    "diferenças restam: o retrato da safra é o último exercício anual, e o "
+    "de hoje é o TTM; e a série de PL e lucro não tem data de publicação, "
+    "então o exercício N-1 conta como público em abril/N pelo prazo da CVM. "
+    "A aprovação do segmento (backtest por segmento) segue sem os dois "
+    "portões, como na tela.",
+    "Troca por classe de liquidez e substituição por correlação/Markowitz: "
+    "dependem do retrato atual.",
     "Camada macro local: o contexto de hoje, sem histórico por safra.",
     "Filtros de valor de mercado e liquidez do perfil (desde a 2.31.0, cada "
     "safra usa o volume e o valor de mercado da época): o valor de mercado "
     "da época é ESTIMADO pelo de hoje vezes a razão de preços sem "
     "dividendos, então emissões e recompras posteriores não entram; quem "
     "não tem valor de mercado hoje não recebe marca de tamanho no passado.",
-    "Score da carteira histórica: o motor aplica penalidade de decaimento a "
-    "quem lidera há vários anos; o score da carteira de hoje não aplica. A "
-    "medição usa a carteira histórica do próprio motor (com decaimento).",
     "Spread de ROIC (perfil Conservador): recortado até N-1 aqui, mas na tela "
     "usa todos os anos -- a medição é mais estrita que a tela.",
 )
@@ -349,16 +370,28 @@ def selecao_do_segmento(res: dict, m: dict, safra: int, *, max_anos_lid: int,
 #: Um segmento na banda do portão: (setor, selecionados, pesos, ranking PIT).
 Segmento = tuple[str, list[str], dict, list]
 
+#: Regra de exclusão do Score de Entrada da safra (`_entry_guard_exclui` sobre
+#: a guarda montada com o retrato PIT). ``None`` = ninguém excluído.
+Exclui = Callable[[str], bool] | None
 
-def substituto_no_segmento(selecionados: list[str], ranking: list) -> str | None:
+
+def _nunca(_tk: str) -> bool:
+    return False
+
+
+def substituto_no_segmento(selecionados: list[str], ranking: list,
+                           exclui: Exclui = None) -> str | None:
     """Quem herda a vaga de um vetado: o próximo do ranking PIT do segmento
-    que ainda não está na seleção (o vetado está nela, então é pulado).
+    que ainda não está na seleção (o vetado está nela, então é pulado) e que
+    o Score de Entrada da safra não exclui.
 
-    Mesma ordem de `_aplicar_gate_qualitativo`, MENOS o Score de Entrada: ele
-    lê o retrato de hoje (`FORA_DO_PIT`) e o sem-portão também não passa por
-    ele -- filtrar só o substituto misturaria duas réguas na mesma banda."""
+    Mesma ordem de `_aplicar_portao_inteligencia` e
+    `_aplicar_gate_qualitativo`. Até a medição 2.2.0 a guarda ficava de fora
+    porque lia o retrato de hoje e o sem-portão também não passava por ela;
+    desde a 2.3.0 as duas pontas leem a guarda da safra."""
+    exclui = exclui or _nunca
     for cand, _sc in ranking:
-        if str(cand) not in selecionados:
+        if str(cand) not in selecionados and not exclui(str(cand)):
             return str(cand)
     return None
 
@@ -374,23 +407,26 @@ def candidatos_a_veto(segmentos: list[Segmento]) -> list[str]:
     return sorted(nomes)
 
 
-def tickers_da_banda(segmentos: list[Segmento]) -> list[str]:
+def tickers_da_banda(segmentos: list[Segmento], exclui: Exclui = None) -> list[str]:
     """Selecionados mais os substitutos de cada veto possível: os retornos que
     `escolher_veto` precisa para avaliar todas as opções."""
     nomes = {str(tk) for _setor, sel, _p, _rk in segmentos for tk in sel}
     for _setor, sel, _p, ranking in segmentos:
-        sub = substituto_no_segmento(sel, ranking)
+        sub = substituto_no_segmento(sel, ranking, exclui)
         if sub:
             nomes.add(sub)
     return sorted(nomes)
 
 
-def vetar_na_carteira(segmentos: list[Segmento],
-                      vetado: str | None) -> tuple[list[tuple[str, list[str], dict]], list[dict]]:
+def vetar_na_carteira(segmentos: list[Segmento], vetado: str | None,
+                      exclui: Exclui = None,
+                      ) -> tuple[list[tuple[str, list[str], dict]], list[dict]]:
     """Aplica UM veto à carteira inteira: o nome sai de todo segmento em que
     foi escolhido (o portão julga o papel, não o segmento) e, em cada um, o
-    próximo do ranking herda vaga e peso -- `pesos[sub] = pesos.get(sub) or
-    pesos.get(vetado)`, como na tela. Não muta a entrada.
+    próximo do ranking que a guarda da safra não exclui herda vaga e peso --
+    `pesos[sub] = pesos.get(sub) or pesos.get(vetado)`, como na tela. Não
+    muta a entrada. Quem a guarda exclui e não foi vetado sai em
+    `montar_carteira(..., exclui=)`, o laço final da tela.
 
     Devolve os itens no formato de `montar_carteira` e as trocas feitas."""
     itens: list[tuple[str, list[str], dict]] = []
@@ -398,7 +434,7 @@ def vetar_na_carteira(segmentos: list[Segmento],
     for setor, sel, pesos, ranking in segmentos:
         sel_v, pesos_v = list(sel), dict(pesos)
         if vetado is not None and vetado in sel_v:
-            sub = substituto_no_segmento(sel_v, ranking)
+            sub = substituto_no_segmento(sel_v, ranking, exclui)
             sel_v = [tk for tk in sel_v if tk != vetado]
             if sub:
                 sel_v.append(sub)
@@ -409,7 +445,8 @@ def vetar_na_carteira(segmentos: list[Segmento],
 
 
 def aplicar_portao_medido(segmentos: list[Segmento], avaliar, *,
-                          max_substitutos: int = 2) -> tuple[list[tuple[str, list[str], dict]], dict]:
+                          max_substitutos: int = 2,
+                          exclui: Exclui = None) -> tuple[list[tuple[str, list[str], dict]], dict]:
     """O portão de LLM DE VERDADE, segmento a segmento, com a mesma mecânica
     de `views.portfolio_b3._aplicar_gate_qualitativo`: o selecionado vetado
     sai; os próximos do ranking do segmento que não estão na seleção nem já
@@ -419,11 +456,12 @@ def aplicar_portao_medido(segmentos: list[Segmento], avaliar, *,
 
     ``avaliar(ticker) -> str`` devolve a classificação ('aprovar',
     'aprovar_com_ressalvas', 'vetar' ou qualquer outra coisa = não avaliado).
-    Diferença declarada para a tela: o substituto não passa pelo Score de
-    Entrada (`FORA_DO_PIT`), a mesma régua da banda. Não muta a entrada.
+    Como na tela, o candidato que ``exclui`` (o Score de Entrada da safra)
+    barra é pulado sem consumir avaliação. Não muta a entrada.
 
     Devolve os itens no formato de `montar_carteira` e o log
     ``{"vetados", "trocas", "nao_avaliados", "avaliados"}``."""
+    exclui = exclui or _nunca
     itens: list[tuple[str, list[str], dict]] = []
     log: dict = {"vetados": [], "trocas": [], "nao_avaliados": [], "avaliados": {}}
 
@@ -448,7 +486,7 @@ def aplicar_portao_medido(segmentos: list[Segmento], avaliar, *,
             substituto, avaliacoes = None, 0
             for cand, _sc in ranking:
                 cand = str(cand)
-                if cand in finais or cand in sel:
+                if cand in finais or cand in sel or exclui(cand):
                     continue
                 avaliacoes += 1
                 if _aval(cand) != "vetar":
@@ -467,7 +505,7 @@ def aplicar_portao_medido(segmentos: list[Segmento], avaliar, *,
 
 def escolher_veto(segmentos: list[Segmento], retornos: dict[str, float | None], *,
                   veta: str, cap: float, teto_setor: float,
-                  teto_ciclico: float) -> dict:
+                  teto_ciclico: float, exclui: Exclui = None) -> dict:
     """O limite da banda do portão: o veto ÚNICO da safra que mais derruba
     (`veta="melhor"`, adversário) ou mais sobe (`veta="pior"`, favorável) o
     retorno bruto da CARTEIRA montada.
@@ -479,7 +517,9 @@ def escolher_veto(segmentos: list[Segmento], retornos: dict[str, float | None], 
     pode ter peso pequeno ou um substituto que rendeu quase o mesmo. "Não
     vetar" entra como opção, então no bruto vale sempre
     `adversário <= sem portão <= favorável`. Empate fica com não vetar e,
-    entre vetos, com a ordem alfabética (determinístico)."""
+    entre vetos, com a ordem alfabética (determinístico). ``exclui`` é a
+    guarda da safra: vale para o substituto e para o laço final, nas
+    mesmas condições do sem-portão."""
     if veta not in ("melhor", "pior"):
         raise ValueError(f"veta deve ser 'melhor' ou 'pior', não {veta!r}")
 
@@ -488,9 +528,9 @@ def escolher_veto(segmentos: list[Segmento], retornos: dict[str, float | None], 
 
     opcoes = []
     for i, vetado in enumerate([None] + candidatos_a_veto(segmentos)):
-        itens, trocas = vetar_na_carteira(segmentos, vetado)
+        itens, trocas = vetar_na_carteira(segmentos, vetado, exclui)
         cart = montar_carteira(itens, cap=cap, teto_setor=teto_setor,
-                               teto_ciclico=teto_ciclico)
+                               teto_ciclico=teto_ciclico, exclui=exclui)
         opcoes.append((_bruto(cart["pesos"]), i, {
             "vetado": vetado, "trocas": trocas, "itens": itens, "carteira": cart}))
     sinal = 1.0 if veta == "melhor" else -1.0
@@ -500,18 +540,47 @@ def escolher_veto(segmentos: list[Segmento], retornos: dict[str, float | None], 
     return {**escolhida, "bruto": bruto}
 
 
+# ── piso de qualidade da safra ──────────────────────────────────────────────
+
+def aplicar_piso(selecionados: list[str], ranking: list, pesos: dict, *,
+                 df_decisao: pd.DataFrame | None,
+                 piso_ativo: bool,
+                 seg_label: str,
+                 selic: float,
+                 log: dict | None = None) -> list[str]:
+    """O piso de qualidade da tela (com substituição, se o perfil o liga),
+    julgado com o retrato da SAFRA (``core.b3_retrato_pit``), nunca o de hoje.
+
+    Roda antes dos portões, como na tela. O Score de Entrada não entra aqui:
+    na tela ele barra o substituto de cada portão e, no laço final, quem
+    sobrou -- é o ``exclui`` de `escolher_veto`, `aplicar_portao_medido` e
+    `montar_carteira`. Os nomes de peso 0 também seguem: a banda os veta
+    (`candidatos_a_veto`) antes de a montagem descartá-los."""
+    sel = [str(tk) for tk in selecionados]
+    if piso_ativo and df_decisao is not None and not df_decisao.empty:
+        sel = apply_with_substitution(
+            sel, ranking, df_decisao, seg_label=seg_label, selic=float(selic),
+            pesos=pesos, log=log if log is not None else {},
+        )
+    return sel
+
+
 def montar_carteira(itens_por_segmento: list[tuple[str, list[str], dict]], *,
-                    cap: float, teto_setor: float, teto_ciclico: float) -> dict:
+                    cap: float, teto_setor: float, teto_ciclico: float,
+                    exclui: Callable[[str], bool] | None = None) -> dict:
     """Orçamento igual por segmento, tetos e cap -- a montagem da tela.
 
-    `itens_por_segmento`: (setor, selecionados, pesos do segmento). Devolve
+    `itens_por_segmento`: (setor, selecionados, pesos do segmento). Como o
+    laço final da tela, descarta quem tem peso 0 e quem ``exclui`` (o Score
+    de Entrada da safra) barra, sem substituição. Devolve
     `{"pesos", "inviavel", "exige_revisao", "avisos"}`. Quando a tela
     mostraria a revisão em vez de carteira (poucos ativos para o cap, ou tetos
     que não fecham), os pesos saem mesmo assim e a safra é MARCADA.
     """
     grupos: list[tuple[str, dict[str, float]]] = []
     for setor, sel, pesos in itens_por_segmento:
-        locais = {tk: float(pesos.get(tk, 0.0) or 0.0) for tk in sel}
+        locais = {tk: float(pesos.get(tk, 0.0) or 0.0) for tk in sel
+                  if exclui is None or not exclui(tk)}
         locais = {tk: w for tk, w in locais.items() if w > 0}
         if locais:
             grupos.append((setor, locais))
@@ -777,7 +846,8 @@ __all__ = [
     "SEM_PORTAO", "PORTAO_VETA_O_MELHOR", "PORTAO_VETA_O_PIOR",
     "metricas_pit", "aprova_economico", "selecao_do_segmento",
     "substituto_no_segmento", "candidatos_a_veto", "tickers_da_banda",
-    "vetar_na_carteira", "escolher_veto", "montar_carteira", "retornos_por_ticker",
+    "vetar_na_carteira", "aplicar_portao_medido", "escolher_veto",
+    "aplicar_piso", "montar_carteira", "retornos_por_ticker",
     "retorno_benchmark", "simular_custos", "resumir", "leitura_honesta",
     "carregar", "vencida",
 ]

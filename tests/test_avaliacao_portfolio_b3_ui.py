@@ -1,4 +1,4 @@
-"""Contratos da aba Avaliação de Portfólio B3 (Empresas B3 → etapa 3 de 3).
+"""Contratos da aba Avaliação de Portfólio de Empresas B3.
 
 Cobre o que a interface promete ao usuário: card de Confiança com escala
 correta, modelo único de redistribuição alimentado por banco + web, cards do

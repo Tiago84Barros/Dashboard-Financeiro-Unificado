@@ -138,6 +138,30 @@ def test_volatilidade_anual():
     assert cr.volatilidade_anual(rets) == pytest.approx(dp * math.sqrt(252))
 
 
+def test_volatilidade_da_referencia_so_nos_pregoes_da_carteira():
+    # 40 pregões; a carteira só tem retorno nos 20 últimos, iguais aos do BOVA11.
+    # A agitação do BOVA11 nos 20 primeiros não pode entrar na comparação.
+    calmos = [0.01, -0.01] * 10
+    carteira = [None] * 20 + calmos
+    bova = [0.08, -0.08] * 10 + calmos
+    vol, n = cr.volatilidade_referencia(carteira, bova)
+    assert n == 20
+    assert vol == pytest.approx(cr.volatilidade_anual(calmos))
+
+
+def test_volatilidade_da_referencia_ignora_pregao_sem_bova():
+    carteira = [0.01, -0.01] * 15
+    bova = [0.01, -0.01] * 15
+    bova[3] = None
+    vol, n = cr.volatilidade_referencia(carteira, bova)
+    assert n == 29 and vol is not None
+
+
+def test_volatilidade_da_referencia_exige_amostra_comum_minima():
+    carteira = [None] * 25 + [0.01, -0.01, 0.0] * 5
+    assert cr.volatilidade_referencia(carteira, [0.01] * 40) == (None, 15)
+
+
 def test_beta_de_carteira_alavancada():
     ref = [0.01 * ((i % 5) - 2) for i in range(30)]
     b, n = cr.beta([2 * r for r in ref], ref)

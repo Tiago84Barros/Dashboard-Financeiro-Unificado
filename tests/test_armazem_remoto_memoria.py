@@ -194,6 +194,8 @@ def test_relatorio_passa_um_corte_so(monkeypatch):
                         lambda **k: cortes.append(k["as_of"]) or "B")
     monkeypatch.setattr(cm, "_macro_supabase_cache", lambda: [])
     monkeypatch.setattr(cm, "_macro_local", lambda: [])
+    monkeypatch.setattr(cm, "_macro_brasil", lambda: [])
+    monkeypatch.setattr(cm, "_trajetoria_cache", lambda: [])
     monkeypatch.setattr(cm, "_manchetes_acervo", lambda limite: [])
     cm.conjuntura_da_empresa("b3", "PETR4", "Petróleo", as_of=CORTE)
     cm.conjuntura_da_carteira("b3", [{"ticker": "PETR4"}], as_of=CORTE)

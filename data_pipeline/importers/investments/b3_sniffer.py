@@ -7,9 +7,11 @@ Os arquivos vêm todos do mesmo lugar — o Relatório Consolidado carrega o nom
 da XP, mas é emitido de dentro do investidor.b3.com.br como os outros dois —,
 têm a mesma extensão e são indistinguíveis pelo nome. O que os separa está
 dentro: Negociação traz a aba "Negociação", Movimentação traz "Movimentação",
-e o Consolidado traz as abas "Posição - …" e "Proventos Recebidos". Os parsers
-já procuram essas abas antes de qualquer outra coisa — aqui a mesma checagem é
-antecipada, para que o usuário não precise escolher a caixa de upload certa.
+o Consolidado traz as abas "Posição - …" e "Proventos Recebidos", e o extrato
+"Posição" da Área do Investidor traz uma aba por classe de ativo com o nome nu
+da classe ("Ações", "Renda Fixa", "Tesouro Direto"). Os parsers já procuram
+essas abas antes de qualquer outra coisa — aqui a mesma checagem é antecipada,
+para que o usuário não precise escolher a caixa de upload certa.
 
 Puro: recebe bytes, devolve string ou None. Não toca o banco, não importa
 Streamlit, não percorre linhas — só `sheetnames`. A abertura do arquivo e a
@@ -45,11 +47,39 @@ _ASSINATURAS: list[tuple[str, str]] = [
     ("PROVENTOS RECEBIDOS", "xp_csl"),
 ]
 
+# Segunda passada, e só depois da primeira: o extrato "Posição" da Área do
+# Investidor nomeia as abas pela classe do ativo e nada mais — "Ações",
+# "Empréstimos", "ETF", "Fundo de Investimento", "Renda Fixa", "Tesouro
+# Direto". Não dá para procurá-las por substring junto das outras assinaturas:
+# "TESOURO DIRETO" está dentro de "POSIÇÃO - TESOURO DIRETO", e o Consolidado
+# da XP — que tem parser próprio e traz proventos que este não tem — seria
+# roubado por ela. Por isso o casamento aqui é EXATO e roda por último: o que
+# a lista acima reconhece continua ganhando, e só o que sobra é testado contra
+# nomes nus.
+#
+# A lista de nomes vem do próprio importador (`ABAS_CONHECIDAS`), não de uma
+# cópia: aba que ganha leitor lá passa a ser detectada aqui no mesmo commit, e
+# uma segunda lista divergiria na primeira correção feita de um lado só.
+#
+# Não há conferência de cabeçalho para confirmar. Seria o natural — o parser
+# exige "Produto" na primeira coluna —, mas este arquivo é gerado por NPOI e
+# declara dimensão "1 x 1": aberto em `read_only=True`, como `xlsx_probe` faz,
+# ele parece vazio. Confirmar pelo conteúdo exigiria abrir o arquivo inteiro
+# só para escolher o parser. O nome exato da aba basta para decidir, e o
+# parser recusa com mensagem própria o que não for um extrato "Posição".
+_CHAVE_POSICAO = "b3_posi"
+
 __all__ = ["detect", "sheet_names"]
 
 
+def _abas_nuas() -> frozenset[str]:
+    from .b3_posicao import ABAS_CONHECIDAS
+
+    return ABAS_CONHECIDAS
+
+
 def detect(file_bytes: bytes) -> str | None:
-    """Devolve "b3_neg", "b3_mov", "b3_pos", "xp_csl" ou None.
+    """Devolve "b3_neg", "b3_mov", "b3_pos", "b3_posi", "xp_csl" ou None.
 
     None cobre tanto "é um xlsx válido de outra origem" quanto "não consegui
     abrir": em ambos os casos a resposta certa é recusar o arquivo em vez de
@@ -62,4 +92,8 @@ def detect(file_bytes: bytes) -> str | None:
     for marcador, chave in _ASSINATURAS:
         if any(marcador in aba for aba in abas):
             return chave
+
+    nuas = _abas_nuas()
+    if any(aba in nuas for aba in abas):
+        return _CHAVE_POSICAO
     return None

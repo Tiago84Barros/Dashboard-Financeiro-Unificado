@@ -12,6 +12,9 @@ from sqlalchemy import text
 from core.config import settings
 from core.macro_data.database import get_local_macro_engine
 from design.componentes import container_pagina, secao_titulo
+from design.lacunas import aviso_lacuna, detalhe_tecnico
+
+_INDISPONIVEL = "Esta análise não está disponível no momento."
 
 
 def _display_temporal(value: object, empty: str = "—") -> str:
@@ -41,14 +44,18 @@ def render() -> None:
         if settings.macro_enabled(p)
     ]
     if not enabled:
-        st.info(
-            "Nenhuma fonte internacional está habilitada. Configure as feature flags e séries em `.env`; o app continua funcional sem elas."
+        st.info(_INDISPONIVEL)
+        aviso_lacuna(
+            "Nenhuma fonte macro internacional está habilitada (feature flags e séries no `.env`).",
+            codigo="tela.macro.sem_fonte_habilitada",
         )
         return
     engine = get_local_macro_engine()
     if engine is None:
-        st.warning(
-            "Banco macro local não configurado. Defina `MACRO_LOCAL_DB_URL` para o PostgreSQL Docker e aplique a migração 065."
+        st.info(_INDISPONIVEL)
+        aviso_lacuna(
+            "Banco macro local não configurado (`MACRO_LOCAL_DB_URL`; migração 065).",
+            codigo="tela.macro.banco_local_ausente",
         )
         return
     try:
@@ -71,8 +78,10 @@ def render() -> None:
                 .all()
             )
     except Exception:
-        st.warning(
-            "A estrutura macro ainda não está disponível no banco. Aplique a migração 065 após backup e validação em ambiente descartável."
+        st.info(_INDISPONIVEL)
+        aviso_lacuna(
+            "A estrutura macro não está disponível no banco (migração 065 pendente).",
+            codigo="tela.macro.estrutura_ausente",
         )
         return
     secao_titulo(
@@ -81,8 +90,9 @@ def render() -> None:
         "Último valor vem da ingestão; nenhuma estimativa é exibida.",
     )
     if not rows:
-        st.caption(
-            "Nenhuma série foi ingerida ainda. Execute o job `update_macro_international` depois de configurar códigos explícitos."
+        aviso_lacuna(
+            "Nenhuma série macro internacional foi ingerida (job `update_macro_international`).",
+            codigo="tela.macro.sem_series_ingeridas",
         )
     else:
         st.dataframe(
@@ -103,8 +113,9 @@ def render() -> None:
             hide_index=True,
             width="stretch",
         )
-        st.caption(
-            "Revisões permanecem no histórico. Backtests devem consultar apenas registros disponíveis na data simulada."
+        detalhe_tecnico(
+            "Revisões permanecem no histórico. Backtests devem consultar apenas registros disponíveis na data simulada.",
+            codigo="macro.revisoes_historico",
         )
     secao_titulo(
         "Saúde das fontes", "🩺", "Última verificação da ingestão, sem dados sensíveis."
@@ -125,10 +136,16 @@ def render() -> None:
                 .all()
             )
     except Exception:
-        st.caption("Ainda não há histórico operacional de saúde das fontes.")
+        aviso_lacuna(
+            "Ainda não há histórico operacional de saúde das fontes macro.",
+            codigo="tela.macro.saude_fontes_indisponivel",
+        )
     else:
         if not health_rows:
-            st.caption("Nenhuma verificação de saúde foi executada ainda.")
+            aviso_lacuna(
+                "Nenhuma verificação de saúde das fontes macro foi executada.",
+                codigo="tela.macro.saude_fontes_sem_verificacao",
+            )
         else:
             st.dataframe(
                 [
@@ -166,10 +183,16 @@ def render() -> None:
                 .all()
             )
     except Exception:
-        st.warning("Não foi possível carregar o calendário macro local.")
+        aviso_lacuna(
+            "Não foi possível carregar o calendário macro local.",
+            codigo="tela.macro.calendario_indisponivel",
+        )
         return
     if not releases:
-        st.caption("Nenhuma divulgação do calendário foi coletada ainda.")
+        aviso_lacuna(
+            "Nenhuma divulgação do calendário macro foi coletada.",
+            codigo="tela.macro.calendario_vazio",
+        )
         return
     st.dataframe(
         [

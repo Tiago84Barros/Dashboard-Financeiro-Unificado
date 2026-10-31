@@ -145,8 +145,9 @@ def test_excecao_ao_carregar_modulo_nao_vaza_para_a_tela_e_log_recebe_detalhe(
     assert _SEGREDO_TECNICO not in detalhe
     assert fake_st.errors_shown == []
 
-    # (b2) o diagnostico tecnico existe na tela e identifica o defeito, mas
-    # nao carrega a mensagem da excecao — que e onde moram senha e host.
+    # (b2) para o administrador (o duble e admin), o diagnostico tecnico
+    # existe na tela e identifica o defeito, mas nao carrega a mensagem da
+    # excecao — que e onde moram senha e host.
     visivel = chr(10).join(fake_st.texto_visivel)
     assert "RuntimeError" in visivel, "a identidade do erro sumiu da tela"
     assert "tests/test_app_error_handling.py:" in visivel
@@ -161,6 +162,48 @@ def test_excecao_ao_carregar_modulo_nao_vaza_para_a_tela_e_log_recebe_detalhe(
     assert _SEGREDO_TECNICO in caplog.text
     # `logger.exception` inclui o traceback formatado no registro.
     assert any(record.exc_info for record in caplog.records)
+
+
+def test_quem_nao_e_admin_ve_so_a_mensagem_amigavel(monkeypatch, caplog):
+    """Desde 05/10/2026 detalhe tecnico nao aparece na tela de uso: o bloco
+    "Detalhes tecnicos" e do administrador, e a identidade do erro vai para
+    Configuracoes -> Restricoes pelo `registrar_excecao`."""
+    monkeypatch.delenv("APP_TEST_MODE", raising=False)
+    fake_st = _FakeStreamlit(selected_menu="📊 Dashboard Geral")
+    mensagens_amigaveis: list[tuple[str, str]] = []
+
+    def fake_import_module(name: str):
+        if name == "views.dashboard_geral":
+            raise RuntimeError(_SEGREDO_TECNICO)
+        raise AssertionError(f"import inesperado: {name}")
+
+    from tests.app_bootstrap_stubs import USUARIO_SINTETICO
+
+    instalar_stubs_de_bootstrap(
+        monkeypatch,
+        fake_st,
+        design_componentes=SimpleNamespace(
+            mensagem_erro=lambda titulo, detalhe="": mensagens_amigaveis.append(
+                (titulo, detalhe)
+            ),
+            transicao_de_pagina=lambda *_args: None,
+            marca_sidebar_html=lambda *_args: "",
+        ),
+        core_user_context=SimpleNamespace(
+            principal=lambda: dict(USUARIO_SINTETICO),
+            is_admin=lambda: False,
+        ),
+    )
+    monkeypatch.setattr(importlib, "import_module", fake_import_module)
+
+    with caplog.at_level(logging.ERROR):
+        runpy.run_path("app.py", run_name="app_error_handling_test_usuario")
+
+    assert len(mensagens_amigaveis) == 1
+    visivel = chr(10).join(fake_st.texto_visivel)
+    assert "RuntimeError" not in visivel
+    assert "Detalhes tecnicos" not in visivel
+    assert _SEGREDO_TECNICO in caplog.text
 
 
 def test_modulo_carregado_com_sucesso_nao_aciona_o_handler_de_erro(monkeypatch, caplog):

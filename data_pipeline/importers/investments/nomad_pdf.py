@@ -24,6 +24,7 @@ from typing import Any
 
 from sqlalchemy.engine import Engine
 
+from core.classe_exterior import classe_ativo_usd
 from core.config import settings
 
 from .common import (
@@ -414,7 +415,9 @@ def _persist_trade(conn, user_id: str, trade: dict, summary: dict) -> None:
         conn,
         ticker=trade["symbol"],
         name=trade["name"],
-        asset_class="etf",     # universo Nomad é majoritariamente ETF
+        # Classe por ativo: com "etf" fixo, MELI e AAPL viravam ETF no cadastro.
+        asset_class=("stock" if classe_ativo_usd(trade["symbol"], trade["name"], None)
+                     == "stock_us" else "etf"),
         currency=NOMAD_CURRENCY,
     )
 

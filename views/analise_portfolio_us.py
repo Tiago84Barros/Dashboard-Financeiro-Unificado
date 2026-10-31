@@ -1,6 +1,6 @@
 """
 views/analise_portfolio_us.py
-Avaliação de Portfólio das Empresas Americanas — etapa 3 de 3.
+Avaliação de Portfólio das Empresas Americanas.
 
 Espelho de ``views/analise_portfolio_b3.py``: mesmas seções, mesma ordem, mesmo
 CSS (importado de lá, não copiado) e mesmo contrato de relatório. O que difere é
@@ -10,16 +10,14 @@ o que é intrínseco ao mercado americano:
 * o macro é o do Fed — juros, CPI, PIB real, desemprego, curva e crédito;
 * os pares são por indústria SEC e o benchmark é o S&P 500;
 * não há RAG documental (sem equivalente de CVM/IPE): a camada de evidência é o
-  dossiê determinístico mais o laboratório avançado, calculados em código;
+  dossiê determinístico mais Piotroski, Altman e Sloan, calculados em código;
 * não há segunda fonte web: o módulo americano é offline-first por contrato.
 """
 from __future__ import annotations
 
 import json
 import logging
-from html import escape
 
-import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -31,6 +29,7 @@ from core.chat_memory import (
     save_chat_history,
     visible_chat_history,
 )
+from core.data_quality import to_float
 from core.inteligencia_ativos import veredito
 from core.llm_b3 import (
     chat_coerente,
@@ -47,11 +46,13 @@ from core.market_companies import (
     us_logo_url,
 )
 from core.portfolio_report_us import (
+    CAMBIO_VELHO_DIAS,
     GRAU_LABEL,
     MARCA_LABEL,
     analyze_us_portfolio_report,
     generate_company_us_report,
     grau_de_confianca,
+    idade_do_cambio,
     motivo_do_grau,
 )
 from core.portfolio_staleness import texto_defasagem
@@ -71,6 +72,7 @@ from core.us_macro import (
 from core.us_portfolio_model import load_active_us_portfolio_model
 from core.utils import escapar_cifrao
 from design import portao_inteligencia as _portao_ui
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.market_companies import render_company_logo
 
 # CSS compartilhado com a aba B3: o visual das duas telas é o mesmo contrato,
@@ -80,8 +82,10 @@ from views.analise_portfolio_b3 import (
     _delta_str,
     _kpi_card,
     _macro_card,
+    _media_das_notas,
     _persp_badge,
     _score_mod,
+    _texto_nota,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,8 +109,7 @@ def _render_portfolio_salvo(model: dict, pesos_novos: dict[str, float] | None) -
 
     entrada = metrics.get("entry_score")
     if entrada is None and items:
-        notas = [float(it.get("entry_score") or 0) for it in items]
-        entrada = sum(notas) / len(notas) if notas else None
+        entrada = _media_das_notas(items, "entry_score")
     setores = {str(it.get("setor") or "—") for it in items}
     nome = model.get("name") or "Portfólio EUA Modelo"
 
@@ -195,12 +198,13 @@ def _render_avaliacao_quantitativa(avaliacao: dict) -> None:
     ])
     st.markdown(f'<div class="apb3-kpi-row">{cards}</div>', unsafe_allow_html=True)
     for alerta in avaliacao.get("alerts", []):
-        st.warning(alerta, icon="⚠️")
+        detalhe_tecnico(str(alerta), codigo="portfolio_us.avaliacao_alerta")
     ausentes = avaliacao.get("missing") or []
     if ausentes:
-        st.caption(
+        aviso_lacuna(
             "Sem pontuação no universo: " + ", ".join(map(str, ausentes))
-            + " — é lacuna de cobertura do warehouse, não qualidade ruim."
+            + " — é lacuna de cobertura do warehouse, não qualidade ruim.",
+            codigo="tela.portfolio_us.sem_pontuacao_no_universo",
         )
 
 
@@ -213,6 +217,8 @@ def _render_macro(macro: dict) -> None:
     cenário corrente, e mexer nos parâmetros é exceção, não fluxo normal."""
     if not macro:
         st.caption("Cenário macro americano indisponível.")
+        aviso_lacuna("Cenário macro americano indisponível.",
+                     codigo="tela.portfolio_us.macro_indisponivel")
         return
     entradas = macro.get("inputs") or {}
     observado = bool(macro.get("observado"))
@@ -283,18 +289,17 @@ def _controles_macro() -> dict:
     tem_observado = bool(observado)
 
     if tem_observado:
-        st.caption(
-            f"📡 Regime macro com **séries oficiais (FRED)** ingeridas no "
-            f"warehouse · data-base {observado.get('as_of') or 'não informada'}."
+        detalhe_tecnico(
+            "Regime macro com séries oficiais (FRED) ingeridas no warehouse; "
+            f"data-base {observado.get('as_of') or 'não informada'}.",
+            codigo="portfolio_us.macro_fonte",
         )
     else:
-        st.warning(
-            "**O cenário macro abaixo é premissa de simulação, não leitura de "
-            "mercado.** Nenhuma série do FRED foi ingerida, então os valores são "
-            "parâmetros de partida. O relatório é instruído a tratá-los de forma "
-            "condicional (“sob a premissa de…”). Para usar dado observado, rode "
+        aviso_lacuna(
+            "O cenário macro é premissa de simulação, não leitura de mercado: "
+            "nenhuma série do FRED foi ingerida. Para usar dado observado, rode "
             "`python run_us_ingest.py macro --warehouse`.",
-            icon="📐",
+            codigo="tela.portfolio_us.macro_sem_serie_fred",
         )
 
     with st.expander("⚙️ Ajustar o cenário macro usado na análise", expanded=False):
@@ -362,7 +367,8 @@ def _render_relatorio_consolidado(port_analise: dict) -> None:
     st.markdown(f'<div class="apb3-kpi-row">{cards}</div>', unsafe_allow_html=True)
 
     if port_analise.get("aviso_ancoragem"):
-        st.caption(port_analise["aviso_ancoragem"])
+        detalhe_tecnico(str(port_analise["aviso_ancoragem"]),
+                        codigo="portfolio_us.ancoragem_consolidado")
 
     with st.expander("📝 Resumo Executivo + Papel dos Ativos", expanded=True):
         for chave, rotulo in (("resumo_executivo", "Resumo Executivo"),
@@ -514,15 +520,15 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
     if motivo["marcas"]:
         selo_grau = " · 🩹 balanço quebrado"
     else:
-        selo_grau = {"research_grade": " · ⚠️ cobertura parcial",
-                     "screen_grade": " · ⛔ só triagem"}.get(grau, "")
+        selo_grau = ""
 
     with st.expander(
         f"{icone} {tk}  —  {faixa}  •  {w_novo*100:.1f}%  [{persp.upper()}]{selo_grau}",
         expanded=False,
     ):
         if an.get("aviso_ancoragem"):
-            st.caption(an["aviso_ancoragem"])
+            detalhe_tecnico(str(an["aviso_ancoragem"]),
+                            codigo="portfolio_us.ancoragem_empresa", entidade=tk)
         if motivo["marcas"]:
             legiveis = ", ".join(MARCA_LABEL.get(m, m) for m in motivo["marcas"])
             st.warning(
@@ -531,9 +537,10 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
                 "Múltiplo sobre base negativa não significa nada aqui.",
                 icon="🩹")
         if grau and grau != "decision_grade":
-            st.warning(
-                f"**Cobertura de dados: {GRAU_LABEL.get(grau, grau)}.** "
-                + motivo["texto"], icon="⚠️")
+            aviso_lacuna(
+                f"Cobertura de dados: {GRAU_LABEL.get(grau, grau)}. "
+                + motivo["texto"],
+                codigo="tela.portfolio_us.cobertura_de_dados", entidade=tk)
 
         resumo = an.get("resumo", "")
         if resumo:
@@ -601,9 +608,9 @@ def _render_empresa_expander(it: dict, pesos_novos: dict[str, float]) -> None:
             for f in _grupos[SEVERIDADE_CONTEXTO]:
                 st.markdown(f"ℹ️ {f}")
         if _grupos[SEVERIDADE_COBERTURA]:
-            st.markdown(f"**{TITULO_SEVERIDADE[SEVERIDADE_COBERTURA]}**")
             for f in _grupos[SEVERIDADE_COBERTURA]:
-                st.caption(f)
+                aviso_lacuna(str(f), codigo="tela.portfolio_us.cobertura_flag",
+                             entidade=tk)
 
         c1, c2 = st.columns(2)
         with c1:
@@ -752,11 +759,13 @@ def _linha_do_score(scored: pd.DataFrame, ticker: str):
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
-def _usd_brl_da_base() -> float | None:
-    """Última cotação USD/BRL do banco unificado (asset_quotes).
+def _usd_brl_da_base() -> tuple[float | None, object]:
+    """Última cotação USD/BRL do banco unificado (asset_quotes) e a data dela.
 
     Número real, não estimativa: a exposição cambial só é dizível se a taxa
-    tiver origem. Sem a cotação, o relatório declara a ausência.
+    tiver origem. A data vai junto porque a última linha da tabela pode ser de
+    semanas atrás, e sem ela a tela e o prompt a liam como a taxa de hoje.
+    Sem a cotação, ``(None, None)`` e o relatório declara a ausência.
     """
     try:
         from sqlalchemy import text
@@ -764,19 +773,35 @@ def _usd_brl_da_base() -> float | None:
         from core.database import get_engine
         engine = get_engine()
         if engine is None:
-            return None
+            return None, None
         with engine.connect() as conn:
-            valor = conn.execute(text("""
-                SELECT q.close
+            linha = conn.execute(text("""
+                SELECT q.close, q.date
                 FROM asset_quotes q
                 JOIN assets a ON a.id = q.asset_id
                 WHERE UPPER(a.ticker) IN ('USDBRL', 'USDBRL=X', 'USD/BRL')
                 ORDER BY q.date DESC
                 LIMIT 1
-            """)).scalar()
-        return float(valor) if valor is not None else None
+            """)).first()
+        if linha is None or linha[0] is None:
+            return None, None
+        return float(linha[0]), linha[1]
     except Exception:  # noqa: BLE001 - câmbio é contexto, não bloqueio
-        return None
+        return None, None
+
+
+def _referencia_cambio(taxa: float | None, data) -> str:
+    """Fim da frase do câmbio: taxa e data do fechamento, marcando a velha."""
+    if not taxa:
+        return "."
+    idade = idade_do_cambio(data)
+    if idade is None:
+        return f" (referência na base: R$ {taxa:.2f}, sem data do fechamento)."
+    quando = f"{pd.Timestamp(data):%d/%m/%Y}"
+    if idade > CAMBIO_VELHO_DIAS:
+        return (f" (referência na base: R$ {taxa:.2f}, fechamento de {quando} — "
+                f"{idade} dias atrás, não é a taxa de hoje).")
+    return f" (referência na base: R$ {taxa:.2f}, fechamento de {quando})."
 
 
 def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
@@ -785,9 +810,8 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
     """Relatório por empresa + consolidado + redistribuição de pesos."""
     contexto_carteira = (
         f"Portfólio americano com {len(items)} empresas. "
-        f"Score de entrada médio: "
-        f"{float(np.mean([it.get('entry_score') or 0 for it in items])):.1f}. "
-        f"Benchmark de referência: S&P 500. Custo de oportunidade: Treasury."
+        + _texto_nota("Score de entrada médio:", _media_das_notas(items, "entry_score"))
+        + ". Benchmark de referência: S&P 500. Custo de oportunidade: Treasury."
     )
 
     items_analisados: list[dict] = []
@@ -815,7 +839,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
         setor = it.get("setor") or "N/D"
         industria = it.get("industria") or "N/D"
         peso_pct = float(it.get("weight") or 0) * 100.0
-        entrada = float(it.get("entry_score") or 0)
+        entrada = to_float(it.get("entry_score"))
 
         progresso.progress((idx + 1) / len(items), text=f"Carregando dados de {tk}…")
         try:
@@ -836,7 +860,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
             contexto_empresa = (
                 f"{contexto_carteira} Empresa avaliada: {nome} | setor {setor} / "
                 f"indústria {industria}. Peso atual na carteira: {peso_pct:.1f}% | "
-                f"score de entrada {entrada:.1f}."
+                + _texto_nota("score de entrada", entrada) + "."
             )
             analise, dossie = generate_company_us_report(
                 tk,
@@ -855,8 +879,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
             # Motivo em categoria na tela, na lista de erros e no fallback;
             # o texto da exceção fica só no log (LLM-A11).
             _motivo = motivo_falha_llm(exc, f"relatório da carteira EUA ({tk})")
-            st.warning(f"{tk}: relatório não gerado — {_motivo}. O detalhe "
-                       "técnico ficou no log do app.")
+            falha_de_acao(f"{tk}: o relatório não pôde ser gerado.", exc)
             erros.append(f"{tk}: relatório não gerado — {_motivo}.")
             from core.portfolio_report_common import fallback_company
             analise = fallback_company(tk, _motivo)
@@ -901,6 +924,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
 
     progresso.empty()
 
+    usd_brl, usd_brl_data = _usd_brl_da_base()
     with st.spinner("Gerando relatório consolidado do portfólio…"):
         try:
             port_analise = analyze_us_portfolio_report(
@@ -908,7 +932,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                 avaliacao_quant=avaliacao_quant,
                 status=status,
                 financials=financials,
-                usd_brl=_usd_brl_da_base(),
+                usd_brl=usd_brl, usd_brl_data=usd_brl_data,
                 conjuntura=conjuntura_da_carteira("us", items, as_of=corte_conjuntura),
                 detalhe_armazem=detalhe_do_consolidado(detalhes, items_analisados),
             )
@@ -917,8 +941,7 @@ def _executar_analise(items: list[dict], macro: dict, scored: pd.DataFrame,
                              "interpretada (JSON inválido).")
         except Exception as exc:  # noqa: BLE001
             _motivo = motivo_falha_llm(exc, "relatório consolidado da carteira EUA")
-            st.warning(f"Análise de portfólio não gerada — {_motivo}. O detalhe "
-                       "técnico ficou no log do app.")
+            falha_de_acao("A análise consolidada do portfólio não pôde ser gerada.", exc)
             erros.append(f"Relatório consolidado: não gerado — {_motivo}.")
             from core.portfolio_report_common import fallback_portfolio
             port_analise = fallback_portfolio(_motivo)
@@ -1032,9 +1055,13 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
 
     _memory_key = conversation_key("apus", ",".join(
         sorted(str(item.get("ticker") or "") for item in model.get("items", []))))
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     historico = load_chat_history(_memory_key, session_key=_CHAT)
     for msg in visible_chat_history(historico, _CHAT):
-        with st.chat_message(msg["role"]):
+        with conversa.chat_message(msg["role"]):
             st.markdown(escapar_cifrao(msg["content"]))
 
     pergunta = st.chat_input("Pergunte sobre o portfólio…", key="apus_chat_input")
@@ -1042,10 +1069,10 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
         return
 
     historico.append({"role": "user", "content": pergunta})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(pergunta))
 
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         aviso = ""
         with st.spinner("Consultando carteira, universo americano e indústrias…"):
             try:
@@ -1071,10 +1098,17 @@ def _render_chat(model: dict, state: dict, macro: dict) -> None:
                 aviso = aviso_ancoragem(resposta, contexto, pergunta)
             except Exception as exc:  # noqa: BLE001
                 from core.llm_falha import mensagem_falha_llm
-                resposta = mensagem_falha_llm(exc, "chat da Avaliação de Portfólio EUA")
+                resposta = None
+                falha = mensagem_falha_llm(exc, "chat da Avaliação de Portfólio EUA")
+        if resposta is None:
+            # A falha é aviso, não fala do assistente: gravada, voltava no
+            # contexto do turno seguinte como resposta dele (LLM-A11).
+            st.warning(falha)
+            historico.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(resposta))
         if aviso:
-            st.caption(aviso)
+            detalhe_tecnico(str(aviso), codigo="portfolio_us.ancoragem_chat")
 
     historico.append({"role": "assistant", "content": resposta})
     save_chat_history(_memory_key, historico, session_key=_CHAT)
@@ -1099,7 +1133,6 @@ def render(show_header: bool = True) -> None:
 
     st.markdown(
         '<p style="font-size:0.80rem;color:var(--app-muted);margin-bottom:20px;">'
-        '<strong style="color:var(--app-text);">Etapa 3 de 3 · Avaliação do conjunto.</strong> '
         'Julga a carteira criada na aba <strong>Criação de Portfólio</strong> como um '
         'todo — diversificação, concentração por ativo, indústria e setor, exposição a '
         'risco, geração de caixa e crescimento consolidados, qualidade contábil e '
@@ -1113,11 +1146,10 @@ def render(show_header: bool = True) -> None:
     with st.spinner("Carregando portfólio modelo…"):
         try:
             model = load_active_us_portfolio_model()
-        except Exception:  # noqa: BLE001
-            # Erro de banco pode carregar SQL e host na mensagem: vai para o
-            # log, a tela diz só o que aconteceu (auditoria LLM-A11).
-            logger.exception("analise_portfolio_us: carteira salva não carregou")
-            st.error("Não foi possível carregar a carteira salva. Detalhes no log do app.")
+        except Exception as exc:  # noqa: BLE001
+            # Erro de banco pode carregar SQL e host na mensagem: a tela diz só
+            # o que aconteceu; a exceção vai para o log e a aba Restrições.
+            falha_de_acao("Não foi possível carregar a carteira salva.", exc)
             return
 
     if not model or not model.get("items"):
@@ -1128,7 +1160,11 @@ def render(show_header: bool = True) -> None:
         )
         return
     if model.get("is_stale"):
+        # Estado bloqueado da carteira e acionável (refazer em Criação de
+        # Portfólio): fica na tela; o registro vai junto.
         st.error(texto_defasagem(model), icon="🕓")
+        aviso_lacuna(texto_defasagem(model),
+                     codigo="tela.portfolio_us.carteira_defasada")
         return
 
     items = model["items"]
@@ -1159,21 +1195,29 @@ def render(show_header: bool = True) -> None:
     modo_txt = {"warehouse": "warehouse local completo",
                 "snapshot": "vitrine publicada"}.get(str(status.get("mode") or ""), "origem não identificada")
     ultima = status.get("last_update")
-    usd_brl = _usd_brl_da_base()
+    usd_brl, usd_brl_data = _usd_brl_da_base()
+    detalhe_tecnico(
+        f"Base: {modo_txt}"
+        + (f"; última ingestão {str(ultima)[:19]}" if ultima else
+           "; data de ingestão não informada")
+        + (f"; universo {status['companies']} empresas" if status.get("companies") else ""),
+        codigo="portfolio_us.base_procedencia",
+    )
+    detalhe_tecnico(
+        "Sem base documental indexada para o mercado americano: a evidência vem "
+        "do dossiê determinístico e dos indicadores de qualidade (Piotroski, Altman, "
+        "Sloan), calculados em código sobre as demonstrações SEC.",
+        codigo="portfolio_us.sem_base_documental",
+    )
+    if not usd_brl:
+        aviso_lacuna("Cotação USD/BRL não disponível na base.",
+                     codigo="tela.portfolio_us.sem_cotacao_usdbrl")
     st.markdown(
         '<div style="font-size:.76rem;color:var(--app-muted);margin:-8px 0 12px;line-height:1.7;">'
-        f'🗂️ <b>Base:</b> {escape(modo_txt)}'
-        + (f' · última ingestão {escape(str(ultima)[:19])}' if ultima else
-           ' · data de ingestão não informada')
-        + (f' · universo {status["companies"]} empresas' if status.get("companies") else "")
-        + '<br>📄 Sem base documental indexada para o mercado americano — a evidência '
-          'vem do dossiê determinístico e do laboratório avançado (Piotroski, '
-          'Altman, Sloan), calculados em código sobre as demonstrações SEC.'
-        + '<br>💱 <b>Carteira em dólares.</b> Seu retorno em reais é o retorno do '
-          'ativo combinado com a variação do câmbio — o USD/BRL é um segundo '
-          'ativo embutido nesta carteira'
-        + (f' (referência na base: R$ {usd_brl:.2f}).' if usd_brl else
-           ' (cotação USD/BRL não disponível na base).')
+        '💱 <b>Carteira em dólares.</b> Seu retorno em reais é o retorno do '
+        'ativo combinado com a variação do câmbio — o USD/BRL é um segundo '
+        'ativo embutido nesta carteira'
+        + _referencia_cambio(usd_brl, usd_brl_data)
         + '</div>',
         unsafe_allow_html=True,
     )
@@ -1193,24 +1237,27 @@ def render(show_header: bool = True) -> None:
                 unsafe_allow_html=True)
 
     if not llm_disponivel():
-        st.warning(
+        st.warning("Esta análise não está disponível no momento.", icon="⚠️")
+        aviso_lacuna(
             "Nenhum provedor LLM configurado. Adicione `OPENAI_API_KEY` e/ou "
             "`GEMINI_API_KEY` no `.env` ou nos Streamlit Secrets para ativar a análise LLM.",
-            icon="⚠️",
+            codigo="tela.portfolio_us.sem_provedor_llm",
         )
         return
 
     provedores = provedores_disponiveis()
     if provedores:
-        rotulos = {"openai": "OpenAI", "gemini": "Gemini"}
-        st.caption(
-            "🤖 Provedores LLM ativos (com fallback automático): **"
-            + " → ".join(rotulos.get(p, p) for p in provedores) + "**"
+        rotulos = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
+        detalhe_tecnico(
+            "Provedores LLM ativos (com fallback automático): "
+            + " → ".join(rotulos.get(p, p) for p in provedores),
+            codigo="portfolio_us.provedores_llm",
         )
-    st.caption(
-        "A análise usa **somente o warehouse local** (demonstrações SEC, preços e "
+    detalhe_tecnico(
+        "A análise usa somente o warehouse local (demonstrações SEC, preços e "
         "score). O módulo americano é offline-first: nenhuma fonte externa é "
-        "consultada durante a avaliação."
+        "consultada durante a avaliação.",
+        codigo="portfolio_us.fonte_warehouse_local",
     )
 
     col_rodar, col_limpar, _ = st.columns([2, 1, 2])
@@ -1232,18 +1279,10 @@ def render(show_header: bool = True) -> None:
     if state:
         erros = state.get("erros", [])
         if erros:
-            with st.expander(
-                f"⚠️ {len(erros)} falha(s) na análise LLM — relatório pode estar incompleto",
-                expanded=True,
-            ):
-                for erro in erros:
-                    st.markdown(f"- {erro}")
-                st.caption(
-                    "Causas comuns: cota/limite atingido em **todos** os provedores, "
-                    "chave sem acesso ao modelo, timeout, ou empresa sem demonstrações "
-                    "no warehouse local. Verifique e clique novamente em "
-                    "**Executar Análise LLM**."
-                )
+            st.warning("Parte da análise não pôde ser gerada. Tente executar "
+                       "novamente em instantes.")
+            for erro in erros:
+                aviso_lacuna(str(erro), codigo="tela.portfolio_us.analise_llm_falha")
 
         st.markdown('<hr class="apb3-divider">', unsafe_allow_html=True)
         _render_relatorio_consolidado(state["port_analise"])

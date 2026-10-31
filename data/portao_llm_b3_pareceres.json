@@ -2463,6 +2463,26 @@
    "hash_prompt": "a747b9af1cb8a873",
    "tentativa": 1
   },
+  "ITUB3|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Sólido acúmulo patrimonial (PL de R$ 282.959,9 mi) e geração de caixa operacional positiva (FCO de R$ 44.567,3 mi em A-1), com ressalva ao EBIT persistentemente negativo no histórico estruturado.",
+   "confianca": 60,
+   "score_qualitativo": 65,
+   "modelo": "gemini/gemini-3.6-flash",
+   "codigo": "EMPRESA-B77B0D",
+   "hash_prompt": "acc2a8d037652855",
+   "tentativa": 1
+  },
+  "ITUB4|2019|0": {
+   "classificacao": "vetar",
+   "motivo": "Falta de dados de lucro líquido em toda a série de 9 anos, EBIT operacional cronicamente negativo e ausência de documentos CVM para validar a tese.",
+   "confianca": 20,
+   "score_qualitativo": 25,
+   "modelo": "gemini/gemini-3.6-flash",
+   "codigo": "EMPRESA-F9ACC5",
+   "hash_prompt": "dbe177e0e5c94f59",
+   "tentativa": 1
+  },
   "JBSS3|2020|0": {
    "classificacao": "aprovar",
    "motivo": "Lucro positivo e crescente, valuation atrativa e alavancagem controlada; ausência de red flags de sustentabilidade ou governança.",
@@ -3224,6 +3244,26 @@
    "hash_prompt": "c1566ac2a19e023d",
    "tentativa": 1
   },
+  "MOTV3|2022|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Aprovação com ressalvas devido ao elevado endividamento líquido (R$ 23.549,2 mi em A-1) e volatilidade nos lucros trimestrais, a despeito do FCO robusto de R$ 2.644,7 mi.",
+   "confianca": 55,
+   "score_qualitativo": 50,
+   "modelo": "gemini/gemini-3.6-flash",
+   "codigo": "EMPRESA-AB4CB9",
+   "hash_prompt": "e4992d33d3ae8ebf",
+   "tentativa": 1
+  },
+  "MOTV3|2022|1": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Aprovação com ressalvas devido ao elevado endividamento líquido (R$ 23.549,2 mi em A-1) e à volatilidade dos lucros pelo ciclo de juros.",
+   "confianca": 60,
+   "score_qualitativo": 55,
+   "modelo": "gemini/gemini-3.6-flash",
+   "codigo": "EMPRESA-AB4CB9",
+   "hash_prompt": "e4992d33d3ae8ebf",
+   "tentativa": 1
+  },
   "MOTV3|2023|0": {
    "classificacao": "aprovar_com_ressalvas",
    "motivo": "Lucro recente elevado mas alavancagem elevada e volatilidade histórica sugerem dependência de ciclo ou eventos extraordinários; falta de documentos CVM limita validação.",
@@ -3232,6 +3272,16 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-AD57A5",
    "hash_prompt": "9216b6be63228f4e",
+   "tentativa": 1
+  },
+  "MOTV3|2024|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa lucrativa e geradora de caixa operacional, mas com elevado endividamento líquido de R$ 35.102,7 mi em A-1 (relação Dívida Líquida/PL de 3,75) e compressão de lucro recente.",
+   "confianca": 50,
+   "score_qualitativo": 50,
+   "modelo": "gemini/gemini-3.6-flash",
+   "codigo": "EMPRESA-4C0775",
+   "hash_prompt": "5f1b46ea13d2b2d5",
    "tentativa": 1
   },
   "MOVI3|2022|0": {
@@ -4814,6 +4864,25 @@
    "hash_prompt": "651a6a58f7b26424",
    "tentativa": 1
   },
+  "SAPR11|2020|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Aprovar com ressalva devido ao patamar de endividamento líquido de R$ 7.406,0 mi (dív.líq./PL = 0,73), apesar do forte crescimento de receita e lucro e excelente geração de caixa operacional de R$ 2.413,4 mi em A-1.",
+   "confianca": 80,
+   "score_qualitativo": 82,
+   "modelo": "gemini/gemini-3.6-flash",
+   "codigo": "EMPRESA-1B134C",
+   "hash_prompt": "05ee85dca828a7b9",
+   "tentativa": 1,
+   "sonda": {
+    "empresa": true,
+    "ano": true,
+    "ano_perto": true,
+    "palpite": "SAPR4",
+    "ano_palpite": 2020,
+    "confianca": 100,
+    "modelo": "gemini/gemini-3.6-flash"
+   }
+  },
   "SAPR3|2017|0": {
    "classificacao": "aprovar",
    "motivo": "Lucro crescente, margens estáveis e dividendos sustentáveis com yield atraente, apesar de alavancagem moderada.",
@@ -6168,6 +6237,36 @@
    "modelo": "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
    "codigo": "EMPRESA-3008EA",
    "hash_prompt": "01be7a30021b9eb3",
+   "tentativa": 1
+  },
+  "VALE3|2018|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Recuperação operacional consistente no A-1 com lucro líquido de R$ 28.606,2 mi, mas com ressalvas pela volatilidade cíclica histórica e ausência de documentos CVM.",
+   "confianca": 70,
+   "score_qualitativo": 65,
+   "modelo": "gemini/gemini-3.6-flash",
+   "codigo": "EMPRESA-7AC0B1",
+   "hash_prompt": "2217222691eff616",
+   "tentativa": 1
+  },
+  "VALE3|2019|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Empresa do setor de Materiais Básicos em forte recuperação cíclica em A-1 (lucro de R$ 18.869,0 mi), mas sujeita à ciclicidade do setor e sem cobertura de documentos CVM.",
+   "confianca": 70,
+   "score_qualitativo": 65,
+   "modelo": "gemini/gemini-3.6-flash",
+   "codigo": "EMPRESA-2E22F9",
+   "hash_prompt": "0820489453b4800b",
+   "tentativa": 1
+  },
+  "VALE3|2020|0": {
+   "classificacao": "aprovar_com_ressalvas",
+   "motivo": "Prejuízo contábil em A-1 (-R$ 8.905,0 mi) contrastado com forte geração de caixa operacional (FCO de R$ 48.420,1 mi) e falta de cobertura documental CVM.",
+   "confianca": 50,
+   "score_qualitativo": 55,
+   "modelo": "gemini/gemini-3.6-flash",
+   "codigo": "EMPRESA-011177",
+   "hash_prompt": "f2d06cea6443f05e",
    "tentativa": 1
   },
   "VALE3|2025|0": {

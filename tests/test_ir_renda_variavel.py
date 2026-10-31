@@ -216,20 +216,90 @@ def test_darf_pendente_e_o_do_mes_fechado_ainda_nao_vencido():
 
 # ── Tela ─────────────────────────────────────────────────────────────────────
 
+def _tela_com(monkeypatch, res, escolha=None) -> dict:
+    """Roda a tela com a apuração ``res`` e devolve o que ela desenhou.
+    ``escolha`` é a opção do seletor de ano; None fica com a sugerida."""
+    import views.ir_renda_variavel as tela
+
+    monkeypatch.setattr(tela, "_dados", lambda: {
+        "apuracao": res, "transacoes": [], "eventos": [], "proventos": [], "posicoes": [],
+        "emissores": {}, "mercado": {}, "etfs": set(), "nomes_fii": {}, "falhas": []})
+    visto = {"avisos": [], "lacunas": [], "titulos": [], "cards": [], "tabelas": [],
+             "opcoes": []}
+    monkeypatch.setattr(tela.st, "warning", lambda msg, **k: visto["avisos"].append(msg))
+    monkeypatch.setattr(tela, "aviso_lacuna", lambda msg, **k: visto["lacunas"].append(msg))
+    monkeypatch.setattr(tela, "secao_titulo", lambda t, *a, **k: visto["titulos"].append(t))
+    monkeypatch.setattr(tela, "card_metrica", lambda t, *a, **k: visto["cards"].append(t))
+    monkeypatch.setattr(tela.st, "dataframe", lambda df, **k: visto["tabelas"].append(df))
+
+    def seletor(rotulo, opcoes, index=0, **k):
+        visto["opcoes"] = [k["format_func"](o) for o in opcoes]
+        return opcoes[index] if escolha is None else escolha
+
+    monkeypatch.setattr(tela.st, "selectbox", seletor)
+    tela.render()
+    return visto
+
+
+def _meses_na_tela(visto: dict) -> list[str]:
+    return [m for df in visto["tabelas"] if "Mês" in df.columns for m in df["Mês"]]
+
+
 def test_tela_renderiza_com_mes_incompleto_e_darf_pendente(monkeypatch):
     import views.ir_renda_variavel as tela
 
     res = apurar([tx("2025-01-10", "BBAS3", "sell", 1000, 30),
                   tx("2026-08-03", "PETR4", "buy", 2000, 10),
                   tx("2026-08-20", "PETR4", "sell", 2000, 12.5)], hoje=date.today())
-    monkeypatch.setattr(tela, "_apuracao", lambda: res)
-    avisos = []
-    monkeypatch.setattr(tela.st, "warning", lambda msg, **k: avisos.append(msg))
-    tela.render()
-    assert any("BBAS3" in a for a in avisos)
+    visto = _tela_com(monkeypatch, res)
+    # Venda sem custo vai para o administrador, sem faixa amarela na tela
+    assert not any("BBAS3" in a for a in visto["avisos"])
+    assert any("BBAS3" in x for x in visto["lacunas"])
     df = tela._tabela_mensal(res["meses"])
     assert "Incompleto: venda sem custo" in set(df["Situação"])
     assert tela._tabela_anual(res["anos"])["Meses incompletos"].sum() == 1
+
+
+def _dois_anos():
+    ano = date.today().year - 1
+    return ano, apurar([tx(f"{ano - 1}-03-10", "PETR4", "buy", 2000, 10),
+                        tx(f"{ano - 1}-05-20", "PETR4", "sell", 1000, 12.5),
+                        tx(f"{ano}-05-20", "PETR4", "sell", 1000, 13)], hoje=date.today())
+
+
+def test_ano_escolhido_recorta_a_tela_inteira(monkeypatch):
+    ano, res = _dois_anos()
+    visto = _tela_com(monkeypatch, res)
+    assert _meses_na_tela(visto) == [f"mai/{ano}"]
+    assert f"Declaração IRPF {ano + 1}" in visto["titulos"]
+    assert "Resumo por ano" not in visto["titulos"]
+    # Ano encerrado: os números de 31/12, não os do mês corrente
+    assert f"DARFs de {ano}" in visto["cards"] and f"Prejuízo em 31/12/{ano}" in visto["cards"]
+    assert "Mês em curso" not in visto["cards"]
+    assert visto["opcoes"][-1] == "Visão geral · todos os anos"
+
+
+def test_ano_fechado_com_darf_de_dezembro_a_vencer_mantem_o_total_do_ano(monkeypatch):
+    # Em janeiro, o DARF de dezembro ainda não venceu: o card segue no total do ano
+    ano = date.today().year - 1
+    res = apurar([tx(f"{ano}-03-10", "PETR4", "buy", 2000, 10),
+                  tx(f"{ano}-12-10", "PETR4", "sell", 2000, 15)],
+                 hoje=date(ano + 1, 1, 15))
+    assert res["pendente"]["mes"] == f"{ano}-12"
+    visto = _tela_com(monkeypatch, res)
+    assert f"DARFs de {ano}" in visto["cards"]
+    assert "DARF em aberto" not in visto["cards"]
+
+
+def test_visao_geral_junta_todos_os_anos_sem_as_fichas(monkeypatch):
+    import views.ir_renda_variavel as tela
+
+    ano, res = _dois_anos()
+    visto = _tela_com(monkeypatch, res, escolha=tela._VISAO_GERAL)
+    assert _meses_na_tela(visto) == [f"mai/{ano}", f"mai/{ano - 1}"]
+    assert "Resumo por ano" in visto["titulos"]
+    assert not any(t.startswith("Declaração IRPF") for t in visto["titulos"])
+    assert "Mês em curso" in visto["cards"]
 
 
 def test_investimentos_tem_a_aba_de_imposto():
@@ -247,5 +317,5 @@ def test_aba_de_imposto_e_a_ultima():
     import views.investimentos as inv
     fonte = inspect.getsource(inv.render)
     rotulos = fonte[fonte.index("st.tabs(["):]
-    rotulos = rotulos[:rotulos.index("])")]
+    rotulos = rotulos[:rotulos.index("]")]
     assert rotulos.rstrip().rstrip(",").endswith('"🧾  Imposto de Renda"')

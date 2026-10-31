@@ -225,7 +225,9 @@ def test_o_card_sai_num_markdown_so():
 
 def test_nao_verificada_nao_e_publicada_como_em_ordem():
     corpo = inspect.getsource(ui.barra_travas)
-    assert "tudo bem" in corpo
+    # o cartão diz "N de 6 verificadas"; o que ninguém verificou vai ao log
+    assert "tudo bem" not in corpo and "verificadas" in corpo
+    assert "tela.inteligencia.travas_nao_verificadas" in corpo
 
 
 # -- Integração rasa: painel real, travas reais ------------------------------

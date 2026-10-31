@@ -50,11 +50,25 @@ def test_chat_receives_invested_scope_and_total_capital_weights():
     assert "publicável=não" in context
 
 
-def preview(mode="partial", history=True, llm=True):
+def preview(mode="partial", history=True, llm=True, falha_llm=False):
     return AppTest.from_string(
         "from tests.fii_rich_preview import render_preview\n"
-        f"render_preview({mode!r}, history={history!r}, llm={llm!r})",
+        f"render_preview({mode!r}, history={history!r}, llm={llm!r}, "
+        f"falha_llm={falha_llm!r})",
         default_timeout=60).run()
+
+
+def test_falha_da_llm_nao_vira_resposta_no_historico():
+    # Gravada, a mensagem de falha voltava no turno seguinte como fala do
+    # assistente; e a pergunta sem resposta ficava sozinha na memória.
+    app = preview(falha_llm=True)
+    app.chat_input[0].set_value("Explique os riscos").run()
+    assert not app.exception
+    assert app.session_state["fii_chat_history"] == []
+    avisos = "\n".join(w.value for w in app.warning)
+    assert "Não foi possível consultar a IA agora" in avisos
+    tela = avisos + "\n".join(str(m.value) for m in app.markdown)
+    assert "org-sintetica-segredo" not in tela
 
 
 @pytest.mark.parametrize("mode", ["partial", "full"])
@@ -99,8 +113,14 @@ def test_actual_portfolio_route_keeps_rich_panels_and_chat(mode):
 def test_no_history_and_no_provider_do_not_remove_details():
     app = preview(history=False, llm=False)
     assert not app.exception
-    assert any("Não há pelo menos dois FIIs" in e.value for e in app.info)
-    assert any("Nenhum provedor LLM" in e.value for e in app.info)
+    # A lacuna de correlacao sai da tela desde 05/10/2026 (vai para
+    # Configuracoes -> Restricoes); o resto do detalhe continua.
+    assert not any("Não há pelo menos dois FIIs" in e.value for e in app.info)
+    # A falta de provedor LLM também sai da tela (vai para o registro); fica
+    # só a frase neutra, sem nome de variável de ambiente.
+    assert not any("Nenhum provedor LLM" in e.value for e in app.info)
+    assert not any("OPENAI_API_KEY" in e.value for e in app.info)
+    assert any("O chat não está disponível" in e.value for e in app.info)
     assert any("Por que estes FIIs avançaram" in e.value for e in app.markdown)
 
 

@@ -28,6 +28,25 @@ def test_visao_geral_nao_tem_subabas():
         assert titulo in corpo, titulo
 
 
+def test_visao_geral_absorveu_o_que_era_unico_da_carteira():
+    """A aba Carteira saiu; o que só ela tinha mora agora na Visão Geral."""
+    assert not hasattr(inv, "_tab_carteira")
+    corpo = inspect.getsource(inv._tab_analise)
+    trecho = corpo[corpo.index("with ta:"):corpo.index("with tb:")]
+    for marcador in (
+        "tela.investimentos.sem_cotacoes",       # aviso sem cotações
+        "investimentos.carteira.cotacoes_snapshot",
+        "cotações ao vivo",
+        "diferenca_reais",                       # valorização em R$
+        "_calc_n_efetivo(posicoes)",
+        "render_portfolio_valuations(posicoes)",
+        "_editor_preco_medio_manual(posicoes)",
+        "_cards_por_classe(",
+        "investimentos.carteira.sem_posicoes",
+    ):
+        assert marcador in trecho, marcador
+
+
 def test_analise_mantem_o_trilho_de_abas_por_classe():
     """As abas de primeiro nível (Ações, FIIs, Tesouro…) seguem intactas."""
     corpo = inspect.getsource(inv._tab_analise)

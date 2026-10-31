@@ -113,7 +113,9 @@ def _patch_renormalize(monkeypatch, payload_rows, data):
 
 def test_renormalize_forca_ticker_b3_e_registra_alias(monkeypatch):
     # payload salvo sob ELET3 (coluna = ticker-B3 requisitado), mas o
-    # normalizador devolve o símbolo divergente AXIA3.
+    # normalizador devolve o símbolo divergente AXIA3. O banco fake não prova
+    # que AXIA3 é da mesma companhia (sem ativos, sem CVM do AXIA3): é o
+    # caminho legado. A troca provada está em test_troca_codigo_ingest.py.
     rows = [("ELET3", 99, {"results": [{"symbol": "AXIA3"}]})]
     conn, upserts = _patch_renormalize(monkeypatch, rows, _full_data("AXIA3"))
 
@@ -138,4 +140,5 @@ def test_renormalize_sem_divergencia_nao_registra_alias(monkeypatch):
 
     ig.renormalize()
     assert all(r["ticker"] == "ELET3" for r in upserts["assets"])
-    assert not any("market.ticker_alias" in s for s, _ in conn.executed)
+    # a leitura das trocas registradas consulta a tabela; gravar, não
+    assert not any("INSERT INTO market.ticker_alias" in s for s, _ in conn.executed)

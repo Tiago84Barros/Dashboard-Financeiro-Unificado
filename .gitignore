@@ -260,6 +260,9 @@ local_staging/fii_document_backfill.stop
 local_staging/estado_publicacao.json
 # Memória do vigia de automações (avisos já dados): estado de máquina, idem.
 local_staging/vigia_automacoes.json
+# Marcas d'água do publicador brapi B3 (armazém → vitrine): estado de máquina.
+local_staging/marca_b3_brapi.json
+local_staging/marca_b3_brapi.tmp
 
 # Saídas de teste locais (lixo)
 _testout.txt

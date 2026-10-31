@@ -76,9 +76,35 @@ class Destaque:
     frases: tuple[str, ...]
 
 
+class _SemAcento(dict):
+    """Tabela de ``str.translate``: cada caractere vira a sua decomposição
+    NFKD sem as marcas combinantes, calculada na primeira vez que aparece.
+
+    Dá o mesmo que normalizar a frase inteira (a reordenação canônica do
+    NFKD só mexe nas marcas, que saem), sem o laço em Python por caractere:
+    era o grosso do custo da análise da carteira (05/10/2026)."""
+
+    def __missing__(self, cod: int) -> str:
+        saida = "".join(c for c in unicodedata.normalize("NFKD", chr(cod))
+                        if not unicodedata.combining(c))
+        self[cod] = saida
+        return saida
+
+
+_TABELA_SEM_ACENTO = _SemAcento()
+_NAO_ASCII = re.compile(r"[^\x00-\x7f]")
+
+
+def _trocar(m: re.Match) -> str:
+    return _TABELA_SEM_ACENTO[ord(m.group())]
+
+
 def _sem_acento(t: str) -> str:
-    return "".join(c for c in unicodedata.normalize("NFKD", t.lower())
-                   if not unicodedata.combining(c))
+    # Só o caractere não ASCII passa pela tabela: o ASCII sai igual, e a frase
+    # em português tem poucos acentos. Metade do custo de ``str.translate``
+    # com a tabela inteira (06/10/2026).
+    t = t.lower()
+    return t if t.isascii() else _NAO_ASCII.sub(_trocar, t)
 
 
 def _limpar(texto: str) -> str:
@@ -92,35 +118,42 @@ def frases(texto: str) -> list[str]:
     return [f.strip() for f in _DIVISOR.split(_limpar(texto)) if f.strip()]
 
 
-def _parece_prosa(frase: str) -> bool:
+def _parece_prosa(frase: str, sem_acento: str | None = None) -> bool:
     """Frase de texto corrido em português, não linha de tabela, cabeçalho,
-    tradução para o inglês ou fragmento cortado no meio da palavra."""
+    tradução para o inglês ou fragmento cortado no meio da palavra.
+    ``sem_acento`` é ``_sem_acento(frase)``, quando o chamador já o tem."""
     if not frase[:1].isupper() and not frase[:1].isdigit():
         return False                               # começa no meio da palavra
     if _LETRAS_SOLTAS.search(frase):
         return False
-    letras = [c for c in frase if c.isalpha()]
-    if not letras or sum(c.isupper() for c in letras) > 0.5 * len(letras):
+    letras = "".join(filter(str.isalpha, frase))
+    if not letras or sum(map(str.isupper, letras)) > 0.5 * len(letras):
         return False                               # cabeçalho em caixa alta
     tokens = frase.split()
-    numericos = sum(1 for t in tokens if any(c.isdigit() for c in t))
+    numericos = sum(1 for t in tokens if any(map(str.isdigit, t)))
     palavras = sum(1 for t in tokens if len(t) >= 3 and t.isalpha())
     if numericos > 6 or palavras < 2 * numericos or palavras < 6:
         return False                               # linha de tabela
-    base = f" {_sem_acento(frase)} "
+    base = f" {_sem_acento(frase) if sem_acento is None else sem_acento} "
     if sum(1 for w in _INGLES if w in base) >= 2:
         return False
     return any(w in base for w in _VERBOS)
 
 
-def pontuar(frase: str) -> int:
+def pontuar(frase: str, sem_acento: str | None = None) -> int:
     """0 = descarta. Frase boa é prosa com fato de negócio e número; valor
-    monetário ou percentual pesa mais."""
-    if not MIN_CHARS <= len(frase) <= MAX_CHARS or not _parece_prosa(frase):
+    monetário ou percentual pesa mais.
+
+    Os filtros baratos (tamanho, número, fato) vêm antes de ``_parece_prosa``:
+    as condições são todas obrigatórias, então a ordem não muda o resultado, e
+    a maioria das frases cai neles. Era o grosso da análise fria da carteira
+    (06/10/2026). ``sem_acento`` é ``_sem_acento(frase)``, quando o chamador
+    já o tem."""
+    if not MIN_CHARS <= len(frase) <= MAX_CHARS or not _NUMERO.search(frase):
         return 0
-    base = _sem_acento(frase)
+    base = _sem_acento(frase) if sem_acento is None else sem_acento
     fatos = sum(1 for p in _FATOS if p in base)
-    if not fatos or not _NUMERO.search(frase):
+    if not fatos or not _parece_prosa(frase, base):
         return 0
     return fatos + 2 * len(_VALOR.findall(frase))
 
@@ -129,11 +162,12 @@ def _escolher(textos: list[str], n: int) -> tuple[str, ...]:
     vistas, candidatas = set(), []
     for pos, texto in enumerate(textos):
         for i, f in enumerate(frases(texto)):
-            chave = _sem_acento(f)[:80]
+            base = _sem_acento(f)
+            chave = base[:80]
             if chave in vistas:
                 continue
             vistas.add(chave)
-            p = pontuar(f)
+            p = pontuar(f, base)
             if p:
                 candidatas.append((p, pos, i, f))
     melhores = sorted(candidatas, key=lambda c: (-c[0], c[1], c[2]))[:n]
@@ -275,7 +309,25 @@ def ler(ticker: str, n_docs: int = N_DOCUMENTOS,
         return ()
 
 
+def _ler_trechos(ticker: str) -> tuple[Trecho, ...]:
+    return por_tema(ler(ticker, N_DOCS_TEMA, N_FRASES_TEMA))
+
+
+def _cache(fn):
+    try:
+        import streamlit as st
+        return st.cache_data(ttl=3600, show_spinner=False)(fn)
+    except Exception:  # pragma: no cover - contexto sem Streamlit
+        return fn
+
+
+_ler_trechos_cache = _cache(_ler_trechos)
+
+
 def ler_trechos(ticker: str) -> tuple[Trecho, ...]:
     """Trechos por tema dos documentos recentes do ativo. Sem corpus,
-    vazio."""
-    return por_tema(ler(ticker, N_DOCS_TEMA, N_FRASES_TEMA))
+    vazio.
+
+    Com cache de 1 h por ativo: a análise da carteira pede os trechos de
+    cada ação a cada recálculo, e o corpus só muda com um novo deploy."""
+    return _ler_trechos_cache(str(ticker or "").upper())

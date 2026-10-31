@@ -222,6 +222,179 @@ def test_arquivar_recusa_categoria_que_nao_e_do_usuario(monkeypatch):
     assert not ok and "você" in msg.lower()
 
 
+# -- retirar do seletor ------------------------------------------------------
+#
+# A maioria das categorias é de sistema e de todos: retirar mexe só na
+# preferência de quem pediu. Os riscos abaixo são os que tirariam isso do lugar:
+# a retirada voltar pela porta do SEED (sem id, gravando lançamento sem
+# categoria), o seletor ficar vazio, e "criar" duplicar o que foi retirado.
+
+_SISTEMA = [
+    {"id": "s1", "nome": "Aluguel Recebido", "minha": False},
+    {"id": "s2", "nome": "Dividendos", "minha": False},
+    {"id": "s3", "nome": "Outros", "minha": False},
+    {"id": "s4", "nome": "Reembolso", "minha": False},
+    {"id": "s5", "nome": "Renda Extra", "minha": False},
+    {"id": "s6", "nome": "Salário", "minha": False},
+    {"id": "m1", "nome": "Freelance", "minha": True},
+]
+
+
+@pytest.fixture
+def preferencia(monkeypatch):
+    """Banco dublado com a lista de retiradas da conta, como a consulta real
+    devolve: a coluna ``retirada`` vem calculada junto de cada categoria."""
+    estado = {"linhas": [dict(linha) for linha in _SISTEMA], "retiradas": set()}
+
+    def _consultar(sql, tipo_db):
+        return [{**linha, "retirada": linha["id"] in estado["retiradas"]}
+                for linha in estado["linhas"]]
+
+    def _gravar(sql, ids):
+        if sql is cat._SQL_RETIRAR:
+            estado["retiradas"].update(ids)
+        else:
+            assert sql is cat._SQL_DEVOLVER
+            estado["retiradas"].difference_update(ids)
+
+    monkeypatch.setattr(cat, "_consultar", _consultar)
+    monkeypatch.setattr(cat, "_gravar_retiradas", _gravar)
+    return estado
+
+
+def test_categoria_de_sistema_pode_ser_retirada(preferencia):
+    ok, msg = cat.retirar(["s1", "s2"], "entrada")
+    assert ok, msg
+    assert preferencia["retiradas"] == {"s1", "s2"}
+    nomes = {c["nome"] for c in cat.listar("entrada")}
+    assert not nomes & {"Aluguel Recebido", "Dividendos"}
+    assert "saíram" in msg
+
+
+def test_retirada_continua_visivel_para_quem_pode_devolver(preferencia):
+    preferencia["retiradas"] = {"s2"}
+    marcadas = {c["nome"] for c in cat.listar("entrada", com_retiradas=True)
+                if c["retirada"]}
+    assert marcadas == {"Dividendos"}
+
+
+def test_retirada_do_seed_nao_volta_sem_id(preferencia):
+    """``Dividendos`` está no SEED. Se a retirada fosse filtrada antes de
+    comparar com o SEED, ela voltaria ao seletor com ``id=None`` — e o
+    lançamento iria para o banco sem categoria, o defeito de origem."""
+    preferencia["retiradas"] = {"s2"}
+    lista = cat.listar("entrada")
+    assert all(c["nome"] != "Dividendos" for c in lista)
+    assert all(c["id"] is not None for c in lista)
+
+
+def test_categoria_criada_pela_pessoa_tambem_se_retira(preferencia):
+    ok, _ = cat.retirar(["m1"], "entrada")
+    assert ok and preferencia["retiradas"] == {"m1"}
+
+
+def test_nao_deixa_o_seletor_vazio(preferencia):
+    todas = [linha["id"] for linha in _SISTEMA]
+    ok, msg = cat.retirar(todas, "entrada")
+    assert not ok and "ao menos uma" in msg
+    assert preferencia["retiradas"] == set()
+
+
+def test_nao_deixa_o_seletor_vazio_somando_com_as_ja_retiradas(preferencia):
+    preferencia["retiradas"] = {"s1", "s2", "s3", "s4", "s5", "m1"}
+    ok, _ = cat.retirar(["s6"], "entrada")
+    assert not ok
+
+
+def test_retirar_de_novo_nao_grava(preferencia):
+    preferencia["retiradas"] = {"s2"}
+    ok, msg = cat.retirar(["s2"], "entrada")
+    assert ok and "já estavam" in msg
+
+
+def test_retirar_recusa_id_de_outro_tipo_ou_inexistente(preferencia):
+    ok, _ = cat.retirar(["nao-existe"], "entrada")
+    assert not ok
+    assert preferencia["retiradas"] == set()
+
+
+def test_retirar_sem_escolha_recusa(preferencia):
+    ok, _ = cat.retirar([], "entrada")
+    assert not ok
+
+
+def test_criar_aponta_para_devolver_quando_o_nome_foi_retirado(preferencia):
+    """Criar de novo faria uma segunda ``Dividendos`` e partiria o histórico."""
+    preferencia["retiradas"] = {"s2"}
+    ok, msg = cat.criar("dividendos", "entrada")
+    assert not ok and "Devolva" in msg
+
+
+def test_devolver_poe_de_volta(preferencia):
+    preferencia["retiradas"] = {"s1", "s2"}
+    ok, _ = cat.devolver(["s2"])
+    assert ok and preferencia["retiradas"] == {"s1"}
+    assert "Dividendos" in {c["nome"] for c in cat.listar("entrada")}
+
+
+def test_preferencia_ilegivel_nao_derruba_o_seletor(monkeypatch):
+    """Se só a parte nova da consulta quebra, o seletor volta a ser o de antes
+    das retiradas -- com id. Cair no SEED sem id gravaria sem categoria."""
+    def _consultar(sql, tipo_db):
+        if "user_settings" in sql:
+            return None
+        return [{"id": "s2", "nome": "Dividendos", "minha": False}]
+
+    monkeypatch.setattr(cat, "_consultar", _consultar)
+    dividendos = next(c for c in cat.listar("entrada") if c["nome"] == "Dividendos")
+    assert dividendos["id"] == "s2" and not dividendos["retirada"]
+
+
+def test_retiradas_moram_na_preferencia_e_nao_na_tabela_de_categorias():
+    """Categoria de sistema é de todos: um UPDATE em ``categories`` tiraria a
+    opção do seletor de todas as contas."""
+    for sql in (cat._SQL_RETIRAR, cat._SQL_DEVOLVER):
+        assert "user_settings" in sql and "categories" not in sql
+        assert "jsonb_set" in sql  # escrita pontual, sem trazer o documento
+
+
+def _app_categorias():
+    from views.configuracoes_geral import _render_categorias
+    _render_categorias()
+
+
+def test_tela_retira_e_devolve(preferencia):
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_function(_app_categorias).run(timeout=30)
+    assert not app.exception
+    assert "7 categoria(s) no seletor de Entrada" in app.caption[0].value
+    retirar = next(m for m in app.multiselect if m.label == "Retirar do seletor")
+    retirar.set_value(["s1", "s2"]).run(timeout=30)
+    next(b for b in app.button if "Retirar" in b.label).click().run(timeout=30)
+    assert not app.exception
+    assert preferencia["retiradas"] == {"s1", "s2"}
+    assert any("saíram do seu seletor" in s.value for s in app.success)
+    assert "5 categoria(s) no seletor de Entrada" in app.caption[0].value
+
+    devolver = next(m for m in app.multiselect if m.label.startswith("Retiradas"))
+    devolver.set_value(["s1"]).run(timeout=30)
+    next(b for b in app.button if "Devolver" in b.label).click().run(timeout=30)
+    assert not app.exception
+    assert preferencia["retiradas"] == {"s2"}
+
+
+def test_tela_nao_oferece_retirar_todas(preferencia):
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_function(_app_categorias).run(timeout=30)
+    retirar = next(m for m in app.multiselect if m.label == "Retirar do seletor")
+    retirar.set_value([linha["id"] for linha in _SISTEMA]).run(timeout=30)
+    botao = next(b for b in app.button if "Retirar" in b.label)
+    assert botao.disabled
+    assert any("ao menos uma" in c.value for c in app.caption)
+
+
 # -- a tela não tem mais lista própria ----------------------------------------
 
 def test_a_view_nao_carrega_mais_lista_de_categoria():

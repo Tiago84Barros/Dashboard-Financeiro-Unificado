@@ -167,6 +167,7 @@ def _sem_rede(monkeypatch, *, acervo=None, remoto=(None, None)):
     monkeypatch.setattr(cm, "_macro_supabase_cache", lambda: ["  MACRO-SUPA"])
     monkeypatch.setattr(cm, "_macro_local", lambda: ["  MACRO-LOCAL"])
     monkeypatch.setattr(cm, "_macro_brasil", lambda: ["  MACRO-BCB"])
+    monkeypatch.setattr(cm, "_trajetoria_cache", lambda: ["  TRAJETORIA"])
     monkeypatch.setattr(cm, "_manchetes_acervo", lambda _l: acervo)
     monkeypatch.setattr(cm, "_manchetes_remoto", lambda _l: remoto)
     monkeypatch.setattr(cm, "_manchetes_vitrine_cache", lambda _l: ["  VITRINE"])

@@ -292,7 +292,9 @@ def test_params_registram_a_versao_da_metodologia_de_liquidez():
 
     params = params_to_dict(USPortfolioCreationParams())
     assert params["liquidity_version"] == LIQ
-    assert params["schema_version"] == "us_portfolio_creation_v3"
+    assert params["schema_version"] == "us_portfolio_creation_v4"
+    # e com quais pesos de trilha a nota de entrada foi montada
+    assert params["entry_weights"]["momentum"] > 0 and params["entry_weights"]["rd"] > 0
 
 
 @pytest.mark.parametrize("piso_invalido", [float("nan"), -1.0,
@@ -321,7 +323,7 @@ def test_interface_expoe_paridade_e_equivalentes_americanos():
     root = Path(__file__).resolve().parents[1]
     source = (root / "views" / "empresas_americanas.py").read_text(encoding="utf-8")
     for token in (
-        "Etapa 2 de 3 · Aplicação em escala",
+        "Aplicação em escala",
         "Auditoria por Indústria",
         "Treasury 3 meses",
         "S&P 500 (SPY)",
@@ -332,3 +334,26 @@ def test_interface_expoe_paridade_e_equivalentes_americanos():
         "disabled=not can_publish",
     ):
         assert token in source
+    # O fluxo em etapas saiu com a Análise Avançada em 30/10/2026.
+    assert "Etapa 2 de 3" not in source
+    assert "Análise Avançada" not in source
+
+
+def test_analise_avancada_saiu_da_barra_e_do_modulo():
+    import views.empresas_americanas as us
+    from design.market_companies import NAV_ITEMS
+
+    assert [r for _, r in NAV_ITEMS] == [
+        "Empresas por Setor", "Análise de Empresa", "Criação de Portfólio",
+        "Avaliação de Portfólio",
+    ]
+    assert not hasattr(us, "_tab_analise_avancada")
+    assert not hasattr(us, "_tab_avancada_unificada")
+
+
+def test_criacao_e_avaliacao_nao_se_apresentam_como_etapas():
+    raiz = Path(__file__).resolve().parents[1] / "views"
+    for nome in ("empresas_americanas.py", "analise_portfolio_us.py"):
+        texto = (raiz / nome).read_text(encoding="utf-8")
+        assert "Etapa " not in texto, nome
+        assert " de 3 ·" not in texto, nome

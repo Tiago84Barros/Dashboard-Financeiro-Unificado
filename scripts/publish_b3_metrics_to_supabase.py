@@ -117,6 +117,23 @@ def _salvar_backup_orfas(conn, orfas: list[dict], destino: Path) -> Path:
     return destino
 
 
+def _reter_fora_da_vitrine(origem: list[dict], tickers: list[str],
+                           presentes: set[str]) -> tuple[list[dict], list[str], list[str]]:
+    """Tira da publicação o ticker que a vitrine não tem em ``market.assets``.
+
+    ``calculated_metrics`` tem FK para ``assets``: um ticker só do armazém
+    derrubava o upsert inteiro. Em 05/10/2026 foi ALSO3, fóssil de alias criado
+    no armazém em 04/10 (o ativo vivo é ALOS3). Este script não cria ativo --
+    reviveria o fóssil na vitrine --, então retém e relata.
+    """
+    retidos = sorted({t for t in tickers if t not in presentes})
+    if not retidos:
+        return origem, tickers, []
+    fora = set(retidos)
+    return ([r for r in origem if r["ticker"] not in fora],
+            [t for t in tickers if t not in fora], retidos)
+
+
 BACKUP_DIR_PADRAO = ROOT / "backups" / "vitrine"
 
 
@@ -173,6 +190,12 @@ def publish(periods: list[str], *, apply: bool = False,
                 raise RuntimeError(
                     "vitrine sem as colunas " + ", ".join(faltando)
                     + " — rode as migrations antes de publicar")
+
+            presentes = {str(r[0]) for r in dst.execute(
+                text("SELECT ticker FROM market.assets"))}
+            origem, tickers, retidos = _reter_fora_da_vitrine(origem, tickers,
+                                                              presentes)
+            resultado["tickers_retidos"] = retidos
 
             remotas = [dict(r) for r in dst.execute(text("""
                 SELECT ticker, period, year, quarter, metric_name

@@ -137,6 +137,29 @@ def test_ler_fii_ticker_fora_do_snapshot(monkeypatch):
     assert ff.ler_fii("XPTO11") == {}
 
 
+def test_ler_fii_le_a_vitrine_uma_vez_por_fundo(monkeypatch):
+    # Cada acerto no cache da vitrine desserializa o quadro inteiro; o
+    # recálculo da carteira pede um FII por vez e não pode pagar isso a cada um.
+    import core.market_read as mr
+    leituras = []
+    monkeypatch.setattr(mr, "load_fii_methodology_inputs",
+                        lambda: leituras.append(1) or pd.DataFrame([_linha_fii()]))
+    for _ in range(3):
+        assert ff.ler_fii("HGLG11")["p_vp"].valor == 0.93
+        assert ff.ler_fii("hglg11")["p_vp"].valor == 0.93
+    assert len(leituras) == 1
+
+
+def test_ler_fii_nao_guarda_vitrine_em_falha(monkeypatch):
+    import core.market_read as mr
+    falha = pd.DataFrame()
+    falha.attrs["load_error"] = "snapshot_query_failed"
+    quadros = [falha, pd.DataFrame([_linha_fii()])]
+    monkeypatch.setattr(mr, "load_fii_methodology_inputs", lambda: quadros.pop(0))
+    assert ff.ler_fii("HGLG11") == {}
+    assert ff.ler_fii("HGLG11")["p_vp"].valor == 0.93  # vitrine voltou
+
+
 # -- renda fixa ---------------------------------------------------------------------
 
 def _titulo(chave, **extra):
@@ -313,5 +336,5 @@ def test_corpo_fundamentos_so_com_tokens():
     html = tela.corpo_fundamentos(fund)
     assert "Dado · fornecido pelo sistema" in html and "Interpretação" in html
     assert "0,90x" in html and html.count("Dado não disponível.") >= 13
-    assert "&lt;b&gt;" in html  # escapado
+    assert "<b>" not in html  # a nota de origem sai da tela (vai ao log)
     assert "#" not in html.replace("&#", "")

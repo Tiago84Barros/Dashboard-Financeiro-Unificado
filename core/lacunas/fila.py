@@ -28,6 +28,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable
 
+from core.lacunas.evento import status_inicial
+
 PESOS_FONTE = {"excecao": 3, "motor": 2, "tela": 2, "llm": 1}
 FATOR_INCERTA = 0.5
 JANELA_DIAS = 14
@@ -153,7 +155,8 @@ def fundir(local: dict[str, dict], cloud: Iterable[dict], estado: dict[str, dict
         base["janela_aproximada"] = aproximada
 
         est = estado.get(imp, {})
-        base["status"] = est.get("status") or (nuv or {}).get("status") or "aberta"
+        base["status"] = (est.get("status") or (nuv or {}).get("status")
+                          or status_inicial(base.get("codigo")))
         base["pr_url"] = est.get("pr_url") or (nuv or {}).get("pr_url")
         base["nota_triagem"] = est.get("nota_triagem") or (nuv or {}).get("nota_triagem")
         base["reincidente"] = bool(est.get("reincidente") or (nuv or {}).get("reincidente"))
@@ -161,7 +164,7 @@ def fundir(local: dict[str, dict], cloud: Iterable[dict], estado: dict[str, dict
         resolvida_em = _dt(est.get("resolvida_em"))
         if (base["status"] == "resolvida" and resolvida_em and ultimas
                 and max(ultimas) > resolvida_em):
-            base["status"] = "aberta"
+            base["status"] = status_inicial(base.get("codigo"))
             base["reincidente"] = True
         base["prioridade"] = prioridade(base)
         itens.append(base)
@@ -191,11 +194,46 @@ def atualizar_estado(estado: dict[str, dict], itens: list[dict]) -> dict[str, di
         est = novo.get(item["impressao"])
         if est is None:
             continue
-        if est.get("status") == "resolvida" and item["status"] == "aberta":
-            est["status"] = "aberta"
+        if est.get("status") == "resolvida" and item["status"] != "resolvida":
+            est["status"] = item["status"]
             est["reincidente"] = True
             est.pop("resolvida_em", None)
     return novo
+
+
+#: Prefixo que a aba Restricoes (Configuracoes) poe na ``nota_triagem`` quando o
+#: administrador decide uma lacuna direto na nuvem.
+PREFIXO_NOTA_ADMIN = "[admin "
+
+
+def importar_decisoes_admin(estado: dict[str, dict], cloud: Iterable[dict],
+                            agora: datetime) -> list[str]:
+    """Traz para o estado local a decisao que o administrador tomou na Cloud.
+
+    O estado local vence o da nuvem na fusao -- e a regra certa para o que o
+    CORRETOR decidiu, e a errada para o que o ADMINISTRADOR decidiu depois: sem
+    isto, a sincronizacao seguinte devolveria o status antigo a ``app_lacunas``
+    e a decisao tomada na tela sumiria. A marca e a nota com
+    ``PREFIXO_NOTA_ADMIN``; so entra se a nota for nova para o estado local.
+    Devolve as impressoes alteradas."""
+    mudadas = []
+    for linha in cloud:
+        nota = linha.get("nota_triagem") or ""
+        status = linha.get("status")
+        if not nota.startswith(PREFIXO_NOTA_ADMIN) or status not in STATUS:
+            continue
+        est = estado.get(linha["impressao"])
+        if est is None or est.get("nota_triagem") == nota:
+            continue
+        est["status"] = status
+        est["nota_triagem"] = nota
+        est["atualizado_em"] = agora.isoformat()
+        if status == "resolvida":
+            est["resolvida_em"] = agora.isoformat()
+        else:
+            est.pop("resolvida_em", None)
+        mudadas.append(linha["impressao"])
+    return mudadas
 
 
 def aplicar_prs(estado: dict[str, dict], consultar: Callable[[str], str | None],

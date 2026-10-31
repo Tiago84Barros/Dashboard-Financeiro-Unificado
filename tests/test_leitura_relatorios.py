@@ -97,9 +97,11 @@ def test_cartao_escapa_e_mostra_validacao():
     h = tela.cartao(replace(r, modelo="m1"))
     assert "<script>" not in h and "&lt;script&gt;" in h
     assert h.index("Resultado") < h.index("Proventos e recompra")
-    assert "Acompanhar" in h and "não falam da dívida" in h and "m1" in h
+    # problemas do validador e o modelo vão ao log, não à tela
+    assert "Acompanhar" in h and "m1" not in h
+    assert "não falam da dívida" in h      # conteúdo da resposta da LLM
     rej = tela.cartao(lr.falha("A LLM não respondeu."))
-    assert "Resumo não gerado" in rej and "não respondeu" in rej
+    assert "Resumo não gerado" in rej and "não respondeu" not in rej
 
 
 def test_chave_muda_quando_os_trechos_mudam():

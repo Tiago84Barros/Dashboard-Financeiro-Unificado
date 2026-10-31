@@ -10,6 +10,7 @@ Rodam contra um banco descartável no armazém local (porta 5433): a cláusula
 WHERE do ON CONFLICT só existe executando de verdade. Sem armazém, são pulados.
 """
 import uuid
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -88,6 +89,24 @@ def test_preco_igual_nao_reescreve_e_preco_novo_reescreve(banco):
     depois = _versao(banco, "historical_prices", "ticker = 'PETR4'")
     assert depois["x"] != antes["x"]
     assert float(depois["close"]) == pytest.approx(10.7)
+
+
+def test_preco_reescrito_carimba_updated_at(banco):
+    """Sem gatilho na tabela, o carimbo só andava na inserção: a cotação
+    intradiária corrigida pelo fechamento continuava parecendo intradiária."""
+    with banco.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE market.historical_prices ADD COLUMN "
+                             "updated_at timestamptz NOT NULL DEFAULT now()")
+    repo.reset_db_cols_cache()
+    _gravar(banco, "historical_prices", [_preco()])
+    with banco.begin() as conn:
+        conn.exec_driver_sql("UPDATE market.historical_prices "
+                             "SET updated_at = '2026-09-25 14:00-03'")
+    _gravar(banco, "historical_prices", [_preco()])
+    antes = _versao(banco, "historical_prices", "ticker = 'PETR4'")
+    assert antes["updated_at"] == datetime(2026, 9, 25, 17, tzinfo=timezone.utc)  # nada mudou
+    _gravar(banco, "historical_prices", [{**_preco(close=10.7), "volume": 5000}])
+    assert _versao(banco, "historical_prices", "ticker = 'PETR4'")["updated_at"] > antes["updated_at"]
 
 
 def test_valor_que_vira_nulo_conta_como_mudanca(banco):

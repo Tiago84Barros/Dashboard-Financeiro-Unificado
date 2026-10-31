@@ -26,6 +26,7 @@ import streamlit as st
 from core.b3_pooled_evidence import MIN_ATIVOS_ANO
 from core.b3_safras import MIN_SAFRAS_LOO, tabela_de_safras
 from design.componentes import card_metrica
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 from views.empresas_b3 import _COR_ALT, _COR_INF, _COR_NEU, _COR_POS, _plot_layout
 
 _COLUNAS_RETORNO = ["Estratégia líquida (%)", "Excesso líquido s/ Selic (pp)",
@@ -262,17 +263,16 @@ def _grafico_barras(completas: pd.DataFrame):
 
 def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                   selic_por_ano: dict[int, float],
-                  taxa_selic_aa: float,
-                  resultados_todos: list[dict] | None = None) -> None:
+                  taxa_selic_aa: float) -> None:
     """Bloco 1: a tabela de safras e a barra por safra contra Selic/EW.
-    Ao fim, chama `render_expectativa` (Bloco 3) e `render_vies_universo`
-    (Bloco 2, sob demanda).
+    Ao fim, chama `render_expectativa` (Bloco 3).
 
     `resultados` e a lista JA FILTRADA pelo gate de aprovacao -- e a
-    carteira que a tela publica. `resultados_todos` e a lista NAO
-    filtrada, e existe so para o Bloco 2 reconstruir as mesmas safras SEM
-    o gate e medir a distancia entre as duas. Sem ela o Bloco 2 nao e
-    renderizado: nao ha o que comparar.
+    carteira que a tela publica.
+
+    O Bloco 2 (`render_vies_universo`, "Tamanho do vies de universo")
+    saiu da tela por pedido do dono do projeto (30/10/2026). A funcao
+    continua aqui e testada; voltar com ela e uma chamada no fim desta.
     """
     st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
@@ -326,7 +326,10 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
 
     st.dataframe(_tabela_para_exibicao(tabela), width="stretch", hide_index=True,
                 column_config=_column_config_retorno())
-    st.caption(_texto_premissas_liquido_b3())
+    st.caption("Líquido = bruto − custo de giro − IR. Equal-weight e Selic "
+               "seguem brutos.")
+    detalhe_tecnico(_texto_premissas_liquido_b3(),
+                    codigo="portfolio_b3.safras_premissas_liquido")
 
     if not completas.empty:
         st.plotly_chart(_grafico_barras(completas), width="stretch",
@@ -345,23 +348,14 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
     # 100,0 justamente por não ter havido observação nenhuma (achado I-1).
     ausente = resumo["peso_ausente_max"]
     if ausente > 0:
-        st.info(
+        aviso_lacuna(
             f"Em pelo menos uma safra medida, até {ausente:.1f}% do peso "
             "ficou sem preço na janela — deslistagem, incorporação ou "
             "buraco de dado. Essa fatia rende **zero** no cálculo: não "
             "inventamos a perda, mas ela também não rende o que os "
-            "sobreviventes renderam."
+            "sobreviventes renderam.",
+            codigo="tela.portfolio_b3.safras_peso_sem_preco",
         )
-
-    # Bloco 2 por último e sob demanda (decisão do dono do projeto): a
-    # reconstrução sem gate é a conta mais cara da tela. `tabela` vai junto
-    # para que o lado "com gate" da comparação seja a MESMA medição já
-    # publicada acima, e não uma segunda reconstrução que pode divergir.
-    if resultados_todos:
-        render_vies_universo(resultados, resultados_todos, df_precos,
-                             selic_por_ano=selic_por_ano,
-                             taxa_selic_aa=taxa_selic_aa,
-                             tabela_com_gate=tabela)
 
 
 def _ics_por_ano(resultados: list[dict],
@@ -815,13 +809,16 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
                      ajuda=exp["ajuda_fragilidade"])
 
     for aviso in exp["avisos"]:
-        st.warning(aviso)
+        detalhe_tecnico(str(aviso), codigo="portfolio_b3.safras_expectativa_aviso")
     # Ressalva e margem em texto visível, não em tooltip: `ajuda` vira
     # `title=` do card e não existe no toque.
-    for nota in (exp["nota_independencia"], exp["nota_fragilidade"],
-                 exp["limitacao_evidencia"], exp["limitacao_banda"]):
+    for nota, codigo in (
+            (exp["nota_independencia"], "portfolio_b3.safras_nota_independencia"),
+            (exp["nota_fragilidade"], "portfolio_b3.safras_nota_fragilidade"),
+            (exp["limitacao_evidencia"], "portfolio_b3.safras_limitacao_evidencia"),
+            (exp["limitacao_banda"], "portfolio_b3.safras_limitacao_banda")):
         if nota:
-            st.caption(nota)
+            detalhe_tecnico(str(nota), codigo=codigo)
 
 
 # ── Bloco 2: o tamanho do viés de universo ──────────────────────────────────
@@ -1308,7 +1305,7 @@ def _desenha_vies(medicao: dict, quando: str | None = None) -> None:
     # Ressalvas em `st.caption` VISÍVEL, nunca em `ajuda=`: `ajuda` vira o
     # `title=` do card, tooltip de hover, invisível no toque.
     for nota in medicao["notas"]:
-        st.caption(nota)
+        detalhe_tecnico(str(nota), codigo="portfolio_b3.safras_vies_nota")
     if not medicao["comparacao"].empty:
         st.dataframe(medicao["comparacao"], width="stretch", hide_index=True,
                      column_config=_column_config_vies())
@@ -1340,7 +1337,7 @@ def render_vies_universo(resultados_aprovados: list[dict],
         'margin:20px 0 8px;">🔍 Tamanho do viés de universo</div>',
         unsafe_allow_html=True,
     )
-    st.caption(
+    detalhe_tecnico(
         "O score de cada safra é point-in-time, mas o **conjunto de "
         "segmentos** que compõe a carteira foi escolhido com o teste OOS "
         "sobre a amostra inteira, até hoje. A safra mais antiga é "
@@ -1348,7 +1345,8 @@ def render_vies_universo(resultados_aprovados: list[dict],
         "isso point-in-time é inviável — nas primeiras safras não há janela "
         "OOS e nenhum segmento seria aprovado —, então aqui se mede o "
         "tamanho: as mesmas safras, com todos os segmentos que tinham score "
-        "naquele ano, sem gate de aprovação."
+        "naquele ano, sem gate de aprovação.",
+        codigo="portfolio_b3.safras_vies_universo_premissa",
     )
 
     clicou = st.button("Medir o viés de universo", key="pb3_btn_vies")

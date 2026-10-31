@@ -120,11 +120,11 @@ def test_cartoes_escapam_e_avisam_que_e_referencia():
     ref = _ref()
     html = tela.cartao_referencia_ativo(ref, "PETR4")
     assert "18,0%" in html and "30,0%" in html and "+12,0 pp" in html
-    assert "não é evidência independente" in html
+    assert "não é evidência independente" not in html   # vai ao log
     geral = tela.cartao_referencia_carteira(ref)
     assert "Do modelo, fora da sua carteira" in geral and "AAPL" in geral
     fora = tela.cartao_referencia_ativo(rm.indisponivel("<b>x</b>"), "PETR4")
-    assert "&lt;b&gt;" in fora and "<b>x" not in fora
+    assert "<b>x" not in fora and "&lt;b&gt;" not in fora   # motivo vai ao log
 
 
 def test_tela_mostra_a_referencia_sem_quebrar():
@@ -134,7 +134,7 @@ def test_tela_mostra_a_referencia_sem_quebrar():
     assert not app.exception
     html = "".join(md.value for md in app.markdown)
     assert "carteira recomendada do Portfólio Global" in html
-    assert "não tem carteira-modelo ativa" in html
+    assert "não tem carteira-modelo ativa" not in html   # vai ao log
 
 
 def test_memo_nao_lembra_falha_de_leitura(monkeypatch):

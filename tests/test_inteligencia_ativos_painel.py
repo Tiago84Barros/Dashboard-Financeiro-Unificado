@@ -59,7 +59,8 @@ def test_resumo_nao_inventa_rentabilidade_nem_renda():
     assert r.rentabilidade_pct is None and r.resultado is None
     assert r.renda_12m is None and r.renda_total is None
     html = tela_painel.cartao_resumo(r)
-    assert "sem cotação suficiente" in html and "proventos indisponíveis" in html
+    assert "sem cotação suficiente" not in html
+    assert "proventos indisponíveis" not in html
 
 
 def test_resumo_lista_so_eventos_futuros():
@@ -154,7 +155,7 @@ def test_aba_mostra_resumo_cartoes_e_abre_a_analise(_historico_em_memoria):
     assert not app.exception
     htmls = [md.value for md in app.markdown]
     assert any("Patrimônio total" in h for h in htmls)
-    cartoes = [h for h in htmls if "Manter, comprar ou vender" in h
+    cartoes = [h for h in htmls if "Ação sugerida" in h
                and "Porcentagem devida" in h]
     assert len(cartoes) == 2
     # a primeira visita grava a foto de cada ativo e a da carteira

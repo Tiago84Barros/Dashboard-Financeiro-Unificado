@@ -173,6 +173,8 @@ tarefas obsoletas `DashboardFinanceiro-FII-Backfill` e
 |---|---|---|
 | `fii_ingest` | 1 dia | cadeia de 7 etapas de ingestão de FIIs **no armazém** |
 | `fii_selection` | 1 dia | vitrine de seleção de FIIs no Supabase |
+| `b3_brapi` | 1 dia | brapi `daily` + `setores` + prontidão **no armazém**; publica na vitrine o que mudou (empresas, preço de 35 dias, proventos, demonstrações, indicadores, safras) |
+| `b3_brapi_anual` | 7 dias | brapi `annual` (demonstrações completas, `range=1y`) no armazém e publica com 400 dias de preço |
 | `b3_metrics` | 7 dias | `market.calculated_metrics` |
 | `b3_vintages` | 7 dias | safras PIT da B3 |
 | `us_snapshot` | 7 dias | `market_us.company_snapshots` |
@@ -185,6 +187,13 @@ Duas regras que existem por incidente:
 - **Falha não vira silêncio.** Um alvo cujo último desfecho foi erro está sempre
   devendo, seja qual for a cadência -- sem isso, uma falha em alvo mensal
   esperaria um mês pela próxima tentativa.
+- **Prazo antes do limite da tarefa.** A tarefa agendada tem limite de execução
+  de 4 h e *mata* a rotina ao estourá-lo; processo morto não notifica. Em
+  05/10/2026 isso deixou sete alvos sem rodar, em silêncio. Depois de
+  `--prazo-min` (padrão 225) nenhum alvo novo começa: os que sobram seguem
+  vencidos e entram na notificação de falha. Por isso `b3_brapi` e
+  `b3_brapi_anual`, os mais longos, são os últimos da fila. Ao subir o limite da
+  tarefa, passe `--prazo-min` correspondente nos argumentos dela.
 - **Safra PIT não tem cadência de calendário.** Republicar a mesma versão de
   metodologia todo dia grava exatamente as mesmas linhas; o gatilho é a versão
   mudar.
@@ -278,7 +287,23 @@ Disable-ScheduledTask -TaskName "DFU - Atualizar vitrines" # suspender
 
 ### O que continua no GitHub Actions
 
-`market-refresh.yml` mantém o refresh da B3 e, dos FIIs, só as duas etapas que
-escrevem tabelas nativas do Supabase que o app lê direto (`run_market_ingest.py
-fiis` e `benchmark`). Elas ficam remotas de propósito: rodam mesmo com esta
-máquina desligada. Todo o resto da cadeia de FIIs saiu de lá.
+`market-refresh.yml` mantém, dos FIIs, só as duas etapas que escrevem tabelas
+nativas do Supabase que o app lê direto (`run_market_ingest.py fiis` e
+`benchmark`). Elas ficam remotas de propósito: rodam mesmo com esta máquina
+desligada. Todo o resto da cadeia de FIIs saiu de lá.
+
+O refresh de Empresas B3 (job `refresh-b3`) saiu do agendamento em 05/10/2026
+(caminho A) e só roda por disparo manual. Rodando contra o Supabase, cada
+recálculo de indicador lia demonstrações e preços de lá (egress, numa conta que
+estourou a cota de 5 GB) e cada consulta à brapi gravava o payload bruto em
+`brapi_raw_payloads` (64 MB dos 500). Agora são os alvos `b3_brapi` e
+`b3_brapi_anual`. O publicador `scripts/publish_b3_brapi_from_local.py`:
+
+- lê o armazém por marca d'água de `updated_at` (`local_staging/marca_b3_brapi.json`,
+  estado de máquina) e grava com o `upsert` do repositório, que não reescreve linha igual;
+- **não cria ativo nem empresa**: ticker que a vitrine não conhece é retido e
+  relatado (`tickers_retidos`) -- o armazém tem fósseis de alias (BRML3, CARD3);
+- respeita o portão de atualidade trimestral: bloqueado, segura indicadores e safras;
+- não apaga nada; a remoção de indicador órfão continua com o `b3_metrics` semanal.
+
+Custo aceito: com esta máquina desligada, a vitrine B3 para de andar.

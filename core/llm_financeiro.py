@@ -15,8 +15,9 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+from core.contexto_mercado import REGRA_CADEIA_TRANSMISSAO, REGRA_CONTEXTO_MERCADO
 from core.llm_b3 import _chat_complete, parse_chart_directives  # noqa: F401 (reexport)
+from core.llm_ferramentas import FERRAMENTAS_MERCADO
 
 _MODEL_CHAT_DEFAULT = "gpt-4o-mini"
 
@@ -53,8 +54,10 @@ os DADOS considerados, as PREMISSAS adotadas, as LIMITAÇÕES e os IMPACTOS espe
 das recomendações.
 6. Ao sugerir cortes, priorize despesas NÃO ESSENCIAIS e de menor impacto na \
 qualidade de vida; nunca recomende cortar saúde, moradia ou dívidas sem ressalva.
-7. Você é apoio à decisão e educação financeira, NÃO recomendação de investimento \
-específico nem garantia de resultado.
+7. Você é apoio à decisão e educação financeira. Não feche a resposta com aviso \
+genérico ("não é recomendação", "não há garantia"): o app não usa esse tipo de \
+alerta. Se o pedido concentra risco (aplicar tudo num ativo só, por exemplo), \
+mostre o risco com os números do usuário.
 8. Seja conciso. Responda à pergunta primeiro; detalhe só o necessário.
 9. {regra_mercado}
 
@@ -92,7 +95,8 @@ def chat_com_financas(context: str, history: Iterable[dict], user_message: str,
     """
     # Concatenação (NÃO str.format): o prompt contém chaves { } literais dos
     # exemplos de diretiva JSON, que o str.format interpretaria como campos.
-    system = _SYSTEM.replace("{regra_mercado}", REGRA_CONTEXTO_MERCADO) + (context or "")
+    system = (_SYSTEM.replace("{regra_mercado}", REGRA_CONTEXTO_MERCADO
+                              + "\n10. " + REGRA_CADEIA_TRANSMISSAO) + (context or ""))
     messages = [{"role": "system", "content": system}]
     for message in list(history)[-10:]:
         role = str(message.get("role") or "")
@@ -101,7 +105,8 @@ def chat_com_financas(context: str, history: Iterable[dict], user_message: str,
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user_message})
     return _chat_complete(messages, temperature=0.25, json_mode=False,
-                          primary_model=model or _MODEL_CHAT_DEFAULT, pessoal=True)
+                          primary_model=model or _MODEL_CHAT_DEFAULT, pessoal=True,
+                          ferramentas=FERRAMENTAS_MERCADO)
 
 
 _SYSTEM_CARTAO = """Você é um ANALISTA FINANCEIRO PESSOAL focado na FATURA DE CARTÃO \
@@ -138,7 +143,9 @@ parcelas já lançadas; não inclui compras novas) — deixe isso explícito.
 PREMISSAS, LIMITAÇÕES e IMPACTOS esperados das recomendações.
 6. Ao sugerir cortes, priorize NÃO ESSENCIAIS e assinaturas de baixo uso; nunca \
 recomende cortar saúde/essenciais sem ressalva.
-7. Apoio à decisão e educação financeira — não é recomendação de investimento nem garantia.
+7. Apoio à decisão e educação financeira, sem aviso genérico ("não é \
+recomendação", "não há garantia"): o app não usa esse tipo de alerta. Risco \
+concentrado se mostra com os números do usuário.
 8. Seja conciso. Responda primeiro; detalhe só o necessário.
 9. {regra_mercado}
 

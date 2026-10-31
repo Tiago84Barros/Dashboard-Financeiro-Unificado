@@ -22,7 +22,8 @@ Estratégias suportadas:
     para fechamentos de capital amigáveis (Cielo, Elektro).
 
 Output: pd.Series com índice DatetimeIndex e valores em R$, pronto pra
-concat com o DataFrame `df_precos` usado em `_simular_backtest`.
+concat com uma tabela de preços mensais por ticker (era o `df_precos` do
+`_simular_backtest`, que saiu com a Análise Avançada em 30/10/2026).
 
 Sem dependência externa além de pandas/numpy.
 """

@@ -147,7 +147,9 @@ def test_empresas_b3_avisa_so_o_risco_confirmado():
     # st.warning só dentro do laço de risco confirmado
     assert "for flag in _grupos[SEVERIDADE_RISCO]:\n            st.warning(flag)" in src
     assert "for flag in _grupos[SEVERIDADE_CONTEXTO]:\n            st.info(flag)" in src
-    assert "for flag in _grupos[SEVERIDADE_COBERTURA]:\n            st.caption(flag)" in src
+    # limitação de cobertura sai da tela e vai para o log de lacunas
+    assert "for flag in _grupos[SEVERIDADE_COBERTURA]:\n            aviso_lacuna(flag" in src
+    assert "st.caption(flag)" not in src
     # o laço antigo, que dava st.warning em TODA linha, não pode voltar
     assert 'for flag in dossie.get("red_flags", []):' not in src
 
@@ -165,7 +167,8 @@ def test_analise_portfolio_b3_poe_bandeira_so_no_risco_confirmado():
     assert '**Red flags determinísticas (verificadas em código)**' not in fonte
     # os outros dois blocos NÃO levam bandeira
     assert 'for f_ in _grupos[SEVERIDADE_CONTEXTO]:\n                st.markdown(f"ℹ️ {f_}")' in fonte
-    assert 'for f_ in _grupos[SEVERIDADE_COBERTURA]:\n                st.caption(f_)' in fonte
+    assert 'detalhe_tecnico(str(f_), codigo="portfolio_b3.analise_flag_cobertura"' in fonte
+    assert 'st.caption(f_)' not in fonte
 
 
 # ── (5) unicidade da regra ──────────────────────────────────────────────────

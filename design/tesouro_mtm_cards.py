@@ -22,6 +22,7 @@ from core.tesouro_mtm import (
 )
 from core.utils import fmt_moeda
 from design.componentes import cor_token
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 
 # Fundo, borda e texto saem como token, nao como literal. Enquanto eram
 # ``#12151E``/``#E2E8F0`` cravados no atributo ``style``, o tema claro nao tinha
@@ -106,11 +107,11 @@ def card_titulo_html(titulo) -> str:
                     if lote.taxa_contratada is not None})
     taxa_txt = taxas[0] if len(taxas) == 1 else (f"{len(taxas)} taxas contratadas" if taxas else "—")
 
-    aviso = ""
     if titulo.aproximado:
-        aviso = (f'<div style="font-size:0.72rem;color:{ALERTA};margin-top:8px;">'
-                 f'⚠️ Título com juros semestrais: o cupom não cancela na razão de PUs, '
-                 f'então a marcação aqui é aproximação, não identidade.</div>')
+        aviso_lacuna("Título com juros semestrais: o cupom não cancela na razão de PUs, "
+                     "então a marcação é aproximação, não identidade.",
+                     codigo="tela.carteira.tesouro_marcacao_aproximada",
+                     entidade=str(titulo.titulo))
 
     return (
         f'<div style="background-color:{_FUNDO};border:1px solid {_BORDA};'
@@ -147,7 +148,6 @@ def card_titulo_html(titulo) -> str:
         f'<div style="font-size:0.72rem;color:{cor_fonte};margin-top:8px;">'
         f'  ● {_ROTULO_FONTE.get(fonte, fonte)}'
         f'{f" · curva de {data_curva}" if fonte == "curva" else ""}</div>'
-        f'{aviso}'
         f'</div>'
     )
 
@@ -164,6 +164,12 @@ def card_veredito_html(titulo, comparacao: Comparacao,
     icone = _ICONE_VEREDITO.get(comparacao.veredito, "⚪")
     alvo = alternativa or "nenhuma alternativa escolhida"
 
+    if comparacao.aproximado:
+        aviso_lacuna("Veredito aproximado: título com cupom.",
+                     codigo="tela.carteira.tesouro_veredito_aproximado",
+                     entidade=str(titulo.titulo))
+    detalhe_tecnico("Faixa de indiferença de 0,5% do valor da posição.",
+                    codigo="carteira.tesouro_faixa_indiferenca")
     if comparacao.valor_final_carregando is None:
         grade = ""
     else:
@@ -188,9 +194,7 @@ def card_veredito_html(titulo, comparacao: Comparacao,
         f'{grade}'
         f'<div style="font-size:0.70rem;color:{_TEXTO4};margin-top:8px;line-height:1.5;">'
         f'  Alternativa comparada: <strong style="color:{_TEXTO2};">{alvo}</strong> · '
-        f'  {comparacao.du_restante} dias úteis até o vencimento · '
-        f'  faixa de indiferença de 0,5% do valor da posição.'
-        f'{" · Aproximação (título com cupom)." if comparacao.aproximado else ""}</div>'
+        f'  {comparacao.du_restante} dias úteis até o vencimento.</div>'
         f'</div>'
     )
 

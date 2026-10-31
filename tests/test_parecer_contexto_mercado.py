@@ -91,8 +91,10 @@ def test_fonte_que_falha_e_nomeada_e_nao_derruba_o_gate(monkeypatch):
     monkeypatch.setattr(cm, "bloco_contexto_mercado", quebra)
     monkeypatch.setattr(lc, "get_warehouse_detail_context", quebra)
     txt = d.contexto_mercado_para_parecer("TAEE11")
-    assert "CONTEXTO DE MERCADO: falha ao montar (banco fora)" in txt
-    assert "DETALHE DO ARMAZÉM: falha ao montar (banco fora)" in txt
+    # Só o tipo vai ao prompt; o texto da exceção (host, usuário) fica no log.
+    assert "CONTEXTO DE MERCADO: falha ao montar (RuntimeError)" in txt
+    assert "DETALHE DO ARMAZÉM: falha ao montar (RuntimeError)" in txt
+    assert "banco fora" not in txt
 
 
 def test_gate_de_selecao_entrega_o_contexto_ao_parecer(monkeypatch):

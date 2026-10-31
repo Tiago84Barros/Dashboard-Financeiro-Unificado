@@ -80,6 +80,10 @@ class Alvo:
     declarado é `data/public/rag`, do corpus RAG, porque o número de partições
     varia com o dado (letra e ano) e partição removida também precisa ir para
     o commit. Quem os commita é `core.publicacao_git`.
+
+    ``timeout_passo_min`` sobrepõe o teto por passo do agendador. Só para quem
+    varre o universo inteiro na brapi: o `daily` levava 74-80 min no GitHub com
+    1,0 s de intervalo, e o teto padrão é 90.
     """
 
     chave: str
@@ -90,6 +94,7 @@ class Alvo:
     versao_de: str | None = None
     precisa_armazem: bool = True
     artefatos: tuple[str, ...] = ()
+    timeout_passo_min: int | None = None
 
     @property
     def por_versao(self) -> bool:
@@ -137,6 +142,28 @@ _CADEIA_CVM_IPE = (
     ("scripts/backfill_cvm_ipe.py", "--years", "recentes", "--apply"),
     ("scripts/drenar_cvm_fulltext.py", "--ciclos", "5", "--por-ciclo", "20",
      "--delay", "1.5"),
+)
+
+# Empresas B3 pela brapi (caminho A, 05/10/2026). Rodava no GitHub contra o
+# Supabase: cada recálculo de indicador lia demonstrações e preços de lá
+# (egress, numa conta que estourou a cota) e cada consulta gravava o payload
+# bruto em `brapi_raw_payloads` (64 MB de 500). Agora ingere no armazém e o
+# publicador leva à vitrine só o que o app lê, incrementalmente por marca
+# d'água. Ele não cria ativo nem empresa: ticker que a vitrine não conhece é
+# retido e relatado -- o armazém tem fósseis de alias (BRML3, CARD3).
+_CADEIA_B3_BRAPI = (
+    ("run_market_ingest.py", "daily", "--source", "market", "--warehouse",
+     "--json"),
+    ("run_market_ingest.py", "setores", "--warehouse", "--json"),
+    ("-m", "scripts.snapshot_b3_readiness", "--warehouse"),
+    ("scripts/publish_b3_brapi_from_local.py", "--apply"),
+)
+_CADEIA_B3_BRAPI_ANUAL = (
+    ("run_market_ingest.py", "annual", "--source", "market", "--warehouse",
+     "--json"),
+    # `range=1y` reescreve um ano de preço; a janela padrão leva só 35 dias.
+    ("scripts/publish_b3_brapi_from_local.py", "--apply", "--dias-precos",
+     "400"),
 )
 ALVOS: tuple[Alvo, ...] = (
     Alvo(
@@ -325,6 +352,20 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/valuation_historico.json.gz",),
     ),
     Alvo(
+        # Painel mensal dos cenários análogos (Memória de Mercado aplicada ao
+        # macro): "da última vez que a Selic começou a cair com a bolsa
+        # subindo, o que aconteceu?". Depois de `macro_brasil` (Selic e IPCA
+        # do dia) e de `valuation_historico` (P/L mediano), que vêm antes na
+        # fila; o publicador recusa Selic ou BOVA11 parados. Lê só o armazém
+        # e arquivos; o casamento roda na hora da pergunta.
+        chave="cenarios_analogos",
+        titulo="Cenários análogos para as LLMs (Memória de Mercado)",
+        passos=(("scripts/publish_cenarios_analogos.py",),),
+        cadencia_dias=1,
+        modulo="macro",
+        artefatos=("data/public/cenarios_analogos.json.gz",),
+    ),
+    Alvo(
         # Série mensal de fundamentos dos FIIs (VPA, patrimônio, cotistas,
         # composição) com o fechamento mensal da fita da B3 para o P/VP. No
         # Supabase a market.fii_metrics_monthly parou em 05/2026 (sem espaço
@@ -337,6 +378,77 @@ ALVOS: tuple[Alvo, ...] = (
         cadencia_dias=7,
         modulo="fii",
         artefatos=("data/public/fii_metrics_monthly.json.gz",),
+    ),
+    Alvo(
+        # Fechamento do último pregão de cada mês (COTAHIST, sem retroajuste)
+        # para a Evolução Patrimonial de quem não tem foto de custódia: a
+        # carteira é remontada pelas negociações e avaliada mês a mês. A fita
+        # mora no armazém; market.historical_prices do Supabase mistura séries
+        # ajustadas e brutas. Depois de b3_pregao, que traz o pregão novo.
+        chave="precos_mensais_b3",
+        titulo="Fechamento mensal bruto da B3",
+        passos=(("scripts/publish_precos_mensais_b3.py",),),
+        cadencia_dias=7,
+        modulo="b3",
+        artefatos=("data/public/precos_mensais_b3.json.gz",),
+    ),
+    Alvo(
+        # Fechamento de cada um dos últimos 63 pregões, para o bloco de
+        # contexto das LLMs e a ferramenta `preco_diario_recente`. Em 29/10/2026
+        # o chat só tinha o fechamento mensal de 05/10 e não viu a queda de
+        # 26/10 (BOVA11 −14,5%). Lê os ZIPs do COTAHIST que `b3_pregao` deixa no
+        # cache, sem tocar no armazém.
+        chave="pregoes_recentes_b3",
+        titulo="Pregões recentes da B3 para as LLMs (COTAHIST)",
+        passos=(("scripts/publish_pregoes_recentes_b3.py",),),
+        cadencia_dias=1,
+        modulo="b3",
+        precisa_armazem=False,
+        artefatos=("data/public/pregoes_recentes_b3.json.gz",),
+    ),
+    Alvo(
+        # Proventos de renda por ano para o card e o gráfico de dividendos da
+        # Empresas B3, a série da LLM e o adapter de FII. Lê a resposta mais
+        # nova da brapi arquivada no armazém, não `market.dividends`, onde o
+        # upsert guarda cada revisão ao lado da anterior. A resposta que
+        # `b3_brapi` (fim da fila) traz hoje entra amanhã.
+        chave="proventos_b3",
+        titulo="Proventos de renda da B3 por ano",
+        passos=(("scripts/publish_proventos_b3.py",),),
+        cadencia_dias=1,
+        modulo="b3",
+        artefatos=("data/public/proventos_b3.json.gz",),
+    ),
+    Alvo(
+        # Curvas diárias da Carteira 20 contra BOVA11, CDI e pesos iguais, que a
+        # aba 📒 Carteira 20 lê. O retorno das ações estende a série da
+        # pesquisa com o COTAHIST que `b3_pregao` acabou de baixar e os
+        # proventos de `market.dividends`; o CDI é o arquivo de `cdi_diario`.
+        # Os dois vêm antes na fila. Os proventos que `b3_brapi` (fim da fila)
+        # traz hoje entram amanhã: a extensão é recalculada inteira a cada
+        # rodada e marca como suspeito o dia ex ainda sem provento. Antes do
+        # primeiro pregão depois da execução, não grava nada e sai com 0.
+        chave="carteira20_desempenho",
+        titulo="Desempenho diário da Carteira 20",
+        passos=(("scripts/carteira20_desempenho.py",),),
+        cadencia_dias=1,
+        modulo="b3",
+        artefatos=("data/public/carteira20_desempenho.json",),
+    ),
+    Alvo(
+        # Medição mensal do protocolo da Carteira 20 (curva por aportes e
+        # teórica, IR por preço médio, IPCA), que a aba 📒 Carteira 20 lê. As
+        # mesmas fontes do desempenho diário, mais o IPCA do `macro_brasil`
+        # (antes na fila). Roda todo dia porque refaz a conta inteira desde a
+        # inaugural: provento que chega depois do fechamento corrige o mês. Antes
+        # do primeiro fechamento (30/11/2026) grava o arquivo sem meses; uma
+        # rodada que mede menos meses do que o publicado não grava e falha.
+        chave="carteira20_medicao",
+        titulo="Medição mensal da Carteira 20",
+        passos=(("scripts/carteira20_medicao.py",),),
+        cadencia_dias=1,
+        modulo="b3",
+        artefatos=("data/public/carteira20_medicao.json",),
     ),
     Alvo(
         # Notícias filtradas por relevância, relatórios (documentos CVM/SEC) e
@@ -379,12 +491,20 @@ ALVOS: tuple[Alvo, ...] = (
         # e em 04/10/2026 103 tickers -- BBDC4, ITUB4, PETR4 -- seguiam no
         # 2026T1 com o payload do 2T26 no disco desde 19/09. O segundo passo
         # regrava as demonstrações a partir dele, sem rede (B3-02).
+        #
+        # E regrava à força: o modo comum pula o dono cujo payload mais novo já
+        # foi normalizado, então linha gravada por normalizador velho nunca
+        # sarava. Em 26-27/10/2026 a rotina rodou do checkout sem o PR #558,
+        # gravou 26,7 mil demonstrações com o LPA 1000x e o P/L mediano B3
+        # calculado do armazém passou a parar em março. Custa ~70 s; o upsert só toca a linha que muda, e
+        # só ela ganha updated_at novo -- é o que a publicação B3 leva ao
+        # Supabase pela marca d'água.
         chave="brapi_raw_poda",
         titulo="Poda do cache bruto da brapi",
         passos=(
             ("scripts/archive_remote_brapi_raw.py",),
             ("run_market_ingest.py", "renormalize-demonstracoes", "--warehouse",
-             "--json"),
+             "--json", "--forcar"),
             ("scripts/compact_remote_brapi_raw.py", "--apply"),
         ),
         cadencia_dias=1,
@@ -411,6 +531,48 @@ ALVOS: tuple[Alvo, ...] = (
                 ("-m", "scripts.publish_us_score_panel", "--apply")),
         cadencia_dias=30,
         modulo="us",
+    ),
+    Alvo(
+        # O painel PIT dos EUA publicado também no ARMAZÉM, para o app rodando
+        # na máquina contra ele (`scripts/abrir_app_armazem.bat`). Sem isto a
+        # Criação de Portfólio dos EUA montava o painel ao vivo: 34,5 s por cache
+        # frio no armazém, mais lento que a Cloud lendo o publicado do Supabase.
+        # Alvo próprio, e não passo a mais nos alvos dos EUA, para que uma falha
+        # aqui não reprove -- e faça repetir -- a publicação no Supabase. Diário
+        # porque o armazém recebe preço e safra por várias rotinas; quando nada
+        # mudou, a regravação é local e não gasta egress. Painel velho nunca é
+        # servido: a impressão do armazém diverge e o leitor monta ao vivo.
+        # Depois de todos os alvos dos EUA e antes dos longos da brapi, que
+        # ficam no fim da fila.
+        chave="us_painel_armazem",
+        titulo="Painel PIT dos EUA no armazém local",
+        passos=(("-m", "scripts.publish_us_score_panel", "--apply",
+                 "--armazem"),),
+        cadencia_dias=1,
+        modulo="us",
+    ),
+    Alvo(
+        # Últimos da fila, de propósito. O `daily` leva cerca de 2 h, e logo
+        # depois de `b3_pregao` empurrava notícias, macro e espelho para além
+        # do limite de 4 h da tarefa agendada (ver PRAZO_ROTINA_MIN). No fim, o
+        # que o prazo adia é esta ingestão, retomada no dia seguinte. E rodam
+        # depois de `brapi_raw_poda`: o publicador leva na mesma noite as
+        # demonstrações que `renormalize-demonstracoes` regravou.
+        # `b3_metrics`/`b3_vintages` (semanais) leem o armazém da véspera.
+        chave="b3_brapi",
+        titulo="Empresas B3 pela brapi (armazém → vitrine)",
+        passos=_CADEIA_B3_BRAPI,
+        cadencia_dias=1,
+        modulo="b3",
+        timeout_passo_min=180,
+    ),
+    Alvo(
+        chave="b3_brapi_anual",
+        titulo="Demonstrações B3 pela brapi (refresh anual)",
+        passos=_CADEIA_B3_BRAPI_ANUAL,
+        cadencia_dias=7,
+        modulo="b3",
+        timeout_passo_min=240,
     ),
 )
 

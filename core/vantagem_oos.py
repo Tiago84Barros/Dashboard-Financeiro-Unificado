@@ -239,6 +239,19 @@ def avaliar(motor: str, versao_atual: str,
                        f"distinguivel de acaso{_poder_preditivo(med)}")
 
 
+def rank_ic_significativo(med: dict[str, Any]) -> tuple[float, float] | None:
+    """``(rank_ic_medio, t)`` dos extras quando |t| >= 2; senão None.
+
+    Um corte só para o portão e para o relatório do analista: duas cópias do
+    limiar divergiriam (``memoria: guarda-duplicada-diverge``).
+    """
+    extras = med.get("extras") or {}
+    ic, t = _numero(extras.get("rank_ic_medio")), _numero(extras.get("rank_ic_t"))
+    if ic is None or t is None or abs(t) < 2.0:
+        return None
+    return ic, t
+
+
 def _poder_preditivo(med: dict[str, Any]) -> str:
     """Ressalva do Rank-IC quando o excesso reprova mas a ordenacao acerta.
 
@@ -248,10 +261,10 @@ def _poder_preditivo(med: dict[str, Any]) -> str:
     Rank-IC faria o portao parecer dizer "o score nao serve", que e mais forte
     do que o dado sustenta; omitir o excesso faria o oposto.
     """
-    extras = med.get("extras") or {}
-    ic, t = _numero(extras.get("rank_ic_medio")), _numero(extras.get("rank_ic_t"))
-    if ic is None or t is None or abs(t) < 2.0:
+    sig = rank_ic_significativo(med)
+    if sig is None:
         return ""
+    ic, t = sig
     return (f". O score AINDA ASSIM ordena o universo (Rank-IC medio "
             f"{ic:+.3f}, t={t:.2f}): ha poder preditivo sem excesso "
             f"sobre a carteira igualmente ponderada")

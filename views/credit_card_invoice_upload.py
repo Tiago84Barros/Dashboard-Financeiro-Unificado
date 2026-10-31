@@ -22,6 +22,7 @@ from core.controle import (
     parse_fatura_cartao_csv,
 )
 from core.utils import fmt_moeda
+from design.lacunas import aviso_lacuna
 
 _COR_RECEITA = "var(--app-primary)"
 _COR_DESPESA = "var(--app-danger)"
@@ -116,6 +117,23 @@ def _invoice_upload_summary(rows: list[dict]) -> dict:
     }
 
 
+_MARCAS_TECNICAS = ("modo mock", "não configurado")
+
+
+def _mostrar_falha(result: dict) -> None:
+    """Falha de importação: problema do arquivo ou da conta escolhida fica na
+    tela; configuração do ambiente vira frase neutra e registro."""
+    msg = result.get("message") or "Falha ao importar fatura."
+    if not any(m in msg.lower() for m in _MARCAS_TECNICAS):
+        st.error(msg)
+        return
+    st.error("Não foi possível importar a fatura agora.")
+    aviso_lacuna(
+        "Importação de fatura recusada por configuração do ambiente (modo mock ou banco).",
+        codigo="tela.controle.fatura_importacao_recusada",
+    )
+
+
 def render_upload_fatura_cartao(*, show_header: bool = True) -> None:
     """Renderiza o fluxo exclusivo de importacao da fatura do cartao."""
     if show_header:
@@ -131,7 +149,7 @@ def render_upload_fatura_cartao(*, show_header: bool = True) -> None:
             f"{int(summary.get('skipped', 0))} duplicado(s) ignorado(s)."
         )
     elif last_result:
-        st.error(last_result.get("message", "Falha ao importar fatura."))
+        _mostrar_falha(last_result)
 
     contas = get_contas_cartao_credito()
     uploaded = st.file_uploader(
@@ -313,4 +331,4 @@ def render_upload_fatura_cartao(*, show_header: bool = True) -> None:
         st.session_state["cc_invoice_import_result"] = result
         if result.get("ok"):
             st.rerun()
-        st.error(result.get("message", "Falha ao importar fatura."))
+        _mostrar_falha(result)

@@ -13,6 +13,12 @@ Comportamento:
   * Cria ativos novos automaticamente em `assets`.
   * Cria instituição/conta agregadora "B3 - Carteira Consolidada".
   * Idempotente via `investment_transactions.external_id`.
+  * Execuções idênticas no mesmo pregão (mesma data, lado, papel, quantidade,
+    preço e mercado) são fatos distintos: a partir da segunda, o external_id
+    leva a ordem da linha entre as idênticas. A primeira mantém a chave antiga,
+    então subir de novo um arquivo já importado só acrescenta as que tinham
+    sido fundidas -- antes de 12/10/2026 o ON CONFLICT descartava a repetida
+    (TAEE3 100+100 em 16/12/2020 entrou como 100).
 
 Otimização (2026-05-22):
   Antes: 1 SAVEPOINT + 3-4 queries por linha do XLSX (300+ linhas = 5-10min).
@@ -99,11 +105,12 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
     # nao abortam o batch. Erros de DB no batch abortam tudo (raro: o
     # batch só roda apos validação Python rigorosa).
     candidates: list[dict] = []
+    ocorrencias: dict[tuple, int] = {}
     for i, row in enumerate(sheet.iter_rows(values_only=True)):
         if i == 0:
             continue
         try:
-            parsed = _parse_row(row, account_label="B3")
+            parsed = _parse_row(row, account_label="B3", ocorrencias=ocorrencias)
         except Exception as exc:  # noqa: BLE001
             summary["errors"].append(f"Linha {i + 1}: {safe_error(exc)}")
             continue
@@ -170,7 +177,8 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
     return finalize_summary(summary)
 
 
-def _parse_row(row, *, account_label: str) -> dict | None:
+def _parse_row(row, *, account_label: str,
+               ocorrencias: dict[tuple, int] | None = None) -> dict | None:
     """Parse puro (sem DB) de uma linha do XLSX de Negociação.
 
     Retorna dict com chaves: ticker, asset_name, tx_type, quantity,
@@ -212,10 +220,15 @@ def _parse_row(row, *, account_label: str) -> dict | None:
     if tx_date is None:
         return None
 
-    ext_id = make_external_id(
-        "b3neg",
-        [tx_date.isoformat(), tx_type, ticker_clean, qtd, preco, str(mercado_raw or "")],
-    )
+    partes: list[Any] = [tx_date.isoformat(), tx_type, ticker_clean, qtd, preco,
+                         str(mercado_raw or "")]
+    if ocorrencias is not None:
+        chave = tuple(partes)
+        ordem = ocorrencias.get(chave, 0)
+        ocorrencias[chave] = ordem + 1
+        if ordem:
+            partes.append(ordem)
+    ext_id = make_external_id("b3neg", partes)
 
     return {
         "ticker":            ticker_clean,

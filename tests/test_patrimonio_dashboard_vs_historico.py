@@ -23,7 +23,7 @@ _ETF_NOMAD = SimpleNamespace(
 _POSICAO_XP = object()
 
 
-def _carteira_so_do_snapshot(rows, tx_costs=None, precos_manuais=None):
+def _carteira_so_do_snapshot(rows, tx_costs=None, precos_manuais=None, curva_tesouro=None):
     return {
         "posicoes": [{"ticker": "ITUB4", "classe": "Ações", "setor": "Bancos",
                       "cor": "#fff", "total_investido": 800.0,
@@ -115,9 +115,49 @@ def test_sql_so_soma_custo_quando_toda_posicao_tem_custo():
 
 def test_historico_inclui_acoes_emprestadas():
     # Dez/23 da B3 (R$ 590.520,23) so fecha somando a aba de emprestimos.
-    sql = investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower()
+    # So o aluguel TOMADO (negativo, e divida) sai, e so da soma que encerra
+    # o ativo; a acao emprestada (Doador, positiva) continua no patrimonio.
+    sql = " ".join(investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower().split())
+    tomador = "not (coalesce(s.is_loaned, false) and s.quantity < 0)"
 
-    assert "is_loaned" not in sql
+    assert tomador in sql
+    assert "is_loaned" not in sql.replace(tomador, "")
+
+
+def _case_de_prioridade(sql: str) -> str:
+    sql = " ".join(sql.lower().split())
+    inicio = sql.index("case pps.effective_source_table")
+    return sql[inicio:sql.index("end", inicio)]
+
+
+def test_serie_desempata_fontes_como_o_ponto_de_hoje():
+    # Set/26 -> Out/26 subia ~R$ 100 mil sem aporte: a serie somava uma fonte
+    # por data e o ponto de hoje juntava todas. As duas consultas tem de
+    # montar a carteira com a mesma ordem de autoridade.
+    assert (_case_de_prioridade(investimentos._SQL_EVOLUCAO_SNAPSHOTS)
+            == _case_de_prioridade(investimentos._SQL_POSICOES_SNAPSHOT))
+
+
+def test_serie_le_todas_as_fontes_e_os_encerramentos_da_b3():
+    sql = " ".join(investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower().split())
+    # A única lista de fontes mora em mov_encerrados e não filtra a série: só
+    # marca se a custódia da B3 confirma a saída de um resgate.
+    cte = " ".join(investimentos._CTE_MOV_ENCERRADOS_POR_CORTE.lower().split())
+
+    assert cte in sql
+    assert "source_table in" not in sql.replace(cte, "")
+    assert "b3_encerrados" in sql
+    assert "s.report_date <= c.corte" in sql
+
+
+def test_serie_nao_soma_o_exterior_que_ja_entra_pelas_notas():
+    # A foto da Nomad (moeda USD) mora em portfolio_position_snapshots. Se a
+    # serie a somasse, _exterior_nas_datas somaria o exterior de novo.
+    serie = " ".join(investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower().split())
+    exterior = " ".join(investimentos._SQL_EVOLUCAO_EXTERIOR_TX.lower().split())
+
+    assert "upper(coalesce(a.currency, 'brl')) = 'usd'" in exterior
+    assert "upper(coalesce(a.currency, 'brl')) <> 'usd'" in serie
 
 
 def test_foto_sem_custo_vira_lacuna_e_nao_zero():

@@ -3,7 +3,10 @@ views/configuracoes_geral.py
 Aba "Geral" de Configurações — o que era da sidebar, mais o que não tinha lugar.
 
   🎨 Tema              — a preferência visual da conta
-  🏷️ Categorias        — as opções do lançamento manual do Controle Financeiro
+  🧭 Seções            — quais telas aparecem no menu lateral desta conta
+  🏷️ Categorias        — criar, retirar e devolver as opções do lançamento
+                         manual do Controle Financeiro
+  🎯 Orçamento         — o teto mensal de gasto por categoria de despesa
   👤 Trocar de usuário — encerrar a sessão deste navegador
   🧹 Memória da LLM    — apagar o histórico de conversa, por seção
 
@@ -18,29 +21,43 @@ que se fazem uma vez.
 A 🎯 Estratégia e o 🌎 Cenário de Investimentos **saíram daqui** em 27/09/2026:
 são configurados e alterados na própria aba Investimentos → Inteligência dos
 Ativos, que depende deles.
+
+As 🧭 Seções do aplicativo **entraram aqui** em 31/10/2026, logo depois do
+tema: as duas são o jeito de a conta personalizar o app. Esconder uma seção
+tira a porta de entrada do menu e o bloco dela do Dashboard Geral, e nada
+mais -- regra e cache em ``core/secoes_app.py``.
 """
 from __future__ import annotations
 
+from datetime import date
 from html import escape
 
 import streamlit as st
 
 from core import categorias as cat_repo
-from core import chat_repository
+from core import chat_repository, secoes_app
 from core.auth import encerrar_sessao
+from design.lacunas import aviso_lacuna, falha_de_acao
 
 _CONFIRMA_SAIDA = "cfg_geral_confirma_saida"
 _SECAO_LLM = "cfg_geral_secao_llm"
 _TODAS = "__todas__"
 _TIPO_CAT = "cfg_geral_tipo_categoria"
 _NOME_CAT = "cfg_geral_nome_categoria"
+_RECADO_CAT = "cfg_geral_recado_categoria"
+_RECADO_SECOES = "cfg_geral_recado_secoes"
+_INTERRUPTOR = "cfg_geral_secao_{}"
+_BASE_INTERRUPTORES = "cfg_geral_secoes_base"
+_RECADO_ORC = "cfg_geral_recado_orcamento"
 
 
 def render() -> None:
     st.caption("A Estratégia e o Cenário de Investimentos se configuram em "
                "Investimentos → Inteligência dos Ativos.")
     _render_tema()
+    _render_secoes()
     _render_categorias()
+    _render_orcamento()
     _render_trocar_usuario()
     _render_memoria_llm()
 
@@ -53,12 +70,126 @@ def _render_tema() -> None:
     with st.container(border=True, key="cfg_geral_tema"):
         _cabecalho(
             "01", "🎨 Tema do aplicativo",
-            "Claro ou escuro, salvo na sua conta e aplicado na hora.",
+            "Claro ou escuro: muda só quando você escolhe, e fica salvo na sua conta.",
         )
         # A lógica de persistência não muda de lugar junto: o callback
         # ``_persist_choice`` resolve um bug documentado de rerun que revertia a
         # segunda troca de tema da sessão. Aqui só muda ONDE o widget aparece.
         render_theme_selector()
+
+
+# -- seções do aplicativo -----------------------------------------------------
+
+def _render_secoes() -> None:
+    """Um interruptor por tela que pode sair do menu.
+
+    Dashboard Geral e Configurações não ganham interruptor: travado e
+    desabilitado, ele sai cinza e é lido como DESLIGADO -- o oposto do que
+    acontece. Uma linha de texto diz que os dois ficam.
+
+    A escolha só vale depois do clique em Salvar: mexer em três interruptores
+    não vira três gravações nem três redesenhos do menu, e o resumo do que vai
+    mudar aparece antes do clique, como no bloco da LLM.
+    """
+    with st.container(border=True, key="cfg_geral_secoes"):
+        _cabecalho(
+            "02", "🧭 Seções do aplicativo",
+            "Escolha o que aparece no menu lateral e no Dashboard Geral. Tirar "
+            "do menu não apaga nada: a seção volta inteira quando você a ligar.",
+        )
+        recado = st.session_state.pop(_RECADO_SECOES, None)
+        if recado:
+            st.success(recado)
+        # Ler ANTES de perguntar se a leitura falhou: é aqui dentro que a nova
+        # tentativa acontece, e a pergunta feita antes respondia pela execução
+        # anterior.
+        ocultas = secoes_app.ocultas_da_sessao()
+        falhou = secoes_app.leitura_falhou()
+        if falhou:
+            st.warning("Não foi possível ler a sua escolha salva. Por segurança, "
+                       "o menu mostra todas as seções até a leitura voltar.")
+            if st.button("🔄 Ler de novo", key="cfg_geral_secoes_reler"):
+                secoes_app.esquecer_leitura()
+                st.rerun()
+        _reconciliar_interruptores(ocultas, st.session_state)
+
+        ligadas: dict[str, bool] = {}
+        fixas = [f"**{s.rotulo}**" for s in secoes_app.SECOES if s.fixa]
+        st.markdown(f"Sempre no menu: {' e '.join(fixas)} — a porta de "
+                    "entrada e o lugar onde esta escolha se desfaz.")
+        # Linhas de dois, e não duas colunas altas: no celular as colunas
+        # empilham, e duas colunas altas viravam "1, 3, 5, 2, 4, 6" -- a
+        # ordem do menu se perdia justamente onde a tela é mais estreita.
+        secoes = [s for s in secoes_app.SECOES if not s.fixa]
+        for inicio in range(0, len(secoes), 2):
+            for secao, coluna in zip(secoes[inicio:inicio + 2], st.columns(2)):
+                with coluna:
+                    ligadas.update(_interruptor(secao, ocultas))
+
+        novas = secoes_app.normalizar(m for m, ligada in ligadas.items() if not ligada)
+        saem = [m for m in novas if m not in ocultas]
+        voltam = [m for m in secoes_app.OPCIONAIS if m in ocultas and m not in novas]
+        ligadas_n = len(secoes_app.OPCIONAIS) - len(novas)
+        resumo = (f"{ligadas_n} de {len(secoes_app.OPCIONAIS)} seções ligadas, "
+                  "além das duas fixas.")
+        if saem or voltam:
+            partes = []
+            if saem:
+                partes.append("saem do menu: " + _nomes(saem))
+            if voltam:
+                partes.append("voltam ao menu: " + _nomes(voltam))
+            resumo += " Ao salvar, " + "; ".join(partes) + "."
+        if falhou:
+            # Gravar agora trocaria a escolha guardada pelo que esta tela
+            # mostra -- tudo ligado, porque a escolha não foi lida. Quem tinha
+            # escondido três seções e só quis esconder mais uma perderia as
+            # três (mesma regra do tema: leitura falha bloqueia gravação).
+            resumo += (" Salvar fica bloqueado até a escolha salva ser lida: "
+                       "gravar agora apagaria o que você já tinha tirado do menu.")
+        st.caption(resumo)
+
+        if st.button("💾 Salvar seções", key="cfg_geral_salvar_secoes",
+                     type="primary", disabled=falhou or not (saem or voltam)):
+            ok, msg = secoes_app.gravar(novas)
+            if not ok:
+                st.error(msg)
+                return
+            st.session_state[_RECADO_SECOES] = msg
+            # Novo run para o menu lateral, desenhado antes desta tela, já
+            # nascer com a escolha nova.
+            st.rerun()
+
+
+def _reconciliar_interruptores(ocultas: frozenset[str], estado) -> None:
+    """Realinha os interruptores quando a escolha carregada muda.
+
+    Interruptor com ``key`` guarda o próprio valor entre execuções e ignora o
+    ``value=`` dali em diante. Se a leitura falhou com a tela aberta, eles
+    nasceram todos ligados; quando a leitura volta (sozinha, depois da espera,
+    ou por "Ler de novo"), o menu já obedece à escolha salva, mas os
+    interruptores continuariam ligados -- e o próximo Salvar devolveria ao
+    menu o que a pessoa tinha tirado. Apontado pela revisão do PR #630.
+
+    Roda antes de os interruptores existirem nesta execução, que é quando o
+    Streamlit aceita tirar a chave de um widget. Depois de salvar, a escolha
+    carregada também muda: os interruptores renascem com os mesmos valores.
+    """
+    if estado.get(_BASE_INTERRUPTORES) == ocultas:
+        return
+    for modulo in secoes_app.OPCIONAIS:
+        estado.pop(_INTERRUPTOR.format(modulo), None)
+    estado[_BASE_INTERRUPTORES] = ocultas
+
+
+def _interruptor(secao: secoes_app.Secao, ocultas: frozenset[str]) -> dict[str, bool]:
+    """``{modulo: ligada}`` -- o interruptor da seção, ligado se está no menu."""
+    return {secao.modulo: st.toggle(
+        secao.rotulo, value=secao.modulo not in ocultas,
+        key=_INTERRUPTOR.format(secao.modulo), help=secao.descricao)}
+
+
+def _nomes(modulos: list[str]) -> str:
+    return ", ".join(s.nome for s in map(secoes_app.secao, modulos) if s is not None)
 
 
 # -- categorias do Controle Financeiro ----------------------------------------
@@ -68,65 +199,206 @@ _ROTULO_TIPO = {"entrada": "Entrada", "saida": "Saída",
 
 
 def _render_categorias() -> None:
-    """Criar e arquivar as categorias do lançamento manual.
+    """Criar, retirar e devolver as categorias do lançamento manual.
 
-    Arquivar, nunca apagar: a linha some do seletor e os lançamentos antigos
-    continuam classificados nela. Apagar levaria a classificação junto, e não
-    há como voltar atrás.
+    Retirar, nunca apagar: a opção some do SEU seletor e os lançamentos antigos
+    continuam classificados nela. Vale para a categoria de sistema também —
+    ela é de todos, e por isso o que se retira é a opção de quem pediu, não a
+    linha do banco. Apagar levaria a classificação junto, sem volta.
     """
     with st.container(border=True, key="cfg_geral_categorias"):
         _cabecalho(
-            "02", "🏷️ Categorias do Controle Financeiro",
+            "03", "🏷️ Categorias do Controle Financeiro",
             "As opções que aparecem ao lançar entrada, saída ou investimento.",
         )
+        # O recado da ação anterior: ``st.rerun()`` logo depois do clique
+        # apagava o ``st.success`` antes de alguém conseguir lê-lo.
+        recado = st.session_state.pop(_RECADO_CAT, None)
+        if recado:
+            st.success(recado)
+
         tipo = st.selectbox(
             "Tipo", list(cat_repo.TIPOS), key=_TIPO_CAT,
             format_func=lambda t: _ROTULO_TIPO.get(t, t),
         )
+        rotulo = _ROTULO_TIPO.get(tipo, tipo)
         try:
-            atuais = cat_repo.listar(tipo)
+            todas = cat_repo.listar(tipo, com_retiradas=True)
         except Exception as exc:  # noqa: BLE001
-            st.error(f"Não foi possível ler as categorias: {exc}")
+            falha_de_acao("Não foi possível ler as categorias.", exc)
             return
+        no_seletor = [c for c in todas if not c["retirada"]]
+        retiradas = [c for c in todas if c["retirada"]]
 
         # Categoria oferecida pelo seletor mas ausente do banco grava
         # lançamento SEM categoria. Antes isso acontecia calado; aqui tem nome.
-        sem_banco = [c["nome"] for c in atuais if c["id"] is None]
+        sem_banco = [c["nome"] for c in no_seletor if c["id"] is None]
         if sem_banco:
-            st.warning(
-                "Estas ainda não existem no banco e gravam lançamento sem "
+            aviso_lacuna(
+                "Categorias ainda não existem no banco e gravam lançamento sem "
                 f"categoria: {', '.join(sem_banco)}. Rode a migration 072 "
-                "(`supabase_unificado/schema/072_categorias.sql`) no Supabase."
+                "(`supabase_unificado/schema/072_categorias.sql`) no Supabase.",
+                codigo="tela.configuracoes.categorias_fora_do_banco",
             )
 
-        st.caption(f"{len(atuais)} categoria(s) em {_ROTULO_TIPO.get(tipo, tipo)}: "
-                   + ", ".join(c["nome"] for c in atuais))
+        st.caption(f"{len(no_seletor)} categoria(s) no seletor de {rotulo}: "
+                   + ", ".join(c["nome"] for c in no_seletor))
 
         nome = st.text_input("Nova categoria", key=_NOME_CAT,
                              placeholder="Ex.: Previdência")
         if st.button("➕ Criar categoria", key="cfg_geral_criar_cat",
                      type="primary", disabled=not nome.strip()):
             ok, msg = cat_repo.criar(nome, tipo)
-            (st.success if ok else st.error)(msg)
-            if ok:
-                st.rerun()
+            _depois_da_acao(ok, msg, _NOME_CAT)
 
-        minhas = [c for c in atuais if c.get("minha") and c["id"]]
-        if minhas:
-            alvo = st.selectbox(
-                "Arquivar uma categoria criada por você",
-                [c["id"] for c in minhas], key=f"cfg_geral_arquivar_{tipo}",
-                format_func=lambda cid: next(
-                    c["nome"] for c in minhas if c["id"] == cid),
-            )
-            if st.button("📦 Arquivar", key="cfg_geral_arquivar_btn"):
-                ok, msg = cat_repo.arquivar(alvo)
-                (st.success if ok else st.error)(msg)
-                if ok:
-                    st.rerun()
-        else:
-            st.caption("Você ainda não criou nenhuma categoria deste tipo. "
-                       "As de sistema não podem ser arquivadas.")
+        _render_retirar(tipo, rotulo, no_seletor)
+        _render_devolver(tipo, rotulo, retiradas)
+
+
+def _render_retirar(tipo: str, rotulo: str, no_seletor: list[dict]) -> None:
+    candidatas = [c for c in no_seletor if c["id"]]
+    if not candidatas:
+        return
+    nomes = {c["id"]: c["nome"] for c in candidatas}
+    # A chave leva o tipo: trocar de Entrada para Saída com ids de Entrada
+    # ainda escolhidos no widget faria o Streamlit oferecer o que não existe.
+    alvos = st.multiselect(
+        "Retirar do seletor", list(nomes), key=f"cfg_geral_retirar_{tipo}",
+        format_func=lambda cid: nomes.get(cid, cid),
+        placeholder=f"Escolha as categorias de {rotulo} que você não usa",
+    )
+    # Uma tem de sobrar: sem nenhuma, o lançamento é gravado sem categoria.
+    todas_escolhidas = bool(alvos) and len(alvos) >= len(candidatas)
+    if st.button("➖ Retirar categoria", key="cfg_geral_retirar_btn",
+                 disabled=not alvos or todas_escolhidas):
+        ok, msg = cat_repo.retirar(alvos, tipo)
+        _depois_da_acao(ok, msg, f"cfg_geral_retirar_{tipo}")
+    if todas_escolhidas:
+        st.caption(f"Deixe ao menos uma categoria em {rotulo}: sem nenhuma, o "
+                   "lançamento seria gravado sem categoria.")
+    else:
+        st.caption("Retirar só tira a opção do seu lançamento. Os lançamentos "
+                   "antigos continuam com a categoria, os totais não mudam e "
+                   "ela pode voltar quando você quiser.")
+
+
+def _render_devolver(tipo: str, rotulo: str, retiradas: list[dict]) -> None:
+    if not retiradas:
+        return
+    nomes = {c["id"]: c["nome"] for c in retiradas}
+    alvos = st.multiselect(
+        f"Retiradas de {rotulo} ({len(retiradas)})", list(nomes),
+        key=f"cfg_geral_devolver_{tipo}",
+        format_func=lambda cid: nomes.get(cid, cid),
+        placeholder="Escolha as que devem voltar ao seletor",
+    )
+    if st.button("↩️ Devolver ao seletor", key="cfg_geral_devolver_btn",
+                 disabled=not alvos):
+        ok, msg = cat_repo.devolver(alvos)
+        _depois_da_acao(ok, msg, f"cfg_geral_devolver_{tipo}")
+
+
+def _depois_da_acao(ok: bool, msg: str, chave_widget: str) -> None:
+    """Erro fica na tela; acerto vira recado e redesenha o bloco.
+
+    A escolha do widget sai junto: depois de retirar, os ids escolhidos não
+    estão mais entre as opções, e o Streamlit recusaria o valor velho.
+    """
+    if not ok:
+        st.error(msg)
+        return
+    st.session_state[_RECADO_CAT] = msg
+    st.session_state.pop(chave_widget, None)
+    st.rerun()
+
+
+# -- limites de orçamento -----------------------------------------------------
+
+def _render_orcamento() -> None:
+    """Teto mensal de gasto por categoria de despesa.
+
+    Mora aqui desde 31/10/2026. A aba Orçamento saiu do Controle Financeiro em
+    30/09/2026, a pedido do usuário, e levou junto o único lugar onde se
+    gravava limite -- mas os limites continuaram valendo para ``core.alertas``
+    (R1) e para os painéis. O editor volta em Configurações, ao lado das
+    categorias, e o Controle Financeiro segue com as suas quatro abas.
+
+    Categoria retirada do seletor não é oferecida. Exceção: a retirada que
+    ainda tem limite em vigor aparece, marcada. Escondê-la deixaria um limite
+    que continua disparando alerta e que ninguém mais consegue zerar.
+    """
+    from core.controle import (
+        get_orcamentos_vigentes,
+        is_investment_category,
+        salvar_orcamentos,
+    )
+
+    with st.container(border=True, key="cfg_geral_orcamento"):
+        _cabecalho(
+            "04", "🎯 Limites de orçamento",
+            "O teto mensal de gasto por categoria de despesa que os alertas e os "
+            "painéis usam.",
+        )
+        recado = st.session_state.pop(_RECADO_ORC, None)
+        if recado:
+            st.success(recado)
+
+        hoje = date.today()
+        rotulo_mes = f"{hoje.month:02d}/{hoje.year}"
+        try:
+            categorias = cat_repo.listar("saida", com_retiradas=True)
+            vigentes = get_orcamentos_vigentes(hoje.year, hoje.month, estrito=True)
+        except Exception as exc:  # noqa: BLE001
+            falha_de_acao("Não foi possível ler os limites de orçamento.", exc)
+            return
+
+        # Aporte não é gasto: a categoria de investimento não leva teto.
+        oferecidas = [
+            c for c in categorias
+            if c["id"] and not is_investment_category(c["nome"])
+            and (not c["retirada"] or vigentes.get(c["id"], 0.0) > 0)
+        ]
+        if not oferecidas:
+            st.caption("Nenhuma categoria de despesa no seu seletor.")
+            return
+
+        st.caption(
+            f"O limite gravado vale de {rotulo_mes} em diante, até você gravar outro "
+            "valor num mês seguinte. Zerar encerra o limite daqui para a frente, sem "
+            "mexer nos meses anteriores. Categoria retirada do seletor não aparece aqui."
+        )
+        with st.form("cfg_geral_form_orcamento"):
+            cols = st.columns(3, gap="small")
+            valores: dict[str, float] = {}
+            for n, cat in enumerate(oferecidas):
+                cid = cat["id"]
+                with cols[n % 3]:
+                    valores[cid] = st.number_input(
+                        f"{cat['nome']} (retirada)" if cat["retirada"] else cat["nome"],
+                        min_value=0.0,
+                        step=50.0,
+                        value=float(vigentes.get(cid, 0.0)),
+                        help=("Retirada do seletor, mas com limite em vigor: zere "
+                              "para encerrá-lo." if cat["retirada"] else None),
+                        key=f"cfg_orc_{cid}",
+                    )
+            gravar = st.form_submit_button("Salvar limites", type="primary")
+        if not gravar:
+            return
+        mudou = {
+            cid: v for cid, v in valores.items()
+            if round(v, 2) != round(float(vigentes.get(cid, 0.0)), 2)
+        }
+        if not mudou:
+            st.info("Nenhum limite mudou.")
+            return
+        ok, msg = salvar_orcamentos(hoje.year, hoje.month, mudou)
+        if not ok:
+            st.error(msg or "Não foi possível gravar os limites.")
+            return
+        st.session_state[_RECADO_ORC] = (
+            f"{len(mudou)} limite(s) gravado(s) a partir de {rotulo_mes}.")
+        st.rerun()
 
 
 # -- trocar de usuário --------------------------------------------------------
@@ -136,7 +408,7 @@ def _render_trocar_usuario() -> None:
 
     with st.container(border=True, key="cfg_geral_usuario"):
         _cabecalho(
-            "03", "👤 Trocar de usuário",
+            "05", "👤 Trocar de usuário",
             "Encerra a sessão deste navegador e volta para a tela de entrada.",
         )
         nome = str(principal().get("name") or principal().get("email") or "")
@@ -159,14 +431,14 @@ def _render_trocar_usuario() -> None:
 def _render_memoria_llm() -> None:
     with st.container(border=True, key="cfg_geral_llm"):
         _cabecalho(
-            "04", "🧹 Limpar histórico da LLM",
+            "06", "🧹 Limpar histórico da LLM",
             "Escolha a seção cuja conversa deve ser apagada. Nada é apagado "
             "sem a escolha e o clique.",
         )
         try:
             contagens = chat_repository.contagens()
         except Exception as exc:  # noqa: BLE001
-            st.error(f"Não foi possível ler o histórico de conversas: {exc}")
+            falha_de_acao("Não foi possível ler o histórico de conversas.", exc)
             return
 
         total = sum(contagens.values())
@@ -199,7 +471,7 @@ def _render_memoria_llm() -> None:
             try:
                 apagadas = chat_repository.clear_prefixos(alvo)
             except Exception as exc:  # noqa: BLE001
-                st.error(f"Nada foi apagado: {exc}")
+                falha_de_acao("Nada foi apagado.", exc)
                 return
             # A sessão também, e não só o banco: a tela que estiver aberta com
             # o histórico em memória continuaria exibindo o que já morreu e o

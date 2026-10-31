@@ -829,7 +829,8 @@ def test_painel_de_recomendacoes_conta_e_nomeia_as_nao_calibradas():
     import inspect
     fonte = inspect.getsource(portfolio_global._painel_recomendacoes)
     assert "custo_calibrado" in fonte
-    assert "st.warning" in fonte
+    # O aviso nomeando as nao calibradas foi para o log de lacunas.
+    assert "tela.portfolio_global.custo_nao_calibrado" in fonte
 
 
 def _acao_de_teste(**kwargs):
@@ -858,7 +859,7 @@ def test_card_de_recomendacao_abre_o_conteudo_que_estava_atras_do_clique():
     assert "12.00%" in html and "8.00%" in html      # peso atual -> sugerido
     assert "R$ 31,40" in html
     assert "concentracao" in html and "-0.800" in html   # decomposicao do score
-    assert "concentration, risk" in html                 # analisadores
+    assert "concentration, risk" not in html             # analisadores: so no log
     assert "-2.50/100" in html                           # macro delta
     assert html.count("<div") == html.count("</div>")
 

@@ -29,16 +29,20 @@ def test_configuracoes_has_responsive_professional_layout():
     assert '.stTabs .stTabs [data-baseweb="tab-list"]' in source
     assert ".cfg-workflow-header" in source
     assert "@media (max-width: 760px)" in source
-    # "Grau de Confiança" foi para a primeira posição em 17/09/2026. A ordem
+    # "Grau de Confiança" vem logo depois de ⚙️ Geral (era a primeira desde
+    # 17/09/2026 até a Geral entrar à frente dela em 21/09). A ordem
     # da barra tem que bater com a ordem dos corpos: st.tabs devolve as abas
     # na ordem dos rótulos, e desencontrar as duas troca o conteúdo de lugar
     # sem levantar erro nenhum.
-    ordem_rotulos = [r for r in ("🎯 Grau de Confiança", "🔁 Atualização de dados",
+    # "Restrições" entrou em 05/10/2026, logo depois de Grau de Confiança: as
+    # duas sao diagnostico do que o app mostra.
+    ordem_rotulos = [r for r in ("🎯 Grau de Confiança", "🧭 Restrições",
+                                 "🔁 Atualização de dados",
                                  "🔄 Dados de mercado", "🗄️ Banco de dados",
                                  "🔒 Segurança")]
     posicoes = [source.index(f'"{r}"') for r in ordem_rotulos]
     assert posicoes == sorted(posicoes), "ordem dos rótulos das abas mudou"
-    assert source.index("tab_conf, tab_atualizacao") < posicoes[0]
+    assert source.index("tab_conf, tab_restr, tab_atualizacao") < posicoes[0]
 
     # Abas de topo. "Controle" e "Investimentos" deixaram de ser abas irmãs
     # aqui em 06/09/2026: viraram sub-abas de "Atualização de dados", porque
@@ -46,7 +50,7 @@ def test_configuracoes_has_responsive_professional_layout():
     # com abas de diagnóstico.
     for rotulo in ('"🔁 Atualização de dados"', '"🔄 Dados de mercado"',
                    '"🗄️ Banco de dados"', '"🎯 Grau de Confiança"',
-                   '"🔒 Segurança"'):
+                   '"🔒 Segurança"', '"🧭 Restrições"'):
         assert rotulo in source, f"aba de topo sumiu: {rotulo}"
 
     # As duas continuam existindo por dentro -- agrupar não podia virar perder.

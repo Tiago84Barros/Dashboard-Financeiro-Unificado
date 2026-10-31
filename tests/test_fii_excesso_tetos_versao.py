@@ -168,6 +168,14 @@ def test_aviso_da_tela_nomeia_cobertura_minimo_e_teto():
     assert fiis._aviso_de_tetos_inativos([]) == ""
 
 
+def test_frase_da_tela_nomeia_so_as_dimensoes():
+    """O detalhe (cobertura, mínimo) vai para Restrições; a tela fica com o risco."""
+    frase = fiis._aviso_de_concentracao_livre(tetos_inativos(_resultado(_COBERTURA_04_10)))
+    assert "inquilino" in frase and "devedor" in frase
+    assert "cobertura" not in frase and "%" not in frase
+    assert fiis._aviso_de_concentracao_livre([]) == ""
+
+
 def test_teto_manager_e_do_administrador_nao_da_gestora():
     """As duas fontes da exposição (CVM `CNPJ_Administrador`, brapi
     `administratorCnpj`) só trazem o administrador."""
@@ -193,7 +201,10 @@ def test_tela_nao_tem_versao_fixa_da_metodologia():
         if not linha.lstrip().startswith("#")
     )
     assert not re.search(r"""["'][^"'\n]*\bv6\.\d""", fonte)
-    assert 'f"Seleção Integrada de FIIs · v{METHODOLOGY_VERSION}"' in fonte
+    # Desde 05/10/2026 a versão sai da tela e vai para o registro do
+    # administrador; continua vindo da mesma constante, nunca de literal.
+    assert 'f"Seleção Integrada de FIIs · v{METHODOLOGY_VERSION}"' not in fonte
+    assert 'detalhe_tecnico(f"Metodologia de FIIs {METHODOLOGY_VERSION}."' in fonte
 
 
 def test_versoes_do_modelo_e_do_manifesto_seguem_a_metodologia():
