@@ -383,7 +383,7 @@
             {
               "nome": "Taxa de Poupança, Despesa Média / Dia, Maior Categoria e Saldo Acumulado",
               "resumo": "Quatro indicadores do mês escolhido",
-              "explicacao": "Quanto da renda foi poupado (meta de referência 30%), a despesa do mês dividida por 30 dias, a categoria em que mais se gastou (com a porcentagem do limite, se houver um limite cadastrado) e o saldo de receitas menos despesas.",
+              "explicacao": "Quanto da renda foi poupado (meta de referência 30%), a despesa do mês dividida por 30 dias, a categoria em que mais se gastou (com a porcentagem do limite, se houver um limite cadastrado em Configurações → Geral → Limites de orçamento) e o saldo de receitas menos despesas.",
               "so_admin": false
             },
             {
@@ -2840,8 +2840,8 @@
       "filhos": [
         {
           "nome": "Geral",
-          "resumo": "Tema, categorias, sair e apagar conversas",
-          "explicacao": "Preferências da sua conta, em quatro blocos numerados. No topo, um lembrete avisa que a Estratégia e o Cenário de Investimentos agora se ajustam em Investimentos → Inteligência dos Ativos.",
+          "resumo": "Tema, categorias, orçamento, sair e apagar conversas",
+          "explicacao": "Preferências da sua conta, em cinco blocos numerados. No topo, um lembrete avisa que a Estratégia e o Cenário de Investimentos agora se ajustam em Investimentos → Inteligência dos Ativos.",
           "so_admin": false,
           "filhos": [
             {
@@ -2853,7 +2853,13 @@
             {
               "nome": "Categorias do Controle Financeiro",
               "resumo": "Criar, retirar e devolver categorias de lançamento",
-              "explicacao": "Escolha o tipo (Entrada, Saída ou Investimento) e veja quais categorias estão no seu seletor de lançamento. Crie uma nova com o botão 'Criar categoria'. Para tirar do seletor as que você não usa, escolha uma ou mais em 'Retirar do seletor' e clique em 'Retirar categoria': vale para as categorias padrão do app e para as que você criou, e só muda o seu seletor, não o de outras contas. Os lançamentos antigos continuam com a categoria e os totais não mudam. As retiradas aparecem logo abaixo e voltam com 'Devolver ao seletor'. O app não deixa retirar a última categoria de um tipo.",
+              "explicacao": "Escolha o tipo (Entrada, Saída ou Investimento) e veja quais categorias estão no seu seletor de lançamento. Crie uma nova com o botão 'Criar categoria'. Para tirar do seletor as que você não usa, escolha uma ou mais em 'Retirar do seletor' e clique em 'Retirar categoria': vale para as categorias padrão do app e para as que você criou, e só muda o seu seletor, não o de outras contas. Os lançamentos antigos continuam com a categoria e os totais não mudam. A categoria retirada também sai dos Limites de orçamento. As retiradas aparecem logo abaixo e voltam com 'Devolver ao seletor'. O app não deixa retirar a última categoria de um tipo.",
+              "so_admin": false
+            },
+            {
+              "nome": "Limites de orçamento",
+              "resumo": "Teto mensal de gasto por categoria",
+              "explicacao": "Um campo por categoria de despesa com o limite de gasto do mês, que os alertas e os painéis usam. Mude os valores e clique em 'Salvar limites': o limite vale do mês atual em diante, e zerar encerra o limite sem mexer nos meses anteriores. Categorias retiradas do seletor não aparecem, a não ser a que ainda tem limite gravado: ela vem marcada '(retirada)' para você poder zerá-la. Categorias de investimento não têm limite, porque aporte não é gasto.",
               "so_admin": false
             },
             {
