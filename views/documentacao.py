@@ -1758,7 +1758,8 @@ FLOW_CONFIGURACOES = FlowSpec(
     ),
     tela="Configurações",
     rows=(
-        ("Preferências", ("cfg_tema", "cfg_categorias", "cfg_trocar_usuario", "cfg_memoria_llm")),
+        ("Preferências", ("cfg_tema", "cfg_categorias", "cfg_orcamento", "cfg_trocar_usuario",
+                          "cfg_memoria_llm")),
         ("Diagnóstico", ("cfg_confianca", "cfg_restricoes", "cfg_mercado", "cfg_banco")),
         ("Entrada de arquivo", ("cfg_fatura", "cfg_extrato", "cfg_carteira")),
         ("Segurança", ("cfg_conta", "cfg_sessao", "cfg_usuarios")),
@@ -1796,6 +1797,7 @@ FLOW_CONFIGURACOES = FlowSpec(
                 "Retirar do seletor (várias de uma vez) e botão ➖ Retirar categoria; "
                 "a última categoria do tipo não sai",
                 "Retiradas do tipo e botão ↩️ Devolver ao seletor",
+                "A retirada sai também dos 🎯 Limites de orçamento (bloco 03)",
                 "core.categorias (listar, criar, retirar, devolver)",
                 "Retiradas gravadas na conta: user_settings.extra_settings → "
                 "cf_categorias_retiradas (lista de ids), sem migration",
@@ -1807,12 +1809,29 @@ FLOW_CONFIGURACOES = FlowSpec(
             "por isso o que se retira é a preferência de quem pediu, não a linha do banco. "
             "Apagar levaria a classificação junto, sem volta.",
         ),
+        "cfg_orcamento": _node(
+            "cfg_orcamento", "Limites de orçamento", "Preferências",
+            "Define o teto mensal de gasto de cada categoria de despesa, que os alertas e "
+            "os painéis usam. Categoria retirada do seletor de lançamento não aparece.",
+            (
+                "Aba ⚙️ Geral, bloco 03 (🎯 Limites de orçamento)",
+                "Um campo por categoria de despesa e botão Salvar limites",
+                "O limite vale do mês atual em diante; zerar encerra sem mexer no passado",
+                "Retirada com limite em vigor aparece marcada (retirada), para poder zerar",
+                "Categoria de investimento fica de fora: aporte não é gasto",
+                "core.controle (get_orcamentos_vigentes, salvar_orcamentos) → tabela budgets",
+            ),
+            "A aba Orçamento saiu do Controle Financeiro em 30/09/2026 e os limites seguiram "
+            "valendo para os alertas, sem lugar para editá-los. O editor mora aqui desde "
+            "31/10/2026. A retirada com limite continua visível porque escondê-la deixaria um "
+            "alerta que ninguém mais consegue desligar.",
+        ),
         "cfg_trocar_usuario": _node(
             "cfg_trocar_usuario", "Trocar de usuário", "Preferências",
             "Encerra a sessão deste navegador e devolve a tela de entrada. Exige marcar "
             "uma confirmação explícita antes do botão Sair / trocar usuário ficar disponível.",
             (
-                "Aba ⚙️ Geral, bloco 03 (👤 Trocar de usuário)",
+                "Aba ⚙️ Geral, bloco 04 (👤 Trocar de usuário)",
                 "Confirmação obrigatória: Entendi que a sessão atual será encerrada",
                 "Limpa a sessão inteira do navegador",
             ),
@@ -1825,7 +1844,7 @@ FLOW_CONFIGURACOES = FlowSpec(
             "Apaga o histórico de conversa com o assistente — de uma seção específica "
             "ou de todas. A contagem aparece antes do clique.",
             (
-                "Aba ⚙️ Geral, bloco 04 (🧹 Limpar histórico da LLM)",
+                "Aba ⚙️ Geral, bloco 05 (🧹 Limpar histórico da LLM)",
                 "Contagem de conversas exibida antes de apagar",
                 "Limpa o banco e também a sessão aberta",
             ),
