@@ -341,26 +341,8 @@ def test_serie_declara_fonte_moeda_e_versao_do_mapa():
     assert estado["horizonte_meses"] == 12
 
 
-def test_simulacao_da_ui_entrega_o_benchmark_escolhido_ao_motor():
-    """O controle da simulação não pode virar apenas um rótulo na tela.
-
-    A view é carregada com muitas dependências de dados; esta asserção de
-    contrato verifica o trecho estreito que transforma a escolha da UI no
-    argumento do facade, sem banco, rede ou runtime Streamlit.
-    """
-    view = (Path(__file__).resolve().parents[1] / "views"
-            / "empresas_americanas.py").read_text(encoding="utf-8")
-    body = view.split("def _render_us_lab_backtest() -> None:", 1)[1].split(
-        "\n\n_US_COMPARE_METRICS", 1)[0]
-    assert 'benchmark = st.selectbox("Benchmark de mercado", us.benchmark_options(),' in body
-    call = re.search(r"us\.backtest\((.*?)\)", body, re.S)
-    assert call and "benchmark=benchmark" in re.sub(r"\s+", "", call.group(1))
-    assert "excess_ann_vs_benchmark" in body
-    assert "benchmark_equity_curve" in body
-
-
 def test_backtest_historico_original_entrega_o_benchmark_escolhido_ao_motor():
-    """A rota de validação histórica também deve encaminhar a escolha, não só o laboratório."""
+    """A rota de validação histórica deve encaminhar a escolha ao motor, não só exibi-la."""
     view = (Path(__file__).resolve().parents[1] / "views"
             / "empresas_americanas.py").read_text(encoding="utf-8")
     body = view.split("def _tab_backtests(status: dict) -> None:", 1)[1].split(

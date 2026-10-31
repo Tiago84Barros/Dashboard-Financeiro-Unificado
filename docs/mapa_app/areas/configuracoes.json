@@ -1,0 +1,507 @@
+{
+  "nome": "Configurações",
+  "resumo": "Ajustes, envio de arquivos e saúde do app",
+  "explicacao": "A tela se chama Central de Configurações e tem nove abas. Nela você ajusta sua conta, envia os arquivos do cartão, do banco e das corretoras, acompanha se os dados de mercado estão em dia, cuida da segurança, abre este mapa e consulta o guia do app. Desde 12/10/2026 todas as abas aparecem para todas as pessoas; só dois blocos da aba Segurança são exclusivos do administrador.",
+  "so_admin": false,
+  "fonte": "views/configuracoes.py:40",
+  "filhos": [
+    {
+      "nome": "Geral",
+      "resumo": "Tema, categorias, sair e apagar conversas",
+      "explicacao": "Preferências da sua conta, em quatro blocos numerados. No topo, um lembrete avisa que a Estratégia e o Cenário de Investimentos agora se ajustam em Investimentos → Inteligência dos Ativos.",
+      "so_admin": false,
+      "fonte": "views/configuracoes.py:75 → views/configuracoes_geral.py:42",
+      "filhos": [
+        {
+          "nome": "Tema do aplicativo",
+          "resumo": "Escolher visual claro ou escuro",
+          "explicacao": "Uma lista 'Tema da minha conta' com as opções Dark (escuro) e Light (claro). O tema muda só quando você escolhe aqui: o app nunca troca sozinho. A escolha fica guardada na sua conta e muda o visual na hora, em todas as telas. Sem escolha, o app usa o escuro padrão e a lista aparece vazia.",
+          "so_admin": false,
+          "fonte": "views/configuracoes_geral.py:53",
+          "filhos": []
+        },
+        {
+          "nome": "Categorias do Controle Financeiro",
+          "resumo": "Criar, retirar e devolver categorias de lançamento",
+          "explicacao": "Escolha o tipo (Entrada, Saída ou Investimento) e veja quais categorias estão no seu seletor de lançamento. Crie uma nova com o botão 'Criar categoria'. Para tirar do seletor as que você não usa, escolha uma ou mais em 'Retirar do seletor' e clique em 'Retirar categoria': vale para as categorias padrão do app e para as que você criou, e só muda o seu seletor, não o de outras contas. Os lançamentos antigos continuam com a categoria e os totais não mudam. As retiradas aparecem logo abaixo e voltam com 'Devolver ao seletor'. O app não deixa retirar a última categoria de um tipo.",
+          "so_admin": false,
+          "fonte": "views/configuracoes_geral.py:73",
+          "filhos": []
+        },
+        {
+          "nome": "Trocar de usuário",
+          "resumo": "Sair da conta, com confirmação",
+          "explicacao": "Mostra 'Conectado como' e o seu nome. Para sair, marque 'Entendi que a sessão atual será encerrada' e clique em 'Sair / trocar usuário'. A confirmação existe porque sair descarta tudo o que estava aberto e ainda não salvo em outras telas.",
+          "so_admin": false,
+          "fonte": "views/configuracoes_geral.py:189",
+          "filhos": []
+        },
+        {
+          "nome": "Limpar histórico da LLM",
+          "resumo": "Apagar conversas com o assistente de IA",
+          "explicacao": "Escolha a seção do app (ou todas) e veja quantas conversas com o assistente de IA serão apagadas antes de clicar. O botão 'Apagar histórico' apaga de vez, sem como desfazer.",
+          "so_admin": false,
+          "fonte": "views/configuracoes_geral.py:214",
+          "filhos": []
+        }
+      ]
+    },
+    {
+      "nome": "Grau de Confiança",
+      "resumo": "Quanto dá para confiar em cada tela",
+      "explicacao": "Dá uma nota de 0 a 100% para a qualidade dos dados por trás de cada parte do app, e uma nota geral. É apoio para estudar, não recomendação de compra ou venda. A medição é demorada, por isso só acontece quando você clica.",
+      "so_admin": false,
+      "fonte": "views/configuracoes.py:86 → views/confianca.py:630",
+      "filhos": [
+        {
+          "nome": "Medir agora / Recalcular",
+          "resumo": "Botão que refaz a medição",
+          "explicacao": "Se ainda não existe medição, aparece 'Medir agora'; depois, 'Recalcular'. Leva alguns minutos. Ao lado aparecem a data da última medição, a idade dela, a validade em dias e quantas seções foram medidas; se a medição estiver velha, surge um aviso para refazer antes de decidir.",
+          "so_admin": false,
+          "fonte": "views/confianca.py:641",
+          "filhos": []
+        },
+        {
+          "nome": "Confiança geral do aplicativo",
+          "resumo": "A nota única do app inteiro",
+          "explicacao": "Número em destaque com a faixa (Alta, Média ou Baixa) e quantas seções caem em cada faixa. É uma média das seções; o que não pôde ser medido fica fora da conta e aparece com o nome, nunca como zero.",
+          "so_admin": false,
+          "fonte": "views/confianca.py:568",
+          "filhos": []
+        },
+        {
+          "nome": "Confiança por seção",
+          "resumo": "Um cartão para cada tela do menu",
+          "explicacao": "Sete cartões: Dashboard Geral, Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global. Cada cartão abre os itens que formam a nota e a prova por trás de cada um. Em Empresas B3 e Seleção de FIIs, o item 'Pregão diário (chat)' mede a idade dos pregões que o chat do ativo cita.",
+          "so_admin": false,
+          "fonte": "views/confianca.py:675; core/confianca_secao.py:754",
+          "filhos": []
+        },
+        {
+          "nome": "Rigor dos três motores",
+          "resumo": "Por que notas de FII, B3 e EUA diferem",
+          "explicacao": "Tabela que faz as mesmas perguntas às análises de FIIs, Empresas B3 e Empresas Americanas, marcando ✓ vencida, ✗ reprovada ou — não apurada. Serve para lembrar que uma nota 80 numa análise não vale o mesmo que 80 na outra.",
+          "so_admin": false,
+          "fonte": "views/confianca.py:472",
+          "filhos": []
+        },
+        {
+          "nome": "Como ler",
+          "resumo": "O que significam Alta, Média e Baixa",
+          "explicacao": "Alta: a seção sustenta decisão dentro dos limites que ela mesma declara. Média: serve para estudar, mas confira o ponto mais fraco antes de agir. Baixa: trate apenas como exploração.",
+          "so_admin": false,
+          "fonte": "views/confianca.py:603",
+          "filhos": []
+        }
+      ]
+    },
+    {
+      "nome": "Restrições",
+      "resumo": "Lista do que o app não sabe ou errou",
+      "explicacao": "Painel de trabalho com falta de dados, erros e detalhes técnicos que foram tirados das telas de uso. Você filtra a lista, lê cada item e registra o que fazer com ele. A mesma para todas as contas desde 12/10/2026.",
+      "so_admin": false,
+      "fonte": "views/configuracoes.py:95 → views/configuracoes_restricoes.py:269",
+      "filhos": [
+        {
+          "nome": "Recarregar",
+          "resumo": "De onde veio a lista e botão de reler",
+          "explicacao": "No topo, etiquetas mostram de onde a lista foi lida (o computador do dono e a versão online do app) e quando. O botão '↻ Recarregar' lê tudo de novo na hora, sem esperar o intervalo de 5 minutos.",
+          "so_admin": false,
+          "fonte": "views/configuracoes_restricoes.py:332",
+          "filhos": []
+        },
+        {
+          "nome": "Restrições pendentes · Erros pendentes · Detalhes técnicos · Reincidentes",
+          "resumo": "Quatro cartões com as contagens",
+          "explicacao": "Quantos problemas de falta de dado estão em aberto, quantos erros de tela, quantos detalhes informativos e quantos itens voltaram depois de marcados como resolvidos.",
+          "so_admin": false,
+          "fonte": "views/configuracoes_restricoes.py:340",
+          "filhos": []
+        },
+        {
+          "nome": "Fila de itens",
+          "resumo": "Filtrar e ler a lista de problemas",
+          "explicacao": "Filtros por Natureza, Situação e Tela, mais uma busca por texto. A tabela mostra onde aconteceu, a mensagem, o ativo envolvido, quantas vezes apareceu nos últimos 14 dias e a última vez.",
+          "so_admin": false,
+          "fonte": "views/configuracoes_restricoes.py:366",
+          "filhos": []
+        },
+        {
+          "nome": "Decisão",
+          "resumo": "Marcar o que fazer com cada item",
+          "explicacao": "Escolha um item e veja a ficha dele. Marque Pendente, Em análise, Aceita ou Resolvida, escreva uma observação se quiser e clique em 'Registrar decisão'. A rotina de correção lê essa marcação: 'Aceita' tira o item da fila dela, e 'Resolvida' volta a abrir sozinha se o problema reaparecer.",
+          "so_admin": false,
+          "fonte": "views/configuracoes_restricoes.py:502",
+          "filhos": []
+        }
+      ]
+    },
+    {
+      "nome": "Atualização de dados",
+      "resumo": "Enviar seus arquivos de cartão, banco e corretoras",
+      "explicacao": "É onde você sobe os arquivos baixados do cartão, do banco e das corretoras. Sempre há uma prévia para conferir antes de gravar. Tem duas sub-abas: Controle Financeiro e Investimentos.",
+      "so_admin": false,
+      "fonte": "views/configuracoes.py:106 → views/configuracoes.py:207",
+      "filhos": [
+        {
+          "nome": "Controle Financeiro",
+          "resumo": "Fatura do cartão e extrato do banco",
+          "explicacao": "Dois blocos: fatura do cartão (arquivo CSV) e extrato bancário (arquivo PDF). Os dois alimentam a tela Controle Financeiro e ficam separados de propósito, para não somar o gasto do mês com a fatura que ainda vai vencer.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:310",
+          "filhos": [
+            {
+              "nome": "Fatura do cartão",
+              "resumo": "Importar a fatura em CSV com prévia",
+              "explicacao": "Envie o arquivo, escolha a data de vencimento e o cartão, confira os lançamentos e clique em 'Importar fatura'. Há também 'Corrigir pagamentos' (acerta pagamentos de fatura que entraram como estorno) e 'Limpar fatura' (apaga os lançamentos daquela fatura para reimportar, com confirmação).",
+              "so_admin": false,
+              "fonte": "views/credit_card_invoice_upload.py:137",
+              "filhos": []
+            },
+            {
+              "nome": "Extrato bancário",
+              "resumo": "Importar o extrato em PDF com revisão",
+              "explicacao": "Escolha o banco (hoje só C6 Bank), envie o PDF e revise numa grade a descrição, se é entrada ou saída, a categoria e o valor de cada movimento. Depois clique em 'Importar extrato'.",
+              "so_admin": false,
+              "fonte": "views/bank_statement_upload.py:343",
+              "filhos": []
+            }
+          ]
+        },
+        {
+          "nome": "Investimentos",
+          "resumo": "Arquivos da B3, do Tesouro e da Nomad",
+          "explicacao": "Bloco 'Arquivos da carteira'. Um aviso lembra que o app usa só arquivos exportados e nunca pede senha da B3, XP, Nomad ou banco. Depois de cada importação a carteira é recalculada sozinha.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:337",
+          "filhos": [
+            {
+              "nome": "Dados Históricos B3 (.xlsx)",
+              "resumo": "Planilhas da área do investidor da B3",
+              "explicacao": "Aceita vários arquivos de uma vez: Negociação, Movimentação, Relatório Consolidado (o da XP), Posição Detalhada ou Posição. O app descobre sozinho o tipo de cada arquivo. Depois do botão 'Importar', mostra o que entrou, o que já existia e o que foi recusado.",
+              "so_admin": false,
+              "fonte": "views/configuracoes.py:1654",
+              "filhos": []
+            },
+            {
+              "nome": "Dados Históricos Tesouro Direto (.xlsx)",
+              "resumo": "Extratos do Tesouro Direto",
+              "explicacao": "Aceita o Extrato Consolidado (quanto você tem) e o Extrato Analítico (taxa e data de cada compra, necessários para calcular quanto o título vale hoje). Pode misturar os dois tipos no mesmo envio.",
+              "so_admin": false,
+              "fonte": "views/configuracoes.py:1677",
+              "filhos": []
+            },
+            {
+              "nome": "Dados Históricos Internacionais (.pdf)",
+              "resumo": "Notas de compra e venda da Nomad",
+              "explicacao": "Envie as notas de negociação em PDF exportadas pela Nomad, várias de uma vez, e receba um resumo único. Alimenta a parte internacional da sua carteira.",
+              "so_admin": false,
+              "fonte": "views/configuracoes.py:1391",
+              "filhos": []
+            },
+            {
+              "nome": "Recalcular carteira agora",
+              "resumo": "Refazer as posições da carteira",
+              "explicacao": "O botão 'Recalcular' refaz as posições a partir de todas as suas operações, pelo preço médio. Isso já acontece sozinho após cada importação; use quando você lançou algo por outro caminho.",
+              "so_admin": false,
+              "fonte": "views/configuracoes.py:1435",
+              "filhos": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nome": "Dados de mercado",
+      "resumo": "Ver e mandar atualizar cotações e indicadores",
+      "explicacao": "Mostra se as fontes automáticas (cotações, dólar, indicadores do Banco Central, preços do Tesouro) estão em dia e permite mandar atualizar na hora. Transações, operações e proventos não entram aqui: eles vêm dos seus arquivos.",
+      "so_admin": false,
+      "fonte": "views/configuracoes.py:109 → views/configuracoes.py:584",
+      "filhos": [
+        {
+          "nome": "Inicializar pipeline",
+          "resumo": "Preparação feita uma única vez",
+          "explicacao": "Só aparece se a estrutura que controla as atualizações ainda não existe, e então é a única coisa da aba: os cartões e a tabela abaixo só surgem depois. Um clique a cria; depois disso o botão não aparece mais.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:607",
+          "filhos": []
+        },
+        {
+          "nome": "Fontes OK · Precisam atualizar · Última atualização (BRT)",
+          "resumo": "Três cartões de resumo",
+          "explicacao": "Quantas fontes estão em dia, quantas pedem atenção e quando foi a última atualização, no horário de Brasília.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:633",
+          "filhos": []
+        },
+        {
+          "nome": "Atualizar tudo",
+          "resumo": "Botões para atualizar agora",
+          "explicacao": "'Atualizar tudo' roda só o que já venceu pela frequência de cada fonte. 'Forçar atualização' ignora a frequência e roda tudo. No fim aparece quantas deram certo, falharam ou foram puladas. Um quadro recolhível explica o que é atualizado e com que frequência.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:663",
+          "filhos": []
+        },
+        {
+          "nome": "Tabela de fontes",
+          "resumo": "Situação de cada fonte de dados",
+          "explicacao": "Uma linha por fonte, com as colunas O que atualiza, Frequência, Status, Última OK, Registros e Erro. Os ícones mostram se a fonte está atualizada, em atenção, desatualizada ou com erro.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:685",
+          "filhos": []
+        },
+        {
+          "nome": "Executar fonte individualmente",
+          "resumo": "Atualizar uma fonte só",
+          "explicacao": "Um botão para cada fonte automática, que roda aquela fonte na hora, mesmo fora da frequência normal.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:731",
+          "filhos": []
+        },
+        {
+          "nome": "Log de execuções recentes",
+          "resumo": "Histórico das últimas 20 rodadas",
+          "explicacao": "Tabela com início, nome da tarefa, resultado, quantos registros entraram, falhas, tempo gasto e mensagem de erro.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:740",
+          "filhos": []
+        }
+      ]
+    },
+    {
+      "nome": "Banco de dados",
+      "resumo": "Saúde e espaço da base de dados do app",
+      "explicacao": "Diagnóstico da base de dados da versão online do app, onde ficam seus lançamentos e sua carteira. Não mostra senhas nem endereços. Um comentário no código ainda diz que só o administrador vê esta aba, mas hoje ela aparece para todos.",
+      "so_admin": false,
+      "fonte": "views/configuracoes.py:118 → views/configuracoes.py:809",
+      "filhos": [
+        {
+          "nome": "Conexão e contexto",
+          "resumo": "Conectado? Dados reais ou de exemplo?",
+          "explicacao": "Três sinais: se a base de dados está conectada, se os dados são reais ou de demonstração e se o dono do app está configurado. Avisos sobre a configuração do ambiente ficam num quadro recolhível.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:813",
+          "filhos": []
+        },
+        {
+          "nome": "Capacidade do banco",
+          "resumo": "Quanto espaço já foi usado",
+          "explicacao": "Cartões com uso atual, limite acompanhado (500 MB no plano gratuito) e espaço livre, uma barra de progresso e a lista das maiores tabelas.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:855",
+          "filhos": []
+        },
+        {
+          "nome": "Integridade do schema",
+          "resumo": "Conferir se a estrutura está completa",
+          "explicacao": "Compara as tabelas que o app espera com as que existem. Se faltar alguma, aparece o botão 'Criar N tabela(s)'; se estiver tudo certo, aparece 'Schema completo ✓'.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:865",
+          "filhos": []
+        },
+        {
+          "nome": "Rotas de importação",
+          "resumo": "Importar planilhas ou dados de outra base",
+          "explicacao": "Duas portas para trazer dados antigos, sempre com simulação antes de gravar. As importações da B3, XP e Nomad não ficam aqui, e sim em Atualização de dados.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:893",
+          "filhos": [
+            {
+              "nome": "Importar dados de arquivo (CSV / Excel)",
+              "resumo": "Subir planilha de transações, operações ou proventos",
+              "explicacao": "Escolha o tipo de dado, envie a planilha e rode primeiro a 'Simulação' para ver o que entraria. Desligando a simulação, o botão vira 'GRAVAR NO BANCO'. Sem arquivo, a tela mostra o modelo de colunas para baixar.",
+              "so_admin": false,
+              "fonte": "views/configuracoes.py:1010",
+              "filhos": []
+            },
+            {
+              "nome": "Importar de banco de origem (PostgreSQL / SQLite)",
+              "resumo": "Trazer histórico de uma base antiga",
+              "explicacao": "Escolha a fonte, use 'Testar conexão' e 'Listar tabelas' e indique qual coluna vai para onde. Também roda em simulação antes de gravar de verdade.",
+              "so_admin": false,
+              "fonte": "views/configuracoes.py:1133",
+              "filhos": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "nome": "Segurança",
+      "resumo": "Senha, sessão e quem tem acesso",
+      "explicacao": "Cuida do acesso ao app: trocar a sua senha, encerrar a sessão e gerar a senha protegida do app. O cadastro de pessoas e a lista de usuários só funcionam para o administrador; os demais veem um aviso no lugar.",
+      "so_admin": false,
+      "fonte": "views/configuracoes.py:127 → views/configuracoes.py:2054",
+      "filhos": [
+        {
+          "nome": "Minha conta",
+          "resumo": "Trocar a própria senha",
+          "explicacao": "Mostra o seu e-mail. Preencha a senha atual, a nova senha (8 caracteres) e a confirmação, e clique em 'Alterar minha senha'. Depois da troca o app encerra a sessão para você entrar de novo.",
+          "so_admin": false,
+          "fonte": "design/user_accounts.py:9",
+          "filhos": []
+        },
+        {
+          "nome": "Cadastrar usuário",
+          "resumo": "Criar conta para outra pessoa",
+          "explicacao": "Formulário com nome, e-mail, senha inicial e confirmação, e o botão 'Cadastrar usuário'. Cada pessoa cadastrada tem seus próprios dados e conversas. Quem não é administrador vê só um aviso dizendo que essa ação é de quem administra o app.",
+          "so_admin": true,
+          "fonte": "design/user_accounts.py:46",
+          "filhos": []
+        },
+        {
+          "nome": "Proteção e sessão",
+          "resumo": "Senha do app ligada? Sessão ativa?",
+          "explicacao": "Mostra se o app está protegido por senha e se a sessão deste navegador está ativa. O botão 'Encerrar sessão' faz sair.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:2058",
+          "filhos": []
+        },
+        {
+          "nome": "Credencial do aplicativo",
+          "resumo": "Gerar a senha protegida do app",
+          "explicacao": "Em 'Gerar hash de senha (APP_PASSWORD)', você digita uma senha e o app mostra a versão embaralhada dela, que é a que deve ser guardada na configuração do app. Assim a senha nunca fica gravada como texto legível.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:2078",
+          "filhos": []
+        },
+        {
+          "nome": "Usuários cadastrados",
+          "resumo": "Lista de quem tem acesso",
+          "explicacao": "Tabela com nome, e-mail, data de cadastro, situação (ativo ou inativo) e perfil. Só o administrador vê a lista; os demais veem um aviso explicando que ela é restrita.",
+          "so_admin": true,
+          "fonte": "views/configuracoes.py:2103; design/user_accounts.py:76",
+          "filhos": []
+        }
+      ]
+    },
+    {
+      "nome": "Mapa do App",
+      "resumo": "Este mapa, com todas as telas do app",
+      "explicacao": "É este mapa que você está lendo. Ele mostra, em forma de fluxograma, as telas do menu, o que existe dentro de cada uma e, por último, o que funciona por trás delas. Toque numa caixa para abrir o que tem dentro, ou use a busca para achar uma parte pelo nome. Aparece para todas as pessoas e acompanha o tema claro ou escuro escolhido na aba Geral. O mapa só descreve o app: ele não abre telas nem muda nada.",
+      "so_admin": false,
+      "fonte": "views/configuracoes.py:136 → design/mapa_app.py:47"
+    },
+    {
+      "nome": "Documentação",
+      "resumo": "Guia ilustrado de como o app funciona",
+      "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 14 sub-abas, na ordem do menu lateral.",
+      "so_admin": false,
+      "fonte": "views/configuracoes.py:195 → views/documentacao.py:3016",
+      "filhos": [
+        {
+          "nome": "Dashboard Geral",
+          "resumo": "Fatos do período primeiro, referências depois",
+          "explicacao": "Fluxograma da primeira tela do menu: como o caixa do Controle Financeiro e a carteira de Investimentos se juntam num painel só, com as carteiras recomendadas no fim, marcadas como referência.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:1983",
+          "filhos": []
+        },
+        {
+          "nome": "Controle financeiro",
+          "resumo": "Como entram e se somam receitas e gastos",
+          "explicacao": "Fluxograma da tela Controle Financeiro: de onde vêm os lançamentos, o cartão e o extrato, e como o app chega aos totais.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:805",
+          "filhos": []
+        },
+        {
+          "nome": "Carteira atual",
+          "resumo": "Como a carteira de investimentos é analisada",
+          "explicacao": "Fluxograma das subabas Dashboard, Histórico e Análise de Investimentos, da importação dos arquivos até os números da tela.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:687",
+          "filhos": []
+        },
+        {
+          "nome": "Inteligência e IR",
+          "resumo": "As duas últimas subabas de Investimentos",
+          "explicacao": "Fluxograma da Inteligência dos Ativos, que lê a carteira pela sua estratégia, e do Imposto de Renda, que apura o imposto sobre renda variável.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:2236",
+          "filhos": []
+        },
+        {
+          "nome": "Empresas e Carteira 20 (B3)",
+          "resumo": "Consulta e Carteira 20",
+          "explicacao": "Fluxograma das três subabas de Empresas B3 que não têm fluxo próprio: Empresas por Setor, Análise de Empresa e Carteira 20.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:2109",
+          "filhos": []
+        },
+        {
+          "nome": "Criação de portfólio (B3)",
+          "resumo": "Como o app monta uma carteira",
+          "explicacao": "Fluxograma das etapas que o app segue para sugerir uma carteira de ações brasileiras.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:348",
+          "filhos": []
+        },
+        {
+          "nome": "Simulação (B3)",
+          "resumo": "Como a simulação de carteira funciona",
+          "explicacao": "Por dentro da subaba Criação de Portfólio: o modelo que simula a trajetória de uma carteira de ações, com aportes, preço ajustado e comparação com índices.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:479",
+          "filhos": []
+        },
+        {
+          "nome": "Avaliação de portfólio (B3)",
+          "resumo": "Como uma carteira pronta é avaliada",
+          "explicacao": "Fluxograma da subaba Avaliação de Portfólio: como a carteira salva vira relatório, redistribuição de pesos e conversa com o portfólio.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:582",
+          "filhos": []
+        },
+        {
+          "nome": "Empresas Americanas",
+          "resumo": "Do balanço oficial dos EUA ao ranking",
+          "explicacao": "Fluxograma de como as empresas americanas são analisadas, a partir dos balanços entregues ao órgão regulador dos EUA (SEC), até o ranking.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:1164",
+          "filhos": []
+        },
+        {
+          "nome": "Seleção de FIIs",
+          "resumo": "Dos dados publicados à carteira-modelo de FIIs",
+          "explicacao": "Fluxograma das cinco subabas de Seleção de FIIs: como os fundos imobiliários são pontuados e quando o que sai é Carteira-Modelo ou só Lista de Diligência.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:927",
+          "filhos": []
+        },
+        {
+          "nome": "Portfólio Global",
+          "resumo": "Tudo o que você tem, numa visão só",
+          "explicacao": "Fluxograma de como o app junta investimentos do Brasil e do exterior numa visão única, da consolidação à alocação.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:1384",
+          "filhos": []
+        },
+        {
+          "nome": "Qualidade dos dados",
+          "resumo": "De onde vem cada número e quanto vale",
+          "explicacao": "Fluxograma de como o app confere a origem e a confiabilidade dos números que mostra.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:1574",
+          "filhos": []
+        },
+        {
+          "nome": "Configurações",
+          "resumo": "As nove abas desta Central",
+          "explicacao": "Fluxograma desta própria Central de Configurações, aba por aba: preferências, envio de arquivos, diagnóstico, mapa, documentação e segurança.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:1731",
+          "filhos": []
+        },
+        {
+          "nome": "Indicadores",
+          "resumo": "Dicionário de indicadores e demonstrações",
+          "explicacao": "Glossário dos indicadores usados nas notas e análises, com filtro por grupo, e explicação das demonstrações financeiras.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:2899",
+          "filhos": []
+        }
+      ]
+    }
+  ]
+}

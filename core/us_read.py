@@ -1343,6 +1343,43 @@ def load_us_giro_diario(dias: int = 180) -> dict[str, dict]:
     return out
 
 
+def load_us_estilos() -> dict[str, dict]:
+    """{symbol: chaves de ``core.us_estilos.ESTILOS_COLS``}: momento 12-1 e P&D.
+
+    O momento sai do diário (``adjusted_close``, retorno total) dos últimos 400
+    dias; o P&D, do último exercício anual já disponível de cada símbolo. No
+    mesmo exercício, a linha com P&D preenchido vence a sem.
+    """
+    from core.us_estilos import estilos_da_empresa, momento_12_1
+
+    eng = _engine()
+    if eng is None or not schema_ready():
+        return {}
+    with eng.connect() as conn:
+        precos = pd.read_sql_query(text("""
+        SELECT symbol, date, adjusted_close
+        FROM market_us.prices_daily
+        WHERE date >= CURRENT_DATE - 400 AND adjusted_close > 0
+        """), conn)
+        pesquisa = pd.read_sql_query(text("""
+        SELECT DISTINCT ON (symbol) symbol, fiscal_year, rnd_expenses
+        FROM market_us.income_statements
+        WHERE period = 'annual'
+          AND (available_at IS NULL OR available_at <= CURRENT_DATE)
+        ORDER BY symbol, fiscal_year DESC, (rnd_expenses IS NULL), updated_at DESC
+        """), conn)
+    momento = momento_12_1(precos)
+    pd_por_symbol: dict[str, dict] = {}
+    for _, row in pesquisa.iterrows():
+        valor = pd.to_numeric(row.get("rnd_expenses"), errors="coerce")
+        if pd.isna(valor):
+            continue
+        pd_por_symbol[str(row["symbol"]).strip().upper()] = {
+            "pd_anual_usd": float(valor), "pd_exercicio": int(row["fiscal_year"])}
+    return {s: estilos_da_empresa(s, momento, pd_por_symbol)
+            for s in set(momento) | set(pd_por_symbol)}
+
+
 def load_us_resiliencia() -> dict[str, dict]:
     """Margem operacional nas recessões vs anos normais, por símbolo.
 

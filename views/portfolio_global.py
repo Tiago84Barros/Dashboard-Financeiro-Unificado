@@ -1766,7 +1766,7 @@ def _painel_aporte(alvos: dict, renda_fixa: float | None) -> None:
         ["Aportar (R$)", "Classe"], ascending=[False, True]
     )
     st.dataframe(
-        tabela, hide_index=True, use_container_width=True,
+        tabela, hide_index=True, width="stretch",
         column_config={
             "Peso atual": st.column_config.NumberColumn(format="%.2f%%"),
             "Alvo": st.column_config.NumberColumn(format="%.2f%%"),
@@ -1843,9 +1843,13 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
             st.rerun()
 
     _memory_key = conversation_key("portfolio_global", ",".join(sorted(df["symbol"].astype(str))))
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     historico = load_chat_history(_memory_key, session_key=_CHAVE_CHAT)
     for mensagem in visible_chat_history(historico, _CHAVE_CHAT):
-        with st.chat_message(mensagem["role"]):
+        with conversa.chat_message(mensagem["role"]):
             st.markdown(escapar_cifrao(mensagem["content"]))
 
     pergunta = st.chat_input(
@@ -1856,10 +1860,10 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
         return
 
     historico.append({"role": "user", "content": pergunta})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(pergunta))
 
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         aviso = ""
         with st.spinner("Consultando os dados do patrimônio consolidado…"):
             try:
@@ -1901,7 +1905,14 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
                 aviso = aviso_ancoragem(resposta, contexto, pergunta)
             except Exception as exc:  # noqa: BLE001 - fronteira de isolamento do provedor
                 from core.llm_falha import mensagem_falha_llm
-                resposta = mensagem_falha_llm(exc, "chat do Portfólio Global")
+                resposta = None
+                falha = mensagem_falha_llm(exc, "chat do Portfólio Global")
+        if resposta is None:
+            # A falha é aviso, não fala do assistente: gravada, voltava no
+            # contexto do turno seguinte como resposta dele (LLM-A11).
+            st.warning(falha)
+            historico.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(resposta))
         if aviso:
             detalhe_tecnico(str(aviso), codigo="portfolio_global.ancoragem_chat")

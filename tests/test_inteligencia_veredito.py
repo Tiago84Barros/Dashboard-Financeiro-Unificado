@@ -56,18 +56,25 @@ def test_mesma_avaliacao_que_a_inteligencia(an):  # noqa: F811
         assert obtido == esperado
 
 
-def test_limite_segue_os_passos_da_inteligencia():
-    d = r.Decisao(r.COMPRAR, "abaixo do alvo", "")
+def test_limite_do_ativo_e_teto_e_nomeia_a_manchete():
+    """Sem a carteira (modelos, chat por ativo), o limite vem só da
+    avaliação. É teto, não ordem: na carteira do usuário a decisão pesa
+    ainda peso, tese e par (29/10/2026)."""
     casos = [
-        (_av(alertas=[_CRITICO]), vd.TROCAR, r.VENDER),
-        (_av(qualidade=av.FRAGIL, preco=av.CARO), vd.TROCAR, r.VENDER),
-        (_av(qualidade=av.FRAGIL, mercado=av.NEGATIVO), vd.TROCAR, r.VENDER),
-        (_av(qualidade=av.FRAGIL), vd.NAO_APORTAR, r.MANTER),
-        (_av(qualidade=av.FORTE, preco=av.BARATO), vd.LIVRE, r.COMPRAR),
+        (_av(alertas=[_CRITICO]), vd.TROCAR),
+        (_av(qualidade=av.FRAGIL, preco=av.CARO), vd.TROCAR),
+        (_av(qualidade=av.FRAGIL, mercado=av.NEGATIVO), vd.TROCAR),
+        (_av(qualidade=av.FRAGIL), vd.NAO_APORTAR),
+        (_av(qualidade=av.FORTE, preco=av.BARATO), vd.LIVRE),
     ]
-    for aval, limite, codigo in casos:
+    for aval, limite in casos:
         assert vd.limite(aval)[0] == limite
-        assert r.com_avaliacao(d, aval).codigo == codigo
+    manchete = av.Alerta("recuperação judicial citada no noticiário", True,
+                         noticia=True)
+    cod, motivo = vd.limite(_av(alertas=[manchete]))
+    assert cod == vd.TROCAR and "a confirmar em documento oficial" in motivo
+    cod, motivo = vd.limite(_av(alertas=[manchete, _CRITICO]))
+    assert "documento oficial" not in motivo
 
 
 def test_alerta_eliminatorio_vira_limite_no_bloco():
@@ -258,10 +265,14 @@ def _dec(codigo, detalhe):
 
 
 def test_decisao_da_carteira_vira_veredito():
-    casos = [(_dec(r.VENDER, "avaliar troca por uma alternativa"), vd.TROCAR),
-             (_dec(r.VENDER, "vender parte: acima do alvo"), vd.REDUZIR),
+    casos = [(_dec(r.VENDER, "vender: alerta eliminatório"), vd.TROCAR),
+             (_dec(r.SUBSTITUIR, "substituir por X: alerta"), vd.TROCAR),
+             (_dec(r.REDUZIR_PARCIAL, "reduzir cerca de 20%"), vd.REDUZIR),
+             (_dec(r.REBALANCEAR, "rebalancear: acima"), vd.NAO_APORTAR),
+             (_dec(r.ACOMPANHAR, "investigar já"), vd.NAO_APORTAR),
              (_dec(r.MANTER, "no alvo"), vd.NAO_APORTAR),
              (_dec(r.COMPRAR, "abaixo do alvo"), vd.LIVRE)]
+    assert {d.codigo for d, _ in casos} == set(r.ROTULO_DECISAO)
     for d, esperado in casos:
         v = vd.veredito_de_decisao("DIRR3", d)
         assert v.limite == esperado and v.decisao == d.rotulo
@@ -270,7 +281,8 @@ def test_decisao_da_carteira_vira_veredito():
 
 
 def test_decisao_pronta_vence_o_avaliador_e_nao_conta_no_teto():
-    v = vd.veredito_de_decisao("DIRR3", _dec(r.VENDER, "vender parte: x"))
+    v = vd.veredito_de_decisao("DIRR3",
+                               _dec(r.REDUZIR_PARCIAL, "reduzir cerca de 1/3"))
     chamados = []
 
     def avaliador(tk, nome, setor):
@@ -314,7 +326,8 @@ def test_bloco_da_carteira_decisao_primeiro_e_citados(monkeypatch):
 
 
 def test_conferencia_com_ticker_americano_e_reduzir():
-    v = vd.veredito_de_decisao("AAPL", _dec(r.VENDER, "vender parte: acima"))
+    v = vd.veredito_de_decisao("AAPL",
+                               _dec(r.REDUZIR_PARCIAL, "reduzir cerca de 20%"))
     avs = {"AAPL": v, "MSFT": _av(qualidade=av.FORTE)}
     out = vd.conferir_resposta("AAPL: aumentar a posição. MSFT: comprar.", avs)
     assert [(x.ticker, x.limite) for x in out] == [("AAPL", vd.REDUZIR)]

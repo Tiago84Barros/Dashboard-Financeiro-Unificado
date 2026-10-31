@@ -232,7 +232,7 @@ def _alinhar(prov: pd.DataFrame, d: pd.DataFrame) -> pd.DataFrame:
 
 
 def calcular(pregoes: pd.DataFrame, proventos: pd.DataFrame, ids_por_ticker: dict[str, str],
-             depois_de: date) -> pd.DataFrame:
+             depois_de: date, *, componentes: bool = False) -> pd.DataFrame:
     """Retorno total diário com data em ``(depois_de, ...)``: colunas ``id``, ``data``,
     ``ret`` e ``suspeito``, no formato de ``core.carteira20_desempenho.calcular``.
 
@@ -241,6 +241,14 @@ def calcular(pregoes: pd.DataFrame, proventos: pd.DataFrame, ids_por_ticker: dic
     ``depois_de`` (P_{t-1}, marcas persistentes e a mediana pré-evento) e o
     universo inteiro (o mercado mediano pede 20 ativos no dia); ``proventos``,
     as datas com desde 400 dias antes (a cobertura que decide a imputação).
+
+    ``componentes`` acrescenta ``preco`` (fechamento por ação), ``k`` (ações
+    novas por antiga) e ``caixa`` (dinheiro por ação antiga: ``k × dist + D +
+    D_imp``), com ``1 + ret = (k × preco + caixa) / P_{t-1}``. É o que a medição
+    mensal (``core.carteira20_medicao``) precisa para contar ações inteiras e
+    creditar os proventos em caixa. No dia de retorno vazio (salto sem evento)
+    ``k`` faz o valor da posição ficar parado, como o retorno zero da curva
+    diária.
     """
     d = _por_ativo(pregoes, ids_por_ticker)
     if d.empty:
@@ -341,7 +349,13 @@ def calcular(pregoes: pd.DataFrame, proventos: pd.DataFrame, ids_por_ticker: dic
     d["suspeito"] = salto | d["evento"].isin(INCERTOS) | pendente
 
     d = d[(d["trade_date"].dt.date > depois_de) & d["p_ant"].notna()]
-    return pd.DataFrame({"id": d["id"].values,
-                         "data": d["trade_date"].dt.date.values,
-                         "ret": d["ret"].values,
-                         "suspeito": d["suspeito"].astype(bool).values})
+    saida = pd.DataFrame({"id": d["id"].values,
+                          "data": d["trade_date"].dt.date.values,
+                          "ret": d["ret"].values,
+                          "suspeito": d["suspeito"].astype(bool).values})
+    if componentes:
+        vazio = d["ret"].isna().to_numpy()
+        saida["preco"] = d["close_unitario"].to_numpy()
+        saida["k"] = np.where(vazio, d["p_ant"] / d["close_unitario"], d["k"])
+        saida["caixa"] = np.where(vazio, 0.0, d["k"] * d["dist"] + d["D"] + d["D_imp"])
+    return saida

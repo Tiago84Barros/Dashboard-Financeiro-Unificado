@@ -530,8 +530,9 @@ def _discriminacao_rf(ticker: str, nome: str) -> str:
 
 # Desempate entre origens da posição: a mesma ordem do CASE de
 # core.investimentos._SQL_POSICOES_SNAPSHOT (um teste prende as duas juntas).
-PRIORIDADE_FONTE = {"tesouro_direto": 0, "b3_posicao_detalhada": 1,
-                    "xp_consolidado": 2, "xp_positions": 3}
+PRIORIDADE_FONTE = {"tesouro_direto": 0, "b3_posicao": 1,
+                    "b3_posicao_detalhada": 2, "xp_consolidado": 3,
+                    "xp_positions": 4}
 
 
 def _ultimo_ate(posicoes: list[dict], corte: str) -> list[dict]:
@@ -798,6 +799,9 @@ _SQL_POSICOES = """
       AND s.source_system = 'app4'
       AND EXTRACT(MONTH FROM s.report_date) = 12
       AND COALESCE(s.currency, 'BRL') = 'BRL'
+      -- Aluguel tomado (BTC Tomador) é devido, não bem: somado, abateria a
+      -- custódia do mesmo papel.
+      AND NOT (COALESCE(s.is_loaned, FALSE) AND s.quantity < 0)
 """
 
 

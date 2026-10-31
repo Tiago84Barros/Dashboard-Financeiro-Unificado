@@ -847,8 +847,11 @@ def explicar(pn: Painel, *, simbolo: str | None = None, chamar=None) -> Explicac
 
             if not llm_b3.llm_disponivel():
                 return explicacao_deterministica(pn, simbolo=simbolo)
+            # Sai a cada recarga da tela, sem o usuário pedir: fica fora do
+            # crédito pago do Claude (``sob_demanda``).
             chamar = lambda p: llm_b3._chat_complete(  # noqa: E731
-                [{"role": "user", "content": p}], json_mode=False
+                [{"role": "user", "content": p}], json_mode=False,
+                sob_demanda=False,
             )
         except Exception:
             logger.exception("LLM indisponível; usando explicação do backend")

@@ -281,10 +281,13 @@ def test_score_combinado_e_recusado_por_padrao_com_o_motivo():
     assert not v.medido and "escalas são diferentes" in v.observacao
 
 
-def test_toda_explicacao_simples_recusa_garantia_de_retorno():
+def test_explicacao_simples_nao_traz_aviso_de_recomendacao():
+    """O app não usa o aviso de 'não é recomendação' (30/10/2026)."""
     for conj in ({"noticias": 60}, {"noticias": -90}, {"noticias": 0}):
         be = P.bloco_empresa(decisao(conj=conj))
-        assert "não é garantia de retorno" in be.bloco.explicacao_simples.lower()
+        texto = be.bloco.explicacao_simples.lower()
+        assert texto
+        assert "garantia" not in texto and "recomendação" not in texto
 
 
 def test_prioridade_anterior_ausente_nao_vira_zero():

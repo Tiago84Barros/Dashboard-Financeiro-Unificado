@@ -15,14 +15,16 @@ import numpy as np
 import pandas as pd
 
 from core.market_companies import translate_us_sector
-from core.us_advanced_lab import build_entry_scores
+from core.us_advanced_lab import DEFAULT_WEIGHTS, build_entry_scores
 from core.us_liquidity import VERSION as US_LIQUIDITY_VERSION
 
 # v3 (2026-08-17): ``params`` passou a carregar `liquidity_version`, porque a
 # regra de elegibilidade por negociabilidade mudou de comportamento e uma
 # carteira salva precisa dizer sob qual regra nasceu. Chave ADITIVA: carteiras
 # gravadas com v2 continuam legíveis (a leitura usa .get) e não são migradas.
-PORTFOLIO_SCHEMA_VERSION = "us_portfolio_creation_v3"
+# v4 (2026-10-30): ``params`` carrega `entry_weights`, os pesos das trilhas do
+# score de entrada -- momento e P&D entraram nele. Também aditiva.
+PORTFOLIO_SCHEMA_VERSION = "us_portfolio_creation_v4"
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,7 @@ def params_to_dict(params: USPortfolioCreationParams) -> dict[str, Any]:
     return {
         "schema_version": PORTFOLIO_SCHEMA_VERSION,
         "liquidity_version": US_LIQUIDITY_VERSION,
+        "entry_weights": dict(DEFAULT_WEIGHTS),
         **asdict(params),
     }
 

@@ -7,9 +7,12 @@ histórico, tudo aberto de uma vez. O usuário desenhou o que quer ver primeiro:
 
     Reserva de emergência → Tesouro Selic, valor e %
     Renda fixa            → as demais, valor e %
-    Ações                 → uma caixa por ativo: % atual, % devida, manter /
-                            comprar / vender, substituto se vender, dois pares
-                            numa tabela, notícias, relatórios e o macro
+    Ações                 → uma caixa por ativo: % atual, % devida, a ação
+                            sugerida (manter, comprar, acompanhar,
+                            rebalancear, reduzir parcialmente, vender ou
+                            substituir) com convicção, condições e limitações,
+                            substituto se sair, dois pares numa tabela,
+                            notícias, relatórios e o macro
 
 Este módulo só reagrupa o que ``analisar_carteira`` já montou; não lê banco
 nem chama LLM. O único número novo é a % devida sugerida (``alvos_sugeridos``,
@@ -21,7 +24,7 @@ Coberto por tests/test_inteligencia_ativos_resumida.py.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from core.cenario import modelo as cen
 from core.estrategia import politica as pol
@@ -29,6 +32,7 @@ from core.inteligencia_ativos import avaliacao as av_
 from core.inteligencia_ativos import informacoes as inf
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import pares as prs
+from core.inteligencia_ativos import recomendacao as rec
 from core.inteligencia_ativos.fundamentos import _tem_valor, formatar
 
 # -- grupos da página, na ordem da tela ------------------------------------------
@@ -53,34 +57,66 @@ ROTULO_GRUPO = dict(GRUPOS)
 # caixa de expansão por ativo.
 GRUPOS_EM_LISTA = (RESERVA, RENDA_FIXA)
 
-# -- manter / comprar / vender -----------------------------------------------------
+# -- a recomendação ------------------------------------------------------------------
 
 MANTER = "manter"
 COMPRAR = "comprar"
+ACOMPANHAR = "acompanhar"
+REBALANCEAR = "rebalancear"
+REDUZIR_PARCIAL = "reduzir_parcial"
 VENDER = "vender"
-ROTULO_DECISAO = {MANTER: "Manter", COMPRAR: "Comprar", VENDER: "Vender"}
+SUBSTITUIR = "substituir"
+ROTULO_DECISAO = {MANTER: "Manter", COMPRAR: "Comprar",
+                  ACOMPANHAR: "Acompanhar", REBALANCEAR: "Rebalancear",
+                  REDUZIR_PARCIAL: "Reduzir parcialmente", VENDER: "Vender",
+                  SUBSTITUIR: "Substituir"}
+# Só estas vendem alguma coisa. Rebalancear é mudar para onde vão os próximos
+# aportes, sem vender; acompanhar é investigar antes de mexer.
+MOVIMENTA = (REDUZIR_PARCIAL, VENDER, SUBSTITUIR)
 
-# A ação da análise é leitura de adequação, com sete estados. A página
-# resumida a traduz nas três palavras que o usuário pediu, e mostra o estado
-# original ao lado: "Vender" de REDUZIR_CONCENTRACAO é vender parte.
+# A ação da análise é leitura de adequação, com sete estados; aqui ela é o
+# ponto de partida quando não há % devida. Até 29/10/2026 três deles viravam
+# "Vender" direto (tese em dúvida, concentração, comparar alternativas). O
+# usuário pediu cautela: limite estourado é alerta para investigar, não ordem.
 DECISAO: dict[str, tuple[str, str]] = {
     m.APORTE_COMPATIVEL: (COMPRAR, "novos aportes cabem na estratégia"),
-    m.REAVALIAR_TESE: (VENDER, "avaliar venda: a tese está em dúvida"),
-    m.REDUZIR_CONCENTRACAO: (VENDER, "vender parte: reduzir concentração"),
-    m.COMPARAR_ALTERNATIVAS: (VENDER, "avaliar troca por uma alternativa"),
+    m.REAVALIAR_TESE: (ACOMPANHAR, "reavaliar a tese: ela está em dúvida"),
+    m.REDUZIR_CONCENTRACAO: (REBALANCEAR, "rebalancear: reduzir concentração"),
+    m.COMPARAR_ALTERNATIVAS: (ACOMPANHAR, "comparar com alternativas"),
     m.REAVALIAR_APORTES: (MANTER, "manter, sem novos aportes por ora"),
     m.EXPOSICAO_ADEQUADA: (MANTER, "exposição já adequada"),
     m.MANTER: (MANTER, "nenhuma regra pede mudança"),
 }
 
-AVISO_DECISAO = ("Leitura por regras, não ordem de compra ou venda: junta a "
+# Redução parcial: no máximo um terço da posição por vez, e 20% quando o
+# motivo é só o preço esticado. Venda total fica para alerta eliminatório,
+# tese quebrada com qualidade frágil ou alternativa claramente superior.
+# As frações são convenção do sistema, não calibradas.
+FRACAO_MAX_REDUCAO = 1 / 3
+FRACAO_REDUCAO_ESTICADO = 0.20
+# Acima de 1,5 vez o limite por ativo, o sistema deixa de contar só com os
+# aportes para corrigir o peso e sugere reduzir parte, mesmo com a empresa
+# sólida. Também convenção.
+FATOR_TETO = 1.5
+# Quantos pares fora da carteira o confronto examina (os mais próximos).
+N_CANDIDATOS_TROCA = 5
+_GATILHOS_FUNDAMENTOS = ("reducao_dividendos", "aumento_divida",
+                         "perda_qualidade", "mudanca_estrategia")
+
+AVISO_DECISAO = ("Recomendação por regras, não ordem automática: junta a "
                  "adequação à sua estratégia (% devida, limites e tese) com a "
-                 "avaliação multicritério do ativo (qualidade contra os pares, "
-                 "valuation contra o histórico e os pares, notícias e risco "
-                 "de mercado). Alerta eliminatório pesa sozinho.")
+                 "avaliação do ativo (qualidade contra os pares, valuation "
+                 "contra o próprio histórico e os pares, notícias e risco de "
+                 "mercado). Peso acima da % devida, preço no topo do "
+                 "histórico ou queda forte são alertas para investigar: só "
+                 "viram venda com piora dos fundamentos, tese quebrada ou "
+                 "alternativa claramente superior, depois de custos e "
+                 "impostos.")
 AVISO_SUBSTITUTO = ("Candidatos do mesmo grupo de comparação, fora da sua "
-                    "carteira. O sistema não os ordena como melhores: compare "
-                    "na tabela antes de decidir.")
+                    "carteira. A troca só é sugerida quando um deles supera o "
+                    "ativo na qualidade sem perder no preço nem no risco; "
+                    "potencial de alta maior, sozinho, não basta. Compare na "
+                    "tabela antes de decidir.")
 
 N_PARES_TABELA = 2
 N_NOTICIAS = 3
@@ -109,14 +145,32 @@ def grupo(a: m.AnaliseAtivo) -> str:
 
 @dataclass(frozen=True)
 class Decisao:
-    codigo: str          # MANTER | COMPRAR | VENDER
-    detalhe: str         # por que, em poucas palavras
-    motivo: str          # a primeira justificativa da análise
+    codigo: str          # uma das chaves de ROTULO_DECISAO
+    detalhe: str         # a ação em poucas palavras
+    motivo: str          # a justificativa principal
     avaliacao: av_.Avaliacao | None = None
+    conviccao: str = rec.MODERADA
+    porque_conviccao: str = ""
+    justificativas: tuple[str, ...] = ()   # os fatores pesados
+    condicoes: tuple[str, ...] = ()        # o que mudaria a recomendação
+    limitacoes: tuple[str, ...] = ()       # dado ausente que pesa
+    alertas: tuple[str, ...] = ()          # para investigar, não são ordens
+    contexto: tuple[str, ...] = ()         # cenário, notícias, valorização
+    proporcao: float | None = None         # fração da posição a vender
+    custos: rec.CustoVenda | None = None
+    substituto: rec.Confronto | None = None
 
     @property
     def rotulo(self) -> str:
         return ROTULO_DECISAO[self.codigo]
+
+    @property
+    def movimenta(self) -> bool:
+        return self.codigo in MOVIMENTA
+
+    @property
+    def rotulo_conviccao(self) -> str:
+        return rec.ROTULO_CONVICCAO[self.conviccao]
 
     @property
     def argumentos(self) -> tuple[str, ...]:
@@ -134,82 +188,143 @@ def alvo_do_ativo(a: m.AnaliseAtivo,
 
 def tolerancia_pp(alvo: float) -> float:
     """Folga em torno da % devida antes de pedir mudança: 20% do alvo, no
-    mínimo meio ponto. Sem ela, todo ativo viraria comprar ou vender por
+    mínimo meio ponto. Sem ela, todo ativo viraria comprar ou rebalancear por
     centésimos."""
     return max(0.5, 0.2 * alvo)
 
 
 def decisao(a: m.AnaliseAtivo,
             sugerido: "AlvoSugerido | None" = None,
-            avaliacao: av_.Avaliacao | None = None) -> Decisao:
-    """Manter, comprar ou vender, ativo a ativo. Puro.
+            avaliacao: av_.Avaliacao | None = None,
+            na_carteira=None,
+            ctx: m.ContextoInvestidor | None = None) -> Decisao:
+    """Manter, comprar, acompanhar, rebalancear, reduzir parcialmente,
+    vender ou substituir, ativo a ativo. Puro.
 
-    1. Vender que vem da análise (tese em dúvida, teto estourado) prevalece.
-    2. Com % devida (faixa do usuário ou sugestão), o peso do ativo contra
-       ela decide: acima da folga → vender parte; abaixo → comprar, salvo se
-       a classe já passou do alvo dela; dentro → manter.
-    3. Sem % devida, vale a leitura da classe (a tradução de ``DECISAO``).
-    4. A avaliação multicritério (``avaliacao.avaliar``) corrige o resultado:
-       alerta eliminatório → avaliar troca; qualidade frágil barra o aporte
-       e, somada a preço caro ou mercado negativo, vira avaliar troca; preço
-       caro ou notícias negativas qualificam o comprar.
+    Pedido do usuário (29/10/2026): nada de vender uma empresa de qualidade
+    porque a cotação ou o peso passou de um limite. A árvore, nesta ordem:
 
-    Até 01/10/2026 só o passo 3 existia, e a decisão era a da classe: todos
-    os FIIs "Comprar", todas as ações "Manter", nenhum "Vender" sem teto
-    estourado (o usuário notou nas telas publicadas). O passo 4 entrou no
-    mesmo dia: "coloque fundamentos e valuation na decisão também".
+    1. Alerta eliminatório do balanço → vender, ou substituir se um par fora
+       da carteira for claramente superior (``rec.confrontar``). Alerta só
+       do noticiário → acompanhar: a manchete pede confirmação oficial.
+    2. Gatilho da tese disparado → reduzir 1/3; com qualidade frágil, sair.
+    3. Ativo fora da função na carteira → acompanhar (reavaliar a tese); com
+       qualidade frágil, sair.
+    4. Qualidade frágil → substituir se houver par superior; reduzir parte se
+       o preço também está caro ou o peso passou do devido; senão acompanhar.
+    5. Empresa sólida:
+       * acima da % devida ou de um limite → rebalancear pelos aportes, sem
+         vender. Reduzir parte só se o preço também esticou contra o próprio
+         histórico, ou se o peso passou de 1,5× o limite por ativo;
+       * abaixo → comprar (salvo classe acima do alvo ou preço muito
+         esticado);
+       * na % devida → manter; realizar ~20% só com o preço muito esticado.
+
+    ``na_carteira`` (os tickers da carteira) tira os pares que já estão nela
+    da busca de substituto; ``ctx`` traz o cenário para o contexto e as
+    limitações. Cada decisão sai com convicção, condições que a mudariam,
+    limitações, alertas para investigar (separados da ação) e, quando vende,
+    a proporção e o custo estimado da venda.
     """
-    base = _decisao_por_peso(a, sugerido)
-    return com_avaliacao(base, avaliacao if avaliacao is not None
-                         else av_.avaliar(a))
+    av = avaliacao if avaliacao is not None else av_.avaliar(a)
+    s = _situacao(a, sugerido, av, na_carteira)
+    return _completar(a, s, av, _escolher(a, s, av), ctx)
 
 
-def com_avaliacao(d: Decisao, av: av_.Avaliacao) -> Decisao:
-    """Aplica a avaliação multicritério sobre a decisão por peso. Puro."""
-    d = replace(d, avaliacao=av)
-    q, preco, mercado = av.qualidade, av.preco, av.mercado
-    custo = ("Vender tem custo (imposto, corretagem): compare com os "
-             "substitutos e, no mínimo, não aporte mais.")
-    if av.criticos:
-        # O alerta vem antes do peso: "vender parte" esconderia que o
-        # problema é o ativo, não o tamanho da posição.
-        alerta = av.criticos[0].texto
-        antes = f" {d.motivo}" if d.codigo == VENDER and d.motivo else ""
-        return replace(d, codigo=VENDER, detalhe="avaliar troca: alerta "
-                       "eliminatório", motivo=f"{alerta[:1].upper()}"
-                       f"{alerta[1:]}. Nenhum ponto bom compensa esse alerta."
-                       f"{antes if antes else ' ' + custo}")
-    if q == av_.FRAGIL:
-        piora = [t for t, ok in (("preço acima do normal", preco == av_.CARO),
-                                 ("mercado e notícias negativos",
-                                  mercado == av_.NEGATIVO)) if ok]
-        if d.codigo != VENDER and piora:
-            return replace(d, codigo=VENDER, detalhe="avaliar troca: qualidade "
-                           f"frágil e {' e '.join(piora)}",
-                           motivo=f"{_motivo_qualidade(av)} {custo}")
-        if d.codigo == COMPRAR:
-            return replace(d, codigo=MANTER, detalhe=f"{d.detalhe}, mas "
-                           "qualidade frágil: não aportar por ora",
-                           motivo=_motivo_qualidade(av))
-        if d.codigo == MANTER:
-            return replace(d, detalhe=f"{d.detalhe}; qualidade frágil: não "
-                           "reforçar")
-        return d
-    if d.codigo == COMPRAR:
-        notas = []
-        if q == av_.FORTE and preco == av_.BARATO:
-            notas.append("qualidade forte e preço abaixo do normal")
-        elif preco == av_.CARO:
-            notas.append("preço acima do normal: aportar aos poucos")
-        if mercado == av_.NEGATIVO:
-            notas.append("mercado e notícias negativos: conferir antes")
-        if notas:
-            return replace(d, detalhe=f"{d.detalhe}; {'; '.join(notas)}")
-    if d.codigo == VENDER and q == av_.FORTE and not av.criticos:
-        return replace(d, motivo=f"{d.motivo} A qualidade é forte: o excesso "
-                       "pode sair pelo aporte no resto da classe, sem vender."
-                       .strip())
-    return d
+# -- o que a árvore olha --------------------------------------------------------------
+
+@dataclass(frozen=True)
+class _Situacao:
+    atual: float
+    alvo: float | None
+    dif: float | None                # atual − alvo, em p.p.
+    acima: bool                      # além da folga da % devida
+    abaixo: bool
+    concentracao: tuple[str, ...]    # limites estourados (ativo, setor, classe)
+    excesso_teto: float | None       # atual − limite por ativo, se acima
+    severa: bool                     # acima de FATOR_TETO × limite por ativo
+    fora: str | None                 # a função na carteira não se cumpre
+    quebra: tuple[str, ...]          # gatilhos de fundamentos disparados
+    est: rec.Esticamento
+    confronto: rec.Confronto | None
+
+    @property
+    def pesado(self) -> bool:
+        return self.acima or bool(self.concentracao)
+
+    @property
+    def excesso(self) -> float | None:
+        """O maior excesso de peso, em p.p., sobre a % devida ou o limite."""
+        xs = [x for x in ((self.dif if self.acima else None),
+                          self.excesso_teto) if x]
+        return max(xs) if xs else None
+
+
+def _sem_prefixo(texto: str, prefixo: str) -> str:
+    if texto.startswith(prefixo):
+        texto = texto[len(prefixo):]
+    return texto.strip().rstrip(".")
+
+
+def _situacao(a: m.AnaliseAtivo, sugerido, av: av_.Avaliacao,
+              na_carteira) -> _Situacao:
+    atual = float(a.ativo.peso_atual)
+    alvo = alvo_do_ativo(a, sugerido)
+    dif = None if alvo is None else atual - alvo
+    folga = None if alvo is None else tolerancia_pp(alvo)
+    gat = {g.codigo: g for g in a.tese.gatilhos}
+    just = a.acao.justificativas
+
+    conc: list[str] = []
+    gc = gat.get("concentracao")
+    if gc is not None and gc.disparado:
+        conc += [t.strip() for t in gc.detalhe.split(";") if t.strip()]
+    conc += [_sem_prefixo(j, "") for j in just if j.startswith("A classe soma")]
+    if not conc and a.acao.estado == m.REDUZIR_CONCENTRACAO:
+        conc.append(_sem_prefixo(just[0], "Concentração:") if just
+                    else "concentração acima do seu limite")
+    teto = a.faixa.teto_ativo
+    excesso_teto = (atual - float(teto)
+                    if teto is not None and atual > float(teto) else None)
+
+    gf = gat.get("funcao_original")
+    fora = gf.detalhe if gf is not None and gf.disparado else None
+    if fora is None and a.acao.estado == m.REAVALIAR_TESE:
+        fora = next((_sem_prefixo(j, "Tese em dúvida:") for j in just
+                     if j.startswith("Tese em dúvida:")),
+                    _sem_prefixo(just[0], "") if just
+                    else "a tese está em dúvida")
+    quebra = tuple(g.descricao + (f": {g.detalhe}" if g.detalhe else "")
+                   for g in a.tese.gatilhos
+                   if g.codigo in _GATILHOS_FUNDAMENTOS and g.disparado)
+
+    confronto = None
+    if av.criticos or av.qualidade == av_.FRAGIL or quebra:
+        # A troca só é procurada quando sair já está em pauta: "outro
+        # parece melhor" não é motivo de venda.
+        fora_da_busca = set(na_carteira or ()) | {a.ativo.ticker}
+        confronto = rec.melhor_substituto(
+            a, substitutos(a, fora_da_busca, N_CANDIDATOS_TROCA))
+    return _Situacao(
+        atual, alvo, dif, dif is not None and dif > folga,
+        dif is not None and dif < -folga, tuple(dict.fromkeys(conc)),
+        excesso_teto, teto is not None and atual > FATOR_TETO * float(teto),
+        fora, quebra, rec.esticamento(a, av), confronto)
+
+
+# -- a árvore ------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class _Rascunho:
+    codigo: str
+    detalhe: str
+    motivo: str
+    razoes: tuple[str, ...] = ()        # sinais a favor próprios do ramo
+    condicoes: tuple[str, ...] = ()
+    proporcao: float | None = None
+    substituto: rec.Confronto | None = None
+    teto: str | None = None             # convicção máxima
+    motivo_teto: str = ""
 
 
 def _motivo_qualidade(av: av_.Avaliacao) -> str:
@@ -219,32 +334,470 @@ def _motivo_qualidade(av: av_.Avaliacao) -> str:
         "Qualidade frágil.")
 
 
-def _decisao_por_peso(a: m.AnaliseAtivo,
-                      sugerido: "AlvoSugerido | None" = None) -> Decisao:
-    """Passos 1 a 3 de ``decisao``: estratégia e peso, sem o ativo em si."""
-    codigo, detalhe = DECISAO.get(a.acao.estado, (MANTER, a.acao.rotulo))
-    motivo = a.acao.justificativas[0] if a.acao.justificativas else ""
-    alvo = alvo_do_ativo(a, sugerido)
-    if codigo == VENDER or alvo is None:
-        return Decisao(codigo, detalhe, motivo)
-    atual = float(a.ativo.peso_atual)
-    dif = atual - alvo
-    devida = f"% devida {_pct(alvo)}"
-    if dif > tolerancia_pp(alvo):
-        return Decisao(
-            VENDER, f"vender parte: {_pp(dif)[1:]} acima da {devida}",
-            f"Pesa {_pct(atual)} da carteira contra {_pct(alvo)} devidos. "
-            "Vender tem custo (imposto, corretagem): parar de aportar nele e "
-            "aportar no resto da classe também reduz o peso.")
-    if dif < -tolerancia_pp(alvo):
+def _motivo_acao(a: m.AnaliseAtivo) -> str:
+    return a.acao.justificativas[0] if a.acao.justificativas else ""
+
+
+def _frase_solida(av: av_.Avaliacao) -> str:
+    if av.qualidade in (av_.FORTE, av_.ADEQUADA):
+        return (f"A qualidade é {av_.ROTULO_LEITURA[av.qualidade].lower()} e "
+                "nenhum gatilho da tese disparou")
+    return ("Sem dado para medir a qualidade e nenhum gatilho da tese "
+            "disparou")
+
+
+def _frase_preco(s: _Situacao) -> str:
+    if s.est.nivel:
+        return f"o preço está {s.est.rotulo} contra o próprio histórico"
+    if s.est.medido:
+        return "o preço não está esticado contra o próprio histórico"
+    return "não há histórico de múltiplos para dizer se o preço esticou"
+
+
+def _arredonda(fracao: float) -> float:
+    if fracao >= FRACAO_MAX_REDUCAO - 1e-9:
+        return FRACAO_MAX_REDUCAO
+    return max(0.05, round(fracao * 20) / 20)
+
+
+def _texto_fracao(fracao: float) -> str:
+    if abs(fracao - FRACAO_MAX_REDUCAO) < 1e-9:
+        return "cerca de 1/3"
+    return f"cerca de {fracao * 100:.0f}%"
+
+
+def _reduzir(fracao: float, razao: str, motivo: str, razoes=(),
+             condicoes=()) -> _Rascunho:
+    fr = _arredonda(fracao)
+    return _Rascunho(REDUZIR_PARCIAL,
+                     f"reduzir {_texto_fracao(fr)} da posição: {razao}",
+                     motivo, tuple(razoes), tuple(condicoes), proporcao=fr)
+
+
+def _sair(s: _Situacao, razao: str, motivo: str, razoes=(),
+          condicoes=()) -> _Rascunho:
+    cf = s.confronto
+    if cf is not None:
+        return _Rascunho(
+            SUBSTITUIR, f"substituir por {cf.ticker}: {razao}",
+            f"{motivo} {cf.resumo}: supera na qualidade sem perder no preço "
+            "nem no risco.",
+            tuple(razoes) + (f"{cf.ticker} claramente superior",),
+            tuple(condicoes) + (
+                f"Se {cf.ticker} perder a vantagem na qualidade, ou ficar mais "
+                "caro ou mais arriscado que o ativo, a troca deixa de valer e "
+                "a saída vira venda simples.",),
+            proporcao=1.0, substituto=cf, teto=rec.MODERADA,
+            motivo_teto=(f"{cf.ticker} foi comparado só pelas métricas "
+                         "publicadas dos pares, sem a avaliação completa"))
+    return _Rascunho(
+        VENDER, f"vender: {razao}",
+        f"{motivo} Nenhum par fora da carteira é claramente superior: a "
+        "saída não vem com troca.", tuple(razoes), tuple(condicoes),
+        proporcao=1.0)
+
+
+def _escolher(a: m.AnaliseAtivo, s: _Situacao,
+              av: av_.Avaliacao) -> _Rascunho:
+    if av.criticos:
+        return _por_alerta(s, av)
+    fragil = av.qualidade == av_.FRAGIL
+    if s.quebra:
+        if fragil:
+            return _sair(s, "tese quebrada e qualidade frágil",
+                         f"Gatilho da tese disparado: {s.quebra[0]}. "
+                         f"{_motivo_qualidade(av)}",
+                         ("gatilho da tese disparado",))
+        return _reduzir(
+            FRACAO_MAX_REDUCAO, "gatilho da tese disparado",
+            f"Gatilho da tese disparado: {s.quebra[0]}. A qualidade ainda não "
+            "é frágil: reduzir parte e esperar o próximo balanço antes de "
+            "decidir o resto.", ("gatilho da tese disparado",),
+            ("Se o próximo balanço mostrar que o gatilho foi pontual, a "
+             "recomendação volta a manter.",))
+    if s.fora:
+        if fragil:
+            return _sair(s, "fora da função e qualidade frágil",
+                         f"Tese em dúvida: {s.fora}. {_motivo_qualidade(av)}",
+                         ("a função na carteira não se cumpre",))
+        return _Rascunho(
+            ACOMPANHAR, "reavaliar a tese: o ativo deixou de cumprir a função",
+            f"Tese em dúvida: {s.fora}. A qualidade não é frágil: a dúvida é "
+            "sobre o papel do ativo na carteira, não sobre a empresa.",
+            ("a função na carteira não se cumpre",),
+            ("Se a saída for intencional, reduzir em etapas (cerca de 1/3 por "
+             "vez), pesando o imposto de cada etapa.",
+             "Se o papel do ativo mudou de propósito, atualizar a estratégia "
+             "desfaz a dúvida."))
+    if fragil:
+        return _fragil(s, av)
+    return _solida(a, s, av)
+
+
+def _por_alerta(s: _Situacao, av: av_.Avaliacao) -> _Rascunho:
+    al = av.criticos[0]
+    texto = f"{al.texto[:1].upper()}{al.texto[1:]}"
+    if all(x.noticia for x in av.criticos):
+        return _Rascunho(
+            ACOMPANHAR, "investigar já: alerta eliminatório no noticiário",
+            f"{texto}. Manchete não é fato confirmado (o nome citado pode não "
+            "ser o sujeito): a venda espera o documento oficial.",
+            ("alerta eliminatório no noticiário",),
+            ("Se o fato relevante ou o comunicado à CVM confirmar, a "
+             "recomendação passa a vender, ou substituir se houver par "
+             "claramente superior.",
+             "Se a notícia for desmentida ou não tratar desta empresa, o "
+             "alerta cai e a recomendação volta a seguir fundamentos, preço e "
+             "peso."),
+            teto=rec.MODERADA,
+            motivo_teto=("o alerta veio só do noticiário e não foi confirmado "
+                         "em documento oficial"))
+    return _sair(s, "alerta eliminatório",
+                 f"{texto}. Nenhum ponto bom compensa esse alerta.",
+                 ("alerta eliminatório",),
+                 ("Se o alerta for resolvido (por exemplo, a dívida voltar "
+                  "para baixo do teto do setor), a recomendação volta a "
+                  "seguir fundamentos, preço e peso.",))
+
+
+def _fragil(s: _Situacao, av: av_.Avaliacao) -> _Rascunho:
+    mq = _motivo_qualidade(av)
+    razoes = ("qualidade frágil",)
+    if s.confronto is not None:
+        return _sair(s, "qualidade frágil", mq, razoes)
+    if s.est.nivel or av.preco == av_.CARO:
+        return _reduzir(
+            FRACAO_MAX_REDUCAO, "qualidade frágil e preço acima do normal",
+            f"{mq} O preço ainda está acima do normal: reduzir parte realiza "
+            "esse preço sem apostar a posição inteira na piora.", razoes,
+            ("Se a qualidade voltar a adequada no próximo balanço, a "
+             "recomendação volta a manter.",))
+    if s.pesado and s.excesso:
+        return _reduzir(
+            s.excesso / s.atual, "qualidade frágil e peso acima do devido",
+            f"{mq} Com a qualidade frágil, vender o excesso é mais prudente "
+            "que esperar os aportes trazerem o peso de volta.", razoes)
+    if av.mercado == av_.NEGATIVO:
+        return _Rascunho(
+            ACOMPANHAR, "acompanhar: qualidade frágil e mercado negativo",
+            f"{mq} O noticiário também pesa contra: ler as notícias e o "
+            "próximo balanço antes de decidir.", razoes,
+            ("Se o próximo balanço confirmar a piora, ou surgir par "
+             "claramente superior, a recomendação passa a reduzir ou "
+             "substituir.",))
+    return _Rascunho(
+        ACOMPANHAR, "qualidade frágil: não aportar por ora", mq, razoes,
+        ("Se a qualidade voltar a adequada, os aportes voltam a caber; se "
+         "piorar com preço caro, ou surgir par claramente superior, a "
+         "recomendação passa a reduzir ou substituir.",))
+
+
+def _comprar(detalhe: str, motivo: str, s: _Situacao,
+             av: av_.Avaliacao, razao: str) -> _Rascunho:
+    notas = []
+    if av.qualidade == av_.FORTE and av.preco == av_.BARATO:
+        notas.append("qualidade forte e preço abaixo do normal")
+    elif s.est.nivel or av.preco == av_.CARO:
+        notas.append("preço acima do normal: aportar aos poucos")
+    if av.mercado == av_.NEGATIVO:
+        notas.append("mercado e notícias negativos: conferir antes")
+    return _Rascunho(COMPRAR, "; ".join([detalhe] + notas), motivo, (razao,))
+
+
+def _solida(a: m.AnaliseAtivo, s: _Situacao,
+            av: av_.Avaliacao) -> _Rascunho:
+    base = _frase_solida(av)
+    devida = f"% devida {_pct(s.alvo)}"
+    contra_alvo = (f" contra {_pct(s.alvo)} devidos" if s.alvo is not None
+                   else "")
+    if s.pesado:
+        peso_txt = (f"{_pp(s.dif)[1:]} acima da {devida}" if s.acima
+                    else s.concentracao[0])
+        if s.est.nivel:
+            fr = (s.excesso / s.atual if s.excesso
+                  else FRACAO_REDUCAO_ESTICADO)
+            return _reduzir(
+                fr, f"peso acima do devido e preço {s.est.rotulo}",
+                f"Pesa {_pct(s.atual)} da carteira{contra_alvo}. {base}, mas "
+                f"{_frase_preco(s)} ({s.est.evidencias[0]}): reduzir o "
+                "excesso realiza parte do ganho sem abandonar a tese.",
+                ("peso acima do devido",))
+        if s.severa:
+            teto = float(a.faixa.teto_ativo)
+            return _reduzir(
+                s.excesso_teto / s.atual,
+                f"{_pct(s.atual)} contra o limite de {_pct(teto)}",
+                f"Pesa {_pct(s.atual)}, mais de {av_._br(FATOR_TETO)}× o seu "
+                f"limite por ativo ({_pct(teto)}). {base}; {_frase_preco(s)}"
+                ", mas acima desse ponto o sistema não conta só com os "
+                "aportes para corrigir o peso.", ("peso muito acima do limite",))
+        return _Rascunho(
+            REBALANCEAR, f"rebalancear: {peso_txt}",
+            f"Pesa {_pct(s.atual)} da carteira{contra_alvo}. {base}; "
+            f"{_frase_preco(s)}: parar de aportar nele e aportar no resto da "
+            "classe reduz o peso sem vender, sem imposto nem custo de saída.",
+            ("peso acima do devido",))
+    if s.abaixo:
+        falta = f"faltam {_pp(-s.dif)[1:]} para a {devida}"
         if a.acao.estado == m.REAVALIAR_APORTES:
-            return Decisao(
+            return _Rascunho(
                 MANTER, f"abaixo da {devida}, mas a classe já passou do alvo",
-                motivo)
-        return Decisao(
-            COMPRAR, f"faltam {_pp(-dif)[1:]} para a {devida}",
-            f"Pesa {_pct(atual)} da carteira contra {_pct(alvo)} devidos.")
-    return Decisao(MANTER, f"na {devida}", motivo)
+                _motivo_acao(a), ("classe acima do alvo",))
+        if s.est.nivel == rec.MUITO_ESTICADO:
+            return _Rascunho(
+                MANTER, f"{falta}, mas o preço está muito esticado: esperar "
+                "para aportar",
+                f"Pesa {_pct(s.atual)} contra {_pct(s.alvo)} devidos, mas "
+                f"{s.est.evidencias[0]}. Aportar no topo do histórico encarece "
+                "a posição.", ("tese válida",))
+        return _comprar(falta, f"Pesa {_pct(s.atual)} da carteira contra "
+                        f"{_pct(s.alvo)} devidos.", s, av, "abaixo da % devida")
+
+    codigo, detalhe = DECISAO.get(a.acao.estado, (MANTER, a.acao.rotulo))
+    if s.est.nivel == rec.MUITO_ESTICADO:
+        return _reduzir(
+            FRACAO_REDUCAO_ESTICADO, "preço muito esticado; manter o núcleo",
+            f"{base}, mas {_frase_preco(s)} ("
+            f"{'; '.join(s.est.evidencias[:2])}). Realizar uma parte trava "
+            "parte do ganho e mantém o núcleo da posição na tese.")
+    if s.est.nivel == rec.ESTICADO:
+        return _Rascunho(
+            MANTER, "manter, sem novos aportes por ora: preço esticado",
+            f"{base}; {_frase_preco(s)} ({s.est.evidencias[0]}), mas não a "
+            "ponto de realizar: manter e direcionar os aportes para outro "
+            "ativo.", ("tese válida",))
+    if codigo == COMPRAR:
+        return _comprar(detalhe, _motivo_acao(a), s, av, "classe abaixo do alvo")
+    if codigo == ACOMPANHAR:
+        return _Rascunho(ACOMPANHAR, detalhe, _motivo_acao(a))
+    if av.mercado == av_.NEGATIVO:
+        return _Rascunho(
+            ACOMPANHAR, "acompanhar: mercado e notícias negativos",
+            f"{base}, mas o noticiário e o risco de mercado pesam contra: ler "
+            "as notícias antes de aportar ou mexer.")
+    if s.alvo is not None:
+        return _Rascunho(MANTER, f"na {devida}", _motivo_acao(a) or (
+            f"Pesa {_pct(s.atual)}, dentro da folga da % devida."),
+            ("peso na % devida",))
+    return _Rascunho(codigo, detalhe, _motivo_acao(a))
+
+
+# -- o que acompanha a recomendação --------------------------------------------------
+
+def _sinais(s: _Situacao, av: av_.Avaliacao) -> tuple[list[str], list[str]]:
+    """(pedem cautela, sustentam a posição)."""
+    cautela, sustentam = [], []
+    if av.criticos:
+        cautela.append("alerta eliminatório no noticiário"
+                       if all(x.noticia for x in av.criticos)
+                       else "alerta eliminatório")
+    elif av.qualidade == av_.FRAGIL:
+        cautela.append("qualidade frágil")
+    if s.est.nivel:
+        cautela.append(f"preço {s.est.rotulo} contra o próprio histórico")
+    elif av.preco == av_.CARO:
+        cautela.append("preço acima do normal")
+    if av.mercado == av_.NEGATIVO:
+        cautela.append("mercado e notícias negativos")
+    if s.quebra:
+        cautela.append("gatilho da tese disparado")
+    if av.qualidade in (av_.FORTE, av_.ADEQUADA):
+        sustentam.append(
+            f"qualidade {av_.ROTULO_LEITURA[av.qualidade].lower()}")
+    if av.preco == av_.BARATO:
+        sustentam.append("preço abaixo do normal")
+    elif av.preco == av_.JUSTO:
+        sustentam.append("preço em linha com o normal")
+    if av.mercado == av_.POSITIVO:
+        sustentam.append("mercado e notícias positivos")
+    return cautela, sustentam
+
+
+def _conviccao(s: _Situacao, av: av_.Avaliacao,
+               r: _Rascunho) -> rec.Conviccao:
+    cautela, sustentam = _sinais(s, av)
+    razoes = list(r.razoes)
+    if r.codigo in (VENDER, SUBSTITUIR, ACOMPANHAR):
+        favor, contra = razoes + cautela, sustentam
+    elif r.codigo == REDUZIR_PARCIAL:
+        # Qualidade boa não pesa contra reduzir parte: é por ela que a
+        # redução é parcial.
+        favor = razoes + cautela
+        contra = [x for x in sustentam if not x.startswith("qualidade")]
+    elif r.codigo == REBALANCEAR:
+        favor = razoes + [x for x in sustentam if x.startswith("qualidade")]
+        contra = cautela
+    else:
+        favor, contra = razoes + sustentam, cautela
+    teto, motivo = r.teto, r.motivo_teto
+    if teto is None and r.codigo == ACOMPANHAR:
+        teto = rec.MODERADA
+        motivo = ("acompanhar é provisório: depende do que a investigação "
+                  "encontrar")
+    return rec.conviccao(list(dict.fromkeys(favor)),
+                         list(dict.fromkeys(contra)), av, teto, motivo)
+
+
+def _justificativas(a: m.AnaliseAtivo, s: _Situacao,
+                    av: av_.Avaliacao) -> tuple[str, ...]:
+    out = [x for x in av_.argumentos(av) if not x.startswith("Alerta")]
+    if s.alvo is not None:
+        out.append(f"Peso na carteira: {_pct(s.atual)} contra "
+                   f"{_pct(s.alvo)} devidos ({_pp(s.dif)}).")
+    else:
+        out.append(f"Peso na carteira: {_pct(s.atual)}, sem % devida para "
+                   "comparar.")
+    if s.quebra:
+        out.append(f"Tese: gatilho disparado — {s.quebra[0]}.")
+    elif s.fora:
+        out.append(f"Tese: em dúvida — {s.fora}.")
+    else:
+        pend = any(g.estado == m.PENDENTE for g in a.tese.gatilhos)
+        out.append("Tese: nenhum gatilho avaliado disparou"
+                   + (" (os de fundamentos ainda não são avaliados)"
+                      if pend else "") + ".")
+    return tuple(dict.fromkeys(out))
+
+
+def _condicoes(a: m.AnaliseAtivo, s: _Situacao,
+               r: _Rascunho) -> tuple[str, ...]:
+    c = list(r.condicoes)
+    parado = r.codigo in (MANTER, COMPRAR, REBALANCEAR, ACOMPANHAR)
+    if parado:
+        c.append("Se a qualidade piorar (alerta eliminatório, qualidade "
+                 "frágil) ou um gatilho da tese disparar, a recomendação "
+                 "passa a reduzir ou vender.")
+    if r.codigo in (MANTER, COMPRAR) and not s.est.nivel and s.est.medido:
+        c.append("Se os múltiplos chegarem ao topo do próprio histórico "
+                 f"(percentil {rec.PERCENTIL_MUITO_ESTICADO:.0f}) com o preço "
+                 "caro, cabe realizar parte.")
+    if r.codigo in (MANTER, COMPRAR) and s.alvo is not None:
+        c.append(f"Se o peso passar de {_pct(s.alvo + tolerancia_pp(s.alvo))}"
+                 ", a recomendação passa a rebalancear pelos aportes.")
+    if r.codigo == COMPRAR and s.alvo is not None:
+        c.append(f"Ao chegar à % devida ({_pct(s.alvo)}), a recomendação "
+                 "volta a manter.")
+    if r.codigo == REBALANCEAR:
+        c.append("Se o peso voltar para dentro da folga da % devida e dos "
+                 "limites, a recomendação volta a manter.")
+        if s.est.medido:
+            c.append("Se o preço esticar contra o próprio histórico, cabe "
+                     "reduzir parte em vez de só redirecionar os aportes.")
+        teto = a.faixa.teto_ativo
+        if teto is not None and not s.severa:
+            c.append(f"Se o peso passar de {_pct(FATOR_TETO * float(teto))} "
+                     f"({av_._br(FATOR_TETO)}× o seu limite por ativo), cabe "
+                     "reduzir parte.")
+    if r.codigo == REDUZIR_PARCIAL:
+        c.append("Se o preço voltar para perto da mediana do próprio "
+                 "histórico, ou o peso voltar à % devida, o resto da posição "
+                 "fica.")
+        c.append("Se os fundamentos piorarem ou a tese quebrar, a "
+                 "recomendação passa a vender.")
+    if r.codigo in MOVIMENTA and a.ativo.classe_politica == ACOES:
+        c.append("Vendas de ações acima de R$ 20 mil no mês pagam 15% de IR "
+                 "sobre o ganho: dividir a venda entre meses pode preservar "
+                 "a isenção.")
+    return tuple(dict.fromkeys(c))
+
+
+_DIMENSAO_DA_FALTA = {"qualidade": av_.QUALIDADE, "valuation": av_.VALUATION,
+                      "mercado": av_.MERCADO}
+
+
+def _limitacoes(a: m.AnaliseAtivo, s: _Situacao, av: av_.Avaliacao,
+                r: _Rascunho, custos: rec.CustoVenda | None,
+                ctx) -> tuple[str, ...]:
+    out = []
+    for f in rec.cobertura(av)[1]:
+        nota = av.dimensao(_DIMENSAO_DA_FALTA[f]).nota
+        out.append(f"Sem leitura de {f}."
+                   + (f" {nota.rstrip('.')}." if nota else ""))
+    pend = [g.descricao.lower() for g in a.tese.gatilhos
+            if g.estado == m.PENDENTE]
+    if pend:
+        out.append(f"Gatilhos da tese ainda não avaliados ({', '.join(pend)})"
+                   ": a quebra da tese só aparece pelos alertas e pela função "
+                   "na carteira.")
+    if not s.est.medido:
+        out.append("Sem percentil do próprio histórico nos múltiplos: não dá "
+                   "para dizer se o preço esticou.")
+    if s.alvo is None:
+        out.append("Sem % devida para o ativo: o peso entrou só pelos limites "
+                   "da estratégia.")
+    if r.proporcao is not None and r.proporcao < 1.0:
+        out.append("A proporção sugerida é convenção do sistema, não "
+                   "calibrada: no máximo 1/3 da posição por vez, e 20% quando "
+                   "o motivo é só o preço esticado.")
+    if custos is not None:
+        out += list(custos.limitacoes)
+    if r.substituto is not None:
+        out.append(f"{r.substituto.ticker} foi comparado só pelas métricas "
+                   "publicadas dos pares: notícias, alertas e o histórico de "
+                   "valuation dele não entraram.")
+    if ctx is not None and macro(a, ctx).sem_cenario:
+        out.append("Cenário econômico não lido: o contexto macro não entrou "
+                   "nesta recomendação.")
+    return tuple(dict.fromkeys(out))
+
+
+def _alertas(s: _Situacao, av: av_.Avaliacao) -> tuple[str, ...]:
+    """Sinais que pedem olhar mais de perto. Nenhum é ordem de venda."""
+    out = []
+    if s.acima:
+        out.append(f"Peso de {_pct(s.atual)} contra {_pct(s.alvo)} devidos "
+                   f"({_pp(s.dif)}): rever os aportes, não vender por isso.")
+    out += [f"Concentração: {c}." for c in s.concentracao]
+    out += [f"Preço no topo do histórico: {e}." for e in s.est.evidencias]
+    if (s.est.excesso_pp is not None
+            and s.est.excesso_pp >= av_.MOMENTO_DIFERENCA_PP):
+        out.append(f"Valorização forte: {s.est.valorizacao}. Subida sozinha "
+                   "não é motivo de venda: conferir se os fundamentos "
+                   "acompanharam.")
+    for al in av.alertas:
+        texto = f"{al.texto[:1].upper()}{al.texto[1:]}"
+        if al.critico and al.noticia:
+            out.append(f"A confirmar em documento oficial: {al.texto}.")
+        elif not al.critico:
+            out.append(f"{texto}.")
+    if av.mercado == av_.NEGATIVO:
+        out.append("Mercado e notícias negativos: ler as notícias antes de "
+                   "qualquer movimento.")
+    if s.fora:
+        out.append(f"Função na carteira: {s.fora}.")
+    return tuple(dict.fromkeys(out))
+
+
+def _contexto(a: m.AnaliseAtivo, s: _Situacao, av: av_.Avaliacao,
+              ctx) -> tuple[str, ...]:
+    """Cenário, tom do noticiário e valorização: o pano de fundo."""
+    out = []
+    if ctx is not None:
+        mc = macro(a, ctx)
+        if mc.premissas:
+            out.append("Cenário que mais pesa na classe: "
+                       + "; ".join(mc.premissas[:3]) + ".")
+        out += [f"Sinal do cenário: {x}" for x in mc.sinais[:2]]
+    out += [f"{c.texto}." for c in av.dimensao(av_.MERCADO).criterios
+            if "notícia" in c.texto or "noticiário" in c.texto][:2]
+    if s.est.valorizacao:
+        out.append(f"{s.est.valorizacao}.")
+    return tuple(dict.fromkeys(out))
+
+
+def _completar(a: m.AnaliseAtivo, s: _Situacao, av: av_.Avaliacao,
+               r: _Rascunho, ctx) -> Decisao:
+    custos = (rec.custo_da_venda(a, r.proporcao)
+              if r.codigo in MOVIMENTA and r.proporcao else None)
+    cv = _conviccao(s, av, r)
+    return Decisao(
+        r.codigo, r.detalhe, r.motivo, av, conviccao=cv.grau,
+        porque_conviccao=cv.porque,
+        justificativas=_justificativas(a, s, av),
+        condicoes=_condicoes(a, s, r),
+        limitacoes=_limitacoes(a, s, av, r, custos, ctx),
+        alertas=_alertas(s, av), contexto=_contexto(a, s, av, ctx),
+        proporcao=r.proporcao, custos=custos, substituto=r.substituto)
 
 
 # -- porcentagem devida ------------------------------------------------------------

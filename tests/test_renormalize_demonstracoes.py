@@ -4,6 +4,7 @@ Em 04/10/2026 o armazém tinha o payload de 19/09 da BBDC4 (com o 2T26) e as
 demonstrações dela ainda saíam do payload de julho; o ``renormalize`` comum não
 resolvia porque lê o payload mais novo, que é a cotação diária, só preço.
 """
+import json
 import sys
 
 from data_pipeline.market import ingest as ig
@@ -61,10 +62,11 @@ def _data(sym, com_demonstracao=True):
     }
 
 
-def _patch(monkeypatch, payload_rows, por_ticker):
+def _patch(monkeypatch, payload_rows, por_ticker, trocas=None):
     conn = _FakeConn(payload_rows)
     upserts: dict[str, list] = {}
     monkeypatch.setattr(ig, "_engine", lambda: _FakeEngine(conn))
+    monkeypatch.setattr(ig, "_carregar_trocas", lambda e: dict(trocas or {}))
     monkeypatch.setattr(ig.repo, "reset_db_cols_cache", lambda: None)
     monkeypatch.setattr(ig.repo, "schema_exists", lambda c: True)
 
@@ -77,7 +79,7 @@ def _patch(monkeypatch, payload_rows, por_ticker):
 
 
 def test_grava_so_as_tres_demonstracoes_com_a_procedencia(monkeypatch):
-    rows = [("BBDC4", 99879, {"symbol": "BBDC4"})]
+    rows = [("BBDC4", "BBDC4", 99879, {"symbol": "BBDC4"})]
     _, upserts = _patch(monkeypatch, rows, {"BBDC4": _data("BBDC4")})
 
     prog = ig.renormalize_demonstracoes()
@@ -89,7 +91,7 @@ def test_grava_so_as_tres_demonstracoes_com_a_procedencia(monkeypatch):
 
 
 def test_payload_sem_linha_nao_conta_como_atualizado(monkeypatch):
-    rows = [("BBDC4", 1, {"symbol": "BBDC4"})]
+    rows = [("BBDC4", "BBDC4", 1, {"symbol": "BBDC4"})]
     _patch(monkeypatch, rows, {"BBDC4": _data("BBDC4", com_demonstracao=False)})
 
     prog = ig.renormalize_demonstracoes()
@@ -98,13 +100,29 @@ def test_payload_sem_linha_nao_conta_como_atualizado(monkeypatch):
 
 
 def test_grava_sob_o_ticker_requisitado_e_nao_o_da_brapi(monkeypatch):
-    rows = [("ELET3", 7, {"symbol": "AXIA3"})]
+    # símbolo divergente sem troca provada: fica sob o código requisitado
+    rows = [("ELET3", "ELET3", 7, {"symbol": "AXIA3"})]
     _, upserts = _patch(monkeypatch, rows, {"AXIA3": _data("AXIA3")})
 
     prog = ig.renormalize_demonstracoes()
 
     assert all(r["ticker"] == "ELET3" for r in upserts["income_statements"])
     assert prog["atualizados"] == ["ELET3"]
+
+
+def test_payload_do_codigo_antigo_grava_sob_o_atual_com_o_id_original(monkeypatch):
+    # unificar não move payload: o único com as demonstrações pode ter ficado
+    # sob ELET3, e pular o código antigo as perderia para sempre
+    rows = [("AXIA3", "ELET3", 7, {"symbol": "AXIA3"})]
+    _, upserts = _patch(monkeypatch, rows, {"AXIA3": _data("AXIA3")},
+                        trocas={"ELET3": "AXIA3"})
+
+    prog = ig.renormalize_demonstracoes(forcar=True)
+
+    for linhas in upserts.values():
+        assert [(r["ticker"], r["raw_payload_id"]) for r in linhas] == [("AXIA3", 7)]
+    assert prog["atualizados"] == ["AXIA3"]
+    assert prog["payloads_de_codigo_antigo"] == 1 and prog["erros"] == 0
 
 
 def test_escolhe_o_payload_mais_novo_que_traz_demonstracao(monkeypatch):
@@ -116,10 +134,21 @@ def test_escolhe_o_payload_mais_novo_que_traz_demonstracao(monkeypatch):
     # cotação diária (só preço) não entra
     assert "?| array['incomeStatementHistoryQuarterly'" in sql
     # o arquivamento dá id novo a payload antigo: a idade é fetched_at
-    assert "ORDER BY ticker, fetched_at DESC, id DESC" in sql
+    assert "ORDER BY dono, fetched_at DESC, id DESC" in sql
     # o que já saiu deste payload não é regravado
-    assert "s.raw_payload_id = u.id" in sql
-    assert params == {"tks": ["BBDC4"]}
+    assert "s.ticker = u.dono AND s.raw_payload_id = u.id" in sql
+    assert params == {"tks": ["BBDC4"], "trocas": "{}"}
+
+
+def test_pedir_qualquer_dos_dois_codigos_traz_os_payloads_dos_dois(monkeypatch):
+    for pedido in (["ELET3"], ["axia3.sa"]):
+        conn, _ = _patch(monkeypatch, [], {}, trocas={"ELET3": "AXIA3"})
+
+        ig.renormalize_demonstracoes(pedido)
+
+        params = next(p for s, p in conn.executed if "brapi_raw_payloads" in s)
+        assert params["tks"] == ["AXIA3", "ELET3"]
+        assert json.loads(params["trocas"]) == {"ELET3": "AXIA3"}
 
 
 def test_cli_recalcula_indicadores_so_dos_atualizados(monkeypatch):
@@ -159,7 +188,7 @@ def test_forcar_regrava_o_que_ja_saiu_do_payload(monkeypatch):
 
     sql = next(s for s, _ in conn.executed if "brapi_raw_payloads" in s)
     assert "s.raw_payload_id = u.id" not in sql
-    assert "ORDER BY ticker, fetched_at DESC, id DESC" in sql
+    assert "ORDER BY dono, fetched_at DESC, id DESC" in sql
 
 
 def test_cli_repassa_forcar(monkeypatch):

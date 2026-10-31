@@ -228,8 +228,8 @@ render_sector_grid(df, key_prefix='test_cards', selected_ticker=None,
 """).run(timeout=60)
     assert not app.exception
     labels = [button.label for button in app.button]
-    assert labels[:5] == [
-        "🏢 Empresas por Setor", "🔍 Análise de Empresa", "🔬 Análise Avançada",
+    assert labels[:4] == [
+        "🏢 Empresas por Setor", "🔍 Análise de Empresa",
         "🚀 Criação de Portfólio", "🧠 Avaliação de Portfólio",
     ]
     assert labels.count("Analisar") == 4

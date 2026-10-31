@@ -38,9 +38,10 @@ compatível.
 > Estado atual: **módulo completo e alinhado à navegação de Empresas B3** — infraestrutura, ingestão,
 > normalização/qualidade/PIT (2–4); score fundamentalista + comparação por
 > indústria + dossiê (5); carteira-modelo + backtest point-in-time + Rank-IC (6);
-> Análise Avançada
-> (Piotroski/Altman/Sloan/ROIC incremental), comparação, criação/simulação e
-> avaliação de portfólio, regime macro americano e validação (8+).
+> indicadores avançados (Piotroski/Altman/Sloan/ROIC incremental), criação e
+> avaliação de portfólio, regime macro americano e validação (8+). A subaba
+> Análise Avançada saiu da tela em 30/10/2026, como em Empresas B3; os cálculos
+> abaixo seguem no dossiê, no snapshot e na Avaliação de Portfólio.
 
 ## Score fundamentalista — SBC e diluição (v0.5.0, 2026-07)
 
@@ -68,9 +69,12 @@ Para recomputar o histórico PIT com a nova versão:
 python run_us_ingest.py score-history
 ```
 
-## Análise Avançada
+## Indicadores avançados
 
-`core/us_advanced.py`, determinístico e puro:
+`core/us_advanced.py`, determinístico e puro. Deu nome à subaba Análise
+Avançada, que saiu em 30/10/2026; o módulo continua alimentando o dossiê
+(`core/us_read.py`), o snapshot (`data_pipeline/us/snapshot.py`) e o relatório
+da Avaliação de Portfólio (`core/portfolio_report_us.py`):
 
 - **Piotroski F-Score** (2000) — 9 critérios binários (rentabilidade, alavancagem/
   liquidez, eficiência). Critério sem dado retorna `None` e **não** conta como

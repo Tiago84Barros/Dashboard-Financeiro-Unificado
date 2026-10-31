@@ -1993,8 +1993,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         st.caption(
             "Como é calculado: cada classe de ativo tem uma sensibilidade fixa "
             "(0 a 1) a cada fator; a barra é a média dessas sensibilidades "
-            "ponderada pelo peso das classes na carteira. Estimativa indicativa "
-            "— não constitui recomendação de investimento."
+            "ponderada pelo peso das classes na carteira. Estimativa indicativa."
         )
     else:
         st.caption("Sem dados de alocação para calcular dependências macro.")
@@ -2748,6 +2747,10 @@ def _card_ativo(pos: dict, renda: float, logo_url: str = "") -> str:
         fonte_icon, fonte_label = "🟢", "mercado atual"
     elif cotacao_fonte == "stale":
         fonte_icon, fonte_label = "🟠", "mercado desatualizado"
+    elif cotacao_fonte == "curva_tesouro":
+        fonte_icon, fonte_label = "🟢", "curva do Tesouro"
+    elif cotacao_fonte == "curva_tesouro_antiga":
+        fonte_icon, fonte_label = "🟠", "curva do Tesouro desatualizada"
     else:
         fonte_icon, fonte_label = "🟡", "snapshot"
 
@@ -2906,7 +2909,7 @@ def _editor_preco_medio_manual(posicoes: list[dict]) -> None:
         b1, b2 = st.columns([1, 1], gap="small")
         with b1:
             if st.button("Salvar preço médio", type="primary",
-                         use_container_width=True, key="pmm_salvar"):
+                         width="stretch", key="pmm_salvar"):
                 try:
                     salvar(uid, tk, valor, nota)
                 except Exception as exc:  # noqa: BLE001
@@ -2916,7 +2919,7 @@ def _editor_preco_medio_manual(posicoes: list[dict]) -> None:
                     st.success(f"{tk}: preço médio informado por você gravado.")
                     st.rerun()
         with b2:
-            if vigente and st.button("Apagar declaração", use_container_width=True,
+            if vigente and st.button("Apagar declaração", width="stretch",
                                      key="pmm_apagar"):
                 remover(uid, tk)
                 st.cache_data.clear()
@@ -3635,11 +3638,19 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         # Contagem de cotações ao vivo, valorização em R$ e N efetivo vieram
         # da antiga aba Carteira, que repetia estes quatro KPIs.
         n_live = carteira.get("n_cotacoes_live", 0)
-        if not n_live:
+        n_curva = carteira.get("n_cotacoes_curva", 0)
+        n_curva_antiga = carteira.get("n_cotacoes_curva_antiga", 0)
+        n_ativos = carteira.get("num_ativos", 0)
+        if not n_live and not n_curva and not n_curva_antiga:
             detalhe_tecnico("Sem cotações ao vivo: valores pelas cotações do snapshot XP.",
                             codigo="investimentos.carteira.cotacoes_snapshot")
-        cotacao_sub = (f"{n_live}/{carteira.get('num_ativos', 0)} cotações ao vivo"
-                       if n_live else "Cotações da última foto")
+        # O Tesouro marcado pela curva oficial vale pelo PU do dia, não pela foto.
+        cotacao_sub = " · ".join(
+            ([f"{n_live}/{n_ativos} cotações ao vivo"] if n_live else [])
+            + ([f"{n_curva}/{n_ativos} pela curva do Tesouro"] if n_curva else [])
+            + ([f"{n_curva_antiga}/{n_ativos} pela curva do Tesouro desatualizada"]
+               if n_curva_antiga else [])
+        ) or "Cotações da última foto"
         dif_total = carteira.get("diferenca_reais", round(total_mkt - total_inv, 2))
         dif_txt = f"{'+' if dif_total >= 0 else ''}{fmt_moeda(dif_total)}"
 
@@ -4525,13 +4536,15 @@ def render() -> None:
             "sucesso" if _fonte == "real" else "alerta",
         )
     with col_b2:
-        _n_live  = carteira.get("n_cotacoes_live", 0)
+        # Tesouro pela curva oficial conta como atual: é o PU do dia.
+        _n_atuais = (carteira.get("n_cotacoes_live", 0)
+                     + carteira.get("n_cotacoes_curva", 0))
         _n_stale = carteira.get("n_cotacoes_stale", 0)
         _n_tot   = carteira.get("num_ativos", 0)
         badge_status(
-            (f"Cotações atuais {_n_live}/{_n_tot}" if not _n_stale else
-             f"Atuais {_n_live} · antigas {_n_stale}"),
-            "sucesso" if _n_live and not _n_stale else "alerta",
+            (f"Cotações atuais {_n_atuais}/{_n_tot}" if not _n_stale else
+             f"Atuais {_n_atuais} · antigas {_n_stale}"),
+            "sucesso" if _n_atuais and not _n_stale else "alerta",
         )
     with col_b3:
         badge_status(f"{proventos['num_eventos']} proventos", "neutro")

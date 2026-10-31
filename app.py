@@ -41,7 +41,11 @@ if not _APP_TEST_MODE:
     from core.config import settings
     from design.componentes import mensagem_erro, transicao_de_pagina
     from design.tema import aplicar_tema
-    from design.theme_selector import lembrar_no_navegador, tema_para_pintar
+    from design.theme_selector import (
+        escolha_pintada,
+        lembrar_no_navegador,
+        tema_para_pintar,
+    )
 
     # O tema é aplicado ANTES do portão: toda execução que o portão interrompe
     # -- tela de login, ou o aviso de sessão que não deu para validar -- saía
@@ -53,17 +57,16 @@ if not _APP_TEST_MODE:
     # elementos acima da página não pode depender do tema (ver `aplicar_tema`).
     _tema = tema_para_pintar()
     aplicar_tema(_tema)
-    # E fica lembrado no NAVEGADOR. O tema é preferência de conta, mas a conta
-    # some da sessão quando ela expira ou quando o websocket reconecta -- e a
-    # execução sem conta não tinha de onde saber que a pessoa estava no claro.
-    # Também emitido em toda execução e nos dois temas, para que a contagem de
-    # elementos acima da página não mude com o tema.
-    # Com a conta junto: o cookie é do navegador, e num navegador usado por
-    # mais de uma conta ele entregava à seguinte o tema da anterior. Vai só a
-    # etiqueta opaca da conta, nunca o id (ver `theme_selector._etiqueta`).
+    # E a ESCOLHA fica lembrada no navegador -- a escolha, nunca a cor pintada.
+    # O tema muda se e somente se a pessoa escolher (regra de 31/10/2026); levar
+    # ao cookie a cor da tela fazia o escuro padrão de uma execução que não
+    # sabia a resposta voltar na sessão seguinte como se fosse preferência.
+    # Sem escolha, o elemento é emitido igual e não escreve nada: a contagem de
+    # elementos acima da página não pode mudar. Vai só a etiqueta opaca da
+    # conta, nunca o id (ver `theme_selector._etiqueta`).
     from core.user_context import principal as _principal
 
-    lembrar_no_navegador(_tema, str(_principal().get("id", "")))
+    lembrar_no_navegador(escolha_pintada(), str(_principal().get("id", "")))
     verificar_autenticacao()
 
 # ── Mapeamento: label da sidebar → módulo em views/ ──────────────────────────

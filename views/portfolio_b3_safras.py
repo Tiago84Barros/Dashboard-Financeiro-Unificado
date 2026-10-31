@@ -263,17 +263,16 @@ def _grafico_barras(completas: pd.DataFrame):
 
 def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                   selic_por_ano: dict[int, float],
-                  taxa_selic_aa: float,
-                  resultados_todos: list[dict] | None = None) -> None:
+                  taxa_selic_aa: float) -> None:
     """Bloco 1: a tabela de safras e a barra por safra contra Selic/EW.
-    Ao fim, chama `render_expectativa` (Bloco 3) e `render_vies_universo`
-    (Bloco 2, sob demanda).
+    Ao fim, chama `render_expectativa` (Bloco 3).
 
     `resultados` e a lista JA FILTRADA pelo gate de aprovacao -- e a
-    carteira que a tela publica. `resultados_todos` e a lista NAO
-    filtrada, e existe so para o Bloco 2 reconstruir as mesmas safras SEM
-    o gate e medir a distancia entre as duas. Sem ela o Bloco 2 nao e
-    renderizado: nao ha o que comparar.
+    carteira que a tela publica.
+
+    O Bloco 2 (`render_vies_universo`, "Tamanho do vies de universo")
+    saiu da tela por pedido do dono do projeto (30/10/2026). A funcao
+    continua aqui e testada; voltar com ela e uma chamada no fim desta.
     """
     st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
@@ -357,16 +356,6 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
             "sobreviventes renderam.",
             codigo="tela.portfolio_b3.safras_peso_sem_preco",
         )
-
-    # Bloco 2 por último e sob demanda (decisão do dono do projeto): a
-    # reconstrução sem gate é a conta mais cara da tela. `tabela` vai junto
-    # para que o lado "com gate" da comparação seja a MESMA medição já
-    # publicada acima, e não uma segunda reconstrução que pode divergir.
-    if resultados_todos:
-        render_vies_universo(resultados, resultados_todos, df_precos,
-                             selic_por_ano=selic_por_ano,
-                             taxa_selic_aa=taxa_selic_aa,
-                             tabela_com_gate=tabela)
 
 
 def _ics_por_ano(resultados: list[dict],

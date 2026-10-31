@@ -1005,5 +1005,5 @@ def _tabela_carteira(analises) -> None:
           "Peso": round(a.ativo.peso_atual, 1),
           "Classe vs alvo (pp)": a.faixa.desvio_classe,
           "Ação a considerar": a.acao.rotulo} for a in analises],
-        hide_index=True, use_container_width=True,
+        hide_index=True, width="stretch",
         column_config={"Peso": st.column_config.NumberColumn(format="%.1f%%")})

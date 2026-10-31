@@ -1,11 +1,11 @@
 {
-  "gerado_em": "2026-10-12T13:07:01+00:00",
-  "linhas": 475939,
-  "chunks_distintos": 475939,
+  "gerado_em": "2026-10-31T00:45:21+00:00",
+  "linhas": 483950,
+  "chunks_distintos": 483950,
   "roots": 364,
-  "ancoras": 207338,
-  "stubs": 512,
-  "bytes": 141133513,
+  "ancoras": 210673,
+  "stubs": 0,
+  "bytes": 143445540,
   "particoes": [
     {
       "arquivo": "chunks_A_2023.parquet",
@@ -24,8 +24,8 @@
     },
     {
       "arquivo": "chunks_A_2026.parquet",
-      "linhas": 20072,
-      "bytes": 5547633
+      "linhas": 20432,
+      "bytes": 5627759
     },
     {
       "arquivo": "chunks_B_2023.parquet",
@@ -44,8 +44,8 @@
     },
     {
       "arquivo": "chunks_B_2026.parquet",
-      "linhas": 25510,
-      "bytes": 6881044
+      "linhas": 26363,
+      "bytes": 7157784
     },
     {
       "arquivo": "chunks_C_2023.parquet",
@@ -64,8 +64,8 @@
     },
     {
       "arquivo": "chunks_C_2026.parquet",
-      "linhas": 25203,
-      "bytes": 7082454
+      "linhas": 25723,
+      "bytes": 7223317
     },
     {
       "arquivo": "chunks_D_2023.parquet",
@@ -84,8 +84,8 @@
     },
     {
       "arquivo": "chunks_D_2026.parquet",
-      "linhas": 4674,
-      "bytes": 1343635
+      "linhas": 4755,
+      "bytes": 1367873
     },
     {
       "arquivo": "chunks_E_2023.parquet",
@@ -104,8 +104,8 @@
     },
     {
       "arquivo": "chunks_E_2026.parquet",
-      "linhas": 14934,
-      "bytes": 4260907
+      "linhas": 15017,
+      "bytes": 4283763
     },
     {
       "arquivo": "chunks_F_2023.parquet",
@@ -124,8 +124,8 @@
     },
     {
       "arquivo": "chunks_F_2026.parquet",
-      "linhas": 3140,
-      "bytes": 957452
+      "linhas": 3556,
+      "bytes": 1056162
     },
     {
       "arquivo": "chunks_G_2023.parquet",
@@ -144,8 +144,8 @@
     },
     {
       "arquivo": "chunks_G_2026.parquet",
-      "linhas": 7419,
-      "bytes": 2145730
+      "linhas": 7492,
+      "bytes": 2170832
     },
     {
       "arquivo": "chunks_H_2023.parquet",
@@ -164,8 +164,8 @@
     },
     {
       "arquivo": "chunks_H_2026.parquet",
-      "linhas": 5583,
-      "bytes": 1537547
+      "linhas": 5741,
+      "bytes": 1547170
     },
     {
       "arquivo": "chunks_I_2023.parquet",
@@ -184,8 +184,8 @@
     },
     {
       "arquivo": "chunks_I_2026.parquet",
-      "linhas": 9098,
-      "bytes": 2411169
+      "linhas": 9543,
+      "bytes": 2554023
     },
     {
       "arquivo": "chunks_J_2023.parquet",
@@ -204,8 +204,8 @@
     },
     {
       "arquivo": "chunks_J_2026.parquet",
-      "linhas": 1814,
-      "bytes": 406479
+      "linhas": 2442,
+      "bytes": 573123
     },
     {
       "arquivo": "chunks_K_2023.parquet",
@@ -244,8 +244,8 @@
     },
     {
       "arquivo": "chunks_L_2026.parquet",
-      "linhas": 7512,
-      "bytes": 2193050
+      "linhas": 7631,
+      "bytes": 2244762
     },
     {
       "arquivo": "chunks_M_2023.parquet",
@@ -264,8 +264,8 @@
     },
     {
       "arquivo": "chunks_M_2026.parquet",
-      "linhas": 11564,
-      "bytes": 3236703
+      "linhas": 12220,
+      "bytes": 3424320
     },
     {
       "arquivo": "chunks_N_2023.parquet",
@@ -284,8 +284,8 @@
     },
     {
       "arquivo": "chunks_N_2026.parquet",
-      "linhas": 4122,
-      "bytes": 1041282
+      "linhas": 4697,
+      "bytes": 1240294
     },
     {
       "arquivo": "chunks_O_2023.parquet",
@@ -304,8 +304,8 @@
     },
     {
       "arquivo": "chunks_O_2026.parquet",
-      "linhas": 5100,
-      "bytes": 1418467
+      "linhas": 5489,
+      "bytes": 1528715
     },
     {
       "arquivo": "chunks_P_2023.parquet",
@@ -324,8 +324,8 @@
     },
     {
       "arquivo": "chunks_P_2026.parquet",
-      "linhas": 14235,
-      "bytes": 3874930
+      "linhas": 14482,
+      "bytes": 3953861
     },
     {
       "arquivo": "chunks_Q_2023.parquet",
@@ -344,8 +344,8 @@
     },
     {
       "arquivo": "chunks_Q_2026.parquet",
-      "linhas": 1477,
-      "bytes": 392522
+      "linhas": 1547,
+      "bytes": 408390
     },
     {
       "arquivo": "chunks_R_2023.parquet",
@@ -364,8 +364,8 @@
     },
     {
       "arquivo": "chunks_R_2026.parquet",
-      "linhas": 9981,
-      "bytes": 2894755
+      "linhas": 11013,
+      "bytes": 3216287
     },
     {
       "arquivo": "chunks_S_2023.parquet",
@@ -384,8 +384,8 @@
     },
     {
       "arquivo": "chunks_S_2026.parquet",
-      "linhas": 12639,
-      "bytes": 3491599
+      "linhas": 13576,
+      "bytes": 3727506
     },
     {
       "arquivo": "chunks_T_2023.parquet",
@@ -404,8 +404,8 @@
     },
     {
       "arquivo": "chunks_T_2026.parquet",
-      "linhas": 13320,
-      "bytes": 3888703
+      "linhas": 13363,
+      "bytes": 3908543
     },
     {
       "arquivo": "chunks_U_2023.parquet",
@@ -424,8 +424,8 @@
     },
     {
       "arquivo": "chunks_U_2026.parquet",
-      "linhas": 2490,
-      "bytes": 690989
+      "linhas": 2494,
+      "bytes": 692481
     },
     {
       "arquivo": "chunks_V_2023.parquet",
@@ -444,8 +444,8 @@
     },
     {
       "arquivo": "chunks_V_2026.parquet",
-      "linhas": 9134,
-      "bytes": 2496088
+      "linhas": 9358,
+      "bytes": 2570285
     },
     {
       "arquivo": "chunks_W_2023.parquet",
@@ -464,8 +464,8 @@
     },
     {
       "arquivo": "chunks_W_2026.parquet",
-      "linhas": 2099,
-      "bytes": 629088
+      "linhas": 2197,
+      "bytes": 657003
     },
     {
       "arquivo": "chunks_Y_2023.parquet",
@@ -488,8 +488,8 @@
       "bytes": 169615
     }
   ],
-  "assinatura_chunk_hash": "91f6de73f57bcc26f3e21a07ee89b034",
-  "assinatura_origem": "91f6de73f57bcc26f3e21a07ee89b034",
-  "linhas_origem": 475939,
+  "assinatura_chunk_hash": "75457d4ed5fb4cd6415e09c702e22c01",
+  "assinatura_origem": "75457d4ed5fb4cd6415e09c702e22c01",
+  "linhas_origem": 483950,
   "confere": true
 }

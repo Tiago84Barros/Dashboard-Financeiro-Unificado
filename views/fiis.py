@@ -9,7 +9,9 @@ Abas (como Empresas B3, com as particularidades de FII):
   2. Busca de ativo — detalhe por FII: histórico (P/VP·VPA), vacância, composição
                       e carteira de imóveis com região (tijolo/logística).
   3. Carteira-modelo — seleção diversificada por tipo (tijolo/papel/fof/híbrido).
-  4. Backtest        — retorno total (preço + proventos reinvestidos) da carteira.
+  4. Retrospectiva   — retorno total (preço + proventos reinvestidos) da carteira.
+  5. Revisão de dados — decisão humana, versionada, sobre valores extraídos de
+                        relatório gerencial antes de virarem dado aceito.
 
 Fonte nativa do market.* (BRAPI Pro + CVM Informe Mensal). FII não tem DRE/ROE.
 """
@@ -90,6 +92,7 @@ from design.componentes import (
 )
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.market_companies import company_logo_html
+from design.relatorio_analista import secao_relatorio
 
 # Metadados por tipo de FII: emoji, rótulo e cor de destaque do card.
 _TIPO_META = {
@@ -1288,7 +1291,7 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
         return
 
     providers = provedores_disponiveis()
-    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
+    provider_labels = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
     detalhe_tecnico("Provedor disponível: " + ", ".join(
         provider_labels.get(provider, provider) for provider in providers),
         codigo="fii.chat_provedor")
@@ -1324,9 +1327,13 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                          width="stretch"):
                 suggested_input = question
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     history = load_chat_history(memory_key, session_key="fii_chat_history")
     for message in visible_chat_history(history, "fii_chat_history"):
-        with st.chat_message(message["role"]):
+        with conversa.chat_message(message["role"]):
             st.markdown(escapar_cifrao(message["content"]))
 
     typed_input = st.chat_input(
@@ -1336,9 +1343,9 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
         return
 
     history.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(user_input))
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         aviso = ""
         with st.spinner("Consultando seleção, pares, cenário e qualidade dos dados…"):
             try:
@@ -1359,7 +1366,8 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                 detalhe = get_warehouse_detail_context(alvos)
                 if detalhe:
                     context = context + "\n\n" + detalhe
-                context = context + "\n\n" + bloco_contexto_mercado()
+                context = context + "\n\n" + bloco_contexto_mercado(
+                    tickers_movimento=alvos)
                 # Citados primeiro, depois a seleção por peso: o mesmo
                 # veredito da Inteligência dos Ativos, conferido na resposta.
                 context, avaliacoes = veredito.anexar(
@@ -1370,11 +1378,17 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                 aviso = aviso_ancoragem(answer, context, user_input)
             except Exception as exc:
                 from core.llm_falha import mensagem_falha_llm
-                answer = mensagem_falha_llm(exc, "chat da Seleção de FIIs")
+                answer = None
+                falha = mensagem_falha_llm(exc, "chat da Seleção de FIIs")
+        if answer is None:
+            # A falha é aviso, não fala do assistente: gravada, voltava no
+            # contexto do turno seguinte como resposta dele (LLM-A11).
+            st.warning(falha)
+            history.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(answer))
         if aviso:
             st.caption(aviso)
-        st.caption("Análise educacional baseada nos dados disponíveis; não constitui recomendação.")
     history.append({"role": "assistant", "content": answer})
     save_chat_history(memory_key, history, session_key="fii_chat_history")
 
@@ -2174,10 +2188,17 @@ def _tab_busca(df: pd.DataFrame) -> None:
                          "`python run_market_ingest.py fiis-imoveis` (coleta best-effort por scraping).",
                          codigo="tela.fii.imoveis_nao_coletados", entidade=tk)
 
+    st.divider()
+    st.markdown("#### 🧭 Relatório do analista")
+    # Sem setor, como o portão da Inteligência dos Ativos lê o FII.
+    relatorio = secao_relatorio(tk, str(d.get("Nome") or "") or None, None,
+                                mercado="fii")
+
     render_chat_ativo(
         mercado="fii", ticker=tk, nome=str(d.get("Nome") or ""), accent="#B084F6",
         build_context=lambda pergunta: build_fii_ativo_context(
             tk, user_question=pergunta, dados=d, universo=df, imoveis=imoveis,
+            relatorio=relatorio,
         ),
     )
 

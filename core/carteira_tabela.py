@@ -342,13 +342,15 @@ _SQL_MOVIMENTOS = """
 """
 
 # A foto da B3 é excluída da corretora (constante "B3 - Area do Investidor")
-# mas entra na data: é evidência de posse como qualquer outra foto.
+# mas entra na data: é evidência de posse como qualquer outra foto. O aluguel
+# tomado (BTC Tomador, gravado negativo) não é: o papel é devido, não possuído.
 _SQL_FOTOS = """
     SELECT upper(a.ticker) AS ticker, pps.report_date AS data,
            pps.institution AS instituicao
     FROM   portfolio_position_snapshots pps
     JOIN   assets a ON a.id = pps.asset_id
     WHERE  pps.user_id = :uid
+      AND  NOT (COALESCE(pps.is_loaned, FALSE) AND pps.quantity < 0)
 """
 
 
