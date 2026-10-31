@@ -93,25 +93,45 @@ def test_inicio_do_periodo():
     assert dc.inicio_do_periodo(10, date(2026, 10, 31)) == date(2026, 10, 21)
 
 
-def test_tela_tem_selecao_do_que_comparar_na_visao_geral():
+def test_selecao_e_pela_legenda_e_nao_por_widget():
+    """Pedido de 31/10/2026: sem pílulas verdes; a legenda liga e desliga."""
     import views.investimentos as inv
 
     secao = inspect.getsource(inv._secao_desempenho_categorias)
-    assert "st.pills(" in secao and 'selection_mode="multi"' in secao
-    assert "analise_vg_categorias_sel" in secao
+    assert "st.pills(" not in secao and "st.multiselect(" not in secao
     corpo = inspect.getsource(inv._tab_analise)
     trecho = corpo[corpo.index("with ta:"):corpo.index("with tb:")]
     assert "_secao_desempenho_categorias(posicoes)" in trecho
 
 
-def test_figura_desenha_so_as_selecionadas():
+def _serie(fim: float) -> pd.Series:
+    return pd.Series([0.0, fim], index=pd.to_datetime(["2026-01-01", "2026-02-01"]))
+
+
+def test_grafico_abre_com_acoes_etf_e_tesouro_e_o_resto_na_legenda():
     import views.investimentos as inv
 
-    s = pd.Series([0.0, 5.0], index=pd.to_datetime(["2026-01-01", "2026-02-01"]))
-    fig = inv._fig_desempenho_categorias(
-        {"Empresas Americanas": s, "ETFs Americanos": s * 2}, ["ETFs Americanos"])
-    assert [t.name for t in fig.data if t.showlegend is not False] == ["ETFs Americanos"]
-    assert [a.text for a in fig.layout.annotations] == ["<b>+10,0%</b>"]
+    series = {c.nome: _serie(i + 1.0) for i, c in enumerate(dc.CATEGORIAS)}
+    fig = inv._fig_desempenho_categorias(series)
+    linhas = {t.name: t.visible for t in fig.data if t.showlegend is not False}
+    assert set(linhas) == {c.nome for c in dc.CATEGORIAS}
+    assert {n for n, v in linhas.items() if v is True} == set(dc.INICIAIS)
+    assert all(v == "legendonly" for n, v in linhas.items() if n not in dc.INICIAIS)
+    # Ponto final e rótulo seguem a linha: mesmo grupo, mesma visibilidade.
+    for t in fig.data:
+        dono = next(x for x in fig.data if x.name == t.legendgroup)
+        assert t.visible == dono.visible
+    assert fig.layout.dragmode is False
+
+
+def test_sem_nenhuma_inicial_o_grafico_mostra_tudo():
+    import views.investimentos as inv
+
+    fig = inv._fig_desempenho_categorias({"Empresas Americanas": _serie(-3.0),
+                                          "Renda Fixa": _serie(1.0)})
+    assert all(t.visible is True for t in fig.data)
+    textos = [t.text[0] for t in fig.data if t.mode == "text"]
+    assert textos == ["<b>-3,0%</b>", "<b>+1,0%</b>"]
 
 
 def test_rotulos_de_fim_de_linha_nao_se_sobrepoem():
@@ -122,7 +142,7 @@ def test_rotulos_de_fim_de_linha_nao_se_sobrepoem():
     assert pos["A"] < pos["B"] < pos["C"]
 
 
-def test_placar_ordena_do_melhor_para_o_pior_e_apaga_o_nao_selecionado():
+def test_placar_ordena_do_melhor_para_o_pior():
     import views.investimentos as inv
 
     s = pd.Series([0.0, 1.0], index=pd.to_datetime(["2026-01-01", "2026-02-01"]))
@@ -130,63 +150,6 @@ def test_placar_ordena_do_melhor_para_o_pior_e_apaga_o_nao_selecionado():
     info = {"Empresas Americanas": {**base, "retorno": -3.0},
             "ETFs Americanos": {**base, "retorno": 7.5}}
     html = inv._cards_desempenho_categorias(
-        {"Empresas Americanas": s, "ETFs Americanos": s}, info, ["ETFs Americanos"])
+        {"Empresas Americanas": s, "ETFs Americanos": s}, info)
     assert html.index("ETFs Americanos") < html.index("Empresas Americanas")
-    assert html.count("dcat-off") == 1 and "+7,5%" in html and "-3,0%" in html
-
-
-# ── achados da revisão do PR #637 ────────────────────────────────────────────
-
-def test_sem_passo_medido_nao_vira_serie_de_zero():
-    """Dois ativos com uma foto cada, em datas diferentes: nenhum retorno."""
-    precos = _df({"A": [1000.0, None], "B": [None, 2000.0]},
-                 ["2026-01-31", "2026-02-28"])
-    assert dc.retorno_encadeado(precos, {"A": 1, "B": 1}).empty
-
-
-def test_passo_nao_medido_sai_da_curva_em_vez_de_valer_zero():
-    # A some depois do dia 2 e B só começa no dia 3: o passo 2→3 não é medido.
-    precos = _df({"A": [10.0, 11.0, None, None], "B": [None, None, 50.0, 55.0]},
-                 ["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"])
-    s = dc.retorno_encadeado(precos, {"A": 1, "B": 1})
-    assert pd.Timestamp("2026-01-03") not in s.index
-    assert s.iloc[-1] == pytest.approx((1.1 * 1.1 - 1) * 100)
-
-
-def test_peso_da_renda_fixa_vem_do_valor_e_nao_da_unidade_da_fonte():
-    """Dois ativos de R$ 1.000, um +10% e outro parado, dão 5% -- mesmo que a
-    série de um conte em notas de R$ 1.000 e a quantidade de hoje em reais."""
-    precos = _df({"CDB": [1000.0, 1100.0], "LCI": [1.0, 1.0]},
-                 ["2026-01-31", "2026-02-28"])
-    q = dc.quantidades_pelo_valor(precos, {"CDB": 1100.0, "LCI": 1000.0, "SEM": 5.0})
-    assert set(q) == {"CDB", "LCI"}
-    s = dc.retorno_encadeado(precos, q)
-    assert s.iloc[-1] == pytest.approx((2100 / 2000 - 1) * 100)
-
-
-def test_ticker_que_junta_cupom_e_principal_fica_sem_curva():
-    assert dc.chave_unica_tesouro(
-        "TIPCA2032", ["Tesouro IPCA+ 2032", "Tesouro IPCA+ com Juros Semestrais 2032"]) is None
-    assert dc.chave_unica_tesouro("TIPCA2032", ["Tesouro IPCA+ 2032"]) == "TIPCA2032"
-    assert dc.chave_unica_tesouro(
-        "TIPCA2032", ["Tesouro IPCA+ com Juros Semestrais 2032"]) == "TIPCAJ2032"
-
-
-def test_precos_tesouro_nao_pede_curva_de_grupo_ambiguo(monkeypatch):
-    from core import tesouro_curva
-
-    pedidas = []
-
-    def _serie(engine, chave, desde=None):
-        pedidas.append(chave)
-        return pd.DataFrame({"base_date": ["2026-01-02", "2026-01-05"],
-                             "sell_pu": [100.0, 101.0], "base_pu": [None, None]})
-
-    monkeypatch.setattr(tesouro_curva, "serie_titulo", _serie)
-    df = dc.precos_tesouro(object(), [
-        {"ticker": "TIPCA2032",
-         "nomes": ["Tesouro IPCA+ 2032", "Tesouro IPCA+ com Juros Semestrais 2032"]},
-        {"ticker": "TPRE2030", "nomes": ["Tesouro Prefixado 2030"]},
-    ], date(2026, 1, 1))
-    assert pedidas == ["TPRE2030"]
-    assert list(df.columns) == ["TPRE2030"]
+    assert "+7,5%" in html and "-3,0%" in html

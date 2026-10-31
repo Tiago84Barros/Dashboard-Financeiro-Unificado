@@ -62,6 +62,10 @@ CATEGORIAS: tuple[Categoria, ...] = (
 
 POR_NOME = {c.nome: c for c in CATEGORIAS}
 
+# O gráfico abre só com estas; as outras ficam na legenda, a um clique.
+# Seis linhas de saída poluíam a leitura (pedido do usuário, 31/10/2026).
+INICIAIS = frozenset({"Ações", "ETFs Americanos", "Tesouro Direto"})
+
 
 def posicoes_por_categoria(posicoes: list[dict]) -> dict[str, list[dict]]:
     """``{categoria: [posições com quantidade > 0]}``, só as que têm posição."""

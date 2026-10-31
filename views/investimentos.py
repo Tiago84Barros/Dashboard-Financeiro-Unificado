@@ -1903,7 +1903,6 @@ _CSS_DESEMPENHO_CATEGORIAS = """
 .dcat-card{position:relative;background:var(--app-surface);border:1px solid var(--app-border);
   border-radius:10px;padding:12px 14px 8px;overflow:hidden;transition:opacity .15s ease;}
 .dcat-card::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:var(--dcat-cor);}
-.dcat-card.dcat-off{opacity:.42;}
 .dcat-nome{display:flex;align-items:center;gap:6px;font-size:.72rem;font-weight:700;
   letter-spacing:.02em;color:var(--app-subtle);white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;}
@@ -1946,7 +1945,7 @@ def _sparkline_svg(serie: pd.Series, cor: str, pontos: int = 48) -> str:
             f'vector-effect="non-scaling-stroke"/></svg>')
 
 
-def _cards_desempenho_categorias(series: dict, info: dict, selecionadas: list) -> str:
+def _cards_desempenho_categorias(series: dict, info: dict) -> str:
     """Placar das categorias, da melhor para a pior no período."""
     from core.desempenho_categorias import POR_NOME
 
@@ -1960,8 +1959,7 @@ def _cards_desempenho_categorias(series: dict, info: dict, selecionadas: list) -
         cor_ret = _cor_texto(_COR_POSITIVO if i["retorno"] >= 0 else _COR_NEGATIVO)
         moeda = " · em USD" if i["moeda"] != "BRL" else ""
         cards.append(
-            f'<div class="dcat-card{"" if nome in selecionadas else " dcat-off"}" '
-            f'style="--dcat-cor:{cor};">'
+            f'<div class="dcat-card" style="--dcat-cor:{cor};">'
             f'<div class="dcat-nome"><span class="dcat-pos">{pos}º</span>'
             f'{_html.escape(nome)}</div>'
             f'<div class="dcat-ret" style="color:{cor_ret};">{_fmt_retorno(i["retorno"])}</div>'
@@ -1974,88 +1972,103 @@ def _cards_desempenho_categorias(series: dict, info: dict, selecionadas: list) -
 
 
 def _rotulos_sem_colisao(finais: list[tuple[str, float]], folga: float) -> dict[str, float]:
-    """Posição vertical do rótulo de fim de linha, afastando os que se tocam."""
-    ordem = sorted(finais, key=lambda t: t[1])
+    """Posição vertical do rótulo de fim de linha, afastando os que se tocam.
+
+    Só empurra para cima quem encosta no de baixo: rótulo sem vizinho fica na
+    ponta da própria linha.
+    """
     pos: dict[str, float] = {}
     anterior = None
-    for nome, y in ordem:
+    for nome, y in sorted(finais, key=lambda t: t[1]):
         alvo = y if anterior is None else max(y, anterior + folga)
         pos[nome] = alvo
         anterior = alvo
-    # Empurrar só para cima desloca o bloco inteiro; recentra no meio dos reais.
-    if pos:
-        desvio = (sum(pos.values()) - sum(y for _, y in finais)) / len(pos)
-        pos = {n: y - desvio for n, y in pos.items()}
     return pos
 
 
-def _fig_desempenho_categorias(series: dict, selecionadas: list) -> go.Figure:
-    from core.desempenho_categorias import POR_NOME
+def _visiveis_de_inicio(nomes: list[str]) -> set[str]:
+    """As categorias que o gráfico abre mostrando; sem nenhuma delas, todas."""
+    from core.desempenho_categorias import INICIAIS
 
+    return (set(nomes) & INICIAIS) or set(nomes)
+
+
+def _fig_desempenho_categorias(series: dict) -> go.Figure:
+    """Uma linha por categoria; a legenda, abaixo, liga e desliga cada uma.
+
+    Linha, ponto final e rótulo de cada categoria formam um ``legendgroup``:
+    o clique na legenda esconde os três juntos. As que não estão entre as
+    iniciais nascem ``legendonly`` -- fora do gráfico e da escala do eixo,
+    mas a um clique.
+    """
+    from core.desempenho_categorias import CATEGORIAS, POR_NOME
+
+    nomes = [c.nome for c in CATEGORIAS if c.nome in series and not series[c.nome].empty]
+    visiveis = _visiveis_de_inicio(nomes)
     fig = go.Figure()
-    finais: list[tuple[str, float]] = []
-    ultimo_x = None
-    todos: list[float] = []
-    for nome in selecionadas:
-        s = series.get(nome)
-        if s is None or s.empty:
-            continue
+    if not nomes:
+        return fig
+    ultimo_x = max(series[n].index[-1] for n in nomes)
+    todos = [v for n in nomes for v in (float(series[n].min()), float(series[n].max()))]
+    folga = max((max(todos) - min(todos)) * 0.045, 0.5)
+    rotulos = _rotulos_sem_colisao([(n, float(series[n].iloc[-1])) for n in nomes], folga)
+
+    for nome in nomes:
+        s = series[nome]
         cor = POR_NOME[nome].cor
+        visivel = True if nome in visiveis else "legendonly"
+        grupo = {"legendgroup": nome, "visible": visivel}
         mensal = len(s) < 40   # fotos mensais: o ponto mostra onde há dado
         fig.add_trace(go.Scatter(
-            x=s.index, y=s.values, name=nome,
+            x=s.index, y=s.values, name=nome, **grupo,
             mode="lines+markers" if mensal else "lines",
             line={"color": cor, "width": 2.2},
             marker={"size": 5, "color": cor},
             hovertemplate=f"{_html.escape(nome)}: %{{y:+.2f}}%<extra></extra>",
         ))
         fig.add_trace(go.Scatter(
-            x=[s.index[-1]], y=[float(s.iloc[-1])], mode="markers",
+            x=[s.index[-1]], y=[float(s.iloc[-1])], mode="markers", **grupo,
             marker={"size": 8, "color": cor, "line": {"color": "#0E1117", "width": 2}},
             hoverinfo="skip", showlegend=False,
         ))
-        finais.append((nome, float(s.iloc[-1])))
-        todos.extend([float(s.min()), float(s.max())])
-        ultimo_x = s.index[-1] if ultimo_x is None else max(ultimo_x, s.index[-1])
-
-    if finais:
-        folga = max((max(todos) - min(todos)) * 0.055, 0.5)
-        for nome, y_rot in _rotulos_sem_colisao(finais, folga).items():
-            final = dict(finais)[nome]
-            fig.add_annotation(
-                x=ultimo_x, y=y_rot, xref="x", yref="y", xanchor="left", yanchor="middle",
-                xshift=10, showarrow=False, align="left",
-                text=f"<b>{_fmt_retorno(final)}</b>",
-                font={"size": 12, "color": POR_NOME[nome].cor},
-            )
+        fig.add_trace(go.Scatter(
+            x=[ultimo_x], y=[rotulos[nome]], mode="text", **grupo,
+            text=[f"<b>{_fmt_retorno(float(s.iloc[-1]))}</b>"],
+            textposition="middle right", textfont={"size": 12, "color": cor},
+            cliponaxis=False, hoverinfo="skip", showlegend=False,
+        ))
 
     fig.add_hline(y=0, line_color="#4A5568", line_width=1, opacity=0.9)
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font={"color": _COR_NEUTRO, "size": 12},
         showlegend=True,
-        legend={"orientation": "h", "x": 0, "y": 1.02, "yanchor": "bottom",
-                "font": {"size": 12, "color": _COR_NEUTRO}, "bgcolor": "rgba(0,0,0,0)",
-                "itemclick": "toggle", "itemdoubleclick": "toggleothers"},
-        margin={"t": 36, "b": 8, "l": 8, "r": 74},
-        height=440,
+        legend={"orientation": "h", "x": 0, "y": -0.1, "yanchor": "top",
+                "font": {"size": 13, "color": _COR_NEUTRO}, "bgcolor": "rgba(0,0,0,0)",
+                "itemclick": "toggle", "itemdoubleclick": "toggleothers",
+                "itemwidth": 40, "traceorder": "normal"},
+        margin={"t": 12, "b": 8, "l": 8, "r": 70},
+        height=480,
         hovermode="x unified",
         hoverlabel={"font": {"size": 12}, "bordercolor": "#2D3748"},
+        # Sem arrastar para dar zoom: no celular, rolar a página por cima do
+        # gráfico virava zoom e deixava a área em branco.
+        dragmode=False,
         xaxis={"showgrid": False, "showline": True, "linecolor": "#2D3748",
                "ticks": "outside", "tickcolor": "#2D3748", "ticklen": 4,
                "tickformat": "%m/%y", "hoverformat": "%d/%m/%Y", "title": None,
-               "showspikes": True, "spikemode": "across", "spikethickness": 1,
-               "spikedash": "dot", "spikecolor": "#4A5568"},
+               "fixedrange": True, "showspikes": True, "spikemode": "across",
+               "spikethickness": 1, "spikedash": "dot", "spikecolor": "#4A5568"},
         yaxis={"showgrid": True, "gridcolor": "#1E2533", "zeroline": False,
                "ticksuffix": "%", "tickformat": "+.0f", "title": None,
-               "tickfont": {"size": 11}, "nticks": 7},
+               "tickfont": {"size": 11}, "nticks": 7, "fixedrange": True},
         separators=",.",
     )
     return fig
 
 
 def _secao_desempenho_categorias(posicoes: list) -> None:
-    """Placar e linhas de retorno por categoria, com escolha do que comparar."""
+    """Placar e linhas de retorno por categoria; a legenda escolhe o que comparar."""
     from core.desempenho_categorias import CATEGORIAS
 
     _secao_titulo_orig(
@@ -2064,52 +2077,31 @@ def _secao_desempenho_categorias(posicoes: list) -> None:
     )
     st.markdown(_CSS_DESEMPENHO_CATEGORIAS, unsafe_allow_html=True)
 
-    col_p, col_s = st.columns([2, 5], gap="large", vertical_alignment="bottom")
-    with col_p:
-        period_key = st.segmented_control(
-            "Período", _PERIODOS_CATEGORIAS, default="12M",
-            key="analise_vg_categorias_periodo",
-            format_func=lambda k: _ROTULO_PERIODO_CURTO[k],
-        ) or "12M"
+    period_key = st.segmented_control(
+        "Período", _PERIODOS_CATEGORIAS, default="12M",
+        key="analise_vg_categorias_periodo",
+        format_func=lambda k: _ROTULO_PERIODO_CURTO[k],
+    ) or "12M"
     with st.spinner("Carregando séries por categoria…"):
         series, info = _series_desempenho_categorias(posicoes, period_key)
     if not series:
         st.info("Nenhuma categoria da carteira tem série de preço neste período.", icon="📈")
         return
-    opcoes = [c.nome for c in CATEGORIAS if c.nome in series]
-    with col_s:
-        chave = "analise_vg_categorias_sel"
-        # Trocar o período pode tirar uma categoria das opções; a escolha
-        # guardada perde o que sumiu em vez de quebrar o widget.
-        if chave in st.session_state:
-            st.session_state[chave] = [c for c in (st.session_state[chave] or [])
-                                       if c in opcoes]
-            padrao = {}
-        else:
-            padrao = {"default": opcoes}
-        selecionadas = st.pills(
-            "Comparar", opcoes, selection_mode="multi", key=chave,
-            help="Clique para incluir ou tirar uma categoria do gráfico.", **padrao,
-        ) or []
 
-    st.markdown(_cards_desempenho_categorias(series, info, selecionadas),
-                unsafe_allow_html=True)
-    if not selecionadas:
-        st.info("Selecione ao menos uma categoria para comparar.", icon="☝️")
-        return
-    st.plotly_chart(_fig_desempenho_categorias(series, selecionadas),
-                    width="stretch", config={"displayModeBar": False},
+    st.markdown(_cards_desempenho_categorias(series, info), unsafe_allow_html=True)
+    st.plotly_chart(_fig_desempenho_categorias(series),
+                    width="stretch", config={"displayModeBar": False, "scrollZoom": False},
                     key="analise_vg_categorias_graf")
     st.markdown(
         f'<div class="dcat-rodape">Período: {_PERFORMANCE_PERIODS[period_key]["label"]} · '
-        'cada linha começa no primeiro preço disponível · passe o mouse para comparar '
-        'na mesma data · clique na legenda para esconder uma linha</div>',
+        'toque no nome de uma categoria na legenda para mostrar ou esconder a linha · '
+        'cada linha começa no primeiro preço disponível</div>',
         unsafe_allow_html=True,
     )
 
     with st.expander("Fontes e metodologia"):
         linhas = []
-        for nome in [n for n in opcoes if n in info]:
+        for nome in [c.nome for c in CATEGORIAS if c.nome in info]:
             i = info[nome]
             linhas.append({
                 "Categoria": nome,
