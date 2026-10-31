@@ -92,7 +92,7 @@ A tabela `assets` **não tem filtro de user** — é tratada como catálogo de m
 | `asset_quotes` | Vazia após migração | Rentabilidade exibe 0% em Carteira e Investimentos; banner informativo exibido; resolver via Configurações → Cotações |
 | `budgets` | Vazia | Orçamentos calculados de forma implícita (`gasto × 1,2`); alertas R5 ativo; resolver cadastrando orçamentos no app |
 | `info_economica` | Vazia | Tela Macro usa referências manuais |
-| `info_economica_mensal` | Vazia | Idem |
+| `info_economica_mensal` | OBSOLETA no app (04/10/2026) | Nenhum código de `core/`, `views/` ou `app.py` a lê, e nenhuma LLM; o macro vem de `public.macro`, `macro_staging` e `data/public/macro_insumos`. Única leitura restante: `data_pipeline/market/fii_pit.py` (validação PIT, pelo espelho no armazém). Congelada em 01/2026 de propósito: não é vitrine velha, não republicar, não apagar |
 | `multiplos` | Vazia | Tela Empresas EUA sem fundamentalistas |
 | `financial_goals` | Pode estar vazia | Módulo de Metas cai em mock automático |
 

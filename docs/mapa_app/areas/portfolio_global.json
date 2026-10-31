@@ -1,0 +1,194 @@
+{
+  "nome": "Portfólio Global",
+  "resumo": "As três carteiras somadas num patrimônio só",
+  "explicacao": "Junta as carteiras-modelo de Empresas B3, Empresas Americanas e FIIs como se fossem um único patrimônio. Mostra concentração, risco, papel de cada ativo, sugestões de ajuste, um plano de aporte e um chat com a inteligência artificial. Não tem abas: é uma página longa, dividida em seções, que só aparece por completo depois de definir a alocação-alvo.",
+  "so_admin": false,
+  "fonte": "views/portfolio_global.py:1920",
+  "filhos": [
+    {
+      "nome": "Alocação-alvo por classe",
+      "resumo": "Quanto você quer em cada tipo de investimento",
+      "explicacao": "Formulário com a porcentagem desejada para Empresas B3, Empresas Americanas e FIIs, a fatia em renda fixa e, se quiser, o patrimônio total em reais. Clique em Salvar alocação. Abre sozinho quando ainda não há alvo; sem ele, a tela pede para defini-lo e não mostra o resto.",
+      "so_admin": false,
+      "fonte": "views/portfolio_global.py:277"
+    },
+    {
+      "nome": "Concentração",
+      "resumo": "O patrimônio está espalhado ou concentrado?",
+      "explicacao": "Cartões com o número efetivo de posições, setores, países e classes (quantos itens de mesmo peso dariam a mesma diversificação) e o índice de desigualdade (Gini). Logo abaixo, quanto pesam juntas as 1, 3, 5 e 10 maiores posições.",
+      "so_admin": false,
+      "fonte": "views/portfolio_global.py:356 (maiores posições em :386)"
+    },
+    {
+      "nome": "Métricas do patrimônio",
+      "resumo": "P/L, P/VP e dividend yield do conjunto",
+      "explicacao": "Cartões com P/L (preço sobre lucro) e P/VP (preço sobre patrimônio) do conjunto e o dividend yield consolidado, calculados de forma ponderada pelo peso de cada ativo.",
+      "so_admin": false,
+      "fonte": "views/portfolio_global.py:402",
+      "filhos": [
+        {
+          "nome": "Qualidade por classe",
+          "resumo": "Nota média de cada carteira, separada",
+          "explicacao": "Seção logo abaixo, com um cartão de nota para cada classe. As notas não são somadas porque cada carteira usa uma régua diferente.",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:426"
+        }
+      ]
+    },
+    {
+      "nome": "Composição",
+      "resumo": "O que há no patrimônio, em três visões",
+      "explicacao": "Três abas para ver a composição do patrimônio por ativo, por setor ou por país.",
+      "so_admin": false,
+      "fonte": "views/portfolio_global.py:569",
+      "filhos": [
+        {
+          "nome": "Por ativo",
+          "resumo": "Cartão de cada ativo com seu peso",
+          "explicacao": "Cartões com logo, código, peso no patrimônio, nome, classe, setor e valor em reais, separados por classe (B3, FIIs, Americanas) com o peso de cada classe no título.",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:570 (cartões em :556)"
+        },
+        {
+          "nome": "Por setor",
+          "resumo": "Tabela de peso por setor",
+          "explicacao": "Tabela com cada setor, seu peso em porcentagem e quantos ativos tem.",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:575"
+        },
+        {
+          "nome": "Por país",
+          "resumo": "Tabela de peso por país",
+          "explicacao": "Tabela com cada país, seu peso em porcentagem e quantos ativos tem.",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:582"
+        }
+      ]
+    },
+    {
+      "nome": "Correlação, fatores e risco",
+      "resumo": "Quanto o patrimônio oscila e por quê",
+      "explicacao": "Bloco com três seções que usam o histórico mensal de preços. Cada uma mostra um aviso de indisponível quando não há histórico suficiente.",
+      "so_admin": false,
+      "fonte": "views/portfolio_global.py:1977",
+      "filhos": [
+        {
+          "nome": "Correlação e diversificação",
+          "resumo": "Os ativos sobem e caem juntos?",
+          "explicacao": "Cartões com a correlação média (quanto os ativos andam juntos), razão de diversificação e apostas efetivas, e a tabela Pares redundantes, com pares de ativos que se movem quase igual.",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:714"
+        },
+        {
+          "nome": "Exposição a fatores de risco",
+          "resumo": "A que forças do mercado você está exposto",
+          "explicacao": "Tabela que estima quanto o patrimônio reage a fatores de mercado (como bolsa, juros e câmbio), marcando quando o número pode ser só ruído.",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:747"
+        },
+        {
+          "nome": "Risco do patrimônio",
+          "resumo": "Volatilidade, perdas extremas e maior queda",
+          "explicacao": "Cartões com a volatilidade anual (tamanho das oscilações), VaR e CVaR 95% (perda de um mês ruim e a média dos piores meses) e a maior queda do pico ao fundo.",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:788"
+        }
+      ]
+    },
+    {
+      "nome": "Papel estratégico por ativo",
+      "resumo": "Para que serve cada ativo na carteira",
+      "explicacao": "Classifica cada ativo em papéis como geração de renda, crescimento, proteção contra inflação, hedge cambial ou redução de volatilidade. Mostra quantos ativos há em cada papel, alerta os que ficaram sem papel e traz um cartão por ativo, agrupado por classe.",
+      "so_admin": false,
+      "fonte": "views/portfolio_global.py:907"
+    },
+    {
+      "nome": "Alocação Black-Litterman",
+      "resumo": "Divisão teórica que junta sua meta e as notas",
+      "explicacao": "Método que parte da sua alocação-alvo e a inclina na direção dos ativos com melhores notas, conforme a confiança comprovada de cada carteira. Os pesos são teóricos, não ordem de compra. Aparece só quando há histórico suficiente.",
+      "so_admin": false,
+      "fonte": "views/portfolio_global.py:1520",
+      "filhos": [
+        {
+          "nome": "Parâmetros e confiança por carteira",
+          "resumo": "Cartões com as premissas do cálculo",
+          "explicacao": "Cartões com aversão a risco, incerteza, ajuste estatístico e janela de meses usada, mais a confiança dada às notas de cada carteira (B3, FIIs e Americanas).",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:1541"
+        },
+        {
+          "nome": "Tabelas Meta × Black-Litterman × Real",
+          "resumo": "Pesos sugeridos versus sua carteira real",
+          "explicacao": "Duas tabelas comparando, por ativo e por classe, o peso da sua meta, o peso sugerido pelo método e o peso real que você tem na aba Investimentos.",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:1579"
+        },
+        {
+          "nome": "Gráfico da fronteira eficiente",
+          "resumo": "Risco versus retorno esperado",
+          "explicacao": "Gráfico teórico com as melhores combinações de risco e retorno, marcando a meta, a sugestão do método e a sua carteira real.",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:1608"
+        },
+        {
+          "nome": "Como o score vira retorno esperado",
+          "resumo": "Explicação da conta, para os curiosos",
+          "explicacao": "Seção que abre ao clicar, com a explicação de como a nota de cada ativo vira um retorno esperado.",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:1621"
+        },
+        {
+          "nome": "Benchmark composto",
+          "resumo": "Desempenho passado contra um índice misto",
+          "explicacao": "Cartões e gráfico comparando o retorno anual das alternativas com um índice de referência montado com os mesmos pesos. Resultado do passado não é promessa de futuro.",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:1448"
+        }
+      ]
+    },
+    {
+      "nome": "Recomendações do motor de movimentação",
+      "resumo": "Sugestões de aumentar, reduzir ou vender",
+      "explicacao": "O app sugere o que fazer com cada ativo, considerando sinais, limites e custos de negociação. É sugestão para revisão humana, não ordem automática.",
+      "so_admin": false,
+      "fonte": "views/portfolio_global.py:1211",
+      "filhos": [
+        {
+          "nome": "Alvo do motor",
+          "resumo": "Escolhe a referência das sugestões",
+          "explicacao": "Botões Tilt por sinais (padrão) e Black-Litterman. Muda a referência usada nas sugestões. Só aparece quando a Alocação Black-Litterman está disponível.",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:1231"
+        },
+        {
+          "nome": "Resumo das ações",
+          "resumo": "Contagem de cada tipo de sugestão",
+          "explicacao": "Cartões contando quantos ativos estão em Aumentar, Reduzir, Vender, Manter e Indeterminado, e quantas sugestões têm custo não calibrado (classes em que o app ainda não conhece o custo real e prefere não mexer).",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:1256"
+        },
+        {
+          "nome": "Cartões de recomendação",
+          "resumo": "Uma sugestão detalhada por ativo",
+          "explicacao": "Um cartão por ativo, em duas colunas, com a ação sugerida, o peso atual e o custo estimado da mudança.",
+          "so_admin": false,
+          "fonte": "views/portfolio_global.py:1301"
+        }
+      ]
+    },
+    {
+      "nome": "Plano de aporte",
+      "resumo": "Onde colocar o dinheiro novo",
+      "explicacao": "Usa a sua carteira real da aba Investimentos. Você informa o valor do Aporte a distribuir (R$) e o app mostra quanto ir para cada classe para se aproximar do alvo, sem vender nada, com cartões de desvio antes e depois, quantos aportes faltam até o alvo e o valor não alocado. Pede a alocação-alvo se ela não estiver definida.",
+      "so_admin": false,
+      "fonte": "views/portfolio_global.py:1676"
+    },
+    {
+      "nome": "Converse com a IA sobre este patrimônio",
+      "resumo": "Chat com a IA sobre o patrimônio todo",
+      "explicacao": "Caixa de conversa para perguntar sobre alocação, risco e recomendações. A IA responde só com os dados desta tela e avisa quando algo falta. Botão Limpar chat apaga a conversa.",
+      "so_admin": false,
+      "fonte": "views/portfolio_global.py:1828"
+    }
+  ]
+}

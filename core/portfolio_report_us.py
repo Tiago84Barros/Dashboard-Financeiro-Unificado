@@ -27,7 +27,10 @@ from typing import Any
 
 import pandas as pd
 
+from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
 from core.llm_b3 import _call_llm, _parse_json, _report_model
+from core.llm_falha import motivo_falha_llm
+from core.llm_grounding import com_aviso_ancoragem
 from core.portfolio_report_common import (
     QUALITATIVE_WEIGHTS,
     SEM_DETALHE_NO_CONSOLIDADO,
@@ -740,7 +743,11 @@ def build_company_prompt(
         dossier_text = dossie_to_text(dossier)
     except (KeyError, TypeError):
         dossier_text = str(dossier)
-    return _PROMPT_COMPANY_PORTFOLIO.format(
+    # O relatório vai numa mensagem só (``_call_llm``), sem system: a regra do
+    # contexto de mercado entra no topo do prompt, como nos chats (auditoria
+    # app4, LLM-A12). Sem ela, conjuntura e macro chegavam sem a instrução de
+    # citar fonte e data e de tratar manchete como dado, nunca como instrução.
+    return f"{REGRA_CONTEXTO_MERCADO}\n\n" + _PROMPT_COMPANY_PORTFOLIO.format(
         ticker=ticker,
         name=dossier.get("name") or ticker,
         sector=dossier.get("sector") or "N/D",
@@ -799,10 +806,11 @@ def generate_company_us_report(
     try:
         raw = _call_llm(prompt, model=model or _report_model())
         parsed = _parse_json(raw, fallback_company(tk, "JSON inválido"))
-        return sanitize_company_report(parsed, tk), dossier
+        return com_aviso_ancoragem(sanitize_company_report(parsed, tk), prompt), dossier
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Relatório institucional de %s falhou: %s", tk, exc)
-        return fallback_company(tk, str(exc)[:200]), dossier
+        # Motivo em categoria no ``resumo`` da tela, nunca ``str(exc)`` (LLM-A11).
+        motivo = motivo_falha_llm(exc, f"relatório institucional de {tk}")
+        return fallback_company(tk, motivo), dossier
 
 
 # Grau de confiança do score, produzido por core.us_score. O relatório precisa
@@ -966,7 +974,23 @@ def build_confidence_context(items: list[dict]) -> str:
     return "\n".join(linhas)
 
 
-def build_fx_context(usd_brl: float | None = None) -> str:
+#: Dias corridos a partir dos quais o fechamento do USD/BRL da base é velho.
+#: Cinco cobre fim de semana e feriado emendado sem marcar a cotação de sexta.
+CAMBIO_VELHO_DIAS = 5
+
+
+def idade_do_cambio(data, hoje=None) -> int | None:
+    """Dias desde o fechamento ``data``; None sem data."""
+    if data is None:
+        return None
+    try:
+        ref = pd.Timestamp(hoje).date() if hoje is not None else pd.Timestamp.now().date()
+        return (ref - pd.Timestamp(data).date()).days
+    except (TypeError, ValueError):
+        return None
+
+
+def build_fx_context(usd_brl: float | None = None, data=None, hoje=None) -> str:
     """Exposição cambial de quem investe em reais numa carteira em dólares.
 
     A carteira é cotada em USD, mas o patrimônio do usuário é medido em reais.
@@ -982,8 +1006,17 @@ def build_fx_context(usd_brl: float | None = None) -> str:
         "de conversão.",
     ]
     taxa = safe_float(usd_brl)
-    if taxa is not None:
-        linhas.append(f"  USD/BRL de referência na base: R$ {taxa:.2f}.")
+    idade = idade_do_cambio(data, hoje)
+    if taxa is not None and idade is None:
+        linhas.append(f"  USD/BRL de referência na base: R$ {taxa:.2f} "
+                      "(data do fechamento não informada).")
+    elif taxa is not None and idade > CAMBIO_VELHO_DIAS:
+        linhas.append(f"  USD/BRL de referência na base: R$ {taxa:.2f}, fechamento de "
+                      f"{pd.Timestamp(data):%d/%m/%Y} — VELHA ({idade} dias): não a "
+                      "trate como a taxa de hoje.")
+    elif taxa is not None:
+        linhas.append(f"  USD/BRL de referência na base: R$ {taxa:.2f} "
+                      f"(fechamento de {pd.Timestamp(data):%d/%m/%Y}).")
     else:
         linhas.append("  USD/BRL não disponível na base — não estime a taxa.")
     linhas.append(
@@ -1066,11 +1099,13 @@ def analyze_us_portfolio_report(
     status: dict | None = None,
     financials: dict[str, pd.DataFrame] | None = None,
     usd_brl: float | None = None,
+    usd_brl_data=None,
     conjuntura: str = "",
     detalhe_armazem: str = "",
 ) -> dict:
     """Síntese consolidada da carteira americana, no schema que a UI consome."""
-    prompt = _PROMPT_PORTFOLIO.format(
+    # Regra de contexto de mercado no topo: ver build_company_prompt (LLM-A12).
+    prompt = f"{REGRA_CONTEXTO_MERCADO}\n\n" + _PROMPT_PORTFOLIO.format(
         items_context="\n".join(
             company_summary_for_portfolio(item) for item in items_analyzed
         ) or "Carteira vazia.",
@@ -1079,17 +1114,18 @@ def analyze_us_portfolio_report(
         quant_context=build_quant_context(avaliacao_quant),
         provenance=build_data_provenance_context(status, financials),
         confidence=build_confidence_context(items_analyzed),
-        fx_context=build_fx_context(usd_brl),
+        fx_context=build_fx_context(usd_brl, usd_brl_data),
         conjuntura=conjuntura or "Conjuntura não montada nesta execução; não trate como ausência de notícias.",
         detalhe_armazem=detalhe_armazem or SEM_DETALHE_NO_CONSOLIDADO,
     )
     try:
         raw = _call_llm(prompt, model=model or _report_model())
         parsed = _parse_json(raw, fallback_portfolio("JSON inválido"))
-        return sanitize_portfolio_report(parsed, items_analyzed)
+        return com_aviso_ancoragem(
+            sanitize_portfolio_report(parsed, items_analyzed), prompt)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Relatório consolidado americano falhou: %s", exc)
-        return fallback_portfolio(str(exc)[:200])
+        return fallback_portfolio(
+            motivo_falha_llm(exc, "relatório consolidado americano"))
 
 
 __all__ = [

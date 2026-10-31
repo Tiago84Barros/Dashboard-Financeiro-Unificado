@@ -1,8 +1,9 @@
 """Página resumida da Inteligência dos Ativos (rascunho do usuário, 30/09/2026).
 
 Reserva de emergência e renda fixa em lista; ações com uma caixa por ativo:
-% atual, % devida, manter / comprar / vender, substituto, dois pares numa
-tabela, notícias, relatórios e macro. Tudo reagrupa o que a análise já tem.
+% atual, % devida, a ação sugerida (com convicção, condições e limitações),
+os alertas à parte, substituto, dois pares numa tabela, notícias, relatórios
+e macro. Tudo reagrupa o que a análise já tem.
 """
 import re
 from dataclasses import replace
@@ -77,22 +78,27 @@ def test_meta_da_reserva_vem_da_estrategia_ou_nao_aparece():
         {"has_emergency_reserve": {"value": False}})
 
 
-# -- manter / comprar / vender --------------------------------------------------------
+# -- a ação sugerida -----------------------------------------------------------------
 
 @pytest.mark.parametrize("estado,codigo", [
     (m.APORTE_COMPATIVEL, rs.COMPRAR),
-    (m.REAVALIAR_TESE, rs.VENDER),
-    (m.REDUZIR_CONCENTRACAO, rs.VENDER),
-    (m.COMPARAR_ALTERNATIVAS, rs.VENDER),
+    (m.REAVALIAR_TESE, rs.ACOMPANHAR),
+    (m.REDUZIR_CONCENTRACAO, rs.REBALANCEAR),
+    (m.COMPARAR_ALTERNATIVAS, rs.ACOMPANHAR),
     (m.REAVALIAR_APORTES, rs.MANTER),
     (m.EXPOSICAO_ADEQUADA, rs.MANTER),
     (m.MANTER, rs.MANTER),
 ])
-def test_cada_acao_vira_uma_das_tres_palavras(carteira, estado, codigo):
+def test_acao_da_analise_sozinha_nunca_vira_venda(carteira, estado, codigo):
+    # 29/10/2026: tese em dúvida, concentração e "comparar alternativas"
+    # davam "Vender" direto. Sem qualidade frágil, alerta ou par superior,
+    # viram acompanhar ou rebalancear pelos aportes.
     _, an = carteira
     d = rs.decisao(_com_acao(an[2], estado, "porque sim"))
-    assert d.codigo == codigo and d.motivo == "porque sim"
+    assert d.codigo == codigo and not d.movimenta
+    assert "porque sim" in d.motivo + d.detalhe
     assert set(rs.DECISAO) == set(m.ROTULO_ACAO)
+    assert set(rs.ROTULO_DECISAO) == set(tela._COR_DECISAO)
 
 
 def _sug(peso):
@@ -106,12 +112,17 @@ def _pesando(a, peso, estado=m.EXPOSICAO_ADEQUADA):
 
 def test_decisao_por_ativo_compara_o_peso_com_a_porcentagem_devida(carteira):
     # 01/10/2026: a classe dentro do alvo dava "Manter" a todos; BBAS3 com
-    # 8,5% numa classe que reparte 25% entre dez ativos precisa sair "Vender".
+    # 8,5% numa classe que reparte 25% entre dez ativos precisa sair do
+    # "Manter". 29/10/2026: sem preço esticado nem qualidade frágil, sai
+    # rebalancear pelos aportes, não vender.
     _, an = carteira
     a = an[2]
     d = rs.decisao(_pesando(a, 8.5), _sug(2.5))
-    assert d.codigo == rs.VENDER and "6,0 pp acima da % devida 2,5%" in d.detalhe
-    assert "parar de aportar" in d.motivo
+    assert (d.codigo == rs.REBALANCEAR
+            and "6,0 pp acima da % devida 2,5%" in d.detalhe)
+    assert "parar de aportar" in d.motivo and "sem vender" in d.motivo
+    assert d.proporcao is None and d.custos is None
+    assert any("não vender por isso" in x for x in d.alertas)
     d = rs.decisao(_pesando(a, 0.6), _sug(2.5))
     assert d.codigo == rs.COMPRAR and "faltam 1,9 pp" in d.detalhe
     # dentro da folga (20% do alvo, mínimo 0,5 pp) fica como está
@@ -127,9 +138,9 @@ def test_decisao_por_ativo_respeita_classe_acima_do_alvo_e_venda_da_analise(
     # abaixo da % devida, mas a classe já passou do alvo: não compra
     d = rs.decisao(_pesando(a, 0.6, m.REAVALIAR_APORTES), _sug(2.5))
     assert d.codigo == rs.MANTER and "classe já passou do alvo" in d.detalhe
-    # vender que vem da análise (tese, teto) não é desfeito pela % devida
+    # tese em dúvida não é desfeita pela % devida: acompanhar, não comprar
     d = rs.decisao(_pesando(a, 0.6, m.REAVALIAR_TESE), _sug(2.5))
-    assert d.codigo == rs.VENDER and d.motivo == "leitura da classe"
+    assert d.codigo == rs.ACOMPANHAR and "leitura da classe" in d.motivo
     # sem % devida, vale a leitura da classe
     assert rs.decisao(_pesando(a, 8.5)).codigo == rs.MANTER
     # a faixa do usuário vence a sugestão
@@ -138,7 +149,7 @@ def test_decisao_por_ativo_respeita_classe_acima_do_alvo_e_venda_da_analise(
     assert rs.decisao(b, _sug(2.5)).codigo == rs.MANTER
     assert tela.rotulo_expander(b, _sug(2.5)).endswith("8,5% → 8,0% · Manter")
     assert (tela.rotulo_expander(_pesando(a, 8.5), _sug(2.5))
-            == f"{a.ativo.ticker} · 8,5% → 2,5% · Vender")
+            == f"{a.ativo.ticker} · 8,5% → 2,5% · Rebalancear")
 
 
 def test_peso_devido_sem_alvo_da_classe_fica_no_limite_ou_sem_alvo(carteira):
@@ -298,16 +309,21 @@ def test_cartoes_so_usam_tokens_e_nao_viram_link_perigoso(carteira):
         tela.cartao_lista(rs.blocos(an, ctx)[1]),
         tela.cartao_posicao(a),
         tela.cartao_substitutos(rs.substitutos(a, ())),
+        tela.cartao_recomendacao(rs.decisao(a, ctx=ctx)),
+        tela.cartao_alertas(rs.decisao(a)),
         tela.cartao_pares(rs.tabela_pares(a)),
         tela.cartao_papel(a), tela.cartao_noticias(a),
         tela.cartao_relatorios(a), tela.cartao_macro(rs.macro(a, ctx), "sobe"),
     ]
     for h in htmls:
         assert _sem_cor_literal(h), h
-    assert "javascript:" not in htmls[6] and "&lt;b&gt;t" in htmls[6]
-    assert "Vender" in htmls[2] and "Porcentagem devida" in htmls[2]
+    assert "javascript:" not in htmls[8] and "&lt;b&gt;t" in htmls[8]
+    assert "Rebalancear" in htmls[2] and "Porcentagem devida" in htmls[2]
+    assert "Ação sugerida" in htmls[2] and "Convicção" in htmls[2]
+    assert "Justificativa" in htmls[4] and "Dados ausentes" in htmls[4]
+    assert tela.TITULO_ALERTAS in htmls[5]
     assert "Leitura do Portfolio Fit" in htmls[-1]
-    assert tela.rotulo_expander(a) == "BBAS3 · 15,0% · Vender"
+    assert tela.rotulo_expander(a) == "BBAS3 · 15,0% · Rebalancear"
 
 
 def test_relatorios_mostram_o_que_o_documento_diz_sem_link(carteira):
@@ -373,7 +389,7 @@ def test_cartao_mostra_cenario_e_diz_os_temas(carteira):
     assert "Cenário econômico e político" in html
     assert "Copom sinaliza corte da Selic" in html
     assert "Sable Offshore" not in html and "Petrobras" not in html
-    assert "não de outras empresas" in html and "Fonte: Acervo local" in html
+    assert "não de outras empresas" in html and "Fonte: Acervo local" not in html
     vazio = tela.cartao_noticias(a, ([GERAIS[0]], "Acervo local"))
     assert "Nenhuma manchete de juros" in vazio and "Sable" not in vazio
 

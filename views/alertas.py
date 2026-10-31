@@ -24,6 +24,7 @@ from design.componentes import (
     container_pagina,
     secao_titulo,
 )
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 
 _TIPO_CORES = {
     "sucesso": ("Positivo",   "sucesso"),
@@ -118,14 +119,12 @@ def render() -> None:
     st.divider()
 
     if _fonte != "real":
-        st.info(
-            "**Engine de alertas** — Ative os dados reais configurando "
-            "`MOCK_MODE=false` no `.env` ou Streamlit Secrets para receber "
-            "alertas calculados automaticamente a partir dos seus dados.",
-            icon="🔔",
+        aviso_lacuna(
+            "Alertas em modo de demonstração: dados reais não ativados.",
+            codigo="tela.alertas.sem_dados_reais",
         )
     else:
-        st.caption(
-            "Alertas calculados automaticamente · "
-            "Engine v1.0 — Fase 5.6 · Próxima versão: análise por IA (Fase 8)"
+        detalhe_tecnico(
+            "Alertas calculados automaticamente; engine v1.0, fase 5.6.",
+            codigo="alertas.engine_versao",
         )

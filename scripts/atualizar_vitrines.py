@@ -31,6 +31,12 @@ Uso:
     python scripts/atualizar_vitrines.py --listar       # só mostra o que deve
     python scripts/atualizar_vitrines.py --apenas fii_selection --forcar
     python scripts/atualizar_vitrines.py --dry-run
+    python scripts/atualizar_vitrines.py --sem-vigia      # sem o vigia no fim
+
+No fim de toda execução real (não em --listar/--dry-run) roda o vigia de
+automações (`scripts/vigia_automacoes.py`): workflows agendados em falha e
+publicações acima do limite viram aviso no Telegram. Falha do vigia não
+muda o código de saída da rotina.
 """
 from __future__ import annotations
 
@@ -65,8 +71,21 @@ DOCKER_DESKTOP = Path(r"C:\Program Files\Docker\Docker\Docker Desktop.exe")
 # Um alvo travado não pode segurar a fila para sempre: sem teto, um passo que
 # nunca retorna deixa todos os alvos seguintes vencidos e silenciosos.
 TIMEOUT_PASSO = 90 * 60
+# A tarefa agendada "DFU - Atualizar vitrines" tem limite de execução de 4 h e
+# MATA a rotina ao estourá-lo: em 05/10/2026 ela caiu às 23:30 no meio do
+# `us_snapshot`, e notícias, macro, espelho e CDI não rodaram -- sem
+# notificação, porque processo morto não notifica. Depois deste prazo nenhum
+# alvo novo começa; os que sobram ficam vencidos para a próxima execução e
+# entram na notificação de falha. Quem subir o limite da tarefa passa
+# `--prazo-min` junto; 0 desliga.
+PRAZO_ROTINA_MIN = 225
 # Marca a execução filha de `recarregar`, para ela não recarregar de novo.
 _RECARREGADA = "DFU_ROTINA_RECARREGADA"
+
+
+def prazo_esgotado(inicio: float, prazo_min: int, agora: float) -> bool:
+    """Se o prazo da rotina, contado em segundos monotônicos, já passou."""
+    return prazo_min > 0 and agora - inicio >= prazo_min * 60
 
 
 def registrar(mensagem: str) -> None:
@@ -220,6 +239,11 @@ CARIMBO = {
                        "SELECT max(completed_at) FROM market.fii_cvm_archive_loads "
                        "WHERE archive_kind = 'eventual'"),
     "cvm_ipe": ("armazem", "SELECT max(created_at) FROM public.docs_corporativos"),
+    # A cadeia brapi grava no armazém; o carimbo lê o que ELA produz, e não o
+    # que o job do GitHub deixou na vitrine até 05/10/2026.
+    "b3_brapi": ("armazem",
+                 "SELECT max(observed_at) FROM market.b3_data_readiness_snapshots"),
+    "b3_brapi_anual": ("armazem", "SELECT max(updated_at) FROM market.balance_sheets"),
     "fii_selection": ("supabase",
                       "SELECT max(generated_at) FROM market.fii_selection_inputs"),
     "b3_metrics": ("supabase", "SELECT max(updated_at) FROM market.calculated_metrics"),
@@ -230,6 +254,10 @@ CARIMBO = {
     "us_vintages": ("supabase", "SELECT max(created_at) FROM market_us.score_vintages"),
     "us_delistings": ("supabase", "SELECT max(derived_at) FROM market_us.delistings"),
     "us_prices": ("supabase", "SELECT max(ingested_at) FROM market_us.prices_monthly"),
+    # `--armazem` apaga e regrava a meta a cada publicação; `publicado_em`
+    # nasce com NOW() no armazém, que é onde este alvo escreve.
+    "us_painel_armazem": ("armazem",
+                          "SELECT max(publicado_em) FROM market_us.score_panel_pub_meta"),
     "noticias_vitrine": ("supabase", "SELECT max(gerada_em) FROM noticias_vitrine_meta"),
     "espelho_supabase": ("armazem", "SELECT max(executado_em) FROM public.espelho_supabase_meta"),
     # A poda apaga no Supabase e não deixa carimbo lá; o rastro é o manifesto
@@ -240,9 +268,18 @@ CARIMBO = {
     # `generated_at` gravado dentro dele.
     "macro_insumos": ("arquivo", "data/public/macro_insumos.json.gz"),
     "cdi_diario": ("arquivo", "data/public/cdi_diario.json.gz"),
+    "macro_brasil": ("arquivo", "data/public/macro_brasil.json.gz"),
     "valuation_historico": ("arquivo", "data/public/valuation_historico.json.gz"),
+    "cenarios_analogos": ("arquivo", "data/public/cenarios_analogos.json.gz"),
     "informacoes_recentes": ("arquivo", "data/public/informacoes_recentes.json.gz"),
+    "fii_metrics_monthly": ("arquivo", "data/public/fii_metrics_monthly.json.gz"),
+    "precos_mensais_b3": ("arquivo", "data/public/precos_mensais_b3.json.gz"),
+    "pregoes_recentes_b3": ("arquivo", "data/public/pregoes_recentes_b3.json.gz"),
+    "proventos_b3": ("arquivo", "data/public/proventos_b3.json.gz"),
+    "carteira20_desempenho": ("arquivo", "data/public/carteira20_desempenho.json"),
+    "carteira20_medicao": ("arquivo", "data/public/carteira20_medicao.json"),
     "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),
+    "b3_linhagem": ("arquivo", "data/public/b3_linhagem.json"),
 }
 
 
@@ -264,7 +301,7 @@ def _carimbo_do_arquivo(relativo: str):
     if isinstance(dados, dict) and isinstance(dados.get("gerado_em"), str):
         return datetime.fromisoformat(dados["gerado_em"])
     if isinstance(dados, dict) and "gerado_em" in dados:
-        return None  # arquivo à espera da primeira publicação (CDI)
+        return None  # arquivo à espera da primeira publicação (CDI, Carteira 20)
     from core.macro_data.insumos_publicados import desserializar
     return desserializar(bruto).gerado_em
 
@@ -333,6 +370,7 @@ def versao_corrente(alvo) -> str | None:
 
 def executar(alvo, ambiente: dict) -> tuple[bool, str]:
     """Roda os passos do alvo em ordem. Um passo que falha aborta os seguintes."""
+    teto = (alvo.timeout_passo_min or 0) * 60 or TIMEOUT_PASSO
     for indice, passo in enumerate(alvo.passos, start=1):
         rotulo = " ".join(passo)
         if len(alvo.passos) > 1:
@@ -340,9 +378,9 @@ def executar(alvo, ambiente: dict) -> tuple[bool, str]:
         try:
             proc = subprocess.run([_python(), *passo], cwd=str(ROOT), env=ambiente,
                                   capture_output=True, text=True, encoding="utf-8",
-                                  errors="replace", timeout=TIMEOUT_PASSO, check=False)
+                                  errors="replace", timeout=teto, check=False)
         except subprocess.TimeoutExpired:
-            return False, f"passo {indice} ({rotulo}) estourou {TIMEOUT_PASSO}s"
+            return False, f"passo {indice} ({rotulo}) estourou {teto}s"
         except OSError as exc:
             return False, f"passo {indice} ({rotulo}) não executou: {exc}"
         if proc.returncode != 0:
@@ -463,6 +501,11 @@ def main(argv=None) -> int:
     p.add_argument("--semear", action="store_true",
                    help="Lê dos bancos a data da última publicação de cada alvo "
                         "sem registro e grava o estado inicial.")
+    p.add_argument("--sem-vigia", action="store_true",
+                   help="Não roda o vigia de automações no fim.")
+    p.add_argument("--prazo-min", type=int, default=PRAZO_ROTINA_MIN,
+                   help="Depois de tantos minutos, não começa alvo novo "
+                        f"(padrão {PRAZO_ROTINA_MIN}; 0 desliga).")
     args = p.parse_args(argv)
 
     # Antes de decidir o que venceu: a decisão tem de usar a agenda mergeada.
@@ -470,9 +513,36 @@ def main(argv=None) -> int:
         atualizacao = atualizar_main(ROOT)
         if atualizacao.avancou:
             registrar(f"  git: {atualizacao.resumo()}; recarregando com o código novo")
+            # O processo filho roda o vigia; rodar aqui também avisaria duas vezes.
             return recarregar(argv)
 
+    try:
+        return _publicar(args)
+    finally:
+        # Em toda saída da execução real -- inclusive "nada vencido" e falha --,
+        # porque é justamente quando nada publica que a vitrine envelhece calada.
+        if not (args.listar or args.dry_run or args.sem_vigia):
+            vigiar()
+
+
+def vigiar() -> None:
+    """Roda o vigia de automações isolado: nada que ele faça muda o desfecho.
+
+    Ele lê o estado que esta execução acabou de gravar, então mede a idade já
+    depois das publicações de agora.
+    """
+    try:
+        from scripts.vigia_automacoes import vigiar as rodada
+
+        registrar("vigia de automações:")
+        rodada(estado_publicacao=ESTADO, saida=registrar)
+    except Exception as exc:  # noqa: BLE001
+        registrar(f"ATENÇÃO: vigia de automações falhou ({exc}).")
+
+
+def _publicar(args) -> int:
     agora = datetime.now(timezone.utc)
+    inicio = time.monotonic()
     estado = ler_estado()
     apenas = tuple(args.apenas or ())
     versoes = {a.chave: versao_corrente(a) for a in ALVOS if a.por_versao}
@@ -522,7 +592,11 @@ def main(argv=None) -> int:
     publicados_alvos: list = []
     modulos: set[str] = set()
 
+    adiados: list[str] = []
     for alvo, motivo in devidos:
+        if adiados or prazo_esgotado(inicio, args.prazo_min, time.monotonic()):
+            adiados.append(alvo.chave)
+            continue
         registrar(f"  {alvo.chave}: {alvo.titulo} -- {motivo}")
         ok, detalhe = executar(alvo, ambiente)
         # Gravado a cada alvo, não no fim: hibernar no meio não pode desfazer o
@@ -538,6 +612,12 @@ def main(argv=None) -> int:
         else:
             falhas.append(f"{alvo.chave}: {detalhe}")
             registrar(f"  {alvo.chave}: FALHOU -- {detalhe}")
+    if adiados:
+        # Sem registro no estado: seguem vencidos e a próxima execução os pega.
+        aviso = (f"prazo de {args.prazo_min} min esgotado; adiados para a "
+                 f"próxima execução: {', '.join(adiados)}")
+        registrar(f"  {aviso}")
+        falhas.append(aviso)
 
     # Antes de verificar, porque a verificação lê a vitrine e não o repositório:
     # a ordem entre as duas não muda o resultado de nenhuma, mas um artefato que

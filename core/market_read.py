@@ -31,11 +31,26 @@ import streamlit as st
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from core.b3_precos_saneamento import neutralizar_saltos_mensais
+from core.b3_troca_codigo import (
+    TOLERANCIA_BASE,
+    mapa_de_trocas,
+    sql_dono,
+    sql_ticker,
+    trocas_json,
+    unificar_classificacao,
+)
 from core.data_quality import clean_multiples_frame
+from core.data_quality import (
+    suprimir_razoes_sobre_patrimonio_negativo as _suprime_razoes_sobre_patrimonio_negativo,
+)
 from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
 from core.fii_ticker import sql_ticker_fii as _sql_ticker_fii
 from core.liquidez import procedencia_liquidez
 from core.observacao_ausente import valor_observado
+from core.proventos_b3 import FONTE_ARQUIVO as _FONTE_ARQUIVO
+from core.proventos_b3 import FONTE_BANCO as _FONTE_BANCO
+from core.proventos_b3 import renda_anual as _renda_anual
 
 logger = logging.getLogger(__name__)
 
@@ -105,43 +120,9 @@ def _pivot_metrics(long_df: pd.DataFrame) -> pd.DataFrame:
             wide[c] = pd.NA
     for c in _MULT_COLS:
         wide[c] = pd.to_numeric(wide[c], errors="coerce")
+    # A regra e o porquê moram em core.data_quality, com quem mais junta linhas.
     return _suprime_razoes_sobre_patrimonio_negativo(
         wide[["Ticker", "year", *_MULT_COLS]])
-
-
-# Razões cujo DENOMINADOR é o patrimônio líquido. Com PL negativo o quociente
-# inverte de sinal e desastre vira destaque.
-_RAZOES_SOBRE_PL = ("ROE", "P/VP", "Endividamento_Total")
-
-
-def _suprime_razoes_sobre_patrimonio_negativo(wide: pd.DataFrame) -> pd.DataFrame:
-    """Anula ROE/P-VP/Endividamento quando o patrimônio líquido é negativo.
-
-    Por que na LEITURA e não só no cálculo: ``calculated_metrics`` tem mais de
-    uma fonte para a mesma métrica. O ETL calcula (``market.compute``) e a brapi
-    entrega a dela pronta (``brapi_trailing``). Guardar apenas o cálculo deixava
-    passar a versão da brapi — medido em 30/07/2026, MWET4 exibia ROE de +4,23
-    com patrimônio negativo e prejuízo de R$ 28,6 mi, e o método gravado era
-    ``brapi_trailing``. Das 45 empresas com patrimônio negativo, 32 mostravam
-    ROE POSITIVO, até +423%; a faixa canônica de ROE (-3, 5) aceita o número,
-    porque os dois sinais se cancelam antes de ela olhar.
-
-    Suprimir aqui cobre todo consumidor do frame, seja qual for a fonte que
-    gravou. O veredito sobre a empresa não se perde: fica no sinal
-    ``Patrimonio_Negativo``, que é justamente a coluna consultada para saber
-    disso.
-    """
-    if wide.empty or "Patrimonio_Negativo" not in wide.columns:
-        return wide
-    insolvente = pd.to_numeric(wide["Patrimonio_Negativo"],
-                               errors="coerce").fillna(0) == 1
-    if not bool(insolvente.any()):
-        return wide
-    wide = wide.copy()
-    for coluna in _RAZOES_SOBRE_PL:
-        if coluna in wide.columns:
-            wide.loc[insolvente, coluna] = float("nan")
-    return wide
 
 
 # ── Loaders ───────────────────────────────────────────────────────────────────
@@ -149,24 +130,33 @@ def _suprime_razoes_sobre_patrimonio_negativo(wide: pd.DataFrame) -> pd.DataFram
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_setores() -> pd.DataFrame:
     """
-    ticker, nome_empresa, SETOR, SUBSETOR, SEGMENTO.
+    ticker, nome_empresa, SETOR, SUBSETOR, SEGMENTO, company_id, codigo_atual.
     Universo/nomes vêm do market.* (assets+companies); a TAXONOMIA B3
     (Setor/Subsetor/Segmento) vem de public.setores — a brapi não traz a
     classificação B3 de forma consistente. public.setores é dado de
     referência (como cvm_to_ticker), não os fundamentos legados.
+
+    Troca de código (ELET3 → AXIA3): enquanto o código antigo continuar ativo
+    na base, os dois aparecem aqui, com UMA classificação (regra em
+    ``core.b3_troca_codigo``) e ``codigo_atual`` apontando o código vigente.
+    Quem conta empresas (a aba de portfólio) tira o substituído com
+    ``deduplicar_por_empresa``.
     """
     df = _q("""
-        SELECT a.ticker,
+        SELECT a.ticker, a.company_id,
                COALESCE(c.name, s.nome_empresa, a.ticker) AS nome_empresa,
                COALESCE(NULLIF(s."SETOR", ''),    NULLIF(c.sector, ''))    AS "SETOR",
                COALESCE(NULLIF(s."SUBSETOR", ''), NULLIF(c.subsector, '')) AS "SUBSETOR",
-               COALESCE(NULLIF(s."SEGMENTO", ''), NULLIF(c.segment, ''))   AS "SEGMENTO"
+               COALESCE(NULLIF(s."SEGMENTO", ''), NULLIF(c.segment, ''))   AS "SEGMENTO",
+               s.listagem
         FROM market.assets a
         LEFT JOIN market.companies c ON c.id = a.company_id
         -- taxonomia B3: casa por ticker exato; senão pela RAIZ de 4 letras
         -- (PN/Unit herdam o setor do ON: BBDC4->BBDC3, ITUB4->ITUB3).
         LEFT JOIN LATERAL (
-            SELECT s2."SETOR", s2."SUBSETOR", s2."SEGMENTO", s2.nome_empresa
+            SELECT s2."SETOR", s2."SUBSETOR", s2."SEGMENTO", s2.nome_empresa,
+                   -- via jsonb: nem toda base tem a coluna LISTAGEM
+                   to_jsonb(s2)->>'LISTAGEM' AS listagem
             FROM public.setores s2
             WHERE s2."SETOR" IS NOT NULL
               AND (UPPER(REPLACE(s2.ticker, '.SA', '')) = a.ticker
@@ -188,7 +178,20 @@ def load_setores() -> pd.DataFrame:
         if col not in df.columns:
             df[col] = ""
         df[col] = df[col].fillna("").astype(str)
-    return df
+    return _com_codigo_atual(df)
+
+
+def _com_codigo_atual(df: pd.DataFrame) -> pd.DataFrame:
+    """Dá aos dois códigos de uma troca a mesma classificação e marca o atual.
+
+    O alias é tabela pequena (dezenas de linhas). Sem ela (base sem a
+    migration), vale só ``PARES_CONHECIDOS``.
+    """
+    aliases = _q("SELECT brapi_symbol, b3_ticker, motivo FROM market.ticker_alias")
+    mapa = mapa_de_trocas(df, aliases)
+    df = unificar_classificacao(df, mapa)
+    df["codigo_atual"] = df["ticker"].map(lambda t: mapa.get(t, t))
+    return df.drop(columns=["listagem"], errors="ignore")
 
 
 def _multiplos_long(ticker: str | None = None) -> pd.DataFrame:
@@ -344,6 +347,32 @@ def _demo_finalize(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=["_year"])
 
 
+def _proventos_do_exercicio(datas: pd.Series, total_do_ano) -> pd.Series:
+    """Soma de proventos do ano civil de cada exercício.
+
+    O ano civil que ainda não fechou fica vazio: a soma dele é parcial e
+    entraria no gráfico, no CAGR e no contexto das LLMs como o total do ano.
+    Só chega aqui o exercício encerrado fora de dezembro (cinco tickers em
+    29/10/2026, com exercício fechado entre fevereiro e junho).
+    """
+    aberto = _dt.date.today().year
+    return pd.to_numeric(datas.dt.year.map(
+        lambda y: total_do_ano(int(y)) if pd.notna(y) and int(y) < aberto else None),
+        errors="coerce")
+
+
+def _procedencia_dos_proventos(df: pd.DataFrame, divs: pd.DataFrame, tk: str) -> None:
+    """Põe em ``df.attrs`` a procedência da coluna ``Dividendos`` de ``tk``.
+
+    As mesmas chaves de :func:`load_dividendos_anuais`, para que o leitor
+    (gráfico, LLM, snapshot) nomeie a fonte e marque a resposta velha da brapi
+    com ``core.proventos_b3.procedencia``.
+    """
+    foto_em = divs.attrs.get("foto_em") or {}
+    df.attrs["fonte"] = _FONTE_ARQUIVO if tk in foto_em else _FONTE_BANCO
+    df.attrs["foto_em"] = {tk: foto_em[tk]} if tk in foto_em else {}
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_demonstracoes(ticker: str) -> pd.DataFrame:
     """Demonstrações anuais (market.*) com colunas PT iguais ao legado."""
@@ -351,12 +380,15 @@ def load_demonstracoes(ticker: str) -> pd.DataFrame:
     df = _demo_finalize(_q(_DEMO_SQL.format(where="i.ticker = :t"), {"t": tk}))
     if df.empty:
         return df
-    divs = _q("SELECT EXTRACT(YEAR FROM event_date)::int AS y, SUM(amount) AS d "
-              "FROM market.dividends WHERE ticker=:t AND event_date IS NOT NULL GROUP BY 1",
-              {"t": tk})
-    dmap = {int(r.y): float(r.d) for r in divs.itertuples()} if not divs.empty else {}
-    df["Dividendos"] = df["Data"].dt.year.map(dmap)
-    return df.sort_values("Data").reset_index(drop=True)
+    # A soma crua de market.dividends batia com a fonte em 65,6% dos
+    # ticker-anos: cada revisão da brapi deixa a linha antiga ao lado da nova
+    # (ver core.proventos_b3).
+    divs = _renda_anual([tk])
+    dmap = {int(r.ano): float(r.total) for r in divs.itertuples()} if not divs.empty else {}
+    df["Dividendos"] = _proventos_do_exercicio(df["Data"], dmap.get)
+    df = df.sort_values("Data").reset_index(drop=True)
+    _procedencia_dos_proventos(df, divs, tk)
+    return df
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -370,21 +402,19 @@ def load_demonstracoes_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame
         return {}
     # Dividendos por ano (paridade com load_demonstracoes single) — os
     # relatórios LLM usam a série p/ ancorar a política de proventos em números.
-    divs = _q("SELECT ticker, EXTRACT(YEAR FROM event_date)::int AS y, SUM(amount) AS d "
-              "FROM market.dividends WHERE ticker = ANY(:tks) AND event_date IS NOT NULL "
-              "GROUP BY 1, 2", {"tks": tks})
+    divs = _renda_anual(tks)
     dmap: dict[tuple[str, int], float] = (
-        {(str(r.ticker).upper(), int(r.y)): float(r.d) for r in divs.itertuples()}
+        {(str(r.ticker).upper(), int(r.ano)): float(r.total) for r in divs.itertuples()}
         if not divs.empty else {}
     )
     out: dict[str, pd.DataFrame] = {}
     for tk in tks:
         sub = df[df["Ticker"] == tk].copy().reset_index(drop=True)
         if not sub.empty:
-            sub["Dividendos"] = sub["Data"].dt.year.map(
-                lambda y, t=tk: dmap.get((t, int(y))) if pd.notna(y) else None
-            )
+            sub["Dividendos"] = _proventos_do_exercicio(
+                sub["Data"], lambda y, t=tk: dmap.get((t, y)))
             out[tk] = sub.sort_values("Data").reset_index(drop=True)
+            _procedencia_dos_proventos(out[tk], divs, tk)
     return out
 
 
@@ -590,6 +620,11 @@ _FII_SNAPSHOT_SCHEMA = "fii_selection_inputs.v2"
 _FII_SNAPSHOT_MAX_AGE_DAYS = 4
 _FII_SNAPSHOT_HARD_MAX_AGE_DAYS = 30
 _FII_SNAPSHOT_MEMORY_TTL_SECONDS = 900
+# INF-A2 (04/10/2026): com o artefato local válido, a leitura do Supabase em
+# segundo plano só serve se puder trazer vitrine MAIS NOVA -- e isso só é
+# possível quando o artefato passou do alvo de publicação. Mesmo então, uma
+# tentativa a cada 6 h basta: a vitrine remota muda no máximo uma vez por noite.
+_FII_SNAPSHOT_REMOTE_RETRY_SECONDS = 6 * 3600
 _FII_SNAPSHOT_MAX_ATTEMPTS = 2
 _FII_SNAPSHOT_DEADLINE_SECONDS = 12.0
 _FII_SNAPSHOT_REQUIRED_COLUMNS = {
@@ -601,6 +636,7 @@ _FII_SNAPSHOT_LOCK = threading.RLock()
 _FII_SNAPSHOT_LAST_GOOD: pd.DataFrame | None = None
 _FII_SNAPSHOT_LAST_GOOD_AT: _dt.datetime | None = None
 _FII_SNAPSHOT_JOB: tuple[threading.Thread, queue.Queue] | None = None
+_FII_SNAPSHOT_LAST_REMOTE_TRY_AT: _dt.datetime | None = None
 _FII_SNAPSHOT_ARTIFACT_PATH = (
     Path(__file__).resolve().parents[1]
     / "data" / "public" / "fii_selection_snapshot_v2.json.gz"
@@ -758,7 +794,7 @@ def _load_fii_snapshot_artifact(
     frame.attrs.update({
         "snapshot_source": "local_verified_artifact",
         "snapshot_fallback": True,
-        "fallback_reason": "remote_refresh_in_background",
+        "fallback_reason": "local_artifact_preferred",
         "snapshot_read_attempts": 0,
     })
     return frame
@@ -792,8 +828,9 @@ def _reset_fii_snapshot_memory_cache() -> None:
     e `scripts/verificar_frescor_vitrines.py` limpam justamente para reler a
     vitrine, e herdavam o resultado da leitura anterior.
 
-    Na suíte o preço era outro e maior. A leitura real dispara o worker sem
-    esperar (`timeout_seconds=0`) quando o artefato local responde, e ele segue
+    Na suíte o preço era outro e maior. A leitura real disparava o worker sem
+    esperar (`timeout_seconds=0`) quando o artefato local respondia (desde o
+    INF-A2, só quando o artefato passou do alvo de 4 dias), e ele segue
     lendo o Supabase por mais de 30 s. Qualquer teste que chamasse o carregador
     nesse intervalo recebia o resultado DELE -- 433 linhas reais ou um quadro
     vazio -- e seus `monkeypatch` de engine e `read_sql_query` viravam decoração.
@@ -803,10 +840,12 @@ def _reset_fii_snapshot_memory_cache() -> None:
     Abandonar é seguro: a thread é daemon e a fila é privada dela.
     """
     global _FII_SNAPSHOT_LAST_GOOD, _FII_SNAPSHOT_LAST_GOOD_AT, _FII_SNAPSHOT_JOB
+    global _FII_SNAPSHOT_LAST_REMOTE_TRY_AT
     with _FII_SNAPSHOT_LOCK:
         _FII_SNAPSHOT_LAST_GOOD = None
         _FII_SNAPSHOT_LAST_GOOD_AT = None
         _FII_SNAPSHOT_JOB = None
+        _FII_SNAPSHOT_LAST_REMOTE_TRY_AT = None
 
 
 def _read_fii_selection_snapshot(eng, page_size: int) -> pd.DataFrame:
@@ -935,14 +974,98 @@ def _annotate_fii_snapshot_freshness(frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
+def _fii_snapshot_as_of(frame: pd.DataFrame) -> _dt.date | None:
+    if frame is None or frame.empty or "as_of_date" not in frame.columns:
+        return None
+    as_of = pd.to_datetime(frame["as_of_date"], errors="coerce").dt.date.dropna()
+    return None if as_of.empty else as_of.iloc[0]
+
+
+def _newer_remembered_fii_snapshot(artifact_as_of: _dt.date) -> pd.DataFrame | None:
+    """Vitrine remota já lida, verificada e mais nova que o artefato, se houver.
+
+    Sem o teto de 15 min de `_fresh_fii_snapshot_fallback`: lá a memória
+    substitui uma leitura que FALHOU; aqui ela compete com um artefato mais
+    velho, e uma vitrine verificada (hash, schema, 30 dias) mais nova vence o
+    artefato enquanto ele não for republicado.
+    """
+    with _FII_SNAPSHOT_LOCK:
+        cached = (None if _FII_SNAPSHOT_LAST_GOOD is None
+                  else _FII_SNAPSHOT_LAST_GOOD.copy(deep=True))
+    if cached is None or _fii_snapshot_integrity_error(cached) is not None:
+        return None
+    cached_as_of = _fii_snapshot_as_of(cached)
+    if cached_as_of is None or cached_as_of <= artifact_as_of:
+        return None
+    cached.attrs.update({
+        "snapshot_source": "database",
+        "snapshot_fallback": False,
+        "fallback_reason": "remote_newer_than_local_artifact",
+        "snapshot_read_attempts": 0,
+    })
+    return cached
+
+
+def _artifact_or_newer_remote(artifact: pd.DataFrame, eng, page_size: int) -> pd.DataFrame:
+    """Decide entre o artefato local verificado e a vitrine do Supabase.
+
+    INF-A2 (auditoria de 04/10/2026). Até aqui, com o artefato válido, a
+    leitura disparava SEMPRE um worker que trazia a vitrine inteira do Supabase
+    -- 434 linhas, 2,9 MB de JSON (medido no artefato de 04/10) -- e guardava o
+    resultado só na memória de última leitura boa, que o artefato vencia na
+    chamada seguinte. Era tráfego descartado a cada expiração do cache de 15
+    min: até 96 leituras/dia, ~280 MB/dia por processo, mais que o orçamento
+    inteiro de ~160 MB/dia que cabe nos 5 GB do plano free (o ciclo de
+    setembro fechou em 7,8 GB).
+
+    Agora o Supabase só é lido quando pode acrescentar algo: artefato além do
+    alvo de 4 dias (a rotina noturna parou de republicar) e sem tentativa
+    remota nas últimas 6 h. Quando o worker termina, a vitrine dele é servida
+    se for mais nova que o artefato -- antes ela nunca era.
+    """
+    artifact_as_of = _fii_snapshot_as_of(artifact)
+    if artifact_as_of is None:
+        return artifact
+    idade = (_utcnow().date() - artifact_as_of).days
+    if idade <= _FII_SNAPSHOT_MAX_AGE_DAYS:
+        return artifact
+
+    newer = _newer_remembered_fii_snapshot(artifact_as_of)
+    if newer is not None:
+        return newer
+
+    global _FII_SNAPSHOT_LAST_REMOTE_TRY_AT, _FII_SNAPSHOT_JOB
+    agora = _utcnow()
+    with _FII_SNAPSHOT_LOCK:
+        ultima = _FII_SNAPSHOT_LAST_REMOTE_TRY_AT
+        devida = eng is not None and (
+            ultima is None
+            or (agora - ultima).total_seconds() >= _FII_SNAPSHOT_REMOTE_RETRY_SECONDS
+        )
+        if devida:
+            _FII_SNAPSHOT_LAST_REMOTE_TRY_AT = agora
+            # Ninguém espera o worker disparado sem prazo, então ele termina e
+            # fica registrado. Reaproveitá-lo devolveria a leitura de 6 h atrás
+            # no lugar de uma nova; o que ele leu de bom já está na memória.
+            if _FII_SNAPSHOT_JOB is not None and not _FII_SNAPSHOT_JOB[0].is_alive():
+                _FII_SNAPSHOT_JOB = None
+    if devida:
+        _wait_for_fii_snapshot_job(eng, int(page_size), timeout_seconds=0)
+        artifact.attrs["fallback_reason"] = "remote_refresh_in_background"
+    else:
+        artifact.attrs["fallback_reason"] = "local_artifact_stale"
+    return artifact
+
+
 def _load_fii_selection_snapshot(page_size: int = 500) -> pd.DataFrame:
     """Lê a vitrine v2 sob prazo total e fallback verificado de 15 minutos."""
     eng = _fii_snapshot_engine()
     artifact = _load_fii_snapshot_artifact()
-    if not artifact.empty:
-        if eng is not None:
-            _wait_for_fii_snapshot_job(eng, int(page_size), timeout_seconds=0)
-        return _annotate_fii_snapshot_freshness(artifact)
+    # Artefato reprovado (hash, schema, > 30 dias) chega com linhas E
+    # `load_error`; servi-lo seria falhar com o Supabase talvez íntegro.
+    if not artifact.empty and not artifact.attrs.get("load_error"):
+        return _annotate_fii_snapshot_freshness(
+            _artifact_or_newer_remote(artifact, eng, int(page_size)))
     if eng is None:
         fallback = _fresh_fii_snapshot_fallback("database_unavailable", 0)
         if fallback is not None:
@@ -1247,12 +1370,13 @@ def _load_fii_validation_status_cached(methodology_version: str | None) -> dict:
 
 def _fii_validation_status(methodology_version: str | None, engine) -> dict:
     from core.fii_methodology import METHODOLOGY_VERSION
+    from core.fii_validation import FILTRO_RUN_VALIDACAO_PIT
     if methodology_version is None:
         methodology_version = METHODOLOGY_VERSION
-    df = _q("""
+    df = _q(f"""
         SELECT status, metrics_json, blockers_json, as_of_date, finished_at
         FROM market.fii_validation_runs
-        WHERE methodology_version = :version
+        WHERE methodology_version = :version AND {FILTRO_RUN_VALIDACAO_PIT}
         ORDER BY COALESCE(finished_at, started_at) DESC LIMIT 1
     """, {"version": methodology_version}, engine=engine)
     if df.empty:
@@ -1312,6 +1436,39 @@ def load_fii_one(ticker: str) -> pd.Series:
     return df.iloc[0]
 
 
+ARQUIVO_FII_METRICS_MENSAL = (Path(__file__).resolve().parents[1] / "data" / "public"
+                              / "fii_metrics_monthly.json.gz")
+
+
+def _fii_metrics_do_artefato(tk: str) -> pd.DataFrame | None:
+    """Série mensal do FII lida do artefato publicado; ``None`` se o arquivo
+    não existe ou não traz o fundo (o chamador cai no Supabase).
+
+    Mesmas colunas e a mesma conta de P/VP do caminho SQL -- fechamento do
+    último pregão do mês na fita da B3 ÷ VPA --, só que o fechamento já vem
+    dentro do arquivo (lido do armazém). Mês sem fechamento fica com P/VP
+    nulo, como no caminho SQL.
+    """
+    from core.inteligencia_ativos import arquivo_publicado
+    art = arquivo_publicado.ler(str(ARQUIVO_FII_METRICS_MENSAL), "fii_metrics_monthly")
+    linhas = ((art or {}).get("por_ticker") or {}).get(tk)
+    colunas = (art or {}).get("colunas")
+    if not linhas or not colunas:
+        return None
+    df = pd.DataFrame(linhas, columns=colunas).rename(columns={
+        "ref_month": "Data", "vpa": "VPA", "patrimonio_liquido": "Patrimonio",
+        "num_cotistas": "Cotistas", "dy_patrimonial_mes": "DY_Patrimonial",
+        "pct_imoveis": "Pct_Imoveis", "pct_papel": "Pct_Papel",
+        "pct_caixa": "Pct_Caixa", "pct_fundos": "Pct_Fundos"})
+    df["Data"] = pd.to_datetime(df["Data"], errors="coerce")
+    for c in ("VPA", "Patrimonio", "Cotistas", "DY_Patrimonial", "Pct_Imoveis",
+              "Pct_Papel", "Pct_Caixa", "Pct_Fundos", "fechamento"):
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+    df["P/VP"] = (df["fechamento"] / df["VPA"]).where(df["VPA"] > 0)
+    df = df.drop(columns=["fechamento"])
+    return df.dropna(subset=["Data"]).sort_values("Data").reset_index(drop=True)
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_fii_metrics_mensal(ticker: str) -> pd.DataFrame:
     """
@@ -1338,6 +1495,12 @@ def load_fii_metrics_mensal(ticker: str) -> pd.DataFrame:
     grupamento o preço ajustado está.
     """
     tk = ticker.strip().upper().replace(".SA", "")
+    # Local-first: o artefato do armazém (scripts/publish_fii_metrics_monthly.py)
+    # está em dia; a tabela do Supabase parou em 05/2026 (sem espaço e sem
+    # egress). Só o fundo que o arquivo não traz, ou sem arquivo, vai ao banco.
+    do_arquivo = _fii_metrics_do_artefato(tk)
+    if do_arquivo is not None:
+        return do_arquivo
     met = _q("""
         SELECT ref_month AS "Data", vpa AS "VPA",
                patrimonio_liquido AS "Patrimonio", num_cotistas AS "Cotistas",
@@ -1585,7 +1748,11 @@ def load_fii_quality() -> pd.DataFrame:
     return base
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+# INF-A2: lê o histórico INTEIRO de preços dos FIIs + XFIX11 (42.628 linhas,
+# 1,24 MB em texto no armazém em 04/10/2026) para devolver duas séries
+# mensais. A fonte muda uma vez por noite e a saída é mensal: com TTL de 1 h
+# eram até 24 leituras/dia (~30 MB/dia de egress por processo) sem dado novo.
+@st.cache_data(ttl=43200, show_spinner=False)
 def load_mercado_retorno_mensal() -> pd.DataFrame:
     """
     Retornos MENSAIS (retorno total, adjusted_close) de referência de mercado:
@@ -1610,7 +1777,8 @@ def load_mercado_retorno_mensal() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
+def load_precos_mensais(tickers: tuple[str, ...],
+                        trocas: tuple[tuple[str, str], ...] = ()) -> pd.DataFrame:
     """
     Preços MENSAIS (último pregão do mês) AJUSTADOS por proventos+splits
     (adjusted_close = retorno total), a partir de market.historical_prices.
@@ -1618,6 +1786,15 @@ def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     Espelha a saída de views._batch_yf_precos_mensais: DataFrame com
     DatetimeIndex mensal × colunas = tickers (sem .SA). Substitui o download
     do yfinance no backtest do portfólio B3.
+
+    ``trocas`` ((antigo, atual), ...) une as duas fitas no DIÁRIO, sob o
+    código atual, com o critério da migração
+    (``data_pipeline.market.troca_codigo``): o adjusted_close do antigo vai
+    multiplicado pela mediana da razão atual/antigo nos pregões comuns (sem
+    pregão comum, nada se reescala) e, na mesma data, fica a linha do atual.
+    A série sai igual antes e depois do ``--apply``. Unir só com o mês já
+    fechado mediria a base em dias diferentes (o último pregão de cada código
+    no mês da troca) e tomaria movimento de preço por diferença de base.
     """
     if not tickers:
         return pd.DataFrame()
@@ -1628,10 +1805,44 @@ def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     # números impossíveis exibidos como medição -- queda máxima de -2.638%
     # em MMAQ4, -104% em RSUL3, volatilidade de 361% em NEMO3. Descartar a
     # observação devolve o mês como ausente, que todo consumidor já trata.
-    df = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c "
-            "FROM market.historical_prices WHERE ticker = ANY(:t) "
-            "AND COALESCE(adjusted_close, close) > 0 ORDER BY ticker, date",
-            {"t": tks})
+    if trocas:
+        # Pedir um dos dois códigos traz a fita dos dois. O filtro de preço
+        # vem depois da escolha da linha, como no banco já migrado: a linha
+        # do atual descarta a do antigo na mesma data mesmo sem preço.
+        pedidos = set(tks)
+        tks += sorted({c for par in trocas for c in par if pedidos & set(par)} - pedidos)
+        df = _q(f"""
+            WITH fita AS (
+                SELECT {sql_dono('p.ticker')} AS dono, {sql_ticker('p.ticker')} AS tk,
+                       p.date, p.adjusted_close, p.close
+                FROM market.historical_prices p
+                WHERE p.ticker = ANY(:t)
+            ),
+            base AS (
+                SELECT o.tk, percentile_cont(0.5) WITHIN GROUP (
+                           ORDER BY (n.adjusted_close / o.adjusted_close)::float8) AS fator
+                FROM fita o
+                JOIN fita n ON n.tk = o.dono AND n.date = o.date
+                WHERE o.tk <> o.dono AND o.adjusted_close > 0 AND n.adjusted_close > 0
+                GROUP BY o.tk
+            ),
+            unida AS (
+                SELECT DISTINCT ON (f.dono, f.date) f.dono AS ticker, f.date,
+                       COALESCE(f.adjusted_close * CASE WHEN ABS(b.fator - 1) > :tol
+                                                        THEN b.fator ELSE 1 END,
+                                f.close) AS c,
+                       f.close AS b
+                FROM fita f
+                LEFT JOIN base b ON b.tk = f.tk
+                ORDER BY f.dono, f.date, (f.tk = f.dono) DESC
+            )
+            SELECT ticker, date, c, b FROM unida WHERE c > 0 ORDER BY ticker, date
+        """, {"t": tks, "trocas": trocas_json(trocas), "tol": TOLERANCIA_BASE})
+    else:
+        df = _q("SELECT ticker, date, COALESCE(adjusted_close, close) AS c, "
+                "close AS b FROM market.historical_prices WHERE ticker = ANY(:t) "
+                "AND COALESCE(adjusted_close, close) > 0 ORDER BY ticker, date",
+                {"t": tks})
     if df.empty:
         return pd.DataFrame()
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
@@ -1639,13 +1850,26 @@ def load_precos_mensais(tickers: tuple[str, ...]) -> pd.DataFrame:
     wide = df.pivot_table(index="date", columns="ticker", values="c", aggfunc="last")
     mensal = wide.resample("ME").last()          # último preço válido de cada mês
     mensal.columns = [str(c).strip().upper() for c in mensal.columns]
-    return mensal.dropna(how="all")
+    brutos = (df.pivot_table(index="date", columns="ticker", values="b",
+                             aggfunc="last").resample("ME").last())
+    brutos.columns = [str(c).strip().upper() for c in brutos.columns]
+    # B3-01: desdobramento/grupamento que o ajuste da fonte nao retroagiu (e
+    # ajustado corrompido com close plano, MMAQ4/RSUL3) aparece como retorno
+    # mensal acima de +100% ou abaixo de -60%: a safra 2024 do EW saia
+    # +135,6% contra -8,1% saneada. So se neutraliza COM evidencia (fator
+    # redondo, close estavel ou alta > +300%): queda sem evidencia e perda
+    # real (AMER3 -82% em 01/2023). A regra e o porque moram em
+    # core.b3_precos_saneamento.
+    mensal, _ = neutralizar_saltos_mensais(mensal.dropna(how="all"), brutos)
+    return mensal
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_dividendos_anuais(ticker: str) -> pd.DataFrame:
-    """Dividendos anuais totais (R$/ação) de ``market.dividends`` — colunas
-    [Data, Dividendos], Data = 31/12 do ano de referência.
+    """Dividendos anuais totais (R$/ação) por ano de pagamento — colunas
+    [Data, Dividendos], Data = 31/12 do ano de referência. Fonte:
+    ``core.proventos_b3.renda_anual`` (a resposta mais nova da brapi,
+    publicada; ``market.dividends`` só para o ticker que ela não cobre).
 
     Fonte governada usada como PRIMÁRIA pela aba "Análise de Empresa" (Empresas
     B3) quando ``market.*`` está ativo — yfinance ao vivo só entra como
@@ -1653,26 +1877,10 @@ def load_dividendos_anuais(ticker: str) -> pd.DataFrame:
     (achado A-011, 2026-08-19: antes a tela chamava yfinance incondicionalmente,
     mesmo com o dado governado disponível).
     """
-    from core.dividend_types import sql_apenas_renda
-
     tk = ticker.strip().upper().replace(".SA", "")
-    # A-128/A-129: amortizacao e restituicao de capital nao sao provento, e o
-    # eco de classe da brapi grava o mesmo evento sob varios tickers. Somar
-    # tudo cru inflava 234 tickers em 139% na media (medido em 2026-08-24).
-    # MIN dentro de (data, tipo) mata o eco; SUM entre tipos distintos preserva
-    # dividendo + JCP no mesmo dia, que sao dois eventos de verdade.
-    df = _q(f"""
-        SELECT ano, SUM(valor) AS total FROM (
-            SELECT EXTRACT(YEAR FROM event_date)::int AS ano,
-                   event_date, type, MIN(amount) AS valor
-            FROM market.dividends
-            WHERE ticker = :t AND event_date IS NOT NULL
-              AND {sql_apenas_renda()}
-            GROUP BY 1, 2, 3
-        ) AS renda
-        GROUP BY 1
-        ORDER BY 1
-    """, {"t": tk})
+    # A mesma fonte de load_demonstracoes: só renda, sem eco de classe, sem a
+    # safra colapsada e sem as revisões que o upsert não apaga.
+    df = _renda_anual([tk])
     if df.empty:
         return pd.DataFrame()
     df = df.dropna(subset=["ano", "total"])
@@ -1684,7 +1892,10 @@ def load_dividendos_anuais(ticker: str) -> pd.DataFrame:
         "Data": df["ano"].map(lambda y: pd.Timestamp(_dt.date(int(y), 12, 31))),
         "Dividendos": pd.to_numeric(df["total"], errors="coerce"),
     })
-    return out.dropna().reset_index(drop=True)
+    out = out.dropna().reset_index(drop=True)
+    out.attrs["fonte"] = df.attrs.get("fonte", "")
+    out.attrs["foto_em"] = df.attrs.get("foto_em", {})
+    return out
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -1696,14 +1907,18 @@ def load_fii_segmentos() -> list[str]:
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_historico_anos() -> dict[str, int]:
-    """{ticker: nº de anos de demonstração anual} a partir de market.income_statements."""
-    df = _q("""
-        SELECT ticker, COUNT(DISTINCT year)::int AS anos
+def load_historico_anos(trocas: tuple[tuple[str, str], ...] = ()) -> dict[str, int]:
+    """{ticker: nº de anos de demonstração anual} a partir de market.income_statements.
+
+    ``trocas`` ((antigo, atual), ...) conta sob o código atual os exercícios
+    das duas fitas: 8 anos do antigo e 3 do atual são 11 (core.b3_troca_codigo).
+    """
+    df = _q(f"""
+        SELECT {sql_dono()} AS ticker, COUNT(DISTINCT year)::int AS anos
         FROM market.income_statements
         WHERE period = 'annual' AND ticker IS NOT NULL AND year IS NOT NULL
-        GROUP BY ticker
-    """)
+        GROUP BY 1
+    """, {"trocas": trocas_json(trocas)})
     if df.empty:
         return {}
     out: dict[str, int] = {}
@@ -1723,23 +1938,34 @@ _PREGOES_POR_MES = 21
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_giro_diario(dias: int = 400) -> dict[str, float]:
+def load_giro_diario(dias: int = 400,
+                     trocas: tuple[tuple[str, str], ...] = ()) -> dict[str, float]:
     """{ticker: giro financeiro diário estimado em R$}.
 
     Usa a MEDIANA das barras mensais, não a média: um único mês de leilão ou de
     entrada em índice multiplica o volume e faria um papel ilíquido parecer
     negociável. Validação cruzada em 30/07/2026 — EUCA4 deu ~R$ 570 mil/dia
     aqui contra R$ 766 mil de ADTV publicado, mesma ordem de grandeza.
+
+    ``trocas`` ((antigo, atual), ...) tira a mediana da fita unida sob o código
+    atual; na mesma data fica a barra do atual (core.b3_troca_codigo).
     """
-    df = _q("""
-        SELECT p.ticker,
-               percentile_cont(0.5) WITHIN GROUP (ORDER BY p.close * p.volume)
-                 AS giro_mensal
-        FROM market.historical_prices p
-        WHERE p.date >= CURRENT_DATE - make_interval(days => :dias)
-          AND p.volume > 0 AND p.close > 0
-        GROUP BY p.ticker
-    """, {"dias": int(dias)})
+    df = _q(f"""
+        WITH barras AS (
+            SELECT DISTINCT ON (dono, date) dono, giro
+            FROM (SELECT {sql_dono('p.ticker')} AS dono,
+                         {sql_ticker('p.ticker')} AS tk,
+                         p.date, p.close * p.volume AS giro
+                  FROM market.historical_prices p
+                  WHERE p.date >= CURRENT_DATE - make_interval(days => :dias)
+                    AND p.volume > 0 AND p.close > 0) b
+            ORDER BY dono, date, (tk = dono) DESC
+        )
+        SELECT dono AS ticker,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY giro) AS giro_mensal
+        FROM barras
+        GROUP BY dono
+    """, {"dias": int(dias), "trocas": trocas_json(trocas)})
     if df.empty:
         return {}
     out: dict[str, float] = {}

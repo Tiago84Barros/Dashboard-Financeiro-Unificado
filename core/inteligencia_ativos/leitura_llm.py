@@ -91,7 +91,9 @@ def detalhe_armazem_do_ativo(analise: m.AnaliseAtivo, *,
 
 def _chamar_padrao(mensagens: list[dict]) -> str:
     from core.llm_b3 import _chat_complete
-    return _chat_complete(mensagens, temperature=_TEMPERATURA, json_mode=True)
+    # Leva a política e a carteira do usuário: cadeia sem modelo gratuito.
+    return _chat_complete(mensagens, temperature=_TEMPERATURA, json_mode=True,
+                          pessoal=True)
 
 
 def _modelo_que_respondeu(chamar) -> str | None:

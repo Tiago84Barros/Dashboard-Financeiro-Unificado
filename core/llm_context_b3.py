@@ -567,7 +567,9 @@ def get_dre_history_context(tickers: list[str], max_n: int = 3, anos: int = 6) -
 # ─────────────────────────────────────────────────────────────────────────────
 
 def get_macro_context(macro_hist: dict | None = None) -> str:
-    from core.contexto_mercado import _como_pct
+    from datetime import date
+
+    from core.contexto_mercado import UNIDADE_MACRO_ANUAL, _como_pct
 
     hist = macro_hist if macro_hist else _db.load_macro_history()
     if not hist:
@@ -578,11 +580,15 @@ def get_macro_context(macro_hist: dict | None = None) -> str:
         d = hist[ano]
         parts = []
         # public.macro mistura unidades (Selic em fração, IPCA em percentual):
-        # multiplicar o IPCA por 100 publicava "IPCA=310%" para a LLM.
+        # multiplicar o IPCA por 100 publicava "IPCA=310%" para a LLM. A
+        # unidade vem do mapa da fonte, não da magnitude do número.
         if d.get("selic") is not None:
-            parts.append(f"Selic={_como_pct(d['selic']):.2f}%")
+            parts.append(f"Selic={_como_pct(d['selic'], UNIDADE_MACRO_ANUAL['selic']):.2f}%")
         if d.get("ipca") is not None:
-            parts.append(f"IPCA={_como_pct(d['ipca']):.2f}%")
+            ipca = _como_pct(d["ipca"], UNIDADE_MACRO_ANUAL["ipca"])
+            # No ano corrente a coluna é o acumulado no ano, não 12 meses.
+            parts.append(f"IPCA acumulado no ano até agora={ipca:.2f}%"
+                         if ano >= date.today().year else f"IPCA={ipca:.2f}%")
         if "cambio" in d:
             parts.append(f"USD/BRL={d['cambio']:.2f}")
         if parts:

@@ -9,7 +9,9 @@ Abas (como Empresas B3, com as particularidades de FII):
   2. Busca de ativo — detalhe por FII: histórico (P/VP·VPA), vacância, composição
                       e carteira de imóveis com região (tijolo/logística).
   3. Carteira-modelo — seleção diversificada por tipo (tijolo/papel/fof/híbrido).
-  4. Backtest        — retorno total (preço + proventos reinvestidos) da carteira.
+  4. Retrospectiva   — retorno total (preço + proventos reinvestidos) da carteira.
+  5. Revisão de dados — decisão humana, versionada, sobre valores extraídos de
+                        relatório gerencial antes de virarem dado aceito.
 
 Fonte nativa do market.* (BRAPI Pro + CVM Informe Mensal). FII não tem DRE/ROE.
 """
@@ -54,11 +56,16 @@ from core.fii_methodology import (
 from core.fii_portfolio_v4 import (
     LIVE_PORTFOLIO_STRATEGY_ID,
     PortfolioPolicy,
+    tetos_inativos,
 )
 from core.fii_renda_recorrente import dy_recorrente
 from core.fii_selection_explanations import build_selection_reports
 from core.fii_taxonomy import ORDEM_CATEGORIAS_FII, categoria_fii
-from core.fii_validation import validation_supports_strategy
+from core.fii_validation import (
+    leitura_do_excesso,
+    texto_do_excesso,
+    validation_supports_strategy,
+)
 from core.inteligencia_ativos import veredito
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_context_ativo import build_fii_ativo_context
@@ -68,6 +75,7 @@ from core.llm_context_fii import (
     tickers_para_detalhe,
 )
 from core.llm_fii import chat_com_fiis
+from core.llm_grounding import aviso_ancoragem
 from core.macro_cenario import CenarioObservado, cenario_macro_observado
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
@@ -82,8 +90,9 @@ from design.componentes import (
     container_pagina,
     rolar_para_topo,
 )
-from design.lacunas import aviso_lacuna
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.market_companies import company_logo_html
+from design.relatorio_analista import secao_relatorio
 
 # Metadados por tipo de FII: emoji, rótulo e cor de destaque do card.
 _TIPO_META = {
@@ -111,7 +120,11 @@ _TOKEN_POR_COR = {
 
 def _cor_texto(cor: str) -> str:
     """Traduz a cor semântica para o token do tema (texto e bordas em HTML)."""
-    return _TOKEN_POR_COR.get(str(cor).upper(), cor)
+    # Cor fora do mapa (classe de ativo, paleta de grupo) também precisa
+    # ser legível no claro: ver ``design.componentes.tinta_legivel``.
+    from design.componentes import tinta_legivel
+
+    return _TOKEN_POR_COR.get(str(cor).upper()) or tinta_legivel(cor)
 
 # FII é sempre listado na B3 — mesmo CDN de logo usado em empresas_b3.py e
 # reaproveitado em views/portfolio_global.py (sem módulo central para essa
@@ -281,6 +294,8 @@ def render(show_header: bool = True) -> None:
         validation, LIVE_PORTFOLIO_STRATEGY_ID
     )
     st.markdown(_CSS, unsafe_allow_html=True)
+    detalhe_tecnico(f"Metodologia de FIIs {METHODOLOGY_VERSION}.",
+                    codigo="fii.metodologia_versao")
 
     if show_header:
         container_pagina(
@@ -288,13 +303,15 @@ def render(show_header: bool = True) -> None:
             "Universo disponível, busca de ativo, carteira-modelo e retrospectiva de fundos imobiliários.",
             "🏬",
             metadados=[
-                ("Metodologia", METHODOLOGY_VERSION),
                 (
                     "Validação",
                     "Point-in-time aplicável"
                     if validation_applicable
                     else "Motor atual pendente",
                 ),
+                # FII-02: o selo acima atesta integridade do protocolo, não
+                # vantagem. O IC do excesso fica ao lado dele no cabeçalho.
+                ("Excesso vs IFIX", _metadado_do_excesso(validation)),
             ],
         )
 
@@ -303,11 +320,13 @@ def render(show_header: bool = True) -> None:
     df = _methodology_inputs_to_vitrine(inputs)
     if df.empty:
         if inputs.attrs.get("load_error"):
-            st.error(
-                "Não foi possível consultar o universo de FIIs agora. "
-                "A conexão foi preservada em modo somente leitura; tente novamente."
-            )
+            st.info("Esta análise não está disponível no momento.")
+            aviso_lacuna(
+                "Não foi possível consultar o universo de FIIs (leitura somente "
+                "leitura da vitrine falhou).",
+                codigo="tela.fii.universo_falha_leitura")
         else:
+            st.info("Esta análise não está disponível no momento.")
             aviso_lacuna("Ainda não há FIIs no banco. Rode `python run_market_ingest.py fiis` "
                          "(+ `fiis-cvm`, `fiis-series`) para popular.",
                          codigo="tela.fii.universo_vazio")
@@ -421,9 +440,10 @@ def _falha_de_leitura_da_vitrine(inputs: pd.DataFrame) -> bool:
     erro = inputs.attrs.get("load_error")
     if not erro and not inputs.empty:
         return False
-    causa = _mr.causa_falha_vitrine_fii(erro)
-    saida = _SAIDA_DE_FALHA.get(
-        str(erro or ""), "Recarregue a página em alguns instantes.")
+    codigo_erro = str(erro or "")
+    causa_tecnica = _mr.causa_falha_vitrine_fii(erro)
+    saida_tecnica = _SAIDA_DE_FALHA.get(
+        codigo_erro, "Recarregue a página em alguns instantes.")
     idade = inputs.attrs.get("snapshot_age_days")
     as_of = inputs.attrs.get("snapshot_as_of")
     detalhe = ""
@@ -432,9 +452,24 @@ def _falha_de_leitura_da_vitrine(inputs: pd.DataFrame) -> bool:
         if idade is not None:
             detalhe += f", há {int(idade)} dia(s)"
         detalhe += "."
+    detalhe_tecnico(
+        f"A seleção não rodou porque {causa_tecnica}.{detalhe} {saida_tecnica}",
+        codigo="fii.vitrine_falha_leitura")
+    aviso_lacuna(f"Falha ao ler a vitrine de FIIs: {causa_tecnica}.",
+                 codigo="tela.fii.vitrine_falha_leitura")
+    # Só as duas causas que o usuário entende vão para a tela; as demais
+    # (hash, consulta, worker) ficam no registro.
+    if codigo_erro in ("snapshot_stale", "database_unavailable"):
+        causa = causa_tecnica
+        saida = ("Recarregue a página em alguns instantes."
+                 if codigo_erro == "snapshot_stale"
+                 else "Verifique a conexão e recarregue a página.")
+    else:
+        causa = "o universo de FIIs não pôde ser carregado"
+        saida = "Recarregue a página em alguns instantes."
     st.markdown(_info_card_html(
         "Sem carteira: falha ao ler os dados, não reprovação dos fundos",
-        f"A seleção não rodou porque {causa}.{detalhe} Nenhum fundo foi avaliado "
+        f"A seleção não rodou porque {causa}. Nenhum fundo foi avaliado "
         f"e nenhum filtro reprovou nada — não relaxe os critérios por causa "
         f"desta tela. {saida}",
         accent="#FC5C7D",
@@ -449,15 +484,13 @@ def _aviso_de_idade_da_vitrine(inputs: pd.DataFrame) -> None:
     idade = inputs.attrs.get("snapshot_age_days")
     alvo = inputs.attrs.get("snapshot_max_age_days")
     limite = inputs.attrs.get("snapshot_hard_max_age_days")
-    st.markdown(_info_card_html(
-        "Vitrine fora do prazo de publicação",
-        f"Os dados são de {inputs.attrs.get('snapshot_as_of', 'data desconhecida')}, "
-        f"há {idade} dia(s) — o alvo de publicação é {alvo} dia(s) e a vitrine deixa "
-        f"de valer aos {limite}. Fundamentos e carteira dos fundos mudam pouco nesse "
-        f"intervalo; preço, liquidez e P/VP mudam. Trate a seleção como indicativa "
-        f"até a próxima publicação.",
-        accent="#FFB454",
-    ), unsafe_allow_html=True)
+    detalhe_tecnico(
+        f"Vitrine fora do prazo de publicação: dados de "
+        f"{inputs.attrs.get('snapshot_as_of', 'data desconhecida')}, há {idade} "
+        f"dia(s); alvo de publicação {alvo} dia(s); a vitrine deixa de valer aos "
+        f"{limite}. Fundamentos mudam pouco nesse intervalo; preço, liquidez e "
+        f"P/VP mudam.",
+        codigo="fii.vitrine_fora_do_prazo")
 
 
 def _diagnostico_de_exclusao(eligibility: dict, *, expandido: bool) -> None:
@@ -469,11 +502,10 @@ def _diagnostico_de_exclusao(eligibility: dict, *, expandido: bool) -> None:
     total = eligibility.get("universe_count") or 0
     with st.expander("Por que os fundos ficaram de fora", expanded=expandido):
         if total and ausencias >= total:
-            st.warning(
+            aviso_lacuna(
                 "Toda exclusão foi por métrica ausente, e não por reprovação em "
-                "critério. Isso é sintoma de dado faltando, não de filtro apertado: "
-                "relaxar os limites não devolveria nenhum fundo."
-            )
+                "critério: sintoma de dado faltando, não de filtro apertado.",
+                codigo="tela.fii.exclusao_so_por_metrica_ausente")
         st.dataframe(
             pd.DataFrame(
                 [{"Motivo": motivo, "Fundos": int(qtd)}
@@ -483,12 +515,17 @@ def _diagnostico_de_exclusao(eligibility: dict, *, expandido: bool) -> None:
         )
 
 
-def _mensagem_de_universo_vazio(eligibility: dict) -> str:
-    """A saída sugerida tem que corresponder ao que de fato reprovou."""
+def _universo_vazio_por_ausencia(eligibility: dict) -> bool:
+    """True quando toda exclusão foi métrica ausente (dado, não filtro)."""
     contagem = eligibility.get("exclusion_counts") or {}
     total = eligibility.get("universe_count") or 0
     ausencias = sum(v for k, v in contagem.items() if "ausente" in str(k))
-    if total and ausencias >= total:
+    return bool(total and ausencias >= total)
+
+
+def _mensagem_de_universo_vazio(eligibility: dict) -> str:
+    """A saída sugerida tem que corresponder ao que de fato reprovou."""
+    if _universo_vazio_por_ausencia(eligibility):
         return ("Nenhum FII foi avaliado: todos foram excluídos por métrica ausente. "
                 "O problema é de dado, não de filtro — relaxar os critérios não "
                 "mudaria o resultado.")
@@ -557,9 +594,11 @@ def _diagnostico_de_factibilidade(result: dict) -> None:
             st.dataframe(controls, hide_index=True, width="stretch")
         solver_reason = candidate_pool.get("reason") or candidate_pool.get("solver_message")
         if solver_reason:
-            st.caption(f"Retorno técnico da pré-seleção: {solver_reason}")
+            detalhe_tecnico(f"Retorno técnico da pré-seleção: {solver_reason}",
+                            codigo="fii.preselecao_retorno_solver")
         for note in candidate_pool.get("viability_notes") or []:
-            st.caption(f"Nota de viabilidade: {note}")
+            detalhe_tecnico(f"Nota de viabilidade: {note}",
+                            codigo="fii.preselecao_nota_viabilidade")
 
 
 def _fii_data_health_metrics(
@@ -676,9 +715,12 @@ def _render_project_evidence_review(
     st.caption(
         "Valores esperados são estimativas do gestor, não fatos realizados. "
         f"Página {row.get('page_number') or '—'} · confiança de extração "
-        f"{float(row.get('confidence') or 0):.0%} · SHA-256 "
-        f"{str(row.get('content_sha256') or '')[:20]}…"
+        f"{float(row.get('confidence') or 0):.0%}"
     )
+    detalhe_tecnico(
+        f"Evidência de empreendimento #{selected_id}: SHA-256 "
+        f"{str(row.get('content_sha256') or '')[:20]}…",
+        codigo="fii.revisao_projeto_hash")
     with st.form("fii_project_review_form"):
         decision_label = st.radio(
             "Decisão", ["Aceitar como evidência", "Rejeitar"],
@@ -706,7 +748,7 @@ def _render_project_evidence_review(
             st.cache_data.clear()
             st.rerun()
         except Exception as exc:
-            st.error(f"Não foi possível registrar a revisão: {exc}")
+            falha_de_acao("Não foi possível registrar a revisão.", exc)
 
 
 def _render_finding_evidence_review(
@@ -765,7 +807,7 @@ def _render_finding_evidence_review(
             st.cache_data.clear()
             st.rerun()
         except Exception as exc:
-            st.error(f"Não foi possível registrar a revisão: {exc}")
+            falha_de_acao("Não foi possível registrar a revisão.", exc)
 
 
 def _tab_evidence_review() -> None:
@@ -789,8 +831,11 @@ def _tab_evidence_review() -> None:
     ), unsafe_allow_html=True)
     summary = review_backlog_summary()
     if not summary.get("available"):
-        st.info("A fila documental não está disponível neste banco: "
-                + str(summary.get("reason") or "sem detalhes"))
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna(
+            "A fila documental não está disponível neste banco: "
+            + str(summary.get("reason") or "sem detalhes"),
+            codigo="tela.fii.fila_documental_indisponivel")
         return
     k1, k2, k3, k4, k5 = st.columns(5)
     k1.markdown(_kpi_html("Evidências pendentes", summary.get("pending", 0),
@@ -861,10 +906,13 @@ def _tab_evidence_review() -> None:
     st.caption(
         f"Documento: {evidence.get('document_type')} · referência: "
         f"{evidence.get('reference_date') or 'não informada'} · página: "
-        f"{evidence.get('page_number') or 'não identificada'} · parser: "
-        f"{evidence.get('parser_name')} {evidence.get('parser_version')} · SHA-256: "
-        f"{str(evidence.get('content_sha256') or '')[:20]}…"
+        f"{evidence.get('page_number') or 'não identificada'}"
     )
+    detalhe_tecnico(
+        f"Evidência #{selected_id}: parser {evidence.get('parser_name')} "
+        f"{evidence.get('parser_version')} · SHA-256 "
+        f"{str(evidence.get('content_sha256') or '')[:20]}…",
+        codigo="fii.revisao_evidencia_parser")
 
     with st.form("fii_evidence_review_form", clear_on_submit=False):
         decision_label = st.radio(
@@ -897,61 +945,35 @@ def _tab_evidence_review() -> None:
             st.cache_data.clear()
             st.rerun()
         except Exception as exc:
-            st.error(f"Não foi possível registrar a revisão: {exc}")
+            falha_de_acao("Não foi possível registrar a revisão.", exc)
 
 
 def _render_data_health_summary(metrics: dict[str, float | int | str], gate) -> None:
-    """Cobertura operacional e prontidão para recomendação, recolhidas por padrão.
+    """Qualidade dos dados: sai da tela e vai para o registro do administrador.
 
-    Auditoria não disputa espaço com a decisão: o rótulo do expander carrega os
-    três números que resumem o estado dos dados, de modo que o essencial é legível
-    sem abrir, e o detalhamento fica a um clique. A divergência de sincronização
-    permanece fora do expander — é alarme, não diagnóstico de rotina.
+    Prontidão, confiança mediana, cobertura de campos e procedência do snapshot
+    são diagnóstico técnico (Configurações → Restrições). A divergência de
+    sincronização é restrição de dado e entra na fila de correção.
     """
-    with st.expander(
+    detalhe_tecnico(
         f"Qualidade dos dados · prontidão {int(metrics['ready_count'])}/"
         f"{int(metrics['scoreable_rows'])} · confiança mediana "
         f"{float(metrics['median_confidence']):.0%} · campos essenciais "
-        f"{float(metrics['required_coverage']):.0%}"
-    ):
-        _render_data_health_detail(metrics, gate)
+        f"{float(metrics['required_coverage']):.0%}",
+        codigo="fii.qualidade_dados_resumo")
+    _render_data_health_detail(metrics, gate)
     if metrics["vitrine_rows"] != metrics["snapshot_rows"]:
-        st.warning(
+        aviso_lacuna(
             "Divergência de sincronização: a vitrine usada no ranking contém "
             f"{metrics['vitrine_rows']} fundos, mas o snapshot metodológico contém "
-            f"{metrics['snapshot_rows']}. O ranking pode estar em cache ou em um build anterior. "
-            "Após o redeploy, atualize a página para reconciliar as fontes."
+            f"{metrics['snapshot_rows']}. O ranking pode estar em cache ou em um build anterior.",
+            codigo="tela.fii.vitrine_snapshot_divergentes",
         )
 
 
 def _render_data_health_detail(metrics: dict[str, float | int | str], gate) -> None:
-    st.caption(_publication_gate_message(metrics, gate))
-    cards = st.columns(5)
-    cards[0].markdown(
-        _kpi_html("Snapshot consumido", f"{metrics['snapshot_rows']}/{metrics['snapshot_rows']}",
-                  "inputs recebidos pelo App 4", accent="#4A9EFF"),
-        unsafe_allow_html=True,
-    )
-    cards[1].markdown(
-        _kpi_html("Campos essenciais", f"{metrics['required_coverage']:.1%}",
-                  "média de 10 campos", accent="#00C896"),
-        unsafe_allow_html=True,
-    )
-    cards[2].markdown(
-        _kpi_html("FIIs pontuáveis", f"{metrics['scoreable_rows']}/{metrics['snapshot_rows']}",
-                  f"ranking exibido: {metrics['ranked_rows']}", accent="#B084F6"),
-        unsafe_allow_html=True,
-    )
-    cards[3].markdown(
-        _kpi_html("Prontidão metodológica", f"{metrics['ready_count']}/{metrics['scoreable_rows']}",
-                  "campos críticos + confiança ≥ 75%", accent="#F6C90E"),
-        unsafe_allow_html=True,
-    )
-    cards[4].markdown(
-        _kpi_html("Confiança mediana", f"{metrics['median_confidence']:.1%}",
-                  "mínimo para publicação: 75%", accent="#FC5C7D"),
-        unsafe_allow_html=True,
-    )
+    detalhe_tecnico(_publication_gate_message(metrics, gate),
+                    codigo="fii.gate_publicacao")
     validation_pending = any(
         "backtest" in reason or "robustez" in reason for reason in gate.reasons
     )
@@ -961,15 +983,15 @@ def _render_data_health_detail(metrics: dict[str, float | int | str], gate) -> N
         "A validação point-in-time foi aprovada; a publicação continua bloqueada somente pelos gates de "
         "cobertura crítica e confiança dos fundos."
     )
-    st.markdown(_info_card_html(
-        "Como interpretar estes números",
-        "Snapshot consumido mede se o App 4 recebeu os dados. Campos essenciais mede a completude dos inputs. "
-        "FIIs pontuáveis mede quantos possuem tipo válido. Prontidão metodológica exige cobertura dos campos críticos "
-        "e confiança mínima de 75%; é diferente de apenas ter dados no snapshot. "
-        f"{publication_note} "
+    detalhe_tecnico(
+        f"Snapshot consumido: {metrics['snapshot_rows']} · campos essenciais "
+        f"{metrics['required_coverage']:.1%} (média de 10 campos) · FIIs pontuáveis "
+        f"{metrics['scoreable_rows']}/{metrics['snapshot_rows']} (ranking exibido: "
+        f"{metrics['ranked_rows']}) · prontidão metodológica "
+        f"{metrics['ready_count']}/{metrics['scoreable_rows']} · confiança mediana "
+        f"{metrics['median_confidence']:.1%} (mínimo 75%). {publication_note} "
         f"Fonte: {metrics['snapshot_version']}.",
-        accent="#00C896",
-    ), unsafe_allow_html=True)
+        codigo="fii.qualidade_dados_detalhe")
 
 
 def _scenario_cards_html(values: dict[str, float]) -> str:
@@ -1085,6 +1107,54 @@ def _universo_exibido(estritos, candidatos, result: dict) -> list[dict]:
     ]
 
 
+def _aviso_de_tetos_inativos(inativos: list[dict]) -> str:
+    """Nomeia cada teto de concentração que o otimizador deixou de aplicar.
+
+    FII-03 (auditoria de 04/10/2026): com cobertura abaixo do mínimo o
+    otimizador faz ``continue`` e o teto some sem aviso — inquilino 0 de 219,
+    devedor 8,4%, indexador 57,9% e região 70,8%, contra 80% exigidos. A
+    legenda antiga listava só os nomes internos (``tenant``, ``debtor``); quem
+    lê a carteira precisa saber que ela pode concentrar nessas dimensões.
+    """
+    if not inativos:
+        return ""
+    partes = [
+        f"{t['rotulo']} (cobertura {t['cobertura']:.1%} contra mínimo de "
+        f"{t['minimo']:.0%}; teto de {t['teto']:.0%} não aplicado)"
+        for t in inativos
+    ]
+    return (
+        f"**{len(inativos)} tetos de concentração inativos** por falta de "
+        "cobertura: " + "; ".join(partes) + ". A carteira pode concentrar "
+        "nessas dimensões sem limite; setor e emissor têm histórico "
+        "point-in-time obrigatório."
+    )
+
+
+def _aviso_de_concentracao_livre(inativos: list[dict]) -> str:
+    """Frase da tela de uso: o risco para a carteira, sem cobertura nem mínimo.
+
+    Desde 05/10/2026 o detalhe técnico (cobertura contra mínimo, teto não
+    aplicado) vai para Configurações → Restrições via ``aviso_lacuna``; quem
+    investe precisa saber só em que dimensões a carteira pode concentrar.
+    """
+    if not inativos:
+        return ""
+    dimensoes = ", ".join(t["rotulo"] for t in inativos)
+    return f"A carteira pode concentrar sem limite em: {dimensoes}."
+
+
+def _metadado_do_excesso(validation: dict) -> str:
+    """IC 95% do excesso mensal, curto para o cabeçalho da página."""
+    excesso = leitura_do_excesso(validation.get("metrics") or {})
+    if not excesso["disponivel"]:
+        return "IC indisponível"
+    inferior = f"{excesso['inferior'] * 100:+.2f}".replace(".", ",")
+    superior = f"{excesso['superior'] * 100:+.2f}".replace(".", ",")
+    faixa = f"IC 95% {inferior} a {superior} p.p./mês"
+    return faixa if excesso["significativo"] else f"{faixa} · não significativo"
+
+
 def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> str:
     """Card do veredito do protocolo PIT, com a cessão de proteção da safra.
 
@@ -1117,6 +1187,15 @@ def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> 
                 "proteção cedida não é ausência de risco")
         # Âmbar mesmo aprovado, na borda E no subtítulo: o verde desta tela
         # significa "sem ressalva", e a ressalva é justamente o subtítulo.
+        accent = sub_color = "#F6C90E"
+    # FII-02: o IC do excesso sai junto do selo. No run 90 ele vai de −0,127
+    # a +0,380 p.p./mês — "Aprovado" sem isso ao lado é lido como "bate o
+    # índice". O piso (`PISO_IC_EXCESSO`) é aviso, não bloqueio: o portão
+    # continua o mesmo, e a vitrine continua publicando.
+    excesso = leitura_do_excesso(validation_metrics)
+    sub += " · " + texto_do_excesso(excesso)
+    if aprovado and excesso["disponivel"] and not excesso["significativo"]:
+        valor = f"{valor} · excesso não significativo"
         accent = sub_color = "#F6C90E"
     return _kpi_html("Protocolo PIT", valor, sub=sub, sub_color=sub_color,
                      accent=accent)
@@ -1209,13 +1288,17 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
     ), unsafe_allow_html=True)
 
     if not llm_disponivel():
-        st.info("Nenhum provedor LLM configurado. Adicione OPENAI_API_KEY ou GEMINI_API_KEY.")
+        st.info("O chat não está disponível no momento.")
+        aviso_lacuna(
+            "Nenhum provedor LLM configurado (OPENAI_API_KEY ou GEMINI_API_KEY).",
+            codigo="tela.fii.chat_sem_provedor")
         return
 
     providers = provedores_disponiveis()
-    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
-    st.caption("Provedor disponível: " + ", ".join(
-        provider_labels.get(provider, provider) for provider in providers))
+    provider_labels = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
+    detalhe_tecnico("Provedor disponível: " + ", ".join(
+        provider_labels.get(provider, provider) for provider in providers),
+        codigo="fii.chat_provedor")
 
     signature = repr((
         tuple(sorted((str(item.get("ticker")), round(float(item.get("weight") or 0), 6))
@@ -1248,9 +1331,13 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                          width="stretch"):
                 suggested_input = question
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     history = load_chat_history(memory_key, session_key="fii_chat_history")
     for message in visible_chat_history(history, "fii_chat_history"):
-        with st.chat_message(message["role"]):
+        with conversa.chat_message(message["role"]):
             st.markdown(escapar_cifrao(message["content"]))
 
     typed_input = st.chat_input(
@@ -1260,9 +1347,10 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
         return
 
     history.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(user_input))
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
+        aviso = ""
         with st.spinner("Consultando seleção, pares, cenário e qualidade dos dados…"):
             try:
                 context = build_fii_chat_context(
@@ -1282,7 +1370,8 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                 detalhe = get_warehouse_detail_context(alvos)
                 if detalhe:
                     context = context + "\n\n" + detalhe
-                context = context + "\n\n" + bloco_contexto_mercado()
+                context = context + "\n\n" + bloco_contexto_mercado(
+                    tickers_movimento=alvos)
                 # Citados primeiro, depois a seleção por peso: o mesmo
                 # veredito da Inteligência dos Ativos, conferido na resposta.
                 context, avaliacoes = veredito.anexar(
@@ -1290,10 +1379,20 @@ def _render_fii_chat(*, items: list[dict], scored: list[dict], methodology_rows:
                 answer = veredito.responder_coerente(
                     lambda h, msg: chat_com_fiis(context, h, msg),
                     history[:-1], user_input, avaliacoes)
+                aviso = aviso_ancoragem(answer, context, user_input)
             except Exception as exc:
-                answer = f"Não foi possível consultar a LLM neste momento: {exc}"
+                from core.llm_falha import mensagem_falha_llm
+                answer = None
+                falha = mensagem_falha_llm(exc, "chat da Seleção de FIIs")
+        if answer is None:
+            # A falha é aviso, não fala do assistente: gravada, voltava no
+            # contexto do turno seguinte como resposta dele (LLM-A11).
+            st.warning(falha)
+            history.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(answer))
-        st.caption("Análise educacional baseada nos dados disponíveis; não constitui recomendação.")
+        if aviso:
+            st.caption(aviso)
     history.append({"role": "assistant", "content": answer})
     save_chat_history(memory_key, history, session_key="fii_chat_history")
 
@@ -1484,14 +1583,16 @@ def _integrated_preference_controls() -> dict:
     with st.expander("🌐 Cenário macroeconômico e estresse", expanded=False):
         observado = _cenario_macro_observado()
         if observado.indisponivel:
-            st.caption(
-                f"Sem Selic observada ({observado.indisponivel}); os campos abaixo "
-                "partem de um valor arbitrário e são tratados como premissa, não "
-                "como dado.")
+            aviso_lacuna(
+                f"Sem Selic observada ({observado.indisponivel}); os campos do "
+                "cenário partem de um valor arbitrário.",
+                codigo="tela.fii.cenario_sem_selic_observada")
+            st.caption("Os campos abaixo são premissas suas, não dados observados.")
         else:
-            st.caption(
-                f"Padrões observados em {observado.fonte}, ano {observado.ano}. "
-                "Alterar um campo passa a valer como premissa sua.")
+            detalhe_tecnico(
+                f"Padrões do cenário observados em {observado.fonte}, ano {observado.ano}.",
+                codigo="fii.cenario_padroes_observados")
+            st.caption("Alterar um campo passa a valer como premissa sua.")
         m1, m2, m3 = st.columns(3)
         selic = m1.number_input("Selic (%)", 0.0, 30.0, observado.padrao_selic, .25,
                                 key="fii_pref_integrated_selic")
@@ -1516,9 +1617,8 @@ def _integrated_preference_controls() -> dict:
                 "scenario": "Cenário ampliado",
             }.get,
             key="fii_pref_macro_mode",
-            help=("Usa séries do PostgreSQL Docker local (ou os insumos que ele publicou) "
-                  "e sensibilidades por tipo "
-                  "de FII. Lacunas permanecem explicitamente sem cobertura."),
+            help=("Usa séries macroeconômicas históricas e sensibilidades por "
+                  "tipo de FII. Lacunas permanecem explicitamente sem cobertura."),
         )
 
     return {
@@ -1579,8 +1679,10 @@ def _render_portfolio_correlation(weights: dict[str, float],
                      codigo="tela.fii.correlacao_sem_janela_comum")
         return returns
     avg_correlation = _fz.mean_correlation(corr)
+    detalhe_tecnico("Correlação dos retornos totais mensais, com mínimo de 12 observações por par.",
+                    codigo="fii.correlacao_amostra_minima")
     st.caption(
-        "Correlação dos retornos totais mensais, com mínimo de 12 observações por par. "
+        "Correlação dos retornos totais mensais. "
         + (f"Média entre os pares: **{avg_correlation:.2f}**. "
            if avg_correlation is not None else "")
         + "Azul indica menor correlação; rosa indica maior correlação."
@@ -1654,15 +1756,17 @@ def _render_portfolio_history_diagnostics(weights: dict[str, float],
             accent="#00C896" if (alpha or 0) >= 0 else "#FC5C7D",
             sub="retorno anualizado relativo", sub_color="#4A5568"),
             unsafe_allow_html=True)
-        st.caption(
+        detalhe_tecnico(
             "Diagnóstico in-sample das posições atuais na mesma janela. Como estabilidade "
             "histórica participa da seleção, este resultado não é evidência preditiva nem "
-            "substitui o backtest point-in-time.")
+            "substitui o backtest point-in-time.",
+            codigo="fii.retrospectiva_in_sample")
 
     st.markdown("#### Risco × número de fundos")
     curve = _fz.risk_curve(returns, weights) if not returns.empty else []
     if len(curve) < 2:
-        st.caption("Sem histórico suficiente entre os fundos selecionados para traçar a curva.")
+        aviso_lacuna("Sem histórico suficiente entre os fundos selecionados para traçar a curva de risco.",
+                     codigo="tela.fii.curva_risco_sem_historico")
         return
     curve_frame = pd.DataFrame(curve)
     curve_frame["Volatilidade anual (%)"] = curve_frame["vol"] * 100
@@ -1914,11 +2018,13 @@ def _tab_ranking(df: pd.DataFrame, ranked: pd.DataFrame) -> None:
         validation_applicable=bool(raw_gate and raw_gate.can_publish_recommendation),
         can_publish=bool(raw_gate and raw_gate.can_publish_recommendation),
     )
-    st.caption(f"Metodologia Integrada {METHODOLOGY_VERSION}: comparação somente dentro de cada categoria; "
-               f"dados ausentes reduzem cobertura e confiança, sem imputação neutra. "
-               f"{fora} fundos ficaram sem score por tipo ausente/inválido. "
-               f"Atualizado: {fmt_datetime_br(ts) if ts is not None else '—'}. "
-               + status_copy["footer"])
+    detalhe_tecnico(
+        f"Metodologia Integrada {METHODOLOGY_VERSION}: comparação somente dentro de cada categoria; "
+        f"dados ausentes reduzem cobertura e confiança, sem imputação neutra. "
+        f"{fora} fundos ficaram sem score por tipo ausente/inválido. "
+        f"Atualizado: {fmt_datetime_br(ts) if ts is not None else '—'}.",
+        codigo="fii.ranking_metodologia_atualizacao")
+    st.caption(status_copy["footer"])
     aviso_escala_do_score()
     # A-154: por quantos fundos esta nota fala.
     aviso_cobertura_do_universo("fii")
@@ -1944,7 +2050,9 @@ def _tab_busca(df: pd.DataFrame) -> None:
     opts = df.sort_values("Score", ascending=False, na_position="last")
     labels = {f"{r['Ticker']} — {r['Nome']}": r["Ticker"] for _, r in opts.iterrows()}
     if not labels:
-        st.info("Sem FIIs no banco.")
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna("Não há FIIs disponíveis na vitrine.",
+                     codigo="tela.fii.busca_sem_fiis")
         return
     # pré-seleção vinda de um card da aba Ranking (botão "Analisar")
     keys = list(labels.keys())
@@ -1955,6 +2063,7 @@ def _tab_busca(df: pd.DataFrame) -> None:
 
     d = _mr.load_fii_one(tk)
     if d is None or d.empty:
+        st.info("Esta análise não está disponível no momento.")
         aviso_lacuna(f"Sem dados para {tk}.", codigo="tela.fii.sem_dados",
                      nivel="warning", entidade=tk)
         return
@@ -1973,7 +2082,9 @@ def _tab_busca(df: pd.DataFrame) -> None:
     if tipo in _TIPOS_TIJOLO:
         ref = d.get("Vacancia_Ref")
         vac_val = _fmt_pct(vac)
-        vac_sub = f"Status Invest{' · ' + str(ref) if ref else ''}"
+        vac_sub = f"ref. {ref}" if ref else None
+        detalhe_tecnico("Vacância do fundo: fonte Status Invest.",
+                        codigo="fii.vacancia_fonte", entidade=tk)
     else:
         vac_val, vac_sub = "n/a", "não se aplica (papel/FoF)"
 
@@ -2000,8 +2111,9 @@ def _tab_busca(df: pd.DataFrame) -> None:
     st.markdown("#### 📈 Histórico fundamentalista")
     met = _mr.load_fii_metrics_mensal(tk)
     if met.empty:
-        st.info("Sem série mensal da CVM para este FII (rode `fiis-metrics`). "
-                "Abaixo, ainda assim, o histórico de preço e proventos.")
+        st.info("O histórico mensal deste FII não está disponível no momento.")
+        aviso_lacuna("Sem série mensal da CVM para este FII (`fiis-metrics`).",
+                     codigo="tela.fii.sem_serie_mensal_cvm", entidade=tk)
     else:
         c1, c2 = st.columns(2)
         with c1:
@@ -2011,9 +2123,12 @@ def _tab_busca(df: pd.DataFrame) -> None:
                 # A-134: separar "não deu para ler" de "não há pregão casado
                 # com o VPA" -- a falha de leitura não pode passar por ausência.
                 if met.attrs.get("pvp_load_error"):
-                    st.caption("— preço indisponível: falha ao ler a fita da B3.")
+                    aviso_lacuna("P/VP mensal sem preço: falha ao ler a fita da B3.",
+                                 codigo="tela.fii.pvp_falha_leitura_preco", entidade=tk)
                 else:
-                    st.caption("— sem pregão da B3 casado com o VPA.")
+                    aviso_lacuna("P/VP mensal sem pregão da B3 casado com o VPA.",
+                                 codigo="tela.fii.pvp_sem_pregao_casado", entidade=tk)
+                st.caption("— série indisponível.")
             else:
                 st.line_chart(pvp_serie.set_index("Data"))
         with c2:
@@ -2038,7 +2153,7 @@ def _tab_busca(df: pd.DataFrame) -> None:
     comp = {k: float(v) for k, v in comp.items() if v is not None and pd.notna(v)}
     if comp:
         st.markdown("#### 🧩 Composição de ativos")
-        st.caption("Participação por classe de ativo sobre o ativo total (CVM).")
+        st.caption("Participação por classe de ativo sobre o ativo total.")
         st.bar_chart(pd.Series(comp, name="Composição"))
 
     st.divider()
@@ -2077,10 +2192,17 @@ def _tab_busca(df: pd.DataFrame) -> None:
                          "`python run_market_ingest.py fiis-imoveis` (coleta best-effort por scraping).",
                          codigo="tela.fii.imoveis_nao_coletados", entidade=tk)
 
+    st.divider()
+    st.markdown("#### 🧭 Relatório do analista")
+    # Sem setor, como o portão da Inteligência dos Ativos lê o FII.
+    relatorio = secao_relatorio(tk, str(d.get("Nome") or "") or None, None,
+                                mercado="fii")
+
     render_chat_ativo(
         mercado="fii", ticker=tk, nome=str(d.get("Nome") or ""), accent="#B084F6",
         build_context=lambda pergunta: build_fii_ativo_context(
             tk, user_question=pergunta, dados=d, universo=df, imoveis=imoveis,
+            relatorio=relatorio,
         ),
     )
 
@@ -2090,7 +2212,10 @@ def _tab_busca(df: pd.DataFrame) -> None:
 def _tab_carteira(ranked: pd.DataFrame) -> None:
     st.subheader("Preferências da seleção")
     st.markdown(_info_card_html(
-        "Seleção Integrada de FIIs · v6.7",
+        # FII-07: o card dizia "v6.7" fixo enquanto a metodologia era a
+        # 6.10.0. A versão sai da mesma constante que escolhe o run de
+        # validação (`load_fii_validation_status(METHODOLOGY_VERSION)`).
+        "Seleção Integrada de FIIs",
         "Um único motor combina elegibilidade histórica, score específico por tipo, "
         "qualidade dos dados, cenário macroeconômico, concentração e correlação. "
         "DY, P/VP e liquidez entram uma única vez, sem somar scores concorrentes.",
@@ -2115,12 +2240,11 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
                            f"**{_ref_vac.strftime('%d/%m/%Y')}** (data da coleta, "
                            "não do dado)")
     if _avisos:
-        st.markdown(_info_card_html(
-            "Defasagem das fontes",
-            " · ".join(item.replace("**", "") for item in _avisos) +
-            ". Preço, DY e liquidez vêm da última ingestão Brapi.",
-            accent="#F6C90E",
-        ), unsafe_allow_html=True)
+        detalhe_tecnico(
+            "Defasagem das fontes: "
+            + " · ".join(item.replace("**", "") for item in _avisos)
+            + ". Preço, DY e liquidez vêm da última ingestão Brapi.",
+            codigo="fii.defasagem_fontes")
     _carteira_integrada(preferences)
 
 
@@ -2175,11 +2299,14 @@ def _carteira_integrada(preferences: dict):
         # Coluna ausente era lida como métrica ausente e reprovava todo mundo:
         # a tela mostrava "0 elegíveis" com cara de veredito. Aqui a falha de
         # leitura aparece como falha de leitura.
+        aviso_lacuna(
+            "Leitura do universo de FIIs incompleta: colunas exigidas pela "
+            "política que não vieram no quadro: " + ", ".join(erro.missing_columns),
+            codigo="tela.fii.universo_colunas_ausentes")
         st.error(
             "Sem carteira: a leitura do universo veio incompleta, e nenhum "
-            "fundo foi avaliado. Colunas exigidas pela política que não vieram "
-            "no quadro: " + ", ".join(erro.missing_columns) + ". Não relaxe os "
-            "critérios por causa desta tela — nenhum filtro reprovou nada."
+            "fundo foi avaliado. Não relaxe os critérios por causa desta tela — "
+            "nenhum filtro reprovou nada."
         )
         st.session_state.pop("fii_port", None)
         return None
@@ -2223,7 +2350,12 @@ def _carteira_integrada(preferences: dict):
         from core.portfolio_review_routes import fii_review
         from design.portfolio_review import render_portfolio_review
 
-        st.error(_mensagem_de_universo_vazio(eligibility))
+        if _universo_vazio_por_ausencia(eligibility):
+            aviso_lacuna(_mensagem_de_universo_vazio(eligibility),
+                         codigo="tela.fii.universo_vazio_por_metrica_ausente")
+            st.error("Nenhum FII foi avaliado agora.")
+        else:
+            st.error(_mensagem_de_universo_vazio(eligibility))
         render_portfolio_review(fii_review([], portfolio_policy, scenario), key="fii_review")
         st.session_state.pop("fii_port", None)
         st.session_state["fii_portfolio_can_publish"] = False
@@ -2442,7 +2574,11 @@ def _carteira_integrada(preferences: dict):
         st.success("Carteira apta à publicação segundo os gates vigentes.")
     else:
         blockers = list(result.get("blockers") or []) + list(investable_gate.reasons)
-        st.warning("Rascunho não publicável: " + " · ".join(dict.fromkeys(blockers)))
+        st.warning("Rascunho não publicável.")
+        detalhe_tecnico(
+            "Motivos do rascunho não publicável: "
+            + " · ".join(dict.fromkeys(blockers)),
+            codigo="fii.rascunho_nao_publicavel_motivos")
     items = result["items"]
     if partial_review:
         st.caption(
@@ -2451,16 +2587,17 @@ def _carteira_integrada(preferences: dict):
             "ajuste macro adicional aos pesos desta composição."
         )
     elif macro_snapshot is None:
-        st.warning(
-            "Camada macro indisponível (sem Docker local e sem arquivo publicado recente); a carteira mantém a "
-            "metodologia estrutural e os cenários informados acima."
-        )
+        aviso_lacuna(
+            "Camada macro indisponível (sem Docker local e sem arquivo publicado "
+            "recente); a carteira mantém a metodologia estrutural.",
+            codigo="tela.fii.camada_macro_indisponivel")
     else:
-        st.info(
+        detalhe_tecnico(
             f"{descrever_fonte_macro(macro_fonte)} · corte {macro_snapshot.as_of:%d/%m/%Y %H:%M UTC} · "
             f"cobertura da seleção {result.get('macro_coverage', 0):.0%} · "
-            f"{macro_snapshot.source_count} séries. O ajuste é limitado e não é previsão."
-        )
+            f"{macro_snapshot.source_count} séries.",
+            codigo="fii.macro_snapshot_procedencia")
+        st.info("O ajuste macro é limitado e não é previsão.")
         from functools import partial
 
         from core.macro_data.fii_history import rebuild_fii_macro_history
@@ -2527,17 +2664,15 @@ def _carteira_integrada(preferences: dict):
     k5.markdown(_kpi_html("Confiança ponderada", f"{average_confidence:.0%}",
                           accent="#00C896"), unsafe_allow_html=True)
     corr_coverage = float((result.get("correlation_info") or {}).get("coverage") or 0)
+    inativos = tetos_inativos(result)
     k6.markdown(_kpi_html("Cobertura da correlação", f"{corr_coverage:.0%}",
-                          sub=f"{len(result.get('unresolved_dimensions') or [])} dimensões sem cobertura",
+                          sub=f"{len(inativos)} tetos de concentração inativos",
                           accent="#FC5C7D" if corr_coverage < .80 else "#4A9EFF"),
                 unsafe_allow_html=True)
-    if result.get("unresolved_dimensions"):
-        st.caption(
-            "Look-through adicional ainda sem cobertura suficiente: "
-            + ", ".join(result["unresolved_dimensions"])
-            + ". Esses limites só são aplicados quando observáveis; setor e "
-              "emissor possuem histórico point-in-time obrigatório."
-        )
+    aviso_tetos = _aviso_de_tetos_inativos(inativos)
+    if aviso_tetos:
+        aviso_lacuna(aviso_tetos, codigo="tela.fii.teto_concentracao_inativo")
+        st.warning(_aviso_de_concentracao_livre(inativos))
     for aviso in _avisos_de_cessao_de_protecao(result):
         st.warning(aviso)
     if result.get("protecao_excedida"):
@@ -2682,12 +2817,11 @@ def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
                     "Carteira-modelo salva, relida e verificada na mesma transação."
                 )
             except (RuntimeError, ValueError) as exc:
-                st.error(f"Não foi possível salvar: {exc}")
-            except SQLAlchemyError:
-                st.error(
-                    "Não foi possível salvar por uma falha transacional no banco. "
-                    "Nenhuma substituição parcial foi mantida."
-                )
+                falha_de_acao("Não foi possível salvar a carteira-modelo.", exc)
+            except SQLAlchemyError as exc:
+                falha_de_acao(
+                    "Não foi possível salvar a carteira-modelo. "
+                    "Nenhuma substituição parcial foi mantida.", exc)
     _render_log_da_carteira_ativa()
     _render_portfolio_version_history(key)
 
@@ -2726,8 +2860,7 @@ def _render_portfolio_version_history(key: str) -> None:
             options=list(by_id),
             format_func=lambda model_id: (
                 f"{fmt_datetime_br(by_id[model_id].get('created_at'))} · "
-                f"{by_id[model_id].get('item_count', 0)} FIIs · "
-                f"{(by_id[model_id].get('params_json') or {}).get('methodology_version', 'legado')}"
+                f"{by_id[model_id].get('item_count', 0)} FIIs"
             ),
             key=f"{key}_restore_version",
         )
@@ -2748,12 +2881,11 @@ def _render_portfolio_version_history(key: str) -> None:
                 st.success("Versão restaurada e verificada transacionalmente.")
                 st.rerun()
             except (RuntimeError, ValueError) as exc:
-                st.error(f"Restauração bloqueada: {exc}")
-            except SQLAlchemyError:
-                st.error(
-                    "Restauração bloqueada por uma falha transacional no banco; "
-                    "a versão ativa anterior foi preservada."
-                )
+                falha_de_acao("Restauração bloqueada.", exc)
+            except SQLAlchemyError as exc:
+                falha_de_acao(
+                    "Restauração bloqueada; a versão ativa anterior foi preservada.",
+                    exc)
 
 
 # ── Tab 4: Backtest ───────────────────────────────────────────────────────────
@@ -2804,14 +2936,73 @@ def _cards_por_padrao(curvas: dict) -> None:
                       f"{float(dados.get('max_drawdown_concatenado') or 0):.1%}",
                       sub="curva concatenada", sub_color="#4A5568", accent=cor),
             unsafe_allow_html=True)
-    st.caption(
-        "Os períodos de cada coorte **não são contíguos**: a curva compõe "
-        "meses salteados e responde *como se comportaram estas carteiras*, "
-        "não *quanto eu teria ganho*. O mês que ficou de fora não vira caixa "
-        "nem índice — ele simplesmente não existe nessa curva. Por isso a "
-        "queda máxima aparece como concatenada, e a validação da metodologia "
-        "continua sendo julgada pela curva completa."
+    detalhe_tecnico(
+        "Os períodos de cada coorte não são contíguos: a curva compõe "
+        "meses salteados e responde como se comportaram estas carteiras, "
+        "não quanto se teria ganho. O mês que ficou de fora não vira caixa "
+        "nem índice. Por isso a queda máxima aparece como concatenada, e a "
+        "validação da metodologia continua sendo julgada pela curva completa.",
+        codigo="fii.backtest_coortes_nao_contiguas")
+
+
+def _texto_premissas_liquido_fii(premissas: dict) -> str:
+    """Premissas do líquido como frase: a alíquota que só existe no cálculo
+    ninguém contesta."""
+    return (
+        f"Premissas do líquido: custo de giro de "
+        f"{float(premissas.get('custo_transacao_bps') or 0):.0f} bps + slippage de "
+        f"{float(premissas.get('slippage_bps') or 0):.0f} bps por unidade de "
+        f"turnover; IR de {float(premissas.get('ir_ganho_capital') or 0):.0%} sobre "
+        "o ganho de capital realizado no rebalanceamento, com compensação de "
+        "prejuízo; rendimento distribuído isento (PF); sem IR na liquidação "
+        "final, porque o IFIX de comparação também não paga. O IFIX segue "
+        "bruto: é o índice, não um investidor."
     )
+
+
+def _bloco_liquido_fii(pit: dict) -> None:
+    """Bruto, após custos e líquido de IR lado a lado (auditoria app4, FII-10).
+
+    Certificado anterior ao líquido não tem as chaves; nele o excesso exibido
+    é após custos e sem IR, e a tela diz isso em vez de rotulá-lo líquido.
+    """
+    if not pit or pit.get("status") != "calculated":
+        return
+    if "mean_excess_bruto" not in pit:
+        detalhe_tecnico(
+            "Este certificado é anterior ao retorno líquido: o excesso e o "
+            "intervalo já descontam custo de giro (15 + 10 bps), mas não os 20% "
+            "de IR sobre o ganho de capital do giro. Passa a ser líquido no "
+            "próximo processamento da validação PIT.",
+            codigo="fii.backtest_certificado_pre_liquido")
+        return
+
+    def _pct(valor) -> str:
+        return "—" if valor is None or pd.isna(valor) else f"{float(valor):+.2%}"
+
+    st.markdown("#### Excesso sobre o IFIX: bruto × líquido")
+    colunas = st.columns(4)
+    colunas[0].markdown(_kpi_html(
+        "Bruto", _pct(pit.get("mean_excess_bruto")), sub="sem custo nem IR",
+        sub_color="#4A5568", accent="#9CA3AF"), unsafe_allow_html=True)
+    colunas[1].markdown(_kpi_html(
+        "Após custos", _pct(pit.get("mean_excess_apos_custos")),
+        sub="giro descontado", sub_color="#4A5568", accent="#4A9EFF"),
+        unsafe_allow_html=True)
+    if pit.get("ir_calculado"):
+        liquido_sub, liquido_val = "custos e IR — padrão", _pct(pit.get("mean_excess"))
+    else:
+        liquido_sub, liquido_val = "IR não calculado: retornos sem preço", "—"
+    colunas[2].markdown(_kpi_html(
+        "Líquido", liquido_val, sub=liquido_sub, sub_color="#4A5568",
+        accent="#00C896"), unsafe_allow_html=True)
+    colunas[3].markdown(_kpi_html(
+        "IR médio", f"{float(pit.get('mean_ir_periodo') or 0):.2%}",
+        sub="por período, sobre o giro", sub_color="#4A5568",
+        accent="#F6C90E"), unsafe_allow_html=True)
+    st.caption("Excesso médio por período.")
+    detalhe_tecnico(_texto_premissas_liquido_fii(pit.get("premissas_liquido") or {}),
+                    codigo="fii.backtest_premissas_liquido")
 
 
 def _tab_backtest() -> None:
@@ -2836,49 +3027,58 @@ def _tab_backtest() -> None:
     cards[3].markdown(_kpi_html("Cobertura de retornos",
                                 f"{float(pit.get('return_observation_coverage') or 0):.0%}",
                                 accent="#4A9EFF"), unsafe_allow_html=True)
-    ci = pit.get("excess_bootstrap") or {}
-    ci_text = (f"{float(ci['lower']):+.2%} a {float(ci['upper']):+.2%}"
-               if ci.get("lower") is not None and pd.notna(ci.get("lower")) else "—")
+    excesso = leitura_do_excesso(pit)
+    ci_text = (f"{excesso['inferior']:+.2%} a {excesso['superior']:+.2%}"
+               if excesso["disponivel"] else "—")
     cards[4].markdown(_kpi_html("IC bootstrap do excesso", ci_text,
-                                sub="intervalo de 95%", sub_color="#4A5568",
-                                accent="#00C896" if float(ci.get("lower") or -1) > 0 else "#F6C90E"),
+                                sub=(("95%, líquido de custos e IR"
+                                      if pit.get("ir_calculado") else
+                                      "95%, após custos, sem IR")
+                                     + (" · excesso não significativo"
+                                        if excesso["disponivel"]
+                                        and not excesso["significativo"] else "")),
+                                sub_color="#4A5568",
+                                accent="#00C896" if excesso["significativo"] else "#F6C90E"),
                       unsafe_allow_html=True)
     # A-118: quanto da carteira saiu de campo (liquidação, incorporação ou fim
     # do dado) em vez de ter retorno observado. A versão anterior redistribuía
     # essa fatia entre os sobreviventes, então o número nem existia.
     saida = pit.get("saida_de_campo") or {}
     if float(saida.get("peso_ausente_medio") or 0) > 0:
-        st.info(
+        detalhe_tecnico(
             f"Em {saida.get('periodos_com_ausencia')} dos "
             f"{saida.get('periodos')} períodos, parte da carteira ficou sem "
             f"retorno observado — {float(saida['peso_ausente_medio']):.1%} do "
             f"peso em média, até {float(saida.get('peso_ausente_maximo') or 0):.1%} "
-            "no pior período. Essa fatia rende **zero** no cálculo: não "
+            "no pior período. Essa fatia rende zero no cálculo: não "
             "inventamos a perda, que pode ser buraco de dado, mas ela também "
-            "não rende o que os fundos sobreviventes renderam."
-        )
+            "não rende o que os fundos sobreviventes renderam.",
+            codigo="fii.backtest_saida_de_campo")
 
+    _bloco_liquido_fii(pit)
     _cards_por_padrao(pit.get("curvas_por_padrao") or {})
 
     blockers = validation.get("blockers") or []
     if blockers:
-        st.warning("Validação ainda bloqueada: " + " · ".join(str(item) for item in blockers))
+        st.warning("Validação ainda bloqueada.")
+        detalhe_tecnico(
+            "Motivos da validação bloqueada: "
+            + " · ".join(str(item) for item in blockers),
+            codigo="fii.backtest_validacao_bloqueios")
     else:
         st.success("Backtest PIT, cobertura, estabilidade, regimes e custos atenderam aos gates.")
         # O que os gates NÃO perguntam. Sem isto, "atenderam aos gates" é lido
         # como "a estratégia funciona": nenhum dos critérios acima exige que o
         # excesso sobre o índice seja distinguível de zero.
-        _ci = pit.get("excess_bootstrap") or {}
-        try:
-            _low, _high = float(_ci["lower"]), float(_ci["upper"])
-        except (KeyError, TypeError, ValueError):
-            _low = _high = None
-        if _low is not None and pd.notna(_low) and _low <= 0:
+        # O piso é `PISO_IC_EXCESSO`, o mesmo do card da carteira.
+        if excesso["disponivel"] and not excesso["significativo"]:
             st.warning(
                 f"Os gates aferem **integridade do protocolo**, não vantagem. O "
                 f"excesso médio sobre o IFIX tem intervalo de 95% de "
-                f"{_low:+.2%} a {_high:+.2%} por período: ele **atravessa o "
-                f"zero**, então a vantagem observada não é distinguível de "
+                f"{excesso['inferior']:+.2%} a {excesso['superior']:+.2%} por "
+                f"período: **excesso não significativo** — o intervalo não fica "
+                f"acima do piso de {excesso['piso']:+.2%}, então a vantagem "
+                f"observada não é distinguível de "
                 f"acaso nesta amostra. A carteira segue sustentada por "
                 f"diversificação e por qualidade do ativo, não por evidência "
                 f"de que supera o índice."
@@ -2889,9 +3089,11 @@ def _tab_backtest() -> None:
     if not weights:
         st.info("Monte a carteira na aba **Carteira-modelo** primeiro.")
         return
-    st.caption("Retrospectiva buy-and-hold das posições e pesos atuais. Há viés de "
-               "sobrevivência e de seleção: não é um backtest point-in-time nem uma "
-               "validação fora da amostra.")
+    st.caption("Retrospectiva buy-and-hold das posições e pesos atuais.")
+    detalhe_tecnico(
+        "Retrospectiva buy-and-hold: há viés de sobrevivência e de seleção; "
+        "não é um backtest point-in-time nem uma validação fora da amostra.",
+        codigo="fii.retrospectiva_vies_sobrevivencia")
     bench_nome = "IFIX (XFIX11)"   # a brapi não tem histórico do IFIX puro; XFIX11 (ETF) o replica
     series = _mr.load_fii_series(tuple(sorted(weights)))
     bench = _mr.load_fii_series(("XFIX11",)).get("precos", {}).get("XFIX11")
@@ -2900,7 +3102,9 @@ def _tab_backtest() -> None:
     serie, met = _fz.backtest(weights, series.get("precos", {}), {},
                               benchmark=bench, benchmark_nome=bench_nome)
     if serie.empty:
-        st.warning("Sem série histórica suficiente para o backtest.")
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna("Sem série histórica suficiente para o backtest da seleção atual.",
+                     codigo="tela.fii.backtest_sem_serie")
         return
     bret = met.get("bench_retorno")
     alpha = (met["retorno_total"] - bret) if (met["retorno_total"] is not None and bret is not None) else None
@@ -2919,5 +3123,7 @@ def _tab_backtest() -> None:
     cols = [c for c in ("Carteira", bench_nome) if c in serie.columns]
     st.line_chart(serie.set_index("Data")[cols])
     st.caption("Índice base 100 na mesma janela efetivamente disponível para carteira e "
-               "XFIX11. Retorno total ajustado, sem custos ou impostos. O resultado mostra "
-               "como a carteira atual teria se comportado; não reproduz decisões históricas.")
+               "XFIX11. O resultado mostra como a carteira atual teria se comportado; "
+               "não reproduz decisões históricas.")
+    detalhe_tecnico("Retorno total ajustado, sem custos ou impostos.",
+                    codigo="fii.retrospectiva_retorno_total")

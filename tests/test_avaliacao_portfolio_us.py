@@ -56,8 +56,9 @@ def test_relatorio_americano_devolve_o_schema_que_a_ui_consome():
 def test_as_duas_telas_tem_as_mesmas_secoes():
     for secao in ("Relatório Consolidado do Portfólio", "Alocação do Modelo",
                   "Relatórios por Empresa", "Conclusão Estratégica",
-                  "Tire Dúvidas sobre o Portfólio", "Análise Qualitativa via LLM",
-                  "Etapa 3 de 3"):
+                  "Tire Dúvidas sobre o Portfólio", "Análise Qualitativa via LLM"):
+        # "Etapa 3 de 3" saiu das duas telas com a Análise Avançada, a B3 e a
+        # americana em 30/10/2026.
         assert secao in _FONTE_B3, f"a B3 perdeu: {secao}"
         assert secao in _FONTE_US, f"falta na tela americana: {secao}"
 
@@ -285,9 +286,9 @@ v.render(show_header=True)
     markdown = "\n".join(str(m.value) for m in app.markdown)
     assert "Portfolio EUA Modelo 2026" in markdown
     assert "Cenário Macroeconômico" in markdown
-    assert "Etapa 3 de 3" in markdown
+    assert "Etapa 3 de 3" not in markdown
     # Sem provedor configurado, a tela avisa e para antes do painel de LLM.
-    assert any("provedor LLM" in w.value for w in app.warning)
+    assert any("não está disponível" in w.value for w in app.warning)
 
 
 def test_tela_bloqueia_carteira_com_metodologia_antiga():

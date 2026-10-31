@@ -268,6 +268,21 @@ class EdgarProvider(FundamentalsProvider):
                             "exchangeShortName": exch})
         return out
 
+    def sec_ticker_cik_map(self) -> dict[str, str]:
+        """{symbol: cik10} das DUAS listagens da SEC, para vincular `assets` a `companies`.
+
+        `company_tickers_exchange.json` vem primeiro (traz a bolsa e cobre mais
+        papéis listados); `company_tickers.json` só completa o que ela não tem.
+        Uma companhia aparece com vários tickers (DUK e DUKB, MCHP e MCHPP) e todos
+        apontam o mesmo CIK -- é essa repetição que permite reconhecer classe
+        adicional e título de dívida da mesma emissora.
+        """
+        mapa: dict[str, str] = dict(self.ticker_map())
+        for r in self.get_universe([]):
+            if r.get("symbol") and r.get("cik"):
+                mapa[r["symbol"]] = r["cik"]
+        return mapa
+
     def set_cik_hints(self, hints: dict) -> None:
         """Registra ticker→CIK ja conhecido, como ultimo recurso (A-146).
 

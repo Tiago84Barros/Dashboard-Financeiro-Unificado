@@ -1,0 +1,246 @@
+"""
+views/portfolio_b3_oos_carteira.py — o fora da amostra da CARTEIRA, por perfil.
+
+Só renderiza: a medição sai de `scripts/medir_oos_carteira_b3.py` para
+`data/oos_carteira_b3.json` (auditoria B3-03), e a leitura/validade vem de
+`core.b3_oos_carteira`. Fica fora de `views/portfolio_b3.py` pelo mesmo motivo
+de `portfolio_b3_safras.py`: a aba já passa de 5 mil linhas.
+
+O bloco existe porque o Rank-IC de `data/vantagem_oos.json` mede o RANKING na
+configuração padrão, bruto e sem portão -- não a carteira que cada perfil
+entrega depois de aprovação, líder+maior, orçamento por segmento, tetos e
+giro. Este bloco mostra a carteira, líquida, contra pesos iguais, Selic e
+Ibovespa, e diz com todas as letras quando o intervalo cruza o zero.
+"""
+from __future__ import annotations
+
+import pandas as pd
+import streamlit as st
+
+from core import b3_oos_carteira as oos
+from design.lacunas import aviso_lacuna, detalhe_tecnico
+
+
+def _pp(v) -> str:
+    return "—" if v is None else f"{float(v) * 100:+.1f} pp"
+
+
+def _ic(r: dict) -> str:
+    lo, hi = (r.get("ic95") or [None, None])
+    if lo is None or hi is None:
+        return "—"
+    return f"[{lo * 100:+.1f}; {hi * 100:+.1f}]"
+
+
+def _linha_resumo(rotulo: str, r: dict) -> dict:
+    return {
+        "Comparação": rotulo,
+        "Excesso médio/safra": _pp(r.get("media")),
+        "IC 95%": _ic(r),
+        "Safras": r.get("n_safras", 0),
+        "Anos negativos": ", ".join(str(a) for a in r.get("safras_negativas") or []) or "—",
+        "Cruza o zero?": "sim" if r.get("ic_cruza_zero") else "não",
+    }
+
+
+def _perfil_ativo() -> str | None:
+    try:
+        from core.b3_portfolio_presets import PRESETS, identificar_perfil
+        atual = {chave: st.session_state.get(chave)
+                 for p in PRESETS.values() for chave in p.valores}
+        return identificar_perfil(atual)
+    except Exception:  # noqa: BLE001 -- destaque é cosmético
+        return None
+
+
+def render_oos_carteira() -> None:
+    """Bloco 'A carteira de cada perfil, fora da amostra'."""
+    from core.b3_methodology import SCORE_VERSION
+    from core.b3_portfolio_presets import VERSION as PRESETS_VERSION
+
+    st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
+                unsafe_allow_html=True)
+    st.markdown(
+        '<div style="font-weight:700;font-size:1.05rem;color:var(--app-text);'
+        'margin-bottom:8px;">🧪 A carteira de cada perfil, fora da amostra</div>',
+        unsafe_allow_html=True,
+    )
+
+    dados = oos.carregar()
+    if not dados or not dados.get("perfis"):
+        st.info("Esta análise não está disponível no momento.")
+        aviso_lacuna("Ainda não há medição da carteira por perfil. Rode "
+                     "`python scripts/medir_oos_carteira_b3.py` com o armazém local "
+                     "ligado para gerar `data/oos_carteira_b3.json`.",
+                     codigo="tela.portfolio_b3.oos_carteira_sem_medicao")
+        return
+
+    motivos = oos.vencida(dados, SCORE_VERSION, PRESETS_VERSION)
+    if motivos:
+        aviso_lacuna("Medição VENCIDA — feita com outra versão do código ("
+                     + "; ".join(motivos) + "). Os números não valem para a "
+                     "carteira de hoje até a medição ser refeita.",
+                     codigo="tela.portfolio_b3.oos_carteira_vencida")
+
+    st.caption(
+        f"Safra a safra ({dados.get('janela') or '—'}), a carteira que a aba "
+        "montaria em abril com os dados disponíveis até março (aprovação dos "
+        "segmentos, líder + maior participação, orçamento por segmento, cap e "
+        "tetos), mantida por 12 meses e paga o giro do rebalanceamento."
+    )
+    detalhe_tecnico(
+        f"Medida em {str(dados.get('medido_em', ''))[:10]}, metodologia "
+        f"{dados.get('versao_metodologia')}.",
+        codigo="portfolio_b3.oos_carteira_metodologia")
+
+    ativo = _perfil_ativo()
+    from core.b3_portfolio_presets import NOMES_ANTIGOS
+    for nome, medido in dados["perfis"].items():
+        nome = NOMES_ANTIGOS.get(nome, nome)
+        variantes = medido.get("variantes") or {}
+        base = variantes.get(oos.SEM_PORTAO) or {}
+        if not base:
+            continue
+        titulo = f"{nome}" + (" — perfil em uso" if nome == ativo else "")
+        with st.expander(titulo, expanded=(nome == ativo)):
+            principal = base.get("vs_equal_weight") or {}
+            leitura = oos.leitura_honesta(principal)
+            (st.warning if principal.get("ic_cruza_zero") else st.success)(leitura)
+
+            st.dataframe(pd.DataFrame([
+                _linha_resumo("Pesos iguais (líquido — principal)", principal),
+                _linha_resumo("Pesos iguais (bruto)", base.get("vs_equal_weight_bruto") or {}),
+                _linha_resumo("Pesos iguais (líquido, com IR)",
+                              base.get("vs_equal_weight_com_ir") or {}),
+                _linha_resumo("Selic", base.get("vs_selic") or {}),
+                _linha_resumo("Ibovespa (BOVA11)", base.get("vs_ibovespa") or {}),
+            ]), hide_index=True, width="stretch")
+
+            giro, custo = base.get("giro_medio"), base.get("custo_medio")
+            if giro is not None and custo is not None:
+                st.caption(f"Giro médio de {giro:.0%} por rebalanceamento, custo médio "
+                           f"de {custo * 100:.2f}% da carteira por ano.")
+
+            adv = variantes.get(oos.PORTAO_VETA_O_MELHOR) or {}
+            fav = variantes.get(oos.PORTAO_VETA_O_PIOR) or {}
+            adv_b = adv.get("vs_equal_weight_bruto") or {}
+            fav_b = fav.get("vs_equal_weight_bruto") or {}
+            sem_b = base.get("vs_equal_weight_bruto") or {}
+            adv_l = adv.get("vs_equal_weight") or {}
+            fav_l = fav.get("vs_equal_weight") or {}
+            if adv_b and fav_b:
+                # O veto é escolhido pelo BRUTO, e só no bruto a banda é limite
+                # estrito; o líquido das variantes é o daqueles cenários.
+                detalhe_tecnico(
+                    "Banda do portão de LLM (não medido diretamente — ver abaixo), "
+                    "para um portão que vete ATÉ UM nome da carteira por safra. "
+                    "Limites estritos, no BRUTO: pior veto possível "
+                    f"{_pp(adv_b.get('media'))} IC {_ic(adv_b)}; melhor "
+                    f"{_pp(fav_b.get('media'))} IC {_ic(fav_b)}; sem portão "
+                    f"{_pp(sem_b.get('media'))}. No líquido, os mesmos cenários dão "
+                    f"{_pp(adv_l.get('media'))} e {_pp(fav_l.get('media'))} (sem "
+                    f"portão {_pp(principal.get('media'))}) -- escolhidos pelo bruto, "
+                    "não são limites estritos do líquido. Portão que vete mais de "
+                    "um nome pode sair da banda.",
+                    codigo="portfolio_b3.oos_carteira_banda_portao", entidade=nome)
+                for rotulo, var in (("Pior veto", adv), ("Melhor veto", fav)):
+                    vetos = [f"{s['safra']} {s['veto']}" for s in var.get("safras") or []
+                             if s.get("veto") and not s.get("sem_carteira")]
+                    if vetos:
+                        detalhe_tecnico(
+                            f"{rotulo} por safra (sai → entra): " + "; ".join(vetos) + ".",
+                            codigo="portfolio_b3.oos_carteira_vetos_banda", entidade=nome)
+
+            var_med = variantes.get(oos.PORTAO_LLM_MEDIDO) or {}
+            med_l = var_med.get("vs_equal_weight") or {}
+            med_b = var_med.get("vs_equal_weight_bruto") or {}
+            if med_l:
+                # O portão de verdade, medido sobre o dossiê da época. A banda
+                # acima vale para UM veto; este pode vetar mais de um.
+                res = medido.get("portao_llm_medido") or {}
+                st.markdown("**Portão de LLM medido** — o parecer do LLM sobre o "
+                            "dossiê remontado em março de cada safra, anonimizado.")
+                st.dataframe(pd.DataFrame([
+                    _linha_resumo("Com o portão (líquido)", med_l),
+                    _linha_resumo("Com o portão (bruto)", med_b),
+                ]), hide_index=True, width="stretch")
+                partes = []
+                if res.get("taxa_veto") is not None:
+                    partes.append(f"vetou {res['taxa_veto']:.0%} de {res.get('pareceres', 0)} "
+                                  "pareceres")
+                if res.get("falhas"):
+                    partes.append(f"{res['falhas']} sem parecer (não vetam)")
+                if res.get("concordancia_veto") is not None:
+                    partes.append(f"repetido, concordou consigo no veto em "
+                                  f"{res['concordancia_veto']:.0%} de {res.get('repeticoes')}")
+                if res.get("sonda_acerta_empresa") is not None:
+                    partes.append(
+                        f"na sonda de memória, o modelo reconheceu a empresa em "
+                        f"{res['sonda_acerta_empresa']:.0%} e o ano em "
+                        f"{res.get('sonda_acerta_ano') or 0:.0%} de {res.get('sondas')} dossiês")
+                if partes:
+                    detalhe_tecnico("Portão medido: " + "; ".join(partes) + ". Sem portão "
+                                    f"(líquido): {_pp(principal.get('media'))}.",
+                                    codigo="portfolio_b3.oos_carteira_portao_medido",
+                                    entidade=nome)
+                trocas = [f"{s['safra']} {s['veto']}" for s in var_med.get("safras") or []
+                          if s.get("veto") and not s.get("sem_carteira")]
+                if trocas:
+                    detalhe_tecnico("Vetos do portão por safra (sai → entra): "
+                                    + "; ".join(trocas) + ".",
+                                    codigo="portfolio_b3.oos_carteira_vetos_portao",
+                                    entidade=nome)
+                elif var_med.get("safras"):
+                    detalhe_tecnico("O portão não vetou nenhum nome desta carteira em safra "
+                                    "alguma: com o portão é o mesmo que sem portão. Isso mede "
+                                    "este modelo sobre o dossiê da época, mais pobre que o "
+                                    "de hoje (sem notícias nem trechos da CVM).",
+                                    codigo="portfolio_b3.oos_carteira_portao_inerte",
+                                    entidade=nome)
+
+            marcadas = sorted(set(base.get("safras_inviaveis_no_cap") or [])
+                              | set(base.get("safras_com_revisao") or []))
+            if marcadas:
+                detalhe_tecnico("Safras em que a tela pediria revisão em vez de carteira "
+                                "(poucos ativos para o cap ou tetos que não fecham) — "
+                                "medidas mesmo assim, com os pesos possíveis: "
+                                + ", ".join(str(a) for a in marcadas) + ".",
+                                codigo="portfolio_b3.oos_carteira_safras_revisao",
+                                entidade=nome)
+            sem = base.get("safras_sem_carteira") or []
+            if sem:
+                st.caption("Safras sem segmento aprovado (investidor em caixa, "
+                           "fora da média): " + ", ".join(str(a) for a in sem) + ".")
+
+            linhas = [s for s in base.get("safras") or [] if not s.get("sem_carteira")]
+            if linhas:
+                tab = pd.DataFrame([{
+                    "Safra": s["safra"],
+                    "Segmentos aprovados": f"{s['segmentos_aprovados']}/{s['segmentos_avaliados']}",
+                    "Ativos": s["n_ativos"],
+                    "Carteira líquida": _pp(s.get("liquido")).replace(" pp", ""),
+                    "Pesos iguais": _pp(s.get("ew")).replace(" pp", ""),
+                    "Selic": _pp(s.get("selic")).replace(" pp", ""),
+                    "Ibovespa": _pp(s.get("ibov")).replace(" pp", ""),
+                    "Excesso s/ pesos iguais": _pp(s.get("excesso_ew")),
+                    "Maiores posições": s.get("maiores", ""),
+                } for s in linhas])
+                st.dataframe(tab, hide_index=True, width="stretch")
+
+    portao = dados.get("portao_llm") or oos.PORTAO_LLM
+    detalhe_tecnico(f"Portão de LLM — fora da métrica principal. "
+                    f"{portao.get('por_que', '')} {portao.get('como_medido', '')}",
+                    codigo="portfolio_b3.oos_carteira_nao_cobre_portao")
+    if portao.get("medicao_direta"):
+        detalhe_tecnico(str(portao["medicao_direta"]),
+                        codigo="portfolio_b3.oos_carteira_medicao_direta")
+    for nota in dados.get("fora_do_pit") or oos.FORA_DO_PIT:
+        detalhe_tecnico(str(nota), codigo="portfolio_b3.oos_carteira_fora_do_pit")
+    custos = dados.get("custos") or {}
+    if custos.get("benchmarks"):
+        detalhe_tecnico(f"Custos: {custos.get('cobrado', '')}. Benchmarks "
+                        f"{custos['benchmarks']}. IR: {custos.get('ir', '')}.",
+                        codigo="portfolio_b3.oos_carteira_custos")
+
+
+__all__ = ["render_oos_carteira"]

@@ -38,12 +38,20 @@ from sqlalchemy import text
 # da função.
 from core.b3_holdings_health import FRACAO_PL_QUEDA_CRITICA, MIN_PARES_PL_HIST
 from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+from core.seguranca.procedencia import linha_externa
 
 logger = logging.getLogger(__name__)
 
 # Schema mínimo que o parecer LLM deve devolver — superset do schema usado por
 # analisar_empresa (compatível com _render_empresa_expander/redistribuir_pesos).
 _CLASSIFICACOES = ("aprovar", "aprovar_com_ressalvas", "vetar")
+# Fora de `_CLASSIFICACOES` de propósito: não é veredito que a LLM possa dar,
+# é a ausência dele. Falha de LLM, resposta ilegível ou dossiê indisponível
+# saíam como "aprovar_com_ressalvas" -- e a tela mostrava o ativo como
+# aprovado pelo portão sem portão nenhum ter olhado (auditoria B3-09). O ativo
+# continua na carteira (falha não veta: a estatística decide sozinha), mas
+# marcado como não avaliado.
+NAO_AVALIADO = "nao_avaliado"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -104,7 +112,9 @@ def _ident(tk: str) -> dict:
             "setor": None, "subsetor": None, "segmento": None}
 
 
-def _series_anuais(tk: str, max_anos: int = 12) -> list[dict]:
+def _series_anuais(tk: str, max_anos: int = 12, ate_ano: int | None = None) -> list[dict]:
+    """Série anual. ``ate_ano`` corta no exercício (dossiê de uma data
+    passada, `core.b3_portao_pit`); sem ele, tudo o que o banco tem."""
     rows = _rows(
         """
         SELECT i.year, i.revenue, i.ebit, i.ebitda, i.net_income, i.eps,
@@ -120,6 +130,8 @@ def _series_anuais(tk: str, max_anos: int = 12) -> list[dict]:
         """,
         t=tk,
     )
+    if ate_ano is not None:
+        rows = [r for r in rows if int(r["year"]) <= int(ate_ano)]
     out: list[dict] = []
     for r in rows[-max_anos:]:
         rec, ll, pl = _f(r["revenue"]), _f(r["net_income"]), _f(r["equity"])
@@ -171,15 +183,19 @@ def load_pl_lucro_anual_batch(
     return {ticker: serie[-max_anos:] for ticker, serie in por_ticker.items()}
 
 
-def _trimestres(tk: str, n: int = 6) -> dict:
+def _trimestres(tk: str, n: int = 6, ate_ano: int | None = None) -> dict:
+    corte = "" if ate_ano is None else " AND year <= :ate"
+    params = {"t": tk, "n": n + 4}
+    if ate_ano is not None:
+        params["ate"] = int(ate_ano)
     rows = _rows(
-        """
+        f"""
         SELECT year, quarter, revenue, net_income
         FROM market.income_statements
-        WHERE ticker = :t AND period <> 'annual' AND quarter BETWEEN 1 AND 4
+        WHERE ticker = :t AND period <> 'annual' AND quarter BETWEEN 1 AND 4{corte}
         ORDER BY year DESC, quarter DESC LIMIT :n
         """,
-        t=tk, n=n + 4,
+        **params,
     )
     rows = rows[::-1]
     tris = [{"ano": int(r["year"]), "tri": int(r["quarter"]),
@@ -189,17 +205,87 @@ def _trimestres(tk: str, n: int = 6) -> dict:
     if len(tris) >= 5:
         ult, ant = tris[-1], tris[-5]
         if ant["ano"] == ult["ano"] - 1 and ant["tri"] == ult["tri"]:
-            if ant["receita_mi"] and ult["receita_mi"] is not None:
+            if (ant["receita_mi"] is not None and ant["receita_mi"] > 0
+                    and ult["receita_mi"] is not None):
                 yoy["receita_yoy_pct"] = round(
                     (ult["receita_mi"] / ant["receita_mi"] - 1) * 100, 1)
-            if ant["lucro_mi"] and ult["lucro_mi"] is not None:
-                yoy["lucro_yoy_pct"] = round(
-                    (ult["lucro_mi"] / ant["lucro_mi"] - 1) * 100, 1)
+            pct, leitura = variacao_lucro_aa(ant["lucro_mi"], ult["lucro_mi"])
+            if pct is not None:
+                yoy["lucro_yoy_pct"] = pct
+            if leitura:
+                yoy["lucro_yoy_leitura"] = leitura
+                yoy["lucro_base_mi"] = ant["lucro_mi"]
+                yoy["lucro_ult_mi"] = ult["lucro_mi"]
             yoy["ref"] = f"{ult['ano']}T{ult['tri']} vs {ant['ano']}T{ant['tri']}"
     return {"serie": tris[-n:], "yoy": yoy}
 
 
-def _dividendos(tk: str, preco: float | None) -> dict:
+# Leitura do lucro a/a quando a variação percentual não tem sentido.
+LEITURAS_LUCRO_AA = {
+    "virou_prejuizo": "virou prejuízo",
+    "virada_para_lucro": "saiu do prejuízo para lucro",
+    "prejuizo_reduzido": "prejuízo menor que o do ano anterior",
+    "prejuizo_ampliado": "prejuízo maior que o do ano anterior",
+    "prejuizo_estavel": "prejuízo igual ao do ano anterior",
+    "base_zero": "lucro zero no ano anterior — variação sem base",
+}
+
+
+def variacao_lucro_aa(ant: float | None,
+                      ult: float | None) -> tuple[float | None, str | None]:
+    """Variação a/a do lucro e, quando ela não basta, a leitura do que houve.
+
+    ``ult / ant - 1`` só tem o sinal certo com base positiva. Com prejuízo na
+    base ele inverte: de -100 para -50 (prejuízo menor) dá -50%, que o dossiê
+    lia como "lucro caiu 50%"; de -100 para +50 (virada) dá -150%. Nesses
+    casos a porcentagem não existe e a leitura diz o fato.
+    """
+    if ant is None or ult is None:
+        return None, None
+    if ant > 0:
+        pct = round((ult / ant - 1) * 100, 1)
+        return pct, ("virou_prejuizo" if ult < 0 else None)
+    if ant == 0:
+        return None, "base_zero"
+    if ult > 0:
+        return None, "virada_para_lucro"
+    if ult > ant:
+        return None, "prejuizo_reduzido"
+    if ult < ant:
+        return None, "prejuizo_ampliado"
+    return None, "prejuizo_estavel"
+
+
+def _atualidade(tk: str, hoje: date | None = None) -> dict:
+    """Atualidade da demonstração e da base do score deste ticker (B3-02).
+
+    Mede pela cobertura do universo, não pelo ``MAX(data)``, e descobre de qual
+    trimestre é o TTM que o score usa. Detalhes e números medidos em
+    ``core/b3_atualidade_trimestral.py``. As séries são lidas cruas porque
+    ``_trimestres`` arredonda para R$ mi, e o arredondamento impede casar a
+    margem gravada com a janela que a produziu.
+    """
+    from core import b3_atualidade_trimestral as at
+    from core.database import get_engine
+
+    hoje = hoje or date.today()
+    eng = get_engine()
+    if eng is None:
+        return {}
+    with eng.connect() as conn:
+        desde = at.desde_ano(hoje)
+        universo = at.avaliar_universo(at.ler_contagens(conn, desde), hoje)
+        series, margens = at.ler_series_e_margens(conn, desde, ticker=tk)
+    medida = at.medir_base_do_score(series, margens).get(tk) or {}
+    serie = series.get(tk) or []
+    ultimo = max((r[:2] for r in serie), key=at.serial) if serie else None
+    out = at.avaliar_ticker(ultimo, medida.get("base"), universo["esperado"],
+                            universo["vigente"])
+    out["vigente_universo"] = universo["vigente"]
+    return out
+
+
+def _dividendos(tk: str, preco: float | None, ref: date | None = None) -> dict:
     """Provento por acao separando renda de devolucao de capital.
 
     A-130: o agrupamento anterior era so por data, e o ramo conservador tomava
@@ -209,6 +295,9 @@ def _dividendos(tk: str, preco: float | None) -> dict:
     lida. Agrupar por (data, tipo) mata o eco de classe sem apagar o segundo
     evento. A-128: amortizacao e restituicao de capital saem do yield e passam
     a ser reportadas a parte.
+
+    ``ref`` e a data do dossie: eventos depois dela ficam de fora e os
+    "ultimos 12 meses" contam ate ela (dossie de uma data passada).
     """
     from core.dividend_types import eh_renda, sql_safra_canonica
 
@@ -231,6 +320,8 @@ def _dividendos(tk: str, preco: float | None) -> dict:
         if not v:
             continue
         dt, tipo = str(r["dt"]), str(r["type"] or "")
+        if ref is not None and dt[:10] > ref.isoformat():
+            continue
         if eh_renda(r["type"]):
             por_chave[(dt, tipo)].append(v)
         else:
@@ -239,12 +330,12 @@ def _dividendos(tk: str, preco: float | None) -> dict:
     por_ano_bruto: dict[str, float] = defaultdict(float)
     por_ano_conserv: dict[str, float] = defaultdict(float)
     datas_duplicadas = 0
-    hoje = date.today()
+    hoje = ref or date.today()
     ult12_bruto = ult12_conserv = ult12_capital = 0.0
 
     def _recente(dt: str) -> bool:
         try:
-            return (hoje - date.fromisoformat(dt)).days <= 365
+            return (hoje - date.fromisoformat(dt[:10])).days <= 365
         except ValueError:
             return False
 
@@ -279,25 +370,29 @@ def _dividendos(tk: str, preco: float | None) -> dict:
     }
 
 
-def _precos(tk: str) -> dict:
+def _precos(tk: str, ref: date | None = None) -> dict:
+    """Preço, retorno de 12 meses e faixa de 52 semanas. ``ref`` é a data do
+    dossiê (uma data passada); sem ela, hoje."""
+    dia = "CURRENT_DATE" if ref is None else "CAST(:ref AS date)"
+    params = {"t": tk} if ref is None else {"t": tk, "ref": ref.isoformat()}
     rows = _rows(
-        """
+        f"""
         (SELECT date, close FROM market.historical_prices
-          WHERE ticker = :t ORDER BY date DESC LIMIT 1)
+          WHERE ticker = :t AND date <= {dia} ORDER BY date DESC LIMIT 1)
         UNION ALL
         (SELECT date, close FROM market.historical_prices
-          WHERE ticker = :t AND date <= CURRENT_DATE - INTERVAL '365 days'
+          WHERE ticker = :t AND date <= {dia} - INTERVAL '365 days'
           ORDER BY date DESC LIMIT 1)
         """,
-        t=tk,
+        **params,
     )
     stats = _rows(
-        """
-        SELECT MIN(close) FILTER (WHERE date >= CURRENT_DATE - INTERVAL '365 days') AS min52,
-               MAX(close) FILTER (WHERE date >= CURRENT_DATE - INTERVAL '365 days') AS max52
-        FROM market.historical_prices WHERE ticker = :t
+        f"""
+        SELECT MIN(close) FILTER (WHERE date >= {dia} - INTERVAL '365 days') AS min52,
+               MAX(close) FILTER (WHERE date >= {dia} - INTERVAL '365 days') AS max52
+        FROM market.historical_prices WHERE ticker = :t AND date <= {dia}
         """,
-        t=tk,
+        **params,
     )
     out: dict = {"preco": None, "data_preco": None, "ret_12m_pct": None,
                  "min_52s": None, "max_52s": None}
@@ -352,7 +447,50 @@ def _metricas_snapshot(tk: str) -> dict:
             for r in rows if r["metric_name"] in keep and _f(r["metric_value"]) is not None}
 
 
+def _eventos_do_artefato(tk: str, n: int) -> dict | None:
+    """Documentos CVM/IPE do artefato de informações recentes, ou ``None``.
+
+    O Supabase passou dos 500 MB e a ``public.docs_corporativos`` de lá parou
+    em 26/06/2026; o armazém local recebe a coleta todo dia e a publica em
+    ``data/public/informacoes_recentes.json.gz`` (``relatorios.por_ticker``,
+    180 dias, até 20 por ativo). Mesmo critério de classe do SQL antigo: os
+    quatro primeiros caracteres (PETR3 e PETR4 contam juntos). Documento do
+    FNET (fundo imobiliário) fica de fora -- a tabela antiga era só CVM/IPE.
+    ``None`` quando não há artefato, para o chamador cair no Supabase.
+    """
+    from core.inteligencia_ativos import fontes_informacoes as fi
+    art = fi.arquivo()
+    bloco = (art or {}).get("relatorios") or {}
+    por_ticker = bloco.get("por_ticker")
+    if not por_ticker:
+        return None
+    pref = tk[:4].upper()
+    docs = []
+    for chave, lista in por_ticker.items():
+        if not str(chave).upper().startswith(pref):
+            continue
+        for d in lista or []:
+            if "FNET" in str(d.get("source") or "").upper():
+                continue
+            docs.append(d)
+    docs.sort(key=lambda d: str(d.get("reference_date") or ""), reverse=True)
+    eventos = [{"data": str(d.get("reference_date")), "categoria": d.get("tipo"),
+                "titulo": (d.get("titulo") or "")[:140]} for d in docs[:n]]
+    return {
+        "eventos": eventos,
+        "n_docs": len(eventos),
+        "docs_desde": eventos[-1]["data"] if eventos else None,
+        "fonte": "artefato informacoes_recentes (armazém local)",
+        "janela_dias": bloco.get("janela_dias"),
+        "base_ate": (bloco.get("base_ate") or {}).get("b3"),
+    }
+
+
 def _eventos_societarios(tk: str, n: int = 12) -> dict:
+    # Artefato primeiro (local-first); Supabase só quando o arquivo não existe.
+    do_arquivo = _eventos_do_artefato(tk, n)
+    if do_arquivo is not None:
+        return do_arquivo
     rows = _rows(
         """
         SELECT COALESCE(document_date, data) AS dt, COALESCE(categoria, tipo) AS cat,
@@ -493,13 +631,26 @@ def _checks(serie: list[dict], tris: dict, divs: dict, met: dict,
     if serie and all(s.get("ebitda_mi") is None for s in serie):
         flags.append("COBERTURA: EBITDA ausente na DRE estruturada.")
     if not docs.get("n_docs"):
-        flags.append("COBERTURA: nenhum documento CVM indexado — parecer sem base documental.")
+        janela = docs.get("janela_dias")
+        flags.append("COBERTURA: nenhum documento CVM indexado"
+                     + (f" nos últimos {janela} dias" if janela else "")
+                     + " — parecer sem base documental.")
     if len(serie) < 5:
         flags.append(f"COBERTURA: apenas {len(serie)} ano(s) de DRE anual — histórico curto.")
     yoy = tris.get("yoy", {})
+    leitura = yoy.get("lucro_yoy_leitura")
     if (yoy.get("lucro_yoy_pct") is not None and yoy["lucro_yoy_pct"] < -25):
-        flags.append(f"MOMENTUM: lucro do último trimestre caiu {yoy['lucro_yoy_pct']}% "
-                     f"a/a ({yoy.get('ref')}).")
+        if leitura == "virou_prejuizo":
+            flags.append(f"MOMENTUM: lucro do último trimestre virou prejuízo "
+                         f"({yoy.get('lucro_base_mi')} → {yoy.get('lucro_ult_mi')} "
+                         f"R$ mi, {yoy.get('ref')}).")
+        else:
+            flags.append(f"MOMENTUM: lucro do último trimestre caiu "
+                         f"{yoy['lucro_yoy_pct']}% a/a ({yoy.get('ref')}).")
+    elif leitura == "prejuizo_ampliado":
+        flags.append(f"MOMENTUM: prejuízo do último trimestre aumentou a/a "
+                     f"({yoy.get('lucro_base_mi')} → {yoy.get('lucro_ult_mi')} "
+                     f"R$ mi, {yoy.get('ref')}).")
     return flags
 
 
@@ -558,35 +709,66 @@ TITULO_SEVERIDADE: dict[str, str] = {
 }
 
 
+#: ``erro`` do dossiê que não saiu. Vai para a tela (resumo do parecer de
+#: reserva), para o prompt e para a aba Restrições -- por isso nunca é o texto
+#: da exceção, que pode trazer SQL, host ou usuário do banco. A identidade do
+#: erro segue em ``erro_tipo``; o texto inteiro, no log.
+DOSSIE_INDISPONIVEL = "falha ao ler os dados desta empresa nesta execução"
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
+def _dossie_cacheado(tk: str) -> dict:
+    """Corpo de ``build_dossie``. Levanta em falha: ``st.cache_data`` não
+    guarda exceção, e o dicionário de erro devolvido daqui ficava 1 h no cache
+    -- um soluço do banco virava uma hora de ativo sem dossiê."""
+    serie = _series_anuais(tk)
+    tris = _trimestres(tk)
+    precos = _precos(tk)
+    divs = _dividendos(tk, precos.get("preco"))
+    met = _metricas_snapshot(tk)
+    docs = _eventos_societarios(tk)
+    val = _valuation(_market_cap(tk), serie, precos)
+    dossie = {
+        "ticker": tk,
+        **_ident(tk),
+        "serie_anual": serie,
+        "trimestres": tris,
+        "dividendos": divs,
+        "valuation": val,
+        "metricas_banco": met,
+        "sensibilidade_juros": _sensibilidade_juros(serie),
+        "eventos_societarios": docs,
+        "red_flags": [],
+    }
+    dossie["red_flags"] = _checks(serie, tris, divs, met, docs, val)
+    # Atualidade tem try próprio: falhar nela não pode apagar o dossiê
+    # inteiro, e o campo vazio diz "não medido".
+    try:
+        atual = _atualidade(tk)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("build_dossie(%s): atualidade não medida: %s", tk, exc)
+        atual = {}
+    dossie["atualidade"] = atual
+    dossie["red_flags"].extend(atual.get("flags") or [])
+    return dossie
+
+
 def build_dossie(ticker: str) -> dict:
-    """Dossiê determinístico completo de um ticker (só banco, sem LLM)."""
+    """Dossiê determinístico completo de um ticker (só banco, sem LLM).
+
+    Nunca levanta: em falha devolve ``erro`` (``DOSSIE_INDISPONIVEL``) e
+    ``erro_tipo``, sem cache -- a próxima chamada tenta o banco de novo.
+    """
     tk = ticker.strip().upper().replace(".SA", "")
     try:
-        serie = _series_anuais(tk)
-        tris = _trimestres(tk)
-        precos = _precos(tk)
-        divs = _dividendos(tk, precos.get("preco"))
-        met = _metricas_snapshot(tk)
-        docs = _eventos_societarios(tk)
-        val = _valuation(_market_cap(tk), serie, precos)
-        dossie = {
-            "ticker": tk,
-            **_ident(tk),
-            "serie_anual": serie,
-            "trimestres": tris,
-            "dividendos": divs,
-            "valuation": val,
-            "metricas_banco": met,
-            "sensibilidade_juros": _sensibilidade_juros(serie),
-            "eventos_societarios": docs,
-            "red_flags": [],
-        }
-        dossie["red_flags"] = _checks(serie, tris, divs, met, docs, val)
-        return dossie
-    except Exception as exc:  # banco fora, ticker inexistente etc.
+        return _dossie_cacheado(tk)
+    except Exception as exc:  # noqa: BLE001 -- banco fora, ticker inexistente etc.
         logger.warning("build_dossie(%s) falhou: %s", tk, exc)
-        return {"ticker": tk, "erro": str(exc)[:300]}
+        return {"ticker": tk, "erro": DOSSIE_INDISPONIVEL,
+                "erro_tipo": type(exc).__name__}
+
+
+build_dossie.clear = _dossie_cacheado.clear  # type: ignore[attr-defined]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -611,10 +793,25 @@ def dossie_to_text(d: dict) -> str:
         L.append("\nTRIMESTRES RECENTES (R$ mi) — receita | lucro:")
         for t in tris["serie"]:
             L.append(f"  {t['ano']}T{t['tri']} | {t['receita_mi']} | {t['lucro_mi']}")
-        if tris.get("yoy"):
-            L.append(f"  Último tri a/a ({tris['yoy'].get('ref')}): "
-                     f"receita {tris['yoy'].get('receita_yoy_pct')}% | "
-                     f"lucro {tris['yoy'].get('lucro_yoy_pct')}%")
+        yoy = tris.get("yoy") or {}
+        if yoy:
+            rec = yoy.get("receita_yoy_pct")
+            rec_txt = f"{rec}%" if rec is not None else "sem base comparável"
+            luc = yoy.get("lucro_yoy_pct")
+            luc_txt = f"{luc}%" if luc is not None else "sem variação percentual"
+            leitura = LEITURAS_LUCRO_AA.get(yoy.get("lucro_yoy_leitura") or "")
+            if leitura:
+                luc_txt += (f" — {leitura} ({yoy.get('lucro_base_mi')} → "
+                            f"{yoy.get('lucro_ult_mi')} R$ mi)")
+            L.append(f"  Último tri a/a ({yoy.get('ref')}): "
+                     f"receita {rec_txt} | lucro {luc_txt}")
+
+    at = d.get("atualidade") or {}
+    if at.get("esperado"):
+        from core.b3_atualidade_trimestral import rotulo
+        L.append(f"  ATUALIDADE: última demonstração {rotulo(at.get('ultimo_trimestre'))} | "
+                 f"base do score/TTM {rotulo(at.get('base_score'))} | "
+                 f"esperado pelo calendário CVM {rotulo(at.get('esperado'))}")
 
     dv = d.get("dividendos", {})
     L.append(f"\nDIVIDENDOS (R$/ação, dedup conservador por data-ex): por ano {dv.get('por_ano')}"
@@ -637,8 +834,12 @@ def dossie_to_text(d: dict) -> str:
     ev = d.get("eventos_societarios", {})
     if ev.get("eventos"):
         L.append(f"\nEVENTOS SOCIETÁRIOS (docs CVM indexados: {ev['n_docs']}, desde {ev['docs_desde']}):")
+        # Título de documento é texto do emissor, não do backend: neutralizado
+        # (sem quebra de linha nem marcador de papel) como as manchetes
+        # (auditoria app4, LLM-A4).
         for e in ev["eventos"]:
-            L.append(f"  {e['data']} [{e['categoria']}] {e['titulo']}")
+            L.append(f"  {e['data']} [{e['categoria']}] "
+                     f"{linha_externa(e['titulo'], teto=140)}")
 
     # As três categorias saem APARTADAS. Sob um cabeçalho único, as 222
     # empresas cuja observação o próprio texto declara NÃO ser risco chegavam
@@ -767,8 +968,9 @@ def _parecer_fallback(tk: str, motivo: str = "LLM indisponível") -> dict:
     return {
         "perspectiva": "moderada", "acao_sugerida": "revisar",
         "confianca": 0, "score_qualitativo": 50,
-        "classificacao_selecao": "aprovar_com_ressalvas",
-        "motivo_selecao": f"Parecer não gerado ({motivo}) — mantido por padrão, sem veto.",
+        "classificacao_selecao": NAO_AVALIADO,
+        "motivo_selecao": (f"Parecer não gerado ({motivo}) — não avaliado pelo "
+                           "portão; mantido sem veto e sem aprovação."),
         "resumo": f"Parecer qualitativo indisponível para {tk}: {motivo}.",
         "alerta_principal": "Análise qualitativa não executada.",
         "proxima_acao": "Reexecutar quando o LLM estiver disponível.",
@@ -779,18 +981,44 @@ def _parecer_fallback(tk: str, motivo: str = "LLM indisponível") -> dict:
 
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def _parecer_llm_cached(prompt: str, _tk: str) -> dict:
-    """Uma chamada LLM por (prompt) por dia — o prompt embute o hash do dossiê."""
+def _parecer_llm_por_chave(chave: str, _prompt: str, _tk: str) -> dict:
+    """Uma chamada LLM por ``chave`` por dia; o modelo recebe ``_prompt``.
+
+    ``chave`` é o prompt com o sufixo aleatório das cercas trocado por ``X``
+    (``sem_marcadores_aleatorios``). Antes a chave era o próprio prompt, e
+    desde as cercas do PR #506 ele carrega dois marcadores novos por chamada
+    (contexto de mercado) mais o do RAG: medido em 04/10/2026, duas
+    montagens seguidas do mesmo ativo davam prompts diferentes, e o cache de
+    24 h nunca acertava -- cada Criação de Portfólio pagava um parecer por
+    líder de novo. ``_prompt`` e ``_tk`` ficam fora do hash (sublinhado).
+    """
     from core.llm_b3 import _call_llm, _parse_json, _report_model
-    raw = _call_llm(prompt, model=_report_model())
-    return _parse_json(raw, _parecer_fallback(_tk, "resposta não interpretável"))
+    raw = _call_llm(_prompt, model=_report_model())
+    parecer = _parse_json(raw, None)
+    if not isinstance(parecer, dict):
+        # Levantar em vez de devolver o fallback: `st.cache_data` não guarda
+        # exceção, e devolvido o fallback ficava 24 h no cache -- um soluço do
+        # provedor virava um dia inteiro de ativo sem parecer.
+        raise ValueError("resposta não interpretável")
+    return parecer
+
+
+def _parecer_llm_cached(prompt: str, tk: str) -> dict:
+    """O parecer do dia para ``prompt``, com a chave sem os marcadores aleatórios."""
+    from core.seguranca.procedencia import sem_marcadores_aleatorios
+    return _parecer_llm_por_chave(sem_marcadores_aleatorios(prompt), prompt, tk)
+
+
+# Quem limpa o cache (testes, scripts/eval_gate_selecao.py) continua chamando
+# ``_parecer_llm_cached.clear()``.
+_parecer_llm_cached.clear = _parecer_llm_por_chave.clear  # type: ignore[attr-defined]
 
 
 def _sanitizar_parecer(p: dict, tk: str) -> dict:
     base = _parecer_fallback(tk, "campos ausentes")
     out = {**base, **(p or {})}
     if out.get("classificacao_selecao") not in _CLASSIFICACOES:
-        out["classificacao_selecao"] = "aprovar_com_ressalvas"
+        out["classificacao_selecao"] = NAO_AVALIADO
     if not isinstance(out.get("relatorio"), dict):
         out["relatorio"] = {}
     return out
@@ -813,12 +1041,16 @@ def contexto_mercado_para_parecer(tk: str) -> str:
         from core.contexto_mercado import bloco_contexto_mercado
         partes.append(bloco_contexto_mercado({"b3": {tk: ""}}, noticias_gerais=False))
     except Exception as exc:  # noqa: BLE001
-        partes.append(f"CONTEXTO DE MERCADO: falha ao montar ({str(exc)[:160]}).")
+        # Só o tipo vai ao prompt: o texto de um erro de conexão traz host e
+        # usuário do banco. O traço completo fica no log do servidor.
+        logger.exception("contexto de mercado do parecer %s falhou", tk)
+        partes.append(f"CONTEXTO DE MERCADO: falha ao montar ({type(exc).__name__}).")
     try:
         from core.llm_context_b3 import get_warehouse_detail_context
         partes.append(get_warehouse_detail_context([tk]))
     except Exception as exc:  # noqa: BLE001
-        partes.append(f"DETALHE DO ARMAZÉM: falha ao montar ({str(exc)[:160]}).")
+        logger.exception("detalhe do armazém do parecer %s falhou", tk)
+        partes.append(f"DETALHE DO ARMAZÉM: falha ao montar ({type(exc).__name__}).")
     return "\n\n".join(p for p in partes if p and p.strip())
 
 
@@ -863,9 +1095,16 @@ def gerar_parecer_empresa(
     try:
         parecer = _parecer_llm_cached(prompt, tk)
     except Exception as exc:
-        logger.warning("Parecer LLM falhou para %s: %s", tk, exc)
-        return _parecer_fallback(tk, str(exc)[:200]), dossie
-    return _sanitizar_parecer(parecer, tk), dossie
+        # O motivo entra em ``motivo_selecao``, que a Criação de Portfólio
+        # mostra na lista de "não avaliados": categoria, nunca ``str(exc)``.
+        from core.llm_falha import motivo_falha_llm
+        motivo = motivo_falha_llm(exc, f"parecer de seleção de {tk}")
+        return _parecer_fallback(tk, motivo), dossie
+    # LLM-A9: o parecer passa pela mesma conferência dos chats. O aviso fica
+    # no parecer (campo ``aviso_ancoragem``) e NÃO muda a classificação:
+    # o gate é fail-open e número sem lastro é alerta, não veto.
+    from core.llm_grounding import com_aviso_ancoragem
+    return com_aviso_ancoragem(_sanitizar_parecer(parecer, tk), prompt), dossie
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -884,7 +1123,8 @@ def avaliar_para_selecao(ticker: str) -> dict:
     """
     Avaliação enxuta para o gate de seleção: dossiê + RAG curto + parecer.
     Retorna {"classificacao", "motivo", "parecer", "dossie"}.
-    Falha de LLM/dados NUNCA veta (fail-open): a estatística decide sozinha.
+    Falha de LLM/dados NUNCA veta: a estatística decide sozinha. Mas também
+    não aprova -- sai como ``NAO_AVALIADO`` para a tela dizer isso.
     """
     tk = ticker.strip().upper().replace(".SA", "")
     rag_ctx = ""
@@ -897,8 +1137,11 @@ def avaliar_para_selecao(ticker: str) -> dict:
     parecer, dossie = gerar_parecer_empresa(
         tk, rag_context=rag_ctx, contexto_mercado=contexto_mercado_para_parecer(tk))
     return {
-        "classificacao": parecer.get("classificacao_selecao", "aprovar_com_ressalvas"),
+        "classificacao": parecer.get("classificacao_selecao", NAO_AVALIADO),
         "motivo": parecer.get("motivo_selecao", ""),
+        # Número do parecer sem lastro no dossiê/contexto (LLM-A9). A
+        # Criação de Portfólio mostra junto do motivo; não muda a decisão.
+        "aviso_ancoragem": parecer.get("aviso_ancoragem", ""),
         "parecer": parecer,
         "dossie": dossie,
     }

@@ -87,3 +87,69 @@ def test_analise_por_ativo_aceita_ticker_fracionario():
     assert _posicao(carteira, "BBAS3")["ticker"] == "BBAS3"
     assert _posicao(carteira, "BYDDF")["ticker"] == "BYDDF"  # exato vence
     assert _posicao(carteira, "PETR4F") is None
+
+
+# ── Recálculo de portfolio_positions: lote e fracionário são UMA posição ─────
+# `positions._compute` guardava o estado por asset_id. Ação comprada no
+# fracionário e vendida no lote padrão (o caminho normal de quem junta 100)
+# deixava a venda descoberta em BBAS3 -- zerada com alerta -- e as cotas do
+# BBAS3F vivas, com o custo antigo entrando na média da compra seguinte.
+
+def _tx(ticker, tipo, qty, price, dia):
+    from decimal import Decimal
+
+    return {"user_id": "u1", "asset_id": f"a-{ticker}", "ticker": ticker,
+            "type": tipo, "quantity": Decimal(str(qty)),
+            "unit_price": Decimal(str(price)), "fees": Decimal("0"),
+            "transaction_date": dia}
+
+
+def test_venda_no_lote_consome_cotas_compradas_no_fracionario():
+    from decimal import Decimal
+
+    from data_pipeline.importers.investments.positions import _compute
+
+    positions, alerts = _compute([
+        _tx("BBAS3", "buy", 100, 20, "2024-01-02"),
+        _tx("BBAS3F", "buy", 50, 20, "2024-01-03"),
+        _tx("BBAS3", "sell", 150, 30, "2024-02-01"),
+        _tx("BBAS3F", "buy", 10, 40, "2024-03-01"),
+    ])
+    assert [(p["ticker"], p["asset_id"]) for p in positions] == [("BBAS3", "a-BBAS3")]
+    assert positions[0]["quantity"] == Decimal("10")
+    assert float(positions[0]["average_price"]) == 40.0
+    assert float(positions[0]["total_invested"]) == 400.0
+    assert not [a for a in alerts if a["type"] == "quantidade_negativa"]
+
+
+def test_fracionario_vendido_em_parte_divide_o_custo_medio_com_o_lote():
+    from decimal import Decimal
+
+    from data_pipeline.importers.investments.positions import _compute
+
+    positions, alerts = _compute([
+        _tx("PETR3", "buy", 100, 30, "2024-01-02"),
+        _tx("PETR3F", "buy", 50, 45, "2024-01-03"),   # PM conjunto: 35
+        _tx("PETR3F", "sell", 30, 50, "2024-02-01"),  # vender não muda o PM
+        _tx("PETR3", "buy", 80, 40, "2024-03-01"),    # (120*35 + 3200) / 200
+    ])
+    assert len(positions) == 1
+    p = positions[0]
+    assert (p["ticker"], p["asset_id"]) == ("PETR3", "a-PETR3")
+    assert p["quantity"] == Decimal("200")
+    assert float(p["average_price"]) == 37.0
+    assert not alerts
+
+
+def test_so_fracionario_grava_no_proprio_ativo():
+    """Sem negociação no lote padrão não há asset_id da base a usar."""
+    from decimal import Decimal
+
+    from data_pipeline.importers.investments.positions import _compute
+
+    positions, _ = _compute([
+        _tx("MXRF11F", "buy", 7, 10, "2024-01-02"),
+        _tx("MXRF11F", "sell", 2, 11, "2024-02-01"),
+    ])
+    assert [(p["ticker"], p["asset_id"]) for p in positions] == [("MXRF11F", "a-MXRF11F")]
+    assert positions[0]["quantity"] == Decimal("5")

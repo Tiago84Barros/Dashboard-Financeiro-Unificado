@@ -352,11 +352,11 @@ def test_cartoes_escapam_e_so_linkam_http():
     assert 'href="https://x/1"' in hl and 'rel="noopener noreferrer"' in hl
     hr, he = tela.corpo_relatorios(r), tela.corpo_eventos(e)
     # Sem texto no acervo: aviso, não tabela de documentos.
-    assert "ainda não está no acervo" in hr and "<table" not in hr
+    assert "ainda não está no acervo" not in hr and "<table" not in hr
     assert "Onde procurar" not in hr and "Pergunta" not in hr
     for cab in ("Evento", "Data", "Relevância", "Possível impacto"):
         assert cab in he
-    assert "Sem fonte de data para" in he
+    assert "Sem fonte de data para" not in he   # vai ao log
     assert tela.corpo_noticias(inf.Noticias()) == inf.NAO_DISPONIVEL
     for html in (hn, hl, hr, he):
         assert not re.search(r"#[0-9a-fA-F]{3,6}\b", html)

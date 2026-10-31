@@ -7,6 +7,7 @@ Comandos:
     python run_market_ingest.py daily        # atualização leve diária
     python run_market_ingest.py annual       # refresh de demonstrações
     python run_market_ingest.py reprocess    # recalcula indicadores (sem rede)
+    python run_market_ingest.py renormalize-demonstracoes  # payload arquivado -> demonstrações (sem rede)
 
 Opções comuns:
     --tickers PETR4 VALE3   processa só estes
@@ -86,7 +87,7 @@ def main() -> int:
     p = argparse.ArgumentParser(description="Ingestão BRAPI Pro -> Supabase (market.*)")
     p.add_argument("command",
                    choices=["validate", "cadastro", "bootstrap", "daily", "annual",
-                            "reprocess", "renormalize", "integrity", "parity", "fiis",
+                            "reprocess", "renormalize", "renormalize-demonstracoes", "integrity", "parity", "fiis",
                             "fiis-reprocess", "fiis-cvm", "fiis-series",
                             "fiis-metrics", "fiis-vacancia", "fiis-cadastro-gaps",
                             "fiis-imoveis",
@@ -118,6 +119,9 @@ def main() -> int:
                    help="fiis-enrich: documentos máximos por execução")
     p.add_argument("--document-budget-mb", type=int, default=250,
                    help="fiis-enrich: orçamento de PDFs por execução")
+    p.add_argument("--forcar", action="store_true",
+                   help="renormalize-demonstracoes: regrava também o que já saiu "
+                        "do payload mais novo (correção do normalizador)")
     p.add_argument("--json", action="store_true")
     p.add_argument("--warehouse", action="store_true",
                    help="usa o PostgreSQL local warehouse em 127.0.0.1:5433")
@@ -205,6 +209,12 @@ def main() -> int:
             log.info("FIIs COTAHIST B3 — arquivos=%s linhas=%s tickers=%s erros=%s",
                      rep.get("archives"), rep.get("rows"), rep.get("tickers"),
                      len(rep.get("errors") or []))
+            # O motivo vinha só como contagem: "erros=1" no log não dizia se
+            # era o download do ano corrente ou um ZIP ilegível.
+            for item in rep.get("errors") or []:
+                log.error("FIIs COTAHIST B3 — erro: %s", item)
+            for item in rep.get("warnings") or []:
+                log.warning("FIIs COTAHIST B3 — aviso (não derruba a etapa): %s", item)
         elif args.command == "fiis-entities":
             from data_pipeline.market.fii_entity_pipeline import resolve_entities
             rep = resolve_entities()
@@ -414,6 +424,14 @@ def main() -> int:
         prog = ingest.annual(tickers, args.source or "setores", args.limit)
     elif args.command == "renormalize":
         prog = ingest.renormalize(tickers, args.limit)
+    elif args.command == "renormalize-demonstracoes":
+        # Demonstração regravada sem indicador recalculado deixa o TTM velho
+        # na origem do b3_metrics: os dois passos andam juntos.
+        prog = ingest.renormalize_demonstracoes(tickers, args.limit, forcar=args.forcar)
+        if prog.get("atualizados"):
+            rep = ingest.reprocess_metrics(prog["atualizados"])
+            prog["indicadores"] = rep.get("indicadores", 0)
+            prog["erros"] += max(rep.get("erros", 0), 0)
     else:
         prog = ingest.reprocess_metrics(tickers, args.limit)
 

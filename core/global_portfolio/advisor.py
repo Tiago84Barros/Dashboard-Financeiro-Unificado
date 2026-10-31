@@ -226,9 +226,18 @@ def recomendar(
     sensibilidade: float = SENSIBILIDADE_SCORE_DEFAULT,
     limiar_venda: float = LIMIAR_VENDA_DEFAULT,
     macro_impacts: Mapping[str, float] | None = None,
+    pesos_alvo: Mapping[str, float] | None = None,
 ) -> list[Acao]:
     """Combina `sinais` em `Acao` por ativo. Ver o docstring do modulo para as
     duas regras (custo nao calibrado -> `manter`; sinal ausente -> `indeterminado`).
+
+    `pesos_alvo` (GLB-01) troca o tilt proporcional ao score por um alvo ja
+    calculado fora -- hoje, os pesos Black-Litterman de
+    `core.global_portfolio.alocacao_bl`. Sem ele, o tilt continua sendo o
+    padrao, com o mesmo resultado de antes. Com ele, as duas regras e as
+    guardas seguem iguais: ativo indeterminado continua pinado (sem sinal nao
+    ha acao, venha o alvo de onde vier), e o alvo ainda passa pela projecao
+    de tetos, pela politica de rebalanceamento e pela guarda de custo.
 
     `patrimonio_total` (em R$) converte o `delta` de peso (fracao) no
     `valor_bruto` que `core.transaction_costs` espera -- sem ele nao ha como
@@ -250,6 +259,10 @@ def recomendar(
     scores = _scores(componentes)
 
     pesos_bruto = _pesos_alvo_brutos(symbols, peso_atual, scores, sensibilidade)
+    if pesos_alvo is not None:
+        pesos_bruto = {s: (max(float(pesos_alvo.get(s, peso_atual[s])), 0.0)
+                           if scores[s] is not None else peso_atual[s])
+                       for s in symbols}
     peso_projetado = _projetar(symbols, pesos_bruto, classe_por_symbol, alvos, cap_ativo)
 
     relevant = {}

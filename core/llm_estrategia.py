@@ -15,6 +15,7 @@ pergunta vira a do primeiro campo que falta.
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 from dataclasses import dataclass, field
@@ -237,7 +238,9 @@ def proxima_etapa(politica: dict, historico: list, resposta: str, *,
     função de completion (injeção para teste); por padrão, a cadeia de
     provedores do app.
     """
-    chat = chat or _chat_complete
+    # A entrevista leva renda e gastos do Controle Financeiro: cadeia sem
+    # modelo gratuito.
+    chat = chat or functools.partial(_chat_complete, pessoal=True)
     resposta = (resposta or "").strip()
     if not resposta:
         return Etapa(politica=politica, pergunta=pergunta_do_roteiro(politica),

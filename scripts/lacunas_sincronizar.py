@@ -36,58 +36,23 @@ if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
 from core.lacunas import fila  # noqa: E402
+from core.lacunas.leitura import (  # noqa: E402
+    eventos_locais,
+    gravar_cloud,
+    ler_cloud,
+)
+from core.lacunas.leitura import gravar_json as _gravar_json  # noqa: E402
+from core.lacunas.leitura import ler_json as _ler_json  # noqa: E402
+from core.lacunas.leitura import ler_jsonl as _ler_jsonl  # noqa: E402
 
 _log = logging.getLogger("lacunas_sincronizar")
 
 PASTA = RAIZ / "local_staging" / "lacunas"
 DIAS_RESUMO = 7
 
-_SQL_LER = """
-SELECT impressao, fonte, modulo, codigo, entidade, ultima_mensagem, contexto,
-       primeira_vez, ultima_vez, ocorrencias, status, reincidente, pr_url, nota_triagem
-FROM app_lacunas
-"""
-_SQL_ATUALIZAR = """
-UPDATE app_lacunas
-SET status = :status, pr_url = :pr_url, nota_triagem = :nota_triagem,
-    reincidente = :reincidente
-WHERE impressao = :impressao
-"""
 
 
 # ── arquivos ──────────────────────────────────────────────────────────────────
-def _ler_jsonl(caminho: Path) -> list[dict]:
-    if not caminho.exists():
-        return []
-    abrir = gzip.open if caminho.suffix == ".gz" else open
-    eventos = []
-    with abrir(caminho, "rt", encoding="utf-8") as fh:
-        for linha in fh:
-            linha = linha.strip()
-            if not linha:
-                continue
-            try:
-                eventos.append(json.loads(linha))
-            except json.JSONDecodeError:
-                _log.warning("linha invalida ignorada em %s", caminho.name)
-    return eventos
-
-
-def _ler_json(caminho: Path, padrao):
-    try:
-        return json.loads(caminho.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return padrao
-
-
-def _gravar_json(caminho: Path, dado) -> None:
-    caminho.parent.mkdir(parents=True, exist_ok=True)
-    tmp = caminho.with_suffix(caminho.suffix + ".tmp")
-    tmp.write_text(json.dumps(dado, ensure_ascii=False, indent=2, default=str),
-                   encoding="utf-8")
-    os.replace(tmp, caminho)
-
-
 def rotacionar(pasta: Path, agora: datetime) -> list[str]:
     """Move eventos de meses anteriores do ``eventos.jsonl`` para o ``.gz`` do
     mes. O ``.gz`` e gravado ANTES de o jsonl ser reescrito: se cair no meio,
@@ -110,13 +75,6 @@ def rotacionar(pasta: Path, agora: datetime) -> list[str]:
     return sorted(grupos)
 
 
-def eventos_locais(pasta: Path) -> list[dict]:
-    eventos = []
-    for gz in sorted(pasta.glob("eventos-*.jsonl.gz")):
-        eventos.extend(_ler_jsonl(gz))
-    eventos.extend(_ler_jsonl(pasta / "eventos.jsonl"))
-    return eventos
-
 
 # ── nuvem e gh ────────────────────────────────────────────────────────────────
 def _engine():
@@ -126,29 +84,6 @@ def _engine():
     from core.database import get_engine
 
     return get_engine()
-
-
-def ler_cloud(engine) -> list[dict]:
-    from sqlalchemy import text
-
-    with engine.connect() as con:
-        linhas = [dict(r._mapping) for r in con.execute(text(_SQL_LER))]
-    for linha in linhas:
-        for campo in ("primeira_vez", "ultima_vez"):
-            if isinstance(linha.get(campo), datetime):
-                linha[campo] = linha[campo].isoformat()
-        if isinstance(linha.get("contexto"), str):
-            linha["contexto"] = json.loads(linha["contexto"] or "{}")
-    return linhas
-
-
-def gravar_cloud(engine, diferencas: list[dict]) -> None:
-    if not diferencas:
-        return
-    from sqlalchemy import text
-
-    with engine.begin() as con:
-        con.execute(text(_SQL_ATUALIZAR), diferencas)
 
 
 def consultar_pr(url: str) -> str | None:
@@ -190,6 +125,7 @@ def sincronizar(pasta: Path = PASTA, *, agora: datetime | None = None,
         fontes["cloud"] = f"indisponivel: {type(exc).__name__}"
         _log.warning("app_lacunas nao lida", exc_info=True)
 
+    fila.importar_decisoes_admin(estado, cloud, agora)
     prs = fila.aplicar_prs(estado, consultar, agora)
     fotos = fila.registrar_foto(fotos, cloud, agora)
     itens = fila.fundir(local, cloud, estado, fotos, agora)

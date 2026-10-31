@@ -39,6 +39,8 @@ from typing import Iterable, Mapping
 
 import streamlit as st
 
+from core.seguranca.procedencia import cercar_linhas, linha_externa
+
 logger = logging.getLogger(__name__)
 
 #: Leituras do Supabase: 15 min. Curva, dólar e macro mudam por dia, e a
@@ -52,7 +54,21 @@ _TTL_TUNEL = 120
 MAX_MANCHETES = 12
 #: Série local mais velha que isto é histórico, não "cenário atual".
 _IDADE_MAX_SERIE_LOCAL = timedelta(days=400)
+#: Provedor de dado anual: o World Bank publica o ano fechado com 1 a 2 anos de
+#: atraso, então o corte de 400 dias apagava a série inteira em silêncio (a
+#: observação mais nova de uma série anual tem período de 1 a 2 anos atrás).
+#: 3 anos cobrem o atraso natural; além disso a série é nomeada como omitida.
+_IDADE_MAX_SERIE_ANUAL = timedelta(days=3 * 365)
+_PROVEDORES_ANUAIS = frozenset({"world_bank"})
 _MAX_TITULO = 200
+#: Quantos itens de maior nota o bloco lê do acervo para curar 12. Em
+#: 04/10/2026 a janela de 3 dias tinha 3.388 avaliados; o topo de 400 pela nota
+#: sai em 0,2-0,35 s e sobra folga para o dedup por evento e as cotas (os 150
+#: mais novos, lidos antes, cobriam só as últimas horas).
+_LEITURA_POR_NOTA = 400
+#: Vagas garantidas ao noticiário que cita o Brasil, pela nota. Piso, não
+#: prioridade -- ver :func:`core.noticias.curadoria.curar`.
+_PISO_BRASIL = 4
 #: Mesmo limite de ``core.conjuntura.ponte.MAX_IDADE_VITRINE_HORAS``.
 _IDADE_MAX_VITRINE_H = 48
 _FAMILIAS_CURVA = ("Tesouro Selic", "Tesouro Prefixado", "Tesouro IPCA+",
@@ -81,6 +97,44 @@ REGRA_CONTEXTO_MERCADO = (
     "pergunta sobre cenário quando o bloco traz dado para respondê-la."
 )
 
+#: Só nos chats de texto livre. Os prompts que devolvem JSON ou vetam (portão
+#: PIT, dossiê, Portfolio Fit, relatórios) não recebem: regra nova num prompt
+#: que veta muda o veto, e isso exige medição própria.
+REGRA_CADEIA_TRANSMISSAO = (
+    "CADEIA DE TRANSMISSÃO: quando a pergunta envolver cenário, rumo do "
+    "mercado, juros, câmbio, inflação ou se vale a pena investir agora, a "
+    "resposta TERMINA com duas seções, mesmo que já tenha falado de riscos "
+    "antes. **Cadeia de transmissão**: de 2 a 4 "
+    "elos no formato causa → efeito → impacto no que o usuário pergunta, e "
+    "CADA elo cita um número do contexto com fonte e data — de preferência a "
+    "variação e o percentil da seção TRAJETÓRIA (ex.: 'dólar −6,4% em 12 "
+    "meses, percentil 22 de 5,1 anos'). Elo sem número no contexto "
+    "é marcado como hipótese. **Contraponto**: o elo mais frágil da cadeia e "
+    "qual dado, se mudasse, invalidaria a conclusão. Percentil nunca sai "
+    "sozinho: vem com os anos da janela, e o de série com histórico curto não "
+    "sustenta 'recorde', 'máxima histórica' nem 'ciclo longo'. A cadeia explica "
+    "o cenário: não substitui nem contradiz o veredito ou a decisão que o "
+    "contexto já traz. Quando o contexto trouxer a seção CENÁRIOS ANÁLOGOS, "
+    "a cadeia vem precedida de uma terceira seção, **Da última vez**: a "
+    "'Síntese para citar' de lá, copiada inteira, com o episódio mais recente, "
+    "o mais parecido, o n e o contraponto de todos os meses. Um episódio "
+    "sozinho é um caso, não um padrão; nunca descreva 'da última vez' de "
+    "memória. "
+    # Vale para toda resposta do chat, não só para a pergunta de cenário: a
+    # análise de GMAT3 e BBAS3 de 29/10/2026 partiu do fechamento mensal de
+    # 05/10 e chamou de manchete a queda que o pregão de 26/10 já tinha medido.
+    "PREÇO DE AGORA: quando o contexto trouxer a seção MOVIMENTO RECENTE DA "
+    "BOLSA, toda resposta sobre ativo, carteira ou mercado parte dela, e não do "
+    "fechamento mensal mais velho da TRAJETÓRIA ou de preco_ativo; abra com a "
+    "variação recente do ativo e do BOVA11, com a data do pregão. Quando a "
+    "notícia e o pregão andam juntos (mesma direção, mesmos dias), o pregão "
+    "confirma o movimento, não a causa: a queda ou a alta é fato medido; a "
+    "explicação da manchete segue atribuída à fonte ('segundo o Valor, ...') "
+    "e entra na cadeia como hipótese. Cite a manchete junto da variação, em "
+    "vez de descartá-la como manchete sem confirmação. Para um ativo fora da "
+    "seção, chame preco_diario_recente antes de pedir o dado ao usuário."
+)
+
 
 def _limpo(valor: object, limite: int = _MAX_TITULO) -> str:
     return " ".join(str(valor or "").replace("\x00", " ").split())[:limite]
@@ -92,39 +146,71 @@ def _pct(valor: float | None, casas: int = 2) -> str:
     return f"{valor:.{casas}f}%".replace(".", ",")
 
 
-def _como_pct(valor: object) -> float | None:
-    """``public.macro`` mistura unidades: Selic em fração, IPCA em percentual.
+#: Unidade de cada coluna de ``public.macro`` como ``load_macro_history`` a
+#: entrega: a Selic sai normalizada em fração, IPCA e juro real em percentual.
+UNIDADE_MACRO_ANUAL = {"selic": "fracao", "ipca": "pct", "juros_real_ex_ante": "pct"}
 
-    |x| <= 1 é lido como fração — nenhuma taxa anual brasileira recente fica
-    abaixo de 1% ao ano, e é a mesma heurística que ``load_macro_history``
-    aplica à Selic.
+
+def _como_pct(valor: object, unidade: str) -> float | None:
+    """Converte para % a partir da unidade DECLARADA pela fonte (``fracao``/``pct``).
+
+    Antes a escala era adivinhada pela magnitude (|x| <= 1 era fração): um juro
+    real de 0,194% virava 19,4%, e uma Selic que um dia caísse abaixo de 1%
+    seria centuplicada. Quem chama sabe de onde o número veio; a função não
+    chuta.
     """
+    if unidade not in ("fracao", "pct"):
+        raise ValueError(f"unidade desconhecida: {unidade!r}")
     try:
         numero = float(valor)
     except (TypeError, ValueError):
         return None
     if numero != numero:  # NaN
         return None
-    return numero * 100.0 if abs(numero) <= 1 else numero
+    return numero * 100.0 if unidade == "fracao" else numero
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Macro — Supabase
 # ─────────────────────────────────────────────────────────────────────────────
 
-def linhas_macro_anual(hist: Mapping[int, Mapping[str, float]], anos: int = 3) -> list[str]:
-    """``public.macro`` em linhas de prompt, com a unidade já resolvida."""
+def linhas_macro_anual(hist: Mapping[int, Mapping[str, float]], anos: int = 3,
+                       *, hoje: date | None = None) -> list[str]:
+    """``public.macro`` em linhas de prompt, com a unidade já resolvida.
+
+    Duas armadilhas do ano corrente (auditoria app4 de 04/10/2026, LLM-A2):
+    o IPCA gravado é o acumulado NO ANO até o último mês (3,11% em 2026, com o
+    IPCA em 12 meses em 4,22%), e a coluna ``juros_real_ex_ante`` é Selic −
+    IPCA realizado -- ex post e aritmética, 10,64% contra ~7,3% do Tesouro
+    IPCA+. O rótulo diz o que o IPCA do ano corrente é; o juro real dos anos
+    fechados sai por Fisher, aqui, e o do ano corrente fica para o bloco do BCB
+    (Selic meta e IPCA 12m), que é o número comparável.
+    """
     if not hist:
         return ["  public.macro: sem linhas (tabela vazia ou ilegível)."]
-    linhas = ["  public.macro (BCB/SGS, anual — o ano corrente é o último "
-              "valor observado até agora, não o fechamento):"]
+    ano_corrente = (hoje or date.today()).year
+    linhas = ["  public.macro (BCB/SGS, anual — Selic é a meta no fim do ano; no ano "
+              "corrente, a última observada):"]
     for ano in sorted(hist)[-anos:]:
         d = hist[ano] or {}
+        corrente = ano >= ano_corrente
+        selic = (_como_pct(d["selic"], UNIDADE_MACRO_ANUAL["selic"])
+                 if "selic" in d else None)
+        ipca = (_como_pct(d["ipca"], UNIDADE_MACRO_ANUAL["ipca"])
+                if "ipca" in d else None)
         partes = []
-        for chave, rotulo in (("selic", "Selic"), ("ipca", "IPCA"),
-                              ("juros_real_ex_ante", "juro real ex ante")):
-            if chave in d:
-                partes.append(f"{rotulo} {_pct(_como_pct(d[chave]))}")
+        if "selic" in d:
+            partes.append(f"Selic {_pct(selic)}")
+        if "ipca" in d:
+            partes.append(f"IPCA acumulado no ano até o último mês divulgado {_pct(ipca)} "
+                          "(não é 12 meses)" if corrente else f"IPCA {_pct(ipca)}")
+        if corrente:
+            partes.append("juro real: ver Selic meta e IPCA 12m do BCB abaixo")
+        elif selic is not None and ipca is not None:
+            from core.macro_brasil import fisher
+
+            partes.append("juro real ex post (Fisher, Selic de fim de ano sobre o IPCA "
+                          f"do ano) {_pct(fisher(selic, ipca))}")
         if "cambio" in d:
             partes.append(f"USD/BRL {float(d['cambio']):.2f}".replace(".", ","))
         if "icc" in d:
@@ -212,25 +298,119 @@ def linhas_curva_tesouro(curva) -> list[str]:
 # Macro — armazém local
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _idade_max_serie(fato) -> timedelta:
+    if fato.get("provider") in _PROVEDORES_ANUAIS:
+        return _IDADE_MAX_SERIE_ANUAL
+    return _IDADE_MAX_SERIE_LOCAL
+
+
 def _linhas_macro_local(fatos, origem: str) -> list[str]:
-    """Séries do armazém com período no último ano, sem a cópia de public.macro."""
+    """Séries do armazém com período dentro da tolerância da fonte.
+
+    A tolerância depende da frequência (anual tolera mais). A idade do período
+    vai na linha, e a série descartada por defasagem é nomeada: fonte que some
+    em silêncio parece fonte que nunca existiu.
+    """
     from core.macro_data.context import format_macro_context
 
     hoje = date.today()
-    recentes = []
+    recentes, omitidas = [], []
     for fato in fatos:
         try:
             periodo = date.fromisoformat(str(fato.get("reference_period"))[:10])
         except ValueError:
             continue
-        if (hoje - periodo <= _IDADE_MAX_SERIE_LOCAL
-                and fato.get("provider") != _PROVEDOR_ESPELHO):
-            recentes.append(fato)
-    if not recentes:
-        return [f"  {origem}: nenhuma série com período recente."]
-    return [f"  {origem} (séries com período no último ano; a cópia "
-            "de public.macro fica de fora):"] + [
-        "    " + linha for linha in format_macro_context(recentes)]
+        if fato.get("provider") == _PROVEDOR_ESPELHO:
+            continue
+        if hoje - periodo <= _idade_max_serie(fato):
+            recentes.append((fato, (hoje - periodo).days))
+        else:
+            omitidas.append(f"{fato.get('indicator')} [{fato.get('provider')}] "
+                            f"(período {periodo:%d/%m/%Y})")
+    linhas = []
+    if recentes:
+        linhas = [f"  {origem} (séries dentro da tolerância de idade da fonte; "
+                  "a cópia de public.macro fica de fora):"]
+        for fato, dias in recentes:
+            for linha in format_macro_context([fato]):
+                linhas.append(f"    {linha} · período há {dias} dias")
+    else:
+        linhas = [f"  {origem}: nenhuma série com período recente."]
+    if omitidas:
+        linhas.append("    Séries omitidas por defasagem acima da tolerância: "
+                      + "; ".join(omitidas[:8]) + ".")
+    return linhas
+
+
+def _sem_secao_propria(fatos):
+    """Tira as séries do BCB que já têm seção própria (:func:`_macro_brasil`).
+
+    Sem isto a Selic meta e o Focus sairiam duas vezes -- lá com unidade,
+    Fisher e data; aqui como linha crua, e o Focus anual (período no fim de
+    2027) ainda contaria como "período há -454 dias".
+    """
+    from core.macro_brasil import PROVEDORES
+
+    return [f for f in fatos if f.get("provider") not in PROVEDORES]
+
+
+def _macro_brasil() -> list[str]:
+    """Selic meta, CDI, IPCA 12m, Focus e juro real por Fisher, com fonte nomeada.
+
+    Armazém local primeiro; sem ele (produção), o arquivo que a rotina publica.
+    O CDI vem sempre do arquivo ``cdi_diario`` (SGS 12), que já é publicado.
+    """
+    from core import macro_brasil as mb
+
+    obs, origem, motivo = _observacoes_bcb()
+    try:
+        from core.rentabilidade import ler_cdi_publicado
+
+        cdi = ler_cdi_publicado()
+    except Exception:  # noqa: BLE001 - a linha do CDI nomeia a ausência
+        cdi = {}
+    if obs is None:
+        return [f"  Banco Central do Brasil (Selic meta, IPCA 12m, Focus): indisponível "
+                f"({motivo}; sem arquivo publicado recente).", mb.linha_cdi(cdi)]
+    return mb.linhas_macro_brasil(mb.resumo(obs), cdi, origem=origem)
+
+
+def _observacoes_bcb() -> tuple[list | None, str | None, str | None]:
+    """Observações do BCB: armazém local primeiro, depois o arquivo publicado.
+
+    Devolve ``(observações, origem, motivo)``; ``observações`` é ``None`` quando
+    nenhuma das duas fontes respondeu, e ``motivo`` diz por quê.
+    """
+    from core import macro_brasil as mb
+
+    obs, origem, motivo = None, None, None
+    engine = None
+    try:
+        from core.macro_data.database import get_local_macro_engine
+
+        engine = get_local_macro_engine()
+        if engine is None:
+            motivo = "armazém local não configurado neste ambiente"
+        else:
+            obs = mb.ler_do_armazem(engine) or None
+            origem = "armazém local, BCB/SGS e Focus"
+            if obs is None:
+                motivo = "armazém local sem séries do BCB; rode scripts/ingerir_macro_brasil.py"
+    except Exception as exc:  # noqa: BLE001 - ausência declarada
+        motivo = f"armazém local: falha na leitura ({_limpo(exc, 100)})"
+    finally:
+        if engine is not None:
+            engine.dispose()
+    if obs is None:
+        try:
+            publicado = mb.carregar_publicado()
+        except Exception as exc:  # noqa: BLE001
+            publicado = None
+            motivo = f"{motivo}; arquivo publicado ilegível ({_limpo(exc, 80)})"
+        if publicado is not None:
+            obs = list(publicado.observacoes)
+            origem = (f"arquivo publicado em {publicado.gerado_em:%d/%m/%Y}; {motivo}")
+    return obs, origem, motivo
 
 
 def _macro_local() -> list[str]:
@@ -245,7 +425,8 @@ def _macro_local() -> list[str]:
             return _macro_remoto()
         from core.macro_data.context import latest_macro_context
 
-        return _linhas_macro_local(latest_macro_context(engine), "Armazém macro local")
+        return _linhas_macro_local(_sem_secao_propria(latest_macro_context(engine)),
+                                   "Armazém macro local")
     except Exception as exc:  # noqa: BLE001
         # URL configurada com o Docker parado: o túnel e o arquivo publicado
         # ainda respondem, e parar na falha jogava fora os dois.
@@ -265,7 +446,8 @@ def _macro_remoto() -> list[str]:
         fatos = armazem_remoto.macro_recente()
         if fatos is None:
             return _macro_publicado("túnel não configurado")
-        return _linhas_macro_local(fatos, "Armazém macro local, lido pelo túnel")
+        return _linhas_macro_local(_sem_secao_propria(fatos),
+                                   "Armazém macro local, lido pelo túnel")
     except Exception as exc:  # noqa: BLE001
         return _macro_publicado(f"túnel indisponível: {_limpo(exc, 120)}")
 
@@ -285,7 +467,131 @@ def _macro_publicado(motivo: str) -> list[str]:
                 "sem arquivo publicado recente; só as séries do Supabase acima entraram."]
     origem = (f"Armazém macro, publicado em {insumos.gerado_em:%d/%m/%Y} "
               f"({motivo})")
-    return _linhas_macro_local(published_macro_context(insumos), origem)
+    return _linhas_macro_local(_sem_secao_propria(published_macro_context(insumos)), origem)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trajetória das séries (agora, 1/3/12 meses, posição na janela)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=_TTL_REMOTO, show_spinner=False)
+def _trajetoria_cache() -> list[str]:
+    """Uma consulta agregada por grupo no Supabase; o resto é arquivo ou armazém."""
+    return _trajetoria()
+
+
+def _trajetoria() -> list[str]:
+    from core import trajetoria_mercado as tm
+
+    return tm.linhas_trajetoria(supabase=_supabase, cdi=_cdi_publicado,
+                                bcb=_bcb_para_trajetoria, eua=_series_eua,
+                                valuation=_valuation_publicado,
+                                recentes=_fechamentos_recentes)
+
+
+def _fechamentos_recentes():
+    """Último pregão de BOVA11 e SMAL11: corrige a linha mensal que ficou velha."""
+    from core import pregoes_recentes as pr
+    from core import trajetoria_mercado as tm
+
+    return pr.ultimos_fechamentos(pr.carregar(), tm.HISTORICO)
+
+
+def _movimento_recente(ativos: Mapping[str, Mapping[str, str]] | None,
+                       tickers: Iterable[str] = ()) -> list[str]:
+    """Seção MOVIMENTO RECENTE DA BOLSA: os pregões diários do COTAHIST.
+
+    Os ativos B3 e FII em questão ganham linha própria; os EUA não estão no
+    COTAHIST. ``tickers`` soma ativos que não vieram em ``ativos`` (o chat de
+    um ativo só, que já tem o noticiário dele). Falha vira linha que nomeia a
+    falha.
+    """
+    from core import pregoes_recentes as pr
+
+    pedidos = [tk for classe in ("b3", "fii") for tk in (ativos or {}).get(classe) or {}]
+    pedidos += list(tickers)
+    try:
+        return pr.linhas(pedidos)
+    except Exception as exc:  # noqa: BLE001
+        return [f"MOVIMENTO RECENTE DA BOLSA: falha na leitura ({_limpo(exc, 120)}). "
+                "Não trate como mercado parado: diga que faltou o dado diário."]
+
+
+def _valuation_publicado():
+    """P/L mediano do mercado, do arquivo que a rotina noturna publica."""
+    from core.inteligencia_ativos.fontes_valuation import arquivo
+
+    art = arquivo()
+    if not art:
+        return None, "arquivo valuation_historico ausente ou ilegível"
+    if "mercado_b3" not in art:
+        return None, "arquivo valuation_historico ainda sem a série mercado_b3"
+    gerado = str(art.get("gerado_em") or "")[:10]
+    try:
+        gerado = datetime.fromisoformat(gerado).strftime("%d/%m/%Y")
+    except ValueError:
+        gerado = gerado or "data desconhecida"
+    return art["mercado_b3"], f"gerado em {gerado}"
+
+
+def _cenarios_analogos() -> list[str]:
+    """Seção CENÁRIOS ANÁLOGOS: o painel publicado, casado com o mês de hoje.
+
+    Sempre do arquivo (ver ``scripts/publish_cenarios_analogos.py``): o painel
+    junta armazém e arquivos que a produção não alcança juntos. Falha vira
+    linha que nomeia a falha.
+    """
+    from core.memoria_mercado import cenarios_macro as cmac
+
+    try:
+        carga, origem = cmac.carregar_publicado()
+        return cmac.linhas_cenarios(carga, origem)
+    except Exception as exc:  # noqa: BLE001
+        return cmac.linhas_cenarios(None, f"falha na leitura: {_limpo(exc, 120)}")
+
+
+def _cdi_publicado():
+    from core.rentabilidade import ler_cdi_publicado
+
+    return ler_cdi_publicado()
+
+
+def _bcb_para_trajetoria():
+    obs, origem, motivo = _observacoes_bcb()
+    return obs, (origem if obs is not None else motivo or "sem fonte")
+
+
+def _series_eua():
+    """FRED do armazém (décadas); sem ele, os insumos publicados (24 obs.)."""
+    from core import trajetoria_mercado as tm
+
+    motivo = "armazém local não configurado neste ambiente"
+    engine = None
+    try:
+        from core.macro_data.database import get_local_macro_engine
+
+        engine = get_local_macro_engine()
+        if engine is not None:
+            series = tm.series_eua_do_armazem(engine)
+            if series:
+                return series, "armazém local"
+            motivo = "armazém local sem as séries do FRED"
+    except Exception as exc:  # noqa: BLE001 - cai para o arquivo publicado
+        motivo = f"armazém local: falha na leitura ({_limpo(exc, 100)})"
+    finally:
+        if engine is not None:
+            engine.dispose()
+    try:
+        from core.macro_data.insumos_publicados import carregar_insumos_publicados
+
+        insumos = carregar_insumos_publicados()
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{motivo}; arquivo publicado ilegível ({_limpo(exc, 80)})"
+    if insumos is None:
+        return None, f"{motivo}; sem arquivo publicado recente"
+    return (tm.series_eua_publicadas(insumos),
+            f"insumos publicados em {insumos.gerado_em:%d/%m/%Y}, só as últimas 24 "
+            f"observações por série ({motivo})")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -324,8 +630,9 @@ def _manchetes_acervo(limite: int) -> list[str] | None:
             return None
         from core.noticias.armazenamento import ler_recentes
 
-        return _linhas_acervo(ler_recentes(150, dias=3, engine=engine), limite,
-                              "Acervo local")
+        return _linhas_acervo(
+            ler_recentes(_LEITURA_POR_NOTA, dias=3, engine=engine, ordem="nota"),
+            limite, "Acervo local")
     except Exception as exc:  # noqa: BLE001
         return [f"  Acervo local de notícias: falha na leitura ({_limpo(exc, 120)})."]
     finally:
@@ -333,28 +640,46 @@ def _manchetes_acervo(limite: int) -> list[str] | None:
             engine.dispose()
 
 
+def _titulo_externo(valor: object) -> str:
+    return linha_externa(valor, teto=_MAX_TITULO)
+
+
 def _linhas_acervo(itens, limite: int, origem: str) -> list[str]:
+    """Cabeçalho + manchetes curadas e cercadas.
+
+    A escolha é de :func:`core.noticias.curadoria.curar` (nota, um por evento,
+    cota por veículo e por tipo, publieditorial fora, piso para o Brasil). Cada
+    campo de fora passa por :func:`linha_externa` e as linhas vão entre
+    marcadores (:func:`cercar_linhas`): manchete é dado, nunca instrução, e o
+    cabeçalho dizer isso não basta quando o título traz ``System:`` ou uma
+    quebra de linha que abre seção nova (auditoria app4, LLM-A4).
+    """
+    from core.noticias.curadoria import COTA_POR_TIPO, COTA_POR_VEICULO, curar
+
     itens = list(itens)
-    itens.sort(key=lambda i: (_cita_brasil(i), float(i.get("nota") or 0)),
-               reverse=True)
-    linhas = [f"  {origem} ({len(itens)} itens avaliados nos últimos 3 "
-              "dias; Brasil primeiro, depois os de maior relevância):"]
-    vistos: set[str] = set()
-    for item in itens:
-        titulo = _limpo(item.get("titulo"))
-        if not titulo or titulo in vistos:
-            continue
-        vistos.add(titulo)
-        direcao = _limpo(item.get("direcao"), 20) or "indefinida"
-        linhas.append(f"    - [{_data(item.get('publicado_em') or item.get('coletado_em'))}] "
-                      f"{titulo} ({_limpo(item.get('veiculo'), 40)}; relevância "
-                      f"{float(item.get('nota') or 0):.0f}; direção {direcao})")
-        if len(vistos) >= limite:
-            break
-    if not vistos:
+    escolhidos, descartes = curar(
+        itens, limite, chave_titulo=_titulo_externo,
+        reserva=(_cita_brasil, _PISO_BRASIL))
+    descarte = ""
+    if descartes:
+        partes = ", ".join(f"{n} por {m}" for m, n in sorted(descartes.items()))
+        descarte = f"; fora como publieditorial: {partes}"
+    linhas = [f"  {origem} ({len(itens)} itens avaliados lidos dos últimos 3 "
+              f"dias; os de maior relevância, um por evento, no máximo "
+              f"{COTA_POR_VEICULO} por veículo e {COTA_POR_TIPO} por tipo de "
+              f"evento, até {_PISO_BRASIL} vagas para o Brasil{descarte}):"]
+    corpo = []
+    for item in escolhidos:
+        direcao = linha_externa(item.get("direcao"), teto=20) or "indefinida"
+        corpo.append(f"    - [{_data(item.get('publicado_em') or item.get('coletado_em'))}] "
+                     f"{_titulo_externo(item.get('titulo'))} "
+                     f"({linha_externa(item.get('veiculo'), teto=40)}; relevância "
+                     f"{float(item.get('nota') or 0):.0f}; direção {direcao})")
+    if not corpo:
         linhas.append("    nenhum item avaliado no período — ausência de "
                       "coleta, não de fatos.")
-    return linhas
+        return linhas
+    return linhas + cercar_linhas(corpo)
 
 
 @st.cache_data(ttl=_TTL_TUNEL, show_spinner=False)
@@ -365,16 +690,27 @@ def _manchetes_remoto(limite: int) -> tuple[list[str] | None, str | None]:
     não o noticiário inteiro. Sem dizer que o acervo falhou, o modelo leria o
     recorte como se fosse tudo o que aconteceu.
     """
+    origem = "Acervo local, lido pelo túnel"
     try:
         from core import armazem_remoto
 
-        itens = armazem_remoto.noticias_recentes(150, dias=3)
+        # Mesma leitura do acervo direto (:func:`_manchetes_acervo`): os de
+        # maior nota da janela, para a curadoria escolher. Antes o túnel lia
+        # os 150 mais novos -- as últimas horas --, e em 04/10/2026 o topo
+        # curado dali tinha notas 56-68, contra 68-74 lendo pela nota.
+        try:
+            itens = armazem_remoto.noticias_recentes(
+                _LEITURA_POR_NOTA, dias=3, ordem="nota")
+        except armazem_remoto.OrdemIgnorada as exc:
+            itens = exc.itens
+            origem += (" (serviço desatualizado: vieram os mais novos, não os "
+                       "de maior relevância)")
     except Exception as exc:  # noqa: BLE001
         return None, (f"  Acervo local pelo túnel: indisponível ({_limpo(exc, 120)}); "
                       "segue a vitrine do Supabase, que é um recorte por ativo.")
     if itens is None:
         return None, None
-    return _linhas_acervo(itens, limite, "Acervo local, lido pelo túnel"), None
+    return _linhas_acervo(itens, limite, origem), None
 
 
 @st.cache_data(ttl=_TTL_REMOTO, show_spinner=False)
@@ -436,22 +772,23 @@ def _manchetes_vitrine(engine, limite: int) -> list[str]:
         for item in itens or ():
             if not isinstance(item, dict):
                 continue
-            titulo = _limpo(item.get("titulo"))
+            titulo = _titulo_externo(item.get("titulo"))
             if not titulo:
                 continue
             registro = por_titulo.setdefault(titulo, {
                 "publicado_em": str(item.get("publicado_em") or ""),
-                "veiculo": _limpo(item.get("veiculo"), 40), "ativos": set()})
+                "veiculo": linha_externa(item.get("veiculo"), teto=40),
+                "ativos": set()})
             registro["ativos"].add(str(simbolo))
     if not por_titulo:
         return [cabeca, "    nenhuma manchete publicada — ausência de coleta, "
                         "não de fatos."]
     ordenadas = sorted(por_titulo.items(), key=lambda kv: kv[1]["publicado_em"],
                        reverse=True)[:limite]
-    return [cabeca] + [
+    return [cabeca] + cercar_linhas([
         f"    - [{_data(r['publicado_em'])}] {titulo} ({r['veiculo']}; "
         f"citada para {', '.join(sorted(r['ativos'])[:4])})"
-        for titulo, r in ordenadas]
+        for titulo, r in ordenadas])
 
 
 def manchetes_gerais(limite: int = MAX_MANCHETES) -> tuple[list[str], str]:
@@ -639,6 +976,7 @@ def bloco_contexto_mercado(
     noticias_gerais: bool = True,
     max_itens_por_classe: int = 10,
     as_of: datetime | None = None,
+    tickers_movimento: Iterable[str] = (),
 ) -> str:
     """Bloco CONTEXTO DE MERCADO pronto para anexar a qualquer contexto de LLM.
 
@@ -646,6 +984,8 @@ def bloco_contexto_mercado(
     noticiário por ativo sai de :func:`core.conjuntura.bloco_para_prompt`, que
     escolhe acervo local ou vitrine e carimba a data. ``noticias_gerais`` junta
     as manchetes do mercado sem filtro de ativo, para perguntas de cenário.
+    ``tickers_movimento`` dá pregão diário próprio a ativos B3/FII sem puxar o
+    noticiário deles — para o chat que já traz esse noticiário no contexto.
     """
     partes = [
         "=== CONTEXTO DE MERCADO ===",
@@ -656,7 +996,11 @@ def bloco_contexto_mercado(
         "MACROECONOMIA E JUROS:",
     ]
     partes += _macro_supabase_cache()
+    partes += _macro_brasil()
     partes += _macro_local()
+    partes += [""] + _trajetoria_cache()
+    partes += [""] + _movimento_recente(ativos, tickers_movimento)
+    partes += [""] + _cenarios_analogos()
 
     if noticias_gerais:
         partes += ["", "NOTICIÁRIO GERAL DO MERCADO:"]

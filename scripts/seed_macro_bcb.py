@@ -191,6 +191,20 @@ def _annual_compound_pct(df: pd.DataFrame, col: str) -> pd.DataFrame:
     return out
 
 
+def _ipca_12m_fim_de_ano(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    """IPCA em 12 meses no último mês observado de cada ano (12 IPCAs mensais).
+
+    Nos anos fechados é o IPCA do ano; no corrente é o 12 meses até o último
+    mês divulgado -- não o acumulado no ano, que em 04/10/2026 era 3,11%
+    contra 4,22% em 12 meses.
+    """
+    fator = (1 + df.iloc[:, 0].astype("float64") / 100.0)
+    doze = fator.rolling(12, min_periods=12).apply(lambda x: x.prod(), raw=True) - 1
+    out = (doze * 100.0).resample("YE-DEC").last().to_frame()
+    out.columns = [col]
+    return out
+
+
 def _build_macro(dados: dict[str, pd.DataFrame], icc_mode: str = "final") -> pd.DataFrame:
     parts: list[pd.DataFrame] = []
     transforms: list[tuple[str, str, Callable[[pd.DataFrame, str], pd.DataFrame]]] = [
@@ -206,6 +220,7 @@ def _build_macro(dados: dict[str, pd.DataFrame], icc_mode: str = "final") -> pd.
 
     if not dados["ipca"].empty:
         parts.append(_annual_compound_pct(dados["ipca"], "ipca"))
+        parts.append(_ipca_12m_fim_de_ano(dados["ipca"], "_ipca_12m"))
 
     if not dados["icc"].empty:
         icc_fn = _annual_mean if icc_mode == "mean" else _annual_last
@@ -224,7 +239,16 @@ def _build_macro(dados: dict[str, pd.DataFrame], icc_mode: str = "final") -> pd.
     if "icc" in df.columns:
         df["icc_delta"] = pd.to_numeric(df["icc"], errors="coerce").diff()
     if "selic" in df.columns and "ipca" in df.columns:
-        df["juros_real_ex_ante"] = (df["selic"] * 100.0) - df["ipca"]
+        # Juro real por Fisher, (1 + Selic) / (1 + IPCA 12m) − 1. Era Selic −
+        # IPCA do ano: aritmético e, no ano corrente, contra o IPCA acumulado
+        # no ano -- 10,64% em 2026 contra 9,14% por Fisher sobre o IPCA 12m e
+        # ~7,3% do Tesouro IPCA+. A coluna continua ``juros_real_ex_ante`` para
+        # não exigir DDL, mas a conta é EX POST (inflação já ocorrida); o ex
+        # ante com o Focus sai em ``core.macro_brasil``. Sem 12 meses de IPCA
+        # (primeiro ano da janela), cai no IPCA do ano.
+        ipca_ref = (pd.to_numeric(df["_ipca_12m"], errors="coerce").fillna(df["ipca"])
+                    if "_ipca_12m" in df.columns else df["ipca"])
+        df["juros_real_ex_ante"] = ((1 + df["selic"]) / (1 + ipca_ref / 100.0) - 1) * 100.0
 
     for col in MACRO_COLUMNS:
         if col not in df.columns:

@@ -3,6 +3,7 @@ import datetime as dt
 import json
 
 import pandas as pd
+import pytest
 
 import core.us_data as us
 import core.us_read as ur
@@ -94,6 +95,7 @@ def test_use_snapshot_decide_por_ambiente(monkeypatch):
     monkeypatch.setattr(ur, "snapshot_ready", lambda: True)
     assert us._use_snapshot() is True            # só vitrine → usa snapshot
 
+    us._reset_use_snapshot_memo()                # o "sim" fica guardado 12 h (INF-A2)
     monkeypatch.setattr(ur, "snapshot_ready", lambda: False)
     assert us._use_snapshot() is False           # nada → sem fallback
 
@@ -119,6 +121,53 @@ def test_dossie_snapshot_ausente_retorna_erro(monkeypatch):
     monkeypatch.setattr(ur, "load_snapshot_dossie", lambda s: None)
     d = us.dossie("ZZZZ")
     assert d["symbol"] == "ZZZZ" and "erro" in d
+
+
+def test_use_snapshot_guarda_so_o_sim(monkeypatch):
+    """INF-A2: 2-3 consultas por chamada. O "sim" vale 12 h; o "não" se refaz,
+    porque falha transitória também responde "não" e não pode fixar o modo."""
+    chamadas = []
+
+    def _schema():
+        chamadas.append("schema")
+        return False
+
+    monkeypatch.setattr(ur, "schema_ready", _schema)
+    monkeypatch.setattr(ur, "snapshot_ready", lambda: False)
+    assert us._use_snapshot() is False
+    assert us._use_snapshot() is False
+    assert chamadas == ["schema", "schema"]
+
+    monkeypatch.setattr(ur, "snapshot_ready", lambda: True)
+    assert us._use_snapshot() is True
+    assert us._use_snapshot() is True
+    assert chamadas == ["schema"] * 3            # o segundo "sim" veio da memória
+
+    monkeypatch.setattr(us, "_USE_SNAPSHOT_SIM_DESDE",
+                        us._USE_SNAPSHOT_SIM_DESDE - us._USE_SNAPSHOT_TTL_SECONDS - 1)
+    assert us._use_snapshot() is True
+    assert chamadas == ["schema"] * 4            # venceu: perguntou de novo
+
+
+def test_dossie_da_vitrine_cacheia_por_ticker_e_nao_cacheia_ausencia(monkeypatch):
+    if not hasattr(us._dossie_da_vitrine, "clear"):
+        pytest.skip("sem Streamlit, _cache_pesado é identidade")
+    lidas = []
+
+    def _ler(s):
+        lidas.append(s)
+        return None if s == "ZZZZ" else {"symbol": s}
+
+    monkeypatch.setattr(us, "_use_snapshot", lambda: True)
+    monkeypatch.setattr(ur, "load_snapshot_dossie", _ler)
+    assert us.dossie("aapl ")["symbol"] == "AAPL"
+    assert us.dossie("AAPL")["symbol"] == "AAPL"
+    assert us.dossie("MSFT")["symbol"] == "MSFT"
+    assert lidas == ["AAPL", "MSFT"]             # chave normalizada, um por ticker
+
+    assert "erro" in us.dossie("ZZZZ")
+    assert "erro" in us.dossie("ZZZZ")
+    assert lidas.count("ZZZZ") == 2              # ausência não fica guardada 12 h
 
 
 def test_migration_044_autossuficiente():

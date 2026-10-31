@@ -23,9 +23,12 @@ from core.inteligencia_ativos import veredito
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_carteira import chat_com_carteira
 from core.llm_dossie_carteira import gerar_dossie_classe
+from core.llm_grounding import aviso_ancoragem
 from core.utils import escapar_cifrao
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 
-_PROVEDOR_LABEL = {"openai": "OpenAI", "gemini": "Gemini", "openrouter": "OpenRouter"}
+_PROVEDOR_LABEL = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini",
+                   "openrouter": "OpenRouter"}
 
 _SUGESTOES: dict[str, tuple[str, ...]] = {
     "acoes": (
@@ -142,14 +145,17 @@ def render_chat_carteira(
     st.markdown("---")
     st.markdown(f"#### 💬 Converse sobre {_TITULO.get(classe, 'esta classe')}")
     if not llm_disponivel():
-        st.info("Nenhum provedor LLM configurado. Adicione OPENAI_API_KEY ou "
-                "GEMINI_API_KEY para conversar sobre esta classe.")
+        st.info("Esta conversa não está disponível no momento.")
+        aviso_lacuna("Nenhum provedor LLM configurado para o chat da carteira",
+                     codigo="tela.inteligencia.chat_carteira_sem_provedor",
+                     entidade=classe)
         return
 
     provedores = provedores_disponiveis()
     if provedores:
-        st.caption("Provedor disponível: " + ", ".join(
-            _PROVEDOR_LABEL.get(p, p) for p in provedores))
+        detalhe_tecnico("Provedor disponível: " + ", ".join(
+            _PROVEDOR_LABEL.get(p, p) for p in provedores),
+            codigo="inteligencia.chat_provedor")
 
     hist_key = f"chat_carteira_{classe}_history"
     sig_key = f"chat_carteira_{classe}_signature"
@@ -224,17 +230,28 @@ def render_chat_carteira(
                              width="stretch"):
                     sugerida = pergunta
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     historico = load_chat_history(memory_key, session_key=hist_key)
     for mensagem in visible_chat_history(historico, hist_key):
-        with st.chat_message(mensagem["role"]):
+        with conversa.chat_message(mensagem["role"]):
             st.markdown(escapar_cifrao(mensagem["content"]))
+
+    # Sempre desenhada, também no dossiê: antes ela sumia enquanto ele era gerado.
+    digitada = st.chat_input(
+        _PLACEHOLDER.get(classe, _PLACEHOLDER["acoes"]),
+        key=f"chat_carteira_{classe}_input",
+    )
 
     if gerar:
         pedido = "Gerar o dossiê completo desta classe."
         historico.append({"role": "user", "content": pedido})
-        with st.chat_message("user"):
+        with conversa.chat_message("user"):
             st.markdown(pedido)
-        with st.chat_message("assistant"):
+        with conversa.chat_message("assistant"):
+            aviso = ""
             with st.spinner("Montando o dossiê — concentração, pares, "
                             "substituições, tributação e plano de aporte…"):
                 try:
@@ -245,27 +262,30 @@ def render_chat_carteira(
                     # com o veredito sai avisada no topo, nunca em silêncio.
                     resposta = veredito.com_aviso(
                         resposta, veredito.conferir_resposta(resposta, avaliacoes))
+                    aviso = aviso_ancoragem(resposta, contexto, pedido)
                 except Exception as exc:  # provedor fora do ar, timeout, dado ausente
-                    resposta = f"Não foi possível gerar o dossiê agora: {exc}"
+                    resposta = None
+                    falha_de_acao("Não foi possível gerar o dossiê agora. "
+                                  "Tente de novo em instantes.", exc)
+            if resposta is None:
+                historico.pop()  # pedido sem resposta não vai ao histórico
+                return
             st.markdown(escapar_cifrao(resposta))
-            st.caption("Análise educacional baseada nos dados carregados nesta "
-                       "aba. A decisão é sua.")
+            if aviso:
+                st.caption(aviso)
         historico.append({"role": "assistant", "content": resposta})
         save_chat_history(memory_key, historico, session_key=hist_key)
         return
 
-    digitada = st.chat_input(
-        _PLACEHOLDER.get(classe, _PLACEHOLDER["acoes"]),
-        key=f"chat_carteira_{classe}_input",
-    )
     pergunta = sugerida or digitada
     if not pergunta:
         return
 
     historico.append({"role": "user", "content": pergunta})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(pergunta))
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
+        aviso = ""
         with st.spinner("Consultando carteira, macro, curva e noticiário…"):
             try:
                 contexto = build_context(pergunta, valores_reais=valores_reais)
@@ -274,10 +294,15 @@ def render_chat_carteira(
                     lambda h, msg: chat_com_carteira(contexto, h, msg,
                                                      classe=classe),
                     historico[:-1], pergunta, avaliacoes)
+                aviso = aviso_ancoragem(resposta, contexto, pergunta)
             except Exception as exc:  # provedor fora do ar, timeout, dado ausente
-                resposta = f"Não foi possível consultar a LLM neste momento: {exc}"
+                resposta = None
+                falha_de_acao("Não foi possível responder agora. Tente de novo em instantes.", exc)
+        if resposta is None:
+            historico.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(resposta))
-        st.caption("Análise educacional baseada nos dados carregados nesta "
-                   "aba. A decisão é sua.")
+        if aviso:
+            st.caption(aviso)
     historico.append({"role": "assistant", "content": resposta})
     save_chat_history(memory_key, historico, session_key=hist_key)

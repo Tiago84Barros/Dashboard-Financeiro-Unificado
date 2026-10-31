@@ -11,6 +11,15 @@ import pandas as pd
 
 VALIDATION_STRATEGY_ID = "fii_rank_equal_weight_buffered.v1"
 
+# ``market.fii_validation_runs`` guarda dois tipos de run e não tem coluna que
+# os distinga: a validação PIT (``data_pipeline/market/fii_pit.py``, com
+# ``backtest`` no ``metrics_json``) e o gate de prontidão que a auditoria diária
+# grava (``fii_ingest.record_validation_readiness``, só com ``data_audit`` e
+# sempre ``blocked``). Toda leitura de "a validação vigente" precisa deste
+# filtro: sem ele, a auditoria de cada dia esconde o último run PIT aprovado --
+# foi assim que a vitrine de FIIs parou de publicar desde 28/09/2026.
+FILTRO_RUN_VALIDACAO_PIT = "metrics_json->'backtest' IS NOT NULL"
+
 
 def validation_supports_strategy(validation: dict[str, Any], strategy_id: str) -> bool:
     """Só aceita um gate que tenha validado exatamente o motor em execução."""
@@ -18,6 +27,72 @@ def validation_supports_strategy(validation: dict[str, Any], strategy_id: str) -
     backtest = metrics.get("backtest") or {}
     validated_strategy = metrics.get("strategy_id") or backtest.get("strategy_id")
     return validation.get("status") == "passed" and validated_strategy == strategy_id
+
+
+# Piso do limite inferior do IC 95% do excesso mensal sobre o IFIX. É AVISO,
+# não portão: `validate_methodology` continua sem exigir excesso positivo.
+#
+# Medido no run 90 (v6.10.0, 70 períodos): excesso médio de +0,136 p.p./mês
+# com IC [−0,127; +0,380]. Os runs 88 e 89 dão o mesmo retrato (limite
+# inferior −0,112 e −0,141). Com o piso como bloqueio, os três reprovam e a
+# vitrine de FIIs, recém-destravada no PR #486, para de publicar. Endurecer o
+# portão é decisão humana; até lá o selo "Aprovado" sai acompanhado do IC e
+# da marca "excesso não significativo", para não ser lido como "bate o
+# índice". Os três leitores (card da carteira, aba de validação e
+# `core.validacao_motor`) leem esta constante: guarda duplicada diverge.
+PISO_IC_EXCESSO = 0.0
+
+
+def leitura_do_excesso(metrics: dict[str, Any] | None) -> dict[str, Any]:
+    """Excesso sobre o IFIX e seu IC, prontos para a tela, a partir do run.
+
+    Aceita o ``metrics_json`` do run (com ``backtest``) ou o próprio dicionário
+    do backtest. ``disponivel`` falso quando o intervalo não existe ou é NaN —
+    ausência não vira "não significativo", que é afirmação sobre um número.
+    """
+    metrics = metrics or {}
+    pit = metrics.get("backtest") if isinstance(metrics.get("backtest"), dict) else metrics
+    ci = pit.get("excess_bootstrap") or {}
+
+    def _f(valor: Any) -> float | None:
+        try:
+            numero = float(valor)
+        except (TypeError, ValueError):
+            return None
+        return numero if math.isfinite(numero) else None
+
+    inferior, superior = _f(ci.get("lower")), _f(ci.get("upper"))
+    media = _f(pit.get("mean_excess"))
+    if media is None:
+        media = _f(ci.get("mean"))
+    disponivel = inferior is not None and superior is not None
+    return {
+        "disponivel": disponivel,
+        "media": media,
+        "inferior": inferior,
+        "superior": superior,
+        "periodos": int(ci.get("n") or 0),
+        "piso": PISO_IC_EXCESSO,
+        "significativo": bool(disponivel and inferior > PISO_IC_EXCESSO),
+    }
+
+
+def _pp(valor: float) -> str:
+    """Retorno mensal em fração para pontos percentuais com vírgula."""
+    return f"{valor * 100:+.3f}".replace(".", ",").replace("-", "−")
+
+
+def texto_do_excesso(leitura: dict[str, Any]) -> str:
+    """Uma linha: média, IC 95% e o veredito contra o piso."""
+    if not leitura.get("disponivel"):
+        return "IC do excesso sobre o IFIX indisponível neste run"
+    media = leitura.get("media")
+    prefixo = (f"excesso médio de {_pp(media)} p.p./mês sobre o IFIX, "
+               if media is not None else "excesso sobre o IFIX, ")
+    veredito = ("significativo" if leitura["significativo"]
+                else "excesso não significativo")
+    return (f"{prefixo}IC 95% de {_pp(leitura['inferior'])} a "
+            f"{_pp(leitura['superior'])} p.p. — {veredito}")
 
 
 @dataclass(frozen=True)
@@ -278,10 +353,20 @@ def robust_optimizer_point_in_time_backtest(
 ) -> dict[str, Any]:
     """Walk-forward do mesmo otimizador robusto usado pela carteira-modelo.
 
-    Cada rebalanceamento aplica a elegibilidade padrão v6.7, o score reconstruído
+    Cada rebalanceamento aplica a elegibilidade padrão vigente, o score reconstruído
     naquela data, o cenário macro então observável e correlações calculadas
     exclusivamente com retornos anteriores à decisão.
+
+    Retorno em três camadas (auditoria app4, FII-10): bruto, após custo de
+    giro e líquido de IR. ``portfolio_return`` -- o que alimenta excesso,
+    bootstrap e regimes -- é o LÍQUIDO: com giro de 263% ao ano, vender cota
+    com ganho paga 20% (o rendimento distribuído é isento), e um backtest que
+    não cobra isso mede um investidor que não existe. O IR exige separar preço
+    de provento; sem a coluna ``price_return`` nos retornos ele não é
+    calculado e ``ir_calculado`` sai ``False`` -- nunca um zero silencioso.
+    O IFIX de comparação segue bruto: é o índice, não um investidor.
     """
+    from core.backtest_liquido import IR_FII_GANHO, RastreadorIR, premissas_fii
     from core.fii_carteira_protegida import montar_carteira_com_concessao
     from core.fii_integrated_model import (
         ColunasDeElegibilidadeAusentes,
@@ -316,6 +401,8 @@ def robust_optimizer_point_in_time_backtest(
     b.index = pd.to_datetime(b.index).normalize()
     dates = sorted(set(s["reference_date"]))
     return_dates = sorted(set(r["date"]))
+    ir_calculado = "price_return" in r.columns
+    rastreador_ir = RastreadorIR(IR_FII_GANHO)
     previous = pd.Series(dtype=float)
     observations: list[dict[str, Any]] = []
     ranks: list[pd.Series] = []
@@ -548,7 +635,23 @@ def robust_optimizer_point_in_time_backtest(
             continue
         periodic = matrix.mul(weights, axis=1).sum(axis=1, skipna=True) / present_weight
         gross = float((1.0 + periodic).prod() - 1.0)
-        net = gross - turn * (transaction_cost + slippage)
+        after_costs = gross - turn * (transaction_cost + slippage)
+        ir_periodo = 0.0
+        if ir_calculado:
+            # O IR do rebalanceamento cai no período que ele abre, como o
+            # custo de giro. Mês sem retorno conta como posição parada, a
+            # mesma convenção do bruto acima.
+            ir_periodo = rastreador_ir.rebalancear(weights.to_dict())
+            price_matrix = period_rows.pivot_table(
+                index="date", columns="ticker", values="price_return", aggfunc="last",
+            ).reindex(index=matrix.index, columns=matrix.columns)
+            total_por_ativo = (1.0 + matrix.fillna(0.0)).prod() - 1.0
+            preco_por_ativo = (1.0 + price_matrix.fillna(0.0)).prod() - 1.0
+            rastreador_ir.evoluir(
+                total_por_ativo.to_dict(),
+                (total_por_ativo - preco_por_ativo).to_dict(),
+            )
+        net = after_costs - ir_periodo
         benchmark_period = b[b.index >= execution_date]
         if next_execution is not None:
             benchmark_period = benchmark_period[benchmark_period.index < next_execution]
@@ -559,6 +662,9 @@ def robust_optimizer_point_in_time_backtest(
         observations.append({
             "date": execution_date, "decision_date": decision,
             "portfolio_return": net, "benchmark_return": benchmark_return,
+            "portfolio_return_bruto": gross,
+            "portfolio_return_apos_custos": after_costs,
+            "ir_periodo": ir_periodo,
             "coverage": coverage, "turnover": turn,
             "holdings": {
                 str(ticker): float(weight) for ticker, weight in weights.items()
@@ -600,12 +706,14 @@ def robust_optimizer_point_in_time_backtest(
         return {
             "status": "blocked",
             "strategy_id": LIVE_PORTFOLIO_STRATEGY_ID,
-            "blockers": ["nenhum período PIT elegível para o otimizador v6.7"],
+            "blockers": ["nenhum período PIT elegível para o otimizador robusto"],
             "optimizer_failures": optimizer_failures[:100],
             "optimizer_failure_summary": failure_summary,
             "missing_macro_periods": missing_macro_periods,
         }
     excess = result["portfolio_return"] - result["benchmark_return"]
+    excess_bruto = result["portfolio_return_bruto"] - result["benchmark_return"]
+    excess_apos_custos = result["portfolio_return_apos_custos"] - result["benchmark_return"]
     stabilities = [
         ranking_stability(left, right)["spearman"]
         for left, right in zip(ranks, ranks[1:])
@@ -625,6 +733,16 @@ def robust_optimizer_point_in_time_backtest(
         "mean_benchmark": float(result["benchmark_return"].mean()),
         "mean_excess": float(excess.mean()),
         "excess_bootstrap": bootstrap_mean_ci(excess),
+        # As três camadas lado a lado: quanto do excesso o custo de giro come
+        # e quanto o IR come. O líquido acima é o padrão; estes são a régua.
+        "mean_return_bruto": float(result["portfolio_return_bruto"].mean()),
+        "mean_return_apos_custos": float(result["portfolio_return_apos_custos"].mean()),
+        "mean_excess_bruto": float(excess_bruto.mean()),
+        "mean_excess_apos_custos": float(excess_apos_custos.mean()),
+        "excess_bootstrap_bruto": bootstrap_mean_ci(excess_bruto),
+        "mean_ir_periodo": float(result["ir_periodo"].mean()),
+        "ir_calculado": bool(ir_calculado),
+        "premissas_liquido": premissas_fii(transaction_cost, slippage),
         "mean_coverage": float(result["coverage"].mean()),
         "annualized_turnover": float(np.mean(turnovers) * 12),
         "rank_stability": float(np.mean(valid_stabilities)) if valid_stabilities else np.nan,

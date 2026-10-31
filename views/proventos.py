@@ -24,6 +24,7 @@ from design.componentes import (
     indicador_linha,
     secao_titulo,
 )
+from design.lacunas import detalhe_tecnico
 
 # ── Gráfico de barras mensais ─────────────────────────────────────────────────
 
@@ -93,11 +94,11 @@ def render() -> None:
         badge_status(f"{d['num_eventos']} eventos", "neutro")
 
     if d["num_eventos"] == 0:
-        st.info(
-            "**Nenhum provento registrado.** A tabela `dividends` está vazia "
-            "para este usuário. Importe os dados via App 2 ou script.",
-            icon="💵",
+        detalhe_tecnico(
+            "Tabela dividends vazia para este usuário; os dados entram via App 2 ou script.",
+            codigo="proventos.tabela_vazia",
         )
+        st.info("**Nenhum provento registrado.**", icon="💵")
         return
 
     st.markdown("<br>", unsafe_allow_html=True)

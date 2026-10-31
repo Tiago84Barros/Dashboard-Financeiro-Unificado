@@ -32,6 +32,12 @@ from core.inteligencia_ativos.destaques_relatorios import (
     Trecho,
     titulo_curto,
 )
+from core.seguranca.procedencia import (
+    cercar_documentos,
+    cercar_linhas,
+    linha_externa,
+    texto_documental,
+)
 
 NAO_DISPONIVEL = "Dado não disponível."
 
@@ -758,12 +764,20 @@ def texto_noticias(n: Noticias, ticker: str) -> str:
               "classificadas pelo código]"]
     if not n.itens:
         linhas.append(f"- {n.motivo or NAO_DISPONIVEL}")
+    # Manchete, resumo e veículo são texto de terceiro: neutralizados e entre
+    # marcadores (auditoria app4, LLM-A4). Antes entravam crus -- inclusive o
+    # resumo, com quebra de linha, que é a forma mais simples de abrir uma
+    # seção nova no prompt.
+    corpo: list[str] = []
     for i in n.itens:
         dims = ", ".join(ROTULO_DIMENSAO.get(d, d) for d in i.affected_dimension)
-        linhas.append(
+        corpo.append(
             f"- {_data_br(i.date)} · impacto {i.impact_level} · {dims} · "
-            f"\"{i.headline}\" ({_fonte(i.source, i.url)})"
-            + (f"\n  Resumo da fonte: {i.summary}" if i.summary else ""))
+            f"\"{linha_externa(i.headline)}\" "
+            f"({linha_externa(_fonte(i.source, i.url), teto=300)})")
+        if i.summary:
+            corpo.append(f"  Resumo da fonte: {linha_externa(i.summary, teto=600)}")
+    linhas.extend(cercar_linhas(corpo, recuo=""))
     if n.descartadas:
         linhas.append("- Descartadas pelo filtro: " + "; ".join(
             f"{k}: {v}" for k, v in n.descartadas.items()))
@@ -779,25 +793,33 @@ def texto_relatorios(r: Relatorios, ticker: str) -> str:
                               if r.trechos else ", só metadados]")]
     if not r.documentos and not r.trechos:
         linhas.append(f"- {r.motivo or NAO_DISPONIVEL}")
+    # Frase, título e fonte são texto do emissor: passam pela neutralização e
+    # vão para dentro da cerca de documento oficial (LLM-A4, sobra do 13b).
+    # O prefixo da cerca não é o do noticiário, então ``sem_cercas`` não a
+    # remove -- os números dos trechos continuam lastro da resposta, como
+    # pede a regra 2 do prompt de ``leitura_relatorios``.
+    corpo: list[str] = []
     tema_atual = None
     for t in r.trechos:
         if t.tema != tema_atual:
             tema_atual = t.tema
-            linhas.append(f"Trechos · {ROTULO_TEMA[t.tema]}:")
-        linhas.append(f"- \"{t.frase}\" ({_data_br(t.data)} · "
-                      f"{titulo_curto(t.titulo, t.tipo)})")
+            corpo.append(f"Trechos · {ROTULO_TEMA[t.tema]}:")
+        corpo.append(f"- \"{texto_documental(t.frase)}\" ({_data_br(t.data)} · "
+                     f"{linha_externa(titulo_curto(t.titulo, t.tipo))})")
     if r.documentos:
-        linhas.append("Documentos publicados:")
+        corpo.append("Documentos publicados:")
     for d in r.documentos:
-        linhas.append(f"- {_data_br(d.reference_date)} · {d.rotulo} · "
-                      f"\"{d.titulo}\" ({_fonte(d.source, d.source_url)})")
+        corpo.append(f"- {_data_br(d.reference_date)} · {d.rotulo} · "
+                     f"\"{linha_externa(d.titulo)}\" "
+                     f"({linha_externa(_fonte(d.source, d.source_url), teto=300)})")
     ind = r.indicios()
-    linhas.append("Indícios pelo título (onde procurar, não conclusão):")
+    corpo.append("Indícios pelo título (onde procurar, não conclusão):")
     for chave, rotulo in PERGUNTAS:
         docs = ind[chave]
-        linhas.append(f"- {rotulo}: " + (
-            "; ".join(f"{x.titulo} ({_data_br(x.reference_date)})"
+        corpo.append(f"- {rotulo}: " + (
+            "; ".join(f"{linha_externa(x.titulo)} ({_data_br(x.reference_date)})"
                       for x in docs) if docs else NAO_DISPONIVEL))
+    linhas.extend(cercar_documentos(corpo))
     linhas.append("INTERPRETAÇÃO (sua): responda às sete perguntas só com o "
                   "que os títulos e os trechos acima sustentam; o resto fica "
                   "como \"Dado não disponível.\" Os trechos foram escolhidos "

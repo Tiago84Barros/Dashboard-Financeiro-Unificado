@@ -13,11 +13,11 @@ def test_snapshot_tesouro_legado_nao_substitui_consolidado_xp():
     assert "asset_source_rank = 1" in sql
 
 
-def test_evolucao_xp_ignora_linhas_tesouro_rotuladas_como_xp():
+def test_evolucao_trata_linhas_tesouro_rotuladas_como_xp_como_tesouro():
     sql = investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower()
 
     assert "td-snap-%" in sql
-    assert "not like" in sql
+    assert "effective_source_table" in sql
 
 
 def test_falha_da_carteira_real_nao_retorna_mock(monkeypatch):
@@ -74,7 +74,10 @@ def test_falha_de_evolucao_real_retorna_estado_vazio(monkeypatch):
 
 def test_evolucao_nao_soma_tesouro_rotulado_como_xp_na_mesma_data():
     # Ago/26: o consolidado da B3 e o extrato do Tesouro caem em 2026-08-31.
+    # As linhas td-snap contam como tesouro_direto e o desempate por ativo
+    # fica com uma so -- a mesma regra do ponto de hoje.
     sql = " ".join(investimentos._SQL_EVOLUCAO_SNAPSHOTS.lower().split())
-    xp_snaps = sql.split("xp_snaps as", 1)[1]
 
-    assert "coalesce(pps.source_id, '') not like 'td-snap-%'" in xp_snaps
+    assert "when pps.source_id like 'td-snap-%' then 'tesouro_direto'" in sql
+    assert "partition by ls.corte, pps.asset_id" in sql
+    assert "asset_source_rank = 1" in sql

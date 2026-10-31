@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import threading
+import time
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, Mapping
 
 import pandas as pd
@@ -93,29 +95,9 @@ def observation_applies_to_asset_class(
     )
 
 
-def _ler_insumos(fonte, *, asset_class: str, sectors: list[str], as_of: datetime,
-                 knowledge_mode: str) -> tuple[list, list]:
-    """Exposições do setor e as 24 últimas observações de cada série.
-
-    ``fonte`` é o engine do Docker local ou os insumos publicados
-    (:mod:`core.macro_data.insumos_publicados`), que respondem o mesmo.
-    """
-    from core.macro_data.insumos_publicados import InsumosMacroPublicados
-
-    if isinstance(fonte, InsumosMacroPublicados):
-        return fonte.ler(asset_class=asset_class, sectors=sectors,
-                         as_of=as_of, knowledge_mode=knowledge_mode)
-    with fonte.connect() as conn:
-        exposures = conn.execute(
-            text("""
-                SELECT sector, factor, sensitivity, confidence, channel
-                  FROM macro_sector_exposures
-                 WHERE asset_class=:asset_class AND sector = ANY(:sectors)
-            """),
-            {"asset_class": asset_class, "sectors": sectors},
-        ).mappings().all()
-        observations = conn.execute(
-            text("""
+#: As 24 últimas observações de cada série, point-in-time em ``as_of``.
+#: Não depende da classe nem do setor -- só de ``as_of`` e do modo.
+_SQL_OBSERVACOES = text("""
                 WITH versions AS (
                     SELECT i.provider, i.provider_code, i.country_code, i.category,
                            i.frequency, i.unit, i.source_url,
@@ -155,9 +137,94 @@ def _ler_insumos(fonte, *, asset_class: str, sectors: list[str], as_of: datetime
                 )
                 SELECT * FROM ranked WHERE position <= 24
                 ORDER BY provider, provider_code, country_code, reference_period
+""")
+
+#: Leitura única com TTL curto (auditoria app4, LLM-A10, 04/10/2026). O bloco
+#: de mercado de um chat de carteira monta a conjuntura de b3 e de fii, e cada
+#: uma rodava este SELECT inteiro -- 1,7-2,6 s cada no armazém local, ~70% do
+#: bloco (medido: 5,5 s quente, ``_ler_insumos`` x2 = 4,0 s). O resultado não
+#: depende da classe nem do setor, então a segunda montagem e o turno seguinte
+#: do chat reaproveitam a primeira leitura. Medido no mesmo horário, carteira
+#: de 3 ações + 2 FIIs: bloco quente de 4,8-5,5 s para 1,2-1,4 s, frio de
+#: 7,9 s para 5,9 s, ao vivo de 4,9-5,8 s para 1,4 s no turno seguinte; saída
+#: idêntica (marcador da cerca à parte).
+_TTL_OBSERVACOES_S = 300
+_cache_observacoes: dict[tuple[str, str], tuple[datetime, float, list]] = {}
+_trava_observacoes = threading.Lock()
+
+
+
+def _limpar_cache_observacoes() -> None:
+    """Esquece as leituras guardadas (testes que regravam a mesma base)."""
+    with _trava_observacoes:
+        _cache_observacoes.clear()
+
+
+def _chave_fonte(fonte) -> str | None:
+    url = getattr(fonte, "url", None)
+    if url is None:
+        return None
+    try:
+        return url.render_as_string(hide_password=True)
+    except AttributeError:
+        return str(url)
+
+
+def _observacoes(fonte, conn, *, as_of: datetime, knowledge_mode: str) -> list:
+    """Observações point-in-time, com reaproveitamento seguro para o PIT.
+
+    Reaproveita a leitura feita em ``lido <= as_of`` só enquanto
+    ``as_of - lido`` couber no TTL: tudo o que ela trouxe já tinha sido
+    recuperado e divulgado até ``lido`` e, portanto, até ``as_of``. O que fica
+    de fora é só a linha recuperada no intervalo -- no máximo 5 min, para
+    séries que a rotina grava uma vez por dia. Pedido com ``as_of`` anterior
+    ao da leitura (reconstrução histórica) relê sempre: o filtro
+    ``retrieved_at <= as_of`` mudaria o resultado. ``conn`` é a conexão já
+    aberta por :func:`_ler_insumos`; só é usada quando não há o que reaproveitar.
+    """
+    chave = _chave_fonte(fonte)
+    agora = time.monotonic()
+    if chave is not None:
+        with _trava_observacoes:
+            achado = _cache_observacoes.get((chave, knowledge_mode))
+        if achado is not None:
+            lido, quando, linhas = achado
+            if (agora - quando <= _TTL_OBSERVACOES_S
+                    and lido <= as_of <= lido + timedelta(seconds=_TTL_OBSERVACOES_S)):
+                return linhas
+    linhas = conn.execute(
+        _SQL_OBSERVACOES, {"as_of": as_of, "knowledge_mode": knowledge_mode},
+    ).mappings().all()
+    if chave is not None:
+        with _trava_observacoes:
+            _cache_observacoes[(chave, knowledge_mode)] = (as_of, agora, linhas)
+    return linhas
+
+
+def _ler_insumos(fonte, *, asset_class: str, sectors: list[str], as_of: datetime,
+                 knowledge_mode: str) -> tuple[list, list]:
+    """Exposições do setor e as 24 últimas observações de cada série.
+
+    ``fonte`` é o engine do Docker local ou os insumos publicados
+    (:mod:`core.macro_data.insumos_publicados`), que respondem o mesmo.
+    """
+    from core.macro_data.insumos_publicados import InsumosMacroPublicados
+
+    if isinstance(fonte, InsumosMacroPublicados):
+        return fonte.ler(asset_class=asset_class, sectors=sectors,
+                         as_of=as_of, knowledge_mode=knowledge_mode)
+    with fonte.connect() as conn:
+        exposures = conn.execute(
+            text("""
+                SELECT sector, factor, sensitivity, confidence, channel
+                  FROM macro_sector_exposures
+                 WHERE asset_class=:asset_class AND sector = ANY(:sectors)
             """),
-            {"as_of": as_of, "knowledge_mode": knowledge_mode},
+            {"asset_class": asset_class, "sectors": sectors},
         ).mappings().all()
+        # Mesma conexão das exposições, como antes: só o SELECT pesado é poupado.
+        observations = _observacoes(fonte, conn, as_of=as_of,
+                                    knowledge_mode=knowledge_mode)
 
     return exposures, observations
 

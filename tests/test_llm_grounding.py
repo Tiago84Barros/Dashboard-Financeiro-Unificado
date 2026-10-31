@@ -239,3 +239,13 @@ def test_cem_solto_e_afirmacao_e_nao_fator_de_conversao():
                   "A conta é (3.100 / 12.500) × 100.",
                   "Multiplicando por 100 obtém-se o percentual."):
         assert "100" not in {c.raw for c in check_grounding(frase, ctx).ungrounded}, frase
+
+
+def test_marcador_de_cerca_nao_vira_numero_do_contexto():
+    # O sufixo hex da cerca é aleatório; seus dígitos não podem ancorar nada.
+    from core.llm_grounding import check_grounding, extract_numbers
+    ctx = ("<<<INICIO DOCUMENTO-OFICIAL-3700000000abcdef>>>\nLucro de R$ 3 bi.\n"
+           "<<<FIM DOCUMENTO-OFICIAL-3700000000abcdef>>>")
+    assert [v for v, _ in extract_numbers(ctx)] == [3.0, 3e9]
+    rel = check_grounding("O lucro subiu 37%.", ctx)
+    assert [c.raw for c in rel.ungrounded] == ["37"]

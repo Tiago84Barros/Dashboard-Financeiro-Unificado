@@ -22,6 +22,7 @@ from html import escape
 import streamlit as st
 
 from core.cenario import modelo as mod
+from design.lacunas import falha_de_acao
 
 _FLASH = "cfg_cenario_flash"
 _ORIGEM = "cfg_cenario_origem"
@@ -108,7 +109,7 @@ def render() -> None:
     try:
         cenario = repo.carregar()
     except Exception as exc:  # noqa: BLE001
-        st.error(f"Não foi possível ler o cenário: {exc}")
+        falha_de_acao("Não foi possível ler o cenário.", exc)
         return
     hoje = dt.date.today()
     sinais = divergencia.sinais(cenario, referencias.referencias())
@@ -172,7 +173,7 @@ def render() -> None:
         st.error(str(exc))
         return
     except Exception as exc:  # noqa: BLE001
-        st.error(f"O cenário não foi salvo: {exc}")
+        falha_de_acao("O cenário não foi salvo.", exc)
         return
     if erros:
         st.error("O cenário não foi salvo:\n\n"

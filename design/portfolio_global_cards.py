@@ -225,16 +225,8 @@ def card_recomendacao_html(acao: advisor.Acao, rotulo: str, accent: str,
             f'<div style="font-size:0.66rem;color:{_TEXTO4};line-height:1.5;'
             f'margin-top:4px;">{sinais}</div>'
         )
-    if acao.analisadores:
-        partes.append(
-            f'<div style="font-size:0.63rem;color:{_TEXTO4};margin-top:5px;">'
-            f'analisadores: {_t(", ".join(sorted(acao.analisadores)))}</div>'
-        )
-    else:
-        partes.append(
-            f'<div style="font-size:0.63rem;color:{_TEXTO4};margin-top:5px;">'
-            f'nenhum analisador produziu sinal para este ativo</div>'
-        )
+    # Quais analisadores produziram sinal é procedência técnica: a view
+    # registra no log de lacunas (detalhe_tecnico), o card não a exibe.
     if acao.macro_delta is not None:
         cor = POSITIVO if acao.macro_delta >= 0 else NEGATIVO
         partes.append(

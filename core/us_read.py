@@ -311,11 +311,25 @@ _CASHFLOW_COLS = ("fiscal_year", "operating_cash_flow", "capex", "free_cash_flow
                   "stock_based_compensation")
 
 
+# "Último preço" é o último pregão COM fechamento. Em 02/10/2026 a barra chegou
+# com 2.560 de 2.627 closes nulos (o provedor devolveu o pregão sem o Close);
+# ordenar por data e pegar a primeira linha devolvia None e apagava o valor de
+# mercado derivado de ~97% do universo no próximo load_scoring_frame.
+_SQL_ULTIMO_PRECO = (
+    "SELECT COALESCE(adjusted_close, close) FROM market_us.prices_daily "
+    "WHERE symbol=:s AND COALESCE(adjusted_close, close) IS NOT NULL "
+    "ORDER BY date DESC LIMIT 1")
+
+_SQL_ULTIMO_PRECO_POR_SIMBOLO = (
+    "SELECT DISTINCT ON (symbol) symbol, COALESCE(adjusted_close, close) AS px "
+    "FROM market_us.prices_daily "
+    "WHERE COALESCE(adjusted_close, close) IS NOT NULL "
+    "ORDER BY symbol, date DESC")
+
+
 def _latest_close(conn, symbol: str):
     try:
-        return conn.execute(text(
-            "SELECT COALESCE(adjusted_close, close) FROM market_us.prices_daily "
-            "WHERE symbol=:s ORDER BY date DESC LIMIT 1"), {"s": symbol}).scalar()
+        return conn.execute(text(_SQL_ULTIMO_PRECO), {"s": symbol}).scalar()
     except Exception:  # noqa: BLE001
         return None
 
@@ -453,9 +467,7 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
                 "SELECT DISTINCT ON (symbol) symbol, market_cap "
                 "FROM market_us.market_cap_history ORDER BY symbol, date DESC"), conn)
             # último preço por símbolo (deriva market cap quando não há histórico)
-            closes = pd.read_sql(text(
-                "SELECT DISTINCT ON (symbol) symbol, COALESCE(adjusted_close, close) AS px "
-                "FROM market_us.prices_daily ORDER BY symbol, date DESC"), conn)
+            closes = pd.read_sql(text(_SQL_ULTIMO_PRECO_POR_SIMBOLO), conn)
     except Exception as exc:  # noqa: BLE001
         logger.warning("load_scoring_frame falhou: %s", exc)
         return pd.DataFrame(columns=cols)
@@ -1331,6 +1343,43 @@ def load_us_giro_diario(dias: int = 180) -> dict[str, dict]:
     return out
 
 
+def load_us_estilos() -> dict[str, dict]:
+    """{symbol: chaves de ``core.us_estilos.ESTILOS_COLS``}: momento 12-1 e P&D.
+
+    O momento sai do diário (``adjusted_close``, retorno total) dos últimos 400
+    dias; o P&D, do último exercício anual já disponível de cada símbolo. No
+    mesmo exercício, a linha com P&D preenchido vence a sem.
+    """
+    from core.us_estilos import estilos_da_empresa, momento_12_1
+
+    eng = _engine()
+    if eng is None or not schema_ready():
+        return {}
+    with eng.connect() as conn:
+        precos = pd.read_sql_query(text("""
+        SELECT symbol, date, adjusted_close
+        FROM market_us.prices_daily
+        WHERE date >= CURRENT_DATE - 400 AND adjusted_close > 0
+        """), conn)
+        pesquisa = pd.read_sql_query(text("""
+        SELECT DISTINCT ON (symbol) symbol, fiscal_year, rnd_expenses
+        FROM market_us.income_statements
+        WHERE period = 'annual'
+          AND (available_at IS NULL OR available_at <= CURRENT_DATE)
+        ORDER BY symbol, fiscal_year DESC, (rnd_expenses IS NULL), updated_at DESC
+        """), conn)
+    momento = momento_12_1(precos)
+    pd_por_symbol: dict[str, dict] = {}
+    for _, row in pesquisa.iterrows():
+        valor = pd.to_numeric(row.get("rnd_expenses"), errors="coerce")
+        if pd.isna(valor):
+            continue
+        pd_por_symbol[str(row["symbol"]).strip().upper()] = {
+            "pd_anual_usd": float(valor), "pd_exercicio": int(row["fiscal_year"])}
+    return {s: estilos_da_empresa(s, momento, pd_por_symbol)
+            for s in set(momento) | set(pd_por_symbol)}
+
+
 def load_us_resiliencia() -> dict[str, dict]:
     """Margem operacional nas recessões vs anos normais, por símbolo.
 
@@ -1447,6 +1496,77 @@ def load_us_macro() -> dict:
     # até onde a série mais antiga alcança.
     snapshot["as_of"] = min(datas).isoformat() if datas else None
     return snapshot
+
+
+# ── Câmbio para o backtest em reais (auditoria app4, EUA-J) ──────────────────
+
+def _serie_mensal(frame: pd.DataFrame, coluna_data: str, coluna_valor: str) -> pd.Series:
+    datas = pd.to_datetime(frame[coluna_data], errors="coerce", utc=True).dt.tz_localize(None)
+    valores = pd.to_numeric(frame[coluna_valor], errors="coerce")
+    serie = pd.Series(valores.to_numpy(), index=pd.DatetimeIndex(datas)).dropna()
+    serie = serie[serie > 0]
+    if serie.empty:
+        return pd.Series(dtype="float64")
+    serie.index = serie.index.normalize() + pd.offsets.MonthEnd(0)
+    return serie.groupby(level=0).last().sort_index()
+
+
+def load_usdbrl_mensal(*, engine=None) -> pd.Series:
+    """USDBRL de fim de mês para converter o walk-forward dos EUA em reais.
+
+    Fonte principal: ``public.info_economica_mensal."Cambio_Final"`` -- mensal
+    desde 2010-01, cobre todas as datas-base do painel (30/jun de 2010 a
+    2025). A cotação diária de ``asset_quotes`` (USDBRL, desde 2021-08) só
+    preenche o mês que a mensal ainda não fechou: o fim do último período do
+    painel (jun/2026) caiu fora dela em 04/10/2026. As duas diferem pouco
+    (30/06/2025: 5,4571 na mensal, 5,4784 na diária); a mensal tem
+    precedência para que o histórico inteiro saia da mesma régua.
+
+    Série vazia quando nenhuma das duas existe -- o backtest em reais diz
+    que faltou câmbio em vez de assumir câmbio constante.
+    """
+    eng = engine if engine is not None else _engine()
+    if eng is None:
+        return pd.Series(dtype="float64")
+    partes: list[pd.Series] = []
+    fontes: list[str] = []
+    consultas = (
+        ("info_economica_mensal.Cambio_Final",
+         'SELECT data, "Cambio_Final" AS valor FROM public.info_economica_mensal',
+         "data"),
+        ("asset_quotes.USDBRL",
+         "SELECT aq.timestamp AS data, aq.close AS valor FROM asset_quotes aq "
+         "JOIN assets a ON a.id = aq.asset_id "
+         "WHERE UPPER(TRIM(a.ticker)) = 'USDBRL' AND aq.close > 0",
+         "data"),
+    )
+    try:
+        conn_ctx = eng.connect()
+    except Exception as exc:  # noqa: BLE001 - sem câmbio, o bloco em reais avisa
+        logger.warning("load_usdbrl_mensal sem conexão: %s", exc)
+        return pd.Series(dtype="float64")
+    with conn_ctx as conn:
+        for nome, sql, coluna in consultas:
+            try:
+                frame = pd.read_sql(text(sql), conn)
+            except Exception as exc:  # noqa: BLE001 - a outra fonte ainda serve
+                logger.info("câmbio %s ilegível: %s", nome, exc)
+                try:
+                    conn.rollback()
+                except Exception:  # noqa: BLE001
+                    pass
+                continue
+            serie = _serie_mensal(frame, coluna, "valor") if not frame.empty                 else pd.Series(dtype="float64")
+            if not serie.empty:
+                partes.append(serie)
+                fontes.append(nome)
+    if not partes:
+        return pd.Series(dtype="float64")
+    serie = partes[0]
+    for complemento in partes[1:]:
+        serie = serie.combine_first(complemento)
+    serie.attrs["fonte"] = " + ".join(fontes)
+    return serie.sort_index()
 
 
 # ── Série mensal (formato do análogo da B3) ───────────────────────────────────

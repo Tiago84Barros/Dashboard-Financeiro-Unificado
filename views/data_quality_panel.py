@@ -1,7 +1,8 @@
 """
 views/data_quality_panel.py
-Componentes de UI reutilizáveis para transparência e saneamento de dados,
-usados na Análise Avançada e na Criação de Portfólio.
+Componentes de UI reutilizáveis para transparência e saneamento de dados.
+Só a Análise Avançada de Empresas B3 os montava; a aba saiu em 30/10/2026 e o
+módulo ficou sem tela, mantido para quando outra aba quiser o painel.
 
 - render_quality_report: mostra outliers, empresas incompletas, duplicados e
   campos críticos ausentes (sem mascarar nada).

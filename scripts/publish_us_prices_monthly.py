@@ -135,7 +135,53 @@ def _gravar(df: pd.DataFrame, *, engine, lote: int = LOTE) -> None:
             conn.execute(sql, params)
 
 
-def publicar(*, local, remoto, apply: bool, simbolos: list[str] | None = None) -> dict[str, int]:
+def parciais_obsoletas(chaves: pd.DataFrame) -> list[tuple]:
+    """(symbol, month_end) que não são o último pregão do próprio mês.
+
+    A derivação grava o último pregão COM DADO até o dia em que roda; a linha
+    de 04/09 ficava ao lado da de 30/09 como outra chave, e o retorno do mês
+    era contado duas vezes (EUA-N5). Em pandas, não em SQL, para o mesmo
+    código servir ao PostgreSQL e ao SQLite dos testes. O month_end volta no
+    tipo original (date no PostgreSQL), para o DELETE comparar sem cast.
+    """
+    if chaves.empty:
+        return []
+    df = chaves[["symbol", "month_end"]].drop_duplicates().copy()
+    df["_data"] = pd.to_datetime(df["month_end"].astype(str))
+    df = df.drop_duplicates(["symbol", "_data"])
+    df["_mes"] = df["_data"].dt.to_period("M")
+    ultimo = df.groupby(["symbol", "_mes"])["_data"].transform("max")
+    velhas = df[df["_data"] < ultimo].sort_values(["symbol", "_data"])
+    return list(zip(velhas["symbol"], velhas["month_end"]))
+
+
+def _chaves_no_destino(simbolos: list[str], *, engine) -> pd.DataFrame:
+    if not simbolos:
+        return pd.DataFrame(columns=["symbol", "month_end"])
+    tabela = _tabela_prices_monthly(engine)
+    marcadores = ", ".join(f":s{i}" for i in range(len(simbolos)))
+    params = {f"s{i}": simbolo for i, simbolo in enumerate(simbolos)}
+    with engine.connect() as conn:
+        return pd.read_sql(
+            text(f"SELECT symbol, month_end FROM {tabela} WHERE symbol IN ({marcadores})"),
+            conn, params=params,
+        )
+
+
+def _podar(chaves: list[tuple], *, engine, lote: int = LOTE) -> None:
+    tabela = _tabela_prices_monthly(engine)
+    for inicio in range(0, len(chaves), lote):
+        condicoes, params = [], {}
+        for i, (simbolo, mes) in enumerate(chaves[inicio:inicio + lote]):
+            condicoes.append(f"(symbol = :s{i} AND month_end = :m{i})")
+            params.update({f"s{i}": simbolo, f"m{i}": mes})
+        with engine.begin() as conn:
+            conn.execute(text(f"DELETE FROM {tabela} WHERE " + " OR ".join(condicoes)),
+                         params)
+
+
+def publicar(*, local, remoto, apply: bool, simbolos: list[str] | None = None,
+             relatorio: dict | None = None) -> dict[str, int]:
     """Copia a serie mensal dos simbolos pedidos do local para o remoto.
 
     Devolve {simbolo: linhas} -- gravadas, se apply, ou que seriam gravadas,
@@ -148,6 +194,17 @@ def publicar(*, local, remoto, apply: bool, simbolos: list[str] | None = None) -
     df = ler_do_local(alvo, engine=local)
     if apply:
         _gravar(df, engine=remoto)
+    # Depois de gravar, o último pregão de cada mês já está no destino e as
+    # parciais deixadas por publicações anteriores saem. Em simulação conta-se
+    # sobre a união do que está lá com o que chegaria, sem apagar nada.
+    destino = _chaves_no_destino(alvo, engine=remoto)
+    if not apply and not df.empty:
+        destino = pd.concat([destino, df[["symbol", "month_end"]]], ignore_index=True)
+    obsoletas = parciais_obsoletas(destino)
+    if apply and obsoletas:
+        _podar(obsoletas, engine=remoto)
+    if relatorio is not None:
+        relatorio["parciais_obsoletas"] = len(obsoletas)
 
     resumo = {simbolo: 0 for simbolo in alvo}
     if not df.empty:
@@ -176,7 +233,9 @@ def main(argv=None) -> int:
         return 2
     local = create_engine(_warehouse_url())
 
-    resumo = publicar(local=local, remoto=remoto, apply=args.apply, simbolos=args.simbolos)
+    relatorio: dict = {}
+    resumo = publicar(local=local, remoto=remoto, apply=args.apply, simbolos=args.simbolos,
+                      relatorio=relatorio)
 
     modo = "GRAVADO" if args.apply else "SIMULACAO (use --apply para gravar)"
     print(f"[{modo}]")
@@ -184,6 +243,8 @@ def main(argv=None) -> int:
         print(f"  {simbolo:>6}: {resumo[simbolo]} linhas")
     total = sum(resumo.values())
     print(f"  total: {total} linhas em {len(resumo)} simbolos")
+    verbo = "removidos" if args.apply else "a remover"
+    print(f"  meses parciais duplicados {verbo}: {relatorio['parciais_obsoletas']}")
     return 0
 
 

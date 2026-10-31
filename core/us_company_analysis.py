@@ -4,6 +4,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from core.crescimento import Crescimento, cagr_regressao, retornos_anuais
+
 
 def numeric_financials(frame: pd.DataFrame | None) -> pd.DataFrame:
     """Normaliza a série anual sem transformar ausência em zero."""
@@ -26,34 +28,22 @@ def last_value(frame: pd.DataFrame, column: str) -> float | None:
 
 def regression_cagr(frame: pd.DataFrame, column: str) -> float | None:
     """Crescimento anual pela regressão logarítmica usada na seção B3."""
+    growth = regression_growth(frame, column)
+    return growth.taxa if growth is not None else None
+
+
+def regression_growth(frame: pd.DataFrame, column: str) -> Crescimento | None:
+    """``regression_cagr`` com a janela usada e o motivo quando não há taxa."""
     if frame is None or frame.empty or column not in frame or "fiscal_year" not in frame:
         return None
-    values = frame[["fiscal_year", column]].copy()
-    values["fiscal_year"] = pd.to_numeric(values["fiscal_year"], errors="coerce")
-    values[column] = pd.to_numeric(values[column], errors="coerce")
-    values = values.dropna().query(f"`{column}` > 0").sort_values("fiscal_year")
-    if len(values) < 2:
-        return None
-    x = values["fiscal_year"].to_numpy(dtype=float)
-    x = x - x[0]
-    slope, _ = np.polyfit(x, np.log(values[column].to_numpy(dtype=float)), deg=1)
-    result = float(np.exp(slope) - 1.0)
-    return result if np.isfinite(result) else None
+    return cagr_regressao(frame["fiscal_year"], frame[column])
 
 
 def annual_price_returns(prices: pd.DataFrame | None) -> pd.DataFrame:
-    columns = ["Ano", "Retorno"]
+    """Retorno por ano civil; ``Rotulo`` marca o ano ainda aberto."""
     if prices is None or prices.empty:
-        return pd.DataFrame(columns=columns)
-    out = prices[["date", "price"]].copy()
-    out["date"] = pd.to_datetime(out["date"], errors="coerce")
-    out["price"] = pd.to_numeric(out["price"], errors="coerce")
-    out = out.dropna().sort_values("date")
-    if out.empty:
-        return pd.DataFrame(columns=columns)
-    annual = out.assign(Ano=out["date"].dt.year).groupby("Ano")["price"].last()
-    returns = (annual.pct_change().dropna() * 100).rename("Retorno").reset_index()
-    return returns
+        return pd.DataFrame(columns=["Ano", "Retorno", "Rotulo"])
+    return retornos_anuais(prices["date"], prices["price"])
 
 
 def annual_dividends(financials: pd.DataFrame,

@@ -26,10 +26,68 @@ import streamlit as st
 from core.b3_pooled_evidence import MIN_ATIVOS_ANO
 from core.b3_safras import MIN_SAFRAS_LOO, tabela_de_safras
 from design.componentes import card_metrica
-from views.empresas_b3 import _COR_ALT, _COR_NEU, _COR_POS, _plot_layout
+from design.lacunas import aviso_lacuna, detalhe_tecnico
+from views.empresas_b3 import _COR_ALT, _COR_INF, _COR_NEU, _COR_POS, _plot_layout
 
-_COLUNAS_RETORNO = ["Estratégia (%)", "Equal-weight (%)", "Selic (%)",
-                    "Excesso s/ Selic (pp)"]
+_COLUNAS_RETORNO = ["Estratégia líquida (%)", "Excesso líquido s/ Selic (pp)",
+                    "Excesso líquido s/ EW (pp)", "Giro (%)",
+                    "Custo de giro (pp)", "IR (pp)",
+                    "Estratégia (%)", "Equal-weight (%)", "Selic (%)",
+                    "Excesso s/ Selic (pp)", "Excesso s/ EW (pp)"]
+
+# B3-08 (auditoria app4, item 19): o líquido virou o padrão e o bruto ficou
+# ao lado. As colunas brutas mantêm o nome de sempre no quadro (o Bloco 2 e
+# os testes leem por ele); só o cabeçalho EXIBIDO ganha o "bruto", para
+# ninguém ler "Estratégia (%)" ao lado de "Estratégia líquida (%)" e achar
+# que as duas medem a mesma coisa.
+_ROTULOS_BRUTOS = {
+    "Estratégia (%)": "Estratégia bruta (%)",
+    "Excesso s/ Selic (pp)": "Excesso bruto s/ Selic (pp)",
+    "Excesso s/ EW (pp)": "Excesso bruto s/ EW (pp)",
+}
+
+# Coluna de excesso que as médias e as bandas leem: a líquida quando a
+# tabela a tem (toda tabela de `core.b3_safras` desde o item 19), a bruta
+# só num quadro antigo -- e aí o rótulo do card diz "bruto".
+_EXCESSO_SELIC = ("Excesso líquido s/ Selic (pp)", "Excesso s/ Selic (pp)")
+_EXCESSO_EW = ("Excesso líquido s/ EW (pp)", "Excesso s/ EW (pp)")
+
+
+def _coluna_excesso(tabela: pd.DataFrame, par: tuple[str, str]) -> tuple[str, bool]:
+    """(coluna, é_líquida) -- a líquida se existir, senão a bruta."""
+    liquida, bruta = par
+    if liquida in tabela.columns:
+        return liquida, True
+    return bruta, False
+
+
+def _texto_premissas_liquido_b3() -> str:
+    """As premissas do líquido, lidas das MESMAS constantes que entram na
+    conta (`core.backtest_liquido.premissas_b3`) -- texto fixo envelheceria
+    separado do número."""
+    from core.backtest_liquido import premissas_b3
+
+    p = premissas_b3()
+
+    def _bps(v: float) -> str:
+        return f"{v:g}".replace(".", ",")
+
+    return (
+        "Líquido = bruto − custo de giro − IR. Custo por ponta negociada: "
+        f"emolumentos de {_bps(p['emolumentos_bps_por_ponta'])} bps + meio "
+        f"spread de {_bps(p['meio_spread_large_bps'])} bps (large cap) ou "
+        f"{_bps(p['meio_spread_small_bps'])} bps (small cap), corretagem "
+        "zero. A carteira de abril é comparada com a anterior já derivada "
+        "pelos preços do ano, e só a diferença é negociada. IR de "
+        f"{p['ir_ganho_capital']:.0%} sobre o ganho realizado nessa troca, "
+        "com compensação de prejuízo e **sem** a isenção de R$ 20 mil/mês: "
+        "o backtest não tem valor de carteira, e a troca anual de abril "
+        "vende de uma vez uma parcela que passa desse limite numa carteira "
+        "de R$ 100 mil. O preço é ajustado por proventos, então o dividendo "
+        "(isento) acaba tributado quando a posição é vendida — o IR aqui é "
+        "conservador. Sem IR nem custo de saída na última safra. "
+        "Equal-weight e Selic seguem brutos."
+    )
 
 # Colunas cuja EXIBIÇÃO é arredondada em 1 casa. Desde a rodada de correção
 # 2, `core.b3_safras._pct` não arredonda mais (A-T7-02: o valor é lido por
@@ -45,8 +103,11 @@ _COLUNAS_1CASA = _COLUNAS_RETORNO + ["Peso sem preço (%)"]
 _CASAS_TABELA = 1
 _FORMATO_TABELA = f"%.{_CASAS_TABELA}f"
 
+# Chaves = nome EXIBIDO da série (o das colunas brutas passa por
+# `_ROTULOS_BRUTOS` antes de chegar ao gráfico).
 _CORES_SERIE = {
-    "Estratégia (%)": _COR_POS,
+    "Estratégia líquida (%)": _COR_POS,
+    "Estratégia bruta (%)": _COR_INF,
     "Equal-weight (%)": _COR_NEU,
     "Selic (%)": _COR_ALT,
 }
@@ -81,14 +142,17 @@ def _resumo_safras(tabela: pd.DataFrame) -> dict:
     orfas = tabela[tabela["Completa"] & ~completas_bool]
 
     n_medidas = len(completas)
+    coluna, liquido = _coluna_excesso(tabela, _EXCESSO_SELIC)
     if n_medidas:
-        media_excesso = float(completas["Excesso s/ Selic (pp)"].mean())
-        venceu = int((completas["Excesso s/ Selic (pp)"] > 0).sum())
+        media_excesso = float(completas[coluna].mean())
+        media_excesso_bruto = float(completas["Excesso s/ Selic (pp)"].mean())
+        venceu = int((completas[coluna] > 0).sum())
         peso_ausente_max = float(completas["Peso sem preço (%)"].max())
         safra_min = int(completas["Safra"].min())
         safra_max = int(completas["Safra"].max())
     else:
         media_excesso = None
+        media_excesso_bruto = None
         venceu = 0
         peso_ausente_max = 0.0
         safra_min = None
@@ -100,6 +164,8 @@ def _resumo_safras(tabela: pd.DataFrame) -> dict:
         "orfas": orfas,
         "n_medidas": n_medidas,
         "media_excesso": media_excesso,
+        "media_excesso_bruto": media_excesso_bruto,
+        "liquido": liquido,
         "venceu": venceu,
         "peso_ausente_max": peso_ausente_max,
         "safra_min": safra_min,
@@ -168,7 +234,8 @@ def _column_config_retorno() -> dict:
     `views/portfolio_b3.py`, linhas 2370/2397/2422, via
     `st.column_config.NumberColumn`)."""
     return {
-        col: st.column_config.NumberColumn(format=_FORMATO_TABELA)
+        col: st.column_config.NumberColumn(_ROTULOS_BRUTOS.get(col, col),
+                                           format=_FORMATO_TABELA)
         for col in _COLUNAS_1CASA
     }
 
@@ -178,11 +245,15 @@ def _grafico_barras(completas: pd.DataFrame):
     transparente e nas mesmas cores dos demais gráficos da aba (achado
     I-3): sem isso este era o único gráfico com papel branco opaco e Selic
     trocando de cor em relação ao gráfico vizinho."""
+    series = [c for c in ("Estratégia líquida (%)", "Estratégia (%)",
+                          "Equal-weight (%)", "Selic (%)")
+              if c in completas.columns]
     longo = completas.melt(
         id_vars="Safra",
-        value_vars=["Estratégia (%)", "Equal-weight (%)", "Selic (%)"],
+        value_vars=series,
         var_name="Série", value_name="Retorno da safra (%)",
     )
+    longo["Série"] = longo["Série"].map(lambda c: _ROTULOS_BRUTOS.get(c, c))
     fig = px.bar(longo, x="Safra", y="Retorno da safra (%)",
                  color="Série", barmode="group",
                  color_discrete_map=_CORES_SERIE)
@@ -192,17 +263,16 @@ def _grafico_barras(completas: pd.DataFrame):
 
 def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                   selic_por_ano: dict[int, float],
-                  taxa_selic_aa: float,
-                  resultados_todos: list[dict] | None = None) -> None:
+                  taxa_selic_aa: float) -> None:
     """Bloco 1: a tabela de safras e a barra por safra contra Selic/EW.
-    Ao fim, chama `render_expectativa` (Bloco 3) e `render_vies_universo`
-    (Bloco 2, sob demanda).
+    Ao fim, chama `render_expectativa` (Bloco 3).
 
     `resultados` e a lista JA FILTRADA pelo gate de aprovacao -- e a
-    carteira que a tela publica. `resultados_todos` e a lista NAO
-    filtrada, e existe so para o Bloco 2 reconstruir as mesmas safras SEM
-    o gate e medir a distancia entre as duas. Sem ela o Bloco 2 nao e
-    renderizado: nao ha o que comparar.
+    carteira que a tela publica.
+
+    O Bloco 2 (`render_vies_universo`, "Tamanho do vies de universo")
+    saiu da tela por pedido do dono do projeto (30/10/2026). A funcao
+    continua aqui e testada; voltar com ela e uma chamada no fim desta.
     """
     st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
                 unsafe_allow_html=True)
@@ -235,9 +305,16 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                          ajuda="Janela fechada e com pelo menos um pregão observado")
         with cols[1]:
             media = resumo["media_excesso"]
-            card_metrica("Excesso médio s/ Selic", f"{media:+.1f} pp",
-                         positivo=media > 0,
-                         ajuda="Média simples das safras medidas")
+            if resumo["liquido"]:
+                rotulo = "Excesso médio s/ Selic (líquido)"
+                ajuda = ("Média simples das safras medidas, após custo de "
+                         "giro e IR. Bruto: "
+                         f"{resumo['media_excesso_bruto']:+.1f} pp")
+            else:
+                rotulo = "Excesso médio s/ Selic (bruto)"
+                ajuda = "Média simples das safras medidas, sem custo nem IR"
+            card_metrica(rotulo, f"{media:+.1f} pp",
+                         positivo=media > 0, ajuda=ajuda)
         with cols[2]:
             card_metrica("Safras acima da Selic",
                          f"{resumo['venceu']} de {resumo['n_medidas']}",
@@ -249,6 +326,10 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
 
     st.dataframe(_tabela_para_exibicao(tabela), width="stretch", hide_index=True,
                 column_config=_column_config_retorno())
+    st.caption("Líquido = bruto − custo de giro − IR. Equal-weight e Selic "
+               "seguem brutos.")
+    detalhe_tecnico(_texto_premissas_liquido_b3(),
+                    codigo="portfolio_b3.safras_premissas_liquido")
 
     if not completas.empty:
         st.plotly_chart(_grafico_barras(completas), width="stretch",
@@ -267,23 +348,14 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
     # 100,0 justamente por não ter havido observação nenhuma (achado I-1).
     ausente = resumo["peso_ausente_max"]
     if ausente > 0:
-        st.info(
+        aviso_lacuna(
             f"Em pelo menos uma safra medida, até {ausente:.1f}% do peso "
             "ficou sem preço na janela — deslistagem, incorporação ou "
             "buraco de dado. Essa fatia rende **zero** no cálculo: não "
             "inventamos a perda, mas ela também não rende o que os "
-            "sobreviventes renderam."
+            "sobreviventes renderam.",
+            codigo="tela.portfolio_b3.safras_peso_sem_preco",
         )
-
-    # Bloco 2 por último e sob demanda (decisão do dono do projeto): a
-    # reconstrução sem gate é a conta mais cara da tela. `tabela` vai junto
-    # para que o lado "com gate" da comparação seja a MESMA medição já
-    # publicada acima, e não uma segunda reconstrução que pode divergir.
-    if resultados_todos:
-        render_vies_universo(resultados, resultados_todos, df_precos,
-                             selic_por_ano=selic_por_ano,
-                             taxa_selic_aa=taxa_selic_aa,
-                             tabela_com_gate=tabela)
 
 
 def _ics_por_ano(resultados: list[dict],
@@ -473,10 +545,18 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
     medidas = set(tabela.attrs.get("safras_completas", []))
     completas = (tabela[tabela["Safra"].isin(medidas)]
                  if not tabela.empty else tabela)
-    excessos = [float(v) / 100.0
-                for v in (completas["Excesso s/ Selic (pp)"]
-                          if not completas.empty else [])
-                if pd.notna(v)]
+    # B3-08: as bandas leem o excesso LÍQUIDO de custo de giro e IR quando a
+    # tabela o traz -- é o que o investidor leva; o bruto vira referência
+    # no texto de ajuda do card.
+    col_selic, liquido = _coluna_excesso(tabela, _EXCESSO_SELIC)
+    col_ew, _ = _coluna_excesso(tabela, _EXCESSO_EW)
+
+    def _excessos(coluna: str) -> list[float]:
+        if completas.empty or coluna not in completas.columns:
+            return []
+        return [float(v) / 100.0 for v in completas[coluna] if pd.notna(v)]
+
+    excessos = _excessos(col_selic)
 
     # F-1: o MESMO criterio que o leave-one-out usa. Antes o card chamava
     # `classify_evidence` sem p-valor e o LOO chamava com: a tela imprimia
@@ -485,17 +565,35 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
     # mostrava e que contradizia o card ao lado.
     veredito = veredito_do_rank_ic(ic_values)
     baixo, alto = bootstrap_excesso(excessos)
+    # B3-01: o excesso sobre o equal-weight (o teste que importa: a Selic é
+    # piso, o EW é o mercado) ganha o MESMO intervalo, sobre retornos já
+    # saneados de saltos e winsorizados em `core.b3_safras`.
+    excessos_ew = _excessos(col_ew)
+    baixo_ew, alto_ew = bootstrap_excesso(excessos_ew)
+    if liquido:
+        bb, ba = bootstrap_excesso(_excessos("Excesso s/ Selic (pp)"))
+        bb_ew, ba_ew = bootstrap_excesso(_excessos("Excesso s/ EW (pp)"))
+    else:
+        bb, ba, bb_ew, ba_ew = baixo, alto, baixo_ew, alto_ew
     loo = fragilidade_leave_one_out(ic_values)
 
     avisos: list[str] = []
     if baixo is not None and baixo <= 0 <= alto:
         avisos.append(
-            f"O intervalo de 95% do excesso sobre a Selic vai de {baixo:+.1%} "
+            f"O intervalo de 95% do excesso {'líquido ' if liquido else ''}"
+            f"sobre a Selic vai de {baixo:+.1%} "
             f"a {alto:+.1%} por safra: ele **atravessa o zero**. Nesta "
             "amostra, a vantagem observada não é distinguível de acaso. "
             "Ordenar não é superar — o Rank-IC pode indicar que o motor "
             "discrimina retornos sem que isso vire vantagem líquida."
         )
+    if baixo_ew is not None and baixo_ew <= 0 <= alto_ew:
+        avisos.append(
+            f"O intervalo de 95% do excesso {'líquido ' if liquido else ''}"
+            "sobre o equal-weight vai de "
+            f"{baixo_ew:+.1%} a {alto_ew:+.1%} por safra: ele **atravessa o "
+            "zero**. Nesta amostra, a carteira não é distinguível de comprar "
+            "o universo inteiro em partes iguais.")
     if loo["safras_que_viram"] > 0:
         avisos.append(
             f"O veredito muda se {loo['safras_que_viram']} dos "
@@ -647,9 +745,17 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
         "positivo_fragilidade": positivo_frag,
         "ajuda_fragilidade": ajuda_frag,
         "banda": (baixo, alto),
+        "banda_ew": (baixo_ew, alto_ew),
+        "texto_banda_ew": (f"{baixo_ew:+.1%} a {alto_ew:+.1%}"
+                           if baixo_ew is not None else "—"),
         "n_safras_banda": n_banda,
         "texto_banda": (f"{baixo:+.1%} a {alto:+.1%}"
                         if baixo is not None else "—"),
+        "liquido": liquido,
+        "texto_banda_bruta": (f"{bb:+.1%} a {ba:+.1%}"
+                              if bb is not None else "—"),
+        "texto_banda_ew_bruta": (f"{bb_ew:+.1%} a {ba_ew:+.1%}"
+                                 if bb_ew is not None else "—"),
         "loo": loo,
         "avisos": avisos,
         "limitacao_banda": limitacao,
@@ -673,29 +779,46 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
     exp = _expectativa(resultados, tabela)
     veredito = exp["veredito"]
 
-    cols = st.columns(3)
+    cols = st.columns(4)
     with cols[0]:
         card_metrica("Ordena?", evidence_label(veredito),
                      ajuda=exp["ajuda_ordena"])
     with cols[1]:
         baixo = exp["banda"][0]
-        card_metrica("Supera? (excesso s/ Selic)", exp["texto_banda"],
+        qual = "líquido" if exp["liquido"] else "bruto"
+        card_metrica(f"Supera? (excesso {qual} s/ Selic)", exp["texto_banda"],
                      positivo=(baixo is not None and baixo > 0),
                      ajuda=(f"Intervalo de 95% por reamostragem de "
-                            f"{exp['n_safras_banda']} safra(s) mensurável(is)"))
+                            f"{exp['n_safras_banda']} safra(s) mensurável(is)"
+                            + (f". Bruto: {exp['texto_banda_bruta']}"
+                               if exp["liquido"] else "")))
+    with cols[3]:
+        baixo_ew = exp["banda_ew"][0]
+        qual_ew = "líquido" if exp["liquido"] else "bruto"
+        card_metrica(f"Supera o mercado? ({qual_ew} s/ equal-weight)",
+                     exp["texto_banda_ew"],
+                     positivo=(baixo_ew is not None and baixo_ew > 0),
+                     ajuda="Intervalo de 95% do excesso sobre o equal-weight "
+                           "do universo, com saltos de preço neutralizados e "
+                           "retornos winsorizados a 1%/99% por safra"
+                           + (f". Bruto: {exp['texto_banda_ew_bruta']}"
+                              if exp["liquido"] else ""))
     with cols[2]:
         card_metrica("Fragilidade", exp["texto_fragilidade"],
                      positivo=exp["positivo_fragilidade"],
                      ajuda=exp["ajuda_fragilidade"])
 
     for aviso in exp["avisos"]:
-        st.warning(aviso)
+        detalhe_tecnico(str(aviso), codigo="portfolio_b3.safras_expectativa_aviso")
     # Ressalva e margem em texto visível, não em tooltip: `ajuda` vira
     # `title=` do card e não existe no toque.
-    for nota in (exp["nota_independencia"], exp["nota_fragilidade"],
-                 exp["limitacao_evidencia"], exp["limitacao_banda"]):
+    for nota, codigo in (
+            (exp["nota_independencia"], "portfolio_b3.safras_nota_independencia"),
+            (exp["nota_fragilidade"], "portfolio_b3.safras_nota_fragilidade"),
+            (exp["limitacao_evidencia"], "portfolio_b3.safras_limitacao_evidencia"),
+            (exp["limitacao_banda"], "portfolio_b3.safras_limitacao_banda")):
         if nota:
-            st.caption(nota)
+            detalhe_tecnico(str(nota), codigo=codigo)
 
 
 # ── Bloco 2: o tamanho do viés de universo ──────────────────────────────────
@@ -1182,7 +1305,7 @@ def _desenha_vies(medicao: dict, quando: str | None = None) -> None:
     # Ressalvas em `st.caption` VISÍVEL, nunca em `ajuda=`: `ajuda` vira o
     # `title=` do card, tooltip de hover, invisível no toque.
     for nota in medicao["notas"]:
-        st.caption(nota)
+        detalhe_tecnico(str(nota), codigo="portfolio_b3.safras_vies_nota")
     if not medicao["comparacao"].empty:
         st.dataframe(medicao["comparacao"], width="stretch", hide_index=True,
                      column_config=_column_config_vies())
@@ -1214,7 +1337,7 @@ def render_vies_universo(resultados_aprovados: list[dict],
         'margin:20px 0 8px;">🔍 Tamanho do viés de universo</div>',
         unsafe_allow_html=True,
     )
-    st.caption(
+    detalhe_tecnico(
         "O score de cada safra é point-in-time, mas o **conjunto de "
         "segmentos** que compõe a carteira foi escolhido com o teste OOS "
         "sobre a amostra inteira, até hoje. A safra mais antiga é "
@@ -1222,7 +1345,8 @@ def render_vies_universo(resultados_aprovados: list[dict],
         "isso point-in-time é inviável — nas primeiras safras não há janela "
         "OOS e nenhum segmento seria aprovado —, então aqui se mede o "
         "tamanho: as mesmas safras, com todos os segmentos que tinham score "
-        "naquele ano, sem gate de aprovação."
+        "naquele ano, sem gate de aprovação.",
+        codigo="portfolio_b3.safras_vies_universo_premissa",
     )
 
     clicou = st.button("Medir o viés de universo", key="pb3_btn_vies")

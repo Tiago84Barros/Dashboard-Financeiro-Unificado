@@ -1,16 +1,24 @@
 """
 views/configuracoes.py
-Configurações do sistema — sete abas organizadas por finalidade.
+Configurações do sistema — nove abas organizadas por finalidade.
 
-  ⚙️ Geral                — tema, troca de usuário e memória da LLM
+  ⚙️ Geral                — tema, troca de usuário, memória da LLM e as
+                            categorias do lançamento manual
   🎯 Grau de Confiança    — quanto o app confia em cada seção, e por quê
+  🧭 Restrições           — limitações, erros e detalhes técnicos que saíram
+                            das telas de uso (05/10/2026), para decisão do admin
   🔁 Atualização de dados — o que o usuário sobe de arquivo, em duas sub-abas:
        💳 Controle Financeiro — fatura do cartão + extratos bancários
        📈 Investimentos       — importações B3, XP, Nomad
   🔄 Dados de mercado     — CVM, YFinance, Banco Central, macro (orquestração)
   🗄️ Banco de dados       — conexão, capacidade, schema e diagnóstico técnico
   🔒 Segurança            — sessão e autenticação
+  🗺️ Mapa do App          — fluxograma de todas as telas, em linguagem simples
   📚 Documentação         — fluxogramas e explicações do app (era rota da sidebar)
+
+A tela é a mesma para quem administra e para quem não administra desde
+12/10/2026: todas as abas aparecem para todo mundo. O que ainda separa os dois
+é o dado que cada guarda de ``core`` entrega, não o que a tela desenha.
 """
 from __future__ import annotations
 
@@ -24,31 +32,26 @@ from core.auth import encerrar_sessao, esta_autenticado
 from core.config import settings
 from core.database import get_database_storage_status, get_db_status
 from design.componentes import card_metrica, container_pagina
+from design.lacunas import aviso_lacuna, detalhe_tecnico
 from views.bank_statement_upload import render_upload_extrato_bancario
 from views.configuracoes_geral import render as render_geral
 from views.credit_card_invoice_upload import render_upload_fatura_cartao
 
 
 def render() -> None:
-    from core.user_context import is_admin, require_user
+    from core.user_context import require_user
     require_user()
-    if not is_admin():
-        from design.user_accounts import render_user_accounts
-        st.title("Minhas configurações")
-        # A estratégia e o cenário são de cada conta e moram na aba
-        # Investimentos → Inteligência dos Ativos desde 27/09/2026.
-        st.caption("A Estratégia e o Cenário de Investimentos se configuram "
-                   "em Investimentos → Inteligência dos Ativos.")
-        personal, account, docs = st.tabs(
-            ["Importar meus dados", "Minha conta", "📚 Documentação"]
-        )
-        with personal:
-            _render_atualizacao_de_dados()
-        with account:
-            render_user_accounts()
-        with docs:
-            _render_documentacao()
-        return
+    # Uma tela só, para quem administra e para quem não administra (12/10/2026,
+    # a pedido do usuário). Até aqui, quem não era administrador via um título
+    # próprio e três abas -- "Importar meus dados", "Minha conta" e
+    # "📚 Documentação". Nada se perde na fusão: importar é a aba 🔁 Atualização
+    # de dados, a conta é o primeiro bloco de 🔒 Segurança, a documentação
+    # continua sendo a última aba, e o aviso de que Estratégia e Cenário moram
+    # em Investimentos → Inteligência dos Ativos abre a aba ⚙️ Geral.
+    #
+    # O que continua dependendo de ser administrador é o DADO, não a tela: as
+    # guardas de ``core`` (``require_admin``) seguem onde estavam, e o bloco
+    # que elas recusam aparece dizendo por quê -- não some calado.
     container_pagina(
         "Central de Configurações",
         "Importações, atualização de dados e integridade do ambiente em um único lugar.",
@@ -57,14 +60,16 @@ def render() -> None:
     )
     st.markdown(_CONFIG_CSS + _CARD_CSS, unsafe_allow_html=True)
 
-    (tab_geral, tab_conf, tab_atualizacao, tab_dados, tab_banco, tab_seg,
-     tab_docs) = st.tabs([
+    (tab_geral, tab_conf, tab_restr, tab_atualizacao, tab_dados, tab_banco,
+     tab_seg, tab_mapa, tab_docs) = st.tabs([
         "⚙️ Geral",
         "🎯 Grau de Confiança",
+        "🧭 Restrições",
         "🔁 Atualização de dados",
         "🔄 Dados de mercado",
         "🗄️ Banco de dados",
         "🔒 Segurança",
+        "🗺️ Mapa do App",
         "📚 Documentação",
     ])
 
@@ -82,12 +87,22 @@ def render() -> None:
     with tab_conf:
         _render_tab_intro(
             "Grau de Confiança",
-            "Quanto o app confia em cada seção, e a evidência por trás de cada "
-            "nota. Apoio analítico — não é recomendação.",
+            "Quanto o app confia em cada seção, e a evidência por trás de cada nota.",
             "Medição por seção",
             "var(--app-primary, #00C896)",
         )
         _render_confianca()
+
+    with tab_restr:
+        _render_tab_intro(
+            "Restrições",
+            "Limitações de dado, erros e detalhes técnicos que as telas de uso "
+            "não mostram mais ao usuário. Decida cada item: aceitar, corrigir "
+            "ou acompanhar.",
+            "Diagnóstico do app",
+            "var(--app-warning, #F6C90E)",
+        )
+        _render_restricoes()
 
     with tab_atualizacao:
         _render_atualizacao_de_dados()
@@ -119,6 +134,16 @@ def render() -> None:
         )
         _render_seguranca()
 
+    with tab_mapa:
+        _render_tab_intro(
+            "Mapa do App",
+            "Todas as telas do app num fluxograma só, em linguagem simples. "
+            "Toque numa caixa para ver o que existe dentro dela.",
+            "Todas as telas",
+            "var(--app-primary, #00C896)",
+        )
+        _render_mapa_app()
+
     with tab_docs:
         _render_tab_intro(
             "Documentação",
@@ -128,6 +153,44 @@ def render() -> None:
             "var(--app-info, #4A9EFF)",
         )
         _render_documentacao()
+
+
+def _render_restricoes() -> None:
+    """Import tardio, como nas outras abas pesadas: um defeito no painel fica
+    preso nesta aba em vez de derrubar Configurações inteira."""
+    from views.configuracoes_restricoes import render as render_restricoes
+
+    render_restricoes()
+
+
+#: Altura do iframe do Mapa do App, em px. Fixa e com rolagem própria: a
+#: página cresce e encolhe conforme o ramo aberto, e um iframe que mudasse de
+#: altura a cada toque empurraria a tela inteira para cima e para baixo.
+_ALTURA_MAPA_APP = 900
+
+
+def _render_mapa_app() -> None:
+    """Aba do Mapa do App: o fluxograma de todas as telas, para toda conta.
+
+    O mapa só descreve o app -- não lê banco nem conta de ninguém --, então
+    não há guarda de administrador aqui: a mesma página para todo mundo.
+
+    Vai num iframe (``components.html``) porque é uma página inteira, com
+    estilo e script próprios, que o CSS do app não alcança. A cor segue o tema
+    escolhido no app (``tema_pintado``), não o do sistema operacional.
+
+    Nada aqui muda a posição das abas: a aba desenha sempre os mesmos dois
+    elementos (a faixa e o iframe), em toda execução. Trocar o tema muda só o conteúdo do
+    iframe, não quantos elementos existem -- e é a contagem acima do
+    ``st.tabs`` que devolveria a seleção para a primeira aba (ver ``app.py``).
+    """
+    import streamlit.components.v1 as components
+
+    from design.mapa_app import pagina_html
+    from design.theme_selector import tema_pintado
+
+    components.html(pagina_html(tema_pintado()), height=_ALTURA_MAPA_APP,
+                    scrolling=True)
 
 
 def _render_documentacao() -> None:
@@ -168,7 +231,8 @@ def _render_atualizacao_de_dados() -> None:
 
 
 def _render_confianca() -> None:
-    """Aba do Grau de Confiança, a primeira da barra desde 17/09/2026.
+    """Aba do Grau de Confiança, a segunda da barra: foi a primeira de 17/09/2026
+    até a ⚙️ Geral entrar à frente dela em 21/09.
 
     Import tardio de propósito: mantém ``core.confianca_secao`` e suas leituras
     fora do custo de importar este módulo, e prende o erro aqui em vez de
@@ -285,7 +349,12 @@ def _render_investimentos() -> None:
         if settings.has_database:
             _render_import_investimentos()
         else:
-            st.warning("Banco não conectado. Configure `SUPABASE_UNIFICADO_URL` para habilitar as importações.")
+            st.info("As importações não estão disponíveis no momento.")
+            aviso_lacuna(
+                "Banco não conectado. Configure `SUPABASE_UNIFICADO_URL` para "
+                "habilitar as importações.",
+                codigo="tela.configuracoes.importacao_sem_banco",
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -587,7 +656,7 @@ def _render_atualizacao() -> None:
 | **Documentos corporativos** — fatos relevantes, resultados trimestrais e atas de empresas listadas | Semanal |
 
 > Transações, operações e proventos **não** são atualizados automaticamente —
-> eles vêm de importação manual (aba **Atualizar Controle Financeiro**) ou lançamento direto no app.
+> eles vêm de importação manual (aba **🔁 Atualização de dados › 💳 Controle Financeiro**) ou lançamento direto no app.
         """)
 
     # ── Botões de execução ─────────────────────────────────────────────────────
@@ -1228,6 +1297,22 @@ _B3_JOBS: dict[str, dict[str, str]] = {
         "source_name": "B3 — Posição Detalhada (manual)",
         "skip_recompute": True,
     },
+    # `needs_filename` aqui é obrigatório, não conveniência: o extrato
+    # "Posição" é o único que não declara a data em NENHUMA célula — ela vive
+    # no nome do download ("posicao-2026-10-27-08-15-29.xlsx"), com a data de
+    # exportação em docProps como reserva. Sem o nome, só a reserva sobra, e um
+    # arquivo renomeado ficaria sem data nenhuma.
+    "b3_posi": {
+        "key":         "b3_posi",
+        "label":       "B3 — Posição (por classe de ativo)",
+        "file_types":  "xlsx",
+        "parser_attr": "parse_b3_posicao",
+        "job_name":    "import_b3_posicao",
+        "table_name":  "portfolio_position_snapshots",
+        "source_name": "B3 — Posição (manual)",
+        "needs_filename": True,
+        "skip_recompute": True,
+    },
     # `needs_filename` não é cosmético: `_parse_report_date` infere a data do
     # snapshot do NOME do arquivo (mensal-2026-janeiro → 31/01/2026). Entregar
     # só os bytes faria todo relatório cair em `date.today()`, e a chave única
@@ -1254,9 +1339,12 @@ _B3_JOBS: dict[str, dict[str, str]] = {
 # O Consolidado vem por último porque a aba "Proventos Recebidos" deduplica
 # contra os proventos da Movimentação: rodando antes dela, o lote gravaria o
 # mesmo provento duas vezes quando os dois arquivos cobrissem o mesmo mês.
-# A Posição Detalhada é uma foto e não deduplica contra nada: entra por
-# último, junto do Consolidado, depois das duas fontes de evento.
-_B3_ORDEM: tuple[str, ...] = ("b3_neg", "b3_mov", "xp_csl", "b3_pos")
+# A Posição Detalhada e a Posição são fotos e não deduplicam contra nada:
+# entram por último, junto do Consolidado, depois das duas fontes de evento.
+# Entre as duas fotos a ordem não muda resultado — cada uma grava com a sua
+# própria `source_table` e nenhuma sobrescreve a outra —, mas fica fixa para o
+# mesmo lote produzir sempre o mesmo log.
+_B3_ORDEM: tuple[str, ...] = ("b3_neg", "b3_mov", "xp_csl", "b3_pos", "b3_posi")
 
 
 # Jobs do lote do Tesouro Direto. Mesma mecânica dos extratos da B3: um único
@@ -1348,9 +1436,9 @@ def _render_import_investimentos() -> None:
         with col_txt:
             st.markdown("**📊 Recalcular carteira agora**")
             st.caption(
-                "Recomputa `portfolio_positions` a partir de todas as "
-                "`investment_transactions` (custo médio ponderado). "
-                "É chamado automaticamente após cada importação, mas você "
+                "Refaz as posições da carteira a partir de todas as suas "
+                "operações (custo médio ponderado). "
+                "Acontece automaticamente após cada importação, mas você "
                 "pode forçar manualmente."
             )
         with col_btn:
@@ -1369,7 +1457,11 @@ def _render_import_investimentos() -> None:
             )
             engine = get_engine()
             if engine is None:
-                st.error("Banco não configurado.")
+                st.error("Não foi possível recalcular a carteira agora.")
+                aviso_lacuna(
+                    "Banco não configurado: recálculo da carteira não executou.",
+                    codigo="tela.configuracoes.recalculo_sem_banco",
+                )
             else:
                 with st.spinner("Recalculando carteira…"):
                     rec = recompute_for_user(engine, settings.OWNER_USER_ID)
@@ -1385,12 +1477,16 @@ def _render_import_investimentos() -> None:
                     f"recalculadas a partir de "
                     f"{rec.get('transactions_loaded', 0)} operações."
                 )
-                if rec.get("alerts"):
-                    with st.expander("Alertas"):
-                        for msg in rec["alerts"]:
-                            st.caption(msg)
+                for msg in rec.get("alerts") or []:
+                    detalhe_tecnico(
+                        str(msg), codigo="configuracoes.recalculo_alerta")
             else:
-                st.error(f"Falha: {rec.get('error', 'erro desconhecido')}")
+                st.error("Não foi possível recalcular a carteira.")
+                detalhe_tecnico(
+                    f"Falha no recálculo da carteira: "
+                    f"{rec.get('error', 'erro desconhecido')}",
+                    codigo="configuracoes.recalculo_falha",
+                )
 
 
 
@@ -1561,13 +1657,18 @@ _LOTE_B3: dict = {
     "key":        "b3_unificado",
     "titulo":     "📊 Dados Históricos B3 (.xlsx)",
     "caption":    "investidor.b3.com.br → Extratos e Informativos → "
-                  "Negociação, Movimentação, Relatório Consolidado (o da XP) "
-                  "**ou** Posição Detalhada. Envie quantos arquivos quiser, "
-                  "dos quatro tipos misturados — o app identifica cada um "
-                  "pelo conteúdo. A Posição Detalhada é uma foto da carteira: "
-                  "linha sem quantidade (CDB, fundo fechado) e ativo já "
-                  "vendido não entram, e a seção Custódia Remunerada é "
-                  "ignorada porque repete as mesmas ações de \"Ações\".",
+                  "Negociação, Movimentação, Relatório Consolidado (o da XP), "
+                  "Posição Detalhada **ou** Posição. Envie quantos arquivos "
+                  "quiser, dos cinco tipos misturados — o app identifica cada "
+                  "um pelo conteúdo. A Posição Detalhada é uma foto da "
+                  "carteira: linha sem quantidade (CDB, fundo fechado) e "
+                  "ativo já vendido não entram, e a seção Custódia Remunerada "
+                  "é ignorada porque repete as mesmas ações de \"Ações\". A "
+                  "Posição (uma aba por classe: Ações, Empréstimos, ETF, "
+                  "Fundo de Investimento, Renda Fixa, Tesouro Direto) também "
+                  "é uma foto, e **mantenha o nome do arquivo** — a data dela "
+                  "não está em nenhuma célula, só no nome "
+                  "(`posicao-AAAA-MM-DD-…`).",
     "file_types": ["xlsx"],
     "fonte":      "Dados Históricos B3",
     "assunto":    "da B3",
@@ -1762,6 +1863,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
     from data_pipeline.importers.investments import (
         parse_b3_movimentacao,
         parse_b3_negociacao,
+        parse_b3_posicao,
         parse_b3_posicao_detalhada,
         parse_nomad_pdf,
         parse_tesouro_analitico,
@@ -1777,6 +1879,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
     parsers = {
         "parse_b3_negociacao":   parse_b3_negociacao,
         "parse_b3_movimentacao": parse_b3_movimentacao,
+        "parse_b3_posicao":      parse_b3_posicao,
         "parse_b3_posicao_detalhada": parse_b3_posicao_detalhada,
         "parse_xp_consolidado":  parse_xp_consolidado,
         "parse_tesouro_direto":  parse_tesouro_direto,
@@ -1873,7 +1976,9 @@ def _render_import_result(summary: dict) -> None:
     elif status == "skipped":
         st.info("⚪ Importação não executada nesta rodada.")
     else:
-        st.error(f"❌ Falha na importação de {src}.")
+        st.error("❌ Falha na importação.")
+        detalhe_tecnico(f"Falha na importação da fonte {src}.",
+                        codigo="configuracoes.importacao_falha")
 
     # XP traz posições (snapshots); B3/Nomad trazem operações.
     positions = int(summary.get("positions_imported", 0))
@@ -1928,22 +2033,20 @@ def _render_import_result(summary: dict) -> None:
                 f"posições recalculadas a partir de "
                 f"{rec.get('transactions_loaded', 0)} operações."
             )
-            if rec.get("alerts"):
-                with st.expander("Alertas no cálculo da carteira"):
-                    for msg in rec["alerts"]:
-                        st.caption(msg)
+            for msg in rec.get("alerts") or []:
+                detalhe_tecnico(
+                    str(msg), codigo="configuracoes.recalculo_alerta")
         else:
-            st.warning(
-                f"📊 Recálculo da carteira falhou: {rec.get('error', 'erro desconhecido')}"
+            st.warning("📊 Não foi possível recalcular a carteira.")
+            detalhe_tecnico(
+                f"Recálculo da carteira falhou: "
+                f"{rec.get('error', 'erro desconhecido')}",
+                codigo="configuracoes.recalculo_falha",
             )
 
     errors = summary.get("errors") or []
-    if errors:
-        with st.expander(f"Detalhes técnicos ({len(errors)})"):
-            for err in errors[:50]:
-                st.code(err)
-            if len(errors) > 50:
-                st.caption(f"… e mais {len(errors) - 50} mensagens.")
+    for err in errors[:50]:
+        detalhe_tecnico(str(err), codigo="configuracoes.importacao_erro")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1951,7 +2054,6 @@ def _render_import_result(summary: dict) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _render_seguranca() -> None:
-    from core.user_context import is_admin
     from design.user_accounts import render_registered_users, render_user_accounts
     render_user_accounts()
     with st.container(border=True, key="cfg_security_session"):
@@ -1994,14 +2096,15 @@ def _render_seguranca() -> None:
                 h = hashlib.sha256(senha.encode()).hexdigest()
                 st.code(h)
 
-    # Fecha a página, e não o topo: o administrador chega aqui depois de ver o
-    # estado da sessão e da credencial. Quem não é administrador não vê nem o
-    # container -- ``render_registered_users`` sai sem desenhar nada.
-    if is_admin():
-        with st.container(border=True, key="cfg_security_users"):
-            _render_workflow_header(
-                "03", "Usuários cadastrados",
-                "Quem tem acesso ao aplicativo, com data de cadastro e situação.",
-                "Somente leitura", "Visível só ao admin",
-            )
-            render_registered_users()
+    # Fecha a página, e não o topo: chega-se aqui depois de ver o estado da
+    # sessão e da credencial. O container existe para todo mundo desde
+    # 12/10/2026; quem não administra lê, no lugar da lista, por que ela não
+    # veio -- ``list_users`` chama ``require_admin`` antes de tocar no banco, e
+    # essa guarda é de dado de outras pessoas, não de layout.
+    with st.container(border=True, key="cfg_security_users"):
+        _render_workflow_header(
+            "03", "Usuários cadastrados",
+            "Quem tem acesso ao aplicativo, com data de cadastro e situação.",
+            "Somente leitura", "Lista restrita ao admin",
+        )
+        render_registered_users()

@@ -119,6 +119,20 @@ def _sem_pausa_de_provedor_herdada():
         mod._limpar_estado_provedores()
 
 
+# ── o Claude nao responde teste nenhum ───────────────────────────────────────
+# O elo Claude entra na cadeia so em sessao do navegador, e o `AppTest` e uma:
+# com a chave real vazada do .env (`load_dotenv`), um teste de tela gastaria
+# credito pago. Os testes do proprio elo religam o getter com cliente falso.
+@pytest.fixture(autouse=True)
+def _sem_claude(monkeypatch):
+    try:
+        import core.llm_b3 as llm
+    except Exception:  # o modulo pode nao existir neste checkout
+        return
+    if hasattr(llm, "_get_anthropic_client"):
+        monkeypatch.setattr(llm, "_get_anthropic_client", lambda: None)
+
+
 # ── nenhum teste herda a leitura em voo de outro ─────────────────────────────
 # `core.market_read._FII_SNAPSHOT_JOB` e um slot global do processo, e a leitura
 # real o preenche sem esperar (`timeout_seconds=0`) quando o artefato local
@@ -152,6 +166,12 @@ def _limpar(mr) -> None:
     # conforme a duracao da execucao, nao conforme o que o teste pediu.
     try:
         mr._load_fii_methodology_inputs_cached.clear()
+    except Exception:
+        pass
+    # ``fontes_fundamentos.ler_fii`` guarda a linha de cada fundo lida dali.
+    try:
+        from core.inteligencia_ativos import fontes_fundamentos as ff
+        ff._linha_fii_cache.clear()
     except Exception:
         pass
 
@@ -321,6 +341,46 @@ def _sem_memoria_do_tunel():
     ar._limpar_memoria()
 
 
+# ── nenhum teste herda a leitura macro de outro ─────────────────────────────
+# `core.macro_data.portfolio_context` guarda por 5 min as observações lidas de
+# cada engine (LLM-A10). Um teste que regrava o mesmo banco e relê com o mesmo
+# `as_of` receberia a leitura do teste anterior.
+@pytest.fixture(autouse=True)
+def _sem_leitura_macro_herdada():
+    try:
+        from core.macro_data import portfolio_context as pc
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    pc._limpar_cache_observacoes()
+    yield
+    pc._limpar_cache_observacoes()
+
+
+# ── nenhum teste herda o modo vitrine nem o dossiê dos EUA de outro ─────────
+# `core.us_data` guarda o "sim" do modo vitrine por 12 h na memória do processo
+# e o dossiê da vitrine no `st.cache_data` (INF-A2). Sem a limpeza, o primeiro
+# teste que simulasse a vitrine decidiria o modo de todos os seguintes.
+def _limpar_us_data(us) -> None:
+    us._reset_use_snapshot_memo()
+    try:
+        us._dossie_da_vitrine.clear()
+    except Exception:  # sem Streamlit o decorador é identidade
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _sem_memoria_da_fachada_us():
+    try:
+        import core.us_data as us
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    _limpar_us_data(us)
+    yield
+    _limpar_us_data(us)
+
+
 # ── fundamentos da Inteligência dos Ativos sem banco ─────────────────────────
 # O provedor real lê snapshot de FII, Supabase (B3/EUA) e o extrato do
 # Tesouro. Na suíte, todo ativo sai com o catálogo da classe e nenhum dado
@@ -452,7 +512,14 @@ def _destaques_relatorios_sem_corpus(monkeypatch):
         yield
         return
     monkeypatch.setattr(dr, "ler", lambda ticker, *a, **k: ())
+    # ``ler_trechos`` guarda o resultado por ativo: sem limpar, um teste
+    # herdaria os trechos que o anterior leu de um ``ler`` trocado.
+    limpar = getattr(getattr(dr, "_ler_trechos_cache", None), "clear", None)
+    if limpar:
+        limpar()
     yield
+    if limpar:
+        limpar()
 
 
 # A Inteligência dos Ativos compara com a carteira recomendada do Portfólio
@@ -469,6 +536,39 @@ def _referencia_modelo_sem_banco(monkeypatch):
     monkeypatch.setattr(rm, "_ler", lambda engine=None, owner_id=None:
                         ({}, {"targets": {}, "renda_fixa": None}))
     yield
+
+
+# Os proventos da B3 saem do arquivo publicado (data/public/proventos_b3.json.gz),
+# que a rotina noturna regrava. Deixado solto, o mesmo teste mudaria de resultado
+# conforme o que a brapi respondeu ontem. Sem arquivo, todo ticker cai no banco
+# -- que o teste já controla. Quem testa a leitura do arquivo troca ``carregar``.
+@pytest.fixture(autouse=True)
+def _proventos_sem_arquivo_publicado(monkeypatch):
+    try:
+        from core import proventos_b3
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(proventos_b3, "carregar", lambda: {})
+    yield
+
+
+# A carteira busca cotação ao vivo no yfinance (core/cotacao_viva.py). Em
+# teste a fonte não responde e vale o banco, como em produção com o Yahoo fora.
+# Sem limpar o cache e a espera após falha, um teste herdaria as cotações (ou
+# a espera) do anterior. Quem testa a busca troca ``_baixar``.
+@pytest.fixture(autouse=True)
+def _cotacao_viva_sem_rede(monkeypatch):
+    try:
+        from core import cotacao_viva as cv
+    except Exception:  # o modulo pode nao existir neste checkout
+        yield
+        return
+    monkeypatch.setattr(cv, "_baixar", lambda simbolos: {})
+    monkeypatch.setattr(cv, "_falha_ate", 0.0)
+    cv._buscar_em_cache.clear()
+    yield
+    cv._buscar_em_cache.clear()
 
 
 # Estratégia de Investimentos em memória. A aba Inteligência dos Ativos

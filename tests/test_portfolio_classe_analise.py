@@ -203,7 +203,7 @@ def test_contexto_de_tesouro_usa_conjuntura_e_nao_multiplo():
         macro={"atual": {"ano": 2026, "selic": 12.0, "ipca": 4.0,
                          "juros_real_ex_ante": 7.5}})
     assert "POSIÇÃO EM TESOURO DIRETO" in texto
-    assert "Juro real ex-ante" in texto
+    assert "Juro real ex post" in texto and "ex-ante" not in texto
     assert "P/L" not in texto
 
 

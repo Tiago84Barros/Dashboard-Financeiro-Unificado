@@ -20,6 +20,7 @@ em silêncio quando espalhadas:
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date
 
 import pandas as pd
@@ -105,6 +106,61 @@ def taxas_mais_recentes(engine, security_keys: list[str] | None = None,
         ORDER BY security_key, base_date DESC
     """
     return _consultar(engine, sql, params)
+
+
+# Ponta de recompra, a mesma da Evolução (`core.evolucao_reconstruida`): é por
+# ela que o Tesouro paga quem vende hoje. `base_pu` só cobre linha sem venda.
+SQL_PU_DE_RECOMPRA = """
+    SELECT DISTINCT ON (security_key)
+           security_key, base_date, COALESCE(sell_pu, base_pu) AS pu
+      FROM tesouro_market_rates
+     WHERE security_key = ANY(:chaves) AND COALESCE(sell_pu, base_pu) > 0
+     ORDER BY security_key, base_date DESC
+"""
+
+
+def chave_da_curva(ticker, nome) -> str:
+    """`security_key` da curva para uma posição da carteira.
+
+    O ticker das fotos (`xp_consolidado._tesouro_ticker`) junta o título de
+    cupom ao principal: "IPCA+ com Juros Semestrais 2032" e "IPCA+ 2032" saem
+    os dois TIPCA2032, enquanto a curva os guarda como TIPCAJ2032 e TIPCA2032.
+    A diferença só sobrevive no nome. Só esse caso troca de chave, e só quando
+    o nome, lido pela mesma função do job da curva, diz cupom: qualquer outra
+    leitura do nome poderia levar um CDB "Pré 2030" para a curva do Tesouro.
+    """
+    from data_pipeline.importers.investments.tesouro_direto import tesouro_security_key
+
+    ticker = str(ticker or "").upper().strip()
+    familia = re.fullmatch(r"(TIPCA|TPRE)(20\d{2})", ticker)
+    if not familia or not nome:
+        return ticker
+    cupom = f"{familia.group(1)}J{familia.group(2)}"
+    return cupom if tesouro_security_key(nome, familia.group(2)) == cupom else ticker
+
+
+def pu_de_recompra(conn, security_keys) -> dict[str, tuple[float, date]]:
+    """``{security_key: (pu, data_base)}`` do último dia da curva de cada título.
+
+    Recebe a conexão de quem chama — a carteira já tem uma aberta — e lê dentro
+    de um SAVEPOINT: sem ele, a tabela ausente deixaria a transação do chamador
+    abortada e todas as consultas seguintes da carteira morreriam. Devolve
+    vazio, nunca erro.
+    """
+    chaves = sorted({str(k) for k in security_keys if k})
+    if not chaves:
+        return {}
+    try:
+        with conn.begin_nested():
+            linhas = conn.execute(text(SQL_PU_DE_RECOMPRA), {"chaves": chaves}).fetchall()
+    except Exception as exc:
+        logger.info("tesouro_curva: PU de recompra indisponível (%s)", exc)
+        return {}
+    pus: dict[str, tuple[float, date]] = {}
+    for r in linhas:
+        base = r.base_date if isinstance(r.base_date, date) else pd.to_datetime(r.base_date).date()
+        pus[str(r.security_key)] = (float(r.pu), base)
+    return pus
 
 
 def serie_titulo(engine, security_key: str, desde: date | None = None) -> pd.DataFrame:

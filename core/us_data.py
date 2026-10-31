@@ -8,7 +8,12 @@ vira estrutura vazia/segura. A chave FMP NUNCA passa por aqui.
 """
 from __future__ import annotations
 
+import logging
+import time as _time
+
 import core.us_read as _read
+
+logger = logging.getLogger(__name__)
 
 try:
     import streamlit as st
@@ -30,17 +35,47 @@ def data_status() -> dict:
     return _read.data_status()
 
 
+# INF-A2: `_use_snapshot` roda em quase toda função da fachada, e cada chamada
+# fazia 2–3 consultas ao Supabase (`to_regclass` duas vezes e um `LIMIT 1`).
+# A resposta só muda com deploy ou migration. Por isso o "sim" (modo vitrine,
+# o do app publicado) fica guardado por 12 h. O "não" é recalculado sempre:
+# no armazém local ele não custa egress, e uma falha transitória de conexão
+# também responde "não" (`schema_ready`/`snapshot_ready` engolem o erro). Se
+# o "não" fosse guardado, uma queda de segundos prenderia o app no modo errado
+# por 12 h.
+_USE_SNAPSHOT_TTL_SECONDS = 43200
+_USE_SNAPSHOT_SIM_DESDE: float | None = None
+
+
+def _reset_use_snapshot_memo() -> None:
+    global _USE_SNAPSHOT_SIM_DESDE
+    _USE_SNAPSHOT_SIM_DESDE = None
+
+
 def _use_snapshot() -> bool:
     """True quando só a vitrine existe (deploy) — sem as tabelas completas."""
-    return not _read.schema_ready() and _read.snapshot_ready()
+    global _USE_SNAPSHOT_SIM_DESDE
+    agora = _time.monotonic()
+    if (_USE_SNAPSHOT_SIM_DESDE is not None
+            and agora - _USE_SNAPSHOT_SIM_DESDE < _USE_SNAPSHOT_TTL_SECONDS):
+        return True
+    sim = not _read.schema_ready() and _read.snapshot_ready()
+    _USE_SNAPSHOT_SIM_DESDE = agora if sim else None
+    return sim
 
 
-@_cache
+# INF-A2: as duas leem a vitrine inteira por `_snapshot_df` -- 3.701 linhas,
+# 0,87 MB em texto (medido no armazém em 04/10/2026) -- para listar empresas e
+# contar setores. A vitrine é republicada uma vez por noite; com TTL de 5 min
+# cada visita à aba "Empresas por setor" depois da expiração relia tudo (até
+# 288 leituras/dia, ~250 MB/dia por processo). 12 h, como `scored_universe`,
+# que lê a mesma tabela.
+@_cache_pesado
 def overview() -> dict:
     return _read.load_snapshot_overview() if _use_snapshot() else _read.load_overview()
 
 
-@_cache
+@_cache_pesado
 def companies(sector: str | None = None, search: str | None = None,
               limit: int = 500):
     if _use_snapshot():
@@ -108,7 +143,11 @@ def _anexa_negociabilidade_e_ciclo(frame):
     try:
         giro = _read.load_us_giro_diario()
         ciclo = _read.load_us_resiliencia()
-    except Exception:                       # dado ausente não pode zerar a aba
+    except Exception:  # noqa: BLE001 - dado ausente não pode zerar a aba
+        # A carteira EUA nomeia a coluna que falta; o log guarda a causa
+        # (INF-M4), que antes sumia sem rastro.
+        logger.exception(
+            "Negociabilidade/ciclo EUA indisponíveis; colunas não anexadas")
         return frame
 
     chaves = frame["symbol"].astype(str).str.strip().str.upper()
@@ -131,6 +170,35 @@ def _anexa_negociabilidade_e_ciclo(frame):
     return out
 
 
+def _anexa_estilos(frame):
+    """Momento 12-1 e P&D (core.us_estilos) como COLUNAS do cross-section.
+
+    Na vitrine já chegam do blob ``metrics``; no armazém local, saem do diário
+    e da DRE. Vitrine publicada antes delas fica com as colunas vazias, e as
+    duas trilhas entram neutras na nota de entrada -- nunca como zero.
+    """
+    import pandas as pd
+
+    from core.us_estilos import ESTILOS_COLS
+
+    if frame is None or frame.empty or "symbol" not in frame.columns:
+        return frame
+    if all(c in frame.columns for c in ESTILOS_COLS):
+        return frame
+    try:
+        estilos = _read.load_us_estilos()
+    except Exception:  # noqa: BLE001 - dado ausente não pode zerar a aba
+        logger.exception("Momento/P&D EUA indisponíveis; trilhas de estilo neutras")
+        estilos = {}
+    chaves = frame["symbol"].astype(str).str.strip().str.upper()
+    out = frame.copy()
+    for coluna in ESTILOS_COLS:
+        out[coluna] = chaves.map(lambda s, _c=coluna: (estilos.get(s) or {}).get(_c))
+    for coluna in ("momento_12_1", "pd_anual_usd"):
+        out[coluna] = pd.to_numeric(out[coluna], errors="coerce")
+    return out
+
+
 @_cache_pesado
 def scored_universe(limit_companies: int | None = None):
     """Cross-section com score fundamentalista calculado (para as abas de análise).
@@ -140,12 +208,12 @@ def scored_universe(limit_companies: int | None = None):
     """
     import pandas as pd
     if _use_snapshot():
-        return _anexa_negociabilidade_e_ciclo(_read.load_snapshot_scored())
+        return _anexa_estilos(_anexa_negociabilidade_e_ciclo(_read.load_snapshot_scored()))
     import core.us_score as _score
     frame = _read.load_scoring_frame(limit_companies=limit_companies)
     if frame is None or frame.empty:
         return frame if frame is not None else pd.DataFrame()
-    return _anexa_negociabilidade_e_ciclo(_score.score_cross_section(frame))
+    return _anexa_estilos(_anexa_negociabilidade_e_ciclo(_score.score_cross_section(frame)))
 
 
 def portfolio_candidates_with_renda_sustentavel(scored, params):
@@ -170,11 +238,30 @@ def portfolio_candidates_with_renda_sustentavel(scored, params):
     )
 
 
+class _SemDossieNaVitrine(LookupError):
+    """Sinaliza a ausência sem deixar o cache guardá-la (exceção não é cacheada)."""
+
+
+# INF-A2: o dossiê da vitrine (~7,4 KB de JSON por empresa) era relido do
+# Supabase a cada rerun da aba e a cada contexto de LLM do ativo. A vitrine é
+# republicada no máximo uma vez por noite, então 12 h por símbolo. A ausência
+# (falha de conexão ou empresa fora da vitrine) não fica guardada: ela sai como
+# exceção, que o `st.cache_data` não memoriza.
+@_cache_pesado
+def _dossie_da_vitrine(symbol: str) -> dict:
+    d = _read.load_snapshot_dossie(symbol)
+    if not d:
+        raise _SemDossieNaVitrine(symbol)
+    return d
+
+
 def dossie(symbol: str) -> dict:
+    sym = (symbol or "").strip().upper()
     if _use_snapshot():
-        d = _read.load_snapshot_dossie(symbol)
-        return d if d else {"symbol": (symbol or "").upper(),
-                            "erro": "sem dados na vitrine para esta empresa"}
+        try:
+            return _dossie_da_vitrine(sym)
+        except _SemDossieNaVitrine:
+            return {"symbol": sym, "erro": "sem dados na vitrine para esta empresa"}
     import core.us_dossie as _dos
     return _dos.build_dossie(symbol)
 
@@ -209,6 +296,12 @@ def asymmetry_universe(limit_companies: int | None = None):
     return _read.load_asymmetry_frame(limit_companies=limit_companies)
 
 
+@_cache_pesado
+def usdbrl_mensal():
+    """Câmbio de fim de mês para o backtest em reais (core.us_read)."""
+    return _read.load_usdbrl_mensal()
+
+
 def backtest(top_n: int = 20, weighting: str = "score", *,
              benchmark=None, benchmark_loader=None) -> dict:
     """Backtest PIT sobre o painel de scores (vazio até computar o histórico).
@@ -221,6 +314,10 @@ def backtest(top_n: int = 20, weighting: str = "score", *,
     baseline; o equal-weight do universo continua sendo calculado e reportado.
     Sem série publicada para o índice, o resultado traz `benchmark.ok = False`
     com erro nomeado — nunca um excesso calculado contra outra coisa.
+    
+    O bloco `liquido` traz o mesmo walk-forward em reais, depois de custo,
+    retenção, IR e IOF (auditoria app4, EUA-J); é o que a tela mostra por
+    padrão. As chaves brutas em USD seguem iguais para a medição OOS.
     """
     import core.us_backtest as _bt
     panel = score_panel(horizon_months=HORIZONTE_PAINEL_MESES)
@@ -229,7 +326,8 @@ def backtest(top_n: int = 20, weighting: str = "score", *,
     return _bt.walk_forward(panel, top_n=top_n, weighting=weighting,
                             periods_per_year=1, benchmark=benchmark,
                             benchmark_loader=benchmark_loader,
-                            benchmark_horizon_months=HORIZONTE_PAINEL_MESES)
+                            benchmark_horizon_months=HORIZONTE_PAINEL_MESES,
+                            cambio_usdbrl=usdbrl_mensal())
 
 
 def benchmark_options() -> tuple[str, ...]:

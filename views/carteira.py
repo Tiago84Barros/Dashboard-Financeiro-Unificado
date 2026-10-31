@@ -23,6 +23,7 @@ from design.componentes import (
     indicador_linha,
     secao_titulo,
 )
+from design.lacunas import aviso_lacuna
 
 # ── Helpers de gráfico ────────────────────────────────────────────────────────
 
@@ -132,10 +133,14 @@ def render() -> None:
 
     # ── Aviso sem cotações ────────────────────────────────────────────────────
     if not cotacoes:
+        aviso_lacuna(
+            "Cotações de mercado não disponíveis: valores de mercado e rentabilidade "
+            "são estimativas pelo preço médio de aquisição (custo histórico). "
+            "A tabela asset_quotes precisa ser alimentada.",
+            codigo="tela.carteira.sem_cotacoes",
+        )
         st.info(
-            "**Cotações de mercado não disponíveis** — os valores de mercado e a "
-            "rentabilidade exibidos são estimativas pelo preço médio de aquisição (custo histórico). "
-            "Alimente a tabela `asset_quotes` via yfinance para ativar valores reais.",
+            "Valores de mercado e rentabilidade estimados pelo custo de aquisição.",
             icon="📈",
         )
 
@@ -212,7 +217,9 @@ def render() -> None:
             )
             for cls in por_classe:
                 cor_rentab = "#00C896" if cls["rentab_pct"] >= 0 else "#FC5C7D"
-                rentab_txt = fmt_percentual(cls["rentab_pct"]) if cotacoes else "—"
+                rentab_txt = (fmt_percentual(cls["rentab_pct"])
+                              if cotacoes and cls.get("sem_marcacao_n", 0) < cls["num_ativos"]
+                              else "—")
                 indicador_linha(
                     f"{cls['nome']} · {cls['num_ativos']} ativo{'s' if cls['num_ativos'] != 1 else ''}",
                     fmt_moeda(cls["valor_mercado"]),

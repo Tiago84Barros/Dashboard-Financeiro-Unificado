@@ -216,3 +216,32 @@ def test_arquivo_sem_linha_de_fii_nao_conclui(banco, monkeypatch):
     with banco.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM market.fii_b3_archive_loads "
                                  "WHERE status='completed'")).scalar() == 0
+
+
+@pytest.mark.parametrize("agora, esperado", [
+    ("2026-10-03T15:00:00-03:00", "2026-10-02"),  # sábado -> sexta
+    ("2026-10-04T10:00:00-03:00", "2026-10-02"),  # domingo -> sexta
+    ("2026-10-05T10:00:00-03:00", "2026-10-02"),  # segunda antes do fechamento
+    ("2026-10-05T19:30:00-03:00", "2026-10-05"),  # segunda após o fechamento
+    ("2026-10-06T07:30:00-03:00", "2026-10-05"),
+])
+def test_ultimo_pregao_esperado(agora, esperado):
+    assert str(fbh.ultimo_pregao_esperado(datetime.fromisoformat(agora))) == esperado
+
+
+def test_cache_cobre_ultimo_pregao_so_com_o_dia_esperado():
+    sabado = datetime.fromisoformat("2026-10-03T15:00:00-03:00")
+    assert fbh.cache_cobre_ultimo_pregao([{"trade_date": "2026-10-02"}], sabado)
+    assert not fbh.cache_cobre_ultimo_pregao([{"trade_date": "2026-10-01"}], sabado)
+    assert not fbh.cache_cobre_ultimo_pregao([], sabado)
+
+
+def test_download_caido_com_cache_em_dia_e_aviso_nao_erro(banco, monkeypatch):
+    esperado = fbh.ultimo_pregao_esperado().strftime("%Y%m%d")
+    if int(esperado[:4]) != ANO:
+        pytest.skip("último pregão esperado cai no ano anterior")
+    _servir(monkeypatch, _zip(esperado), do_cache=True)
+    relatorio = fbh.ingest_b3_history(years=1)
+    assert relatorio["status"] == "completed"
+    assert relatorio["errors"] == []
+    assert "cache" in relatorio["warnings"][0]["error"]

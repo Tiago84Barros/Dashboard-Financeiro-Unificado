@@ -172,9 +172,34 @@ def _linha_por_ticker(frame, ticker: str) -> dict | None:
     return achado.iloc[0].to_dict()
 
 
-def ler_fii(ticker: str) -> dict[str, Dado]:
+def _carregar_linha_fii(ticker: str) -> tuple[dict | None, bool]:
+    """(linha do fundo ou None, se a vitrine falhou)."""
     from core.market_read import load_fii_methodology_inputs
-    linha = _linha_por_ticker(load_fii_methodology_inputs(), ticker)
+    frame = load_fii_methodology_inputs()
+    falhou = bool(getattr(frame, "attrs", {}).get("load_error"))
+    return _linha_por_ticker(frame, ticker), falhou
+
+
+try:
+    import streamlit as st
+    _linha_fii_cache = st.cache_data(ttl=900, show_spinner=False)(
+        _carregar_linha_fii)
+except Exception:  # pragma: no cover - contexto sem Streamlit
+    _linha_fii_cache = _carregar_linha_fii
+
+
+def ler_fii(ticker: str) -> dict[str, Dado]:
+    """Fundamentos do FII, com a linha da vitrine em cache por fundo.
+
+    Cada acerto em ``load_fii_methodology_inputs`` desserializa a vitrine
+    inteira (434 fundos x 99 colunas, ~18 ms); com 8 FIIs na carteira eram
+    ~0,18 s de cada recálculo. Aqui o acerto devolve só a linha do fundo.
+    Leitura com a vitrine em falha não fica no cache (mesma regra de
+    ``load_fii_methodology_inputs`` e de ``fontes_valuation.ler``).
+    """
+    linha, falhou = _linha_fii_cache(str(ticker or "").upper())
+    if falhou and hasattr(_linha_fii_cache, "clear"):
+        _linha_fii_cache.clear()
     return dados_fii(linha) if linha else {}
 
 

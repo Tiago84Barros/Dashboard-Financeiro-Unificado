@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import pytest
 
 
 def _universo(n: int = 24) -> pd.DataFrame:
@@ -207,106 +206,13 @@ def test_ciclo_renderiza_sem_erro(tmp_path):
     script.write_text(
         "import pandas as pd\n"
         f"u = pd.read_json(r'{dados}')\n"
-        "from views.empresas_americanas import _render_us_piso_e_ciclo\n"
-        "_render_us_piso_e_ciclo(u)\n", encoding="utf-8")
+        "from views.empresas_americanas import _render_us_ciclo\n"
+        "_render_us_ciclo(u)\n", encoding="utf-8")
 
     at = AppTest.from_file(str(script), default_timeout=60).run()
     assert not at.exception, at.exception
     texto = " ".join(c.value for c in at.caption)
     assert "2008" in texto
-
-
-def _app_filtro_liquidez(tmp_path, frame: pd.DataFrame, piso: float):
-    """Roda `_render_us_filtro_liquidez` no Streamlit de verdade, sem banco.
-
-    Pickle e não JSON: `to_json` grava ±infinito como null e o caso mais
-    perigoso (inf passando por `>= piso`) viraria um NaN comum no caminho.
-    """
-    from streamlit.testing.v1 import AppTest
-
-    dados = tmp_path / "u.pkl"
-    frame.to_pickle(dados)
-    script = tmp_path / "app.py"
-    piso_expr = (
-        "float('nan')" if np.isnan(piso) else
-        "float('inf')" if np.isposinf(piso) else
-        "float('-inf')" if np.isneginf(piso) else repr(piso)
-    )
-    script.write_text(
-        "import pandas as pd, streamlit as st\n"
-        f"u = pd.read_pickle(r'{dados}')\n"
-        "from views.empresas_americanas import _render_us_filtro_liquidez\n"
-        f"saida = _render_us_filtro_liquidez(u, {piso_expr})\n"
-        "st.text(','.join(sorted(saida['symbol'].astype(str))))\n",
-        encoding="utf-8")
-    at = AppTest.from_file(str(script), default_timeout=60).run()
-    assert not at.exception, at.exception
-    restantes = [s for s in at.text[0].value.split(",") if s]
-    return at, restantes
-
-
-def _universo_tres_estados() -> pd.DataFrame:
-    """S00/S01 não verificadas, S02/S03 lixo (±inf), S04/S05 abaixo, S06/S07 ok."""
-    u = _universo(8)
-    u["giro_diario_usd"] = [np.nan, np.nan, np.inf, -np.inf,
-                            2e5, 0.0, 5e7, 4e6]
-    return u
-
-
-def test_tela_com_piso_remove_o_nao_verificado_e_declara_quantos(tmp_path):
-    """A tela replicava `giro.isna() | (giro >= piso)`: prometia "≥ US$ 20
-    milhões/dia" e listava empresa cujo volume ninguém mediu."""
-    u = _universo_tres_estados()
-    at, restantes = _app_filtro_liquidez(tmp_path, u, 1e6)
-
-    assert set(restantes) == {"S06", "S07"}
-    # Card CSS, não informação solta: os três estados aparecem no markdown.
-    cards = " ".join(m.value for m in at.markdown)
-    assert "Não verificadas" in cards and "Medida abaixo do piso" in cards
-    assert any("sem série de volume ou sem data" in c.value
-               for c in at.caption)
-
-
-def test_tela_sem_piso_mantem_tudo_mas_avisa_que_nao_validou(tmp_path):
-    """Modo exploratório: o não verificado aparece e a tela diz que aparece."""
-    u = _universo_tres_estados()
-    at, restantes = _app_filtro_liquidez(tmp_path, u, 0.0)
-
-    assert set(restantes) == set(u["symbol"])
-    assert any("não validada" in c.value for c in at.caption)
-
-
-@pytest.mark.parametrize("piso_invalido", [float("nan"), -1.0,
-                                            float("inf"), float("-inf")])
-def test_tela_bloqueia_piso_invalido_sem_excecao(tmp_path, piso_invalido):
-    """O mesmo valor inválido do motor não pode renderizar análise enganosa."""
-    at, restantes = _app_filtro_liquidez(tmp_path, _universo_tres_estados(), piso_invalido)
-
-    assert restantes == []
-    assert any("Piso de negociabilidade inválido" in error.value for error in at.error)
-
-
-def test_tela_exige_timestamp_atual_para_o_giro_alto(tmp_path):
-    """Valor alto não basta: a UI usa a mesma janela de frescor do motor."""
-    u = _universo(4)
-    u["giro_diario_usd"] = 50e6
-    u["giro_diario_usd_at"] = [pd.Timestamp.now(tz="UTC"),
-                                 pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=8),
-                                 pd.NaT, "data inválida"]
-    at, restantes = _app_filtro_liquidez(tmp_path, u, 1e6)
-
-    assert restantes == ["S00"]
-    assert any("sem série de volume ou sem data" in c.value for c in at.caption)
-
-
-def test_tela_sem_a_coluna_de_volume_nao_finge_ter_aplicado_o_piso(tmp_path):
-    """Sem a coluna, o piso não pode ser aplicado — e devolver o universo
-    inteiro seria afirmar que ele foi."""
-    u = _universo(8).drop(columns=["giro_diario_usd"])
-    at, restantes = _app_filtro_liquidez(tmp_path, u, 5e6)
-
-    assert restantes == []
-    assert any("não publica o volume negociado" in w.value for w in at.warning)
 
 
 def test_ciclo_sem_dado_declara_em_vez_de_sumir(tmp_path):
@@ -322,12 +228,19 @@ def test_ciclo_sem_dado_declara_em_vez_de_sumir(tmp_path):
     script.write_text(
         "import pandas as pd\n"
         f"u = pd.read_json(r'{dados}')\n"
-        "from views.empresas_americanas import _render_us_ciclo\n"
-        "_render_us_ciclo(u)\n", encoding="utf-8")
+        "import streamlit as st\n"
+        "import views.empresas_americanas as v\n"
+        "_reg = []\n"
+        "v.aviso_lacuna = lambda m, *, codigo, **k: _reg.append(codigo)\n"
+        "v._render_us_ciclo(u)\n"
+        "st.text('|'.join(_reg))\n", encoding="utf-8")
 
     at = AppTest.from_file(str(script), default_timeout=60).run()
     assert not at.exception, at.exception
-    assert any("Sem série anual suficiente" in c.value for c in at.caption)
+    # A seção declara a indisponibilidade com frase neutra; o motivo vai ao log.
+    assert any("não está disponível no momento" in c.value for c in at.caption)
+    assert not any("Sem série anual suficiente" in c.value for c in at.caption)
+    assert "tela.eua.ciclo_sem_serie_anual" in at.text[0].value
 
 
 def test_o_piso_de_qualidade_nao_reordena_por_conta_propria():

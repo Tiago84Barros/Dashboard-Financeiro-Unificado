@@ -273,4 +273,4 @@ def gerar_dossie_classe(context: str, *, classe: str,
             "ordem definida.")},
     ]
     return _chat_complete(messages, temperature=.2, json_mode=False,
-                          primary_model=model or _report_model())
+                          primary_model=model or _report_model(), pessoal=True)

@@ -10,7 +10,7 @@ import hashlib
 import io
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import text
@@ -30,6 +30,41 @@ PARSER_VERSION = "1.1.0"
 PARSER_SCHEMA_VERSION = "cotahist-layout-2020-r2"
 _LOGGER = logging.getLogger(__name__)
 _BATCH_SIZE = 1_000
+
+
+_BRT = timezone(timedelta(hours=-3))
+# A B3 publica o ZIP do dia depois do fechamento; a rotina diária roda às 19:30.
+_HORA_FECHAMENTO_BRT = 19
+
+
+def ultimo_pregao_esperado(agora: datetime | None = None) -> date:
+    """Último dia útil cujo pregão já deveria estar no ZIP do ano corrente.
+
+    Fim de semana aponta a sexta; dia útil antes das 19h aponta o dia útil
+    anterior. Feriado nacional não é descontado: ele só pode apontar um dia
+    sem pregão, o que acusa atraso a mais, nunca esconde atraso real.
+    """
+    agora = (agora or datetime.now(timezone.utc)).astimezone(_BRT)
+    dia = agora.date()
+    if dia.weekday() < 5 and agora.hour < _HORA_FECHAMENTO_BRT:
+        dia -= timedelta(days=1)
+    while dia.weekday() >= 5:
+        dia -= timedelta(days=1)
+    return dia
+
+
+def cache_cobre_ultimo_pregao(rows: list[dict], agora: datetime | None = None) -> bool:
+    """O ZIP em cache já traz o último pregão esperado?
+
+    Em 03/10/2026 (sábado) os dois downloads do ano corrente falharam; o cache
+    de sexta 19:34 já tinha o pregão de 02/10 e não havia nada novo a baixar,
+    mas o relatório saía "partial" e a etapa b3_pregao ficava FALHOU por 18 min
+    de timeout. Falha de download com o cache em dia é aviso, não erro.
+    """
+    datas = [row["trade_date"] for row in rows if row.get("trade_date")]
+    if not datas:
+        return False
+    return date.fromisoformat(max(datas)) >= ultimo_pregao_esperado(agora)
 
 
 def _problema_do_zip(content: bytes) -> str | None:
@@ -162,7 +197,7 @@ def ingest_b3_history(*, years: int = 10) -> dict:
         return {"status": "failed", "errors": ["banco indisponível"]}
     current = datetime.now(timezone.utc).year
     report = {"status": "completed", "archives": 0, "skipped": 0,
-              "rows": 0, "tickers": set(), "errors": []}
+              "rows": 0, "tickers": set(), "errors": [], "warnings": []}
     with engine.begin() as conn:
         columns = {row[0] for row in conn.execute(text("""
             SELECT column_name FROM information_schema.columns
@@ -181,15 +216,20 @@ def ingest_b3_history(*, years: int = 10) -> dict:
                 _LOGGER.info("COTAHIST %s — ano fechado já carregado, sem download", year)
                 continue
             content, url, headers = fetch_year(year)
+            rows = parse_cotahist(content)
             if headers.get("cache-fallback") and year == current:
                 # O ano corrente em cache é o do último download que deu certo:
                 # carregá-lo em silêncio marcaria a rotina como em dia com a
-                # fita parada. Carrega assim mesmo, mas o relatório sai parcial.
-                report["errors"].append({"year": year, "error": (
-                    "download do COTAHIST falhou; carregado o ZIP em cache, "
-                    "que pode estar velho: "
-                    + headers.get("cache-fallback-motivo", "motivo não informado"))})
-            rows = parse_cotahist(content)
+                # fita parada. Se o cache já traz o último pregão esperado não
+                # há o que perder e vira aviso; senão o relatório sai parcial.
+                mensagem = {"year": year, "error": (
+                    "download do COTAHIST falhou; carregado o ZIP em cache"
+                    + ("" if cache_cobre_ultimo_pregao(rows) else ", que está velho")
+                    + ": " + headers.get("cache-fallback-motivo", "motivo não informado"))}
+                if cache_cobre_ultimo_pregao(rows):
+                    report["warnings"].append(mensagem)
+                else:
+                    report["errors"].append(mensagem)
             if not rows:
                 # Todo ano do COTAHIST tem FII desde 2010; zero linhas é
                 # arquivo errado, não ano vazio. Registrar 'completed' faria o

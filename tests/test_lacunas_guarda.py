@@ -1,7 +1,8 @@
 """Guarda contra "resolver a lacuna apagando o aviso".
 
 Compara o diff do branch com a base e falha se ele REMOVE uma chamada de
-``registrar_lacuna`` / ``registrar_limitacoes`` / ``aviso_lacuna`` ou um texto
+``registrar_lacuna`` / ``registrar_limitacoes`` / ``aviso_lacuna`` /
+``detalhe_tecnico`` ou um texto
 de limitacao (``limitacoes=`` / ``limitacoes.append``). Linha movida (removida
 aqui, acrescentada ali com o mesmo texto) nao conta.
 
@@ -26,7 +27,7 @@ import pytest
 
 RAIZ = Path(__file__).resolve().parents[1]
 
-_CHAMADA = re.compile(r"(?<!def )\b(registrar_lacuna|registrar_limitacoes|aviso_lacuna)\(")
+_CHAMADA = re.compile(r"(?<!def )\b(registrar_lacuna|registrar_limitacoes|aviso_lacuna|detalhe_tecnico)\(")
 _LIMITACAO = re.compile(r"\blimitacoes\b\s*(=|\+=|\.append\(|\.extend\().*[\"']")
 _JUSTIFICATIVA = re.compile(r"^##\s*Aviso removido\s*$\n+(?P<texto>(?!##).+)", re.MULTILINE)
 

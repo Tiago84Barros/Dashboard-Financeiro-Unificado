@@ -294,7 +294,8 @@ def _avaliar(caso: Caso, contexto: str = "vazio") -> dict:
     # Fallback não é veredito: significa que o LLM não respondeu. Contabilizar
     # como acerto inflaria a nota (o fallback nunca veta, então "acertaria"
     # todos os casos de não-veto).
-    indisponivel = "Parecer não gerado" in motivo or parecer.get("confianca") == 0
+    indisponivel = (classificacao == "nao_avaliado" or "Parecer não gerado" in motivo
+                    or parecer.get("confianca") == 0)
     return {
         "caso": caso.nome, "deve_vetar": caso.deve_vetar,
         "classificacao": classificacao, "vetou": vetou,

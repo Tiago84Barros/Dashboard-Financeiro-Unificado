@@ -21,9 +21,12 @@ from core.chat_memory import (
 from core.inteligencia_ativos import veredito
 from core.llm_ativo import chat_com_ativo
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
+from core.llm_grounding import aviso_ancoragem
 from core.utils import escapar_cifrao
+from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 
-_PROVEDOR_LABEL = {"openai": "OpenAI", "gemini": "Gemini", "openrouter": "OpenRouter"}
+_PROVEDOR_LABEL = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini",
+                   "openrouter": "OpenRouter"}
 
 _SUGESTOES_PADRAO: dict[str, tuple[str, ...]] = {
     "b3": (
@@ -97,14 +100,17 @@ def render_chat_ativo(
     ), unsafe_allow_html=True)
 
     if not llm_disponivel():
-        st.info("Nenhum provedor LLM configurado. Adicione OPENAI_API_KEY ou "
-                "GEMINI_API_KEY para conversar sobre o ativo.")
+        st.info("Esta conversa não está disponível no momento.")
+        aviso_lacuna("Nenhum provedor LLM configurado para o chat do ativo",
+                     codigo="tela.inteligencia.chat_ativo_sem_provedor",
+                     entidade=tk)
         return
 
     provedores = provedores_disponiveis()
     if provedores:
-        st.caption("Provedor disponível: " + ", ".join(
-            _PROVEDOR_LABEL.get(p, p) for p in provedores))
+        detalhe_tecnico("Provedor disponível: " + ", ".join(
+            _PROVEDOR_LABEL.get(p, p) for p in provedores),
+            codigo="inteligencia.chat_provedor")
 
     hist_key = f"chat_ativo_{mercado}_history"
     sig_key = f"chat_ativo_{mercado}_signature"
@@ -135,9 +141,13 @@ def render_chat_ativo(
                              width="stretch"):
                     sugerida = pergunta
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     historico = load_chat_history(memory_key, session_key=hist_key)
     for mensagem in visible_chat_history(historico, hist_key):
-        with st.chat_message(mensagem["role"]):
+        with conversa.chat_message(mensagem["role"]):
             st.markdown(escapar_cifrao(mensagem["content"]))
 
     digitada = st.chat_input(
@@ -149,16 +159,19 @@ def render_chat_ativo(
         return
 
     historico.append({"role": "user", "content": pergunta})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(pergunta))
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
+        aviso = ""
         with st.spinner(f"Consultando os dados de {tk}, pares e qualidade…"):
             try:
                 # O bloco do ativo já traz o noticiário dele; aqui entram macro,
-                # curva, câmbio e manchetes gerais — premissa do app.
+                # curva, câmbio, manchetes gerais e os pregões diários do
+                # próprio ativo (só B3/FII estão no COTAHIST) — premissa do app.
                 from core.contexto_mercado import bloco_contexto_mercado
 
-                contexto = build_context(pergunta) + "\n\n" + bloco_contexto_mercado()
+                contexto = build_context(pergunta) + "\n\n" + bloco_contexto_mercado(
+                    tickers_movimento=[tk] if mercado in ("b3", "fii") else ())
                 # O veredito da Inteligência dos Ativos para este ativo, e a
                 # resposta conferida contra ele.
                 avaliacoes: dict = {}
@@ -170,10 +183,15 @@ def render_chat_ativo(
                     lambda h, msg: chat_com_ativo(contexto, h, msg,
                                                   mercado=mercado, ticker=tk),
                     historico[:-1], pergunta, avaliacoes)
+                aviso = aviso_ancoragem(resposta, contexto, pergunta)
             except Exception as exc:  # provedor fora do ar, timeout, dado ausente
-                resposta = f"Não foi possível consultar a LLM neste momento: {exc}"
+                resposta = None
+                falha_de_acao("Não foi possível responder agora. Tente de novo em instantes.", exc)
+        if resposta is None:
+            historico.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(resposta))
-        st.caption("Análise educacional baseada nos dados disponíveis; "
-                   "não constitui recomendação de compra ou venda.")
+        if aviso:
+            st.caption(aviso)
     historico.append({"role": "assistant", "content": resposta})
     save_chat_history(memory_key, historico, session_key=hist_key)

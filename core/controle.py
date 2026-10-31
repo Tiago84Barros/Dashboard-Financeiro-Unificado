@@ -539,11 +539,16 @@ def get_contas_cartao_credito() -> list[dict]:
 
 
 @user_cache_data(ttl=60)
-def get_orcamentos_vigentes(ano: int, mes: int) -> dict[str, float]:
+def get_orcamentos_vigentes(ano: int, mes: int, *,
+                            estrito: bool = False) -> dict[str, float]:
     """{category_id: limite} em vigor no mês, para o editor de orçamento.
 
     Vazio em mock ou em falha: o editor abre em branco em vez de derrubar a
     página, e a tela de consumo continua lendo `get_controle`.
+
+    ``estrito=True`` deixa a falha subir. O editor de Configurações precisa
+    distinguir "nenhum limite" de "não consegui ler": em branco por falha, ele
+    mostraria R$ 0 onde há limite gravado, sem dizer que a leitura quebrou.
     """
     if settings.MOCK_MODE:
         return {}
@@ -564,6 +569,8 @@ def get_orcamentos_vigentes(ano: int, mes: int) -> dict[str, float]:
         return {r.category_id: float(r.amount_limit) for r in rows
                 if r.amount_limit is not None and float(r.amount_limit) > 0}
     except Exception as exc:
+        if estrito:
+            raise
         logger.warning("[controle] Falha ao carregar orçamentos: %s", exc)
         return {}
 
@@ -837,16 +844,30 @@ def _get_or_create_category(conn, owner: str, name: str, cat_type: str) -> str |
     return created.id if created else None
 
 
-def _invoice_fingerprint(row: dict, account_id: str) -> tuple:
+def _fingerprint_values(account_id, due_date, purchase_date, amount, description,
+                        installment_current, installment_total) -> tuple:
+    """Identidade de um lançamento de fatura, a MESMA nos dois lados do dedup.
+
+    Fica de fora a categoria: ela é opinião (o usuário recategoriza, a regra
+    muda), não parte do fato. Com a categoria na chave, reimportar o CSV depois
+    de recategorizar não casava com o que já estava gravado e duplicava o
+    lançamento (a auditoria de 04/10/2026 achou 2 grupos assim).
+    """
     return (
         account_id,
-        row["due_date"].isoformat(),
-        row["purchase_date"].isoformat(),
-        round(float(row["amount"]), 2),
-        _norm_text(row["description"]),
-        _norm_text(row["category"]),
-        int(row["installment_current"]),
-        int(row["installment_total"]),
+        due_date.isoformat(),
+        purchase_date.isoformat(),
+        round(float(amount), 2),
+        _norm_text(description),
+        int(installment_current),
+        int(installment_total),
+    )
+
+
+def _invoice_fingerprint(row: dict, account_id: str) -> tuple:
+    return _fingerprint_values(
+        account_id, row["due_date"], row["purchase_date"], row["amount"],
+        row["description"], row["installment_current"], row["installment_total"],
     )
 
 
@@ -1065,15 +1086,14 @@ def importar_fatura_cartao_csv(file_bytes: bytes, vencimento: _date, account_id:
         existing = Counter()
         for item in existing_rows:
             purchase_date = item.payment_date or item.due_date
-            existing[(
+            existing[_fingerprint_values(
                 account_id,
-                item.due_date.isoformat(),
-                purchase_date.isoformat(),
-                round(float(item.amount or 0), 2),
-                _norm_text(item.description),
-                _norm_text(item.category_name),
-                int(item.installment_current or 1),
-                int(item.installment_total or 1),
+                item.due_date,
+                purchase_date,
+                item.amount or 0,
+                item.description,
+                item.installment_current or 1,
+                item.installment_total or 1,
             )] += 1
 
         seen = Counter()

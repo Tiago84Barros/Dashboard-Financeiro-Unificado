@@ -2,8 +2,8 @@
 core/llm_b3.py
 Módulo LLM para análise de portfólio B3.
 
-Provedores em cadeia: OpenRouter (Nemotron) → OpenAI → Gemini. Dois tiers de
-modelo no lado da OpenAI:
+Provedores em cadeia: Claude (só em chat e relatório pedidos na tela) →
+OpenRouter (Nemotron) → OpenAI → Gemini. Dois tiers de modelo no lado da OpenAI:
   - _MODEL_DEFAULT (gpt-4o-mini): interações rápidas/baratas (chat).
   - _REPORT_MODEL_DEFAULT (gpt-4o): Relatórios por Empresa/Portfólio — síntese
     de 10 anos de fundamentos + peers + documentos CVM exige um modelo forte;
@@ -20,10 +20,12 @@ import re
 import sys
 import threading
 import time
+from typing import Sequence
 
 import pandas as pd
 import streamlit as st
 
+import core.data_quality as _dq
 from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
 from core.inteligencia_ativos import veredito as _veredito
 from core.inteligencia_ativos.veredito import REGRA_VEREDITO
@@ -44,9 +46,22 @@ def _report_model() -> str:
     except Exception:
         pass
     return os.getenv("LLM_REPORT_MODEL", "").strip() or _REPORT_MODEL_DEFAULT
-_OPENROUTER_MODEL_DEFAULT = "nvidia/nemotron-3-super-120b-a12b:free"
+_OPENROUTER_MODEL_DEFAULT = "nvidia/nemotron-3.5-super-vl:free"
+#: Modelos gratuitos que o OpenRouter tenta, em ordem, quando o pedido falha.
+#: Em 26/10/2026 o endpoint do `nemotron-3-super-120b-a12b:free` sumiu na NVIDIA
+#: (404 "Function not found") com o modelo ainda listado no OpenRouter: o elo
+#: inteiro caía e o chat mostrava o erro do provedor seguinte (OpenAI sem
+#: crédito). Os dois desta lista passaram em 4/4 julgamentos em
+#: `scripts/avaliar_provedor_llm.py` naquele dia. O OpenRouter aceita no máximo
+#: três modelos em `models`.
+_OPENROUTER_RESERVA_GRATUITA = (
+    "nvidia/nemotron-3.5-super-vl:free",
+    "nvidia/nemotron-3-ultra-550b-a55b:free",
+)
 _OPENROUTER_BASE_URL_DEFAULT = "https://openrouter.ai/api/v1"
 _GEMINI_MODEL_DEFAULT = "gemini-3.6-flash"
+_ANTHROPIC_MODEL_DEFAULT = "claude-sonnet-5-5"
+_ANTHROPIC_EFFORT_DEFAULT = "medium"
 _GEMINI_BASE_URL_DEFAULT = "https://generativelanguage.googleapis.com/v1beta/openai/"
 _TEMPERATURE   = 0.2
 _TIMEOUT       = 90
@@ -90,6 +105,27 @@ def _get_gemini_client():
         return OpenAI(api_key=key, base_url=base, timeout=_TIMEOUT)
     except Exception as exc:
         logger.warning("Gemini client init falhou: %s", exc)
+        return None
+
+
+@st.cache_resource(show_spinner=False)
+def _get_anthropic_client():
+    """Cliente da Anthropic, ou None sem chave. SDK próprio: ver core/llm_anthropic.py.
+
+    Um retry só: o SDK já repete 429/5xx/529 sozinho, e no chat o usuário
+    prefere a resposta do Gemini a esperar o terceiro backoff.
+    """
+    try:
+        from anthropic import Anthropic
+
+        from core.config import settings
+        key = (getattr(settings, "ANTHROPIC_API_KEY", None)
+               or os.environ.get("ANTHROPIC_API_KEY", ""))
+        if not key:
+            return None
+        return Anthropic(api_key=key, timeout=_TIMEOUT, max_retries=1)
+    except Exception as exc:
+        logger.warning("Anthropic client init falhou: %s", exc)
         return None
 
 
@@ -138,10 +174,74 @@ def _gemini_model() -> str:
         return _GEMINI_MODEL_DEFAULT
 
 
-def _provider_chain(primary_model: str | None = None) -> list[tuple]:
+def _anthropic_model() -> str:
+    try:
+        from core.config import settings
+        return getattr(settings, "ANTHROPIC_MODEL", None) or _ANTHROPIC_MODEL_DEFAULT
+    except Exception:
+        return _ANTHROPIC_MODEL_DEFAULT
+
+
+def _anthropic_effort() -> str:
+    try:
+        from core.config import settings
+        return getattr(settings, "ANTHROPIC_EFFORT", None) or _ANTHROPIC_EFFORT_DEFAULT
+    except Exception:
+        return _ANTHROPIC_EFFORT_DEFAULT
+
+
+def _sessao_interativa() -> bool:
+    """Esta thread serve uma sessão do navegador?
+
+    Rotina noturna, script, job e thread solta (o prazo do portão PIT roda numa)
+    não têm contexto de execução do Streamlit. É a fronteira do crédito pago:
+    o Claude atende quem está na tela, e o lote fica com os elos de sempre.
     """
-    Lista de (nome, client, modelo) na ordem: OpenRouter → OpenAI → Gemini.
-    Inclui apenas os provedores com chave configurada.
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        return get_script_run_ctx(suppress_warning=True) is not None
+    except Exception:
+        return False
+
+
+def _modelo_gratuito(modelo: str | None) -> bool:
+    """Modelo ``:free`` do OpenRouter: o provedor costuma pagar-se com os prompts."""
+    return ":free" in str(modelo or "").lower()
+
+
+def _extra_openrouter(nome: str, modelo: str | None) -> dict:
+    """``extra_body`` com a reserva gratuita, só para modelo ``:free`` do OpenRouter.
+
+    Modelo gratuito some sem aviso (ver ``_OPENROUTER_RESERVA_GRATUITA``); com
+    ``models`` o próprio OpenRouter passa ao próximo na mesma requisição. Modelo
+    pago não ganha reserva gratuita: trocaria em silêncio o que foi escolhido.
+    """
+    if nome != "openrouter" or not _modelo_gratuito(modelo):
+        return {}
+    modelos = [modelo] + [m for m in _OPENROUTER_RESERVA_GRATUITA if m != modelo]
+    return {"extra_body": {"models": modelos[:3]}}
+
+
+def _quem_respondeu(nome: str, pedido: str, resp) -> str:
+    """"provedor/modelo" de quem respondeu de fato (a reserva pode ter entrado)."""
+    real = getattr(resp, "model", None)
+    return f"{nome}/{real if isinstance(real, str) and real else pedido}"
+
+
+def _provider_chain(primary_model: str | None = None, *,
+                    pessoal: bool = False) -> list[tuple]:
+    """
+    Lista de (nome, client, modelo) na ordem: Claude → OpenRouter → OpenAI →
+    Gemini. Inclui apenas os provedores com chave configurada.
+
+    O Claude (Anthropic) vai na frente só em sessão do navegador
+    (``_sessao_interativa``): é crédito pago, e o lote não o consome. Sem
+    crédito, ele sai por 15 minutos como qualquer elo (``_sem_credito``).
+
+    ``pessoal=True`` é a cadeia dos chats que mandam dado do usuário
+    (transações, fatura, posições, política, renda): os elos com modelo
+    ``:free`` saem e a ordem dos demais fica. A cadeia dos chats de mercado
+    não muda.
 
     O OpenRouter vai na frente por medição, não por preferência: no teste de
     `scripts/avaliar_provedor_llm.py` o Nemotron super-120b acertou o julgamento
@@ -150,6 +250,9 @@ def _provider_chain(primary_model: str | None = None) -> list[tuple]:
     cadeia de um elo só transforma indisponibilidade em tela sem análise.
     """
     chain: list[tuple] = []
+    ac = _get_anthropic_client()
+    if ac is not None and _sessao_interativa():
+        chain.append(("anthropic", ac, _anthropic_model()))
     rc = _get_openrouter_client()
     if rc is not None:
         chain.append(("openrouter", rc, _openrouter_model(primary_model)))
@@ -159,6 +262,8 @@ def _provider_chain(primary_model: str | None = None) -> list[tuple]:
     gc = _get_gemini_client()
     if gc is not None:
         chain.append(("gemini", gc, _gemini_model()))
+    if pessoal:
+        chain = [elo for elo in chain if not _modelo_gratuito(elo[2])]
     return chain
 
 
@@ -178,6 +283,86 @@ _ULTIMO = threading.local()
 
 def ultimo_modelo() -> str | None:
     return getattr(_ULTIMO, "modelo", None)
+
+
+def ultimas_ferramentas() -> list[dict]:
+    """Ferramentas que a última chamada desta thread executou, em ordem.
+
+    Cada item: ``{"nome", "argumentos", "chars"}``. Lista vazia quando a LLM
+    respondeu sem chamar nada ou o provedor não aceitou ferramentas.
+    """
+    return list(getattr(_ULTIMO, "ferramentas", None) or [])
+
+
+#: Rodadas de ferramenta antes da resposta final, e chamadas por rodada. A
+#: pergunta típica pede uma ou duas séries; o teto segura laço de modelo que
+#: chama a mesma ferramenta de novo, e cada rodada paga o prompt inteiro.
+MAX_RODADAS_FERRAMENTA = 3
+MAX_CHAMADAS_POR_RODADA = 4
+
+
+def _mensagem_assistente(msg) -> dict:
+    """A mensagem com ``tool_calls`` como volta ao provedor.
+
+    ``model_dump`` preserva o que o provedor exige de volta -- a
+    ``thought_signature`` do Gemini 3 vem em ``extra_content`` de cada
+    chamada, e sem ela a rodada seguinte é recusada.
+    """
+    if hasattr(msg, "model_dump"):
+        return msg.model_dump(exclude_none=True)
+    return {"role": "assistant", "content": getattr(msg, "content", None),
+            "tool_calls": [{"id": c.id, "type": "function",
+                            "function": {"name": c.function.name,
+                                         "arguments": c.function.arguments}}
+                           for c in msg.tool_calls]}
+
+
+def _com_ferramentas(client, modelo: str, messages: list[dict], temperature: float,
+                     ferramentas: Sequence, extra: dict | None = None) -> str:
+    """Laço de function calling: a LLM pede, o app executa, a LLM responde.
+
+    A regra das ferramentas entra no system prompt só aqui: o provedor que
+    responde sem tools não lê instrução sobre ferramenta que não tem.
+    Esgotadas as rodadas, a última chamada sai com ``tool_choice="none"``.
+    """
+    from core.llm_ferramentas import REGRA_FERRAMENTAS, executar
+
+    msgs = [dict(m) for m in messages]
+    if msgs and msgs[0].get("role") == "system":
+        msgs[0]["content"] = (msgs[0].get("content") or "") + "\n\n" + REGRA_FERRAMENTAS
+    else:
+        msgs.insert(0, {"role": "system", "content": REGRA_FERRAMENTAS})
+    esquemas = [f.esquema() for f in ferramentas]
+    usadas: list[dict] = []
+    _ULTIMO.ferramentas = usadas
+    for rodada in range(MAX_RODADAS_FERRAMENTA + 1):
+        parada = {"tool_choice": "none"} if rodada == MAX_RODADAS_FERRAMENTA else {}
+        resp = client.chat.completions.create(model=modelo, messages=msgs,
+                                              temperature=temperature, tools=esquemas,
+                                              **parada, **(extra or {}))
+        msg = resp.choices[0].message
+        chamadas = list(getattr(msg, "tool_calls", None) or [])
+        if not chamadas or parada:
+            conteudo = getattr(msg, "content", None)
+            if not (conteudo or "").strip():
+                raise ValueError("resposta vazia depois das ferramentas")
+            return conteudo
+        msgs.append(_mensagem_assistente(msg))
+        # Toda chamada pedida recebe resposta (o provedor exige uma por id);
+        # as que passam do teto recebem a recusa, não o silêncio.
+        for i, chamada in enumerate(chamadas):
+            if i >= MAX_CHAMADAS_POR_RODADA:
+                resultado = (f"Não executada: teto de {MAX_CHAMADAS_POR_RODADA} "
+                             "chamadas por rodada.")
+            else:
+                resultado = executar(chamada.function.name, chamada.function.arguments,
+                                     ferramentas)
+                usadas.append({"nome": chamada.function.name,
+                               "argumentos": chamada.function.arguments,
+                               "chars": len(resultado)})
+            msgs.append({"role": "tool", "tool_call_id": chamada.id,
+                         "content": resultado})
+    raise RuntimeError("laço de ferramentas sem resposta final")  # inalcançável
 
 
 def _modulo_lacuna() -> str:
@@ -231,6 +416,7 @@ def _sem_lacunas(texto: str | None, modulo: str) -> str | None:
 _PAUSA_PROVEDOR_S = 15 * 60
 _PAUSADOS: dict[str, float] = {}
 _SEM_JSON: set[tuple[str, str]] = set()
+_SEM_TOOLS: set[tuple[str, str]] = set()
 
 
 def _status(exc: Exception) -> int | None:
@@ -239,9 +425,18 @@ def _status(exc: Exception) -> int | None:
 
 
 def _sem_credito(exc: Exception) -> bool:
-    return (_status(exc) in (401, 403)
+    """Chave recusada ou crédito no fim: não volta em segundos.
+
+    A Anthropic responde 400 "Your credit balance is too low" ao acabar o
+    crédito e "You have reached your specified API usage limits" ao bater o
+    limite de gasto do Console; o 402 é a cobrança recusada.
+    """
+    texto = str(exc).casefold()
+    return (_status(exc) in (401, 402, 403)
             or "insufficient_quota" in str(exc)
-            or "no credits" in str(exc).casefold())
+            or "no credits" in texto
+            or "credit balance is too low" in texto
+            or "usage limit" in texto)
 
 
 def _json_nao_suportado(exc: Exception) -> bool:
@@ -265,6 +460,38 @@ def _limpar_estado_provedores() -> None:
     """Esquece pausas e modos JSON aprendidos (teste e troca de chave)."""
     _PAUSADOS.clear()
     _SEM_JSON.clear()
+    _SEM_TOOLS.clear()
+
+
+def _responder_claude(client, modelo: str, messages: list[dict], json_mode: bool,
+                      ferramentas: Sequence | None) -> tuple[str, str]:
+    """O elo Claude, com a mesma triagem de ferramentas dos outros.
+
+    Cota, chave e lentidão sobem para a cadeia; só o 4xx de parâmetro recusado
+    desliga as ferramentas daquele modelo, e a resposta sai sem elas.
+    """
+    from core import llm_anthropic
+
+    if ferramentas and not json_mode and ("anthropic", modelo) not in _SEM_TOOLS:
+        usadas: list[dict] = []
+        _ULTIMO.ferramentas = usadas
+        try:
+            return llm_anthropic.completar(
+                client, modelo, messages, ferramentas=ferramentas,
+                esforco=_anthropic_effort(), usadas=usadas,
+                max_rodadas=MAX_RODADAS_FERRAMENTA,
+                max_por_rodada=MAX_CHAMADAS_POR_RODADA)
+        except Exception as exc_tools:
+            if (_status(exc_tools) in (401, 403, 429)
+                    or _sem_credito(exc_tools) or _passageiro(exc_tools)
+                    or not 400 <= (_status(exc_tools) or 0) < 500):
+                raise
+            _SEM_TOOLS.add(("anthropic", modelo))
+            _ULTIMO.ferramentas = []
+            logger.warning("Function calling falhou em anthropic (%s) — tentando "
+                           "sem ferramentas.", exc_tools)
+    return llm_anthropic.completar(client, modelo, messages, json_mode=json_mode,
+                                   esforco=_anthropic_effort())
 
 
 def _chat_complete(
@@ -273,6 +500,9 @@ def _chat_complete(
     json_mode: bool = False,
     primary_model: str | None = None,
     timeout: float | None = None,
+    pessoal: bool = False,
+    ferramentas: Sequence | None = None,
+    sob_demanda: bool = True,
 ) -> str:
     """
     Executa um chat completion com fallback entre provedores. Tenta OpenAI e,
@@ -282,11 +512,36 @@ def _chat_complete(
 
     `timeout` (s) vale por provedor e substitui o padrão de 90 s: tela
     interativa prefere passar ao próximo provedor a esperar um modelo lento.
+
+    `pessoal=True` usa a cadeia sem modelos ``:free`` (ver ``_provider_chain``):
+    é o que passam os chats com dado do usuário. Se só houver modelo gratuito,
+    recusa em vez de mandar o dado para ele.
+
+    `ferramentas` (``core.llm_ferramentas.Ferramenta``) liga o function
+    calling: a LLM pode pedir uma série antes de responder (ver
+    ``_com_ferramentas``). Provedor que recusa ``tools`` responde sem elas,
+    com o mesmo contexto. Só em texto livre: em ``json_mode`` é ignorado.
+
+    `sob_demanda=False` marca a chamada que a tela faz sozinha, sem o usuário
+    pedir (a explicação do painel de mercado, a cada recarga): ela não usa o
+    Claude, que é crédito pago. Chat, dossiê e relatório de botão são sob
+    demanda, e o padrão.
     """
     modulo_lacuna = _modulo_lacuna()
     if not json_mode:
         messages = _com_instrucao_lacunas(messages)
-    chain = _provider_chain(primary_model)
+    # Só passa ``pessoal`` quando pedido: quem substitui ``_provider_chain``
+    # (medição headless, testes) continua com a assinatura de um argumento.
+    chain = (_provider_chain(primary_model, pessoal=True) if pessoal
+             else _provider_chain(primary_model))
+    if not sob_demanda:
+        chain = [elo for elo in chain if elo[0] != "anthropic"]
+    if not chain and pessoal and _provider_chain(primary_model):
+        raise RuntimeError(
+            "Só há provedor LLM gratuito configurado, e este chat leva dado "
+            "pessoal -- defina OPENAI_API_KEY ou GEMINI_API_KEY (ou um "
+            "OPENROUTER_MODEL pago)."
+        )
     if not chain:
         raise RuntimeError(
             "Nenhum provedor LLM configurado — defina OPENAI_API_KEY e/ou "
@@ -298,20 +553,27 @@ def _chat_complete(
     chain = ativos or chain
     erros: list[str] = []
     _ULTIMO.modelo = None
+    _ULTIMO.ferramentas = []
     for nome, client, modelo in chain:
         if timeout is not None and hasattr(client, "with_options"):
             client = client.with_options(timeout=timeout, max_retries=0)
+        reserva = _extra_openrouter(nome, modelo)
         try:
+            if nome == "anthropic":
+                conteudo, real = _responder_claude(client, modelo, messages,
+                                                   json_mode, ferramentas)
+                _ULTIMO.modelo = f"{nome}/{real}"
+                return _sem_lacunas(conteudo, modulo_lacuna)
             if json_mode and (nome, modelo) not in _SEM_JSON:
                 try:
                     resp = client.chat.completions.create(
                         model=modelo, messages=messages, temperature=temperature,
-                        response_format={"type": "json_object"},
+                        response_format={"type": "json_object"}, **reserva,
                     )
                     conteudo = resp.choices[0].message.content
                     if not (conteudo or "").strip():
                         raise ValueError("resposta vazia em modo JSON")
-                    _ULTIMO.modelo = f"{nome}/{modelo}"
+                    _ULTIMO.modelo = _quem_respondeu(nome, modelo, resp)
                     return _sem_lacunas(conteudo, modulo_lacuna)
                 except Exception as exc_json:
                     # Cota, chave, limite de taxa e lentidão não mudam sem
@@ -324,15 +586,34 @@ def _chat_complete(
                         _SEM_JSON.add((nome, modelo))
                     logger.warning("JSON mode falhou em %s (%s) — tentando sem response_format.",
                                    nome, exc_json)
+            if ferramentas and not json_mode and (nome, modelo) not in _SEM_TOOLS:
+                try:
+                    conteudo = _com_ferramentas(client, modelo, messages, temperature,
+                                                ferramentas, reserva)
+                    _ULTIMO.modelo = f"{nome}/{modelo}"
+                    return _sem_lacunas(conteudo, modulo_lacuna)
+                except Exception as exc_tools:
+                    # Mesma triagem do modo JSON: cota e lentidão não mudam sem
+                    # tools. Só o 4xx (parâmetro recusado) desliga as tools
+                    # daquele modelo; resposta vazia é tropeço daquela rodada.
+                    if (_status(exc_tools) in (401, 403, 429)
+                            or _sem_credito(exc_tools) or _passageiro(exc_tools)):
+                        raise
+                    if 400 <= (_status(exc_tools) or 0) < 500:
+                        _SEM_TOOLS.add((nome, modelo))
+                    _ULTIMO.ferramentas = []
+                    logger.warning("Function calling falhou em %s (%s) — tentando sem "
+                                   "ferramentas.", nome, exc_tools)
             resp = client.chat.completions.create(
-                model=modelo, messages=messages, temperature=temperature,
+                model=modelo, messages=messages, temperature=temperature, **reserva,
             )
             if nome != "openai":
                 logger.info("LLM respondido pelo provedor de fallback: %s (%s)", nome, modelo)
-            _ULTIMO.modelo = f"{nome}/{modelo}"
+            _ULTIMO.modelo = _quem_respondeu(nome, modelo, resp)
             return _sem_lacunas(resp.choices[0].message.content, modulo_lacuna)
         except Exception as exc:
             erros.append(f"{nome}({modelo}): {exc}")
+            _ULTIMO.ferramentas = []
             if _sem_credito(exc):
                 _PAUSADOS[nome] = time.monotonic() + _PAUSA_PROVEDOR_S
                 logger.warning("Provedor LLM %s sem crédito ou chave recusada; "
@@ -444,7 +725,14 @@ def _fmt_dre(df: pd.DataFrame) -> str:
                     vals.append(f"{c}={v:.2f}")
         if vals:
             lines.append(f"  {ano} {', '.join(vals)}")
-    return "\n".join(lines) if lines else "  Insuficiente."
+    if not lines:
+        return "  Insuficiente."
+    # A resposta da brapi que a brapi parou de renovar segue no arquivo com o
+    # valor antigo; sem a data ela passaria por atual também para a LLM.
+    if "Dividendos" in cols and d["Dividendos"].notna().any() and df.attrs.get("fonte"):
+        from core.proventos_b3 import procedencia
+        lines.append(f"  Dividendos: {procedencia(df.attrs)}.")
+    return "\n".join(lines)
 
 
 def _fmt_macro(macro_hist: dict) -> str:
@@ -572,6 +860,13 @@ Gere o relatório em JSON com EXATAMENTE este schema:
 # API pública
 # ─────────────────────────────────────────────────────────────────────────────
 
+# SEM CHAMADOR (auditoria app4, LLM-A13, 04/10/2026): nenhuma tela, ETL ou
+# script chama analisar_empresa/analisar_portfolio -- a Avaliação de Portfólio
+# B3 usa core.portfolio_report_b3 e a seleção usa dossie_b3.gerar_parecer_empresa.
+# Mantidas por decisão (não apagar sem validação): scripts/avaliar_provedor_llm.py
+# reaproveita _PROMPT_EMPRESA e os _fmt_*, e views/documentacao.py as descreve.
+# Não recebem REGRA_CONTEXTO_MERCADO nem o check de ancoragem; quem as religar
+# precisa acrescentar os dois.
 def analisar_empresa(
     ticker: str,
     nome: str,
@@ -603,6 +898,7 @@ def analisar_empresa(
     return _parse_json(raw, _fallback_empresa(ticker, peso_pct))
 
 
+# SEM CHAMADOR (LLM-A13): ver o comentário acima de analisar_empresa.
 def analisar_portfolio(
     items_analisados: list[dict],
     macro_hist: dict,
@@ -679,8 +975,12 @@ def redistribuir_pesos(
         an   = it.get("analise", {}) or {}
         persp = an.get("perspectiva", "moderada")
 
-        score_q   = float(it.get("score", 50) or 0) / 100.0
         score_llm = float(an.get("score_qualitativo", 50) or 0) / 100.0
+        # Sem nota quantitativa, a leitura qualitativa responde sozinha. Antes
+        # ``score`` None virava 0 e a empresa caía para o piso por falta de
+        # dado, não por desempenho.
+        score_q   = _dq.to_float(it.get("score"))
+        score_q   = score_llm if score_q is None else score_q / 100.0
         conviccao = max(float(an.get("confianca", 50) or 0) / 100.0, _CONVICCAO_MIN)
         alpha_n   = min(max(float(it.get("alpha_selic", 0) or 0) / 100.0, -0.5), 1.0)
 
@@ -807,7 +1107,10 @@ def chat_com_portfolio(
     messages.append({"role": "user", "content": user_message})
 
     # Chat livre (markdown), sem JSON mode. Usa a cadeia OpenAI → Gemini.
-    return _chat_complete(messages, temperature=0.3, json_mode=False, primary_model=model)
+    from core.llm_ferramentas import FERRAMENTAS_MERCADO
+
+    return _chat_complete(messages, temperature=0.3, json_mode=False, primary_model=model,
+                          ferramentas=FERRAMENTAS_MERCADO)
 
 
 def chat_coerente(

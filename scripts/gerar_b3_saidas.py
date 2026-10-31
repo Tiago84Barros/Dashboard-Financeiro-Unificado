@@ -41,7 +41,7 @@ from scripts.publish_fii_selection_from_local import _warehouse_url  # noqa: E40
 
 log = logging.getLogger(__name__)
 
-VERSAO = "1.0.0"
+VERSAO = "1.1.0"
 ANO_DFP_INI = 2010
 PISO_ADTV = 1e6          # R$/dia: mesmo piso da medição de mortalidade
 DIAS_MORTO = 30          # último pregão a mais de 30 dias do fim do painel
@@ -56,7 +56,7 @@ def _cache_dir() -> Path:
 
 def ler_cotahist() -> pd.DataFrame:
     q = text("""
-        select ticker, trade_date, close_unitario as close, financial_volume
+        select ticker, trade_date, close_unitario as close, financial_volume, specification
         from market.b3_security_history
         where bdi = '02'
           and (specification like 'ON%' or specification like 'PN%' or specification like 'UNT%')
@@ -68,6 +68,7 @@ def ler_cotahist() -> pd.DataFrame:
     df["trade_date"] = pd.to_datetime(df["trade_date"])
     df["close"] = pd.to_numeric(df["close"], errors="coerce")
     df["financial_volume"] = pd.to_numeric(df["financial_volume"], errors="coerce")
+    df["marcador"] = df["specification"].map(bs.marcador_b3)
     return df
 
 
@@ -136,10 +137,12 @@ def reconstruir(ticker: str, cot: pd.DataFrame, dems: dict[int, bs.DemonstracaoA
     precos = serie["close"]
     fund = {a: bs.fundamentos(d, ticker[4:]) for a, d in dems.items()}
     av = {a: d.available_at for a, d in dems.items()}
-    acoes = bs.acoes_estimadas(fund)
-    eventos = bs.detectar_eventos(precos, acoes, av)
+    acoes, lote_mil = bs.corrigir_lote_de_mil(bs.acoes_estimadas(fund))
+    marcas = serie["marcador"] if "marcador" in serie else None
+    eventos = bs.detectar_eventos(precos, acoes, av, marcas)
+    dist = bs.detectar_distribuicoes(precos, marcas, eventos)
     dps = bs.dps_final_por_ano(fund, acoes, av, eventos)
-    tr = bs.retorno_total_mensal(precos, eventos, dps)
+    tr = bs.retorno_total_mensal(precos, eventos, dps, dist)
     vol = bs.volume_mensal(serie["financial_volume"])
     mult = bs.multiplos_anuais(precos, eventos, fund, acoes, av)
     return {
@@ -149,6 +152,12 @@ def reconstruir(ticker: str, cot: pd.DataFrame, dems: dict[int, bs.DemonstracaoA
         "anos_com_acoes_estimadas": sorted(acoes),
         "desdobramentos": [{"data": e.data.date().isoformat(), "fator": e.fator, "status": e.status}
                            for e in eventos],
+        "distribuicoes": [{"data": x.data.date().isoformat(), "tipo": x.tipo,
+                           "valor": round(x.valor, 6), "fracao": round(x.fracao, 6)}
+                          for x in dist],
+        "anos_lpa_por_lote_de_mil": lote_mil,
+        "saltos_residuais": [{"mes": j["mes"], "razao": round(j["razao"], 4)}
+                             for j in bs.saltos_residuais(tr)],
         "precos": {str(p): round(float(v), 6) for p, v in tr.items()},
         "volume": {str(p): round(float(v), 2) for p, v in vol.items()},
         "fundamentos": mult,
@@ -159,7 +168,15 @@ LIMITACOES = [
     "Os valores da DFP são os da última versão entregue; a data de disponibilidade é a da "
     "primeira. Reapresentação posterior entra antes da hora (look-ahead brando).",
     "Ações em circulação são estimadas por lucro/LPA; anos com |LPA| < 0,05 herdam a estimativa "
-    "do ano vizinho. Emissões e recompras entre os dois anos não são capturadas.",
+    "do ano vizinho. Emissões e recompras entre os dois anos não são capturadas. LPA informado "
+    "por lote de mil ações é corrigido (anos em anos_lpa_por_lote_de_mil).",
+    "Desdobramento, grupamento e bonificação marcados pela B3 (EB/EG) entram pelo salto do preço "
+    "levado ao fator redondo mais próximo (status marcador_b3) quando a DFP não confirma; o erro "
+    "residual é o movimento do mercado no dia ex.",
+    "Restituição de capital e cisão (marcação ER/EC) entram como distribuição reinvestida no "
+    "fechamento do dia ex, medida pela queda contra o fechamento anterior. Sem a marcação da B3 a "
+    "queda fica como perda. Meses que ainda multiplicam ou dividem o índice por mais de 3 ficam "
+    "em saltos_residuais para revisão.",
     "Dividendos entram como o total pago no ano (DFC) dividido pelas ações, em quatro parcelas "
     "trimestrais; o provento do ano da saída não é capturado.",
     "O último fechamento é o valor de saída. Em OPA e incorporação ele se aproxima do valor "
@@ -211,6 +228,8 @@ def main() -> int:
             "excluidas": int(len(exc)),
             "nao_curadas": len(nao_curadas),
             "eventos_de_capital": sum(len(e["desdobramentos"]) for e in empresas),
+            "distribuicoes": sum(len(e["distribuicoes"]) for e in empresas),
+            "saltos_residuais": sum(len(e["saltos_residuais"]) for e in empresas),
         },
         "excluidas": exc.to_dict(orient="records"),
         "saidas_nao_curadas": nao_curadas,

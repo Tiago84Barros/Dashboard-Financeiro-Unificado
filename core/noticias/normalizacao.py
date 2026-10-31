@@ -136,11 +136,105 @@ def para_utc(valor) -> datetime | None:
         return None
 
 
-def limpar_html(texto: str | None) -> str:
-    """Tira marcacao e entidades. RSS entrega descricao como HTML."""
+#: Par "lead + continuacao" do UTF-8 lido como latin-1: ``\u00c3\u00a7`` (c
+#: cedilha), ``\u00c3\u00a3`` (a til), ``\u00e2\u0080\u0099`` (aspas curvas). Em portugues legitimo
+#: esse par nao ocorre -- ``\u00c3`` e ``\u00c2`` maiusculos nao sao seguidos de
+#: controle C1 nem de ``\u00a7``/``\u00a3``/``\u00a9``. Escrito em escapes de proposito: os
+#: caracteres literais incluem controles invisiveis no editor.
+_MOJIBAKE = re.compile("[\u00c2-\u00f4][\u0080-\u00bf]")
+#: Uma sequencia UTF-8 completa vista como latin-1, para o conserto trecho a
+#: trecho quando o texto mistura parte quebrada e parte boa.
+_SEQ_MOJIBAKE = re.compile(
+    "[\u00c2-\u00df][\u0080-\u00bf]|[\u00e0-\u00ef][\u0080-\u00bf]{2}"
+    "|[\u00f0-\u00f4][\u0080-\u00bf]{3}")
+#: O a com crase e ``C3 A0``; o ``A0`` vira espaco nao separavel, e o colapso
+#: de espacos da coleta o troca por espaco comum. Sobra ``\u00c3`` + espaco --
+#: lido como crase so quando o mesmo texto ja provou ser mojibake (~180 casos
+#: no acervo). O espaco que sobra e ambiguo: "a crase" + espaco ("chega a
+#: sexta") ou so o NBSP colapsado dentro da palavra ("as 20h10" vira
+#: ``Ã s 20h10``). Medido na Exame: ``Ã s`` + fim de palavra apareceu 87
+#: vezes, todas "as" com crase; as contracoes ``aquel``/``aquil`` seguem a
+#: mesma regra. O resto mantem o espaco.
+_A_CRASE_PERDIDO = re.compile(
+    "\u00c3(?:[^\\S\u00a0](?=s\\b|qu[ei]l)|(?=[^\\S\u00a0]|$))")
+#: ``Ã`` sozinho, entre espacos, nao e palavra em portugues -- e
+#: ``Ã`` + espaco nao separavel colapsado, sem outro sinal no texto que
+#: o prove. Medido no acervo: 9 titulos e 6 resumos da Exame ("chega ``Ã`` sexta
+#: semifinal", "China doa ``Ã`` ONU") so tinham esse sinal. Palavra que
+#: termina em ``Ã`` maiusculo ("IRM``Ã`` DE") nao casa: ha letra antes.
+_A_CRASE_SOLTO = re.compile("(?<!\\w)\u00c3(?:[^\\S\u00a0](?=s\\b|qu[ei]l)|(?=[^\\S\u00a0]))")
+_NBSP = "\u00a0"
+_NBSP_SOLTO = re.compile("(?<!\u00c3)\u00a0")
+
+
+def _trecho_utf8(achado: re.Match) -> str:
+    trecho = achado.group(0)
+    for codec in ("latin-1", "cp1252"):
+        try:
+            return trecho.encode(codec).decode("utf-8")
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+    return trecho
+
+
+def consertar_mojibake(texto: str | None) -> str:
+    """Desfaz UTF-8 decodificado como latin-1 (``AutorizaÃ§Ã£o`` -> ``Autorização``).
+
+    Medido no acervo local em 04/10/2026: 2.923 dos 3.377 itens da Exame
+    (86,6%; 9,0% do acervo de 32.405) chegavam assim desde 06/09, porque o
+    feed responde ``text/xml`` sem ``charset`` e o ``requests`` assume
+    ISO-8859-1 para ``text/*``. A causa foi corrigida no transporte; isto
+    conserta o que ja entrou e o que vier de outro feed com o mesmo defeito.
+
+    Sem ``ftfy`` de proposito: nao esta no ``requirements.txt`` e o defeito e
+    um so, de forma conhecida. A guarda e a propria decodificacao -- texto em
+    latin-1 legitimo quase nunca e UTF-8 valido -- e ``Ã `` so vira ``à``
+    quando o resto do texto ja provou ser mojibake. Texto sem o par lead +
+    continuacao sai intacto; a funcao e idempotente.
+    """
     if not texto:
         return ""
-    limpo = _TAGS.sub(" ", str(texto))
+    s = str(texto)
+    # Ate tres passadas: 1 item do acervo (easybourse) veio decodificado errado DUAS
+    # vezes (``d\xc3\x83\xc2\xa9sordre``), e uma passada so deixaria a funcao nao
+    # idempotente -- o conserto de hoje viraria o conserto de amanha.
+    for _ in range(3):
+        novo = _uma_passada(s)
+        if novo == s:
+            break
+        s = novo
+    return s
+
+
+def _uma_passada(s: str) -> str:
+    if not _MOJIBAKE.search(s):
+        return _A_CRASE_SOLTO.sub("\u00e0", s)
+    candidato = _A_CRASE_PERDIDO.sub("\u00c3" + _NBSP, s)
+    for codec in ("latin-1", "cp1252"):
+        try:
+            # O NBSP que sobra vira espaço, salvo colado num ``Ã``: aí ele é
+            # a 2a camada de um ``à`` com mojibake duplo, e a próxima passada
+            # o consome (1 item da easybourse, medido no acervo). NBSP também
+            # saiu do ``\s`` dos padrões da crase pelo mesmo motivo.
+            return _NBSP_SOLTO.sub(" ", candidato.encode(codec).decode("utf-8"))
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            continue
+    # Texto misto (parte ja correta, parte quebrada): trecho a trecho.
+    consertado = _SEQ_MOJIBAKE.sub(_trecho_utf8, s)
+    if consertado == s:
+        return s
+    return _A_CRASE_PERDIDO.sub("\u00e0", consertado)
+
+
+def limpar_html(texto: str | None) -> str:
+    """Tira marcacao e entidades. RSS entrega descricao como HTML.
+
+    Conserta mojibake antes de colapsar espacos: o ``à`` quebrado (``Ã`` +
+    espaco nao separavel) ainda tem conserto exato neste ponto.
+    """
+    if not texto:
+        return ""
+    limpo = _TAGS.sub(" ", consertar_mojibake(str(texto)))
     return _ESPACOS.sub(" ", html.unescape(limpo)).strip()
 
 

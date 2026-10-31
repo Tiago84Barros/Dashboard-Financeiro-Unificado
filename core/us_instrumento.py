@@ -96,7 +96,12 @@ def e_spac_sem_operacao(*, name: object = None,
     return bool(_NOME_AQUISICAO.search(str(name or "")))
 
 
-_EXPLICIT_NON_COMMON = re.compile(r"(?:-P[A-Z0-9]?|-WT|-WS|-UN)$")
+# Sufixo explícito de preferencial (-P*), warrant (-WT/-WS), unit (-U/-UN) e right
+# (-R/-RI). O -RI e o -U entraram em 04/10/2026: medidos no armazém, 14 rights
+# (-RI) estavam 'unresolved' e 3 units de SPAC (IMPX-U, LHC-U, TLGA-U) estavam
+# 'eligible' -- o regex só conhecia -UN. Classe -A/-B/-V NÃO entra: HVT-A, TAP-A
+# e MKC-V são ação ordinária de verdade.
+_EXPLICIT_NON_COMMON = re.compile(r"(?:-P[A-Z0-9]?|-WT|-WS|-UN?|-RI?)$")
 _NASDAQ_ISSUE_SUFFIX = re.compile(r"^[A-Z]{4,}[WRU]$")
 
 # ── A-144: ETF e trust de commodity chegando como `security_type='common'` ──
@@ -212,6 +217,40 @@ def classe_adicional_da_mesma_companhia(
                 and not _NASDAQ_ISSUE_SUFFIX.fullmatch(base)):
             return base
     return None
+
+
+# ── EUA-A: outro ticker da mesma emissora que não é prefixo do principal ─────
+#
+# `classe_adicional_da_mesma_companhia` exige que o base seja prefixo do papel
+# (DUK/DUKB). Não alcança DTE Energy: DTE (ação) e DTB, DTG, DTK, DTW (notes da
+# DTE) têm o mesmo CIK e nenhum é prefixo do outro. `load_scoring_frame` agrupa
+# por companhia e escolhe MIN(symbol) entre os elegíveis, então o ranking
+# mostrava "DTB" -- preço de título de dívida -- como se fosse a DTE. Medido em
+# 04/10/2026 depois do vínculo por CIK: 170 elegíveis sem demonstração sob o
+# próprio símbolo, boa parte de grupos assim (DTE x4, CHSCL/M/N/O/P, UZD/UZE/UZF).
+#
+# Quem sobrevive é o papel de MAIOR giro financeiro recente: nota e preferencial
+# negociam uma fração da ação ordinária, e o giro é dado medido, não heurística
+# de letra. Empate ou ausência de giro cai no símbolo mais curto e depois na
+# ordem alfabética, para o resultado ser determinístico.
+MOTIVO_OUTRO_TICKER_DA_EMISSORA = (
+    "outro ticker da mesma emissora (CIK) tem maior giro e já representa a "
+    "análise: {base}"
+)
+
+
+def ticker_principal_da_emissora(giro_por_simbolo: dict) -> str | None:
+    """Símbolo que representa a companhia entre os que compartilham o CIK.
+
+    `giro_por_simbolo` é {símbolo: giro financeiro médio ou None}. Devolve None
+    quando não há símbolo.
+    """
+    candidatos = [(str(s).upper(), g) for s, g in giro_por_simbolo.items() if s]
+    if not candidatos:
+        return None
+    candidatos.sort(key=lambda sg: (-(float(sg[1]) if sg[1] is not None else -1.0),
+                                    len(sg[0]), sg[0]))
+    return candidatos[0][0]
 
 
 def e_reit(*, security_type: object = None, sector: object = None,

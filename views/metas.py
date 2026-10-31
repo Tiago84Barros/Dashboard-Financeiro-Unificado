@@ -28,6 +28,7 @@ from design.componentes import (
     container_pagina,
     secao_titulo,
 )
+from design.lacunas import falha_de_acao
 
 
 def render() -> None:
@@ -178,7 +179,7 @@ def _form_atualizar_progresso(metas: list) -> None:
                 st.success(f"✅ Progresso de '{nomes[meta_idx]}' atualizado para {fmt_moeda(novo_valor)}.")
                 st.rerun()
             else:
-                st.error(f"Erro: {msg}")
+                falha_de_acao("Não foi possível atualizar o progresso da meta.", RuntimeError("falha de gravação"))
 
 
 # ── Formulário: nova meta ─────────────────────────────────────────────────────
@@ -248,4 +249,4 @@ def _form_nova_meta() -> None:
                 if ok:
                     st.success("✅ Meta criada com sucesso!")
                 else:
-                    st.error(f"Erro ao criar meta: {msg}")
+                    falha_de_acao("Não foi possível criar a meta.", RuntimeError("falha de gravação"))

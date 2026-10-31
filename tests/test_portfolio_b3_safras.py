@@ -42,19 +42,37 @@ RAIZ = Path(__file__).parents[1]
 
 
 def _linha(safra, *, completa, mensuravel, estrategia=10.0, ew=8.0,
-          selic=6.0, excesso=4.0, peso_ausente=0.0):
+          selic=6.0, excesso=4.0, peso_ausente=0.0, arrasto=0.0,
+          liquido=True):
+    """Linha no formato de `core.b3_safras.COLUNAS_TABELA`.
+
+    `arrasto` (pp) é custo de giro + IR: as colunas líquidas saem do bruto
+    menos ele. Default 0 para que os testes anteriores ao item 19 meçam o
+    mesmo número nas duas leituras. `liquido=False` monta um quadro antigo,
+    sem as colunas líquidas."""
     if not mensuravel:
         estrategia = ew = selic = excesso = np.nan
         peso_ausente = 100.0  # core/b3_safras.py: nada observado = 100%
-    return {
+    linha = {
         "Safra": safra, "Exercício-base": safra - 1,
         "Janela": f"abr/{safra} a mar/{safra + 1}",
         "Completa": completa, "Mensurável": mensuravel,
         "Segmentos": 1, "Ativos": 3, "Maiores posições": "AAA, BBB, CCC",
         "Estratégia (%)": estrategia, "Equal-weight (%)": ew,
         "Selic (%)": selic, "Excesso s/ Selic (pp)": excesso,
+        "Excesso s/ EW (pp)": excesso - 1.0,
         "Peso sem preço (%)": peso_ausente, "Universo com preço": 3,
     }
+    if liquido:
+        linha.update({
+            "Estratégia líquida (%)": estrategia - arrasto,
+            "Excesso líquido s/ Selic (pp)": excesso - arrasto,
+            "Excesso líquido s/ EW (pp)": excesso - 1.0 - arrasto,
+            "Giro (%)": 0.0 if mensuravel else np.nan,
+            "Custo de giro (pp)": 0.3 * arrasto if mensuravel else np.nan,
+            "IR (pp)": 0.7 * arrasto if mensuravel else np.nan,
+        })
+    return linha
 
 
 def _tabela(linhas, safras_completas):
@@ -815,9 +833,12 @@ def test_ressalva_e_margem_chegam_a_tela_como_texto_e_nao_como_tooltip():
                 and isinstance(n.slice.value, str)}
 
     def chama_caption(no):
+        # Desde 05/10/2026 a ressalva sai da tela e vai para o log de lacunas
+        # (`detalhe_tecnico`): o que importa e que ela continue CABEADA, lida
+        # da medicao, e que nao volte para o tooltip.
         return any(isinstance(c, ast.Call)
-                   and isinstance(c.func, ast.Attribute)
-                   and c.func.attr == "caption"
+                   and isinstance(c.func, ast.Name)
+                   and c.func.id == "detalhe_tecnico"
                    for c in ast.walk(no))
 
     visiveis = set()
@@ -1333,30 +1354,22 @@ def _funcao_da_view(nome, arquivo="portfolio_b3_safras.py"):
                 if isinstance(no, ast.FunctionDef) and no.name == nome)
 
 
-def test_render_safras_chama_render_vies_universo():
-    """Sem esta checagem, apagar a chamada apaga o Bloco 2 inteiro da tela
-    e deixa a suíte verde — `_vies_universo` é pura e continuaria passando
-    sozinha. Inspeção por AST (`apptest-vaza-atribuicao-de-modulo`)."""
+def test_render_safras_nao_desenha_o_bloco_2():
+    """O Bloco 2 ("Tamanho do viés de universo") saiu da tela por pedido do
+    dono do projeto (30/10/2026). `render_vies_universo` segue definida e
+    testada abaixo — voltar com ele é uma linha —, mas `render_safras` não a
+    chama nem recebe mais a lista sem gate. Inspeção por AST
+    (`apptest-vaza-atribuicao-de-modulo`); o alcance é provado por execução
+    em `test_render_safras_nao_executa_o_bloco_2`."""
     render = _funcao_da_view("render_safras")
     chamadas = {no.func.id for no in ast.walk(render)
                 if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)}
-    assert "render_vies_universo" in chamadas, (
-        "render_safras nao chama render_vies_universo -- o Bloco 2 nao "
-        "aparece na tela e nenhum outro teste percebe"
+    assert "render_vies_universo" not in chamadas, (
+        "render_safras voltou a chamar render_vies_universo -- o Bloco 2 "
+        "saiu da tela por decisao do dono do projeto"
     )
-    # Presenca nao e alcance: um `if False and ...` em volta da chamada
-    # deixaria o `ast.Call` no lugar e o Bloco 2 fora da tela. A guarda
-    # tem que ser exatamente "tenho a lista completa".
-    guardas = [no for no in ast.walk(render) if isinstance(no, ast.If)
-               and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
-                       and c.func.id == "render_vies_universo"
-                       for filho in no.body for c in ast.walk(filho))]
-    assert len(guardas) == 1, "esperava uma unica guarda em volta do Bloco 2"
-    teste = guardas[0].test
-    assert isinstance(teste, ast.Name) and teste.id == "resultados_todos", (
-        "a chamada do Bloco 2 esta sob uma condicao que nao e apenas "
-        "`resultados_todos` -- ela pode nunca ser alcancada"
-    )
+    parametros = {a.arg for a in render.args.args + render.args.kwonlyargs}
+    assert "resultados_todos" not in parametros
 
 
 def test_bloco_2_nao_mede_nada_em_rerun_sem_clique(monkeypatch):
@@ -1506,19 +1519,18 @@ def test_ressalvas_do_vies_chegam_como_caption_e_nao_como_tooltip():
     visiveis = set()
     for no in ast.walk(desenha):
         if isinstance(no, ast.For) and any(
-                isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
-                and c.func.attr == "caption" for c in ast.walk(no)):
+                isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                and c.func.id == "detalhe_tecnico" for c in ast.walk(no)):
             visiveis |= chaves(no)
     assert "notas" in visiveis, (
         f"as notas nao chegam por st.caption -- visiveis: {sorted(visiveis)}"
     )
 
 
-def test_tela_b3_passa_os_aprovados_e_a_lista_completa():
-    """As duas pontas do Bloco 2 vêm da mesma chamada, e passar a lista
-    errada em qualquer uma delas não quebra nada visível: com `resultados`
-    no lugar de `aprovados` as duas reconstruções ficam IDÊNTICAS e o
-    bloco publica viés zero — um número tranquilizador e falso."""
+def test_tela_b3_passa_os_aprovados():
+    """O Bloco 1 reconstrói a carteira que a tela publica: com `resultados`
+    no lugar de `aprovados`, a "Safra a safra" mediria o universo inteiro e
+    não a carteira — nada visível quebraria."""
     chamada = next(
         no for no in ast.walk(
             ast.parse((RAIZ / "views" / "portfolio_b3.py")
@@ -1530,16 +1542,6 @@ def test_tela_b3_passa_os_aprovados_e_a_lista_completa():
     assert chamada.args[0].id == "aprovados", (
         "o Bloco 1 nao reconstroi a carteira que a tela publica -- primeiro "
         f"argumento: {ast.dump(chamada.args[0])}"
-    )
-    todos = {kw.arg: kw.value for kw in chamada.keywords}
-    assert "resultados_todos" in todos, (
-        "render_safras nao recebe a lista nao filtrada -- o Bloco 2 nao "
-        "e renderizado"
-    )
-    assert isinstance(todos["resultados_todos"], ast.Name)
-    assert todos["resultados_todos"].id == "resultados", (
-        "a lista sem gate nao e a lista nao filtrada -- as duas curvas "
-        "ficariam iguais e o vies sairia zero"
     )
 
 
@@ -1598,6 +1600,10 @@ class _Falso:
 
     def legendas(self):
         return [c[1][0] for c in self.chamadas if c[0] == "caption"]
+
+    def detalhes(self):
+        """Ressalvas que SAIRAM da tela e foram para o log de lacunas."""
+        return [c[1][0] for c in self.chamadas if c[0] == "detalhe"]
 
 
 def _tabela_vies(com, sem, safras=None):
@@ -1693,6 +1699,11 @@ def _tela_de_safras_falsa(monkeypatch, *, botao=False):
     monkeypatch.setattr(mod, "st", falso)
     monkeypatch.setattr(mod, "card_metrica",
                         lambda *a, **k: falso.chamadas.append(("card", a, k)))
+    # Ressalva técnica não é desenhada: vai para o log (pedido de 05/10/2026).
+    monkeypatch.setattr(mod, "detalhe_tecnico",
+                        lambda msg, **k: falso.chamadas.append(("detalhe", (msg,), k)))
+    monkeypatch.setattr(mod, "aviso_lacuna",
+                        lambda msg, **k: falso.chamadas.append(("lacuna", (msg,), k)))
     return mod, falso
 
 
@@ -1713,40 +1724,10 @@ def _precos_b3(tickers):
                         index=datas)
 
 
-def test_render_safras_executa_o_bloco_2_de_fato(monkeypatch):
-    """A-T7-01: prova por ALCANCE, não por forma.
-
-    Um `return` logo antes da chamada não muda a forma da guarda nenhuma —
-    o `ast.If` continua lá, o `ast.Call` também — e o Bloco 2 some da tela
-    com a suíte verde. Este teste roda `render_safras` com um dublê de
-    streamlit e exige que `render_vies_universo` tenha sido REALMENTE
-    chamada, com a tabela do Bloco 1 junto.
-    """
-    mod, falso = _tela_de_safras_falsa(monkeypatch)
-    chamou: list[dict] = []
-    monkeypatch.setattr(mod, "render_vies_universo",
-                        lambda *a, **k: chamou.append({"args": a, "kwargs": k}))
-    monkeypatch.setattr(mod, "render_expectativa", lambda *a, **k: None)
-
-    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
-    todos = aprovados + [_resultado_b3("B", 2025, ["CCCC3"])]
-    precos = _precos_b3(["AAAA3", "BBBB3", "CCCC3"])
-
-    mod.render_safras(aprovados, precos, selic_por_ano={}, taxa_selic_aa=0.0,
-                      resultados_todos=todos)
-
-    assert chamou, (
-        "render_safras terminou sem executar o Bloco 2 -- a chamada pode "
-        "estar presente no código e inalcançável"
-    )
-    assert chamou[0]["args"][0] is aprovados
-    assert chamou[0]["args"][1] is todos
-    assert isinstance(chamou[0]["kwargs"]["tabela_com_gate"], pd.DataFrame)
-
-
-def test_render_safras_nao_executa_o_bloco_2_sem_a_lista_completa(monkeypatch):
-    """O outro lado: sem `resultados_todos` não há o que comparar, e o
-    bloco não pode ser desenhado."""
+def test_render_safras_nao_executa_o_bloco_2(monkeypatch):
+    """Prova por EXECUÇÃO de que o Bloco 2 saiu da tela (pedido do dono do
+    projeto, 30/10/2026): `render_safras` roda inteira com um dublê de
+    streamlit e `render_vies_universo` não é chamada."""
     mod, falso = _tela_de_safras_falsa(monkeypatch)
     chamou = []
     monkeypatch.setattr(mod, "render_vies_universo",
@@ -1777,7 +1758,9 @@ def test_render_vies_universo_desenha_depois_do_clique(monkeypatch):
     assert "button" in nomes, "o botão do Bloco 2 nem chegou a ser desenhado"
     assert "card" in nomes, "clicou e o card do viés não foi desenhado"
     assert "dataframe" in nomes, "clicou e a tabela do viés não foi desenhada"
-    assert falso.legendas(), "clicou e nenhuma ressalva foi publicada"
+    assert falso.detalhes(), "clicou e nenhuma ressalva foi registrada"
+    assert not [c for c in falso.legendas() if "viés" in str(c).lower()
+                and "point-in-time" in str(c)], "a ressalva voltou para a tela"
     assert "pb3_vies_universo" in falso.session_state
 
 
@@ -2469,9 +2452,11 @@ def test_render_expectativa_desenha_de_fato(monkeypatch):
     )
     titulos = [c[1][0] for c in cartoes]
     assert "Ordena?" in titulos and "Fragilidade" in titulos
-    assert falso.legendas() or any(c[0] == "warning" for c in falso.chamadas), (
-        "o Bloco 3 desenhou os cards sem nenhuma ressalva ao lado"
+    assert falso.detalhes() or any(c[0] == "warning" for c in falso.chamadas), (
+        "o Bloco 3 desenhou os cards sem registrar nenhuma ressalva"
     )
+    # A ressalva não aparece na tela: nem como legenda, nem como aviso.
+    assert not any(c[0] == "warning" for c in falso.chamadas)
 
 
 def test_render_safras_executa_o_bloco_3_de_fato(monkeypatch):
@@ -2492,3 +2477,105 @@ def test_render_safras_executa_o_bloco_3_de_fato(monkeypatch):
         "estar presente e inalcançável"
     )
     assert isinstance(chamou[0][1], pd.DataFrame)
+
+
+# ── B3-08 (auditoria app4, item 19): líquido como padrão, bruto ao lado ──────
+
+
+def test_motor_desconta_custo_de_giro_e_ir_da_safra_encadeada():
+    """Conta à mão, sobre as entradas REAIS do motor. Cada safra tem um
+    líder diferente com peso 1,0 (papel fora da lista de large caps):
+
+    - 2020: só a compra -- uma ponta de 3 + 15 bps = 0,18 pp, IR zero;
+    - 2021: vende o líder de 2020 (que rendeu 10%) e compra o novo -- duas
+      pontas (0,36 pp) e IR de 15% sobre o ganho realizado, 1 − 1/1,1 da
+      carteira (1,3636 pp).
+    """
+    com, _ = _tabelas_do_motor({2020: 10.0, 2021: 20.0})
+    por_safra = com.set_index("Safra")
+    assert por_safra.loc[2020, "Custo de giro (pp)"] == pytest.approx(0.18)
+    assert por_safra.loc[2020, "IR (pp)"] == pytest.approx(0.0)
+    assert por_safra.loc[2020, "Giro (%)"] == pytest.approx(0.0)
+    assert por_safra.loc[2021, "Giro (%)"] == pytest.approx(100.0)
+    assert por_safra.loc[2021, "Custo de giro (pp)"] == pytest.approx(0.36)
+    ir_2021 = 15.0 * (1 - 1 / 1.1)
+    assert por_safra.loc[2021, "IR (pp)"] == pytest.approx(ir_2021)
+    for safra in (2020, 2021):
+        linha = por_safra.loc[safra]
+        liquido = (linha["Estratégia (%)"] - linha["Custo de giro (pp)"]
+                   - linha["IR (pp)"])
+        assert linha["Estratégia líquida (%)"] == pytest.approx(liquido)
+        assert linha["Excesso líquido s/ Selic (pp)"] == pytest.approx(
+            liquido - linha["Selic (%)"])
+        assert linha["Excesso líquido s/ EW (pp)"] == pytest.approx(
+            liquido - linha["Equal-weight (%)"])
+
+
+def test_resumo_le_o_excesso_liquido_e_guarda_o_bruto():
+    tabela = _tabela(
+        [_linha(2020, completa=True, mensuravel=True, excesso=4.0, arrasto=1.5),
+         _linha(2021, completa=True, mensuravel=True, excesso=1.0, arrasto=1.5)],
+        [2020, 2021],
+    )
+    resumo = _resumo_safras(tabela)
+    assert resumo["liquido"] is True
+    assert resumo["media_excesso"] == pytest.approx(1.0)
+    assert resumo["media_excesso_bruto"] == pytest.approx(2.5)
+    # 2021 vence a Selic no bruto (+1,0) e perde no líquido (−0,5).
+    assert resumo["venceu"] == 1
+
+
+def test_quadro_sem_colunas_liquidas_cai_no_bruto_e_diz_que_e_bruto():
+    tabela = _tabela(
+        [_linha(2020, completa=True, mensuravel=True, liquido=False),
+         _linha(2021, completa=True, mensuravel=True, liquido=False)],
+        [2020, 2021],
+    )
+    resumo = _resumo_safras(tabela)
+    assert resumo["liquido"] is False
+    assert resumo["media_excesso"] == pytest.approx(4.0)
+    assert _expectativa([], tabela)["liquido"] is False
+
+
+def test_banda_do_bloco_3_e_a_do_excesso_liquido():
+    linhas = [_linha(2020 + i, completa=True, mensuravel=True, excesso=e,
+                     arrasto=2.0)
+              for i, e in enumerate([4.0, 5.0, 3.0, 6.0])]
+    out = _expectativa([], _tabela(linhas, [2020 + i for i in range(4)]))
+    baixo, alto = out["banda"]
+    # Líquido = 2..4 pp por safra: a banda inteira fica abaixo de 4,1%; a
+    # bruta (3..6 pp) passaria disso.
+    assert out["liquido"] is True
+    assert alto <= 0.041
+    assert out["texto_banda_bruta"] != out["texto_banda"]
+
+
+def test_rotulo_exibido_marca_as_colunas_brutas():
+    config = _column_config_retorno()
+    for coluna, rotulo in mod_safras._ROTULOS_BRUTOS.items():
+        assert config[coluna]["label"] == rotulo
+        assert "brut" in rotulo
+    assert config["Estratégia líquida (%)"]["label"] == "Estratégia líquida (%)"
+
+
+def test_grafico_mostra_liquida_e_bruta_lado_a_lado():
+    tabela = _tabela(
+        [_linha(2020, completa=True, mensuravel=True, arrasto=1.0)], [2020])
+    fig = _grafico_barras(_resumo_safras(tabela)["completas"])
+    nomes = {trace.name for trace in fig.data}
+    assert {"Estratégia líquida (%)", "Estratégia bruta (%)"} <= nomes
+
+
+def test_premissas_do_liquido_saem_das_constantes_e_vao_para_a_tela():
+    from core.backtest_liquido import premissas_b3
+
+    texto = mod_safras._texto_premissas_liquido_b3()
+    p = premissas_b3()
+    assert f"{p['emolumentos_bps_por_ponta']:g}" in texto
+    assert f"{p['meio_spread_small_bps']:g}" in texto
+    assert "15%" in texto and "20 mil" in texto
+    assert "brutos" in texto  # benchmarks
+    fonte = (RAIZ / "views" / "portfolio_b3_safras.py").read_text(encoding="utf-8")
+    # A premissa completa saiu da tela: vai para o log de lacunas.
+    assert "st.caption(_texto_premissas_liquido_b3())" not in fonte
+    assert "detalhe_tecnico(_texto_premissas_liquido_b3()," in fonte

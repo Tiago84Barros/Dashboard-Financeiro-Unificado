@@ -19,11 +19,21 @@ from sqlalchemy.pool import NullPool
 SUPABASE_FREE_DB_LIMIT_MB = 500.0
 
 
-def _fii_snapshot_connection_url(url: str):
-    """Normaliza o endpoint curto para o modo transacional do Supavisor."""
+def _com_driver_psycopg2(url: str):
+    """Fixa o psycopg2 em URL Postgres sem driver explícito.
+
+    Sem driver, o SQLAlchemy 2.1 escolhe o psycopg v3, que não está instalado:
+    o pipeline caiu com "No module named 'psycopg'" de 01/10 a 03/10/2026.
+    """
     parsed = make_url(url)
     if parsed.drivername in {"postgresql", "postgres"}:
         parsed = parsed.set(drivername="postgresql+psycopg2")
+    return parsed
+
+
+def _fii_snapshot_connection_url(url: str):
+    """Normaliza o endpoint curto para o modo transacional do Supavisor."""
+    parsed = _com_driver_psycopg2(url)
     if (
         parsed.host
         and parsed.host.endswith(".pooler.supabase.com")
@@ -62,6 +72,7 @@ def get_engine():
         kwargs.update({"pool_size": 1, "max_overflow": 2, "pool_timeout": 10,
                        "pool_recycle": 300, "pool_use_lifo": True,
                        "connect_args": connect_args})
+        return create_engine(_com_driver_psycopg2(url), **kwargs)
     return create_engine(url, **kwargs)
 
 

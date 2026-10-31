@@ -412,7 +412,7 @@ def methodology_manifest() -> dict[str, Any]:
             # ganhou portão de renda recorrente, veto de concentração e a
             # lista de candidatos à concessão; o otimizador ganhou piso de
             # cardinalidade e trocou a renda da função objetivo.
-            "eligibility_version": "6.10.0",
+            "eligibility_version": METHODOLOGY_VERSION,
             "portfolio_strategy_id": "fii_integrated_robust_optimizer.v6.8",
             "stages": ("eligibility", "type_score", "empirical_confidence",
                        "pit_walk_forward", "robust_scenario_optimization"),

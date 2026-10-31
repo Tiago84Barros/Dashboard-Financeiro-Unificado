@@ -93,15 +93,15 @@ _SQL_METAS = """
 _SQL_UPDATE_PROGRESSO = """
     UPDATE financial_goals
     SET    current_amount = :novo_valor
-    WHERE  id       = :goal_id::uuid
-      AND  user_id  = :uid::uuid
+    WHERE  id       = CAST(:goal_id AS uuid)
+      AND  user_id  = CAST(:uid AS uuid)
 """
 
 _SQL_INSERT_META = """
     INSERT INTO financial_goals
         (user_id, name, type, target_amount, current_amount, deadline)
     VALUES
-        (:uid::uuid, :nome, :tipo, :alvo, :atual, :prazo)
+        (CAST(:uid AS uuid), :nome, :tipo, :alvo, :atual, :prazo)
 """
 
 

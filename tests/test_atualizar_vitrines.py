@@ -6,6 +6,15 @@ import pytest
 from core.publicacao_agenda import ALVOS, POR_CHAVE
 from scripts import atualizar_vitrines as av
 
+# A implementação real, antes de a fixture abaixo trocá-la por um no-op.
+_VIGIAR_REAL = av.vigiar
+
+
+@pytest.fixture(autouse=True)
+def _sem_vigia_real(monkeypatch):
+    """O vigia chama o `gh` e o Telegram; aqui ele nunca roda de verdade."""
+    monkeypatch.setattr(av, "vigiar", lambda: None)
+
 
 def test_todo_alvo_tem_carimbo_de_onde_ler_a_ultima_publicacao():
     """Alvo sem carimbo é semeado como "nunca publicado" e republica tudo.
@@ -28,9 +37,14 @@ def test_carimbo_aponta_para_a_base_que_o_alvo_escreve(chave, onde):
     armazém de 11/08. O espelho também escreve no armazém (lê o Supabase).
     """
     escreve_no_armazem = {"fii_ingest", "espelho_supabase", "brapi_raw_poda",
-                          "b3_pregao", "fii_documentos", "cvm_ipe"}
-    escreve_arquivo = {"macro_insumos", "cdi_diario", "valuation_historico",
-                       "informacoes_recentes", "rag_corpus"}
+                          "b3_pregao", "fii_documentos", "cvm_ipe",
+                          "b3_brapi", "b3_brapi_anual", "us_painel_armazem"}
+    escreve_arquivo = {"macro_insumos", "cdi_diario", "macro_brasil", "valuation_historico",
+                       "cenarios_analogos",
+                       "informacoes_recentes", "rag_corpus", "fii_metrics_monthly",
+                       "b3_linhagem", "precos_mensais_b3", "carteira20_desempenho",
+                       "carteira20_medicao",
+                       "proventos_b3", "pregoes_recentes_b3"}
     esperado = ("armazem" if chave in escreve_no_armazem
                 else "arquivo" if chave in escreve_arquivo else "supabase")
     assert onde == esperado
@@ -296,3 +310,100 @@ def test_listar_nao_mexe_no_git(monkeypatch, capsys):
     monkeypatch.setattr(av, "atualizar_main", _nunca)
     monkeypatch.setattr(av, "ler_estado", lambda: {})
     assert av.main(["--listar"]) == 0
+
+
+def test_vigia_roda_no_fim_da_execucao_real_mesmo_sem_nada_vencido(monkeypatch):
+    """É quando nada publica que a vitrine envelhece calada."""
+    monkeypatch.setenv(av._RECARREGADA, "1")
+    monkeypatch.setattr(av, "registrar", lambda _m: None)
+    monkeypatch.setattr(av, "ler_estado", lambda: {})
+    monkeypatch.setattr(av, "alvos_devidos", lambda *a, **k: [])
+    chamadas = []
+    monkeypatch.setattr(av, "vigiar", lambda: chamadas.append(1))
+    assert av.main([]) == 0
+    assert chamadas == [1]
+
+
+@pytest.mark.parametrize("argv", [["--listar"], ["--dry-run"], ["--sem-vigia"]])
+def test_vigia_nao_roda_em_listar_dry_run_ou_sem_vigia(monkeypatch, argv):
+    monkeypatch.setenv(av._RECARREGADA, "1")
+    monkeypatch.setattr(av, "registrar", lambda _m: None)
+    monkeypatch.setattr(av, "ler_estado", lambda: {})
+    monkeypatch.setattr(av, "alvos_devidos", lambda *a, **k: [])
+    monkeypatch.setattr(av, "vigiar", _nunca)
+    assert av.main(argv) == 0
+
+
+def test_falha_do_vigia_nao_muda_o_desfecho_da_rotina(monkeypatch):
+    """O vigia é isolado: exceção dele vira linha de log, não exceção."""
+    import scripts.vigia_automacoes as vigia
+
+    monkeypatch.setattr(vigia, "vigiar", _nunca)
+    avisos = []
+    monkeypatch.setattr(av, "registrar", avisos.append)
+    _VIGIAR_REAL()
+    assert any("vigia de automações falhou" in a for a in avisos)
+
+
+@pytest.mark.parametrize("decorrido_min, prazo_min, esperado", [
+    (224, 225, False), (225, 225, True), (600, 0, False),
+])
+def test_prazo_esgotado(decorrido_min, prazo_min, esperado):
+    assert av.prazo_esgotado(1000.0, prazo_min, 1000.0 + decorrido_min * 60) is esperado
+
+
+class _AtualizacaoOk:
+    ok = True
+
+    def resumo(self):
+        return "main local já em dia"
+
+
+def test_prazo_esgotado_adia_o_resto_e_notifica_em_vez_de_morrer_calado(monkeypatch):
+    """Em 05/10/2026 a tarefa agendada (limite de 4 h) matou a rotina no meio do
+    `us_snapshot`: sete alvos não rodaram e ninguém foi avisado."""
+    devidos = [(POR_CHAVE[c], "vencido") for c in ("cdi_diario", "macro_brasil", "b3_brapi")]
+    relogio = iter([0.0, 0.0, 300 * 60])  # início, antes do 1º, antes do 2º
+    monkeypatch.setenv(av._RECARREGADA, "1")
+    monkeypatch.setattr(av.time, "monotonic", lambda: next(relogio))
+    monkeypatch.setattr(av, "registrar", lambda _m: None)
+    monkeypatch.setattr(av, "ler_estado", lambda: {})
+    monkeypatch.setattr(av, "alvos_devidos", lambda *a, **k: devidos)
+    monkeypatch.setattr(av, "atualizar_main", lambda _r: _AtualizacaoOk())
+    gravados = []
+    monkeypatch.setattr(av, "gravar_estado", lambda e: gravados.append(dict(e)))
+    executados = []
+    monkeypatch.setattr(av, "executar",
+                        lambda alvo, _amb: executados.append(alvo.chave) or (True, ""))
+    monkeypatch.setattr(av, "levar_artefatos_ao_repositorio", lambda _a: [])
+    monkeypatch.setattr(av, "verificar", lambda *_a: (True, ""))
+    avisos = []
+    monkeypatch.setattr(av, "notificar", lambda msg, _titulo: avisos.append(msg))
+
+    assert av.main(["--sem-armazem", "--sem-vigia"]) == 1
+    assert executados == ["cdi_diario"]
+    assert "macro_brasil, b3_brapi" in avisos[0]
+    # Adiado não ganha registro: segue vencido para a próxima execução.
+    assert "cdi_diario" in gravados[-1]
+    assert "macro_brasil" not in gravados[-1] and "b3_brapi" not in gravados[-1]
+
+
+def test_ingestao_brapi_e_a_ultima_da_fila():
+    """O `daily` leva cerca de 2 h; quem o prazo adia tem de ser ele, não notícias
+    e macro. E depois da poda, que renormaliza o que o publicador leva."""
+    ordem = [a.chave for a in ALVOS]
+    assert ordem[-2:] == ["b3_brapi", "b3_brapi_anual"]
+    assert ordem.index("brapi_raw_poda") < ordem.index("b3_brapi")
+
+
+def test_poda_regrava_as_demonstracoes_a_forca():
+    """Sem `--forcar`, linha gravada por normalizador velho nunca se corrige.
+
+    Em 26-27/10/2026 a rotina rodou do checkout sem o PR #558 e regravou 26,7
+    mil demonstrações com o LPA 1000x errado; o renormalize comum pula o dono
+    cujo payload mais novo já foi normalizado, e o P/L mediano calculado do
+    armazém passou a parar em março com 14 ações descartadas.
+    """
+    passo = next(p for p in POR_CHAVE["brapi_raw_poda"].passos
+                 if "renormalize-demonstracoes" in p)
+    assert "--forcar" in passo

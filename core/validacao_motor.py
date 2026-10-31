@@ -237,18 +237,16 @@ def _vantagem_fii(metrics: dict) -> Portao:
     que ele de fato atesta -- integridade do protocolo point-in-time --, e a
     vantagem economica vira um portao separado, com o intervalo no detalhe.
     """
-    ci = ((metrics or {}).get("backtest") or {}).get("excess_bootstrap") or {}
-    low, high = ci.get("lower"), ci.get("upper")
-    try:
-        low, high = float(low), float(high)
-    except (TypeError, ValueError):
+    # O piso e o mesmo do card da carteira e da aba de validacao
+    # (`core.fii_validation.PISO_IC_EXCESSO`): guarda duplicada diverge.
+    from core.fii_validation import leitura_do_excesso
+    leitura = leitura_do_excesso((metrics or {}).get("backtest") or {})
+    if not leitura["disponivel"]:
         return _vantagem_nao_apurada(
             "certificado sem intervalo bootstrap do excesso")
-    if low != low or high != high:  # NaN
-        return _vantagem_nao_apurada(
-            "certificado sem intervalo bootstrap do excesso")
+    low, high = leitura["inferior"], leitura["superior"]
     faixa = f"IC 95% do excesso por periodo: {low:+.2%} a {high:+.2%}"
-    if low > 0:
+    if leitura["significativo"]:
         return Portao("Vantagem fora da amostra", True, faixa,
                       dimensao=DIM_VANTAGEM)
     return Portao("Vantagem fora da amostra", False,

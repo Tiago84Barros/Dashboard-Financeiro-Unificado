@@ -221,7 +221,13 @@ def manchetes_da_leitura(linhas, limite: int = MANCHETES_GERAIS,
     cortar pela data jogaria fora justamente o que ele mostraria. Depois delas,
     até ``macro`` fatos de cenário que ficaram de fora.
     """
-    ordenadas = sorted(linhas, key=lambda i: float(i.get("nota") or 0), reverse=True)
+    from core.noticias.curadoria import motivo_publieditorial
+
+    # Publieditorial fora já na publicação: 104 releases de escritório de
+    # advocacia nos 32.405 itens do acervo (04/10/2026), com notas 72-79, que
+    # tomariam as 40 vagas da meta antes de o chat ter chance de filtrar.
+    ordenadas = sorted((i for i in linhas if not motivo_publieditorial(i)),
+                       key=lambda i: float(i.get("nota") or 0), reverse=True)
     saida: list[dict] = []
     vistos: set[str] = set()
 
@@ -248,6 +254,9 @@ def manchetes_da_leitura(linhas, limite: int = MANCHETES_GERAIS,
             "coletado_em": _texto_iso(linha.get("coletado_em")),
             "entidades": {"paises": list(entidades.get("paises") or ())},
             "tipo_evento": str(linha.get("tipo_evento") or "") or None,
+            # O chat cura com um item por evento; sem o id, a mesma descoberta
+            # em 4 veículos tomaria 4 vagas também pela vitrine.
+            "evento_id": str(linha.get("evento_id") or "") or None,
             "com_ticker": bool(entidades.get("tickers")),
         }
 
