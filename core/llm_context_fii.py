@@ -226,8 +226,7 @@ def build_fii_chat_context(
                          for item in cedidos}
 
     current_output = (
-        "Carteira Modelo aprovada pelos gates vigentes; resultado quantitativo "
-        "não constitui garantia de retorno."
+        "Carteira Modelo aprovada pelos gates vigentes."
         if portfolio_result.get("can_publish")
         else "lista de diligência; há gates ou pré-requisitos pendentes."
     )

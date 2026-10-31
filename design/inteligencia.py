@@ -35,14 +35,8 @@ __all__ = [
     "selo_qualidade", "linha_valor", "card_valor", "grade_valores",
     "selo_frescor", "barra_frescor", "selo_provedor", "cabecalho_bloco",
     "bloco_completo", "selo_situacao", "cartao_noticia", "cartao_alerta",
-    "area_tecnica", "aviso_sem_garantia",
+    "area_tecnica",
 ]
-
-AVISO_SEM_GARANTIA = (
-    "Nada aqui é recomendação de compra ou venda, nem garantia de retorno. "
-    "Estimativas são publicadas em faixa e podem estar erradas."
-)
-
 
 def _linha(texto: object, *, aspas: bool = False) -> str:
     """Escapa **e** achata. A quebra de linha aqui não é cosmética.
@@ -235,10 +229,6 @@ def cartao_alerta(alerta: al.Alerta) -> None:
         + f'<div class="app-kpi-delta" style="color:var(--app-muted)">'
           f'{_linha(alerta.motivo_canal)}</div></div>',
         unsafe_allow_html=True)
-
-
-def aviso_sem_garantia() -> None:
-    st.caption(AVISO_SEM_GARANTIA)
 
 
 # ── Travas de circuito ───────────────────────────────────────────────────────

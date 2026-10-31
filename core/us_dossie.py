@@ -340,5 +340,8 @@ def build_dossie(symbol: str) -> dict:
             balance=bundle.get("balance", []), cashflow=bundle.get("cashflow", []),
             price=bundle.get("price"), market_cap=bundle.get("market_cap"))
     except Exception as exc:  # noqa: BLE001
+        # O texto da exceção pode trazer SQL, host ou usuário do banco, e
+        # ``erro`` vai para a tela e para o prompt: fica só no log.
         logger.warning("build_dossie(%s) falhou: %s", sym, exc)
-        return {"symbol": sym, "erro": str(exc)[:300]}
+        return {"symbol": sym, "erro": "falha ao ler os dados desta empresa nesta execução",
+                "erro_tipo": type(exc).__name__}

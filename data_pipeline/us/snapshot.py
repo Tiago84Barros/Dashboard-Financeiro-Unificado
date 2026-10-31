@@ -213,6 +213,7 @@ def build_snapshot(engine, *, limit_companies: int | None = None) -> dict:
     from core.us_advanced import advanced_snapshot
     from core.us_asymmetry import build_trajectory, score_asymmetry
     from core.us_dossie import assemble_dossie
+    from core.us_estilos import ESTILOS_COLS
     from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
     from core.us_score import score_cross_section
     from data_pipeline.us.repository import build_upsert
@@ -243,9 +244,11 @@ def build_snapshot(engine, *, limit_companies: int | None = None) -> dict:
     # income_statements — tabelas que a vitrine NÃO carrega. Sem gravá-las aqui,
     # o piso de liquidez e a evidência de ciclo funcionariam só no warehouse
     # local e ficariam mudos no app publicado, que roda em modo snapshot.
-    # Duas consultas agregadas para o universo inteiro, fora do laço.
+    # Consultas agregadas para o universo inteiro, fora do laço.
     giro_por_symbol = ur.load_us_giro_diario()
     ciclo_por_symbol = ur.load_us_resiliencia()
+    # Momento e P&D (core.us_estilos) também: o diário e a DRE não sobem.
+    estilos_por_symbol = ur.load_us_estilos()
 
     written = errors = 0
     rows_out: list[dict] = []
@@ -269,6 +272,8 @@ def build_snapshot(engine, *, limit_companies: int | None = None) -> dict:
             metrics = dict(metrics)
             metrics.update(negociabilidade_e_ciclo(
                 sym, giro_por_symbol, ciclo_por_symbol))
+            metrics.update(estilos_por_symbol.get(str(sym).strip().upper())
+                           or dict.fromkeys(ESTILOS_COLS))
             asym = score_asymmetry(metrics, build_trajectory(inc, bal, cfw)) \
                 if (metrics.get("_years") or 0) >= 3 else None
             adv = advanced_snapshot(inc, bal, cfw, bundle.get("market_cap"))

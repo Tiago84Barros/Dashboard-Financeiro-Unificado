@@ -10,6 +10,7 @@ Uso padrão em cada página:
         with col1:
             card_metrica("Saldo", "R$ 12.300,00", delta="+5,2%", positivo=True)
 """
+import re
 from html import escape
 
 import streamlit as st
@@ -396,9 +397,33 @@ _TOKEN_POR_COR = {
 }
 
 
+_HEX_OPACO = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})")
+
+
+def tinta_legivel(cor: str) -> str:
+    """Cor literal usada como TEXTO, legível nos dois temas.
+
+    O mapa ``_TOKEN_POR_COR`` só conhece as cores semânticas; qualquer outra
+    -- a cor de cada classe de ativo, de cada grupo, de cada paleta -- saía
+    crua no HTML. Desenhada para o fundo escuro, ela some no claro: a varredura
+    de contraste de 31/10/2026 mediu 1,3:1 a 2,9:1 em cores assim (``#CBD5E0``,
+    ``#4C9BE8``, ``#9B59B6``...). Enumerar cor por cor nunca fecha a lista.
+
+    No escuro, ``--app-escurece-tinta`` não existe e a mistura é com 0% de
+    preto: a cor sai idêntica, byte a byte no que se vê. O tema claro define
+    55%, que leva o pior caso medido (o amarelo ``#F6C90E``) a 5,3:1 sobre as
+    superfícies claras. Só hex opaco: transparência é fundo, não texto, e
+    escurecer um véu o deixaria sujo.
+    """
+    cor = str(cor).strip()
+    if not _HEX_OPACO.fullmatch(cor):
+        return cor
+    return f"color-mix(in srgb, {cor}, #000 var(--app-escurece-tinta, 0%))"
+
+
 def cor_token(cor: str) -> str:
-    """Traduz a cor semântica literal para o token equivalente do tema."""
-    return _TOKEN_POR_COR.get(str(cor).upper(), cor)
+    """Traduz a cor literal para o token do tema; sem token, para tinta legível."""
+    return _TOKEN_POR_COR.get(str(cor).upper()) or tinta_legivel(cor)
 
 
 def card_metrica(

@@ -9,8 +9,8 @@ Replica FIELMENTE as 4 seções do app original controlefinanceirotsb.streamlit.
 
 Adições do app unificado preservadas (não existiam no original):
   - Pizza de despesas na aba Análises
-  - Orçamento por categoria: a aba saiu da navegação em 30/09/2026; o cálculo
-    segue vivo para os alertas e o Dashboard Geral
+  - Orçamento por categoria: a aba saiu da navegação em 30/09/2026; os limites
+    se editam em Configurações → Geral e seguem valendo para alertas e Dashboard
   - Conciliação lançamento manual × extrato importado (aba Tabelas)
   - Barras de progresso por categoria
   - (Taxa de poupança mensal histórica removida)
@@ -1192,7 +1192,7 @@ def _render_chat_financeiro(
         )
         return
 
-    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
+    provider_labels = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
     detalhe_tecnico(
         "Provedor(es) LLM: " + ", ".join(
             provider_labels.get(p, p) for p in provedores_disponiveis()),
@@ -1228,9 +1228,13 @@ def _render_chat_financeiro(
             clear_chat_history(_memory_key, session_key="cf_chat_history")
             st.rerun()
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     history = load_chat_history(_memory_key, session_key="cf_chat_history")
     for msg in visible_chat_history(history, "cf_chat_history"):
-        with st.chat_message(msg["role"]):
+        with conversa.chat_message(msg["role"]):
             st.markdown(escapar_cifrao(msg["content"]))
             for direc in msg.get("_charts", []) or []:
                 try:
@@ -1247,10 +1251,10 @@ def _render_chat_financeiro(
         return
 
     history.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(user_input))
 
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         chart_directives: list[dict] = []
         chart_meta: dict = {}
         aviso_ancoragem = ""
@@ -1281,7 +1285,14 @@ def _render_chat_financeiro(
                 aviso_ancoragem = _aviso_ancoragem(resposta, context, user_input)
             except Exception as exc:
                 from core.llm_falha import mensagem_falha_llm
-                resposta = mensagem_falha_llm(exc, "chat do fluxo de caixa")
+                resposta = None
+                falha = mensagem_falha_llm(exc, "chat do fluxo de caixa")
+        if resposta is None:
+            # A falha é aviso, não fala do assistente: gravada, voltava no
+            # contexto do turno seguinte como resposta dele (LLM-A11).
+            st.warning(falha)
+            history.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(resposta))
         if aviso_ancoragem:
             st.caption(aviso_ancoragem)
@@ -1291,8 +1302,6 @@ def _render_chat_financeiro(
                 desenhados = render_financas_charts(chart_directives, chart_meta)
             except Exception as exc:
                 falha_de_acao("Não foi possível gerar os gráficos.", exc)
-        st.caption("Análise educacional baseada nos seus dados; não é recomendação "
-                   "de investimento nem garantia de resultado.")
 
     msg_assistant = {"role": "assistant", "content": resposta}
     if desenhados and chart_directives:
@@ -3511,7 +3520,7 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
         )
         return
 
-    provider_labels = {"openai": "OpenAI", "gemini": "Gemini"}
+    provider_labels = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini"}
     detalhe_tecnico(
         "Provedor(es) LLM: " + ", ".join(
             provider_labels.get(p, p) for p in provedores_disponiveis()),
@@ -3550,9 +3559,13 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
             clear_chat_history(_memory_key, session_key="cc_chat_history")
             st.rerun()
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     history = load_chat_history(_memory_key, session_key="cc_chat_history")
     for msg in visible_chat_history(history, "cc_chat_history"):
-        with st.chat_message(msg["role"]):
+        with conversa.chat_message(msg["role"]):
             st.markdown(escapar_cifrao(msg["content"]))
             for direc in msg.get("_charts", []) or []:
                 try:
@@ -3566,10 +3579,10 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
         return
 
     history.append({"role": "user", "content": user_input})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(user_input))
 
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         chart_directives: list[dict] = []
         chart_meta: dict = {}
         aviso_ancoragem = ""
@@ -3602,7 +3615,14 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
                 aviso_ancoragem = _aviso_ancoragem(resposta, context, user_input)
             except Exception as exc:
                 from core.llm_falha import mensagem_falha_llm
-                resposta = mensagem_falha_llm(exc, "chat do cartão de crédito")
+                resposta = None
+                falha = mensagem_falha_llm(exc, "chat do cartão de crédito")
+        if resposta is None:
+            # A falha é aviso, não fala do assistente: gravada, voltava no
+            # contexto do turno seguinte como resposta dele (LLM-A11).
+            st.warning(falha)
+            history.pop()  # pergunta sem resposta não vai ao histórico
+            return
         st.markdown(escapar_cifrao(resposta))
         if aviso_ancoragem:
             st.caption(aviso_ancoragem)
@@ -3612,8 +3632,6 @@ def _render_chat_cartao(df: pd.DataFrame, df_all: pd.DataFrame, filters: dict) -
                 desenhados = render_financas_charts(chart_directives, chart_meta)
             except Exception as exc:
                 falha_de_acao("Não foi possível gerar os gráficos.", exc)
-        st.caption("Análise educacional baseada nos seus dados; não é recomendação "
-                   "de investimento nem garantia de resultado.")
 
     msg_assistant = {"role": "assistant", "content": resposta}
     if desenhados and chart_directives:
@@ -3751,7 +3769,7 @@ def render() -> None:
     # A aba "Orçamento" saiu da navegação a pedido do usuário (30/09/2026).
     # `_tab_orcamento` continua no módulo, sem rota, porque o orçamento em si
     # não foi desligado: `core.alertas` (R1) e o Dashboard Geral seguem lendo
-    # os limites gravados. Sem a aba, porém, não há mais onde cadastrá-los.
+    # os limites, editados em Configurações → Geral desde 31/10/2026.
     _SECOES = ["📊  Dashboard", "📈  Análises", "🧾  Tabelas",
                "💳  Cartão de Crédito"]
     secao = abas_secao(_SECOES, key="cf_secao_ativa", default=_SECOES[0])

@@ -974,7 +974,23 @@ def build_confidence_context(items: list[dict]) -> str:
     return "\n".join(linhas)
 
 
-def build_fx_context(usd_brl: float | None = None) -> str:
+#: Dias corridos a partir dos quais o fechamento do USD/BRL da base é velho.
+#: Cinco cobre fim de semana e feriado emendado sem marcar a cotação de sexta.
+CAMBIO_VELHO_DIAS = 5
+
+
+def idade_do_cambio(data, hoje=None) -> int | None:
+    """Dias desde o fechamento ``data``; None sem data."""
+    if data is None:
+        return None
+    try:
+        ref = pd.Timestamp(hoje).date() if hoje is not None else pd.Timestamp.now().date()
+        return (ref - pd.Timestamp(data).date()).days
+    except (TypeError, ValueError):
+        return None
+
+
+def build_fx_context(usd_brl: float | None = None, data=None, hoje=None) -> str:
     """Exposição cambial de quem investe em reais numa carteira em dólares.
 
     A carteira é cotada em USD, mas o patrimônio do usuário é medido em reais.
@@ -990,8 +1006,17 @@ def build_fx_context(usd_brl: float | None = None) -> str:
         "de conversão.",
     ]
     taxa = safe_float(usd_brl)
-    if taxa is not None:
-        linhas.append(f"  USD/BRL de referência na base: R$ {taxa:.2f}.")
+    idade = idade_do_cambio(data, hoje)
+    if taxa is not None and idade is None:
+        linhas.append(f"  USD/BRL de referência na base: R$ {taxa:.2f} "
+                      "(data do fechamento não informada).")
+    elif taxa is not None and idade > CAMBIO_VELHO_DIAS:
+        linhas.append(f"  USD/BRL de referência na base: R$ {taxa:.2f}, fechamento de "
+                      f"{pd.Timestamp(data):%d/%m/%Y} — VELHA ({idade} dias): não a "
+                      "trate como a taxa de hoje.")
+    elif taxa is not None:
+        linhas.append(f"  USD/BRL de referência na base: R$ {taxa:.2f} "
+                      f"(fechamento de {pd.Timestamp(data):%d/%m/%Y}).")
     else:
         linhas.append("  USD/BRL não disponível na base — não estime a taxa.")
     linhas.append(
@@ -1074,6 +1099,7 @@ def analyze_us_portfolio_report(
     status: dict | None = None,
     financials: dict[str, pd.DataFrame] | None = None,
     usd_brl: float | None = None,
+    usd_brl_data=None,
     conjuntura: str = "",
     detalhe_armazem: str = "",
 ) -> dict:
@@ -1088,7 +1114,7 @@ def analyze_us_portfolio_report(
         quant_context=build_quant_context(avaliacao_quant),
         provenance=build_data_provenance_context(status, financials),
         confidence=build_confidence_context(items_analyzed),
-        fx_context=build_fx_context(usd_brl),
+        fx_context=build_fx_context(usd_brl, usd_brl_data),
         conjuntura=conjuntura or "Conjuntura não montada nesta execução; não trate como ausência de notícias.",
         detalhe_armazem=detalhe_armazem or SEM_DETALHE_NO_CONSOLIDADO,
     )

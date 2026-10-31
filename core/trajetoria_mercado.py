@@ -140,12 +140,24 @@ def _anos(inicio: date, fim: date) -> float:
     return (fim - inicio).days / 365.25
 
 
-def linha(s: Serie, r: Resumo | None, *, hoje: date | None = None) -> str:
-    """Uma linha de prompt: agora, 1/3/12 meses atrás e posição na janela."""
+def linha(s: Serie, r: Resumo | None, *, hoje: date | None = None,
+          recente: tuple[date, float] | None = None) -> str:
+    """Uma linha de prompt: agora, 1/3/12 meses atrás e posição na janela.
+
+    ``recente`` é um fechamento diário mais novo que o último ponto da série
+    (``core.pregoes_recentes``). Ele entra colado ao valor, na mesma frase, e
+    diz que a comparação e o percentil são do ponto antigo. Sem isso, a LLM leu
+    "BOVA11 no percentil 100" três semanas depois de uma queda de 15%.
+    """
     if r is None:
         return f"  {s.nome} ({s.fonte}): sem observações."
     folga = FOLGA_MENSAL if s.mensal else FOLGA_DIARIA
     partes = [f"  {s.nome} ({s.fonte}): {_valor(s, r.valor)} em {r.data:%d/%m/%Y}"]
+    if recente is not None and recente[0] > r.data:
+        partes[0] += (f" — SUPERADO: no pregão de {recente[0]:%d/%m/%Y} fechou em "
+                      f"{_valor(s, recente[1])} ({_variacao(s, r.valor, recente[1])} desde "
+                      f"{r.data:%d/%m}, COTAHIST da B3); as comparações e o percentil "
+                      f"abaixo são do ponto de {r.data:%d/%m}, não de hoje")
     comparacoes = []
     for meses in MESES_ATRAS:
         rotulo = f"há {meses} {'mês' if meses == 1 else 'meses'}"
@@ -270,8 +282,12 @@ def resumos_sql(conn, fonte: str, chaves: Iterable[str]) -> dict[str, Resumo]:
 
 
 def linhas_supabase(engine, *, hoje: date | None = None,
-                    resumos_out: dict[str, Resumo] | None = None) -> list[str]:
-    """Linhas do Supabase; ``resumos_out`` recebe os resumos (o prêmio usa o juro real)."""
+                    resumos_out: dict[str, Resumo] | None = None,
+                    recentes: Mapping[str, tuple[date, float]] | None = None) -> list[str]:
+    """Linhas do Supabase; ``resumos_out`` recebe os resumos (o prêmio usa o juro real).
+
+    ``recentes``: fechamento diário mais novo por chave (ver :func:`linha`).
+    """
     if engine is None:
         return ["  Dólar, bolsa e Tesouro: banco Supabase indisponível."]
     saida: list[str] = []
@@ -289,7 +305,8 @@ def linhas_supabase(engine, *, hoje: date | None = None,
                     continue
                 if resumos_out is not None:
                     resumos_out.update(resumos)
-                saida += [linha(s, resumos.get(chave), hoje=hoje)
+                saida += [linha(s, resumos.get(chave), hoje=hoje,
+                                recente=(recentes or {}).get(chave))
                           for chave, s in series.items()]
     except Exception as exc:  # noqa: BLE001
         saida.append(f"  Dólar, bolsa e Tesouro: falha na conexão ({_limpo(exc)}).")
@@ -478,6 +495,7 @@ def linhas_trajetoria(
     bcb: Callable[[], tuple[Iterable[Mapping] | None, str]] | None = None,
     eua: Callable[[], tuple[Mapping[str, Mapping[date, float]] | None, str]] | None = None,
     valuation: Callable[[], tuple[Mapping | None, str]] | None = None,
+    recentes: Callable[[], Mapping[str, tuple[date, float]]] | None = None,
     hoje: date | None = None,
 ) -> list[str]:
     """Todas as linhas da seção; cada leitor é injetável e cada falha é nomeada."""
@@ -485,8 +503,13 @@ def linhas_trajetoria(
     saida = [CABECALHO]
     resumos: dict[str, Resumo] = {}
     try:
+        fechamentos = recentes() if recentes else {}
+    except Exception as exc:  # noqa: BLE001 - a linha mensal sai sem a correção
+        logger.info("Pregões recentes indisponíveis para a trajetória: %s", exc)
+        fechamentos = {}
+    try:
         saida += linhas_supabase(supabase() if supabase else None, hoje=hoje,
-                                 resumos_out=resumos)
+                                 resumos_out=resumos, recentes=fechamentos)
     except Exception as exc:  # noqa: BLE001
         saida.append(f"  Dólar, bolsa e Tesouro: falha na leitura ({_limpo(exc)}).")
     try:

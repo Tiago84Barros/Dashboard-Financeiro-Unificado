@@ -15,7 +15,8 @@ source_table, source_id)).
 
 Abas processadas:
   Posição - Ações          → asset_type='stock'
-  Posição - Empréstimos    → asset_type='stock' + is_loaned=True
+  Posição - Empréstimos    → asset_type='stock' + is_loaned=True; Natureza
+                             Doador positivo, Tomador negativo (devido)
   Posição - ETF            → asset_type='etf'
   Posição - Fundos         → 'fii' ou 'fundo_rf' (depende do Tipo)
   Posição - Renda Fixa     → 'renda_fixa' ou 'fundo_rf' (CFF)
@@ -192,18 +193,47 @@ def _parse_acoes(ws) -> list[dict]:
 
 
 def _parse_emprestimos(ws) -> list[dict]:
+    """Aba de aluguel (BTC): a coluna "Natureza" decide o sinal.
+
+    Doador emprestou o papel, que continua sendo dele: entra positivo.
+    Tomador pegou emprestado e DEVE o papel: entra negativo em quantidade e
+    em valor, como em `b3_posicao._ler_emprestimos`. Ignorar a Natureza
+    somava a dívida ao patrimônio -- um aluguel tomado aparecia como ação
+    da carteira. Natureza desconhecida não vira chute: a linha volta com
+    `_erro` e o laço a pula, registrando o motivo.
+    """
     out = []
     for row in _rows(ws):
         ticker, name = _extract_ticker_name(row[0])
+        natureza = str(row[2]).strip() if len(row) > 2 and row[2] else ""
         qty = _decimal(row[11]) if len(row) > 11 else None
         price = _decimal(row[12]) if len(row) > 12 else None
         value = _decimal(row[13]) if len(row) > 13 else None
         if qty is None or qty <= 0:
             continue
+        chave = _norm(natureza)
+        if chave.startswith("doador"):
+            sinal = 1.0
+        elif chave.startswith("tomador"):
+            sinal = -1.0
+        else:
+            out.append({
+                "ticker": ticker,
+                "_erro": (
+                    f"Natureza '{natureza or '(vazia)'}' desconhecida: sem ela "
+                    "não dá para dizer se a posição é própria (Doador) ou "
+                    "devida (Tomador)"
+                ),
+            })
+            continue
         out.append({
             "ticker": ticker, "name": name, "asset_type": "stock",
-            "quantity": qty, "market_price": price, "market_value": value,
+            "quantity": sinal * qty,
+            # Preço não leva sinal: o sinal mora na quantidade e no valor.
+            "market_price": price,
+            "market_value": None if value is None else sinal * value,
             "invested_value": None, "is_loaned": True, "currency": "BRL",
+            "_natureza": natureza,
         })
     return out
 
@@ -506,6 +536,39 @@ def _insert_snapshot(
     return str(row[0]) if row else None
 
 
+def _apagar_tomado_gravado_positivo(
+    conn: Connection,
+    portfolio_id: str,
+    asset_id: str,
+    report_date: date,
+    source_id_antigo: str,
+) -> int:
+    """Remove a linha de aluguel tomado que entrou positiva.
+
+    Antes da leitura da Natureza, o Tomador era gravado como posição própria,
+    com a chave sem marcador. Só a linha `is_loaned` e positiva é dela: a
+    aba Ações roda antes na mesma importação e, se tiver o mesmo ativo com
+    a mesma quantidade, deixa a linha com `is_loaned` falso, e ela fica.
+    """
+    from sqlalchemy import text
+    res = conn.execute(
+        text("""
+            DELETE FROM portfolio_position_snapshots
+             WHERE portfolio_id  = :pid
+               AND asset_id      = :aid
+               AND report_date   = :rd
+               AND source_system = 'app4'
+               AND source_table  = 'xp_consolidado'
+               AND source_id     = :sid
+               AND is_loaned
+               AND quantity > 0
+        """),
+        {"pid": portfolio_id, "aid": asset_id, "rd": report_date,
+         "sid": source_id_antigo},
+    )
+    return res.rowcount or 0
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
@@ -646,6 +709,11 @@ def _parse_single(
                 )
                 return finalize_summary(summary)
 
+            # Chaves que esta importação gravou positivas: o Doador da aba de
+            # aluguel usa a mesma chave que o Tomador gravado positivo antes da
+            # Natureza, e a limpeza desse fóssil não pode levar o Doador.
+            chaves_gravadas: set[str] = set()
+
             # Processa cada aba de posição
             for sheet_key, parser_fn in _SHEET_PARSERS:
                 ws = sheet_map.get(sheet_key)
@@ -660,6 +728,13 @@ def _parse_single(
                     continue
 
                 for pos in positions:
+                    if pos.get("_erro"):
+                        summary["rows_skipped"] += 1
+                        summary["errors"].append(
+                            f"[{ws.title}] {pos.get('ticker', '?')}: "
+                            f"{pos['_erro']}"
+                        )
+                        continue
                     try:
                         with conn.begin_nested():
                             asset_id = get_or_create_asset(
@@ -669,13 +744,28 @@ def _parse_single(
                                 asset_class=_map_asset_type(pos["asset_type"]),
                                 currency=pos.get("currency", "BRL"),
                             )
-                            source_id = make_external_id(
-                                "xpcsl-snap",
-                                [report_date.isoformat(),
-                                 pos["ticker"],
-                                 pos["asset_type"],
-                                 f"{pos['quantity']:.6f}"],
-                            )
+                            chave = [report_date.isoformat(),
+                                     pos["ticker"],
+                                     pos["asset_type"],
+                                     f"{abs(pos['quantity']):.6f}"]
+                            source_id = make_external_id("xpcsl-snap", chave)
+                            if pos["quantity"] < 0:
+                                # O Tomador ganha chave própria: com a de
+                                # sempre, a dívida sobrescreveria a posição
+                                # da aba Ações de mesma quantidade. A linha
+                                # que o importador gravava positiva antes de
+                                # ler a Natureza sai, ou a reimportação a
+                                # deixaria como fóssil ao lado da negativa.
+                                # Se o Doador do mesmo papel e quantidade já
+                                # entrou nesta importação, a linha é dele.
+                                if source_id not in chaves_gravadas:
+                                    _apagar_tomado_gravado_positivo(
+                                        conn, portfolio_id, asset_id,
+                                        report_date, source_id,
+                                    )
+                                source_id = make_external_id(
+                                    "xpcsl-snap", [*chave, "tomador"],
+                                )
                             _insert_snapshot(
                                 conn,
                                 user_id=user_id,
@@ -686,7 +776,16 @@ def _parse_single(
                                 institution=institution,
                                 source_id=source_id,
                             )
+                            if pos["quantity"] >= 0:
+                                chaves_gravadas.add(source_id)
                             summary["positions_imported"] += 1
+                        if pos["quantity"] < 0:
+                            summary["files_skipped_notes"].append(
+                                f"{pos['ticker']}: tomado em aluguel "
+                                f"({pos.get('_natureza') or 'Tomador'}) -- "
+                                "gravado negativo, é devido e não soma ao "
+                                "patrimônio."
+                            )
                     except Exception as exc:  # noqa: BLE001
                         summary["errors"].append(
                             f"[{ws.title}] {pos.get('ticker', '?')}: "

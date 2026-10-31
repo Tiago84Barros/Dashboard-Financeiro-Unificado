@@ -96,6 +96,38 @@ def test_contexto_fii_de_papel_nao_inventa_carteira_de_imoveis():
     assert "PARES DO TIPO PAPEL" in texto
 
 
+RELATORIO = "RELATÓRIO DE ANALISTA (regras) — teste"
+
+
+def test_relatorio_entra_cedo_e_sobrevive_ao_corte(monkeypatch):
+    # Pares enormes depois do relatório: o _cap corta a cauda, não o relatório.
+    enorme = "PAR " * (ctx._CAP_CONTEXTO // 2)
+    monkeypatch.setattr("core.llm_context_us.get_peers_context",
+                        lambda *a, **k: (enorme, {}))
+    monkeypatch.setattr("core.llm_context_us.get_sector_context", lambda *a, **k: "")
+    row = pd.Series({"name": "Apple", "sector": "Technology"})
+    texto = ctx.build_us_ativo_context("aapl", row=row, financials=pd.DataFrame(),
+                                       relatorio=RELATORIO)
+    assert "contexto truncado" in texto
+    assert texto.index(RELATORIO) < texto.index("Cadastro pontuado")
+
+
+def test_relatorio_no_contexto_b3_e_fii(monkeypatch):
+    for nome in ("get_company_fundamentals_context", "get_dre_history_context",
+                 "get_chunks_context", "get_macro_context",
+                 "get_warehouse_detail_context"):
+        monkeypatch.setattr(f"core.llm_context_b3.{nome}", lambda *a, **k: "")
+    monkeypatch.setattr("core.llm_context_b3.get_peers_context",
+                        lambda *a, **k: ("", {}))
+    monkeypatch.setattr("core.database.get_engine", lambda: None)
+    b3 = ctx.build_b3_ativo_context("wege3", relatorio=RELATORIO)
+    assert b3.index(RELATORIO) < b3.index("Múltiplos do snapshot")
+    fii = ctx.build_fii_ativo_context(
+        "PAPE11", dados=pd.Series({"Tipo": "papel"}), relatorio=RELATORIO)
+    assert fii.index(RELATORIO) < fii.index("Cadastro do fundo")
+    assert RELATORIO not in ctx.build_fii_ativo_context("PAPE11")
+
+
 class _Resultado:
     def __init__(self, linhas):
         self.linhas = linhas

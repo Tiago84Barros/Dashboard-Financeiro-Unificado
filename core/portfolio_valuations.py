@@ -164,6 +164,7 @@ def aggregate_tesouro(positions, ano_atual):
     pode somar é a exposição por indexador e o prazo médio até o vencimento,
     ponderados pelo valor de mercado. O retorno é mercado sobre custo, o mesmo
     da tabela por título; não é marcação a mercado isolada nem retorno anual.
+    ``marcacao`` conta os títulos por origem do valor de mercado.
     """
     from core.tesouro_analysis import retorno_mercado_sobre_custo, tesouro_meta
 
@@ -172,6 +173,7 @@ def aggregate_tesouro(positions, ano_atual):
     sem_ano = 0.
     por_indexador: dict = {}
     tickers = set()
+    fonte_do_ticker: dict = {}
     for pos in positions or ():
         mv = _number(pos.get('valor_mercado')) or 0.
         vi = _number(pos.get('total_investido')) or 0.
@@ -181,6 +183,11 @@ def aggregate_tesouro(positions, ano_atual):
         total_vi += vi
         ticker = str(pos.get('ticker') or '').strip().upper()
         tickers.add(ticker)
+        fonte = _FONTE_MARCACAO.get(pos.get('cotacao_fonte'), 'foto')
+        # Uma linha marcada pela foto rebaixa o título inteiro: dizer "pela
+        # curva" de um título que tem parte do valor na foto seria otimismo.
+        if _ORDEM_MARCACAO[fonte] > _ORDEM_MARCACAO.get(fonte_do_ticker.get(ticker), -1):
+            fonte_do_ticker[ticker] = fonte
         meta = tesouro_meta(ticker)
         por_indexador[meta.tipo] = por_indexador.get(meta.tipo, 0.) + mv
         if meta.ano_referencia:
@@ -200,7 +207,45 @@ def aggregate_tesouro(positions, ano_atual):
         'por_indexador': ({k: v / total_mv for k, v in sorted(
             por_indexador.items(), key=lambda item: -item[1])} if total_mv else {}),
         'titulos': len(tickers),
+        'marcacao': {chave: sum(1 for f in fonte_do_ticker.values() if f == chave)
+                     for chave in _ORDEM_MARCACAO},
     }
+
+
+# ``cotacao_fonte`` da carteira → de onde veio o valor do título público. A
+# cotação viva não cobre renda fixa; fora da curva, o que sobra é a foto.
+_FONTE_MARCACAO = {'curva_tesouro': 'curva', 'curva_tesouro_antiga': 'curva_antiga'}
+_ORDEM_MARCACAO = {'curva': 0, 'curva_antiga': 1, 'foto': 2}
+
+
+def _titulos(n: int) -> str:
+    return f"{n} título{'s' if n != 1 else ''}"
+
+
+def texto_marcacao_tesouro(marcacao) -> str:
+    """De onde vem o valor de mercado do Tesouro, contado por título.
+
+    Vazio quando não há título com valor: sem posição não há o que afirmar.
+    """
+    curva, antiga, foto = (int((marcacao or {}).get(k) or 0) for k in _ORDEM_MARCACAO)
+    total = curva + antiga + foto
+    if not total:
+        return ''
+    if curva == total:
+        quem = 'do título' if total == 1 else f'de todos os {_titulos(total)}'
+        return (f'O valor de mercado {quem} vem da curva oficial do Tesouro (PU de '
+                'recompra da data-base mais recente), título a título.')
+    partes = []
+    if curva:
+        partes.append(f'{_titulos(curva)} pela curva oficial do Tesouro (PU de recompra '
+                      'da data-base mais recente)')
+    if antiga:
+        partes.append(f'{_titulos(antiga)} pela última curva oficial, desatualizada '
+                      '(fora da janela de cotação do dia)')
+    if foto:
+        partes.append(f'{_titulos(foto)} pelo saldo da foto da corretora/B3, cujo PU '
+                      'pode ser de dias antes da data do relatório')
+    return 'Valor de mercado: ' + '; '.join(partes) + '.'
 
 
 def load_valuation_fundamentals(stocks, fiis):

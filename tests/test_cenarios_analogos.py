@@ -190,6 +190,7 @@ def test_bloco_de_contexto_traz_a_secao_depois_da_trajetoria(monkeypatch):
     for nome in ("_macro_supabase_cache", "_macro_brasil", "_macro_local"):
         monkeypatch.setattr(cm, nome, lambda: [])
     monkeypatch.setattr(cm, "_trajetoria_cache", lambda: ["TRAJ"])
+    monkeypatch.setattr(cm, "_movimento_recente", lambda ativos, tickers=(): ["MOVIMENTO"])
     monkeypatch.setattr(cm, "_cenarios_analogos", lambda: ["CENARIOS"])
     bloco = cm.bloco_contexto_mercado(noticias_gerais=False)
     assert bloco.index("TRAJ") < bloco.index("CENARIOS")

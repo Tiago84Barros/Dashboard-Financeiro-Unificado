@@ -120,10 +120,12 @@ def test_existe_botao_de_atualizacao_manual():
     assert "st.button" in corpo and "Atualizar notícias agora" in corpo
 
 
-def test_toda_secao_de_estimativa_traz_aviso_sem_garantia():
+def test_secao_de_estimativa_nao_traz_aviso_de_recomendacao():
+    """O app não usa o aviso de 'não é recomendação' (30/10/2026)."""
+    assert not hasattr(V.ui, "aviso_sem_garantia")
     for fn in (V.render_antifragilidade, V.render_fundamentos_cenario,
                V.render_explicacao):
-        assert "aviso_sem_garantia" in inspect.getsource(fn), fn.__name__
+        assert "aviso_sem_garantia" not in inspect.getsource(fn), fn.__name__
 
 
 def test_crise_declara_que_nada_e_executado_automaticamente():
@@ -131,8 +133,10 @@ def test_crise_declara_que_nada_e_executado_automaticamente():
     assert "executada automaticamente" in corpo
 
 
-def test_memoria_declara_que_passado_nao_garante_futuro():
-    assert "não garante o futuro" in inspect.getsource(V.render_memoria)
+def test_memoria_diz_como_ler_a_faixa_sem_aviso_generico():
+    corpo = inspect.getsource(V.render_memoria)
+    assert "dispersão observada, não previsão" in corpo
+    assert "não garante o futuro" not in corpo
 
 
 def test_noticias_agrupam_eventos_iguais():

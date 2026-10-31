@@ -1,13 +1,14 @@
 """Aba 📒 Carteira 20 (Empresas B3).
 
 Só lê o registro append-only ``data/public/carteira20_registro.jsonl`` que
-``scripts/carteira20_revisao.py`` grava e o desempenho diário
+``scripts/carteira20_revisao.py`` grava, o desempenho diário
 ``data/public/carteira20_desempenho.json`` que ``scripts/carteira20_desempenho.py``
-publica; nada é treinado nem calculado aqui. A tela mostra a carteira vigente
-em cards, o caminho desde a execução contra os comparadores, o histórico das
-revisões com os hashes, o estado da cadeia e o que a pesquisa espera -- sem
-antecipar conclusão: o protocolo proíbe qualquer veredito antes de 12 meses de
-registro.
+publica e a medição mensal ``data/public/carteira20_medicao.json`` de
+``scripts/carteira20_medicao.py``; nada é treinado nem calculado aqui. A tela
+mostra a carteira vigente em cards, o caminho desde a execução contra os
+comparadores, os fechamentos mensais do protocolo, o histórico das revisões com
+os hashes, o estado da cadeia e o que a pesquisa espera -- sem antecipar
+conclusão: o protocolo proíbe qualquer veredito antes de 12 meses de registro.
 """
 from __future__ import annotations
 
@@ -27,6 +28,7 @@ from design.lacunas import aviso_lacuna
 from design.market_companies import company_logo_html
 
 DESEMPENHO = c20.REGISTRO.parent / "carteira20_desempenho.json"
+MEDICAO = c20.REGISTRO.parent / "carteira20_medicao.json"
 _LOGOS = "https://raw.githubusercontent.com/thefintz/icones-b3/main/icones"
 # O publicador roda à noite sobre o pregão do dia; com fim de semana e feriado,
 # 5 dias corridos sem pregão novo ainda é série em dia.
@@ -67,6 +69,31 @@ def carregar_desempenho(caminho: Path = DESEMPENHO) -> dict | None:
         return None
 
 
+def carregar_medicao(caminho: Path = MEDICAO) -> dict | None:
+    """Artefato da medição mensal, ou None se ainda não foi publicado."""
+    return carregar_desempenho(caminho)
+
+
+def medicao_do_registro(registros: list[dict], medicao: dict | None) -> dict | None:
+    """A medição só vale para o registro de que ela fala: o mesmo protocolo e as
+    mesmas revisões, cada uma com o corpo vigente de hoje.
+
+    Revisão registrada depois da rodada não invalida o que foi medido antes
+    dela; a tela só diz que a medição está atrasada.
+    """
+    if not (registros and medicao and medicao.get("meses")):
+        return None
+    if (medicao.get("protocolo") or {}).get("hash") != registros[0].get("hash"):
+        return None
+    vigentes = {r["registro"]["seq"]: r for r in c20.revisoes(registros)}
+    for rv in medicao.get("revisoes") or []:
+        atual = vigentes.get(rv.get("seq"))
+        if (atual is None or rv.get("hash") != atual["registro"].get("hash")
+                or rv.get("corpo_sha256") != cd.impressao_corpo(atual["corpo"])):
+            return None
+    return medicao
+
+
 def desempenho_da_vigente(registros: list[dict], desempenho: dict | None) -> dict | None:
     """O artefato só vale para a revisão de que ele fala: mesmo hash e mesmo corpo vigente.
 
@@ -92,6 +119,11 @@ def _pct(v: float | None, sinal: bool = False) -> str:
 
 def _reais(v: float) -> str:
     return "R$ " + f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _aviso(aviso: str) -> None:
+    """Aviso do publicador. "\\$": dois cifrões no mesmo texto viram fórmula LaTeX."""
+    st.caption(f"⚠️ {_frase(aviso[:1].upper() + aviso[1:])}".replace("$", "\\$"))
 
 
 def _data(iso: str | None) -> str:
@@ -404,8 +436,6 @@ def _cards_desempenho(desempenho: dict) -> None:
 
 
 def _secao_desempenho(registros: list[dict], hoje: date, desempenho: dict | None) -> None:
-    proto = c20.protocolo(registros) or {}
-    medicao = proto.get("medicao") or {}
     execucao = ((c20.vigente(registros) or {}).get("corpo") or {}).get("pregao_execucao")
     secao_titulo("Desempenho", "📈",
                  "Desde o fechamento da execução, contra BOVA11, CDI e pesos iguais do universo")
@@ -441,7 +471,7 @@ def _secao_desempenho(registros: list[dict], hoje: date, desempenho: dict | None
             + "Sem aporte nem rebalanceamento até a próxima revisão; os proventos são "
             "reinvestidos na própria ação.")
         for aviso in desempenho.get("avisos") or []:
-            st.caption(f"⚠️ {_frase(aviso[:1].upper() + aviso[1:])}")
+            _aviso(aviso)
     elif execucao and hoje <= date.fromisoformat(execucao):
         estado_vazio(f"A carteira passa a valer no fechamento de {_data(execucao)}; o gráfico "
                      "começa no primeiro pregão seguinte.", "⏳")
@@ -451,23 +481,118 @@ def _secao_desempenho(registros: list[dict], hoje: date, desempenho: dict | None
                      f"({DESEMPENHO.name}); rode scripts/carteira20_desempenho.py.",
                      codigo="tela.b3.carteira20.desempenho_ausente")
 
+
+
+def ultimo_fechamento(registros: list[dict], hoje: date) -> date | None:
+    """O fechamento de mês mais recente até ``hoje``, desde o primeiro do protocolo."""
+    fecha = primeiro_fechamento(registros)
+    if fecha is None or hoje < fecha:
+        return None
+    ano, mes = hoje.year, hoje.month
+    dia = c20.ultimo_pregao_do_mes(ano, mes)
+    if dia > hoje:
+        ano, mes = (ano - 1, 12) if mes == 1 else (ano, mes - 1)
+        dia = c20.ultimo_pregao_do_mes(ano, mes)
+    return dia if dia >= fecha else None
+
+
+_CARTEIRAS = (("carteira20", "Carteira 20"), ("pesos_iguais", "Pesos iguais"),
+              ("bova11", "BOVA11"), ("cdi", "CDI"))
+
+
+def tabela_medicao(medicao: dict, curva: str, real: bool) -> pd.DataFrame:
+    """Um fechamento por linha: o aportado e o valor líquido de cada carteira.
+
+    Em reais do início, cada valor é dividido pelo fator do IPCA do mês; mês
+    sem IPCA divulgado fica com "—", nunca com o nominal no lugar.
+    """
+    linhas = []
+    for m in medicao.get("meses") or []:
+        bloco = m.get(curva) or {}
+        fator = m.get("ipca_fator")
+
+        def valor(v):
+            if v is None or (real and fator is None):
+                return "—"
+            return _reais(v / fator if real else v)
+
+        aportado = bloco.get("aportado_real") if real else bloco.get("aportado")
+        linha = {"Fechamento": _data(m.get("fechamento")),
+                 "Aportado": "—" if aportado is None else _reais(aportado)}
+        for chave, rotulo in _CARTEIRAS:
+            linha[rotulo] = valor((bloco.get(chave) or {}).get("liquido"))
+        linhas.append(linha)
+    return pd.DataFrame(linhas)
+
+
+def _secao_medicao(registros: list[dict], hoje: date, medicao: dict | None) -> None:
+    regras = (c20.protocolo(registros) or {}).get("medicao") or {}
     st.markdown("**Medição mensal do protocolo**")
     fecha = primeiro_fechamento(registros)
-    if fecha is None or hoje <= fecha:
+    meses = (medicao or {}).get("meses") or []
+    if not meses and (fecha is None or hoje <= fecha):
         estado_vazio("Nenhum mês fechado ainda"
                      + (f": o primeiro fecha em {fecha.strftime('%d/%m/%Y')}." if fecha else "."),
                      "⏳")
-    else:
+    elif not meses:
         badge_status(f"O primeiro mês fechou em {fecha.strftime('%d/%m/%Y')} e a medição "
                      "ainda não foi publicada", "alerta")
         aviso_lacuna("Carteira 20: mês fechado sem medição publicada.",
                      codigo="tela.b3.carteira20.medicao_pendente")
-    comp = medicao.get("comparacoes") or {}
+    else:
+        _tabela_da_medicao(registros, hoje, medicao)
+    comp = regras.get("comparacoes") or {}
     for chave, rotulo in _COMPARACOES:
         if comp.get(chave):
             st.caption(f"{rotulo}: {_frase(comp[chave])}")
-    if medicao.get("ir"):
-        st.caption(f"Imposto: {_frase(medicao['ir'])}")
+    if regras.get("ir"):
+        st.caption(f"Imposto: {_frase(regras['ir'])}")
+
+
+def _tabela_da_medicao(registros: list[dict], hoje: date, medicao: dict) -> None:
+    meses = medicao["meses"]
+    ultimo = date.fromisoformat(meses[-1]["fechamento"])
+    devido = ultimo_fechamento(registros, hoje)
+    if devido and devido > ultimo and (hoje - devido).days > _FOLGA_DIAS:
+        badge_status(f"O fechamento de {devido:%d/%m/%Y} ainda não foi medido; a medição "
+                     f"publicada vai até {ultimo:%d/%m/%Y}", "alerta")
+        aviso_lacuna(f"Carteira 20: fechamento de {devido:%d/%m/%Y} sem medição publicada.",
+                     codigo="tela.b3.carteira20.medicao_atrasada")
+    execucao = ((c20.revisoes(registros) or [{}])[0].get("corpo") or {}).get("pregao_execucao")
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        escolha = st.radio("Curva", ("Por aportes", "Teórica"), horizontal=True,
+                           key="c20_medicao_curva",
+                           help="Por aportes: R$ 1.000 na execução e R$ 500 em cada fechamento. "
+                                "Teórica: os R$ 1.000 sem aporte, como a curva diária.")
+    with c2:
+        real = st.toggle(f"Em reais de {_data(execucao)} (IPCA)", key="c20_medicao_real")
+    curva = "aportes" if escolha == "Por aportes" else "teorica"
+    st.dataframe(tabela_medicao(medicao, curva, real), hide_index=True, width="stretch")
+    c = (meses[-1].get(curva) or {}).get("carteira20") or {}
+    # "\$": dois cifrões no mesmo texto viram fórmula LaTeX no markdown do Streamlit
+    st.caption(
+        "Cada valor é o que sobraria vendendo tudo no fechamento, antes do aporte do dia: "
+        "spread de venda, 0,30% de corretagem e o IR que a venda geraria. "
+        + ("Os R\\$ 500 entram em cada fechamento depois da medição e vão para as ações mais "
+           "abaixo do peso, sem venda; os proventos caem em caixa e entram no aporte seguinte. "
+           if curva == "aportes" else "Sem aporte; os proventos voltam para a própria ação. ")
+        + (f"Em {_data(meses[-1]['fechamento'])}, a Carteira 20 tinha "
+           f"{_reais(c.get('caixa', 0.0))} em caixa, que não rende, e já tinha pagado "
+           f"{_reais(c.get('ir_pago', 0.0))} de IR e {_reais(c.get('custos', 0.0))} de "
+           "custos.").replace("R$", "R\\$"))
+    if real and any(m.get("ipca_fator") is None for m in meses):
+        st.caption("Mês com IPCA ainda não divulgado (o IBGE publica por volta do dia 10 do "
+                   "mês seguinte) aparece com —.")
+    posicoes = medicao.get("posicoes_aportes") or []
+    if curva == "aportes" and posicoes:
+        with st.expander("Ações da curva por aportes depois do aporte de "
+                         f"{_data(meses[-1]['fechamento'])}"):
+            st.dataframe(pd.DataFrame([{"Ação": p["ticker"], "Quantidade": p["quantidade"],
+                                        "Valor": _reais(p["valor"])} for p in posicoes]),
+                         hide_index=True, width="stretch")
+    for aviso in medicao.get("avisos") or []:
+        _aviso(aviso)
 
 
 def _secao_expectativa(registros: list[dict]) -> None:
@@ -514,5 +639,6 @@ def render(show_header: bool = False, hoje: date | None = None,
     desempenho = desempenho_da_vigente(registros, carregar_desempenho())
     _secao_carteira(registros, cadastro_por_ticker(cadastro), desempenho)
     _secao_desempenho(registros, hoje, desempenho)
+    _secao_medicao(registros, hoje, medicao_do_registro(registros, carregar_medicao()))
     _secao_expectativa(registros)
     _secao_historico(registros)

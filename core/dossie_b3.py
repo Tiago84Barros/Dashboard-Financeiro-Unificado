@@ -205,14 +205,55 @@ def _trimestres(tk: str, n: int = 6, ate_ano: int | None = None) -> dict:
     if len(tris) >= 5:
         ult, ant = tris[-1], tris[-5]
         if ant["ano"] == ult["ano"] - 1 and ant["tri"] == ult["tri"]:
-            if ant["receita_mi"] and ult["receita_mi"] is not None:
+            if (ant["receita_mi"] is not None and ant["receita_mi"] > 0
+                    and ult["receita_mi"] is not None):
                 yoy["receita_yoy_pct"] = round(
                     (ult["receita_mi"] / ant["receita_mi"] - 1) * 100, 1)
-            if ant["lucro_mi"] and ult["lucro_mi"] is not None:
-                yoy["lucro_yoy_pct"] = round(
-                    (ult["lucro_mi"] / ant["lucro_mi"] - 1) * 100, 1)
+            pct, leitura = variacao_lucro_aa(ant["lucro_mi"], ult["lucro_mi"])
+            if pct is not None:
+                yoy["lucro_yoy_pct"] = pct
+            if leitura:
+                yoy["lucro_yoy_leitura"] = leitura
+                yoy["lucro_base_mi"] = ant["lucro_mi"]
+                yoy["lucro_ult_mi"] = ult["lucro_mi"]
             yoy["ref"] = f"{ult['ano']}T{ult['tri']} vs {ant['ano']}T{ant['tri']}"
     return {"serie": tris[-n:], "yoy": yoy}
+
+
+# Leitura do lucro a/a quando a variação percentual não tem sentido.
+LEITURAS_LUCRO_AA = {
+    "virou_prejuizo": "virou prejuízo",
+    "virada_para_lucro": "saiu do prejuízo para lucro",
+    "prejuizo_reduzido": "prejuízo menor que o do ano anterior",
+    "prejuizo_ampliado": "prejuízo maior que o do ano anterior",
+    "prejuizo_estavel": "prejuízo igual ao do ano anterior",
+    "base_zero": "lucro zero no ano anterior — variação sem base",
+}
+
+
+def variacao_lucro_aa(ant: float | None,
+                      ult: float | None) -> tuple[float | None, str | None]:
+    """Variação a/a do lucro e, quando ela não basta, a leitura do que houve.
+
+    ``ult / ant - 1`` só tem o sinal certo com base positiva. Com prejuízo na
+    base ele inverte: de -100 para -50 (prejuízo menor) dá -50%, que o dossiê
+    lia como "lucro caiu 50%"; de -100 para +50 (virada) dá -150%. Nesses
+    casos a porcentagem não existe e a leitura diz o fato.
+    """
+    if ant is None or ult is None:
+        return None, None
+    if ant > 0:
+        pct = round((ult / ant - 1) * 100, 1)
+        return pct, ("virou_prejuizo" if ult < 0 else None)
+    if ant == 0:
+        return None, "base_zero"
+    if ult > 0:
+        return None, "virada_para_lucro"
+    if ult > ant:
+        return None, "prejuizo_reduzido"
+    if ult < ant:
+        return None, "prejuizo_ampliado"
+    return None, "prejuizo_estavel"
 
 
 def _atualidade(tk: str, hoje: date | None = None) -> dict:
@@ -597,9 +638,19 @@ def _checks(serie: list[dict], tris: dict, divs: dict, met: dict,
     if len(serie) < 5:
         flags.append(f"COBERTURA: apenas {len(serie)} ano(s) de DRE anual — histórico curto.")
     yoy = tris.get("yoy", {})
+    leitura = yoy.get("lucro_yoy_leitura")
     if (yoy.get("lucro_yoy_pct") is not None and yoy["lucro_yoy_pct"] < -25):
-        flags.append(f"MOMENTUM: lucro do último trimestre caiu {yoy['lucro_yoy_pct']}% "
-                     f"a/a ({yoy.get('ref')}).")
+        if leitura == "virou_prejuizo":
+            flags.append(f"MOMENTUM: lucro do último trimestre virou prejuízo "
+                         f"({yoy.get('lucro_base_mi')} → {yoy.get('lucro_ult_mi')} "
+                         f"R$ mi, {yoy.get('ref')}).")
+        else:
+            flags.append(f"MOMENTUM: lucro do último trimestre caiu "
+                         f"{yoy['lucro_yoy_pct']}% a/a ({yoy.get('ref')}).")
+    elif leitura == "prejuizo_ampliado":
+        flags.append(f"MOMENTUM: prejuízo do último trimestre aumentou a/a "
+                     f"({yoy.get('lucro_base_mi')} → {yoy.get('lucro_ult_mi')} "
+                     f"R$ mi, {yoy.get('ref')}).")
     return flags
 
 
@@ -658,44 +709,66 @@ TITULO_SEVERIDADE: dict[str, str] = {
 }
 
 
+#: ``erro`` do dossiê que não saiu. Vai para a tela (resumo do parecer de
+#: reserva), para o prompt e para a aba Restrições -- por isso nunca é o texto
+#: da exceção, que pode trazer SQL, host ou usuário do banco. A identidade do
+#: erro segue em ``erro_tipo``; o texto inteiro, no log.
+DOSSIE_INDISPONIVEL = "falha ao ler os dados desta empresa nesta execução"
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
+def _dossie_cacheado(tk: str) -> dict:
+    """Corpo de ``build_dossie``. Levanta em falha: ``st.cache_data`` não
+    guarda exceção, e o dicionário de erro devolvido daqui ficava 1 h no cache
+    -- um soluço do banco virava uma hora de ativo sem dossiê."""
+    serie = _series_anuais(tk)
+    tris = _trimestres(tk)
+    precos = _precos(tk)
+    divs = _dividendos(tk, precos.get("preco"))
+    met = _metricas_snapshot(tk)
+    docs = _eventos_societarios(tk)
+    val = _valuation(_market_cap(tk), serie, precos)
+    dossie = {
+        "ticker": tk,
+        **_ident(tk),
+        "serie_anual": serie,
+        "trimestres": tris,
+        "dividendos": divs,
+        "valuation": val,
+        "metricas_banco": met,
+        "sensibilidade_juros": _sensibilidade_juros(serie),
+        "eventos_societarios": docs,
+        "red_flags": [],
+    }
+    dossie["red_flags"] = _checks(serie, tris, divs, met, docs, val)
+    # Atualidade tem try próprio: falhar nela não pode apagar o dossiê
+    # inteiro, e o campo vazio diz "não medido".
+    try:
+        atual = _atualidade(tk)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("build_dossie(%s): atualidade não medida: %s", tk, exc)
+        atual = {}
+    dossie["atualidade"] = atual
+    dossie["red_flags"].extend(atual.get("flags") or [])
+    return dossie
+
+
 def build_dossie(ticker: str) -> dict:
-    """Dossiê determinístico completo de um ticker (só banco, sem LLM)."""
+    """Dossiê determinístico completo de um ticker (só banco, sem LLM).
+
+    Nunca levanta: em falha devolve ``erro`` (``DOSSIE_INDISPONIVEL``) e
+    ``erro_tipo``, sem cache -- a próxima chamada tenta o banco de novo.
+    """
     tk = ticker.strip().upper().replace(".SA", "")
     try:
-        serie = _series_anuais(tk)
-        tris = _trimestres(tk)
-        precos = _precos(tk)
-        divs = _dividendos(tk, precos.get("preco"))
-        met = _metricas_snapshot(tk)
-        docs = _eventos_societarios(tk)
-        val = _valuation(_market_cap(tk), serie, precos)
-        dossie = {
-            "ticker": tk,
-            **_ident(tk),
-            "serie_anual": serie,
-            "trimestres": tris,
-            "dividendos": divs,
-            "valuation": val,
-            "metricas_banco": met,
-            "sensibilidade_juros": _sensibilidade_juros(serie),
-            "eventos_societarios": docs,
-            "red_flags": [],
-        }
-        dossie["red_flags"] = _checks(serie, tris, divs, met, docs, val)
-        # Atualidade tem try próprio: falhar nela não pode apagar o dossiê
-        # inteiro, e o campo vazio diz "não medido".
-        try:
-            atual = _atualidade(tk)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("build_dossie(%s): atualidade não medida: %s", tk, exc)
-            atual = {}
-        dossie["atualidade"] = atual
-        dossie["red_flags"].extend(atual.get("flags") or [])
-        return dossie
-    except Exception as exc:  # banco fora, ticker inexistente etc.
+        return _dossie_cacheado(tk)
+    except Exception as exc:  # noqa: BLE001 -- banco fora, ticker inexistente etc.
         logger.warning("build_dossie(%s) falhou: %s", tk, exc)
-        return {"ticker": tk, "erro": str(exc)[:300]}
+        return {"ticker": tk, "erro": DOSSIE_INDISPONIVEL,
+                "erro_tipo": type(exc).__name__}
+
+
+build_dossie.clear = _dossie_cacheado.clear  # type: ignore[attr-defined]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -720,10 +793,18 @@ def dossie_to_text(d: dict) -> str:
         L.append("\nTRIMESTRES RECENTES (R$ mi) — receita | lucro:")
         for t in tris["serie"]:
             L.append(f"  {t['ano']}T{t['tri']} | {t['receita_mi']} | {t['lucro_mi']}")
-        if tris.get("yoy"):
-            L.append(f"  Último tri a/a ({tris['yoy'].get('ref')}): "
-                     f"receita {tris['yoy'].get('receita_yoy_pct')}% | "
-                     f"lucro {tris['yoy'].get('lucro_yoy_pct')}%")
+        yoy = tris.get("yoy") or {}
+        if yoy:
+            rec = yoy.get("receita_yoy_pct")
+            rec_txt = f"{rec}%" if rec is not None else "sem base comparável"
+            luc = yoy.get("lucro_yoy_pct")
+            luc_txt = f"{luc}%" if luc is not None else "sem variação percentual"
+            leitura = LEITURAS_LUCRO_AA.get(yoy.get("lucro_yoy_leitura") or "")
+            if leitura:
+                luc_txt += (f" — {leitura} ({yoy.get('lucro_base_mi')} → "
+                            f"{yoy.get('lucro_ult_mi')} R$ mi)")
+            L.append(f"  Último tri a/a ({yoy.get('ref')}): "
+                     f"receita {rec_txt} | lucro {luc_txt}")
 
     at = d.get("atualidade") or {}
     if at.get("esperado"):
@@ -960,12 +1041,16 @@ def contexto_mercado_para_parecer(tk: str) -> str:
         from core.contexto_mercado import bloco_contexto_mercado
         partes.append(bloco_contexto_mercado({"b3": {tk: ""}}, noticias_gerais=False))
     except Exception as exc:  # noqa: BLE001
-        partes.append(f"CONTEXTO DE MERCADO: falha ao montar ({str(exc)[:160]}).")
+        # Só o tipo vai ao prompt: o texto de um erro de conexão traz host e
+        # usuário do banco. O traço completo fica no log do servidor.
+        logger.exception("contexto de mercado do parecer %s falhou", tk)
+        partes.append(f"CONTEXTO DE MERCADO: falha ao montar ({type(exc).__name__}).")
     try:
         from core.llm_context_b3 import get_warehouse_detail_context
         partes.append(get_warehouse_detail_context([tk]))
     except Exception as exc:  # noqa: BLE001
-        partes.append(f"DETALHE DO ARMAZÉM: falha ao montar ({str(exc)[:160]}).")
+        logger.exception("detalhe do armazém do parecer %s falhou", tk)
+        partes.append(f"DETALHE DO ARMAZÉM: falha ao montar ({type(exc).__name__}).")
     return "\n\n".join(p for p in partes if p and p.strip())
 
 

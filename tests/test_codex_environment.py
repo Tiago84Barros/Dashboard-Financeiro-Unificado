@@ -37,6 +37,19 @@ class CodexEnvironmentTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             formulas.savings_rate(0, 1)
 
+    def test_no_embedded_secrets(self) -> None:
+        # O CI do GitHub so roda pytest: sem isto, o gate de segredos do
+        # `run_quality_checks.py` ficou vermelho na main sem ninguem ver.
+        findings = load_script("check_secrets").scan()
+        self.assertEqual([f"{path}:{line}: {label}" for path, line, label in findings], [])
+
+    def test_secret_scanner_still_flags_credentialed_url(self) -> None:
+        # montada em tempo de execucao, para o proprio teste nao virar achado
+        url = "postgresql://u:" + "x" * 12 + "@db.example.test:5432/postgres"
+        pattern = load_script("check_secrets").PATTERNS["credentialed database URL"]
+        self.assertIsNotNone(pattern.search(url))
+        self.assertIsNone(pattern.search("postgresql://u:{senha}@db.example.test:5432/postgres"))
+
 
 if __name__ == "__main__":
     unittest.main()

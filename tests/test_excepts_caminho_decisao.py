@@ -96,19 +96,6 @@ def test_resiliencia_integra_nao_marca_nada(monkeypatch):
     assert (out["health_penalty"] == 0.0).all()
 
 
-def test_tabela_de_resiliencia_nao_pinta_saudavel_sem_calculo():
-    """A tabela usava `p >= 20 / p >= 8 / senão Saudável`: NaN caía em
-    "Saudável". O ramo novo vem antes."""
-    import inspect
-
-    import views.empresas_b3 as b3
-    corpo = inspect.getsource(b3)
-    i = corpo.index('_res_df["saude"] = _res_df["health_penalty"].apply(')
-    trecho = corpo[i:i + 300]
-    assert "pd.isna(p)" in trecho
-    assert trecho.index("pd.isna(p)") < trecho.index("Saudável")
-
-
 def test_avisar_degradacoes_nomeia_na_tela(monkeypatch):
     import views.empresas_b3 as b3
     chamadas = []
@@ -176,15 +163,6 @@ def test_duas_fontes_falhando_viram_indisponivel(monkeypatch):
     assert "yfinance: RuntimeError" in df.attrs["fonte_precos_erro"]
 
 
-def test_procedencia_viaja_para_o_resultado_guardado_na_sessao():
-    import views.empresas_b3 as b3
-    origem = pd.DataFrame({"a": [1]})
-    origem.attrs.update(fonte_precos="yfinance", fonte_precos_erro="OperationalError")
-    destino = b3._herdar_fonte_precos(pd.DataFrame({"b": [2]}), origem)
-    assert destino.attrs["fonte_precos"] == "yfinance"
-    assert destino.attrs["fonte_precos_erro"] == "OperationalError"
-
-
 # ── Portão de risco do Score de Entrada ────────────────────────────────────
 
 def test_risco_indisponivel_nao_se_le_como_sem_risco(monkeypatch):
@@ -231,7 +209,7 @@ def test_dossie_nomeia_historico_e_motor_oficial_indisponiveis(monkeypatch):
                        "tela.b3.dossie_nota_das_trilhas"]
 
 
-# ── Backtest: Markowitz híbrido que falha ──────────────────────────────────
+# ── Histórico sintético (score histórico) ──────────────────────────────────
 
 def _hist_sintetico() -> dict[str, pd.DataFrame]:
     anos = list(range(2018, 2025))
@@ -241,34 +219,6 @@ def _hist_sintetico() -> dict[str, pd.DataFrame]:
                              "ROE": [roe] * len(anos), "DY": [0.05] * len(anos)})
 
     return {"AAA3": _df(0.30), "BBB3": _df(0.10), "CCC3": _df(0.20)}
-
-
-def _precos_sinteticos() -> pd.DataFrame:
-    idx = pd.date_range("2021-01-31", "2023-12-31", freq="ME")
-    rng = np.random.default_rng(7)
-    base = np.cumprod(1 + rng.normal(0.01, 0.05, (len(idx), 3)), axis=0) * 10
-    return pd.DataFrame(base, index=idx, columns=["AAA3", "BBB3", "CCC3"])
-
-
-def test_backtest_registra_ano_em_que_o_markowitz_falhou(monkeypatch, caplog):
-    import core.markowitz as mk
-    from views.empresas_b3 import _simular_backtest
-    monkeypatch.setattr(mk, "min_variance_capped", _explode)
-
-    with caplog.at_level(logging.ERROR, logger="views.empresas_b3"):
-        df_bt, _top, _n = _simular_backtest(
-            _precos_sinteticos(), pd.DataFrame(), _hist_sintetico(),
-            ["AAA3", "BBB3", "CCC3"],
-            aporte=1000.0, data_inicio=pd.Timestamp("2021-01-01"),
-            taxa_selic_aa=0.10, pesos={"ROE": (1.0, True)}, tk_grupos=None,
-            top_n_max=3, usar_gamma=True, cap=0.50,
-            use_markowitz=True,
-        )
-
-    assert not df_bt.empty
-    falhas = df_bt.attrs["markowitz_falhas"]
-    assert falhas and all("RuntimeError" in f for f in falhas)
-    assert any("Markowitz" in r.getMessage() for r in caplog.records)
 
 
 # ── Fora da tela B3: o log passa a guardar a causa ─────────────────────────
@@ -411,38 +361,6 @@ def test_mapa_de_scores_historico_carrega_a_falha_de_resiliencia(monkeypatch):
     assert [d["codigo"] for d in mapa.degradacoes] == ["tela.b3.score_sem_resiliencia"]
     # st.cache_data serializa por pickle: a marca não pode cair aí.
     assert pickle.loads(pickle.dumps(mapa)).degradacoes == mapa.degradacoes
-    # A função pública sem cobertura devolve o mesmo mapa marcado.
-    assert b3._score_historico_ano(
-        _hist_sintetico(), ["AAA3", "BBB3", "CCC3"], 2023, {"ROE": (1.0, True)}
-    ).degradacoes
-
-
-def _backtest_simples():
-    from views.empresas_b3 import _simular_backtest
-    df_bt, _top, _n = _simular_backtest(
-        _precos_sinteticos(), pd.DataFrame(), _hist_sintetico(),
-        ["AAA3", "BBB3", "CCC3"],
-        aporte=1000.0, data_inicio=pd.Timestamp("2021-01-01"),
-        taxa_selic_aa=0.10, pesos={"ROE": (1.0, True)}, tk_grupos=None,
-        top_n_max=3, usar_gamma=True, cap=0.50,
-    )
-    return df_bt
-
-
-def test_backtest_registra_anos_com_score_sem_resiliencia(monkeypatch):
-    import core.resilience_score as rs
-    monkeypatch.setattr(rs, "financial_health_penalty", _explode)
-
-    df_bt = _backtest_simples()
-
-    assert not df_bt.empty
-    anos = df_bt.attrs["anos_sem_resiliencia"]
-    assert anos and set(anos) <= {2021, 2022, 2023}
-
-
-def test_backtest_integro_nao_declara_ano_sem_resiliencia(monkeypatch):
-    _neutraliza_resiliencia(monkeypatch)
-    assert _backtest_simples().attrs["anos_sem_resiliencia"] == []
 
 
 def test_guarda_de_entrada_preserva_degradacoes_atraves_do_concat(monkeypatch):
@@ -490,7 +408,7 @@ def test_criacao_de_portfolio_avisa_degradacoes_da_guarda_na_tela():
 
     import views.portfolio_b3 as pb3
     corpo = inspect.getsource(pb3.render)
-    i = corpo.index("_render_data_quality_box(quality_summary")
+    i = corpo.index("_registrar_qualidade_dos_fundamentos(quality_summary")
     assert '_avisar_degradacoes(st.session_state.get("pb3_entry_guard_df"' in corpo[i:i + 400]
 
 
@@ -502,43 +420,7 @@ def test_risk_engine_sem_codigo_morto_apos_o_return():
     assert "Liquidez_Corrente" not in fonte and "penalty.clip" not in fonte
 
 
-# ── INF-M4 (resto): Rank-IC e Criação de Portfólio leem a marca ────────────
-
-def test_rank_ic_nomeia_anos_com_score_sem_resiliencia(monkeypatch):
-    import core.resilience_score as rs
-    from views.empresas_b3 import _rank_ic_por_ano
-    monkeypatch.setattr(rs, "financial_health_penalty", _explode)
-
-    df_ic = _rank_ic_por_ano(_precos_sinteticos(), _hist_sintetico(),
-                             ["AAA3", "BBB3", "CCC3"], {"ROE": (1.0, True)},
-                             min_n=3)
-
-    assert not df_ic.empty
-    # Só anos que de fato entraram no IC — nem mais, nem menos.
-    assert df_ic.attrs["anos_sem_resiliencia"] == sorted(df_ic["Ano"].tolist())
-
-
-def test_rank_ic_integro_nao_declara_ano_sem_resiliencia(monkeypatch):
-    from views.empresas_b3 import _rank_ic_por_ano
-    _neutraliza_resiliencia(monkeypatch)
-
-    df_ic = _rank_ic_por_ano(_precos_sinteticos(), _hist_sintetico(),
-                             ["AAA3", "BBB3", "CCC3"], {"ROE": (1.0, True)},
-                             min_n=3)
-
-    assert not df_ic.empty
-    assert df_ic.attrs["anos_sem_resiliencia"] == []
-
-
-def test_tela_do_rank_ic_avisa_anos_sem_resiliencia():
-    import inspect
-
-    import views.empresas_b3 as b3
-    corpo = inspect.getsource(b3)
-    i = corpo.index('_pit_card_html(_pit_cov_ic, "Rank-IC")')
-    trecho = corpo[i:i + 700]
-    assert 'df_ic.attrs.get("anos_sem_resiliencia")' in trecho
-    assert "tela.b3.rank_ic_score_sem_resiliencia" in trecho
+# ── INF-M4 (resto): a Criação de Portfólio lê a marca ──────────────────────
 
 
 def _segmento(monkeypatch, explode: bool) -> dict:
@@ -605,5 +487,5 @@ def test_render_chama_aviso_de_segmentos_sem_resiliencia():
 
     import views.portfolio_b3 as pb3
     corpo = inspect.getsource(pb3.render)
-    i = corpo.index("_render_data_quality_box(quality_summary")
+    i = corpo.index("_registrar_qualidade_dos_fundamentos(quality_summary")
     assert "_avisar_segmentos_sem_resiliencia(resultados)" in corpo[i:i + 500]

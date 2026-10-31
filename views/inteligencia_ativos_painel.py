@@ -252,7 +252,7 @@ def render_cards(cards: list[pn.CardAtivo], *, colunas: int = 3) -> None:
                 st.markdown(cartao_ativo(c), unsafe_allow_html=True)
                 st.button("Abrir análise completa", key=f"ia_abrir_{c.ticker}",
                           on_click=_abrir, args=(c.ticker,),
-                          use_container_width=True)
+                          width="stretch")
 
 
 # -- histórico (gravado, não exibido) ----------------------------------------------------------

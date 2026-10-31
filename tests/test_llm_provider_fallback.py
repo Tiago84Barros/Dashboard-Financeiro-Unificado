@@ -20,8 +20,8 @@ import core.llm_b3 as llm
 
 # Os getters de cliente da cadeia. Manter em sincronia com `_provider_chain`;
 # `test_todos_os_getters_estao_neutralizados` cobra essa sincronia.
-_PROVEDORES = ("_get_openrouter_client", "_get_openai_client",
-               "_get_gemini_client")
+_PROVEDORES = ("_get_anthropic_client", "_get_openrouter_client",
+               "_get_openai_client", "_get_gemini_client")
 
 
 class _FakeMsg:

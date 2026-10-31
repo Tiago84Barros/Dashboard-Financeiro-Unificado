@@ -48,6 +48,9 @@ from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
 from core.fii_ticker import sql_ticker_fii as _sql_ticker_fii
 from core.liquidez import procedencia_liquidez
 from core.observacao_ausente import valor_observado
+from core.proventos_b3 import FONTE_ARQUIVO as _FONTE_ARQUIVO
+from core.proventos_b3 import FONTE_BANCO as _FONTE_BANCO
+from core.proventos_b3 import renda_anual as _renda_anual
 
 logger = logging.getLogger(__name__)
 
@@ -344,6 +347,32 @@ def _demo_finalize(df: pd.DataFrame) -> pd.DataFrame:
     return df.drop(columns=["_year"])
 
 
+def _proventos_do_exercicio(datas: pd.Series, total_do_ano) -> pd.Series:
+    """Soma de proventos do ano civil de cada exercício.
+
+    O ano civil que ainda não fechou fica vazio: a soma dele é parcial e
+    entraria no gráfico, no CAGR e no contexto das LLMs como o total do ano.
+    Só chega aqui o exercício encerrado fora de dezembro (cinco tickers em
+    29/10/2026, com exercício fechado entre fevereiro e junho).
+    """
+    aberto = _dt.date.today().year
+    return pd.to_numeric(datas.dt.year.map(
+        lambda y: total_do_ano(int(y)) if pd.notna(y) and int(y) < aberto else None),
+        errors="coerce")
+
+
+def _procedencia_dos_proventos(df: pd.DataFrame, divs: pd.DataFrame, tk: str) -> None:
+    """Põe em ``df.attrs`` a procedência da coluna ``Dividendos`` de ``tk``.
+
+    As mesmas chaves de :func:`load_dividendos_anuais`, para que o leitor
+    (gráfico, LLM, snapshot) nomeie a fonte e marque a resposta velha da brapi
+    com ``core.proventos_b3.procedencia``.
+    """
+    foto_em = divs.attrs.get("foto_em") or {}
+    df.attrs["fonte"] = _FONTE_ARQUIVO if tk in foto_em else _FONTE_BANCO
+    df.attrs["foto_em"] = {tk: foto_em[tk]} if tk in foto_em else {}
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_demonstracoes(ticker: str) -> pd.DataFrame:
     """Demonstrações anuais (market.*) com colunas PT iguais ao legado."""
@@ -351,12 +380,15 @@ def load_demonstracoes(ticker: str) -> pd.DataFrame:
     df = _demo_finalize(_q(_DEMO_SQL.format(where="i.ticker = :t"), {"t": tk}))
     if df.empty:
         return df
-    divs = _q("SELECT EXTRACT(YEAR FROM event_date)::int AS y, SUM(amount) AS d "
-              "FROM market.dividends WHERE ticker=:t AND event_date IS NOT NULL GROUP BY 1",
-              {"t": tk})
-    dmap = {int(r.y): float(r.d) for r in divs.itertuples()} if not divs.empty else {}
-    df["Dividendos"] = df["Data"].dt.year.map(dmap)
-    return df.sort_values("Data").reset_index(drop=True)
+    # A soma crua de market.dividends batia com a fonte em 65,6% dos
+    # ticker-anos: cada revisão da brapi deixa a linha antiga ao lado da nova
+    # (ver core.proventos_b3).
+    divs = _renda_anual([tk])
+    dmap = {int(r.ano): float(r.total) for r in divs.itertuples()} if not divs.empty else {}
+    df["Dividendos"] = _proventos_do_exercicio(df["Data"], dmap.get)
+    df = df.sort_values("Data").reset_index(drop=True)
+    _procedencia_dos_proventos(df, divs, tk)
+    return df
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -370,21 +402,19 @@ def load_demonstracoes_batch(tickers: tuple[str, ...]) -> dict[str, pd.DataFrame
         return {}
     # Dividendos por ano (paridade com load_demonstracoes single) — os
     # relatórios LLM usam a série p/ ancorar a política de proventos em números.
-    divs = _q("SELECT ticker, EXTRACT(YEAR FROM event_date)::int AS y, SUM(amount) AS d "
-              "FROM market.dividends WHERE ticker = ANY(:tks) AND event_date IS NOT NULL "
-              "GROUP BY 1, 2", {"tks": tks})
+    divs = _renda_anual(tks)
     dmap: dict[tuple[str, int], float] = (
-        {(str(r.ticker).upper(), int(r.y)): float(r.d) for r in divs.itertuples()}
+        {(str(r.ticker).upper(), int(r.ano)): float(r.total) for r in divs.itertuples()}
         if not divs.empty else {}
     )
     out: dict[str, pd.DataFrame] = {}
     for tk in tks:
         sub = df[df["Ticker"] == tk].copy().reset_index(drop=True)
         if not sub.empty:
-            sub["Dividendos"] = sub["Data"].dt.year.map(
-                lambda y, t=tk: dmap.get((t, int(y))) if pd.notna(y) else None
-            )
+            sub["Dividendos"] = _proventos_do_exercicio(
+                sub["Data"], lambda y, t=tk: dmap.get((t, y)))
             out[tk] = sub.sort_values("Data").reset_index(drop=True)
+            _procedencia_dos_proventos(out[tk], divs, tk)
     return out
 
 
@@ -1836,8 +1866,10 @@ def load_precos_mensais(tickers: tuple[str, ...],
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_dividendos_anuais(ticker: str) -> pd.DataFrame:
-    """Dividendos anuais totais (R$/ação) de ``market.dividends`` — colunas
-    [Data, Dividendos], Data = 31/12 do ano de referência.
+    """Dividendos anuais totais (R$/ação) por ano de pagamento — colunas
+    [Data, Dividendos], Data = 31/12 do ano de referência. Fonte:
+    ``core.proventos_b3.renda_anual`` (a resposta mais nova da brapi,
+    publicada; ``market.dividends`` só para o ticker que ela não cobre).
 
     Fonte governada usada como PRIMÁRIA pela aba "Análise de Empresa" (Empresas
     B3) quando ``market.*`` está ativo — yfinance ao vivo só entra como
@@ -1845,26 +1877,10 @@ def load_dividendos_anuais(ticker: str) -> pd.DataFrame:
     (achado A-011, 2026-08-19: antes a tela chamava yfinance incondicionalmente,
     mesmo com o dado governado disponível).
     """
-    from core.dividend_types import sql_apenas_renda
-
     tk = ticker.strip().upper().replace(".SA", "")
-    # A-128/A-129: amortizacao e restituicao de capital nao sao provento, e o
-    # eco de classe da brapi grava o mesmo evento sob varios tickers. Somar
-    # tudo cru inflava 234 tickers em 139% na media (medido em 2026-08-24).
-    # MIN dentro de (data, tipo) mata o eco; SUM entre tipos distintos preserva
-    # dividendo + JCP no mesmo dia, que sao dois eventos de verdade.
-    df = _q(f"""
-        SELECT ano, SUM(valor) AS total FROM (
-            SELECT EXTRACT(YEAR FROM event_date)::int AS ano,
-                   event_date, type, MIN(amount) AS valor
-            FROM market.dividends
-            WHERE ticker = :t AND event_date IS NOT NULL
-              AND {sql_apenas_renda()}
-            GROUP BY 1, 2, 3
-        ) AS renda
-        GROUP BY 1
-        ORDER BY 1
-    """, {"t": tk})
+    # A mesma fonte de load_demonstracoes: só renda, sem eco de classe, sem a
+    # safra colapsada e sem as revisões que o upsert não apaga.
+    df = _renda_anual([tk])
     if df.empty:
         return pd.DataFrame()
     df = df.dropna(subset=["ano", "total"])
@@ -1876,7 +1892,10 @@ def load_dividendos_anuais(ticker: str) -> pd.DataFrame:
         "Data": df["ano"].map(lambda y: pd.Timestamp(_dt.date(int(y), 12, 31))),
         "Dividendos": pd.to_numeric(df["total"], errors="coerce"),
     })
-    return out.dropna().reset_index(drop=True)
+    out = out.dropna().reset_index(drop=True)
+    out.attrs["fonte"] = df.attrs.get("fonte", "")
+    out.attrs["foto_em"] = df.attrs.get("foto_em", {})
+    return out
 
 
 @st.cache_data(ttl=3600, show_spinner=False)

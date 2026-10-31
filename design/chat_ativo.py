@@ -25,7 +25,8 @@ from core.llm_grounding import aviso_ancoragem
 from core.utils import escapar_cifrao
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 
-_PROVEDOR_LABEL = {"openai": "OpenAI", "gemini": "Gemini", "openrouter": "OpenRouter"}
+_PROVEDOR_LABEL = {"anthropic": "Claude", "openai": "OpenAI", "gemini": "Gemini",
+                   "openrouter": "OpenRouter"}
 
 _SUGESTOES_PADRAO: dict[str, tuple[str, ...]] = {
     "b3": (
@@ -140,9 +141,13 @@ def render_chat_ativo(
                              width="stretch"):
                     sugerida = pergunta
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     historico = load_chat_history(memory_key, session_key=hist_key)
     for mensagem in visible_chat_history(historico, hist_key):
-        with st.chat_message(mensagem["role"]):
+        with conversa.chat_message(mensagem["role"]):
             st.markdown(escapar_cifrao(mensagem["content"]))
 
     digitada = st.chat_input(
@@ -154,17 +159,19 @@ def render_chat_ativo(
         return
 
     historico.append({"role": "user", "content": pergunta})
-    with st.chat_message("user"):
+    with conversa.chat_message("user"):
         st.markdown(escapar_cifrao(pergunta))
-    with st.chat_message("assistant"):
+    with conversa.chat_message("assistant"):
         aviso = ""
         with st.spinner(f"Consultando os dados de {tk}, pares e qualidade…"):
             try:
                 # O bloco do ativo já traz o noticiário dele; aqui entram macro,
-                # curva, câmbio e manchetes gerais — premissa do app.
+                # curva, câmbio, manchetes gerais e os pregões diários do
+                # próprio ativo (só B3/FII estão no COTAHIST) — premissa do app.
                 from core.contexto_mercado import bloco_contexto_mercado
 
-                contexto = build_context(pergunta) + "\n\n" + bloco_contexto_mercado()
+                contexto = build_context(pergunta) + "\n\n" + bloco_contexto_mercado(
+                    tickers_movimento=[tk] if mercado in ("b3", "fii") else ())
                 # O veredito da Inteligência dos Ativos para este ativo, e a
                 # resposta conferida contra ele.
                 avaliacoes: dict = {}
@@ -186,7 +193,5 @@ def render_chat_ativo(
         st.markdown(escapar_cifrao(resposta))
         if aviso:
             st.caption(aviso)
-        st.caption("Análise educacional baseada nos dados disponíveis; "
-                   "não constitui recomendação de compra ou venda.")
     historico.append({"role": "assistant", "content": resposta})
     save_chat_history(memory_key, historico, session_key=hist_key)

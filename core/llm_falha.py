@@ -32,7 +32,8 @@ _DO_APP = ("Nenhum provedor LLM configurado", "Só há provedor LLM gratuito")
 #: Prefixo do erro de ``core.llm_b3._chat_complete`` quando a cadeia inteira
 #: falha; cada elo vem como ``nome(modelo): erro``, separados por `` | ``.
 _CADEIA = "Todos os provedores LLM falharam — "
-_NOME_PROVEDOR = {"openrouter": "OpenRouter", "openai": "OpenAI", "gemini": "Gemini"}
+_NOME_PROVEDOR = {"anthropic": "Claude", "openrouter": "OpenRouter",
+                  "openai": "OpenAI", "gemini": "Gemini"}
 
 
 def _categoria(nome: str, texto: str) -> str | None:
@@ -40,7 +41,7 @@ def _categoria(nome: str, texto: str) -> str | None:
     if "timeout" in nome or "timed out" in texto or "timeout" in texto:
         return "demorou demais"
     if any(m in texto for m in ("429", "rate limit", "quota", "insufficient",
-                                "crédito", "credit", "billing")):
+                                "crédito", "credit", "billing", "usage limit")):
         return "limite de uso ou falta de crédito"
     if any(m in texto for m in ("401", "403", "api key", "invalid_api_key",
                                 "unauthorized", "permission")):
