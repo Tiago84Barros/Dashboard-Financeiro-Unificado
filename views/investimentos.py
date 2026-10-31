@@ -87,7 +87,11 @@ _TOKEN_POR_COR = {
 
 def _cor_texto(cor: str) -> str:
     """Traduz a cor semântica para o token do tema (texto e bordas em HTML)."""
-    return _TOKEN_POR_COR.get(str(cor).upper(), cor)
+    # Cor fora do mapa (classe de ativo, paleta de grupo) também precisa
+    # ser legível no claro: ver ``design.componentes.tinta_legivel``.
+    from design.componentes import tinta_legivel
+
+    return _TOKEN_POR_COR.get(str(cor).upper()) or tinta_legivel(cor)
 
 
 _ICONES_B3_CDN = (

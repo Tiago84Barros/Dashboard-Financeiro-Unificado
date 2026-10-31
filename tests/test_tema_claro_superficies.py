@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 RAIZ = Path(__file__).resolve().parents[1]
 
 
@@ -120,8 +122,8 @@ def test_tema_claro_alcanca_cabecalho_e_o_desbote_de_recalculo():
     """
     from design.theme_light import LIGHT_CSS
 
-    for seletor in ('[data-testid="stHeader"] :is(button,span,svg,path,circle)',
-                    '[data-testid="stToolbar"] :is(button,span,svg,path,circle)',
+    for seletor in ('[data-testid="stHeader"] :is(button,span,svg,path,circle,label)',
+                    '[data-testid="stToolbar"] :is(button,span,svg,path,circle,label)',
                     '[data-testid="stElementContainer"][data-stale="true"]'):
         assert seletor in LIGHT_CSS, f"{seletor} sem regra no tema claro"
 
@@ -627,3 +629,114 @@ def test_tema_claro_alcanca_o_icone_e_o_balao_de_ajuda():
         r'\[data-testid="stTooltipContent"\] \[data-testid="stMarkdownContainer"\]\s*'
         r':is\(p,li,h1,h2,h3,h4,h5,h6\) \{\s*color:#fafafa!important', css)
     assert regra_texto, "o texto do balão de ajuda voltou a ser escuro sobre escuro"
+
+
+# -- varredura de contraste de 31/10/2026 ----------------------------------------
+#
+# Feita no app real (Playwright), em todas as telas do menu e em todas as abas:
+# cor de cada texto contra o fundo efetivo, com transparências, gradientes e
+# opacidade dos ancestrais compostos. 359 achados no claro, em 34 causas.
+
+def _contraste(a: str, b: str) -> float:
+    def lum(h):
+        def lin(c):
+            c /= 255
+            return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+        h = h.lstrip("#")
+        r, g, b_ = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+        return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b_)
+    x, y = sorted((lum(a), lum(b)), reverse=True)
+    return (x + 0.05) / (y + 0.05)
+
+
+def test_todo_token_de_tinta_do_claro_passa_aa_em_toda_superficie_clara():
+    """O verde da marca (#007e60) dava 4,27:1 a 4,50:1 nas superfícies tingidas
+    e o laranja de alerta 4,47:1: abaixo do AA por um fio, e em todo lugar que
+    usa o token. Este teste mede os tokens, não as telas -- é o piso de tudo."""
+    from design.theme_light import LIGHT_CSS
+
+    raiz = re.search(r":root \{(.*?)\}", LIGHT_CSS, re.S).group(1)
+    tokens = dict(re.findall(r"--(app-[\w-]+):\s*(#[0-9a-fA-F]{6})", raiz))
+    superficies = ("app-bg", "app-surface", "app-surface-raised")
+    tintas = ("app-text", "app-muted", "app-subtle", "app-primary", "app-info",
+              "app-danger", "app-warning", "app-accent", "app-alert")
+    abaixo = [
+        f"--{t} sobre --{s}: {_contraste(tokens[t], tokens[s]):.2f}:1"
+        for t in tintas for s in superficies
+        if _contraste(tokens[t], tokens[s]) < 4.5
+    ]
+    assert not abaixo, "token de texto abaixo de 4,5:1 no claro: " + "; ".join(abaixo)
+
+
+def test_cor_fora_do_mapa_vira_tinta_legivel_so_no_claro():
+    """Cor de classe de ativo, de grupo, de paleta: o mapa de tokens não a
+    conhece e ela saía crua (``#CBD5E0`` deu 1,39:1, ``#4C9BE8`` 2,93:1).
+
+    A mistura com preto é controlada por uma variável que SÓ o claro define:
+    no escuro a mistura é de 0% e a cor sai idêntica."""
+    from design.componentes import cor_token, tinta_legivel
+    from design.tema import _CSS
+    from design.theme_light import LIGHT_CSS
+
+    assert cor_token("#00C896") == "var(--app-primary)"
+    assert cor_token("#4C9BE8") == (
+        "color-mix(in srgb, #4C9BE8, #000 var(--app-escurece-tinta, 0%))")
+    # O que não é hex opaco passa reto: token já resolvido, transparência
+    # (que é véu de fundo, não texto) e hex com alfa.
+    for cor in ("var(--app-info)", "rgba(0,200,150,.15)", "transparent", "#00C89622"):
+        assert tinta_legivel(cor) == cor
+    assert "--app-escurece-tinta" not in _CSS, "o escuro deixaria de ser idêntico"
+    assert "--app-escurece-tinta:55%" in LIGHT_CSS
+
+
+@pytest.mark.parametrize("modulo", ["views.dashboard_geral", "views.investimentos", "views.fiis"])
+def test_cor_texto_das_telas_nao_devolve_literal_cru(modulo):
+    """As três telas têm cópia própria do mapa; todas caem na tinta legível."""
+    import importlib
+
+    tela = importlib.import_module(modulo)
+    assert tela._cor_texto("#CBD5E0").startswith("color-mix(in srgb, #CBD5E0"), (
+        f"{modulo}._cor_texto devolveu a cor crua: some no tema claro")
+
+
+def test_dashboard_geral_nao_emite_cor_de_texto_crua():
+    """Número do módulo, selo de status, métricas e rótulos de gráfico saíam
+    com o literal do tema escuro como cor de texto: amarelo a 1,33:1, verde a
+    1,74:1. Fundo e borda seguem com o literal, porque levam sufixo de alfa."""
+    import views.dashboard_geral as dg
+
+    html = (
+        dg._mini_metric("Top 5", "53%", "detalhe", dg._COR_NEGATIVO)
+        + dg._status_chip("Mensal", dg._COR_FLUXO)
+        + dg._modulo_card("5", "Título", "resumo", "Sem carteira", dg._COR_NEUTRO, [], dg._COR_ALERTA)
+        + dg._card_lista_html("Título", dg._COR_INVEST, "", "")
+    )
+    for literal in (dg._COR_NEGATIVO, dg._COR_FLUXO, dg._COR_ALERTA, dg._COR_NEUTRO, dg._COR_INVEST):
+        assert f"color:{literal}" not in html, f"cor de texto crua {literal} no Dashboard Geral"
+    fonte = (RAIZ / "views" / "dashboard_geral.py").read_text(encoding="utf-8")
+    assert "--chart-color:{escape(_cor_texto(cor))}" in fonte, (
+        "o rótulo dos gráficos voltou a usar a cor crua (amarelo a 1,41:1)")
+
+
+def test_tema_claro_alcanca_a_varredura_de_contraste_de_outubro():
+    """Cada asserção desfaz uma causa medida -- e cada uma valia para o app
+    inteiro, não para uma tela."""
+    from design.theme_light import LIGHT_CSS
+
+    css = re.sub(r"/\*.*?\*/", "", LIGHT_CSS, flags=re.S)
+    esperado = {
+        # opacity .6 do Streamlit em cima do --app-muted: 2,7:1 em toda legenda
+        '[data-testid="stCaptionContainer"] {opacity:1!important;}': "legendas esmaecidas duas vezes",
+        'a:not([class]):not([style]) {color:var(--app-info)': "link cru com o azul do escuro",
+        '[data-testid="stCaptionContainer"] :not(pre) > code': "código inline quase preto na legenda",
+        '[data-testid="stHeaderActionElements"] svg': "âncora dos títulos branca (1:1)",
+        '[data-testid="stNumberInputContainer"] button:disabled svg': "botão - do número invisível",
+        '[data-testid="stMultiSelect"] [data-baseweb="select"] div:not(:has(*))': "exemplo do multiselect branco",
+        ".app-page-eyebrow {color:var(--app-info)": "rótulo #60A5FA do topo das telas",
+        ".empty-state .empty-text {color:var(--app-muted)": "estado vazio #718096",
+        ".tp-wrap {--tp-pos:": "variação positiva #16a34a da tabela de posições",
+        ".dg-mini-label {opacity:1": "rótulo das mini-métricas esmaecido (3,8:1)",
+        '[data-testid="stToolbar"] :is(button,span,svg,path,circle,label)': "\"Running...\" do cabeçalho branco no claro",
+    }
+    faltando = [motivo for regra, motivo in esperado.items() if regra not in css]
+    assert not faltando, "voltou: " + "; ".join(faltando)
