@@ -1,0 +1,41 @@
+{
+ "schema": 1,
+ "gerado_em": "2026-10-30T21:43:39-03:00",
+ "protocolo": {
+  "seq": 0,
+  "hash": "6230d78028503324f9c2402a48540452ae9a76f29efb82fdc0d1958b0bfc6080"
+ },
+ "revisoes": [
+  {
+   "seq": 1,
+   "hash": "958b9b309f5817a1dc80b4a95da150520d3779f5458635bce6f9c36c27231c9e",
+   "corpo_sha256": "2a926324ce4e4edef7de9a8564d14bed7fdd5307c4e2904648ffb377615f3ff9",
+   "pregao_execucao": "2026-10-26"
+  }
+ ],
+ "regras": {
+  "capital_inicial": 1000.0,
+  "aporte_mensal": 500.0,
+  "custo_por_lado": 0.003,
+  "aliquota_ir": 0.15,
+  "isencao_mensal_acoes": 20000.0,
+  "lote": 1,
+  "caixa_rende": false,
+  "aporte": "no fechamento do mês, depois da medição; o primeiro em 30/11/2026",
+  "valor": "líquido de liquidação: vendendo tudo no fechamento, com spread, corretagem e o IR que a venda geraria; antes do aporte do dia",
+  "real": "dividido pelo IPCA desde o fechamento da execução da inaugural (o mês da execução pró-rata pelos dias corridos)"
+ },
+ "fontes": {
+  "acoes": "pesquisa: dados/b3_retornos_diarios.parquet (fechamento, fator e proventos) até o fim dela; depois, COTAHIST da B3 + market.dividends do armazém com as regras da pesquisa",
+  "bova11": "COTAHIST da B3: fechamento oficial (BDI 14)",
+  "cdi": "BCB/SGS 12 (arquivo publicado até 29/10/2026)",
+  "ipca": "BCB/SGS 433 (data/public/macro_brasil.json.gz)",
+  "spread": "o da curva diária, medido no COTAHIST na execução de cada revisão"
+ },
+ "ipca": {},
+ "meses": [],
+ "avisos": [],
+ "dados_ate": "2026-10-29",
+ "posicoes_aportes": [],
+ "proximo_fechamento": "2026-11-30"
+}

@@ -174,7 +174,7 @@ class _Conexao:
             return _Res([SimpleNamespace(mes=date.today().replace(day=1),
                                          valor_mercado=1000.0,
                                          valor_investido_snapshot=800.0)])
-        if sql == investimentos._SQL_TEM_FOTO_DE_CUSTODIA:
+        if sql == investimentos._SQL_TEM_CURVA_DE_CUSTODIA:
             return _Res(escalar=self.tem_custodia)
         if sql == investimentos._SQL_POSICOES_SNAPSHOT:
             return _Res([object()])

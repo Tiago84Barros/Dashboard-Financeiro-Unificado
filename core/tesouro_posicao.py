@@ -402,6 +402,18 @@ def lotes_da_movimentacao(
     return lotes
 
 
+def _registrar_falha(diagnostico: dict | None, fonte: str,
+                     exc: Exception | None = None) -> None:
+    """Anota a leitura que falhou, para não ser lida como dado inexistente.
+
+    Vai só o tipo do erro: a mensagem do driver pode trazer host e usuário, e
+    o diagnóstico chega ao prompt da LLM.
+    """
+    if diagnostico is not None:
+        diagnostico.setdefault("falhas", []).append(
+            f"{fonte}: {type(exc).__name__}" if exc is not None else fonte)
+
+
 def _titulos_da_movimentacao(engine, user_id: str, data_avaliacao: date,
                              diagnostico: dict | None) -> list[TituloAnalitico]:
     from data_pipeline.importers.investments.tesouro_direto import tesouro_security_key
@@ -411,6 +423,7 @@ def _titulos_da_movimentacao(engine, user_id: str, data_avaliacao: date,
             linhas = conn.execute(text(SQL_MOVIMENTOS_TD), {"user_id": user_id}).fetchall()
     except Exception as exc:
         logger.info("tesouro_posicao: sem movimentação do Tesouro (%s)", exc)
+        _registrar_falha(diagnostico, "Movimentação do Tesouro", exc)
         return []
     movimentos = [
         {"event_date": _como_data(r.event_date), "movement": r.movement,
@@ -427,6 +440,9 @@ def _titulos_da_movimentacao(engine, user_id: str, data_avaliacao: date,
 
     mercado = taxas_mais_recentes(engine)
     if mercado.empty:
+        # Há compras, então os lotes existem: sem curva não há vencimento nem
+        # taxa para remontá-los, e isso é falha, não ausência.
+        _registrar_falha(diagnostico, "curva do Tesouro vazia ou ilegível")
         return []
     cotacoes = {str(r["security_key"]): r for r in mercado.to_dict("records")}
     vencimentos = {k: _como_data(r["maturity_date"]) for k, r in cotacoes.items()}
@@ -450,6 +466,7 @@ def _titulos_da_movimentacao(engine, user_id: str, data_avaliacao: date,
                 custodia[str(r.security_key)] = float(r.quantidade or 0)
     except Exception as exc:
         logger.info("tesouro_posicao: curva ou custódia indisponível (%s)", exc)
+        _registrar_falha(diagnostico, "curva nas datas de compra ou custódia do Tesouro", exc)
 
     lotes = lotes_da_movimentacao(movimentos, vencimentos=vencimentos,
                                   indexadores=indexadores, curva=curva)
@@ -496,7 +513,8 @@ def carregar_titulos(engine, user_id: str,
     Sem nenhum Extrato Analítico importado, os lotes saem da Movimentação
     (``origem_lotes == "movimentacao"``). Devolve lista vazia — nunca erro —
     quando nem um nem outro existe. ``diagnostico``, quando passado, recebe a
-    origem e os títulos que não puderam ser remontados.
+    origem, os títulos que não puderam ser remontados e, em ``falhas``, as
+    leituras que deram erro — lista vazia com falha não quer dizer "não há".
     """
     if engine is None:
         return []
@@ -507,6 +525,7 @@ def carregar_titulos(engine, user_id: str,
             linhas = conn.execute(text(SQL_LOTES), {"user_id": user_id}).fetchall()
     except Exception as exc:
         logger.info("tesouro_posicao: sem lotes analíticos (%s)", exc)
+        _registrar_falha(diagnostico, "lotes do Extrato Analítico", exc)
         linhas = []
 
     if not linhas:
@@ -544,3 +563,26 @@ def carregar_titulos(engine, user_id: str,
         ))
 
     return sorted(titulos, key=lambda t: (t.vencimento, t.security_key))
+
+
+def lotes_para_contexto(engine, user_id: str) -> dict:
+    """Lotes do Tesouro para o contexto da LLM: ``{"titulos", "diagnostico"}``.
+
+    Falha vira ``{"erro": ...}`` em vez de lista vazia: a LLM precisa poder
+    dizer "não foi carregado" sem afirmar "não existe". Vale também para a
+    leitura parcial — ``carregar_titulos`` segue adiante quando o extrato não
+    lê, mas o que sobra não é a posição. O erro leva só o tipo da exceção.
+    """
+    if engine is None:
+        return {"erro": "sem conexão com o banco"}
+    if not user_id:
+        return {"erro": "sem usuário identificado na sessão"}
+    diagnostico: dict = {}
+    try:
+        titulos = carregar_titulos(engine, user_id, diagnostico=diagnostico)
+    except Exception as exc:  # noqa: BLE001 - o chat segue sem os lotes
+        logger.warning("tesouro_posicao: lotes para o contexto falharam (%s)", exc)
+        return {"erro": type(exc).__name__}
+    if diagnostico.get("falhas"):
+        return {"erro": "; ".join(diagnostico["falhas"])}
+    return {"titulos": titulos, "diagnostico": diagnostico}

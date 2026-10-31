@@ -176,29 +176,52 @@ def test_render_etiqueta_o_lider_admitido_por_viabilidade():
         "viabilidade — a ressalva some do card")
 
 
-def test_render_publica_os_avisos_de_afrouxamento_do_piso():
+def test_render_registra_os_avisos_de_afrouxamento_do_piso():
+    # A seção de transparência do piso saiu da tela (pedido do dono do
+    # projeto, 30/10/2026); o afrouxamento continua indo para Configurações →
+    # Restrições, sem depender de haver reprovado ou vaga vazia.
     import re
 
     fonte = _fonte_render()
     assert re.search(
-        r"for\s+_msg_afr\s+in\s+_avisos_afrouxamento_piso\(\s*piso_log\s*\)\s*:"
-        r"\s*\n\s*st\.warning\(\s*_msg_afr",
+        r"if\s+_piso_ativo\s*:\s*\n\s*for\s+_msg_afr\s+in\s+"
+        r"_avisos_afrouxamento_piso\(\s*piso_log\s*\)\s*:"
+        r"\s*\n\s*aviso_lacuna\(\s*_msg_afr",
         fonte,
-    ), ("a seção de transparência do piso não imprime mais "
-        "_avisos_afrouxamento_piso — o afrouxamento vira silêncio")
+    ), ("o render não registra mais _avisos_afrouxamento_piso — o "
+        "afrouxamento vira silêncio")
 
 
-def test_portao_de_transparencia_abre_so_por_afrouxamento():
-    # Sem este termo, um afrouxamento SOZINHO (sem reprovado nem vaga vazia)
-    # não abre a seção, e o aviso do teste anterior nunca é alcançado.
-    import re
-
+def test_vagas_sem_substituto_vao_para_as_restricoes():
+    # Sem a seção, a vaga que o piso ou a Inteligência dos Ativos esvaziou
+    # só aparece em Configurações → Restrições: o registro não pode sumir.
     fonte = _fonte_render()
-    assert re.search(
-        r"if\s+_piso_ativo\s+and\s+\([^()]*afrouxado_por_viabilidade[^()]*\)\s*:",
-        fonte,
-    ), ("o portão da seção de transparência do piso não considera mais "
-        "afrouxado_por_viabilidade — afrouxamento isolado fica invisível")
+    for laco, codigo in (
+        ('for vazio in piso_log["sem_substituto"]:',
+         "tela.portfolio_b3.piso_vaga_sem_substituto"),
+        ('for vazio in intel_log["vagas_vazias"]:',
+         "tela.portfolio_b3.inteligencia_vaga_vazia"),
+    ):
+        i = fonte.index(laco)
+        trecho = fonte[i:i + 600]
+        assert "aviso_lacuna(" in trecho and codigo in trecho, codigo
+
+
+def test_secoes_de_transparencia_sairam_da_tela():
+    # Decisão do dono do projeto (30/10/2026): a Criação de Portfólio B3 fica
+    # sem estas seções. O que elas sinalizavam segue no card da líder ou nas
+    # Restrições (testes acima).
+    fonte = _fonte_render()
+    for titulo in ("🚧 Piso absoluto", "📋 Auditoria de Segmentos",
+                   "_portao_ui.render(", "_render_rota_de_valor(",
+                   "render_oos_carteira("):
+        assert titulo not in fonte, titulo
+
+
+def test_card_da_lider_marca_quem_entrou_sem_a_inteligencia():
+    fonte = _fonte_render()
+    assert ('motivos.append("Não avaliado pela Inteligência dos Ativos '
+            '(avaliação indisponível)")') in fonte
 
 
 # ── I-C: a linha do DY sustentável não pode zerar nem mentir ─────────────────

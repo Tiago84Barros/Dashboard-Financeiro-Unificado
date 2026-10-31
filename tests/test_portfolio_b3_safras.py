@@ -1354,30 +1354,22 @@ def _funcao_da_view(nome, arquivo="portfolio_b3_safras.py"):
                 if isinstance(no, ast.FunctionDef) and no.name == nome)
 
 
-def test_render_safras_chama_render_vies_universo():
-    """Sem esta checagem, apagar a chamada apaga o Bloco 2 inteiro da tela
-    e deixa a suíte verde — `_vies_universo` é pura e continuaria passando
-    sozinha. Inspeção por AST (`apptest-vaza-atribuicao-de-modulo`)."""
+def test_render_safras_nao_desenha_o_bloco_2():
+    """O Bloco 2 ("Tamanho do viés de universo") saiu da tela por pedido do
+    dono do projeto (30/10/2026). `render_vies_universo` segue definida e
+    testada abaixo — voltar com ele é uma linha —, mas `render_safras` não a
+    chama nem recebe mais a lista sem gate. Inspeção por AST
+    (`apptest-vaza-atribuicao-de-modulo`); o alcance é provado por execução
+    em `test_render_safras_nao_executa_o_bloco_2`."""
     render = _funcao_da_view("render_safras")
     chamadas = {no.func.id for no in ast.walk(render)
                 if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)}
-    assert "render_vies_universo" in chamadas, (
-        "render_safras nao chama render_vies_universo -- o Bloco 2 nao "
-        "aparece na tela e nenhum outro teste percebe"
+    assert "render_vies_universo" not in chamadas, (
+        "render_safras voltou a chamar render_vies_universo -- o Bloco 2 "
+        "saiu da tela por decisao do dono do projeto"
     )
-    # Presenca nao e alcance: um `if False and ...` em volta da chamada
-    # deixaria o `ast.Call` no lugar e o Bloco 2 fora da tela. A guarda
-    # tem que ser exatamente "tenho a lista completa".
-    guardas = [no for no in ast.walk(render) if isinstance(no, ast.If)
-               and any(isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
-                       and c.func.id == "render_vies_universo"
-                       for filho in no.body for c in ast.walk(filho))]
-    assert len(guardas) == 1, "esperava uma unica guarda em volta do Bloco 2"
-    teste = guardas[0].test
-    assert isinstance(teste, ast.Name) and teste.id == "resultados_todos", (
-        "a chamada do Bloco 2 esta sob uma condicao que nao e apenas "
-        "`resultados_todos` -- ela pode nunca ser alcancada"
-    )
+    parametros = {a.arg for a in render.args.args + render.args.kwonlyargs}
+    assert "resultados_todos" not in parametros
 
 
 def test_bloco_2_nao_mede_nada_em_rerun_sem_clique(monkeypatch):
@@ -1535,11 +1527,10 @@ def test_ressalvas_do_vies_chegam_como_caption_e_nao_como_tooltip():
     )
 
 
-def test_tela_b3_passa_os_aprovados_e_a_lista_completa():
-    """As duas pontas do Bloco 2 vêm da mesma chamada, e passar a lista
-    errada em qualquer uma delas não quebra nada visível: com `resultados`
-    no lugar de `aprovados` as duas reconstruções ficam IDÊNTICAS e o
-    bloco publica viés zero — um número tranquilizador e falso."""
+def test_tela_b3_passa_os_aprovados():
+    """O Bloco 1 reconstrói a carteira que a tela publica: com `resultados`
+    no lugar de `aprovados`, a "Safra a safra" mediria o universo inteiro e
+    não a carteira — nada visível quebraria."""
     chamada = next(
         no for no in ast.walk(
             ast.parse((RAIZ / "views" / "portfolio_b3.py")
@@ -1551,16 +1542,6 @@ def test_tela_b3_passa_os_aprovados_e_a_lista_completa():
     assert chamada.args[0].id == "aprovados", (
         "o Bloco 1 nao reconstroi a carteira que a tela publica -- primeiro "
         f"argumento: {ast.dump(chamada.args[0])}"
-    )
-    todos = {kw.arg: kw.value for kw in chamada.keywords}
-    assert "resultados_todos" in todos, (
-        "render_safras nao recebe a lista nao filtrada -- o Bloco 2 nao "
-        "e renderizado"
-    )
-    assert isinstance(todos["resultados_todos"], ast.Name)
-    assert todos["resultados_todos"].id == "resultados", (
-        "a lista sem gate nao e a lista nao filtrada -- as duas curvas "
-        "ficariam iguais e o vies sairia zero"
     )
 
 
@@ -1743,40 +1724,10 @@ def _precos_b3(tickers):
                         index=datas)
 
 
-def test_render_safras_executa_o_bloco_2_de_fato(monkeypatch):
-    """A-T7-01: prova por ALCANCE, não por forma.
-
-    Um `return` logo antes da chamada não muda a forma da guarda nenhuma —
-    o `ast.If` continua lá, o `ast.Call` também — e o Bloco 2 some da tela
-    com a suíte verde. Este teste roda `render_safras` com um dublê de
-    streamlit e exige que `render_vies_universo` tenha sido REALMENTE
-    chamada, com a tabela do Bloco 1 junto.
-    """
-    mod, falso = _tela_de_safras_falsa(monkeypatch)
-    chamou: list[dict] = []
-    monkeypatch.setattr(mod, "render_vies_universo",
-                        lambda *a, **k: chamou.append({"args": a, "kwargs": k}))
-    monkeypatch.setattr(mod, "render_expectativa", lambda *a, **k: None)
-
-    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
-    todos = aprovados + [_resultado_b3("B", 2025, ["CCCC3"])]
-    precos = _precos_b3(["AAAA3", "BBBB3", "CCCC3"])
-
-    mod.render_safras(aprovados, precos, selic_por_ano={}, taxa_selic_aa=0.0,
-                      resultados_todos=todos)
-
-    assert chamou, (
-        "render_safras terminou sem executar o Bloco 2 -- a chamada pode "
-        "estar presente no código e inalcançável"
-    )
-    assert chamou[0]["args"][0] is aprovados
-    assert chamou[0]["args"][1] is todos
-    assert isinstance(chamou[0]["kwargs"]["tabela_com_gate"], pd.DataFrame)
-
-
-def test_render_safras_nao_executa_o_bloco_2_sem_a_lista_completa(monkeypatch):
-    """O outro lado: sem `resultados_todos` não há o que comparar, e o
-    bloco não pode ser desenhado."""
+def test_render_safras_nao_executa_o_bloco_2(monkeypatch):
+    """Prova por EXECUÇÃO de que o Bloco 2 saiu da tela (pedido do dono do
+    projeto, 30/10/2026): `render_safras` roda inteira com um dublê de
+    streamlit e `render_vies_universo` não é chamada."""
     mod, falso = _tela_de_safras_falsa(monkeypatch)
     chamou = []
     monkeypatch.setattr(mod, "render_vies_universo",

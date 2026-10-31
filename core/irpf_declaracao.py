@@ -799,6 +799,9 @@ _SQL_POSICOES = """
       AND s.source_system = 'app4'
       AND EXTRACT(MONTH FROM s.report_date) = 12
       AND COALESCE(s.currency, 'BRL') = 'BRL'
+      -- Aluguel tomado (BTC Tomador) é devido, não bem: somado, abateria a
+      -- custódia do mesmo papel.
+      AND NOT (COALESCE(s.is_loaned, FALSE) AND s.quantity < 0)
 """
 
 

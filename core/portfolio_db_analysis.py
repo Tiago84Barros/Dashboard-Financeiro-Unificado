@@ -114,7 +114,7 @@ def analise_acoes_db(tickers) -> dict:
     """Seis trilhas de ``core.b3_company_score`` contra o universo de public.multiplos.
 
     É a MESMA decomposição do painel individual de Empresas B3, não o ranking
-    da Análise Avançada — aquele motor vive na tela e pondera por setor. Aqui a
+    da Criação de Portfólio — aquele motor vive na tela e pondera por setor. Aqui a
     referência é o universo inteiro, para que os ativos da carteira sejam
     comparáveis entre si.
     """

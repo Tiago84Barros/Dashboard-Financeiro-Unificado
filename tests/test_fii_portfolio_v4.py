@@ -548,6 +548,101 @@ def test_afrouxamento_por_interacao_com_outro_limite_e_minimo_e_aparece_no_resul
     assert not all(peso >= .15 - 1e-6 for peso in pesos_tijolo)
 
 
+def test_afrouxamento_aproveita_a_resolucao_que_ja_falhou():
+    """Quem chama só pede o afrouxamento depois de resolver sob o teto
+    descontado e falhar. Resolver esse mesmo problema de novo no início da
+    busca custava, no MILP, até o limite de tempo do solver por tentativa --
+    e terminava na mesma falha."""
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from core.fii_portfolio_v4 import _afrouxa_ate_viavel
+
+    policy = PortfolioPolicy(max_asset=.15)
+    tetos = np.array([.075, .15, .075])
+
+    def _fabrica():
+        vistos: list[tuple[float, ...]] = []
+
+        def resolver(caps):
+            vistos.append(tuple(np.round(caps, 9)))
+            ok = float(caps[0]) >= .11
+            return SimpleNamespace(success=ok, x=(caps.copy() if ok else None))
+        return resolver, vistos
+
+    resolver, vistos_sem = _fabrica()
+    sem = _afrouxa_ate_viavel(tetos, resolver, policy)
+    resolver, vistos_com = _fabrica()
+    falha = resolver(tetos)
+    vistos_com.clear()
+    com = _afrouxa_ate_viavel(tetos, resolver, policy, solucao_inicial=falha)
+
+    assert tuple(tetos) not in vistos_com
+    assert len(vistos_com) == len(vistos_sem) - 1
+    assert np.allclose(com[0], sem[0]) and com[2] == sem[2]
+    assert np.allclose(com[1].x, sem[1].x)
+
+
+def test_selecao_inteira_nao_resolve_o_mesmo_problema_duas_vezes(monkeypatch):
+    """No cenário do afrouxamento por interação, cada MILP do laço de piso
+    de cardinalidade é um problema distinto."""
+    import numpy as np
+    import scipy.optimize as otimizador
+
+    original = otimizador.milp
+    chaves: list[bytes] = []
+
+    def milp_contado(*args, **kwargs):
+        restricoes = kwargs["constraints"]
+        chaves.append(kwargs["bounds"].ub.tobytes() + np.asarray(restricoes.lb).tobytes())
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(otimizador, "milp", milp_contado)
+    policy = PortfolioPolicy(max_assets=12)
+    papel_rows = [_candidate(i, "papel") for i in range(3)]
+    tijolo_rows = [_candidate(i, "tijolo") for i in range(10, 18)]
+    bands = {"papel": (.30, .50), "tijolo": (.50, .90)}
+
+    selected, info = _candidate_pool(
+        papel_rows + tijolo_rows, bands, policy, MacroScenario(selic=12, ipca=5))
+
+    assert selected and info["status"] == "milp_feasible"
+    assert any("afrouxado" in nota for nota in info.get("viability_notes") or [])
+    assert len(chaves) == len(set(chaves))
+
+
+def test_toda_restricao_do_slsqp_leva_o_gradiente_exato(monkeypatch):
+    """Sem "jac", o SLSQP deriva cada restrição por diferenças finitas a cada
+    iteração. O gradiente declarado precisa ser o da própria restrição."""
+    import numpy as np
+    import scipy.optimize as otimizador
+
+    original = otimizador.minimize
+    vistas: list[tuple[np.ndarray, list[dict]]] = []
+
+    def minimize_espiao(fun, x0, *args, **kwargs):
+        vistas.append((np.asarray(x0, dtype=float).copy(), kwargs["constraints"]))
+        return original(fun, x0, *args, **kwargs)
+
+    monkeypatch.setattr(otimizador, "minimize", minimize_espiao)
+    types = ["tijolo", "papel", "fof", "hibrido"] * 3
+    rows = [_candidate(i, fii_type) for i, fii_type in enumerate(types)]
+    result = optimize_diligence_portfolio(
+        rows, MacroScenario(selic=11, ipca=4, selic_change_12m=-2.5),
+        policy=PortfolioPolicy(max_assets=12, max_asset=.15),
+    )
+
+    assert result["items"] and vistas
+    rng = np.random.default_rng(0)
+    for x0, restricoes in vistas:
+        assert restricoes and all("jac" in restricao for restricao in restricoes)
+        ponto = x0 + rng.normal(0, .01, len(x0))
+        for restricao in restricoes:
+            numerico = otimizador.approx_fprime(ponto, restricao["fun"], 1e-7)
+            assert np.allclose(restricao["jac"](ponto), numerico, atol=1e-5)
+
+
 def test_carteira_reporta_o_yield_recorrente_alem_do_divulgado():
     from core.fii_portfolio_v4 import _resumo_de_renda
 

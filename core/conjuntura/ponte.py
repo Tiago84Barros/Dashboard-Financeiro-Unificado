@@ -794,10 +794,17 @@ def para_llm(contexto: ContextoConjuntural, *, max_itens: int = 12) -> str:
         f"{', '.join(contexto.componentes_ausentes) or 'nenhum'}",
     ]
     if not contexto.move_prioridade:
+        # A proibição vale para o score, não para o mundo. Escrita como "não
+        # afirme que a conjuntura está desfavorável", ela fez a LLM tratar a
+        # "ressaca pós-eleição" de 28/10/2026 como manchete sem confirmação, com
+        # o BOVA11 −14,5% num pregão.
         linhas.append(
             "  Efeito na carteira: NENHUM. A cobertura de componentes está "
-            "abaixo do mínimo para alterar prioridade de aporte. Não afirme "
-            "que a conjuntura está favorável nem desfavorável.")
+            "abaixo do mínimo para este score conjuntural alterar a prioridade "
+            "de aporte: não atribua a ele veredito favorável nem desfavorável. "
+            "Isso não cala o resto: o movimento de preço medido (seção "
+            "MOVIMENTO RECENTE) e as notícias listadas abaixo podem ser "
+            "descritos, com data e fonte.")
 
     decisoes_ativas = [d for d in contexto.decisoes
                        if d.bloqueia_aporte or d.fator_prioridade != 1.0]

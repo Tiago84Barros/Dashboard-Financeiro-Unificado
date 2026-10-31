@@ -44,8 +44,8 @@ from core.dossie_b3 import NAO_AVALIADO, avaliar_para_selecao, quali_gate_dispon
 from core.inteligencia_ativos import veredito
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
+from core.proventos_b3 import fotos_velhas
 from data_pipeline.utils.date_utils import fmt_datetime_br
-from design import portao_inteligencia as _portao_ui
 from design.componentes import card_metrica, cor_token
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.market_companies import company_logo_html
@@ -87,7 +87,6 @@ from views.empresas_b3 import (
     _yf_multiplos_dividendos,
     _yf_trailing12m_divs,
 )
-from views.portfolio_b3_oos_carteira import render_oos_carteira
 from views.portfolio_b3_safras import render_safras
 
 logger = logging.getLogger(__name__)
@@ -511,33 +510,21 @@ def _avisar_segmentos_sem_resiliencia(resultados: list[dict]) -> None:
             codigo="tela.b3.carteira_historico_sem_resiliencia", nivel="warning")
 
 
-def _render_data_quality_box(summary: dict, audit: pd.DataFrame, hist_audit: pd.DataFrame) -> None:
+def _registrar_qualidade_dos_fundamentos(summary: dict, hist_audit: pd.DataFrame) -> None:
+    """O quadro "Qualidade dos fundamentos usados pela carteira" saiu da tela
+    (pedido do dono do projeto, 30/10/2026); as duas ressalvas que ele
+    registrava continuam indo para Configurações → Restrições."""
     if not summary:
         return
-    with st.expander("Qualidade dos fundamentos usados pela carteira", expanded=False):
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            card_metrica("Tickers", int(summary.get("tickers", 0)), accent="#4A9EFF")
-        with c2:
-            card_metrica("Células inválidas", int(summary.get("celulas_invalidas", 0)),
-                         accent="#FC5C7D")
-        with c3:
-            card_metrica("Correções web", int(summary.get("correcoes_web", 0)), accent="#F6C90E")
-        with c4:
-            card_metrica("Histórico saneado",
-                         int(hist_audit["Ocorrencias"].sum()) if not hist_audit.empty else 0,
-                         accent="#00C896")
-        zeros = summary.get("campos_zero_suspeito") or []
-        if zeros:
-            aviso_lacuna("Campos tratados como ausentes por excesso de zeros: " + ", ".join(zeros),
-                         codigo="tela.b3.campos_zero_suspeito", nivel="warning")
-        if not audit.empty:
-            st.dataframe(audit.head(80), width="stretch", height=260)
-        if not hist_audit.empty:
-            detalhe_tecnico(
-                f"Outliers removidos do histórico usado no backtest: "
-                f"{int(hist_audit['Ocorrencias'].sum())} ocorrência(s).",
-                codigo="portfolio_b3.qualidade_outliers_historico")
+    zeros = summary.get("campos_zero_suspeito") or []
+    if zeros:
+        aviso_lacuna("Campos tratados como ausentes por excesso de zeros: " + ", ".join(zeros),
+                     codigo="tela.b3.campos_zero_suspeito", nivel="warning")
+    if not hist_audit.empty:
+        detalhe_tecnico(
+            f"Outliers removidos do histórico usado no backtest: "
+            f"{int(hist_audit['Ocorrencias'].sum())} ocorrência(s).",
+            codigo="portfolio_b3.qualidade_outliers_historico")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1900,6 +1887,17 @@ def _first_annual_series(df: pd.DataFrame, cols: tuple[str, ...]) -> pd.Series:
     return pd.Series(dtype=float)
 
 
+def _avisar_proventos_velhos(dre_batch: dict) -> None:
+    """A resposta da brapi que parou de renovar entra na fila de Restrições.
+
+    O crescimento dos dividendos do Patch 5 sai da coluna ``Dividendos`` de
+    ``load_demonstracoes_batch``; o ticker que a brapi deixou de renovar segue
+    nela com o valor antigo. O mesmo aviso da Análise de Empresa.
+    """
+    for tk, msg in fotos_velhas(dre_batch):
+        aviso_lacuna(msg, codigo="tela.portfolio_b3.proventos_foto_velha", entidade=tk)
+
+
 def _growth_from_annual(s: pd.Series) -> float:
     vals = pd.to_numeric(s, errors="coerce").dropna()
     vals = vals[vals > 0].tail(6)
@@ -2045,6 +2043,7 @@ def _render_patch5_qualidade(proximos_uniq: list[dict], df_precos_all: pd.DataFr
     with st.spinner("Carregando indicadores do Patch 5..."):
         mult_batch = _db.load_multiplos_historico_batch(tuple(tickers))
         dre_batch = _db.load_demonstracoes_batch(tuple(tickers))
+    _avisar_proventos_velhos(dre_batch)
 
     # A-125: o indice de confianca de dados nao tinha consumidor nenhum desde
     # que a pagina "Saude dos Dados" saiu (a7bbe35). Aqui ele fala sobre os
@@ -2826,10 +2825,9 @@ def render(show_header: bool = True) -> None:
 
     st.markdown(
         '<p style="font-size:0.80rem;color:var(--app-muted);margin-bottom:20px;">'
-        '<strong style="color:var(--app-text);">Etapa 2 de 3 · Aplicação em escala.</strong> '
-        'Roda a metodologia validada na aba <strong>Análise Avançada</strong> em '
-        '<strong>todos os segmentos</strong> da B3 de uma vez, identifica as empresas '
-        'vencedoras de cada segmento e consolida uma carteira inicial multissetorial.'
+        'Roda a metodologia de seleção em <strong>todos os segmentos</strong> da B3 '
+        'de uma vez, identifica as empresas vencedoras de cada segmento e consolida '
+        'uma carteira inicial multissetorial.'
         '</p>',
         unsafe_allow_html=True,
     )
@@ -2892,7 +2890,7 @@ def render(show_header: bool = True) -> None:
                                          key="pb3_aporte")
         ano_inicio   = pa2.number_input("Ano início da reconstrução", 2010, 2022, _ANO_INICIO_DEFAULT, 1,
                                          key="pb3_ano_ini")
-        mostrar_audit = pa3.checkbox("Mostrar auditoria dos segmentos", value=True,
+        mostrar_audit = pa3.checkbox("Mostrar segmentos aprovados", value=True,
                                       key="pb3_audit")
         min_anos_dre = pa4.number_input("Histórico DRE mínimo", 4, 20, 10, 1,
                                         key="pb3_min_anos_dre")
@@ -3456,12 +3454,15 @@ def render(show_header: bool = True) -> None:
         # Repetir a instrução embaixo dele era ruído.
         return
 
-    # Gamma/cap/soft calibrados (ou defaults). Definidos FORA do `if rodar:`
-    # porque as seções de exibição (líderes do próximo ano) usam `cap`/`gamma`/
-    # `soft` a cada rerun, mesmo sem reprocessar — senão dá UnboundLocalError.
-    gamma = st.session_state.get("b3_av_gamma", _GAMMA_DEF)
-    cap   = st.session_state.get("b3_av_cap",   _CAP_DEF)
-    soft  = st.session_state.get("b3_av_soft",  _SOFT_DEF)
+    # Gamma/cap/soft são os padrões do motor. Até 30/10/2026 a calibração
+    # walk-forward da Análise Avançada os gravava na sessão e esta tela os
+    # herdava: a mesma carteira saía diferente conforme o usuário tivesse ou não
+    # calibrado um segmento antes. A aba saiu e a herança com ela. Definidos FORA
+    # do `if rodar:` porque as seções de exibição (líderes do próximo ano) usam
+    # `cap`/`gamma`/`soft` a cada rerun, mesmo sem reprocessar.
+    gamma = _GAMMA_DEF
+    cap   = _CAP_DEF
+    soft  = _SOFT_DEF
     # Teto por setor: 100% = desligado. Lido aqui (fora do `if rodar:`) pelo
     # mesmo motivo dos demais — as seções de exibição usam a cada rerun.
     teto_setor = float(st.session_state.get("pb3_teto_setor", 100)) / 100.0
@@ -3494,8 +3495,8 @@ def render(show_header: bool = True) -> None:
             # Política única de fontes (fix auditoria 2026-07): com market.*
             # ativo a fonte é limpa — web (Fundamentus/Status Invest) NÃO
             # sobrescreve o banco; passar fund_data={} faz a reconciliação
-            # virar apenas saneamento por ranges (nulo fica nulo), alinhado
-            # à regra da Análise Avançada ("vazio fica vazio").
+            # virar apenas saneamento por ranges (nulo fica nulo): vazio fica
+            # vazio.
             # Scraping descontinuado (2026-07): fonte única = market.* (brapi).
             # include_status=False e fund_data={} fazem a reconciliação virar só
             # saneamento por faixas canônicas (nulo fica nulo).
@@ -3685,7 +3686,6 @@ def render(show_header: bool = True) -> None:
     df_set     = st.session_state.get("pb3_df_set", df_set)
     df_precos_all = st.session_state.get("pb3_precos_all", pd.DataFrame())
     quality_summary = st.session_state.get("pb3_quality_summary", {})
-    quality_audit = st.session_state.get("pb3_quality_audit", pd.DataFrame())
     hist_audit = st.session_state.get("pb3_hist_audit", pd.DataFrame())
     entry_guard = st.session_state.get("pb3_entry_guard", {})
 
@@ -3714,7 +3714,7 @@ def render(show_header: bool = True) -> None:
                      codigo="tela.portfolio_b3.nenhum_segmento_com_dados")
         return
 
-    _render_data_quality_box(quality_summary, quality_audit, hist_audit)
+    _registrar_qualidade_dos_fundamentos(quality_summary, hist_audit)
     # A guarda de entrada filtra as recomendações abaixo; se o score ou o
     # risco dela saiu degradado, a tela precisa dizer — antes ficava só no log.
     _avisar_degradacoes(st.session_state.get("pb3_entry_guard_df", pd.DataFrame()))
@@ -3781,7 +3781,7 @@ def render(show_header: bool = True) -> None:
                 # Regra compartilhada: ausência de p-valor (sem dispersão entre
                 # os Rank-ICs anuais) NÃO aprova — num modo que exige prova
                 # positiva, "não deu para testar" não é prova — e também não é
-                # evidência contra: a coluna Situação sai "🟡 Inconclusivo",
+                # evidência contra: o segmento fica "🟡 Inconclusivo",
                 # nunca "❌ Reprovado (evidência contra)".
                 if not sinal_significante(res.get("p_value_ic")):
                     return False
@@ -3850,21 +3850,20 @@ def render(show_header: bool = True) -> None:
                 "concessão — desligue o filtro para comparar a carteira sem ele.",
                 icon="🔎")
 
-    # ── TABELA DE AUDITORIA ───────────────────────────────────────────────────
-    _sec_hdr(f"📋 Auditoria de Segmentos — {len(resultados)} analisados · "
-             f"{len(aprovados)} aprovados")
+    # ── AUDITORIA DE SEGMENTOS: a tabela saiu da tela ─────────────────────────
+    # Pedido do dono do projeto (30/10/2026). A aprovação acima é a mesma; o
+    # que a tabela declarava sobre os limites dela vai para Configurações →
+    # Restrições.
     cobertura_validacao_total = PITCoverage()
     for resultado in resultados:
         cobertura = resultado.get("pit_coverage_validacao")
         if isinstance(cobertura, PITCoverage):
             cobertura_validacao_total = cobertura_validacao_total + cobertura
-    st.markdown(_pit_card_html(cobertura_validacao_total, "Validação agregada"),
-                unsafe_allow_html=True)
     if cobertura_validacao_total.cobertura_medida < 1.0:
         detalhe_tecnico(
-            "A aprovação quantitativa abaixo permanece uma diligência/simulação "
-            "metodológica na parcela sem vintage medido; não é validação "
-            "point-in-time integral. O risco de restatement está declarado no card.",
+            "A aprovação quantitativa dos segmentos permanece uma "
+            "diligência/simulação metodológica na parcela sem vintage medido; "
+            "não é validação point-in-time integral.",
             codigo="portfolio_b3.validacao_pit_parcial")
     if criterio_modo == "economico":
         _modo_txt = (
@@ -3891,7 +3890,7 @@ def render(show_header: bool = True) -> None:
             "erro-padrão, então **o teste não chegou a ser feito**. No terceiro caso o "
             "segmento também não é aprovado — um critério que exige prova positiva não "
             "aprova sem teste —, mas isso é **ausência de medição, não evidência "
-            "contra**: a Situação sai 🟡 *Inconclusivo (sem significância)*, nunca "
+            "contra**: o segmento fica 🟡 *Inconclusivo (sem significância)*, nunca "
             "❌ *Reprovado (evidência contra)* por esse motivo. "
             "O valor-p do retorno de 24m vira **diagnóstico** e não reprova."
         )
@@ -3910,9 +3909,7 @@ def render(show_header: bool = True) -> None:
     )
     _wf_txt = (
         " **Validação: walk-forward.** As margens e o valor-p do retorno cobrem "
-        "TODO o histórico point-in-time (vários regimes), não só os últimos meses — "
-        "e a coluna 'Anos batendo pares' mostra em quantos anos a estratégia "
-        "superou o Equal-Weight."
+        "TODO o histórico point-in-time (vários regimes), não só os últimos meses."
         if walk_forward else ""
     )
     _comum_txt = (
@@ -3929,148 +3926,12 @@ def render(show_header: bool = True) -> None:
     )
     detalhe_tecnico(_modo_txt + _comum_txt + _resil_txt + _wf_txt,
                     codigo="portfolio_b3.criterio_de_aprovacao")
-
-    # Descasamento decisão × exibição (corrigido): o modo econômico APROVA pela
-    # margem do histórico cheio (val_est vs val_selic), mas a tabela mostrava
-    # apenas a margem da janela de validação — números diferentes dos que
-    # decidiram, levando a ler "aprovado com 4%" quando o portão viu 22%. Agora
-    # as duas janelas aparecem e o sufixo marca qual delas decidiu.
-    _decide_full = criterio_modo == "economico"
-    _sfx_hist = " ← DECIDE" if _decide_full else " (diagnóstico)"
-    _sfx_val  = " (diagnóstico)" if _decide_full else " ← DECIDE"
-    _col_selic_hist = f"vs Selic · histórico{_sfx_hist} (%)"
-    _col_selic_val  = f"vs Selic · validação{_sfx_val} (%)"
-    _col_ew_hist    = f"vs Pesos Iguais · histórico{_sfx_hist} (%)"
-    _col_ew_val     = f"vs Pesos Iguais · validação{_sfx_val} (%)"
-
-    # Estado da evidência por segmento (auditoria §16): "não pude medir" e
-    # "medi e é ruim" deixam de ser o mesmo rótulo. Só evidência CONTRA é
-    # reprovação estatística; inconclusivo é limite do dado, não do ativo.
-    from core.b3_evidence import classify_evidence, evidence_label
-
-    rows_tbl: list[dict] = []
-    for res in resultados:
-        m_s  = _margem_pct(res.get("val_est_oos", 0.0), res.get("val_selic_oos", 0.0))
-        m_ew = _margem_pct(res.get("val_est_oos", 0.0), res.get("val_ew_oos", 0.0))
-        m_s_full  = _margem_pct(res.get("val_est", 0.0), res.get("val_selic", 0.0))
-        m_ew_full = _margem_pct(res.get("val_est", 0.0), res.get("val_ew", 0.0))
-        ult  = max(res["ultimo_lid"].values()) if res["ultimo_lid"] else 0
-        _verdict = classify_evidence(
-            ic_values=res.get("rank_ic_values") or [],
-            ic_mean=res.get("rank_ic_mean"),
-            p_value=res.get("p_value_ic"),
-        )
-        # O portão econômico é aferido à parte para não confundir "reprovado por
-        # não bater a Selic" com "reprovado pela estatística".
-        _economico_ok = (
-            res.get("val_est", 0.0) > 0
-            and m_s_full >= thr_selic
-            and (not usar_ew_como_criterio or res.get("val_ew", 0.0) <= 0
-                 or m_ew_full >= thr_ew)
-        )
-        _iv_sel = res.get("selecao_excesso") or {}
-        if _aprovado(res):
-            _situacao = "✅ Aprovado"
-        elif _iv_sel.get("veredito") == _selecao.CONTRA:
-            _situacao = "❌ Reprovado (seleção pior que Pesos Iguais)"
-        elif _verdict.bloqueante:
-            _situacao = "❌ Reprovado (evidência contra)"
-        elif not _economico_ok:
-            _situacao = "❌ Reprovado (critério econômico)"
-        else:
-            # Passou no econômico e a estatística não teve como falar.
-            _situacao = f"🟡 {evidence_label(_verdict)}"
-        rows_tbl.append({
-            "Setor":     res["setor"],
-            "Subsetor":  res["subsetor"],
-            "Segmento":  res["segmento"],
-            "Situação": _situacao,
-            "Cobertura PIT da validação (%)": round(
-                float((res.get("pit_coverage_validacao") or PITCoverage()).cobertura_medida) * 100,
-                1,
-            ),
-            "Proveniência da validação": _rotulo_validacao_pit(res),
-            "Estado da evidência": evidence_label(_verdict),
-            "Efeito mín. detectável (Rank-IC)": (
-                round(_verdict.efeito_minimo_detectavel, 3)
-                if _verdict.efeito_minimo_detectavel is not None else None
-            ),
-            _col_selic_hist: round(m_s_full, 1),
-            _col_ew_hist: round(m_ew_full, 1),
-            _col_selic_val: round(m_s, 1),
-            _col_ew_val: round(m_ew, 1),
-            "valor-p (validação)": round(float(res.get("p_value_oos", 1.0)), 4),
-            "q-valor (falsos positivos)": round(float(res.get("q_value_oos", 1.0)), 4),
-            "Meses de validação": int(res.get("n_months_oos", 0)),
-            "Excesso vs Pesos Iguais · validação (% a.m., IC 90%)": _selecao.rotulo(_iv_sel),
-            "Teste de seleção": _iv_sel.get("veredito", _selecao.SEM_AMOSTRA),
-            "Poder preditivo médio (Rank-IC)": (
-                round(float(res["rank_ic_mean"]), 3)
-                if np.isfinite(float(res.get("rank_ic_mean", float("nan"))))
-                else None
-            ),
-            # Sem dispersão entre os Rank-ICs anuais não houve teste: a
-            # célula fica VAZIA em vez de publicar 1,0, que seria afirmar
-            # "testei e não deu" sobre um teste que não aconteceu.
-            "valor-p do sinal (Rank-IC)": (
-                round(float(res["p_value_ic"]), 4)
-                if res.get("p_value_ic") is not None else None
-            ),
-            "Anos batendo pares (%)": (
-                round(float(res["wf_hit_rate"]) * 100, 0)
-                if np.isfinite(float(res.get("wf_hit_rate", float("nan"))))
-                else None
-            ),
-            "ROIC − Selic médio (p.p.)": (
-                round(float(res["roic_spread_mean"]) * 100, 1)
-                if np.isfinite(float(res.get("roic_spread_mean", float("nan"))))
-                else None
-            ),
-            "Anos ROIC > Selic (%)": (
-                round(float(res["roic_hit_rate"]) * 100, 0)
-                if np.isfinite(float(res.get("roic_hit_rate", float("nan"))))
-                else None
-            ),
-            "Anos com poder preditivo": int(res.get("rank_ic_years", 0)),
-            "Patrimônio total": _fv(res["val_est"]),
-            "Últ. liderança": ult or "—",
-        })
-
-    df_tbl = pd.DataFrame(rows_tbl)
-
-    # Cores literais de propósito: a grade nativa é canvas e não resolve
-    # `var(--…)`. No tema claro quem converte é `design/tema_canvas.py`.
-    def _cor_status(v: str) -> str:
-        if "✅" in v:
-            return "color: #00C896"
-        # Inconclusivo é âmbar, não vermelho: não houve reprovação de mérito.
-        if "⚠️" in v or "🟡" in v:
-            return "color: #F6C90E"
-        return "color: #FC5C7D"
-
-    st.dataframe(
-        df_tbl.style.applymap(_cor_status, subset=["Situação"]),
-        width="stretch",
-        height=min(500, 60 + 35 * len(df_tbl)),
-    )
-    _n_inconclusivos = sum("🟡" in str(linha["Situação"]) for linha in rows_tbl)
-    st.caption(
-        "**Como ler a Situação.** ❌ *evidência contra* = o score ordenou ao "
-        "contrário do retorno (reprovação de mérito). ❌ *critério econômico* = "
-        "não bateu a Selic/Pesos Iguais pela margem. 🟡 *Inconclusivo* = passou "
-        "no econômico e a estatística **não teve como falar** — amplitude ou "
-        "significância insuficientes. Inconclusivo NÃO é reprovação: não "
-        "rejeitar a hipótese nula não prova ausência de habilidade."
-        + (f" Nesta rodada, {_n_inconclusivos} segmento(s) ficaram nesse estado."
-           if _n_inconclusivos else "")
-    )
-    st.caption(
-        "**Efeito mín. detectável (Rank-IC)** é o menor poder preditivo que o "
-        "teste conseguiria enxergar com os dados disponíveis (80% de poder)."
-    )
+    # A tabela que mostrava o efeito mínimo detectável saiu da tela; o limite
+    # do teste continua valendo e segue registrado em Restrições.
     detalhe_tecnico(
-        "Valor alto de efeito mínimo detectável significa teste cego para efeitos "
-        "moderados — com mediana de 3 empresas por segmento na B3, é o caso frequente.",
+        "O teste de poder preditivo (Rank-IC) por segmento tem efeito mínimo "
+        "detectável alto: com mediana de 3 empresas por segmento na B3, fica "
+        "cego para efeitos moderados.",
         codigo="portfolio_b3.efeito_minimo_detectavel")
 
     # ── SEGMENTOS APROVADOS ───────────────────────────────────────────────────
@@ -4085,9 +3946,6 @@ def render(show_header: bool = True) -> None:
 
     # ── EVIDÊNCIA NO UNIVERSO (amplitude real, sem multiplicidade) ───────────
     _render_evidencia_universo(resultados)
-
-    # ── ROTA DE VALOR (independe de habilidade cross-seccional) ──────────────
-    _render_rota_de_valor(df_mult_todos, df_set, taxa_selic_aa)
 
     # ── EMPRESAS LÍDERES PARA O PRÓXIMO ANO ──────────────────────────────────
     st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
@@ -4230,6 +4088,8 @@ def render(show_header: bool = True) -> None:
                                if s["entra"] == tk), None)
             if _sub_intel:
                 motivos.append(f"Entrou pela Inteligência dos Ativos sobre {_sub_intel}")
+            if any(s["tk"] == tk for s in intel_log["indisponiveis"]):
+                motivos.append("Não avaliado pela Inteligência dos Ativos (avaliação indisponível)")
             motivos.extend(_motivos_dy_sustentavel(tk, df_mult_todos))
             _aval_quali = (st.session_state.get("pb3_quali_cache", {}).get(tk)
                            if _gate_ativo else None)
@@ -4705,42 +4565,38 @@ def render(show_header: bool = True) -> None:
     else:
         st.info("Nenhum líder identificado com os parâmetros atuais.")
 
-    # ── TRANSPARÊNCIA DO PISO ABSOLUTO ───────────────────────────────────────
-    if _piso_ativo and (piso_log["reprovados"] or piso_log["sem_substituto"]
-                        or piso_log["afrouxado_por_viabilidade"]):
-        st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
-                    unsafe_allow_html=True)
-        _sec_hdr("🚧 Piso absoluto de qualidade — reprovações e substituições")
-        st.caption(
-            "Aplicado ANTES do parecer qualitativo, com a mesma régua da seção "
-            "de Saúde: reprova o que lá seria CRÍTICO. Quem entra vem do MESMO "
-            "segmento, então nenhuma vaga setorial é perdida por exigir "
-            "qualidade. Ausência de dado não reprova."
-        )
-        k1, k2, k3 = st.columns(3)
-        with k1:
-            card_metrica("Reprovados", str(len(piso_log["reprovados"])))
-        with k2:
-            card_metrica("Substituídos", str(len(piso_log["substituicoes"])))
-        with k3:
-            card_metrica("Vagas sem substituto", str(len(piso_log["sem_substituto"])))
-
-        for sub in piso_log["substituicoes"]:
-            st.success(
-                f"**{sub['entra']}** entrou no lugar de **{sub['sai']}** "
-                f"· {sub['segmento']}", icon="🔁")
-        for rep in piso_log["reprovados"]:
-            st.warning(f"**{rep['tk']}** reprovado · {rep['segmento']} — "
-                       f"{rep['motivo']}", icon="⛔")
-        for vazio in piso_log["sem_substituto"]:
-            st.error(
-                f"Segmento **{vazio['segmento']}** ficou SEM representante: "
-                f"{vazio['tk']} foi reprovado e nenhum candidato do mesmo "
-                "segmento passou no piso. A carteira perde este setor — é uma "
-                "informação sobre o segmento, não uma falha do filtro.",
-                icon="🕳️")
+    # ── PISO ABSOLUTO: a seção de transparência saiu da tela ─────────────────
+    # Pedido do dono do projeto (30/10/2026). Quem entrou pelo piso, ou por
+    # afrouxamento, segue etiquetado no card da líder; o que o card não mostra
+    # — o afrouxamento por segmento e a vaga que ficou sem substituto — vai
+    # para Configurações → Restrições, para não virar silêncio.
+    if _piso_ativo:
         for _msg_afr in _avisos_afrouxamento_piso(piso_log):
-            st.warning(_msg_afr, icon="⚠️")
+            aviso_lacuna(_msg_afr, codigo="tela.portfolio_b3.piso_afrouxado",
+                         nivel="warning")
+        for vazio in piso_log["sem_substituto"]:
+            aviso_lacuna(
+                f"Segmento {vazio['segmento']} ficou sem representante: "
+                f"{vazio['tk']} foi reprovado pelo piso de qualidade e nenhum "
+                "candidato do mesmo segmento passou.",
+                codigo="tela.portfolio_b3.piso_vaga_sem_substituto",
+                entidade=vazio["segmento"], nivel="warning")
+
+    # ── PORTÃO DA INTELIGÊNCIA: a seção de transparência saiu da tela ────────
+    # Mesmo pedido e mesmo critério do piso: a troca segue no card da líder;
+    # a vaga que o veto esvaziou e o nome que entrou sem ser avaliado vão
+    # para Configurações → Restrições.
+    for vazio in intel_log["vagas_vazias"]:
+        aviso_lacuna(
+            f"Segmento {vazio['segmento']} ficou sem representante: "
+            f"{vazio['sai']} foi barrado pela Inteligência dos Ativos e nenhum "
+            "candidato do mesmo segmento passou.",
+            codigo="tela.portfolio_b3.inteligencia_vaga_vazia",
+            entidade=vazio["segmento"], nivel="warning")
+    for indisp in intel_log["indisponiveis"]:
+        detalhe_tecnico(f"Avaliação indisponível: {indisp['erro']}",
+                        codigo="inteligencia.portao_avaliacao_indisponivel",
+                        entidade=str(indisp["tk"]))
 
     # ── SAÚDE DAS SELECIONADAS (cruza as duas rotas) ─────────────────────────
     _render_saude_da_carteira(
@@ -4751,15 +4607,6 @@ def render(show_header: bool = True) -> None:
         pesos={item["tk"]: float(item.get("peso") or 0.0)
                for item in (proximos_uniq or [])},
     )
-
-    # ── TRANSPARÊNCIA DO PORTÃO DA INTELIGÊNCIA DOS ATIVOS ───────────────────
-    if _portao_ui.tem_conteudo(intel_log):
-        st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
-                    unsafe_allow_html=True)
-        _sec_hdr(_portao_ui.TITULO)
-        _portao_ui.render(
-            intel_log, grupo=_portao_ui.GRUPO["b3"],
-            como_substitui=_portao_ui.COMO_SUBSTITUI["b3"])
 
     # ── TRANSPARÊNCIA DO GATE QUALITATIVO ────────────────────────────────────
     if _gate_ativo:
@@ -5154,21 +5001,13 @@ def render(show_header: bool = True) -> None:
 
     # `aprovados` (nao `resultados`) e a carteira que esta aba publica: as
     # safras do Bloco 1 tem que ser reconstruidas com o MESMO conjunto de
-    # segmentos que a tela recomenda. `resultados` -- a lista nao filtrada
-    # -- entra como `resultados_todos` e serve ao Bloco 2, que mede quanto
-    # o gate de aprovacao move o retorno de cada safra.
+    # segmentos que a tela recomenda.
     render_safras(
         aprovados,
         df_precos_all,
         selic_por_ano=selic_hist,
         taxa_selic_aa=taxa_selic_aa,
-        resultados_todos=resultados,
     )
-
-    # B3-03: as safras acima são da configuração ATUAL e brutas de custo; o
-    # bloco abaixo lê a medição gravada da carteira de cada perfil, líquida,
-    # point-in-time (scripts/medir_oos_carteira_b3.py).
-    render_oos_carteira()
 
     # ── Metodologia e referências científicas ────────────────────────────────
     _render_metodologia_portfolio()

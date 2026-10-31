@@ -159,3 +159,200 @@ def sql_safra_canonica(alias: str = "d", tabela: str = "market.dividends") -> st
                        AND date_trunc('month', _sc.payment_date)
                            = date_trunc('month', {alias}.payment_date)),
         false)"""
+
+
+# ---------------------------------------------------------------------------
+# A agregacao anual unica
+# ---------------------------------------------------------------------------
+# Tres regras ja existiam, cada uma num leitor diferente -- e cada leitor
+# aplicava as que lembrava. `load_demonstracoes`, a fonte do card e do grafico
+# de dividendos da Empresas B3 e da serie de dividendos da LLM, somava a coluna
+# crua, com a copia por lote de mil e a amortizacao dentro.
+#
+# A identidade de um provento nao cabe numa chave de colunas. A tabela e unica
+# por (ticker, event_date, tipo, valor) e o upsert nao apaga: quando a brapi
+# muda a data de pagamento, a linha antiga fica ao lado da nova. O mesmo
+# provento aparece entao
+#   - com dois pagamentos a poucos dias um do outro (a revisao da data);
+#   - com pagamento nulo, ou anterior a data-ex, ao lado do pagamento real;
+#   - com a data-ex deslocada em poucos dias e o mesmo valor.
+# E ha o contrario, o que parece copia e nao e:
+#   - a mesma declaracao paga em parcelas iguais (mesma data-ex, pagamentos em
+#     junho e em dezembro);
+#   - declaracoes distintas pagas no mesmo dia (JCP trimestrais com datas-ex
+#     de meses diferentes, todos com pagamento "a definir" em 31/12).
+# Agrupar por dia de pagamento, a primeira tentativa, juntava o segundo caso
+# com o primeiro: medido em 29/10/2026 no armazem local, eram 663 grupos de
+# acoes com datas-ex a mais de 15 dias uma da outra.
+
+#: Duas linhas sao o mesmo provento quando o valor coincide a 0,1%, a data-ex
+#: difere em ate 15 dias e o pagamento em ate 31. Fora disso sao parcelas ou
+#: declaracoes distintas, e somam. Valor e data-ex sao os da regra B de
+#: `core.brapi.dedup_cash_dividends`.
+TOLERANCIA_VALOR = 1e-3
+JANELA_EX_DIAS = 15
+JANELA_PAGAMENTO_DIAS = 31
+
+#: Colunas que :func:`renda_por_evento` devolve.
+COLUNAS_EVENTO = ("ticker", "type", "ex_date", "payment_date", "event_date", "amount")
+
+
+def sql_proventos_de_renda(filtro: str, *, alias: str = "d",
+                           tabela: str = "market.dividends") -> str:
+    """SQL das linhas que :func:`renda_por_evento` deduplica.
+
+    O banco so filtra o que decide melhor: renda (A-128), safra canonica
+    (A-131, que precisa ver a tabela inteira para achar a gemea) e valor
+    positivo. ``filtro`` e o predicado de ticker sobre ``alias``, com os
+    parametros de quem chama.
+    """
+    return f"""
+        SELECT {alias}.ticker, {alias}.type, {alias}.ex_date, {alias}.payment_date,
+               {alias}.event_date, {alias}.amount, {alias}.created_at
+        FROM {tabela} {alias}
+        WHERE ({filtro}) AND {alias}.event_date IS NOT NULL AND {alias}.amount > 0
+          AND {sql_apenas_renda(f'{alias}.type')}
+          AND {sql_safra_canonica(alias, tabela)}"""
+
+
+def renda_por_evento(df):
+    """Um provento de renda por linha, com as colunas de :data:`COLUNAS_EVENTO`.
+
+    ``df`` e um quadro de ``market.dividends`` -- de preferencia o de
+    :func:`sql_proventos_de_renda`; renda e safra canonica sao reaplicadas aqui,
+    e reaplica-las nao muda nada. ``created_at`` e opcional.
+
+    1. Mesmo valor, data-ex e pagamento dentro das janelas: o mesmo provento
+       regravado. Fica a linha gravada por ultimo, que e a informacao mais nova
+       da fonte.
+    2. Pagamento nulo, ou nao posterior a data-ex, nao e data. A linha sai
+       quando ha, no mesmo valor e na janela de data-ex, uma com pagamento real
+       -- e se junta a uma so, para nao fundir duas parcelas.
+
+    O resto soma: parcelas da mesma declaracao, declaracoes distintas no mesmo
+    dia, tipos distintos no mesmo dia -- e valores diferentes com a mesma
+    data-ex e o mesmo pagamento. Ficar com o minimo desse grupo (a regra do
+    A-129) parecia matar o eco de classe, mas a resposta mais nova da brapi
+    tem 306 grupos assim, todos declaracoes distintas, e o eco ja sai na
+    ingestao. Medido em 29/10/2026 contra essa resposta
+    (``scripts/medir_proventos_b3.py``): 86,0% dos ticker-anos batem a 1% sem
+    o minimo, 83,9% com ele. A medida e circular -- a resposta mais nova e a
+    referencia, nao a verdade --; diante da CVM, nos FIIs, as duas variantes
+    empatam (69,5% e 69,6% a ate 5%).
+
+    Dois limites do desenho, ambos so no caminho de reserva (o ticker que o
+    arquivo publicado de ``core.proventos_b3`` nao cobre):
+
+    * o par decide, mas a uniao e transitiva: 1,0000, 1,0009 e 1,0018 com as
+      mesmas datas viram um evento so (1,0018), embora as pontas fiquem a 0,18%;
+    * a revisao que muda o valor em mais de 0,1% e tambem o pagamento conta
+      duas vezes: 0,50 e depois 0,51 viram dois proventos. ``created_at`` nao
+      separa revisao de declaracao nova, que tambem e gravada depois; separar
+      exigiria saber se a linha antiga continuou na resposta seguinte, e o
+      upsert nao registra isso.
+    """
+    import numpy as np
+    import pandas as pd
+
+    vazio = pd.DataFrame(columns=list(COLUNAS_EVENTO))
+    if df is None or len(df) == 0:
+        return vazio
+    d = descarta_safra_colapsada(apenas_renda(df)).copy()
+    for c in ("ex_date", "payment_date", "event_date"):
+        d[c] = pd.to_datetime(d[c], errors="coerce") if c in d.columns else pd.NaT
+    d["event_date"] = d["event_date"].fillna(d["payment_date"]).fillna(d["ex_date"])
+    d["amount"] = pd.to_numeric(d["amount"], errors="coerce")
+    d = d[d["amount"].gt(0) & d["event_date"].notna()]
+    if d.empty:
+        return vazio
+    d["ticker"] = d["ticker"].astype(str).str.strip().str.upper()
+    if "type" not in d.columns:
+        d["type"] = None
+    d["_tipo"] = d["type"].fillna("").astype(str).str.strip().str.upper()
+    d["_ex"] = d["ex_date"].fillna(d["event_date"])
+    criado = (pd.to_datetime(d["created_at"], errors="coerce", utc=True)
+              if "created_at" in d.columns
+              else pd.Series(pd.NaT, index=d.index, dtype="datetime64[ns, UTC]"))
+    d["_criado"] = criado.dt.tz_localize(None)
+
+    # Faixas de valor: vizinhos a ate 0,1% um do outro, dentro de (ticker, tipo).
+    # A faixa so separa quem nunca pode ser o mesmo provento: 1,0000 -> 1,0009
+    # -> 1,0018 cabe numa faixa so, e as pontas ficam a 0,18%. Quem decide e o
+    # par, com o proprio valor (`_mesmo_valor`).
+    d = d.sort_values(["ticker", "_tipo", "amount"], kind="mergesort").reset_index(drop=True)
+    salto = d["amount"] / d["amount"].shift() - 1 > TOLERANCIA_VALOR
+    d["_faixa"] = ((d["ticker"] != d["ticker"].shift()) | (d["_tipo"] != d["_tipo"].shift())
+                   | salto).cumsum()
+    valido = (d["payment_date"].notna() & (d["payment_date"] > d["_ex"])).to_numpy()
+    ex = d["_ex"].to_numpy("datetime64[D]").astype("int64")
+    pag = d["payment_date"].to_numpy("datetime64[D]").astype("int64")
+    valor = d["amount"].to_numpy("float64")
+
+    def _mesmo_valor(a, b):
+        # a regra B de `core.brapi.dedup_cash_dividends`
+        return abs(valor[a] - valor[b]) <= TOLERANCIA_VALOR * max(valor[a], valor[b])
+
+    raiz = np.arange(len(d))
+
+    def acha(i):
+        while raiz[i] != i:
+            raiz[i] = raiz[raiz[i]]
+            i = raiz[i]
+        return i
+
+    def une(i, j):
+        raiz[acha(i)] = acha(j)
+
+    for idx in d.groupby("_faixa").indices.values():
+        if len(idx) < 2:
+            continue
+        reais = [i for i in idx if valido[i]]
+        # 1. Revisao: valor, data-ex e pagamento dentro das janelas.
+        for a_pos, a in enumerate(reais):
+            for b in reais[a_pos + 1:]:
+                if (abs(ex[a] - ex[b]) <= JANELA_EX_DIAS
+                        and abs(pag[a] - pag[b]) <= JANELA_PAGAMENTO_DIAS
+                        and _mesmo_valor(a, b)):
+                    une(a, b)
+        # 2. Sem pagamento real: junta a UMA linha real na janela de data-ex,
+        # a mais proxima. Sem nenhuma, as sem data se juntam entre si.
+        sem_data = [i for i in idx if not valido[i]]
+        orfas = []
+        for a in sem_data:
+            perto = [b for b in reais
+                     if abs(ex[a] - ex[b]) <= JANELA_EX_DIAS and _mesmo_valor(a, b)]
+            if perto:
+                une(a, min(perto, key=lambda b: abs(ex[a] - ex[b])))
+                continue
+            for b in orfas:
+                if abs(ex[a] - ex[b]) <= JANELA_EX_DIAS and _mesmo_valor(a, b):
+                    une(a, b)
+            orfas.append(a)
+
+    d["_grupo"] = [acha(i) for i in range(len(d))]
+    d["_valido"] = valido
+    d = (d.sort_values(["_grupo", "_valido", "_criado", "payment_date"],
+                       na_position="first", kind="mergesort")
+          .drop_duplicates("_grupo", keep="last"))
+    return (d[list(COLUNAS_EVENTO)].sort_values(["ticker", "event_date", "type"])
+             .reset_index(drop=True))
+
+
+def soma_por_ano(eventos, *, data: str = "event_date"):
+    """``ticker, ano, total``: a soma por acao de eventos ja deduplicados,
+    com o ano tirado da coluna ``data``; linha sem essa data fica de fora."""
+    import pandas as pd
+
+    datas = pd.to_datetime(eventos[data], errors="coerce")
+    ev = eventos[datas.notna()]
+    if ev.empty:
+        return pd.DataFrame(columns=["ticker", "ano", "total"])
+    out = (ev.assign(ano=datas[datas.notna()].dt.year.astype(int))
+             .groupby(["ticker", "ano"], as_index=False)["amount"].sum()
+             .rename(columns={"amount": "total"}))
+    return out.sort_values(["ticker", "ano"]).reset_index(drop=True)
+
+
+def renda_por_ano(df, *, data: str = "event_date"):
+    """``ticker, ano, total`` dos eventos de :func:`renda_por_evento`."""
+    return soma_por_ano(renda_por_evento(df), data=data)

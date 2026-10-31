@@ -29,7 +29,8 @@ existe para nao repetir aquilo:
 
 Modulo puro: sem streamlit, sem banco, sem rede. A leitura da DFP e do
 armazem fica em scripts/treinar_previsao_lucros_b3.py; o resultado vai para
-data/public/previsao_lucros_b3.json.gz e a aba so o le.
+data/public/previsao_lucros_b3.json.gz. Nenhuma tela o le desde 29/10/2026, quando
+a aba Previsao de Lucros saiu de Empresas B3; o modelo e o treino ficam aqui.
 """
 from __future__ import annotations
 

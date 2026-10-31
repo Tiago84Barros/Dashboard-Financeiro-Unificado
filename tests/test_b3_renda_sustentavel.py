@@ -335,9 +335,9 @@ _COLUNAS_DECISAO = (
 
 
 def test_empresas_b3_enriquece_o_quadro_que_a_decisao_le(monkeypatch):
-    """Rodada de correção 1: a ligação nas duas telas de Empresas B3 (dossiê
-    da Análise de Empresa e ranking da Análise Avançada) tinha só leitura de
-    código para provar que a evidência chega ao quadro. As seis colunas
+    """Rodada de correção 1: a ligação em Empresas B3 (dossiê da Análise de
+    Empresa; o ranking da Análise Avançada saiu com a aba em 30/10/2026) tinha
+    só leitura de código para provar que a evidência chega ao quadro. As seis colunas
     (renda + patrimonial) têm que aparecer com valor DERIVADO do histórico
     injetado, não só a coluna existindo vazia — e ausência tem que ficar NaN,
     nunca zero.
@@ -530,33 +530,6 @@ def test_analise_acoes_db_liga_evidencia_no_universo_que_o_score_le(monkeypatch)
     sem_hist = universo.loc["SEMHIST3"]
     for coluna in _COLUNAS_DECISAO:
         assert np.isnan(sem_hist[coluna])
-
-
-def test_tab_avancada_liga_evidencia_historica_no_df_mult_enrich():
-    """``_tab_avancada`` exige widgets Streamlit (st.columns/selectbox com
-    session_state) antes de chegar no ranking — inexequível isolada, mesmo
-    padrão já registrado nesta suíte para essa função (ver
-    test_empresas_b3_abas_ui.py, que também usa inspect.getsource para provar
-    comportamento de ``_tab_avancada`` sem executá-la). Prova por inspeção
-    que o call site real atribui a evidência histórica a
-    ``df_mult_enrich`` — se a linha for removida ou o alvo/args mudarem, a
-    regex não casa e o teste quebra (confirmado manualmente: comentar a
-    chamada em views/empresas_b3.py faz este teste falhar).
-    """
-    import inspect
-    import re
-
-    import views.empresas_b3 as b3
-
-    corpo = inspect.getsource(b3._tab_avancada)
-    padrao = re.compile(
-        r"df_mult_enrich\s*=\s*_enrich_com_evidencia_historica\(\s*"
-        r"df_mult_enrich,\s*hist_batch,\s*tuple\(sorted\(tks_uni\)\)\s*\)"
-    )
-    assert padrao.search(corpo), (
-        "o call site de _tab_avancada não liga mais a evidência histórica "
-        "a df_mult_enrich"
-    )
 
 
 # ── Task 8: red flag histórica e contexto da LLM ─────────────────────────────

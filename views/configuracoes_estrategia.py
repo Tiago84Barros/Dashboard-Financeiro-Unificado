@@ -237,11 +237,15 @@ def _render_entrevista(rascunho: repo.Registro) -> None:
                        "12 meses. A IA vai perguntar sobre renda e gastos em "
                        "vez de avaliá-los.")
 
+    # A conversa mora num container aberto antes do st.chat_input. Dentro de
+    # aba ou coluna a barra aparece onde é chamada; a pergunta nova e a
+    # resposta escritas aqui ficam acima dela, e a barra fica no fim do chat.
+    conversa = st.container()
     historico = list(rascunho.entrevista)
     if not historico:
         historico = [_msg("assistant", entrevista.abertura(rascunho.politica))]
     for m in historico:
-        with st.chat_message(m["role"]):
+        with conversa.chat_message(m["role"]):
             st.markdown(escapar_cifrao(m["content"]))
 
     turnos = sum(1 for m in historico if m["role"] == "user")
@@ -255,7 +259,9 @@ def _render_entrevista(rascunho: repo.Registro) -> None:
     resposta = st.chat_input("Sua resposta", key="cfg_estrategia_resposta")
     if not resposta:
         return
-    with st.spinner("Lendo sua resposta..."):
+    with conversa.chat_message("user"):
+        st.markdown(escapar_cifrao(resposta))
+    with conversa, st.spinner("Lendo sua resposta..."):
         etapa = entrevista.proxima_etapa(
             rascunho.politica, historico, resposta, contexto=_contexto())
     fala = etapa.pergunta or (
@@ -268,7 +274,8 @@ def _render_entrevista(rascunho: repo.Registro) -> None:
     try:
         repo.salvar_rascunho(rascunho.id, etapa.politica, historico)
     except Exception as exc:  # noqa: BLE001
-        falha_de_acao("A resposta não foi gravada.", exc)
+        with conversa:
+            falha_de_acao("A resposta não foi gravada.", exc)
         return
     if etapa.aviso:
         _flash("warning", etapa.aviso)

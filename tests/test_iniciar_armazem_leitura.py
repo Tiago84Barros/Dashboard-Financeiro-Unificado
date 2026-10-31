@@ -82,6 +82,31 @@ def test_fetch_falho_nao_impede_subir(tmp_path):
     assert "pulada" in msg and "checkout" not in chamadas
 
 
+def test_excecao_na_atualizacao_nao_impede_subir(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text("", encoding="utf-8")
+    log = tmp_path / "a.log"
+    subiu: list = []
+
+    def _estoura(pasta):
+        raise subprocess.TimeoutExpired(["git", "fetch"], 120)
+
+    monkeypatch.setattr(sup, "atualizar_para_main", _estoura)
+    monkeypatch.setattr(sup, "supervisionar", lambda comando, log, **kw: subiu.append(1) or 0)
+    assert sup.main(["--env", str(env), "--log", str(log), "--atualizar"]) == 0
+    assert subiu == [1]
+    assert "atualização falhou (TimeoutExpired" in log.read_text(encoding="utf-8")
+
+
+def test_git_decodifica_utf8(tmp_path):
+    """O "Á" de "Área" em UTF-8 tem o byte 0x81, que o cp1252 não tem."""
+    pasta = tmp_path / "Área"
+    pasta.mkdir()
+    assert sup._git("init", "-q", pasta=pasta).returncode == 0
+    r = sup._git("rev-parse", "--show-toplevel", pasta=pasta)
+    assert r.returncode == 0 and "Área" in r.stdout
+
+
 def _executar(codigos: list[int], feitos: list):
     def _run(comando, **kw):
         feitos.append(comando)

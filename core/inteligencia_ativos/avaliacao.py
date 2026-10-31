@@ -96,6 +96,18 @@ LIMITES_ALAVANCAGEM = {GERAL: (1.5, 3.0, 4.5), CICLICA: (1.0, 2.5, 4.0),
 # incorporadora (nela, é a régua que substitui a de dívida/EBITDA).
 FATOR_CRITICO_DIVIDA_PL = 2.0
 
+# Cobertura de juros (resultado operacional/juros): (fraca abaixo de,
+# eliminatória abaixo de).
+COBERTURA_JUROS = (1.5, 1.0)
+# Payout (%) acima do qual a empresa distribui mais que o lucro; com caixa
+# livre negativo elimina (fora do setor regulado).
+PAYOUT_ACIMA_DO_LUCRO = 100.0
+# Réguas do FII, em % : (desfavorável acima de, eliminatório acima de).
+VACANCIA_FII = (15.0, 30.0)
+INADIMPLENCIA_FII = (5.0, 10.0)
+# Alavancagem do FII (% do patrimônio) acima da qual pesa contra.
+ALAVANCAGEM_FII_ALTA = 30.0
+
 _TERMOS_INCORPORADORA = ("incorpora", "construcao civil", "edificac")
 _TERMOS_FINANCEIRA = ("financ", "banco", "bancos", "segur", "previdencia",
                       "intermediarios", "bank", "insurance", "credit")
@@ -116,7 +128,7 @@ _TERMOS_SAIDA = ("pagina virada", "sai da", "saida da", "deixa a", "encerra",
                  "encerramento", "fim da", "termino", "emerge",
                  "exits", "emerges")
 
-AVISO = ("Avaliação por regras sobre os dados do app, não recomendação: cada "
+AVISO = ("Avaliação por regras sobre os dados do app: cada "
          "critério traz o número e a referência. Sentimento vem do provedor "
          "da notícia quando ele mede (o do ticker, ou na falta dele o do "
          "artigo inteiro), senão do léxico do app (termômetro, não "
@@ -144,6 +156,9 @@ class Criterio:
 class Alerta:
     texto: str
     critico: bool       # eliminatório: põe a qualidade em frágil
+    # Veio de manchete, não do balanço: pede confirmação no documento
+    # oficial antes de virar venda (``resumida.decisao``).
+    noticia: bool = False
 
 
 @dataclass(frozen=True)
@@ -240,6 +255,10 @@ def _x(x: float) -> str:
     return f"{_br(x, 2 if abs(x) < 10 else 1)}x"
 
 
+def _pares(n: int) -> str:
+    return f"{n} par" if n == 1 else f"{n} pares"
+
+
 def _fmt(x: float, unidade: str) -> str:
     return _pct(x) if unidade == fnd.PCT else _x(x)
 
@@ -322,7 +341,7 @@ def _contra_pares(c: prs.ComparacaoPares | None, chave: str, rotulo: str,
     melhor = (ln.posicao == val.ACIMA) == maior_melhor
     rel = "acima" if ln.posicao == val.ACIMA else "abaixo"
     return Criterio(
-        f"{rotulo} {_pct(ln.valor)} {rel} da mediana de {ln.n_pares} pares "
+        f"{rotulo} {_pct(ln.valor)} {rel} da mediana de {_pares(ln.n_pares)} "
         f"({_pct(ln.mediana_pares)})", 1 if melhor else -1)
 
 
@@ -373,7 +392,7 @@ def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
 
     payout = val_("payout")
     if perfil_ == FINANCEIRA:
-        if payout is not None and payout > 100:
+        if payout is not None and payout > PAYOUT_ACIMA_DO_LUCRO:
             crits.append(Criterio(f"Payout de {_pct(payout)}: distribui mais "
                                   "que o lucro", -1))
         return
@@ -487,14 +506,14 @@ def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
         if x >= 3:
             crits.append(Criterio(f"Resultado operacional cobre os juros "
                                   f"{_x(x)}", 1))
-        elif x < 1.5:
+        elif x < COBERTURA_JUROS[0]:
             crits.append(Criterio(f"Cobertura de juros de {_x(x)}: o resultado "
                                   "operacional mal paga os juros", -1))
-            if x < 1.0:
+            if x < COBERTURA_JUROS[1]:
                 alertas.append(Alerta("o resultado operacional não paga os "
                                       f"juros (cobertura de {_x(x)})", True))
 
-    if payout is not None and payout > 100:
+    if payout is not None and payout > PAYOUT_ACIMA_DO_LUCRO:
         if fcl is not None and fcl < 0:
             # Em setor regulado, caixa livre negativo costuma ser ciclo de
             # investimento com retorno contratado: alerta, não eliminação.
@@ -521,16 +540,16 @@ def _qualidade_fii(f: fnd.Fundamentos, c, crits: list[Criterio],
     if vac is not None:
         if vac <= 5:
             crits.append(Criterio(f"{rot_vac} de {_pct(vac)}: baixa", 1))
-        elif vac > 15:
+        elif vac > VACANCIA_FII[0]:
             crits.append(Criterio(f"{rot_vac} de {_pct(vac)}: alta", -1))
-            if vac > 30:
+            if vac > VACANCIA_FII[1]:
                 alertas.append(Alerta(f"{rot_vac.lower()} de {_pct(vac)}",
                                       True))
     inad = val_("inadimplencia")
     if inad is not None:
-        if inad > 5:
+        if inad > INADIMPLENCIA_FII[0]:
             crits.append(Criterio(f"Inadimplência de {_pct(inad)}", -1))
-            if inad > 10:
+            if inad > INADIMPLENCIA_FII[1]:
                 alertas.append(Alerta(f"inadimplência de {_pct(inad)}", True))
         elif inad <= 1:
             crits.append(Criterio(f"Inadimplência de {_pct(inad)}: baixa", 1))
@@ -539,7 +558,7 @@ def _qualidade_fii(f: fnd.Fundamentos, c, crits: list[Criterio],
         ln = c.linha("alavancagem")
         alav = ln.valor if ln is not None else None
     if alav is not None:
-        if alav > 30:
+        if alav > ALAVANCAGEM_FII_ALTA:
             crits.append(Criterio(f"Alavancagem de {_pct(alav)} do patrimônio",
                                   -1))
         elif alav <= 10:
@@ -552,7 +571,7 @@ def _qualidade_fii(f: fnd.Fundamentos, c, crits: list[Criterio],
     liq = c.linha("liquidez_diaria") if c is not None else None
     if liq is not None and liq.posicao == val.ABAIXO:
         crits.append(Criterio(f"Liquidez diária abaixo da mediana de "
-                              f"{liq.n_pares} pares", -1))
+                              f"{_pares(liq.n_pares)}", -1))
 
 
 def _leitura_qualidade(crits, alertas) -> str:
@@ -683,10 +702,10 @@ def _momento(c, crits: list[Criterio], alertas: list[Alerta]) -> None:
         sinal = (1 if dif >= MOMENTO_DIFERENCA_PP else
                  -1 if dif <= -MOMENTO_DIFERENCA_PP else 0)
         rel = ("acima da" if sinal > 0 else "abaixo da" if sinal < 0 else
-               "em linha com")
+               "em linha com a")
         crits.append(Criterio(
             f"Retorno de 12 meses de {_pct(r)}, {rel} mediana de "
-            f"{ln.n_pares} pares ({_pct(med)}; diferença de "
+            f"{_pares(ln.n_pares)} ({_pct(med)}; diferença de "
             f"{_br(dif)} p.p.)", sinal))
     if r <= MOMENTO_QUEDA_ALERTA:
         alertas.append(Alerta(f"preço caiu {_pct(-r)} em 12 meses (com "
@@ -715,7 +734,7 @@ def _mercado(a: m.AnaliseAtivo, c, crits: list[Criterio],
         if n.categoria in CATEGORIAS_CRITICAS:
             alertas.append(Alerta(f"{n.rotulo_categoria.lower()} no noticiário"
                                   f" ({(n.date or '')[:10]}): {n.headline}",
-                                  True))
+                                  True, noticia=True))
             crits.append(Criterio(f"{n.rotulo_categoria}: {n.headline}", -1))
             escores.append(-1.0)
             metodos["categoria"] += 1
@@ -771,8 +790,9 @@ def _mercado(a: m.AnaliseAtivo, c, crits: list[Criterio],
         maior = ln.posicao == val.ACIMA
         crits.append(Criterio(
             f"{rotulo} de {_pct(abs(ln.valor))} "
-            f"{'acima' if maior else 'abaixo'} da mediana de {ln.n_pares} "
-            f"pares ({_pct(abs(ln.mediana_pares))})", -1 if maior else 1))
+            f"{'acima' if maior else 'abaixo'} da mediana de "
+            f"{_pares(ln.n_pares)} ({_pct(abs(ln.mediana_pares))})",
+            -1 if maior else 1))
     _momento(c, crits, alertas)
 
     assinados = [x.sinal for x in crits if x.sinal]

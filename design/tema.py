@@ -569,6 +569,8 @@ hr {
 .app-status-badge {
     display: inline-flex;
     align-items: center;
+    /* O flex descarta o espaço entre o ícone e o rótulo; o gap o devolve. */
+    gap: .3em;
     min-height: 28px;
     padding: 3px 10px;
     border: 1px solid color-mix(in srgb, var(--badge-color) 62%, transparent);

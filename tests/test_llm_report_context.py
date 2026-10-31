@@ -29,6 +29,26 @@ def test_fmt_dre_inclui_dividendos_e_fco():
     assert "FCO=" in out and "Dividendos=" in out
 
 
+def test_fmt_dre_nomeia_a_resposta_da_brapi_e_marca_a_velha():
+    from core.proventos_b3 import FONTE_ARQUIVO, FONTE_BANCO
+
+    df = _df_anos(3, col="Receita_Liquida", base=1e9)
+    df["Dividendos"] = 1.5
+    df.attrs.update(fonte=FONTE_ARQUIVO, foto_em={"AAAA3": "2020-01-02"})
+    out = _fmt_dre(df)
+    assert out.splitlines()[-1].startswith("  Dividendos: brapi, resposta de 02/01/2020 — VELHA:")
+
+    df.attrs.update(fonte=FONTE_BANCO, foto_em={})
+    assert _fmt_dre(df).splitlines()[-1] == f"  Dividendos: {FONTE_BANCO}."
+
+
+def test_fmt_dre_sem_valor_de_dividendos_nao_nomeia_fonte():
+    df = _df_anos(3, col="Receita_Liquida", base=1e9)
+    df["Dividendos"] = float("nan")
+    df.attrs.update(fonte="qualquer", foto_em={})
+    assert "Dividendos:" not in _fmt_dre(df)
+
+
 def test_report_model_default_gpt4o(monkeypatch):
     monkeypatch.delenv("LLM_REPORT_MODEL", raising=False)
     assert _report_model() == "gpt-4o"
