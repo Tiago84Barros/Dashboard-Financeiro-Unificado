@@ -970,6 +970,12 @@
                   "so_admin": false
                 },
                 {
+                  "nome": "Desempenho por Categoria",
+                  "resumo": "Linhas de retorno de cada tipo de investimento, lado a lado",
+                  "explicacao": "Gráfico de linhas que compara o retorno de Ações, FIIs, Empresas Americanas, ETFs Americanos, Tesouro Direto e Renda Fixa no período escolhido (6 meses, 12 meses, 24 meses, 5 anos ou no ano). No campo 'Comparar' você escolhe quais categorias aparecem. Cada linha usa os ativos que você tem hoje, na quantidade de hoje, e começa no primeiro dia em que há preço — as linhas não começam todas na mesma data. Não é a rentabilidade da sua conta: aportes e vendas ficam de fora. Ações e FIIs vêm do fechamento diário, as americanas são convertidas para reais pelo dólar do dia, o Tesouro pelo preço de recompra da curva oficial e a renda fixa pelo valor unitário dos extratos importados. Uma tabela abaixo mostra o retorno, a data de início, quantos ativos têm preço e a fonte de cada linha.",
+                  "so_admin": false
+                },
+                {
                   "nome": "Posições da Carteira",
                   "resumo": "Tabela de todos os ativos, agrupados por tipo",
                   "explicacao": "Tabela com cada ativo agrupado por tipo (ações, FIIs, americanas, renda fixa), com subtotais, peso na carteira, corretora e resultado. Se não houver posições, aparece 'Nenhuma posição encontrada'.",

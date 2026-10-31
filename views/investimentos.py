@@ -1769,6 +1769,216 @@ def _fig_performance_historico(
     return fig
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# Desempenho por Categoria — Análise › Visão Geral
+# ══════════════════════════════════════════════════════════════════════════════
+
+_PERIODOS_CATEGORIAS = ("6M", "12M", "24M", "5Y", "YTD")
+_CHAVE_USDBRL = "USDBRL"
+
+
+@user_cache_data(ttl=3600, show_spinner=False)
+def _precos_tesouro_categoria(titulos: tuple[tuple[str, str], ...], desde) -> pd.DataFrame:
+    from core.database import get_engine
+    from core.desempenho_categorias import precos_tesouro
+
+    posicoes = [{"ticker": tk, "nome": nome} for tk, nome in titulos]
+    return precos_tesouro(get_engine(), posicoes, desde)
+
+
+@user_cache_data(ttl=3600, show_spinner=False)
+def _precos_renda_fixa_categoria(tickers: tuple[str, ...], desde) -> pd.DataFrame:
+    from core.config import settings
+    from core.database import get_engine
+    from core.desempenho_categorias import precos_renda_fixa
+
+    return precos_renda_fixa(get_engine(), settings.OWNER_USER_ID, list(tickers), desde)
+
+
+def _series_desempenho_categorias(posicoes: list, period_key: str) -> tuple[dict, dict]:
+    """``({categoria: retorno % acumulado}, {categoria: procedência})``.
+
+    Cada categoria parte do primeiro dado que tem dentro do período; as linhas
+    não são alinhadas no tempo. Ver ``core.desempenho_categorias``.
+    """
+    from core import desempenho_categorias as dc
+
+    cfg = _PERFORMANCE_PERIODS[period_key]
+    desde = dc.inicio_do_periodo(cfg["days"])
+    corte = pd.Timestamp(desde)
+    series: dict[str, pd.Series] = {}
+    info: dict[str, dict] = {}
+    grupos = dc.posicoes_por_categoria(posicoes)
+
+    # Uma chamada só ao yfinance para todas as categorias de bolsa, câmbio junto:
+    # a Visão Geral é a subaba que abre primeiro.
+    simbolos: dict[str, dict[str, str]] = {}
+    for nome, lista in grupos.items():
+        if dc.POR_NOME[nome].fonte != "mercado":
+            continue
+        for p in lista:
+            if sym := _yf_symbol_for_pos(p):
+                simbolos.setdefault(nome, {})[sym.removesuffix(".SA")] = sym
+    mapa = {base: sym for grupo in simbolos.values() for base, sym in grupo.items()}
+    if any(dc.POR_NOME[n].dolar for n in simbolos):
+        mapa[_CHAVE_USDBRL] = "BRL=X"
+    mercado = (_load_performance_history(tuple(sorted(mapa.items())), period_key)
+               if mapa else pd.DataFrame())
+    usdbrl = mercado.get(_CHAVE_USDBRL, pd.Series(dtype=float))
+
+    for nome, lista in grupos.items():
+        cat = dc.POR_NOME[nome]
+        moeda = "BRL"
+        quantidades: dict[str, float] = {}
+        if cat.fonte == "mercado":
+            for p in lista:
+                if sym := _yf_symbol_for_pos(p):
+                    base = sym.removesuffix(".SA")
+                    quantidades[base] = quantidades.get(base, 0.0) + float(p["quantidade"])
+            cols = [c for c in mercado.columns if c in quantidades]
+            precos = mercado[cols].dropna(how="all") if cols else pd.DataFrame()
+            fonte = "Fechamento diário (yfinance ajustado; na falha, asset_quotes)"
+            if cat.dolar and not precos.empty:
+                em_brl = dc.converter_para_brl(precos, usdbrl)
+                if em_brl.dropna(how="all").empty:
+                    moeda = "USD"
+                else:
+                    precos = em_brl
+        elif cat.fonte == "tesouro":
+            titulos = tuple(sorted({(str(p["ticker"]).strip(), str(p.get("nome") or ""))
+                                    for p in lista}))
+            for p in lista:
+                tk = str(p["ticker"]).strip()
+                quantidades[tk] = quantidades.get(tk, 0.0) + float(p["quantidade"])
+            precos = _precos_tesouro_categoria(titulos, desde)
+            fonte = "PU de recompra diário da curva do Tesouro"
+        else:
+            for p in lista:
+                tk = str(p["ticker"]).strip()
+                quantidades[tk] = quantidades.get(tk, 0.0) + float(p["quantidade"])
+            precos = _precos_renda_fixa_categoria(tuple(sorted(quantidades)), desde)
+            fonte = "Valor unitário das fotos de custódia"
+
+        if not precos.empty:
+            precos = precos.copy()
+            precos.index = pd.to_datetime(precos.index)
+            if getattr(precos.index, "tz", None) is not None:
+                precos.index = precos.index.tz_localize(None)
+            precos = precos.loc[precos.index >= corte]
+        serie = dc.retorno_encadeado(precos, quantidades) if not precos.empty else None
+        cobertos = [c for c in precos.columns
+                    if c in quantidades and precos[c].notna().any()] if not precos.empty else []
+        if serie is None or len(serie) < 2:
+            aviso_lacuna(
+                f"{nome}: sem série de preço no período {period_key} para "
+                f"{', '.join(sorted(quantidades) or [p['ticker'] for p in lista])}.",
+                codigo="tela.investimentos.desempenho_categoria_sem_serie",
+                entidade=nome,
+            )
+            continue
+        series[nome] = serie
+        info[nome] = {
+            "fonte": fonte, "moeda": moeda, "inicio": serie.index[0],
+            "cobertos": len(cobertos), "total": len(lista),
+            "retorno": float(serie.iloc[-1]),
+        }
+    return series, info
+
+
+def _fig_desempenho_categorias(series: dict, selecionadas: list) -> go.Figure:
+    from core.desempenho_categorias import POR_NOME
+
+    fig = go.Figure()
+    for nome in selecionadas:
+        s = series.get(nome)
+        if s is None or s.empty:
+            continue
+        final = float(s.iloc[-1])
+        fig.add_trace(go.Scatter(
+            x=s.index, y=s.values, mode="lines",
+            name=f"{nome} ({'+' if final >= 0 else ''}{final:.1f}%)",
+            line={"color": POR_NOME[nome].cor, "width": 2},
+            hovertemplate=f"<b>{_html.escape(nome)}</b><br>"
+                          "%{x|%d/%m/%Y}: %{y:+.2f}%<extra></extra>",
+        ))
+    fig.add_hline(y=0, line_dash="dot", line_color="#4A5568", line_width=1, opacity=0.7)
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        font_color=_COR_NEUTRO,
+        legend={"orientation": "h", "y": -0.15, "font": {"size": 11},
+                "bgcolor": "rgba(0,0,0,0)"},
+        margin={"t": 10, "b": 10, "l": 0, "r": 0},
+        height=420,
+        xaxis={"showgrid": True, "gridcolor": "#1E2533", "title": None},
+        yaxis={"showgrid": True, "gridcolor": "#1E2533", "ticksuffix": "%",
+               "title": "Retorno acumulado no período", "tickfont": {"size": 10}},
+        hovermode="closest",
+    )
+    return fig
+
+
+def _secao_desempenho_categorias(posicoes: list) -> None:
+    """Linhas de retorno por categoria, com escolha do que comparar."""
+    from core.desempenho_categorias import CATEGORIAS
+
+    _secao_titulo_orig(
+        "📈", "Desempenho por Categoria",
+        "Retorno de preço das posições atuais de cada categoria; "
+        "cada linha começa no primeiro dado que tem no período",
+    )
+    col_p, col_s = st.columns([1, 3], gap="medium")
+    with col_p:
+        period_key = st.radio(
+            "Período", _PERIODOS_CATEGORIAS, index=1, horizontal=True,
+            key="analise_vg_categorias_periodo",
+            format_func=lambda k: _PERFORMANCE_PERIODS[k]["label"],
+        )
+    with st.spinner("Carregando séries por categoria…"):
+        series, info = _series_desempenho_categorias(posicoes, period_key)
+    if not series:
+        st.info("Nenhuma categoria da carteira tem série de preço neste período.", icon="📈")
+        return
+    opcoes = [c.nome for c in CATEGORIAS if c.nome in series]
+    with col_s:
+        chave = "analise_vg_categorias_sel"
+        # Trocar o período pode tirar uma categoria das opções; a escolha
+        # guardada perde o que sumiu em vez de quebrar o widget.
+        if chave in st.session_state:
+            st.session_state[chave] = [c for c in st.session_state[chave] if c in opcoes]
+            padrao = {}
+        else:
+            padrao = {"default": opcoes}
+        selecionadas = st.multiselect(
+            "Comparar", opcoes, key=chave,
+            help="Escolha quais categorias aparecem no gráfico.", **padrao,
+        )
+    if not selecionadas:
+        st.info("Selecione ao menos uma categoria para comparar.", icon="☝️")
+        return
+    st.plotly_chart(_fig_desempenho_categorias(series, selecionadas),
+                    width="stretch", config={"displayModeBar": False},
+                    key="analise_vg_categorias_graf")
+
+    linhas = []
+    for nome in selecionadas:
+        i = info[nome]
+        linhas.append({
+            "Categoria": nome,
+            "Retorno no período": f"{'+' if i['retorno'] >= 0 else ''}{i['retorno']:.2f}%",
+            "Início da série": i["inicio"].strftime("%d/%m/%Y"),
+            "Ativos com série": f"{i['cobertos']}/{i['total']}",
+            "Moeda": i["moeda"],
+            "Fonte": i["fonte"],
+        })
+    st.dataframe(pd.DataFrame(linhas), hide_index=True, width="stretch")
+    st.caption(
+        "Não é a rentabilidade da conta: usa a quantidade de hoje de cada ativo e "
+        "ignora aportes e vendas. FIIs e ações pelo fechamento ajustado incluem "
+        "proventos; Tesouro com cupom cai no pagamento do cupom. Categorias "
+        "americanas em reais pelo câmbio do dia, salvo quando a coluna Moeda diz USD."
+    )
+
+
 def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: dict) -> None:
     posicoes   = carteira.get("posicoes", [])
     por_classe = carteira.get("por_classe", [])
@@ -3763,6 +3973,10 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
             for i, cls in enumerate(por_classe[:n_cls]):
                 with cols_cls[i]:
                     st.markdown(_kpi_classe(cls), unsafe_allow_html=True)
+
+        if posicoes:
+            st.markdown("<br>", unsafe_allow_html=True)
+            _secao_desempenho_categorias(posicoes)
 
         if posicoes:
             st.markdown("<br>", unsafe_allow_html=True)
