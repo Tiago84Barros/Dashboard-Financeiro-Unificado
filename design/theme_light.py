@@ -396,6 +396,26 @@ button:disabled {opacity:.55;}
 [data-testid="stCode"] div:has(> [data-testid="stElementToolbarButton"]) {
  background:var(--app-surface-raised)!important; border-radius:8px;
 }
+/* Ajuda dos widgets (o "?" de todo `help=`), medido no DOM em 31/10/2026.
+   O traço do SVG chega com o rgba(250,250,250,.6) do tema escuro e some no
+   claro; o `fill` não serve, porque o ícone é só contorno. E a regra que dá
+   fundo branco aos botões do selectbox pegava também o botão do ícone, que
+   virava um quadrado branco no lugar do "?". */
+[data-testid="stTooltipIcon"] button {background:transparent!important;}
+[data-testid="stTooltipIcon"] svg, [data-testid="stTooltipIcon"] svg * {
+ stroke:var(--app-muted)!important;
+}
+[data-testid="stTooltipIcon"] button:hover :is(svg, svg *) {
+ stroke:var(--app-text)!important;
+}
+/* O balão continua escuro -- é o desenho normal do tooltip (ver o menu do
+   selectbox, acima) --, mas o texto dele é markdown, e a regra de texto do
+   claro o pintava de --app-text: #172033 sobre #1A1F2E, 1,1:1. Toda ajuda
+   do app estava ilegível no tema claro. */
+[data-testid="stTooltipContent"] [data-testid="stMarkdownContainer"]
+ :is(p,li,h1,h2,h3,h4,h5,h6) {
+ color:#fafafa!important;
+}
 </style>
 """
 
