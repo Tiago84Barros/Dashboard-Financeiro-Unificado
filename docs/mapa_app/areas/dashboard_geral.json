@@ -1,31 +1,39 @@
 {
   "nome": "Dashboard Geral",
   "resumo": "Resumo do seu dinheiro e dos investimentos numa página",
-  "explicacao": "É a primeira tela do app: uma página única, de rolar, que junta o mês atual (quanto entrou, quanto saiu, quanto sobrou), o histórico, a carteira que você tem investida e as carteiras sugeridas pelo app. Aqui você só consulta: nada é digitado nem salvo. Para lançar ou corrigir valores, use os outros itens do menu.",
+  "explicacao": "É a primeira tela do app: uma página única, de rolar, que junta o mês atual (quanto entrou, quanto saiu, quanto sobrou), o histórico, a carteira que você tem investida e as carteiras sugeridas pelo app. Ela se monta com as seções que você mantém no menu (Configurações → Geral → Seções do aplicativo): o bloco de uma seção desligada não aparece, e o que sobra continua na mesma ordem. Aqui você só consulta: nada é digitado nem salvo. Para lançar ou corrigir valores, use os outros itens do menu.",
   "so_admin": false,
-  "fonte": "views/dashboard_geral.py:1756",
+  "fonte": "views/dashboard_geral.py:1882",
   "filhos": [
     {
       "nome": "Seu dinheiro, em perspectiva.",
       "resumo": "Título da página, mês de referência e origem dos dados",
-      "explicacao": "Faixa de abertura com o título e pequenas etiquetas: se os números são seus dados reais ou de demonstração, o mês a que se referem e a data de hoje. Se o mês atual já tem lançamentos, aparece também 'Mês parcial · até dd/mm', lembrando que o mês ainda não fechou. Se o mês atual ainda não tem lançamentos, os números e a etiqueta passam a ser do último mês com movimento.",
+      "explicacao": "Faixa de abertura com o título e pequenas etiquetas: se os números são seus dados reais ou de demonstração, o mês a que se referem e a data de hoje. Se o mês atual já tem lançamentos, aparece também 'Mês parcial · até dd/mm', lembrando que o mês ainda não fechou. Se o mês atual ainda não tem lançamentos, os números e a etiqueta passam a ser do último mês com movimento. A frase abaixo do título diz o que a página reúne; com seções fora do menu, ela lista só o que ficou (por exemplo, 'o caixa do mês e as carteiras recomendadas'). Sem o Controle Financeiro no menu, a etiqueta de período é sempre a do mês atual, que é o mês dos números que sobram no topo.",
       "so_admin": false,
-      "fonte": "views/dashboard_geral.py:396",
+      "fonte": "views/dashboard_geral.py:453",
+      "filhos": []
+    },
+    {
+      "nome": "Painel sem seções",
+      "resumo": "Aviso quando nenhuma seção com resumo está no menu",
+      "explicacao": "Se Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas e Seleção de FIIs estiverem todos fora do menu, a página mostra só o título e um quadro dizendo que nada foi apagado e que as seções se ligam de novo em Configurações → Geral → Seções do aplicativo.",
+      "so_admin": false,
+      "fonte": "views/dashboard_geral.py:1646",
       "filhos": []
     },
     {
       "nome": "Indicadores financeiros principais",
-      "resumo": "Cinco números-chave do mês e da carteira",
-      "explicacao": "Uma fileira de cinco cartões com os números mais importantes: quanto você tem investido, quanto sobrou no mês, quanto conseguiu poupar, quanto a carteira rende e quanto recebeu de rendimentos. Esse nome não aparece escrito na tela (é o nome que o app dá à fileira para leitores de tela). Se alguma conta ou aplicação em moeda estrangeira ficou fora do total por falta de cotação, aparece um aviso logo abaixo dizendo qual.",
+      "resumo": "Até cinco números-chave do mês e da carteira",
+      "explicacao": "Uma fileira de até cinco cartões com os números mais importantes: quanto você tem investido, quanto sobrou no mês, quanto conseguiu poupar, quanto a carteira rende e quanto recebeu de rendimentos. Saldo e taxa de poupança são do Controle Financeiro; patrimônio, rentabilidade e rendimentos são de Investimentos. Com uma dessas seções fora do menu, os cartões dela saem e os que ficam ocupam a largura toda. Esse nome não aparece escrito na tela (é o nome que o app dá à fileira para leitores de tela). Se alguma conta ou aplicação em moeda estrangeira ficou fora do total por falta de cotação, aparece um aviso logo abaixo dizendo qual.",
       "so_admin": false,
-      "fonte": "views/dashboard_geral.py:461",
+      "fonte": "views/dashboard_geral.py:519",
       "filhos": [
         {
           "nome": "Patrimônio investido",
           "resumo": "Valor atual de tudo que você tem aplicado",
           "explicacao": "Quanto valem hoje, a preço de mercado, todas as suas aplicações, com a quantidade de ativos. Mostra 'N/D' quando esse valor não está disponível.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:509",
+          "fonte": "views/dashboard_geral.py:575",
           "filhos": []
         },
         {
@@ -33,7 +41,7 @@
           "resumo": "Receitas menos despesas do mês",
           "explicacao": "Quanto sobrou no mês: receitas menos despesas. Dinheiro aplicado em investimentos não conta como despesa. Fica vermelho só quando você gastou mais do que ganhou, e azul quando as aplicações passaram da sobra (é dinheiro guardado, não gasto).",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:516",
+          "fonte": "views/dashboard_geral.py:582",
           "filhos": []
         },
         {
@@ -41,7 +49,7 @@
           "resumo": "Parte da renda poupada, com meta de 30%",
           "explicacao": "Que parte da renda do mês você guardou: a sobra mais o que foi aplicado. A meta de referência é 30%: verde quando atingida, amarelo entre 15% e 30%, vermelho abaixo de 15%.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:525",
+          "fonte": "views/dashboard_geral.py:591",
           "filhos": []
         },
         {
@@ -49,7 +57,7 @@
           "resumo": "Ganho ou perda da carteira em porcentagem",
           "explicacao": "Quanto a carteira ganhou ou perdeu, em porcentagem, comparando o valor de hoje com o que você pagou pelos ativos.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:535",
+          "fonte": "views/dashboard_geral.py:601",
           "filhos": []
         },
         {
@@ -57,7 +65,7 @@
           "resumo": "Rendimentos recebidos no mês e no ano",
           "explicacao": "Dividendos e outros rendimentos pagos pelos seus investimentos no mês atual, com o total do ano logo abaixo. Mostra 'N/D' quando essa informação não está disponível.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:543",
+          "fonte": "views/dashboard_geral.py:609",
           "filhos": []
         }
       ]
@@ -65,24 +73,24 @@
     {
       "nome": "Leitura do mês",
       "resumo": "Frase pronta que resume como foi o mês",
-      "explicacao": "Um quadro com uma frase que interpreta o mês: se sobrou dinheiro, se houve déficit, ou se o que passou da renda foi aplicação e não gasto. Lembra também que os números de cima são fatos, enquanto as carteiras mostradas mais abaixo são só referências analíticas.",
+      "explicacao": "Um quadro com uma frase que interpreta o mês: se sobrou dinheiro, se houve déficit, ou se o que passou da renda foi aplicação e não gasto. Lembra também que os números de cima são fatos, enquanto as carteiras mostradas mais abaixo são só referências analíticas. Só aparece com o Controle Financeiro no menu.",
       "so_admin": false,
-      "fonte": "views/dashboard_geral.py:1844",
+      "fonte": "views/dashboard_geral.py:1996",
       "filhos": []
     },
     {
       "nome": "Resumo por área",
       "resumo": "Um cartão por área do app, com poucos números",
-      "explicacao": "Cinco cartões numerados que mostram como está cada parte do app: o caixa do mês, os investimentos e as três carteiras sugeridas (ações brasileiras, ações americanas e fundos imobiliários). Os cartões só informam; para mexer em algo, abra o item correspondente no menu.",
+      "explicacao": "Até cinco cartões numerados que mostram como está cada parte do app: o caixa do mês, os investimentos e as três carteiras sugeridas (ações brasileiras, ações americanas e fundos imobiliários). Só entram as seções que estão no seu menu, numeradas na ordem em que aparecem (1, 2, 3...). Os cartões só informam; para mexer em algo, abra o item correspondente no menu.",
       "so_admin": false,
-      "fonte": "views/dashboard_geral.py:999",
+      "fonte": "views/dashboard_geral.py:1152",
       "filhos": [
         {
           "nome": "Controle Financeiro",
           "resumo": "Receitas, despesas, saldo e poupança do mês",
           "explicacao": "Retrato rápido da tela Controle Financeiro: receitas, despesas, saldo, quanto foi aplicado no mês e a taxa de poupança.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1010",
+          "fonte": "views/dashboard_geral.py:1086",
           "filhos": []
         },
         {
@@ -90,7 +98,7 @@
           "resumo": "Patrimônio, aportes do ano e rentabilidade",
           "explicacao": "Quanto você tem investido, quanto aplicou no ano, em quantos tipos de aplicação o dinheiro está dividido (ações, renda fixa etc.) e a rentabilidade.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1031",
+          "fonte": "views/dashboard_geral.py:1103",
           "filhos": []
         },
         {
@@ -98,7 +106,7 @@
           "resumo": "Resumo da carteira de ações brasileiras sugerida",
           "explicacao": "Resumo da carteira de ações brasileiras que você salvou na tela Empresas B3: quantas empresas, a nota média e o ano de compra. A etiqueta diz 'Ativa', 'Revisar' (feita com um método antigo) ou 'Sem carteira'. Leva o selo 'Carteira recomendada pelo app'.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1053",
+          "fonte": "views/dashboard_geral.py:1117",
           "filhos": []
         },
         {
@@ -106,7 +114,7 @@
           "resumo": "Resumo da carteira de ações dos EUA sugerida",
           "explicacao": "O mesmo resumo para a carteira de ações dos Estados Unidos salva na tela Empresas Americanas, com a nota média de entrada. Também leva o selo 'Carteira recomendada pelo app'.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1067",
+          "fonte": "views/dashboard_geral.py:1127",
           "filhos": []
         },
         {
@@ -114,7 +122,7 @@
           "resumo": "Resumo da carteira de fundos imobiliários",
           "explicacao": "Quantos fundos imobiliários, o rendimento médio pago nos últimos 12 meses e o P/VP (preço do fundo comparado ao valor do patrimônio dele). A etiqueta diz 'Salva' se você salvou uma carteira ou 'Sugerida' se é a sugestão automática do app.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1085",
+          "fonte": "views/dashboard_geral.py:1137",
           "filhos": []
         }
       ]
@@ -122,16 +130,16 @@
     {
       "nome": "Evolução financeira",
       "resumo": "Caixa dos últimos meses, categorias e anos",
-      "explicacao": "Bloco do caixa: como receitas, despesas e aplicações se comportaram nos últimos meses e anos. Tudo vem dos lançamentos do Controle Financeiro.",
+      "explicacao": "Bloco do caixa: como receitas, despesas e aplicações se comportaram nos últimos meses e anos. Tudo vem dos lançamentos do Controle Financeiro. Só aparece com o Controle Financeiro no menu.",
       "so_admin": false,
-      "fonte": "views/dashboard_geral.py:1873",
+      "fonte": "views/dashboard_geral.py:2028",
       "filhos": [
         {
           "nome": "Receitas, despesas e investimentos (6 meses)",
           "resumo": "Gráfico mês a mês dos últimos seis meses",
           "explicacao": "Gráfico de barras com receitas e despesas de cada um dos últimos seis meses e uma linha com o que foi aplicado. Este gráfico não tem título próprio; fica logo abaixo da faixa 'Evolução financeira'.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1880",
+          "fonte": "views/dashboard_geral.py:2035",
           "filhos": []
         },
         {
@@ -139,7 +147,7 @@
           "resumo": "Onde você mais gastou no ano",
           "explicacao": "Gráfico de rosca com as categorias que mais pesaram no ano (o título mostra o ano, por exemplo '(2026)') e a lista das cinco maiores, com valor e porcentagem. Compras feitas no cartão de crédito ficam de fora, pois têm análise própria.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1898",
+          "fonte": "views/dashboard_geral.py:2053",
           "filhos": []
         },
         {
@@ -147,7 +155,7 @@
           "resumo": "Receitas, aplicações e despesas de cada ano",
           "explicacao": "Gráfico e tabela com o total de receitas, investimentos e despesas de cada ano, para comparar um ano com o outro.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1934",
+          "fonte": "views/dashboard_geral.py:2089",
           "filhos": []
         }
       ]
@@ -155,16 +163,16 @@
     {
       "nome": "Raio X do portfólio investido",
       "resumo": "Como está dividida a carteira que você tem",
-      "explicacao": "Retrato da carteira que você realmente tem aplicada: quanto rende, quanto está fora do Brasil, se está bem dividida e como evoluiu. Só aparece se houver investimentos registrados.",
+      "explicacao": "Retrato da carteira que você realmente tem aplicada: quanto rende, quanto está fora do Brasil, se está bem dividida e como evoluiu. Só aparece se houver investimentos registrados e com Investimentos no menu.",
       "so_admin": false,
-      "fonte": "views/dashboard_geral.py:1129",
+      "fonte": "views/dashboard_geral.py:1199",
       "filhos": [
         {
           "nome": "Rentabilidade, Exterior, N efetivo e Top 5",
           "resumo": "Quatro números sobre ganho e diversificação",
           "explicacao": "O ganho ou perda da carteira; a parte aplicada fora do Brasil; o 'N efetivo', que diz a quantos ativos de mesmo tamanho sua carteira equivale (abaixo de 10 fica amarelo, sinal de pouca diversificação); e quanto as cinco maiores posições somam (acima de 50% fica vermelho), citando a maior delas.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1137",
+          "fonte": "views/dashboard_geral.py:1207",
           "filhos": []
         },
         {
@@ -172,7 +180,7 @@
           "resumo": "Divisão do dinheiro por tipo de aplicação",
           "explicacao": "Gráfico de rosca mostrando como o dinheiro investido se divide entre tipos de aplicação (ações, renda fixa, fundos etc.).",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1152",
+          "fonte": "views/dashboard_geral.py:1222",
           "filhos": []
         },
         {
@@ -180,7 +188,7 @@
           "resumo": "Quanto está no Brasil e quanto lá fora",
           "explicacao": "Barras comparando o valor aplicado no Brasil com o valor aplicado no exterior.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1160",
+          "fonte": "views/dashboard_geral.py:1230",
           "filhos": []
         },
         {
@@ -188,7 +196,7 @@
           "resumo": "Ativos que mais pesam na carteira",
           "explicacao": "Barras com os ativos que ocupam a maior parte da carteira.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1172",
+          "fonte": "views/dashboard_geral.py:1242",
           "filhos": []
         },
         {
@@ -196,7 +204,7 @@
           "resumo": "Valor da carteira ao longo do tempo",
           "explicacao": "Linha do tempo com o valor de mercado da carteira e quanto você pagou por ela. Se ainda não houver histórico suficiente, mostra apenas um aviso de que a evolução não está disponível.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1180",
+          "fonte": "views/dashboard_geral.py:1250",
           "filhos": []
         }
       ]
@@ -204,23 +212,23 @@
     {
       "nome": "Detalhes da carteira recomendada",
       "resumo": "Carteiras sugeridas pelo app, para consulta",
-      "explicacao": "Último bloco da página: a composição das carteiras que o app sugere e que você salvou nas telas Empresas B3, Empresas Americanas e Seleção de FIIs. São sugestões para consulta, não o que você tem investido. Só aparece se existir ao menos uma dessas carteiras, e nunca no modo de demonstração.",
+      "explicacao": "Último bloco da página: a composição das carteiras que o app sugere e que você salvou nas telas Empresas B3, Empresas Americanas e Seleção de FIIs. São sugestões para consulta, não o que você tem investido. Cada carteira só aparece com a tela dela no menu, e a faixa de abertura cita só as que vêm logo abaixo. O bloco só aparece se existir ao menos uma dessas carteiras, e nunca no modo de demonstração.",
       "so_admin": false,
-      "fonte": "views/dashboard_geral.py:1584",
+      "fonte": "views/dashboard_geral.py:1692",
       "filhos": [
         {
           "nome": "Portfólio B3 padrão",
           "resumo": "Carteira de ações brasileiras salva por você",
           "explicacao": "Carteira de ações brasileiras salva na tela Empresas B3. Só aparece se você salvou uma. Se ela foi montada com um método antigo do app, surge um aviso pedindo para refazê-la em Empresas B3 antes de usá-la.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1351",
+          "fonte": "views/dashboard_geral.py:1421",
           "filhos": [
             {
               "nome": "Recarregar",
               "resumo": "Busca de novo a carteira salva",
               "explicacao": "Botão que lê outra vez a carteira salva. Útil quando você acabou de alterá-la na tela Empresas B3 e a mudança ainda não apareceu aqui (o app guarda a leitura por alguns minutos).",
               "so_admin": false,
-              "fonte": "views/dashboard_geral.py:1284",
+              "fonte": "views/dashboard_geral.py:1354",
               "filhos": []
             },
             {
@@ -228,7 +236,7 @@
               "resumo": "Quatro números que resumem a carteira",
               "explicacao": "Quantas empresas e para que ano de compra, a nota média delas no método do app, o setor com mais peso e a data em que a carteira foi salva.",
               "so_admin": false,
-              "fonte": "views/dashboard_geral.py:1356",
+              "fonte": "views/dashboard_geral.py:1426",
               "filhos": []
             },
             {
@@ -236,7 +244,7 @@
               "resumo": "Códigos das empresas da carteira",
               "explicacao": "Lista com o código de cada empresa da carteira (até 30; se houver mais, diz quantas ficaram de fora da lista).",
               "so_admin": false,
-              "fonte": "views/dashboard_geral.py:1310",
+              "fonte": "views/dashboard_geral.py:1380",
               "filhos": []
             },
             {
@@ -244,7 +252,7 @@
               "resumo": "Quanto iria para cada empresa",
               "explicacao": "Parte do dinheiro que iria para cada empresa, mostrando as oito de maior peso.",
               "so_admin": false,
-              "fonte": "views/dashboard_geral.py:1325",
+              "fonte": "views/dashboard_geral.py:1395",
               "filhos": []
             },
             {
@@ -262,14 +270,14 @@
           "resumo": "Carteira de ações americanas salva por você",
           "explicacao": "Carteira de ações dos Estados Unidos salva na tela Empresas Americanas, no mesmo formato da carteira brasileira. Só aparece se você salvou uma; se foi feita com um método antigo, surge um aviso pedindo para refazê-la.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1389",
+          "fonte": "views/dashboard_geral.py:1459",
           "filhos": [
             {
               "nome": "Recarregar",
               "resumo": "Busca de novo a carteira salva",
               "explicacao": "Botão que lê outra vez a carteira salva, para mostrar uma mudança recente feita em Empresas Americanas.",
               "so_admin": false,
-              "fonte": "views/dashboard_geral.py:1284",
+              "fonte": "views/dashboard_geral.py:1354",
               "filhos": []
             },
             {
@@ -277,7 +285,7 @@
               "resumo": "Quatro números que resumem a carteira",
               "explicacao": "Quantas empresas e para que ano de compra, a nota média de entrada (pesada pelo tamanho de cada posição), o setor com mais peso e a data em que a carteira foi salva.",
               "so_admin": false,
-              "fonte": "views/dashboard_geral.py:1394",
+              "fonte": "views/dashboard_geral.py:1464",
               "filhos": []
             },
             {
@@ -285,7 +293,7 @@
               "resumo": "Códigos das empresas da carteira",
               "explicacao": "Lista com o código de cada empresa americana da carteira (até 30).",
               "so_admin": false,
-              "fonte": "views/dashboard_geral.py:1310",
+              "fonte": "views/dashboard_geral.py:1380",
               "filhos": []
             },
             {
@@ -293,7 +301,7 @@
               "resumo": "Quanto iria para cada empresa",
               "explicacao": "Parte do dinheiro que iria para cada empresa, mostrando as oito de maior peso.",
               "so_admin": false,
-              "fonte": "views/dashboard_geral.py:1325",
+              "fonte": "views/dashboard_geral.py:1395",
               "filhos": []
             },
             {
@@ -311,14 +319,14 @@
           "resumo": "Fundos imobiliários salvos ou sugeridos pelo app",
           "explicacao": "Carteira de fundos imobiliários: a que você salvou na Seleção de FIIs ou, se não salvou nenhuma, uma sugestão automática calculada pelo app (o subtítulo diz qual das duas). Se a carteira salva não puder ser lida, aparece um aviso de que está sendo exibida a sugestão recalculada.",
           "so_admin": false,
-          "fonte": "views/dashboard_geral.py:1486",
+          "fonte": "views/dashboard_geral.py:1556",
           "filhos": [
             {
               "nome": "FIIs, DY 12m, P/VP e Tipo líder",
               "resumo": "Quatro números que resumem os fundos",
               "explicacao": "Quantos fundos, o rendimento médio pago nos últimos 12 meses, o preço comparado ao valor do patrimônio dos fundos e o tipo de fundo com mais peso (tijolo, papel, fundo de fundos ou híbrido).",
               "so_admin": false,
-              "fonte": "views/dashboard_geral.py:1488",
+              "fonte": "views/dashboard_geral.py:1558",
               "filhos": []
             },
             {
@@ -326,7 +334,7 @@
               "resumo": "Códigos dos fundos escolhidos",
               "explicacao": "Lista com o código de cada fundo da carteira e uma nota de que ela é dividida por tipo, com limite por fundo e por tipo.",
               "so_admin": false,
-              "fonte": "views/dashboard_geral.py:1508",
+              "fonte": "views/dashboard_geral.py:1578",
               "filhos": []
             },
             {
@@ -334,7 +342,7 @@
               "resumo": "Quanto iria para cada fundo",
               "explicacao": "Parte do dinheiro que iria para cada um dos cinco fundos de maior peso.",
               "so_admin": false,
-              "fonte": "views/dashboard_geral.py:1527",
+              "fonte": "views/dashboard_geral.py:1597",
               "filhos": []
             },
             {
@@ -342,7 +350,7 @@
               "resumo": "Fundos barrados ou trocados ao montar a carteira",
               "explicacao": "Mesma seção de abrir e fechar das outras carteiras. Só aparece quando a carteira de fundos foi salva por você (não na sugestão automática).",
               "so_admin": false,
-              "fonte": "views/dashboard_geral.py:1534",
+              "fonte": "views/dashboard_geral.py:1604",
               "filhos": []
             }
           ]
