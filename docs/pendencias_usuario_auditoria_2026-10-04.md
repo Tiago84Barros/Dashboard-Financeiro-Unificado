@@ -147,7 +147,9 @@ bloqueio, reprovaria as validações 88 a 90 — #494.
 - **Âncora do preço médio de BBAS3:** o app calcula 25,46, contra 23,92 da
   outra fonte. A posição anterior ao extrato (Bens e Direitos do IR,
   migration 080) resolve na origem.
-- **Primeiro elo da cadeia de LLM:** hoje é `nvidia/nemotron-3-super-120b-a12b:free`.
+- **Primeiro elo da cadeia de LLM:** desde 26/10/2026 é `nvidia/nemotron-3.5-super-vl:free`,
+  com `nvidia/nemotron-3-ultra-550b-a55b:free` de reserva no próprio OpenRouter
+  (o endpoint gratuito do `nemotron-3-super-120b-a12b` sumiu na NVIDIA).
   Desde o #482, dado pessoal não vai para modelo `:free`.
 - **Uma linha por empresa no ranking B3:** 91 empresas têm mais de uma classe.
   `public.setores` guarda uma classe por empresa de propósito — #497.

@@ -14,7 +14,7 @@ import pytest
 import core.llm_b3 as llm
 from tests.test_llm_provider_fallback import _PROVEDORES, _FakeClient
 
-_GRATIS = "nvidia/nemotron-3-super-120b-a12b:free"
+_GRATIS = "nvidia/nemotron-3.5-super-vl:free"
 
 
 @pytest.fixture(autouse=True)

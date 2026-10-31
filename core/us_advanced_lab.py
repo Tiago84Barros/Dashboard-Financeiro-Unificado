@@ -4,6 +4,12 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from core.us_estilos import notas_de_estilo
+
+# As seis primeiras são as trilhas fundamentalistas de core.us_score; momento e
+# P&D (core.us_estilos) entraram em 30/10/2026 -- os dois estilos que mais
+# renderam acima do mercado nos EUA na base sem viés de sobrevivência e que a
+# nota não olhava.
 TRACK_COLUMNS = {
     "quality": "score_quality",
     "growth": "score_growth",
@@ -11,15 +17,30 @@ TRACK_COLUMNS = {
     "capital_efficiency": "score_capital_efficiency",
     "valuation": "score_valuation",
     "shareholder": "score_shareholder",
+    "momentum": "score_momentum",
+    "rd": "score_pd",
 }
 
+TRACK_LABELS = {
+    "quality": "Qualidade", "growth": "Crescimento", "solidity": "Solidez",
+    "capital_efficiency": "Eficiência de capital", "valuation": "Avaliação",
+    "shareholder": "Retorno ao acionista", "momentum": "Momento (12 meses)",
+    "rd": "Pesquisa e desenvolvimento",
+}
+
+# As seis fundamentalistas mantêm a proporção que tinham entre si (eram 22, 18,
+# 15, 15, 18 e 12) e cedem 18 pontos aos estilos. Momento leva mais que P&D: a
+# evidência dele vem de 1927 e vale para toda ação com preço; a de P&D, de 1951,
+# e só para quem declara P&D -- o resto fica neutro nessa trilha.
 DEFAULT_WEIGHTS = {
-    "quality": .22,
-    "growth": .18,
-    "solidity": .15,
-    "capital_efficiency": .15,
-    "valuation": .18,
-    "shareholder": .12,
+    "quality": .18,
+    "growth": .15,
+    "solidity": .12,
+    "capital_efficiency": .12,
+    "valuation": .15,
+    "shareholder": .10,
+    "momentum": .11,
+    "rd": .07,
 }
 
 
@@ -81,7 +102,7 @@ def build_entry_scores(scored: pd.DataFrame,
     """Repondera as trilhas e calcula score de entrada + penalidades de risco."""
     if scored is None or scored.empty:
         return pd.DataFrame()
-    out = scored.copy().reset_index(drop=True)
+    out = notas_de_estilo(scored.copy().reset_index(drop=True))
     w = normalize_weights(weights)
 
     def series(column: str, default: float = 50.0) -> pd.Series:
@@ -217,19 +238,21 @@ def build_entry_scores(scored: pd.DataFrame,
 
 def factor_contributions(row: pd.Series,
                          weights: dict[str, float] | None = None) -> pd.DataFrame:
-    """Contribuição aditiva de cada trilha em relação ao ponto neutro (50)."""
+    """Contribuição aditiva de cada trilha em relação ao ponto neutro (50).
+
+    Segue ``build_entry_scores``: trilha ausente entra na nota como 50 e
+    contribui zero — mas a pontuação exibida fica vazia, não 50. Zero é nota:
+    ``or 50`` transformava a pior posição em contribuição nula.
+    """
     w = normalize_weights(weights)
-    labels = {
-        "quality": "Qualidade", "growth": "Crescimento", "solidity": "Solidez",
-        "capital_efficiency": "Eficiência de capital", "valuation": "Avaliação",
-        "shareholder": "Retorno ao acionista",
-    }
     records = []
     for track, column in TRACK_COLUMNS.items():
-        value = float(row.get(column, 50) or 50)
-        records.append({"Trilha": labels[track], "Pontuação": value,
+        value = pd.to_numeric(row.get(column), errors="coerce")
+        observed = bool(pd.notna(value) and np.isfinite(value))
+        records.append({"Trilha": TRACK_LABELS[track],
+                        "Pontuação": float(value) if observed else None,
                         "Peso (%)": w[track] * 100,
-                        "Contribuição": (value - 50) * w[track]})
+                        "Contribuição": (float(value) - 50) * w[track] if observed else 0.0})
     return pd.DataFrame(records)
 
 

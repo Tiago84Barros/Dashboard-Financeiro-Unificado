@@ -37,6 +37,7 @@ _POR_ROTULO: dict[str, str] = {
     "ETF": "b3",
     "FII": "fii",
     "ETF Internacional": "us",
+    "Ações EUA": "us",
     "BDR": "us",
     "Renda Fixa": "renda_fixa",
     "Tesouro Direto": "renda_fixa",

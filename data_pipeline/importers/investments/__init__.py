@@ -6,6 +6,7 @@ Importadores manuais de dados de investimento.
 Fontes suportadas:
   - b3_negociacao   B3 Área do Investidor → Negociação (.xlsx)
   - b3_movimentacao B3 Área do Investidor → Movimentação (.xlsx)
+  - b3_posicao      B3 Área do Investidor → Posição (.xlsx, uma aba por classe)
   - b3_posicao_detalhada B3 Área do Investidor → Posição Detalhada (.xlsx)
   - xp_consolidado  XP Investimentos → Posição Consolidada (.xlsx) — stub
   - tesouro_analitico Tesouro Direto → Extrato Analítico por título (.xlsx)
@@ -26,6 +27,7 @@ from typing import Any
 __all__ = [
     "parse_b3_negociacao",
     "parse_b3_movimentacao",
+    "parse_b3_posicao",
     "parse_b3_posicao_detalhada",
     "parse_xp_consolidado",
     "parse_tesouro_direto",
@@ -42,6 +44,20 @@ def parse_b3_negociacao(file_bytes: bytes, engine) -> dict[str, Any]:
 def parse_b3_movimentacao(file_bytes: bytes, engine) -> dict[str, Any]:
     from .b3_movimentacao import parse
     return parse(file_bytes, engine)
+
+
+def parse_b3_posicao(
+    payload: "bytes | tuple[str, bytes]", engine,
+) -> dict[str, Any]:
+    """Extrato "Posição" — uma aba por classe de ativo.
+
+    Exige (filename, bytes): a data da foto **não** está em nenhuma célula do
+    arquivo, só no nome do download ("posicao-2026-10-27-08-15-29.xlsx"), com
+    a data de exportação em docProps como reserva. Sem nome e sem docProps o
+    parser recusa em vez de usar a data de hoje.
+    """
+    from .b3_posicao import parse
+    return parse(payload, engine)
 
 
 def parse_b3_posicao_detalhada(

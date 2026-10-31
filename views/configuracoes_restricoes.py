@@ -1,6 +1,6 @@
 """
 views/configuracoes_restricoes.py
-Aba "Restrições" de Configurações — só o administrador vê.
+Aba "Restrições" de Configurações — a mesma para toda conta desde 12/10/2026.
 
 Desde 05/10/2026 nenhuma tela de uso mostra limitação técnica, fonte fora do
 ar, procedência ou versão de metodologia: tudo isso é registrado em silêncio
@@ -267,10 +267,12 @@ def _data_curta(valor: str | None) -> str:
 
 
 def render() -> None:
-    from core.user_context import is_admin
+    """O painel de restrições, para qualquer conta.
 
-    if not is_admin():
-        return
+    Era exclusivo de quem administra até 12/10/2026. O que ele mostra —
+    limitação de dado, erro e detalhe técnico que saíram das telas de uso — já
+    descreve o app inteiro, não a conta de ninguém: nada aqui é pessoal.
+    """
     render_painel(_carregar())
 
 
@@ -328,7 +330,7 @@ def render_painel(dados: painel.Painel) -> None:
     estado, recarregar = st.columns([1, 0.16], vertical_alignment="center")
     estado.markdown(_chips_estado_html(dados), unsafe_allow_html=True)
     if recarregar.button("↻ Recarregar", key="cfg_restr_recarregar",
-                         use_container_width=True,
+                         width="stretch",
                          help="Relê o log local e o do Supabase, ignorando o cache."):
         _limpar_cache()
         st.rerun()
@@ -407,7 +409,7 @@ def render_painel(dados: painel.Painel) -> None:
         "Última vez": _data_curta(i.get("ultima_vez")),
     } for i in vistos])
     st.dataframe(
-        tabela, hide_index=True, use_container_width=True,
+        tabela, hide_index=True, width="stretch",
         height=min(430, 60 + 35 * len(tabela)),
         column_config={
             "!": st.column_config.TextColumn(

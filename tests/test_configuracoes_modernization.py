@@ -29,7 +29,8 @@ def test_configuracoes_has_responsive_professional_layout():
     assert '.stTabs .stTabs [data-baseweb="tab-list"]' in source
     assert ".cfg-workflow-header" in source
     assert "@media (max-width: 760px)" in source
-    # "Grau de Confiança" foi para a primeira posição em 17/09/2026. A ordem
+    # "Grau de Confiança" vem logo depois de ⚙️ Geral (era a primeira desde
+    # 17/09/2026 até a Geral entrar à frente dela em 21/09). A ordem
     # da barra tem que bater com a ordem dos corpos: st.tabs devolve as abas
     # na ordem dos rótulos, e desencontrar as duas troca o conteúdo de lugar
     # sem levantar erro nenhum.

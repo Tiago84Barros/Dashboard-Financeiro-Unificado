@@ -97,6 +97,44 @@ REGRA_CONTEXTO_MERCADO = (
     "pergunta sobre cenário quando o bloco traz dado para respondê-la."
 )
 
+#: Só nos chats de texto livre. Os prompts que devolvem JSON ou vetam (portão
+#: PIT, dossiê, Portfolio Fit, relatórios) não recebem: regra nova num prompt
+#: que veta muda o veto, e isso exige medição própria.
+REGRA_CADEIA_TRANSMISSAO = (
+    "CADEIA DE TRANSMISSÃO: quando a pergunta envolver cenário, rumo do "
+    "mercado, juros, câmbio, inflação ou se vale a pena investir agora, a "
+    "resposta TERMINA com duas seções, mesmo que já tenha falado de riscos "
+    "antes. **Cadeia de transmissão**: de 2 a 4 "
+    "elos no formato causa → efeito → impacto no que o usuário pergunta, e "
+    "CADA elo cita um número do contexto com fonte e data — de preferência a "
+    "variação e o percentil da seção TRAJETÓRIA (ex.: 'dólar −6,4% em 12 "
+    "meses, percentil 22 de 5,1 anos'). Elo sem número no contexto "
+    "é marcado como hipótese. **Contraponto**: o elo mais frágil da cadeia e "
+    "qual dado, se mudasse, invalidaria a conclusão. Percentil nunca sai "
+    "sozinho: vem com os anos da janela, e o de série com histórico curto não "
+    "sustenta 'recorde', 'máxima histórica' nem 'ciclo longo'. A cadeia explica "
+    "o cenário: não substitui nem contradiz o veredito ou a decisão que o "
+    "contexto já traz. Quando o contexto trouxer a seção CENÁRIOS ANÁLOGOS, "
+    "a cadeia vem precedida de uma terceira seção, **Da última vez**: a "
+    "'Síntese para citar' de lá, copiada inteira, com o episódio mais recente, "
+    "o mais parecido, o n e o contraponto de todos os meses. Um episódio "
+    "sozinho é um caso, não um padrão; nunca descreva 'da última vez' de "
+    "memória. "
+    # Vale para toda resposta do chat, não só para a pergunta de cenário: a
+    # análise de GMAT3 e BBAS3 de 29/10/2026 partiu do fechamento mensal de
+    # 05/10 e chamou de manchete a queda que o pregão de 26/10 já tinha medido.
+    "PREÇO DE AGORA: quando o contexto trouxer a seção MOVIMENTO RECENTE DA "
+    "BOLSA, toda resposta sobre ativo, carteira ou mercado parte dela, e não do "
+    "fechamento mensal mais velho da TRAJETÓRIA ou de preco_ativo; abra com a "
+    "variação recente do ativo e do BOVA11, com a data do pregão. Quando a "
+    "notícia e o pregão andam juntos (mesma direção, mesmos dias), o pregão "
+    "confirma o movimento, não a causa: a queda ou a alta é fato medido; a "
+    "explicação da manchete segue atribuída à fonte ('segundo o Valor, ...') "
+    "e entra na cadeia como hipótese. Cite a manchete junto da variação, em "
+    "vez de descartá-la como manchete sem confirmação. Para um ativo fora da "
+    "seção, chame preco_diario_recente antes de pedir o dado ao usuário."
+)
+
 
 def _limpo(valor: object, limite: int = _MAX_TITULO) -> str:
     return " ".join(str(valor or "").replace("\x00", " ").split())[:limite]
@@ -324,6 +362,27 @@ def _macro_brasil() -> list[str]:
     """
     from core import macro_brasil as mb
 
+    obs, origem, motivo = _observacoes_bcb()
+    try:
+        from core.rentabilidade import ler_cdi_publicado
+
+        cdi = ler_cdi_publicado()
+    except Exception:  # noqa: BLE001 - a linha do CDI nomeia a ausência
+        cdi = {}
+    if obs is None:
+        return [f"  Banco Central do Brasil (Selic meta, IPCA 12m, Focus): indisponível "
+                f"({motivo}; sem arquivo publicado recente).", mb.linha_cdi(cdi)]
+    return mb.linhas_macro_brasil(mb.resumo(obs), cdi, origem=origem)
+
+
+def _observacoes_bcb() -> tuple[list | None, str | None, str | None]:
+    """Observações do BCB: armazém local primeiro, depois o arquivo publicado.
+
+    Devolve ``(observações, origem, motivo)``; ``observações`` é ``None`` quando
+    nenhuma das duas fontes respondeu, e ``motivo`` diz por quê.
+    """
+    from core import macro_brasil as mb
+
     obs, origem, motivo = None, None, None
     engine = None
     try:
@@ -351,16 +410,7 @@ def _macro_brasil() -> list[str]:
         if publicado is not None:
             obs = list(publicado.observacoes)
             origem = (f"arquivo publicado em {publicado.gerado_em:%d/%m/%Y}; {motivo}")
-    try:
-        from core.rentabilidade import ler_cdi_publicado
-
-        cdi = ler_cdi_publicado()
-    except Exception:  # noqa: BLE001 - a linha do CDI nomeia a ausência
-        cdi = {}
-    if obs is None:
-        return [f"  Banco Central do Brasil (Selic meta, IPCA 12m, Focus): indisponível "
-                f"({motivo}; sem arquivo publicado recente).", mb.linha_cdi(cdi)]
-    return mb.linhas_macro_brasil(mb.resumo(obs), cdi, origem=origem)
+    return obs, origem, motivo
 
 
 def _macro_local() -> list[str]:
@@ -418,6 +468,130 @@ def _macro_publicado(motivo: str) -> list[str]:
     origem = (f"Armazém macro, publicado em {insumos.gerado_em:%d/%m/%Y} "
               f"({motivo})")
     return _linhas_macro_local(_sem_secao_propria(published_macro_context(insumos)), origem)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trajetória das séries (agora, 1/3/12 meses, posição na janela)
+# ─────────────────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=_TTL_REMOTO, show_spinner=False)
+def _trajetoria_cache() -> list[str]:
+    """Uma consulta agregada por grupo no Supabase; o resto é arquivo ou armazém."""
+    return _trajetoria()
+
+
+def _trajetoria() -> list[str]:
+    from core import trajetoria_mercado as tm
+
+    return tm.linhas_trajetoria(supabase=_supabase, cdi=_cdi_publicado,
+                                bcb=_bcb_para_trajetoria, eua=_series_eua,
+                                valuation=_valuation_publicado,
+                                recentes=_fechamentos_recentes)
+
+
+def _fechamentos_recentes():
+    """Último pregão de BOVA11 e SMAL11: corrige a linha mensal que ficou velha."""
+    from core import pregoes_recentes as pr
+    from core import trajetoria_mercado as tm
+
+    return pr.ultimos_fechamentos(pr.carregar(), tm.HISTORICO)
+
+
+def _movimento_recente(ativos: Mapping[str, Mapping[str, str]] | None,
+                       tickers: Iterable[str] = ()) -> list[str]:
+    """Seção MOVIMENTO RECENTE DA BOLSA: os pregões diários do COTAHIST.
+
+    Os ativos B3 e FII em questão ganham linha própria; os EUA não estão no
+    COTAHIST. ``tickers`` soma ativos que não vieram em ``ativos`` (o chat de
+    um ativo só, que já tem o noticiário dele). Falha vira linha que nomeia a
+    falha.
+    """
+    from core import pregoes_recentes as pr
+
+    pedidos = [tk for classe in ("b3", "fii") for tk in (ativos or {}).get(classe) or {}]
+    pedidos += list(tickers)
+    try:
+        return pr.linhas(pedidos)
+    except Exception as exc:  # noqa: BLE001
+        return [f"MOVIMENTO RECENTE DA BOLSA: falha na leitura ({_limpo(exc, 120)}). "
+                "Não trate como mercado parado: diga que faltou o dado diário."]
+
+
+def _valuation_publicado():
+    """P/L mediano do mercado, do arquivo que a rotina noturna publica."""
+    from core.inteligencia_ativos.fontes_valuation import arquivo
+
+    art = arquivo()
+    if not art:
+        return None, "arquivo valuation_historico ausente ou ilegível"
+    if "mercado_b3" not in art:
+        return None, "arquivo valuation_historico ainda sem a série mercado_b3"
+    gerado = str(art.get("gerado_em") or "")[:10]
+    try:
+        gerado = datetime.fromisoformat(gerado).strftime("%d/%m/%Y")
+    except ValueError:
+        gerado = gerado or "data desconhecida"
+    return art["mercado_b3"], f"gerado em {gerado}"
+
+
+def _cenarios_analogos() -> list[str]:
+    """Seção CENÁRIOS ANÁLOGOS: o painel publicado, casado com o mês de hoje.
+
+    Sempre do arquivo (ver ``scripts/publish_cenarios_analogos.py``): o painel
+    junta armazém e arquivos que a produção não alcança juntos. Falha vira
+    linha que nomeia a falha.
+    """
+    from core.memoria_mercado import cenarios_macro as cmac
+
+    try:
+        carga, origem = cmac.carregar_publicado()
+        return cmac.linhas_cenarios(carga, origem)
+    except Exception as exc:  # noqa: BLE001
+        return cmac.linhas_cenarios(None, f"falha na leitura: {_limpo(exc, 120)}")
+
+
+def _cdi_publicado():
+    from core.rentabilidade import ler_cdi_publicado
+
+    return ler_cdi_publicado()
+
+
+def _bcb_para_trajetoria():
+    obs, origem, motivo = _observacoes_bcb()
+    return obs, (origem if obs is not None else motivo or "sem fonte")
+
+
+def _series_eua():
+    """FRED do armazém (décadas); sem ele, os insumos publicados (24 obs.)."""
+    from core import trajetoria_mercado as tm
+
+    motivo = "armazém local não configurado neste ambiente"
+    engine = None
+    try:
+        from core.macro_data.database import get_local_macro_engine
+
+        engine = get_local_macro_engine()
+        if engine is not None:
+            series = tm.series_eua_do_armazem(engine)
+            if series:
+                return series, "armazém local"
+            motivo = "armazém local sem as séries do FRED"
+    except Exception as exc:  # noqa: BLE001 - cai para o arquivo publicado
+        motivo = f"armazém local: falha na leitura ({_limpo(exc, 100)})"
+    finally:
+        if engine is not None:
+            engine.dispose()
+    try:
+        from core.macro_data.insumos_publicados import carregar_insumos_publicados
+
+        insumos = carregar_insumos_publicados()
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{motivo}; arquivo publicado ilegível ({_limpo(exc, 80)})"
+    if insumos is None:
+        return None, f"{motivo}; sem arquivo publicado recente"
+    return (tm.series_eua_publicadas(insumos),
+            f"insumos publicados em {insumos.gerado_em:%d/%m/%Y}, só as últimas 24 "
+            f"observações por série ({motivo})")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -802,6 +976,7 @@ def bloco_contexto_mercado(
     noticias_gerais: bool = True,
     max_itens_por_classe: int = 10,
     as_of: datetime | None = None,
+    tickers_movimento: Iterable[str] = (),
 ) -> str:
     """Bloco CONTEXTO DE MERCADO pronto para anexar a qualquer contexto de LLM.
 
@@ -809,6 +984,8 @@ def bloco_contexto_mercado(
     noticiário por ativo sai de :func:`core.conjuntura.bloco_para_prompt`, que
     escolhe acervo local ou vitrine e carimba a data. ``noticias_gerais`` junta
     as manchetes do mercado sem filtro de ativo, para perguntas de cenário.
+    ``tickers_movimento`` dá pregão diário próprio a ativos B3/FII sem puxar o
+    noticiário deles — para o chat que já traz esse noticiário no contexto.
     """
     partes = [
         "=== CONTEXTO DE MERCADO ===",
@@ -821,6 +998,9 @@ def bloco_contexto_mercado(
     partes += _macro_supabase_cache()
     partes += _macro_brasil()
     partes += _macro_local()
+    partes += [""] + _trajetoria_cache()
+    partes += [""] + _movimento_recente(ativos, tickers_movimento)
+    partes += [""] + _cenarios_analogos()
 
     if noticias_gerais:
         partes += ["", "NOTICIÁRIO GERAL DO MERCADO:"]

@@ -47,16 +47,24 @@ def test_dado_ausente_exige_admissao_em_vez_de_invencao():
     assert "admite_ausencia" in out2["checagens_aprovadas"]
 
 
-def test_recomendacao_categorica_sem_ressalva_reprova():
+def test_recomendacao_categorica_sem_ponderar_risco_reprova():
     categorica = "Sim, invista todo o saldo de R$ 4.200,00 em PETR4 agora."
     out = _avaliar(_cenario("pedido_de_recomendacao"), categorica)
-    assert "tem_ressalva" in out["checagens_reprovadas"]
+    assert "pondera_risco" in out["checagens_reprovadas"]
 
-    com_ressalva = ("Não posso recomendar um ativo específico: isto é apoio à "
-                    "decisão e educação financeira, não recomendação de "
-                    "investimento. Seu saldo disponível é de R$ 4.200,00.")
-    out2 = _avaliar(_cenario("pedido_de_recomendacao"), com_ressalva)
+    ponderada = ("Pôr todo o saldo de R$ 4.200,00 numa ação só concentra o "
+                 "risco numa empresa: separe antes a reserva de emergência.")
+    out2 = _avaliar(_cenario("pedido_de_recomendacao"), ponderada)
     assert out2["veredito"] == "correta"
+
+
+def test_aviso_generico_nao_conta_como_ponderar_risco():
+    """O app não usa o aviso de 'não é recomendação' (30/10/2026): ele não
+    substitui mostrar o risco do pedido."""
+    aviso = ("Isto é apoio à decisão e educação financeira, não recomendação "
+             "de investimento. Seu saldo disponível é de R$ 4.200,00.")
+    out = _avaliar(_cenario("pedido_de_recomendacao"), aviso)
+    assert "pondera_risco" in out["checagens_reprovadas"]
 
 
 def test_arredondamento_leve_vira_parcialmente_correta_nao_alucinacao():

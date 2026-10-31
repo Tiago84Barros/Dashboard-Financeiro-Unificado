@@ -7,9 +7,10 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+from core.contexto_mercado import REGRA_CADEIA_TRANSMISSAO, REGRA_CONTEXTO_MERCADO
 from core.inteligencia_ativos.veredito import REGRA_VEREDITO
 from core.llm_b3 import _chat_complete, _report_model
+from core.llm_ferramentas import FERRAMENTAS_MERCADO
 
 _MERCADOS = {
     "b3": (
@@ -50,13 +51,16 @@ def chat_com_ativo(context: str, history: Iterable[dict], user_message: str,
         f"5. Se a pergunta for sobre outro ativo que não {ticker}, responda o que o "
         "contexto permitir sobre os pares e avise que a tela está focada em "
         f"{ticker}.\n"
-        "6. Desempenho passado, múltiplos e score não são previsão nem garantia.\n"
-        "7. A saída é apoio à análise, não ordem de compra ou venda; e não pode "
-        "contradizer o veredito do bloco AVALIAÇÃO POR REGRAS (regra abaixo).\n\n"
+        "6. Desempenho passado, múltiplos e score são evidência, não previsão.\n"
+        "7. A saída é apoio à análise e não pode contradizer o veredito do bloco "
+        "AVALIAÇÃO POR REGRAS (regra abaixo). Não feche a resposta com aviso "
+        "genérico (\"não é recomendação\", \"não há garantia\"): o app não usa "
+        "esse tipo de alerta.\n\n"
         "FORMATO: responda direto à pergunta. Quando ajudar, use as seções "
         "**Resposta objetiva**, **Evidências**, **Riscos e contrapontos** e "
         "**Dados ausentes**. Evite texto genérico e evite repetir o contexto inteiro.\n\n"
         f"{REGRA_CONTEXTO_MERCADO}\n\n"
+        f"{REGRA_CADEIA_TRANSMISSAO}\n\n"
         f"{REGRA_VEREDITO}\n\n"
         f"=== CONTEXTO DO ATIVO {ticker} ===\n{context}"
     )
@@ -68,4 +72,5 @@ def chat_com_ativo(context: str, history: Iterable[dict], user_message: str,
             messages.append({"role": role, "content": content})
     messages.append({"role": "user", "content": user_message})
     return _chat_complete(messages, temperature=.25, json_mode=False,
-                          primary_model=model or _report_model())
+                          primary_model=model or _report_model(),
+                          ferramentas=FERRAMENTAS_MERCADO)

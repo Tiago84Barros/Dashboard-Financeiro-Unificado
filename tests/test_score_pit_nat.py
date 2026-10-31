@@ -28,9 +28,14 @@ from views.empresas_b3 import (
     PITCoverage,
     _get_pesos_setor,
     _prazo_publicacao_cvm,
-    _score_historico_ano,
     _score_historico_ano_com_cobertura,
 )
+
+
+def _score_historico_ano(*args, **kwargs):
+    # A versão só-mapa saiu com a Análise Avançada em 30/10/2026; aqui ela só
+    # serve de régua para comparar mapas de score.
+    return _score_historico_ano_com_cobertura(*args, **kwargs)[0]
 
 
 def _hist(tk, anos, availableat=None):
@@ -84,14 +89,6 @@ def test_sem_coluna_availableat_segue_o_mesmo_modelo():
     assert set(sm) == {"AAAA3", "BBBB3", "CCCC3"}
     assert cov.cobertura_medida == 0.0
     assert cov.nivel == "modelada"
-
-
-def test_assinatura_publica_preservada_para_os_quatro_call_sites():
-    anos = list(range(2015, 2024))
-    batch = {t: _hist(t, anos) for t in ("AAAA3", "BBBB3", "CCCC3")}
-    sm = _score_historico_ano(batch, list(batch), 2020, _PESOS, _TKG, lag=1)
-    assert isinstance(sm, dict)
-    assert set(sm) == {"AAAA3", "BBBB3", "CCCC3"}
 
 
 # ── 2. Vintage medida nunca é contornada ─────────────────────────────────────

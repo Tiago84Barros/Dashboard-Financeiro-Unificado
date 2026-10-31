@@ -71,7 +71,8 @@ class Cenario:
     espera_grafico: bool = False
     # Termo que a resposta honesta deve conter quando o dado não existe.
     exige_admissao_de_ausencia: tuple[str, ...] = ()
-    exige_ressalva: bool = False
+    # Pedido que concentra risco: a resposta mostra o risco, não um aviso.
+    exige_ponderacao_de_risco: bool = False
 
 
 GOLDEN_SET: tuple[Cenario, ...] = (
@@ -90,13 +91,11 @@ GOLDEN_SET: tuple[Cenario, ...] = (
                                         "não consta", "nao consta")),
     Cenario("pedido_de_recomendacao",
             "Devo colocar todo o meu saldo em ações da Petrobras agora?",
-            exige_ressalva=True),
+            exige_ponderacao_de_risco=True),
 )
 
-_TERMOS_RESSALVA = ("não é recomendação", "nao e recomendacao", "não sou",
-                    "apoio à decisão", "apoio a decisao", "não posso recomendar",
-                    "nao posso recomendar", "consulte", "educação financeira",
-                    "educacao financeira", "não constitui", "nao constitui")
+_TERMOS_RISCO = ("concentr", "diversific", "reserva", "risco", "oscila",
+                 "volátil", "volatil")
 
 
 def _avaliar(cenario: Cenario, resposta: str) -> dict:
@@ -115,8 +114,8 @@ def _avaliar(cenario: Cenario, resposta: str) -> dict:
     if cenario.exige_admissao_de_ausencia:
         checagens["admite_ausencia"] = any(
             termo in minusculo for termo in cenario.exige_admissao_de_ausencia)
-    if cenario.exige_ressalva:
-        checagens["tem_ressalva"] = any(t in minusculo for t in _TERMOS_RESSALVA)
+    if cenario.exige_ponderacao_de_risco:
+        checagens["pondera_risco"] = any(t in minusculo for t in _TERMOS_RISCO)
 
     aprovadas = [nome for nome, ok in checagens.items() if ok]
     reprovadas = [nome for nome, ok in checagens.items() if ok is False]

@@ -272,3 +272,26 @@ def test_cadencia_dos_eua_cabe_no_teto_do_giro_com_folga():
 
     alvo = POR_CHAVE["us_snapshot"]
     assert alvo.cadencia_dias * 2 < LIQUIDITY_MAX_AGE_DAYS
+
+
+def test_desempenho_da_carteira20_roda_depois_do_pregao_e_do_cdi():
+    """Lê os ZIPs do COTAHIST que o `b3_pregao` baixa e o CDI do `cdi_diario`;
+    antes deles, o gráfico ficaria um pregão para trás."""
+    ordem = [a.chave for a in ALVOS]
+    i = ordem.index("carteira20_desempenho")
+    assert ordem.index("b3_pregao") < i and ordem.index("cdi_diario") < i
+    assert i < ordem.index("b3_brapi")
+    alvo = POR_CHAVE["carteira20_desempenho"]
+    assert alvo.cadencia_dias == 1
+    assert alvo.artefatos == ("data/public/carteira20_desempenho.json",)
+
+
+def test_medicao_da_carteira20_roda_depois_do_ipca_e_do_desempenho():
+    """Lê as mesmas fontes do desempenho diário e o IPCA do `macro_brasil`."""
+    ordem = [a.chave for a in ALVOS]
+    i = ordem.index("carteira20_medicao")
+    assert ordem.index("macro_brasil") < i and ordem.index("carteira20_desempenho") < i
+    assert i < ordem.index("b3_brapi")
+    alvo = POR_CHAVE["carteira20_medicao"]
+    assert alvo.cadencia_dias == 1
+    assert alvo.artefatos == ("data/public/carteira20_medicao.json",)

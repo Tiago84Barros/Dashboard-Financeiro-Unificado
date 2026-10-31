@@ -8,7 +8,19 @@ Ordem das seções (fatos primeiro, referências depois):
       ano a ano — o mesmo cluster, tudo vindo do caixa)
   3 — Raio X do portfólio investido
   4 — Detalhes da carteira recomendada (B3 · EUA · FIIs) — sempre por último
+
+A tela se monta com as seções que a conta mantém no menu lateral (Configurações
+→ Geral → Seções do aplicativo, desde 31/10/2026). Cada bloco pertence a uma
+seção e sai junto com ela -- o caixa ao Controle Financeiro, a carteira real a
+Investimentos, cada carteira recomendada à sua tela de seleção. A ORDEM não
+muda: o que sobra continua fatos primeiro, referências depois. As consultas
+próprias de cada bloco (histórico, categorias, comparativo, evolução, carteiras
+recomendadas) só acontecem com a seção no menu. O resumo agregado do topo
+(``get_visao_geral``) é uma leitura só, que junta caixa e carteira para o
+patrimônio: é lido sempre que alguma seção com resumo está no menu, e só fica
+de fora quando nenhuma está.
 """
+from collections.abc import Callable
 from datetime import date as _date
 from datetime import datetime as _datetime
 from html import escape
@@ -28,6 +40,9 @@ from core.investimentos import (
     get_cashflow_mensal,
     get_evolucao_patrimonial,
 )
+from core.secoes_app import TODAS as _TODAS_AS_SECOES
+from core.secoes_app import secao as _secao_do_menu
+from core.secoes_app import visiveis_da_sessao
 from core.us_portfolio_model import load_active_us_portfolio_model
 from core.utils import fmt_moeda, fmt_percentual
 from design import portao_inteligencia as _portao_ui
@@ -55,6 +70,47 @@ _TOKEN_POR_COR = {
     _COR_INVEST: "var(--app-accent)",
     _COR_NEUTRO: "var(--app-muted)",
 }
+
+
+# ── Seção do menu dona de cada bloco ─────────────────────────────────────────
+# O módulo de ``views/`` que, oculto do menu (Configurações → Geral), leva
+# junto o bloco do dashboard. Mesmos nomes de ``core.secoes_app.SECOES``.
+_CAIXA = "controle_financeiro"
+_CARTEIRA = "investimentos"
+_B3 = "empresas_b3"
+_EUA = "empresas_americanas"
+_FIIS = "fiis"
+_SELECAO = frozenset({_B3, _EUA, _FIIS})
+
+
+def _juntar(partes: list[str]) -> str:
+    """``["a", "b", "c"]`` → ``"a, b e c"``."""
+    if len(partes) <= 1:
+        return "".join(partes)
+    return ", ".join(partes[:-1]) + " e " + partes[-1]
+
+
+def _subtitulo_do_cabecalho(areas: frozenset[str]) -> str:
+    """O que a página reúne, dito a partir das seções que estão no menu.
+
+    Com tudo no menu, o texto de sempre. Com menos, a lista do que sobrou: um
+    cabeçalho que promete "caixa" a quem tirou o Controle Financeiro descreve
+    uma página que a pessoa não está vendo.
+    """
+    tem_caixa, tem_carteira = _CAIXA in areas, _CARTEIRA in areas
+    tem_selecao = bool(areas & _SELECAO)
+    if tem_caixa and tem_carteira and tem_selecao:
+        return ("Caixa, patrimônio e decisões de investimento reunidos em uma "
+                "leitura executiva — do mês atual ao histórico da carteira.")
+    partes = [rotulo for presente, rotulo in (
+        (tem_caixa, "o caixa do mês"),
+        (tem_carteira, "o patrimônio investido"),
+        (tem_selecao, "as carteiras recomendadas"),
+    ) if presente]
+    if not partes:
+        return ("Nenhuma seção com resumo está no seu menu. Escolha em "
+                "Configurações → Geral o que este painel deve reunir.")
+    return f"Leitura executiva do que você mantém no menu: {_juntar(partes)}."
 
 
 #: Rótulo curto do estado do caixa, para o detalhe dos KPIs.
@@ -183,7 +239,8 @@ _DASHBOARD_STYLES = """
 }
 .dg-kpi-grid {
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    /* Quantos cartões couberem às seções visíveis (5 com todas no menu). */
+    grid-template-columns: repeat(var(--dg-kpi-cols, 5), minmax(0, 1fr));
     gap: .78rem;
     margin: 0 0 1.4rem;
 }
@@ -399,41 +456,43 @@ def _render_dashboard_header(
     fonte_cor: str,
     atualizado_em: _date,
     parcial_ate: _date | None = None,
+    subtitulo: str | None = None,
 ) -> None:
     """Cabeçalho executivo responsivo e autocontido do Dashboard Geral.
 
     ``parcial_ate``: quando o período é o mês corrente, o dia até onde os KPIs
     foram apurados -- sem a marca, receita e despesa de 4 dias pareciam um mês.
+    ``subtitulo``: o que a página reúne, conforme as seções do menu (ver
+    :func:`_subtitulo_do_cabecalho`); ``None`` é a página completa.
     """
+    subtitulo = subtitulo or _subtitulo_do_cabecalho(_TODAS_AS_SECOES)
     chip_parcial = (
         f'<span class="dg-chip">Mês parcial&nbsp;·&nbsp;até {parcial_ate.strftime("%d/%m")}</span>'
         if parcial_ate else ""
     )
     st.markdown(_DASHBOARD_STYLES, unsafe_allow_html=True)
+    # Marcação numa linha só, sem recuo: com o HTML recuado, o chip parcial
+    # vazio deixava uma linha em branco, o Markdown encerrava o bloco de HTML
+    # ali e o resto do card saía como bloco de código.
     st.markdown(
-        f"""
-        <div class="dg-shell">
-          <section class="dg-hero" aria-labelledby="dg-page-title">
-            <div>
-              <div class="dg-eyebrow">Visão financeira consolidada</div>
-              <h1 class="dg-title" id="dg-page-title">Seu dinheiro, em perspectiva.</h1>
-              <div class="dg-subtitle">
-                Caixa, patrimônio e decisões de investimento reunidos em uma leitura
-                executiva — do mês atual ao histórico da carteira.
-              </div>
-            </div>
-            <div class="dg-hero-meta" aria-label="Contexto dos dados">
-              <span class="dg-chip">
-                <span class="dg-chip-dot" style="--chip-color:{escape(fonte_cor)}"></span>
-                {escape(fonte_label)}
-              </span>
-              <span class="dg-chip">Período&nbsp;·&nbsp;{escape(mes_ref)}</span>
-              {chip_parcial}
-              <span class="dg-chip">Atualizado&nbsp;·&nbsp;{atualizado_em.strftime("%d/%m/%Y")}</span>
-            </div>
-          </section>
-        </div>
-        """,
+        '<div class="dg-shell">'
+        '<section class="dg-hero" aria-labelledby="dg-page-title">'
+        '<div>'
+        '<div class="dg-eyebrow">Visão financeira consolidada</div>'
+        '<h1 class="dg-title" id="dg-page-title">Seu dinheiro, em perspectiva.</h1>'
+        f'<div class="dg-subtitle">{escape(subtitulo)}</div>'
+        '</div>'
+        '<div class="dg-hero-meta" aria-label="Contexto dos dados">'
+        '<span class="dg-chip">'
+        f'<span class="dg-chip-dot" style="--chip-color:{escape(fonte_cor)}"></span>'
+        f'{escape(fonte_label)}'
+        '</span>'
+        f'<span class="dg-chip">Período&nbsp;·&nbsp;{escape(mes_ref)}</span>'
+        f'{chip_parcial}'
+        f'<span class="dg-chip">Atualizado&nbsp;·&nbsp;{atualizado_em.strftime("%d/%m/%Y")}</span>'
+        '</div>'
+        '</section>'
+        '</div>',
         unsafe_allow_html=True,
     )
 
@@ -465,8 +524,16 @@ def _render_kpi_grid(
     carteira: dict,
     portfolio: dict | None = None,
     hoje: _date | None = None,
+    areas: frozenset[str] | None = None,
 ) -> None:
-    """Cinco indicadores essenciais, em CSS Grid responsivo."""
+    """Até cinco indicadores essenciais, em CSS Grid responsivo.
+
+    Saldo e taxa de poupança são do Controle Financeiro; patrimônio,
+    rentabilidade e proventos, de Investimentos. ``areas`` (as seções do menu)
+    decide quais entram; ``None`` são todas. A grade ganha tantas colunas
+    quantos cartões sobrarem, para não deixar buraco à direita.
+    """
+    areas = _TODAS_AS_SECOES if areas is None else areas
     ind = indicadores_caixa(receitas, despesas, investimentos)
     saldo = ind["saldo"]
     taxa = ind["poupanca_alocada_pct"] or 0.0
@@ -500,53 +567,58 @@ def _render_kpi_grid(
         prov_valor = fmt_moeda(float(prov_mes))
         prov_detalhe = (
             f"Pagos em {_MESES_PT[hoje.month]}/{hoje.year} · no ano: "
-            f'<strong style="color:{_COR_FLUXO}">{fmt_moeda(float(prov_ano))}</strong>'
+            f'<strong style="color:{_cor_texto(_COR_FLUXO)}">{fmt_moeda(float(prov_ano))}</strong>'
         )
 
     cards = [
-        _kpi_html(
+        (_CARTEIRA, _kpi_html(
             "Patrimônio investido",
             patrimonio_valor,
             escape(patrimonio_detalhe),
             "◆",
             _COR_PATRIMONIO,
-        ),
-        _kpi_html(
+        )),
+        (_CAIXA, _kpi_html(
             "Saldo líquido do mês",
             fmt_moeda(saldo),
             f'Receitas menos despesas (aportes não são despesa) · '
-            f'<strong style="color:{saldo_cor}">{_ROTULO_STATUS_CAIXA[ind["status"]]}'
+            f'<strong style="color:{_cor_texto(saldo_cor)}">{_ROTULO_STATUS_CAIXA[ind["status"]]}'
             f'</strong>',
             "↘" if ind["status"] == "deficit" else "↗",
             saldo_cor,
-        ),
-        _kpi_html(
+        )),
+        (_CAIXA, _kpi_html(
             "Taxa de poupança",
             fmt_percentual(taxa, sinal=False),
-            f'Sobra do mês + aportes{" · no teto da renda" if ind["poupanca_no_teto"] else ""}'
-            f' · meta 30% · <strong style="color:{taxa_cor}">'
+            f'Sobra do mês {escape(fmt_moeda(saldo))} + aportes {escape(fmt_moeda(investimentos))}'
+            f'{" · no teto da renda" if ind["poupanca_no_teto"] else ""}'
+            f' · meta 30% · <strong style="color:{_cor_texto(taxa_cor)}">'
             f'{"atingida" if taxa >= 30 else "em acompanhamento"}</strong>',
             "%",
             taxa_cor,
-        ),
-        _kpi_html(
+        )),
+        (_CARTEIRA, _kpi_html(
             "Rentabilidade da carteira",
             f"{rentab:+.2f}%",
-            f'Sobre o custo consolidado · <strong style="color:{rentab_cor}">'
+            f'Sobre o custo consolidado · <strong style="color:{_cor_texto(rentab_cor)}">'
             f'{"resultado positivo" if rentab >= 0 else "resultado negativo"}</strong>',
             "⌁",
             rentab_cor,
-        ),
-        _kpi_html(
+        )),
+        (_CARTEIRA, _kpi_html(
             "Proventos recebidos",
             prov_valor,
             prov_detalhe,
             "$",
             _COR_FLUXO,
-        ),
+        )),
     ]
+    cards = [html for area, html in cards if area in areas]
+    if not cards:
+        return
     st.markdown(
         '<div class="dg-shell"><section class="dg-kpi-grid" '
+        f'style="--dg-kpi-cols:{len(cards)}" '
         'aria-label="Indicadores financeiros principais">'
         + "".join(cards)
         + "</section></div>",
@@ -580,7 +652,11 @@ def _cor_texto(cor: str) -> str:
     Os literais seguem existindo porque o Plotly não resolve `var(--…)`; em
     texto HTML, porém, amarelo #F6C90E sobre fundo claro fica ilegível.
     """
-    return _TOKEN_POR_COR.get(cor.upper(), cor)
+    # Cor fora do mapa (classe de ativo, paleta de grupo) também precisa
+    # ser legível no claro: ver ``design.componentes.tinta_legivel``.
+    from design.componentes import tinta_legivel
+
+    return _TOKEN_POR_COR.get(cor.upper()) or tinta_legivel(cor)
 
 
 def _linha_kv(label: str, valor: str, cor_val: str = "var(--app-text)") -> str:
@@ -797,9 +873,9 @@ def _mini_metric(label: str, valor: str, detalhe: str, cor: str) -> str:
                 border:1px solid var(--app-border);border-left:4px solid {cor};
                 border-radius:12px;padding:16px 16px;min-height:100px;
                 box-shadow:var(--app-shadow);">
-        <div style="font-size:0.64rem;text-transform:uppercase;letter-spacing:0.14em;
-                    color:{cor};font-weight:800;margin-bottom:10px;opacity:0.85">{label}</div>
-        <div style="font-size:1.45rem;font-weight:900;color:{cor};line-height:1;
+        <div class="dg-mini-label" style="font-size:0.64rem;text-transform:uppercase;letter-spacing:0.14em;
+                    color:{_cor_texto(cor)};font-weight:800;margin-bottom:10px;opacity:0.85">{label}</div>
+        <div style="font-size:1.45rem;font-weight:900;color:{_cor_texto(cor)};line-height:1;
                     text-shadow:0 0 18px {cor}55">{valor}</div>
         <div style="font-size:0.74rem;color:var(--app-subtle);margin-top:9px;line-height:1.3">{detalhe}</div>
     </div>
@@ -809,7 +885,7 @@ def _mini_metric(label: str, valor: str, detalhe: str, cor: str) -> str:
 def _status_chip(texto: str, cor: str) -> str:
     return (
         f'<span style="display:inline-flex;align-items:center;border:1px solid {cor};'
-        f'background:{cor}1F;color:{cor};border-radius:999px;padding:3px 9px;'
+        f'background:{cor}1F;color:{_cor_texto(cor)};border-radius:999px;padding:3px 9px;'
         f'font-size:0.70rem;font-weight:800;white-space:nowrap;flex-shrink:0;">{texto}</span>'
     )
 
@@ -850,7 +926,7 @@ def _modulo_card(
         'box-shadow:var(--app-shadow);">'
         '<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;">'
         '<div style="display:flex;gap:10px;align-items:center;min-width:0;">'
-        f'<div style="width:28px;height:28px;border-radius:8px;background:{cor}22;color:{cor};'
+        f'<div style="width:28px;height:28px;border-radius:8px;background:{cor}22;color:{_cor_texto(cor)};'
         f'display:flex;align-items:center;justify-content:center;font-weight:900;'
         f'font-size:0.85rem;border:1px solid {cor}55;flex-shrink:0;">{numero}</div>'
         f'<div style="font-size:0.96rem;font-weight:850;color:var(--app-text);line-height:1.2;min-width:0;">{titulo}</div>'
@@ -984,7 +1060,17 @@ def _secao_resumo_modulos(
     modelo_us: dict,
     fiis_port: list[dict],
     fiis_salvo: bool,
+    areas: frozenset[str] | None = None,
 ) -> None:
+    """Um cartão por seção do menu que tem resumo -- só as que estão no menu.
+
+    A numeração acompanha o que sobrou (1, 2, 3...): numerar pelo menu completo
+    deixaria buracos ("1, 3, 5") que parecem cartão faltando. Portfólio Global
+    não tem cartão: ele soma as três carteiras recomendadas, que já têm o seu.
+    Sem nenhum cartão, a faixa também não abre -- faixa sem conteúdo embaixo é
+    título de seção vazia.
+    """
+    areas = _TODAS_AS_SECOES if areas is None else areas
     ind_caixa = indicadores_caixa(receitas_mes, despesas_mes, investimentos_mes)
     saldo_mes = ind_caixa["saldo"]
     taxa_poupanca = ind_caixa["poupanca_alocada_pct"] or 0.0
@@ -994,6 +1080,75 @@ def _secao_resumo_modulos(
     us_status, us_status_cor, us_linhas = _resumo_modelo_us(modelo_us)
     fii_status, fii_status_cor, fii_linhas = _resumo_fiis(fiis_port, fiis_salvo)
 
+    # Cada cartão é montado só depois de se saber o número dele: por isso a
+    # função que recebe o número, e não o HTML pronto.
+    cartoes: list[tuple[str, Callable[[str], str]]] = [
+        (_CAIXA, lambda numero: _modulo_card(
+            numero,
+            "Controle Financeiro",
+            "Fluxo do mês, despesas por categoria e comparação anual.",
+            "Mensal",
+            cor_saldo_mes,
+            [
+                ("Receitas", fmt_moeda(receitas_mes), _COR_FLUXO),
+                ("Despesas", fmt_moeda(despesas_mes), _COR_NEGATIVO),
+                ("Saldo líquido", fmt_moeda(saldo_mes), cor_saldo_mes),
+                # A taxa soma o aporte à sobra; sem ele visível, saldo
+                # negativo ao lado de taxa positiva parece erro de conta.
+                ("Aportes no mês", fmt_moeda(investimentos_mes), _COR_PATRIMONIO),
+                ("Taxa de poupança", fmt_percentual(taxa_poupanca, sinal=False), _COR_ALERTA if taxa_poupanca < 30 else _COR_FLUXO),
+            ],
+            _COR_FLUXO,
+        )),
+        (_CARTEIRA, lambda numero: _modulo_card(
+            numero,
+            "Investimentos",
+            "Carteira consolidada, classes de ativos, concentração e evolução patrimonial.",
+            "Carteira",
+            _COR_INVEST,
+            [
+                ("Patrimônio investido", fmt_moeda(pat["investido"]), _COR_INVEST),
+                ("Aportado no ano", fmt_moeda(aportado_ano), _COR_FLUXO),
+                ("Classes de ativos", str(len(classes)), _COR_NEUTRO),
+                ("Rentabilidade", f"{rentab:+.2f}%", _COR_FLUXO if rentab >= 0 else _COR_NEGATIVO),
+            ],
+            _COR_INVEST,
+        )),
+        (_B3, lambda numero: _modulo_card(
+            numero,
+            "Empresas B3",
+            "Carteira modelo de ações brasileiras definida na análise de empresas.",
+            b3_status,
+            b3_status_cor,
+            b3_linhas,
+            _COR_PATRIMONIO,
+            selo=SELO_CARTEIRA_RECOMENDADA,
+        )),
+        (_EUA, lambda numero: _modulo_card(
+            numero,
+            "Empresas Americanas",
+            "Carteira modelo de ações dos EUA definida na criação de portfólio.",
+            us_status,
+            us_status_cor,
+            us_linhas,
+            _COR_INVEST,
+            selo=SELO_CARTEIRA_RECOMENDADA,
+        )),
+        (_FIIS, lambda numero: _modulo_card(
+            numero,
+            "Seleção de FIIs",
+            "Carteira modelo de fundos imobiliários com diversificação por tipo.",
+            fii_status,
+            fii_status_cor,
+            fii_linhas,
+            _COR_ALERTA,
+            selo=SELO_CARTEIRA_RECOMENDADA,
+        )),
+    ]
+    montadores = [montar for area, montar in cartoes if area in areas]
+    if not montadores:
+        return
+
     _faixa_destaque(
         "◆ Mapa do aplicativo",
         "Resumo por área",
@@ -1002,101 +1157,21 @@ def _secao_resumo_modulos(
         _COR_PATRIMONIO,
     )
 
-    col1, col2 = st.columns(2, gap="medium")
-    with col1:
-        st.markdown(
-            _modulo_card(
-                "1",
-                "Controle Financeiro",
-                "Fluxo do mês, despesas por categoria e comparação anual.",
-                "Mensal",
-                cor_saldo_mes,
-                [
-                    ("Receitas", fmt_moeda(receitas_mes), _COR_FLUXO),
-                    ("Despesas", fmt_moeda(despesas_mes), _COR_NEGATIVO),
-                    ("Saldo líquido", fmt_moeda(saldo_mes), cor_saldo_mes),
-                    ("Taxa de poupança", fmt_percentual(taxa_poupanca, sinal=False), _COR_ALERTA if taxa_poupanca < 30 else _COR_FLUXO),
-                ],
-                _COR_FLUXO,
-            ),
-            unsafe_allow_html=True,
-        )
-    with col2:
-        st.markdown(
-            _modulo_card(
-                "2",
-                "Investimentos",
-                "Carteira consolidada, classes de ativos, concentração e evolução patrimonial.",
-                "Carteira",
-                _COR_INVEST,
-                [
-                    ("Patrimônio investido", fmt_moeda(pat["investido"]), _COR_INVEST),
-                    ("Aportado no ano", fmt_moeda(aportado_ano), _COR_FLUXO),
-                    ("Classes de ativos", str(len(classes)), _COR_NEUTRO),
-                    ("Rentabilidade", f"{rentab:+.2f}%", _COR_FLUXO if rentab >= 0 else _COR_NEGATIVO),
-                ],
-                _COR_INVEST,
-            ),
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    col3, col4 = st.columns(2, gap="medium")
-    with col3:
-        st.markdown(
-            _modulo_card(
-                "3",
-                "Empresas B3",
-                "Carteira modelo de ações brasileiras definida na análise de empresas.",
-                b3_status,
-                b3_status_cor,
-                b3_linhas,
-                _COR_PATRIMONIO,
-                selo=SELO_CARTEIRA_RECOMENDADA,
-            ),
-            unsafe_allow_html=True,
-        )
-    with col4:
-        st.markdown(
-            _modulo_card(
-                "4",
-                "Empresas Americanas",
-                "Carteira modelo de ações dos EUA definida na criação de portfólio.",
-                us_status,
-                us_status_cor,
-                us_linhas,
-                _COR_INVEST,
-                selo=SELO_CARTEIRA_RECOMENDADA,
-            ),
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    col5, _col6 = st.columns(2, gap="medium")
-    with col5:
-        st.markdown(
-            _modulo_card(
-                "5",
-                "Seleção de FIIs",
-                "Carteira modelo de fundos imobiliários com diversificação por tipo.",
-                fii_status,
-                fii_status_cor,
-                fii_linhas,
-                _COR_ALERTA,
-                selo=SELO_CARTEIRA_RECOMENDADA,
-            ),
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("<br>", unsafe_allow_html=True)
+    # Duas colunas por linha, como sempre foi; cartão ímpar no fim fica sozinho
+    # à esquerda, do mesmo tamanho dos outros.
+    for inicio in range(0, len(montadores), 2):
+        colunas = st.columns(2, gap="medium")
+        for coluna, numero, montar in zip(
+                colunas, range(inicio + 1, inicio + 3), montadores[inicio:inicio + 2]):
+            with coluna:
+                st.markdown(montar(str(numero)), unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
 
 def _grafico_container_open(icone: str, titulo: str, cor: str) -> None:
     st.markdown(
         f'<div class="dg-shell"><div class="dg-chart-label" '
-        f'style="--chart-color:{escape(cor)}">'
+        f'style="--chart-color:{escape(_cor_texto(cor))}">'
         f'<span aria-hidden="true">{escape(icone)}</span>{escape(titulo)}</div></div>',
         unsafe_allow_html=True,
     )
@@ -1212,7 +1287,7 @@ def _card_lista_html(titulo: str, cor: str, corpo: str, rodape: str) -> str:
         '<div style="background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;'
         'padding:16px 18px;">'
         f'<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;'
-        f'color:{cor};font-weight:800;margin-bottom:10px;">{escape(titulo)}</div>'
+        f'color:{_cor_texto(cor)};font-weight:800;margin-bottom:10px;">{escape(titulo)}</div>'
         f'{corpo}'
         + (f'<div style="font-size:0.76rem;color:var(--app-muted);margin-top:10px;">{escape(rodape)}</div>'
            if rodape else "")
@@ -1490,39 +1565,38 @@ def _secao_fiis_sugeridos(port: list[dict] | None = None, salvo: bool = False) -
     with m4:
         st.markdown(_mini_metric("Tipo líder", f"{tipo_top[1] * 100:.0f}%", str(tipo_top[0]).capitalize(), _COR_INVEST), unsafe_allow_html=True)
 
-    tickers = ", ".join(p["ticker"] for p in port)
+    tickers = ", ".join(str(p["ticker"]) for p in port)
+    # Marcação numa linha só, sem recuo: interpolação sozinha numa linha do HTML
+    # recuado vira linha em branco quando vazia, e o Markdown passa a mostrar o
+    # resto do card como bloco de código (mesmo defeito do cabeçalho).
     c1, c2 = st.columns([1.2, 0.8], gap="medium")
     with c1:
         st.markdown(
-            f"""
-            <div style="background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;
-                        padding:16px 18px;">
-                <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
-                            color:var(--app-info);font-weight:800;margin-bottom:10px;">FIIs selecionados</div>
-                <div style="font-size:1.05rem;font-weight:850;color:var(--app-text);line-height:1.55;">
-                    {tickers}
-                </div>
-                <div style="font-size:0.76rem;color:var(--app-muted);margin-top:10px;">
-                    Diversificada por tipo (tijolo · papel · fof · híbrido), com teto por FII e por tipo.
-                </div>
-            </div>
-            """,
+            '<div style="background:var(--app-surface);border:1px solid var(--app-border);'
+            'border-radius:12px;padding:16px 18px;">'
+            '<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;'
+            'color:var(--app-info);font-weight:800;margin-bottom:10px;">FIIs selecionados</div>'
+            '<div style="font-size:1.05rem;font-weight:850;color:var(--app-text);line-height:1.55;">'
+            f'{escape(tickers)}'
+            '</div>'
+            '<div style="font-size:0.76rem;color:var(--app-muted);margin-top:10px;">'
+            'Diversificada por tipo (tijolo · papel · fof · híbrido), com teto por FII e por tipo.'
+            '</div>'
+            '</div>',
             unsafe_allow_html=True,
         )
     with c2:
         rows_html = ""
         for p in port[:5]:
             seg = str(p.get("segmento") or p.get("tipo") or "")[:18]
-            rows_html += _linha_kv(f"{p['ticker']} · {seg}", f"{p['peso'] * 100:.1f}%", _COR_FLUXO)
+            rows_html += _linha_kv(escape(f"{p['ticker']} · {seg}"), f"{p['peso'] * 100:.1f}%", _COR_FLUXO)
         st.markdown(
-            f"""
-            <div style="background:var(--app-surface);border:1px solid var(--app-border);border-radius:12px;
-                        padding:16px 18px;">
-                <div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;
-                            color:var(--app-primary);font-weight:800;margin-bottom:10px;">Pesos sugeridos</div>
-                {rows_html}
-            </div>
-            """,
+            '<div style="background:var(--app-surface);border:1px solid var(--app-border);'
+            'border-radius:12px;padding:16px 18px;">'
+            '<div style="font-size:0.72rem;text-transform:uppercase;letter-spacing:0.12em;'
+            'color:var(--app-primary);font-weight:800;margin-bottom:10px;">Pesos sugeridos</div>'
+            f'{rows_html}'
+            '</div>',
             unsafe_allow_html=True,
         )
 
@@ -1569,20 +1643,57 @@ def _faixa_destaque(rotulo: str, titulo: str, descricao: str, cor: str) -> None:
     )
 
 
-def _destaque_carteira_recomendada() -> None:
+def _aviso_painel_sem_secoes() -> None:
+    """O que o painel diz quando nenhuma seção com resumo está no menu.
+
+    Sem o aviso, a pessoa que tirou Controle Financeiro, Investimentos e as
+    três telas de seleção veria um cabeçalho e nada embaixo -- e concluiria
+    que o app quebrou, não que a escolha foi dela e se desfaz em um clique.
+    """
+    st.markdown(
+        '<div class="dg-shell"><div class="dg-callout">'
+        '<div class="dg-callout-icon" aria-hidden="true">◎</div>'
+        '<div class="dg-callout-copy"><strong>Painel sem seções.</strong> O Dashboard '
+        'Geral se monta com Controle Financeiro, Investimentos, Empresas B3, Empresas '
+        'Americanas e Seleção de FIIs, e nenhuma delas está no seu menu. Nada foi '
+        'apagado: ligue as que quiser ver em ⚙️ Configurações → Geral → Seções do '
+        'aplicativo.</div></div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def _render_painel_sem_secoes(hoje: _date) -> None:
+    """Cabeçalho e aviso, sem tocar em dado nenhum.
+
+    O chip de fonte diz o modo do app, não a origem de números -- não há
+    número na tela.
+    """
+    rotulo, cor = (("Dados de demonstração", _COR_ALERTA) if settings.MOCK_MODE
+                   else ("Dados reais", _COR_FLUXO))
+    _render_dashboard_header(
+        f"{_MESES_PT[hoje.month]} {hoje.year}", rotulo, cor, hoje,
+        subtitulo=_subtitulo_do_cabecalho(frozenset()),
+    )
+    _aviso_painel_sem_secoes()
+
+
+def _destaque_carteira_recomendada(origens: tuple[str, ...] = (_B3, _EUA, _FIIS)) -> None:
     """Abre o último bloco do dashboard.
 
-    As três seções que vêm depois (B3 · EUA · FIIs) são o detalhamento das
+    As seções que vêm depois (B3 · EUA · FIIs) são o detalhamento das
     carteiras que o app recomenda — as mesmas marcadas com o selo no
     “Resumo por área”. O destaque existe para que ninguém leia esses pesos
     como posição real da carteira investida, que está acima.
+
+    ``origens``: as telas de seleção cuja carteira vem logo abaixo. Nomear uma
+    tela que a pessoa tirou do menu prometeria um bloco que não aparece.
     """
+    nomes = [s.nome for s in map(_secao_do_menu, origens) if s is not None]
     _faixa_destaque(
         "★ Recomendação do aplicativo",
         "Detalhes da carteira recomendada",
-        "Composição sugerida por Empresas B3, Empresas Americanas e Seleção "
-        "de FIIs. São referências analíticas — não são a sua posição investida "
-        "nem garantia de resultado.",
+        f"Composição sugerida por {_juntar(nomes)}. São referências "
+        "analíticas, não a sua posição investida.",
         _COR_PATRIMONIO,
     )
 
@@ -1593,8 +1704,18 @@ def _secao_sugestoes_carteira(
     fiis_port: list[dict],
     fiis_salvo: bool,
 ) -> None:
-    """Carteiras-modelo (B3 · EUA · FIIs) — último bloco do Dashboard Geral."""
-    if not (modelo_b3.get("items") or modelo_us.get("items") or fiis_port):
+    """Carteiras-modelo (B3 · EUA · FIIs) — último bloco do Dashboard Geral.
+
+    Seção fora do menu chega aqui com o modelo vazio (``_load_decision_models``
+    nem o lê), e modelo vazio já não desenha bloco -- o mesmo caminho de quem
+    nunca salvou uma carteira.
+    """
+    origens = tuple(area for area, tem in (
+        (_B3, modelo_b3.get("items")),
+        (_EUA, modelo_us.get("items")),
+        (_FIIS, fiis_port),
+    ) if tem)
+    if not origens:
         return
 
     st.markdown(
@@ -1602,7 +1723,7 @@ def _secao_sugestoes_carteira(
         'margin:26px 0 6px;"></div></div>',
         unsafe_allow_html=True,
     )
-    _destaque_carteira_recomendada()
+    _destaque_carteira_recomendada(origens)
     _secao_portfolio_modelo_b3(modelo_b3)
     _secao_portfolio_modelo_us(modelo_us)
     _secao_fiis_sugeridos(fiis_port, fiis_salvo)
@@ -1705,14 +1826,22 @@ def _fig_yoy(por_ano: dict, anos: list) -> go.Figure:
 # RENDER PRINCIPAL
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _load_decision_models() -> tuple[dict, dict, list[dict], bool]:
-    """Carrega modelos persistidos somente quando o app usa dados reais."""
+def _load_decision_models(
+    areas: frozenset[str] | None = None,
+) -> tuple[dict, dict, list[dict], bool]:
+    """Carrega modelos persistidos somente quando o app usa dados reais.
+
+    E só das telas de seleção que estão no menu (``areas``; ``None`` são
+    todas): a carteira de FIIs sem modelo salvo é recalculada aqui, e quem
+    tirou a Seleção de FIIs do menu não precisa pagar essa conta a cada visita.
+    """
     if settings.MOCK_MODE:
         return {}, {}, [], False
 
-    modelo_b3 = load_active_b3_portfolio_model()
-    modelo_us = _carteira_modelo_us()
-    fiis_port, fiis_salvo = _fiis_carteira_modelo()
+    areas = _TODAS_AS_SECOES if areas is None else areas
+    modelo_b3 = load_active_b3_portfolio_model() if _B3 in areas else {}
+    modelo_us = _carteira_modelo_us() if _EUA in areas else {}
+    fiis_port, fiis_salvo = _fiis_carteira_modelo() if _FIIS in areas else ([], False)
     return modelo_b3, modelo_us, fiis_port, fiis_salvo
 
 
@@ -1751,6 +1880,17 @@ def mes_parcial_ate(tem_mes_corrente: bool, hoje: _date) -> _date | None:
 
 
 def render() -> None:
+    hoje  = _datetime.now(ZoneInfo("America/Cayenne")).date()
+    # As seções que a conta mantém no menu (Configurações → Geral), lidas
+    # ANTES de qualquer dado: sem nenhuma seção com resumo, o painel é só o
+    # aviso, e o resumo agregado nem é consultado -- uma falha numa leitura
+    # que a pessoa escondeu não pode impedir o aviso de aparecer (revisão do
+    # PR #630).
+    areas = visiveis_da_sessao()
+    if not areas & (_SELECAO | {_CAIXA, _CARTEIRA}):
+        _render_painel_sem_secoes(hoje)
+        return
+
     # ── Dados ─────────────────────────────────────────────────────────────────
     try:
         d = get_visao_geral()
@@ -1762,15 +1902,21 @@ def render() -> None:
                         codigo="dashboard.visao_geral_erro")
         return
 
-    hoje          = _datetime.now(ZoneInfo("America/Cayenne")).date()
-    hist_cashflow = get_cashflow_mensal()        # list[{ano, mes, receitas, despesas, investimentos}]
-    hist_anual    = get_historico_anual()         # {anos, por_ano}
-    carteira      = get_carteira()
-    evolucao_inv  = get_evolucao_patrimonial()
+    # Bloco de seção oculta não aparece, e a consulta própria dele não é
+    # feita: o caixa é do Controle Financeiro, a carteira real é de
+    # Investimentos. O aportado no ano sai do histórico anual do caixa, mas
+    # aparece no cartão de Investimentos -- por isso o histórico anual serve
+    # aos dois.
+    tem_caixa     = _CAIXA in areas
+    tem_carteira  = _CARTEIRA in areas
+    hist_cashflow = get_cashflow_mensal() if tem_caixa else []   # list[{ano, mes, receitas, despesas, investimentos}]
+    hist_anual    = get_historico_anual() if tem_caixa or tem_carteira else {}  # {anos, por_ano}
+    carteira      = get_carteira() if tem_carteira else {}
+    evolucao_inv  = get_evolucao_patrimonial() if tem_carteira else {}
     # O modo de demonstração não deve consultar nem combinar carteiras persistidas.
-    modelo_b3, modelo_us, fiis_port, fiis_salvo = _load_decision_models()
+    modelo_b3, modelo_us, fiis_port, fiis_salvo = _load_decision_models(areas)
     ano_atual     = hoje.year
-    cats_ano      = get_gastos_categoria_anual(ano_atual)
+    cats_ano      = get_gastos_categoria_anual(ano_atual) if tem_caixa else []
 
     # Mês atual no cashflow
     cur = next(
@@ -1798,12 +1944,18 @@ def render() -> None:
         ("Fallback demonstrativo", _COR_NEGATIVO) if fonte == "mock_fallback" else
         ("Dados de demonstração", _COR_ALERTA)
     )
-    mes_ref = _rotulo_do_periodo(cur is not None, d, hoje)
+    # Sem o Controle Financeiro, o histórico do caixa não é lido e ``cur`` fica vazio -- e
+    # o rótulo cairia no último mês com lançamento ("Maio") ao lado de
+    # proventos de outubro. O que sobra no topo (patrimônio, rentabilidade,
+    # proventos do mês) é do mês corrente.
+    mes_corrente = cur is not None or not tem_caixa
+    mes_ref = _rotulo_do_periodo(mes_corrente, d, hoje)
 
     # ── Cabeçalho ──────────────────────────────────────────────────────────────
     _render_dashboard_header(
         mes_ref, badge_label, badge_cor, hoje,
-        parcial_ate=mes_parcial_ate(cur is not None, hoje),
+        parcial_ate=mes_parcial_ate(mes_corrente, hoje),
+        subtitulo=_subtitulo_do_cabecalho(areas),
     )
     _render_kpi_grid(
         pat,
@@ -1813,14 +1965,24 @@ def render() -> None:
         carteira,
         d.get("portfolio"),
         hoje,
+        areas=areas,
     )
+    # Conta ou posição sem câmbio válido fica fora da soma; o total exibido é
+    # menor que o real e precisa dizer o que deixou de fora.
+    fora_do_total = (pat.get("fora_do_total") or []) if tem_carteira else []
+    if fora_do_total:
+        mensagem = ("Fora do patrimônio por falta de câmbio válido: "
+                    + ", ".join(fora_do_total) + ".")
+        st.caption(f"⚠️ {mensagem}")
+        aviso_lacuna(mensagem, codigo="patrimonio.sem_cambio")
     # ══════════════════════════════════════════════════════════════════════════
     # BLOCO 0 — Leitura do mês
     # ══════════════════════════════════════════════════════════════════════════
     # Os dois cards executivos saíram daqui: repetiam o grid de KPIs acima
     # (saldo, taxa de poupança, patrimônio) e os cards de Controle Financeiro e
     # Investimentos do "Resumo por área". A leitura fica — é texto, e carrega a
-    # ressalva de que o que vem abaixo é referência analítica, não garantia.
+    # ressalva de que o que vem abaixo é referência analítica, não fato.
+    # Fala do caixa: sai junto com o Controle Financeiro.
     _ind_leitura = indicadores_caixa(receitas_mes, despesas_mes, investimentos_mes)
     leitura = {
         "deficit": "As despesas superaram as receitas no período: houve déficit de caixa.",
@@ -1830,14 +1992,15 @@ def render() -> None:
         ),
         "equilibrio": "Receitas e despesas se anularam no período.",
     }.get(_ind_leitura["status"], "As despesas ficaram abaixo das receitas: sobrou caixa no mês.")
-    st.markdown(
-        '<div class="dg-shell"><div class="dg-callout">'
-        '<div class="dg-callout-icon" aria-hidden="true">◎</div>'
-        f'<div class="dg-callout-copy"><strong>Leitura do mês.</strong> {escape(leitura)} '
-        'Os valores acima são fatos do período; metas e modelos exibidos abaixo são '
-        'referências analíticas, não garantias de resultado.</div></div></div>',
-        unsafe_allow_html=True,
-    )
+    if tem_caixa:
+        st.markdown(
+            '<div class="dg-shell"><div class="dg-callout">'
+            '<div class="dg-callout-icon" aria-hidden="true">◎</div>'
+            f'<div class="dg-callout-copy"><strong>Leitura do mês.</strong> {escape(leitura)} '
+            'Os valores acima são fatos do período; metas e modelos exibidos abaixo são '
+            'referências analíticas.</div></div></div>',
+            unsafe_allow_html=True,
+        )
 
     # ══════════════════════════════════════════════════════════════════════════
     # BLOCO 1 — Mapa dos módulos do app
@@ -1854,101 +2017,105 @@ def render() -> None:
         modelo_us,
         fiis_port,
         fiis_salvo,
+        areas=areas,
     )
 
     # ══════════════════════════════════════════════════════════════════════════
     # BLOCO 2 — Evolução financeira (o caixa do período)
     # ══════════════════════════════════════════════════════════════════════════
-    _faixa_destaque(
-        "◆ Controle financeiro",
-        "Evolução financeira",
-        "Receitas, despesas e investimentos dos últimos 6 meses, as categorias "
-        "que mais pesam no ano e o comparativo ano a ano.",
-        _COR_FLUXO,
-    )
-    with st.container(border=True, key="dg_history_chart"):
-        if hist6:
-            st.plotly_chart(
-                _fig_historico(hist6),
-                width="stretch",
-                config={"displayModeBar": False},
-                key="dg_history_plot",
+    # Tudo deste bloco sai do caixa: sem o Controle Financeiro no menu, sai junto.
+    if tem_caixa:
+        _faixa_destaque(
+            "◆ Controle financeiro",
+            "Evolução financeira",
+            "Receitas, despesas e investimentos dos últimos 6 meses, as categorias "
+            "que mais pesam no ano e o comparativo ano a ano.",
+            _COR_FLUXO,
+        )
+        with st.container(border=True, key="dg_history_chart"):
+            if hist6:
+                st.plotly_chart(
+                    _fig_historico(hist6),
+                    width="stretch",
+                    config={"displayModeBar": False},
+                    key="dg_history_plot",
+                )
+            else:
+                st.caption("Sem histórico disponível.")
+
+        # ──────────────────────────────────────────────────────────────────────
+        # Mesmo cluster: os dois recortes abaixo tambem saem do controle
+        # financeiro — despesas do ano corrente e o acumulado ano a ano.
+        # ──────────────────────────────────────────────────────────────────────
+        col_cats, col_yoy = st.columns(2, gap="medium")
+
+        with col_cats:
+            _titulo_secao(
+                "🍕", f"Despesas por categoria ({ano_atual})",
+                "Compras de cartão excluídas", _COR_NEGATIVO,
             )
-        else:
-            st.caption("Sem histórico disponível.")
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Mesmo cluster: os dois recortes abaixo tambem saem do controle
-    # financeiro — despesas do ano corrente e o acumulado ano a ano.
-    # ──────────────────────────────────────────────────────────────────────
-    col_cats, col_yoy = st.columns(2, gap="medium")
-
-    with col_cats:
-        _titulo_secao(
-            "🍕", f"Despesas por categoria ({ano_atual})",
-            "Compras de cartão excluídas", _COR_NEGATIVO,
-        )
-        with st.container(border=True, key="dg_categories_chart"):
-            if cats_ano:
-                st.plotly_chart(
-                    _fig_donut_cats(cats_ano),
-                    width="stretch",
-                    config={"displayModeBar": False},
-                    key="dg_categories_plot",
-                )
-                total_cats = sum(c["gasto"] for c in cats_ano)
-                for c in cats_ano[:5]:
-                    pct = c["gasto"] / total_cats * 100 if total_cats else 0
-                    st.markdown(
-                        f'<div style="display:flex;justify-content:space-between;'
-                        f'align-items:center;padding:4px 0;border-bottom:1px solid var(--app-border);">'
-                        f'<span style="font-size:0.79rem;color:var(--app-muted)">'
-                        f'{escape(str(c["nome"]))}</span>'
-                        f'<span style="font-size:0.79rem;font-weight:600;color:var(--app-text)">'
-                        f'{fmt_moeda(c["gasto"])} '
-                        f'<span style="color:var(--app-subtle);font-size:0.70rem">{pct:.1f}%</span>'
-                        f'</span></div>',
-                        unsafe_allow_html=True,
+            with st.container(border=True, key="dg_categories_chart"):
+                if cats_ano:
+                    st.plotly_chart(
+                        _fig_donut_cats(cats_ano),
+                        width="stretch",
+                        config={"displayModeBar": False},
+                        key="dg_categories_plot",
                     )
-                if len(cats_ano) > 5:
-                    restante = sum(c["gasto"] for c in cats_ano[5:])
-                    st.caption(
-                        f"+ {len(cats_ano)-5} outras categorias · {fmt_moeda(restante)}"
-                    )
-            else:
-                st.caption(f"Sem despesas registradas em {ano_atual}.")
+                    total_cats = sum(c["gasto"] for c in cats_ano)
+                    for c in cats_ano[:5]:
+                        pct = c["gasto"] / total_cats * 100 if total_cats else 0
+                        st.markdown(
+                            f'<div style="display:flex;justify-content:space-between;'
+                            f'align-items:center;padding:4px 0;border-bottom:1px solid var(--app-border);">'
+                            f'<span style="font-size:0.79rem;color:var(--app-muted)">'
+                            f'{escape(str(c["nome"]))}</span>'
+                            f'<span style="font-size:0.79rem;font-weight:600;color:var(--app-text)">'
+                            f'{fmt_moeda(c["gasto"])} '
+                            f'<span style="color:var(--app-subtle);font-size:0.70rem">{pct:.1f}%</span>'
+                            f'</span></div>',
+                            unsafe_allow_html=True,
+                        )
+                    if len(cats_ano) > 5:
+                        restante = sum(c["gasto"] for c in cats_ano[5:])
+                        st.caption(
+                            f"+ {len(cats_ano)-5} outras categorias · {fmt_moeda(restante)}"
+                        )
+                else:
+                    st.caption(f"Sem despesas registradas em {ano_atual}.")
 
-    with col_yoy:
-        anos = hist_anual.get("anos", [])
-        _titulo_secao(
-            "📅", "Comparativo Ano a Ano",
-            "Receitas · Investimentos · Despesas acumuladas", _COR_PATRIMONIO,
-        )
-        with st.container(border=True, key="dg_yoy_chart"):
-            if len(anos) >= 1:
-                st.plotly_chart(
-                    _fig_yoy(por_ano, anos),
-                    width="stretch",
-                    config={"displayModeBar": False},
-                    key="dg_yoy_plot",
-                )
-                import pandas as pd
-                rows = []
-                for a in anos:
-                    rows.append({
-                        "Ano":           str(a),
-                        "Receitas":      f"R$ {por_ano[a]['receitas']:,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                        "Investimentos": f"R$ {por_ano[a].get('investimentos',0.0):,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                        "Despesas":      f"R$ {por_ano[a]['despesas']:,.2f}".replace(",","X").replace(".",",").replace("X","."),
-                    })
-                st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
-            else:
-                st.caption("Sem histórico anual disponível.")
+        with col_yoy:
+            anos = hist_anual.get("anos", [])
+            _titulo_secao(
+                "📅", "Comparativo Ano a Ano",
+                "Receitas · Investimentos · Despesas acumuladas", _COR_PATRIMONIO,
+            )
+            with st.container(border=True, key="dg_yoy_chart"):
+                if len(anos) >= 1:
+                    st.plotly_chart(
+                        _fig_yoy(por_ano, anos),
+                        width="stretch",
+                        config={"displayModeBar": False},
+                        key="dg_yoy_plot",
+                    )
+                    import pandas as pd
+                    rows = []
+                    for a in anos:
+                        rows.append({
+                            "Ano":           str(a),
+                            "Receitas":      f"R$ {por_ano[a]['receitas']:,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                            "Investimentos": f"R$ {por_ano[a].get('investimentos',0.0):,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                            "Despesas":      f"R$ {por_ano[a]['despesas']:,.2f}".replace(",","X").replace(".",",").replace("X","."),
+                        })
+                    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+                else:
+                    st.caption("Sem histórico anual disponível.")
 
     # ══════════════════════════════════════════════════════════════════════════
     # BLOCO 3 — Raio X do portfólio investido
     # ══════════════════════════════════════════════════════════════════════════
-    _secao_raio_x_portfolio(carteira, evolucao_inv, classes)
+    if tem_carteira:
+        _secao_raio_x_portfolio(carteira, evolucao_inv, classes)
 
     # ══════════════════════════════════════════════════════════════════════════
     # BLOCO 4 — Detalhes da carteira recomendada (fecham o dashboard)

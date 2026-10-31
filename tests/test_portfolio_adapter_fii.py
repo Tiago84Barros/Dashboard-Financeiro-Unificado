@@ -132,7 +132,8 @@ def test_history_do_fii_traz_a_serie_mensal_e_os_proventos():
                                       "Segmento": ["Logistica"], "Tipo": ["Tijolo"],
                                       "P/VP": [0.95], "DY_12m": [8.4]}),
         "metricas_mensais": lambda tks: {"HGLG11": serie},
-        "proventos": lambda tks: {"HGLG11": {2024: 11.5, 2025: 12.1}},
+        "proventos": lambda tks: {"HGLG11": {"anos": {2024: 11.5, 2025: 12.1},
+                                             "resposta_em": "2026-08-01"}},
     }
     snaps = build_snapshots([{"ticker": "HGLG11", "peso": 1.0}], model_id="m1",
                             params={}, as_of=dt.date(2026, 8, 10), loaders=loaders)
@@ -142,6 +143,38 @@ def test_history_do_fii_traz_a_serie_mensal_e_os_proventos():
     assert hist["metricas_mensais"][-1]["VPA"] == 102.0
     assert hist["proventos_anuais"] == [{"ano": 2024, "total": 11.5},
                                         {"ano": 2025, "total": 12.1}]
+    assert hist["proventos_resposta_em"] == "2026-08-01"
+
+
+def test_ano_de_as_of_e_os_seguintes_ficam_fora_dos_proventos():
+    """O ano de as_of esta pela metade e o seguinte e pagamento so declarado:
+    no snapshot eles virariam o total do ano para quem compara anos."""
+    loaders = {
+        "fiis": lambda: pd.DataFrame({"Ticker": ["A11"], "Nome": ["A"]}),
+        "metricas_mensais": lambda tks: {},
+        "proventos": lambda tks: {"A11": {"anos": {2024: 1.0, 2025: 2.0, 2026: 0.9,
+                                                   2027: 0.3},
+                                          "resposta_em": "2026-08-01"}},
+    }
+    snaps = build_snapshots([{"ticker": "A11", "peso": 1.0}], model_id="m1",
+                            params={}, as_of=dt.date(2026, 8, 10), loaders=loaders)
+    assert snaps[0].payload["history"]["proventos_anuais"] == [
+        {"ano": 2024, "total": 1.0}, {"ano": 2025, "total": 2.0}]
+
+
+def test_carregar_proventos_leva_o_dia_da_resposta_de_quem_o_arquivo_cobre(monkeypatch):
+    import core.proventos_b3 as pb
+    from core.portfolio.adapters.fii import _carregar_proventos
+
+    divs = pd.DataFrame({"ticker": ["A11", "A11", "B11"], "ano": [2024, 2025, 2025],
+                         "total": [1.0, 2.0, 3.0]})
+    divs.attrs["foto_em"] = {"A11": "2026-07-03"}
+    monkeypatch.setattr(pb, "renda_anual", lambda tks: divs)
+
+    assert _carregar_proventos(("A11", "B11")) == {
+        "A11": {"anos": {2024: 1.0, 2025: 2.0}, "resposta_em": "2026-07-03"},
+        "B11": {"anos": {2025: 3.0}, "resposta_em": None},
+    }
 
 
 def test_fii_sem_serie_mensal_mantem_history_com_listas_vazias():
@@ -155,13 +188,14 @@ def test_fii_sem_serie_mensal_mantem_history_com_listas_vazias():
     hist = snaps[0].payload["history"]
     assert hist["metricas_mensais"] == []
     assert hist["proventos_anuais"] == []
+    assert hist["proventos_resposta_em"] is None
 
 
 def test_proventos_saem_ordenados_por_ano():
     loaders = {
         "fiis": lambda: pd.DataFrame({"Ticker": ["A11"], "Nome": ["A"]}),
         "metricas_mensais": lambda tks: {},
-        "proventos": lambda tks: {"A11": {2026: 3.0, 2024: 1.0, 2025: 2.0}},
+        "proventos": lambda tks: {"A11": {"anos": {2025: 3.0, 2023: 1.0, 2024: 2.0}}},
     }
     snaps = build_snapshots([{"ticker": "A11", "peso": 1.0}], model_id="m1",
                             params={}, as_of=dt.date(2026, 8, 10), loaders=loaders)

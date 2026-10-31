@@ -60,8 +60,11 @@ def carregar_env(caminho: Path) -> int:
 
 
 def _git(*args: str, pasta: Path) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", "-C", str(pasta), *args],
-                          capture_output=True, text=True, timeout=120)
+    # UTF-8 explícito: com `text=True` sozinho o Windows decodifica em cp1252,
+    # que não tem o byte 0x81 do "Á" de "Área de Trabalho" em UTF-8; a saída
+    # vinha como None e o `.strip()` seguinte derrubava o supervisor.
+    return subprocess.run(["git", "-C", str(pasta), *args], capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", timeout=120)
 
 
 def atualizar_para_main(pasta: Path, *, git=_git) -> str:
@@ -214,7 +217,15 @@ def main(argv=None) -> int:
     args.log.parent.mkdir(parents=True, exist_ok=True)
     _log(args.log, f"iniciando em {ROOT}")
     if args.atualizar:
-        _log(args.log, atualizar_para_main(ROOT))
+        # Em 29/10/2026 o log parou em "iniciando" e a tarefa saiu com 1: uma
+        # exceção na atualização (fetch que estoura o timeout no logon, saída
+        # que não decodifica) derrubava o serviço inteiro, e o túnel ficou fora
+        # o dia todo. Atualizar é opcional; servir não é.
+        try:
+            _log(args.log, atualizar_para_main(ROOT))
+        except Exception as exc:  # noqa: BLE001 - sobe com o código do disco
+            _log(args.log, f"atualização falhou ({type(exc).__name__}: "
+                           f"{str(exc)[:200]}); sobe com o código do disco")
     if not args.env.is_file():
         _log(args.log, f"arquivo de ambiente não encontrado: {args.env}")
         return SAIDA_CONFIGURACAO

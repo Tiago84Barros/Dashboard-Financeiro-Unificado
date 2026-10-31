@@ -254,6 +254,10 @@ CARIMBO = {
     "us_vintages": ("supabase", "SELECT max(created_at) FROM market_us.score_vintages"),
     "us_delistings": ("supabase", "SELECT max(derived_at) FROM market_us.delistings"),
     "us_prices": ("supabase", "SELECT max(ingested_at) FROM market_us.prices_monthly"),
+    # `--armazem` apaga e regrava a meta a cada publicação; `publicado_em`
+    # nasce com NOW() no armazém, que é onde este alvo escreve.
+    "us_painel_armazem": ("armazem",
+                          "SELECT max(publicado_em) FROM market_us.score_panel_pub_meta"),
     "noticias_vitrine": ("supabase", "SELECT max(gerada_em) FROM noticias_vitrine_meta"),
     "espelho_supabase": ("armazem", "SELECT max(executado_em) FROM public.espelho_supabase_meta"),
     # A poda apaga no Supabase e não deixa carimbo lá; o rastro é o manifesto
@@ -266,8 +270,14 @@ CARIMBO = {
     "cdi_diario": ("arquivo", "data/public/cdi_diario.json.gz"),
     "macro_brasil": ("arquivo", "data/public/macro_brasil.json.gz"),
     "valuation_historico": ("arquivo", "data/public/valuation_historico.json.gz"),
+    "cenarios_analogos": ("arquivo", "data/public/cenarios_analogos.json.gz"),
     "informacoes_recentes": ("arquivo", "data/public/informacoes_recentes.json.gz"),
     "fii_metrics_monthly": ("arquivo", "data/public/fii_metrics_monthly.json.gz"),
+    "precos_mensais_b3": ("arquivo", "data/public/precos_mensais_b3.json.gz"),
+    "pregoes_recentes_b3": ("arquivo", "data/public/pregoes_recentes_b3.json.gz"),
+    "proventos_b3": ("arquivo", "data/public/proventos_b3.json.gz"),
+    "carteira20_desempenho": ("arquivo", "data/public/carteira20_desempenho.json"),
+    "carteira20_medicao": ("arquivo", "data/public/carteira20_medicao.json"),
     "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),
     "b3_linhagem": ("arquivo", "data/public/b3_linhagem.json"),
 }
@@ -291,7 +301,7 @@ def _carimbo_do_arquivo(relativo: str):
     if isinstance(dados, dict) and isinstance(dados.get("gerado_em"), str):
         return datetime.fromisoformat(dados["gerado_em"])
     if isinstance(dados, dict) and "gerado_em" in dados:
-        return None  # arquivo à espera da primeira publicação (CDI)
+        return None  # arquivo à espera da primeira publicação (CDI, Carteira 20)
     from core.macro_data.insumos_publicados import desserializar
     return desserializar(bruto).gerado_em
 

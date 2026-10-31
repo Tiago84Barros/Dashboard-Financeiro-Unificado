@@ -1,0 +1,399 @@
+<title>Mapa do Dashboard Financeiro</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: um fluxograma por vez. A parte aberta fica no alto; setas descem dela até as partes de dentro. Tocar numa caixa abre o fluxograma dela. */
+:root {
+  --bg: #EEF1EC;
+  --surface: #FAFBF8;
+  --ink: #17201C;
+  --muted: #56635D;
+  --line: #C3CCC5;
+  --linha: #87958D;
+  --focus: #1E6A57;
+  --mark: #E8B923;
+  --font-display: "Familjen Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --r0f: #1F2B26; --r0s: #1F2B26; --r0t: #F3F6F2; --r0st: #C3CFC8;
+  --r1f: #E6F1FB; --r1s: #185FA5; --r1t: #0C447C; --r1st: #185FA5;
+  --r2f: #EAF3DE; --r2s: #3B6D11; --r2t: #27500A; --r2st: #3B6D11;
+  --r3f: #EEEDFE; --r3s: #534AB7; --r3t: #3C3489; --r3st: #534AB7;
+  --r4f: #E1F5EE; --r4s: #0F6E56; --r4t: #085041; --r4st: #0F6E56;
+  --r5f: #FAECE7; --r5s: #993C1D; --r5t: #712B13; --r5st: #993C1D;
+  --r6f: #FAEEDA; --r6s: #854F0B; --r6t: #633806; --r6st: #854F0B;
+  --r7f: #FBEAF0; --r7s: #993556; --r7t: #72243E; --r7st: #993556;
+  --r8f: #EDF1F5; --r8s: #475569; --r8t: #1E293B; --r8st: #475569;
+  --r9f: #F1EFE8; --r9s: #5F5E5A; --r9t: #444441; --r9st: #5F5E5A;
+  --admin-bg: #F4E4C4; --admin-ink: #6E4700;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111714; --surface: #19211D; --ink: #E5EBE7; --muted: #9DABA4; --line: #34413B; --linha: #7C8B84;
+    --focus: #62C3A6; --mark: #F2C94C;
+    --r0f: #26332D; --r0s: #56665E; --r0t: #F3F6F2; --r0st: #B7C4BD;
+    --r1f: #0C447C; --r1s: #85B7EB; --r1t: #E6F1FB; --r1st: #B5D4F4;
+    --r2f: #27500A; --r2s: #97C459; --r2t: #EAF3DE; --r2st: #C0DD97;
+    --r3f: #3C3489; --r3s: #AFA9EC; --r3t: #EEEDFE; --r3st: #CECBF6;
+    --r4f: #085041; --r4s: #5DCAA5; --r4t: #E1F5EE; --r4st: #9FE1CB;
+    --r5f: #712B13; --r5s: #F0997B; --r5t: #FAECE7; --r5st: #F5C4B3;
+    --r6f: #633806; --r6s: #EF9F27; --r6t: #FAEEDA; --r6st: #FAC775;
+    --r7f: #72243E; --r7s: #ED93B1; --r7t: #FBEAF0; --r7st: #F4C0D1;
+    --r8f: #1E293B; --r8s: #94A3B8; --r8t: #EDF1F5; --r8st: #CBD5E1;
+    --r9f: #444441; --r9s: #B4B2A9; --r9t: #F1EFE8; --r9st: #D3D1C7;
+    --admin-bg: #4A3712; --admin-ink: #F6DDA8;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111714; --surface: #19211D; --ink: #E5EBE7; --muted: #9DABA4; --line: #34413B; --linha: #7C8B84;
+  --focus: #62C3A6; --mark: #F2C94C;
+  --r0f: #26332D; --r0s: #56665E; --r0t: #F3F6F2; --r0st: #B7C4BD;
+  --r1f: #0C447C; --r1s: #85B7EB; --r1t: #E6F1FB; --r1st: #B5D4F4;
+  --r2f: #27500A; --r2s: #97C459; --r2t: #EAF3DE; --r2st: #C0DD97;
+  --r3f: #3C3489; --r3s: #AFA9EC; --r3t: #EEEDFE; --r3st: #CECBF6;
+  --r4f: #085041; --r4s: #5DCAA5; --r4t: #E1F5EE; --r4st: #9FE1CB;
+  --r5f: #712B13; --r5s: #F0997B; --r5t: #FAECE7; --r5st: #F5C4B3;
+  --r6f: #633806; --r6s: #EF9F27; --r6t: #FAEEDA; --r6st: #FAC775;
+  --r7f: #72243E; --r7s: #ED93B1; --r7t: #FBEAF0; --r7st: #F4C0D1;
+  --r8f: #1E293B; --r8s: #94A3B8; --r8t: #EDF1F5; --r8st: #CBD5E1;
+  --r9f: #444441; --r9s: #B4B2A9; --r9t: #F1EFE8; --r9st: #D3D1C7;
+  --admin-bg: #4A3712; --admin-ink: #F6DDA8;
+  color-scheme: dark;
+}
+.r0 { --f: var(--r0f); --s: var(--r0s); --t: var(--r0t); --st: var(--r0st); }
+.r1 { --f: var(--r1f); --s: var(--r1s); --t: var(--r1t); --st: var(--r1st); }
+.r2 { --f: var(--r2f); --s: var(--r2s); --t: var(--r2t); --st: var(--r2st); }
+.r3 { --f: var(--r3f); --s: var(--r3s); --t: var(--r3t); --st: var(--r3st); }
+.r4 { --f: var(--r4f); --s: var(--r4s); --t: var(--r4t); --st: var(--r4st); }
+.r5 { --f: var(--r5f); --s: var(--r5s); --t: var(--r5t); --st: var(--r5st); }
+.r6 { --f: var(--r6f); --s: var(--r6s); --t: var(--r6t); --st: var(--r6st); }
+.r7 { --f: var(--r7f); --s: var(--r7s); --t: var(--r7t); --st: var(--r7st); }
+.r8 { --f: var(--r8f); --s: var(--r8s); --t: var(--r8t); --st: var(--r8st); }
+.r9 { --f: var(--r9f); --s: var(--r9s); --t: var(--r9t); --st: var(--r9st); }
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--font-body); font-size: 15px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+}
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.pagina { max-width: 1120px; margin: 0 auto; display: grid; gap: 18px; }
+header { display: grid; gap: 8px; }
+.sobretitulo { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+h1 { font-family: var(--font-display); font-weight: 700; font-size: clamp(28px, 5vw, 40px); line-height: 1.1; margin: 0; text-wrap: balance; }
+.intro { margin: 0; max-width: 64ch; color: var(--muted); }
+.numeros { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.numeros b { color: var(--ink); font-weight: 600; }
+
+.ferramentas { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 6; background: var(--bg); padding-block: 10px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
+.busca-caixa { position: relative; }
+.busca { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 0 14px; }
+.busca svg { flex: none; color: var(--muted); }
+.busca input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ink); font: inherit; padding: 9px 0; outline: none; }
+.busca:focus-within { border-color: var(--focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 25%, transparent); }
+.achados { position: absolute; left: 0; right: 0; top: calc(100% + 6px); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 6px; display: grid; gap: 2px; max-height: min(60vh, 420px); overflow-y: auto; box-shadow: 0 10px 30px color-mix(in srgb, var(--ink) 14%, transparent); }
+.achado { display: grid; gap: 1px; text-align: left; font: inherit; color: var(--ink); background: transparent; border: 0; border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+.achado:hover, .achado:focus-visible { background: color-mix(in srgb, var(--focus) 10%, transparent); outline: none; }
+.achado .onde { font-size: 12.5px; color: var(--muted); }
+.achados .nada { padding: 8px 10px; color: var(--muted); font-size: 14px; }
+
+.trilha { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 14px; scroll-margin-top: 90px; min-height: 34px; }
+.trilha .sep { color: var(--muted); }
+.passo { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+.passo:hover { border-color: var(--muted); }
+.passo.agora { background: transparent; border-color: transparent; font-weight: 600; cursor: default; padding-inline: 4px; }
+.voltar { font-weight: 600; }
+
+.palco { position: relative; padding-block: 6px 28px; }
+.palco > svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; color: var(--linha); z-index: 0; transition: opacity .2s ease; }
+.topo { display: flex; justify-content: center; position: relative; z-index: 1; }
+.atual { width: min(100%, 660px); background: var(--f); color: var(--t); border: 1.5px solid var(--s); border-radius: 12px; padding: 16px 20px; text-align: center; display: grid; gap: 4px; }
+.atual .grupo { color: var(--st); }
+.atual .nome { font-family: var(--font-display); font-size: clamp(20px, 3.4vw, 26px); font-weight: 700; line-height: 1.2; text-wrap: balance; }
+.atual .resumo { color: var(--st); font-size: 14.5px; }
+.atual .explica { text-align: left; margin-top: 8px; padding-top: 10px; border-top: 1px dashed var(--s); font-size: 14.5px; }
+.atual .conta { font-size: 12.5px; color: var(--st); font-weight: 600; margin-top: 6px; }
+
+.filhos { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 46px 22px; margin-top: 58px; position: relative; z-index: 1; }
+.caixa { flex: 0 1 200px; min-width: 0; display: grid; gap: 4px; justify-items: center; text-align: center; background: var(--f); color: var(--t); border: 1.5px solid var(--s); border-radius: 10px; padding: 12px 12px 10px; font: inherit; cursor: pointer; animation: surge .28s ease both; animation-delay: calc(var(--i, 0) * 22ms); }
+.caixa:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--s) 28%, transparent); }
+.caixa:focus-visible, .passo:focus-visible, .achado:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.caixa .nome { font-weight: 600; font-size: 15px; line-height: 1.3; overflow-wrap: anywhere; }
+.caixa .resumo { color: var(--st); font-size: 13px; line-height: 1.38; }
+.caixa .rodape { margin-top: 4px; font-size: 12px; font-weight: 600; color: var(--st); display: inline-flex; align-items: center; gap: 4px; padding: 2px 9px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--s) 45%, transparent); }
+.caixa .explica { text-align: left; justify-self: stretch; font-size: 13.5px; line-height: 1.5; border-top: 1px dashed var(--s); padding-top: 8px; margin-top: 4px; }
+.caixa.destaque { box-shadow: 0 0 0 3px var(--mark); }
+.grupo { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; font-weight: 600; color: var(--st); }
+.tracejada { border-style: dashed !important; }
+.selo { display: inline-block; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 1px 7px; border-radius: 999px; background: var(--admin-bg); color: var(--admin-ink); white-space: nowrap; }
+.vazio { margin: 0; color: var(--muted); font-size: 14px; text-align: center; }
+@keyframes surge { from { opacity: 0; } to { opacity: 1; } }
+
+.legenda { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 13px; color: var(--muted); align-items: center; }
+.legenda .amostra { display: inline-block; vertical-align: -3px; width: 30px; height: 16px; border-radius: 4px; border: 1.5px solid var(--muted); margin-right: 6px; }
+.legenda .amostra.tracejada { border-style: dashed; }
+footer { font-size: 13px; color: var(--muted); max-width: 70ch; display: grid; gap: 6px; }
+footer p { margin: 0; }
+@media (max-width: 560px) {
+  .filhos { gap: 40px 12px; margin-top: 50px; }
+  .caixa { flex-basis: calc(50% - 6px); padding: 10px 8px 9px; }
+  .caixa .nome { font-size: 14px; }
+  .caixa .resumo { font-size: 12.5px; }
+  .atual { padding: 14px 14px; }
+}
+@media (prefers-reduced-motion: reduce) { .caixa { animation: none; } .palco > svg { transition: none; } }
+</style>
+
+<div class="pagina">
+  <header>
+    <div class="sobretitulo">Dashboard Financeiro Unificado</div>
+    <h1>Mapa do Dashboard Financeiro</h1>
+    <p class="intro">O fluxograma começa pelas telas do menu. Toque numa caixa para abrir o fluxograma do que existe dentro dela; caixas marcadas com "ler" são a última parte do ramo e mostram a explicação ali mesmo. Para voltar, use o caminho logo acima do desenho.</p>
+    <div class="numeros" id="numeros"></div>
+  </header>
+
+  <div class="ferramentas">
+    <div class="busca-caixa">
+      <label class="busca" for="busca">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="busca" type="search" placeholder="Procurar no mapa (ex.: dividendos, extrato, carteira)" autocomplete="off" aria-controls="achados">
+      </label>
+      <div class="achados" id="achados" hidden></div>
+    </div>
+  </div>
+
+  <nav class="trilha" id="trilha" aria-label="Caminho até aqui"></nav>
+
+  <section class="palco" id="palco" aria-live="polite">
+    <svg id="linhas" aria-hidden="true"></svg>
+    <div class="topo"><div class="atual" id="atual"></div></div>
+    <div class="filhos" id="filhos"></div>
+  </section>
+
+  <div class="legenda">
+    <span><span class="amostra"></span>caixa com "partes ›": abre outro fluxograma</span>
+    <span><span class="amostra tracejada"></span>tracejada: funciona por trás, sem tela própria</span>
+    <span><span class="selo">só administrador</span> aparece só para quem administra o app</span>
+  </div>
+
+  <footer>
+    <p id="rodape-data"></p>
+    <p>O mapa só descreve o app. Ele não abre o app nem muda nada nele.</p>
+  </footer>
+</div>
+
+<script type="application/json" id="dados">/*DADOS*/null</script>
+<script>
+(function () {
+  var dados = JSON.parse(document.getElementById("dados").textContent);
+  var nos = [];
+  var palco = document.getElementById("palco");
+  var svg = document.getElementById("linhas");
+  var cardAtual = document.getElementById("atual");
+  var caixaFilhos = document.getElementById("filhos");
+  var trilha = document.getElementById("trilha");
+  var atual = dados;
+  var lendo = {};
+  var quadro = 0;
+
+  function normal(s) { return (s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase(); }
+  function el(tag, cls, txt) { var e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
+  function partes(k) { return k === 1 ? "1 parte" : k + " partes"; }
+
+  (function preparar(n, pai, rampa, nivel) {
+    n.id = nos.length; n.pai = pai; n.nivel = nivel;
+    n.rampa = nivel === 1 ? n.cor : rampa;
+    n.tracejada = !!(n.bastidores || (pai && pai.tracejada));
+    n.texto = normal([n.nome, n.resumo, n.explicacao].join(" "));
+    nos.push(n);
+    (n.filhos || []).forEach(function (f) { preparar(f, n, n.rampa, nivel + 1); });
+  })(dados, null, 0, 0);
+
+  function caminho(n) { var c = []; while (n) { c.unshift(n); n = n.pai; } return c; }
+  function nomeCurto(n) { return n.nivel === 0 ? "Dashboard Financeiro" : n.nome; }
+
+  function irPara(n, foco) {
+    atual = n; lendo = {};
+    if (foco) lendo[foco.id] = true;
+    desenhar(foco);
+    var t = trilha.getBoundingClientRect().top;
+    if (!foco && (t < 0 || t > window.innerHeight * 0.6)) trilha.scrollIntoView({ block: "start" });
+  }
+
+  function desenhar(foco) {
+    trilha.textContent = "";
+    var cam = caminho(atual);
+    if (cam.length > 1) {
+      var v = el("button", "passo voltar", "‹ Voltar"); v.type = "button";
+      v.addEventListener("click", function () { irPara(atual.pai); });
+      trilha.appendChild(v);
+    }
+    cam.forEach(function (n, i) {
+      if (i) trilha.appendChild(el("span", "sep", "›"));
+      if (i < cam.length - 1) {
+        var b = el("button", "passo", nomeCurto(n)); b.type = "button";
+        b.addEventListener("click", function () { irPara(n); });
+        trilha.appendChild(b);
+      } else trilha.appendChild(el("span", "passo agora", nomeCurto(n)));
+    });
+
+    cardAtual.className = "atual r" + atual.rampa + (atual.tracejada ? " tracejada" : "");
+    cardAtual.textContent = "";
+    if (atual.nivel === 1 && atual.grupo) cardAtual.appendChild(el("span", "grupo", atual.grupo));
+    var nome = el("span", "nome", atual.nome);
+    cardAtual.appendChild(nome);
+    if (atual.so_admin) cardAtual.appendChild(el("span", null)).appendChild(el("span", "selo", "só administrador"));
+    if (atual.resumo) cardAtual.appendChild(el("span", "resumo", atual.resumo));
+    if (atual.explicacao) cardAtual.appendChild(el("div", "explica", atual.explicacao));
+    var fs = atual.filhos || [];
+    if (fs.length) cardAtual.appendChild(el("span", "conta", partes(fs.length) + " abaixo"));
+
+    caixaFilhos.textContent = "";
+    svg.style.opacity = "0";
+    if (!fs.length) caixaFilhos.appendChild(el("p", "vazio", "Esta é a última parte deste ramo."));
+    fs.forEach(function (f, i) { caixaFilhos.appendChild(caixa(f, i)); });
+    agendar();
+    if (foco) {
+      var alvo = caixaFilhos.querySelector('[data-id="' + foco.id + '"]');
+      if (alvo) { alvo.classList.add("destaque"); setTimeout(function () { alvo.scrollIntoView({ block: "center" }); }, 30); }
+    }
+  }
+
+  function caixa(f, i) {
+    var k = (f.filhos || []).length;
+    var b = el("button", "caixa r" + f.rampa + (f.tracejada ? " tracejada" : ""));
+    b.type = "button"; b.dataset.id = f.id; b.style.setProperty("--i", i);
+    if (f.nivel === 1 && f.grupo) b.appendChild(el("span", "grupo", f.grupo));
+    b.appendChild(el("span", "nome", f.nome));
+    if (f.so_admin) b.appendChild(el("span", "selo", "só administrador"));
+    if (f.resumo) b.appendChild(el("span", "resumo", f.resumo));
+    var exp = el("span", "explica", f.explicacao || "");
+    exp.hidden = !lendo[f.id];
+    b.appendChild(exp);
+    var rod = el("span", "rodape", k ? partes(k) + " ›" : (lendo[f.id] ? "fechar" : "ler"));
+    b.appendChild(rod);
+    if (!k) b.setAttribute("aria-expanded", lendo[f.id] ? "true" : "false");
+    b.addEventListener("click", function () {
+      if (k) { irPara(f); return; }
+      lendo[f.id] = !lendo[f.id];
+      exp.hidden = !lendo[f.id];
+      rod.textContent = lendo[f.id] ? "fechar" : "ler";
+      b.setAttribute("aria-expanded", lendo[f.id] ? "true" : "false");
+      b.classList.remove("destaque");
+      agendar();
+    });
+    return b;
+  }
+
+  function agendar() { cancelAnimationFrame(quadro); quadro = requestAnimationFrame(tracar); }
+
+  function tracar() {
+    var P = palco.getBoundingClientRect();
+    var A = cardAtual.getBoundingClientRect();
+    var bs = Array.prototype.slice.call(caixaFilhos.querySelectorAll(".caixa"));
+    var px = A.left + A.width / 2 - P.left, py = A.bottom - P.top;
+    var d = [];
+    if (bs.length) {
+      var linhas = [];
+      bs.forEach(function (b) {
+        var r = b.getBoundingClientRect();
+        var item = { x: r.left + r.width / 2 - P.left, esq: r.left - P.left, dir: r.right - P.left, topo: r.top - P.top, base: r.bottom - P.top };
+        var ln = linhas.find(function (l) { return Math.abs(l.topo - item.topo) < 4; });
+        if (!ln) { ln = { topo: item.topo, itens: [] }; linhas.push(ln); }
+        ln.itens.push(item);
+      });
+      linhas.sort(function (a, b) { return a.topo - b.topo; });
+      var tronco = px;
+      if (linhas.length > 1) {
+        var l0 = linhas[0].itens.slice().sort(function (a, b) { return a.esq - b.esq; });
+        var melhor = null;
+        for (var j = 0; j + 1 < l0.length; j++) {
+          var g = (l0[j].dir + l0[j + 1].esq) / 2;
+          if (melhor === null || Math.abs(g - px) < Math.abs(melhor - px)) melhor = g;
+        }
+        if (melhor !== null) tronco = melhor;
+      }
+      var anterior = py, barras = [];
+      linhas.forEach(function (ln, k) {
+        var y = Math.round((anterior + ln.topo) / 2) + 0.5;
+        barras.push(y);
+        var xs = ln.itens.map(function (it) { return it.x; });
+        xs.push(k === 0 ? px : tronco);
+        if (k === 0 && linhas.length > 1) xs.push(tronco);
+        d.push("M" + Math.min.apply(null, xs) + " " + y + "H" + Math.max.apply(null, xs));
+        ln.itens.forEach(function (it) {
+          d.push('<path d="M' + it.x + " " + y + "V" + (it.topo - 1) + '" marker-end="url(#seta)"/>');
+        });
+        anterior = Math.max.apply(null, ln.itens.map(function (it) { return it.base; }));
+      });
+      d.unshift("M" + px + " " + py + "V" + barras[0]);
+      if (barras.length > 1) d.push("M" + tronco + " " + barras[0] + "V" + barras[barras.length - 1]);
+    }
+    var simples = d.filter(function (s) { return s.charAt(0) === "M"; }).join(" ");
+    var setas = d.filter(function (s) { return s.charAt(0) === "<"; }).join("");
+    svg.innerHTML = '<defs><marker id="seta" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8.5 5L2 9" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>' +
+      '<g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">' + (simples ? '<path d="' + simples + '"/>' : "") + setas + "</g>";
+    svg.style.opacity = "1";
+  }
+
+  if (window.ResizeObserver) new ResizeObserver(agendar).observe(palco);
+  window.addEventListener("resize", agendar);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(agendar);
+
+  var telas = dados.filhos.filter(function (f) { return !f.bastidores; }).length;
+  var admin = nos.filter(function (n) { return n.so_admin; }).length;
+  var numeros = document.getElementById("numeros");
+  [[telas, "telas no menu"], [nos.length - 1, "partes no mapa"], [admin, "só para administrador"]].forEach(function (p) {
+    var s = el("span"); s.appendChild(el("b", null, String(p[0]))); s.appendChild(document.createTextNode(" " + p[1])); numeros.appendChild(s);
+  });
+  document.getElementById("rodape-data").textContent = dados.data_mapa ? "Montado a partir do código do Dashboard Financeiro em " + dados.data_mapa + "." : "";
+
+  var busca = document.getElementById("busca");
+  var achados = document.getElementById("achados");
+  var espera;
+  busca.addEventListener("input", function () { clearTimeout(espera); espera = setTimeout(procurar, 140); });
+  busca.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { achados.hidden = true; }
+    if (e.key === "ArrowDown") { var p = achados.querySelector(".achado"); if (p) { e.preventDefault(); p.focus(); } }
+  });
+  achados.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") { achados.hidden = true; busca.focus(); }
+    var a = document.activeElement;
+    if (e.key === "ArrowDown" && a.nextElementSibling) { e.preventDefault(); a.nextElementSibling.focus(); }
+    if (e.key === "ArrowUp") { e.preventDefault(); (a.previousElementSibling || busca).focus(); }
+  });
+  document.addEventListener("click", function (e) { if (!e.target.closest(".busca-caixa")) achados.hidden = true; });
+  busca.addEventListener("focus", function () { if (achados.childElementCount && busca.value.trim().length > 1) achados.hidden = false; });
+
+  function procurar() {
+    var termo = normal(busca.value.trim());
+    achados.textContent = "";
+    if (termo.length < 2) { achados.hidden = true; return; }
+    var lista = nos.filter(function (n) { return n.nivel > 0 && n.texto.indexOf(termo) !== -1; });
+    lista.sort(function (a, b) {
+      var na = normal(a.nome).indexOf(termo) !== -1 ? 0 : 1, nb = normal(b.nome).indexOf(termo) !== -1 ? 0 : 1;
+      return na - nb || a.id - b.id;
+    });
+    if (!lista.length) achados.appendChild(el("div", "nada", "Nada encontrado. Tente outra palavra."));
+    else achados.appendChild(el("div", "nada", lista.length === 1 ? "1 parte encontrada" : lista.length + " partes encontradas"));
+    lista.slice(0, 40).forEach(function (n) {
+      var b = el("button", "achado"); b.type = "button";
+      b.appendChild(el("span", null, n.nome));
+      b.appendChild(el("span", "onde", caminho(n).slice(1, -1).map(function (x) { return x.nome; }).join(" › ") || "Tela do menu"));
+      b.addEventListener("click", function () {
+        achados.hidden = true;
+        if ((n.filhos || []).length) irPara(n.pai, n); else irPara(n.pai, n);
+      });
+      achados.appendChild(b);
+    });
+    achados.hidden = false;
+  }
+
+  desenhar();
+})();
+</script>

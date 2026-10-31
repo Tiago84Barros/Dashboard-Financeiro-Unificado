@@ -24,13 +24,13 @@ def _us(monkeypatch, estado):
 
 def test_as_duas_perguntas_viraram_dois_componentes():
     s = cs.confianca_us()
-    assert _comp(s, "Vitrine na versao corrente") is not None
+    assert _comp(s, "Vitrine na versão corrente") is not None
     assert _comp(s, "Metodologia validada") is not None
 
 
 def test_o_peso_do_bloco_foi_repartido_e_nao_ampliado():
     s = cs.confianca_us()
-    bloco = (_comp(s, "Vitrine na versao corrente").peso
+    bloco = (_comp(s, "Vitrine na versão corrente").peso
              + _comp(s, "Metodologia validada").peso)
     assert abs(bloco - 0.25) < 1e-9
 

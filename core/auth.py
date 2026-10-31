@@ -15,11 +15,34 @@ Gerar hash seguro para o secrets.toml:
 from __future__ import annotations
 
 import hashlib
+import logging
+import time
 
 import streamlit as st
 
 from core.config import settings
 from core.user_context import principal
+
+logger = logging.getLogger(__name__)
+
+#: Nome da chave de sessão que guarda a última revalidação bem-sucedida,
+#: como ``(uid, credential_version, instante)``.
+_VALIDADA = "_app4_sessao_validada"
+
+#: Por quanto tempo uma revalidação vale sem voltar ao banco.
+#:
+#: Era zero: toda execução do script -- cada clique de botão, cada troca de
+#: aba, cada número digitado, cada upload -- gastava um ``SELECT`` em
+#: ``profiles`` na ÚNICA conexão que a Streamlit Cloud dá ao app, na mesma
+#: execução em que o tema quer essa conexão para ler ou gravar a preferência.
+#: Em Configurações, onde quase toda interação dispara rerun e algumas ainda
+#: fazem ETL, era a conexão disputada que fazia a escolha de tema não chegar ao
+#: banco. Revalidar é guarda de segurança, não contador de cliques.
+_VALIDADE_DA_REVALIDACAO = 60.0
+
+#: Tolerância quando o banco está fora do ar: a sessão segue valendo até aqui
+#: com a última revalidação boa, em vez de derrubar quem está trabalhando.
+_TOLERANCIA_SEM_BANCO = 600.0
 
 # ── Pública ───────────────────────────────────────────────────────────────────
 
@@ -29,26 +52,76 @@ def verificar_autenticacao() -> None:
     Para a execução com st.stop() se a senha estiver configurada e não foi informada.
 
     Valida conta ativa, versão da credencial e prazo antes de liberar as rotas.
+
+    O prazo (``expires_at``) é conferido aqui em toda execução, localmente, por
+    :func:`core.user_context.principal`. O que passou a ser conferido por
+    tempo, e não por execução, é a ida ao banco que pergunta se a conta foi
+    desativada ou se a senha mudou: desativar uma conta ou trocar uma senha
+    passa a derrubar a sessão em até ``_VALIDADE_DA_REVALIDACAO`` segundos (e
+    em até ``_TOLERANCIA_SEM_BANCO`` enquanto o banco estiver inacessível),
+    não no clique seguinte. É a troca consciente que tira a revalidação do
+    caminho de toda interação -- ver o comentário das constantes.
     """
     from core.user_accounts import session_valid
     user = principal()
     if user:
+        agora = time.time()
+        marca = st.session_state.get(_VALIDADA)
+        if _ainda_vale(marca, user, agora, _VALIDADE_DA_REVALIDACAO):
+            return
         try:
-            if session_valid(user):
-                return
+            valido = session_valid(user)
         except Exception:
+            logger.exception("falha ao revalidar a sessão no banco")
+            if _ainda_vale(marca, user, agora, _TOLERANCIA_SEM_BANCO):
+                # Banco fora do ar não é credencial inválida. Antes isto
+                # parava o app com uma tarja de erro no lugar da página.
+                return
             st.error("Não foi possível validar sua sessão. Tente novamente.")
             st.stop()
-        st.session_state.clear()
+        if valido:
+            st.session_state[_VALIDADA] = (
+                str(user.get("id", "")), str(user.get("credential_version", "")), agora
+            )
+            return
+        _limpar_sessao()
 
     _renderizar_login()
     st.stop()
 
 
+def _ainda_vale(marca, user: dict, agora: float, janela: float) -> bool:
+    """A marca de revalidação cobre ESTA conta e ESTA credencial, e é recente.
+
+    Guardar a credencial junto do uid é o que impede a marca de sobreviver a
+    uma troca de senha dentro da mesma sessão: o ``credential_version`` do
+    ``user`` muda e a marca deixa de casar.
+    """
+    if not (isinstance(marca, tuple) and len(marca) == 3):
+        return False
+    uid, credencial, instante = marca
+    return (
+        uid == str(user.get("id", ""))
+        and credencial == str(user.get("credential_version", ""))
+        and 0 <= agora - float(instante) < janela
+    )
+
+
 def encerrar_sessao() -> None:
     """Encerra a sessão autenticada e recarrega o app."""
-    st.session_state.clear()
+    _limpar_sessao()
     st.rerun()
+
+
+def _limpar_sessao() -> None:
+    """Limpa a sessão mantendo o tema que a tela está pintando.
+
+    Import local: ``design`` depende de ``core``, e o caminho inverso no topo
+    do módulo fecharia o ciclo.
+    """
+    from design.theme_selector import limpar_sessao_preservando_o_tema
+
+    limpar_sessao_preservando_o_tema()
 
 
 def esta_autenticado() -> bool:
