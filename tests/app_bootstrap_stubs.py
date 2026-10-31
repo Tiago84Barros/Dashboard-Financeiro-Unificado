@@ -76,7 +76,8 @@ def stubs_de_bootstrap(**overrides) -> dict[str, SimpleNamespace]:
             current_theme=lambda: "dark",
             tema_para_pintar=lambda: "dark",
             render_theme_selector=lambda: None,
-            lembrar_no_navegador=lambda theme, uid="": None,
+            escolha_pintada=lambda: None,
+            lembrar_no_navegador=lambda escolha, uid="": None,
         ),
     }
     for chave, duble in overrides.items():

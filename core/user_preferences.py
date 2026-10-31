@@ -13,12 +13,20 @@ gravador de chat, que faz exatamente o mesmo. Na única conexão do pool do
 Cloud, isso é tempo suficiente para a escolha do tema não chegar ao banco antes
 de a pessoa desistir -- e o claro "não entrava" só na conta grande.
 
-A leitura pede a chave (``->>``) e a gravação usa ``jsonb_set``: o documento não
+A leitura pede a chave (``->>``) e a gravação troca só as chaves do tema: o documento não
 sai do servidor em nenhuma das duas, e a escrita deixou de poder sobrescrever o
 que outra aba gravou -- não há mais um documento em memória para devolver.
 Depois da mudança: 49 ms e 4 bytes na leitura, 242 ms na gravação -- o mesmo
 que uma conta sem histórico nenhum.
+
+Desde 31/10/2026 a conta guarda, junto do tema, o INSTANTE da escolha
+(``app4_theme_at``, milissegundos desde a época). O tema muda se e somente se a
+pessoa escolher, e "a escolha mais recente vale" só se decide com relógio:
+sem ele, uma escolha que não chegou ao banco perdia para a anterior que chegou
+-- e isso, visto da tela, é o app trocando de tema sozinho.
 """
+import time
+
 from sqlalchemy import text
 
 from core.user_accounts import _engine
@@ -26,40 +34,76 @@ from core.user_context import require_user
 
 THEMES = ("dark", "light")
 FIELD = "app4_theme"
+FIELD_AT = "app4_theme_at"
+
+# ``->>`` devolve texto; o que não for um inteiro curto vira 0 -- escolha de
+# antes do relógio, a mais antiga possível. Nunca levanta por valor estranho.
+_INSTANTE_GRAVADO = (
+    "(CASE WHEN extra_settings ->> CAST(:field_at AS text) ~ '^[0-9]{1,18}$' "
+    "THEN (extra_settings ->> CAST(:field_at AS text))::bigint ELSE 0 END)"
+)
+
+
+def _instante(valor) -> int:
+    try:
+        instante = int(valor)
+    except (TypeError, ValueError):
+        return 0
+    return instante if instante > 0 else 0
+
+
+def load_theme_choice() -> tuple[str, int] | None:
+    """``(tema, instante_ms)`` da última escolha gravada, ou ``None``.
+
+    ``None`` é "esta conta nunca escolheu", não "escuro": o padrão é decisão de
+    quem pinta (ver :mod:`design.theme_selector`), e nunca é gravado como se
+    fosse escolha. Tema gravado antes de existir o instante volta com ``0``.
+
+    Pede as duas chaves com ``->>``: o documento -- que carrega o histórico dos
+    chats -- não sai do servidor.
+    """
+    uid = require_user()
+    with _engine().connect() as conn:
+        linha = conn.execute(text(
+            "SELECT extra_settings ->> CAST(:field AS text), "
+            "extra_settings ->> CAST(:field_at AS text) "
+            "FROM user_settings WHERE user_id = :uid"
+        ), {"uid": uid, "field": FIELD, "field_at": FIELD_AT}).first()
+    if not linha or linha[0] not in THEMES:
+        return None
+    return linha[0], _instante(linha[1])
 
 
 def load_theme() -> str | None:
     """Tema gravado na conta, ou ``None`` quando a conta nunca escolheu um.
 
     Devolver ``"dark"`` para a ausência misturava duas respostas que não são a
-    mesma: "esta conta escolheu escuro" e "esta conta não escolheu nada". Quem
-    chama trata as duas igual -- e a segunda era adotada como preferência de
-    verdade, gravada no cache da sessão, no lembrete do processo e no cookie do
-    navegador. Uma leitura que não achou a chave apagava a memória de quem
-    estava no claro, em silêncio e sem erro nenhum para mostrar.
-
+    mesma: "esta conta escolheu escuro" e "esta conta não escolheu nada".
     Ausência acontece de verdade: a linha de ``user_settings`` nasce sem a
     chave, e é criada por qualquer preferência -- cenário, histórico, chat --,
-    não só pelo tema. Conta nova que nunca abriu Configurações → Geral tem
-    linha, tem documento e não tem ``app4_theme``.
-
-    ``None`` não é um tema: quem pinta decide o que fazer com a ausência (ver
-    :func:`design.theme_selector.current_theme`), e o padrão escuro continua
-    existindo -- só deixou de ser confundido com uma escolha.
+    não só pelo tema.
     """
-    uid = require_user()
-    with _engine().connect() as conn:
-        theme = conn.execute(text(
-            "SELECT extra_settings ->> CAST(:field AS text) FROM user_settings "
-            "WHERE user_id = :uid"
-        ), {"uid": uid, "field": FIELD}).scalar()
-    return theme if theme in THEMES else None
+    escolha = load_theme_choice()
+    return escolha[0] if escolha else None
 
 
-def save_theme(theme: str) -> None:
+def save_theme(theme: str, at: int | None = None) -> bool:
+    """Grava a escolha de tema SE ela for a mais recente. ``True`` se gravou.
+
+    ``at`` é o instante da escolha (ms), não o da gravação: uma escolha que
+    ficou pendente e só agora alcança o banco entra com a hora em que foi
+    feita. Por isso a gravação é condicional -- ela não passa por cima de uma
+    escolha mais nova feita em outro aparelho enquanto esta esperava. Sem
+    isso, a escolha atrasada de um navegador desfazia a escolha recente de
+    outro: o tema mudava sem ninguém ter pedido aquilo naquele momento.
+
+    ``False`` não é falha: é "a conta já tem escolha mais nova", e a próxima
+    leitura entrega essa.
+    """
     uid = require_user()
     if theme not in THEMES:
         raise ValueError("Tema inválido.")
+    instante = int(time.time() * 1000) if at is None else _instante(at)
     with _engine().begin() as conn:
         # A linha pode não existir ainda: o tema é a primeira preferência que
         # muita conta grava.
@@ -67,9 +111,15 @@ def save_theme(theme: str) -> None:
             "INSERT INTO user_settings (user_id) VALUES (:uid) "
             "ON CONFLICT (user_id) DO NOTHING"
         ), {"uid": uid})
-        conn.execute(text(
-            "UPDATE user_settings SET extra_settings = jsonb_set("
-            "COALESCE(extra_settings, '{}'::jsonb), ARRAY[CAST(:field AS text)], "
-            "to_jsonb(CAST(:theme AS text)), true), updated_at = NOW() "
-            "WHERE user_id = :uid"
-        ), {"uid": uid, "field": FIELD, "theme": theme})
+        # ``||`` troca só as duas chaves: o documento não vem ao cliente nem
+        # volta inteiro, e o que outra aba gravou nas outras chaves fica.
+        resultado = conn.execute(text(
+            "UPDATE user_settings SET extra_settings = "
+            "COALESCE(extra_settings, '{}'::jsonb) || jsonb_build_object("
+            "CAST(:field AS text), CAST(:theme AS text), "
+            "CAST(:field_at AS text), CAST(:at AS bigint)), "
+            "updated_at = NOW() "
+            f"WHERE user_id = :uid AND {_INSTANTE_GRAVADO} <= CAST(:at AS bigint)"
+        ), {"uid": uid, "field": FIELD, "field_at": FIELD_AT,
+            "theme": theme, "at": instante})
+    return bool(resultado.rowcount)
