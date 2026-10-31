@@ -1715,11 +1715,12 @@ _CHAVE_USDBRL = "USDBRL"
 
 
 @user_cache_data(ttl=3600, show_spinner=False)
-def _precos_tesouro_categoria(titulos: tuple[tuple[str, str], ...], desde) -> pd.DataFrame:
+def _precos_tesouro_categoria(titulos: tuple[tuple[str, tuple[str, ...]], ...],
+                              desde) -> pd.DataFrame:
     from core.database import get_engine
     from core.desempenho_categorias import precos_tesouro
 
-    posicoes = [{"ticker": tk, "nome": nome} for tk, nome in titulos]
+    posicoes = [{"ticker": tk, "nomes": list(nomes)} for tk, nomes in titulos]
     return precos_tesouro(get_engine(), posicoes, desde)
 
 
@@ -1782,18 +1783,26 @@ def _series_desempenho_categorias(posicoes: list, period_key: str) -> tuple[dict
                 else:
                     precos = em_brl
         elif cat.fonte == "tesouro":
-            titulos = tuple(sorted({(str(p["ticker"]).strip(), str(p.get("nome") or ""))
-                                    for p in lista}))
+            # Os nomes de TODAS as linhas do grupo, não o do representante: um
+            # ticker que junta cupom e principal fica sem série.
+            titulos = tuple(sorted(
+                (str(p["ticker"]).strip(),
+                 tuple(p.get("nomes_do_grupo") or [str(p.get("nome") or "")]))
+                for p in lista))
             for p in lista:
                 tk = str(p["ticker"]).strip()
                 quantidades[tk] = quantidades.get(tk, 0.0) + float(p["quantidade"])
             precos = _precos_tesouro_categoria(titulos, desde)
             fonte = "PU de recompra diário da curva do Tesouro"
         else:
+            valores: dict[str, float] = {}
             for p in lista:
                 tk = str(p["ticker"]).strip()
-                quantidades[tk] = quantidades.get(tk, 0.0) + float(p["quantidade"])
-            precos = _precos_renda_fixa_categoria(tuple(sorted(quantidades)), desde)
+                valores[tk] = valores.get(tk, 0.0) + float(p.get("valor_mercado") or 0)
+            precos = _precos_renda_fixa_categoria(tuple(sorted(valores)), desde)
+            # A quantidade de hoje pode estar em outra unidade que a da fonte
+            # da série; o peso sai do valor de mercado de hoje.
+            quantidades = dc.quantidades_pelo_valor(precos, valores)
             fonte = "Valor unitário das fotos de custódia"
 
         if not precos.empty:

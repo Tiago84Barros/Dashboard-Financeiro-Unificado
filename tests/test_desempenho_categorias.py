@@ -111,3 +111,60 @@ def test_figura_desenha_so_as_selecionadas():
     fig = inv._fig_desempenho_categorias(
         {"Empresas Americanas": s, "ETFs Americanos": s * 2}, ["ETFs Americanos"])
     assert [t.name for t in fig.data] == ["ETFs Americanos (+10.0%)"]
+
+
+# ── achados da revisão do PR #637 ────────────────────────────────────────────
+
+def test_sem_passo_medido_nao_vira_serie_de_zero():
+    """Dois ativos com uma foto cada, em datas diferentes: nenhum retorno."""
+    precos = _df({"A": [1000.0, None], "B": [None, 2000.0]},
+                 ["2026-01-31", "2026-02-28"])
+    assert dc.retorno_encadeado(precos, {"A": 1, "B": 1}).empty
+
+
+def test_passo_nao_medido_sai_da_curva_em_vez_de_valer_zero():
+    # A some depois do dia 2 e B só começa no dia 3: o passo 2→3 não é medido.
+    precos = _df({"A": [10.0, 11.0, None, None], "B": [None, None, 50.0, 55.0]},
+                 ["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04"])
+    s = dc.retorno_encadeado(precos, {"A": 1, "B": 1})
+    assert pd.Timestamp("2026-01-03") not in s.index
+    assert s.iloc[-1] == pytest.approx((1.1 * 1.1 - 1) * 100)
+
+
+def test_peso_da_renda_fixa_vem_do_valor_e_nao_da_unidade_da_fonte():
+    """Dois ativos de R$ 1.000, um +10% e outro parado, dão 5% -- mesmo que a
+    série de um conte em notas de R$ 1.000 e a quantidade de hoje em reais."""
+    precos = _df({"CDB": [1000.0, 1100.0], "LCI": [1.0, 1.0]},
+                 ["2026-01-31", "2026-02-28"])
+    q = dc.quantidades_pelo_valor(precos, {"CDB": 1100.0, "LCI": 1000.0, "SEM": 5.0})
+    assert set(q) == {"CDB", "LCI"}
+    s = dc.retorno_encadeado(precos, q)
+    assert s.iloc[-1] == pytest.approx((2100 / 2000 - 1) * 100)
+
+
+def test_ticker_que_junta_cupom_e_principal_fica_sem_curva():
+    assert dc.chave_unica_tesouro(
+        "TIPCA2032", ["Tesouro IPCA+ 2032", "Tesouro IPCA+ com Juros Semestrais 2032"]) is None
+    assert dc.chave_unica_tesouro("TIPCA2032", ["Tesouro IPCA+ 2032"]) == "TIPCA2032"
+    assert dc.chave_unica_tesouro(
+        "TIPCA2032", ["Tesouro IPCA+ com Juros Semestrais 2032"]) == "TIPCAJ2032"
+
+
+def test_precos_tesouro_nao_pede_curva_de_grupo_ambiguo(monkeypatch):
+    from core import tesouro_curva
+
+    pedidas = []
+
+    def _serie(engine, chave, desde=None):
+        pedidas.append(chave)
+        return pd.DataFrame({"base_date": ["2026-01-02", "2026-01-05"],
+                             "sell_pu": [100.0, 101.0], "base_pu": [None, None]})
+
+    monkeypatch.setattr(tesouro_curva, "serie_titulo", _serie)
+    df = dc.precos_tesouro(object(), [
+        {"ticker": "TIPCA2032",
+         "nomes": ["Tesouro IPCA+ 2032", "Tesouro IPCA+ com Juros Semestrais 2032"]},
+        {"ticker": "TPRE2030", "nomes": ["Tesouro Prefixado 2030"]},
+    ], date(2026, 1, 1))
+    assert pedidas == ["TPRE2030"]
+    assert list(df.columns) == ["TPRE2030"]
