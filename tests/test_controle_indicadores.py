@@ -157,3 +157,18 @@ def test_contexto_da_ia_nao_descreve_aporte_como_despesa():
     assert meta["renda_comprometida_pct"] == pytest.approx(92.6, abs=0.05)
     assert "Saldo do mês (Receitas − Despesas):" in contexto
     assert "Receitas − Despesas − Investimentos" not in contexto
+
+
+@pytest.mark.parametrize("renda,despesa,aporte,esperado", [
+    # Caso real: déficit de 458,09 coberto por aporte de ~10 mil de caixa antigo.
+    (25_619.56, 26_077.65, 9_998.81, True),
+    # Déficit sem aporte: a taxa já sai negativa, nada a ressalvar.
+    (10000, 12000, 0, False),
+    # Aporte não cobre o déficit: taxa negativa, nada a ressalvar.
+    (10000, 12000, 1000, False),
+    # Superávit com aporte acima da sobra: o mês poupou de fato.
+    (10000, 8000, 5000, False),
+])
+def test_marca_taxa_positiva_em_mes_deficitario(renda, despesa, aporte, esperado):
+    result = indicadores_caixa(renda, despesa, aporte)
+    assert result["poupanca_de_caixa_anterior"] is esperado
