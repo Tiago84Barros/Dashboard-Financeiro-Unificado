@@ -33,6 +33,11 @@ Uso:
     python scripts/atualizar_vitrines.py --dry-run
     python scripts/atualizar_vitrines.py --sem-vigia      # sem o vigia no fim
 
+Antes de qualquer publicador, a rotina busca a origin/main e confere que o HEAD
+a contém (`core.publicacao_git.atualizar_main`). Se faltar commit dela --
+divergência, fast-forward recusado, fetch sem rede --, nenhum alvo roda, os
+vencidos seguem vencidos e o Telegram avisa "atualização bloqueada".
+
 No fim de toda execução real (não em --listar/--dry-run) roda o vigia de
 automações (`scripts/vigia_automacoes.py`): workflows agendados em falha e
 publicações acima do limite viram aviso no Telegram. Falha do vigia não
@@ -445,6 +450,15 @@ def levar_artefatos_ao_repositorio(alvos_ok: list) -> list[str]:
     arquivo pela metade, e commitar isso publicaria a metade.
     """
     avisos: list[str] = []
+    if any(alvo.artefatos for alvo in alvos_ok):
+        # A rotina leva horas, e muitos merges caem nessa janela: 61 de ~190
+        # desde 01/10/2026 entraram entre 19h e 23h. Commitar em cima de uma
+        # main que ficou para trás dá push rejeitado e, na noite seguinte,
+        # divergência -- que bloqueia a rotina inteira. Avançar antes do commit
+        # fecha quase toda a janela. Uma tentativa só: se falhar, o commit segue
+        # como antes e a recusa do push aparece nos avisos.
+        sincronia = atualizar_main(ROOT, pausas=())
+        registrar(f"  git antes dos artefatos: {sincronia.resumo()}")
     for alvo in alvos_ok:
         if not alvo.artefatos:
             continue
@@ -509,6 +523,7 @@ def main(argv=None) -> int:
     args = p.parse_args(argv)
 
     # Antes de decidir o que venceu: a decisão tem de usar a agenda mergeada.
+    atualizacao = None
     if not (args.listar or args.dry_run) and not os.environ.get(_RECARREGADA):
         atualizacao = atualizar_main(ROOT)
         if atualizacao.avancou:
@@ -517,7 +532,9 @@ def main(argv=None) -> int:
             return recarregar(argv)
 
     try:
-        return _publicar(args)
+        # O resultado vai junto: buscar de novo dentro de `_publicar` só repetiria
+        # o fetch -- e, sem rede, as novas tentativas dele.
+        return _publicar(args, atualizacao)
     finally:
         # Em toda saída da execução real -- inclusive "nada vencido" e falha --,
         # porque é justamente quando nada publica que a vitrine envelhece calada.
@@ -540,7 +557,9 @@ def vigiar() -> None:
         registrar(f"ATENÇÃO: vigia de automações falhou ({exc}).")
 
 
-def _publicar(args) -> int:
+def _publicar(args, atualizacao=None) -> int:
+    """Publica o que venceu. `atualizacao` é o `atualizar_main` que `main` já
+    fez; ``None`` (processo recarregado, ou chamada direta) faz aqui."""
     agora = datetime.now(timezone.utc)
     inicio = time.monotonic()
     estado = ler_estado()
@@ -568,6 +587,27 @@ def _publicar(args) -> int:
         registrar("--dry-run: parando antes de executar.")
         return 0
 
+    # Antes do armazém e de qualquer publicador. Em 26 e 27/10/2026 o checkout
+    # estava divergente e sem o PR #558, e a rotina regravou ~26,7 mil linhas de
+    # market.income_statements com o LPA 1000x que ele corrigia: rodar o código
+    # do disco quando falta commit da origin/main desfaz em produção o que já foi
+    # corrigido. Bloquear não grava estado -- os alvos seguem vencidos e a
+    # próxima execução os pega. Ver core.publicacao_git.
+    if atualizacao is None:
+        atualizacao = atualizar_main(ROOT)
+    registrar(f"  git: {atualizacao.resumo()}")
+    if not atualizacao.pode_publicar:
+        pendentes = ", ".join(a.chave for a, _ in devidos)
+        registrar(f"=== bloqueada: nenhum alvo rodou; seguem vencidos: {pendentes}")
+        notificar("Nenhum publicador rodou: o código do disco não tem tudo o que "
+                  "está na origin/main, e publicar com ele pode desfazer uma "
+                  "correção já mergeada.\n\n"
+                  f"{atualizacao.resumo()}\n\n"
+                  f"Seguem vencidos para a próxima execução: {pendentes}"
+                  f"\n\nLog: {LOG}",
+                  "Dashboard: atualização bloqueada")
+        return 1
+
     if not args.sem_armazem and any(a.precisa_armazem for a, _ in devidos):
         if not armazem_pronto():
             notificar("O armazém local (Docker dfu_warehouse) não subiu -- veja em "
@@ -581,12 +621,9 @@ def _publicar(args) -> int:
     ambiente["PYTHONIOENCODING"] = "utf-8"
 
     falhas: list[str] = []
-    # Antes dos publicadores, que rodam em subprocesso: assim usam o código
-    # mergeado, e o push do artefato não é rejeitado por a main estar atrás.
-    # Recusa não impede publicar no Supabase, mas vai para a notificação.
-    atualizacao = atualizar_main(ROOT)
-    registrar(f"  git: {atualizacao.resumo()}")
     if not atualizacao.ok:
+        # Só passa da guarda com erro o ramo de trabalho que já contém a
+        # origin/main: o código está em dia, mas o artefato não será commitado.
         falhas.append(f"main local não atualizada -- {atualizacao.resumo()}")
     publicados: list[str] = []
     publicados_alvos: list = []
