@@ -331,25 +331,90 @@ def test_falha_de_leitura_nao_fica_no_cache_do_chat(monkeypatch):
 class _ConnLinhas:
     def __init__(self, taxas):
         self.taxas = taxas
+        self.params = None
 
-    def execute(self, *_a, **_k):
+    def execute(self, _sql, params=None):
+        self.params = params
         return iter([(t,) for t in self.taxas])
 
 
 def test_grau_de_confianca_conta_lotes_com_taxa_legivel():
     from core.confianca_secao import _taxa_contratada_do_tesouro
 
-    comp = _taxa_contratada_do_tesouro(_ConnLinhas(["11,11%", "IPCA + 5,55%", None, "??"]))
+    conn = _ConnLinhas(["11,11%", "IPCA + 5,55%", None, "??"])
+    comp = _taxa_contratada_do_tesouro(conn, "dono-a")
     assert comp.nome == "Taxa contratada do Tesouro"
     assert comp.pct == pytest.approx(50.0)
     assert "2 de 4" in comp.evidencia
+    assert conn.params == {"user_id": "dono-a"}
 
 
 def test_grau_de_confianca_sem_extrato_nao_mede():
     from core.confianca_secao import _taxa_contratada_do_tesouro
 
-    comp = _taxa_contratada_do_tesouro(_ConnLinhas([]))
+    comp = _taxa_contratada_do_tesouro(_ConnLinhas([]), "dono-a")
     assert comp.pct is None and "Extrato Analitico" in comp.evidencia
+
+
+def test_grau_de_confianca_sem_dono_nao_le_o_banco():
+    from core.confianca_secao import _taxa_contratada_do_tesouro
+
+    conn = _ConnLinhas(["11,11%"])
+    comp = _taxa_contratada_do_tesouro(conn, "")
+    assert comp.pct is None and "nao medido" in comp.evidencia
+    assert conn.params is None
+
+
+def _engine_com_lotes_de_dois_donos():
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.pool import StaticPool
+
+    eng = create_engine("sqlite://", poolclass=StaticPool,
+                        connect_args={"check_same_thread": False})
+    with eng.begin() as conn:
+        conn.execute(text(
+            "CREATE TABLE tesouro_lots (user_id TEXT, security_key TEXT, "
+            "report_date TEXT, contracted_rate TEXT)"))
+        conn.execute(text(
+            "INSERT INTO tesouro_lots VALUES (:u, :k, :d, :t)"), [
+                # dono-a: extrato velho (ignorado) e o novo, metade legível.
+                {"u": "dono-a", "k": "LTN-X", "d": "2026-01-01", "t": "??"},
+                {"u": "dono-a", "k": "LTN-X", "d": "2026-02-01", "t": "11,11%"},
+                {"u": "dono-a", "k": "LTN-X", "d": "2026-02-01", "t": "??"},
+                # dono-b: mesmo título, extrato mais novo e todo legível. Não
+                # pode entrar na conta do dono-a nem apagar o extrato dele.
+                {"u": "dono-b", "k": "LTN-X", "d": "2026-03-01", "t": "10,00%"},
+                {"u": "dono-b", "k": "LTN-X", "d": "2026-03-01", "t": "12,00%"},
+                {"u": "dono-b", "k": "LTN-X", "d": "2026-03-01", "t": "13,00%"},
+            ])
+    return eng
+
+
+def test_grau_de_confianca_so_conta_os_lotes_do_dono():
+    from core.confianca_secao import _taxa_contratada_do_tesouro
+
+    eng = _engine_com_lotes_de_dois_donos()
+    with eng.connect() as conn:
+        a = _taxa_contratada_do_tesouro(conn, "dono-a")
+        b = _taxa_contratada_do_tesouro(conn, "dono-b")
+        c = _taxa_contratada_do_tesouro(conn, "dono-c")
+    assert a.pct == pytest.approx(50.0) and "1 de 2" in a.evidencia
+    assert b.pct == pytest.approx(100.0) and "3 de 3" in b.evidencia
+    assert c.pct is None
+
+
+def test_confianca_investimentos_mede_o_dono_da_sessao(monkeypatch):
+    from core.confianca_secao import confianca_investimentos
+    from core.config import settings
+
+    # Fora do Streamlit o dono é o legado (o dos jobs de manutenção).
+    monkeypatch.setattr(settings, "_legacy_owner_id", "dono-b")
+    eng = _engine_com_lotes_de_dois_donos()
+    nomes = {c.nome: c for c in confianca_investimentos(eng).componentes}
+    assert nomes["Taxa contratada do Tesouro"].pct == pytest.approx(100.0)
+
+    nomes = {c.nome: c for c in confianca_investimentos(eng, user_id="dono-a").componentes}
+    assert "1 de 2" in nomes["Taxa contratada do Tesouro"].evidencia
 
 
 def test_grau_de_confianca_falha_da_taxa_nao_derruba_a_curva():
