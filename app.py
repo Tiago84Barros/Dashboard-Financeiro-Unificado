@@ -7,14 +7,26 @@ Motivo: isolamento de erros por módulo e compatibilidade futura com autenticaç
 """
 import importlib
 import logging
+import sys
+import time
 
 import streamlit as st
 
 from core.modulos_frescos import descartar_se_o_codigo_mudou
 
+# Relógio da execução: o mais cedo possível, para o preâmbulo inteiro entrar
+# na medição (ver ``core.medicao_rota``). Os imports acima já estão em memória
+# a partir da segunda execução e custam microssegundos.
+_INICIO_DA_EXECUCAO = time.perf_counter()
+
 # Antes de qualquer outro import do projeto: depois de um deploy, o Cloud roda
 # este arquivo novo sobre módulos antigos em memória (ImportError em 30/09/2026).
 descartar_se_o_codigo_mudou()
+
+import core.medicao_rota as medicao_rota  # noqa: E402
+
+_cronometro = medicao_rota.Cronometro(inicio=_INICIO_DA_EXECUCAO)
+medicao_rota.ativar(_cronometro)
 
 from core.app_test_mode import is_app_test_mode, module_for_route  # noqa: E402
 
@@ -188,10 +200,18 @@ if not _APP_TEST_MODE:
 # ── Roteamento ────────────────────────────────────────────────────────────────
 modulo_nome = _ROTAS.get(menu)
 
+_linha_medicao: dict | None = None
+
 if modulo_nome:
+    _nome_do_modulo = f"views.{module_for_route(modulo_nome)}"
+    _import_frio = _nome_do_modulo not in sys.modules
+    _concluiu = False
     try:
-        modulo = importlib.import_module(f"views.{module_for_route(modulo_nome)}")
+        _cronometro.entrar("import")
+        modulo = importlib.import_module(_nome_do_modulo)
+        _cronometro.entrar("render")
         modulo.render()
+        _concluiu = True
     except Exception as exc:  # noqa: BLE001 - fronteira de isolamento entre rotas
         if _APP_TEST_MODE:
             st.error(f'Erro ao carregar o modo sintético "{menu}": {exc}')
@@ -239,5 +259,38 @@ if modulo_nome:
                         st.code(relatorio_tecnico(exc), language="text")
             except Exception:  # noqa: BLE001 - diagnostico e extra, nunca requisito
                 logger.exception("falha ao montar o diagnostico da rota")
+    finally:
+        # ``finally`` porque ``st.stop``/``st.rerun`` não são ``Exception`` e
+        # atravessam o ``except``: a execução interrompida também vai ao log,
+        # marcada como não concluída.
+        try:
+            _linha_medicao = medicao_rota.fechar_execucao(
+                _cronometro,
+                getattr(st, "session_state", None),
+                rota=menu,
+                import_frio=_import_frio,
+                concluiu=_concluiu,
+            )
+        except Exception:  # noqa: BLE001 - medir e extra, nunca requisito
+            logger.exception("falha ao registrar a medicao da rota")
 else:
     st.warning(f'Rota não encontrada para "{menu}".')
+
+# ── Medição (só o administrador vê) ───────────────────────────────────────────
+# Depois da página, nunca acima dela: ver ``design.painel_medicao``.
+if not _APP_TEST_MODE and _linha_medicao is not None:
+    try:
+        from core.user_context import is_admin
+
+        if is_admin():
+            from design.painel_medicao import linha_sidebar, painel_medicao
+
+            linha_sidebar(_linha_medicao)
+            _estado_medicao = getattr(st, "session_state", None)
+            painel_medicao(
+                _estado_medicao.get(medicao_rota.CHAVE_HISTORICO, [_linha_medicao])
+                if _estado_medicao is not None
+                else [_linha_medicao]
+            )
+    except Exception:  # noqa: BLE001 - medir e extra, nunca requisito
+        logger.exception("falha ao exibir a medicao da rota")
