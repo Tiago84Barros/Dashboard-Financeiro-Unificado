@@ -1913,9 +1913,13 @@ FLOW_CONFIGURACOES = FlowSpec(
                 "Aba 🧭 Restrições",
                 "Painel lido de core.lacunas.painel, com cache de 5 minutos",
                 "Três naturezas: Restrição, Erro e Detalhe técnico",
+                "Filtros e decisão em caixas de seleção, sem pílulas: Natureza começa em "
+                "Restrição e Erro; Situação, em Em aberto",
                 "Decisão por item: Pendente, Em análise, Aceita ou Resolvida",
                 "Aceita tira o item da fila do corretor diário; Resolvida reabre sozinha se o "
                 "item voltar a aparecer",
+                "No fim, 'Corrigir com o Claude Code': sessão nova com o pedido já escrito "
+                "(claude.ai/code) ou a sessão fixa, com o pedido para colar",
             ),
             "Aviso técnico espalhado pelas telas atrapalha quem só quer ler o número. "
             "Reunido numa fila com decisão, ele vira trabalho rastreável em vez de ruído.",
