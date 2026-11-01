@@ -55,3 +55,19 @@ def test_faixas_em_ordem_decrescente():
     limites = [lim for lim, _, _ in g.FAIXAS_RANK_IC]
     assert limites == sorted(limites, reverse=True)
     assert all(math.isfinite(x) for x in limites)
+
+
+def test_colunas_de_intervalo_nao_usam_mais_a_sigla_ic():
+    # "IC 95%" colidia com o "IC" de Rank-IC na mesma tela.
+    from pathlib import Path
+    raiz = Path(__file__).resolve().parents[1]
+    for arq in ("views/portfolio_b3_oos_carteira.py", "views/investimentos.py"):
+        fonte = (raiz / arq).read_text(encoding="utf-8")
+        assert '"IC 95%"' not in fonte, arq
+        assert '"Intervalo 95%"' in fonte, arq
+
+
+def test_intervalos_explicam_o_cruzar_o_zero():
+    for texto in (g.INTERVALO_95_EXCESSO, g.INTERVALO_95_CORRELACAO):
+        assert texto.startswith("Intervalo 95%:")
+        assert "cruza o zero" in texto and "95% de confiança" in texto

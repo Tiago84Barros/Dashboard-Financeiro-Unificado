@@ -138,3 +138,29 @@ def explicacao_rank_ic(valor: float | None = None, *,
     if leitura:
         partes.insert(0, f"**Este valor.** {leitura}")
     return "\n\n".join(partes)
+
+
+# ── Intervalo de 95% ────────────────────────────────────────────────────────
+# A sigla "IC 95%" (intervalo de confiança) colidia com "IC" de Rank-IC
+# (coeficiente de informação) — na mesma tela de Criação de Portfólio, "IC"
+# queria dizer duas coisas. As colunas passam a se chamar "Intervalo 95%" e o
+# significado fica escrito ao lado delas.
+
+INTERVALO_95_EXCESSO = (
+    "Intervalo 95%: a faixa onde o excesso médio verdadeiro por safra deve "
+    "estar, com 95% de confiança, dado o pouco histórico que existe. É "
+    "calculado reamostrando as safras medidas (bootstrap). Se a faixa vai de "
+    "um número negativo a um positivo — cruza o zero —, a medição não separa "
+    "a carteira da referência: o ganho médio observado pode ter sido sorte. "
+    "Faixa toda acima de zero = vantagem real nesta amostra; toda abaixo = "
+    "a carteira perdeu."
+)
+
+INTERVALO_95_CORRELACAO = (
+    "Intervalo 95%: a faixa onde a correlação verdadeira do par deve estar, "
+    "com 95% de confiança, dado o número de meses observados. Quanto menos "
+    "meses, mais larga a faixa. Se ela vai de um número negativo a um "
+    "positivo — cruza o zero —, não dá para dizer que os dois ativos andam "
+    "juntos (ou em sentidos opostos): a correlação medida pode ser acaso, e "
+    "a proteção que ela sugere pode não existir."
+)
