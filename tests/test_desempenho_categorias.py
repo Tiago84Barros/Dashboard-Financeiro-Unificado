@@ -153,3 +153,15 @@ def test_placar_ordena_do_melhor_para_o_pior():
         {"Empresas Americanas": s, "ETFs Americanos": s}, info)
     assert html.index("ETFs Americanos") < html.index("Empresas Americanas")
     assert "+7,5%" in html and "-3,0%" in html
+
+
+def test_hover_mostra_duas_casas_em_pt_br():
+    """O texto do hover vai pronto: o d3 do hover unificado não formatava."""
+    import views.investimentos as inv
+
+    s = pd.Series([0.0, 19.525809911220506, -16.8],
+                  index=pd.to_datetime(["2026-01-01", "2026-02-01", "2026-03-01"]))
+    fig = inv._fig_desempenho_categorias({"ETFs Americanos": s})
+    linha = next(t for t in fig.data if t.name == "ETFs Americanos")
+    assert list(linha.customdata) == ["0,00%", "+19,53%", "-16,80%"]
+    assert "%{customdata}" in linha.hovertemplate and "%{y" not in linha.hovertemplate

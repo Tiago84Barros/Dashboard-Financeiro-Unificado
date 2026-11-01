@@ -2012,6 +2012,10 @@ def _fig_desempenho_categorias(series: dict) -> go.Figure:
     todos = [v for n in nomes for v in (float(series[n].min()), float(series[n].max()))]
     folga = max((max(todos) - min(todos)) * 0.045, 0.5)
     rotulos = _rotulos_sem_colisao([(n, float(series[n].iloc[-1])) for n in nomes], folga)
+    # O rótulo sai um pouco à direita do ponto final: colado nele, o ponto
+    # cobria o sinal de menos ("-16,8%" lia-se "16,8%").
+    primeiro_x = min(series[n].index[0] for n in nomes)
+    x_rotulo = ultimo_x + (ultimo_x - primeiro_x) * 0.008
 
     for nome in nomes:
         s = series[nome]
@@ -2024,7 +2028,10 @@ def _fig_desempenho_categorias(series: dict) -> go.Figure:
             mode="lines+markers" if mensal else "lines",
             line={"color": cor, "width": 2.2},
             marker={"size": 5, "color": cor},
-            hovertemplate=f"{_html.escape(nome)}: %{{y:+.2f}}%<extra></extra>",
+            # Texto pronto em pt-BR, duas casas: no hover unificado o Plotly
+            # ignorava o formato d3 e mostrava "19.525809911220506%".
+            customdata=[_fmt_retorno(float(v), 2) for v in s.values],
+            hovertemplate=f"{_html.escape(nome)}: %{{customdata}}<extra></extra>",
         ))
         fig.add_trace(go.Scatter(
             x=[s.index[-1]], y=[float(s.iloc[-1])], mode="markers", **grupo,
@@ -2032,7 +2039,7 @@ def _fig_desempenho_categorias(series: dict) -> go.Figure:
             hoverinfo="skip", showlegend=False,
         ))
         fig.add_trace(go.Scatter(
-            x=[ultimo_x], y=[rotulos[nome]], mode="text", **grupo,
+            x=[x_rotulo], y=[rotulos[nome]], mode="text", **grupo,
             text=[f"<b>{_fmt_retorno(float(s.iloc[-1]))}</b>"],
             textposition="middle right", textfont={"size": 12, "color": cor},
             cliponaxis=False, hoverinfo="skip", showlegend=False,
