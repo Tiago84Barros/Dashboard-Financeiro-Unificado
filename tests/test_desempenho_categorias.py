@@ -165,3 +165,31 @@ def test_hover_mostra_duas_casas_em_pt_br():
     linha = next(t for t in fig.data if t.name == "ETFs Americanos")
     assert list(linha.customdata) == ["0,00%", "+19,53%", "-16,80%"]
     assert "%{customdata}" in linha.hovertemplate and "%{y" not in linha.hovertemplate
+
+
+def test_amostra_semanal_so_guarda_valores_que_a_serie_teve():
+    idx = pd.bdate_range("2026-01-05", "2026-02-27")   # 8 semanas úteis
+    s = pd.Series(range(len(idx)), index=idx, dtype=float)
+    a = dc.amostrar_para_grafico(s, "W")
+    assert a.index[0] == idx[0] and a.iloc[0] == 0      # o 0% de partida fica
+    assert a.index[-1] == idx[-1] and a.iloc[-1] == s.iloc[-1]
+    assert len(a) == 9                                  # partida + 8 sextas
+    assert all(s.loc[d] == v for d, v in a.items())     # nada interpolado
+
+
+def test_amostra_nao_mexe_em_serie_mais_rala_que_a_frequencia():
+    s = pd.Series([0.0, 1.0, 2.5, 3.0],
+                  index=pd.date_range("2026-01-31", periods=4, freq="ME"))
+    assert dc.amostrar_para_grafico(s, "W").equals(s)
+
+
+def test_grafico_desenha_a_serie_amostrada_mas_o_rotulo_e_o_retorno_final():
+    import views.investimentos as inv
+
+    idx = pd.bdate_range("2026-01-05", "2026-06-30")
+    s = pd.Series([i * 0.1 for i in range(len(idx))], index=idx)
+    fig = inv._fig_desempenho_categorias({"ETFs Americanos": s}, "W")
+    linha = next(t for t in fig.data if t.name == "ETFs Americanos")
+    assert len(linha.x) < len(idx) / 4
+    assert [t.text[0] for t in fig.data if t.mode == "text"] == [
+        f"<b>+{s.iloc[-1]:.1f}%</b>".replace(".", ",")]

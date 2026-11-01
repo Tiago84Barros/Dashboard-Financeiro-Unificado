@@ -123,6 +123,22 @@ def retorno_encadeado(precos: pd.DataFrame, quantidades: dict[str, float]) -> pd
     return ((1 + r).cumprod() - 1) * 100
 
 
+def amostrar_para_grafico(serie: pd.Series, freq: str) -> pd.Series:
+    """Um ponto por semana (``"W"``) ou por mês (``"M"``), sem inventar valor.
+
+    Fica o primeiro ponto (o 0% de partida), o último de cada período com a
+    data real dele e o último da série -- é um recorte do retorno acumulado, não
+    uma média: cada ponto desenhado é um valor que a série teve. Série já mais
+    rala que a frequência (fotos mensais da renda fixa) sai igual.
+    """
+    s = serie.dropna()
+    if len(s) < 3:
+        return s
+    periodos = pd.DatetimeIndex(s.index).to_period(freq)
+    recorte = pd.concat([s.iloc[:1], s.groupby(periodos).tail(1), s.iloc[-1:]])
+    return recorte[~recorte.index.duplicated(keep="last")].sort_index()
+
+
 def quantidades_pelo_valor(precos: pd.DataFrame, valores: dict[str, float]) -> dict[str, float]:
     """Quantidade na unidade da série: valor de mercado de hoje ÷ último preço.
 
