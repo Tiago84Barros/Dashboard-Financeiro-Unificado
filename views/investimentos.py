@@ -1993,7 +1993,17 @@ def _visiveis_de_inicio(nomes: list[str]) -> set[str]:
     return (set(nomes) & INICIAIS) or set(nomes)
 
 
-def _fig_desempenho_categorias(series: dict) -> go.Figure:
+# Pontos do gráfico por período: diário em 12 ou 24 meses dava um serrilhado
+# que escondia a tendência (pedido do usuário, 01/11/2026).
+# Quanto maior o período, mais espaçados os pontos: dia a dia em 5 anos
+# desenhava centenas de altos e baixos sem informação (pedido do usuário,
+# 01/11/2026). Cada período fica com ~13 a 45 pontos.
+_AMOSTRA_GRAFICO = {"6M": "W", "YTD": "W", "12M": "M", "24M": "M", "5Y": "Q"}
+_ROTULO_AMOSTRA = {"W": "um ponto por semana", "M": "um ponto por mês",
+                   "Q": "um ponto por trimestre"}
+
+
+def _fig_desempenho_categorias(series: dict, freq: str | None = None) -> go.Figure:
     """Uma linha por categoria; a legenda, abaixo, liga e desliga cada uma.
 
     Linha, ponto final e rótulo de cada categoria formam um ``legendgroup``:
@@ -2001,8 +2011,10 @@ def _fig_desempenho_categorias(series: dict) -> go.Figure:
     iniciais nascem ``legendonly`` -- fora do gráfico e da escala do eixo,
     mas a um clique.
     """
-    from core.desempenho_categorias import CATEGORIAS, POR_NOME
+    from core.desempenho_categorias import CATEGORIAS, POR_NOME, amostrar_para_grafico
 
+    if freq:
+        series = {n: amostrar_para_grafico(s, freq) for n, s in series.items()}
     nomes = [c.nome for c in CATEGORIAS if c.nome in series and not series[c.nome].empty]
     visiveis = _visiveis_de_inicio(nomes)
     fig = go.Figure()
@@ -2012,39 +2024,43 @@ def _fig_desempenho_categorias(series: dict) -> go.Figure:
     todos = [v for n in nomes for v in (float(series[n].min()), float(series[n].max()))]
     folga = max((max(todos) - min(todos)) * 0.045, 0.5)
     rotulos = _rotulos_sem_colisao([(n, float(series[n].iloc[-1])) for n in nomes], folga)
+    # O rótulo sai um pouco à direita do ponto final: colado nele, o ponto
+    # cobria o sinal de menos ("-16,8%" lia-se "16,8%").
+    primeiro_x = min(series[n].index[0] for n in nomes)
+    x_rotulo = ultimo_x + (ultimo_x - primeiro_x) * 0.008
 
     for nome in nomes:
         s = series[nome]
         cor = POR_NOME[nome].cor
         visivel = True if nome in visiveis else "legendonly"
         grupo = {"legendgroup": nome, "visible": visivel}
-        mensal = len(s) < 40   # fotos mensais: o ponto mostra onde há dado
         fig.add_trace(go.Scatter(
-            x=s.index, y=s.values, name=nome, **grupo,
-            mode="lines+markers" if mensal else "lines",
-            line={"color": cor, "width": 2.2},
-            marker={"size": 5, "color": cor},
-            hovertemplate=f"{_html.escape(nome)}: %{{y:+.2f}}%<extra></extra>",
+            x=s.index, y=s.values, name=nome, **grupo, mode="lines",
+            line={"color": cor, "width": 2, "shape": "spline", "smoothing": 0.8},
+            # Texto pronto em pt-BR, duas casas: no hover unificado o Plotly
+            # ignorava o formato d3 e mostrava "19.525809911220506%".
+            customdata=[_fmt_retorno(float(v), 2) for v in s.values],
+            hovertemplate=f"{_html.escape(nome)}: %{{customdata}}<extra></extra>",
         ))
         fig.add_trace(go.Scatter(
             x=[s.index[-1]], y=[float(s.iloc[-1])], mode="markers", **grupo,
-            marker={"size": 8, "color": cor, "line": {"color": "#0E1117", "width": 2}},
+            marker={"size": 6, "color": cor},
             hoverinfo="skip", showlegend=False,
         ))
         fig.add_trace(go.Scatter(
-            x=[ultimo_x], y=[rotulos[nome]], mode="text", **grupo,
+            x=[x_rotulo], y=[rotulos[nome]], mode="text", **grupo,
             text=[f"<b>{_fmt_retorno(float(s.iloc[-1]))}</b>"],
-            textposition="middle right", textfont={"size": 12, "color": cor},
+            textposition="middle right", textfont={"size": 11, "color": cor},
             cliponaxis=False, hoverinfo="skip", showlegend=False,
         ))
 
-    fig.add_hline(y=0, line_color="#4A5568", line_width=1, opacity=0.9)
+    fig.add_hline(y=0, line_color="#4A5568", line_width=1, opacity=0.6)
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font={"color": _COR_NEUTRO, "size": 12},
         showlegend=True,
         legend={"orientation": "h", "x": 0, "y": -0.1, "yanchor": "top",
-                "font": {"size": 13, "color": _COR_NEUTRO}, "bgcolor": "rgba(0,0,0,0)",
+                "font": {"size": 12, "color": _COR_NEUTRO}, "bgcolor": "rgba(0,0,0,0)",
                 "itemclick": "toggle", "itemdoubleclick": "toggleothers",
                 "itemwidth": 40, "traceorder": "normal"},
         margin={"t": 12, "b": 8, "l": 8, "r": 70},
@@ -2054,14 +2070,14 @@ def _fig_desempenho_categorias(series: dict) -> go.Figure:
         # Sem arrastar para dar zoom: no celular, rolar a página por cima do
         # gráfico virava zoom e deixava a área em branco.
         dragmode=False,
-        xaxis={"showgrid": False, "showline": True, "linecolor": "#2D3748",
-               "ticks": "outside", "tickcolor": "#2D3748", "ticklen": 4,
+        xaxis={"showgrid": False, "showline": False,
+               "ticks": "", "tickfont": {"size": 11},
                "tickformat": "%m/%y", "hoverformat": "%d/%m/%Y", "title": None,
                "fixedrange": True, "showspikes": True, "spikemode": "across",
                "spikethickness": 1, "spikedash": "dot", "spikecolor": "#4A5568"},
-        yaxis={"showgrid": True, "gridcolor": "#1E2533", "zeroline": False,
-               "ticksuffix": "%", "tickformat": "+.0f", "title": None,
-               "tickfont": {"size": 11}, "nticks": 7, "fixedrange": True},
+        yaxis={"showgrid": True, "gridcolor": "#1E2533", "griddash": "dot",
+               "zeroline": False, "ticksuffix": "%", "tickformat": "+.0f", "title": None,
+               "tickfont": {"size": 11}, "nticks": 5, "fixedrange": True},
         separators=",.",
     )
     return fig
@@ -2089,13 +2105,14 @@ def _secao_desempenho_categorias(posicoes: list) -> None:
         return
 
     st.markdown(_cards_desempenho_categorias(series, info), unsafe_allow_html=True)
-    st.plotly_chart(_fig_desempenho_categorias(series),
+    freq = _AMOSTRA_GRAFICO.get(period_key, "W")
+    st.plotly_chart(_fig_desempenho_categorias(series, freq),
                     width="stretch", config={"displayModeBar": False, "scrollZoom": False},
                     key="analise_vg_categorias_graf")
     st.markdown(
-        f'<div class="dcat-rodape">Período: {_PERFORMANCE_PERIODS[period_key]["label"]} · '
-        'toque no nome de uma categoria na legenda para mostrar ou esconder a linha · '
-        'cada linha começa no primeiro preço disponível</div>',
+        f'<div class="dcat-rodape">Período: {_PERFORMANCE_PERIODS[period_key]["label"]}, '
+        f'{_ROTULO_AMOSTRA[freq]} · toque no nome de uma categoria na legenda para mostrar '
+        'ou esconder a linha · cada linha começa no primeiro preço disponível</div>',
         unsafe_allow_html=True,
     )
 

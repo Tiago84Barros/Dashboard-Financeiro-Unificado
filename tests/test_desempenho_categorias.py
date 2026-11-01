@@ -153,3 +153,59 @@ def test_placar_ordena_do_melhor_para_o_pior():
         {"Empresas Americanas": s, "ETFs Americanos": s}, info)
     assert html.index("ETFs Americanos") < html.index("Empresas Americanas")
     assert "+7,5%" in html and "-3,0%" in html
+
+
+def test_hover_mostra_duas_casas_em_pt_br():
+    """O texto do hover vai pronto: o d3 do hover unificado não formatava."""
+    import views.investimentos as inv
+
+    s = pd.Series([0.0, 19.525809911220506, -16.8],
+                  index=pd.to_datetime(["2026-01-01", "2026-02-01", "2026-03-01"]))
+    fig = inv._fig_desempenho_categorias({"ETFs Americanos": s})
+    linha = next(t for t in fig.data if t.name == "ETFs Americanos")
+    assert list(linha.customdata) == ["0,00%", "+19,53%", "-16,80%"]
+    assert "%{customdata}" in linha.hovertemplate and "%{y" not in linha.hovertemplate
+
+
+def test_amostra_semanal_so_guarda_valores_que_a_serie_teve():
+    idx = pd.bdate_range("2026-01-05", "2026-02-27")   # 8 semanas úteis
+    s = pd.Series(range(len(idx)), index=idx, dtype=float)
+    a = dc.amostrar_para_grafico(s, "W")
+    assert a.index[0] == idx[0] and a.iloc[0] == 0      # o 0% de partida fica
+    assert a.index[-1] == idx[-1] and a.iloc[-1] == s.iloc[-1]
+    assert len(a) == 9                                  # partida + 8 sextas
+    assert all(s.loc[d] == v for d, v in a.items())     # nada interpolado
+
+
+def test_amostra_nao_mexe_em_serie_mais_rala_que_a_frequencia():
+    s = pd.Series([0.0, 1.0, 2.5, 3.0],
+                  index=pd.date_range("2026-01-31", periods=4, freq="ME"))
+    assert dc.amostrar_para_grafico(s, "W").equals(s)
+
+
+def test_grafico_desenha_a_serie_amostrada_mas_o_rotulo_e_o_retorno_final():
+    import views.investimentos as inv
+
+    idx = pd.bdate_range("2026-01-05", "2026-06-30")
+    s = pd.Series([i * 0.1 for i in range(len(idx))], index=idx)
+    fig = inv._fig_desempenho_categorias({"ETFs Americanos": s}, "W")
+    linha = next(t for t in fig.data if t.name == "ETFs Americanos")
+    assert len(linha.x) < len(idx) / 4
+    assert [t.text[0] for t in fig.data if t.mode == "text"] == [
+        f"<b>+{s.iloc[-1]:.1f}%</b>".replace(".", ",")]
+
+
+def test_pontos_ficam_mais_espacados_quanto_maior_o_periodo():
+    import views.investimentos as inv
+
+    assert inv._AMOSTRA_GRAFICO == {"6M": "W", "YTD": "W", "12M": "M", "24M": "M",
+                                    "5Y": "Q"}
+    cinco_anos = pd.Series(range(1300), index=pd.bdate_range("2021-11-01", periods=1300),
+                           dtype=float)
+    assert len(dc.amostrar_para_grafico(cinco_anos, "Q")) <= 22   # e não 1.300 dias
+    idx = pd.bdate_range("2025-11-03", "2026-10-30")
+    s = pd.Series([i * 0.05 for i in range(len(idx))], index=idx)
+    a = dc.amostrar_para_grafico(s, "M")
+    assert len(a) == 13                         # partida + 12 fins de mês
+    assert a.iloc[-1] == s.iloc[-1] and a.iloc[0] == s.iloc[0]
+    assert len(dc.amostrar_para_grafico(s, "Q")) <= 6
