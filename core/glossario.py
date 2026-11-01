@@ -164,3 +164,11 @@ INTERVALO_95_CORRELACAO = (
     "juntos (ou em sentidos opostos): a correlação medida pode ser acaso, e "
     "a proteção que ela sugere pode não existir."
 )
+
+INTERVALO_95_EXCESSO_IFIX = (
+    "Excesso vs IFIX — intervalo 95%: a faixa onde deve estar, com 95% de "
+    "confiança, quanto a carteira de FIIs rende por mês a mais (ou a menos) "
+    "que o IFIX, calculada reamostrando os meses do teste histórico. Se a "
+    "faixa cruza o zero (vai de negativo a positivo), a carteira não se "
+    "distingue do IFIX nesta amostra — por isso aparece \"não significativo\"."
+)

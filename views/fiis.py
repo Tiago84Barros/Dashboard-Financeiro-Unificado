@@ -66,6 +66,7 @@ from core.fii_validation import (
     texto_do_excesso,
     validation_supports_strategy,
 )
+from core.glossario import INTERVALO_95_EXCESSO_IFIX
 from core.inteligencia_ativos import veredito
 from core.llm_b3 import llm_disponivel, provedores_disponiveis
 from core.llm_context_ativo import build_fii_ativo_context
@@ -314,6 +315,7 @@ def render(show_header: bool = True) -> None:
                 ("Excesso vs IFIX", _metadado_do_excesso(validation)),
             ],
         )
+        st.caption(INTERVALO_95_EXCESSO_IFIX)
 
     with st.spinner("Carregando snapshot auditável de FIIs…"):
         inputs = _mr.load_fii_methodology_inputs()
@@ -1145,13 +1147,18 @@ def _aviso_de_concentracao_livre(inativos: list[dict]) -> str:
 
 
 def _metadado_do_excesso(validation: dict) -> str:
-    """IC 95% do excesso mensal, curto para o cabeçalho da página."""
+    """Intervalo 95% do excesso mensal, curto para o cabeçalho da página.
+
+    Era "IC 95%": a sigla colidia com o "IC" de Rank-IC nas outras telas. O
+    significado da faixa vai em legenda logo abaixo do cabeçalho
+    (`INTERVALO_95_EXCESSO_IFIX`), porque o cabeçalho não comporta tooltip.
+    """
     excesso = leitura_do_excesso(validation.get("metrics") or {})
     if not excesso["disponivel"]:
-        return "IC indisponível"
+        return "Intervalo indisponível"
     inferior = f"{excesso['inferior'] * 100:+.2f}".replace(".", ",")
     superior = f"{excesso['superior'] * 100:+.2f}".replace(".", ",")
-    faixa = f"IC 95% {inferior} a {superior} p.p./mês"
+    faixa = f"Intervalo 95% {inferior} a {superior} p.p./mês"
     return faixa if excesso["significativo"] else f"{faixa} · não significativo"
 
 
