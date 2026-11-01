@@ -20,6 +20,13 @@ from core.bank_statement_import import (
     rotulo_da_linha,
     rotulos_de_categoria,
 )
+from core.conciliacao_bancaria import (
+    JANELA_DIAS,
+    conferir_saldo,
+    impacto_no_saldo,
+    preparar_conciliacao,
+    ultimas_conferencias,
+)
 from core.config import settings
 from core.utils import fmt_moeda
 from design.lacunas import aviso_lacuna, detalhe_tecnico
@@ -227,6 +234,153 @@ def _mostrar_falha(result: dict) -> None:
     )
 
 
+def _linhas_finais(rows: list[dict], edited: pd.DataFrame, cat_por_rotulo: dict) -> list[dict]:
+    """Linhas do extrato com o que o usuário editou na prévia."""
+    final_rows: list[dict] = []
+    for idx, base in enumerate(rows):
+        e = edited.iloc[idx]
+        row = {**base}
+        row["descricao_original"] = str(e["Descrição"] or "")[:500]
+        row["direcao"] = str(e["Direção"] or base.get("direcao") or "saida")
+        row["valor"] = round(float(e["Valor (R$)"] or 0.0), 2)
+        cat = cat_por_rotulo.get(str(e["Categoria"] or ROTULO_PENDENTE))
+        if cat:
+            row["categoria_id"] = cat["id"]
+            row["categoria_nome"] = cat["nome"]
+            row["categoria_sugerida_texto"] = cat["nome"]
+            row["status_classificacao"] = "confirmada"
+            row["confianca_classificacao"] = 1.0
+        else:
+            row["categoria_id"] = None
+            row["categoria_sugerida_texto"] = None
+            row["status_classificacao"] = "pendente"
+            row["confianca_classificacao"] = 0.0
+        final_rows.append(row)
+    return final_rows
+
+
+_FORCA = {"forte": "par forte", "possivel": "par possível — confira"}
+
+
+def _md(texto: str) -> str:
+    """Texto com R$ dentro de widget que lê markdown: dois "$" na mesma linha
+    viram fórmula LaTeX e o valor some da tela."""
+    return str(texto).replace("$", "\\$")
+
+
+def _render_conciliacao(final_rows: list[dict], parsed: dict) -> tuple[dict[int, str], dict | None]:
+    """Conciliação na prévia: vínculo com lançamentos manuais e conferência
+    de saldo. Devolve ``({índice: transaction_id}, saldo_extrato | None)``.
+
+    Sem banco a prévia segue igual e a conciliação some com uma frase -- ela
+    ajuda a importação, não a bloqueia.
+    """
+    st.markdown("#### 🔗 Conciliação")
+
+    detectado = (parsed.get("saldos") or {}).get("final") or {}
+    datas = [r["data_movimento"] for r in final_rows if r.get("data_movimento")]
+    data_padrao = detectado.get("data") or (max(datas) if datas else None)
+    c_data, c_valor = st.columns(2, gap="small")
+    data_saldo = c_data.date_input(
+        "Data do saldo final", value=data_padrao, format="DD/MM/YYYY",
+        key="conciliacao_data_saldo")
+    valor_saldo = c_valor.number_input(
+        "Saldo final do extrato (R$)", value=detectado.get("valor"), step=0.01,
+        format="%.2f", key="conciliacao_valor_saldo",
+        help="Lido do PDF quando o extrato imprime o saldo. Confira com o PDF; "
+             "se veio vazio, digite o saldo do fim do período.")
+    if detectado.get("valor") is not None:
+        st.caption("Saldo lido do próprio extrato. O OCR pode errar centavos: confira com o PDF.")
+    else:
+        st.caption("O extrato não trouxe saldo legível. Digite o saldo final do período "
+                   "para conferir se o app fecha com o banco.")
+
+    ctx = preparar_conciliacao(final_rows, data_saldo if valor_saldo is not None else None)
+    if not ctx.get("ok"):
+        st.caption("Conciliação indisponível agora (sem banco conectado). A importação segue normal.")
+        return {}, None
+
+    st.caption(f"Conta conciliada: **{ctx['conta']['nome']}** — só lançamentos manuais "
+               "desta conta entram na busca por par.")
+
+    ja = ctx["ja_importados"]
+    if ja:
+        st.info(f"{len(ja)} linha(s) deste extrato já foram importadas antes e serão ignoradas.")
+
+    escolhidos: dict[int, str] = {}
+    vinculos = ctx["vinculos"]
+    if vinculos:
+        st.markdown(
+            f"**{len(vinculos)} movimento(s) já lançado(s) à mão.** Marcado: o movimento se "
+            "vincula ao lançamento existente e não cria outro. Desmarcado: vira lançamento novo.")
+        for idx in sorted(vinculos):
+            v = vinculos[idx]
+            r = final_rows[idx]
+            rotulo = (
+                f"{_fmt_date(r.get('data_movimento'))} · {r.get('descricao_original') or '-'} · "
+                f"{fmt_moeda(r.get('valor'))}  ↔  manual {_fmt_date(v['data'])} · "
+                f"{v['descricao'] or '(sem descrição)'} ({_FORCA[v['forca']]})"
+            )
+            if st.checkbox(_md(rotulo), value=True, key=f"conciliacao_vinc_{idx}_{v['transaction_id']}"):
+                escolhidos[idx] = v["transaction_id"]
+    else:
+        st.caption("Nenhum movimento deste extrato tem par entre os lançamentos manuais "
+                   f"da conta (mesmo valor, até {JANELA_DIAS} dias de diferença).")
+
+    if valor_saldo is None or data_saldo is None or ctx.get("saldo_app") is None:
+        return escolhidos, None
+
+    marcadas = [
+        {**r, "ja_importado": i in ja,
+         "vincular_transaction_id": escolhidos.get(i)}
+        for i, r in enumerate(final_rows)
+    ]
+    a_lancar, pendente = impacto_no_saldo(marcadas, data_saldo)
+    conf = conferir_saldo(float(valor_saldo), ctx["saldo_app"], a_lancar, pendente)
+
+    k1, k2, k3 = st.columns(3, gap="small")
+    k1.markdown(_kpi_card("Saldo do banco", fmt_moeda(conf["saldo_extrato"]),
+                          f"em {_fmt_date(data_saldo)}", _COR_NEUTRO), unsafe_allow_html=True)
+    k2.markdown(_kpi_card("Saldo do app após importar", fmt_moeda(conf["saldo_projetado"]),
+                          f"hoje {fmt_moeda(conf['saldo_app'])} + {fmt_moeda(conf['a_lancar'])} "
+                          "desta importação", _COR_INVEST), unsafe_allow_html=True)
+    k3.markdown(_kpi_card("Diferença", fmt_moeda(conf["diferenca"]),
+                          "banco − app", _COR_RECEITA if conf["fecha"] else _COR_DESPESA),
+                unsafe_allow_html=True)
+
+    if conf["fecha"]:
+        st.success("O saldo do app fecha com o do banco nesta data.")
+    elif conf["explicada_por_pendentes"]:
+        st.warning(_md(
+            f"A diferença é exatamente o total dos movimentos sem categoria "
+            f"({fmt_moeda(conf['pendente'])}): eles ficam fora do saldo até serem classificados."))
+    else:
+        st.warning(_md(
+            f"Diferença de {fmt_moeda(conf['diferenca'])} até {_fmt_date(data_saldo)}: algum "
+            "lançamento falta ou sobra no app. Causas comuns: lançamento manual em outra conta "
+            "ou com valor diferente do banco, movimento sem categoria "
+            f"({fmt_moeda(conf['pendente'])} nesta importação), valor lido errado pelo OCR, "
+            "ou saldo inicial da conta desatualizado."))
+    return escolhidos, {"data": data_saldo, "valor": float(valor_saldo)}
+
+
+def _render_ultimas_conferencias() -> None:
+    """Saldos de extratos já importados, recalculados contra o app de hoje."""
+    conferencias = ultimas_conferencias()
+    if not conferencias:
+        return
+    st.markdown("#### Últimas conferências de saldo")
+    st.caption("A diferença é recalculada agora: classificar um pendente ou corrigir um "
+               "lançamento manual muda o resultado.")
+    for c in conferencias:
+        icone = "✅" if c["fecha"] else "⚠️"
+        texto = (f"{icone} {_fmt_date(c['data_saldo'])} · {c['conta']} · banco "
+                 f"{fmt_moeda(c['saldo_extrato'])} · app {fmt_moeda(c['saldo_app'])}")
+        if not c["fecha"]:
+            texto += f" · diferença {fmt_moeda(c['diferenca'])}"
+        st.markdown(_md(texto))
+
+
 def _render_upload(*, show_header: bool = True) -> None:
     if show_header:
         st.subheader("Upload de Extrato Bancário")
@@ -309,6 +463,9 @@ def _render_upload(*, show_header: bool = True) -> None:
         key="bank_statement_editor",
     )
 
+    final_rows = _linhas_finais(rows, edited, cat_por_rotulo)
+    vinculos_escolhidos, saldo_extrato = _render_conciliacao(final_rows, parsed)
+
     if st.button(
         "Importar extrato",
         type="primary",
@@ -316,28 +473,10 @@ def _render_upload(*, show_header: bool = True) -> None:
         disabled=(not rows or settings.MOCK_MODE),
         key="bank_statement_import_btn",
     ):
-        final_rows: list[dict] = []
-        for idx, base in enumerate(rows):
-            e = edited.iloc[idx]
-            row = {**base}
-            row["descricao_original"] = str(e["Descrição"] or "")[:500]
-            row["direcao"] = str(e["Direção"] or base.get("direcao") or "saida")
-            row["valor"] = round(float(e["Valor (R$)"] or 0.0), 2)
-            cat = cat_por_rotulo.get(str(e["Categoria"] or ROTULO_PENDENTE))
-            if cat:
-                row["categoria_id"] = cat["id"]
-                row["categoria_nome"] = cat["nome"]
-                row["categoria_sugerida_texto"] = cat["nome"]
-                row["status_classificacao"] = "confirmada"
-                row["confianca_classificacao"] = 1.0
-            else:
-                row["categoria_id"] = None
-                row["categoria_sugerida_texto"] = None
-                row["status_classificacao"] = "pendente"
-                row["confianca_classificacao"] = 0.0
-            final_rows.append(row)
-
-        result = import_bank_statement_rows(final_rows, uploaded.name, banco=banco)
+        for idx, tx_id in vinculos_escolhidos.items():
+            final_rows[idx]["vincular_transaction_id"] = tx_id
+        result = import_bank_statement_rows(
+            final_rows, uploaded.name, banco=banco, saldo_extrato=saldo_extrato)
         st.session_state["bank_statement_import_result"] = result
         if result.get("ok"):
             st.rerun()
@@ -354,5 +493,10 @@ def render_upload_extrato_bancario(*, show_header: bool = True) -> None:
     aqui entram conferencia, filtros e confirmacao") enquanto esta a
     contradizia. Nenhuma capacidade saiu do app: confirmar classificacao e
     salvar regra continuam em Controle Financeiro.
+
+    A conciliação (vínculo com lançamento manual e conferência de saldo) mora
+    aqui porque decide o que a importação grava; o histórico das conferências
+    fica logo abaixo do upload.
     """
     _render_upload(show_header=show_header)
+    _render_ultimas_conferencias()

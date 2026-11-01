@@ -158,6 +158,51 @@ DDL_SQL = [
         END IF;
     END; $$
     """,
+    # Conciliação (082): 'vinculada' = o movimento casou com um lançamento
+    # manual que já existia; 'criada' = a importação criou o lançamento.
+    """
+    ALTER TABLE bank_statement_movements
+        ADD COLUMN IF NOT EXISTS conciliacao TEXT
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS bank_statement_balances (
+        id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id        UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        account_id     UUID NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+        banco          TEXT NOT NULL,
+        data_saldo     DATE NOT NULL,
+        saldo_extrato  NUMERIC(15,2) NOT NULL,
+        origem_arquivo TEXT,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, account_id, data_saldo)
+    )
+    """,
+    """
+    DO $$ BEGIN
+        IF NOT (
+            SELECT relrowsecurity FROM pg_class
+            WHERE relname = 'bank_statement_balances'
+              AND relnamespace = 'public'::regnamespace
+        ) THEN
+            ALTER TABLE bank_statement_balances ENABLE ROW LEVEL SECURITY;
+        END IF;
+    END; $$
+    """,
+    """
+    DO $$ BEGIN
+        IF NOT EXISTS (
+            SELECT 1 FROM pg_policies
+            WHERE schemaname='public'
+              AND tablename='bank_statement_balances'
+              AND policyname='bank_statement_balances_owner_all'
+        ) THEN
+            CREATE POLICY bank_statement_balances_owner_all ON bank_statement_balances
+                USING (user_id = auth.uid())
+                WITH CHECK (user_id = auth.uid());
+        END IF;
+    END; $$
+    """,
 ]
 
 
@@ -522,6 +567,10 @@ def parse_c6_bank_text(text_value: str, file_name: str | None = None) -> dict:
     if DEBUG_IMPORT_EXTRATO:
         logger.info("[extrato] parse %s", diagnostics)
 
+    # As linhas de saldo que o parser acima descarta são a prova da
+    # conciliação; lidas à parte (import tardio: o módulo importa este).
+    from core.conciliacao_bancaria import extrair_saldos_extrato
+
     return {
         "ok": bool(rows) and not errors,
         "bank": "C6 Bank",
@@ -529,6 +578,7 @@ def parse_c6_bank_text(text_value: str, file_name: str | None = None) -> dict:
         "errors": errors,
         "summary": summarize_bank_movements(rows, "C6 Bank"),
         "parse_diagnostics": diagnostics,
+        "saldos": extrair_saldos_extrato(text_value),
     }
 
 
@@ -1488,14 +1538,36 @@ def import_bank_statement_pdf(
     }
 
 
+_SQL_TX_VINCULAVEL = """
+    SELECT t.id::text, t.category_id::text AS category_id
+    FROM transactions t
+    WHERE t.id = CAST(:tx_id AS uuid)
+      AND t.user_id = CAST(:uid AS uuid)
+      AND t.account_id = CAST(:account_id AS uuid)
+      AND NOT EXISTS (
+          SELECT 1 FROM bank_statement_movements m
+          WHERE m.transaction_id = t.id AND m.user_id = t.user_id
+      )
+    FOR UPDATE
+"""
+
+
 def import_bank_statement_rows(
     rows: list[dict],
     file_name: str,
     banco: str = "C6 Bank",
+    saldo_extrato: dict | None = None,
 ) -> dict:
     """Grava movimentos JA classificados/editados (vindos da prévia editável),
     sem reparsear o PDF nem reclassificar. Recalcula a descrição normalizada e
-    o hash a partir dos valores atuais para manter a idempotência."""
+    o hash a partir dos valores atuais para manter a idempotência.
+
+    Conciliação: linha com ``vincular_transaction_id`` não cria lançamento --
+    aponta para o lançamento manual que já registrava aquele movimento e herda
+    a categoria dele. O vínculo é revalidado aqui (mesma conta, mesmo dono,
+    sem outro movimento já vinculado); se não valer mais, a linha segue o
+    caminho normal. ``saldo_extrato`` (``{"data", "valor"}``) fica guardado
+    para a conferência de saldo."""
     if settings.MOCK_MODE:
         return {"ok": False, "message": "Modo mock ativo; importacao nao executada."}
 
@@ -1506,7 +1578,7 @@ def import_bank_statement_rows(
         return {"ok": False, "message": "Nada para importar."}
 
     owner = _owner_id()
-    inserted = skipped = published = pending = 0
+    inserted = skipped = published = pending = linked = 0
     prepared: list[dict] = []
     for raw in rows:
         row = {**raw}
@@ -1538,9 +1610,24 @@ def import_bank_statement_rows(
         )
 
         for row in prepared:
+            vinculo = None
+            if row.get("vincular_transaction_id"):
+                vinculo = conn.execute(
+                    text(_SQL_TX_VINCULAVEL),
+                    {"tx_id": row["vincular_transaction_id"], "uid": owner,
+                     "account_id": account_id},
+                ).fetchone()
+            if vinculo:
+                # O lançamento manual já classifica o movimento: herda a
+                # categoria dele em vez da sugerida pelo extrato.
+                row["categoria_id"] = vinculo.category_id
+                row["status_classificacao"] = "confirmada" if vinculo.category_id else "pendente"
+                row["confianca_classificacao"] = 1.0 if vinculo.category_id else 0.0
             params = {
                 "uid": owner,
                 "account_id": account_id,
+                "transaction_id": vinculo.id if vinculo else None,
+                "conciliacao": "vinculada" if vinculo else None,
                 "banco": row.get("banco") or banco,
                 "conta": getattr(account, "name", None),
                 "data_movimento": row.get("data_movimento"),
@@ -1563,14 +1650,17 @@ def import_bank_statement_rows(
                 text(
                     """
                     INSERT INTO bank_statement_movements (
-                        user_id, account_id, banco, conta, data_movimento, data_lancamento,
+                        user_id, account_id, transaction_id, conciliacao,
+                        banco, conta, data_movimento, data_lancamento,
                         tipo_original_banco, descricao_original, descricao_normalizada, valor,
                         direcao, categoria_id, subcategoria_id, categoria_sugerida_texto,
                         subcategoria_sugerida_texto, confianca_classificacao,
                         status_classificacao, origem_arquivo, hash_lancamento
                     )
                     VALUES (
-                        CAST(:uid AS uuid), CAST(:account_id AS uuid), :banco, :conta,
+                        CAST(:uid AS uuid), CAST(:account_id AS uuid),
+                        CAST(:transaction_id AS uuid), :conciliacao,
+                        :banco, :conta,
                         :data_movimento, :data_lancamento, :tipo_original_banco,
                         :descricao_original, :descricao_normalizada, :valor, :direcao,
                         CAST(:categoria_id AS uuid), CAST(:subcategoria_id AS uuid),
@@ -1589,7 +1679,9 @@ def import_bank_statement_rows(
                 continue
 
             inserted += 1
-            if row.get("categoria_id"):
+            if vinculo:
+                linked += 1
+            elif row.get("categoria_id"):
                 category = category_by_id.get(str(row.get("categoria_id")))
                 tx_id = _insert_transaction(conn, owner, row, account_id, category)
                 if tx_id:
@@ -1597,7 +1689,9 @@ def import_bank_statement_rows(
                         text(
                             """
                             UPDATE bank_statement_movements
-                            SET transaction_id = CAST(:tx_id AS uuid), updated_at = NOW()
+                            SET transaction_id = CAST(:tx_id AS uuid),
+                                conciliacao = 'criada',
+                                updated_at = NOW()
                             WHERE id = CAST(:movement_id AS uuid)
                             """
                         ),
@@ -1607,6 +1701,14 @@ def import_bank_statement_rows(
             else:
                 pending += 1
 
+        if saldo_extrato and saldo_extrato.get("data") and saldo_extrato.get("valor") is not None:
+            from core.conciliacao_bancaria import registrar_saldo_extrato
+
+            registrar_saldo_extrato(
+                conn, owner, account_id, banco, saldo_extrato["data"],
+                float(saldo_extrato["valor"]), file_name,
+            )
+
     try:
         from core.controle import _clear_controle_caches
 
@@ -1615,11 +1717,13 @@ def import_bank_statement_rows(
         logger.debug("Nao foi possivel limpar caches do controle financeiro.", exc_info=True)
 
     summary = summarize_bank_movements(prepared, banco)
-    summary.update({"inserted": inserted, "skipped": skipped, "published": published, "pending": pending})
+    summary.update({"inserted": inserted, "skipped": skipped, "published": published,
+                    "pending": pending, "linked": linked})
     return {
         "ok": True,
         "message": (
-            f"{inserted} movimento(s) importado(s); {published} publicado(s) no Controle Financeiro; "
+            f"{inserted} movimento(s) importado(s); {linked} vinculado(s) a lançamento manual; "
+            f"{published} publicado(s) no Controle Financeiro; "
             f"{pending} pendente(s); {skipped} duplicado(s) ignorado(s)."
         ),
         "summary": summary,
@@ -1952,20 +2056,24 @@ def update_bank_statement_movement(
                 if category else None
             )
 
+            # Movimento vinculado a lançamento manual: a descrição do
+            # lançamento é a do usuário e não é trocada pela do banco.
+            desc_tx = (None if getattr(mv, "conciliacao", None) == "vinculada"
+                       else new_desc[:255])
             if mv.transaction_id:
                 if category:
                     conn.execute(
                         text(
                             """
                             UPDATE transactions
-                            SET description = :d, amount = :a, type = :t,
+                            SET description = COALESCE(:d, description), amount = :a, type = :t,
                                 category_id = CAST(:cid AS uuid),
                                 account_id = CAST(:acc AS uuid)
                             WHERE id = CAST(:tx AS uuid) AND user_id = CAST(:uid AS uuid)
                             """
                         ),
                         {
-                            "d": new_desc[:255], "a": signed,
+                            "d": desc_tx, "a": signed,
                             "t": _transaction_type_for(row, category_dict),
                             "cid": category.id, "acc": account_final,
                             "tx": str(mv.transaction_id), "uid": owner,
@@ -1976,12 +2084,12 @@ def update_bank_statement_movement(
                         text(
                             """
                             UPDATE transactions
-                            SET description = :d, amount = :a, type = :t
+                            SET description = COALESCE(:d, description), amount = :a, type = :t
                             WHERE id = CAST(:tx AS uuid) AND user_id = CAST(:uid AS uuid)
                             """
                         ),
                         {
-                            "d": new_desc[:255], "a": signed,
+                            "d": desc_tx, "a": signed,
                             "t": _transaction_type_for(row, None),
                             "tx": str(mv.transaction_id), "uid": owner,
                         },

@@ -725,8 +725,57 @@ def confianca_controle_financeiro(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Extrato importado", None, 0.20,
                                 f"nao medido: {type(exc).__name__}"))
+    comps.extend(_componente_saldo_conferido(engine, notas))
     return ConfiancaSecao("Controle Financeiro", tuple(comps),
                           notas=tuple(notas))
+
+
+# Saldo do último extrato contra o saldo do app na mesma data e conta:
+# initial_balance + lançamentos pagos até ali (core/conciliacao_bancaria.py).
+_SQL_ULTIMA_DIFERENCA_DE_SALDO = """
+    SELECT b.saldo_extrato - (
+               a.initial_balance + COALESCE((
+                   SELECT SUM(t.amount) FROM transactions t
+                   WHERE t.account_id = b.account_id AND t.user_id = b.user_id
+                     AND t.status = 'settled' AND t.due_date <= b.data_saldo), 0))
+    FROM bank_statement_balances b
+    JOIN accounts a ON a.id = b.account_id
+    ORDER BY b.data_saldo DESC
+    LIMIT 1
+"""
+
+
+def _componente_saldo_conferido(engine, notas: list[str]) -> list[Componente]:
+    """Classificar o extrato confere a categoria; o saldo confere o total.
+
+    Com o saldo do banco guardado na importação, dá para afirmar se o app
+    fecha com o banco -- a pergunta que a conciliação existe para responder.
+    Sem saldo guardado não entra componente (nada a medir, e o fluxo manual
+    continua suficiente). O frescor decide o peso pelo mesmo motivo do A-145.
+    """
+    from core.database import get_engine
+    try:
+        eng = engine or get_engine()
+        with eng.connect() as conn:
+            if not int(_scalar(conn, "SELECT count(*) FROM bank_statement_balances") or 0):
+                return []
+            data_saldo = _scalar(conn, """
+                SELECT max(data_saldo) FROM bank_statement_balances""")
+            diferenca = float(_scalar(conn, _SQL_ULTIMA_DIFERENCA_DE_SALDO) or 0.0)
+    except Exception as exc:  # noqa: BLE001
+        return [Componente("Saldo conferido com o banco", None, 0.10,
+                           f"nao medido: {type(exc).__name__}")]
+    dias = _dias_desde(data_saldo)
+    relevancia = (_frescor_pct(dias, 30, 240) or 0.0) / 100.0
+    fecha = abs(diferenca) < 0.01
+    if not fecha:
+        notas.append(f"saldo do app difere do extrato em R$ {diferenca:,.2f} "
+                     "- falta ou sobra lancamento")
+    return [Componente(
+        "Saldo conferido com o banco", 100.0 if fecha else 0.0, 0.10 * relevancia,
+        ("saldo do ultimo extrato fecha com o app" if fecha
+         else f"diferenca de R$ {diferenca:,.2f} no ultimo extrato")
+        + f"; saldo de ha {dias} dias, pesa {relevancia:.0%} do previsto")]
 
 
 CURVA_DO_TESOURO = "Curva do Tesouro"
