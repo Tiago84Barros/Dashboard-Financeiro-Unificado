@@ -820,16 +820,22 @@ def _get_or_create_category(conn, owner: str, name: str, cat_type: str) -> str |
     # Uma única trava por usuário evita que duas faturas concorrentes criem
     # categorias homônimas antes de enxergarem o commit uma da outra.
     acquire_transaction_import_lock(conn, "category-upsert", owner)
+    # Mesmo nome pode existir em tipos diferentes (a 072 só proíbe repetir
+    # dono+nome+tipo): uma "Saúde" de receita criada pela pessoa não pode
+    # vencer a "Saúde" de despesa do sistema. O tipo pesa primeiro; sem
+    # nenhuma do tipo pedido, vale a de mesmo nome — criar outra partiria a
+    # categoria em duas.
     row = conn.execute(
         text("""
             SELECT id::text
             FROM categories
             WHERE LOWER(name) = LOWER(:name)
               AND (user_id = :uid OR user_id IS NULL)
-            ORDER BY CASE WHEN user_id = :uid THEN 0 ELSE 1 END
+            ORDER BY CASE WHEN type = :type THEN 0 ELSE 1 END,
+                     CASE WHEN user_id = :uid THEN 0 ELSE 1 END
             LIMIT 1
         """),
-        {"name": clean, "uid": owner},
+        {"name": clean, "uid": owner, "type": cat_type},
     ).fetchone()
     if row:
         return row.id
