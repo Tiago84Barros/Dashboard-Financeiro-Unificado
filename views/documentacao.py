@@ -445,7 +445,9 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "O seletor Critério de aprovação tem três modos. Econômico (Brasil), o padrão "
             "dos perfis, aprova pela margem contra a Selic no histórico cheio (e contra "
             "Pesos Iguais, se o piso estiver ligado), e a estatística só serve de trava: "
-            "reprova apenas sinal claramente antipreditivo (Rank-IC < −0,05). Sinal "
+            "reprova apenas sinal claramente antipreditivo (Rank-IC < −0,05 — o Rank-IC "
+            "é a correlação, de −1 a +1, entre a ordem do score e a ordem dos retornos "
+            "do ano seguinte). Sinal "
             "fundamental (Rank-IC) e Retorno de 24m (FDR), o mais frágil, exigem poder "
             "preditivo positivo e significância, e neles a margem contra a Selic vira "
             "diagnóstico.",
@@ -2735,6 +2737,8 @@ _FLOW_DETAIL_OVERRIDES = {
     },
     "aprovacao_cp": {
         "formula": (
+            "Rank-IC = correlação de Spearman entre a ordem do score no ano t e a "
+            "ordem do retorno no ano t+1 (−1 a +1; 0 = ordem aleatória)\n"
             "Econômico (Brasil), padrão: margem vs Selic ≥ mínimo e Rank-IC ≥ −0,05\n"
             "Sinal fundamental (Rank-IC): Rank-IC > 0 em 2 anos ou mais e p-valor do IC significante\n"
             "Retorno de 24m (FDR): Rank-IC > 0 em 2 anos ou mais e q (FDR) ≤ 10%\n"
@@ -2744,7 +2748,10 @@ _FLOW_DETAIL_OVERRIDES = {
         "interpretacao": (
             "A aprovação impede que um segmento entre na carteira apenas por um resultado "
             "isolado. O modo econômico pergunta se o segmento rendeu mais que a renda fixa; "
-            "os estatísticos perguntam se a escolha das empresas tem habilidade."
+            "os estatísticos perguntam se a escolha das empresas tem habilidade. "
+            "Como ler o Rank-IC: abaixo de −0,02 o score ordena ao contrário; perto de "
+            "zero, não antecipa nada; de +0,05 a +0,10 já é um fator útil; acima de "
+            "+0,10 é raro em ações. Ele não é retorno: +0,09 não quer dizer 9% a mais."
         ),
     },
     "pesos_cp": {

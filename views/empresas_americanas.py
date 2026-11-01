@@ -24,6 +24,12 @@ from sqlalchemy.exc import SQLAlchemyError
 import core.us_data as us
 from core.busca_empresa import buscar_empresas
 from core.crescimento import sem_ano_em_curso, ultimo_preco_nao_positivo
+from core.glossario import (
+    RANK_IC_CURTO,
+    RANK_IC_ESCALA,
+    ajuda_rank_ic,
+    faixa_rank_ic,
+)
 from core.inteligencia_ativos import veredito
 from core.llm_context_ativo import build_us_ativo_context
 from core.macro_data.database import descrever_fonte_macro, get_macro_source
@@ -58,6 +64,7 @@ from design import portao_inteligencia as _portao_ui
 from design.chat_ativo import render_chat_ativo
 from design.componentes import (
     aviso_cobertura_do_universo,
+    explicar_rank_ic,
     aviso_escala_do_score,
     badge_status,
     card_metrica,
@@ -1957,7 +1964,10 @@ def _tab_criacao_portfolio(status: dict) -> None:
                             "status": "Status", "company_count": "Empresas",
                             "leaders": "Líderes", "reason": "Motivo",
                         }), hide_index=True, width="stretch",
+            column_config={"Rank‑IC": st.column_config.NumberColumn(
+                "Rank‑IC", format="%.3f", help=RANK_IC_CURTO)},
         )
+        st.caption("Rank‑IC: " + RANK_IC_ESCALA)
 
     if holdings is None or holdings.empty:
         estado_vazio(
@@ -2301,22 +2311,41 @@ def _tab_backtests(status: dict) -> None:
         return "—" if x is None else f"{x*mult:.2f}{suf}"
 
     secao_titulo(f"Correlação entre classificação e retorno ({res['n_periods']} períodos)", "📐")
+    _faixa_ic = faixa_rank_ic(ic["mean"])
+    st.caption(
+        "Em cada safra, as empresas são ordenadas pela nota e pelo retorno que "
+        "tiveram no período seguinte; a **correlação média (Rank-IC)** mede se "
+        "as duas ordens coincidem — de −1 a +1, com 0 = ordem aleatória.")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        card_metrica("Correlação média", "—" if ic["mean"] is None else f"{ic['mean']:.3f}")
+        card_metrica("Correlação média (Rank-IC)",
+                     "—" if ic["mean"] is None else f"{ic['mean']:.3f}",
+                     delta=(f"ordenação {_faixa_ic[0]}" if _faixa_ic else None),
+                     ajuda=ajuda_rank_ic(ic["mean"]))
     with c2:
-        card_metrica("Estatística t", "—" if ic["t_stat"] is None else f"{ic['t_stat']:.2f}")
+        card_metrica("Estatística t", "—" if ic["t_stat"] is None else f"{ic['t_stat']:.2f}",
+                     ajuda="Quantos erros-padrão a correlação média está acima "
+                           "de zero. Acima de 2 costuma indicar que não é acaso.")
     with c3:
-        card_metrica("p-valor", "—" if ic["p_value"] is None else f"{ic['p_value']:.3f}")
+        card_metrica("p-valor", "—" if ic["p_value"] is None else f"{ic['p_value']:.3f}",
+                     ajuda="Chance de uma correlação média deste tamanho surgir "
+                           "por acaso se a nota não tivesse poder nenhum.")
     with c4:
-        card_metrica("Taxa de acerto", _p(ic["hit_rate"]))
+        card_metrica("Taxa de acerto", _p(ic["hit_rate"]),
+                     ajuda="Fração das safras em que o Rank-IC foi positivo, "
+                           "isto é, em que a nota ordenou mais certo que errado.")
+    # Chamada só de dentro do expander "Validação histórica e benchmarks":
+    # o Streamlit não aninha expanders, então a explicação vai em legenda.
+    explicar_rank_ic(ic["mean"], dentro_de_expander=True)
+    st.caption(RANK_IC_ESCALA)
     detalhe_tecnico(_aviso_sobrevivencia(), codigo="eua.backtests_vies_sobrevivencia")
 
     _bloco_liquido_us(res)
 
     secao_titulo("Desempenho bruto em dólar versus pesos iguais", "📈")
     st.caption("Retorno total em USD, sem custo, imposto nem câmbio: é a "
-               "régua da ordenação (Rank-IC e o excesso guardado na medição "
+               "régua da ordenação (Rank-IC, a correlação de ranking acima, e o "
+               "excesso guardado na medição "
                "fora da amostra), não o que sobra no bolso.")
     c1, c2, c3, c4 = st.columns(4)
     with c1:

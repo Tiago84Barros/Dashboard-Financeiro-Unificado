@@ -46,7 +46,7 @@ from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from core.proventos_b3 import fotos_velhas
 from data_pipeline.utils.date_utils import fmt_datetime_br
-from design.componentes import card_metrica, cor_token
+from design.componentes import card_metrica, cor_token, explicar_rank_ic
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.market_companies import company_logo_html
 
@@ -2522,6 +2522,7 @@ def _render_evidencia_universo(resultados: list[dict]) -> None:
     ao universo, na medida da incerteza de cada uma.
     """
     from core.b3_evidence import A_FAVOR, CONTRA
+    from core.glossario import ajuda_rank_ic, faixa_rank_ic, leitura_rank_ic
     from core.b3_pooled_evidence import (
         SegmentSample,
         pooled_yearly_ics,
@@ -2550,22 +2551,48 @@ def _render_evidencia_universo(resultados: list[dict]) -> None:
         codigo="portfolio_b3.evidencia_universo_metodo")
 
     icone = {A_FAVOR: "✅", CONTRA: "❌"}.get(evidencia.estado, "🟡")
+    _ic_ok = np.isfinite(evidencia.ic_medio)
+    _faixa = faixa_rank_ic(evidencia.ic_medio) if _ic_ok else None
+    st.caption(
+        "Pergunta deste bloco: **a ordem que o score dá às empresas antecipa a "
+        "ordem dos retornos do ano seguinte?** Cada ano, todas as empresas são "
+        "ordenadas pelo score e pelo retorno que tiveram depois; o Rank-IC é a "
+        "correlação entre as duas ordens (−1 a +1, 0 = ordem aleatória)."
+    )
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         card_metrica("Rank-IC do universo",
-                     f"{evidencia.ic_medio:+.3f}"
-                     if np.isfinite(evidencia.ic_medio) else "—")
+                     f"{evidencia.ic_medio:+.3f}" if _ic_ok else "—",
+                     delta=(f"ordenação {_faixa[0]}" if _faixa else None),
+                     ajuda=ajuda_rank_ic(evidencia.ic_medio if _ic_ok else None,
+                                         periodo="no ano seguinte"))
     with c2:
         card_metrica("valor-p",
-                     f"{evidencia.p_value:.3f}" if evidencia.p_value is not None else "—")
+                     f"{evidencia.p_value:.3f}" if evidencia.p_value is not None else "—",
+                     delta="chance de ser acaso",
+                     ajuda="Probabilidade de um Rank-IC médio deste tamanho "
+                           "aparecer só por acaso, se o score não tivesse poder "
+                           "nenhum. Abaixo de 0,10 = aprovado neste app.")
     with c3:
         card_metrica("Anos × empresas/ano",
-                     f"{evidencia.anos} × ~{evidencia.n_medio_ativos:.0f}")
+                     f"{evidencia.anos} × ~{evidencia.n_medio_ativos:.0f}",
+                     delta="tamanho da amostra",
+                     ajuda="Quantos anos entraram na média e quantas empresas, "
+                           "em média, foram ordenadas em cada ano.")
     with c4:
         card_metrica("Efeito mín. detectável",
                      f"{evidencia.efeito_minimo_detectavel:.3f}"
-                     if evidencia.efeito_minimo_detectavel is not None else "—")
+                     if evidencia.efeito_minimo_detectavel is not None else "—",
+                     delta="menor Rank-IC visível",
+                     ajuda="Menor Rank-IC médio que esta amostra consegue separar "
+                           "do acaso. Um valor medido abaixo dele não prova nada "
+                           "— nem a favor, nem contra.")
     st.markdown(f"{icone} {evidencia.explicacao}")
+    _leitura = leitura_rank_ic(evidencia.ic_medio if _ic_ok else None,
+                               periodo="no ano seguinte")
+    if _leitura:
+        st.markdown(f"🧭 **Em português claro:** {_leitura}")
+    explicar_rank_ic(evidencia.ic_medio if _ic_ok else None, periodo="no ano seguinte")
 
     amostras = [
         SegmentSample(
@@ -2591,7 +2618,9 @@ def _render_evidencia_universo(resultados: list[dict]) -> None:
             "própria incerteza. Segmento com 3 empresas e IC alto é quase "
             "inteiramente encolhido — é ruído; com muitas empresas, preserva o "
             "seu valor. Sem observação, adota a estimativa do universo — que é "
-            "a melhor inferência disponível, não uma reprovação."
+            "a melhor inferência disponível, não uma reprovação. *IC bruto* = "
+            "Rank-IC medido só com as empresas do segmento; *IC encolhido* = "
+            "o mesmo valor depois de puxado para a média do universo."
         )
         tabela = pd.DataFrame([{
             "Segmento": e.key,
@@ -2876,7 +2905,10 @@ def render(show_header: bool = True) -> None:
                  "NÃO aplica piso nenhum vs Pesos Iguais: no modo 'Econômico "
                  "(Brasil)' a única estatística é o guarda-corpo Rank-IC ≥ −0,05; "
                  "nos modos estatísticos, a significância é a do critério "
-                 "escolhido (Rank-IC ou retorno de 24m com FDR).",
+                 "escolhido (Rank-IC ou retorno de 24m com FDR). Rank-IC = correlação, "
+                 "de −1 a +1, entre a ordem do score e a ordem dos retornos "
+                 "que as empresas tiveram depois; −0,05 é ordenar levemente "
+                 "ao contrário.",
         )
         # Definido aqui (e não depois do bloco de captions) porque as legendas
         # do modo econômico precisam informar se o segundo portão está ativo.
@@ -2911,7 +2943,8 @@ def render(show_header: bool = True) -> None:
             key="pb3_min_empresas",
             help="Segmentos com menos empresas elegíveis que este mínimo são "
                  "agrupados no subsetor, para haver massa suficiente para medir o "
-                 "poder preditivo (Rank-IC). Use 1 para desativar o agrupamento.",
+                 "poder preditivo (Rank-IC: se a ordem do score acerta a ordem dos "
+                 "retornos seguintes). Use 1 para desativar o agrupamento.",
         )
         pb3.number_input(
             "Teto por setor (%)", 20, 100, 100, 5,
@@ -2953,8 +2986,9 @@ def render(show_header: bool = True) -> None:
                  "mais que a renda fixa, não se a escolha das empresas dentro "
                  "dele foi boa; a estatística vira GUARDA-CORPO (só reprova "
                  "sinal claramente anti-preditivo) e não exige prova de "
-                 "significância. Sinal fundamental (Rank-IC): exige significância "
-                 "do sinal — precisa de amplitude, escassa na B3. Retorno de 24m "
+                 "significância. Sinal fundamental (Rank-IC): exige que o score "
+                 "acerte a ORDEM dos retornos seguintes (correlação de ranking "
+                 "positiva) com significância — precisa de amplitude, escassa na B3. Retorno de 24m "
                  "(FDR): exige significância do retorno recente — o mais frágil aqui.",
         )
         criterio_modo = (
@@ -3152,7 +3186,8 @@ def render(show_header: bool = True) -> None:
                 "mostra que o discricionário/econômico vence nos ciclos adversos "
                 "que dominam a B3). A **estatística** vira **guarda-corpo**: só "
                 "**reprova** um segmento cujo sinal seja **claramente "
-                "anti-preditivo** (Rank-IC < −0,05); ela **NÃO exige** prova de "
+                "anti-preditivo** (Rank-IC < −0,05, isto é, o score ordenando as "
+                "empresas ao contrário do retorno que elas tiveram depois); ela **NÃO exige** prova de "
                 "significância — que, na B3 (poucas empresas, história curta), "
                 "reprovaria quase tudo. As colunas de valor-p e Rank-IC ficam como "
                 "**diagnóstico**, não como portão."
@@ -3180,8 +3215,10 @@ def render(show_header: bool = True) -> None:
             "usou para se montar. *Significância / valor-p* = chance do resultado "
             "ser sorte (quanto menor, melhor). *Falsos positivos "
             "(Benjamini-Hochberg)* = ajuste por testar dezenas de segmentos de uma "
-            "vez. *Poder preditivo (Rank-IC)* = o quanto a pontuação de qualidade "
-            "acertou o retorno futuro."
+            "vez. *Poder preditivo (Rank-IC)* = correlação, de −1 a +1, entre a "
+            "ordem do score e a ordem dos retornos que as empresas tiveram "
+            "depois: 0 é ordem aleatória, +0,05 a +0,10 já é um fator útil, "
+            "acima de +0,10 é raro. Não é retorno — +0,09 não quer dizer 9% a mais."
         )
 
     rodar = st.button("🚀 Rodar Criação de Portfólio", type="primary", key="pb3_rodar")

@@ -1521,7 +1521,10 @@ def _painel_black_litterman(df: pd.DataFrame, ret: pd.DataFrame, alvos: dict,
     st.caption(
         "Parte da sua meta (prior de equilíbrio π = δΣw) e a inclina pelos "
         "scores dos três motores, cada um com a confiança que o próprio IC "
-        "fora da amostra justifica."
+        "fora da amostra justifica. IC aqui é o Rank-IC: correlação, de −1 a "
+        "+1, entre a ordem que o score deu aos ativos e a ordem dos retornos "
+        "que eles tiveram depois — 0 é ordem aleatória, +0,05 a +0,10 já é "
+        "um sinal útil."
     )
     try:
         restricoes = _ler_restricoes_da_politica(renda_fixa)
@@ -1622,7 +1625,9 @@ def _painel_black_litterman(df: pd.DataFrame, ret: pd.DataFrame, alvos: dict,
         st.markdown(
             "**Grinold-Kahn:** α = IC × σ × z. `z` é o posto do score dentro da "
             "classe levado à normal (Φ⁻¹((posto − 0,5)/n)); σ é a volatilidade "
-            "anual do ativo em Σ; IC é o medido fora da amostra pelo motor. "
+            "anual do ativo em Σ; IC é o Rank-IC medido fora da amostra pelo "
+            "motor (correlação entre a ordem do score e a ordem dos retornos "
+            "seguintes; não é retorno). "
             "A view é Q = π + α, absoluta, uma por ativo com score.\n\n"
             "**Confiança (Idzorek):** c = 0,5 × min(IC/0,10, 1); metade se o "
             "portão de excesso reprovou; 1% sem medição, com versão divergente "
