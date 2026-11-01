@@ -64,13 +64,13 @@ from design import portao_inteligencia as _portao_ui
 from design.chat_ativo import render_chat_ativo
 from design.componentes import (
     aviso_cobertura_do_universo,
-    explicar_rank_ic,
     aviso_escala_do_score,
     badge_status,
     card_metrica,
     container_pagina,
     cor_token,
     estado_vazio,
+    explicar_rank_ic,
     frescor_da_vitrine,
     secao_titulo,
     selo_de_frescor,

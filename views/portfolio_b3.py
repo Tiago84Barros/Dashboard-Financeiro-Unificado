@@ -2522,13 +2522,13 @@ def _render_evidencia_universo(resultados: list[dict]) -> None:
     ao universo, na medida da incerteza de cada uma.
     """
     from core.b3_evidence import A_FAVOR, CONTRA
-    from core.glossario import ajuda_rank_ic, faixa_rank_ic, leitura_rank_ic
     from core.b3_pooled_evidence import (
         SegmentSample,
         pooled_yearly_ics,
         shrink_segment_estimates,
         universe_evidence,
     )
+    from core.glossario import ajuda_rank_ic, faixa_rank_ic, leitura_rank_ic
 
     todos_pares: list[tuple] = []
     for res in resultados:
