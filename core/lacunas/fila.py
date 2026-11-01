@@ -204,6 +204,11 @@ def atualizar_estado(estado: dict[str, dict], itens: list[dict]) -> dict[str, di
 #: Prefixo que a aba Restricoes (Configuracoes) poe na ``nota_triagem`` quando o
 #: administrador decide uma lacuna direto na nuvem.
 PREFIXO_NOTA_ADMIN = "[admin "
+#: Prefixo da decisão tomada pelo corretor na nuvem (``core/lacunas/nuvem.py``),
+#: que chega a ``app_lacunas`` pelo workflow ``lacunas-nuvem.yml``. Importada
+#: como a do administrador: sem isso o sincronizador local a sobrescreveria.
+PREFIXO_NOTA_NUVEM = "[nuvem "
+_PREFIXOS_IMPORTADOS = (PREFIXO_NOTA_ADMIN, PREFIXO_NOTA_NUVEM)
 
 
 def importar_decisoes_admin(estado: dict[str, dict], cloud: Iterable[dict],
@@ -214,13 +219,14 @@ def importar_decisoes_admin(estado: dict[str, dict], cloud: Iterable[dict],
     CORRETOR decidiu, e a errada para o que o ADMINISTRADOR decidiu depois: sem
     isto, a sincronizacao seguinte devolveria o status antigo a ``app_lacunas``
     e a decisao tomada na tela sumiria. A marca e a nota com
-    ``PREFIXO_NOTA_ADMIN``; so entra se a nota for nova para o estado local.
+    ``PREFIXO_NOTA_ADMIN`` (ou ``PREFIXO_NOTA_NUVEM``, do corretor na nuvem);
+    so entra se a nota for nova para o estado local.
     Devolve as impressoes alteradas."""
     mudadas = []
     for linha in cloud:
         nota = linha.get("nota_triagem") or ""
         status = linha.get("status")
-        if not nota.startswith(PREFIXO_NOTA_ADMIN) or status not in STATUS:
+        if not nota.startswith(_PREFIXOS_IMPORTADOS) or status not in STATUS:
             continue
         est = estado.get(linha["impressao"])
         if est is None or est.get("nota_triagem") == nota:

@@ -40,7 +40,9 @@ gh pr list --state open --search "head:lacuna/" --json number --jq length
 - Leia `abertas.json`:
   - Se `fontes.cloud` não for `ok`, siga, mas registre no fim que a fila saiu só
     com o local.
-  - Pegue o **primeiro** item de `fila`. Se a fila estiver vazia, encerre.
+  - Pegue o **primeiro** item de `fila` que ainda não tenha branch remoto
+    `lacuna/<impressao[:8]>` (`git ls-remote origin "refs/heads/lacuna/*"`): o
+    corretor na nuvem trabalha a mesma fila. Se não sobrar item, encerre.
 
 ### 2. Investigar, nesta ordem
 
@@ -142,3 +144,74 @@ o script ou o ajuste. O corpo do PR diz o comando exato que a pessoa deve rodar.
   - se o worktree criado estiver sem alterações, remova-o;
   - encerre.
 - Ao terminar, imprima uma linha: `<impressao[:8]> -> <veredito> [<pr_url>]`.
+
+## Execução na nuvem (tarefa agendada `corrigir-lacuna-nuvem`)
+
+Criada em 01/11/2026 porque a rotina local depende do PC ligado e ficou 26 dias
+parada. Roda numa sessão do Claude Code na nuvem, que **não alcança** o
+Supabase, o armazém local nem `local_staging/`. Tudo acima vale, com estas
+diferenças:
+
+### 1. Fila
+
+```bash
+python scripts/lacunas_nuvem.py ler --saida /tmp/fila.json
+```
+
+O workflow `lacunas-nuvem.yml` exporta a fila de `app_lacunas` cifrada no log
+(o repositório é público); `ler` baixa o log pela API do GitHub e decifra com
+`LACUNAS_FILA_CHAVE`. Sem a chave no ambiente, ou sem execução recente do
+workflow, encerre dizendo exatamente o que falta. Se `fontes.cloud` não for
+`ok`, encerre também: fila sem nuvem não é fila.
+
+Pule o item que já tiver branch remoto `lacuna/<impressao[:8]>` ou decisão em
+`docs/lacunas/decisoes_nuvem.jsonl`. O teto de 3 PRs `lacuna/` abertos vale.
+
+### 2. Investigar
+
+Sem armazém e sem banco. O vault é o repositório
+`Tiago84Barros/ProjetoIA-Obsidian` (anexe se não estiver no contêiner). Se a
+decisão depender de dado que só o armazém local ou o Supabase mostrariam, o
+veredito é `incerta`, com a nota "precisa do armazém local" ou "precisa do
+Supabase" — nunca `legitima` por não ter conseguido olhar.
+
+### 3. Registrar a decisão
+
+A decisão não vai por `lacunas_sincronizar.py marcar` (estado local). Ela é
+uma linha anexada a `docs/lacunas/decisoes_nuvem.jsonl`:
+
+```json
+{"impressao": "<impressao completa>", "status": "resolvida|legitima|incerta|em_pr", "pr": 650, "data": "<agora, ISO 8601 UTC>", "nota": "<veredito: causa em 1-2 frases>"}
+```
+
+O workflow leva a linha a `app_lacunas` depois do merge, com a nota prefixada
+por `[nuvem AAAA-MM-DD]`, que o sincronizador local respeita.
+
+- `defeito`: branch `lacuna/<impressao[:8]>` a partir de `origin/main`, teste
+  que falha, correção, suíte inteira (`python -m pytest -q tests -p
+  no:cacheprovider`), PR. Depois de abrir o PR, um segundo commit anexa a linha
+  com `status: resolvida` e o número do PR.
+- `legitima` ou `incerta`: PR `triagem(lacuna): <impressao[:8]> <veredito>` só
+  com a linha.
+- `dado` que exige ingestão: PR com o script e o comando no corpo, linha com
+  `status: em_pr`. **Esse PR não é mergeado**: a pessoa precisa rodar a carga.
+
+O repositório é público. No PR, no commit e na nota, cite código de ativo só
+quando for indispensável para entender a correção; nunca valor, quantidade ou
+saldo da carteira.
+
+### 4. Merge
+
+Autorizado pelo dono em 01/11/2026, **só nesta rotina na nuvem** e só para os
+PRs que ela abrir (exceto o de `dado`). Faça o merge (merge commit) quando,
+no head atual do PR:
+
+- `pytest (Python 3.11)` e `pytest (Python 3.12)` concluíram com `success`;
+- o PR está `mergeable` sem conflito.
+
+Para esperar o CI, assine a atividade do PR e encerre o turno: o evento acorda
+a sessão. CI vermelho: até 2 tentativas de correção da causa; depois disso,
+deixe o PR aberto, sem merge, e diga por quê. Nunca pule, desative ou afrouxe
+teste para ficar verde, e nunca force push.
+
+Ao terminar, a mesma linha de sempre: `<impressao[:8]> -> <veredito> [<pr_url>] [merge: sim|não]`.
