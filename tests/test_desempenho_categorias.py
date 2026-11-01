@@ -195,11 +195,14 @@ def test_grafico_desenha_a_serie_amostrada_mas_o_rotulo_e_o_retorno_final():
         f"<b>+{s.iloc[-1]:.1f}%</b>".replace(".", ",")]
 
 
-def test_frequencia_do_grafico_e_mensal_e_trimestral_em_cinco_anos():
+def test_pontos_ficam_mais_espacados_quanto_maior_o_periodo():
     import views.investimentos as inv
 
-    assert inv._AMOSTRA_GRAFICO == {"6M": "M", "YTD": "M", "12M": "M", "24M": "M",
+    assert inv._AMOSTRA_GRAFICO == {"6M": "W", "YTD": "W", "12M": "M", "24M": "M",
                                     "5Y": "Q"}
+    cinco_anos = pd.Series(range(1300), index=pd.bdate_range("2021-11-01", periods=1300),
+                           dtype=float)
+    assert len(dc.amostrar_para_grafico(cinco_anos, "Q")) <= 22   # e não 1.300 dias
     idx = pd.bdate_range("2025-11-03", "2026-10-30")
     s = pd.Series([i * 0.05 for i in range(len(idx))], index=idx)
     a = dc.amostrar_para_grafico(s, "M")

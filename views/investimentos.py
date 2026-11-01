@@ -1995,8 +1995,10 @@ def _visiveis_de_inicio(nomes: list[str]) -> set[str]:
 
 # Pontos do gráfico por período: diário em 12 ou 24 meses dava um serrilhado
 # que escondia a tendência (pedido do usuário, 01/11/2026).
-# O semanal ainda parecia granulado; o usuário pediu mensal (01/11/2026).
-_AMOSTRA_GRAFICO = {"6M": "M", "YTD": "M", "12M": "M", "24M": "M", "5Y": "Q"}
+# Quanto maior o período, mais espaçados os pontos: dia a dia em 5 anos
+# desenhava centenas de altos e baixos sem informação (pedido do usuário,
+# 01/11/2026). Cada período fica com ~13 a 45 pontos.
+_AMOSTRA_GRAFICO = {"6M": "W", "YTD": "W", "12M": "M", "24M": "M", "5Y": "Q"}
 _ROTULO_AMOSTRA = {"W": "um ponto por semana", "M": "um ponto por mês",
                    "Q": "um ponto por trimestre"}
 
