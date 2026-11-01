@@ -193,3 +193,16 @@ def test_grafico_desenha_a_serie_amostrada_mas_o_rotulo_e_o_retorno_final():
     assert len(linha.x) < len(idx) / 4
     assert [t.text[0] for t in fig.data if t.mode == "text"] == [
         f"<b>+{s.iloc[-1]:.1f}%</b>".replace(".", ",")]
+
+
+def test_frequencia_do_grafico_e_mensal_e_trimestral_em_cinco_anos():
+    import views.investimentos as inv
+
+    assert inv._AMOSTRA_GRAFICO == {"6M": "M", "YTD": "M", "12M": "M", "24M": "M",
+                                    "5Y": "Q"}
+    idx = pd.bdate_range("2025-11-03", "2026-10-30")
+    s = pd.Series([i * 0.05 for i in range(len(idx))], index=idx)
+    a = dc.amostrar_para_grafico(s, "M")
+    assert len(a) == 13                         # partida + 12 fins de mês
+    assert a.iloc[-1] == s.iloc[-1] and a.iloc[0] == s.iloc[0]
+    assert len(dc.amostrar_para_grafico(s, "Q")) <= 6

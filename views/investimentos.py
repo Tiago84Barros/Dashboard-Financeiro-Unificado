@@ -1995,8 +1995,10 @@ def _visiveis_de_inicio(nomes: list[str]) -> set[str]:
 
 # Pontos do gráfico por período: diário em 12 ou 24 meses dava um serrilhado
 # que escondia a tendência (pedido do usuário, 01/11/2026).
-_AMOSTRA_GRAFICO = {"6M": "W", "YTD": "W", "12M": "W", "24M": "W", "5Y": "M"}
-_ROTULO_AMOSTRA = {"W": "um ponto por semana", "M": "um ponto por mês"}
+# O semanal ainda parecia granulado; o usuário pediu mensal (01/11/2026).
+_AMOSTRA_GRAFICO = {"6M": "M", "YTD": "M", "12M": "M", "24M": "M", "5Y": "Q"}
+_ROTULO_AMOSTRA = {"W": "um ponto por semana", "M": "um ponto por mês",
+                   "Q": "um ponto por trimestre"}
 
 
 def _fig_desempenho_categorias(series: dict, freq: str | None = None) -> go.Figure:
@@ -2030,12 +2032,9 @@ def _fig_desempenho_categorias(series: dict, freq: str | None = None) -> go.Figu
         cor = POR_NOME[nome].cor
         visivel = True if nome in visiveis else "legendonly"
         grupo = {"legendgroup": nome, "visible": visivel}
-        mensal = len(s) < 40   # fotos mensais: o ponto mostra onde há dado
         fig.add_trace(go.Scatter(
-            x=s.index, y=s.values, name=nome, **grupo,
-            mode="lines+markers" if mensal else "lines",
-            line={"color": cor, "width": 1.8, "shape": "spline", "smoothing": 0.6},
-            marker={"size": 4, "color": cor},
+            x=s.index, y=s.values, name=nome, **grupo, mode="lines",
+            line={"color": cor, "width": 2, "shape": "spline", "smoothing": 0.8},
             # Texto pronto em pt-BR, duas casas: no hover unificado o Plotly
             # ignorava o formato d3 e mostrava "19.525809911220506%".
             customdata=[_fmt_retorno(float(v), 2) for v in s.values],
