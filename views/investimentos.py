@@ -35,6 +35,7 @@ from core.correlation_analysis import (
     correlacao_media_ponderada,
     intervalo_confianca_correlacao,
 )
+from core.glossario import INTERVALO_95_CORRELACAO
 from core.investimentos import (
     crescimento_patrimonio,
     crescimento_proventos,
@@ -1433,7 +1434,7 @@ def _corr_pairs(corr: pd.DataFrame, overlap: pd.DataFrame | None = None) -> pd.D
                 "Correlação": float(val),
                 "|Correlação|": abs_val,
                 "Observações": observacoes,
-                "IC 95%": f"{ic[0]:.2f} a {ic[1]:.2f}" if ic is not None else "—",
+                "Intervalo 95%": f"{ic[0]:.2f} a {ic[1]:.2f}" if ic is not None else "—",
                 "Leitura": classificar_correlacao(float(val)),
             })
     return pd.DataFrame(rows).sort_values("|Correlação|", ascending=False)
@@ -1461,7 +1462,7 @@ def _legenda_par(row) -> tuple[str, bool]:
     if ic is None:
         return f"{par} · {n} meses", False
     incerto = ic[0] < 0 < ic[1]
-    texto = f"{par} · {n} meses · IC 95% {ic[0]:.2f} a {ic[1]:.2f}"
+    texto = f"{par} · {n} meses · intervalo 95% {ic[0]:.2f} a {ic[1]:.2f}"
     if incerto:
         texto += " — não distinguível de independência"
     return texto, incerto
@@ -2592,12 +2593,13 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
         if not pares.empty:
             st.markdown("**Relações entre os pares**")
             tab_pos, tab_inv, tab_ind = st.tabs(["Positivas", "Inversas", "Independentes"])
-            colunas_pares = ["Par", "Correlação", "Observações", "IC 95%", "Leitura"]
+            colunas_pares = ["Par", "Correlação", "Observações", "Intervalo 95%", "Leitura"]
             config_pares = {
                 "Par": st.column_config.TextColumn(width="medium"),
                 "Correlação": st.column_config.NumberColumn(format="%.2f", width="small"),
                 "Observações": st.column_config.NumberColumn(format="%d", width="small"),
-                "IC 95%": st.column_config.TextColumn(width="medium"),
+                "Intervalo 95%": st.column_config.TextColumn(
+                    width="medium", help=INTERVALO_95_CORRELACAO.split(": ", 1)[1]),
                 "Leitura": st.column_config.TextColumn(width="medium"),
             }
             with tab_pos:
@@ -2621,6 +2623,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                     hide_index=True,
                     column_config=config_pares,
                 )
+            st.caption(INTERVALO_95_CORRELACAO)
         pulados = corr_data.get("skipped", [])
         if pulados:
             aviso_lacuna(

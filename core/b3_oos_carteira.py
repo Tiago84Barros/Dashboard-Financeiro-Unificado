@@ -797,7 +797,7 @@ def leitura_honesta(resumo: dict, rotulo: str = "pesos iguais") -> str:
         return f"Amostra insuficiente ({n} safra(s)): sem intervalo, sem conclusão."
     neg = len(resumo.get("safras_negativas") or [])
     base = (f"Excesso médio de {media * 100:+.1f} pp por safra sobre {rotulo}, "
-            f"IC 95% [{lo * 100:+.1f}; {hi * 100:+.1f}] pp, {n} safras, "
+            f"intervalo 95% [{lo * 100:+.1f}; {hi * 100:+.1f}] pp, {n} safras, "
             f"{neg} negativa(s).")
     sem_melhor = resumo.get("media_sem_melhor_safra")
     robustez = ""

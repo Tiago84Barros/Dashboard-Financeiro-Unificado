@@ -165,7 +165,7 @@ def test_tabela_distingue_correlacao_inversa_e_expoe_incerteza():
     assert pares.iloc[0]["Correlação"] == pytest.approx(-0.55)
     assert pares.iloc[0]["Leitura"] == "Moderada inversa"
     assert pares.iloc[0]["Observações"] == 24
-    assert pares.iloc[0]["IC 95%"] != "—"
+    assert pares.iloc[0]["Intervalo 95%"] != "—"
 
 
 def test_build_envia_ao_provedor_apenas_simbolos_e_moedas_publicas(monkeypatch):

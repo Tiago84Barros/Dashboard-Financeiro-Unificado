@@ -93,7 +93,7 @@ def test_card_de_destaque_declara_incerteza_quando_o_ic_cruza_zero():
                        "Observações": 26})
     texto, incerto = _legenda_par(fraco)
     assert incerto
-    assert "26 meses" in texto and "IC 95%" in texto
+    assert "26 meses" in texto and "intervalo 95%" in texto
     assert "não distinguível de independência" in texto
 
 

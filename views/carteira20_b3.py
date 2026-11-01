@@ -23,6 +23,7 @@ import streamlit as st
 
 import core.carteira20 as c20
 import core.carteira20_desempenho as cd
+from core.glossario import RANK_IC_CURTO, RANK_IC_ESCALA
 from design.componentes import badge_status, card_metrica, estado_vazio, secao_titulo
 from design.lacunas import aviso_lacuna
 from design.market_companies import company_logo_html
@@ -610,9 +611,13 @@ def _secao_expectativa(registros: list[dict]) -> None:
     if linhas:
         st.dataframe(pd.DataFrame(linhas), hide_index=True, width="stretch",
                      column_config={
-                         "Rank-IC": st.column_config.NumberColumn(format="%.3f"),
+                         "Rank-IC": st.column_config.NumberColumn(
+                             format="%.3f", help=RANK_IC_CURTO),
                          "Excesso a.a. sobre pesos iguais": st.column_config.NumberColumn(
                              format="percent")})
+        st.caption("Rank-IC: correlação, de −1 a +1, entre a ordem que o score "
+                   "deu às empresas e a ordem dos retornos que elas tiveram "
+                   "depois. " + RANK_IC_ESCALA.split(": ", 1)[1])
     if exp.get("contra_o_indice"):
         st.caption(f"Contra o índice: {_frase(exp['contra_o_indice'])}")
     for chave, rotulo in (("minimo", "Mínimo"), ("veredito", "Veredito"),
