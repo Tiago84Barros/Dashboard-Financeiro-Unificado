@@ -123,7 +123,10 @@ def test_sem_cotacao_ao_vivo_as_linhas_saem_intactas():
 
 def test_extra_da_nomad_sai_pelo_cambio_e_preco_ao_vivo():
     """O caso de 26/10/2026: o mercado em BRL usa o câmbio de agora."""
-    cot = {"SPY": cv.Cotacao(765.0, AGORA), cv.SIMBOLO_CAMBIO: cv.Cotacao(5.55, AGORA)}
+    # Hora real, não AGORA: a frescura da cotação é medida contra o relógio,
+    # e uma data fixa deixava de ser "live" assim que o calendário passava dela.
+    agora = datetime.now(timezone.utc)
+    cot = {"SPY": cv.Cotacao(765.0, agora), cv.SIMBOLO_CAMBIO: cv.Cotacao(5.55, agora)}
     linhas, _ = cv.aplicar([_linha_usd()], "current_price",
                            "current_price_timestamp", cot)
     carteira = {"posicoes": [], "avisos_dados": []}
