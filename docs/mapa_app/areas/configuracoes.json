@@ -116,14 +116,14 @@
       "resumo": "Lista do que o app não sabe ou errou",
       "explicacao": "Painel de trabalho com falta de dados, erros e detalhes técnicos que foram tirados das telas de uso. Você filtra a lista, lê cada item e registra o que fazer com ele. A mesma para todas as contas desde 12/10/2026.",
       "so_admin": false,
-      "fonte": "views/configuracoes.py:95 → views/configuracoes_restricoes.py:269",
+      "fonte": "views/configuracoes.py:95 → views/configuracoes_restricoes.py:295",
       "filhos": [
         {
           "nome": "Recarregar",
           "resumo": "De onde veio a lista e botão de reler",
           "explicacao": "No topo, etiquetas mostram de onde a lista foi lida (o computador do dono e a versão online do app) e quando. O botão '↻ Recarregar' lê tudo de novo na hora, sem esperar o intervalo de 5 minutos.",
           "so_admin": false,
-          "fonte": "views/configuracoes_restricoes.py:332",
+          "fonte": "views/configuracoes_restricoes.py:358",
           "filhos": []
         },
         {
@@ -131,23 +131,31 @@
           "resumo": "Quatro cartões com as contagens",
           "explicacao": "Quantos problemas de falta de dado estão em aberto, quantos erros de tela, quantos detalhes informativos e quantos itens voltaram depois de marcados como resolvidos.",
           "so_admin": false,
-          "fonte": "views/configuracoes_restricoes.py:340",
+          "fonte": "views/configuracoes_restricoes.py:366",
           "filhos": []
         },
         {
           "nome": "Fila de itens",
           "resumo": "Filtrar e ler a lista de problemas",
-          "explicacao": "Filtros por Natureza, Situação e Tela, mais uma busca por texto. A tabela mostra onde aconteceu, a mensagem, o ativo envolvido, quantas vezes apareceu nos últimos 14 dias e a última vez.",
+          "explicacao": "Filtros em caixas de seleção — Natureza (começa em Restrição e Erro), Situação (começa em Em aberto: Pendente, Em análise e Correção em PR) e Tela —, mais uma busca por texto. A tabela mostra onde aconteceu, a mensagem, o ativo envolvido, quantas vezes apareceu nos últimos 14 dias e a última vez.",
           "so_admin": false,
-          "fonte": "views/configuracoes_restricoes.py:366",
+          "fonte": "views/configuracoes_restricoes.py:392",
           "filhos": []
         },
         {
           "nome": "Decisão",
           "resumo": "Marcar o que fazer com cada item",
-          "explicacao": "Escolha um item e veja a ficha dele. Marque Pendente, Em análise, Aceita ou Resolvida, escreva uma observação se quiser e clique em 'Registrar decisão'. A rotina de correção lê essa marcação: 'Aceita' tira o item da fila dela, e 'Resolvida' volta a abrir sozinha se o problema reaparecer.",
+          "explicacao": "Escolha um item e veja a ficha dele. Na caixa 'Decisão', escolha Pendente, Em análise, Aceita ou Resolvida, escreva uma observação se quiser e clique em 'Registrar decisão'. A rotina de correção lê essa marcação: 'Aceita' tira o item da fila dela, e 'Resolvida' volta a abrir sozinha se o problema reaparecer.",
           "so_admin": false,
-          "fonte": "views/configuracoes_restricoes.py:502",
+          "fonte": "views/configuracoes_restricoes.py:527",
+          "filhos": []
+        },
+        {
+          "nome": "Corrigir com o Claude Code",
+          "resumo": "Mandar o item escolhido para correção",
+          "explicacao": "No fim da tela, dois botões levam o item escolhido ao Claude Code: 'Nova sessão com este item' abre o Claude Code com o pedido de correção já escrito e o repositório do app anexado; 'Abrir a sessão do Claude Code' abre a conversa fixa, onde se cola o pedido mostrado logo abaixo. Nada é enviado sem o seu clique, e o Claude Code corrige em PR, sem fazer merge.",
+          "so_admin": false,
+          "fonte": "views/configuracoes_restricoes.py:619",
           "filhos": []
         }
       ]

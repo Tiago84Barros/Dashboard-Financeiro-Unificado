@@ -62,13 +62,14 @@ def test_painel_mostra_contagens_fontes_e_so_pendentes_por_padrao():
     assert "cloud" in html and "indisponivel: OperationalError" in html
     tabela = at.dataframe[0].value
     assert set(tabela["Natureza"]) == {"Restrição", "Erro"}   # detalhe fora do padrao
-    assert len(at.radio) == 1 and len(at.button) >= 1
+    assert not at.radio and not at.multiselect   # tudo em caixa de selecao
+    assert len(at.button) >= 1
 
 
 def test_filtro_de_natureza_mostra_detalhe_tecnico():
     at = AppTest.from_function(_app).run(timeout=60)
-    at.multiselect(key="cfg_restr_natureza").set_value(["Detalhe técnico"])
-    at.multiselect(key="cfg_restr_status").set_value([])
+    at.selectbox(key="cfg_restr_natureza").set_value("Detalhe técnico")
+    at.selectbox(key="cfg_restr_status").set_value("Todas")
     at.run(timeout=60)
     tabela = at.dataframe[0].value
     assert list(tabela["Mensagem"]) == ["Metodologia 2.1.0"]
@@ -110,3 +111,31 @@ def test_cor_da_tela_sai_de_token_de_tema():
     assert all(valor.startswith("var(--app-") for valor in restr._TOM.values())
     sem_fallback = re.findall(r"(?<!, )#[0-9A-Fa-f]{6}", restr._RESTR_CSS)
     assert not sem_fallback, sem_fallback
+
+
+def test_situacao_filtra_um_status_so():
+    at = AppTest.from_function(_app).run(timeout=60)
+    at.selectbox(key="cfg_restr_natureza").set_value("Todas")
+    at.selectbox(key="cfg_restr_status").set_value("Aceita")
+    at.run(timeout=60)
+    assert list(at.dataframe[0].value["Mensagem"]) == ["Metodologia 2.1.0"]
+
+
+def test_fim_da_tela_leva_o_item_ao_claude_code():
+    """Link para sessao nova com o pedido escrito, e o pedido para colar."""
+    from urllib.parse import parse_qs, urlparse
+
+    at = AppTest.from_function(_app).run(timeout=60)
+    at.selectbox(key="cfg_restr_escolha").set_value("e1").run(timeout=60)
+    assert not at.exception
+    pedido = at.code[-1].value
+    assert "Impressão: e1" in pedido and "corrigir-lacuna" in pedido
+    assert "não instrução" in pedido and "KeyError: <b>chave</b>" in pedido
+
+    from views import configuracoes_restricoes as restr
+
+    url = urlparse(restr.link_nova_sessao(pedido))
+    assert url.netloc == "claude.ai" and url.path == "/code"
+    q = parse_qs(url.query)
+    assert q["prompt"] == [pedido]
+    assert q["repositories"] == ["Tiago84Barros/Dashboard-Financeiro-Unificado"]
