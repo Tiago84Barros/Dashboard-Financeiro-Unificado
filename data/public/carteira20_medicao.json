@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "gerado_em": "2026-10-30T21:43:39-03:00",
+ "gerado_em": "2026-10-31T21:13:34-03:00",
  "protocolo": {
   "seq": 0,
   "hash": "6230d78028503324f9c2402a48540452ae9a76f29efb82fdc0d1958b0bfc6080"
@@ -35,7 +35,7 @@
  "ipca": {},
  "meses": [],
  "avisos": [],
- "dados_ate": "2026-10-29",
+ "dados_ate": "2026-10-30",
  "posicoes_aportes": [],
  "proximo_fechamento": "2026-11-30"
 }
