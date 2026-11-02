@@ -126,9 +126,14 @@ _SESSAO_LOGOS = None
 _SESSAO_LOCK = threading.Lock()
 
 # Logo que existe não some de uma hora para outra; logo ausente pode aparecer
-# (ou a falha ter sido de rede). Por isso o positivo vale dias e o negativo, 1 h.
+# (ou a falha ter sido de rede). Por isso o positivo vale dias e o negativo, 1
+# dia. O negativo já valeu 1 h: 241 dos 435 FIIs não têm ícone no repositório
+# (medido em 02/11/2026), e a cada hora alguém pagava as checagens de novo.
 _TTL_LOGO_OK = 7 * 24 * 3600
-_TTL_LOGO_AUSENTE = 3600
+_TTL_LOGO_AUSENTE = 24 * 3600
+# Checagens simultâneas na pré-busca. Abaixo do pool padrão do requests (10
+# conexões por host), para a Session não descartar conexão.
+_PREBUSCA_LOGOS_PARALELAS = 8
 _CACHE_LOGOS: dict[str, tuple[bool, float]] = {}
 _CACHE_LOCK = threading.Lock()
 
@@ -176,6 +181,27 @@ def _logo_disponivel_cached(url: str) -> bool:
     with _CACHE_LOCK:
         _CACHE_LOGOS[url] = (ok, validade)
     return ok
+
+
+def prebuscar_logos(urls) -> None:
+    """Checa de uma vez, em paralelo, os logos que a página vai desenhar.
+
+    ``company_logo_html`` checa um logo por vez dentro do laço que monta os
+    cards: 80 cards de FII custavam 7,2 s de espera em fila na primeira
+    abertura (medido em 02/11/2026). Chamada antes do laço, esta função deixa
+    o cache pronto e o laço só lê. URL já conhecida e dentro da validade não
+    é checada de novo.
+    """
+    agora = time.monotonic()
+    with _CACHE_LOCK:
+        pendentes = list(dict.fromkeys(
+            url for url in urls
+            if url and not ((visto := _CACHE_LOGOS.get(url)) and visto[1] > agora)))
+    if not pendentes:
+        return
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=_PREBUSCA_LOGOS_PARALELAS) as executor:
+        list(executor.map(_logo_disponivel_cached, pendentes))
 
 
 def render_company_logo(ticker: str, url: str, *, size: int = 64) -> None:
