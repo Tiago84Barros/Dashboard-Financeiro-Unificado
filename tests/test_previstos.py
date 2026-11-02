@@ -91,6 +91,8 @@ class _Conn:
     def __init__(self, tipo_conta="checking", amount_atual=-100.0, rowcount=1):
         self.tipo_conta, self.amount_atual, self.rowcount = tipo_conta, amount_atual, rowcount
         self.categorias_do_dono = {"cat"}
+        self.conta_padrao = "acc-padrao"
+        self.ativa = True
         self.inserts: list[dict] = []
         self.updates: list[dict] = []
 
@@ -99,8 +101,12 @@ class _Conn:
         if "FROM categories" in sql:
             ok = params["category_id"] in self.categorias_do_dono and params["uid"] == "owner-1"
             return SimpleNamespace(fetchone=lambda: (1,) if ok else None)
+        if "FROM accounts" in sql and "LIMIT 1" in sql:
+            cp = self.conta_padrao
+            return SimpleNamespace(fetchone=lambda: SimpleNamespace(id=cp) if cp else None)
         if "FROM accounts" in sql and "SELECT id::text" in sql:
-            return SimpleNamespace(fetchone=lambda: SimpleNamespace(id="acc", type=self.tipo_conta))
+            return SimpleNamespace(fetchone=lambda: SimpleNamespace(
+                id=params["account_id"], type=self.tipo_conta, active=self.ativa))
         if "INSERT INTO transactions" in sql:
             self.inserts.append(dict(params))
             return SimpleNamespace(rowcount=1)
@@ -299,16 +305,26 @@ def test_listagem_so_junta_categoria_do_sistema_ou_do_dono():
     assert "c.user_id IS NULL OR c.user_id = t.user_id" in sql
 
 
-def _tipo(c):
-    return c["tipo"]
+def test_sem_conta_informada_usa_a_conta_padrao_de_movimentacao(banco):
+    ok, msg = prev.criar_previstos("Aluguel", 100.0, "expense", date(2026, 11, 5), None)
+    assert ok, msg
+    assert banco.inserts[0]["account_id"] == "acc-padrao"
 
 
-def test_sem_conta_corrente_previsto_vai_para_poupanca_mesmo_com_investimento_antes():
-    contas = [{"id": "inv", "tipo": "investment"}, {"id": "poup", "tipo": "savings"}]
-    assert prev.conta_escolhida_para_previsto(contas, _tipo) == "poup"
+def test_sem_conta_de_movimentacao_ativa_nao_grava(banco):
+    banco.conta_padrao = None
+    ok, msg = prev.criar_previstos("X", 10.0, "expense", date(2026, 11, 5), None)
+    assert not ok and "ativa" in msg and not banco.inserts
 
 
-def test_conta_corrente_tem_preferencia_e_sem_conta_aceita_nao_ha_escolha():
-    contas = [{"id": "poup", "tipo": "savings"}, {"id": "cc", "tipo": "checking"}]
-    assert prev.conta_escolhida_para_previsto(contas, _tipo) == "cc"
-    assert prev.conta_escolhida_para_previsto([{"id": "inv", "tipo": "investment"}], _tipo) is None
+def test_conta_inativa_e_recusada(banco):
+    banco.ativa = False
+    ok, msg = prev.criar_previstos("X", 10.0, "expense", date(2026, 11, 5), None, "acc")
+    assert not ok and "inativa" in msg and not banco.inserts
+
+
+def test_conta_padrao_e_movimentacao_ativa_com_corrente_primeiro():
+    sql = " ".join(prev._SQL_CONTA_PADRAO.split())
+    assert "COALESCE(active, TRUE)" in sql
+    assert "type IN ('checking', 'savings', 'digital_wallet')" in sql
+    assert "WHEN 'checking' THEN 0" in sql

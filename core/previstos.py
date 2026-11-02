@@ -51,15 +51,6 @@ def sql_realizado(t: str = "t", conta: str = "ac") -> str:
 # Funções puras
 # ─────────────────────────────────────────────────────────────────────────────
 
-def conta_escolhida_para_previsto(contas: list[dict], tipo_de) -> str | None:
-    """Id da conta onde o previsto é gravado: conta corrente primeiro, depois
-    qualquer outra de movimentação. ``tipo_de(conta)`` devolve o tipo."""
-    aceitas = [c for c in contas if tipo_de(c) in TIPOS_CONTA_MOVIMENTACAO]
-    preferida = next((c for c in aceitas if tipo_de(c) == "checking"), None)
-    escolhida = preferida or (aceitas[0] if aceitas else None)
-    return escolhida["id"] if escolhida else None
-
-
 def datas_mensais(primeiro: date, repeticoes: int) -> list[date]:
     """Vencimentos mensais a partir de ``primeiro``. Dia 31 em mês curto cai
     no último dia daquele mês, e volta ao 31 no mês seguinte que o tiver."""
@@ -128,9 +119,24 @@ def projetar_saldo(saldo_atual: float, previstos: list[dict], hoje: date,
 # ─────────────────────────────────────────────────────────────────────────────
 
 _SQL_CONTA_MOVIMENTACAO = """
-    SELECT id::text, COALESCE(type, '') AS type
+    SELECT id::text, COALESCE(type, '') AS type, COALESCE(active, TRUE) AS active
     FROM accounts
     WHERE id = CAST(:account_id AS uuid) AND user_id = CAST(:uid AS uuid)
+"""
+
+# Conta do previsto quando o chamador não escolhe: a mesma regra do saldo de
+# partida da projeção e da conta do extrato -- movimentação, ativa, corrente
+# primeiro. Resolver aqui, e não na lista da tela, é o que impede a escolha
+# de cair em conta de investimento ou inativa.
+_SQL_CONTA_PADRAO = """
+    SELECT id::text
+    FROM accounts
+    WHERE user_id = CAST(:uid AS uuid)
+      AND COALESCE(active, TRUE)
+      AND type IN ('checking', 'savings', 'digital_wallet')
+    ORDER BY CASE type WHEN 'checking' THEN 0 WHEN 'digital_wallet' THEN 1 ELSE 2 END,
+             name
+    LIMIT 1
 """
 
 # Categoria só se for do sistema (user_id nulo) ou do próprio dono: a chave
@@ -223,10 +229,13 @@ def criar_previstos(
     tipo: str,
     vencimento: date,
     categoria_id: Optional[str],
-    conta_id: str,
+    conta_id: Optional[str] = None,
     repeticoes: int = 1,
 ) -> tuple[bool, str]:
     """Grava um previsto, ou uma série mensal de ``repeticoes`` previstos.
+
+    ``conta_id`` omitido: a conta padrão de movimentação do dono
+    (``_SQL_CONTA_PADRAO``). Informado: tem de ser de movimentação e ativa.
 
     Sinal igual ao do lançamento manual: entrada positiva, o resto negativo.
     Série leva ``installment_group`` e ``n de N`` para a tela mostrar "3/12".
@@ -246,10 +255,18 @@ def criar_previstos(
     grupo = str(uuid.uuid4()) if len(datas) > 1 else None
     try:
         with engine.begin() as conn:
+            if not conta_id:
+                padrao = conn.execute(text(_SQL_CONTA_PADRAO), {"uid": owner}).fetchone()
+                if not padrao:
+                    return False, ("Previsto precisa de conta corrente, poupança ou carteira "
+                                   "digital ativa, e nenhuma está configurada.")
+                conta_id = padrao.id
             conta = conn.execute(text(_SQL_CONTA_MOVIMENTACAO),
                                  {"account_id": conta_id, "uid": owner}).fetchone()
             if not conta:
                 return False, "Conta não encontrada."
+            if not conta.active:
+                return False, "Conta inativa não recebe previsto."
             if conta.type == "credit_card":
                 return False, "Compras de cartão de crédito entram pela fatura CSV."
             if conta.type not in TIPOS_CONTA_MOVIMENTACAO:
