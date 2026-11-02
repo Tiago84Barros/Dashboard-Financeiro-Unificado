@@ -127,7 +127,9 @@ render_portfolio_review(result, key="synthetic")
 render_portfolio_review(allocate_partial([], []), key="empty")
 ''').run(timeout=20)
     assert not app.exception
-    assert app.metric[0].value == "10.0%"
-    assert app.metric[1].value == "90.0%"
-    assert app.metric[3].value == "100.0%"
+    # Os KPIs saem como cards HTML (um st.markdown por composição), não st.metric.
+    cards = [m.value for m in app.markdown if "pr-resumo" in m.value]
+    assert len(cards) == 2
+    assert "10.0%" in cards[0] and "90.0%" in cards[0] and "SYNTH" in cards[0]
+    assert "100.0%" in cards[1] and 'class="pr-card"' not in cards[1]
     assert app.dataframe[0].value.iloc[0]["Ativo"] == "SYNTH"
