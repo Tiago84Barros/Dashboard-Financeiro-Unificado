@@ -38,18 +38,50 @@ def test_logo_presente_fica_lembrado_por_dias(monkeypatch, cache_de_logo_limpo):
     assert len(chamadas) == 2
 
 
-def test_logo_ausente_volta_a_ser_checado_em_uma_hora(monkeypatch,
-                                                       cache_de_logo_limpo):
+def test_logo_ausente_volta_a_ser_checado_em_um_dia(monkeypatch,
+                                                     cache_de_logo_limpo):
     respostas = iter([False, True])
     monkeypatch.setattr(mc, "_logo_disponivel", lambda url: next(respostas))
     relogio = [0.0]
     monkeypatch.setattr(mc.time, "monotonic", lambda: relogio[0])
 
     assert not mc._logo_disponivel_cached("https://x/b.png")
-    relogio[0] += 1800
+    relogio[0] += 23 * 3600
     assert not mc._logo_disponivel_cached("https://x/b.png")
-    relogio[0] += 1801
+    relogio[0] += 3601
     assert mc._logo_disponivel_cached("https://x/b.png")
+
+
+def test_prebusca_checa_em_paralelo_so_o_que_nao_esta_guardado(
+        monkeypatch, cache_de_logo_limpo):
+    import threading
+    import time as _time
+
+    checadas, threads = [], set()
+
+    def checa(url):
+        checadas.append(url)
+        threads.add(threading.get_ident())
+        _time.sleep(.05)  # simula a espera de rede
+        return url.endswith("ok.png")
+
+    monkeypatch.setattr(mc, "_logo_disponivel", checa)
+    mc._CACHE_LOGOS["https://x/guardado.png"] = (True, mc.time.monotonic() + 3600)
+    urls = [f"https://x/{i}-ok.png" for i in range(8)] + [
+        "https://x/sem.png", "https://x/sem.png", "https://x/guardado.png", ""]
+
+    inicio = _time.perf_counter()
+    mc.prebuscar_logos(urls)
+    decorrido = _time.perf_counter() - inicio
+
+    assert sorted(checadas) == sorted(set(urls) - {"https://x/guardado.png", ""})
+    assert len(threads) > 1
+    assert decorrido < .05 * len(checadas) / 2  # bem menos que em fila
+    # O laço dos cards depois só lê o que a pré-busca guardou.
+    monkeypatch.setattr(mc, "_logo_disponivel",
+                        lambda url: pytest.fail("devia estar guardado"))
+    assert mc._logo_disponivel_cached("https://x/3-ok.png")
+    assert not mc._logo_disponivel_cached("https://x/sem.png")
 
 
 def test_checagem_de_logo_reaproveita_a_mesma_sessao(monkeypatch):

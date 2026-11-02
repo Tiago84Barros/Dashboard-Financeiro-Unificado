@@ -15,6 +15,8 @@ Fonte nativa do market.* (BRAPI Pro + CVM Informe Mensal). FII não tem DRE/ROE.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
 import math
 from html import escape
 
@@ -89,7 +91,7 @@ from design.componentes import (
     rolar_para_topo,
 )
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
-from design.market_companies import company_logo_html
+from design.market_companies import company_logo_html, prebuscar_logos
 from design.relatorio_analista import secao_relatorio
 
 # Metadados por tipo de FII: emoji, rótulo e cor de destaque do card.
@@ -1673,6 +1675,7 @@ def _cards_de_fiis_disponiveis(view: pd.DataFrame) -> None:
     limit_key = "fii_disponiveis_visible_limit"
     visible_limit = int(st.session_state.get(limit_key, _FII_DISPONIVEIS_PAGE_SIZE))
     visible = df.head(visible_limit)
+    prebuscar_logos(_fii_logo_url(str(tk)) for tk in visible["Ticker"])
     total_por_categoria = df.groupby("Categoria", dropna=False)["Ticker"].size().to_dict()
 
     for categoria, grupo in visible.groupby("Categoria", sort=False, dropna=False):
@@ -2015,6 +2018,32 @@ def _assinatura_dos_controles() -> tuple:
     ))
 
 
+_CHAVE_MONTAGEM_GUARDADA = "fii_montagem_guardada"
+
+
+def _chave_da_montagem(preferences: dict, portfolio_policy, eligible_rows: list,
+                       candidatos_da_concessao, validation_status: str,
+                       previous_weights: dict, macro_snapshot, inputs) -> str:
+    """Impressão digital de tudo o que entra na montagem da carteira.
+
+    Linhas inteiras, não só os tickers: a mesma lista de fundos com uma métrica
+    diferente monta outra carteira. ``repr`` é estável para dicts, números e
+    as políticas (dataclasses), e o hash custa milissegundos diante da montagem.
+    """
+    partes = (
+        repr(sorted((k, repr(v)) for k, v in preferences.items()
+                    if k != "scenario_provenance")),
+        repr(portfolio_policy),
+        repr(eligible_rows),
+        repr(list(candidatos_da_concessao or ())),
+        validation_status,
+        repr(sorted(previous_weights.items())),
+        repr(getattr(macro_snapshot, "impacts", None)),
+        repr(inputs.attrs.get("snapshot_as_of")),
+    )
+    return hashlib.sha256("\x1f".join(partes).encode("utf-8")).hexdigest()
+
+
 def _intel_avaliar_fii(tk: str):
     """Avaliação por regras da Inteligência dos Ativos (FII), com cache de
     sessão. Falha não é guardada: o portão é fail-open e tenta de novo no rerun."""
@@ -2218,13 +2247,33 @@ def _carteira_integrada(preferences: dict):
     # A carteira criada é compra: FII que a Inteligência dos Ativos manda
     # avaliar troca ou não aportar sai, e a carteira é remontada sem ele sob
     # as mesmas restrições (o otimizador não tem vaga por tipo para herdar).
-    intel_log = veredito.novo_log_selecao()
-    result, intel_excluidos = veredito.reotimizar_sem_vetados(
-        _montar, avaliador=_intel_avaliar_fii, log=intel_log,
-        itens_de=lambda r: [(str(i.get("ticker") or "").upper(),
-                             str(i.get("tipo") or "—"))
-                            for i in r.get("items") or []],
-    )
+    #
+    # A montagem custa de 35 a 55 s (medido em 02/11/2026 com a vitrine de 436
+    # FIIs: 231 otimizações, quase todas na busca da cessão mínima de forma), e
+    # o Streamlit refaz o script inteiro a cada clique. Sem memória, uma
+    # pergunta no chat ou um "salvar" repetia a montagem. Ela é determinística
+    # nas entradas da chave abaixo; mudou qualquer uma, monta de novo.
+    chave_da_montagem = _chave_da_montagem(
+        preferences, portfolio_policy, eligible_rows, candidatos_da_concessao,
+        validation_status, previous_weights, macro_snapshot, inputs)
+    guardada = st.session_state.get(_CHAVE_MONTAGEM_GUARDADA)
+    if guardada is not None and guardada[0] == chave_da_montagem:
+        result, intel_excluidos, intel_log, correlacao_guardada = copy.deepcopy(guardada[1])
+        _correlacao_da_ultima_tentativa[:] = [correlacao_guardada]
+    else:
+        intel_log = veredito.novo_log_selecao()
+        result, intel_excluidos = veredito.reotimizar_sem_vetados(
+            _montar, avaliador=_intel_avaliar_fii, log=intel_log,
+            itens_de=lambda r: [(str(i.get("ticker") or "").upper(),
+                                 str(i.get("tipo") or "—"))
+                                for i in r.get("items") or []],
+        )
+        correlacao_montada = (_correlacao_da_ultima_tentativa[0]
+                              if _correlacao_da_ultima_tentativa else pd.DataFrame())
+        # Uma vaga só: guardar todas as combinações já rodadas faria a sessão
+        # crescer a cada ajuste de controle.
+        st.session_state[_CHAVE_MONTAGEM_GUARDADA] = (chave_da_montagem, copy.deepcopy(
+            (result, intel_excluidos, intel_log, correlacao_montada)))
     result["macro_snapshot"] = macro_snapshot
     result["inteligencia_log"] = intel_log
     if _portao_ui.tem_conteudo(intel_log):

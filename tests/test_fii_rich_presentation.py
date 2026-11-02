@@ -147,3 +147,49 @@ def test_empty_universe_has_explicit_state_and_no_stale_portfolio():
     assert not app.exception
     assert "fii_port" not in app.session_state
     assert not app.session_state["fii_portfolio_can_publish"]
+
+
+def test_montagem_roda_uma_vez_por_clique_e_nao_a_cada_interacao():
+    """A montagem custa dezenas de segundos; chat e controles não a repetem."""
+    from unittest.mock import patch
+
+    import views.fiis as fiis
+
+    original = fiis.veredito.reotimizar_sem_vetados
+    with patch.object(fiis.veredito, "reotimizar_sem_vetados",
+                      side_effect=original) as montagem:
+        app = preview("full")
+        assert not app.exception
+        assert montagem.call_count == 1
+        carteira = dict(app.session_state["fii_port"])
+
+        app.chat_input[0].set_value("Explique os riscos").run()
+        app.slider(key="fii_pref_integrated_max_asset").set_value(5).run()
+        assert not app.exception
+        assert montagem.call_count == 1
+        assert app.session_state["fii_port"] == carteira
+
+        app.button(key="fii_carteira_rodar").click().run()
+        assert montagem.call_count == 2
+        app.button(key="fii_carteira_rodar").click().run()
+        assert montagem.call_count == 2  # mesmos parâmetros: nada a refazer
+
+
+def test_chave_da_montagem_muda_com_a_metrica_e_nao_com_a_procedencia():
+    import views.fiis as fiis
+
+    inputs = pd.DataFrame()
+    inputs.attrs["snapshot_as_of"] = "2026-10-31"
+    prefs = {"scenario": MacroScenario(selic=15, ipca=4), "macro_mode": "moderate",
+             "scenario_provenance": {"selic": object()}}
+    linhas = [{"ticker": "AAAA11", "dy_12m": .1}]
+
+    def chave(linhas_, prefs_=prefs):
+        return fiis._chave_da_montagem(prefs_, PortfolioPolicy(), linhas_, [],
+                                       "unvalidated", {}, None, inputs)
+
+    assert chave(linhas) == chave([dict(linhas[0])])
+    # Procedência é objeto sem repr estável e não muda a carteira.
+    assert chave(linhas) == chave(linhas, {**prefs, "scenario_provenance": {"selic": object()}})
+    assert chave(linhas) != chave([{"ticker": "AAAA11", "dy_12m": .11}])
+    assert chave(linhas) != chave(linhas, {**prefs, "macro_mode": "scenario"})
