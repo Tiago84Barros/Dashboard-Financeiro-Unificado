@@ -209,7 +209,7 @@
         {
           "nome": "Correção de lacunas por assistente de IA",
           "resumo": "Propõe correção para um problema por vez",
-          "explicacao": "Um assistente de IA lê a fila da aba Configurações → Restrições, escolhe o problema mais importante e trata um por vez, parando se já houver 3 propostas abertas. Roda de dois jeitos: no computador do dono, às 06:00, quando ele está ligado, e só propõe — o dono aprova; e, desde 01/11/2026, numa tarefa agendada na nuvem do Claude Code, todo dia de manhã, que recebe a fila cifrada de uma automação do GitHub e aplica a correção sozinha quando todos os testes passam. Correção que depende de rodar carga de dados continua esperando o dono.",
+          "explicacao": "Um assistente de IA lê a fila da aba Configurações → Restrições, escolhe o problema mais importante e trata um por vez, parando se já houver 3 propostas abertas. Roda de dois jeitos: no computador do dono, às 06:00, quando ele está ligado, e só propõe — o dono aprova; e numa tarefa agendada na nuvem do Claude Code, criada em 01/11/2026, que recebe a fila cifrada de uma automação do GitHub e aplica a correção sozinha quando todos os testes passam. Desde 02/11/2026 a tarefa na nuvem e o agendamento da automação estão pausados: falta dar à tarefa acesso de escrita ao repositório e gravar a chave da fila. Correção que depende de rodar carga de dados continua esperando o dono.",
           "so_admin": false,
           "fonte": ".claude/skills/corrigir-lacuna/SKILL.md:1; scripts/lacunas_sincronizar.py:1; scripts/lacunas_nuvem.py:1; .github/workflows/lacunas-nuvem.yml:1",
           "filhos": []
