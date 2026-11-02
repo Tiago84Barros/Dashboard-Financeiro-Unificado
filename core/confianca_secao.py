@@ -681,8 +681,12 @@ def confianca_controle_financeiro(engine=None) -> ConfiancaSecao:
     usuario, nao do app: extrato velho e informacao sobre o registro, nao
     defeito do sistema."""
     from core.database import get_engine
+    # Previsto (conta a pagar/receber em aberto) nao e registro do que
+    # aconteceu: um vencimento no mes que vem faria o "ultimo lancamento"
+    # parecer de hoje. A nota do registro olha so o realizado; o previsto
+    # tem componente proprio (_componente_previstos_em_dia).
     base = _confianca_pessoal(engine, "Controle Financeiro",
-                              "public.transactions", "due_date", "category_id")
+                              _TRANSACOES_REALIZADAS, "due_date", "category_id")
     comps = list(base.componentes)
     notas = list(base.notas)
     try:
@@ -726,8 +730,50 @@ def confianca_controle_financeiro(engine=None) -> ConfiancaSecao:
         comps.append(Componente("Extrato importado", None, 0.20,
                                 f"nao medido: {type(exc).__name__}"))
     comps.extend(_componente_saldo_conferido(engine, notas))
+    comps.extend(_componente_previstos_em_dia(engine, notas))
     return ConfiancaSecao("Controle Financeiro", tuple(comps),
                           notas=tuple(notas))
+
+
+_TRANSACOES_REALIZADAS = """(
+    SELECT t.* FROM public.transactions t
+    LEFT JOIN public.accounts ac ON ac.id = t.account_id
+    WHERE NOT (t.status = 'pending' AND COALESCE(ac.type, '') <> 'credit_card')
+) AS realizadas"""
+
+_SQL_PREVISTOS = """
+    SELECT count(*)
+    FROM public.transactions t
+    LEFT JOIN public.accounts ac ON ac.id = t.account_id
+    WHERE t.status = 'pending' AND COALESCE(ac.type, '') <> 'credit_card'
+"""
+TOLERANCIA_PREVISTO_DIAS = 7
+
+
+def _componente_previstos_em_dia(engine, notas: list[str]) -> list[Componente]:
+    """A aba A pagar e receber afirma o que ainda vai sair e entrar. Previsto
+    vencido ha mais de uma semana ou nao foi pago, ou foi pago e ninguem deu
+    baixa -- nos dois casos a projecao de saldo esta errada. Sem previsto nao
+    ha o que medir."""
+    from core.database import get_engine
+    try:
+        eng = engine or get_engine()
+        with eng.connect() as conn:
+            total = int(_scalar(conn, _SQL_PREVISTOS) or 0)
+            atrasados = int(_scalar(
+                conn, _SQL_PREVISTOS + " AND t.due_date < CURRENT_DATE - :dias",
+                {"dias": TOLERANCIA_PREVISTO_DIAS}) or 0) if total else 0
+    except Exception as exc:  # noqa: BLE001
+        return [Componente("Previstos em dia", None, 0.10,
+                           f"nao medido: {type(exc).__name__}")]
+    if not total:
+        return []
+    if atrasados:
+        notas.append(f"{atrasados} previsto(s) vencido(s) ha mais de "
+                     f"{TOLERANCIA_PREVISTO_DIAS} dias sem baixa")
+    return [Componente(
+        "Previstos em dia", 100.0 * (total - atrasados) / total, 0.10,
+        f"{total - atrasados} de {total} previstos sem atraso de baixa")]
 
 
 # Saldo do último extrato contra o saldo do app na mesma data e conta:

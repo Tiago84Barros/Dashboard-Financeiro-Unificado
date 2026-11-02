@@ -189,6 +189,7 @@ def sugerir_vinculos(
             "dias": dias,
             "similaridade": sim,
             "forca": "forte" if dias == 0 or sim >= SIMILARIDADE_FORTE else "possivel",
+            "previsto": tx.get("status") == "pending",
         }
     return vinculos
 
@@ -227,18 +228,21 @@ def conferir_saldo(
 def impacto_no_saldo(rows: list[dict], data_saldo: date | None) -> tuple[float, float]:
     """(a lançar, pendente) das linhas que esta importação grava até a data.
 
-    Linha vinculada a lançamento manual não soma: o valor já está no app. Linha
-    já importada antes (``ja_importado``) também não: o banco a recusa.
+    Linha vinculada a lançamento manual pago não soma: o valor já está no app.
+    Vinculada a previsto soma: a baixa é o que põe o valor no saldo. Linha já
+    importada antes (``ja_importado``) não soma: o banco a recusa.
     """
     a_lancar = pendente = 0.0
     for row in rows:
-        if row.get("ja_importado") or row.get("vincular_transaction_id"):
+        if row.get("ja_importado"):
+            continue
+        if row.get("vincular_transaction_id") and not row.get("vincular_previsto"):
             continue
         d = _como_data(row.get("data_movimento"))
         if data_saldo is not None and (d is None or d > data_saldo):
             continue
         valor = float(row.get("valor") or 0.0)
-        if row.get("categoria_id"):
+        if row.get("categoria_id") or row.get("vincular_previsto"):
             a_lancar += valor
         else:
             pendente += valor
@@ -262,15 +266,17 @@ _SQL_SALDO_APP_ATE = """
     GROUP BY a.initial_balance
 """
 
-# Candidatos ao vínculo: lançamento manual pago da mesma conta, na janela de
-# datas do extrato, que nenhum movimento importado ainda reclamou.
+# Candidatos ao vínculo: lançamento manual da mesma conta, na janela de
+# datas do extrato, que nenhum movimento importado ainda reclamou. Pago
+# (settled) ou previsto (pending): o previsto vinculado recebe a baixa.
 _SQL_LANCAMENTOS_MANUAIS = """
-    SELECT t.id::text, t.due_date, t.amount, t.description, t.category_id::text
+    SELECT t.id::text, t.due_date, t.amount, t.description, t.category_id::text,
+           t.status
     FROM transactions t
     WHERE t.user_id = CAST(:uid AS uuid)
       AND t.account_id = CAST(:account_id AS uuid)
       AND COALESCE(t.source, '') = 'manual'
-      AND t.status = 'settled'
+      AND t.status IN ('settled', 'pending')
       AND t.due_date BETWEEN :inicio AND :fim
       AND NOT EXISTS (
           SELECT 1 FROM bank_statement_movements m

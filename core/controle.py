@@ -62,6 +62,7 @@ from core.categorias import (
 )
 from core.config import settings
 from core.import_guard import acquire_transaction_import_lock
+from core.previstos import sql_realizado
 from core.user_context import user_cache_data
 
 logger = logging.getLogger(__name__)
@@ -212,6 +213,7 @@ _SQL_TRANSACOES = """
     WHERE  t.user_id = :uid
       AND  EXTRACT(year  FROM t.due_date) = :ano
       AND  EXTRACT(month FROM t.due_date) = :mes
+      AND  """ + sql_realizado("t", "ac") + """
     ORDER  BY t.due_date DESC, t.created_at DESC
 """
 
@@ -354,6 +356,7 @@ _SQL_GASTOS_CARTAO_MENSAL = """
       -- (account_type='credit_card' + source='csv'), que é fluxo FUTURO e vive só
       -- na aba Cartão de Crédito. As duas naturezas não se misturam.
       AND  NOT (COALESCE(a.type, '') = 'credit_card' AND COALESCE(t.source, '') = 'csv')
+      AND  """ + sql_realizado("t", "a") + """
     GROUP  BY ano, mes
     ORDER  BY ano, mes
 """
@@ -432,6 +435,7 @@ _SQL_GASTOS_CATEGORIA_ANUAL = """
       AND  t.type IN ('expense', 'saida')
       AND  t.amount < 0
       AND  COALESCE(a.type, '') != 'credit_card'
+      AND  """ + sql_realizado("t", "a") + """
     GROUP  BY c.name
     ORDER  BY total_spent DESC
 """
@@ -455,6 +459,7 @@ _SQL_TRANSACOES_FILTRADAS = """
     LEFT JOIN categories c  ON c.id  = t.category_id
     LEFT JOIN accounts   ac ON ac.id = t.account_id
     WHERE  t.user_id = :uid
+      AND  """ + sql_realizado("t", "ac") + """
 """
 
 

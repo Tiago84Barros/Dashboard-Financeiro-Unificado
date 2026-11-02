@@ -829,28 +829,32 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
     title="Controle financeiro",
     subtitle=(
         "Mostra como o app separa o dinheiro que já entrou/saiu no mês (fluxo de "
-        "caixa) da fatura futura do cartão (fluxo a vencer) — duas naturezas que "
-        "nunca se misturam."
+        "caixa), as contas a pagar e a receber que você previu (previstos) e a "
+        "fatura futura do cartão (fluxo a vencer) — naturezas que nunca se misturam."
     ),
     tela="Controle Financeiro",
-    abas=("Dashboard", "Análises", "Tabelas", "Cartão de Crédito"),
+    abas=("Dashboard", "Análises", "Tabelas", "A pagar e receber", "Cartão de Crédito"),
     rows=(
         ("Entrada", ("lanc_manual", "extrato", "fatura_cc")),
         ("Classificação", ("conta", "categoria")),
-        ("Natureza do fluxo", ("fluxo_caixa", "fluxo_futuro")),
+        ("Natureza do fluxo", ("fluxo_caixa", "previstos", "fluxo_futuro")),
         ("Visualização", ("abas", "graficos")),
     ),
     default="lanc_manual",
     nodes={
         "lanc_manual": _node(
             "lanc_manual", "Lançamento manual", "Entrada",
-            "Barra lateral: você registra entradas, saídas e investimentos do mês corrente.",
+            "Barra lateral: você registra entradas, saídas e investimentos. Situação 'Pago' "
+            "grava o que já aconteceu; 'Previsto' grava uma conta a pagar ou a receber, com a "
+            "data como vencimento, e 'Repetir todo mês' cria a série mensal.",
             (
                 "Tipo: entrada / saída / investimento",
                 "Valor, data, categoria e descrição",
+                "Situação: Pago ou Previsto",
                 "Grava source='manual'",
             ),
-            "É dinheiro que entra e sai no ato do lançamento — fluxo de caixa do presente.",
+            "Pago é dinheiro que entrou ou saiu no ato — fluxo de caixa do presente. Previsto "
+            "é compromisso: só vira caixa quando recebe a baixa.",
         ),
         "extrato": _node(
             "extrato", "Importação de extrato", "Entrada",
@@ -919,6 +923,20 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
             ),
             "É a foto do dinheiro real do mês corrente — o que você de fato tem.",
         ),
+        "previstos": _node(
+            "previstos", "Previstos (a pagar e receber)", "Natureza do fluxo",
+            "Aba A pagar e receber: contas em aberto por vencimento, vencidas sem baixa, totais "
+            "dos próximos 30 dias e o saldo das contas de movimentação projetado em 30, 60 ou "
+            "90 dias. Dá para dar baixa (data e valor pago) ou excluir. Ao importar o extrato, "
+            "o movimento de mesmo valor até 3 dias do vencimento dá a baixa sozinho.",
+            (
+                "status 'pending' em conta que não é cartão",
+                "Fora do saldo, dos totais do mês e do orçamento",
+                "Baixa manual ou pela conciliação do extrato",
+            ),
+            "Previsto não é dinheiro: somá-lo ao mês faria o Dashboard mostrar gasto que ainda "
+            "não aconteceu. Ele aparece só onde a pergunta é 'o que vem por aí'.",
+        ),
         "fluxo_futuro": _node(
             "fluxo_futuro", "Cartão de crédito (futuro)", "Natureza do fluxo",
             "A fatura CSV vive isolada: dinheiro que ainda vai sair, com projeção e parcelas.",
@@ -931,7 +949,8 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
         ),
         "abas": _node(
             "abas", "Abas e filtros", "Visualização",
-            "Navegação: Dashboard, Análises, Tabelas e Cartão de Crédito, com filtros e edição.",
+            "Navegação: Dashboard, Análises, Tabelas, A pagar e receber e Cartão de Crédito, "
+            "com filtros e edição.",
             (
                 "KPIs do mês (renda, despesa, saldo)",
                 "Filtros: categoria / ano / mês / dia",
@@ -953,6 +972,8 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
     notes=(
         "Regra de ouro: fluxo de caixa (manual + extrato) e cartão de crédito "
         "(fatura CSV) são independentes e NUNCA se misturam.",
+        "Previsto (conta a pagar ou a receber) só entra no caixa depois da baixa; até "
+        "lá vive na aba A pagar e receber.",
     ),
 )
 
@@ -1970,7 +1991,8 @@ FLOW_CONFIGURACOES = FlowSpec(
             "cfg_extrato", "Extrato bancário", "Entrada de arquivo",
             "Sobe o PDF do extrato e revisa direção, valor e categoria de cada movimento "
             "antes da importação. Na seção 🔗 Conciliação, marca quais movimentos já foram "
-            "lançados à mão e compara o saldo final do banco com o saldo do app na mesma data.",
+            "lançados à mão — o previsto (conta a pagar ou a receber) que casa recebe a baixa — "
+            "e compara o saldo final do banco com o saldo do app na mesma data.",
             (
                 "Aba 🔁 Atualização de dados › 💳 Controle Financeiro",
                 "Arquivo PDF, com revisão linha a linha",

@@ -312,13 +312,16 @@ def _render_conciliacao(final_rows: list[dict], parsed: dict) -> tuple[dict[int,
     if vinculos:
         st.markdown(
             f"**{len(vinculos)} movimento(s) já lançado(s) à mão.** Marcado: o movimento se "
-            "vincula ao lançamento existente e não cria outro. Desmarcado: vira lançamento novo.")
+            "vincula ao lançamento existente e não cria outro; se o lançamento era previsto "
+            "(conta a pagar/receber), recebe a baixa na data do banco. Desmarcado: vira "
+            "lançamento novo.")
         for idx in sorted(vinculos):
             v = vinculos[idx]
             r = final_rows[idx]
             rotulo = (
                 f"{_fmt_date(r.get('data_movimento'))} · {r.get('descricao_original') or '-'} · "
-                f"{fmt_moeda(r.get('valor'))}  ↔  manual {_fmt_date(v['data'])} · "
+                f"{fmt_moeda(r.get('valor'))}  ↔  "
+                f"{'previsto, vence' if v.get('previsto') else 'manual'} {_fmt_date(v['data'])} · "
                 f"{v['descricao'] or '(sem descrição)'} ({_FORCA[v['forca']]})"
             )
             if st.checkbox(_md(rotulo), value=True, key=f"conciliacao_vinc_{idx}_{v['transaction_id']}"):
@@ -332,7 +335,8 @@ def _render_conciliacao(final_rows: list[dict], parsed: dict) -> tuple[dict[int,
 
     marcadas = [
         {**r, "ja_importado": i in ja,
-         "vincular_transaction_id": escolhidos.get(i)}
+         "vincular_transaction_id": escolhidos.get(i),
+         "vincular_previsto": bool(escolhidos.get(i)) and bool(vinculos.get(i, {}).get("previsto"))}
         for i, r in enumerate(final_rows)
     ]
     a_lancar, pendente = impacto_no_saldo(marcadas, data_saldo)

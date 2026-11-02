@@ -67,6 +67,7 @@ from core.controle import (
 )
 from core.controle_indicadores import indicadores_caixa
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
+from core.previstos import MAX_REPETICOES, criar_previstos, listar_previstos
 from core.utils import escapar_cifrao, fmt_moeda, fmt_percentual
 from design.componentes import (
     abas_secao,
@@ -76,6 +77,7 @@ from design.componentes import (
 )
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.tema_canvas import no_claro
+from views.controle_previstos import render_previstos
 
 # Chat "Analista Financeiro Pessoal" (aba Análises) — importado localmente na
 # função de render para não pesar no carregamento das demais abas/reruns.
@@ -437,6 +439,19 @@ def _sidebar_render(ano: int, mes: int) -> None:
             "Descrição (opcional)", height=60, key="cf_sb_desc",
         )
 
+        # Previsto = conta a pagar/receber: não entra no saldo nem nos totais
+        # do mês até a baixa (aba A pagar e receber, ou o extrato importado).
+        situacao_tx = st.radio(
+            "Situação", ["Pago", "Previsto"], horizontal=True, key="cf_sb_situacao",
+            help="Pago: o dinheiro já saiu ou entrou nesta data. Previsto: conta a pagar "
+                 "ou a receber, com a data como vencimento.",
+        )
+        repeticoes = st.number_input(
+            "Repetir todo mês (vezes)", min_value=1, max_value=MAX_REPETICOES, value=1,
+            step=1, key="cf_sb_repetir",
+            help="Só para previsto: cria a série mensal (aluguel, escola, salário).",
+        )
+
         submitted = st.form_submit_button("Salvar lançamento", width="stretch")
 
     if submitted:
@@ -478,6 +493,26 @@ def _sidebar_render(ano: int, mes: int) -> None:
         tipo_insert = _MAP_TIPO.get(t_type, "expense")
 
         desc_final = descricao.strip() or categoria_final
+
+        if situacao_tx == "Previsto":
+            ok, msg = criar_previstos(
+                descricao=desc_final,
+                valor=valor,
+                tipo=tipo_insert,
+                vencimento=data_tx,
+                categoria_id=cat_id,
+                conta_id=conta_id,
+                repeticoes=int(repeticoes),
+            )
+            if ok:
+                st.sidebar.success(
+                    f"✅ {int(repeticoes)} previsto(s) salvo(s) — veja em A pagar e receber.")
+                st.rerun()
+            st.sidebar.error(f"Erro: {msg}")
+            return
+        if int(repeticoes) > 1:
+            st.sidebar.error("Repetir vale só para previsto. Mude a Situação ou deixe 1.")
+            return
 
         ok, msg = inserir_transacao(
             descricao=desc_final,
@@ -1164,6 +1199,15 @@ def _aviso_ancoragem(resposta: str, contexto: str,
     return aviso_ancoragem(resposta, contexto, pergunta)
 
 
+def _previstos_para_chat() -> list | None:
+    """Previstos para o contexto do chat; ``None`` quando a leitura falha,
+    para o contexto nomear a fonte que faltou em vez de dizer "nenhum"."""
+    try:
+        return listar_previstos()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _render_chat_financeiro(
     d: dict, historico: list, hist_anual: dict, gastos_cartao: dict,
     investido_mes: float, evolucao: dict, ano_ref: int, mes_ref: int,
@@ -1279,6 +1323,7 @@ def _render_chat_financeiro(
                     investido_mes=investido_mes,
                     ano_ref=ano_ref,
                     mes_ref=mes_ref,
+                    previstos=_previstos_para_chat(),
                 )
                 # Premissa do app: macro e noticiário geral acompanham toda
                 # conversa — juro e inflação mudam a leitura do orçamento.
@@ -3781,7 +3826,7 @@ def render() -> None:
     # não foi desligado: `core.alertas` (R1) e o Dashboard Geral seguem lendo
     # os limites, editados em Configurações → Geral desde 31/10/2026.
     _SECOES = ["📊  Dashboard", "📈  Análises", "🧾  Tabelas",
-               "💳  Cartão de Crédito"]
+               "📅  A pagar e receber", "💳  Cartão de Crédito"]
     secao = abas_secao(_SECOES, key="cf_secao_ativa", default=_SECOES[0])
 
     if secao == _SECOES[1]:
@@ -3791,6 +3836,8 @@ def render() -> None:
         _render_conciliacao(d)
         _tab_tabelas(d)
     elif secao == _SECOES[3]:
+        render_previstos()
+    elif secao == _SECOES[4]:
         _tab_cartao(d, sel["ano"], sel["mes"])
     else:
         _tab_dashboard(d, historico, fluxo_inv, investido_mes)
