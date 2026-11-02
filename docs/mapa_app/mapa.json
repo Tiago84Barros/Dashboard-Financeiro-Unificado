@@ -2220,12 +2220,6 @@
           "so_admin": false,
           "filhos": [
             {
-              "nome": "Validação histórica",
-              "resumo": "Aviso: a regra funcionou no passado?",
-              "explicacao": "Quadro no topo com o resumo do teste histórico: se a nota ordenou bem as empresas e se a carteira teria rendido mais do que dividir igualmente. Só aparece quando o histórico necessário existe.",
-              "so_admin": false
-            },
-            {
               "nome": "Perfil de configuração",
               "resumo": "Escolha um conjunto de regras pronto",
               "explicacao": "Selo mostrando o perfil ativo, uma lista de perfis prontos e o botão Aplicar perfil, que preenche todos os parâmetros de uma vez. Há uma explicação que abre ao clicar (Por que estes valores) e alertas quando um ajuste seu tem custo conhecido.",
