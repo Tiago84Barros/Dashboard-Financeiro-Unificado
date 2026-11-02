@@ -855,14 +855,20 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
         "extrato": _node(
             "extrato", "Importação de extrato", "Entrada",
             "Configurações > Atualização de dados > Controle Financeiro > Extrato bancário: "
-            "sobe o PDF do banco, confere direção, valor e categoria de cada movimento e grava.",
+            "sobe o PDF do banco, confere direção, valor e categoria de cada movimento e grava. "
+            "Movimento que já foi lançado à mão (mesma conta, mesmo valor, até 3 dias) se "
+            "vincula ao lançamento existente em vez de criar outro.",
             (
                 "Extrato do banco em PDF",
                 "Prévia revisável antes de gravar",
                 "Classificação automática por regras",
+                "Vínculo com lançamento manual",
+                "Conferência do saldo do banco",
                 "Grava source='import'",
             ),
-            "Dinheiro que JÁ saiu da conta também é fluxo de caixa, ainda que não digitado a mão.",
+            "Dinheiro que JÁ saiu da conta também é fluxo de caixa, ainda que não digitado a mão. "
+            "Por isso o extrato casa com o manual antes de gravar: sem o vínculo, quem lança à "
+            "mão e importa o extrato conta a mesma saída duas vezes.",
         ),
         "fatura_cc": _node(
             "fatura_cc", "Upload da fatura (cartão)", "Entrada",
@@ -1963,14 +1969,18 @@ FLOW_CONFIGURACOES = FlowSpec(
         "cfg_extrato": _node(
             "cfg_extrato", "Extrato bancário", "Entrada de arquivo",
             "Sobe o PDF do extrato e revisa direção, valor e categoria de cada movimento "
-            "antes da importação.",
+            "antes da importação. Na seção 🔗 Conciliação, marca quais movimentos já foram "
+            "lançados à mão e compara o saldo final do banco com o saldo do app na mesma data.",
             (
                 "Aba 🔁 Atualização de dados › 💳 Controle Financeiro",
                 "Arquivo PDF, com revisão linha a linha",
+                "Vínculo com lançamento manual e conferência de saldo",
                 "Alimenta os movimentos do mês",
             ),
             "Extrato importado sem revisão inverte sinal e erra categoria em silêncio: o total "
-            "fecha e a leitura por categoria fica errada. A conferência é parte da importação.",
+            "fecha e a leitura por categoria fica errada. A conferência é parte da importação. "
+            "O saldo é a prova do total: diferença diferente de zero quer dizer lançamento "
+            "faltando ou sobrando, e a lista de últimas conferências recalcula isso a cada visita.",
         ),
         "cfg_carteira": _node(
             "cfg_carteira", "Arquivos da carteira", "Entrada de arquivo",

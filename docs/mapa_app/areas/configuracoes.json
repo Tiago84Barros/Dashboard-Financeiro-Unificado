@@ -185,9 +185,9 @@
             {
               "nome": "Extrato bancário",
               "resumo": "Importar o extrato em PDF com revisão",
-              "explicacao": "Escolha o banco (hoje só C6 Bank), envie o PDF e revise numa grade a descrição, se é entrada ou saída, a categoria e o valor de cada movimento. A categoria vem sugerida entre as que já existem (o extrato não cria categoria); nome repetido em tipos diferentes aparece com o tipo entre parênteses, como 'Outros (despesa)'. Depois clique em 'Importar extrato'.",
+              "explicacao": "Escolha o banco (hoje só C6 Bank), envie o PDF e revise numa grade a descrição, se é entrada ou saída, a categoria e o valor de cada movimento. A categoria vem sugerida entre as que já existem (o extrato não cria categoria); nome repetido em tipos diferentes aparece com o tipo entre parênteses, como 'Outros (despesa)'. Abaixo da grade, a seção Conciliação mostra os movimentos que já foram lançados à mão (mesma conta, mesmo valor, até 3 dias de diferença): marcados, eles se vinculam ao lançamento existente em vez de criar outro. Ali também se confere o saldo: o saldo final do extrato (lido do PDF ou digitado) contra o saldo do app na mesma data, depois da importação. Depois clique em 'Importar extrato'. Embaixo do upload ficam as últimas conferências de saldo, recalculadas contra o app de hoje.",
               "so_admin": false,
-              "fonte": "views/bank_statement_upload.py:343",
+              "fonte": "views/bank_statement_upload.py:486",
               "filhos": []
             }
           ]
