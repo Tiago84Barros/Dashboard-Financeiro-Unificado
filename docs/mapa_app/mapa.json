@@ -2220,12 +2220,6 @@
           "so_admin": false,
           "filhos": [
             {
-              "nome": "Validação histórica",
-              "resumo": "Aviso: a regra funcionou no passado?",
-              "explicacao": "Quadro no topo com o resumo do teste histórico: se a nota ordenou bem as empresas e se a carteira teria rendido mais do que dividir igualmente. Só aparece quando o histórico necessário existe.",
-              "so_admin": false
-            },
-            {
               "nome": "Perfil de configuração",
               "resumo": "Escolha um conjunto de regras pronto",
               "explicacao": "Selo mostrando o perfil ativo, uma lista de perfis prontos e o botão Aplicar perfil, que preenche todos os parâmetros de uma vez. Há uma explicação que abre ao clicar (Por que estes valores) e alertas quando um ajuste seu tem custo conhecido.",
@@ -2429,7 +2423,7 @@
     {
       "nome": "Seleção de FIIs",
       "resumo": "Fundos imobiliários: explorar, estudar e montar carteira",
-      "explicacao": "Área dos fundos imobiliários (FIIs), fundos que investem em imóveis ou em títulos ligados a imóveis e repassam renda mensal. O cabeçalho mostra se o método já foi validado e quanto ele rendeu acima do IFIX (o índice dos FIIs). Cinco botões no topo funcionam como abas: ver os fundos, estudar um fundo, montar a carteira, ver o desempenho passado e revisar dados.",
+      "explicacao": "Área dos fundos imobiliários (FIIs), fundos que investem em imóveis ou em títulos ligados a imóveis e repassam renda mensal. O cabeçalho mostra se o método já foi validado e quanto ele rendeu acima do IFIX (o índice dos FIIs). Quatro botões no topo funcionam como abas: ver os fundos, estudar um fundo, montar a carteira e ver o desempenho passado.",
       "so_admin": false,
       "filhos": [
         {
@@ -2505,7 +2499,7 @@
         {
           "nome": "Carteira-modelo",
           "resumo": "Monta automaticamente uma carteira de FIIs",
-          "explicacao": "Você define suas preferências e o app monta na hora uma carteira diversificada de fundos, sem botão de rodar: cada ajuste refaz o resultado. Mostra por que cada fundo entrou ou saiu, riscos, desempenho passado e um chat, e permite salvar a carteira.",
+          "explicacao": "Você define suas preferências e clica em Rodar seleção de FIIs para o app montar uma carteira diversificada de fundos. Antes do clique, a aba mostra só os ajustes. Mostra por que cada fundo entrou ou saiu, riscos, desempenho passado e um chat, e permite salvar a carteira.",
           "so_admin": false,
           "filhos": [
             {
@@ -2529,9 +2523,15 @@
               ]
             },
             {
+              "nome": "Rodar seleção de FIIs",
+              "resumo": "Botão principal que monta a carteira",
+              "explicacao": "Ao clicar, o app aplica os filtros, pontua os fundos e calcula os pesos com os ajustes escolhidos acima. Se você mudar algum ajuste depois, a carteira mostrada continua a anterior e a tela avisa que é preciso rodar de novo.",
+              "so_admin": false
+            },
+            {
               "nome": "Resultado da seleção",
-              "resumo": "Quantos fundos passaram e por quê",
-              "explicacao": "Cartões com o momento econômico e com quantos fundos passaram nos filtros. Inclui seções que abrem ao clicar: Por que os fundos ficaram de fora e, quando houver trocas, Inteligência dos Ativos — vetos e substituições. Se nenhuma carteira for possível, mostra um diagnóstico.",
+              "resumo": "Exigência cedida, trocas e diagnóstico",
+              "explicacao": "Começa pelo resultado da carteira. Quando os filtros precisaram ser afrouxados para diversificar, um cartão diz qual exigência foi cedida. Quando houver trocas, a seção Inteligência dos Ativos — vetos e substituições abre ao clicar. Se nenhum fundo passar nos filtros, aparecem os motivos de exclusão e um diagnóstico.",
               "so_admin": false
             },
             {
@@ -2632,44 +2632,6 @@
               "nome": "Retrospectiva da seleção atual",
               "resumo": "A carteira de hoje no passado",
               "explicacao": "Cartões com o retorno total da carteira atual, do IFIX, a diferença entre os dois e o período, mais um gráfico partindo de 100. Só funciona depois de montar a carteira na aba Carteira-modelo.",
-              "so_admin": false
-            }
-          ]
-        },
-        {
-          "nome": "Revisão de dados",
-          "resumo": "Aprovar ou corrigir dados lidos de relatórios",
-          "explicacao": "Fila de dados extraídos automaticamente dos relatórios dos fundos, que só passam a valer depois de uma decisão humana (aceitar, corrigir ou rejeitar). É uma tarefa de manutenção dos dados, mas o código não restringe esta aba ao administrador: qualquer usuário a vê.",
-          "so_admin": false,
-          "filhos": [
-            {
-              "nome": "Revisão auditável de evidências documentais",
-              "resumo": "Resumo da fila de pendências",
-              "explicacao": "Explicação da etapa e cinco cartões: dados pendentes, fundos na fila, revisões já feitas, empreendimentos pendentes e achados pendentes.",
-              "so_admin": false
-            },
-            {
-              "nome": "Tipo de evidência",
-              "resumo": "Escolhe o que revisar",
-              "explicacao": "Botões Métricas, Empreendimentos e Achados qualitativos. Cada opção troca o conteúdo abaixo.",
-              "so_admin": false
-            },
-            {
-              "nome": "Métricas",
-              "resumo": "Revisar números extraídos dos relatórios",
-              "explicacao": "Filtre por fundo e por métrica, escolha um item, veja o valor extraído e o trecho do documento, e registre a decisão (Aceitar, Corrigir com o valor certo ou Rejeitar) com seu nome e uma justificativa no botão Registrar decisão.",
-              "so_admin": false
-            },
-            {
-              "nome": "Empreendimentos",
-              "resumo": "Revisar imóveis e projetos extraídos",
-              "explicacao": "Escolha um empreendimento pendente, confira os dados e o trecho do documento e registre a decisão no botão Registrar decisão.",
-              "so_admin": false
-            },
-            {
-              "nome": "Achados qualitativos",
-              "resumo": "Revisar informações em texto",
-              "explicacao": "Escolha um achado pendente (informação descritiva tirada de relatório), confira e registre a decisão no botão Registrar decisão.",
               "so_admin": false
             }
           ]

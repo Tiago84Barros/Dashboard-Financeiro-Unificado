@@ -984,12 +984,11 @@ FLOW_SELECAO_FIIS = FlowSpec(
     subtitle=(
         "Como o app pontua fundos imobiliários, mede a própria confiança e decide "
         "se o que sai na tela é uma Carteira-Modelo ou apenas uma Lista de Diligência. "
-        "A tela tem cinco subabas: FIIs Disponíveis, Busca de ativo, Carteira-modelo, "
-        "Retrospectiva e Revisão de dados."
+        "A tela tem quatro subabas: FIIs Disponíveis, Busca de ativo, Carteira-modelo "
+        "e Retrospectiva."
     ),
     tela="Seleção de FIIs",
-    abas=("FIIs Disponíveis", "Busca de ativo", "Carteira-modelo", "Retrospectiva",
-          "Revisão de dados"),
+    abas=("FIIs Disponíveis", "Busca de ativo", "Carteira-modelo", "Retrospectiva"),
     rows=(
         ("Universo", ("vitrine_fii", "tipos_fii", "integridade_fii")),
         ("Métricas", ("renda_fii", "valuation_fii", "risco_fii", "governanca_fii")),
@@ -1031,7 +1030,7 @@ FLOW_SELECAO_FIIS = FlowSpec(
             (
                 "Checagem de colunas obrigatórias",
                 "Erro de leitura levanta erro, não vira lista vazia",
-                "Aba 🧾 Revisão de dados expõe as lacunas por fundo",
+                "Coluna faltando vira aviso de lacuna na Carteira-modelo, não carteira vazia",
             ),
             "Já aconteceu de uma falha de leitura virar 'todos os fundos são inelegíveis'. "
             "Erro tem que parecer erro.",
@@ -1153,6 +1152,8 @@ FLOW_SELECAO_FIIS = FlowSpec(
                 "Quantidade de ativos e pesos mínimo/máximo",
                 "Tetos por tipo e por administrador (não por gestora)",
                 "Piso de liquidez diária",
+                "Carteira só é montada no botão 🚀 Rodar seleção de FIIs; ajuste "
+                "posterior avisa que a carteira mostrada é a anterior",
             ),
             "Teto que você não viu é premissa de quem escreveu o código — e envelhece "
             "sem parecer errado.",
