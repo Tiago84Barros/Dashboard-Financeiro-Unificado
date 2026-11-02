@@ -1152,6 +1152,8 @@ FLOW_SELECAO_FIIS = FlowSpec(
                 "Quantidade de ativos e pesos mínimo/máximo",
                 "Tetos por tipo e por administrador (não por gestora)",
                 "Piso de liquidez diária",
+                "Carteira só é montada no botão 🚀 Rodar seleção de FIIs; ajuste "
+                "posterior avisa que a carteira mostrada é a anterior",
             ),
             "Teto que você não viu é premissa de quem escreveu o código — e envelhece "
             "sem parecer errado.",

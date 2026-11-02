@@ -1976,7 +1976,43 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
             + " · ".join(item.replace("**", "") for item in _avisos)
             + ". Preço, DY e liquidez vêm da última ingestão Brapi.",
             codigo="fii.defasagem_fontes")
-    _carteira_integrada(preferences)
+
+    # A seleção roda só no botão, como a Criação de Portfólio de B3 e EUA:
+    # antes ela rodava ao abrir a aba e a cada mexida num controle, e o
+    # usuário via uma carteira antes de escolher os parâmetros dela. A
+    # carteira exibida é a dos parâmetros do último clique, não a dos
+    # controles atuais — mexer num slider não troca a carteira sem aviso.
+    rodar = st.button("🚀 Rodar seleção de FIIs", type="primary",
+                      key="fii_carteira_rodar")
+    if rodar:
+        st.session_state[_CHAVE_PREFS_RODADAS] = preferences
+        st.session_state[_CHAVE_ASSINATURA_RODADA] = _assinatura_dos_controles()
+    rodadas = st.session_state.get(_CHAVE_PREFS_RODADAS)
+    if rodadas is None:
+        st.info("Ajuste os parâmetros acima e clique **🚀 Rodar seleção de FIIs** "
+                "para montar a carteira.")
+        return
+    if st.session_state.get(_CHAVE_ASSINATURA_RODADA) != _assinatura_dos_controles():
+        st.info("Os parâmetros mudaram desde a última seleção. A carteira abaixo "
+                "ainda é a anterior; clique **🚀 Rodar seleção de FIIs** para "
+                "atualizá-la.")
+    if rodar:
+        with st.spinner("Aplicando filtros, pontuando e otimizando pesos…"):
+            _carteira_integrada(rodadas)
+    else:
+        _carteira_integrada(rodadas)
+
+
+_CHAVE_PREFS_RODADAS = "fii_carteira_prefs_rodadas"
+_CHAVE_ASSINATURA_RODADA = "fii_carteira_assinatura_rodada"
+
+
+def _assinatura_dos_controles() -> tuple:
+    """Valores atuais dos controles da seleção, para saber se mudaram."""
+    return tuple(sorted(
+        (chave, repr(valor)) for chave, valor in st.session_state.items()
+        if str(chave).startswith(("fii_pref_integrated_", "fii_pref_macro_mode"))
+    ))
 
 
 def _intel_avaliar_fii(tk: str):

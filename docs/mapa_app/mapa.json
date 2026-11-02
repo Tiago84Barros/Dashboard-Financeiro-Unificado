@@ -2499,7 +2499,7 @@
         {
           "nome": "Carteira-modelo",
           "resumo": "Monta automaticamente uma carteira de FIIs",
-          "explicacao": "Você define suas preferências e o app monta na hora uma carteira diversificada de fundos, sem botão de rodar: cada ajuste refaz o resultado. Mostra por que cada fundo entrou ou saiu, riscos, desempenho passado e um chat, e permite salvar a carteira.",
+          "explicacao": "Você define suas preferências e clica em Rodar seleção de FIIs para o app montar uma carteira diversificada de fundos. Antes do clique, a aba mostra só os ajustes. Mostra por que cada fundo entrou ou saiu, riscos, desempenho passado e um chat, e permite salvar a carteira.",
           "so_admin": false,
           "filhos": [
             {
@@ -2521,6 +2521,12 @@
                   "so_admin": false
                 }
               ]
+            },
+            {
+              "nome": "Rodar seleção de FIIs",
+              "resumo": "Botão principal que monta a carteira",
+              "explicacao": "Ao clicar, o app aplica os filtros, pontua os fundos e calcula os pesos com os ajustes escolhidos acima. Se você mudar algum ajuste depois, a carteira mostrada continua a anterior e a tela avisa que é preciso rodar de novo.",
+              "so_admin": false
             },
             {
               "nome": "Resultado da seleção",
