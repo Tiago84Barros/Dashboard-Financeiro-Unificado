@@ -1,7 +1,7 @@
 {
   "nome": "Controle Financeiro",
   "resumo": "Lançar, conferir e analisar receitas, despesas e cartão",
-  "explicacao": "Tela do dia a dia do dinheiro: você escolhe o mês, lança entradas e saídas pela barra lateral e navega por quatro abas (Dashboard, Análises, Tabelas e Cartão de Crédito). Dá para corrigir lançamentos, conferir extratos importados, categorizar compras do cartão e conversar com um assistente de IA. A importação do extrato do banco e da fatura do cartão não fica aqui: é feita em Configurações → Atualização de dados → Controle Financeiro.",
+  "explicacao": "Tela do dia a dia do dinheiro: você escolhe o mês, lança entradas e saídas pela barra lateral e navega por cinco abas (Dashboard, Análises, Tabelas, A pagar e receber e Cartão de Crédito). Dá para corrigir lançamentos, conferir extratos importados, categorizar compras do cartão e conversar com um assistente de IA. A importação do extrato do banco e da fatura do cartão não fica aqui: é feita em Configurações → Atualização de dados → Controle Financeiro.",
   "so_admin": false,
   "fonte": "views/controle_financeiro.py:3673",
   "filhos": [
@@ -25,7 +25,7 @@
     {
       "nome": "Novo lançamento",
       "resumo": "Formulário na barra lateral para registrar movimentos",
-      "explicacao": "Formulário que aparece na barra lateral esquerda enquanto esta tela está aberta, para registrar uma entrada, saída ou aplicação feita pela conta. Logo acima, em 'Filtros', aparece só o mês escolhido, como lembrete. Compras no cartão de crédito não são lançadas aqui: entram pela importação da fatura.",
+      "explicacao": "Formulário que aparece na barra lateral esquerda enquanto esta tela está aberta, para registrar uma entrada, saída ou aplicação feita pela conta. Em 'Situação', 'Pago' grava o que já aconteceu e 'Previsto' grava uma conta a pagar ou a receber com a data como vencimento; 'Repetir todo mês' cria a série mensal (só para previsto). Previsto não entra nos totais do mês até receber a baixa. Logo acima, em 'Filtros', aparece só o mês escolhido, como lembrete. Compras no cartão de crédito não são lançadas aqui: entram pela importação da fatura.",
       "so_admin": false,
       "fonte": "views/controle_financeiro.py:355",
       "filhos": [
@@ -309,6 +309,14 @@
           ]
         }
       ]
+    },
+    {
+      "nome": "A pagar e receber",
+      "resumo": "Contas previstas, vencimentos e saldo projetado",
+      "explicacao": "Lista as contas a pagar e a receber em aberto (lançadas como 'Previsto' na barra lateral), por vencimento. No alto, quantos previstos venceram sem baixa e quanto há a pagar e a receber nos próximos 30 dias. A tabela soma cada previsto ao saldo das contas de movimentação e mostra o saldo depois de cada um, no horizonte de 30, 60 ou 90 dias; previsto vencido entra como se fosse pago hoje. Embaixo, escolha um previsto para dar baixa (data e valor pago) ou excluir. Ao importar o extrato, o movimento de mesmo valor perto do vencimento dá a baixa sozinho.",
+      "so_admin": false,
+      "fonte": "views/controle_previstos.py:112",
+      "filhos": []
     },
     {
       "nome": "Cartão de Crédito",

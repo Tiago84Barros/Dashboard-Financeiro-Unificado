@@ -1,7 +1,7 @@
 {
   "nome": "Dashboard Financeiro Unificado",
   "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, o que funciona por trás delas.",
-  "data_mapa": "01/11/2026",
+  "data_mapa": "02/11/2026",
   "filhos": [
     {
       "nome": "Dashboard Geral",
@@ -291,7 +291,7 @@
     {
       "nome": "Controle Financeiro",
       "resumo": "Lançar, conferir e analisar receitas, despesas e cartão",
-      "explicacao": "Tela do dia a dia do dinheiro: você escolhe o mês, lança entradas e saídas pela barra lateral e navega por quatro abas (Dashboard, Análises, Tabelas e Cartão de Crédito). Dá para corrigir lançamentos, conferir extratos importados, categorizar compras do cartão e conversar com um assistente de IA. A importação do extrato do banco e da fatura do cartão não fica aqui: é feita em Configurações → Atualização de dados → Controle Financeiro.",
+      "explicacao": "Tela do dia a dia do dinheiro: você escolhe o mês, lança entradas e saídas pela barra lateral e navega por cinco abas (Dashboard, Análises, Tabelas, A pagar e receber e Cartão de Crédito). Dá para corrigir lançamentos, conferir extratos importados, categorizar compras do cartão e conversar com um assistente de IA. A importação do extrato do banco e da fatura do cartão não fica aqui: é feita em Configurações → Atualização de dados → Controle Financeiro.",
       "so_admin": false,
       "filhos": [
         {
@@ -311,7 +311,7 @@
         {
           "nome": "Novo lançamento",
           "resumo": "Formulário na barra lateral para registrar movimentos",
-          "explicacao": "Formulário que aparece na barra lateral esquerda enquanto esta tela está aberta, para registrar uma entrada, saída ou aplicação feita pela conta. Logo acima, em 'Filtros', aparece só o mês escolhido, como lembrete. Compras no cartão de crédito não são lançadas aqui: entram pela importação da fatura.",
+          "explicacao": "Formulário que aparece na barra lateral esquerda enquanto esta tela está aberta, para registrar uma entrada, saída ou aplicação feita pela conta. Em 'Situação', 'Pago' grava o que já aconteceu e 'Previsto' grava uma conta a pagar ou a receber com a data como vencimento; 'Repetir todo mês' cria a série mensal (só para previsto). Previsto não entra nos totais do mês até receber a baixa. Logo acima, em 'Filtros', aparece só o mês escolhido, como lembrete. Compras no cartão de crédito não são lançadas aqui: entram pela importação da fatura.",
           "so_admin": false,
           "filhos": [
             {
@@ -533,6 +533,12 @@
               ]
             }
           ]
+        },
+        {
+          "nome": "A pagar e receber",
+          "resumo": "Contas previstas, vencimentos e saldo projetado",
+          "explicacao": "Lista as contas a pagar e a receber em aberto (lançadas como 'Previsto' na barra lateral), por vencimento. No alto, quantos previstos venceram sem baixa e quanto há a pagar e a receber nos próximos 30 dias. A tabela soma cada previsto ao saldo das contas de movimentação e mostra o saldo depois de cada um, no horizonte de 30, 60 ou 90 dias; previsto vencido entra como se fosse pago hoje. Embaixo, escolha um previsto para dar baixa (data e valor pago) ou excluir. Ao importar o extrato, o movimento de mesmo valor perto do vencimento dá a baixa sozinho.",
+          "so_admin": false
         },
         {
           "nome": "Cartão de Crédito",
@@ -2991,7 +2997,7 @@
                 {
                   "nome": "Extrato bancário",
                   "resumo": "Importar o extrato em PDF com revisão",
-                  "explicacao": "Escolha o banco (hoje só C6 Bank), envie o PDF e revise numa grade a descrição, se é entrada ou saída, a categoria e o valor de cada movimento. A categoria vem sugerida entre as que já existem (o extrato não cria categoria); nome repetido em tipos diferentes aparece com o tipo entre parênteses, como 'Outros (despesa)'. Abaixo da grade, a seção Conciliação mostra os movimentos que já foram lançados à mão (mesma conta, mesmo valor, até 3 dias de diferença): marcados, eles se vinculam ao lançamento existente em vez de criar outro. Ali também se confere o saldo: o saldo final do extrato (lido do PDF ou digitado) contra o saldo do app na mesma data, depois da importação. Depois clique em 'Importar extrato'. Embaixo do upload ficam as últimas conferências de saldo, recalculadas contra o app de hoje.",
+                  "explicacao": "Escolha o banco (hoje só C6 Bank), envie o PDF e revise numa grade a descrição, se é entrada ou saída, a categoria e o valor de cada movimento. A categoria vem sugerida entre as que já existem (o extrato não cria categoria); nome repetido em tipos diferentes aparece com o tipo entre parênteses, como 'Outros (despesa)'. Abaixo da grade, a seção Conciliação mostra os movimentos que já foram lançados à mão (mesma conta, mesmo valor, até 3 dias de diferença): marcados, eles se vinculam ao lançamento existente em vez de criar outro, e o lançamento que estava como previsto (conta a pagar ou a receber) recebe a baixa na data do banco. Ali também se confere o saldo: o saldo final do extrato (lido do PDF ou digitado) contra o saldo do app na mesma data, depois da importação. Depois clique em 'Importar extrato'. Embaixo do upload ficam as últimas conferências de saldo, recalculadas contra o app de hoje.",
                   "so_admin": false
                 }
               ]

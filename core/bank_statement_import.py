@@ -1539,7 +1539,7 @@ def import_bank_statement_pdf(
 
 
 _SQL_TX_VINCULAVEL = """
-    SELECT t.id::text, t.category_id::text AS category_id
+    SELECT t.id::text, t.category_id::text AS category_id, t.status
     FROM transactions t
     WHERE t.id = CAST(:tx_id AS uuid)
       AND t.user_id = CAST(:uid AS uuid)
@@ -1578,7 +1578,7 @@ def import_bank_statement_rows(
         return {"ok": False, "message": "Nada para importar."}
 
     owner = _owner_id()
-    inserted = skipped = published = pending = linked = 0
+    inserted = skipped = published = pending = linked = baixados = 0
     prepared: list[dict] = []
     for raw in rows:
         row = {**raw}
@@ -1681,6 +1681,20 @@ def import_bank_statement_rows(
             inserted += 1
             if vinculo:
                 linked += 1
+                if getattr(vinculo, "status", None) == "pending":
+                    # Previsto (conta a pagar/receber): o extrato prova o
+                    # pagamento, então é a baixa. A data passa a ser a do banco.
+                    conn.execute(
+                        text(
+                            """
+                            UPDATE transactions
+                            SET status = 'settled', due_date = :data, payment_date = :data
+                            WHERE id = CAST(:tx_id AS uuid) AND user_id = CAST(:uid AS uuid)
+                            """
+                        ),
+                        {"data": row.get("data_movimento"), "tx_id": vinculo.id, "uid": owner},
+                    )
+                    baixados += 1
             elif row.get("categoria_id"):
                 category = category_by_id.get(str(row.get("categoria_id")))
                 tx_id = _insert_transaction(conn, owner, row, account_id, category)
@@ -1718,11 +1732,12 @@ def import_bank_statement_rows(
 
     summary = summarize_bank_movements(prepared, banco)
     summary.update({"inserted": inserted, "skipped": skipped, "published": published,
-                    "pending": pending, "linked": linked})
+                    "pending": pending, "linked": linked, "baixados": baixados})
     return {
         "ok": True,
         "message": (
-            f"{inserted} movimento(s) importado(s); {linked} vinculado(s) a lançamento manual; "
+            f"{inserted} movimento(s) importado(s); {linked} vinculado(s) a lançamento manual "
+            f"({baixados} previsto(s) baixado(s)); "
             f"{published} publicado(s) no Controle Financeiro; "
             f"{pending} pendente(s); {skipped} duplicado(s) ignorado(s)."
         ),
