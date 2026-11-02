@@ -3651,6 +3651,9 @@ def _stock_card_html(pos: dict, fd: dict, price_info: dict,
     rows += R("Custo investido", _f_brs(custo, 0))
     if pm:
         rows += R("Preço médio", _f_brs(pm))
+    dy_custo = _dy_sobre_custo(dy, preco, pm)
+    if dy_custo is not None:
+        rows += R("DY sobre o custo", f"{dy_custo:.2f}%")
 
     rows += S("Valuation")
     if pl:
@@ -3671,9 +3674,6 @@ def _stock_card_html(pos: dict, fd: dict, price_info: dict,
     if dy:
         rows += R("Dividend Yield", f"{dy:.2f}%",
                   "fund-val-warn" if dy > T["stock_dy_alto"] else "fund-val-pos")
-        dy_custo = _dy_sobre_custo(dy, preco, pm)
-        if dy_custo is not None:
-            rows += R("DY sobre o custo", f"{dy_custo:.2f}%")
 
     rows += S("Rentabilidade")
     if roe:
@@ -3801,6 +3801,10 @@ def _fii_card_html(pos: dict, fd: dict, price_info: dict,
     rows += R("Peso na carteira", f"{peso:.1f}%")
     rows += R("Custo investido", _f_brs(custo, 0))
     rows += R("Cotas", _f_br(qty, 0))
+    pm_fii = float(pos.get("preco_medio") or 0) or (custo / qty if qty > 0 else 0)
+    dy_custo = _dy_sobre_custo(dy_f, preco, pm_fii)
+    if dy_custo is not None:
+        rows += R("DY sobre o custo", f"{dy_custo:.2f}%")
 
     rows += S("Indicadores")
     if pvp:
@@ -3812,10 +3816,6 @@ def _fii_card_html(pos: dict, fd: dict, price_info: dict,
     if dy_f:
         rows += R("Dividend Yield", f"{dy_f:.2f}%",
                   "fund-val-warn" if dy_f > T["fii_dy_alto"] else "fund-val-pos")
-        pm_fii = float(pos.get("preco_medio") or 0) or (custo / qty if qty > 0 else 0)
-        dy_custo = _dy_sobre_custo(dy_f, preco, pm_fii)
-        if dy_custo is not None:
-            rows += R("DY sobre o custo", f"{dy_custo:.2f}%")
     if ult_rend:
         lbl_rend = f"Últ. Rendimento{' (' + data_rend + ')' if data_rend else ''}"
         rows += R(lbl_rend, _f_brs(ult_rend, 4))
