@@ -172,6 +172,24 @@ def _f_big(v) -> str:
 def _f_chip(label: str, color: str = "blue") -> str:
     return f'<span class="f-chip f-chip-{color}">{_html.escape(label)}</span>'
 
+def _dy_sobre_custo(dy, preco, preco_medio):
+    """DY sobre o custo: o mesmo dividendo por ação dos últimos 12 meses do DY,
+    dividido pelo preço médio em vez da cotação.
+
+    DY = DPA_12m / cotação  →  DPA_12m = DY × cotação  →  DY s/ custo = DY × cotação / PM.
+    Mesmo numerador, só troca o denominador — por isso dá para comparar lado a
+    lado com o DY. Não é a renda que o investidor de fato recebeu: quem comprou
+    há três meses não recebeu 12 meses de proventos.
+    """
+    try:
+        dy, preco, preco_medio = float(dy), float(preco), float(preco_medio)
+    except (TypeError, ValueError):
+        return None
+    if dy <= 0 or preco <= 0 or preco_medio <= 0:
+        return None
+    return dy * preco / preco_medio
+
+
 def _f_row(key: str, val: str, cls: str = "fund-val") -> str:
     return (f'<div class="fund-row"><span class="fund-key">{_html.escape(key)}</span>'
             f'<span class="{cls}">{val}</span></div>')
@@ -3653,6 +3671,9 @@ def _stock_card_html(pos: dict, fd: dict, price_info: dict,
     if dy:
         rows += R("Dividend Yield", f"{dy:.2f}%",
                   "fund-val-warn" if dy > T["stock_dy_alto"] else "fund-val-pos")
+        dy_custo = _dy_sobre_custo(dy, preco, pm)
+        if dy_custo is not None:
+            rows += R("DY sobre o custo", f"{dy_custo:.2f}%")
 
     rows += S("Rentabilidade")
     if roe:
@@ -3791,6 +3812,10 @@ def _fii_card_html(pos: dict, fd: dict, price_info: dict,
     if dy_f:
         rows += R("Dividend Yield", f"{dy_f:.2f}%",
                   "fund-val-warn" if dy_f > T["fii_dy_alto"] else "fund-val-pos")
+        pm_fii = float(pos.get("preco_medio") or 0) or (custo / qty if qty > 0 else 0)
+        dy_custo = _dy_sobre_custo(dy_f, preco, pm_fii)
+        if dy_custo is not None:
+            rows += R("DY sobre o custo", f"{dy_custo:.2f}%")
     if ult_rend:
         lbl_rend = f"Últ. Rendimento{' (' + data_rend + ')' if data_rend else ''}"
         rows += R(lbl_rend, _f_brs(ult_rend, 4))
