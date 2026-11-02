@@ -90,11 +90,15 @@ def test_projecao_trata_vencido_como_pago_hoje_e_para_no_horizonte():
 class _Conn:
     def __init__(self, tipo_conta="checking", amount_atual=-100.0, rowcount=1):
         self.tipo_conta, self.amount_atual, self.rowcount = tipo_conta, amount_atual, rowcount
+        self.categorias_do_dono = {"cat"}
         self.inserts: list[dict] = []
         self.updates: list[dict] = []
 
     def execute(self, stmt, params=None):
         sql = str(stmt)
+        if "FROM categories" in sql:
+            ok = params["category_id"] in self.categorias_do_dono and params["uid"] == "owner-1"
+            return SimpleNamespace(fetchone=lambda: (1,) if ok else None)
         if "FROM accounts" in sql and "SELECT id::text" in sql:
             return SimpleNamespace(fetchone=lambda: SimpleNamespace(id="acc", type=self.tipo_conta))
         if "INSERT INTO transactions" in sql:
@@ -282,3 +286,29 @@ def test_previstos_em_dia_conta_so_os_do_dono(monkeypatch):
 
 def test_previstos_em_dia_sem_dono_nao_mede(monkeypatch):
     assert _comp_previstos(monkeypatch, 4, 1, dono="") == ([], [])
+
+
+def test_categoria_de_outro_usuario_e_recusada(banco):
+    ok, msg = prev.criar_previstos("X", 10.0, "expense", date(2026, 11, 5),
+                                   "cat-de-outro", "acc")
+    assert not ok and "Categoria" in msg and not banco.inserts
+
+
+def test_listagem_so_junta_categoria_do_sistema_ou_do_dono():
+    sql = " ".join(prev._SQL_LISTAR.split())
+    assert "c.user_id IS NULL OR c.user_id = t.user_id" in sql
+
+
+def _tipo(c):
+    return c["tipo"]
+
+
+def test_sem_conta_corrente_previsto_vai_para_poupanca_mesmo_com_investimento_antes():
+    contas = [{"id": "inv", "tipo": "investment"}, {"id": "poup", "tipo": "savings"}]
+    assert prev.conta_escolhida_para_previsto(contas, _tipo) == "poup"
+
+
+def test_conta_corrente_tem_preferencia_e_sem_conta_aceita_nao_ha_escolha():
+    contas = [{"id": "poup", "tipo": "savings"}, {"id": "cc", "tipo": "checking"}]
+    assert prev.conta_escolhida_para_previsto(contas, _tipo) == "cc"
+    assert prev.conta_escolhida_para_previsto([{"id": "inv", "tipo": "investment"}], _tipo) is None

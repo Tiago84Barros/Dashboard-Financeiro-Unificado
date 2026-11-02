@@ -67,7 +67,12 @@ from core.controle import (
 )
 from core.controle_indicadores import indicadores_caixa
 from core.investimentos import get_cashflow_mensal, get_evolucao_patrimonial
-from core.previstos import MAX_REPETICOES, criar_previstos, listar_previstos
+from core.previstos import (
+    MAX_REPETICOES,
+    conta_escolhida_para_previsto,
+    criar_previstos,
+    listar_previstos,
+)
 from core.utils import escapar_cifrao, fmt_moeda, fmt_percentual
 from design.componentes import (
     abas_secao,
@@ -495,13 +500,21 @@ def _sidebar_render(ano: int, mes: int) -> None:
         desc_final = descricao.strip() or categoria_final
 
         if situacao_tx == "Previsto":
+            # Previsto só em conta de movimentação: é o saldo delas que a
+            # projeção usa. Sem conta corrente, a conta escolhida acima pode
+            # ser de investimento -- aqui a escolha se restringe às aceitas.
+            conta_mov = conta_escolhida_para_previsto(contas, _tipo_conta)
+            if not conta_mov:
+                st.sidebar.error("Previsto precisa de conta corrente, poupança ou carteira "
+                                 "digital, e nenhuma está configurada.")
+                return
             ok, msg = criar_previstos(
                 descricao=desc_final,
                 valor=valor,
                 tipo=tipo_insert,
                 vencimento=data_tx,
                 categoria_id=cat_id,
-                conta_id=conta_id,
+                conta_id=conta_mov,
                 repeticoes=int(repeticoes),
             )
             if ok:

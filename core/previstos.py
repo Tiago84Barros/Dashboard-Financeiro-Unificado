@@ -51,6 +51,15 @@ def sql_realizado(t: str = "t", conta: str = "ac") -> str:
 # Funções puras
 # ─────────────────────────────────────────────────────────────────────────────
 
+def conta_escolhida_para_previsto(contas: list[dict], tipo_de) -> str | None:
+    """Id da conta onde o previsto é gravado: conta corrente primeiro, depois
+    qualquer outra de movimentação. ``tipo_de(conta)`` devolve o tipo."""
+    aceitas = [c for c in contas if tipo_de(c) in TIPOS_CONTA_MOVIMENTACAO]
+    preferida = next((c for c in aceitas if tipo_de(c) == "checking"), None)
+    escolhida = preferida or (aceitas[0] if aceitas else None)
+    return escolhida["id"] if escolhida else None
+
+
 def datas_mensais(primeiro: date, repeticoes: int) -> list[date]:
     """Vencimentos mensais a partir de ``primeiro``. Dia 31 em mês curto cai
     no último dia daquele mês, e volta ao 31 no mês seguinte que o tiver."""
@@ -124,6 +133,14 @@ _SQL_CONTA_MOVIMENTACAO = """
     WHERE id = CAST(:account_id AS uuid) AND user_id = CAST(:uid AS uuid)
 """
 
+# Categoria só se for do sistema (user_id nulo) ou do próprio dono: a chave
+# estrangeira não cobra o dono, e o mesmo filtro protege _SQL_INSERT_TX.
+_SQL_CATEGORIA_PERMITIDA = """
+    SELECT 1 FROM categories
+    WHERE id = CAST(:category_id AS uuid)
+      AND (user_id IS NULL OR user_id = CAST(:uid AS uuid))
+"""
+
 _SQL_INSERIR = """
     INSERT INTO transactions
         (user_id, account_id, category_id, description, amount, due_date,
@@ -145,6 +162,7 @@ _SQL_LISTAR = f"""
            COALESCE(t.installment_total, 1) AS total_parcelas
     FROM transactions t
     LEFT JOIN categories c ON c.id = t.category_id
+                          AND (c.user_id IS NULL OR c.user_id = t.user_id)
     LEFT JOIN accounts ac ON ac.id = t.account_id
     WHERE t.user_id = CAST(:uid AS uuid)
       AND NOT ({sql_realizado()})
@@ -237,6 +255,10 @@ def criar_previstos(
             if conta.type not in TIPOS_CONTA_MOVIMENTACAO:
                 return False, ("Previsto precisa de conta corrente, poupança ou carteira "
                                "digital: é o saldo delas que a projeção usa.")
+            if categoria_id and not conn.execute(
+                    text(_SQL_CATEGORIA_PERMITIDA),
+                    {"category_id": categoria_id, "uid": owner}).fetchone():
+                return False, "Categoria indisponível para este usuário."
             for i, d in enumerate(datas, start=1):
                 conn.execute(text(_SQL_INSERIR), {
                     "uid": owner, "account_id": conta_id, "category_id": categoria_id,
