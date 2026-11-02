@@ -8,9 +8,13 @@ name: Lacunas para o corretor na nuvem
 #               ativos da carteira; a chave é LACUNAS_FILA_CHAVE)
 # A sessão na nuvem baixa o log pela API pública e decifra com a mesma chave.
 on:
-  schedule:
-    # 06:23 de Brasília, antes da tarefa agendada na nuvem (07:4x).
-    - cron: "23 9 * * *"
+  # Agendamento DESLIGADO em 02/11/2026, a pedido do dono: a tarefa agendada
+  # corrigir-lacuna-nuvem está pausada (a sessão que ela dispara nasce sem
+  # acesso de escrita ao GitHub) e a chave LACUNAS_FILA_CHAVE ainda não existe,
+  # então cada execução diária só falhava. Para religar, depois de recriar a
+  # rotina com o repositório anexado e gravar a chave, recoloque:
+  #   schedule:
+  #     - cron: "23 9 * * *"   # 06:23 de Brasília, antes da rotina (07:4x)
   push:
     branches: [main]
     paths:
