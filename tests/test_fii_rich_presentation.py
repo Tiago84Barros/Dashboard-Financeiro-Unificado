@@ -151,8 +151,9 @@ def test_empty_universe_has_explicit_state_and_no_stale_portfolio():
 
 def test_montagem_roda_uma_vez_por_clique_e_nao_a_cada_interacao():
     """A montagem custa dezenas de segundos; chat e controles não a repetem."""
-    import views.fiis as fiis
     from unittest.mock import patch
+
+    import views.fiis as fiis
 
     original = fiis.veredito.reotimizar_sem_vetados
     with patch.object(fiis.veredito, "reotimizar_sem_vetados",
@@ -175,9 +176,7 @@ def test_montagem_roda_uma_vez_por_clique_e_nao_a_cada_interacao():
 
 
 def test_chave_da_montagem_muda_com_a_metrica_e_nao_com_a_procedencia():
-    import pandas as pd
     import views.fiis as fiis
-    from core.fii_methodology import MacroScenario
 
     inputs = pd.DataFrame()
     inputs.attrs["snapshot_as_of"] = "2026-10-31"
