@@ -97,10 +97,13 @@ def projetar_saldo(saldo_atual: float, previstos: list[dict], hoje: date,
     """Saldo depois de cada previsto até ``ate``, em ordem de vencimento.
 
     Vencido entra como se fosse pago hoje: se ainda não saiu da conta, vai
-    sair. Previsto depois de ``ate`` fica fora.
+    sair. Previsto depois de ``ate`` fica fora, e também o de conta que não
+    entra em ``saldo_atual`` (``na_projecao`` falso): somar o compromisso de
+    uma conta cujo saldo não está na base inventaria um rombo.
     """
     eventos = sorted(
-        (p for p in previstos if p["vencimento"] <= ate),
+        (p for p in previstos
+         if p["vencimento"] <= ate and p.get("na_projecao", True)),
         key=lambda p: (max(p["vencimento"], hoje), p["valor"] > 0, p.get("descricao") or ""),
     )
     saldo = float(saldo_atual)
@@ -136,6 +139,8 @@ _SQL_LISTAR = f"""
     SELECT t.id::text, t.description, t.amount, t.due_date, t.type,
            t.category_id::text, COALESCE(c.name, 'Sem categoria') AS categoria,
            COALESCE(ac.name, 'Sem conta') AS conta,
+           (COALESCE(ac.type, '') IN ('checking', 'savings', 'digital_wallet')
+            AND COALESCE(ac.active, TRUE)) AS na_projecao,
            COALESCE(t.installment_current, 1) AS parcela,
            COALESCE(t.installment_total, 1) AS total_parcelas
     FROM transactions t
@@ -229,6 +234,9 @@ def criar_previstos(
                 return False, "Conta não encontrada."
             if conta.type == "credit_card":
                 return False, "Compras de cartão de crédito entram pela fatura CSV."
+            if conta.type not in TIPOS_CONTA_MOVIMENTACAO:
+                return False, ("Previsto precisa de conta corrente, poupança ou carteira "
+                               "digital: é o saldo delas que a projeção usa.")
             for i, d in enumerate(datas, start=1):
                 conn.execute(text(_SQL_INSERIR), {
                     "uid": owner, "account_id": conta_id, "category_id": categoria_id,
@@ -256,6 +264,7 @@ def listar_previstos() -> list[dict]:
         "id": r.id, "descricao": r.description or "", "valor": float(r.amount or 0),
         "vencimento": r.due_date, "tipo": r.type, "categoria_id": r.category_id,
         "categoria": r.categoria, "conta": r.conta,
+        "na_projecao": bool(r.na_projecao),
         "parcela": int(r.parcela or 1), "total_parcelas": int(r.total_parcelas or 1),
     } for r in rows]
 

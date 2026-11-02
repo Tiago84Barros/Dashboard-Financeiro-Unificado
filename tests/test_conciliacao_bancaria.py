@@ -11,6 +11,8 @@ from contextlib import contextmanager
 from datetime import date
 from types import SimpleNamespace
 
+import pytest
+
 import core.bank_statement_import as bsi
 from core.bank_statement_import import parse_c6_bank_text
 from core.conciliacao_bancaria import (
@@ -240,13 +242,17 @@ def test_vinculo_que_nao_vale_mais_segue_o_caminho_normal(monkeypatch):
 # ── Grau de Confiança: o saldo conferido entra como componente ──────────────
 
 class _ConnConfianca:
+    """Toda consulta tem de vir filtrada pelo dono (AGENTS.md): o fake
+    recusa a que chega sem o parâmetro."""
+
     def __init__(self, saldos: int, diferenca: float, dias: int):
         from datetime import timedelta
         self.saldos, self.diferenca = saldos, diferenca
         self.data = date.today() - timedelta(days=dias)
 
-    def execute(self, stmt, *a, **k):
+    def execute(self, stmt, params=None, *a, **k):
         sql = " ".join(str(stmt).split()).lower()
+        assert (params or {}).get("uid") == "dono-1" and "user_id = cast(:uid" in sql, sql
         if "count(*) from bank_statement_balances" in sql:
             v = self.saldos
         elif "max(data_saldo)" in sql:
@@ -262,6 +268,12 @@ class _ConnConfianca:
 
     def __exit__(self, *exc):
         return False
+
+
+@pytest.fixture(autouse=True)
+def _dono(monkeypatch):
+    from core.config import settings
+    monkeypatch.setattr(settings, "OWNER_USER_ID", "dono-1", raising=False)
 
 
 def _componente_saldo(saldos, diferenca, dias):
@@ -284,3 +296,9 @@ def test_saldo_que_nao_fecha_reprova_e_vira_nota():
 
 def test_sem_saldo_guardado_nao_entra_componente():
     assert _componente_saldo(0, 0.0, 5) == ([], [])
+
+
+def test_sem_dono_nao_mede_saldo_de_ninguem(monkeypatch):
+    from core.config import settings
+    monkeypatch.setattr(settings, "OWNER_USER_ID", "", raising=False)
+    assert _componente_saldo(1, -80.0, 5) == ([], [])

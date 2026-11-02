@@ -231,3 +231,54 @@ def test_aba_vazia_ensina_onde_criar():
     at = AppTest.from_function(_app_vazio).run()
     assert not at.exception
     assert "Previsto" in " ".join(m.value for m in at.markdown)
+
+
+# ── achados da revisão (Codex, PR #647) ─────────────────────────────────────
+
+def test_projecao_ignora_previsto_de_conta_fora_do_saldo_base():
+    """Conta de investimento com previsto não está no saldo de partida:
+    somar o compromisso dela inventaria um rombo."""
+    fora = {**_p(15, -100.0, "Taxa corretora"), "na_projecao": False}
+    linhas = projetar_saldo(1000.0, [fora, _p(16, -50.0)], HOJE, HOJE + timedelta(days=30))
+    assert [x["saldo_apos"] for x in linhas] == [950.0]
+
+
+def test_previsto_em_conta_que_nao_e_de_movimentacao_e_recusado(banco):
+    banco.tipo_conta = "investment"
+    ok, msg = prev.criar_previstos("X", 10.0, "expense", date(2026, 11, 5), None, "acc")
+    assert not ok and "conta corrente" in msg and not banco.inserts
+
+
+class _ConnPrevistos:
+    def __init__(self, total, atrasados):
+        self.total, self.atrasados = total, atrasados
+
+    def execute(self, stmt, params=None, *a, **k):
+        sql = " ".join(str(stmt).split())
+        assert (params or {}).get("uid") == "dono-1" and "t.user_id = CAST(:uid" in sql, sql
+        v = self.atrasados if "CURRENT_DATE" in sql else self.total
+        return SimpleNamespace(scalar=lambda: v)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _comp_previstos(monkeypatch, total, atrasados, dono="dono-1"):
+    from core.confianca_secao import _componente_previstos_em_dia
+    from core.config import settings
+    monkeypatch.setattr(settings, "OWNER_USER_ID", dono, raising=False)
+    notas: list[str] = []
+    eng = SimpleNamespace(connect=lambda: _ConnPrevistos(total, atrasados))
+    return _componente_previstos_em_dia(eng, notas), notas
+
+
+def test_previstos_em_dia_conta_so_os_do_dono(monkeypatch):
+    (c,), notas = _comp_previstos(monkeypatch, 4, 1)
+    assert c.pct == 75.0 and notas
+
+
+def test_previstos_em_dia_sem_dono_nao_mede(monkeypatch):
+    assert _comp_previstos(monkeypatch, 4, 1, dono="") == ([], [])

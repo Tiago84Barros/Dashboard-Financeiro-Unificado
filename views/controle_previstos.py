@@ -164,7 +164,13 @@ def render_previstos() -> None:
     else:
         st.caption("Nenhum previsto dentro do horizonte.")
 
-    depois = [p for p in previstos if p["vencimento"] > ate]
+    fora = [p for p in previstos if not p.get("na_projecao", True)]
+    if fora:
+        with st.expander(f"Fora da projeção ({len(fora)})"):
+            st.caption("Previstos em conta que não é de movimentação, ou está inativa: o "
+                       "saldo dessas contas não está na base da projeção.")
+            st.markdown(_tabela_html(fora, hoje, com_saldo=False), unsafe_allow_html=True)
+    depois = [p for p in previstos if p["vencimento"] > ate and p.get("na_projecao", True)]
     if depois:
         with st.expander(f"Depois do horizonte ({len(depois)})"):
             st.markdown(_tabela_html(depois, hoje, com_saldo=False), unsafe_allow_html=True)
