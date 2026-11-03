@@ -97,6 +97,31 @@ def _type_from_asset_classes(weights: dict[str, float]) -> str | None:
     return "hibrido"
 
 
+def _preco_sem_salto_de_split(fechamento: pd.Series, ajustado: pd.Series) -> pd.Series:
+    """Fechamento mensal encadeado sem o salto de desdobramento/grupamento.
+
+    Drawdown e tendencia PIT eram medidos sobre o fechamento bruto: num
+    desdobramento 1:10 o preco cai 90% de um mes para o outro sem que o cotista
+    perca nada, e o fundo saia cortado por "drawdown acima da tolerancia". A
+    regra e a mesma de ``_monthly_returns``, para as duas series contarem a mesma
+    historia: o mes em que o fechamento salta mais de 50% e o ajustado fica
+    plausivel e split; nele vale a variacao do ajustado. Fora desses meses vale
+    o fechamento -- o ajustado inteiro nao serve, porque a fonte o reescreve
+    retroativamente (saltos espurios de 600% ja medidos).
+
+    So o mes do evento usa o ajustado, e por razao entre dois meses
+    consecutivos: um fator corporativo posterior se cancela na divisao, entao
+    nada do futuro entra no corte.
+    """
+    variacao = fechamento.pct_change(fill_method=None)
+    variacao_ajustada = ajustado.pct_change(fill_method=None)
+    split = (variacao.abs() > .50) & (variacao_ajustada.abs() <= .50)
+    if not bool(split.any()):
+        return fechamento
+    corrigida = variacao.where(~split, variacao_ajustada).fillna(0.0)
+    return float(fechamento.iloc[0]) * (1.0 + corrigida).cumprod()
+
+
 def _monthly_market_features(prices: pd.DataFrame, dividends: pd.DataFrame) -> dict[str, dict]:
     output: dict[str, dict] = {}
     if prices.empty:
@@ -130,6 +155,10 @@ def _monthly_market_features(prices: pd.DataFrame, dividends: pd.DataFrame) -> d
     for ticker, group in frame.groupby("ticker"):
         group = group.sort_values("date").drop_duplicates("date", keep="last").set_index("date")
         monthly = group[["price", "close_raw"]].resample("ME").last().dropna(subset=["price"])
+        if "adjusted_close" in group:
+            ajustado = (pd.to_numeric(group["adjusted_close"], errors="coerce")
+                        .resample("ME").last().reindex(monthly.index))
+            monthly["price"] = _preco_sem_salto_de_split(monthly["close_raw"], ajustado)
         monthly["return"] = monthly["price"].pct_change(fill_method=None)
         daily_value = group["close_raw"] * group["volume"]
         ticker_div = (div[div["ticker"] == ticker].dropna(subset=["date", "amount"])
