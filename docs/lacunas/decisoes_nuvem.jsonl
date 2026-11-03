@@ -1,0 +1,1 @@
+{"impressao": "a4cb28ecf6e5109a1cb20d576d2276e006fb7cde", "status": "em_pr", "pr": 655, "data": "2026-11-03T12:19:50Z", "nota": "defeito parcial: a correlação pedia o PU do Tesouro pelo ticker da foto, não por chave_da_curva (cupom TIPCAJ lido como principal TIPCA). Selic/Prefixado de 2025 ainda precisam do Supabase para decidir entre dado e limitação real."}
