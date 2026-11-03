@@ -4701,7 +4701,8 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         _secao_titulo_orig(
             "🌪️", "Stress Tests Históricos",
             "Quanto a carteira de hoje perderia se cada crise passada se "
-            "repetisse agora — choques calibrados em dados B3/BCB.",
+            "repetisse agora — choques calibrados em dados B3/BCB. Evento "
+            "ainda em curso entra com o choque observado até agora.",
         )
 
         try:
@@ -4724,7 +4725,19 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 perda_abs = abs(float(pior.get("perda_absoluta", 0.0)))
                 valor_pre = float(pior.get("total_pre", 0.0))
                 valor_pos = float(pior.get("total_pos", 0.0))
-                rec_m = int(pior.get("tempo_recuperacao_meses", 0) or 0)
+                # Recuperação ``None`` = não medida (evento em curso). Virar 0
+                # afirmaria "recupera em 0 meses" sobre algo que nem acabou.
+                _rec_bruto = pior.get("tempo_recuperacao_meses")
+                rec_m = int(_rec_bruto) if _rec_bruto is not None else None
+                if rec_m is not None:
+                    _frase_rec = (
+                        'Historicamente, um evento desse porte levou cerca de '
+                        f'<b style="color:{_cor_texto(_COR_ALERTA)}">{rec_m} meses</b> '
+                        'para ser recuperado.')
+                else:
+                    _frase_rec = (
+                        'O evento <b>ainda está em curso</b>: o choque é o observado '
+                        'até agora e o tempo de recuperação não foi medido.')
 
                 # Frase primeiro, números depois: a pergunta que a aba responde
                 # é "quanto eu perderia e em quanto tempo volto", e a tabela
@@ -4741,8 +4754,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     f'a carteira cairia <b style="color:{_cor_texto(_COR_NEGATIVO)}">{perda_pct:.1f}%</b>'
                     f' — de {fmt_moeda(valor_pre)} para <b>{fmt_moeda(valor_pos)}</b>, '
                     f'uma perda de <b style="color:{_cor_texto(_COR_NEGATIVO)}">{fmt_moeda(perda_abs)}</b>. '
-                    'Historicamente, um evento desse porte levou cerca de '
-                    f'<b style="color:{_cor_texto(_COR_ALERTA)}">{rec_m} meses</b> para ser recuperado.'
+                    f'{_frase_rec}'
                     '</div></div>',
                     unsafe_allow_html=True,
                 )
@@ -4760,8 +4772,11 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     ), unsafe_allow_html=True)
                 with cs3:
                     st.markdown(_kpi(
-                        "Tempo de recuperação", f"{rec_m} meses",
-                        "Mediana histórica do evento", _COR_ALERTA,
+                        "Tempo de recuperação",
+                        f"{rec_m} meses" if rec_m is not None else "Em curso",
+                        "Mediana histórica do evento" if rec_m is not None
+                        else "Ainda não medido: o evento não terminou",
+                        _COR_ALERTA,
                     ), unsafe_allow_html=True)
 
                 # ── Comparação entre cenários ─────────────────────────────────
@@ -4788,7 +4803,10 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     customdata=list(zip(
                         [r["data_ref"] for r in ordenados],
                         [abs(float(r["perda_absoluta"])) for r in ordenados],
-                        [r["tempo_recuperacao_meses"] for r in ordenados],
+                        [(f'{r["tempo_recuperacao_meses"]} meses'
+                          if r["tempo_recuperacao_meses"] is not None
+                          else "evento em curso, não medida")
+                         for r in ordenados],
                         [r.get("descricao", "") for r in ordenados],
                     )),
                     hovertemplate=(
@@ -4796,7 +4814,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                         "Período: %{customdata[0]}<br>"
                         "Queda: %{x:.1f}%<br>"
                         "Perda: R$ %{customdata[1]:,.0f}<br>"
-                        "Recuperação: %{customdata[2]} meses<extra></extra>"
+                        "Recuperação: %{customdata[2]}<extra></extra>"
                     ),
                 ))
                 fig_stress.update_layout(
@@ -4814,6 +4832,23 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 st.plotly_chart(fig_stress, width="stretch",
                                 config={"displayModeBar": False},
                                 key="analise_stress_bar")
+
+                # Evento em curso: dizer na tela o que é provisório. O choque
+                # de uma classe que ninguém mediu é proxy, e o leitor precisa
+                # saber se a carteira dele passou por esse proxy.
+                for r in ordenados:
+                    if not r.get("em_curso"):
+                        continue
+                    _nm = r.get("choque_nao_medido") or {}
+                    _txt = (f"⏳ **{r['cenario']}** está em curso: choques "
+                            "observados até agora, sujeitos a revisão, e sem "
+                            "tempo de recuperação.")
+                    if _nm:
+                        _txt += (" Choque **não medido** (proxy de um evento "
+                                 "análogo) em: " + ", ".join(
+                                     f"{k} ({fmt_moeda(v)})" for k, v in _nm.items())
+                                 + ".")
+                    st.caption(_txt)
 
                 # ── Renda fixa por indexador e duration (INV-A3) ──────────────
                 por_idx = pior.get("por_indexador") or {}
@@ -4923,7 +4958,9 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                             "Valor pós-choque": st.column_config.NumberColumn(format="R$ %.0f"),
                             "Queda":  st.column_config.NumberColumn(format="-%.1f%%"),
                             "Perda":  st.column_config.NumberColumn(format="R$ %.0f"),
-                            "Recuperação": st.column_config.NumberColumn(format="%d meses"),
+                            "Recuperação": st.column_config.NumberColumn(
+                                format="%d meses",
+                                help="Vazio = evento em curso, recuperação não medida."),
                         },
                     )
 
@@ -4936,6 +4973,10 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                         "período, que costuma amortecer parte da queda.<br/>"
                         "- **Recuperação** é a mediana histórica de tempo até o "
                         "portfólio voltar ao valor pré-choque (Ibovespa como proxy).<br/>"
+                        "- Um evento **em curso** entra com o choque observado até "
+                        "agora e sem recuperação: ela ainda não aconteceu. A classe "
+                        "cujo choque ninguém mediu recebe o de um evento análogo, "
+                        "e a tela diz qual.<br/>"
                         "- É exercício de ordem de grandeza, não previsão: o modelo "
                         "aplica choque uniforme por classe e não modela correlações "
                         "de cauda entre ativos.",

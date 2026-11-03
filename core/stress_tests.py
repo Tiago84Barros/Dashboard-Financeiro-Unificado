@@ -14,6 +14,9 @@ observados nos eventos históricos:
   • Janeiro Vermelho 2015  — IBOV -13% (jan/15), USDBRL +12%, downgrade BR
   • COVID Crash 2020       — IBOV -29% (1 mês), USDBRL +25%, IFIX -22%
   • Crise CDS 2002         — IBOV -34% (1 ano), USDBRL +52%
+  • Choque Eleitoral 2026  — IBOV -18% (1 semana), USDBRL +9%, IFIX -9%
+                             (EM CURSO: sem tempo de recuperação; ver
+                             ``StressScenario.em_curso``)
 
 A modelagem é simplificada (choque uniforme por classe, não modela
 correlação cross-asset). Para análise rigorosa usar copulas
@@ -50,7 +53,9 @@ class StressScenario:
     shock_tesouro:    float  # Tesouro Selic (LFT) — menos exposto
     shock_fundo_rf:   float  # Fundos RF — exposição parcial via DI
     cambio_usd_brl:   float  # Variação USD/BRL (positivo = BRL desvaloriza)
-    tempo_recuperacao_meses: int
+    #: ``None`` = não medido. Só um evento encerrado e recuperado tem prazo de
+    #: recuperação; num evento em curso, qualquer número aqui seria inventado.
+    tempo_recuperacao_meses: int | None
     #: Índice de referência do choque de ações e o retorno observado nele.
     #: É o que torna o cenário *conferível*: sem o observado ao lado do
     #: parâmetro, "reproduzir um cenário histórico" não passa de declarar
@@ -58,6 +63,41 @@ class StressScenario:
     indice_referencia: str = "IBOVESPA"
     retorno_indice_observado: float | None = None
     fonte: str = ""
+    #: Evento sem janela fechada: o choque é o observado *até agora*, pode
+    #: piorar ou reverter, e a recuperação ainda não aconteceu. A tela tem de
+    #: dizer isso em vez de afirmar um prazo "histórico".
+    em_curso: bool = False
+    #: Atributos de choque que ninguém mediu no evento. O valor que está no
+    #: campo é um *proxy declarado* (emprestado de um análogo), não um dado; a
+    #: tela nomeia as classes que receberam esse choque.
+    choques_nao_medidos: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        for attr in self.choques_nao_medidos:
+            if attr not in ROTULO_CHOQUE:
+                raise ValueError(f"{self.nome}: choque desconhecido {attr!r}")
+        if "shock_stock_br" in self.choques_nao_medidos:
+            # É o choque conferido contra o índice de referência: declará-lo
+            # não medido e conferi-lo ao mesmo tempo seria contradição.
+            raise ValueError(f"{self.nome}: o choque de ações BR é o conferido")
+        if self.em_curso and self.tempo_recuperacao_meses is not None:
+            raise ValueError(f"{self.nome}: evento em curso não tem recuperação "
+                             "medida")
+        if not self.em_curso and self.tempo_recuperacao_meses is None:
+            raise ValueError(f"{self.nome}: evento encerrado precisa do prazo "
+                             "de recuperação")
+
+
+#: Nome legível de cada atributo de choque, para a tela dizer *qual* classe
+#: recebeu um choque não medido.
+ROTULO_CHOQUE: dict[str, str] = {
+    "shock_stock_br":   "Ações BR",
+    "shock_fii":        "FIIs",
+    "shock_etf_intl":   "Exterior (USD)",
+    "shock_renda_fixa": "Prefixado e IPCA+",
+    "shock_tesouro":    "Tesouro Selic",
+    "shock_fundo_rf":   "Fundos de renda fixa",
+}
 
 
 # Cenários calibrados em dados públicos
@@ -185,6 +225,29 @@ SCENARIOS: list[StressScenario] = [
         fonte="IBOV 2022 (B3) e S&P 500 2022; cenário deliberadamente "
               "assimétrico -- sem ele, os 11 diriam que crise é sempre "
               "bolsa brasileira caindo com dólar subindo",
+    ),
+    # ── Eventos em curso ────────────────────────────────────────────────
+    # Cadastrado em 03/11/2026, com a janela ainda aberta. Os números são do
+    # noticiário (fechamentos de 23/10 e 30/10/2026), não das séries do
+    # warehouse local -- recalibrar por elas e fechar a janela quando o evento
+    # acabar; só então ``em_curso`` sai e o prazo de recuperação entra.
+    StressScenario(
+        nome="Choque Eleitoral 2026",
+        descricao="Reeleição de Lula; risco fiscal; circuit breaker no 1º pregão",
+        data_ref="26/out/2026 – em curso",
+        shock_stock_br=-0.18, shock_fii=-0.09,
+        shock_etf_intl=-0.01, shock_renda_fixa=-0.11,
+        shock_tesouro=-0.01, shock_fundo_rf=-0.04,
+        cambio_usd_brl=+0.09, tempo_recuperacao_meses=None,
+        retorno_indice_observado=-0.18,
+        fonte="Noticiário, semana de 26-30/out/2026 sobre o fechamento de "
+              "23/out: IBOV -18,12% (-14% em 26/out, circuit breaker), "
+              "USDBRL +9,15% (R$ 5,446), IFIX -8,62%, S&P 500 -1,01% (LPL). "
+              "Renda fixa: Tesouro Prefixado 2032 (~5 anos de duration) de "
+              "12,89% para 15,50% em 26/out, cerca de -11% no preço. "
+              "Tesouro Selic e Fundo RF não medidos: proxy do COVID 2020",
+        em_curso=True,
+        choques_nao_medidos=("shock_tesouro", "shock_fundo_rf"),
     ),
 ]
 
@@ -355,13 +418,18 @@ def aplicar_stress(
       por_classe:       {classe: {pre, pos, perda_pct}}
       por_indexador:    {bucket de renda fixa: {pre, pos, perda_pct, duration_anos}}
       renda_fixa_sem_duration: tickers cujo choque não pôde ser escalado
-      tempo_recuperacao_meses: heurística histórica do cenário
+      tempo_recuperacao_meses: heurística histórica do cenário; ``None``
+                        quando o evento está em curso (não medido)
+      em_curso:         o evento ainda não terminou
+      choque_nao_medido: {rótulo do choque: valor pré-choque (R$)} das
+                        posições que receberam um choque proxy, não medido
     """
     total_pre = 0.0
     total_pos = 0.0
     por_classe: dict[str, dict] = {}
     por_idx: dict[str, dict] = {}
     sem_duration: list[str] = []
+    nao_medido: dict[str, float] = {}
 
     for pos in posicoes:
         classe = str(pos.get("classe") or "Outros")
@@ -380,6 +448,10 @@ def aplicar_stress(
             shock_efetivo = (1 + shock) * (1 + scenario.cambio_usd_brl) - 1
         else:
             shock_efetivo = shock
+
+        if exp["shock_attr"] in scenario.choques_nao_medidos:
+            rot = ROTULO_CHOQUE[exp["shock_attr"]]
+            nao_medido[rot] = nao_medido.get(rot, 0.0) + vm_br
 
         vm_pos = vm_br * (1 + shock_efetivo)
         total_pre += vm_br
@@ -427,11 +499,13 @@ def aplicar_stress(
                             for k, v in por_idx.items()},
         "renda_fixa_sem_duration": sorted(set(sem_duration)),
         "tempo_recuperacao_meses": scenario.tempo_recuperacao_meses,
+        "em_curso":        scenario.em_curso,
+        "choque_nao_medido": {k: round(v, 2) for k, v in nao_medido.items()},
     }
 
 
 def aplicar_todos_cenarios(posicoes: list[dict]) -> list[dict]:
-    """Roda os 11 cenários históricos e retorna lista de resultados."""
+    """Roda todos os cenários (históricos e em curso) e retorna os resultados."""
     return [aplicar_stress(posicoes, s) for s in SCENARIOS]
 
 
@@ -498,8 +572,12 @@ def cenarios_reproduzidos() -> int:
     o portão que só pode dar o mesmo resultado, aprovando por existir uma
     lista (``memoria: gate-que-so-dava-false``). Aqui só conta o cenário que
     passa por :func:`conferir_cenario`.
+
+    Evento em curso não conta: o critério é de cenários *históricos*, e um
+    choque cuja janela ainda está aberta não é reprodução de nada.
     """
-    return sum(1 for c in SCENARIOS if conferir_cenario(c)[0] is True)
+    return sum(1 for c in SCENARIOS
+               if not c.em_curso and conferir_cenario(c)[0] is True)
 
 
 def diagnostico_cenarios() -> dict:
@@ -510,7 +588,8 @@ def diagnostico_cenarios() -> dict:
         linhas.append({"cenario": c.nome, "data_ref": c.data_ref,
                        "indice": c.indice_referencia,
                        "observado": c.retorno_indice_observado,
-                       "fonte": c.fonte, "reproduz": ok, "motivo": motivo})
+                       "fonte": c.fonte, "reproduz": ok, "motivo": motivo,
+                       "em_curso": c.em_curso})
     return {
         "declarados": len(SCENARIOS),
         "reproduzidos": sum(1 for x in linhas if x["reproduz"] is True),
