@@ -92,7 +92,7 @@ class StressScenario:
 #: recebeu um choque não medido.
 ROTULO_CHOQUE: dict[str, str] = {
     "shock_stock_br":   "Ações BR",
-    "shock_fii":        "FIIs",
+    "shock_fii":        "Fundos imobiliários",
     "shock_etf_intl":   "Exterior (USD)",
     "shock_renda_fixa": "Prefixado e IPCA+",
     "shock_tesouro":    "Tesouro Selic",
