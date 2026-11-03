@@ -234,17 +234,21 @@ def test_menos_de_tres_pares_nao_forma_grupo():
 # -- comparação ----------------------------------------------------------------------
 
 def test_comparar_monta_a_tabela_e_nao_conclui():
-    alvo = _c("AAAA3", p_l=10.0, dividend_yield=6.0, roe=15.0)
-    universo = [_c("BBBB3", p_l=8.0, dividend_yield=4.0),
-                _c("CCCC3", p_l=12.0, dividend_yield=5.0),
-                _c("DDDD3", p_l=20.0, dividend_yield=4.5)]
+    alvo = _c("AAAA3", p_l=10.0, dy_mediano_5a=6.0, dividend_yield=30.0,
+              roe=15.0)
+    universo = [_c("BBBB3", p_l=8.0, dy_mediano_5a=4.0),
+                _c("CCCC3", p_l=12.0, dy_mediano_5a=5.0),
+                _c("DDDD3", p_l=20.0, dy_mediano_5a=4.5)]
     c = p.comparar(alvo, p.selecionar(alvo, universo))
     pl = c.linha("p_l")
     assert (pl.ativo, pl.metrica, pl.valor, pl.mediana_pares, pl.n_pares) == (
         "AAAA3", "P/L", 10.0, 12.0, 3)
     assert pl.posicao == v.ABAIXO and pl.texto_diferenca() == "−2,00x (−17%)"
     assert "Não indica, sozinho, investimento melhor ou pior" in pl.interpretacao
-    dy = c.linha("dividend_yield")
+    # ação compara o DY mediano de 5 anos, não o de 12 meses
+    assert c.linha("dividend_yield") is None
+    dy = c.linha("dy_mediano_5a")
+    assert dy.metrica == "DY mediano de 5 anos" and dy.valor == 6.0
     assert dy.texto_diferenca() == "+1,5 p.p."
     roe = c.linha("roe")
     assert roe.n_pares == 0 and roe.interpretacao == "Nenhum par com este dado."
@@ -299,6 +303,48 @@ def test_candidatos_b3_taxonomia_financeira_e_escala():
     assert itub.raiz == "ITUB" and itub.ano_ref == 2025
     wege = cand["WEGE3"]
     assert "p_l" not in wege.metricas and wege.porte == 1e11 and wege.risco == 25
+
+
+def test_dy_mediano_5a_ano_sem_provento_conta_zero():
+    # DIRR3-like: 2025 extraordinário; 2023 sem provento mas com P/VP
+    h = {"dividend_yield": [[2020, 6.0], [2021, 5.0], [2022, 7.0],
+                            [2024, 8.0], [2025, 34.0]],
+         "p_vp": [[2021, 1.0], [2022, 1.0], [2023, 1.0], [2024, 1.0],
+                  [2025, 1.0]]}
+    # janela 2021-2025: 5, 7, 0, 8, 34 → mediana 7 (a média seria 10,8)
+    assert fv.dy_mediano(h, 2025) == pytest.approx(7.0)
+    # empresa que pulou o provento em 3 de 5 anos: mediana 0
+    pulou = {"dividend_yield": [[2021, 9.0], [2025, 9.0]],
+             "p_vp": [[a, 1.0] for a in range(2021, 2026)]}
+    assert fv.dy_mediano(pulou, 2025) == pytest.approx(0.0)
+
+
+def test_dy_mediano_5a_sem_dado_vira_none():
+    # nenhum DY no histórico: "não paga" e "sem dado" não se separam
+    assert fv.dy_mediano({"p_l": [[2024, 10.0], [2025, 12.0]]}, 2025) is None
+    # ano sem nenhum dado fica fora; menos de 3 anos observados → None
+    assert fv.dy_mediano({"dividend_yield": [[2024, 4.0], [2025, 6.0]]},
+                       2025) is None
+    # último exercício velho demais (parou de publicar)
+    velho = {"dividend_yield": [[2019, 4.0], [2020, 5.0], [2021, 6.0]]}
+    assert fv.dy_mediano(velho, 2025) is None
+    # um ano de defasagem é aceito (exercício fiscal dos EUA)
+    assert fv.dy_mediano(velho, 2022) == pytest.approx(5.0)
+    assert fv.dy_mediano(None, 2025) is None
+
+
+def test_candidatos_b3_e_eua_levam_dy_mediano_e_pares_comparam_por_ele():
+    hist = {"historico": {"dividend_yield": [[2021, 4.0], [2022, 4.0],
+                                             [2023, 4.0], [2024, 4.0],
+                                             [2025, 4.0]]}}
+    cand = fv.candidatos_b3([{"Ticker": "WEGE3", "DY": 0.30}], {},
+                            {"WEGE3": hist})
+    assert cand["WEGE3"].metricas["dy_mediano_5a"] == pytest.approx(4.0)
+    assert cand["WEGE3"].metricas["dividend_yield"] == pytest.approx(30.0)
+    eua = fv.candidatos_eua({"KO": {"atual": {}, **hist}})
+    assert eua["KO"].metricas["dy_mediano_5a"] == pytest.approx(4.0)
+    chaves = [mt.chave for mt in p.METRICAS[f.ACAO]]
+    assert "dy_mediano_5a" in chaves and "dividend_yield" not in chaves
 
 
 def test_entradas_b3_exclusoes_e_historico():
