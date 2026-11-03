@@ -766,7 +766,9 @@ FLOW_INVESTIMENTOS = FlowSpec(
             "stress_ai", "Stress tests", "Análise",
             "Em Análise › 🌪️ Stress (Stress Tests Históricos), aplica à carteira de hoje os "
             "choques de crises passadas, calibrados em dados públicos da B3 e do BCB, para "
-            "estimar perda e tempo de recuperação.",
+            "estimar perda e tempo de recuperação. Um evento ainda em curso (hoje, o Choque "
+            "Eleitoral 2026) entra com o choque observado até agora, sem tempo de "
+            "recuperação e com as classes de choque não medido nomeadas na tela.",
             ("core/stress_tests.py", "aplicar_todos_cenarios()", "cenario_pior_caso()",
              "Perda percentual", "Perda em R$", "Tempo de recuperação"),
             "Responde a pergunta que importa no susto: quanto isso pode cair?",

@@ -689,7 +689,7 @@
             {
               "nome": "Cenário mais severo para esta carteira",
               "resumo": "A pior crise: queda, valor restante, recuperação",
-              "explicacao": "Uma frase dizendo quanto a carteira cairia na pior crise e em quanto tempo costuma se recuperar, seguida dos cartões Queda no pior cenário, Valor restante e Tempo de recuperação.",
+              "explicacao": "Uma frase dizendo quanto a carteira cairia na pior crise e em quanto tempo costuma se recuperar, seguida dos cartões Queda no pior cenário, Valor restante e Tempo de recuperação. Se a pior crise for um evento ainda em curso, a frase e o cartão dizem 'Em curso' no lugar do prazo, porque a recuperação ainda não foi medida.",
               "so_admin": false,
               "fonte": "views/investimentos.py:4237-4271",
               "filhos": []
@@ -697,7 +697,7 @@
             {
               "nome": "Queda estimada por crise",
               "resumo": "Barras comparando todas as crises",
-              "explicacao": "Gráfico com a queda estimada da carteira em cada crise histórica; passando o mouse aparecem o período, a perda em reais e o tempo de recuperação.",
+              "explicacao": "Gráfico com a queda estimada da carteira em cada crise histórica e no evento em curso (Choque Eleitoral 2026); passando o mouse aparecem o período, a perda em reais e o tempo de recuperação. Abaixo, uma nota avisa que o evento em curso é provisório e quais classes da carteira receberam um choque não medido.",
               "so_admin": false,
               "fonte": "views/investimentos.py:4277",
               "filhos": []
