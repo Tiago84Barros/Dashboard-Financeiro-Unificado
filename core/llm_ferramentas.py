@@ -7,7 +7,7 @@ fez depois das vezes em que o IPCA passou de 6%?" -- ficava sem resposta, ou
 pior, com número de memória. Com function calling a LLM pede a série e recebe
 o dado com fonte, janela e n, no mesmo formato do resto do contexto.
 
-Quatro ferramentas, todas lendo o que a produção alcança:
+Cinco ferramentas, todas lendo o que a produção alcança:
 
 ``serie_macro``
     Séries macro e de mercado mês a mês: o painel publicado da Memória de
@@ -25,6 +25,12 @@ Quatro ferramentas, todas lendo o que a produção alcança:
 ``meses_com_condicao``
     Os meses do painel em que uma condição macro valeu, agrupados em
     episódios, com o que veio depois e o contraponto de todos os meses.
+``proventos_ativo``
+    Proventos por ação ano a ano de até quatro ações ou FIIs da B3 (arquivo
+    publicado ``data/public/proventos_b3.json.gz``, com ``market.dividends``
+    de reserva) e o DY anual do histórico de valuation (B3 e EUA), com média
+    e mediana dos últimos cinco anos. Sem ela o chat dizia "não há histórico
+    de proventos" com o histórico no disco.
 
 O egress do Supabase estourou a cota: o SQL agrega para um
 ponto por mês antes de sair do banco, e cada resultado tem teto de caracteres.
@@ -54,10 +60,14 @@ REGRA_FERRAMENTAS = (
     "séries macro mês a mês desde 2010 (serie_macro), o preço mensal de qualquer "
     "ação ou FII da B3 e de ações americanas (preco_ativo), o fechamento de cada "
     "pregão recente da B3 (preco_diario_recente: use para 'o que houve nos "
-    "últimos dias', a queda de um pregão, o preço de ontem) e os meses do "
+    "últimos dias', a queda de um pregão, o preço de ontem), os meses do "
     "histórico em que uma condição macro valeu, com o que veio depois "
-    "(meses_com_condicao). Quando a resposta precisar de um número que o "
-    "contexto não traz — a trajetória ou a maior queda de um ativo, a comparação "
+    "(meses_com_condicao), e os proventos por ação ano a ano, com o DY de "
+    "cada ano e a média e a mediana de cinco anos (proventos_ativo: use para "
+    "dividendo médio, histórico de pagamento e se o provento atual foge do "
+    "padrão). Quando a resposta precisar de um número que o "
+    "contexto não traz — a trajetória ou a maior queda de um ativo, os "
+    "proventos de outros anos, a comparação "
     "entre ativos, o que aconteceu depois que um cenário se repetiu — CHAME a "
     "ferramenta antes de responder, em vez de dizer que o dado falta ou de "
     "estimar de memória. Não chame para o que o contexto já traz. O resultado "
@@ -89,6 +99,23 @@ def _engine():
     from core.database import get_engine
 
     return get_engine()
+
+
+def _renda_anual(tickers: list[str]):
+    """``ticker, ano, total`` (proventos por ação, ano de pagamento)."""
+    from core.proventos_b3 import renda_anual
+
+    return renda_anual(tickers)
+
+
+def _arquivo_valuation() -> dict:
+    from core.inteligencia_ativos import fontes_valuation
+
+    return fontes_valuation.arquivo() or {}
+
+
+def _hoje() -> date:
+    return date.today()
 
 
 def _painel() -> tuple[list[dict] | None, str]:
@@ -702,6 +729,163 @@ def meses_com_condicao(condicoes=None) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# proventos_ativo
+# ─────────────────────────────────────────────────────────────────────────────
+
+ANOS_PADRAO_PROVENTOS = 10
+#: A mesma janela do card de pares da Inteligência dos Ativos.
+JANELA_PROVENTOS = 5
+
+
+def _media_mediana(valores: Sequence[float]) -> tuple[float, float] | None:
+    import statistics
+
+    vals = list(valores)
+    return (sum(vals) / len(vals), statistics.median(vals)) if vals else None
+
+
+def _pp(v: float) -> str:
+    return f"{_br(v, 1)}%"
+
+
+#: Como cada mercado do histórico de valuation mede o DY do ano.
+METODO_DY = {
+    "b3": ("proventos com data-ex no ano ÷ fechamento do último pregão do ano; "
+           "histórico de valuation, B3"),
+    "fii": ("DY de 12 meses no último mês com dado de cada ano, rendimentos com "
+            "data-ex nos 12 meses ÷ fechamento; histórico de valuation, FII"),
+    "eua": ("dividendos pagos no exercício fiscal ÷ valor de mercado no fim "
+            "dele; histórico de valuation, SEC/EDGAR"),
+}
+
+
+def linha_dy(historico_dy: Mapping | None, ano_mercado_dy: int | None,
+             mercado: str = "b3") -> str:
+    """O DY anual de cinco anos, com a regra do card de pares. Puro.
+
+    Na série mensal do FII o último mês de cada ano fica com o ano."""
+    from core.inteligencia_ativos import fontes_valuation as fv
+
+    janela = fv.dy_janela(historico_dy, ano_mercado_dy)
+    if not janela:
+        return ("DY anual de cinco anos: sem dado no histórico de valuation "
+                "para este código (menos de 3 anos, série parada ou nenhum "
+                "provento registrado).")
+    media, mediana = _media_mediana([v for _, v in janela])
+    return (f"DY anual ({METODO_DY.get(mercado, METODO_DY['b3'])}): "
+            + "; ".join(f"{a} {_pp(v)}" for a, v in janela)
+            + f". Média {_pp(media)}, mediana {_pp(mediana)}; ano com dado de "
+            "preço e sem provento entra como 0%. O critério de ano do DY pode "
+            "diferir da soma por pagamento.")
+
+
+def texto_proventos(ticker: str, por_ano: Mapping[int, float], fonte: str,
+                    hoje: date, *, anos: int = ANOS_PADRAO_PROVENTOS,
+                    historico_dy: Mapping | None = None,
+                    ano_mercado_dy: int | None = None,
+                    mercado: str = "b3") -> str:
+    """Proventos por ação ano a ano, média e mediana dos anos fechados, e o
+    DY anual do histórico de valuation. Puro."""
+    linhas = [f"{ticker} — proventos de renda por ação ou cota (dividendos, JCP "
+              "e rendimentos), "
+              f"soma por ano de PAGAMENTO; fonte: {fonte}."]
+    pagos = {int(a): float(v) for a, v in (por_ano or {}).items() if v is not None}
+    fechados = {a: v for a, v in pagos.items() if a < hoje.year}
+    if not pagos:
+        linhas.append("Sem provento por ação na fonte para este código: a fonte "
+                      "não separa 'não paga' de 'sem dado'; diga isso.")
+    else:
+        primeiro = min(pagos)
+        # Ano fechado sem pagamento, depois do primeiro provento, conta 0:
+        # a fonte é a lista completa de eventos do ticker.
+        serie = [(a, fechados.get(a, 0.0))
+                 for a in range(max(primeiro, hoje.year - anos), hoje.year)]
+        if serie:
+            linhas.append("Anos fechados: " + "; ".join(
+                f"{a} R$ {_br(v)}" for a, v in serie) + ".")
+            janela = serie[-JANELA_PROVENTOS:]
+            mm = _media_mediana([v for _, v in janela])
+            if mm:
+                linhas.append(
+                    f"Últimos {len(janela)} anos fechados ({janela[0][0]}–"
+                    f"{janela[-1][0]}): média R$ {_br(mm[0])}, mediana "
+                    f"R$ {_br(mm[1])} por ação ou cota. Ano sem pagamento entra como "
+                    "R$ 0. A mediana ignora um ano de provento extraordinário; "
+                    "a média não.")
+        if hoje.year in pagos:
+            linhas.append(f"{hoje.year} (ano em curso, parcial até "
+                          f"{hoje:%d/%m/%Y}): R$ {_br(pagos[hoje.year])}.")
+        futuros = [(a, v) for a, v in sorted(pagos.items()) if a > hoje.year]
+        if futuros:
+            linhas.append("Declarado e ainda não pago: " + "; ".join(
+                f"{a} R$ {_br(v)}" for a, v in futuros) + ".")
+        linhas.append("Valor por ação como a fonte informa; desdobramento ou "
+                      "grupamento no período muda a escala entre anos.")
+    linhas.append(linha_dy(historico_dy, ano_mercado_dy, mercado))
+    return "\n".join(linhas)
+
+
+def proventos_ativo(tickers=None, anos=ANOS_PADRAO_PROVENTOS) -> str:
+    if isinstance(tickers, str):
+        tickers = [t for t in tickers.replace(";", ",").split(",")]
+    pedidos = list(dict.fromkeys(t for t in map(_normalizar_ticker, tickers or ()) if t))
+    if not pedidos:
+        return "Nenhum ticker informado: passe de 1 a 4 tickers (ex.: ['ITUB4', 'HGLG11'])."
+    excedentes = pedidos[MAX_TICKERS:]
+    pedidos = pedidos[:MAX_TICKERS]
+    anos = _anos_arg(anos, ANOS_PADRAO_PROVENTOS)
+    hoje = _hoje()
+    from core.inteligencia_ativos import fontes_valuation as fv
+
+    try:
+        art = _arquivo_valuation()
+    except Exception as exc:  # noqa: BLE001 - ausência declarada
+        logger.warning("histórico de valuation ilegível", exc_info=True)
+        art, erro_art = {}, _limpo(exc)
+    else:
+        erro_art = None
+    mercados = {m: art.get(m) or {} for m in ("b3", "fii", "eua")}
+    ano_mercado = {m: fv.ultimo_ano_dy(v) for m, v in mercados.items()}
+    b3 = [tk for tk in pedidos if tk not in mercados["eua"]]
+    por_ticker: dict[str, dict[int, float]] = {}
+    fonte, falha = "", None
+    if b3:
+        try:
+            frame = _renda_anual(b3)
+            fonte = frame.attrs.get("fonte") or "proventos publicados"
+            fotos = frame.attrs.get("foto_em") or {}
+            falha = frame.attrs.get("load_error")
+            for r in frame.itertuples():
+                por_ticker.setdefault(str(r.ticker).upper(), {})[int(r.ano)] = \
+                    float(r.total)
+        except Exception as exc:  # noqa: BLE001 - ausência declarada
+            falha, fotos = _limpo(exc), {}
+    blocos = []
+    for tk in pedidos:
+        mercado = next((m for m in ("eua", "fii") if tk in mercados[m]), "b3")
+        hist = (mercados[mercado].get(tk) or {}).get("historico")
+        if mercado == "eua":
+            blocos.append(f"{tk} — proventos por ação: só há para a B3.\n"
+                          + linha_dy(hist, ano_mercado["eua"], "eua"))
+            continue
+        foto = fotos.get(tk)
+        rotulo = fonte + (f", resposta de {foto}" if foto else "")
+        blocos.append(texto_proventos(tk, por_ticker.get(tk, {}), rotulo, hoje,
+                                      anos=anos, historico_dy=hist,
+                                      ano_mercado_dy=ano_mercado[mercado],
+                                      mercado=mercado))
+    if falha:
+        blocos.append(f"Falha na leitura de proventos: {falha}.")
+    if erro_art:
+        blocos.append(f"Histórico de valuation ilegível ({erro_art}): sem DY anual.")
+    if excedentes:
+        blocos.append(f"Não consultados (teto de {MAX_TICKERS} por chamada): "
+                      f"{', '.join(excedentes)}.")
+    blocos.append("Provento passado não é promessa de provento futuro.")
+    return "\n\n".join(blocos)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Registro e execução
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -767,6 +951,22 @@ FERRAMENTAS_MERCADO: tuple[Ferramenta, ...] = (
                            "required": ["campo", "operador", "valor"]}}},
          "required": ["condicoes"]},
         meses_com_condicao,
+    ),
+    Ferramenta(
+        "proventos_ativo",
+        "Proventos por ação ano a ano (dividendos e JCP, por ano de pagamento) de "
+        "1 a 4 ações ou FIIs da B3, com média e mediana dos últimos 5 anos "
+        "fechados, o ano em curso e o declarado a pagar; e o DY anual de 5 anos "
+        "do histórico de valuation (também para ações americanas). Use para "
+        "dividendo médio, regularidade do pagamento e provento fora do padrão.",
+        {"type": "object",
+         "properties": {
+             "tickers": {"type": "array", "items": {"type": "string"},
+                         "description": f"De 1 a {MAX_TICKERS} códigos."},
+             "anos": {"type": "integer", "description": "Anos fechados listados "
+                      f"(1 a {MAX_ANOS}); padrão {ANOS_PADRAO_PROVENTOS}."}},
+         "required": ["tickers"]},
+        proventos_ativo,
     ),
 )
 

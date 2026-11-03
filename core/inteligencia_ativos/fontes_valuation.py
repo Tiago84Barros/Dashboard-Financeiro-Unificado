@@ -140,6 +140,26 @@ def ultimo_ano_dy(art_mercado: dict) -> int | None:
     return max(anos) if anos else None
 
 
+def dy_janela(historico: dict | None, ano_mercado: int | None, *,
+              anos: int = ANOS_DY_MEDIANO,
+              minimo: int = MIN_ANOS_DY_MEDIANO
+              ) -> tuple[tuple[int, float], ...] | None:
+    """(ano, DY %) dos ``anos`` exercícios até o último do próprio ativo, com
+    a regra de :func:`dy_mediano`. Puro."""
+    historico = historico or {}
+    dy = _anos_serie(historico, "dividend_yield")
+    if not dy:
+        return None
+    observados = (set(dy) | set(_anos_serie(historico, "p_l"))
+                  | set(_anos_serie(historico, "p_vp")))
+    fim = max(observados)
+    if ano_mercado is not None and fim < ano_mercado - 1:
+        return None
+    janela = tuple((a, dy.get(a, 0.0)) for a in range(fim - anos + 1, fim + 1)
+                   if a in observados)
+    return janela if len(janela) >= minimo else None
+
+
 def dy_mediano(historico: dict | None, ano_mercado: int | None, *,
                anos: int = ANOS_DY_MEDIANO,
                minimo: int = MIN_ANOS_DY_MEDIANO) -> float | None:
@@ -154,20 +174,8 @@ def dy_mediano(historico: dict | None, ano_mercado: int | None, *,
     observados na janela ou com o último exercício mais de um ano atrás do
     mercado (ativo que parou de publicar).
     """
-    historico = historico or {}
-    dy = _anos_serie(historico, "dividend_yield")
-    if not dy:
-        return None
-    observados = (set(dy) | set(_anos_serie(historico, "p_l"))
-                  | set(_anos_serie(historico, "p_vp")))
-    fim = max(observados)
-    if ano_mercado is not None and fim < ano_mercado - 1:
-        return None
-    valores = [dy.get(a, 0.0) for a in range(fim - anos + 1, fim + 1)
-               if a in observados]
-    if len(valores) < minimo:
-        return None
-    return statistics.median(valores)
+    janela = dy_janela(historico, ano_mercado, anos=anos, minimo=minimo)
+    return None if janela is None else statistics.median(v for _, v in janela)
 
 
 def premissa_dy_mediano(ano_mercado: int | None) -> str:

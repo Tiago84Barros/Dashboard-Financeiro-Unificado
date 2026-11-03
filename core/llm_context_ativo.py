@@ -208,6 +208,15 @@ def build_b3_ativo_context(
     except Exception:
         logger.exception("pares de %s indisponíveis", tk)
     try:
+        # Proventos ano a ano e DY de cinco anos: sem o bloco, o chat dizia
+        # "não há histórico de proventos" com a série no arquivo publicado.
+        from core.llm_ferramentas import proventos_ativo
+
+        blocos.append("\nPROVENTOS DO ATIVO (mesmo dado da ferramenta "
+                      "proventos_ativo):\n" + proventos_ativo([tk]))
+    except Exception:
+        logger.exception("proventos de %s indisponíveis", tk)
+    try:
         detalhe = get_warehouse_detail_context([tk])
         if detalhe:
             blocos.append("\n" + detalhe)
@@ -306,6 +315,13 @@ def build_us_ativo_context(
             blocos.append("\n" + pares_txt)
     except Exception:
         logger.exception("pares de %s indisponíveis", sym)
+    try:
+        from core.llm_ferramentas import proventos_ativo
+
+        blocos.append("\nDIVIDENDOS DO ATIVO (mesmo dado da ferramenta "
+                      "proventos_ativo):\n" + proventos_ativo([sym]))
+    except Exception:
+        logger.exception("dividendos de %s indisponíveis", sym)
     try:
         import core.us_data as us
         dossie = us.dossie(sym)
