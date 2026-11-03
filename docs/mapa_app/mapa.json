@@ -3392,7 +3392,7 @@
             {
               "nome": "Correção de lacunas por assistente de IA",
               "resumo": "Propõe correção para um problema por vez",
-              "explicacao": "Um assistente de IA lê a fila da aba Configurações → Restrições, escolhe o problema mais importante e trata um por vez, parando se já houver 3 propostas abertas. Roda de dois jeitos: no computador do dono, às 06:00, quando ele está ligado, e só propõe — o dono aprova; e numa tarefa agendada na nuvem do Claude Code, criada em 01/11/2026, que recebe a fila cifrada de uma automação do GitHub e aplica a correção sozinha quando todos os testes passam. Desde 02/11/2026 a tarefa na nuvem e o agendamento da automação estão pausados: falta dar à tarefa acesso de escrita ao repositório e gravar a chave da fila. Correção que depende de rodar carga de dados continua esperando o dono.",
+              "explicacao": "Um assistente de IA lê a fila da aba Configurações → Restrições, escolhe o problema mais importante e trata um por vez, parando se já houver 3 propostas abertas. Roda de dois jeitos: no computador do dono, às 06:00, quando ele está ligado, e só propõe — o dono aprova; e numa tarefa agendada na nuvem do Claude Code, criada em 01/11/2026, que recebe a fila cifrada de uma automação do GitHub e aplica a correção sozinha quando todos os testes passam. Pausada de 02/11 a 03/11/2026 por falta de acesso de escrita e da chave da fila; religada em 03/11, com a tarefa recriada com o repositório anexado e a chave gravada nos dois lados. Correção que depende de rodar carga de dados continua esperando o dono.",
               "so_admin": false
             }
           ]
