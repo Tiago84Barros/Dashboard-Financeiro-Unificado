@@ -1705,7 +1705,7 @@
             {
               "nome": "Converse sobre (código da empresa)",
               "resumo": "Chat com inteligência artificial sobre a empresa",
-              "explicacao": "Chat em que você pergunta sobre resultados, dívidas, concorrentes ou riscos e recebe respostas baseadas só no que o app sabe da empresa, que avisam quando falta informação. Há perguntas prontas em botões e o botão \"Limpar chat\" para recomeçar. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês.",
+              "explicacao": "Chat em que você pergunta sobre resultados, dívidas, concorrentes ou riscos e recebe respostas baseadas só no que o app sabe da empresa, que avisam quando falta informação. Há perguntas prontas em botões e o botão \"Limpar chat\" para recomeçar. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês. Recebe ainda os proventos por ação de cada ano, o do ano em curso e o já anunciado, e o dividend yield dos últimos cinco anos com a média e a mediana, para responder sobre dividendo médio e pagamento fora do padrão.",
               "so_admin": false
             }
           ]

@@ -412,6 +412,7 @@ def ler_etf(posicao: dict) -> dict[str, Dado]:
 
 FONTE_B3_DEMO = "Demonstrações anuais B3 (market.income_statements, balance_sheets, cash_flow_statements)"
 FONTE_B3_MET = "Métricas calculadas B3 (market.calculated_metrics, 12 meses)"
+FONTE_B3_PROVENTOS = "Proventos B3 publicados (brapi, resposta mais nova)"
 FONTE_B3_BRAPI = ("brapi financialData e demonstrativo anual "
                   "(data/public/valuation_historico)")
 # Nota do indicador sem valor quando o EBITDA é negativo: a avaliação a
@@ -456,14 +457,39 @@ def _divergencia_brapi(dle: float | None, ebitda: float | None,
             "indicador fica retido até a conferência")
 
 
+def _proventos_ultimo_ano(proventos: dict | None, hoje,
+                          fonte: str) -> Dado | None:
+    """Soma por ação do último ano civil fechado. ``proventos``: {ano: total}
+    da lista completa de eventos do ticker; ano fechado ausente depois do
+    primeiro provento é ano sem pagamento (R$ 0)."""
+    if not proventos:
+        return None
+    pagos = {int(a): float(v) for a, v in proventos.items() if v is not None}
+    ano = hoje.year - 1
+    if not pagos or min(pagos) > ano:
+        return None
+    return Dado(pagos.get(ano, 0.0), fonte, f"pagos em {ano}",
+                "soma por ação dos proventos de renda (dividendos e JCP) com "
+                "pagamento no último ano civil fechado; o ano em curso fica de "
+                "fora por estar pela metade")
+
+
 def dados_acao_b3(demonstracoes, multiplos,
-                  alavancagem: dict | None = None) -> dict[str, Dado]:
+                  alavancagem: dict | None = None,
+                  proventos: dict | None = None, hoje=None,
+                  fonte_proventos: str = FONTE_B3_PROVENTOS) -> dict[str, Dado]:
     """``demonstracoes``: DataFrame anual de ``load_demonstracoes`` (colunas
     PT, ``Data`` = 31/12). ``multiplos``: Series de ``load_multiplos``.
     ``alavancagem``: o item do ticker no arquivo de valuation (chaves
     ``divida_liquida_ebitda``, ``cobertura_juros``...), só preenche o que a
-    base contábil não tem."""
+    base contábil não tem. ``proventos``: {ano de pagamento: soma por ação}
+    de ``core.proventos_b3.renda_anual``."""
     saida: dict[str, Dado] = {}
+    from datetime import date as _date
+    prov = _proventos_ultimo_ano(proventos, hoje or _date.today(),
+                                 fonte_proventos)
+    if prov is not None:
+        saida["dividendos_12m"] = prov
     if demonstracoes is not None and not getattr(demonstracoes, "empty", True):
         df = demonstracoes.sort_values("Data")
         ult = df.iloc[-1]
@@ -570,10 +596,20 @@ def dados_acao_b3(demonstracoes, multiplos,
 def ler_acao_b3(ticker: str) -> dict[str, Dado]:
     from core import market_read
     from core.inteligencia_ativos import fontes_valuation
-    alav = ((fontes_valuation.arquivo().get("b3") or {})
-            .get(str(ticker or "").upper()))
+    tk = str(ticker or "").upper()
+    alav = (fontes_valuation.arquivo().get("b3") or {}).get(tk)
+    proventos, fonte = None, FONTE_B3_PROVENTOS
+    try:
+        from core.proventos_b3 import renda_anual
+        frame = renda_anual([tk])
+        if not frame.attrs.get("load_error"):
+            proventos = {int(r.ano): float(r.total) for r in frame.itertuples()}
+            fonte = frame.attrs.get("fonte") or fonte
+    except Exception:  # noqa: BLE001 - sem proventos o campo fica sem dado
+        logger.warning("proventos de %s ilegíveis", tk, exc_info=True)
     return dados_acao_b3(market_read.load_demonstracoes(ticker),
-                         market_read.load_multiplos(ticker), alav)
+                         market_read.load_multiplos(ticker), alav,
+                         proventos, fonte_proventos=fonte)
 
 
 # -- ações EUA ----------------------------------------------------------------------
