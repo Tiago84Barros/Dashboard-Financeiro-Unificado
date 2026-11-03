@@ -26,6 +26,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+import statistics
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -112,14 +113,15 @@ def _raiz_b3(ticker: str) -> str:
     return str(ticker or "").upper()[:4]
 
 
-# -- DY médio de 5 anos (pares de ações) ---------------------------------------------
+# -- DY mediano de 5 anos (pares de ações) -------------------------------------------
 
 # O DY de 12 meses de um ano com provento extraordinário (DIRR3 em 2025: 34%)
 # põe a ação "acima da mediana" por um pagamento que não se repete. Nos
-# pares de ações entra a média simples dos últimos cinco exercícios do
-# histórico publicado. Convenção do sistema, não calibrada.
-ANOS_DY_MEDIO = 5
-MIN_ANOS_DY_MEDIO = 3
+# pares de ações entra a MEDIANA dos últimos cinco exercícios do histórico
+# publicado: a média ainda deixava o ano fora do padrão pesar 1/5 (DIRR3:
+# média 11,4%, mediana 7,5%). Convenção do sistema, não calibrada.
+ANOS_DY_MEDIANO = 5
+MIN_ANOS_DY_MEDIANO = 3
 
 
 def _anos_serie(historico: dict, chave: str) -> dict[int, float]:
@@ -138,10 +140,10 @@ def ultimo_ano_dy(art_mercado: dict) -> int | None:
     return max(anos) if anos else None
 
 
-def dy_medio(historico: dict | None, ano_mercado: int | None, *,
-             anos: int = ANOS_DY_MEDIO,
-             minimo: int = MIN_ANOS_DY_MEDIO) -> float | None:
-    """Média simples do DY anual (%) nos ``anos`` exercícios até o último do
+def dy_mediano(historico: dict | None, ano_mercado: int | None, *,
+               anos: int = ANOS_DY_MEDIANO,
+               minimo: int = MIN_ANOS_DY_MEDIANO) -> float | None:
+    """Mediana do DY anual (%) nos ``anos`` exercícios até o último do
     próprio ativo. Puro.
 
     O histórico só grava ano com provento: ano observado (com P/L ou P/VP)
@@ -165,17 +167,17 @@ def dy_medio(historico: dict | None, ano_mercado: int | None, *,
                if a in observados]
     if len(valores) < minimo:
         return None
-    return sum(valores) / len(valores)
+    return statistics.median(valores)
 
 
-def premissa_dy_medio(ano_mercado: int | None) -> str:
+def premissa_dy_mediano(ano_mercado: int | None) -> str:
     janela = (f" (até {ano_mercado})" if ano_mercado is not None else "")
-    return (f"DY médio de {ANOS_DY_MEDIO} anos (comparação com pares): média "
-            f"simples do DY anual dos últimos {ANOS_DY_MEDIO} exercícios do "
+    return (f"DY mediano de {ANOS_DY_MEDIANO} anos (comparação com pares): "
+            f"mediana do DY anual dos últimos {ANOS_DY_MEDIANO} exercícios do "
             f"próprio ativo{janela}; ano sem provento conta como 0%; exige "
-            f"{MIN_ANOS_DY_MEDIO} anos com dado. Suaviza provento "
-            "extraordinário, mas não o elimina: um ano fora do padrão ainda "
-            "pesa 1/5 da média.")
+            f"{MIN_ANOS_DY_MEDIANO} anos com dado. Um ano de provento "
+            "extraordinário não move a mediana; dois anos altos em cinco, "
+            "sim.")
 
 
 # -- arquivo publicado ---------------------------------------------------------------
@@ -237,7 +239,7 @@ def candidatos_b3(multiplos: list[dict], setores: dict[str, dict],
         metricas = {
             "p_l": _positivo(m.get("P/L")), "p_vp": _positivo(m.get("P/VP")),
             "dividend_yield": _pct(m.get("DY")),
-            "dy_medio_5a": dy_medio(a.get("historico"), ano_mercado),
+            "dy_mediano_5a": dy_mediano(a.get("historico"), ano_mercado),
             "ev_ebit": None if financeira else _positivo(m.get("EV_EBIT")),
             "roe": _pct(m.get("ROE")),
             "margem_liquida": _pct(m.get("Margem_Liquida")),
@@ -413,7 +415,7 @@ def candidatos_eua(art_eua: dict) -> dict[str, p.Candidato]:
         metricas = {
             "p_l": _positivo(atual.get("p_l")), "p_vp": _positivo(atual.get("p_vp")),
             "dividend_yield": _num(atual.get("dividend_yield")),
-            "dy_medio_5a": dy_medio(a.get("historico"), ano_mercado),
+            "dy_mediano_5a": dy_mediano(a.get("historico"), ano_mercado),
             "ev_ebit": None if financeira else _positivo(atual.get("ev_ebit")),
             "roe": _num(atual.get("roe")),
             "margem_liquida": _num(atual.get("margem_liquida")),
@@ -580,7 +582,7 @@ def ler_sem_cache(ticker: str, nome: str, classe: str, moeda: str):
                        (f"Valor atual: {FONTE_MULTIPLOS_B3} (múltiplos do "
                         "último exercício publicado a preço recente); o "
                         "histórico usa o fechamento de cada fim de ano.",
-                        premissa_dy_medio(ultimo_ano_dy(art.get("b3") or {})))
+                        premissa_dy_mediano(ultimo_ano_dy(art.get("b3") or {})))
                        + _premissas_arquivo(art, "b3"))
     if tipo == ACAO:
         art = arquivo()
@@ -590,7 +592,7 @@ def ler_sem_cache(ticker: str, nome: str, classe: str, moeda: str):
                        list(universo.values()),
                        (f"Valor atual: {FONTE_EUA}; último exercício fiscal "
                         "a preço do retrato.",
-                        premissa_dy_medio(ultimo_ano_dy(eua)))
+                        premissa_dy_mediano(ultimo_ano_dy(eua)))
                        + _premissas_arquivo(art, "eua"),
                        "Ação fora do universo americano coberto (só ações, "
                        "sem REIT).")
