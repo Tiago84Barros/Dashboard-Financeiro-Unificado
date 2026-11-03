@@ -855,18 +855,26 @@ def _load_corr_precos(
 
 
 def _build_corr_data(posicoes: list) -> dict:
+    from core.tesouro_curva import chave_da_curva
+
     symbol_map = []
     pesos = {}
     seen = set()
     skipped = []
     tesouro = []
+    ticker_da_tela = {}
     for pos in sorted(posicoes, key=lambda p: float(p.get("valor_mercado") or 0), reverse=True):
         tk = str(pos.get("ticker") or "").upper().strip()
         if tk and _eh_tesouro(pos):
-            if tk not in seen:
-                tesouro.append(tk)
-                pesos[tk] = float(pos.get("valor_mercado") or 0.0)
-                seen.add(tk)
+            # A curva é chaveada pelo título: a foto chama o cupom pelo ticker
+            # do principal (TIPCA2032 para TIPCAJ2032). Sem a chave da curva a
+            # matriz pedia o PU de outro título, de outra história.
+            chave = chave_da_curva(tk, pos.get("nome"))
+            if chave not in seen:
+                tesouro.append(chave)
+                ticker_da_tela[chave] = tk
+                pesos[chave] = float(pos.get("valor_mercado") or 0.0)
+                seen.add(chave)
             continue
         sym = _yf_symbol_for_pos(pos)
         if sym:
@@ -883,10 +891,14 @@ def _build_corr_data(posicoes: list) -> dict:
     data = _load_corr_precos(tuple(symbol_map[:28]), tesouro=tuple(tesouro))
     # Título pedido que não chegou à matriz continua declarado, com o motivo:
     # PU ausente na curva ou menos meses que o mínimo exigido.
+    # Quem lê o aviso conhece o título pelo ticker da tela; quando a curva o
+    # guarda sob outra chave, ela vai junto para a ausência poder ser conferida.
     na_matriz = set(data.get("corr", pd.DataFrame()).columns)
+    motivo = f"PU do Tesouro sem {MIN_CORR_MONTHS} meses de histórico"
     skipped.extend(
-        f"{tk} (PU do Tesouro sem {MIN_CORR_MONTHS} meses de histórico)"
-        for tk in tesouro if tk not in na_matriz
+        f"{ticker_da_tela[ch]} ({ch} na curva: {motivo})"
+        if ticker_da_tela[ch] != ch else f"{ch} ({motivo})"
+        for ch in tesouro if ch not in na_matriz
     )
     data["skipped"] = skipped
     data["requested"] = [tk for tk, _, _ in symbol_map[:28]] + tesouro
