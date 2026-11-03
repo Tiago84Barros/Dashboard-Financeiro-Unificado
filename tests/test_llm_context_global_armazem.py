@@ -123,7 +123,7 @@ def test_proventos_em_lotes_do_teto_da_ferramenta(monkeypatch):
         lambda simbolos, anos: lotes.append(list(simbolos)) or "ok"))
     simbolos = [f"AAAA{i}" for i in range(MAX_TICKERS + 1)]
     mod._bloco_proventos(simbolos)
-    assert [len(l) for l in lotes] == [MAX_TICKERS, 1]
+    assert [len(lote) for lote in lotes] == [MAX_TICKERS, 1]
 
 
 def test_falha_dos_proventos_nao_apaga_o_armazem(monkeypatch):
