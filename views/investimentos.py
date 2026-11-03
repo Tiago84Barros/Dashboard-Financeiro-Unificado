@@ -172,6 +172,24 @@ def _f_big(v) -> str:
 def _f_chip(label: str, color: str = "blue") -> str:
     return f'<span class="f-chip f-chip-{color}">{_html.escape(label)}</span>'
 
+def _dy_sobre_custo(dy, preco, preco_medio):
+    """DY sobre o custo: o mesmo dividendo por ação dos últimos 12 meses do DY,
+    dividido pelo preço médio em vez da cotação.
+
+    DY = DPA_12m / cotação  →  DPA_12m = DY × cotação  →  DY s/ custo = DY × cotação / PM.
+    Mesmo numerador, só troca o denominador — por isso dá para comparar lado a
+    lado com o DY. Não é a renda que o investidor de fato recebeu: quem comprou
+    há três meses não recebeu 12 meses de proventos.
+    """
+    try:
+        dy, preco, preco_medio = float(dy), float(preco), float(preco_medio)
+    except (TypeError, ValueError):
+        return None
+    if dy <= 0 or preco <= 0 or preco_medio <= 0:
+        return None
+    return dy * preco / preco_medio
+
+
 def _f_row(key: str, val: str, cls: str = "fund-val") -> str:
     return (f'<div class="fund-row"><span class="fund-key">{_html.escape(key)}</span>'
             f'<span class="{cls}">{val}</span></div>')
@@ -3633,6 +3651,9 @@ def _stock_card_html(pos: dict, fd: dict, price_info: dict,
     rows += R("Custo investido", _f_brs(custo, 0))
     if pm:
         rows += R("Preço médio", _f_brs(pm))
+    dy_custo = _dy_sobre_custo(dy, preco, pm)
+    if dy_custo is not None:
+        rows += R("DY sobre o custo", f"{dy_custo:.2f}%")
 
     rows += S("Valuation")
     if pl:
@@ -3780,6 +3801,10 @@ def _fii_card_html(pos: dict, fd: dict, price_info: dict,
     rows += R("Peso na carteira", f"{peso:.1f}%")
     rows += R("Custo investido", _f_brs(custo, 0))
     rows += R("Cotas", _f_br(qty, 0))
+    pm_fii = float(pos.get("preco_medio") or 0) or (custo / qty if qty > 0 else 0)
+    dy_custo = _dy_sobre_custo(dy_f, preco, pm_fii)
+    if dy_custo is not None:
+        rows += R("DY sobre o custo", f"{dy_custo:.2f}%")
 
     rows += S("Indicadores")
     if pvp:
