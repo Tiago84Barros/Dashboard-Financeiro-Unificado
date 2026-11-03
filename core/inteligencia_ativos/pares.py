@@ -80,7 +80,9 @@ METRICAS: dict[str, tuple[Metrica, ...]] = {
     ACAO: (
         Metrica("p_l", "P/L", X),
         Metrica("p_vp", "P/VP", X),
-        Metrica("dividend_yield", "Dividend yield", PCT),
+        # média de 5 exercícios, não o DY de 12 meses: provento
+        # extraordinário de um ano não descreve o padrão de distribuição
+        Metrica("dy_medio_5a", "DY médio de 5 anos", PCT),
         Metrica("ev_ebit", "EV/EBIT", X),
         Metrica("roe", "ROE", PCT),
         Metrica("margem_liquida", "Margem líquida", PCT),
@@ -115,6 +117,10 @@ LEITURA: dict[str, str] = {
     "dividend_yield": "distribui mais (acima) ou menos (abaixo) sobre o "
                       "preço; pode refletir payout, preço deprimido ou "
                       "reinvestimento",
+    "dy_medio_5a": "distribuiu mais (acima) ou menos (abaixo) sobre o "
+                   "preço, em média, nos últimos cinco exercícios; suaviza "
+                   "provento extraordinário, mas ainda reflete payout, preço "
+                   "deprimido ou reinvestimento",
     "ev_ebit": "a firma vale mais (acima) ou menos (abaixo) por unidade de "
                "resultado operacional",
     "roe": "retorno sobre o patrimônio maior (acima) ou menor (abaixo); "
