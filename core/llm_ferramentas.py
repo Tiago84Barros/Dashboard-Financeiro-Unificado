@@ -813,12 +813,17 @@ def texto_proventos(ticker: str, por_ano: Mapping[int, float], fonte: str,
                     "R$ 0. A mediana ignora um ano de provento extraordinário; "
                     "a média não.")
         if hoje.year in pagos:
-            linhas.append(f"{hoje.year} (ano em curso, parcial até "
-                          f"{hoje:%d/%m/%Y}): R$ {_br(pagos[hoje.year])}.")
+            # A soma é por ano de pagamento e inclui o já anunciado com
+            # pagamento depois de hoje: não dá para dizer quanto já caiu.
+            linhas.append(f"{hoje.year} (ano em curso): R$ "
+                          f"{_br(pagos[hoje.year])}, somando o já pago e o "
+                          "anunciado com pagamento até 31/12; a fonte é anual "
+                          "e não separa um do outro.")
         futuros = [(a, v) for a, v in sorted(pagos.items()) if a > hoje.year]
         if futuros:
-            linhas.append("Declarado e ainda não pago: " + "; ".join(
-                f"{a} R$ {_br(v)}" for a, v in futuros) + ".")
+            linhas.append("Anunciado com pagamento nos anos seguintes: "
+                          + "; ".join(f"{a} R$ {_br(v)}" for a, v in futuros)
+                          + ".")
         linhas.append("Valor por ação como a fonte informa; desdobramento ou "
                       "grupamento no período muda a escala entre anos.")
     linhas.append(linha_dy(historico_dy, ano_mercado_dy, mercado))

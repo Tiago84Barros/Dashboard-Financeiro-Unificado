@@ -299,8 +299,11 @@ def test_texto_proventos_anos_fechados_media_mediana_e_ano_em_curso():
     assert "2020 R$ 0,00" in texto and "2023 R$ 0,00" in texto
     # 2021–2025: 0,7 0,5 0 2,0 5,0 → média 1,64; mediana 0,70
     assert "(2021–2025): média R$ 1,64, mediana R$ 0,70" in texto
-    assert "2026 (ano em curso, parcial até 03/11/2026): R$ 1,00" in texto
-    assert "Declarado e ainda não pago: 2027 R$ 0,40" in texto
+    # o ano em curso soma pago e anunciado: não é "recebido até hoje"
+    assert ("2026 (ano em curso): R$ 1,00, somando o já pago e o anunciado "
+            "com pagamento até 31/12") in texto
+    assert "parcial até" not in texto
+    assert "Anunciado com pagamento nos anos seguintes: 2027 R$ 0,40" in texto
     # DY: 5, 7, 0 (2023 com P/VP e sem DY), 8, 34 → mediana 7
     assert "2023 0,0%" in texto and "mediana 7,0%" in texto
     assert "média 10,8%" in texto.lower()
