@@ -40,7 +40,7 @@ _B3_IFIX_MONTHLY_URL = _ifix.URL_MENSAL
 _parse_b3_ifix_monthly = _ifix.parse_ifix_mensal
 _ingest_b3_ifix_monthly = _ifix.ingerir_ifix_mensal
 
-VALIDATION_PROTOCOL_VERSION = "fii-pit-robust-optimizer-3.4.0"
+VALIDATION_PROTOCOL_VERSION = "fii-pit-robust-optimizer-3.5.0"
 
 
 def _num(value: Any) -> float | None:

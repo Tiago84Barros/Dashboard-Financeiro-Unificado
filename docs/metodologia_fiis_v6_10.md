@@ -93,4 +93,24 @@ piso, não a da carteira cheia.
 - elegibilidade: `6.10.0`;
 - estratégia: `fii_integrated_robust_optimizer.v6.8`;
 - fórmula: `br-fii-integrated-income-resilience-6.10.0`;
-- protocolo de validação: `fii-pit-robust-optimizer-3.4.0`.
+- protocolo de validação: `fii-pit-robust-optimizer-3.5.0` (os números da
+  validação acima foram medidos sob a `3.4.0`).
+
+## Protocolo 3.5.0 — fundo que sai de campo rende zero (A-118)
+
+Até a `3.4.0`, o walk-forward do otimizador robusto renormalizava os pesos
+sobre os fundos com retorno no período. Um fundo da carteira que liquidou,
+foi incorporado ou perdeu o dado tinha a fatia redistribuída entre os
+sobreviventes, e o dinheiro dele rendia o que os outros renderam. A correção
+do A-118 existia só no backtest simples (`point_in_time_backtest`), que não
+roda em produção.
+
+Na `3.5.0` a fatia ausente rende zero no período, pela mesma regra, e o
+resultado grava `saida_de_campo` (peso ausente médio, máximo e períodos
+afetados), que a tela já sabia exibir.
+
+**A validação de 14/09/2026 precisa ser refeita** no warehouse local
+(`scripts/run_fii_optimizer_pit_local.py`). Retorno médio, excesso, IC e
+regimes acima só mudam nos períodos em que algum fundo da carteira ficou
+sem retorno; enquanto a nova safra não for gravada, eles podem estar
+inflados nesses períodos.
