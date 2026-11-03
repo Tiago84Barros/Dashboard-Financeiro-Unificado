@@ -200,8 +200,6 @@ if not _APP_TEST_MODE:
 # ── Roteamento ────────────────────────────────────────────────────────────────
 modulo_nome = _ROTAS.get(menu)
 
-_linha_medicao: dict | None = None
-
 if modulo_nome:
     _nome_do_modulo = f"views.{module_for_route(modulo_nome)}"
     _import_frio = _nome_do_modulo not in sys.modules
@@ -271,26 +269,15 @@ if modulo_nome:
                 import_frio=_import_frio,
                 concluiu=_concluiu,
             )
+            # A medição não aparece mais na tela (03/11/2026): fica no log da
+            # nuvem, e a execução acima do limite vira item de Configurações
+            # → Restrições, com o arquivo da tela para a coluna Tela.
+            if not _APP_TEST_MODE:
+                medicao_rota.registrar_lentidao(
+                    _linha_medicao,
+                    modulo=f"{_nome_do_modulo.replace('.', '/')}.py:render",
+                )
         except Exception:  # noqa: BLE001 - medir e extra, nunca requisito
             logger.exception("falha ao registrar a medicao da rota")
 else:
     st.warning(f'Rota não encontrada para "{menu}".')
-
-# ── Medição (só o administrador vê) ───────────────────────────────────────────
-# Depois da página, nunca acima dela: ver ``design.painel_medicao``.
-if not _APP_TEST_MODE and _linha_medicao is not None:
-    try:
-        from core.user_context import is_admin
-
-        if is_admin():
-            from design.painel_medicao import linha_sidebar, painel_medicao
-
-            linha_sidebar(_linha_medicao)
-            _estado_medicao = getattr(st, "session_state", None)
-            painel_medicao(
-                _estado_medicao.get(medicao_rota.CHAVE_HISTORICO, [_linha_medicao])
-                if _estado_medicao is not None
-                else [_linha_medicao]
-            )
-    except Exception:  # noqa: BLE001 - medir e extra, nunca requisito
-        logger.exception("falha ao exibir a medicao da rota")

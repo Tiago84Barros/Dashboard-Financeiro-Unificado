@@ -164,3 +164,65 @@ def test_cronometro_de_uma_sessao_nao_recebe_consulta_de_outra():
     finally:
         m.desativar()
     assert c.fases["preambulo"].sql_n == 0
+
+
+# ── Lentidão vai para Configurações → Restrições (03/11/2026) ────────────────
+def _lenta(**kw) -> dict:
+    base = {
+        "rota": "💳 Controle Financeiro", "tipo": m.TROCA, "concluiu": True,
+        "total_ms": 10_100, "sql_ms": 6_400, "sql_n": 26,
+        "fora_do_banco_ms": 3_700, "import_ms": 0,
+        "sql_mais_lenta_ms": 900, "sql_mais_lenta": "select * from lancamentos",
+    }
+    return {**base, **kw}
+
+
+def test_troca_acima_do_limite_vira_restricao_com_o_tempo_dividido():
+    item = m.lentidao(_lenta())
+    assert item["codigo"] == "desempenho.lentidao_troca"
+    assert "10,1 s" in item["mensagem"] and "limite de 5,0 s" in item["mensagem"]
+    assert "26 consultas" in item["mensagem"]
+    assert "select * from lancamentos" in item["mensagem"]
+
+
+@pytest.mark.parametrize("linha", [
+    _lenta(total_ms=5_000),                       # no limite não incomoda
+    _lenta(concluiu=False),                       # interrompida não mede a tela
+    _lenta(tipo=m.ABERTURA, total_ms=9_000),      # abertura tem folga maior
+    _lenta(tipo=m.INTERACAO, total_ms=9_000),
+    _lenta(tipo="desconhecido", total_ms=99_000),
+])
+def test_execucao_dentro_do_limite_ou_interrompida_nao_registra(linha):
+    assert m.lentidao(linha) is None
+
+
+def test_registrar_lentidao_usa_o_arquivo_da_tela_como_modulo():
+    chamadas = []
+    ok = m.registrar_lentidao(
+        _lenta(), modulo="views/controle_financeiro.py:render",
+        registrar=lambda *a, **kw: chamadas.append((a, kw)),
+    )
+    assert ok
+    (fonte, codigo, _msg), kw = chamadas[0]
+    assert (fonte, codigo) == ("tela", "desempenho.lentidao_troca")
+    assert kw == {"modulo": "views/controle_financeiro.py:render"}
+    from core.lacunas.painel import natureza, tela_do_modulo
+
+    assert tela_do_modulo(kw["modulo"]) == "Controle Financeiro"
+    assert natureza({"fonte": fonte, "codigo": codigo}) == "Restrição"
+
+
+def test_registrar_lentidao_nunca_levanta():
+    def quebra(*_a, **_kw):
+        raise RuntimeError("banco fora")
+
+    assert m.registrar_lentidao(_lenta(), modulo="x.py:render", registrar=quebra) is False
+    assert m.registrar_lentidao(_lenta(total_ms=1), modulo="x.py:render", registrar=quebra) is False
+
+
+def test_medicao_nao_aparece_mais_na_tela():
+    from pathlib import Path
+
+    app = (Path(__file__).resolve().parents[1] / "app.py").read_text(encoding="utf-8")
+    assert "painel_medicao" not in app and "linha_sidebar" not in app
+    assert "registrar_lentidao" in app
