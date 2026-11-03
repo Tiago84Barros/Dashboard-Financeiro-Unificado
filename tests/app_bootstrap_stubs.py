@@ -82,12 +82,6 @@ def stubs_de_bootstrap(**overrides) -> dict[str, SimpleNamespace]:
             ocultas_da_sessao=lambda: frozenset(),
         ),
         "design.tema": SimpleNamespace(aplicar_tema=lambda theme="dark": None),
-        # O real importa ``streamlit`` no topo e guardaria o falso (ver o
-        # comentário de ``design.theme_selector`` abaixo).
-        "design.painel_medicao": SimpleNamespace(
-            linha_sidebar=lambda *_args: None,
-            painel_medicao=lambda *_args: None,
-        ),
         # Importado com o ``streamlit`` falso em sys.modules, o módulo real
         # guardaria o falso no próprio ``st`` e o vazaria para todos os testes
         # seguintes -- ``tests/test_user_theme.py`` quebrava com "module

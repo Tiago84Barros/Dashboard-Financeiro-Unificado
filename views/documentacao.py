@@ -1941,6 +1941,9 @@ FLOW_CONFIGURACOES = FlowSpec(
                 "Aba 🧭 Restrições",
                 "Painel lido de core.lacunas.painel, com cache de 5 minutos",
                 "Três naturezas: Restrição, Erro e Detalhe técnico",
+                "Tela lenta também entra, como Restrição: troca de página acima de 5 s, "
+                "abertura do app ou clique acima de 10 s, uma vez por tela e tipo em cada "
+                "sessão, com o tempo dividido entre banco, fora do banco e importação",
                 "Filtros e decisão em caixas de seleção, sem pílulas: Natureza começa em "
                 "Restrição e Erro; Situação, em Em aberto",
                 "Decisão por item: Pendente, Em análise, Aceita ou Resolvida",

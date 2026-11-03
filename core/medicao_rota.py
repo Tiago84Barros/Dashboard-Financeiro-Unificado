@@ -163,6 +163,83 @@ def registrar_no_log(linha: dict) -> None:
     _logger.info("medicao_rota %s", json.dumps(linha, ensure_ascii=False))
 
 
+# ── Lentidão que incomoda: vai para Configurações → Restrições ──────────────
+# Pedido de 03/11/2026: a medição saiu da tela (rodapé da barra lateral e
+# expansor no fim da página) -- quem usa o app não precisa dela. Ela continua
+# no log da nuvem a cada execução, e a execução que passa do limite abaixo vira
+# um item da fila de Restrições, uma vez por tela e tipo em cada sessão.
+#
+# Limites pela régua clássica de tempo de resposta (Nielsen): até ~1 s o fluxo
+# segue; perto de 10 s a atenção se perde. A troca de página é o gesto mais
+# repetido, então pesa mais cedo; a abertura carrega imports frios e a
+# interação inclui ações que de fato demoram (chat com a LLM, otimização).
+LIMITES_MS: dict[str, int] = {
+    TROCA: 5_000,
+    ABERTURA: 10_000,
+    INTERACAO: 10_000,
+}
+PREFIXO_CODIGO_LENTIDAO = "desempenho.lentidao_"
+
+_ROTULO_TIPO = {
+    ABERTURA: "Abertura do app",
+    TROCA: "Troca de página",
+    INTERACAO: "Clique na tela",
+}
+
+
+def _seg(ms: float) -> str:
+    return f"{ms / 1000:.1f} s".replace(".", ",")
+
+
+def lentidao(linha: dict) -> dict | None:
+    """O item de Restrições para uma execução lenta, ou ``None``.
+
+    Só execução concluída conta: a que parou no meio (``st.stop``, erro) não
+    mede a tela -- a mesma regra de ``agregar``.
+    """
+    if not linha.get("concluiu"):
+        return None
+    tipo = linha.get("tipo")
+    limite = LIMITES_MS.get(tipo)
+    if limite is None or linha.get("total_ms", 0) <= limite:
+        return None
+    sql_n = linha.get("sql_n", 0)
+    mensagem = (
+        f"{_ROTULO_TIPO.get(tipo, tipo)} em \"{linha.get('rota')}\" levou "
+        f"{_seg(linha['total_ms'])}, acima do limite de {_seg(limite)}. "
+        f"Banco: {_seg(linha.get('sql_ms', 0))} em {sql_n} "
+        f"consulta{'' if sql_n == 1 else 's'}; fora do banco: "
+        f"{_seg(linha.get('fora_do_banco_ms', 0))}; importação: "
+        f"{_seg(linha.get('import_ms', 0))}."
+    )
+    if linha.get("sql_mais_lenta"):
+        mensagem += (
+            f" Consulta mais lenta ({_seg(linha.get('sql_mais_lenta_ms', 0))}): "
+            f"{linha['sql_mais_lenta']}"
+        )
+    return {"codigo": PREFIXO_CODIGO_LENTIDAO + str(tipo), "mensagem": mensagem}
+
+
+def registrar_lentidao(linha: dict, *, modulo: str,
+                       registrar: Callable[..., None] | None = None) -> bool:
+    """Manda a execução lenta para o log de lacunas. Nunca levanta.
+
+    ``modulo`` é o arquivo da tela (``views/x.py:render``): é ele que dá nome à
+    coluna Tela em Restrições e separa uma tela da outra na impressão digital.
+    """
+    item = lentidao(linha)
+    if item is None:
+        return False
+    try:
+        if registrar is None:
+            from core.lacunas import registrar_lacuna as registrar
+        registrar("tela", item["codigo"], item["mensagem"], modulo=modulo)
+    except Exception:  # noqa: BLE001 - medir e extra, nunca requisito
+        _logger.warning("falha ao registrar a lentidao", exc_info=True)
+        return False
+    return True
+
+
 # ── Histórico da sessão ──────────────────────────────────────────────────────
 CHAVE_HISTORICO = "_medicao_rota_historico"
 CHAVE_ULTIMA_ROTA = "_medicao_rota_ultima"
