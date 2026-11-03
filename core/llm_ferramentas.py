@@ -798,12 +798,18 @@ def texto_proventos(ticker: str, por_ano: Mapping[int, float], fonte: str,
         primeiro = min(pagos)
         # Ano fechado sem pagamento, depois do primeiro provento, conta 0:
         # a fonte é a lista completa de eventos do ticker.
-        serie = [(a, fechados.get(a, 0.0))
-                 for a in range(max(primeiro, hoje.year - anos), hoje.year)]
+        def _anos(n: int) -> list[tuple[int, float]]:
+            return [(a, fechados.get(a, 0.0))
+                    for a in range(max(primeiro, hoje.year - n), hoje.year)]
+
+        serie = _anos(anos)
         if serie:
             linhas.append("Anos fechados: " + "; ".join(
                 f"{a} R$ {_br(v)}" for a, v in serie) + ".")
-            janela = serie[-JANELA_PROVENTOS:]
+        # A janela de cinco anos não depende de quantos anos a listagem
+        # mostra: com anos=1 a "média de cinco anos" saía de um ano só.
+        janela = _anos(JANELA_PROVENTOS)
+        if janela:
             mm = _media_mediana([v for _, v in janela])
             if mm:
                 linhas.append(

@@ -309,6 +309,14 @@ def test_texto_proventos_anos_fechados_media_mediana_e_ano_em_curso():
     assert "média 10,8%" in texto.lower()
 
 
+def test_texto_proventos_janela_de_cinco_anos_nao_segue_a_listagem():
+    por_ano = {2021: 1.0, 2022: 2.0, 2023: 3.0, 2024: 4.0, 2025: 10.0}
+    texto = lf.texto_proventos("XPTO3", por_ano, "brapi", date(2026, 11, 3),
+                               anos=1)
+    assert "Anos fechados: 2025 R$ 10,00." in texto
+    assert "(2021–2025): média R$ 4,00, mediana R$ 3,00" in texto
+
+
 def test_texto_proventos_sem_dado_declarado():
     texto = lf.texto_proventos("XPTO3", {}, "brapi", date(2026, 11, 3))
     assert "Sem provento por ação na fonte" in texto
