@@ -1034,7 +1034,7 @@
                 {
                   "nome": "Converse sobre sua carteira",
                   "resumo": "Chat com IA sobre a carteira inteira",
-                  "explicacao": "Conversa com a inteligência artificial, que responde usando os dados desta aba, juros, inflação, câmbio, notícias e os pregões diários recentes da bolsa de cada ação e fundo da carteira. Tem perguntas sugeridas, o botão 'Limpar chat' e uma caixa para enviar os valores em reais (por padrão vão só porcentagens). Sem IA configurada, aparece 'Esta conversa não está disponível no momento'.",
+                  "explicacao": "Conversa com a inteligência artificial, que responde usando os dados desta aba, juros, inflação, câmbio, notícias, os pregões diários recentes da bolsa e os proventos de cada ano (inclusive o do ano em curso) de cada ação e fundo da carteira. Tem perguntas sugeridas, o botão 'Limpar chat' e uma caixa para enviar os valores em reais (por padrão vão só porcentagens). Sem IA configurada, aparece 'Esta conversa não está disponível no momento'.",
                   "so_admin": false
                 }
               ]
@@ -2491,7 +2491,7 @@
             {
               "nome": "Converse sobre o fundo",
               "resumo": "Chat com a IA sobre este fundo",
-              "explicacao": "Caixa de conversa com a inteligência artificial focada no fundo aberto. Responde só com os dados do app e avisa quando falta informação. Só funciona quando a IA está configurada. Na tela o título traz o código do fundo. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês.",
+              "explicacao": "Caixa de conversa com a inteligência artificial focada no fundo aberto. Responde só com os dados do app, inclusive os rendimentos por cota de cada ano e o do ano em curso, e avisa quando falta informação. Só funciona quando a IA está configurada. Na tela o título traz o código do fundo. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês.",
               "so_admin": false
             }
           ]

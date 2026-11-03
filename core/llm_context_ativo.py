@@ -408,6 +408,13 @@ def build_fii_ativo_context(
                 linhas.append("  " + " | ".join(f"{c}={_fmt(r.get(c))}" for c in cols))
             if len(linhas) > 1:
                 blocos.append("\n".join(linhas))
+    try:
+        from core.llm_ferramentas import proventos_ativo
+
+        blocos.append("\nPROVENTOS DO FUNDO (mesmo dado da ferramenta "
+                      "proventos_ativo):\n" + proventos_ativo([tk]))
+    except Exception:
+        logger.exception("proventos de %s indisponíveis", tk)
     local_macro = _local_macro_block("fii", tk, tipo.lower())
     if local_macro:
         blocos.append("\n" + local_macro)
