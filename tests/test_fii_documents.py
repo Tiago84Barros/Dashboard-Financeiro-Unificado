@@ -137,7 +137,7 @@ def test_document_evidence_uses_methodology_names_and_page_numbers():
     evidence = _extract_evidence("\n".join(pages), pages)
     rows = {row["metric_name"]: row for row in evidence}
 
-    assert PARSER_VERSION == "1.7.1"
+    assert PARSER_VERSION == "1.7.2"
     assert rows["vacancia_fisica"]["normalized_value"] == pytest.approx(.075)
     assert rows["wault_anos"]["normalized_value"] == pytest.approx(4.2)
     assert rows["implied_cap_rate"]["normalized_value"] == pytest.approx(.091)

@@ -32,7 +32,7 @@ from data_pipeline.market.fii_sources import metric_observation
 logger = logging.getLogger(__name__)
 
 PARSER_NAME = "fii_public_report"
-PARSER_VERSION = "1.7.1"
+PARSER_VERSION = "1.7.2"
 SCHEMA_VERSION = "fii-evidence-v6"
 
 
