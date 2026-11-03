@@ -2446,11 +2446,8 @@ def _carteira_integrada(preferences: dict):
     show = _enrich_portfolio_view(show, specific_metrics)
     table_slot = st.empty()
     _render_portfolio_table(table_slot, show)
-    valid_pvp = [(float(item["pvp"]), float(item["weight"])) for item in items
-                 if item.get("pvp") is not None and pd.notna(item.get("pvp"))]
-    pvp_weight = sum(weight for _, weight in valid_pvp)
-    weighted_pvp = (sum(value * weight for value, weight in valid_pvp) / pvp_weight
-                    if pvp_weight else None)
+    from core.fii_presentation import pvp_da_carteira
+    weighted_pvp = pvp_da_carteira((item.get("pvp"), item.get("weight")) for item in items)
     average_confidence = sum(float(item["confidence"]) * float(item["weight"])
                              for item in items) / allocated_weight
     k1, k2, k3 = st.columns(3)
