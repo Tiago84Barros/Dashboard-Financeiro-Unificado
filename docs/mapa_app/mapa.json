@@ -2903,7 +2903,7 @@
         {
           "nome": "Restrições",
           "resumo": "Lista do que o app não sabe ou errou",
-          "explicacao": "Painel de trabalho com falta de dados, erros e detalhes técnicos que foram tirados das telas de uso. Tela lenta também entra aqui: a troca de página que passa de 5 segundos, ou a abertura do app e o clique que passam de 10, vira um item com o tempo gasto no banco e fora dele — o tempo não aparece mais no rodapé das telas. Você filtra a lista, lê cada item e registra o que fazer com ele. A mesma para todas as contas desde 12/10/2026.",
+          "explicacao": "Painel de trabalho com falta de dados, erros e detalhes técnicos que foram tirados das telas de uso. Tela lenta também entra aqui: a troca de página que passa de 3 segundos, ou a abertura do app e o clique que passam de 10, vira um item com o tempo gasto no banco e fora dele — o tempo não aparece mais no rodapé das telas. Você filtra a lista, lê cada item e registra o que fazer com ele. A mesma para todas as contas desde 12/10/2026.",
           "so_admin": false,
           "filhos": [
             {

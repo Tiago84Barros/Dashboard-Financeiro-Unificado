@@ -171,10 +171,11 @@ def registrar_no_log(linha: dict) -> None:
 #
 # Limites pela régua clássica de tempo de resposta (Nielsen): até ~1 s o fluxo
 # segue; perto de 10 s a atenção se perde. A troca de página é o gesto mais
-# repetido, então pesa mais cedo; a abertura carrega imports frios e a
-# interação inclui ações que de fato demoram (chat com a LLM, otimização).
+# repetido, então pesa mais cedo -- 3 s desde 03/11/2026, a pedido do dono do
+# app (era 5 s); a abertura carrega imports frios e a interação inclui ações
+# que de fato demoram (chat com a LLM, otimização).
 LIMITES_MS: dict[str, int] = {
-    TROCA: 5_000,
+    TROCA: 3_000,
     ABERTURA: 10_000,
     INTERACAO: 10_000,
 }
