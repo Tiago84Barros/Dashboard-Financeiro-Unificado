@@ -447,6 +447,45 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
     return ConfiancaSecao("Empresas B3", tuple(comps), u, tuple(notas))
 
 
+# Frescor de FII: idade MEDIANA do dado que a tela le. Ate 03/11/2026 era
+# `max(updated_at)` de `market.fiis`: um unico fundo tocado hoje dava 100% a
+# secao inteira, com centenas de linhas paradas atras dele, e a tabela nem era
+# a que a selecao e a carteira leem. Com vitrine, mede a vitrine (mesma regra
+# do gate de Abrangencia, A-136). A data de cada linha e `reference_date`, o
+# dado mais recente do payload -- nao `as_of_date`, que o publicador carimba
+# com o instante da publicacao: republicar um armazem parado renova o carimbo
+# e nao o dado.
+_SQL_FRESCOR_VITRINE_FII = """
+    SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY reference_date), count(*)
+    FROM market.fii_selection_inputs
+    WHERE quality_status IN ('published', 'accepted')
+      AND reference_date IS NOT NULL"""
+_SQL_FRESCOR_CADASTRO_FII = """
+    SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY updated_at), count(*)
+    FROM market.fiis
+    WHERE price > 0 AND updated_at IS NOT NULL"""
+
+
+def _frescor_fii(conn) -> Componente:
+    from sqlalchemy import text
+
+    from core.universo_decisao import _tem_vitrine_fii
+    peso = PESOS_COM_PREGAO["Frescor"]
+    com_vitrine = _tem_vitrine_fii(conn)
+    sql = _SQL_FRESCOR_VITRINE_FII if com_vitrine else _SQL_FRESCOR_CADASTRO_FII
+    mediana, linhas = conn.execute(text(sql)).one()
+    dias = _dias_desde(mediana)
+    if dias is None:
+        return Componente("Frescor", None, peso,
+                          "sem carimbo de data no dado que a tela le")
+    origem = ("da vitrine que a tela le" if com_vitrine
+              else "do cadastro (vitrine indisponivel neste ambiente)")
+    return Componente(
+        "Frescor", _frescor_pct(dias, 3, 30), peso,
+        f"dado mediano com {dias} dias em {int(linhas or 0)} fundos {origem}"
+        + (" - ingestao parada" if dias > 30 else ""))
+
+
 def confianca_fii(engine=None) -> ConfiancaSecao:
     from core.database import get_engine
     comps: list[Componente] = []
@@ -460,13 +499,7 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
     try:
         eng = engine or get_engine()
         with eng.connect() as conn:
-            dias = _dias_desde(_scalar(conn, """
-                SELECT max(updated_at) FROM market.fiis WHERE price > 0"""))
-            comps.append(Componente(
-                "Frescor", _frescor_pct(dias, 3, 30), PESOS_COM_PREGAO["Frescor"],
-                (f"cadastro atualizado ha {dias} dias"
-                 + (" - ingestao parada" if dias > 30 else ""))
-                if dias is not None else "sem carimbo de atualizacao"))
+            comps.append(_frescor_fii(conn))
             # Integridade: proventos ja passam pelo filtro renda-vs-capital
             # (A-128) e pelo dedup de eco de classe (A-129). O que resta medir
             # e a fracao de aptos SEM evento de magnitude implausivel (A-132),
