@@ -180,13 +180,13 @@ def _lenta(**kw) -> dict:
 def test_troca_acima_do_limite_vira_restricao_com_o_tempo_dividido():
     item = m.lentidao(_lenta())
     assert item["codigo"] == "desempenho.lentidao_troca"
-    assert "10,1 s" in item["mensagem"] and "limite de 5,0 s" in item["mensagem"]
+    assert "10,1 s" in item["mensagem"] and "limite de 3,0 s" in item["mensagem"]
     assert "26 consultas" in item["mensagem"]
     assert "select * from lancamentos" in item["mensagem"]
 
 
 @pytest.mark.parametrize("linha", [
-    _lenta(total_ms=5_000),                       # no limite não incomoda
+    _lenta(total_ms=3_000),                       # no limite não incomoda
     _lenta(concluiu=False),                       # interrompida não mede a tela
     _lenta(tipo=m.ABERTURA, total_ms=9_000),      # abertura tem folga maior
     _lenta(tipo=m.INTERACAO, total_ms=9_000),
