@@ -44,7 +44,7 @@ from core.investimentos import (
     get_evolucao_patrimonial,
     get_resultado_realizado,
 )
-from core.proventos import get_proventos
+from core.proventos import get_proventos, media_por_periodo
 from core.tesouro_analysis import (
     analise_suficiencia_tesouro,
     retorno_mercado_sobre_custo,
@@ -2939,6 +2939,18 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                    "tickformat": ",.0f", "tickprefix": "R$ "},
             showlegend=False,
         )
+        # Linha da média por período. Meses/anos sem provento contam como zero
+        # e o período em curso fica fora — ver core.proventos.media_por_periodo.
+        media_prov = media_por_periodo(serie_prov, visao_prov)
+        if media_prov:
+            unidade = "mês" if visao_prov == "Mensal" else "ano"
+            fig_prov.add_hline(
+                y=media_prov["media"],
+                line={"color": _COR_NEUTRO, "width": 1.5, "dash": "dash"},
+                annotation_text=f"Média {_fmt_brl(media_prov['media'], 0)}/{unidade}",
+                annotation_position="top right",
+                annotation_font={"size": 11, "color": _COR_NEUTRO},
+            )
         st.plotly_chart(fig_prov, width="stretch",
                         config={"displayModeBar": False},
                         key="hist_proventos_bar")
@@ -2954,19 +2966,34 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
             )
             st.caption(
                 f"Histórico completo · {serie_prov[0]['label']}–{serie_prov[-1]['label']} "
-                f"({len(serie_prov)} anos)."
+                f"({len(serie_prov)} anos)." + _legenda_media_prov(media_prov, "ano")
             )
         else:
             st.caption(
                 f"Total no período: **R$ {total_exibido:,.2f}**".replace(",", "X").replace(".", ",").replace("X", ".")
                 + f" · {len(serie_prov)} meses (últimos 12 com dados) — "
                 "escolha **Anual** para o histórico completo"
+                + _legenda_media_prov(media_prov, "mês")
             )
     else:
         st.caption("Sem histórico de proventos.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     _proventos_por_ativo(proventos, carteira)
+
+
+def _legenda_media_prov(media: dict | None, unidade: str) -> str:
+    """Explica a linha tracejada: sobre quantos períodos e o que ficou fora."""
+    if not media:
+        return ""
+    plural = "meses" if unidade == "mês" else "anos"
+    partes = [f"Linha tracejada: média de **{_fmt_brl(media['media'])}/{unidade}** "
+              f"em {media['n_periodos']} {plural} fechados"]
+    if media["periodos_zerados"]:
+        partes.append(f"{media['periodos_zerados']} sem provento contam como zero")
+    if media["excluiu_corrente"]:
+        partes.append(f"o {unidade} em curso fica fora")
+    return "  \n" + " · ".join(partes) + "."
 
 
 def _fmt_brl(v: float, casas: int = 2) -> str:

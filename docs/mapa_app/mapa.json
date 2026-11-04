@@ -874,7 +874,7 @@
             {
               "nome": "Proventos",
               "resumo": "Gráfico dos dividendos recebidos, mensal ou anual",
-              "explicacao": "Barras com os dividendos e rendimentos recebidos. No seletor ao lado você troca entre Mensal (últimos 12 meses com pagamento) e Anual (histórico completo); o total do período aparece embaixo.",
+              "explicacao": "Barras com os dividendos e rendimentos recebidos. No seletor ao lado você troca entre Mensal (últimos 12 meses com pagamento) e Anual (histórico completo); o total do período aparece embaixo. A linha tracejada é a média por mês (ou por ano): conta como zero os meses sem provento e deixa de fora o período ainda em curso.",
               "so_admin": false
             },
             {
