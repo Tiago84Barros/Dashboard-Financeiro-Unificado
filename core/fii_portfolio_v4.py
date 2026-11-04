@@ -23,6 +23,8 @@ from core.fii_renda_recorrente import dy_recorrente, protecao_nao_divulgada
 from core.fii_scenarios import asset_scenario_return
 
 SCENARIOS = ("base", "selic_alta", "queda_selic", "inflacao_alta", "vacancia", "credito")
+# Limite de tempo de cada resolução do MILP, em segundos.
+LIMITE_SEGUNDOS_MILP = 20
 # v6.8: o motor que roda hoje não é mais o v6.7. Duas coisas mudaram a
 # carteira que ele devolve — a função objetivo passou a premiar renda
 # recorrente em vez do DY divulgado, e a cardinalidade ganhou piso cedente.
@@ -576,7 +578,7 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
                 np.array(lower_todas),
                 np.array(upper_todas),
             ),
-            options={"time_limit": 20},
+            options={"time_limit": LIMITE_SEGUNDOS_MILP},
         )
 
     floor_alvo = max(0, min(int(policy.min_assets), policy.max_assets, n))
@@ -585,11 +587,18 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
         solution = None
         piso_cedido: int | None = None
         tentativa = None
+        # `milp` devolve status 1 quando estoura o limite de tempo, com
+        # `success=False` -- o mesmo sinal da inviabilidade. Sem distinguir os
+        # dois, a nota de cessão culpava "bandas, tetos ou incerteza" por um
+        # piso que talvez cabesse com mais tempo de busca.
+        tempo_esgotado = False
         for floor in range(floor_alvo, -1, -1):
             def _resolve_no_piso(caps: np.ndarray, _floor: int = floor) -> Any:
                 return _resolve(caps, _floor)
 
             tentativa = _resolve_no_piso(tetos)
+            if getattr(tentativa, "status", None) == 1:
+                tempo_esgotado = True
             tetos_tentativa = tetos
             notas_tentativa: list[str] = []
             if not (tentativa.success and tentativa.x is not None):
@@ -626,8 +635,13 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
             notas_de_viabilidade = list(notas_de_viabilidade) + [
                 f"piso de cardinalidade cedido de {floor_alvo} para "
                 f"{piso_cedido} ativos ({faltaram} posição(ões) a menos que o "
-                "piso-alvo): bandas, tetos de concentração ou incerteza do "
-                "regime não comportavam a carteira com a cardinalidade cheia"
+                "piso-alvo): "
+                + ("o solver esgotou o limite de "
+                   f"{LIMITE_SEGUNDOS_MILP} s antes de provar a carteira cheia "
+                   "-- pode ser falta de tempo de busca, não inviabilidade"
+                   if tempo_esgotado else
+                   "bandas, tetos de concentração ou incerteza do regime não "
+                   "comportavam a carteira com a cardinalidade cheia")
             ]
         if solution is not None and solution.success and solution.x is not None:
             selected = [
