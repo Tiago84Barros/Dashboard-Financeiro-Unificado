@@ -1936,6 +1936,10 @@ FLOW_CONFIGURACOES = FlowSpec(
                 "Empresas B3 e Seleção de FIIs medem também o 'Pregão diário (chat)': a "
                 "idade dos pregões do COTAHIST que o chat do ativo cita (peso 0,05, "
                 "tirado do bloco de frescor, que segue somando 0,25)",
+                "Empresas B3, Seleção de FIIs e Investimentos medem os 'Proventos "
+                "publicados (chat)': a idade da resposta da brapi no arquivo de "
+                "proventos que os chats citam (peso 0,05; em B3 e FII também tirado do "
+                "frescor; zero com 10 dias, quando o publicador recusa o arquivo)",
             ),
             "Medir a cada abertura custava uma varredura inteira do banco por clique de menu. "
             "Ler a última medição e remedir sob comando deixa o custo onde a decisão está. "
