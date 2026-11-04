@@ -635,3 +635,49 @@ def filtrar_por_situacao(ordem: list, em_carteira: set, situacao: str) -> list:
     if situacao == "Saíram da carteira":
         return [t for t in ordem if _base_ticker(t) not in em_carteira]
     return list(ordem)
+
+
+def media_por_periodo(serie: list, visao: str, hoje: _date | None = None) -> dict | None:
+    """Média dos proventos por período da série do gráfico (mês ou ano).
+
+    Duas armadilhas que a média ingênua das barras cairia:
+
+    * As séries só trazem períodos COM pagamento. Um mês (ou ano) sem provento
+      não vira barra zero, some. Dividir o total pelo número de barras
+      inflaria a média; aqui o divisor é o intervalo de calendário entre a
+      primeira barra e o último período fechado, contando os buracos como zero.
+    * O período corrente ainda está em curso. Entrar com outubro pela metade
+      (ou com o ano corrente até outubro) puxaria a média para baixo, então ele
+      fica fora e o retorno avisa.
+
+    Devolve ``None`` quando não sobra período fechado para medir.
+    """
+    if not serie:
+        return None
+    hoje = hoje or _date.today()
+    mensal = visao == "Mensal"
+    idx_mes = {nome: num for num, nome in _MESES_PT.items()}
+
+    def _ordinal(h: dict) -> int:
+        if mensal:
+            return h["ano"] * 12 + idx_mes[h["mes"]] - 1
+        return int(h["ano"])
+
+    corrente = hoje.year * 12 + hoje.month - 1 if mensal else hoje.year
+    fechados = [h for h in serie if _ordinal(h) < corrente]
+    excluiu_corrente = len(fechados) < len(serie)
+    if not fechados:
+        return None
+
+    inicio = _ordinal(fechados[0])
+    # Até o último período fechado antes de hoje, não até a última barra:
+    # meses (ou anos) sem provento depois do último pagamento também são zero.
+    fim = corrente - 1
+    n_periodos = fim - inicio + 1
+    total = sum(h["total"] for h in fechados)
+    return {
+        "media":            round(total / n_periodos, 2),
+        "n_periodos":       n_periodos,
+        "periodos_zerados": n_periodos - len(fechados),
+        "excluiu_corrente": excluiu_corrente,
+    }
