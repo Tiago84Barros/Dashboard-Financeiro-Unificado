@@ -1172,9 +1172,10 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
             # quando o cadastro vinha vazio. Com numero preenchido, por mais
             # absurdo que fosse, ninguem conferia, e o piso de liquidez da
             # politica era derrotado pela entrada em vez de pela regra.
+            from core.liquidez import PISO_DECISAO as _piso_liq
             from core.liquidez import liquidez_para_decisao as _liq
             escolhas = [
-                _liq(declarada, observada, meses_observados=meses)
+                _liq(declarada, observada, meses_observados=meses, piso=_piso_liq)
                 for declarada, observada, meses in zip(
                     base["Liquidez_Diaria"], base["Liquidity_Fallback"],
                     base.get("Liquidity_Months", pd.Series([0] * len(base))))

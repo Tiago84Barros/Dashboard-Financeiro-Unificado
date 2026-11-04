@@ -36,6 +36,12 @@ FATOR_CONTRADICAO = 10.0
 # tres e o piso em que a observacao para de ser anedota.
 MESES_MINIMOS = 3
 
+# Piso de liquidez que decide entrada no universo e na carteira -- o mesmo
+# `min_daily_liquidity` de `PortfolioPolicy` e de `IntegratedEligibilityPolicy`
+# (um teste prende os tres juntos). Fica aqui, e nao importado de la, porque
+# `core.market_read` chama esta arbitragem e nao deve carregar o otimizador.
+PISO_DECISAO = 1_000_000.0
+
 
 @dataclass(frozen=True)
 class LiquidezDecisao:
@@ -71,8 +77,18 @@ def _meses_validos(v) -> int:
 
 
 def liquidez_para_decisao(declarada, observada,
-                          meses_observados: int = 0) -> LiquidezDecisao:
-    """Escolhe o numero que pode sustentar decisao de investimento."""
+                          meses_observados: int = 0, *,
+                          piso: float | None = None) -> LiquidezDecisao:
+    """Escolhe o numero que pode sustentar decisao de investimento.
+
+    Com ``piso``, a tolerancia de ``FATOR_CONTRADICAO`` deixa de valer quando
+    as duas fontes caem em lados opostos dele. Dentro da tolerancia, cadastro
+    e fita divergirem e ruido -- enquanto a escolha nao muda a decisao. Quando
+    muda, a folga de 10x deixava passar declarada de R$ 5 mi contra fita de
+    R$ 0,6 mi com seis meses de lastro (8,3x): o fundo entrava acima do piso de
+    R$ 1 mi negociando um decimo disso na bolsa. Ai vale a fonte de maior
+    qualidade, a fita -- nos dois sentidos, pela mesma simetria da regra.
+    """
     dec = _positivo_ou_zero(declarada)
     obs = _positivo_ou_zero(observada)
     meses = _meses_validos(meses_observados)
@@ -101,6 +117,13 @@ def liquidez_para_decisao(declarada, observada,
             obs, "fita_b3",
             f"declarada contradiz a fita oficial da B3 em {razao:,.0f}x"
             .replace(",", "."),
+            razao=razao)
+    if piso is not None and (dec >= piso) != (obs >= piso):
+        return LiquidezDecisao(
+            obs, "fita_b3",
+            "declarada e fita em lados opostos do piso de "
+            + f"{piso:,.0f}".replace(",", ".") + "/dia ("
+            + f"{razao:.1f}".replace(".", ",") + "x); vale a fita oficial da B3",
             razao=razao)
     return LiquidezDecisao(dec, "declarada",
                            "cadastro e fita concordam dentro da tolerancia",
