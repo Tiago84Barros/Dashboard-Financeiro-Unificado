@@ -102,6 +102,37 @@ são estrutura: conferir. Quem barra no CI é
 texto das explicações — fica por conta de quem muda: releia o nó da tela que
 você tocou nas três abas. Quando nada precisar mudar, diga no PR por quê.
 
+## Corrigiu uma regra? Procure os gêmeos antes do PR
+
+Na auditoria da Seleção de FIIs de 03/11/2026, sete dos nove defeitos já
+tinham correção no repositório, com achado numerado e comentário, mas ela
+estava num só dos caminhos que fazem a mesma conta. O gêmeo ficou para trás, e
+o defeito parecia "voltar". Exemplos:
+
+- o A-118 estava no backtest simples, mas não no robusto, que é o único que
+  roda em produção;
+- o A-136 cobria a Abrangência, mas não o Frescor da mesma função;
+- o ajuste de split cobria os retornos, mas não as features do PIT.
+
+Os detalhes estão em
+`../ProjetoIA/04_App_Dashboard_Financeiro_Unificado/atualizacoes_2026-11-03_selecao_fiis_correcao_que_parou_no_primeiro_lugar.md`.
+
+Ao corrigir uma regra, uma escala, um filtro ou um agregador, antes do PR:
+
+1. **Busque a mesma conta no repositório inteiro.** Procure o mesmo campo, o
+   mesmo predicado e a mesma expressão, por exemplo `or 0`, `abs(x) > 1`,
+   `max(updated_at)`, `weights.loc[valid] / weights.loc[valid].sum()` e
+   `close_raw`. Cada ocorrência é corrigida ou ganha, no PR, o motivo de
+   ficar como está.
+2. **Prefira uma função única a duas cópias corrigidas.**
+3. **Teste a equivalência entre os caminhos**, não só o ponto que você
+   corrigiu. Um exemplo é verificar que o fundo que sumiu rende o mesmo que o
+   fundo presente com retorno zero.
+4. **Siga a chamada a partir da tela ou do pipeline** e confirme que o caminho
+   corrigido é o que roda em produção.
+5. **Atualize o texto junto com a fórmula:** docstring, manifesto, metodologia
+   em `docs/` e as três abas de Configurações.
+
 ## Regras
 
 - Não apagar funcionalidades existentes sem validação.
