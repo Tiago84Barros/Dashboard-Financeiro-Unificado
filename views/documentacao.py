@@ -1128,7 +1128,9 @@ FLOW_SELECAO_FIIS = FlowSpec(
         "pit_fii": _node(
             "pit_fii", "Validação point-in-time", "Validação",
             "A aba Retrospectiva refaz a seleção safra a safra usando SÓ o que era "
-            "conhecido naquela data e mede o que a regra teria escolhido.",
+            "conhecido naquela data e mede o que a regra teria escolhido. Fundo da "
+            "carteira que sai de campo no período rende zero, nunca o que os "
+            "sobreviventes renderam.",
             (
                 "Safras reconstruídas com dado da época",
                 "Mínimo metodológico de períodos para valer",
