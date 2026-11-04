@@ -1571,9 +1571,19 @@ def evaluate_rebalance_triggers(current: dict, proposed: dict, *, costs: float =
         reasons.append("evento relevante de crédito, imóvel, gestão ou CVM")
     if proposed.get("constraint_breach"):
         reasons.append("limite de concentração ou liquidez violado")
-    income_gain = _num(proposed.get("expected_yield")) - _num(current.get("expected_yield"))
-    if income_gain > costs + .005:
-        reasons.append("ganho de renda esperado supera custos e margem mínima")
+    # Ganho de renda medido na renda RECORRENTE. `expected_yield` é o DY
+    # divulgado (alias de compatibilidade de `trailing_yield_12m`), que soma
+    # amortização e resultado não recorrente -- justamente o que a v6.10 deixou
+    # de usar para ordenar. Comparar DY bruto disparava troca de carteira por
+    # um "ganho" que podia ser devolução de capital. Sem o recorrente dos dois
+    # lados não há gatilho de renda: cair no bruto seria trocar a métrica em
+    # silêncio.
+    renda_atual = current.get("recurrent_yield_12m")
+    renda_proposta = proposed.get("recurrent_yield_12m")
+    if renda_atual is not None and renda_proposta is not None:
+        income_gain = _num(renda_proposta) - _num(renda_atual)
+        if income_gain > costs + .005:
+            reasons.append("ganho de renda recorrente supera custos e margem mínima")
     if _num(current.get("stress_loss")) - _num(proposed.get("stress_loss")) >= .02:
         reasons.append("redução material da perda em cenário de estresse")
     if _num(current.get("confidence")) - _num(proposed.get("confidence")) >= .15:
