@@ -809,10 +809,14 @@ FLOW_INVESTIMENTOS = FlowSpec(
             "🏦 Tesouro recebe os lotes de cada título (tesouro_lots, do Extrato Analítico; "
             "na falta dele, as compras da Movimentação com a taxa deduzida): data de cada "
             "compra, taxa contratada, taxa de hoje na curva e marcação a mercado, além de "
-            "quanto da posição atual esses lotes cobrem.",
+            "quanto da posição atual esses lotes cobrem. Os chats de Visão Geral, Ações e "
+            "FIIs recebem os proventos de cada ano dos ativos da B3 do arquivo publicado, "
+            "que não depende do armazém local nem do túnel.",
             ("_tab_analise()", "Desempenho por Categoria", "Posições da Carteira",
              "Uma subaba por classe",
-             "tesouro_lots no chat do Tesouro", "Alertas", "Stress Tests Históricos"),
+             "tesouro_lots no chat do Tesouro",
+             "bloco_detalhe_armazem(): armazém pelo túnel e proventos publicados",
+             "Alertas", "Stress Tests Históricos"),
             "A transparência fica no nível do ativo, separada por classe.",
         ),
         "alertas_ai": _node(
@@ -1207,6 +1211,8 @@ FLOW_SELECAO_FIIS = FlowSpec(
                 "core.market_read.load_fii_one()",
                 "Seleção do FII ordenada pela nota",
                 "Fundo sem dado vira aviso de lacuna, não tela vazia",
+                "Chat do fundo: build_fii_ativo_context() com os rendimentos por cota de "
+                "cada ano (proventos_ativo, arquivo publicado)",
             ),
             "O score resume; a busca mostra o que está por trás dele, fundo a fundo.",
         ),
@@ -1616,6 +1622,7 @@ FLOW_PORTFOLIO_GLOBAL = FlowSpec(
             "calculados, em vez de recalcular por conta própria.",
             (
                 "Recebe os números já apurados nos painéis",
+                "Ações e FIIs da B3 chegam com os proventos publicados, mesmo com o armazém fora",
                 "Fica por último na tela, depois da evidência",
                 "Não substitui os painéis",
             ),
@@ -1929,6 +1936,10 @@ FLOW_CONFIGURACOES = FlowSpec(
                 "Empresas B3 e Seleção de FIIs medem também o 'Pregão diário (chat)': a "
                 "idade dos pregões do COTAHIST que o chat do ativo cita (peso 0,05, "
                 "tirado do bloco de frescor, que segue somando 0,25)",
+                "Empresas B3, Seleção de FIIs e Investimentos medem os 'Proventos "
+                "publicados (chat)': a idade da resposta da brapi no arquivo de "
+                "proventos que os chats citam (peso 0,05; em B3 e FII também tirado do "
+                "frescor; zero com 10 dias, quando o publicador recusa o arquivo)",
             ),
             "Medir a cada abertura custava uma varredura inteira do banco por clique de menu. "
             "Ler a última medição e remedir sob comando deixa o custo onde a decisão está. "

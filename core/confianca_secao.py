@@ -94,9 +94,21 @@ PESOS_MEDICAO = {"Integridade": 0.35, "Frescor": 0.25}
 # entao fica fora dos pesos que ``_declarar_nao_medidos`` completa.
 PREGAO_DO_CHAT = "Pregão diário (chat)"
 PESO_PREGAO_DO_CHAT = 0.05
-PESOS_COM_PREGAO = {"Integridade": 0.35, "Frescor": 0.20}  # 0,20 + 0,05 = 0,25
 #: Dias uteis de atraso com que o pregao do chat ja vale zero.
 PREGAO_VELHO_UTEIS = 10
+
+# Desde 03/11/2026 os chats de Empresas B3, de FIIs e de Investimentos citam os
+# proventos por acao ou cota do arquivo publicado
+# (``data/public/proventos_b3.json.gz``, ``core.llm_ferramentas.proventos_ativo``),
+# com ou sem o armazem. Terceira fonte de numero na tela, entao o frescor (0,25)
+# de B3 e FII foi repartido de novo: 0,15 do preco + 0,05 do pregao + 0,05 dos
+# proventos. Tambem de arquivo publicado, tambem medido com o banco fora.
+PROVENTOS_DO_CHAT = "Proventos publicados (chat)"
+PESO_PROVENTOS_DO_CHAT = 0.05
+PESOS_COM_PREGAO = {"Integridade": 0.35, "Frescor": 0.15}  # 0,15 + 0,05 + 0,05 = 0,25
+#: Dias corridos da resposta da brapi a partir dos quais ainda vale 100%: a
+#: coleta e diaria e o fim de semana nao renova.
+PROVENTOS_FRESCO_DIAS = 3
 
 
 def _declarar_nao_medidos(comps: list["Componente"], motivo: str,
@@ -380,6 +392,35 @@ def _pregao_do_chat(hoje: date | None = None) -> Componente:
         f"{ref:%d/%m}, {atraso} dias uteis atras; fechamento bruto, so B3 e FII")
 
 
+def _proventos_do_chat(hoje: date | None = None) -> Componente:
+    """Idade dos proventos publicados que os chats citam.
+
+    Le o mesmo arquivo que ``proventos_ativo`` le. Zero em
+    ``FOTO_MAXIMA_DIAS``, a idade com que o proprio publicador recusa o
+    arquivo. Arquivo ausente e medicao, nao falta dela: o chat fica sem os
+    proventos de cada ano e diz isso.
+    """
+    from core import proventos_b3 as pb
+    peso = PESO_PROVENTOS_DO_CHAT
+    art = pb.carregar()
+    foto = art.get("foto_mais_nova")
+    if not foto:
+        return Componente(PROVENTOS_DO_CHAT, 0.0, peso,
+                          "arquivo proventos_b3 ausente ou ilegivel: os chats "
+                          "ficam sem os proventos de cada ano")
+    try:
+        ref = date.fromisoformat(str(foto)[:10])
+    except ValueError:
+        return Componente(PROVENTOS_DO_CHAT, 0.0, peso,
+                          f"data da resposta ilegivel no arquivo ({foto!r})")
+    dias = ((hoje or date.today()) - ref).days
+    return Componente(
+        PROVENTOS_DO_CHAT,
+        _frescor_pct(dias, PROVENTOS_FRESCO_DIAS, pb.FOTO_MAXIMA_DIAS), peso,
+        f"chats citam proventos de {art.get('n_tickers') or '?'} ativos da B3, "
+        f"resposta mais nova da brapi de {ref:%d/%m}, {dias} dias atras")
+
+
 def _scalar(conn, sql: str, params: dict | None = None):
     from sqlalchemy import text
     return conn.execute(text(sql), params or {}).scalar()
@@ -432,6 +473,7 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
         _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}",
                               PESOS_COM_PREGAO)
     comps.append(_pregao_do_chat())
+    comps.append(_proventos_do_chat())
     _declarar_nao_medidos(comps, "nao medido: sem ticker apto no indice",
                           PESOS_COM_PREGAO)
 
@@ -479,6 +521,7 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
         _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}",
                               PESOS_COM_PREGAO)
     comps.append(_pregao_do_chat())
+    comps.append(_proventos_do_chat())
     _declarar_nao_medidos(comps, "nao medido: universo investivel vazio",
                           PESOS_COM_PREGAO)
 
@@ -906,7 +949,8 @@ def _taxa_contratada_do_tesouro(conn, user_id: str) -> Componente:
 
 
 def confianca_investimentos(engine=None, user_id: str | None = None) -> ConfiancaSecao:
-    """Registro de operacoes, a curva que marca o Tesouro e a taxa de cada compra.
+    """Registro de operacoes, a curva que marca o Tesouro, a taxa de cada compra
+    e os proventos publicados que os chats da Analise citam.
 
     ``user_id`` omitido e o dono da sessao (fora do Streamlit, o dos jobs).
     """
@@ -933,6 +977,8 @@ def confianca_investimentos(engine=None, user_id: str | None = None) -> Confianc
         comps.append(Componente(TAXA_CONTRATADA_TESOURO, None,
                                 PESO_TAXA_CONTRATADA_TESOURO,
                                 f"nao medido: {type(exc).__name__}"))
+    # Os chats de Visao Geral, Acoes e FIIs citam os proventos publicados.
+    comps.append(_proventos_do_chat())
     return ConfiancaSecao("Investimentos", tuple(comps), base.universo, base.notas)
 
 

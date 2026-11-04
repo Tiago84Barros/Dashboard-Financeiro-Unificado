@@ -1,7 +1,7 @@
 {
   "nome": "Dashboard Financeiro Unificado",
   "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, o que funciona por trás delas.",
-  "data_mapa": "03/11/2026",
+  "data_mapa": "04/11/2026",
   "filhos": [
     {
       "nome": "Dashboard Geral",
@@ -1034,7 +1034,7 @@
                 {
                   "nome": "Converse sobre sua carteira",
                   "resumo": "Chat com IA sobre a carteira inteira",
-                  "explicacao": "Conversa com a inteligência artificial, que responde usando os dados desta aba, juros, inflação, câmbio, notícias e os pregões diários recentes da bolsa de cada ação e fundo da carteira. Tem perguntas sugeridas, o botão 'Limpar chat' e uma caixa para enviar os valores em reais (por padrão vão só porcentagens). Sem IA configurada, aparece 'Esta conversa não está disponível no momento'.",
+                  "explicacao": "Conversa com a inteligência artificial, que responde usando os dados desta aba, juros, inflação, câmbio, notícias, os pregões diários recentes da bolsa e os proventos de cada ano (inclusive o do ano em curso) de cada ação e fundo da carteira. Tem perguntas sugeridas, o botão 'Limpar chat' e uma caixa para enviar os valores em reais (por padrão vão só porcentagens). Sem IA configurada, aparece 'Esta conversa não está disponível no momento'.",
                   "so_admin": false
                 }
               ]
@@ -2491,7 +2491,7 @@
             {
               "nome": "Converse sobre o fundo",
               "resumo": "Chat com a IA sobre este fundo",
-              "explicacao": "Caixa de conversa com a inteligência artificial focada no fundo aberto. Responde só com os dados do app e avisa quando falta informação. Só funciona quando a IA está configurada. Na tela o título traz o código do fundo. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês.",
+              "explicacao": "Caixa de conversa com a inteligência artificial focada no fundo aberto. Responde só com os dados do app, inclusive os rendimentos por cota de cada ano e o do ano em curso, e avisa quando falta informação. Só funciona quando a IA está configurada. Na tela o título traz o código do fundo. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês.",
               "so_admin": false
             }
           ]
@@ -2883,7 +2883,7 @@
             {
               "nome": "Confiança por seção",
               "resumo": "Um cartão para cada tela do menu",
-              "explicacao": "Sete cartões: Dashboard Geral, Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global. Cada cartão abre os itens que formam a nota e a prova por trás de cada um. Em Empresas B3 e Seleção de FIIs, o item 'Pregão diário (chat)' mede a idade dos pregões que o chat do ativo cita.",
+              "explicacao": "Sete cartões: Dashboard Geral, Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global. Cada cartão abre os itens que formam a nota e a prova por trás de cada um. Em Empresas B3 e Seleção de FIIs, o item 'Pregão diário (chat)' mede a idade dos pregões que o chat do ativo cita. Em Empresas B3, Seleção de FIIs e Investimentos, o item 'Proventos publicados (chat)' mede a idade dos proventos que os chats citam.",
               "so_admin": false
             },
             {
