@@ -35,6 +35,35 @@ def pvp_da_carteira(posicoes: Iterable[tuple[object, object]]) -> float | None:
     return sum(w for _, w in medidos) / sum(w / p for p, w in medidos)
 
 
+def dy_da_carteira(posicoes: Iterable[tuple[object, object]]) -> float | None:
+    """DY 12m da carteira, em fração: média ARITMÉTICA ponderada pelo peso.
+
+    Diferente do P/VP, aqui a aritmética é a certa: rendimento sobre preço,
+    ponderado pelo valor de mercado de cada posição, soma direto. O que estava
+    errado no Dashboard Geral era o resto:
+
+    - DY ausente entrava como zero (``dy_12m or 0``), e um fundo sem dado
+      rebaixava o rendimento da carteira inteira. Agora fica fora e o peso se
+      renormaliza sobre quem foi medido;
+    - a vitrine grava o DY ora em fração (0,11), ora em ponto (11,0), e o
+      cartão multiplicava por 100 sem olhar: 11,0 virava 1.100%.
+
+    Sem nenhum DY medido o resultado é ``None``, nunca zero.
+    """
+    medidos = []
+    for dy, peso in posicoes:
+        try:
+            d, w = float(dy), float(peso)
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(d) and math.isfinite(w)) or w <= 0 or d < 0:
+            continue
+        medidos.append((d / 100 if d > 1 else d, w))
+    if not medidos:
+        return None
+    return sum(d * w for d, w in medidos) / sum(w for _, w in medidos)
+
+
 def enrich_review_presentation(proposal, policy, correlation_matrix=None):
     from core.fii_portfolio_v4 import (
         SCENARIOS,

@@ -1037,8 +1037,8 @@ def _resumo_fiis(port: list[dict], salvo: bool) -> tuple[str, str, list[tuple[st
             ],
         )
 
-    dy_w = sum((p.get("dy_12m") or 0) * p["peso"] for p in port)
-    from core.fii_presentation import pvp_da_carteira
+    from core.fii_presentation import dy_da_carteira, pvp_da_carteira
+    dy_w = dy_da_carteira((p.get("dy_12m"), p.get("peso")) for p in port)
     pvp_w = pvp_da_carteira((p.get("pvp"), p.get("peso")) for p in port)
     status = "Salva" if salvo else "Sugerida"
     status_cor = _COR_FLUXO if salvo else _COR_ALERTA
@@ -1047,7 +1047,8 @@ def _resumo_fiis(port: list[dict], salvo: bool) -> tuple[str, str, list[tuple[st
         status_cor,
         [
             ("FIIs selecionados", str(len(port)), _COR_PATRIMONIO),
-            ("DY 12m ponderado", f"{dy_w * 100:.1f}%", _COR_FLUXO),
+            ("DY 12m ponderado", f"{dy_w * 100:.1f}%" if dy_w is not None else "N/D",
+             _COR_FLUXO),
             ("P/VP ponderado", f"{pvp_w:.2f}" if pvp_w is not None else "N/D",
              _COR_ALERTA),
         ],
@@ -1553,8 +1554,8 @@ def _secao_fiis_sugeridos(port: list[dict] | None = None, salvo: bool = False) -
     subtitulo = ("Carteira-modelo de FIIs definida por você na Seleção de FIIs" if salvo
                  else "Triagem quantitativa automática — salve uma composição para fixá-la")
 
-    dy_w = sum((p.get("dy_12m") or 0) * p["peso"] for p in port)
-    from core.fii_presentation import pvp_da_carteira
+    from core.fii_presentation import dy_da_carteira, pvp_da_carteira
+    dy_w = dy_da_carteira((p.get("dy_12m"), p.get("peso")) for p in port)
     pvp_w = pvp_da_carteira((p.get("pvp"), p.get("peso")) for p in port)
     tipos: dict[str, float] = {}
     for p in port:
@@ -1568,7 +1569,7 @@ def _secao_fiis_sugeridos(port: list[dict] | None = None, salvo: bool = False) -
     with m1:
         st.markdown(_mini_metric("FIIs", str(len(port)), "Carteira-modelo diversificada", _COR_PATRIMONIO), unsafe_allow_html=True)
     with m2:
-        st.markdown(_mini_metric("DY 12m", f"{dy_w * 100:.1f}%", "Yield ponderado", _COR_FLUXO), unsafe_allow_html=True)
+        st.markdown(_mini_metric("DY 12m", f"{dy_w * 100:.1f}%" if dy_w is not None else "N/D", "Yield ponderado", _COR_FLUXO), unsafe_allow_html=True)
     with m3:
         st.markdown(_mini_metric("P/VP", f"{pvp_w:.2f}" if pvp_w is not None else "N/D","Preço/valor patrim. ponderado", _COR_ALERTA), unsafe_allow_html=True)
     with m4:
