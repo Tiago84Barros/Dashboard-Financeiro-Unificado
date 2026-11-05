@@ -378,17 +378,17 @@ def test_curva_de_capital_inclui_indice_e_pesos_iguais():
                           benchmark="S&P 500 (SPY)", benchmark_loader=_loader,
                           benchmark_horizon_months=12)
     quadro, info = bt.curvas_capital(res)
-    assert info["benchmark"] == "S&P 500 (SPY) (US$)"
+    assert info["benchmark"] == "S&P 500 (SPY, US$)"
     assert info["janela_recortada"] is False
     assert list(quadro.columns) == ["Estratégia bruta (US$)",
-                                    "S&P 500 (SPY) (US$)",
+                                    "S&P 500 (SPY, US$)",
                                     "Pesos iguais do universo (US$)"]
     assert list(quadro.index) == res["dates"]
     np.testing.assert_allclose(quadro["Estratégia bruta (US$)"], res["equity_curve"])
-    np.testing.assert_allclose(quadro["S&P 500 (SPY) (US$)"],
+    np.testing.assert_allclose(quadro["S&P 500 (SPY, US$)"],
                                res["benchmark_equity_curve"])
     # SPY sintético sobe 5% a.a.: 8 janelas de 12 meses compõem 1,05^8.
-    assert quadro["S&P 500 (SPY) (US$)"].iloc[-1] == pytest.approx(1.05 ** 8, rel=1e-6)
+    assert quadro["S&P 500 (SPY, US$)"].iloc[-1] == pytest.approx(1.05 ** 8, rel=1e-6)
 
 
 def test_curva_recorta_todas_as_linhas_na_janela_do_indice():
@@ -428,3 +428,19 @@ def test_curva_com_indice_sem_serie_nao_inventa_linha():
     quadro, info = bt.curvas_capital(res)
     assert info["benchmark"] is None
     assert not any("SPY" in c for c in quadro.columns)
+
+
+def test_legenda_da_curva_explica_indice_ausente():
+    # O aviso de benchmark sem série só ia para o log de lacunas; a tela dizia
+    # "escolha um índice" com o S&P 500 já escolhido.
+    from views.empresas_americanas import _figura_curva_capital, _legenda_curva_capital
+    res = bt.walk_forward(_panel(), top_n=3, periods_per_year=1,
+                          benchmark="S&P 500 (SPY)",
+                          benchmark_loader=lambda s: pd.DataFrame())
+    quadro, info = bt.curvas_capital(res)
+    texto = _legenda_curva_capital(info, res["benchmark"])
+    assert texto.startswith("S&P 500 (SPY) ficou fora do gráfico")
+    assert "Escolha um índice" not in texto
+    fig = _figura_curva_capital(quadro, info["benchmark"])
+    assert all("%{y:.2f}" in t.hovertemplate for t in fig.data)
+    assert all(np.allclose(t.y, np.round(t.y, 2)) for t in fig.data)

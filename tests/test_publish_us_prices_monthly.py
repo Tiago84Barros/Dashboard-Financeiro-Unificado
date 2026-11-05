@@ -68,7 +68,8 @@ def test_ler_do_local_sem_simbolos_devolve_vazio(local):
 
 def test_simulacao_nao_grava_nada(local, remoto):
     resumo = pub.publicar(local=local, remoto=remoto, apply=False)
-    assert resumo == {"AAPL": 2, "MSFT": 1}
+    # Indices sem serie no local aparecem com zero, como qualquer simbolo.
+    assert resumo == {"AAPL": 2, "MSFT": 1, "IWB": 0, "QQQ": 0, "SPY": 0}
     with remoto.connect() as c:
         assert c.execute(text("SELECT COUNT(*) FROM prices_monthly")).scalar() == 0
 
@@ -185,3 +186,19 @@ def test_parciais_obsoletas_guarda_so_o_ultimo_pregao_do_mes():
                            "month_end": ["2026-07-17", "2026-07-30", "2026-07-31",
                                          "2026-10-02", "2026-09-04"]})
     assert pub.parciais_obsoletas(chaves) == [("X", "2026-07-17"), ("X", "2026-07-30")]
+
+
+def test_indices_do_seletor_de_benchmark_sao_publicados_sem_estar_em_carteira(local, remoto):
+    # O S&P 500 sumia da Curva de capital porque o SPY nao esta em nenhuma
+    # carteira salva e este script so publicava simbolos de carteira.
+    from core.us_benchmark import US_BENCHMARKS
+    assert pub.simbolos_de_benchmark() == sorted(s for s in US_BENCHMARKS.values() if s)
+    with local.begin() as c:
+        c.execute(text("INSERT INTO prices_monthly (symbol, month_end, close, "
+                       "adjusted_close, volume, total_return) "
+                       "VALUES ('SPY','2024-01-31',480.0,478.0,1,0.02)"))
+    resumo = pub.publicar(local=local, remoto=remoto, apply=True)
+    assert resumo["SPY"] == 1
+    with remoto.connect() as c:
+        assert c.execute(text(
+            "SELECT COUNT(*) FROM prices_monthly WHERE symbol='SPY'")).scalar() == 1

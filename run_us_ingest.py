@@ -16,6 +16,7 @@ Comandos:
     python run_us_ingest.py fundamentals --warehouse --tickers AAPL
     python run_us_ingest.py resume       --warehouse            # retoma do checkpoint
     python run_us_ingest.py validate     --warehouse            # auditoria de qualidade
+    python run_us_ingest.py monthly      --warehouse            # deriva prices_monthly do diário
 
 Opções: --tickers, --exchanges, --limit, --years, --budget, --dry-run, --offline,
 --warehouse (usa 127.0.0.1:5433 lendo warehouse/.env), --json.
@@ -127,7 +128,7 @@ def main() -> int:
     p.add_argument("command", choices=[
         "init-schema", "test", "universe", "estimate", "bootstrap", "daily",
         "fundamentals", "resume", "validate", "score-history", "backtest",
-        "snapshot", "prices", "enrich", "macro", "link-cik"])
+        "snapshot", "prices", "enrich", "macro", "link-cik", "monthly"])
     p.add_argument("--tickers", nargs="*", help="símbolos específicos")
     p.add_argument("--exchanges", nargs="*", default=None, help="NYSE NASDAQ AMEX")
     p.add_argument("--limit", type=int, default=None, help="limita o universo/lote")
@@ -164,7 +165,8 @@ def main() -> int:
 
     # Proteção: ingestão pesada NUNCA deve escrever no Supabase remoto.
     if args.command in {"bootstrap", "daily", "fundamentals", "universe", "resume",
-                        "score-history", "snapshot", "enrich", "macro", "link-cik"} \
+                        "score-history", "snapshot", "enrich", "macro", "link-cik",
+                        "monthly"} \
             and not _is_local_target() and not args.dry_run:
         log.error("Comando %s exige --warehouse (destino local). "
                   "Ingestão pesada não pode ir para o Supabase.", args.command)
@@ -265,6 +267,16 @@ def main() -> int:
                                        limit_companies=args.limit)
         res["prices_monthly_rows"] = monthly.get("rows")
         return out(res)
+
+    if args.command == "monthly":
+        # Só a derivação mensal, sem recomputar os scores PIT. É o passo que
+        # faltava para o benchmark: `prices --tickers SPY IWB QQQ` grava o
+        # diário, e o backtest e a publicação no Supabase leem o mensal.
+        from core.database import get_engine
+        from data_pipeline.us import scoring_history as sh
+        if args.dry_run:
+            return out({"ok": True, "action": "dry-run: nada derivado"})
+        return out(sh.derive_prices_monthly(get_engine()))
 
     if args.command == "backtest":
         import core.us_backtest as bt

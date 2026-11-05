@@ -389,7 +389,8 @@ def curvas_capital(res: dict) -> tuple[pd.DataFrame, dict]:
     datas = [str(d) for d in (res.get("dates") or [])]
     curva = res.get("equity_curve") or []
     info = {"benchmark": None, "janela_recortada": False,
-            "n_periodos": len(datas), "inicio": datas[0] if datas else None}
+            "n_periodos": len(datas), "inicio": datas[0] if datas else None,
+            "fim": datas[-1] if datas else None}
     if not datas or len(curva) != len(datas):
         return pd.DataFrame(), info
 
@@ -407,7 +408,9 @@ def curvas_capital(res: dict) -> tuple[pd.DataFrame, dict]:
     if (estado.get("ok") and estado.get("modo") == "indice" and bm_curva
             and len(bm_curva) == len(bm_datas) and set(bm_datas) <= set(datas)):
         rotulo = str(estado.get("rotulo") or estado.get("simbolo") or "Índice")
-        coluna = f"{rotulo} (US$)"
+        # "S&P 500 (SPY)" vira "S&P 500 (SPY, US$)", e não "(SPY) (US$)".
+        coluna = (f"{rotulo[:-1]}, US$)" if rotulo.endswith(")")
+                  else f"{rotulo} (US$)")
         retornos[coluna] = _retornos_da_curva(bm_curva, bm_datas)
         info["benchmark"] = coluna
         if bm_datas != datas:
@@ -422,4 +425,5 @@ def curvas_capital(res: dict) -> tuple[pd.DataFrame, dict]:
                            for nome, r in retornos.items()})
     info["n_periodos"] = len(janela)
     info["inicio"] = janela[0] if janela else None
+    info["fim"] = janela[-1] if janela else None
     return quadro, info
