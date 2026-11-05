@@ -2383,6 +2383,14 @@ def _tab_backtests(status: dict) -> None:
                             width="stretch", config={"displayModeBar": False},
                             key="us_bt_curva_capital")
             st.caption(_legenda_curva_capital(info_curva, res.get("benchmark") or {}))
+            if info_curva.get("janela_recortada"):
+                detalhe_tecnico(
+                    f"O índice não cobre todas as datas do teste, então todas as "
+                    f"curvas foram recompostas a partir de {info_curva['inicio']} "
+                    f"({info_curva['n_periodos']} períodos), a mesma janela do "
+                    "excesso anualizado. Partir cada linha de uma data diferente "
+                    "faria a mais curta parecer pior só por ter composto menos anos.",
+                    codigo="eua.backtests_curva_janela_benchmark")
 
 
 # Cor fixa por papel, não pela ordem das colunas: o índice tem de ter a mesma
