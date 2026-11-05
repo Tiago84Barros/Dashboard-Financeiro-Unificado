@@ -394,8 +394,9 @@ def test_curva_de_capital_inclui_indice_e_pesos_iguais():
 def test_curva_recorta_todas_as_linhas_na_janela_do_indice():
     # Índice que começa depois do painel: as linhas têm de partir da MESMA data,
     # senão o índice parece pior só por ter tido menos anos para compor.
-    curto = lambda simbolos: pd.DataFrame(
-        {"SPY": _serie(0.05, anos=8, inicio="2013-06-30")})
+    def curto(simbolos):
+        return pd.DataFrame({"SPY": _serie(0.05, anos=8, inicio="2013-06-30")})
+
     res = bt.walk_forward(_panel(), top_n=3, periods_per_year=1,
                           benchmark="S&P 500 (SPY)", benchmark_loader=curto,
                           benchmark_horizon_months=12)
