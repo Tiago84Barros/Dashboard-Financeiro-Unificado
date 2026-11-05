@@ -2379,26 +2379,70 @@ def _tab_backtests(status: dict) -> None:
         secao_titulo("Curva de capital", "📉")
         curve, info_curva = curvas_capital(res)
         if not curve.empty:
-            st.line_chart(curve)
-            referencia = info_curva.get("benchmark")
-            if referencia:
-                legenda = (f"Referências: {referencia} e pesos iguais do universo, "
-                           "em retorno total e antes de custo e imposto. Compare o "
-                           "índice com a linha bruta, que está na mesma moeda; a "
-                           "líquida em reais desconta custo, câmbio, IR e IOF.")
-            else:
-                legenda = ("Referência: pesos iguais do universo, em retorno total "
-                           "e antes de custo e imposto. Escolha um índice no "
-                           "seletor “Benchmark de mercado” para incluí-lo.")
-            st.caption(legenda)
-            if info_curva.get("janela_recortada"):
-                detalhe_tecnico(
-                    f"O índice não cobre todas as datas do teste, então todas as "
-                    f"curvas foram recompostas a partir de {info_curva['inicio']} "
-                    f"({info_curva['n_periodos']} períodos), a mesma janela do "
-                    "excesso anualizado. Partir cada linha de uma data diferente "
-                    "faria a mais curta parecer pior só por ter composto menos anos.",
-                    codigo="eua.backtests_curva_janela_benchmark")
+            st.plotly_chart(_figura_curva_capital(curve, info_curva.get("benchmark")),
+                            width="stretch", config={"displayModeBar": False},
+                            key="us_bt_curva_capital")
+            st.caption(_legenda_curva_capital(info_curva, res.get("benchmark") or {}))
+
+
+# Cor fixa por papel, não pela ordem das colunas: o índice tem de ter a mesma
+# cor com ou sem a linha líquida no quadro.
+_CORES_CURVA = {"Estratégia bruta (US$)": "#4C78A8",
+                "Estratégia líquida (R$)": "#F58518",
+                "Pesos iguais do universo (US$)": "#9CA3AF"}
+_COR_BENCHMARK = "#E45756"
+
+
+def _figura_curva_capital(curve: pd.DataFrame, benchmark: str | None) -> go.Figure:
+    """Curvas de capital com valores de 2 casas no tooltip e no eixo.
+
+    O ``st.line_chart`` anterior mostrava ``14.7480899796`` e rótulos em
+    inglês (index/value/color) no tooltip, sem como formatar.
+    """
+    fig = go.Figure()
+    for coluna in curve.columns:
+        e_indice = coluna == benchmark
+        fig.add_trace(go.Scatter(
+            x=list(curve.index), y=curve[coluna].round(2), name=coluna,
+            mode="lines+markers", marker=dict(size=5),
+            line=dict(color=_COR_BENCHMARK if e_indice else _CORES_CURVA.get(coluna),
+                      width=3 if e_indice else 2,
+                      dash="dot" if coluna.startswith("Pesos iguais") else "solid"),
+            hovertemplate="%{y:.2f}×<extra>" + html.escape(coluna) + "</extra>",
+        ))
+    fig.update_layout(**_PLOT_LAYOUT, height=420, hovermode="x unified",
+                      legend=dict(orientation="h", y=-0.25, x=0),
+                      yaxis_title="Capital (1 = valor inicial)", xaxis_title=None)
+    fig.update_yaxes(tickformat=".2f")
+    return fig
+
+
+def _legenda_curva_capital(info: dict, estado: dict) -> str:
+    """Diz qual referência entrou e, quando o índice escolhido faltou, por quê.
+
+    O aviso de benchmark indisponível vai só para o log de lacunas; sem dizê-lo
+    aqui, a curva sem o S&P 500 parecia um seletor esquecido.
+    """
+    referencia = info.get("benchmark")
+    if referencia:
+        texto = (f"Referências: {referencia} e pesos iguais do universo, em retorno "
+                 "total e antes de custo e imposto. Compare o índice com a linha "
+                 "bruta, que está na mesma moeda; a líquida em reais desconta "
+                 "custo, câmbio, IR e IOF.")
+        if info.get("janela_recortada"):
+            texto += (f" O índice não cobre todo o teste, então todas as linhas "
+                      f"foram recompostas de {info['inicio']} a {info['fim']} "
+                      f"({info['n_periodos']} períodos), a mesma janela do excesso "
+                      "anualizado.")
+        return texto
+    if estado.get("modo") == "erro":
+        rotulo = estado.get("rotulo") or estado.get("simbolo") or "O índice escolhido"
+        return (f"{rotulo} ficou fora do gráfico: não há série mensal publicada "
+                "para ele no período do teste. A referência é a carteira de pesos "
+                "iguais do universo, em retorno total e antes de custo e imposto.")
+    return ("Referência: pesos iguais do universo, em retorno total e antes de "
+            "custo e imposto. Escolha um índice no seletor “Benchmark de mercado” "
+            "para incluí-lo.")
 
 
 # ── Qualidade dos Dados ───────────────────────────────────────────────────────
@@ -2494,7 +2538,12 @@ def _tab_sincronizacao(status: dict) -> None:
         "# 9) publicar a vitrine no Supabase (conexão direta, não o pooler)\n"
         "python scripts/publish_us_snapshot.py `\n"
         '  --source-url "postgresql://postgres:<senha>@127.0.0.1:5433/postgres" `\n'
-        '  --target-url "<SUPABASE_UNIFICADO_URL>" --dry-run   # confira, depois sem --dry-run',
+        '  --target-url "<SUPABASE_UNIFICADO_URL>" --dry-run   # confira, depois sem --dry-run\n\n'
+        "# 10) índices do benchmark (SPY, IWB, QQQ) para a Curva de capital\n"
+        "python run_us_ingest.py prices  --warehouse --tickers SPY IWB QQQ\n"
+        "python run_us_ingest.py monthly --warehouse\n"
+        "python -m scripts.publish_us_prices_monthly            # confira\n"
+        "python -m scripts.publish_us_prices_monthly --apply",
         language="powershell")
     st.caption("Testes históricos e a sincronização rodam **só localmente** — a vitrine "
                "traz pontuação, dossiê, assimetria e Piotroski/Altman/Sloan já calculados, "

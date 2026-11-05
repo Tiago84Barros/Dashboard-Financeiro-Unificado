@@ -1,9 +1,11 @@
 """Publica no Supabase a serie mensal de precos dos EUA que ja existe no
 warehouse local, restrita aos simbolos das carteiras salvas.
 
-So os simbolos de us_portfolio_model_items sao publicados -- nunca os 3.052
+So os simbolos de us_portfolio_model_items e os indices de referencia do
+backtest (SPY, IWB, QQQ, de core.us_benchmark) sao publicados -- nunca os 3.052
 da vitrine, e so a serie mensal -- nunca a diaria (12 milhoes de linhas no
-local). Espaco no Supabase e escasso (9 MB de folga em 500 MB); publicar mais
+local). Os indices custam ~200 linhas cada; sem eles a Curva de capital e o
+excesso contra o S&P 500 ficam sem serie no app publicado. Espaco no Supabase e escasso (9 MB de folga em 500 MB); publicar mais
 do que o necessario e exatamente o erro que este script existe para evitar.
 
 Simulacao por padrao; grava somente com --apply, como todo script deste
@@ -13,6 +15,10 @@ Uso:
     python -m scripts.publish_us_prices_monthly
     python -m scripts.publish_us_prices_monthly --apply
     python -m scripts.publish_us_prices_monthly --apply --simbolo AAPL --simbolo MSFT
+
+Indices no armazem local, antes da primeira publicacao:
+    python run_us_ingest.py prices  --warehouse --tickers SPY IWB QQQ
+    python run_us_ingest.py monthly --warehouse
 """
 from __future__ import annotations
 
@@ -66,6 +72,17 @@ def simbolos_das_carteiras(*, engine) -> list[str]:
         )
         return []
     return sorted(str(s) for s in linhas)
+
+
+def simbolos_de_benchmark() -> list[str]:
+    """Simbolos dos indices que o seletor "Benchmark de mercado" oferece.
+
+    Lidos do mapa versionado em vez de repetidos aqui: um indice novo no
+    seletor sem serie publicada e exatamente o defeito que deixou o S&P 500
+    fora da Curva de capital.
+    """
+    from core.us_benchmark import US_BENCHMARKS
+    return sorted({s for s in US_BENCHMARKS.values() if s})
 
 
 def ler_do_local(simbolos: list[str], *, engine) -> pd.DataFrame:
@@ -189,8 +206,13 @@ def publicar(*, local, remoto, apply: bool, simbolos: list[str] | None = None,
     menos que uma lista explicita seja passada. Um simbolo pedido sem serie
     no local aparece no resumo com zero: sumir e como uma lacuna de dado vira
     lacuna de cobertura sem ninguem perceber.
+
+    Sem lista explicita, os indices de referencia entram sempre, mesmo que
+    nenhuma carteira os contenha.
     """
-    alvo = sorted(simbolos) if simbolos is not None else simbolos_das_carteiras(engine=remoto)
+    alvo = (sorted(simbolos) if simbolos is not None
+            else sorted(set(simbolos_das_carteiras(engine=remoto))
+                        | set(simbolos_de_benchmark())))
     df = ler_do_local(alvo, engine=local)
     if apply:
         _gravar(df, engine=remoto)
