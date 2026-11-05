@@ -2375,13 +2375,30 @@ def _tab_backtests(status: dict) -> None:
         )
 
     if res.get("equity_curve"):
+        from core.us_backtest import curvas_capital
         secao_titulo("Curva de capital", "📉")
-        curve = pd.DataFrame({"Bruta (US$)": res["equity_curve"]},
-                             index=res.get("dates"))
-        liquido = res.get("liquido") or {}
-        if liquido.get("ok") and liquido.get("dates") == res.get("dates"):
-            curve["Líquida (R$)"] = liquido["equity_curve_liquido"]
-        st.line_chart(curve)
+        curve, info_curva = curvas_capital(res)
+        if not curve.empty:
+            st.line_chart(curve)
+            referencia = info_curva.get("benchmark")
+            if referencia:
+                legenda = (f"Referências: {referencia} e pesos iguais do universo, "
+                           "em retorno total e antes de custo e imposto. Compare o "
+                           "índice com a linha bruta, que está na mesma moeda; a "
+                           "líquida em reais desconta custo, câmbio, IR e IOF.")
+            else:
+                legenda = ("Referência: pesos iguais do universo, em retorno total "
+                           "e antes de custo e imposto. Escolha um índice no "
+                           "seletor “Benchmark de mercado” para incluí-lo.")
+            st.caption(legenda)
+            if info_curva.get("janela_recortada"):
+                detalhe_tecnico(
+                    f"O índice não cobre todas as datas do teste, então todas as "
+                    f"curvas foram recompostas a partir de {info_curva['inicio']} "
+                    f"({info_curva['n_periodos']} períodos), a mesma janela do "
+                    "excesso anualizado. Partir cada linha de uma data diferente "
+                    "faria a mais curta parecer pior só por ter composto menos anos.",
+                    codigo="eua.backtests_curva_janela_benchmark")
 
 
 # ── Qualidade dos Dados ───────────────────────────────────────────────────────

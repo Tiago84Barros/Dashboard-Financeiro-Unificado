@@ -337,9 +337,9 @@
             {
               "nome": "Curva de capital",
               "resumo": "Gráfico da evolução do dinheiro",
-              "explicacao": "Linha que mostra como o dinheiro teria evoluído ao longo do teste.",
+              "explicacao": "Linhas que mostram como o dinheiro teria evoluído ao longo do teste: a estratégia bruta em dólar, a líquida em reais e, como referência, o índice escolhido no seletor (como o S&P 500) e a carteira de pesos iguais do universo. Quando o índice cobre menos anos que o teste, todas as linhas recomeçam na mesma data.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2434"
+              "fonte": "views/empresas_americanas.py:2379"
             }
           ]
         },

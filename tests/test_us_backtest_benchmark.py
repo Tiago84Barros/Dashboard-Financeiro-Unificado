@@ -368,3 +368,62 @@ def test_backtest_teorico_publica_concentracao_e_bloqueia_conclusao_quando_viola
     assert concentration["max_weight"] > concentration["policy_max_weight"]
     assert concentration["max_hhi"] > 0.99
     assert concentration["eligible_for_conclusion"] is False
+
+
+# ── Curva de capital com o benchmark ─────────────────────────────────────────
+def test_curva_de_capital_inclui_indice_e_pesos_iguais():
+    # O gráfico mostrava só bruta e líquida: o índice estava calculado em
+    # `benchmark_equity_curve` e ninguém o desenhava.
+    res = bt.walk_forward(_panel(), top_n=3, periods_per_year=1,
+                          benchmark="S&P 500 (SPY)", benchmark_loader=_loader,
+                          benchmark_horizon_months=12)
+    quadro, info = bt.curvas_capital(res)
+    assert info["benchmark"] == "S&P 500 (SPY) (US$)"
+    assert info["janela_recortada"] is False
+    assert list(quadro.columns) == ["Estratégia bruta (US$)",
+                                    "S&P 500 (SPY) (US$)",
+                                    "Pesos iguais do universo (US$)"]
+    assert list(quadro.index) == res["dates"]
+    np.testing.assert_allclose(quadro["Estratégia bruta (US$)"], res["equity_curve"])
+    np.testing.assert_allclose(quadro["S&P 500 (SPY) (US$)"],
+                               res["benchmark_equity_curve"])
+    # SPY sintético sobe 5% a.a.: 8 janelas de 12 meses compõem 1,05^8.
+    assert quadro["S&P 500 (SPY) (US$)"].iloc[-1] == pytest.approx(1.05 ** 8, rel=1e-6)
+
+
+def test_curva_recorta_todas_as_linhas_na_janela_do_indice():
+    # Índice que começa depois do painel: as linhas têm de partir da MESMA data,
+    # senão o índice parece pior só por ter tido menos anos para compor.
+    curto = lambda simbolos: pd.DataFrame(
+        {"SPY": _serie(0.05, anos=8, inicio="2013-06-30")})
+    res = bt.walk_forward(_panel(), top_n=3, periods_per_year=1,
+                          benchmark="S&P 500 (SPY)", benchmark_loader=curto,
+                          benchmark_horizon_months=12)
+    assert res["benchmark"]["ok"] and res["benchmark_dates"] != res["dates"]
+    quadro, info = bt.curvas_capital(res)
+    assert info["janela_recortada"] is True
+    assert list(quadro.index) == res["benchmark_dates"]
+    # A carteira recomposta na janela é a mesma que o excesso anualizado usa.
+    total = quadro["Estratégia bruta (US$)"].iloc[-1] - 1
+    assert total == pytest.approx(
+        res["portfolio_on_benchmark_window"]["total_return"], rel=1e-9)
+
+
+def test_curva_sem_indice_mostra_pesos_iguais():
+    res = bt.walk_forward(_panel(), top_n=3, periods_per_year=1,
+                          benchmark="Pesos iguais do universo",
+                          benchmark_loader=_loader)
+    quadro, info = bt.curvas_capital(res)
+    assert info["benchmark"] is None
+    assert "Pesos iguais do universo (US$)" in quadro.columns
+    assert len(quadro) == len(res["dates"])
+
+
+def test_curva_com_indice_sem_serie_nao_inventa_linha():
+    res = bt.walk_forward(_panel(), top_n=3, periods_per_year=1,
+                          benchmark="S&P 500 (SPY)",
+                          benchmark_loader=lambda s: pd.DataFrame())
+    assert res["benchmark"]["ok"] is False
+    quadro, info = bt.curvas_capital(res)
+    assert info["benchmark"] is None
+    assert not any("SPY" in c for c in quadro.columns)
