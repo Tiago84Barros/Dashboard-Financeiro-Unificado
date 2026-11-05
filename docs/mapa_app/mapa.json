@@ -1,7 +1,7 @@
 {
   "nome": "Dashboard Financeiro Unificado",
   "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, o que funciona por trás delas.",
-  "data_mapa": "04/11/2026",
+  "data_mapa": "05/11/2026",
   "filhos": [
     {
       "nome": "Dashboard Geral",
@@ -2332,7 +2332,7 @@
                 {
                   "nome": "Curva de capital",
                   "resumo": "Gráfico da evolução do dinheiro",
-                  "explicacao": "Linha que mostra como o dinheiro teria evoluído ao longo do teste.",
+                  "explicacao": "Linhas que mostram como o dinheiro teria evoluído ao longo do teste: a estratégia bruta em dólar, a líquida em reais e, como referência, o índice escolhido no seletor (como o S&P 500) e a carteira de pesos iguais do universo. Quando o índice cobre menos anos que o teste, todas as linhas recomeçam na mesma data.",
                   "so_admin": false
                 }
               ]

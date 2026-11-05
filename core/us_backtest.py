@@ -350,6 +350,76 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
         "slippage_bps": float(slippage_bps),
         "bootstrap_excess": bootstrap_mean_ci(excess_series, samples=bootstrap_samples),
         "equity_curve": list((1 + pr_s).cumprod().values),
+        # Pesos iguais do universo na MESMA grade de datas da carteira: é a
+        # baseline interna, e a única linha de comparação quando o seletor está
+        # em "Pesos iguais do universo" ou o índice não tem série.
+        "equal_weight_curve": list((1 + ew_s).cumprod().values),
         "dates": [str(d) for d in dates],
         **extra,
     }
+
+
+def _retornos_da_curva(curva, datas) -> pd.Series:
+    """Desfaz o ``cumprod``: retorno de cada período a partir do índice de capital."""
+    c = pd.Series([float(x) for x in curva], index=list(datas), dtype="float64")
+    return c / c.shift(1).fillna(1.0) - 1.0
+
+
+def curvas_capital(res: dict) -> tuple[pd.DataFrame, dict]:
+    """Curvas de capital da estratégia e das referências, na MESMA janela.
+
+    Devolve ``(quadro, info)``: ``quadro`` tem uma coluna por linha do gráfico,
+    indexada pelas datas de decisão; ``info`` diz qual referência entrou e se a
+    janela foi recortada.
+
+    A comparação só é honesta quando todas as linhas começam do mesmo capital
+    na mesma data. O índice pode cobrir menos datas que o painel (série mais
+    curta que o histórico de scores); desenhar a carteira desde 2010 e o índice
+    desde 2014, cada um partindo de 1, faria o índice parecer pior só por ter
+    tido menos anos para compor. Por isso, quando o índice não cobre todas as
+    datas, TODAS as curvas são recompostas a partir dos retornos período a
+    período nas datas que o índice cobre -- o mesmo recorte que
+    ``_bloco_benchmark`` usa para o excesso anualizado.
+
+    Moedas: carteira bruta, pesos iguais e índice são retorno total em USD,
+    antes de custo e imposto; a líquida é em reais depois de custo, câmbio, IR
+    e IOF. O rótulo de cada coluna leva a moeda para que ninguém compare a
+    líquida em reais com o índice em dólar achando que é a mesma régua.
+    """
+    datas = [str(d) for d in (res.get("dates") or [])]
+    curva = res.get("equity_curve") or []
+    info = {"benchmark": None, "janela_recortada": False,
+            "n_periodos": len(datas), "inicio": datas[0] if datas else None}
+    if not datas or len(curva) != len(datas):
+        return pd.DataFrame(), info
+
+    retornos: dict[str, pd.Series] = {
+        "Estratégia bruta (US$)": _retornos_da_curva(curva, datas)}
+    liquido = res.get("liquido") or {}
+    if liquido.get("ok") and [str(d) for d in liquido.get("dates") or []] == datas:
+        retornos["Estratégia líquida (R$)"] = _retornos_da_curva(
+            liquido["equity_curve_liquido"], datas)
+
+    estado = res.get("benchmark") or {}
+    bm_curva = res.get("benchmark_equity_curve") or []
+    bm_datas = [str(d) for d in (res.get("benchmark_dates") or [])]
+    janela = datas
+    if (estado.get("ok") and estado.get("modo") == "indice" and bm_curva
+            and len(bm_curva) == len(bm_datas) and set(bm_datas) <= set(datas)):
+        rotulo = str(estado.get("rotulo") or estado.get("simbolo") or "Índice")
+        coluna = f"{rotulo} (US$)"
+        retornos[coluna] = _retornos_da_curva(bm_curva, bm_datas)
+        info["benchmark"] = coluna
+        if bm_datas != datas:
+            janela = bm_datas
+            info["janela_recortada"] = True
+
+    ew = res.get("equal_weight_curve") or []
+    if len(ew) == len(datas):
+        retornos["Pesos iguais do universo (US$)"] = _retornos_da_curva(ew, datas)
+
+    quadro = pd.DataFrame({nome: (1.0 + r.reindex(janela)).cumprod()
+                           for nome, r in retornos.items()})
+    info["n_periodos"] = len(janela)
+    info["inicio"] = janela[0] if janela else None
+    return quadro, info
