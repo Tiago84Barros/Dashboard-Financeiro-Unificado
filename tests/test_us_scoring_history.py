@@ -55,3 +55,18 @@ def test_build_annual_panel_sem_preco_futuro():
 def test_annual_asof_dates():
     ds = sh.annual_asof_dates(2020, 2022)
     assert ds == [date(2020, 6, 30), date(2021, 6, 30), date(2022, 6, 30)]
+
+
+def test_filtro_por_simbolo_entra_na_mesma_sql_da_derivacao():
+    # Uma SQL só, filtrada por substituição: uma cópia à parte divergiria na
+    # primeira correção da derivação.
+    from data_pipeline.us import scoring_history as sh
+
+    deriva = sh._so_simbolos(sh._SQL_DERIVA_MENSAL,
+                             "WHERE COALESCE(adjusted_close, close) IS NOT NULL",
+                             "symbol")
+    poda = sh._so_simbolos(sh._SQL_PODA_MES_PARCIAL,
+                           "WHERE p.source = 'derived'", "p.symbol")
+    assert "IS NOT NULL AND symbol IN :simbolos" in deriva
+    assert "'derived' AND p.symbol IN :simbolos" in poda
+    assert deriva.replace(" AND symbol IN :simbolos", "") == sh._SQL_DERIVA_MENSAL

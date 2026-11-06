@@ -186,3 +186,22 @@ def test_ingestao_pula_barra_sem_close_e_grava_as_outras(monkeypatch):
 
     assert n == 1
     assert [r["date"] for r in gravadas] == ["2026-10-01"]
+
+
+def test_derivacao_so_dos_simbolos_pedidos(armazem):
+    """O alvo diário dos índices deriva SPY/IWB/QQQ, não o universo inteiro."""
+    from sqlalchemy import bindparam
+
+    from data_pipeline.us.scoring_history import _SQL_DERIVA_MENSAL, _so_simbolos
+
+    sql = _so_simbolos(_no_schema_do_teste(_SQL_DERIVA_MENSAL),
+                       "WHERE COALESCE(adjusted_close, close) IS NOT NULL", "symbol")
+    with armazem.begin() as conn:
+        conn.execute(text(f"DELETE FROM {SCHEMA}.prices_monthly"))
+        conn.execute(text(sql).bindparams(bindparam("simbolos", expanding=True)),
+                     {"simbolos": ["KO"]})
+        simbolos = {r[0] for r in conn.execute(text(
+            f"SELECT DISTINCT symbol FROM {SCHEMA}.prices_monthly"))}
+        conn.execute(text(f"DELETE FROM {SCHEMA}.prices_monthly"))
+
+    assert simbolos == {"KO"}
