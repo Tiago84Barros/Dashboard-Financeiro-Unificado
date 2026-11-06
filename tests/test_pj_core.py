@@ -221,3 +221,32 @@ def test_saldo_antes_da_abertura_e_calculado_para_tras():
     assert rel.saldo_ate(1000.0, ancora, lancs, date(2026, 10, 15)) == 1000.0
     assert rel.saldo_ate(1000.0, ancora, lancs, ancora) == 1000.0
     assert rel.saldo_ate(1000.0, ancora, lancs, date(2026, 11, 5)) == 950.0
+
+
+def test_ofx_com_duas_contas_e_recusado():
+    """Achado do Codex no PR #680: duas contas no mesmo arquivo misturavam
+    movimentos contra o saldo da primeira."""
+    duas = OFX_SGML.replace(
+        b"</STMTRS>",
+        b"</STMTRS><STMTRS><BANKACCTFROM><BANKID>1<ACCTID>999-9</BANKACCTFROM>"
+        b"<BANKTRANLIST><STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20261105<TRNAMT>-1<FITID>A1"
+        b"</STMTTRN></BANKTRANLIST></STMTRS>", 1)
+    e = ler_ofx(duas)
+    assert e.movimentos == [] and "2 contas" in e.avisos[0]
+
+
+def test_previa_confere_extrato_antigo_com_a_mesma_conta_do_saldo_gravado():
+    """Achado do Codex no PR #680: abertura 1.000 em 02/11; extrato antigo com
+    crédito de 200 em 15/10 e saldo de 800 em 14/10 fecha na prévia."""
+    existentes = [{"id": "p1", "data": date(2026, 11, 20), "valor": -100.0, "status": "previsto"}]
+    novos = [{"data": date(2026, 10, 15), "valor": 200.0}]
+    hip = rel.lancamentos_apos_importacao(existentes, novos, {})
+    assert rel.saldo_ate(1000.0, date(2026, 11, 2), hip, date(2026, 10, 14)) == 800.0
+
+
+def test_previa_trata_previsto_conciliado_como_pago_na_data_do_banco():
+    existentes = [{"id": "p1", "data": date(2026, 11, 20), "valor": -100.0, "status": "previsto"}]
+    novos = [{"data": date(2026, 11, 18), "valor": -100.0}]
+    hip = rel.lancamentos_apos_importacao(existentes, novos, {0: "p1"})
+    assert hip == [{"id": "p1", "data": date(2026, 11, 18), "valor": -100.0, "status": "pago"}]
+    assert rel.saldo_ate(1000.0, date(2026, 11, 2), hip, date(2026, 11, 18)) == 900.0

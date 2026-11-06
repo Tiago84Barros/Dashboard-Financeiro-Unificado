@@ -14,6 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from core.config import settings
+from core.pj import relatorios
 from core.pj import repositorio as repo
 from core.pj.extratos import extensoes_aceitas, ler_extrato
 from core.pj.plano_contas import CATEGORIAS, POR_CODIGO, rotulo, sugerir_categoria
@@ -86,16 +87,10 @@ def _conferencia_de_saldo(extrato, novos: list[dict], vinculos: dict[int, dict],
             f"{_fmt_data(saldo['data'])}. Ele define o saldo de abertura da conta, e os "
             "próximos extratos serão conferidos contra ele."))
         return
-    hoje_no_app = repo.saldo_calculado(empresa, repo.listar_lancamentos(), saldo["data"])
-    a_lancar = 0.0
-    for i, m in enumerate(novos):
-        if m["data"] > saldo["data"]:
-            continue
-        v = vinculos.get(i)
-        if i in escolhidos and v and not v.get("previsto"):
-            continue  # o pago manual já está no saldo
-        a_lancar += m["valor"]
-    projetado = round((hoje_no_app or 0.0) + a_lancar, 2)
+    hipoteticos = relatorios.lancamentos_apos_importacao(
+        repo.listar_lancamentos(), novos,
+        {i: v["transaction_id"] for i, v in vinculos.items() if i in escolhidos})
+    projetado = repo.saldo_calculado(empresa, hipoteticos, saldo["data"]) or 0.0
     dif = round(saldo["valor"] - projetado, 2)
     k1, k2, k3 = st.columns(3)
     k1.metric("Saldo do banco", fmt_moeda(saldo["valor"]), _fmt_data(saldo["data"]),

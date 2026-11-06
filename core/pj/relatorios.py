@@ -145,3 +145,25 @@ def meses_desde_o_inicio(serie: list[dict], lancs: list[dict]) -> list[dict]:
         return []
     inicio = min(datas)
     return [s for s in serie if (s["ano"], s["mes"]) >= (inicio.year, inicio.month)]
+
+
+def lancamentos_apos_importacao(existentes: list[dict], novos: list[dict],
+                                vinculos: dict[int, str]) -> list[dict]:
+    """Os lançamentos como ficam se a prévia for gravada, para a conferência
+    de saldo usar a MESMA conta do saldo gravado (:func:`saldo_ate`).
+
+    ``vinculos``: índice em ``novos`` -> id do lançamento existente que ele
+    concilia. O conciliado vira pago na data do banco, como faz
+    ``repositorio.importar_extrato``; o resto entra como pago novo. A prévia
+    fazia uma conta própria só para frente e acusava diferença falsa em
+    extrato mais antigo que a abertura (achado do Codex no PR #680).
+    """
+    por_id = {x["id"]: dict(x) for x in existentes if x.get("id")}
+    saida = [x for x in existentes if not x.get("id")]
+    for i, m in enumerate(novos):
+        alvo = vinculos.get(i)
+        if alvo and alvo in por_id:
+            por_id[alvo].update(status="pago", data=m["data"])
+        else:
+            saida.append({"data": m["data"], "valor": m["valor"], "status": "pago"})
+    return list(por_id.values()) + saida

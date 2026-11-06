@@ -98,6 +98,16 @@ def ler_ofx(conteudo: bytes, nome_arquivo: str | None = None) -> ExtratoLido:
     texto = _decodificar(conteudo)
     avisos: list[str] = []
 
+    # Um arquivo, uma conta. OFX com várias contas misturaria movimentos de
+    # todas contra o saldo da primeira, e o mesmo FITID em contas diferentes
+    # viraria a mesma chave (achado do Codex no PR #680).
+    contas = {_folhas(b).get("ACCTID") for b in _BLOCO["conta"].findall(texto)}
+    contas.discard(None)
+    if len(contas) > 1:
+        return ExtratoLido(formato="OFX", movimentos=[], avisos=[
+            f"O arquivo traz {len(contas)} contas ({', '.join(sorted(contas))}). Exporte o "
+            "extrato de uma conta por arquivo."])
+
     conta_folhas = _folhas(_BLOCO["conta"].search(texto).group(1)) if _BLOCO["conta"].search(texto) else {}
     conta = conta_folhas.get("ACCTID")
     banco_folhas = _folhas(_BLOCO["banco"].search(texto).group(1)) if _BLOCO["banco"].search(texto) else {}
