@@ -35,6 +35,7 @@ SAIDA = PASTA / "mapa.json"
 AREAS = [
     ("dashboard_geral.json", "Visão geral", 1, False),
     ("controle_financeiro.json", "Finanças do dia a dia", 2, False),
+    ("controle_cnpj.json", "Finanças do dia a dia", 2, False),
     ("investimentos.json", "Investimentos", 3, False),
     ("empresas_b3.json", "Investimentos", 4, False),
     ("empresas_americanas.json", "Investimentos", 5, False),

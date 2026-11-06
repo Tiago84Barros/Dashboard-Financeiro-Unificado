@@ -85,6 +85,7 @@ if not _APP_TEST_MODE:
 _ROTAS: dict[str, str] = {
     "📊 Dashboard Geral":     "dashboard_geral",
     "💰 Controle Financeiro": "controle_financeiro",
+    "💼 Controle CNPJ":       "controle_cnpj",
     "📈 Investimentos":       "investimentos",
     "🏢 Empresas B3":         "empresas_b3",
     # 🌎 e não 🇺🇸: Windows não renderiza emoji de bandeira (vira as letras "US")
@@ -126,7 +127,7 @@ with st.sidebar:
         ]
     else:
         opcoes_visao = ["📊 Dashboard Geral"]
-        opcoes_financas = ["💰 Controle Financeiro"]
+        opcoes_financas = ["💰 Controle Financeiro", "💼 Controle CNPJ"]
         opcoes_invest = ["📈 Investimentos", "🏢 Empresas B3",
                          "🌎 Empresas Americanas",
                          "🏬 Seleção de FIIs",

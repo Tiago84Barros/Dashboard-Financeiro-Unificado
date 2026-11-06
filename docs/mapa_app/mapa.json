@@ -676,6 +676,47 @@
       "bastidores": false
     },
     {
+      "nome": "Controle CNPJ",
+      "resumo": "O financeiro da empresa, separado do pessoal",
+      "explicacao": "Tela do dinheiro da empresa (um CNPJ no Simples Nacional), inspirada no Conta Azul no que dá para fazer a partir do extrato. Cinco abas: Visão geral, Lançamentos, A pagar e receber, DRE e Impostos. O extrato da conta da empresa entra por Configurações → Atualização de dados → CNPJ. Nada daqui entra no Controle Financeiro pessoal, e nada do pessoal entra aqui. Emitir nota fiscal, gerar boleto e mandar dados ao contador não existem no app: dependem de certificado digital e convênio com banco.",
+      "so_admin": false,
+      "filhos": [
+        {
+          "nome": "Visão geral",
+          "resumo": "O mês da empresa num olhar",
+          "explicacao": "Escolha o mês. Os cartões mostram a receita bruta, o resultado com a margem, o saldo em conta calculado hoje e quantos lançamentos estão sem categoria. Logo abaixo, a conferência com o último extrato: se o saldo do app fecha com o do banco ou qual é a diferença. O gráfico traz 12 meses de entradas, saídas e resultado.",
+          "so_admin": false
+        },
+        {
+          "nome": "Lançamentos",
+          "resumo": "Lista do mês, classificação e lançamento manual",
+          "explicacao": "A lista do mês com data, descrição, categoria, valor, situação (pago ou previsto) e origem (extrato, manual ou manual conciliado). Os que estão sem categoria aparecem num formulário para classificar; a categoria escolhida vale também para os próximos extratos do mesmo cliente ou fornecedor. Em 'Corrigir categoria' dá para trocar a categoria de qualquer lançamento do mês, inclusive os já classificados (um aporte aceito como receita, por exemplo). Há ainda 'Novo lançamento manual' e 'Excluir lançamento manual' (o que veio do extrato não se exclui, porque o banco registrou).",
+          "so_admin": false
+        },
+        {
+          "nome": "A pagar e receber",
+          "resumo": "Contas previstas e saldo projetado",
+          "explicacao": "Cadastre contas a pagar e a receber (com 'Repetir todo mês' para as fixas). Os cartões mostram vencidos sem baixa, o que há a pagar e a receber em 30 dias e o saldo projetado em 90 dias. A tabela soma cada previsto ao saldo; vencido entra como pago hoje. Embaixo, escolha um previsto para dar baixa (data e valor pago) ou excluir. Ao importar o extrato, o pagamento de mesmo valor perto do vencimento dá a baixa sozinho.",
+          "so_admin": false
+        },
+        {
+          "nome": "DRE",
+          "resumo": "Demonstração de resultado gerencial",
+          "explicacao": "Escolha o mês e o período (mês, ano ou últimos 12 meses). A DRE vai da receita bruta ao resultado do período, passando por deduções (DAS), receita líquida, custos, lucro bruto, despesas, pessoal e financeiro, com cada categoria embaixo da sua linha. Aporte, distribuição de lucros, transferência, empréstimo e aplicação aparecem à parte, porque mexem no caixa e não no lucro. É regime de caixa: conta no mês em que o dinheiro passou pela conta. Lançamento sem categoria fica fora e é avisado.",
+          "so_admin": false
+        },
+        {
+          "nome": "Impostos",
+          "resumo": "Dados da empresa e DAS estimado do Simples",
+          "explicacao": "Em 'Dados da empresa', informe CNPJ, razão social e o anexo do Simples Nacional. Escolha o mês: os cartões mostram a receita do mês, a RBT12 (receita dos 12 meses anteriores; com menos de 12, média × 12), a alíquota efetiva com anexo e faixa, e o DAS estimado que vence no mês seguinte. No Anexo V aparece o Fator R (folha ÷ RBT12), que de 28% para cima leva a tributação ao Anexo III. Se o DAS já foi pago, a tela compara com a estimativa. O valor oficial é sempre o do PGDAS-D.",
+          "so_admin": false
+        }
+      ],
+      "grupo": "Finanças do dia a dia",
+      "cor": 2,
+      "bastidores": false
+    },
+    {
       "nome": "Investimentos",
       "resumo": "Sua carteira: resumo, histórico, análises, IA e imposto",
       "explicacao": "É a área que reúne tudo sobre os seus investimentos: quanto você tem, como evoluiu, onde estão os riscos, o que a inteligência do app sugere e quanto imposto há a pagar. No topo aparecem a data de referência dos números, se as cotações são de hoje e selos com a contagem de cotações atualizadas e de proventos (dividendos e rendimentos) registrados. O conteúdo fica dividido em cinco abas.",
@@ -2940,8 +2981,8 @@
         },
         {
           "nome": "Atualização de dados",
-          "resumo": "Enviar seus arquivos de cartão, banco e corretoras",
-          "explicacao": "É onde você sobe os arquivos baixados do cartão, do banco e das corretoras. Sempre há uma prévia para conferir antes de gravar. Tem duas sub-abas: Controle Financeiro e Investimentos.",
+          "resumo": "Enviar seus arquivos de cartão, banco, corretoras e da empresa",
+          "explicacao": "É onde você sobe os arquivos baixados do cartão, do banco, das corretoras e da conta da empresa. Sempre há uma prévia para conferir antes de gravar. Tem três sub-abas: Controle Financeiro, Investimentos e CNPJ.",
           "so_admin": false,
           "filhos": [
             {
@@ -2995,6 +3036,12 @@
                   "so_admin": false
                 }
               ]
+            },
+            {
+              "nome": "CNPJ",
+              "resumo": "Extrato da conta da empresa (OFX)",
+              "explicacao": "Envie o extrato da conta da empresa em OFX (no Cora: Extrato › Exportar › OFX). A prévia mostra cada movimento com uma categoria sugerida do plano de contas da empresa; a categoria que você escolher para um cliente ou fornecedor vira regra para os próximos extratos. O movimento que já estava lançado à mão (mesmo valor, até 3 dias) aparece marcado para conciliar em vez de duplicar, e o previsto recebe a baixa. O saldo final do arquivo é comparado com o saldo do app. Depois clique em 'Importar extrato'. Tudo vai para a seção Controle CNPJ e nada entra no Controle Financeiro pessoal.",
+              "so_admin": false
             }
           ]
         },
@@ -3135,7 +3182,7 @@
         {
           "nome": "Documentação",
           "resumo": "Guia ilustrado de como o app funciona",
-          "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 14 sub-abas, na ordem do menu lateral.",
+          "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 15 sub-abas, na ordem do menu lateral.",
           "so_admin": false,
           "filhos": [
             {
@@ -3148,6 +3195,12 @@
               "nome": "Controle financeiro",
               "resumo": "Como entram e se somam receitas e gastos",
               "explicacao": "Fluxograma da tela Controle Financeiro: de onde vêm os lançamentos, o cartão e o extrato, e como o app chega aos totais.",
+              "so_admin": false
+            },
+            {
+              "nome": "Controle CNPJ",
+              "resumo": "Como o extrato da empresa vira caixa, DRE e DAS",
+              "explicacao": "Fluxograma da seção Controle CNPJ: a entrada do extrato e do lançamento manual, o plano de contas da empresa, a conciliação e as abas Visão geral, Lançamentos, A pagar e receber, DRE e Impostos.",
               "so_admin": false
             },
             {
