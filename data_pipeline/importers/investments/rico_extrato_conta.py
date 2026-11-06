@@ -14,8 +14,8 @@ O que o arquivo traz e o que vira dado:
   "RENDIMENTOS DE CLIENTES MANA11 S/ 368"      → dividends (reit_income),
                                                  quantidade 368
   "DIVIDENDOS DE CLIENTES BBAS3 S/ 100"        → dividends (dividend)
-  "RENDIMENTO FUNDO FECHADO BALCÃO PIER11 - …" → dividends (reit_income),
-                                                 sem quantidade
+  "RENDIMENTO FUNDO FECHADO BALCÃO PIER11 - …" → reconhecido, mas NÃO
+                                                 gravado (ver abaixo)
 
 E o que fica de fora, de propósito, contado em `rows_skipped`:
 
@@ -29,6 +29,13 @@ E o que fica de fora, de propósito, contado em `rows_skipped`:
     app não tem tabela de renda de aluguel; `dividends` não é o lugar.
   * TED, retirada e qualquer outra movimentação de caixa.
   * O bloco "Lançamentos futuros" — crédito ainda não pago pode mudar.
+  * Provento sem quantidade (o rendimento de fundo fechado de balcão não diz
+    quantas cotas). `dividends.quantity` e `amount_per_unit` não aceitam
+    vazio, e gravar 1 cota com o pagamento inteiro como valor por cota seria
+    inventar número — a tela de Proventos o mostraria como fato, e a
+    Movimentação da B3, que traz a quantidade, seria barrada pela
+    deduplicação depois. O lançamento sai nomeado em `errors`, com o valor,
+    para o usuário saber que precisa vir da B3.
 
 Deduplicação: além do `external_id` próprio (prefixo `ricocc`),
 `insert_dividend` só grava se não houver provento do mesmo ativo, na mesma
@@ -121,7 +128,11 @@ def reconhece(file_bytes: bytes) -> bool:
         return False
     try:
         for aba in wb.worksheets:
-            linhas = [_celulas(lin) for lin in primeiras_linhas(aba, _LINHAS_SONDA)]
+            try:
+                brutas = primeiras_linhas(aba, _LINHAS_SONDA)
+            except Exception:  # noqa: BLE001 — aba ilegível não é este extrato
+                continue
+            linhas = [_celulas(lin) for lin in brutas]
             titulo = any("EXTRATO DA CONTA" in c for lin in linhas for c in lin)
             if titulo and any(_e_cabecalho(lin) for lin in linhas):
                 return True
@@ -195,8 +206,9 @@ def ler_lancamentos(linhas) -> tuple[list[dict[str, Any]], int]:
         proventos.append({
             "ticker": achado["ticker"],
             "tipo": achado["tipo"],
-            "quantidade": qtd if qtd and qtd > 0 else 1.0,
-            "por_unidade": round(valor / qtd, 6) if qtd and qtd > 0 else valor,
+            # None quando o extrato não diz: ausente fica ausente.
+            "quantidade": qtd if qtd and qtd > 0 else None,
+            "por_unidade": round(valor / qtd, 6) if qtd and qtd > 0 else None,
             "total": round(valor, 2),
             "pagamento": pagamento,
         })
@@ -240,6 +252,15 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
             with conn.begin():
                 for p in proventos:
                     pagamento: date = p["pagamento"]
+                    if p["quantidade"] is None:
+                        summary["rows_skipped"] += 1
+                        summary["errors"].append(
+                            f"{p['ticker']} {pagamento:%d/%m/%Y} "
+                            f"R$ {p['total']:.2f}: o extrato não informa a "
+                            "quantidade de cotas, então não foi gravado. "
+                            "Importe a Movimentação da B3 do período."
+                        )
+                        continue
                     try:
                         with conn.begin_nested():
                             asset_id = get_or_create_asset(

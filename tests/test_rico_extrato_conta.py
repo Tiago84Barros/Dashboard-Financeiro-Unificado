@@ -168,7 +168,9 @@ def test_ler_lancamentos_pega_so_proventos_pagos():
     assert mana["por_unidade"] == pytest.approx(0.12)
     assert mana["pagamento"] == date(2026, 10, 22)
     pier = por_ticker["PIER11"]
-    assert (pier["quantidade"], pier["por_unidade"]) == (1.0, 346.32)
+    # O extrato não diz quantas cotas: nada de "1 cota a R$ 346,32".
+    assert (pier["quantidade"], pier["por_unidade"]) == (None, None)
+    assert pier["total"] == 346.32
 
 
 def test_parse_le_alem_da_dimensao_declarada(monkeypatch):
@@ -181,7 +183,7 @@ def test_parse_le_alem_da_dimensao_declarada(monkeypatch):
 
     resumo = rico.parse(dados, engine)
 
-    assert resumo["incomes_imported"] == 3, resumo
+    assert resumo["incomes_imported"] == 2, resumo
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -223,12 +225,11 @@ def test_reimportar_o_mesmo_extrato_nao_duplica(monkeypatch):
     primeiro = rico.parse(_extrato(), engine)
     segundo = rico.parse(_extrato(), engine)
 
-    assert primeiro["status"] == "success"
-    assert primeiro["incomes_imported"] == 3
+    assert primeiro["incomes_imported"] == 2
     assert segundo["incomes_imported"] == 0
-    assert segundo["duplicates_skipped"] == 3
+    assert segundo["duplicates_skipped"] == 2
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT COUNT(*) FROM dividends")).scalar() == 3
+        assert conn.execute(text("SELECT COUNT(*) FROM dividends")).scalar() == 2
 
 
 def test_provento_ja_vindo_da_movimentacao_b3_nao_entra_de_novo(monkeypatch):
@@ -245,7 +246,7 @@ def test_provento_ja_vindo_da_movimentacao_b3_nao_entra_de_novo(monkeypatch):
 
     resumo = rico.parse(_extrato(), engine)
 
-    assert resumo["incomes_imported"] == 2
+    assert resumo["incomes_imported"] == 1
     assert resumo["duplicates_skipped"] == 1
     with engine.connect() as conn:
         n = conn.execute(text(
@@ -264,3 +265,31 @@ def test_sem_owner_falha_sem_gravar(monkeypatch):
     assert resumo["status"] == "failed"
     with engine.connect() as conn:
         assert conn.execute(text("SELECT COUNT(*) FROM dividends")).scalar() == 0
+
+
+def test_provento_sem_quantidade_nao_e_gravado_e_vem_nomeado(monkeypatch):
+    """Ausente fica ausente: o rendimento de fundo de balcão sem quantidade
+    sai como aviso, com valor e data, em vez de virar 1 cota inventada."""
+    engine = _engine()
+    _sem_banco_real(monkeypatch)
+
+    resumo = rico.parse(_extrato(), engine)
+
+    assert resumo["status"] == "partial_success"
+    assert any("PIER11" in e and "346.32" in e for e in resumo["errors"])
+    with engine.connect() as conn:
+        n = conn.execute(text(
+            "SELECT COUNT(*) FROM dividends WHERE asset_id = 'asset-PIER11'"
+        )).scalar()
+    assert n == 0
+
+
+def test_aba_ilegivel_nao_derruba_o_reconhecimento(monkeypatch):
+    """Um .xlsx de outra origem que quebre ao ler células é recusado, não
+    derruba o lote inteiro em `planejar_lote`."""
+    def _quebra(aba, limite=12):
+        raise ValueError("célula ilegível")
+
+    monkeypatch.setattr(rico, "primeiras_linhas", _quebra)
+    assert rico.reconhece(_extrato()) is False
+    assert detect(_extrato()) is None
