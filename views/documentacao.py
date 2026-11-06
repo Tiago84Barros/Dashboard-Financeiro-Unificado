@@ -2025,8 +2025,9 @@ FLOW_CONFIGURACOES = FlowSpec(
         ),
         "cfg_carteira": _node(
             "cfg_carteira", "Arquivos da carteira", "Entrada de arquivo",
-            "Importa os arquivos de negociação da corretora — seleciona a instituição, "
-            "valida a prévia e atualiza a carteira consolidada.",
+            "Importa os extratos da B3, do Tesouro Direto, da Nomad e o Extrato da conta "
+            "da Rico (deste, só os proventos pagos) — o tipo de cada arquivo sai do "
+            "conteúdo, não da caixa escolhida — e atualiza a carteira consolidada.",
             (
                 "Aba 🔁 Atualização de dados › 📈 Investimentos",
                 "Formatos CSV, XLSX e PDF conforme a origem",
