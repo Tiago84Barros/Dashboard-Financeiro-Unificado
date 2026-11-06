@@ -143,6 +143,8 @@ def test_importador_xp_processa_aba_proventos(monkeypatch):
         return f"dividend-{len(inserted)}"
 
     monkeypatch.setattr(xp, "insert_dividend", _capture_insert)
+    monkeypatch.setattr(xp, "ajustar_quantidades_dividendos",
+                        lambda conn, rows: 0)
 
     summary = xp._parse_single(
         (

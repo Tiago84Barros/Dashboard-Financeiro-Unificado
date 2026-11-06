@@ -63,15 +63,16 @@ from sqlalchemy.engine import Engine
 from core.config import settings
 
 from .common import (
+    ajustar_quantidades_dividendos,
     aviso_sem_quantidade,
     classify_ticker,
-    dividends_aceita_quantidade_vazia,
     ensure_external_id_columns,
     finalize_summary,
     get_or_create_asset,
     insert_dividend,
     make_external_id,
     make_summary,
+    migracao_083_aplicada,
     parse_date_br,
     quantidade_e_valor_unitario,
     safe_error,
@@ -249,17 +250,15 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
         return finalize_summary(summary)
 
     ensure_external_id_columns(engine)
-    aceita_sem_qtd = (
-        any(p["quantidade"] is None for p in proventos)
-        and dividends_aceita_quantidade_vazia(engine)
-    )
+    aplicada = migracao_083_aplicada(engine)
+    gravadas: list[dict[str, Any]] = []
 
     try:
         with engine.connect() as conn:
             with conn.begin():
                 for p in proventos:
                     pagamento: date = p["pagamento"]
-                    if p["quantidade"] is None and not aceita_sem_qtd:
+                    if p["quantidade"] is None and not aplicada:
                         summary["rows_skipped"] += 1
                         summary["errors"].append(aviso_sem_quantidade(
                             p["ticker"], pagamento, p["total"],
@@ -271,22 +270,33 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                                 conn, ticker=p["ticker"], name=p["ticker"],
                                 asset_class=classify_ticker(p["ticker"]),
                             )
-                            novo = insert_dividend(
-                                conn,
-                                user_id=user_id,
-                                asset_id=asset_id,
-                                div_type=p["tipo"],
-                                amount_per_unit=p["por_unidade"],
-                                quantity=p["quantidade"],
-                                total_amount=p["total"],
-                                ex_date=None,
-                                payment_date=pagamento,
-                                external_id=make_external_id(
+                            linha = {
+                                "user_id": user_id,
+                                "asset_id": asset_id,
+                                "type": p["tipo"],
+                                "amount_per_unit": p["por_unidade"],
+                                "quantity": p["quantidade"],
+                                "total_amount": p["total"],
+                                "payment_date": pagamento,
+                                "external_id": make_external_id(
                                     "ricocc",
                                     [pagamento.isoformat(), p["ticker"],
                                      p["tipo"], f"{p['total']:.2f}"],
                                 ),
+                            }
+                            novo = insert_dividend(
+                                conn,
+                                user_id=user_id,
+                                asset_id=asset_id,
+                                div_type=linha["type"],
+                                amount_per_unit=linha["amount_per_unit"],
+                                quantity=linha["quantity"],
+                                total_amount=linha["total_amount"],
+                                ex_date=None,
+                                payment_date=pagamento,
+                                external_id=linha["external_id"],
                             )
+                            gravadas.append(linha)
                         if novo is None:
                             summary["duplicates_skipped"] += 1
                         else:
@@ -296,6 +306,8 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                             f"{p['ticker']} {pagamento:%d/%m/%Y}: "
                             f"{safe_error(exc)}"
                         )
+                if aplicada:
+                    ajustar_quantidades_dividendos(conn, gravadas)
     except Exception as exc:  # noqa: BLE001
         # A transação inteira voltou: nada do que foi contado ficou gravado.
         summary["incomes_imported"] = 0

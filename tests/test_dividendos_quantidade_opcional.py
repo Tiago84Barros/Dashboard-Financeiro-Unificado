@@ -33,7 +33,8 @@ def _engine():
                 user_id TEXT NOT NULL, asset_id TEXT NOT NULL,
                 type TEXT NOT NULL, amount_per_unit NUMERIC,
                 quantity NUMERIC, total_amount NUMERIC NOT NULL,
-                ex_date DATE, payment_date DATE NOT NULL, external_id TEXT
+                ex_date DATE, payment_date DATE NOT NULL, external_id TEXT,
+                quantity_placeholder BOOLEAN NOT NULL DEFAULT 0
             )
         """))
         conn.execute(text("""
@@ -53,7 +54,9 @@ def _row(ext: str, qtd: float | None, total: float = 44.16) -> dict:
 
 
 def _via_lote(conn, row: dict) -> None:
+    """Como a Movimentação grava: INSERT em lote e depois o ajuste."""
     common.batch_insert_dividends(conn, [row])
+    common.ajustar_quantidades_dividendos(conn, [row])
 
 
 def _via_linha(conn, row: dict) -> None:
@@ -64,6 +67,7 @@ def _via_linha(conn, row: dict) -> None:
         ex_date=None, payment_date=row["payment_date"],
         external_id=row["external_id"],
     )
+    common.ajustar_quantidades_dividendos(conn, [row])
 
 
 def _linhas(engine) -> list[tuple]:
@@ -128,20 +132,21 @@ def test_mesmo_provento_por_duas_fontes_acaba_com_a_quantidade(
     assert linhas[0][1:] == (368.0, 0.12, 44.16)
 
 
-def test_fonte_com_quantidade_corrige_a_linha_inventada_de_outra_fonte():
-    """A linha da XP gravada antes desta correção (1 cota = total) recebe a
+def test_fonte_com_quantidade_corrige_a_linha_marcada_de_outra_fonte():
+    """Linha antiga marcada pela 083 como suspeita (1 cota = total) recebe a
     quantidade da Movimentação."""
     engine = _engine()
     with engine.begin() as conn:
         conn.execute(text("""
             INSERT INTO dividends (user_id, asset_id, type, amount_per_unit,
-                quantity, total_amount, payment_date, external_id)
+                quantity, total_amount, payment_date, external_id,
+                quantity_placeholder)
             VALUES ('u', 'MANA11', 'reit_income', 44.16, 1, 44.16,
-                    :d, 'xpcsl-inc-velho')
+                    :d, 'legado-app2', 1)
         """), {"d": _DIA})
         _via_lote(conn, _row("b3mov-1", 368))
 
-    assert _linhas(engine) == [("xpcsl-inc-velho", 368.0, 0.12, 44.16)]
+    assert _linhas(engine) == [("legado-app2", 368.0, 0.12, 44.16)]
 
 
 def test_reimportar_sem_quantidade_esvazia_a_propria_linha_inventada():
@@ -149,9 +154,10 @@ def test_reimportar_sem_quantidade_esvazia_a_propria_linha_inventada():
     with engine.begin() as conn:
         conn.execute(text("""
             INSERT INTO dividends (user_id, asset_id, type, amount_per_unit,
-                quantity, total_amount, payment_date, external_id)
+                quantity, total_amount, payment_date, external_id,
+                quantity_placeholder)
             VALUES ('u', 'MANA11', 'reit_income', 44.16, 1, 44.16,
-                    :d, 'b3mov-1')
+                    :d, 'b3mov-1', 1)
         """), {"d": _DIA})
         _via_lote(conn, _row("b3mov-1", None))
 
@@ -241,6 +247,9 @@ def test_esvaziar_nao_mexe_na_linha_de_outro_dono():
             VALUES ('outro', 'MANA11', 'reit_income', 44.16, 1, 44.16,
                     :d, 'b3mov-1')
         """), {"d": _DIA})
+        conn.execute(text("""
+            UPDATE dividends SET quantity_placeholder = 1
+        """), {"d": _DIA})
         common.ajustar_quantidades_dividendos(conn, [_row("b3mov-1", None)])
 
     assert _linhas(engine) == [("b3mov-1", 1.0, 44.16, 44.16)]
@@ -312,9 +321,79 @@ def test_reimportar_a_movimentacao_corrige_a_linha_inventada_ja_gravada(
             VALUES ('u', 'PIER11', 'reit_income', 346.32, 1, 346.32,
                     :d, :e)
         """), {"d": date(2026, 10, 22), "e": ext})
+        conn.execute(text("""
+            UPDATE dividends SET quantity_placeholder = 1
+        """), {"d": date(2026, 10, 22), "e": ext})
 
     resumo = mov.parse(_movimentacao_xlsx(linha), engine)
 
     assert resumo["duplicates_skipped"] == 1
     assert resumo["incomes_imported"] == 0
     assert _linhas(engine) == [(ext, None, None, 346.32)]
+
+
+def test_linha_sem_marca_no_padrao_uma_cota_nao_e_tocada():
+    """Sem a marca da 083, "1 cota = total" é tratado como dado: nem a B3 sem
+    quantidade esvazia, nem outra fonte sobrescreve."""
+    engine = _engine()
+    with engine.begin() as conn:
+        _via_lote(conn, _row("b3mov-1", 1))
+        _via_lote(conn, _row("b3mov-2", None))
+        _via_linha(conn, _row("ricocc-1", 368))
+
+    assert _linhas(engine)[0] == ("b3mov-1", 1.0, 44.16, 44.16)
+
+
+def test_quantidade_completada_por_outra_fonte_sobrevive_a_reimportacao_b3():
+    """B3 sem quantidade, depois a Rico com 1 cota real, depois a mesma B3 de
+    novo: a quantidade completada fica, porque ela já não é placeholder."""
+    engine = _engine()
+    with engine.begin() as conn:
+        _via_lote(conn, _row("b3mov-1", None))
+        _via_linha(conn, _row("ricocc-1", 1))
+        _via_lote(conn, _row("b3mov-1", None))
+
+    assert _linhas(engine) == [("b3mov-1", 1.0, 44.16, 44.16)]
+
+
+def test_migracao_083_so_marca_e_limpa_dentro_da_transicao():
+    sql = _SQL_083.read_text(encoding="utf-8")
+    inicio_if, fim_if = sql.index("is_nullable = 'NO'"), sql.index("END IF")
+    for trecho in ("SET quantity = NULL", "SET quantity_placeholder = TRUE"):
+        assert inicio_if < sql.index(trecho) < fim_if, trecho
+    assert "ADD COLUMN IF NOT EXISTS quantity_placeholder" in sql
+
+
+def test_xp_nao_grava_provento_antes_da_083(monkeypatch):
+    """Provento da XP gravado antes da 083 com 1 cota real seria limpo pela
+    própria 083, que não distingue o antigo do novo: a XP espera."""
+    import io
+
+    import openpyxl
+
+    from data_pipeline.importers.investments import xp_consolidado as xp
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Proventos Recebidos"
+    ws.append(["Produto", "Pagamento", "Tipo de Evento", "Instituição",
+               "Quantidade", "Preço unitário", "Valor líquido"])
+    ws.append(["KNCR11 - KINEA", "12/06/2026", "Rendimento", "XP", 1, 35.2, 35.2])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    gravou = []
+    monkeypatch.setattr(xp.settings, "OWNER_USER_ID", "u")
+    monkeypatch.setattr(xp, "ensure_external_id_columns", lambda e: None)
+    monkeypatch.setattr(xp, "migracao_083_aplicada", lambda e: False)
+    monkeypatch.setattr(xp, "_ensure_portfolio", lambda c, u: "p")
+    monkeypatch.setattr(xp, "insert_dividend",
+                        lambda conn, **kw: gravou.append(kw) or "x")
+    resumo = xp._parse_single(
+        ("relatorio-consolidado-mensal-2026-junho.xlsx", buf.getvalue()),
+        _engine(),
+    )
+
+    assert gravou == []
+    assert resumo["rows_skipped"] == 1
+    assert any("083" in e for e in resumo["errors"])

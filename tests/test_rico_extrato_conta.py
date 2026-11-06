@@ -199,7 +199,8 @@ def _engine():
                 user_id TEXT NOT NULL, asset_id TEXT NOT NULL,
                 type TEXT NOT NULL, amount_per_unit NUMERIC,
                 quantity NUMERIC, total_amount NUMERIC NOT NULL,
-                ex_date DATE, payment_date DATE NOT NULL, external_id TEXT
+                ex_date DATE, payment_date DATE NOT NULL, external_id TEXT,
+                quantity_placeholder BOOLEAN NOT NULL DEFAULT 0
             )
         """))
         conn.execute(text("""
@@ -290,7 +291,7 @@ def test_banco_sem_a_083_recusa_o_provento_sem_quantidade_nomeado(monkeypatch):
     (nem inventada): sai em errors, com valor, data e a instrução."""
     engine = _engine()
     _sem_banco_real(monkeypatch)
-    monkeypatch.setattr(rico, "dividends_aceita_quantidade_vazia", lambda e: False)
+    monkeypatch.setattr(rico, "migracao_083_aplicada", lambda e: False)
 
     resumo = rico.parse(_extrato(), engine)
 

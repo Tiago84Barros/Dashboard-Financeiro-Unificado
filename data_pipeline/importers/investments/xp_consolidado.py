@@ -40,8 +40,8 @@ from sqlalchemy.engine import Connection, Engine
 from core.config import settings
 
 from .common import (
-    aviso_sem_quantidade,
-    dividends_aceita_quantidade_vazia,
+    ajustar_quantidades_dividendos,
+    aviso_xp_sem_083,
     ensure_external_id_columns,
     finalize_summary,
     get_or_create_account,
@@ -50,6 +50,7 @@ from .common import (
     insert_dividend,
     make_external_id,
     make_summary,
+    migracao_083_aplicada,
     quantidade_e_valor_unitario,
     safe_error,
     to_float_br,
@@ -348,7 +349,6 @@ def _parse_proventos(
     user_id: str,
     summary: dict,
     report_date: date,
-    aceita_sem_qtd: bool = True,
 ) -> None:
     """Aba "Proventos Recebidos": Produto | Pagamento | Tipo de Evento |
     Instituição | Quantidade | Preço unitário | Valor líquido.
@@ -357,7 +357,12 @@ def _parse_proventos(
     provento virava 1 cota = total). O valor por cota é o total LÍQUIDO
     dividido pela quantidade, não a coluna "Preço unitário": no JCP ela é
     bruta, e `total_amount = amount_per_unit × quantity` deixaria de fechar.
+
+    Só roda depois da migração 083 (quem chama verifica): a 083 limpa as
+    linhas da XP gravadas pelo importador antigo, e uma linha real de 1 cota
+    gravada antes dela seria limpa junto.
     """
+    gravadas: list[dict[str, Any]] = []
     for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True)):
         if not row or row[0] is None:
             continue
@@ -419,13 +424,6 @@ def _parse_proventos(
             qtd, apu = quantidade_e_valor_unitario(
                 to_float_br(row[4]) if len(row) > 4 else None, amount,
             )
-            if qtd is None and not aceita_sem_qtd:
-                summary["rows_skipped"] += 1
-                summary["errors"].append(
-                    aviso_sem_quantidade(ticker, pay_date, amount)
-                )
-                continue
-
             try:
                 with conn.begin_nested():
                     new_id = insert_dividend(
@@ -444,6 +442,12 @@ def _parse_proventos(
                         summary["duplicates_skipped"] += 1
                     else:
                         summary["incomes_imported"] += 1
+                gravadas.append({
+                    "user_id": user_id, "asset_id": asset_id,
+                    "type": inc_type, "quantity": qtd,
+                    "amount_per_unit": apu, "total_amount": amount,
+                    "payment_date": pay_date, "external_id": ext_id,
+                })
             except Exception as exc:  # noqa: BLE001
                 summary["errors"].append(
                     f"Proventos linha {i + 2}: {safe_error(exc)}"
@@ -453,6 +457,16 @@ def _parse_proventos(
             summary["errors"].append(
                 f"Proventos linha {i + 2}: {safe_error(exc)}"
             )
+
+    ajustar_quantidades_dividendos(conn, gravadas)
+
+
+def _linhas_de_provento(ws) -> int:
+    return sum(
+        1 for row in ws.iter_rows(min_row=2, values_only=True)
+        if row and row[0] is not None and str(row[0]).strip().lower()
+        not in ("", "produto", "total", "-")
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -719,10 +733,13 @@ def _parse_single(
         break
 
     sheet_map = {_norm(ws.title): ws for ws in wb.worksheets}
-    aceita_sem_qtd = (
-        "proventos recebidos" not in sheet_map
-        or dividends_aceita_quantidade_vazia(engine)
-    )
+    ws_prov = sheet_map.get("proventos recebidos")
+    if ws_prov is not None and not migracao_083_aplicada(engine):
+        n = _linhas_de_provento(ws_prov)
+        if n:
+            summary["rows_skipped"] += n
+            summary["errors"].append(aviso_xp_sem_083(n))
+        ws_prov = None
 
     with engine.connect() as conn:
         with conn.begin():
@@ -821,8 +838,7 @@ def _parse_single(
             # Aba Proventos Recebidos → dividends. A camada comum de insert
             # deduplica contra B3 Movimentação pela chave canônica, além do
             # external_id específico da XP.
-            ws_prov = sheet_map.get("proventos recebidos")
-            if ws_prov:
+            if ws_prov is not None:
                 try:
                     _ensure_xp_account(conn, user_id)
                 except Exception as exc:  # noqa: BLE001
@@ -832,7 +848,6 @@ def _parse_single(
                 else:
                     _parse_proventos(
                         ws_prov, conn, user_id, summary, report_date,
-                        aceita_sem_qtd,
                     )
 
     summary["_report_date"] = report_date.isoformat()

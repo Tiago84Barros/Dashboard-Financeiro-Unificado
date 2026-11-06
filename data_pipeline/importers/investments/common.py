@@ -335,43 +335,51 @@ def ensure_external_id_columns(engine: Engine) -> None:
 #
 # Até 06/11/2026 `dividends.quantity` e `amount_per_unit` eram NOT NULL, e todo
 # importador que não sabia a quantidade gravava 1 cota com o pagamento inteiro
-# como valor por cota. A tela de Proventos mostrava isso como fato. Agora:
+# como valor por cota. Depois da migração 083:
 #   * quantidade desconhecida grava NULL nas duas colunas;
-#   * a fonte que traz a quantidade preenche a linha vazia -- ou a do padrão
-#     inventado "1 cota = total" -- pela mesma chave canônica da deduplicação;
+#   * `quantity_placeholder` marca, uma vez só, as linhas antigas no padrão
+#     "1 cota = total". O padrão numérico sozinho não separa placeholder de
+#     posição real de 1 cota, então só a marca autoriza mexer numa linha que
+#     já tem quantidade;
+#   * a fonte que traz a quantidade completa a linha vazia ou marcada (chave
+#     canônica) e desliga a marca;
 #   * a Movimentação da B3 reimportada sem quantidade esvazia a SUA linha
-#     inventada (só ela: ver `_PREFIXOS_COM_QUANTIDADE_NO_ID`).
+#     marcada (ver `_PREFIXOS_COM_QUANTIDADE_NO_ID`).
 #
 # O importador NÃO roda a migração: ela muda o schema e limpa dados da XP, e
-# AGENTS.md exige confirmação humana para migração. Enquanto a 083 não rodar
-# no SQL Editor, a linha sem quantidade sai nomeada em `errors`
-# (`aviso_sem_quantidade`), nunca com 1 cota inventada.
+# AGENTS.md exige confirmação humana para migração. Antes da 083, o provento
+# sem quantidade sai nomeado em `errors` (`aviso_sem_quantidade`), a XP não
+# grava provento nenhum (`aviso_xp_sem_083`) e nenhum ajuste roda.
 
 def _dialeto(conn: Any) -> str | None:
     return getattr(getattr(conn, "dialect", None), "name", None)
 
 
-def dividends_aceita_quantidade_vazia(conn: Connection | Engine) -> bool:
-    """True se `dividends.quantity` e `amount_per_unit` aceitam NULL.
+def migracao_083_aplicada(conn: Connection | Engine) -> bool:
+    """True se a 083 rodou: as duas colunas aceitam NULL e a marca existe.
 
-    Fora do Postgres (SQLite dos testes) não há information_schema; a tabela
-    de teste decide sozinha, e a resposta é True.
+    Só lê o `information_schema`. Fora do Postgres (SQLite dos testes) a
+    tabela de teste decide sozinha, e a resposta é True.
     """
     if _dialeto(conn) != "postgresql":
         return True
     sql = text("""
-        SELECT COUNT(*) FROM information_schema.columns
+        SELECT
+          COUNT(*) FILTER (WHERE column_name IN ('quantity', 'amount_per_unit')
+                             AND is_nullable = 'YES') AS anulaveis,
+          COUNT(*) FILTER (WHERE column_name = 'quantity_placeholder') AS marca
+          FROM information_schema.columns
          WHERE table_name = 'dividends'
-           AND column_name IN ('quantity', 'amount_per_unit')
-           AND is_nullable = 'NO'
     """)
     try:
         if isinstance(conn, Engine):
             with conn.connect() as c:
-                return int(c.execute(sql).scalar() or 0) == 0
-        return int(conn.execute(sql).scalar() or 0) == 0
+                linha = c.execute(sql).one()
+        else:
+            linha = conn.execute(sql).one()
+        return int(linha.anulaveis) == 2 and int(linha.marca) == 1
     except Exception as exc:  # noqa: BLE001
-        logger.warning("dividends_aceita_quantidade_vazia: %s", safe_error(exc))
+        logger.warning("migracao_083_aplicada: %s", safe_error(exc))
         return False
 
 
@@ -385,38 +393,54 @@ def quantidade_e_valor_unitario(
     return quantidade, round(total / quantidade, 6)
 
 
+_INSTRUCAO_083 = (
+    "Rode, com backup, supabase_unificado/schema/"
+    "083_dividends_quantidade_opcional.sql no SQL Editor do Supabase e importe "
+    "de novo."
+)
+
+
 def aviso_sem_quantidade(ticker: str, pagamento: date, total: float) -> str:
     """Mensagem de quando o banco ainda exige quantidade (083 sem rodar)."""
     return (
         f"{ticker} {pagamento:%d/%m/%Y} R$ {total:.2f}: a fonte não informa a "
-        "quantidade e o banco ainda não aceita provento sem ela. Rode, com "
-        "backup, supabase_unificado/schema/083_dividends_quantidade_opcional.sql "
-        "no SQL Editor do Supabase e importe de novo."
+        f"quantidade e o banco ainda não aceita provento sem ela. {_INSTRUCAO_083}"
+    )
+
+
+def aviso_xp_sem_083(n: int) -> str:
+    """A 083 limpa os proventos da XP gravados pelo importador antigo; um
+    provento real de 1 cota gravado antes dela seria limpo junto."""
+    return (
+        f"{n} provento(s) da XP não gravado(s): eles só entram depois da "
+        f"migração 083, que limpa as quantidades inventadas da XP antiga. "
+        f"{_INSTRUCAO_083}"
     )
 
 
 _SQL_CANDIDATAS = text("""
-    SELECT id, user_id, asset_id, payment_date, type, total_amount, quantity
+    SELECT id, user_id, asset_id, payment_date, type, total_amount
       FROM dividends
      WHERE user_id IN :uids
        AND asset_id IN :aids
-       AND (quantity IS NULL
-            OR (quantity = 1 AND amount_per_unit = total_amount))
+       AND (quantity IS NULL OR quantity_placeholder)
 """).bindparams(bindparam("uids", expanding=True),
                 bindparam("aids", expanding=True))
 
 _SQL_PREENCHE = text("""
-    UPDATE dividends SET quantity = :quantity, amount_per_unit = :amount_per_unit
+    UPDATE dividends
+       SET quantity = :quantity, amount_per_unit = :amount_per_unit,
+           quantity_placeholder = FALSE
      WHERE id = :id
 """)
 
-_SQL_ESVAZIA_INVENTADA = text("""
+_SQL_ESVAZIA_PLACEHOLDER = text("""
     UPDATE dividends
-       SET quantity = NULL, amount_per_unit = NULL
+       SET quantity = NULL, amount_per_unit = NULL,
+           quantity_placeholder = FALSE
      WHERE user_id = :user_id
        AND external_id IN :ids
-       AND quantity = 1
-       AND amount_per_unit = total_amount
+       AND quantity_placeholder
 """).bindparams(bindparam("ids", expanding=True))
 
 
@@ -428,11 +452,10 @@ def _chave_canonica(user_id, asset_id, payment_date, tipo, total) -> tuple:
 
 
 # Só a Movimentação da B3 põe a quantidade crua no hash do external_id
-# (`b3_movimentacao._parse_row`): a linha dela sem quantidade nunca tem o mesmo
-# id que uma com quantidade, então "1 cota = total" com esse id é, com certeza,
-# o placeholder da versão antiga. Na XP e na Rico o id não leva a quantidade, e
-# uma reimportação incompleta apagaria uma 1 cota de verdade -- a XP antiga já
-# é limpa pela 083, e a Rico nunca gravou placeholder.
+# (`b3_movimentacao._parse_row`): a linha dela que chega sem quantidade nunca
+# tem o mesmo id que uma com quantidade, então a linha MARCADA com esse id é o
+# placeholder da versão antiga. Na XP e na Rico o id não leva a quantidade, e
+# uma reimportação incompleta apagaria uma quantidade conhecida.
 _PREFIXOS_COM_QUANTIDADE_NO_ID = ("b3mov-",)
 
 
@@ -441,18 +464,19 @@ def ajustar_quantidades_dividendos(
 ) -> int:
     """Corrige quantidades já gravadas à luz das linhas desta importação.
 
-    * Linha COM quantidade preenche o provento equivalente (chave canônica)
-      que está sem quantidade ou com o padrão inventado "1 cota = total".
-      Mesmo ativo, dia, tipo e total com outra quantidade não é outra posição:
-      o valor por cota de um provento é um só, e a fonte que conta as cotas
-      vence a que não contava.
+    Só depois da 083 (`migracao_083_aplicada`): usa `quantity_placeholder`.
+
+    * Linha COM quantidade completa o provento equivalente (chave canônica)
+      que está sem quantidade ou marcado como placeholder, e desliga a marca.
+      Mesmo ativo, dia, tipo e total não é outra posição: o valor por cota de
+      um provento é um só, e a fonte que conta as cotas decide.
     * Linha SEM quantidade da Movimentação da B3 esvazia a própria linha
-      (mesmo dono e external_id) que a versão antiga gravou como
-      "1 cota = total".
+      (mesmo dono e external_id) que ainda está marcada. Linha completada
+      por outra fonte já perdeu a marca e fica como está.
 
     Custo fixo: uma consulta das candidatas e um UPDATE por linha que de fato
-    muda -- não um UPDATE por provento do arquivo, que no Supabase custaria
-    uma ida e volta de rede cada.
+    muda -- não um por provento do arquivo, que no Supabase custaria uma ida e
+    volta de rede cada.
 
     Devolve quantas linhas mudaram.
     """
@@ -466,10 +490,10 @@ def ajustar_quantidades_dividendos(
         if r.get("quantity") is None and ext.startswith(
             _PREFIXOS_COM_QUANTIDADE_NO_ID
         ):
-            sem.setdefault(str(r["user_id"]), set()).add(r["external_id"])
+            sem.setdefault(str(r["user_id"]), set()).add(ext)
     mudou = 0
     for dono, ids in sorted(sem.items()):
-        res = conn.execute(_SQL_ESVAZIA_INVENTADA,
+        res = conn.execute(_SQL_ESVAZIA_PLACEHOLDER,
                            {"user_id": dono, "ids": sorted(ids)})
         mudou += max(res.rowcount or 0, 0)
     if not com:
@@ -484,15 +508,14 @@ def ajustar_quantidades_dividendos(
                                 c.type, c.total_amount)
         candidatas.setdefault(chave, []).append(c)
 
-    updates = []
-    for r in com:
-        chave = _chave_canonica(r["user_id"], r["asset_id"], r["payment_date"],
-                                r["type"], r["total_amount"])
-        for c in candidatas.pop(chave, []):
-            if c.quantity is not None and float(c.quantity) == float(r["quantity"]):
-                continue  # 1 cota de verdade, informada pela fonte
-            updates.append({"id": c.id, "quantity": r["quantity"],
-                            "amount_per_unit": r["amount_per_unit"]})
+    updates = [
+        {"id": c.id, "quantity": r["quantity"],
+         "amount_per_unit": r["amount_per_unit"]}
+        for r in com
+        for c in candidatas.pop(
+            _chave_canonica(r["user_id"], r["asset_id"], r["payment_date"],
+                            r["type"], r["total_amount"]), [])
+    ]
     if updates:
         conn.execute(_SQL_PREENCHE, updates)
         mudou += len(updates)
@@ -684,8 +707,8 @@ def insert_dividend(
     A chave canônica evita duplicidade entre fontes diferentes (por exemplo,
     B3 Movimentação e XP Consolidado), cujos external_ids têm prefixos
     distintos para o mesmo pagamento. `quantity`/`amount_per_unit` None quer
-    dizer "a fonte não informa" e exige a migração 083. Depois do INSERT,
-    `ajustar_quantidades_dividendos` completa ou esvazia a linha equivalente.
+    dizer "a fonte não informa" e exige a migração 083. Quem chama roda
+    `ajustar_quantidades_dividendos` depois, com o lote inteiro.
     """
     if div_type not in ("dividend", "jcp", "reit_income", "amortization", "other"):
         raise ValueError(f"div_type invalido: {div_type}")
@@ -723,12 +746,6 @@ def insert_dividend(
             "ext":   external_id,
         },
     ).fetchone()
-    ajustar_quantidades_dividendos(conn, [{
-        "user_id": user_id, "asset_id": asset_id, "type": div_type,
-        "quantity": quantity, "amount_per_unit": amount_per_unit,
-        "total_amount": total_amount, "payment_date": payment_date,
-        "external_id": external_id,
-    }])
     return str(row[0]) if row else None
 
 
@@ -935,8 +952,8 @@ def batch_insert_dividends(
 ) -> int:
     """
     Insere lista de dividendos em uma única statement. Além do external_id,
-    deduplica pela chave canônica compartilhada entre B3 e XP, e depois
-    completa ou esvazia quantidades com `ajustar_quantidades_dividendos`.
+    deduplica pela chave canônica compartilhada entre B3 e XP. Quem chama
+    roda `ajustar_quantidades_dividendos` depois, se a 083 já rodou.
 
     Cada item de `rows` precisa ter as chaves:
       user_id, asset_id, type, amount_per_unit, quantity,
@@ -968,9 +985,7 @@ def batch_insert_dividends(
         ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING
     """)
     result = conn.execute(stmt, rows)
-    inseridos = result.rowcount if result.rowcount is not None else len(rows)
-    ajustar_quantidades_dividendos(conn, rows)
-    return inseridos
+    return result.rowcount if result.rowcount is not None else len(rows)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

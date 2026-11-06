@@ -50,7 +50,6 @@ from .common import (
     batch_insert_investment_transactions,
     classify_movement,
     classify_ticker,
-    dividends_aceita_quantidade_vazia,
     ensure_external_id_columns,
     ensure_movement_events_table,
     finalize_summary,
@@ -58,6 +57,7 @@ from .common import (
     insert_movement_events,
     make_external_id,
     make_summary,
+    migracao_083_aplicada,
     parse_date_br,
     parse_ticker_from_produto,
     quantidade_e_valor_unitario,
@@ -137,12 +137,10 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
     # DDL fora da transação principal: sem permissão de CREATE, perde-se o
     # fato cru, não os proventos.
     eventos_ok = bool(ev_candidates) and ensure_movement_events_table(engine)
-    # Provento sem "Quantidade" no arquivo grava NULL (migração 083). Se o
-    # banco ainda não aceita, ele sai nomeado em errors -- nunca vira 1 cota.
-    aceita_sem_qtd = (
-        any(c["quantity"] is None for c in div_candidates)
-        and dividends_aceita_quantidade_vazia(engine)
-    )
+    # Provento sem "Quantidade" no arquivo grava NULL (migração 083). Antes
+    # dela, sai nomeado em errors -- nunca vira 1 cota -- e nenhum ajuste de
+    # quantidade roda (ele depende de `quantity_placeholder`).
+    aceita_sem_qtd = bool(div_candidates) and migracao_083_aplicada(engine)
 
     try:
         with engine.connect() as conn:
@@ -233,7 +231,8 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                 # 4) Insert em lote
                 inserted_tx = batch_insert_investment_transactions(conn, tx_rows)
                 inserted_div = batch_insert_dividends(conn, div_rows)
-                ajustar_quantidades_dividendos(conn, ja_gravadas)
+                if aceita_sem_qtd:
+                    ajustar_quantidades_dividendos(conn, div_rows + ja_gravadas)
                 summary["transactions_imported"] += inserted_tx
                 summary["incomes_imported"] += inserted_div
 
