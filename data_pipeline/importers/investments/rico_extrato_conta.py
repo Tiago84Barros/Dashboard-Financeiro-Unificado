@@ -121,9 +121,9 @@ def reconhece(file_bytes: bytes) -> bool:
         return False
     try:
         for aba in wb.worksheets:
-            linhas = [_celulas(l) for l in primeiras_linhas(aba, _LINHAS_SONDA)]
-            titulo = any("EXTRATO DA CONTA" in c for l in linhas for c in l)
-            if titulo and any(_e_cabecalho(l) for l in linhas):
+            linhas = [_celulas(lin) for lin in primeiras_linhas(aba, _LINHAS_SONDA)]
+            titulo = any("EXTRATO DA CONTA" in c for lin in linhas for c in lin)
+            if titulo and any(_e_cabecalho(lin) for lin in linhas):
                 return True
         return False
     finally:
