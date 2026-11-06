@@ -38,41 +38,38 @@ def _sqlite_dividends_engine():
     return engine
 
 
-def test_insert_dividend_deduplica_fontes_diferentes():
+def test_gravar_proventos_deduplica_fontes_diferentes():
     engine = _sqlite_dividends_engine()
-    params = {
+    base = {
         "user_id": "user-1",
         "asset_id": "asset-1",
-        "div_type": "reit_income",
-        "amount_per_unit": 35.20,
-        "quantity": 1.0,
+        "type": "reit_income",
+        "amount_per_unit": 1.10,
+        "quantity": 32.0,
         "total_amount": 35.20,
         "ex_date": None,
         "payment_date": date(2026, 6, 12),
     }
 
     with engine.begin() as conn:
-        first = common.insert_dividend(
-            conn, external_id="b3mov-abc", **params,
-        )
-        duplicate = common.insert_dividend(
-            conn, external_id="xpcsl-inc-xyz", **params,
-        )
+        first = common.gravar_proventos(conn, [{**base, "external_id": "b3mov-abc"}])
+        duplicate = common.gravar_proventos(
+            conn, [{**base, "external_id": "xpcsl-inc-xyz"}])
         count = conn.execute(text("SELECT COUNT(*) FROM dividends")).scalar()
 
-    assert first is not None
-    assert duplicate is None
+    assert (first.inseridos, first.duplicados) == (1, 0)
+    assert (duplicate.inseridos, duplicate.duplicados) == (0, 1)
     assert count == 1
 
 
-def test_batch_insert_dividends_deduplica_chave_canonica():
+def test_gravar_proventos_em_lote_deduplica_chave_canonica():
     engine = _sqlite_dividends_engine()
     base = {
         "user_id": "user-1",
         "asset_id": "asset-1",
         "type": "reit_income",
-        "amount_per_unit": 35.20,
-        "quantity": 1.0,
+        "amount_per_unit": 1.10,
+        "quantity": 32.0,
         "total_amount": 35.20,
         "ex_date": None,
         "payment_date": date(2026, 6, 12),
@@ -83,9 +80,10 @@ def test_batch_insert_dividends_deduplica_chave_canonica():
     ]
 
     with engine.begin() as conn:
-        common.batch_insert_dividends(conn, rows)
+        res = common.gravar_proventos(conn, rows)
         count = conn.execute(text("SELECT COUNT(*) FROM dividends")).scalar()
 
+    assert (res.inseridos, res.duplicados) == (1, 1)
     assert count == 1
 
 
@@ -138,11 +136,12 @@ def test_importador_xp_processa_aba_proventos(monkeypatch):
         lambda conn, ticker, name, asset_class: f"asset-{ticker}",
     )
 
-    def _capture_insert(conn, **kwargs):
-        inserted.append(kwargs)
-        return f"dividend-{len(inserted)}"
+    def _capture_insert(conn, rows, **kwargs):
+        inserted.extend(rows)
+        return common.GravacaoProventos(inseridos=len(rows))
 
-    monkeypatch.setattr(xp, "insert_dividend", _capture_insert)
+    monkeypatch.setattr(xp, "gravar_proventos", _capture_insert)
+    monkeypatch.setattr(xp, "dividends_aceita_quantidade_ausente", lambda conn: True)
 
     summary = xp._parse_single(
         (
@@ -159,3 +158,7 @@ def test_importador_xp_processa_aba_proventos(monkeypatch):
         date(2026, 6, 30),
     ]
     assert [row["total_amount"] for row in inserted] == [35.20, 16.40]
+    # A quantidade vem da coluna "Quantidade", não de "1 cota com o total".
+    assert [row["quantity"] for row in inserted] == [32.0, 53.0]
+    assert [row["amount_per_unit"] for row in inserted] == [
+        round(35.20 / 32, 6), round(16.40 / 53, 6)]

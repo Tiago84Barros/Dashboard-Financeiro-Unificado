@@ -32,6 +32,8 @@ Schema do dict retornado por get_proventos():
   eventos                  list    [{id, ticker, nome, classe, cor, tipo, label_tipo,
                                      amount_per_unit, quantity, total_amount,
                                      ex_date, payment_date}]
+                                   amount_per_unit e quantity são None quando a
+                                   fonte não informou a quantidade (SQL 083).
 """
 import logging
 from collections import defaultdict
@@ -250,6 +252,11 @@ def _proventos_real() -> dict:
     def _f(v) -> float:
         return float(v) if v is not None else 0.0
 
+    def _opcional(v) -> float | None:
+        # Quantidade e valor por unidade que a fonte não informou ficam None
+        # (SQL 083). Virar 0.0 seria afirmar "zero cotas".
+        return float(v) if v is not None else None
+
     eventos = []
     universo = None  # lido uma vez, e só se houver provento em dólar
     for r in rows:
@@ -269,8 +276,8 @@ def _proventos_real() -> dict:
             "cor":             _CLASS_COR.get(classe_raw, "#718096"),
             "tipo":            tipo_raw,
             "label_tipo":      _TIPO_LABEL.get(tipo_raw, tipo_raw),
-            "amount_per_unit": _f(r.amount_per_unit),
-            "quantity":        _f(r.quantity),
+            "amount_per_unit": _opcional(r.amount_per_unit),
+            "quantity":        _opcional(r.quantity),
             "total_amount":    _f(r.total_amount),
             "ex_date":         r.ex_date,
             "payment_date":    r.payment_date,
@@ -366,7 +373,7 @@ def _unificar_fracionario(eventos: list) -> list:
     discordarem sobre o que é um ativo.
 
     Também descarta o pagamento repetido entre os dois tickers. A proteção da
-    importação (``insert_dividend``) só compara dentro do mesmo ``asset_id``,
+    importação (``common.gravar_proventos``) só compara dentro do mesmo ``asset_id``,
     então um pagamento gravado como BBAS3 pela B3 e como BBAS3F pela XP
     entrava duas vezes. Mesmo papel, mesma data, mesmo tipo e mesmo valor
     total é o mesmo pagamento; fica a linha da fonte mais confiável.
@@ -395,9 +402,19 @@ def _unificar_fracionario(eventos: list) -> list:
             resultado.append(novo)
             continue
         descartados += 1
+        perdedor = novo
         if _prioridade_fonte(e.get("external_id")) < _prioridade_fonte(
                 resultado[outro].get("external_id")):
+            perdedor = resultado[outro]
             resultado[outro] = novo
+        # A importação completa a quantidade só dentro do mesmo asset_id
+        # (common.gravar_proventos); entre BBAS3 e BBAS3F ela é completada
+        # aqui, da linha descartada, se só ela a tiver.
+        vencedor = resultado[outro]
+        if vencedor.get("quantity") is None and perdedor.get("quantity") is not None:
+            resultado[outro] = {**vencedor,
+                                "quantity": perdedor["quantity"],
+                                "amount_per_unit": perdedor.get("amount_per_unit")}
     if descartados:
         logger.info("[proventos] %d pagamento(s) repetido(s) entre lote padrão e "
                     "fracionário descartado(s)", descartados)

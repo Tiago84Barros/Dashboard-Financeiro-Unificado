@@ -25,8 +25,8 @@ Mapeamentos:
     rendimento → reit_income (provento de FII)
 
   dividends sem amount_per_unit:
-    amount_per_unit = total_amount / quantity  (se quantity > 0)
-    quantity = 1, amount_per_unit = total_amount  (se sem quantity)
+    O App2 só tem o total. quantity e amount_per_unit vão NULL (exige a
+    SQL 083); até 06/11/2026 iam 1 e o total, quantidade inventada.
 
 Uso:
   python migration/migrate_app2_investimentos.py             # dry run
@@ -262,10 +262,11 @@ def migrate_dividends(conn, text, apply, records, asset_id_map, owner_id):
         inc_type = INCOME_TYPE_MAP.get(raw_type, "dividend")
 
         total_amount = _dec(r.get("amount") or 0, 2) or "0.00"
-        # App2 não tem quantity/amount_per_unit separados
-        # Convenção: quantity=1, amount_per_unit=total
-        quantity = "1.00000000"
-        amount_per_unit = total_amount
+        # App2 só tem o total: quantidade ausente fica ausente (SQL 083).
+        # Banco sem a 083 recusa o NULL e o script falha alto, em vez de
+        # gravar 1 cota inventada como fazia.
+        quantity = None
+        amount_per_unit = None
 
         payment_date = str(r.get("date") or "")[:10]
         if not payment_date:

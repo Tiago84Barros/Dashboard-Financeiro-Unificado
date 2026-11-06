@@ -198,7 +198,9 @@ def importador(monkeypatch):
                         lambda c, items: {tk: i for i, (tk, _n, _c) in enumerate(items)})
     monkeypatch.setattr(imp, "batch_filter_existing_external_ids", lambda c, t, ids: set())
     monkeypatch.setattr(imp, "batch_insert_investment_transactions", lambda c, rows: len(rows))
-    monkeypatch.setattr(imp, "batch_insert_dividends", lambda c, rows: len(rows))
+    from data_pipeline.importers.investments.common import GravacaoProventos
+    monkeypatch.setattr(imp, "gravar_proventos",
+                        lambda c, rows: GravacaoProventos(inseridos=len(rows)))
     monkeypatch.setattr(imp, "ensure_movement_events_table", lambda e: True)
     return imp
 

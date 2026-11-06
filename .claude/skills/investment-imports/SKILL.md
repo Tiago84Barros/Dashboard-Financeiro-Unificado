@@ -57,6 +57,22 @@ Convenções de mapeamento:
   - termina em `3` ou `4` → `class = 'stock'`
   - prefixo TESOURO → `class = 'fixed_income'`
 
+## Provento sem quantidade
+
+Regra única para B3 Movimentação, XP Consolidado e Rico (06/11/2026):
+
+- `quantity` e `amount_per_unit` saem de `common.quantidade_provento(total,
+  qtd)`: com quantidade, `amount_per_unit = total / qtd` em 6 casas; sem ela,
+  os dois `None`. **Nunca** 1 cota com o total por cota.
+- Toda gravação em `dividends` passa por `common.gravar_proventos`: INSERT com
+  a deduplicação canônica (ativo, data, tipo, total) e, em seguida, o UPDATE
+  que completa a quantidade da linha que ficou vazia (`incomes_enriched` no
+  resumo). O resultado não depende da ordem em que as fontes chegam.
+- O vazio exige a SQL `083_dividends_quantidade_opcional.sql`, aplicada à mão.
+  Sem ela, o provento sem quantidade é recusado e nomeado em `errors`.
+- Guarda: `tests/test_proventos_quantidade_ausente.py` (equivalência entre as
+  fontes em todas as ordens).
+
 ## Idempotência
 
 Cada parser **deve** gerar um `external_id` determinístico (hash MD5 ou SHA1
@@ -92,6 +108,7 @@ Todos os parsers devolvem o mesmo `dict`:
     "records_imported": int,        # somatório de tudo gravado
     "transactions_imported": int,
     "incomes_imported": int,
+    "incomes_enriched": int,        # proventos vazios que ganharam a quantidade
     "positions_imported": int,
     "duplicates_skipped": int,
     "rows_skipped": int,
