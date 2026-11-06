@@ -25,6 +25,18 @@ from design.componentes import (
     secao_titulo,
 )
 from design.lacunas import detalhe_tecnico
+from design.tabela_posicoes import fmt_quantidade
+
+#: Célula de quantidade e valor por unidade que a fonte não informou.
+SEM_QUANTIDADE = "—"
+
+
+def _fmt_qtd(q) -> str:
+    return SEM_QUANTIDADE if q is None else fmt_quantidade(float(q))
+
+
+def _fmt_unitario(v) -> str:
+    return SEM_QUANTIDADE if v is None else fmt_moeda(float(v), casas=4)
 
 # ── Gráfico de barras mensais ─────────────────────────────────────────────────
 
@@ -249,8 +261,10 @@ def render() -> None:
             "Nome":            e["nome"],
             "Tipo":            e["label_tipo"],
             "Classe":          e["classe"],
-            "Qtd.":            e["quantity"],
-            "R$/Unit":         e["amount_per_unit"],
+            # Texto, não número: o vazio aparece como "—", e não como 0 ou
+            # como célula em branco que parece erro de carga.
+            "Qtd.":            _fmt_qtd(e.get("quantity")),
+            "R$/Unit":         _fmt_unitario(e.get("amount_per_unit")),
             "Total (R$)":      e["total_amount"],
         }
         for e in ev_filtrados
@@ -264,8 +278,8 @@ def render() -> None:
             "Nome":       st.column_config.TextColumn("Nome"),
             "Tipo":       st.column_config.TextColumn("Tipo",       width="small"),
             "Classe":     st.column_config.TextColumn("Classe",     width="small"),
-            "Qtd.":       st.column_config.NumberColumn("Qtd.",     format="%.2f",   width="small"),
-            "R$/Unit":    st.column_config.NumberColumn("R$/Unit",  format="R$ %.4f"),
+            "Qtd.":       st.column_config.TextColumn("Qtd.",       width="small"),
+            "R$/Unit":    st.column_config.TextColumn("R$/Unit"),
             "Total (R$)": st.column_config.NumberColumn("Total",    format="R$ %.2f"),
         },
         hide_index=True,
@@ -274,7 +288,10 @@ def render() -> None:
     )
 
     total_filtrado = sum(e["total_amount"] for e in ev_filtrados)
+    sem_qtd = sum(1 for e in ev_filtrados if e.get("quantity") is None)
     st.caption(
         f"{len(ev_filtrados)} evento{'s' if len(ev_filtrados) != 1 else ''} · "
         f"Total: {fmt_moeda(total_filtrado)}"
+        + (f" · {sem_qtd} sem quantidade (—): a fonte informou só o total; "
+           "a Movimentação da B3 do período completa" if sem_qtd else "")
     )

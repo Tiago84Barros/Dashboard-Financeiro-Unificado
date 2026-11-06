@@ -23,7 +23,8 @@ Abas processadas:
   Posição - Tesouro Direto → 'tesouro'
 
 A aba "Proventos Recebidos", quando presente, alimenta `dividends`
-(deduplica contra B3 Movimentacao por ativo, data, tipo e valor).
+(deduplica contra B3 Movimentacao por ativo, data, tipo e valor). A
+quantidade sai da coluna "Quantidade"; sem ela fica vazia, nunca 1.
 """
 from __future__ import annotations
 
@@ -40,15 +41,19 @@ from sqlalchemy.engine import Connection, Engine
 from core.config import settings
 
 from .common import (
+    dividends_aceita_quantidade_ausente,
     ensure_external_id_columns,
     finalize_summary,
     get_or_create_account,
     get_or_create_asset,
     get_or_create_institution,
-    insert_dividend,
+    gravar_proventos,
     make_external_id,
     make_summary,
+    quantidade_provento,
+    registrar_gravacao_proventos,
     safe_error,
+    to_float_br,
 )
 from .positions import PORTFOLIO_NAME, PORTFOLIO_TYPE
 
@@ -338,6 +343,19 @@ _SHEET_PARSERS: list[tuple[str, Any]] = [
 # Aba "Proventos Recebidos" → dividends
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _coluna_quantidade(ws) -> int | None:
+    """Índice da coluna "Quantidade" no cabeçalho da aba, ou None.
+
+    Pelo nome, não pela posição: sem a coluna, a quantidade fica ausente, e
+    uma coluna que mudou de lugar não vira quantidade de outra coisa.
+    """
+    for cabecalho in ws.iter_rows(min_row=1, max_row=1, values_only=True):
+        for i, celula in enumerate(cabecalho or ()):
+            if celula is not None and _norm(str(celula)).strip() == "quantidade":
+                return i
+    return None
+
+
 def _parse_proventos(
     ws,
     conn: Connection,
@@ -345,6 +363,18 @@ def _parse_proventos(
     summary: dict,
     report_date: date,
 ) -> None:
+    """Aba "Proventos Recebidos" → ``dividends``.
+
+    A quantidade vem da coluna "Quantidade" quando a aba a traz; sem ela, o
+    provento grava ``quantity``/``amount_per_unit`` vazios (SQL 083). Até
+    06/11/2026 gravava sempre 1 cota com o pagamento inteiro por cota ("XP
+    não separa por cota") -- número inventado, que a deduplicação ainda
+    impedia a Movimentação da B3 de corrigir. A gravação é a mesma da B3 e
+    da Rico (``common.gravar_proventos``).
+    """
+    idx_qtd = _coluna_quantidade(ws)
+    # Uma leitura do catálogo por aba, não uma por linha.
+    aceita_ausente = dividends_aceita_quantidade_ausente(conn)
     for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True)):
         if not row or row[0] is None:
             continue
@@ -392,6 +422,9 @@ def _parse_proventos(
                     summary["rows_skipped"] += 1
                     continue
 
+            qtd_raw = row[idx_qtd] if idx_qtd is not None and idx_qtd < len(row) else None
+            quantity, apu = quantidade_provento(amount, to_float_br(qtd_raw))
+
             # Asset deve existir — XP relata produtos que talvez nao estejam
             # no nosso assets ainda. Cria como stock por padrao (XP nao
             # informa classe na aba Proventos).
@@ -406,22 +439,23 @@ def _parse_proventos(
 
             try:
                 with conn.begin_nested():
-                    new_id = insert_dividend(
+                    res = gravar_proventos(
                         conn,
-                        user_id=user_id,
-                        asset_id=asset_id,
-                        div_type=inc_type,
-                        amount_per_unit=amount,  # XP nao separa por cota
-                        quantity=1.0,
-                        total_amount=amount,
-                        ex_date=None,
-                        payment_date=pay_date,
-                        external_id=ext_id,
+                        [{
+                            "user_id":         user_id,
+                            "asset_id":        asset_id,
+                            "type":            inc_type,
+                            "amount_per_unit": apu,
+                            "quantity":        quantity,
+                            "total_amount":    amount,
+                            "ex_date":         None,
+                            "payment_date":    pay_date,
+                            "external_id":     ext_id,
+                            "_ticker":         ticker,
+                        }],
+                        aceita_quantidade_ausente=aceita_ausente,
                     )
-                    if new_id is None:
-                        summary["duplicates_skipped"] += 1
-                    else:
-                        summary["incomes_imported"] += 1
+                registrar_gravacao_proventos(summary, res)
             except Exception as exc:  # noqa: BLE001
                 summary["errors"].append(
                     f"Proventos linha {i + 2}: {safe_error(exc)}"

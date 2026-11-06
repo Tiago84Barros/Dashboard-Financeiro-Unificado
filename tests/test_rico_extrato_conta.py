@@ -268,8 +268,9 @@ def test_sem_owner_falha_sem_gravar(monkeypatch):
 
 
 def test_provento_sem_quantidade_nao_e_gravado_e_vem_nomeado(monkeypatch):
-    """Ausente fica ausente: o rendimento de fundo de balcão sem quantidade
-    sai como aviso, com valor e data, em vez de virar 1 cota inventada."""
+    """Banco ainda sem a SQL 083 (quantity NOT NULL): o rendimento de fundo de
+    balcão sem quantidade sai como aviso, com valor e data, em vez de virar 1
+    cota inventada. Com a 083, ver o teste seguinte."""
     engine = _engine()
     _sem_banco_real(monkeypatch)
 
@@ -282,6 +283,39 @@ def test_provento_sem_quantidade_nao_e_gravado_e_vem_nomeado(monkeypatch):
             "SELECT COUNT(*) FROM dividends WHERE asset_id = 'asset-PIER11'"
         )).scalar()
     assert n == 0
+
+
+def test_com_a_083_provento_sem_quantidade_grava_vazio(monkeypatch):
+    """Com quantity/amount_per_unit anuláveis, o PIER11 entra com os dois
+    vazios -- o total é fato, a quantidade não foi dita."""
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE dividends (
+                id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+                user_id TEXT NOT NULL, asset_id TEXT NOT NULL,
+                type TEXT NOT NULL, amount_per_unit NUMERIC,
+                quantity NUMERIC, total_amount NUMERIC NOT NULL,
+                ex_date DATE, payment_date DATE NOT NULL, external_id TEXT
+            )
+        """))
+        conn.execute(text("""
+            CREATE UNIQUE INDEX ux_div_ext ON dividends(external_id)
+            WHERE external_id IS NOT NULL
+        """))
+    _sem_banco_real(monkeypatch)
+
+    resumo = rico.parse(_extrato(), engine)
+
+    assert resumo["status"] == "success", resumo["errors"]
+    assert resumo["incomes_imported"] == 3
+    with engine.connect() as conn:
+        linha = conn.execute(text(
+            "SELECT quantity, amount_per_unit, total_amount FROM dividends "
+            "WHERE asset_id = 'asset-PIER11'"
+        )).one()
+    assert (linha.quantity, linha.amount_per_unit) == (None, None)
+    assert float(linha.total_amount) == 346.32
 
 
 def test_aba_ilegivel_nao_derruba_o_reconhecimento(monkeypatch):

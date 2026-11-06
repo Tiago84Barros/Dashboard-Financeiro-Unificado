@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from typing import Any, Iterable
 
@@ -37,6 +38,10 @@ def make_summary(source: str) -> dict[str, Any]:
         "records_imported": 0,
         "transactions_imported": 0,
         "incomes_imported": 0,
+        # Proventos que já estavam gravados sem quantidade e ganharam a
+        # quantidade desta fonte (``gravar_proventos``). Não somam em
+        # records_imported: a linha não é nova.
+        "incomes_enriched": 0,
         "positions_imported": 0,
         "duplicates_skipped": 0,
         "rows_skipped": 0,
@@ -55,7 +60,8 @@ def finalize_summary(summary: dict[str, Any]) -> dict[str, Any]:
         + int(summary.get("incomes_imported", 0))
         + int(summary.get("positions_imported", 0))
     )
-    if summary["records_imported"] == 0 and summary["errors"]:
+    alterou_algo = summary["records_imported"] or int(summary.get("incomes_enriched", 0))
+    if not alterou_algo and summary["errors"]:
         summary["status"] = "failed"
     elif summary["errors"]:
         summary["status"] = "partial_success"
@@ -495,65 +501,6 @@ def insert_investment_transaction(
     return str(row[0]) if row else None
 
 
-def insert_dividend(
-    conn: Connection,
-    *,
-    user_id: str,
-    asset_id: str,
-    div_type: str,
-    amount_per_unit: float,
-    quantity: float,
-    total_amount: float,
-    ex_date: date | None,
-    payment_date: date,
-    external_id: str,
-) -> str | None:
-    """
-    Insere um provento em `dividends`. Retorna o UUID ou None se duplicata.
-
-    A chave canônica evita duplicidade entre fontes diferentes (por exemplo,
-    B3 Movimentação e XP Consolidado), cujos external_ids têm prefixos
-    distintos para o mesmo pagamento.
-    """
-    if div_type not in ("dividend", "jcp", "reit_income", "amortization", "other"):
-        raise ValueError(f"div_type invalido: {div_type}")
-    # ON CONFLICT cobre reimportação da mesma fonte. O NOT EXISTS cobre o
-    # mesmo provento chegando por outra fonte.
-    row = conn.execute(
-        text("""
-            INSERT INTO dividends
-                (user_id, asset_id, type, amount_per_unit, quantity,
-                 total_amount, ex_date, payment_date, external_id)
-            SELECT
-                :uid, :aid, :type, :apu, :qty, :total, :exd, :pd, :ext
-            WHERE NOT EXISTS (
-                SELECT 1
-                FROM dividends existing
-                WHERE existing.user_id = :uid
-                  AND existing.asset_id = :aid
-                  AND existing.payment_date = :pd
-                  AND existing.type = :type
-                  AND ROUND(CAST(existing.total_amount AS NUMERIC), 2)
-                      = ROUND(CAST(:total AS NUMERIC), 2)
-            )
-            ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING
-            RETURNING id
-        """),
-        {
-            "uid":   user_id,
-            "aid":   asset_id,
-            "type":  div_type,
-            "apu":   amount_per_unit,
-            "qty":   quantity,
-            "total": total_amount,
-            "exd":   ex_date,
-            "pd":    payment_date,
-            "ext":   external_id,
-        },
-    ).fetchone()
-    return str(row[0]) if row else None
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers BATCH (otimização — substitui 1 query/linha por 1 batch query)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -751,45 +698,217 @@ def insert_movement_events(conn: Connection, rows: list[dict[str, Any]]) -> int:
     return result.rowcount if result.rowcount is not None and result.rowcount >= 0 else len(rows)
 
 
-def batch_insert_dividends(
+# ─────────────────────────────────────────────────────────────────────────────
+# Proventos — uma gravação só para B3 Movimentação, XP Consolidado e Rico
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Quantidade ausente fica ausente (06/11/2026). Antes, a Movimentação da B3
+# sem quantidade e TODO provento da XP eram gravados como 1 cota com o
+# pagamento inteiro por cota: número inventado, que a tela de Proventos
+# mostrava como fato. E a deduplicação pela chave canônica barrava a fonte que
+# chegasse depois com a quantidade certa, então o número inventado ficava.
+#
+# Agora:
+#   * ``quantidade_provento`` é a regra única de quantity/amount_per_unit;
+#   * sem quantidade, a linha vai com os dois NULL (SQL 083);
+#   * a fonte que chega depois COM quantidade completa a linha que ficou sem
+#     (``incomes_enriched``) em vez de ser descartada como duplicata;
+#   * banco sem a 083 aplicada recusa o provento sem quantidade em vez de
+#     inventar -- ele sai nomeado em ``errors``, como a Rico já fazia.
+
+TIPOS_PROVENTO = frozenset({"dividend", "jcp", "reit_income", "amortization", "other"})
+
+_COLUNAS_PROVENTO = (
+    "user_id", "asset_id", "type", "amount_per_unit", "quantity",
+    "total_amount", "ex_date", "payment_date", "external_id",
+)
+
+# Mesmo provento vindo de fontes diferentes: mesmo dono, ativo, data de
+# pagamento, tipo e total em centavos. Os external_ids têm prefixos distintos
+# por fonte, então não servem para isso.
+_CHAVE_CANONICA = """
+          {t}.user_id      = :user_id
+      AND {t}.asset_id     = :asset_id
+      AND {t}.payment_date = :payment_date
+      AND {t}.type         = :type
+      AND ROUND(CAST({t}.total_amount AS NUMERIC), 2)
+          = ROUND(CAST(:total_amount AS NUMERIC), 2)
+"""
+
+_SQL_INSERIR_PROVENTO = text("""
+    INSERT INTO dividends
+        (user_id, asset_id, type, amount_per_unit, quantity,
+         total_amount, ex_date, payment_date, external_id)
+    SELECT
+        :user_id, :asset_id, :type, :amount_per_unit, :quantity,
+        :total_amount, :ex_date, :payment_date, :external_id
+    WHERE NOT EXISTS (
+        SELECT 1 FROM dividends existing
+        WHERE """ + _CHAVE_CANONICA.format(t="existing") + """
+    )
+    ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING
+""")
+
+# Só preenche o que está vazio: quantidade que uma fonte já informou não é
+# trocada pela de outra (a primeira a dizer fica).
+_SQL_COMPLETAR_PROVENTO = text("""
+    UPDATE dividends
+       SET quantity = :quantity, amount_per_unit = :amount_per_unit
+     WHERE """ + _CHAVE_CANONICA.format(t="dividends") + """
+       AND dividends.quantity IS NULL
+""")
+
+
+def quantidade_provento(
+    total: float | None, quantidade: float | None,
+) -> tuple[float | None, float | None]:
+    """``(quantity, amount_per_unit)`` de um provento, ou ``(None, None)``.
+
+    A regra é uma só para todas as fontes, para o mesmo pagamento chegar
+    igual por qualquer uma: valor por unidade = total ÷ quantidade, em 6
+    casas. Quantidade ausente, zero, negativa ou não numérica não vira 1.
+
+    >>> quantidade_provento(44.16, 368)
+    (368.0, 0.12)
+    >>> quantidade_provento(44.16, None)
+    (None, None)
+    """
+    if total is None or quantidade is None:
+        return None, None
+    try:
+        q = float(quantidade)
+        t = float(total)
+    except (TypeError, ValueError):
+        return None, None
+    if not q > 0 or t != t:  # rejeita 0, negativo e NaN
+        return None, None
+    return q, round(t / q, 6)
+
+
+def dividends_aceita_quantidade_ausente(conn: Connection) -> bool:
+    """``dividends.quantity`` e ``amount_per_unit`` aceitam NULL (SQL 083)?
+
+    O app não aplica a 083 sozinho -- migração pede confirmação humana
+    (AGENTS.md). Enquanto ela não roda, quem chama recusa o provento sem
+    quantidade, e nunca troca o vazio por 1.
+    """
+    try:
+        if conn.dialect.name == "postgresql":
+            linha = conn.execute(text("""
+                SELECT COUNT(*) AS n,
+                       COUNT(*) FILTER (WHERE a.attnotnull) AS obrigatorias
+                FROM pg_attribute a
+                WHERE a.attrelid = to_regclass('dividends')
+                  AND a.attname IN ('quantity', 'amount_per_unit')
+                  AND NOT a.attisdropped
+            """)).one()
+            return int(linha.n) == 2 and int(linha.obrigatorias) == 0
+        if conn.dialect.name == "sqlite":
+            notnull = {
+                r[1]: r[3] for r in conn.execute(text("PRAGMA table_info(dividends)"))
+            }
+            return notnull.get("quantity") == 0 and notnull.get("amount_per_unit") == 0
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[proventos] nulidade de dividends ilegível: %s", safe_error(exc))
+    return False
+
+
+@dataclass
+class GravacaoProventos:
+    """O que ``gravar_proventos`` fez com as linhas recebidas."""
+
+    inseridos: int = 0
+    #: linhas que já existiam sem quantidade e foram completadas.
+    enriquecidos: int = 0
+    #: mesmo provento já gravado (por esta ou por outra fonte).
+    duplicados: int = 0
+    #: sem quantidade, num banco que ainda não aceita o vazio (sem a 083).
+    recusados: list[dict[str, Any]] = field(default_factory=list)
+
+
+def gravar_proventos(
     conn: Connection,
     rows: list[dict[str, Any]],
-) -> int:
-    """
-    Insere lista de dividendos em uma única statement. Além do external_id,
-    deduplica pela chave canônica compartilhada entre B3 e XP.
+    *,
+    aceita_quantidade_ausente: bool | None = None,
+) -> GravacaoProventos:
+    """Grava proventos em ``dividends`` -- o caminho único das três fontes.
 
-    Cada item de `rows` precisa ter as chaves:
-      user_id, asset_id, type, amount_per_unit, quantity,
-      total_amount, ex_date, payment_date, external_id
+    Cada item de ``rows`` tem ``user_id, asset_id, type, amount_per_unit,
+    quantity, total_amount, ex_date, payment_date, external_id``, com
+    ``quantity`` e ``amount_per_unit`` saídos de ``quantidade_provento``
+    (os dois preenchidos ou os dois ``None``). A chave opcional ``_ticker``
+    só serve para a mensagem do recusado.
+
+    Ordem: INSERT (com a deduplicação canônica) e depois o UPDATE que
+    completa a quantidade. Nessa ordem o resultado não depende de qual fonte
+    chega primeiro, nem da ordem das linhas dentro do mesmo lote.
+
+    ``aceita_quantidade_ausente`` evita reler o catálogo a cada linha nos
+    importadores que gravam uma por vez; ``None`` lê aqui.
+
+    Duas queries por chamada, qualquer que seja o tamanho do lote (ver o
+    motivo dos helpers batch acima).
     """
+    resultado = GravacaoProventos()
     if not rows:
-        return 0
-    valid_types = {"dividend", "jcp", "reit_income", "amortization", "other"}
+        return resultado
     for r in rows:
-        if r["type"] not in valid_types:
+        if r["type"] not in TIPOS_PROVENTO:
             raise ValueError(f"div_type invalido: {r['type']!r}")
-    stmt = text("""
-        INSERT INTO dividends
-            (user_id, asset_id, type, amount_per_unit, quantity,
-             total_amount, ex_date, payment_date, external_id)
-        SELECT
-            :user_id, :asset_id, :type, :amount_per_unit, :quantity,
-            :total_amount, :ex_date, :payment_date, :external_id
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM dividends existing
-            WHERE existing.user_id = :user_id
-              AND existing.asset_id = :asset_id
-              AND existing.payment_date = :payment_date
-              AND existing.type = :type
-              AND ROUND(CAST(existing.total_amount AS NUMERIC), 2)
-                  = ROUND(CAST(:total_amount AS NUMERIC), 2)
-        )
-        ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING
-    """)
-    result = conn.execute(stmt, rows)
-    return result.rowcount if result.rowcount is not None else len(rows)
+        if (r.get("quantity") is None) != (r.get("amount_per_unit") is None):
+            raise ValueError(
+                "quantity e amount_per_unit vão juntos: os dois ou nenhum "
+                "(use quantidade_provento)"
+            )
+
+    aceita = (dividends_aceita_quantidade_ausente(conn)
+              if aceita_quantidade_ausente is None else aceita_quantidade_ausente)
+    gravaveis = []
+    for r in rows:
+        if r.get("quantity") is None and not aceita:
+            resultado.recusados.append(r)
+        else:
+            gravaveis.append({k: r.get(k) for k in _COLUNAS_PROVENTO})
+    if not gravaveis:
+        return resultado
+
+    ins = conn.execute(_SQL_INSERIR_PROVENTO, gravaveis)
+    resultado.inseridos = (
+        ins.rowcount if ins.rowcount is not None and ins.rowcount >= 0 else len(gravaveis)
+    )
+    # Sem a 083 não existe linha com quantidade vazia para completar.
+    com_qtd = [p for p in gravaveis if p["quantity"] is not None]
+    if com_qtd and aceita:
+        upd = conn.execute(_SQL_COMPLETAR_PROVENTO, com_qtd)
+        resultado.enriquecidos = max(upd.rowcount or 0, 0)
+    resultado.duplicados = max(
+        len(gravaveis) - resultado.inseridos - resultado.enriquecidos, 0)
+    return resultado
+
+
+def mensagem_provento_sem_quantidade(row: dict[str, Any]) -> str:
+    """Erro nomeado do provento recusado: ativo, data e valor, nada do arquivo."""
+    rotulo = row.get("_ticker") or "ativo"
+    pagamento = row.get("payment_date")
+    data = pagamento.strftime("%d/%m/%Y") if hasattr(pagamento, "strftime") else str(pagamento)
+    return (
+        f"{rotulo} {data} R$ {float(row['total_amount']):.2f}: a fonte não "
+        "informa a quantidade, e o banco ainda não aceita provento sem "
+        "quantidade (falta aplicar supabase_unificado/schema/"
+        "083_dividends_quantidade_opcional.sql). Não foi gravado para não "
+        "inventar a quantidade; a Movimentação da B3 do período a traz."
+    )
+
+
+def registrar_gravacao_proventos(summary: dict[str, Any], res: GravacaoProventos) -> None:
+    """Leva o resultado de ``gravar_proventos`` para o resumo padronizado."""
+    summary["incomes_imported"] += res.inseridos
+    summary["incomes_enriched"] = int(summary.get("incomes_enriched", 0)) + res.enriquecidos
+    summary["duplicates_skipped"] += res.duplicados
+    for r in res.recusados:
+        summary["rows_skipped"] += 1
+        summary["errors"].append(mensagem_provento_sem_quantidade(r))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -9,7 +9,10 @@ Colunas esperadas:
     Quantidade | Preço unitário | Valor da Operação
 
 Importa:
-  * Dividendos, JCP, Rendimentos de FII, Amortizações em `dividends`.
+  * Dividendos, JCP, Rendimentos de FII, Amortizações em `dividends`. Linha
+    sem quantidade grava `quantity`/`amount_per_unit` vazios (SQL 083), e
+    nunca 1 cota com o valor inteiro por cota; a gravação é a mesma da XP e
+    da Rico (`common.gravar_proventos`).
   * Bonificações, desdobros e operações sem contrapartida financeira em
     `investment_transactions` (preço/valor = 0 quando aplicável).
 
@@ -44,7 +47,6 @@ from core.config import settings
 from .common import (
     batch_filter_existing_external_ids,
     batch_get_or_create_assets,
-    batch_insert_dividends,
     batch_insert_investment_transactions,
     classify_movement,
     classify_ticker,
@@ -52,11 +54,14 @@ from .common import (
     ensure_movement_events_table,
     finalize_summary,
     get_or_create_b3_account,
+    gravar_proventos,
     insert_movement_events,
     make_external_id,
     make_summary,
     parse_date_br,
     parse_ticker_from_produto,
+    quantidade_provento,
+    registrar_gravacao_proventos,
     safe_error,
     to_float_br,
 )
@@ -205,13 +210,16 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                         "ex_date":         None,
                         "payment_date":    c["transaction_date"],
                         "external_id":     c["external_id"],
+                        "_ticker":         c["ticker"],
                     })
 
-                # 4) Insert em lote
+                # 4) Insert em lote. Proventos pelo caminho único das três
+                #    fontes: sem quantidade fica NULL, e quem chega com ela
+                #    completa a linha que ficou sem (common.gravar_proventos).
                 inserted_tx = batch_insert_investment_transactions(conn, tx_rows)
-                inserted_div = batch_insert_dividends(conn, div_rows)
                 summary["transactions_imported"] += inserted_tx
-                summary["incomes_imported"] += inserted_div
+                registrar_gravacao_proventos(
+                    summary, gravar_proventos(conn, div_rows))
 
                 # 5) Fatos crus -- não entram em records_imported: não são
                 #    transação nem provento, e somar confundiria o resumo.
@@ -313,12 +321,9 @@ def _parse_row(row) -> dict | None:
     if category == "income":
         if valor is None or valor <= 0:
             return None
-        if qtd and qtd > 0:
-            apu = round(valor / qtd, 6)
-            quantity_used = qtd
-        else:
-            apu = valor
-            quantity_used = 1.0
+        # Sem quantidade no arquivo, os dois ficam None -- nunca "1 cota com
+        # o valor inteiro por cota", que a tela mostraria como fato.
+        quantity_used, apu = quantidade_provento(valor, qtd)
         return {
             "kind":             "income",
             "ticker":           ticker_clean,

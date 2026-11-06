@@ -1588,6 +1588,7 @@ def _consolidar_resultados_lote(
         "records_imported",
         "transactions_imported",
         "incomes_imported",
+        "incomes_enriched",
         "positions_imported",
         "duplicates_skipped",
         "rows_skipped",
@@ -2031,6 +2032,12 @@ def _render_import_result(summary: dict) -> None:
             card_metrica("Ignorados", int(summary.get("rows_skipped", 0)), accent="#9CA3AF")
 
     extras = []
+    completados = int(summary.get("incomes_enriched", 0) or 0)
+    if completados:
+        extras.append(
+            f"Quantidade completada em {completados} provento(s) que já "
+            "estavam gravados sem ela"
+        )
     if summary.get("_report_date"):
         extras.append(f"Data do snapshot: {summary['_report_date']}")
     if summary.get("_institution"):

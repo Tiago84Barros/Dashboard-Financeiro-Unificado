@@ -2973,7 +2973,7 @@
                 {
                   "nome": "Dados Históricos B3 (.xlsx)",
                   "resumo": "Planilhas da área do investidor da B3",
-                  "explicacao": "Aceita vários arquivos de uma vez: Negociação, Movimentação, Relatório Consolidado (o da XP), Posição Detalhada, Posição e o Extrato da conta da Rico (deste, só os rendimentos e dividendos pagos). O app descobre sozinho o tipo de cada arquivo. Depois do botão 'Importar', mostra o que entrou, o que já existia e o que foi recusado.",
+                  "explicacao": "Aceita vários arquivos de uma vez: Negociação, Movimentação, Relatório Consolidado (o da XP), Posição Detalhada, Posição e o Extrato da conta da Rico (deste, só os rendimentos e dividendos pagos). O app descobre sozinho o tipo de cada arquivo. Depois do botão 'Importar', mostra o que entrou, o que já existia, o que foi recusado e quantos proventos já gravados sem quantidade ganharam a quantidade do arquivo. Provento cujo arquivo não informa a quantidade entra só com o valor total; a quantidade nunca é preenchida com 1.",
                   "so_admin": false
                 },
                 {

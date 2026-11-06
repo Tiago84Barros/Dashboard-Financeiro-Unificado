@@ -14,8 +14,8 @@ O que o arquivo traz e o que vira dado:
   "RENDIMENTOS DE CLIENTES MANA11 S/ 368"      → dividends (reit_income),
                                                  quantidade 368
   "DIVIDENDOS DE CLIENTES BBAS3 S/ 100"        → dividends (dividend)
-  "RENDIMENTO FUNDO FECHADO BALCÃO PIER11 - …" → reconhecido, mas NÃO
-                                                 gravado (ver abaixo)
+  "RENDIMENTO FUNDO FECHADO BALCÃO PIER11 - …" → dividends sem quantidade
+                                                 (ver abaixo)
 
 E o que fica de fora, de propósito, contado em `rows_skipped`:
 
@@ -29,16 +29,17 @@ E o que fica de fora, de propósito, contado em `rows_skipped`:
     app não tem tabela de renda de aluguel; `dividends` não é o lugar.
   * TED, retirada e qualquer outra movimentação de caixa.
   * O bloco "Lançamentos futuros" — crédito ainda não pago pode mudar.
-  * Provento sem quantidade (o rendimento de fundo fechado de balcão não diz
-    quantas cotas). `dividends.quantity` e `amount_per_unit` não aceitam
-    vazio, e gravar 1 cota com o pagamento inteiro como valor por cota seria
-    inventar número — a tela de Proventos o mostraria como fato, e a
-    Movimentação da B3, que traz a quantidade, seria barrada pela
-    deduplicação depois. O lançamento sai nomeado em `errors`, com o valor,
-    para o usuário saber que precisa vir da B3.
+
+Provento sem quantidade (o rendimento de fundo fechado de balcão não diz
+quantas cotas) é gravado com `quantity` e `amount_per_unit` vazios, desde que
+o banco já tenha a SQL 083; a Movimentação da B3 que chegar depois com a
+quantidade completa a linha em vez de ser barrada pela deduplicação. Sem a
+083, ele é recusado e sai nomeado em `errors` -- gravar 1 cota com o
+pagamento inteiro como valor por cota seria inventar número. A regra e a
+gravação são as mesmas da B3 e da XP (`common.gravar_proventos`).
 
 Deduplicação: além do `external_id` próprio (prefixo `ricocc`),
-`insert_dividend` só grava se não houver provento do mesmo ativo, na mesma
+`gravar_proventos` só grava se não houver provento do mesmo ativo, na mesma
 data de pagamento, do mesmo tipo e com o mesmo total — a chave canônica que
 já impede o Consolidado da XP de duplicar a Movimentação da B3. O mesmo
 rendimento chegando pela Movimentação e por este extrato entra uma vez só,
@@ -64,13 +65,16 @@ from core.config import settings
 
 from .common import (
     classify_ticker,
+    dividends_aceita_quantidade_ausente,
     ensure_external_id_columns,
     finalize_summary,
     get_or_create_asset,
-    insert_dividend,
+    gravar_proventos,
     make_external_id,
     make_summary,
     parse_date_br,
+    quantidade_provento,
+    registrar_gravacao_proventos,
     safe_error,
     to_float_br,
 )
@@ -202,13 +206,13 @@ def ler_lancamentos(linhas) -> tuple[list[dict[str, Any]], int]:
             ignorados += 1
             continue
         pagamento = parse_date_br(_col("liq")) or data_mov
-        qtd = achado["quantidade"]
+        # None quando o extrato não diz: ausente fica ausente.
+        qtd, por_unidade = quantidade_provento(valor, achado["quantidade"])
         proventos.append({
             "ticker": achado["ticker"],
             "tipo": achado["tipo"],
-            # None quando o extrato não diz: ausente fica ausente.
-            "quantidade": qtd if qtd and qtd > 0 else None,
-            "por_unidade": round(valor / qtd, 6) if qtd and qtd > 0 else None,
+            "quantidade": qtd,
+            "por_unidade": por_unidade,
             "total": round(valor, 2),
             "pagamento": pagamento,
         })
@@ -250,43 +254,36 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
     try:
         with engine.connect() as conn:
             with conn.begin():
+                aceita_ausente = dividends_aceita_quantidade_ausente(conn)
                 for p in proventos:
                     pagamento: date = p["pagamento"]
-                    if p["quantidade"] is None:
-                        summary["rows_skipped"] += 1
-                        summary["errors"].append(
-                            f"{p['ticker']} {pagamento:%d/%m/%Y} "
-                            f"R$ {p['total']:.2f}: o extrato não informa a "
-                            "quantidade de cotas, então não foi gravado. "
-                            "Importe a Movimentação da B3 do período."
-                        )
-                        continue
                     try:
                         with conn.begin_nested():
                             asset_id = get_or_create_asset(
                                 conn, ticker=p["ticker"], name=p["ticker"],
                                 asset_class=classify_ticker(p["ticker"]),
                             )
-                            novo = insert_dividend(
+                            res = gravar_proventos(
                                 conn,
-                                user_id=user_id,
-                                asset_id=asset_id,
-                                div_type=p["tipo"],
-                                amount_per_unit=p["por_unidade"],
-                                quantity=p["quantidade"],
-                                total_amount=p["total"],
-                                ex_date=None,
-                                payment_date=pagamento,
-                                external_id=make_external_id(
-                                    "ricocc",
-                                    [pagamento.isoformat(), p["ticker"],
-                                     p["tipo"], f"{p['total']:.2f}"],
-                                ),
+                                [{
+                                    "user_id":         user_id,
+                                    "asset_id":        asset_id,
+                                    "type":            p["tipo"],
+                                    "amount_per_unit": p["por_unidade"],
+                                    "quantity":        p["quantidade"],
+                                    "total_amount":    p["total"],
+                                    "ex_date":         None,
+                                    "payment_date":    pagamento,
+                                    "external_id": make_external_id(
+                                        "ricocc",
+                                        [pagamento.isoformat(), p["ticker"],
+                                         p["tipo"], f"{p['total']:.2f}"],
+                                    ),
+                                    "_ticker":         p["ticker"],
+                                }],
+                                aceita_quantidade_ausente=aceita_ausente,
                             )
-                        if novo is None:
-                            summary["duplicates_skipped"] += 1
-                        else:
-                            summary["incomes_imported"] += 1
+                        registrar_gravacao_proventos(summary, res)
                     except Exception as exc:  # noqa: BLE001
                         summary["errors"].append(
                             f"{p['ticker']} {pagamento:%d/%m/%Y}: "
@@ -295,6 +292,7 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         # A transação inteira voltou: nada do que foi contado ficou gravado.
         summary["incomes_imported"] = 0
+        summary["incomes_enriched"] = 0
         summary["duplicates_skipped"] = 0
         summary["errors"].append(f"Gravacao falhou: {safe_error(exc)}")
 
