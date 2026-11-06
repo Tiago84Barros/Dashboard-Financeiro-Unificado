@@ -68,3 +68,12 @@ def test_upload_sem_arquivo_orienta():
     at = AppTest.from_function(_app_upload).run(timeout=30)
     assert not at.exception
     assert any("prévia" in c.value for c in at.caption)
+
+
+def test_lancamento_ja_classificado_pode_ter_a_categoria_corrigida():
+    """Achado do Codex no PR #680: só os sem categoria tinham editor, e um
+    aporte aceito como receita ficava preso na DRE e no DAS."""
+    at = AppTest.from_function(_app, args=("_tab_lancamentos",)).run(timeout=30)
+    assert any("Corrigir categoria" in e.label for e in at.expander)
+    rotulos = at.selectbox(key="cnpj_corrigir_sel").options
+    assert any("Cliente Alfa" in r for r in rotulos)

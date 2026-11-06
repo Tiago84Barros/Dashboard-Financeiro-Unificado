@@ -120,8 +120,8 @@ def test_acima_do_teto_nao_calcula():
 
 def test_fator_r_leva_anexo_v_para_o_iii():
     receitas = [25_000.0] * 12  # RBT12 = 300 mil
-    alto = estimar_das("V", receitas, 30_000.0, folha_12m=90_000.0)   # 30%
-    baixo = estimar_das("V", receitas, 30_000.0, folha_12m=60_000.0)  # 20%
+    alto = estimar_das("V", receitas, 30_000.0, folhas_12m_anteriores=[7_500.0] * 12)  # 30%
+    baixo = estimar_das("V", receitas, 30_000.0, folhas_12m_anteriores=[5_000.0] * 12)  # 20%
     assert alto.anexo_aplicado == "III" and baixo.anexo_aplicado == "V"
     assert alto.das_estimado == pytest.approx(30_000 * 0.0808, abs=0.01)
 
@@ -171,3 +171,12 @@ def test_saldo_inicial_deduzido_do_primeiro_extrato():
     ini, data = rel.saldo_inicial_pelo_extrato(9375.2, movs, date(2026, 11, 6))
     assert ini == 4687.6 and data == date(2026, 11, 2)
     assert rel.saldo_ate(ini, data, [dict(m, status="pago") for m in movs], date(2026, 11, 6)) == 9375.2
+
+
+def test_fator_r_no_inicio_compara_folha_e_receita_do_mesmo_periodo():
+    """Achado do Codex no PR #680: seis meses com R$ 10 mil de receita e R$ 3 mil
+    de folha são Fator R de 30%, não 15% (receita anualizada, folha não)."""
+    est = estimar_das("V", [10_000.0] * 6, 10_000.0, folhas_12m_anteriores=[3_000.0] * 6)
+    assert est.rbt12_proporcional and est.rbt12 == 120_000.0
+    assert est.fator_r == 0.30
+    assert est.anexo_aplicado == "III"

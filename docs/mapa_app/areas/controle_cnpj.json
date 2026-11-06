@@ -16,7 +16,7 @@
     {
       "nome": "Lançamentos",
       "resumo": "Lista do mês, classificação e lançamento manual",
-      "explicacao": "A lista do mês com data, descrição, categoria, valor, situação (pago ou previsto) e origem (extrato, manual ou manual conciliado). Os que estão sem categoria aparecem num formulário para classificar; a categoria escolhida vale também para os próximos extratos do mesmo cliente ou fornecedor. Há ainda 'Novo lançamento manual' e 'Excluir lançamento manual' (o que veio do extrato não se exclui, porque o banco registrou).",
+      "explicacao": "A lista do mês com data, descrição, categoria, valor, situação (pago ou previsto) e origem (extrato, manual ou manual conciliado). Os que estão sem categoria aparecem num formulário para classificar; a categoria escolhida vale também para os próximos extratos do mesmo cliente ou fornecedor. Em 'Corrigir categoria' dá para trocar a categoria de qualquer lançamento do mês, inclusive os já classificados (um aporte aceito como receita, por exemplo). Há ainda 'Novo lançamento manual' e 'Excluir lançamento manual' (o que veio do extrato não se exclui, porque o banco registrou).",
       "so_admin": false,
       "fonte": "views/controle_cnpj.py:192",
       "filhos": []

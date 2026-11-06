@@ -321,8 +321,17 @@ def importar_extrato(movimentos: list[dict], arquivo: str,
                     SET saldo = EXCLUDED.saldo, arquivo = EXCLUDED.arquivo"""),
                 {"uid": dono, "data": saldo_final["data"], "saldo": saldo_final["valor"],
                  "arquivo": arquivo})
+            # Saldo de abertura a partir de TODOS os movimentos do banco já
+            # gravados (chave preenchida = veio do extrato ou foi conciliado),
+            # não só dos novos deste arquivo: um extrato anterior sem saldo
+            # que se sobrepõe a este já tem linhas no banco, e o saldo
+            # calculado depois as soma (achado do Codex no PR #680).
+            gravados = [{"data": r.data, "valor": float(r.valor)} for r in conn.execute(_texto("""
+                SELECT data, valor FROM pj_lancamentos
+                WHERE user_id = CAST(:uid AS uuid) AND chave IS NOT NULL
+                  AND status = 'pago'"""), {"uid": dono})]
             abertura = relatorios.saldo_inicial_pelo_extrato(
-                saldo_final["valor"], movimentos, saldo_final["data"])
+                saldo_final["valor"], gravados, saldo_final["data"])
             if abertura:
                 # Só na primeira vez: o saldo de abertura não muda a cada extrato.
                 conn.execute(_texto("""

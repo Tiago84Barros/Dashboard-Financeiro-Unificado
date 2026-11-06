@@ -87,10 +87,28 @@ def aliquota_efetiva(anexo: str, rbt12: float) -> tuple[int | None, float | None
     return None, None, None
 
 
+def fator_r_de(receitas_mensais: list[float], folhas_mensais: list[float]) -> float | None:
+    """Folha ÷ receita no MESMO período (os últimos até 12 meses dos dois).
+
+    No início de atividade a RBT12 é anualizada; anualizar só a receita e não
+    a folha derrubaria o Fator R pela metade com seis meses de histórico. A
+    razão entre somas do mesmo período não depende da anualização.
+    """
+    n = min(12, len(receitas_mensais), len(folhas_mensais))
+    if n == 0:
+        return None
+    receita = sum(float(v or 0) for v in receitas_mensais[-n:])
+    if receita <= 0:
+        return None
+    return round(sum(float(v or 0) for v in folhas_mensais[-n:]) / receita, 4)
+
+
 def estimar_das(anexo: str, receitas_12m_anteriores: list[float], receita_mes: float,
-                folha_12m: float | None = None) -> EstimativaDAS:
+                folhas_12m_anteriores: list[float] | None = None) -> EstimativaDAS:
+    """``folhas_12m_anteriores``: folha mês a mês, alinhada às receitas."""
     rbt12, proporcional = rbt12_de(receitas_12m_anteriores)
-    fator_r = round(folha_12m / rbt12, 4) if folha_12m is not None and rbt12 > 0 else None
+    fator_r = (fator_r_de(receitas_12m_anteriores, folhas_12m_anteriores)
+               if folhas_12m_anteriores is not None else None)
     aplicado = anexo_efetivo(anexo, fator_r)
     faixa, nominal, efetiva = aliquota_efetiva(aplicado, rbt12)
     aviso = None

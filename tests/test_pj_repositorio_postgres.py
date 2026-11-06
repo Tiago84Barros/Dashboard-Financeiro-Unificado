@@ -130,3 +130,17 @@ def test_dados_da_empresa(repo):
     assert repo.salvar_empresa("12.345.678/0001-90", "Empresa Teste", "V") == (True, "")
     assert repo.obter_empresa()["anexo_simples"] == "V"
     assert repo.salvar_empresa("123", "x", "V")[0] is False
+
+
+def test_saldo_de_abertura_conta_movimentos_ja_gravados_de_extrato_sem_saldo(repo):
+    """Achado do Codex no PR #680: um extrato anterior SEM saldo deixou um
+    crédito de 100 em 02/11; o próximo arquivo (com saldo 1.600) traz 200 em
+    01/11 e 300 em 03/11 além do mesmo crédito. Abertura certa: 1.000."""
+    antigo = dict(_mov(2, 100.0, "Credito", "O1"), categoria=None)
+    repo.importar_extrato([antigo], "parcial.ofx")
+    novos = [dict(_mov(1, 200.0, "A", "O0"), categoria=None),
+             dict(_mov(3, 300.0, "B", "O3"), categoria=None)]
+    repo.importar_extrato(novos, "completo.ofx", {"data": date(2026, 11, 3), "valor": 1600.0})
+    emp = repo.obter_empresa()
+    assert emp["saldo_inicial"] == 1000.0 and emp["data_saldo_inicial"] == date(2026, 10, 31)
+    assert repo.saldo_calculado(emp, repo.listar_lancamentos(), date(2026, 11, 3)) == 1600.0

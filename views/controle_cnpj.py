@@ -228,6 +228,29 @@ def _tab_lancamentos(lancs: list[dict]) -> None:
                 st.session_state["cnpj_msg"] = "Categorias salvas."
                 st.rerun()
 
+    if do_mes:
+        with st.expander("✏️ Corrigir categoria"):
+            st.caption("Para qualquer lançamento do mês, inclusive os já classificados: um "
+                       "aporte de sócio aceito como receita, por exemplo. Corrigir aqui muda a "
+                       "DRE e o DAS estimado.")
+            por_id = {x["id"]: x for x in do_mes}
+            escolhido = st.selectbox(
+                "Lançamento", list(por_id), key="cnpj_corrigir_sel",
+                format_func=lambda i: (f"{_fmt_data(por_id[i]['data'])} · {por_id[i]['descricao']} · "
+                                       f"{fmt_moeda(por_id[i]['valor'])} · {rotulo(por_id[i]['categoria'])}"))
+            opcoes = ["Sem categoria", *_NOMES]
+            atual = rotulo(por_id[escolhido]["categoria"])
+            nova = st.selectbox("Nova categoria", opcoes, index=opcoes.index(atual),
+                                key=f"cnpj_corrigir_cat_{escolhido}")
+            lembrar = st.checkbox("Usar esta categoria para os próximos extratos desta contraparte",
+                                  value=True, key="cnpj_corrigir_lembrar")
+            if st.button("Salvar correção", key="cnpj_corrigir_btn"):
+                ok, msg = repo.classificar(escolhido, _CODIGO_POR_NOME.get(nova), lembrar=lembrar)
+                if ok:
+                    st.session_state["cnpj_msg"] = "Categoria corrigida."
+                    st.rerun()
+                st.error(msg)
+
     with st.expander("➕ Novo lançamento manual"):
         st.caption("Para o que não passa pelo extrato ou ainda não aconteceu. Quando o extrato "
                    "trouxer o mesmo valor perto da data, a importação concilia em vez de duplicar.")
@@ -425,7 +448,7 @@ def _tab_impostos(lancs: list[dict], empresa: dict | None) -> None:
     primeiro_com_receita = next((i for i, s in enumerate(anteriores) if s["receita"] > 0), None)
     historico = anteriores[primeiro_com_receita:] if primeiro_com_receita is not None else []
     est = estimar_das(anexo_atual, [s["receita"] for s in historico], atual["receita"],
-                      folha_12m=sum(s["folha"] for s in historico))
+                      folhas_12m_anteriores=[s["folha"] for s in historico])
 
     seguinte = (ano, mes + 1) if mes < 12 else (ano + 1, 1)
     das_pago = rel.serie_mensal(lancs, _date(*seguinte, 1), meses=1)[0]["das_pago"]

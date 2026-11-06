@@ -7,6 +7,7 @@ aqui só se desenha e se coleta a decisão do usuário.
 """
 from __future__ import annotations
 
+import hashlib
 import html
 
 import pandas as pd
@@ -35,13 +36,18 @@ def _editor_categorias(movs: list[dict]) -> list[str]:
     o canvas do data_editor ignora as cores do tema claro (mesma decisão de
     ``views/bank_statement_upload.py``).
     """
+    # Chaves dos widgets pelo movimento (FITID), nunca pela posição: trocar de
+    # arquivo com a prévia aberta herdava a categoria escolhida para a linha de
+    # mesmo número do arquivo anterior (achado do Codex no PR #680).
+    assinatura = hashlib.sha1("".join(m["chave"] for m in movs).encode()).hexdigest()[:12]
     if not no_claro():
         df = pd.DataFrame([{
             "Data": _fmt_data(m["data"]), "Descrição": m["descricao"],
             "Valor (R$)": m["valor"], "Categoria": rotulo(m.get("categoria")),
         } for m in movs])
         editado = st.data_editor(
-            df, hide_index=True, width="stretch", num_rows="fixed", key="cnpj_previa_editor",
+            df, hide_index=True, width="stretch", num_rows="fixed",
+            key=f"cnpj_previa_editor_{assinatura}",
             column_config={
                 "Data": st.column_config.TextColumn("Data", disabled=True),
                 "Descrição": st.column_config.TextColumn("Descrição", disabled=True, width="large"),
@@ -52,7 +58,7 @@ def _editor_categorias(movs: list[dict]) -> list[str]:
             })
         return list(editado["Categoria"])
     escolhas = []
-    for i, m in enumerate(movs):
+    for m in movs:
         c1, c2, c3 = st.columns([1.1, 3.2, 2.2], gap="small")
         c1.markdown(f'<div style="padding-top:6px;font-size:0.8rem;">{_fmt_data(m["data"])}</div>',
                     unsafe_allow_html=True)
@@ -61,7 +67,8 @@ def _editor_categorias(movs: list[dict]) -> list[str]:
             f'<b>{html.escape(fmt_moeda(m["valor"]))}</b></div>', unsafe_allow_html=True)
         atual = rotulo(m.get("categoria"))
         escolhas.append(c3.selectbox("Categoria", _OPCOES, index=_OPCOES.index(atual),
-                                     key=f"cnpj_previa_cat_{i}", label_visibility="collapsed"))
+                                     key=f"cnpj_previa_cat_{m['chave'][:24]}",
+                                     label_visibility="collapsed"))
     return escolhas
 
 
