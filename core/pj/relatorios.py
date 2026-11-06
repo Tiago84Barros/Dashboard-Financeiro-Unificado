@@ -120,3 +120,18 @@ def saldo_inicial_pelo_extrato(saldo_final: float, movimentos: list[dict],
     primeiro = min(m["data"] for m in ate)
     from datetime import timedelta
     return round(float(saldo_final) - sum(float(m["valor"]) for m in ate), 2), primeiro - timedelta(days=1)
+
+
+def meses_desde_o_inicio(serie: list[dict], lancs: list[dict]) -> list[dict]:
+    """Os meses de ``serie`` a partir do início da atividade (primeiro
+    lançamento pago), para a RBT12 do Simples.
+
+    Não corta na primeira RECEITA da janela: mês sem faturamento de empresa
+    que já existia é zero de verdade, e descartá-lo faria a RBT12 anualizar
+    só os meses bons (achado do Codex no PR #680).
+    """
+    datas = [x["data"] for x in _pagos(lancs)]
+    if not datas:
+        return []
+    inicio = min(datas)
+    return [s for s in serie if (s["ano"], s["mes"]) >= (inicio.year, inicio.month)]

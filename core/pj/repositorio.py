@@ -262,6 +262,20 @@ def preparar_importacao(movimentos: list[dict]) -> dict[str, Any]:
             "vinculos": {novos[k]: v for k, v in pares.items()}}
 
 
+def _aprender_regra(conn, dono: str, contraparte: object, categoria: str | None) -> None:
+    """Contraparte -> categoria. Um lugar só para os três caminhos que
+    classificam: movimento novo, movimento conciliado e correção manual."""
+    cp = normalizar(contraparte)
+    if not categoria or not cp:
+        return
+    conn.execute(_texto("""
+        INSERT INTO pj_regras (user_id, contraparte, categoria)
+        VALUES (CAST(:uid AS uuid), :cp, :cat)
+        ON CONFLICT (user_id, contraparte)
+        DO UPDATE SET categoria = EXCLUDED.categoria, updated_at = NOW()"""),
+        {"uid": dono, "cp": cp, "cat": categoria})
+
+
 def importar_extrato(movimentos: list[dict], arquivo: str,
                      saldo_final: dict | None = None) -> dict:
     """Grava os movimentos (com categoria e vínculo já decididos na prévia).
@@ -281,15 +295,22 @@ def importar_extrato(movimentos: list[dict], arquivo: str,
                 r = conn.execute(_texto("""
                     UPDATE pj_lancamentos
                     SET status = 'pago', data = :data, chave = :chave,
-                        categoria = COALESCE(categoria, :cat), updated_at = NOW()
+                        categoria = COALESCE(categoria, :cat),
+                        contraparte = COALESCE(contraparte, :contraparte),
+                        updated_at = NOW()
                     WHERE id = CAST(:id AS uuid) AND user_id = CAST(:uid AS uuid)
                       AND chave IS NULL
                       AND NOT EXISTS (SELECT 1 FROM pj_lancamentos o
-                                      WHERE o.user_id = CAST(:uid AS uuid) AND o.chave = :chave)"""),
+                                      WHERE o.user_id = CAST(:uid AS uuid) AND o.chave = :chave)
+                    RETURNING categoria"""),
                     {"data": m["data"], "chave": m["chave"], "cat": categoria,
-                     "id": m["vincular_id"], "uid": dono})
-                if r.rowcount:
+                     "contraparte": m.get("contraparte"),
+                     "id": m["vincular_id"], "uid": dono}).fetchone()
+                if r is not None:
                     vinculados += 1
+                    # A contraparte do banco passa a morar no lançamento e
+                    # aprende a categoria que ficou nele (achado do Codex, #680).
+                    _aprender_regra(conn, dono, m.get("contraparte"), r.categoria)
                     continue
             r = conn.execute(_texto("""
                 INSERT INTO pj_lancamentos
@@ -305,14 +326,7 @@ def importar_extrato(movimentos: list[dict], arquivo: str,
                 novos += 1
             else:
                 repetidos += 1
-            contraparte = normalizar(m.get("contraparte"))
-            if categoria and contraparte:
-                conn.execute(_texto("""
-                    INSERT INTO pj_regras (user_id, contraparte, categoria)
-                    VALUES (CAST(:uid AS uuid), :cp, :cat)
-                    ON CONFLICT (user_id, contraparte)
-                    DO UPDATE SET categoria = EXCLUDED.categoria, updated_at = NOW()"""),
-                    {"uid": dono, "cp": contraparte, "cat": categoria})
+            _aprender_regra(conn, dono, m.get("contraparte"), categoria)
         if saldo_final and saldo_final.get("data") and saldo_final.get("valor") is not None:
             conn.execute(_texto("""
                 INSERT INTO pj_saldos_extrato (user_id, data, saldo, arquivo)
@@ -403,14 +417,8 @@ def classificar(lancamento_id: str, categoria: str | None,
             RETURNING contraparte"""), {"cat": categoria, "id": lancamento_id, "uid": dono}).fetchone()
         if r is None:
             return False, "Lançamento não encontrado."
-        contraparte = normalizar(r.contraparte)
-        if lembrar and categoria and contraparte:
-            conn.execute(_texto("""
-                INSERT INTO pj_regras (user_id, contraparte, categoria)
-                VALUES (CAST(:uid AS uuid), :cp, :cat)
-                ON CONFLICT (user_id, contraparte)
-                DO UPDATE SET categoria = EXCLUDED.categoria, updated_at = NOW()"""),
-                {"uid": dono, "cp": contraparte, "cat": categoria})
+        if lembrar:
+            _aprender_regra(conn, dono, r.contraparte, categoria)
     limpar_caches()
     return True, ""
 

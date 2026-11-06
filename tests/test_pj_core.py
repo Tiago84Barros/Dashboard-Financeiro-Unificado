@@ -180,3 +180,32 @@ def test_fator_r_no_inicio_compara_folha_e_receita_do_mesmo_periodo():
     assert est.rbt12_proporcional and est.rbt12 == 120_000.0
     assert est.fator_r == 0.30
     assert est.anexo_aplicado == "III"
+
+
+def test_fator_r_logo_abaixo_de_28_por_cento_nao_muda_de_anexo():
+    """Achado do Codex no PR #680: 27,999% arredondado virava 28% e levava ao III."""
+    est = estimar_das("V", [100_000.0] * 12, 100_000.0, folhas_12m_anteriores=[27_999.0] * 12)
+    assert est.anexo_aplicado == "V"
+    assert est.fator_r == pytest.approx(0.27999)
+
+
+def test_mes_sem_receita_de_empresa_antiga_conta_como_zero_na_rbt12():
+    """Achado do Codex no PR #680: seis meses zerados seguidos de seis com R$ 20 mil
+    numa empresa que já existia dão RBT12 de 120 mil, não 240 mil."""
+    lancs = [_l(1, -10.0, "tarifas", mes=1) | {"data": date(2025, 1, 1)}]
+    lancs += [{"data": date(2026, m, 5), "valor": 20_000.0, "categoria": "receita_servicos",
+               "status": "pago"} for m in range(5, 11)]
+    serie = rel.serie_mensal(lancs, date(2026, 11, 1), meses=13)[:-1]
+    hist = rel.meses_desde_o_inicio(serie, lancs)
+    assert len(hist) == 12
+    est = estimar_das("III", [s["receita"] for s in hist], 20_000.0)
+    assert est.rbt12 == 120_000.0 and not est.rbt12_proporcional
+    assert est.das_estimado == pytest.approx(1_200.0)
+
+
+def test_inicio_de_atividade_dentro_da_janela_continua_proporcional():
+    lancs = [{"data": date(2026, m, 5), "valor": 10_000.0, "categoria": "receita_servicos",
+              "status": "pago"} for m in range(8, 11)]
+    serie = rel.serie_mensal(lancs, date(2026, 11, 1), meses=13)[:-1]
+    hist = rel.meses_desde_o_inicio(serie, lancs)
+    assert [(s["ano"], s["mes"]) for s in hist] == [(2026, 8), (2026, 9), (2026, 10)]

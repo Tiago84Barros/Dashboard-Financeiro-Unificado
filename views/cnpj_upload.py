@@ -145,7 +145,18 @@ def render_upload_extrato_cnpj() -> None:
     if ja:
         st.info(f"{len(ja)} movimento(s) deste arquivo já foram importados e serão ignorados.")
     if not novos_idx:
-        st.success("Nada novo neste arquivo.")
+        # Sem movimento novo o saldo do arquivo ainda vale: pode ser o primeiro
+        # saldo de movimentos importados antes sem ele, ou uma conferência
+        # mais recente (achado do Codex no PR #680).
+        st.success("Nenhum movimento novo neste arquivo.")
+        if extrato.saldo_final:
+            st.markdown("#### Conferência de saldo")
+            _conferencia_de_saldo(extrato, [], {}, set())
+            if st.button("Gravar o saldo do extrato", type="primary", width="stretch",
+                         disabled=settings.MOCK_MODE, key="cnpj_gravar_saldo"):
+                st.session_state["cnpj_import_result"] = repo.importar_extrato(
+                    [], arquivo.name, extrato.saldo_final)
+                st.rerun()
         return
     novos = [dict(extrato.movimentos[i]) for i in novos_idx]
     for m in novos:

@@ -445,8 +445,7 @@ def _tab_impostos(lancs: list[dict], empresa: dict | None) -> None:
     ano, mes = _seletor_mes(lancs, "cnpj_imp_mes")
     serie = rel.serie_mensal(lancs, _date(ano, mes, 1), meses=13)
     anteriores, atual = serie[:-1], serie[-1]
-    primeiro_com_receita = next((i for i, s in enumerate(anteriores) if s["receita"] > 0), None)
-    historico = anteriores[primeiro_com_receita:] if primeiro_com_receita is not None else []
+    historico = rel.meses_desde_o_inicio(anteriores, lancs)
     est = estimar_das(anexo_atual, [s["receita"] for s in historico], atual["receita"],
                       folhas_12m_anteriores=[s["folha"] for s in historico])
 

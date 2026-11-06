@@ -100,7 +100,8 @@ def fator_r_de(receitas_mensais: list[float], folhas_mensais: list[float]) -> fl
     receita = sum(float(v or 0) for v in receitas_mensais[-n:])
     if receita <= 0:
         return None
-    return round(sum(float(v or 0) for v in folhas_mensais[-n:]) / receita, 4)
+    # Sem arredondar: 27,999% arredondado viraria 28% e mudaria o anexo.
+    return sum(float(v or 0) for v in folhas_mensais[-n:]) / receita
 
 
 def estimar_das(anexo: str, receitas_12m_anteriores: list[float], receita_mes: float,

@@ -144,3 +144,36 @@ def test_saldo_de_abertura_conta_movimentos_ja_gravados_de_extrato_sem_saldo(rep
     emp = repo.obter_empresa()
     assert emp["saldo_inicial"] == 1000.0 and emp["data_saldo_inicial"] == date(2026, 10, 31)
     assert repo.saldo_calculado(emp, repo.listar_lancamentos(), date(2026, 11, 3)) == 1600.0
+
+
+def test_conciliado_guarda_a_contraparte_ensina_a_regra_e_conta_no_frescor(repo):
+    """Achados do Codex no PR #680: o movimento conciliado não aprendia regra,
+    perdia a contraparte e não contava no frescor do extrato."""
+    repo.criar_lancamento(date(2026, 11, 3), "Aporte", 5000.0, entrada=True,
+                          categoria="aporte_socio", status="previsto")
+    mov = _mov(3, 5000.0, "Pix recebido", "AP1", contraparte="Socio Ficticio")
+    ctx = repo.preparar_importacao([mov])
+    repo.importar_extrato([dict(mov, vincular_id=ctx["vinculos"][0]["transaction_id"],
+                                categoria="receita_servicos")], "a.ofx")
+    lanc = repo.listar_lancamentos()[0]
+    assert lanc["categoria"] == "aporte_socio" and lanc["contraparte"] == "Socio Ficticio"
+    regras = repo.preparar_importacao([_mov(9, 100.0, "x", "AP2", contraparte="SOCIO FICTICIO")])["regras"]
+    assert regras["socio ficticio"] == "aporte_socio"
+
+    from core.confianca_secao import confianca_controle_cnpj
+    from core.database import get_engine
+    frescor = next(c for c in confianca_controle_cnpj(get_engine()).componentes
+                   if c.nome == "Frescor do extrato")
+    assert frescor.pct is not None
+
+
+def test_extrato_sem_movimento_novo_ainda_grava_o_saldo(repo):
+    """Achado do Codex no PR #680: o saldo de um arquivo sem movimento novo era
+    descartado, e a empresa ficava sem saldo de abertura."""
+    m = dict(_mov(3, 500.0, "A", "B1"), categoria=None)
+    repo.importar_extrato([m], "sem_saldo.ofx")
+    assert repo.obter_empresa() is None
+    repo.importar_extrato([], "com_saldo.ofx", {"data": date(2026, 11, 4), "valor": 700.0})
+    emp = repo.obter_empresa()
+    assert emp["saldo_inicial"] == 200.0
+    assert repo.saldo_calculado(emp, repo.listar_lancamentos(), date(2026, 11, 4)) == 700.0

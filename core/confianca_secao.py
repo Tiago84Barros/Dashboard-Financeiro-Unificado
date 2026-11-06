@@ -896,7 +896,7 @@ def confianca_controle_cnpj(engine=None) -> ConfiancaSecao:
             if n:
                 dias = _dias_desde(_scalar(conn, """
                     SELECT max(data) FROM pj_lancamentos
-                    WHERE user_id = CAST(:uid AS uuid) AND origem = 'extrato'""", filtro))
+                    WHERE user_id = CAST(:uid AS uuid) AND chave IS NOT NULL""", filtro))
                 comps.append(Componente(
                     "Frescor do extrato", _frescor_pct(dias, 15, 90), 0.30,
                     f"ultimo movimento do extrato ha {dias} dias" if dias is not None
