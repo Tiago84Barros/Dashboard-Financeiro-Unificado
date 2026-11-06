@@ -14,8 +14,9 @@ O que o arquivo traz e o que vira dado:
   "RENDIMENTOS DE CLIENTES MANA11 S/ 368"      → dividends (reit_income),
                                                  quantidade 368
   "DIVIDENDOS DE CLIENTES BBAS3 S/ 100"        → dividends (dividend)
-  "RENDIMENTO FUNDO FECHADO BALCÃO PIER11 - …" → reconhecido, mas NÃO
-                                                 gravado (ver abaixo)
+  "RENDIMENTO FUNDO FECHADO BALCÃO PIER11 - …" → dividends (reit_income),
+                                                 quantidade em branco (ver
+                                                 abaixo)
 
 E o que fica de fora, de propósito, contado em `rows_skipped`:
 
@@ -29,13 +30,12 @@ E o que fica de fora, de propósito, contado em `rows_skipped`:
     app não tem tabela de renda de aluguel; `dividends` não é o lugar.
   * TED, retirada e qualquer outra movimentação de caixa.
   * O bloco "Lançamentos futuros" — crédito ainda não pago pode mudar.
-  * Provento sem quantidade (o rendimento de fundo fechado de balcão não diz
-    quantas cotas). `dividends.quantity` e `amount_per_unit` não aceitam
-    vazio, e gravar 1 cota com o pagamento inteiro como valor por cota seria
-    inventar número — a tela de Proventos o mostraria como fato, e a
-    Movimentação da B3, que traz a quantidade, seria barrada pela
-    deduplicação depois. O lançamento sai nomeado em `errors`, com o valor,
-    para o usuário saber que precisa vir da B3.
+
+Provento sem quantidade (o rendimento de fundo fechado de balcão não diz
+quantas cotas) grava `quantity` e `amount_per_unit` NULL — migração 083 —,
+nunca 1 cota com o pagamento inteiro por cota. Se a Movimentação da B3 trouxer
+a quantidade depois, `common.ajustar_quantidades_dividendos` preenche a linha.
+Se o banco ainda não aceitar NULL, o lançamento sai nomeado em `errors`.
 
 Deduplicação: além do `external_id` próprio (prefixo `ricocc`),
 `insert_dividend` só grava se não houver provento do mesmo ativo, na mesma
@@ -63,6 +63,8 @@ from sqlalchemy.engine import Engine
 from core.config import settings
 
 from .common import (
+    ajustar_quantidades_dividendos,
+    aviso_sem_quantidade,
     classify_ticker,
     ensure_external_id_columns,
     finalize_summary,
@@ -70,7 +72,9 @@ from .common import (
     insert_dividend,
     make_external_id,
     make_summary,
+    migracao_083_aplicada,
     parse_date_br,
+    quantidade_e_valor_unitario,
     safe_error,
     to_float_br,
 )
@@ -202,13 +206,13 @@ def ler_lancamentos(linhas) -> tuple[list[dict[str, Any]], int]:
             ignorados += 1
             continue
         pagamento = parse_date_br(_col("liq")) or data_mov
-        qtd = achado["quantidade"]
+        # None quando o extrato não diz: ausente fica ausente.
+        qtd, por_unidade = quantidade_e_valor_unitario(achado["quantidade"], valor)
         proventos.append({
             "ticker": achado["ticker"],
             "tipo": achado["tipo"],
-            # None quando o extrato não diz: ausente fica ausente.
-            "quantidade": qtd if qtd and qtd > 0 else None,
-            "por_unidade": round(valor / qtd, 6) if qtd and qtd > 0 else None,
+            "quantidade": qtd,
+            "por_unidade": por_unidade,
             "total": round(valor, 2),
             "pagamento": pagamento,
         })
@@ -246,20 +250,19 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
         return finalize_summary(summary)
 
     ensure_external_id_columns(engine)
+    aplicada = migracao_083_aplicada(engine)
+    gravadas: list[dict[str, Any]] = []
 
     try:
         with engine.connect() as conn:
             with conn.begin():
                 for p in proventos:
                     pagamento: date = p["pagamento"]
-                    if p["quantidade"] is None:
+                    if p["quantidade"] is None and not aplicada:
                         summary["rows_skipped"] += 1
-                        summary["errors"].append(
-                            f"{p['ticker']} {pagamento:%d/%m/%Y} "
-                            f"R$ {p['total']:.2f}: o extrato não informa a "
-                            "quantidade de cotas, então não foi gravado. "
-                            "Importe a Movimentação da B3 do período."
-                        )
+                        summary["errors"].append(aviso_sem_quantidade(
+                            p["ticker"], pagamento, p["total"],
+                        ))
                         continue
                     try:
                         with conn.begin_nested():
@@ -267,22 +270,33 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                                 conn, ticker=p["ticker"], name=p["ticker"],
                                 asset_class=classify_ticker(p["ticker"]),
                             )
-                            novo = insert_dividend(
-                                conn,
-                                user_id=user_id,
-                                asset_id=asset_id,
-                                div_type=p["tipo"],
-                                amount_per_unit=p["por_unidade"],
-                                quantity=p["quantidade"],
-                                total_amount=p["total"],
-                                ex_date=None,
-                                payment_date=pagamento,
-                                external_id=make_external_id(
+                            linha = {
+                                "user_id": user_id,
+                                "asset_id": asset_id,
+                                "type": p["tipo"],
+                                "amount_per_unit": p["por_unidade"],
+                                "quantity": p["quantidade"],
+                                "total_amount": p["total"],
+                                "payment_date": pagamento,
+                                "external_id": make_external_id(
                                     "ricocc",
                                     [pagamento.isoformat(), p["ticker"],
                                      p["tipo"], f"{p['total']:.2f}"],
                                 ),
+                            }
+                            novo = insert_dividend(
+                                conn,
+                                user_id=user_id,
+                                asset_id=asset_id,
+                                div_type=linha["type"],
+                                amount_per_unit=linha["amount_per_unit"],
+                                quantity=linha["quantity"],
+                                total_amount=linha["total_amount"],
+                                ex_date=None,
+                                payment_date=pagamento,
+                                external_id=linha["external_id"],
                             )
+                            gravadas.append(linha)
                         if novo is None:
                             summary["duplicates_skipped"] += 1
                         else:
@@ -292,6 +306,8 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                             f"{p['ticker']} {pagamento:%d/%m/%Y}: "
                             f"{safe_error(exc)}"
                         )
+                if aplicada:
+                    ajustar_quantidades_dividendos(conn, gravadas)
     except Exception as exc:  # noqa: BLE001
         # A transação inteira voltou: nada do que foi contado ficou gravado.
         summary["incomes_imported"] = 0

@@ -14,7 +14,7 @@ import re
 from datetime import date, datetime, timezone
 from typing import Any, Iterable
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection, Engine
 
 logger = logging.getLogger(__name__)
@@ -329,6 +329,199 @@ def ensure_external_id_columns(engine: Engine) -> None:
         logger.warning("ensure_external_id_columns falhou: %s", exc)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Quantidade de provento: ausente fica ausente (migração 083)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Até 06/11/2026 `dividends.quantity` e `amount_per_unit` eram NOT NULL, e todo
+# importador que não sabia a quantidade gravava 1 cota com o pagamento inteiro
+# como valor por cota. Depois da migração 083:
+#   * quantidade desconhecida grava NULL nas duas colunas;
+#   * `quantity_placeholder` marca, uma vez só, as linhas antigas no padrão
+#     "1 cota = total". O padrão numérico sozinho não separa placeholder de
+#     posição real de 1 cota, então só a marca autoriza mexer numa linha que
+#     já tem quantidade;
+#   * a fonte que traz a quantidade completa a linha vazia ou marcada (chave
+#     canônica) e desliga a marca;
+#   * a Movimentação da B3 reimportada sem quantidade esvazia a SUA linha
+#     marcada (ver `_PREFIXOS_COM_QUANTIDADE_NO_ID`).
+#
+# O importador NÃO roda a migração: ela muda o schema e limpa dados da XP, e
+# AGENTS.md exige confirmação humana para migração. Antes da 083, o provento
+# sem quantidade sai nomeado em `errors` (`aviso_sem_quantidade`), a XP não
+# grava provento nenhum (`aviso_xp_sem_083`) e nenhum ajuste roda.
+
+def _dialeto(conn: Any) -> str | None:
+    return getattr(getattr(conn, "dialect", None), "name", None)
+
+
+def migracao_083_aplicada(conn: Connection | Engine) -> bool:
+    """True se a 083 rodou: as duas colunas aceitam NULL e a marca existe.
+
+    Só lê o `information_schema`. Fora do Postgres (SQLite dos testes) a
+    tabela de teste decide sozinha, e a resposta é True.
+    """
+    if _dialeto(conn) != "postgresql":
+        return True
+    sql = text("""
+        SELECT
+          COUNT(*) FILTER (WHERE column_name IN ('quantity', 'amount_per_unit')
+                             AND is_nullable = 'YES') AS anulaveis,
+          COUNT(*) FILTER (WHERE column_name = 'quantity_placeholder') AS marca
+          FROM information_schema.columns
+         WHERE table_name = 'dividends'
+    """)
+    try:
+        if isinstance(conn, Engine):
+            with conn.connect() as c:
+                linha = c.execute(sql).one()
+        else:
+            linha = conn.execute(sql).one()
+        return int(linha.anulaveis) == 2 and int(linha.marca) == 1
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("migracao_083_aplicada: %s", safe_error(exc))
+        return False
+
+
+def quantidade_e_valor_unitario(
+    quantidade: float | None, total: float,
+) -> tuple[float | None, float | None]:
+    """(quantity, amount_per_unit) de um provento: os dois None se a
+    quantidade não é conhecida. Nunca 1 cota inventada."""
+    if quantidade is None or quantidade <= 0:
+        return None, None
+    return quantidade, round(total / quantidade, 6)
+
+
+_INSTRUCAO_083 = (
+    "Rode, com backup, supabase_unificado/schema/"
+    "083_dividends_quantidade_opcional.sql no SQL Editor do Supabase e importe "
+    "de novo."
+)
+
+
+def aviso_sem_quantidade(ticker: str, pagamento: date, total: float) -> str:
+    """Mensagem de quando o banco ainda exige quantidade (083 sem rodar)."""
+    return (
+        f"{ticker} {pagamento:%d/%m/%Y} R$ {total:.2f}: a fonte não informa a "
+        f"quantidade e o banco ainda não aceita provento sem ela. {_INSTRUCAO_083}"
+    )
+
+
+def aviso_xp_sem_083(n: int) -> str:
+    """A 083 limpa os proventos da XP gravados pelo importador antigo; um
+    provento real de 1 cota gravado antes dela seria limpo junto."""
+    return (
+        f"{n} provento(s) da XP não gravado(s): eles só entram depois da "
+        f"migração 083, que limpa as quantidades inventadas da XP antiga. "
+        f"{_INSTRUCAO_083}"
+    )
+
+
+_SQL_CANDIDATAS = text("""
+    SELECT id, user_id, asset_id, payment_date, type, total_amount
+      FROM dividends
+     WHERE user_id IN :uids
+       AND asset_id IN :aids
+       AND (quantity IS NULL OR quantity_placeholder)
+""").bindparams(bindparam("uids", expanding=True),
+                bindparam("aids", expanding=True))
+
+_SQL_PREENCHE = text("""
+    UPDATE dividends
+       SET quantity = :quantity, amount_per_unit = :amount_per_unit,
+           quantity_placeholder = FALSE
+     WHERE id = :id
+""")
+
+_SQL_ESVAZIA_PLACEHOLDER = text("""
+    UPDATE dividends
+       SET quantity = NULL, amount_per_unit = NULL,
+           quantity_placeholder = FALSE
+     WHERE user_id = :user_id
+       AND external_id IN :ids
+       AND quantity_placeholder
+""").bindparams(bindparam("ids", expanding=True))
+
+
+def _chave_canonica(user_id, asset_id, payment_date, tipo, total) -> tuple:
+    """A mesma chave do NOT EXISTS da deduplicação, normalizada para casar
+    o que vem do banco (Decimal, date ou texto no SQLite) com o da planilha."""
+    return (str(user_id), str(asset_id), str(payment_date)[:10], str(tipo),
+            round(float(total), 2))
+
+
+# Só a Movimentação da B3 põe a quantidade crua no hash do external_id
+# (`b3_movimentacao._parse_row`): a linha dela que chega sem quantidade nunca
+# tem o mesmo id que uma com quantidade, então a linha MARCADA com esse id é o
+# placeholder da versão antiga. Na XP e na Rico o id não leva a quantidade, e
+# uma reimportação incompleta apagaria uma quantidade conhecida.
+_PREFIXOS_COM_QUANTIDADE_NO_ID = ("b3mov-",)
+
+
+def ajustar_quantidades_dividendos(
+    conn: Connection, rows: list[dict[str, Any]],
+) -> int:
+    """Corrige quantidades já gravadas à luz das linhas desta importação.
+
+    Só depois da 083 (`migracao_083_aplicada`): usa `quantity_placeholder`.
+
+    * Linha COM quantidade completa o provento equivalente (chave canônica)
+      que está sem quantidade ou marcado como placeholder, e desliga a marca.
+      Mesmo ativo, dia, tipo e total não é outra posição: o valor por cota de
+      um provento é um só, e a fonte que conta as cotas decide.
+    * Linha SEM quantidade da Movimentação da B3 esvazia a própria linha
+      (mesmo dono e external_id) que ainda está marcada. Linha completada
+      por outra fonte já perdeu a marca e fica como está.
+
+    Custo fixo: uma consulta das candidatas e um UPDATE por linha que de fato
+    muda -- não um por provento do arquivo, que no Supabase custaria uma ida e
+    volta de rede cada.
+
+    Devolve quantas linhas mudaram.
+    """
+    com = [r for r in rows if r.get("quantity") is not None]
+    # Por dono: o external_id não carrega o dono em toda configuração
+    # (`make_external_id` omite o do admin), e a linha de outro usuário com o
+    # mesmo id não é desta importação.
+    sem: dict[str, set[str]] = {}
+    for r in rows:
+        ext = r.get("external_id") or ""
+        if r.get("quantity") is None and ext.startswith(
+            _PREFIXOS_COM_QUANTIDADE_NO_ID
+        ):
+            sem.setdefault(str(r["user_id"]), set()).add(ext)
+    mudou = 0
+    for dono, ids in sorted(sem.items()):
+        res = conn.execute(_SQL_ESVAZIA_PLACEHOLDER,
+                           {"user_id": dono, "ids": sorted(ids)})
+        mudou += max(res.rowcount or 0, 0)
+    if not com:
+        return mudou
+
+    candidatas: dict[tuple, list] = {}
+    for c in conn.execute(_SQL_CANDIDATAS, {
+        "uids": sorted({str(r["user_id"]) for r in com}),
+        "aids": sorted({str(r["asset_id"]) for r in com}),
+    }):
+        chave = _chave_canonica(c.user_id, c.asset_id, c.payment_date,
+                                c.type, c.total_amount)
+        candidatas.setdefault(chave, []).append(c)
+
+    updates = [
+        {"id": c.id, "quantity": r["quantity"],
+         "amount_per_unit": r["amount_per_unit"]}
+        for r in com
+        for c in candidatas.pop(
+            _chave_canonica(r["user_id"], r["asset_id"], r["payment_date"],
+                            r["type"], r["total_amount"]), [])
+    ]
+    if updates:
+        conn.execute(_SQL_PREENCHE, updates)
+        mudou += len(updates)
+    return mudou
+
+
 def get_or_create_institution(conn: Connection, name: str, inst_type: str) -> str:
     """
     Retorna o UUID da financial_institution. Cria se não existir.
@@ -501,8 +694,8 @@ def insert_dividend(
     user_id: str,
     asset_id: str,
     div_type: str,
-    amount_per_unit: float,
-    quantity: float,
+    amount_per_unit: float | None,
+    quantity: float | None,
     total_amount: float,
     ex_date: date | None,
     payment_date: date,
@@ -513,7 +706,9 @@ def insert_dividend(
 
     A chave canônica evita duplicidade entre fontes diferentes (por exemplo,
     B3 Movimentação e XP Consolidado), cujos external_ids têm prefixos
-    distintos para o mesmo pagamento.
+    distintos para o mesmo pagamento. `quantity`/`amount_per_unit` None quer
+    dizer "a fonte não informa" e exige a migração 083. Quem chama roda
+    `ajustar_quantidades_dividendos` depois, com o lote inteiro.
     """
     if div_type not in ("dividend", "jcp", "reit_income", "amortization", "other"):
         raise ValueError(f"div_type invalido: {div_type}")
@@ -757,7 +952,8 @@ def batch_insert_dividends(
 ) -> int:
     """
     Insere lista de dividendos em uma única statement. Além do external_id,
-    deduplica pela chave canônica compartilhada entre B3 e XP.
+    deduplica pela chave canônica compartilhada entre B3 e XP. Quem chama
+    roda `ajustar_quantidades_dividendos` depois, se a 083 já rodou.
 
     Cada item de `rows` precisa ter as chaves:
       user_id, asset_id, type, amount_per_unit, quantity,

@@ -199,6 +199,7 @@ def importador(monkeypatch):
     monkeypatch.setattr(imp, "batch_filter_existing_external_ids", lambda c, t, ids: set())
     monkeypatch.setattr(imp, "batch_insert_investment_transactions", lambda c, rows: len(rows))
     monkeypatch.setattr(imp, "batch_insert_dividends", lambda c, rows: len(rows))
+    monkeypatch.setattr(imp, "ajustar_quantidades_dividendos", lambda c, rows: 0)
     monkeypatch.setattr(imp, "ensure_movement_events_table", lambda e: True)
     return imp
 

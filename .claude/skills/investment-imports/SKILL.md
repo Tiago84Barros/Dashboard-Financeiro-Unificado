@@ -57,6 +57,33 @@ Convenções de mapeamento:
   - termina em `3` ou `4` → `class = 'stock'`
   - prefixo TESOURO → `class = 'fixed_income'`
 
+## Quantidade de provento: ausente fica ausente
+
+A migração 083 (`supabase_unificado/schema/083_dividends_quantidade_opcional.sql`)
+roda **à mão**, com backup. Ela faz três coisas:
+
+- deixa `dividends.quantity` e `amount_per_unit` aceitarem NULL;
+- cria `quantity_placeholder`, que marca as linhas antigas no padrão
+  "1 cota = total";
+- limpa os proventos da XP gravados pelo importador antigo.
+
+Ao gravar provento:
+
+- Quantidade desconhecida grava None nas duas colunas, via
+  `common.quantidade_e_valor_unitario(qtd, total)`. **Nunca** grave 1 cota
+  com o total como valor por cota.
+- Consulte `migracao_083_aplicada(engine)`. Se ela devolver False:
+  - provento sem quantidade sai nomeado em `errors`, com
+    `aviso_sem_quantidade`;
+  - a XP não grava provento nenhum (`aviso_xp_sem_083`);
+  - nenhum ajuste roda.
+- Com a 083 aplicada, depois do INSERT chame
+  `ajustar_quantidades_dividendos(conn, linhas)` com **todas** as linhas do
+  lote, inclusive as já gravadas. Ele completa as linhas vazias ou marcadas
+  pela chave canônica e esvazia a linha marcada da própria B3.
+- O padrão numérico sozinho nunca autoriza alterar uma linha: só a marca
+  autoriza.
+
 ## Idempotência
 
 Cada parser **deve** gerar um `external_id` determinístico (hash MD5 ou SHA1
