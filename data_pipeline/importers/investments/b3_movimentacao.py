@@ -42,12 +42,14 @@ from sqlalchemy.engine import Engine
 from core.config import settings
 
 from .common import (
+    aviso_sem_quantidade,
     batch_filter_existing_external_ids,
     batch_get_or_create_assets,
     batch_insert_dividends,
     batch_insert_investment_transactions,
     classify_movement,
     classify_ticker,
+    ensure_dividend_quantity_nullable,
     ensure_external_id_columns,
     ensure_movement_events_table,
     finalize_summary,
@@ -57,6 +59,7 @@ from .common import (
     make_summary,
     parse_date_br,
     parse_ticker_from_produto,
+    quantidade_e_valor_unitario,
     safe_error,
     to_float_br,
 )
@@ -133,6 +136,12 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
     # DDL fora da transação principal: sem permissão de CREATE, perde-se o
     # fato cru, não os proventos.
     eventos_ok = bool(ev_candidates) and ensure_movement_events_table(engine)
+    # Provento sem "Quantidade" no arquivo grava NULL (migração 083). Se o
+    # banco ainda não aceita, ele sai nomeado em errors -- nunca vira 1 cota.
+    aceita_sem_qtd = (
+        any(c["quantity"] is None for c in div_candidates)
+        and ensure_dividend_quantity_nullable(engine)
+    )
 
     try:
         with engine.connect() as conn:
@@ -194,6 +203,13 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                         summary["errors"].append(
                             f"asset_id ausente para ticker={c['ticker']}"
                         )
+                        continue
+                    if c["quantity"] is None and not aceita_sem_qtd:
+                        summary["rows_skipped"] += 1
+                        summary["errors"].append(aviso_sem_quantidade(
+                            c["ticker"], c["transaction_date"],
+                            c["total_amount"],
+                        ))
                         continue
                     div_rows.append({
                         "user_id":         user_id,
@@ -313,12 +329,9 @@ def _parse_row(row) -> dict | None:
     if category == "income":
         if valor is None or valor <= 0:
             return None
-        if qtd and qtd > 0:
-            apu = round(valor / qtd, 6)
-            quantity_used = qtd
-        else:
-            apu = valor
-            quantity_used = 1.0
+        # Sem "Quantidade" no arquivo, as duas ficam None (migração 083). Antes
+        # gravava 1 cota com o pagamento inteiro como valor por cota.
+        quantity_used, apu = quantidade_e_valor_unitario(qtd, valor)
         return {
             "kind":             "income",
             "ticker":           ticker_clean,

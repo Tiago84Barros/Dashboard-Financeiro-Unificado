@@ -159,3 +159,8 @@ def test_importador_xp_processa_aba_proventos(monkeypatch):
         date(2026, 6, 30),
     ]
     assert [row["total_amount"] for row in inserted] == [35.20, 16.40]
+    # A quantidade vem da coluna Quantidade; o valor por cota é o total
+    # líquido dividido por ela (no JCP a coluna "Preço unitário" é bruta).
+    assert [row["quantity"] for row in inserted] == [32, 53]
+    assert inserted[0]["amount_per_unit"] == 1.1
+    assert inserted[1]["amount_per_unit"] == round(16.40 / 53, 6)

@@ -250,6 +250,9 @@ def _proventos_real() -> dict:
     def _f(v) -> float:
         return float(v) if v is not None else 0.0
 
+    def _opt(v) -> float | None:
+        return float(v) if v is not None else None
+
     eventos = []
     universo = None  # lido uma vez, e só se houver provento em dólar
     for r in rows:
@@ -269,8 +272,10 @@ def _proventos_real() -> dict:
             "cor":             _CLASS_COR.get(classe_raw, "#718096"),
             "tipo":            tipo_raw,
             "label_tipo":      _TIPO_LABEL.get(tipo_raw, tipo_raw),
-            "amount_per_unit": _f(r.amount_per_unit),
-            "quantity":        _f(r.quantity),
+            # None quando a fonte não informou a quantidade (migração 083):
+            # a tela mostra a célula vazia, não "0 cotas".
+            "amount_per_unit": _opt(r.amount_per_unit),
+            "quantity":        _opt(r.quantity),
             "total_amount":    _f(r.total_amount),
             "ex_date":         r.ex_date,
             "payment_date":    r.payment_date,

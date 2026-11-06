@@ -40,6 +40,8 @@ from sqlalchemy.engine import Connection, Engine
 from core.config import settings
 
 from .common import (
+    aviso_sem_quantidade,
+    ensure_dividend_quantity_nullable,
     ensure_external_id_columns,
     finalize_summary,
     get_or_create_account,
@@ -48,7 +50,9 @@ from .common import (
     insert_dividend,
     make_external_id,
     make_summary,
+    quantidade_e_valor_unitario,
     safe_error,
+    to_float_br,
 )
 from .positions import PORTFOLIO_NAME, PORTFOLIO_TYPE
 
@@ -344,7 +348,16 @@ def _parse_proventos(
     user_id: str,
     summary: dict,
     report_date: date,
+    aceita_sem_qtd: bool = True,
 ) -> None:
+    """Aba "Proventos Recebidos": Produto | Pagamento | Tipo de Evento |
+    Instituição | Quantidade | Preço unitário | Valor líquido.
+
+    A quantidade vem da coluna Quantidade (até 06/11/2026 era ignorada e todo
+    provento virava 1 cota = total). O valor por cota é o total LÍQUIDO
+    dividido pela quantidade, não a coluna "Preço unitário": no JCP ela é
+    bruta, e `total_amount = amount_per_unit × quantity` deixaria de fechar.
+    """
     for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True)):
         if not row or row[0] is None:
             continue
@@ -403,6 +416,15 @@ def _parse_proventos(
                 "xpcsl-inc",
                 [pay_date.isoformat(), ticker, inc_type, f"{amount:.2f}"],
             )
+            qtd, apu = quantidade_e_valor_unitario(
+                to_float_br(row[4]) if len(row) > 4 else None, amount,
+            )
+            if qtd is None and not aceita_sem_qtd:
+                summary["rows_skipped"] += 1
+                summary["errors"].append(
+                    aviso_sem_quantidade(ticker, pay_date, amount)
+                )
+                continue
 
             try:
                 with conn.begin_nested():
@@ -411,8 +433,8 @@ def _parse_proventos(
                         user_id=user_id,
                         asset_id=asset_id,
                         div_type=inc_type,
-                        amount_per_unit=amount,  # XP nao separa por cota
-                        quantity=1.0,
+                        amount_per_unit=apu,
+                        quantity=qtd,
                         total_amount=amount,
                         ex_date=None,
                         payment_date=pay_date,
@@ -697,6 +719,10 @@ def _parse_single(
         break
 
     sheet_map = {_norm(ws.title): ws for ws in wb.worksheets}
+    aceita_sem_qtd = (
+        "proventos recebidos" not in sheet_map
+        or ensure_dividend_quantity_nullable(engine)
+    )
 
     with engine.connect() as conn:
         with conn.begin():
@@ -806,6 +832,7 @@ def _parse_single(
                 else:
                     _parse_proventos(
                         ws_prov, conn, user_id, summary, report_date,
+                        aceita_sem_qtd,
                     )
 
     summary["_report_date"] = report_date.isoformat()

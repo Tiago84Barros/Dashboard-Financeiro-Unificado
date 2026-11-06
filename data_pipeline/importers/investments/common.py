@@ -12,9 +12,10 @@ import hashlib
 import logging
 import re
 from datetime import date, datetime, timezone
+from pathlib import Path
 from typing import Any, Iterable
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection, Engine
 
 logger = logging.getLogger(__name__)
@@ -329,6 +330,183 @@ def ensure_external_id_columns(engine: Engine) -> None:
         logger.warning("ensure_external_id_columns falhou: %s", exc)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Quantidade de provento: ausente fica ausente (migração 083)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Até 06/11/2026 `dividends.quantity` e `amount_per_unit` eram NOT NULL, e todo
+# importador que não sabia a quantidade gravava 1 cota com o pagamento inteiro
+# como valor por cota. A tela de Proventos mostrava isso como fato. Agora:
+#   * quantidade desconhecida grava NULL nas duas colunas;
+#   * a fonte que traz a quantidade preenche a linha vazia -- ou a do padrão
+#     inventado "1 cota = total" -- pela mesma chave canônica da deduplicação;
+#   * a fonte que reimporta a SUA linha inventada sem quantidade a esvazia.
+
+_SQL_083 = (
+    Path(__file__).resolve().parents[3]
+    / "supabase_unificado" / "schema" / "083_dividends_quantidade_opcional.sql"
+)
+
+
+def _sql_sem_comentarios(caminho: Path) -> str:
+    """O arquivo sem as linhas de comentário: o texto delas tem ':' que o
+    `text()` do SQLAlchemy leria como parâmetro."""
+    return "\n".join(
+        linha for linha in caminho.read_text(encoding="utf-8").splitlines()
+        if not linha.lstrip().startswith("--")
+    )
+
+
+def _dialeto(conn: Any) -> str | None:
+    return getattr(getattr(conn, "dialect", None), "name", None)
+
+
+def dividends_aceita_quantidade_vazia(conn: Connection | Engine) -> bool:
+    """True se `dividends.quantity` e `amount_per_unit` aceitam NULL.
+
+    Fora do Postgres (SQLite dos testes) não há information_schema; a tabela
+    de teste decide sozinha, e a resposta é True.
+    """
+    if _dialeto(conn) != "postgresql":
+        return True
+    sql = text("""
+        SELECT COUNT(*) FROM information_schema.columns
+         WHERE table_name = 'dividends'
+           AND column_name IN ('quantity', 'amount_per_unit')
+           AND is_nullable = 'NO'
+    """)
+    try:
+        if isinstance(conn, Engine):
+            with conn.connect() as c:
+                return int(c.execute(sql).scalar() or 0) == 0
+        return int(conn.execute(sql).scalar() or 0) == 0
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("dividends_aceita_quantidade_vazia: %s", safe_error(exc))
+        return False
+
+
+def ensure_dividend_quantity_nullable(engine: Engine) -> bool:
+    """Roda a 083 se ainda não rodou. Devolve se o banco aceita NULL agora.
+
+    Transação própria: sem permissão de DDL o ALTER falha sozinho e a
+    importação segue -- só as linhas sem quantidade ficam de fora, nomeadas.
+    """
+    if _dialeto(engine) != "postgresql":
+        return True
+    if dividends_aceita_quantidade_vazia(engine):
+        return True
+    try:
+        with engine.begin() as conn:
+            conn.execute(text(_sql_sem_comentarios(_SQL_083)))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("migração 083 não aplicada: %s", safe_error(exc))
+    return dividends_aceita_quantidade_vazia(engine)
+
+
+def quantidade_e_valor_unitario(
+    quantidade: float | None, total: float,
+) -> tuple[float | None, float | None]:
+    """(quantity, amount_per_unit) de um provento: os dois None se a
+    quantidade não é conhecida. Nunca 1 cota inventada."""
+    if quantidade is None or quantidade <= 0:
+        return None, None
+    return quantidade, round(total / quantidade, 6)
+
+
+def aviso_sem_quantidade(ticker: str, pagamento: date, total: float) -> str:
+    """Mensagem de quando o banco ainda exige quantidade (083 sem rodar)."""
+    return (
+        f"{ticker} {pagamento:%d/%m/%Y} R$ {total:.2f}: a fonte não informa a "
+        "quantidade e o banco ainda não aceita provento sem ela. Rode "
+        "supabase_unificado/schema/083_dividends_quantidade_opcional.sql no "
+        "Supabase e importe de novo."
+    )
+
+
+_SQL_CANDIDATAS = text("""
+    SELECT id, user_id, asset_id, payment_date, type, total_amount, quantity
+      FROM dividends
+     WHERE user_id IN :uids
+       AND asset_id IN :aids
+       AND (quantity IS NULL
+            OR (quantity = 1 AND amount_per_unit = total_amount))
+""").bindparams(bindparam("uids", expanding=True),
+                bindparam("aids", expanding=True))
+
+_SQL_PREENCHE = text("""
+    UPDATE dividends SET quantity = :quantity, amount_per_unit = :amount_per_unit
+     WHERE id = :id
+""")
+
+_SQL_ESVAZIA_INVENTADA = text("""
+    UPDATE dividends
+       SET quantity = NULL, amount_per_unit = NULL
+     WHERE external_id IN :ids
+       AND quantity = 1
+       AND amount_per_unit = total_amount
+""").bindparams(bindparam("ids", expanding=True))
+
+
+def _chave_canonica(user_id, asset_id, payment_date, tipo, total) -> tuple:
+    """A mesma chave do NOT EXISTS da deduplicação, normalizada para casar
+    o que vem do banco (Decimal, date ou texto no SQLite) com o da planilha."""
+    return (str(user_id), str(asset_id), str(payment_date)[:10], str(tipo),
+            round(float(total), 2))
+
+
+def ajustar_quantidades_dividendos(
+    conn: Connection, rows: list[dict[str, Any]],
+) -> int:
+    """Corrige quantidades já gravadas à luz das linhas desta importação.
+
+    * Linha COM quantidade preenche o provento equivalente (chave canônica)
+      que está sem quantidade ou com o padrão inventado "1 cota = total".
+      Mesmo ativo, dia, tipo e total com outra quantidade não é outra posição:
+      o valor por cota de um provento é um só, e a fonte que conta as cotas
+      vence a que não contava.
+    * Linha SEM quantidade esvazia a própria linha (mesmo external_id) que uma
+      versão anterior do importador gravou como "1 cota = total".
+
+    Custo fixo: uma consulta das candidatas e um UPDATE por linha que de fato
+    muda -- não um UPDATE por provento do arquivo, que no Supabase custaria
+    uma ida e volta de rede cada.
+
+    Devolve quantas linhas mudaram.
+    """
+    com = [r for r in rows if r.get("quantity") is not None]
+    sem = sorted({r["external_id"] for r in rows
+                  if r.get("quantity") is None and r.get("external_id")})
+    mudou = 0
+    if sem:
+        res = conn.execute(_SQL_ESVAZIA_INVENTADA, {"ids": sem})
+        mudou += max(res.rowcount or 0, 0)
+    if not com:
+        return mudou
+
+    candidatas: dict[tuple, list] = {}
+    for c in conn.execute(_SQL_CANDIDATAS, {
+        "uids": sorted({str(r["user_id"]) for r in com}),
+        "aids": sorted({str(r["asset_id"]) for r in com}),
+    }):
+        chave = _chave_canonica(c.user_id, c.asset_id, c.payment_date,
+                                c.type, c.total_amount)
+        candidatas.setdefault(chave, []).append(c)
+
+    updates = []
+    for r in com:
+        chave = _chave_canonica(r["user_id"], r["asset_id"], r["payment_date"],
+                                r["type"], r["total_amount"])
+        for c in candidatas.pop(chave, []):
+            if c.quantity is not None and float(c.quantity) == float(r["quantity"]):
+                continue  # 1 cota de verdade, informada pela fonte
+            updates.append({"id": c.id, "quantity": r["quantity"],
+                            "amount_per_unit": r["amount_per_unit"]})
+    if updates:
+        conn.execute(_SQL_PREENCHE, updates)
+        mudou += len(updates)
+    return mudou
+
+
 def get_or_create_institution(conn: Connection, name: str, inst_type: str) -> str:
     """
     Retorna o UUID da financial_institution. Cria se não existir.
@@ -501,8 +679,8 @@ def insert_dividend(
     user_id: str,
     asset_id: str,
     div_type: str,
-    amount_per_unit: float,
-    quantity: float,
+    amount_per_unit: float | None,
+    quantity: float | None,
     total_amount: float,
     ex_date: date | None,
     payment_date: date,
@@ -513,7 +691,9 @@ def insert_dividend(
 
     A chave canônica evita duplicidade entre fontes diferentes (por exemplo,
     B3 Movimentação e XP Consolidado), cujos external_ids têm prefixos
-    distintos para o mesmo pagamento.
+    distintos para o mesmo pagamento. `quantity`/`amount_per_unit` None quer
+    dizer "a fonte não informa" e exige a migração 083. Depois do INSERT,
+    `ajustar_quantidades_dividendos` completa ou esvazia a linha equivalente.
     """
     if div_type not in ("dividend", "jcp", "reit_income", "amortization", "other"):
         raise ValueError(f"div_type invalido: {div_type}")
@@ -551,6 +731,12 @@ def insert_dividend(
             "ext":   external_id,
         },
     ).fetchone()
+    ajustar_quantidades_dividendos(conn, [{
+        "user_id": user_id, "asset_id": asset_id, "type": div_type,
+        "quantity": quantity, "amount_per_unit": amount_per_unit,
+        "total_amount": total_amount, "payment_date": payment_date,
+        "external_id": external_id,
+    }])
     return str(row[0]) if row else None
 
 
@@ -757,7 +943,8 @@ def batch_insert_dividends(
 ) -> int:
     """
     Insere lista de dividendos em uma única statement. Além do external_id,
-    deduplica pela chave canônica compartilhada entre B3 e XP.
+    deduplica pela chave canônica compartilhada entre B3 e XP, e depois
+    completa ou esvazia quantidades com `ajustar_quantidades_dividendos`.
 
     Cada item de `rows` precisa ter as chaves:
       user_id, asset_id, type, amount_per_unit, quantity,
@@ -789,7 +976,9 @@ def batch_insert_dividends(
         ON CONFLICT (external_id) WHERE external_id IS NOT NULL DO NOTHING
     """)
     result = conn.execute(stmt, rows)
-    return result.rowcount if result.rowcount is not None else len(rows)
+    inseridos = result.rowcount if result.rowcount is not None else len(rows)
+    ajustar_quantidades_dividendos(conn, rows)
+    return inseridos
 
 
 # ─────────────────────────────────────────────────────────────────────────────

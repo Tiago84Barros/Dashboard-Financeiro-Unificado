@@ -57,6 +57,18 @@ Convenções de mapeamento:
   - termina em `3` ou `4` → `class = 'stock'`
   - prefixo TESOURO → `class = 'fixed_income'`
 
+## Quantidade de provento: ausente fica ausente
+
+Desde a migração 083 (`supabase_unificado/schema/083_dividends_quantidade_opcional.sql`),
+`dividends.quantity` e `amount_per_unit` aceitam NULL. Quando o arquivo não
+informa a quantidade, grave as duas como None — use
+`common.quantidade_e_valor_unitario(qtd, total)`. **Nunca** grave 1 cota com o
+total como valor por cota. `insert_dividend` e `batch_insert_dividends`
+chamam `ajustar_quantidades_dividendos`, que completa a linha vazia quando outra
+fonte traz a quantidade. Chame `ensure_dividend_quantity_nullable(engine)` antes
+de gravar provento sem quantidade. Se ela devolver False, nomeie a linha com
+`aviso_sem_quantidade` em `errors`.
+
 ## Idempotência
 
 Cada parser **deve** gerar um `external_id` determinístico (hash MD5 ou SHA1
