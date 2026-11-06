@@ -37,7 +37,8 @@ ALTER TABLE dividends
 DO $$ BEGIN
     IF EXISTS (
         SELECT 1 FROM information_schema.columns
-        WHERE table_name = 'dividends' AND column_name = 'quantity'
+        WHERE table_schema = 'public' AND table_name = 'dividends'
+          AND column_name = 'quantity'
           AND is_nullable = 'NO'
     ) THEN
         ALTER TABLE dividends ALTER COLUMN quantity        DROP NOT NULL;

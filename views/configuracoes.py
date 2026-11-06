@@ -1623,6 +1623,7 @@ def _consolidar_resultados_lote(
     )
     total: dict = {k: 0 for k in contadores}
     total["errors"] = []
+    total["avisos"] = []
     status_vistos: set[str] = set()
 
     for _chave, nome, summary in resultados:
@@ -1631,6 +1632,8 @@ def _consolidar_resultados_lote(
         status_vistos.add(summary.get("status", "failed"))
         for erro in (summary.get("errors") or []):
             total["errors"].append(f"{nome}: {erro}")
+        for aviso in (summary.get("avisos") or []):
+            total["avisos"].append(f"{nome}: {aviso}")
 
     if status_vistos <= {"success"}:
         total["status"] = "success"
@@ -2098,6 +2101,16 @@ def _render_import_result(summary: dict) -> None:
                 f"{rec.get('error', 'erro desconhecido')}",
                 codigo="configuracoes.recalculo_falha",
             )
+
+    # Avisos dizem ao usuário o que fazer (rodar uma migração, importar outro
+    # extrato). Diferente de `errors`, que é detalhe técnico e não vai para a
+    # tela, eles precisam ser lidos -- uma "Falha" sem motivo não ajuda.
+    avisos = summary.get("avisos") or []
+    if avisos:
+        with st.container(border=True):
+            st.markdown(f"**⚠️ {len(avisos)} aviso(s) para você**")
+            for aviso in avisos[:50]:
+                st.caption(f"• {aviso}")
 
     errors = summary.get("errors") or []
     for err in errors[:50]:

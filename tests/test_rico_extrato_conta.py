@@ -287,18 +287,48 @@ def test_provento_sem_quantidade_grava_quantidade_vazia(monkeypatch):
 
 
 def test_banco_sem_a_083_recusa_o_provento_sem_quantidade_nomeado(monkeypatch):
-    """Sem permissão para rodar a 083, a linha sem quantidade não é gravada
-    (nem inventada): sai em errors, com valor, data e a instrução."""
+    """Sem a 083, a linha sem quantidade não é gravada (nem inventada): sai
+    em `avisos`, que a tela mostra, com valor, data e a instrução. Não é
+    erro -- o status não muda."""
     engine = _engine()
     _sem_banco_real(monkeypatch)
     monkeypatch.setattr(rico, "migracao_083_aplicada", lambda e: False)
 
     resumo = rico.parse(_extrato(), engine)
 
-    assert resumo["status"] == "partial_success"
+    assert resumo["status"] == "success"
+    assert resumo["errors"] == []
     assert resumo["incomes_imported"] == 2
-    assert any("PIER11" in e and "346.32" in e and "083" in e
-               for e in resumo["errors"])
+    assert any("PIER11" in a and "346.32" in a and "083" in a
+               for a in resumo["avisos"])
+
+
+def test_tudo_duplicado_e_sem_a_083_nao_e_falha(monkeypatch):
+    """O caso da tela de 06/11: os rendimentos já tinham vindo da B3 e o
+    PIER11 esperava a 083. Nada falhou -- antes a tela dizia "Falha na
+    importação" e escondia o motivo no registro técnico."""
+    engine = _engine()
+    _sem_banco_real(monkeypatch)
+    monkeypatch.setattr(rico, "migracao_083_aplicada", lambda e: False)
+    rico.parse(_extrato(), engine)
+
+    resumo = rico.parse(_extrato(), engine)
+
+    assert resumo["status"] == "success"
+    assert resumo["incomes_imported"] == 0
+    assert resumo["duplicates_skipped"] == 2
+    assert len(resumo["avisos"]) == 1
+
+
+def test_lote_leva_os_avisos_para_a_tela():
+    from views.configuracoes import _consolidar_resultados_lote
+
+    total = _consolidar_resultados_lote(
+        [("rico_cc", "rico.xlsx", {"status": "success", "avisos": ["rode a 083"]})],
+        "Dados Históricos B3",
+    )
+    assert total["status"] == "success"
+    assert total["avisos"] == ["rico.xlsx: rode a 083"]
 
 
 def test_aba_ilegivel_nao_derruba_o_reconhecimento(monkeypatch):

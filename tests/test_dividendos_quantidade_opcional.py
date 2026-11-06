@@ -396,4 +396,4 @@ def test_xp_nao_grava_provento_antes_da_083(monkeypatch):
 
     assert gravou == []
     assert resumo["rows_skipped"] == 1
-    assert any("083" in e for e in resumo["errors"])
+    assert any("083" in a for a in resumo["avisos"])

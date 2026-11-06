@@ -738,7 +738,7 @@ def _parse_single(
         n = _linhas_de_provento(ws_prov)
         if n:
             summary["rows_skipped"] += n
-            summary["errors"].append(aviso_xp_sem_083(n))
+            summary["avisos"].append(aviso_xp_sem_083(n))
         ws_prov = None
 
     with engine.connect() as conn:
