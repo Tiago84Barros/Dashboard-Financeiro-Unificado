@@ -360,3 +360,38 @@ def test_cartoes_escapam_e_so_linkam_http():
     assert tela.corpo_noticias(inf.Noticias()) == inf.NAO_DISPONIVEL
     for html in (hn, hl, hr, he):
         assert not re.search(r"#[0-9a-fA-F]{3,6}\b", html)
+
+
+# ── Classes irmãs nos EUA ─────────────────────────────────────────────────────
+@pytest.mark.parametrize("ticker, resolvidos", [
+    ("GOOGL", ("GOOG",)),      # "Alphabet" resolve para uma classe só
+    ("GOOG", ("GOOGL",)),
+    ("FOXA", ("FOX",)),
+    ("BRK-B", ("BRK.B",)),     # provedor com ponto, projeto com hífen
+])
+def test_classe_irma_americana_e_a_mesma_empresa(ticker, resolvidos):
+    # 206 candidatas do GOOGL descartadas em 60 dias (vitrine de 05/11/2026):
+    # a comparação nos EUA era literal, e só a B3 tinha regra de classe irmã.
+    cl = inf.avaliar_manchete(ticker, "Alphabet faces antitrust lawsuit", resolvidos)
+    assert isinstance(cl, inf.Classificacao)
+
+
+def test_empresas_americanas_diferentes_continuam_diferentes():
+    assert inf.avaliar_manchete(
+        "GOOGL", "Meta faces antitrust lawsuit", ("META",)) == inf.D_NAO_ASSUNTO
+    assert not inf._mesma_empresa("FOX", "NWS")
+
+
+def test_leitura_acha_a_classe_irma_americana_e_a_outra_grafia():
+    art = {"noticias": {"por_ticker": {
+        "GOOG": {"itens": [], "descartadas": {inf.D_NAO_ASSUNTO: 3}},
+        "GOOGL": {"itens": [{"headline": "x"}], "descartadas": {}},
+        "BRK-B": {"itens": [{"headline": "y"}], "descartadas": {}},
+    }}}
+    pt = art["noticias"]["por_ticker"]
+    # Exata primeiro, mesmo vazia: é a entrada do próprio ticker.
+    assert fi._do_ticker(pt, "GOOG") is pt["GOOG"]
+    assert fi._do_ticker(pt, "BRK.B") is pt["BRK-B"]
+    del pt["GOOG"]
+    assert fi._do_ticker(pt, "GOOG") is pt["GOOGL"]
+    assert fi._do_ticker(pt, "META") is None
