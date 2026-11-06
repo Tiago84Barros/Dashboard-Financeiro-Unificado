@@ -984,6 +984,130 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
 )
 
 
+FLOW_CONTROLE_CNPJ = FlowSpec(
+    key="controle_cnpj",
+    title="Controle CNPJ",
+    subtitle=(
+        "O financeiro da empresa, separado do pessoal: o extrato da conta PJ entra, "
+        "cada movimento ganha uma categoria do plano de contas da empresa e daí saem "
+        "o caixa, a DRE, as contas a pagar e a estimativa do DAS do Simples."
+    ),
+    tela="Controle CNPJ",
+    abas=("Visão geral", "Lançamentos", "A pagar e receber", "DRE", "Impostos"),
+    rows=(
+        ("Entrada", ("cnpj_extrato", "cnpj_manual")),
+        ("Classificação", ("cnpj_plano", "cnpj_conciliacao")),
+        ("Visualização", ("cnpj_visao", "cnpj_previstos", "cnpj_dre", "cnpj_impostos")),
+    ),
+    default="cnpj_extrato",
+    nodes={
+        "cnpj_extrato": _node(
+            "cnpj_extrato", "Extrato da empresa", "Entrada",
+            "Configurações > Atualização de dados > CNPJ: sobe o OFX da conta da empresa "
+            "(o Cora exporta), confere a prévia e grava. O FITID de cada transação impede "
+            "importar o mesmo movimento duas vezes.",
+            (
+                "Arquivo OFX (outros formatos entram em core/pj/extratos.py)",
+                "Prévia com categoria por movimento",
+                "Saldo final do arquivo guardado para conferência",
+                "Grava em pj_lancamentos, nunca em transactions",
+            ),
+            "Tabela própria da empresa: o financeiro pessoal tem dezenas de consultas sobre "
+            "transactions, e a que esquecesse um filtro somaria o faturamento da empresa à "
+            "renda da pessoa.",
+        ),
+        "cnpj_manual": _node(
+            "cnpj_manual", "Lançamento manual", "Entrada",
+            "Aba Lançamentos ou A pagar e receber: registra o que não passou pelo extrato, "
+            "pago ou previsto, com série mensal para contas fixas.",
+            (
+                "Entrada ou saída, categoria, data e valor",
+                "Situação: Pago ou Previsto",
+                "Repetir todo mês (só previsto)",
+            ),
+            "Conta a pagar registrada antes do vencimento é o que permite projetar o caixa.",
+        ),
+        "cnpj_plano": _node(
+            "cnpj_plano", "Plano de contas da empresa", "Classificação",
+            "Categorias próprias da empresa, cada uma presa a uma linha da DRE: receita, "
+            "deduções (DAS), custos, despesas, pessoal (pró-labore), financeiro e o que fica "
+            "fora do resultado (aporte, distribuição de lucros, transferência). Regras sugerem "
+            "a categoria, e a escolha do usuário para uma contraparte vira regra.",
+            (
+                "Regras padrão: DAS, pró-labore, tarifas, contador, rendimentos; crédito recebido sugere receita",
+                "Regra aprendida por contraparte vence a padrão",
+                "Sem categoria: entra no caixa, fica fora da DRE",
+            ),
+            "Categoria da empresa não é a pessoal: pró-labore sai da empresa e entra na pessoa, "
+            "e o DAS é dedução da receita, não despesa.",
+        ),
+        "cnpj_conciliacao": _node(
+            "cnpj_conciliacao", "Conciliação", "Classificação",
+            "Na importação, o movimento de mesmo valor até 3 dias de um lançamento manual "
+            "(pago ou previsto) concilia com ele em vez de criar outro; o previsto recebe a "
+            "baixa. O saldo do arquivo é comparado com o saldo calculado na mesma data.",
+            (
+                "Mesma regra de par do Controle Financeiro",
+                "Primeiro extrato com saldo define o saldo de abertura",
+                "Diferença de saldo vira aviso",
+            ),
+            "Sem o vínculo, lançar à mão e importar o extrato conta a mesma saída duas vezes.",
+        ),
+        "cnpj_visao": _node(
+            "cnpj_visao", "Visão geral e Lançamentos", "Visualização",
+            "Visão geral: receita bruta, resultado e margem do mês, saldo em conta, "
+            "conferência com o último extrato e 12 meses de entradas, saídas e resultado. "
+            "Lançamentos: a lista do mês, a classificação dos que estão sem categoria e a "
+            "exclusão de lançamento manual.",
+            (
+                "Saldo = saldo de abertura + lançamentos pagos",
+                "Movimento do extrato não se exclui (o banco registrou)",
+            ),
+            "O mês precisa fechar com o banco antes de qualquer leitura de resultado.",
+        ),
+        "cnpj_previstos": _node(
+            "cnpj_previstos", "A pagar e receber", "Visualização",
+            "Contas em aberto por vencimento, vencidas sem baixa, totais de 30 dias e o saldo "
+            "projetado em 90 dias, com baixa manual e exclusão.",
+            (
+                "Previsto não entra no caixa nem na DRE",
+                "Vencido entra na projeção como pago hoje",
+            ),
+            "É a pergunta 'o caixa aguenta o mês que vem?', que o extrato sozinho não responde.",
+        ),
+        "cnpj_dre": _node(
+            "cnpj_dre", "DRE gerencial", "Visualização",
+            "Demonstração de resultado em regime de caixa, por mês, ano ou últimos 12 meses: "
+            "receita bruta, deduções, receita líquida, custos, lucro bruto, despesas, pessoal, "
+            "resultado operacional, financeiro e resultado do período.",
+            (
+                "Fora do resultado mostrado à parte",
+                "Lançamento sem categoria avisado, não somado",
+            ),
+            "Caixa e não competência: o extrato só sabe quando o dinheiro passou.",
+        ),
+        "cnpj_impostos": _node(
+            "cnpj_impostos", "Impostos (Simples Nacional)", "Visualização",
+            "Dados da empresa (CNPJ, razão social, anexo) e o DAS estimado do mês: RBT12 dos "
+            "12 meses anteriores, faixa, alíquota efetiva e Fator R; compara com o DAS pago "
+            "no mês seguinte.",
+            (
+                "Tabelas da LC 155/2016, Anexos I a V",
+                "Fator R de 28% leva o Anexo V ao III",
+                "Início de atividade: média dos meses × 12",
+            ),
+            "É estimativa: o valor oficial é o do PGDAS-D, que trata atividade mista, ISS "
+            "retido e segregação de receitas.",
+        ),
+    },
+    notes=(
+        "Nada da empresa entra no Controle Financeiro pessoal, e nada do pessoal entra aqui.",
+        "Emissão de nota fiscal, boleto e envio ao contador não existem: dependem de "
+        "certificado digital e convênio que o app não tem.",
+    ),
+)
+
+
 FLOW_SELECAO_FIIS = FlowSpec(
     key="selecao_fiis",
     title="Seleção de FIIs — da vitrine publicada à carteira-modelo",
@@ -1810,7 +1934,7 @@ FLOW_CONFIGURACOES = FlowSpec(
         ("Preferências", ("cfg_tema", "cfg_secoes", "cfg_categorias", "cfg_orcamento",
                           "cfg_trocar_usuario", "cfg_memoria_llm")),
         ("Diagnóstico", ("cfg_confianca", "cfg_restricoes", "cfg_mercado", "cfg_banco")),
-        ("Entrada de arquivo", ("cfg_fatura", "cfg_extrato", "cfg_carteira")),
+        ("Entrada de arquivo", ("cfg_fatura", "cfg_extrato", "cfg_carteira", "cfg_cnpj")),
         ("Segurança", ("cfg_conta", "cfg_sessao", "cfg_usuarios")),
         ("Referência", ("cfg_mapa", "cfg_documentacao")),
     ),
@@ -2022,6 +2146,17 @@ FLOW_CONFIGURACOES = FlowSpec(
             "fecha e a leitura por categoria fica errada. A conferência é parte da importação. "
             "O saldo é a prova do total: diferença diferente de zero quer dizer lançamento "
             "faltando ou sobrando, e a lista de últimas conferências recalcula isso a cada visita.",
+        ),
+        "cfg_cnpj": _node(
+            "cfg_cnpj", "Extrato da empresa (CNPJ)", "Entrada de arquivo",
+            "Sobe o OFX da conta da empresa, escolhe a categoria de cada movimento, marca o "
+            "que já estava lançado à mão e confere o saldo antes de gravar no Controle CNPJ.",
+            (
+                "Aba 🔁 Atualização de dados › 🏢 CNPJ",
+                "Arquivo OFX, com prévia e conciliação",
+                "Alimenta a seção Controle CNPJ, nunca o financeiro pessoal",
+            ),
+            "Sub-aba própria porque o destino é outro: as tabelas da empresa.",
         ),
         "cfg_carteira": _node(
             "cfg_carteira", "Arquivos da carteira", "Entrada de arquivo",
@@ -2541,6 +2676,7 @@ FLOWS = (
     FLOW_INVESTIMENTOS,
     FLOW_INTELIGENCIA_IR,
     FLOW_CONTROLE_FINANCEIRO,
+    FLOW_CONTROLE_CNPJ,
     FLOW_SELECAO_FIIS,
     FLOW_EMPRESAS_EUA,
     FLOW_PORTFOLIO_GLOBAL,
@@ -3165,9 +3301,15 @@ def render_corpo() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
 
     # Na ordem do menu lateral; Qualidade dos dados e Indicadores são transversais.
+    # Rótulo e fluxo em listas paralelas, conferidas pelo tamanho: a versão
+    # numerada à mão (``with tabs[7]``) desalinhava rótulo e conteúdo a cada aba
+    # que entrava no meio. ``tab_labels`` continua sendo uma lista de textos
+    # porque o Mapa do App é conferido contra ela
+    # (``tests/test_configuracoes_sincronizadas.py``).
     tab_labels = [
         "Dashboard Geral",
         "Controle financeiro",
+        "Controle CNPJ",
         "Carteira atual",
         "Inteligência e IR",
         "Empresas e Carteira 20 (B3)",
@@ -3181,33 +3323,28 @@ def render_corpo() -> None:
         "Configurações",
         "Indicadores",
     ]
+    fluxos: list[FlowSpec | None] = [
+        FLOW_DASHBOARD_GERAL,
+        FLOW_CONTROLE_FINANCEIRO,
+        FLOW_CONTROLE_CNPJ,
+        FLOW_INVESTIMENTOS,
+        FLOW_INTELIGENCIA_IR,
+        FLOW_EMPRESAS_B3_TELAS,
+        FLOW_CRIACAO_PORTFOLIO,
+        FLOW_SIMULADOR,
+        FLOW_ANALISE_PORTFOLIO,
+        FLOW_EMPRESAS_EUA,
+        FLOW_SELECAO_FIIS,
+        FLOW_PORTFOLIO_GLOBAL,
+        FLOW_QUALIDADE_DADOS,
+        FLOW_CONFIGURACOES,
+        None,  # Indicadores
+    ]
+    assert len(fluxos) == len(tab_labels), "documentação: aba sem fluxo ou fluxo sem aba"
     tabs = st.tabs(tab_labels)
-
-    with tabs[0]:
-        _render_flow(FLOW_DASHBOARD_GERAL)
-    with tabs[1]:
-        _render_flow(FLOW_CONTROLE_FINANCEIRO)
-    with tabs[2]:
-        _render_flow(FLOW_INVESTIMENTOS)
-    with tabs[3]:
-        _render_flow(FLOW_INTELIGENCIA_IR)
-    with tabs[4]:
-        _render_flow(FLOW_EMPRESAS_B3_TELAS)
-    with tabs[5]:
-        _render_flow(FLOW_CRIACAO_PORTFOLIO)
-    with tabs[6]:
-        _render_flow(FLOW_SIMULADOR)
-    with tabs[7]:
-        _render_flow(FLOW_ANALISE_PORTFOLIO)
-    with tabs[8]:
-        _render_flow(FLOW_EMPRESAS_EUA)
-    with tabs[9]:
-        _render_flow(FLOW_SELECAO_FIIS)
-    with tabs[10]:
-        _render_flow(FLOW_PORTFOLIO_GLOBAL)
-    with tabs[11]:
-        _render_flow(FLOW_QUALIDADE_DADOS)
-    with tabs[12]:
-        _render_flow(FLOW_CONFIGURACOES)
-    with tabs[13]:
-        _render_indicadores()
+    for tab, flow in zip(tabs, fluxos):
+        with tab:
+            if flow is None:
+                _render_indicadores()
+            else:
+                _render_flow(flow)

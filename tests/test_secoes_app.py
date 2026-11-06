@@ -56,7 +56,7 @@ def test_catalogo_e_o_menu_do_app_na_mesma_ordem():
 def test_so_dashboard_geral_e_configuracoes_sao_fixas():
     assert secoes_app.FIXAS == ("dashboard_geral", "configuracoes")
     assert secoes_app.OPCIONAIS == (
-        "controle_financeiro", "investimentos", "empresas_b3",
+        "controle_financeiro", "controle_cnpj", "investimentos", "empresas_b3",
         "empresas_americanas", "fiis", "portfolio_global",
     )
 
@@ -83,8 +83,9 @@ def test_filtrar_menu_tira_as_ocultas_e_nunca_as_fixas():
     filtrado = secoes_app.filtrar_menu(
         menu, rotas, {"empresas_b3", "fiis", "configuracoes", "dashboard_geral"})
     assert filtrado == [
-        "📊 Dashboard Geral", "💰 Controle Financeiro", "📈 Investimentos",
-        "🌎 Empresas Americanas", "🌐 Portfólio Global", "⚙️ Configurações",
+        "📊 Dashboard Geral", "💰 Controle Financeiro", "💼 Controle CNPJ",
+        "📈 Investimentos", "🌎 Empresas Americanas", "🌐 Portfólio Global",
+        "⚙️ Configurações",
     ]
     # Esconder tudo o que dá deixa exatamente as duas portas.
     tudo = secoes_app.filtrar_menu(menu, rotas, secoes_app.TODAS)
@@ -272,8 +273,9 @@ def test_menu_lateral_obedece_a_escolha_da_conta(monkeypatch):
                         lambda _n: SimpleNamespace(render=lambda: None))
     runpy.run_path(str(RAIZ / "app.py"), run_name="menu_personalizado_test")
     assert fake_st.opcoes == [
-        "📊 Dashboard Geral", "💰 Controle Financeiro", "🏢 Empresas B3",
-        "🌎 Empresas Americanas", "🌐 Portfólio Global", "⚙️ Configurações",
+        "📊 Dashboard Geral", "💰 Controle Financeiro", "💼 Controle CNPJ",
+        "🏢 Empresas B3", "🌎 Empresas Americanas", "🌐 Portfólio Global",
+        "⚙️ Configurações",
     ]
 
 

@@ -857,6 +857,76 @@ def _componente_previstos_em_dia(engine, notas: list[str]) -> list[Componente]:
         f"{total - atrasados} de {total} previstos sem atraso de baixa")]
 
 
+# ── Controle CNPJ ────────────────────────────────────────────────────────────
+
+_SQL_CNPJ_DIFERENCA_DE_SALDO = """
+    SELECT s.saldo - (e.saldo_inicial + COALESCE((
+               SELECT SUM(l.valor) FROM pj_lancamentos l
+               WHERE l.user_id = s.user_id AND l.status = 'pago'
+                 AND l.data > e.data_saldo_inicial AND l.data <= s.data), 0))
+    FROM pj_saldos_extrato s
+    JOIN pj_empresas e ON e.user_id = s.user_id
+    WHERE s.user_id = CAST(:uid AS uuid) AND e.saldo_inicial IS NOT NULL
+    ORDER BY s.data DESC
+    LIMIT 1
+"""
+
+
+def confianca_controle_cnpj(engine=None) -> ConfiancaSecao:
+    """Financeiro da empresa: registro, frescor do extrato, classificação e
+    saldo conferido com o banco. Tudo filtrado pelo dono da sessão, desde o
+    primeiro dia (a lição do PR #647: contagem sem dono mede os outros)."""
+    from core.config import settings
+    from core.database import get_engine
+    dono = settings.OWNER_USER_ID
+    secao = "Controle CNPJ"
+    if not dono:
+        return ConfiancaSecao(secao, (Componente("Registro presente", None, 1.0,
+                                                 "sem dono na sessao"),), None, ())
+    filtro = {"uid": dono}
+    comps: list[Componente] = []
+    notas: list[str] = []
+    try:
+        eng = engine or get_engine()
+        with eng.connect() as conn:
+            n = int(_scalar(conn, """SELECT count(*) FROM pj_lancamentos
+                                     WHERE user_id = CAST(:uid AS uuid)""", filtro) or 0)
+            comps.append(Componente("Registro presente", 100.0 if n else 0.0, 0.25,
+                                    f"{n} lancamentos da empresa"))
+            if n:
+                dias = _dias_desde(_scalar(conn, """
+                    SELECT max(data) FROM pj_lancamentos
+                    WHERE user_id = CAST(:uid AS uuid) AND origem = 'extrato'""", filtro))
+                comps.append(Componente(
+                    "Frescor do extrato", _frescor_pct(dias, 15, 90), 0.30,
+                    f"ultimo movimento do extrato ha {dias} dias" if dias is not None
+                    else "nenhum extrato importado"))
+                pagos = int(_scalar(conn, """SELECT count(*) FROM pj_lancamentos
+                    WHERE user_id = CAST(:uid AS uuid) AND status = 'pago'""", filtro) or 0)
+                cat = int(_scalar(conn, """SELECT count(*) FROM pj_lancamentos
+                    WHERE user_id = CAST(:uid AS uuid) AND status = 'pago'
+                      AND categoria IS NOT NULL""", filtro) or 0)
+                comps.append(Componente(
+                    "Classificação", 100.0 * cat / pagos if pagos else None, 0.25,
+                    f"{cat} de {pagos} lancamentos pagos com categoria (fora da DRE sem ela)"))
+                diferenca = _scalar(conn, _SQL_CNPJ_DIFERENCA_DE_SALDO, filtro)
+                if diferenca is None:
+                    comps.append(Componente("Saldo conferido com o banco", None, 0.20,
+                                            "nenhum extrato com saldo importado"))
+                else:
+                    fecha = abs(float(diferenca)) < 0.01
+                    if not fecha:
+                        notas.append(f"saldo da empresa difere do extrato em R$ {float(diferenca):,.2f}")
+                    comps.append(Componente(
+                        "Saldo conferido com o banco", 100.0 if fecha else 0.0, 0.20,
+                        "saldo do ultimo extrato fecha com o app" if fecha
+                        else f"diferenca de R$ {float(diferenca):,.2f} no ultimo extrato"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("confianca %s: %s", secao, exc)
+        notas.append(f"nao medido: {type(exc).__name__}")
+    return ConfiancaSecao(secao, tuple(comps), None, tuple(notas))
+
+
 # Saldo do último extrato contra o saldo do app na mesma data e conta:
 # initial_balance + lançamentos pagos até ali (core/conciliacao_bancaria.py).
 _SQL_ULTIMA_DIFERENCA_DE_SALDO = """
@@ -1033,6 +1103,7 @@ def confianca_dashboard_geral(engine=None) -> ConfiancaSecao:
 _SECOES = (
     ("Dashboard Geral", confianca_dashboard_geral),
     ("Controle Financeiro", confianca_controle_financeiro),
+    ("Controle CNPJ", confianca_controle_cnpj),
     ("Investimentos", confianca_investimentos),
     ("Empresas B3", confianca_b3),
     ("Empresas Americanas", confianca_us),

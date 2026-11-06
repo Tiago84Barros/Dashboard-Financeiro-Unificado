@@ -7,9 +7,10 @@ Configurações do sistema — nove abas organizadas por finalidade.
   🎯 Grau de Confiança    — quanto o app confia em cada seção, e por quê
   🧭 Restrições           — limitações, erros e detalhes técnicos que saíram
                             das telas de uso (05/10/2026), para decisão do admin
-  🔁 Atualização de dados — o que o usuário sobe de arquivo, em duas sub-abas:
+  🔁 Atualização de dados — o que o usuário sobe de arquivo, em três sub-abas:
        💳 Controle Financeiro — fatura do cartão + extratos bancários
        📈 Investimentos       — importações B3, XP, Nomad
+       🏢 CNPJ                — extrato da conta da empresa (Controle CNPJ)
   🔄 Dados de mercado     — CVM, YFinance, Banco Central, macro (orquestração)
   🗄️ Banco de dados       — conexão, capacidade, schema e diagnóstico técnico
   🔒 Segurança            — sessão e autenticação
@@ -217,10 +218,14 @@ def _render_atualizacao_de_dados() -> None:
     é o fluxo do mês e a fatura do cartão é fluxo futuro; misturar as duas
     entradas numa lista só já foi o caminho para somar o que não se soma
     (``memoria: fluxo-caixa-vs-cartao-independentes``).
+
+    A terceira, 🏢 CNPJ (06/11/2026), recebe o extrato da empresa: vai para as
+    tabelas ``pj_*`` do Controle CNPJ e nunca para o financeiro pessoal.
     """
-    sub_controle, sub_invest = st.tabs([
+    sub_controle, sub_invest, sub_cnpj = st.tabs([
         "💳 Controle Financeiro",
         "📈 Investimentos",
+        "🏢 CNPJ",
     ])
 
     with sub_controle:
@@ -228,6 +233,9 @@ def _render_atualizacao_de_dados() -> None:
 
     with sub_invest:
         _render_investimentos()
+
+    with sub_cnpj:
+        _render_cnpj()
 
 
 def _render_confianca() -> None:
@@ -330,6 +338,26 @@ def _render_controle_financeiro() -> None:
             "Controle · Movimentos",
         )
         render_upload_extrato_bancario(show_header=False)
+
+
+def _render_cnpj() -> None:
+    """Extrato da conta da empresa, para a seção 💼 Controle CNPJ.
+
+    Sub-aba própria, e não um bloco dentro de 💳 Controle Financeiro: o que
+    entra aqui vai para as tabelas ``pj_*`` e nunca para o financeiro pessoal.
+    Import tardio: o módulo só carrega quando a sub-aba é desenhada.
+    """
+    from views.cnpj_upload import render_upload_extrato_cnpj
+
+    with st.container(border=True, key="cfg_cnpj_statement_workflow"):
+        _render_workflow_header(
+            "01",
+            "Extrato da empresa",
+            "Confira a prévia, a categoria de cada movimento e o saldo antes de gravar.",
+            "OFX",
+            "Controle CNPJ",
+        )
+        render_upload_extrato_cnpj()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
