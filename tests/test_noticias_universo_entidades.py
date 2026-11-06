@@ -523,3 +523,46 @@ def test_ticker_declarado_pelo_provedor_nao_passa_pela_trava_de_caixa():
 
     assert resolver("acoes sobem", tickers_declarados=("VALE3",),
                     universo=u).tickers == ("VALE3",)
+
+
+# ─────────────────── nomes do cadastro da SEC (EUA) ──────────────────────────
+
+_SEC = {**LINHAS, "EUA": [
+    {"ticker": "LLY", "nome": "LILLY ELI & CO", "setor": "Healthcare"},
+    {"ticker": "KO", "nome": "COCA COLA CO", "setor": "Consumer Defensive"},
+    {"ticker": "JPM", "nome": "JPMORGAN CHASE & CO", "setor": "Financial"},
+    {"ticker": "PG", "nome": "PROCTER & GAMBLE Co", "setor": "Consumer"},
+    {"ticker": "GOOG", "nome": "Alphabet Inc.", "setor": "Technology"},
+]}
+
+
+@pytest.mark.parametrize("nome, chave", [
+    ("COCA COLA CO", "coca cola"),
+    ("JPMORGAN CHASE & CO", "jpmorgan chase"),
+    ("LILLY ELI & CO", "lilly eli"),
+    ("PROCTER & GAMBLE Co", "procter gamble"),
+    # O "&" do meio do nome fica: só a cauda é podada.
+    ("JOHNSON & JOHNSON", "johnson johnson"),
+])
+def test_co_e_e_comercial_saem_do_fim_do_nome_da_sec(nome, chave):
+    # Só "co." estava na lista: "COCA COLA CO" gravava a chave "coca cola co",
+    # que nenhuma manchete escreve, e a Coca-Cola saía com uma notícia em 60 dias.
+    assert normalizar_texto(ue._limpar_nome(nome, "US")) == chave
+
+
+def test_co_no_fim_de_nome_da_b3_continua_no_nome():
+    assert ue._limpar_nome("DTCOM DIRECT TO CO", "BR") == "DTCOM DIRECT TO CO"
+
+
+@pytest.mark.parametrize("manchete, ticker", [
+    ("Coca-Cola raises quarterly dividend", "KO"),
+    ("JPMorgan Chase profit jumps on trading", "JPM"),
+    ("Procter & Gamble lowers sales outlook", "PG"),
+    # Nome invertido da SEC: só o apelido declarado alcança a manchete.
+    ("Eli Lilly beats estimates as Zepbound sales surge", "LLY"),
+    # Marca em vez da razão social.
+    ("Google unveils new AI chip", "GOOG"),
+])
+def test_manchete_americana_resolve_pelo_nome_que_a_imprensa_usa(manchete, ticker):
+    u, _ = ue.carregar(engine=_Engine(_SEC), usar_cache=False)
+    assert resolver(manchete, universo=u).tickers == (ticker,)

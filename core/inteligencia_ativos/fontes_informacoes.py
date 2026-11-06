@@ -66,16 +66,26 @@ def arquivo() -> dict:
 
 
 def _do_ticker(por_ticker: dict, ticker: str):
-    """Entrada exata; na B3, a de uma classe irmã (PETR3 para PETR4)."""
+    """Entrada exata; senão, a de uma classe irmã (PETR3 para PETR4, GOOG
+    para GOOGL) ou a da outra grafia da classe (BRK-B para BRK.B).
+
+    Entre irmãs, vence a que tem notícia: a vitrine também guarda tickers
+    só com descartes, e devolver a irmã vazia esconderia a outra."""
     tk = ticker.upper()
     if tk in por_ticker:
         return por_ticker[tk]
-    raiz = inf.raiz_b3(tk)
-    if raiz:
-        for k in sorted(por_ticker):
-            if inf.raiz_b3(k) == raiz:
-                return por_ticker[k]
-    return None
+    irmas = [k for k in sorted(por_ticker) if inf.mesma_empresa(tk, k)]
+
+    def _tem_conteudo(entrada) -> bool:
+        # Notícias: {"itens": [...], "descartadas": {...}}; relatórios: lista.
+        if isinstance(entrada, dict):
+            return bool(entrada.get("itens"))
+        return bool(entrada)
+
+    for k in irmas:
+        if _tem_conteudo(por_ticker[k]):
+            return por_ticker[k]
+    return por_ticker[irmas[0]] if irmas else None
 
 
 # ---------------------------------------------------------------------------

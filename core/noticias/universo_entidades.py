@@ -109,8 +109,17 @@ SUFIXOS = (
     "co.", "n.v.", "nv", "ag", "the",
 )
 
+#: Só para o cadastro da SEC: "co" sem ponto e o "&" que sobra antes dele.
+#: A SEC escreve "COCA COLA CO", "JPMORGAN CHASE & CO", "LILLY ELI & CO"; só
+#: "co." estava na lista, e a chave gravada era "coca cola co" -- que nenhuma
+#: manchete escreve. Medido em 05/11/2026 na vitrine de notícias: Eli Lilly,
+#: Coca-Cola, JPMorgan Chase e Procter & Gamble saíam com zero ou uma notícia
+#: em 60 dias. Fica fora da B3 de propósito: lá "CO" é parte de nome
+#: ("DTCOM DIRECT TO CO"), e o nome brasileiro não pode se mover.
+SUFIXOS_SEC = ("co", "&")
 
-def _limpar_nome(nome: str) -> str:
+
+def _limpar_nome(nome: str, pais: str = "") -> str:
     """Poda sufixos societários e de classe, do fim para o começo.
 
     Repete a poda enquanto houver o que podar: "Itau Unibanco Holding SA Pfd"
@@ -142,13 +151,15 @@ def _limpar_nome(nome: str) -> str:
     """
     texto = _CORTES.sub("", " ".join(str(nome or "").split())).strip(" ,.-")
     texto = _SEDE.sub("", texto).strip(" ,./-")
+    sufixos = SUFIXOS + (SUFIXOS_SEC if pais == "US" else ())
     mudou = True
     while mudou and texto:
         mudou = False
         baixo = texto.lower()
-        for sufixo in SUFIXOS:
+        for sufixo in sufixos:
             if baixo.endswith(" " + sufixo):
-                texto = texto[: -len(sufixo) - 1].strip(" ,.")
+                texto = texto[: -len(sufixo) - 1].strip(
+                    " ,.&" if pais == "US" else " ,.")
                 mudou = True
                 break
     return texto
@@ -199,6 +210,10 @@ APELIDOS: dict[str, tuple[str, ...]] = {
     "YDUQ3": ("Estacio",),
     "CIEL3": ("Cielo",),
     "GOAU4": ("Metalurgica Gerdau",),
+    # EUA. O cadastro da SEC inverte nomes de pessoa ("LILLY ELI & CO") e usa
+    # a razão social onde a imprensa usa a marca ("Alphabet" x "Google").
+    "LLY": ("Eli Lilly",),
+    "GOOG": ("Google",), "GOOGL": ("Google",),
     # Ver PALAVRAS_COMUNS: a chave podada "news" saiu; o nome inteiro fica.
     "NWS": ("News Corp", "News Corporation"),
     "NWSA": ("News Corp", "News Corporation"),
@@ -213,7 +228,7 @@ def _bloco(conn, sql, pais: str) -> tuple[dict, dict, dict]:
         ticker = str(linha["ticker"] or "").strip().upper().replace(".SA", "")
         if not ticker:
             continue
-        pares[ticker] = _limpar_nome(linha["nome"])
+        pares[ticker] = _limpar_nome(linha["nome"], pais)
         if linha["setor"]:
             setores[ticker] = str(linha["setor"])
         paises[ticker] = pais
