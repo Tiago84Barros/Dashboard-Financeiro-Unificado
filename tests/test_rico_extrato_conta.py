@@ -290,7 +290,7 @@ def test_banco_sem_a_083_recusa_o_provento_sem_quantidade_nomeado(monkeypatch):
     (nem inventada): sai em errors, com valor, data e a instrução."""
     engine = _engine()
     _sem_banco_real(monkeypatch)
-    monkeypatch.setattr(rico, "ensure_dividend_quantity_nullable", lambda e: False)
+    monkeypatch.setattr(rico, "dividends_aceita_quantidade_vazia", lambda e: False)
 
     resumo = rico.parse(_extrato(), engine)
 

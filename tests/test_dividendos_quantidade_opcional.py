@@ -13,6 +13,7 @@ mostrava isso como fato. Estes testes prendem:
 from __future__ import annotations
 
 from datetime import date
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -185,21 +186,135 @@ def test_outro_total_nao_e_o_mesmo_provento():
 # Migração
 # ─────────────────────────────────────────────────────────────────────────────
 
-def test_migracao_083_roda_pelo_app_sem_parametros_falsos():
-    """O app executa o arquivo sem os comentários: o que sobra não pode ter
-    nada que o `text()` leia como parâmetro, nem '%' que o psycopg2 leia
-    como placeholder."""
-    sql = common._sql_sem_comentarios(common._SQL_083)
-    assert "DROP NOT NULL" in sql
-    assert "--" not in sql
-    assert "%" not in sql
-    assert text(sql).compile().params == {}
+_SQL_083 = (Path(__file__).resolve().parents[1] / "supabase_unificado"
+            / "schema" / "083_dividends_quantidade_opcional.sql")
+
+
+def test_migracao_083_existe_e_libera_as_duas_colunas():
+    sql = _SQL_083.read_text(encoding="utf-8")
+    assert "ALTER COLUMN quantity        DROP NOT NULL" in sql
+    assert "ALTER COLUMN amount_per_unit DROP NOT NULL" in sql
 
 
 def test_limpeza_da_xp_so_roda_na_transicao():
     """Rodar o arquivo de novo não pode apagar 1 cota real da XP gravada
     depois: a limpeza fica dentro do IF que testa o NOT NULL."""
-    sql = common._sql_sem_comentarios(common._SQL_083)
+    sql = _SQL_083.read_text(encoding="utf-8")
     inicio_if = sql.index("is_nullable = 'NO'")
     fim_if = sql.index("END IF")
     assert inicio_if < sql.index("UPDATE dividends") < fim_if
+
+
+def test_nenhum_importador_roda_a_migracao_sozinho():
+    """Migração muda schema e dado: exige confirmação humana (AGENTS.md). O
+    importador só consulta se ela já rodou."""
+    pasta = Path(common.__file__).parent
+    for arquivo in pasta.glob("*.py"):
+        codigo = arquivo.read_text(encoding="utf-8")
+        assert "DROP NOT NULL" not in codigo, arquivo.name
+        assert "083_dividends" not in codigo or arquivo.name == "common.py", (
+            arquivo.name
+        )
+
+
+def test_reimportacao_incompleta_da_xp_nao_apaga_uma_cota_real():
+    """O external_id da XP não leva a quantidade: a mesma linha pode vir com 1
+    cota real e depois sem a coluna. Só a B3, cujo id muda com a quantidade,
+    esvazia o placeholder."""
+    engine = _engine()
+    with engine.begin() as conn:
+        _via_linha(conn, _row("xpcsl-inc-1", 1))
+        _via_linha(conn, _row("xpcsl-inc-1", None))
+        _via_linha(conn, _row("ricocc-1", None))
+
+    assert _linhas(engine) == [("xpcsl-inc-1", 1.0, 44.16, 44.16)]
+
+
+def test_esvaziar_nao_mexe_na_linha_de_outro_dono():
+    """O external_id do admin não leva o dono (`make_external_id`); a linha de
+    outro usuário com o mesmo id não é da importação que está rodando."""
+    engine = _engine()
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO dividends (user_id, asset_id, type, amount_per_unit,
+                quantity, total_amount, payment_date, external_id)
+            VALUES ('outro', 'MANA11', 'reit_income', 44.16, 1, 44.16,
+                    :d, 'b3mov-1')
+        """), {"d": _DIA})
+        common.ajustar_quantidades_dividendos(conn, [_row("b3mov-1", None)])
+
+    assert _linhas(engine) == [("b3mov-1", 1.0, 44.16, 44.16)]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pelo importador da Movimentação, não só pelo helper
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _movimentacao_xlsx(*linhas) -> bytes:
+    import io
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Movimentação"
+    ws.append(["Entrada/Saída", "Data", "Movimentação", "Produto",
+               "Instituição", "Quantidade", "Preço unitário",
+               "Valor da Operação"])
+    for linha in linhas:
+        ws.append(list(linha))
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _b3_sem_banco_real(monkeypatch, engine):
+    from data_pipeline.importers.investments import b3_movimentacao as mov
+
+    monkeypatch.setattr(mov.settings, "OWNER_USER_ID", "u")
+    monkeypatch.setattr(mov, "ensure_external_id_columns", lambda e: None)
+    monkeypatch.setattr(mov, "ensure_movement_events_table", lambda e: False)
+    monkeypatch.setattr(mov, "get_or_create_b3_account", lambda c, u: "conta")
+    monkeypatch.setattr(
+        mov, "batch_get_or_create_assets",
+        lambda c, itens: {t: t for t, _n, _c in itens},
+    )
+    monkeypatch.setattr(
+        mov, "batch_insert_investment_transactions", lambda c, rows: 0,
+    )
+
+    def _existentes(conn, tabela, ids):  # o original usa ANY(), só Postgres
+        marcas = ", ".join(f":i{n}" for n in range(len(ids)))
+        return {r[0] for r in conn.execute(
+            text(f"SELECT external_id FROM {tabela} "
+                 f"WHERE external_id IN ({marcas})"),
+            {f"i{n}": v for n, v in enumerate(ids)},
+        )}
+
+    monkeypatch.setattr(mov, "batch_filter_existing_external_ids", _existentes)
+    return mov
+
+
+def test_reimportar_a_movimentacao_corrige_a_linha_inventada_ja_gravada(
+    monkeypatch,
+):
+    """O importador filtra as linhas já gravadas antes do INSERT; elas têm de
+    passar pelo ajuste mesmo assim, ou a reimportação nunca corrige nada."""
+    engine = _engine()
+    mov = _b3_sem_banco_real(monkeypatch, engine)
+    linha = ("Credito", "22/10/2026", "Rendimento", "PIER11 - PATRIA",
+             "RICO", None, None, "346,32")
+    ext = mov._parse_row(linha)["external_id"]
+    with engine.begin() as conn:  # como a versão antiga gravava
+        conn.execute(text("""
+            INSERT INTO dividends (user_id, asset_id, type, amount_per_unit,
+                quantity, total_amount, payment_date, external_id)
+            VALUES ('u', 'PIER11', 'reit_income', 346.32, 1, 346.32,
+                    :d, :e)
+        """), {"d": date(2026, 10, 22), "e": ext})
+
+    resumo = mov.parse(_movimentacao_xlsx(linha), engine)
+
+    assert resumo["duplicates_skipped"] == 1
+    assert resumo["incomes_imported"] == 0
+    assert _linhas(engine) == [(ext, None, None, 346.32)]

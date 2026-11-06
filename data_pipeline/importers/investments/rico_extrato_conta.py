@@ -65,7 +65,7 @@ from core.config import settings
 from .common import (
     aviso_sem_quantidade,
     classify_ticker,
-    ensure_dividend_quantity_nullable,
+    dividends_aceita_quantidade_vazia,
     ensure_external_id_columns,
     finalize_summary,
     get_or_create_asset,
@@ -251,7 +251,7 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
     ensure_external_id_columns(engine)
     aceita_sem_qtd = (
         any(p["quantidade"] is None for p in proventos)
-        and ensure_dividend_quantity_nullable(engine)
+        and dividends_aceita_quantidade_vazia(engine)
     )
 
     try:

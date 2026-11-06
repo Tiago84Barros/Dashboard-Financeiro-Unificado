@@ -41,7 +41,7 @@ from core.config import settings
 
 from .common import (
     aviso_sem_quantidade,
-    ensure_dividend_quantity_nullable,
+    dividends_aceita_quantidade_vazia,
     ensure_external_id_columns,
     finalize_summary,
     get_or_create_account,
@@ -721,7 +721,7 @@ def _parse_single(
     sheet_map = {_norm(ws.title): ws for ws in wb.worksheets}
     aceita_sem_qtd = (
         "proventos recebidos" not in sheet_map
-        or ensure_dividend_quantity_nullable(engine)
+        or dividends_aceita_quantidade_vazia(engine)
     )
 
     with engine.connect() as conn:

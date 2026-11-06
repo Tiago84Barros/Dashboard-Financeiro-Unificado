@@ -42,6 +42,7 @@ from sqlalchemy.engine import Engine
 from core.config import settings
 
 from .common import (
+    ajustar_quantidades_dividendos,
     aviso_sem_quantidade,
     batch_filter_existing_external_ids,
     batch_get_or_create_assets,
@@ -49,7 +50,7 @@ from .common import (
     batch_insert_investment_transactions,
     classify_movement,
     classify_ticker,
-    ensure_dividend_quantity_nullable,
+    dividends_aceita_quantidade_vazia,
     ensure_external_id_columns,
     ensure_movement_events_table,
     finalize_summary,
@@ -140,7 +141,7 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
     # banco ainda não aceita, ele sai nomeado em errors -- nunca vira 1 cota.
     aceita_sem_qtd = (
         any(c["quantity"] is None for c in div_candidates)
-        and ensure_dividend_quantity_nullable(engine)
+        and dividends_aceita_quantidade_vazia(engine)
     )
 
     try:
@@ -192,26 +193,32 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                         "external_id":      c["external_id"],
                     })
 
-                # 3b) Monta linhas novas — dividends
+                # 3b) Monta linhas novas — dividends. As já gravadas não
+                #     entram no INSERT, mas entram no ajuste de quantidade:
+                #     reimportar a Movimentação é o que corrige a linha que
+                #     uma versão antiga gravou como "1 cota = total".
                 div_rows = []
+                ja_gravadas = []
                 for c in div_candidates:
-                    if c["external_id"] in existing_div:
+                    ja_existe = c["external_id"] in existing_div
+                    if ja_existe:
                         summary["duplicates_skipped"] += 1
-                        continue
                     aid = ticker_to_id.get(c["ticker"])
                     if aid is None:
-                        summary["errors"].append(
-                            f"asset_id ausente para ticker={c['ticker']}"
-                        )
+                        if not ja_existe:
+                            summary["errors"].append(
+                                f"asset_id ausente para ticker={c['ticker']}"
+                            )
                         continue
                     if c["quantity"] is None and not aceita_sem_qtd:
-                        summary["rows_skipped"] += 1
-                        summary["errors"].append(aviso_sem_quantidade(
-                            c["ticker"], c["transaction_date"],
-                            c["total_amount"],
-                        ))
+                        if not ja_existe:
+                            summary["rows_skipped"] += 1
+                            summary["errors"].append(aviso_sem_quantidade(
+                                c["ticker"], c["transaction_date"],
+                                c["total_amount"],
+                            ))
                         continue
-                    div_rows.append({
+                    (ja_gravadas if ja_existe else div_rows).append({
                         "user_id":         user_id,
                         "asset_id":        aid,
                         "type":            c["div_type"],
@@ -226,6 +233,7 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                 # 4) Insert em lote
                 inserted_tx = batch_insert_investment_transactions(conn, tx_rows)
                 inserted_div = batch_insert_dividends(conn, div_rows)
+                ajustar_quantidades_dividendos(conn, ja_gravadas)
                 summary["transactions_imported"] += inserted_tx
                 summary["incomes_imported"] += inserted_div
 

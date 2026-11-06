@@ -12,7 +12,6 @@ import hashlib
 import logging
 import re
 from datetime import date, datetime, timezone
-from pathlib import Path
 from typing import Any, Iterable
 
 from sqlalchemy import bindparam, text
@@ -340,22 +339,13 @@ def ensure_external_id_columns(engine: Engine) -> None:
 #   * quantidade desconhecida grava NULL nas duas colunas;
 #   * a fonte que traz a quantidade preenche a linha vazia -- ou a do padrão
 #     inventado "1 cota = total" -- pela mesma chave canônica da deduplicação;
-#   * a fonte que reimporta a SUA linha inventada sem quantidade a esvazia.
-
-_SQL_083 = (
-    Path(__file__).resolve().parents[3]
-    / "supabase_unificado" / "schema" / "083_dividends_quantidade_opcional.sql"
-)
-
-
-def _sql_sem_comentarios(caminho: Path) -> str:
-    """O arquivo sem as linhas de comentário: o texto delas tem ':' que o
-    `text()` do SQLAlchemy leria como parâmetro."""
-    return "\n".join(
-        linha for linha in caminho.read_text(encoding="utf-8").splitlines()
-        if not linha.lstrip().startswith("--")
-    )
-
+#   * a Movimentação da B3 reimportada sem quantidade esvazia a SUA linha
+#     inventada (só ela: ver `_PREFIXOS_COM_QUANTIDADE_NO_ID`).
+#
+# O importador NÃO roda a migração: ela muda o schema e limpa dados da XP, e
+# AGENTS.md exige confirmação humana para migração. Enquanto a 083 não rodar
+# no SQL Editor, a linha sem quantidade sai nomeada em `errors`
+# (`aviso_sem_quantidade`), nunca com 1 cota inventada.
 
 def _dialeto(conn: Any) -> str | None:
     return getattr(getattr(conn, "dialect", None), "name", None)
@@ -385,24 +375,6 @@ def dividends_aceita_quantidade_vazia(conn: Connection | Engine) -> bool:
         return False
 
 
-def ensure_dividend_quantity_nullable(engine: Engine) -> bool:
-    """Roda a 083 se ainda não rodou. Devolve se o banco aceita NULL agora.
-
-    Transação própria: sem permissão de DDL o ALTER falha sozinho e a
-    importação segue -- só as linhas sem quantidade ficam de fora, nomeadas.
-    """
-    if _dialeto(engine) != "postgresql":
-        return True
-    if dividends_aceita_quantidade_vazia(engine):
-        return True
-    try:
-        with engine.begin() as conn:
-            conn.execute(text(_sql_sem_comentarios(_SQL_083)))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("migração 083 não aplicada: %s", safe_error(exc))
-    return dividends_aceita_quantidade_vazia(engine)
-
-
 def quantidade_e_valor_unitario(
     quantidade: float | None, total: float,
 ) -> tuple[float | None, float | None]:
@@ -417,9 +389,9 @@ def aviso_sem_quantidade(ticker: str, pagamento: date, total: float) -> str:
     """Mensagem de quando o banco ainda exige quantidade (083 sem rodar)."""
     return (
         f"{ticker} {pagamento:%d/%m/%Y} R$ {total:.2f}: a fonte não informa a "
-        "quantidade e o banco ainda não aceita provento sem ela. Rode "
-        "supabase_unificado/schema/083_dividends_quantidade_opcional.sql no "
-        "Supabase e importe de novo."
+        "quantidade e o banco ainda não aceita provento sem ela. Rode, com "
+        "backup, supabase_unificado/schema/083_dividends_quantidade_opcional.sql "
+        "no SQL Editor do Supabase e importe de novo."
     )
 
 
@@ -441,7 +413,8 @@ _SQL_PREENCHE = text("""
 _SQL_ESVAZIA_INVENTADA = text("""
     UPDATE dividends
        SET quantity = NULL, amount_per_unit = NULL
-     WHERE external_id IN :ids
+     WHERE user_id = :user_id
+       AND external_id IN :ids
        AND quantity = 1
        AND amount_per_unit = total_amount
 """).bindparams(bindparam("ids", expanding=True))
@@ -454,6 +427,15 @@ def _chave_canonica(user_id, asset_id, payment_date, tipo, total) -> tuple:
             round(float(total), 2))
 
 
+# Só a Movimentação da B3 põe a quantidade crua no hash do external_id
+# (`b3_movimentacao._parse_row`): a linha dela sem quantidade nunca tem o mesmo
+# id que uma com quantidade, então "1 cota = total" com esse id é, com certeza,
+# o placeholder da versão antiga. Na XP e na Rico o id não leva a quantidade, e
+# uma reimportação incompleta apagaria uma 1 cota de verdade -- a XP antiga já
+# é limpa pela 083, e a Rico nunca gravou placeholder.
+_PREFIXOS_COM_QUANTIDADE_NO_ID = ("b3mov-",)
+
+
 def ajustar_quantidades_dividendos(
     conn: Connection, rows: list[dict[str, Any]],
 ) -> int:
@@ -464,8 +446,9 @@ def ajustar_quantidades_dividendos(
       Mesmo ativo, dia, tipo e total com outra quantidade não é outra posição:
       o valor por cota de um provento é um só, e a fonte que conta as cotas
       vence a que não contava.
-    * Linha SEM quantidade esvazia a própria linha (mesmo external_id) que uma
-      versão anterior do importador gravou como "1 cota = total".
+    * Linha SEM quantidade da Movimentação da B3 esvazia a própria linha
+      (mesmo dono e external_id) que a versão antiga gravou como
+      "1 cota = total".
 
     Custo fixo: uma consulta das candidatas e um UPDATE por linha que de fato
     muda -- não um UPDATE por provento do arquivo, que no Supabase custaria
@@ -474,11 +457,20 @@ def ajustar_quantidades_dividendos(
     Devolve quantas linhas mudaram.
     """
     com = [r for r in rows if r.get("quantity") is not None]
-    sem = sorted({r["external_id"] for r in rows
-                  if r.get("quantity") is None and r.get("external_id")})
+    # Por dono: o external_id não carrega o dono em toda configuração
+    # (`make_external_id` omite o do admin), e a linha de outro usuário com o
+    # mesmo id não é desta importação.
+    sem: dict[str, set[str]] = {}
+    for r in rows:
+        ext = r.get("external_id") or ""
+        if r.get("quantity") is None and ext.startswith(
+            _PREFIXOS_COM_QUANTIDADE_NO_ID
+        ):
+            sem.setdefault(str(r["user_id"]), set()).add(r["external_id"])
     mudou = 0
-    if sem:
-        res = conn.execute(_SQL_ESVAZIA_INVENTADA, {"ids": sem})
+    for dono, ids in sorted(sem.items()):
+        res = conn.execute(_SQL_ESVAZIA_INVENTADA,
+                           {"user_id": dono, "ids": sorted(ids)})
         mudou += max(res.rowcount or 0, 0)
     if not com:
         return mudou

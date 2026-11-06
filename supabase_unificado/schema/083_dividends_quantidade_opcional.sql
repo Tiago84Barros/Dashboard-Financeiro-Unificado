@@ -1,11 +1,11 @@
 -- 083_dividends_quantidade_opcional.sql — provento sem quantidade fica sem
 -- quantidade.
 --
--- Idempotente. O app roda o ALTER sozinho a cada importação de investimentos
--- (`data_pipeline/importers/investments/common.py::
--- ensure_dividend_quantity_nullable`); rodar à mão no SQL Editor do Supabase
--- também funciona, e é o caminho se o usuário do app não tiver permissão de
--- DDL.
+-- Idempotente. Roda À MÃO no SQL Editor do Supabase, depois de um backup:
+-- muda o schema e limpa dados da XP, e AGENTS.md exige confirmação humana para
+-- migração. O app não a executa; até ela rodar, os importadores recusam o
+-- provento sem quantidade e o nomeiam em `errors`
+-- (`common.dividends_aceita_quantidade_vazia`).
 --
 -- Por que existe: `quantity` e `amount_per_unit` eram NOT NULL, e quando o
 -- arquivo não trazia a quantidade os importadores gravavam 1 cota com o

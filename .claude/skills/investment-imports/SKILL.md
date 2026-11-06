@@ -65,9 +65,11 @@ informa a quantidade, grave as duas como None — use
 `common.quantidade_e_valor_unitario(qtd, total)`. **Nunca** grave 1 cota com o
 total como valor por cota. `insert_dividend` e `batch_insert_dividends`
 chamam `ajustar_quantidades_dividendos`, que completa a linha vazia quando outra
-fonte traz a quantidade. Chame `ensure_dividend_quantity_nullable(engine)` antes
-de gravar provento sem quantidade. Se ela devolver False, nomeie a linha com
-`aviso_sem_quantidade` em `errors`.
+fonte traz a quantidade. Antes de gravar provento sem quantidade, consulte
+`dividends_aceita_quantidade_vazia(engine)`. Se ela devolver False, a 083
+ainda não rodou: nomeie a linha com `aviso_sem_quantidade` em `errors`. O
+importador nunca roda a migração sozinho, porque migração exige confirmação
+humana (AGENTS.md).
 
 ## Idempotência
 
