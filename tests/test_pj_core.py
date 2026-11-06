@@ -209,3 +209,15 @@ def test_inicio_de_atividade_dentro_da_janela_continua_proporcional():
     serie = rel.serie_mensal(lancs, date(2026, 11, 1), meses=13)[:-1]
     hist = rel.meses_desde_o_inicio(serie, lancs)
     assert [(s["ano"], s["mes"]) for s in hist] == [(2026, 8), (2026, 9), (2026, 10)]
+
+
+def test_saldo_antes_da_abertura_e_calculado_para_tras():
+    """Achado do Codex no PR #680: abertura de 1.000 em 02/11 e crédito de 200 em
+    15/10 importado depois dão 800 em 14/10, não 1.000."""
+    lancs = [{"data": date(2026, 10, 15), "valor": 200.0, "status": "pago"},
+             {"data": date(2026, 11, 5), "valor": -50.0, "status": "pago"}]
+    ancora = date(2026, 11, 2)
+    assert rel.saldo_ate(1000.0, ancora, lancs, date(2026, 10, 14)) == 800.0
+    assert rel.saldo_ate(1000.0, ancora, lancs, date(2026, 10, 15)) == 1000.0
+    assert rel.saldo_ate(1000.0, ancora, lancs, ancora) == 1000.0
+    assert rel.saldo_ate(1000.0, ancora, lancs, date(2026, 11, 5)) == 950.0

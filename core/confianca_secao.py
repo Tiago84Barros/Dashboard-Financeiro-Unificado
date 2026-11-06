@@ -860,10 +860,15 @@ def _componente_previstos_em_dia(engine, notas: list[str]) -> list[Componente]:
 # ── Controle CNPJ ────────────────────────────────────────────────────────────
 
 _SQL_CNPJ_DIFERENCA_DE_SALDO = """
+    -- Mesma conta de core.pj.relatorios.saldo_ate: para frente depois da
+    -- âncora (saldo de abertura), para trás antes dela.
     SELECT s.saldo - (e.saldo_inicial + COALESCE((
-               SELECT SUM(l.valor) FROM pj_lancamentos l
-               WHERE l.user_id = s.user_id AND l.status = 'pago'
-                 AND l.data > e.data_saldo_inicial AND l.data <= s.data), 0))
+               SELECT SUM(CASE
+                   WHEN l.data > e.data_saldo_inicial AND l.data <= s.data THEN l.valor
+                   WHEN l.data > s.data AND l.data <= e.data_saldo_inicial THEN -l.valor
+                   ELSE 0 END)
+               FROM pj_lancamentos l
+               WHERE l.user_id = s.user_id AND l.status = 'pago'), 0))
     FROM pj_saldos_extrato s
     JOIN pj_empresas e ON e.user_id = s.user_id
     WHERE s.user_id = CAST(:uid AS uuid) AND e.saldo_inicial IS NOT NULL

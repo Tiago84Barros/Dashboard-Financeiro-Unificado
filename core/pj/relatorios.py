@@ -102,11 +102,21 @@ def meses_com_movimento(lancs: list[dict]) -> list[tuple[int, int]]:
 
 def saldo_ate(saldo_inicial: float, data_inicial: date | None, lancs: list[dict],
               data: date) -> float:
-    """Saldo da conta em ``data``: saldo inicial + pagos depois da data inicial."""
+    """Saldo da conta ao fim de ``data``, ancorado no saldo de abertura.
+
+    Depois da âncora: abertura + pagos entre a âncora e a data. ANTES dela
+    (extrato mais antigo importado depois): abertura − pagos entre a data e a
+    âncora -- sem isso a conferência de um extrato antigo acusava diferença
+    que não existe (achado do Codex no PR #680). A mesma conta, em SQL, está em
+    ``core.confianca_secao._SQL_CNPJ_DIFERENCA_DE_SALDO``.
+    """
     total = float(saldo_inicial or 0.0)
     for x in _pagos(lancs):
-        if (data_inicial is None or x["data"] > data_inicial) and x["data"] <= data:
-            total += float(x["valor"])
+        if data_inicial is None or data >= data_inicial:
+            if (data_inicial is None or x["data"] > data_inicial) and x["data"] <= data:
+                total += float(x["valor"])
+        elif data < x["data"] <= data_inicial:
+            total -= float(x["valor"])
     return round(total, 2)
 
 

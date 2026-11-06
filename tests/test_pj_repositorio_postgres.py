@@ -177,3 +177,30 @@ def test_extrato_sem_movimento_novo_ainda_grava_o_saldo(repo):
     emp = repo.obter_empresa()
     assert emp["saldo_inicial"] == 200.0
     assert repo.saldo_calculado(emp, repo.listar_lancamentos(), date(2026, 11, 4)) == 700.0
+
+
+def test_extrato_antigo_importado_depois_confere_para_tras_no_app_e_na_confianca(repo):
+    """Python e SQL do Grau de Confiança fazem a mesma conta antes da âncora."""
+    repo.importar_extrato([dict(_mov(3, 100.0, "A", "N1"), categoria=None)], "nov.ofx",
+                          {"data": date(2026, 11, 3), "valor": 1100.0})
+    emp = repo.obter_empresa()
+    assert emp["data_saldo_inicial"] == date(2026, 11, 2)
+    antigo = {"data": date(2026, 10, 15), "valor": 200.0, "descricao": "B",
+              "contraparte": "B", "fitid": "N0"}
+    from core.pj.ofx import chave_movimento
+    antigo["chave"] = chave_movimento("conta-1", antigo)
+    repo.importar_extrato([dict(antigo, categoria=None)], "out.ofx",
+                          {"data": date(2026, 10, 14), "valor": 800.0})
+    assert repo.saldo_calculado(repo.obter_empresa(), repo.listar_lancamentos(),
+                                date(2026, 10, 14)) == 800.0
+    # O SQL do Grau de Confiança, apontado para o saldo ANTIGO (antes da
+    # âncora), tem de dar diferença zero, como o Python.
+    from sqlalchemy import text
+
+    from core.confianca_secao import _SQL_CNPJ_DIFERENCA_DE_SALDO
+    from core.database import get_engine
+    sql_antigo = _SQL_CNPJ_DIFERENCA_DE_SALDO.replace("ORDER BY s.data DESC", "ORDER BY s.data ASC")
+    assert sql_antigo != _SQL_CNPJ_DIFERENCA_DE_SALDO
+    with get_engine().connect() as conn:
+        dif = conn.execute(text(sql_antigo), {"uid": DONO_A}).scalar()
+    assert float(dif) == 0.0
