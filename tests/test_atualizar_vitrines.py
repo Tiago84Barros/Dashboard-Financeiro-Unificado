@@ -564,3 +564,12 @@ def test_poda_regrava_as_demonstracoes_a_forca():
     passo = next(p for p in POR_CHAVE["brapi_raw_poda"].passos
                  if "renormalize-demonstracoes" in p)
     assert "--forcar" in passo
+
+
+def test_carimbo_dos_indices_le_so_os_simbolos_do_seletor():
+    # O max da tabela inteira viria das carteiras e esconderia o SPY ausente.
+    from core.publicacao_agenda import SIMBOLOS_BENCHMARK_EUA
+
+    consulta = av.CARIMBO["us_benchmarks"][1]
+    for simbolo in SIMBOLOS_BENCHMARK_EUA:
+        assert f"'{simbolo}'" in consulta

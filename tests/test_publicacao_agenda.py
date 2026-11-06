@@ -295,3 +295,24 @@ def test_medicao_da_carteira20_roda_depois_do_ipca_e_do_desempenho():
     alvo = POR_CHAVE["carteira20_medicao"]
     assert alvo.cadencia_dias == 1
     assert alvo.artefatos == ("data/public/carteira20_medicao.json",)
+
+
+def test_indices_de_referencia_dos_eua_sao_coletados_derivados_e_publicados_todo_dia():
+    # O S&P 500 nunca chegava à Curva de capital: `us_prices` publica a cada
+    # 30 dias e nenhum passo baixava o preço dos índices nem derivava o mensal.
+    from core.us_benchmark import US_BENCHMARKS
+
+    alvo = POR_CHAVE["us_benchmarks"]
+    simbolos = sorted(s for s in US_BENCHMARKS.values() if s)
+    assert alvo.cadencia_dias == 1 and alvo.precisa_armazem
+    coleta, mensal, publica = alvo.passos
+    assert coleta[:3] == ("run_us_ingest.py", "prices", "--warehouse")
+    assert mensal[:3] == ("run_us_ingest.py", "monthly", "--warehouse")
+    assert publica[:3] == ("-m", "scripts.publish_us_prices_monthly", "--apply")
+    for passo in (coleta, mensal):
+        assert sorted(passo[passo.index("--tickers") + 1:]) == simbolos
+    assert sorted(publica[i + 1] for i, a in enumerate(publica)
+                  if a == "--simbolo") == simbolos
+    # Antes da republicação mensal, para que ela já leve os índices frescos.
+    chaves = [a.chave for a in ALVOS]
+    assert chaves.index("us_benchmarks") < chaves.index("us_prices")

@@ -180,6 +180,7 @@ tarefas obsoletas `DashboardFinanceiro-FII-Backfill` e
 | `us_snapshot` | 7 dias | `market_us.company_snapshots` |
 | `us_vintages` | por versão | safras PIT dos EUA (gatilho: `US_FUNDAMENTAL_SCORE_VERSION` mudar) |
 | `us_delistings` | 30 dias | saídas de bolsa |
+| `us_benchmarks` | 1 dia | SPY, IWB e QQQ: baixa o diário, deriva o mensal e publica só os três |
 | `us_prices` | 30 dias | preços mensais |
 
 Duas regras que existem por incidente:

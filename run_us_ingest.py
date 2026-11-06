@@ -17,6 +17,7 @@ Comandos:
     python run_us_ingest.py resume       --warehouse            # retoma do checkpoint
     python run_us_ingest.py validate     --warehouse            # auditoria de qualidade
     python run_us_ingest.py monthly      --warehouse            # deriva prices_monthly do diário
+    python run_us_ingest.py monthly      --warehouse --tickers SPY IWB QQQ  # só esses
 
 Opções: --tickers, --exchanges, --limit, --years, --budget, --dry-run, --offline,
 --warehouse (usa 127.0.0.1:5433 lendo warehouse/.env), --json.
@@ -275,8 +276,9 @@ def main() -> int:
         from core.database import get_engine
         from data_pipeline.us import scoring_history as sh
         if args.dry_run:
-            return out({"ok": True, "action": "dry-run: nada derivado"})
-        return out(sh.derive_prices_monthly(get_engine()))
+            return out({"ok": True, "action": "dry-run: nada derivado",
+                        "tickers": args.tickers or "todos"})
+        return out(sh.derive_prices_monthly(get_engine(), simbolos=args.tickers))
 
     if args.command == "backtest":
         import core.us_backtest as bt

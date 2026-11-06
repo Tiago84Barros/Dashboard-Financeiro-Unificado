@@ -2598,11 +2598,10 @@ def _tab_sincronizacao(status: dict) -> None:
         "python scripts/publish_us_snapshot.py `\n"
         '  --source-url "postgresql://postgres:<senha>@127.0.0.1:5433/postgres" `\n'
         '  --target-url "<SUPABASE_UNIFICADO_URL>" --dry-run   # confira, depois sem --dry-run\n\n'
-        "# 10) índices do benchmark (SPY, IWB, QQQ) para a Curva de capital\n"
-        "python run_us_ingest.py prices  --warehouse --tickers SPY IWB QQQ\n"
-        "python run_us_ingest.py monthly --warehouse\n"
-        "python -m scripts.publish_us_prices_monthly            # confira\n"
-        "python -m scripts.publish_us_prices_monthly --apply",
+        "# 10) índices do benchmark (SPY, IWB, QQQ) para a Curva de capital.\n"
+        "#     Roda sozinho todo dia na tarefa \"DFU - Atualizar vitrines\"\n"
+        "#     (alvo us_benchmarks); à mão, só para forçar:\n"
+        "python scripts/atualizar_vitrines.py --apenas us_benchmarks --forcar",
         language="powershell")
     st.caption("Testes históricos e a sincronização rodam **só localmente** — a vitrine "
                "traz pontuação, dossiê, assimetria e Piotroski/Altman/Sloan já calculados, "

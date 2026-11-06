@@ -259,6 +259,11 @@ CARIMBO = {
     "us_vintages": ("supabase", "SELECT max(created_at) FROM market_us.score_vintages"),
     "us_delistings": ("supabase", "SELECT max(derived_at) FROM market_us.delistings"),
     "us_prices": ("supabase", "SELECT max(ingested_at) FROM market_us.prices_monthly"),
+    # Só as linhas dos índices: o max da tabela inteira viria das carteiras e
+    # daria o alvo por publicado com o SPY ausente -- o estado de 06/11/2026.
+    "us_benchmarks": ("supabase",
+                      "SELECT max(ingested_at) FROM market_us.prices_monthly "
+                      "WHERE symbol IN ('IWB', 'QQQ', 'SPY')"),
     # `--armazem` apaga e regrava a meta a cada publicação; `publicado_em`
     # nasce com NOW() no armazém, que é onde este alvo escreve.
     "us_painel_armazem": ("armazem",
