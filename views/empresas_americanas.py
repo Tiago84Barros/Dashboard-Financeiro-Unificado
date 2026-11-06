@@ -1024,6 +1024,29 @@ def _bloco_liquido_us(res: dict) -> None:
                      _p(liquido.get("excess_ann_vs_ew_brl_bruto")),
                      ajuda="Em reais, sem custo nem imposto. Em dólar, o "
                            "excesso bruto está na seção seguinte.")
+    bm_liq = res.get("benchmark_liquido") or {}
+    estado_bm = res.get("benchmark") or {}
+    if bm_liq.get("ok") and estado_bm.get("ok"):
+        from core.us_backtest import _nome_indice
+        nome = _nome_indice(estado_bm)
+        d1, d2, d3, _ = st.columns(4)
+        with d1:
+            card_metrica(f"{nome} líquido (R$)",
+                         _p(bm_liq["portfolio_brl_liquido"].get("ann_return")),
+                         ajuda="Retorno anual do índice comprado e mantido, pela "
+                               "mesma conta da estratégia: custo, retenção, "
+                               "câmbio, IR e IOF.")
+        with d2:
+            card_metrica(f"{nome} bruto (R$)",
+                         _p(bm_liq["portfolio_brl_bruto"].get("ann_return")),
+                         ajuda="Só a conversão cambial do retorno total em dólar.")
+        with d3:
+            card_metrica(f"Excesso líquido sobre o {nome}",
+                         _p(res.get("excess_ann_liquido_vs_benchmark")),
+                         ajuda="Retorno anual líquido da estratégia menos o do "
+                               "índice, os dois em reais, nas datas que o índice "
+                               "cobre. É a pergunta do bolso: valeu escolher "
+                               "ações em vez de comprar o índice?")
     st.caption(
         f"Por período, em média: custo de giro {_p(liquido.get('custo_medio'))}, "
         f"retenção {_p(liquido.get('retencao_media'))}, IR "
@@ -2379,7 +2402,9 @@ def _tab_backtests(status: dict) -> None:
         secao_titulo("Curva de capital", "📉")
         curve, info_curva = curvas_capital(res)
         if not curve.empty:
-            st.plotly_chart(_figura_curva_capital(curve, info_curva.get("benchmark")),
+            st.plotly_chart(_figura_curva_capital(
+                                curve, info_curva.get("benchmark_colunas"),
+                                pesos_iguais_ocultos=bool(info_curva.get("benchmark"))),
                             width="stretch", config={"displayModeBar": False},
                             key="us_bt_curva_capital")
             st.caption(_legenda_curva_capital(info_curva, res.get("benchmark") or {}))
@@ -2393,32 +2418,42 @@ def _tab_backtests(status: dict) -> None:
                     codigo="eua.backtests_curva_janela_benchmark")
 
 
-# Cor fixa por papel, não pela ordem das colunas: o índice tem de ter a mesma
-# cor com ou sem a linha líquida no quadro.
-_CORES_CURVA = {"Estratégia bruta (US$)": "#4C78A8",
-                "Estratégia líquida (R$)": "#F58518",
-                "Pesos iguais do universo (US$)": "#9CA3AF"}
+# Cor por ATIVO e traço por TRATAMENTO: a estratégia é azul e o índice é
+# vermelho; tracejado é bruto, cheio é líquido. Cada par que se compara (bruto
+# com bruto, líquido com líquido) fica com o mesmo traço, em cores diferentes.
+_COR_ESTRATEGIA = "#4C78A8"
 _COR_BENCHMARK = "#E45756"
+_COR_PESOS_IGUAIS = "#9CA3AF"
 
 
-def _figura_curva_capital(curve: pd.DataFrame, benchmark: str | None) -> go.Figure:
+def _estilo_curva(coluna: str, indices: list[str]) -> dict:
+    if coluna.startswith("Pesos iguais"):
+        return dict(color=_COR_PESOS_IGUAIS, width=2, dash="dot")
+    cor = _COR_BENCHMARK if coluna in indices else _COR_ESTRATEGIA
+    bruto = " bruta " in f" {coluna} " or " bruto " in f" {coluna} "
+    return dict(color=cor, width=2 if bruto else 3, dash="dash" if bruto else "solid")
+
+
+def _figura_curva_capital(curve: pd.DataFrame, indices: list[str] | None = None,
+                          *, pesos_iguais_ocultos: bool = False) -> go.Figure:
     """Curvas de capital com valores de 2 casas no tooltip e no eixo.
 
-    O ``st.line_chart`` anterior mostrava ``14.7480899796`` e rótulos em
-    inglês (index/value/color) no tooltip, sem como formatar.
+    ``indices`` são as colunas do benchmark (bruta e líquida). Com o índice no
+    gráfico, a linha de pesos iguais começa oculta (clique na legenda mostra):
+    cinco linhas no mesmo eixo escondem o par que importa.
     """
+    indices = list(indices or [])
     fig = go.Figure()
     for coluna in curve.columns:
-        e_indice = coluna == benchmark
+        oculta = pesos_iguais_ocultos and coluna.startswith("Pesos iguais")
         fig.add_trace(go.Scatter(
             x=list(curve.index), y=curve[coluna].round(2), name=coluna,
             mode="lines+markers", marker=dict(size=5),
-            line=dict(color=_COR_BENCHMARK if e_indice else _CORES_CURVA.get(coluna),
-                      width=3 if e_indice else 2,
-                      dash="dot" if coluna.startswith("Pesos iguais") else "solid"),
+            line=_estilo_curva(coluna, indices),
+            visible="legendonly" if oculta else True,
             hovertemplate="%{y:.2f}×<extra>" + html.escape(coluna) + "</extra>",
         ))
-    fig.update_layout(**_PLOT_LAYOUT, height=420, hovermode="x unified",
+    fig.update_layout(**_PLOT_LAYOUT, height=440, hovermode="x unified",
                       legend=dict(orientation="h", y=-0.25, x=0),
                       yaxis_title="Capital (1 = valor inicial)", xaxis_title=None)
     fig.update_yaxes(tickformat=".2f")
@@ -2426,31 +2461,47 @@ def _figura_curva_capital(curve: pd.DataFrame, benchmark: str | None) -> go.Figu
 
 
 def _legenda_curva_capital(info: dict, estado: dict) -> str:
-    """Diz qual referência entrou e, quando o índice escolhido faltou, por quê.
+    """Diz em que moeda estão as linhas, o que cada par compara e, quando o
+    índice escolhido faltou, por quê.
 
     O aviso de benchmark indisponível vai só para o log de lacunas; sem dizê-lo
     aqui, a curva sem o S&P 500 parecia um seletor esquecido.
     """
+    em_reais = info.get("moeda") == "BRL"
     referencia = info.get("benchmark")
-    if referencia:
-        texto = (f"Referências: {referencia} e pesos iguais do universo, em retorno "
-                 "total e antes de custo e imposto. Compare o índice com a linha "
-                 "bruta, que está na mesma moeda; a líquida em reais desconta "
-                 "custo, câmbio, IR e IOF.")
-        if info.get("janela_recortada"):
-            texto += (f" O índice não cobre todo o teste, então todas as linhas "
-                      f"foram recompostas de {info['inicio']} a {info['fim']} "
-                      f"({info['n_periodos']} períodos), a mesma janela do excesso "
-                      "anualizado.")
-        return texto
-    if estado.get("modo") == "erro":
-        rotulo = estado.get("rotulo") or estado.get("simbolo") or "O índice escolhido"
-        return (f"{rotulo} ficou fora do gráfico: não há série mensal publicada "
-                "para ele no período do teste. A referência é a carteira de pesos "
-                "iguais do universo, em retorno total e antes de custo e imposto.")
-    return ("Referência: pesos iguais do universo, em retorno total e antes de "
-            "custo e imposto. Escolha um índice no seletor “Benchmark de mercado” "
-            "para incluí-lo.")
+    if em_reais:
+        texto = ("Todas as linhas estão em reais. Bruto (tracejado) é só a "
+                 "conversão cambial do retorno total em dólar; líquido (cheio) "
+                 "desconta custo de giro, retenção de 30% sobre dividendos, IR de "
+                 "15% sobre o ganho realizado e IOF de ida e volta.")
+        if referencia:
+            texto += (" O índice passa pela mesma conta, comprado na primeira data e "
+                      "mantido: como não há venda, não paga IR no caminho. Compare "
+                      "bruto com bruto e líquido com líquido. A linha de pesos iguais "
+                      "aparece ao clicar na legenda.")
+    elif referencia:
+        texto = (f"Linhas em dólar, em retorno total e antes de custo e imposto: o "
+                 f"câmbio não estava disponível para converter. Referências: "
+                 f"{referencia} e pesos iguais do universo.")
+    else:
+        texto = ("Linhas em dólar, em retorno total e antes de custo e imposto: o "
+                 "câmbio não estava disponível para converter.")
+    if referencia and info.get("janela_recortada"):
+        texto += (f" O índice não cobre todo o teste, então todas as linhas foram "
+                  f"recompostas de {info['inicio']} a {info['fim']} "
+                  f"({info['n_periodos']} períodos), a mesma janela do excesso "
+                  "anualizado.")
+    if not referencia:
+        if estado.get("modo") == "erro":
+            rotulo = estado.get("rotulo") or estado.get("simbolo") or "O índice escolhido"
+            texto += (f" {rotulo} ficou fora do gráfico: não há série mensal "
+                      "publicada para ele no período do teste. A referência é a "
+                      "carteira de pesos iguais do universo, bruta.")
+        else:
+            texto += (" A referência é a carteira de pesos iguais do universo, "
+                      "bruta. Escolha um índice no seletor “Benchmark de mercado” "
+                      "para incluí-lo.")
+    return texto
 
 
 # ── Qualidade dos Dados ───────────────────────────────────────────────────────
