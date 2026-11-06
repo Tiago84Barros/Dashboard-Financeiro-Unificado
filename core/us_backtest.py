@@ -189,6 +189,55 @@ def _bloco_benchmark(pr_s: pd.Series, dates: list, *, benchmark,
     }
 
 
+def _benchmark_liquido(extra: dict, dates: list, cambio_usdbrl,
+                       periods_per_year: int) -> dict:
+    """O índice em reais, bruto e líquido, pela MESMA conta da estratégia.
+
+    O índice é tratado como uma carteira de um ativo só, comprada na primeira
+    data e mantida: peso 1 em todo período, giro de 0,5 na entrada (a mesma
+    convenção da estratégia, que parte de caixa) e zero depois. Passa por
+    ``liquido_eua_brl`` -- custo, retenção de 30% sobre o dividendo, câmbio,
+    IR de 15% sobre o ganho REALIZADO e IOF --, e não por uma fórmula própria:
+    duas contas para a mesma pergunta divergiriam na primeira correção.
+
+    Como quem segura o índice não vende, o rastreador não realiza ganho e o IR
+    no caminho é zero. Isso não é favor ao índice: é a vantagem real de não
+    girar a carteira, e é exatamente o que a comparação tem de mostrar.
+
+    O excesso líquido é medido nas datas que o índice cobre, como o excesso
+    em dólar de ``_bloco_benchmark``.
+    """
+    from core.backtest_liquido import liquido_eua_brl
+
+    estado = extra.get("benchmark") or {}
+    simbolo = str(estado.get("simbolo") or "INDICE")
+    por_texto = {str(d): d for d in dates}
+    bm_datas = [str(d) for d in extra.get("benchmark_dates") or []]
+    if not bm_datas or any(d not in por_texto for d in bm_datas):
+        return {}
+    r_bm = _retornos_da_curva(extra["benchmark_equity_curve"], bm_datas)
+    periodos, prev = [], {}
+    for texto in bm_datas:
+        pesos = {simbolo: 1.0}
+        r = float(r_bm.loc[texto])
+        periodos.append({"date": por_texto[texto], "pesos": pesos,
+                         "turnover": turnover(prev, pesos), "fwd": {simbolo: r},
+                         "fwd_preco": {}, "ew_usd": r})
+        prev = pesos
+    bm_liq = liquido_eua_brl(periodos, cambio_usdbrl,
+                             periodos_por_ano=periods_per_year)
+    saida = {"benchmark_liquido": bm_liq}
+    if bm_liq.get("ok"):
+        liq = extra["liquido"]
+        r_est = _retornos_da_curva(liq["equity_curve_liquido"],
+                                   [str(d) for d in liq["dates"]]).reindex(bm_datas)
+        est = performance_stats(r_est, periods_per_year)["ann_return"]
+        idx = bm_liq["portfolio_brl_liquido"]["ann_return"]
+        saida["excess_ann_liquido_vs_benchmark"] = (
+            None if est is None or idx is None else float(est - idx))
+    return saida
+
+
 def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
                  weighting: str = "score", periods_per_year: int = 12,
                  transaction_cost_bps: float = 0.0, slippage_bps: float = 0.0,
@@ -307,6 +356,9 @@ def walk_forward(panel: pd.DataFrame, *, top_n: int = 20,
         from core.backtest_liquido import liquido_eua_brl
         extra["liquido"] = liquido_eua_brl(
             periodos_liquido, cambio_usdbrl, periodos_por_ano=periods_per_year)
+        if extra.get("benchmark_equity_curve") and extra["liquido"].get("ok"):
+            extra.update(_benchmark_liquido(
+                extra, dates, cambio_usdbrl, periods_per_year))
     max_weight = float(max(max_weights)) if max_weights else None
     max_hhi = float(max(hhis)) if hhis else None
     violates_policy = bool(max_weight is not None
@@ -365,62 +417,90 @@ def _retornos_da_curva(curva, datas) -> pd.Series:
     return c / c.shift(1).fillna(1.0) - 1.0
 
 
+def _nome_indice(estado: dict) -> str:
+    """"S&P 500 (SPY)" -> "S&P 500": a moeda e o tratamento vão no sufixo."""
+    rotulo = str(estado.get("rotulo") or estado.get("simbolo") or "Índice")
+    return rotulo.split(" (")[0].strip() or rotulo
+
+
 def curvas_capital(res: dict) -> tuple[pd.DataFrame, dict]:
-    """Curvas de capital da estratégia e das referências, na MESMA janela.
+    """Curvas de capital da estratégia e das referências, na MESMA moeda e janela.
 
     Devolve ``(quadro, info)``: ``quadro`` tem uma coluna por linha do gráfico,
-    indexada pelas datas de decisão; ``info`` diz qual referência entrou e se a
-    janela foi recortada.
+    indexada pelas datas de decisão; ``info`` diz a moeda, qual índice entrou
+    (``benchmark`` é a coluna líquida dele em reais, ou a coluna em dólar no
+    modo sem câmbio) e se a janela foi recortada.
 
-    A comparação só é honesta quando todas as linhas começam do mesmo capital
-    na mesma data. O índice pode cobrir menos datas que o painel (série mais
-    curta que o histórico de scores); desenhar a carteira desde 2010 e o índice
-    desde 2014, cada um partindo de 1, faria o índice parecer pior só por ter
-    tido menos anos para compor. Por isso, quando o índice não cobre todas as
-    datas, TODAS as curvas são recompostas a partir dos retornos período a
-    período nas datas que o índice cobre -- o mesmo recorte que
-    ``_bloco_benchmark`` usa para o excesso anualizado.
+    Moeda: com câmbio (``res["liquido"]["ok"]``) TODAS as linhas saem em reais
+    -- estratégia bruta (só câmbio), estratégia líquida (custo, retenção, IR e
+    IOF), o índice bruto e líquido pela mesma conta (``_benchmark_liquido``) e
+    pesos iguais em reais, bruto. Assim a distância entre bruta e líquida é
+    custo e imposto, e não câmbio, e cada par (bruto x bruto, líquido x
+    líquido) compara a mesma coisa. Sem câmbio, o gráfico cai para o dólar
+    bruto e diz isso em ``info["moeda"]``.
 
-    Moedas: carteira bruta, pesos iguais e índice são retorno total em USD,
-    antes de custo e imposto; a líquida é em reais depois de custo, câmbio, IR
-    e IOF. O rótulo de cada coluna leva a moeda para que ninguém compare a
-    líquida em reais com o índice em dólar achando que é a mesma régua.
+    Janela: a comparação só é honesta quando todas as linhas começam do mesmo
+    capital na mesma data. Se o índice cobre menos datas que o painel, TODAS
+    as curvas são recompostas a partir dos retornos período a período nas
+    datas que ele cobre -- o mesmo recorte do excesso anualizado. Nesse caso o
+    IOF de ida da estratégia, cobrado no primeiro período do painel, pode cair
+    fora da janela: aproximação declarada, de 1,1% uma única vez.
     """
     datas = [str(d) for d in (res.get("dates") or [])]
     curva = res.get("equity_curve") or []
-    info = {"benchmark": None, "janela_recortada": False,
-            "n_periodos": len(datas), "inicio": datas[0] if datas else None,
+    info = {"benchmark": None, "benchmark_colunas": [], "moeda": "USD",
+            "janela_recortada": False, "n_periodos": len(datas),
+            "inicio": datas[0] if datas else None,
             "fim": datas[-1] if datas else None}
     if not datas or len(curva) != len(datas):
         return pd.DataFrame(), info
 
-    retornos: dict[str, pd.Series] = {
-        "Estratégia bruta (US$)": _retornos_da_curva(curva, datas)}
-    liquido = res.get("liquido") or {}
-    if liquido.get("ok") and [str(d) for d in liquido.get("dates") or []] == datas:
-        retornos["Estratégia líquida (R$)"] = _retornos_da_curva(
-            liquido["equity_curve_liquido"], datas)
-
     estado = res.get("benchmark") or {}
     bm_curva = res.get("benchmark_equity_curve") or []
     bm_datas = [str(d) for d in (res.get("benchmark_dates") or [])]
+    tem_indice = bool(estado.get("ok") and estado.get("modo") == "indice"
+                      and bm_curva and len(bm_curva) == len(bm_datas)
+                      and set(bm_datas) <= set(datas))
+    liquido = res.get("liquido") or {}
+    em_reais = bool(liquido.get("ok")
+                    and [str(d) for d in liquido.get("dates") or []] == datas
+                    and liquido.get("equity_curve_bruto_brl"))
+
+    retornos: dict[str, pd.Series] = {}
+    if em_reais:
+        info["moeda"] = "BRL"
+        retornos["Estratégia bruta (R$)"] = _retornos_da_curva(
+            liquido["equity_curve_bruto_brl"], datas)
+        retornos["Estratégia líquida (R$)"] = _retornos_da_curva(
+            liquido["equity_curve_liquido"], datas)
+        bm_liq = res.get("benchmark_liquido") or {}
+        if (tem_indice and bm_liq.get("ok")
+                and [str(d) for d in bm_liq.get("dates") or []] == bm_datas):
+            nome = _nome_indice(estado)
+            bruto, liq = f"{nome} bruto (R$)", f"{nome} líquido (R$)"
+            retornos[bruto] = _retornos_da_curva(bm_liq["equity_curve_bruto_brl"], bm_datas)
+            retornos[liq] = _retornos_da_curva(bm_liq["equity_curve_liquido"], bm_datas)
+            info["benchmark"], info["benchmark_colunas"] = liq, [bruto, liq]
+        if liquido.get("equity_curve_ew_brl"):
+            retornos["Pesos iguais do universo (R$)"] = _retornos_da_curva(
+                liquido["equity_curve_ew_brl"], datas)
+    else:
+        retornos["Estratégia bruta (US$)"] = _retornos_da_curva(curva, datas)
+        if tem_indice:
+            rotulo = str(estado.get("rotulo") or estado.get("simbolo") or "Índice")
+            # "S&P 500 (SPY)" vira "S&P 500 (SPY, US$)", e não "(SPY) (US$)".
+            coluna = (f"{rotulo[:-1]}, US$)" if rotulo.endswith(")")
+                      else f"{rotulo} (US$)")
+            retornos[coluna] = _retornos_da_curva(bm_curva, bm_datas)
+            info["benchmark"], info["benchmark_colunas"] = coluna, [coluna]
+        ew = res.get("equal_weight_curve") or []
+        if len(ew) == len(datas):
+            retornos["Pesos iguais do universo (US$)"] = _retornos_da_curva(ew, datas)
+
     janela = datas
-    if (estado.get("ok") and estado.get("modo") == "indice" and bm_curva
-            and len(bm_curva) == len(bm_datas) and set(bm_datas) <= set(datas)):
-        rotulo = str(estado.get("rotulo") or estado.get("simbolo") or "Índice")
-        # "S&P 500 (SPY)" vira "S&P 500 (SPY, US$)", e não "(SPY) (US$)".
-        coluna = (f"{rotulo[:-1]}, US$)" if rotulo.endswith(")")
-                  else f"{rotulo} (US$)")
-        retornos[coluna] = _retornos_da_curva(bm_curva, bm_datas)
-        info["benchmark"] = coluna
-        if bm_datas != datas:
-            janela = bm_datas
-            info["janela_recortada"] = True
-
-    ew = res.get("equal_weight_curve") or []
-    if len(ew) == len(datas):
-        retornos["Pesos iguais do universo (US$)"] = _retornos_da_curva(ew, datas)
-
+    if info["benchmark"] and bm_datas != datas:
+        janela = bm_datas
+        info["janela_recortada"] = True
     quadro = pd.DataFrame({nome: (1.0 + r.reindex(janela)).cumprod()
                            for nome, r in retornos.items()})
     info["n_periodos"] = len(janela)
