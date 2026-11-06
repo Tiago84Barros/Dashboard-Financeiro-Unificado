@@ -260,7 +260,7 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                     pagamento: date = p["pagamento"]
                     if p["quantidade"] is None and not aplicada:
                         summary["rows_skipped"] += 1
-                        summary["errors"].append(aviso_sem_quantidade(
+                        summary["avisos"].append(aviso_sem_quantidade(
                             p["ticker"], pagamento, p["total"],
                         ))
                         continue

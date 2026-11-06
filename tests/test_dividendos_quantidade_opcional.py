@@ -396,4 +396,18 @@ def test_xp_nao_grava_provento_antes_da_083(monkeypatch):
 
     assert gravou == []
     assert resumo["rows_skipped"] == 1
-    assert any("083" in e for e in resumo["errors"])
+    assert any("083" in a for a in resumo["avisos"])
+
+
+def test_xp_com_varios_arquivos_nao_perde_os_avisos(monkeypatch):
+    from data_pipeline.importers.investments import xp_consolidado as xp
+
+    resumos = iter([
+        {**common.make_summary("xp"), "avisos": ["rode a 083"]},
+        common.make_summary("xp"),
+    ])
+    monkeypatch.setattr(xp, "_parse_single", lambda item, engine: next(resumos))
+
+    resumo = xp.parse([("jan.xlsx", b"a"), ("fev.xlsx", b"b")], None)
+
+    assert resumo["avisos"] == ["jan.xlsx: rode a 083"]

@@ -211,7 +211,7 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                     if c["quantity"] is None and not aceita_sem_qtd:
                         if not ja_existe:
                             summary["rows_skipped"] += 1
-                            summary["errors"].append(aviso_sem_quantidade(
+                            summary["avisos"].append(aviso_sem_quantidade(
                                 c["ticker"], c["transaction_date"],
                                 c["total_amount"],
                             ))

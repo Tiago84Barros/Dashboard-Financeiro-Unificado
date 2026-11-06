@@ -667,6 +667,8 @@ def parse(
         if s.get("errors"):
             for e in s["errors"]:
                 agg["errors"].append(f"{item[0]}: {e}")
+        for a in s.get("avisos") or []:
+            agg["avisos"].append(f"{item[0]}: {a}")
         if s.get("files_skipped_notes"):
             agg.setdefault("files_skipped_notes", []).extend(
                 s["files_skipped_notes"]
@@ -738,7 +740,7 @@ def _parse_single(
         n = _linhas_de_provento(ws_prov)
         if n:
             summary["rows_skipped"] += n
-            summary["errors"].append(aviso_xp_sem_083(n))
+            summary["avisos"].append(aviso_xp_sem_083(n))
         ws_prov = None
 
     with engine.connect() as conn:

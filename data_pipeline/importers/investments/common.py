@@ -42,6 +42,10 @@ def make_summary(source: str) -> dict[str, Any]:
         "rows_skipped": 0,
         "files_skipped": 0,        # arquivos pulados intencionalmente (não-erro)
         "files_skipped_notes": [],  # mensagens amigáveis (1 por arquivo)
+        # O que o USUÁRIO precisa fazer (rodar a 083, importar outro extrato).
+        # Não é erro: não muda o status. `errors` vai para o registro técnico
+        # (`detalhe_tecnico`) e não aparece na tela; `avisos` aparece.
+        "avisos": [],
         "errors": [],
         "started_at": datetime.now(tz=timezone.utc).isoformat(),
         "finished_at": None,
@@ -348,7 +352,7 @@ def ensure_external_id_columns(engine: Engine) -> None:
 #
 # O importador NÃO roda a migração: ela muda o schema e limpa dados da XP, e
 # AGENTS.md exige confirmação humana para migração. Antes da 083, o provento
-# sem quantidade sai nomeado em `errors` (`aviso_sem_quantidade`), a XP não
+# sem quantidade sai nomeado em `avisos` (`aviso_sem_quantidade`), a XP não
 # grava provento nenhum (`aviso_xp_sem_083`) e nenhum ajuste roda.
 
 def _dialeto(conn: Any) -> str | None:
@@ -369,7 +373,8 @@ def migracao_083_aplicada(conn: Connection | Engine) -> bool:
                              AND is_nullable = 'YES') AS anulaveis,
           COUNT(*) FILTER (WHERE column_name = 'quantity_placeholder') AS marca
           FROM information_schema.columns
-         WHERE table_name = 'dividends'
+         WHERE table_schema = 'public'
+           AND table_name = 'dividends'
     """)
     try:
         if isinstance(conn, Engine):
