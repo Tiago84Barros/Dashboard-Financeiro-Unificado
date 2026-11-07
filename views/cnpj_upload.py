@@ -19,6 +19,7 @@ from core.pj import repositorio as repo
 from core.pj.extratos import extensoes_aceitas, ler_extrato
 from core.pj.plano_contas import CATEGORIAS, POR_CODIGO, rotulo, sugerir_categoria
 from core.utils import escapar_cifrao, fmt_moeda
+from design.componentes import card_metrica
 from design.tema_canvas import no_claro
 
 SEM_CATEGORIA = "Sem categoria"
@@ -92,12 +93,17 @@ def _conferencia_de_saldo(extrato, novos: list[dict], vinculos: dict[int, dict],
         {i: v["transaction_id"] for i, v in vinculos.items() if i in escolhidos})
     projetado = repo.saldo_calculado(empresa, hipoteticos, saldo["data"]) or 0.0
     dif = round(saldo["valor"] - projetado, 2)
-    k1, k2, k3 = st.columns(3)
-    k1.metric("Saldo do banco", fmt_moeda(saldo["valor"]), _fmt_data(saldo["data"]),
-              delta_color="off")
-    k2.metric("Saldo do app após importar", fmt_moeda(projetado))
-    k3.metric("Diferença", fmt_moeda(dif))
-    if abs(dif) < 0.01:
+    fecha = abs(dif) < 0.01
+    k1, k2, k3 = st.columns(3, gap="small")
+    with k1:
+        card_metrica("Saldo do banco", fmt_moeda(saldo["valor"]),
+                     f"em {_fmt_data(saldo['data'])}", accent="var(--app-muted)")
+    with k2:
+        card_metrica("Saldo do app após importar", fmt_moeda(projetado),
+                     "lançamentos + esta importação", accent="var(--app-info)")
+    with k3:
+        card_metrica("Diferença", fmt_moeda(dif), "banco − app", positivo=fecha)
+    if fecha:
         st.success("O saldo do app fecha com o do banco.")
     else:
         st.warning(escapar_cifrao(

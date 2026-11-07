@@ -77,3 +77,37 @@ def test_lancamento_ja_classificado_pode_ter_a_categoria_corrigida():
     assert any("Corrigir categoria" in e.label for e in at.expander)
     rotulos = at.selectbox(key="cnpj_corrigir_sel").options
     assert any("Cliente Alfa" in r for r in rotulos)
+
+
+def _app_conferencia(saldo_banco: float):
+    from datetime import date
+    from types import SimpleNamespace
+
+    import views.cnpj_upload as up
+
+    up.repo.obter_empresa = lambda: {"saldo_inicial": 1000.0}
+    up.repo.listar_lancamentos = lambda: []
+    up.repo.saldo_calculado = lambda empresa, lancs, data: 1771.44
+    up.relatorios.lancamentos_apos_importacao = lambda *a, **k: []
+    extrato = SimpleNamespace(saldo_final={"valor": saldo_banco, "data": date(2026, 11, 7)})
+    up._conferencia_de_saldo(extrato, [], {}, set())
+
+
+def test_conferencia_de_saldo_em_cards_css():
+    """Os três números saem no card CSS do app, não em st.metric."""
+    at = AppTest.from_function(_app_conferencia, args=(1771.44,)).run(timeout=30)
+    assert not at.exception
+    assert not at.metric
+    cards = "".join(m.value for m in at.markdown if "app-kpi-card" in m.value)
+    for trecho in ("Saldo do banco", "Saldo do app após importar", "Diferença",
+                   "1.771,44", "07/11/2026"):
+        assert trecho in cards
+    assert any("fecha com o do banco" in s.value for s in at.success)
+
+
+def test_conferencia_com_diferenca_pinta_o_card_de_vermelho():
+    at = AppTest.from_function(_app_conferencia, args=(1800.0,)).run(timeout=30)
+    assert not at.exception
+    card_dif = [m.value for m in at.markdown if "Diferença" in m.value][0]
+    assert "danger" in card_dif
+    assert at.warning
