@@ -247,3 +247,39 @@ def test_dre_mostra_a_categoria_propria_na_linha_dela():
     i_custos = next(i for i, linha in enumerate(linhas) if "(−) Custos" in linha)
     assert "Comissões de vendedores" in linhas[i_custos + 1]
     assert "300,00" in linhas[i_custos]
+
+
+def _app_visao_geral_anual():
+    from datetime import date
+
+    import views.controle_cnpj as tela
+
+    hoje = date.today()
+    base = {"status": "pago", "origem": "extrato", "contraparte": None, "parcela": 1,
+            "total_parcelas": 1, "categoria": "receita_servicos"}
+    lancs = [
+        {**base, "id": "1", "data": date(hoje.year, 1, 2), "descricao": "Cliente jan",
+         "valor": 1000.0, "chave": "k1"},
+        {**base, "id": "2", "data": hoje, "descricao": "Cliente hoje", "valor": 400.0,
+         "chave": "k2"},
+        {**base, "id": "3", "data": date(hoje.year - 1, 12, 20), "descricao": "Ano passado",
+         "valor": 9000.0, "chave": "k3"},
+    ]
+    originais = {n: getattr(tela.repo, n) for n in ("saldo_calculado", "listar_saldos_extrato")}
+    tela.repo.saldo_calculado = lambda empresa, lancs, data: None
+    tela.repo.listar_saldos_extrato = lambda: []
+    try:
+        tela._tab_visao_geral(lancs, None)
+    finally:
+        for n, f in originais.items():
+            setattr(tela.repo, n, f)
+
+
+def test_visao_geral_resume_o_ano_sem_seletor_de_mes():
+    at = AppTest.from_function(_app_visao_geral_anual).run(timeout=30)
+    assert not at.exception
+    assert not at.selectbox  # sem filtro por mês
+    cards = "".join(m.value for m in at.markdown if "app-kpi-card" in m.value)
+    assert "Receita bruta no ano" in cards
+    assert "1.400,00" in cards        # janeiro + hoje
+    assert "9.000" not in cards       # ano anterior fica de fora

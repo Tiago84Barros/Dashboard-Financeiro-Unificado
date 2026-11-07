@@ -3,12 +3,12 @@
   "resumo": "O financeiro da empresa, separado do pessoal",
   "explicacao": "Tela do dinheiro da empresa (um CNPJ no Simples Nacional), inspirada no Conta Azul no que dá para fazer a partir do extrato. Seis abas: Visão geral, Lançamentos, A pagar e receber, DRE, Balanço e Impostos. O extrato da conta da empresa entra por Configurações → Atualização de dados → CNPJ. Nada daqui entra no Controle Financeiro pessoal, e nada do pessoal entra aqui. Emitir nota fiscal, gerar boleto e mandar dados ao contador não existem no app: dependem de certificado digital e convênio com banco.",
   "so_admin": false,
-  "fonte": "views/controle_cnpj.py:685",
+  "fonte": "views/controle_cnpj.py:690",
   "filhos": [
     {
       "nome": "Visão geral",
-      "resumo": "O mês da empresa num olhar",
-      "explicacao": "Escolha o mês. Os cartões mostram a receita bruta, o resultado com a margem, o saldo em conta calculado hoje e quantos lançamentos estão sem categoria. Logo abaixo, a conferência com o último extrato: se o saldo do app fecha com o do banco ou qual é a diferença. O gráfico traz 12 meses de entradas, saídas e resultado.",
+      "resumo": "O ano da empresa num olhar",
+      "explicacao": "Sem seletor de mês: os cartões resumem o ano corrente, de janeiro até hoje, com a receita bruta, o resultado com a margem e quantos lançamentos do ano estão sem categoria, além do saldo em conta calculado hoje. O mês a mês fica no gráfico e na aba DRE. Logo abaixo, a conferência com o último extrato: se o saldo do app fecha com o do banco ou qual é a diferença. O gráfico traz 12 meses de entradas, saídas e resultado.",
       "so_admin": false,
       "fonte": "views/controle_cnpj.py:113",
       "filhos": []
@@ -18,7 +18,7 @@
       "resumo": "Lista por mês ou de todos os meses, com filtro e busca",
       "explicacao": "Escolha um mês ou 'Todos os meses'. A lista traz data, descrição, categoria, valor, situação (pago ou previsto) e origem (extrato, manual ou manual conciliado). Dá para filtrar por uma ou mais categorias (inclusive 'Sem categoria') e buscar na descrição: a busca ignora acento e maiúscula, e cada palavra digitada precisa aparecer, em qualquer ordem. Com filtro ativo, uma linha mostra quantos lançamentos sobraram e o total de entradas e saídas deles. Os que estão sem categoria aparecem num formulário para classificar; a categoria escolhida vale também para os próximos extratos do mesmo cliente ou fornecedor; quando a empresa manda dinheiro para quem tem regra de receita, a sugestão é 'Devoluções e cancelamentos a clientes', que entra como dedução da receita. Em 'Corrigir categoria' dá para trocar a categoria de qualquer lançamento da lista filtrada, inclusive os já classificados (um aporte aceito como receita, por exemplo). Em 'Categorias da empresa' você cria categorias próprias, além das do app: cada uma recebe um nome e a linha da DRE em que entra (a linha decide se soma na receita e no DAS, nas despesas ou fora do resultado, e não muda depois de criada); dá para renomear e, se nenhum lançamento a usa, excluir. As categorias criadas aparecem em todos os seletores, no filtro, na prévia da importação e na DRE. Há ainda 'Novo lançamento manual' e 'Excluir lançamento manual' (o que veio do extrato não se exclui, porque o banco registrou).",
       "so_admin": false,
-      "fonte": "views/controle_cnpj.py:288",
+      "fonte": "views/controle_cnpj.py:293",
       "filhos": []
     },
     {
@@ -26,7 +26,7 @@
       "resumo": "Contas previstas e saldo projetado",
       "explicacao": "Cadastre contas a pagar e a receber (com 'Repetir todo mês' para as fixas). Os cartões mostram vencidos sem baixa, o que há a pagar e a receber em 30 dias e o saldo projetado em 90 dias. A tabela soma cada previsto ao saldo; vencido entra como pago hoje. Embaixo, escolha um previsto para dar baixa (data e valor pago) ou excluir. Ao importar o extrato, o pagamento de mesmo valor perto do vencimento dá a baixa sozinho.",
       "so_admin": false,
-      "fonte": "views/controle_cnpj.py:389",
+      "fonte": "views/controle_cnpj.py:394",
       "filhos": []
     },
     {
@@ -34,7 +34,7 @@
       "resumo": "Demonstração de resultado gerencial",
       "explicacao": "Escolha o mês e o período (mês, ano ou últimos 12 meses). A DRE vai da receita bruta ao resultado do período, passando por deduções (DAS e devoluções a clientes), receita líquida, custos, lucro bruto, despesas, pessoal e financeiro, com cada categoria embaixo da sua linha. Aporte, distribuição de lucros, transferência, empréstimo e aplicação aparecem à parte, porque mexem no caixa e não no lucro. É regime de caixa: conta no mês em que o dinheiro passou pela conta. Lançamento sem categoria fica fora e é avisado.",
       "so_admin": false,
-      "fonte": "views/controle_cnpj.py:485",
+      "fonte": "views/controle_cnpj.py:490",
       "filhos": []
     },
     {
@@ -42,7 +42,7 @@
       "resumo": "O que a empresa tem, deve e o patrimônio líquido",
       "explicacao": "Escolha hoje ou o fim de um mês já fechado. Os cartões mostram o ativo, o passivo e o patrimônio líquido. À esquerda, o ativo: caixa e bancos (o saldo conferido com o extrato), contas a receber, aplicações (valor aplicado menos resgatado) e dinheiro transferido para outras contas da empresa. À direita, o passivo (contas a pagar e empréstimos) e o patrimônio líquido: o saldo que já havia na conta antes do primeiro lançamento registrado, aportes, distribuição de lucros, resultado acumulado da DRE, contas em aberto e movimentos sem categoria. Fecha por construção, porque tudo sai do mesmo caixa. É um balanço gerencial: imobilizado, estoque e tributo a recolher não aparecem, e em data passada as contas a pagar e a receber ficam de fora, porque o app não sabe o que estava em aberto naquele dia.",
       "so_admin": false,
-      "fonte": "views/controle_cnpj.py:548",
+      "fonte": "views/controle_cnpj.py:553",
       "filhos": []
     },
     {
@@ -50,7 +50,7 @@
       "resumo": "Dados da empresa e DAS estimado do Simples",
       "explicacao": "Em 'Dados da empresa', informe CNPJ, razão social e o anexo do Simples Nacional. Escolha o mês: os cartões mostram a receita do mês (receita bruta menos devoluções a clientes, como manda o Simples), a RBT12 (receita dos 12 meses anteriores; com menos de 12, média × 12), a alíquota efetiva com anexo e faixa, e o DAS estimado que vence no mês seguinte. No Anexo V aparece o Fator R (folha ÷ RBT12), que de 28% para cima leva a tributação ao Anexo III. Se o DAS já foi pago, a tela compara com a estimativa. O valor oficial é sempre o do PGDAS-D.",
       "so_admin": false,
-      "fonte": "views/controle_cnpj.py:622",
+      "fonte": "views/controle_cnpj.py:627",
       "filhos": []
     }
   ]

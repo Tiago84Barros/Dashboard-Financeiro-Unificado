@@ -1061,7 +1061,7 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
         ),
         "cnpj_visao": _node(
             "cnpj_visao", "Visão geral e Lançamentos", "Visualização",
-            "Visão geral: receita bruta, resultado e margem do mês, saldo em conta, "
+            "Visão geral: receita bruta, resultado e margem do ano até hoje, saldo em conta, "
             "conferência com o último extrato e 12 meses de entradas, saídas e resultado. "
             "Lançamentos: a lista de um mês ou de todos os meses, com filtro por categoria e "
             "busca na descrição, a classificação dos que estão sem categoria, a correção da "

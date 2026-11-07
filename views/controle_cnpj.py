@@ -111,22 +111,26 @@ def _fig_serie(serie: list[dict]) -> go.Figure:
 
 
 def _tab_visao_geral(lancs: list[dict], empresa: dict | None) -> None:
-    ano, mes = _seletor_mes(lancs, "cnpj_vg_mes")
-    d = rel.dre(lancs, [(ano, mes)])
+    # Resumo do ano corrente, de janeiro até hoje, sem seletor de mês: a visão
+    # geral responde "como vai o ano"; o mês a mês fica na DRE e no gráfico.
     hoje = _date.today()
+    ano = hoje.year
+    d = rel.dre(lancs, [(ano, m) for m in range(1, hoje.month + 1)])
+    periodo = (f"{_MESES[1]}–{_rotulo_mes(ano, hoje.month)}" if hoje.month > 1
+               else _rotulo_mes(ano, 1))
     saldo = repo.saldo_calculado(empresa, lancs, hoje)
     k1, k2, k3, k4 = st.columns(4, gap="small")
     with k1:
-        card_metrica("Receita bruta", fmt_moeda(d["grupos"]["receita_bruta"]), _rotulo_mes(ano, mes))
+        card_metrica("Receita bruta no ano", fmt_moeda(d["grupos"]["receita_bruta"]), periodo)
     with k2:
         margem = f"margem {d['margem']:.0%}" if d["margem"] is not None else "sem receita"
-        card_metrica("Resultado", fmt_moeda(d["resultado"]), margem,
+        card_metrica("Resultado no ano", fmt_moeda(d["resultado"]), margem,
                      positivo=d["resultado"] >= 0)
     with k3:
         card_metrica("Saldo em conta", fmt_moeda(saldo) if saldo is not None else "—",
                      "calculado hoje" if saldo is not None else "importe um extrato com saldo")
     with k4:
-        card_metrica("Sem categoria", d["sem_categoria_n"],
+        card_metrica("Sem categoria no ano", d["sem_categoria_n"],
                      fmt_moeda(d["sem_categoria_total"]) if d["sem_categoria_n"] else "tudo classificado",
                      positivo=False if d["sem_categoria_n"] else None)
 
@@ -149,7 +153,8 @@ def _tab_visao_geral(lancs: list[dict], empresa: dict | None) -> None:
                    "até ser classificado na aba Lançamentos.")
 
     st.markdown("#### Últimos 12 meses")
-    st.plotly_chart(_fig_serie(rel.serie_mensal(lancs, _date(ano, mes, 1))), width="stretch")
+    st.plotly_chart(_fig_serie(rel.serie_mensal(lancs, _date(ano, hoje.month, 1))),
+                    width="stretch")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
