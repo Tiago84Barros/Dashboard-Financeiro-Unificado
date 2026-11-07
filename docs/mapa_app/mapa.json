@@ -708,7 +708,7 @@
         {
           "nome": "Balanço",
           "resumo": "O que a empresa tem, deve e o patrimônio líquido",
-          "explicacao": "Escolha hoje ou o fim de um mês já fechado. Os cartões mostram o ativo, o passivo e o patrimônio líquido. À esquerda, o ativo: caixa e bancos (o saldo conferido com o extrato), contas a receber, aplicações (valor aplicado menos resgatado) e dinheiro transferido para outras contas da empresa. À direita, o passivo (contas a pagar e empréstimos) e o patrimônio líquido: saldo de abertura da conta, aportes, distribuição de lucros, resultado acumulado da DRE, contas em aberto e movimentos sem categoria. Fecha por construção, porque tudo sai do mesmo caixa. É um balanço gerencial: imobilizado, estoque e tributo a recolher não aparecem, e em data passada as contas a pagar e a receber ficam de fora, porque o app não sabe o que estava em aberto naquele dia.",
+          "explicacao": "Escolha hoje ou o fim de um mês já fechado. Os cartões mostram o ativo, o passivo e o patrimônio líquido. À esquerda, o ativo: caixa e bancos (o saldo conferido com o extrato), contas a receber, aplicações (valor aplicado menos resgatado) e dinheiro transferido para outras contas da empresa. À direita, o passivo (contas a pagar e empréstimos) e o patrimônio líquido: o saldo que já havia na conta antes do primeiro lançamento registrado, aportes, distribuição de lucros, resultado acumulado da DRE, contas em aberto e movimentos sem categoria. Fecha por construção, porque tudo sai do mesmo caixa. É um balanço gerencial: imobilizado, estoque e tributo a recolher não aparecem, e em data passada as contas a pagar e a receber ficam de fora, porque o app não sabe o que estava em aberto naquele dia.",
           "so_admin": false
         },
         {
@@ -3046,7 +3046,7 @@
             {
               "nome": "CNPJ",
               "resumo": "Extrato da conta da empresa (OFX)",
-              "explicacao": "Envie o extrato da conta da empresa em OFX (no Cora: Extrato › Exportar › OFX). A prévia mostra cada movimento com uma categoria sugerida do plano de contas da empresa; a categoria que você escolher para um cliente ou fornecedor vira regra para os próximos extratos. O movimento que já estava lançado à mão (mesmo valor, até 3 dias) aparece marcado para conciliar em vez de duplicar, e o previsto recebe a baixa. O saldo final do arquivo é comparado com o saldo do app. Depois clique em 'Importar extrato'. Tudo vai para a seção Controle CNPJ e nada entra no Controle Financeiro pessoal.",
+              "explicacao": "Envie o extrato da conta da empresa em OFX (no Cora: Extrato › Exportar › OFX). A prévia mostra cada movimento com uma categoria sugerida do plano de contas da empresa; a categoria que você escolher para um cliente ou fornecedor vira regra para os próximos extratos. Dinheiro enviado a um cliente é sugerido como devolução (dedução da receita), e estorno ou reembolso recebido nunca é sugerido como receita: segue a categoria do fornecedor, ou a da despesa que desfaz (estorno de tarifa volta para Tarifas), ou fica sem categoria. O movimento que já estava lançado à mão (mesmo valor, até 3 dias) aparece marcado para conciliar em vez de duplicar, e o previsto recebe a baixa. O saldo final do arquivo é comparado com o saldo do app. Depois clique em 'Importar extrato'. Tudo vai para a seção Controle CNPJ e nada entra no Controle Financeiro pessoal.",
               "so_admin": false
             }
           ]
@@ -3206,7 +3206,7 @@
             {
               "nome": "Controle CNPJ",
               "resumo": "Como o extrato da empresa vira caixa, DRE e DAS",
-              "explicacao": "Fluxograma da seção Controle CNPJ: a entrada do extrato e do lançamento manual, o plano de contas da empresa, a conciliação e as abas Visão geral, Lançamentos, A pagar e receber, DRE e Impostos.",
+              "explicacao": "Fluxograma da seção Controle CNPJ: a entrada do extrato e do lançamento manual, o plano de contas da empresa, a conciliação e as abas Visão geral, Lançamentos, A pagar e receber, DRE, Balanço e Impostos.",
               "so_admin": false
             },
             {

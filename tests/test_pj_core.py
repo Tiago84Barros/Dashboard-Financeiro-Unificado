@@ -402,7 +402,7 @@ def test_balanco_fecha_e_poe_cada_categoria_no_seu_lado():
     assert _linha(b, "passivo", "Empréstimos e financiamentos") == 8500.0
     assert _linha(b, "passivo", "Contas a pagar") == 700.0  # sem a parcela do empréstimo
     pl = dict(b["patrimonio_liquido"])
-    assert pl["Saldo de abertura da conta"] == 1000.0
+    assert pl["Saldo anterior aos lançamentos registrados"] == 1000.0
     assert pl["Aportes de sócios"] == 5000.0
     assert pl["Distribuição de lucros"] == -1000.0
     assert pl["Resultado acumulado (DRE, caixa)"] == 2600.0
@@ -436,3 +436,70 @@ def test_balanco_antes_da_abertura_e_sem_saldo():
     assert b["fecha"]
     assert _linha(b, "ativo", "Caixa e bancos") == saldo_ate(
         1000.0, date(2026, 10, 31), _lancs_balanco(), date(2026, 10, 5))
+
+
+# ── Estorno de fornecedor: abate a despesa, nunca vira receita ──────────────
+
+def test_estorno_de_quem_nao_tem_regra_nao_vira_receita():
+    from core.pj.plano_contas import sugerir_categoria
+    estorno = {"valor": 200.0, "descricao": "Pix recebido - Estorno compra Loja Y",
+               "contraparte": "Loja Y"}
+    assert sugerir_categoria(estorno, {}) is None
+    for desc in ("TED recebida - Reembolso Kalunga", "Pix recebido - devolução fornecedor",
+                 "Crédito recebido ressarcimento", "Cashback recebido"):
+        assert sugerir_categoria({**estorno, "descricao": desc}, {}) is None, desc
+    # crédito comum continua sugerindo receita
+    assert sugerir_categoria({**estorno, "descricao": "Pix recebido - Andressa"},
+                             {}) == "receita_servicos"
+
+
+def test_estorno_usa_a_regra_da_saida_que_ele_desfaz():
+    from core.pj.plano_contas import sugerir_categoria
+    assert sugerir_categoria({"valor": 12.9, "descricao": "Estorno de tarifa Pix",
+                              "contraparte": "Cora"}, {}) == "tarifas"
+    assert sugerir_categoria({"valor": 3.5, "descricao": "Estorno IOF",
+                              "contraparte": "Cora"}, {}) == "despesas_financeiras"
+
+
+def test_estorno_de_fornecedor_conhecido_segue_a_regra_dele():
+    from core.pj.plano_contas import sugerir_categoria
+    regras = {"imobiliaria central": "aluguel"}
+    assert sugerir_categoria({"valor": 200.0, "descricao": "Pix recebido - estorno",
+                              "contraparte": "Imobiliária Central"}, regras) == "aluguel"
+
+
+def test_estorno_abate_a_despesa_e_nao_mexe_na_base_do_das():
+    from datetime import date
+
+    from core.pj.relatorios import dre, serie_mensal
+
+    def pago(dia, valor, cat):
+        return {"data": date(2026, 11, dia), "valor": valor, "categoria": cat,
+                "status": "pago"}
+    sem = [pago(1, 1000.0, "receita_servicos"), pago(2, -800.0, "aluguel")]
+    com = [*sem, pago(3, 200.0, "aluguel")]
+    assert dre(com, [(2026, 11)])["grupos"]["despesas_operacionais"] == -600.0
+    assert dre(com, [(2026, 11)])["resultado"] == dre(sem, [(2026, 11)])["resultado"] + 200.0
+    base = [serie_mensal(x, date(2026, 11, 1), meses=1)[0]["receita_simples"] for x in (sem, com)]
+    assert base == [1000.0, 1000.0]
+
+
+def test_balanco_conta_o_historico_anterior_a_ancora_do_saldo():
+    """Achado do Codex no PR #686: extrato de outubro importado depois do de
+    novembro deixa a âncora em 31/10, e o empréstimo tomado em outubro sumia
+    do passivo (só a parcela de novembro aparecia, como dívida negativa)."""
+    from datetime import date
+
+    from core.pj.relatorios import balanco
+
+    def pago(d, v, cat):
+        return {"data": d, "valor": v, "categoria": cat, "status": "pago"}
+    lancs = [pago(date(2026, 10, 5), 10000.0, "emprestimo"),
+             pago(date(2026, 10, 9), -2000.0, "aplicacao"),
+             pago(date(2026, 11, 5), -1000.0, "emprestimo")]
+    b = balanco(lancs, 8000.0, date(2026, 10, 31), date(2026, 11, 7))
+    assert b["fecha"]
+    assert _linha(b, "ativo", "Caixa e bancos") == 7000.0
+    assert _linha(b, "ativo", "Aplicações financeiras") == 2000.0
+    assert _linha(b, "passivo", "Empréstimos e financiamentos") == 9000.0
+    assert _linha(b, "patrimonio_liquido", "Saldo anterior aos lançamentos registrados") == 0.0

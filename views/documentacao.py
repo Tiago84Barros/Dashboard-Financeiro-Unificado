@@ -1039,6 +1039,7 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
                 "Regras padrão: DAS, pró-labore, tarifas, contador, rendimentos; crédito recebido sugere receita",
                 "Regra aprendida por contraparte vence a padrão",
                 "Saída para quem tem regra de receita vira devolução (dedução), não receita negativa",
+                "Estorno ou reembolso recebido nunca vira receita: segue a despesa que desfaz",
                 "Sem categoria: entra no caixa, fica fora da DRE",
             ),
             "Categoria da empresa não é a pessoal: pró-labore sai da empresa e entra na pessoa, "

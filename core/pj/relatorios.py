@@ -206,8 +206,11 @@ def balanco(lancs: list[dict], saldo_inicial: float | None, data_inicial: date |
     (empréstimo, aplicação, aporte, distribuição, transferência). Fecha por
     construção, porque o caixa é o saldo de abertura mais os pagos:
 
-        Caixa = abertura + resultado + aportes + distribuições + empréstimos
-                + aplicações + transferências + sem categoria
+        Caixa = saldo anterior + resultado + aportes + distribuições
+                + empréstimos + aplicações + transferências + sem categoria
+
+    com "saldo anterior" = caixa − todos os pagos registrados até a data, ou
+    seja, o dinheiro que já estava na conta antes do primeiro lançamento.
 
     e cada parcela vai para o seu lado: aplicação e transferência viram ativo
     (o dinheiro foi para outro lugar da empresa), empréstimo vira passivo, o
@@ -224,8 +227,12 @@ def balanco(lancs: list[dict], saldo_inicial: float | None, data_inicial: date |
     if saldo_inicial is None:
         return None
     caixa = saldo_ate(saldo_inicial, data_inicial, lancs, data)
-    fluxo = [x for x in _pagos(lancs)
-             if x["data"] <= data and (data_inicial is None or x["data"] > data_inicial)]
+    # Todo o histórico registrado até a data, inclusive o que é anterior à
+    # âncora do saldo de abertura (extrato mais antigo importado depois): a
+    # âncora serve para o CAIXA, não para descartar empréstimo ou aplicação
+    # que o app conhece. O que sobra do caixa é o saldo anterior ao primeiro
+    # lançamento registrado (achado do Codex no PR #686).
+    fluxo = [x for x in _pagos(lancs) if x["data"] <= data]
     por_cat: dict[str, float] = defaultdict(float)
     resultado = sem_cat = 0.0
     for x in fluxo:
@@ -258,7 +265,7 @@ def balanco(lancs: list[dict], saldo_inicial: float | None, data_inicial: date |
              ("Outras contas da empresa (transferências)", r(-por_cat["transferencia"]))]
     passivo = [("Contas a pagar", r(a_pagar)),
                ("Empréstimos e financiamentos", r(por_cat["emprestimo"]))]
-    pl = [("Saldo de abertura da conta", abertura),
+    pl = [("Saldo anterior aos lançamentos registrados", abertura),
           ("Aportes de sócios", r(por_cat["aporte_socio"])),
           ("Distribuição de lucros", r(por_cat["distribuicao_lucros"])),
           ("Resultado acumulado (DRE, caixa)", r(resultado)),

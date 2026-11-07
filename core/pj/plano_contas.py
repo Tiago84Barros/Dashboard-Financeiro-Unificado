@@ -105,6 +105,16 @@ _REGRAS_PADRAO: tuple[tuple[tuple[str, ...], str, str], ...] = (
       "credito recebido", "boleto recebido"), "receita_servicos", "entrada"),
 )
 
+# Entrada que devolve dinheiro que a empresa pagou: estorno de tarifa, de
+# compra, reembolso de fornecedor. NÃO é faturamento -- cair na regra genérica
+# de "Pix recebido" punha o estorno na receita bruta e aumentava o DAS. A
+# entrada com um destes termos é lida pelas regras de SAÍDA ("Estorno de
+# tarifa" volta para Tarifas, abatendo a despesa) e, sem regra, fica pendente.
+_TERMOS_ESTORNO = (
+    "estorno", "estornado", "estornada", "extorno", "devolucao", "devolvido",
+    "devolvida", "reembolso", "reembolsado", "ressarcimento", "cashback", "chargeback",
+)
+
 
 def normalizar(texto: object) -> str:
     base = unicodedata.normalize("NFKD", str(texto or ""))
@@ -126,6 +136,10 @@ def sugerir_categoria(mov: dict, regras_aprendidas: dict[str, str] | None = None
     A regra aprendida é por contraparte, sem sentido, e o mesmo cliente que
     paga também pode receber dinheiro de volta. Por isso o sentido do
     movimento decide entre receita e devolução (``categoria_no_sentido``).
+
+    Estorno de fornecedor conhecido segue a regra dele (o reembolso da
+    imobiliária entra em Aluguel e abate a despesa: é o tratamento certo).
+    Estorno de quem não tem regra não vira receita (``_TERMOS_ESTORNO``).
     """
     contraparte = normalizar(mov.get("contraparte"))
     sentido = "entrada" if float(mov.get("valor") or 0) > 0 else "saida"
@@ -134,6 +148,8 @@ def sugerir_categoria(mov: dict, regras_aprendidas: dict[str, str] | None = None
         if codigo in POR_CODIGO:
             return codigo
     texto = normalizar(f"{mov.get('descricao', '')} {mov.get('contraparte', '')}")
+    if sentido == "entrada" and any(_contem(texto, t) for t in _TERMOS_ESTORNO):
+        sentido = "saida"  # estorno desfaz uma saída: vale a regra dela, nunca a de receita
     for termos, codigo, so_para in _REGRAS_PADRAO:
         if so_para != "ambas" and so_para != sentido:
             continue
