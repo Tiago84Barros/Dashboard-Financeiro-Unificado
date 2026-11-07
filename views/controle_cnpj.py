@@ -484,7 +484,8 @@ def _tab_impostos(lancs: list[dict], empresa: dict | None) -> None:
     serie = rel.serie_mensal(lancs, _date(ano, mes, 1), meses=13)
     anteriores, atual = serie[:-1], serie[-1]
     historico = rel.meses_desde_o_inicio(anteriores, lancs)
-    est = estimar_das(anexo_atual, [s["receita"] for s in historico], atual["receita"],
+    est = estimar_das(anexo_atual, [s["receita_simples"] for s in historico],
+                      atual["receita_simples"],
                       folhas_12m_anteriores=[s["folha"] for s in historico])
 
     seguinte = (ano, mes + 1) if mes < 12 else (ano + 1, 1)
@@ -514,7 +515,8 @@ def _tab_impostos(lancs: list[dict], empresa: dict | None) -> None:
             f"(estimado {fmt_moeda(est.das_estimado)}, diferença {fmt_moeda(dif)})."))
     st.info("Estimativa. O valor oficial é o do PGDAS-D, que trata atividades mistas, ISS "
             "retido, segregação de receitas e o início de atividade com regra própria. A receita "
-            "considerada é a categoria Receita bruta, no mês em que o dinheiro entrou.")
+            "considerada é a Receita bruta menos as devoluções a clientes, no mês em que o "
+            "dinheiro passou pela conta.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

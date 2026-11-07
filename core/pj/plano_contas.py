@@ -8,7 +8,7 @@ diz em que linha da DRE cai.
 DRE gerencial em regime de CAIXA (o extrato só sabe quando o dinheiro passou):
 
     Receita bruta
-    (-) Deduções (DAS e impostos sobre a receita)
+    (-) Deduções (DAS, impostos sobre a receita e devoluções a clientes)
     = Receita líquida
     (-) Custos
     = Lucro bruto
@@ -51,6 +51,10 @@ CATEGORIAS: tuple[Categoria, ...] = (
     Categoria("receita_vendas", "Receita de vendas", "receita_bruta"),
     Categoria("outras_receitas", "Outras receitas operacionais", "receita_bruta"),
     Categoria("das", "DAS / Simples Nacional", "deducoes"),
+    # Dinheiro devolvido a cliente: estorno de serviço, venda cancelada. É
+    # dedução da receita (não despesa) e sai da receita bruta do Simples (LC
+    # 123/2006, art. 3º, § 1º: "não incluídas as vendas canceladas").
+    Categoria("devolucoes", "Devoluções e cancelamentos a clientes", "deducoes"),
     Categoria("outros_impostos", "Outros impostos sobre a receita", "deducoes"),
     Categoria("custo_servicos", "Custo de serviços (terceiros)", "custos"),
     Categoria("custo_mercadorias", "Custo de mercadorias", "custos"),
@@ -118,20 +122,42 @@ def sugerir_categoria(mov: dict, regras_aprendidas: dict[str, str] | None = None
     Regra aprendida: contraparte normalizada -> código, gravada quando o
     usuário classifica um movimento na importação. Ela vence a regra padrão,
     porque diz o que ESTE usuário faz com ESTA contraparte.
+
+    A regra aprendida é por contraparte, sem sentido, e o mesmo cliente que
+    paga também pode receber dinheiro de volta. Por isso o sentido do
+    movimento decide entre receita e devolução (``categoria_no_sentido``).
     """
     contraparte = normalizar(mov.get("contraparte"))
+    sentido = "entrada" if float(mov.get("valor") or 0) > 0 else "saida"
     if regras_aprendidas and contraparte and contraparte in regras_aprendidas:
-        codigo = regras_aprendidas[contraparte]
+        codigo = categoria_no_sentido(regras_aprendidas[contraparte], sentido)
         if codigo in POR_CODIGO:
             return codigo
     texto = normalizar(f"{mov.get('descricao', '')} {mov.get('contraparte', '')}")
-    sentido = "entrada" if float(mov.get("valor") or 0) > 0 else "saida"
     for termos, codigo, so_para in _REGRAS_PADRAO:
         if so_para != "ambas" and so_para != sentido:
             continue
         if any(_contem(texto, t) for t in termos):
             return codigo
     return None
+
+
+def categoria_no_sentido(codigo: str | None, sentido: str) -> str | None:
+    """A categoria aprendida para a contraparte, ajustada ao sentido do dinheiro.
+
+    - receita (grupo Receita bruta) numa SAÍDA vira devolução ao cliente: o
+      Pix enviado a quem paga a empresa não é faturamento negativo, é dedução;
+    - devolução numa ENTRADA não vale (``None``): dinheiro que chega do
+      cliente é receita, e a regra padrão de crédito recebido decide qual.
+    """
+    cat = POR_CODIGO.get(codigo or "")
+    if cat is None:
+        return None
+    if sentido == "saida" and cat.grupo == "receita_bruta":
+        return "devolucoes"
+    if sentido == "entrada" and cat.codigo == "devolucoes":
+        return None
+    return cat.codigo
 
 
 def rotulo(codigo: str | None) -> str:

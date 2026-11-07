@@ -1030,12 +1030,14 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
         "cnpj_plano": _node(
             "cnpj_plano", "Plano de contas da empresa", "Classificação",
             "Categorias próprias da empresa, cada uma presa a uma linha da DRE: receita, "
-            "deduções (DAS), custos, despesas, pessoal (pró-labore), financeiro e o que fica "
+            "deduções (DAS e devoluções a clientes), custos, despesas, pessoal (pró-labore), "
+            "financeiro e o que fica "
             "fora do resultado (aporte, distribuição de lucros, transferência). Regras sugerem "
             "a categoria, e a escolha do usuário para uma contraparte vira regra.",
             (
                 "Regras padrão: DAS, pró-labore, tarifas, contador, rendimentos; crédito recebido sugere receita",
                 "Regra aprendida por contraparte vence a padrão",
+                "Saída para quem tem regra de receita vira devolução (dedução), não receita negativa",
                 "Sem categoria: entra no caixa, fica fora da DRE",
             ),
             "Categoria da empresa não é a pessoal: pró-labore sai da empresa e entra na pessoa, "
@@ -1098,6 +1100,7 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
                 "Tabelas da LC 155/2016, Anexos I a V",
                 "Fator R de 28% leva o Anexo V ao III",
                 "Início de atividade: média dos meses × 12",
+                "Base do DAS e da RBT12: receita bruta menos devoluções (LC 123, art. 3º, § 1º)",
             ),
             "É estimativa: o valor oficial é o do PGDAS-D, que trata atividade mista, ISS "
             "retido e segregação de receitas.",

@@ -264,15 +264,22 @@ def preparar_importacao(movimentos: list[dict]) -> dict[str, Any]:
 
 def _aprender_regra(conn, dono: str, contraparte: object, categoria: str | None) -> None:
     """Contraparte -> categoria. Um lugar só para os três caminhos que
-    classificam: movimento novo, movimento conciliado e correção manual."""
+    classificam: movimento novo, movimento conciliado e correção manual.
+
+    Devolução não sobrescreve regra existente: o cliente com regra de receita
+    já recebe "devolução" nas saídas (``categoria_no_sentido``), e trocar a
+    regra por devolução faria o próximo pagamento dele perder a receita certa
+    (de vendas, por exemplo) e cair na sugestão genérica.
+    """
     cp = normalizar(contraparte)
     if not categoria or not cp:
         return
-    conn.execute(_texto("""
+    conflito = ("DO NOTHING" if categoria == "devolucoes" else
+                "DO UPDATE SET categoria = EXCLUDED.categoria, updated_at = NOW()")
+    conn.execute(_texto(f"""
         INSERT INTO pj_regras (user_id, contraparte, categoria)
         VALUES (CAST(:uid AS uuid), :cp, :cat)
-        ON CONFLICT (user_id, contraparte)
-        DO UPDATE SET categoria = EXCLUDED.categoria, updated_at = NOW()"""),
+        ON CONFLICT (user_id, contraparte) {conflito}"""),
         {"uid": dono, "cp": cp, "cat": categoria})
 
 

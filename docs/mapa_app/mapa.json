@@ -690,7 +690,7 @@
         {
           "nome": "Lançamentos",
           "resumo": "Lista por mês ou de todos os meses, com filtro e busca",
-          "explicacao": "Escolha um mês ou 'Todos os meses'. A lista traz data, descrição, categoria, valor, situação (pago ou previsto) e origem (extrato, manual ou manual conciliado). Dá para filtrar por uma ou mais categorias (inclusive 'Sem categoria') e buscar na descrição: a busca ignora acento e maiúscula, e cada palavra digitada precisa aparecer, em qualquer ordem. Com filtro ativo, uma linha mostra quantos lançamentos sobraram e o total de entradas e saídas deles. Os que estão sem categoria aparecem num formulário para classificar; a categoria escolhida vale também para os próximos extratos do mesmo cliente ou fornecedor. Em 'Corrigir categoria' dá para trocar a categoria de qualquer lançamento da lista filtrada, inclusive os já classificados (um aporte aceito como receita, por exemplo). Há ainda 'Novo lançamento manual' e 'Excluir lançamento manual' (o que veio do extrato não se exclui, porque o banco registrou).",
+          "explicacao": "Escolha um mês ou 'Todos os meses'. A lista traz data, descrição, categoria, valor, situação (pago ou previsto) e origem (extrato, manual ou manual conciliado). Dá para filtrar por uma ou mais categorias (inclusive 'Sem categoria') e buscar na descrição: a busca ignora acento e maiúscula, e cada palavra digitada precisa aparecer, em qualquer ordem. Com filtro ativo, uma linha mostra quantos lançamentos sobraram e o total de entradas e saídas deles. Os que estão sem categoria aparecem num formulário para classificar; a categoria escolhida vale também para os próximos extratos do mesmo cliente ou fornecedor; quando a empresa manda dinheiro para quem tem regra de receita, a sugestão é 'Devoluções e cancelamentos a clientes', que entra como dedução da receita. Em 'Corrigir categoria' dá para trocar a categoria de qualquer lançamento da lista filtrada, inclusive os já classificados (um aporte aceito como receita, por exemplo). Há ainda 'Novo lançamento manual' e 'Excluir lançamento manual' (o que veio do extrato não se exclui, porque o banco registrou).",
           "so_admin": false
         },
         {
@@ -702,13 +702,13 @@
         {
           "nome": "DRE",
           "resumo": "Demonstração de resultado gerencial",
-          "explicacao": "Escolha o mês e o período (mês, ano ou últimos 12 meses). A DRE vai da receita bruta ao resultado do período, passando por deduções (DAS), receita líquida, custos, lucro bruto, despesas, pessoal e financeiro, com cada categoria embaixo da sua linha. Aporte, distribuição de lucros, transferência, empréstimo e aplicação aparecem à parte, porque mexem no caixa e não no lucro. É regime de caixa: conta no mês em que o dinheiro passou pela conta. Lançamento sem categoria fica fora e é avisado.",
+          "explicacao": "Escolha o mês e o período (mês, ano ou últimos 12 meses). A DRE vai da receita bruta ao resultado do período, passando por deduções (DAS e devoluções a clientes), receita líquida, custos, lucro bruto, despesas, pessoal e financeiro, com cada categoria embaixo da sua linha. Aporte, distribuição de lucros, transferência, empréstimo e aplicação aparecem à parte, porque mexem no caixa e não no lucro. É regime de caixa: conta no mês em que o dinheiro passou pela conta. Lançamento sem categoria fica fora e é avisado.",
           "so_admin": false
         },
         {
           "nome": "Impostos",
           "resumo": "Dados da empresa e DAS estimado do Simples",
-          "explicacao": "Em 'Dados da empresa', informe CNPJ, razão social e o anexo do Simples Nacional. Escolha o mês: os cartões mostram a receita do mês, a RBT12 (receita dos 12 meses anteriores; com menos de 12, média × 12), a alíquota efetiva com anexo e faixa, e o DAS estimado que vence no mês seguinte. No Anexo V aparece o Fator R (folha ÷ RBT12), que de 28% para cima leva a tributação ao Anexo III. Se o DAS já foi pago, a tela compara com a estimativa. O valor oficial é sempre o do PGDAS-D.",
+          "explicacao": "Em 'Dados da empresa', informe CNPJ, razão social e o anexo do Simples Nacional. Escolha o mês: os cartões mostram a receita do mês (receita bruta menos devoluções a clientes, como manda o Simples), a RBT12 (receita dos 12 meses anteriores; com menos de 12, média × 12), a alíquota efetiva com anexo e faixa, e o DAS estimado que vence no mês seguinte. No Anexo V aparece o Fator R (folha ÷ RBT12), que de 28% para cima leva a tributação ao Anexo III. Se o DAS já foi pago, a tela compara com a estimativa. O valor oficial é sempre o do PGDAS-D.",
           "so_admin": false
         }
       ],

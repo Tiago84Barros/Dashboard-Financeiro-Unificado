@@ -84,6 +84,11 @@ def serie_mensal(lancs: list[dict], ate: date, meses: int = 12) -> list[dict]:
         saida.append({
             "ano": a, "mes": m,
             "receita": d["grupos"]["receita_bruta"],
+            # Base do Simples: receita bruta menos devoluções e vendas
+            # canceladas (LC 123/2006, art. 3º, § 1º). A devolução mora em
+            # Deduções na DRE, mas o DAS e a RBT12 a descontam da receita.
+            "receita_simples": round(d["grupos"]["receita_bruta"]
+                                     + d["categorias"].get("devolucoes", 0.0), 2),
             "resultado": d["resultado"],
             "entradas": round(entradas, 2),
             "saidas": round(saidas, 2),

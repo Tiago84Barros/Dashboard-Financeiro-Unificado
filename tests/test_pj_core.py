@@ -287,3 +287,68 @@ def test_filtro_de_categoria_aceita_sem_categoria_e_combina_com_a_busca():
     assert ids(filtrar_lancamentos(_lancs_filtro(), [None])) == ["4"]
     assert ids(filtrar_lancamentos(_lancs_filtro(), ["receita_servicos", None])) == ["1", "2", "4"]
     assert ids(filtrar_lancamentos(_lancs_filtro(), ["receita_servicos"], "pagamento")) == ["1"]
+
+
+# ── Devolução a cliente: dedução da receita, nunca receita negativa ─────────
+
+def test_receita_aprendida_numa_saida_vira_devolucao():
+    from core.pj.plano_contas import sugerir_categoria
+    regras = {"luana bezerra": "receita_servicos", "loja x": "receita_vendas"}
+    saida = {"valor": -70.0, "descricao": "Transf Pix enviada - Luana Bezerra",
+             "contraparte": "Luana Bezerra"}
+    assert sugerir_categoria(saida, regras) == "devolucoes"
+    assert sugerir_categoria({**saida, "contraparte": "Loja X"}, regras) == "devolucoes"
+    # a mesma pessoa pagando continua sendo receita
+    assert sugerir_categoria({**saida, "valor": 300.0}, regras) == "receita_servicos"
+
+
+def test_devolucao_aprendida_numa_entrada_cai_na_regra_padrao():
+    from core.pj.plano_contas import sugerir_categoria
+    regras = {"luana bezerra": "devolucoes"}
+    entrada = {"valor": 300.0, "descricao": "Pix recebido - Luana Bezerra",
+               "contraparte": "Luana Bezerra"}
+    assert sugerir_categoria(entrada, regras) == "receita_servicos"
+    assert sugerir_categoria({**entrada, "valor": -30.0}, regras) == "devolucoes"
+
+
+def test_sentido_so_mexe_em_receita_e_devolucao():
+    from core.pj.plano_contas import categoria_no_sentido
+    assert categoria_no_sentido("aluguel", "saida") == "aluguel"
+    assert categoria_no_sentido("aluguel", "entrada") == "aluguel"
+    assert categoria_no_sentido("transferencia", "saida") == "transferencia"
+    assert categoria_no_sentido("receitas_financeiras", "saida") == "receitas_financeiras"
+    assert categoria_no_sentido("inexistente", "saida") is None
+    assert categoria_no_sentido(None, "entrada") is None
+
+
+def _lancs_devolucao(cat_devolucao: str):
+    from datetime import date
+    return [
+        {"data": date(2026, 11, 3), "valor": 1000.0, "categoria": "receita_servicos",
+         "status": "pago"},
+        {"data": date(2026, 11, 4), "valor": -70.0, "categoria": cat_devolucao,
+         "status": "pago"},
+    ]
+
+
+def test_devolucao_entra_em_deducoes_na_dre():
+    from core.pj.relatorios import dre
+    d = dre(_lancs_devolucao("devolucoes"), [(2026, 11)])
+    assert d["grupos"]["receita_bruta"] == 1000.0
+    assert d["grupos"]["deducoes"] == -70.0
+    assert d["receita_liquida"] == 930.0
+
+
+def test_base_do_simples_desconta_devolucao_igual_a_receita_negativa():
+    """Equivalência dos dois caminhos: a devolução em Deduções dá a mesma base
+    do DAS que o lançamento antigo, gravado como receita negativa."""
+    from datetime import date
+
+    from core.pj.relatorios import serie_mensal
+    from core.pj.simples import estimar_das
+    novo = serie_mensal(_lancs_devolucao("devolucoes"), date(2026, 11, 1), meses=1)[0]
+    antigo = serie_mensal(_lancs_devolucao("receita_servicos"), date(2026, 11, 1), meses=1)[0]
+    assert novo["receita_simples"] == antigo["receita_simples"] == 930.0
+    assert novo["receita"] == 1000.0  # a receita bruta da DRE não muda
+    assert (estimar_das("III", [930.0] * 12, novo["receita_simples"]).das_estimado
+            == estimar_das("III", [930.0] * 12, antigo["receita_simples"]).das_estimado)
