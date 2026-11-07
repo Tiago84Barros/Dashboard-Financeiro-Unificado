@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 
-from core.pj.plano_contas import CODIGOS_FOLHA, GRUPOS_DRE, POR_CODIGO
+from core.pj.plano_contas import CODIGOS_FOLHA, GRUPOS_DRE, POR_CODIGO, normalizar
 
 _GRUPOS_RESULTADO = ("receita_bruta", "deducoes", "custos", "despesas_operacionais",
                      "pessoal", "financeiro")
@@ -84,6 +84,11 @@ def serie_mensal(lancs: list[dict], ate: date, meses: int = 12) -> list[dict]:
         saida.append({
             "ano": a, "mes": m,
             "receita": d["grupos"]["receita_bruta"],
+            # Base do Simples: receita bruta menos devoluções e vendas
+            # canceladas (LC 123/2006, art. 3º, § 1º). A devolução mora em
+            # Deduções na DRE, mas o DAS e a RBT12 a descontam da receita.
+            "receita_simples": round(d["grupos"]["receita_bruta"]
+                                     + d["categorias"].get("devolucoes", 0.0), 2),
             "resultado": d["resultado"],
             "entradas": round(entradas, 2),
             "saidas": round(saidas, 2),
@@ -167,3 +172,109 @@ def lancamentos_apos_importacao(existentes: list[dict], novos: list[dict],
         else:
             saida.append({"data": m["data"], "valor": m["valor"], "status": "pago"})
     return list(por_id.values()) + saida
+
+
+def filtrar_lancamentos(lancs: list[dict], categorias: list[str | None] | None = None,
+                        busca: str = "") -> list[dict]:
+    """Lançamentos que passam no filtro de categoria e na busca por descrição.
+
+    ``categorias`` vazio ou ``None`` não filtra; ``None`` dentro da lista é
+    "sem categoria". A busca ignora acento, caixa e pontuação, e cada palavra
+    digitada precisa aparecer na descrição ("luana pix" acha
+    "Transf Pix enviada - Luana ..."), em qualquer ordem.
+    """
+    termos = normalizar(busca).split()
+    filtro_cat = set(categorias) if categorias else None
+    saida = []
+    for x in lancs:
+        if filtro_cat is not None and (x.get("categoria") or None) not in filtro_cat:
+            continue
+        if termos:
+            desc = normalizar(x.get("descricao"))
+            if not all(t in desc for t in termos):
+                continue
+        saida.append(x)
+    return saida
+
+
+def balanco(lancs: list[dict], saldo_inicial: float | None, data_inicial: date | None,
+            data: date, contas_em_aberto: bool = True) -> dict | None:
+    """Balanço patrimonial gerencial na ``data``, montado só com o que o app tem.
+
+    Não há escrituração: o balanço sai do caixa conferido com o banco, das
+    contas a pagar e a receber em aberto e das categorias "fora do resultado"
+    (empréstimo, aplicação, aporte, distribuição, transferência). Fecha por
+    construção, porque o caixa é o saldo de abertura mais os pagos:
+
+        Caixa = saldo anterior + resultado + aportes + distribuições
+                + empréstimos + aplicações + transferências + sem categoria
+
+    com "saldo anterior" = caixa − todos os pagos registrados até a data, ou
+    seja, o dinheiro que já estava na conta antes do primeiro lançamento.
+
+    e cada parcela vai para o seu lado: aplicação e transferência viram ativo
+    (o dinheiro foi para outro lugar da empresa), empréstimo vira passivo, o
+    resto compõe o patrimônio líquido. As contas em aberto (previstos) entram
+    no ativo/passivo e, pela diferença, no patrimônio, como resultado que o
+    caixa ainda não viu. Previsto de categoria fora do resultado (parcela de
+    empréstimo, por exemplo) fica de fora: a dívida já está em Empréstimos.
+
+    ``contas_em_aberto=False`` para data passada: o app não guarda quando um
+    previsto foi criado, então não sabe o que estava em aberto naquele dia.
+
+    ``None`` sem saldo de abertura: sem ele não há caixa.
+    """
+    if saldo_inicial is None:
+        return None
+    caixa = saldo_ate(saldo_inicial, data_inicial, lancs, data)
+    # Todo o histórico registrado até a data, inclusive o que é anterior à
+    # âncora do saldo de abertura (extrato mais antigo importado depois): a
+    # âncora serve para o CAIXA, não para descartar empréstimo ou aplicação
+    # que o app conhece. O que sobra do caixa é o saldo anterior ao primeiro
+    # lançamento registrado (achado do Codex no PR #686).
+    fluxo = [x for x in _pagos(lancs) if x["data"] <= data]
+    por_cat: dict[str, float] = defaultdict(float)
+    resultado = sem_cat = 0.0
+    for x in fluxo:
+        grupo = _grupo(x)
+        if grupo is None:
+            sem_cat += float(x["valor"])
+        elif grupo == "fora_do_resultado":
+            por_cat[x["categoria"]] += float(x["valor"])
+        else:
+            resultado += float(x["valor"])
+    abertura = round(caixa - sum(float(x["valor"]) for x in fluxo), 2)
+
+    a_receber = a_pagar = 0.0
+    if contas_em_aberto:
+        for x in lancs:
+            if x.get("status") != "previsto" or _grupo(x) == "fora_do_resultado":
+                continue
+            v = float(x["valor"])
+            if v > 0:
+                a_receber += v
+            else:
+                a_pagar -= v
+
+    def r(v: float) -> float:
+        return round(v, 2)
+
+    ativo = [("Caixa e bancos", r(caixa)),
+             ("Contas a receber", r(a_receber)),
+             ("Aplicações financeiras", r(-por_cat["aplicacao"])),
+             ("Outras contas da empresa (transferências)", r(-por_cat["transferencia"]))]
+    passivo = [("Contas a pagar", r(a_pagar)),
+               ("Empréstimos e financiamentos", r(por_cat["emprestimo"]))]
+    pl = [("Saldo anterior aos lançamentos registrados", abertura),
+          ("Aportes de sócios", r(por_cat["aporte_socio"])),
+          ("Distribuição de lucros", r(por_cat["distribuicao_lucros"])),
+          ("Resultado acumulado (DRE, caixa)", r(resultado)),
+          ("Contas em aberto (a receber − a pagar)", r(a_receber - a_pagar)),
+          ("Movimentos sem categoria", r(sem_cat))]
+    total_ativo = r(sum(v for _, v in ativo))
+    total_passivo = r(sum(v for _, v in passivo))
+    total_pl = r(sum(v for _, v in pl))
+    return {"data": data, "ativo": ativo, "passivo": passivo, "patrimonio_liquido": pl,
+            "total_ativo": total_ativo, "total_passivo": total_passivo, "total_pl": total_pl,
+            "contas_em_aberto": contas_em_aberto,
+            "fecha": abs(total_ativo - total_passivo - total_pl) < 0.01}

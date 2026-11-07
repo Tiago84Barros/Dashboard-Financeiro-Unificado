@@ -1,7 +1,7 @@
 {
   "nome": "Dashboard Financeiro Unificado",
   "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, o que funciona por trás delas.",
-  "data_mapa": "06/11/2026",
+  "data_mapa": "07/11/2026",
   "filhos": [
     {
       "nome": "Dashboard Geral",
@@ -678,7 +678,7 @@
     {
       "nome": "Controle CNPJ",
       "resumo": "O financeiro da empresa, separado do pessoal",
-      "explicacao": "Tela do dinheiro da empresa (um CNPJ no Simples Nacional), inspirada no Conta Azul no que dá para fazer a partir do extrato. Cinco abas: Visão geral, Lançamentos, A pagar e receber, DRE e Impostos. O extrato da conta da empresa entra por Configurações → Atualização de dados → CNPJ. Nada daqui entra no Controle Financeiro pessoal, e nada do pessoal entra aqui. Emitir nota fiscal, gerar boleto e mandar dados ao contador não existem no app: dependem de certificado digital e convênio com banco.",
+      "explicacao": "Tela do dinheiro da empresa (um CNPJ no Simples Nacional), inspirada no Conta Azul no que dá para fazer a partir do extrato. Seis abas: Visão geral, Lançamentos, A pagar e receber, DRE, Balanço e Impostos. O extrato da conta da empresa entra por Configurações → Atualização de dados → CNPJ. Nada daqui entra no Controle Financeiro pessoal, e nada do pessoal entra aqui. Emitir nota fiscal, gerar boleto e mandar dados ao contador não existem no app: dependem de certificado digital e convênio com banco.",
       "so_admin": false,
       "filhos": [
         {
@@ -689,8 +689,8 @@
         },
         {
           "nome": "Lançamentos",
-          "resumo": "Lista do mês, classificação e lançamento manual",
-          "explicacao": "A lista do mês com data, descrição, categoria, valor, situação (pago ou previsto) e origem (extrato, manual ou manual conciliado). Os que estão sem categoria aparecem num formulário para classificar; a categoria escolhida vale também para os próximos extratos do mesmo cliente ou fornecedor. Em 'Corrigir categoria' dá para trocar a categoria de qualquer lançamento do mês, inclusive os já classificados (um aporte aceito como receita, por exemplo). Há ainda 'Novo lançamento manual' e 'Excluir lançamento manual' (o que veio do extrato não se exclui, porque o banco registrou).",
+          "resumo": "Lista por mês ou de todos os meses, com filtro e busca",
+          "explicacao": "Escolha um mês ou 'Todos os meses'. A lista traz data, descrição, categoria, valor, situação (pago ou previsto) e origem (extrato, manual ou manual conciliado). Dá para filtrar por uma ou mais categorias (inclusive 'Sem categoria') e buscar na descrição: a busca ignora acento e maiúscula, e cada palavra digitada precisa aparecer, em qualquer ordem. Com filtro ativo, uma linha mostra quantos lançamentos sobraram e o total de entradas e saídas deles. Os que estão sem categoria aparecem num formulário para classificar; a categoria escolhida vale também para os próximos extratos do mesmo cliente ou fornecedor; quando a empresa manda dinheiro para quem tem regra de receita, a sugestão é 'Devoluções e cancelamentos a clientes', que entra como dedução da receita. Em 'Corrigir categoria' dá para trocar a categoria de qualquer lançamento da lista filtrada, inclusive os já classificados (um aporte aceito como receita, por exemplo). Há ainda 'Novo lançamento manual' e 'Excluir lançamento manual' (o que veio do extrato não se exclui, porque o banco registrou).",
           "so_admin": false
         },
         {
@@ -702,13 +702,19 @@
         {
           "nome": "DRE",
           "resumo": "Demonstração de resultado gerencial",
-          "explicacao": "Escolha o mês e o período (mês, ano ou últimos 12 meses). A DRE vai da receita bruta ao resultado do período, passando por deduções (DAS), receita líquida, custos, lucro bruto, despesas, pessoal e financeiro, com cada categoria embaixo da sua linha. Aporte, distribuição de lucros, transferência, empréstimo e aplicação aparecem à parte, porque mexem no caixa e não no lucro. É regime de caixa: conta no mês em que o dinheiro passou pela conta. Lançamento sem categoria fica fora e é avisado.",
+          "explicacao": "Escolha o mês e o período (mês, ano ou últimos 12 meses). A DRE vai da receita bruta ao resultado do período, passando por deduções (DAS e devoluções a clientes), receita líquida, custos, lucro bruto, despesas, pessoal e financeiro, com cada categoria embaixo da sua linha. Aporte, distribuição de lucros, transferência, empréstimo e aplicação aparecem à parte, porque mexem no caixa e não no lucro. É regime de caixa: conta no mês em que o dinheiro passou pela conta. Lançamento sem categoria fica fora e é avisado.",
+          "so_admin": false
+        },
+        {
+          "nome": "Balanço",
+          "resumo": "O que a empresa tem, deve e o patrimônio líquido",
+          "explicacao": "Escolha hoje ou o fim de um mês já fechado. Os cartões mostram o ativo, o passivo e o patrimônio líquido. À esquerda, o ativo: caixa e bancos (o saldo conferido com o extrato), contas a receber, aplicações (valor aplicado menos resgatado) e dinheiro transferido para outras contas da empresa. À direita, o passivo (contas a pagar e empréstimos) e o patrimônio líquido: o saldo que já havia na conta antes do primeiro lançamento registrado, aportes, distribuição de lucros, resultado acumulado da DRE, contas em aberto e movimentos sem categoria. Fecha por construção, porque tudo sai do mesmo caixa. É um balanço gerencial: imobilizado, estoque e tributo a recolher não aparecem, e em data passada as contas a pagar e a receber ficam de fora, porque o app não sabe o que estava em aberto naquele dia.",
           "so_admin": false
         },
         {
           "nome": "Impostos",
           "resumo": "Dados da empresa e DAS estimado do Simples",
-          "explicacao": "Em 'Dados da empresa', informe CNPJ, razão social e o anexo do Simples Nacional. Escolha o mês: os cartões mostram a receita do mês, a RBT12 (receita dos 12 meses anteriores; com menos de 12, média × 12), a alíquota efetiva com anexo e faixa, e o DAS estimado que vence no mês seguinte. No Anexo V aparece o Fator R (folha ÷ RBT12), que de 28% para cima leva a tributação ao Anexo III. Se o DAS já foi pago, a tela compara com a estimativa. O valor oficial é sempre o do PGDAS-D.",
+          "explicacao": "Em 'Dados da empresa', informe CNPJ, razão social e o anexo do Simples Nacional. Escolha o mês: os cartões mostram a receita do mês (receita bruta menos devoluções a clientes, como manda o Simples), a RBT12 (receita dos 12 meses anteriores; com menos de 12, média × 12), a alíquota efetiva com anexo e faixa, e o DAS estimado que vence no mês seguinte. No Anexo V aparece o Fator R (folha ÷ RBT12), que de 28% para cima leva a tributação ao Anexo III. Se o DAS já foi pago, a tela compara com a estimativa. O valor oficial é sempre o do PGDAS-D.",
           "so_admin": false
         }
       ],
@@ -3040,7 +3046,7 @@
             {
               "nome": "CNPJ",
               "resumo": "Extrato da conta da empresa (OFX)",
-              "explicacao": "Envie o extrato da conta da empresa em OFX (no Cora: Extrato › Exportar › OFX). A prévia mostra cada movimento com uma categoria sugerida do plano de contas da empresa; a categoria que você escolher para um cliente ou fornecedor vira regra para os próximos extratos. O movimento que já estava lançado à mão (mesmo valor, até 3 dias) aparece marcado para conciliar em vez de duplicar, e o previsto recebe a baixa. O saldo final do arquivo é comparado com o saldo do app. Depois clique em 'Importar extrato'. Tudo vai para a seção Controle CNPJ e nada entra no Controle Financeiro pessoal.",
+              "explicacao": "Envie o extrato da conta da empresa em OFX (no Cora: Extrato › Exportar › OFX). A prévia mostra cada movimento com uma categoria sugerida do plano de contas da empresa; a categoria que você escolher para um cliente ou fornecedor vira regra para os próximos extratos. Dinheiro enviado a um cliente é sugerido como devolução (dedução da receita), e estorno ou reembolso recebido nunca é sugerido como receita: segue a categoria do fornecedor, ou a da despesa que desfaz (estorno de tarifa volta para Tarifas), ou fica sem categoria. O movimento que já estava lançado à mão (mesmo valor, até 3 dias) aparece marcado para conciliar em vez de duplicar, e o previsto recebe a baixa. O saldo final do arquivo é comparado com o saldo do app. Depois clique em 'Importar extrato'. Tudo vai para a seção Controle CNPJ e nada entra no Controle Financeiro pessoal.",
               "so_admin": false
             }
           ]
@@ -3200,7 +3206,7 @@
             {
               "nome": "Controle CNPJ",
               "resumo": "Como o extrato da empresa vira caixa, DRE e DAS",
-              "explicacao": "Fluxograma da seção Controle CNPJ: a entrada do extrato e do lançamento manual, o plano de contas da empresa, a conciliação e as abas Visão geral, Lançamentos, A pagar e receber, DRE e Impostos.",
+              "explicacao": "Fluxograma da seção Controle CNPJ: a entrada do extrato e do lançamento manual, o plano de contas da empresa, a conciliação e as abas Visão geral, Lançamentos, A pagar e receber, DRE, Balanço e Impostos.",
               "so_admin": false
             },
             {

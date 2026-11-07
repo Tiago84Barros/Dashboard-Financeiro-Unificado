@@ -990,14 +990,15 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
     subtitle=(
         "O financeiro da empresa, separado do pessoal: o extrato da conta PJ entra, "
         "cada movimento ganha uma categoria do plano de contas da empresa e daí saem "
-        "o caixa, a DRE, as contas a pagar e a estimativa do DAS do Simples."
+        "o caixa, a DRE, o balanço, as contas a pagar e a estimativa do DAS do Simples."
     ),
     tela="Controle CNPJ",
-    abas=("Visão geral", "Lançamentos", "A pagar e receber", "DRE", "Impostos"),
+    abas=("Visão geral", "Lançamentos", "A pagar e receber", "DRE", "Balanço", "Impostos"),
     rows=(
         ("Entrada", ("cnpj_extrato", "cnpj_manual")),
         ("Classificação", ("cnpj_plano", "cnpj_conciliacao")),
-        ("Visualização", ("cnpj_visao", "cnpj_previstos", "cnpj_dre", "cnpj_impostos")),
+        ("Visualização", ("cnpj_visao", "cnpj_previstos", "cnpj_dre", "cnpj_balanco",
+                          "cnpj_impostos")),
     ),
     default="cnpj_extrato",
     nodes={
@@ -1030,12 +1031,15 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
         "cnpj_plano": _node(
             "cnpj_plano", "Plano de contas da empresa", "Classificação",
             "Categorias próprias da empresa, cada uma presa a uma linha da DRE: receita, "
-            "deduções (DAS), custos, despesas, pessoal (pró-labore), financeiro e o que fica "
+            "deduções (DAS e devoluções a clientes), custos, despesas, pessoal (pró-labore), "
+            "financeiro e o que fica "
             "fora do resultado (aporte, distribuição de lucros, transferência). Regras sugerem "
             "a categoria, e a escolha do usuário para uma contraparte vira regra.",
             (
                 "Regras padrão: DAS, pró-labore, tarifas, contador, rendimentos; crédito recebido sugere receita",
                 "Regra aprendida por contraparte vence a padrão",
+                "Saída para quem tem regra de receita vira devolução (dedução), não receita negativa",
+                "Estorno ou reembolso recebido nunca vira receita: segue a despesa que desfaz",
                 "Sem categoria: entra no caixa, fica fora da DRE",
             ),
             "Categoria da empresa não é a pessoal: pró-labore sai da empresa e entra na pessoa, "
@@ -1057,11 +1061,14 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
             "cnpj_visao", "Visão geral e Lançamentos", "Visualização",
             "Visão geral: receita bruta, resultado e margem do mês, saldo em conta, "
             "conferência com o último extrato e 12 meses de entradas, saídas e resultado. "
-            "Lançamentos: a lista do mês, a classificação dos que estão sem categoria, a "
-            "correção da categoria de qualquer lançamento e a exclusão de lançamento manual.",
+            "Lançamentos: a lista de um mês ou de todos os meses, com filtro por categoria e "
+            "busca na descrição, a classificação dos que estão sem categoria, a correção da "
+            "categoria de qualquer lançamento da lista filtrada e a exclusão de lançamento "
+            "manual.",
             (
                 "Saldo = saldo de abertura + lançamentos pagos",
                 "Movimento do extrato não se exclui (o banco registrou)",
+                "Busca ignora acento e maiúscula; todas as palavras precisam aparecer",
             ),
             "O mês precisa fechar com o banco antes de qualquer leitura de resultado.",
         ),
@@ -1086,6 +1093,19 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
             ),
             "Caixa e não competência: o extrato só sabe quando o dinheiro passou.",
         ),
+        "cnpj_balanco": _node(
+            "cnpj_balanco", "Balanço patrimonial", "Visualização",
+            "Ativo, passivo e patrimônio líquido hoje ou no fim de um mês fechado: caixa "
+            "conferido com o banco, contas a receber e a pagar, aplicações, empréstimos, "
+            "aportes, distribuição de lucros e o resultado acumulado da DRE.",
+            (
+                "Fecha por construção: tudo sai do mesmo caixa",
+                "Aplicação e transferência viram ativo; empréstimo vira passivo",
+                "Data passada: sem contas em aberto (o app não sabe o que estava aberto)",
+            ),
+            "Gerencial, não contábil: imobilizado, estoque e tributo a recolher ficam de fora; "
+            "o balanço oficial é o do contador.",
+        ),
         "cnpj_impostos": _node(
             "cnpj_impostos", "Impostos (Simples Nacional)", "Visualização",
             "Dados da empresa (CNPJ, razão social, anexo) e o DAS estimado do mês: RBT12 dos "
@@ -1095,6 +1115,7 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
                 "Tabelas da LC 155/2016, Anexos I a V",
                 "Fator R de 28% leva o Anexo V ao III",
                 "Início de atividade: média dos meses × 12",
+                "Base do DAS e da RBT12: receita bruta menos devoluções (LC 123, art. 3º, § 1º)",
             ),
             "É estimativa: o valor oficial é o do PGDAS-D, que trata atividade mista, ISS "
             "retido e segregação de receitas.",

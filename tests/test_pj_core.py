@@ -250,3 +250,256 @@ def test_previa_trata_previsto_conciliado_como_pago_na_data_do_banco():
     hip = rel.lancamentos_apos_importacao(existentes, novos, {0: "p1"})
     assert hip == [{"id": "p1", "data": date(2026, 11, 18), "valor": -100.0, "status": "pago"}]
     assert rel.saldo_ate(1000.0, date(2026, 11, 2), hip, date(2026, 11, 18)) == 900.0
+
+
+# ── Lançamentos: filtro por categoria e busca por descrição ─────────────────
+
+def _lancs_filtro():
+    from datetime import date
+    return [
+        {"id": "1", "data": date(2026, 11, 6), "descricao": "Pagamento recebido - Andressa França",
+         "valor": 300.0, "categoria": "receita_servicos"},
+        {"id": "2", "data": date(2026, 11, 4), "descricao": "Transf Pix enviada - Luana Bezerra",
+         "valor": -70.0, "categoria": "receita_servicos"},
+        {"id": "3", "data": date(2026, 11, 3), "descricao": "Pagamento da fatura - Cora SCFI",
+         "valor": -64.99, "categoria": "outras_despesas"},
+        {"id": "4", "data": date(2026, 10, 3), "descricao": "Pix sem nome",
+         "valor": -10.0, "categoria": None},
+    ]
+
+
+def test_filtro_sem_criterio_devolve_tudo():
+    from core.pj.relatorios import filtrar_lancamentos
+    assert len(filtrar_lancamentos(_lancs_filtro())) == 4
+    assert len(filtrar_lancamentos(_lancs_filtro(), [], "   ")) == 4
+
+
+def test_busca_ignora_acento_caixa_e_ordem_das_palavras():
+    from core.pj.relatorios import filtrar_lancamentos
+    assert [x["id"] for x in filtrar_lancamentos(_lancs_filtro(), busca="FRANCA")] == ["1"]
+    assert [x["id"] for x in filtrar_lancamentos(_lancs_filtro(), busca="luana pix")] == ["2"]
+    assert filtrar_lancamentos(_lancs_filtro(), busca="luana fatura") == []
+
+
+def test_filtro_de_categoria_aceita_sem_categoria_e_combina_com_a_busca():
+    from core.pj.relatorios import filtrar_lancamentos
+
+    def ids(r):
+        return [x["id"] for x in r]
+
+    assert ids(filtrar_lancamentos(_lancs_filtro(), [None])) == ["4"]
+    assert ids(filtrar_lancamentos(_lancs_filtro(), ["receita_servicos", None])) == ["1", "2", "4"]
+    assert ids(filtrar_lancamentos(_lancs_filtro(), ["receita_servicos"], "pagamento")) == ["1"]
+
+
+# ── Devolução a cliente: dedução da receita, nunca receita negativa ─────────
+
+def test_receita_aprendida_numa_saida_vira_devolucao():
+    from core.pj.plano_contas import sugerir_categoria
+    regras = {"luana bezerra": "receita_servicos", "loja x": "receita_vendas"}
+    saida = {"valor": -70.0, "descricao": "Transf Pix enviada - Luana Bezerra",
+             "contraparte": "Luana Bezerra"}
+    assert sugerir_categoria(saida, regras) == "devolucoes"
+    assert sugerir_categoria({**saida, "contraparte": "Loja X"}, regras) == "devolucoes"
+    # a mesma pessoa pagando continua sendo receita
+    assert sugerir_categoria({**saida, "valor": 300.0}, regras) == "receita_servicos"
+
+
+def test_devolucao_aprendida_numa_entrada_cai_na_regra_padrao():
+    from core.pj.plano_contas import sugerir_categoria
+    regras = {"luana bezerra": "devolucoes"}
+    entrada = {"valor": 300.0, "descricao": "Pix recebido - Luana Bezerra",
+               "contraparte": "Luana Bezerra"}
+    assert sugerir_categoria(entrada, regras) == "receita_servicos"
+    assert sugerir_categoria({**entrada, "valor": -30.0}, regras) == "devolucoes"
+
+
+def test_sentido_so_mexe_em_receita_e_devolucao():
+    from core.pj.plano_contas import categoria_no_sentido
+    assert categoria_no_sentido("aluguel", "saida") == "aluguel"
+    assert categoria_no_sentido("aluguel", "entrada") == "aluguel"
+    assert categoria_no_sentido("transferencia", "saida") == "transferencia"
+    assert categoria_no_sentido("receitas_financeiras", "saida") == "receitas_financeiras"
+    assert categoria_no_sentido("inexistente", "saida") is None
+    assert categoria_no_sentido(None, "entrada") is None
+
+
+def _lancs_devolucao(cat_devolucao: str):
+    from datetime import date
+    return [
+        {"data": date(2026, 11, 3), "valor": 1000.0, "categoria": "receita_servicos",
+         "status": "pago"},
+        {"data": date(2026, 11, 4), "valor": -70.0, "categoria": cat_devolucao,
+         "status": "pago"},
+    ]
+
+
+def test_devolucao_entra_em_deducoes_na_dre():
+    from core.pj.relatorios import dre
+    d = dre(_lancs_devolucao("devolucoes"), [(2026, 11)])
+    assert d["grupos"]["receita_bruta"] == 1000.0
+    assert d["grupos"]["deducoes"] == -70.0
+    assert d["receita_liquida"] == 930.0
+
+
+def test_base_do_simples_desconta_devolucao_igual_a_receita_negativa():
+    """Equivalência dos dois caminhos: a devolução em Deduções dá a mesma base
+    do DAS que o lançamento antigo, gravado como receita negativa."""
+    from datetime import date
+
+    from core.pj.relatorios import serie_mensal
+    from core.pj.simples import estimar_das
+    novo = serie_mensal(_lancs_devolucao("devolucoes"), date(2026, 11, 1), meses=1)[0]
+    antigo = serie_mensal(_lancs_devolucao("receita_servicos"), date(2026, 11, 1), meses=1)[0]
+    assert novo["receita_simples"] == antigo["receita_simples"] == 930.0
+    assert novo["receita"] == 1000.0  # a receita bruta da DRE não muda
+    assert (estimar_das("III", [930.0] * 12, novo["receita_simples"]).das_estimado
+            == estimar_das("III", [930.0] * 12, antigo["receita_simples"]).das_estimado)
+
+
+# ── Balanço patrimonial gerencial ───────────────────────────────────────────
+
+def _lancs_balanco():
+    from datetime import date
+    def pago(dia, valor, cat):
+        return {"data": date(2026, 10, dia), "valor": valor, "categoria": cat, "status": "pago"}
+    return [
+        pago(1, 5000.0, "aporte_socio"),
+        pago(2, 3000.0, "receita_servicos"),
+        pago(3, -400.0, "aluguel"),
+        pago(4, 10000.0, "emprestimo"),
+        pago(5, -1500.0, "emprestimo"),
+        pago(6, -2000.0, "aplicacao"),
+        pago(7, 500.0, "aplicacao"),
+        pago(8, -1000.0, "distribuicao_lucros"),
+        pago(9, -300.0, "transferencia"),
+        pago(10, -50.0, None),
+        {"data": date(2026, 12, 5), "valor": 1200.0, "categoria": "receita_servicos",
+         "status": "previsto"},
+        {"data": date(2026, 12, 10), "valor": -700.0, "categoria": "aluguel",
+         "status": "previsto"},
+        # parcela prevista de empréstimo: a dívida já está em Empréstimos
+        {"data": date(2026, 12, 15), "valor": -1500.0, "categoria": "emprestimo",
+         "status": "previsto"},
+    ]
+
+
+def _linha(b, lado, nome):
+    return dict(b[lado])[nome]
+
+
+def test_balanco_fecha_e_poe_cada_categoria_no_seu_lado():
+    from datetime import date
+
+    from core.pj.relatorios import balanco
+    b = balanco(_lancs_balanco(), 1000.0, date(2026, 9, 30), date(2026, 11, 7))
+    assert b["fecha"]
+    # caixa = 1000 + 5000 + 3000 − 400 + 10000 − 1500 − 2000 + 500 − 1000 − 300 − 50
+    assert _linha(b, "ativo", "Caixa e bancos") == 14250.0
+    assert _linha(b, "ativo", "Aplicações financeiras") == 1500.0
+    assert _linha(b, "ativo", "Outras contas da empresa (transferências)") == 300.0
+    assert _linha(b, "ativo", "Contas a receber") == 1200.0
+    assert _linha(b, "passivo", "Empréstimos e financiamentos") == 8500.0
+    assert _linha(b, "passivo", "Contas a pagar") == 700.0  # sem a parcela do empréstimo
+    pl = dict(b["patrimonio_liquido"])
+    assert pl["Saldo anterior aos lançamentos registrados"] == 1000.0
+    assert pl["Aportes de sócios"] == 5000.0
+    assert pl["Distribuição de lucros"] == -1000.0
+    assert pl["Resultado acumulado (DRE, caixa)"] == 2600.0
+    assert pl["Contas em aberto (a receber − a pagar)"] == 500.0
+    assert pl["Movimentos sem categoria"] == -50.0
+    assert b["total_ativo"] == 17250.0
+    assert b["total_passivo"] == 9200.0
+    assert b["total_pl"] == 8050.0
+
+
+def test_balanco_em_data_passada_nao_tem_contas_em_aberto_e_fecha():
+    from datetime import date
+
+    from core.pj.relatorios import balanco
+    b = balanco(_lancs_balanco(), 1000.0, date(2026, 9, 30), date(2026, 10, 4),
+                contas_em_aberto=False)
+    assert b["fecha"]
+    assert _linha(b, "ativo", "Caixa e bancos") == 18600.0
+    assert _linha(b, "ativo", "Contas a receber") == 0.0
+    assert _linha(b, "passivo", "Contas a pagar") == 0.0
+
+
+def test_balanco_antes_da_abertura_e_sem_saldo():
+    from datetime import date
+
+    from core.pj.relatorios import balanco, saldo_ate
+    assert balanco(_lancs_balanco(), None, None, date(2026, 11, 7)) is None
+    # extrato antigo: a data do balanço é anterior à âncora do saldo de abertura
+    b = balanco(_lancs_balanco(), 1000.0, date(2026, 10, 31), date(2026, 10, 5),
+                contas_em_aberto=False)
+    assert b["fecha"]
+    assert _linha(b, "ativo", "Caixa e bancos") == saldo_ate(
+        1000.0, date(2026, 10, 31), _lancs_balanco(), date(2026, 10, 5))
+
+
+# ── Estorno de fornecedor: abate a despesa, nunca vira receita ──────────────
+
+def test_estorno_de_quem_nao_tem_regra_nao_vira_receita():
+    from core.pj.plano_contas import sugerir_categoria
+    estorno = {"valor": 200.0, "descricao": "Pix recebido - Estorno compra Loja Y",
+               "contraparte": "Loja Y"}
+    assert sugerir_categoria(estorno, {}) is None
+    for desc in ("TED recebida - Reembolso Kalunga", "Pix recebido - devolução fornecedor",
+                 "Crédito recebido ressarcimento", "Cashback recebido"):
+        assert sugerir_categoria({**estorno, "descricao": desc}, {}) is None, desc
+    # crédito comum continua sugerindo receita
+    assert sugerir_categoria({**estorno, "descricao": "Pix recebido - Andressa"},
+                             {}) == "receita_servicos"
+
+
+def test_estorno_usa_a_regra_da_saida_que_ele_desfaz():
+    from core.pj.plano_contas import sugerir_categoria
+    assert sugerir_categoria({"valor": 12.9, "descricao": "Estorno de tarifa Pix",
+                              "contraparte": "Cora"}, {}) == "tarifas"
+    assert sugerir_categoria({"valor": 3.5, "descricao": "Estorno IOF",
+                              "contraparte": "Cora"}, {}) == "despesas_financeiras"
+
+
+def test_estorno_de_fornecedor_conhecido_segue_a_regra_dele():
+    from core.pj.plano_contas import sugerir_categoria
+    regras = {"imobiliaria central": "aluguel"}
+    assert sugerir_categoria({"valor": 200.0, "descricao": "Pix recebido - estorno",
+                              "contraparte": "Imobiliária Central"}, regras) == "aluguel"
+
+
+def test_estorno_abate_a_despesa_e_nao_mexe_na_base_do_das():
+    from datetime import date
+
+    from core.pj.relatorios import dre, serie_mensal
+
+    def pago(dia, valor, cat):
+        return {"data": date(2026, 11, dia), "valor": valor, "categoria": cat,
+                "status": "pago"}
+    sem = [pago(1, 1000.0, "receita_servicos"), pago(2, -800.0, "aluguel")]
+    com = [*sem, pago(3, 200.0, "aluguel")]
+    assert dre(com, [(2026, 11)])["grupos"]["despesas_operacionais"] == -600.0
+    assert dre(com, [(2026, 11)])["resultado"] == dre(sem, [(2026, 11)])["resultado"] + 200.0
+    base = [serie_mensal(x, date(2026, 11, 1), meses=1)[0]["receita_simples"] for x in (sem, com)]
+    assert base == [1000.0, 1000.0]
+
+
+def test_balanco_conta_o_historico_anterior_a_ancora_do_saldo():
+    """Achado do Codex no PR #686: extrato de outubro importado depois do de
+    novembro deixa a âncora em 31/10, e o empréstimo tomado em outubro sumia
+    do passivo (só a parcela de novembro aparecia, como dívida negativa)."""
+    from datetime import date
+
+    from core.pj.relatorios import balanco
+
+    def pago(d, v, cat):
+        return {"data": d, "valor": v, "categoria": cat, "status": "pago"}
+    lancs = [pago(date(2026, 10, 5), 10000.0, "emprestimo"),
+             pago(date(2026, 10, 9), -2000.0, "aplicacao"),
+             pago(date(2026, 11, 5), -1000.0, "emprestimo")]
+    b = balanco(lancs, 8000.0, date(2026, 10, 31), date(2026, 11, 7))
+    assert b["fecha"]
+    assert _linha(b, "ativo", "Caixa e bancos") == 7000.0
+    assert _linha(b, "ativo", "Aplicações financeiras") == 2000.0
+    assert _linha(b, "passivo", "Empréstimos e financiamentos") == 9000.0
+    assert _linha(b, "patrimonio_liquido", "Saldo anterior aos lançamentos registrados") == 0.0

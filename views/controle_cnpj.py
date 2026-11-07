@@ -44,7 +44,7 @@ _NOMES = [c.nome for c in CATEGORIAS]
 _CODIGO_POR_NOME = {c.nome: c.codigo for c in CATEGORIAS}
 
 _SECOES = ["📊  Visão geral", "🧾  Lançamentos", "📅  A pagar e receber",
-           "📈  DRE", "🧮  Impostos"]
+           "📈  DRE", "⚖️  Balanço", "🧮  Impostos"]
 
 
 def _rotulo_mes(ano: int, mes: int) -> str:
@@ -189,22 +189,60 @@ def _form_novo_lancamento(prefixo: str, previsto_padrao: bool = False) -> None:
     st.error(msg)
 
 
+# Primeira opção do seletor de período da aba Lançamentos: todos os meses juntos.
+_TODOS_OS_MESES = "Todos os meses"
+
+
+def _filtros_lancamentos(do_periodo: list[dict]) -> list[dict]:
+    """Filtro por categoria e busca por descrição sobre os lançamentos do período."""
+    # Opções fixas (todo o plano de contas), e não só as do período: trocar de
+    # mês não pode apagar o filtro que o usuário já escolheu.
+    sem = "Sem categoria"
+    opcoes = [sem, *_NOMES]
+    f1, f2 = st.columns([2, 3], gap="small")
+    escolhidas = f1.multiselect("Categoria", opcoes, key="cnpj_lanc_filtro_cat",
+                                placeholder="Todas")
+    busca = f2.text_input("Buscar na descrição", key="cnpj_lanc_busca",
+                          placeholder="cliente, fornecedor, CPF/CNPJ…")
+    codigos = [None if n == sem else _CODIGO_POR_NOME[n] for n in escolhidas]
+    visiveis = rel.filtrar_lancamentos(do_periodo, codigos, busca)
+    if escolhidas or busca.strip():
+        entradas = sum(x["valor"] for x in visiveis if x["valor"] > 0)
+        saidas = sum(x["valor"] for x in visiveis if x["valor"] < 0)
+        st.caption(escapar_cifrao(
+            f"{len(visiveis)} de {len(do_periodo)} lançamento(s) · entradas {fmt_moeda(entradas)} · "
+            f"saídas {fmt_moeda(saidas)}"))
+    return visiveis
+
+
 def _tab_lancamentos(lancs: list[dict]) -> None:
-    ano, mes = _seletor_mes(lancs, "cnpj_lanc_mes")
-    do_mes = [x for x in lancs if x["data"].year == ano and x["data"].month == mes]
-    if not do_mes:
-        estado_vazio(f"Nenhum lançamento em {_rotulo_mes(ano, mes)}.", "🧾")
+    por_rotulo = {_TODOS_OS_MESES: None,
+                  **{_rotulo_mes(*p): p for p in _periodos_disponiveis(lancs)}}
+    periodo = por_rotulo[st.selectbox("Mês", list(por_rotulo), index=1, key="cnpj_lanc_mes")]
+    if periodo is None:
+        do_periodo, vazio = list(lancs), "Nenhum lançamento registrado ainda."
     else:
+        ano, mes = periodo
+        do_periodo = [x for x in lancs if x["data"].year == ano and x["data"].month == mes]
+        vazio = f"Nenhum lançamento em {_rotulo_mes(ano, mes)}."
+    visiveis = do_periodo
+    if not do_periodo:
+        estado_vazio(vazio, "🧾")
+    else:
+        visiveis = _filtros_lancamentos(do_periodo)
+    if do_periodo and not visiveis:
+        estado_vazio("Nenhum lançamento do período passa nos filtros.", "🔎")
+    elif do_periodo:
         linhas = [[
             _fmt_data(x["data"]), html.escape(x["descricao"]), html.escape(rotulo(x["categoria"])),
             _valor_html(x["valor"]),
             "previsto" if x["status"] == "previsto" else "pago",
             "extrato" if x["origem"] == "extrato" else ("manual · conciliado" if x["chave"] else "manual"),
-        ] for x in sorted(do_mes, key=lambda x: x["data"], reverse=True)]
+        ] for x in sorted(visiveis, key=lambda x: x["data"], reverse=True)]
         st.markdown(_tabela(linhas, ["Data", "Descrição", "Categoria", "Valor", "Situação", "Origem"],
                             {3}), unsafe_allow_html=True)
 
-    pendentes = [x for x in do_mes if not x["categoria"]][:40]
+    pendentes = [x for x in do_periodo if not x["categoria"]][:40]
     if pendentes:
         st.markdown(f"#### Classificar ({len(pendentes)} sem categoria)")
         st.caption("A categoria escolhida vale também para os próximos extratos da mesma "
@@ -228,12 +266,12 @@ def _tab_lancamentos(lancs: list[dict]) -> None:
                 st.session_state["cnpj_msg"] = "Categorias salvas."
                 st.rerun()
 
-    if do_mes:
+    if visiveis:
         with st.expander("✏️ Corrigir categoria"):
-            st.caption("Para qualquer lançamento do mês, inclusive os já classificados: um "
+            st.caption("Para qualquer lançamento do período, inclusive os já classificados: um "
                        "aporte de sócio aceito como receita, por exemplo. Corrigir aqui muda a "
-                       "DRE e o DAS estimado.")
-            por_id = {x["id"]: x for x in do_mes}
+                       "DRE e o DAS estimado. A lista segue os filtros acima.")
+            por_id = {x["id"]: x for x in visiveis}
             escolhido = st.selectbox(
                 "Lançamento", list(por_id), key="cnpj_corrigir_sel",
                 format_func=lambda i: (f"{_fmt_data(por_id[i]['data'])} · {por_id[i]['descricao']} · "
@@ -419,6 +457,92 @@ def _tab_dre(lancs: list[dict]) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ⚖️ Balanço
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _datas_do_balanco(lancs: list[dict]) -> dict[str, _date]:
+    """Hoje e o último dia de cada mês já fechado com movimento."""
+    hoje = _date.today()
+    datas = {f"Hoje ({_fmt_data(hoje)})": hoje}
+    for ano, mes in _periodos_disponiveis(lancs):
+        if (ano, mes) >= (hoje.year, hoje.month):
+            continue
+        fim = (_date(ano + (mes == 12), mes % 12 + 1, 1) - timedelta(days=1))
+        datas[f"Fim de {_rotulo_mes(ano, mes)}"] = fim
+    return datas
+
+
+def _tab_balanco(lancs: list[dict], empresa: dict | None) -> None:
+    datas = _datas_do_balanco(lancs)
+    rotulo_data = st.selectbox("Data do balanço", list(datas), key="cnpj_bal_data")
+    data = datas[rotulo_data]
+    hoje = _date.today()
+    b = rel.balanco(lancs, (empresa or {}).get("saldo_inicial"),
+                    (empresa or {}).get("data_saldo_inicial"), data,
+                    contas_em_aberto=data >= hoje)
+    if b is None:
+        estado_vazio("Sem saldo de abertura não há caixa, e sem caixa não há balanço. Importe "
+                     "um extrato com saldo em Configurações › Atualização de dados › 🏢 CNPJ.",
+                     "⚖️")
+        return
+
+    k1, k2, k3 = st.columns(3, gap="small")
+    with k1:
+        card_metrica("Ativo", fmt_moeda(b["total_ativo"]), "o que a empresa tem",
+                     accent="var(--app-info)")
+    with k2:
+        card_metrica("Passivo", fmt_moeda(b["total_passivo"]), "o que a empresa deve",
+                     accent="var(--app-danger)")
+    with k3:
+        card_metrica("Patrimônio líquido", fmt_moeda(b["total_pl"]), "ativo − passivo",
+                     positivo=b["total_pl"] >= 0)
+
+    # No balanço a cor não diz "entrou" ou "saiu": passivo positivo é dívida,
+    # e verde nele leria como coisa boa. Só o valor negativo ganha cor.
+    def valor(v: float) -> str:
+        cor = "var(--app-danger)" if v < 0 else "var(--app-text)"
+        return f'<span style="color:{cor};">{html.escape(fmt_moeda(v))}</span>'
+
+    def linhas(itens: list[tuple[str, float]]) -> list[list[str]]:
+        return [[f'<span style="padding-left:12px;">{html.escape(nome)}</span>', valor(v)]
+                for nome, v in itens if v]
+
+    def total(nome: str, v: float) -> list[str]:
+        return [f"<b>{html.escape(nome)}</b>", f"<b>{valor(v)}</b>"]
+
+    def titulo(nome: str) -> list[str]:
+        return [f'<span style="font-size:0.68rem;text-transform:uppercase;letter-spacing:0.05em;'
+                f'color:var(--app-muted);font-weight:700;">{html.escape(nome)}</span>', ""]
+
+    c1, c2 = st.columns(2, gap="medium")
+    with c1:
+        st.markdown(_tabela([*linhas(b["ativo"]), total("Total do ativo", b["total_ativo"])],
+                            ["Ativo", "Valor"], {1}), unsafe_allow_html=True)
+    with c2:
+        st.markdown(_tabela(
+            [*linhas(b["passivo"]), total("Total do passivo", b["total_passivo"]),
+             titulo("Patrimônio líquido"),
+             *linhas(b["patrimonio_liquido"]), total("Total do patrimônio líquido", b["total_pl"]),
+             total("Passivo + patrimônio líquido", b["total_passivo"] + b["total_pl"])],
+            ["Passivo", "Valor"], {1}), unsafe_allow_html=True)
+
+    notas = ["Balanço gerencial, montado com o que o app tem: o caixa conferido com o banco, "
+             "as contas a pagar e a receber e as categorias de empréstimo, aplicação, aporte e "
+             "distribuição. Imobilizado, estoque, tributo a recolher e o que nunca passou pela "
+             "conta não aparecem; o balanço oficial é o do contador."]
+    if not b["contas_em_aberto"]:
+        notas.append("Em data passada, contas a pagar e a receber ficam de fora: o app não sabe "
+                     "o que estava em aberto naquele dia.")
+    if any(nome == "Empréstimos e financiamentos" and v < 0 for nome, v in b["passivo"]):
+        notas.append("Empréstimos negativos: há pagamento de empréstimo tomado antes do "
+                     "primeiro extrato, que o app não viu entrar.")
+    if any(nome == "Movimentos sem categoria" and v for nome, v in b["patrimonio_liquido"]):
+        notas.append("Movimentos sem categoria entram no caixa, mas o app não sabe de que lado "
+                     "pô-los; classifique-os na aba Lançamentos.")
+    st.caption(" ".join(notas))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 🧮 Impostos
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -446,7 +570,8 @@ def _tab_impostos(lancs: list[dict], empresa: dict | None) -> None:
     serie = rel.serie_mensal(lancs, _date(ano, mes, 1), meses=13)
     anteriores, atual = serie[:-1], serie[-1]
     historico = rel.meses_desde_o_inicio(anteriores, lancs)
-    est = estimar_das(anexo_atual, [s["receita"] for s in historico], atual["receita"],
+    est = estimar_das(anexo_atual, [s["receita_simples"] for s in historico],
+                      atual["receita_simples"],
                       folhas_12m_anteriores=[s["folha"] for s in historico])
 
     seguinte = (ano, mes + 1) if mes < 12 else (ano + 1, 1)
@@ -476,7 +601,8 @@ def _tab_impostos(lancs: list[dict], empresa: dict | None) -> None:
             f"(estimado {fmt_moeda(est.das_estimado)}, diferença {fmt_moeda(dif)})."))
     st.info("Estimativa. O valor oficial é o do PGDAS-D, que trata atividades mistas, ISS "
             "retido, segregação de receitas e o início de atividade com regra própria. A receita "
-            "considerada é a categoria Receita bruta, no mês em que o dinheiro entrou.")
+            "considerada é a Receita bruta menos as devoluções a clientes, no mês em que o "
+            "dinheiro passou pela conta.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -515,6 +641,8 @@ def render() -> None:
     elif secao == _SECOES[3]:
         _tab_dre(lancs)
     elif secao == _SECOES[4]:
+        _tab_balanco(lancs, empresa)
+    elif secao == _SECOES[5]:
         _tab_impostos(lancs, empresa)
     else:
         _tab_visao_geral(lancs, empresa)

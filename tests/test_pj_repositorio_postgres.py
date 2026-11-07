@@ -103,6 +103,24 @@ def test_categoria_escolhida_vira_regra_para_o_proximo_extrato(repo):
     assert ctx["regras"] == {"cliente beta": "receita_servicos"}
 
 
+def test_devolucao_nao_apaga_a_regra_de_receita_do_cliente(repo):
+    """Marcar o Pix devolvido como devolução não troca a regra: o próximo
+    pagamento do cliente continua sugerindo a receita que ele tinha."""
+    repo.importar_extrato([dict(_mov(3, 800.0, "Pix recebido", "D1", contraparte="Loja X"),
+                                categoria="receita_vendas")], "a.ofx")
+    repo.importar_extrato([dict(_mov(4, -70.0, "Pix enviado", "D2", contraparte="Loja X"),
+                                categoria="devolucoes")], "b.ofx")
+    devolvido = [x for x in repo.listar_lancamentos() if x["valor"] < 0][0]
+    assert repo.classificar(devolvido["id"], "devolucoes", lembrar=True)[0]
+    ctx = repo.preparar_importacao([_mov(5, 900.0, "Pix recebido", "D3", contraparte="LOJA X")])
+    assert ctx["regras"] == {"loja x": "receita_vendas"}
+    # Sem regra anterior, a devolução é aprendida normalmente.
+    repo.importar_extrato([dict(_mov(6, -20.0, "Pix enviado", "D4", contraparte="Cliente Z"),
+                                categoria="devolucoes")], "c.ofx")
+    ctx = repo.preparar_importacao([_mov(7, -5.0, "Pix enviado", "D5", contraparte="Cliente Z")])
+    assert ctx["regras"]["cliente z"] == "devolucoes"
+
+
 def test_outro_dono_nao_ve_nem_altera_nada(repo, monkeypatch):
     repo.importar_extrato([dict(_mov(3, 100.0, "X", "Z1"), categoria=None)], "a.ofx")
     lanc_id = repo.listar_lancamentos()[0]["id"]

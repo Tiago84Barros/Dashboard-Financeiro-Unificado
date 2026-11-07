@@ -29,6 +29,7 @@ from core.conciliacao_bancaria import (
 )
 from core.config import settings
 from core.utils import fmt_moeda
+from design.componentes import card_metrica
 from design.lacunas import aviso_lacuna, detalhe_tecnico
 from design.tema_canvas import no_claro
 
@@ -97,74 +98,26 @@ def _editor_previa_claro(edit_df: pd.DataFrame, category_options: list) -> pd.Da
     return edited
 
 
-def _safe(value: object) -> str:
-    return html.escape(str(value or ""))
-
-
 def _fmt_date(value: object) -> str:
     return value.strftime("%d/%m/%Y") if hasattr(value, "strftime") else "-"
 
 
-def _kpi_card(title: str, value: str, subtitle: str, color: str) -> str:
-    return f"""
-    <div style="
-        background:var(--app-surface);
-        border:1px solid var(--app-border);
-        border-radius:8px;
-        padding:14px 16px;
-        min-height:96px;">
-        <div style="font-size:0.70rem;font-weight:800;letter-spacing:0.12em;
-                    text-transform:uppercase;color:var(--app-muted);">{_safe(title)}</div>
-        <div style="font-size:1.30rem;font-weight:900;color:{color};
-                    margin-top:10px;line-height:1.1;">{_safe(value)}</div>
-        <div style="font-size:0.76rem;color:var(--app-subtle);margin-top:8px;
-                    line-height:1.3;">{_safe(subtitle)}</div>
-    </div>
-    """
-
-
 def _summary_cards(summary: dict, file_name: str | None = None) -> None:
+    pendentes = int(summary.get("pendentes", 0))
     c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
-        st.markdown(
-            _kpi_card(
-                "Arquivo",
-                (file_name or "Extrato")[:24],
-                f"{int(summary.get('rows', 0))} movimento(s) lido(s)",
-                _COR_NEUTRO,
-            ),
-            unsafe_allow_html=True,
-        )
+        card_metrica("Arquivo", (file_name or "Extrato")[:24],
+                     f"{int(summary.get('rows', 0))} movimento(s) lido(s)", accent=_COR_NEUTRO)
     with c2:
-        st.markdown(
-            _kpi_card(
-                "Entradas",
-                fmt_moeda(summary.get("total_entradas", 0.0)),
-                f"{int(summary.get('entradas', 0))} movimento(s)",
-                _COR_RECEITA,
-            ),
-            unsafe_allow_html=True,
-        )
+        card_metrica("Entradas", fmt_moeda(summary.get("total_entradas", 0.0)),
+                     f"{int(summary.get('entradas', 0))} movimento(s)", accent=_COR_RECEITA)
     with c3:
-        st.markdown(
-            _kpi_card(
-                "Saídas",
-                fmt_moeda(summary.get("total_saidas", 0.0)),
-                f"{int(summary.get('saidas', 0))} movimento(s)",
-                _COR_DESPESA,
-            ),
-            unsafe_allow_html=True,
-        )
+        card_metrica("Saídas", fmt_moeda(summary.get("total_saidas", 0.0)),
+                     f"{int(summary.get('saidas', 0))} movimento(s)", accent=_COR_DESPESA)
     with c4:
-        st.markdown(
-            _kpi_card(
-                "Pendentes",
-                str(int(summary.get("pendentes", 0))),
-                f"{int(summary.get('classificados', 0))} classificados",
-                _COR_INVEST if int(summary.get("pendentes", 0)) == 0 else "var(--app-warning)",
-            ),
-            unsafe_allow_html=True,
-        )
+        card_metrica("Pendentes", pendentes,
+                     f"{int(summary.get('classificados', 0))} classificados",
+                     accent=_COR_INVEST if pendentes == 0 else "var(--app-warning)")
 
     start = summary.get("periodo_inicio")
     end = summary.get("periodo_fim")
@@ -343,14 +296,16 @@ def _render_conciliacao(final_rows: list[dict], parsed: dict) -> tuple[dict[int,
     conf = conferir_saldo(float(valor_saldo), ctx["saldo_app"], a_lancar, pendente)
 
     k1, k2, k3 = st.columns(3, gap="small")
-    k1.markdown(_kpi_card("Saldo do banco", fmt_moeda(conf["saldo_extrato"]),
-                          f"em {_fmt_date(data_saldo)}", _COR_NEUTRO), unsafe_allow_html=True)
-    k2.markdown(_kpi_card("Saldo do app após importar", fmt_moeda(conf["saldo_projetado"]),
-                          f"hoje {fmt_moeda(conf['saldo_app'])} + {fmt_moeda(conf['a_lancar'])} "
-                          "desta importação", _COR_INVEST), unsafe_allow_html=True)
-    k3.markdown(_kpi_card("Diferença", fmt_moeda(conf["diferenca"]),
-                          "banco − app", _COR_RECEITA if conf["fecha"] else _COR_DESPESA),
-                unsafe_allow_html=True)
+    with k1:
+        card_metrica("Saldo do banco", fmt_moeda(conf["saldo_extrato"]),
+                     f"em {_fmt_date(data_saldo)}", accent=_COR_NEUTRO)
+    with k2:
+        card_metrica("Saldo do app após importar", fmt_moeda(conf["saldo_projetado"]),
+                     f"hoje {fmt_moeda(conf['saldo_app'])} + {fmt_moeda(conf['a_lancar'])} "
+                     "desta importação", accent=_COR_INVEST)
+    with k3:
+        card_metrica("Diferença", fmt_moeda(conf["diferenca"]), "banco − app",
+                     positivo=bool(conf["fecha"]))
 
     if conf["fecha"]:
         st.success("O saldo do app fecha com o do banco nesta data.")
