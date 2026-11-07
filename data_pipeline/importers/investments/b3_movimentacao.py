@@ -42,7 +42,9 @@ from sqlalchemy.engine import Engine
 from core.config import settings
 
 from .common import (
+    TIPO_REEMBOLSO_BTC,
     ajustar_quantidades_dividendos,
+    aviso_reembolso_sem_084,
     aviso_sem_quantidade,
     batch_filter_existing_external_ids,
     batch_get_or_create_assets,
@@ -50,6 +52,7 @@ from .common import (
     batch_insert_investment_transactions,
     classify_movement,
     classify_ticker,
+    corrigir_tipo_reembolso,
     ensure_external_id_columns,
     ensure_movement_events_table,
     finalize_summary,
@@ -58,10 +61,12 @@ from .common import (
     make_external_id,
     make_summary,
     migracao_083_aplicada,
+    migracao_084_aplicada,
     parse_date_br,
     parse_ticker_from_produto,
     quantidade_e_valor_unitario,
     safe_error,
+    tipo_gravavel,
     to_float_br,
 )
 
@@ -141,6 +146,13 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
     # dela, sai nomeado em errors -- nunca vira 1 cota -- e nenhum ajuste de
     # quantidade roda (ele depende de `quantity_placeholder`).
     aceita_sem_qtd = bool(div_candidates) and migracao_083_aplicada(engine)
+    # Reembolso de aluguel (BTC) tem tipo próprio desde a migração 084. Antes
+    # dela, grava como sempre gravou e avisa.
+    tem_reembolso = any(
+        c["div_type"] == TIPO_REEMBOLSO_BTC for c in div_candidates
+    )
+    aplicada_084 = tem_reembolso and migracao_084_aplicada(engine)
+    reembolsos_sem_084 = 0
 
     try:
         with engine.connect() as conn:
@@ -216,10 +228,13 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                                 c["total_amount"],
                             ))
                         continue
+                    tipo = tipo_gravavel(c["div_type"], aplicada_084)
+                    if tipo != c["div_type"] and not ja_existe:
+                        reembolsos_sem_084 += 1
                     (ja_gravadas if ja_existe else div_rows).append({
                         "user_id":         user_id,
                         "asset_id":        aid,
-                        "type":            c["div_type"],
+                        "type":            tipo,
                         "amount_per_unit": c["amount_per_unit"],
                         "quantity":        c["quantity"],
                         "total_amount":    c["total_amount"],
@@ -231,6 +246,14 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                 # 4) Insert em lote
                 inserted_tx = batch_insert_investment_transactions(conn, tx_rows)
                 inserted_div = batch_insert_dividends(conn, div_rows)
+                if aplicada_084:
+                    # Antes do ajuste de quantidade: ele casa pela chave
+                    # canônica, que inclui o tipo.
+                    corrigir_tipo_reembolso(conn, ja_gravadas)
+                if reembolsos_sem_084:
+                    summary["avisos"].append(
+                        aviso_reembolso_sem_084(reembolsos_sem_084)
+                    )
                 if aceita_sem_qtd:
                     ajustar_quantidades_dividendos(conn, div_rows + ja_gravadas)
                 summary["transactions_imported"] += inserted_tx

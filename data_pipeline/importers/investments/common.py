@@ -192,12 +192,22 @@ _TX_MAP_B3 = {
     "resgate antecipado":                    "sell",
 }
 
+# Tipos aceitos em `dividends.type` (CHECK da 003, ampliada pela 084).
+TIPO_REEMBOLSO_BTC = "lending_reimbursement"
+TIPOS_DIVIDENDO = frozenset({
+    "dividend", "jcp", "reit_income", "amortization", "other",
+    TIPO_REEMBOLSO_BTC,
+})
+
 # Movimentos da B3 que entram em `dividends`
 _INCOME_MAP_B3 = {
     "dividendo":                              "dividend",
     "juros sobre capital próprio":            "jcp",
     "rendimento":                             "reit_income",
-    "reembolso":                              "reit_income",
+    # Reembolso: o que quem tomou suas ações emprestadas (BTC) paga no lugar
+    # do dividendo ou do JCP. Não é rendimento de FII -- até a migração 084
+    # era gravado como `reit_income` e aparecia como "Rendimento FII".
+    "reembolso":                              TIPO_REEMBOLSO_BTC,
     "pagamento de prêmio/rendimentos":        "reit_income",
     "pagamento de rendimentos":               "reit_income",
     "direito de subscrição":                  "other",
@@ -386,6 +396,76 @@ def migracao_083_aplicada(conn: Connection | Engine) -> bool:
     except Exception as exc:  # noqa: BLE001
         logger.warning("migracao_083_aplicada: %s", safe_error(exc))
         return False
+
+
+def migracao_084_aplicada(conn: Connection | Engine) -> bool:
+    """True se a CHECK de `dividends.type` já aceita `lending_reimbursement`.
+
+    Só lê o catálogo. Fora do Postgres (SQLite dos testes) a resposta é True.
+    """
+    if _dialeto(conn) != "postgresql":
+        return True
+    sql = text("""
+        SELECT COUNT(*)
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         WHERE n.nspname = 'public' AND t.relname = 'dividends'
+           AND c.contype = 'c'
+           AND pg_get_constraintdef(c.oid) LIKE '%lending_reimbursement%'
+    """)
+    try:
+        if isinstance(conn, Engine):
+            with conn.connect() as c:
+                return int(c.execute(sql).scalar() or 0) > 0
+        return int(conn.execute(sql).scalar() or 0) > 0
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("migracao_084_aplicada: %s", safe_error(exc))
+        return False
+
+
+def tipo_gravavel(tipo: str, aplicada_084: bool) -> str:
+    """O tipo que o banco aceita agora. Antes da 084 o reembolso volta a ser
+    `reit_income`, como sempre foi -- e a importação avisa
+    (`aviso_reembolso_sem_084`); depois dela, a reimportação corrige."""
+    if tipo == TIPO_REEMBOLSO_BTC and not aplicada_084:
+        return "reit_income"
+    return tipo
+
+
+def aviso_reembolso_sem_084(n: int) -> str:
+    return (
+        f"{n} reembolso(s) de aluguel de ações (BTC) gravado(s) como "
+        "\"Rendimento FII\", porque o banco ainda não tem o tipo próprio. Rode, "
+        "com backup, supabase_unificado/schema/084_dividends_reembolso_btc.sql "
+        "no SQL Editor do Supabase e importe de novo."
+    )
+
+
+_SQL_CORRIGE_TIPO_REEMBOLSO = text("""
+    UPDATE dividends
+       SET type = :tipo
+     WHERE user_id = :user_id
+       AND external_id IN :ids
+       AND type = 'reit_income'
+""").bindparams(bindparam("ids", expanding=True))
+
+
+def corrigir_tipo_reembolso(conn: Connection, rows: list[dict[str, Any]]) -> int:
+    """Leva a `lending_reimbursement` a linha já gravada como `reit_income`
+    que esta importação reconhece como reembolso -- pelo external_id, que é
+    estável entre a versão antiga e a nova do importador. Só depois da 084."""
+    por_dono: dict[str, set[str]] = {}
+    for r in rows:
+        if r.get("type") == TIPO_REEMBOLSO_BTC and r.get("external_id"):
+            por_dono.setdefault(str(r["user_id"]), set()).add(r["external_id"])
+    mudou = 0
+    for dono, ids in sorted(por_dono.items()):
+        res = conn.execute(_SQL_CORRIGE_TIPO_REEMBOLSO, {
+            "tipo": TIPO_REEMBOLSO_BTC, "user_id": dono, "ids": sorted(ids),
+        })
+        mudou += max(res.rowcount or 0, 0)
+    return mudou
 
 
 def quantidade_e_valor_unitario(
@@ -715,7 +795,7 @@ def insert_dividend(
     dizer "a fonte não informa" e exige a migração 083. Quem chama roda
     `ajustar_quantidades_dividendos` depois, com o lote inteiro.
     """
-    if div_type not in ("dividend", "jcp", "reit_income", "amortization", "other"):
+    if div_type not in TIPOS_DIVIDENDO:
         raise ValueError(f"div_type invalido: {div_type}")
     # ON CONFLICT cobre reimportação da mesma fonte. O NOT EXISTS cobre o
     # mesmo provento chegando por outra fonte.
@@ -966,7 +1046,7 @@ def batch_insert_dividends(
     """
     if not rows:
         return 0
-    valid_types = {"dividend", "jcp", "reit_income", "amortization", "other"}
+    valid_types = TIPOS_DIVIDENDO
     for r in rows:
         if r["type"] not in valid_types:
             raise ValueError(f"div_type invalido: {r['type']!r}")

@@ -248,6 +248,13 @@ def _conferencias(d: dict) -> list[str]:
 
     out = []
     for p in d["proventos_a_classificar"]["linhas"]:
+        if p.get("tipo") == "lending_reimbursement":
+            out.append(
+                f"**{', '.join(p['tickers'])}** — R\\$ {_n(p['valor'])} de *reembolso de "
+                "aluguel de ações (BTC)*: o que o tomador pagou no lugar do provento. "
+                "Não é o dividendo nem o JCP; a ficha sai do informe de rendimentos da "
+                "corretora, por isso não entrou em nenhuma.")
+            continue
         out.append(
             f"**{', '.join(p['tickers'])}** — R\\$ {_n(p['valor'])} lançados no extrato da B3 como "
             "*Rendimento*. O informe de rendimentos da empresa diz se é dividendo "
