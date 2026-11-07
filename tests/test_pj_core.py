@@ -283,7 +283,10 @@ def test_busca_ignora_acento_caixa_e_ordem_das_palavras():
 
 def test_filtro_de_categoria_aceita_sem_categoria_e_combina_com_a_busca():
     from core.pj.relatorios import filtrar_lancamentos
-    ids = lambda r: [x["id"] for x in r]
+
+    def ids(r):
+        return [x["id"] for x in r]
+
     assert ids(filtrar_lancamentos(_lancs_filtro(), [None])) == ["4"]
     assert ids(filtrar_lancamentos(_lancs_filtro(), ["receita_servicos", None])) == ["1", "2", "4"]
     assert ids(filtrar_lancamentos(_lancs_filtro(), ["receita_servicos"], "pagamento")) == ["1"]
