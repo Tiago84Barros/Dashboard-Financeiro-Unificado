@@ -43,6 +43,10 @@ def test_par_marcado_e_saldo_que_fecha():
     assert saldo["valor"] == 970.0
     # 1000 no app − 30 do mercado (a padaria já está no app) = 970 do banco.
     assert any("fecha" in s.value for s in at.success)
+    # Os três números saem no card CSS comum do app (design.componentes.card_metrica).
+    cards = "".join(m.value for m in at.markdown if "app-kpi-card" in m.value)
+    for trecho in ("Saldo do banco", "Saldo do app após importar", "Diferença", "970,00"):
+        assert trecho in cards
 
 
 def test_desmarcar_o_par_faz_a_linha_virar_lancamento_e_abre_diferenca():
@@ -51,6 +55,9 @@ def test_desmarcar_o_par_faz_a_linha_virar_lancamento_e_abre_diferenca():
     escolhidos, _ = at.session_state["resultado"]
     assert escolhidos == {}
     assert at.warning and "Diferença" in at.warning[0].value
+    card_dif = [m.value for m in at.markdown
+                if "app-kpi-card" in m.value and "Diferença" in m.value][0]
+    assert "danger" in card_dif
 
 
 def _app_sem_saldo():
