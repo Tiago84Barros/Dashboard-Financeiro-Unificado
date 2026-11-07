@@ -1034,13 +1034,15 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
             "deduções (DAS e devoluções a clientes), custos, despesas, pessoal (pró-labore), "
             "financeiro e o que fica "
             "fora do resultado (aporte, distribuição de lucros, transferência). Regras sugerem "
-            "a categoria, e a escolha do usuário para uma contraparte vira regra.",
+            "a categoria, e a escolha do usuário para uma contraparte vira regra. O usuário "
+            "cria categorias próprias (pj_categorias), cada uma presa a uma linha da DRE.",
             (
                 "Regras padrão: DAS, pró-labore, tarifas, contador, rendimentos; crédito recebido sugere receita",
                 "Regra aprendida por contraparte vence a padrão",
                 "Saída para quem tem regra de receita vira devolução (dedução), não receita negativa",
                 "Estorno ou reembolso recebido nunca vira receita: segue a despesa que desfaz",
                 "Sem categoria: entra no caixa, fica fora da DRE",
+                "Categoria própria: nome livre, linha da DRE fixa; só se exclui sem lançamento",
             ),
             "Categoria da empresa não é a pessoal: pró-labore sai da empresa e entra na pessoa, "
             "e o DAS é dedução da receita, não despesa.",

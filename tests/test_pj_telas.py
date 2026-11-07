@@ -190,3 +190,60 @@ def test_balanco_sem_saldo_de_abertura_nao_inventa_numero():
     at = AppTest.from_function(app).run(timeout=30)
     assert not at.exception
     assert not [m for m in at.markdown if "app-kpi-card" in m.value]
+
+
+def _app_categoria_propria(aba: str):
+    from datetime import date
+
+    import views.controle_cnpj as tela
+    from core.pj.plano_contas import Categoria, PlanoDeContas
+
+    hoje = date.today()
+    base = {"status": "pago", "origem": "extrato", "contraparte": None, "parcela": 1,
+            "total_parcelas": 1}
+    lancs = [
+        {**base, "id": "1", "data": hoje, "descricao": "Pix enviado - Vendedor X",
+         "valor": -300.0, "categoria": "u_comissoes", "grupo_categoria": "custos", "chave": "k1"},
+        {**base, "id": "2", "data": hoje, "descricao": "Pagamento recebido - Cliente",
+         "valor": 1000.0, "categoria": "receita_servicos", "chave": "k2"},
+    ]
+    plano = PlanoDeContas((Categoria("u_comissoes", "Comissões de vendedores", "custos"),))
+    original = tela.repo.listar_categorias
+    tela.repo.listar_categorias = lambda: [{"codigo": "u_comissoes",
+                                            "nome": "Comissões de vendedores",
+                                            "grupo": "custos", "usos": 1}]
+    try:
+        getattr(tela, aba)(lancs, plano)
+    finally:
+        tela.repo.listar_categorias = original
+
+
+def test_categoria_propria_aparece_na_lista_no_filtro_e_na_correcao():
+    at = AppTest.from_function(_app_categoria_propria, args=("_tab_lancamentos",)).run(timeout=30)
+    assert not at.exception
+    tabela = "".join(m.value for m in at.markdown if "<table" in m.value)
+    assert "Comissões de vendedores" in tabela
+    assert "Comissões de vendedores" in at.multiselect(key="cnpj_lanc_filtro_cat").options
+    assert "Comissões de vendedores" in at.selectbox(key="cnpj_corrigir_cat_1").options
+    # gerenciador: a categoria criada, sua linha da DRE e o uso
+    assert any("Categorias da empresa" in e.label for e in at.expander)
+    assert "Custos" in tabela
+    # em uso: não dá para excluir
+    assert at.button(key="cnpj_cat_excluir").disabled
+
+
+def test_filtro_por_categoria_propria():
+    at = AppTest.from_function(_app_categoria_propria, args=("_tab_lancamentos",)).run(timeout=30)
+    at.multiselect(key="cnpj_lanc_filtro_cat").select("Comissões de vendedores").run()
+    assert not at.exception
+    assert any("1 de 2 lançamento(s)" in c.value for c in at.caption)
+
+
+def test_dre_mostra_a_categoria_propria_na_linha_dela():
+    at = AppTest.from_function(_app_categoria_propria, args=("_tab_dre",)).run(timeout=30)
+    assert not at.exception
+    tabela = "".join(m.value for m in at.markdown if "<table" in m.value)
+    linhas = tabela.split("<tr>")
+    i_custos = next(i for i, linha in enumerate(linhas) if "(−) Custos" in linha)
+    assert "Comissões de vendedores" in linhas[i_custos + 1]
+    assert "300,00" in linhas[i_custos]

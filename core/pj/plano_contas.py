@@ -81,6 +81,61 @@ CATEGORIAS: tuple[Categoria, ...] = (
 )
 POR_CODIGO = {c.codigo: c for c in CATEGORIAS}
 
+#: Código das categorias criadas pelo usuário. O prefixo impede colisão com
+#: as fixas, inclusive com uma fixa que o app venha a ganhar depois.
+PREFIXO_PROPRIA = "u_"
+
+
+@dataclass(frozen=True)
+class PlanoDeContas:
+    """As categorias fixas mais as criadas pelo dono (``pj_categorias``).
+
+    Toda tela que lista, valida ou rotula categoria parte daqui, e não de
+    ``CATEGORIAS``: uma lista montada só com as fixas some com a categoria
+    nova do seletor, da DRE ou do filtro, e o lançamento dela vira "Sem
+    categoria" na tela que esqueceu.
+    """
+    proprias: tuple[Categoria, ...] = ()
+
+    @property
+    def todas(self) -> tuple[Categoria, ...]:
+        """Na ordem da DRE; dentro de cada grupo, as fixas antes das próprias."""
+        ordem = {g: i for i, (g, _) in enumerate(GRUPOS_DRE)}
+        return tuple(sorted((*CATEGORIAS, *self.proprias),
+                            key=lambda c: (ordem.get(c.grupo, 99),
+                                           c.codigo.startswith(PREFIXO_PROPRIA))))
+
+    @property
+    def por_codigo(self) -> dict[str, Categoria]:
+        return {c.codigo: c for c in self.todas}
+
+    def nomes(self) -> list[str]:
+        return [c.nome for c in self.todas]
+
+    def codigo_por_nome(self) -> dict[str, str]:
+        return {c.nome: c.codigo for c in self.todas}
+
+    def rotulo(self, codigo: str | None) -> str:
+        cat = self.por_codigo.get(codigo or "")
+        return cat.nome if cat else "Sem categoria"
+
+    def do_grupo(self, grupo: str) -> list[Categoria]:
+        return [c for c in self.todas if c.grupo == grupo]
+
+
+PLANO_PADRAO = PlanoDeContas()
+
+
+def codigo_para_propria(nome: str, existentes: set[str]) -> str:
+    """Código estável a partir do nome: ``u_`` + nome normalizado, com sufixo
+    numérico se já houver outro igual. Renomear não muda o código, então os
+    lançamentos e as regras continuam apontando para a mesma categoria."""
+    base = PREFIXO_PROPRIA + ("_".join(normalizar(nome).split()) or "categoria")[:40]
+    codigo, n = base, 2
+    while codigo in existentes or codigo in POR_CODIGO:
+        codigo, n = f"{base}_{n}", n + 1
+    return codigo
+
 #: Folha para o Fator R do Simples: pró-labore, salários e encargos (INSS
 #: patronal e FGTS). Benefício não entra.
 CODIGOS_FOLHA = ("pro_labore", "salarios", "encargos")
@@ -126,7 +181,8 @@ def _contem(texto_norm: str, termo: str) -> bool:
     return re.search(rf"\b{re.escape(termo)}\b", texto_norm) is not None
 
 
-def sugerir_categoria(mov: dict, regras_aprendidas: dict[str, str] | None = None) -> str | None:
+def sugerir_categoria(mov: dict, regras_aprendidas: dict[str, str] | None = None,
+                      plano: PlanoDeContas = PLANO_PADRAO) -> str | None:
     """Código sugerido para um movimento, ou ``None`` (fica pendente).
 
     Regra aprendida: contraparte normalizada -> código, gravada quando o
@@ -144,8 +200,8 @@ def sugerir_categoria(mov: dict, regras_aprendidas: dict[str, str] | None = None
     contraparte = normalizar(mov.get("contraparte"))
     sentido = "entrada" if float(mov.get("valor") or 0) > 0 else "saida"
     if regras_aprendidas and contraparte and contraparte in regras_aprendidas:
-        codigo = categoria_no_sentido(regras_aprendidas[contraparte], sentido)
-        if codigo in POR_CODIGO:
+        codigo = categoria_no_sentido(regras_aprendidas[contraparte], sentido, plano)
+        if codigo in plano.por_codigo:
             return codigo
     texto = normalizar(f"{mov.get('descricao', '')} {mov.get('contraparte', '')}")
     if sentido == "entrada" and any(_contem(texto, t) for t in _TERMOS_ESTORNO):
@@ -158,7 +214,8 @@ def sugerir_categoria(mov: dict, regras_aprendidas: dict[str, str] | None = None
     return None
 
 
-def categoria_no_sentido(codigo: str | None, sentido: str) -> str | None:
+def categoria_no_sentido(codigo: str | None, sentido: str,
+                         plano: PlanoDeContas = PLANO_PADRAO) -> str | None:
     """A categoria aprendida para a contraparte, ajustada ao sentido do dinheiro.
 
     - receita (grupo Receita bruta) numa SAÍDA vira devolução ao cliente: o
@@ -166,7 +223,7 @@ def categoria_no_sentido(codigo: str | None, sentido: str) -> str | None:
     - devolução numa ENTRADA não vale (``None``): dinheiro que chega do
       cliente é receita, e a regra padrão de crédito recebido decide qual.
     """
-    cat = POR_CODIGO.get(codigo or "")
+    cat = plano.por_codigo.get(codigo or "")
     if cat is None:
         return None
     if sentido == "saida" and cat.grupo == "receita_bruta":

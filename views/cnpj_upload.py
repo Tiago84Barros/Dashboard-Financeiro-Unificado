@@ -17,21 +17,19 @@ from core.config import settings
 from core.pj import relatorios
 from core.pj import repositorio as repo
 from core.pj.extratos import extensoes_aceitas, ler_extrato
-from core.pj.plano_contas import CATEGORIAS, POR_CODIGO, rotulo, sugerir_categoria
+from core.pj.plano_contas import PLANO_PADRAO, PlanoDeContas, sugerir_categoria
 from core.utils import escapar_cifrao, fmt_moeda
 from design.componentes import card_metrica
 from design.tema_canvas import no_claro
 
 SEM_CATEGORIA = "Sem categoria"
-_OPCOES = [SEM_CATEGORIA] + [c.nome for c in CATEGORIAS]
-_CODIGO_POR_NOME = {c.nome: c.codigo for c in CATEGORIAS}
 
 
 def _fmt_data(d) -> str:
     return d.strftime("%d/%m/%Y") if hasattr(d, "strftime") else "-"
 
 
-def _editor_categorias(movs: list[dict]) -> list[str]:
+def _editor_categorias(movs: list[dict], plano: PlanoDeContas = PLANO_PADRAO) -> list[str]:
     """Nome da categoria escolhida para cada movimento, na ordem.
 
     Tema escuro: ``st.data_editor``. Tema claro: um seletor por linha, porque
@@ -41,11 +39,12 @@ def _editor_categorias(movs: list[dict]) -> list[str]:
     # Chaves dos widgets pelo movimento (FITID), nunca pela posição: trocar de
     # arquivo com a prévia aberta herdava a categoria escolhida para a linha de
     # mesmo número do arquivo anterior (achado do Codex no PR #680).
+    opcoes = [SEM_CATEGORIA, *plano.nomes()]
     assinatura = hashlib.sha1("".join(m["chave"] for m in movs).encode()).hexdigest()[:12]
     if not no_claro():
         df = pd.DataFrame([{
             "Data": _fmt_data(m["data"]), "Descrição": m["descricao"],
-            "Valor (R$)": m["valor"], "Categoria": rotulo(m.get("categoria")),
+            "Valor (R$)": m["valor"], "Categoria": plano.rotulo(m.get("categoria")),
         } for m in movs])
         editado = st.data_editor(
             df, hide_index=True, width="stretch", num_rows="fixed",
@@ -55,7 +54,7 @@ def _editor_categorias(movs: list[dict]) -> list[str]:
                 "Descrição": st.column_config.TextColumn("Descrição", disabled=True, width="large"),
                 "Valor (R$)": st.column_config.NumberColumn("Valor (R$)", format="R$ %.2f",
                                                             disabled=True),
-                "Categoria": st.column_config.SelectboxColumn("Categoria", options=_OPCOES,
+                "Categoria": st.column_config.SelectboxColumn("Categoria", options=opcoes,
                                                               required=True),
             })
         return list(editado["Categoria"])
@@ -67,8 +66,8 @@ def _editor_categorias(movs: list[dict]) -> list[str]:
         c2.markdown(
             f'<div style="padding-top:6px;font-size:0.8rem;">{html.escape(m["descricao"])} · '
             f'<b>{html.escape(fmt_moeda(m["valor"]))}</b></div>', unsafe_allow_html=True)
-        atual = rotulo(m.get("categoria"))
-        escolhas.append(c3.selectbox("Categoria", _OPCOES, index=_OPCOES.index(atual),
+        atual = plano.rotulo(m.get("categoria"))
+        escolhas.append(c3.selectbox("Categoria", opcoes, index=opcoes.index(atual),
                                      key=f"cnpj_previa_cat_{m['chave'][:24]}",
                                      label_visibility="collapsed"))
     return escolhas
@@ -141,6 +140,7 @@ def render_upload_extrato_cnpj() -> None:
                f"{_fmt_data(min(datas))} a {_fmt_data(max(datas))}")
 
     ctx = repo.preparar_importacao(extrato.movimentos)
+    plano = repo.plano_de_contas()
     ja = ctx["ja_importadas"]
     novos_idx = [i for i, m in enumerate(extrato.movimentos) if m["chave"] not in ja]
     if ja:
@@ -161,12 +161,12 @@ def render_upload_extrato_cnpj() -> None:
         return
     novos = [dict(extrato.movimentos[i]) for i in novos_idx]
     for m in novos:
-        m["categoria"] = sugerir_categoria(m, ctx["regras"])
+        m["categoria"] = sugerir_categoria(m, ctx["regras"], plano)
 
     st.markdown("#### Categorias")
     st.caption("Sugeridas pelas regras e pelo que você já classificou antes. A categoria que "
                "você escolher para uma contraparte vira regra para os próximos extratos.")
-    escolhas = _editor_categorias(novos)
+    escolhas = _editor_categorias(novos, plano)
 
     # vinculos vêm indexados pela posição no arquivo; aqui, pela posição em `novos`
     vinculos = {novos_idx.index(i): v for i, v in ctx["vinculos"].items() if i in novos_idx}
@@ -195,8 +195,8 @@ def render_upload_extrato_cnpj() -> None:
                  disabled=settings.MOCK_MODE, key="cnpj_importar"):
         finais = []
         for k, m in enumerate(novos):
-            codigo = _CODIGO_POR_NOME.get(escolhas[k])
-            item = {**m, "categoria": codigo if codigo in POR_CODIGO else None}
+            codigo = plano.codigo_por_nome().get(escolhas[k])
+            item = {**m, "categoria": codigo if codigo in plano.por_codigo else None}
             if k in escolhidos:
                 item["vincular_id"] = vinculos[k]["transaction_id"]
             finais.append(item)

@@ -1,6 +1,6 @@
 """Banco do Controle CNPJ: tabelas ``pj_*``, sempre filtradas pelo dono.
 
-Quatro tabelas (migration 084, também criadas aqui na primeira leitura):
+Cinco tabelas (migrations 084 e 085, também criadas aqui na primeira leitura):
 
 - ``pj_empresas`` -- uma linha por dono: CNPJ, razão social, anexo do Simples
   e o saldo de abertura da conta (deduzido do primeiro extrato com saldo);
@@ -10,7 +10,9 @@ Quatro tabelas (migration 084, também criadas aqui na primeira leitura):
 - ``pj_saldos_extrato`` -- o saldo que o banco informou em cada extrato, para
   a conferência contra o saldo calculado;
 - ``pj_regras`` -- contraparte -> categoria, aprendida quando o usuário
-  classifica um movimento na importação.
+  classifica um movimento na importação;
+- ``pj_categorias`` -- categorias criadas pelo dono (migration 085), cada uma
+  presa a um grupo da DRE. O código (``u_...``) não muda ao renomear.
 
 Conciliação: o movimento do extrato que casa com um lançamento manual (pago
 ou previsto) não vira linha nova -- o lançamento existente recebe a ``chave``
@@ -28,7 +30,14 @@ from typing import Any
 from core.conciliacao_bancaria import JANELA_DIAS, sugerir_vinculos
 from core.config import settings
 from core.pj import relatorios
-from core.pj.plano_contas import POR_CODIGO, normalizar
+from core.pj.plano_contas import (
+    GRUPOS_DRE,
+    POR_CODIGO,
+    Categoria,
+    PlanoDeContas,
+    codigo_para_propria,
+    normalizar,
+)
 from core.previstos import datas_mensais
 from core.user_context import user_cache_data
 
@@ -94,6 +103,18 @@ DDL = [
         PRIMARY KEY (user_id, contraparte)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS pj_categorias (
+        user_id    UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        codigo     TEXT NOT NULL,
+        nome       TEXT NOT NULL,
+        grupo      TEXT NOT NULL CHECK (grupo IN ('receita_bruta', 'deducoes', 'custos',
+                       'despesas_operacionais', 'pessoal', 'financeiro', 'fora_do_resultado')),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (user_id, codigo)
+    )
+    """,
     *[
         f"""
         DO $$ BEGIN
@@ -109,7 +130,8 @@ DDL = [
             END IF;
         END; $$
         """
-        for t in ("pj_empresas", "pj_lancamentos", "pj_saldos_extrato", "pj_regras")
+        for t in ("pj_empresas", "pj_lancamentos", "pj_saldos_extrato", "pj_regras",
+                  "pj_categorias")
     ],
 ]
 
@@ -147,7 +169,7 @@ def _engine_e_dono():
 
 
 def limpar_caches() -> None:
-    for fn in (obter_empresa, listar_lancamentos, listar_saldos_extrato):
+    for fn in (obter_empresa, listar_lancamentos, listar_saldos_extrato, listar_categorias):
         if hasattr(fn, "clear"):
             fn.clear()
 
@@ -184,16 +206,53 @@ def listar_lancamentos() -> list[dict]:
         return []
     with engine.begin() as conn:
         garantir_tabelas(conn)
+        # grupo_categoria: o grupo da DRE de uma categoria criada pelo usuário,
+        # que core.pj.relatorios não acha em POR_CODIGO.
         rows = conn.execute(_texto("""
-            SELECT id::text, data, descricao, valor, categoria, status, origem,
-                   contraparte, chave, parcela, total_parcelas
-            FROM pj_lancamentos WHERE user_id = CAST(:uid AS uuid)
-            ORDER BY data, created_at"""), {"uid": dono}).fetchall()
+            SELECT l.id::text, l.data, l.descricao, l.valor, l.categoria, l.status, l.origem,
+                   l.contraparte, l.chave, l.parcela, l.total_parcelas,
+                   c.grupo AS grupo_categoria
+            FROM pj_lancamentos l
+            LEFT JOIN pj_categorias c ON c.user_id = l.user_id AND c.codigo = l.categoria
+            WHERE l.user_id = CAST(:uid AS uuid)
+            ORDER BY l.data, l.created_at"""), {"uid": dono}).fetchall()
     return [{"id": r.id, "data": r.data, "descricao": r.descricao, "valor": float(r.valor),
              "categoria": r.categoria, "status": r.status, "origem": r.origem,
              "contraparte": r.contraparte, "chave": r.chave,
-             "parcela": int(r.parcela or 1), "total_parcelas": int(r.total_parcelas or 1)}
+             "parcela": int(r.parcela or 1), "total_parcelas": int(r.total_parcelas or 1),
+             "grupo_categoria": r.grupo_categoria}
             for r in rows]
+
+
+@user_cache_data(ttl=60)
+def listar_categorias() -> list[dict]:
+    """Categorias criadas pelo dono, com quantos lançamentos usam cada uma."""
+    engine, dono = _engine_e_dono()
+    if engine is None:
+        return []
+    with engine.begin() as conn:
+        garantir_tabelas(conn)
+        rows = conn.execute(_texto("""
+            SELECT c.codigo, c.nome, c.grupo,
+                   (SELECT count(*) FROM pj_lancamentos l
+                    WHERE l.user_id = c.user_id AND l.categoria = c.codigo) AS usos
+            FROM pj_categorias c WHERE c.user_id = CAST(:uid AS uuid)
+            ORDER BY c.nome"""), {"uid": dono}).fetchall()
+    return [{"codigo": r.codigo, "nome": r.nome, "grupo": r.grupo, "usos": int(r.usos)}
+            for r in rows]
+
+
+def plano_de_contas() -> PlanoDeContas:
+    """Fixas + criadas pelo dono. Sem banco, só as fixas."""
+    return PlanoDeContas(tuple(Categoria(c["codigo"], c["nome"], c["grupo"])
+                               for c in listar_categorias()))
+
+
+def _codigos_validos(conn, dono: str) -> set[str]:
+    proprias = {r.codigo for r in conn.execute(_texto("""
+        SELECT codigo FROM pj_categorias WHERE user_id = CAST(:uid AS uuid)"""),
+        {"uid": dono})}
+    return set(POR_CODIGO) | proprias
 
 
 @user_cache_data(ttl=60)
@@ -296,8 +355,9 @@ def importar_extrato(movimentos: list[dict], arquivo: str,
     novos = vinculados = repetidos = 0
     with engine.begin() as conn:
         garantir_tabelas(conn)
+        validos = _codigos_validos(conn, dono)
         for m in movimentos:
-            categoria = m.get("categoria") if m.get("categoria") in POR_CODIGO else None
+            categoria = m.get("categoria") if m.get("categoria") in validos else None
             if m.get("vincular_id"):
                 r = conn.execute(_texto("""
                     UPDATE pj_lancamentos
@@ -387,13 +447,13 @@ def criar_lancamento(data: date, descricao: str, valor: float, entrada: bool,
         return False, "Informe um valor maior que zero."
     if repeticoes > 1 and status != "previsto":
         return False, "Repetir vale só para previsto."
-    if categoria is not None and categoria not in POR_CODIGO:
-        return False, "Categoria inválida."
     sinal = 1.0 if entrada else -1.0
     datas = datas_mensais(data, repeticoes)
     grupo = str(uuid.uuid4()) if len(datas) > 1 else None
     with engine.begin() as conn:
         garantir_tabelas(conn)
+        if categoria is not None and categoria not in _codigos_validos(conn, dono):
+            return False, "Categoria inválida."
         for i, d in enumerate(datas, start=1):
             conn.execute(_texto("""
                 INSERT INTO pj_lancamentos
@@ -414,10 +474,10 @@ def classificar(lancamento_id: str, categoria: str | None,
     engine, dono = _engine_e_dono()
     if engine is None:
         return False, "Banco não configurado ou sessão sem dono."
-    if categoria is not None and categoria not in POR_CODIGO:
-        return False, "Categoria inválida."
     with engine.begin() as conn:
         garantir_tabelas(conn)
+        if categoria is not None and categoria not in _codigos_validos(conn, dono):
+            return False, "Categoria inválida."
         r = conn.execute(_texto("""
             UPDATE pj_lancamentos SET categoria = :cat, updated_at = NOW()
             WHERE id = CAST(:id AS uuid) AND user_id = CAST(:uid AS uuid)
@@ -490,5 +550,101 @@ def salvar_empresa(cnpj: str, razao_social: str, anexo: str) -> tuple[bool, str]
                     anexo_simples = EXCLUDED.anexo_simples, updated_at = NOW()"""),
             {"uid": dono, "cnpj": digitos or None, "razao": (razao_social or "").strip() or None,
              "anexo": anexo})
+    limpar_caches()
+    return True, ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Categorias criadas pelo usuário
+# ─────────────────────────────────────────────────────────────────────────────
+
+_GRUPOS = dict(GRUPOS_DRE)
+
+
+def _nome_em_uso(conn, dono: str, nome: str, exceto: str | None = None) -> bool:
+    alvo = normalizar(nome)
+    if any(normalizar(c.nome) == alvo for c in POR_CODIGO.values()):
+        return True
+    return any(normalizar(r.nome) == alvo for r in conn.execute(_texto("""
+        SELECT codigo, nome FROM pj_categorias
+        WHERE user_id = CAST(:uid AS uuid) AND codigo <> COALESCE(:exceto, '')"""),
+        {"uid": dono, "exceto": exceto}))
+
+
+def criar_categoria(nome: str, grupo: str) -> tuple[bool, str]:
+    """Nova categoria do dono, presa a um grupo da DRE. O grupo decide onde
+    ela soma: Receita bruta entra no DAS, Fora do resultado não entra na DRE."""
+    engine, dono = _engine_e_dono()
+    if engine is None:
+        return False, "Banco não configurado ou sessão sem dono."
+    nome = " ".join(str(nome or "").split())[:60]
+    if not nome:
+        return False, "Informe o nome da categoria."
+    if grupo not in _GRUPOS:
+        return False, "Escolha a linha da DRE."
+    with engine.begin() as conn:
+        garantir_tabelas(conn)
+        if _nome_em_uso(conn, dono, nome):
+            return False, f"Já existe uma categoria chamada \"{nome}\"."
+        existentes = {r.codigo for r in conn.execute(_texto("""
+            SELECT codigo FROM pj_categorias WHERE user_id = CAST(:uid AS uuid)"""),
+            {"uid": dono})}
+        conn.execute(_texto("""
+            INSERT INTO pj_categorias (user_id, codigo, nome, grupo)
+            VALUES (CAST(:uid AS uuid), :codigo, :nome, :grupo)"""),
+            {"uid": dono, "codigo": codigo_para_propria(nome, existentes),
+             "nome": nome, "grupo": grupo})
+    limpar_caches()
+    return True, ""
+
+
+def renomear_categoria(codigo: str, novo_nome: str) -> tuple[bool, str]:
+    """Só o nome muda: o código fica, e com ele os lançamentos e as regras."""
+    engine, dono = _engine_e_dono()
+    if engine is None:
+        return False, "Banco não configurado ou sessão sem dono."
+    novo_nome = " ".join(str(novo_nome or "").split())[:60]
+    if not novo_nome:
+        return False, "Informe o novo nome."
+    with engine.begin() as conn:
+        garantir_tabelas(conn)
+        if _nome_em_uso(conn, dono, novo_nome, exceto=codigo):
+            return False, f"Já existe uma categoria chamada \"{novo_nome}\"."
+        r = conn.execute(_texto("""
+            UPDATE pj_categorias SET nome = :nome, updated_at = NOW()
+            WHERE user_id = CAST(:uid AS uuid) AND codigo = :codigo"""),
+            {"uid": dono, "codigo": codigo, "nome": novo_nome})
+        if not r.rowcount:
+            return False, "Categoria não encontrada."
+    limpar_caches()
+    return True, ""
+
+
+def excluir_categoria(codigo: str) -> tuple[bool, str]:
+    """Só categoria sem lançamento. Com lançamento, apagar deixaria o
+    dinheiro dele sem linha na DRE sem o usuário ver: ele reclassifica antes.
+    As regras que apontavam para ela saem junto (o próximo extrato daquela
+    contraparte volta para a sugestão padrão)."""
+    engine, dono = _engine_e_dono()
+    if engine is None:
+        return False, "Banco não configurado ou sessão sem dono."
+    with engine.begin() as conn:
+        garantir_tabelas(conn)
+        usos = int(conn.execute(_texto("""
+            SELECT count(*) FROM pj_lancamentos
+            WHERE user_id = CAST(:uid AS uuid) AND categoria = :codigo"""),
+            {"uid": dono, "codigo": codigo}).scalar() or 0)
+        if usos:
+            return False, (f"{usos} lançamento(s) usam esta categoria. Troque a categoria "
+                           "deles em 'Corrigir categoria' antes de excluí-la.")
+        r = conn.execute(_texto("""
+            DELETE FROM pj_categorias
+            WHERE user_id = CAST(:uid AS uuid) AND codigo = :codigo"""),
+            {"uid": dono, "codigo": codigo})
+        if not r.rowcount:
+            return False, "Categoria não encontrada."
+        conn.execute(_texto("""
+            DELETE FROM pj_regras WHERE user_id = CAST(:uid AS uuid) AND categoria = :codigo"""),
+            {"uid": dono, "codigo": codigo})
     limpar_caches()
     return True, ""
