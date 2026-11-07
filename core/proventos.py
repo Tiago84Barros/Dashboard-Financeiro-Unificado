@@ -51,6 +51,9 @@ _TIPO_LABEL: dict[str, str] = {
     "reit_income":  "Rendimento FII",
     "amortization": "Amortização",
     "other":        "Outros",
+    # Migração 084: o que quem tomou suas ações emprestadas paga no lugar do
+    # dividendo ou do JCP. É renda, mas não é rendimento de FII.
+    "lending_reimbursement": "Reembolso de aluguel (BTC)",
 }
 
 _MESES_PT = {
@@ -294,7 +297,11 @@ def _proventos_real() -> dict:
 #: (``data_pipeline/importers/investments/common.py``): nenhum dos dois é renda.
 #: Somá-los inflava o DY exibido em Investimentos (mesma regra do A-128 para
 #: ``market.dividends``, em ``core/dividend_types.py``).
-TIPOS_RENDA_PESSOAL = frozenset({"dividend", "jcp", "reit_income"})
+TIPOS_RENDA_PESSOAL = frozenset({
+    "dividend", "jcp", "reit_income",
+    # Substitui o dividendo/JCP da ação emprestada: é renda do mesmo jeito.
+    "lending_reimbursement",
+})
 
 
 def _montar_dict(eventos: list, hoje: _date) -> dict:

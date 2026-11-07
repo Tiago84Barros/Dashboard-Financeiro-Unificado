@@ -403,7 +403,8 @@ def rendimentos(proventos: list[dict], ano: int, emissores: dict, mercado: dict,
     """Proventos do ano por ficha, somados por fonte pagadora (CNPJ).
 
     ``proventos``: dicts com data, ticker, nome, tipo ('dividend', 'jcp',
-    'reit_income', 'amortization', 'other') e valor (JCP já líquido).
+    'reit_income', 'amortization', 'other', 'lending_reimbursement') e valor
+    (JCP já líquido).
 
       dividend em ação ............ Isentos 09
       jcp ......................... Exclusiva 10
@@ -415,6 +416,11 @@ def rendimentos(proventos: list[dict], ano: int, emissores: dict, mercado: dict,
     "Rendimento" em ação (reit_income) é o rótulo do extrato da B3; pode ser
     dividendo, JCP ou reembolso de aluguel (BTC). O informe da empresa diz
     qual; adivinhar põe o valor na ficha errada.
+
+    'lending_reimbursement' (migração 084) é o reembolso de aluguel já
+    identificado. Ele também vai para a_classificar, inclusive em FII: o
+    reembolso não é o provento -- é o tomador pagando o equivalente --, e a
+    ficha sai do informe da corretora, não da regra do provento original.
     """
     grupos: dict[str, dict[tuple, dict]] = {
         "dividendos": {}, "jcp": {}, "fii": {}, "fip_ie": {}, "a_classificar": {}}
