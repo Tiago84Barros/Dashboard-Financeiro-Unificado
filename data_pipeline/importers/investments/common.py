@@ -192,12 +192,22 @@ _TX_MAP_B3 = {
     "resgate antecipado":                    "sell",
 }
 
+# Tipos aceitos em `dividends.type` (CHECK da 003, ampliada pela 084).
+TIPO_REEMBOLSO_BTC = "lending_reimbursement"
+TIPOS_DIVIDENDO = frozenset({
+    "dividend", "jcp", "reit_income", "amortization", "other",
+    TIPO_REEMBOLSO_BTC,
+})
+
 # Movimentos da B3 que entram em `dividends`
 _INCOME_MAP_B3 = {
     "dividendo":                              "dividend",
     "juros sobre capital próprio":            "jcp",
     "rendimento":                             "reit_income",
-    "reembolso":                              "reit_income",
+    # Reembolso: o que quem tomou suas ações emprestadas (BTC) paga no lugar
+    # do dividendo ou do JCP. Não é rendimento de FII -- até a migração 084
+    # era gravado como `reit_income` e aparecia como "Rendimento FII".
+    "reembolso":                              TIPO_REEMBOLSO_BTC,
     "pagamento de prêmio/rendimentos":        "reit_income",
     "pagamento de rendimentos":               "reit_income",
     "direito de subscrição":                  "other",
@@ -388,6 +398,96 @@ def migracao_083_aplicada(conn: Connection | Engine) -> bool:
         return False
 
 
+def migracao_084_aplicada(conn: Connection | Engine) -> bool:
+    """True se a CHECK de `dividends.type` já aceita `lending_reimbursement`.
+
+    Só lê o catálogo. Fora do Postgres (SQLite dos testes) a resposta é True.
+    """
+    if _dialeto(conn) != "postgresql":
+        return True
+    sql = text("""
+        SELECT COUNT(*)
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         WHERE n.nspname = 'public' AND t.relname = 'dividends'
+           AND c.contype = 'c'
+           AND pg_get_constraintdef(c.oid) LIKE '%lending_reimbursement%'
+    """)
+    try:
+        if isinstance(conn, Engine):
+            with conn.connect() as c:
+                return int(c.execute(sql).scalar() or 0) > 0
+        return int(conn.execute(sql).scalar() or 0) > 0
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("migracao_084_aplicada: %s", safe_error(exc))
+        return False
+
+
+def tipo_gravavel(tipo: str, aplicada_084: bool) -> str:
+    """O tipo que o banco aceita agora. Antes da 084 o reembolso volta a ser
+    `reit_income`, como sempre foi -- e a importação avisa
+    (`aviso_reembolso_sem_084`); depois dela, a reimportação corrige."""
+    if tipo == TIPO_REEMBOLSO_BTC and not aplicada_084:
+        return "reit_income"
+    return tipo
+
+
+def aviso_reembolso_sem_084(n: int) -> str:
+    return (
+        f"{n} reembolso(s) de aluguel de ações (BTC) gravado(s) como "
+        "\"Rendimento FII\", porque o banco ainda não tem o tipo próprio. Rode, "
+        "com backup, supabase_unificado/schema/084_dividends_reembolso_btc.sql "
+        "no SQL Editor do Supabase e importe de novo."
+    )
+
+
+def _tipo_canonico_sql(expr: str) -> str:
+    """O tipo como a deduplicação o compara: o reembolso de aluguel e o
+    `reit_income` são o mesmo pagamento -- até a 084 todo reembolso era
+    gravado como `reit_income`, e uma linha antiga da XP ou da B3 com o tipo
+    velho não pode deixar passar o mesmo pagamento chegando com o novo."""
+    return (f"(CASE WHEN {expr} = '{TIPO_REEMBOLSO_BTC}' "
+            f"THEN 'reit_income' ELSE {expr} END)")
+
+
+def _tipo_canonico(tipo: str) -> str:
+    return "reit_income" if tipo == TIPO_REEMBOLSO_BTC else str(tipo)
+
+
+# Pela chave canônica, não pelo external_id: a linha antiga pode ter vindo de
+# OUTRA fonte (XP antes da B3, ou o contrário), com outro id.
+_SQL_CORRIGE_TIPO_REEMBOLSO = text(f"""
+    UPDATE dividends
+       SET type = '{TIPO_REEMBOLSO_BTC}'
+     WHERE user_id = :user_id
+       AND asset_id = :asset_id
+       AND payment_date = :payment_date
+       AND type = 'reit_income'
+       AND ROUND(CAST(total_amount AS NUMERIC), 2)
+           = ROUND(CAST(:total_amount AS NUMERIC), 2)
+""")
+
+
+def corrigir_tipo_reembolso(conn: Connection, rows: list[dict[str, Any]]) -> int:
+    """Leva a `lending_reimbursement` a linha já gravada como `reit_income`
+    que é o mesmo pagamento (chave canônica) de um reembolso desta
+    importação, venha ela da mesma fonte ou de outra. Só depois da 084.
+
+    Mesmo ativo, dia e total: é a regra que a deduplicação já usa para dizer
+    que duas linhas são o mesmo provento. Um "Rendimento" de ação e um
+    reembolso no mesmo dia e com o mesmo valor ao centavo seriam fundidos;
+    a deduplicação os fundiria igual."""
+    params = [
+        {k: r[k] for k in ("user_id", "asset_id", "payment_date", "total_amount")}
+        for r in rows if r.get("type") == TIPO_REEMBOLSO_BTC
+    ]
+    if not params:
+        return 0
+    res = conn.execute(_SQL_CORRIGE_TIPO_REEMBOLSO, params)
+    return max(res.rowcount or 0, 0)
+
+
 def quantidade_e_valor_unitario(
     quantidade: float | None, total: float,
 ) -> tuple[float | None, float | None]:
@@ -452,8 +552,8 @@ _SQL_ESVAZIA_PLACEHOLDER = text("""
 def _chave_canonica(user_id, asset_id, payment_date, tipo, total) -> tuple:
     """A mesma chave do NOT EXISTS da deduplicação, normalizada para casar
     o que vem do banco (Decimal, date ou texto no SQLite) com o da planilha."""
-    return (str(user_id), str(asset_id), str(payment_date)[:10], str(tipo),
-            round(float(total), 2))
+    return (str(user_id), str(asset_id), str(payment_date)[:10],
+            _tipo_canonico(tipo), round(float(total), 2))
 
 
 # Só a Movimentação da B3 põe a quantidade crua no hash do external_id
@@ -715,7 +815,7 @@ def insert_dividend(
     dizer "a fonte não informa" e exige a migração 083. Quem chama roda
     `ajustar_quantidades_dividendos` depois, com o lote inteiro.
     """
-    if div_type not in ("dividend", "jcp", "reit_income", "amortization", "other"):
+    if div_type not in TIPOS_DIVIDENDO:
         raise ValueError(f"div_type invalido: {div_type}")
     # ON CONFLICT cobre reimportação da mesma fonte. O NOT EXISTS cobre o
     # mesmo provento chegando por outra fonte.
@@ -732,7 +832,8 @@ def insert_dividend(
                 WHERE existing.user_id = :uid
                   AND existing.asset_id = :aid
                   AND existing.payment_date = :pd
-                  AND existing.type = :type
+                  AND """ + _tipo_canonico_sql("existing.type") + """
+                      = """ + _tipo_canonico_sql("CAST(:type AS VARCHAR)") + """
                   AND ROUND(CAST(existing.total_amount AS NUMERIC), 2)
                       = ROUND(CAST(:total AS NUMERIC), 2)
             )
@@ -966,7 +1067,7 @@ def batch_insert_dividends(
     """
     if not rows:
         return 0
-    valid_types = {"dividend", "jcp", "reit_income", "amortization", "other"}
+    valid_types = TIPOS_DIVIDENDO
     for r in rows:
         if r["type"] not in valid_types:
             raise ValueError(f"div_type invalido: {r['type']!r}")
@@ -983,7 +1084,8 @@ def batch_insert_dividends(
             WHERE existing.user_id = :user_id
               AND existing.asset_id = :asset_id
               AND existing.payment_date = :payment_date
-              AND existing.type = :type
+              AND """ + _tipo_canonico_sql("existing.type") + """
+                  = """ + _tipo_canonico_sql("CAST(:type AS VARCHAR)") + """
               AND ROUND(CAST(existing.total_amount AS NUMERIC), 2)
                   = ROUND(CAST(:total_amount AS NUMERIC), 2)
         )

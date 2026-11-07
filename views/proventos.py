@@ -182,6 +182,7 @@ def render() -> None:
             "jcp":          "#F6C90E",
             "amortization": "#4A9EFF",
             "other":        "#718096",
+            "lending_reimbursement": "#E67E22",
         }
         for t in por_tipo:
             cor = _CORES_TIPO.get(t["tipo"], "#718096")
