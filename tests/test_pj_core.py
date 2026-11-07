@@ -250,3 +250,40 @@ def test_previa_trata_previsto_conciliado_como_pago_na_data_do_banco():
     hip = rel.lancamentos_apos_importacao(existentes, novos, {0: "p1"})
     assert hip == [{"id": "p1", "data": date(2026, 11, 18), "valor": -100.0, "status": "pago"}]
     assert rel.saldo_ate(1000.0, date(2026, 11, 2), hip, date(2026, 11, 18)) == 900.0
+
+
+# ── Lançamentos: filtro por categoria e busca por descrição ─────────────────
+
+def _lancs_filtro():
+    from datetime import date
+    return [
+        {"id": "1", "data": date(2026, 11, 6), "descricao": "Pagamento recebido - Andressa França",
+         "valor": 300.0, "categoria": "receita_servicos"},
+        {"id": "2", "data": date(2026, 11, 4), "descricao": "Transf Pix enviada - Luana Bezerra",
+         "valor": -70.0, "categoria": "receita_servicos"},
+        {"id": "3", "data": date(2026, 11, 3), "descricao": "Pagamento da fatura - Cora SCFI",
+         "valor": -64.99, "categoria": "outras_despesas"},
+        {"id": "4", "data": date(2026, 10, 3), "descricao": "Pix sem nome",
+         "valor": -10.0, "categoria": None},
+    ]
+
+
+def test_filtro_sem_criterio_devolve_tudo():
+    from core.pj.relatorios import filtrar_lancamentos
+    assert len(filtrar_lancamentos(_lancs_filtro())) == 4
+    assert len(filtrar_lancamentos(_lancs_filtro(), [], "   ")) == 4
+
+
+def test_busca_ignora_acento_caixa_e_ordem_das_palavras():
+    from core.pj.relatorios import filtrar_lancamentos
+    assert [x["id"] for x in filtrar_lancamentos(_lancs_filtro(), busca="FRANCA")] == ["1"]
+    assert [x["id"] for x in filtrar_lancamentos(_lancs_filtro(), busca="luana pix")] == ["2"]
+    assert filtrar_lancamentos(_lancs_filtro(), busca="luana fatura") == []
+
+
+def test_filtro_de_categoria_aceita_sem_categoria_e_combina_com_a_busca():
+    from core.pj.relatorios import filtrar_lancamentos
+    ids = lambda r: [x["id"] for x in r]
+    assert ids(filtrar_lancamentos(_lancs_filtro(), [None])) == ["4"]
+    assert ids(filtrar_lancamentos(_lancs_filtro(), ["receita_servicos", None])) == ["1", "2", "4"]
+    assert ids(filtrar_lancamentos(_lancs_filtro(), ["receita_servicos"], "pagamento")) == ["1"]

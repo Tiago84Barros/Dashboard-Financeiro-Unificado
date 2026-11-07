@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 
-from core.pj.plano_contas import CODIGOS_FOLHA, GRUPOS_DRE, POR_CODIGO
+from core.pj.plano_contas import CODIGOS_FOLHA, GRUPOS_DRE, POR_CODIGO, normalizar
 
 _GRUPOS_RESULTADO = ("receita_bruta", "deducoes", "custos", "despesas_operacionais",
                      "pessoal", "financeiro")
@@ -167,3 +167,26 @@ def lancamentos_apos_importacao(existentes: list[dict], novos: list[dict],
         else:
             saida.append({"data": m["data"], "valor": m["valor"], "status": "pago"})
     return list(por_id.values()) + saida
+
+
+def filtrar_lancamentos(lancs: list[dict], categorias: list[str | None] | None = None,
+                        busca: str = "") -> list[dict]:
+    """Lançamentos que passam no filtro de categoria e na busca por descrição.
+
+    ``categorias`` vazio ou ``None`` não filtra; ``None`` dentro da lista é
+    "sem categoria". A busca ignora acento, caixa e pontuação, e cada palavra
+    digitada precisa aparecer na descrição ("luana pix" acha
+    "Transf Pix enviada - Luana ..."), em qualquer ordem.
+    """
+    termos = normalizar(busca).split()
+    filtro_cat = set(categorias) if categorias else None
+    saida = []
+    for x in lancs:
+        if filtro_cat is not None and (x.get("categoria") or None) not in filtro_cat:
+            continue
+        if termos:
+            desc = normalizar(x.get("descricao"))
+            if not all(t in desc for t in termos):
+                continue
+        saida.append(x)
+    return saida

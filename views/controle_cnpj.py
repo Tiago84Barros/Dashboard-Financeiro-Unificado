@@ -189,22 +189,60 @@ def _form_novo_lancamento(prefixo: str, previsto_padrao: bool = False) -> None:
     st.error(msg)
 
 
+# Primeira opção do seletor de período da aba Lançamentos: todos os meses juntos.
+_TODOS_OS_MESES = "Todos os meses"
+
+
+def _filtros_lancamentos(do_periodo: list[dict]) -> list[dict]:
+    """Filtro por categoria e busca por descrição sobre os lançamentos do período."""
+    # Opções fixas (todo o plano de contas), e não só as do período: trocar de
+    # mês não pode apagar o filtro que o usuário já escolheu.
+    sem = "Sem categoria"
+    opcoes = [sem, *_NOMES]
+    f1, f2 = st.columns([2, 3], gap="small")
+    escolhidas = f1.multiselect("Categoria", opcoes, key="cnpj_lanc_filtro_cat",
+                                placeholder="Todas")
+    busca = f2.text_input("Buscar na descrição", key="cnpj_lanc_busca",
+                          placeholder="cliente, fornecedor, CPF/CNPJ…")
+    codigos = [None if n == sem else _CODIGO_POR_NOME[n] for n in escolhidas]
+    visiveis = rel.filtrar_lancamentos(do_periodo, codigos, busca)
+    if escolhidas or busca.strip():
+        entradas = sum(x["valor"] for x in visiveis if x["valor"] > 0)
+        saidas = sum(x["valor"] for x in visiveis if x["valor"] < 0)
+        st.caption(escapar_cifrao(
+            f"{len(visiveis)} de {len(do_periodo)} lançamento(s) · entradas {fmt_moeda(entradas)} · "
+            f"saídas {fmt_moeda(saidas)}"))
+    return visiveis
+
+
 def _tab_lancamentos(lancs: list[dict]) -> None:
-    ano, mes = _seletor_mes(lancs, "cnpj_lanc_mes")
-    do_mes = [x for x in lancs if x["data"].year == ano and x["data"].month == mes]
-    if not do_mes:
-        estado_vazio(f"Nenhum lançamento em {_rotulo_mes(ano, mes)}.", "🧾")
+    por_rotulo = {_TODOS_OS_MESES: None,
+                  **{_rotulo_mes(*p): p for p in _periodos_disponiveis(lancs)}}
+    periodo = por_rotulo[st.selectbox("Mês", list(por_rotulo), index=1, key="cnpj_lanc_mes")]
+    if periodo is None:
+        do_periodo, vazio = list(lancs), "Nenhum lançamento registrado ainda."
     else:
+        ano, mes = periodo
+        do_periodo = [x for x in lancs if x["data"].year == ano and x["data"].month == mes]
+        vazio = f"Nenhum lançamento em {_rotulo_mes(ano, mes)}."
+    visiveis = do_periodo
+    if not do_periodo:
+        estado_vazio(vazio, "🧾")
+    else:
+        visiveis = _filtros_lancamentos(do_periodo)
+    if do_periodo and not visiveis:
+        estado_vazio("Nenhum lançamento do período passa nos filtros.", "🔎")
+    elif do_periodo:
         linhas = [[
             _fmt_data(x["data"]), html.escape(x["descricao"]), html.escape(rotulo(x["categoria"])),
             _valor_html(x["valor"]),
             "previsto" if x["status"] == "previsto" else "pago",
             "extrato" if x["origem"] == "extrato" else ("manual · conciliado" if x["chave"] else "manual"),
-        ] for x in sorted(do_mes, key=lambda x: x["data"], reverse=True)]
+        ] for x in sorted(visiveis, key=lambda x: x["data"], reverse=True)]
         st.markdown(_tabela(linhas, ["Data", "Descrição", "Categoria", "Valor", "Situação", "Origem"],
                             {3}), unsafe_allow_html=True)
 
-    pendentes = [x for x in do_mes if not x["categoria"]][:40]
+    pendentes = [x for x in do_periodo if not x["categoria"]][:40]
     if pendentes:
         st.markdown(f"#### Classificar ({len(pendentes)} sem categoria)")
         st.caption("A categoria escolhida vale também para os próximos extratos da mesma "
@@ -228,12 +266,12 @@ def _tab_lancamentos(lancs: list[dict]) -> None:
                 st.session_state["cnpj_msg"] = "Categorias salvas."
                 st.rerun()
 
-    if do_mes:
+    if visiveis:
         with st.expander("✏️ Corrigir categoria"):
-            st.caption("Para qualquer lançamento do mês, inclusive os já classificados: um "
+            st.caption("Para qualquer lançamento do período, inclusive os já classificados: um "
                        "aporte de sócio aceito como receita, por exemplo. Corrigir aqui muda a "
-                       "DRE e o DAS estimado.")
-            por_id = {x["id"]: x for x in do_mes}
+                       "DRE e o DAS estimado. A lista segue os filtros acima.")
+            por_id = {x["id"]: x for x in visiveis}
             escolhido = st.selectbox(
                 "Lançamento", list(por_id), key="cnpj_corrigir_sel",
                 format_func=lambda i: (f"{_fmt_data(por_id[i]['data'])} · {por_id[i]['descricao']} · "

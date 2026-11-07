@@ -1057,11 +1057,14 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
             "cnpj_visao", "Visão geral e Lançamentos", "Visualização",
             "Visão geral: receita bruta, resultado e margem do mês, saldo em conta, "
             "conferência com o último extrato e 12 meses de entradas, saídas e resultado. "
-            "Lançamentos: a lista do mês, a classificação dos que estão sem categoria, a "
-            "correção da categoria de qualquer lançamento e a exclusão de lançamento manual.",
+            "Lançamentos: a lista de um mês ou de todos os meses, com filtro por categoria e "
+            "busca na descrição, a classificação dos que estão sem categoria, a correção da "
+            "categoria de qualquer lançamento da lista filtrada e a exclusão de lançamento "
+            "manual.",
             (
                 "Saldo = saldo de abertura + lançamentos pagos",
                 "Movimento do extrato não se exclui (o banco registrou)",
+                "Busca ignora acento e maiúscula; todas as palavras precisam aparecer",
             ),
             "O mês precisa fechar com o banco antes de qualquer leitura de resultado.",
         ),
