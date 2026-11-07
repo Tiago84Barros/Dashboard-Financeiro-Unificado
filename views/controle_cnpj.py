@@ -44,7 +44,7 @@ _NOMES = [c.nome for c in CATEGORIAS]
 _CODIGO_POR_NOME = {c.nome: c.codigo for c in CATEGORIAS}
 
 _SECOES = ["📊  Visão geral", "🧾  Lançamentos", "📅  A pagar e receber",
-           "📈  DRE", "🧮  Impostos"]
+           "📈  DRE", "⚖️  Balanço", "🧮  Impostos"]
 
 
 def _rotulo_mes(ano: int, mes: int) -> str:
@@ -457,6 +457,92 @@ def _tab_dre(lancs: list[dict]) -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ⚖️ Balanço
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _datas_do_balanco(lancs: list[dict]) -> dict[str, _date]:
+    """Hoje e o último dia de cada mês já fechado com movimento."""
+    hoje = _date.today()
+    datas = {f"Hoje ({_fmt_data(hoje)})": hoje}
+    for ano, mes in _periodos_disponiveis(lancs):
+        if (ano, mes) >= (hoje.year, hoje.month):
+            continue
+        fim = (_date(ano + (mes == 12), mes % 12 + 1, 1) - timedelta(days=1))
+        datas[f"Fim de {_rotulo_mes(ano, mes)}"] = fim
+    return datas
+
+
+def _tab_balanco(lancs: list[dict], empresa: dict | None) -> None:
+    datas = _datas_do_balanco(lancs)
+    rotulo_data = st.selectbox("Data do balanço", list(datas), key="cnpj_bal_data")
+    data = datas[rotulo_data]
+    hoje = _date.today()
+    b = rel.balanco(lancs, (empresa or {}).get("saldo_inicial"),
+                    (empresa or {}).get("data_saldo_inicial"), data,
+                    contas_em_aberto=data >= hoje)
+    if b is None:
+        estado_vazio("Sem saldo de abertura não há caixa, e sem caixa não há balanço. Importe "
+                     "um extrato com saldo em Configurações › Atualização de dados › 🏢 CNPJ.",
+                     "⚖️")
+        return
+
+    k1, k2, k3 = st.columns(3, gap="small")
+    with k1:
+        card_metrica("Ativo", fmt_moeda(b["total_ativo"]), "o que a empresa tem",
+                     accent="var(--app-info)")
+    with k2:
+        card_metrica("Passivo", fmt_moeda(b["total_passivo"]), "o que a empresa deve",
+                     accent="var(--app-danger)")
+    with k3:
+        card_metrica("Patrimônio líquido", fmt_moeda(b["total_pl"]), "ativo − passivo",
+                     positivo=b["total_pl"] >= 0)
+
+    # No balanço a cor não diz "entrou" ou "saiu": passivo positivo é dívida,
+    # e verde nele leria como coisa boa. Só o valor negativo ganha cor.
+    def valor(v: float) -> str:
+        cor = "var(--app-danger)" if v < 0 else "var(--app-text)"
+        return f'<span style="color:{cor};">{html.escape(fmt_moeda(v))}</span>'
+
+    def linhas(itens: list[tuple[str, float]]) -> list[list[str]]:
+        return [[f'<span style="padding-left:12px;">{html.escape(nome)}</span>', valor(v)]
+                for nome, v in itens if v]
+
+    def total(nome: str, v: float) -> list[str]:
+        return [f"<b>{html.escape(nome)}</b>", f"<b>{valor(v)}</b>"]
+
+    def titulo(nome: str) -> list[str]:
+        return [f'<span style="font-size:0.68rem;text-transform:uppercase;letter-spacing:0.05em;'
+                f'color:var(--app-muted);font-weight:700;">{html.escape(nome)}</span>', ""]
+
+    c1, c2 = st.columns(2, gap="medium")
+    with c1:
+        st.markdown(_tabela([*linhas(b["ativo"]), total("Total do ativo", b["total_ativo"])],
+                            ["Ativo", "Valor"], {1}), unsafe_allow_html=True)
+    with c2:
+        st.markdown(_tabela(
+            [*linhas(b["passivo"]), total("Total do passivo", b["total_passivo"]),
+             titulo("Patrimônio líquido"),
+             *linhas(b["patrimonio_liquido"]), total("Total do patrimônio líquido", b["total_pl"]),
+             total("Passivo + patrimônio líquido", b["total_passivo"] + b["total_pl"])],
+            ["Passivo", "Valor"], {1}), unsafe_allow_html=True)
+
+    notas = ["Balanço gerencial, montado com o que o app tem: o caixa conferido com o banco, "
+             "as contas a pagar e a receber e as categorias de empréstimo, aplicação, aporte e "
+             "distribuição. Imobilizado, estoque, tributo a recolher e o que nunca passou pela "
+             "conta não aparecem; o balanço oficial é o do contador."]
+    if not b["contas_em_aberto"]:
+        notas.append("Em data passada, contas a pagar e a receber ficam de fora: o app não sabe "
+                     "o que estava em aberto naquele dia.")
+    if any(nome == "Empréstimos e financiamentos" and v < 0 for nome, v in b["passivo"]):
+        notas.append("Empréstimos negativos: há pagamento de empréstimo tomado antes do "
+                     "primeiro extrato, que o app não viu entrar.")
+    if any(nome == "Movimentos sem categoria" and v for nome, v in b["patrimonio_liquido"]):
+        notas.append("Movimentos sem categoria entram no caixa, mas o app não sabe de que lado "
+                     "pô-los; classifique-os na aba Lançamentos.")
+    st.caption(" ".join(notas))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 🧮 Impostos
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -555,6 +641,8 @@ def render() -> None:
     elif secao == _SECOES[3]:
         _tab_dre(lancs)
     elif secao == _SECOES[4]:
+        _tab_balanco(lancs, empresa)
+    elif secao == _SECOES[5]:
         _tab_impostos(lancs, empresa)
     else:
         _tab_visao_geral(lancs, empresa)

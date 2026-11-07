@@ -355,3 +355,84 @@ def test_base_do_simples_desconta_devolucao_igual_a_receita_negativa():
     assert novo["receita"] == 1000.0  # a receita bruta da DRE não muda
     assert (estimar_das("III", [930.0] * 12, novo["receita_simples"]).das_estimado
             == estimar_das("III", [930.0] * 12, antigo["receita_simples"]).das_estimado)
+
+
+# ── Balanço patrimonial gerencial ───────────────────────────────────────────
+
+def _lancs_balanco():
+    from datetime import date
+    def pago(dia, valor, cat):
+        return {"data": date(2026, 10, dia), "valor": valor, "categoria": cat, "status": "pago"}
+    return [
+        pago(1, 5000.0, "aporte_socio"),
+        pago(2, 3000.0, "receita_servicos"),
+        pago(3, -400.0, "aluguel"),
+        pago(4, 10000.0, "emprestimo"),
+        pago(5, -1500.0, "emprestimo"),
+        pago(6, -2000.0, "aplicacao"),
+        pago(7, 500.0, "aplicacao"),
+        pago(8, -1000.0, "distribuicao_lucros"),
+        pago(9, -300.0, "transferencia"),
+        pago(10, -50.0, None),
+        {"data": date(2026, 12, 5), "valor": 1200.0, "categoria": "receita_servicos",
+         "status": "previsto"},
+        {"data": date(2026, 12, 10), "valor": -700.0, "categoria": "aluguel",
+         "status": "previsto"},
+        # parcela prevista de empréstimo: a dívida já está em Empréstimos
+        {"data": date(2026, 12, 15), "valor": -1500.0, "categoria": "emprestimo",
+         "status": "previsto"},
+    ]
+
+
+def _linha(b, lado, nome):
+    return dict(b[lado])[nome]
+
+
+def test_balanco_fecha_e_poe_cada_categoria_no_seu_lado():
+    from datetime import date
+
+    from core.pj.relatorios import balanco
+    b = balanco(_lancs_balanco(), 1000.0, date(2026, 9, 30), date(2026, 11, 7))
+    assert b["fecha"]
+    # caixa = 1000 + 5000 + 3000 − 400 + 10000 − 1500 − 2000 + 500 − 1000 − 300 − 50
+    assert _linha(b, "ativo", "Caixa e bancos") == 14250.0
+    assert _linha(b, "ativo", "Aplicações financeiras") == 1500.0
+    assert _linha(b, "ativo", "Outras contas da empresa (transferências)") == 300.0
+    assert _linha(b, "ativo", "Contas a receber") == 1200.0
+    assert _linha(b, "passivo", "Empréstimos e financiamentos") == 8500.0
+    assert _linha(b, "passivo", "Contas a pagar") == 700.0  # sem a parcela do empréstimo
+    pl = dict(b["patrimonio_liquido"])
+    assert pl["Saldo de abertura da conta"] == 1000.0
+    assert pl["Aportes de sócios"] == 5000.0
+    assert pl["Distribuição de lucros"] == -1000.0
+    assert pl["Resultado acumulado (DRE, caixa)"] == 2600.0
+    assert pl["Contas em aberto (a receber − a pagar)"] == 500.0
+    assert pl["Movimentos sem categoria"] == -50.0
+    assert b["total_ativo"] == 17250.0
+    assert b["total_passivo"] == 9200.0
+    assert b["total_pl"] == 8050.0
+
+
+def test_balanco_em_data_passada_nao_tem_contas_em_aberto_e_fecha():
+    from datetime import date
+
+    from core.pj.relatorios import balanco
+    b = balanco(_lancs_balanco(), 1000.0, date(2026, 9, 30), date(2026, 10, 4),
+                contas_em_aberto=False)
+    assert b["fecha"]
+    assert _linha(b, "ativo", "Caixa e bancos") == 18600.0
+    assert _linha(b, "ativo", "Contas a receber") == 0.0
+    assert _linha(b, "passivo", "Contas a pagar") == 0.0
+
+
+def test_balanco_antes_da_abertura_e_sem_saldo():
+    from datetime import date
+
+    from core.pj.relatorios import balanco, saldo_ate
+    assert balanco(_lancs_balanco(), None, None, date(2026, 11, 7)) is None
+    # extrato antigo: a data do balanço é anterior à âncora do saldo de abertura
+    b = balanco(_lancs_balanco(), 1000.0, date(2026, 10, 31), date(2026, 10, 5),
+                contas_em_aberto=False)
+    assert b["fecha"]
+    assert _linha(b, "ativo", "Caixa e bancos") == saldo_ate(
+        1000.0, date(2026, 10, 31), _lancs_balanco(), date(2026, 10, 5))

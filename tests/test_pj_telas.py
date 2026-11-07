@@ -1,4 +1,4 @@
-"""Controle CNPJ: as cinco abas e a subaba de upload rodam de verdade (AppTest).
+"""Controle CNPJ: as seis abas e a subaba de upload rodam de verdade (AppTest).
 
 O banco é trocado por lançamentos sintéticos: o que se testa é a tela montar
 cada aba sem exceção e mostrar os números que os relatórios calculam.
@@ -34,11 +34,12 @@ def _app(aba: str):
     tela.repo.listar_saldos_extrato = lambda: [{"data": ini, "saldo": 10850.0, "arquivo": "x.ofx"}]
     getattr(tela, aba)(*({"_tab_visao_geral": (lancs, empresa), "_tab_lancamentos": (lancs,),
                           "_tab_previstos": (lancs, empresa), "_tab_dre": (lancs,),
+                          "_tab_balanco": (lancs, empresa),
                           "_tab_impostos": (lancs, empresa)}[aba]))
 
 
 @pytest.mark.parametrize("aba", ["_tab_visao_geral", "_tab_lancamentos", "_tab_previstos",
-                                 "_tab_dre", "_tab_impostos"])
+                                 "_tab_dre", "_tab_balanco", "_tab_impostos"])
 def test_cada_aba_monta_sem_excecao(aba):
     at = AppTest.from_function(_app, args=(aba,)).run(timeout=30)
     assert not at.exception, at.exception
@@ -167,3 +168,25 @@ def test_busca_e_categoria_filtram_a_lista_e_a_correcao():
     at.multiselect(key="cnpj_lanc_filtro_cat").select("Sem categoria").run()
     assert not _tabela_html(at)
     assert not at.exception
+
+
+def test_balanco_fecha_e_mostra_os_tres_totais():
+    at = AppTest.from_function(_app, args=("_tab_balanco",)).run(timeout=30)
+    assert not at.exception
+    cards = "".join(m.value for m in at.markdown if "app-kpi-card" in m.value)
+    for trecho in ("Ativo", "Passivo", "Patrimônio líquido"):
+        assert trecho in cards
+    # caixa 10.850 + aluguel previsto de 2.000 a pagar
+    assert "10.850,00" in cards and "2.000,00" in cards
+    assert "8.850,00" in cards  # PL = 10.850 − 2.000
+    assert any("gerencial" in c.value for c in at.caption)
+
+
+def test_balanco_sem_saldo_de_abertura_nao_inventa_numero():
+    def app():
+        import views.controle_cnpj as tela
+        tela._tab_balanco([], {"saldo_inicial": None})
+
+    at = AppTest.from_function(app).run(timeout=30)
+    assert not at.exception
+    assert not [m for m in at.markdown if "app-kpi-card" in m.value]

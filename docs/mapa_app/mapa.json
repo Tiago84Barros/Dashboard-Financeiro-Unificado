@@ -678,7 +678,7 @@
     {
       "nome": "Controle CNPJ",
       "resumo": "O financeiro da empresa, separado do pessoal",
-      "explicacao": "Tela do dinheiro da empresa (um CNPJ no Simples Nacional), inspirada no Conta Azul no que dá para fazer a partir do extrato. Cinco abas: Visão geral, Lançamentos, A pagar e receber, DRE e Impostos. O extrato da conta da empresa entra por Configurações → Atualização de dados → CNPJ. Nada daqui entra no Controle Financeiro pessoal, e nada do pessoal entra aqui. Emitir nota fiscal, gerar boleto e mandar dados ao contador não existem no app: dependem de certificado digital e convênio com banco.",
+      "explicacao": "Tela do dinheiro da empresa (um CNPJ no Simples Nacional), inspirada no Conta Azul no que dá para fazer a partir do extrato. Seis abas: Visão geral, Lançamentos, A pagar e receber, DRE, Balanço e Impostos. O extrato da conta da empresa entra por Configurações → Atualização de dados → CNPJ. Nada daqui entra no Controle Financeiro pessoal, e nada do pessoal entra aqui. Emitir nota fiscal, gerar boleto e mandar dados ao contador não existem no app: dependem de certificado digital e convênio com banco.",
       "so_admin": false,
       "filhos": [
         {
@@ -703,6 +703,12 @@
           "nome": "DRE",
           "resumo": "Demonstração de resultado gerencial",
           "explicacao": "Escolha o mês e o período (mês, ano ou últimos 12 meses). A DRE vai da receita bruta ao resultado do período, passando por deduções (DAS e devoluções a clientes), receita líquida, custos, lucro bruto, despesas, pessoal e financeiro, com cada categoria embaixo da sua linha. Aporte, distribuição de lucros, transferência, empréstimo e aplicação aparecem à parte, porque mexem no caixa e não no lucro. É regime de caixa: conta no mês em que o dinheiro passou pela conta. Lançamento sem categoria fica fora e é avisado.",
+          "so_admin": false
+        },
+        {
+          "nome": "Balanço",
+          "resumo": "O que a empresa tem, deve e o patrimônio líquido",
+          "explicacao": "Escolha hoje ou o fim de um mês já fechado. Os cartões mostram o ativo, o passivo e o patrimônio líquido. À esquerda, o ativo: caixa e bancos (o saldo conferido com o extrato), contas a receber, aplicações (valor aplicado menos resgatado) e dinheiro transferido para outras contas da empresa. À direita, o passivo (contas a pagar e empréstimos) e o patrimônio líquido: saldo de abertura da conta, aportes, distribuição de lucros, resultado acumulado da DRE, contas em aberto e movimentos sem categoria. Fecha por construção, porque tudo sai do mesmo caixa. É um balanço gerencial: imobilizado, estoque e tributo a recolher não aparecem, e em data passada as contas a pagar e a receber ficam de fora, porque o app não sabe o que estava em aberto naquele dia.",
           "so_admin": false
         },
         {

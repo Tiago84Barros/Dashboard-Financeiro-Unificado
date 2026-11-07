@@ -195,3 +195,79 @@ def filtrar_lancamentos(lancs: list[dict], categorias: list[str | None] | None =
                 continue
         saida.append(x)
     return saida
+
+
+def balanco(lancs: list[dict], saldo_inicial: float | None, data_inicial: date | None,
+            data: date, contas_em_aberto: bool = True) -> dict | None:
+    """Balanço patrimonial gerencial na ``data``, montado só com o que o app tem.
+
+    Não há escrituração: o balanço sai do caixa conferido com o banco, das
+    contas a pagar e a receber em aberto e das categorias "fora do resultado"
+    (empréstimo, aplicação, aporte, distribuição, transferência). Fecha por
+    construção, porque o caixa é o saldo de abertura mais os pagos:
+
+        Caixa = abertura + resultado + aportes + distribuições + empréstimos
+                + aplicações + transferências + sem categoria
+
+    e cada parcela vai para o seu lado: aplicação e transferência viram ativo
+    (o dinheiro foi para outro lugar da empresa), empréstimo vira passivo, o
+    resto compõe o patrimônio líquido. As contas em aberto (previstos) entram
+    no ativo/passivo e, pela diferença, no patrimônio, como resultado que o
+    caixa ainda não viu. Previsto de categoria fora do resultado (parcela de
+    empréstimo, por exemplo) fica de fora: a dívida já está em Empréstimos.
+
+    ``contas_em_aberto=False`` para data passada: o app não guarda quando um
+    previsto foi criado, então não sabe o que estava em aberto naquele dia.
+
+    ``None`` sem saldo de abertura: sem ele não há caixa.
+    """
+    if saldo_inicial is None:
+        return None
+    caixa = saldo_ate(saldo_inicial, data_inicial, lancs, data)
+    fluxo = [x for x in _pagos(lancs)
+             if x["data"] <= data and (data_inicial is None or x["data"] > data_inicial)]
+    por_cat: dict[str, float] = defaultdict(float)
+    resultado = sem_cat = 0.0
+    for x in fluxo:
+        grupo = _grupo(x)
+        if grupo is None:
+            sem_cat += float(x["valor"])
+        elif grupo == "fora_do_resultado":
+            por_cat[x["categoria"]] += float(x["valor"])
+        else:
+            resultado += float(x["valor"])
+    abertura = round(caixa - sum(float(x["valor"]) for x in fluxo), 2)
+
+    a_receber = a_pagar = 0.0
+    if contas_em_aberto:
+        for x in lancs:
+            if x.get("status") != "previsto" or _grupo(x) == "fora_do_resultado":
+                continue
+            v = float(x["valor"])
+            if v > 0:
+                a_receber += v
+            else:
+                a_pagar -= v
+
+    def r(v: float) -> float:
+        return round(v, 2)
+
+    ativo = [("Caixa e bancos", r(caixa)),
+             ("Contas a receber", r(a_receber)),
+             ("Aplicações financeiras", r(-por_cat["aplicacao"])),
+             ("Outras contas da empresa (transferências)", r(-por_cat["transferencia"]))]
+    passivo = [("Contas a pagar", r(a_pagar)),
+               ("Empréstimos e financiamentos", r(por_cat["emprestimo"]))]
+    pl = [("Saldo de abertura da conta", abertura),
+          ("Aportes de sócios", r(por_cat["aporte_socio"])),
+          ("Distribuição de lucros", r(por_cat["distribuicao_lucros"])),
+          ("Resultado acumulado (DRE, caixa)", r(resultado)),
+          ("Contas em aberto (a receber − a pagar)", r(a_receber - a_pagar)),
+          ("Movimentos sem categoria", r(sem_cat))]
+    total_ativo = r(sum(v for _, v in ativo))
+    total_passivo = r(sum(v for _, v in passivo))
+    total_pl = r(sum(v for _, v in pl))
+    return {"data": data, "ativo": ativo, "passivo": passivo, "patrimonio_liquido": pl,
+            "total_ativo": total_ativo, "total_passivo": total_passivo, "total_pl": total_pl,
+            "contas_em_aberto": contas_em_aberto,
+            "fecha": abs(total_ativo - total_passivo - total_pl) < 0.01}

@@ -990,14 +990,15 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
     subtitle=(
         "O financeiro da empresa, separado do pessoal: o extrato da conta PJ entra, "
         "cada movimento ganha uma categoria do plano de contas da empresa e daí saem "
-        "o caixa, a DRE, as contas a pagar e a estimativa do DAS do Simples."
+        "o caixa, a DRE, o balanço, as contas a pagar e a estimativa do DAS do Simples."
     ),
     tela="Controle CNPJ",
-    abas=("Visão geral", "Lançamentos", "A pagar e receber", "DRE", "Impostos"),
+    abas=("Visão geral", "Lançamentos", "A pagar e receber", "DRE", "Balanço", "Impostos"),
     rows=(
         ("Entrada", ("cnpj_extrato", "cnpj_manual")),
         ("Classificação", ("cnpj_plano", "cnpj_conciliacao")),
-        ("Visualização", ("cnpj_visao", "cnpj_previstos", "cnpj_dre", "cnpj_impostos")),
+        ("Visualização", ("cnpj_visao", "cnpj_previstos", "cnpj_dre", "cnpj_balanco",
+                          "cnpj_impostos")),
     ),
     default="cnpj_extrato",
     nodes={
@@ -1090,6 +1091,19 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
                 "Lançamento sem categoria avisado, não somado",
             ),
             "Caixa e não competência: o extrato só sabe quando o dinheiro passou.",
+        ),
+        "cnpj_balanco": _node(
+            "cnpj_balanco", "Balanço patrimonial", "Visualização",
+            "Ativo, passivo e patrimônio líquido hoje ou no fim de um mês fechado: caixa "
+            "conferido com o banco, contas a receber e a pagar, aplicações, empréstimos, "
+            "aportes, distribuição de lucros e o resultado acumulado da DRE.",
+            (
+                "Fecha por construção: tudo sai do mesmo caixa",
+                "Aplicação e transferência viram ativo; empréstimo vira passivo",
+                "Data passada: sem contas em aberto (o app não sabe o que estava aberto)",
+            ),
+            "Gerencial, não contábil: imobilizado, estoque e tributo a recolher ficam de fora; "
+            "o balanço oficial é o do contador.",
         ),
         "cnpj_impostos": _node(
             "cnpj_impostos", "Impostos (Simples Nacional)", "Visualização",

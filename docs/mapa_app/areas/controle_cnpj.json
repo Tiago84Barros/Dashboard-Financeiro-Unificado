@@ -1,9 +1,9 @@
 {
   "nome": "Controle CNPJ",
   "resumo": "O financeiro da empresa, separado do pessoal",
-  "explicacao": "Tela do dinheiro da empresa (um CNPJ no Simples Nacional), inspirada no Conta Azul no que dá para fazer a partir do extrato. Cinco abas: Visão geral, Lançamentos, A pagar e receber, DRE e Impostos. O extrato da conta da empresa entra por Configurações → Atualização de dados → CNPJ. Nada daqui entra no Controle Financeiro pessoal, e nada do pessoal entra aqui. Emitir nota fiscal, gerar boleto e mandar dados ao contador não existem no app: dependem de certificado digital e convênio com banco.",
+  "explicacao": "Tela do dinheiro da empresa (um CNPJ no Simples Nacional), inspirada no Conta Azul no que dá para fazer a partir do extrato. Seis abas: Visão geral, Lançamentos, A pagar e receber, DRE, Balanço e Impostos. O extrato da conta da empresa entra por Configurações → Atualização de dados → CNPJ. Nada daqui entra no Controle Financeiro pessoal, e nada do pessoal entra aqui. Emitir nota fiscal, gerar boleto e mandar dados ao contador não existem no app: dependem de certificado digital e convênio com banco.",
   "so_admin": false,
-  "fonte": "views/controle_cnpj.py:524",
+  "fonte": "views/controle_cnpj.py:612",
   "filhos": [
     {
       "nome": "Visão geral",
@@ -38,11 +38,19 @@
       "filhos": []
     },
     {
+      "nome": "Balanço",
+      "resumo": "O que a empresa tem, deve e o patrimônio líquido",
+      "explicacao": "Escolha hoje ou o fim de um mês já fechado. Os cartões mostram o ativo, o passivo e o patrimônio líquido. À esquerda, o ativo: caixa e bancos (o saldo conferido com o extrato), contas a receber, aplicações (valor aplicado menos resgatado) e dinheiro transferido para outras contas da empresa. À direita, o passivo (contas a pagar e empréstimos) e o patrimônio líquido: saldo de abertura da conta, aportes, distribuição de lucros, resultado acumulado da DRE, contas em aberto e movimentos sem categoria. Fecha por construção, porque tudo sai do mesmo caixa. É um balanço gerencial: imobilizado, estoque e tributo a recolher não aparecem, e em data passada as contas a pagar e a receber ficam de fora, porque o app não sabe o que estava em aberto naquele dia.",
+      "so_admin": false,
+      "fonte": "views/controle_cnpj.py:475",
+      "filhos": []
+    },
+    {
       "nome": "Impostos",
       "resumo": "Dados da empresa e DAS estimado do Simples",
       "explicacao": "Em 'Dados da empresa', informe CNPJ, razão social e o anexo do Simples Nacional. Escolha o mês: os cartões mostram a receita do mês (receita bruta menos devoluções a clientes, como manda o Simples), a RBT12 (receita dos 12 meses anteriores; com menos de 12, média × 12), a alíquota efetiva com anexo e faixa, e o DAS estimado que vence no mês seguinte. No Anexo V aparece o Fator R (folha ÷ RBT12), que de 28% para cima leva a tributação ao Anexo III. Se o DAS já foi pago, a tela compara com a estimativa. O valor oficial é sempre o do PGDAS-D.",
       "so_admin": false,
-      "fonte": "views/controle_cnpj.py:463",
+      "fonte": "views/controle_cnpj.py:549",
       "filhos": []
     }
   ]
