@@ -803,7 +803,7 @@ FLOW_INVESTIMENTOS = FlowSpec(
             "Tabelas não é aba desta tela: as posições moram em Visão Geral. A Visão Geral "
             "traz também o Desempenho por Categoria: linhas de retorno de Ações, FIIs, "
             "Empresas Americanas, ETFs Americanos, Tesouro Direto e Renda Fixa, com as "
-            "posições de hoje, cada linha a partir do seu primeiro preço no período; abre "
+            "posições de hoje, cada ativo a partir do seu primeiro aporte; abre "
             "com Ações, ETFs Americanos e Tesouro Direto, e a legenda liga e desliga as "
             "outras (core.desempenho_categorias). O chat do "
             "🏦 Tesouro recebe os lotes de cada título (tesouro_lots, do Extrato Analítico; "

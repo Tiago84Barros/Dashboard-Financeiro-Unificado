@@ -10,7 +10,9 @@ em diante, sem degrau na curva. Cada categoria começa onde o seu dado começa:
 as linhas não são alinhadas no tempo, de propósito.
 
 É retorno de PREÇO das posições de hoje, não rentabilidade da conta: aporte,
-venda e o histórico de quantidades ficam de fora. Fontes por categoria:
+venda e o histórico de quantidades ficam de fora. Cada ativo só entra a partir
+do primeiro aporte dele (``recortar_pela_posse``): antes disso o papel não era
+do investidor, e o histórico de mercado dele não é história da carteira. Fontes por categoria:
 
 - Ações, FIIs, Empresas Americanas, ETFs Americanos: fechamento diário
   (yfinance ajustado; na falha, ``asset_quotes`` sem ajuste). As duas
@@ -121,6 +123,45 @@ def retorno_encadeado(precos: pd.DataFrame, quantidades: dict[str, float]) -> pd
     r.iloc[0] = 0.0
     r = r.dropna()
     return ((1 + r).cumprod() - 1) * 100
+
+
+def inicio_da_posse(aportes: dict, tickers) -> dict[str, pd.Timestamp | None]:
+    """Desde quando cada ativo é do investidor, para recortar a série.
+
+    ``aportes`` é o ``primeiro_aporte`` de ``core.carteira_tabela`` (extrato de
+    negociação ou movimentação, ou a primeira foto de posição). Posição de
+    *abertura* -- já existia antes do primeiro extrato, sem data -- vale desde
+    o começo dos registros: antes disso não há como afirmar que era sua.
+    Ativo sem registro nenhum fica ``None``, e a série dele não entra: sem data
+    de compra, qualquer histórico seria de um papel que talvez não fosse seu.
+    """
+    from core.carteira_tabela import ticker_base
+
+    datas = [v.get("data") for v in (aportes or {}).values() if v.get("data")]
+    inicio_registros = min(datas) if datas else None
+    saida: dict[str, pd.Timestamp | None] = {}
+    for tk in tickers:
+        reg = (aportes or {}).get(ticker_base(tk))
+        data = (reg.get("data") or inicio_registros) if reg else None
+        saida[tk] = pd.Timestamp(data) if data else None
+    return saida
+
+
+def recortar_pela_posse(precos: pd.DataFrame,
+                        inicio: dict[str, pd.Timestamp | None]) -> pd.DataFrame:
+    """Apaga o preço de cada ativo antes do primeiro aporte dele.
+
+    Com o retorno encadeado, o ativo entra na cesta no dia em que passou a ser
+    do investidor, sem degrau; antes disso a linha da categoria é feita só dos
+    que já eram dele. Ativo sem data (``None``) fica sem preço nenhum.
+    """
+    if precos is None or precos.empty:
+        return precos
+    saida = precos.copy()
+    for col in saida.columns:
+        desde = inicio.get(col)
+        saida[col] = saida[col].where(saida.index >= desde) if desde is not None else float("nan")
+    return saida
 
 
 def amostrar_para_grafico(serie: pd.Series, freq: str) -> pd.Series:
