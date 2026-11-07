@@ -249,7 +249,10 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                 if aplicada_084:
                     # Antes do ajuste de quantidade: ele casa pela chave
                     # canônica, que inclui o tipo.
-                    corrigir_tipo_reembolso(conn, ja_gravadas)
+                    # Todas as linhas: a nova barrada pela deduplicação pode
+                    # ter esbarrado numa antiga de OUTRA fonte (a XP), com o
+                    # tipo velho.
+                    corrigir_tipo_reembolso(conn, div_rows + ja_gravadas)
                 if reembolsos_sem_084:
                     summary["avisos"].append(
                         aviso_reembolso_sem_084(reembolsos_sem_084)

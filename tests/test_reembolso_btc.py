@@ -167,12 +167,50 @@ def test_corrigir_tipo_so_mexe_na_linha_do_dono():
             VALUES ('outro', 'BBAS3', 'reit_income', 170.35, :d, 'b3mov-1')
         """), {"d": date(2026, 9, 11)})
         n = common.corrigir_tipo_reembolso(conn, [{
-            "user_id": "u", "external_id": "b3mov-1",
-            "type": common.TIPO_REEMBOLSO_BTC,
+            "user_id": "u", "asset_id": "BBAS3", "payment_date": date(2026, 9, 11),
+            "total_amount": 170.35, "type": common.TIPO_REEMBOLSO_BTC,
         }])
 
     assert n == 0
     assert _linhas(engine)[0][1] == "reit_income"
+
+
+def test_reembolso_antigo_da_xp_nao_duplica_quando_a_b3_chega(monkeypatch):
+    """O reembolso que entrou pela XP antes da 084 está como `reit_income`. A
+    B3 trazendo o mesmo pagamento com o tipo novo não pode gravar um segundo
+    provento -- dobraria a renda --, e a linha antiga ganha o tipo certo."""
+    engine = _engine()
+    with engine.begin() as conn:
+        conn.execute(text("""
+            INSERT INTO dividends (user_id, asset_id, type, total_amount,
+                                   payment_date, external_id)
+            VALUES ('u', 'BBAS3', 'reit_income', 170.35, :d, 'xpcsl-inc-velho')
+        """), {"d": date(2026, 9, 11)})
+    _b3_sem_banco_real(monkeypatch)
+
+    resumo = mov.parse(_movimentacao_xlsx(_LINHA_B3), engine)
+
+    assert resumo["incomes_imported"] == 0
+    assert _linhas(engine) == [
+        ("xpcsl-inc-velho", common.TIPO_REEMBOLSO_BTC, 170.35)]
+
+
+def test_reembolso_e_rendimento_de_valor_diferente_continuam_dois():
+    engine = _engine()
+    base = {"user_id": "u", "asset_id": "BBAS3", "amount_per_unit": None,
+            "quantity": None, "ex_date": None, "payment_date": date(2026, 9, 11)}
+    with engine.begin() as conn:
+        common.batch_insert_dividends(conn, [
+            {**base, "type": "reit_income", "total_amount": 50.0,
+             "external_id": "b3mov-a"},
+            {**base, "type": common.TIPO_REEMBOLSO_BTC, "total_amount": 170.35,
+             "external_id": "b3mov-b"},
+        ])
+        common.corrigir_tipo_reembolso(conn, [{
+            **base, "type": common.TIPO_REEMBOLSO_BTC, "total_amount": 170.35}])
+
+    assert [t for _e, t, _v in _linhas(engine)] == [
+        "reit_income", common.TIPO_REEMBOLSO_BTC]
 
 
 # ─────────────────────────────────────────────────────────────────────────────

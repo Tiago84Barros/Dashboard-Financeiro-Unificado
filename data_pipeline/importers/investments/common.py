@@ -442,30 +442,50 @@ def aviso_reembolso_sem_084(n: int) -> str:
     )
 
 
-_SQL_CORRIGE_TIPO_REEMBOLSO = text("""
+def _tipo_canonico_sql(expr: str) -> str:
+    """O tipo como a deduplicação o compara: o reembolso de aluguel e o
+    `reit_income` são o mesmo pagamento -- até a 084 todo reembolso era
+    gravado como `reit_income`, e uma linha antiga da XP ou da B3 com o tipo
+    velho não pode deixar passar o mesmo pagamento chegando com o novo."""
+    return (f"(CASE WHEN {expr} = '{TIPO_REEMBOLSO_BTC}' "
+            f"THEN 'reit_income' ELSE {expr} END)")
+
+
+def _tipo_canonico(tipo: str) -> str:
+    return "reit_income" if tipo == TIPO_REEMBOLSO_BTC else str(tipo)
+
+
+# Pela chave canônica, não pelo external_id: a linha antiga pode ter vindo de
+# OUTRA fonte (XP antes da B3, ou o contrário), com outro id.
+_SQL_CORRIGE_TIPO_REEMBOLSO = text(f"""
     UPDATE dividends
-       SET type = :tipo
+       SET type = '{TIPO_REEMBOLSO_BTC}'
      WHERE user_id = :user_id
-       AND external_id IN :ids
+       AND asset_id = :asset_id
+       AND payment_date = :payment_date
        AND type = 'reit_income'
-""").bindparams(bindparam("ids", expanding=True))
+       AND ROUND(CAST(total_amount AS NUMERIC), 2)
+           = ROUND(CAST(:total_amount AS NUMERIC), 2)
+""")
 
 
 def corrigir_tipo_reembolso(conn: Connection, rows: list[dict[str, Any]]) -> int:
     """Leva a `lending_reimbursement` a linha já gravada como `reit_income`
-    que esta importação reconhece como reembolso -- pelo external_id, que é
-    estável entre a versão antiga e a nova do importador. Só depois da 084."""
-    por_dono: dict[str, set[str]] = {}
-    for r in rows:
-        if r.get("type") == TIPO_REEMBOLSO_BTC and r.get("external_id"):
-            por_dono.setdefault(str(r["user_id"]), set()).add(r["external_id"])
-    mudou = 0
-    for dono, ids in sorted(por_dono.items()):
-        res = conn.execute(_SQL_CORRIGE_TIPO_REEMBOLSO, {
-            "tipo": TIPO_REEMBOLSO_BTC, "user_id": dono, "ids": sorted(ids),
-        })
-        mudou += max(res.rowcount or 0, 0)
-    return mudou
+    que é o mesmo pagamento (chave canônica) de um reembolso desta
+    importação, venha ela da mesma fonte ou de outra. Só depois da 084.
+
+    Mesmo ativo, dia e total: é a regra que a deduplicação já usa para dizer
+    que duas linhas são o mesmo provento. Um "Rendimento" de ação e um
+    reembolso no mesmo dia e com o mesmo valor ao centavo seriam fundidos;
+    a deduplicação os fundiria igual."""
+    params = [
+        {k: r[k] for k in ("user_id", "asset_id", "payment_date", "total_amount")}
+        for r in rows if r.get("type") == TIPO_REEMBOLSO_BTC
+    ]
+    if not params:
+        return 0
+    res = conn.execute(_SQL_CORRIGE_TIPO_REEMBOLSO, params)
+    return max(res.rowcount or 0, 0)
 
 
 def quantidade_e_valor_unitario(
@@ -532,8 +552,8 @@ _SQL_ESVAZIA_PLACEHOLDER = text("""
 def _chave_canonica(user_id, asset_id, payment_date, tipo, total) -> tuple:
     """A mesma chave do NOT EXISTS da deduplicação, normalizada para casar
     o que vem do banco (Decimal, date ou texto no SQLite) com o da planilha."""
-    return (str(user_id), str(asset_id), str(payment_date)[:10], str(tipo),
-            round(float(total), 2))
+    return (str(user_id), str(asset_id), str(payment_date)[:10],
+            _tipo_canonico(tipo), round(float(total), 2))
 
 
 # Só a Movimentação da B3 põe a quantidade crua no hash do external_id
@@ -812,7 +832,8 @@ def insert_dividend(
                 WHERE existing.user_id = :uid
                   AND existing.asset_id = :aid
                   AND existing.payment_date = :pd
-                  AND existing.type = :type
+                  AND """ + _tipo_canonico_sql("existing.type") + """
+                      = """ + _tipo_canonico_sql("CAST(:type AS VARCHAR)") + """
                   AND ROUND(CAST(existing.total_amount AS NUMERIC), 2)
                       = ROUND(CAST(:total AS NUMERIC), 2)
             )
@@ -1063,7 +1084,8 @@ def batch_insert_dividends(
             WHERE existing.user_id = :user_id
               AND existing.asset_id = :asset_id
               AND existing.payment_date = :payment_date
-              AND existing.type = :type
+              AND """ + _tipo_canonico_sql("existing.type") + """
+                  = """ + _tipo_canonico_sql("CAST(:type AS VARCHAR)") + """
               AND ROUND(CAST(existing.total_amount AS NUMERIC), 2)
                   = ROUND(CAST(:total_amount AS NUMERIC), 2)
         )
