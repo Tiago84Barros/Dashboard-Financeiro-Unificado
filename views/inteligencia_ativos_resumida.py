@@ -175,6 +175,12 @@ def cartao_recomendacao(d: rs.Decisao) -> str:
     substituto, o que mudaria a recomendação, dados ausentes e o pano de
     fundo. Puro."""
     partes = [_secao("Justificativa"), _itens(d.justificativas)]
+    momento = d.momento.linha() if d.momento is not None else None
+    if momento:
+        # A queda à vista, antes da venda (pedido de 08/11/2026): vender
+        # num preço deprimido pode transformar oscilação em perda.
+        partes += [_secao("Momento: o ativo está em queda"),
+                   _itens((momento.removeprefix("Momento: "),))]
     if d.proporcao:
         venda = [f"Vender cerca de {d.proporcao * 100:.0f}% da posição."]
         if d.custos is not None:
@@ -188,7 +194,7 @@ def cartao_recomendacao(d: rs.Decisao) -> str:
                            d.condicoes),
                           ("Dados ausentes e limitações", d.limitacoes),
                           ("Contexto: cenário, noticiário e valorização",
-                           d.contexto)):
+                           tuple(x for x in d.contexto if x != momento))):
         if itens:
             partes += [_secao(titulo), _itens(itens)]
     return f'<div style="{_CAIXA}">{"".join(partes)}</div>'

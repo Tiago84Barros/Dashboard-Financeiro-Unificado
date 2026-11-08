@@ -2618,6 +2618,10 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
             "ativos. O cenário econômico entra lido dos dados, sem pergunta.",
             (
                 "views/inteligencia_ativos_resumida.py e views/inteligencia_ativos_painel.py",
+                "A ação de cada caixa sai da árvore de core/inteligencia_ativos/resumida.py, "
+                "sensível ao momento (core/inteligencia_ativos/momento.py, 08/11/2026): queda "
+                "sem piora nos fundamentos não vira venda; com piora, a venda vai em etapas "
+                "(cerca de 1/3), salvo alerta eliminatório do balanço",
                 "Cenário lido por core/cenario/automatico.py desde 30/09/2026, quando o "
                 "'Meu cenário' saiu",
                 "A análise é refeita depois de 15 minutos, o mesmo prazo das fontes",

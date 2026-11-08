@@ -659,6 +659,9 @@ def _substituicao(sai: refm.LinhaAtivo, a, v: vd.Veredito | None,
     if av_entra.preco == av_.CARO:
         motivos.append(f"Preço de {entra.ticker} acima do normal: entre aos "
                        "poucos.")
+    mom = getattr(d, "momento", None)
+    if mom is not None and mom.linha():
+        motivos.append(mom.linha())
     sub_rec = getattr(d, "substituto", None)
     if sub_rec is not None and refm.normalizar(sub_rec.ticker) != entra.ticker:
         motivos.append("Entre os pares do segmento, a Inteligência também "
