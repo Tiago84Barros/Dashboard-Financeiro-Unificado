@@ -1411,7 +1411,7 @@
                 {
                   "nome": "Papel na carteira · Notícias · Relatórios relevantes · Como o macro influencia",
                   "resumo": "Função do ativo, notícias e efeito da economia",
-                  "explicacao": "Para que o ativo serve na sua carteira, notícias recentes, trechos de relatórios da empresa e como juros, inflação e câmbio o afetam.",
+                  "explicacao": "Para que o ativo serve na sua carteira, notícias recentes, trechos de relatórios da empresa (entregues à CVM, ao FNET ou, nas ações americanas, à SEC) e como juros, inflação e câmbio o afetam.",
                   "so_admin": false
                 },
                 {
@@ -2255,7 +2255,7 @@
             {
               "nome": "Converse sobre a empresa",
               "resumo": "Chat com a IA sobre esta empresa",
-              "explicacao": "Caixa de conversa com a inteligência artificial focada na empresa aberta: pergunte sobre resultados, dívidas, concorrentes e riscos. Ela responde só com os dados que o app tem e avisa quando falta informação. Só funciona quando a IA está configurada; senão aparece um aviso. Na tela o título traz o código da empresa (Converse sobre AAPL, por exemplo).",
+              "explicacao": "Caixa de conversa com a inteligência artificial focada na empresa aberta: pergunte sobre resultados, dívidas, concorrentes e riscos. Além dos números, ela recebe os documentos recentes que a empresa entregou à SEC (8-K, 10-Q, 10-K), com a data e o assunto de cada um. Ela responde só com os dados que o app tem e avisa quando falta informação. Só funciona quando a IA está configurada; senão aparece um aviso. Na tela o título traz o código da empresa (Converse sobre AAPL, por exemplo).",
               "so_admin": false
             }
           ]

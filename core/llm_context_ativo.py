@@ -257,6 +257,29 @@ _US_CAMPOS = [
 ]
 
 
+def _bloco_documentos_sec(sym: str, n: int = 8) -> str:
+    """Documentos recentes entregues à SEC (8-K, 10-Q, 10-K...), da vitrine.
+
+    O mesmo leitor da tela (``fontes_informacoes.relatorios_de``): a LLM e o
+    usuário veem a mesma lista. Sem documento, o bloco diz por quê -- fonte
+    que falha é nomeada, nunca some (premissa do CLAUDE.md).
+    """
+    try:
+        from core.inteligencia_ativos import fontes_informacoes as fi
+        rel = fi.relatorios_de(fi.arquivo(), sym, fi.ACAO)
+    except Exception:
+        logger.exception("documentos da SEC de %s indisponíveis", sym)
+        return "DOCUMENTOS ENTREGUES À SEC: indisponíveis (falha ao ler a vitrine)."
+    if not rel.documentos:
+        return f"DOCUMENTOS ENTREGUES À SEC: {rel.motivo or 'nenhum na janela.'}"
+    linhas = [f"DOCUMENTOS ENTREGUES À SEC (fonte {rel.fonte or 'SEC/EDGAR'}, "
+              f"base até {rel.base_ate or '?'}; o item do 8-K diz o fato, o "
+              "texto não foi lido):"]
+    for d in rel.documentos[:n]:
+        linhas.append(f"  - {d.reference_date or '?'} | {d.rotulo} | {d.titulo}")
+    return "\n".join(linhas)
+
+
 def build_us_ativo_context(
     symbol: str, *, user_question: str = "", row=None,
     financials: pd.DataFrame | None = None, current_price=None,
@@ -332,6 +355,9 @@ def build_us_ativo_context(
                 blocos.append("\nDOSSIÊ DA EMPRESA: " + "; ".join(itens[:30]))
     except Exception:
         logger.exception("dossiê de %s indisponível", sym)
+    sec = _bloco_documentos_sec(sym)
+    if sec:
+        blocos.append("\n" + sec)
     local_macro = _local_macro_block("us", sym, setor_macro)
     if local_macro:
         blocos.append("\n" + local_macro)

@@ -876,7 +876,7 @@
             {
               "nome": "Papel na carteira · Notícias · Relatórios relevantes · Como o macro influencia",
               "resumo": "Função do ativo, notícias e efeito da economia",
-              "explicacao": "Para que o ativo serve na sua carteira, notícias recentes, trechos de relatórios da empresa e como juros, inflação e câmbio o afetam.",
+              "explicacao": "Para que o ativo serve na sua carteira, notícias recentes, trechos de relatórios da empresa (entregues à CVM, ao FNET ou, nas ações americanas, à SEC) e como juros, inflação e câmbio o afetam.",
               "so_admin": false,
               "fonte": "views/inteligencia_ativos_resumida.py:376, :414, :483, :532",
               "filhos": []

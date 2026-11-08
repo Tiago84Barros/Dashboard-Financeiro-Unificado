@@ -244,6 +244,7 @@ CARIMBO = {
                        "SELECT max(completed_at) FROM market.fii_cvm_archive_loads "
                        "WHERE archive_kind = 'eventual'"),
     "cvm_ipe": ("armazem", "SELECT max(created_at) FROM public.docs_corporativos"),
+    "us_sec_filings": ("armazem", "SELECT max(collected_at) FROM market_us.sec_filings"),
     # A cadeia brapi grava no armazém; o carimbo lê o que ELA produz, e não o
     # que o job do GitHub deixou na vitrine até 05/10/2026.
     "b3_brapi": ("armazem",

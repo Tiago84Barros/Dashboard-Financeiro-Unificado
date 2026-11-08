@@ -139,14 +139,17 @@ def relatorios_de(art: dict, ticker: str, tipo: str | None) -> inf.Relatorios:
     if not art:
         return inf.Relatorios(motivo=SEM_ARQUIVO)
     bloco = art.get("relatorios") or {}
-    mercado = "fii" if tipo == FII else "b3"
+    eua = tipo == ACAO and inf.raiz_b3(ticker) is None
+    mercado = "fii" if tipo == FII else "eua" if eua else "b3"
     fonte = (bloco.get("fonte") or {}).get(mercado)
     base = (bloco.get("base_ate") or {}).get(mercado)
     docs = _do_ticker(bloco.get("por_ticker") or {}, ticker)
-    if tipo == ACAO and inf.raiz_b3(ticker) is None:
-        return inf.Relatorios(motivo="Dado não disponível. Não há base de "
-                                     "filings da SEC no projeto para ações "
-                                     "americanas.")
+    if eua and mercado not in (bloco.get("fonte") or {}):
+        # Vitrine anterior à coleta da SEC (market_us.sec_filings): a base não
+        # existe nela, o que é diferente de a empresa não ter entregue nada.
+        return inf.Relatorios(motivo="Dado não disponível. A base de "
+                                     "documentos da SEC (8-K, 10-Q, 10-K) "
+                                     "ainda não foi publicada na vitrine.")
     if not docs:
         return inf.Relatorios(fonte=fonte, base_ate=base, motivo=(
             f"Dado não disponível. Nenhum documento de {ticker} nos últimos "

@@ -204,6 +204,20 @@ ALVOS: tuple[Alvo, ...] = (
         modulo="b3",
     ),
     Alvo(
+        # Entregas à SEC (8-K, 10-Q, 10-K, DEF 14A...) das ações dos EUA, o
+        # equivalente americano de `cvm_ipe`. Sem isto a tela de relatórios
+        # declarava em texto fixo que "não há base de filings da SEC", e a LLM
+        # respondia sobre resultado sem saber do 8-K do dia. Uma requisição por
+        # CIK a 4/s: ~3 mil empresas em ~13 min. Diário porque o 8-K sai
+        # quando o fato acontece, não no fim do trimestre. Antes de
+        # `informacoes_recentes`, que é quem leva os documentos à vitrine.
+        chave="us_sec_filings",
+        titulo="Documentos da SEC das ações dos EUA no armazém",
+        passos=(("run_us_ingest.py", "filings", "--warehouse", "--json"),),
+        cadencia_dias=1,
+        modulo="us",
+    ),
+    Alvo(
         chave="fii_ingest",
         titulo="Ingestão de FIIs no armazém",
         passos=_CADEIA_FII,
