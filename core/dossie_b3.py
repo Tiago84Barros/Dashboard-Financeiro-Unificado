@@ -470,7 +470,10 @@ def _eventos_do_artefato(tk: str, n: int) -> dict | None:
         if not str(chave).upper().startswith(pref):
             continue
         for d in lista or []:
-            if "FNET" in str(d.get("source") or "").upper():
+            # Só CVM/IPE, como a tabela antiga: o FNET é de fundo, e a SEC é do
+            # ADR listado nos EUA -- "VALE" (ADR) casaria o prefixo de VALE3.
+            fonte = str(d.get("source") or "").upper()
+            if "FNET" in fonte or "SEC" in fonte:
                 continue
             docs.append(d)
     docs.sort(key=lambda d: str(d.get("reference_date") or ""), reverse=True)

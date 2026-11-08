@@ -306,6 +306,13 @@ class EdgarProvider(FundamentalsProvider):
             return _CIK_OVERRIDES[sym]
         return self.ticker_map().get(sym) or self._cik_hints.get(sym)
 
+    def submissions(self, cik: str) -> dict | None:
+        """``submissions.json`` cru de um CIK (``None`` se a SEC responder 404).
+
+        Público para quem lê a lista de entregas (``data_pipeline.us.sec_filings``)
+        sem precisar passar por símbolo: GOOG e GOOGL são o mesmo CIK."""
+        return self._get(SUBMISSIONS_URL.format(cik=normalize_cik(cik)))
+
     def get_profile(self, symbol: str) -> dict | None:
         cik = self._cik_for(symbol)
         if not cik:

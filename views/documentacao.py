@@ -1399,6 +1399,7 @@ FLOW_EMPRESAS_EUA = FlowSpec(
             (
                 "10-K e 10-Q: demonstrações auditadas",
                 "8-K: eventos, inclusive saída de bolsa",
+                "Entregas dos últimos 180 dias: na seção de relatórios e no chat da empresa",
                 "Preço de mercado complementado por fonte de cotação",
             ),
             "Número mastigado por terceiro traz o critério do terceiro junto. Ir na fonte "
