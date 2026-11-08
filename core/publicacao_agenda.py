@@ -49,6 +49,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from core.us_benchmark import US_BENCHMARKS as _US_BENCHMARKS
+
+#: Lidos do mapa versionado do seletor "Benchmark de mercado": índice novo no
+#: seletor entra na publicação diária sem ninguém lembrar de mexer aqui.
+SIMBOLOS_BENCHMARK_EUA: tuple[str, ...] = tuple(
+    sorted({s for s in _US_BENCHMARKS.values() if s}))
+
 
 @dataclass(frozen=True)
 class Alvo:
@@ -523,6 +530,31 @@ ALVOS: tuple[Alvo, ...] = (
         cadencia_dias=7,
         modulo="b3",
         artefatos=("data/public/b3_linhagem.json",),
+    ),
+    Alvo(
+        # Índices de referência do backtest dos EUA (SPY, IWB, QQQ). O alvo
+        # `us_prices` publica a série mensal a cada 30 dias, mas nenhum passo
+        # baixava o preço dos índices nem derivava o mensal deles: o `daily` da
+        # vitrine só renova ações do universo, e ETF está fora dele por regra
+        # (`core.us_instrumento.TIPOS_FORA`). Resultado: o S&P 500 nunca chegou
+        # à Curva de capital do app publicado (06/11/2026).
+        #
+        # `prices` e não `daily`: baixa o histórico inteiro, que o armazém não
+        # tinha (o SPY tinha 9 linhas), e refaz o retroajuste de split sozinho.
+        # Três símbolos, segundos por execução. O mensal é derivado só para eles,
+        # e a publicação vai só com eles -- ~200 linhas cada no Supabase.
+        chave="us_benchmarks",
+        titulo="Índices de referência dos EUA (SPY, IWB, QQQ)",
+        passos=(
+            ("run_us_ingest.py", "prices", "--warehouse", "--json",
+             "--tickers", *SIMBOLOS_BENCHMARK_EUA),
+            ("run_us_ingest.py", "monthly", "--warehouse", "--json",
+             "--tickers", *SIMBOLOS_BENCHMARK_EUA),
+            ("-m", "scripts.publish_us_prices_monthly", "--apply",
+             *(arg for s in SIMBOLOS_BENCHMARK_EUA for arg in ("--simbolo", s))),
+        ),
+        cadencia_dias=1,
+        modulo="us",
     ),
     Alvo(
         chave="us_prices",
