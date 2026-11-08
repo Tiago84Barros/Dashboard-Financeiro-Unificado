@@ -194,3 +194,42 @@ def test_cobertura_de_setor_na_carteira_e_no_diagnostico_e_a_mesma():
     sem_fracao[1].pop("pct_imoveis_renda")
     known, applicable = _dimension_observation_masks(sem_fracao, "sector")
     assert known.sum() / applicable.sum() == .5
+
+
+def _exp(kind: str, name: str, weight: float = 1.0) -> dict:
+    return {"exposure_type": kind, "exposure_name": name, "exposure_weight": weight}
+
+
+def test_segmento_cadastral_so_preenche_setor_que_falta():
+    """`segment` (cadastro do informe mensal) e reserva do `sector` (inquilinos).
+
+    O setor por inquilino e o que a metodologia mede; o cadastral e um rotulo
+    unico declarado pelo administrador. Quando os dois existem, vale o
+    inquilino, mesmo que o cadastral seja mais recente.
+    """
+    from core.fii_lookthrough import apply_exposures
+
+    com_inquilino: dict = {"ticker": "A11"}
+    apply_exposures(com_inquilino, [
+        _exp("sector", "Varejo", .6), _exp("sector", "Logística", .4),
+        _exp("segment", "Lajes Corporativas"),
+    ])
+    assert com_inquilino["sector"] == "Varejo"
+    assert com_inquilino["segment"] == "Lajes Corporativas"
+
+    sem_inquilino: dict = {"ticker": "B11"}
+    apply_exposures(sem_inquilino, [
+        _exp("segment", "Lajes Corporativas"),
+        _exp("issuer", "Emissor A", .7), _exp("issuer", "Emissor B", .3),
+    ])
+    assert sem_inquilino["sector"] == "Lajes Corporativas"
+    assert sem_inquilino["issuers"] == {"Emissor A": .7, "Emissor B": .3}
+
+
+def test_segmento_cadastral_nao_sobrescreve_setor_ja_conhecido_na_linha():
+    """No estado corrente a linha ja chega com o setor do cadastro da brapi."""
+    from core.fii_lookthrough import apply_exposures
+
+    row: dict = {"ticker": "C11", "sector": "Shoppings"}
+    apply_exposures(row, [_exp("segment", "Lajes Corporativas")])
+    assert row["sector"] == "Shoppings"

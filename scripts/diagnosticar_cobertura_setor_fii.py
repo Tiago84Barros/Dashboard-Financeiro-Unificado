@@ -15,6 +15,10 @@ classifica o buraco:
 - ``c_sem_imovel_para_renda``: ``pct_imoveis_renda`` abaixo de 20%. É fundo de
   obra, terreno ou cotas, e a regra de aplicabilidade já o tira da máscara.
 
+Um fundo sem setor por inquilino mas com ``segment`` (segmento cadastral do
+informe mensal, parser 1.8.0) conhecido até a decisão sai como
+``ok_pelo_cadastro``: o PIT usa o cadastral como reserva do setor.
+
 Uso:  python scripts/diagnosticar_cobertura_setor_fii.py [--run ID]
       [--controles 2019-06-30,2023-06-30]
 """
@@ -69,6 +73,9 @@ def _fatos(conn, ticker: str, dia: date) -> dict:
     setor_tarde = conn.execute(text(
         f"SELECT min(knowledge_at) FROM market.fii_exposures "
         f"WHERE exposure_type='sector' AND {filtro}"), corte).scalar()
+    segmento = conn.execute(text(
+        f"SELECT max(reference_date) FROM market.fii_exposures "
+        f"WHERE exposure_type='segment' AND {conhecido}"), corte).scalar()
     trimestral = conn.execute(text(
         f"SELECT max(reference_date), string_agg(DISTINCT exposure_type, ',') "
         f"FROM market.fii_exposures WHERE source='cvm_informe_trimestral' "
@@ -90,6 +97,7 @@ def _fatos(conn, ticker: str, dia: date) -> dict:
         "tipo_cadastro_atual": tipo,
         "setor_ref": str(setor) if setor else None,
         "setor_primeiro_knowledge_at": str(setor_tarde) if setor_tarde else None,
+        "segmento_cadastral_ref": str(segmento) if segmento else None,
         "trimestral_ref": str(trimestral[0]) if trimestral and trimestral[0] else None,
         "trimestral_tipos": trimestral[1] if trimestral else None,
         "pct_imoveis_renda": float(renda[0]) if renda and renda[0] is not None else None,
@@ -100,6 +108,8 @@ def _fatos(conn, ticker: str, dia: date) -> dict:
 def _classifica(fatos: dict) -> str:
     if fatos["setor_ref"]:
         return "ok"
+    if fatos["segmento_cadastral_ref"]:
+        return "ok_pelo_cadastro"
     renda = fatos["pct_imoveis_renda"]
     if renda is not None and renda < _PISO_RENDA:
         return "c_sem_imovel_para_renda"
@@ -150,7 +160,9 @@ def main() -> int:
                 if tipo not in {"tijolo", "hibrido"}:
                     continue
                 causa = _classifica(fatos)
-                if causa != "ok":
+                if causa == "ok_pelo_cadastro":
+                    contagem[causa] = contagem.get(causa, 0) + 1
+                elif causa != "ok":
                     fundos[ticker] = {"causa": causa, **fatos}
                     contagem[causa] = contagem.get(causa, 0) + 1
             resultado["periodos"][rotulo] = {"carteira": tickers, "sem_setor": fundos}

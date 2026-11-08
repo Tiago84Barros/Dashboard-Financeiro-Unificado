@@ -1,4 +1,5 @@
 import io
+import json
 import zipfile
 from datetime import datetime, timezone
 
@@ -357,3 +358,48 @@ def test_monthly_without_administrator_publishes_no_manager():
     }, year=2019), {"12345678000100": "TEST11"}, 7)
     assert not [row for row in parsed["exposures"]
                 if row["exposure_type"] == "manager"]
+
+
+def _monthly_general(segmento: str, mandato: str = "Renda") -> dict:
+    general = (
+        "CNPJ_Fundo_Classe;Data_Referencia;Versao;Data_Entrega;"
+        "Segmento_Atuacao;Mandato\n"
+        f"12.345.678/0001-00;2017-07-01;1;2017-08-15;{segmento};{mandato}\n")
+    return parse_archive(_archive("monthly", {
+        "inf_mensal_fii_geral_2017.csv": general,
+    }, year=2017), {"12345678000100": "TEST11"}, 7)
+
+
+def test_monthly_publishes_cadastral_segment_with_delivery_date():
+    """O segmento cadastral do informe mensal vira exposicao `segment`.
+
+    O ZIP da CVM guarda so a ultima versao do trimestral; quando o fundo
+    reapresenta, o setor por inquilino passa a ser conhecido meses depois e
+    a decisao PIT fica sem setor. O mensal chega no prazo todo mes e traz
+    `Segmento_Atuacao`, que e a reserva para esse furo.
+    """
+    parsed = _monthly_general("Lajes Corporativas")
+    segments = [row for row in parsed["exposures"]
+                if row["exposure_type"] == "segment"]
+    assert len(segments) == 1
+    row = segments[0]
+    assert row["exposure_name"] == "Lajes Corporativas"
+    assert row["exposure_weight"] == 1.0
+    assert row["knowledge_at"].startswith("2017-08-1")
+    assert row["availability_quality"] == "verified_publication"
+    metadata = json.loads(row["metadata_json"])
+    assert metadata["scope"] == "cvm_cadastral_segment"
+    assert metadata["mandate"] == "Renda"
+    # Nao pode entrar como `sector`: o PIT trocaria o setor por inquilino de
+    # todo fundo de tijolo pelo rotulo cadastral, que e mais recente.
+    assert not [r for r in parsed["exposures"] if r["exposure_type"] == "sector"]
+
+
+@pytest.mark.parametrize("segmento", [
+    "Híbrido", "Hibrido", "Outros", "Multicategoria", "", "Títulos e Val. Mob.",
+    "Títulos e Valores Mobiliários",
+])
+def test_monthly_discards_uninformative_cadastral_segment(segmento):
+    parsed = _monthly_general(segmento, mandato="Híbrido")
+    assert not [row for row in parsed["exposures"]
+                if row["exposure_type"] == "segment"]

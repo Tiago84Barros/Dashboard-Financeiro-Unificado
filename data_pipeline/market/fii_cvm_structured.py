@@ -28,9 +28,11 @@ SOURCE = "cvm_dados_abertos"
 ROOT = "https://dados.cvm.gov.br/dados/FII/DOC"
 PARSER_NAME = "cvm_fii_structured"
 # 1.7.0: o informe mensal passa a emitir ``pct_imoveis_renda`` (ver
-# ``_rental_property_share``). A troca de versão força o reprocessamento dos
-# arquivos já carregados, sem o qual o PIT não enxerga a métrica nova.
-PARSER_VERSION = "1.7.0"
+# ``_rental_property_share``). 1.8.0: o mensal passa a emitir a exposição
+# ``segment`` (``Segmento_Atuacao`` do cadastro, ver ``_cadastral_segment``).
+# A troca de versão força o reprocessamento dos arquivos já carregados, sem o
+# qual o PIT não enxerga o dado novo.
+PARSER_VERSION = "1.8.0"
 PARSER_SCHEMA_VERSION = "cvm-fii-structured-v2"
 ARCHIVES = {
     "monthly": ("INF_MENSAL", "inf_mensal_fii_{year}.zip"),
@@ -394,6 +396,36 @@ _NON_RENTAL_PROPERTY_FIELDS = ("Terrenos", "Imoveis_Renda_Construcao",
                                "Imoveis_Venda_Acabados", "Imoveis_Venda_Construcao")
 
 
+# ``Segmento_Atuacao`` que não diz em que o fundo investe. "Híbrido", "Outros"
+# e, no layout mais novo, "Multicategoria" são a maioria do cadastro e não
+# separam nada; o de papel não tem setor de imóvel. Comparação sem acento e
+# sem caixa, porque o cadastro da CVM escreve o mesmo rótulo de mais de um
+# jeito.
+_UNINFORMATIVE_SEGMENTS = frozenset({
+    "hibrido", "outros", "multicategoria",
+    "titulos e val. mob.", "titulos e valores mobiliarios",
+})
+
+
+def _cadastral_segment(general: dict) -> str | None:
+    """Segmento cadastral do informe mensal, ou ``None`` se não informa nada.
+
+    É a reserva da exposição ``sector`` por inquilino (informe trimestral):
+    o ZIP anual da CVM guarda só a última versão de cada trimestral, então a
+    reapresentação empurra o ``knowledge_at`` do setor para meses depois,
+    enquanto o mensal chega no prazo. O consumidor (``core.fii_lookthrough
+    .apply_exposures``) só usa o cadastral quando nenhum setor por inquilino é
+    conhecido; por isso ele sai como ``segment``, nunca como ``sector``.
+    """
+    segment = _text(general.get("Segmento_Atuacao"))
+    if not segment:
+        return None
+    folded = unicodedata.normalize("NFKD", segment).encode("ascii", "ignore")
+    if folded.decode().casefold().strip() in _UNINFORMATIVE_SEGMENTS:
+        return None
+    return segment
+
+
 def _rental_property_share(asset: dict, classes: dict[str, float]) -> float | None:
     """Fração da carteira em imóvel que pode ter inquilino declarado.
 
@@ -483,6 +515,15 @@ def parse_monthly(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
                 raw_payload_id=raw_payload_id,
                 metadata={"administrator_name": nome_admin,
                           "administrator_cnpj": cnpj_admin or None,
+                          "source_url": archive.url,
+                          "archive_sha256": archive.sha256}))
+        segment = _cadastral_segment(general)
+        if segment:
+            exposures.extend(_exposures(
+                context, "segment", {segment: 1.0}, source=source,
+                raw_payload_id=raw_payload_id,
+                metadata={"scope": "cvm_cadastral_segment",
+                          "mandate": _text(general.get("Mandato")),
                           "source_url": archive.url,
                           "archive_sha256": archive.sha256}))
     return {"observations": observations, "exposures": exposures,

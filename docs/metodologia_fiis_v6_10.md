@@ -156,3 +156,43 @@ de carteira chamam.
 **Aprovada não quer dizer que bate o IFIX.** O excesso medido no run 105
 sobre o IFIX oficial foi de −0,116 p.p./mês, com IC 95% de [−0,32; +0,10].
 Destravar o portão de viabilidade não muda essa conclusão.
+
+## Segmento cadastral do mensal é reserva do setor por inquilino (parser CVM 1.8.0)
+
+A validação PIT de 08/11/2026 (run 146, parser 1.7.0) ficou em 110 de 116
+carteiras viáveis (0,948, piso 0,95). As recusas de 2017-08-31 e 2017-09-30
+eram RCRB11 sem setor. O fundo **tinha** inquilino declarado; o que faltava
+era o `knowledge_at`: o ZIP anual da CVM guarda só a última versão de cada
+informe trimestral, e RCRB11 reapresentou os de 2016-12, 2017-03 e 2017-06
+em outubro de 2017. A `Data_Entrega` que vira `knowledge_at` é a da
+reapresentação (v4, v7); a v1, entregue no prazo, não existe mais nos dados
+abertos. Baixar o piso ou "corrigir" o `knowledge_at` para trás seria
+inventar dado.
+
+O informe **mensal** (`inf_mensal_fii_geral`, colunas `Segmento_Atuacao` e
+`Mandato`) chega no prazo todo mês e, para RCRB11, dizia "Lajes
+Corporativas" desde 2017. A partir do parser `1.8.0`:
+
+- o mensal grava a exposição `segment`, peso 1,0, com o `knowledge_at` da
+  entrega do mensal e `metadata_json.scope = cvm_cadastral_segment`.
+  "Híbrido", "Multicategoria", "Outros", vazio e "Títulos e Val. Mob." não
+  geram exposição:
+  não dizem em que o fundo investe (em 2017 eram 237 dos 369 cadastros);
+- `core.fii_lookthrough.apply_exposures` é o ponto único que leva as
+  exposições para a linha da metodologia, no PIT e no estado corrente.
+  `segment` só preenche `sector` quando **nenhum** setor por inquilino é
+  conhecido até a decisão (nem pelo trimestral, nem pelo cadastro da brapi
+  no estado corrente). Quando os dois existem, vale o inquilino, mesmo que o
+  cadastral seja mais recente, e a linha guarda `sector_source =
+  cvm_cadastral_segment` quando a reserva foi usada;
+- `segment` nunca entra como `sector`: o PIT fica com a referência mais nova
+  por tipo de exposição, e o mensal é sempre mais novo que o trimestral.
+  Gravar o cadastral como `sector` trocaria o mix de inquilinos de todo
+  fundo de tijolo por um rótulo único.
+
+A tabela `market.fii_exposures` precisa da migration
+`086_fii_exposures_segment.sql` (o CHECK de `exposure_type` não aceitava
+`segment`). Fundo "Híbrido" sem inquilino, como MFII11 em 2018 (fundo de
+desenvolvimento, tabela de inquilinos vazia em todo o período), não se
+resolve por aí; é a regra de aplicabilidade do 1.7.0 que o tira da máscara,
+se `pct_imoveis_renda` estiver abaixo de 20%.

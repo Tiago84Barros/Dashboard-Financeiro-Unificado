@@ -24,6 +24,7 @@ from core.fii_methodology import (
     income_recurrence,
     score_fiis_by_type,
 )
+from core.fii_lookthrough import apply_exposures
 from core.fii_portfolio_v4 import LIVE_PORTFOLIO_STRATEGY_ID
 from core.fii_validation import (
     evaluate_regime_performance,
@@ -326,23 +327,9 @@ def reconstruct_snapshots(
                 "metric_metadata": {}, "data_consistency": .90,
                 "snapshot_availability_quality": type_quality,
             }
-            for exposure_type in {
-                str(item["exposure_type"]) for item in ticker_exp
-            }:
-                mapping = {
-                    str(item["exposure_name"]): float(item["exposure_weight"])
-                    for item in ticker_exp
-                    if str(item["exposure_type"]) == exposure_type
-                }
-                key = {
-                    "tenant": "tenants", "debtor": "debtors", "issuer": "issuers",
-                    "indexer": "indexers", "region": "regions",
-                    "holding": "holdings",
-                }.get(exposure_type)
-                if key:
-                    row[key] = mapping
-                elif exposure_type in {"manager", "sector"} and mapping:
-                    row[exposure_type] = max(mapping, key=mapping.get)
+            # `segment` (cadastro do mensal) so preenche `sector` quando
+            # nenhum setor por inquilino e conhecido ate a decisao.
+            apply_exposures(row, ticker_exp)
             for metric in ("dy_12m", "liquidez_diaria", "total_return_trend", "max_drawdown",
                            "income_growth_per_share_3y", "income_recurrence"):
                 if row.get(metric) is not None:

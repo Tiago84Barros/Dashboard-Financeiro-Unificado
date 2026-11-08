@@ -236,3 +236,46 @@ def summarize_lookthrough_coverage(
             value for value in SOURCE_LIMITATIONS.values() if value
         ],
     }
+
+
+#: Exposições que entram na linha como dicionário nome → peso.
+_EXPOSURE_MAPPING_KEYS = {
+    "tenant": "tenants", "debtor": "debtors", "issuer": "issuers",
+    "indexer": "indexers", "region": "regions", "holding": "holdings",
+}
+#: Exposições que entram como um rótulo só (o de maior peso).
+_EXPOSURE_LABEL_KEYS = ("manager", "sector", "segment")
+
+
+def apply_exposures(row: dict, items: list[dict]) -> dict:
+    """Leva as exposições de um fundo para os campos da linha da metodologia.
+
+    Ponto único para o PIT (`data_pipeline.market.fii_pit`) e o estado
+    corrente (`core.market_read`), que antes repetiam o mesmo mapeamento.
+
+    ``segment`` é o segmento cadastral declarado pelo administrador no informe
+    mensal da CVM. Ele é **reserva** do ``sector`` por inquilino do informe
+    trimestral: só preenche ``sector`` quando a linha não tem setor nem pelas
+    exposições nem pelo cadastro corrente (brapi). O trimestral reapresentado
+    chega meses depois; o mensal chega no prazo, e é o que RCRB11 tinha em
+    2017-08 e 2017-09.
+    """
+    mappings: dict[str, dict[str, float]] = {}
+    for item in items:
+        kind = str(item.get("exposure_type") or "")
+        name = str(item.get("exposure_name") or "")
+        weight = item.get("exposure_weight")
+        if not kind or not name or weight is None:
+            continue
+        mappings.setdefault(kind, {})[name] = float(weight)
+    for kind, key in _EXPOSURE_MAPPING_KEYS.items():
+        if mappings.get(kind):
+            row[key] = mappings[kind]
+    for kind in _EXPOSURE_LABEL_KEYS:
+        mapping = mappings.get(kind)
+        if mapping:
+            row[kind] = max(mapping, key=mapping.get)
+    if not row.get("sector") and row.get("segment"):
+        row["sector"] = row["segment"]
+        row["sector_source"] = "cvm_cadastral_segment"
+    return row
