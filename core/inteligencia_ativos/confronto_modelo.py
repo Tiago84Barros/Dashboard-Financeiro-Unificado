@@ -55,6 +55,9 @@ from core.inteligencia_ativos import veredito as vd
 # Divergência acentuada: abaixo disso é ruído de arredondamento e de preço.
 LIMIAR_ATIVO_PP = 3.0
 LIMIAR_CLASSE_PP = 5.0
+# Folga de ponto flutuante nos limites inclusivos (gêmeo do achado do Codex
+# no #698): 33% − 30% pode dar 2,999… e o limite é "3 pp ou mais".
+_EPS = 1e-9
 # Ativos do modelo fora da carteira avaliados pela régua da Inteligência, do
 # maior peso para o menor. Cada avaliação lê fundamentos, valuation, pares e
 # notícias; o resto fica "sem avaliação", com a contagem na tela.
@@ -224,7 +227,7 @@ class DivergenciaClasse:
     @property
     def acentuada(self) -> bool:
         return (self.alvo_modelo is not None
-                and abs(self.diferenca) >= LIMIAR_CLASSE_PP)
+                and abs(self.diferenca) >= LIMIAR_CLASSE_PP - _EPS)
 
     def como_dict(self) -> dict:
         return {"classe": self.rotulo,
@@ -804,7 +807,7 @@ def montar(ref: refm.ReferenciaModelo,
 
     divergencias = []
     for x in risco:
-        if x.peso_real is None or abs(x.diferenca or 0.0) < LIMIAR_ATIVO_PP:
+        if x.peso_real is None or abs(x.diferenca or 0.0) < LIMIAR_ATIVO_PP - _EPS:
             continue
         v = vereditos.get(x.ticker)
         conclusao, texto, motivos = _conclusao_da_carteira(x, v)

@@ -245,3 +245,43 @@ def test_tela_mostra_o_momento_numa_secao_propria(an):
     assert html.count("15,0% abaixo do valor investido") == 1
     sem = tela.cartao_recomendacao(rs.decisao(_solida(an, 2.5), _sug(2.5)))
     assert "Momento:" not in sem
+
+
+def test_caiu_menos_que_o_segmento_nao_vira_caiu_mais():
+    """Codex P2 (#698): −20% contra −40% dos pares é cair menos, não mais."""
+    melhor = _mom(ret=-20.0, med=-40.0, n=4)
+    assert melhor.segmento_caiu_junto is False
+    assert "caiu menos que o segmento" in melhor.linha()
+    assert "caiu mais" not in melhor.linha()
+    pior = _mom(ret=-30.0, med=-5.0, n=4)
+    assert "caiu mais que o segmento" in pior.linha()
+
+
+def test_perda_de_exatamente_dez_por_cento_conta_como_queda():
+    """Codex P2 (#698): 90 contra 100 dá −9,999…% em ponto flutuante; o
+    limite é inclusivo e tem de valer com valores reais da posição."""
+    info = replace(_INFO, valor_mercado=90.0, valor_investido=100.0)
+    m = _mom(resultado=mo.resultado_da_posicao(info))
+    assert m.em_prejuizo_relevante and m.tipo == mo.QUEDA_DE_PRECO
+    assert _mom(ret=(80.0 / 100.0 - 1.0) * 100.0).queda_forte_12m
+
+
+
+
+def test_limites_do_confronto_tambem_sao_inclusivos():
+    """Gêmeo do achado do Codex: 5 pp e 3 pp são "ou mais" também quando a
+    subtração em ponto flutuante fica um fio abaixo (12% − 7% = 4,999…;
+    10% − 7% = 2,999…)."""
+    from core.inteligencia_ativos import confronto_modelo as cf
+    from core.inteligencia_ativos import referencia_modelo as rm
+    real, alvo = 0.12 * 100, 0.07 * 100
+    assert real - alvo < 5.0
+    k = cf.DivergenciaClasse("b3", "Empresas B3", alvo, real, None,
+                             cf.SEM_AVALIACAO, "")
+    assert k.acentuada
+    linha = rm.LinhaAtivo("PETR4", "Petrobras", "b3", peso_modelo=0.07 * 100,
+                          peso_real=0.10 * 100, situacao=rm.NOS_DOIS)
+    assert linha.diferenca < 3.0
+    ref = rm.ReferenciaModelo(disponivel=True, ativos={"PETR4": linha})
+    c = cf.montar(ref, {}, {})
+    assert c.da_carteira("PETR4") is not None

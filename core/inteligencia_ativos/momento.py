@@ -51,6 +51,9 @@ QUEDA_12M_RELEVANTE = -20.0     # retorno de 12 meses com proventos, em %
 # Retorno a menos disso da mediana dos pares conta como "o segmento caiu
 # junto" (a mesma régua de momento da avaliação).
 JUNTO_COM_PARES_PP = av_.MOMENTO_DIFERENCA_PP
+# Folga de ponto flutuante nos limites inclusivos: 90 contra 100 dá
+# −9,999…%, e uma perda de 10% exatos tem de contar (achado do Codex no #698).
+_EPS = 1e-9
 
 SEM_QUEDA = "sem_queda"
 QUEDA_DE_PRECO = "queda_de_preco"
@@ -90,12 +93,12 @@ class Momento:
     @property
     def em_prejuizo_relevante(self) -> bool:
         return (self.resultado_pct is not None
-                and self.resultado_pct <= PERDA_RELEVANTE_PCT)
+                and self.resultado_pct <= PERDA_RELEVANTE_PCT + _EPS)
 
     @property
     def queda_forte_12m(self) -> bool:
         return (self.retorno_12m is not None
-                and self.retorno_12m <= QUEDA_12M_RELEVANTE)
+                and self.retorno_12m <= QUEDA_12M_RELEVANTE + _EPS)
 
     @property
     def em_queda(self) -> bool:
@@ -143,8 +146,13 @@ class Momento:
                 txt += (f", perto da mediana de {self.n_pares} pares "
                         f"({_br(self.mediana_pares_12m)}%): o segmento caiu junto")
             elif junto is False and self.mediana_pares_12m is not None:
+                # A direção vem da comparação, não da distância: −20% contra
+                # −40% dos pares é cair menos (achado do Codex no #698).
+                rel = ("caiu mais que o segmento"
+                       if self.retorno_12m < self.mediana_pares_12m
+                       else "caiu menos que o segmento")
                 txt += (f", contra {_br(self.mediana_pares_12m)}% da mediana de "
-                        f"{self.n_pares} pares: caiu mais que o segmento")
+                        f"{self.n_pares} pares: {rel}")
             out.append(txt)
         if self.preco_abaixo_do_normal:
             out.append("o preço está abaixo do normal contra o próprio "
