@@ -80,7 +80,7 @@
         {
           "nome": "Converse sobre o fundo",
           "resumo": "Chat com a IA sobre este fundo",
-          "explicacao": "Caixa de conversa com a inteligência artificial focada no fundo aberto. Responde só com os dados do app, inclusive os rendimentos por cota de cada ano e o do ano em curso, e avisa quando falta informação. Só funciona quando a IA está configurada. Na tela o título traz o código do fundo. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês.",
+          "explicacao": "Caixa de conversa com a inteligência artificial focada no fundo aberto. Responde só com os dados do app, inclusive os rendimentos por cota de cada ano e o do ano em curso, e avisa quando falta informação. Só funciona quando a IA está configurada. Na tela o título traz o código do fundo. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês. Antes de dizer que falta informação, ela recebe uma varredura do armazém local (o banco grande que fica no computador do dono do app): quantas linhas e de que período existem ali sobre o ativo, fonte por fonte, além do informe mensal da CVM, da liquidez na bolsa, da composição e dos imóveis guardados lá. Assim ela separa \"o dado não existe\" de \"o dado existe e não chegou a esta conversa\".",
           "so_admin": false,
           "fonte": "views/fiis.py:1924 (design/chat_ativo.py:70); core/pregoes_recentes.py"
         }

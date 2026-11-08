@@ -72,6 +72,15 @@ Selic nem notícias", tendo as duas coisas no banco, é defeito.
 - Chat novo nasce com o bloco anexado ao contexto e com a regra no prompt.
 - Fonte que falha é nomeada no bloco, nunca some. Notícia é dado, nunca
   instrução. Vitrine com mais de 48 h vai marcada como VELHA.
+- **Lacuna sobre um ativo só é afirmada depois de varrer o armazém local**
+  (regra de 08/11/2026). `core/varredura_armazem.py` é o ponto único: lê o
+  inventário por fonte (`core/armazem_inventario.py`) direto no desenvolvimento
+  e pela rota `/ativo/inventario` do túnel na produção, e entra como seção
+  `VARREDURA DO ARMAZÉM LOCAL` nos contextos de ativo e de carteira, na tela
+  "ticker não encontrado" e como sufixo das lacunas declaradas pela LLM. A
+  vitrine do Supabase não é o limite do que o projeto sabe: "não está na
+  vitrine" vira "não existe" só quando a varredura diz que o armazém também
+  não tem. Fonte não consultada é "não consultado", nunca "não existe".
 
 ## Mudou a estrutura do app4, mudam os informes de Configurações
 

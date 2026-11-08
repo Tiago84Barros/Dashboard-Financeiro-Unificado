@@ -34,6 +34,10 @@ Rotas (todas GET, todas exigem ``Authorization: Bearer <token>``):
                                        composição, imóveis e score mês a mês
     /b3/detalhe?tickers=WEGE3,PETR4    -- pregão diário (COTAHIST) e reação a
                                           resultados anuais (Memória de Mercado)
+    /ativo/inventario?classe=b3&tickers=PETR4,XXXX3
+                                       -- quantas linhas e que período o armazém
+                                          tem de cada ativo, fonte por fonte
+                                          (varredura antes de afirmar lacuna)
 """
 from __future__ import annotations
 
@@ -261,6 +265,33 @@ def rota_b3_detalhe(params) -> tuple[int, dict]:
         engine_eventos=engine_leitura(url_memoria) if url_memoria else None)}
 
 
+def rota_ativo_inventario(params) -> tuple[int, dict]:
+    """Varredura: o que o armazém guarda de cada ativo, por fonte.
+
+    Só contagens e datas -- nenhuma linha de dado sai daqui. Cada fonte
+    falha sozinha dentro de ``ler_inventario``; banco não configurado nesta
+    máquina vira ``sem_banco`` na fonte, não 503 na rota, para que as fontes
+    dos outros bancos ainda respondam.
+    """
+    from core.armazem_inventario import CLASSES, TICKERS_MAX, ler_inventario, normalizar_tickers
+
+    classe = str(params.get("classe", [""])[0] or "").strip().lower()
+    if classe not in CLASSES:
+        return 400, {"erro": f"classe deve ser uma de {', '.join(CLASSES)}"}
+    tickers = normalizar_tickers(",".join(params.get("tickers", [])).split(","))
+    if not tickers:
+        return 400, {"erro": "informe tickers"}
+    if len(tickers) > TICKERS_MAX:
+        return 400, {"erro": f"no máximo {TICKERS_MAX} tickers por chamada"}
+    url_mercado, url_noticias, url_memoria = _url_eua(), _url_noticias(), _url_memoria()
+    if not (url_mercado or url_noticias or url_memoria):
+        return 503, {"erro": "armazém não configurado nesta máquina"}
+    engines = {"mercado": engine_leitura(url_mercado) if url_mercado else None,
+               "noticias": engine_leitura(url_noticias) if url_noticias else None,
+               "memoria": engine_leitura(url_memoria) if url_memoria else None}
+    return 200, {"inventario": ler_inventario(engines, classe, tickers)}
+
+
 ROTAS = {
     "/saude": rota_saude,
     "/noticias/recentes": rota_noticias,
@@ -269,6 +300,7 @@ ROTAS = {
     "/eua/detalhe": rota_eua_detalhe,
     "/fii/detalhe": rota_fii_detalhe,
     "/b3/detalhe": rota_b3_detalhe,
+    "/ativo/inventario": rota_ativo_inventario,
 }
 
 

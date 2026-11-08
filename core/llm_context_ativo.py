@@ -137,6 +137,21 @@ def _data_br(valor) -> str:
         return str(valor)
 
 
+def _varredura(asset_class: str, symbol: str) -> str:
+    """Seção VARREDURA DO ARMAZÉM LOCAL do ativo: quantas linhas e que período
+    o armazém tem dele, fonte por fonte. Entra em todo contexto de ativo para a
+    LLM separar "o armazém não tem" de "o dado não veio a este contexto" antes
+    de afirmar lacuna (regra de 08/11/2026). Nunca levanta."""
+    try:
+        from core.varredura_armazem import bloco_varredura
+
+        return bloco_varredura(asset_class, [symbol])
+    except Exception as exc:  # noqa: BLE001 - vira linha no prompt
+        logger.exception("varredura do armazém de %s falhou", symbol)
+        return ("VARREDURA DO ARMAZÉM LOCAL: não feita nesta resposta "
+                f"({type(exc).__name__}); não trate como ausência de dado.")
+
+
 def _conjuntura_block(asset_class: str, symbol: str, sector: str) -> str:
     """Bloco conjuntural do ativo: noticias com procedencia e o nao medido.
 
@@ -222,6 +237,7 @@ def build_b3_ativo_context(
             blocos.append("\n" + detalhe)
     except Exception:
         logger.exception("detalhe do armazém de %s indisponível", tk)
+    blocos.append("\n" + _varredura("b3", tk))
     try:
         docs = get_chunks_context(user_question or tk, [tk], None)
         if docs:
@@ -286,8 +302,12 @@ def build_us_ativo_context(
     relatorio: str = "",
 ) -> str:
     """Relatório de analista, cadastro pontuado, série de demonstrações, pares
-    de indústria e dossiê."""
-    from core.llm_context_us import get_peers_context, get_sector_context
+    de indústria, dossiê, detalhe do armazém e varredura do armazém."""
+    from core.llm_context_us import (
+        get_peers_context,
+        get_sector_context,
+        get_warehouse_detail_context,
+    )
     sym = str(symbol or "").strip().upper()
     blocos = [
         "ATIVO EM ANÁLISE (tela Empresas Americanas → Análise de empresas):",
@@ -353,8 +373,21 @@ def build_us_ativo_context(
                      if not isinstance(v, (dict, list, pd.DataFrame)) and v is not None]
             if itens:
                 blocos.append("\nDOSSIÊ DA EMPRESA: " + "; ".join(itens[:30]))
+        elif isinstance(dossie, dict):
+            # Dossiê ausente é nomeado: vazio a LLM lê como "empresa sem dado".
+            blocos.append(f"\nDOSSIÊ DA EMPRESA: indisponível ({dossie.get('erro')}).")
     except Exception:
         logger.exception("dossiê de %s indisponível", sym)
+    try:
+        # Preço diário, trimestres e proventos que a vitrine não guarda. Sem
+        # este bloco o chat da empresa era o único caminho de LLM dos EUA sem
+        # o detalhe do armazém (os chats de carteira já o recebiam).
+        detalhe = get_warehouse_detail_context([sym])
+        if detalhe:
+            blocos.append("\n" + detalhe)
+    except Exception:
+        logger.exception("detalhe do armazém de %s indisponível", sym)
+    blocos.append("\n" + _varredura("us", sym))
     sec = _bloco_documentos_sec(sym)
     if sec:
         blocos.append("\n" + sec)
@@ -441,6 +474,18 @@ def build_fii_ativo_context(
                       "proventos_ativo):\n" + proventos_ativo([tk]))
     except Exception:
         logger.exception("proventos de %s indisponíveis", tk)
+    try:
+        # Informe mensal da CVM, liquidez, composição, imóveis e score mês a
+        # mês: o chat do fundo não recebia o detalhe que o chat da seleção já
+        # recebia (views/fiis.py), e dizia não ter histórico com ele no armazém.
+        from core.llm_context_fii import get_warehouse_detail_context
+
+        detalhe = get_warehouse_detail_context([tk])
+        if detalhe:
+            blocos.append("\n" + detalhe)
+    except Exception:
+        logger.exception("detalhe do armazém de %s indisponível", tk)
+    blocos.append("\n" + _varredura("fii", tk))
     local_macro = _local_macro_block("fii", tk, tipo.lower())
     if local_macro:
         blocos.append("\n" + local_macro)

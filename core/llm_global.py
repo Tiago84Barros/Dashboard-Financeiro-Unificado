@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from core.contexto_mercado import REGRA_CADEIA_TRANSMISSAO, REGRA_CONTEXTO_MERCADO
+from core.varredura_armazem import REGRA_VARREDURA_ARMAZEM
 from core.inteligencia_ativos.veredito import REGRA_VEREDITO
 from core.llm_b3 import _chat_complete, _report_model
 from core.llm_ferramentas import FERRAMENTAS_MERCADO
@@ -71,6 +72,7 @@ def chat_com_portfolio_global(
         "**Concentração e risco** · **Pontos de atenção** · "
         "**O que os dados não permitem afirmar** · **Conclusão prática**.\n\n"
         f"{REGRA_CONTEXTO_MERCADO}\n\n"
+        f"{REGRA_VARREDURA_ARMAZEM}\n\n"
         f"{REGRA_CADEIA_TRANSMISSAO}\n\n"
         f"{REGRA_VEREDITO}\n\n"
         f"=== CONTEXTO DO PORTFÓLIO GLOBAL ===\n{context}"

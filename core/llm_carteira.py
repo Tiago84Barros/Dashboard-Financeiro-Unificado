@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Iterable
 
 from core.contexto_mercado import REGRA_CADEIA_TRANSMISSAO, REGRA_CONTEXTO_MERCADO
+from core.varredura_armazem import REGRA_VARREDURA_ARMAZEM
 from core.inteligencia_ativos.veredito import REGRA_VEREDITO
 from core.llm_b3 import _chat_complete, _report_model
 from core.llm_ferramentas import FERRAMENTAS_MERCADO
@@ -101,7 +102,8 @@ def regras_da_analise(*, geral: bool = False) -> str:
         "Ele vale só para os ativos que lista: ativo fora dele não tem esse "
         "detalhe, e fonte que o bloco declara indisponível não é dado zero. "
         "Os PROVENTOS PUBLICADOS do bloco não dependem do armazém: com o "
-        "armazém indisponível, eles continuam valendo como dado.\n"
+        "armazém indisponível, eles continuam valendo como dado. "
+        f"{REGRA_VARREDURA_ARMAZEM}\n"
         f"11. {REGRA_VEREDITO} Na carteira do usuário, a recomendação de "
         "compra, venda ou peso da regra 7 parte da DECISÃO da Inteligência "
         "do bloco; sem bloco ou sem a linha DECISÃO para o ativo, vale o "

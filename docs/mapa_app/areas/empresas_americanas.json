@@ -54,7 +54,7 @@
     {
       "nome": "Análise de Empresa",
       "resumo": "Raio-x completo de uma empresa escolhida",
-      "explicacao": "Mostra tudo sobre uma empresa: preço, lucros, dívidas, dividendos, indicadores, uma nota de qualidade, um relatório do analista e um chat com a inteligência artificial. No topo aparecem logo, nome, setor e a última cotação em dólares. Serve para decidir se a empresa merece entrar no seu radar.",
+      "explicacao": "Mostra tudo sobre uma empresa: preço, lucros, dívidas, dividendos, indicadores, uma nota de qualidade, um relatório do analista e um chat com a inteligência artificial. No topo aparecem logo, nome, setor e a última cotação em dólares. Serve para decidir se a empresa merece entrar no seu radar. Quando o código digitado não está na lista publicada, a tela diz também o que o armazém local tem sobre ele, para separar erro de digitação de papel real fora da lista.",
       "so_admin": false,
       "fonte": "views/empresas_americanas.py:458",
       "filhos": [
@@ -193,7 +193,7 @@
         {
           "nome": "Converse sobre a empresa",
           "resumo": "Chat com a IA sobre esta empresa",
-          "explicacao": "Caixa de conversa com a inteligência artificial focada na empresa aberta: pergunte sobre resultados, dívidas, concorrentes e riscos. Além dos números, ela recebe os documentos recentes que a empresa entregou à SEC (8-K, 10-Q, 10-K), com a data e o assunto de cada um. Ela responde só com os dados que o app tem e avisa quando falta informação. Só funciona quando a IA está configurada; senão aparece um aviso. Na tela o título traz o código da empresa (Converse sobre AAPL, por exemplo).",
+          "explicacao": "Caixa de conversa com a inteligência artificial focada na empresa aberta: pergunte sobre resultados, dívidas, concorrentes e riscos. Além dos números, ela recebe os documentos recentes que a empresa entregou à SEC (8-K, 10-Q, 10-K), com a data e o assunto de cada um. Ela responde só com os dados que o app tem e avisa quando falta informação. Só funciona quando a IA está configurada; senão aparece um aviso. Na tela o título traz o código da empresa (Converse sobre AAPL, por exemplo). Antes de dizer que falta informação, ela recebe uma varredura do armazém local (o banco grande que fica no computador do dono do app): quantas linhas e de que período existem ali sobre o ativo, fonte por fonte, além do preço diário, dos trimestres e dos dividendos guardados lá. Assim ela separa \"o dado não existe\" de \"o dado existe e não chegou a esta conversa\".",
           "so_admin": false,
           "fonte": "views/empresas_americanas.py:836 (design/chat_ativo.py:92)"
         }
