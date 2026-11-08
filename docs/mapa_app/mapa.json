@@ -1405,13 +1405,13 @@
                 {
                   "nome": "Avaliação do ativo · Pares",
                   "resumo": "Notas do ativo e comparação com concorrentes",
-                  "explicacao": "Avaliação por dimensões (por exemplo, se está caro ou barato) e uma tabela comparando o ativo com dois parecidos.",
+                  "explicacao": "Avaliação por dimensões (por exemplo, se está caro ou barato) e uma tabela comparando o ativo com dois parecidos. Num ETF, os indicadores do fundo (índice, maiores posições, concentração, taxa, liquidez e setores) vêm do yfinance; o tracking error não é calculado.",
                   "so_admin": false
                 },
                 {
                   "nome": "Papel na carteira · Notícias · Relatórios relevantes · Como o macro influencia",
                   "resumo": "Função do ativo, notícias e efeito da economia",
-                  "explicacao": "Para que o ativo serve na sua carteira, notícias recentes, trechos de relatórios da empresa (entregues à CVM, ao FNET ou, nas ações americanas, à SEC) e como juros, inflação e câmbio o afetam.",
+                  "explicacao": "Para que o ativo serve na sua carteira, notícias recentes, trechos de relatórios da empresa (entregues à CVM, ao FNET ou, nas ações americanas, à SEC) e como juros, inflação e câmbio o afetam. Num ETF sem notícia própria, aparecem as notícias das maiores posições do fundo, marcadas como tal.",
                   "so_admin": false
                 },
                 {
