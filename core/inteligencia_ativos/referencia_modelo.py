@@ -228,7 +228,10 @@ def montar(snapshots: dict[str, dict[str, dict]], alocacao: dict,
             classe, nome, anterior = modelo[tk]
             peso += anterior
         modelo[tk] = (classe, nome, peso)
-        setor = linha.get("sector_raw") or linha.get("sector")
+        # Só o setor bruto do snapshot: a chave canônica (``other``,
+        # ``real_estate``...) não se compara com o setor da carteira, e
+        # "other" quer dizer desconhecido, não um setor.
+        setor = str(linha.get("sector_raw") or "").strip()
         if setor and tk not in setores:
             setores[tk] = str(setor)
 

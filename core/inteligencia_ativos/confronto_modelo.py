@@ -592,8 +592,9 @@ def _comparar(a, sai: refm.LinhaAtivo, av_sai: av_.Avaliacao | None,
     carteira, ou o setor é o mesmo): vale só ``recomendacao.confrontar`` --
     melhor na qualidade, não pior no preço nem no risco, com três métricas
     no mínimo -- e a qualidade não pode ser menor; sem comparação possível,
-    não troca. Segmentos diferentes: os múltiplos não se comparam entre
-    setores, então só um nível de qualidade acima conta."""
+    não troca. Segmentos diferentes (os dois setores conhecidos e distintos):
+    os múltiplos não se comparam entre setores, então só um nível de
+    qualidade acima conta. Setor desconhecido de um dos lados: não troca."""
     nota_sai = NOTA_QUALIDADE.get(av_sai.qualidade) if av_sai else None
     nota_entra = NOTA_QUALIDADE[av_entra.qualidade]
     if nota_sai is not None and nota_entra < nota_sai:
@@ -601,8 +602,11 @@ def _comparar(a, sai: refm.LinhaAtivo, av_sai: av_.Avaliacao | None,
     pares = _pares_do_ativo(a)
     par = pares.get(entra.ticker)
     setor_sai = _dobra(a.ativo.setor if a is not None else None)
-    mesmo = par is not None or (bool(setor_sai)
-                                and setor_sai == _dobra(entra.setor))
+    setor_entra = _dobra(entra.setor)
+    mesmo = par is not None or (bool(setor_sai) and setor_sai == setor_entra)
+    # Setor ausente não prova segmento diferente (achado P1 do Codex no PR
+    # #697, 2ª rodada): sem os dois setores conhecidos, falta evidência.
+    diferente = (not mesmo and bool(setor_sai) and bool(setor_entra))
     if mesmo:
         # No mesmo segmento a régua é a comparação métrica a métrica. Sem
         # métricas que se sobreponham falta evidência, e a qualidade sozinha
@@ -616,6 +620,8 @@ def _comparar(a, sai: refm.LinhaAtivo, av_sai: av_.Avaliacao | None,
         if cf is None:
             return False, True, None
         return cf.claramente_superior, True, cf
+    if not diferente:
+        return False, False, None
     return (nota_sai is not None and nota_entra > nota_sai), False, None
 
 

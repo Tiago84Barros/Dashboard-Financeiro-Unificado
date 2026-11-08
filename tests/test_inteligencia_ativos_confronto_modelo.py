@@ -140,7 +140,10 @@ def test_abaixo_do_modelo_com_compra_liberada_vira_aporte():
 def test_vender_da_inteligencia_vence_e_ganha_candidato_da_classe():
     v = {"PETR4": _vered("PETR4", "vender", _av(criticos=("dívida",))),
          "ITSA4": _vered("ITSA4", "manter", _av(av_.ADEQUADA))}
-    d = _conf(v).da_carteira("PETR4")
+    # Setores conhecidos e diferentes (Petróleo × "x"): troca pela qualidade.
+    d = _conf(v, analises={"PETR4": _analise("PETR4", PETR,
+                                             setor="Petróleo")}
+              ).da_carteira("PETR4")
     assert d.conclusao == cf.MUDAR and "não por causa do modelo" in d.texto
     assert any("VALE3" in m for m in d.motivos)
 
@@ -434,10 +437,14 @@ def test_substituicoes_vao_para_a_llm_e_para_a_tela():
     assert "nenhum ativo do modelo" in c.para_llm("ITSA4")["substituicao_do_ativo"]
     html = tela.cartao_substituicoes(c)
     assert "PETR4" in html and "VALE3" in html and "pelos aportes" in html
-    # No confronto padrão, ITSA4 (adequada) perde para VALE3 (forte) num
-    # nível de qualidade: troca entre segmentos, pelos aportes.
-    itsa = _conf().substituicao_de("ITSA4")
+    # ITSA4 (adequada) perde para VALE3 (forte) num nível de qualidade, com
+    # setores conhecidos e diferentes: troca entre segmentos, pelos aportes.
+    itsa = _conf(analises={"ITSA4": _analise("ITSA4", PETR,
+                                             setor="Holdings")}
+                 ).substituicao_de("ITSA4")
     assert itsa.entra == "VALE3" and itsa.modo == cf.TROCA_GRADUAL
+    # Sem a análise (setor desconhecido), não há evidência: sem troca.
+    assert _conf().substituicao_de("ITSA4") is None
     fortes = {tk: _vered(tk, "manter", _av(av_.FORTE))
               for tk in ("PETR4", "ITSA4", "HGLG11")}
     vazio = tela.cartao_substituicoes(_conf(fortes))
@@ -479,3 +486,23 @@ def test_mesmo_segmento_sem_metricas_nao_troca_so_pela_qualidade():
     sem_sobreposicao = _conf_sub(pares=(), setor_sai="x", qual_vale=av_.FORTE,
                                  metricas={"VALE3": {"cap_rate": 9.0}})
     assert sem_sobreposicao.substituicao_de("PETR4") is None
+
+
+def test_setor_desconhecido_nao_vira_segmento_diferente():
+    """Codex P1 (#697, 2ª rodada): setor ausente não prova segmento
+    diferente. Sem setor conhecido dos dois lados e sem o ativo entre os
+    pares, falta evidência: não troca pela qualidade."""
+    sem_setor_sai = _conf_sub(pares=(), setor_sai=None, qual_vale=av_.FORTE,
+                              metricas={"VALE3": VALE_MELHOR})
+    assert sem_setor_sai.substituicao_de("PETR4") is None
+    # Setor vazio no snapshot vira "other" na chave canônica, que não é
+    # setor: a referência guarda só o setor bruto.
+    snaps = {**SNAPSHOTS, "b3": {**SNAPSHOTS["b3"],
+                                 "VALE3": _snap("Vale", 0.3, setor="")}}
+    assert _ref(snapshots=snaps).linha("VALE3").setor is None
+    v = {"PETR4": _vered("PETR4", "manter", _av(av_.ADEQUADA))}
+    c = cf.montar(_ref(snapshots=snaps), v, {"VALE3": _av(av_.FORTE)},
+                  alocacao_estrategia=ESTRATEGIA,
+                  analises={"PETR4": _analise("PETR4", PETR, pares=(),
+                                              setor="Petróleo")})
+    assert c.substituicao_de("PETR4") is None

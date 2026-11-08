@@ -999,7 +999,8 @@ def cartao_substituicoes(c: conf_.Confronto) -> str:
     return "".join(_item_substituicao(x) for x in c.substituicoes) + _nota(
         "Mesmo segmento: melhor na qualidade e não pior no preço nem no "
         "risco, métrica a métrica, a mesma régua do \"Se sair, qual "
-        "substituir?\". Segmentos diferentes: um nível de qualidade acima. "
+        "substituir?\". Segmentos diferentes (os dois setores conhecidos): um "
+        "nível de qualidade acima; setor desconhecido não troca. "
         "No mesmo segmento, sem métricas para comparar, não há troca. A troca "
         "só vende quando a Inteligência já indica vender, substituir ou "
         "reduzir.")

@@ -2668,8 +2668,9 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
                 "rebalancear pelos aportes",
                 "Substituição: no mesmo segmento, a régua do 'Se sair, qual substituir?' "
                 "(recomendacao.confrontar: melhor na qualidade e não pior no preço nem no "
-                "risco, com três métricas no mínimo); entre segmentos, um nível de qualidade "
-                "acima. Uma troca por ativo, nunca para quem a Inteligência manda comprar",
+                "risco, com três métricas no mínimo); entre segmentos (os dois setores "
+                "conhecidos e distintos), um nível de qualidade acima; setor desconhecido "
+                "não troca. Uma troca por ativo, nunca para quem a Inteligência manda comprar",
                 "A troca só vende (com o custo e o IR estimados) quando a Inteligência já "
                 "indica vender, substituir ou reduzir; nos demais casos é pelos aportes, "
                 "sem vender. No mesmo segmento, sem métricas para comparar, não há troca",
