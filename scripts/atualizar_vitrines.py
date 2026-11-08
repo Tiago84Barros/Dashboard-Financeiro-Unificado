@@ -291,6 +291,7 @@ CARIMBO = {
     "carteira20_medicao": ("arquivo", "data/public/carteira20_medicao.json"),
     "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),
     "b3_linhagem": ("arquivo", "data/public/b3_linhagem.json"),
+    "etf_dados": ("arquivo", "data/public/etf_dados.json.gz"),
 }
 
 

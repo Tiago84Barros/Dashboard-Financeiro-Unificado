@@ -571,6 +571,22 @@ ALVOS: tuple[Alvo, ...] = (
         modulo="us",
     ),
     Alvo(
+        # Dados dos ETFs da carteira e dos índices do seletor (taxa, maiores
+        # posições, setores, patrimônio, volume), do yfinance, para os oito
+        # indicadores de ETF da Inteligência dos Ativos -- que saíam todos
+        # "Dado não disponível." porque nenhuma fonte trazia dado de fundo.
+        # Lê do Supabase só a lista de posições; não usa o armazém. Semanal:
+        # taxa e composição mudam devagar, e cada republicação vira histórico
+        # no git.
+        chave="etf_dados",
+        titulo="Dados dos ETFs da carteira (yfinance)",
+        passos=(("scripts/publish_etf_dados.py",),),
+        cadencia_dias=7,
+        modulo="us",
+        precisa_armazem=False,
+        artefatos=("data/public/etf_dados.json.gz",),
+    ),
+    Alvo(
         chave="us_prices",
         titulo="Preços mensais dos EUA",
         passos=(("-m", "scripts.publish_us_prices_monthly", "--apply"),

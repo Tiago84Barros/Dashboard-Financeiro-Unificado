@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import math
 import re
+from pathlib import Path
 
 from core.inteligencia_ativos.fundamentos import Dado
 
@@ -386,14 +387,28 @@ def ler_renda_fixa(posicao: dict) -> dict[str, Dado]:
 
 # -- ETF ----------------------------------------------------------------------------
 #
-# Nenhuma fonte do projeto traz índice de referência, composição, taxa de
-# administração, tracking error nem exposição por dentro do ETF. País e
-# moeda da posição dizem onde o ETF é negociado, não o que ele carrega
-# (IVVB11 é listado no Brasil e expõe aos EUA), por isso não viram
-# "exposição geográfica". Todos os indicadores saem "Dado não disponível.".
+# Índice, composição, concentração, taxa, liquidez e setores vêm da vitrine
+# ``data/public/etf_dados.json.gz`` (``scripts/publish_etf_dados.py``, yfinance
+# na máquina local). Tracking error continua "Dado não disponível.": exige a
+# série do índice ao lado da do fundo. País e moeda da posição dizem onde o
+# ETF é negociado, não o que ele carrega (IVVB11 é listado no Brasil e expõe
+# aos EUA), por isso não viram "exposição geográfica" -- o campo leva a
+# categoria do fundo, com nota.
+
+ARQUIVO_ETF = Path(__file__).resolve().parents[2] / "data" / "public" / \
+    "etf_dados.json.gz"
+
+
+def registro_etf(ticker: str) -> dict | None:
+    """Registro do ETF na vitrine, pelo ticker como a carteira o escreve."""
+    from core.inteligencia_ativos import arquivo_publicado
+    art = arquivo_publicado.ler(str(ARQUIVO_ETF), "etf")
+    return ((art or {}).get("por_ticker") or {}).get(str(ticker or "").upper())
+
 
 def dados_etf(posicao: dict) -> dict[str, Dado]:
-    return {}
+    from core.inteligencia_ativos import etf_dados
+    return etf_dados.dados_de(registro_etf(posicao.get("ticker")))
 
 
 def ler_etf(posicao: dict) -> dict[str, Dado]:

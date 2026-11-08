@@ -431,8 +431,11 @@ def cartao_noticias(a: m.AnaliseAtivo,
         partes.append(_secao("Como está o segmento"
                              + (f" · {rotulo}" if rotulo else "")))
         partes.append("".join(_manchete(i) for i in setor))
-        partes.append(_nota("Notícias dos pares do mesmo segmento, não do "
-                            "ativo."))
+        from core.inteligencia_ativos.secoes import ROTULO_POSICOES_ETF
+        partes.append(_nota(
+            "Notícias das maiores posições do fundo, não do fundo."
+            if str(rotulo or "").startswith(ROTULO_POSICOES_ETF) else
+            "Notícias dos pares do mesmo segmento, não do ativo."))
     if gerais is not None and rs.precisa_noticiario_geral(a):
         brutos, origem = gerais
         falta = max(rs.N_NOTICIAS - len(itens) - len(setor), 1)
