@@ -314,3 +314,114 @@ def precos_renda_fixa(engine, owner: str, tickers: list[str], desde: date) -> pd
                     type(exc).__name__)
         return pd.DataFrame()
     return unitario_de_fonte_unica(pd.DataFrame(linhas))
+
+
+# ── Eventos de mercado marcados no gráfico ───────────────────────────────────
+# Pedido do usuário de 08/11/2026: a queda de 26/10/2026 parecia defeito do
+# gráfico, e era o mercado. O evento é detectado no índice, não declarado à
+# mão: um pregão em que o Ibovespa ou o S&P 500 andou LIMIAR_EVENTO ou mais.
+# O nome vem dos cenários do Stress (core.stress_tests.SCENARIOS), a lista
+# curada que o app já mantém -- sem segunda lista para envelhecer.
+
+LIMIAR_EVENTO = 0.05
+#: Num crash, dias de 5% vêm em sequência (mar/2020 teve vários); dentro desta
+#: janela fica só o maior, senão as marcas se sobrepõem.
+JANELA_AGRUPAMENTO_DIAS = 30
+#: Retorno entre dois fechamentos mais distantes que isto não é "um pregão":
+#: buraco na série viraria evento falso.
+_MAX_DIAS_ENTRE_PREGOES = 5
+#: Folga ao casar a data com a janela do cenário: o Joesley Day está cadastrado
+#: em 17/mai/2017 e a queda de 8,8% foi no pregão de 18/mai.
+_FOLGA_CENARIO_DIAS = 3
+
+_MESES = {"jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
+          "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12}
+
+ARQUIVO_PREGOES_B3 = (__import__("pathlib").Path(__file__).resolve().parents[1]
+                      / "data" / "public" / "pregoes_recentes_b3.json.gz")
+
+
+def _ponta_da_janela(texto: str, fim: bool) -> pd.Timestamp | None:
+    """``"17/mai/2017"`` ou ``"set/2008"`` → data; ``"em curso"`` → hoje."""
+    texto = texto.strip().lower()
+    if "curso" in texto:
+        return pd.Timestamp(date.today())
+    partes = texto.split("/")
+    try:
+        if len(partes) == 3:
+            return pd.Timestamp(int(partes[2]), _MESES[partes[1]], int(partes[0]))
+        if len(partes) == 2:
+            inicio = pd.Timestamp(int(partes[1]), _MESES[partes[0]], 1)
+            return inicio + pd.offsets.MonthEnd(0) if fim else inicio
+    except (KeyError, ValueError):
+        return None
+    return None
+
+
+def janela_do_cenario(data_ref: str) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    """Janela de um ``StressScenario.data_ref``; ``None`` se não der para ler."""
+    pontas = [p for p in data_ref.replace("—", "–").split("–")]
+    inicio = _ponta_da_janela(pontas[0], fim=False)
+    fim = _ponta_da_janela(pontas[-1], fim=True)
+    if inicio is None or fim is None:
+        return None
+    return inicio, fim
+
+
+def cenario_do_dia(dia: pd.Timestamp, cenarios=None) -> dict | None:
+    """O cenário do Stress cuja janela contém o dia, com a folga do pregão."""
+    if cenarios is None:
+        from core.stress_tests import SCENARIOS as cenarios
+    folga = pd.Timedelta(days=_FOLGA_CENARIO_DIAS)
+    for c in cenarios:
+        janela = janela_do_cenario(c.data_ref)
+        if janela and janela[0] - folga <= pd.Timestamp(dia) <= janela[1] + folga:
+            return {"nome": c.nome, "descricao": c.descricao}
+    return None
+
+
+def eventos_de_mercado(indices: dict[str, pd.Series],
+                       limiar: float = LIMIAR_EVENTO,
+                       janela_dias: int = JANELA_AGRUPAMENTO_DIAS,
+                       cenarios=None) -> list[dict]:
+    """Pregões em que um índice andou ``limiar`` ou mais, do mais antigo ao mais novo.
+
+    ``indices``: ``{"Ibovespa": fechamentos diários, ...}``. Entre dias
+    extremos a menos de ``janela_dias`` um do outro fica o de maior
+    variação. Cada evento: ``data``, ``indice``, ``variacao`` (%), ``cenario``.
+    """
+    candidatos = []
+    for nome, serie in indices.items():
+        s = pd.to_numeric(serie, errors="coerce").dropna()
+        s = s[s > 0]
+        if len(s) < 2:
+            continue
+        s.index = _sem_fuso(s.index)
+        s = s[~s.index.duplicated(keep="last")].sort_index()
+        r = s / s.shift() - 1
+        perto = (s.index.to_series().diff().dt.days <= _MAX_DIAS_ENTRE_PREGOES).values
+        for dia, v in r[perto & (r.abs() >= limiar).values].items():
+            candidatos.append({"data": dia, "indice": nome, "variacao": float(v) * 100})
+    escolhidos: list[dict] = []
+    for ev in sorted(candidatos, key=lambda e: -abs(e["variacao"])):
+        if all(abs((ev["data"] - e["data"]).days) > janela_dias for e in escolhidos):
+            escolhidos.append(ev)
+    for ev in escolhidos:
+        ev["cenario"] = cenario_do_dia(ev["data"], cenarios)
+    return sorted(escolhidos, key=lambda e: e["data"])
+
+
+def ibovespa_pela_fita_publica() -> pd.Series:
+    """BOVA11 diário da fita oficial da B3 publicada no repositório.
+
+    Reserva para quando o Yahoo não responde: cobre só os últimos pregões
+    (``data/public/pregoes_recentes_b3.json.gz``), mas é o dado oficial.
+    """
+    from core.inteligencia_ativos import arquivo_publicado
+
+    art = arquivo_publicado.ler(str(ARQUIVO_PREGOES_B3), "pregoes_recentes_b3") or {}
+    serie = ((art.get("por_ticker") or {}).get("BOVA11") or {}).get("c") or []
+    pregoes = art.get("pregoes") or []
+    if not serie or len(serie) != len(pregoes):
+        return pd.Series(dtype=float)
+    return pd.Series(serie, index=pd.to_datetime(pregoes), dtype=float).dropna()

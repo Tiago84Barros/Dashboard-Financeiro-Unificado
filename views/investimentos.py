@@ -2046,7 +2046,68 @@ _ROTULO_AMOSTRA = {"W": "um ponto por semana", "M": "um ponto por mês",
                    "Q": "um ponto por trimestre"}
 
 
-def _fig_desempenho_categorias(series: dict, freq: str | None = None) -> go.Figure:
+_INDICES_EVENTO = (("Ibovespa", "^BVSP"), ("S&P 500", "^GSPC"))
+_ROTULO_CURTO_INDICE = {"Ibovespa": "Ibov", "S&P 500": "S&P"}
+
+
+@user_cache_data(ttl=3600, show_spinner=False)
+def _eventos_mercado(period_key: str) -> list[dict]:
+    """Pregões de ±5% no Ibovespa ou no S&P 500 dentro do período.
+
+    Yahoo primeiro; sem o Ibovespa de lá, o BOVA11 da fita oficial da B3
+    publicada no repositório (só os pregões recentes).
+    """
+    from core import desempenho_categorias as dc
+
+    try:
+        bruto = _load_performance_history(tuple((s, s) for _, s in _INDICES_EVENTO), period_key)
+    except Exception:  # noqa: BLE001 -- sem índice, sem marca; o gráfico segue
+        bruto = pd.DataFrame()
+    indices = {nome: bruto[sym] for nome, sym in _INDICES_EVENTO
+               if not bruto.empty and sym in bruto and bruto[sym].notna().sum() > 1}
+    if "Ibovespa" not in indices:
+        reserva = dc.ibovespa_pela_fita_publica()
+        if not reserva.empty:
+            indices["Ibovespa"] = reserva
+    corte = pd.Timestamp(dc.inicio_do_periodo(_PERFORMANCE_PERIODS[period_key]["days"]))
+    return [e for e in dc.eventos_de_mercado(indices) if e["data"] >= corte]
+
+
+def _descricao_evento(ev: dict) -> str:
+    texto = (f'{ev["data"].strftime("%d/%m/%Y")} · {ev["indice"]} '
+             f'{_fmt_retorno(ev["variacao"], 2)} no dia')
+    if ev.get("cenario"):
+        texto += f' · {ev["cenario"]["nome"]}: {ev["cenario"]["descricao"]}'
+    return texto
+
+
+def _marcar_eventos(fig: go.Figure, eventos: list[dict], x_min, x_max) -> list[dict]:
+    """Linha vertical e etiqueta curta em cada evento dentro do eixo x."""
+    dentro = [e for e in eventos or [] if x_min <= e["data"] <= x_max]
+    largura = (x_max - x_min) or pd.Timedelta(days=1)
+    for i, ev in enumerate(dentro):
+        cor = _COR_NEGATIVO if ev["variacao"] < 0 else _COR_POSITIVO
+        fig.add_shape(type="line", x0=ev["data"], x1=ev["data"], xref="x",
+                      y0=0, y1=1, yref="paper", layer="below",
+                      line={"color": cor, "width": 1, "dash": "dot"})
+        # Perto da borda direita, a etiqueta abre para a esquerda.
+        perto_do_fim = (ev["data"] - x_min) / largura > 0.8
+        rotulo = f'{_ROTULO_CURTO_INDICE.get(ev["indice"], ev["indice"])} ' \
+                 f'{_fmt_retorno(ev["variacao"])}'
+        if ev.get("cenario"):
+            rotulo = f'{ev["cenario"]["nome"]} · {rotulo}'
+        fig.add_annotation(
+            x=ev["data"], y=1, xref="x", yref="paper", yanchor="bottom",
+            xanchor="right" if perto_do_fim else "left", xshift=-4 if perto_do_fim else 4,
+            yshift=2 + 14 * (i % 2), showarrow=False, text=_html.escape(rotulo),
+            hovertext=_html.escape(_descricao_evento(ev)),
+            font={"size": 10, "color": cor},
+        )
+    return dentro
+
+
+def _fig_desempenho_categorias(series: dict, freq: str | None = None,
+                               eventos: list[dict] | None = None) -> go.Figure:
     """Uma linha por categoria; a legenda, abaixo, liga e desliga cada uma.
 
     Linha, ponto final e rótulo de cada categoria formam um ``legendgroup``:
@@ -2098,6 +2159,7 @@ def _fig_desempenho_categorias(series: dict, freq: str | None = None) -> go.Figu
         ))
 
     fig.add_hline(y=0, line_color="#4A5568", line_width=1, opacity=0.6)
+    marcados = _marcar_eventos(fig, eventos, primeiro_x, ultimo_x)
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font={"color": _COR_NEUTRO, "size": 12},
@@ -2106,7 +2168,7 @@ def _fig_desempenho_categorias(series: dict, freq: str | None = None) -> go.Figu
                 "font": {"size": 12, "color": _COR_NEUTRO}, "bgcolor": "rgba(0,0,0,0)",
                 "itemclick": "toggle", "itemdoubleclick": "toggleothers",
                 "itemwidth": 40, "traceorder": "normal"},
-        margin={"t": 12, "b": 8, "l": 8, "r": 70},
+        margin={"t": 40 if marcados else 12, "b": 8, "l": 8, "r": 70},
         height=480,
         hovermode="x unified",
         hoverlabel={"font": {"size": 12}, "bordercolor": "#2D3748"},
@@ -2149,7 +2211,11 @@ def _secao_desempenho_categorias(posicoes: list) -> None:
 
     st.markdown(_cards_desempenho_categorias(series, info), unsafe_allow_html=True)
     freq = _AMOSTRA_GRAFICO.get(period_key, "W")
-    st.plotly_chart(_fig_desempenho_categorias(series, freq),
+    eventos = _eventos_mercado(period_key)
+    inicio_x = min(s.index[0] for s in series.values())
+    fim_x = max(s.index[-1] for s in series.values())
+    eventos = [e for e in eventos if inicio_x <= e["data"] <= fim_x]
+    st.plotly_chart(_fig_desempenho_categorias(series, freq, eventos),
                     width="stretch", config={"displayModeBar": False, "scrollZoom": False},
                     key="analise_vg_categorias_graf")
     st.markdown(
@@ -2158,6 +2224,14 @@ def _secao_desempenho_categorias(posicoes: list) -> None:
         'ou esconder a linha · cada ativo entra na linha a partir do seu primeiro aporte</div>',
         unsafe_allow_html=True,
     )
+    if eventos:
+        itens = "".join(f"<li>{_html.escape(_descricao_evento(e))}</li>" for e in eventos)
+        st.markdown(
+            '<div class="dcat-rodape"><b>Eventos marcados</b> (linhas pontilhadas: pregões '
+            'em que o Ibovespa ou o S&amp;P 500 andou 5% ou mais no dia)'
+            f'<ul style="margin:2px 0 0 1.1em;padding:0;">{itens}</ul></div>',
+            unsafe_allow_html=True,
+        )
 
     with st.expander("Fontes e metodologia"):
         linhas = []
@@ -2180,7 +2254,10 @@ def _secao_desempenho_categorias(posicoes: list) -> None:
             "série pode ficar menor que o total. Cada passo do retorno usa só os ativos com preço "
             "nas duas datas. FIIs e ações pelo fechamento ajustado incluem proventos; "
             "Tesouro com cupom cai no pagamento do cupom. Categorias americanas em reais "
-            "pelo câmbio do dia, salvo quando a coluna Moeda diz USD."
+            "pelo câmbio do dia, salvo quando a coluna Moeda diz USD. Eventos marcados: "
+            "pregões em que o Ibovespa (^BVSP; na falta, o BOVA11 da fita oficial da B3) ou "
+            "o S&P 500 (^GSPC) andou 5% ou mais; dias extremos a menos de 30 dias um do "
+            "outro viram um evento só, o maior. O nome vem dos cenários do Stress."
         )
 
 
