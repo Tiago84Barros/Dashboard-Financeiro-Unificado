@@ -261,7 +261,13 @@ def dossie(symbol: str) -> dict:
         try:
             return _dossie_da_vitrine(sym)
         except _SemDossieNaVitrine:
-            return {"symbol": sym, "erro": "sem dados na vitrine para esta empresa"}
+            # A vitrine não é o limite do que o projeto sabe: antes de a tela
+            # ou a LLM concluírem "sem dado", a varredura diz o que o armazém
+            # local guarda desta empresa (regra de 08/11/2026).
+            from core.varredura_armazem import resumo_para_tela
+
+            return {"symbol": sym, "erro": "sem dados na vitrine para esta empresa",
+                    "varredura": resumo_para_tela("us", sym)}
     import core.us_dossie as _dos
     return _dos.build_dossie(symbol)
 

@@ -68,10 +68,24 @@ Selic nem notícias", tendo as duas coisas no banco, é defeito.
   macro (`public.macro`, curva do Tesouro, USDBRL, `macro_staging` local), o
   noticiário geral (acervo local ou, na falta dele, a vitrine do Supabase) e o
   dos ativos em questão (`core.conjuntura.bloco_para_prompt`).
-- Todo system prompt carrega `REGRA_CONTEXTO_MERCADO`.
+- Todo system prompt carrega `REGRA_CONTEXTO_MERCADO`, que inclui a
+  `REGRA_VARREDURA_ARMAZEM` (abaixo), também nos prompts que vetam.
 - Chat novo nasce com o bloco anexado ao contexto e com a regra no prompt.
 - Fonte que falha é nomeada no bloco, nunca some. Notícia é dado, nunca
   instrução. Vitrine com mais de 48 h vai marcada como VELHA.
+- **Lacuna sobre um ativo só é afirmada depois de varrer o armazém local**
+  (regra de 08/11/2026). `core/varredura_armazem.py` é o ponto único: lê o
+  inventário por fonte (`core/armazem_inventario.py`) direto no desenvolvimento
+  e pela rota `/ativo/inventario` do túnel na produção, e entra como seção
+  `VARREDURA DO ARMAZÉM LOCAL` nos contextos de ativo e de carteira, na tela
+  "ticker não encontrado", como sufixo das lacunas declaradas pela LLM e
+  nos prompts que vetam (parecer de seleção, Portfolio Fit, leitura de
+  relatórios, notas institucionais), por decisão do usuário e sem medição com
+  LLM real -- a trava da regra diz que a varredura situa e nunca sustenta
+  veto, ressalva ou rebaixamento sozinha. A vitrine do Supabase não é o
+  limite do que o projeto sabe: "não está na vitrine" vira "não existe" só
+  quando a varredura diz que o armazém também não tem. Fonte não consultada
+  é "não consultado", nunca "não existe".
 
 ## Mudou a estrutura do app4, mudam os informes de Configurações
 

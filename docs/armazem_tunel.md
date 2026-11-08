@@ -17,7 +17,11 @@ comportamento anterior e explica o motivo.
 
 ## O que o serviço expõe e o que não expõe
 
-- **Expõe:** notícias avaliadas e as últimas observações macro. É dado público.
+- **Expõe:** notícias avaliadas, as últimas observações macro, o detalhe de
+  mercado por ativo (`/eua/detalhe`, `/fii/detalhe`, `/b3/detalhe`) e o
+  inventário por ativo (`/ativo/inventario`: quantas linhas e que período cada
+  fonte do armazém tem de um ticker; só contagens e datas, nenhuma linha de
+  dado). É dado público.
 - **Não expõe:** finanças, carteira, cartão e o espelho do Supabase. Nenhuma
   rota lê essas tabelas.
 - **Só GET.** A sessão do Postgres abre com `default_transaction_read_only=on`.
@@ -141,6 +145,27 @@ porque a porta 8787 é uma só:
 ```bash
 powershell -Command "Start-ScheduledTask -TaskName 'DFU - Armazem leitura'"
 ```
+
+## Varredura antes de afirmar lacuna (`/ativo/inventario`)
+
+Regra de 08/11/2026: as análises de empresas do app e das LLMs, quando
+encontram lacuna sobre um ativo, varrem o armazém local antes de concluir que
+a informação não existe. O ponto único é `core/varredura_armazem.py`, que lê
+`core/armazem_inventario.py` direto no desenvolvimento e por esta rota na
+produção:
+
+```
+GET /ativo/inventario?classe=b3|fii|us&tickers=PETR4,XXXX3   (até 10 tickers)
+```
+
+A resposta traz, por ticker e por fonte (pregão, demonstrativos, proventos,
+documentos, notícias, Memória de Mercado...), a contagem e o período coberto.
+Fonte cujo banco não está configurado nesta máquina sai como `sem_banco`;
+consulta que falha sai como `falha` com o motivo, e as outras fontes seguem.
+O app formata isso como a seção `VARREDURA DO ARMAZÉM LOCAL` dos prompts, como
+a frase da tela "ticker não encontrado" e como sufixo das lacunas que a LLM
+declara. Rota nova exige reiniciar a tarefa `DFU - Armazem leitura`; até lá o
+prompt diz "não feita (HTTP 404)" e não trata isso como ausência de dado.
 
 ## Como saber se está funcionando
 

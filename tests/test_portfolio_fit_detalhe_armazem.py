@@ -10,6 +10,8 @@ Nada aqui toca rede nem banco.
 import dataclasses
 import json
 
+import pytest
+
 from core import llm_context_global_armazem as ga
 from core.inteligencia_ativos import armazem_fatos, leitura_llm
 from core.inteligencia_ativos import portfolio_fit as pf
@@ -31,6 +33,24 @@ def _leitores_falsos(chamadas):
                     for c in ("b3", "fii", "us")}
 
 
+VARREDURA = "VARREDURA DO ARMAZÉM LOCAL (lido direto)\n  TAEE11:\n    pregão: 10 linhas"
+
+
+@pytest.fixture(autouse=True)
+def _varredura_falsa(monkeypatch):
+    """A varredura (08/11/2026) vai colada ao detalhe; aqui é dublê para os
+    testes do detalhe continuarem lendo só o detalhe."""
+    chamadas = []
+    monkeypatch.setattr("core.varredura_armazem.bloco_varredura",
+                        lambda classe, tks: chamadas.append((classe, list(tks))) or VARREDURA)
+    return chamadas
+
+
+def _so_detalhe(texto: str) -> str:
+    assert texto.endswith("\n\n" + VARREDURA), texto
+    return texto[: -len("\n\n" + VARREDURA)]
+
+
 def _com_classe(a, classe, moeda="BRL"):
     return dataclasses.replace(a, ativo=dataclasses.replace(a.ativo, classe=classe,
                                                             moeda=moeda))
@@ -40,7 +60,7 @@ def test_detalhe_pede_o_leitor_da_classe_do_ativo(monkeypatch):
     chamadas = []
     monkeypatch.setattr(ga, "_leitores", _leitores_falsos(chamadas))
     a = _com_classe(_analise("TAEE11", _ctx()), "Ações BR")
-    assert leitura_llm.detalhe_armazem_do_ativo(a) == DETALHE
+    assert _so_detalhe(leitura_llm.detalhe_armazem_do_ativo(a)) == DETALHE
     assert chamadas == [("b3", ["TAEE11"])]
 
     chamadas.clear()
@@ -64,6 +84,16 @@ def test_falha_do_leitor_vira_linha_nomeada(monkeypatch):
     a = _com_classe(_analise("TAEE11", _ctx()), "Ações BR")
     texto = leitura_llm.detalhe_armazem_do_ativo(a)
     assert "falha ao montar (RuntimeError)" in texto and "Não trate como dado zero" in texto
+    assert texto.endswith(VARREDURA)  # a varredura entra mesmo com o detalhe em falha
+
+
+def test_varredura_vai_colada_ao_detalhe_na_classe_do_ativo(monkeypatch, _varredura_falsa):
+    monkeypatch.setattr(ga, "_leitores", _leitores_falsos([]))
+    a = _com_classe(_analise("TAEE11", _ctx()), "FII")
+    assert leitura_llm.detalhe_armazem_do_ativo(a) == DETALHE + "\n\n" + VARREDURA
+    assert _varredura_falsa == [("fii", ["TAEE11"])]
+    # Classe sem leitor não tem varredura: não há classe para varrer.
+    assert leitura_llm.detalhe_armazem_do_ativo(_com_classe(a, "Tesouro")) == ""
 
 
 FATOS = {"fonte": "pregão diário da B3", "pregao_de_referencia": "26/09/2026",
@@ -82,7 +112,7 @@ def test_armazem_do_ativo_le_uma_vez_e_devolve_texto_e_campos(monkeypatch):
     monkeypatch.setattr(ga, "_leitores", lambda: {"b3": leitor})
     a = _com_classe(_analise("TAEE11", _ctx()), "Ações BR")
     texto, fatos = leitura_llm.armazem_do_ativo(a)
-    assert texto == DETALHE and chamadas == [["TAEE11"]]
+    assert _so_detalhe(texto) == DETALHE and chamadas == [["TAEE11"]]
     assert fatos["liquidez"]["volume_financeiro_mediano_21_pregoes"].endswith("/dia")
 
 

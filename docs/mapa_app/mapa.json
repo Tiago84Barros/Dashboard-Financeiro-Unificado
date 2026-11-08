@@ -1632,7 +1632,7 @@
         {
           "nome": "Análise de Empresa",
           "resumo": "Raio-x completo de uma empresa",
-          "explicacao": "Você digita o código ou o nome de uma empresa e vê tudo sobre ela numa página só: preço, resultados ao longo dos anos, indicadores, uma nota de qualidade, um relatório e um chat para tirar dúvidas. Serve para estudar uma empresa antes de decidir investir. Enquanto nenhuma empresa é escolhida, só aparece a busca.",
+          "explicacao": "Você digita o código ou o nome de uma empresa e vê tudo sobre ela numa página só: preço, resultados ao longo dos anos, indicadores, uma nota de qualidade, um relatório e um chat para tirar dúvidas. Serve para estudar uma empresa antes de decidir investir. Enquanto nenhuma empresa é escolhida, só aparece a busca. Quando o código digitado não está na lista publicada, a tela diz também o que o armazém local tem sobre ele, para separar erro de digitação de papel real fora da lista.",
           "so_admin": false,
           "filhos": [
             {
@@ -1772,7 +1772,7 @@
             {
               "nome": "Converse sobre (código da empresa)",
               "resumo": "Chat com inteligência artificial sobre a empresa",
-              "explicacao": "Chat em que você pergunta sobre resultados, dívidas, concorrentes ou riscos e recebe respostas baseadas só no que o app sabe da empresa, que avisam quando falta informação. Há perguntas prontas em botões e o botão \"Limpar chat\" para recomeçar. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês. Recebe ainda os proventos por ação de cada ano, o do ano em curso e o já anunciado, e o dividend yield dos últimos cinco anos com a média e a mediana, para responder sobre dividendo médio e pagamento fora do padrão.",
+              "explicacao": "Chat em que você pergunta sobre resultados, dívidas, concorrentes ou riscos e recebe respostas baseadas só no que o app sabe da empresa, que avisam quando falta informação. Há perguntas prontas em botões e o botão \"Limpar chat\" para recomeçar. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês. Recebe ainda os proventos por ação de cada ano, o do ano em curso e o já anunciado, e o dividend yield dos últimos cinco anos com a média e a mediana, para responder sobre dividendo médio e pagamento fora do padrão. Antes de dizer que falta informação, ela recebe uma varredura do armazém local (o banco grande que fica no computador do dono do app): quantas linhas e de que período existem ali sobre o ativo, fonte por fonte. Assim ela separa \"o dado não existe\" de \"o dado existe e não chegou a esta conversa\".",
               "so_admin": false
             }
           ]
@@ -2155,7 +2155,7 @@
         {
           "nome": "Análise de Empresa",
           "resumo": "Raio-x completo de uma empresa escolhida",
-          "explicacao": "Mostra tudo sobre uma empresa: preço, lucros, dívidas, dividendos, indicadores, uma nota de qualidade, um relatório do analista e um chat com a inteligência artificial. No topo aparecem logo, nome, setor e a última cotação em dólares. Serve para decidir se a empresa merece entrar no seu radar.",
+          "explicacao": "Mostra tudo sobre uma empresa: preço, lucros, dívidas, dividendos, indicadores, uma nota de qualidade, um relatório do analista e um chat com a inteligência artificial. No topo aparecem logo, nome, setor e a última cotação em dólares. Serve para decidir se a empresa merece entrar no seu radar. Quando o código digitado não está na lista publicada, a tela diz também o que o armazém local tem sobre ele, para separar erro de digitação de papel real fora da lista.",
           "so_admin": false,
           "filhos": [
             {
@@ -2275,7 +2275,7 @@
             {
               "nome": "Converse sobre a empresa",
               "resumo": "Chat com a IA sobre esta empresa",
-              "explicacao": "Caixa de conversa com a inteligência artificial focada na empresa aberta: pergunte sobre resultados, dívidas, concorrentes e riscos. Além dos números da vitrine, ela recebe os últimos trimestres (receita, lucro, margem, fluxo de caixa livre e a comparação com o mesmo trimestre do ano anterior), os exercícios e os proventos, e os documentos recentes que a empresa entregou à SEC (8-K, 10-Q, 10-K), com a data e o assunto de cada um. Ela responde só com os dados que o app tem e avisa quando falta informação. Só funciona quando a IA está configurada; senão aparece um aviso. Na tela o título traz o código da empresa (Converse sobre AAPL, por exemplo).",
+              "explicacao": "Caixa de conversa com a inteligência artificial focada na empresa aberta: pergunte sobre resultados, dívidas, concorrentes e riscos. Além dos números da vitrine, ela recebe os últimos trimestres (receita, lucro, margem, fluxo de caixa livre e a comparação com o mesmo trimestre do ano anterior), os exercícios e os proventos, e os documentos recentes que a empresa entregou à SEC (8-K, 10-Q, 10-K), com a data e o assunto de cada um. Ela responde só com os dados que o app tem e avisa quando falta informação. Só funciona quando a IA está configurada; senão aparece um aviso. Na tela o título traz o código da empresa (Converse sobre AAPL, por exemplo). Antes de dizer que falta informação, ela recebe uma varredura do armazém local (o banco grande que fica no computador do dono do app): quantas linhas e de que período existem ali sobre o ativo, fonte por fonte. Assim ela separa \"o dado não existe\" de \"o dado existe e não chegou a esta conversa\".",
               "so_admin": false
             }
           ]
@@ -2552,7 +2552,7 @@
             {
               "nome": "Converse sobre o fundo",
               "resumo": "Chat com a IA sobre este fundo",
-              "explicacao": "Caixa de conversa com a inteligência artificial focada no fundo aberto. Responde só com os dados do app, inclusive os rendimentos por cota de cada ano e o do ano em curso, e avisa quando falta informação. Só funciona quando a IA está configurada. Na tela o título traz o código do fundo. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês.",
+              "explicacao": "Caixa de conversa com a inteligência artificial focada no fundo aberto. Responde só com os dados do app, inclusive os rendimentos por cota de cada ano e o do ano em curso, e avisa quando falta informação. Só funciona quando a IA está configurada. Na tela o título traz o código do fundo. Também lê os pregões diários recentes da bolsa (cerca de três meses, arquivo da B3 com alguns dias de atraso, fechamento sem desconto de proventos), para falar da queda ou alta de agora e não só do fechamento do mês. Antes de dizer que falta informação, ela recebe uma varredura do armazém local (o banco grande que fica no computador do dono do app): quantas linhas e de que período existem ali sobre o ativo, fonte por fonte, além do informe mensal da CVM, da liquidez na bolsa, da composição e dos imóveis guardados lá. Assim ela separa \"o dado não existe\" de \"o dado existe e não chegou a esta conversa\".",
               "so_admin": false
             }
           ]

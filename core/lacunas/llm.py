@@ -89,6 +89,20 @@ def extrair_lacunas(texto: str) -> tuple[str, list[dict]]:
     return limpo, itens[:MAX_POR_RESPOSTA]
 
 
+def _com_varredura(mensagem: str, entidade) -> str:
+    """Acrescenta o que o armazém local tem da entidade, se ela foi varrida ao
+    montar o contexto. A triagem da lacuna passa a saber de antemão se o dado
+    existe (defeito de entrega) ou não (falta de dado). Só memória: nenhuma
+    ida ao armazém no fim da resposta."""
+    try:
+        from core.varredura_armazem import nota_para_lacuna
+
+        nota = nota_para_lacuna(entidade)
+    except Exception:  # noqa: BLE001 - a nota é extra
+        return mensagem
+    return f"{mensagem} [{nota}]" if nota else mensagem
+
+
 def processar_resposta(texto: str, *, modulo: str) -> str:
     """Tira o bloco da resposta e registra cada lacuna. Nunca levanta: se algo
     falhar, devolve o texto recebido."""
@@ -107,6 +121,7 @@ def processar_resposta(texto: str, *, modulo: str) -> str:
             mensagem = str(item.get("mensagem") or "").strip()
             if not mensagem:
                 continue
+            mensagem = _com_varredura(mensagem, item.get("entidade") or None)
             registrar_lacuna("llm", _codigo(item.get("codigo")), mensagem,
                              modulo=modulo, entidade=(item.get("entidade") or None))
         except Exception:  # noqa: BLE001

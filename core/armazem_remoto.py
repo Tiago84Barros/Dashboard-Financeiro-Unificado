@@ -282,3 +282,22 @@ def detalhe_fii(tickers) -> dict[str, dict] | None:
     if not isinstance(detalhe, dict):
         raise ArmazemRemotoIndisponivel("resposta sem o detalhe por ticker")
     return {str(k): v for k, v in detalhe.items() if isinstance(v, dict)}
+
+
+def inventario_ativos(classe: str, tickers) -> dict | None:
+    """Varredura de ``armazem_inventario.ler_inventario``; ``None`` sem configuração.
+
+    Contagens e datas por fonte -- o resumo (``resumo_para_prompt``,
+    ``resumo_curto``) roda no app, pelo mesmo motivo das demais rotas.
+    """
+    alvo = ",".join(sorted({str(t).strip().upper().removesuffix(".SA")
+                            for t in tickers if str(t).strip()}))
+    if not alvo:
+        return {}
+    corpo = _ler("/ativo/inventario", {"classe": str(classe).lower(), "tickers": alvo})
+    if corpo is None:
+        return None
+    inventario = corpo.get("inventario")
+    if not isinstance(inventario, dict):
+        raise ArmazemRemotoIndisponivel("resposta sem o inventário por ativo")
+    return inventario

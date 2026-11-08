@@ -816,7 +816,8 @@ FLOW_INVESTIMENTOS = FlowSpec(
             ("_tab_analise()", "Desempenho por Categoria", "Posições da Carteira",
              "Uma subaba por classe",
              "tesouro_lots no chat do Tesouro",
-             "bloco_detalhe_armazem(): armazém pelo túnel e proventos publicados",
+             "bloco_detalhe_armazem(): armazém pelo túnel, varredura do armazém por "
+             "classe e proventos publicados",
              "Alertas", "Stress Tests Históricos"),
             "A transparência fica no nível do ativo, separada por classe.",
         ),
@@ -1367,6 +1368,9 @@ FLOW_SELECAO_FIIS = FlowSpec(
                 "Fundo sem dado vira aviso de lacuna, não tela vazia",
                 "Chat do fundo: build_fii_ativo_context() com os rendimentos por cota de "
                 "cada ano (proventos_ativo, arquivo publicado)",
+                "O chat recebe o detalhe do armazém do fundo (informe CVM, liquidez, "
+                "composição, imóveis e score, get_warehouse_detail_context) e a VARREDURA "
+                "DO ARMAZÉM LOCAL, fonte por fonte, antes de afirmar lacuna",
             ),
             "O score resume; a busca mostra o que está por trás dele, fundo a fundo.",
         ),
@@ -1561,6 +1565,11 @@ FLOW_EMPRESAS_EUA = FlowSpec(
                 "core.us_data.scored_universe()",
                 "Dossiê, classificação e critérios avançados (expander)",
                 "Chat do ativo: render_chat_ativo() com build_us_ativo_context()",
+                "O chat recebe o detalhe do armazém (preço diário, trimestres e proventos, "
+                "get_warehouse_detail_context) e a VARREDURA DO ARMAZÉM LOCAL do símbolo, "
+                "fonte por fonte, antes de afirmar lacuna (core/varredura_armazem.py)",
+                "Ticker fora do universo publicado e dossiê fora da vitrine: a tela diz o que "
+                "o armazém local tem do símbolo",
             ),
             "O relatório do analista lê o ativo como o portão da Inteligência dos Ativos "
             "lê: os dois chegam ao mesmo veredito.",
@@ -2517,6 +2526,10 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
                 "média e mediana de cinco anos; também é ferramenta de todos os chats",
                 "bloco_contexto_mercado(tickers_movimento=[tk]): os pregões diários do ativo, "
                 "do BOVA11 e do SMAL11, de data/public/pregoes_recentes_b3.json.gz",
+                "VARREDURA DO ARMAZÉM LOCAL (core/varredura_armazem.py): quantas linhas e que "
+                "período o armazém tem do ativo, fonte por fonte, antes de a LLM afirmar lacuna; "
+                "direto no desenvolvimento, pela rota /ativo/inventario do túnel na produção",
+                "Ticker fora do universo da vitrine: a tela mostra o que o armazém local tem dele",
                 "O relatório entra cedo no contexto, para o corte de tamanho não alcançá-lo",
             ),
             "O relatório lê o ativo com o mesmo nome e setor que o portão da Inteligência dos "

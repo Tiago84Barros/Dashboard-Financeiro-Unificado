@@ -22,6 +22,27 @@ def _sec(*comps, secao="S", notas=()):
     return ConfiancaSecao(secao, tuple(comps), notas=notas)
 
 
+class _EngineFora:
+    def connect(self):
+        raise RuntimeError("banco fora")
+
+
+def test_secoes_com_chat_do_ativo_declaram_o_detalhe_do_armazem():
+    """Desde 08/11/2026 o chat do ativo cita o detalhe e a varredura do
+    armazem, lidos pelo tunel. A nota nao mede essa fonte (a producao nao
+    alcanca o armazem) -- entao declara, nas tres secoes, que ela existe e
+    fica fora da nota. Declarar e a regra do modulo para o que nao se mede."""
+    from core.confianca_secao import (
+        NOTA_DETALHE_DO_CHAT,
+        confianca_b3,
+        confianca_fii,
+        confianca_us,
+    )
+
+    for secao in (confianca_b3, confianca_fii, confianca_us):
+        assert NOTA_DETALHE_DO_CHAT in secao(engine=_EngineFora()).notas, secao.__name__
+
+
 def test_nao_medido_sai_da_media_em_vez_de_virar_cem():
     """Se o não medido contasse 100, a seção daria 75% em vez de 50%."""
     s = _sec(Componente("a", 50.0, 0.5, ""), Componente("b", None, 0.5, ""))

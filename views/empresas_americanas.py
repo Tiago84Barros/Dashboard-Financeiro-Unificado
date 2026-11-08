@@ -524,6 +524,15 @@ def _tab_empresa(status: dict) -> None:
     match = scored[scored["symbol"] == symbol]
     if match.empty:
         st.warning("Ticker não encontrado no universo americano publicado.", icon="⚠️")
+        # A vitrine não é o limite do que o projeto sabe: antes de concluir
+        # "sem dado", a tela diz o que o armazém local tem deste símbolo.
+        from core.varredura_armazem import resumo_para_tela
+
+        varredura = resumo_para_tela("us", symbol)
+        if varredura:
+            st.caption(varredura)
+        aviso_lacuna(f"{symbol} fora do universo americano publicado. {varredura}",
+                     codigo="tela.eua.ticker_fora_da_vitrine", entidade=symbol)
         return
     row = localize_us_company_frame(match).iloc[0]
 
@@ -1195,6 +1204,12 @@ def _tab_dossie(status: dict) -> None:
     d = us.dossie(symbol)
     if d.get("erro"):
         estado_vazio("Esta análise não está disponível no momento.", "📄")
+        if d.get("varredura"):
+            # O que o armazém local tem da empresa, para o usuário e para a
+            # triagem da lacuna abaixo saberem se o dado existe.
+            st.caption(d["varredura"])
+            detalhe_tecnico(d["varredura"], codigo="eua.dossie_varredura_armazem",
+                            entidade=symbol)
         aviso_lacuna(f"{symbol}: {d['erro']}", codigo="tela.eua.dossie_indisponivel",
                      entidade=symbol)
         return
