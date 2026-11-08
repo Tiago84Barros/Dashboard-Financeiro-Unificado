@@ -30,9 +30,11 @@ PARSER_NAME = "cvm_fii_structured"
 # 1.7.0: o informe mensal passa a emitir ``pct_imoveis_renda`` (ver
 # ``_rental_property_share``). 1.8.0: o mensal passa a emitir a exposição
 # ``segment`` (``Segmento_Atuacao`` do cadastro, ver ``_cadastral_segment``).
+# 1.8.1: célula vazia ou ilegível em imóvel de renda ou direito real deixa
+# ``pct_imoveis_renda`` ausente em vez de contar zero.
 # A troca de versão força o reprocessamento dos arquivos já carregados, sem o
 # qual o PIT não enxerga o dado novo.
-PARSER_VERSION = "1.8.0"
+PARSER_VERSION = "1.8.1"
 PARSER_SCHEMA_VERSION = "cvm-fii-structured-v2"
 ARCHIVES = {
     "monthly": ("INF_MENSAL", "inf_mensal_fii_{year}.zip"),
@@ -436,14 +438,21 @@ def _rental_property_share(asset: dict, classes: dict[str, float]) -> float | No
     TGAR11, MFII11 e VGHF11 derrubando a cobertura de setor da carteira).
 
     Devolve ``None`` quando o layout do ano não traz a coluna de imóvel para
-    renda acabado: ausência de coluna não pode virar fração zero.
+    renda acabado, ou quando qualquer campo que soma ao numerador vem vazio ou
+    ilegível. Fração zero tira o fundo da máscara de setor; ela só pode sair
+    de zeros declarados, nunca de célula em branco ("dados ausentes permanecem
+    ausentes", AGENTS.md).
     """
     if "Imoveis_Renda_Acabados" not in asset:
         return None
     total = sum(value for value in classes.values() if value > 0)
     if total <= 0:
         return None
-    rental = sum(max(_num(asset.get(field)) or 0, 0) for field in _RENTAL_OR_AMBIGUOUS_FIELDS)
+    values = [_num(asset.get(field)) for field in _RENTAL_OR_AMBIGUOUS_FIELDS
+              if field in asset]
+    if any(value is None for value in values):
+        return None
+    rental = sum(max(value, 0) for value in values)
     return min(rental / total, 1.0)
 
 

@@ -89,6 +89,19 @@ def test_monthly_rental_share_is_absent_when_layout_lacks_the_column():
     assert "pct_imoveis_renda" not in observed
 
 
+@pytest.mark.parametrize(("header", "values"), [
+    # Coluna presente, célula vazia: não é zero declarado (revisão do #692).
+    ("Disponibilidades;Imoveis_Renda_Acabados;Terrenos", "100;;900"),
+    # Direito real ilegível também pode ser imóvel locado.
+    ("Disponibilidades;Imoveis_Renda_Acabados;Direitos_Bens_Imoveis;Terrenos",
+     "100;0;n/d;900"),
+])
+def test_monthly_rental_share_is_absent_when_a_rental_cell_is_blank(header, values):
+    observed = _monthly_assets(header, values)
+
+    assert "pct_imoveis_renda" not in observed
+
+
 def test_quarterly_derives_expiry_indexer_tenant_and_duration():
     common = "12.345.678/0001-00;2026-06-30;1"
     files = {
