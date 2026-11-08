@@ -54,6 +54,20 @@ class Fonte:
     rotulo: str
     banco: str
     sql: str
+    #: Fonte arquivada por emissor, não por classe de ação: o SQL recebe e
+    #: devolve a raiz de 4 letras (PETR), e a contagem vale para toda classe
+    #: pedida do mesmo emissor (PETR3, PETR4). Mesma convenção de
+    #: ``core.rag_b3._ticker_root``, que lê esses documentos.
+    por_raiz: bool = False
+
+
+_RAIZ = re.compile(r"\d+$")
+
+
+def raiz_emissor(ticker: str) -> str:
+    """PETR3/PETR4/PETR11 → PETR. Igual a ``core.rag_b3._ticker_root`` (o teste
+    prende a igualdade): na B3 o prefixo de 4 letras identifica o emissor."""
+    return _RAIZ.sub("", str(ticker or "").strip().upper())[:4]
 
 
 def _contagem(tabela: str, simbolo: str, data: str | None, extra: str = "") -> str:
@@ -84,6 +98,18 @@ GROUP BY 1
 
 _NOTICIAS = Fonte("noticias", "notícias do acervo local", "noticias", _SQL_NOTICIAS)
 
+# Documentos CVM/IPE ficam sob UMA classe de ação do emissor (ex.: PETR3); a
+# análise pode ser de outra (PETR4). Contar pelo ticker exato dizia "nenhuma
+# linha" com os documentos do emissor no armazém -- e o chat lia isso como
+# "não há documento". A raiz é o que ``rag_b3`` usa para achá-los.
+_SQL_DOCUMENTOS_CVM = """
+SELECT left(regexp_replace(upper(ticker), '[0-9]+$', ''), 4) AS simbolo, count(*) AS n,
+       min(data) AS desde, max(data) AS ate
+FROM public.docs_corporativos
+WHERE left(regexp_replace(upper(ticker), '[0-9]+$', ''), 4) = ANY(:t)
+GROUP BY 1
+"""
+
 #: Fontes por classe. A ordem é a do resumo. Cada SQL devolve
 #: ``simbolo, n, desde, ate`` e recebe ``:t`` (lista de tickers em maiúsculas).
 FONTES: dict[str, tuple[Fonte, ...]] = {
@@ -100,8 +126,8 @@ FONTES: dict[str, tuple[Fonte, ...]] = {
         Fonte("proventos", "proventos", "mercado",
               _contagem("market.dividends", "ticker",
                         "COALESCE(ex_date, payment_date, event_date)")),
-        Fonte("documentos_cvm", "documentos CVM/IPE (texto no RAG)", "mercado",
-              _contagem("public.docs_corporativos", "ticker", "data")),
+        Fonte("documentos_cvm", "documentos CVM/IPE do emissor (texto no RAG)", "mercado",
+              _SQL_DOCUMENTOS_CVM, por_raiz=True),
         Fonte("eventos_resultado", "reação a resultados (Memória de Mercado)", "memoria",
               _contagem("memoria_mercado.eventos_medidos", "simbolo", "data_evento")),
         _NOTICIAS,
@@ -197,11 +223,12 @@ def ler_inventario(engines: Mapping[str, object | None], classe: str, tickers) -
             estado["estado"] = "sem_banco"
             saida["fontes"][fonte.chave] = estado
             continue
+        chaves = (sorted({raiz_emissor(tk) for tk in alvo}) if fonte.por_raiz else alvo)
         try:
             # Uma conexão por fonte: consulta que falha deixa a transação
             # abortada, e a fonte seguinte precisa de uma limpa.
             with engine.connect() as conn:
-                linhas = conn.execute(text(fonte.sql), {"t": alvo}).mappings().all()
+                linhas = conn.execute(text(fonte.sql), {"t": chaves}).mappings().all()
         except Exception as exc:  # noqa: BLE001 - a fonte fica marcada, as outras seguem
             logger.info("inventário (%s/%s) não lido: %s", classe, fonte.chave, exc)
             estado["estado"] = "falha"
@@ -212,10 +239,12 @@ def ler_inventario(engines: Mapping[str, object | None], classe: str, tickers) -
         saida["fontes"][fonte.chave] = estado
         for linha in linhas:
             simbolo = str(linha.get("simbolo") or "").upper()
-            if simbolo in saida["ativos"]:
-                saida["ativos"][simbolo][fonte.chave] = {
-                    "n": int(linha.get("n") or 0),
+            item = {"n": int(linha.get("n") or 0),
                     "desde": linha.get("desde"), "ate": linha.get("ate")}
+            destinos = ([tk for tk in alvo if raiz_emissor(tk) == simbolo]
+                        if fonte.por_raiz else [simbolo] if simbolo in saida["ativos"] else [])
+            for tk in destinos:
+                saida["ativos"][tk][fonte.chave] = dict(item)
     return saida
 
 

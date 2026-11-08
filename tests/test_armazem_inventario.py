@@ -126,7 +126,7 @@ def test_resumo_separa_tem_nao_tem_e_nao_consultada():
     assert "demonstrativos anuais e trimestrais: 15 linhas, de 2011 a 2025" in texto
     assert "métricas calculadas: nenhuma linha" in texto
     assert "notícias do acervo local: não consultada (banco desta fonte não configurado" in texto
-    assert "documentos CVM/IPE (texto no RAG): não consultada (RuntimeError" in texto
+    assert "documentos CVM/IPE do emissor (texto no RAG): não consultada (RuntimeError" in texto
     assert "CONHECE este ativo (4 de 6 fontes consultadas com linha)" in texto
     # XXXX3: zero nas lidas, mas duas fontes não consultadas -- ausência em aberto.
     bloco_x = texto.split("  XXXX3:")[1]
@@ -166,7 +166,8 @@ def test_resumo_curto_cabe_numa_linha_e_diz_o_que_falta():
     curto = inv.resumo_curto(lido, "PETR4", limite=600)
     assert curto.startswith("armazém local: pregão diário da B3 (COTAHIST) 2.480 até 07/11/2026")
     assert "sem preço histórico do coletor (brapi), métricas calculadas" in curto
-    assert "não consultada: documentos CVM/IPE (texto no RAG), notícias do acervo local" in curto
+    assert ("não consultada: documentos CVM/IPE do emissor (texto no RAG), notícias do "
+            "acervo local") in curto
     assert "\n" not in curto
     assert len(inv.resumo_curto(lido, "PETR4")) <= 220
     assert len(inv.resumo_curto(lido, "PETR4", limite=80)) <= 80
@@ -178,6 +179,41 @@ def test_sem_tickers_nao_consulta_e_nao_escreve():
     assert engines["mercado"].conexoes == 0
     assert inv.resumo_para_prompt(lido, origem="x") == ""
     assert inv.resumo_para_prompt(None, origem="x") == ""
+
+
+def test_documentos_cvm_contam_pela_raiz_do_emissor():
+    """Os documentos ficam sob UMA classe (PETR3); a análise de PETR4 tem de
+    vê-los. Mesma convenção de ``rag_b3._ticker_root``."""
+    from core.rag_b3 import _ticker_root
+
+    for tk in ("PETR4", "petr3", "PETR11", "TAEE11", "B3SA3", "XPLG11"):
+        assert inv.raiz_emissor(tk) == _ticker_root(tk)
+
+    pedidos = []
+
+    class _Docs(_Engine):
+        def connect(self):
+            conexao = super().connect()
+            execute = conexao.execute
+
+            def _execute(sql, params):
+                if "public.docs_corporativos" in str(sql):
+                    pedidos.append(list(params["t"]))
+                return execute(sql, params)
+
+            conexao.execute = _execute
+            return conexao
+
+    mercado = _Docs({"public.docs_corporativos": [
+        _linha("PETR", 37, date(2019, 5, 2), date(2026, 10, 30))]})
+    lido = inv.ler_inventario({"mercado": mercado, "noticias": None, "memoria": None},
+                              "b3", ["PETR4", "PETR3", "VALE3"])
+    assert pedidos == [["PETR", "VALE"]]  # a raiz, não a classe
+    assert lido["ativos"]["PETR4"]["documentos_cvm"]["n"] == 37
+    assert lido["ativos"]["PETR3"]["documentos_cvm"]["n"] == 37
+    assert "documentos_cvm" not in lido["ativos"]["VALE3"]
+    texto = inv.resumo_para_prompt(lido, origem="x")
+    assert "documentos CVM/IPE do emissor (texto no RAG): 37 linhas, de 02/05/2019 a 30/10/2026" in texto
 
 
 def test_toda_fonte_declara_simbolo_n_desde_e_ate():

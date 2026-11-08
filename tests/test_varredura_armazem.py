@@ -22,8 +22,9 @@ import core.armazem_remoto as ar  # noqa: E402
 import core.varredura_armazem as var  # noqa: E402
 
 
-def _inventario(classe, tickers, *, tem=("PETR4",)):
-    fontes = {"pregao": {"rotulo": "pregão diário da B3 (COTAHIST)", "estado": "lida"},
+def _inventario(classe, tickers, *, tem=("PETR4",), pregao="lida"):
+    fontes = {"pregao": {"rotulo": "pregão diário da B3 (COTAHIST)", "estado": pregao,
+                         **({"motivo": "RuntimeError: banco fora"} if pregao == "falha" else {})},
               "proventos": {"rotulo": "proventos", "estado": "lida"},
               "noticias": {"rotulo": "notícias do acervo local", "estado": "sem_banco"}}
     ativos = {tk: ({"pregao": {"n": 2480, "desde": date(2016, 1, 4), "ate": date(2026, 11, 7)}}
@@ -85,6 +86,34 @@ def test_reaproveita_o_que_ja_leu_e_so_busca_o_que_falta(monkeypatch):
     relogio[0] += var.VALIDADE_S + 1
     var.bloco_varredura("b3", ["PETR4"])
     assert pedidos[-1] == ["PETR4"]  # venceu: relido
+
+
+def test_leituras_com_fontes_em_estados_diferentes_nao_se_misturam(monkeypatch):
+    """PETR4 foi lido com o pregão em falha; VALE3, depois, com o pregão lido.
+    Juntar os dois marcaria o pregão de PETR4 como lido e sem linha -- e a
+    LLM afirmaria uma ausência que ninguém mediu. A saída é reler os dois
+    juntos, com um único estado por fonte."""
+    pedidos = []
+    estado = {"pregao": "falha"}
+
+    def _ler(classe, tickers):
+        pedidos.append(list(tickers))
+        return _inventario(classe, list(tickers), pregao=estado["pregao"])
+
+    monkeypatch.setattr(var, "_engines_diretas",
+                        lambda: {"mercado": None, "noticias": None, "memoria": None})
+    monkeypatch.setattr(ar, "inventario_ativos", _ler)
+    primeiro = var.bloco_varredura("b3", ["PETR4"])
+    assert "pregão diário da B3 (COTAHIST): não consultada (RuntimeError: banco fora)" in primeiro
+    estado["pregao"] = "lida"
+    inv, origem = var.inventario("b3", ["PETR4", "VALE3"])
+    assert pedidos == [["PETR4"], ["VALE3"], ["PETR4", "VALE3"]]  # releu os dois juntos
+    assert inv["fontes"]["pregao"]["estado"] == "lida" and origem == "lido pelo túnel"
+    texto = var.resumo_para_prompt(inv, origem=origem)
+    assert "não consultada (RuntimeError" not in texto
+    # Com a memória agora coerente, a próxima leitura não vai ao túnel.
+    var.inventario("b3", ["VALE3", "PETR4"])
+    assert len(pedidos) == 3
 
 
 def test_pelo_tunel_quando_o_app_nao_alcanca_o_armazem(monkeypatch):

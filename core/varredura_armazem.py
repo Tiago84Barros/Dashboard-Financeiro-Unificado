@@ -93,17 +93,61 @@ def _recorte(inventario: dict, ticker: str) -> dict:
             "ativos": {ticker: (inventario.get("ativos") or {}).get(ticker) or {}}}
 
 
+def _assinatura(inv: dict) -> tuple:
+    """O estado de cada fonte numa leitura. Duas leituras só se juntam quando
+    as assinaturas são iguais: fonte que falhou numa e foi lida na outra não
+    pode virar "lida" para o ticker da primeira -- o "nenhuma linha" daí
+    autorizaria a LLM a afirmar uma ausência que ninguém mediu."""
+    return tuple(sorted(
+        (chave, str(estado.get("estado")), str(estado.get("motivo") or ""))
+        for chave, estado in (inv.get("fontes") or {}).items()))
+
+
 def _juntar(classe: str, tickers: list[str], partes: dict[str, tuple[dict, str]]) -> tuple[dict, str]:
-    fontes: dict = {}
+    """Só para partes com a mesma assinatura (``inventario`` garante isso)."""
     ativos: dict = {}
     origens = []
     for tk in tickers:
         inv, origem = partes[tk]
-        fontes.update(inv.get("fontes") or {})
         ativos[tk] = (inv.get("ativos") or {}).get(tk) or {}
         origens.append(origem)
+    fontes = dict((partes[tickers[0]][0].get("fontes") or {})) if tickers else {}
     origem = origens[0] if len(set(origens)) == 1 else "lido em mais de um momento"
     return {"classe": classe, "tickers": tickers, "fontes": fontes, "ativos": ativos}, origem
+
+
+def _ler(classe: str, tickers: list[str]) -> tuple[dict | None, str]:
+    """Uma leitura: direto quando o app aponta para o armazém, túnel na
+    produção; ``(None, motivo)`` quando nenhum dos dois está configurado."""
+    engines = _engines_diretas()
+    if engines.get("mercado") is not None:
+        from core.armazem_inventario import ler_inventario
+
+        try:
+            return ler_inventario(engines, classe, tickers), "lido direto"
+        finally:
+            for banco in ("noticias", "memoria"):
+                eng = engines.get(banco)
+                if eng is not None and hasattr(eng, "dispose"):
+                    eng.dispose()
+    from core import armazem_remoto
+
+    lido = armazem_remoto.inventario_ativos(classe, tickers)
+    if lido is None:
+        return None, "não configurado"
+    return lido, "lido pelo túnel"
+
+
+def _guardar(classe: str, lido: dict, tickers: list[str], origem: str,
+             prontos: dict[str, tuple[dict, str]], agora: float) -> None:
+    with _trava:
+        for tk in tickers:
+            recorte = _recorte(lido, tk)
+            _memoria[(classe, tk)] = (_relogio(), recorte, origem)
+            prontos[tk] = (recorte, origem)
+        for chave in [c for c, (quando, _, _) in _memoria.items()
+                      if agora - quando >= VALIDADE_S]:
+            del _memoria[chave]
 
 
 def inventario(classe: str, tickers: Iterable[str]) -> tuple[dict | None, str]:
@@ -129,32 +173,18 @@ def inventario(classe: str, tickers: Iterable[str]) -> tuple[dict | None, str]:
                 prontos[tk] = (salvo[1], salvo[2])
     faltam = [tk for tk in alvo if tk not in prontos]
     if faltam:
-        engines = _engines_diretas()
-        if engines.get("mercado") is not None:
-            from core.armazem_inventario import ler_inventario
-
-            try:
-                lido, origem = ler_inventario(engines, classe, faltam), "lido direto"
-            finally:
-                for banco in ("noticias", "memoria"):
-                    eng = engines.get(banco)
-                    if eng is not None and hasattr(eng, "dispose"):
-                        eng.dispose()
-        else:
-            from core import armazem_remoto
-
-            lido = armazem_remoto.inventario_ativos(classe, faltam)
-            if lido is None:
-                return None, "não configurado"
-            origem = "lido pelo túnel"
-        with _trava:
-            for tk in faltam:
-                recorte = _recorte(lido, tk)
-                _memoria[(classe, tk)] = (_relogio(), recorte, origem)
-                prontos[tk] = (recorte, origem)
-            for chave in [c for c, (quando, _, _) in _memoria.items()
-                          if agora - quando >= VALIDADE_S]:
-                del _memoria[chave]
+        lido, origem = _ler(classe, faltam)
+        if lido is None:
+            return None, origem
+        _guardar(classe, lido, faltam, origem, prontos, agora)
+    if len({_assinatura(inv) for inv, _ in prontos.values()}) > 1:
+        # Leituras de momentos diferentes com fontes em estados diferentes
+        # (uma falhou no pregão, a outra não): não se juntam. Lê-se tudo de
+        # novo, junto, para um único estado valer para todos os tickers.
+        lido, origem = _ler(classe, alvo)
+        if lido is None:
+            return None, origem
+        _guardar(classe, lido, alvo, origem, prontos, agora)
     return _juntar(classe, alvo, prontos)
 
 
