@@ -207,6 +207,89 @@ def test_nome_generico_nao_entra_no_mapa_de_nomes():
     assert "ELET3" in u.tickers
 
 
+def test_papel_da_carteira_entra_no_universo_mesmo_com_vitrine_inativa(monkeypatch):
+    """A FSS (carteira) tinha valuation e valor de mercado, mas a vitrine a
+    marcava inativa (não republicada) e o universo não a conhecia: nenhuma
+    notícia dela era atribuída ao ticker. A regra, não o ticker: quem o
+    usuário detém ou estuda entra sempre; o filtro de atividade fica para o
+    resto."""
+    from core.noticias import universo_coleta
+
+    monkeypatch.setattr(universo_coleta, "da_carteira", lambda engine=None: (("FSS", "PETR4"), ""))
+    monkeypatch.setattr(universo_coleta, "dos_candidatos",
+                        lambda engine=None, excluir=(): (("PODD",), ""))
+    visto = {}
+
+    class _ConnQueVe(_Conn):
+        def execute(self, sql, *args, **kw):
+            if ":carteira" in str(sql):
+                visto["sql"] = str(sql)
+                visto["params"] = args[0] if args else kw
+                return _Result([
+                    {"ticker": "FSS", "nome": "Federal Signal Corp", "setor": "Industrials"}])
+            return super().execute(sql, *args, **kw)
+
+    class _EngineQueVe(_Engine):
+        def connect(self):
+            return _ConnQueVe(self._linhas, self._falhar)
+
+    u, limitacoes = ue.carregar(engine=_EngineQueVe(LINHAS), usar_cache=False)
+    assert "upper(symbol) = ANY(:carteira)" in visto["sql"]
+    assert "is_active" not in visto["sql"]  # detido entra mesmo inativo
+    assert visto["params"] == {"carteira": ["FSS", "PETR4", "PODD"]}
+    assert "FSS" in u.tickers and u.pais_por_ticker["FSS"] == "US"
+    assert "AAPL" in u.tickers  # a base compartilhada continua inteira
+    assert not any("carteira" in texto for texto in limitacoes)
+
+
+def test_cache_compartilhado_nao_leva_a_carteira_de_um_usuario_ao_outro(monkeypatch):
+    """Dois usuários no mesmo processo do Streamlit: a base do universo é
+    uma só e fica em memória; os papéis detidos são de cada um e são lidos a
+    cada chamada. Guardar a soma serviria a carteira de A para B."""
+    from core.noticias import universo_coleta
+
+    carteiras = iter([("FSS",), ()])
+    monkeypatch.setattr(universo_coleta, "da_carteira",
+                        lambda engine=None: (next(carteiras), ""))
+    monkeypatch.setattr(universo_coleta, "dos_candidatos",
+                        lambda engine=None, excluir=(): ((), ""))
+    execucoes = {"base": 0, "detidos": 0}
+
+    class _ConnQueConta(_Conn):
+        def execute(self, sql, *args, **kw):
+            if ":carteira" in str(sql):
+                execucoes["detidos"] += 1
+                return _Result([{"ticker": "FSS", "nome": "Federal Signal Corp",
+                                 "setor": "Industrials"}])
+            if _rotulo(sql) == "EUA":
+                execucoes["base"] += 1
+            return super().execute(sql, *args, **kw)
+
+    class _EngineQueConta(_Engine):
+        def connect(self):
+            return _ConnQueConta(self._linhas, self._falhar)
+
+    engine = _EngineQueConta(LINHAS)
+    a, _ = ue.carregar(engine=engine, usar_cache=True)
+    b, _ = ue.carregar(engine=engine, usar_cache=True)
+    assert "FSS" in a.tickers and "FSS" not in b.tickers
+    assert "AAPL" in a.tickers and "AAPL" in b.tickers
+    assert execucoes == {"base": 1, "detidos": 1}  # base lida uma vez; carteira por chamada
+
+
+def test_carteira_ilegivel_vira_limitacao_e_o_universo_segue(monkeypatch):
+    from core.noticias import universo_coleta
+
+    def _quebra(engine=None, **kw):
+        raise RuntimeError("portfolio fora")
+
+    monkeypatch.setattr(universo_coleta, "da_carteira", _quebra)
+    u, limitacoes = _universo()
+    assert "AAPL" in u.tickers and "VALE3" in u.tickers
+    assert any("tickers da carteira não acrescentados" in texto and "RuntimeError" in texto
+               for texto in limitacoes), limitacoes
+
+
 def test_fonte_que_falha_vira_limitacao_escrita():
     """Universo menor em silêncio apresentaria ignorância como ausência.
 

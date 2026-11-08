@@ -572,15 +572,19 @@ def test_publicador_volatilidade_precisa_da_janela():
     assert pub.volatilidade(precos.head(20)) == {}
 
 
-def test_publicador_capitalizacao_corta_antes_do_degrau():
+def test_publicador_capitalizacao_retroajusta_o_degrau_em_vez_de_cortar():
+    """Até 08/11/2026 este teste cobrava o corte de tudo antes do degrau; o
+    corte deixava 2.852 empresas sem histórico. Agora o degrau 4:1 é
+    retroajustado e os 30 meses ficam, todos na escala de depois do split."""
     from scripts import publish_valuation_historico as pub
     meses = pd.date_range("2019-01-31", periods=30, freq="ME")
     acoes = [1000.0] * 15 + [4000.0] * 15
     cap = pd.DataFrame({"symbol": "X", "date": meses,
                         "market_cap": [a * 10 for a in acoes]})
     precos = pd.DataFrame({"symbol": "X", "mes": meses, "close": 10.0})
-    limpa, descartados = pub.capitalizacao_limpa(cap, precos)
-    assert len(limpa) + descartados == 30
+    limpa, contagem = pub.capitalizacao_limpa(cap, precos)
+    assert len(limpa) == 30 and contagem["capitalizacao_fora_do_preco"] == 0
+    assert contagem["degraus_retroajustados"] == 1
     assert (limpa["market_cap"] == 40000.0).all()
 
 
