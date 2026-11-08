@@ -153,9 +153,21 @@ Não mudaram `min_optimizer_feasible_fraction` (0,95) nem
 (`_dimension_observation_masks`), o diagnóstico de look-through e a revisão
 de carteira chamam.
 
-**Aprovada não quer dizer que bate o IFIX.** O excesso medido no run 105
-sobre o IFIX oficial foi de −0,116 p.p./mês, com IC 95% de [−0,32; +0,10].
-Destravar o portão de viabilidade não muda essa conclusão.
+**Aprovada não quer dizer que bate o IFIX.** No run 105 o excesso sobre o
+IFIX oficial era de −0,116 p.p./mês, com IC 95% de [−0,32; +0,10], que
+contém o zero. A validação aprovada de 08/11/2026 (run local 147, publicado
+no Supabase como id 107, `as_of` 31/10/2026, 112 períodos) mede pior:
+
+- retorno médio mensal de 0,372%, contra 0,634% do IFIX oficial;
+- excesso de −0,262 p.p./mês (−0,223 depois de custos), com IC 95% de
+  bootstrap de [−0,536; −0,004]. **O intervalo inteiro está abaixo de zero:**
+  a carteira perde do IFIX de forma estatisticamente distinguível;
+- information ratio de −0,58 e drawdown máximo de −20,7%;
+- cessão de proteção em 58,9% dos períodos.
+
+A aprovação atesta integridade temporal, viabilidade (112/116 = 0,966) e
+respeito às restrições. Ela não diz que a carteira bate o IFIX; no histórico
+medido, ela não bate.
 
 ## Segmento cadastral do mensal é reserva do setor por inquilino (parser CVM 1.8.0)
 
