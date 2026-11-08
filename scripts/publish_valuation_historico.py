@@ -956,26 +956,37 @@ def _parece_split(razao: float) -> bool:
     return False
 
 
+#: Quanto a razão registrada pode diferir do salto medido e ainda explicá-lo:
+#: o salto carrega a recompra ou emissão do trimestre.
+TOLERANCIA_SALTO_REGISTRADO = 1.25
+
+
 def _split_registrado(splits, simbolo: str, quando, medido: float):
     """Razão do split de ``market_us.splits`` que explica um degrau visto em
     ``quando``: data do split até :data:`DIAS_ATE_O_BALANCO` antes do degrau,
-    no mesmo sentido (desdobramento ou grupamento) do que foi medido."""
+    no mesmo sentido do que foi medido e com a razão mais próxima do salto.
+    Dois splits na janela (2:1 e depois 3:1) casam cada um com o seu degrau;
+    registro que não explica o salto medido não é usado."""
     if splits is None or len(splits) == 0:
         return None
     import pandas as pd
     s = splits[splits["symbol"] == simbolo]
-    if s.empty:
+    if s.empty or not medido or medido <= 0:
         return None
     datas = pd.to_datetime(s["split_date"])
     janela = (datas <= quando) & (datas >= quando - pd.Timedelta(days=DIAS_ATE_O_BALANCO))
+    melhor, distancia = None, None
     for _, linha in s.loc[janela].iterrows():
         try:
             razao = float(linha["numerator"]) / float(linha["denominator"])
         except (TypeError, ValueError, ZeroDivisionError):
             continue
-        if razao > 0 and (razao > 1) == (medido > 1):
-            return razao
-    return None
+        if razao <= 0 or (razao > 1) != (medido > 1):
+            continue
+        d = abs(math.log(razao) - math.log(medido))
+        if d <= math.log(TOLERANCIA_SALTO_REGISTRADO) and (distancia is None or d < distancia):
+            melhor, distancia = razao, d
+    return melhor
 
 
 def _retroajustar_simbolo(g, splits, contagem: dict):
@@ -1002,7 +1013,14 @@ def _retroajustar_simbolo(g, splits, contagem: dict):
         anteriores = anteriores[anteriores > 0]
         if len(anteriores) and abs(math.log(float(np.median(anteriores)) / acoes[i - 1])) > math.log(1.25):
             continue
-        razao = _split_registrado(splits, g["symbol"].iloc[i], g["date"].iloc[i], salto)
+        registrado = _split_registrado(splits, g["symbol"].iloc[i], g["date"].iloc[i], salto)
+        if len(seguintes) < 2 and registrado is None:
+            # Salto no fim da série, sem meses que o confirmem nem split
+            # registrado: ainda não é regime. Fica para o filtro de mês
+            # isolado, que o descarta; reescrever o histórico inteiro por um
+            # mês ainda não confirmado é o erro que não se desfaz.
+            continue
+        razao = registrado
         if razao is None and _parece_split(salto):
             razao = salto
         if razao is None:
@@ -1131,12 +1149,15 @@ def coletar_eua(conn) -> tuple[dict, dict]:
          WHERE month_end >= make_date(:ini, 1, 1) AND close > 0
            AND symbol IN (SELECT symbol FROM market_us.company_snapshots)
     """, ini=ANO_INICIAL)
+    # Leitura opcional em savepoint: tabela ausente abortaria a transação da
+    # conexão única e derrubaria o que vem depois (coletar_mercado_b3).
     try:
-        splits = _ler(conn, """
-            SELECT symbol, split_date, numerator, denominator
-              FROM market_us.splits
-             WHERE symbol IN (SELECT symbol FROM market_us.company_snapshots)
-        """)
+        with conn.begin_nested():
+            splits = _ler(conn, """
+                SELECT symbol, split_date, numerator, denominator
+                  FROM market_us.splits
+                 WHERE symbol IN (SELECT symbol FROM market_us.company_snapshots)
+            """)
     except Exception as exc:  # noqa: BLE001 - sem a tabela, vale a razão medida
         print(f"  splits não lidos ({type(exc).__name__}); degraus pela razão medida",
               file=sys.stderr)

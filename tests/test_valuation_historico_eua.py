@@ -122,6 +122,48 @@ def test_split_registrado_em_sentido_contrario_nao_e_usado():
     assert contagem["degraus_retroajustados"] == 1
 
 
+def test_dois_splits_registrados_na_janela_casam_cada_um_com_o_seu_degrau():
+    # 2:1 no mês 9 (contagem nova no mês 12) e 3:1 no mês 18 (nova no mês
+    # 21): regimes 1 → 2 → 6. O registro escolhido é o que explica o salto.
+    acoes = [1 * BI] * 12 + [2 * BI] * 9 + [6 * BI] * 15
+    cap, precos = _serie("DUP", acoes)
+    meses = _meses(len(acoes))
+    splits = pd.DataFrame([
+        {"symbol": "DUP", "split_date": meses[18].date(), "numerator": 3, "denominator": 1},
+        {"symbol": "DUP", "split_date": meses[9].date(), "numerator": 2, "denominator": 1},
+    ])
+    limpo, contagem = pub.capitalizacao_limpa(cap, precos, splits)
+    assert contagem["degraus_retroajustados"] == 2
+    assert (limpo["market_cap"].round(0) == 150 * BI).all()
+    assert pub._split_registrado(splits, "DUP", meses[21], 3.05) == 3
+    assert pub._split_registrado(splits, "DUP", meses[12], 2.02) == 2
+    # Registro que não explica o salto medido não é usado.
+    assert pub._split_registrado(splits, "DUP", meses[21], 10.0) is None
+
+
+def test_salto_no_ultimo_mes_sem_confirmacao_nao_reescreve_o_historico():
+    """Contagem errada só no mês mais recente: antes, o filtro de mês isolado
+    a tirava; a nova regra não pode promovê-la a regime e multiplicar todo o
+    histórico por 3."""
+    acoes = [1 * BI] * 39 + [3 * BI]
+    cap, precos = _serie("FIM", acoes)
+    limpo, contagem = pub.capitalizacao_limpa(cap, precos, None)
+    assert contagem["degraus_retroajustados"] == 0
+    assert contagem["capitalizacao_fora_do_preco"] == 1 and len(limpo) == 39
+    assert (limpo["market_cap"].round(0) == 25 * BI).all()
+
+
+def test_salto_no_ultimo_mes_com_split_registrado_e_aplicado():
+    acoes = [1 * BI] * 39 + [4 * BI]
+    cap, precos = _serie("NOVO", acoes)
+    meses = _meses(len(acoes))
+    splits = pd.DataFrame([{"symbol": "NOVO", "split_date": meses[37].date(),
+                            "numerator": 4, "denominator": 1}])
+    limpo, contagem = pub.capitalizacao_limpa(cap, precos, splits)
+    assert contagem["degraus_retroajustados"] == 1 and len(limpo) == 40
+    assert (limpo["market_cap"].round(0) == 100 * BI).all()
+
+
 def test_historico_de_pl_passa_a_existir_antes_do_split():
     acoes = [1 * BI] * 30 + [4 * BI] * 18
     cap, precos = _serie("AAPL", acoes)
