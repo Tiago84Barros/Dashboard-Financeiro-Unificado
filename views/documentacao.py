@@ -2572,7 +2572,7 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
     abas=("Inteligência dos Ativos", "Imposto de Renda"),
     rows=(
         ("Portão", ("ia_portao",)),
-        ("Painel", ("ia_painel", "ia_detalhe", "ia_referencia")),
+        ("Painel", ("ia_painel", "ia_confronto", "ia_detalhe", "ia_referencia")),
         ("Apuração", ("ir_apuracao", "ir_cobertura")),
         ("Declaração", ("ir_darf", "ir_fichas")),
     ),
@@ -2600,8 +2600,9 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
         "ia_painel": _node(
             "ia_painel", "Painel da carteira", "Painel",
             "Liberada, a aba abre a página resumida — reserva, renda fixa e uma caixa por "
-            "ativo — e, num expander, a 📊 Visão geral da carteira, com a premissa, os cálculos "
-            "e a tabela dos ativos. O cenário econômico entra lido dos dados, sem pergunta.",
+            "ativo —, logo abaixo o confronto 🌐 Sua carteira × Portfólio Global e, num "
+            "expander, a 📊 Visão geral da carteira, com a premissa, os cálculos e a tabela dos "
+            "ativos. O cenário econômico entra lido dos dados, sem pergunta.",
             (
                 "views/inteligencia_ativos_resumida.py e views/inteligencia_ativos_painel.py",
                 "Cenário lido por core/cenario/automatico.py desde 30/09/2026, quando o "
@@ -2629,15 +2630,45 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
             "LLM chamada na renderização trava a tela. No botão, ela só roda quando alguém "
             "pede, e a pré-leitura pelas regras já está na tela antes disso.",
         ),
+        "ia_confronto": _node(
+            "ia_confronto", "Sua carteira × Portfólio Global", "Painel",
+            "Confronta sempre a carteira com a carteira recomendada do Portfólio Global: a "
+            "qualidade média dos dois lados (de 1, frágil, a 3, forte, ponderada pelo peso), o "
+            "peso com alerta eliminatório, a aderência ao modelo e a distribuição por classe "
+            "(real, modelo e a sua estratégia). Dois expanders detalham as divergências de "
+            "peso de cada ativo e os ativos do modelo que faltam na carteira, cada um com a "
+            "conclusão — mudança sugerida, manter a sua escolha, candidato a inclusão ou não "
+            "incluir agora — e os motivos.",
+            (
+                "core/inteligencia_ativos/confronto_modelo.py (puro); a tela é "
+                "views/inteligencia_ativos.py::_render_confronto",
+                "A qualidade dos dois lados usa a mesma régua: a avaliação por regras da "
+                "Inteligência (veredito.avaliar_ativo); os 25 maiores pesos do modelo fora da "
+                "carteira são avaliados",
+                "Divergência acentuada: 3 pp ou mais no ativo, 5 pp ou mais na classe",
+                "Ativo da carteira: a conclusão segue a decisão da Inteligência — nunca manda "
+                "vender só porque o modelo pesa menos nem aportar quando ela barra o aporte",
+                "Ativo do modelo vira candidato só com limite livre, qualidade forte ou "
+                "adequada, sem perder para a média dos seus ativos da classe, e com a classe "
+                "prevista na sua estratégia",
+                "Classe: a sua estratégia é a premissa; perto dela, manter, longe dela, "
+                "rebalancear pelos aportes",
+            ),
+            "O modelo é montado em parte com o próprio veredito desta aba: usá-lo como "
+            "argumento seria confirmação circular. Por isso o confronto compara a qualidade "
+            "medida, não a presença no modelo, e explica a divergência em vez de mandar "
+            "copiar o modelo.",
+        ),
         "ia_referencia": _node(
             "ia_referencia", "Referência do Portfólio Global", "Painel",
-            "A carteira recomendada do Portfólio Global aparece como referência comparativa, "
-            "em cartão próprio: na visão geral, para a carteira, e no detalhe, para o ativo "
-            "escolhido.",
+            "A carteira recomendada do Portfólio Global aparece como referência comparativa: "
+            "no confronto, para a carteira, e no detalhe, para o ativo escolhido, com a "
+            "conclusão do confronto quando o ativo diverge do modelo.",
             (
                 "core/inteligencia_ativos/referencia_modelo.py",
                 "Fora das 13 etapas e da Ação a considerar",
-                "Também entra no Portfolio Fit como contexto da LLM",
+                "Também entra no Portfolio Fit como contexto da LLM, com o confronto em "
+                "app_model_reference.confronto",
             ),
             "Modelo é referência, não ordem. Fora das etapas, ele não pesa na conclusão sobre "
             "o ativo e ainda deixa a comparação à vista.",

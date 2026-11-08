@@ -743,14 +743,14 @@
       "resumo": "Cada ativo avaliado à luz da sua estratégia",
       "explicacao": "Avalia cada ativo da carteira de acordo com a sua estratégia (objetivo, prazo, risco e alocação desejada) e sugere uma de sete ações: manter, comprar, acompanhar, rebalancear, reduzir parcialmente, vender ou substituir. Peso ou preço acima de um limite vira alerta para investigar, nunca ordem de venda. Enquanto a estratégia não estiver concluída, a aba aparece com um cadeado e mostra só a configuração; depois, ganha o ícone de cérebro e libera a análise.",
       "so_admin": false,
-      "fonte": "views/investimentos.py:4578 (views/inteligencia_ativos.py:81)",
+      "fonte": "views/investimentos.py:4578 (views/inteligencia_ativos.py:91)",
       "filhos": [
         {
           "nome": "Configure sua estratégia para liberar esta análise",
           "resumo": "Aviso e lista do que falta configurar",
           "explicacao": "Aparece só com a aba bloqueada: um cartão explicando por que configurar, a lista do que já foi respondido e do que falta, a barra de progresso e o botão 'Configurar minha estratégia' (ou 'Continuar configuração' / 'Revisar minha estratégia'). Se a estratégia precisar de revisão, o título vira 'Revise sua estratégia para liberar esta análise'.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos.py:145 (cartao_onboarding :112)",
+          "fonte": "views/inteligencia_ativos.py:155 (cartao_onboarding :122)",
           "filhos": []
         },
         {
@@ -758,7 +758,7 @@
           "resumo": "Entrevista ou formulário para montar a estratégia",
           "explicacao": "Onde você define a sua estratégia. Com a aba bloqueada, abre logo abaixo do aviso depois de clicar no botão; com a aba liberada, fica dentro de 'Minha estratégia'. Mostra a situação, a versão e a porcentagem concluída.",
           "so_admin": false,
-          "fonte": "views/configuracoes_estrategia.py:44 (chamado em views/inteligencia_ativos.py:169 e :179)",
+          "fonte": "views/configuracoes_estrategia.py:44 (chamado em views/inteligencia_ativos.py:179 e :189)",
           "filhos": [
             {
               "nome": "Iniciar configuração",
@@ -892,11 +892,36 @@
           ]
         },
         {
+          "nome": "Sua carteira × Portfólio Global",
+          "resumo": "Sua carteira confrontada com a carteira sugerida",
+          "explicacao": "Logo abaixo das caixas dos ativos, compara sempre a sua carteira com a carteira recomendada do Portfólio Global: a qualidade média dos dois lados (de 1, frágil, a 3, forte), o peso em ativos com alerta grave, quanto da carteira já coincide com o modelo e a divisão por classe (a sua, a do modelo e a da sua estratégia). Quando uma classe diverge 5 pontos ou mais, explica se vale manter ou rebalancear pelos aportes, com a sua estratégia como premissa.",
+          "so_admin": false,
+          "fonte": "views/inteligencia_ativos.py:1091 (_render_confronto; core/inteligencia_ativos/confronto_modelo.py)",
+          "filhos": [
+            {
+              "nome": "Divergências de peso e o porquê",
+              "resumo": "Ativos com 3 pontos ou mais de diferença",
+              "explicacao": "Cada ativo seu que pesa 3 pontos ou mais acima ou abaixo do modelo, com a conclusão — mudança sugerida ou manter a sua escolha — e os motivos. A conclusão segue a decisão da Inteligência para o ativo: nunca manda vender só porque o modelo pesa menos, nem comprar quando a Inteligência barra o aporte.",
+              "so_admin": false,
+              "fonte": "views/inteligencia_ativos.py:941 (cartao_divergencias)",
+              "filhos": []
+            },
+            {
+              "nome": "Ativos do modelo fora da sua carteira",
+              "resumo": "Incluir ou não, e por quê",
+              "explicacao": "Os ativos do modelo que você não tem, avaliados com a mesma régua da Inteligência. Viram candidatos a inclusão só se não tiverem alerta grave nem qualidade frágil, se não forem piores que a média dos seus ativos da mesma classe e se a sua estratégia previr a classe. Os demais aparecem como 'não incluir agora' ou 'sem avaliação', com o motivo.",
+              "so_admin": false,
+              "fonte": "views/inteligencia_ativos.py:954 (cartao_candidatos)",
+              "filhos": []
+            }
+          ]
+        },
+        {
           "nome": "Visão geral da carteira",
           "resumo": "Resumo da carteira frente à estratégia",
-          "explicacao": "Caixa recolhida com o resumo da carteira (Patrimônio total, Rentabilidade, Renda gerada (12 meses), Ativos que merecem revisão, alocação atual contra o alvo, concentrações, alertas e próximos eventos), a estratégia usada como base, uma tabela com papel, peso e ação a considerar para cada ativo e a comparação com a carteira recomendada do Portfólio Global.",
+          "explicacao": "Caixa recolhida com o resumo da carteira (Patrimônio total, Rentabilidade, Renda gerada (12 meses), Ativos que merecem revisão, alocação atual contra o alvo, concentrações, alertas e próximos eventos), a estratégia usada como base e uma tabela com papel, peso e ação a considerar para cada ativo. A comparação com a carteira recomendada do Portfólio Global saiu daqui e fica no confronto logo acima.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos.py:962",
+          "fonte": "views/inteligencia_ativos.py:1130",
           "filhos": []
         },
         {
@@ -904,14 +929,14 @@
           "resumo": "Estudo completo de um ativo escolhido",
           "explicacao": "Botão de ligar e desligar. Ligado, mostra o estudo passo a passo de um ativo e o quanto ele combina com a sua carteira.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos.py:976",
+          "fonte": "views/inteligencia_ativos.py:1142",
           "filhos": [
             {
               "nome": "Ativo",
               "resumo": "Escolhe qual ativo detalhar",
               "explicacao": "Seletor com todos os ativos da carteira; também é preenchido pelo botão 'Ver análise completa'.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos.py:981",
+              "fonte": "views/inteligencia_ativos.py:1147",
               "filhos": []
             },
             {
@@ -919,7 +944,7 @@
               "resumo": "Cartões numerados, do ativo até a decisão",
               "explicacao": "Sequência de cartões que vai de 'Ativo', 'Papel na carteira', 'Peso atual' e 'Peso desejado' até fundamentos, valuation, concorrentes, notícias, relatórios e eventos, terminando em 'Impacto na carteira' e 'Ação a considerar'.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos.py:687 (cartoes_analise), :985-991",
+              "fonte": "views/inteligencia_ativos.py:697 (cartoes_analise), :1152-1158",
               "filhos": []
             },
             {
@@ -935,7 +960,7 @@
               "resumo": "Quanto o ativo combina com sua carteira",
               "explicacao": "Mostra uma leitura por regras (limites, alvo da classe e papel do ativo) e o botão 'Gerar leitura de Portfolio Fit', em que a IA escreve uma avaliação mais completa. Sem IA configurada, aparece um aviso de indisponibilidade.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos.py:994 (views/inteligencia_ativos_fit.py:226)",
+              "fonte": "views/inteligencia_ativos.py:1167 (views/inteligencia_ativos_fit.py:226)",
               "filhos": []
             }
           ]
@@ -945,7 +970,7 @@
           "resumo": "Ver ou alterar a estratégia em vigor",
           "explicacao": "No fim da aba liberada. A caixa 'Ver ou alterar minha estratégia' abre o bloco Estratégia de Investimentos, com as respostas atuais e o botão para editar.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos.py:172",
+          "fonte": "views/inteligencia_ativos.py:182",
           "filhos": []
         }
       ]
