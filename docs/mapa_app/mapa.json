@@ -1423,9 +1423,29 @@
               ]
             },
             {
+              "nome": "Sua carteira × Portfólio Global",
+              "resumo": "Sua carteira confrontada com a carteira sugerida",
+              "explicacao": "Logo abaixo das caixas dos ativos, compara sempre a sua carteira com a carteira recomendada do Portfólio Global: a qualidade média dos dois lados (de 1, frágil, a 3, forte), o peso em ativos com alerta grave, quanto da carteira já coincide com o modelo e a divisão por classe (a sua, a do modelo e a da sua estratégia). Quando uma classe diverge 5 pontos ou mais, explica se vale manter ou rebalancear pelos aportes, com a sua estratégia como premissa.",
+              "so_admin": false,
+              "filhos": [
+                {
+                  "nome": "Divergências de peso e o porquê",
+                  "resumo": "Ativos com 3 pontos ou mais de diferença",
+                  "explicacao": "Cada ativo seu que pesa 3 pontos ou mais acima ou abaixo do modelo, com a conclusão — mudança sugerida ou manter a sua escolha — e os motivos. A conclusão segue a decisão da Inteligência para o ativo: nunca manda vender só porque o modelo pesa menos, nem comprar quando a Inteligência barra o aporte.",
+                  "so_admin": false
+                },
+                {
+                  "nome": "Ativos do modelo fora da sua carteira",
+                  "resumo": "Incluir ou não, e por quê",
+                  "explicacao": "Os ativos do modelo que você não tem, avaliados com a mesma régua da Inteligência. Viram candidatos a inclusão só se não tiverem alerta grave nem qualidade frágil, se não forem piores que a média dos seus ativos da mesma classe e se a sua estratégia previr a classe. Os demais aparecem como 'não incluir agora' ou 'sem avaliação', com o motivo.",
+                  "so_admin": false
+                }
+              ]
+            },
+            {
               "nome": "Visão geral da carteira",
               "resumo": "Resumo da carteira frente à estratégia",
-              "explicacao": "Caixa recolhida com o resumo da carteira (Patrimônio total, Rentabilidade, Renda gerada (12 meses), Ativos que merecem revisão, alocação atual contra o alvo, concentrações, alertas e próximos eventos), a estratégia usada como base, uma tabela com papel, peso e ação a considerar para cada ativo e a comparação com a carteira recomendada do Portfólio Global.",
+              "explicacao": "Caixa recolhida com o resumo da carteira (Patrimônio total, Rentabilidade, Renda gerada (12 meses), Ativos que merecem revisão, alocação atual contra o alvo, concentrações, alertas e próximos eventos), a estratégia usada como base e uma tabela com papel, peso e ação a considerar para cada ativo. A comparação com a carteira recomendada do Portfólio Global saiu daqui e fica no confronto logo acima.",
               "so_admin": false
             },
             {
