@@ -171,9 +171,24 @@ def test_resumo_para_tela_nos_tres_estados(monkeypatch):
     assert "pregão diário da B3 (COTAHIST) 2.480 até 07/11/2026" in conhecido
     assert "sem proventos" in conhecido and "não consultada: notícias" in conhecido
     assert conhecido.endswith(".")
+    # Sem linha nas lidas, mas o acervo de notícias não foi consultado: a tela
+    # não pode dizer "não tem"; diz o que ficou de fora.
     desconhecido = var.resumo_para_tela("b3", "XXXX3")
-    assert desconhecido == ("Varredura feita: o armazém local também não tem nenhuma linha "
-                            "sobre XXXX3 nas fontes consultadas.")
+    assert desconhecido == (
+        "Varredura de XXXX3: nenhuma linha nas 2 fontes consultadas; 1 fonte(s) não "
+        "consultada(s), então a ausência NÃO está confirmada. Não consultadas: "
+        "notícias do acervo local.")
+    # Todas as fontes lidas e vazias: aí sim a ausência é afirmada.
+    var._limpar_memoria()
+    completo = _inventario("b3", ["XXXX3"], tem=())
+    completo["fontes"]["noticias"]["estado"] = "lida"
+    monkeypatch.setattr(ar, "inventario_ativos", lambda classe, tickers: completo)
+    assert var.resumo_para_tela("b3", "XXXX3") == (
+        "Varredura de XXXX3: o armazém local NÃO tem nenhuma linha sobre este ativo em "
+        "nenhuma das 3 fontes consultadas.")
+    monkeypatch.setattr(ar, "inventario_ativos",
+                        lambda classe, tickers: _inventario(classe, list(tickers)))
+    var._limpar_memoria()
     monkeypatch.setattr(ar, "inventario_ativos", lambda classe, tickers: None)
     var._limpar_memoria()
     assert "túnel não configurado" in var.resumo_para_tela("b3", "PETR4")

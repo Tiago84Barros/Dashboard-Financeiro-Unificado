@@ -314,21 +314,31 @@ def conhece(inventario: Mapping, ticker: str) -> bool | None:
     return False if lidas else None
 
 
-def _veredito(inventario: Mapping, ticker: str) -> str:
+def veredito(inventario: Mapping, ticker: str, *, nomear_nao_lidas: bool = False) -> str:
+    """Uma frase: conhece / ausência confirmada / ausência NÃO confirmada /
+    nada consultado. ``nomear_nao_lidas`` acrescenta quais fontes ficaram de
+    fora -- para a tela, que não lista as fontes linha a linha como o prompt."""
     lidas, nao_lidas = _fontes_lidas(inventario)
+    fontes = inventario.get("fontes") or {}
+    nomes = ("" if not (nomear_nao_lidas and nao_lidas) else
+             " Não consultadas: " + ", ".join(
+                 str(fontes[c].get("rotulo") or c) for c, _ in nao_lidas) + ".")
     dados = (inventario.get("ativos") or {}).get(str(ticker).upper()) or {}
     com_linha = [c for c in lidas if int((dados.get(c) or {}).get("n") or 0) > 0]
     if com_linha:
         return (f"o armazém local CONHECE este ativo ({len(com_linha)} de {len(lidas)} "
-                "fontes consultadas com linha).")
+                f"fontes consultadas com linha).{nomes}")
     if not lidas:
         return ("nenhuma fonte pôde ser consultada; a existência do dado no armazém "
-                "está em aberto -- não trate como ausência.")
+                f"está em aberto -- não trate como ausência.{nomes}")
     if nao_lidas:
         return (f"nenhuma linha nas {len(lidas)} fontes consultadas; {len(nao_lidas)} "
-                "fonte(s) não consultada(s), então a ausência NÃO está confirmada.")
+                f"fonte(s) não consultada(s), então a ausência NÃO está confirmada.{nomes}")
     return (f"o armazém local NÃO tem nenhuma linha sobre este ativo em nenhuma das "
             f"{len(lidas)} fontes consultadas.")
+
+
+_veredito = veredito
 
 
 CABECALHO = (

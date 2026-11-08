@@ -36,6 +36,7 @@ from core.armazem_inventario import (
     normalizar_tickers,
     resumo_curto,
     resumo_para_prompt,
+    veredito,
 )
 from core.contexto_mercado import REGRA_VARREDURA_ARMAZEM  # noqa: F401 - reexportada
 
@@ -242,14 +243,15 @@ def resumo_para_tela(classe: str, ticker: str) -> str:
     if inv is None:
         return ("Armazém local não consultado (túnel não configurado neste ambiente): "
                 f"a existência de dado sobre {tk[0]} lá fica em aberto.")
-    sabe = conhece(inv, tk[0])
-    if sabe is False:
-        return (f"Varredura feita: o armazém local também não tem nenhuma linha sobre "
-                f"{tk[0]} nas fontes consultadas.")
-    prefixo = ("Varredura feita: o armazém local conhece este ativo. "
-               if sabe else "Varredura sem fonte consultada. ")
-    curto = resumo_curto(inv, tk[0])
-    return prefixo + curto[:1].upper() + curto[1:] + "."
+    if conhece(inv, tk[0]):
+        curto = resumo_curto(inv, tk[0])
+        return ("Varredura feita: o armazém local conhece este ativo. "
+                + curto[:1].upper() + curto[1:] + ".")
+    # Sem linha nas fontes lidas: o veredito separa "ausência confirmada" de
+    # "fonte(s) não consultada(s)" e nomeia quais ficaram de fora. Dizer só
+    # "não tem" com o banco de mercado em falha esconderia que preço e
+    # fundamentos nem foram olhados.
+    return f"Varredura de {tk[0]}: " + veredito(inv, tk[0], nomear_nao_lidas=True)
 
 
 def nota_para_lacuna(entidade: str | None) -> str:
