@@ -74,7 +74,9 @@ REGRA_REFERENCIA = (
     "modelo do app. \"confronto\" traz a comparação já feita em código: "
     "qualidade média da carteira e do modelo (mesma régua da Inteligência "
     "nos dois lados), divergências acentuadas com a conclusão (mudar ou "
-    "manter a escolha do investidor) e candidatos a inclusão. Essas "
+    "manter a escolha do investidor), candidatos a inclusão e substituições "
+    "sugeridas (ativo do modelo melhor que um da carteira, com o modo: "
+    "vender e comprar, ou aos poucos pelos aportes). Essas "
     "conclusões já respeitam o veredito; cite-as em \"portfolio_impact\" "
     "com os números, sem trocá-las por outras e sem usá-las para escolher "
     "\"action_to_consider\". Estado indisponível não é sinal de nada.")
@@ -226,7 +228,10 @@ def montar(snapshots: dict[str, dict[str, dict]], alocacao: dict,
             classe, nome, anterior = modelo[tk]
             peso += anterior
         modelo[tk] = (classe, nome, peso)
-        setor = linha.get("sector_raw") or linha.get("sector")
+        # Só o setor bruto do snapshot: a chave canônica (``other``,
+        # ``real_estate``...) não se compara com o setor da carteira, e
+        # "other" quer dizer desconhecido, não um setor.
+        setor = str(linha.get("sector_raw") or "").strip()
         if setor and tk not in setores:
             setores[tk] = str(setor)
 
