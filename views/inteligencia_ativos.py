@@ -967,6 +967,43 @@ def cartao_candidatos(c: conf_.Confronto) -> str:
     return html
 
 
+_COR_SUBSTITUICAO = {conf_.TROCA: "var(--app-warning)",
+                     conf_.TROCA_GRADUAL: "var(--app-info)"}
+
+
+def _item_substituicao(x: conf_.Substituicao) -> str:
+    cor = _COR_SUBSTITUICAO[x.modo]
+    chip = (f'<span style="font-size:0.72rem;font-weight:700;padding:1px 8px;'
+            f'border-radius:999px;border:1px solid {cor};color:{cor}">'
+            f'{escape(x.rotulo_modo)}</span>')
+    pesos = (f"Sai {x.sai}: {_pct(x.peso_real_sai)} da base · entra "
+             f"{x.entra}: {_pct(x.peso_modelo_entra)} no modelo · "
+             + ("mesmo segmento" if x.mesmo_segmento else "segmento diferente"))
+    return ('<div style="margin:10px 0;padding-top:8px;border-top:1px solid '
+            'var(--app-border)">'
+            f'<div><strong>{escape(x.sai)}</strong> → <strong>'
+            f'{escape(x.entra)}</strong> · {escape(x.nome_entra)} {chip}</div>'
+            f'<div style="font-size:0.82rem;color:var(--app-muted)">'
+            f'{escape(pesos)}</div>'
+            f'<div style="margin-top:4px">{escape(x.texto)}</div>'
+            '<div style="font-size:0.84rem;color:var(--app-muted);'
+            f'margin:2px 0 0 12px">{_lista(x.motivos)}</div></div>')
+
+
+def cartao_substituicoes(c: conf_.Confronto) -> str:
+    """Cada ativo da carteira que um ativo do modelo supera: a troca, o modo
+    (vender e comprar, ou aos poucos pelos aportes) e o porquê. Puro."""
+    if not c.substituicoes:
+        return escape("Nenhum ativo avaliado do modelo supera os da sua "
+                      "carteira na mesma classe: nenhuma troca sugerida.")
+    return "".join(_item_substituicao(x) for x in c.substituicoes) + _nota(
+        "Mesmo segmento: melhor na qualidade e não pior no preço nem no "
+        "risco, métrica a métrica, a mesma régua do \"Se sair, qual "
+        "substituir?\". Segmentos diferentes: um nível de qualidade acima. "
+        "A troca só vende quando a Inteligência já indica vender, substituir "
+        "ou reduzir, ou a qualidade do ativo é frágil.")
+
+
 def _render_liberada(liberacao: portao.Liberacao, carteira: dict,
                      proventos: dict | None = None) -> None:
     detalhe_tecnico(f"Premissa: estratégia versão {liberacao.politica.version}",
@@ -1042,31 +1079,43 @@ _AVALIACAO_MODELO_KEY = "_ia_avaliacao_modelo_cache"
 _CONFRONTO_MEMO_KEY = "_ia_confronto_memo"
 
 
+def _ler_ativo_do_modelo(linha: refm.LinhaAtivo) -> tuple[object, dict]:
+    """(``Avaliacao``, métricas de pares) de um ativo do modelo, pelos mesmos
+    provedores da Inteligência (``veredito.insumos_do_ativo``). A avaliação
+    decide se ele pode entrar; as métricas alimentam a comparação métrica a
+    métrica das substituições (``recomendacao.confrontar``)."""
+    from core.inteligencia_ativos import avaliacao as av_
+    insumos = vd.insumos_do_ativo(linha.ticker, linha.nome, linha.setor,
+                                  mercado=linha.classe_modelo or "b3")
+    return (av_.avaliar(insumos),
+            conf_.metricas_de_pares(insumos.pares.dados))
+
+
 def _avaliacoes_do_modelo(ref: refm.ReferenciaModelo
-                          ) -> dict[str, object]:
-    """A ``Avaliacao`` da Inteligência para os ativos do modelo fora da
-    carteira (``conf_.a_avaliar``), lembrada na sessão pelo prazo da análise.
-    Falha vira ``None`` (sem avaliação) e não é lembrada: o próximo rerun
+                          ) -> tuple[dict[str, object], dict[str, dict]]:
+    """(avaliação, métricas) dos ativos do modelo fora da carteira
+    (``conf_.a_avaliar``), lembradas na sessão pelo prazo da análise. Falha
+    vira avaliação ``None`` (sem avaliação) e não é lembrada: o próximo rerun
     tenta de novo."""
     cache = st.session_state.setdefault(_AVALIACAO_MODELO_KEY, {})
     agora = time.monotonic()
-    saida: dict[str, object] = {}
+    avals: dict[str, object] = {}
+    metricas: dict[str, dict] = {}
     for linha in conf_.a_avaliar(ref):
         lembrado = cache.get(linha.ticker)
         if lembrado and lembrado[0] > agora:
-            saida[linha.ticker] = lembrado[1]
+            avals[linha.ticker], metricas[linha.ticker] = lembrado[1], lembrado[2]
             continue
         try:
-            av = vd.avaliar_ativo(linha.ticker, linha.nome, linha.setor,
-                                  mercado=linha.classe_modelo or "b3")
+            av, met = _ler_ativo_do_modelo(linha)
         except Exception as exc:  # noqa: BLE001 — um ativo não derruba o confronto
             logger.warning("confronto: avaliação de %s falhou: %s",
                            linha.ticker, exc)
-            saida[linha.ticker] = None
+            avals[linha.ticker] = None
             continue
-        cache[linha.ticker] = (agora + _ANALISE_MEMO_TTL, av)
-        saida[linha.ticker] = av
-    return saida
+        cache[linha.ticker] = (agora + _ANALISE_MEMO_TTL, av, met)
+        avals[linha.ticker], metricas[linha.ticker] = av, met
+    return avals, metricas
 
 
 def _confronto_memo(resultado: dict, ref: refm.ReferenciaModelo,
@@ -1079,11 +1128,14 @@ def _confronto_memo(resultado: dict, ref: refm.ReferenciaModelo,
     if not ref.disponivel:
         confronto = conf_.indisponivel(ref.motivo)
     else:
+        avals, metricas = _avaliacoes_do_modelo(ref)
         confronto = conf_.montar(
-            ref, vd.vereditos_da_carteira(resultado),
-            _avaliacoes_do_modelo(ref),
+            ref, vd.vereditos_da_carteira(resultado), avals,
             alocacao_estrategia=ctx.alocacao_alvo,
-            limite_por_ativo=ctx.limite_por_ativo)
+            limite_por_ativo=ctx.limite_por_ativo,
+            analises={a.ativo.ticker: a
+                      for a in resultado.get("analises") or ()},
+            metricas_modelo=metricas)
     st.session_state[_CONFRONTO_MEMO_KEY] = (resultado, ref, confronto)
     return confronto
 
@@ -1099,6 +1151,10 @@ def _render_confronto(confronto: conf_.Confronto) -> None:
     with st.expander("⚖️ Divergências de peso e o porquê "
                      f"({len(confronto.divergencias)})"):
         st.markdown(cartao_divergencias(confronto), unsafe_allow_html=True)
+    n_subs = len(confronto.substituicoes)
+    with st.expander(f"🔁 Substituições sugeridas ({n_subs})",
+                     expanded=bool(n_subs)):
+        st.markdown(cartao_substituicoes(confronto), unsafe_allow_html=True)
     n_incluir = len(confronto.por_conclusao(conf_.INCLUIR))
     with st.expander("➕ Ativos do modelo fora da sua carteira "
                      f"({n_incluir} candidato{'s' if n_incluir != 1 else ''})"):
@@ -1163,6 +1219,11 @@ def _render_painel(liberacao: portao.Liberacao, carteira: dict,
             _item_divergencia(divergencia, escape(
                 f"Real {_pct(divergencia.peso_real)} · modelo "
                 f"{_pct(divergencia.peso_modelo)}"))), unsafe_allow_html=True)
+    troca = confronto.substituicao_de(analise_.ativo.ticker)
+    if troca is not None:
+        st.markdown(_cartao_ref("Substituição sugerida · " + troca.sai,
+                                _item_substituicao(troca)),
+                    unsafe_allow_html=True)
     st.markdown("#### Portfolio Fit")
     leitura = tela_fit.render(analise_, ctx, {
         **referencia.para_llm(analise_.ativo.ticker),

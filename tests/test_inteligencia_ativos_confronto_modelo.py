@@ -270,16 +270,173 @@ def test_cartoes_escapam_e_mostram_os_numeros():
 def test_avaliacoes_do_modelo_lembra_sucesso_e_nao_lembra_falha(monkeypatch):
     chamadas = []
 
-    def avaliar(tk, nome=None, setor=None, *, mercado="b3"):
-        chamadas.append(tk)
-        if tk == "AAPL" and chamadas.count("AAPL") == 1:
+    def ler(linha):
+        chamadas.append(linha.ticker)
+        if linha.ticker == "AAPL" and chamadas.count("AAPL") == 1:
             raise ConnectionError("sem rede")
-        return _av()
-    monkeypatch.setattr(tela.vd, "avaliar_ativo", avaliar)
+        return _av(), {"roe": 20.0}
+    monkeypatch.setattr(tela, "_ler_ativo_do_modelo", ler)
     monkeypatch.setattr(tela.st, "session_state", {})
     ref = _ref()
-    primeira = tela._avaliacoes_do_modelo(ref)
-    assert primeira["AAPL"] is None and primeira["VALE3"] is not None
-    segunda = tela._avaliacoes_do_modelo(ref)
-    assert segunda["AAPL"] is not None
+    avals, metricas = tela._avaliacoes_do_modelo(ref)
+    assert avals["AAPL"] is None and avals["VALE3"] is not None
+    assert "AAPL" not in metricas and metricas["VALE3"] == {"roe": 20.0}
+    avals, _ = tela._avaliacoes_do_modelo(ref)
+    assert avals["AAPL"] is not None
     assert chamadas.count("VALE3") == 1 and chamadas.count("AAPL") == 2
+
+
+# -- substituições --------------------------------------------------------------
+
+def _linhas(tk, valores):
+    return [{"ativo": tk, "chave": k, "metrica": k.upper(), "unidade": "pct",
+             "valor": v} for k, v in valores.items()]
+
+
+def _analise(tk, valores, *, pares=(), setor="Mineração", vm=300.0,
+             vi=200.0):
+    """O que ``recomendacao.confrontar`` e ``custo_da_venda`` leem de uma
+    ``AnaliseAtivo``: a comparação com os pares e a posição."""
+    dados = {"ativo": tk, "tipo": "acao", "moeda": "BRL",
+             "grupo": {"nivel": "segmento", "valor": setor, "pares": [
+                 {"ticker": p, "metricas": m} for p, m in pares]},
+             "linhas": _linhas(tk, valores)}
+    ativo = SimpleNamespace(ticker=tk, nome=tk, setor=setor, moeda="BRL",
+                            classe_politica="acoes_br", valor_mercado=vm,
+                            valor_investido=vi)
+    return SimpleNamespace(ativo=ativo, pares=SimpleNamespace(dados=dados))
+
+
+PETR = {"roe": 10.0, "margem_liquida": 8.0, "p_l": 9.0, "p_vp": 1.5,
+        "volatilidade": 30.0}
+VALE_MELHOR = {"roe": 18.0, "margem_liquida": 12.0, "p_l": 7.0, "p_vp": 1.2,
+               "volatilidade": 25.0}
+
+
+def _conf_sub(codigo="manter", qual_sai=av_.ADEQUADA, qual_vale=av_.ADEQUADA,
+              *, pares=(("VALE3", VALE_MELHOR),), metricas=None,
+              setor_sai="Mineração", **kw):
+    v = {"PETR4": _vered("PETR4", codigo, _av(qual_sai)),
+         "ITSA4": _vered("ITSA4", "manter", _av(av_.FORTE))}
+    avals = {"VALE3": _av(qual_vale), "WEGE3": _av(av_.FRAGIL),
+             "AAPL": _av(av_.FORTE)}
+    analises = {"PETR4": _analise("PETR4", PETR, pares=pares,
+                                  setor=setor_sai)}
+    return _conf(v, avals, analises=analises,
+                 metricas_modelo=metricas or {}, **kw)
+
+
+def test_par_do_mesmo_segmento_claramente_superior_vira_troca_gradual():
+    c = _conf_sub()
+    x = c.substituicao_de("PETR4")
+    assert x is not None and x.entra == "VALE3" and x.mesmo_segmento
+    # A Inteligência mantém PETR4: troca pelos aportes, sem vender.
+    assert x.modo == cf.TROCA_GRADUAL and "Vender agora não se justifica" in x.texto
+    assert any(m.startswith("Comparação: VALE3 supera em") for m in x.motivos)
+    assert any("não no fato de ele estar no modelo" in m for m in x.motivos)
+    # A divergência e o candidato apontam a troca.
+    assert any("Substituição sugerida: VALE3" in m
+               for m in c.da_carteira("PETR4").motivos)
+    vale = next(d for d in c.candidatos if d.ticker == "VALE3")
+    assert vale.conclusao == cf.INCLUIR and "no lugar de PETR4" in vale.texto
+
+
+def test_venda_da_inteligencia_vira_troca_com_custo():
+    x = _conf_sub("vender").substituicao_de("PETR4")
+    assert x.modo == cf.TROCA and x.texto.startswith("Trocar PETR4 por VALE3")
+    assert any("Venda de 100% da posição" in m for m in x.motivos)
+
+
+def test_reduzir_parcial_troca_so_a_proporcao():
+    v = _vered("PETR4", "reduzir_parcial", _av(), proporcao=0.3)
+    c = cf.montar(_ref(), {"PETR4": v}, {"VALE3": _av()},
+                  alocacao_estrategia=ESTRATEGIA,
+                  analises={"PETR4": _analise("PETR4", PETR, pares=(
+                      ("VALE3", VALE_MELHOR),))})
+    x = c.substituicao_de("PETR4")
+    assert x.modo == cf.TROCA and "30% da posição de PETR4" in x.texto
+    assert any("Venda de 30% da posição" in m for m in x.motivos)
+
+
+def test_qualidade_fragil_vira_troca_mesmo_com_manter():
+    x = _conf_sub("manter", qual_sai=av_.FRAGIL).substituicao_de("PETR4")
+    assert x.modo == cf.TROCA
+
+
+def test_par_que_nao_e_claramente_superior_nao_troca():
+    pior_no_preco = {**VALE_MELHOR, "p_l": 20.0, "p_vp": 3.0}
+    assert _conf_sub(pares=(("VALE3", pior_no_preco),)
+                     ).substituicao_de("PETR4") is None
+
+
+def test_qualidade_menor_nunca_troca():
+    assert _conf_sub(qual_sai=av_.FORTE, qual_vale=av_.ADEQUADA
+                     ).substituicao_de("PETR4") is None
+
+
+def test_mesmo_setor_fora_dos_pares_usa_as_metricas_do_proprio_ativo():
+    # O setor do snapshot é "x"; a comparação ignora caixa e espaço.
+    c = _conf_sub(pares=(), setor_sai=" X ", metricas={"VALE3": VALE_MELHOR})
+    x = c.substituicao_de("PETR4")
+    assert x is not None and x.mesmo_segmento
+    assert any("supera em" in m for m in x.motivos)
+
+
+def test_setores_diferentes_so_trocam_com_qualidade_acima():
+    # Setor do snapshot é "x"; PETR4 é Petróleo: segmentos diferentes.
+    igual = _conf_sub(pares=(), setor_sai="Petróleo",
+                      metricas={"VALE3": VALE_MELHOR})
+    assert igual.substituicao_de("PETR4") is None
+    acima = _conf_sub(pares=(), setor_sai="Petróleo", qual_vale=av_.FORTE,
+                      metricas={"VALE3": VALE_MELHOR})
+    x = acima.substituicao_de("PETR4")
+    assert x is not None and not x.mesmo_segmento
+    assert any("Segmentos diferentes" in m for m in x.motivos)
+    assert not any(m.startswith("Comparação:") for m in x.motivos)
+
+
+def test_ativo_que_a_inteligencia_manda_comprar_nao_e_trocado():
+    assert _conf_sub("comprar").substituicao_de("PETR4") is None
+
+
+def test_entra_so_quem_passa_no_limite_e_na_estrategia():
+    # Frágil (WEGE3) nunca entra; classe zerada na estratégia também não.
+    assert not cf.elegivel_para_entrar(_av(av_.FRAGIL), None)
+    assert not cf.elegivel_para_entrar(_av(criticos=("dívida",)), None)
+    assert not cf.elegivel_para_entrar(_av(), 0.0)
+    assert cf.elegivel_para_entrar(_av(av_.FORTE), 10.0)
+    assert all(x.entra != "WEGE3" for x in _conf_sub().substituicoes)
+
+
+def test_substituicao_nunca_contradiz_a_decisao():
+    """Venda só sai quando a Inteligência já deixa o ativo (vender,
+    substituir, reduzir) ou a qualidade é frágil; nos demais, aportes."""
+    for codigo in ("manter", "acompanhar", "rebalancear", "reduzir_parcial",
+                   "vender", "substituir"):
+        x = _conf_sub(codigo).substituicao_de("PETR4")
+        vende = codigo in ("vender", "substituir", "reduzir_parcial")
+        assert x.modo == (cf.TROCA if vende else cf.TROCA_GRADUAL), codigo
+
+
+def test_metricas_de_pares_le_o_valor_do_proprio_ativo():
+    dados = _analise("VALE3", {"roe": 18.0, "p_l": None}).pares.dados
+    assert cf.metricas_de_pares(dados) == {"roe": 18.0}
+    assert cf.metricas_de_pares(None) == {}
+
+
+def test_substituicoes_vao_para_a_llm_e_para_a_tela():
+    c = _conf_sub()
+    llm = c.para_llm("PETR4")
+    assert llm["substituicao_do_ativo"]["entra"] == "VALE3"
+    assert llm["substituicoes_sugeridas"][0]["sai"] == "PETR4"
+    assert "nenhum ativo do modelo" in c.para_llm("ITSA4")["substituicao_do_ativo"]
+    html = tela.cartao_substituicoes(c)
+    assert "PETR4" in html and "VALE3" in html and "pelos aportes" in html
+    # No confronto padrão, ITSA4 (adequada) perde para VALE3 (forte) num
+    # nível de qualidade: troca entre segmentos, pelos aportes.
+    itsa = _conf().substituicao_de("ITSA4")
+    assert itsa.entra == "VALE3" and itsa.modo == cf.TROCA_GRADUAL
+    fortes = {tk: _vered(tk, "manter", _av(av_.FORTE))
+              for tk in ("PETR4", "ITSA4", "HGLG11")}
+    vazio = tela.cartao_substituicoes(_conf(fortes))
+    assert "nenhuma troca sugerida" in vazio

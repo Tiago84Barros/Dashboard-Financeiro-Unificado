@@ -1435,6 +1435,12 @@
                   "so_admin": false
                 },
                 {
+                  "nome": "Substituições sugeridas",
+                  "resumo": "Ativo do modelo melhor que um seu, e por quê",
+                  "explicacao": "Quando um ativo da carteira sugerida é melhor que um dos seus na mesma classe, a tela sugere a troca e explica por quê. No mesmo segmento, 'melhor' é a mesma comparação do 'Se sair, qual substituir?': melhor em qualidade e não pior em preço nem em risco, indicador a indicador. Entre segmentos diferentes, só conta qualidade claramente maior. Se a Inteligência ainda recomenda manter o seu ativo, a troca é aos poucos, levando os próximos aportes para o novo; só sugere vender, com o custo e o imposto estimados, quando a Inteligência já indica vender, substituir ou reduzir, ou quando a qualidade do seu ativo é frágil.",
+                  "so_admin": false
+                },
+                {
                   "nome": "Ativos do modelo fora da sua carteira",
                   "resumo": "Incluir ou não, e por quê",
                   "explicacao": "Os ativos do modelo que você não tem, avaliados com a mesma régua da Inteligência. Viram candidatos a inclusão só se não tiverem alerta grave nem qualidade frágil, se não forem piores que a média dos seus ativos da mesma classe e se a sua estratégia previr a classe. Os demais aparecem como 'não incluir agora' ou 'sem avaliação', com o motivo.",

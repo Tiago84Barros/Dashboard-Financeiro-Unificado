@@ -2648,10 +2648,10 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
             "Confronta sempre a carteira com a carteira recomendada do Portfólio Global: a "
             "qualidade média dos dois lados (de 1, frágil, a 3, forte, ponderada pelo peso), o "
             "peso com alerta eliminatório, a aderência ao modelo e a distribuição por classe "
-            "(real, modelo e a sua estratégia). Dois expanders detalham as divergências de "
-            "peso de cada ativo e os ativos do modelo que faltam na carteira, cada um com a "
-            "conclusão — mudança sugerida, manter a sua escolha, candidato a inclusão ou não "
-            "incluir agora — e os motivos.",
+            "(real, modelo e a sua estratégia). Três expanders detalham as divergências de "
+            "peso de cada ativo, as substituições sugeridas — quando um ativo do modelo é "
+            "melhor que um da carteira — e os ativos do modelo que faltam na carteira, cada um "
+            "com a conclusão e os motivos.",
             (
                 "core/inteligencia_ativos/confronto_modelo.py (puro); a tela é "
                 "views/inteligencia_ativos.py::_render_confronto",
@@ -2666,6 +2666,13 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
                 "prevista na sua estratégia",
                 "Classe: a sua estratégia é a premissa; perto dela, manter, longe dela, "
                 "rebalancear pelos aportes",
+                "Substituição: no mesmo segmento, a régua do 'Se sair, qual substituir?' "
+                "(recomendacao.confrontar: melhor na qualidade e não pior no preço nem no "
+                "risco, com três métricas no mínimo); entre segmentos, um nível de qualidade "
+                "acima. Uma troca por ativo, nunca para quem a Inteligência manda comprar",
+                "A troca só vende (com o custo e o IR estimados) quando a Inteligência já "
+                "indica vender, substituir ou reduzir, ou a qualidade é frágil; nos demais "
+                "casos é pelos aportes, sem vender",
             ),
             "O modelo é montado em parte com o próprio veredito desta aba: usá-lo como "
             "argumento seria confirmação circular. Por isso o confronto compara a qualidade "
