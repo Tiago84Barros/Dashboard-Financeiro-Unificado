@@ -976,9 +976,10 @@ def _item_substituicao(x: conf_.Substituicao) -> str:
     chip = (f'<span style="font-size:0.72rem;font-weight:700;padding:1px 8px;'
             f'border-radius:999px;border:1px solid {cor};color:{cor}">'
             f'{escape(x.rotulo_modo)}</span>')
+    entra = (f"{_pct(x.peso_modelo_entra)} no modelo"
+             if x.origem == conf_.MODELO else "par do segmento, fora do modelo")
     pesos = (f"Sai {x.sai}: {_pct(x.peso_real_sai)} da base · entra "
-             f"{x.entra}: {_pct(x.peso_modelo_entra)} no modelo · "
-             + ("mesmo segmento" if x.mesmo_segmento else "segmento diferente"))
+             f"{x.entra}: {entra} · mesmo segmento")
     return ('<div style="margin:10px 0;padding-top:8px;border-top:1px solid '
             'var(--app-border)">'
             f'<div><strong>{escape(x.sai)}</strong> → <strong>'
@@ -990,20 +991,39 @@ def _item_substituicao(x: conf_.Substituicao) -> str:
             f'margin:2px 0 0 12px">{_lista(x.motivos)}</div></div>')
 
 
+def _item_sem_substituto(x: conf_.SemSubstituto) -> str:
+    alternativas = (
+        '<div style="font-size:0.84rem;color:var(--app-muted);'
+        f'margin:2px 0 0 12px">{_lista(x.alternativas)}</div>'
+        if x.alternativas else "")
+    return ('<div style="margin:10px 0;padding-top:8px;border-top:1px solid '
+            'var(--app-border)">'
+            f'<div><strong>{escape(x.sai)}</strong> · {escape(x.nome_sai)} '
+            f'{_chip_conclusao(conf_.SEM_AVALIACAO)}</div>'
+            f'<div style="margin-top:4px">{escape(x.texto)}</div>'
+            f'{alternativas}</div>')
+
+
 def cartao_substituicoes(c: conf_.Confronto) -> str:
-    """Cada ativo da carteira que um ativo do modelo supera: a troca, o modo
-    (vender e comprar, ou aos poucos pelos aportes) e o porquê. Puro."""
-    if not c.substituicoes:
-        return escape("Nenhum ativo avaliado do modelo supera os da sua "
-                      "carteira na mesma classe: nenhuma troca sugerida.")
-    return "".join(_item_substituicao(x) for x in c.substituicoes) + _nota(
-        "Mesmo segmento: melhor na qualidade e não pior no preço nem no "
-        "risco, métrica a métrica, a mesma régua do \"Se sair, qual "
-        "substituir?\". Segmentos diferentes (os dois setores conhecidos): um "
-        "nível de qualidade acima; setor desconhecido não troca. "
-        "No mesmo segmento, sem métricas para comparar, não há troca. A troca "
-        "só vende quando a Inteligência já indica vender, substituir ou "
-        "reduzir.")
+    """Cada ativo da carteira que um ativo do mesmo segmento supera: a troca,
+    de onde vem o substituto, o modo (vender e comprar, ou aos poucos pelos
+    aportes) e o porquê; e, para quem a Inteligência já questiona sem par
+    superior, as alternativas do segmento. Puro."""
+    if not c.substituicoes and not c.sem_substituto:
+        return escape("Nenhum ativo do mesmo segmento supera os da sua "
+                      "carteira: nenhuma troca sugerida.")
+    html = "".join(_item_substituicao(x) for x in c.substituicoes)
+    if c.sem_substituto:
+        html += ('<div style="margin-top:12px;font-weight:700">Sem substituto '
+                 'claramente superior no segmento</div>'
+                 + "".join(_item_sem_substituto(x) for x in c.sem_substituto))
+    return html + _nota(
+        "Troca só dentro do mesmo segmento, pela régua do \"Se sair, qual "
+        "substituir?\": melhor na qualidade e não pior no preço nem no "
+        "risco, métrica a métrica. O substituto vem do Portfólio Global ou, "
+        "sem equivalente lá, dos pares do ativo fora da carteira (esses, só "
+        "pelas métricas publicadas). A troca só vende quando a Inteligência "
+        "já indica vender, substituir ou reduzir.")
 
 
 def _render_liberada(liberacao: portao.Liberacao, carteira: dict,
@@ -1154,7 +1174,7 @@ def _render_confronto(confronto: conf_.Confronto) -> None:
                      f"({len(confronto.divergencias)})"):
         st.markdown(cartao_divergencias(confronto), unsafe_allow_html=True)
     n_subs = len(confronto.substituicoes)
-    with st.expander(f"🔁 Substituições sugeridas ({n_subs})",
+    with st.expander(f"🔁 Substituições sugeridas no mesmo segmento ({n_subs})",
                      expanded=bool(n_subs)):
         st.markdown(cartao_substituicoes(confronto), unsafe_allow_html=True)
     n_incluir = len(confronto.por_conclusao(conf_.INCLUIR))
