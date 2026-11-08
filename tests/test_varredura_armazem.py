@@ -115,6 +115,17 @@ def test_tunel_ausente_e_tunel_caido_dizem_nao_consultado(monkeypatch):
     assert var.resumo_para_tela("us", "AAPL").startswith("Armazém local não consultado (")
 
 
+def test_anexar_varredura_cola_o_bloco_ao_detalhe(monkeypatch):
+    monkeypatch.setattr(var, "_engines_diretas",
+                        lambda: {"mercado": None, "noticias": None, "memoria": None})
+    monkeypatch.setattr(ar, "inventario_ativos",
+                        lambda classe, tickers: _inventario(classe, list(tickers)))
+    texto = var.anexar_varredura("b3", ["PETR4"], "DETALHE")
+    assert texto.startswith("DETALHE\n\nVARREDURA DO ARMAZÉM LOCAL (lido pelo túnel)")
+    assert var.anexar_varredura("b3", ["PETR4"], "").startswith("VARREDURA DO ARMAZÉM LOCAL")
+    assert var.anexar_varredura("b3", [], "DETALHE") == "DETALHE"
+
+
 def test_classe_desconhecida_levanta_em_vez_de_calar():
     with pytest.raises(ValueError):
         var.bloco_varredura("cripto", ["BTC"])

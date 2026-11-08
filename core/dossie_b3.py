@@ -1054,6 +1054,15 @@ def contexto_mercado_para_parecer(tk: str) -> str:
     except Exception as exc:  # noqa: BLE001
         logger.exception("detalhe do armazém do parecer %s falhou", tk)
         partes.append(f"DETALHE DO ARMAZÉM: falha ao montar ({type(exc).__name__}).")
+    try:
+        # O que mais o armazém tem (ou não tem) do papel, fonte por fonte.
+        # Decisão do usuário de 08/11/2026: entra também no prompt que veta,
+        # com a trava da REGRA_VARREDURA_ARMAZEM (situa, nunca sustenta veto).
+        from core.varredura_armazem import bloco_varredura
+        partes.append(bloco_varredura("b3", [tk]))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("varredura do armazém do parecer %s falhou", tk)
+        partes.append(f"VARREDURA DO ARMAZÉM: falha ao montar ({type(exc).__name__}).")
     return "\n\n".join(p for p in partes if p and p.strip())
 
 

@@ -37,6 +37,10 @@ from core.armazem_inventario import (
     resumo_curto,
     resumo_para_prompt,
 )
+from core.contexto_mercado import REGRA_VARREDURA_ARMAZEM  # noqa: F401 - reexportada
+
+__all__ = ["REGRA_VARREDURA_ARMAZEM", "anexar_varredura", "bloco_varredura",
+           "inventario", "nota_para_lacuna", "resumo_para_tela"]
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +52,6 @@ _trava = threading.Lock()
 #: de um ativo não depender de quais outros foram lidos junto.
 _memoria: dict[tuple[str, str], tuple[float, dict, str]] = {}
 
-REGRA_VARREDURA_ARMAZEM = (
-    "VARREDURA DO ARMAZÉM: antes de afirmar que não há dado, histórico ou "
-    "informação sobre um ativo, leia a seção VARREDURA DO ARMAZÉM LOCAL. Só "
-    "afirme ausência quando ela diz que a fonte foi consultada e não tem linha. "
-    "Fonte não consultada ou varredura indisponível: diga \"não consultado nesta "
-    "resposta\", nunca \"não existe\". Quando a varredura mostra que o dado existe "
-    "no armazém e ele não veio a este contexto, diga isso e declare a lacuna."
-)
 
 
 def _relogio() -> float:
@@ -188,6 +184,17 @@ def bloco_varredura(classe: str, tickers: Iterable[str]) -> str:
                 f"ambiente. A existência de dado sobre {', '.join(alvo)} no armazém "
                 "está em aberto: diga \"não consultado\", não \"não existe\".")
     return resumo_para_prompt(inv, origem=origem)
+
+
+def anexar_varredura(classe: str, tickers: Iterable[str], texto: str) -> str:
+    """``texto`` (o detalhe do armazém já montado) seguido da varredura dos
+    mesmos ativos. É o que os prompts que vetam recebem: o detalhe diz os
+    números; a varredura diz o que mais o armazém tem e o que não tem. Nunca
+    levanta; sem tickers devolve ``texto`` intacto."""
+    bloco = bloco_varredura(classe, tickers)
+    if not bloco:
+        return texto
+    return f"{texto}\n\n{bloco}" if texto else bloco
 
 
 def resumo_para_tela(classe: str, ticker: str) -> str:
