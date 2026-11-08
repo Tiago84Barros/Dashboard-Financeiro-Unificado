@@ -190,7 +190,7 @@ def test_lacuna_da_llm_leva_a_varredura_da_entidade(monkeypatch, tmp_path):
     resposta = ('ok\n<lacunas>\n{"codigo": "b3.pregao", "mensagem": "sem liquidez diária", '
                 '"entidade": "PETR4"}\n{"codigo": "x", "mensagem": "sem Focus"}\n</lacunas>')
     assert processar_resposta(resposta, modulo="views.empresas_b3") == "ok"
-    eventos = [json.loads(l) for l in caminho.read_text(encoding="utf-8").splitlines()]
+    eventos = [json.loads(linha) for linha in caminho.read_text(encoding="utf-8").splitlines()]
     por_codigo = {e["codigo"]: e["mensagem"] for e in eventos}
     assert por_codigo["llm.b3.pregao"].startswith("sem liquidez diária [armazém local: pregão")
     assert por_codigo["llm.x"] == "sem Focus"  # sem entidade, sem nota

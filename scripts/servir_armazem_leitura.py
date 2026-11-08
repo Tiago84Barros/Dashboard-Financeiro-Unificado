@@ -273,7 +273,12 @@ def rota_ativo_inventario(params) -> tuple[int, dict]:
     máquina vira ``sem_banco`` na fonte, não 503 na rota, para que as fontes
     dos outros bancos ainda respondam.
     """
-    from core.armazem_inventario import CLASSES, TICKERS_MAX, ler_inventario, normalizar_tickers
+    from core.armazem_inventario import (
+        CLASSES,
+        TICKERS_MAX,
+        ler_inventario,
+        normalizar_tickers,
+    )
 
     classe = str(params.get("classe", [""])[0] or "").strip().lower()
     if classe not in CLASSES:
