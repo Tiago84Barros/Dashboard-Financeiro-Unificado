@@ -251,30 +251,23 @@
         {
           "nome": "Resumo do Portfólio",
           "resumo": "Números da carteira e botões para salvar",
-          "explicacao": "Cartões com número de ações, nota média, maior posição, capital, setores e indústrias, seguidos dos botões de uso e de dois gráficos de alocação.",
+          "explicacao": "Cartões com número de ações, nota média, maior posição, capital, setores e indústrias, seguidos do botão de salvar, de uma frase que diz qual carteira está no banco hoje e se ela é a montada acima, e de dois gráficos de alocação.",
           "so_admin": false,
-          "fonte": "views/empresas_americanas.py:2037",
+          "fonte": "views/empresas_americanas.py:2025",
           "filhos": [
-            {
-              "nome": "Usar na Avaliação de Portfólio",
-              "resumo": "Envia a carteira para a próxima aba",
-              "explicacao": "Botão que guarda a carteira montada para a avaliação. Fica bloqueado quando a carteira não passa nas checagens. Atenção: pela leitura do código, a aba Avaliação de Portfólio lê apenas a carteira salva como padrão, não a enviada por este botão.",
-              "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2065"
-            },
             {
               "nome": "Salvar como carteira padrão",
               "resumo": "Grava a carteira para o Dashboard e a avaliação",
-              "explicacao": "Salva a carteira de forma permanente. Ela passa a aparecer no Dashboard Geral e é a que a aba Avaliação de Portfólio usa. Fica bloqueado quando a carteira não passa nas checagens.",
+              "explicacao": "Único botão da seção e o que grava: salva a carteira de forma permanente. Ela passa a aparecer no Dashboard Geral e no Portfólio Global e é a que a aba Avaliação de Portfólio usa. Fica bloqueado quando a carteira não passa nas checagens.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2072"
+              "fonte": "views/empresas_americanas.py:2060"
             },
             {
               "nome": "Histórico e restauração do Portfólio EUA",
               "resumo": "Volte a uma carteira salva antes",
               "explicacao": "Só aparece quando existem versões antigas. Escolha uma versão, marque a confirmação e clique em Restaurar versão selecionada para trocá-la pela atual.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:1415"
+              "fonte": "views/empresas_americanas.py:1440"
             },
             {
               "nome": "Alocação por ativo e Alocação por setor",
