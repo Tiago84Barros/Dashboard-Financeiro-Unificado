@@ -222,10 +222,10 @@ def test_papel_da_carteira_entra_no_universo_mesmo_com_vitrine_inativa(monkeypat
 
     class _ConnQueVe(_Conn):
         def execute(self, sql, *args, **kw):
-            if _rotulo(sql) == "EUA":
+            if ":carteira" in str(sql):
                 visto["sql"] = str(sql)
                 visto["params"] = args[0] if args else kw
-                return _Result(LINHAS["EUA"] + [
+                return _Result([
                     {"ticker": "FSS", "nome": "Federal Signal Corp", "setor": "Industrials"}])
             return super().execute(sql, *args, **kw)
 
@@ -234,10 +234,47 @@ def test_papel_da_carteira_entra_no_universo_mesmo_com_vitrine_inativa(monkeypat
             return _ConnQueVe(self._linhas, self._falhar)
 
     u, limitacoes = ue.carregar(engine=_EngineQueVe(LINHAS), usar_cache=False)
-    assert "is_active IS TRUE OR upper(symbol) = ANY(:carteira)" in visto["sql"]
+    assert "upper(symbol) = ANY(:carteira)" in visto["sql"]
+    assert "is_active" not in visto["sql"]  # detido entra mesmo inativo
     assert visto["params"] == {"carteira": ["FSS", "PETR4", "PODD"]}
     assert "FSS" in u.tickers and u.pais_por_ticker["FSS"] == "US"
+    assert "AAPL" in u.tickers  # a base compartilhada continua inteira
     assert not any("carteira" in texto for texto in limitacoes)
+
+
+def test_cache_compartilhado_nao_leva_a_carteira_de_um_usuario_ao_outro(monkeypatch):
+    """Dois usuários no mesmo processo do Streamlit: a base do universo é
+    uma só e fica em memória; os papéis detidos são de cada um e são lidos a
+    cada chamada. Guardar a soma serviria a carteira de A para B."""
+    from core.noticias import universo_coleta
+
+    carteiras = iter([("FSS",), ()])
+    monkeypatch.setattr(universo_coleta, "da_carteira",
+                        lambda engine=None: (next(carteiras), ""))
+    monkeypatch.setattr(universo_coleta, "dos_candidatos",
+                        lambda engine=None, excluir=(): ((), ""))
+    execucoes = {"base": 0, "detidos": 0}
+
+    class _ConnQueConta(_Conn):
+        def execute(self, sql, *args, **kw):
+            if ":carteira" in str(sql):
+                execucoes["detidos"] += 1
+                return _Result([{"ticker": "FSS", "nome": "Federal Signal Corp",
+                                 "setor": "Industrials"}])
+            if _rotulo(sql) == "EUA":
+                execucoes["base"] += 1
+            return super().execute(sql, *args, **kw)
+
+    class _EngineQueConta(_Engine):
+        def connect(self):
+            return _ConnQueConta(self._linhas, self._falhar)
+
+    engine = _EngineQueConta(LINHAS)
+    a, _ = ue.carregar(engine=engine, usar_cache=True)
+    b, _ = ue.carregar(engine=engine, usar_cache=True)
+    assert "FSS" in a.tickers and "FSS" not in b.tickers
+    assert "AAPL" in a.tickers and "AAPL" in b.tickers
+    assert execucoes == {"base": 1, "detidos": 1}  # base lida uma vez; carteira por chamada
 
 
 def test_carteira_ilegivel_vira_limitacao_e_o_universo_segue(monkeypatch):

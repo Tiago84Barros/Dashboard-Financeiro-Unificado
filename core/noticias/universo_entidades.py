@@ -77,19 +77,27 @@ _SQL_B3 = text("""
      WHERE a.is_active IS TRUE AND a.ticker IS NOT NULL
 """)
 
+_SQL_US = text("""
+    SELECT symbol AS ticker, COALESCE(name, symbol) AS nome,
+           COALESCE(sector, '') AS setor
+      FROM market_us.company_snapshots
+     WHERE is_active IS TRUE AND symbol IS NOT NULL
+""")
+
 # ``is_active`` cai para FALSE em toda linha que a última publicação da vitrine
 # não trouxe (``publish_us_snapshot._build_deactivate_stale``) -- é "não
 # republicada", não "deslistada". Em 08/11/2026 a FSS, da carteira, estava
 # assim: tinha valuation e valor de mercado, e nenhuma notícia dela era
 # atribuída ao ticker porque o universo não a conhecia. Papel que o usuário
-# detém ou estuda entra sempre; o filtro de atividade vale para o resto, que
-# é onde um nome de empresa morta viraria falso positivo.
-_SQL_US = text("""
+# detém ou estuda entra sempre, por esta consulta à parte; o filtro de
+# atividade vale para o resto, que é onde um nome de empresa morta viraria
+# falso positivo. À parte, e não na consulta acima, porque a base do universo
+# é a mesma para todo usuário e fica em memória; a carteira é de cada um.
+_SQL_US_DETIDOS = text("""
     SELECT symbol AS ticker, COALESCE(name, symbol) AS nome,
            COALESCE(sector, '') AS setor
       FROM market_us.company_snapshots
-     WHERE symbol IS NOT NULL
-       AND (is_active IS TRUE OR upper(symbol) = ANY(:carteira))
+     WHERE symbol IS NOT NULL AND upper(symbol) = ANY(:carteira)
 """)
 
 _SQL_FII = text("""
@@ -265,12 +273,15 @@ def carregar(*, engine=None, usar_cache: bool = True
     engasgou troca uma degradação por um apagão. Fonte que falha vira limitação
     escrita, e ``Universo`` vazio com limitação é diferente de universo vazio
     silencioso — o primeiro diz por que não sabe.
+
+    Duas partes, de propósito: a **base** (cadastros B3, EUA ativos, FIIs e
+    apelidos) é a mesma para todo usuário e fica em memória por :data:`TTL_S`;
+    os **papéis do usuário** (carteira e candidatos, que entram mesmo com a
+    vitrine inativa) são de cada um e são lidos a cada chamada. Guardar o
+    resultado já somado serviria a carteira de quem chamou primeiro a quem
+    chamasse depois, no mesmo processo do Streamlit.
     """
     agora = time.monotonic()
-    if usar_cache and _cache.get("universo") is not None:
-        if agora - _cache.get("em", 0.0) < TTL_S:
-            return _cache["universo"], _cache["limitacoes"]
-
     if engine is None:
         try:
             from core.database import get_engine
@@ -281,24 +292,74 @@ def carregar(*, engine=None, usar_cache: bool = True
     if engine is None:
         return UNIVERSO_VAZIO, ("universo de entidades: sem banco configurado",)
 
-    pares: dict[str, str] = {}
-    setores: dict[str, str] = {}
-    paises: dict[str, str] = {}
-    limitacoes: list[str] = []
-    contagem: dict[str, int] = {}
+    base = _cache.get("base") if usar_cache else None
+    if base is None or agora - _cache.get("em", 0.0) >= TTL_S:
+        base = _base_compartilhada(engine)
+        _cache["base"] = base
+        _cache["em"] = agora
+
+    pares = dict(base["pares"])
+    setores = dict(base["setores"])
+    paises = dict(base["paises"])
+    limitacoes = list(base["limitacoes"])
+    contagem = dict(base["contagem"])
+    mapa = base["mapa"]
 
     carteira, motivo_carteira = _tickers_do_usuario(engine)
     if motivo_carteira:
         limitacoes.append(
             f"tickers da carteira não acrescentados ao universo ({motivo_carteira}): "
             "papel detido com vitrine inativa fica sem atribuição de notícia")
-    params = {"EUA": {"carteira": list(carteira)}}
+    elif carteira:
+        try:
+            with engine.connect() as conn:
+                p, se, pa = _bloco(conn, _SQL_US_DETIDOS, "US", {"carteira": list(carteira)})
+        except Exception as exc:  # noqa: BLE001 - a base segue sem eles
+            causa = str(exc).splitlines()[0][:160]
+            logger.warning("Universo de entidades sem os papéis da carteira: %s", causa)
+            limitacoes.append(
+                f"tickers da carteira não acrescentados ao universo ({causa}): "
+                "papel detido com vitrine inativa fica sem atribuição de notícia")
+            p, se, pa = {}, {}, {}
+        novos = 0
+        for t, nome in p.items():
+            t2 = mapa.get(t, t)
+            if t2 not in pares:
+                novos += 1
+            pares.setdefault(t2, nome)
+            if t in se:
+                setores.setdefault(t2, se[t])
+            paises.setdefault(t2, pa[t])
+        contagem["carteira"] = novos
+
+    universo = Universo.de_pares(pares, setores, paises)
+    universo = _sem_nomes_genericos(universo)
+    universo = _com_apelidos(universo, pares)
+
+    if universo.vazio:
+        limitacoes.append(
+            "universo de entidades vazio: só tickers declarados pelo provedor "
+            "serão reconhecidos, e nenhum nome de empresa será casado")
+    else:
+        logger.info("Universo de entidades: %s ativos (%s)", len(pares),
+                    ", ".join(f"{k}={v}" for k, v in contagem.items()))
+    return universo, tuple(limitacoes)
+
+
+def _base_compartilhada(engine) -> dict:
+    """Cadastros que valem para todo usuário: B3, EUA ativos, FIIs e o mapa
+    de apelidos de ticker, já aplicado. É o que fica em memória."""
+    pares: dict[str, str] = {}
+    setores: dict[str, str] = {}
+    paises: dict[str, str] = {}
+    limitacoes: list[str] = []
+    contagem: dict[str, int] = {}
 
     for rotulo, sql, pais in (("B3", _SQL_B3, "BR"), ("EUA", _SQL_US, "US"),
                               ("FIIs", _SQL_FII, "BR")):
         try:
             with engine.connect() as conn:
-                p, s, pa = _bloco(conn, sql, pais, params.get(rotulo))
+                p, s, pa = _bloco(conn, sql, pais)
         except Exception as exc:  # noqa: BLE001 - fonte ausente é declarada
             causa = str(exc).splitlines()[0][:160]
             logger.warning("Universo de entidades sem %s: %s", rotulo, causa)
@@ -330,23 +391,8 @@ def carregar(*, engine=None, usar_cache: bool = True
         pares = {mapa.get(t, t): n for t, n in pares.items()}
         setores = {mapa.get(t, t): v for t, v in setores.items()}
         paises = {mapa.get(t, t): v for t, v in paises.items()}
-
-    universo = Universo.de_pares(pares, setores, paises)
-    universo = _sem_nomes_genericos(universo)
-    universo = _com_apelidos(universo, pares)
-
-    if universo.vazio:
-        limitacoes.append(
-            "universo de entidades vazio: só tickers declarados pelo provedor "
-            "serão reconhecidos, e nenhum nome de empresa será casado")
-    else:
-        logger.info("Universo de entidades: %s ativos (%s)", len(pares),
-                    ", ".join(f"{k}={v}" for k, v in contagem.items()))
-
-    _cache["universo"] = universo
-    _cache["limitacoes"] = tuple(limitacoes)
-    _cache["em"] = agora
-    return universo, tuple(limitacoes)
+    return {"pares": pares, "setores": setores, "paises": paises,
+            "limitacoes": tuple(limitacoes), "contagem": contagem, "mapa": mapa}
 
 
 def _com_apelidos(universo: Universo, pares: dict[str, str]) -> Universo:
