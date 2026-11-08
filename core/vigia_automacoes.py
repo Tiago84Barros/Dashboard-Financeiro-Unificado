@@ -225,6 +225,129 @@ def problema_atualidade_b3(avaliacao: dict | None) -> Problema | None:
 
 
 # --------------------------------------------------------------------------
+# Coleta de notícias (acervo local)
+# --------------------------------------------------------------------------
+#
+# Incidente de 07/10/2026: o Alpha Vantage, que trazia ~75% das notícias
+# americanas (70 a 175 por dia), caiu para 0 a 6 por dia de um dia para o
+# outro, e de 14 a 22/10 o coletor inteiro não rodou. Ninguém soube por um
+# mês: o coletor grava o estado de cada provedor em `noticias_coleta_estado`,
+# mas nada lia isso para avisar. Três perguntas, cada uma com seu limiar:
+#
+# 1. a coleta roda? -- última tentativa global há mais de COLETA_PARADA;
+# 2. o provedor responde? -- sem sucesso há DIAS_SEM_SUCESSO dias ou mais;
+# 3. o provedor rende? -- responde, mas os últimos DIAS_QUEDA dias completos
+#    ficaram abaixo de FRACAO_QUEDA do normal dele. É o caso de 07/10: a cota
+#    diária esgota cedo, as chamadas seguintes voltam vazias e contam como
+#    sucesso, e a pergunta 2 nunca dispararia sozinha.
+
+CHAVE_COLETA_NOTICIAS = "noticias:coleta"
+#: O ciclo mais lento da cadência é de horas; 26 h cobre um dia inteiro mais a
+#: folga de o vigia rodar no fim da tarde.
+COLETA_PARADA = timedelta(hours=26)
+DIAS_SEM_SUCESSO = 2
+DIAS_QUEDA = 2
+FRACAO_QUEDA = 0.2
+#: Provedor que rende menos que isto por dia no normal não é julgado pelo
+#: rendimento: com 3 notícias/dia, um dia com zero é acaso, não defeito.
+MIN_NORMAL_DIA = 10
+#: O "normal" é o percentil 75 dos dias de BASE_DIAS. Mediana curta faria a
+#: queda virar o novo normal em duas semanas e o vigia declararia "resolvido"
+#: um provedor que continua morto; com o p75 de 60 dias, isso leva ~45 dias.
+BASE_DIAS = 60
+
+
+def _como_data(valor) -> date:
+    """Chave do ``por_dia``: ``date`` do banco ou texto ISO de quem serializou."""
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    return date.fromisoformat(str(valor)[:10])
+
+
+def _p75(valores: list[int]) -> float:
+    ordem = sorted(valores)
+    if not ordem:
+        return 0.0
+    return float(ordem[min(len(ordem) - 1, int(round(0.75 * (len(ordem) - 1))))])
+
+
+def problemas_noticias(estados: dict[str, dict], por_dia: dict[str, dict],
+                       agora: datetime) -> tuple[list[Problema], set[str]]:
+    """Coleta parada, provedor falhando e provedor rendendo quase nada. Puro.
+
+    ``estados`` é ``noticias_coleta_estado`` por chave (``global`` e
+    ``provedor:<nome>``); ``por_dia`` é ``{provedor: {date: notícias novas}}``
+    contado por ``coletado_em`` em ``noticias_itens``. Só entra em
+    ``verificados`` o que se mediu: provedor sem linha de estado não é
+    declarado nem parado nem resolvido.
+    """
+    problemas: list[Problema] = []
+    verificados: set[str] = set()
+    glob = estados.get("global")
+    parada = False
+    if glob:
+        verificados.add(CHAVE_COLETA_NOTICIAS)
+        ultima = _instante(glob.get("ultima_tentativa"))
+        if ultima is None or agora - ultima > COLETA_PARADA:
+            parada = True
+            horas = "?" if ultima is None else int((agora - ultima).total_seconds() // 3600)
+            problemas.append(Problema(
+                CHAVE_COLETA_NOTICIAS, f"parada:{ultima.isoformat() if ultima else '-'}",
+                f"Coleta de notícias não roda desde {_dia(ultima)} ({horas} h). A "
+                "tarefa \"DFU - Coleta de noticias\" está parada, desativada ou o "
+                "PC ficou desligado; sem ela o acervo e a vitrine de notícias "
+                "envelhecem."))
+
+    for chave, est in sorted(estados.items()):
+        if not chave.startswith("provedor:"):
+            continue
+        nome = chave.split(":", 1)[1]
+        tentativa = _instante(est.get("ultima_tentativa"))
+        # Provedor que saiu da rotação (sem chave, desligado) não é falha.
+        if tentativa is None or agora - tentativa > timedelta(days=DIAS_SEM_SUCESSO + 1):
+            continue
+        k = f"noticias:provedor:{nome}"
+        verificados.add(k)
+        sucesso = _instante(est.get("ultimo_sucesso"))
+        if sucesso is not None and agora - sucesso < timedelta(days=DIAS_SEM_SUCESSO):
+            continue
+        erro = str(est.get("ultimo_erro") or "erro não detalhado")[:200]
+        problemas.append(Problema(
+            k, f"sem_sucesso:{sucesso.isoformat() if sucesso else '-'}",
+            f"Notícias: o provedor {nome} não tem coleta bem-sucedida desde "
+            f"{_dia(sucesso) if sucesso else 'nunca'}. Último erro: {erro}. "
+            "Cota esgotada, chave inválida ou plano alterado são as causas comuns."))
+
+    if parada:
+        # Com a coleta inteira parada, todo provedor "rende zero": o aviso
+        # global já diz o que há para fazer.
+        return problemas, verificados
+    hoje = agora.astimezone(timezone.utc).date()
+    recentes = [hoje - timedelta(days=i) for i in range(1, DIAS_QUEDA + 1)]
+    base = [hoje - timedelta(days=i)
+            for i in range(DIAS_QUEDA + 1, DIAS_QUEDA + 1 + BASE_DIAS)]
+    for nome, contagem in sorted(por_dia.items()):
+        contagem = {_como_data(d): int(n or 0) for d, n in (contagem or {}).items()}
+        normal = _p75([contagem.get(d, 0) for d in base])
+        if normal < MIN_NORMAL_DIA:
+            continue
+        k = f"noticias:rendimento:{nome}"
+        verificados.add(k)
+        ultimos = [contagem.get(d, 0) for d in recentes]
+        if all(n < FRACAO_QUEDA * normal for n in ultimos):
+            problemas.append(Problema(
+                k, "queda",
+                f"Notícias: o provedor {nome} trouxe {' e '.join(map(str, ultimos))} "
+                f"notícia(s) nova(s) nos {DIAS_QUEDA} últimos dias, contra "
+                f"{normal:.0f}/dia no normal dele. Ele responde, mas quase vazio: "
+                "costuma ser cota diária esgotando cedo, consulta que deixou de "
+                "casar ou mudança de plano do provedor."))
+    return problemas, verificados
+
+
+# --------------------------------------------------------------------------
 # Cegueira do próprio vigia
 # --------------------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 """Vigia das automações: avisa no Telegram o que parou sem reclamar.
 
-Confere três coisas e avisa pelo `scripts.notificar` (Hermes -> Telegram):
+Confere quatro coisas e avisa pelo `scripts.notificar` (Hermes -> Telegram):
 
 1. workflow AGENDADO do GitHub Actions com 2+ execuções agendadas seguidas em
    falha (lista descoberta em `.github/workflows/*.yml` pelo gatilho
@@ -10,6 +10,10 @@ Confere três coisas e avisa pelo `scripts.notificar` (Hermes -> Telegram):
    `local_staging/estado_publicacao.json`, sem tocar no Supabase.
 3. trimestre vigente das demonstrações da B3 no armazém local, medido por
    cobertura do universo, contra o calendário da CVM (B3-02).
+4. coleta de notícias: coletor parado, provedor sem sucesso há dias, ou
+   provedor que responde mas rende quase nada (o Alpha Vantage de 07/10/2026),
+   lidos de `noticias_coleta_estado` e `noticias_itens` no banco local
+   `noticias`.
 
 A decisão é de `core.vigia_automacoes`; aqui só há I/O. A memória dos avisos
 fica em `local_staging/vigia_automacoes.json` (estado de máquina, fora do git):
@@ -47,6 +51,7 @@ from core.vigia_automacoes import (  # noqa: E402
     montar_mensagem,
     problema_atualidade_b3,
     problema_workflow,
+    problemas_noticias,
     problemas_vitrine,
     tem_agendamento,
 )
@@ -124,6 +129,48 @@ def atualidade_b3_do_armazem(hoje) -> dict | None:
         return None
 
 
+_SQL_ESTADO_NOTICIAS = """
+    SELECT chave, status, ultima_tentativa, ultimo_sucesso, ultimo_erro
+      FROM noticias_coleta_estado
+"""
+
+_SQL_RENDIMENTO_NOTICIAS = """
+    SELECT provedor, (coletado_em AT TIME ZONE 'UTC')::date AS dia, count(*) AS n
+      FROM noticias_itens
+     WHERE coletado_em >= now() - interval '64 days'
+     GROUP BY 1, 2
+"""
+
+
+def noticias_do_acervo() -> tuple[dict, dict] | None:
+    """``(estados, por_dia)`` do banco local de notícias, ou ``None``.
+
+    Mesmo banco que a coleta usa (o `noticias` ao lado do armazém). Banco
+    fora do ar não é aviso aqui: o vigia diz "não medido" e não declara
+    nada resolvido.
+    """
+    try:
+        import re
+
+        from sqlalchemy import create_engine, text
+
+        from scripts.publish_fii_selection_from_local import _warehouse_url
+        eng = create_engine(re.sub(r"/[^/]+$", "/noticias", _warehouse_url()),
+                            pool_pre_ping=True)
+        try:
+            with eng.connect() as conn:
+                estados = {r["chave"]: dict(r) for r in
+                           conn.execute(text(_SQL_ESTADO_NOTICIAS)).mappings()}
+                por_dia: dict[str, dict] = {}
+                for r in conn.execute(text(_SQL_RENDIMENTO_NOTICIAS)).mappings():
+                    por_dia.setdefault(r["provedor"], {})[r["dia"]] = int(r["n"])
+        finally:
+            eng.dispose()
+        return estados, por_dia
+    except Exception:  # noqa: BLE001 - vigia não derruba a rotina
+        return None
+
+
 def _ler_json(caminho: Path) -> dict | None:
     """Conteúdo do JSON, ``{}`` se não existe, ``None`` se ilegível."""
     if not caminho.exists():
@@ -194,6 +241,17 @@ def vigiar(dry_run: bool = False, estado_publicacao: Path = ESTADO_PUBLICACAO,
         saida(f"  demonstrações B3: {avaliacao.get('texto')}")
         if problema_b3:
             problemas.append(problema_b3)
+
+    # 4. Coleta de notícias (banco local `noticias`; zero egress)
+    noticias = noticias_do_acervo()
+    if noticias is None:
+        saida("  notícias: banco local de notícias indisponível, não medido")
+    else:
+        problemas_n, verif_n = problemas_noticias(*noticias, agora)
+        problemas.extend(problemas_n)
+        verificados |= verif_n
+        saida(f"  notícias: {len(verif_n)} verificação(ões) -- "
+              f"{len(problemas_n)} problema(s)")
 
     decisao = decidir(problemas, avisos_anteriores, agora, verificados)
     mensagem = montar_mensagem(decisao, avisos_anteriores)
