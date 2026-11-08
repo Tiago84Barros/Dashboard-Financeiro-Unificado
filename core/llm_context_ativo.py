@@ -287,7 +287,11 @@ def build_us_ativo_context(
 ) -> str:
     """Relatório de analista, cadastro pontuado, série de demonstrações, pares
     de indústria e dossiê."""
-    from core.llm_context_us import get_peers_context, get_sector_context
+    from core.llm_context_us import (
+        get_peers_context,
+        get_sector_context,
+        get_warehouse_detail_context,
+    )
     sym = str(symbol or "").strip().upper()
     blocos = [
         "ATIVO EM ANÁLISE (tela Empresas Americanas → Análise de empresas):",
@@ -355,6 +359,16 @@ def build_us_ativo_context(
                 blocos.append("\nDOSSIÊ DA EMPRESA: " + "; ".join(itens[:30]))
     except Exception:
         logger.exception("dossiê de %s indisponível", sym)
+    # Trimestres, exercícios e proventos: armazém direto, túnel ou o arquivo
+    # publicado. Antes, o chat da empresa só recebia a CONTAGEM de períodos
+    # ("Demonstrações: 9 períodos no banco") e respondia sobre o último
+    # trimestre sem o número dele.
+    try:
+        detalhe = get_warehouse_detail_context([sym])
+        if detalhe:
+            blocos.append("\n" + detalhe)
+    except Exception:
+        logger.exception("detalhe trimestral de %s indisponível", sym)
     sec = _bloco_documentos_sec(sym)
     if sec:
         blocos.append("\n" + sec)
