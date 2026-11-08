@@ -236,6 +236,43 @@ def test_rota_recusa_classe_errada_e_pedido_largo_demais():
     assert srv.rota_ativo_inventario({"classe": ["b3"], "tickers": [muitos]})[0] == 400
 
 
+def test_rota_isola_o_banco_cuja_url_falha(monkeypatch):
+    """``_url_eua`` consulta o Docker e pode levantar (serviço subiu antes do
+    Docker). Isso não pode virar 503: o cliente pausaria todas as rotas por
+    60 s, e as fontes dos outros bancos ainda respondem."""
+    recebido = {}
+
+    def _ler(engines, classe, tickers):
+        recebido.update(engines=engines)
+        return {"classe": classe, "tickers": tickers, "fontes": {}, "ativos": {}}
+
+    def _docker_fora():
+        raise RuntimeError("docker inspect falhou")
+
+    monkeypatch.setattr(srv, "_url_eua", _docker_fora)
+    monkeypatch.setattr(srv, "_url_noticias", lambda: "postgresql://n")
+    monkeypatch.setattr(srv, "_url_memoria", lambda: "")
+    monkeypatch.setattr(srv, "engine_leitura", lambda url: f"engine:{url}")
+    monkeypatch.setattr(inv, "ler_inventario", _ler)
+    status, _ = srv.rota_ativo_inventario({"classe": ["b3"], "tickers": ["PETR4"]})
+    assert status == 200
+    assert recebido["engines"] == {"mercado": None, "noticias": "engine:postgresql://n",
+                                   "memoria": None}
+    # Todos os bancos sem URL ou com URL em falha: aí sim 503.
+    monkeypatch.setattr(srv, "_url_noticias", lambda: "")
+    assert srv.rota_ativo_inventario({"classe": ["b3"], "tickers": ["PETR4"]})[0] == 503
+
+
+def test_predicados_das_series_usam_a_coluna_nua():
+    """``upper(ticker) = ANY(...)`` descartaria o índice e varreria
+    ``market_us.prices_daily`` inteira a cada varredura."""
+    for classe, fontes in inv.FONTES.items():
+        for fonte in fontes:
+            if fonte.chave == "noticias":
+                continue  # jsonb expandido: não há índice a preservar
+            assert "upper(" not in fonte.sql, (classe, fonte.chave)
+
+
 def test_rota_sem_armazem_responde_503(monkeypatch):
     for nome in ("_url_eua", "_url_noticias", "_url_memoria"):
         monkeypatch.setattr(srv, nome, lambda: "")

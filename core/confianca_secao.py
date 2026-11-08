@@ -106,6 +106,19 @@ PREGAO_VELHO_UTEIS = 10
 PROVENTOS_DO_CHAT = "Proventos publicados (chat)"
 PESO_PROVENTOS_DO_CHAT = 0.05
 PESOS_COM_PREGAO = {"Integridade": 0.35, "Frescor": 0.15}  # 0,15 + 0,05 + 0,05 = 0,25
+
+# Desde 08/11/2026 os chats do ativo de Empresas B3, Empresas Americanas e
+# Seleção de FIIs citam tambem o DETALHE do armazem local (pregao, trimestres,
+# informe CVM, composicao, imoveis, score) e a VARREDURA do armazem, lidos pelo
+# tunel quando o PC do usuario esta ligado. Essa fonte NAO entra na nota: a
+# producao nao alcanca o armazem, e medir o tunel mediria a disponibilidade do
+# PC, nao o dado. O que a tela de fato mostra e declarado aqui, como nota da
+# secao, e no proprio prompt, que nomeia linha a linha se cada fonte foi lida
+# ("lido pelo tunel", "nao feita", "nao consultada").
+NOTA_DETALHE_DO_CHAT = (
+    "o chat do ativo cita tambem o detalhe e a varredura do armazem local, "
+    "lidos pelo tunel quando o PC esta ligado; fonte fora da nota: a producao "
+    "nao a mede, e o prompt declara, linha a linha, se ela foi lida")
 #: Dias corridos da resposta da brapi a partir dos quais ainda vale 100%: a
 #: coleta e diaria e o fim de semana nao renova.
 PROVENTOS_FRESCO_DIAS = 3
@@ -486,6 +499,7 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
         comps.append(Componente("Metodologia validada", None, 0.25,
                                 f"nao medido: {type(exc).__name__}"))
 
+    notas.append(NOTA_DETALHE_DO_CHAT)
     return ConfiancaSecao("Empresas B3", tuple(comps), u, tuple(notas))
 
 
@@ -574,6 +588,7 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Metodologia validada", None, 0.25,
                                 f"nao medido: {type(exc).__name__}"))
+    notas.append(NOTA_DETALHE_DO_CHAT)
     return ConfiancaSecao("Seleção de FIIs", tuple(comps), u, tuple(notas))
 
 
@@ -663,6 +678,7 @@ def confianca_us(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Metodologia validada", None, 0.15,
                                 f"nao medido: {type(exc).__name__}"))
+    notas.append(NOTA_DETALHE_DO_CHAT)
     return ConfiancaSecao("Empresas Americanas", tuple(comps), u, tuple(notas))
 
 

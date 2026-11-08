@@ -288,13 +288,29 @@ def rota_ativo_inventario(params) -> tuple[int, dict]:
         return 400, {"erro": "informe tickers"}
     if len(tickers) > TICKERS_MAX:
         return 400, {"erro": f"no máximo {TICKERS_MAX} tickers por chamada"}
-    url_mercado, url_noticias, url_memoria = _url_eua(), _url_noticias(), _url_memoria()
-    if not (url_mercado or url_noticias or url_memoria):
+    engines = {banco: _engine_ou_nenhuma(resolver)
+               for banco, resolver in (("mercado", _url_eua),
+                                       ("noticias", _url_noticias),
+                                       ("memoria", _url_memoria))}
+    if all(eng is None for eng in engines.values()):
         return 503, {"erro": "armazém não configurado nesta máquina"}
-    engines = {"mercado": engine_leitura(url_mercado) if url_mercado else None,
-               "noticias": engine_leitura(url_noticias) if url_noticias else None,
-               "memoria": engine_leitura(url_memoria) if url_memoria else None}
     return 200, {"inventario": ler_inventario(engines, classe, tickers)}
+
+
+def _engine_ou_nenhuma(resolver):
+    """Engine do banco cuja URL ``resolver`` devolve; ``None`` quando não há
+    URL ou quando resolvê-la falha (``_url_eua`` consulta o Docker, que pode
+    não ter subido). A falha de um banco não pode virar 503 da rota: o cliente
+    trata 5xx como serviço fora do ar e pausa TODAS as rotas por 60 s, e as
+    fontes dos outros bancos ainda têm o que responder -- elas saem
+    ``sem_banco`` na fonte, nomeadas, em vez de sumir."""
+    try:
+        url = resolver()
+    except Exception as exc:  # noqa: BLE001 - vira fonte "sem_banco"
+        logger.warning("inventário: URL de um banco do armazém indisponível: %s",
+                       type(exc).__name__)
+        return None
+    return engine_leitura(url) if url else None
 
 
 ROTAS = {

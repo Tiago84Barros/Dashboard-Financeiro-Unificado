@@ -71,11 +71,17 @@ def raiz_emissor(ticker: str) -> str:
 
 
 def _contagem(tabela: str, simbolo: str, data: str | None, extra: str = "") -> str:
-    """``SELECT simbolo, n, desde, ate`` de uma tabela, agrupado por símbolo."""
+    """``SELECT simbolo, n, desde, ate`` de uma tabela, agrupado por símbolo.
+
+    A coluna entra nua no predicado: ``upper(ticker) = ANY(...)`` descartaria
+    o índice por ticker e varreria ``market_us.prices_daily`` (12 milhões de
+    linhas) inteira a cada varredura. Os tickers já chegam em maiúsculas, e as
+    tabelas os guardam assim (é como os leitores de detalhe os consultam).
+    """
     desde = f"min({data})" if data else "NULL"
     ate = f"max({data})" if data else "NULL"
-    return (f"SELECT upper({simbolo}) AS simbolo, count(*) AS n, {desde} AS desde, "
-            f"{ate} AS ate FROM {tabela} WHERE upper({simbolo}) = ANY(:t){extra} "
+    return (f"SELECT {simbolo} AS simbolo, count(*) AS n, {desde} AS desde, "
+            f"{ate} AS ate FROM {tabela} WHERE {simbolo} = ANY(:t){extra} "
             "GROUP BY 1")
 
 
@@ -90,9 +96,9 @@ GROUP BY 1
 """
 
 _SQL_CADASTRO_US = """
-SELECT upper(a.symbol) AS simbolo, count(*) AS n, NULL AS desde, NULL AS ate
+SELECT a.symbol AS simbolo, count(*) AS n, NULL AS desde, NULL AS ate
 FROM market_us.assets a
-WHERE upper(a.symbol) = ANY(:t)
+WHERE a.symbol = ANY(:t)
 GROUP BY 1
 """
 
@@ -101,12 +107,14 @@ _NOTICIAS = Fonte("noticias", "notícias do acervo local", "noticias", _SQL_NOTI
 # Documentos CVM/IPE ficam sob UMA classe de ação do emissor (ex.: PETR3); a
 # análise pode ser de outra (PETR4). Contar pelo ticker exato dizia "nenhuma
 # linha" com os documentos do emissor no armazém -- e o chat lia isso como
-# "não há documento". A raiz é o que ``rag_b3`` usa para achá-los.
+# "não há documento". A raiz é o que ``rag_b3`` usa para achá-los. ``left``
+# não usa o índice por ticker, mas a tabela é de metadados (dezenas de
+# milhares de linhas), não de série.
 _SQL_DOCUMENTOS_CVM = """
-SELECT left(regexp_replace(upper(ticker), '[0-9]+$', ''), 4) AS simbolo, count(*) AS n,
+SELECT left(ticker, 4) AS simbolo, count(*) AS n,
        min(data) AS desde, max(data) AS ate
 FROM public.docs_corporativos
-WHERE left(regexp_replace(upper(ticker), '[0-9]+$', ''), 4) = ANY(:t)
+WHERE left(ticker, 4) = ANY(:t)
 GROUP BY 1
 """
 
