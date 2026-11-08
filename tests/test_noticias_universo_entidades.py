@@ -207,6 +207,52 @@ def test_nome_generico_nao_entra_no_mapa_de_nomes():
     assert "ELET3" in u.tickers
 
 
+def test_papel_da_carteira_entra_no_universo_mesmo_com_vitrine_inativa(monkeypatch):
+    """A FSS (carteira) tinha valuation e valor de mercado, mas a vitrine a
+    marcava inativa (não republicada) e o universo não a conhecia: nenhuma
+    notícia dela era atribuída ao ticker. A regra, não o ticker: quem o
+    usuário detém ou estuda entra sempre; o filtro de atividade fica para o
+    resto."""
+    from core.noticias import universo_coleta
+
+    monkeypatch.setattr(universo_coleta, "da_carteira", lambda engine=None: (("FSS", "PETR4"), ""))
+    monkeypatch.setattr(universo_coleta, "dos_candidatos",
+                        lambda engine=None, excluir=(): (("PODD",), ""))
+    visto = {}
+
+    class _ConnQueVe(_Conn):
+        def execute(self, sql, *args, **kw):
+            if _rotulo(sql) == "EUA":
+                visto["sql"] = str(sql)
+                visto["params"] = args[0] if args else kw
+                return _Result(LINHAS["EUA"] + [
+                    {"ticker": "FSS", "nome": "Federal Signal Corp", "setor": "Industrials"}])
+            return super().execute(sql, *args, **kw)
+
+    class _EngineQueVe(_Engine):
+        def connect(self):
+            return _ConnQueVe(self._linhas, self._falhar)
+
+    u, limitacoes = ue.carregar(engine=_EngineQueVe(LINHAS), usar_cache=False)
+    assert "is_active IS TRUE OR upper(symbol) = ANY(:carteira)" in visto["sql"]
+    assert visto["params"] == {"carteira": ["FSS", "PETR4", "PODD"]}
+    assert "FSS" in u.tickers and u.pais_por_ticker["FSS"] == "US"
+    assert not any("carteira" in texto for texto in limitacoes)
+
+
+def test_carteira_ilegivel_vira_limitacao_e_o_universo_segue(monkeypatch):
+    from core.noticias import universo_coleta
+
+    def _quebra(engine=None, **kw):
+        raise RuntimeError("portfolio fora")
+
+    monkeypatch.setattr(universo_coleta, "da_carteira", _quebra)
+    u, limitacoes = _universo()
+    assert "AAPL" in u.tickers and "VALE3" in u.tickers
+    assert any("tickers da carteira não acrescentados" in texto and "RuntimeError" in texto
+               for texto in limitacoes), limitacoes
+
+
 def test_fonte_que_falha_vira_limitacao_escrita():
     """Universo menor em silêncio apresentaria ignorância como ausência.
 

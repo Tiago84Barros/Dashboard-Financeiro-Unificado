@@ -37,8 +37,12 @@ Métodos (repetidos no campo ``metodo`` do arquivo):
   ``prices_monthly.close`` já vem ajustado por split e o LPA não, então P/L
   por ação misturaria escalas; e as ações do ponto-no-tempo chegam atrasadas
   depois de um split e não são retroajustadas (AAPL até set/2020 saía com 1/4
-  do valor). Mês cujo valor ÷ preço foge mais de 1,5x da mediana móvel de 13
-  meses é descartado, e do degrau que sobra só vale o trecho posterior.
+  do valor). O degrau da contagem é retroajustado: o valor anterior é
+  multiplicado pela razão do split (``market_us.splits``, ou a razão medida
+  quando é uma que a bolsa pratica); degrau que não é split (emissão) fica.
+  Depois, mês isolado cujo valor ÷ preço foge mais de 1,5x da mediana móvel
+  de 13 meses é descartado. Até 08/11/2026 descartava-se tudo antes do
+  último degrau, e 2.852 das 4.350 empresas ficavam sem histórico de P/L.
 
 Momento de preço (desde 01/10/2026): retorno de 12 e de 3 meses com preço
 ajustado por proventos e eventos (retorno total), do fechamento mensal mais
@@ -134,10 +138,13 @@ METODO = {
             "janelas que atravessam grupamento ou desdobramento."),
     "eua": ("Anual. Valor de mercado no fim do exercício (preço × ações do "
             "ponto-no-tempo) ÷ lucro líquido (P/L), ÷ patrimônio (P/VP); "
-            "dividendos pagos ÷ valor de mercado (DY). Meses em que valor ÷ "
-            "preço foge mais de 1,5x da mediana móvel de 13 meses são "
-            "descartados, e também tudo antes do último degrau dessa razão "
-            "(ações do ponto-no-tempo não retroajustadas por split)."),
+            "dividendos pagos ÷ valor de mercado (DY). As ações do "
+            "ponto-no-tempo não são retroajustadas por split: o valor "
+            "anterior ao primeiro balanço pós-split é multiplicado pela razão "
+            "do split (market_us.splits, ou a razão medida quando é uma que a "
+            "bolsa pratica); degrau que não é split (emissão, recompra) fica. "
+            "Mês isolado em que valor ÷ preço foge mais de 1,5x da mediana "
+            "móvel de 13 meses é descartado, e mês sem preço também."),
     "volatilidade": (f"Desvio-padrão dos retornos mensais dos últimos "
                      f"{JANELA_VOL_MESES} meses (preço ajustado), anualizado "
                      "(× √12), em %."),
@@ -919,45 +926,146 @@ def _pct(v):
     return None if f is None else f * 100.0
 
 
-def capitalizacao_limpa(capitalizacao, precos) -> tuple:
-    """Descarta meses em que o valor de mercado não acompanha o preço.
+#: Salto nas ações implícitas (valor ÷ preço) de um mês para o seguinte que
+#: caracteriza troca de regime na contagem do ponto-no-tempo: o primeiro
+#: balanço depois de um split. Recompra e emissão correntes mudam a contagem
+#: alguns pontos percentuais por trimestre, nunca 45%.
+SALTO_ACOES = 1.45
+#: Razões de split que a bolsa pratica. Um degrau que casa com uma delas (ou
+#: com o inverso, no grupamento) dentro de ``TOLERANCIA_SPLIT`` é split mesmo
+#: sem registro em ``market_us.splits``; 1,6x não é: é emissão, e emissão muda
+#: o valor de mercado de verdade.
+RAZOES_DE_SPLIT = (2, 3, 4, 5, 6, 7, 8, 10, 15, 20, 25, 30, 40, 50, 100,
+                   3 / 2, 4 / 3, 5 / 4)
+TOLERANCIA_SPLIT = 0.025
+#: O balanço que traz a contagem nova sai até este tanto depois do split
+#: (empresa que só reporta no 10-K anual).
+DIAS_ATE_O_BALANCO = 300
+#: Mês isolado cujo valor foge disto da mediana móvel das vizinhanças é
+#: contagem errada daquele mês, não regime novo.
+DESVIO_MES_ISOLADO = 1.5
 
-    ``market_cap_history`` multiplica o preço (ajustado por split) pelas
-    ações do ponto-no-tempo, que chegam com atraso depois de um
-    desdobramento: AAPL de jun a set/2020 saía com 1/4 do valor (4:1 em
-    ago/2020). Ações implícitas = valor ÷ preço mudam devagar (recompra,
-    emissão); mês que foge mais de 1,5x da mediana móvel de 13 meses é
-    descartado. ``precos``: symbol, mes, close.
+
+def _parece_split(razao: float) -> bool:
+    if not razao or razao <= 0:
+        return False
+    for r in RAZOES_DE_SPLIT:
+        for alvo in (r, 1.0 / r):
+            if abs(math.log(razao) - math.log(alvo)) <= math.log(1 + TOLERANCIA_SPLIT):
+                return True
+    return False
+
+
+def _split_registrado(splits, simbolo: str, quando, medido: float):
+    """Razão do split de ``market_us.splits`` que explica um degrau visto em
+    ``quando``: data do split até :data:`DIAS_ATE_O_BALANCO` antes do degrau,
+    no mesmo sentido (desdobramento ou grupamento) do que foi medido."""
+    if splits is None or len(splits) == 0:
+        return None
+    import pandas as pd
+    s = splits[splits["symbol"] == simbolo]
+    if s.empty:
+        return None
+    datas = pd.to_datetime(s["split_date"])
+    janela = (datas <= quando) & (datas >= quando - pd.Timedelta(days=DIAS_ATE_O_BALANCO))
+    for _, linha in s.loc[janela].iterrows():
+        try:
+            razao = float(linha["numerator"]) / float(linha["denominator"])
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+        if razao > 0 and (razao > 1) == (medido > 1):
+            return razao
+    return None
+
+
+def _retroajustar_simbolo(g, splits, contagem: dict):
+    """Multiplica o valor de mercado anterior a cada degrau de contagem pela
+    razão do split. ``g`` é o quadro de UM símbolo ordenado por data, com as
+    colunas ``acoes`` e ``market_cap``; devolve ``market_cap`` ajustado."""
+    import numpy as np
+    acoes = g["acoes"].to_numpy(dtype=float)
+    fatores = np.ones(len(g))
+    for i in range(1, len(g)):
+        if not (acoes[i] > 0 and acoes[i - 1] > 0):
+            continue
+        salto = acoes[i] / acoes[i - 1]
+        if abs(math.log(salto)) <= math.log(SALTO_ACOES):
+            continue
+        # Degrau persistente: a contagem velha era estável e a nova fica. Pico
+        # de um mês só é contagem errada daquele mês, tratado depois como mês
+        # isolado -- e a volta do pico não pode passar por degrau para baixo.
+        seguintes = acoes[i + 1:i + 4]
+        seguintes = seguintes[seguintes > 0]
+        if len(seguintes) and abs(math.log(float(np.median(seguintes)) / acoes[i])) > math.log(1.25):
+            continue
+        anteriores = acoes[max(0, i - 4):i - 1]
+        anteriores = anteriores[anteriores > 0]
+        if len(anteriores) and abs(math.log(float(np.median(anteriores)) / acoes[i - 1])) > math.log(1.25):
+            continue
+        razao = _split_registrado(splits, g["symbol"].iloc[i], g["date"].iloc[i], salto)
+        if razao is None and _parece_split(salto):
+            razao = salto
+        if razao is None:
+            contagem["degraus_mantidos"] += 1   # emissão ou recompra de verdade
+            continue
+        contagem["degraus_retroajustados"] += 1
+        fatores[:i] *= razao
+    contagem["meses_retroajustados"] += int((fatores != 1.0).sum())
+    return g["market_cap"].to_numpy(dtype=float) * fatores
+
+
+def capitalizacao_limpa(capitalizacao, precos, splits=None) -> tuple:
+    """Valor de mercado mês a mês na escala correta, com o que não dá para
+    corrigir descartado e contado.
+
+    ``market_cap_history`` multiplica o preço ajustado por split pelas ações
+    do ponto-no-tempo, que NÃO são retroajustadas: todo mês anterior ao
+    primeiro balanço pós-split sai dividido pela razão do split (AAPL até
+    set/2020 inteira em 1/4). Até 08/11/2026 a saída era ficar só com o trecho
+    depois do último degrau -- e 2.852 das 4.350 empresas ficaram sem um ano
+    sequer de P/L, porque quase toda empresa com 15 anos de bolsa desdobrou
+    alguma vez. Agora o degrau é retroajustado: o valor anterior é
+    multiplicado pela razão do split (``market_us.splits`` quando registrado;
+    senão a razão medida, se for uma que a bolsa pratica). Degrau que não é
+    split (emissão, recompra grande) fica como está, porque é mudança real.
+
+    Depois disso, mês isolado cujas ações implícitas fogem mais de
+    :data:`DESVIO_MES_ISOLADO` da mediana móvel de 13 meses é contagem errada
+    daquele mês e é descartado. Mês sem preço não tem como ser conferido e
+    também sai. ``precos``: symbol, mes, close. ``splits``: symbol,
+    split_date, numerator, denominator (opcional).
+
+    Devolve ``(quadro, contagens)``; ``contagens["capitalizacao_fora_do_preco"]``
+    mantém o nome que o arquivo publicado sempre teve.
     """
     import numpy as np
     import pandas as pd
+    contagem = {"capitalizacao_fora_do_preco": 0, "sem_preco_no_mes": 0,
+                "degraus_retroajustados": 0, "degraus_mantidos": 0,
+                "meses_retroajustados": 0}
     c = capitalizacao.dropna(subset=["date", "market_cap"]).copy()
     c["date"] = pd.to_datetime(c["date"])
     c["mes"] = c["date"].dt.to_period("M")
     p = precos.dropna(subset=["close"]).copy()
     p["mes"] = pd.to_datetime(p["mes"]).dt.to_period("M")
     c = c.merge(p[["symbol", "mes", "close"]], on=["symbol", "mes"], how="left")
-    c = c.sort_values(["symbol", "date"])
+    sem_preco = c["close"].isna() | ~(c["close"] > 0)
+    contagem["sem_preco_no_mes"] = int(sem_preco.sum())
+    c = c.loc[~sem_preco].sort_values(["symbol", "date"]).reset_index(drop=True)
+    if c.empty:
+        return c[["symbol", "date", "market_cap"]], contagem
+    c["acoes"] = c["market_cap"] / c["close"]
+    c["market_cap"] = np.concatenate([
+        _retroajustar_simbolo(g, splits, contagem) for _, g in c.groupby("symbol", sort=False)])
     c["acoes"] = c["market_cap"] / c["close"]
     c["ref"] = (c.groupby("symbol")["acoes"]
                 .transform(lambda s: s.rolling(13, center=True, min_periods=5)
                            .median()))
     razao = (c["acoes"] / c["ref"]).astype(float)
-    fora = razao.notna() & (np.abs(np.log(razao.where(razao > 0))) > math.log(1.5))
-    c = c.loc[~fora].copy()
-    # Depois de tirar os meses isolados, sobra o degrau: as ações do
-    # ponto-no-tempo NÃO são retroajustadas, então todo mês anterior ao split
-    # multiplica o preço já ajustado pela contagem velha (AAPL até set/2020
-    # inteira em 1/4). Fica só o trecho depois do último degrau.
-    salto = (c.groupby("symbol")["acoes"].transform(lambda s: s / s.shift(1))
-             .astype(float))
-    degrau = salto.notna() & (np.abs(np.log(salto.where(salto > 0))) > math.log(1.5))
-    c["_bloco"] = degrau.astype(int).groupby(c["symbol"]).cumsum()
-    ultimo = c.groupby("symbol")["_bloco"].transform("max")
-    antes = c["_bloco"] < ultimo
-    c = c.loc[~antes]
-    return (c[["symbol", "date", "market_cap"]].reset_index(drop=True),
-            int(fora.sum()) + int(antes.sum()))
+    fora = razao.notna() & (np.abs(np.log(razao.where(razao > 0))) > math.log(DESVIO_MES_ISOLADO))
+    contagem["capitalizacao_fora_do_preco"] = int(fora.sum())
+    c = c.loc[~fora]
+    return c[["symbol", "date", "market_cap"]].reset_index(drop=True), contagem
 
 
 def historico_eua(anuais, capitalizacao) -> dict[str, dict]:
@@ -1023,12 +1131,22 @@ def coletar_eua(conn) -> tuple[dict, dict]:
          WHERE month_end >= make_date(:ini, 1, 1) AND close > 0
            AND symbol IN (SELECT symbol FROM market_us.company_snapshots)
     """, ini=ANO_INICIAL)
+    try:
+        splits = _ler(conn, """
+            SELECT symbol, split_date, numerator, denominator
+              FROM market_us.splits
+             WHERE symbol IN (SELECT symbol FROM market_us.company_snapshots)
+        """)
+    except Exception as exc:  # noqa: BLE001 - sem a tabela, vale a razão medida
+        print(f"  splits não lidos ({type(exc).__name__}); degraus pela razão medida",
+              file=sys.stderr)
+        splits = None
     for col in ("net_income", "equity", "dividends_paid"):
         anuais[col] = anuais[col].astype(float)
     cap["market_cap"] = cap["market_cap"].astype(float)
     mensais["close"] = mensais["close"].astype(float)
     mensais["adjusted_close"] = mensais["adjusted_close"].astype(float)
-    cap, descartados = capitalizacao_limpa(cap, mensais)
+    cap, contagem_cap = capitalizacao_limpa(cap, mensais, splits)
     hist = historico_eua(anuais, cap)
     import pandas as pd
     recentes = mensais[pd.to_datetime(mensais["mes"])
@@ -1065,8 +1183,7 @@ def coletar_eua(conn) -> tuple[dict, dict]:
                           and str(r.last_fiscal_year) != "nan" else None),
             "historico": hist.get(str(r.symbol), {}),
         }
-    return saida, {"capitalizacao_fora_do_preco": descartados,
-                   "momento": excl_mom}
+    return saida, {**contagem_cap, "momento": excl_mom}
 
 
 # -- saída --------------------------------------------------------------------------

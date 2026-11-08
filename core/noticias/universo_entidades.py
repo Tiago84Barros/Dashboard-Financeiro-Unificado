@@ -77,11 +77,19 @@ _SQL_B3 = text("""
      WHERE a.is_active IS TRUE AND a.ticker IS NOT NULL
 """)
 
+# ``is_active`` cai para FALSE em toda linha que a última publicação da vitrine
+# não trouxe (``publish_us_snapshot._build_deactivate_stale``) -- é "não
+# republicada", não "deslistada". Em 08/11/2026 a FSS, da carteira, estava
+# assim: tinha valuation e valor de mercado, e nenhuma notícia dela era
+# atribuída ao ticker porque o universo não a conhecia. Papel que o usuário
+# detém ou estuda entra sempre; o filtro de atividade vale para o resto, que
+# é onde um nome de empresa morta viraria falso positivo.
 _SQL_US = text("""
     SELECT symbol AS ticker, COALESCE(name, symbol) AS nome,
            COALESCE(sector, '') AS setor
       FROM market_us.company_snapshots
-     WHERE is_active IS TRUE AND symbol IS NOT NULL
+     WHERE symbol IS NOT NULL
+       AND (is_active IS TRUE OR upper(symbol) = ANY(:carteira))
 """)
 
 _SQL_FII = text("""
@@ -220,11 +228,11 @@ APELIDOS: dict[str, tuple[str, ...]] = {
 }
 
 
-def _bloco(conn, sql, pais: str) -> tuple[dict, dict, dict]:
+def _bloco(conn, sql, pais: str, params: dict | None = None) -> tuple[dict, dict, dict]:
     pares: dict[str, str] = {}
     setores: dict[str, str] = {}
     paises: dict[str, str] = {}
-    for linha in conn.execute(sql).mappings():
+    for linha in conn.execute(sql, params or {}).mappings():
         ticker = str(linha["ticker"] or "").strip().upper().replace(".SA", "")
         if not ticker:
             continue
@@ -233,6 +241,20 @@ def _bloco(conn, sql, pais: str) -> tuple[dict, dict, dict]:
             setores[ticker] = str(linha["setor"])
         paises[ticker] = pais
     return pares, setores, paises
+
+
+def _tickers_do_usuario(engine) -> tuple[tuple[str, ...], str]:
+    """Carteira e candidatos, como a coleta os vê (``universo_coleta``). Falha
+    vira motivo escrito, nunca exceção: o universo segue sem eles."""
+    try:
+        from core.noticias import universo_coleta
+
+        carteira, motivo = universo_coleta.da_carteira(engine=engine)
+        candidatos, _ = universo_coleta.dos_candidatos(engine=engine, excluir=carteira)
+    except Exception as exc:  # noqa: BLE001 - o universo não depende da carteira
+        return (), f"{type(exc).__name__}"
+    todos = tuple(sorted({*carteira, *candidatos}))
+    return todos, ("" if todos else (motivo or "carteira vazia"))
 
 
 def carregar(*, engine=None, usar_cache: bool = True
@@ -265,11 +287,18 @@ def carregar(*, engine=None, usar_cache: bool = True
     limitacoes: list[str] = []
     contagem: dict[str, int] = {}
 
+    carteira, motivo_carteira = _tickers_do_usuario(engine)
+    if motivo_carteira:
+        limitacoes.append(
+            f"tickers da carteira não acrescentados ao universo ({motivo_carteira}): "
+            "papel detido com vitrine inativa fica sem atribuição de notícia")
+    params = {"EUA": {"carteira": list(carteira)}}
+
     for rotulo, sql, pais in (("B3", _SQL_B3, "BR"), ("EUA", _SQL_US, "US"),
                               ("FIIs", _SQL_FII, "BR")):
         try:
             with engine.connect() as conn:
-                p, s, pa = _bloco(conn, sql, pais)
+                p, s, pa = _bloco(conn, sql, pais, params.get(rotulo))
         except Exception as exc:  # noqa: BLE001 - fonte ausente é declarada
             causa = str(exc).splitlines()[0][:160]
             logger.warning("Universo de entidades sem %s: %s", rotulo, causa)
