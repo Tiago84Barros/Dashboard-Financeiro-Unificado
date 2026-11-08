@@ -89,17 +89,27 @@ def test_monthly_rental_share_is_absent_when_layout_lacks_the_column():
     assert "pct_imoveis_renda" not in observed
 
 
-@pytest.mark.parametrize(("header", "values"), [
-    # Coluna presente, célula vazia: não é zero declarado (revisão do #692).
-    ("Disponibilidades;Imoveis_Renda_Acabados;Terrenos", "100;;900"),
-    # Direito real ilegível também pode ser imóvel locado.
-    ("Disponibilidades;Imoveis_Renda_Acabados;Direitos_Bens_Imoveis;Terrenos",
-     "100;0;n/d;900"),
-])
-def test_monthly_rental_share_is_absent_when_a_rental_cell_is_blank(header, values):
-    observed = _monthly_assets(header, values)
+@pytest.mark.parametrize("values", ["100;;900", "100;n/d;900"])
+def test_monthly_rental_share_is_absent_when_rental_value_is_blank(values):
+    """Coluna presente mas vazia ou ilegível é valor não informado, não zero
+    (Codex, PR #692).
+
+    Com zero inventado o fundo saía da máscara de setor/inquilino por um dado
+    que a CVM não publicou.
+    """
+    observed = _monthly_assets("Disponibilidades;Imoveis_Renda_Acabados;Terrenos", values)
 
     assert "pct_imoveis_renda" not in observed
+
+
+def test_monthly_rental_share_keeps_blank_real_rights_as_zero():
+    """Direito real em branco não derruba a fração: o setor por inquilino só
+    existe para imóvel para renda acabado, e esse campo veio informado."""
+    observed = _monthly_assets(
+        "Disponibilidades;Imoveis_Renda_Acabados;Direitos_Bens_Imoveis;Outros_Direitos_Reais",
+        "100;300;;")
+
+    assert observed["pct_imoveis_renda"]["value_numeric"] == .75
 
 
 def test_quarterly_derives_expiry_indexer_tenant_and_duration():

@@ -141,10 +141,13 @@ A partir do parser `1.7.0`:
 - o informe mensal grava `pct_imoveis_renda`, a fração da carteira em
   imóvel para renda acabado mais direitos reais (que entram por cautela,
   porque a CVM não diz se o direito é sobre imóvel locado). Se o layout do
-  ano não traz a coluna `Imoveis_Renda_Acabados`, ou se uma célula que soma
-  ao numerador vem vazia ou ilegível, a métrica não é gravada: ausência não
-  vira fração zero (parser `1.8.1`; até o `1.8.0` a célula vazia contava como
-  zero);
+  ano não traz a coluna `Imoveis_Renda_Acabados`, ou se ela veio em branco
+  (parser `1.8.1`, revisão do Codex no PR #692), a métrica não é gravada:
+  coluna ausente ou valor não informado não vira fração zero. No acervo
+  2017-2026, 8% a 12% dos fundos-mês por ano traziam o campo em branco e
+  saíam da máscara por um zero inventado. Direito real em branco conta zero,
+  porque só pode elevar a fração e o setor por inquilino existe só para o
+  imóvel para renda acabado, que veio informado;
 - `core.fii_lookthrough.dimension_is_applicable` tira `sector` e `tenant` da
   máscara quando essa fração está observada abaixo de 20% e nenhum setor foi
   observado. Setor observado mantém o fundo na máscara. Região não muda,

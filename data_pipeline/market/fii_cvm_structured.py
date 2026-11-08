@@ -30,10 +30,11 @@ PARSER_NAME = "cvm_fii_structured"
 # 1.7.0: o informe mensal passa a emitir ``pct_imoveis_renda`` (ver
 # ``_rental_property_share``). 1.8.0: o mensal passa a emitir a exposição
 # ``segment`` (``Segmento_Atuacao`` do cadastro, ver ``_cadastral_segment``).
-# 1.8.1: célula vazia ou ilegível em imóvel de renda ou direito real deixa
-# ``pct_imoveis_renda`` ausente em vez de contar zero.
-# A troca de versão força o reprocessamento dos arquivos já carregados, sem o
-# qual o PIT não enxerga o dado novo.
+# 1.8.1: ``pct_imoveis_renda`` deixa de ser gravado quando ``Imoveis_Renda_Acabados``
+# vem em branco (antes virava zero). A troca de versão força o reprocessamento
+# dos arquivos já carregados, sem o qual o PIT não enxerga o dado novo; a
+# métrica que deixa de ser emitida precisa ser apagada antes, porque o ingest
+# não remove observação antiga do mesmo arquivo.
 PARSER_VERSION = "1.8.1"
 PARSER_SCHEMA_VERSION = "cvm-fii-structured-v2"
 ARCHIVES = {
@@ -390,8 +391,8 @@ def _append(rows: list[dict], value: dict | None) -> None:
 # trimestral (``inf_trimestral_fii_imovel_renda_acabado_inquilino``). Direitos
 # reais entram aqui por cautela: a CVM não diz se o direito é sobre imóvel
 # locado, e na dúvida a dimensão continua aplicável.
-_RENTAL_OR_AMBIGUOUS_FIELDS = ("Imoveis_Renda_Acabados", "Direitos_Bens_Imoveis",
-                               "Outros_Direitos_Reais")
+_AMBIGUOUS_RIGHTS_FIELDS = ("Direitos_Bens_Imoveis", "Outros_Direitos_Reais")
+_RENTAL_OR_AMBIGUOUS_FIELDS = ("Imoveis_Renda_Acabados",) + _AMBIGUOUS_RIGHTS_FIELDS
 # Imóvel que, por definição da própria CVM, ainda não tem locatário: obra,
 # estoque à venda e terreno.
 _NON_RENTAL_PROPERTY_FIELDS = ("Terrenos", "Imoveis_Renda_Construcao",
@@ -438,21 +439,28 @@ def _rental_property_share(asset: dict, classes: dict[str, float]) -> float | No
     TGAR11, MFII11 e VGHF11 derrubando a cobertura de setor da carteira).
 
     Devolve ``None`` quando o layout do ano não traz a coluna de imóvel para
-    renda acabado, ou quando qualquer campo que soma ao numerador vem vazio ou
-    ilegível. Fração zero tira o fundo da máscara de setor; ela só pode sair
-    de zeros declarados, nunca de célula em branco ("dados ausentes permanecem
+    renda acabado, e também quando a coluna existe mas veio em branco ou
+    ilegível: coluna ausente ou valor não informado não pode virar fração
+    zero, porque zero tira o fundo da máscara de setor e inquilino (revisão do
+    Codex no PR #692; no acervo 2017-2026, 8% a 12% dos fundos-mês por ano
+    traziam o campo em branco e saíam da máscara por um zero inventado).
+    Fração zero só pode sair de zero declarado ("dados ausentes permanecem
     ausentes", AGENTS.md).
+
+    Os direitos reais entram por cautela e só podem elevar a fração; em
+    branco contam zero, porque setor e inquilino na CVM existem só para o
+    imóvel para renda acabado, que aqui já veio informado. Tratá-los como
+    desconhecidos apagaria a métrica em 700 a 1.200 fundos-mês por ano para
+    mudar de lado do piso de 20% entre 3 e 33 deles.
     """
-    if "Imoveis_Renda_Acabados" not in asset:
+    rental_value = _num(asset.get("Imoveis_Renda_Acabados"))
+    if rental_value is None:
         return None
     total = sum(value for value in classes.values() if value > 0)
     if total <= 0:
         return None
-    values = [_num(asset.get(field)) for field in _RENTAL_OR_AMBIGUOUS_FIELDS
-              if field in asset]
-    if any(value is None for value in values):
-        return None
-    rental = sum(max(value, 0) for value in values)
+    rental = max(rental_value, 0) + sum(max(_num(asset.get(field)) or 0, 0)
+                                       for field in _AMBIGUOUS_RIGHTS_FIELDS)
     return min(rental / total, 1.0)
 
 
