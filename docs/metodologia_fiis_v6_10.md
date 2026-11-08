@@ -114,3 +114,45 @@ afetados), que a tela já sabia exibir.
 regimes acima só mudam nos períodos em que algum fundo da carteira ficou
 sem retorno; enquanto a nova safra não for gravada, eles podem estar
 inflados nesses períodos.
+
+## Setor de inquilino só se cobra de quem tem inquilino (parser CVM 1.7.0)
+
+A validação PIT de 30/09/2026 (run 105) foi recusada por um único motivo:
+`optimizer_feasible_fraction` 0,861 (99 de 115), contra piso de 0,95. As 16
+carteiras recusadas foram montadas pelo MILP e barradas no portão de
+publicação por `exposicoes obrigatorias sem cobertura suficiente: sector`.
+
+A exposição `sector` tem uma única fonte estruturada: a tabela de inquilinos
+de **imóvel para renda acabado** do informe trimestral
+(`inf_trimestral_fii_imovel_renda_acabado_inquilino`, coluna
+`Setor_Atuacao`). Fundo de obra, de terreno, de estoque à venda ou de cotas
+nunca aparece nela. Mesmo assim ele ficava na máscara de aplicáveis, porque
+o informe mensal somava `Imoveis_Renda_Acabados`, `Imoveis_Renda_Construcao`,
+`Imoveis_Venda_*` e `Terrenos` numa classe só (`real_estate`), e o híbrido
+sem `pct_imoveis` no PIT era aplicável por cautela. Nas carteiras gravadas
+no run 105, quem ficou sem setor foram fundos desse perfil: TGAR11 (todas as
+recusas de 2021-08 a 2022-01), MFII11 (2018-04 a 2018-06) e, pelo mesmo
+padrão, VGHF11 (2024-01). Essa leitura foi inferida das carteiras gravadas e
+do cadastro atual. O `scripts/diagnosticar_cobertura_setor_fii.py` a
+confirma ou refuta fundo a fundo no warehouse local.
+
+A partir do parser `1.7.0`:
+
+- o informe mensal grava `pct_imoveis_renda`, a fração da carteira em
+  imóvel para renda acabado mais direitos reais (que entram por cautela,
+  porque a CVM não diz se o direito é sobre imóvel locado). Se o layout do
+  ano não traz a coluna `Imoveis_Renda_Acabados`, a métrica não é gravada:
+  coluna ausente não vira fração zero;
+- `core.fii_lookthrough.dimension_is_applicable` tira `sector` e `tenant` da
+  máscara quando essa fração está observada abaixo de 20% e nenhum setor foi
+  observado. Setor observado mantém o fundo na máscara. Região não muda,
+  porque a tabela de imóveis lista obra, estoque e terreno.
+
+Não mudaram `min_optimizer_feasible_fraction` (0,95) nem
+`min_dimension_coverage` (0,80). A regra está numa função só, que a carteira
+(`_dimension_observation_masks`), o diagnóstico de look-through e a revisão
+de carteira chamam.
+
+**Aprovada não quer dizer que bate o IFIX.** O excesso medido no run 105
+sobre o IFIX oficial foi de −0,116 p.p./mês, com IC 95% de [−0,32; +0,10].
+Destravar o portão de viabilidade não muda essa conclusão.

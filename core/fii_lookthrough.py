@@ -44,6 +44,10 @@ SOURCE_LIMITATIONS = {
     ),
 }
 _PROPERTY_DIMENSIONS = {"sector", "tenant", "region"}
+# Dimensões cuja única fonte estruturada é a tabela de inquilinos de imóvel
+# para renda acabado. Região fica de fora: sai da tabela de imóveis, que
+# lista obra, estoque e terreno também.
+_TENANT_TABLE_DIMENSIONS = {"sector", "tenant"}
 _CREDIT_DIMENSIONS = {"issuer", "debtor", "indexer"}
 _MACRO_REGIONS = {
     "NORTE": "Norte",
@@ -77,10 +81,22 @@ def dimension_is_applicable(
     papel+FoF ou imóveis+FoF. Quando a composição está observada, uma dimensão
     só é aplicável se a exposição econômica correspondente for material. Sem
     composição observada, o comportamento conservador anterior é preservado.
+
+    Setor e inquilino só existem, na CVM, para imóvel para renda acabado. Se o
+    informe mensal mostra que o fundo quase não tem esse imóvel
+    (``pct_imoveis_renda`` abaixo da materialidade) e nenhum setor foi
+    observado, a dimensão não se aplica: é fundo de obra, terreno, estoque ou
+    cotas, e cobrar dele setor de inquilino só reprova a carteira por um dado
+    que não existe. Setor observado mantém o fundo na máscara.
     """
     fii_type = str(row.get("tipo") or "").strip().lower()
     if fii_type not in APPLICABLE_TYPES.get(dimension, set()):
         return False
+    if dimension in _TENANT_TABLE_DIMENSIONS:
+        rental = _fraction(row.get("pct_imoveis_renda"))
+        if (rental is not None and rental < materiality
+                and not has_observed_dimension(row, dimension)):
+            return False
     if fii_type != "hibrido":
         return True
     if dimension in _PROPERTY_DIMENSIONS:

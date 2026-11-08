@@ -27,7 +27,10 @@ from data_pipeline.market.fii_sources import metric_observation
 SOURCE = "cvm_dados_abertos"
 ROOT = "https://dados.cvm.gov.br/dados/FII/DOC"
 PARSER_NAME = "cvm_fii_structured"
-PARSER_VERSION = "1.6.0"
+# 1.7.0: o informe mensal passa a emitir ``pct_imoveis_renda`` (ver
+# ``_rental_property_share``). A troca de versão força o reprocessamento dos
+# arquivos já carregados, sem o qual o PIT não enxerga a métrica nova.
+PARSER_VERSION = "1.7.0"
 PARSER_SCHEMA_VERSION = "cvm-fii-structured-v2"
 ARCHIVES = {
     "monthly": ("INF_MENSAL", "inf_mensal_fii_{year}.zip"),
@@ -379,6 +382,39 @@ def _append(rows: list[dict], value: dict | None) -> None:
         rows.append(value)
 
 
+# Imóvel que pode ter locatário declarado na tabela de inquilinos do informe
+# trimestral (``inf_trimestral_fii_imovel_renda_acabado_inquilino``). Direitos
+# reais entram aqui por cautela: a CVM não diz se o direito é sobre imóvel
+# locado, e na dúvida a dimensão continua aplicável.
+_RENTAL_OR_AMBIGUOUS_FIELDS = ("Imoveis_Renda_Acabados", "Direitos_Bens_Imoveis",
+                               "Outros_Direitos_Reais")
+# Imóvel que, por definição da própria CVM, ainda não tem locatário: obra,
+# estoque à venda e terreno.
+_NON_RENTAL_PROPERTY_FIELDS = ("Terrenos", "Imoveis_Renda_Construcao",
+                               "Imoveis_Venda_Acabados", "Imoveis_Venda_Construcao")
+
+
+def _rental_property_share(asset: dict, classes: dict[str, float]) -> float | None:
+    """Fração da carteira em imóvel que pode ter inquilino declarado.
+
+    A exposição ``sector`` sai só da tabela de inquilinos de imóvel para renda
+    acabado. Fundo de desenvolvimento, de terreno ou de cotas nunca aparece
+    nela, e sem esta fração ele ficava para sempre na máscara de aplicáveis
+    sem chance de cobertura (validação PIT 6.10.0, run 105: fundos como
+    TGAR11, MFII11 e VGHF11 derrubando a cobertura de setor da carteira).
+
+    Devolve ``None`` quando o layout do ano não traz a coluna de imóvel para
+    renda acabado: ausência de coluna não pode virar fração zero.
+    """
+    if "Imoveis_Renda_Acabados" not in asset:
+        return None
+    total = sum(value for value in classes.values() if value > 0)
+    if total <= 0:
+        return None
+    rental = sum(max(_num(asset.get(field)) or 0, 0) for field in _RENTAL_OR_AMBIGUOUS_FIELDS)
+    return min(rental / total, 1.0)
+
+
 def parse_monthly(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
                   raw_payload_id: int | None = None) -> dict:
     tables = _read_zip(archive)
@@ -426,6 +462,13 @@ def parse_monthly(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
         }
         exposures.extend(_exposures(context, "asset_class", classes, source=source,
                                     raw_payload_id=raw_payload_id))
+        _append(observations, _observation(
+            context, "pct_imoveis_renda", _rental_property_share(asset, classes),
+            source=source, raw_payload_id=raw_payload_id,
+            metadata={"source_url": archive.url, "archive_sha256": archive.sha256,
+                      "formula": "(" + "+".join(_RENTAL_OR_AMBIGUOUS_FIELDS)
+                                 + ")/soma_das_classes_de_ativo",
+                      "excluded": list(_NON_RENTAL_PROPERTY_FIELDS)}))
         # A dimensao `manager` so existia no estado corrente da brapi (desde
         # 2025-08, knowledge_at de 2026-07). O informe mensal traz o mesmo
         # administrador desde 2016 com data de entrega propria, entao a

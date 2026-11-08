@@ -46,6 +46,46 @@ def test_monthly_creates_regulatory_metrics_and_leverage():
     assert values["total_investors"] == 100
     assert all(row["availability_quality"] == "verified_publication"
                for row in parsed["observations"])
+    # 500 de imóvel para renda acabado sobre 1000 de classes de ativo.
+    assert values["pct_imoveis_renda"] == .5
+
+
+def _monthly_assets(header: str, values: str) -> dict:
+    general = (
+        "CNPJ_Fundo_Classe;Data_Referencia;Versao;Data_Entrega\n"
+        "12.345.678/0001-00;2026-06-30;1;2026-07-05\n")
+    assets = ("CNPJ_Fundo_Classe;Data_Referencia;Versao;" + header + "\n"
+              "12.345.678/0001-00;2026-06-30;1;" + values + "\n")
+    parsed = parse_archive(_archive("monthly", {
+        "inf_mensal_fii_geral_2026.csv": general,
+        "inf_mensal_fii_ativo_passivo_2026.csv": assets,
+    }), {"12345678000100": "TEST11"}, 7)
+    return {row["metric_name"]: row for row in parsed["observations"]}
+
+
+def test_monthly_rental_share_is_zero_for_development_fund():
+    """Obra, estoque e terreno não têm inquilino na CVM: fração zero."""
+    observed = _monthly_assets(
+        "Disponibilidades;Imoveis_Renda_Acabados;Imoveis_Venda_Construcao;Terrenos",
+        "100;0;700;200")
+
+    assert observed["pct_imoveis_renda"]["value_numeric"] == 0.0
+    assert observed["pct_imoveis_renda"]["availability_quality"] == "verified_publication"
+
+
+def test_monthly_rental_share_counts_real_rights_as_possibly_leased():
+    observed = _monthly_assets(
+        "Disponibilidades;Imoveis_Renda_Acabados;Direitos_Bens_Imoveis;FII",
+        "100;0;300;600")
+
+    assert observed["pct_imoveis_renda"]["value_numeric"] == .3
+
+
+def test_monthly_rental_share_is_absent_when_layout_lacks_the_column():
+    """Coluna que o layout do ano não tem não pode virar fração zero."""
+    observed = _monthly_assets("Disponibilidades;Terrenos;CRI", "100;400;500")
+
+    assert "pct_imoveis_renda" not in observed
 
 
 def test_quarterly_derives_expiry_indexer_tenant_and_duration():
