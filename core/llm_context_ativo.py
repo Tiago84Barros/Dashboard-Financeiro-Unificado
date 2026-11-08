@@ -378,15 +378,16 @@ def build_us_ativo_context(
             blocos.append(f"\nDOSSIÊ DA EMPRESA: indisponível ({dossie.get('erro')}).")
     except Exception:
         logger.exception("dossiê de %s indisponível", sym)
+    # Trimestres, exercícios e proventos: armazém direto, túnel ou o arquivo
+    # publicado. Antes, o chat da empresa só recebia a CONTAGEM de períodos
+    # ("Demonstrações: 9 períodos no banco") e respondia sobre o último
+    # trimestre sem o número dele.
     try:
-        # Preço diário, trimestres e proventos que a vitrine não guarda. Sem
-        # este bloco o chat da empresa era o único caminho de LLM dos EUA sem
-        # o detalhe do armazém (os chats de carteira já o recebiam).
         detalhe = get_warehouse_detail_context([sym])
         if detalhe:
             blocos.append("\n" + detalhe)
     except Exception:
-        logger.exception("detalhe do armazém de %s indisponível", sym)
+        logger.exception("detalhe trimestral de %s indisponível", sym)
     blocos.append("\n" + _varredura("us", sym))
     sec = _bloco_documentos_sec(sym)
     if sec:
