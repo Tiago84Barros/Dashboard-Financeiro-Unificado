@@ -1840,6 +1840,9 @@ def _series_desempenho_categorias(posicoes: list, period_key: str) -> tuple[dict
     series: dict[str, pd.Series] = {}
     info: dict[str, dict] = {}
     grupos = dc.posicoes_por_categoria(posicoes)
+    # Data do primeiro aporte de cada ativo: a mesma da coluna "Primeiro
+    # aporte" da tabela de posições. O histórico anterior não é da carteira.
+    aportes = get_extras_tabela().get("primeiro_aporte") or {}
 
     # Uma chamada só ao yfinance para todas as categorias de bolsa, câmbio junto:
     # a Visão Geral é a subaba que abre primeiro.
@@ -1904,6 +1907,16 @@ def _series_desempenho_categorias(posicoes: list, period_key: str) -> tuple[dict
             if getattr(precos.index, "tz", None) is not None:
                 precos.index = precos.index.tz_localize(None)
             precos = precos.loc[precos.index >= corte]
+            posse = dc.inicio_da_posse(aportes, precos.columns)
+            sem_data = sorted(c for c, d in posse.items() if d is None and c in quantidades)
+            if sem_data:
+                aviso_lacuna(
+                    f"{nome}: sem data de primeiro aporte para {', '.join(sem_data)}; "
+                    "o ativo fica fora da linha da categoria.",
+                    codigo="tela.investimentos.desempenho_categoria_sem_aporte",
+                    entidade=nome,
+                )
+            precos = dc.recortar_pela_posse(precos, posse).dropna(how="all")
         serie = dc.retorno_encadeado(precos, quantidades) if not precos.empty else None
         cobertos = [c for c in precos.columns
                     if c in quantidades and precos[c].notna().any()] if not precos.empty else []
@@ -2142,7 +2155,7 @@ def _secao_desempenho_categorias(posicoes: list) -> None:
     st.markdown(
         f'<div class="dcat-rodape">Período: {_PERFORMANCE_PERIODS[period_key]["label"]}, '
         f'{_ROTULO_AMOSTRA[freq]} · toque no nome de uma categoria na legenda para mostrar '
-        'ou esconder a linha · cada linha começa no primeiro preço disponível</div>',
+        'ou esconder a linha · cada ativo entra na linha a partir do seu primeiro aporte</div>',
         unsafe_allow_html=True,
     )
 
@@ -2161,7 +2174,10 @@ def _secao_desempenho_categorias(posicoes: list) -> None:
         st.dataframe(pd.DataFrame(linhas), hide_index=True, width="stretch")
         st.caption(
             "Não é a rentabilidade da conta: usa a quantidade de hoje de cada ativo e "
-            "ignora aportes e vendas. Cada passo do retorno usa só os ativos com preço "
+            "ignora aportes e vendas. Cada ativo entra na linha só a partir do primeiro "
+            "aporte (extrato de Negociação ou Movimentação; na falta, a primeira foto de "
+            "posição), e ativo sem essa data fica de fora — por isso a coluna Ativos com "
+            "série pode ficar menor que o total. Cada passo do retorno usa só os ativos com preço "
             "nas duas datas. FIIs e ações pelo fechamento ajustado incluem proventos; "
             "Tesouro com cupom cai no pagamento do cupom. Categorias americanas em reais "
             "pelo câmbio do dia, salvo quando a coluna Moeda diz USD."
