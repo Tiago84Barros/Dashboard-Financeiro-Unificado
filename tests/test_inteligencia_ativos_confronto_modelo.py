@@ -358,9 +358,11 @@ def test_reduzir_parcial_troca_so_a_proporcao():
     assert any("Venda de 30% da posição" in m for m in x.motivos)
 
 
-def test_qualidade_fragil_vira_troca_mesmo_com_manter():
+def test_qualidade_fragil_com_manter_segue_pelos_aportes():
+    # Até o achado P1 do Codex (#697), frágil vendia por atalho; agora a
+    # venda só sai da decisão, que já pesa a qualidade.
     x = _conf_sub("manter", qual_sai=av_.FRAGIL).substituicao_de("PETR4")
-    assert x.modo == cf.TROCA
+    assert x.modo == cf.TROCA_GRADUAL
 
 
 def test_par_que_nao_e_claramente_superior_nao_troca():
@@ -410,7 +412,7 @@ def test_entra_so_quem_passa_no_limite_e_na_estrategia():
 
 def test_substituicao_nunca_contradiz_a_decisao():
     """Venda só sai quando a Inteligência já deixa o ativo (vender,
-    substituir, reduzir) ou a qualidade é frágil; nos demais, aportes."""
+    substituir, reduzir); nos demais, aportes."""
     for codigo in ("manter", "acompanhar", "rebalancear", "reduzir_parcial",
                    "vender", "substituir"):
         x = _conf_sub(codigo).substituicao_de("PETR4")
@@ -440,3 +442,40 @@ def test_substituicoes_vao_para_a_llm_e_para_a_tela():
               for tk in ("PETR4", "ITSA4", "HGLG11")}
     vazio = tela.cartao_substituicoes(_conf(fortes))
     assert "nenhuma troca sugerida" in vazio
+
+
+def test_alerta_so_do_noticiario_nao_vira_venda():
+    """Codex P1 (#697): alerta eliminatório só do noticiário leva a
+    Inteligência a "acompanhar" até o documento oficial; a troca não pode
+    mandar vender antes dela."""
+    noticia = av_.Avaliacao(
+        perfil=av_.GERAL,
+        dimensoes=_av(av_.ADEQUADA).dimensoes,
+        alertas=(av_.Alerta("recuperação judicial na manchete", critico=True,
+                            noticia=True),))
+    v = {"PETR4": _vered("PETR4", "acompanhar", noticia)}
+    c = cf.montar(_ref(), v, {"VALE3": _av(av_.FORTE)},
+                  alocacao_estrategia=ESTRATEGIA,
+                  analises={"PETR4": _analise("PETR4", PETR, pares=(
+                      ("VALE3", VALE_MELHOR),))})
+    x = c.substituicao_de("PETR4")
+    assert x is not None and x.modo == cf.TROCA_GRADUAL
+
+
+def test_modo_da_troca_segue_so_a_decisao():
+    """A venda sai da decisão da Inteligência, nunca de um atalho próprio:
+    qualidade frágil com "acompanhar" continua pelos aportes."""
+    x = _conf_sub("acompanhar", qual_sai=av_.FRAGIL).substituicao_de("PETR4")
+    assert x.modo == cf.TROCA_GRADUAL
+
+
+def test_mesmo_segmento_sem_metricas_nao_troca_so_pela_qualidade():
+    """Codex P2 (#697): no mesmo segmento, a régua é a comparação métrica a
+    métrica. Sem métricas para comparar, falta evidência: não troca (dado
+    ausente não vira classificação)."""
+    sem_metricas = _conf_sub(pares=(), setor_sai="x", qual_vale=av_.FORTE,
+                             metricas={})
+    assert sem_metricas.substituicao_de("PETR4") is None
+    sem_sobreposicao = _conf_sub(pares=(), setor_sai="x", qual_vale=av_.FORTE,
+                                 metricas={"VALE3": {"cap_rate": 9.0}})
+    assert sem_sobreposicao.substituicao_de("PETR4") is None

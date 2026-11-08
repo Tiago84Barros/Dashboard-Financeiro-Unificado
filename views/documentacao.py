@@ -2671,8 +2671,8 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
                 "risco, com três métricas no mínimo); entre segmentos, um nível de qualidade "
                 "acima. Uma troca por ativo, nunca para quem a Inteligência manda comprar",
                 "A troca só vende (com o custo e o IR estimados) quando a Inteligência já "
-                "indica vender, substituir ou reduzir, ou a qualidade é frágil; nos demais "
-                "casos é pelos aportes, sem vender",
+                "indica vender, substituir ou reduzir; nos demais casos é pelos aportes, "
+                "sem vender. No mesmo segmento, sem métricas para comparar, não há troca",
             ),
             "O modelo é montado em parte com o próprio veredito desta aba: usá-lo como "
             "argumento seria confirmação circular. Por isso o confronto compara a qualidade "

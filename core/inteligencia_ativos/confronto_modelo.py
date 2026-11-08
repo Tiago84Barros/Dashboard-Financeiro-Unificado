@@ -22,7 +22,7 @@ O que ele responde, sempre que o Portfólio Global tem modelo e alocação:
    entre segmentos diferentes, um nível de qualidade acima. Quando a
    Inteligência ainda sustenta o ativo da carteira, a troca é pelos aportes,
    sem vender; só vira venda quando ela já indica vender, substituir ou
-   reduzir, ou a qualidade do ativo é frágil.
+   reduzir. No mesmo segmento, sem métricas para comparar, não há troca.
 
 Por que isto não reabre a confirmação circular que ``referencia_modelo``
 evita (o modelo é montado em parte com o veredito desta aba):
@@ -589,11 +589,11 @@ def _comparar(a, sai: refm.LinhaAtivo, av_sai: av_.Avaliacao | None,
     """(é melhor, mesmo segmento, Confronto métrica a métrica | None).
 
     Mesmo segmento (o ativo do modelo está entre os pares do ativo da
-    carteira, ou o setor é o mesmo): vale ``recomendacao.confrontar`` --
+    carteira, ou o setor é o mesmo): vale só ``recomendacao.confrontar`` --
     melhor na qualidade, não pior no preço nem no risco, com três métricas
-    no mínimo -- e a qualidade não pode ser menor. Segmentos diferentes: os
-    múltiplos não se comparam entre setores, então só um nível de qualidade
-    acima conta."""
+    no mínimo -- e a qualidade não pode ser menor; sem comparação possível,
+    não troca. Segmentos diferentes: os múltiplos não se comparam entre
+    setores, então só um nível de qualidade acima conta."""
     nota_sai = NOTA_QUALIDADE.get(av_sai.qualidade) if av_sai else None
     nota_entra = NOTA_QUALIDADE[av_entra.qualidade]
     if nota_sai is not None and nota_entra < nota_sai:
@@ -603,14 +603,20 @@ def _comparar(a, sai: refm.LinhaAtivo, av_sai: av_.Avaliacao | None,
     setor_sai = _dobra(a.ativo.setor if a is not None else None)
     mesmo = par is not None or (bool(setor_sai)
                                 and setor_sai == _dobra(entra.setor))
-    if mesmo and a is not None:
+    if mesmo:
+        # No mesmo segmento a régua é a comparação métrica a métrica. Sem
+        # métricas que se sobreponham falta evidência, e a qualidade sozinha
+        # não a substitui: dado ausente não vira troca (achado P2 do Codex no
+        # PR #697).
         if par is None and metricas:
             par = prs.Par(entra.ticker, entra.nome, 0.0,
                           "carteira do Portfólio Global", dict(metricas))
-        cf = rec.confrontar(a, par) if par is not None else None
-        if cf is not None:
-            return cf.claramente_superior, True, cf
-    return (nota_sai is not None and nota_entra > nota_sai), mesmo, None
+        cf = (rec.confrontar(a, par)
+              if a is not None and par is not None else None)
+        if cf is None:
+            return False, True, None
+        return cf.claramente_superior, True, cf
+    return (nota_sai is not None and nota_entra > nota_sai), False, None
 
 
 def _substituicao(sai: refm.LinhaAtivo, a, v: vd.Veredito | None,
@@ -619,9 +625,11 @@ def _substituicao(sai: refm.LinhaAtivo, a, v: vd.Veredito | None,
     d = v.recomendacao if v is not None else None
     codigo = getattr(d, "codigo", None)
     av_sai = v.avaliacao if v is not None else None
-    deixa = (codigo in (rs.VENDER, rs.SUBSTITUIR, rs.REDUZIR_PARCIAL)
-             or (av_sai is not None and (av_sai.qualidade == av_.FRAGIL
-                                         or av_sai.criticos)))
+    # A venda sai só da decisão da Inteligência. Qualidade frágil ou alerta
+    # eliminatório já entram nela (``resumida``): alerta só do noticiário
+    # vira "acompanhar" até o documento oficial, e um atalho aqui mandaria
+    # vender antes disso (achado P1 do Codex no PR #697).
+    deixa = codigo in (rs.VENDER, rs.SUBSTITUIR, rs.REDUZIR_PARCIAL)
     q_sai = (av_.ROTULO_LEITURA[av_sai.qualidade].lower()
              if av_sai is not None else "sem leitura")
     q_entra = av_.ROTULO_LEITURA[av_entra.qualidade].lower()

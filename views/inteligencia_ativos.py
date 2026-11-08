@@ -1000,8 +1000,9 @@ def cartao_substituicoes(c: conf_.Confronto) -> str:
         "Mesmo segmento: melhor na qualidade e não pior no preço nem no "
         "risco, métrica a métrica, a mesma régua do \"Se sair, qual "
         "substituir?\". Segmentos diferentes: um nível de qualidade acima. "
-        "A troca só vende quando a Inteligência já indica vender, substituir "
-        "ou reduzir, ou a qualidade do ativo é frágil.")
+        "No mesmo segmento, sem métricas para comparar, não há troca. A troca "
+        "só vende quando a Inteligência já indica vender, substituir ou "
+        "reduzir.")
 
 
 def _render_liberada(liberacao: portao.Liberacao, carteira: dict,
