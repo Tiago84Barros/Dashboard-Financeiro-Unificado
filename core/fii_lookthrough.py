@@ -44,6 +44,10 @@ SOURCE_LIMITATIONS = {
     ),
 }
 _PROPERTY_DIMENSIONS = {"sector", "tenant", "region"}
+# Dimensões cuja única fonte estruturada é a tabela de inquilinos de imóvel
+# para renda acabado. Região fica de fora: sai da tabela de imóveis, que
+# lista obra, estoque e terreno também.
+_TENANT_TABLE_DIMENSIONS = {"sector", "tenant"}
 _CREDIT_DIMENSIONS = {"issuer", "debtor", "indexer"}
 _MACRO_REGIONS = {
     "NORTE": "Norte",
@@ -77,10 +81,22 @@ def dimension_is_applicable(
     papel+FoF ou imóveis+FoF. Quando a composição está observada, uma dimensão
     só é aplicável se a exposição econômica correspondente for material. Sem
     composição observada, o comportamento conservador anterior é preservado.
+
+    Setor e inquilino só existem, na CVM, para imóvel para renda acabado. Se o
+    informe mensal mostra que o fundo quase não tem esse imóvel
+    (``pct_imoveis_renda`` abaixo da materialidade) e nenhum setor foi
+    observado, a dimensão não se aplica: é fundo de obra, terreno, estoque ou
+    cotas, e cobrar dele setor de inquilino só reprova a carteira por um dado
+    que não existe. Setor observado mantém o fundo na máscara.
     """
     fii_type = str(row.get("tipo") or "").strip().lower()
     if fii_type not in APPLICABLE_TYPES.get(dimension, set()):
         return False
+    if dimension in _TENANT_TABLE_DIMENSIONS:
+        rental = _fraction(row.get("pct_imoveis_renda"))
+        if (rental is not None and rental < materiality
+                and not has_observed_dimension(row, dimension)):
+            return False
     if fii_type != "hibrido":
         return True
     if dimension in _PROPERTY_DIMENSIONS:
@@ -220,3 +236,46 @@ def summarize_lookthrough_coverage(
             value for value in SOURCE_LIMITATIONS.values() if value
         ],
     }
+
+
+#: Exposições que entram na linha como dicionário nome → peso.
+_EXPOSURE_MAPPING_KEYS = {
+    "tenant": "tenants", "debtor": "debtors", "issuer": "issuers",
+    "indexer": "indexers", "region": "regions", "holding": "holdings",
+}
+#: Exposições que entram como um rótulo só (o de maior peso).
+_EXPOSURE_LABEL_KEYS = ("manager", "sector", "segment")
+
+
+def apply_exposures(row: dict, items: list[dict]) -> dict:
+    """Leva as exposições de um fundo para os campos da linha da metodologia.
+
+    Ponto único para o PIT (`data_pipeline.market.fii_pit`) e o estado
+    corrente (`core.market_read`), que antes repetiam o mesmo mapeamento.
+
+    ``segment`` é o segmento cadastral declarado pelo administrador no informe
+    mensal da CVM. Ele é **reserva** do ``sector`` por inquilino do informe
+    trimestral: só preenche ``sector`` quando a linha não tem setor nem pelas
+    exposições nem pelo cadastro corrente (brapi). O trimestral reapresentado
+    chega meses depois; o mensal chega no prazo, e é o que RCRB11 tinha em
+    2017-08 e 2017-09.
+    """
+    mappings: dict[str, dict[str, float]] = {}
+    for item in items:
+        kind = str(item.get("exposure_type") or "")
+        name = str(item.get("exposure_name") or "")
+        weight = item.get("exposure_weight")
+        if not kind or not name or weight is None:
+            continue
+        mappings.setdefault(kind, {})[name] = float(weight)
+    for kind, key in _EXPOSURE_MAPPING_KEYS.items():
+        if mappings.get(kind):
+            row[key] = mappings[kind]
+    for kind in _EXPOSURE_LABEL_KEYS:
+        mapping = mappings.get(kind)
+        if mapping:
+            row[kind] = max(mapping, key=mapping.get)
+    if not row.get("sector") and row.get("segment"):
+        row["sector"] = row["segment"]
+        row["sector_source"] = "cvm_cadastral_segment"
+    return row

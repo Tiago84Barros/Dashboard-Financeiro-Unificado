@@ -46,7 +46,8 @@ DIAS_FITA_PARADA = 5
 #: ``dy_patrimonial_mes`` é o rendimento do mês sobre o patrimônio (fração).
 _METRICAS = ("nav_per_share", "total_investors", "equity", "leverage",
              "dy_patrimonial_mes", "liquidity_ratio")
-_TIPOS_COMPOSICAO = ("asset_class", "sector", "indexer", "region", "issuer", "debtor")
+_TIPOS_COMPOSICAO = ("asset_class", "sector", "segment", "indexer", "region", "issuer",
+                     "debtor")
 
 _SQL_SERIE = """
 SELECT DISTINCT ON (ticker, metric_name, reference_date)
@@ -438,7 +439,9 @@ def resumo_imoveis(imoveis: list[dict]) -> dict | None:
             "principais": ordem[:IMOVEIS_LISTADOS]}
 
 
-_NOMES_TIPO = {"asset_class": "classe de ativo", "sector": "setor", "indexer": "indexador",
+_NOMES_TIPO = {"asset_class": "classe de ativo", "sector": "setor por inquilino",
+               "segment": "segmento cadastral (declarado pelo administrador)",
+               "indexer": "indexador",
                "region": "região", "issuer": "emissor (CNPJ quando o cadastro não tem o nome)",
                "debtor": "devedor dos CRI (CNPJ quando o cadastro não tem o nome)"}
 
