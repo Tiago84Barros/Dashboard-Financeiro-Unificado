@@ -189,9 +189,11 @@ def get_warehouse_detail_context(tickers: list[str], *,
     alvo = list(dict.fromkeys(_norm_tk(t) for t in tickers if str(t).strip()))[:_MAX_DETALHE]
     if not alvo:
         return ""
-    from core.us_detalhe_armazem import ler_detalhe, resumo_para_prompt
+    from core.us_detalhe_armazem import ler_detalhe, ler_do_arquivo, resumo_para_prompt
     from core.us_read import _db_is_local, _engine
 
+    falha_tunel = None
+    detalhe = None
     try:
         if _db_is_local() and _engine() is not None:
             detalhe, origem = ler_detalhe(_engine(), alvo), "lido direto"
@@ -199,17 +201,31 @@ def get_warehouse_detail_context(tickers: list[str], *,
             from core import armazem_remoto
 
             detalhe, origem = armazem_remoto.detalhe_eua(alvo), "lido pelo túnel"
-    except Exception as exc:  # noqa: BLE001 - vira linha no prompt
+    except Exception as exc:  # noqa: BLE001 - cai para o arquivo publicado
         logger.warning("detalhe do armazém indisponível: %s", exc)
-        motivo = str(exc).splitlines()[0][:140] if str(exc) else type(exc).__name__
-        return ("DETALHE DO ARMAZÉM LOCAL: indisponível agora "
-                f"({motivo}); preço diário, trimestres e proventos não entraram.")
-    if detalhe is None:
-        return ("DETALHE DO ARMAZÉM LOCAL: túnel não configurado neste ambiente; "
-                "preço diário, trimestres e proventos não entraram.")
-    if captura is not None:
-        captura.update(detalhe)
-    return resumo_para_prompt(detalhe, origem=origem)
+        falha_tunel = str(exc).splitlines()[0][:140] if str(exc) else type(exc).__name__
+        detalhe = None
+    if detalhe is not None:
+        if captura is not None:
+            captura.update(detalhe)
+        return resumo_para_prompt(detalhe, origem=origem)
+    # Túnel ausente (o normal na nuvem) ou fora do ar: o arquivo publicado tem
+    # trimestres, exercícios e proventos -- só não tem o preço diário.
+    try:
+        publicado = ler_do_arquivo(alvo)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("detalhe publicado ilegível: %s", exc)
+        publicado = None
+    if publicado is not None:
+        detalhe, origem = publicado
+        if captura is not None:
+            captura.update(detalhe)
+        return resumo_para_prompt(detalhe, origem=origem, com_precos=False)
+    tunel = (f"indisponível agora ({falha_tunel})" if falha_tunel
+             else "túnel não configurado neste ambiente")
+    return (f"DETALHE DO ARMAZÉM LOCAL: {tunel}, e o arquivo publicado "
+            "(data/public/detalhe_eua.json.gz) ainda não existe; preço diário, "
+            "trimestres e proventos não entraram.")
 
 
 def get_creation_context(model: dict) -> str:

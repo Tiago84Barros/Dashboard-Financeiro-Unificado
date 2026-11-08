@@ -587,6 +587,20 @@ ALVOS: tuple[Alvo, ...] = (
         artefatos=("data/public/etf_dados.json.gz",),
     ),
     Alvo(
+        # Trimestres, exercícios e proventos das ações dos EUA para o chat da
+        # empresa, que só recebia a contagem de demonstrativos. Arquivo e não
+        # tabela: decisão do usuário (08/11/2026), Supabase perto dos 500 MB.
+        # Semanal porque o 10-Q chega uma vez por trimestre por empresa; na
+        # temporada de resultados, uma semana é o atraso máximo. Depois de
+        # `us_snapshot`, que renova o universo que o publicador lê.
+        chave="detalhe_eua",
+        titulo="Trimestres e proventos dos EUA para as LLMs",
+        passos=(("scripts/publish_detalhe_eua.py",),),
+        cadencia_dias=7,
+        modulo="us",
+        artefatos=("data/public/detalhe_eua.json.gz",),
+    ),
+    Alvo(
         chave="us_prices",
         titulo="Preços mensais dos EUA",
         passos=(("-m", "scripts.publish_us_prices_monthly", "--apply"),

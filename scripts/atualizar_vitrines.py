@@ -292,6 +292,7 @@ CARIMBO = {
     "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),
     "b3_linhagem": ("arquivo", "data/public/b3_linhagem.json"),
     "etf_dados": ("arquivo", "data/public/etf_dados.json.gz"),
+    "detalhe_eua": ("arquivo", "data/public/detalhe_eua.json.gz"),
 }
 
 

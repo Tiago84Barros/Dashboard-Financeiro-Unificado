@@ -14,11 +14,19 @@ Duas metades, separadas de propósito:
 * :func:`resumo_para_prompt` faz as contas e roda sempre no app. Assim a
   fórmula é uma só: o PC servindo uma versão velha do código não muda o número
   que a LLM lê (mesma regra das notícias por ativo).
+
+Terceira origem, para quando o túnel não está de pé (o caso normal na nuvem):
+``data/public/detalhe_eua.json.gz``, gravado por
+``scripts/publish_detalhe_eua.py`` com as MESMAS linhas cruas de
+:func:`ler_detalhe` -- trimestres, exercícios e proventos do universo inteiro.
+O preço diário fica fora do arquivo (400 dias x 3 mil empresas); a vitrine já
+tem a série compacta, e o resumo diz isso em vez de "o armazém não tem".
 """
 from __future__ import annotations
 
 import math
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 #: Tetos do recorte. ~400 dias corridos cobrem 252 pregões com folga para o
 #: retorno de 12 meses; 8 trimestres dão a comparação ano contra ano de 4.
@@ -27,6 +35,9 @@ TRIMESTRES = 8
 EXERCICIOS = 3
 ANOS_PROVENTOS = 5
 SIMBOLOS_MAX = 10
+
+ARQUIVO = Path(__file__).resolve().parents[1] / "data" / "public" / \
+    "detalhe_eua.json.gz"
 
 _CONTAS = ("revenue", "gross_profit", "operating_income", "net_income",
            "eps_diluted", "operating_cash_flow", "capex", "free_cash_flow")
@@ -65,15 +76,23 @@ def normalizar_simbolos(simbolos) -> list[str]:
         str(s).strip().upper() for s in (simbolos or []) if str(s).strip()))
 
 
-def ler_detalhe(engine, simbolos, *, hoje: date | None = None) -> dict[str, dict]:
+def ler_detalhe(engine, simbolos, *, hoje: date | None = None,
+                limite: int | None = SIMBOLOS_MAX,
+                com_precos: bool = True) -> dict[str, dict]:
     """Linhas cruas por símbolo: ``precos``, ``trimestres``, ``exercicios``, ``proventos``.
 
     Símbolo sem nenhuma linha volta com listas vazias -- ausência também é
     resposta, e o resumo diz que o armazém não tem, em vez de omitir.
+
+    ``limite`` e ``com_precos`` existem para o publicador do arquivo, que lê o
+    universo inteiro em lotes e deixa o preço diário de fora; a pergunta do
+    chat continua com o teto de :data:`SIMBOLOS_MAX` e com preço.
     """
     from sqlalchemy import text
 
-    alvo = normalizar_simbolos(simbolos)[:SIMBOLOS_MAX]
+    alvo = normalizar_simbolos(simbolos)
+    if limite is not None:
+        alvo = alvo[:limite]
     hoje = hoje or date.today()
     saida = {s: {"precos": [], "trimestres": [], "exercicios": [], "proventos": []}
              for s in alvo}
@@ -85,7 +104,8 @@ def ler_detalhe(engine, simbolos, *, hoje: date | None = None) -> dict[str, dict
             "desde": hoje - timedelta(days=366 * (EXERCICIOS + 1))}).mappings().all()
         precos = conn.execute(text(_SQL_PRECOS), {
             "s": alvo, "hoje": hoje,
-            "desde": hoje - timedelta(days=DIAS_PRECO)}).mappings().all()
+            "desde": hoje - timedelta(days=DIAS_PRECO)}).mappings().all() \
+            if com_precos else []
         prov = conn.execute(text(_SQL_PROVENTOS), {
             "s": alvo, "hoje": hoje,
             "desde": hoje - timedelta(days=366 * ANOS_PROVENTOS)}).mappings().all()
@@ -231,8 +251,12 @@ def _linha_trimestre(t: dict, anterior: dict | None) -> str:
 
 
 def resumo_para_prompt(detalhe: dict[str, dict], *, origem: str,
-                       hoje: date | None = None) -> str:
-    """Bloco de texto para o prompt, uma seção por ticker."""
+                       hoje: date | None = None, com_precos: bool = True) -> str:
+    """Bloco de texto para o prompt, uma seção por ticker.
+
+    ``com_precos=False`` é a origem que não carrega preço diário (o arquivo
+    publicado): a linha de preço diz isso, em vez de afirmar que o armazém não
+    tem a série -- seriam duas ausências diferentes com o mesmo texto."""
     hoje = hoje or date.today()
     if not detalhe:
         return ""
@@ -241,7 +265,10 @@ def resumo_para_prompt(detalhe: dict[str, dict], *, origem: str,
     for sym, d in detalhe.items():
         linhas.append(f"  {sym}:")
         p = resumo_precos(d.get("precos") or [])
-        if p is None:
+        if p is None and not com_precos:
+            linhas.append("    Preço diário: não vem no arquivo publicado; use o "
+                          "preço e a variação do resumo da vitrine.")
+        elif p is None:
             linhas.append("    Preço diário: o armazém não tem série recente deste ticker.")
         else:
             idade = (hoje - p["ultimo_dia"]).days
@@ -286,3 +313,72 @@ def resumo_para_prompt(detalhe: dict[str, dict], *, origem: str,
                 f"(US$ {pv['ultimo_valor']:,.4f}); "
                 f"pagou em {pv['anos_seguidos']} ano(s) seguido(s) até {hoje.year - 1}.")
     return "\n".join(linhas)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Arquivo publicado (terceira origem)
+# ─────────────────────────────────────────────────────────────────────────────
+def _iso(valor):
+    d = _data(valor)
+    return d.isoformat() if d is not None else None
+
+
+def _compacto(valor):
+    """Número sem casa que não diz nada: receita em dólar inteiro, LPA com 4."""
+    x = _num(valor)
+    if x is None:
+        return None
+    return round(x) if abs(x) >= 1000 else round(x, 4)
+
+
+def para_arquivo(detalhe: dict[str, dict]) -> dict[str, dict]:
+    """Linhas cruas de :func:`ler_detalhe` em tipos de JSON, sem o preço. Puro.
+
+    Símbolo sem trimestre, exercício nem provento fica de fora: no arquivo,
+    ausência do ticker já quer dizer "não há", e o leitor diz isso."""
+    saida = {}
+    for sym, d in detalhe.items():
+        blocos = {}
+        for chave in ("trimestres", "exercicios"):
+            linhas = []
+            for t in d.get(chave) or []:
+                linha = {"fiscal_year": t.get("fiscal_year"),
+                         "fiscal_quarter": t.get("fiscal_quarter"),
+                         "reference_date": _iso(t.get("reference_date")),
+                         "available_at": _iso(t.get("available_at"))}
+                linha.update({c: _compacto(t.get(c)) for c in _CONTAS})
+                linhas.append({k: v for k, v in linha.items() if v is not None})
+            if linhas:
+                blocos[chave] = linhas
+        prov = [{"ex_date": _iso(r.get("ex_date")), "valor": _num(r.get("valor"))}
+                for r in d.get("proventos") or []
+                if _iso(r.get("ex_date")) and _num(r.get("valor")) is not None]
+        if prov:
+            blocos["proventos"] = prov
+        if blocos:
+            saida[sym] = blocos
+    return saida
+
+
+def ler_do_arquivo(simbolos, *, caminho: Path | None = None) -> tuple[dict, str] | None:
+    """``(detalhe, origem)`` do arquivo publicado, ou ``None`` sem arquivo.
+
+    Devolve a MESMA forma de :func:`ler_detalhe` (com ``precos`` vazio), para o
+    :func:`resumo_para_prompt` fazer a conta. Ticker ausente do arquivo vem
+    com listas vazias: o resumo diz que não há demonstrativo, em vez de omitir.
+    """
+    from core.inteligencia_ativos import arquivo_publicado
+    art = arquivo_publicado.ler(str(caminho or ARQUIVO), "detalhe_eua")
+    por_ticker = (art or {}).get("por_ticker")
+    if not art or por_ticker is None or not art.get("base_ate"):
+        return None
+    alvo = normalizar_simbolos(simbolos)[:SIMBOLOS_MAX]
+    detalhe = {}
+    for sym in alvo:
+        d = por_ticker.get(sym) or {}
+        detalhe[sym] = {"precos": [], "trimestres": list(d.get("trimestres") or []),
+                        "exercicios": list(d.get("exercicios") or []),
+                        "proventos": list(d.get("proventos") or [])}
+    origem = (f"arquivo publicado em {str(art.get('gerado_em'))[:10]}, "
+              f"demonstrativos até {art.get('base_ate')}")
+    return detalhe, origem
