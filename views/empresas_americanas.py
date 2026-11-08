@@ -13,6 +13,7 @@ inteligência usa SEC/GAAP e contexto macroeconômico americano.
 from __future__ import annotations
 
 import html
+import logging
 
 import numpy as np
 import pandas as pd
@@ -54,6 +55,7 @@ from core.us_company_analysis import (
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
 from core.validacao_motor import validacao_us
 from data_pipeline.utils.date_utils import fmt_datetime_br
+from design import gravacao_carteira as _gravacao
 from design import portao_inteligencia as _portao_ui
 from design.chat_ativo import render_chat_ativo
 from design.componentes import (
@@ -1485,6 +1487,25 @@ def _render_us_portfolio_version_history(key: str) -> None:
                               "foi preservada.", exc)
 
 
+def _salvar_carteira_padrao_us(holdings: pd.DataFrame, result: dict,
+                               macro_info: dict, snapshot, metrics: dict) -> str:
+    """Grava a carteira montada como padrão americana; devolve o id."""
+    from core.us_portfolio_model import save_us_portfolio_model
+    return save_us_portfolio_model(
+        holdings.to_dict("records"),
+        params={
+            **(result.get("params") or {}),
+            "macro_mode": macro_info.get("mode"),
+            "macro_snapshot": snapshot.to_payload() if snapshot else None,
+            "macro_as_of": snapshot.as_of.isoformat() if snapshot else None,
+            "macro_coverage": macro_info.get("coverage"),
+            **veredito.log_para_payload(result.get("inteligencia_log")),
+        },
+        metrics={**metrics, "macro_turnover": macro_info.get("turnover")},
+        name=f"Portfolio EUA Modelo {pd.Timestamp.today().year}",
+    )
+
+
 def _tab_criacao_portfolio(status: dict) -> None:
     """Aplicação em escala da metodologia americana."""
     if _empty_if_offline(status, "Sem dados locais para montar a carteira.", "🚀"):
@@ -2027,43 +2048,39 @@ def _tab_criacao_portfolio(status: dict) -> None:
     if publication_blocking_error:
         st.warning(publication_blocking_error)
 
-    use_col, save_col, info_col = st.columns([1, 1, 2])
-    with use_col:
-        if st.button("💾 Usar na Avaliação de Portfólio", type="primary",
-                     key="us_create_save_model", disabled=not can_publish):
-            st.session_state["us_portfolio_model"] = holdings.copy()
-            st.success("Carteira-modelo enviada para Avaliação de Portfólio.")
+    # Um botão só, e ele grava. Até 08/11/2026 o primário, com disquete, era
+    # "Usar na Avaliação de Portfólio": punha a carteira numa chave de sessão
+    # que nenhuma tela lia (a Avaliação lê só o banco) e respondia "enviada".
+    # Quem clicava achava que tinha salvo, e o Dashboard Geral e o Portfólio
+    # Global seguiam com a carteira de 15/09. A gravação vai no on_click,
+    # antes do rerun de ~2 min desta tela; ver design/gravacao_carteira.py.
+    save_col, info_col = st.columns([1, 2])
     with save_col:
-        # Mesma decisão que "Salvar portfólio padrão" na B3: sem persistir, o
-        # Dashboard Geral não tem como exibir a carteira americana entre reruns.
-        if st.button("⭐ Salvar como carteira padrão", key="us_create_persist_model",
-                     disabled=not can_publish):
-            try:
-                from core.us_portfolio_model import save_us_portfolio_model
-                model_id = save_us_portfolio_model(
-                    holdings.to_dict("records"),
-                    params={
-                        **(result.get("params") or {}),
-                        "macro_mode": macro_info.get("mode"),
-                        "macro_snapshot": snapshot.to_payload() if snapshot else None,
-                        "macro_as_of": (
-                            snapshot.as_of.isoformat() if snapshot else None
-                        ),
-                        "macro_coverage": macro_info.get("coverage"),
-                        **veredito.log_para_payload(
-                            result.get("inteligencia_log")),
-                    },
-                    metrics={**metrics, "macro_turnover": macro_info.get("turnover")},
-                    name=f"Portfolio EUA Modelo {pd.Timestamp.today().year}",
-                )
-                st.success(
-                    "Carteira padrão americana salva — aparece no Dashboard Geral. "
-                    f"ID: {model_id[:8]}"
-                )
-            except Exception as exc:  # noqa: BLE001 - fronteira de persistência
-                falha_de_acao("Não foi possível salvar a carteira padrão.", exc)
+        st.button(
+            "💾 Salvar como carteira padrão", type="primary",
+            key="us_create_persist_model", disabled=not can_publish,
+            help="Grava no banco. É a carteira que o Dashboard Geral, o "
+                 "Portfólio Global e a Avaliação de Portfólio usam.",
+            on_click=_gravacao.ao_clicar_gravar(
+                "us_create_persist_model",
+                lambda: _salvar_carteira_padrao_us(
+                    holdings, result, macro_info, snapshot, metrics),
+                sucesso=("Carteira padrão americana salva — aparece no Dashboard "
+                         "Geral, no Portfólio Global e na Avaliação de "
+                         "Portfólio. ID: {id}"),
+                falha="Não foi possível salvar a carteira padrão.",
+            ),
+        )
+        _gravacao.mostrar_resultado("us_create_persist_model")
         _render_us_portfolio_version_history("us_create_persist_model")
     with info_col:
+        try:
+            from core.us_portfolio_model import load_active_us_portfolio_model
+            st.markdown(_gravacao.resumo_da_carteira_salva(
+                load_active_us_portfolio_model(), holdings["symbol"].astype(str)))
+        except (RuntimeError, ValueError, SQLAlchemyError) as exc:
+            logging.getLogger(__name__).warning(
+                "carteira EUA ativa ilegível: %s", exc)
         st.info(
             f"{len(holdings)} ativos · aporte mensal simulado de "
             f"US$ {metrics.get('monthly_contribution_usd', 0):,.2f} · "

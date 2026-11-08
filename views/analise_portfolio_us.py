@@ -1155,7 +1155,7 @@ def render(show_header: bool = True) -> None:
     if not model or not model.get("items"):
         st.info(
             "Nenhum portfólio modelo salvo. Crie uma carteira na aba "
-            "**🚀 Criação de Portfólio** e clique em **⭐ Salvar como carteira padrão**.",
+            "**🚀 Criação de Portfólio** e clique em **💾 Salvar como carteira padrão**.",
             icon="ℹ️",
         )
         return

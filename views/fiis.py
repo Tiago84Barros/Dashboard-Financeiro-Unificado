@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import logging
 import math
 from html import escape
 
@@ -82,6 +83,7 @@ from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from core.utils import escapar_cifrao
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
+from design import gravacao_carteira as _gravacao
 from design import portao_inteligencia as _portao_ui
 from design.chat_ativo import render_chat_ativo
 from design.componentes import (
@@ -93,6 +95,8 @@ from design.componentes import (
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.market_companies import company_logo_html, prebuscar_logos
 from design.relatorio_analista import secao_relatorio
+
+_log = logging.getLogger(__name__)
 
 # Metadados por tipo de FII: emoji, rótulo e cor de destaque do card.
 _TIPO_META = {
@@ -2374,6 +2378,7 @@ def _carteira_integrada(preferences: dict):
         result.get("can_publish") and investable_gate.can_publish_recommendation
     )
     st.session_state["fii_portfolio_can_publish"] = portfolio_can_publish
+    st.session_state["fii_portfolio_blockers"] = list(result.get("blockers") or [])
     if portfolio_can_publish:
         st.success("Carteira apta à publicação segundo os gates vigentes.")
     else:
@@ -2589,42 +2594,97 @@ def _carteira_integrada(preferences: dict):
     return table_slot, show, specific_metrics
 
 
+def motivos_do_bloqueio_de_publicacao() -> list[str]:
+    """Por que a carteira montada não é publicável segundo os gates vigentes.
+
+    Lista vazia = publicável. Junta os bloqueios do motor (``result``) e do
+    portão de investibilidade, na ordem em que a tela os calcula.
+    """
+    gate = st.session_state.get("fii_investable_publication_gate")
+    if gate is None:
+        return ["os gates de publicação não foram calculados nesta execução"]
+    motivos = list(st.session_state.get("fii_portfolio_blockers") or [])
+    motivos += list(getattr(gate, "reasons", ()) or ())
+    if not motivos and not (gate.can_publish_recommendation and st.session_state.get(
+            "fii_portfolio_can_publish", False)):
+        motivos.append("carteira não marcada como publicável pelo motor")
+    return list(dict.fromkeys(motivos))
+
+
 def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
                            *, key: str) -> None:
-    """Oferece a mesma persistência para qualquer método de seleção."""
+    """Oferece a mesma persistência para qualquer método de seleção.
+
+    Até 08/11/2026 o botão ficava desabilitado sempre que um gate reprovava,
+    sem dizer o motivo na tela. Desde 04/10/2026 a validação PIT da
+    metodologia 6.10.0 está reprovada, então nenhuma carteira podia ser salva:
+    o Dashboard Geral e o Portfólio Global ficaram presos na de 31/07. A
+    decisão de adotar a carteira é do usuário. O gate deixa de proibir e
+    passa a exigir ciência: os motivos aparecem na tela, a gravação pede
+    confirmação e o modelo salvo leva ``publication_status`` e
+    ``publication_blockers`` em ``params_json``. A integridade estrutural
+    (tickers, pesos, releitura pós-gravação) continua bloqueando em
+    ``core.fii_portfolio_model.save_fii_portfolio_model``.
+    """
     st.markdown("---")
+    motivos = motivos_do_bloqueio_de_publicacao()
     cs1, cs2 = st.columns([3, 1])
     with cs1:
         st.markdown(_info_card_html(
             "Publicação da carteira-modelo",
-            "Ao salvar, o Dashboard Geral passa a usar exatamente estes ativos e pesos. "
-            "A gravação só é liberada quando os gates de cobertura, consistência, "
-            "atualização e validação forem aprovados.",
+            "Ao salvar, o Dashboard Geral e o Portfólio Global passam a usar "
+            "exatamente estes ativos e pesos.",
             accent="#F6C90E",
         ), unsafe_allow_html=True)
+        if motivos:
+            st.warning(
+                "**Esta carteira não passou nos gates da metodologia:**\n\n"
+                + "\n".join(f"- {motivo}" for motivo in motivos)
+                + "\n\nVocê ainda pode salvá-la; ela fica marcada como "
+                "salva **sem aprovação da metodologia**."
+            )
+        try:
+            from core.fii_portfolio_model import load_active_fii_portfolio_model
+            st.markdown(_gravacao.resumo_da_carteira_salva(
+                load_active_fii_portfolio_model(),
+                (item.get("ticker") for item in port), unidade="FIIs"))
+        except (RuntimeError, ValueError, SQLAlchemyError) as exc:
+            _log.warning("carteira FII ativa ilegível: %s", exc)
     with cs2:
-        gate = st.session_state.get("fii_investable_publication_gate")
-        can_publish = bool(
-            gate and gate.can_publish_recommendation
-            and st.session_state.get("fii_portfolio_can_publish", False)
+        ciente = True
+        if motivos:
+            ciente = st.checkbox(
+                "Entendo os motivos acima e quero salvar mesmo assim.",
+                key=f"{key}_ciente",
+            )
+        params_gravados = {
+            **params,
+            "publication_status": "diligence_override" if motivos else "publishable",
+            "publication_blockers": motivos,
+        }
+        st.button(
+            "💾 Salvar carteira-modelo", width="stretch",
+            type="primary", key=key, disabled=not port or not ciente,
+            help=("Marque a confirmação ao lado para salvar."
+                  if motivos and not ciente else None),
+            on_click=_gravacao.ao_clicar_gravar(
+                key,
+                lambda: _salvar_carteira_modelo_fii(port, params_gravados, metrics),
+                sucesso=("Carteira-modelo salva, relida e verificada na mesma "
+                         "transação — já aparece no Dashboard Geral e no "
+                         "Portfólio Global. ID: {id}"),
+                falha=("Não foi possível salvar a carteira-modelo. Nenhuma "
+                       "substituição parcial foi mantida."),
+            ),
         )
-        if st.button("💾 Salvar carteira-modelo", width="stretch",
-                     type="primary", key=key, disabled=not can_publish,
-                     help=None if can_publish else "Publicação bloqueada pela metodologia integrada"):
-            try:
-                from core.fii_portfolio_model import save_fii_portfolio_model
-                save_fii_portfolio_model(port, params, metrics)
-                st.success(
-                    "Carteira-modelo salva, relida e verificada na mesma transação."
-                )
-            except (RuntimeError, ValueError) as exc:
-                falha_de_acao("Não foi possível salvar a carteira-modelo.", exc)
-            except SQLAlchemyError as exc:
-                falha_de_acao(
-                    "Não foi possível salvar a carteira-modelo. "
-                    "Nenhuma substituição parcial foi mantida.", exc)
+        _gravacao.mostrar_resultado(key)
     _render_log_da_carteira_ativa()
     _render_portfolio_version_history(key)
+
+
+def _salvar_carteira_modelo_fii(port: list[dict], params: dict, metrics: dict) -> str:
+    from core.fii_portfolio_model import save_fii_portfolio_model
+    return save_fii_portfolio_model(port, params, metrics)
 
 
 def _render_log_da_carteira_ativa() -> None:

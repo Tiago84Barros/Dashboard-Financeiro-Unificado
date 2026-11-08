@@ -1287,14 +1287,20 @@ FLOW_SELECAO_FIIS = FlowSpec(
         "gate_fii": _node(
             "gate_fii", "Portão de publicação", "Validação",
             "O app só chama o resultado de Carteira-Modelo se passar no portão: cobertura "
-            "mínima, confiança mediana e validação PIT em dia. Senão, sai como Lista de Diligência.",
+            "mínima, confiança mediana e validação PIT em dia. Senão, sai como Lista de "
+            "Diligência, com os motivos listados na tela. Salvar continua possível: "
+            "você marca que entendeu os motivos e a carteira fica gravada como salva "
+            "sem aprovação da metodologia.",
             (
                 "Cobertura mínima do universo",
                 "Confiança mediana acima do piso",
                 "Validação PIT válida para a versão corrente",
+                "Gravação com ciência: params_json.publication_status = "
+                "diligence_override e publication_blockers",
             ),
             "É a diferença entre 'isto foi validado' e 'isto é um ponto de partida para "
-            "você investigar'. O rótulo muda porque a evidência mudou.",
+            "você investigar'. O rótulo muda porque a evidência mudou; a decisão de "
+            "adotar a carteira continua sendo sua.",
         ),
         "preferencias_fii": _node(
             "preferencias_fii", "Suas preferências", "Carteira",
@@ -1560,11 +1566,15 @@ FLOW_EMPRESAS_EUA = FlowSpec(
         "carteira_us": _node(
             "carteira_us", "Criação de portfólio", "Aplicação",
             "Transforma o ranking em carteira, com limites por setor e por ativo "
-            "definidos por você.",
+            "definidos por você. O botão 💾 Salvar como carteira padrão grava no "
+            "banco; é essa carteira que o Dashboard Geral, o Portfólio Global e a "
+            "Avaliação de Portfólio usam.",
             (
                 "Limites por setor e por ativo",
                 "Piso de liquidez",
                 "Diagnóstico de restrição inalcançável",
+                "save_us_portfolio_model() → us_portfolio_models, no clique "
+                "(on_click), antes do rerun da tela",
             ),
             "O ranking ordena; a carteira precisa caber em limites. São decisões diferentes.",
         ),
