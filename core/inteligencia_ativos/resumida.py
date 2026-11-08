@@ -24,13 +24,14 @@ Coberto por tests/test_inteligencia_ativos_resumida.py.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from core.cenario import modelo as cen
 from core.estrategia import politica as pol
 from core.inteligencia_ativos import avaliacao as av_
 from core.inteligencia_ativos import informacoes as inf
 from core.inteligencia_ativos import modelos as m
+from core.inteligencia_ativos import momento as mo
 from core.inteligencia_ativos import pares as prs
 from core.inteligencia_ativos import recomendacao as rec
 from core.inteligencia_ativos.fundamentos import _tem_valor, formatar
@@ -111,7 +112,9 @@ AVISO_DECISAO = ("Recomendação por regras, não ordem automática: junta a "
                  "histórico ou queda forte são alertas para investigar: só "
                  "viram venda com piora dos fundamentos, tese quebrada ou "
                  "alternativa claramente superior, depois de custos e "
-                 "impostos.")
+                 "impostos. Num ativo em queda, a venda é revista: sem piora "
+                 "nos fundamentos, não se vende na queda; com piora, a saída "
+                 "vai em etapas, salvo alerta eliminatório do balanço.")
 AVISO_SUBSTITUTO = ("Candidatos do mesmo grupo de comparação, fora da sua "
                     "carteira. A troca só é sugerida quando um deles supera o "
                     "ativo na qualidade sem perder no preço nem no risco; "
@@ -159,6 +162,7 @@ class Decisao:
     proporcao: float | None = None         # fração da posição a vender
     custos: rec.CustoVenda | None = None
     substituto: rec.Confronto | None = None
+    momento: mo.Momento | None = None      # a queda, se houver (``momento``)
 
     @property
     def rotulo(self) -> str:
@@ -219,6 +223,11 @@ def decisao(a: m.AnaliseAtivo,
        * abaixo → comprar (salvo classe acima do alvo ou preço muito
          esticado);
        * na % devida → manter; realizar ~20% só com o preço muito esticado.
+    6. O momento (pedido de 08/11/2026, ``momento.py``): decisão que vende,
+       num ativo em queda, é revista antes de sair. Queda sem piora nos
+       fundamentos → não vender (rebalancear pelos aportes, ou manter).
+       Queda com piora → vender em etapas (cerca de 1/3 agora), salvo
+       alerta eliminatório do balanço, em que a venda inteira continua.
 
     ``na_carteira`` (os tickers da carteira) tira os pares que já estão nela
     da busca de substituto; ``ctx`` traz o cenário para o contexto e as
@@ -228,7 +237,9 @@ def decisao(a: m.AnaliseAtivo,
     """
     av = avaliacao if avaliacao is not None else av_.avaliar(a)
     s = _situacao(a, sugerido, av, na_carteira)
-    return _completar(a, s, av, _escolher(a, s, av), ctx)
+    mom = mo.medir(a, av, s.quebra)
+    r = _ajustar_ao_momento(_escolher(a, s, av), s, mom)
+    return _completar(a, s, av, r, ctx, mom)
 
 
 # -- o que a árvore olha --------------------------------------------------------------
@@ -432,6 +443,69 @@ def _escolher(a: m.AnaliseAtivo, s: _Situacao,
     if fragil:
         return _fragil(s, av)
     return _solida(a, s, av)
+
+
+def _ajustar_ao_momento(r: _Rascunho, s: _Situacao,
+                        mom: mo.Momento) -> _Rascunho:
+    """Revê a decisão que vende quando o ativo está em queda. Puro.
+
+    * Queda sem piora nos fundamentos: vender realizaria a perda num preço
+      possivelmente deprimido sem motivo da empresa. Vira rebalancear pelos
+      aportes (peso acima do devido) ou manter.
+    * Queda com piora, ou sem leitura de qualidade: a venda inteira vira
+      venda em etapas (cerca de 1/3 agora). Alerta eliminatório do balanço
+      mantém a venda: esperar costuma custar mais que a queda. Substituir
+      fica (vende na queda, mas compra o substituto no preço de hoje dele),
+      com o aviso; reduzir parte já é em etapas.
+    """
+    if mom.tipo == mo.SEM_QUEDA or r.codigo not in MOVIMENTA:
+        return r
+    fatos = "; ".join(mom.fatos())
+    original = f"{ROTULO_DECISAO[r.codigo].lower()} ({r.detalhe})"
+    if mom.tipo == mo.QUEDA_DE_PRECO:
+        codigo = REBALANCEAR if s.pesado else MANTER
+        acao = ("rebalancear pelos aportes" if s.pesado
+                else "manter")
+        return _Rascunho(
+            codigo, f"não vender na queda: {acao}; o preço caiu sem piora "
+            "nos fundamentos",
+            f"A recomendação seria {original}, mas {fatos}, e nenhum "
+            "fundamento piorou. Vender agora realizaria a perda num preço "
+            "possivelmente deprimido, sem motivo da empresa."
+            + (" Parar de aportar nele corrige o peso sem vender."
+               if s.pesado else ""),
+            tuple(r.razoes) + ("queda sem piora nos fundamentos",),
+            tuple(r.condicoes) + (
+                "Se o preço se recuperar e o motivo original continuar "
+                f"({r.detalhe}), a venda parcial volta a valer.",
+                "Se os fundamentos piorarem (alerta eliminatório, qualidade "
+                "frágil ou gatilho da tese), a recomendação passa a reduzir "
+                "ou vender."),
+            teto=rec.MODERADA,
+            motivo_teto=("dizer que a queda é passageira é inferência: o "
+                         "sistema não sabe se o preço volta"))
+    if mom.alerta_do_balanco:
+        return r
+    if r.codigo == VENDER:
+        return _Rascunho(
+            REDUZIR_PARCIAL,
+            f"vender em etapas: reduzir {_texto_fracao(FRACAO_MAX_REDUCAO)} "
+            f"agora ({_sem_prefixo(r.detalhe, 'vender:')})",
+            f"{r.motivo} O preço já caiu ({fatos}): vender tudo de uma vez "
+            "trava a perda inteira no preço de hoje, e parte da piora já "
+            "está nele. Em etapas, a saída acompanha a confirmação.",
+            r.razoes, tuple(r.condicoes) + (
+                "Se o próximo balanço confirmar a piora, vender o restante.",
+                "Se a qualidade voltar a adequada e a tese se mantiver, o "
+                "restante da posição fica."),
+            proporcao=FRACAO_MAX_REDUCAO, teto=r.teto,
+            motivo_teto=r.motivo_teto)
+    if r.codigo == SUBSTITUIR:
+        return replace(r, motivo=(
+            f"{r.motivo} A troca vende na queda ({fatos}), mas compra o "
+            "substituto no preço de hoje dele: se os dois são do mesmo "
+            "segmento, a queda pesa nos dois lados."))
+    return r
 
 
 def _por_alerta(s: _Situacao, av: av_.Avaliacao) -> _Rascunho:
@@ -786,7 +860,7 @@ def _contexto(a: m.AnaliseAtivo, s: _Situacao, av: av_.Avaliacao,
 
 
 def _completar(a: m.AnaliseAtivo, s: _Situacao, av: av_.Avaliacao,
-               r: _Rascunho, ctx) -> Decisao:
+               r: _Rascunho, ctx, mom: mo.Momento | None = None) -> Decisao:
     custos = (rec.custo_da_venda(a, r.proporcao)
               if r.codigo in MOVIMENTA and r.proporcao else None)
     cv = _conviccao(s, av, r)
@@ -796,8 +870,11 @@ def _completar(a: m.AnaliseAtivo, s: _Situacao, av: av_.Avaliacao,
         justificativas=_justificativas(a, s, av),
         condicoes=_condicoes(a, s, r),
         limitacoes=_limitacoes(a, s, av, r, custos, ctx),
-        alertas=_alertas(s, av), contexto=_contexto(a, s, av, ctx),
-        proporcao=r.proporcao, custos=custos, substituto=r.substituto)
+        alertas=_alertas(s, av),
+        contexto=((mom.linha(),) if mom is not None and mom.linha() else ())
+        + _contexto(a, s, av, ctx),
+        proporcao=r.proporcao, custos=custos, substituto=r.substituto,
+        momento=mom)
 
 
 # -- porcentagem devida ------------------------------------------------------------

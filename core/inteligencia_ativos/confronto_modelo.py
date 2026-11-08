@@ -55,6 +55,9 @@ from core.inteligencia_ativos import veredito as vd
 # Divergência acentuada: abaixo disso é ruído de arredondamento e de preço.
 LIMIAR_ATIVO_PP = 3.0
 LIMIAR_CLASSE_PP = 5.0
+# Folga de ponto flutuante nos limites inclusivos (gêmeo do achado do Codex
+# no #698): 33% − 30% pode dar 2,999… e o limite é "3 pp ou mais".
+_EPS = 1e-9
 # Ativos do modelo fora da carteira avaliados pela régua da Inteligência, do
 # maior peso para o menor. Cada avaliação lê fundamentos, valuation, pares e
 # notícias; o resto fica "sem avaliação", com a contagem na tela.
@@ -224,7 +227,7 @@ class DivergenciaClasse:
     @property
     def acentuada(self) -> bool:
         return (self.alvo_modelo is not None
-                and abs(self.diferenca) >= LIMIAR_CLASSE_PP)
+                and abs(self.diferenca) >= LIMIAR_CLASSE_PP - _EPS)
 
     def como_dict(self) -> dict:
         return {"classe": self.rotulo,
@@ -659,6 +662,9 @@ def _substituicao(sai: refm.LinhaAtivo, a, v: vd.Veredito | None,
     if av_entra.preco == av_.CARO:
         motivos.append(f"Preço de {entra.ticker} acima do normal: entre aos "
                        "poucos.")
+    mom = getattr(d, "momento", None)
+    if mom is not None and mom.linha():
+        motivos.append(mom.linha())
     sub_rec = getattr(d, "substituto", None)
     if sub_rec is not None and refm.normalizar(sub_rec.ticker) != entra.ticker:
         motivos.append("Entre os pares do segmento, a Inteligência também "
@@ -801,7 +807,7 @@ def montar(ref: refm.ReferenciaModelo,
 
     divergencias = []
     for x in risco:
-        if x.peso_real is None or abs(x.diferenca or 0.0) < LIMIAR_ATIVO_PP:
+        if x.peso_real is None or abs(x.diferenca or 0.0) < LIMIAR_ATIVO_PP - _EPS:
             continue
         v = vereditos.get(x.ticker)
         conclusao, texto, motivos = _conclusao_da_carteira(x, v)

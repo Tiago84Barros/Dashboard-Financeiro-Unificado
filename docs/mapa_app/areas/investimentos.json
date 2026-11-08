@@ -836,7 +836,7 @@
             {
               "nome": "Porcentagem atual · Porcentagem devida · Ação sugerida · Convicção",
               "resumo": "Peso hoje, peso ideal, a ação e o grau de convicção",
-              "explicacao": "Quatro números lado a lado: o peso hoje, o peso ideal, a ação sugerida (manter, comprar, acompanhar, rebalancear, reduzir parcialmente, vender ou substituir) e a convicção (alta, moderada ou baixa, com o porquê), seguidos do motivo e do lembrete de que é uma avaliação por regras, não uma recomendação.",
+              "explicacao": "Quatro números lado a lado: o peso hoje, o peso ideal, a ação sugerida (manter, comprar, acompanhar, rebalancear, reduzir parcialmente, vender ou substituir) e a convicção (alta, moderada ou baixa, com o porquê), seguidos do motivo e do lembrete de que é uma avaliação por regras, não uma recomendação. Num ativo em queda, a ação que venderia é revista antes de aparecer: se nenhum fundamento piorou, a tela não sugere vender na queda (rebalancear pelos aportes ou manter); se piorou, sugere vender em etapas, cerca de 1/3 por vez, salvo alerta grave confirmado no balanço.",
               "so_admin": false,
               "fonte": "views/inteligencia_ativos_resumida.py:135",
               "filhos": []
@@ -852,7 +852,7 @@
             {
               "nome": "Justificativa · Proporção e custo · Condições · Dados ausentes e limitações · Contexto",
               "resumo": "O porquê da ação sugerida",
-              "explicacao": "Os fatores que sustentam a ação (qualidade, tese, valuation contra o próprio histórico, peso na carteira). Quando a ação é reduzir ou vender, a proporção sugerida e o custo estimado da venda (imposto e spread, quando o app tem esses dados). Depois: o que mudaria a recomendação, os dados que faltaram e o pano de fundo de cenário, noticiário e valorização.",
+              "explicacao": "Os fatores que sustentam a ação (qualidade, tese, valuation contra o próprio histórico, peso na carteira). Quando a ação é reduzir ou vender, a proporção sugerida e o custo estimado da venda (imposto e spread, quando o app tem esses dados). Depois: o que mudaria a recomendação, os dados que faltaram e o pano de fundo de cenário, noticiário e valorização. Quando o ativo está em queda, o contexto começa pela linha 'Momento', com o quanto a posição está abaixo do valor investido, a queda em 12 meses contra a dos pares e se algum fundamento piorou.",
               "so_admin": false,
               "fonte": "views/inteligencia_ativos_resumida.py:173",
               "filhos": []
