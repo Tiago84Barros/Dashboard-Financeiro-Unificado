@@ -989,6 +989,30 @@ def _split_registrado(splits, simbolo: str, quando, medido: float):
     return melhor
 
 
+def _picos_isolados(acoes):
+    """Máscara dos meses cuja contagem destoa dos vizinhos dos DOIS lados:
+    contagem errada de um mês, não degrau. O primeiro mês de um regime novo
+    destoa só do lado de antes e fica; o mês errado na véspera de um split
+    destoa dos dois e sai -- com ele no meio, nenhum dos dois saltos parecia
+    persistente, o degrau não era medido e o histórico ficava na escala
+    errada. Por isso o pico sai ANTES de medir o degrau."""
+    import numpy as np
+    acoes = np.asarray(acoes, dtype=float)
+    pico = np.zeros(len(acoes), dtype=bool)
+    for i in range(1, len(acoes) - 1):
+        antes = acoes[max(0, i - 2):i]
+        depois = acoes[i + 1:i + 3]
+        antes, depois = antes[antes > 0], depois[depois > 0]
+        if not len(antes) or not len(depois) or not acoes[i] > 0:
+            continue
+        m_antes, m_depois = float(np.median(antes)), float(np.median(depois))
+        limite = math.log(DESVIO_MES_ISOLADO)
+        if (abs(math.log(acoes[i] / m_antes)) > limite
+                and abs(math.log(acoes[i] / m_depois)) > limite):
+            pico[i] = True
+    return pico
+
+
 def _retroajustar_simbolo(g, splits, contagem: dict):
     """Multiplica o valor de mercado anterior a cada degrau de contagem pela
     razão do split. ``g`` é o quadro de UM símbolo ordenado por data, com as
@@ -1073,15 +1097,26 @@ def capitalizacao_limpa(capitalizacao, precos, splits=None) -> tuple:
     if c.empty:
         return c[["symbol", "date", "market_cap"]], contagem
     c["acoes"] = c["market_cap"] / c["close"]
+    # 1. Picos isolados saem antes de medir degraus: um mês errado colado a um
+    #    split escondia o split e deixava o histórico na escala errada.
+    pico = np.concatenate([_picos_isolados(g["acoes"].to_numpy())
+                           for _, g in c.groupby("symbol", sort=False)])
+    contagem["capitalizacao_fora_do_preco"] += int(pico.sum())
+    c = c.loc[~pico].reset_index(drop=True)
+    if c.empty:
+        return c[["symbol", "date", "market_cap"]], contagem
+    # 2. Degraus de contagem retroajustados pela razão do split.
     c["market_cap"] = np.concatenate([
         _retroajustar_simbolo(g, splits, contagem) for _, g in c.groupby("symbol", sort=False)])
     c["acoes"] = c["market_cap"] / c["close"]
+    # 3. O que ainda destoa da vizinhança na série já corrigida (bordas, picos
+    #    duplos) sai pela mediana móvel.
     c["ref"] = (c.groupby("symbol")["acoes"]
                 .transform(lambda s: s.rolling(13, center=True, min_periods=5)
                            .median()))
     razao = (c["acoes"] / c["ref"]).astype(float)
     fora = razao.notna() & (np.abs(np.log(razao.where(razao > 0))) > math.log(DESVIO_MES_ISOLADO))
-    contagem["capitalizacao_fora_do_preco"] = int(fora.sum())
+    contagem["capitalizacao_fora_do_preco"] += int(fora.sum())
     c = c.loc[~fora]
     return c[["symbol", "date", "market_cap"]].reset_index(drop=True), contagem
 

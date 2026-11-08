@@ -91,6 +91,19 @@ def test_grupamento_e_dois_splits_acumulam():
     assert (limpo["market_cap"].round(0) == 50 * BI).all()
 
 
+def test_pico_isolado_na_vespera_do_split_nao_esconde_o_split():
+    """[1]*20 + [10] + [4]*20: com o mês errado no meio, nenhum dos dois
+    saltos parecia persistente, o pico saía depois pelo filtro e o degrau
+    1 → 4 ficava sem retroajuste: 20 meses na escala errada. O pico sai
+    antes de medir o degrau."""
+    acoes = [1 * BI] * 20 + [10 * BI] + [4 * BI] * 20
+    cap, precos = _serie("VESP", acoes)
+    limpo, contagem = pub.capitalizacao_limpa(cap, precos, None)
+    assert contagem["degraus_retroajustados"] == 1
+    assert contagem["capitalizacao_fora_do_preco"] == 1 and len(limpo) == 40
+    assert (limpo["market_cap"].round(0) == 100 * BI).all()
+
+
 def test_mes_isolado_errado_continua_saindo_e_contado():
     acoes = [1 * BI] * 40
     acoes[20] = 3 * BI  # contagem errada de um mês só: não é degrau, é pico
