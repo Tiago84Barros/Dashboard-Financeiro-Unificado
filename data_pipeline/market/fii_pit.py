@@ -17,6 +17,7 @@ import requests
 from sqlalchemy import text
 
 from core.dividend_types import apenas_renda, descarta_safra_colapsada
+from core.fii_lookthrough import apply_exposures
 from core.fii_methodology import (
     FORMULA_VERSION,
     METHODOLOGY_VERSION,
@@ -24,7 +25,6 @@ from core.fii_methodology import (
     income_recurrence,
     score_fiis_by_type,
 )
-from core.fii_lookthrough import apply_exposures
 from core.fii_portfolio_v4 import LIVE_PORTFOLIO_STRATEGY_ID
 from core.fii_validation import (
     evaluate_regime_performance,
