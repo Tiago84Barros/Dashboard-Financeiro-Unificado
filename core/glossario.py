@@ -108,9 +108,15 @@ def leitura_rank_ic(valor: float | None, *, periodo: str = "no período seguinte
     texto = f"Rank-IC {v:+.3f} é {faixa[1]}."
     p = acerto_em_pares(v)
     if p is not None:
-        texto += (f" Na prática: entre duas empresas escolhidas ao acaso, a de "
-                  f"score maior rendeu mais {periodo} em cerca de "
-                  f"{p * 100:.0f}% das vezes (50% seria cara ou coroa).")
+        # Inferência, não medição: o percentual sai da conversão teórica de
+        # `acerto_em_pares` (normalidade bivariada) aplicada à MÉDIA dos ICs,
+        # e não da contagem dos pares do histórico. O texto diz isso.
+        texto += (f" Para ter uma ideia — estimativa teórica, não contagem dos "
+                  f"pares do histórico: um Rank-IC desse tamanho equivale a "
+                  f"acertar qual de duas empresas rende mais {periodo} em cerca "
+                  f"de {p * 100:.0f}% das vezes (50% seria cara ou coroa), "
+                  f"supondo retornos com distribuição normal, o que ações "
+                  f"seguem só aproximadamente.")
     return texto
 
 

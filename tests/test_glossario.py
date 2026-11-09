@@ -42,6 +42,10 @@ def test_valor_da_tela_vira_frase_concreta():
     texto = g.leitura_rank_ic(0.092, periodo="no ano seguinte")
     assert "+0.092" in texto and "moderado" in texto
     assert "53%" in texto and "no ano seguinte" in texto
+    # O percentual é inferência (normalidade bivariada), não frequência
+    # observada: a tela tem de dizer isso (AGENTS.md, fatos x inferências).
+    assert "estimativa teórica" in texto and "distribuição normal" in texto
+    assert "rendeu mais" not in texto
 
 
 def test_explicacao_diz_que_nao_e_retorno():
