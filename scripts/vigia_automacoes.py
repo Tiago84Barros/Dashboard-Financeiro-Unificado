@@ -12,8 +12,8 @@ Confere quatro coisas e avisa pelo `scripts.notificar` (Hermes -> Telegram):
    cobertura do universo, contra o calendário da CVM (B3-02).
 4. coleta de notícias: coletor parado, provedor sem sucesso há dias, ou
    provedor que responde mas rende quase nada (o Alpha Vantage de 07/10/2026),
-   lidos de `noticias_coleta_estado` e `noticias_itens` no banco local
-   `noticias`.
+   lidos de `noticias_coleta_estado` (banco da produção) e `noticias_itens`
+   (acervo local) -- os mesmos bancos em que a coleta grava.
 
 A decisão é de `core.vigia_automacoes`; aqui só há I/O. A memória dos avisos
 fica em `local_staging/vigia_automacoes.json` (estado de máquina, fora do git):
@@ -143,32 +143,47 @@ _SQL_RENDIMENTO_NOTICIAS = """
 
 
 def noticias_do_acervo() -> tuple[dict, dict] | None:
-    """``(estados, por_dia)`` do banco local de notícias, ou ``None``.
+    """``(estados, por_dia)`` da coleta de notícias, ou ``None`` se não deu.
 
-    Mesmo banco que a coleta usa (o `noticias` ao lado do armazém). Banco
-    fora do ar não é aviso aqui: o vigia diz "não medido" e não declara
-    nada resolvido.
+    Dois bancos, porque a coleta grava em dois (``core.noticias.estado_coleta._acervo``):
+    o ESTADO de cada provedor (``noticias_coleta_estado``) mora no banco da
+    produção, o de ``core.database.get_engine()``; as notícias
+    (``noticias_itens``) moram no acervo local, o de
+    ``core.noticias.destino.engine_acervo()``. Ler os dois pelo acervo fazia a
+    consulta do estado falhar e o vigia calar as três verificações.
+
+    O estado são algumas linhas por rodada -- o egress é desprezível. Sem o
+    estado não há o que julgar (devolve ``None``); sem o acervo, só o
+    rendimento fica sem medir (``por_dia`` vazio).
     """
     try:
-        import re
+        from sqlalchemy import text
 
-        from sqlalchemy import create_engine, text
-
-        from scripts.publish_fii_selection_from_local import _warehouse_url
-        eng = create_engine(re.sub(r"/[^/]+$", "/noticias", _warehouse_url()),
-                            pool_pre_ping=True)
-        try:
-            with eng.connect() as conn:
-                estados = {r["chave"]: dict(r) for r in
-                           conn.execute(text(_SQL_ESTADO_NOTICIAS)).mappings()}
-                por_dia: dict[str, dict] = {}
-                for r in conn.execute(text(_SQL_RENDIMENTO_NOTICIAS)).mappings():
-                    por_dia.setdefault(r["provedor"], {})[r["dia"]] = int(r["n"])
-        finally:
-            eng.dispose()
-        return estados, por_dia
+        from core.database import get_engine
+        producao = get_engine()
+        if producao is None:
+            return None
+        with producao.connect() as conn:
+            estados = {r["chave"]: dict(r) for r in
+                       conn.execute(text(_SQL_ESTADO_NOTICIAS)).mappings()}
     except Exception:  # noqa: BLE001 - vigia não derruba a rotina
         return None
+    por_dia: dict[str, dict] = {}
+    try:
+        from sqlalchemy import text
+
+        from core.noticias.destino import engine_acervo
+        acervo = engine_acervo()
+        if acervo is not None:
+            try:
+                with acervo.connect() as conn:
+                    for r in conn.execute(text(_SQL_RENDIMENTO_NOTICIAS)).mappings():
+                        por_dia.setdefault(r["provedor"], {})[r["dia"]] = int(r["n"])
+            finally:
+                acervo.dispose()
+    except Exception:  # noqa: BLE001 - sem o acervo, só o rendimento fica sem medir
+        por_dia = {}
+    return estados, por_dia
 
 
 def _ler_json(caminho: Path) -> dict | None:
@@ -242,10 +257,10 @@ def vigiar(dry_run: bool = False, estado_publicacao: Path = ESTADO_PUBLICACAO,
         if problema_b3:
             problemas.append(problema_b3)
 
-    # 4. Coleta de notícias (banco local `noticias`; zero egress)
+    # 4. Coleta de notícias (estado na produção, notícias no acervo local)
     noticias = noticias_do_acervo()
     if noticias is None:
-        saida("  notícias: banco local de notícias indisponível, não medido")
+        saida("  notícias: estado da coleta indisponível, não medido")
     else:
         problemas_n, verif_n = problemas_noticias(*noticias, agora)
         problemas.extend(problemas_n)

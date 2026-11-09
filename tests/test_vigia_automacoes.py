@@ -368,3 +368,41 @@ def test_chave_de_dia_em_texto_iso_tambem_vale():
                for k, v in _por_dia().items()}
     problemas, _ = problemas_noticias(_estados(), por_dia, _AGORA)
     assert [p.chave for p in problemas] == ["noticias:rendimento:alphavantage"]
+
+
+def test_provedor_fora_da_rotacao_tambem_nao_e_julgado_pelo_rendimento():
+    # Achado do Codex no PR #700: desligado há 5 dias, com histórico de
+    # 100/dia, não pode virar aviso diário de rendimento.
+    estados = _estados()
+    estados["provedor:alphavantage"]["ultima_tentativa"] = _AGORA - _td(days=5)
+    problemas, verificados = problemas_noticias(estados, _por_dia(), _AGORA)
+    assert problemas == []
+    assert "noticias:rendimento:alphavantage" not in verificados
+    # Sem linha de estado, idem.
+    del estados["provedor:alphavantage"]
+    assert problemas_noticias(estados, _por_dia(), _AGORA)[0] == []
+
+
+def test_vigia_le_o_estado_da_producao_e_as_noticias_do_acervo(monkeypatch):
+    # Achado do Codex no PR #700: o estado mora no banco da produção e as
+    # notícias no acervo; ler os dois pelo acervo calava as verificações.
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.pool import StaticPool
+
+    import core.database
+    import core.noticias.destino
+    from scripts import vigia_automacoes as vigia
+
+    producao = create_engine("sqlite://", poolclass=StaticPool)
+    with producao.begin() as c:
+        c.execute(text("CREATE TABLE noticias_coleta_estado (chave TEXT, status TEXT, "
+                       "ultima_tentativa TEXT, ultimo_sucesso TEXT, ultimo_erro TEXT)"))
+        c.execute(text("INSERT INTO noticias_coleta_estado VALUES "
+                       "('global', 'ok', '2026-10-09T22:00:00+00:00', "
+                       "'2026-10-09T22:00:00+00:00', NULL)"))
+    monkeypatch.setattr(core.database, "get_engine", lambda: producao)
+    monkeypatch.setattr(core.noticias.destino, "engine_acervo", lambda: None)
+    estados, por_dia = vigia.noticias_do_acervo()
+    assert set(estados) == {"global"} and por_dia == {}
+    monkeypatch.setattr(core.database, "get_engine", lambda: None)
+    assert vigia.noticias_do_acervo() is None

@@ -300,6 +300,7 @@ def problemas_noticias(estados: dict[str, dict], por_dia: dict[str, dict],
                 "PC ficou desligado; sem ela o acervo e a vitrine de notícias "
                 "envelhecem."))
 
+    em_rotacao: set[str] = set()
     for chave, est in sorted(estados.items()):
         if not chave.startswith("provedor:"):
             continue
@@ -308,6 +309,7 @@ def problemas_noticias(estados: dict[str, dict], por_dia: dict[str, dict],
         # Provedor que saiu da rotação (sem chave, desligado) não é falha.
         if tentativa is None or agora - tentativa > timedelta(days=DIAS_SEM_SUCESSO + 1):
             continue
+        em_rotacao.add(nome)
         k = f"noticias:provedor:{nome}"
         verificados.add(k)
         sucesso = _instante(est.get("ultimo_sucesso"))
@@ -329,6 +331,12 @@ def problemas_noticias(estados: dict[str, dict], por_dia: dict[str, dict],
     base = [hoje - timedelta(days=i)
             for i in range(DIAS_QUEDA + 1, DIAS_QUEDA + 1 + BASE_DIAS)]
     for nome, contagem in sorted(por_dia.items()):
+        # Mesma elegibilidade da pergunta 2: provedor desligado de propósito, ou
+        # sem linha de estado, tem histórico de rendimento mas não está em
+        # rotação -- julgá-lo pelo rendimento seria aviso diário de algo que
+        # ninguém espera que funcione.
+        if nome not in em_rotacao:
+            continue
         contagem = {_como_data(d): int(n or 0) for d, n in (contagem or {}).items()}
         normal = _p75([contagem.get(d, 0) for d in base])
         if normal < MIN_NORMAL_DIA:
