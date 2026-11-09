@@ -293,3 +293,38 @@ def test_renomear_mantem_o_codigo_e_excluir_so_sem_uso(repo):
     # a regra que apontava para ela saiu junto
     ctx = repo.preparar_importacao([_mov(4, -1.0, "Loja", "B2", contraparte="Loja")])
     assert "loja" not in ctx["regras"]
+
+
+def test_sem_categoria_e_nome_reservado(repo):
+    ok, msg = repo.criar_categoria("Sem categoria", "receita_bruta")
+    assert not ok and "reservado" in msg
+    repo.criar_categoria("Brindes", "despesas_operacionais")
+    ok, msg = repo.renomear_categoria("u_brindes", "sem  CATEGORIA")
+    assert not ok and "reservado" in msg
+    assert repo.listar_categorias()[0]["nome"] == "Brindes"
+
+
+def test_excluir_espera_quem_esta_gravando_na_categoria(repo):
+    """Achado do Codex no PR #687: excluir e gravar ao mesmo tempo passava nas
+    duas checagens e deixava um lançamento com categoria que não existe."""
+    import threading
+    import time
+
+    from core.database import get_engine
+
+    repo.criar_categoria("Brindes", "despesas_operacionais")
+    resultado = {}
+    with get_engine().begin() as conn:
+        assert "u_brindes" in repo._codigos_validos(conn, DONO_A)
+        conn.execute(repo._texto("""
+            INSERT INTO pj_lancamentos (user_id, data, descricao, valor, categoria)
+            VALUES (CAST(:uid AS uuid), '2026-11-09', 'Brinde', -10, 'u_brindes')"""),
+            {"uid": DONO_A})
+        t = threading.Thread(target=lambda: resultado.update(r=repo.excluir_categoria("u_brindes")))
+        t.start()
+        time.sleep(0.5)
+        assert t.is_alive(), "a exclusão não esperou a gravação em andamento"
+    t.join(timeout=10)
+    ok, msg = resultado["r"]
+    assert not ok and "1 lançamento(s)" in msg
+    assert [c["codigo"] for c in repo.listar_categorias()] == ["u_brindes"]

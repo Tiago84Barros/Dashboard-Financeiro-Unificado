@@ -33,9 +33,11 @@ from core.pj import relatorios
 from core.pj.plano_contas import (
     GRUPOS_DRE,
     POR_CODIGO,
+    SEM_CATEGORIA,
     Categoria,
     PlanoDeContas,
     codigo_para_propria,
+    nome_reservado,
     normalizar,
 )
 from core.previstos import datas_mensais
@@ -249,9 +251,19 @@ def plano_de_contas() -> PlanoDeContas:
 
 
 def _codigos_validos(conn, dono: str) -> set[str]:
+    """Fixas + próprias do dono, com as próprias travadas em FOR SHARE até o
+    fim da transação de quem grava o lançamento.
+
+    Sem a trava, excluir uma categoria e gravar um lançamento nela em duas
+    sessões ao mesmo tempo passava nas duas checagens: o lançamento ficava
+    com uma categoria que não existe mais e sumia da DRE (achado do Codex no
+    PR #687). ``excluir_categoria`` trava a mesma linha em FOR UPDATE antes de
+    contar os usos, então uma das duas espera a outra terminar. Não há chave
+    estrangeira possível: ``pj_lancamentos.categoria`` guarda também as fixas.
+    """
     proprias = {r.codigo for r in conn.execute(_texto("""
-        SELECT codigo FROM pj_categorias WHERE user_id = CAST(:uid AS uuid)"""),
-        {"uid": dono})}
+        SELECT codigo FROM pj_categorias WHERE user_id = CAST(:uid AS uuid)
+        FOR SHARE"""), {"uid": dono})}
     return set(POR_CODIGO) | proprias
 
 
@@ -580,6 +592,8 @@ def criar_categoria(nome: str, grupo: str) -> tuple[bool, str]:
     nome = " ".join(str(nome or "").split())[:60]
     if not nome:
         return False, "Informe o nome da categoria."
+    if nome_reservado(nome):
+        return False, f"\"{SEM_CATEGORIA}\" é reservado para o que ainda não tem categoria."
     if grupo not in _GRUPOS:
         return False, "Escolha a linha da DRE."
     with engine.begin() as conn:
@@ -606,6 +620,8 @@ def renomear_categoria(codigo: str, novo_nome: str) -> tuple[bool, str]:
     novo_nome = " ".join(str(novo_nome or "").split())[:60]
     if not novo_nome:
         return False, "Informe o novo nome."
+    if nome_reservado(novo_nome):
+        return False, f"\"{SEM_CATEGORIA}\" é reservado para o que ainda não tem categoria."
     with engine.begin() as conn:
         garantir_tabelas(conn)
         if _nome_em_uso(conn, dono, novo_nome, exceto=codigo):
@@ -630,6 +646,14 @@ def excluir_categoria(codigo: str) -> tuple[bool, str]:
         return False, "Banco não configurado ou sessão sem dono."
     with engine.begin() as conn:
         garantir_tabelas(conn)
+        # Trava antes de contar: quem está gravando um lançamento nela segura
+        # a linha em FOR SHARE (``_codigos_validos``) e esta espera o commit.
+        existe = conn.execute(_texto("""
+            SELECT 1 FROM pj_categorias
+            WHERE user_id = CAST(:uid AS uuid) AND codigo = :codigo
+            FOR UPDATE"""), {"uid": dono, "codigo": codigo}).fetchone()
+        if existe is None:
+            return False, "Categoria não encontrada."
         usos = int(conn.execute(_texto("""
             SELECT count(*) FROM pj_lancamentos
             WHERE user_id = CAST(:uid AS uuid) AND categoria = :codigo"""),

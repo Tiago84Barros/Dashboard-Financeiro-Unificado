@@ -81,6 +81,17 @@ CATEGORIAS: tuple[Categoria, ...] = (
 )
 POR_CODIGO = {c.codigo: c for c in CATEGORIAS}
 
+#: Rótulo de "nenhuma categoria" em toda tela. É reservado: uma categoria
+#: própria com esse nome capturava a opção "Sem categoria" da prévia e da
+#: correção, e todo movimento pendente entrava na DRE por ela (achado do Codex
+#: no PR #687).
+SEM_CATEGORIA = "Sem categoria"
+
+
+def nome_reservado(nome: str) -> bool:
+    return normalizar(nome) == normalizar(SEM_CATEGORIA)
+
+
 #: Código das categorias criadas pelo usuário. O prefixo impede colisão com
 #: as fixas, inclusive com uma fixa que o app venha a ganhar depois.
 PREFIXO_PROPRIA = "u_"
@@ -113,11 +124,13 @@ class PlanoDeContas:
         return [c.nome for c in self.todas]
 
     def codigo_por_nome(self) -> dict[str, str]:
-        return {c.nome: c.codigo for c in self.todas}
+        """Nome -> código. "Sem categoria" nunca vira código, nem se alguma
+        categoria tiver esse nome: quem traduz a escolha da tela recebe None."""
+        return {c.nome: c.codigo for c in self.todas if not nome_reservado(c.nome)}
 
     def rotulo(self, codigo: str | None) -> str:
         cat = self.por_codigo.get(codigo or "")
-        return cat.nome if cat else "Sem categoria"
+        return cat.nome if cat else SEM_CATEGORIA
 
     def do_grupo(self, grupo: str) -> list[Categoria]:
         return [c for c in self.todas if c.grupo == grupo]
@@ -234,4 +247,4 @@ def categoria_no_sentido(codigo: str | None, sentido: str,
 
 
 def rotulo(codigo: str | None) -> str:
-    return POR_CODIGO[codigo].nome if codigo in POR_CODIGO else "Sem categoria"
+    return POR_CODIGO[codigo].nome if codigo in POR_CODIGO else SEM_CATEGORIA

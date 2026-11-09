@@ -1042,7 +1042,8 @@ FLOW_CONTROLE_CNPJ = FlowSpec(
                 "Saída para quem tem regra de receita vira devolução (dedução), não receita negativa",
                 "Estorno ou reembolso recebido nunca vira receita: segue a despesa que desfaz",
                 "Sem categoria: entra no caixa, fica fora da DRE",
-                "Categoria própria: nome livre, linha da DRE fixa; só se exclui sem lançamento",
+                "Categoria própria: nome livre ('Sem categoria' é reservado), linha da DRE fixa; "
+                "só se exclui sem lançamento",
             ),
             "Categoria da empresa não é a pessoal: pró-labore sai da empresa e entra na pessoa, "
             "e o DAS é dedução da receita, não despesa.",

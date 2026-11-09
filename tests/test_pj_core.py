@@ -578,3 +578,18 @@ def test_balanco_fecha_com_categoria_propria_fora_do_resultado():
     assert b["fecha"]
     assert dict(b["patrimonio_liquido"])["Outras movimentações fora do resultado"] == -300.0
     assert dict(b["patrimonio_liquido"])["Resultado acumulado (DRE, caixa)"] == 1000.0
+
+
+def test_sem_categoria_nunca_vira_codigo_mesmo_com_categoria_de_mesmo_nome():
+    """Achado do Codex no PR #687: uma categoria própria chamada "Sem
+    categoria" capturava a opção de mesmo nome da prévia e da correção."""
+    from core.pj.plano_contas import (
+        SEM_CATEGORIA,
+        Categoria,
+        PlanoDeContas,
+        nome_reservado,
+    )
+    plano = PlanoDeContas((Categoria("u_sem_categoria", "Sem categoria", "receita_bruta"),))
+    assert plano.codigo_por_nome().get(SEM_CATEGORIA) is None
+    assert nome_reservado("  sem   CATEGORIA ")
+    assert not nome_reservado("Sem categoria definida")
