@@ -1399,7 +1399,7 @@
                 {
                   "nome": "Se sair, qual substituir?",
                   "resumo": "Sugestões de troca quando a ação é vender ou substituir",
-                  "explicacao": "Só aparece quando a ação sugerida é vender ou substituir: lista ativos que poderiam ocupar o lugar. A troca só é sugerida quando o substituto é claramente superior em qualidade, sem preço nem risco piores.",
+                  "explicacao": "Só aparece quando a ação sugerida é vender ou substituir: lista ativos que poderiam ocupar o lugar. A troca só é sugerida quando o substituto é claramente superior em qualidade, sem preço nem risco piores. Só entram concorrentes do mesmo segmento: quando há poucos, o grupo de comparação inclui outros segmentos e a tela não sugere troca.",
                   "so_admin": false
                 },
                 {

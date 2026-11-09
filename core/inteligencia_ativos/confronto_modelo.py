@@ -573,10 +573,19 @@ def _dobra(texto: str | None) -> str:
                    if not unicodedata.combining(ch)).casefold().strip()
 
 
-def _pares_do_ativo(a) -> dict[str, prs.Par]:
+def _grupo_do_ativo(a) -> prs.GrupoPares | None:
     if a is None or not getattr(a.pares, "dados", None):
+        return None
+    return prs.ComparacaoPares.de_dict(a.pares.dados).grupo
+
+
+def _pares_do_ativo(a) -> dict[str, prs.Par]:
+    """Os pares que provam mesmo segmento: os de um grupo que não foi
+    ampliado para um nível mais largo da taxonomia (achado P1 do Codex no
+    #701, 2ª rodada: FII de logística junto com shopping)."""
+    grupo = _grupo_do_ativo(a)
+    if grupo is None or grupo.ampliado:
         return {}
-    grupo = prs.ComparacaoPares.de_dict(a.pares.dados).grupo
     return {refm.normalizar(p.ticker): p for p in grupo.pares}
 
 
@@ -647,7 +656,7 @@ def _candidatos(a, sai: refm.LinhaAtivo, entram_modelo: list,
                                 avaliacoes_modelo.get(x.ticker),
                                 x.peso_modelo))
         vistos.add(x.ticker)
-    for p in rs.substitutos(a, na_carteira, prs.N_MAXIMO):
+    for p in (rs.substitutos(a, na_carteira, prs.N_MAXIMO) if pares else ()):
         tk = refm.normalizar(p.ticker)
         # Ativo do modelo só entra pela porta do modelo, com a avaliação
         # completa: reprovado lá (frágil, alerta, teto) não volta como par,

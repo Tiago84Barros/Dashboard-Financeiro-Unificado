@@ -286,7 +286,9 @@ def cartao_substitutos(subs: tuple[prs.Par, ...]) -> str:
     """Só aparece quando a ação é vender ou substituir. Puro."""
     if not subs:
         corpo = ('<div style="color:var(--app-muted)">Nenhum par do mesmo '
-                 'grupo fora da sua carteira para comparar.</div>')
+                 'segmento fora da sua carteira para comparar (com poucos '
+                 'pares, o grupo de comparação inclui outros segmentos, e '
+                 'troca entre segmentos não é sugerida).</div>')
     else:
         corpo = "".join(
             f'<div style="margin:2px 0"><b style="color:var(--app-text)">'

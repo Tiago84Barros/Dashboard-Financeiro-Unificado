@@ -300,12 +300,13 @@ def _linhas(tk, valores):
 
 
 def _analise(tk, valores, *, pares=(), setor="Mineração", vm=300.0,
-             vi=200.0):
+             vi=200.0, nivel="segmento", relaxamentos=()):
     """O que ``recomendacao.confrontar`` e ``custo_da_venda`` leem de uma
     ``AnaliseAtivo``: a comparação com os pares e a posição."""
     dados = {"ativo": tk, "tipo": "acao", "moeda": "BRL",
-             "grupo": {"nivel": "segmento", "valor": setor, "pares": [
-                 {"ticker": p, "metricas": m} for p, m in pares]},
+             "grupo": {"nivel": nivel, "valor": setor,
+                       "relaxamentos": list(relaxamentos), "pares": [
+                           {"ticker": p, "metricas": m} for p, m in pares]},
              "linhas": _linhas(tk, valores)}
     ativo = SimpleNamespace(ticker=tk, nome=tk, setor=setor, moeda="BRL",
                             classe_politica="acoes_br", valor_mercado=vm,
@@ -608,3 +609,44 @@ def test_poucas_metricas_nao_viram_desvantagem_de_preco_ou_risco():
     sem = next(x for x in c.sem_substituto if x.sai == "BBAS3")
     assert "perdem no preço ou no risco" not in sem.texto
     assert "métricas" in sem.texto and "não dá para concluir" in sem.texto
+
+
+
+def test_grupo_de_pares_ampliado_nao_conta_como_mesmo_segmento():
+    """Codex P1 (#701, 2ª rodada): com poucos pares, a seleção alarga para
+    um nível mais largo (FII de logística junto com shopping). Par desse
+    grupo não prova mesmo segmento: nem par de fora, nem ativo do modelo
+    por estar no grupo."""
+    from core.inteligencia_ativos import pares as prs
+    largo = ("Menos de 3 pares no mesmo segmento (Bancos): nível mais largo.",)
+    posicoes = POSICOES + [_pos("BBAS3", "Ações BR", 100.0)]
+    v = {"BBAS3": _vered("BBAS3", "reduzir_parcial", _av(av_.FRAGIL),
+                         proporcao=1 / 3)}
+    c = cf.montar(_ref(posicoes=posicoes), v, {"VALE3": _av(av_.FORTE)},
+                  alocacao_estrategia=ESTRATEGIA,
+                  analises={"BBAS3": _analise(
+                      "BBAS3", BANCO, setor="Bancos", nivel="setor",
+                      relaxamentos=largo,
+                      pares=(("ITUB4", BANCO_MELHOR),
+                             ("VALE3", BANCO_MELHOR)))})
+    assert c.substituicao_de("BBAS3") is None
+    # o campo estruturado e a leitura de dados antigos, só com o texto
+    assert prs.GrupoPares.de_dict({"relaxamentos": list(largo)}).ampliado
+    assert not prs.GrupoPares.de_dict(
+        {"relaxamentos": ["Ativo sem porte conhecido: tamanho não filtra."]}
+    ).ampliado
+
+
+
+def test_se_sair_qual_substituir_tambem_ignora_grupo_ampliado():
+    """Gêmeo: a função única ``resumida.substitutos`` alimenta o "Se sair,
+    qual substituir?" da decisão; grupo ampliado não dá substituto."""
+    from core.inteligencia_ativos import resumida as rs
+    largo = ("Menos de 3 pares no mesmo segmento (Logística): nível mais "
+             "largo.",)
+    a = _analise("HGLG11", BANCO, setor="Logística", nivel="tipo",
+                 relaxamentos=largo, pares=(("XPML11", BANCO_MELHOR),))
+    assert rs.substitutos(a, set(), 5) == ()
+    fino = _analise("HGLG11", BANCO, setor="Logística",
+                    pares=(("BTLG11", BANCO_MELHOR),))
+    assert [p.ticker for p in rs.substitutos(fino, set(), 5)] == ["BTLG11"]

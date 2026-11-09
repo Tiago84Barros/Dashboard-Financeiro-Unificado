@@ -183,6 +183,10 @@ class GrupoPares:
     criterios: tuple[str, ...] = ()
     relaxamentos: tuple[str, ...] = ()
     motivo: str | None = None         # por que não há grupo
+    # O grupo saiu de um nível da taxonomia mais largo que o primeiro (o
+    # ativo não tinha o nível fino, ou ele tinha menos de N_MINIMO pares).
+    # Par de grupo ampliado não é "do mesmo segmento" (confronto_modelo).
+    ampliado: bool = False
 
     @property
     def descricao(self) -> str | None:
@@ -200,6 +204,7 @@ class GrupoPares:
                 "criterios": list(self.criterios),
                 "relaxamentos": list(self.relaxamentos),
                 "motivo": self.motivo, "descricao": self.descricao,
+                "ampliado": self.ampliado,
                 "pares": [{"ticker": p.ticker, "nome": p.nome,
                            "distancia": p.distancia, "motivo": p.motivo,
                            "metricas": dict(p.metricas)} for p in self.pares]}
@@ -212,7 +217,16 @@ class GrupoPares:
                 p.get("motivo") or "", dict(p.get("metricas") or {}))
             for p in d.get("pares") or ()),
             tuple(d.get("criterios") or ()), tuple(d.get("relaxamentos") or ()),
-            d.get("motivo"))
+            d.get("motivo"), _ampliado_de(d))
+
+
+def _ampliado_de(d: dict) -> bool:
+    """O campo gravado; em dado serializado antes dele existir, a marca que
+    ``selecionar`` sempre deixou nos relaxamentos ao pular um nível."""
+    if d.get("ampliado") is not None:
+        return bool(d["ampliado"])
+    return any("nível mais largo" in str(r) or "nível ignorado" in str(r)
+               for r in d.get("relaxamentos") or ())
 
 
 # -- seleção -------------------------------------------------------------------------
@@ -327,7 +341,7 @@ def selecionar(alvo: Candidato, universo, *, n_maximo: int = N_MAXIMO,
                     Par(c.ticker, c.nome, _distancia(alvo, c),
                         _motivo_par(alvo, c, nivel, valor), dict(c.metricas))
                     for c in escolhidos[:n_maximo]), tuple(crit),
-                    tuple(relaxamentos))
+                    tuple(relaxamentos), ampliado=i > 0)
         porte_barrou = (tem_porte and len({c.raiz or c.ticker for c in mesmo})
                         >= n_minimo)
         relaxamentos.append(f"Menos de {n_minimo} pares "
