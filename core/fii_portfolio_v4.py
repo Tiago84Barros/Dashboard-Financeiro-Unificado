@@ -23,6 +23,8 @@ from core.fii_renda_recorrente import dy_recorrente, protecao_nao_divulgada
 from core.fii_scenarios import asset_scenario_return
 
 SCENARIOS = ("base", "selic_alta", "queda_selic", "inflacao_alta", "vacancia", "credito")
+# Limite de tempo de cada resolução do MILP, em segundos.
+LIMITE_SEGUNDOS_MILP = 20
 # v6.8: o motor que roda hoje não é mais o v6.7. Duas coisas mudaram a
 # carteira que ele devolve — a função objetivo passou a premiar renda
 # recorrente em vez do DY divulgado, e a cardinalidade ganhou piso cedente.
@@ -576,7 +578,7 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
                 np.array(lower_todas),
                 np.array(upper_todas),
             ),
-            options={"time_limit": 20},
+            options={"time_limit": LIMITE_SEGUNDOS_MILP},
         )
 
     floor_alvo = max(0, min(int(policy.min_assets), policy.max_assets, n))
@@ -585,11 +587,18 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
         solution = None
         piso_cedido: int | None = None
         tentativa = None
+        # `milp` devolve status 1 quando estoura o limite de tempo, com
+        # `success=False` -- o mesmo sinal da inviabilidade. Sem distinguir os
+        # dois, a nota de cessão culpava "bandas, tetos ou incerteza" por um
+        # piso que talvez cabesse com mais tempo de busca.
+        tempo_esgotado = False
         for floor in range(floor_alvo, -1, -1):
             def _resolve_no_piso(caps: np.ndarray, _floor: int = floor) -> Any:
                 return _resolve(caps, _floor)
 
             tentativa = _resolve_no_piso(tetos)
+            if getattr(tentativa, "status", None) == 1:
+                tempo_esgotado = True
             tetos_tentativa = tetos
             notas_tentativa: list[str] = []
             if not (tentativa.success and tentativa.x is not None):
@@ -626,8 +635,13 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
             notas_de_viabilidade = list(notas_de_viabilidade) + [
                 f"piso de cardinalidade cedido de {floor_alvo} para "
                 f"{piso_cedido} ativos ({faltaram} posição(ões) a menos que o "
-                "piso-alvo): bandas, tetos de concentração ou incerteza do "
-                "regime não comportavam a carteira com a cardinalidade cheia"
+                "piso-alvo): "
+                + ("o solver esgotou o limite de "
+                   f"{LIMITE_SEGUNDOS_MILP} s antes de provar a carteira cheia "
+                   "-- pode ser falta de tempo de busca, não inviabilidade"
+                   if tempo_esgotado else
+                   "bandas, tetos de concentração ou incerteza do regime não "
+                   "comportavam a carteira com a cardinalidade cheia")
             ]
         if solution is not None and solution.success and solution.x is not None:
             selected = [
@@ -1571,9 +1585,19 @@ def evaluate_rebalance_triggers(current: dict, proposed: dict, *, costs: float =
         reasons.append("evento relevante de crédito, imóvel, gestão ou CVM")
     if proposed.get("constraint_breach"):
         reasons.append("limite de concentração ou liquidez violado")
-    income_gain = _num(proposed.get("expected_yield")) - _num(current.get("expected_yield"))
-    if income_gain > costs + .005:
-        reasons.append("ganho de renda esperado supera custos e margem mínima")
+    # Ganho de renda medido na renda RECORRENTE. `expected_yield` é o DY
+    # divulgado (alias de compatibilidade de `trailing_yield_12m`), que soma
+    # amortização e resultado não recorrente -- justamente o que a v6.10 deixou
+    # de usar para ordenar. Comparar DY bruto disparava troca de carteira por
+    # um "ganho" que podia ser devolução de capital. Sem o recorrente dos dois
+    # lados não há gatilho de renda: cair no bruto seria trocar a métrica em
+    # silêncio.
+    renda_atual = current.get("recurrent_yield_12m")
+    renda_proposta = proposed.get("recurrent_yield_12m")
+    if renda_atual is not None and renda_proposta is not None:
+        income_gain = _num(renda_proposta) - _num(renda_atual)
+        if income_gain > costs + .005:
+            reasons.append("ganho de renda recorrente supera custos e margem mínima")
     if _num(current.get("stress_loss")) - _num(proposed.get("stress_loss")) >= .02:
         reasons.append("redução material da perda em cenário de estresse")
     if _num(current.get("confidence")) - _num(proposed.get("confidence")) >= .15:

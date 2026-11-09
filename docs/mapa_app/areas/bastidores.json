@@ -152,7 +152,7 @@
         {
           "nome": "Avisos no Telegram",
           "resumo": "Avisa quando algo falha ou atrasa",
-          "explicacao": "No fim de cada rodada, um 'vigia' manda mensagem no Telegram quando uma publicação falhou ou passou do prazo, quando uma tarefa agendada na nuvem falhou 2 vezes seguidas ou quando os balanços da B3 estão atrasados. Não avisa quando está tudo bem, e só repete o aviso se o problema mudar ou depois de 24 horas.",
+          "explicacao": "No fim de cada rodada, um 'vigia' manda mensagem no Telegram quando uma publicação falhou ou passou do prazo, quando uma tarefa agendada na nuvem falhou 2 vezes seguidas, quando os balanços da B3 estão atrasados, ou quando a coleta de notícias para: o coletor sem rodar há mais de 26 horas, um provedor sem sucesso há 2 dias ou um provedor que responde mas traz menos de 20% do normal dele por 2 dias. Não avisa quando está tudo bem, e só repete o aviso se o problema mudar ou depois de 24 horas.",
           "so_admin": false,
           "fonte": "scripts/vigia_automacoes.py:1; scripts/notificar.py:1",
           "filhos": []
@@ -209,9 +209,9 @@
         {
           "nome": "Correção de lacunas por assistente de IA",
           "resumo": "Propõe correção para um problema por vez",
-          "explicacao": "Um assistente de IA lê a fila da aba Configurações → Restrições, escolhe o problema mais importante e propõe uma correção para o dono aprovar. Nunca aplica nada sozinho, e para se já houver 3 propostas abertas. Frequência não confirmada: o guia fala em 'rotina diária', mas o agendamento não está no código.",
+          "explicacao": "Um assistente de IA lê a fila da aba Configurações → Restrições, escolhe o problema mais importante e trata um por vez, parando se já houver 3 propostas abertas. Roda de dois jeitos: no computador do dono, às 06:00, quando ele está ligado, e só propõe — o dono aprova; e numa tarefa agendada na nuvem do Claude Code, criada em 01/11/2026, que recebe a fila cifrada de uma automação do GitHub e aplica a correção sozinha quando todos os testes passam. Pausada de 02/11 a 03/11/2026 por falta de acesso de escrita e da chave da fila; religada em 03/11, com a tarefa recriada com o repositório anexado e a chave gravada nos dois lados. Correção que depende de rodar carga de dados continua esperando o dono.",
           "so_admin": false,
-          "fonte": ".claude/skills/corrigir-lacuna/SKILL.md:1; scripts/lacunas_sincronizar.py:1",
+          "fonte": ".claude/skills/corrigir-lacuna/SKILL.md:1; scripts/lacunas_sincronizar.py:1; scripts/lacunas_nuvem.py:1; .github/workflows/lacunas-nuvem.yml:1",
           "filhos": []
         }
       ]

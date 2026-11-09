@@ -66,16 +66,26 @@ def arquivo() -> dict:
 
 
 def _do_ticker(por_ticker: dict, ticker: str):
-    """Entrada exata; na B3, a de uma classe irmã (PETR3 para PETR4)."""
+    """Entrada exata; senão, a de uma classe irmã (PETR3 para PETR4, GOOG
+    para GOOGL) ou a da outra grafia da classe (BRK-B para BRK.B).
+
+    Entre irmãs, vence a que tem notícia: a vitrine também guarda tickers
+    só com descartes, e devolver a irmã vazia esconderia a outra."""
     tk = ticker.upper()
     if tk in por_ticker:
         return por_ticker[tk]
-    raiz = inf.raiz_b3(tk)
-    if raiz:
-        for k in sorted(por_ticker):
-            if inf.raiz_b3(k) == raiz:
-                return por_ticker[k]
-    return None
+    irmas = [k for k in sorted(por_ticker) if inf.mesma_empresa(tk, k)]
+
+    def _tem_conteudo(entrada) -> bool:
+        # Notícias: {"itens": [...], "descartadas": {...}}; relatórios: lista.
+        if isinstance(entrada, dict):
+            return bool(entrada.get("itens"))
+        return bool(entrada)
+
+    for k in irmas:
+        if _tem_conteudo(por_ticker[k]):
+            return por_ticker[k]
+    return por_ticker[irmas[0]] if irmas else None
 
 
 # ---------------------------------------------------------------------------
@@ -129,14 +139,17 @@ def relatorios_de(art: dict, ticker: str, tipo: str | None) -> inf.Relatorios:
     if not art:
         return inf.Relatorios(motivo=SEM_ARQUIVO)
     bloco = art.get("relatorios") or {}
-    mercado = "fii" if tipo == FII else "b3"
+    eua = tipo == ACAO and inf.raiz_b3(ticker) is None
+    mercado = "fii" if tipo == FII else "eua" if eua else "b3"
     fonte = (bloco.get("fonte") or {}).get(mercado)
     base = (bloco.get("base_ate") or {}).get(mercado)
     docs = _do_ticker(bloco.get("por_ticker") or {}, ticker)
-    if tipo == ACAO and inf.raiz_b3(ticker) is None:
-        return inf.Relatorios(motivo="Dado não disponível. Não há base de "
-                                     "filings da SEC no projeto para ações "
-                                     "americanas.")
+    if eua and mercado not in (bloco.get("fonte") or {}):
+        # Vitrine anterior à coleta da SEC (market_us.sec_filings): a base não
+        # existe nela, o que é diferente de a empresa não ter entregue nada.
+        return inf.Relatorios(motivo="Dado não disponível. A base de "
+                                     "documentos da SEC (8-K, 10-Q, 10-K) "
+                                     "ainda não foi publicada na vitrine.")
     if not docs:
         return inf.Relatorios(fonte=fonte, base_ate=base, motivo=(
             f"Dado não disponível. Nenhum documento de {ticker} nos últimos "

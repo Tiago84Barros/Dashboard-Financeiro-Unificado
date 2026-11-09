@@ -182,6 +182,7 @@ def render() -> None:
             "jcp":          "#F6C90E",
             "amortization": "#4A9EFF",
             "other":        "#718096",
+            "lending_reimbursement": "#E67E22",
         }
         for t in por_tipo:
             cor = _CORES_TIPO.get(t["tipo"], "#718096")
@@ -272,6 +273,14 @@ def render() -> None:
         width="stretch",
         height=min(40 + len(ev_filtrados) * 36, 480),
     )
+    sem_qtd = sum(1 for e in ev_filtrados if e.get("quantity") is None)
+    if sem_qtd:
+        st.caption(
+            f"{sem_qtd} provento(s) com Qtd. e R$/Unit em branco: o arquivo de "
+            "origem só informou o total pago, não quantas cotas. O total é o "
+            "valor recebido. Importar a Movimentação da B3 do período completa "
+            "a quantidade."
+        )
 
     total_filtrado = sum(e["total_amount"] for e in ev_filtrados)
     st.caption(

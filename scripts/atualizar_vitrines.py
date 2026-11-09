@@ -244,6 +244,7 @@ CARIMBO = {
                        "SELECT max(completed_at) FROM market.fii_cvm_archive_loads "
                        "WHERE archive_kind = 'eventual'"),
     "cvm_ipe": ("armazem", "SELECT max(created_at) FROM public.docs_corporativos"),
+    "us_sec_filings": ("armazem", "SELECT max(collected_at) FROM market_us.sec_filings"),
     # A cadeia brapi grava no armazém; o carimbo lê o que ELA produz, e não o
     # que o job do GitHub deixou na vitrine até 05/10/2026.
     "b3_brapi": ("armazem",
@@ -259,6 +260,11 @@ CARIMBO = {
     "us_vintages": ("supabase", "SELECT max(created_at) FROM market_us.score_vintages"),
     "us_delistings": ("supabase", "SELECT max(derived_at) FROM market_us.delistings"),
     "us_prices": ("supabase", "SELECT max(ingested_at) FROM market_us.prices_monthly"),
+    # Só as linhas dos índices: o max da tabela inteira viria das carteiras e
+    # daria o alvo por publicado com o SPY ausente -- o estado de 06/11/2026.
+    "us_benchmarks": ("supabase",
+                      "SELECT max(ingested_at) FROM market_us.prices_monthly "
+                      "WHERE symbol IN ('IWB', 'QQQ', 'SPY')"),
     # `--armazem` apaga e regrava a meta a cada publicação; `publicado_em`
     # nasce com NOW() no armazém, que é onde este alvo escreve.
     "us_painel_armazem": ("armazem",
@@ -285,6 +291,8 @@ CARIMBO = {
     "carteira20_medicao": ("arquivo", "data/public/carteira20_medicao.json"),
     "rag_corpus": ("arquivo", "data/public/rag/manifesto.json"),
     "b3_linhagem": ("arquivo", "data/public/b3_linhagem.json"),
+    "etf_dados": ("arquivo", "data/public/etf_dados.json.gz"),
+    "detalhe_eua": ("arquivo", "data/public/detalhe_eua.json.gz"),
 }
 
 

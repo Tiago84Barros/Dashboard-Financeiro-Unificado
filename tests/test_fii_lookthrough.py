@@ -126,3 +126,110 @@ def test_cpf_e_nome_nao_sao_preenchidos_como_cnpj():
     assert normalized_dimension_mapping(row, "debtor") == {
         "12345678901": 0.1, "Devedor X": 0.2,
     }
+
+
+# --- Setor de inquilino em fundo sem imóvel para renda (validação PIT 6.10.0) --
+# O run 105 recusou 16 de 115 carteiras porque fundos de obra, terreno ou
+# cotas (TGAR11, MFII11, VGHF11) ficavam na máscara de setor sem que a CVM
+# jamais publique inquilino para eles.
+
+
+def test_fundo_sem_imovel_para_renda_sai_da_mascara_de_setor_e_inquilino():
+    obra = {"ticker": "OBRA11", "tipo": "tijolo", "pct_imoveis_renda": .03,
+            "regions": {"SP": 1.0}}
+
+    assert dimension_is_applicable(obra, "sector") is False
+    assert dimension_is_applicable(obra, "tenant") is False
+    # Região sai da tabela de imóveis, que lista obra e terreno: continua.
+    assert dimension_is_applicable(obra, "region") is True
+
+
+def test_hibrido_de_cotas_sem_imovel_para_renda_sai_da_mascara_de_setor():
+    """Sem ``pct_imoveis`` no PIT o híbrido era aplicável por cautela."""
+    cotas = {"ticker": "COTA11", "tipo": "hibrido", "pct_imoveis_renda": 0.0}
+
+    assert dimension_is_applicable(cotas, "sector") is False
+    # A regra nova não toca as dimensões de crédito.
+    assert dimension_is_applicable(cotas, "issuer") is True
+
+
+def test_setor_observado_mantem_o_fundo_na_mascara():
+    """Fração baixa com setor declarado: o dado existe e conta como cobertura."""
+    row = {"ticker": "SPE11", "tipo": "tijolo", "pct_imoveis_renda": .05,
+           "sector": "Logística"}
+
+    assert dimension_is_applicable(row, "sector") is True
+
+
+@pytest.mark.parametrize("valor", [None, .20, .95])
+def test_fracao_ausente_ou_material_preserva_a_aplicabilidade(valor):
+    row = {"ticker": "RENT11", "tipo": "tijolo"}
+    if valor is not None:
+        row["pct_imoveis_renda"] = valor
+
+    assert dimension_is_applicable(row, "sector") is True
+    assert dimension_is_applicable(row, "tenant") is True
+
+
+def test_cobertura_de_setor_na_carteira_e_no_diagnostico_e_a_mesma():
+    """Os dois caminhos que medem cobertura usam a mesma regra."""
+    from core.fii_portfolio_v4 import _dimension_observation_masks
+
+    pool = [
+        {"ticker": "LOGI11", "tipo": "tijolo", "pct_imoveis_renda": .9,
+         "sector": "Logística"},
+        {"ticker": "OBRA11", "tipo": "hibrido", "pct_imoveis_renda": .02},
+        {"ticker": "PAPR11", "tipo": "papel", "issuers": {"A": 1.0}},
+    ]
+    known, applicable = _dimension_observation_masks(pool, "sector")
+    resumo = summarize_lookthrough_coverage(pool)["dimensions"]["sector"]
+
+    assert known.tolist() == [1.0, 0.0, 0.0]
+    assert applicable.tolist() == [1.0, 0.0, 0.0]
+    assert resumo["coverage"] == known.sum() / applicable.sum() == 1.0
+
+    # Sem a fração observada, o mesmo fundo de obra volta a derrubar a
+    # cobertura para 0,5 -- o formato exato das recusas do run 105.
+    sem_fracao = [dict(row) for row in pool]
+    sem_fracao[1].pop("pct_imoveis_renda")
+    known, applicable = _dimension_observation_masks(sem_fracao, "sector")
+    assert known.sum() / applicable.sum() == .5
+
+
+def _exp(kind: str, name: str, weight: float = 1.0) -> dict:
+    return {"exposure_type": kind, "exposure_name": name, "exposure_weight": weight}
+
+
+def test_segmento_cadastral_so_preenche_setor_que_falta():
+    """`segment` (cadastro do informe mensal) e reserva do `sector` (inquilinos).
+
+    O setor por inquilino e o que a metodologia mede; o cadastral e um rotulo
+    unico declarado pelo administrador. Quando os dois existem, vale o
+    inquilino, mesmo que o cadastral seja mais recente.
+    """
+    from core.fii_lookthrough import apply_exposures
+
+    com_inquilino: dict = {"ticker": "A11"}
+    apply_exposures(com_inquilino, [
+        _exp("sector", "Varejo", .6), _exp("sector", "Logística", .4),
+        _exp("segment", "Lajes Corporativas"),
+    ])
+    assert com_inquilino["sector"] == "Varejo"
+    assert com_inquilino["segment"] == "Lajes Corporativas"
+
+    sem_inquilino: dict = {"ticker": "B11"}
+    apply_exposures(sem_inquilino, [
+        _exp("segment", "Lajes Corporativas"),
+        _exp("issuer", "Emissor A", .7), _exp("issuer", "Emissor B", .3),
+    ])
+    assert sem_inquilino["sector"] == "Lajes Corporativas"
+    assert sem_inquilino["issuers"] == {"Emissor A": .7, "Emissor B": .3}
+
+
+def test_segmento_cadastral_nao_sobrescreve_setor_ja_conhecido_na_linha():
+    """No estado corrente a linha ja chega com o setor do cadastro da brapi."""
+    from core.fii_lookthrough import apply_exposures
+
+    row: dict = {"ticker": "C11", "sector": "Shoppings"}
+    apply_exposures(row, [_exp("segment", "Lajes Corporativas")])
+    assert row["sector"] == "Shoppings"

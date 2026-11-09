@@ -45,7 +45,7 @@ from core.investimentos import (
     get_evolucao_patrimonial,
     get_resultado_realizado,
 )
-from core.proventos import get_proventos
+from core.proventos import get_proventos, media_por_periodo
 from core.tesouro_analysis import (
     analise_suficiencia_tesouro,
     retorno_mercado_sobre_custo,
@@ -172,6 +172,24 @@ def _f_big(v) -> str:
 
 def _f_chip(label: str, color: str = "blue") -> str:
     return f'<span class="f-chip f-chip-{color}">{_html.escape(label)}</span>'
+
+def _dy_sobre_custo(dy, preco, preco_medio):
+    """DY sobre o custo: o mesmo dividendo por ação dos últimos 12 meses do DY,
+    dividido pelo preço médio em vez da cotação.
+
+    DY = DPA_12m / cotação  →  DPA_12m = DY × cotação  →  DY s/ custo = DY × cotação / PM.
+    Mesmo numerador, só troca o denominador — por isso dá para comparar lado a
+    lado com o DY. Não é a renda que o investidor de fato recebeu: quem comprou
+    há três meses não recebeu 12 meses de proventos.
+    """
+    try:
+        dy, preco, preco_medio = float(dy), float(preco), float(preco_medio)
+    except (TypeError, ValueError):
+        return None
+    if dy <= 0 or preco <= 0 or preco_medio <= 0:
+        return None
+    return dy * preco / preco_medio
+
 
 def _f_row(key: str, val: str, cls: str = "fund-val") -> str:
     return (f'<div class="fund-row"><span class="fund-key">{_html.escape(key)}</span>'
@@ -838,18 +856,26 @@ def _load_corr_precos(
 
 
 def _build_corr_data(posicoes: list) -> dict:
+    from core.tesouro_curva import chave_da_curva
+
     symbol_map = []
     pesos = {}
     seen = set()
     skipped = []
     tesouro = []
+    ticker_da_tela = {}
     for pos in sorted(posicoes, key=lambda p: float(p.get("valor_mercado") or 0), reverse=True):
         tk = str(pos.get("ticker") or "").upper().strip()
         if tk and _eh_tesouro(pos):
-            if tk not in seen:
-                tesouro.append(tk)
-                pesos[tk] = float(pos.get("valor_mercado") or 0.0)
-                seen.add(tk)
+            # A curva é chaveada pelo título: a foto chama o cupom pelo ticker
+            # do principal (TIPCA2032 para TIPCAJ2032). Sem a chave da curva a
+            # matriz pedia o PU de outro título, de outra história.
+            chave = chave_da_curva(tk, pos.get("nome"))
+            if chave not in seen:
+                tesouro.append(chave)
+                ticker_da_tela[chave] = tk
+                pesos[chave] = float(pos.get("valor_mercado") or 0.0)
+                seen.add(chave)
             continue
         sym = _yf_symbol_for_pos(pos)
         if sym:
@@ -866,10 +892,14 @@ def _build_corr_data(posicoes: list) -> dict:
     data = _load_corr_precos(tuple(symbol_map[:28]), tesouro=tuple(tesouro))
     # Título pedido que não chegou à matriz continua declarado, com o motivo:
     # PU ausente na curva ou menos meses que o mínimo exigido.
+    # Quem lê o aviso conhece o título pelo ticker da tela; quando a curva o
+    # guarda sob outra chave, ela vai junto para a ausência poder ser conferida.
     na_matriz = set(data.get("corr", pd.DataFrame()).columns)
+    motivo = f"PU do Tesouro sem {MIN_CORR_MONTHS} meses de histórico"
     skipped.extend(
-        f"{tk} (PU do Tesouro sem {MIN_CORR_MONTHS} meses de histórico)"
-        for tk in tesouro if tk not in na_matriz
+        f"{ticker_da_tela[ch]} ({ch} na curva: {motivo})"
+        if ticker_da_tela[ch] != ch else f"{ch} ({motivo})"
+        for ch in tesouro if ch not in na_matriz
     )
     data["skipped"] = skipped
     data["requested"] = [tk for tk, _, _ in symbol_map[:28]] + tesouro
@@ -1811,6 +1841,9 @@ def _series_desempenho_categorias(posicoes: list, period_key: str) -> tuple[dict
     series: dict[str, pd.Series] = {}
     info: dict[str, dict] = {}
     grupos = dc.posicoes_por_categoria(posicoes)
+    # Data do primeiro aporte de cada ativo: a mesma da coluna "Primeiro
+    # aporte" da tabela de posições. O histórico anterior não é da carteira.
+    aportes = get_extras_tabela().get("primeiro_aporte") or {}
 
     # Uma chamada só ao yfinance para todas as categorias de bolsa, câmbio junto:
     # a Visão Geral é a subaba que abre primeiro.
@@ -1875,6 +1908,16 @@ def _series_desempenho_categorias(posicoes: list, period_key: str) -> tuple[dict
             if getattr(precos.index, "tz", None) is not None:
                 precos.index = precos.index.tz_localize(None)
             precos = precos.loc[precos.index >= corte]
+            posse = dc.inicio_da_posse(aportes, precos.columns)
+            sem_data = sorted(c for c, d in posse.items() if d is None and c in quantidades)
+            if sem_data:
+                aviso_lacuna(
+                    f"{nome}: sem data de primeiro aporte para {', '.join(sem_data)}; "
+                    "o ativo fica fora da linha da categoria.",
+                    codigo="tela.investimentos.desempenho_categoria_sem_aporte",
+                    entidade=nome,
+                )
+            precos = dc.recortar_pela_posse(precos, posse).dropna(how="all")
         serie = dc.retorno_encadeado(precos, quantidades) if not precos.empty else None
         cobertos = [c for c in precos.columns
                     if c in quantidades and precos[c].notna().any()] if not precos.empty else []
@@ -2004,7 +2047,68 @@ _ROTULO_AMOSTRA = {"W": "um ponto por semana", "M": "um ponto por mês",
                    "Q": "um ponto por trimestre"}
 
 
-def _fig_desempenho_categorias(series: dict, freq: str | None = None) -> go.Figure:
+_INDICES_EVENTO = (("Ibovespa", "^BVSP"), ("S&P 500", "^GSPC"))
+_ROTULO_CURTO_INDICE = {"Ibovespa": "Ibov", "S&P 500": "S&P"}
+
+
+@user_cache_data(ttl=3600, show_spinner=False)
+def _eventos_mercado(period_key: str) -> list[dict]:
+    """Pregões de ±5% no Ibovespa ou no S&P 500 dentro do período.
+
+    Yahoo primeiro; sem o Ibovespa de lá, o BOVA11 da fita oficial da B3
+    publicada no repositório (só os pregões recentes).
+    """
+    from core import desempenho_categorias as dc
+
+    try:
+        bruto = _load_performance_history(tuple((s, s) for _, s in _INDICES_EVENTO), period_key)
+    except Exception:  # noqa: BLE001 -- sem índice, sem marca; o gráfico segue
+        bruto = pd.DataFrame()
+    indices = {nome: bruto[sym] for nome, sym in _INDICES_EVENTO
+               if not bruto.empty and sym in bruto and bruto[sym].notna().sum() > 1}
+    if "Ibovespa" not in indices:
+        reserva = dc.ibovespa_pela_fita_publica()
+        if not reserva.empty:
+            indices["Ibovespa"] = reserva
+    corte = pd.Timestamp(dc.inicio_do_periodo(_PERFORMANCE_PERIODS[period_key]["days"]))
+    return [e for e in dc.eventos_de_mercado(indices) if e["data"] >= corte]
+
+
+def _descricao_evento(ev: dict) -> str:
+    texto = (f'{ev["data"].strftime("%d/%m/%Y")} · {ev["indice"]} '
+             f'{_fmt_retorno(ev["variacao"], 2)} no dia')
+    if ev.get("cenario"):
+        texto += f' · {ev["cenario"]["nome"]}: {ev["cenario"]["descricao"]}'
+    return texto
+
+
+def _marcar_eventos(fig: go.Figure, eventos: list[dict], x_min, x_max) -> list[dict]:
+    """Linha vertical e etiqueta curta em cada evento dentro do eixo x."""
+    dentro = [e for e in eventos or [] if x_min <= e["data"] <= x_max]
+    largura = (x_max - x_min) or pd.Timedelta(days=1)
+    for i, ev in enumerate(dentro):
+        cor = _COR_NEGATIVO if ev["variacao"] < 0 else _COR_POSITIVO
+        fig.add_shape(type="line", x0=ev["data"], x1=ev["data"], xref="x",
+                      y0=0, y1=1, yref="paper", layer="below",
+                      line={"color": cor, "width": 1, "dash": "dot"})
+        # Perto da borda direita, a etiqueta abre para a esquerda.
+        perto_do_fim = (ev["data"] - x_min) / largura > 0.8
+        rotulo = f'{_ROTULO_CURTO_INDICE.get(ev["indice"], ev["indice"])} ' \
+                 f'{_fmt_retorno(ev["variacao"])}'
+        if ev.get("cenario"):
+            rotulo = f'{ev["cenario"]["nome"]} · {rotulo}'
+        fig.add_annotation(
+            x=ev["data"], y=1, xref="x", yref="paper", yanchor="bottom",
+            xanchor="right" if perto_do_fim else "left", xshift=-4 if perto_do_fim else 4,
+            yshift=2 + 14 * (i % 2), showarrow=False, text=_html.escape(rotulo),
+            hovertext=_html.escape(_descricao_evento(ev)),
+            font={"size": 10, "color": cor},
+        )
+    return dentro
+
+
+def _fig_desempenho_categorias(series: dict, freq: str | None = None,
+                               eventos: list[dict] | None = None) -> go.Figure:
     """Uma linha por categoria; a legenda, abaixo, liga e desliga cada uma.
 
     Linha, ponto final e rótulo de cada categoria formam um ``legendgroup``:
@@ -2056,6 +2160,7 @@ def _fig_desempenho_categorias(series: dict, freq: str | None = None) -> go.Figu
         ))
 
     fig.add_hline(y=0, line_color="#4A5568", line_width=1, opacity=0.6)
+    marcados = _marcar_eventos(fig, eventos, primeiro_x, ultimo_x)
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font={"color": _COR_NEUTRO, "size": 12},
@@ -2064,7 +2169,7 @@ def _fig_desempenho_categorias(series: dict, freq: str | None = None) -> go.Figu
                 "font": {"size": 12, "color": _COR_NEUTRO}, "bgcolor": "rgba(0,0,0,0)",
                 "itemclick": "toggle", "itemdoubleclick": "toggleothers",
                 "itemwidth": 40, "traceorder": "normal"},
-        margin={"t": 12, "b": 8, "l": 8, "r": 70},
+        margin={"t": 40 if marcados else 12, "b": 8, "l": 8, "r": 70},
         height=480,
         hovermode="x unified",
         hoverlabel={"font": {"size": 12}, "bordercolor": "#2D3748"},
@@ -2107,15 +2212,27 @@ def _secao_desempenho_categorias(posicoes: list) -> None:
 
     st.markdown(_cards_desempenho_categorias(series, info), unsafe_allow_html=True)
     freq = _AMOSTRA_GRAFICO.get(period_key, "W")
-    st.plotly_chart(_fig_desempenho_categorias(series, freq),
+    eventos = _eventos_mercado(period_key)
+    inicio_x = min(s.index[0] for s in series.values())
+    fim_x = max(s.index[-1] for s in series.values())
+    eventos = [e for e in eventos if inicio_x <= e["data"] <= fim_x]
+    st.plotly_chart(_fig_desempenho_categorias(series, freq, eventos),
                     width="stretch", config={"displayModeBar": False, "scrollZoom": False},
                     key="analise_vg_categorias_graf")
     st.markdown(
         f'<div class="dcat-rodape">Período: {_PERFORMANCE_PERIODS[period_key]["label"]}, '
         f'{_ROTULO_AMOSTRA[freq]} · toque no nome de uma categoria na legenda para mostrar '
-        'ou esconder a linha · cada linha começa no primeiro preço disponível</div>',
+        'ou esconder a linha · cada ativo entra na linha a partir do seu primeiro aporte</div>',
         unsafe_allow_html=True,
     )
+    if eventos:
+        itens = "".join(f"<li>{_html.escape(_descricao_evento(e))}</li>" for e in eventos)
+        st.markdown(
+            '<div class="dcat-rodape"><b>Eventos marcados</b> (linhas pontilhadas: pregões '
+            'em que o Ibovespa ou o S&amp;P 500 andou 5% ou mais no dia)'
+            f'<ul style="margin:2px 0 0 1.1em;padding:0;">{itens}</ul></div>',
+            unsafe_allow_html=True,
+        )
 
     with st.expander("Fontes e metodologia"):
         linhas = []
@@ -2132,10 +2249,16 @@ def _secao_desempenho_categorias(posicoes: list) -> None:
         st.dataframe(pd.DataFrame(linhas), hide_index=True, width="stretch")
         st.caption(
             "Não é a rentabilidade da conta: usa a quantidade de hoje de cada ativo e "
-            "ignora aportes e vendas. Cada passo do retorno usa só os ativos com preço "
+            "ignora aportes e vendas. Cada ativo entra na linha só a partir do primeiro "
+            "aporte (extrato de Negociação ou Movimentação; na falta, a primeira foto de "
+            "posição), e ativo sem essa data fica de fora — por isso a coluna Ativos com "
+            "série pode ficar menor que o total. Cada passo do retorno usa só os ativos com preço "
             "nas duas datas. FIIs e ações pelo fechamento ajustado incluem proventos; "
             "Tesouro com cupom cai no pagamento do cupom. Categorias americanas em reais "
-            "pelo câmbio do dia, salvo quando a coluna Moeda diz USD."
+            "pelo câmbio do dia, salvo quando a coluna Moeda diz USD. Eventos marcados: "
+            "pregões em que o Ibovespa (^BVSP; na falta, o BOVA11 da fita oficial da B3) ou "
+            "o S&P 500 (^GSPC) andou 5% ou mais; dias extremos a menos de 30 dias um do "
+            "outro viram um evento só, o maior. O nome vem dos cenários do Stress."
         )
 
 
@@ -2912,6 +3035,18 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
                    "tickformat": ",.0f", "tickprefix": "R$ "},
             showlegend=False,
         )
+        # Linha da média por período. Meses/anos sem provento contam como zero
+        # e o período em curso fica fora — ver core.proventos.media_por_periodo.
+        media_prov = media_por_periodo(serie_prov, visao_prov)
+        if media_prov:
+            unidade = "mês" if visao_prov == "Mensal" else "ano"
+            fig_prov.add_hline(
+                y=media_prov["media"],
+                line={"color": _COR_NEUTRO, "width": 1.5, "dash": "dash"},
+                annotation_text=f"Média {_fmt_brl(media_prov['media'], 0)}/{unidade}",
+                annotation_position="top right",
+                annotation_font={"size": 11, "color": _COR_NEUTRO},
+            )
         st.plotly_chart(fig_prov, width="stretch",
                         config={"displayModeBar": False},
                         key="hist_proventos_bar")
@@ -2927,19 +3062,34 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
             )
             st.caption(
                 f"Histórico completo · {serie_prov[0]['label']}–{serie_prov[-1]['label']} "
-                f"({len(serie_prov)} anos)."
+                f"({len(serie_prov)} anos)." + _legenda_media_prov(media_prov, "ano")
             )
         else:
             st.caption(
                 f"Total no período: **R$ {total_exibido:,.2f}**".replace(",", "X").replace(".", ",").replace("X", ".")
                 + f" · {len(serie_prov)} meses (últimos 12 com dados) — "
                 "escolha **Anual** para o histórico completo"
+                + _legenda_media_prov(media_prov, "mês")
             )
     else:
         st.caption("Sem histórico de proventos.")
 
     st.markdown("<br>", unsafe_allow_html=True)
     _proventos_por_ativo(proventos, carteira)
+
+
+def _legenda_media_prov(media: dict | None, unidade: str) -> str:
+    """Explica a linha tracejada: sobre quantos períodos e o que ficou fora."""
+    if not media:
+        return ""
+    plural = "meses" if unidade == "mês" else "anos"
+    partes = [f"Linha tracejada: média de **{_fmt_brl(media['media'])}/{unidade}** "
+              f"em {media['n_periodos']} {plural} fechados"]
+    if media["periodos_zerados"]:
+        partes.append(f"{media['periodos_zerados']} sem provento contam como zero")
+    if media["excluiu_corrente"]:
+        partes.append(f"o {unidade} em curso fica fora")
+    return "  \n" + " · ".join(partes) + "."
 
 
 def _fmt_brl(v: float, casas: int = 2) -> str:
@@ -3636,6 +3786,9 @@ def _stock_card_html(pos: dict, fd: dict, price_info: dict,
     rows += R("Custo investido", _f_brs(custo, 0))
     if pm:
         rows += R("Preço médio", _f_brs(pm))
+    dy_custo = _dy_sobre_custo(dy, preco, pm)
+    if dy_custo is not None:
+        rows += R("DY sobre o custo", f"{dy_custo:.2f}%")
 
     rows += S("Valuation")
     if pl:
@@ -3783,6 +3936,10 @@ def _fii_card_html(pos: dict, fd: dict, price_info: dict,
     rows += R("Peso na carteira", f"{peso:.1f}%")
     rows += R("Custo investido", _f_brs(custo, 0))
     rows += R("Cotas", _f_br(qty, 0))
+    pm_fii = float(pos.get("preco_medio") or 0) or (custo / qty if qty > 0 else 0)
+    dy_custo = _dy_sobre_custo(dy_f, preco, pm_fii)
+    if dy_custo is not None:
+        rows += R("DY sobre o custo", f"{dy_custo:.2f}%")
 
     rows += S("Indicadores")
     if pvp:
@@ -4667,7 +4824,8 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
         _secao_titulo_orig(
             "🌪️", "Stress Tests Históricos",
             "Quanto a carteira de hoje perderia se cada crise passada se "
-            "repetisse agora — choques calibrados em dados B3/BCB.",
+            "repetisse agora — choques calibrados em dados B3/BCB. Evento "
+            "ainda em curso entra com o choque observado até agora.",
         )
 
         try:
@@ -4690,7 +4848,19 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 perda_abs = abs(float(pior.get("perda_absoluta", 0.0)))
                 valor_pre = float(pior.get("total_pre", 0.0))
                 valor_pos = float(pior.get("total_pos", 0.0))
-                rec_m = int(pior.get("tempo_recuperacao_meses", 0) or 0)
+                # Recuperação ``None`` = não medida (evento em curso). Virar 0
+                # afirmaria "recupera em 0 meses" sobre algo que nem acabou.
+                _rec_bruto = pior.get("tempo_recuperacao_meses")
+                rec_m = int(_rec_bruto) if _rec_bruto is not None else None
+                if rec_m is not None:
+                    _frase_rec = (
+                        'Historicamente, um evento desse porte levou cerca de '
+                        f'<b style="color:{_cor_texto(_COR_ALERTA)}">{rec_m} meses</b> '
+                        'para ser recuperado.')
+                else:
+                    _frase_rec = (
+                        'O evento <b>ainda está em curso</b>: o choque é o observado '
+                        'até agora e o tempo de recuperação não foi medido.')
 
                 # Frase primeiro, números depois: a pergunta que a aba responde
                 # é "quanto eu perderia e em quanto tempo volto", e a tabela
@@ -4707,8 +4877,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     f'a carteira cairia <b style="color:{_cor_texto(_COR_NEGATIVO)}">{perda_pct:.1f}%</b>'
                     f' — de {fmt_moeda(valor_pre)} para <b>{fmt_moeda(valor_pos)}</b>, '
                     f'uma perda de <b style="color:{_cor_texto(_COR_NEGATIVO)}">{fmt_moeda(perda_abs)}</b>. '
-                    'Historicamente, um evento desse porte levou cerca de '
-                    f'<b style="color:{_cor_texto(_COR_ALERTA)}">{rec_m} meses</b> para ser recuperado.'
+                    f'{_frase_rec}'
                     '</div></div>',
                     unsafe_allow_html=True,
                 )
@@ -4726,8 +4895,11 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     ), unsafe_allow_html=True)
                 with cs3:
                     st.markdown(_kpi(
-                        "Tempo de recuperação", f"{rec_m} meses",
-                        "Mediana histórica do evento", _COR_ALERTA,
+                        "Tempo de recuperação",
+                        f"{rec_m} meses" if rec_m is not None else "Em curso",
+                        "Mediana histórica do evento" if rec_m is not None
+                        else "Ainda não medido: o evento não terminou",
+                        _COR_ALERTA,
                     ), unsafe_allow_html=True)
 
                 # ── Comparação entre cenários ─────────────────────────────────
@@ -4754,7 +4926,10 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                     customdata=list(zip(
                         [r["data_ref"] for r in ordenados],
                         [abs(float(r["perda_absoluta"])) for r in ordenados],
-                        [r["tempo_recuperacao_meses"] for r in ordenados],
+                        [(f'{r["tempo_recuperacao_meses"]} meses'
+                          if r["tempo_recuperacao_meses"] is not None
+                          else "evento em curso, não medida")
+                         for r in ordenados],
                         [r.get("descricao", "") for r in ordenados],
                     )),
                     hovertemplate=(
@@ -4762,7 +4937,7 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                         "Período: %{customdata[0]}<br>"
                         "Queda: %{x:.1f}%<br>"
                         "Perda: R$ %{customdata[1]:,.0f}<br>"
-                        "Recuperação: %{customdata[2]} meses<extra></extra>"
+                        "Recuperação: %{customdata[2]}<extra></extra>"
                     ),
                 ))
                 fig_stress.update_layout(
@@ -4780,6 +4955,23 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                 st.plotly_chart(fig_stress, width="stretch",
                                 config={"displayModeBar": False},
                                 key="analise_stress_bar")
+
+                # Evento em curso: dizer na tela o que é provisório. O choque
+                # de uma classe que ninguém mediu é proxy, e o leitor precisa
+                # saber se a carteira dele passou por esse proxy.
+                for r in ordenados:
+                    if not r.get("em_curso"):
+                        continue
+                    _nm = r.get("choque_nao_medido") or {}
+                    _txt = (f"⏳ **{r['cenario']}** está em curso: choques "
+                            "observados até agora, sujeitos a revisão, e sem "
+                            "tempo de recuperação.")
+                    if _nm:
+                        _txt += (" Choque **não medido** (proxy de um evento "
+                                 "análogo) em: " + ", ".join(
+                                     f"{k} ({fmt_moeda(v)})" for k, v in _nm.items())
+                                 + ".")
+                    st.caption(_txt)
 
                 # ── Renda fixa por indexador e duration (INV-A3) ──────────────
                 por_idx = pior.get("por_indexador") or {}
@@ -4889,7 +5081,9 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                             "Valor pós-choque": st.column_config.NumberColumn(format="R$ %.0f"),
                             "Queda":  st.column_config.NumberColumn(format="-%.1f%%"),
                             "Perda":  st.column_config.NumberColumn(format="R$ %.0f"),
-                            "Recuperação": st.column_config.NumberColumn(format="%d meses"),
+                            "Recuperação": st.column_config.NumberColumn(
+                                format="%d meses",
+                                help="Vazio = evento em curso, recuperação não medida."),
                         },
                     )
 
@@ -4902,6 +5096,10 @@ def _tab_analise(carteira: dict, proventos: dict) -> None:
                         "período, que costuma amortecer parte da queda.<br/>"
                         "- **Recuperação** é a mediana histórica de tempo até o "
                         "portfólio voltar ao valor pré-choque (Ibovespa como proxy).<br/>"
+                        "- Um evento **em curso** entra com o choque observado até "
+                        "agora e sem recuperação: ela ainda não aconteceu. A classe "
+                        "cujo choque ninguém mediu recebe o de um evento análogo, "
+                        "e a tela diz qual.<br/>"
                         "- É exercício de ordem de grandeza, não previsão: o modelo "
                         "aplica choque uniforme por classe e não modela correlações "
                         "de cauda entre ativos.",

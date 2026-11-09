@@ -46,6 +46,7 @@ from core.macro_data.database import descrever_fonte_macro, get_macro_source
 from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from core.proventos_b3 import fotos_velhas
 from data_pipeline.utils.date_utils import fmt_datetime_br
+from design import gravacao_carteira as _gravacao
 from design.componentes import card_metrica, cor_token, explicar_rank_ic
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
 from design.market_companies import company_logo_html
@@ -4876,22 +4877,27 @@ def render(show_header: bool = True) -> None:
         }
         c_save, c_info = st.columns([1, 3], gap="medium")
         with c_save:
-            if st.button(
+            # Grava no on_click, antes do rerun: com ``if st.button`` o clique
+            # só valia quando o script chegava a esta linha, e trocar de tela
+            # antes disso perdia a gravação sem erro (design/gravacao_carteira.py).
+            st.button(
                 "Salvar portfólio padrão",
                 type="primary",
                 key="pb3_save_model",
                 disabled=not _portfolio_viavel,
-            ):
-                try:
-                    model_id = save_b3_portfolio_model(
+                on_click=_gravacao.ao_clicar_gravar(
+                    "pb3_save_model",
+                    lambda: save_b3_portfolio_model(
                         proximos_uniq,
                         params=params_modelo,
                         metrics=metrics_modelo,
                         name=f"Portfolio B3 Modelo {ano_atual}",
-                    )
-                    st.success(f"Portfólio padrão salvo no banco. ID: {model_id[:8]}")
-                except Exception as exc:
-                    falha_de_acao("Não foi possível salvar o portfólio padrão.", exc)
+                    ),
+                    sucesso="Portfólio padrão salvo no banco. ID: {id}",
+                    falha="Não foi possível salvar o portfólio padrão.",
+                ),
+            )
+            _gravacao.mostrar_resultado("pb3_save_model")
         with c_info:
             _r1, _r2, _r3 = st.columns(3)
             with _r1:

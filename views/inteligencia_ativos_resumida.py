@@ -175,6 +175,12 @@ def cartao_recomendacao(d: rs.Decisao) -> str:
     substituto, o que mudaria a recomendação, dados ausentes e o pano de
     fundo. Puro."""
     partes = [_secao("Justificativa"), _itens(d.justificativas)]
+    momento = d.momento.linha() if d.momento is not None else None
+    if momento:
+        # A queda à vista, antes da venda (pedido de 08/11/2026): vender
+        # num preço deprimido pode transformar oscilação em perda.
+        partes += [_secao("Momento: o ativo está em queda"),
+                   _itens((momento.removeprefix("Momento: "),))]
     if d.proporcao:
         venda = [f"Vender cerca de {d.proporcao * 100:.0f}% da posição."]
         if d.custos is not None:
@@ -188,7 +194,7 @@ def cartao_recomendacao(d: rs.Decisao) -> str:
                            d.condicoes),
                           ("Dados ausentes e limitações", d.limitacoes),
                           ("Contexto: cenário, noticiário e valorização",
-                           d.contexto)):
+                           tuple(x for x in d.contexto if x != momento))):
         if itens:
             partes += [_secao(titulo), _itens(itens)]
     return f'<div style="{_CAIXA}">{"".join(partes)}</div>'
@@ -431,8 +437,11 @@ def cartao_noticias(a: m.AnaliseAtivo,
         partes.append(_secao("Como está o segmento"
                              + (f" · {rotulo}" if rotulo else "")))
         partes.append("".join(_manchete(i) for i in setor))
-        partes.append(_nota("Notícias dos pares do mesmo segmento, não do "
-                            "ativo."))
+        from core.inteligencia_ativos.secoes import ROTULO_POSICOES_ETF
+        partes.append(_nota(
+            "Notícias das maiores posições do fundo, não do fundo."
+            if str(rotulo or "").startswith(ROTULO_POSICOES_ETF) else
+            "Notícias dos pares do mesmo segmento, não do ativo."))
     if gerais is not None and rs.precisa_noticiario_geral(a):
         brutos, origem = gerais
         falta = max(rs.N_NOTICIAS - len(itens) - len(setor), 1)

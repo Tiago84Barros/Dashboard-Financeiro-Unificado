@@ -88,7 +88,7 @@
         {
           "nome": "Confiança por seção",
           "resumo": "Um cartão para cada tela do menu",
-          "explicacao": "Sete cartões: Dashboard Geral, Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global. Cada cartão abre os itens que formam a nota e a prova por trás de cada um. Em Empresas B3 e Seleção de FIIs, o item 'Pregão diário (chat)' mede a idade dos pregões que o chat do ativo cita.",
+          "explicacao": "Sete cartões: Dashboard Geral, Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global. Cada cartão abre os itens que formam a nota e a prova por trás de cada um. Em Empresas B3 e Seleção de FIIs, o item 'Pregão diário (chat)' mede a idade dos pregões que o chat do ativo cita. Em Empresas B3, Seleção de FIIs e Investimentos, o item 'Proventos publicados (chat)' mede a idade dos proventos que os chats citam.",
           "so_admin": false,
           "fonte": "views/confianca.py:675; core/confianca_secao.py:754",
           "filhos": []
@@ -114,7 +114,7 @@
     {
       "nome": "Restrições",
       "resumo": "Lista do que o app não sabe ou errou",
-      "explicacao": "Painel de trabalho com falta de dados, erros e detalhes técnicos que foram tirados das telas de uso. Você filtra a lista, lê cada item e registra o que fazer com ele. A mesma para todas as contas desde 12/10/2026.",
+      "explicacao": "Painel de trabalho com falta de dados, erros e detalhes técnicos que foram tirados das telas de uso. Tela lenta também entra aqui: a troca de página que passa de 3 segundos, ou a abertura do app e o clique que passam de 10, vira um item com o tempo gasto no banco e fora dele — o tempo não aparece mais no rodapé das telas. Você filtra a lista, lê cada item e registra o que fazer com ele. A mesma para todas as contas desde 12/10/2026.",
       "so_admin": false,
       "fonte": "views/configuracoes.py:95 → views/configuracoes_restricoes.py:295",
       "filhos": [
@@ -162,8 +162,8 @@
     },
     {
       "nome": "Atualização de dados",
-      "resumo": "Enviar seus arquivos de cartão, banco e corretoras",
-      "explicacao": "É onde você sobe os arquivos baixados do cartão, do banco e das corretoras. Sempre há uma prévia para conferir antes de gravar. Tem duas sub-abas: Controle Financeiro e Investimentos.",
+      "resumo": "Enviar seus arquivos de cartão, banco, corretoras e da empresa",
+      "explicacao": "É onde você sobe os arquivos baixados do cartão, do banco, das corretoras e da conta da empresa. Sempre há uma prévia para conferir antes de gravar. Tem três sub-abas: Controle Financeiro, Investimentos e CNPJ.",
       "so_admin": false,
       "fonte": "views/configuracoes.py:106 → views/configuracoes.py:207",
       "filhos": [
@@ -185,9 +185,9 @@
             {
               "nome": "Extrato bancário",
               "resumo": "Importar o extrato em PDF com revisão",
-              "explicacao": "Escolha o banco (hoje só C6 Bank), envie o PDF e revise numa grade a descrição, se é entrada ou saída, a categoria e o valor de cada movimento. A categoria vem sugerida entre as que já existem (o extrato não cria categoria); nome repetido em tipos diferentes aparece com o tipo entre parênteses, como 'Outros (despesa)'. Depois clique em 'Importar extrato'.",
+              "explicacao": "Escolha o banco (hoje só C6 Bank), envie o PDF e revise numa grade a descrição, se é entrada ou saída, a categoria e o valor de cada movimento. A categoria vem sugerida entre as que já existem (o extrato não cria categoria); nome repetido em tipos diferentes aparece com o tipo entre parênteses, como 'Outros (despesa)'. Abaixo da grade, a seção Conciliação mostra os movimentos que já foram lançados à mão (mesma conta, mesmo valor, até 3 dias de diferença): marcados, eles se vinculam ao lançamento existente em vez de criar outro, e o lançamento que estava como previsto (conta a pagar ou a receber) recebe a baixa na data do banco. Ali também se confere o saldo: o saldo final do extrato (lido do PDF ou digitado) contra o saldo do app na mesma data, depois da importação. Depois clique em 'Importar extrato'. Embaixo do upload ficam as últimas conferências de saldo, recalculadas contra o app de hoje.",
               "so_admin": false,
-              "fonte": "views/bank_statement_upload.py:343",
+              "fonte": "views/bank_statement_upload.py:486",
               "filhos": []
             }
           ]
@@ -202,7 +202,7 @@
             {
               "nome": "Dados Históricos B3 (.xlsx)",
               "resumo": "Planilhas da área do investidor da B3",
-              "explicacao": "Aceita vários arquivos de uma vez: Negociação, Movimentação, Relatório Consolidado (o da XP), Posição Detalhada ou Posição. O app descobre sozinho o tipo de cada arquivo. Depois do botão 'Importar', mostra o que entrou, o que já existia e o que foi recusado.",
+              "explicacao": "Aceita vários arquivos de uma vez: Negociação, Movimentação, Relatório Consolidado (o da XP), Posição Detalhada, Posição e o Extrato da conta da Rico (deste, só os rendimentos e dividendos pagos). O app descobre sozinho o tipo de cada arquivo. Depois do botão 'Importar', mostra o que entrou, o que já existia e o que foi recusado.",
               "so_admin": false,
               "fonte": "views/configuracoes.py:1654",
               "filhos": []
@@ -232,6 +232,14 @@
               "filhos": []
             }
           ]
+        },
+        {
+          "nome": "CNPJ",
+          "resumo": "Extrato da conta da empresa (OFX)",
+          "explicacao": "Envie o extrato da conta da empresa em OFX (no Cora: Extrato › Exportar › OFX). A prévia mostra cada movimento com uma categoria sugerida do plano de contas da empresa; a categoria que você escolher para um cliente ou fornecedor vira regra para os próximos extratos. Dinheiro enviado a um cliente é sugerido como devolução (dedução da receita), e estorno ou reembolso recebido nunca é sugerido como receita: segue a categoria do fornecedor, ou a da despesa que desfaz (estorno de tarifa volta para Tarifas), ou fica sem categoria. O movimento que já estava lançado à mão (mesmo valor, até 3 dias) aparece marcado para conciliar em vez de duplicar, e o previsto recebe a baixa. O saldo final do arquivo é comparado com o saldo do app. Depois clique em 'Importar extrato'. Tudo vai para a seção Controle CNPJ e nada entra no Controle Financeiro pessoal.",
+          "so_admin": false,
+          "fonte": "views/configuracoes.py:343",
+          "filhos": []
         }
       ]
     },
@@ -409,7 +417,7 @@
     {
       "nome": "Documentação",
       "resumo": "Guia ilustrado de como o app funciona",
-      "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 14 sub-abas, na ordem do menu lateral.",
+      "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 15 sub-abas, na ordem do menu lateral.",
       "so_admin": false,
       "fonte": "views/configuracoes.py:195 → views/documentacao.py:3016",
       "filhos": [
@@ -427,6 +435,14 @@
           "explicacao": "Fluxograma da tela Controle Financeiro: de onde vêm os lançamentos, o cartão e o extrato, e como o app chega aos totais.",
           "so_admin": false,
           "fonte": "views/documentacao.py:805",
+          "filhos": []
+        },
+        {
+          "nome": "Controle CNPJ",
+          "resumo": "Como o extrato da empresa vira caixa, DRE e DAS",
+          "explicacao": "Fluxograma da seção Controle CNPJ: a entrada do extrato e do lançamento manual, o plano de contas da empresa, a conciliação e as abas Visão geral, Lançamentos, A pagar e receber, DRE, Balanço e Impostos.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:987",
           "filhos": []
         },
         {

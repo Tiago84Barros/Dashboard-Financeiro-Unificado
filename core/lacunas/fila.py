@@ -204,6 +204,11 @@ def atualizar_estado(estado: dict[str, dict], itens: list[dict]) -> dict[str, di
 #: Prefixo que a aba Restricoes (Configuracoes) poe na ``nota_triagem`` quando o
 #: administrador decide uma lacuna direto na nuvem.
 PREFIXO_NOTA_ADMIN = "[admin "
+#: Prefixo da decisão tomada pelo corretor na nuvem (``core/lacunas/nuvem.py``),
+#: que chega a ``app_lacunas`` pelo workflow ``lacunas-nuvem.yml``. Importada
+#: como a do administrador: sem isso o sincronizador local a sobrescreveria.
+PREFIXO_NOTA_NUVEM = "[nuvem "
+_PREFIXOS_IMPORTADOS = (PREFIXO_NOTA_ADMIN, PREFIXO_NOTA_NUVEM)
 
 
 def importar_decisoes_admin(estado: dict[str, dict], cloud: Iterable[dict],
@@ -214,19 +219,28 @@ def importar_decisoes_admin(estado: dict[str, dict], cloud: Iterable[dict],
     CORRETOR decidiu, e a errada para o que o ADMINISTRADOR decidiu depois: sem
     isto, a sincronizacao seguinte devolveria o status antigo a ``app_lacunas``
     e a decisao tomada na tela sumiria. A marca e a nota com
-    ``PREFIXO_NOTA_ADMIN``; so entra se a nota for nova para o estado local.
+    ``PREFIXO_NOTA_ADMIN`` (ou ``PREFIXO_NOTA_NUVEM``, do corretor na nuvem);
+    so entra se a nota for nova para o estado local.
+
+    "Nova" quer dizer nunca importada, nao "diferente da nota local de agora":
+    o corretor local que decide DEPOIS da nuvem troca a nota, e a nota antiga
+    da nuvem, se fosse comparada so com a atual, voltaria a entrar na
+    sincronizacao seguinte e desfaria o veredito local para sempre (lacuna
+    e327cdfc, 08/11/2026). Por isso a nota importada fica guardada em
+    ``nota_importada`` e ``marcar`` preserva essa memoria.
     Devolve as impressoes alteradas."""
     mudadas = []
     for linha in cloud:
         nota = linha.get("nota_triagem") or ""
         status = linha.get("status")
-        if not nota.startswith(PREFIXO_NOTA_ADMIN) or status not in STATUS:
+        if not nota.startswith(_PREFIXOS_IMPORTADOS) or status not in STATUS:
             continue
         est = estado.get(linha["impressao"])
-        if est is None or est.get("nota_triagem") == nota:
+        if est is None or nota in (est.get("nota_triagem"), est.get("nota_importada")):
             continue
         est["status"] = status
         est["nota_triagem"] = nota
+        est["nota_importada"] = nota
         est["atualizado_em"] = agora.isoformat()
         if status == "resolvida":
             est["resolvida_em"] = agora.isoformat()
@@ -280,6 +294,11 @@ def marcar(estado: dict[str, dict], impressao: str, status: str, *,
     if pr_url is not None:
         est["pr_url"] = pr_url
     if nota is not None:
+        anterior = est.get("nota_triagem") or ""
+        if anterior.startswith(_PREFIXOS_IMPORTADOS):
+            # estados gravados antes de ``nota_importada`` existir: a nota que
+            # esta sendo substituida veio da nuvem, e nao pode voltar a entrar
+            est.setdefault("nota_importada", anterior)
         est["nota_triagem"] = nota
     if status == "resolvida":
         est["resolvida_em"] = agora.isoformat()

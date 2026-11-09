@@ -154,7 +154,7 @@ Q, V, R = "qualidade", "valuation", "risco"
 METRICAS_CONFRONTO: dict[str, tuple[tuple[str, str, bool], ...]] = {
     prs.ACAO: (("roe", Q, True), ("margem_liquida", Q, True),
                ("p_l", V, False), ("p_vp", V, False), ("ev_ebit", V, False),
-               ("dividend_yield", V, True), ("volatilidade", R, False)),
+               ("dy_mediano_5a", V, True), ("volatilidade", R, False)),
     prs.FII: (("alavancagem", Q, False), ("p_vp", V, False),
               ("dividend_yield", V, True), ("cap_rate", V, True),
               ("max_drawdown", R, False)),

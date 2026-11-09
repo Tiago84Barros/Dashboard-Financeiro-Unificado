@@ -623,6 +623,18 @@ def robust_optimizer_point_in_time_backtest(
         coverage = len(valid) / len(weights) if len(weights) else 0.0
         if not len(valid):
             continue
+        # A-118, aplicado tambem ao backtest que certifica a carteira ao vivo.
+        # A correcao existia so em `point_in_time_backtest`; este walk-forward
+        # -- o unico que roda em producao (`data_pipeline/market/fii_pit.py`)
+        # -- seguia renormalizando, e o fundo que liquidava rendia o que os
+        # sobreviventes renderam. A fatia ausente rende ZERO no periodo, pela
+        # mesma regra da versao simples. Medida contra o peso total da carteira
+        # entregue, nao contra 1,0: o otimizador nao promete soma exata.
+        total_entregue = float(weights.sum())
+        peso_ausente = (
+            float(max(0.0, 1.0 - float(weights.loc[valid].sum()) / total_entregue))
+            if total_entregue > 0 else 0.0
+        )
         weights = weights.loc[valid] / weights.loc[valid].sum()
         turn = portfolio_turnover(previous, weights) if not previous.empty else 1.0
         matrix = period_matrix[valid]
@@ -635,6 +647,7 @@ def robust_optimizer_point_in_time_backtest(
             continue
         periodic = matrix.mul(weights, axis=1).sum(axis=1, skipna=True) / present_weight
         gross = float((1.0 + periodic).prod() - 1.0)
+        gross = (1.0 - peso_ausente) * gross   # A-118: a fatia que sumiu rende 0
         after_costs = gross - turn * (transaction_cost + slippage)
         ir_periodo = 0.0
         if ir_calculado:
@@ -666,6 +679,7 @@ def robust_optimizer_point_in_time_backtest(
             "portfolio_return_apos_custos": after_costs,
             "ir_periodo": ir_periodo,
             "coverage": coverage, "turnover": turn,
+            "peso_ausente": peso_ausente,
             "holdings": {
                 str(ticker): float(weight) for ticker, weight in weights.items()
             },
@@ -744,6 +758,15 @@ def robust_optimizer_point_in_time_backtest(
         "ir_calculado": bool(ir_calculado),
         "premissas_liquido": premissas_fii(transaction_cost, slippage),
         "mean_coverage": float(result["coverage"].mean()),
+        # Mesmo bloco da versao simples. A tela (`views/fiis.py`, aviso
+        # `fii.backtest_saida_de_campo`) ja o lia, mas so a versao simples o
+        # produzia -- e ela nao roda em producao, entao o aviso nunca aparecia.
+        "saida_de_campo": {
+            "peso_ausente_medio": float(result["peso_ausente"].mean()),
+            "peso_ausente_maximo": float(result["peso_ausente"].max()),
+            "periodos_com_ausencia": int((result["peso_ausente"] > 1e-9).sum()),
+            "periodos": int(len(result)),
+        },
         "annualized_turnover": float(np.mean(turnovers) * 12),
         "rank_stability": float(np.mean(valid_stabilities)) if valid_stabilities else np.nan,
         "verified_snapshot_fraction": (

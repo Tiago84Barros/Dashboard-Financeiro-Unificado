@@ -10,13 +10,14 @@ Abas (como Empresas B3, com as particularidades de FII):
                       e carteira de imóveis com região (tijolo/logística).
   3. Carteira-modelo — seleção diversificada por tipo (tijolo/papel/fof/híbrido).
   4. Retrospectiva   — retorno total (preço + proventos reinvestidos) da carteira.
-  5. Revisão de dados — decisão humana, versionada, sobre valores extraídos de
-                        relatório gerencial antes de virarem dado aceito.
 
 Fonte nativa do market.* (BRAPI Pro + CVM Informe Mensal). FII não tem DRE/ROE.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
+import logging
 import math
 from html import escape
 
@@ -83,6 +84,7 @@ from core.macro_data.portfolio_context import load_portfolio_macro_snapshot
 from core.utils import escapar_cifrao
 from data_pipeline.market import fii as _fz
 from data_pipeline.utils.date_utils import fmt_datetime_br
+from design import gravacao_carteira as _gravacao
 from design import portao_inteligencia as _portao_ui
 from design.chat_ativo import render_chat_ativo
 from design.componentes import (
@@ -92,8 +94,10 @@ from design.componentes import (
     rolar_para_topo,
 )
 from design.lacunas import aviso_lacuna, detalhe_tecnico, falha_de_acao
-from design.market_companies import company_logo_html
+from design.market_companies import company_logo_html, prebuscar_logos
 from design.relatorio_analista import secao_relatorio
+
+_log = logging.getLogger(__name__)
 
 # Metadados por tipo de FII: emoji, rótulo e cor de destaque do card.
 _TIPO_META = {
@@ -224,7 +228,7 @@ _CSS = """
 """
 
 _TABS = ["📋 FIIs Disponíveis", "🔎 Busca de ativo", "🧺 Carteira-modelo",
-         "📈 Retrospectiva", "🧾 Revisão de dados"]
+         "📈 Retrospectiva"]
 
 _SNAPSHOT_REQUIRED_FIELDS = (
     "ticker", "tipo", "dy_12m", "pvp", "liquidez_diaria", "history_months",
@@ -375,6 +379,9 @@ def render(show_header: bool = True) -> None:
 
     # Abas por botão (permitem trocar de aba programaticamente — ex.: card → Busca).
     active = st.session_state.get("fii_active_tab", 0)
+    # Sessão aberta antes da saída de Revisão de dados pode guardar o índice 4.
+    if not isinstance(active, int) or not 0 <= active < len(_TABS):
+        active = 0
     cols = st.columns(len(_TABS))
     for i, (c, lab) in enumerate(zip(cols, _TABS)):
         with c:
@@ -397,10 +404,8 @@ def render(show_header: bool = True) -> None:
         _tab_busca(df)
     elif active == 2:
         _tab_carteira(ranked)
-    elif active == 3:
-        _tab_backtest()
     else:
-        _tab_evidence_review()
+        _tab_backtest()
 
 
 # ── Tab 1: Ranking (cards por tipo) ───────────────────────────────────────────
@@ -680,274 +685,6 @@ def _publication_gate_message(
     if any("cobertura do universo" in reason for reason in gate.reasons):
         parts.append(f"cobertura do universo {float(gate.universe_coverage):.1%}")
     return " · ".join(parts)
-
-
-def _render_project_evidence_review(
-    rows: list[dict], *, reviewer_default: str,
-) -> None:
-    from core.fii_evidence_review import review_project_observation
-
-    if not rows:
-        st.success("Não há empreendimentos pendentes de revisão.")
-        return
-    selected_id = st.selectbox(
-        "Empreendimento extraído",
-        [int(row["id"]) for row in rows],
-        format_func=lambda value: next(
-            f"#{value} · {row.get('ticker')} · {row.get('project_name')} · "
-            f"{row.get('reference_date')}"
-            for row in rows if int(row["id"]) == value
-        ),
-        key="fii_project_review_id",
-    )
-    row = next(item for item in rows if int(item["id"]) == int(selected_id))
-    st.dataframe(pd.DataFrame([{
-        "FII": row.get("ticker"),
-        "Empreendimento": row.get("project_name"),
-        "Local": " · ".join(filter(None, [row.get("city"), row.get("state")])),
-        "Fase": row.get("stage"),
-        "Peso": row.get("portfolio_weight"),
-        "% obras": row.get("construction_progress"),
-        "% vendas": row.get("sales_progress"),
-        "TIR esperada": row.get("expected_irr"),
-        "Resultado esperado (R$)": row.get("expected_result_brl"),
-        "Natureza": row.get("value_nature"),
-    }]), width="stretch", hide_index=True)
-    st.code(str(row.get("evidence_text") or ""), language=None, wrap_lines=True)
-    st.caption(
-        "Valores esperados são estimativas do gestor, não fatos realizados. "
-        f"Página {row.get('page_number') or '—'} · confiança de extração "
-        f"{float(row.get('confidence') or 0):.0%}"
-    )
-    detalhe_tecnico(
-        f"Evidência de empreendimento #{selected_id}: SHA-256 "
-        f"{str(row.get('content_sha256') or '')[:20]}…",
-        codigo="fii.revisao_projeto_hash")
-    with st.form("fii_project_review_form"):
-        decision_label = st.radio(
-            "Decisão", ["Aceitar como evidência", "Rejeitar"],
-            horizontal=True, key="fii_project_review_decision",
-        )
-        reviewer = st.text_input(
-            "Identificador do revisor", value=reviewer_default,
-            key="fii_project_reviewer",
-        )
-        note = st.text_area(
-            "Justificativa/observação", max_chars=2000,
-            key="fii_project_review_note",
-        )
-        submitted = st.form_submit_button("Registrar decisão", type="primary")
-    if submitted:
-        try:
-            report = review_project_observation(
-                int(selected_id),
-                decision=("accepted" if decision_label == "Aceitar como evidência"
-                          else "rejected"),
-                reviewer_id=reviewer,
-                note=note,
-            )
-            st.success(f"Decisão registrada · auditoria {report['review_hash'][:16]}…")
-            st.cache_data.clear()
-            st.rerun()
-        except Exception as exc:
-            falha_de_acao("Não foi possível registrar a revisão.", exc)
-
-
-def _render_finding_evidence_review(
-    rows: list[dict], *, reviewer_default: str,
-) -> None:
-    from core.fii_evidence_review import review_document_finding
-
-    if not rows:
-        st.success("Não há achados qualitativos pendentes de revisão.")
-        return
-    selected_id = st.selectbox(
-        "Achado extraído",
-        [int(row["id"]) for row in rows],
-        format_func=lambda value: next(
-            f"#{value} · {row.get('ticker')} · {row.get('finding_type')} · "
-            f"{row.get('topic')}"
-            for row in rows if int(row["id"]) == value
-        ),
-        key="fii_finding_review_id",
-    )
-    row = next(item for item in rows if int(item["id"]) == int(selected_id))
-    st.markdown(_info_card_html(
-        f"{row.get('ticker') or 'FII'} · {row.get('topic')}",
-        str(row.get("claim_text") or ""),
-        accent="#FC5C7D" if row.get("finding_type") == "risk" else "#4A9EFF",
-    ), unsafe_allow_html=True)
-    st.caption(
-        "Alegação do relatório, ainda não corroborada por fonte independente. "
-        f"Página {row.get('page_number') or '—'} · confiança de extração "
-        f"{float(row.get('confidence') or 0):.0%}."
-    )
-    with st.form("fii_finding_review_form"):
-        decision_label = st.radio(
-            "Decisão", ["Aceitar como alegação atribuída", "Rejeitar"],
-            horizontal=True, key="fii_finding_review_decision",
-        )
-        reviewer = st.text_input(
-            "Identificador do revisor", value=reviewer_default,
-            key="fii_finding_reviewer",
-        )
-        note = st.text_area(
-            "Justificativa/observação", max_chars=2000,
-            key="fii_finding_review_note",
-        )
-        submitted = st.form_submit_button("Registrar decisão", type="primary")
-    if submitted:
-        try:
-            report = review_document_finding(
-                int(selected_id),
-                decision=("accepted" if decision_label == "Aceitar como alegação atribuída"
-                          else "rejected"),
-                reviewer_id=reviewer,
-                note=note,
-            )
-            st.success(f"Decisão registrada · auditoria {report['review_hash'][:16]}…")
-            st.cache_data.clear()
-            st.rerun()
-        except Exception as exc:
-            falha_de_acao("Não foi possível registrar a revisão.", exc)
-
-
-def _tab_evidence_review() -> None:
-    """Revisão humana explícita; decisões são versionadas e auditáveis."""
-    from core.config import settings
-    from core.fii_evidence_review import (
-        load_pending_evidence,
-        load_pending_findings,
-        load_pending_project_observations,
-        review_backlog_summary,
-        review_evidence,
-    )
-
-    st.subheader("Revisão auditável de evidências documentais")
-    st.markdown(_info_card_html(
-        "O que esta etapa faz",
-        "Valores extraídos de relatórios gerenciais só se tornam dados aceitos depois de uma "
-        "decisão explícita. Cada decisão preserva documento, hash, página, parser, revisor e "
-        "instante de conhecimento; rejeições automáticas não calibram o parser como revisão humana.",
-        accent="#B084F6",
-    ), unsafe_allow_html=True)
-    summary = review_backlog_summary()
-    if not summary.get("available"):
-        st.info("Esta análise não está disponível no momento.")
-        aviso_lacuna(
-            "A fila documental não está disponível neste banco: "
-            + str(summary.get("reason") or "sem detalhes"),
-            codigo="tela.fii.fila_documental_indisponivel")
-        return
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.markdown(_kpi_html("Evidências pendentes", summary.get("pending", 0),
-                          accent="#F6C90E"), unsafe_allow_html=True)
-    k2.markdown(_kpi_html("FIIs na fila", summary.get("pending_tickers", 0),
-                          accent="#4A9EFF"), unsafe_allow_html=True)
-    k3.markdown(_kpi_html("Revisões humanas", summary.get("human_reviewed", 0),
-                          accent="#00C896"), unsafe_allow_html=True)
-    k4.markdown(_kpi_html("Projetos pendentes", summary.get("project_pending", 0),
-                          accent="#B084F6"), unsafe_allow_html=True)
-    k5.markdown(_kpi_html("Achados pendentes", summary.get("finding_pending", 0),
-                          accent="#FC5C7D"), unsafe_allow_html=True)
-
-    reviewer_default = settings.OWNER_USER_ID or "app_operator"
-    review_kind = st.radio(
-        "Tipo de evidência",
-        ["Métricas", "Empreendimentos", "Achados qualitativos"],
-        horizontal=True,
-        key="fii_review_kind",
-    )
-    if review_kind == "Empreendimentos":
-        _render_project_evidence_review(
-            load_pending_project_observations(limit=100),
-            reviewer_default=reviewer_default,
-        )
-        return
-    if review_kind == "Achados qualitativos":
-        _render_finding_evidence_review(
-            load_pending_findings(limit=100),
-            reviewer_default=reviewer_default,
-        )
-        return
-
-    initial = load_pending_evidence(limit=300)
-    if not initial:
-        st.success("Não há evidências pendentes neste banco.")
-        return
-    tickers = sorted({str(row.get("ticker") or "") for row in initial if row.get("ticker")})
-    metrics = sorted({str(row.get("metric_name") or "") for row in initial if row.get("metric_name")})
-    f1, f2 = st.columns(2)
-    ticker = f1.selectbox("FII", ["(todos)", *tickers], key="fii_review_ticker")
-    metric = f2.selectbox("Métrica", ["(todas)", *metrics], key="fii_review_metric")
-    rows = load_pending_evidence(
-        limit=50,
-        tickers=[] if ticker == "(todos)" else [ticker],
-        metrics=[] if metric == "(todas)" else [metric],
-    )
-    if not rows:
-        st.info("Nenhuma evidência corresponde aos filtros.")
-        return
-    selected_id = st.selectbox(
-        "Evidência",
-        [int(row["id"]) for row in rows],
-        format_func=lambda value: next(
-            f"#{value} · {row.get('ticker') or 'sem ticker'} · {row.get('metric_name')} · "
-            f"{float(row.get('confidence') or 0):.0%}"
-            for row in rows if int(row["id"]) == value
-        ),
-        key="fii_review_evidence_id",
-    )
-    evidence = next(row for row in rows if int(row["id"]) == int(selected_id))
-    meta = st.columns(4)
-    meta[0].metric("Ticker", evidence.get("ticker") or "—")
-    meta[1].metric("Métrica", evidence.get("metric_name") or "—")
-    meta[2].metric("Valor extraído", str(evidence.get("normalized_value")))
-    meta[3].metric("Confiança da extração", f"{float(evidence.get('confidence') or 0):.0%}")
-    st.code(str(evidence.get("evidence_text") or ""), language=None, wrap_lines=True)
-    st.caption(
-        f"Documento: {evidence.get('document_type')} · referência: "
-        f"{evidence.get('reference_date') or 'não informada'} · página: "
-        f"{evidence.get('page_number') or 'não identificada'}"
-    )
-    detalhe_tecnico(
-        f"Evidência #{selected_id}: parser {evidence.get('parser_name')} "
-        f"{evidence.get('parser_version')} · SHA-256 "
-        f"{str(evidence.get('content_sha256') or '')[:20]}…",
-        codigo="fii.revisao_evidencia_parser")
-
-    with st.form("fii_evidence_review_form", clear_on_submit=False):
-        decision_label = st.radio(
-            "Decisão", ["Aceitar", "Corrigir", "Rejeitar"], horizontal=True,
-            key="fii_review_decision",
-        )
-        raw_value = evidence.get("normalized_value")
-        try:
-            default_value = float(raw_value)
-        except (TypeError, ValueError):
-            default_value = 0.0
-        corrected = st.number_input(
-            "Valor corrigido", value=default_value, format="%.6f",
-            disabled=decision_label != "Corrigir",
-        )
-        reviewer = st.text_input("Identificador do revisor", value=reviewer_default)
-        note = st.text_area("Justificativa/observação", max_chars=2000)
-        submitted = st.form_submit_button("Registrar decisão", type="primary")
-    if submitted:
-        decisions = {"Aceitar": "accepted", "Corrigir": "corrected", "Rejeitar": "rejected"}
-        try:
-            report = review_evidence(
-                int(selected_id), decision=decisions[decision_label], reviewer_id=reviewer,
-                corrected_value=corrected if decision_label == "Corrigir" else None,
-                note=note,
-            )
-            st.success(
-                f"Decisão registrada. Hash de auditoria: {report['review_hash'][:16]}…"
-            )
-            st.cache_data.clear()
-            st.rerun()
-        except Exception as exc:
-            falha_de_acao("Não foi possível registrar a revisão.", exc)
 
 
 def _render_data_health_summary(metrics: dict[str, float | int | str], gate) -> None:
@@ -1949,6 +1686,7 @@ def _cards_de_fiis_disponiveis(view: pd.DataFrame) -> None:
     limit_key = "fii_disponiveis_visible_limit"
     visible_limit = int(st.session_state.get(limit_key, _FII_DISPONIVEIS_PAGE_SIZE))
     visible = df.head(visible_limit)
+    prebuscar_logos(_fii_logo_url(str(tk)) for tk in visible["Ticker"])
     total_por_categoria = df.groupby("Categoria", dropna=False)["Ticker"].size().to_dict()
 
     for categoria, grupo in visible.groupby("Categoria", sort=False, dropna=False):
@@ -2252,7 +1990,69 @@ def _tab_carteira(ranked: pd.DataFrame) -> None:
             + " · ".join(item.replace("**", "") for item in _avisos)
             + ". Preço, DY e liquidez vêm da última ingestão Brapi.",
             codigo="fii.defasagem_fontes")
-    _carteira_integrada(preferences)
+
+    # A seleção roda só no botão, como a Criação de Portfólio de B3 e EUA:
+    # antes ela rodava ao abrir a aba e a cada mexida num controle, e o
+    # usuário via uma carteira antes de escolher os parâmetros dela. A
+    # carteira exibida é a dos parâmetros do último clique, não a dos
+    # controles atuais — mexer num slider não troca a carteira sem aviso.
+    rodar = st.button("🚀 Rodar seleção de FIIs", type="primary",
+                      key="fii_carteira_rodar")
+    if rodar:
+        st.session_state[_CHAVE_PREFS_RODADAS] = preferences
+        st.session_state[_CHAVE_ASSINATURA_RODADA] = _assinatura_dos_controles()
+    rodadas = st.session_state.get(_CHAVE_PREFS_RODADAS)
+    if rodadas is None:
+        st.info("Ajuste os parâmetros acima e clique **🚀 Rodar seleção de FIIs** "
+                "para montar a carteira.")
+        return
+    if st.session_state.get(_CHAVE_ASSINATURA_RODADA) != _assinatura_dos_controles():
+        st.info("Os parâmetros mudaram desde a última seleção. A carteira abaixo "
+                "ainda é a anterior; clique **🚀 Rodar seleção de FIIs** para "
+                "atualizá-la.")
+    if rodar:
+        with st.spinner("Aplicando filtros, pontuando e otimizando pesos…"):
+            _carteira_integrada(rodadas)
+    else:
+        _carteira_integrada(rodadas)
+
+
+_CHAVE_PREFS_RODADAS = "fii_carteira_prefs_rodadas"
+_CHAVE_ASSINATURA_RODADA = "fii_carteira_assinatura_rodada"
+
+
+def _assinatura_dos_controles() -> tuple:
+    """Valores atuais dos controles da seleção, para saber se mudaram."""
+    return tuple(sorted(
+        (chave, repr(valor)) for chave, valor in st.session_state.items()
+        if str(chave).startswith(("fii_pref_integrated_", "fii_pref_macro_mode"))
+    ))
+
+
+_CHAVE_MONTAGEM_GUARDADA = "fii_montagem_guardada"
+
+
+def _chave_da_montagem(preferences: dict, portfolio_policy, eligible_rows: list,
+                       candidatos_da_concessao, validation_status: str,
+                       previous_weights: dict, macro_snapshot, inputs) -> str:
+    """Impressão digital de tudo o que entra na montagem da carteira.
+
+    Linhas inteiras, não só os tickers: a mesma lista de fundos com uma métrica
+    diferente monta outra carteira. ``repr`` é estável para dicts, números e
+    as políticas (dataclasses), e o hash custa milissegundos diante da montagem.
+    """
+    partes = (
+        repr(sorted((k, repr(v)) for k, v in preferences.items()
+                    if k != "scenario_provenance")),
+        repr(portfolio_policy),
+        repr(eligible_rows),
+        repr(list(candidatos_da_concessao or ())),
+        validation_status,
+        repr(sorted(previous_weights.items())),
+        repr(getattr(macro_snapshot, "impacts", None)),
+        repr(inputs.attrs.get("snapshot_as_of")),
+    )
+    return hashlib.sha256("\x1f".join(partes).encode("utf-8")).hexdigest()
 
 
 def _intel_avaliar_fii(tk: str):
@@ -2274,11 +2074,6 @@ def _carteira_integrada(preferences: dict):
     scenario_provenance = preferences.get("scenario_provenance") or {}
     portfolio_policy = preferences["portfolio_policy"]
     eligibility_policy = preferences["eligibility_policy"]
-    st.markdown(_info_card_html(
-        "Regime quantitativo",
-        classify_macro_regime(scenario).replace("_", " ").title(),
-        accent="#4A9EFF",
-    ), unsafe_allow_html=True)
 
     inputs = _mr.load_fii_methodology_inputs()
     if _falha_de_leitura_da_vitrine(inputs):
@@ -2324,15 +2119,6 @@ def _carteira_integrada(preferences: dict):
     portfolio_policy = ajustar_politica_de_carteira(
         portfolio_policy, universo.politica)
     _aviso_de_idade_da_vitrine(inputs)
-    st.markdown(_info_card_html(
-        "Universo elegível",
-        f"{eligibility['eligible_count']} de {eligibility['universe_count']} FIIs passaram "
-        "pelos filtros "
-        + ("escolhidos" if not universo.cedeu else "efetivamente aplicados")
-        + ". Ausências em métricas exigidas reprovam o ativo; não recebem "
-        "nota neutra.",
-        accent="#4A9EFF" if eligible_rows else "#FC5C7D",
-    ), unsafe_allow_html=True)
     if universo.cedeu:
         # A cessão aparece antes da carteira, não em nota de rodapé: quem lê a
         # composição precisa saber que ela foi montada sob exigência menor do
@@ -2342,10 +2128,12 @@ def _carteira_integrada(preferences: dict):
             nota_de_cessao(universo),
             accent="#F7B733",
         ), unsafe_allow_html=True)
-    # A contagem por motivo volta à tela: sem ela, "0 de 394" foi lido como
-    # "todos os fundos são ruins" quando a causa era leitura de dado. Um número
-    # de exclusão sem o motivo não é diagnóstico, é veredito sem processo.
-    _diagnostico_de_exclusao(eligibility, expandido=not eligible_rows)
+    # Com carteira montada, a contagem por motivo de exclusão não aparece: é
+    # detalhe que o usuário pediu para tirar da tela (02/11/2026). Sem nenhum
+    # elegível ela volta, aberta: "0 de 394" já foi lido como "todos os fundos
+    # são ruins" quando a causa era leitura de dado.
+    if not eligible_rows:
+        _diagnostico_de_exclusao(eligibility, expandido=True)
     candidatos_da_concessao = eligibility.get("concession_candidates") or ()
     if not eligible_rows and not candidatos_da_concessao:
         # Duas coisas diferentes, e as duas precisam aparecer: a causa da
@@ -2470,13 +2258,33 @@ def _carteira_integrada(preferences: dict):
     # A carteira criada é compra: FII que a Inteligência dos Ativos manda
     # avaliar troca ou não aportar sai, e a carteira é remontada sem ele sob
     # as mesmas restrições (o otimizador não tem vaga por tipo para herdar).
-    intel_log = veredito.novo_log_selecao()
-    result, intel_excluidos = veredito.reotimizar_sem_vetados(
-        _montar, avaliador=_intel_avaliar_fii, log=intel_log,
-        itens_de=lambda r: [(str(i.get("ticker") or "").upper(),
-                             str(i.get("tipo") or "—"))
-                            for i in r.get("items") or []],
-    )
+    #
+    # A montagem custa de 35 a 55 s (medido em 02/11/2026 com a vitrine de 436
+    # FIIs: 231 otimizações, quase todas na busca da cessão mínima de forma), e
+    # o Streamlit refaz o script inteiro a cada clique. Sem memória, uma
+    # pergunta no chat ou um "salvar" repetia a montagem. Ela é determinística
+    # nas entradas da chave abaixo; mudou qualquer uma, monta de novo.
+    chave_da_montagem = _chave_da_montagem(
+        preferences, portfolio_policy, eligible_rows, candidatos_da_concessao,
+        validation_status, previous_weights, macro_snapshot, inputs)
+    guardada = st.session_state.get(_CHAVE_MONTAGEM_GUARDADA)
+    if guardada is not None and guardada[0] == chave_da_montagem:
+        result, intel_excluidos, intel_log, correlacao_guardada = copy.deepcopy(guardada[1])
+        _correlacao_da_ultima_tentativa[:] = [correlacao_guardada]
+    else:
+        intel_log = veredito.novo_log_selecao()
+        result, intel_excluidos = veredito.reotimizar_sem_vetados(
+            _montar, avaliador=_intel_avaliar_fii, log=intel_log,
+            itens_de=lambda r: [(str(i.get("ticker") or "").upper(),
+                                 str(i.get("tipo") or "—"))
+                                for i in r.get("items") or []],
+        )
+        correlacao_montada = (_correlacao_da_ultima_tentativa[0]
+                              if _correlacao_da_ultima_tentativa else pd.DataFrame())
+        # Uma vaga só: guardar todas as combinações já rodadas faria a sessão
+        # crescer a cada ajuste de controle.
+        st.session_state[_CHAVE_MONTAGEM_GUARDADA] = (chave_da_montagem, copy.deepcopy(
+            (result, intel_excluidos, intel_log, correlacao_montada)))
     result["macro_snapshot"] = macro_snapshot
     result["inteligencia_log"] = intel_log
     if _portao_ui.tem_conteudo(intel_log):
@@ -2577,6 +2385,7 @@ def _carteira_integrada(preferences: dict):
         result.get("can_publish") and investable_gate.can_publish_recommendation
     )
     st.session_state["fii_portfolio_can_publish"] = portfolio_can_publish
+    st.session_state["fii_portfolio_blockers"] = list(result.get("blockers") or [])
     if portfolio_can_publish:
         st.success("Carteira apta à publicação segundo os gates vigentes.")
     else:
@@ -2649,11 +2458,8 @@ def _carteira_integrada(preferences: dict):
     show = _enrich_portfolio_view(show, specific_metrics)
     table_slot = st.empty()
     _render_portfolio_table(table_slot, show)
-    valid_pvp = [(float(item["pvp"]), float(item["weight"])) for item in items
-                 if item.get("pvp") is not None and pd.notna(item.get("pvp"))]
-    pvp_weight = sum(weight for _, weight in valid_pvp)
-    weighted_pvp = (sum(value * weight for value, weight in valid_pvp) / pvp_weight
-                    if pvp_weight else None)
+    from core.fii_presentation import pvp_da_carteira
+    weighted_pvp = pvp_da_carteira((item.get("pvp"), item.get("weight")) for item in items)
     average_confidence = sum(float(item["confidence"]) * float(item["weight"])
                              for item in items) / allocated_weight
     k1, k2, k3 = st.columns(3)
@@ -2795,42 +2601,97 @@ def _carteira_integrada(preferences: dict):
     return table_slot, show, specific_metrics
 
 
+def motivos_do_bloqueio_de_publicacao() -> list[str]:
+    """Por que a carteira montada não é publicável segundo os gates vigentes.
+
+    Lista vazia = publicável. Junta os bloqueios do motor (``result``) e do
+    portão de investibilidade, na ordem em que a tela os calcula.
+    """
+    gate = st.session_state.get("fii_investable_publication_gate")
+    if gate is None:
+        return ["os gates de publicação não foram calculados nesta execução"]
+    motivos = list(st.session_state.get("fii_portfolio_blockers") or [])
+    motivos += list(getattr(gate, "reasons", ()) or ())
+    if not motivos and not (gate.can_publish_recommendation and st.session_state.get(
+            "fii_portfolio_can_publish", False)):
+        motivos.append("carteira não marcada como publicável pelo motor")
+    return list(dict.fromkeys(motivos))
+
+
 def _render_save_portfolio(port: list[dict], params: dict, metrics: dict,
                            *, key: str) -> None:
-    """Oferece a mesma persistência para qualquer método de seleção."""
+    """Oferece a mesma persistência para qualquer método de seleção.
+
+    Até 08/11/2026 o botão ficava desabilitado sempre que um gate reprovava,
+    sem dizer o motivo na tela. Desde 04/10/2026 a validação PIT da
+    metodologia 6.10.0 está reprovada, então nenhuma carteira podia ser salva:
+    o Dashboard Geral e o Portfólio Global ficaram presos na de 31/07. A
+    decisão de adotar a carteira é do usuário. O gate deixa de proibir e
+    passa a exigir ciência: os motivos aparecem na tela, a gravação pede
+    confirmação e o modelo salvo leva ``publication_status`` e
+    ``publication_blockers`` em ``params_json``. A integridade estrutural
+    (tickers, pesos, releitura pós-gravação) continua bloqueando em
+    ``core.fii_portfolio_model.save_fii_portfolio_model``.
+    """
     st.markdown("---")
+    motivos = motivos_do_bloqueio_de_publicacao()
     cs1, cs2 = st.columns([3, 1])
     with cs1:
         st.markdown(_info_card_html(
             "Publicação da carteira-modelo",
-            "Ao salvar, o Dashboard Geral passa a usar exatamente estes ativos e pesos. "
-            "A gravação só é liberada quando os gates de cobertura, consistência, "
-            "atualização e validação forem aprovados.",
+            "Ao salvar, o Dashboard Geral e o Portfólio Global passam a usar "
+            "exatamente estes ativos e pesos.",
             accent="#F6C90E",
         ), unsafe_allow_html=True)
+        if motivos:
+            st.warning(
+                "**Esta carteira não passou nos gates da metodologia:**\n\n"
+                + "\n".join(f"- {motivo}" for motivo in motivos)
+                + "\n\nVocê ainda pode salvá-la; ela fica marcada como "
+                "salva **sem aprovação da metodologia**."
+            )
+        try:
+            from core.fii_portfolio_model import load_active_fii_portfolio_model
+            st.markdown(_gravacao.resumo_da_carteira_salva(
+                load_active_fii_portfolio_model(),
+                (item.get("ticker") for item in port), unidade="FIIs"))
+        except (RuntimeError, ValueError, SQLAlchemyError) as exc:
+            _log.warning("carteira FII ativa ilegível: %s", exc)
     with cs2:
-        gate = st.session_state.get("fii_investable_publication_gate")
-        can_publish = bool(
-            gate and gate.can_publish_recommendation
-            and st.session_state.get("fii_portfolio_can_publish", False)
+        ciente = True
+        if motivos:
+            ciente = st.checkbox(
+                "Entendo os motivos acima e quero salvar mesmo assim.",
+                key=f"{key}_ciente",
+            )
+        params_gravados = {
+            **params,
+            "publication_status": "diligence_override" if motivos else "publishable",
+            "publication_blockers": motivos,
+        }
+        st.button(
+            "💾 Salvar carteira-modelo", width="stretch",
+            type="primary", key=key, disabled=not port or not ciente,
+            help=("Marque a confirmação ao lado para salvar."
+                  if motivos and not ciente else None),
+            on_click=_gravacao.ao_clicar_gravar(
+                key,
+                lambda: _salvar_carteira_modelo_fii(port, params_gravados, metrics),
+                sucesso=("Carteira-modelo salva, relida e verificada na mesma "
+                         "transação — já aparece no Dashboard Geral e no "
+                         "Portfólio Global. ID: {id}"),
+                falha=("Não foi possível salvar a carteira-modelo. Nenhuma "
+                       "substituição parcial foi mantida."),
+            ),
         )
-        if st.button("💾 Salvar carteira-modelo", width="stretch",
-                     type="primary", key=key, disabled=not can_publish,
-                     help=None if can_publish else "Publicação bloqueada pela metodologia integrada"):
-            try:
-                from core.fii_portfolio_model import save_fii_portfolio_model
-                save_fii_portfolio_model(port, params, metrics)
-                st.success(
-                    "Carteira-modelo salva, relida e verificada na mesma transação."
-                )
-            except (RuntimeError, ValueError) as exc:
-                falha_de_acao("Não foi possível salvar a carteira-modelo.", exc)
-            except SQLAlchemyError as exc:
-                falha_de_acao(
-                    "Não foi possível salvar a carteira-modelo. "
-                    "Nenhuma substituição parcial foi mantida.", exc)
+        _gravacao.mostrar_resultado(key)
     _render_log_da_carteira_ativa()
     _render_portfolio_version_history(key)
+
+
+def _salvar_carteira_modelo_fii(port: list[dict], params: dict, metrics: dict) -> str:
+    from core.fii_portfolio_model import save_fii_portfolio_model
+    return save_fii_portfolio_model(port, params, metrics)
 
 
 def _render_log_da_carteira_ativa() -> None:

@@ -63,6 +63,19 @@ indicador declara seu piso:
 Vacância é de FII e ROE é de companhia — a mesma média não comporta os dois, e
 não há tradução implícita entre os nomes de campo de cada fonte.
 
+**Vacância financeira não vem do Fundamentus.** O `detalhes.php` publica para
+FII só a "Vacância Média" (física). `core.fundamentus.batch_fiis` completa
+`vacancia_financ` com a vitrine da Seleção de FIIs
+(`market.fii_selection_inputs`, espelho `data/public/fii_selection_snapshot_v2.json.gz`),
+lida dos relatórios gerenciais e publicada em fração — convertida para pontos
+percentuais, a unidade do Fundamentus. Só preenche onde o Fundamentus deixou
+vazio e só para fundo coberto pela vitrine; fundo sem a medida continua sem
+dado (nunca zero). A procedência vai em `vacancia_financ_fonte` e a data de
+referência em `vacancia_financ_ref`; o painel de FIIs mostra o intervalo dessas
+datas num detalhe técnico, porque relatório gerencial tem data própria por
+fundo. O mesmo complemento alimenta os cards de FII da aba Análise, que leem o
+mesmo `batch_fiis`.
+
 **Exterior não tem DY nem P/VP.** O conjunto de métricas do módulo americano
 não entrega dividend yield nem price-to-book. Anunciar os cards e deixá-los
 vazios seria pior que não exibi-los; a limitação está no rodapé do painel.

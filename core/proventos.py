@@ -51,6 +51,9 @@ _TIPO_LABEL: dict[str, str] = {
     "reit_income":  "Rendimento FII",
     "amortization": "Amortização",
     "other":        "Outros",
+    # Migração 084: o que quem tomou suas ações emprestadas paga no lugar do
+    # dividendo ou do JCP. É renda, mas não é rendimento de FII.
+    "lending_reimbursement": "Reembolso de aluguel (BTC)",
 }
 
 _MESES_PT = {
@@ -250,6 +253,9 @@ def _proventos_real() -> dict:
     def _f(v) -> float:
         return float(v) if v is not None else 0.0
 
+    def _opt(v) -> float | None:
+        return float(v) if v is not None else None
+
     eventos = []
     universo = None  # lido uma vez, e só se houver provento em dólar
     for r in rows:
@@ -269,8 +275,10 @@ def _proventos_real() -> dict:
             "cor":             _CLASS_COR.get(classe_raw, "#718096"),
             "tipo":            tipo_raw,
             "label_tipo":      _TIPO_LABEL.get(tipo_raw, tipo_raw),
-            "amount_per_unit": _f(r.amount_per_unit),
-            "quantity":        _f(r.quantity),
+            # None quando a fonte não informou a quantidade (migração 083):
+            # a tela mostra a célula vazia, não "0 cotas".
+            "amount_per_unit": _opt(r.amount_per_unit),
+            "quantity":        _opt(r.quantity),
             "total_amount":    _f(r.total_amount),
             "ex_date":         r.ex_date,
             "payment_date":    r.payment_date,
@@ -289,7 +297,11 @@ def _proventos_real() -> dict:
 #: (``data_pipeline/importers/investments/common.py``): nenhum dos dois é renda.
 #: Somá-los inflava o DY exibido em Investimentos (mesma regra do A-128 para
 #: ``market.dividends``, em ``core/dividend_types.py``).
-TIPOS_RENDA_PESSOAL = frozenset({"dividend", "jcp", "reit_income"})
+TIPOS_RENDA_PESSOAL = frozenset({
+    "dividend", "jcp", "reit_income",
+    # Substitui o dividendo/JCP da ação emprestada: é renda do mesmo jeito.
+    "lending_reimbursement",
+})
 
 
 def _montar_dict(eventos: list, hoje: _date) -> dict:
@@ -635,3 +647,49 @@ def filtrar_por_situacao(ordem: list, em_carteira: set, situacao: str) -> list:
     if situacao == "Saíram da carteira":
         return [t for t in ordem if _base_ticker(t) not in em_carteira]
     return list(ordem)
+
+
+def media_por_periodo(serie: list, visao: str, hoje: _date | None = None) -> dict | None:
+    """Média dos proventos por período da série do gráfico (mês ou ano).
+
+    Duas armadilhas que a média ingênua das barras cairia:
+
+    * As séries só trazem períodos COM pagamento. Um mês (ou ano) sem provento
+      não vira barra zero, some. Dividir o total pelo número de barras
+      inflaria a média; aqui o divisor é o intervalo de calendário entre a
+      primeira barra e o último período fechado, contando os buracos como zero.
+    * O período corrente ainda está em curso. Entrar com outubro pela metade
+      (ou com o ano corrente até outubro) puxaria a média para baixo, então ele
+      fica fora e o retorno avisa.
+
+    Devolve ``None`` quando não sobra período fechado para medir.
+    """
+    if not serie:
+        return None
+    hoje = hoje or _date.today()
+    mensal = visao == "Mensal"
+    idx_mes = {nome: num for num, nome in _MESES_PT.items()}
+
+    def _ordinal(h: dict) -> int:
+        if mensal:
+            return h["ano"] * 12 + idx_mes[h["mes"]] - 1
+        return int(h["ano"])
+
+    corrente = hoje.year * 12 + hoje.month - 1 if mensal else hoje.year
+    fechados = [h for h in serie if _ordinal(h) < corrente]
+    excluiu_corrente = len(fechados) < len(serie)
+    if not fechados:
+        return None
+
+    inicio = _ordinal(fechados[0])
+    # Até o último período fechado antes de hoje, não até a última barra:
+    # meses (ou anos) sem provento depois do último pagamento também são zero.
+    fim = corrente - 1
+    n_periodos = fim - inicio + 1
+    total = sum(h["total"] for h in fechados)
+    return {
+        "media":            round(total / n_periodos, 2),
+        "n_periodos":       n_periodos,
+        "periodos_zerados": n_periodos - len(fechados),
+        "excluiu_corrente": excluiu_corrente,
+    }

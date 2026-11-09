@@ -307,3 +307,35 @@ def test_decisao_resolvida_do_admin_marca_a_data():
     cloud[0].update(status="aberta", nota_triagem="[admin 2026-09-29] voltou")
     fila.importar_decisoes_admin(estado, cloud, AGORA)
     assert estado["a"]["status"] == "aberta" and "resolvida_em" not in estado["a"]
+
+
+def test_veredito_local_posterior_nao_e_desfeito_pela_nota_antiga_da_nuvem():
+    """Cenario da lacuna e327cdfc (08/11): o corretor na nuvem marcou ``incerta``
+    em 03/11; o corretor local, com o armazem, concluiu ``legitima`` em 08/11 e
+    marcou. A sincronizacao seguinte reimportava a nota ``[nuvem ...]`` antiga
+    (porque diferia da nota local) e devolvia ``incerta``: o veredito local
+    nunca pegava. A nota ja importada e lembrada e nao entra de novo; uma nota
+    nova do admin ou da nuvem continua entrando."""
+    antiga = "[nuvem 2026-11-03] incerta: precisa do armazem"
+    estado = {"a": {"status": "incerta", "nota_triagem": antiga}}
+    cloud = [_nuvem("a", 1, 1, 1, status="incerta")]
+    cloud[0]["nota_triagem"] = antiga
+
+    fila.marcar(estado, "a", "legitima", nota="[local 2026-11-08] legitima: so ha "
+                "linhas DEVEDOR vazias na CVM", agora=AGORA)
+    assert fila.importar_decisoes_admin(estado, cloud, AGORA) == []
+    assert estado["a"]["status"] == "legitima"
+    assert estado["a"]["nota_triagem"].startswith("[local 2026-11-08]")
+
+    # a mesma sincronizacao sobe o veredito local para a nuvem...
+    itens = fila.fundir({}, cloud, estado, {}, AGORA)
+    assert fila.diferencas_para_cloud(itens, cloud)[0]["status"] == "legitima"
+
+    # ...e uma decisao NOVA do administrador ainda entra por cima.
+    cloud[0].update(status="aberta", nota_triagem="[admin 2026-11-09] reabrir, dado chegou")
+    assert fila.importar_decisoes_admin(estado, cloud, AGORA) == ["a"]
+    assert estado["a"]["status"] == "aberta"
+    # e, importada, nao entra de novo nem desfaz um marcar posterior
+    fila.marcar(estado, "a", "em_pr", pr_url="https://x/pr/1", agora=AGORA)
+    assert fila.importar_decisoes_admin(estado, cloud, AGORA) == []
+    assert estado["a"]["status"] == "em_pr"

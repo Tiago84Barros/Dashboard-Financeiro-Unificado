@@ -74,8 +74,12 @@ def test_montagem_pede_so_o_noticiario_do_ativo(monkeypatch):
 
     monkeypatch.setattr(cm, "bloco_contexto_mercado", bloco)
     monkeypatch.setattr(lc, "get_warehouse_detail_context", lambda tks: "DETALHE " + tks[0])
+    monkeypatch.setattr("core.varredura_armazem.bloco_varredura",
+                        lambda classe, tks: f"VARREDURA {classe} {tks[0]}")
     txt = d.contexto_mercado_para_parecer("TAEE11")
-    assert txt == "BLOCO MACRO\n\nDETALHE TAEE11"
+    # A varredura do papel entra no prompt que veta (decisão de 08/11/2026),
+    # depois do detalhe; a trava "situa, nunca veta" está na regra.
+    assert txt == "BLOCO MACRO\n\nDETALHE TAEE11\n\nVARREDURA b3 TAEE11"
     assert chamadas["ativos"] == {"b3": {"TAEE11": ""}}
     # a idade da vitrine geral muda de hora em hora e quebraria o cache diário
     assert chamadas["kw"] == {"noticias_gerais": False}
@@ -90,11 +94,20 @@ def test_fonte_que_falha_e_nomeada_e_nao_derruba_o_gate(monkeypatch):
 
     monkeypatch.setattr(cm, "bloco_contexto_mercado", quebra)
     monkeypatch.setattr(lc, "get_warehouse_detail_context", quebra)
+    monkeypatch.setattr("core.varredura_armazem.bloco_varredura", quebra)
     txt = d.contexto_mercado_para_parecer("TAEE11")
     # Só o tipo vai ao prompt; o texto da exceção (host, usuário) fica no log.
     assert "CONTEXTO DE MERCADO: falha ao montar (RuntimeError)" in txt
     assert "DETALHE DO ARMAZÉM: falha ao montar (RuntimeError)" in txt
+    assert "VARREDURA DO ARMAZÉM: falha ao montar (RuntimeError)" in txt
     assert "banco fora" not in txt
+
+
+def test_regra_do_parecer_traz_a_varredura_com_a_trava():
+    from core.varredura_armazem import REGRA_VARREDURA_ARMAZEM
+
+    assert REGRA_VARREDURA_ARMAZEM in REGRA_CONTEXTO_MERCADO
+    assert "NUNCA sustenta sozinha veto" in REGRA_VARREDURA_ARMAZEM
 
 
 def test_gate_de_selecao_entrega_o_contexto_ao_parecer(monkeypatch):

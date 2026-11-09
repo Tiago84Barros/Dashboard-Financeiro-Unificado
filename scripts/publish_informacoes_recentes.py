@@ -51,7 +51,8 @@ ACERVO_MAXIMO_DIAS = 7
 
 FONTE_NOTICIAS = "Acervo de notícias do projeto (RSS e APIs de imprensa)"
 FONTE_DOCS = {"b3": "CVM/IPE (docs_corporativos)",
-              "fii": "B3/FNET (fii_documents)"}
+              "fii": "B3/FNET (fii_documents)",
+              "eua": "SEC/EDGAR (sec_filings: 8-K, 10-Q, 10-K, DEF 14A...)"}
 
 METODO = {
     "noticias": (
@@ -180,8 +181,11 @@ def agrupar_documentos(linhas) -> dict:
     por: dict[str, list] = defaultdict(list)
     vistos = set()
     for r in linhas:
-        tipo = inf.tipo_documento(r.get("categoria"), r.get("tipo"),
-                                  r.get("titulo"))
+        # A SEC chega já classificada (formulário e item do 8-K, em
+        # `data_pipeline.us.sec_filings.classificar`); a CVM e o FNET, pela
+        # categoria e pelo tipo da fonte.
+        tipo = r.get("tipo_doc") or inf.tipo_documento(
+            r.get("categoria"), r.get("tipo"), r.get("titulo"))
         tk = str(r.get("ticker") or "").upper()
         if tipo is None or not tk:
             continue
@@ -268,11 +272,56 @@ def coletar_documentos(conn) -> tuple[dict, dict]:
             "titulo": f"{rotulo} — referência {ref:%d/%m/%Y}" if ref else rotulo,
             "data": m["data"], "fonte": "B3/FNET", "url": m["source_url"],
             "coletado_em": m["first_observed_at"]})
+    eua = coletar_documentos_sec(conn)
     base = {
         "b3": _iso(max((x["data"] for x in b3), default=None)),
         "fii": _iso(max((x["data"] for x in fii), default=None)),
+        "eua": _iso(max((x["data"] for x in eua), default=None)),
     }
-    return agrupar_documentos(b3 + fii), base
+    return agrupar_documentos(b3 + fii + eua), base
+
+
+def documentos_sec(linhas) -> list[dict]:
+    """Linhas de ``market_us.sec_filings`` → o formato de ``agrupar_documentos``.
+
+    Puro. A classificação é a do coletor (``sec_filings.classificar``), a
+    mesma função: duas leituras do item do 8-K divergiriam na primeira
+    correção."""
+    from data_pipeline.us.sec_filings import FONTE, classificar
+    saida = []
+    for m in linhas:
+        cl = classificar(m.get("form"), m.get("items"))
+        if cl is None:
+            continue
+        tipo, titulo = cl
+        ref = m.get("report_date")
+        if ref and tipo == inf.BALANCO:
+            titulo = f"{titulo} — período até {ref:%d/%m/%Y}"
+        saida.append({
+            "ticker": m.get("symbol"), "categoria": "", "tipo": m.get("form"),
+            "tipo_doc": tipo, "titulo": titulo, "data": m.get("filing_date"),
+            "fonte": FONTE, "url": m.get("url"),
+            "coletado_em": m.get("collected_at")})
+    return saida
+
+
+def coletar_documentos_sec(conn) -> list[dict]:
+    """Entregas à SEC na janela. Tabela ausente (coletor nunca rodou) vira
+    lista vazia e a base "eua" sai sem data -- a tela diz que a base não foi
+    publicada, em vez de a vitrine inteira falhar por causa dela."""
+    from sqlalchemy import text
+    from sqlalchemy.exc import DBAPIError
+    try:
+        with conn.begin_nested():
+            linhas = [dict(r._mapping) for r in conn.execute(text(f"""
+                SELECT symbol, form, items, filing_date, report_date, url,
+                       collected_at
+                  FROM market_us.sec_filings
+                 WHERE filing_date >= current_date - {JANELA_DOCUMENTOS}
+                   AND filing_date <= current_date + 1"""))]
+    except DBAPIError:
+        return []
+    return documentos_sec(linhas)
 
 
 def serializar(payload: dict, caminho: Path) -> None:

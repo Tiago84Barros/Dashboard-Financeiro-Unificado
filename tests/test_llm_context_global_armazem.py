@@ -93,3 +93,46 @@ def test_o_chat_da_tela_anexa_o_detalhe():
     # Depois do bloco de mercado e antes da chamada ao modelo.
     assert (fonte.index("bloco_contexto_mercado(") < fonte.index("bloco_detalhe_armazem(df")
             < fonte.index("chat_com_portfolio_global("))
+
+
+# ── proventos publicados: não dependem do armazém ────────────────────────────
+
+def test_armazem_fora_mantem_os_proventos_publicados(monkeypatch):
+    pedidos = []
+    monkeypatch.setattr(mod, "_leitores", lambda: {
+        c: (lambda s: "DETALHE DO ARMAZÉM LOCAL: indisponível agora (HTTP 502).")
+        for c in ("b3", "fii", "us")})
+    monkeypatch.setattr(mod, "_proventos_publicados", lambda: (
+        lambda simbolos, anos: pedidos.append((list(simbolos), anos))
+        or f"proventos {','.join(simbolos)}"))
+    bloco = mod.bloco_detalhe_armazem(_df(), "e a NVDA?")
+    assert "indisponível agora (HTTP 502)" in bloco
+    assert "PROVENTOS PUBLICADOS (arquivo do app; não dependem do armazém" in bloco
+    # B3 e FII levam os proventos; ação americana não (o arquivo é da B3).
+    classes = {tuple(s) for s, _ in pedidos}
+    assert all(not any(t in ("NVDA", "MET") for t in s) for s in classes)
+    assert any("XPLG11" in s for s in classes)
+    assert all(anos == 5 for _, anos in pedidos)
+
+
+def test_proventos_em_lotes_do_teto_da_ferramenta(monkeypatch):
+    from core.llm_ferramentas import MAX_TICKERS
+
+    lotes = []
+    monkeypatch.setattr(mod, "_proventos_publicados", lambda: (
+        lambda simbolos, anos: lotes.append(list(simbolos)) or "ok"))
+    simbolos = [f"AAAA{i}" for i in range(MAX_TICKERS + 1)]
+    mod._bloco_proventos(simbolos)
+    assert [len(lote) for lote in lotes] == [MAX_TICKERS, 1]
+
+
+def test_falha_dos_proventos_nao_apaga_o_armazem(monkeypatch):
+    monkeypatch.setattr(mod, "_leitores", lambda: {
+        c: (lambda s, c=c: f"detalhe {c}") for c in ("b3", "fii", "us")})
+
+    def quebra():
+        raise RuntimeError("arquivo ilegível")
+    monkeypatch.setattr(mod, "_proventos_publicados", quebra)
+    bloco = mod.bloco_detalhe_armazem(_df(), "oi")
+    assert "detalhe fii" in bloco and "detalhe b3" in bloco
+    assert "PROVENTOS PUBLICADOS: indisponíveis agora (RuntimeError)" in bloco

@@ -1,6 +1,6 @@
 """Vigia das automações: avisa no Telegram o que parou sem reclamar.
 
-Confere três coisas e avisa pelo `scripts.notificar` (Hermes -> Telegram):
+Confere quatro coisas e avisa pelo `scripts.notificar` (Hermes -> Telegram):
 
 1. workflow AGENDADO do GitHub Actions com 2+ execuções agendadas seguidas em
    falha (lista descoberta em `.github/workflows/*.yml` pelo gatilho
@@ -10,6 +10,10 @@ Confere três coisas e avisa pelo `scripts.notificar` (Hermes -> Telegram):
    `local_staging/estado_publicacao.json`, sem tocar no Supabase.
 3. trimestre vigente das demonstrações da B3 no armazém local, medido por
    cobertura do universo, contra o calendário da CVM (B3-02).
+4. coleta de notícias: coletor parado, provedor sem sucesso há dias, ou
+   provedor que responde mas rende quase nada (o Alpha Vantage de 07/10/2026),
+   lidos de `noticias_coleta_estado` (banco da produção) e `noticias_itens`
+   (acervo local) -- os mesmos bancos em que a coleta grava.
 
 A decisão é de `core.vigia_automacoes`; aqui só há I/O. A memória dos avisos
 fica em `local_staging/vigia_automacoes.json` (estado de máquina, fora do git):
@@ -47,6 +51,7 @@ from core.vigia_automacoes import (  # noqa: E402
     montar_mensagem,
     problema_atualidade_b3,
     problema_workflow,
+    problemas_noticias,
     problemas_vitrine,
     tem_agendamento,
 )
@@ -124,6 +129,63 @@ def atualidade_b3_do_armazem(hoje) -> dict | None:
         return None
 
 
+_SQL_ESTADO_NOTICIAS = """
+    SELECT chave, status, ultima_tentativa, ultimo_sucesso, ultimo_erro
+      FROM noticias_coleta_estado
+"""
+
+_SQL_RENDIMENTO_NOTICIAS = """
+    SELECT provedor, (coletado_em AT TIME ZONE 'UTC')::date AS dia, count(*) AS n
+      FROM noticias_itens
+     WHERE coletado_em >= now() - interval '64 days'
+     GROUP BY 1, 2
+"""
+
+
+def noticias_do_acervo() -> tuple[dict, dict] | None:
+    """``(estados, por_dia)`` da coleta de notícias, ou ``None`` se não deu.
+
+    Dois bancos, porque a coleta grava em dois (``core.noticias.estado_coleta._acervo``):
+    o ESTADO de cada provedor (``noticias_coleta_estado``) mora no banco da
+    produção, o de ``core.database.get_engine()``; as notícias
+    (``noticias_itens``) moram no acervo local, o de
+    ``core.noticias.destino.engine_acervo()``. Ler os dois pelo acervo fazia a
+    consulta do estado falhar e o vigia calar as três verificações.
+
+    O estado são algumas linhas por rodada -- o egress é desprezível. Sem o
+    estado não há o que julgar (devolve ``None``); sem o acervo, só o
+    rendimento fica sem medir (``por_dia`` vazio).
+    """
+    try:
+        from sqlalchemy import text
+
+        from core.database import get_engine
+        producao = get_engine()
+        if producao is None:
+            return None
+        with producao.connect() as conn:
+            estados = {r["chave"]: dict(r) for r in
+                       conn.execute(text(_SQL_ESTADO_NOTICIAS)).mappings()}
+    except Exception:  # noqa: BLE001 - vigia não derruba a rotina
+        return None
+    por_dia: dict[str, dict] = {}
+    try:
+        from sqlalchemy import text
+
+        from core.noticias.destino import engine_acervo
+        acervo = engine_acervo()
+        if acervo is not None:
+            try:
+                with acervo.connect() as conn:
+                    for r in conn.execute(text(_SQL_RENDIMENTO_NOTICIAS)).mappings():
+                        por_dia.setdefault(r["provedor"], {})[r["dia"]] = int(r["n"])
+            finally:
+                acervo.dispose()
+    except Exception:  # noqa: BLE001 - sem o acervo, só o rendimento fica sem medir
+        por_dia = {}
+    return estados, por_dia
+
+
 def _ler_json(caminho: Path) -> dict | None:
     """Conteúdo do JSON, ``{}`` se não existe, ``None`` se ilegível."""
     if not caminho.exists():
@@ -194,6 +256,17 @@ def vigiar(dry_run: bool = False, estado_publicacao: Path = ESTADO_PUBLICACAO,
         saida(f"  demonstrações B3: {avaliacao.get('texto')}")
         if problema_b3:
             problemas.append(problema_b3)
+
+    # 4. Coleta de notícias (estado na produção, notícias no acervo local)
+    noticias = noticias_do_acervo()
+    if noticias is None:
+        saida("  notícias: estado da coleta indisponível, não medido")
+    else:
+        problemas_n, verif_n = problemas_noticias(*noticias, agora)
+        problemas.extend(problemas_n)
+        verificados |= verif_n
+        saida(f"  notícias: {len(verif_n)} verificação(ões) -- "
+              f"{len(problemas_n)} problema(s)")
 
     decisao = decidir(problemas, avisos_anteriores, agora, verificados)
     mensagem = montar_mensagem(decisao, avisos_anteriores)

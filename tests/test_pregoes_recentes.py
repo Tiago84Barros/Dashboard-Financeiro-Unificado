@@ -661,6 +661,50 @@ def test_b3_e_fii_repartem_o_frescor_com_o_pregao_do_chat(monkeypatch, art):
     for secao in (cs.confianca_b3, cs.confianca_fii):
         s = secao(engine=_Morta())
         pesos = {c.nome: c.peso for c in s.componentes}
-        assert abs(pesos["Frescor"] + pesos[cs.PREGAO_DO_CHAT] - 0.25) < 1e-9, s.secao
+        # Desde 03/11/2026 os proventos publicados também dividem o bloco.
+        assert abs(pesos["Frescor"] + pesos[cs.PREGAO_DO_CHAT]
+                   + pesos[cs.PROVENTOS_DO_CHAT] - 0.25) < 1e-9, s.secao
         assert abs(sum(pesos.values()) - 1.0) < 1e-9, s.secao
         assert next(c for c in s.componentes if c.nome == cs.PREGAO_DO_CHAT).medido
+
+
+def test_grau_de_confianca_mede_os_proventos_que_os_chats_citam(monkeypatch):
+    """Os chats de B3, FII e Investimentos citam os proventos publicados; a nota
+    mede a idade da resposta da brapi, até zero na idade em que o publicador
+    recusa o arquivo."""
+    import core.confianca_secao as cs
+    import core.proventos_b3 as pb
+
+    art = {"foto_mais_nova": "2026-10-29", "n_tickers": 883}
+    monkeypatch.setattr(pb, "carregar", lambda: art)
+    fresco = cs._proventos_do_chat(hoje=date(2026, 10, 31))
+    assert (fresco.nome, fresco.pct, fresco.peso) == (cs.PROVENTOS_DO_CHAT, 100.0, 0.05)
+    assert "883 ativos" in fresco.evidencia and "29/10" in fresco.evidencia
+    from datetime import timedelta
+    velho = cs._proventos_do_chat(
+        hoje=date(2026, 10, 29) + timedelta(days=pb.FOTO_MAXIMA_DIAS))
+    assert velho.pct == 0.0
+
+    monkeypatch.setattr(pb, "carregar", lambda: {})
+    ausente = cs._proventos_do_chat(hoje=date(2026, 10, 31))
+    assert ausente.pct == 0.0 and "ausente" in ausente.evidencia
+    monkeypatch.setattr(pb, "carregar", lambda: {"foto_mais_nova": "ontem"})
+    assert cs._proventos_do_chat().pct == 0.0
+
+
+def test_investimentos_mede_os_proventos_dos_chats(monkeypatch):
+    import core.confianca_secao as cs
+    import core.proventos_b3 as pb
+
+    class _Morta:
+        def connect(self):
+            raise RuntimeError("sem banco")
+
+        begin = connect
+
+    monkeypatch.setattr("core.database.get_engine", lambda *a, **k: _Morta())
+    monkeypatch.setattr(pb, "carregar", lambda: {"foto_mais_nova": "2026-10-29"})
+    s = cs.confianca_investimentos(_Morta(), user_id="dono")
+    comp = next(c for c in s.componentes if c.nome == cs.PROVENTOS_DO_CHAT)
+    # Arquivo publicado: segue medido com o banco fora.
+    assert comp.medido and comp.peso == cs.PESO_PROVENTOS_DO_CHAT

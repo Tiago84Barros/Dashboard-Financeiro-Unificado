@@ -6,7 +6,6 @@ arquivo CSV usado pela seção Configurações.
 """
 from __future__ import annotations
 
-import html
 import re
 import unicodedata
 from datetime import date
@@ -22,6 +21,7 @@ from core.controle import (
     parse_fatura_cartao_csv,
 )
 from core.utils import fmt_moeda
+from design.componentes import card_metrica
 from design.lacunas import aviso_lacuna
 
 _COR_RECEITA = "var(--app-primary)"
@@ -34,31 +34,9 @@ _CC_FEE_TERMS = (
 )
 
 
-def _safe(text: object) -> str:
-    return html.escape(str(text or ""))
-
-
 def _norm_text(value: object) -> str:
     text = unicodedata.normalize("NFKD", str(value or ""))
     return text.encode("ascii", "ignore").decode("ascii").casefold().strip()
-
-
-def _kpi_card(title: str, value: str, subtitle: str, color: str) -> str:
-    return f"""
-    <div style="
-        background:var(--app-surface);
-        border:1px solid var(--app-border);
-        border-radius:8px;
-        padding:14px 16px;
-        min-height:96px;">
-        <div style="font-size:0.70rem;font-weight:800;letter-spacing:0.12em;
-                    text-transform:uppercase;color:var(--app-muted);">{_safe(title)}</div>
-        <div style="font-size:1.30rem;font-weight:900;color:{color};
-                    margin-top:10px;line-height:1.1;">{_safe(value)}</div>
-        <div style="font-size:0.76rem;color:var(--app-subtle);margin-top:8px;
-                    line-height:1.3;">{_safe(subtitle)}</div>
-    </div>
-    """
 
 
 def _infer_due_date_from_filename(filename: str | None) -> date:
@@ -212,27 +190,27 @@ def render_upload_fatura_cartao(*, show_header: bool = True) -> None:
 
     c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1:
-        st.markdown(_kpi_card("Arquivo", _safe(uploaded.name[:24]), f"{len(rows)} lançamento(s) válidos", _COR_NEUTRO), unsafe_allow_html=True)
+        card_metrica("Arquivo", uploaded.name[:24], f"{len(rows)} lançamento(s) válidos", accent=_COR_NEUTRO)
     with c2:
-        st.markdown(_kpi_card("Total bruto", fmt_moeda(upload_summary["total_bruto"]), "Soma absoluta da fatura.", _COR_DESPESA), unsafe_allow_html=True)
+        card_metrica("Total bruto", fmt_moeda(upload_summary["total_bruto"]), "Soma absoluta da fatura.", accent=_COR_DESPESA)
     with c3:
-        st.markdown(_kpi_card("Compras reais", fmt_moeda(upload_summary["compras_reais"]), "Exclui pagamentos, estornos e tarifas.", _COR_DESPESA), unsafe_allow_html=True)
+        card_metrica("Compras reais", fmt_moeda(upload_summary["compras_reais"]), "Exclui pagamentos, estornos e tarifas.", accent=_COR_DESPESA)
     with c4:
-        st.markdown(_kpi_card("Líquido", fmt_moeda(upload_summary["net_total"]), "Compras + tarifas - créditos.", _COR_NEUTRO), unsafe_allow_html=True)
+        card_metrica("Líquido", fmt_moeda(upload_summary["net_total"]), "Compras + tarifas - créditos.", accent=_COR_NEUTRO)
 
     c5, c6, c7, c8 = st.columns(4, gap="small")
     with c5:
-        st.markdown(_kpi_card("Tarifas", fmt_moeda(upload_summary["tarifas"]), "Anuidade, IOF, juros, multa e encargos.", "var(--app-warning)"), unsafe_allow_html=True)
+        card_metrica("Tarifas", fmt_moeda(upload_summary["tarifas"]), "Anuidade, IOF, juros, multa e encargos.", accent="var(--app-warning)")
     with c6:
         pag_val = upload_summary.get("pagamentos", 0.0)
         est_val = upload_summary.get("estornos", 0.0)
         subtitle = f"Pagamentos: {fmt_moeda(pag_val)} | Estornos: {fmt_moeda(est_val)}"
-        st.markdown(_kpi_card("Pagamentos + Estornos", fmt_moeda(pag_val + est_val), subtitle, _COR_RECEITA), unsafe_allow_html=True)
+        card_metrica("Pagamentos + Estornos", fmt_moeda(pag_val + est_val), subtitle, accent=_COR_RECEITA)
     with c7:
-        st.markdown(_kpi_card("Parceladas", str(sum(1 for r in rows if r.get("installment_total", 1) > 1)), "Compras com parcela maior que 1.", _COR_INVEST), unsafe_allow_html=True)
+        card_metrica("Parceladas", str(sum(1 for r in rows if r.get("installment_total", 1) > 1)), "Compras com parcela maior que 1.", accent=_COR_INVEST)
     with c8:
         cards = sorted({str(r.get("card_final")) for r in rows if r.get("card_final")})
-        st.markdown(_kpi_card("Cartoes", str(len(cards)), ", ".join(cards)[:42] or "-", _COR_INVEST), unsafe_allow_html=True)
+        card_metrica("Cartões", str(len(cards)), ", ".join(cards)[:42] or "-", accent=_COR_INVEST)
 
     preview = pd.DataFrame([
         {

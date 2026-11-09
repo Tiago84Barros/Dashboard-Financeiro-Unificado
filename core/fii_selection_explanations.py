@@ -250,8 +250,11 @@ def _market_relationships(ticker: str, prices: pd.DataFrame | None) -> dict:
     return output
 
 
-def _metric_line(label: str, value: Any, *, percent: bool = True) -> str | None:
-    number = _percent(value) if percent else _num(value)
+def _metric_line(label: str, value: Any, *, percent: bool = True,
+                 fracao: bool = False) -> str | None:
+    """``fracao`` para razões que passam de 100% (alavancagem, LTV): nelas
+    1,2 é 120%, e a heurística de ``_percent`` a leria como 1,2%."""
+    number = _num(value) if (not percent or fracao) else _percent(value)
     if number is None:
         return None
     return f"{label}: {number:.1%}" if percent else f"{label}: {number:.1f}"
@@ -269,7 +272,7 @@ def _specific_structure(row: dict) -> list[str]:
             _metric_line("vacância física", row.get("vacancia_fisica")),
             _metric_line("concentração do maior locatário", row.get("tenant_concentration")),
             _metric_line("vencimentos em 24 meses", row.get("lease_expiry_concentration_24m")),
-            _metric_line("alavancagem", row.get("leverage")),
+            _metric_line("alavancagem", row.get("leverage"), fracao=True),
             _metric_line("WAULT", row.get("wault_anos"), percent=False),
             ("principais regiões: " + _top_exposures(row.get("regions"))
              if _top_exposures(row.get("regions")) else None),
@@ -277,7 +280,7 @@ def _specific_structure(row: dict) -> list[str]:
     elif fii_type == "papel":
         lines.extend([
             _metric_line("duration", row.get("duration_anos"), percent=False),
-            _metric_line("LTV", row.get("ltv")),
+            _metric_line("LTV", row.get("ltv"), fracao=True),
             _metric_line("spread de crédito", row.get("credit_spread")),
             _metric_line("qualidade de rating", row.get("rating_quality")),
             _metric_line("proteção por subordinação", row.get("subordination_protection")),
@@ -349,7 +352,9 @@ def build_selection_reports(
         if holders is not None:
             facts.append(f"{holders:,.0f} cotistas".replace(",", "."))
         recurrence = _percent(row.get("income_recurrence"))
-        growth = _percent(row.get("income_growth_per_share_3y"))
+        # Crescimento chega em fração e pode passar de 100%: a heurística de
+        # `_percent` faria +150% virar +1,5%.
+        growth = _num(row.get("income_growth_per_share_3y"))
         operating = []
         if recurrence is not None:
             operating.append(f"recorrência da renda {recurrence:.1%}")

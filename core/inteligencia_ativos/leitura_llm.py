@@ -72,21 +72,30 @@ def detalhe_armazem_do_ativo(analise: m.AnaliseAtivo, *,
     reconhecido como vindo do contexto, senão a leitura é rejeitada.
     """
     i = analise.ativo
+    classe = _classe(analise)
+    if classe is None or not str(i.ticker or "").strip():
+        return ""
+    alvo = [str(i.ticker).strip().upper()]
     try:
-        from core.contexto_mercado import classe_conjuntura
         from core.llm_context_global_armazem import _leitores
 
-        classe = classe_conjuntura({"classe": i.classe, "moeda": i.moeda})
-        if classe is None or not str(i.ticker or "").strip():
-            return ""
         leitor = _leitores()[classe]
-        alvo = [str(i.ticker).strip().upper()]
-        return leitor(alvo) if captura is None else leitor(alvo, captura=captura)
+        texto = leitor(alvo) if captura is None else leitor(alvo, captura=captura)
     except Exception as exc:  # noqa: BLE001 — a leitura continua sem o detalhe
         log.warning("detalhe do armazém indisponível: %s", exc)
-        return ("DETALHE DO ARMAZÉM LOCAL: falha ao montar "
-                f"({type(exc).__name__}); liquidez, preço e proventos do "
-                "armazém não entraram. Não trate como dado zero.")
+        texto = ("DETALHE DO ARMAZÉM LOCAL: falha ao montar "
+                 f"({type(exc).__name__}); liquidez, preço e proventos do "
+                 "armazém não entraram. Não trate como dado zero.")
+    try:
+        # Varredura do armazém, fonte por fonte, colada ao detalhe: entra no
+        # prompt e na âncora. Decisão do usuário de 08/11/2026 para os prompts
+        # que vetam; a trava está na REGRA_VARREDURA_ARMAZEM.
+        from core.varredura_armazem import anexar_varredura
+
+        return anexar_varredura(classe, alvo, texto)
+    except Exception as exc:  # noqa: BLE001 — a varredura é extra
+        log.warning("varredura do armazém indisponível: %s", exc)
+        return texto
 
 
 def _chamar_padrao(mensagens: list[dict]) -> str:

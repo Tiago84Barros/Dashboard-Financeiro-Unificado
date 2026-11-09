@@ -279,7 +279,75 @@ def test_esquemas_sao_tools_da_api_openai():
         assert esq["function"]["parameters"]["required"]
     nomes = [f.nome for f in lf.FERRAMENTAS_MERCADO]
     assert nomes == ["serie_macro", "preco_ativo", "preco_diario_recente",
-                     "meses_com_condicao"]
+                     "meses_com_condicao", "proventos_ativo"]
+    assert "proventos_ativo" in lf.REGRA_FERRAMENTAS
+
+
+# ── proventos_ativo ──────────────────────────────────────────────────────────
+
+_HIST_DY = {"dividend_yield": [[2021, 5.0], [2022, 7.0], [2024, 8.0],
+                               [2025, 34.0]],
+            "p_vp": [[a, 1.0] for a in range(2021, 2026)]}
+
+
+def test_texto_proventos_anos_fechados_media_mediana_e_ano_em_curso():
+    por_ano = {2019: 0.8, 2021: 0.7, 2022: 0.5, 2024: 2.0, 2025: 5.0,
+               2026: 1.0, 2027: 0.4}
+    texto = lf.texto_proventos("DIRR3", por_ano, "brapi", date(2026, 11, 3),
+                               historico_dy=_HIST_DY, ano_mercado_dy=2025)
+    # ano fechado sem pagamento depois do primeiro provento entra como 0
+    assert "2020 R$ 0,00" in texto and "2023 R$ 0,00" in texto
+    # 2021–2025: 0,7 0,5 0 2,0 5,0 → média 1,64; mediana 0,70
+    assert "(2021–2025): média R$ 1,64, mediana R$ 0,70" in texto
+    # o ano em curso soma pago e anunciado: não é "recebido até hoje"
+    assert ("2026 (ano em curso): R$ 1,00, somando o já pago e o anunciado "
+            "com pagamento até 31/12") in texto
+    assert "parcial até" not in texto
+    assert "Anunciado com pagamento nos anos seguintes: 2027 R$ 0,40" in texto
+    # DY: 5, 7, 0 (2023 com P/VP e sem DY), 8, 34 → mediana 7
+    assert "2023 0,0%" in texto and "mediana 7,0%" in texto
+    assert "média 10,8%" in texto.lower()
+
+
+def test_texto_proventos_janela_de_cinco_anos_nao_segue_a_listagem():
+    por_ano = {2021: 1.0, 2022: 2.0, 2023: 3.0, 2024: 4.0, 2025: 10.0}
+    texto = lf.texto_proventos("XPTO3", por_ano, "brapi", date(2026, 11, 3),
+                               anos=1)
+    assert "Anos fechados: 2025 R$ 10,00." in texto
+    assert "(2021–2025): média R$ 4,00, mediana R$ 3,00" in texto
+
+
+def test_texto_proventos_sem_dado_declarado():
+    texto = lf.texto_proventos("XPTO3", {}, "brapi", date(2026, 11, 3))
+    assert "Sem provento por ação na fonte" in texto
+    assert "DY anual de cinco anos: sem dado" in texto
+
+
+def test_proventos_ativo_b3_eua_e_falha(monkeypatch):
+    import pandas as pd
+
+    frame = pd.DataFrame([("DIRR3", 2024, 2.0), ("DIRR3", 2025, 5.0)],
+                         columns=["ticker", "ano", "total"])
+    frame.attrs.update(fonte="brapi (resposta mais nova)",
+                       foto_em={"DIRR3": "2026-10-29"})
+    pedidos = []
+    monkeypatch.setattr(lf, "_renda_anual",
+                        lambda tks: pedidos.append(tks) or frame)
+    monkeypatch.setattr(lf, "_hoje", lambda: date(2026, 11, 3))
+    monkeypatch.setattr(lf, "_arquivo_valuation", lambda: {
+        "b3": {"DIRR3": {"historico": _HIST_DY}},
+        "eua": {"AAPL": {"historico": _HIST_DY}}})
+    texto = lf.executar("proventos_ativo", {"tickers": ["dirr3.sa", "AAPL"]})
+    assert pedidos == [["DIRR3"]]           # EUA não vai à fonte da B3
+    assert "resposta de 2026-10-29" in texto and "2025 R$ 5,00" in texto
+    assert "AAPL — proventos por ação: só há para a B3" in texto
+    assert "SEC/EDGAR" in texto
+    assert lf.proventos_ativo([]).startswith("Nenhum ticker informado")
+
+    def quebra(_):
+        raise RuntimeError("sem rede")
+    monkeypatch.setattr(lf, "_renda_anual", quebra)
+    assert "Falha na leitura de proventos: sem rede" in lf.proventos_ativo(["DIRR3"])
 
 
 # ── o laço em core.llm_b3 ────────────────────────────────────────────────────

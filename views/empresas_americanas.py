@@ -13,6 +13,7 @@ inteligência usa SEC/GAAP e contexto macroeconômico americano.
 from __future__ import annotations
 
 import html
+import logging
 
 import numpy as np
 import pandas as pd
@@ -60,6 +61,7 @@ from core.us_company_analysis import (
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
 from core.validacao_motor import validacao_us
 from data_pipeline.utils.date_utils import fmt_datetime_br
+from design import gravacao_carteira as _gravacao
 from design import portao_inteligencia as _portao_ui
 from design.chat_ativo import render_chat_ativo
 from design.componentes import (
@@ -529,6 +531,15 @@ def _tab_empresa(status: dict) -> None:
     match = scored[scored["symbol"] == symbol]
     if match.empty:
         st.warning("Ticker não encontrado no universo americano publicado.", icon="⚠️")
+        # A vitrine não é o limite do que o projeto sabe: antes de concluir
+        # "sem dado", a tela diz o que o armazém local tem deste símbolo.
+        from core.varredura_armazem import resumo_para_tela
+
+        varredura = resumo_para_tela("us", symbol)
+        if varredura:
+            st.caption(varredura)
+        aviso_lacuna(f"{symbol} fora do universo americano publicado. {varredura}",
+                     codigo="tela.eua.ticker_fora_da_vitrine", entidade=symbol)
         return
     row = localize_us_company_frame(match).iloc[0]
 
@@ -1031,6 +1042,29 @@ def _bloco_liquido_us(res: dict) -> None:
                      _p(liquido.get("excess_ann_vs_ew_brl_bruto")),
                      ajuda="Em reais, sem custo nem imposto. Em dólar, o "
                            "excesso bruto está na seção seguinte.")
+    bm_liq = res.get("benchmark_liquido") or {}
+    estado_bm = res.get("benchmark") or {}
+    if bm_liq.get("ok") and estado_bm.get("ok"):
+        from core.us_backtest import _nome_indice
+        nome = _nome_indice(estado_bm)
+        d1, d2, d3, _ = st.columns(4)
+        with d1:
+            card_metrica(f"{nome} líquido (R$)",
+                         _p(bm_liq["portfolio_brl_liquido"].get("ann_return")),
+                         ajuda="Retorno anual do índice comprado e mantido, pela "
+                               "mesma conta da estratégia: custo, retenção, "
+                               "câmbio, IR e IOF.")
+        with d2:
+            card_metrica(f"{nome} bruto (R$)",
+                         _p(bm_liq["portfolio_brl_bruto"].get("ann_return")),
+                         ajuda="Só a conversão cambial do retorno total em dólar.")
+        with d3:
+            card_metrica(f"Excesso líquido sobre o {nome}",
+                         _p(res.get("excess_ann_liquido_vs_benchmark")),
+                         ajuda="Retorno anual líquido da estratégia menos o do "
+                               "índice, os dois em reais, nas datas que o índice "
+                               "cobre. É a pergunta do bolso: valeu escolher "
+                               "ações em vez de comprar o índice?")
     st.caption(
         f"Por período, em média: custo de giro {_p(liquido.get('custo_medio'))}, "
         f"retenção {_p(liquido.get('retencao_media'))}, IR "
@@ -1177,6 +1211,12 @@ def _tab_dossie(status: dict) -> None:
     d = us.dossie(symbol)
     if d.get("erro"):
         estado_vazio("Esta análise não está disponível no momento.", "📄")
+        if d.get("varredura"):
+            # O que o armazém local tem da empresa, para o usuário e para a
+            # triagem da lacuna abaixo saberem se o dado existe.
+            st.caption(d["varredura"])
+            detalhe_tecnico(d["varredura"], codigo="eua.dossie_varredura_armazem",
+                            entidade=symbol)
         aviso_lacuna(f"{symbol}: {d['erro']}", codigo="tela.eua.dossie_indisponivel",
                      entidade=symbol)
         return
@@ -1469,58 +1509,23 @@ def _render_us_portfolio_version_history(key: str) -> None:
                               "foi preservada.", exc)
 
 
-def _veredito_validacao_us(res: dict) -> tuple[str, str] | None:
-    """Resume o teste histórico em (nível, texto) para o topo da Criação.
-
-    O resultado vivia só no expander do fim da aba: quem montava a carteira
-    via o painel inteiro antes de saber que o excesso sobre pesos iguais não
-    se distingue de zero. Nível ``"warning"`` sempre que o intervalo t de 95%
-    do excesso cruza zero ou o excesso médio não é positivo.
-    """
-    if not res.get("ok"):
-        return None
-    ic = res.get("rank_ic") or {}
-    excesso = res.get("excess_ann_vs_ew")
-    periodos = [float(x) for x in (res.get("excess_periods") or [])]
-    if excesso is None or len(periodos) < 3:
-        return None
-    serie = np.asarray(periodos)
-    media = float(serie.mean())
-    erro = float(serie.std(ddof=1) / np.sqrt(len(serie)))
-    from scipy import stats as _stats
-    meia = float(_stats.t.ppf(.975, len(serie) - 1)) * erro
-    lo, hi = media - meia, media + meia
-    ic_txt = ("—" if ic.get("mean") is None else
-              f"{ic['mean']:.3f} (t = {ic.get('t_stat') or 0:.2f})")
-    texto = (
-        f"**Validação histórica ({res.get('n_periods')} safras anuais):** a "
-        f"nota ordena as empresas — correlação média com o retorno seguinte "
-        f"{ic_txt} — e o top 20 rendeu **{excesso:+.2%} ao ano** sobre pesos "
-        f"iguais, com intervalo de 95% por safra de **{lo:+.2%} a {hi:+.2%}**. "
+def _salvar_carteira_padrao_us(holdings: pd.DataFrame, result: dict,
+                               macro_info: dict, snapshot, metrics: dict) -> str:
+    """Grava a carteira montada como padrão americana; devolve o id."""
+    from core.us_portfolio_model import save_us_portfolio_model
+    return save_us_portfolio_model(
+        holdings.to_dict("records"),
+        params={
+            **(result.get("params") or {}),
+            "macro_mode": macro_info.get("mode"),
+            "macro_snapshot": snapshot.to_payload() if snapshot else None,
+            "macro_as_of": snapshot.as_of.isoformat() if snapshot else None,
+            "macro_coverage": macro_info.get("coverage"),
+            **veredito.log_para_payload(result.get("inteligencia_log")),
+        },
+        metrics={**metrics, "macro_turnover": macro_info.get("turnover")},
+        name=f"Portfolio EUA Modelo {pd.Timestamp.today().year}",
     )
-    if lo <= 0 or media <= 0:
-        texto += ("Ordenar bem **não se converteu em retorno distinguível de "
-                  "zero**: não há evidência de que a carteira abaixo supere "
-                  "dividir igualmente entre as elegíveis. ")
-        nivel = "warning"
-    else:
-        nivel = "info"
-    texto += ("O teste mede o top 20 pela nota pura; a carteira desta aba "
-              "(tetos, penalidades, piso de qualidade) **não foi testada**. "
-              "Detalhes em *Validação histórica e benchmarks*, no fim da aba.")
-    return nivel, texto
-
-
-def _render_veredito_validacao_us() -> None:
-    try:
-        res = us.backtest(top_n=20, weighting="score")
-    except Exception:  # o veredito é resumo; a falha já aparece no expander
-        return
-    veredito = _veredito_validacao_us(res)
-    if veredito is None:
-        return
-    nivel, texto = veredito
-    (st.warning if nivel == "warning" else st.info)(texto, icon="🧪")
 
 
 def _tab_criacao_portfolio(status: dict) -> None:
@@ -1565,8 +1570,6 @@ def _tab_criacao_portfolio(status: dict) -> None:
     # histórico é a consulta -- que já devolve o motivo quando não há.
     score_panel = us.score_panel()
     history_available = score_panel is not None and not score_panel.empty
-    if history_available:
-        _render_veredito_validacao_us()
 
     # Semear ANTES de instanciar qualquer widget: depois de instanciado, o
     # Streamlit não deixa mais escrever a chave no session_state.
@@ -2070,43 +2073,39 @@ def _tab_criacao_portfolio(status: dict) -> None:
     if publication_blocking_error:
         st.warning(publication_blocking_error)
 
-    use_col, save_col, info_col = st.columns([1, 1, 2])
-    with use_col:
-        if st.button("💾 Usar na Avaliação de Portfólio", type="primary",
-                     key="us_create_save_model", disabled=not can_publish):
-            st.session_state["us_portfolio_model"] = holdings.copy()
-            st.success("Carteira-modelo enviada para Avaliação de Portfólio.")
+    # Um botão só, e ele grava. Até 08/11/2026 o primário, com disquete, era
+    # "Usar na Avaliação de Portfólio": punha a carteira numa chave de sessão
+    # que nenhuma tela lia (a Avaliação lê só o banco) e respondia "enviada".
+    # Quem clicava achava que tinha salvo, e o Dashboard Geral e o Portfólio
+    # Global seguiam com a carteira de 15/09. A gravação vai no on_click,
+    # antes do rerun de ~2 min desta tela; ver design/gravacao_carteira.py.
+    save_col, info_col = st.columns([1, 2])
     with save_col:
-        # Mesma decisão que "Salvar portfólio padrão" na B3: sem persistir, o
-        # Dashboard Geral não tem como exibir a carteira americana entre reruns.
-        if st.button("⭐ Salvar como carteira padrão", key="us_create_persist_model",
-                     disabled=not can_publish):
-            try:
-                from core.us_portfolio_model import save_us_portfolio_model
-                model_id = save_us_portfolio_model(
-                    holdings.to_dict("records"),
-                    params={
-                        **(result.get("params") or {}),
-                        "macro_mode": macro_info.get("mode"),
-                        "macro_snapshot": snapshot.to_payload() if snapshot else None,
-                        "macro_as_of": (
-                            snapshot.as_of.isoformat() if snapshot else None
-                        ),
-                        "macro_coverage": macro_info.get("coverage"),
-                        **veredito.log_para_payload(
-                            result.get("inteligencia_log")),
-                    },
-                    metrics={**metrics, "macro_turnover": macro_info.get("turnover")},
-                    name=f"Portfolio EUA Modelo {pd.Timestamp.today().year}",
-                )
-                st.success(
-                    "Carteira padrão americana salva — aparece no Dashboard Geral. "
-                    f"ID: {model_id[:8]}"
-                )
-            except Exception as exc:  # noqa: BLE001 - fronteira de persistência
-                falha_de_acao("Não foi possível salvar a carteira padrão.", exc)
+        st.button(
+            "💾 Salvar como carteira padrão", type="primary",
+            key="us_create_persist_model", disabled=not can_publish,
+            help="Grava no banco. É a carteira que o Dashboard Geral, o "
+                 "Portfólio Global e a Avaliação de Portfólio usam.",
+            on_click=_gravacao.ao_clicar_gravar(
+                "us_create_persist_model",
+                lambda: _salvar_carteira_padrao_us(
+                    holdings, result, macro_info, snapshot, metrics),
+                sucesso=("Carteira padrão americana salva — aparece no Dashboard "
+                         "Geral, no Portfólio Global e na Avaliação de "
+                         "Portfólio. ID: {id}"),
+                falha="Não foi possível salvar a carteira padrão.",
+            ),
+        )
+        _gravacao.mostrar_resultado("us_create_persist_model")
         _render_us_portfolio_version_history("us_create_persist_model")
     with info_col:
+        try:
+            from core.us_portfolio_model import load_active_us_portfolio_model
+            st.markdown(_gravacao.resumo_da_carteira_salva(
+                load_active_us_portfolio_model(), holdings["symbol"].astype(str)))
+        except (RuntimeError, ValueError, SQLAlchemyError) as exc:
+            logging.getLogger(__name__).warning(
+                "carteira EUA ativa ilegível: %s", exc)
         st.info(
             f"{len(holdings)} ativos · aporte mensal simulado de "
             f"US$ {metrics.get('monthly_contribution_usd', 0):,.2f} · "
@@ -2460,13 +2459,110 @@ def _tab_backtests(status: dict) -> None:
         )
 
     if res.get("equity_curve"):
+        from core.us_backtest import curvas_capital
         secao_titulo("Curva de capital", "📉")
-        curve = pd.DataFrame({"Bruta (US$)": res["equity_curve"]},
-                             index=res.get("dates"))
-        liquido = res.get("liquido") or {}
-        if liquido.get("ok") and liquido.get("dates") == res.get("dates"):
-            curve["Líquida (R$)"] = liquido["equity_curve_liquido"]
-        st.line_chart(curve)
+        curve, info_curva = curvas_capital(res)
+        if not curve.empty:
+            st.plotly_chart(_figura_curva_capital(
+                                curve, info_curva.get("benchmark_colunas"),
+                                pesos_iguais_ocultos=bool(info_curva.get("benchmark"))),
+                            width="stretch", config={"displayModeBar": False},
+                            key="us_bt_curva_capital")
+            st.caption(_legenda_curva_capital(info_curva, res.get("benchmark") or {}))
+            if info_curva.get("janela_recortada"):
+                detalhe_tecnico(
+                    f"O índice não cobre todas as datas do teste, então todas as "
+                    f"curvas foram recompostas a partir de {info_curva['inicio']} "
+                    f"({info_curva['n_periodos']} períodos), a mesma janela do "
+                    "excesso anualizado. Partir cada linha de uma data diferente "
+                    "faria a mais curta parecer pior só por ter composto menos anos.",
+                    codigo="eua.backtests_curva_janela_benchmark")
+
+
+# Cor por ATIVO e traço por TRATAMENTO: a estratégia é azul e o índice é
+# vermelho; tracejado é bruto, cheio é líquido. Cada par que se compara (bruto
+# com bruto, líquido com líquido) fica com o mesmo traço, em cores diferentes.
+_COR_ESTRATEGIA = "#4C78A8"
+_COR_BENCHMARK = "#E45756"
+_COR_PESOS_IGUAIS = "#9CA3AF"
+
+
+def _estilo_curva(coluna: str, indices: list[str]) -> dict:
+    if coluna.startswith("Pesos iguais"):
+        return dict(color=_COR_PESOS_IGUAIS, width=2, dash="dot")
+    cor = _COR_BENCHMARK if coluna in indices else _COR_ESTRATEGIA
+    bruto = " bruta " in f" {coluna} " or " bruto " in f" {coluna} "
+    return dict(color=cor, width=2 if bruto else 3, dash="dash" if bruto else "solid")
+
+
+def _figura_curva_capital(curve: pd.DataFrame, indices: list[str] | None = None,
+                          *, pesos_iguais_ocultos: bool = False) -> go.Figure:
+    """Curvas de capital com valores de 2 casas no tooltip e no eixo.
+
+    ``indices`` são as colunas do benchmark (bruta e líquida). Com o índice no
+    gráfico, a linha de pesos iguais começa oculta (clique na legenda mostra):
+    cinco linhas no mesmo eixo escondem o par que importa.
+    """
+    indices = list(indices or [])
+    fig = go.Figure()
+    for coluna in curve.columns:
+        oculta = pesos_iguais_ocultos and coluna.startswith("Pesos iguais")
+        fig.add_trace(go.Scatter(
+            x=list(curve.index), y=curve[coluna].round(2), name=coluna,
+            mode="lines+markers", marker=dict(size=5),
+            line=_estilo_curva(coluna, indices),
+            visible="legendonly" if oculta else True,
+            hovertemplate="%{y:.2f}×<extra>" + html.escape(coluna) + "</extra>",
+        ))
+    fig.update_layout(**_PLOT_LAYOUT, height=440, hovermode="x unified",
+                      legend=dict(orientation="h", y=-0.25, x=0),
+                      yaxis_title="Capital (1 = valor inicial)", xaxis_title=None)
+    fig.update_yaxes(tickformat=".2f")
+    return fig
+
+
+def _legenda_curva_capital(info: dict, estado: dict) -> str:
+    """Diz em que moeda estão as linhas, o que cada par compara e, quando o
+    índice escolhido faltou, por quê.
+
+    O aviso de benchmark indisponível vai só para o log de lacunas; sem dizê-lo
+    aqui, a curva sem o S&P 500 parecia um seletor esquecido.
+    """
+    em_reais = info.get("moeda") == "BRL"
+    referencia = info.get("benchmark")
+    if em_reais:
+        texto = ("Todas as linhas estão em reais. Bruto (tracejado) é só a "
+                 "conversão cambial do retorno total em dólar; líquido (cheio) "
+                 "desconta custo de giro, retenção de 30% sobre dividendos, IR de "
+                 "15% sobre o ganho realizado e IOF de ida e volta.")
+        if referencia:
+            texto += (" O índice passa pela mesma conta, comprado na primeira data e "
+                      "mantido: como não há venda, não paga IR no caminho. Compare "
+                      "bruto com bruto e líquido com líquido. A linha de pesos iguais "
+                      "aparece ao clicar na legenda.")
+    elif referencia:
+        texto = (f"Linhas em dólar, em retorno total e antes de custo e imposto: o "
+                 f"câmbio não estava disponível para converter. Referências: "
+                 f"{referencia} e pesos iguais do universo.")
+    else:
+        texto = ("Linhas em dólar, em retorno total e antes de custo e imposto: o "
+                 "câmbio não estava disponível para converter.")
+    if referencia and info.get("janela_recortada"):
+        texto += (f" O índice não cobre todo o teste, então todas as linhas foram "
+                  f"recompostas de {info['inicio']} a {info['fim']} "
+                  f"({info['n_periodos']} períodos), a mesma janela do excesso "
+                  "anualizado.")
+    if not referencia:
+        if estado.get("modo") == "erro":
+            rotulo = estado.get("rotulo") or estado.get("simbolo") or "O índice escolhido"
+            texto += (f" {rotulo} ficou fora do gráfico: não há série mensal "
+                      "publicada para ele no período do teste. A referência é a "
+                      "carteira de pesos iguais do universo, bruta.")
+        else:
+            texto += (" A referência é a carteira de pesos iguais do universo, "
+                      "bruta. Escolha um índice no seletor “Benchmark de mercado” "
+                      "para incluí-lo.")
+    return texto
 
 
 # ── Qualidade dos Dados ───────────────────────────────────────────────────────
@@ -2562,7 +2658,11 @@ def _tab_sincronizacao(status: dict) -> None:
         "# 9) publicar a vitrine no Supabase (conexão direta, não o pooler)\n"
         "python scripts/publish_us_snapshot.py `\n"
         '  --source-url "postgresql://postgres:<senha>@127.0.0.1:5433/postgres" `\n'
-        '  --target-url "<SUPABASE_UNIFICADO_URL>" --dry-run   # confira, depois sem --dry-run',
+        '  --target-url "<SUPABASE_UNIFICADO_URL>" --dry-run   # confira, depois sem --dry-run\n\n'
+        "# 10) índices do benchmark (SPY, IWB, QQQ) para a Curva de capital.\n"
+        "#     Roda sozinho todo dia na tarefa \"DFU - Atualizar vitrines\"\n"
+        "#     (alvo us_benchmarks); à mão, só para forçar:\n"
+        "python scripts/atualizar_vitrines.py --apenas us_benchmarks --forcar",
         language="powershell")
     st.caption("Testes históricos e a sincronização rodam **só localmente** — a vitrine "
                "traz pontuação, dossiê, assimetria e Piotroski/Altman/Sloan já calculados, "

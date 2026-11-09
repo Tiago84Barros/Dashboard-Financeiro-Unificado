@@ -470,7 +470,10 @@ def _eventos_do_artefato(tk: str, n: int) -> dict | None:
         if not str(chave).upper().startswith(pref):
             continue
         for d in lista or []:
-            if "FNET" in str(d.get("source") or "").upper():
+            # Só CVM/IPE, como a tabela antiga: o FNET é de fundo, e a SEC é do
+            # ADR listado nos EUA -- "VALE" (ADR) casaria o prefixo de VALE3.
+            fonte = str(d.get("source") or "").upper()
+            if "FNET" in fonte or "SEC" in fonte:
                 continue
             docs.append(d)
     docs.sort(key=lambda d: str(d.get("reference_date") or ""), reverse=True)
@@ -1051,6 +1054,15 @@ def contexto_mercado_para_parecer(tk: str) -> str:
     except Exception as exc:  # noqa: BLE001
         logger.exception("detalhe do armazém do parecer %s falhou", tk)
         partes.append(f"DETALHE DO ARMAZÉM: falha ao montar ({type(exc).__name__}).")
+    try:
+        # O que mais o armazém tem (ou não tem) do papel, fonte por fonte.
+        # Decisão do usuário de 08/11/2026: entra também no prompt que veta,
+        # com a trava da REGRA_VARREDURA_ARMAZEM (situa, nunca sustenta veto).
+        from core.varredura_armazem import bloco_varredura
+        partes.append(bloco_varredura("b3", [tk]))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("varredura do armazém do parecer %s falhou", tk)
+        partes.append(f"VARREDURA DO ARMAZÉM: falha ao montar ({type(exc).__name__}).")
     return "\n\n".join(p for p in partes if p and p.strip())
 
 

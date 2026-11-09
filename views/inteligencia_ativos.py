@@ -23,9 +23,14 @@ não decide nada sozinha.
 Liberada, a aba é um painel, de cima para baixo: resumo da carteira,
 cartões dos ativos (o botão de cada um abre a análise completa), análise
 completa e Portfolio Fit do ativo escolhido. O histórico de cada foto é
-gravado, mas não aparece na tela. A carteira recomendada do Portfólio Global aparece como referência
-comparativa (``core/inteligencia_ativos/referencia_modelo.py``), em cartão
-próprio, fora das 13 etapas e da "Ação a considerar". Os cartões vêm de ``views/inteligencia_ativos_painel.py``; os
+gravado, mas não aparece na tela. Logo abaixo da página resumida, a seção
+"🌐 Sua carteira × Portfólio Global" confronta sempre a carteira com a
+carteira recomendada do Portfólio Global (pedido de 08/11/2026): qualidade
+pela mesma régua nos dois lados, classes contra o modelo e a estratégia,
+divergências por ativo e inclusões, cada uma com a conclusão e o porquê
+(``core/inteligencia_ativos/confronto_modelo.py``). Como a referência
+(``referencia_modelo.py``), ela fica fora das 13 etapas e da "Ação a
+considerar", e nenhuma conclusão contradiz a decisão da Inteligência. Os cartões vêm de ``views/inteligencia_ativos_painel.py``; os
 números, de ``core/inteligencia_ativos/painel.py`` e ``historico.py``.
 
 Coberto por tests/test_inteligencia_ativos_tela.py e
@@ -36,6 +41,7 @@ from __future__ import annotations
 import datetime as dt
 import hashlib
 import json
+import logging
 import time
 from html import escape
 
@@ -45,6 +51,7 @@ from core import inteligencia_ativos as servico
 from core.estrategia import politica as pol
 from core.estrategia import portao
 from core.inteligencia_ativos import calculos as calc
+from core.inteligencia_ativos import confronto_modelo as conf_
 from core.inteligencia_ativos import destaques_relatorios as dr
 from core.inteligencia_ativos import fundamentos as fund
 from core.inteligencia_ativos import historico as hist
@@ -54,6 +61,7 @@ from core.inteligencia_ativos import painel, papeis
 from core.inteligencia_ativos import pares as prs
 from core.inteligencia_ativos import referencia_modelo as refm
 from core.inteligencia_ativos import valuation as val
+from core.inteligencia_ativos import veredito as vd
 from core.utils import fmt_moeda
 from design.lacunas import aviso_lacuna, detalhe_tecnico
 from views import configuracoes_estrategia as tela_estrategia
@@ -61,6 +69,8 @@ from views import inteligencia_ativos_fit as tela_fit
 from views import inteligencia_ativos_painel as tela_painel
 from views import inteligencia_ativos_relatorios as tela_relatorios
 from views import inteligencia_ativos_resumida as tela_resumida
+
+logger = logging.getLogger(__name__)
 
 ROTULO = "Inteligência dos Ativos"
 # Configuração aberta na própria aba (onboarding ou "Minha estratégia").
@@ -843,30 +853,157 @@ def cartao_referencia_ativo(ref: refm.ReferenciaModelo, ticker: str) -> str:
     return _cartao_ref(titulo, corpo)
 
 
-def cartao_referencia_carteira(ref: refm.ReferenciaModelo) -> str:
-    """Classes contra o alvo do modelo e os maiores ativos do modelo que a
-    carteira não tem. Puro."""
-    titulo = "Referência · carteira recomendada do Portfólio Global"
-    if not ref.disponivel:
+_TD = '<td style="padding:3px 10px 3px 0;vertical-align:top">'
+_COR_CONCLUSAO = {
+    conf_.MUDAR: "var(--app-warning)",
+    conf_.PERMANECER: "var(--app-info)",
+    conf_.INCLUIR: "var(--app-primary)",
+    conf_.NAO_INCLUIR: "var(--app-subtle)",
+    conf_.SEM_AVALIACAO: "var(--app-subtle)",
+}
+
+
+def _chip_conclusao(conclusao: str) -> str:
+    cor = _COR_CONCLUSAO[conclusao]
+    return (f'<span style="font-size:0.72rem;font-weight:700;padding:1px 8px;'
+            f'border-radius:999px;border:1px solid {cor};color:{cor}">'
+            f'{escape(conf_.ROTULO_CONCLUSAO[conclusao])}</span>')
+
+
+def _qual(q: conf_.QualidadeLado) -> str:
+    if q.nota is None:
+        return "sem leitura"
+    return f"{q.rotulo} ({q.nota:.1f})".replace(".", ",")
+
+
+def cartao_confronto(c: conf_.Confronto) -> str:
+    """Qualidade da carteira × modelo, aderência e classes (real, modelo e a
+    sua estratégia), com a conclusão das classes que divergem. Puro."""
+    titulo = "Sua carteira × carteira recomendada do Portfólio Global"
+    if not c.disponivel:
         return _cartao_ref(titulo, _indisponivel(
-            "Referência do modelo", ref.motivo, "Não disponível."))
-    td = '<td style="padding:2px 10px 2px 0">'
-    linhas = "".join(
-        f"<tr>{td}{escape(c.rotulo)}</td>{td}{_pct(c.alvo)}</td>"
-        f"{td}{_pct(c.real)}</td>{td}{_pp(c.diferenca)}</td></tr>"
-        for c in ref.classes)
-    corpo = _tabela(["Classe", "Modelo", "Real", "Real − modelo"], linhas)
-    fora = ref.fora_da_carteira()
-    if fora:
-        corpo += ('<div style="margin-top:8px;font-weight:700">'
-                  'Do modelo, fora da sua carteira</div>'
-                  + _lista(f"{x.ticker} · {x.nome} · {_pct(x.peso_modelo)}"
-                           for x in fora))
-    corpo += _lista(ref.avisos)
-    corpo += ('<div style="font-size:0.82rem;color:var(--app-muted);'
-              f'margin-top:6px">Base dos pesos: '
-              f'{escape(refm.ROTULO_BASE[ref.base])}.</div>')
+            "Confronto com o modelo", c.motivo, "Não disponível."))
+    corpo = _grade([
+        ("Qualidade média · sua carteira", _qual(c.carteira)),
+        ("Qualidade média · modelo", _qual(c.modelo)),
+        ("Peso com alerta eliminatório",
+         f"{_pct(c.carteira.peso_com_alerta)} × {_pct(c.modelo.peso_com_alerta)}"),
+        ("Aderência ao modelo", _pct(c.aderencia)),
+    ])
+    corpo += _nota(
+        "Qualidade de 1 (frágil) a 3 (forte), média ponderada pelo peso, "
+        "medida com a mesma régua da Inteligência nos dois lados. Cobertura: "
+        f"{_pct(c.carteira.cobertura)} do peso da sua carteira e "
+        f"{_pct(c.modelo.cobertura)} do peso do modelo. Aderência é a parte "
+        "da base que já está em ativos do modelo, até o peso do modelo.")
+    if c.por_classe:
+        linhas = "".join(
+            f"<tr>{_TD}{escape(q.rotulo)}</td>{_TD}{escape(_qual(q.carteira))}"
+            f"</td>{_TD}{escape(_qual(q.modelo))}</td></tr>"
+            for q in c.por_classe)
+        corpo += ('<div style="margin-top:10px;font-weight:700">Qualidade '
+                  'por classe</div>'
+                  + _tabela(["Classe", "Sua carteira", "Modelo"], linhas))
+    if c.classes:
+        linhas = "".join(
+            f"<tr>{_TD}{escape(k.rotulo)}</td>{_TD}{_pct(k.real)}</td>"
+            f"{_TD}{_pct(k.alvo_modelo)}</td>{_TD}{_pct(k.alvo_estrategia)}"
+            f"</td>{_TD}{_pp(k.diferenca)}</td></tr>"
+            for k in c.classes)
+        corpo += ('<div style="margin-top:10px;font-weight:700">Distribuição '
+                  'por classe</div>'
+                  + _tabela(["Classe", "Real", "Modelo", "Sua estratégia",
+                             "Real − modelo"], linhas))
+    for k in c.classes_acentuadas:
+        corpo += (f'<div style="margin-top:6px">{_chip_conclusao(k.conclusao)}'
+                  f' {escape(k.texto)}</div>')
+    corpo += _lista(c.avisos)
+    corpo += _nota(f"Base dos pesos: {refm.ROTULO_BASE[c.base]}. Divergência "
+                   f"acentuada: {conf_.LIMIAR_CLASSE_PP:.0f} pp ou mais na "
+                   f"classe, {conf_.LIMIAR_ATIVO_PP:.0f} pp ou mais no ativo.")
     return _cartao_ref(titulo, corpo)
+
+
+def _item_divergencia(d: conf_.Divergencia, pesos: str) -> str:
+    motivos = (f'<div style="font-size:0.84rem;color:var(--app-muted);'
+               f'margin:2px 0 0 12px">{_lista(d.motivos)}</div>'
+               if d.motivos else "")
+    return ('<div style="margin:10px 0;padding-top:8px;border-top:1px solid '
+            'var(--app-border)">'
+            f'<div><strong>{escape(d.ticker)}</strong> · {escape(d.nome)} '
+            f'{_chip_conclusao(d.conclusao)}</div>'
+            f'<div style="font-size:0.82rem;color:var(--app-muted)">{pesos}'
+            '</div>'
+            f'<div style="margin-top:4px">{escape(d.texto)}</div>{motivos}'
+            '</div>')
+
+
+def cartao_divergencias(c: conf_.Confronto) -> str:
+    """Cada ativo da carteira com divergência acentuada para o modelo:
+    mudar ou manter a escolha do investidor, e os motivos. Puro."""
+    if not c.divergencias:
+        return escape("Nenhum ativo da sua carteira diverge do modelo em "
+                      f"{conf_.LIMIAR_ATIVO_PP:.0f} pp ou mais.")
+    return "".join(
+        _item_divergencia(d, escape(
+            f"Real {_pct(d.peso_real)} · modelo {_pct(d.peso_modelo)} · "
+            f"real − modelo {_pp(d.diferenca)}"))
+        for d in c.divergencias)
+
+
+def cartao_candidatos(c: conf_.Confronto) -> str:
+    """Os ativos do modelo fora da carteira: incluir ou não, e por quê."""
+    if not c.candidatos and not c.nao_avaliados:
+        return escape("Você já tem todos os ativos do modelo.")
+    html = "".join(
+        _item_divergencia(d, escape(
+            f"Peso no modelo {_pct(d.peso_modelo)}"
+            + (f" · qualidade {d.qualidade.lower()}" if d.qualidade else "")))
+        for d in c.candidatos)
+    if c.nao_avaliados:
+        html += _nota(f"Outros {c.nao_avaliados} ativos do modelo, de peso "
+                      "menor, não foram avaliados nesta tela (só os "
+                      f"{conf_.MAX_AVALIADOS_MODELO} maiores).")
+    return html
+
+
+_COR_SUBSTITUICAO = {conf_.TROCA: "var(--app-warning)",
+                     conf_.TROCA_GRADUAL: "var(--app-info)"}
+
+
+def _item_substituicao(x: conf_.Substituicao) -> str:
+    cor = _COR_SUBSTITUICAO[x.modo]
+    chip = (f'<span style="font-size:0.72rem;font-weight:700;padding:1px 8px;'
+            f'border-radius:999px;border:1px solid {cor};color:{cor}">'
+            f'{escape(x.rotulo_modo)}</span>')
+    pesos = (f"Sai {x.sai}: {_pct(x.peso_real_sai)} da base · entra "
+             f"{x.entra}: {_pct(x.peso_modelo_entra)} no modelo · "
+             + ("mesmo segmento" if x.mesmo_segmento else "segmento diferente"))
+    return ('<div style="margin:10px 0;padding-top:8px;border-top:1px solid '
+            'var(--app-border)">'
+            f'<div><strong>{escape(x.sai)}</strong> → <strong>'
+            f'{escape(x.entra)}</strong> · {escape(x.nome_entra)} {chip}</div>'
+            f'<div style="font-size:0.82rem;color:var(--app-muted)">'
+            f'{escape(pesos)}</div>'
+            f'<div style="margin-top:4px">{escape(x.texto)}</div>'
+            '<div style="font-size:0.84rem;color:var(--app-muted);'
+            f'margin:2px 0 0 12px">{_lista(x.motivos)}</div></div>')
+
+
+def cartao_substituicoes(c: conf_.Confronto) -> str:
+    """Cada ativo da carteira que um ativo do modelo supera: a troca, o modo
+    (vender e comprar, ou aos poucos pelos aportes) e o porquê. Puro."""
+    if not c.substituicoes:
+        return escape("Nenhum ativo avaliado do modelo supera os da sua "
+                      "carteira na mesma classe: nenhuma troca sugerida.")
+    return "".join(_item_substituicao(x) for x in c.substituicoes) + _nota(
+        "Mesmo segmento: melhor na qualidade e não pior no preço nem no "
+        "risco, métrica a métrica, a mesma régua do \"Se sair, qual "
+        "substituir?\". Segmentos diferentes (os dois setores conhecidos): um "
+        "nível de qualidade acima; setor desconhecido não troca. "
+        "No mesmo segmento, sem métricas para comparar, não há troca. A troca "
+        "só vende quando a Inteligência já indica vender, substituir ou "
+        "reduzir.")
 
 
 def _render_liberada(liberacao: portao.Liberacao, carteira: dict,
@@ -940,6 +1077,92 @@ def _referencia_memo(carteira: dict) -> refm.ReferenciaModelo:
     return ref
 
 
+_AVALIACAO_MODELO_KEY = "_ia_avaliacao_modelo_cache"
+_CONFRONTO_MEMO_KEY = "_ia_confronto_memo"
+
+
+def _ler_ativo_do_modelo(linha: refm.LinhaAtivo) -> tuple[object, dict]:
+    """(``Avaliacao``, métricas de pares) de um ativo do modelo, pelos mesmos
+    provedores da Inteligência (``veredito.insumos_do_ativo``). A avaliação
+    decide se ele pode entrar; as métricas alimentam a comparação métrica a
+    métrica das substituições (``recomendacao.confrontar``)."""
+    from core.inteligencia_ativos import avaliacao as av_
+    insumos = vd.insumos_do_ativo(linha.ticker, linha.nome, linha.setor,
+                                  mercado=linha.classe_modelo or "b3")
+    return (av_.avaliar(insumos),
+            conf_.metricas_de_pares(insumos.pares.dados))
+
+
+def _avaliacoes_do_modelo(ref: refm.ReferenciaModelo
+                          ) -> tuple[dict[str, object], dict[str, dict]]:
+    """(avaliação, métricas) dos ativos do modelo fora da carteira
+    (``conf_.a_avaliar``), lembradas na sessão pelo prazo da análise. Falha
+    vira avaliação ``None`` (sem avaliação) e não é lembrada: o próximo rerun
+    tenta de novo."""
+    cache = st.session_state.setdefault(_AVALIACAO_MODELO_KEY, {})
+    agora = time.monotonic()
+    avals: dict[str, object] = {}
+    metricas: dict[str, dict] = {}
+    for linha in conf_.a_avaliar(ref):
+        lembrado = cache.get(linha.ticker)
+        if lembrado and lembrado[0] > agora:
+            avals[linha.ticker], metricas[linha.ticker] = lembrado[1], lembrado[2]
+            continue
+        try:
+            av, met = _ler_ativo_do_modelo(linha)
+        except Exception as exc:  # noqa: BLE001 — um ativo não derruba o confronto
+            logger.warning("confronto: avaliação de %s falhou: %s",
+                           linha.ticker, exc)
+            avals[linha.ticker] = None
+            continue
+        cache[linha.ticker] = (agora + _ANALISE_MEMO_TTL, av, met)
+        avals[linha.ticker], metricas[linha.ticker] = av, met
+    return avals, metricas
+
+
+def _confronto_memo(resultado: dict, ref: refm.ReferenciaModelo,
+                    ctx: m.ContextoInvestidor) -> conf_.Confronto:
+    """O confronto refeito só quando a análise ou a referência mudam (os dois
+    já são lembrados na sessão, então a identidade basta)."""
+    memo = st.session_state.get(_CONFRONTO_MEMO_KEY)
+    if memo and memo[0] is resultado and memo[1] is ref:
+        return memo[2]
+    if not ref.disponivel:
+        confronto = conf_.indisponivel(ref.motivo)
+    else:
+        avals, metricas = _avaliacoes_do_modelo(ref)
+        confronto = conf_.montar(
+            ref, vd.vereditos_da_carteira(resultado), avals,
+            alocacao_estrategia=ctx.alocacao_alvo,
+            limite_por_ativo=ctx.limite_por_ativo,
+            analises={a.ativo.ticker: a
+                      for a in resultado.get("analises") or ()},
+            metricas_modelo=metricas)
+    st.session_state[_CONFRONTO_MEMO_KEY] = (resultado, ref, confronto)
+    return confronto
+
+
+def _render_confronto(confronto: conf_.Confronto) -> None:
+    """Sua carteira × Portfólio Global: qualidade e classes à vista, e as
+    divergências por ativo e as inclusões em expanders próprios."""
+    st.markdown("#### 🌐 Sua carteira × Portfólio Global")
+    st.markdown(cartao_confronto(confronto), unsafe_allow_html=True)
+    if not confronto.disponivel:
+        return
+    detalhe_tecnico(conf_.AVISO, codigo="inteligencia.confronto_modelo_aviso")
+    with st.expander("⚖️ Divergências de peso e o porquê "
+                     f"({len(confronto.divergencias)})"):
+        st.markdown(cartao_divergencias(confronto), unsafe_allow_html=True)
+    n_subs = len(confronto.substituicoes)
+    with st.expander(f"🔁 Substituições sugeridas ({n_subs})",
+                     expanded=bool(n_subs)):
+        st.markdown(cartao_substituicoes(confronto), unsafe_allow_html=True)
+    n_incluir = len(confronto.por_conclusao(conf_.INCLUIR))
+    with st.expander("➕ Ativos do modelo fora da sua carteira "
+                     f"({n_incluir} candidato{'s' if n_incluir != 1 else ''})"):
+        st.markdown(cartao_candidatos(confronto), unsafe_allow_html=True)
+
+
 def _render_painel(liberacao: portao.Liberacao, carteira: dict,
                    proventos: dict | None) -> None:
     if not carteira.get("posicoes"):
@@ -958,6 +1181,9 @@ def _render_painel(liberacao: portao.Liberacao, carteira: dict,
     tela_painel.registrar_uma_vez(ctx, analises, resumo)
     politica = liberacao.politica.politica if liberacao.politica else None
     tela_resumida.render(analises, ctx, politica)
+    referencia = _referencia_memo(carteira)
+    confronto = _confronto_memo(resultado, referencia, ctx)
+    _render_confronto(confronto)
 
     with st.expander("📊 Visão geral da carteira"):
         _, comparacao = tela_painel.comparacao_de(
@@ -968,8 +1194,6 @@ def _render_painel(liberacao: portao.Liberacao, carteira: dict,
         st.markdown(cartao_premissa(ctx), unsafe_allow_html=True)
         st.markdown(cartao_calculos(ctx.calculos), unsafe_allow_html=True)
         _tabela_carteira(analises)
-        st.markdown(cartao_referencia_carteira(_referencia_memo(carteira)),
-                    unsafe_allow_html=True)
 
     # Toggle, não expander: o Portfolio Fit tem expander próprio e o
     # Streamlit não aninha expanders.
@@ -988,12 +1212,24 @@ def _render_painel(liberacao: portao.Liberacao, carteira: dict,
     tela_relatorios.render(analise_)
     if depois:
         st.markdown(depois, unsafe_allow_html=True)
-    referencia = _referencia_memo(carteira)
     st.markdown(cartao_referencia_ativo(referencia, analise_.ativo.ticker),
                 unsafe_allow_html=True)
+    divergencia = confronto.da_carteira(analise_.ativo.ticker)
+    if divergencia is not None:
+        st.markdown(_cartao_ref(
+            "Confronto com o modelo · " + divergencia.ticker,
+            _item_divergencia(divergencia, escape(
+                f"Real {_pct(divergencia.peso_real)} · modelo "
+                f"{_pct(divergencia.peso_modelo)}"))), unsafe_allow_html=True)
+    troca = confronto.substituicao_de(analise_.ativo.ticker)
+    if troca is not None:
+        st.markdown(_cartao_ref("Substituição sugerida · " + troca.sai,
+                                _item_substituicao(troca)),
+                    unsafe_allow_html=True)
     st.markdown("#### Portfolio Fit")
-    leitura = tela_fit.render(analise_, ctx,
-                              referencia.para_llm(analise_.ativo.ticker))
+    leitura = tela_fit.render(analise_, ctx, {
+        **referencia.para_llm(analise_.ativo.ticker),
+        "confronto": confronto.para_llm(analise_.ativo.ticker)})
     tela_painel.registrar_leitura_llm(analise_, ctx, leitura)
 
 

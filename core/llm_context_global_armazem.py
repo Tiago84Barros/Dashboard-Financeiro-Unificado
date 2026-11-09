@@ -12,6 +12,10 @@ desenvolvimento e pelo túnel na produção.
 Sem este bloco, a LLM do patrimônio consolidado via só a foto dos snapshots,
 enquanto a pergunta sobre um único ativo, feita na aba da classe, via a
 liquidez diária, os trimestres, os proventos e o score mês a mês.
+
+Ações e FIIs da B3 levam também os proventos do arquivo publicado
+(``core.llm_ferramentas.proventos_ativo``), que não passa pelo túnel: com o
+armazém fora, o chat continua sabendo o que cada ativo distribuiu.
 """
 from __future__ import annotations
 
@@ -47,6 +51,35 @@ def _leitores() -> dict[str, Callable[[list[str]], str]]:
     return {"b3": llm_context_b3.get_warehouse_detail_context,
             "fii": llm_context_fii.get_warehouse_detail_context,
             "us": llm_context_us.get_warehouse_detail_context}
+
+
+#: Classes com proventos no arquivo publicado (``data/public/proventos_b3``).
+CLASSES_COM_PROVENTOS = ("b3", "fii")
+
+
+def _varredura() -> Callable[[str, list[str]], str]:
+    from core.varredura_armazem import bloco_varredura
+
+    return bloco_varredura
+
+
+def _proventos_publicados() -> Callable[..., str]:
+    from core.llm_ferramentas import proventos_ativo
+
+    return proventos_ativo
+
+
+def _bloco_proventos(simbolos: list[str]) -> str:
+    """Proventos por ação ou cota do arquivo publicado, que o app lê sem o
+    armazém. Sem isto, com o túnel fora (HTTP 502), o chat da carteira dizia
+    não ter os proventos de 2026 com eles no arquivo."""
+    from core.llm_ferramentas import MAX_TICKERS
+
+    ler = _proventos_publicados()
+    partes = [ler(simbolos[i:i + MAX_TICKERS], anos=5)
+              for i in range(0, len(simbolos), MAX_TICKERS)]
+    return ("PROVENTOS PUBLICADOS (arquivo do app; não dependem do armazém "
+            "nem do túnel):\n" + "\n\n".join(partes))
 
 
 def _peso(valor: Any) -> float:
@@ -157,5 +190,20 @@ def bloco_detalhe_armazem(df: pd.DataFrame, pergunta: str,
             logger.warning("detalhe do armazém (%s) falhou: %s", classe, exc)
             motivo = str(exc).splitlines()[0][:140] if str(exc) else type(exc).__name__
             corpo = f"DETALHE DO ARMAZÉM LOCAL: indisponível agora ({motivo})."
+        try:
+            # Antes de a LLM afirmar que o armazém "não tem" algo de um ativo,
+            # ela vê quantas linhas e que período ele guarda, fonte por fonte.
+            corpo += "\n\n" + _varredura()(classe, simbolos)
+        except Exception as exc:  # noqa: BLE001 - a varredura é extra
+            logger.warning("varredura do armazém (%s) falhou: %s", classe, exc)
+            corpo += ("\n\nVARREDURA DO ARMAZÉM LOCAL: não feita nesta resposta "
+                      f"({type(exc).__name__}); não trate como ausência de dado.")
+        if classe in CLASSES_COM_PROVENTOS:
+            try:
+                corpo += "\n\n" + _bloco_proventos(simbolos)
+            except Exception as exc:  # noqa: BLE001 - o detalhe do armazém fica
+                logger.warning("proventos publicados (%s) falharam: %s", classe, exc)
+                corpo += ("\n\nPROVENTOS PUBLICADOS: indisponíveis agora "
+                          f"({type(exc).__name__}).")
         partes.append(f"--- {_ROTULOS[classe]} ({', '.join(simbolos)}) ---\n{corpo}")
     return "\n\n".join(partes)

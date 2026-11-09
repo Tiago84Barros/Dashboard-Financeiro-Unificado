@@ -121,8 +121,13 @@ def test_cartoes_escapam_e_avisam_que_e_referencia():
     html = tela.cartao_referencia_ativo(ref, "PETR4")
     assert "18,0%" in html and "30,0%" in html and "+12,0 pp" in html
     assert "não é evidência independente" not in html   # vai ao log
-    geral = tela.cartao_referencia_carteira(ref)
-    assert "Do modelo, fora da sua carteira" in geral and "AAPL" in geral
+    # A tabela das classes e os ativos do modelo fora da carteira passaram
+    # para o confronto (core/inteligencia_ativos/confronto_modelo.py).
+    from core.inteligencia_ativos import confronto_modelo as cf
+    conf = cf.montar(ref, {}, {"AAPL": None})
+    geral = tela.cartao_confronto(conf)
+    assert "Distribuição por classe" in geral and "Empresas B3" in geral
+    assert "AAPL" in tela.cartao_candidatos(conf)
     fora = tela.cartao_referencia_ativo(rm.indisponivel("<b>x</b>"), "PETR4")
     assert "<b>x" not in fora and "&lt;b&gt;" not in fora   # motivo vai ao log
 

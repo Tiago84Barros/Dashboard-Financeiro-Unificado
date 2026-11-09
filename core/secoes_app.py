@@ -57,6 +57,8 @@ SECOES: tuple[Secao, ...] = (
           fixa=True),
     Secao("controle_financeiro", "💰 Controle Financeiro", "Controle Financeiro",
           "Receitas, despesas, cartão de crédito e o caixa do mês."),
+    Secao("controle_cnpj", "💼 Controle CNPJ", "Controle CNPJ",
+          "Financeiro da empresa: extrato, DRE, contas a pagar e o DAS do Simples."),
     Secao("investimentos", "📈 Investimentos", "Investimentos",
           "A sua carteira real: posições, proventos, Tesouro e imposto."),
     Secao("empresas_b3", "🏢 Empresas B3", "Empresas B3",

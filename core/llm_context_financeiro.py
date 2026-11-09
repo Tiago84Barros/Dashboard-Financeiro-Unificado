@@ -88,6 +88,7 @@ def build_financas_chat_context(
     investido_mes: float,
     ano_ref: int,
     mes_ref: int,
+    previstos: list | None = None,
 ) -> tuple[str, dict]:
     """
     Constrói (contexto_texto, chart_meta) a partir dos dados REAIS já carregados
@@ -102,6 +103,8 @@ def build_financas_chat_context(
       evolucao               : get_evolucao_patrimonial()
       investido_mes          : investido no mês selecionado
       ano_ref, mes_ref       : mês selecionado no header
+      previstos              : core.previstos.listar_previstos(); None = não lido
+                               (a fonte que falha é nomeada, nunca some)
     """
     receitas = float(dados_mes.get("receitas", 0) or 0)
     despesas = float(dados_mes.get("despesas", 0) or 0)
@@ -312,8 +315,13 @@ def build_financas_chat_context(
         L.append(f"  Último ponto: {ult.get('mes_str', ult.get('label', ''))} — "
                  f"mercado {_brl(ult.get('valor_mercado', 0))}")
 
+    L.extend(_bloco_previstos(previstos))
+
     L.append("")
     L.append("DEFINIÇÕES IMPORTANTES:")
+    L.append("  - Previstos (contas a pagar e a receber) ainda NÃO aconteceram: não estão")
+    L.append("    nas receitas, despesas nem no saldo do mês. Use-os para perguntas sobre")
+    L.append("    o que vem por aí; nunca some previsto ao realizado.")
     L.append("  - 'Despesas' do mês EXCLUEM compras no cartão de crédito (elas viram")
     L.append("    fatura futura e vivem em outra aba). Não confunda fluxo do mês com fatura.")
     L.append("  - 'Saldo do mês' é Receitas − Despesas. Aporte em investimento NÃO")
@@ -322,6 +330,37 @@ def build_financas_chat_context(
     L.append("  - Valores em Reais (BRL).")
 
     return "\n".join(L), chart_meta
+
+
+_MAX_PREVISTOS_NO_CONTEXTO = 40
+
+
+def _bloco_previstos(previstos: list | None) -> list[str]:
+    """Contas a pagar e a receber em aberto, para a IA responder sobre
+    vencimentos e caixa futuro. ``None`` (falha de leitura) vira linha dizendo
+    isso: a IA não pode concluir "não há contas" de uma fonte que não leu."""
+    from datetime import date as _d
+    linhas = ["", "CONTAS A PAGAR E A RECEBER (previstos em aberto, ainda não pagos):"]
+    if previstos is None:
+        linhas.append("  (não lidos nesta conversa: a leitura falhou — não conclua que não há)")
+        return linhas
+    if not previstos:
+        linhas.append("  Nenhum previsto em aberto.")
+        return linhas
+    hoje = _d.today()
+    vencidos = [p for p in previstos if p["vencimento"] < hoje]
+    a_pagar = sum(-p["valor"] for p in previstos if p["valor"] < 0)
+    a_receber = sum(p["valor"] for p in previstos if p["valor"] > 0)
+    linhas.append(f"  Total em aberto: a pagar {_brl(a_pagar)}, a receber {_brl(a_receber)}; "
+                  f"{len(vencidos)} vencido(s) sem baixa.")
+    for p in previstos[:_MAX_PREVISTOS_NO_CONTEXTO]:
+        flag = " [VENCIDO]" if p["vencimento"] < hoje else ""
+        linhas.append(f"  {p['vencimento'].strftime('%d/%m/%Y')} | {p['descricao']} | "
+                      f"{p['categoria']} | {_brl(p['valor'])}{flag}")
+    if len(previstos) > _MAX_PREVISTOS_NO_CONTEXTO:
+        linhas.append(f"  (+{len(previstos) - _MAX_PREVISTOS_NO_CONTEXTO} previstos mais "
+                      "distantes fora da lista; os totais acima incluem todos)")
+    return linhas
 
 
 # ── Contexto específico do CARTÃO DE CRÉDITO ─────────────────────────────────

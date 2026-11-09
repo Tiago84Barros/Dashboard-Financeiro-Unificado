@@ -1,6 +1,6 @@
 {
  "schema": 2,
- "gerado_em": "2026-10-31T21:13:18-03:00",
+ "gerado_em": "2026-11-05T14:28:42-03:00",
  "revisao": {
   "seq": 1,
   "hash": "958b9b309f5817a1dc80b4a95da150520d3779f5458635bce6f9c36c27231c9e",
@@ -8,7 +8,7 @@
   "data_formacao": "2026-09-30",
   "pregao_execucao": "2026-10-26"
  },
- "dados_ate": "2026-10-30",
+ "dados_ate": "2026-11-04",
  "regras": {
   "capital": 1000.0,
   "custo_por_lado": 0.003,
@@ -25,16 +25,18 @@
  "fontes": {
   "acoes": "pesquisa: dados/b3_retornos_diarios.parquet até 22/10/2026; depois, COTAHIST da B3 + market.dividends do armazém com as regras da pesquisa (retorno total)",
   "bova11": "COTAHIST da B3: fechamento oficial (BDI 14)",
-  "cdi": "BCB/SGS 12 (arquivo publicado até 29/10/2026)",
+  "cdi": "BCB/SGS 12 (arquivo publicado até 04/11/2026)",
   "spread": "COTAHIST da B3: mediana de até 63 pregões até a execução das melhores ofertas do fracionário (BDI 96) contra o fechamento do lote padrão; BOVA11, as do próprio lote padrão"
  },
- "pregoes": 4,
+ "pregoes": 6,
  "datas": [
   "2026-10-26",
   "2026-10-27",
   "2026-10-28",
   "2026-10-29",
-  "2026-10-30"
+  "2026-10-30",
+  "2026-11-03",
+  "2026-11-04"
  ],
  "curvas": {
   "carteira20": [
@@ -42,35 +44,45 @@
    985.7993,
    955.3726,
    942.4258,
-   937.4482
+   937.4482,
+   933.822,
+   946.3419
   ],
   "carteira20_fracoes": [
    994.009,
    990.971,
    959.9139,
    947.0322,
-   942.2283
+   942.2283,
+   938.2035,
+   950.3582
   ],
   "pesos_iguais": [
    994.009,
    990.3554,
    942.6936,
    919.989,
-   913.1509
+   913.1509,
+   907.8414,
+   937.2177
   ],
   "bova11": [
    994.6357,
    997.5268,
    974.9461,
    965.176,
-   959.643
+   959.643,
+   947.7296,
+   956.7519
   ],
   "cdi": [
    1000.0,
    1000.4317,
    1000.8636,
    1001.2958,
-   1001.7281
+   1001.7281,
+   1002.1607,
+   1002.5935
   ]
  },
  "caixa": {
@@ -82,7 +94,7 @@
   {
    "id": "CLSC4_20120120",
    "ticker": "CLSC4",
-   "retorno": 0.014474,
+   "retorno": 0.028239,
    "peso_atual": 0.0,
    "quantidade": 0,
    "preco_compra": 169.27,
@@ -92,8 +104,8 @@
   {
    "id": "CXSE3_20210429",
    "ticker": "CXSE3",
-   "retorno": 0.01327,
-   "peso_atual": 0.048041,
+   "retorno": 0.000474,
+   "peso_atual": 0.046962,
    "quantidade": 2,
    "preco_compra": 21.1,
    "custo_compra": 0.001675,
@@ -102,8 +114,8 @@
   {
    "id": "PETR4_20100104",
    "ticker": "PETR4",
-   "retorno": -0.021715,
-   "peso_atual": 0.05922,
+   "retorno": -0.125464,
+   "peso_atual": 0.052413,
    "quantidade": 1,
    "preco_compra": 53.88,
    "custo_compra": 0.000849,
@@ -112,8 +124,8 @@
   {
    "id": "CPLE3_20100104",
    "ticker": "CPLE3",
-   "retorno": -0.051656,
-   "peso_atual": 0.048266,
+   "retorno": -0.033775,
+   "peso_atual": 0.048686,
    "quantidade": 3,
    "preco_compra": 15.1,
    "custo_compra": 0.001901,
@@ -122,8 +134,8 @@
   {
    "id": "MILS3_20100416",
    "ticker": "MILS3",
-   "retorno": -0.013924,
-   "peso_atual": 0.052512,
+   "retorno": 0.027215,
+   "peso_atual": 0.054159,
    "quantidade": 3,
    "preco_compra": 15.8,
    "custo_compra": 0.00127,
@@ -132,8 +144,8 @@
   {
    "id": "ITSA4_20100104",
    "ticker": "ITSA4",
-   "retorno": -0.070202,
-   "peso_atual": 0.05595,
+   "retorno": -0.042569,
+   "peso_atual": 0.05704,
    "quantidade": 4,
    "preco_compra": 13.39,
    "custo_compra": 0.00143,
@@ -142,8 +154,8 @@
   {
    "id": "GOAU4_20100104",
    "ticker": "GOAU4",
-   "retorno": -0.03559,
-   "peso_atual": 0.049928,
+   "retorno": -0.042535,
+   "peso_atual": 0.049076,
    "quantidade": 4,
    "preco_compra": 11.52,
    "custo_compra": 0.000855,
@@ -152,8 +164,8 @@
   {
    "id": "GGBR4_20100104",
    "ticker": "GGBR4",
-   "retorno": -0.012574,
-   "peso_atual": 0.056467,
+   "retorno": -0.022397,
+   "peso_atual": 0.055349,
    "quantidade": 2,
    "preco_compra": 25.45,
    "custo_compra": 0.001197,
@@ -162,8 +174,8 @@
   {
    "id": "BRDT3_20171215",
    "ticker": "VBBR3",
-   "retorno": -0.081031,
-   "peso_atual": 0.066511,
+   "retorno": -0.091897,
+   "peso_atual": 0.065071,
    "quantidade": 2,
    "preco_compra": 32.21,
    "custo_compra": 0.002183,
@@ -172,8 +184,8 @@
   {
    "id": "BBSE3_20130429",
    "ticker": "BBSE3",
-   "retorno": -0.042188,
-   "peso_atual": 0.046423,
+   "retorno": -0.124942,
+   "peso_atual": 0.04199,
    "quantidade": 1,
    "preco_compra": 43.14,
    "custo_compra": 0.000971,
@@ -182,8 +194,8 @@
   {
    "id": "CBAV3_20210715",
    "ticker": "CBAV3",
-   "retorno": 0.002669,
-   "peso_atual": 0.050647,
+   "retorno": 0.003559,
+   "peso_atual": 0.050188,
    "quantidade": 4,
    "preco_compra": 11.24,
    "custo_compra": 0.001828,
@@ -192,8 +204,8 @@
   {
    "id": "FLRY3_20100104",
    "ticker": "FLRY3",
-   "retorno": -0.073756,
-   "peso_atual": 0.045996,
+   "retorno": -0.062896,
+   "peso_atual": 0.046072,
    "quantidade": 2,
    "preco_compra": 22.1,
    "custo_compra": 0.001728,
@@ -202,8 +214,8 @@
   {
    "id": "BMGB4_20191129",
    "ticker": "BMGB4",
-   "retorno": -0.170455,
-   "peso_atual": 0.045929,
+   "retorno": -0.103896,
+   "peso_atual": 0.04912,
    "quantidade": 8,
    "preco_compra": 6.16,
    "custo_compra": 0.003247,
@@ -212,8 +224,8 @@
   {
    "id": "CPFE3_20100104",
    "ticker": "CPFE3",
-   "retorno": -0.018735,
-   "peso_atual": 0.047075,
+   "retorno": -0.001405,
+   "peso_atual": 0.047429,
    "quantidade": 1,
    "preco_compra": 42.7,
    "custo_compra": 0.001771,
@@ -222,8 +234,8 @@
   {
    "id": "ALUP11_20130424",
    "ticker": "ALUP11",
-   "retorno": -0.020281,
-   "peso_atual": 0.070556,
+   "retorno": 0.018097,
+   "peso_atual": 0.07259,
    "quantidade": 2,
    "preco_compra": 32.05,
    "custo_compra": 0.004827,
@@ -232,8 +244,8 @@
   {
    "id": "UGPA3_20110805",
    "ticker": "UGPA3",
-   "retorno": -0.098751,
-   "peso_atual": 0.035682,
+   "retorno": -0.129398,
+   "peso_atual": 0.034126,
    "quantidade": 1,
    "preco_compra": 35.24,
    "custo_compra": 0.002126,
@@ -242,8 +254,8 @@
   {
    "id": "SSBR3_20110203",
    "ticker": "ALOS3",
-   "retorno": -0.102711,
-   "peso_atual": 0.052804,
+   "retorno": -0.050783,
+   "peso_atual": 0.055305,
    "quantidade": 2,
    "preco_compra": 26.19,
    "custo_compra": 0.001148,
@@ -252,8 +264,8 @@
   {
    "id": "LEVE3_20110112",
    "ticker": "LEVE3",
-   "retorno": -0.054375,
-   "peso_atual": 0.067994,
+   "retorno": -0.0175,
+   "peso_atual": 0.069943,
    "quantidade": 2,
    "preco_compra": 32.0,
    "custo_compra": 0.003222,
@@ -262,8 +274,8 @@
   {
    "id": "ABEV3_20131111",
    "ticker": "ABEV3",
-   "retorno": -0.050098,
-   "peso_atual": 0.049209,
+   "retorno": -0.007807,
+   "peso_atual": 0.050889,
    "quantidade": 3,
    "preco_compra": 15.37,
    "custo_compra": 0.003727,
@@ -272,8 +284,8 @@
   {
    "id": "JHSF3_20100104",
    "ticker": "JHSF3",
-   "retorno": -0.154228,
-   "peso_atual": 0.050789,
+   "retorno": -0.098598,
+   "peso_atual": 0.053592,
    "quantidade": 5,
    "preco_compra": 10.69,
    "custo_compra": 0.006814,

@@ -2836,6 +2836,16 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
         )
         if sugestoes:
             st.caption("Talvez você queira: " + " · ".join(f"`{x}`" for x in sugestoes))
+        # O universo acima vem do Supabase. Antes de o usuário concluir que o
+        # ticker não existe, a tela varre o armazém local: erro de digitação
+        # dá "nenhuma linha" lá também; papel real fora da vitrine, não.
+        from core.varredura_armazem import resumo_para_tela
+
+        varredura = resumo_para_tela("b3", tk)
+        if varredura:
+            st.caption(varredura)
+        aviso_lacuna(f"{tk} fora do universo B3 da vitrine. {varredura}",
+                     codigo="tela.b3.ticker_fora_da_vitrine", entidade=tk)
         return
 
     # ── Header ────────────────────────────────────────────────────────────────
@@ -3187,10 +3197,15 @@ def _tab_analise(df_set: pd.DataFrame) -> None:
                 codigo="tela.b3.historico_precos_falha_rede", entidade=tk)
         elif sem_banco:
             st.info(f"**{tk}** ainda não tem dados publicados para análise.")
+            from core.varredura_armazem import resumo_para_tela
+
+            varredura = resumo_para_tela("b3", tk)
+            if varredura:
+                st.caption(varredura)
             aviso_lacuna(
                 f"{tk} é um ticker conhecido, mas não há preço nem "
                 "fundamentos publicados para ele. Costuma ser papel de baixa "
-                "liquidez ou recém-listado, ainda sem safra de dados.",
+                f"liquidez ou recém-listado, ainda sem safra de dados. {varredura}",
                 codigo="tela.b3.ticker_sem_dados", entidade=tk)
         else:
             st.info("O gráfico de preço não está disponível no momento.")

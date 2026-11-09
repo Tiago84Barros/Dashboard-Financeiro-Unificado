@@ -40,6 +40,11 @@ from sqlalchemy.engine import Connection, Engine
 from core.config import settings
 
 from .common import (
+    TIPO_REEMBOLSO_BTC,
+    ajustar_quantidades_dividendos,
+    aviso_reembolso_sem_084,
+    aviso_xp_sem_083,
+    corrigir_tipo_reembolso,
     ensure_external_id_columns,
     finalize_summary,
     get_or_create_account,
@@ -48,7 +53,12 @@ from .common import (
     insert_dividend,
     make_external_id,
     make_summary,
+    migracao_083_aplicada,
+    migracao_084_aplicada,
+    quantidade_e_valor_unitario,
     safe_error,
+    tipo_gravavel,
+    to_float_br,
 )
 from .positions import PORTFOLIO_NAME, PORTFOLIO_TYPE
 
@@ -83,7 +93,10 @@ _XP_INCOME_TYPE_MAP: dict[str, str] = {
     "dividendo":                      "dividend",
     "dividendo - ação":               "dividend",
     "dividendo - acao":               "dividend",
-    "reembolso":                      "reit_income",
+    # Reembolso de aluguel (BTC): o mesmo tipo que a Movimentação da B3 usa,
+    # ou a deduplicação canônica, que compara o tipo, deixaria passar o mesmo
+    # pagamento pelas duas fontes.
+    "reembolso":                      TIPO_REEMBOLSO_BTC,
     "pagamento de prêmio/rendimentos": "reit_income",
     "pagamento de premio/rendimentos": "reit_income",
     "pagamento de rendimentos":       "reit_income",
@@ -344,7 +357,22 @@ def _parse_proventos(
     user_id: str,
     summary: dict,
     report_date: date,
+    aplicada_084: bool = True,
 ) -> None:
+    """Aba "Proventos Recebidos": Produto | Pagamento | Tipo de Evento |
+    Instituição | Quantidade | Preço unitário | Valor líquido.
+
+    A quantidade vem da coluna Quantidade (até 06/11/2026 era ignorada e todo
+    provento virava 1 cota = total). O valor por cota é o total LÍQUIDO
+    dividido pela quantidade, não a coluna "Preço unitário": no JCP ela é
+    bruta, e `total_amount = amount_per_unit × quantity` deixaria de fechar.
+
+    Só roda depois da migração 083 (quem chama verifica): a 083 limpa as
+    linhas da XP gravadas pelo importador antigo, e uma linha real de 1 cota
+    gravada antes dela seria limpa junto.
+    """
+    gravadas: list[dict[str, Any]] = []
+    reembolsos_sem_084 = 0
     for i, row in enumerate(ws.iter_rows(min_row=2, values_only=True)):
         if not row or row[0] is None:
             continue
@@ -399,11 +427,23 @@ def _parse_proventos(
                 conn, ticker=ticker, name=ticker, asset_class="stock",
             )
 
+            # O id é calculado com o tipo ANTIGO do reembolso (`reit_income`):
+            # com o novo, a linha já gravada ganharia outro id e a
+            # reimportação a gravaria de novo, ao lado da antiga.
+            tipo_no_id = (
+                "reit_income" if inc_type == TIPO_REEMBOLSO_BTC else inc_type
+            )
             ext_id = make_external_id(
                 "xpcsl-inc",
-                [pay_date.isoformat(), ticker, inc_type, f"{amount:.2f}"],
+                [pay_date.isoformat(), ticker, tipo_no_id, f"{amount:.2f}"],
             )
-
+            tipo = tipo_gravavel(inc_type, aplicada_084)
+            if tipo != inc_type:
+                reembolsos_sem_084 += 1
+            inc_type = tipo
+            qtd, apu = quantidade_e_valor_unitario(
+                to_float_br(row[4]) if len(row) > 4 else None, amount,
+            )
             try:
                 with conn.begin_nested():
                     new_id = insert_dividend(
@@ -411,8 +451,8 @@ def _parse_proventos(
                         user_id=user_id,
                         asset_id=asset_id,
                         div_type=inc_type,
-                        amount_per_unit=amount,  # XP nao separa por cota
-                        quantity=1.0,
+                        amount_per_unit=apu,
+                        quantity=qtd,
                         total_amount=amount,
                         ex_date=None,
                         payment_date=pay_date,
@@ -422,6 +462,12 @@ def _parse_proventos(
                         summary["duplicates_skipped"] += 1
                     else:
                         summary["incomes_imported"] += 1
+                gravadas.append({
+                    "user_id": user_id, "asset_id": asset_id,
+                    "type": inc_type, "quantity": qtd,
+                    "amount_per_unit": apu, "total_amount": amount,
+                    "payment_date": pay_date, "external_id": ext_id,
+                })
             except Exception as exc:  # noqa: BLE001
                 summary["errors"].append(
                     f"Proventos linha {i + 2}: {safe_error(exc)}"
@@ -431,6 +477,22 @@ def _parse_proventos(
             summary["errors"].append(
                 f"Proventos linha {i + 2}: {safe_error(exc)}"
             )
+
+    if aplicada_084:
+        # Antes do ajuste de quantidade: ele casa pela chave canônica, que
+        # inclui o tipo.
+        corrigir_tipo_reembolso(conn, gravadas)
+    if reembolsos_sem_084:
+        summary["avisos"].append(aviso_reembolso_sem_084(reembolsos_sem_084))
+    ajustar_quantidades_dividendos(conn, gravadas)
+
+
+def _linhas_de_provento(ws) -> int:
+    return sum(
+        1 for row in ws.iter_rows(min_row=2, values_only=True)
+        if row and row[0] is not None and str(row[0]).strip().lower()
+        not in ("", "produto", "total", "-")
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -631,6 +693,8 @@ def parse(
         if s.get("errors"):
             for e in s["errors"]:
                 agg["errors"].append(f"{item[0]}: {e}")
+        for a in s.get("avisos") or []:
+            agg["avisos"].append(f"{item[0]}: {a}")
         if s.get("files_skipped_notes"):
             agg.setdefault("files_skipped_notes", []).extend(
                 s["files_skipped_notes"]
@@ -697,6 +761,13 @@ def _parse_single(
         break
 
     sheet_map = {_norm(ws.title): ws for ws in wb.worksheets}
+    ws_prov = sheet_map.get("proventos recebidos")
+    if ws_prov is not None and not migracao_083_aplicada(engine):
+        n = _linhas_de_provento(ws_prov)
+        if n:
+            summary["rows_skipped"] += n
+            summary["avisos"].append(aviso_xp_sem_083(n))
+        ws_prov = None
 
     with engine.connect() as conn:
         with conn.begin():
@@ -795,8 +866,7 @@ def _parse_single(
             # Aba Proventos Recebidos → dividends. A camada comum de insert
             # deduplica contra B3 Movimentação pela chave canônica, além do
             # external_id específico da XP.
-            ws_prov = sheet_map.get("proventos recebidos")
-            if ws_prov:
+            if ws_prov is not None:
                 try:
                     _ensure_xp_account(conn, user_id)
                 except Exception as exc:  # noqa: BLE001
@@ -806,6 +876,7 @@ def _parse_single(
                 else:
                     _parse_proventos(
                         ws_prov, conn, user_id, summary, report_date,
+                        migracao_084_aplicada(engine),
                     )
 
     summary["_report_date"] = report_date.isoformat()

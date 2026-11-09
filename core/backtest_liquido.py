@@ -377,6 +377,11 @@ def liquido_eua_brl(periodos: list[dict], fx: Any, *,
         "iof_total": float(sum(iofs)),
         "variacao_cambial_media": float(np.mean(variacoes)) - 1.0,
         "equity_curve_liquido": list((1 + liquido_s).cumprod().values),
+        # Bruto em reais (só câmbio) e pesos iguais em reais: o gráfico de
+        # capital põe todas as linhas na MESMA moeda, para a distância entre
+        # bruta e líquida ser custo e imposto, não câmbio.
+        "equity_curve_bruto_brl": list((1 + bruto_s).cumprod().values),
+        "equity_curve_ew_brl": list((1 + ew_s).cumprod().values),
         "dates": [str(d) for d in datas],
     }
 

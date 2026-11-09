@@ -8,6 +8,7 @@ Fontes suportadas:
   - b3_movimentacao B3 Área do Investidor → Movimentação (.xlsx)
   - b3_posicao      B3 Área do Investidor → Posição (.xlsx, uma aba por classe)
   - b3_posicao_detalhada B3 Área do Investidor → Posição Detalhada (.xlsx)
+  - rico_extrato_conta Rico → Extrato da conta (.xlsx, caixa: só proventos)
   - xp_consolidado  XP Investimentos → Posição Consolidada (.xlsx) — stub
   - tesouro_analitico Tesouro Direto → Extrato Analítico por título (.xlsx)
   - nomad_pdf       Nomad → notas de corretagem (.pdf) — stub
@@ -30,6 +31,7 @@ __all__ = [
     "parse_b3_posicao",
     "parse_b3_posicao_detalhada",
     "parse_xp_consolidado",
+    "parse_rico_extrato_conta",
     "parse_tesouro_direto",
     "parse_tesouro_analitico",
     "parse_nomad_pdf",
@@ -81,6 +83,12 @@ def parse_xp_consolidado(
     """
     from .xp_consolidado import parse
     return parse(payload, engine)
+
+
+def parse_rico_extrato_conta(file_bytes: bytes, engine) -> dict[str, Any]:
+    """Extrato da conta (caixa) da Rico — grava só os proventos pagos."""
+    from .rico_extrato_conta import parse
+    return parse(file_bytes, engine)
 
 
 def parse_tesouro_direto(file_bytes: bytes, engine) -> dict[str, Any]:

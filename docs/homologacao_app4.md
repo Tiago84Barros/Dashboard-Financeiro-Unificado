@@ -240,6 +240,16 @@ O de 2022 é deliberado: sem ele o conjunto afirmaria que crise é sempre bolsa
 brasileira caindo com dólar subindo, e uma carteira que passasse nos onze
 estaria protegida contra um cenário, não contra onze.
 
+**Evento em curso (03/11/2026).** O *Choque Eleitoral 2026* (IBOV −18%, USD/BRL
++9%, IFIX −9% na semana de 26–30/out) foi cadastrado com `em_curso=True` e sem
+tempo de recuperação, porque a recuperação ainda não aconteceu. Os choques vêm
+do noticiário, não das séries do warehouse local. Tesouro Selic e Fundo RF não
+foram medidos e usam o proxy do COVID 2020, declarado em `choques_nao_medidos`
+e nomeado na tela. O cenário **não** entra em `cenarios_reproduzidos()`, que
+conta só os cenários históricos. Quando a janela fechar, ele deve ser
+recalibrado pelas séries do warehouse, receber o prazo de recuperação e perder
+o `em_curso`.
+
 **Contar não é medir.** `cenarios_reproduzidos()` **não** devolve
 `len(SCENARIOS)` — isso fecharia o critério sem conferir nada. Cada cenário é
 aplicado a uma carteira canônica pelo caminho de código real (mapa de classe →

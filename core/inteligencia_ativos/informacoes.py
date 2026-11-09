@@ -302,9 +302,42 @@ def _literal(ticker: str, titulo: str) -> bool:
     return re.search(padrao, t) is not None
 
 
-def _mesma_empresa(a: str, b: str) -> bool:
+#: Classes irmãs nos EUA. Na B3 a raiz do ticker já diz que PETR3 e PETR4 são
+#: a mesma empresa; nos EUA não há regra de formação ("GOOG" e "GOOGL",
+#: "FOX" e "FOXA"), então a lista é declarada, como os apelidos de marca. Sem
+#: ela, a manchete "Alphabet ..." resolvia para uma classe só e a outra ficava
+#: com zero notícias: 206 candidatas do GOOGL descartadas em 60 dias, medido em
+#: 05/11/2026. Símbolos na forma do projeto, com hífen (``identity.normalize_symbol``).
+_CLASSES_EUA: tuple[frozenset[str], ...] = tuple(frozenset(g) for g in (
+    ("GOOG", "GOOGL"), ("FOX", "FOXA"), ("NWS", "NWSA"), ("BRK-A", "BRK-B"),
+    ("LEN", "LEN-B"), ("HEI", "HEI-A"), ("BF-A", "BF-B"), ("UA", "UAA"),
+    ("LBRDA", "LBRDK"), ("Z", "ZG"), ("GEF", "GEF-B"), ("MKC", "MKC-V"),
+    ("MOG-A", "MOG-B"), ("LSXMA", "LSXMK"), ("FWONA", "FWONK"),
+    ("BATRA", "BATRK"),
+))
+
+
+def simbolo_eua(ticker: str) -> str:
+    """BRK.B -> BRK-B: a forma do projeto. Provedor escreve das duas."""
+    return str(ticker or "").upper().replace(".", "-")
+
+
+def mesma_empresa(a: str, b: str) -> bool:
+    """Mesmo emissor: o mesmo ticker, uma classe irmã na B3 (PETR3/PETR4) ou
+    nos EUA (GOOG/GOOGL), com ponto ou hífen na classe (BRK.B/BRK-B).
+
+    Única regra para quem publica a vitrine (``avaliar_manchete``) e para quem
+    a lê (``fontes_informacoes._do_ticker``): com duas, a correção ficaria num
+    lado só."""
+    a, b = str(a or "").upper(), str(b or "").upper()
     ra, rb = raiz_b3(a), raiz_b3(b)
-    return a == b or (ra is not None and ra == rb)
+    if a == b or (ra is not None and ra == rb):
+        return True
+    ua, ub = simbolo_eua(a), simbolo_eua(b)
+    return ua == ub or any(ua in g and ub in g for g in _CLASSES_EUA)
+
+
+_mesma_empresa = mesma_empresa
 
 
 @dataclass(frozen=True)

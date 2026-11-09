@@ -116,7 +116,9 @@ def render_portfolio_valuations(positions):
                'Sem dado não significa zero; DY zero é incluído. Múltiplos nulos ou negativos são excluídos.')
     detalhe_tecnico(
         'Fontes: reconciliação B3/Fundamentus para ações e Fundamentus para FIIs, '
-        'as mesmas da aba Análise. DY em percentual informado pela fonte, não yield on cost '
+        'as mesmas da aba Análise; a vacância financeira dos FIIs, que o Fundamentus não '
+        'publica, vem da vitrine da Seleção de FIIs (relatórios gerenciais, com a data de '
+        'referência de cada fundo). DY em percentual informado pela fonte, não yield on cost '
         'nem renda efetivamente recebida. Tesouro, renda fixa, ETFs, BDRs e exterior não '
         'entram enquanto não houver indicadores comparáveis integrados neste painel. '
         'Cobertura sobre o valor positivo conhecido da carteira, incluindo renda fixa.',
@@ -178,7 +180,40 @@ def render_valuations_classe(classe, positions, fundamentals, *, colunas: int = 
         'margem e crescimento negativos entram, porque são observação legítima. '
         'Não é múltiplo contábil consolidado nem previsão de retorno.'
     )
+    _nota_vacancia_financeira(positions, fundamentals, resultado)
     return resultado
+
+
+def _nota_vacancia_financeira(positions, fundamentals, resultado) -> None:
+    """Diz de onde e de quando veio a vacância financeira que entrou na média.
+
+    O Fundamentus não a publica; ``core.fundamentus.batch_fiis`` a completa
+    com a vitrine da Seleção de FIIs e carrega a procedência em
+    ``vacancia_financ_fonte`` / ``vacancia_financ_ref``. Relatório gerencial
+    tem data própria por fundo, e a mais antiga é a que limita a leitura.
+    """
+    if resultado.get('vacancia_financ', {}).get('value') is None:
+        return
+    tickers = {str(p.get('ticker') or '').upper() for p in positions}
+    refs, fontes = [], set()
+    for t, fd in (fundamentals or {}).items():
+        if str(t).upper() not in tickers or not isinstance(fd, dict):
+            continue
+        if fd.get('vacancia_financ') is None or not fd.get('vacancia_financ_fonte'):
+            continue
+        fontes.add(str(fd['vacancia_financ_fonte']))
+        if fd.get('vacancia_financ_ref'):
+            refs.append(str(fd['vacancia_financ_ref'])[:10])
+    if not fontes:
+        return
+    quando = (f'referência de {min(refs)} a {max(refs)}' if refs
+              else 'sem data de referência publicada')
+    detalhe_tecnico(
+        'Vacância financeira: o Fundamentus não a publica; veio da vitrine da Seleção '
+        f'de FIIs ({", ".join(sorted(fontes))}), {quando}, por fundo. Relatório gerencial '
+        'antigo entra na média com a data que tem — confira a referência antes de '
+        'comparar com a vacância física, que é a do Fundamentus de hoje.',
+        codigo='carteira.valuation_vacancia_financeira_fonte')
 
 
 def render_valuations_tesouro(positions, ano_atual: int):

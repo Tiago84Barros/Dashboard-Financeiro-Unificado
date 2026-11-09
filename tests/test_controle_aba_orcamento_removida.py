@@ -40,15 +40,17 @@ def test_orcamento_nao_esta_mais_na_navegacao():
 
 def test_a_navegacao_mantem_as_demais_secoes_na_ordem():
     secoes = _secoes()
+    # "A pagar e receber" entrou em 02/11/2026 (lançamentos previstos).
     assert [s.split("  ", 1)[-1] for s in secoes] == [
-        "Dashboard", "Análises", "Tabelas", "Cartão de Crédito",
+        "Dashboard", "Análises", "Tabelas", "A pagar e receber", "Cartão de Crédito",
     ]
 
 
 @pytest.mark.parametrize(("indice", "render"), [
     (1, "_tab_analises"),
     (2, "_tab_tabelas"),
-    (3, "_tab_cartao"),
+    (3, "render_previstos"),
+    (4, "_tab_cartao"),
 ])
 def test_cada_secao_restante_chama_o_render_certo(indice: int, render: str):
     """Tirar um item da lista renumera os ramos: o teste prende o par."""

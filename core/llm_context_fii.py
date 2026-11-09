@@ -33,12 +33,27 @@ def _num(value: Any) -> float | None:
         return None
 
 
-def _fmt(value: Any, *, percent: bool = False) -> str:
+# Razões que passam de 100% legitimamente e chegam sempre em fração: os
+# ingestores as calculam como divisão (passivo/ativo, saldo/garantia,
+# crescimento sobre a base) e o motor de cenários aceita alavancagem e LTV até
+# 1,5. A heurística ``abs(x) > 1 -> /100`` mandava à IA "alavancagem 1,20%"
+# para um fundo com passivo de 120% do ativo -- número 100x menor, na direção
+# que esconde o risco.
+_RAZOES_EM_FRACAO = frozenset({"leverage", "ltv", "income_growth_per_share_3y"})
+
+
+def _fmt(value: Any, *, percent: bool = False, fracao: bool = False) -> str:
+    """Formata para o prompt.
+
+    ``percent`` aceita o percentual em fração (0.18) ou em ponto (18.0), como a
+    vitrine grava. ``fracao`` desliga essa adivinhação para razões que podem
+    passar de 1: nelas 1.2 é 120%, nunca 1,2%.
+    """
     number = _num(value)
     if number is None:
         return "ausente"
     if percent:
-        if abs(number) > 1:
+        if abs(number) > 1 and not fracao:
             number /= 100
         return f"{number:.2%}"
     return f"{number:.4g}"
@@ -106,7 +121,8 @@ def _fund_block(row: dict, selected: bool, cessao: dict | None = None) -> str:
         value = dy_recorrente(row) if metric == "dy_recorrente" else row.get(metric)
         if _num(value) is not None:
             percent = metric not in ("wault_anos", "duration_anos")
-            observed.append(f"{metric}={_fmt(value, percent=percent)}")
+            observed.append(f"{metric}=" + _fmt(
+                value, percent=percent, fracao=metric in _RAZOES_EM_FRACAO))
         elif metric in protection_missing:
             observed.append(f"{metric}=não divulgado pelo gestor")
     lines.append("  métricas específicas observadas: " + ("; ".join(observed) or "nenhuma"))

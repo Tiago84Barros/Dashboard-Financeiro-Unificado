@@ -328,7 +328,7 @@ def test_interface_expoe_paridade_e_equivalentes_americanos():
         "Treasury 3 meses",
         "S&P 500 (SPY)",
         "Peso máximo por indústria",
-        "Usar na Avaliação de Portfólio",
+        "Salvar como carteira padrão",
         "Metodologia e equivalências B3 × Estados Unidos",
         "can_publish",
         "disabled=not can_publish",

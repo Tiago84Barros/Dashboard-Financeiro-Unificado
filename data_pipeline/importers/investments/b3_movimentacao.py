@@ -42,12 +42,17 @@ from sqlalchemy.engine import Engine
 from core.config import settings
 
 from .common import (
+    TIPO_REEMBOLSO_BTC,
+    ajustar_quantidades_dividendos,
+    aviso_reembolso_sem_084,
+    aviso_sem_quantidade,
     batch_filter_existing_external_ids,
     batch_get_or_create_assets,
     batch_insert_dividends,
     batch_insert_investment_transactions,
     classify_movement,
     classify_ticker,
+    corrigir_tipo_reembolso,
     ensure_external_id_columns,
     ensure_movement_events_table,
     finalize_summary,
@@ -55,9 +60,13 @@ from .common import (
     insert_movement_events,
     make_external_id,
     make_summary,
+    migracao_083_aplicada,
+    migracao_084_aplicada,
     parse_date_br,
     parse_ticker_from_produto,
+    quantidade_e_valor_unitario,
     safe_error,
+    tipo_gravavel,
     to_float_br,
 )
 
@@ -133,6 +142,17 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
     # DDL fora da transação principal: sem permissão de CREATE, perde-se o
     # fato cru, não os proventos.
     eventos_ok = bool(ev_candidates) and ensure_movement_events_table(engine)
+    # Provento sem "Quantidade" no arquivo grava NULL (migração 083). Antes
+    # dela, sai nomeado em errors -- nunca vira 1 cota -- e nenhum ajuste de
+    # quantidade roda (ele depende de `quantity_placeholder`).
+    aceita_sem_qtd = bool(div_candidates) and migracao_083_aplicada(engine)
+    # Reembolso de aluguel (BTC) tem tipo próprio desde a migração 084. Antes
+    # dela, grava como sempre gravou e avisa.
+    tem_reembolso = any(
+        c["div_type"] == TIPO_REEMBOLSO_BTC for c in div_candidates
+    )
+    aplicada_084 = tem_reembolso and migracao_084_aplicada(engine)
+    reembolsos_sem_084 = 0
 
     try:
         with engine.connect() as conn:
@@ -183,22 +203,38 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                         "external_id":      c["external_id"],
                     })
 
-                # 3b) Monta linhas novas — dividends
+                # 3b) Monta linhas novas — dividends. As já gravadas não
+                #     entram no INSERT, mas entram no ajuste de quantidade:
+                #     reimportar a Movimentação é o que corrige a linha que
+                #     uma versão antiga gravou como "1 cota = total".
                 div_rows = []
+                ja_gravadas = []
                 for c in div_candidates:
-                    if c["external_id"] in existing_div:
+                    ja_existe = c["external_id"] in existing_div
+                    if ja_existe:
                         summary["duplicates_skipped"] += 1
-                        continue
                     aid = ticker_to_id.get(c["ticker"])
                     if aid is None:
-                        summary["errors"].append(
-                            f"asset_id ausente para ticker={c['ticker']}"
-                        )
+                        if not ja_existe:
+                            summary["errors"].append(
+                                f"asset_id ausente para ticker={c['ticker']}"
+                            )
                         continue
-                    div_rows.append({
+                    if c["quantity"] is None and not aceita_sem_qtd:
+                        if not ja_existe:
+                            summary["rows_skipped"] += 1
+                            summary["avisos"].append(aviso_sem_quantidade(
+                                c["ticker"], c["transaction_date"],
+                                c["total_amount"],
+                            ))
+                        continue
+                    tipo = tipo_gravavel(c["div_type"], aplicada_084)
+                    if tipo != c["div_type"] and not ja_existe:
+                        reembolsos_sem_084 += 1
+                    (ja_gravadas if ja_existe else div_rows).append({
                         "user_id":         user_id,
                         "asset_id":        aid,
-                        "type":            c["div_type"],
+                        "type":            tipo,
                         "amount_per_unit": c["amount_per_unit"],
                         "quantity":        c["quantity"],
                         "total_amount":    c["total_amount"],
@@ -210,6 +246,19 @@ def parse(file_bytes: bytes, engine: Engine) -> dict[str, Any]:
                 # 4) Insert em lote
                 inserted_tx = batch_insert_investment_transactions(conn, tx_rows)
                 inserted_div = batch_insert_dividends(conn, div_rows)
+                if aplicada_084:
+                    # Antes do ajuste de quantidade: ele casa pela chave
+                    # canônica, que inclui o tipo.
+                    # Todas as linhas: a nova barrada pela deduplicação pode
+                    # ter esbarrado numa antiga de OUTRA fonte (a XP), com o
+                    # tipo velho.
+                    corrigir_tipo_reembolso(conn, div_rows + ja_gravadas)
+                if reembolsos_sem_084:
+                    summary["avisos"].append(
+                        aviso_reembolso_sem_084(reembolsos_sem_084)
+                    )
+                if aceita_sem_qtd:
+                    ajustar_quantidades_dividendos(conn, div_rows + ja_gravadas)
                 summary["transactions_imported"] += inserted_tx
                 summary["incomes_imported"] += inserted_div
 
@@ -313,12 +362,9 @@ def _parse_row(row) -> dict | None:
     if category == "income":
         if valor is None or valor <= 0:
             return None
-        if qtd and qtd > 0:
-            apu = round(valor / qtd, 6)
-            quantity_used = qtd
-        else:
-            apu = valor
-            quantity_used = 1.0
+        # Sem "Quantidade" no arquivo, as duas ficam None (migração 083). Antes
+        # gravava 1 cota com o pagamento inteiro como valor por cota.
+        quantity_used, apu = quantidade_e_valor_unitario(qtd, valor)
         return {
             "kind":             "income",
             "ticker":           ticker_clean,
