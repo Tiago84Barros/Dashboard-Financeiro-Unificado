@@ -221,16 +221,38 @@ def test_fusao_respeita_encerramento():
 # ── alvo do tipo certo e reversão que conta referências ──────────────────────
 
 def test_busca_do_alvo_poe_o_tipo_esperado_na_frente():
-    """Uma "Saúde" de receita da pessoa não pode vencer a de despesa do sistema
-    — nem no script, nem no importador."""
+    """Uma "Saúde" de receita da pessoa não pode vencer a de despesa do sistema."""
+    from core.categorias import SQL_BUSCAR_CATEGORIA
+
+    ordem = SQL_BUSCAR_CATEGORIA[SQL_BUSCAR_CATEGORIA.index("ORDER"):]
+    assert ordem.index("type") < ordem.index("user_id")
+    # Prioriza, não filtra: filtrar criaria uma segunda categoria de mesmo nome.
+    assert "type = :type" not in SQL_BUSCAR_CATEGORIA.split("ORDER")[0]
+
+
+def test_busca_de_categoria_por_nome_e_uma_so():
+    """Regra dos gêmeos (CLAUDE.md): a busca vive em ``core.categorias`` e
+    quem acha categoria pelo nome usa ela — a cópia que não olhava o tipo
+    sobrevivia em ``scripts/migrate_csv_transactions.py``."""
     import inspect
 
     from core import controle
-    from scripts.unificar_categorias_cartao import _SQL_ALVO
+    from scripts import migrate_csv_transactions, unificar_categorias_cartao
 
-    for sql in (_SQL_ALVO, inspect.getsource(controle._get_or_create_category)):
-        ordem = sql[sql.index("ORDER"):]
-        assert ordem.index("type") < ordem.index("user_id"), sql
+    for fonte in (inspect.getsource(controle._get_or_create_category),
+                  inspect.getsource(migrate_csv_transactions._get_or_create_category),
+                  inspect.getsource(unificar_categorias_cartao._buscar_alvo)):
+        assert "SQL_BUSCAR_CATEGORIA" in fonte
+    copias = []
+    for pasta in ("core", "scripts", "views", "etl", "data_pipeline"):
+        for arq in (RAIZ / pasta).rglob("*.py"):
+            if arq == RAIZ / "core" / "categorias.py":
+                continue
+            texto = arq.read_text(encoding="utf-8")
+            if re.search(r"FROM\s+categories\b[^;]*?\bname\)?\s*=\s*(LOWER\()?:name",
+                         texto, flags=re.I | re.S):
+                copias.append(str(arq.relative_to(RAIZ)))
+    assert copias == []
 
 
 def test_importador_passa_o_tipo_para_a_busca():
@@ -264,3 +286,97 @@ def test_categoria_so_e_apagada_depois_de_contar_referencias():
         assert "DELETE FROM categories" in fonte
         assert fonte.index("referencias_a(") < fonte.index("DELETE FROM categories")
         assert "begin_nested" not in fonte  # nada de confiar no erro do DELETE
+
+
+# ── reversão: segunda revisão do Codex (PR #639) ─────────────────────────────
+
+class _ConnFalsa:
+    """Responde ao SELECT do orçamento-alvo e anota toda escrita."""
+
+    def __init__(self, atuais):
+        self.atuais = atuais
+        self.escritas = []
+
+    def execute(self, stmt, params=None):
+        from types import SimpleNamespace
+
+        sql = str(stmt)
+        if sql.lstrip().startswith("SELECT"):
+            return [SimpleNamespace(id=i, amount_limit=v) for i, v in self.atuais.items()]
+        self.escritas.append(sql.split()[0])
+        return SimpleNamespace(rowcount=1)
+
+
+def _op_fundida():
+    return {
+        "user_id": "u1", "para": "saude", "para_nome": "Saúde",
+        "alvo_antes": [{"id": "b-fev", "mes": "2026-02-01", "limite": "200.00"}],
+        "alvo_depois": [{"id": "b-jan", "mes": "2026-01-01", "limite": "100.00"},
+                        {"id": "b-fev", "mes": "2026-02-01", "limite": "300.00"}],
+        "legado": [{"id": "l-jan", "linha": {"id": "l-jan"}}],
+    }
+
+
+def test_reverter_orcamento_editado_depois_nao_devolve_a_parte_antiga():
+    """R$100 + R$200 fundidos em R$300 e editados para R$400: devolver a parte
+    antiga daria R$400 + R$100. Fica fundido, nada é escrito."""
+    from collections import Counter
+    from decimal import Decimal as D
+
+    from scripts.unificar_categorias_cartao import _reverter_orcamento_fundido
+
+    conn = _ConnFalsa({"b-jan": D("100.00"), "b-fev": D("400.00")})
+    voltaram, ficaram = Counter(), Counter()
+    _reverter_orcamento_fundido(conn, _op_fundida(), str, voltaram, ficaram)
+    assert conn.escritas == []
+    assert sum(ficaram.values()) == 1 and not voltaram
+
+
+def test_reverter_orcamento_com_registro_novo_tambem_fica_fundido():
+    from collections import Counter
+    from decimal import Decimal as D
+
+    from scripts.unificar_categorias_cartao import _reverter_orcamento_fundido
+
+    conn = _ConnFalsa({"b-jan": D("100"), "b-fev": D("300"), "b-dez": D("800")})
+    voltaram, ficaram = Counter(), Counter()
+    _reverter_orcamento_fundido(conn, _op_fundida(), str, voltaram, ficaram)
+    assert conn.escritas == [] and sum(ficaram.values()) == 1
+
+
+def test_reverter_orcamento_intacto_desfaz_tudo():
+    from collections import Counter
+    from decimal import Decimal as D
+
+    from scripts.unificar_categorias_cartao import _reverter_orcamento_fundido
+
+    conn = _ConnFalsa({"b-jan": D("100.0"), "b-fev": D("300")})
+    voltaram, ficaram = Counter(), Counter()
+    _reverter_orcamento_fundido(conn, _op_fundida(), str, voltaram, ficaram)
+    # Na ordem do cronograma: jan (criado pela fusão) sai, fev volta a 200,
+    # e por fim o registro antigo volta.
+    assert conn.escritas == ["DELETE", "UPDATE", "INSERT"]
+    assert sum(voltaram.values()) == 1 and not ficaram
+
+
+def test_reverter_aceita_backup_da_versao_de_31_10():
+    """A versão com defeito ficou na main desde 31/10: um backup dela precisa
+    continuar revertível pelo script novo."""
+    import inspect
+
+    from scripts import unificar_categorias_cartao as script
+
+    assert '"acao" in o' in inspect.getsource(script.cmd_reverter)
+    fonte = inspect.getsource(script._reverter_orcamentos_formato_antigo)
+    assert "reversed(ops)" in fonte and '"mover"' in fonte
+
+
+def test_reverter_recria_categorias_antes_de_ligar_a_mae():
+    """``parent_id`` tem chave imediata: recriar a filha antes da mãe falharia."""
+    import inspect
+
+    from scripts import unificar_categorias_cartao as script
+
+    fonte = inspect.getsource(script.cmd_reverter)
+    assert "- 'parent_id'" in fonte
+    assert fonte.index("- 'parent_id'") < fonte.index("SET parent_id")

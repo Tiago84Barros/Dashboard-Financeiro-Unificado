@@ -67,6 +67,7 @@ from core.card_categorization import (  # noqa: E402
     NOMES_LEGADOS,
     nome_unificado,
 )
+from core.categorias import SQL_BUSCAR_CATEGORIA  # noqa: E402
 
 #: (tabela, coluna que aponta para a categoria, expressão do texto que decide
 #: a divisão de ``Transporte & Combustível``). Expressões fixas, sem entrada de
@@ -87,18 +88,6 @@ _SQL_LEGADAS = """
     ORDER  BY c.user_id, c.name
 """
 
-# Mesma busca de ``core.controle._get_or_create_category``: o nome, com o tipo
-# esperado na frente (uma "Saúde" de receita da pessoa não vence a "Saúde" de
-# despesa do sistema) e, no empate, a categoria da pessoa.
-_SQL_ALVO = """
-    SELECT id::text
-    FROM   categories
-    WHERE  LOWER(name) = LOWER(:nome)
-      AND  (user_id = CAST(:uid AS uuid) OR user_id IS NULL)
-    ORDER  BY CASE WHEN type = :tipo THEN 0 ELSE 1 END,
-              CASE WHEN user_id = CAST(:uid AS uuid) THEN 0 ELSE 1 END
-    LIMIT  1
-"""
 
 # Toda coluna com chave estrangeira para ``categories``, lida do catálogo — não
 # de uma lista nossa. ``ON DELETE SET NULL`` e ``CASCADE`` deixam o DELETE
@@ -167,8 +156,11 @@ def prever_mantidas(conn, plano: dict) -> None:
 
 
 def _buscar_alvo(conn, uid: str, nome: str) -> str | None:
-    return conn.execute(text(_SQL_ALVO), {
-        "nome": nome, "uid": uid, "tipo": CATEGORY_TYPE.get(nome, "expense")}).scalar()
+    # A MESMA busca do importador (``core.categorias.SQL_BUSCAR_CATEGORIA``):
+    # o tipo esperado na frente — uma "Saúde" de receita da pessoa não vence a
+    # "Saúde" de despesa do sistema — e, no empate, a categoria da pessoa.
+    return conn.execute(text(SQL_BUSCAR_CATEGORIA), {
+        "name": nome, "uid": uid, "type": CATEGORY_TYPE.get(nome, "expense")}).scalar()
 
 
 def resolvedor_somente_leitura(conn):
@@ -209,22 +201,27 @@ def resolvedor_que_cria(conn, criadas: list[dict]):
 
 # ── orçamento ────────────────────────────────────────────────────────────────
 
-def _vigente(cronograma: list[tuple[str, Decimal]], mes: str) -> Decimal:
-    """Limite em vigor no mês, pela regra de ``core.orcamento.vigentes``: o
-    último registro até o mês; sem registro, ou encerrado (<= 0), vale zero."""
-    anteriores = [(m, v) for m, v in cronograma if m <= mes]
-    if not anteriores:
-        return Decimal(0)
-    valor = Decimal(str(max(anteriores)[1]))
-    return valor if valor > 0 else Decimal(0)
-
-
 def mesclar_orcamentos(cronogramas: list[list[tuple[str, Decimal]]]) -> list[tuple[str, Decimal]]:
     """Um cronograma cujo limite vigente em CADA mês é a soma dos vigentes das
     fontes. Basta um registro por mês em que alguma fonte muda; entre eles o
-    limite se carrega, como nas fontes. Soma zero vira registro 0 (encerra)."""
+    limite se carrega, como nas fontes. Soma zero vira registro 0 (encerra).
+
+    "Vigente" é o de ``core.orcamento.vigentes`` — a regra que a tela de
+    orçamento usa —, e não uma cópia dela: o último registro até o mês, com o
+    encerrado (<= 0) valendo zero.
+    """
+    from datetime import date
+
+    from core.orcamento import vigentes
+
+    registros = [{"categoria": i, "limite": v, "mes": date.fromisoformat(m)}
+                 for i, cron in enumerate(cronogramas) for m, v in cron]
     meses = sorted({m for cron in cronogramas for m, _ in cron})
-    return [(m, sum((_vigente(c, m) for c in cronogramas), Decimal(0))) for m in meses]
+    # ``vigentes`` devolve float; ``str`` dá a forma curta (150.0), exata para
+    # valores em centavos, e a soma segue em Decimal.
+    return [(m, sum((Decimal(str(v)) for v in
+                     vigentes(registros, date.fromisoformat(m)).values()), Decimal(0)))
+            for m in meses]
 
 
 def _planejar_orcamentos(conn, legadas: list[dict], resolver) -> list[dict]:
@@ -452,6 +449,79 @@ def cmd_aplicar(engine, usuario: str | None) -> int:
 
 # ── reverter ─────────────────────────────────────────────────────────────────
 
+def _como_dict(valor) -> dict:
+    return json.loads(valor) if isinstance(valor, str) else dict(valor or {})
+
+
+def _reverter_orcamento_fundido(conn, o: dict, _linha, voltaram: Counter,
+                                ficaram: Counter) -> None:
+    """Desfaz a fusão de UM alvo, tudo ou nada.
+
+    Só desfaz se o orçamento da categoria nova estiver exatamente como a
+    migração o deixou — os mesmos registros, com os mesmos limites. Se a
+    pessoa mexeu nele depois (``salvar_orcamentos``), devolver a parte antiga
+    somaria a dela à edição: R$100 + R$200 fundidos em R$300, editados para
+    R$400, virariam R$400 + R$100. Aí o orçamento fica fundido como está e o
+    relatório diz qual.
+    """
+    rotulo = f"orçamento de {o['para_nome']}"
+    atuais = {r.id: Decimal(str(r.amount_limit)) for r in conn.execute(text(
+        "SELECT id::text AS id, amount_limit FROM budgets "
+        "WHERE user_id = CAST(:uid AS uuid) AND category_id = CAST(:cid AS uuid)"),
+        {"uid": o["user_id"], "cid": o["para"]})}
+    deixados = {r["id"]: Decimal(str(r["limite"])) for r in o["alvo_depois"]}
+    if atuais != deixados:
+        ficaram[f"{rotulo} (mudou depois da migração: fica fundido)"] += 1
+        return
+    antes = {r["id"]: r for r in o["alvo_antes"]}
+    for r in o["alvo_depois"]:
+        if r["id"] in antes:
+            conn.execute(text(
+                "UPDATE budgets SET amount_limit = CAST(:antes AS numeric) "
+                "WHERE id = CAST(:id AS uuid)"),
+                {"id": r["id"], "antes": str(antes[r["id"]]["limite"])})
+        else:
+            conn.execute(text("DELETE FROM budgets WHERE id = CAST(:id AS uuid)"),
+                         {"id": r["id"]})
+    for r in o["legado"]:
+        conn.execute(text(
+            "INSERT INTO budgets SELECT * FROM "
+            "jsonb_populate_record(NULL::budgets, CAST(:linha AS jsonb)) "
+            "ON CONFLICT DO NOTHING"), {"linha": _linha(r["linha"])})
+    voltaram[f"{rotulo} (desfundido)"] += 1
+
+
+def _reverter_orcamentos_formato_antigo(conn, ops: list[dict], voltaram: Counter,
+                                        ficaram: Counter) -> None:
+    """Reversão dos backups gravados pela versão de 31/10/2026.
+
+    Aquela versão movia cada registro antigo para a categoria nova e, quando
+    ela já tinha limite no mesmo mês, somava e apagava o antigo. Desfaz na
+    ordem inversa, com a mesma guarda: só volta o que continua como ficou.
+    """
+    def _linha(valor) -> str:
+        return valor if isinstance(valor, str) else json.dumps(valor, default=str)
+
+    for o in reversed(ops):
+        if o["acao"] == "mover":
+            n = conn.execute(text(
+                "UPDATE budgets SET category_id = CAST(:de AS uuid) "
+                "WHERE id = CAST(:id AS uuid) AND category_id = CAST(:para AS uuid)"),
+                {"de": o["de"], "id": o["id"], "para": o["para"]}).rowcount
+        else:
+            n = conn.execute(text(
+                "UPDATE budgets SET amount_limit = CAST(:antigo AS numeric) "
+                "WHERE id = CAST(:alvo AS uuid) AND amount_limit = CAST(:novo AS numeric)"),
+                {"antigo": str(o["alvo_limite_antigo"]), "alvo": o["alvo_id"],
+                 "novo": str(o["alvo_limite_novo"])}).rowcount
+            if n:
+                conn.execute(text(
+                    "INSERT INTO budgets SELECT * FROM "
+                    "jsonb_populate_record(NULL::budgets, CAST(:linha AS jsonb)) "
+                    "ON CONFLICT DO NOTHING"), {"linha": _linha(o["linha"])})
+        (voltaram if n else ficaram)["budgets (backup no formato de 31/10)"] += 1
+
+
 def cmd_reverter(engine, caminho: str) -> int:
     if not os.path.isfile(caminho):
         print(f"Backup não encontrado: {caminho}")
@@ -466,11 +536,20 @@ def cmd_reverter(engine, caminho: str) -> int:
     ficaram = Counter()
     with engine.begin() as conn:
         # Primeiro as categorias: as referências precisam delas para voltar.
+        # Em duas passadas — todas sem pai, depois o pai de cada uma — porque
+        # ``parent_id`` tem chave imediata: recriar a filha antes da mãe (a
+        # ordem em que foram apagadas pode ser essa) derrubaria a reversão.
         for c in plano["categorias"]:
             conn.execute(text(
                 "INSERT INTO categories SELECT * FROM "
-                "jsonb_populate_record(NULL::categories, CAST(:linha AS jsonb)) "
+                "jsonb_populate_record(NULL::categories, CAST(:linha AS jsonb) - 'parent_id') "
                 "ON CONFLICT (id) DO NOTHING"), {"linha": _linha(c["linha"])})
+        for c in plano["categorias"]:
+            pai = _como_dict(c["linha"]).get("parent_id")
+            if pai:
+                conn.execute(text(
+                    "UPDATE categories SET parent_id = CAST(:pai AS uuid) "
+                    "WHERE id = CAST(:id AS uuid)"), {"pai": pai, "id": c["id"]})
         for ref in plano["referencias"]:
             n = conn.execute(text(
                 f"UPDATE {ref['tabela']} SET {ref['coluna']} = CAST(:de AS uuid) "
@@ -478,27 +557,14 @@ def cmd_reverter(engine, caminho: str) -> int:
                 ref).rowcount
             (voltaram if n else ficaram)[ref["tabela"]] += 1
 
-        for o in plano["orcamentos"]:
-            antes = {r["id"]: r for r in o["alvo_antes"]}
-            for r in o["alvo_depois"]:
-                params = {"id": r["id"], "depois": str(r["limite"])}
-                if r["id"] in antes:
-                    n = conn.execute(text(
-                        "UPDATE budgets SET amount_limit = CAST(:antes AS numeric) "
-                        "WHERE id = CAST(:id AS uuid) AND amount_limit = CAST(:depois AS numeric)"),
-                        {**params, "antes": str(antes[r["id"]]["limite"])}).rowcount
-                else:
-                    n = conn.execute(text(
-                        "DELETE FROM budgets "
-                        "WHERE id = CAST(:id AS uuid) AND amount_limit = CAST(:depois AS numeric)"),
-                        params).rowcount
-                (voltaram if n else ficaram)["budgets (categoria nova)"] += 1
-            for r in o["legado"]:
-                conn.execute(text(
-                    "INSERT INTO budgets SELECT * FROM "
-                    "jsonb_populate_record(NULL::budgets, CAST(:linha AS jsonb)) "
-                    "ON CONFLICT DO NOTHING"), {"linha": _linha(r["linha"])})
-                voltaram["budgets (categoria antiga)"] += 1
+        orcamentos = plano["orcamentos"]
+        if any("acao" in o for o in orcamentos):
+            # Backup da versão de 31/10/2026 (``acao`` mover/somar por
+            # registro), a que ficou na main antes da fusão de cronogramas.
+            _reverter_orcamentos_formato_antigo(conn, orcamentos, voltaram, ficaram)
+        else:
+            for o in orcamentos:
+                _reverter_orcamento_fundido(conn, o, _linha, voltaram, ficaram)
 
         for r in plano["regras_cartao"]:
             n = conn.execute(text(
