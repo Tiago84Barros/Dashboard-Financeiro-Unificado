@@ -137,7 +137,7 @@ def test_document_evidence_uses_methodology_names_and_page_numbers():
     evidence = _extract_evidence("\n".join(pages), pages)
     rows = {row["metric_name"]: row for row in evidence}
 
-    assert PARSER_VERSION == "1.7.1"
+    assert PARSER_VERSION == "1.7.2"
     assert rows["vacancia_fisica"]["normalized_value"] == pytest.approx(.075)
     assert rows["wault_anos"]["normalized_value"] == pytest.approx(4.2)
     assert rows["implied_cap_rate"]["normalized_value"] == pytest.approx(.091)
@@ -701,3 +701,34 @@ def test_prazo_medio_ponderado_rejeita_numero_solto_sem_contexto_de_anos():
 
     padrao = _METRIC_PATTERNS["wault_anos"]
     assert padrao.search("prazo médio ponderado de exposição: 45%") is None
+
+
+def test_qualificador_de_locacao_antes_do_prazo_medio_e_wault():
+    """Lacuna a3f64bba: o relatório gerencial da BRCO11 escreve "Os contratos
+    de locação apresentam um prazo médio remanescente de 4,7 anos". O
+    qualificador vem ANTES do gatilho, e o padrão só o aceitava depois — o
+    WAULT estava no PDF do armazém e nunca virava evidência."""
+    from data_pipeline.market.fii_documents import _METRIC_PATTERNS, _extract_evidence
+
+    padrao = _METRIC_PATTERNS["wault_anos"]
+    texto = ("A vacância física dos empreendimentos atualmente é de 7,4%.\n"
+             "Os contratos de locação apresentam um prazo médio remanescente "
+             "de 4,7 anos, dos quais 36% são classificados\ncomo contratos atípicos.")
+    encontrado = padrao.search(texto)
+    assert encontrado and encontrado.group(1) == "4,7"
+    assert padrao.search("O contrato de locação tem prazo médio ponderado de 6 anos").group(1) == "6"
+
+    rows = {r["metric_name"]: r for r in _extract_evidence(texto, [texto], fii_type="tijolo")}
+    assert rows["wault_anos"]["normalized_value"] == pytest.approx(4.7)
+    assert rows["wault_anos"]["validation_status"] == "pending"
+
+
+def test_qualificador_antes_do_prazo_medio_mantem_as_guardas():
+    """A variante nova não afrouxa nada: unidade diferente de anos continua
+    falhando, e o qualificador precisa estar na mesma frase do gatilho."""
+    from data_pipeline.market.fii_documents import _METRIC_PATTERNS
+
+    padrao = _METRIC_PATTERNS["wault_anos"]
+    assert padrao.search("Os contratos de locação têm prazo médio remanescente de 18 meses") is None
+    assert padrao.search("Os contratos de locação somam 40%. O prazo médio remanescente da dívida é de 4,5 anos") is None
+    assert padrao.search("contratos de locação: prazo médio ponderado de exposição: 45%") is None

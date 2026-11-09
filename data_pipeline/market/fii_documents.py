@@ -32,7 +32,7 @@ from data_pipeline.market.fii_sources import metric_observation
 logger = logging.getLogger(__name__)
 
 PARSER_NAME = "fii_public_report"
-PARSER_VERSION = "1.7.1"
+PARSER_VERSION = "1.7.2"
 SCHEMA_VERSION = "fii-evidence-v6"
 
 
@@ -109,9 +109,15 @@ _METRIC_PATTERNS = {
     # precisa ser anos/years — "meses", "dias" ou "%" fazem o casamento
     # falhar em vez de serem ignorados, para não capturar 18 meses como 18
     # anos.
+    #
+    # O qualificador também vem antes do gatilho ("Os contratos de locação
+    # apresentam um prazo médio remanescente de 4,7 anos", BRCO11). Aí ele
+    # precisa estar na mesma frase: sem ponto nem ponto e vírgula no meio.
     "wault_anos": re.compile(
         r"(?:\bWAULT\b|prazo\s+m[eé]dio\s+(?:remanescente|ponderado)\s+"
-        r"(?:dos?\s+contratos?|d[ae]\s+loca[çc][aã]o))"
+        r"(?:dos?\s+contratos?|d[ae]\s+loca[çc][aã]o)|"
+        r"contratos?\s+d[ae]\s+loca[çc][aã]o[^\d.;]{0,40}?"
+        r"prazo\s+m[eé]dio\s+(?:remanescente|ponderado))"
         r"[^\d]{0,40}(\d{1,2}(?:[.,]\d{1,2})?)(?!\d)"
         r"\s*(?:anos?|years?)?"
         r"(?!\s*(?:m[êe]s(?:es)?|dias?|%|por\s*cento))",
