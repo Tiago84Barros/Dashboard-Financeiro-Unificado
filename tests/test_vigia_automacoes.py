@@ -206,6 +206,10 @@ def rodada(monkeypatch, tmp_path):
     monkeypatch.setattr(sv, "runs_agendados", lambda nome, gh: runs[nome])
     # Sem isto a rodada abriria conexão com o armazém local de verdade.
     monkeypatch.setattr(sv, "atualidade_b3_do_armazem", lambda hoje: None)
+    # Idem para a coleta de notícias: com o `.env` da máquina, a rodada leria o
+    # estado da produção e o acervo de verdade (achado do Codex no PR #700). A
+    # rota dos bancos tem teste próprio, com engines injetadas.
+    monkeypatch.setattr(sv, "noticias_do_acervo", lambda: None)
     enviados = []
     import scripts.notificar as notif
     monkeypatch.setattr(notif, "notificar",
@@ -406,3 +410,14 @@ def test_vigia_le_o_estado_da_producao_e_as_noticias_do_acervo(monkeypatch):
     assert set(estados) == {"global"} and por_dia == {}
     monkeypatch.setattr(core.database, "get_engine", lambda: None)
     assert vigia.noticias_do_acervo() is None
+
+
+def test_rodada_inclui_a_coleta_de_noticias_com_dados_sinteticos(rodada, monkeypatch):
+    sv, estado, memoria, enviados = rodada
+    agora = _dt(2026, 10, 9, 22, 30, tzinfo=_tz.utc)
+    estados = {"global": {"ultima_tentativa": agora - _td(hours=40)}}
+    monkeypatch.setattr(sv, "noticias_do_acervo", lambda: (estados, {}))
+    linhas = []
+    sv.vigiar(dry_run=True, estado_publicacao=estado, memoria_path=memoria,
+              agora=agora, saida=linhas.append)
+    assert any("Coleta de notícias não roda" in linha for linha in linhas)
