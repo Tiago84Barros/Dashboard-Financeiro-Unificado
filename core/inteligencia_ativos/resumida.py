@@ -1185,9 +1185,15 @@ def tabela_pares(a: m.AnaliseAtivo, n: int = N_PARES_TABELA) -> TabelaPares:
 def substitutos(a: m.AnaliseAtivo, na_carteira, n: int = N_PARES_TABELA
                 ) -> tuple[prs.Par, ...]:
     """Pares do mesmo grupo que não estão na carteira, os mais próximos
-    primeiro. Proximidade é de perfil (porte, risco), não de qualidade."""
+    primeiro. Proximidade é de perfil (porte, risco), não de qualidade.
+
+    Grupo ampliado para um nível mais largo da taxonomia (poucos pares no
+    segmento) não dá substituto: FII de logística não troca por shopping,
+    nem banco por seguradora (pedido de 08/11/2026; achado P1 do Codex no
+    #701, aplicado aqui por ser a função única do "Se sair, qual
+    substituir?" e do confronto com o Portfólio Global)."""
     c = _comparacao(a)
-    if c is None:
+    if c is None or c.grupo.ampliado:
         return ()
     fora = [p for p in c.grupo.pares if p.ticker not in set(na_carteira)]
     return tuple(sorted(fora, key=lambda p: p.distancia)[:n])

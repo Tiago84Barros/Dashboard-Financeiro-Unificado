@@ -137,16 +137,19 @@ def test_abaixo_do_modelo_com_compra_liberada_vira_aporte():
     assert d.conclusao == cf.MUDAR and "libera compra" in d.texto
 
 
-def test_vender_da_inteligencia_vence_e_ganha_candidato_da_classe():
+def test_vender_da_inteligencia_sem_par_no_segmento_nao_troca_de_setor():
+    """Pedido de 08/11/2026 (BBAS3 e PSSA3 viravam CPFE3): o modelo só tem
+    ativo de outro setor, e a troca não atravessa setores. O ativo em pauta
+    fica sem substituto, dito com todas as letras."""
     v = {"PETR4": _vered("PETR4", "vender", _av(criticos=("dívida",))),
          "ITSA4": _vered("ITSA4", "manter", _av(av_.ADEQUADA))}
-    # Setores conhecidos e diferentes (Petróleo × "x"): troca pela qualidade.
-    d = _conf(v, analises={"PETR4": _analise("PETR4", PETR,
-                                             setor="Petróleo")}
-              ).da_carteira("PETR4")
+    c = _conf(v, analises={"PETR4": _analise("PETR4", PETR,
+                                             setor="Petróleo")})
+    d = c.da_carteira("PETR4")
     assert d.conclusao == cf.MUDAR and "não por causa do modelo" in d.texto
-    assert any("VALE3" in m for m in d.motivos)
-
+    assert c.substituicao_de("PETR4") is None
+    sem = next(x for x in c.sem_substituto if x.sai == "PETR4")
+    assert "Sem par do mesmo segmento" in sem.texto
 
 def test_reduzir_parcial_acima_do_modelo_diz_a_proporcao():
     v = {"PETR4": _vered("PETR4", "reduzir_parcial", proporcao=0.25)}
@@ -297,12 +300,13 @@ def _linhas(tk, valores):
 
 
 def _analise(tk, valores, *, pares=(), setor="Mineração", vm=300.0,
-             vi=200.0):
+             vi=200.0, nivel="segmento", relaxamentos=()):
     """O que ``recomendacao.confrontar`` e ``custo_da_venda`` leem de uma
     ``AnaliseAtivo``: a comparação com os pares e a posição."""
     dados = {"ativo": tk, "tipo": "acao", "moeda": "BRL",
-             "grupo": {"nivel": "segmento", "valor": setor, "pares": [
-                 {"ticker": p, "metricas": m} for p, m in pares]},
+             "grupo": {"nivel": nivel, "valor": setor,
+                       "relaxamentos": list(relaxamentos), "pares": [
+                           {"ticker": p, "metricas": m} for p, m in pares]},
              "linhas": _linhas(tk, valores)}
     ativo = SimpleNamespace(ticker=tk, nome=tk, setor=setor, moeda="BRL",
                             classe_politica="acoes_br", valor_mercado=vm,
@@ -387,18 +391,14 @@ def test_mesmo_setor_fora_dos_pares_usa_as_metricas_do_proprio_ativo():
     assert any("supera em" in m for m in x.motivos)
 
 
-def test_setores_diferentes_so_trocam_com_qualidade_acima():
-    # Setor do snapshot é "x"; PETR4 é Petróleo: segmentos diferentes.
-    igual = _conf_sub(pares=(), setor_sai="Petróleo",
+def test_setores_diferentes_nunca_trocam():
+    """Até 08/11/2026, setores diferentes trocavam com um nível de qualidade
+    acima, e um banco virava elétrica. Agora a troca não atravessa setores,
+    nem com qualidade bem melhor."""
+    for qual in (av_.ADEQUADA, av_.FORTE):
+        c = _conf_sub(pares=(), setor_sai="Petróleo", qual_vale=qual,
                       metricas={"VALE3": VALE_MELHOR})
-    assert igual.substituicao_de("PETR4") is None
-    acima = _conf_sub(pares=(), setor_sai="Petróleo", qual_vale=av_.FORTE,
-                      metricas={"VALE3": VALE_MELHOR})
-    x = acima.substituicao_de("PETR4")
-    assert x is not None and not x.mesmo_segmento
-    assert any("Segmentos diferentes" in m for m in x.motivos)
-    assert not any(m.startswith("Comparação:") for m in x.motivos)
-
+        assert c.substituicao_de("PETR4") is None
 
 def test_ativo_que_a_inteligencia_manda_comprar_nao_e_trocado():
     assert _conf_sub("comprar").substituicao_de("PETR4") is None
@@ -437,13 +437,11 @@ def test_substituicoes_vao_para_a_llm_e_para_a_tela():
     assert "nenhum ativo do modelo" in c.para_llm("ITSA4")["substituicao_do_ativo"]
     html = tela.cartao_substituicoes(c)
     assert "PETR4" in html and "VALE3" in html and "pelos aportes" in html
-    # ITSA4 (adequada) perde para VALE3 (forte) num nível de qualidade, com
-    # setores conhecidos e diferentes: troca entre segmentos, pelos aportes.
-    itsa = _conf(analises={"ITSA4": _analise("ITSA4", PETR,
+    assert "da carteira do Portfólio Global" in html
+    # ITSA4 (holding) contra VALE3 (outro setor): sem troca.
+    assert _conf(analises={"ITSA4": _analise("ITSA4", PETR,
                                              setor="Holdings")}
-                 ).substituicao_de("ITSA4")
-    assert itsa.entra == "VALE3" and itsa.modo == cf.TROCA_GRADUAL
-    # Sem a análise (setor desconhecido), não há evidência: sem troca.
+                 ).substituicao_de("ITSA4") is None
     assert _conf().substituicao_de("ITSA4") is None
     fortes = {tk: _vered(tk, "manter", _av(av_.FORTE))
               for tk in ("PETR4", "ITSA4", "HGLG11")}
@@ -506,3 +504,149 @@ def test_setor_desconhecido_nao_vira_segmento_diferente():
                   analises={"PETR4": _analise("PETR4", PETR, pares=(),
                                               setor="Petróleo")})
     assert c.substituicao_de("PETR4") is None
+
+
+
+# -- substituto do mesmo segmento fora do modelo (pedido de 08/11/2026) -----------
+
+BANCO = {"roe": 12.0, "margem_liquida": 15.0, "p_l": 5.0, "p_vp": 0.8,
+         "volatilidade": 30.0}
+BANCO_MELHOR = {"roe": 21.0, "margem_liquida": 22.0, "p_l": 4.5,
+                "p_vp": 0.8, "volatilidade": 25.0}
+BANCO_CARO = {"roe": 21.0, "margem_liquida": 22.0, "p_l": 9.0, "p_vp": 2.0,
+              "volatilidade": 25.0}
+
+
+def _banco(codigo="reduzir_parcial", pares=(), qual=av_.FRAGIL, avals=None):
+    """BBAS3 na carteira, frágil, sem banco no modelo (só PETR4/VALE3/
+    WEGE3, de outros setores): o substituto tem de vir dos pares."""
+    posicoes = POSICOES + [_pos("BBAS3", "Ações BR", 100.0)]
+    v = {"BBAS3": _vered("BBAS3", codigo, _av(qual), proporcao=1 / 3),
+         "PETR4": _vered("PETR4", "manter", _av(av_.FORTE))}
+    avals = avals or {"VALE3": _av(av_.FORTE), "WEGE3": _av(av_.FORTE),
+                      "AAPL": _av(av_.FORTE)}
+    analises = {"BBAS3": _analise("BBAS3", BANCO, pares=pares,
+                                  setor="Bancos")}
+    return _conf(v, avals, ref=_ref(posicoes=posicoes), analises=analises)
+
+
+def test_banco_nao_vira_eletrica_nem_mineradora():
+    c = _banco(pares=())
+    assert c.substituicao_de("BBAS3") is None
+    sem = next(x for x in c.sem_substituto if x.sai == "BBAS3")
+    assert "Nenhuma troca sugerida" in sem.texto
+
+
+def test_par_do_segmento_fora_do_modelo_vira_substituto():
+    c = _banco(pares=(("ITUB4", BANCO_MELHOR),))
+    x = c.substituicao_de("BBAS3")
+    assert x is not None and x.entra == "ITUB4" and x.origem == cf.PARES
+    assert x.modo == cf.TROCA and "fora do Portfólio Global" in x.texto
+    assert any("só pelas métricas publicadas" in m for m in x.motivos)
+    assert not any("estar no modelo" in m for m in x.motivos)
+    html = tela.cartao_substituicoes(c)
+    assert "par do segmento, fora do modelo" in html
+
+
+def test_sem_par_superior_mostra_alternativas_do_segmento():
+    """O par tem qualidade melhor mas é mais caro: não é claramente
+    superior. A tela não sugere a troca; mostra a alternativa e o que ela
+    perde."""
+    c = _banco(pares=(("ITUB4", BANCO_CARO),))
+    assert c.substituicao_de("BBAS3") is None
+    sem = next(x for x in c.sem_substituto if x.sai == "BBAS3")
+    assert "perdem no preço ou no risco" in sem.texto
+    assert sem.alternativas and sem.alternativas[0].startswith("ITUB4")
+    assert "perde em" in sem.alternativas[0]
+    html = tela.cartao_substituicoes(c)
+    assert "Sem substituto claramente superior no segmento" in html
+    assert c.para_llm("BBAS3")["sem_substituto_no_segmento"]
+
+
+def test_ativo_fora_de_pauta_nao_ganha_alternativas():
+    c = _banco("manter", pares=(("ITUB4", BANCO_CARO),), qual=av_.ADEQUADA)
+    assert not any(x.sai == "BBAS3" for x in c.sem_substituto)
+
+
+def test_modelo_do_mesmo_segmento_vence_par_de_fora():
+    """VALE3 no modelo e entre os pares de PETR4, e um par de fora também
+    superior: vence o do modelo, que passou pela avaliação completa."""
+    pares = (("VALE3", VALE_MELHOR), ("PRIO3", VALE_MELHOR))
+    x = _conf_sub("vender", pares=pares).substituicao_de("PETR4")
+    assert x.entra == "VALE3" and x.origem == cf.MODELO
+
+
+# -- achados do Codex no #701 -----------------------------------------------------
+
+def test_ativo_do_modelo_reprovado_nao_volta_como_par():
+    """P1: WEGE3 está no modelo, mas frágil (reprovado para entrar). Ele
+    também é par de BBAS3: não pode voltar pela porta dos pares, só com
+    métricas, nem ser chamado de "fora do Portfólio Global"."""
+    c = _banco(pares=(("WEGE3", BANCO_MELHOR),),
+               avals={"VALE3": _av(av_.FORTE), "WEGE3": _av(av_.FRAGIL)})
+    assert c.substituicao_de("BBAS3") is None
+    assert not any(x.entra == "WEGE3" for x in c.substituicoes)
+
+
+def test_classe_zerada_na_estrategia_nao_ganha_troca_de_nenhuma_fonte():
+    """P2: com acoes_br = 0 na estratégia, nenhum substituto da classe,
+    nem dos pares de fora do modelo."""
+    v = {"BBAS3": _vered("BBAS3", "reduzir_parcial", _av(av_.FRAGIL),
+                         proporcao=1 / 3)}
+    posicoes = POSICOES + [_pos("BBAS3", "Ações BR", 100.0)]
+    c = cf.montar(_ref(posicoes=posicoes), v, {},
+                  alocacao_estrategia={**ESTRATEGIA, "acoes_br": 0.0},
+                  analises={"BBAS3": _analise(
+                      "BBAS3", BANCO, pares=(("ITUB4", BANCO_MELHOR),),
+                      setor="Bancos")})
+    assert c.substituicao_de("BBAS3") is None
+
+
+def test_poucas_metricas_nao_viram_desvantagem_de_preco_ou_risco():
+    """P2: com só 2 métricas em comum, não dá para dizer que o par perde
+    no preço ou no risco; a tela diz que faltam métricas."""
+    c = _banco(pares=(("ITUB4", {"roe": 21.0, "margem_liquida": 22.0}),))
+    sem = next(x for x in c.sem_substituto if x.sai == "BBAS3")
+    assert "perdem no preço ou no risco" not in sem.texto
+    assert "métricas" in sem.texto and "não dá para concluir" in sem.texto
+
+
+
+def test_grupo_de_pares_ampliado_nao_conta_como_mesmo_segmento():
+    """Codex P1 (#701, 2ª rodada): com poucos pares, a seleção alarga para
+    um nível mais largo (FII de logística junto com shopping). Par desse
+    grupo não prova mesmo segmento: nem par de fora, nem ativo do modelo
+    por estar no grupo."""
+    from core.inteligencia_ativos import pares as prs
+    largo = ("Menos de 3 pares no mesmo segmento (Bancos): nível mais largo.",)
+    posicoes = POSICOES + [_pos("BBAS3", "Ações BR", 100.0)]
+    v = {"BBAS3": _vered("BBAS3", "reduzir_parcial", _av(av_.FRAGIL),
+                         proporcao=1 / 3)}
+    c = cf.montar(_ref(posicoes=posicoes), v, {"VALE3": _av(av_.FORTE)},
+                  alocacao_estrategia=ESTRATEGIA,
+                  analises={"BBAS3": _analise(
+                      "BBAS3", BANCO, setor="Bancos", nivel="setor",
+                      relaxamentos=largo,
+                      pares=(("ITUB4", BANCO_MELHOR),
+                             ("VALE3", BANCO_MELHOR)))})
+    assert c.substituicao_de("BBAS3") is None
+    # o campo estruturado e a leitura de dados antigos, só com o texto
+    assert prs.GrupoPares.de_dict({"relaxamentos": list(largo)}).ampliado
+    assert not prs.GrupoPares.de_dict(
+        {"relaxamentos": ["Ativo sem porte conhecido: tamanho não filtra."]}
+    ).ampliado
+
+
+
+def test_se_sair_qual_substituir_tambem_ignora_grupo_ampliado():
+    """Gêmeo: a função única ``resumida.substitutos`` alimenta o "Se sair,
+    qual substituir?" da decisão; grupo ampliado não dá substituto."""
+    from core.inteligencia_ativos import resumida as rs
+    largo = ("Menos de 3 pares no mesmo segmento (Logística): nível mais "
+             "largo.",)
+    a = _analise("HGLG11", BANCO, setor="Logística", nivel="tipo",
+                 relaxamentos=largo, pares=(("XPML11", BANCO_MELHOR),))
+    assert rs.substitutos(a, set(), 5) == ()
+    fino = _analise("HGLG11", BANCO, setor="Logística",
+                    pares=(("BTLG11", BANCO_MELHOR),))
+    assert [p.ticker for p in rs.substitutos(fino, set(), 5)] == ["BTLG11"]

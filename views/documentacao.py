@@ -2653,8 +2653,9 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
             "qualidade média dos dois lados (de 1, frágil, a 3, forte, ponderada pelo peso), o "
             "peso com alerta eliminatório, a aderência ao modelo e a distribuição por classe "
             "(real, modelo e a sua estratégia). Três expanders detalham as divergências de "
-            "peso de cada ativo, as substituições sugeridas — quando um ativo do modelo é "
-            "melhor que um da carteira — e os ativos do modelo que faltam na carteira, cada um "
+            "peso de cada ativo, as substituições sugeridas — quando um ativo do mesmo "
+            "segmento é melhor que um da carteira — e os ativos do modelo que faltam na "
+            "carteira, cada um "
             "com a conclusão e os motivos.",
             (
                 "core/inteligencia_ativos/confronto_modelo.py (puro); a tela é "
@@ -2670,11 +2671,13 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
                 "prevista na sua estratégia",
                 "Classe: a sua estratégia é a premissa; perto dela, manter, longe dela, "
                 "rebalancear pelos aportes",
-                "Substituição: no mesmo segmento, a régua do 'Se sair, qual substituir?' "
-                "(recomendacao.confrontar: melhor na qualidade e não pior no preço nem no "
-                "risco, com três métricas no mínimo); entre segmentos (os dois setores "
-                "conhecidos e distintos), um nível de qualidade acima; setor desconhecido "
-                "não troca. Uma troca por ativo, nunca para quem a Inteligência manda comprar",
+                "Substituição: só dentro do mesmo segmento, pela régua do 'Se sair, qual "
+                "substituir?' (recomendacao.confrontar: melhor na qualidade e não pior no "
+                "preço nem no risco, com três métricas no mínimo). O substituto vem do "
+                "Portfólio Global ou, sem equivalente lá, dos pares do ativo fora da carteira. "
+                "Sem nenhum claramente superior, o ativo em pauta mostra as alternativas do "
+                "segmento e o que cada uma perde. Uma troca por ativo, nunca para quem a "
+                "Inteligência manda comprar",
                 "A troca só vende (com o custo e o IR estimados) quando a Inteligência já "
                 "indica vender, substituir ou reduzir; nos demais casos é pelos aportes, "
                 "sem vender. No mesmo segmento, sem métricas para comparar, não há troca",

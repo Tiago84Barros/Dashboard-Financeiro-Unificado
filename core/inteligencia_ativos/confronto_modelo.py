@@ -15,14 +15,17 @@ O que ele responde, sempre que o Portfólio Global tem modelo e alocação:
    ganha uma conclusão (mudar ou manter a escolha do investidor) e os motivos.
 4. **Inclusões**: os ativos do modelo fora da carteira, cada um com a
    conclusão (candidato, não incluir agora, sem avaliação) e o porquê.
-5. **Substituições** (pedido de 08/11/2026): quando um ativo do modelo é
-   melhor que um da carteira, a troca sugerida e o porquê. "Melhor" é a
-   régua que a Inteligência já usa no "Se sair, qual substituir?"
-   (``recomendacao.confrontar``, métrica a métrica, no mesmo segmento) ou,
-   entre segmentos diferentes, um nível de qualidade acima. Quando a
-   Inteligência ainda sustenta o ativo da carteira, a troca é pelos aportes,
-   sem vender; só vira venda quando ela já indica vender, substituir ou
-   reduzir. No mesmo segmento, sem métricas para comparar, não há troca.
+5. **Substituições** (pedidos de 08/11/2026): quando um ativo é melhor que
+   um da carteira, a troca sugerida e o porquê -- **sempre dentro do mesmo
+   segmento** (banco não troca por elétrica). "Melhor" é a régua do "Se
+   sair, qual substituir?" (``recomendacao.confrontar``: melhor na
+   qualidade, não pior no preço nem no risco, métrica a métrica). O
+   candidato vem primeiro do Portfólio Global; sem equivalente lá, dos pares
+   do próprio ativo fora da carteira. Sem nenhum claramente superior, o
+   ativo que a Inteligência já questiona ganha as alternativas do segmento
+   com qualidade melhor e o que cada uma perde. Quando a Inteligência ainda
+   sustenta o ativo, a troca é pelos aportes, sem vender; só vira venda
+   quando ela já indica vender, substituir ou reduzir.
 
 Por que isto não reabre a confirmação circular que ``referencia_modelo``
 evita (o modelo é montado em parte com o veredito desta aba):
@@ -259,6 +262,7 @@ class Substituicao:
     motivos: tuple[str, ...] = ()
     peso_real_sai: float | None = None
     peso_modelo_entra: float | None = None
+    origem: str = "modelo"            # modelo | pares
 
     @property
     def rotulo_modo(self) -> str:
@@ -266,6 +270,7 @@ class Substituicao:
 
     def como_dict(self) -> dict:
         return {"sai": self.sai, "entra": self.entra,
+                "origem": ROTULO_ORIGEM.get(self.origem, self.origem),
                 "modo": self.rotulo_modo,
                 "mesmo_segmento": self.mesmo_segmento,
                 "peso_real_sai_pct": _r(self.peso_real_sai),
@@ -285,6 +290,7 @@ class Confronto:
     divergencias: tuple[Divergencia, ...] = ()
     candidatos: tuple[Divergencia, ...] = ()
     substituicoes: tuple[Substituicao, ...] = ()
+    sem_substituto: tuple["SemSubstituto", ...] = ()
     nao_avaliados: int = 0            # do modelo, fora da carteira, sem avaliação
     aderencia: float | None = None    # Σ min(real, modelo), em % da base
     avisos: tuple[str, ...] = ()
@@ -323,6 +329,8 @@ class Confronto:
             ][:N_CANDIDATOS_LLM],
             "substituicoes_sugeridas": [x.como_dict()
                                         for x in self.substituicoes],
+            "sem_substituto_no_segmento": [x.como_dict()
+                                           for x in self.sem_substituto],
         }
         if ticker is not None:
             sub = self.substituicao_de(ticker)
@@ -565,10 +573,19 @@ def _dobra(texto: str | None) -> str:
                    if not unicodedata.combining(ch)).casefold().strip()
 
 
-def _pares_do_ativo(a) -> dict[str, prs.Par]:
+def _grupo_do_ativo(a) -> prs.GrupoPares | None:
     if a is None or not getattr(a.pares, "dados", None):
+        return None
+    return prs.ComparacaoPares.de_dict(a.pares.dados).grupo
+
+
+def _pares_do_ativo(a) -> dict[str, prs.Par]:
+    """Os pares que provam mesmo segmento: os de um grupo que não foi
+    ampliado para um nível mais largo da taxonomia (achado P1 do Codex no
+    #701, 2ª rodada: FII de logística junto com shopping)."""
+    grupo = _grupo_do_ativo(a)
+    if grupo is None or grupo.ampliado:
         return {}
-    grupo = prs.ComparacaoPares.de_dict(a.pares.dados).grupo
     return {refm.normalizar(p.ticker): p for p in grupo.pares}
 
 
@@ -586,51 +603,115 @@ def elegivel_para_entrar(av: av_.Avaliacao | None,
     return alvo_estrategia is None or alvo_estrategia > 0
 
 
-def _comparar(a, sai: refm.LinhaAtivo, av_sai: av_.Avaliacao | None,
-              entra: refm.LinhaAtivo, av_entra: av_.Avaliacao,
-              metricas: dict | None):
-    """(é melhor, mesmo segmento, Confronto métrica a métrica | None).
+MODELO, PARES = "modelo", "pares"
+ROTULO_ORIGEM = {MODELO: "da carteira do Portfólio Global",
+                 PARES: "do mesmo segmento, fora do Portfólio Global"}
+# Alternativas mostradas quando nenhum par é claramente superior.
+N_ALTERNATIVAS = 3
 
-    Mesmo segmento (o ativo do modelo está entre os pares do ativo da
-    carteira, ou o setor é o mesmo): vale só ``recomendacao.confrontar`` --
-    melhor na qualidade, não pior no preço nem no risco, com três métricas
-    no mínimo -- e a qualidade não pode ser menor; sem comparação possível,
-    não troca. Segmentos diferentes (os dois setores conhecidos e distintos):
-    os múltiplos não se comparam entre setores, então só um nível de
-    qualidade acima conta. Setor desconhecido de um dos lados: não troca."""
-    nota_sai = NOTA_QUALIDADE.get(av_sai.qualidade) if av_sai else None
-    nota_entra = NOTA_QUALIDADE[av_entra.qualidade]
-    if nota_sai is not None and nota_entra < nota_sai:
-        return False, False, None
+
+@dataclass(frozen=True)
+class _Candidato:
+    """Quem pode entrar no lugar de um ativo da carteira: um ativo do modelo
+    (com a avaliação completa da Inteligência) ou um par do mesmo segmento
+    fora do modelo (só as métricas publicadas dos pares)."""
+    ticker: str
+    nome: str
+    origem: str
+    par: prs.Par
+    avaliacao: av_.Avaliacao | None = None
+    peso_modelo: float | None = None
+
+
+def _candidatos(a, sai: refm.LinhaAtivo, entram_modelo: list,
+                avaliacoes_modelo: dict, metricas_modelo: dict,
+                na_carteira: set[str],
+                do_modelo: set[str] = frozenset()) -> list[_Candidato]:
+    """Os candidatos do MESMO segmento de ``sai`` (pedido do usuário de
+    08/11/2026: banco não troca por elétrica). Do modelo: o ativo está entre
+    os pares de ``sai`` ou tem o mesmo setor conhecido. De fora do modelo:
+    os pares de ``sai`` que não estão na carteira -- os mesmos do "Se sair,
+    qual substituir?", só que sem o corte nos 5 mais próximos."""
+    if a is None:
+        return []
     pares = _pares_do_ativo(a)
-    par = pares.get(entra.ticker)
-    setor_sai = _dobra(a.ativo.setor if a is not None else None)
-    setor_entra = _dobra(entra.setor)
-    mesmo = par is not None or (bool(setor_sai) and setor_sai == setor_entra)
-    # Setor ausente não prova segmento diferente (achado P1 do Codex no PR
-    # #697, 2ª rodada): sem os dois setores conhecidos, falta evidência.
-    diferente = (not mesmo and bool(setor_sai) and bool(setor_entra))
-    if mesmo:
-        # No mesmo segmento a régua é a comparação métrica a métrica. Sem
-        # métricas que se sobreponham falta evidência, e a qualidade sozinha
-        # não a substitui: dado ausente não vira troca (achado P2 do Codex no
-        # PR #697).
-        if par is None and metricas:
-            par = prs.Par(entra.ticker, entra.nome, 0.0,
+    setor_sai = _dobra(a.ativo.setor)
+    saida: list[_Candidato] = []
+    vistos: set[str] = set()
+    for x in entram_modelo:
+        if x.classe != sai.classe:
+            continue
+        par = pares.get(x.ticker)
+        mesmo = par is not None or (bool(setor_sai)
+                                    and setor_sai == _dobra(x.setor))
+        if not mesmo:
+            continue
+        if par is None:
+            metricas = metricas_modelo.get(x.ticker)
+            if not metricas:
+                continue   # sem métricas não há comparação (achado P2, #697)
+            par = prs.Par(x.ticker, x.nome, 0.0,
                           "carteira do Portfólio Global", dict(metricas))
-        cf = (rec.confrontar(a, par)
-              if a is not None and par is not None else None)
-        if cf is None:
-            return False, True, None
-        return cf.claramente_superior, True, cf
-    if not diferente:
-        return False, False, None
-    return (nota_sai is not None and nota_entra > nota_sai), False, None
+        saida.append(_Candidato(x.ticker, x.nome, MODELO, par,
+                                avaliacoes_modelo.get(x.ticker),
+                                x.peso_modelo))
+        vistos.add(x.ticker)
+    for p in (rs.substitutos(a, na_carteira, prs.N_MAXIMO) if pares else ()):
+        tk = refm.normalizar(p.ticker)
+        # Ativo do modelo só entra pela porta do modelo, com a avaliação
+        # completa: reprovado lá (frágil, alerta, teto) não volta como par,
+        # só com métricas (achado P1 do Codex no #701).
+        if tk in vistos or tk in na_carteira or tk in do_modelo:
+            continue
+        saida.append(_Candidato(tk, str(p.nome or tk), PARES, p))
+        vistos.add(tk)
+    return saida
+
+
+def _comparar(a, av_sai: av_.Avaliacao | None, c: _Candidato):
+    """``recomendacao.confrontar``: a régua única do "Se sair, qual
+    substituir?" -- melhor na qualidade, não pior no preço nem no risco,
+    com três métricas no mínimo. Do modelo, a qualidade medida também não
+    pode ser menor. Só dentro do mesmo segmento (``_candidatos``)."""
+    cf = rec.confrontar(a, c.par)
+    if cf is None:
+        return None
+    if (c.avaliacao is not None and av_sai is not None
+            and av_sai.qualidade in NOTA_QUALIDADE
+            and NOTA_QUALIDADE.get(c.avaliacao.qualidade, 0.0)
+            < NOTA_QUALIDADE[av_sai.qualidade]):
+        return None
+    return cf
+
+
+@dataclass(frozen=True)
+class SemSubstituto:
+    """Ativo que a Inteligência tira de pauta (vender, reduzir, acompanhar
+    ou qualidade frágil) sem par claramente superior no segmento: as
+    alternativas de qualidade melhor, com o que cada uma perde."""
+    sai: str
+    nome_sai: str
+    texto: str
+    alternativas: tuple[str, ...] = ()
+
+    def como_dict(self) -> dict:
+        return {"ativo": self.sai, "explicacao": self.texto,
+                "alternativas_do_segmento": list(self.alternativas)}
+
+
+def _em_pauta(v: vd.Veredito | None) -> bool:
+    """A Inteligência já questiona o ativo: vale procurar quem o substitua."""
+    if v is None:
+        return False
+    codigo = getattr(v.recomendacao, "codigo", None)
+    return (codigo in (rs.VENDER, rs.SUBSTITUIR, rs.REDUZIR_PARCIAL,
+                       rs.ACOMPANHAR)
+            or (v.avaliacao is not None
+                and v.avaliacao.qualidade == av_.FRAGIL))
 
 
 def _substituicao(sai: refm.LinhaAtivo, a, v: vd.Veredito | None,
-                  entra: refm.LinhaAtivo, av_entra: av_.Avaliacao,
-                  mesmo: bool, cf) -> Substituicao:
+                  c: _Candidato, cf) -> Substituicao:
     d = v.recomendacao if v is not None else None
     codigo = getattr(d, "codigo", None)
     av_sai = v.avaliacao if v is not None else None
@@ -641,32 +722,30 @@ def _substituicao(sai: refm.LinhaAtivo, a, v: vd.Veredito | None,
     deixa = codigo in (rs.VENDER, rs.SUBSTITUIR, rs.REDUZIR_PARCIAL)
     q_sai = (av_.ROTULO_LEITURA[av_sai.qualidade].lower()
              if av_sai is not None else "sem leitura")
-    q_entra = av_.ROTULO_LEITURA[av_entra.qualidade].lower()
-    como = (f"{entra.ticker} é melhor no mesmo segmento, métrica a métrica"
-            if cf is not None else
-            f"{entra.ticker} tem qualidade {q_entra}, um nível acima")
-    motivos: list[str] = []
-    if cf is not None:
-        motivos.append(f"Comparação: {cf.resumo}.")
-    motivos.append(f"Qualidade: {sai.ticker} {q_sai} × {entra.ticker} "
-                   f"{q_entra}.")
-    motivos.append(f"Avaliação de {entra.ticker}: {av_entra.resumo()}")
+    como = (f"{c.ticker} ({ROTULO_ORIGEM[c.origem]}) é melhor no mesmo "
+            "segmento, métrica a métrica")
+    motivos: list[str] = [f"Comparação: {cf.resumo}."]
+    if c.avaliacao is not None:
+        q_entra = av_.ROTULO_LEITURA[c.avaliacao.qualidade].lower()
+        motivos.append(f"Qualidade: {sai.ticker} {q_sai} × {c.ticker} "
+                       f"{q_entra}.")
+        motivos.append(f"Avaliação de {c.ticker}: {c.avaliacao.resumo()}")
+        if c.avaliacao.preco == av_.CARO:
+            motivos.append(f"Preço de {c.ticker} acima do normal: entre aos "
+                           "poucos.")
+    else:
+        motivos.append(f"{c.ticker} foi comparado só pelas métricas "
+                       "publicadas dos pares: notícias, alertas e o "
+                       "histórico de valuation dele não entraram. Confira "
+                       "antes de comprar.")
     if v is not None:
         motivos.append(f"Decisão da Inteligência para {sai.ticker}: "
                        f"{v.decisao} — {v.detalhe}")
-    if not mesmo:
-        motivos.append("Segmentos diferentes: a troca muda a exposição "
-                       "setorial da carteira, e os múltiplos não se comparam "
-                       "entre setores; por isso a régua é só o nível de "
-                       "qualidade.")
-    if av_entra.preco == av_.CARO:
-        motivos.append(f"Preço de {entra.ticker} acima do normal: entre aos "
-                       "poucos.")
     mom = getattr(d, "momento", None)
     if mom is not None and mom.linha():
         motivos.append(mom.linha())
     sub_rec = getattr(d, "substituto", None)
-    if sub_rec is not None and refm.normalizar(sub_rec.ticker) != entra.ticker:
+    if sub_rec is not None and refm.normalizar(sub_rec.ticker) != c.ticker:
         motivos.append("Entre os pares do segmento, a Inteligência também "
                        f"aponta {sub_rec.resumo}.")
 
@@ -678,44 +757,99 @@ def _substituicao(sai: refm.LinhaAtivo, a, v: vd.Veredito | None,
             motivos += list(custo.linhas) + list(custo.limitacoes)
         porque = (v.motivo or v.detalhe) if v is not None else f"qualidade {q_sai}"
         quanto = (f" {fracao * 100:.0f}% da posição de" if fracao < 1 else "")
-        texto = (f"Trocar{quanto} {sai.ticker} por {entra.ticker}: "
-                 f"{como}, e {sai.ticker} já não se "
-                 f"sustenta pela própria avaliação ({porque}).")
+        texto = (f"Trocar{quanto} {sai.ticker} por {c.ticker}: {como}, e "
+                 f"{sai.ticker} já não se sustenta pela própria avaliação "
+                 f"({porque}).")
         modo = TROCA
     else:
-        texto = (f"Trocar {sai.ticker} por {entra.ticker} aos poucos: "
-                 f"{como}. Direcione os próximos "
-                 f"aportes da classe para {entra.ticker} e não reforce "
-                 f"{sai.ticker}. Vender agora não se justifica: "
+        texto = (f"Trocar {sai.ticker} por {c.ticker} aos poucos: {como}. "
+                 f"Direcione os próximos aportes do segmento para {c.ticker} "
+                 f"e não reforce {sai.ticker}. Vender agora não se justifica: "
                  + (f"a Inteligência mantém {sai.ticker} ({v.decisao}), e "
                     if v is not None else "")
                  + "a venda teria custo e imposto.")
         modo = TROCA_GRADUAL
-    base = "nas métricas e na qualidade" if cf is not None else "na qualidade"
-    motivos.append(f"A sugestão se apoia {base} de {entra.ticker}, não no "
-                   "fato de ele estar no modelo.")
+    if c.origem == MODELO:
+        motivos.append(f"A sugestão se apoia nas métricas e na qualidade de "
+                       f"{c.ticker}, não no fato de ele estar no modelo.")
     return Substituicao(
-        sai=sai.ticker, nome_sai=sai.nome, entra=entra.ticker,
-        nome_entra=entra.nome, classe=sai.classe, modo=modo,
-        mesmo_segmento=mesmo, texto=texto, motivos=tuple(motivos),
-        peso_real_sai=sai.peso_real, peso_modelo_entra=entra.peso_modelo)
+        sai=sai.ticker, nome_sai=sai.nome, entra=c.ticker,
+        nome_entra=c.nome, classe=sai.classe, modo=modo,
+        mesmo_segmento=True, texto=texto, motivos=tuple(motivos),
+        peso_real_sai=sai.peso_real, peso_modelo_entra=c.peso_modelo,
+        origem=c.origem)
+
+
+def _sem_substituto(sai: refm.LinhaAtivo, comparados: list) -> SemSubstituto:
+    """Nenhum candidato do segmento passa na régua: diz isso e mostra os que
+    têm qualidade melhor. Separa quem perde de fato no preço ou no risco de
+    quem só não tem métricas suficientes para concluir (achado P2 do Codex
+    no #701: falta de dado não é desvantagem)."""
+    melhores = [(c, cf) for c, cf in comparados if cf.saldo_qualidade > 0]
+    perdem = [(c, cf) for c, cf in melhores
+              if cf.n >= rec.MIN_METRICAS_TROCA
+              and (cf.saldo_valuation < 0 or cf.saldo_risco < 0)]
+    poucas = [(c, cf) for c, cf in melhores if cf.n < rec.MIN_METRICAS_TROCA]
+    def ordem(x):
+        return (-x[1].saldo_qualidade, x[0].origem != MODELO, x[0].ticker)
+    perdem.sort(key=ordem)
+    poucas.sort(key=ordem)
+    alternativas = tuple(
+        f"{c.ticker} ({c.nome}, {ROTULO_ORIGEM[c.origem]}): {cf.resumo}"
+        for c, cf in perdem[:N_ALTERNATIVAS])
+    alternativas += tuple(
+        f"{c.ticker} ({c.nome}, {ROTULO_ORIGEM[c.origem]}): {cf.resumo} — "
+        f"só {cf.n} métrica(s) em comum, menos que as "
+        f"{rec.MIN_METRICAS_TROCA} da régua"
+        for c, cf in poucas[:max(0, N_ALTERNATIVAS - len(alternativas))])
+    if not comparados:
+        texto = (f"Sem par do mesmo segmento com métricas para comparar com "
+                 f"{sai.ticker}, no Portfólio Global nem entre os pares fora "
+                 "da carteira. Nenhuma troca sugerida.")
+    elif perdem:
+        texto = (f"Nenhum par do segmento de {sai.ticker} é claramente "
+                 "superior: os de qualidade melhor perdem no preço ou no "
+                 "risco. Trocar por eles é pagar mais caro (ou correr mais "
+                 "risco) por qualidade; a escolha é sua, não uma sugestão.")
+        if poucas:
+            texto += (" Outros têm qualidade melhor nas métricas disponíveis, "
+                      "mas com poucas métricas em comum não dá para concluir.")
+    elif poucas:
+        texto = (f"Há pares do segmento de {sai.ticker} com qualidade melhor "
+                 "nas métricas disponíveis, mas com menos métricas em comum "
+                 "que a régua pede: não dá para concluir se são melhores. "
+                 "Nenhuma troca sugerida.")
+    else:
+        texto = (f"Nenhum par do segmento de {sai.ticker} tem qualidade "
+                 "melhor nas métricas comparadas. Nenhuma troca sugerida.")
+    return SemSubstituto(sai.ticker, sai.nome, texto, alternativas)
 
 
 def substituicoes(ref: refm.ReferenciaModelo, vereditos: dict,
                   avaliacoes_modelo: dict, analises: dict,
                   metricas_modelo: dict, alocacao_estrategia: dict | None
-                  ) -> list[Substituicao]:
-    """No máximo uma troca por ativo da carteira: o melhor ativo do modelo,
-    fora da carteira e da mesma classe, que o supera. Ativo que a
-    Inteligência manda comprar mais não é trocado."""
+                  ) -> tuple[list[Substituicao], list[SemSubstituto]]:
+    """No máximo uma troca por ativo da carteira, sempre dentro do mesmo
+    segmento: primeiro o ativo do modelo claramente superior, depois o par
+    de fora do modelo. Ativo que a Inteligência manda comprar mais não é
+    trocado. Ativo em pauta sem par superior ganha as alternativas do
+    segmento (``SemSubstituto``)."""
     entram = [x for x in ref.fora_da_carteira(len(ref.ativos))
               if x.classe in CLASSES_ATIVO
               and elegivel_para_entrar(
                   avaliacoes_modelo.get(x.ticker),
                   _alvo_na_base(alocacao_estrategia, x.classe, ref.base))]
+    na_carteira = {tk for tk, x in ref.ativos.items() if x.peso_real}
+    do_modelo = {tk for tk, x in ref.ativos.items() if x.peso_modelo}
     saida: list[Substituicao] = []
+    sem: list[SemSubstituto] = []
     for sai in ref.ativos.values():
         if sai.peso_real is None or sai.classe not in CLASSES_ATIVO:
+            continue
+        # Classe que a estratégia zera não recebe aporte nem troca, venha o
+        # substituto de onde vier (achado P2 do Codex no #701).
+        alvo_classe = _alvo_na_base(alocacao_estrategia, sai.classe, ref.base)
+        if alvo_classe is not None and alvo_classe <= 0:
             continue
         v = vereditos.get(sai.ticker)
         if v is not None and getattr(v.recomendacao, "codigo",
@@ -723,28 +857,26 @@ def substituicoes(ref: refm.ReferenciaModelo, vereditos: dict,
             continue
         a = analises.get(sai.ticker)
         av_sai = v.avaliacao if v is not None else None
-        melhores = []
-        for entra in entram:
-            if entra.classe != sai.classe:
-                continue
-            av_entra = avaliacoes_modelo[entra.ticker]
-            melhor, mesmo, cf = _comparar(a, sai, av_sai, entra, av_entra,
-                                          metricas_modelo.get(entra.ticker))
-            if not melhor:
-                continue
-            nota_sai = NOTA_QUALIDADE.get(av_sai.qualidade, 0.0) if av_sai else 0.0
-            chave = (cf is not None, NOTA_QUALIDADE[av_entra.qualidade]
-                     - nota_sai, cf.saldo_qualidade if cf else 0,
-                     entra.peso_modelo or 0.0)
-            melhores.append((chave, entra, av_entra, mesmo, cf))
-        if not melhores:
-            continue
-        melhores.sort(key=lambda x: x[0], reverse=True)
-        _, entra, av_entra, mesmo, cf = melhores[0]
-        saida.append(_substituicao(sai, a, v, entra, av_entra, mesmo, cf))
+        comparados = []
+        for c in _candidatos(a, sai, entram, avaliacoes_modelo,
+                             metricas_modelo, na_carteira, do_modelo):
+            cf = _comparar(a, av_sai, c)
+            if cf is not None:
+                comparados.append((c, cf))
+        superiores = [(c, cf) for c, cf in comparados
+                      if cf.claramente_superior]
+        if superiores:
+            superiores.sort(key=lambda x: (x[0].origem != MODELO,
+                                           -x[1].saldo_qualidade,
+                                           -(x[0].peso_modelo or 0.0),
+                                           x[0].ticker))
+            c, cf = superiores[0]
+            saida.append(_substituicao(sai, a, v, c, cf))
+        elif _em_pauta(v):
+            sem.append(_sem_substituto(sai, comparados))
     saida.sort(key=lambda x: (x.modo != TROCA, -(x.peso_real_sai or 0.0),
                               x.sai))
-    return saida
+    return saida, sem
 
 
 # -- montagem ---------------------------------------------------------------------
@@ -843,7 +975,7 @@ def montar(ref: refm.ReferenciaModelo,
             qualidade=(av_.ROTULO_LEITURA[av.qualidade] if av else None),
             nota=NOTA_QUALIDADE.get(av.qualidade) if av else None))
 
-    subs = substituicoes(
+    subs, sem_sub = substituicoes(
         ref, vereditos, avals,
         {refm.normalizar(k): a for k, a in (analises or {}).items()},
         {refm.normalizar(k): v for k, v in (metricas_modelo or {}).items()},
@@ -884,5 +1016,6 @@ def montar(ref: refm.ReferenciaModelo,
         disponivel=True, base=ref.base, carteira=carteira, modelo=modelo,
         por_classe=tuple(por_classe), classes=tuple(classes),
         divergencias=tuple(divergencias), candidatos=tuple(candidatos),
-        substituicoes=tuple(subs), nao_avaliados=nao_avaliados,
+        substituicoes=tuple(subs), sem_substituto=tuple(sem_sub),
+        nao_avaliados=nao_avaliados,
         aderencia=aderencia, avisos=ref.avisos)
