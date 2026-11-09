@@ -79,6 +79,33 @@ CHAVES_DE_INVESTIMENTO: frozenset[str] = frozenset(
 )
 
 
+# ── achar a categoria pelo nome ──────────────────────────────────────────────
+
+#: A busca de categoria por NOME, única para quem grava sem o id na mão: o
+#: importador da fatura (``core.controle._get_or_create_category``), a
+#: unificação (``scripts/unificar_categorias_cartao.py``) e a migração de CSV
+#: antiga (``scripts/migrate_csv_transactions.py``). Parâmetros: ``name``,
+#: ``uid`` e ``type`` (o tipo que quem chama espera).
+#:
+#: O mesmo nome pode existir em tipos diferentes — a 072 só proíbe repetir
+#: dono+nome+tipo —, e uma "Saúde" de receita criada pela pessoa não pode
+#: vencer a "Saúde" de despesa do sistema: o tipo pesa primeiro, e no empate
+#: fica a categoria da pessoa. NÃO filtra pelo tipo: quando só existe a de
+#: mesmo nome com outro tipo, ela serve, porque criar outra partiria a
+#: categoria em duas (ex.: "Pagamento de Cartão" é ``transfer`` no banco e
+#: há quem a peça como ``expense``). A cópia que não olhava o tipo era o
+#: defeito que a revisão do PR #636 achou.
+SQL_BUSCAR_CATEGORIA = """
+    SELECT id::text
+    FROM categories
+    WHERE LOWER(name) = LOWER(:name)
+      AND (user_id = CAST(:uid AS uuid) OR user_id IS NULL)
+    ORDER BY CASE WHEN type = :type THEN 0 ELSE 1 END,
+             CASE WHEN user_id = CAST(:uid AS uuid) THEN 0 ELSE 1 END
+    LIMIT 1
+"""
+
+
 # ── as categorias do formulário ──────────────────────────────────────────────
 
 #: Tipo escolhido na tela → tipo gravado em ``categories.type``.

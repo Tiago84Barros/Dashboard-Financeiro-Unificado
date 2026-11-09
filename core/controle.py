@@ -57,6 +57,7 @@ from typing import Optional
 from core import orcamento
 from core.categorias import (
     CHAVES_DE_INVESTIMENTO,
+    SQL_BUSCAR_CATEGORIA,
     SQL_INVESTIMENTO,
     normalizar,
 )
@@ -825,16 +826,11 @@ def _get_or_create_category(conn, owner: str, name: str, cat_type: str) -> str |
     # Uma única trava por usuário evita que duas faturas concorrentes criem
     # categorias homônimas antes de enxergarem o commit uma da outra.
     acquire_transaction_import_lock(conn, "category-upsert", owner)
+    # A busca é a única do projeto (``core.categorias.SQL_BUSCAR_CATEGORIA``):
+    # o tipo pedido pesa primeiro, sem filtrar por ele.
     row = conn.execute(
-        text("""
-            SELECT id::text
-            FROM categories
-            WHERE LOWER(name) = LOWER(:name)
-              AND (user_id = :uid OR user_id IS NULL)
-            ORDER BY CASE WHEN user_id = :uid THEN 0 ELSE 1 END
-            LIMIT 1
-        """),
-        {"name": clean, "uid": owner},
+        text(SQL_BUSCAR_CATEGORIA),
+        {"name": clean, "uid": owner, "type": cat_type},
     ).fetchone()
     if row:
         return row.id

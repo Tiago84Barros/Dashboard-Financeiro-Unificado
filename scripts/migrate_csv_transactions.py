@@ -20,13 +20,20 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import create_engine, text
 
-# Script standalone -- nao importa nada de core/ (evita dependencia do Streamlit)
+# Script standalone -- nao importa core/ que dependa do Streamlit. A excecao e
+# core.categorias, que nao o carrega e guarda a busca de categoria por nome
+# unica do projeto (SQL_BUSCAR_CATEGORIA).
 _ROOT = Path(__file__).resolve().parent.parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from core.categorias import SQL_BUSCAR_CATEGORIA  # noqa: E402
 
 # Carrega .env do projeto
 try:
@@ -116,18 +123,16 @@ def _get_or_create_category(conn, owner_uid: str, name: str,
                              cache: dict, dry_run: bool) -> str | None:
     if name in cache:
         return cache[name]
+    cat_type = _CAT_TYPE.get(name, "expense")
+    # A busca única do projeto: o tipo esperado na frente, e no empate a
+    # categoria do dono. A cópia que havia aqui escolhia qualquer uma.
     row = conn.execute(
-        text("""
-            SELECT id::text FROM categories
-            WHERE name = :name AND (user_id = :uid OR user_id IS NULL)
-            LIMIT 1
-        """),
-        {"name": name, "uid": owner_uid},
+        text(SQL_BUSCAR_CATEGORIA),
+        {"name": name, "uid": owner_uid, "type": cat_type},
     ).fetchone()
     if row:
         cache[name] = row[0]
         return row[0]
-    cat_type = _CAT_TYPE.get(name, "expense")
     print(f"    [+] Nova categoria: {name!r} (type={cat_type})")
     if not dry_run:
         r = conn.execute(
