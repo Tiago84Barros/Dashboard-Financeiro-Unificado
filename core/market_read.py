@@ -45,6 +45,7 @@ from core.data_quality import (
     suprimir_razoes_sobre_patrimonio_negativo as _suprime_razoes_sobre_patrimonio_negativo,
 )
 from core.dividend_types import sql_safra_canonica as _sql_safra_canonica
+from core.fii_lookthrough import apply_exposures
 from core.fii_ticker import sql_ticker_fii as _sql_ticker_fii
 from core.liquidez import procedencia_liquidez
 from core.observacao_ausente import valor_observado
@@ -1172,9 +1173,10 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
             # quando o cadastro vinha vazio. Com numero preenchido, por mais
             # absurdo que fosse, ninguem conferia, e o piso de liquidez da
             # politica era derrotado pela entrada em vez de pela regra.
+            from core.liquidez import PISO_DECISAO as _piso_liq
             from core.liquidez import liquidez_para_decisao as _liq
             escolhas = [
-                _liq(declarada, observada, meses_observados=meses)
+                _liq(declarada, observada, meses_observados=meses, piso=_piso_liq)
                 for declarada, observada, meses in zip(
                     base["Liquidez_Diaria"], base["Liquidity_Fallback"],
                     base.get("Liquidity_Months", pd.Series([0] * len(base))))
@@ -1310,16 +1312,9 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
                     "raw_metric_name": raw_metric,
                 }
         if not exposures.empty:
-            exp = exposures[exposures["ticker"] == ticker]
-            for kind, group in exp.groupby("exposure_type"):
-                mapping = {str(r.exposure_name): float(r.exposure_weight) for r in group.itertuples()}
-                key = {"tenant": "tenants", "debtor": "debtors", "issuer": "issuers",
-                       "indexer": "indexers", "region": "regions",
-                       "holding": "holdings"}.get(str(kind))
-                if key:
-                    row[key] = mapping
-                elif kind in ("manager", "sector") and mapping:
-                    row[str(kind)] = max(mapping, key=mapping.get)
+            # Mesmo mapeamento do PIT; `segment` (cadastro do mensal) so
+            # preenche `sector` quando nem inquilino nem brapi o deram.
+            apply_exposures(row, exposures[exposures["ticker"] == ticker].to_dict("records"))
         observed_calibrations = [calibration_map[key] for key in row
                                  if key in calibration_map]
         row["parser_calibration"] = (sum(observed_calibrations) / len(observed_calibrations)

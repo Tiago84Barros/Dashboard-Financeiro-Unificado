@@ -94,9 +94,34 @@ PESOS_MEDICAO = {"Integridade": 0.35, "Frescor": 0.25}
 # entao fica fora dos pesos que ``_declarar_nao_medidos`` completa.
 PREGAO_DO_CHAT = "Pregão diário (chat)"
 PESO_PREGAO_DO_CHAT = 0.05
-PESOS_COM_PREGAO = {"Integridade": 0.35, "Frescor": 0.20}  # 0,20 + 0,05 = 0,25
 #: Dias uteis de atraso com que o pregao do chat ja vale zero.
 PREGAO_VELHO_UTEIS = 10
+
+# Desde 03/11/2026 os chats de Empresas B3, de FIIs e de Investimentos citam os
+# proventos por acao ou cota do arquivo publicado
+# (``data/public/proventos_b3.json.gz``, ``core.llm_ferramentas.proventos_ativo``),
+# com ou sem o armazem. Terceira fonte de numero na tela, entao o frescor (0,25)
+# de B3 e FII foi repartido de novo: 0,15 do preco + 0,05 do pregao + 0,05 dos
+# proventos. Tambem de arquivo publicado, tambem medido com o banco fora.
+PROVENTOS_DO_CHAT = "Proventos publicados (chat)"
+PESO_PROVENTOS_DO_CHAT = 0.05
+PESOS_COM_PREGAO = {"Integridade": 0.35, "Frescor": 0.15}  # 0,15 + 0,05 + 0,05 = 0,25
+
+# Desde 08/11/2026 os chats do ativo de Empresas B3, Empresas Americanas e
+# Seleção de FIIs citam tambem o DETALHE do armazem local (pregao, trimestres,
+# informe CVM, composicao, imoveis, score) e a VARREDURA do armazem, lidos pelo
+# tunel quando o PC do usuario esta ligado. Essa fonte NAO entra na nota: a
+# producao nao alcanca o armazem, e medir o tunel mediria a disponibilidade do
+# PC, nao o dado. O que a tela de fato mostra e declarado aqui, como nota da
+# secao, e no proprio prompt, que nomeia linha a linha se cada fonte foi lida
+# ("lido pelo tunel", "nao feita", "nao consultada").
+NOTA_DETALHE_DO_CHAT = (
+    "o chat do ativo cita tambem o detalhe e a varredura do armazem local, "
+    "lidos pelo tunel quando o PC esta ligado; fonte fora da nota: a producao "
+    "nao a mede, e o prompt declara, linha a linha, se ela foi lida")
+#: Dias corridos da resposta da brapi a partir dos quais ainda vale 100%: a
+#: coleta e diaria e o fim de semana nao renova.
+PROVENTOS_FRESCO_DIAS = 3
 
 
 def _declarar_nao_medidos(comps: list["Componente"], motivo: str,
@@ -380,6 +405,35 @@ def _pregao_do_chat(hoje: date | None = None) -> Componente:
         f"{ref:%d/%m}, {atraso} dias uteis atras; fechamento bruto, so B3 e FII")
 
 
+def _proventos_do_chat(hoje: date | None = None) -> Componente:
+    """Idade dos proventos publicados que os chats citam.
+
+    Le o mesmo arquivo que ``proventos_ativo`` le. Zero em
+    ``FOTO_MAXIMA_DIAS``, a idade com que o proprio publicador recusa o
+    arquivo. Arquivo ausente e medicao, nao falta dela: o chat fica sem os
+    proventos de cada ano e diz isso.
+    """
+    from core import proventos_b3 as pb
+    peso = PESO_PROVENTOS_DO_CHAT
+    art = pb.carregar()
+    foto = art.get("foto_mais_nova")
+    if not foto:
+        return Componente(PROVENTOS_DO_CHAT, 0.0, peso,
+                          "arquivo proventos_b3 ausente ou ilegivel: os chats "
+                          "ficam sem os proventos de cada ano")
+    try:
+        ref = date.fromisoformat(str(foto)[:10])
+    except ValueError:
+        return Componente(PROVENTOS_DO_CHAT, 0.0, peso,
+                          f"data da resposta ilegivel no arquivo ({foto!r})")
+    dias = ((hoje or date.today()) - ref).days
+    return Componente(
+        PROVENTOS_DO_CHAT,
+        _frescor_pct(dias, PROVENTOS_FRESCO_DIAS, pb.FOTO_MAXIMA_DIAS), peso,
+        f"chats citam proventos de {art.get('n_tickers') or '?'} ativos da B3, "
+        f"resposta mais nova da brapi de {ref:%d/%m}, {dias} dias atras")
+
+
 def _scalar(conn, sql: str, params: dict | None = None):
     from sqlalchemy import text
     return conn.execute(text(sql), params or {}).scalar()
@@ -432,6 +486,7 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
         _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}",
                               PESOS_COM_PREGAO)
     comps.append(_pregao_do_chat())
+    comps.append(_proventos_do_chat())
     _declarar_nao_medidos(comps, "nao medido: sem ticker apto no indice",
                           PESOS_COM_PREGAO)
 
@@ -444,7 +499,47 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
         comps.append(Componente("Metodologia validada", None, 0.25,
                                 f"nao medido: {type(exc).__name__}"))
 
+    notas.append(NOTA_DETALHE_DO_CHAT)
     return ConfiancaSecao("Empresas B3", tuple(comps), u, tuple(notas))
+
+
+# Frescor de FII: idade MEDIANA do dado que a tela le. Ate 03/11/2026 era
+# `max(updated_at)` de `market.fiis`: um unico fundo tocado hoje dava 100% a
+# secao inteira, com centenas de linhas paradas atras dele, e a tabela nem era
+# a que a selecao e a carteira leem. Com vitrine, mede a vitrine (mesma regra
+# do gate de Abrangencia, A-136). A data de cada linha e `reference_date`, o
+# dado mais recente do payload -- nao `as_of_date`, que o publicador carimba
+# com o instante da publicacao: republicar um armazem parado renova o carimbo
+# e nao o dado.
+_SQL_FRESCOR_VITRINE_FII = """
+    SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY reference_date), count(*)
+    FROM market.fii_selection_inputs
+    WHERE quality_status IN ('published', 'accepted')
+      AND reference_date IS NOT NULL"""
+_SQL_FRESCOR_CADASTRO_FII = """
+    SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY updated_at), count(*)
+    FROM market.fiis
+    WHERE price > 0 AND updated_at IS NOT NULL"""
+
+
+def _frescor_fii(conn) -> Componente:
+    from sqlalchemy import text
+
+    from core.universo_decisao import _tem_vitrine_fii
+    peso = PESOS_COM_PREGAO["Frescor"]
+    com_vitrine = _tem_vitrine_fii(conn)
+    sql = _SQL_FRESCOR_VITRINE_FII if com_vitrine else _SQL_FRESCOR_CADASTRO_FII
+    mediana, linhas = conn.execute(text(sql)).one()
+    dias = _dias_desde(mediana)
+    if dias is None:
+        return Componente("Frescor", None, peso,
+                          "sem carimbo de data no dado que a tela le")
+    origem = ("da vitrine que a tela le" if com_vitrine
+              else "do cadastro (vitrine indisponivel neste ambiente)")
+    return Componente(
+        "Frescor", _frescor_pct(dias, 3, 30), peso,
+        f"dado mediano com {dias} dias em {int(linhas or 0)} fundos {origem}"
+        + (" - ingestao parada" if dias > 30 else ""))
 
 
 def confianca_fii(engine=None) -> ConfiancaSecao:
@@ -460,13 +555,7 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
     try:
         eng = engine or get_engine()
         with eng.connect() as conn:
-            dias = _dias_desde(_scalar(conn, """
-                SELECT max(updated_at) FROM market.fiis WHERE price > 0"""))
-            comps.append(Componente(
-                "Frescor", _frescor_pct(dias, 3, 30), PESOS_COM_PREGAO["Frescor"],
-                (f"cadastro atualizado ha {dias} dias"
-                 + (" - ingestao parada" if dias > 30 else ""))
-                if dias is not None else "sem carimbo de atualizacao"))
+            comps.append(_frescor_fii(conn))
             # Integridade: proventos ja passam pelo filtro renda-vs-capital
             # (A-128) e pelo dedup de eco de classe (A-129). O que resta medir
             # e a fracao de aptos SEM evento de magnitude implausivel (A-132),
@@ -479,6 +568,7 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
         _declarar_nao_medidos(comps, f"nao medido: {type(exc).__name__}",
                               PESOS_COM_PREGAO)
     comps.append(_pregao_do_chat())
+    comps.append(_proventos_do_chat())
     _declarar_nao_medidos(comps, "nao medido: universo investivel vazio",
                           PESOS_COM_PREGAO)
 
@@ -498,6 +588,7 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Metodologia validada", None, 0.25,
                                 f"nao medido: {type(exc).__name__}"))
+    notas.append(NOTA_DETALHE_DO_CHAT)
     return ConfiancaSecao("Seleção de FIIs", tuple(comps), u, tuple(notas))
 
 
@@ -587,6 +678,7 @@ def confianca_us(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Metodologia validada", None, 0.15,
                                 f"nao medido: {type(exc).__name__}"))
+    notas.append(NOTA_DETALHE_DO_CHAT)
     return ConfiancaSecao("Empresas Americanas", tuple(comps), u, tuple(notas))
 
 
@@ -681,8 +773,12 @@ def confianca_controle_financeiro(engine=None) -> ConfiancaSecao:
     usuario, nao do app: extrato velho e informacao sobre o registro, nao
     defeito do sistema."""
     from core.database import get_engine
+    # Previsto (conta a pagar/receber em aberto) nao e registro do que
+    # aconteceu: um vencimento no mes que vem faria o "ultimo lancamento"
+    # parecer de hoje. A nota do registro olha so o realizado; o previsto
+    # tem componente proprio (_componente_previstos_em_dia).
     base = _confianca_pessoal(engine, "Controle Financeiro",
-                              "public.transactions", "due_date", "category_id")
+                              _TRANSACOES_REALIZADAS, "due_date", "category_id")
     comps = list(base.componentes)
     notas = list(base.notas)
     try:
@@ -725,8 +821,187 @@ def confianca_controle_financeiro(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Extrato importado", None, 0.20,
                                 f"nao medido: {type(exc).__name__}"))
+    comps.extend(_componente_saldo_conferido(engine, notas))
+    comps.extend(_componente_previstos_em_dia(engine, notas))
     return ConfiancaSecao("Controle Financeiro", tuple(comps),
                           notas=tuple(notas))
+
+
+_TRANSACOES_REALIZADAS = """(
+    SELECT t.* FROM public.transactions t
+    LEFT JOIN public.accounts ac ON ac.id = t.account_id
+    WHERE NOT (t.status = 'pending' AND COALESCE(ac.type, '') <> 'credit_card')
+) AS realizadas"""
+
+_SQL_PREVISTOS = """
+    SELECT count(*)
+    FROM public.transactions t
+    LEFT JOIN public.accounts ac ON ac.id = t.account_id
+    WHERE t.user_id = CAST(:uid AS uuid)
+      AND t.status = 'pending' AND COALESCE(ac.type, '') <> 'credit_card'
+"""
+TOLERANCIA_PREVISTO_DIAS = 7
+
+
+def _componente_previstos_em_dia(engine, notas: list[str]) -> list[Componente]:
+    """A aba A pagar e receber afirma o que ainda vai sair e entrar. Previsto
+    vencido ha mais de uma semana ou nao foi pago, ou foi pago e ninguem deu
+    baixa -- nos dois casos a projecao de saldo esta errada. Sem previsto nao
+    ha o que medir."""
+    from core.config import settings
+    from core.database import get_engine
+    dono = settings.OWNER_USER_ID
+    if not dono:
+        return []
+    try:
+        eng = engine or get_engine()
+        with eng.connect() as conn:
+            total = int(_scalar(conn, _SQL_PREVISTOS, {"uid": dono}) or 0)
+            atrasados = int(_scalar(
+                conn, _SQL_PREVISTOS + " AND t.due_date < CURRENT_DATE - :dias",
+                {"uid": dono, "dias": TOLERANCIA_PREVISTO_DIAS}) or 0) if total else 0
+    except Exception as exc:  # noqa: BLE001
+        return [Componente("Previstos em dia", None, 0.10,
+                           f"nao medido: {type(exc).__name__}")]
+    if not total:
+        return []
+    if atrasados:
+        notas.append(f"{atrasados} previsto(s) vencido(s) ha mais de "
+                     f"{TOLERANCIA_PREVISTO_DIAS} dias sem baixa")
+    return [Componente(
+        "Previstos em dia", 100.0 * (total - atrasados) / total, 0.10,
+        f"{total - atrasados} de {total} previstos sem atraso de baixa")]
+
+
+# ── Controle CNPJ ────────────────────────────────────────────────────────────
+
+_SQL_CNPJ_DIFERENCA_DE_SALDO = """
+    -- Mesma conta de core.pj.relatorios.saldo_ate: para frente depois da
+    -- âncora (saldo de abertura), para trás antes dela.
+    SELECT s.saldo - (e.saldo_inicial + COALESCE((
+               SELECT SUM(CASE
+                   WHEN l.data > e.data_saldo_inicial AND l.data <= s.data THEN l.valor
+                   WHEN l.data > s.data AND l.data <= e.data_saldo_inicial THEN -l.valor
+                   ELSE 0 END)
+               FROM pj_lancamentos l
+               WHERE l.user_id = s.user_id AND l.status = 'pago'), 0))
+    FROM pj_saldos_extrato s
+    JOIN pj_empresas e ON e.user_id = s.user_id
+    WHERE s.user_id = CAST(:uid AS uuid) AND e.saldo_inicial IS NOT NULL
+    ORDER BY s.data DESC
+    LIMIT 1
+"""
+
+
+def confianca_controle_cnpj(engine=None) -> ConfiancaSecao:
+    """Financeiro da empresa: registro, frescor do extrato, classificação e
+    saldo conferido com o banco. Tudo filtrado pelo dono da sessão, desde o
+    primeiro dia (a lição do PR #647: contagem sem dono mede os outros)."""
+    from core.config import settings
+    from core.database import get_engine
+    dono = settings.OWNER_USER_ID
+    secao = "Controle CNPJ"
+    if not dono:
+        return ConfiancaSecao(secao, (Componente("Registro presente", None, 1.0,
+                                                 "sem dono na sessao"),), None, ())
+    filtro = {"uid": dono}
+    comps: list[Componente] = []
+    notas: list[str] = []
+    try:
+        eng = engine or get_engine()
+        with eng.connect() as conn:
+            n = int(_scalar(conn, """SELECT count(*) FROM pj_lancamentos
+                                     WHERE user_id = CAST(:uid AS uuid)""", filtro) or 0)
+            comps.append(Componente("Registro presente", 100.0 if n else 0.0, 0.25,
+                                    f"{n} lancamentos da empresa"))
+            if n:
+                dias = _dias_desde(_scalar(conn, """
+                    SELECT max(data) FROM pj_lancamentos
+                    WHERE user_id = CAST(:uid AS uuid) AND chave IS NOT NULL""", filtro))
+                comps.append(Componente(
+                    "Frescor do extrato", _frescor_pct(dias, 15, 90), 0.30,
+                    f"ultimo movimento do extrato ha {dias} dias" if dias is not None
+                    else "nenhum extrato importado"))
+                pagos = int(_scalar(conn, """SELECT count(*) FROM pj_lancamentos
+                    WHERE user_id = CAST(:uid AS uuid) AND status = 'pago'""", filtro) or 0)
+                cat = int(_scalar(conn, """SELECT count(*) FROM pj_lancamentos
+                    WHERE user_id = CAST(:uid AS uuid) AND status = 'pago'
+                      AND categoria IS NOT NULL""", filtro) or 0)
+                comps.append(Componente(
+                    "Classificação", 100.0 * cat / pagos if pagos else None, 0.25,
+                    f"{cat} de {pagos} lancamentos pagos com categoria (fora da DRE sem ela)"))
+                diferenca = _scalar(conn, _SQL_CNPJ_DIFERENCA_DE_SALDO, filtro)
+                if diferenca is None:
+                    comps.append(Componente("Saldo conferido com o banco", None, 0.20,
+                                            "nenhum extrato com saldo importado"))
+                else:
+                    fecha = abs(float(diferenca)) < 0.01
+                    if not fecha:
+                        notas.append(f"saldo da empresa difere do extrato em R$ {float(diferenca):,.2f}")
+                    comps.append(Componente(
+                        "Saldo conferido com o banco", 100.0 if fecha else 0.0, 0.20,
+                        "saldo do ultimo extrato fecha com o app" if fecha
+                        else f"diferenca de R$ {float(diferenca):,.2f} no ultimo extrato"))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("confianca %s: %s", secao, exc)
+        notas.append(f"nao medido: {type(exc).__name__}")
+    return ConfiancaSecao(secao, tuple(comps), None, tuple(notas))
+
+
+# Saldo do último extrato contra o saldo do app na mesma data e conta:
+# initial_balance + lançamentos pagos até ali (core/conciliacao_bancaria.py).
+_SQL_ULTIMA_DIFERENCA_DE_SALDO = """
+    SELECT b.saldo_extrato - (
+               a.initial_balance + COALESCE((
+                   SELECT SUM(t.amount) FROM transactions t
+                   WHERE t.account_id = b.account_id AND t.user_id = b.user_id
+                     AND t.status = 'settled' AND t.due_date <= b.data_saldo), 0))
+    FROM bank_statement_balances b
+    JOIN accounts a ON a.id = b.account_id
+    WHERE b.user_id = CAST(:uid AS uuid)
+    ORDER BY b.data_saldo DESC
+    LIMIT 1
+"""
+
+
+def _componente_saldo_conferido(engine, notas: list[str]) -> list[Componente]:
+    """Classificar o extrato confere a categoria; o saldo confere o total.
+
+    Com o saldo do banco guardado na importação, dá para afirmar se o app
+    fecha com o banco -- a pergunta que a conciliação existe para responder.
+    Sem saldo guardado não entra componente (nada a medir, e o fluxo manual
+    continua suficiente). O frescor decide o peso pelo mesmo motivo do A-145.
+    """
+    from core.config import settings
+    from core.database import get_engine
+    dono = settings.OWNER_USER_ID
+    if not dono:
+        return []
+    filtro = {"uid": dono}
+    try:
+        eng = engine or get_engine()
+        with eng.connect() as conn:
+            if not int(_scalar(conn, """SELECT count(*) FROM bank_statement_balances
+                                       WHERE user_id = CAST(:uid AS uuid)""", filtro) or 0):
+                return []
+            data_saldo = _scalar(conn, """
+                SELECT max(data_saldo) FROM bank_statement_balances
+                WHERE user_id = CAST(:uid AS uuid)""", filtro)
+            diferenca = float(_scalar(conn, _SQL_ULTIMA_DIFERENCA_DE_SALDO, filtro) or 0.0)
+    except Exception as exc:  # noqa: BLE001
+        return [Componente("Saldo conferido com o banco", None, 0.10,
+                           f"nao medido: {type(exc).__name__}")]
+    dias = _dias_desde(data_saldo)
+    relevancia = (_frescor_pct(dias, 30, 240) or 0.0) / 100.0
+    fecha = abs(diferenca) < 0.01
+    if not fecha:
+        notas.append(f"saldo do app difere do extrato em R$ {diferenca:,.2f} "
+                     "- falta ou sobra lancamento")
+    return [Componente(
+        "Saldo conferido com o banco", 100.0 if fecha else 0.0, 0.10 * relevancia,
+        ("saldo do ultimo extrato fecha com o app" if fecha
+         else f"diferenca de R$ {diferenca:,.2f} no ultimo extrato")
+        + f"; saldo de ha {dias} dias, pesa {relevancia:.0%} do previsto")]
 
 
 CURVA_DO_TESOURO = "Curva do Tesouro"
@@ -798,7 +1073,8 @@ def _taxa_contratada_do_tesouro(conn, user_id: str) -> Componente:
 
 
 def confianca_investimentos(engine=None, user_id: str | None = None) -> ConfiancaSecao:
-    """Registro de operacoes, a curva que marca o Tesouro e a taxa de cada compra.
+    """Registro de operacoes, a curva que marca o Tesouro, a taxa de cada compra
+    e os proventos publicados que os chats da Analise citam.
 
     ``user_id`` omitido e o dono da sessao (fora do Streamlit, o dos jobs).
     """
@@ -825,6 +1101,8 @@ def confianca_investimentos(engine=None, user_id: str | None = None) -> Confianc
         comps.append(Componente(TAXA_CONTRATADA_TESOURO, None,
                                 PESO_TAXA_CONTRATADA_TESOURO,
                                 f"nao medido: {type(exc).__name__}"))
+    # Os chats de Visao Geral, Acoes e FIIs citam os proventos publicados.
+    comps.append(_proventos_do_chat())
     return ConfiancaSecao("Investimentos", tuple(comps), base.universo, base.notas)
 
 
@@ -846,6 +1124,7 @@ def confianca_dashboard_geral(engine=None) -> ConfiancaSecao:
 _SECOES = (
     ("Dashboard Geral", confianca_dashboard_geral),
     ("Controle Financeiro", confianca_controle_financeiro),
+    ("Controle CNPJ", confianca_controle_cnpj),
     ("Investimentos", confianca_investimentos),
     ("Empresas B3", confianca_b3),
     ("Empresas Americanas", confianca_us),

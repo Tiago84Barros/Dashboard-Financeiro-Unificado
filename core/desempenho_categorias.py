@@ -10,7 +10,9 @@ em diante, sem degrau na curva. Cada categoria começa onde o seu dado começa:
 as linhas não são alinhadas no tempo, de propósito.
 
 É retorno de PREÇO das posições de hoje, não rentabilidade da conta: aporte,
-venda e o histórico de quantidades ficam de fora. Fontes por categoria:
+venda e o histórico de quantidades ficam de fora. Cada ativo só entra a partir
+do primeiro aporte dele (``recortar_pela_posse``): antes disso o papel não era
+do investidor, e o histórico de mercado dele não é história da carteira. Fontes por categoria:
 
 - Ações, FIIs, Empresas Americanas, ETFs Americanos: fechamento diário
   (yfinance ajustado; na falha, ``asset_quotes`` sem ajuste). As duas
@@ -62,6 +64,10 @@ CATEGORIAS: tuple[Categoria, ...] = (
 
 POR_NOME = {c.nome: c for c in CATEGORIAS}
 
+# O gráfico abre só com estas; as outras ficam na legenda, a um clique.
+# Seis linhas de saída poluíam a leitura (pedido do usuário, 31/10/2026).
+INICIAIS = frozenset({"Ações", "ETFs Americanos", "Tesouro Direto"})
+
 
 def posicoes_por_categoria(posicoes: list[dict]) -> dict[str, list[dict]]:
     """``{categoria: [posições com quantidade > 0]}``, só as que têm posição."""
@@ -107,9 +113,103 @@ def retorno_encadeado(precos: pd.DataFrame, quantidades: dict[str, float]) -> pd
     ambos = valor.notna() & anterior.notna()
     num = valor.where(ambos).sum(axis=1)
     den = anterior.where(ambos).sum(axis=1)
-    r = (num / den.where(den > 0) - 1).fillna(0.0)
+    # Passo sem ativo com preço nas duas pontas não foi medido: a data sai da
+    # curva em vez de entrar como retorno zero. Sem nenhum passo medido não
+    # há série -- dois ativos com uma foto cada, em datas diferentes, não
+    # dizem retorno nenhum.
+    r = num / den.where(den > 0) - 1
+    if r.iloc[1:].notna().sum() == 0:
+        return pd.Series(dtype=float)
     r.iloc[0] = 0.0
+    r = r.dropna()
     return ((1 + r).cumprod() - 1) * 100
+
+
+def inicio_da_posse(aportes: dict, tickers) -> dict[str, pd.Timestamp | None]:
+    """Desde quando cada ativo é do investidor, para recortar a série.
+
+    ``aportes`` é o ``primeiro_aporte`` de ``core.carteira_tabela`` (extrato de
+    negociação ou movimentação, ou a primeira foto de posição). Posição de
+    *abertura* -- já existia antes do primeiro extrato, sem data -- vale desde
+    o começo dos registros: antes disso não há como afirmar que era sua.
+    Ativo sem registro nenhum fica ``None``, e a série dele não entra: sem data
+    de compra, qualquer histórico seria de um papel que talvez não fosse seu.
+    """
+    from core.carteira_tabela import ticker_base
+
+    datas = [v.get("data") for v in (aportes or {}).values() if v.get("data")]
+    inicio_registros = min(datas) if datas else None
+    saida: dict[str, pd.Timestamp | None] = {}
+    for tk in tickers:
+        reg = (aportes or {}).get(ticker_base(tk))
+        data = (reg.get("data") or inicio_registros) if reg else None
+        saida[tk] = pd.Timestamp(data) if data else None
+    return saida
+
+
+def recortar_pela_posse(precos: pd.DataFrame,
+                        inicio: dict[str, pd.Timestamp | None]) -> pd.DataFrame:
+    """Apaga o preço de cada ativo antes do primeiro aporte dele.
+
+    Com o retorno encadeado, o ativo entra na cesta no dia em que passou a ser
+    do investidor, sem degrau; antes disso a linha da categoria é feita só dos
+    que já eram dele. Ativo sem data (``None``) fica sem preço nenhum.
+    """
+    if precos is None or precos.empty:
+        return precos
+    saida = precos.copy()
+    for col in saida.columns:
+        desde = inicio.get(col)
+        saida[col] = saida[col].where(saida.index >= desde) if desde is not None else float("nan")
+    return saida
+
+
+def amostrar_para_grafico(serie: pd.Series, freq: str) -> pd.Series:
+    """Um ponto por semana (``"W"``) ou por mês (``"M"``), sem inventar valor.
+
+    Fica o primeiro ponto (o 0% de partida), o último de cada período com a
+    data real dele e o último da série -- é um recorte do retorno acumulado, não
+    uma média: cada ponto desenhado é um valor que a série teve. Série já mais
+    rala que a frequência (fotos mensais da renda fixa) sai igual.
+    """
+    s = serie.dropna()
+    if len(s) < 3:
+        return s
+    periodos = pd.DatetimeIndex(s.index).to_period(freq)
+    recorte = pd.concat([s.iloc[:1], s.groupby(periodos).tail(1), s.iloc[-1:]])
+    return recorte[~recorte.index.duplicated(keep="last")].sort_index()
+
+
+def quantidades_pelo_valor(precos: pd.DataFrame, valores: dict[str, float]) -> dict[str, float]:
+    """Quantidade na unidade da série: valor de mercado de hoje ÷ último preço.
+
+    Para a renda fixa, cuja posição de hoje pode vir de uma fonte que conta
+    quantidade de outro jeito que a série escolhida (uma cota de R$ 1 contra
+    uma nota de R$ 1.000): multiplicar a série por essa quantidade distorce
+    o peso de cada ativo. Ativo sem preço ou sem valor fica de fora.
+    """
+    saida = {}
+    for c in precos.columns:
+        serie = pd.to_numeric(precos[c], errors="coerce").dropna()
+        serie = serie[serie > 0]
+        valor = float(valores.get(c) or 0)
+        if not serie.empty and valor > 0:
+            saida[c] = valor / float(serie.iloc[-1])
+    return saida
+
+
+def chave_unica_tesouro(ticker: str, nomes) -> str | None:
+    """Chave da curva de uma posição do Tesouro; ``None`` se ambígua.
+
+    A carteira agrupa pelo ticker, e "IPCA+ 2032" e "IPCA+ com Juros
+    Semestrais 2032" chegam somados como TIPCA2032. Um PU só daria a uma parte
+    da quantidade a trajetória de outro título, por isso o grupo fica fora --
+    a mesma regra de ``core.investimentos._marcacao_pela_curva``.
+    """
+    from core.tesouro_curva import chave_da_curva
+
+    chaves = {chave_da_curva(ticker, n) for n in (nomes or [None])}
+    return next(iter(chaves)) if len(chaves) == 1 else None
 
 
 def _sem_fuso(indice) -> pd.DatetimeIndex:
@@ -159,13 +259,19 @@ def unitario_de_fonte_unica(linhas: pd.DataFrame) -> pd.DataFrame:
 # ── Leitura do banco ─────────────────────────────────────────────────────────
 
 def precos_tesouro(engine, posicoes: list[dict], desde: date) -> pd.DataFrame:
-    """PU de recompra diário de cada título, colunas pelo ticker da posição."""
-    from core.tesouro_curva import chave_da_curva, serie_titulo
+    """PU de recompra diário de cada título, colunas pelo ticker da posição.
+
+    ``posicoes``: ``{"ticker", "nomes"}``, com os nomes de todos os títulos que
+    a carteira somou sob o ticker. Grupo ambíguo fica sem série.
+    """
+    from core.tesouro_curva import serie_titulo
 
     series = {}
     for p in posicoes:
         ticker = str(p.get("ticker") or "").strip()
-        chave = chave_da_curva(ticker, p.get("nome"))
+        chave = chave_unica_tesouro(ticker, p.get("nomes"))
+        if chave is None:
+            continue
         df = serie_titulo(engine, chave, desde)
         if df.empty:
             continue
@@ -208,3 +314,114 @@ def precos_renda_fixa(engine, owner: str, tickers: list[str], desde: date) -> pd
                     type(exc).__name__)
         return pd.DataFrame()
     return unitario_de_fonte_unica(pd.DataFrame(linhas))
+
+
+# ── Eventos de mercado marcados no gráfico ───────────────────────────────────
+# Pedido do usuário de 08/11/2026: a queda de 26/10/2026 parecia defeito do
+# gráfico, e era o mercado. O evento é detectado no índice, não declarado à
+# mão: um pregão em que o Ibovespa ou o S&P 500 andou LIMIAR_EVENTO ou mais.
+# O nome vem dos cenários do Stress (core.stress_tests.SCENARIOS), a lista
+# curada que o app já mantém -- sem segunda lista para envelhecer.
+
+LIMIAR_EVENTO = 0.05
+#: Num crash, dias de 5% vêm em sequência (mar/2020 teve vários); dentro desta
+#: janela fica só o maior, senão as marcas se sobrepõem.
+JANELA_AGRUPAMENTO_DIAS = 30
+#: Retorno entre dois fechamentos mais distantes que isto não é "um pregão":
+#: buraco na série viraria evento falso.
+_MAX_DIAS_ENTRE_PREGOES = 5
+#: Folga ao casar a data com a janela do cenário: o Joesley Day está cadastrado
+#: em 17/mai/2017 e a queda de 8,8% foi no pregão de 18/mai.
+_FOLGA_CENARIO_DIAS = 3
+
+_MESES = {"jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
+          "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12}
+
+ARQUIVO_PREGOES_B3 = (__import__("pathlib").Path(__file__).resolve().parents[1]
+                      / "data" / "public" / "pregoes_recentes_b3.json.gz")
+
+
+def _ponta_da_janela(texto: str, fim: bool) -> pd.Timestamp | None:
+    """``"17/mai/2017"`` ou ``"set/2008"`` → data; ``"em curso"`` → hoje."""
+    texto = texto.strip().lower()
+    if "curso" in texto:
+        return pd.Timestamp(date.today())
+    partes = texto.split("/")
+    try:
+        if len(partes) == 3:
+            return pd.Timestamp(int(partes[2]), _MESES[partes[1]], int(partes[0]))
+        if len(partes) == 2:
+            inicio = pd.Timestamp(int(partes[1]), _MESES[partes[0]], 1)
+            return inicio + pd.offsets.MonthEnd(0) if fim else inicio
+    except (KeyError, ValueError):
+        return None
+    return None
+
+
+def janela_do_cenario(data_ref: str) -> tuple[pd.Timestamp, pd.Timestamp] | None:
+    """Janela de um ``StressScenario.data_ref``; ``None`` se não der para ler."""
+    pontas = [p for p in data_ref.replace("—", "–").split("–")]
+    inicio = _ponta_da_janela(pontas[0], fim=False)
+    fim = _ponta_da_janela(pontas[-1], fim=True)
+    if inicio is None or fim is None:
+        return None
+    return inicio, fim
+
+
+def cenario_do_dia(dia: pd.Timestamp, cenarios=None) -> dict | None:
+    """O cenário do Stress cuja janela contém o dia, com a folga do pregão."""
+    if cenarios is None:
+        from core.stress_tests import SCENARIOS as cenarios
+    folga = pd.Timedelta(days=_FOLGA_CENARIO_DIAS)
+    for c in cenarios:
+        janela = janela_do_cenario(c.data_ref)
+        if janela and janela[0] - folga <= pd.Timestamp(dia) <= janela[1] + folga:
+            return {"nome": c.nome, "descricao": c.descricao}
+    return None
+
+
+def eventos_de_mercado(indices: dict[str, pd.Series],
+                       limiar: float = LIMIAR_EVENTO,
+                       janela_dias: int = JANELA_AGRUPAMENTO_DIAS,
+                       cenarios=None) -> list[dict]:
+    """Pregões em que um índice andou ``limiar`` ou mais, do mais antigo ao mais novo.
+
+    ``indices``: ``{"Ibovespa": fechamentos diários, ...}``. Entre dias
+    extremos a menos de ``janela_dias`` um do outro fica o de maior
+    variação. Cada evento: ``data``, ``indice``, ``variacao`` (%), ``cenario``.
+    """
+    candidatos = []
+    for nome, serie in indices.items():
+        s = pd.to_numeric(serie, errors="coerce").dropna()
+        s = s[s > 0]
+        if len(s) < 2:
+            continue
+        s.index = _sem_fuso(s.index)
+        s = s[~s.index.duplicated(keep="last")].sort_index()
+        r = s / s.shift() - 1
+        perto = (s.index.to_series().diff().dt.days <= _MAX_DIAS_ENTRE_PREGOES).values
+        for dia, v in r[perto & (r.abs() >= limiar).values].items():
+            candidatos.append({"data": dia, "indice": nome, "variacao": float(v) * 100})
+    escolhidos: list[dict] = []
+    for ev in sorted(candidatos, key=lambda e: -abs(e["variacao"])):
+        if all(abs((ev["data"] - e["data"]).days) > janela_dias for e in escolhidos):
+            escolhidos.append(ev)
+    for ev in escolhidos:
+        ev["cenario"] = cenario_do_dia(ev["data"], cenarios)
+    return sorted(escolhidos, key=lambda e: e["data"])
+
+
+def ibovespa_pela_fita_publica() -> pd.Series:
+    """BOVA11 diário da fita oficial da B3 publicada no repositório.
+
+    Reserva para quando o Yahoo não responde: cobre só os últimos pregões
+    (``data/public/pregoes_recentes_b3.json.gz``), mas é o dado oficial.
+    """
+    from core.inteligencia_ativos import arquivo_publicado
+
+    art = arquivo_publicado.ler(str(ARQUIVO_PREGOES_B3), "pregoes_recentes_b3") or {}
+    serie = ((art.get("por_ticker") or {}).get("BOVA11") or {}).get("c") or []
+    pregoes = art.get("pregoes") or []
+    if not serie or len(serie) != len(pregoes):
+        return pd.Series(dtype=float)
+    return pd.Series(serie, index=pd.to_datetime(pregoes), dtype=float).dropna()

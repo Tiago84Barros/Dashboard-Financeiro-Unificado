@@ -49,6 +49,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from core.us_benchmark import US_BENCHMARKS as _US_BENCHMARKS
+
+#: Lidos do mapa versionado do seletor "Benchmark de mercado": índice novo no
+#: seletor entra na publicação diária sem ninguém lembrar de mexer aqui.
+SIMBOLOS_BENCHMARK_EUA: tuple[str, ...] = tuple(
+    sorted({s for s in _US_BENCHMARKS.values() if s}))
+
 
 @dataclass(frozen=True)
 class Alvo:
@@ -195,6 +202,20 @@ ALVOS: tuple[Alvo, ...] = (
         passos=_CADEIA_CVM_IPE,
         cadencia_dias=1,
         modulo="b3",
+    ),
+    Alvo(
+        # Entregas à SEC (8-K, 10-Q, 10-K, DEF 14A...) das ações dos EUA, o
+        # equivalente americano de `cvm_ipe`. Sem isto a tela de relatórios
+        # declarava em texto fixo que "não há base de filings da SEC", e a LLM
+        # respondia sobre resultado sem saber do 8-K do dia. Uma requisição por
+        # CIK a 4/s: ~3 mil empresas em ~13 min. Diário porque o 8-K sai
+        # quando o fato acontece, não no fim do trimestre. Antes de
+        # `informacoes_recentes`, que é quem leva os documentos à vitrine.
+        chave="us_sec_filings",
+        titulo="Documentos da SEC das ações dos EUA no armazém",
+        passos=(("run_us_ingest.py", "filings", "--warehouse", "--json"),),
+        cadencia_dias=1,
+        modulo="us",
     ),
     Alvo(
         chave="fii_ingest",
@@ -523,6 +544,61 @@ ALVOS: tuple[Alvo, ...] = (
         cadencia_dias=7,
         modulo="b3",
         artefatos=("data/public/b3_linhagem.json",),
+    ),
+    Alvo(
+        # Índices de referência do backtest dos EUA (SPY, IWB, QQQ). O alvo
+        # `us_prices` publica a série mensal a cada 30 dias, mas nenhum passo
+        # baixava o preço dos índices nem derivava o mensal deles: o `daily` da
+        # vitrine só renova ações do universo, e ETF está fora dele por regra
+        # (`core.us_instrumento.TIPOS_FORA`). Resultado: o S&P 500 nunca chegou
+        # à Curva de capital do app publicado (06/11/2026).
+        #
+        # `prices` e não `daily`: baixa o histórico inteiro, que o armazém não
+        # tinha (o SPY tinha 9 linhas), e refaz o retroajuste de split sozinho.
+        # Três símbolos, segundos por execução. O mensal é derivado só para eles,
+        # e a publicação vai só com eles -- ~200 linhas cada no Supabase.
+        chave="us_benchmarks",
+        titulo="Índices de referência dos EUA (SPY, IWB, QQQ)",
+        passos=(
+            ("run_us_ingest.py", "prices", "--warehouse", "--json",
+             "--tickers", *SIMBOLOS_BENCHMARK_EUA),
+            ("run_us_ingest.py", "monthly", "--warehouse", "--json",
+             "--tickers", *SIMBOLOS_BENCHMARK_EUA),
+            ("-m", "scripts.publish_us_prices_monthly", "--apply",
+             *(arg for s in SIMBOLOS_BENCHMARK_EUA for arg in ("--simbolo", s))),
+        ),
+        cadencia_dias=1,
+        modulo="us",
+    ),
+    Alvo(
+        # Dados dos ETFs da carteira e dos índices do seletor (taxa, maiores
+        # posições, setores, patrimônio, volume), do yfinance, para os oito
+        # indicadores de ETF da Inteligência dos Ativos -- que saíam todos
+        # "Dado não disponível." porque nenhuma fonte trazia dado de fundo.
+        # Lê do Supabase só a lista de posições; não usa o armazém. Semanal:
+        # taxa e composição mudam devagar, e cada republicação vira histórico
+        # no git.
+        chave="etf_dados",
+        titulo="Dados dos ETFs da carteira (yfinance)",
+        passos=(("scripts/publish_etf_dados.py",),),
+        cadencia_dias=7,
+        modulo="us",
+        precisa_armazem=False,
+        artefatos=("data/public/etf_dados.json.gz",),
+    ),
+    Alvo(
+        # Trimestres, exercícios e proventos das ações dos EUA para o chat da
+        # empresa, que só recebia a contagem de demonstrativos. Arquivo e não
+        # tabela: decisão do usuário (08/11/2026), Supabase perto dos 500 MB.
+        # Semanal porque o 10-Q chega uma vez por trimestre por empresa; na
+        # temporada de resultados, uma semana é o atraso máximo. Depois de
+        # `us_snapshot`, que renova o universo que o publicador lê.
+        chave="detalhe_eua",
+        titulo="Trimestres e proventos dos EUA para as LLMs",
+        passos=(("scripts/publish_detalhe_eua.py",),),
+        cadencia_dias=7,
+        modulo="us",
+        artefatos=("data/public/detalhe_eua.json.gz",),
     ),
     Alvo(
         chave="us_prices",

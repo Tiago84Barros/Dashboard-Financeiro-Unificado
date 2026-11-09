@@ -29,6 +29,9 @@ MODULOS_EXECUTADOS_DE_VERDADE = frozenset({
     "core.app_test_mode",
     "core.erro_diagnostico",
     "core.lacunas",
+    # Medição de tempo: lógica pura, sem streamlit no topo; o SQLAlchemy só é
+    # importado ao ligar os ouvintes, que não abrem conexão.
+    "core.medicao_rota",
 })
 
 # Identidade sintética: `principal()` real lê `st.session_state`, que não

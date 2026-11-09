@@ -27,6 +27,24 @@ def _first_number(*values: Any) -> float | None:
     return next((number for value in values if (number := _optional_num(value)) is not None), None)
 
 
+def _fracao(value: Any) -> float | None:
+    """Percentual limitado a 100% em fração, venha em fração (0.12) ou ponto (12.0).
+
+    A vitrine grava os dois (ver ``core.fii_renda_recorrente._fracao``), e a
+    elegibilidade já lê estes campos normalizados. Ler o valor cru aqui fazia
+    o mesmo fundo valer 18% na elegibilidade e 1800% no choque de cenário.
+
+    Só para grandezas que não passam de 100% -- vacância, inadimplência,
+    concentração. Alavancagem e LTV ficam de fora: 1,2 é 120%, não 1,2%.
+    """
+    number = _optional_num(value)
+    if number is None:
+        return None
+    if 1.0 < number <= 100.0:
+        number /= 100.0
+    return min(max(number, 0.0), 1.0)
+
+
 def scenario_missing_input_penalty(row: dict, scenario: str) -> tuple[float, tuple[str, ...]]:
     """Penaliza desconhecimento sem inventar vacância, crédito ou duration zero."""
     missing: list[str] = []
@@ -81,15 +99,15 @@ def asset_scenario_return(row: dict, scenario: str) -> float:
     base = float(type_scenario_return(fii_type, scenario))
     confidence = min(max(_num(row.get("confidence"), .0), 0.0), 1.0)
     leverage = min(max(_num(row.get("leverage"), 0.0), 0.0), 1.5)
-    vacancy = min(max(_first_number(row.get("vacancia_financeira"),
-                                    row.get("vacancia_fisica")) or 0.0, 0.0), 1.0)
-    delinquency = min(max(_optional_num(row.get("delinquency")) or 0.0, 0.0), 1.0)
+    vacancy = _fracao(_first_number(row.get("vacancia_financeira"),
+                                    row.get("vacancia_fisica"))) or 0.0
+    delinquency = _fracao(row.get("delinquency")) or 0.0
     ltv = min(max(_optional_num(row.get("ltv")) or 0.0, 0.0), 1.5)
     duration = min(max(_optional_num(row.get("duration_anos")) or 0.0, 0.0), 20.0)
     concentration = max(
-        _num(row.get("tenant_concentration")),
-        _num(row.get("issuance_concentration")),
-        _num(row.get("holdings_overlap")),
+        _fracao(row.get("tenant_concentration")) or 0.0,
+        _fracao(row.get("issuance_concentration")) or 0.0,
+        _fracao(row.get("holdings_overlap")) or 0.0,
     )
     adjustment = 0.0
     if scenario == "selic_alta":

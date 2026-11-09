@@ -34,6 +34,10 @@ Rotas (todas GET, todas exigem ``Authorization: Bearer <token>``):
                                        composição, imóveis e score mês a mês
     /b3/detalhe?tickers=WEGE3,PETR4    -- pregão diário (COTAHIST) e reação a
                                           resultados anuais (Memória de Mercado)
+    /ativo/inventario?classe=b3&tickers=PETR4,XXXX3
+                                       -- quantas linhas e que período o armazém
+                                          tem de cada ativo, fonte por fonte
+                                          (varredura antes de afirmar lacuna)
 """
 from __future__ import annotations
 
@@ -261,6 +265,54 @@ def rota_b3_detalhe(params) -> tuple[int, dict]:
         engine_eventos=engine_leitura(url_memoria) if url_memoria else None)}
 
 
+def rota_ativo_inventario(params) -> tuple[int, dict]:
+    """Varredura: o que o armazém guarda de cada ativo, por fonte.
+
+    Só contagens e datas -- nenhuma linha de dado sai daqui. Cada fonte
+    falha sozinha dentro de ``ler_inventario``; banco não configurado nesta
+    máquina vira ``sem_banco`` na fonte, não 503 na rota, para que as fontes
+    dos outros bancos ainda respondam.
+    """
+    from core.armazem_inventario import (
+        CLASSES,
+        TICKERS_MAX,
+        ler_inventario,
+        normalizar_tickers,
+    )
+
+    classe = str(params.get("classe", [""])[0] or "").strip().lower()
+    if classe not in CLASSES:
+        return 400, {"erro": f"classe deve ser uma de {', '.join(CLASSES)}"}
+    tickers = normalizar_tickers(",".join(params.get("tickers", [])).split(","))
+    if not tickers:
+        return 400, {"erro": "informe tickers"}
+    if len(tickers) > TICKERS_MAX:
+        return 400, {"erro": f"no máximo {TICKERS_MAX} tickers por chamada"}
+    engines = {banco: _engine_ou_nenhuma(resolver)
+               for banco, resolver in (("mercado", _url_eua),
+                                       ("noticias", _url_noticias),
+                                       ("memoria", _url_memoria))}
+    if all(eng is None for eng in engines.values()):
+        return 503, {"erro": "armazém não configurado nesta máquina"}
+    return 200, {"inventario": ler_inventario(engines, classe, tickers)}
+
+
+def _engine_ou_nenhuma(resolver):
+    """Engine do banco cuja URL ``resolver`` devolve; ``None`` quando não há
+    URL ou quando resolvê-la falha (``_url_eua`` consulta o Docker, que pode
+    não ter subido). A falha de um banco não pode virar 503 da rota: o cliente
+    trata 5xx como serviço fora do ar e pausa TODAS as rotas por 60 s, e as
+    fontes dos outros bancos ainda têm o que responder -- elas saem
+    ``sem_banco`` na fonte, nomeadas, em vez de sumir."""
+    try:
+        url = resolver()
+    except Exception as exc:  # noqa: BLE001 - vira fonte "sem_banco"
+        logger.warning("inventário: URL de um banco do armazém indisponível: %s",
+                       type(exc).__name__)
+        return None
+    return engine_leitura(url) if url else None
+
+
 ROTAS = {
     "/saude": rota_saude,
     "/noticias/recentes": rota_noticias,
@@ -269,6 +321,7 @@ ROTAS = {
     "/eua/detalhe": rota_eua_detalhe,
     "/fii/detalhe": rota_fii_detalhe,
     "/b3/detalhe": rota_b3_detalhe,
+    "/ativo/inventario": rota_ativo_inventario,
 }
 
 

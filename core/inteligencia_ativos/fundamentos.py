@@ -65,7 +65,7 @@ CATALOGO: dict[str, tuple[Metrica, ...]] = {
         Metrica("cobertura_juros", "Cobertura de juros (EBIT/despesa financeira)", X),
         Metrica("payout", "Payout", PCT),
         Metrica("dividend_yield", "Dividend yield", PCT),
-        Metrica("dividendos_12m", "Proventos pagos em 12 meses (por ação)", MOEDA),
+        Metrica("dividendos_12m", "Proventos por ação no último ano fechado", MOEDA),
         Metrica("guidance", "Guidance", TEXTO),
     ),
     FII: (

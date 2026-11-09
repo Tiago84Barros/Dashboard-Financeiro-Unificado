@@ -133,20 +133,45 @@ _SQL_PODA_MES_PARCIAL = """
     """
 
 
-def derive_prices_monthly(engine) -> dict:
+def _so_simbolos(sql: str, ancora: str, coluna: str) -> str:
+    """Acrescenta ``AND <coluna> IN :simbolos`` logo depois de ``ancora``.
+
+    Por substituição na MESMA SQL, e não numa segunda cópia filtrada: duas
+    versões da derivação divergiriam na primeira correção (a da barra nula de
+    02/10 teria ficado numa só)."""
+    assert sql.count(ancora) == 1, ancora
+    return sql.replace(ancora, f"{ancora} AND {coluna} IN :simbolos")
+
+
+def derive_prices_monthly(engine, simbolos=None) -> dict:
     """Deriva o fechamento MENSAL (último pregão do mês) de prices_daily.
 
     O backtest PIT lê market_us.prices_monthly; a ingestão só grava o diário.
     Sem este passo o painel do backtest fica vazio. SQL puro no Postgres
     (DISTINCT ON pega o último pregão de cada mês); idempotente por (symbol,
     month_end). total_return = retorno mês a mês do adjusted_close.
+
+    ``simbolos`` restringe a derivação e a poda a esses símbolos. É o que deixa
+    o alvo diário dos índices de referência (SPY, IWB, QQQ) derivar três séries
+    em vez de varrer os 12 milhões de pregões do universo todo dia.
     """
     if engine is None:
         return {"ok": False, "reason": "engine indisponível"}
-    sql = _SQL_DERIVA_MENSAL
+    deriva, poda, params = _SQL_DERIVA_MENSAL, _SQL_PODA_MES_PARCIAL, {}
+    if simbolos:
+        deriva = _so_simbolos(
+            deriva, "WHERE COALESCE(adjusted_close, close) IS NOT NULL", "symbol")
+        poda = _so_simbolos(poda, "WHERE p.source = 'derived'", "p.symbol")
+        params = {"simbolos": [str(s).upper() for s in simbolos]}
     with engine.begin() as conn:
-        conn.execute(text(sql))
-        podadas = conn.execute(text(_SQL_PODA_MES_PARCIAL)).rowcount
+        if params:
+            conn.execute(text(deriva).bindparams(
+                bindparam("simbolos", expanding=True)), params)
+            podadas = conn.execute(text(poda).bindparams(
+                bindparam("simbolos", expanding=True)), params).rowcount
+        else:
+            conn.execute(text(deriva))
+            podadas = conn.execute(text(poda)).rowcount
         n = conn.execute(text("SELECT COUNT(*) FROM market_us.prices_monthly")).scalar()
     return {"ok": True, "rows": int(n or 0), "parciais_podadas": int(podadas or 0)}
 

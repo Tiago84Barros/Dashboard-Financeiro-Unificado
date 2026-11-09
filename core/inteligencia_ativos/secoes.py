@@ -303,6 +303,46 @@ def noticias_com_setor(noticias: Secao, pares: Secao | None, *,
     return replace(noticias, resumo=inf.resumo_noticias(n), dados=n.como_dict())
 
 
+#: Rótulo do "segmento" quando ele é a carteira do próprio ETF. A tela usa o
+#: prefixo para trocar a nota "pares do mesmo segmento" pela do fundo.
+ROTULO_POSICOES_ETF = "maiores posições do "
+
+
+def _registro_etf(ticker: str) -> dict | None:
+    from core.inteligencia_ativos import fontes_fundamentos
+    return fontes_fundamentos.registro_etf(ticker)
+
+
+def noticias_do_etf(noticias: Secao, info: InfoBasica, *, leitor=None,
+                    composicao=None) -> Secao:
+    """ETF sem notícia própria traz as das suas maiores posições.
+
+    Manchete sobre o próprio SPY quase não existe; o que move o SPY é o que
+    acontece com Apple, Microsoft e Nvidia. Mesma regra de
+    ``noticias_com_setor``: a notícia da posição fica em ``setor``, marcada com
+    o ticker de origem, e não vira notícia do fundo. A composição vem da
+    vitrine de ETFs (``etf_dados``); sem ela, a seção fica como estava.
+    """
+    from core.inteligencia_ativos import etf_dados
+    from core.inteligencia_ativos import fundamentos as f
+    from core.inteligencia_ativos import informacoes as inf
+    if f.tipo_do_ativo(info.classe, info.moeda) != f.ETF or not noticias.dados:
+        return noticias
+    n = inf.Noticias.de_dict(noticias.dados)
+    if n.itens or n.setor:
+        return noticias
+    tickers = etf_dados.simbolos_das_posicoes(
+        (composicao or _registro_etf)(info.ticker))
+    if not tickers:
+        return noticias
+    setor = (leitor or _ler_noticias_do_setor)(tickers)
+    if not setor:
+        return noticias
+    n = replace(n, setor=tuple(setor),
+                setor_rotulo=ROTULO_POSICOES_ETF + str(info.ticker).upper())
+    return replace(noticias, resumo=inf.resumo_noticias(n), dados=n.como_dict())
+
+
 def coletar(info: InfoBasica, ctx: ContextoInvestidor) -> dict[str, Secao]:
     saida = {}
     for chave, provedor in PROVEDORES.items():
@@ -320,5 +360,10 @@ def coletar(info: InfoBasica, ctx: ContextoInvestidor) -> dict[str, Secao]:
                                                saida.get("pares"))
     except Exception as exc:  # sem o segmento, fica a seção como estava
         logger.warning("[inteligencia_ativos] notícias do segmento de %s: %s",
+                       info.ticker, type(exc).__name__)
+    try:
+        saida["noticias"] = noticias_do_etf(saida["noticias"], info)
+    except Exception as exc:  # sem a composição, fica a seção como estava
+        logger.warning("[inteligencia_ativos] notícias das posições de %s: %s",
                        info.ticker, type(exc).__name__)
     return saida

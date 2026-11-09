@@ -318,8 +318,27 @@ def test_diagnostico_dos_filtros_removido():
     corpo = _sem_comentarios(inspect.getsource(fiis._carteira_integrada))
     assert "Diagnóstico dos filtros de elegibilidade" not in corpo
     assert "exclusion_counts" not in corpo
-    # O total de elegíveis, que é o número que decide, continua.
-    assert "Universo elegível" in corpo
+
+
+def test_cards_de_regime_e_universo_sairam_da_carteira_modelo():
+    """Pedido do usuário em 02/11/2026: menos informação na Carteira-modelo."""
+    corpo = _sem_comentarios(inspect.getsource(fiis._carteira_integrada))
+    assert '"Regime quantitativo"' not in corpo
+    assert '"Universo elegível"' not in corpo
+
+
+def test_motivos_de_exclusao_so_aparecem_sem_carteira():
+    """Com carteira, some; sem nenhum elegível, volta aberto como diagnóstico."""
+    corpo = _sem_comentarios(inspect.getsource(fiis._carteira_integrada))
+    assert ("if not eligible_rows:\n"
+            "        _diagnostico_de_exclusao(eligibility, expandido=True)") in corpo
+
+
+def test_aba_revisao_de_dados_saiu_e_o_motor_ficou():
+    assert all("Revisão de dados" not in aba for aba in fiis._TABS)
+    assert not hasattr(fiis, "_tab_evidence_review")
+    # Saiu a tela, não a capacidade: o módulo de revisão segue no projeto.
+    from core.fii_evidence_review import review_evidence  # noqa: F401
 
 
 def test_monitoramento_operacional_removido_com_o_calculo():

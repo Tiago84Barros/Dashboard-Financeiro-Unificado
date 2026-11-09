@@ -766,7 +766,9 @@ FLOW_INVESTIMENTOS = FlowSpec(
             "stress_ai", "Stress tests", "Análise",
             "Em Análise › 🌪️ Stress (Stress Tests Históricos), aplica à carteira de hoje os "
             "choques de crises passadas, calibrados em dados públicos da B3 e do BCB, para "
-            "estimar perda e tempo de recuperação.",
+            "estimar perda e tempo de recuperação. Um evento ainda em curso (hoje, o Choque "
+            "Eleitoral 2026) entra com o choque observado até agora, sem tempo de "
+            "recuperação e com as classes de choque não medido nomeadas na tela.",
             ("core/stress_tests.py", "aplicar_todos_cenarios()", "cenario_pior_caso()",
              "Perda percentual", "Perda em R$", "Tempo de recuperação"),
             "Responde a pergunta que importa no susto: quanto isso pode cair?",
@@ -801,15 +803,22 @@ FLOW_INVESTIMENTOS = FlowSpec(
             "Tabelas não é aba desta tela: as posições moram em Visão Geral. A Visão Geral "
             "traz também o Desempenho por Categoria: linhas de retorno de Ações, FIIs, "
             "Empresas Americanas, ETFs Americanos, Tesouro Direto e Renda Fixa, com as "
-            "posições de hoje, cada linha a partir do seu primeiro preço no período e "
-            "seleção do que comparar (core.desempenho_categorias). O chat do "
+            "posições de hoje, cada ativo a partir do seu primeiro aporte; abre "
+            "com Ações, ETFs Americanos e Tesouro Direto, e a legenda liga e desliga as "
+            "outras; linhas pontilhadas marcam pregões de ±5% no Ibovespa ou no S&P 500, "
+            "com o nome do cenário do Stress quando há (core.desempenho_categorias). O chat do "
             "🏦 Tesouro recebe os lotes de cada título (tesouro_lots, do Extrato Analítico; "
             "na falta dele, as compras da Movimentação com a taxa deduzida): data de cada "
             "compra, taxa contratada, taxa de hoje na curva e marcação a mercado, além de "
-            "quanto da posição atual esses lotes cobrem.",
+            "quanto da posição atual esses lotes cobrem. Os chats de Visão Geral, Ações e "
+            "FIIs recebem os proventos de cada ano dos ativos da B3 do arquivo publicado, "
+            "que não depende do armazém local nem do túnel.",
             ("_tab_analise()", "Desempenho por Categoria", "Posições da Carteira",
              "Uma subaba por classe",
-             "tesouro_lots no chat do Tesouro", "Alertas", "Stress Tests Históricos"),
+             "tesouro_lots no chat do Tesouro",
+             "bloco_detalhe_armazem(): armazém pelo túnel, varredura do armazém por "
+             "classe e proventos publicados",
+             "Alertas", "Stress Tests Históricos"),
             "A transparência fica no nível do ativo, separada por classe.",
         ),
         "alertas_ai": _node(
@@ -828,40 +837,50 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
     title="Controle financeiro",
     subtitle=(
         "Mostra como o app separa o dinheiro que já entrou/saiu no mês (fluxo de "
-        "caixa) da fatura futura do cartão (fluxo a vencer) — duas naturezas que "
-        "nunca se misturam."
+        "caixa), as contas a pagar e a receber que você previu (previstos) e a "
+        "fatura futura do cartão (fluxo a vencer) — naturezas que nunca se misturam."
     ),
     tela="Controle Financeiro",
-    abas=("Dashboard", "Análises", "Tabelas", "Cartão de Crédito"),
+    abas=("Dashboard", "Análises", "Tabelas", "A pagar e receber", "Cartão de Crédito"),
     rows=(
         ("Entrada", ("lanc_manual", "extrato", "fatura_cc")),
         ("Classificação", ("conta", "categoria")),
-        ("Natureza do fluxo", ("fluxo_caixa", "fluxo_futuro")),
+        ("Natureza do fluxo", ("fluxo_caixa", "previstos", "fluxo_futuro")),
         ("Visualização", ("abas", "graficos")),
     ),
     default="lanc_manual",
     nodes={
         "lanc_manual": _node(
             "lanc_manual", "Lançamento manual", "Entrada",
-            "Barra lateral: você registra entradas, saídas e investimentos do mês corrente.",
+            "Barra lateral: você registra entradas, saídas e investimentos. Situação 'Pago' "
+            "grava o que já aconteceu; 'Previsto' grava uma conta a pagar ou a receber, com a "
+            "data como vencimento, e 'Repetir todo mês' cria a série mensal.",
             (
                 "Tipo: entrada / saída / investimento",
                 "Valor, data, categoria e descrição",
+                "Situação: Pago ou Previsto",
                 "Grava source='manual'",
             ),
-            "É dinheiro que entra e sai no ato do lançamento — fluxo de caixa do presente.",
+            "Pago é dinheiro que entrou ou saiu no ato — fluxo de caixa do presente. Previsto "
+            "é compromisso: só vira caixa quando recebe a baixa.",
         ),
         "extrato": _node(
             "extrato", "Importação de extrato", "Entrada",
             "Configurações > Atualização de dados > Controle Financeiro > Extrato bancário: "
-            "sobe o PDF do banco, confere direção, valor e categoria de cada movimento e grava.",
+            "sobe o PDF do banco, confere direção, valor e categoria de cada movimento e grava. "
+            "Movimento que já foi lançado à mão (mesma conta, mesmo valor, até 3 dias) se "
+            "vincula ao lançamento existente em vez de criar outro.",
             (
                 "Extrato do banco em PDF",
                 "Prévia revisável antes de gravar",
                 "Classificação automática por regras",
+                "Vínculo com lançamento manual",
+                "Conferência do saldo do banco",
                 "Grava source='import'",
             ),
-            "Dinheiro que JÁ saiu da conta também é fluxo de caixa, ainda que não digitado a mão.",
+            "Dinheiro que JÁ saiu da conta também é fluxo de caixa, ainda que não digitado a mão. "
+            "Por isso o extrato casa com o manual antes de gravar: sem o vínculo, quem lança à "
+            "mão e importa o extrato conta a mesma saída duas vezes.",
         ),
         "fatura_cc": _node(
             "fatura_cc", "Upload da fatura (cartão)", "Entrada",
@@ -912,6 +931,20 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
             ),
             "É a foto do dinheiro real do mês corrente — o que você de fato tem.",
         ),
+        "previstos": _node(
+            "previstos", "Previstos (a pagar e receber)", "Natureza do fluxo",
+            "Aba A pagar e receber: contas em aberto por vencimento, vencidas sem baixa, totais "
+            "dos próximos 30 dias e o saldo das contas de movimentação projetado em 30, 60 ou "
+            "90 dias. Dá para dar baixa (data e valor pago) ou excluir. Ao importar o extrato, "
+            "o movimento de mesmo valor até 3 dias do vencimento dá a baixa sozinho.",
+            (
+                "status 'pending' em conta que não é cartão",
+                "Fora do saldo, dos totais do mês e do orçamento",
+                "Baixa manual ou pela conciliação do extrato",
+            ),
+            "Previsto não é dinheiro: somá-lo ao mês faria o Dashboard mostrar gasto que ainda "
+            "não aconteceu. Ele aparece só onde a pergunta é 'o que vem por aí'.",
+        ),
         "fluxo_futuro": _node(
             "fluxo_futuro", "Cartão de crédito (futuro)", "Natureza do fluxo",
             "A fatura CSV vive isolada: dinheiro que ainda vai sair, com projeção e parcelas.",
@@ -924,7 +957,8 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
         ),
         "abas": _node(
             "abas", "Abas e filtros", "Visualização",
-            "Navegação: Dashboard, Análises, Tabelas e Cartão de Crédito, com filtros e edição.",
+            "Navegação: Dashboard, Análises, Tabelas, A pagar e receber e Cartão de Crédito, "
+            "com filtros e edição.",
             (
                 "KPIs do mês (renda, despesa, saldo)",
                 "Filtros: categoria / ano / mês / dia",
@@ -946,6 +980,153 @@ FLOW_CONTROLE_FINANCEIRO = FlowSpec(
     notes=(
         "Regra de ouro: fluxo de caixa (manual + extrato) e cartão de crédito "
         "(fatura CSV) são independentes e NUNCA se misturam.",
+        "Previsto (conta a pagar ou a receber) só entra no caixa depois da baixa; até "
+        "lá vive na aba A pagar e receber.",
+    ),
+)
+
+
+FLOW_CONTROLE_CNPJ = FlowSpec(
+    key="controle_cnpj",
+    title="Controle CNPJ",
+    subtitle=(
+        "O financeiro da empresa, separado do pessoal: o extrato da conta PJ entra, "
+        "cada movimento ganha uma categoria do plano de contas da empresa e daí saem "
+        "o caixa, a DRE, o balanço, as contas a pagar e a estimativa do DAS do Simples."
+    ),
+    tela="Controle CNPJ",
+    abas=("Visão geral", "Lançamentos", "A pagar e receber", "DRE", "Balanço", "Impostos"),
+    rows=(
+        ("Entrada", ("cnpj_extrato", "cnpj_manual")),
+        ("Classificação", ("cnpj_plano", "cnpj_conciliacao")),
+        ("Visualização", ("cnpj_visao", "cnpj_previstos", "cnpj_dre", "cnpj_balanco",
+                          "cnpj_impostos")),
+    ),
+    default="cnpj_extrato",
+    nodes={
+        "cnpj_extrato": _node(
+            "cnpj_extrato", "Extrato da empresa", "Entrada",
+            "Configurações > Atualização de dados > CNPJ: sobe o OFX da conta da empresa "
+            "(o Cora exporta), confere a prévia e grava. O FITID de cada transação impede "
+            "importar o mesmo movimento duas vezes.",
+            (
+                "Arquivo OFX (outros formatos entram em core/pj/extratos.py)",
+                "Prévia com categoria por movimento",
+                "Saldo final do arquivo guardado para conferência",
+                "Grava em pj_lancamentos, nunca em transactions",
+            ),
+            "Tabela própria da empresa: o financeiro pessoal tem dezenas de consultas sobre "
+            "transactions, e a que esquecesse um filtro somaria o faturamento da empresa à "
+            "renda da pessoa.",
+        ),
+        "cnpj_manual": _node(
+            "cnpj_manual", "Lançamento manual", "Entrada",
+            "Aba Lançamentos ou A pagar e receber: registra o que não passou pelo extrato, "
+            "pago ou previsto, com série mensal para contas fixas.",
+            (
+                "Entrada ou saída, categoria, data e valor",
+                "Situação: Pago ou Previsto",
+                "Repetir todo mês (só previsto)",
+            ),
+            "Conta a pagar registrada antes do vencimento é o que permite projetar o caixa.",
+        ),
+        "cnpj_plano": _node(
+            "cnpj_plano", "Plano de contas da empresa", "Classificação",
+            "Categorias próprias da empresa, cada uma presa a uma linha da DRE: receita, "
+            "deduções (DAS e devoluções a clientes), custos, despesas, pessoal (pró-labore), "
+            "financeiro e o que fica "
+            "fora do resultado (aporte, distribuição de lucros, transferência). Regras sugerem "
+            "a categoria, e a escolha do usuário para uma contraparte vira regra.",
+            (
+                "Regras padrão: DAS, pró-labore, tarifas, contador, rendimentos; crédito recebido sugere receita",
+                "Regra aprendida por contraparte vence a padrão",
+                "Saída para quem tem regra de receita vira devolução (dedução), não receita negativa",
+                "Estorno ou reembolso recebido nunca vira receita: segue a despesa que desfaz",
+                "Sem categoria: entra no caixa, fica fora da DRE",
+            ),
+            "Categoria da empresa não é a pessoal: pró-labore sai da empresa e entra na pessoa, "
+            "e o DAS é dedução da receita, não despesa.",
+        ),
+        "cnpj_conciliacao": _node(
+            "cnpj_conciliacao", "Conciliação", "Classificação",
+            "Na importação, o movimento de mesmo valor até 3 dias de um lançamento manual "
+            "(pago ou previsto) concilia com ele em vez de criar outro; o previsto recebe a "
+            "baixa. O saldo do arquivo é comparado com o saldo calculado na mesma data.",
+            (
+                "Mesma regra de par do Controle Financeiro",
+                "Primeiro extrato com saldo define o saldo de abertura",
+                "Diferença de saldo vira aviso",
+            ),
+            "Sem o vínculo, lançar à mão e importar o extrato conta a mesma saída duas vezes.",
+        ),
+        "cnpj_visao": _node(
+            "cnpj_visao", "Visão geral e Lançamentos", "Visualização",
+            "Visão geral: receita bruta, resultado e margem do mês, saldo em conta, "
+            "conferência com o último extrato e 12 meses de entradas, saídas e resultado. "
+            "Lançamentos: a lista de um mês ou de todos os meses, com filtro por categoria e "
+            "busca na descrição, a classificação dos que estão sem categoria, a correção da "
+            "categoria de qualquer lançamento da lista filtrada e a exclusão de lançamento "
+            "manual.",
+            (
+                "Saldo = saldo de abertura + lançamentos pagos",
+                "Movimento do extrato não se exclui (o banco registrou)",
+                "Busca ignora acento e maiúscula; todas as palavras precisam aparecer",
+            ),
+            "O mês precisa fechar com o banco antes de qualquer leitura de resultado.",
+        ),
+        "cnpj_previstos": _node(
+            "cnpj_previstos", "A pagar e receber", "Visualização",
+            "Contas em aberto por vencimento, vencidas sem baixa, totais de 30 dias e o saldo "
+            "projetado em 90 dias, com baixa manual e exclusão.",
+            (
+                "Previsto não entra no caixa nem na DRE",
+                "Vencido entra na projeção como pago hoje",
+            ),
+            "É a pergunta 'o caixa aguenta o mês que vem?', que o extrato sozinho não responde.",
+        ),
+        "cnpj_dre": _node(
+            "cnpj_dre", "DRE gerencial", "Visualização",
+            "Demonstração de resultado em regime de caixa, por mês, ano ou últimos 12 meses: "
+            "receita bruta, deduções, receita líquida, custos, lucro bruto, despesas, pessoal, "
+            "resultado operacional, financeiro e resultado do período.",
+            (
+                "Fora do resultado mostrado à parte",
+                "Lançamento sem categoria avisado, não somado",
+            ),
+            "Caixa e não competência: o extrato só sabe quando o dinheiro passou.",
+        ),
+        "cnpj_balanco": _node(
+            "cnpj_balanco", "Balanço patrimonial", "Visualização",
+            "Ativo, passivo e patrimônio líquido hoje ou no fim de um mês fechado: caixa "
+            "conferido com o banco, contas a receber e a pagar, aplicações, empréstimos, "
+            "aportes, distribuição de lucros e o resultado acumulado da DRE.",
+            (
+                "Fecha por construção: tudo sai do mesmo caixa",
+                "Aplicação e transferência viram ativo; empréstimo vira passivo",
+                "Data passada: sem contas em aberto (o app não sabe o que estava aberto)",
+            ),
+            "Gerencial, não contábil: imobilizado, estoque e tributo a recolher ficam de fora; "
+            "o balanço oficial é o do contador.",
+        ),
+        "cnpj_impostos": _node(
+            "cnpj_impostos", "Impostos (Simples Nacional)", "Visualização",
+            "Dados da empresa (CNPJ, razão social, anexo) e o DAS estimado do mês: RBT12 dos "
+            "12 meses anteriores, faixa, alíquota efetiva e Fator R; compara com o DAS pago "
+            "no mês seguinte.",
+            (
+                "Tabelas da LC 155/2016, Anexos I a V",
+                "Fator R de 28% leva o Anexo V ao III",
+                "Início de atividade: média dos meses × 12",
+                "Base do DAS e da RBT12: receita bruta menos devoluções (LC 123, art. 3º, § 1º)",
+            ),
+            "É estimativa: o valor oficial é o do PGDAS-D, que trata atividade mista, ISS "
+            "retido e segregação de receitas.",
+        ),
+    },
+    notes=(
+        "Nada da empresa entra no Controle Financeiro pessoal, e nada do pessoal entra aqui.",
+        "Emissão de nota fiscal, boleto e envio ao contador não existem: dependem de "
+        "certificado digital e convênio que o app não tem.",
     ),
 )
 
@@ -956,12 +1137,11 @@ FLOW_SELECAO_FIIS = FlowSpec(
     subtitle=(
         "Como o app pontua fundos imobiliários, mede a própria confiança e decide "
         "se o que sai na tela é uma Carteira-Modelo ou apenas uma Lista de Diligência. "
-        "A tela tem cinco subabas: FIIs Disponíveis, Busca de ativo, Carteira-modelo, "
-        "Retrospectiva e Revisão de dados."
+        "A tela tem quatro subabas: FIIs Disponíveis, Busca de ativo, Carteira-modelo "
+        "e Retrospectiva."
     ),
     tela="Seleção de FIIs",
-    abas=("FIIs Disponíveis", "Busca de ativo", "Carteira-modelo", "Retrospectiva",
-          "Revisão de dados"),
+    abas=("FIIs Disponíveis", "Busca de ativo", "Carteira-modelo", "Retrospectiva"),
     rows=(
         ("Universo", ("vitrine_fii", "tipos_fii", "integridade_fii")),
         ("Métricas", ("renda_fii", "valuation_fii", "risco_fii", "governanca_fii")),
@@ -1003,7 +1183,7 @@ FLOW_SELECAO_FIIS = FlowSpec(
             (
                 "Checagem de colunas obrigatórias",
                 "Erro de leitura levanta erro, não vira lista vazia",
-                "Aba 🧾 Revisão de dados expõe as lacunas por fundo",
+                "Coluna faltando vira aviso de lacuna na Carteira-modelo, não carteira vazia",
             ),
             "Já aconteceu de uma falha de leitura virar 'todos os fundos são inelegíveis'. "
             "Erro tem que parecer erro.",
@@ -1095,7 +1275,9 @@ FLOW_SELECAO_FIIS = FlowSpec(
         "pit_fii": _node(
             "pit_fii", "Validação point-in-time", "Validação",
             "A aba Retrospectiva refaz a seleção safra a safra usando SÓ o que era "
-            "conhecido naquela data e mede o que a regra teria escolhido.",
+            "conhecido naquela data e mede o que a regra teria escolhido. Fundo da "
+            "carteira que sai de campo no período rende zero, nunca o que os "
+            "sobreviventes renderam.",
             (
                 "Safras reconstruídas com dado da época",
                 "Mínimo metodológico de períodos para valer",
@@ -1107,14 +1289,20 @@ FLOW_SELECAO_FIIS = FlowSpec(
         "gate_fii": _node(
             "gate_fii", "Portão de publicação", "Validação",
             "O app só chama o resultado de Carteira-Modelo se passar no portão: cobertura "
-            "mínima, confiança mediana e validação PIT em dia. Senão, sai como Lista de Diligência.",
+            "mínima, confiança mediana e validação PIT em dia. Senão, sai como Lista de "
+            "Diligência, com os motivos listados na tela. Salvar continua possível: "
+            "você marca que entendeu os motivos e a carteira fica gravada como salva "
+            "sem aprovação da metodologia.",
             (
                 "Cobertura mínima do universo",
                 "Confiança mediana acima do piso",
                 "Validação PIT válida para a versão corrente",
+                "Gravação com ciência: params_json.publication_status = "
+                "diligence_override e publication_blockers",
             ),
             "É a diferença entre 'isto foi validado' e 'isto é um ponto de partida para "
-            "você investigar'. O rótulo muda porque a evidência mudou.",
+            "você investigar'. O rótulo muda porque a evidência mudou; a decisão de "
+            "adotar a carteira continua sendo sua.",
         ),
         "preferencias_fii": _node(
             "preferencias_fii", "Suas preferências", "Carteira",
@@ -1125,6 +1313,8 @@ FLOW_SELECAO_FIIS = FlowSpec(
                 "Quantidade de ativos e pesos mínimo/máximo",
                 "Tetos por tipo e por administrador (não por gestora)",
                 "Piso de liquidez diária",
+                "Carteira só é montada no botão 🚀 Rodar seleção de FIIs; ajuste "
+                "posterior avisa que a carteira mostrada é a anterior",
             ),
             "Teto que você não viu é premissa de quem escreveu o código — e envelhece "
             "sem parecer errado.",
@@ -1176,6 +1366,11 @@ FLOW_SELECAO_FIIS = FlowSpec(
                 "core.market_read.load_fii_one()",
                 "Seleção do FII ordenada pela nota",
                 "Fundo sem dado vira aviso de lacuna, não tela vazia",
+                "Chat do fundo: build_fii_ativo_context() com os rendimentos por cota de "
+                "cada ano (proventos_ativo, arquivo publicado)",
+                "O chat recebe o detalhe do armazém do fundo (informe CVM, liquidez, "
+                "composição, imóveis e score, get_warehouse_detail_context) e a VARREDURA "
+                "DO ARMAZÉM LOCAL, fonte por fonte, antes de afirmar lacuna",
             ),
             "O score resume; a busca mostra o que está por trás dele, fundo a fundo.",
         ),
@@ -1215,6 +1410,7 @@ FLOW_EMPRESAS_EUA = FlowSpec(
             (
                 "10-K e 10-Q: demonstrações auditadas",
                 "8-K: eventos, inclusive saída de bolsa",
+                "Entregas dos últimos 180 dias: na seção de relatórios e no chat da empresa",
                 "Preço de mercado complementado por fonte de cotação",
             ),
             "Número mastigado por terceiro traz o critério do terceiro junto. Ir na fonte "
@@ -1369,6 +1565,11 @@ FLOW_EMPRESAS_EUA = FlowSpec(
                 "core.us_data.scored_universe()",
                 "Dossiê, classificação e critérios avançados (expander)",
                 "Chat do ativo: render_chat_ativo() com build_us_ativo_context()",
+                "O chat recebe o detalhe do armazém (preço diário, trimestres e proventos, "
+                "get_warehouse_detail_context) e a VARREDURA DO ARMAZÉM LOCAL do símbolo, "
+                "fonte por fonte, antes de afirmar lacuna (core/varredura_armazem.py)",
+                "Ticker fora do universo publicado e dossiê fora da vitrine: a tela diz o que "
+                "o armazém local tem do símbolo",
             ),
             "O relatório do analista lê o ativo como o portão da Inteligência dos Ativos "
             "lê: os dois chegam ao mesmo veredito.",
@@ -1376,11 +1577,15 @@ FLOW_EMPRESAS_EUA = FlowSpec(
         "carteira_us": _node(
             "carteira_us", "Criação de portfólio", "Aplicação",
             "Transforma o ranking em carteira, com limites por setor e por ativo "
-            "definidos por você.",
+            "definidos por você. O botão 💾 Salvar como carteira padrão grava no "
+            "banco; é essa carteira que o Dashboard Geral, o Portfólio Global e a "
+            "Avaliação de Portfólio usam.",
             (
                 "Limites por setor e por ativo",
                 "Piso de liquidez",
                 "Diagnóstico de restrição inalcançável",
+                "save_us_portfolio_model() → us_portfolio_models, no clique "
+                "(on_click), antes do rerun da tela",
             ),
             "O ranking ordena; a carteira precisa caber em limites. São decisões diferentes.",
         ),
@@ -1585,6 +1790,7 @@ FLOW_PORTFOLIO_GLOBAL = FlowSpec(
             "calculados, em vez de recalcular por conta própria.",
             (
                 "Recebe os números já apurados nos painéis",
+                "Ações e FIIs da B3 chegam com os proventos publicados, mesmo com o armazém fora",
                 "Fica por último na tela, depois da evidência",
                 "Não substitui os painéis",
             ),
@@ -1770,7 +1976,7 @@ FLOW_CONFIGURACOES = FlowSpec(
         ("Preferências", ("cfg_tema", "cfg_secoes", "cfg_categorias", "cfg_orcamento",
                           "cfg_trocar_usuario", "cfg_memoria_llm")),
         ("Diagnóstico", ("cfg_confianca", "cfg_restricoes", "cfg_mercado", "cfg_banco")),
-        ("Entrada de arquivo", ("cfg_fatura", "cfg_extrato", "cfg_carteira")),
+        ("Entrada de arquivo", ("cfg_fatura", "cfg_extrato", "cfg_carteira", "cfg_cnpj")),
         ("Segurança", ("cfg_conta", "cfg_sessao", "cfg_usuarios")),
         ("Referência", ("cfg_mapa", "cfg_documentacao")),
     ),
@@ -1898,6 +2104,10 @@ FLOW_CONFIGURACOES = FlowSpec(
                 "Empresas B3 e Seleção de FIIs medem também o 'Pregão diário (chat)': a "
                 "idade dos pregões do COTAHIST que o chat do ativo cita (peso 0,05, "
                 "tirado do bloco de frescor, que segue somando 0,25)",
+                "Empresas B3, Seleção de FIIs e Investimentos medem os 'Proventos "
+                "publicados (chat)': a idade da resposta da brapi no arquivo de "
+                "proventos que os chats citam (peso 0,05; em B3 e FII também tirado do "
+                "frescor; zero com 10 dias, quando o publicador recusa o arquivo)",
             ),
             "Medir a cada abertura custava uma varredura inteira do banco por clique de menu. "
             "Ler a última medição e remedir sob comando deixa o custo onde a decisão está. "
@@ -1912,9 +2122,16 @@ FLOW_CONFIGURACOES = FlowSpec(
                 "Aba 🧭 Restrições",
                 "Painel lido de core.lacunas.painel, com cache de 5 minutos",
                 "Três naturezas: Restrição, Erro e Detalhe técnico",
+                "Tela lenta também entra, como Restrição: troca de página acima de 3 s, "
+                "abertura do app ou clique acima de 10 s, uma vez por tela e tipo em cada "
+                "sessão, com o tempo dividido entre banco, fora do banco e importação",
+                "Filtros e decisão em caixas de seleção, sem pílulas: Natureza começa em "
+                "Restrição e Erro; Situação, em Em aberto",
                 "Decisão por item: Pendente, Em análise, Aceita ou Resolvida",
                 "Aceita tira o item da fila do corretor diário; Resolvida reabre sozinha se o "
                 "item voltar a aparecer",
+                "No fim, 'Corrigir com o Claude Code': sessão nova com o pedido já escrito "
+                "(claude.ai/code) ou a sessão fixa, com o pedido para colar",
             ),
             "Aviso técnico espalhado pelas telas atrapalha quem só quer ler o número. "
             "Reunido numa fila com decisão, ele vira trabalho rastreável em vez de ruído.",
@@ -1958,19 +2175,36 @@ FLOW_CONFIGURACOES = FlowSpec(
         "cfg_extrato": _node(
             "cfg_extrato", "Extrato bancário", "Entrada de arquivo",
             "Sobe o PDF do extrato e revisa direção, valor e categoria de cada movimento "
-            "antes da importação.",
+            "antes da importação. Na seção 🔗 Conciliação, marca quais movimentos já foram "
+            "lançados à mão — o previsto (conta a pagar ou a receber) que casa recebe a baixa — "
+            "e compara o saldo final do banco com o saldo do app na mesma data.",
             (
                 "Aba 🔁 Atualização de dados › 💳 Controle Financeiro",
                 "Arquivo PDF, com revisão linha a linha",
+                "Vínculo com lançamento manual e conferência de saldo",
                 "Alimenta os movimentos do mês",
             ),
             "Extrato importado sem revisão inverte sinal e erra categoria em silêncio: o total "
-            "fecha e a leitura por categoria fica errada. A conferência é parte da importação.",
+            "fecha e a leitura por categoria fica errada. A conferência é parte da importação. "
+            "O saldo é a prova do total: diferença diferente de zero quer dizer lançamento "
+            "faltando ou sobrando, e a lista de últimas conferências recalcula isso a cada visita.",
+        ),
+        "cfg_cnpj": _node(
+            "cfg_cnpj", "Extrato da empresa (CNPJ)", "Entrada de arquivo",
+            "Sobe o OFX da conta da empresa, escolhe a categoria de cada movimento, marca o "
+            "que já estava lançado à mão e confere o saldo antes de gravar no Controle CNPJ.",
+            (
+                "Aba 🔁 Atualização de dados › 🏢 CNPJ",
+                "Arquivo OFX, com prévia e conciliação",
+                "Alimenta a seção Controle CNPJ, nunca o financeiro pessoal",
+            ),
+            "Sub-aba própria porque o destino é outro: as tabelas da empresa.",
         ),
         "cfg_carteira": _node(
             "cfg_carteira", "Arquivos da carteira", "Entrada de arquivo",
-            "Importa os arquivos de negociação da corretora — seleciona a instituição, "
-            "valida a prévia e atualiza a carteira consolidada.",
+            "Importa os extratos da B3, do Tesouro Direto, da Nomad e o Extrato da conta "
+            "da Rico (deste, só os proventos pagos) — o tipo de cada arquivo sai do "
+            "conteúdo, não da caixa escolhida — e atualiza a carteira consolidada.",
             (
                 "Aba 🔁 Atualização de dados › 📈 Investimentos",
                 "Formatos CSV, XLSX e PDF conforme a origem",
@@ -2281,13 +2515,21 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
         "b3_relatorio": _node(
             "b3_relatorio", "Relatório do analista e chat do ativo", "Consulta",
             "Fecha a Análise de Empresa com o Relatório do analista e com o chat do ativo, que "
-            "recebe a empresa, os pares, os documentos da CVM, o macro, as notícias e os "
-            "pregões diários da B3 (COTAHIST) — o preço de agora, não só o fechamento do mês.",
+            "recebe a empresa, os pares, os documentos da CVM, o macro, as notícias, os "
+            "proventos por ação ano a ano com o DY de cinco anos e os pregões diários da B3 "
+            "(COTAHIST) — o preço de agora, não só o fechamento do mês.",
             (
                 "secao_relatorio(..., mercado=\"b3\") (design/relatorio_analista.py)",
                 "render_chat_ativo() com build_b3_ativo_context()",
+                "proventos_ativo([tk]) (core/llm_ferramentas.py): proventos de "
+                "data/public/proventos_b3.json.gz e DY anual do histórico de valuation, com "
+                "média e mediana de cinco anos; também é ferramenta de todos os chats",
                 "bloco_contexto_mercado(tickers_movimento=[tk]): os pregões diários do ativo, "
                 "do BOVA11 e do SMAL11, de data/public/pregoes_recentes_b3.json.gz",
+                "VARREDURA DO ARMAZÉM LOCAL (core/varredura_armazem.py): quantas linhas e que "
+                "período o armazém tem do ativo, fonte por fonte, antes de a LLM afirmar lacuna; "
+                "direto no desenvolvimento, pela rota /ativo/inventario do túnel na produção",
+                "Ticker fora do universo da vitrine: a tela mostra o que o armazém local tem dele",
                 "O relatório entra cedo no contexto, para o corte de tamanho não alcançá-lo",
             ),
             "O relatório lê o ativo com o mesmo nome e setor que o portão da Inteligência dos "
@@ -2343,7 +2585,7 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
     abas=("Inteligência dos Ativos", "Imposto de Renda"),
     rows=(
         ("Portão", ("ia_portao",)),
-        ("Painel", ("ia_painel", "ia_detalhe", "ia_referencia")),
+        ("Painel", ("ia_painel", "ia_confronto", "ia_detalhe", "ia_referencia")),
         ("Apuração", ("ir_apuracao", "ir_cobertura")),
         ("Declaração", ("ir_darf", "ir_fichas")),
     ),
@@ -2371,10 +2613,15 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
         "ia_painel": _node(
             "ia_painel", "Painel da carteira", "Painel",
             "Liberada, a aba abre a página resumida — reserva, renda fixa e uma caixa por "
-            "ativo — e, num expander, a 📊 Visão geral da carteira, com a premissa, os cálculos "
-            "e a tabela dos ativos. O cenário econômico entra lido dos dados, sem pergunta.",
+            "ativo —, logo abaixo o confronto 🌐 Sua carteira × Portfólio Global e, num "
+            "expander, a 📊 Visão geral da carteira, com a premissa, os cálculos e a tabela dos "
+            "ativos. O cenário econômico entra lido dos dados, sem pergunta.",
             (
                 "views/inteligencia_ativos_resumida.py e views/inteligencia_ativos_painel.py",
+                "A ação de cada caixa sai da árvore de core/inteligencia_ativos/resumida.py, "
+                "sensível ao momento (core/inteligencia_ativos/momento.py, 08/11/2026): queda "
+                "sem piora nos fundamentos não vira venda; com piora, a venda vai em etapas "
+                "(cerca de 1/3), salvo alerta eliminatório do balanço",
                 "Cenário lido por core/cenario/automatico.py desde 30/09/2026, quando o "
                 "'Meu cenário' saiu",
                 "A análise é refeita depois de 15 minutos, o mesmo prazo das fontes",
@@ -2400,15 +2647,53 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
             "LLM chamada na renderização trava a tela. No botão, ela só roda quando alguém "
             "pede, e a pré-leitura pelas regras já está na tela antes disso.",
         ),
+        "ia_confronto": _node(
+            "ia_confronto", "Sua carteira × Portfólio Global", "Painel",
+            "Confronta sempre a carteira com a carteira recomendada do Portfólio Global: a "
+            "qualidade média dos dois lados (de 1, frágil, a 3, forte, ponderada pelo peso), o "
+            "peso com alerta eliminatório, a aderência ao modelo e a distribuição por classe "
+            "(real, modelo e a sua estratégia). Três expanders detalham as divergências de "
+            "peso de cada ativo, as substituições sugeridas — quando um ativo do modelo é "
+            "melhor que um da carteira — e os ativos do modelo que faltam na carteira, cada um "
+            "com a conclusão e os motivos.",
+            (
+                "core/inteligencia_ativos/confronto_modelo.py (puro); a tela é "
+                "views/inteligencia_ativos.py::_render_confronto",
+                "A qualidade dos dois lados usa a mesma régua: a avaliação por regras da "
+                "Inteligência (veredito.avaliar_ativo); os 25 maiores pesos do modelo fora da "
+                "carteira são avaliados",
+                "Divergência acentuada: 3 pp ou mais no ativo, 5 pp ou mais na classe",
+                "Ativo da carteira: a conclusão segue a decisão da Inteligência — nunca manda "
+                "vender só porque o modelo pesa menos nem aportar quando ela barra o aporte",
+                "Ativo do modelo vira candidato só com limite livre, qualidade forte ou "
+                "adequada, sem perder para a média dos seus ativos da classe, e com a classe "
+                "prevista na sua estratégia",
+                "Classe: a sua estratégia é a premissa; perto dela, manter, longe dela, "
+                "rebalancear pelos aportes",
+                "Substituição: no mesmo segmento, a régua do 'Se sair, qual substituir?' "
+                "(recomendacao.confrontar: melhor na qualidade e não pior no preço nem no "
+                "risco, com três métricas no mínimo); entre segmentos (os dois setores "
+                "conhecidos e distintos), um nível de qualidade acima; setor desconhecido "
+                "não troca. Uma troca por ativo, nunca para quem a Inteligência manda comprar",
+                "A troca só vende (com o custo e o IR estimados) quando a Inteligência já "
+                "indica vender, substituir ou reduzir; nos demais casos é pelos aportes, "
+                "sem vender. No mesmo segmento, sem métricas para comparar, não há troca",
+            ),
+            "O modelo é montado em parte com o próprio veredito desta aba: usá-lo como "
+            "argumento seria confirmação circular. Por isso o confronto compara a qualidade "
+            "medida, não a presença no modelo, e explica a divergência em vez de mandar "
+            "copiar o modelo.",
+        ),
         "ia_referencia": _node(
             "ia_referencia", "Referência do Portfólio Global", "Painel",
-            "A carteira recomendada do Portfólio Global aparece como referência comparativa, "
-            "em cartão próprio: na visão geral, para a carteira, e no detalhe, para o ativo "
-            "escolhido.",
+            "A carteira recomendada do Portfólio Global aparece como referência comparativa: "
+            "no confronto, para a carteira, e no detalhe, para o ativo escolhido, com a "
+            "conclusão do confronto quando o ativo diverge do modelo.",
             (
                 "core/inteligencia_ativos/referencia_modelo.py",
                 "Fora das 13 etapas e da Ação a considerar",
-                "Também entra no Portfolio Fit como contexto da LLM",
+                "Também entra no Portfolio Fit como contexto da LLM, com o confronto em "
+                "app_model_reference.confronto",
             ),
             "Modelo é referência, não ordem. Fora das etapas, ele não pesa na conclusão sobre "
             "o ativo e ainda deixa a comparação à vista.",
@@ -2480,6 +2765,7 @@ FLOWS = (
     FLOW_INVESTIMENTOS,
     FLOW_INTELIGENCIA_IR,
     FLOW_CONTROLE_FINANCEIRO,
+    FLOW_CONTROLE_CNPJ,
     FLOW_SELECAO_FIIS,
     FLOW_EMPRESAS_EUA,
     FLOW_PORTFOLIO_GLOBAL,
@@ -3104,9 +3390,15 @@ def render_corpo() -> None:
     st.markdown(_CSS, unsafe_allow_html=True)
 
     # Na ordem do menu lateral; Qualidade dos dados e Indicadores são transversais.
+    # Rótulo e fluxo em listas paralelas, conferidas pelo tamanho: a versão
+    # numerada à mão (``with tabs[7]``) desalinhava rótulo e conteúdo a cada aba
+    # que entrava no meio. ``tab_labels`` continua sendo uma lista de textos
+    # porque o Mapa do App é conferido contra ela
+    # (``tests/test_configuracoes_sincronizadas.py``).
     tab_labels = [
         "Dashboard Geral",
         "Controle financeiro",
+        "Controle CNPJ",
         "Carteira atual",
         "Inteligência e IR",
         "Empresas e Carteira 20 (B3)",
@@ -3120,33 +3412,28 @@ def render_corpo() -> None:
         "Configurações",
         "Indicadores",
     ]
+    fluxos: list[FlowSpec | None] = [
+        FLOW_DASHBOARD_GERAL,
+        FLOW_CONTROLE_FINANCEIRO,
+        FLOW_CONTROLE_CNPJ,
+        FLOW_INVESTIMENTOS,
+        FLOW_INTELIGENCIA_IR,
+        FLOW_EMPRESAS_B3_TELAS,
+        FLOW_CRIACAO_PORTFOLIO,
+        FLOW_SIMULADOR,
+        FLOW_ANALISE_PORTFOLIO,
+        FLOW_EMPRESAS_EUA,
+        FLOW_SELECAO_FIIS,
+        FLOW_PORTFOLIO_GLOBAL,
+        FLOW_QUALIDADE_DADOS,
+        FLOW_CONFIGURACOES,
+        None,  # Indicadores
+    ]
+    assert len(fluxos) == len(tab_labels), "documentação: aba sem fluxo ou fluxo sem aba"
     tabs = st.tabs(tab_labels)
-
-    with tabs[0]:
-        _render_flow(FLOW_DASHBOARD_GERAL)
-    with tabs[1]:
-        _render_flow(FLOW_CONTROLE_FINANCEIRO)
-    with tabs[2]:
-        _render_flow(FLOW_INVESTIMENTOS)
-    with tabs[3]:
-        _render_flow(FLOW_INTELIGENCIA_IR)
-    with tabs[4]:
-        _render_flow(FLOW_EMPRESAS_B3_TELAS)
-    with tabs[5]:
-        _render_flow(FLOW_CRIACAO_PORTFOLIO)
-    with tabs[6]:
-        _render_flow(FLOW_SIMULADOR)
-    with tabs[7]:
-        _render_flow(FLOW_ANALISE_PORTFOLIO)
-    with tabs[8]:
-        _render_flow(FLOW_EMPRESAS_EUA)
-    with tabs[9]:
-        _render_flow(FLOW_SELECAO_FIIS)
-    with tabs[10]:
-        _render_flow(FLOW_PORTFOLIO_GLOBAL)
-    with tabs[11]:
-        _render_flow(FLOW_QUALIDADE_DADOS)
-    with tabs[12]:
-        _render_flow(FLOW_CONFIGURACOES)
-    with tabs[13]:
-        _render_indicadores()
+    for tab, flow in zip(tabs, fluxos):
+        with tab:
+            if flow is None:
+                _render_indicadores()
+            else:
+                _render_flow(flow)

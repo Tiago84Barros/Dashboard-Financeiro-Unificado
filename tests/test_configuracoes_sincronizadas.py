@@ -107,6 +107,8 @@ def _abas_de_investimentos() -> list[str]:
 SUBABAS = {
     "Controle Financeiro": lambda: [
         _sem_emoji(r) for r in _constantes(_atribuicao("views/controle_financeiro.py", "_SECOES"))],
+    "Controle CNPJ": lambda: [
+        _sem_emoji(r) for r in _constantes(_atribuicao("views/controle_cnpj.py", "_SECOES"))],
     "Investimentos": _abas_de_investimentos,
     "Empresas B3": lambda: [nome for _icone, nome in NAV_ITEMS_B3],
     "Empresas Americanas": lambda: [nome for _icone, nome in NAV_ITEMS],

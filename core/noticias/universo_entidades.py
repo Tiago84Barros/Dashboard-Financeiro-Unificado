@@ -84,6 +84,22 @@ _SQL_US = text("""
      WHERE is_active IS TRUE AND symbol IS NOT NULL
 """)
 
+# ``is_active`` cai para FALSE em toda linha que a última publicação da vitrine
+# não trouxe (``publish_us_snapshot._build_deactivate_stale``) -- é "não
+# republicada", não "deslistada". Em 08/11/2026 a FSS, da carteira, estava
+# assim: tinha valuation e valor de mercado, e nenhuma notícia dela era
+# atribuída ao ticker porque o universo não a conhecia. Papel que o usuário
+# detém ou estuda entra sempre, por esta consulta à parte; o filtro de
+# atividade vale para o resto, que é onde um nome de empresa morta viraria
+# falso positivo. À parte, e não na consulta acima, porque a base do universo
+# é a mesma para todo usuário e fica em memória; a carteira é de cada um.
+_SQL_US_DETIDOS = text("""
+    SELECT symbol AS ticker, COALESCE(name, symbol) AS nome,
+           COALESCE(sector, '') AS setor
+      FROM market_us.company_snapshots
+     WHERE symbol IS NOT NULL AND upper(symbol) = ANY(:carteira)
+""")
+
 _SQL_FII = text("""
     SELECT ticker, COALESCE(name, ticker) AS nome,
            COALESCE(NULLIF(segmento, ''), 'Fundo Imobiliário') AS setor
@@ -109,8 +125,17 @@ SUFIXOS = (
     "co.", "n.v.", "nv", "ag", "the",
 )
 
+#: Só para o cadastro da SEC: "co" sem ponto e o "&" que sobra antes dele.
+#: A SEC escreve "COCA COLA CO", "JPMORGAN CHASE & CO", "LILLY ELI & CO"; só
+#: "co." estava na lista, e a chave gravada era "coca cola co" -- que nenhuma
+#: manchete escreve. Medido em 05/11/2026 na vitrine de notícias: Eli Lilly,
+#: Coca-Cola, JPMorgan Chase e Procter & Gamble saíam com zero ou uma notícia
+#: em 60 dias. Fica fora da B3 de propósito: lá "CO" é parte de nome
+#: ("DTCOM DIRECT TO CO"), e o nome brasileiro não pode se mover.
+SUFIXOS_SEC = ("co", "&")
 
-def _limpar_nome(nome: str) -> str:
+
+def _limpar_nome(nome: str, pais: str = "") -> str:
     """Poda sufixos societários e de classe, do fim para o começo.
 
     Repete a poda enquanto houver o que podar: "Itau Unibanco Holding SA Pfd"
@@ -142,13 +167,15 @@ def _limpar_nome(nome: str) -> str:
     """
     texto = _CORTES.sub("", " ".join(str(nome or "").split())).strip(" ,.-")
     texto = _SEDE.sub("", texto).strip(" ,./-")
+    sufixos = SUFIXOS + (SUFIXOS_SEC if pais == "US" else ())
     mudou = True
     while mudou and texto:
         mudou = False
         baixo = texto.lower()
-        for sufixo in SUFIXOS:
+        for sufixo in sufixos:
             if baixo.endswith(" " + sufixo):
-                texto = texto[: -len(sufixo) - 1].strip(" ,.")
+                texto = texto[: -len(sufixo) - 1].strip(
+                    " ,.&" if pais == "US" else " ,.")
                 mudou = True
                 break
     return texto
@@ -199,25 +226,43 @@ APELIDOS: dict[str, tuple[str, ...]] = {
     "YDUQ3": ("Estacio",),
     "CIEL3": ("Cielo",),
     "GOAU4": ("Metalurgica Gerdau",),
+    # EUA. O cadastro da SEC inverte nomes de pessoa ("LILLY ELI & CO") e usa
+    # a razão social onde a imprensa usa a marca ("Alphabet" x "Google").
+    "LLY": ("Eli Lilly",),
+    "GOOG": ("Google",), "GOOGL": ("Google",),
     # Ver PALAVRAS_COMUNS: a chave podada "news" saiu; o nome inteiro fica.
     "NWS": ("News Corp", "News Corporation"),
     "NWSA": ("News Corp", "News Corporation"),
 }
 
 
-def _bloco(conn, sql, pais: str) -> tuple[dict, dict, dict]:
+def _bloco(conn, sql, pais: str, params: dict | None = None) -> tuple[dict, dict, dict]:
     pares: dict[str, str] = {}
     setores: dict[str, str] = {}
     paises: dict[str, str] = {}
-    for linha in conn.execute(sql).mappings():
+    for linha in conn.execute(sql, params or {}).mappings():
         ticker = str(linha["ticker"] or "").strip().upper().replace(".SA", "")
         if not ticker:
             continue
-        pares[ticker] = _limpar_nome(linha["nome"])
+        pares[ticker] = _limpar_nome(linha["nome"], pais)
         if linha["setor"]:
             setores[ticker] = str(linha["setor"])
         paises[ticker] = pais
     return pares, setores, paises
+
+
+def _tickers_do_usuario(engine) -> tuple[tuple[str, ...], str]:
+    """Carteira e candidatos, como a coleta os vê (``universo_coleta``). Falha
+    vira motivo escrito, nunca exceção: o universo segue sem eles."""
+    try:
+        from core.noticias import universo_coleta
+
+        carteira, motivo = universo_coleta.da_carteira(engine=engine)
+        candidatos, _ = universo_coleta.dos_candidatos(engine=engine, excluir=carteira)
+    except Exception as exc:  # noqa: BLE001 - o universo não depende da carteira
+        return (), f"{type(exc).__name__}"
+    todos = tuple(sorted({*carteira, *candidatos}))
+    return todos, ("" if todos else (motivo or "carteira vazia"))
 
 
 def carregar(*, engine=None, usar_cache: bool = True
@@ -228,12 +273,15 @@ def carregar(*, engine=None, usar_cache: bool = True
     engasgou troca uma degradação por um apagão. Fonte que falha vira limitação
     escrita, e ``Universo`` vazio com limitação é diferente de universo vazio
     silencioso — o primeiro diz por que não sabe.
+
+    Duas partes, de propósito: a **base** (cadastros B3, EUA ativos, FIIs e
+    apelidos) é a mesma para todo usuário e fica em memória por :data:`TTL_S`;
+    os **papéis do usuário** (carteira e candidatos, que entram mesmo com a
+    vitrine inativa) são de cada um e são lidos a cada chamada. Guardar o
+    resultado já somado serviria a carteira de quem chamou primeiro a quem
+    chamasse depois, no mesmo processo do Streamlit.
     """
     agora = time.monotonic()
-    if usar_cache and _cache.get("universo") is not None:
-        if agora - _cache.get("em", 0.0) < TTL_S:
-            return _cache["universo"], _cache["limitacoes"]
-
     if engine is None:
         try:
             from core.database import get_engine
@@ -244,6 +292,63 @@ def carregar(*, engine=None, usar_cache: bool = True
     if engine is None:
         return UNIVERSO_VAZIO, ("universo de entidades: sem banco configurado",)
 
+    base = _cache.get("base") if usar_cache else None
+    if base is None or agora - _cache.get("em", 0.0) >= TTL_S:
+        base = _base_compartilhada(engine)
+        _cache["base"] = base
+        _cache["em"] = agora
+
+    pares = dict(base["pares"])
+    setores = dict(base["setores"])
+    paises = dict(base["paises"])
+    limitacoes = list(base["limitacoes"])
+    contagem = dict(base["contagem"])
+    mapa = base["mapa"]
+
+    carteira, motivo_carteira = _tickers_do_usuario(engine)
+    if motivo_carteira:
+        limitacoes.append(
+            f"tickers da carteira não acrescentados ao universo ({motivo_carteira}): "
+            "papel detido com vitrine inativa fica sem atribuição de notícia")
+    elif carteira:
+        try:
+            with engine.connect() as conn:
+                p, se, pa = _bloco(conn, _SQL_US_DETIDOS, "US", {"carteira": list(carteira)})
+        except Exception as exc:  # noqa: BLE001 - a base segue sem eles
+            causa = str(exc).splitlines()[0][:160]
+            logger.warning("Universo de entidades sem os papéis da carteira: %s", causa)
+            limitacoes.append(
+                f"tickers da carteira não acrescentados ao universo ({causa}): "
+                "papel detido com vitrine inativa fica sem atribuição de notícia")
+            p, se, pa = {}, {}, {}
+        novos = 0
+        for t, nome in p.items():
+            t2 = mapa.get(t, t)
+            if t2 not in pares:
+                novos += 1
+            pares.setdefault(t2, nome)
+            if t in se:
+                setores.setdefault(t2, se[t])
+            paises.setdefault(t2, pa[t])
+        contagem["carteira"] = novos
+
+    universo = Universo.de_pares(pares, setores, paises)
+    universo = _sem_nomes_genericos(universo)
+    universo = _com_apelidos(universo, pares)
+
+    if universo.vazio:
+        limitacoes.append(
+            "universo de entidades vazio: só tickers declarados pelo provedor "
+            "serão reconhecidos, e nenhum nome de empresa será casado")
+    else:
+        logger.info("Universo de entidades: %s ativos (%s)", len(pares),
+                    ", ".join(f"{k}={v}" for k, v in contagem.items()))
+    return universo, tuple(limitacoes)
+
+
+def _base_compartilhada(engine) -> dict:
+    """Cadastros que valem para todo usuário: B3, EUA ativos, FIIs e o mapa
+    de apelidos de ticker, já aplicado. É o que fica em memória."""
     pares: dict[str, str] = {}
     setores: dict[str, str] = {}
     paises: dict[str, str] = {}
@@ -286,23 +391,8 @@ def carregar(*, engine=None, usar_cache: bool = True
         pares = {mapa.get(t, t): n for t, n in pares.items()}
         setores = {mapa.get(t, t): v for t, v in setores.items()}
         paises = {mapa.get(t, t): v for t, v in paises.items()}
-
-    universo = Universo.de_pares(pares, setores, paises)
-    universo = _sem_nomes_genericos(universo)
-    universo = _com_apelidos(universo, pares)
-
-    if universo.vazio:
-        limitacoes.append(
-            "universo de entidades vazio: só tickers declarados pelo provedor "
-            "serão reconhecidos, e nenhum nome de empresa será casado")
-    else:
-        logger.info("Universo de entidades: %s ativos (%s)", len(pares),
-                    ", ".join(f"{k}={v}" for k, v in contagem.items()))
-
-    _cache["universo"] = universo
-    _cache["limitacoes"] = tuple(limitacoes)
-    _cache["em"] = agora
-    return universo, tuple(limitacoes)
+    return {"pares": pares, "setores": setores, "paises": paises,
+            "limitacoes": tuple(limitacoes), "contagem": contagem, "mapa": mapa}
 
 
 def _com_apelidos(universo: Universo, pares: dict[str, str]) -> Universo:

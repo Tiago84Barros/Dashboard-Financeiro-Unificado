@@ -450,9 +450,25 @@ def build_company_prompt(
         rag_context=rag_context or "Nenhum trecho CVM/IPE recuperado; não invente eventos.",
         portfolio_context=portfolio_context or "Sem contexto suplementar da carteira.",
         conjuntura=conjuntura or "Conjuntura não montada nesta execução; não trate como ausência de notícias.",
-        detalhe_armazem=detalhe_armazem or "Detalhe do armazém não montado nesta execução; não trate como ausência de dado.",
+        detalhe_armazem=detalhe_armazem or SEM_DETALHE_NA_NOTA,
         weights_contract=_weights_contract(),
     )
+
+
+#: O que a nota por empresa recebe quando ninguém montou o detalhe.
+SEM_DETALHE_NA_NOTA = "Detalhe do armazém não montado nesta execução; não trate como ausência de dado."
+
+
+def _com_varredura(classe: str, tk: str, detalhe_armazem: str) -> str:
+    """Detalhe do armazém (ou a linha que diz que faltou) seguido da varredura do papel, fonte por fonte.
+    Decisão do usuário de 08/11/2026 para os prompts que vetam. Nunca levanta."""
+    try:
+        from core.varredura_armazem import anexar_varredura
+
+        return anexar_varredura(classe, [tk], detalhe_armazem or SEM_DETALHE_NA_NOTA)
+    except Exception as exc:  # noqa: BLE001 - a varredura é extra
+        logger.warning("varredura do armazém de %s indisponível: %s", tk, exc)
+        return detalhe_armazem
 
 
 def generate_company_portfolio_report(
@@ -483,7 +499,7 @@ def generate_company_portfolio_report(
         peer_context = "PARES: indisponíveis; não conclua prêmio/desconto setorial."
     prompt = build_company_prompt(
         tk, dossier, df_fin, df_mult, macro_hist, peer_context, rag_context, portfolio_context,
-        conjuntura=conjuntura, detalhe_armazem=detalhe_armazem,
+        conjuntura=conjuntura, detalhe_armazem=_com_varredura("b3", tk, detalhe_armazem),
     )
     try:
         raw = _call_llm(prompt, model=model or _report_model())

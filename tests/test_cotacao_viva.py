@@ -121,8 +121,16 @@ def test_sem_cotacao_ao_vivo_as_linhas_saem_intactas():
     assert cv.aplicar(linhas, "current_price", "current_price_timestamp", {}) == (linhas, 0)
 
 
-def test_extra_da_nomad_sai_pelo_cambio_e_preco_ao_vivo():
-    """O caso de 26/10/2026: o mercado em BRL usa o câmbio de agora."""
+def test_extra_da_nomad_sai_pelo_cambio_e_preco_ao_vivo(monkeypatch):
+    """O caso de 26/10/2026: o mercado em BRL usa o câmbio de agora.
+
+    O frescor é medido no instante do caso, não no relógio real: com
+    ``datetime.now()`` o teste apodrecia sozinho ``MAX_QUOTE_AGE_DAYS`` depois
+    de 26/10/2026 e passava a ler a cotação de ``AGORA`` como velha.
+    """
+    classificar = investimentos.classificar_cotacao
+    monkeypatch.setattr(investimentos, "classificar_cotacao",
+                        lambda ts, agora=None, **kw: classificar(ts, agora or AGORA, **kw))
     cot = {"SPY": cv.Cotacao(765.0, AGORA), cv.SIMBOLO_CAMBIO: cv.Cotacao(5.55, AGORA)}
     linhas, _ = cv.aplicar([_linha_usd()], "current_price",
                            "current_price_timestamp", cot)

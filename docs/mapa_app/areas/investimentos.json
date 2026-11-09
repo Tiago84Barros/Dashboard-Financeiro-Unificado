@@ -247,7 +247,7 @@
         {
           "nome": "Proventos",
           "resumo": "Gráfico dos dividendos recebidos, mensal ou anual",
-          "explicacao": "Barras com os dividendos e rendimentos recebidos. No seletor ao lado você troca entre Mensal (últimos 12 meses com pagamento) e Anual (histórico completo); o total do período aparece embaixo.",
+          "explicacao": "Barras com os dividendos e rendimentos recebidos. No seletor ao lado você troca entre Mensal (últimos 12 meses com pagamento) e Anual (histórico completo); o total do período aparece embaixo. A linha tracejada é a média por mês (ou por ano): conta como zero os meses sem provento e deixa de fora o período ainda em curso.",
           "so_admin": false,
           "fonte": "views/investimentos.py:2435",
           "filhos": []
@@ -378,7 +378,7 @@
             {
               "nome": "Desempenho por Categoria",
               "resumo": "Linhas de retorno de cada tipo de investimento, lado a lado",
-              "explicacao": "Gráfico de linhas que compara o retorno de Ações, FIIs, Empresas Americanas, ETFs Americanos, Tesouro Direto e Renda Fixa no período escolhido (6 meses, 12 meses, 24 meses, 5 anos ou no ano). No campo 'Comparar' você escolhe quais categorias aparecem. Cada linha usa os ativos que você tem hoje, na quantidade de hoje, e começa no primeiro dia em que há preço — as linhas não começam todas na mesma data. Não é a rentabilidade da sua conta: aportes e vendas ficam de fora. Ações e FIIs vêm do fechamento diário, as americanas são convertidas para reais pelo dólar do dia, o Tesouro pelo preço de recompra da curva oficial e a renda fixa pelo valor unitário dos extratos importados. Uma tabela abaixo mostra o retorno, a data de início, quantos ativos têm preço e a fonte de cada linha.",
+              "explicacao": "Compara o retorno de Ações, FIIs, Empresas Americanas, ETFs Americanos, Tesouro Direto e Renda Fixa no período escolhido (6M, 12M, 24M, 5A ou no ano). Um placar mostra um cartão por categoria, da melhor para a pior, com o retorno, a data de início e um minigráfico; abaixo, o gráfico de linhas, com pontos mais espaçados quanto maior o período (um por semana em 6 meses e no ano, um por mês em 12 e 24 meses, um por trimestre em 5 anos), para a tendência não sumir no sobe e desce diário, traz o retorno final na ponta de cada linha. O gráfico abre só com Ações, ETFs Americanos e Tesouro Direto; tocando no nome de uma categoria na legenda, abaixo do gráfico, você mostra ou esconde a linha dela. Cada linha usa os ativos que você tem hoje, na quantidade de hoje, e cada ativo só entra a partir do seu primeiro aporte (o mesmo da coluna 'Primeiro aporte' da tabela de posições, tirado dos extratos de Negociação e Movimentação ou, na falta deles, da primeira foto de posição) — por isso as linhas não começam todas na mesma data, e o histórico de antes da compra não aparece. Ativo sem data de aporte fica fora da linha. Linhas pontilhadas marcam os pregões em que o Ibovespa ou o S&P 500 andou 5% ou mais no dia, com o nome da crise quando ela está entre os cenários do Stress (por exemplo, 'Choque Eleitoral 2026 · Ibov -14,5%' em 26/10/2026); a lista dos eventos marcados aparece abaixo do gráfico. Não é a rentabilidade da sua conta: aportes e vendas ficam de fora. Ações e FIIs vêm do fechamento diário, as americanas são convertidas para reais pelo dólar do dia, o Tesouro pelo preço de recompra da curva oficial e a renda fixa pelo valor unitário dos extratos importados. Em 'Fontes e metodologia', uma tabela mostra o retorno, a data de início, quantos ativos têm preço e a fonte de cada linha.",
               "so_admin": false,
               "fonte": "views/investimentos.py:1846 (_secao_desempenho_categorias); core/desempenho_categorias.py",
               "filhos": []
@@ -451,7 +451,7 @@
             {
               "nome": "Converse sobre sua carteira",
               "resumo": "Chat com IA sobre a carteira inteira",
-              "explicacao": "Conversa com a inteligência artificial, que responde usando os dados desta aba, juros, inflação, câmbio, notícias e os pregões diários recentes da bolsa de cada ação e fundo da carteira. Tem perguntas sugeridas, o botão 'Limpar chat' e uma caixa para enviar os valores em reais (por padrão vão só porcentagens). Sem IA configurada, aparece 'Esta conversa não está disponível no momento'.",
+              "explicacao": "Conversa com a inteligência artificial, que responde usando os dados desta aba, juros, inflação, câmbio, notícias, os pregões diários recentes da bolsa e os proventos de cada ano (inclusive o do ano em curso) de cada ação e fundo da carteira. Tem perguntas sugeridas, o botão 'Limpar chat' e uma caixa para enviar os valores em reais (por padrão vão só porcentagens). Sem IA configurada, aparece 'Esta conversa não está disponível no momento'.",
               "so_admin": false,
               "fonte": "views/investimentos.py:3900 (design/chat_carteira.py:114); core/pregoes_recentes.py",
               "filhos": []
@@ -689,7 +689,7 @@
             {
               "nome": "Cenário mais severo para esta carteira",
               "resumo": "A pior crise: queda, valor restante, recuperação",
-              "explicacao": "Uma frase dizendo quanto a carteira cairia na pior crise e em quanto tempo costuma se recuperar, seguida dos cartões Queda no pior cenário, Valor restante e Tempo de recuperação.",
+              "explicacao": "Uma frase dizendo quanto a carteira cairia na pior crise e em quanto tempo costuma se recuperar, seguida dos cartões Queda no pior cenário, Valor restante e Tempo de recuperação. Se a pior crise for um evento ainda em curso, a frase e o cartão dizem 'Em curso' no lugar do prazo, porque a recuperação ainda não foi medida.",
               "so_admin": false,
               "fonte": "views/investimentos.py:4237-4271",
               "filhos": []
@@ -697,7 +697,7 @@
             {
               "nome": "Queda estimada por crise",
               "resumo": "Barras comparando todas as crises",
-              "explicacao": "Gráfico com a queda estimada da carteira em cada crise histórica; passando o mouse aparecem o período, a perda em reais e o tempo de recuperação.",
+              "explicacao": "Gráfico com a queda estimada da carteira em cada crise histórica e no evento em curso (Choque Eleitoral 2026); passando o mouse aparecem o período, a perda em reais e o tempo de recuperação. Abaixo, uma nota avisa que o evento em curso é provisório e quais classes da carteira receberam um choque não medido.",
               "so_admin": false,
               "fonte": "views/investimentos.py:4277",
               "filhos": []
@@ -743,14 +743,14 @@
       "resumo": "Cada ativo avaliado à luz da sua estratégia",
       "explicacao": "Avalia cada ativo da carteira de acordo com a sua estratégia (objetivo, prazo, risco e alocação desejada) e sugere uma de sete ações: manter, comprar, acompanhar, rebalancear, reduzir parcialmente, vender ou substituir. Peso ou preço acima de um limite vira alerta para investigar, nunca ordem de venda. Enquanto a estratégia não estiver concluída, a aba aparece com um cadeado e mostra só a configuração; depois, ganha o ícone de cérebro e libera a análise.",
       "so_admin": false,
-      "fonte": "views/investimentos.py:4578 (views/inteligencia_ativos.py:81)",
+      "fonte": "views/investimentos.py:4578 (views/inteligencia_ativos.py:91)",
       "filhos": [
         {
           "nome": "Configure sua estratégia para liberar esta análise",
           "resumo": "Aviso e lista do que falta configurar",
           "explicacao": "Aparece só com a aba bloqueada: um cartão explicando por que configurar, a lista do que já foi respondido e do que falta, a barra de progresso e o botão 'Configurar minha estratégia' (ou 'Continuar configuração' / 'Revisar minha estratégia'). Se a estratégia precisar de revisão, o título vira 'Revise sua estratégia para liberar esta análise'.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos.py:145 (cartao_onboarding :112)",
+          "fonte": "views/inteligencia_ativos.py:155 (cartao_onboarding :122)",
           "filhos": []
         },
         {
@@ -758,7 +758,7 @@
           "resumo": "Entrevista ou formulário para montar a estratégia",
           "explicacao": "Onde você define a sua estratégia. Com a aba bloqueada, abre logo abaixo do aviso depois de clicar no botão; com a aba liberada, fica dentro de 'Minha estratégia'. Mostra a situação, a versão e a porcentagem concluída.",
           "so_admin": false,
-          "fonte": "views/configuracoes_estrategia.py:44 (chamado em views/inteligencia_ativos.py:169 e :179)",
+          "fonte": "views/configuracoes_estrategia.py:44 (chamado em views/inteligencia_ativos.py:179 e :189)",
           "filhos": [
             {
               "nome": "Iniciar configuração",
@@ -836,7 +836,7 @@
             {
               "nome": "Porcentagem atual · Porcentagem devida · Ação sugerida · Convicção",
               "resumo": "Peso hoje, peso ideal, a ação e o grau de convicção",
-              "explicacao": "Quatro números lado a lado: o peso hoje, o peso ideal, a ação sugerida (manter, comprar, acompanhar, rebalancear, reduzir parcialmente, vender ou substituir) e a convicção (alta, moderada ou baixa, com o porquê), seguidos do motivo e do lembrete de que é uma avaliação por regras, não uma recomendação.",
+              "explicacao": "Quatro números lado a lado: o peso hoje, o peso ideal, a ação sugerida (manter, comprar, acompanhar, rebalancear, reduzir parcialmente, vender ou substituir) e a convicção (alta, moderada ou baixa, com o porquê), seguidos do motivo e do lembrete de que é uma avaliação por regras, não uma recomendação. Num ativo em queda, a ação que venderia é revista antes de aparecer: se nenhum fundamento piorou, a tela não sugere vender na queda (rebalancear pelos aportes ou manter); se piorou, sugere vender em etapas, cerca de 1/3 por vez, salvo alerta grave confirmado no balanço.",
               "so_admin": false,
               "fonte": "views/inteligencia_ativos_resumida.py:135",
               "filhos": []
@@ -852,7 +852,7 @@
             {
               "nome": "Justificativa · Proporção e custo · Condições · Dados ausentes e limitações · Contexto",
               "resumo": "O porquê da ação sugerida",
-              "explicacao": "Os fatores que sustentam a ação (qualidade, tese, valuation contra o próprio histórico, peso na carteira). Quando a ação é reduzir ou vender, a proporção sugerida e o custo estimado da venda (imposto e spread, quando o app tem esses dados). Depois: o que mudaria a recomendação, os dados que faltaram e o pano de fundo de cenário, noticiário e valorização.",
+              "explicacao": "Os fatores que sustentam a ação (qualidade, tese, valuation contra o próprio histórico, peso na carteira). Quando a ação é reduzir ou vender, a proporção sugerida e o custo estimado da venda (imposto e spread, quando o app tem esses dados). Depois: o que mudaria a recomendação, os dados que faltaram e o pano de fundo de cenário, noticiário e valorização. Quando o ativo está em queda, o contexto começa pela linha 'Momento', com o quanto a posição está abaixo do valor investido, a queda em 12 meses contra a dos pares e se algum fundamento piorou.",
               "so_admin": false,
               "fonte": "views/inteligencia_ativos_resumida.py:173",
               "filhos": []
@@ -868,7 +868,7 @@
             {
               "nome": "Avaliação do ativo · Pares",
               "resumo": "Notas do ativo e comparação com concorrentes",
-              "explicacao": "Avaliação por dimensões (por exemplo, se está caro ou barato) e uma tabela comparando o ativo com dois parecidos.",
+              "explicacao": "Avaliação por dimensões (por exemplo, se está caro ou barato) e uma tabela comparando o ativo com dois parecidos. Num ETF, os indicadores do fundo (índice, maiores posições, concentração, taxa, liquidez e setores) vêm do yfinance; o tracking error não é calculado.",
               "so_admin": false,
               "fonte": "views/inteligencia_ativos_resumida.py:260, :343",
               "filhos": []
@@ -876,7 +876,7 @@
             {
               "nome": "Papel na carteira · Notícias · Relatórios relevantes · Como o macro influencia",
               "resumo": "Função do ativo, notícias e efeito da economia",
-              "explicacao": "Para que o ativo serve na sua carteira, notícias recentes, trechos de relatórios da empresa e como juros, inflação e câmbio o afetam.",
+              "explicacao": "Para que o ativo serve na sua carteira, notícias recentes, trechos de relatórios da empresa (entregues à CVM, ao FNET ou, nas ações americanas, à SEC) e como juros, inflação e câmbio o afetam. Num ETF sem notícia própria, aparecem as notícias das maiores posições do fundo, marcadas como tal.",
               "so_admin": false,
               "fonte": "views/inteligencia_ativos_resumida.py:376, :414, :483, :532",
               "filhos": []
@@ -892,11 +892,44 @@
           ]
         },
         {
+          "nome": "Sua carteira × Portfólio Global",
+          "resumo": "Sua carteira confrontada com a carteira sugerida",
+          "explicacao": "Logo abaixo das caixas dos ativos, compara sempre a sua carteira com a carteira recomendada do Portfólio Global: a qualidade média dos dois lados (de 1, frágil, a 3, forte), o peso em ativos com alerta grave, quanto da carteira já coincide com o modelo e a divisão por classe (a sua, a do modelo e a da sua estratégia). Quando uma classe diverge 5 pontos ou mais, explica se vale manter ou rebalancear pelos aportes, com a sua estratégia como premissa.",
+          "so_admin": false,
+          "fonte": "views/inteligencia_ativos.py:1145 (_render_confronto; core/inteligencia_ativos/confronto_modelo.py)",
+          "filhos": [
+            {
+              "nome": "Divergências de peso e o porquê",
+              "resumo": "Ativos com 3 pontos ou mais de diferença",
+              "explicacao": "Cada ativo seu que pesa 3 pontos ou mais acima ou abaixo do modelo, com a conclusão — mudança sugerida ou manter a sua escolha — e os motivos. A conclusão segue a decisão da Inteligência para o ativo: nunca manda vender só porque o modelo pesa menos, nem comprar quando a Inteligência barra o aporte.",
+              "so_admin": false,
+              "fonte": "views/inteligencia_ativos.py:941 (cartao_divergencias)",
+              "filhos": []
+            },
+            {
+              "nome": "Substituições sugeridas",
+              "resumo": "Ativo do modelo melhor que um seu, e por quê",
+              "explicacao": "Quando um ativo da carteira sugerida é melhor que um dos seus na mesma classe, a tela sugere a troca e explica por quê. No mesmo segmento, 'melhor' é a mesma comparação do 'Se sair, qual substituir?': melhor em qualidade e não pior em preço nem em risco, indicador a indicador. Sem indicadores para comparar dentro do mesmo segmento, não sugere troca. Entre segmentos diferentes, só conta qualidade claramente maior; se o setor de um dos dois for desconhecido, não sugere troca. Se a Inteligência ainda recomenda manter ou acompanhar o seu ativo, a troca é aos poucos, levando os próximos aportes para o novo; só sugere vender, com o custo e o imposto estimados, quando a própria Inteligência já indica vender, substituir ou reduzir.",
+              "so_admin": false,
+              "fonte": "views/inteligencia_ativos.py:993 (cartao_substituicoes; core/inteligencia_ativos/confronto_modelo.py:substituicoes)",
+              "filhos": []
+            },
+            {
+              "nome": "Ativos do modelo fora da sua carteira",
+              "resumo": "Incluir ou não, e por quê",
+              "explicacao": "Os ativos do modelo que você não tem, avaliados com a mesma régua da Inteligência. Viram candidatos a inclusão só se não tiverem alerta grave nem qualidade frágil, se não forem piores que a média dos seus ativos da mesma classe e se a sua estratégia previr a classe. Os demais aparecem como 'não incluir agora' ou 'sem avaliação', com o motivo.",
+              "so_admin": false,
+              "fonte": "views/inteligencia_ativos.py:954 (cartao_candidatos)",
+              "filhos": []
+            }
+          ]
+        },
+        {
           "nome": "Visão geral da carteira",
           "resumo": "Resumo da carteira frente à estratégia",
-          "explicacao": "Caixa recolhida com o resumo da carteira (Patrimônio total, Rentabilidade, Renda gerada (12 meses), Ativos que merecem revisão, alocação atual contra o alvo, concentrações, alertas e próximos eventos), a estratégia usada como base, uma tabela com papel, peso e ação a considerar para cada ativo e a comparação com a carteira recomendada do Portfólio Global.",
+          "explicacao": "Caixa recolhida com o resumo da carteira (Patrimônio total, Rentabilidade, Renda gerada (12 meses), Ativos que merecem revisão, alocação atual contra o alvo, concentrações, alertas e próximos eventos), a estratégia usada como base e uma tabela com papel, peso e ação a considerar para cada ativo. A comparação com a carteira recomendada do Portfólio Global saiu daqui e fica no confronto logo acima.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos.py:962",
+          "fonte": "views/inteligencia_ativos.py:1188",
           "filhos": []
         },
         {
@@ -904,14 +937,14 @@
           "resumo": "Estudo completo de um ativo escolhido",
           "explicacao": "Botão de ligar e desligar. Ligado, mostra o estudo passo a passo de um ativo e o quanto ele combina com a sua carteira.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos.py:976",
+          "fonte": "views/inteligencia_ativos.py:1200",
           "filhos": [
             {
               "nome": "Ativo",
               "resumo": "Escolhe qual ativo detalhar",
               "explicacao": "Seletor com todos os ativos da carteira; também é preenchido pelo botão 'Ver análise completa'.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos.py:981",
+              "fonte": "views/inteligencia_ativos.py:1205",
               "filhos": []
             },
             {
@@ -919,7 +952,7 @@
               "resumo": "Cartões numerados, do ativo até a decisão",
               "explicacao": "Sequência de cartões que vai de 'Ativo', 'Papel na carteira', 'Peso atual' e 'Peso desejado' até fundamentos, valuation, concorrentes, notícias, relatórios e eventos, terminando em 'Impacto na carteira' e 'Ação a considerar'.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos.py:687 (cartoes_analise), :985-991",
+              "fonte": "views/inteligencia_ativos.py:697 (cartoes_analise), :1210-1216",
               "filhos": []
             },
             {
@@ -935,7 +968,7 @@
               "resumo": "Quanto o ativo combina com sua carteira",
               "explicacao": "Mostra uma leitura por regras (limites, alvo da classe e papel do ativo) e o botão 'Gerar leitura de Portfolio Fit', em que a IA escreve uma avaliação mais completa. Sem IA configurada, aparece um aviso de indisponibilidade.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos.py:994 (views/inteligencia_ativos_fit.py:226)",
+              "fonte": "views/inteligencia_ativos.py:1230 (views/inteligencia_ativos_fit.py:226)",
               "filhos": []
             }
           ]
@@ -945,7 +978,7 @@
           "resumo": "Ver ou alterar a estratégia em vigor",
           "explicacao": "No fim da aba liberada. A caixa 'Ver ou alterar minha estratégia' abre o bloco Estratégia de Investimentos, com as respostas atuais e o botão para editar.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos.py:172",
+          "fonte": "views/inteligencia_ativos.py:182",
           "filhos": []
         }
       ]

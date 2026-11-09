@@ -1,9 +1,67 @@
 """Adapta a composição parcial ao painel FII existente, sem alterar alocação."""
 from __future__ import annotations
 
+import math
+from collections.abc import Iterable
 from dataclasses import asdict
 
 import numpy as np
+
+
+def pvp_da_carteira(posicoes: Iterable[tuple[object, object]]) -> float | None:
+    """P/VP agregado da carteira: média HARMÔNICA ponderada pelo peso.
+
+    O P/VP da carteira é valor de mercado total sobre valor patrimonial total.
+    Com peso ``w`` em mercado, a parcela patrimonial de cada fundo é
+    ``w / pvp``; somando, ``P/VP = Σw / Σ(w/pvp)``. A média aritmética
+    ``Σ(w·pvp)/Σw`` superestima: 50/50 em P/VP 0,5 e 1,5 dava 1,0, e o correto
+    é 0,75 -- a carteira compra patrimônio com 25% de desconto, não pelo valor
+    de face.
+
+    P/VP ausente, não finito ou não positivo fica de fora e o peso se
+    renormaliza sobre quem foi medido. Zero no lugar do ausente (o Dashboard
+    Geral fazia ``pvp or 0``) puxava o agregado para baixo sem ninguém medir.
+    """
+    medidos = []
+    for pvp, peso in posicoes:
+        try:
+            p, w = float(pvp), float(peso)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(p) and math.isfinite(w) and p > 0 and w > 0:
+            medidos.append((p, w))
+    if not medidos:
+        return None
+    return sum(w for _, w in medidos) / sum(w / p for p, w in medidos)
+
+
+def dy_da_carteira(posicoes: Iterable[tuple[object, object]]) -> float | None:
+    """DY 12m da carteira, em fração: média ARITMÉTICA ponderada pelo peso.
+
+    Diferente do P/VP, aqui a aritmética é a certa: rendimento sobre preço,
+    ponderado pelo valor de mercado de cada posição, soma direto. O que estava
+    errado no Dashboard Geral era o resto:
+
+    - DY ausente entrava como zero (``dy_12m or 0``), e um fundo sem dado
+      rebaixava o rendimento da carteira inteira. Agora fica fora e o peso se
+      renormaliza sobre quem foi medido;
+    - a vitrine grava o DY ora em fração (0,11), ora em ponto (11,0), e o
+      cartão multiplicava por 100 sem olhar: 11,0 virava 1.100%.
+
+    Sem nenhum DY medido o resultado é ``None``, nunca zero.
+    """
+    medidos = []
+    for dy, peso in posicoes:
+        try:
+            d, w = float(dy), float(peso)
+        except (TypeError, ValueError):
+            continue
+        if not (math.isfinite(d) and math.isfinite(w)) or w <= 0 or d < 0:
+            continue
+        medidos.append((d / 100 if d > 1 else d, w))
+    if not medidos:
+        return None
+    return sum(d * w for d, w in medidos) / sum(w for _, w in medidos)
 
 
 def enrich_review_presentation(proposal, policy, correlation_matrix=None):

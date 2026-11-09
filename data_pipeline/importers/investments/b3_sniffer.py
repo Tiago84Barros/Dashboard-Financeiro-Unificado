@@ -17,6 +17,10 @@ Puro: recebe bytes, devolve string ou None. Não toca o banco, não importa
 Streamlit, não percorre linhas — só `sheetnames`. A abertura do arquivo e a
 normalização de texto vivem em `xlsx_probe`, compartilhadas com o detector do
 Tesouro Direto.
+
+Exceção, e só no fim: o "Extrato da conta" da Rico tem uma aba chamada
+"Planilha1", que não identifica nada. Para ele, e só quando nenhuma aba
+reconheceu o arquivo, o topo da planilha é lido (`rico_extrato_conta.reconhece`).
 """
 from __future__ import annotations
 
@@ -78,8 +82,15 @@ def _abas_nuas() -> frozenset[str]:
     return ABAS_CONHECIDAS
 
 
+# Terceira passada, a única que lê células: o extrato de caixa da Rico. Vem por
+# último para que nenhum extrato reconhecido pela aba pague o custo de abrir o
+# conteúdo, e para que ele nunca roube um arquivo que já tem dono.
+_CHAVE_RICO_CONTA = "rico_cc"
+
+
 def detect(file_bytes: bytes) -> str | None:
-    """Devolve "b3_neg", "b3_mov", "b3_pos", "b3_posi", "xp_csl" ou None.
+    """Devolve "b3_neg", "b3_mov", "b3_pos", "b3_posi", "xp_csl", "rico_cc"
+    ou None.
 
     None cobre tanto "é um xlsx válido de outra origem" quanto "não consegui
     abrir": em ambos os casos a resposta certa é recusar o arquivo em vez de
@@ -96,4 +107,9 @@ def detect(file_bytes: bytes) -> str | None:
     nuas = _abas_nuas()
     if any(aba in nuas for aba in abas):
         return _CHAVE_POSICAO
+
+    from .rico_extrato_conta import reconhece
+
+    if reconhece(file_bytes):
+        return _CHAVE_RICO_CONTA
     return None

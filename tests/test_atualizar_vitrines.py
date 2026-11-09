@@ -38,13 +38,15 @@ def test_carimbo_aponta_para_a_base_que_o_alvo_escreve(chave, onde):
     """
     escreve_no_armazem = {"fii_ingest", "espelho_supabase", "brapi_raw_poda",
                           "b3_pregao", "fii_documentos", "cvm_ipe",
-                          "b3_brapi", "b3_brapi_anual", "us_painel_armazem"}
+                          "b3_brapi", "b3_brapi_anual", "us_painel_armazem",
+                          "us_sec_filings"}
     escreve_arquivo = {"macro_insumos", "cdi_diario", "macro_brasil", "valuation_historico",
                        "cenarios_analogos",
                        "informacoes_recentes", "rag_corpus", "fii_metrics_monthly",
                        "b3_linhagem", "precos_mensais_b3", "carteira20_desempenho",
                        "carteira20_medicao",
-                       "proventos_b3", "pregoes_recentes_b3"}
+                       "proventos_b3", "pregoes_recentes_b3", "etf_dados",
+                       "detalhe_eua"}
     esperado = ("armazem" if chave in escreve_no_armazem
                 else "arquivo" if chave in escreve_arquivo else "supabase")
     assert onde == esperado
@@ -564,3 +566,12 @@ def test_poda_regrava_as_demonstracoes_a_forca():
     passo = next(p for p in POR_CHAVE["brapi_raw_poda"].passos
                  if "renormalize-demonstracoes" in p)
     assert "--forcar" in passo
+
+
+def test_carimbo_dos_indices_le_so_os_simbolos_do_seletor():
+    # O max da tabela inteira viria das carteiras e esconderia o SPY ausente.
+    from core.publicacao_agenda import SIMBOLOS_BENCHMARK_EUA
+
+    consulta = av.CARIMBO["us_benchmarks"][1]
+    for simbolo in SIMBOLOS_BENCHMARK_EUA:
+        assert f"'{simbolo}'" in consulta

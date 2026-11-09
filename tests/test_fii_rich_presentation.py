@@ -50,12 +50,23 @@ def test_chat_receives_invested_scope_and_total_capital_weights():
     assert "publicável=não" in context
 
 
-def preview(mode="partial", history=True, llm=True, falha_llm=False):
-    return AppTest.from_string(
+def preview(mode="partial", history=True, llm=True, falha_llm=False, rodar=True):
+    app = AppTest.from_string(
         "from tests.fii_rich_preview import render_preview\n"
         f"render_preview({mode!r}, history={history!r}, llm={llm!r}, "
         f"falha_llm={falha_llm!r})",
         default_timeout=60).run()
+    # A seleção só roda no botão, como na Criação de Portfólio de B3 e EUA.
+    return app.button(key="fii_carteira_rodar").click().run() if rodar else app
+
+
+def test_carteira_nao_roda_antes_do_botao():
+    app = preview(rodar=False)
+    assert not app.exception
+    assert "fii_port" not in app.session_state
+    assert any("Rodar seleção de FIIs" in e.value for e in app.info)
+    body = "\n".join(element.value for element in app.markdown)
+    assert "Por que estes FIIs avançaram" not in body
 
 
 def test_falha_da_llm_nao_vira_resposta_no_historico():
@@ -104,8 +115,15 @@ def test_actual_portfolio_route_keeps_rich_panels_and_chat(mode):
     app.chat_input[0].set_value("Explique os riscos").run()
     assert not app.exception
     assert "Explique os riscos" in app.session_state["fii_chat_history"][-1]["content"]
+    carteira_antes = dict(app.session_state["fii_port"])
     app.slider(key="fii_pref_integrated_max_asset").set_value(5).run()
     assert not app.exception
+    # Mexer no controle não troca a carteira: avisa e espera o botão.
+    assert app.session_state["fii_port"] == carteira_antes
+    assert any("Os parâmetros mudaram" in e.value for e in app.info)
+    app.button(key="fii_carteira_rodar").click().run()
+    assert not app.exception
+    assert not any("Os parâmetros mudaram" in e.value for e in app.info)
     # O carregador persistente inicializa a lista do novo contexto como vazia.
     assert app.session_state["fii_chat_history"] == []
 
@@ -129,3 +147,89 @@ def test_empty_universe_has_explicit_state_and_no_stale_portfolio():
     assert not app.exception
     assert "fii_port" not in app.session_state
     assert not app.session_state["fii_portfolio_can_publish"]
+
+
+def test_montagem_roda_uma_vez_por_clique_e_nao_a_cada_interacao():
+    """A montagem custa dezenas de segundos; chat e controles não a repetem."""
+    from unittest.mock import patch
+
+    import views.fiis as fiis
+
+    original = fiis.veredito.reotimizar_sem_vetados
+    with patch.object(fiis.veredito, "reotimizar_sem_vetados",
+                      side_effect=original) as montagem:
+        app = preview("full")
+        assert not app.exception
+        assert montagem.call_count == 1
+        carteira = dict(app.session_state["fii_port"])
+
+        app.chat_input[0].set_value("Explique os riscos").run()
+        app.slider(key="fii_pref_integrated_max_asset").set_value(5).run()
+        assert not app.exception
+        assert montagem.call_count == 1
+        assert app.session_state["fii_port"] == carteira
+
+        app.button(key="fii_carteira_rodar").click().run()
+        assert montagem.call_count == 2
+        app.button(key="fii_carteira_rodar").click().run()
+        assert montagem.call_count == 2  # mesmos parâmetros: nada a refazer
+
+
+def test_chave_da_montagem_muda_com_a_metrica_e_nao_com_a_procedencia():
+    import views.fiis as fiis
+
+    inputs = pd.DataFrame()
+    inputs.attrs["snapshot_as_of"] = "2026-10-31"
+    prefs = {"scenario": MacroScenario(selic=15, ipca=4), "macro_mode": "moderate",
+             "scenario_provenance": {"selic": object()}}
+    linhas = [{"ticker": "AAAA11", "dy_12m": .1}]
+
+    def chave(linhas_, prefs_=prefs):
+        return fiis._chave_da_montagem(prefs_, PortfolioPolicy(), linhas_, [],
+                                       "unvalidated", {}, None, inputs)
+
+    assert chave(linhas) == chave([dict(linhas[0])])
+    # Procedência é objeto sem repr estável e não muda a carteira.
+    assert chave(linhas) == chave(linhas, {**prefs, "scenario_provenance": {"selic": object()}})
+    assert chave(linhas) != chave([{"ticker": "AAAA11", "dy_12m": .11}])
+    assert chave(linhas) != chave(linhas, {**prefs, "macro_mode": "scenario"})
+
+
+def test_carteira_reprovada_nos_gates_salva_com_ciencia_e_marcada():
+    """Antes de 08/11/2026 o gate só desabilitava o botão, sem motivo na tela.
+
+    Com a validação PIT da 6.10.0 reprovada desde 04/10, nenhuma carteira de
+    FIIs podia ser salva. Agora os motivos aparecem, a gravação exige ciência
+    e o modelo salvo leva a marca de que não passou nos gates.
+    """
+    from unittest.mock import patch
+
+    gravadas = []
+
+    def fake_save(items, params, metrics):
+        gravadas.append({"items": items, "params": params})
+        return "1234567890abcdef"
+
+    with patch("core.fii_portfolio_model.save_fii_portfolio_model",
+               side_effect=fake_save):
+        app = preview("full")
+        assert not app.exception
+        key = "fii_save_model_integrated_v6_5"
+        assert app.button(key=key).disabled
+        avisos = "\n".join(w.value for w in app.warning)
+        assert "não passou nos gates da metodologia" in avisos
+        assert "PIT pendente" in avisos
+
+        app.checkbox(key=f"{key}_ciente").check().run()
+        assert not app.exception
+        assert not app.button(key=key).disabled
+        app.button(key=key).click().run()
+        assert not app.exception
+
+    assert len(gravadas) == 1
+    params = gravadas[0]["params"]
+    assert params["publication_status"] == "diligence_override"
+    assert "PIT pendente" in params["publication_blockers"]
+    assert {item["ticker"] for item in gravadas[0]["items"]} == set(
+        app.session_state["fii_port"])
+    assert any("Carteira-modelo salva" in s.value for s in app.success)

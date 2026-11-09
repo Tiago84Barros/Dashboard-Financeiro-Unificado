@@ -14,7 +14,7 @@ import re
 from datetime import date, datetime, timezone
 from typing import Any, Iterable
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.engine import Connection, Engine
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,10 @@ def make_summary(source: str) -> dict[str, Any]:
         "rows_skipped": 0,
         "files_skipped": 0,        # arquivos pulados intencionalmente (não-erro)
         "files_skipped_notes": [],  # mensagens amigáveis (1 por arquivo)
+        # O que o USUÁRIO precisa fazer (rodar a 083, importar outro extrato).
+        # Não é erro: não muda o status. `errors` vai para o registro técnico
+        # (`detalhe_tecnico`) e não aparece na tela; `avisos` aparece.
+        "avisos": [],
         "errors": [],
         "started_at": datetime.now(tz=timezone.utc).isoformat(),
         "finished_at": None,
@@ -188,12 +192,22 @@ _TX_MAP_B3 = {
     "resgate antecipado":                    "sell",
 }
 
+# Tipos aceitos em `dividends.type` (CHECK da 003, ampliada pela 084).
+TIPO_REEMBOLSO_BTC = "lending_reimbursement"
+TIPOS_DIVIDENDO = frozenset({
+    "dividend", "jcp", "reit_income", "amortization", "other",
+    TIPO_REEMBOLSO_BTC,
+})
+
 # Movimentos da B3 que entram em `dividends`
 _INCOME_MAP_B3 = {
     "dividendo":                              "dividend",
     "juros sobre capital próprio":            "jcp",
     "rendimento":                             "reit_income",
-    "reembolso":                              "reit_income",
+    # Reembolso: o que quem tomou suas ações emprestadas (BTC) paga no lugar
+    # do dividendo ou do JCP. Não é rendimento de FII -- até a migração 084
+    # era gravado como `reit_income` e aparecia como "Rendimento FII".
+    "reembolso":                              TIPO_REEMBOLSO_BTC,
     "pagamento de prêmio/rendimentos":        "reit_income",
     "pagamento de rendimentos":               "reit_income",
     "direito de subscrição":                  "other",
@@ -327,6 +341,290 @@ def ensure_external_id_columns(engine: Engine) -> None:
                     logger.debug("ensure_external_id_columns: %s", exc)
     except Exception as exc:  # noqa: BLE001
         logger.warning("ensure_external_id_columns falhou: %s", exc)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Quantidade de provento: ausente fica ausente (migração 083)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Até 06/11/2026 `dividends.quantity` e `amount_per_unit` eram NOT NULL, e todo
+# importador que não sabia a quantidade gravava 1 cota com o pagamento inteiro
+# como valor por cota. Depois da migração 083:
+#   * quantidade desconhecida grava NULL nas duas colunas;
+#   * `quantity_placeholder` marca, uma vez só, as linhas antigas no padrão
+#     "1 cota = total". O padrão numérico sozinho não separa placeholder de
+#     posição real de 1 cota, então só a marca autoriza mexer numa linha que
+#     já tem quantidade;
+#   * a fonte que traz a quantidade completa a linha vazia ou marcada (chave
+#     canônica) e desliga a marca;
+#   * a Movimentação da B3 reimportada sem quantidade esvazia a SUA linha
+#     marcada (ver `_PREFIXOS_COM_QUANTIDADE_NO_ID`).
+#
+# O importador NÃO roda a migração: ela muda o schema e limpa dados da XP, e
+# AGENTS.md exige confirmação humana para migração. Antes da 083, o provento
+# sem quantidade sai nomeado em `avisos` (`aviso_sem_quantidade`), a XP não
+# grava provento nenhum (`aviso_xp_sem_083`) e nenhum ajuste roda.
+
+def _dialeto(conn: Any) -> str | None:
+    return getattr(getattr(conn, "dialect", None), "name", None)
+
+
+def migracao_083_aplicada(conn: Connection | Engine) -> bool:
+    """True se a 083 rodou: as duas colunas aceitam NULL e a marca existe.
+
+    Só lê o `information_schema`. Fora do Postgres (SQLite dos testes) a
+    tabela de teste decide sozinha, e a resposta é True.
+    """
+    if _dialeto(conn) != "postgresql":
+        return True
+    sql = text("""
+        SELECT
+          COUNT(*) FILTER (WHERE column_name IN ('quantity', 'amount_per_unit')
+                             AND is_nullable = 'YES') AS anulaveis,
+          COUNT(*) FILTER (WHERE column_name = 'quantity_placeholder') AS marca
+          FROM information_schema.columns
+         WHERE table_schema = 'public'
+           AND table_name = 'dividends'
+    """)
+    try:
+        if isinstance(conn, Engine):
+            with conn.connect() as c:
+                linha = c.execute(sql).one()
+        else:
+            linha = conn.execute(sql).one()
+        return int(linha.anulaveis) == 2 and int(linha.marca) == 1
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("migracao_083_aplicada: %s", safe_error(exc))
+        return False
+
+
+def migracao_084_aplicada(conn: Connection | Engine) -> bool:
+    """True se a CHECK de `dividends.type` já aceita `lending_reimbursement`.
+
+    Só lê o catálogo. Fora do Postgres (SQLite dos testes) a resposta é True.
+    """
+    if _dialeto(conn) != "postgresql":
+        return True
+    sql = text("""
+        SELECT COUNT(*)
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         WHERE n.nspname = 'public' AND t.relname = 'dividends'
+           AND c.contype = 'c'
+           AND pg_get_constraintdef(c.oid) LIKE '%lending_reimbursement%'
+    """)
+    try:
+        if isinstance(conn, Engine):
+            with conn.connect() as c:
+                return int(c.execute(sql).scalar() or 0) > 0
+        return int(conn.execute(sql).scalar() or 0) > 0
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("migracao_084_aplicada: %s", safe_error(exc))
+        return False
+
+
+def tipo_gravavel(tipo: str, aplicada_084: bool) -> str:
+    """O tipo que o banco aceita agora. Antes da 084 o reembolso volta a ser
+    `reit_income`, como sempre foi -- e a importação avisa
+    (`aviso_reembolso_sem_084`); depois dela, a reimportação corrige."""
+    if tipo == TIPO_REEMBOLSO_BTC and not aplicada_084:
+        return "reit_income"
+    return tipo
+
+
+def aviso_reembolso_sem_084(n: int) -> str:
+    return (
+        f"{n} reembolso(s) de aluguel de ações (BTC) gravado(s) como "
+        "\"Rendimento FII\", porque o banco ainda não tem o tipo próprio. Rode, "
+        "com backup, supabase_unificado/schema/084_dividends_reembolso_btc.sql "
+        "no SQL Editor do Supabase e importe de novo."
+    )
+
+
+def _tipo_canonico_sql(expr: str) -> str:
+    """O tipo como a deduplicação o compara: o reembolso de aluguel e o
+    `reit_income` são o mesmo pagamento -- até a 084 todo reembolso era
+    gravado como `reit_income`, e uma linha antiga da XP ou da B3 com o tipo
+    velho não pode deixar passar o mesmo pagamento chegando com o novo."""
+    return (f"(CASE WHEN {expr} = '{TIPO_REEMBOLSO_BTC}' "
+            f"THEN 'reit_income' ELSE {expr} END)")
+
+
+def _tipo_canonico(tipo: str) -> str:
+    return "reit_income" if tipo == TIPO_REEMBOLSO_BTC else str(tipo)
+
+
+# Pela chave canônica, não pelo external_id: a linha antiga pode ter vindo de
+# OUTRA fonte (XP antes da B3, ou o contrário), com outro id.
+_SQL_CORRIGE_TIPO_REEMBOLSO = text(f"""
+    UPDATE dividends
+       SET type = '{TIPO_REEMBOLSO_BTC}'
+     WHERE user_id = :user_id
+       AND asset_id = :asset_id
+       AND payment_date = :payment_date
+       AND type = 'reit_income'
+       AND ROUND(CAST(total_amount AS NUMERIC), 2)
+           = ROUND(CAST(:total_amount AS NUMERIC), 2)
+""")
+
+
+def corrigir_tipo_reembolso(conn: Connection, rows: list[dict[str, Any]]) -> int:
+    """Leva a `lending_reimbursement` a linha já gravada como `reit_income`
+    que é o mesmo pagamento (chave canônica) de um reembolso desta
+    importação, venha ela da mesma fonte ou de outra. Só depois da 084.
+
+    Mesmo ativo, dia e total: é a regra que a deduplicação já usa para dizer
+    que duas linhas são o mesmo provento. Um "Rendimento" de ação e um
+    reembolso no mesmo dia e com o mesmo valor ao centavo seriam fundidos;
+    a deduplicação os fundiria igual."""
+    params = [
+        {k: r[k] for k in ("user_id", "asset_id", "payment_date", "total_amount")}
+        for r in rows if r.get("type") == TIPO_REEMBOLSO_BTC
+    ]
+    if not params:
+        return 0
+    res = conn.execute(_SQL_CORRIGE_TIPO_REEMBOLSO, params)
+    return max(res.rowcount or 0, 0)
+
+
+def quantidade_e_valor_unitario(
+    quantidade: float | None, total: float,
+) -> tuple[float | None, float | None]:
+    """(quantity, amount_per_unit) de um provento: os dois None se a
+    quantidade não é conhecida. Nunca 1 cota inventada."""
+    if quantidade is None or quantidade <= 0:
+        return None, None
+    return quantidade, round(total / quantidade, 6)
+
+
+_INSTRUCAO_083 = (
+    "Rode, com backup, supabase_unificado/schema/"
+    "083_dividends_quantidade_opcional.sql no SQL Editor do Supabase e importe "
+    "de novo."
+)
+
+
+def aviso_sem_quantidade(ticker: str, pagamento: date, total: float) -> str:
+    """Mensagem de quando o banco ainda exige quantidade (083 sem rodar)."""
+    return (
+        f"{ticker} {pagamento:%d/%m/%Y} R$ {total:.2f}: a fonte não informa a "
+        f"quantidade e o banco ainda não aceita provento sem ela. {_INSTRUCAO_083}"
+    )
+
+
+def aviso_xp_sem_083(n: int) -> str:
+    """A 083 limpa os proventos da XP gravados pelo importador antigo; um
+    provento real de 1 cota gravado antes dela seria limpo junto."""
+    return (
+        f"{n} provento(s) da XP não gravado(s): eles só entram depois da "
+        f"migração 083, que limpa as quantidades inventadas da XP antiga. "
+        f"{_INSTRUCAO_083}"
+    )
+
+
+_SQL_CANDIDATAS = text("""
+    SELECT id, user_id, asset_id, payment_date, type, total_amount
+      FROM dividends
+     WHERE user_id IN :uids
+       AND asset_id IN :aids
+       AND (quantity IS NULL OR quantity_placeholder)
+""").bindparams(bindparam("uids", expanding=True),
+                bindparam("aids", expanding=True))
+
+_SQL_PREENCHE = text("""
+    UPDATE dividends
+       SET quantity = :quantity, amount_per_unit = :amount_per_unit,
+           quantity_placeholder = FALSE
+     WHERE id = :id
+""")
+
+_SQL_ESVAZIA_PLACEHOLDER = text("""
+    UPDATE dividends
+       SET quantity = NULL, amount_per_unit = NULL,
+           quantity_placeholder = FALSE
+     WHERE user_id = :user_id
+       AND external_id IN :ids
+       AND quantity_placeholder
+""").bindparams(bindparam("ids", expanding=True))
+
+
+def _chave_canonica(user_id, asset_id, payment_date, tipo, total) -> tuple:
+    """A mesma chave do NOT EXISTS da deduplicação, normalizada para casar
+    o que vem do banco (Decimal, date ou texto no SQLite) com o da planilha."""
+    return (str(user_id), str(asset_id), str(payment_date)[:10],
+            _tipo_canonico(tipo), round(float(total), 2))
+
+
+# Só a Movimentação da B3 põe a quantidade crua no hash do external_id
+# (`b3_movimentacao._parse_row`): a linha dela que chega sem quantidade nunca
+# tem o mesmo id que uma com quantidade, então a linha MARCADA com esse id é o
+# placeholder da versão antiga. Na XP e na Rico o id não leva a quantidade, e
+# uma reimportação incompleta apagaria uma quantidade conhecida.
+_PREFIXOS_COM_QUANTIDADE_NO_ID = ("b3mov-",)
+
+
+def ajustar_quantidades_dividendos(
+    conn: Connection, rows: list[dict[str, Any]],
+) -> int:
+    """Corrige quantidades já gravadas à luz das linhas desta importação.
+
+    Só depois da 083 (`migracao_083_aplicada`): usa `quantity_placeholder`.
+
+    * Linha COM quantidade completa o provento equivalente (chave canônica)
+      que está sem quantidade ou marcado como placeholder, e desliga a marca.
+      Mesmo ativo, dia, tipo e total não é outra posição: o valor por cota de
+      um provento é um só, e a fonte que conta as cotas decide.
+    * Linha SEM quantidade da Movimentação da B3 esvazia a própria linha
+      (mesmo dono e external_id) que ainda está marcada. Linha completada
+      por outra fonte já perdeu a marca e fica como está.
+
+    Custo fixo: uma consulta das candidatas e um UPDATE por linha que de fato
+    muda -- não um por provento do arquivo, que no Supabase custaria uma ida e
+    volta de rede cada.
+
+    Devolve quantas linhas mudaram.
+    """
+    com = [r for r in rows if r.get("quantity") is not None]
+    # Por dono: o external_id não carrega o dono em toda configuração
+    # (`make_external_id` omite o do admin), e a linha de outro usuário com o
+    # mesmo id não é desta importação.
+    sem: dict[str, set[str]] = {}
+    for r in rows:
+        ext = r.get("external_id") or ""
+        if r.get("quantity") is None and ext.startswith(
+            _PREFIXOS_COM_QUANTIDADE_NO_ID
+        ):
+            sem.setdefault(str(r["user_id"]), set()).add(ext)
+    mudou = 0
+    for dono, ids in sorted(sem.items()):
+        res = conn.execute(_SQL_ESVAZIA_PLACEHOLDER,
+                           {"user_id": dono, "ids": sorted(ids)})
+        mudou += max(res.rowcount or 0, 0)
+    if not com:
+        return mudou
+
+    candidatas: dict[tuple, list] = {}
+    for c in conn.execute(_SQL_CANDIDATAS, {
+        "uids": sorted({str(r["user_id"]) for r in com}),
+        "aids": sorted({str(r["asset_id"]) for r in com}),
+    }):
+        chave = _chave_canonica(c.user_id, c.asset_id, c.payment_date,
+                                c.type, c.total_amount)
+        candidatas.setdefault(chave, []).append(c)
+
+    updates = [
+        {"id": c.id, "quantity": r["quantity"],
+         "amount_per_unit": r["amount_per_unit"]}
+        for r in com
+        for c in candidatas.pop(
+            _chave_canonica(r["user_id"], r["asset_id"], r["payment_date"],
+                            r["type"], r["total_amount"]), [])
+    ]
+    if updates:
+        conn.execute(_SQL_PREENCHE, updates)
+        mudou += len(updates)
+    return mudou
 
 
 def get_or_create_institution(conn: Connection, name: str, inst_type: str) -> str:
@@ -501,8 +799,8 @@ def insert_dividend(
     user_id: str,
     asset_id: str,
     div_type: str,
-    amount_per_unit: float,
-    quantity: float,
+    amount_per_unit: float | None,
+    quantity: float | None,
     total_amount: float,
     ex_date: date | None,
     payment_date: date,
@@ -513,9 +811,11 @@ def insert_dividend(
 
     A chave canônica evita duplicidade entre fontes diferentes (por exemplo,
     B3 Movimentação e XP Consolidado), cujos external_ids têm prefixos
-    distintos para o mesmo pagamento.
+    distintos para o mesmo pagamento. `quantity`/`amount_per_unit` None quer
+    dizer "a fonte não informa" e exige a migração 083. Quem chama roda
+    `ajustar_quantidades_dividendos` depois, com o lote inteiro.
     """
-    if div_type not in ("dividend", "jcp", "reit_income", "amortization", "other"):
+    if div_type not in TIPOS_DIVIDENDO:
         raise ValueError(f"div_type invalido: {div_type}")
     # ON CONFLICT cobre reimportação da mesma fonte. O NOT EXISTS cobre o
     # mesmo provento chegando por outra fonte.
@@ -532,7 +832,8 @@ def insert_dividend(
                 WHERE existing.user_id = :uid
                   AND existing.asset_id = :aid
                   AND existing.payment_date = :pd
-                  AND existing.type = :type
+                  AND """ + _tipo_canonico_sql("existing.type") + """
+                      = """ + _tipo_canonico_sql("CAST(:type AS VARCHAR)") + """
                   AND ROUND(CAST(existing.total_amount AS NUMERIC), 2)
                       = ROUND(CAST(:total AS NUMERIC), 2)
             )
@@ -757,7 +1058,8 @@ def batch_insert_dividends(
 ) -> int:
     """
     Insere lista de dividendos em uma única statement. Além do external_id,
-    deduplica pela chave canônica compartilhada entre B3 e XP.
+    deduplica pela chave canônica compartilhada entre B3 e XP. Quem chama
+    roda `ajustar_quantidades_dividendos` depois, se a 083 já rodou.
 
     Cada item de `rows` precisa ter as chaves:
       user_id, asset_id, type, amount_per_unit, quantity,
@@ -765,7 +1067,7 @@ def batch_insert_dividends(
     """
     if not rows:
         return 0
-    valid_types = {"dividend", "jcp", "reit_income", "amortization", "other"}
+    valid_types = TIPOS_DIVIDENDO
     for r in rows:
         if r["type"] not in valid_types:
             raise ValueError(f"div_type invalido: {r['type']!r}")
@@ -782,7 +1084,8 @@ def batch_insert_dividends(
             WHERE existing.user_id = :user_id
               AND existing.asset_id = :asset_id
               AND existing.payment_date = :payment_date
-              AND existing.type = :type
+              AND """ + _tipo_canonico_sql("existing.type") + """
+                  = """ + _tipo_canonico_sql("CAST(:type AS VARCHAR)") + """
               AND ROUND(CAST(existing.total_amount AS NUMERIC), 2)
                   = ROUND(CAST(:total_amount AS NUMERIC), 2)
         )

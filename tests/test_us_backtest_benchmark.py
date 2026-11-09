@@ -368,3 +368,158 @@ def test_backtest_teorico_publica_concentracao_e_bloqueia_conclusao_quando_viola
     assert concentration["max_weight"] > concentration["policy_max_weight"]
     assert concentration["max_hhi"] > 0.99
     assert concentration["eligible_for_conclusion"] is False
+
+
+# ── Curva de capital com o benchmark ─────────────────────────────────────────
+def test_curva_de_capital_inclui_indice_e_pesos_iguais():
+    # O gráfico mostrava só bruta e líquida: o índice estava calculado em
+    # `benchmark_equity_curve` e ninguém o desenhava.
+    res = bt.walk_forward(_panel(), top_n=3, periods_per_year=1,
+                          benchmark="S&P 500 (SPY)", benchmark_loader=_loader,
+                          benchmark_horizon_months=12)
+    quadro, info = bt.curvas_capital(res)
+    assert info["benchmark"] == "S&P 500 (SPY, US$)"
+    assert info["janela_recortada"] is False
+    assert list(quadro.columns) == ["Estratégia bruta (US$)",
+                                    "S&P 500 (SPY, US$)",
+                                    "Pesos iguais do universo (US$)"]
+    assert list(quadro.index) == res["dates"]
+    np.testing.assert_allclose(quadro["Estratégia bruta (US$)"], res["equity_curve"])
+    np.testing.assert_allclose(quadro["S&P 500 (SPY, US$)"],
+                               res["benchmark_equity_curve"])
+    # SPY sintético sobe 5% a.a.: 8 janelas de 12 meses compõem 1,05^8.
+    assert quadro["S&P 500 (SPY, US$)"].iloc[-1] == pytest.approx(1.05 ** 8, rel=1e-6)
+
+
+def test_curva_recorta_todas_as_linhas_na_janela_do_indice():
+    # Índice que começa depois do painel: as linhas têm de partir da MESMA data,
+    # senão o índice parece pior só por ter tido menos anos para compor.
+    def curto(simbolos):
+        return pd.DataFrame({"SPY": _serie(0.05, anos=8, inicio="2013-06-30")})
+
+    res = bt.walk_forward(_panel(), top_n=3, periods_per_year=1,
+                          benchmark="S&P 500 (SPY)", benchmark_loader=curto,
+                          benchmark_horizon_months=12)
+    assert res["benchmark"]["ok"] and res["benchmark_dates"] != res["dates"]
+    quadro, info = bt.curvas_capital(res)
+    assert info["janela_recortada"] is True
+    assert list(quadro.index) == res["benchmark_dates"]
+    # A carteira recomposta na janela é a mesma que o excesso anualizado usa.
+    total = quadro["Estratégia bruta (US$)"].iloc[-1] - 1
+    assert total == pytest.approx(
+        res["portfolio_on_benchmark_window"]["total_return"], rel=1e-9)
+
+
+def test_curva_sem_indice_mostra_pesos_iguais():
+    res = bt.walk_forward(_panel(), top_n=3, periods_per_year=1,
+                          benchmark="Pesos iguais do universo",
+                          benchmark_loader=_loader)
+    quadro, info = bt.curvas_capital(res)
+    assert info["benchmark"] is None
+    assert "Pesos iguais do universo (US$)" in quadro.columns
+    assert len(quadro) == len(res["dates"])
+
+
+def test_curva_com_indice_sem_serie_nao_inventa_linha():
+    res = bt.walk_forward(_panel(), top_n=3, periods_per_year=1,
+                          benchmark="S&P 500 (SPY)",
+                          benchmark_loader=lambda s: pd.DataFrame())
+    assert res["benchmark"]["ok"] is False
+    quadro, info = bt.curvas_capital(res)
+    assert info["benchmark"] is None
+    assert not any("SPY" in c for c in quadro.columns)
+
+
+def test_legenda_da_curva_explica_indice_ausente():
+    # O aviso de benchmark sem série só ia para o log de lacunas; a tela dizia
+    # "escolha um índice" com o S&P 500 já escolhido.
+    from views.empresas_americanas import _figura_curva_capital, _legenda_curva_capital
+    res = bt.walk_forward(_panel(), top_n=3, periods_per_year=1,
+                          benchmark="S&P 500 (SPY)",
+                          benchmark_loader=lambda s: pd.DataFrame())
+    quadro, info = bt.curvas_capital(res)
+    texto = _legenda_curva_capital(info, res["benchmark"])
+    assert "S&P 500 (SPY) ficou fora do gráfico" in texto
+    assert "Escolha um índice" not in texto
+    fig = _figura_curva_capital(quadro, info["benchmark_colunas"])
+    assert all("%{y:.2f}" in t.hovertemplate for t in fig.data)
+    assert all(np.allclose(t.y, np.round(t.y, 2)) for t in fig.data)
+
+
+# ── Curva em reais: estratégia e índice, brutos e líquidos ──────────────────
+def _fx(valor_inicial=2.0, alta_anual=0.0):
+    idx = pd.date_range("2008-01-31", periods=12 * 25, freq="ME")
+    mensal = (1.0 + alta_anual) ** (1 / 12)
+    return pd.Series(valor_inicial * mensal ** np.arange(len(idx)), index=idx)
+
+
+def _wf_reais(fx, panel=None, top_n=3):
+    return bt.walk_forward(_panel() if panel is None else panel, top_n=top_n,
+                           periods_per_year=1, benchmark="S&P 500 (SPY)",
+                           benchmark_loader=_loader, benchmark_horizon_months=12,
+                           cambio_usdbrl=fx)
+
+
+def test_curva_com_cambio_poe_todas_as_linhas_em_reais():
+    res = _wf_reais(_fx())
+    quadro, info = bt.curvas_capital(res)
+    assert info["moeda"] == "BRL"
+    assert list(quadro.columns) == [
+        "Estratégia bruta (R$)", "Estratégia líquida (R$)",
+        "S&P 500 bruto (R$)", "S&P 500 líquido (R$)",
+        "Pesos iguais do universo (R$)"]
+    assert info["benchmark"] == "S&P 500 líquido (R$)"
+    # Câmbio constante: o bruto em reais é o bruto em dólar.
+    np.testing.assert_allclose(quadro["Estratégia bruta (R$)"], res["equity_curve"])
+    np.testing.assert_allclose(quadro["S&P 500 bruto (R$)"],
+                               res["benchmark_equity_curve"])
+    # Líquido abaixo do bruto, para os dois.
+    assert quadro["S&P 500 líquido (R$)"].iloc[-1] < quadro["S&P 500 bruto (R$)"].iloc[-1]
+    assert (quadro["Estratégia líquida (R$)"].iloc[-1]
+            < quadro["Estratégia bruta (R$)"].iloc[-1])
+
+
+def test_cambio_em_alta_aparece_no_bruto_em_reais():
+    res = _wf_reais(_fx(alta_anual=0.10))
+    quadro, _ = bt.curvas_capital(res)
+    assert quadro["S&P 500 bruto (R$)"].iloc[-1] == pytest.approx(
+        (1.05 * 1.10) ** 8, rel=1e-6)
+
+
+def test_indice_mantido_nao_paga_ir_e_so_gira_na_entrada():
+    res = _wf_reais(_fx(alta_anual=0.10))
+    bm = res["benchmark_liquido"]
+    assert bm["ok"] and bm["ir_medio"] == 0.0
+    n = len(res["benchmark_dates"])
+    assert bm["custo_medio"] == pytest.approx(0.5 * 20 / 10_000 / n)
+    estrategia = res["liquido"]["portfolio_brl_liquido"]["ann_return"]
+    assert res["excess_ann_liquido_vs_benchmark"] == pytest.approx(
+        estrategia - bm["portfolio_brl_liquido"]["ann_return"], rel=1e-9)
+
+
+def test_indice_liquido_e_a_mesma_conta_da_estrategia():
+    # Gêmeos: uma estratégia que só compra o próprio SPY tem de render, líquida
+    # em reais, exatamente o que a linha do índice mostra. Duas contas para a
+    # mesma pergunta divergiriam na primeira correção.
+    painel = pd.DataFrame([{"date": f"{2010 + d}-06-30", "symbol": "SPY",
+                            "score": 1.0, "fwd_return": 0.05} for d in range(8)])
+    res = _wf_reais(_fx(alta_anual=0.07), panel=painel, top_n=1)
+    np.testing.assert_allclose(res["liquido"]["equity_curve_liquido"],
+                               res["benchmark_liquido"]["equity_curve_liquido"])
+    assert res["excess_ann_liquido_vs_benchmark"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_legenda_em_reais_explica_os_pares():
+    from views.empresas_americanas import _figura_curva_capital, _legenda_curva_capital
+    res = _wf_reais(_fx())
+    quadro, info = bt.curvas_capital(res)
+    texto = _legenda_curva_capital(info, res["benchmark"])
+    assert texto.startswith("Todas as linhas estão em reais")
+    assert "bruto com bruto e líquido com líquido" in texto
+    fig = _figura_curva_capital(quadro, info["benchmark_colunas"],
+                                pesos_iguais_ocultos=True)
+    estilos = {t.name: (t.line.color, t.line.dash, t.visible) for t in fig.data}
+    assert estilos["S&P 500 líquido (R$)"][:2] == ("#E45756", "solid")
+    assert estilos["S&P 500 bruto (R$)"][:2] == ("#E45756", "dash")
+    assert estilos["Estratégia bruta (R$)"][:2] == ("#4C78A8", "dash")
+    assert estilos["Pesos iguais do universo (R$)"][2] == "legendonly"

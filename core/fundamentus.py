@@ -63,6 +63,16 @@ def _parse_br_number(s: str) -> float | None:
         return None
 
 
+def _razao(numerador: float | None, denominador: float | None) -> float | None:
+    """Dív. Bruta/Patrim. pela definição, quando a página só traz as parcelas.
+
+    Patrimônio nulo ou negativo não tem razão: devolve None, nunca zero.
+    """
+    if numerador is None or denominador is None or denominador <= 0:
+        return None
+    return round(numerador / denominador, 2)
+
+
 def _safe_f(val: Any, default: float = 0.0) -> float:
     try:
         v = float(val)
@@ -144,13 +154,17 @@ def _scrape_stock(ticker: str) -> dict:
             "dy":             g("Div.Yield") or g("Div. Yield") or g("Dividend Yield"),
             "roe":            g("ROE"),
             "roic":           g("ROIC"),
-            "marg_bruta":     g("Mrg Bruta") or g("Mrg. Bruta"),
-            "marg_ebit":      g("Mrg EBIT") or g("Mrg. EBIT"),
-            "marg_liq":       (g("Mrg. Líq.") or g("Mrg.Líq.") or
+            # A página de detalhe escreve "Marg." e "Liquidez Corr"; "Mrg." e
+            # "Liq. Corr." são os cabeçalhos da página de resultado. Com só os
+            # da lista, as quatro margens voltavam vazias para todo ativo.
+            "marg_bruta":     g("Marg. Bruta") or g("Mrg Bruta") or g("Mrg. Bruta"),
+            "marg_ebit":      g("Marg. EBIT") or g("Mrg EBIT") or g("Mrg. EBIT"),
+            "marg_liq":       (g("Marg. Líquida") or g("Mrg. Líq.") or g("Mrg.Líq.") or
                                g("Mrg Líq") or g("Margem Líquida")),
             "giro_ativos":    g("Giro Ativos"),
-            "liq_corr":       g("Liq. Corr."),
-            "div_brut_patrim": g("Dív.Brut/ Patrim."),
+            "liq_corr":       g("Liquidez Corr") or g("Liq. Corr."),
+            "div_brut_patrim": g("Dív.Brut/ Patrim.") or _razao(g("Dív. Bruta"),
+                                                                   g("Patrim. Líq")),
             "patrim_liq":     g("Patrim. Líq"),
             "div_bruta":      g("Dív. Bruta"),
             "div_liquida":    g("Dív. Líquida"),
@@ -177,7 +191,9 @@ def batch_stocks(tickers: tuple[str, ...]) -> dict[str, dict]:
 @st.cache_data(ttl=3600, show_spinner=False)
 def _scrape_fii(ticker: str) -> dict:
     try:
-        url = f"https://www.fundamentus.com.br/fii_detalhes.php?papel={ticker}"
+        # `fii_detalhes.php` passou a responder 200 com um erro fatal de PHP
+        # (verificado em 03/11/2026); o FII hoje é servido por `detalhes.php`.
+        url = f"https://www.fundamentus.com.br/detalhes.php?papel={ticker}"
         resp = requests.get(url, headers=_FUND_HEADERS, timeout=15)
         if resp.status_code != 200:
             return {}
@@ -192,7 +208,7 @@ def _scrape_fii(ticker: str) -> dict:
             "vacancia_media": g("Vacância Média"),
             "vacancia_fisica": g("Vacância Física"),
             "vacancia_financ": g("Vacância Financeira"),
-            "qtd_imoveis":    g("Qtd de Imóveis") or g("Nro. Imóveis"),
+            "qtd_imoveis":    g("Qtd de Imóveis") or g("Qtd imóveis") or g("Nro. Imóveis"),
             "qtd_cotistas":   g("Qtd de Cotistas") or g("Nro. Cotistas"),
             "qtd_ativos":     g("Qtd de Ativos"),
             "patrim_liq":     g("Patrim Líq") or g("Patrimônio Líq"),

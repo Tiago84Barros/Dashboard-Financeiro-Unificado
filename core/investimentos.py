@@ -1738,6 +1738,10 @@ def _montar_carteira_snapshot(rows: list, tx_costs: dict | None = None,
             "sem_marcacao":       sem_marcacao,
             "pct_carteira":       0.0,
             "cor":                _CLASS_COR.get(classe_raw, "#718096"),
+            # Nomes de todas as linhas somadas no grupo: o Desempenho por
+            # Categoria precisa saber se o ticker junta títulos diferentes.
+            "nomes_do_grupo":     sorted({str(r.asset_name) for r in g["rows"]
+                                          if getattr(r, "asset_name", None)}),
         })
 
     # Ordena por valor de mercado DESC (mantém UX original)

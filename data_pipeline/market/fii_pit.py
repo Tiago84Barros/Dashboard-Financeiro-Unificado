@@ -17,6 +17,7 @@ import requests
 from sqlalchemy import text
 
 from core.dividend_types import apenas_renda, descarta_safra_colapsada
+from core.fii_lookthrough import apply_exposures
 from core.fii_methodology import (
     FORMULA_VERSION,
     METHODOLOGY_VERSION,
@@ -40,7 +41,7 @@ _B3_IFIX_MONTHLY_URL = _ifix.URL_MENSAL
 _parse_b3_ifix_monthly = _ifix.parse_ifix_mensal
 _ingest_b3_ifix_monthly = _ifix.ingerir_ifix_mensal
 
-VALIDATION_PROTOCOL_VERSION = "fii-pit-robust-optimizer-3.4.0"
+VALIDATION_PROTOCOL_VERSION = "fii-pit-robust-optimizer-3.5.0"
 
 
 def _num(value: Any) -> float | None:
@@ -97,6 +98,31 @@ def _type_from_asset_classes(weights: dict[str, float]) -> str | None:
     return "hibrido"
 
 
+def _preco_sem_salto_de_split(fechamento: pd.Series, ajustado: pd.Series) -> pd.Series:
+    """Fechamento mensal encadeado sem o salto de desdobramento/grupamento.
+
+    Drawdown e tendencia PIT eram medidos sobre o fechamento bruto: num
+    desdobramento 1:10 o preco cai 90% de um mes para o outro sem que o cotista
+    perca nada, e o fundo saia cortado por "drawdown acima da tolerancia". A
+    regra e a mesma de ``_monthly_returns``, para as duas series contarem a mesma
+    historia: o mes em que o fechamento salta mais de 50% e o ajustado fica
+    plausivel e split; nele vale a variacao do ajustado. Fora desses meses vale
+    o fechamento -- o ajustado inteiro nao serve, porque a fonte o reescreve
+    retroativamente (saltos espurios de 600% ja medidos).
+
+    So o mes do evento usa o ajustado, e por razao entre dois meses
+    consecutivos: um fator corporativo posterior se cancela na divisao, entao
+    nada do futuro entra no corte.
+    """
+    variacao = fechamento.pct_change(fill_method=None)
+    variacao_ajustada = ajustado.pct_change(fill_method=None)
+    split = (variacao.abs() > .50) & (variacao_ajustada.abs() <= .50)
+    if not bool(split.any()):
+        return fechamento
+    corrigida = variacao.where(~split, variacao_ajustada).fillna(0.0)
+    return float(fechamento.iloc[0]) * (1.0 + corrigida).cumprod()
+
+
 def _monthly_market_features(prices: pd.DataFrame, dividends: pd.DataFrame) -> dict[str, dict]:
     output: dict[str, dict] = {}
     if prices.empty:
@@ -130,6 +156,10 @@ def _monthly_market_features(prices: pd.DataFrame, dividends: pd.DataFrame) -> d
     for ticker, group in frame.groupby("ticker"):
         group = group.sort_values("date").drop_duplicates("date", keep="last").set_index("date")
         monthly = group[["price", "close_raw"]].resample("ME").last().dropna(subset=["price"])
+        if "adjusted_close" in group:
+            ajustado = (pd.to_numeric(group["adjusted_close"], errors="coerce")
+                        .resample("ME").last().reindex(monthly.index))
+            monthly["price"] = _preco_sem_salto_de_split(monthly["close_raw"], ajustado)
         monthly["return"] = monthly["price"].pct_change(fill_method=None)
         daily_value = group["close_raw"] * group["volume"]
         ticker_div = (div[div["ticker"] == ticker].dropna(subset=["date", "amount"])
@@ -297,23 +327,9 @@ def reconstruct_snapshots(
                 "metric_metadata": {}, "data_consistency": .90,
                 "snapshot_availability_quality": type_quality,
             }
-            for exposure_type in {
-                str(item["exposure_type"]) for item in ticker_exp
-            }:
-                mapping = {
-                    str(item["exposure_name"]): float(item["exposure_weight"])
-                    for item in ticker_exp
-                    if str(item["exposure_type"]) == exposure_type
-                }
-                key = {
-                    "tenant": "tenants", "debtor": "debtors", "issuer": "issuers",
-                    "indexer": "indexers", "region": "regions",
-                    "holding": "holdings",
-                }.get(exposure_type)
-                if key:
-                    row[key] = mapping
-                elif exposure_type in {"manager", "sector"} and mapping:
-                    row[exposure_type] = max(mapping, key=mapping.get)
+            # `segment` (cadastro do mensal) so preenche `sector` quando
+            # nenhum setor por inquilino e conhecido ate a decisao.
+            apply_exposures(row, ticker_exp)
             for metric in ("dy_12m", "liquidez_diaria", "total_return_trend", "max_drawdown",
                            "income_growth_per_share_3y", "income_recurrence"):
                 if row.get(metric) is not None:

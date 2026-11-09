@@ -424,7 +424,11 @@ def methodology_manifest() -> dict[str, Any]:
             "weights": {"coverage": .40, "freshness": .12, "source_quality": .12,
                         "consistency": .12, "history": .09, "parser_calibration": .15},
         },
-        "missing_data_policy": "missing_reduces_coverage_and_confidence; never_zero_or_neutral",
+        # A-106: a nota encolhe para o neutro (50) pela raiz da cobertura --
+        # nunca para zero. O texto anterior ("never_zero_or_neutral") afirmava
+        # o contrario da formula e saia publicado no manifesto da vitrine.
+        "missing_data_policy": ("missing_reduces_coverage_and_confidence; never_zero; "
+                                "score_shrinks_toward_neutral_50_by_sqrt_coverage"),
         "publication_policy": "diligence_only_until_point_in_time_validation_passes",
     }
 

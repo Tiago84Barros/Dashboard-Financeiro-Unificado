@@ -71,7 +71,15 @@ REGRA_REFERENCIA = (
     "ativo, nem para escolher \"action_to_consider\" ou o nível de "
     "portfolio_fit. Pode citá-la em \"portfolio_impact\" como comparação "
     "(ex.: \"o peso real está X pp acima do modelo do app\"), dizendo que é o "
-    "modelo do app. Estado indisponível não é sinal de nada.")
+    "modelo do app. \"confronto\" traz a comparação já feita em código: "
+    "qualidade média da carteira e do modelo (mesma régua da Inteligência "
+    "nos dois lados), divergências acentuadas com a conclusão (mudar ou "
+    "manter a escolha do investidor), candidatos a inclusão e substituições "
+    "sugeridas (ativo do modelo melhor que um da carteira, com o modo: "
+    "vender e comprar, ou aos poucos pelos aportes). Essas "
+    "conclusões já respeitam o veredito; cite-as em \"portfolio_impact\" "
+    "com os números, sem trocá-las por outras e sem usá-las para escolher "
+    "\"action_to_consider\". Estado indisponível não é sinal de nada.")
 
 
 def normalizar(ticker) -> str:
@@ -89,6 +97,16 @@ class LinhaAtivo:
     peso_modelo: float | None      # % da base; None = fora do modelo
     peso_real: float | None        # % da base; None = fora da carteira
     situacao: str
+    # Setor do modelo (vai ao avaliador do ativo) e classe global da posição
+    # real (b3, fii, us, renda_fixa, outros): o confronto só compara ativo a
+    # ativo nas classes que o modelo cobre.
+    setor: str | None = None
+    classe_real: str | None = None
+
+    @property
+    def classe(self) -> str | None:
+        """A classe do ativo nos dois lados: a do modelo, senão a real."""
+        return self.classe_modelo or self.classe_real
 
     @property
     def diferenca(self) -> float | None:
@@ -201,6 +219,7 @@ def montar(snapshots: dict[str, dict[str, dict]], alocacao: dict,
     df = montar_posicoes(snapshots, alvos_modelo)
 
     modelo: dict[str, tuple[str, str, float]] = {}
+    setores: dict[str, str] = {}
     for linha in df.to_dict("records"):
         tk = normalizar(linha["symbol"])
         peso = alvos.get(linha["asset_class"], 0.0) * linha["weight_class"] * 100
@@ -209,10 +228,17 @@ def montar(snapshots: dict[str, dict[str, dict]], alocacao: dict,
             classe, nome, anterior = modelo[tk]
             peso += anterior
         modelo[tk] = (classe, nome, peso)
+        # Só o setor bruto do snapshot: a chave canônica (``other``,
+        # ``real_estate``...) não se compara com o setor da carteira, e
+        # "other" quer dizer desconhecido, não um setor.
+        setor = str(linha.get("sector_raw") or "").strip()
+        if setor and tk not in setores:
+            setores[tk] = str(setor)
 
     base = BASE_PATRIMONIO if renda_fixa is not None else BASE_SEM_RENDA_FIXA
     valores: dict[str, float] = {}
     nomes: dict[str, str] = {}
+    classes_reais: dict[str, str] = {}
     por_classe: dict[str, float] = {}
     for p in posicoes or []:
         vm = _num(p.get("valor_mercado"))
@@ -226,6 +252,7 @@ def montar(snapshots: dict[str, dict[str, dict]], alocacao: dict,
             continue
         valores[tk] = valores.get(tk, 0.0) + vm
         nomes.setdefault(tk, str(p.get("nome") or tk))
+        classes_reais.setdefault(tk, classe)
         por_classe[classe] = por_classe.get(classe, 0.0) + vm
     total = sum(valores.values())
     if total <= 0:
@@ -242,7 +269,8 @@ def montar(snapshots: dict[str, dict[str, dict]], alocacao: dict,
             ticker=tk, nome=nomes.get(tk, nome), classe_modelo=classe,
             peso_modelo=peso,
             peso_real=(valores[tk] / total * 100) if na_carteira else None,
-            situacao=situacao)
+            situacao=situacao, setor=setores.get(tk),
+            classe_real=classes_reais.get(tk))
 
     classes = tuple(
         LinhaClasse(classe=c, rotulo=carteira_real.ROTULOS[c],

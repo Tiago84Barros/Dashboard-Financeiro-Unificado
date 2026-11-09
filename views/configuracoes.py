@@ -7,9 +7,10 @@ Configurações do sistema — nove abas organizadas por finalidade.
   🎯 Grau de Confiança    — quanto o app confia em cada seção, e por quê
   🧭 Restrições           — limitações, erros e detalhes técnicos que saíram
                             das telas de uso (05/10/2026), para decisão do admin
-  🔁 Atualização de dados — o que o usuário sobe de arquivo, em duas sub-abas:
+  🔁 Atualização de dados — o que o usuário sobe de arquivo, em três sub-abas:
        💳 Controle Financeiro — fatura do cartão + extratos bancários
        📈 Investimentos       — importações B3, XP, Nomad
+       🏢 CNPJ                — extrato da conta da empresa (Controle CNPJ)
   🔄 Dados de mercado     — CVM, YFinance, Banco Central, macro (orquestração)
   🗄️ Banco de dados       — conexão, capacidade, schema e diagnóstico técnico
   🔒 Segurança            — sessão e autenticação
@@ -217,10 +218,14 @@ def _render_atualizacao_de_dados() -> None:
     é o fluxo do mês e a fatura do cartão é fluxo futuro; misturar as duas
     entradas numa lista só já foi o caminho para somar o que não se soma
     (``memoria: fluxo-caixa-vs-cartao-independentes``).
+
+    A terceira, 🏢 CNPJ (06/11/2026), recebe o extrato da empresa: vai para as
+    tabelas ``pj_*`` do Controle CNPJ e nunca para o financeiro pessoal.
     """
-    sub_controle, sub_invest = st.tabs([
+    sub_controle, sub_invest, sub_cnpj = st.tabs([
         "💳 Controle Financeiro",
         "📈 Investimentos",
+        "🏢 CNPJ",
     ])
 
     with sub_controle:
@@ -228,6 +233,9 @@ def _render_atualizacao_de_dados() -> None:
 
     with sub_invest:
         _render_investimentos()
+
+    with sub_cnpj:
+        _render_cnpj()
 
 
 def _render_confianca() -> None:
@@ -330,6 +338,26 @@ def _render_controle_financeiro() -> None:
             "Controle · Movimentos",
         )
         render_upload_extrato_bancario(show_header=False)
+
+
+def _render_cnpj() -> None:
+    """Extrato da conta da empresa, para a seção 💼 Controle CNPJ.
+
+    Sub-aba própria, e não um bloco dentro de 💳 Controle Financeiro: o que
+    entra aqui vai para as tabelas ``pj_*`` e nunca para o financeiro pessoal.
+    Import tardio: o módulo só carrega quando a sub-aba é desenhada.
+    """
+    from views.cnpj_upload import render_upload_extrato_cnpj
+
+    with st.container(border=True, key="cfg_cnpj_statement_workflow"):
+        _render_workflow_header(
+            "01",
+            "Extrato da empresa",
+            "Confira a prévia, a categoria de cada movimento e o saldo antes de gravar.",
+            "OFX",
+            "Controle CNPJ",
+        )
+        render_upload_extrato_cnpj()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1329,6 +1357,20 @@ _B3_JOBS: dict[str, dict[str, str]] = {
         "needs_filename": True,
         "skip_recompute": True,
     },
+    # Extrato de CAIXA da conta na Rico. Só os proventos pagos viram dado —
+    # nota de corretagem sem ativo, TED, taxa e aluguel ficam de fora (ver o
+    # docstring do parser). Reconhecido pelo conteúdo: a aba se chama
+    # "Planilha1".
+    "rico_cc": {
+        "key":         "rico_cc",
+        "label":       "Rico — Extrato da conta",
+        "file_types":  "xlsx",
+        "parser_attr": "parse_rico_extrato_conta",
+        "job_name":    "import_rico_extrato_conta",
+        "table_name":  "dividends",
+        "source_name": "Rico — Extrato da conta (manual)",
+        "skip_recompute": True,
+    },
 }
 
 # Ordem de execução do lote, independente da ordem em que os arquivos foram
@@ -1344,7 +1386,14 @@ _B3_JOBS: dict[str, dict[str, str]] = {
 # Entre as duas fotos a ordem não muda resultado — cada uma grava com a sua
 # própria `source_table` e nenhuma sobrescreve a outra —, mas fica fixa para o
 # mesmo lote produzir sempre o mesmo log.
-_B3_ORDEM: tuple[str, ...] = ("b3_neg", "b3_mov", "xp_csl", "b3_pos", "b3_posi")
+#
+# O extrato da conta da Rico vem depois da Movimentação pelo mesmo motivo do
+# Consolidado: os dois deduplicam pela chave canônica, e a Movimentação traz o
+# provento com a quantidade e a instituição que o extrato de caixa às vezes não
+# tem — quando os dois cobrem o mesmo pagamento, fica a linha da B3.
+_B3_ORDEM: tuple[str, ...] = (
+    "b3_neg", "b3_mov", "xp_csl", "rico_cc", "b3_pos", "b3_posi",
+)
 
 
 # Jobs do lote do Tesouro Direto. Mesma mecânica dos extratos da B3: um único
@@ -1574,6 +1623,7 @@ def _consolidar_resultados_lote(
     )
     total: dict = {k: 0 for k in contadores}
     total["errors"] = []
+    total["avisos"] = []
     status_vistos: set[str] = set()
 
     for _chave, nome, summary in resultados:
@@ -1582,6 +1632,8 @@ def _consolidar_resultados_lote(
         status_vistos.add(summary.get("status", "failed"))
         for erro in (summary.get("errors") or []):
             total["errors"].append(f"{nome}: {erro}")
+        for aviso in (summary.get("avisos") or []):
+            total["avisos"].append(f"{nome}: {aviso}")
 
     if status_vistos <= {"success"}:
         total["status"] = "success"
@@ -1658,9 +1710,13 @@ _LOTE_B3: dict = {
     "titulo":     "📊 Dados Históricos B3 (.xlsx)",
     "caption":    "investidor.b3.com.br → Extratos e Informativos → "
                   "Negociação, Movimentação, Relatório Consolidado (o da XP), "
-                  "Posição Detalhada **ou** Posição. Envie quantos arquivos "
-                  "quiser, dos cinco tipos misturados — o app identifica cada "
-                  "um pelo conteúdo. A Posição Detalhada é uma foto da "
+                  "Posição Detalhada **ou** Posição — e também o **Extrato da "
+                  "conta da Rico** (rico.com.br → Extrato). Envie quantos "
+                  "arquivos quiser, dos seis tipos misturados — o app "
+                  "identifica cada um pelo conteúdo. Do Extrato da conta só "
+                  "entram os rendimentos e dividendos pagos: as compras e "
+                  "vendas aparecem ali só como total da nota, sem o ativo, e "
+                  "por isso continuam vindo da Negociação. A Posição Detalhada é uma foto da "
                   "carteira: linha sem quantidade (CDB, fundo fechado) e "
                   "ativo já vendido não entram, e a seção Custódia Remunerada "
                   "é ignorada porque repete as mesmas ações de \"Ações\". A "
@@ -1866,6 +1922,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
         parse_b3_posicao,
         parse_b3_posicao_detalhada,
         parse_nomad_pdf,
+        parse_rico_extrato_conta,
         parse_tesouro_analitico,
         parse_tesouro_direto,
         parse_xp_consolidado,
@@ -1882,6 +1939,7 @@ def _executar_importacao_investimento(cfg: dict, payload) -> dict:
         "parse_b3_posicao":      parse_b3_posicao,
         "parse_b3_posicao_detalhada": parse_b3_posicao_detalhada,
         "parse_xp_consolidado":  parse_xp_consolidado,
+        "parse_rico_extrato_conta": parse_rico_extrato_conta,
         "parse_tesouro_direto":  parse_tesouro_direto,
         "parse_tesouro_analitico": parse_tesouro_analitico,
         "parse_nomad_pdf":       parse_nomad_pdf,
@@ -2043,6 +2101,16 @@ def _render_import_result(summary: dict) -> None:
                 f"{rec.get('error', 'erro desconhecido')}",
                 codigo="configuracoes.recalculo_falha",
             )
+
+    # Avisos dizem ao usuário o que fazer (rodar uma migração, importar outro
+    # extrato). Diferente de `errors`, que é detalhe técnico e não vai para a
+    # tela, eles precisam ser lidos -- uma "Falha" sem motivo não ajuda.
+    avisos = summary.get("avisos") or []
+    if avisos:
+        with st.container(border=True):
+            st.markdown(f"**⚠️ {len(avisos)} aviso(s) para você**")
+            for aviso in avisos[:50]:
+                st.caption(f"• {aviso}")
 
     errors = summary.get("errors") or []
     for err in errors[:50]:

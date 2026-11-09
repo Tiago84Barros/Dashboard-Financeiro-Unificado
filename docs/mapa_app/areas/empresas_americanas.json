@@ -54,7 +54,7 @@
     {
       "nome": "Análise de Empresa",
       "resumo": "Raio-x completo de uma empresa escolhida",
-      "explicacao": "Mostra tudo sobre uma empresa: preço, lucros, dívidas, dividendos, indicadores, uma nota de qualidade, um relatório do analista e um chat com a inteligência artificial. No topo aparecem logo, nome, setor e a última cotação em dólares. Serve para decidir se a empresa merece entrar no seu radar.",
+      "explicacao": "Mostra tudo sobre uma empresa: preço, lucros, dívidas, dividendos, indicadores, uma nota de qualidade, um relatório do analista e um chat com a inteligência artificial. No topo aparecem logo, nome, setor e a última cotação em dólares. Serve para decidir se a empresa merece entrar no seu radar. Quando o código digitado não está na lista publicada, a tela diz também o que o armazém local tem sobre ele, para separar erro de digitação de papel real fora da lista.",
       "so_admin": false,
       "fonte": "views/empresas_americanas.py:458",
       "filhos": [
@@ -193,7 +193,7 @@
         {
           "nome": "Converse sobre a empresa",
           "resumo": "Chat com a IA sobre esta empresa",
-          "explicacao": "Caixa de conversa com a inteligência artificial focada na empresa aberta: pergunte sobre resultados, dívidas, concorrentes e riscos. Ela responde só com os dados que o app tem e avisa quando falta informação. Só funciona quando a IA está configurada; senão aparece um aviso. Na tela o título traz o código da empresa (Converse sobre AAPL, por exemplo).",
+          "explicacao": "Caixa de conversa com a inteligência artificial focada na empresa aberta: pergunte sobre resultados, dívidas, concorrentes e riscos. Além dos números da vitrine, ela recebe os últimos trimestres (receita, lucro, margem, fluxo de caixa livre e a comparação com o mesmo trimestre do ano anterior), os exercícios e os proventos, e os documentos recentes que a empresa entregou à SEC (8-K, 10-Q, 10-K), com a data e o assunto de cada um. Ela responde só com os dados que o app tem e avisa quando falta informação. Só funciona quando a IA está configurada; senão aparece um aviso. Na tela o título traz o código da empresa (Converse sobre AAPL, por exemplo). Antes de dizer que falta informação, ela recebe uma varredura do armazém local (o banco grande que fica no computador do dono do app): quantas linhas e de que período existem ali sobre o ativo, fonte por fonte. Assim ela separa \"o dado não existe\" de \"o dado existe e não chegou a esta conversa\".",
           "so_admin": false,
           "fonte": "views/empresas_americanas.py:836 (design/chat_ativo.py:92)"
         }
@@ -206,13 +206,6 @@
       "so_admin": false,
       "fonte": "views/empresas_americanas.py:1519",
       "filhos": [
-        {
-          "nome": "Validação histórica",
-          "resumo": "Aviso: a regra funcionou no passado?",
-          "explicacao": "Quadro no topo com o resumo do teste histórico: se a nota ordenou bem as empresas e se a carteira teria rendido mais do que dividir igualmente. Só aparece quando o histórico necessário existe.",
-          "so_admin": false,
-          "fonte": "views/empresas_americanas.py:1562 (texto em :1466)"
-        },
         {
           "nome": "Perfil de configuração",
           "resumo": "Escolha um conjunto de regras pronto",
@@ -258,30 +251,23 @@
         {
           "nome": "Resumo do Portfólio",
           "resumo": "Números da carteira e botões para salvar",
-          "explicacao": "Cartões com número de ações, nota média, maior posição, capital, setores e indústrias, seguidos dos botões de uso e de dois gráficos de alocação.",
+          "explicacao": "Cartões com número de ações, nota média, maior posição, capital, setores e indústrias, seguidos do botão de salvar, de uma frase que diz qual carteira está no banco hoje e se ela é a montada acima, e de dois gráficos de alocação.",
           "so_admin": false,
-          "fonte": "views/empresas_americanas.py:2037",
+          "fonte": "views/empresas_americanas.py:2025",
           "filhos": [
-            {
-              "nome": "Usar na Avaliação de Portfólio",
-              "resumo": "Envia a carteira para a próxima aba",
-              "explicacao": "Botão que guarda a carteira montada para a avaliação. Fica bloqueado quando a carteira não passa nas checagens. Atenção: pela leitura do código, a aba Avaliação de Portfólio lê apenas a carteira salva como padrão, não a enviada por este botão.",
-              "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2065"
-            },
             {
               "nome": "Salvar como carteira padrão",
               "resumo": "Grava a carteira para o Dashboard e a avaliação",
-              "explicacao": "Salva a carteira de forma permanente. Ela passa a aparecer no Dashboard Geral e é a que a aba Avaliação de Portfólio usa. Fica bloqueado quando a carteira não passa nas checagens.",
+              "explicacao": "Único botão da seção e o que grava: salva a carteira de forma permanente. Ela passa a aparecer no Dashboard Geral e no Portfólio Global e é a que a aba Avaliação de Portfólio usa. Fica bloqueado quando a carteira não passa nas checagens.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2072"
+              "fonte": "views/empresas_americanas.py:2060"
             },
             {
               "nome": "Histórico e restauração do Portfólio EUA",
               "resumo": "Volte a uma carteira salva antes",
               "explicacao": "Só aparece quando existem versões antigas. Escolha uma versão, marque a confirmação e clique em Restaurar versão selecionada para trocá-la pela atual.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:1415"
+              "fonte": "views/empresas_americanas.py:1440"
             },
             {
               "nome": "Alocação por ativo e Alocação por setor",
@@ -337,16 +323,16 @@
             {
               "nome": "Retorno líquido em reais (padrão)",
               "resumo": "Resultado depois de custos, câmbio e IR",
-              "explicacao": "Mostra o resultado convertido para reais, descontando custos e imposto, com as premissas usadas.",
+              "explicacao": "Mostra o resultado convertido para reais, descontando custos e imposto, com as premissas usadas. Com um índice escolhido, mostra também o índice em reais, bruto e líquido, e quanto a estratégia ganhou ou perdeu por ano contra ele depois de custo e imposto.",
               "so_admin": false,
               "fonte": "views/empresas_americanas.py:995 (chamado em :2321)"
             },
             {
               "nome": "Curva de capital",
               "resumo": "Gráfico da evolução do dinheiro",
-              "explicacao": "Linha que mostra como o dinheiro teria evoluído ao longo do teste.",
+              "explicacao": "Linhas que mostram como o dinheiro teria evoluído ao longo do teste, todas em reais: a estratégia bruta (só câmbio) e líquida (depois de custo, retenção de dividendos, IR e IOF) e o índice escolhido no seletor (como o S&P 500) pela mesma conta, comprado e mantido. Tracejado é bruto e cheio é líquido; compare bruto com bruto e líquido com líquido. A carteira de pesos iguais aparece ao clicar na legenda. Os valores têm duas casas. Sem câmbio, as linhas caem para dólar; quando o índice cobre menos anos que o teste, todas são recompostas na mesma janela; sem série publicada do índice, a legenda avisa.",
               "so_admin": false,
-              "fonte": "views/empresas_americanas.py:2434"
+              "fonte": "views/empresas_americanas.py:2379"
             }
           ]
         },

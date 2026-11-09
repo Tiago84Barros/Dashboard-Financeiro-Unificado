@@ -275,6 +275,23 @@ def test_acao_b3_sem_nada():
     assert ff.dados_acao_b3(pd.DataFrame(), pd.Series(dtype=float)) == {}
 
 
+def test_acao_b3_proventos_do_ultimo_ano_fechado():
+    from datetime import date
+    hoje = date(2026, 11, 3)
+    d = ff.dados_acao_b3(pd.DataFrame(), None, None,
+                         {2024: 2.07, 2025: 5.28, 2026: 1.0}, hoje)
+    assert d["dividendos_12m"].valor == pytest.approx(5.28)
+    assert d["dividendos_12m"].referencia == "pagos em 2025"
+    # ano fechado sem pagamento depois do primeiro provento: R$ 0
+    d = ff.dados_acao_b3(pd.DataFrame(), None, None, {2023: 1.0}, hoje)
+    assert d["dividendos_12m"].valor == 0.0
+    # sem lista de proventos, ou só ano em curso: sem dado
+    assert "dividendos_12m" not in ff.dados_acao_b3(pd.DataFrame(), None,
+                                                    None, {}, hoje)
+    assert "dividendos_12m" not in ff.dados_acao_b3(pd.DataFrame(), None,
+                                                    None, {2026: 1.0}, hoje)
+
+
 def test_acao_eua():
     metricas = {"_revenue": 3.9e11, "_net_income": 9.4e10, "gross_margin": 0.46,
                 "roic": 0.55, "interest_coverage": 29.0, "revenue_cagr_3y": None}

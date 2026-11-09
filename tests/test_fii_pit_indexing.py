@@ -57,3 +57,44 @@ def test_reconstruct_snapshots_uses_latest_observation_and_exposure(monkeypatch)
     assert snapshots[0]["ticker"] == "TEST11"
     assert snapshots[0]["fii_type"] == "papel"
     assert snapshots[0]["portfolio_input_json"]["manager"] == "Gestora PIT"
+
+
+def test_rental_share_enters_the_row_only_after_publication(monkeypatch):
+    """A fração de imóvel para renda segue o mesmo corte PIT das métricas.
+
+    Publicada depois da decisão, ela não existe para a carteira daquela data,
+    e o fundo de obra continua na máscara de setor por cautela.
+    """
+    from core.fii_lookthrough import dimension_is_applicable
+
+    prices = pd.DataFrame([
+        {"ticker": "OBRA11", "date": day, "close": 100.0,
+         "adjusted_close": 100.0, "volume": 1_000, "source": "test"}
+        for day in ("2025-01-02", "2025-01-31", "2025-02-03", "2025-02-28")
+    ])
+    observations = pd.DataFrame([
+        {"ticker": "OBRA11", "metric_name": "pct_imoveis_renda", "value_numeric": 0.0,
+         "value_text": None, "value_json": None, "reference_date": "2025-01-31",
+         "knowledge_at": "2025-02-10T00:00:00Z",
+         "availability_quality": "verified_publication", "source": "cvm_informe_mensal"},
+    ])
+    funds = pd.DataFrame([{"ticker": "OBRA11", "tipo": "tijolo"}])
+    rows_by_date: dict[str, dict] = {}
+
+    def fake_score(rows, *, as_of, **_kwargs):
+        rows_by_date[as_of.isoformat()] = rows[0]
+        return [{
+            **rows[0], "type_score": 50.0, "confidence": 0.8, "coverage": 0.9,
+            "critical_coverage": 0.9, "components": {}, "score_inputs": {},
+            "missing_metrics": [], "data_readiness_status": "ready",
+        }]
+
+    monkeypatch.setattr("data_pipeline.market.fii_pit.score_fiis_by_type", fake_score)
+    reconstruct_snapshots(prices, pd.DataFrame(), observations, pd.DataFrame(), funds,
+                          start="2025-01-31", end="2025-02-28")
+
+    janeiro, fevereiro = rows_by_date["2025-01-31"], rows_by_date["2025-02-28"]
+    assert "pct_imoveis_renda" not in janeiro
+    assert dimension_is_applicable(janeiro, "sector") is True
+    assert fevereiro["pct_imoveis_renda"] == 0.0
+    assert dimension_is_applicable(fevereiro, "sector") is False
