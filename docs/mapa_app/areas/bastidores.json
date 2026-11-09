@@ -152,7 +152,7 @@
         {
           "nome": "Avisos no Telegram",
           "resumo": "Avisa quando algo falha ou atrasa",
-          "explicacao": "No fim de cada rodada, um 'vigia' manda mensagem no Telegram quando uma publicação falhou ou passou do prazo, quando uma tarefa agendada na nuvem falhou 2 vezes seguidas ou quando os balanços da B3 estão atrasados. Não avisa quando está tudo bem, e só repete o aviso se o problema mudar ou depois de 24 horas.",
+          "explicacao": "No fim de cada rodada, um 'vigia' manda mensagem no Telegram quando uma publicação falhou ou passou do prazo, quando uma tarefa agendada na nuvem falhou 2 vezes seguidas, quando os balanços da B3 estão atrasados, ou quando a coleta de notícias para: o coletor sem rodar há mais de 26 horas, um provedor sem sucesso há 2 dias ou um provedor que responde mas traz menos de 20% do normal dele por 2 dias. Não avisa quando está tudo bem, e só repete o aviso se o problema mudar ou depois de 24 horas.",
           "so_admin": false,
           "fonte": "scripts/vigia_automacoes.py:1; scripts/notificar.py:1",
           "filhos": []
