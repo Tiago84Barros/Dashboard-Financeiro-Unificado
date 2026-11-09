@@ -32,8 +32,8 @@ def repo(monkeypatch):
 
     engine = create_engine(URL)
     with engine.begin() as conn:
-        conn.execute(text("DROP TABLE IF EXISTS pj_regras, pj_saldos_extrato, pj_lancamentos, "
-                          "pj_empresas, profiles CASCADE"))
+        conn.execute(text("DROP TABLE IF EXISTS pj_categorias, pj_regras, pj_saldos_extrato, "
+                          "pj_lancamentos, pj_empresas, profiles CASCADE"))
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
         conn.execute(text("CREATE SCHEMA IF NOT EXISTS auth"))
         conn.execute(text("CREATE OR REPLACE FUNCTION auth.uid() RETURNS uuid "
@@ -45,7 +45,8 @@ def repo(monkeypatch):
     monkeypatch.setattr(r.settings, "MOCK_MODE", False, raising=False)
     monkeypatch.setattr(r.settings, "OWNER_USER_ID", DONO_A, raising=False)
     monkeypatch.setattr(r, "_criadas", False)
-    for fn in (r.obter_empresa, r.listar_lancamentos, r.listar_saldos_extrato):
+    for fn in (r.obter_empresa, r.listar_lancamentos, r.listar_saldos_extrato,
+               r.listar_categorias):
         monkeypatch.setattr(r, fn.__name__, fn.__wrapped__)
     monkeypatch.setattr(r, "limpar_caches", lambda: None)
     return r
@@ -222,3 +223,122 @@ def test_extrato_antigo_importado_depois_confere_para_tras_no_app_e_na_confianca
     with get_engine().connect() as conn:
         dif = conn.execute(text(sql_antigo), {"uid": DONO_A}).scalar()
     assert float(dif) == 0.0
+
+
+def test_categoria_propria_vale_para_classificar_e_traz_o_grupo(repo):
+    assert repo.criar_categoria("Comissões de vendedores", "custos") == (True, "")
+    cats = repo.listar_categorias()
+    assert [(c["codigo"], c["nome"], c["grupo"], c["usos"]) for c in cats] == [
+        ("u_comissoes_de_vendedores", "Comissões de vendedores", "custos", 0)]
+    plano = repo.plano_de_contas()
+    assert plano.rotulo("u_comissoes_de_vendedores") == "Comissões de vendedores"
+
+    repo.importar_extrato([dict(_mov(3, -300.0, "Pix enviado", "C1", contraparte="Vendedor X"),
+                                categoria="u_comissoes_de_vendedores")], "a.ofx")
+    lanc = repo.listar_lancamentos()[0]
+    assert lanc["categoria"] == "u_comissoes_de_vendedores"
+    assert lanc["grupo_categoria"] == "custos"
+    assert repo.listar_categorias()[0]["usos"] == 1
+    # a regra aprendida guarda a categoria própria
+    ctx = repo.preparar_importacao([_mov(4, -100.0, "Pix enviado", "C2", contraparte="VENDEDOR X")])
+    assert ctx["regras"] == {"vendedor x": "u_comissoes_de_vendedores"}
+    # classificar e lançar à mão também aceitam
+    assert repo.classificar(lanc["id"], "u_comissoes_de_vendedores")[0]
+    assert repo.criar_lancamento(date(2026, 11, 9), "Comissão", 50.0, entrada=False,
+                                 categoria="u_comissoes_de_vendedores")[0]
+
+
+def test_categoria_inexistente_ou_de_outro_dono_e_recusada(repo, monkeypatch):
+    repo.criar_categoria("Só do dono A", "custos")
+    repo.importar_extrato([dict(_mov(3, -10.0, "X", "R1"), categoria=None)], "a.ofx")
+    lanc_id = repo.listar_lancamentos()[0]["id"]
+    assert repo.classificar(lanc_id, "u_inventada") == (False, "Categoria inválida.")
+    assert repo.criar_lancamento(date(2026, 11, 9), "X", 5.0, entrada=False,
+                                 categoria="u_inventada") == (False, "Categoria inválida.")
+
+    monkeypatch.setattr(repo.settings, "OWNER_USER_ID", DONO_B, raising=False)
+    assert repo.listar_categorias() == []
+    assert repo.criar_lancamento(date(2026, 11, 9), "X", 5.0, entrada=False,
+                                 categoria="u_so_do_dono_a") == (False, "Categoria inválida.")
+    # extrato com a categoria de outro dono entra sem categoria
+    repo.importar_extrato([dict(_mov(5, -10.0, "Y", "R2"), categoria="u_so_do_dono_a")], "b.ofx")
+    assert repo.listar_lancamentos()[0]["categoria"] is None
+
+
+def test_nome_repetido_e_recusado_inclusive_o_de_uma_fixa(repo):
+    assert repo.criar_categoria("Brindes", "despesas_operacionais")[0]
+    ok, msg = repo.criar_categoria("  brindes ", "custos")
+    assert not ok and "Já existe" in msg
+    ok, msg = repo.criar_categoria("Aluguel e condomínio", "custos")
+    assert not ok and "Já existe" in msg
+    assert repo.criar_categoria("", "custos") == (False, "Informe o nome da categoria.")
+    assert repo.criar_categoria("Outra", "grupo_falso") == (False, "Escolha a linha da DRE.")
+
+
+def test_renomear_mantem_o_codigo_e_excluir_so_sem_uso(repo):
+    repo.criar_categoria("Brindes", "despesas_operacionais")
+    assert repo.renomear_categoria("u_brindes", "Brindes e presentes") == (True, "")
+    assert repo.listar_categorias()[0]["nome"] == "Brindes e presentes"
+    assert repo.listar_categorias()[0]["codigo"] == "u_brindes"
+
+    repo.importar_extrato([dict(_mov(3, -40.0, "Loja", "B1", contraparte="Loja"),
+                                categoria="u_brindes")], "a.ofx")
+    ok, msg = repo.excluir_categoria("u_brindes")
+    assert not ok and "1 lançamento(s)" in msg
+
+    lanc_id = repo.listar_lancamentos()[0]["id"]
+    repo.classificar(lanc_id, "outras_despesas", lembrar=False)
+    assert repo.excluir_categoria("u_brindes") == (True, "")
+    assert repo.listar_categorias() == []
+    # a regra que apontava para ela saiu junto
+    ctx = repo.preparar_importacao([_mov(4, -1.0, "Loja", "B2", contraparte="Loja")])
+    assert "loja" not in ctx["regras"]
+
+
+def test_sem_categoria_e_nome_reservado(repo):
+    ok, msg = repo.criar_categoria("Sem categoria", "receita_bruta")
+    assert not ok and "reservado" in msg
+    repo.criar_categoria("Brindes", "despesas_operacionais")
+    ok, msg = repo.renomear_categoria("u_brindes", "sem  CATEGORIA")
+    assert not ok and "reservado" in msg
+    assert repo.listar_categorias()[0]["nome"] == "Brindes"
+
+
+def test_excluir_espera_quem_esta_gravando_na_categoria(repo):
+    """Achado do Codex no PR #687: excluir e gravar ao mesmo tempo passava nas
+    duas checagens e deixava um lançamento com categoria que não existe."""
+    import threading
+    import time
+
+    from core.database import get_engine
+
+    repo.criar_categoria("Brindes", "despesas_operacionais")
+    resultado = {}
+    with get_engine().begin() as conn:
+        assert "u_brindes" in repo._codigos_validos(conn, DONO_A)
+        conn.execute(repo._texto("""
+            INSERT INTO pj_lancamentos (user_id, data, descricao, valor, categoria)
+            VALUES (CAST(:uid AS uuid), '2026-11-09', 'Brinde', -10, 'u_brindes')"""),
+            {"uid": DONO_A})
+        t = threading.Thread(target=lambda: resultado.update(r=repo.excluir_categoria("u_brindes")))
+        t.start()
+        time.sleep(0.5)
+        assert t.is_alive(), "a exclusão não esperou a gravação em andamento"
+    t.join(timeout=10)
+    ok, msg = resultado["r"]
+    assert not ok and "1 lançamento(s)" in msg
+    assert [c["codigo"] for c in repo.listar_categorias()] == ["u_brindes"]
+
+
+def test_nome_repetido_e_barrado_pelo_banco_mesmo_se_a_checagem_passar(repo, monkeypatch):
+    """Achado do Codex no PR #687: duas sessões gravando o mesmo nome ao mesmo
+    tempo passavam as duas pela checagem do app. Aqui a checagem é forçada a
+    deixar passar, como na corrida; quem barra é o índice único do banco."""
+    monkeypatch.setattr(repo, "_nome_em_uso", lambda *a, **k: False)
+    assert repo.criar_categoria("Brindes", "despesas_operacionais") == (True, "")
+    ok, msg = repo.criar_categoria("BRINDES!", "custos")  # mesmo nome normalizado
+    assert not ok and "Já existe" in msg
+    assert repo.criar_categoria("Viagens da equipe", "despesas_operacionais")[0]
+    ok, msg = repo.renomear_categoria("u_viagens_da_equipe", "brindes")
+    assert not ok and "Já existe" in msg
+    assert sorted(c["nome"] for c in repo.listar_categorias()) == ["Brindes", "Viagens da equipe"]

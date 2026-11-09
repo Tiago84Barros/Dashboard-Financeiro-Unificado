@@ -503,3 +503,93 @@ def test_balanco_conta_o_historico_anterior_a_ancora_do_saldo():
     assert _linha(b, "ativo", "Aplicações financeiras") == 2000.0
     assert _linha(b, "passivo", "Empréstimos e financiamentos") == 9000.0
     assert _linha(b, "patrimonio_liquido", "Saldo anterior aos lançamentos registrados") == 0.0
+
+
+# ── Categorias criadas pelo usuário ─────────────────────────────────────────
+
+def _plano_proprio():
+    from core.pj.plano_contas import Categoria, PlanoDeContas
+    return PlanoDeContas((Categoria("u_comissoes", "Comissões de vendedores", "custos"),
+                          Categoria("u_consultoria", "Consultoria", "receita_bruta"),
+                          Categoria("u_caucao", "Caução de aluguel", "fora_do_resultado")))
+
+
+def test_plano_junta_fixas_e_proprias_na_ordem_da_dre():
+    from core.pj.plano_contas import CATEGORIAS
+    plano = _plano_proprio()
+    assert len(plano.todas) == len(CATEGORIAS) + 3
+    assert plano.rotulo("u_comissoes") == "Comissões de vendedores"
+    assert plano.rotulo("inexistente") == "Sem categoria"
+    custos = [c.codigo for c in plano.do_grupo("custos")]
+    assert custos[-1] == "u_comissoes"  # depois das fixas do mesmo grupo
+    nomes = plano.nomes()
+    assert nomes.index("Consultoria") < nomes.index("Comissões de vendedores")
+
+
+def test_codigo_da_propria_nao_colide():
+    from core.pj.plano_contas import codigo_para_propria
+    assert codigo_para_propria("Comissões de Vendedores", set()) == "u_comissoes_de_vendedores"
+    assert codigo_para_propria("Comissões", {"u_comissoes"}) == "u_comissoes_2"
+    assert codigo_para_propria("!!!", set()) == "u_categoria"
+
+
+def test_regra_aprendida_com_categoria_propria_e_sugerida():
+    from core.pj.plano_contas import sugerir_categoria
+    plano = _plano_proprio()
+    mov = {"valor": -300.0, "descricao": "Pix enviado - Vendedor X", "contraparte": "Vendedor X"}
+    regras = {"vendedor x": "u_comissoes"}
+    assert sugerir_categoria(mov, regras, plano) == "u_comissoes"
+    # sem o plano do dono, a regra não vale (categoria desconhecida)
+    assert sugerir_categoria(mov, regras) is None
+    # receita própria numa saída também vira devolução
+    assert sugerir_categoria({**mov, "contraparte": "Cliente Y"},
+                             {"cliente y": "u_consultoria"}, plano) == "devolucoes"
+
+
+def test_dre_e_das_contam_a_categoria_propria_pelo_grupo():
+    from datetime import date
+
+    from core.pj.relatorios import dre, serie_mensal
+
+    def pago(valor, cat, grupo=None):
+        return {"data": date(2026, 11, 3), "valor": valor, "categoria": cat,
+                "status": "pago", "grupo_categoria": grupo}
+    lancs = [pago(1000.0, "receita_servicos"), pago(500.0, "u_consultoria", "receita_bruta"),
+             pago(-200.0, "u_comissoes", "custos"), pago(-50.0, "u_x", "grupo_falso")]
+    d = dre(lancs, [(2026, 11)])
+    assert d["grupos"]["receita_bruta"] == 1500.0
+    assert d["grupos"]["custos"] == -200.0
+    assert d["categorias"]["u_consultoria"] == 500.0
+    assert d["sem_categoria_n"] == 1  # grupo inválido não inventa linha
+    assert serie_mensal(lancs, date(2026, 11, 1), meses=1)[0]["receita_simples"] == 1500.0
+
+
+def test_balanco_fecha_com_categoria_propria_fora_do_resultado():
+    from datetime import date
+
+    from core.pj.relatorios import balanco
+
+    def pago(valor, cat, grupo=None):
+        return {"data": date(2026, 11, 3), "valor": valor, "categoria": cat,
+                "status": "pago", "grupo_categoria": grupo}
+    lancs = [pago(1000.0, "receita_servicos"),
+             pago(-300.0, "u_caucao", "fora_do_resultado")]
+    b = balanco(lancs, 0.0, date(2026, 10, 31), date(2026, 11, 7))
+    assert b["fecha"]
+    assert dict(b["patrimonio_liquido"])["Outras movimentações fora do resultado"] == -300.0
+    assert dict(b["patrimonio_liquido"])["Resultado acumulado (DRE, caixa)"] == 1000.0
+
+
+def test_sem_categoria_nunca_vira_codigo_mesmo_com_categoria_de_mesmo_nome():
+    """Achado do Codex no PR #687: uma categoria própria chamada "Sem
+    categoria" capturava a opção de mesmo nome da prévia e da correção."""
+    from core.pj.plano_contas import (
+        SEM_CATEGORIA,
+        Categoria,
+        PlanoDeContas,
+        nome_reservado,
+    )
+    plano = PlanoDeContas((Categoria("u_sem_categoria", "Sem categoria", "receita_bruta"),))
+    assert plano.codigo_por_nome().get(SEM_CATEGORIA) is None
+    assert nome_reservado("  sem   CATEGORIA ")
+    assert not nome_reservado("Sem categoria definida")

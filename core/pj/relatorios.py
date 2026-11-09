@@ -27,9 +27,22 @@ def _pagos(lancs, periodos: set[tuple[int, int]] | None = None):
         yield lanc
 
 
+_GRUPOS_VALIDOS = {g for g, _ in GRUPOS_DRE}
+#: As cinco fixas fora do resultado que o balanço sabe pôr de um lado.
+_FORA_CONHECIDAS = ("aplicacao", "transferencia", "emprestimo", "aporte_socio",
+                    "distribuicao_lucros")
+
+
 def _grupo(lanc) -> str | None:
+    """Grupo da DRE do lançamento. Categoria criada pelo usuário não está em
+    ``POR_CODIGO``: o repositório traz o grupo dela em ``grupo_categoria``
+    (junção com ``pj_categorias``), e é ele que vale aqui."""
     cat = POR_CODIGO.get(lanc.get("categoria") or "")
-    return cat.grupo if cat else None
+    if cat:
+        return cat.grupo
+    if lanc.get("categoria") and lanc.get("grupo_categoria") in _GRUPOS_VALIDOS:
+        return lanc["grupo_categoria"]
+    return None
 
 
 def dre(lancs: list[dict], periodos: list[tuple[int, int]]) -> dict:
@@ -270,6 +283,11 @@ def balanco(lancs: list[dict], saldo_inicial: float | None, data_inicial: date |
           ("Distribuição de lucros", r(por_cat["distribuicao_lucros"])),
           ("Resultado acumulado (DRE, caixa)", r(resultado)),
           ("Contas em aberto (a receber − a pagar)", r(a_receber - a_pagar)),
+          # Categoria criada pelo usuário no grupo "fora do resultado": o app
+          # não sabe se é ativo, dívida ou capital, e deixá-la de fora faria
+          # o balanço deixar de fechar.
+          ("Outras movimentações fora do resultado",
+           r(sum(v for c, v in por_cat.items() if c not in _FORA_CONHECIDAS))),
           ("Movimentos sem categoria", r(sem_cat))]
     total_ativo = r(sum(v for _, v in ativo))
     total_passivo = r(sum(v for _, v in passivo))

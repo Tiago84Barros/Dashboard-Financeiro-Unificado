@@ -28,7 +28,7 @@ import streamlit as st
 
 from core.pj import relatorios as rel
 from core.pj import repositorio as repo
-from core.pj.plano_contas import CATEGORIAS, NOME_GRUPO, rotulo
+from core.pj.plano_contas import GRUPOS_DRE, NOME_GRUPO, PLANO_PADRAO, PlanoDeContas
 from core.pj.simples import ANEXOS_DESCRICAO, TABELAS, estimar_das
 from core.previstos import MAX_REPETICOES, projetar_saldo, resumir, situacao
 from core.utils import escapar_cifrao, fmt_moeda
@@ -40,8 +40,6 @@ _COR_ENTRADA = "#00C896"
 _COR_SAIDA = "#FC5C7D"
 _COR_LINHA = "#4A9EFF"
 _COR_TEXTO = "#9CA3AF"
-_NOMES = [c.nome for c in CATEGORIAS]
-_CODIGO_POR_NOME = {c.nome: c.codigo for c in CATEGORIAS}
 
 _SECOES = ["📊  Visão geral", "🧾  Lançamentos", "📅  A pagar e receber",
            "📈  DRE", "⚖️  Balanço", "🧮  Impostos"]
@@ -113,22 +111,26 @@ def _fig_serie(serie: list[dict]) -> go.Figure:
 
 
 def _tab_visao_geral(lancs: list[dict], empresa: dict | None) -> None:
-    ano, mes = _seletor_mes(lancs, "cnpj_vg_mes")
-    d = rel.dre(lancs, [(ano, mes)])
+    # Resumo do ano corrente, de janeiro até hoje, sem seletor de mês: a visão
+    # geral responde "como vai o ano"; o mês a mês fica na DRE e no gráfico.
     hoje = _date.today()
+    ano = hoje.year
+    d = rel.dre(lancs, [(ano, m) for m in range(1, hoje.month + 1)])
+    periodo = (f"{_MESES[1]}–{_rotulo_mes(ano, hoje.month)}" if hoje.month > 1
+               else _rotulo_mes(ano, 1))
     saldo = repo.saldo_calculado(empresa, lancs, hoje)
     k1, k2, k3, k4 = st.columns(4, gap="small")
     with k1:
-        card_metrica("Receita bruta", fmt_moeda(d["grupos"]["receita_bruta"]), _rotulo_mes(ano, mes))
+        card_metrica("Receita bruta no ano", fmt_moeda(d["grupos"]["receita_bruta"]), periodo)
     with k2:
         margem = f"margem {d['margem']:.0%}" if d["margem"] is not None else "sem receita"
-        card_metrica("Resultado", fmt_moeda(d["resultado"]), margem,
+        card_metrica("Resultado no ano", fmt_moeda(d["resultado"]), margem,
                      positivo=d["resultado"] >= 0)
     with k3:
         card_metrica("Saldo em conta", fmt_moeda(saldo) if saldo is not None else "—",
                      "calculado hoje" if saldo is not None else "importe um extrato com saldo")
     with k4:
-        card_metrica("Sem categoria", d["sem_categoria_n"],
+        card_metrica("Sem categoria no ano", d["sem_categoria_n"],
                      fmt_moeda(d["sem_categoria_total"]) if d["sem_categoria_n"] else "tudo classificado",
                      positivo=False if d["sem_categoria_n"] else None)
 
@@ -151,14 +153,16 @@ def _tab_visao_geral(lancs: list[dict], empresa: dict | None) -> None:
                    "até ser classificado na aba Lançamentos.")
 
     st.markdown("#### Últimos 12 meses")
-    st.plotly_chart(_fig_serie(rel.serie_mensal(lancs, _date(ano, mes, 1))), width="stretch")
+    st.plotly_chart(_fig_serie(rel.serie_mensal(lancs, _date(ano, hoje.month, 1))),
+                    width="stretch")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 🧾 Lançamentos
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _form_novo_lancamento(prefixo: str, previsto_padrao: bool = False) -> None:
+def _form_novo_lancamento(prefixo: str, plano: PlanoDeContas = PLANO_PADRAO,
+                          previsto_padrao: bool = False) -> None:
     with st.form(f"{prefixo}_form_novo", clear_on_submit=True):
         c1, c2, c3 = st.columns([1, 1, 1], gap="small")
         sentido = c1.radio("Tipo", ["Saída", "Entrada"], horizontal=True, key=f"{prefixo}_sentido")
@@ -168,7 +172,7 @@ def _form_novo_lancamento(prefixo: str, previsto_padrao: bool = False) -> None:
                                 key=f"{prefixo}_valor")
         c4, c5 = st.columns([2, 1], gap="small")
         descricao = c4.text_input("Descrição", key=f"{prefixo}_desc")
-        nome_cat = c5.selectbox("Categoria", _NOMES, key=f"{prefixo}_cat")
+        nome_cat = c5.selectbox("Categoria", plano.nomes(), key=f"{prefixo}_cat")
         c6, c7 = st.columns(2, gap="small")
         situacao_tx = c6.radio("Situação", ["Pago", "Previsto"], horizontal=True,
                                index=1 if previsto_padrao else 0, key=f"{prefixo}_sit",
@@ -180,7 +184,7 @@ def _form_novo_lancamento(prefixo: str, previsto_padrao: bool = False) -> None:
         return
     ok, msg = repo.criar_lancamento(
         data, descricao or nome_cat, valor, entrada=(sentido == "Entrada"),
-        categoria=_CODIGO_POR_NOME[nome_cat],
+        categoria=plano.codigo_por_nome()[nome_cat],
         status="previsto" if situacao_tx == "Previsto" else "pago",
         repeticoes=int(repeticoes))
     if ok:
@@ -189,22 +193,93 @@ def _form_novo_lancamento(prefixo: str, previsto_padrao: bool = False) -> None:
     st.error(msg)
 
 
+# O que cada grupo faz com a categoria, para quem escolhe onde ela entra.
+_EFEITO_DO_GRUPO = {
+    "receita_bruta": "Soma no faturamento e entra na base do DAS.",
+    "deducoes": "Abate da receita bruta na DRE (como o DAS).",
+    "custos": "Custo do serviço ou da mercadoria: entra antes do lucro bruto.",
+    "despesas_operacionais": "Despesa do dia a dia da empresa.",
+    "pessoal": "Gente: entra em Pessoal na DRE, mas não na folha do Fator R "
+               "(que conta só pró-labore, salários e encargos).",
+    "financeiro": "Juros, rendimentos e tarifas financeiras.",
+    "fora_do_resultado": "Mexe no caixa, mas não no lucro. No Balanço aparece em "
+                         "'Outras movimentações fora do resultado'.",
+}
+
+
+def _gerenciar_categorias(plano: PlanoDeContas) -> None:
+    with st.expander("🏷️ Categorias da empresa"):
+        st.caption("Além das categorias do app, crie as suas. Cada uma entra numa linha da DRE, "
+                   "e é a linha que decide onde o valor soma: na receita (e no DAS), nas "
+                   "despesas ou fora do resultado.")
+        with st.form("cnpj_form_nova_categoria", clear_on_submit=True):
+            c1, c2 = st.columns([3, 2], gap="small")
+            nome = c1.text_input("Nome da categoria", max_chars=60,
+                                 placeholder="ex.: Comissões de vendedores")
+            grupo = c2.selectbox("Linha da DRE", [g for g, _ in GRUPOS_DRE],
+                                 index=3, format_func=lambda g: NOME_GRUPO[g])
+            st.caption(" · ".join(f"**{NOME_GRUPO[g]}**: {txt}"
+                                  for g, txt in _EFEITO_DO_GRUPO.items()))
+            criar = st.form_submit_button("Criar categoria", type="primary")
+        if criar:
+            ok, msg = repo.criar_categoria(nome, grupo)
+            if ok:
+                st.session_state["cnpj_msg"] = f"Categoria \"{' '.join(nome.split())}\" criada."
+                st.rerun()
+            st.error(msg)
+
+        proprias = repo.listar_categorias()
+        if not proprias:
+            st.caption("Nenhuma categoria criada ainda.")
+            return
+        st.markdown(_tabela(
+            [[html.escape(c["nome"]), html.escape(NOME_GRUPO.get(c["grupo"], c["grupo"])),
+              str(c["usos"])] for c in proprias],
+            ["Categoria", "Linha da DRE", "Lançamentos"], {2}), unsafe_allow_html=True)
+        por_codigo = {c["codigo"]: c for c in proprias}
+        escolhida = st.selectbox("Categoria criada", list(por_codigo), key="cnpj_cat_sel",
+                                 format_func=lambda k: por_codigo[k]["nome"])
+        c1, c2, c3 = st.columns([3, 1, 1], gap="small")
+        novo = c1.text_input("Novo nome", key=f"cnpj_cat_novo_{escolhida}",
+                             value=por_codigo[escolhida]["nome"], max_chars=60)
+        if c2.button("Renomear", key="cnpj_cat_renomear", width="stretch"):
+            ok, msg = repo.renomear_categoria(escolhida, novo)
+            if ok:
+                st.session_state["cnpj_msg"] = "Categoria renomeada."
+                st.rerun()
+            st.error(msg)
+        if c3.button("Excluir", key="cnpj_cat_excluir", width="stretch",
+                     disabled=bool(por_codigo[escolhida]["usos"]),
+                     help="Só categoria sem lançamento. Troque a categoria dos lançamentos "
+                          "em 'Corrigir categoria' antes."):
+            ok, msg = repo.excluir_categoria(escolhida)
+            if ok:
+                st.session_state["cnpj_msg"] = "Categoria excluída."
+                st.rerun()
+            st.error(msg)
+        st.caption("A linha da DRE não muda depois de criada: mudar levaria os valores já "
+                   "lançados de uma linha para outra sem aviso. Para isso, crie outra "
+                   "categoria e corrija os lançamentos.")
+
+
 # Primeira opção do seletor de período da aba Lançamentos: todos os meses juntos.
 _TODOS_OS_MESES = "Todos os meses"
 
 
-def _filtros_lancamentos(do_periodo: list[dict]) -> list[dict]:
+def _filtros_lancamentos(do_periodo: list[dict],
+                         plano: PlanoDeContas = PLANO_PADRAO) -> list[dict]:
     """Filtro por categoria e busca por descrição sobre os lançamentos do período."""
     # Opções fixas (todo o plano de contas), e não só as do período: trocar de
     # mês não pode apagar o filtro que o usuário já escolheu.
     sem = "Sem categoria"
-    opcoes = [sem, *_NOMES]
+    opcoes = [sem, *plano.nomes()]
     f1, f2 = st.columns([2, 3], gap="small")
     escolhidas = f1.multiselect("Categoria", opcoes, key="cnpj_lanc_filtro_cat",
                                 placeholder="Todas")
     busca = f2.text_input("Buscar na descrição", key="cnpj_lanc_busca",
                           placeholder="cliente, fornecedor, CPF/CNPJ…")
-    codigos = [None if n == sem else _CODIGO_POR_NOME[n] for n in escolhidas]
+    por_nome = plano.codigo_por_nome()
+    codigos = [None if n == sem else por_nome[n] for n in escolhidas if n == sem or n in por_nome]
     visiveis = rel.filtrar_lancamentos(do_periodo, codigos, busca)
     if escolhidas or busca.strip():
         entradas = sum(x["valor"] for x in visiveis if x["valor"] > 0)
@@ -215,7 +290,7 @@ def _filtros_lancamentos(do_periodo: list[dict]) -> list[dict]:
     return visiveis
 
 
-def _tab_lancamentos(lancs: list[dict]) -> None:
+def _tab_lancamentos(lancs: list[dict], plano: PlanoDeContas = PLANO_PADRAO) -> None:
     por_rotulo = {_TODOS_OS_MESES: None,
                   **{_rotulo_mes(*p): p for p in _periodos_disponiveis(lancs)}}
     periodo = por_rotulo[st.selectbox("Mês", list(por_rotulo), index=1, key="cnpj_lanc_mes")]
@@ -229,12 +304,12 @@ def _tab_lancamentos(lancs: list[dict]) -> None:
     if not do_periodo:
         estado_vazio(vazio, "🧾")
     else:
-        visiveis = _filtros_lancamentos(do_periodo)
+        visiveis = _filtros_lancamentos(do_periodo, plano)
     if do_periodo and not visiveis:
         estado_vazio("Nenhum lançamento do período passa nos filtros.", "🔎")
     elif do_periodo:
         linhas = [[
-            _fmt_data(x["data"]), html.escape(x["descricao"]), html.escape(rotulo(x["categoria"])),
+            _fmt_data(x["data"]), html.escape(x["descricao"]), html.escape(plano.rotulo(x["categoria"])),
             _valor_html(x["valor"]),
             "previsto" if x["status"] == "previsto" else "pago",
             "extrato" if x["origem"] == "extrato" else ("manual · conciliado" if x["chave"] else "manual"),
@@ -254,12 +329,12 @@ def _tab_lancamentos(lancs: list[dict]) -> None:
                 c1.markdown(escapar_cifrao(
                     f"{_fmt_data(x['data'])} · {x['descricao']} · **{fmt_moeda(x['valor'])}**"))
                 escolhas[x["id"]] = c2.selectbox(
-                    "Categoria", ["Sem categoria", *_NOMES], key=f"cnpj_cls_{x['id']}",
+                    "Categoria", ["Sem categoria", *plano.nomes()], key=f"cnpj_cls_{x['id']}",
                     label_visibility="collapsed")
             salvar = st.form_submit_button("Salvar categorias", type="primary")
         if salvar:
             erros = [m for i, nome in escolhas.items() if nome != "Sem categoria"
-                     for ok, m in [repo.classificar(i, _CODIGO_POR_NOME[nome])] if not ok]
+                     for ok, m in [repo.classificar(i, plano.codigo_por_nome()[nome])] if not ok]
             if erros:
                 st.error(erros[0])
             else:
@@ -275,24 +350,26 @@ def _tab_lancamentos(lancs: list[dict]) -> None:
             escolhido = st.selectbox(
                 "Lançamento", list(por_id), key="cnpj_corrigir_sel",
                 format_func=lambda i: (f"{_fmt_data(por_id[i]['data'])} · {por_id[i]['descricao']} · "
-                                       f"{fmt_moeda(por_id[i]['valor'])} · {rotulo(por_id[i]['categoria'])}"))
-            opcoes = ["Sem categoria", *_NOMES]
-            atual = rotulo(por_id[escolhido]["categoria"])
+                                       f"{fmt_moeda(por_id[i]['valor'])} · {plano.rotulo(por_id[i]['categoria'])}"))
+            opcoes = ["Sem categoria", *plano.nomes()]
+            atual = plano.rotulo(por_id[escolhido]["categoria"])
             nova = st.selectbox("Nova categoria", opcoes, index=opcoes.index(atual),
                                 key=f"cnpj_corrigir_cat_{escolhido}")
             lembrar = st.checkbox("Usar esta categoria para os próximos extratos desta contraparte",
                                   value=True, key="cnpj_corrigir_lembrar")
             if st.button("Salvar correção", key="cnpj_corrigir_btn"):
-                ok, msg = repo.classificar(escolhido, _CODIGO_POR_NOME.get(nova), lembrar=lembrar)
+                ok, msg = repo.classificar(escolhido, plano.codigo_por_nome().get(nova), lembrar=lembrar)
                 if ok:
                     st.session_state["cnpj_msg"] = "Categoria corrigida."
                     st.rerun()
                 st.error(msg)
 
+    _gerenciar_categorias(plano)
+
     with st.expander("➕ Novo lançamento manual"):
         st.caption("Para o que não passa pelo extrato ou ainda não aconteceu. Quando o extrato "
                    "trouxer o mesmo valor perto da data, a importação concilia em vez de duplicar.")
-        _form_novo_lancamento("cnpj_lanc")
+        _form_novo_lancamento("cnpj_lanc", plano)
 
     manuais = [x for x in lancs if x["origem"] == "manual" and not x["chave"]]
     if manuais:
@@ -314,14 +391,15 @@ def _tab_lancamentos(lancs: list[dict]) -> None:
 # 📅 A pagar e receber
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _tab_previstos(lancs: list[dict], empresa: dict | None) -> None:
+def _tab_previstos(lancs: list[dict], empresa: dict | None,
+                   plano: PlanoDeContas = PLANO_PADRAO) -> None:
     hoje = _date.today()
     previstos = [{"id": x["id"], "descricao": x["descricao"], "valor": x["valor"],
-                  "vencimento": x["data"], "categoria": rotulo(x["categoria"]),
+                  "vencimento": x["data"], "categoria": plano.rotulo(x["categoria"]),
                   "parcela": x["parcela"], "total_parcelas": x["total_parcelas"]}
                  for x in lancs if x["status"] == "previsto"]
     with st.expander("➕ Nova conta a pagar ou a receber", expanded=not previstos):
-        _form_novo_lancamento("cnpj_prev", previsto_padrao=True)
+        _form_novo_lancamento("cnpj_prev", plano, previsto_padrao=True)
     if not previstos:
         estado_vazio("Nenhuma conta a pagar ou a receber em aberto.", "📅")
         return
@@ -409,7 +487,7 @@ def _periodos_da_escolha(escolha: str, ano: int, mes: int) -> list[tuple[int, in
     return out
 
 
-def _tab_dre(lancs: list[dict]) -> None:
+def _tab_dre(lancs: list[dict], plano: PlanoDeContas = PLANO_PADRAO) -> None:
     c1, c2 = st.columns([1, 2])
     with c1:
         ano, mes = _seletor_mes(lancs, "cnpj_dre_mes")
@@ -422,7 +500,7 @@ def _tab_dre(lancs: list[dict]) -> None:
     def cat_linhas(grupo: str) -> list[list[str]]:
         return [[f'<span style="padding-left:18px;color:var(--app-subtle);">{html.escape(c.nome)}</span>',
                  _valor_html(d["categorias"][c.codigo])]
-                for c in CATEGORIAS if c.grupo == grupo and d["categorias"].get(c.codigo)]
+                for c in plano.do_grupo(grupo) if d["categorias"].get(c.codigo)]
 
     def total(nome: str, valor: float) -> list[str]:
         return [f"<b>{html.escape(nome)}</b>", f"<b>{_valor_html(valor)}</b>"]
@@ -615,6 +693,7 @@ def render() -> None:
     try:
         empresa = repo.obter_empresa()
         lancs = repo.listar_lancamentos()
+        plano = repo.plano_de_contas()
     except Exception as exc:  # noqa: BLE001
         container_pagina("Controle CNPJ", "Financeiro da empresa.", "💼")
         falha_de_acao("Não foi possível ler o financeiro da empresa.", exc)
@@ -635,11 +714,11 @@ def render() -> None:
 
     secao = abas_secao(_SECOES, key="cnpj_secao_ativa", default=_SECOES[0])
     if secao == _SECOES[1]:
-        _tab_lancamentos(lancs)
+        _tab_lancamentos(lancs, plano)
     elif secao == _SECOES[2]:
-        _tab_previstos(lancs, empresa)
+        _tab_previstos(lancs, empresa, plano)
     elif secao == _SECOES[3]:
-        _tab_dre(lancs)
+        _tab_dre(lancs, plano)
     elif secao == _SECOES[4]:
         _tab_balanco(lancs, empresa)
     elif secao == _SECOES[5]:
