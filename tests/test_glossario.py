@@ -75,3 +75,14 @@ def test_intervalos_explicam_o_cruzar_o_zero():
     for texto in (g.INTERVALO_95_EXCESSO, g.INTERVALO_95_CORRELACAO):
         assert texto.startswith("Intervalo 95%:")
         assert "cruza o zero" in texto and "95% de confiança" in texto
+
+
+def test_efeito_minimo_detectavel_nao_e_piso_de_evidencia():
+    # MDE = (t_alpha + t_poder)·s/√n; significância exige só t_alpha. Um
+    # Rank-IC abaixo do MDE ainda pode ser significativo (revisão do #643).
+    texto = g.EFEITO_MINIMO_DETECTAVEL_AJUDA
+    assert "80%" in texto and "valor-p" in texto and "Não é um piso" in texto
+    from pathlib import Path
+    fonte = (Path(__file__).resolve().parents[1] / "views" / "portfolio_b3.py"
+             ).read_text(encoding="utf-8")
+    assert "não prova nada" not in fonte

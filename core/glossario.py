@@ -178,3 +178,15 @@ INTERVALO_95_EXCESSO_IFIX = (
     "faixa cruza o zero (vai de negativo a positivo), a carteira não se "
     "distingue do IFIX nesta amostra — por isso aparece \"não significativo\"."
 )
+
+# ── Efeito mínimo detectável ────────────────────────────────────────────────
+# `core.b3_evidence.minimum_detectable_effect` = (t_alpha + t_poder)·s/√n, com
+# alpha 10% e poder 80%. Significância exige só cruzar t_alpha, então um
+# Rank-IC medido ABAIXO do MDE ainda pode ser significativo: o MDE mede a
+# sensibilidade do teste, não é piso de evidência. (Revisão do PR #643.)
+EFEITO_MINIMO_DETECTAVEL_AJUDA = (
+    "Tamanho de Rank-IC médio que esta amostra detectaria em 80% das vezes "
+    "(poder de 80%, nível de 10%). Mede a sensibilidade do teste: efeitos "
+    "menores tendem a passar despercebidos. Não é um piso — um valor medido "
+    "abaixo dele ainda pode ser significativo; quem decide é o valor-p."
+)

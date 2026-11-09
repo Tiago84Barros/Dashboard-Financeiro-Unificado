@@ -2529,7 +2529,12 @@ def _render_evidencia_universo(resultados: list[dict]) -> None:
         shrink_segment_estimates,
         universe_evidence,
     )
-    from core.glossario import ajuda_rank_ic, faixa_rank_ic, leitura_rank_ic
+    from core.glossario import (
+        EFEITO_MINIMO_DETECTAVEL_AJUDA,
+        ajuda_rank_ic,
+        faixa_rank_ic,
+        leitura_rank_ic,
+    )
 
     todos_pares: list[tuple] = []
     for res in resultados:
@@ -2584,10 +2589,8 @@ def _render_evidencia_universo(resultados: list[dict]) -> None:
         card_metrica("Efeito mín. detectável",
                      f"{evidencia.efeito_minimo_detectavel:.3f}"
                      if evidencia.efeito_minimo_detectavel is not None else "—",
-                     delta="menor Rank-IC visível",
-                     ajuda="Menor Rank-IC médio que esta amostra consegue separar "
-                           "do acaso. Um valor medido abaixo dele não prova nada "
-                           "— nem a favor, nem contra.")
+                     delta="detectado em 80% das vezes",
+                     ajuda=EFEITO_MINIMO_DETECTAVEL_AJUDA)
     st.markdown(f"{icone} {evidencia.explicacao}")
     _leitura = leitura_rank_ic(evidencia.ic_medio if _ic_ok else None,
                                periodo="no ano seguinte")
