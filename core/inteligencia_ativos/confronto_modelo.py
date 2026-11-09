@@ -616,7 +616,8 @@ class _Candidato:
 
 def _candidatos(a, sai: refm.LinhaAtivo, entram_modelo: list,
                 avaliacoes_modelo: dict, metricas_modelo: dict,
-                na_carteira: set[str]) -> list[_Candidato]:
+                na_carteira: set[str],
+                do_modelo: set[str] = frozenset()) -> list[_Candidato]:
     """Os candidatos do MESMO segmento de ``sai`` (pedido do usuário de
     08/11/2026: banco não troca por elétrica). Do modelo: o ativo está entre
     os pares de ``sai`` ou tem o mesmo setor conhecido. De fora do modelo:
@@ -648,7 +649,10 @@ def _candidatos(a, sai: refm.LinhaAtivo, entram_modelo: list,
         vistos.add(x.ticker)
     for p in rs.substitutos(a, na_carteira, prs.N_MAXIMO):
         tk = refm.normalizar(p.ticker)
-        if tk in vistos or tk in na_carteira:
+        # Ativo do modelo só entra pela porta do modelo, com a avaliação
+        # completa: reprovado lá (frágil, alerta, teto) não volta como par,
+        # só com métricas (achado P1 do Codex no #701).
+        if tk in vistos or tk in na_carteira or tk in do_modelo:
             continue
         saida.append(_Candidato(tk, str(p.nome or tk), PARES, p))
         vistos.add(tk)
@@ -769,23 +773,43 @@ def _substituicao(sai: refm.LinhaAtivo, a, v: vd.Veredito | None,
 
 def _sem_substituto(sai: refm.LinhaAtivo, comparados: list) -> SemSubstituto:
     """Nenhum candidato do segmento passa na régua: diz isso e mostra os que
-    têm qualidade melhor, com o que perdem (preço ou risco)."""
-    melhores = sorted(((c, cf) for c, cf in comparados
-                       if cf.saldo_qualidade > 0),
-                      key=lambda x: (-x[1].saldo_qualidade,
-                                     x[0].origem != MODELO, x[0].ticker))
+    têm qualidade melhor. Separa quem perde de fato no preço ou no risco de
+    quem só não tem métricas suficientes para concluir (achado P2 do Codex
+    no #701: falta de dado não é desvantagem)."""
+    melhores = [(c, cf) for c, cf in comparados if cf.saldo_qualidade > 0]
+    perdem = [(c, cf) for c, cf in melhores
+              if cf.n >= rec.MIN_METRICAS_TROCA
+              and (cf.saldo_valuation < 0 or cf.saldo_risco < 0)]
+    poucas = [(c, cf) for c, cf in melhores if cf.n < rec.MIN_METRICAS_TROCA]
+    def ordem(x):
+        return (-x[1].saldo_qualidade, x[0].origem != MODELO, x[0].ticker)
+    perdem.sort(key=ordem)
+    poucas.sort(key=ordem)
     alternativas = tuple(
         f"{c.ticker} ({c.nome}, {ROTULO_ORIGEM[c.origem]}): {cf.resumo}"
-        for c, cf in melhores[:N_ALTERNATIVAS])
+        for c, cf in perdem[:N_ALTERNATIVAS])
+    alternativas += tuple(
+        f"{c.ticker} ({c.nome}, {ROTULO_ORIGEM[c.origem]}): {cf.resumo} — "
+        f"só {cf.n} métrica(s) em comum, menos que as "
+        f"{rec.MIN_METRICAS_TROCA} da régua"
+        for c, cf in poucas[:max(0, N_ALTERNATIVAS - len(alternativas))])
     if not comparados:
         texto = (f"Sem par do mesmo segmento com métricas para comparar com "
                  f"{sai.ticker}, no Portfólio Global nem entre os pares fora "
                  "da carteira. Nenhuma troca sugerida.")
-    elif alternativas:
+    elif perdem:
         texto = (f"Nenhum par do segmento de {sai.ticker} é claramente "
                  "superior: os de qualidade melhor perdem no preço ou no "
                  "risco. Trocar por eles é pagar mais caro (ou correr mais "
                  "risco) por qualidade; a escolha é sua, não uma sugestão.")
+        if poucas:
+            texto += (" Outros têm qualidade melhor nas métricas disponíveis, "
+                      "mas com poucas métricas em comum não dá para concluir.")
+    elif poucas:
+        texto = (f"Há pares do segmento de {sai.ticker} com qualidade melhor "
+                 "nas métricas disponíveis, mas com menos métricas em comum "
+                 "que a régua pede: não dá para concluir se são melhores. "
+                 "Nenhuma troca sugerida.")
     else:
         texto = (f"Nenhum par do segmento de {sai.ticker} tem qualidade "
                  "melhor nas métricas comparadas. Nenhuma troca sugerida.")
@@ -807,10 +831,16 @@ def substituicoes(ref: refm.ReferenciaModelo, vereditos: dict,
                   avaliacoes_modelo.get(x.ticker),
                   _alvo_na_base(alocacao_estrategia, x.classe, ref.base))]
     na_carteira = {tk for tk, x in ref.ativos.items() if x.peso_real}
+    do_modelo = {tk for tk, x in ref.ativos.items() if x.peso_modelo}
     saida: list[Substituicao] = []
     sem: list[SemSubstituto] = []
     for sai in ref.ativos.values():
         if sai.peso_real is None or sai.classe not in CLASSES_ATIVO:
+            continue
+        # Classe que a estratégia zera não recebe aporte nem troca, venha o
+        # substituto de onde vier (achado P2 do Codex no #701).
+        alvo_classe = _alvo_na_base(alocacao_estrategia, sai.classe, ref.base)
+        if alvo_classe is not None and alvo_classe <= 0:
             continue
         v = vereditos.get(sai.ticker)
         if v is not None and getattr(v.recomendacao, "codigo",
@@ -820,7 +850,7 @@ def substituicoes(ref: refm.ReferenciaModelo, vereditos: dict,
         av_sai = v.avaliacao if v is not None else None
         comparados = []
         for c in _candidatos(a, sai, entram, avaliacoes_modelo,
-                             metricas_modelo, na_carteira):
+                             metricas_modelo, na_carteira, do_modelo):
             cf = _comparar(a, av_sai, c)
             if cf is not None:
                 comparados.append((c, cf))

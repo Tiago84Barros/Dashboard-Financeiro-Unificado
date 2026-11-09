@@ -516,14 +516,14 @@ BANCO_CARO = {"roe": 21.0, "margem_liquida": 22.0, "p_l": 9.0, "p_vp": 2.0,
               "volatilidade": 25.0}
 
 
-def _banco(codigo="reduzir_parcial", pares=(), qual=av_.FRAGIL):
+def _banco(codigo="reduzir_parcial", pares=(), qual=av_.FRAGIL, avals=None):
     """BBAS3 na carteira, frágil, sem banco no modelo (só PETR4/VALE3/
     WEGE3, de outros setores): o substituto tem de vir dos pares."""
     posicoes = POSICOES + [_pos("BBAS3", "Ações BR", 100.0)]
     v = {"BBAS3": _vered("BBAS3", codigo, _av(qual), proporcao=1 / 3),
          "PETR4": _vered("PETR4", "manter", _av(av_.FORTE))}
-    avals = {"VALE3": _av(av_.FORTE), "WEGE3": _av(av_.FORTE),
-             "AAPL": _av(av_.FORTE)}
+    avals = avals or {"VALE3": _av(av_.FORTE), "WEGE3": _av(av_.FORTE),
+                      "AAPL": _av(av_.FORTE)}
     analises = {"BBAS3": _analise("BBAS3", BANCO, pares=pares,
                                   setor="Bancos")}
     return _conf(v, avals, ref=_ref(posicoes=posicoes), analises=analises)
@@ -573,3 +573,38 @@ def test_modelo_do_mesmo_segmento_vence_par_de_fora():
     pares = (("VALE3", VALE_MELHOR), ("PRIO3", VALE_MELHOR))
     x = _conf_sub("vender", pares=pares).substituicao_de("PETR4")
     assert x.entra == "VALE3" and x.origem == cf.MODELO
+
+
+# -- achados do Codex no #701 -----------------------------------------------------
+
+def test_ativo_do_modelo_reprovado_nao_volta_como_par():
+    """P1: WEGE3 está no modelo, mas frágil (reprovado para entrar). Ele
+    também é par de BBAS3: não pode voltar pela porta dos pares, só com
+    métricas, nem ser chamado de "fora do Portfólio Global"."""
+    c = _banco(pares=(("WEGE3", BANCO_MELHOR),),
+               avals={"VALE3": _av(av_.FORTE), "WEGE3": _av(av_.FRAGIL)})
+    assert c.substituicao_de("BBAS3") is None
+    assert not any(x.entra == "WEGE3" for x in c.substituicoes)
+
+
+def test_classe_zerada_na_estrategia_nao_ganha_troca_de_nenhuma_fonte():
+    """P2: com acoes_br = 0 na estratégia, nenhum substituto da classe,
+    nem dos pares de fora do modelo."""
+    v = {"BBAS3": _vered("BBAS3", "reduzir_parcial", _av(av_.FRAGIL),
+                         proporcao=1 / 3)}
+    posicoes = POSICOES + [_pos("BBAS3", "Ações BR", 100.0)]
+    c = cf.montar(_ref(posicoes=posicoes), v, {},
+                  alocacao_estrategia={**ESTRATEGIA, "acoes_br": 0.0},
+                  analises={"BBAS3": _analise(
+                      "BBAS3", BANCO, pares=(("ITUB4", BANCO_MELHOR),),
+                      setor="Bancos")})
+    assert c.substituicao_de("BBAS3") is None
+
+
+def test_poucas_metricas_nao_viram_desvantagem_de_preco_ou_risco():
+    """P2: com só 2 métricas em comum, não dá para dizer que o par perde
+    no preço ou no risco; a tela diz que faltam métricas."""
+    c = _banco(pares=(("ITUB4", {"roe": 21.0, "margem_liquida": 22.0}),))
+    sem = next(x for x in c.sem_substituto if x.sai == "BBAS3")
+    assert "perdem no preço ou no risco" not in sem.texto
+    assert "métricas" in sem.texto and "não dá para concluir" in sem.texto
