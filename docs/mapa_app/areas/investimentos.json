@@ -403,7 +403,7 @@
             {
               "nome": "Valuation médio do portfólio",
               "resumo": "Médias de preço/lucro, dividendos e outros indicadores",
-              "explicacao": "Valuation é o quanto um ativo está caro ou barato em relação aos números dele. Aqui aparecem as médias de indicadores como DY (dividendos sobre preço), P/L (preço sobre lucro) e P/VP (preço sobre patrimônio) das suas ações e FIIs brasileiros, ponderadas pelo valor de cada posição.",
+              "explicacao": "Valuation é o quanto um ativo está caro ou barato em relação aos números dele. Aqui aparecem as médias de indicadores como DY (dividendos sobre preço), P/L (preço sobre lucro) e P/VP (preço sobre patrimônio) das suas ações e FIIs brasileiros, ponderadas pelo valor de cada posição. Os números vêm do Fundamentus; a vacância financeira dos FIIs, que o Fundamentus não publica, vem da vitrine da Seleção de FIIs (relatórios gerenciais), com a data de referência de cada fundo.",
               "so_admin": false,
               "fonte": "views/investimentos.py:3701 (design/portfolio_valuations.py:65)",
               "filhos": []
@@ -517,7 +517,7 @@
             {
               "nome": "Médias de FIIs na carteira",
               "resumo": "Médias dos indicadores dos seus fundos",
-              "explicacao": "Cartões com a média dos indicadores dos seus FIIs, ponderada pelo valor de cada um.",
+              "explicacao": "Cartões com a média dos indicadores dos seus FIIs, ponderada pelo valor de cada um. DY, P/VP e vacância física vêm do Fundamentus; a vacância financeira vem da vitrine da Seleção de FIIs (relatórios gerenciais), e um detalhe técnico mostra de quando é a referência de cada fundo.",
               "so_admin": false,
               "fonte": "views/investimentos.py:3528 (design/portfolio_valuations.py:140)",
               "filhos": []
