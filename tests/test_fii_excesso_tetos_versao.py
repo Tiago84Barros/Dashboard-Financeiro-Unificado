@@ -106,11 +106,11 @@ def test_piso_e_aviso_nao_bloqueio():
 
 def test_metadado_do_cabecalho_resume_o_ic():
     assert fiis._metadado_do_excesso({"metrics": _RUN_90}) == (
-        "IC 95% -0,13 a +0,38 p.p./mês · não significativo")
+        "Intervalo 95% -0,13 a +0,38 p.p./mês · não significativo")
     assert fiis._metadado_do_excesso(
-        {"metrics": _run(0.0012, 0.0045)}) == "IC 95% +0,12 a +0,45 p.p./mês"
-    assert fiis._metadado_do_excesso({"metrics": {}}) == "IC indisponível"
-    assert fiis._metadado_do_excesso({}) == "IC indisponível"
+        {"metrics": _run(0.0012, 0.0045)}) == "Intervalo 95% +0,12 a +0,45 p.p./mês"
+    assert fiis._metadado_do_excesso({"metrics": {}}) == "Intervalo indisponível"
+    assert fiis._metadado_do_excesso({}) == "Intervalo indisponível"
 
 
 def test_validacao_do_motor_usa_o_mesmo_piso(monkeypatch):

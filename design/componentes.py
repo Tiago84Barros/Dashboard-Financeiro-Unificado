@@ -495,6 +495,27 @@ def aviso_escala_do_score() -> None:
     st.caption(AVISO_ESCALA_NAO_COMPARAVEL)
 
 
+def explicar_rank_ic(valor: float | None = None, *,
+                     periodo: str = "no período seguinte",
+                     dentro_de_expander: bool = False) -> None:
+    """Explica o Rank-IC em texto VISÍVEL, onde o número aparece.
+
+    Tooltip (`ajuda=` do card) não basta: é invisível no toque e para quem não
+    passa o mouse. Fora de expander, abre um bloco "ℹ️ O que é Rank-IC" com
+    definição, escala de leitura e a tradução do valor medido; dentro de um
+    expander (o Streamlit não aninha expanders) vira legenda curta.
+    Texto em `core.glossario` — uma casa só para as seis telas.
+    """
+    from core.glossario import RANK_IC_CURTO, explicacao_rank_ic, leitura_rank_ic
+
+    if dentro_de_expander:
+        leitura = leitura_rank_ic(valor, periodo=periodo)
+        st.caption(f"ℹ️ {RANK_IC_CURTO} {leitura}".strip())
+        return
+    with st.expander("ℹ️ O que é Rank-IC — e como ler este número", expanded=False):
+        st.markdown(explicacao_rank_ic(valor, periodo=periodo))
+
+
 # ── A-154: cobertura declarada na tela onde a recomendacao aparece ──────────
 # `core.universo_decisao` ja media as tres populacoes (nominal, investivel,
 # apto) e o preco pago pelo descarte. Como em A-152, o unico consumidor era o

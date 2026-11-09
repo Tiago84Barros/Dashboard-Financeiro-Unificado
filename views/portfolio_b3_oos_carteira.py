@@ -18,6 +18,7 @@ import pandas as pd
 import streamlit as st
 
 from core import b3_oos_carteira as oos
+from core.glossario import INTERVALO_95_EXCESSO
 from design.lacunas import aviso_lacuna, detalhe_tecnico
 
 
@@ -36,11 +37,27 @@ def _linha_resumo(rotulo: str, r: dict) -> dict:
     return {
         "Comparação": rotulo,
         "Excesso médio/safra": _pp(r.get("media")),
-        "IC 95%": _ic(r),
+        "Intervalo 95%": _ic(r),
         "Safras": r.get("n_safras", 0),
         "Anos negativos": ", ".join(str(a) for a in r.get("safras_negativas") or []) or "—",
         "Cruza o zero?": "sim" if r.get("ic_cruza_zero") else "não",
     }
+
+
+# Tabelas dentro de expander: a explicação vai no `help` da coluna (ícone no
+# cabeçalho) e em legenda visível logo abaixo — tooltip sozinho não existe no toque.
+_CONFIG_RESUMO = {
+    "Intervalo 95%": st.column_config.TextColumn(
+        "Intervalo 95%", help=INTERVALO_95_EXCESSO.split(": ", 1)[1]),
+    "Excesso médio/safra": st.column_config.TextColumn(
+        "Excesso médio/safra",
+        help="Quanto a carteira rendeu a mais (ou a menos) que a referência da "
+             "linha, em pontos percentuais, na média das safras."),
+    "Cruza o zero?": st.column_config.TextColumn(
+        "Cruza o zero?",
+        help="'sim' = o intervalo vai de negativo a positivo: a medição não "
+             "distingue a carteira da referência."),
+}
 
 
 def _perfil_ativo() -> str | None:
@@ -114,7 +131,8 @@ def render_oos_carteira() -> None:
                               base.get("vs_equal_weight_com_ir") or {}),
                 _linha_resumo("Selic", base.get("vs_selic") or {}),
                 _linha_resumo("Ibovespa (BOVA11)", base.get("vs_ibovespa") or {}),
-            ]), hide_index=True, width="stretch")
+            ]), hide_index=True, width="stretch", column_config=_CONFIG_RESUMO)
+            st.caption(INTERVALO_95_EXCESSO)
 
             giro, custo = base.get("giro_medio"), base.get("custo_medio")
             if giro is not None and custo is not None:
@@ -163,7 +181,7 @@ def render_oos_carteira() -> None:
                 st.dataframe(pd.DataFrame([
                     _linha_resumo("Com o portão (líquido)", med_l),
                     _linha_resumo("Com o portão (bruto)", med_b),
-                ]), hide_index=True, width="stretch")
+                ]), hide_index=True, width="stretch", column_config=_CONFIG_RESUMO)
                 partes = []
                 if res.get("taxa_veto") is not None:
                     partes.append(f"vetou {res['taxa_veto']:.0%} de {res.get('pareceres', 0)} "

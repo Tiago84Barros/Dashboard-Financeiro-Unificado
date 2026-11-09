@@ -25,7 +25,8 @@ import streamlit as st
 
 from core.b3_pooled_evidence import MIN_ATIVOS_ANO
 from core.b3_safras import MIN_SAFRAS_LOO, tabela_de_safras
-from design.componentes import card_metrica
+from core.glossario import leitura_rank_ic
+from design.componentes import card_metrica, explicar_rank_ic
 from design.lacunas import aviso_lacuna, detalhe_tecnico
 from views.empresas_b3 import _COR_ALT, _COR_INF, _COR_NEU, _COR_POS, _plot_layout
 
@@ -455,7 +456,9 @@ def _ajuda_ordena(veredito) -> str:
     toque e invisível para quem não passa o mouse. Ressalva que só aparece
     no hover é ressalva que não foi publicada.
     """
-    partes = [f"{veredito.anos_medidos} ano(s) de Rank-IC"]
+    partes = [f"{veredito.anos_medidos} ano(s) de Rank-IC (correlação, de −1 "
+              "a +1, entre a ordem do score e a ordem dos retornos do ano "
+              "seguinte)"]
     mde = veredito.efeito_minimo_detectavel
     if mde is not None:
         partes.append(f"Efeito mínimo detectável: {mde:.3f}")
@@ -780,8 +783,12 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
     veredito = exp["veredito"]
 
     cols = st.columns(4)
+    _ics = [v for v in exp["ic_values"] if np.isfinite(v)]
+    _ic_medio = float(np.mean(_ics)) if _ics else None
     with cols[0]:
         card_metrica("Ordena?", evidence_label(veredito),
+                     delta=(f"Rank-IC médio {_ic_medio:+.3f}"
+                            if _ic_medio is not None else None),
                      ajuda=exp["ajuda_ordena"])
     with cols[1]:
         baixo = exp["banda"][0]
@@ -807,6 +814,16 @@ def render_expectativa(resultados: list[dict], tabela: pd.DataFrame) -> None:
         card_metrica("Fragilidade", exp["texto_fragilidade"],
                      positivo=exp["positivo_fragilidade"],
                      ajuda=exp["ajuda_fragilidade"])
+
+    st.caption(
+        "**Ordena?** responde se o score coloca as empresas na mesma ordem em "
+        "que os retornos delas vieram no ano seguinte (Rank-IC). **Supera?** "
+        "responde outra pergunta: se isso virou dinheiro a mais. Ordenar não é "
+        "superar.")
+    leitura = leitura_rank_ic(_ic_medio, periodo="no ano seguinte")
+    if leitura:
+        st.caption(f"🧭 {leitura}")
+    explicar_rank_ic(_ic_medio, periodo="no ano seguinte")
 
     for aviso in exp["avisos"]:
         detalhe_tecnico(str(aviso), codigo="portfolio_b3.safras_expectativa_aviso")
