@@ -328,3 +328,17 @@ def test_excluir_espera_quem_esta_gravando_na_categoria(repo):
     ok, msg = resultado["r"]
     assert not ok and "1 lançamento(s)" in msg
     assert [c["codigo"] for c in repo.listar_categorias()] == ["u_brindes"]
+
+
+def test_nome_repetido_e_barrado_pelo_banco_mesmo_se_a_checagem_passar(repo, monkeypatch):
+    """Achado do Codex no PR #687: duas sessões gravando o mesmo nome ao mesmo
+    tempo passavam as duas pela checagem do app. Aqui a checagem é forçada a
+    deixar passar, como na corrida; quem barra é o índice único do banco."""
+    monkeypatch.setattr(repo, "_nome_em_uso", lambda *a, **k: False)
+    assert repo.criar_categoria("Brindes", "despesas_operacionais") == (True, "")
+    ok, msg = repo.criar_categoria("BRINDES!", "custos")  # mesmo nome normalizado
+    assert not ok and "Já existe" in msg
+    assert repo.criar_categoria("Viagens da equipe", "despesas_operacionais")[0]
+    ok, msg = repo.renomear_categoria("u_viagens_da_equipe", "brindes")
+    assert not ok and "Já existe" in msg
+    assert sorted(c["nome"] for c in repo.listar_categorias()) == ["Brindes", "Viagens da equipe"]

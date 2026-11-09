@@ -110,11 +110,13 @@ DDL = [
         user_id    UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
         codigo     TEXT NOT NULL,
         nome       TEXT NOT NULL,
+        nome_chave TEXT NOT NULL,
         grupo      TEXT NOT NULL CHECK (grupo IN ('receita_bruta', 'deducoes', 'custos',
                        'despesas_operacionais', 'pessoal', 'financeiro', 'fora_do_resultado')),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (user_id, codigo)
+        PRIMARY KEY (user_id, codigo),
+        UNIQUE (user_id, nome_chave)
     )
     """,
     *[
@@ -574,6 +576,11 @@ _GRUPOS = dict(GRUPOS_DRE)
 
 
 def _nome_em_uso(conn, dono: str, nome: str, exceto: str | None = None) -> bool:
+    """Checagem amigável, antes de gravar. Quem garante é o banco: o índice
+    único (user_id, nome_chave) recusa o nome repetido que duas sessões
+    gravem ao mesmo tempo, quando as duas passam por aqui antes de qualquer
+    uma gravar (achado do Codex no PR #687). As fixas não estão no banco, por
+    isso continuam checadas aqui -- e não mudam, então não há corrida com elas."""
     alvo = normalizar(nome)
     if any(normalizar(c.nome) == alvo for c in POR_CODIGO.values()):
         return True
@@ -596,18 +603,23 @@ def criar_categoria(nome: str, grupo: str) -> tuple[bool, str]:
         return False, f"\"{SEM_CATEGORIA}\" é reservado para o que ainda não tem categoria."
     if grupo not in _GRUPOS:
         return False, "Escolha a linha da DRE."
-    with engine.begin() as conn:
-        garantir_tabelas(conn)
-        if _nome_em_uso(conn, dono, nome):
-            return False, f"Já existe uma categoria chamada \"{nome}\"."
-        existentes = {r.codigo for r in conn.execute(_texto("""
-            SELECT codigo FROM pj_categorias WHERE user_id = CAST(:uid AS uuid)"""),
-            {"uid": dono})}
-        conn.execute(_texto("""
-            INSERT INTO pj_categorias (user_id, codigo, nome, grupo)
-            VALUES (CAST(:uid AS uuid), :codigo, :nome, :grupo)"""),
-            {"uid": dono, "codigo": codigo_para_propria(nome, existentes),
-             "nome": nome, "grupo": grupo})
+    from sqlalchemy.exc import IntegrityError
+    try:
+        with engine.begin() as conn:
+            garantir_tabelas(conn)
+            if _nome_em_uso(conn, dono, nome):
+                return False, f"Já existe uma categoria chamada \"{nome}\"."
+            existentes = {r.codigo for r in conn.execute(_texto("""
+                SELECT codigo FROM pj_categorias WHERE user_id = CAST(:uid AS uuid)"""),
+                {"uid": dono})}
+            conn.execute(_texto("""
+                INSERT INTO pj_categorias (user_id, codigo, nome, nome_chave, grupo)
+                VALUES (CAST(:uid AS uuid), :codigo, :nome, :chave, :grupo)"""),
+                {"uid": dono, "codigo": codigo_para_propria(nome, existentes),
+                 "nome": nome, "chave": normalizar(nome), "grupo": grupo})
+    except IntegrityError:
+        # Outra sessão gravou o mesmo nome (ou código) entre a checagem e o INSERT.
+        return False, f"Já existe uma categoria chamada \"{nome}\"."
     limpar_caches()
     return True, ""
 
@@ -622,16 +634,20 @@ def renomear_categoria(codigo: str, novo_nome: str) -> tuple[bool, str]:
         return False, "Informe o novo nome."
     if nome_reservado(novo_nome):
         return False, f"\"{SEM_CATEGORIA}\" é reservado para o que ainda não tem categoria."
-    with engine.begin() as conn:
-        garantir_tabelas(conn)
-        if _nome_em_uso(conn, dono, novo_nome, exceto=codigo):
-            return False, f"Já existe uma categoria chamada \"{novo_nome}\"."
-        r = conn.execute(_texto("""
-            UPDATE pj_categorias SET nome = :nome, updated_at = NOW()
-            WHERE user_id = CAST(:uid AS uuid) AND codigo = :codigo"""),
-            {"uid": dono, "codigo": codigo, "nome": novo_nome})
-        if not r.rowcount:
-            return False, "Categoria não encontrada."
+    from sqlalchemy.exc import IntegrityError
+    try:
+        with engine.begin() as conn:
+            garantir_tabelas(conn)
+            if _nome_em_uso(conn, dono, novo_nome, exceto=codigo):
+                return False, f"Já existe uma categoria chamada \"{novo_nome}\"."
+            r = conn.execute(_texto("""
+                UPDATE pj_categorias SET nome = :nome, nome_chave = :chave, updated_at = NOW()
+                WHERE user_id = CAST(:uid AS uuid) AND codigo = :codigo"""),
+                {"uid": dono, "codigo": codigo, "nome": novo_nome, "chave": normalizar(novo_nome)})
+            if not r.rowcount:
+                return False, "Categoria não encontrada."
+    except IntegrityError:
+        return False, f"Já existe uma categoria chamada \"{novo_nome}\"."
     limpar_caches()
     return True, ""
 
