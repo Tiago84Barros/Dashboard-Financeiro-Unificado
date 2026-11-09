@@ -6,6 +6,8 @@ Dados de preço e histórico via yfinance.
 Funções públicas:
     batch_stocks(tickers)   → dict[ticker, fundamentus_dict]
     batch_fiis(tickers)     → dict[ticker, fundamentus_dict]
+        (vacancia_financ: o Fundamentus não publica; vem da vitrine da
+         Seleção de FIIs, em %, com vacancia_financ_fonte/_ref)
     fetch_price_data(tickers) → dict[ticker, {price, change_pct, hist}]
     alerts_stock(pos, fd)   → list[(css_cls, lbl_cls, label, msg)]
     alerts_fii(pos, fd)     → list[(css_cls, lbl_cls, label, msg)]
@@ -302,7 +304,56 @@ def batch_fiis(tickers: tuple[str, ...]) -> dict[str, dict]:
                   "vacancia_fisica", "vacancia_financ", "valor_mercado"):
             merged[k] = ind.get(k)
         result[t] = merged
+    _complementar_vacancia_financeira(result)
     return result
+
+
+def _complementar_vacancia_financeira(result: dict[str, dict]) -> None:
+    """Preenche ``vacancia_financ`` com a vitrine da Seleção de FIIs.
+
+    O ``detalhes.php`` do Fundamentus publica para FII apenas a "Vacância
+    Média" (física); a financeira nunca vem, e os painéis que só liam o
+    Fundamentus registravam "Vacância financeira: 0 ativo(s)" todo dia. A
+    medida existe na vitrine ``market.fii_selection_inputs`` (espelhada em
+    ``data/public/fii_selection_snapshot_v2.json.gz``), lida dos relatórios
+    gerenciais e publicada em fração (0,026 = 2,6 %); aqui vira pontos
+    percentuais, a unidade do Fundamentus que os cards formatam com ``%``.
+
+    Só preenche onde o Fundamentus deixou vazio e só para fundo que a vitrine
+    cobre: ausência continua ``None`` (nunca zero), e falha da vitrine deixa o
+    dicionário como estava. A procedência vai em ``vacancia_financ_fonte`` e a
+    data de referência em ``vacancia_financ_ref``.
+    """
+    faltantes = [t for t, d in result.items() if d.get("vacancia_financ") is None]
+    if not faltantes:
+        return
+    try:
+        from core.market_read import load_fii_methodology_inputs
+        frame = load_fii_methodology_inputs()
+    except Exception:
+        return
+    if (frame is None or getattr(frame, "empty", True)
+            or "ticker" not in frame.columns or "vacancia_financeira" not in frame.columns):
+        return
+    tem_meta = "metric_metadata" in frame.columns
+    linhas = frame.assign(_t=frame["ticker"].astype(str).str.upper())
+    linhas = linhas.drop_duplicates("_t", keep="last").set_index("_t")
+    for t in faltantes:
+        chave = str(t).upper()
+        if chave not in linhas.index:
+            continue
+        linha = linhas.loc[chave]
+        try:
+            valor = float(linha["vacancia_financeira"])
+        except (TypeError, ValueError):
+            continue
+        if valor != valor or valor in (float("inf"), float("-inf")):
+            continue
+        meta = linha["metric_metadata"] if tem_meta else None
+        meta = (meta or {}).get("vacancia_financeira") or {} if isinstance(meta, dict) else {}
+        result[t]["vacancia_financ"] = round(valor * 100.0, 4)
+        result[t]["vacancia_financ_fonte"] = meta.get("source") or "vitrine da Seleção de FIIs"
+        result[t]["vacancia_financ_ref"] = meta.get("reference_date")
 
 
 # ── Classificação FII ─────────────────────────────────────────────────────────

@@ -27,7 +27,15 @@ from data_pipeline.market.fii_sources import metric_observation
 SOURCE = "cvm_dados_abertos"
 ROOT = "https://dados.cvm.gov.br/dados/FII/DOC"
 PARSER_NAME = "cvm_fii_structured"
-PARSER_VERSION = "1.6.0"
+# 1.7.0: o informe mensal passa a emitir ``pct_imoveis_renda`` (ver
+# ``_rental_property_share``). 1.8.0: o mensal passa a emitir a exposição
+# ``segment`` (``Segmento_Atuacao`` do cadastro, ver ``_cadastral_segment``).
+# 1.8.1: ``pct_imoveis_renda`` deixa de ser gravado quando ``Imoveis_Renda_Acabados``
+# vem em branco (antes virava zero). A troca de versão força o reprocessamento
+# dos arquivos já carregados, sem o qual o PIT não enxerga o dado novo; a
+# métrica que deixa de ser emitida precisa ser apagada antes, porque o ingest
+# não remove observação antiga do mesmo arquivo.
+PARSER_VERSION = "1.8.1"
 PARSER_SCHEMA_VERSION = "cvm-fii-structured-v2"
 ARCHIVES = {
     "monthly": ("INF_MENSAL", "inf_mensal_fii_{year}.zip"),
@@ -379,6 +387,83 @@ def _append(rows: list[dict], value: dict | None) -> None:
         rows.append(value)
 
 
+# Imóvel que pode ter locatário declarado na tabela de inquilinos do informe
+# trimestral (``inf_trimestral_fii_imovel_renda_acabado_inquilino``). Direitos
+# reais entram aqui por cautela: a CVM não diz se o direito é sobre imóvel
+# locado, e na dúvida a dimensão continua aplicável.
+_AMBIGUOUS_RIGHTS_FIELDS = ("Direitos_Bens_Imoveis", "Outros_Direitos_Reais")
+_RENTAL_OR_AMBIGUOUS_FIELDS = ("Imoveis_Renda_Acabados",) + _AMBIGUOUS_RIGHTS_FIELDS
+# Imóvel que, por definição da própria CVM, ainda não tem locatário: obra,
+# estoque à venda e terreno.
+_NON_RENTAL_PROPERTY_FIELDS = ("Terrenos", "Imoveis_Renda_Construcao",
+                               "Imoveis_Venda_Acabados", "Imoveis_Venda_Construcao")
+
+
+# ``Segmento_Atuacao`` que não diz em que o fundo investe. "Híbrido", "Outros"
+# e, no layout mais novo, "Multicategoria" são a maioria do cadastro e não
+# separam nada; o de papel não tem setor de imóvel. Comparação sem acento e
+# sem caixa, porque o cadastro da CVM escreve o mesmo rótulo de mais de um
+# jeito.
+_UNINFORMATIVE_SEGMENTS = frozenset({
+    "hibrido", "outros", "multicategoria",
+    "titulos e val. mob.", "titulos e valores mobiliarios",
+})
+
+
+def _cadastral_segment(general: dict) -> str | None:
+    """Segmento cadastral do informe mensal, ou ``None`` se não informa nada.
+
+    É a reserva da exposição ``sector`` por inquilino (informe trimestral):
+    o ZIP anual da CVM guarda só a última versão de cada trimestral, então a
+    reapresentação empurra o ``knowledge_at`` do setor para meses depois,
+    enquanto o mensal chega no prazo. O consumidor (``core.fii_lookthrough
+    .apply_exposures``) só usa o cadastral quando nenhum setor por inquilino é
+    conhecido; por isso ele sai como ``segment``, nunca como ``sector``.
+    """
+    segment = _text(general.get("Segmento_Atuacao"))
+    if not segment:
+        return None
+    folded = unicodedata.normalize("NFKD", segment).encode("ascii", "ignore")
+    if folded.decode().casefold().strip() in _UNINFORMATIVE_SEGMENTS:
+        return None
+    return segment
+
+
+def _rental_property_share(asset: dict, classes: dict[str, float]) -> float | None:
+    """Fração da carteira em imóvel que pode ter inquilino declarado.
+
+    A exposição ``sector`` sai só da tabela de inquilinos de imóvel para renda
+    acabado. Fundo de desenvolvimento, de terreno ou de cotas nunca aparece
+    nela, e sem esta fração ele ficava para sempre na máscara de aplicáveis
+    sem chance de cobertura (validação PIT 6.10.0, run 105: fundos como
+    TGAR11, MFII11 e VGHF11 derrubando a cobertura de setor da carteira).
+
+    Devolve ``None`` quando o layout do ano não traz a coluna de imóvel para
+    renda acabado, e também quando a coluna existe mas veio em branco ou
+    ilegível: coluna ausente ou valor não informado não pode virar fração
+    zero, porque zero tira o fundo da máscara de setor e inquilino (revisão do
+    Codex no PR #692; no acervo 2017-2026, 8% a 12% dos fundos-mês por ano
+    traziam o campo em branco e saíam da máscara por um zero inventado).
+    Fração zero só pode sair de zero declarado ("dados ausentes permanecem
+    ausentes", AGENTS.md).
+
+    Os direitos reais entram por cautela e só podem elevar a fração; em
+    branco contam zero, porque setor e inquilino na CVM existem só para o
+    imóvel para renda acabado, que aqui já veio informado. Tratá-los como
+    desconhecidos apagaria a métrica em 700 a 1.200 fundos-mês por ano para
+    mudar de lado do piso de 20% entre 3 e 33 deles.
+    """
+    rental_value = _num(asset.get("Imoveis_Renda_Acabados"))
+    if rental_value is None:
+        return None
+    total = sum(value for value in classes.values() if value > 0)
+    if total <= 0:
+        return None
+    rental = max(rental_value, 0) + sum(max(_num(asset.get(field)) or 0, 0)
+                                       for field in _AMBIGUOUS_RIGHTS_FIELDS)
+    return min(rental / total, 1.0)
+
+
 def parse_monthly(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
                   raw_payload_id: int | None = None) -> dict:
     tables = _read_zip(archive)
@@ -426,6 +511,13 @@ def parse_monthly(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
         }
         exposures.extend(_exposures(context, "asset_class", classes, source=source,
                                     raw_payload_id=raw_payload_id))
+        _append(observations, _observation(
+            context, "pct_imoveis_renda", _rental_property_share(asset, classes),
+            source=source, raw_payload_id=raw_payload_id,
+            metadata={"source_url": archive.url, "archive_sha256": archive.sha256,
+                      "formula": "(" + "+".join(_RENTAL_OR_AMBIGUOUS_FIELDS)
+                                 + ")/soma_das_classes_de_ativo",
+                      "excluded": list(_NON_RENTAL_PROPERTY_FIELDS)}))
         # A dimensao `manager` so existia no estado corrente da brapi (desde
         # 2025-08, knowledge_at de 2026-07). O informe mensal traz o mesmo
         # administrador desde 2016 com data de entrega propria, entao a
@@ -440,6 +532,15 @@ def parse_monthly(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
                 raw_payload_id=raw_payload_id,
                 metadata={"administrator_name": nome_admin,
                           "administrator_cnpj": cnpj_admin or None,
+                          "source_url": archive.url,
+                          "archive_sha256": archive.sha256}))
+        segment = _cadastral_segment(general)
+        if segment:
+            exposures.extend(_exposures(
+                context, "segment", {segment: 1.0}, source=source,
+                raw_payload_id=raw_payload_id,
+                metadata={"scope": "cvm_cadastral_segment",
+                          "mandate": _text(general.get("Mandato")),
                           "source_url": archive.url,
                           "archive_sha256": archive.sha256}))
     return {"observations": observations, "exposures": exposures,

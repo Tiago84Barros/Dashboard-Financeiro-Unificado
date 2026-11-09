@@ -144,3 +144,57 @@ def test_cessao_de_protecao_sobrevive_a_serializacao_do_metrics_json():
         "renda recorrente abaixo do mínimo"]
     assert cedido["protecao_cedida"][0]["na_carteira"] is True
     assert "não é ausência de risco" in cedido["viability_notes"][0]
+
+
+def _pit_frames(exposures: list[dict]):
+    dates = pd.date_range("2023-01-02", "2025-03-31", freq="B")
+    prices = pd.DataFrame({
+        "ticker": "TEST11", "date": dates, "close": 100.0,
+        "adjusted_close": 100.0 + pd.Series(range(len(dates))), "volume": 20_000,
+        "source": "b3_cotahist",
+    })
+    dividends = pd.DataFrame({
+        "ticker": ["TEST11"] * 24,
+        "event_date": pd.date_range("2023-04-15", periods=24, freq="ME"),
+        "ex_date": [None] * 24, "payment_date": [None] * 24, "amount": [1.0] * 24,
+    })
+    observations = pd.DataFrame([
+        {"ticker": "TEST11", "metric_name": "nav_per_share", "value_numeric": 110,
+         "value_text": None, "value_json": None, "reference_date": "2024-01-31",
+         "knowledge_at": "2024-02-15T23:59:59Z", "availability_quality": "verified_publication",
+         "source": "cvm_informe_mensal"},
+    ])
+    base = {"ticker": "TEST11", "exposure_weight": 1.0, "reference_date": "2024-01-01",
+            "knowledge_at": "2024-02-15T23:59:59Z",
+            "availability_quality": "verified_publication", "source": "cvm_informe_mensal"}
+    frame = pd.DataFrame([{**base, "exposure_type": "asset_class",
+                           "exposure_name": "real_estate"}] + [{**base, **e} for e in exposures])
+    funds = pd.DataFrame([{"ticker": "TEST11", "tipo": "tijolo"}])
+    return prices, dividends, observations, frame, funds
+
+
+def _february_input(exposures: list[dict]) -> dict:
+    snapshots = reconstruct_snapshots(*_pit_frames(exposures),
+                                      start="2024-02-29", end="2024-02-29")
+    february = [row for row in snapshots if row["reference_date"] == "2024-02-29"]
+    assert february
+    return february[0]["portfolio_input_json"]
+
+
+def test_pit_usa_segmento_cadastral_quando_nao_ha_setor_por_inquilino():
+    """RCRB11 em 2017-08: trimestral reapresentado em outubro, mensal no prazo."""
+    row = _february_input([
+        {"exposure_type": "segment", "exposure_name": "Lajes Corporativas"},
+    ])
+    assert row["sector"] == "Lajes Corporativas"
+
+
+def test_pit_prefere_setor_por_inquilino_ao_segmento_cadastral_mais_novo():
+    row = _february_input([
+        {"exposure_type": "segment", "exposure_name": "Lajes Corporativas"},
+        {"exposure_type": "sector", "exposure_name": "Varejo", "exposure_weight": .6,
+         "reference_date": "2023-12-31", "source": "cvm_informe_trimestral"},
+        {"exposure_type": "sector", "exposure_name": "Logística", "exposure_weight": .4,
+         "reference_date": "2023-12-31", "source": "cvm_informe_trimestral"},
+    ])
+    assert row["sector"] == "Varejo"

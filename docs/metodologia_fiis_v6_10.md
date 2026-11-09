@@ -114,3 +114,103 @@ afetados), que a tela já sabia exibir.
 regimes acima só mudam nos períodos em que algum fundo da carteira ficou
 sem retorno; enquanto a nova safra não for gravada, eles podem estar
 inflados nesses períodos.
+
+## Setor de inquilino só se cobra de quem tem inquilino (parser CVM 1.7.0)
+
+A validação PIT de 30/09/2026 (run 105) foi recusada por um único motivo:
+`optimizer_feasible_fraction` 0,861 (99 de 115), contra piso de 0,95. As 16
+carteiras recusadas foram montadas pelo MILP e barradas no portão de
+publicação por `exposicoes obrigatorias sem cobertura suficiente: sector`.
+
+A exposição `sector` tem uma única fonte estruturada: a tabela de inquilinos
+de **imóvel para renda acabado** do informe trimestral
+(`inf_trimestral_fii_imovel_renda_acabado_inquilino`, coluna
+`Setor_Atuacao`). Fundo de obra, de terreno, de estoque à venda ou de cotas
+nunca aparece nela. Mesmo assim ele ficava na máscara de aplicáveis, porque
+o informe mensal somava `Imoveis_Renda_Acabados`, `Imoveis_Renda_Construcao`,
+`Imoveis_Venda_*` e `Terrenos` numa classe só (`real_estate`), e o híbrido
+sem `pct_imoveis` no PIT era aplicável por cautela. Nas carteiras gravadas
+no run 105, quem ficou sem setor foram fundos desse perfil: TGAR11 (todas as
+recusas de 2021-08 a 2022-01), MFII11 (2018-04 a 2018-06) e, pelo mesmo
+padrão, VGHF11 (2024-01). Essa leitura foi inferida das carteiras gravadas e
+do cadastro atual. O `scripts/diagnosticar_cobertura_setor_fii.py` a
+confirma ou refuta fundo a fundo no warehouse local.
+
+A partir do parser `1.7.0`:
+
+- o informe mensal grava `pct_imoveis_renda`, a fração da carteira em
+  imóvel para renda acabado mais direitos reais (que entram por cautela,
+  porque a CVM não diz se o direito é sobre imóvel locado). Se o layout do
+  ano não traz a coluna `Imoveis_Renda_Acabados`, ou se ela veio em branco
+  (parser `1.8.1`, revisão do Codex no PR #692), a métrica não é gravada:
+  coluna ausente ou valor não informado não vira fração zero. No acervo
+  2017-2026, 8% a 12% dos fundos-mês por ano traziam o campo em branco e
+  saíam da máscara por um zero inventado. Direito real em branco conta zero,
+  porque só pode elevar a fração e o setor por inquilino existe só para o
+  imóvel para renda acabado, que veio informado;
+- `core.fii_lookthrough.dimension_is_applicable` tira `sector` e `tenant` da
+  máscara quando essa fração está observada abaixo de 20% e nenhum setor foi
+  observado. Setor observado mantém o fundo na máscara. Região não muda,
+  porque a tabela de imóveis lista obra, estoque e terreno.
+
+Não mudaram `min_optimizer_feasible_fraction` (0,95) nem
+`min_dimension_coverage` (0,80). A regra está numa função só, que a carteira
+(`_dimension_observation_masks`), o diagnóstico de look-through e a revisão
+de carteira chamam.
+
+**Aprovada não quer dizer que bate o IFIX.** No run 105 o excesso sobre o
+IFIX oficial era de −0,116 p.p./mês, com IC 95% de [−0,32; +0,10], que
+contém o zero. A validação aprovada de 08/11/2026 (run local 148, parser
+`1.8.1`, publicado no Supabase como id 108, `as_of` 31/10/2026, 112
+períodos; o run 147, com o `1.8.0`, deu os mesmos números) mede pior:
+
+- retorno médio mensal de 0,372%, contra 0,634% do IFIX oficial;
+- excesso de −0,262 p.p./mês (−0,223 depois de custos), com IC 95% de
+  bootstrap de [−0,536; −0,004]. **O intervalo inteiro está abaixo de zero:**
+  a carteira perde do IFIX de forma estatisticamente distinguível;
+- information ratio de −0,58 e drawdown máximo de −20,7%;
+- cessão de proteção em 58,9% dos períodos.
+
+A aprovação atesta integridade temporal, viabilidade (112/116 = 0,966) e
+respeito às restrições. Ela não diz que a carteira bate o IFIX; no histórico
+medido, ela não bate.
+
+## Segmento cadastral do mensal é reserva do setor por inquilino (parser CVM 1.8.0)
+
+A validação PIT de 08/11/2026 (run 146, parser 1.7.0) ficou em 110 de 116
+carteiras viáveis (0,948, piso 0,95). As recusas de 2017-08-31 e 2017-09-30
+eram RCRB11 sem setor. O fundo **tinha** inquilino declarado; o que faltava
+era o `knowledge_at`: o ZIP anual da CVM guarda só a última versão de cada
+informe trimestral, e RCRB11 reapresentou os de 2016-12, 2017-03 e 2017-06
+em outubro de 2017. A `Data_Entrega` que vira `knowledge_at` é a da
+reapresentação (v4, v7); a v1, entregue no prazo, não existe mais nos dados
+abertos. Baixar o piso ou "corrigir" o `knowledge_at` para trás seria
+inventar dado.
+
+O informe **mensal** (`inf_mensal_fii_geral`, colunas `Segmento_Atuacao` e
+`Mandato`) chega no prazo todo mês e, para RCRB11, dizia "Lajes
+Corporativas" desde 2017. A partir do parser `1.8.0`:
+
+- o mensal grava a exposição `segment`, peso 1,0, com o `knowledge_at` da
+  entrega do mensal e `metadata_json.scope = cvm_cadastral_segment`.
+  "Híbrido", "Multicategoria", "Outros", vazio e "Títulos e Val. Mob." não
+  geram exposição:
+  não dizem em que o fundo investe (em 2017 eram 237 dos 369 cadastros);
+- `core.fii_lookthrough.apply_exposures` é o ponto único que leva as
+  exposições para a linha da metodologia, no PIT e no estado corrente.
+  `segment` só preenche `sector` quando **nenhum** setor por inquilino é
+  conhecido até a decisão (nem pelo trimestral, nem pelo cadastro da brapi
+  no estado corrente). Quando os dois existem, vale o inquilino, mesmo que o
+  cadastral seja mais recente, e a linha guarda `sector_source =
+  cvm_cadastral_segment` quando a reserva foi usada;
+- `segment` nunca entra como `sector`: o PIT fica com a referência mais nova
+  por tipo de exposição, e o mensal é sempre mais novo que o trimestral.
+  Gravar o cadastral como `sector` trocaria o mix de inquilinos de todo
+  fundo de tijolo por um rótulo único.
+
+A tabela `market.fii_exposures` precisa da migration
+`086_fii_exposures_segment.sql` (o CHECK de `exposure_type` não aceitava
+`segment`). Fundo "Híbrido" sem inquilino, como MFII11 em 2018 (fundo de
+desenvolvimento, tabela de inquilinos vazia em todo o período), não se
+resolve por aí; é a regra de aplicabilidade do 1.7.0 que o tira da máscara,
+se `pct_imoveis_renda` estiver abaixo de 20%.
