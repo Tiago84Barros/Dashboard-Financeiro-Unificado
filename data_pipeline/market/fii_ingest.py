@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import text
 
 import core.brapi as brapi
+import core.fii_vacancia as fvac
 from core.dividend_types import sql_apenas_renda, sql_safra_canonica
 from core.fii_ticker import e_ticker_fii, sql_ticker_fii
 from core.fii_universo_vivo import registrar as registrar_universo_vivo
@@ -30,6 +31,10 @@ from data_pipeline.market import repository as repo
 from data_pipeline.quality import scheduler as sched
 
 logger = logging.getLogger(__name__)
+
+
+# Fundos seguidos recusados por limite antes de abortar a coleta da brapi.
+LIMITE_RECUSAS_SEGUIDAS = 3
 
 
 def _batches(values: list[str], size: int) -> list[list[str]]:
@@ -730,6 +735,32 @@ def _persist_document_discoveries(conn, documents: list[dict]) -> int:
     return max(int(result.rowcount or 0), 0)
 
 
+def _podar_imoveis(conn, rows: list[dict]) -> int:
+    """Apaga de market.fii_imoveis o imovel que a coleta nova da MESMA fonte nao trouxe.
+
+    A chave e (ticker, nome_imovel) e o upsert nao apaga: imovel que sai (ou que
+    volta com outro nome) ficava como fossil e era somado de novo. O escopo e
+    (ticker, fonte) -- uma fonte nunca apaga a outra -- e ha piso de cardinalidade:
+    coleta que trouxe menos da metade do que existia e tratada como truncada.
+    """
+    por_chave: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for row in rows:
+        if row.get("ticker") and row.get("fonte") and row.get("nome_imovel"):
+            por_chave[(row["ticker"], row["fonte"])].append(row["nome_imovel"])
+    apagados = 0
+    for (ticker, fonte), nomes in por_chave.items():
+        existentes = conn.execute(text(
+            "SELECT COUNT(*) FROM market.fii_imoveis WHERE ticker=:t AND fonte=:f"),
+            {"t": ticker, "f": fonte}).scalar() or 0
+        if not fvac.deve_podar(int(existentes), len(set(nomes))):
+            continue
+        apagados += conn.execute(text(
+            "DELETE FROM market.fii_imoveis WHERE ticker=:t AND fonte=:f "
+            "AND NOT (nome_imovel = ANY(:n))"),
+            {"t": ticker, "f": fonte, "n": list(set(nomes))}).rowcount or 0
+    return apagados
+
+
 def _persist_fii_v2_payload(conn, endpoint: str, symbols: list[str],
                             response: brapi.FiiApiResponse) -> dict:
     """Persiste payload e sua normalização na mesma transação."""
@@ -780,6 +811,7 @@ def _persist_fii_v2_payload(conn, endpoint: str, symbols: list[str],
         normalized = fii_v2.normalize_properties(payload, raw_id)
         observations.extend(normalized["observations"])
         counts["imoveis"] = repo.upsert(conn, "fii_imoveis", normalized["properties"])
+        counts["imoveis_podados"] = _podar_imoveis(conn, normalized["properties"])
         exposures.extend(normalized.get("exposures") or [])
     elif endpoint == "properties/history":
         observations.extend(fii_v2.normalize_property_history(payload, raw_id))
@@ -1673,12 +1705,22 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
     ref = datetime.now(timezone.utc).date()
     delay = float(os.getenv("MARKET_DELAY", "1.0"))
     metrics: list[dict] = []
+    seguidos_limitados = 0
     for i, tk in enumerate(universe):
+        if seguidos_limitados >= LIMITE_RECUSAS_SEGUIDAS:
+            # Cota da brapi esgotada (429/401/403 em sequencia): continuar so
+            # gasta ~1 min por fundo em backoff (~20 h para 1.300 fundos), estoura
+            # o teto da cadeia sem gravar nada e ainda soma recusas na cota.
+            logger.error("brapi recusou %d fundos seguidos (cota esgotada?); "
+                         "interrompendo em %s/%d", seguidos_limitados, i, len(universe))
+            prog["bloqueio_brapi"] = True
+            break
         try:
             quote = sched.with_backoff(
                 lambda: brapi.fetch_quote_full(tk),
                 retries=3, base=float(os.getenv("MARKET_BACKOFF", "4.0")),
                 on_block=brapi.is_rate_limited)
+            seguidos_limitados = 0
             if not quote:
                 prog["erros"] += 1
             else:
@@ -1695,6 +1737,8 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
         except Exception as exc:
             logger.warning("fii %s: %s", tk, exc)
             prog["erros"] += 1
+            if brapi.is_rate_limited(exc):
+                seguidos_limitados += 1
         if i < len(universe) - 1:
             sched.sleep_jittered(base=delay)
 
@@ -1748,6 +1792,8 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
                     conn, calculated_at)
         except Exception as exc:  # noqa: BLE001
             logger.warning("prova de vida do universo: %s", exc)
+    if prog.get("bloqueio_brapi"):
+        prog["erros"] = -1  # exit 1 no runner; o que ja foi coletado foi gravado acima
     logger.info("market/fii ingest: %s", prog)
     return prog
 
@@ -1962,34 +2008,73 @@ def backfill_metrics_monthly(years: int = 3) -> dict:
 
 def enrich_vacancia() -> dict:
     """
-    Recalcula a vacância do fundo a partir dos imóveis já coletados
-    (market.fii_imoveis), ponderada pela área, e grava em market.fiis.vacancia.
-    SEM rede — rode após `fiis-imoveis`. Útil para refrescar o agregado.
+    Vacancia do fundo em market.fiis.vacancia, de UMA fonte por fundo (sem rede).
+
+    Preferencia: ultima vacancia_fisica da CVM trimestral (oficial, com data-base
+    real), se tiver ate ``CVM_MAX_IDADE_DIAS``; senao a coleta de imoveis mais
+    nova de uma unica fonte, ponderada pela area e datada pela coleta. Nunca
+    mistura fontes, ignora fossil de coleta antiga e deixa ausente (nao zero) a
+    lista ambigua. Ver core/fii_vacancia.py. Antes (ate 10/11/2026) ponderava
+    todas as linhas do ticker e gravava a data da rodada: XPML11 saia com 65,96%.
     """
     from datetime import datetime, timezone
     engine = _engine()
-    prog = {"fiis_com_imoveis": 0, "com_vacancia": 0, "gravados": 0, "erros": 0}
+    prog = {"fiis_com_imoveis": 0, "com_vacancia": 0, "gravados": 0, "via_cvm": 0,
+            "via_imoveis": 0, "sem_fonte_confiavel": 0, "erros": 0}
     if engine is None:
         return {**prog, "erros": -1}
     with engine.connect() as conn:
         if not _schema_ready(conn):
             return {**prog, "erros": -1}
-        rows = conn.execute(text("""
-            SELECT ticker,
-                   CASE WHEN SUM(area_m2) FILTER (WHERE vacancia IS NOT NULL) > 0
-                        THEN SUM(vacancia * area_m2) FILTER (WHERE vacancia IS NOT NULL AND area_m2 > 0)
-                             / NULLIF(SUM(area_m2) FILTER (WHERE vacancia IS NOT NULL AND area_m2 > 0), 0)
-                        ELSE AVG(vacancia) END AS vac
-            FROM market.fii_imoveis GROUP BY ticker
-        """)).fetchall()
-    prog["fiis_com_imoveis"] = len(rows)
-    ref = datetime.now(timezone.utc).date().isoformat()
-    out = [{"ticker": tk, "vacancia": round(float(vac), 4), "vacancia_ref_date": ref}
-           for tk, vac in rows if vac is not None]
+        imoveis = conn.execute(text(
+            "SELECT ticker, nome_imovel, area_m2, vacancia, fonte, updated_at "
+            "FROM market.fii_imoveis")).mappings().all()
+        has_obs = conn.execute(text(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema='market' "
+            "AND table_name='fii_metric_observations'")).scalar()
+        cvm_rows = conn.execute(text("""
+            SELECT DISTINCT ON (ticker) ticker, value_numeric, reference_date
+              FROM market.fii_metric_observations
+             WHERE source = 'cvm_informe_trimestral' AND metric_name = 'vacancia_fisica'
+               AND value_numeric BETWEEN 0 AND 1 AND quality_status = 'observed'
+             ORDER BY ticker, reference_date DESC, knowledge_at DESC
+        """)).fetchall() if has_obs else []
+    por_ticker: dict[str, list[dict]] = defaultdict(list)
+    for r in imoveis:
+        por_ticker[r["ticker"]].append({
+            **dict(r),
+            "area_m2": float(r["area_m2"]) if r["area_m2"] is not None else None,
+            "vacancia": float(r["vacancia"]) if r["vacancia"] is not None else None})
+    cvm = {t: {"valor": float(v), "data_base": d} for t, v, d in cvm_rows}
+    prog["fiis_com_imoveis"] = len(por_ticker)
+    hoje = datetime.now(timezone.utc).date()
+    out = []
+    sem_fonte: list[str] = []
+    for tk in sorted(set(por_ticker) | set(cvm)):
+        # CVM so entra para quem tem imovel coletado: o escopo e o de sempre
+        # (tijolo/hibrido); `enrich_cadastro_gaps` cobre o resto sem sobrescrever.
+        if tk not in por_ticker:
+            continue
+        d = fvac.decidir_vacancia_fundo(por_ticker[tk], cvm.get(tk), hoje)
+        if d is None:
+            prog["sem_fonte_confiavel"] += 1
+            sem_fonte.append(tk)
+            continue
+        prog["via_cvm" if d["origem"].startswith("cvm") else "via_imoveis"] += 1
+        out.append({"ticker": tk, "vacancia": d["vacancia"],
+                    "vacancia_ref_date": d["vacancia_ref_date"].isoformat()})
     prog["com_vacancia"] = len(out)
-    if out:
+    if out or sem_fonte:
         with engine.begin() as conn:
-            prog["gravados"] = repo.upsert(conn, "fiis", out)
+            if out:
+                prog["gravados"] = repo.upsert(conn, "fiis", out)
+            if sem_fonte:
+                # Valor rejeitado (lista ambigua, sem CVM recente) nao pode ficar
+                # em market.fiis como se fosse observacao valida: limpa os dois campos.
+                conn.execute(text(
+                    "UPDATE market.fiis SET vacancia = NULL, vacancia_ref_date = NULL "
+                    "WHERE ticker = ANY(:t) AND (vacancia IS NOT NULL "
+                    "OR vacancia_ref_date IS NOT NULL)"), {"t": sem_fonte})
     logger.info("market/fii enrich_vacancia: %s", prog)
     return prog
 
@@ -2000,8 +2085,8 @@ def enrich_cadastro_gaps() -> dict:
       * segmento vazio <- segmento_cvm (Informe CVM, já casado por CNPJ);
       * vacancia nula  <- última observação PIT 'vacancia_fisica'
         (market.fii_metric_observations, informes CVM), com a data-base.
-    Só preenche ausências — nunca sobrescreve valor existente (a vacância por
-    imóveis de enrich_vacancia continua preferencial). Idempotente.
+    Só preenche ausências — nunca sobrescreve valor existente (enrich_vacancia
+    já prefere a CVM trimestral e, sem ela, os imóveis de uma fonte). Idempotente.
     """
     engine = _engine()
     prog = {"segmento_preenchido": 0, "vacancia_preenchida": 0, "erros": 0}
@@ -2050,7 +2135,6 @@ def ingest_imoveis() -> dict:
     market.fii_imoveis. Grava num_imoveis e a vacância do fundo (média ponderada
     pela área) em market.fiis. Best-effort: cobertura varia por fundo.
     """
-    from datetime import datetime, timezone
 
     import core.fii_imoveis as fim
     engine = _engine()
@@ -2065,20 +2149,19 @@ def ingest_imoveis() -> dict:
             "WHERE tipo IN ('tijolo', 'hibrido')")).fetchall()
     tickers = [r[0] for r in rows]
     prog["fiis"] = len(tickers)
-    ref = datetime.now(timezone.utc).date().isoformat()
     delay = float(os.getenv("MARKET_DELAY", "1.0"))
     for i, tk in enumerate(tickers):
         try:
             imoveis = fim.fetch_fii_imoveis(tk)
             if imoveis:
-                vac = fim.vacancia_media(imoveis)
                 with engine.begin() as conn:
                     rows_db = [{"ticker": tk, **im} for im in imoveis]
                     prog["gravados"] += repo.upsert(conn, "fii_imoveis", rows_db)
-                    fii_upd = {"ticker": tk, "num_imoveis": len(imoveis)}
-                    if vac is not None:
-                        fii_upd.update(vacancia=vac, vacancia_ref_date=ref)
-                    repo.upsert(conn, "fiis", [fii_upd])
+                    prog["podados"] = prog.get("podados", 0) + _podar_imoveis(conn, rows_db)
+                    # A vacancia do fundo NAO e gravada aqui: `enrich_vacancia`
+                    # escolhe a fonte (CVM ou esta coleta) e a data-base. Gravar
+                    # `ref` (data da rodada) como data-base era o defeito D3.
+                    repo.upsert(conn, "fiis", [{"ticker": tk, "num_imoveis": len(imoveis)}])
                 prog["com_imoveis"] += 1
                 prog["imoveis"] += len(imoveis)
         except Exception as exc:

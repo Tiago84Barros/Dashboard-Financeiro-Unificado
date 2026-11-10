@@ -333,3 +333,22 @@ def test_validacao_reprovada_publica_o_selo_bloqueado():
              "backtest": {"periods": 99}}, "blockers_json": []}
     assert not _publica_selo_bloqueado(outro, _publication_preflight(
         validation=outro, lookthrough={"required_ready": True}, row_count=394))
+
+
+def test_fundo_com_liquidez_zero_e_cvm_velha_sai_da_vitrine():
+    import datetime as dt
+
+    import pandas as pd
+
+    from scripts.publish_fii_selection_snapshot import separar_encerrados
+    df = pd.DataFrame([
+        {"ticker": "MORT11", "liquidez_diaria": 0, "cvm_ref_date": "2025-10-01"},
+        {"ticker": "ILIQ11", "liquidez_diaria": 0, "cvm_ref_date": "2026-09-01"},
+        {"ticker": "VIVO11", "liquidez_diaria": 5e6, "cvm_ref_date": "2025-10-01"},
+        {"ticker": "SEMC11", "liquidez_diaria": 0, "cvm_ref_date": None},
+        {"ticker": "SEML11", "liquidez_diaria": None, "cvm_ref_date": "2025-10-01"},
+        {"ticker": "LIMI11", "liquidez_diaria": 0, "cvm_ref_date": "2026-09-01"},
+    ])
+    ficam, fora = separar_encerrados(df, dt.date(2026, 11, 10))
+    assert fora == ["MORT11"]
+    assert sorted(ficam["ticker"]) == ["ILIQ11", "LIMI11", "SEMC11", "SEML11", "VIVO11"]

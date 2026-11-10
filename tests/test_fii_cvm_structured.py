@@ -426,3 +426,30 @@ def test_monthly_discards_uninformative_cadastral_segment(segmento):
     parsed = _monthly_general(segmento, mandato="Híbrido")
     assert not [row for row in parsed["exposures"]
                 if row["exposure_type"] == "segment"]
+
+
+def _mensal_com_cotas(cotas: str) -> dict:
+    general = (
+        "CNPJ_Fundo_Classe;Data_Referencia;Versao;Data_Entrega;Quantidade_Cotas_Emitidas\n"
+        f"12.345.678/0001-00;2026-09-01;3;2026-11-04;{cotas}\n")
+    complement = (
+        "CNPJ_Fundo_Classe;Data_Referencia;Versao;Valor_Ativo;Patrimonio_Liquido;"
+        "Valor_Patrimonial_Cotas;Total_Numero_Cotistas\n"
+        "12.345.678/0001-00;2026-09-01;3;1000;800;80;100\n")
+    parsed = parse_archive(_archive("monthly", {
+        "inf_mensal_fii_geral_2026.csv": general,
+        "inf_mensal_fii_complemento_2026.csv": complement,
+    }), {"12345678000100": "TEST11"}, 7)
+    return {row["metric_name"]: row for row in parsed["observations"]}
+
+
+def test_monthly_emite_cotas_emitidas_com_a_competencia():
+    obs = _mensal_com_cotas("18851720")["shares_outstanding"]
+    assert obs["value_numeric"] == 18851720
+    assert obs["reference_date"] == "2026-09-01"
+    assert obs["source"] == "cvm_informe_mensal"
+
+
+@pytest.mark.parametrize("cotas", ["", "0", "-5"])
+def test_monthly_cotas_ausente_ou_invalida_nao_vira_zero(cotas):
+    assert "shares_outstanding" not in _mensal_com_cotas(cotas)
