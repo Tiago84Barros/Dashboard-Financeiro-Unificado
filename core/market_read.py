@@ -1144,7 +1144,7 @@ def _observacao_vence_base(row: dict, raw_metric: str, obs: dict,
         atual = row.get(coluna)
         if _ausente(atual):
             return True
-        data_base = _ts_utc(row.get("updated_at"))
+        data_base = _ts_utc(row.get("price_base_at")) or _ts_utc(row.get("updated_at"))
         data_obs = _ts_utc(obs.get("knowledge_at")) or _ts_utc(obs.get("reference_date"))
         if data_base is None or data_obs is None:
             return False
@@ -1156,8 +1156,10 @@ def _aplicar_observacoes_fii(row: dict, observacoes: list[dict],
                              metric_aliases: dict[str, str]) -> None:
     base_comp = _dia(row.get("cvm_ref_date"))
     competencia = {"vpa": base_comp, "patrimonio_liquido": base_comp}
-    base_updated = row.get("updated_at")
+    base_updated = (row.get("price_base_at") if not _ausente(row.get("price_base_at"))
+                    else row.get("updated_at"))
     row["price_date"] = str(base_updated)[:10] if not _ausente(base_updated) else None
+    row["dy_date"] = row["price_date"]
     for obs in observacoes:
         # Dono unico da resolucao: sem ele a linha de ausencia
         # chegaria aqui como a marca em `value_json`, isto e, uma
@@ -1197,6 +1199,8 @@ def _aplicar_observacoes_fii(row: dict, observacoes: list[dict],
                 continue
             if metric == "price":
                 row["price_date"] = str(obs.get("knowledge_at"))[:10]
+            elif metric == "dy_12m":
+                row["dy_date"] = str(obs.get("knowledge_at"))[:10]
         row[metric] = value
         row["metric_metadata"][metric] = meta
     # Competencia da linha = a mais antiga entre VPA e PL (conservador); as cotas
@@ -1204,10 +1208,13 @@ def _aplicar_observacoes_fii(row: dict, observacoes: list[dict],
     comps = [c for c in competencia.values() if c is not None]
     if comps:
         row["cvm_ref_date"] = min(comps)
-    row["_vpa_comp"] = competencia["vpa"]
+    row["vpa_ref_date"] = (None if competencia["vpa"] is None
+                           else str(competencia["vpa"].date()))
+    row["shares_derived_ref"] = None
+    row["pl_ref_date"] = (None if competencia["patrimonio_liquido"] is None
+                          else str(competencia["patrimonio_liquido"].date()))
     _consolidar_cotacao_e_cotas_fii(row, alinhadas=(
         competencia["vpa"] is not None and competencia["vpa"] == competencia["patrimonio_liquido"]))
-    row.pop("_vpa_comp", None)
 
 
 def _consolidar_cotacao_e_cotas_fii(row: dict, alinhadas: bool = True) -> None:
@@ -1224,7 +1231,7 @@ def _consolidar_cotacao_e_cotas_fii(row: dict, alinhadas: bool = True) -> None:
         row["pvp"] = efetivo
         row["metric_metadata"]["pvp"] = {
             # Competencia do PROPRIO VPA usado na divisao, nao a minima da linha.
-            "reference_date": str(row.get("_vpa_comp") or row.get("cvm_ref_date"))[:10],
+            "reference_date": str(row.get("vpa_ref_date") or row.get("cvm_ref_date"))[:10],
             "price_date": row.get("price_date") or str(row.get("updated_at"))[:10],
             "available_at": str(row.get("updated_at")),
             "source": "cvm_vpa+market_price",
@@ -1242,6 +1249,7 @@ def _consolidar_cotacao_e_cotas_fii(row: dict, alinhadas: bool = True) -> None:
     if not _ausente(row.get("shares_outstanding")) and ref_atual is not None and ref_atual > comp:
         return
     row["shares_outstanding"] = pl / vpa
+    row["shares_derived_ref"] = str(comp.date())
     row["metric_metadata"]["shares_outstanding"] = {
         "reference_date": str(comp.date()),
         "available_at": str(row.get("updated_at")),
@@ -1430,6 +1438,12 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
             "property_count": item.get("Num_Imoveis"),
             "property_diversification": item.get("Property_Diversification"),
             "region_count": item.get("N_Regioes"),
+            # Data propria da cotacao-base: `updated_at` e renovado por qualquer
+            # UPDATE da linha (ex.: enrich da CVM), entao nao data o preco. A
+            # fita (Series_AvailableAt) nao sofre isso; sem ela, o carimbo da linha.
+            "price_base_at": (item.get("Series_AvailableAt")
+                              if not _ausente(item.get("Series_AvailableAt"))
+                              else item.get("updated_at")),
             "metric_metadata": {
                 "dy_12m": {"available_at": str(item.get("updated_at")), "source": "brapi",
                            "reference_date": str(item.get("updated_at"))[:10]},

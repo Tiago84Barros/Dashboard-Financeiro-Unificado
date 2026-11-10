@@ -161,3 +161,27 @@ def test_pvp_datado_pela_competencia_do_proprio_vpa():
         _obs("nav_per_share", 100.0, "2026-10-01", "2026-11-08", "cvm_informe_mensal")])
     assert row["metric_metadata"]["pvp"]["reference_date"] == "2026-10-01"
     assert "_vpa_comp" not in row
+
+
+def test_enrich_da_cvm_nao_rejuvenesce_a_cotacao_base():
+    row = _base(updated_at=pd.Timestamp("2026-11-10 12:00", tz="UTC"),
+                price_base_at=pd.Timestamp("2026-11-07 12:00", tz="UTC"))
+    _aplicar(row, [_obs("price", 110.0, "2026-11-09", "2026-11-09")])
+    assert row["price"] == 110.0 and row["price_date"] == "2026-11-09"
+
+
+def test_proveniencia_sobrevive_a_compactacao_do_snapshot():
+    from core.inteligencia_ativos.fontes_fundamentos import dados_fii
+    from scripts.publish_fii_selection_snapshot import _compact_payload
+    row = _aplicar(_base(vpa=10.0, patrimonio_liquido=5.67e9), [
+        _obs("shares_outstanding", 460e6, "2026-03-01", "2026-07-16")])
+    publicado = market_read._expand_snapshot_payload(_compact_payload(row))
+    d = dados_fii(publicado)
+    assert "preço de 2026-11-07 ÷ VPA da CVM de 2026-09" in d["p_vpa" if False else "p_vp"].nota
+    assert "derivado de PL" in d["emissoes"].nota
+
+
+def test_dy_mantem_a_data_da_base_quando_so_o_preco_foi_aceito():
+    row = _aplicar(_base(), [_obs("price", 110.0, "2026-11-09", "2026-11-09")])
+    assert row["price_date"] == "2026-11-09"
+    assert row["dy_date"] == "2026-11-07"

@@ -248,6 +248,8 @@ def _methodology_inputs_to_vitrine(inputs: pd.DataFrame) -> pd.DataFrame:
         "pct_imoveis": "Pct_Imoveis", "pct_papel": "Pct_Papel",
         "pct_caixa": "Pct_Caixa", "pct_fundos": "Pct_Fundos",
         "liquidez_origem": "Liquidez_Origem", "price_date": "Price_Date",
+        "vpa_ref_date": "Vpa_Ref",
+        "dy_date": "Dy_Date", "pl_ref_date": "Pl_Ref",
     }
     classificacoes = inputs.apply(
         lambda row: categoria_fii(
@@ -1791,7 +1793,7 @@ _TIPOS_TIJOLO = {"tijolo", "hibrido"}
 
 _KPIS_DA_VITRINE = ("Preço", "P/VP", "DY_12m", "VPA", "Patrimonio", "Cotistas",
                     "Liquidez_Diaria", "updated_at", "cvm_ref_date", "Liquidez_Origem",
-                    "Price_Date")
+                    "Price_Date", "Vpa_Ref", "Dy_Date", "Pl_Ref")
 
 
 def _kpis_da_vitrine(d: pd.Series, vitrine: pd.DataFrame, ticker: str) -> pd.Series:
@@ -1866,7 +1868,11 @@ def _tab_busca(df: pd.DataFrame) -> None:
     # do Informe Mensal da CVM (VPA e patrimônio).
     dia_preco = _data_base(d.get("Price_Date")) or _data_base(d.get("updated_at"))
     sub_preco = f"cotação de {dia_preco}" if dia_preco else None
-    comp = _data_base(d.get("cvm_ref_date"), "%m/%Y")
+    dia_dy = _data_base(d.get("Dy_Date")) or dia_preco
+    sub_dy = f"DY de {dia_dy}" if dia_dy else None
+    comp_pl = _data_base(d.get("Pl_Ref"), "%m/%Y") or _data_base(d.get("cvm_ref_date"), "%m/%Y")
+    sub_pl = f"CVM {comp_pl}" if comp_pl else None
+    comp = _data_base(d.get("Vpa_Ref"), "%m/%Y") or _data_base(d.get("cvm_ref_date"), "%m/%Y")
     sub_cvm = f"CVM {comp}" if comp else None
     fita_b3 = str(d.get("Liquidez_Origem") or "") == "fita_b3"
     if fita_b3:
@@ -1881,7 +1887,7 @@ def _tab_busca(df: pd.DataFrame) -> None:
     r1[1].markdown(_kpi_html("P/VP", f"{d.get('P/VP'):.2f}" if pd.notna(d.get("P/VP")) else "—",
                              sub=(f"preço ÷ VPA ({sub_cvm})" if sub_cvm else None),
                              sub_color="#4A5568", accent="#B084F6"), unsafe_allow_html=True)
-    r1[2].markdown(_kpi_html("DY 12m", _fmt_pct(d.get("DY_12m")), sub=sub_preco,
+    r1[2].markdown(_kpi_html("DY 12m", _fmt_pct(d.get("DY_12m")), sub=sub_dy,
                              sub_color="#4A5568", accent="#00C896"),
                    unsafe_allow_html=True)
     r1[3].markdown(_kpi_html("VPA", _fmt_money(d.get("VPA")), sub=sub_cvm,
@@ -1889,7 +1895,7 @@ def _tab_busca(df: pd.DataFrame) -> None:
                    unsafe_allow_html=True)
     r2 = st.columns(4)
     r2[0].markdown(_kpi_html("Patrimônio", _fmt_money(pl / 1e9, 2) + " bi" if pd.notna(pl) else "—",
-                             sub=sub_cvm, sub_color="#4A5568"),
+                             sub=sub_pl, sub_color="#4A5568"),
                    unsafe_allow_html=True)
     r2[1].markdown(_kpi_html("Cotistas", cot, accent="#4A9EFF"), unsafe_allow_html=True)
     r2[2].markdown(_kpi_html("Vacância", vac_val, sub=vac_sub, sub_color="#4A5568",
