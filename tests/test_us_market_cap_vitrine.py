@@ -23,20 +23,31 @@ class _Conn:
         self._close = close
 
     def execute(self, sql, params=None):  # noqa: ARG002
-        alvo = self._mc if "market_cap_history" in str(sql) else self._close
-        return _Escalar(alvo)
+        if "market_cap_history" in str(sql):
+            return _Escalar(self._mc)
+        if "splits" in str(sql):
+            return _Escalar(None)
+        return _Escalar(self._close, data="2026-11-06")
 
 
 class _Escalar:
-    def __init__(self, valor):
+    def __init__(self, valor, data=None):
         self._valor = valor
+        self._data = data
 
     def scalar(self):
         return self._valor
 
+    def first(self):
+        return None if self._valor is None else (self._valor, self._data)
+
+    def fetchall(self):
+        return []
+
 
 def _bal(shares):
-    return [{"fiscal_year": 2024, "shares_outstanding": shares}]
+    return [{"fiscal_year": 2025, "shares_outstanding": shares,
+             "reference_date": "2026-06-30", "available_at": "2026-08-01"}]
 
 
 def _inc(receita):

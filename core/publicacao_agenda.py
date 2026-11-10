@@ -270,8 +270,21 @@ ALVOS: tuple[Alvo, ...] = (
         # cada 7 vence no meio do ciclo por qualquer atraso. Dois dias absorvem
         # fim de semana e feriado. O custo no Supabase é baixo: upsert por
         # símbolo numa tabela de ~39 MB, espaço que o autovacuum reaproveita.
+        #
+        # Fundamentos (10/11/2026): nenhum alvo reingeria demonstracoes -- o
+        # `daily` e so preco e `us_sec_filings` so a lista de documentos --, e
+        # `income_statements`/`market_cap_history` pararam em 02/10 (o 10-K FY2026
+        # da AAPL, de 03/11, nao entrou). `fundamentals --novos` reingere SO as
+        # empresas com 10-K/10-Q em `sec_filings` posterior a ultima extracao
+        # (`us_sec_filings` roda antes na fila). Lote de 600 e teto de 45 min
+        # (a rotina e morta em 4 h; ver PRAZO_ROTINA_MIN): o que sobra volta no
+        # dia seguinte, a mais atrasada primeiro. Antes do `daily` para que o
+        # `enrich` abaixo derive o valor de mercado com preco e acoes novos.
         passos=(
+            ("run_us_ingest.py", "fundamentals", "--warehouse", "--json",
+             "--novos", "--no-prices", "--limit", "600", "--max-minutos", "45"),
             ("run_us_ingest.py", "daily", "--warehouse", "--json"),
+            ("run_us_ingest.py", "enrich", "--warehouse", "--json"),
             ("run_us_ingest.py", "snapshot", "--warehouse", "--json"),
             ("scripts/publish_us_snapshot_from_local.py",),
         ),

@@ -304,6 +304,9 @@ _BALANCE_COLS = ("fiscal_year", "total_assets", "total_equity", "total_debt",
                  "current_liabilities", "invested_capital", "shares_outstanding",
                  "total_liabilities", "short_term_debt", "long_term_debt",
                  "retained_earnings")
+# As duas datas que a contagem de ações precisa para valer (idade e desdobramento
+# desde a entrega): ver core.us_acoes. Só entram onde o valor de mercado nasce.
+_BALANCE_COLS_COM_DATAS = _BALANCE_COLS + ("reference_date", "available_at")
 _CASHFLOW_COLS = ("fiscal_year", "operating_cash_flow", "capex", "free_cash_flow",
                   "acquisitions", "investments", "dividends_paid",
                   "stock_repurchase", "stock_issuance", "depreciation_and_amortization",
@@ -316,12 +319,13 @@ _CASHFLOW_COLS = ("fiscal_year", "operating_cash_flow", "capex", "free_cash_flow
 # ordenar por data e pegar a primeira linha devolvia None e apagava o valor de
 # mercado derivado de ~97% do universo no próximo load_scoring_frame.
 _SQL_ULTIMO_PRECO = (
-    "SELECT COALESCE(adjusted_close, close) FROM market_us.prices_daily "
+    "SELECT COALESCE(adjusted_close, close), date FROM market_us.prices_daily "
     "WHERE symbol=:s AND COALESCE(adjusted_close, close) IS NOT NULL "
     "ORDER BY date DESC LIMIT 1")
 
 _SQL_ULTIMO_PRECO_POR_SIMBOLO = (
-    "SELECT DISTINCT ON (symbol) symbol, COALESCE(adjusted_close, close) AS px "
+    "SELECT DISTINCT ON (symbol) symbol, COALESCE(adjusted_close, close) AS px, "
+    "date AS px_date "
     "FROM market_us.prices_daily "
     "WHERE COALESCE(adjusted_close, close) IS NOT NULL "
     "ORDER BY symbol, date DESC")
@@ -334,16 +338,61 @@ def _latest_close(conn, symbol: str):
         return None
 
 
-def _latest_shares(balance_rows) -> float | None:
-    """Ações em circulação mais recentes com dado (float)."""
-    for r in reversed(balance_rows or []):
-        v = r.get("shares_outstanding")
-        if v is not None:
-            try:
-                return float(v)
-            except (TypeError, ValueError):
-                return None
-    return None
+def _latest_close_e_data(conn, symbol: str):
+    """``(preço, data)`` do último pregão com fechamento, ou ``(None, None)``."""
+    try:
+        linha = conn.execute(text(_SQL_ULTIMO_PRECO), {"s": symbol}).first()
+    except Exception:  # noqa: BLE001
+        return None, None
+    return (linha[0], linha[1]) if linha else (None, None)
+
+
+def _splits_do_simbolo(conn, symbol: str) -> list:
+    """Desdobramentos de ``market_us.splits`` (``split_date, numerador, denominador``).
+
+    Tabela ausente (vitrine publicada) devolve lista vazia: sobra a idade máxima
+    da contagem como única guarda, e isso fica no log.
+    """
+    try:
+        return [tuple(r) for r in conn.execute(text(
+            "SELECT split_date, numerator, denominator FROM market_us.splits "
+            "WHERE symbol=:s"), {"s": symbol}).fetchall()]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("splits de %s indisponiveis (%s); so a idade guarda as acoes",
+                       symbol, type(exc).__name__)
+        return []
+
+
+def _splits_por_simbolo(conn) -> dict:
+    """``{símbolo: [(data, numerador, denominador)]}`` de todo o universo."""
+    try:
+        linhas = conn.execute(text(
+            "SELECT symbol, split_date, numerator, denominator "
+            "FROM market_us.splits")).fetchall()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("splits indisponiveis (%s); so a idade guarda as acoes",
+                       type(exc).__name__)
+        try:
+            conn.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return {}
+    saida: dict = {}
+    for r in linhas:
+        saida.setdefault(r[0], []).append((r[1], r[2], r[3]))
+    return saida
+
+
+def _latest_shares(balance_rows, data_preco=None, splits=None) -> float | None:
+    """Ações vigentes, na base do preço de ``data_preco`` (float).
+
+    Idade máxima de 18 meses e ajuste de desdobramento: ver ``core.us_acoes``.
+    Sem ``data_preco`` não há como medir a idade e o resultado é ``None``.
+    """
+    from core.us_acoes import ultimas_acoes
+
+    v = ultimas_acoes(balance_rows, data_preco, splits)
+    return float(v) if v is not None else None
 
 
 def _latest_market_cap(conn, symbol: str, balance_rows=None, income_rows=None):
@@ -362,16 +411,20 @@ def _latest_market_cap(conn, symbol: str, balance_rows=None, income_rows=None):
     errada. A guarda passa a morar no unico lugar que produz
     `bundle["market_cap"]`, em vez de ser repetida em cada consumidor.
     """
-    from core.us_metrics import _latest, market_cap_confiavel
+    from core.us_acoes import _como_data
+    from core.us_metrics import _no_ano, ano_de_referencia, market_cap_confiavel
 
+    publicado_em = None
     try:
-        publicado = conn.execute(text(
-            "SELECT market_cap FROM market_us.market_cap_history "
-            "WHERE symbol=:s ORDER BY date DESC LIMIT 1"), {"s": symbol}).scalar()
+        linha = conn.execute(text(
+            "SELECT market_cap, date FROM market_us.market_cap_history "
+            "WHERE symbol=:s ORDER BY date DESC LIMIT 1"), {"s": symbol}).first()
+        publicado, publicado_em = (linha[0], linha[1]) if linha else (None, None)
     except Exception:  # noqa: BLE001
         publicado = None
-    close = _latest_close(conn, symbol)
-    shares = _latest_shares(balance_rows)
+    close, data_preco = _latest_close_e_data(conn, symbol)
+    shares = _latest_shares(balance_rows, data_preco,
+                            _splits_do_simbolo(conn, symbol))
     try:
         preco = float(close) if close is not None else None
     except (TypeError, ValueError):
@@ -382,7 +435,9 @@ def _latest_market_cap(conn, symbol: str, balance_rows=None, income_rows=None):
     except (TypeError, ValueError):
         publicado = None
     return market_cap_confiavel(
-        publicado, derivado, preco, _latest(income_rows or [], "revenue"))
+        publicado, derivado, preco,
+        _no_ano(income_rows or [], "revenue", ano_de_referencia(income_rows or [])),
+        publicado_em=_como_data(publicado_em), preco_em=_como_data(data_preco))
 
 
 def load_company_bundle(symbol: str) -> dict | None:
@@ -408,7 +463,7 @@ def load_company_bundle(symbol: str) -> dict | None:
                      f"AND quality_status IN ('raw','validated') ORDER BY fiscal_year")
                 return [dict(r._mapping) for r in conn.execute(text(q), {"c": cid})]
 
-            balance = _series("balance_sheets", _BALANCE_COLS)
+            balance = _series("balance_sheets", _BALANCE_COLS_COM_DATAS)
             income = _series("income_statements", _INCOME_COLS)
             return {
                 "name": ident[1], "sector": ident[2], "industry": ident[3],
@@ -429,7 +484,13 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
     Puxa as séries anuais em lote e calcula as métricas em Python (core.us_metrics).
     Retorna vazio se não houver dados — a UI trata offline.
     """
-    from core.us_metrics import _latest, compute_company_metrics, market_cap_confiavel
+    from core.us_acoes import _como_data
+    from core.us_metrics import (
+        _no_ano,
+        ano_de_referencia,
+        compute_company_metrics,
+        market_cap_confiavel,
+    )
     cols = ["symbol", "name", "sector", "industry"]
     eng = _engine()
     if eng is None or not schema_ready():
@@ -461,13 +522,14 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
                 return pd.read_sql(q, conn, params={"ids": ids})
 
             inc = _bulk("income_statements", _INCOME_COLS)
-            bal = _bulk("balance_sheets", _BALANCE_COLS)
+            bal = _bulk("balance_sheets", _BALANCE_COLS_COM_DATAS)
             cfw = _bulk("cash_flow_statements", _CASHFLOW_COLS)
             mcaps = pd.read_sql(text(
-                "SELECT DISTINCT ON (symbol) symbol, market_cap "
+                "SELECT DISTINCT ON (symbol) symbol, market_cap, date AS mc_date "
                 "FROM market_us.market_cap_history ORDER BY symbol, date DESC"), conn)
             # último preço por símbolo (deriva market cap quando não há histórico)
             closes = pd.read_sql(text(_SQL_ULTIMO_PRECO_POR_SIMBOLO), conn)
+            splits_por_simbolo = _splits_por_simbolo(conn)
     except Exception as exc:  # noqa: BLE001
         logger.warning("load_scoring_frame falhou: %s", exc)
         return pd.DataFrame(columns=cols)
@@ -476,6 +538,8 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
         if not mcaps.empty else {}
     close_by_symbol = dict(zip(closes.get("symbol", []), closes.get("px", []))) \
         if not closes.empty else {}
+    data_preco_by_symbol = dict(zip(closes.get("symbol", []), closes.get("px_date", [])))         if not closes.empty else {}
+    mcap_em_by_symbol = dict(zip(mcaps.get("symbol", []), mcaps.get("mc_date", [])))         if not mcaps.empty else {}
     inc_g = {k: v.to_dict("records") for k, v in inc.groupby("company_id")} if not inc.empty else {}
     bal_g = {k: v.to_dict("records") for k, v in bal.groupby("company_id")} if not bal.empty else {}
     cfw_g = {k: v.to_dict("records") for k, v in cfw.groupby("company_id")} if not cfw.empty else {}
@@ -488,14 +552,17 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
         # o derivado era só reserva para quando o histórico faltava, e um
         # histórico presente porém absurdo passava direto — ver
         # market_cap_confiavel.
-        shares = _latest_shares(bal_rows)
+        shares = _latest_shares(bal_rows, data_preco_by_symbol.get(c["symbol"]),
+                                splits_por_simbolo.get(c["symbol"]))
         px = close_by_symbol.get(c["symbol"])
         derivado = float(px) * shares if px is not None and shares else None
         publicado = mcap_by_symbol.get(c["symbol"])
         mcap = market_cap_confiavel(
             float(publicado) if publicado is not None else None, derivado,
             float(px) if px is not None else None,
-            _latest(inc_g.get(cid, []), "revenue"))
+            _no_ano(inc_g.get(cid, []), "revenue", ano_de_referencia(inc_g.get(cid, []))),
+            publicado_em=_como_data(mcap_em_by_symbol.get(c["symbol"])),
+            preco_em=_como_data(data_preco_by_symbol.get(c["symbol"])))
         m = compute_company_metrics(
             inc_g.get(cid, []), bal_rows, cfw_g.get(cid, []), market_cap=mcap)
         rows.append({"symbol": c["symbol"], "name": c["name"],

@@ -127,8 +127,41 @@ def _build_deactivate_stale() -> str:
     return (
         "UPDATE market_us.company_snapshots "
         "SET is_active = FALSE, score_status = 'stale', published_at = NOW() "
-        "WHERE NOT (symbol = ANY(:symbols))"
+        "WHERE NOT (symbol = ANY(:symbols)) "
+        # Já desativada em rodada anterior: não rebate `published_at`, que passava
+        # a dizer "publicado hoje" sobre uma linha de semanas atrás.
+        "AND NOT (is_active IS FALSE AND score_status = 'stale')"
     )
+
+
+#: Quanto tempo uma linha desativada fica preservada para rollback.
+RETENCAO_FOSSEIS_DIAS = 7
+#: Piso de cardinalidade: lote publicado com menos que esta fração do que o
+#: Supabase tem ativo é lote parcial (ou vazio por defeito a montante) e não
+#: autoriza apagar nada.
+PISO_PUBLICADO_FRACAO = 0.5
+
+
+def _build_purge_stale() -> str:
+    """Apaga o fóssil: desativada (`stale`) cuja medição é mais velha que a retenção.
+
+    UPSERT sem DELETE deixava a GOOGL no Supabase para sempre, com `generated_at`
+    de 03/10 e preço de outubro, a um lookup por símbolo de distância da tela.
+    A idade é a do `generated_at`, a da última medição, e não a de `published_at`.
+    """
+    return (
+        "DELETE FROM market_us.company_snapshots "
+        "WHERE is_active IS FALSE AND score_status = 'stale' "
+        "AND NOT (symbol = ANY(:symbols)) "
+        "AND generated_at < :limite"
+    )
+
+
+def pode_apagar_fosseis(publicados: int, ativos_no_destino: int) -> bool:
+    """O lote publicado cobre o bastante do que já está ativo para apagar o resto."""
+    if publicados <= 0:
+        return False
+    return ativos_no_destino <= 0 or publicados >= PISO_PUBLICADO_FRACAO * ativos_no_destino
 
 
 def _ensure_schema(engine) -> str:
@@ -325,6 +358,14 @@ def main() -> int:
 
     # Retomada por identidade do artefato. Evita regravar milhares de JSONB já
     # confirmados quando o Supabase interrompe um lote perto do fim.
+    # Base do piso de cardinalidade: ATIVOS no destino ANTES de gravar ou
+    # desativar qualquer coisa. Medida depois, a desativacao ja teria reduzido
+    # a base ao tamanho do lote e o piso passaria sempre (achado do Codex, #708).
+    with tgt.connect() as conn:
+        ativos_antes = int(conn.execute(text(
+            "SELECT COUNT(*) FROM market_us.company_snapshots WHERE is_active IS TRUE"
+        )).scalar() or 0)
+    limpeza_ok = pode_apagar_fosseis(len(rows), ativos_antes)
     with tgt.connect() as conn:
         existing = {
             (str(row.symbol), str(row.score_version or ""), row.generated_at)
@@ -355,7 +396,11 @@ def main() -> int:
     # Preserva sobras para rollback, mas as marca como inativas somente após todos
     # os lotes. Uma falha intermediária não reduz nem invalida a vitrine remota.
     symbols = [str(row["symbol"]) for row in rows]
-    _exec_retry(tgt, text(_build_deactivate_stale()), {"symbols": symbols})
+    if limpeza_ok:
+        _exec_retry(tgt, text(_build_deactivate_stale()), {"symbols": symbols})
+    else:
+        print(f"ausentes NAO desativados: publicado {len(rows)} contra {ativos_antes} "
+              f"ativos no destino (piso {PISO_PUBLICADO_FRACAO:.0%}); lote parcial?")
     expected = {
         (str(row["symbol"]), str(row.get("score_version") or ""), row.get("generated_at"))
         for row in rows
@@ -374,6 +419,20 @@ def main() -> int:
         raise RuntimeError(
             f"publicação incompleta: esperado {len(expected)}, obtido {remote_count}"
         )
+    # Fóssil: só depois de a publicação inteira ter sido confirmada, e com piso
+    # de cardinalidade contra lote vazio ou parcial.
+    if limpeza_ok:
+        from datetime import datetime, timedelta, timezone
+        medidas = [r["generated_at"] for r in rows if r.get("generated_at")]
+        referencia = max(medidas) if medidas else datetime.now(timezone.utc)
+        limite = referencia - timedelta(days=RETENCAO_FOSSEIS_DIAS)
+        with tgt.begin() as conn:
+            apagadas = conn.execute(text(_build_purge_stale()),
+                                    {"symbols": symbols, "limite": limite}).rowcount
+        print(f"fósseis removidos (desativados, medição anterior a {limite:%d/%m/%Y}): "
+              f"{apagadas}")
+    else:
+        print("fósseis NÃO removidos (piso de cardinalidade).")
     print(
         f"publicado nesta execução: {done}; snapshot confirmado: {remote_count} "
         "empresa(s) em market_us.company_snapshots (Supabase)."

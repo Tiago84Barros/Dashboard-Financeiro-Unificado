@@ -6,10 +6,12 @@ brutos; nenhuma delas apaga observações históricas.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 from sqlalchemy import text
 
+from core.us_acoes import MAX_IDADE_ACOES_DIAS
 from core.us_instrumento import (
     MOTIVO_OUTRO_TICKER_DA_EMISSORA,
     motivo_exclusao_ativo,
@@ -17,6 +19,8 @@ from core.us_instrumento import (
 )
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
 from data_pipeline.us.repository import colunas_da_tabela, equity_identity_expr
+
+logger = logging.getLogger(__name__)
 
 # A-140: a regra de quem e ativo analisavel mora em core/us_instrumento.py --
 # a leitura da vitrine precisa da MESMA regra, e duplica-la aqui garantiria que
@@ -220,36 +224,103 @@ def classify_assets(engine) -> dict:
     return {"matched": int(matched or 0), "statuses": {r[0]: int(r[1]) for r in rows}}
 
 
+# Valor de mercado mensal derivado: preço do mês x ações do balanço vigente.
+# Regras de `core.us_acoes` (aqui em SQL, porque o lote é de centenas de
+# milhares de linhas):
+#   * idade máxima de 18 meses entre a data de referência do balanço e o fim
+#     do mês do preço -- ações de 2012 não valem para um preço de 2026 (WMT);
+#   * os preços do armazém são retroajustados por desdobramento, as ações são
+#     da época: multiplica-se pelo fator de todo split POSTERIOR à entrega do
+#     balanço (`market_us.splits`);
+#   * split entre a referência e a entrega do balanço é ambíguo: o balanço é
+#     descartado e o mês cai para o anterior que valha, ou fica sem valor.
+# A idade usa 548 dias, o mesmo `MAX_IDADE_ACOES_DIAS` do módulo Python.
+_SQL_MARKET_CAP_UPSERT = f"""
+    INSERT INTO market_us.market_cap_history (symbol, date, market_cap, source)
+    SELECT p.symbol, p.month_end,
+           p.adjusted_close * sh.shares_outstanding,
+           'derived_price_x_pit_shares'
+    FROM market_us.prices_monthly p
+    JOIN LATERAL (
+        SELECT b.shares_outstanding * COALESCE((
+                   SELECT EXP(SUM(LN(s.numerator / s.denominator)))
+                   FROM market_us.splits s
+                   WHERE s.symbol = b.symbol
+                     AND s.numerator > 0 AND s.denominator > 0
+                     AND s.split_date > COALESCE(b.available_at, b.reference_date)
+               ), 1) AS shares_outstanding
+        FROM market_us.balance_sheets b
+        WHERE b.symbol=p.symbol
+          AND b.shares_outstanding > 0
+          AND b.available_at IS NOT NULL
+          AND b.available_at <= p.month_end
+          AND b.quality_status <> 'rejected'
+          AND p.month_end - b.reference_date <= {MAX_IDADE_ACOES_DIAS}
+          AND NOT EXISTS (
+              SELECT 1 FROM market_us.splits s
+              WHERE s.symbol = b.symbol
+                AND s.split_date > b.reference_date
+                AND s.split_date <= b.available_at)
+        ORDER BY b.available_at DESC, b.reference_date DESC
+        LIMIT 1
+    ) sh ON TRUE
+    WHERE p.adjusted_close > 0
+    ON CONFLICT (symbol, date) DO UPDATE SET
+        market_cap=EXCLUDED.market_cap, source=EXCLUDED.source,
+        ingested_at=NOW()
+"""
+
+# Linha derivada que a regra acima deixou de produzir (balanço velho demais,
+# split ambíguo) ficaria para sempre: UPSERT sem DELETE. `NOW()` é o início da
+# transação, igual ao `ingested_at` que o UPSERT acabou de gravar; quem ficou
+# para trás é fóssil. Só `source` derivada: o publicado por provedor não é
+# desta função.
+_SQL_MARKET_CAP_FOSSEIS = """
+    DELETE FROM market_us.market_cap_history
+    WHERE source = 'derived_price_x_pit_shares' AND ingested_at < NOW()
+"""
+
+#: Piso de cardinalidade: se a regeneração produz menos que esta fração do que
+#: já existia derivado, algo quebrou a montante (preço mensal vazio, balanço
+#: ausente) e NADA é apagado.
+PISO_FOSSEIS_FRACAO = 0.5
+
+
+def pode_remover_fosseis(antes: int, mantidas: int) -> bool:
+    """Se a regeneração é completa o bastante para apagar o que ela não refez."""
+    return mantidas > 0 and (antes == 0 or mantidas >= PISO_FOSSEIS_FRACAO * antes)
+
+
 def derive_market_cap_history(engine) -> dict:
-    """Calcula market cap mensal PIT usando preço e ações conhecidas na data."""
-    sql = """
-        INSERT INTO market_us.market_cap_history (symbol, date, market_cap, source)
-        SELECT p.symbol, p.month_end,
-               p.adjusted_close * sh.shares_outstanding,
-               'derived_price_x_pit_shares'
-        FROM market_us.prices_monthly p
-        JOIN LATERAL (
-            SELECT b.shares_outstanding
-            FROM market_us.balance_sheets b
-            WHERE b.symbol=p.symbol
-              AND b.shares_outstanding > 0
-              AND b.available_at IS NOT NULL
-              AND b.available_at <= p.month_end
-              AND b.quality_status <> 'rejected'
-            ORDER BY b.available_at DESC, b.reference_date DESC
-            LIMIT 1
-        ) sh ON TRUE
-        WHERE p.adjusted_close > 0
-        ON CONFLICT (symbol, date) DO UPDATE SET
-            market_cap=EXCLUDED.market_cap, source=EXCLUDED.source,
-            ingested_at=NOW()
+    """Calcula market cap mensal PIT usando preço e ações conhecidas na data.
+
+    Ações de balanço com mais de 18 meses não valem, e desdobramentos
+    posteriores à entrega ajustam a contagem (ver `core.us_acoes`). Linhas
+    derivadas que deixaram de qualificar são removidas, com piso de cardinalidade.
     """
     with engine.begin() as conn:
-        changed = conn.execute(text(sql)).rowcount
+        antes = int(conn.execute(text(
+            "SELECT COUNT(*) FROM market_us.market_cap_history "
+            "WHERE source='derived_price_x_pit_shares'")).scalar() or 0)
+        changed = conn.execute(text(_SQL_MARKET_CAP_UPSERT)).rowcount
+        mantidas = int(conn.execute(text(
+            "SELECT COUNT(*) FROM market_us.market_cap_history "
+            "WHERE source='derived_price_x_pit_shares' AND ingested_at >= NOW()"
+        )).scalar() or 0)
+        removidas = 0
+        piso_ok = pode_remover_fosseis(antes, mantidas)
+        if piso_ok:
+            removidas = int(conn.execute(text(_SQL_MARKET_CAP_FOSSEIS)).rowcount or 0)
+        elif antes:
+            logger.warning(
+                "market_cap_history: regeneracao produziu %d de %d linhas derivadas "
+                "(piso %.0f%%); fosseis NAO removidos", mantidas, antes,
+                PISO_FOSSEIS_FRACAO * 100)
         total, symbols = conn.execute(text(
             "SELECT COUNT(*), COUNT(DISTINCT symbol) FROM market_us.market_cap_history"
         )).one()
-    return {"changed": int(changed or 0), "rows": int(total), "symbols": int(symbols)}
+    return {"changed": int(changed or 0), "rows": int(total), "symbols": int(symbols),
+            "fosseis_removidos": removidas, "fosseis_protegidos_pelo_piso": not piso_ok and bool(antes)}
 
 
 def promote_lineage_and_quality(engine) -> dict:
