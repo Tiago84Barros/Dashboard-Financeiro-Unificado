@@ -2831,7 +2831,12 @@ INDICADORES = [
     {
         "Grupo": "Margens",
         "Indicador": "Margem Operacional",
-        "O que mede": "Resultado operacional dividido pela receita.",
+        "O que mede": ("Resultado operacional (EBIT) dividido pela receita. Nos "
+                        "bancos, que não têm EBIT, o resultado operacional é o "
+                        "resultado antes dos tributos, como no Status Invest e no "
+                        "Investidor10; nas seguradoras e nas financeiras de plano "
+                        "antigo, é a conta antes do resultado financeiro ou antes "
+                        "da tributação que o plano de contas da CVM traz."),
         "Importância": "Isola a qualidade da operação antes de efeitos financeiros e impostos.",
         "Leitura": "Boa para comparar eficiência entre pares do mesmo setor.",
         "Autores": "Damodaran usa margens e crescimento para estimar qualidade operacional e valor intrínseco.",
@@ -2879,7 +2884,10 @@ INDICADORES = [
     {
         "Grupo": "Valuation",
         "Indicador": "EV/EBIT",
-        "O que mede": "Valor da firma dividido pelo lucro operacional.",
+        "O que mede": ("Valor da firma dividido pelo lucro operacional. Nos "
+                        "bancos fica em branco: a captação (depósitos) é a "
+                        "matéria-prima do negócio, não dívida, e o app não "
+                        "inventa dívida líquida zero para fechar a conta."),
         "Importância": "Compara preço do negócio inteiro, incluindo dívida, com resultado operacional.",
         "Leitura": "Útil para comparar empresas com estruturas de capital diferentes.",
         "Autores": "Greenblatt usa rendimento operacional sobre valor da firma como uma de suas ideias centrais.",
@@ -2903,7 +2911,9 @@ INDICADORES = [
     {
         "Grupo": "Solvência",
         "Indicador": "Liquidez Corrente",
-        "O que mede": "Ativos circulantes divididos por passivos circulantes.",
+        "O que mede": ("Ativos circulantes divididos por passivos circulantes. "
+                        "Nos bancos fica em branco: o balanço deles não separa "
+                        "circulante de não circulante."),
         "Importância": "Indica folga de curto prazo para cumprir obrigações.",
         "Leitura": "Muito baixa pode sinalizar aperto; muito alta pode indicar capital parado.",
         "Autores": "Graham via liquidez como camada de proteção para o investidor defensivo.",

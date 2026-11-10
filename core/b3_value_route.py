@@ -160,13 +160,16 @@ def _avaliar_solvencia(df: pd.DataFrame, policy: ValuePolicy,
         "patrimônio líquido negativo": pl_negativo,
         f"endividamento fora de faixa (> {policy.max_endividamento:g}x)": endiv_fora,
         # Margem operacional negativa exige PREJUÍZO confirmando, pelo mesmo
-        # motivo do FCO negativo. EBIT/receita não é conceito válido para
-        # instituição financeira — banco não tem "operação" no sentido
-        # industrial, e a brapi devolve o quociente mesmo assim. Medido em
-        # 01/08/2026: das 81 empresas com margem operacional negativa, 28 são do
-        # setor Financeiro (o maior grupo) e 33 têm ROE POSITIVO. Sem a
-        # confirmação, Banco do Brasil e Bradesco saíam CRÍTICOS por um número
-        # que não se aplica a eles.
+        # motivo do FCO negativo. Medido em 01/08/2026: das 81 empresas com
+        # margem operacional negativa, 28 são do setor Financeiro (o maior
+        # grupo) e 33 têm ROE POSITIVO. Sem a confirmação, Banco do Brasil e
+        # Bradesco saíam CRÍTICOS. A causa, achada em 10/11/2026: no molde de
+        # banco da brapi não há ``ebit``, e o EBIT gravado era o
+        # ``operatingIncome``, que ali é a linha de despesas operacionais, não
+        # o lucro operacional. Desde então o EBIT dos bancos é o resultado antes
+        # dos tributos (``data_pipeline.market.normalize._ebit``), como no Status
+        # Invest e no Investidor10. A confirmação fica: margem negativa isolada
+        # continua não sendo conclusiva.
         #
         # ROE ausente não confirma nem absolve: sem o segundo sinal a falha não
         # é conclusiva, e a empresa cai na faixa de atenção como qualquer
