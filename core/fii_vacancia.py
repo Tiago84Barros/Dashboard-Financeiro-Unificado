@@ -23,7 +23,7 @@ preencheu o informe em percentual. Em vez de adivinhar, a agregação devolve
 """
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from typing import Iterable, Mapping
 
 ESCALAS = ("fracao", "percentual")
@@ -34,8 +34,6 @@ MIN_IMOVEIS_AMBIGUIDADE = 4
 # A CVM trimestral é "recente" até este número de dias após a data-base
 # (trimestre + 45 dias de prazo de entrega + folga de uma safra).
 CVM_MAX_IDADE_DIAS = 200
-# Linhas da mesma coleta distam menos que isto do upsert mais novo da fonte.
-JANELA_COLETA = timedelta(days=1)
 # Piso de cardinalidade da poda: não apaga imóvel se a coleta nova trouxe menos
 # da metade do que já havia (coleta truncada não prova que o imóvel saiu).
 PISO_PODA = 0.5
@@ -60,8 +58,8 @@ def para_fracao(valor, escala: str) -> float | None:
 
 def lista_ambigua(linhas: Iterable[Mapping]) -> bool:
     """True se a maior parte da área vem com vacância exatamente 1,00."""
-    com_dado = [(l.get("vacancia"), l.get("area_m2") or 0.0) for l in linhas
-                if l.get("vacancia") is not None]
+    com_dado = [(r.get("vacancia"), r.get("area_m2") or 0.0) for r in linhas
+                if r.get("vacancia") is not None]
     if len(com_dado) < MIN_IMOVEIS_AMBIGUIDADE:
         return False
     total = sum(a for _, a in com_dado if a > 0)
@@ -74,36 +72,34 @@ def lista_ambigua(linhas: Iterable[Mapping]) -> bool:
 def agregar_imoveis(linhas: Iterable[Mapping], escala: str = "fracao") -> float | None:
     """Vacância do fundo = média ponderada pela área de UMA fonte. None se ambígua."""
     normal = []
-    for l in linhas:
-        v = para_fracao(l.get("vacancia"), escala)
+    for r in linhas:
+        v = para_fracao(r.get("vacancia"), escala)
         if v is not None:
-            normal.append({"vacancia": v, "area_m2": l.get("area_m2")})
+            normal.append({"vacancia": v, "area_m2": r.get("area_m2")})
     if not normal or lista_ambigua(normal):
         return None
-    com_area = [(l["vacancia"], float(l["area_m2"])) for l in normal
-                if l.get("area_m2") and float(l["area_m2"]) > 0]
+    com_area = [(r["vacancia"], float(r["area_m2"])) for r in normal
+                if r.get("area_m2") and float(r["area_m2"]) > 0]
     if com_area:
         return round(sum(v * a for v, a in com_area) / sum(a for _, a in com_area), 4)
-    return round(sum(l["vacancia"] for l in normal) / len(normal), 4)
+    return round(sum(r["vacancia"] for r in normal) / len(normal), 4)
 
 
 def coleta_mais_recente(linhas: Iterable[Mapping]) -> list[Mapping]:
-    """Mantém UMA fonte (a de upsert mais novo) e só as linhas da mesma coleta.
+    """Mantém UMA fonte: a de upsert mais novo (empate: ordem alfabética).
 
-    Imóvel que a coleta nova não trouxe e continua na tabela (a chave inclui o
-    nome, e o upsert não apaga) é fóssil; imóvel renomeado duplica. Misturar
-    fontes soma o mesmo m² duas vezes.
+    Todas as linhas da fonte escolhida entram. ``updated_at`` só muda quando o
+    valor muda (o upsert usa IS DISTINCT FROM), então um imóvel inalterado tem
+    carimbo antigo mesmo coletado hoje; filtrar por janela de tempo o trataria
+    como fóssil. Fóssil de verdade (imóvel que saiu) é apagado por
+    ``deve_podar`` na própria ingestão. Misturar fontes soma o mesmo m² duas vezes.
     """
-    linhas = [l for l in linhas if l.get("updated_at") is not None]
+    linhas = [r for r in linhas if r.get("updated_at") is not None]
     if not linhas:
         return []
-    topo = max(l["updated_at"] for l in linhas)
-    fontes = sorted({l.get("fonte") or "" for l in linhas
-                     if topo - l["updated_at"] <= JANELA_COLETA})
-    fonte = fontes[0]
-    mesma = [l for l in linhas if (l.get("fonte") or "") == fonte]
-    ult = max(l["updated_at"] for l in mesma)
-    return [l for l in mesma if ult - l["updated_at"] <= JANELA_COLETA]
+    topo = max(r["updated_at"] for r in linhas)
+    fonte = sorted({r.get("fonte") or "" for r in linhas if r["updated_at"] == topo})[0]
+    return [r for r in linhas if (r.get("fonte") or "") == fonte]
 
 
 def decidir_vacancia_fundo(imoveis: Iterable[Mapping], cvm: Mapping | None,
@@ -125,7 +121,7 @@ def decidir_vacancia_fundo(imoveis: Iterable[Mapping], cvm: Mapping | None,
     if valor is None:
         return None
     return {"vacancia": valor,
-            "vacancia_ref_date": max(l["updated_at"] for l in coleta).date(),
+            "vacancia_ref_date": max(r["updated_at"] for r in coleta).date(),
             "origem": f"imoveis:{coleta[0].get('fonte')}"}
 
 

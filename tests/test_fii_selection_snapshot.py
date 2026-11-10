@@ -337,7 +337,9 @@ def test_validacao_reprovada_publica_o_selo_bloqueado():
 
 def test_fundo_com_liquidez_zero_e_cvm_velha_sai_da_vitrine():
     import datetime as dt
+
     import pandas as pd
+
     from scripts.publish_fii_selection_snapshot import separar_encerrados
     df = pd.DataFrame([
         {"ticker": "MORT11", "liquidez_diaria": 0, "cvm_ref_date": "2025-10-01"},

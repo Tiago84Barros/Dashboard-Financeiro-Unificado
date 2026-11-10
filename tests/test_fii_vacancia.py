@@ -42,15 +42,23 @@ def test_xpml11_statusinvest_e_brapi_nao_se_misturam():
     brapi = [_l("brapi_fii_v2", 1.0, 100.0, T0, f"b{i}") for i in range(6)]
     si = [_l("statusinvest", 0.01, 100.0, T0 + timedelta(days=3), f"s{i}") for i in range(4)]
     coleta = fv.coleta_mais_recente(brapi + si)
-    assert {l["fonte"] for l in coleta} == {"statusinvest"}
+    assert {r["fonte"] for r in coleta} == {"statusinvest"}
     assert fv.agregar_imoveis(coleta) == pytest.approx(0.01)
 
 
-def test_fossil_da_mesma_fonte_fica_de_fora():
-    novo = [_l("statusinvest", 0.02, 100.0, T0 + timedelta(days=40), "a")]
-    fossil = [_l("statusinvest", 0.90, 900.0, T0, "antigo")]
-    coleta = fv.coleta_mais_recente(novo + fossil)
-    assert [l["nome_imovel"] for l in coleta] == ["a"]
+def test_imovel_inalterado_com_carimbo_antigo_continua_na_coleta():
+    # updated_at so muda quando o valor muda: o imovel de 900 m2 nao e fossil.
+    novo = [_l("statusinvest", 0.50, 100.0, T0 + timedelta(days=40), "a")]
+    inalterado = [_l("statusinvest", 0.0, 900.0, T0, "b")]
+    coleta = fv.coleta_mais_recente(novo + inalterado)
+    assert {r["nome_imovel"] for r in coleta} == {"a", "b"}
+    assert fv.agregar_imoveis(coleta) == pytest.approx(0.05)
+
+
+def test_fonte_mais_nova_vence_mesmo_com_nome_depois_no_alfabeto():
+    brapi = [_l("brapi_fii_v2", 0.9, 100.0, T0, "b")]
+    si = [_l("statusinvest", 0.02, 100.0, T0 + timedelta(hours=2), "s")]
+    assert {r["fonte"] for r in fv.coleta_mais_recente(brapi + si)} == {"statusinvest"}
 
 
 def test_cvm_recente_vence_e_data_e_a_data_base():

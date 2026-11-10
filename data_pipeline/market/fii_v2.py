@@ -16,6 +16,7 @@ from datetime import date, datetime, timezone
 from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
+from core import fii_vacancia
 from core.fii_methodology import (
     INCOME_GROWTH_FORMULA,
     INCOME_RECURRENCE_FORMULA,
@@ -23,7 +24,6 @@ from core.fii_methodology import (
     income_recurrence_com_motivo,
     income_recurrence_months,
 )
-from core import fii_vacancia
 from core.fii_vacancia import para_fracao
 from core.observacao_ausente import CHAVE_AUSENCIA, marca_de_ausencia
 from data_pipeline.market.fii_sources import metric_observation

@@ -1714,8 +1714,7 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
             logger.error("brapi recusou %d fundos seguidos (cota esgotada?); "
                          "interrompendo em %s/%d", seguidos_limitados, i, len(universe))
             prog["bloqueio_brapi"] = True
-            prog["erros"] = -1
-            return prog
+            break
         try:
             quote = sched.with_backoff(
                 lambda: brapi.fetch_quote_full(tk),
@@ -1793,6 +1792,8 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
                     conn, calculated_at)
         except Exception as exc:  # noqa: BLE001
             logger.warning("prova de vida do universo: %s", exc)
+    if prog.get("bloqueio_brapi"):
+        prog["erros"] = -1  # exit 1 no runner; o que ja foi coletado foi gravado acima
     logger.info("market/fii ingest: %s", prog)
     return prog
 
@@ -2048,6 +2049,7 @@ def enrich_vacancia() -> dict:
     prog["fiis_com_imoveis"] = len(por_ticker)
     hoje = datetime.now(timezone.utc).date()
     out = []
+    sem_fonte: list[str] = []
     for tk in sorted(set(por_ticker) | set(cvm)):
         # CVM so entra para quem tem imovel coletado: o escopo e o de sempre
         # (tijolo/hibrido); `enrich_cadastro_gaps` cobre o resto sem sobrescrever.
@@ -2056,14 +2058,23 @@ def enrich_vacancia() -> dict:
         d = fvac.decidir_vacancia_fundo(por_ticker[tk], cvm.get(tk), hoje)
         if d is None:
             prog["sem_fonte_confiavel"] += 1
+            sem_fonte.append(tk)
             continue
         prog["via_cvm" if d["origem"].startswith("cvm") else "via_imoveis"] += 1
         out.append({"ticker": tk, "vacancia": d["vacancia"],
                     "vacancia_ref_date": d["vacancia_ref_date"].isoformat()})
     prog["com_vacancia"] = len(out)
-    if out:
+    if out or sem_fonte:
         with engine.begin() as conn:
-            prog["gravados"] = repo.upsert(conn, "fiis", out)
+            if out:
+                prog["gravados"] = repo.upsert(conn, "fiis", out)
+            if sem_fonte:
+                # Valor rejeitado (lista ambigua, sem CVM recente) nao pode ficar
+                # em market.fiis como se fosse observacao valida: limpa os dois campos.
+                conn.execute(text(
+                    "UPDATE market.fiis SET vacancia = NULL, vacancia_ref_date = NULL "
+                    "WHERE ticker = ANY(:t) AND (vacancia IS NOT NULL "
+                    "OR vacancia_ref_date IS NOT NULL)"), {"t": sem_fonte})
     logger.info("market/fii enrich_vacancia: %s", prog)
     return prog
 
@@ -2124,7 +2135,6 @@ def ingest_imoveis() -> dict:
     market.fii_imoveis. Grava num_imoveis e a vacância do fundo (média ponderada
     pela área) em market.fiis. Best-effort: cobertura varia por fundo.
     """
-    from datetime import datetime, timezone
 
     import core.fii_imoveis as fim
     engine = _engine()
