@@ -62,6 +62,26 @@ def acoes_emitidas(quote: dict) -> float | None:
     return _positivo(dks.get("sharesOutstanding")) or _positivo(quote.get("sharesOutstanding"))
 
 
+# Tipos de ativo em que k não é 1 por suposição. ``other`` é o título de
+# sufixo 11 que o normalizador não classificou (sem perfil e sem nome que o
+# denuncie): pode ser unit, então k sai da razão ou fica desconhecido.
+# Dado ausente permanece ausente, nunca vira 1.
+TIPOS_COM_K = frozenset({"unit", "other"})
+
+# Linhas spot que saem juntas da composição. O quote completo que não as
+# emite (k não fecha) apaga as antigas: o upsert sozinho deixaria o k velho
+# ao lado das ações novas.
+METRICAS_DE_COMPOSICAO = ("marketCap", "Acoes_Emitidas", "Acoes_por_Titulo")
+
+
+def exige_k(tipo, ticker: str = "") -> bool:
+    """True quando o título não é 1 ação por suposição: unit, tipo
+    desconhecido, ou, sem tipo gravado, sufixo 11."""
+    if tipo is None or str(tipo) == "":
+        return str(ticker or "").upper().endswith("11")
+    return str(tipo) in TIPOS_COM_K
+
+
 def acoes_por_titulo(quote: dict, *, unit: bool) -> int | None:
     """Quantas ações cada título carrega: 1 para ação; k para unit; None se
     a unit não deixa derivar k com segurança."""

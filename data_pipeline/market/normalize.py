@@ -566,7 +566,7 @@ def metric_rows(quote: dict, composicao: dict | None = None) -> list[dict]:
     tk = _ticker(quote)
     if not tk:
         return []
-    unit = _infer_asset_type(tk, quote) == "unit"
+    unit = _ac.exige_k(_infer_asset_type(tk, quote), tk)
     q_acoes = _ac.quote_com_composicao(quote, composicao)
     dks = (quote or {}).get("defaultKeyStatistics") or {}
     fin = (quote or {}).get("financialData") or {}

@@ -424,7 +424,7 @@ def linhas_de_valor_de_mercado(fotos) -> tuple[list[dict], dict]:
     for r in fotos:
         tk = str(r["ticker"]).upper()
         q = ac.quote_com_composicao(r.get("payload") or {}, r.get("composicao"))
-        unit = _infer_asset_type(tk, q) == "unit"
+        unit = ac.exige_k(_infer_asset_type(tk, q), tk)
         k = ac.acoes_por_titulo(q, unit=unit)
         por_titulo[tk] = k
         mc = ac.valor_de_mercado(q.get("regularMarketPrice"),

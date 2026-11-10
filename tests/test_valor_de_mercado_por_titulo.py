@@ -288,3 +288,110 @@ def test_linhas_do_porte_quote_diario_mantem_k_da_ultima_composicao():
     assert k == {"XPTO11": 3}
     assert [(r["ticker"], r["market_cap"], r["origem"]) for r in linhas] == [
         ("XPTO11", pytest.approx(33_000.0), "acoes")]
+
+
+# ── título 11 de tipo desconhecido (Codex, PR #710) ───────────────────────────
+# Sufixo 11 sem perfil e sem nome que o classifique sai como "other". Pode ser
+# unit: k vem da razão, nunca é 1 por suposição.
+
+def _sem_classe(tk, preco, **kw):
+    q = _quote(tk, preco, **kw)
+    q["longName"] = "Companhia Sintetica UNT"
+    return q
+
+
+def test_titulo_11_de_tipo_desconhecido_deriva_k():
+    q = _sem_classe("XPTO11", 30.0, acoes=3_000.0, lpa_titulo=3.0, lucro=3_000.0)
+    assert nz._infer_asset_type("XPTO11", q) == "other"
+    by = _spot(q)
+    assert by["Acoes_por_Titulo"] == 3
+    assert by["marketCap"] == pytest.approx(30_000.0)
+
+
+def test_titulo_11_de_tipo_desconhecido_sem_k_fica_sem_k():
+    by = _spot(_sem_classe("XPTO11", 30.0, acoes=3_000.0, lpa_titulo=2.6,
+                           lucro=2_000.0))
+    assert "Acoes_por_Titulo" not in by and "marketCap" not in by
+
+
+def test_exige_k_na_unit_e_no_tipo_desconhecido():
+    assert ac.exige_k("unit") and ac.exige_k("other")
+    assert not ac.exige_k("stock") and not ac.exige_k("fii")
+    # Sem tipo gravado: o sufixo 11 decide, como no publicador.
+    assert ac.exige_k(None, "XPTO11") and not ac.exige_k(None, "XPTO3")
+
+
+def test_linhas_do_porte_titulo_11_de_tipo_desconhecido_deriva_k():
+    from datetime import datetime, timezone
+
+    from scripts import publish_valuation_historico as pub
+    hoje = datetime(2026, 10, 29, 12, tzinfo=timezone.utc)
+    q = _sem_classe("XPTO11", 30.0, acoes=3_000.0, lpa_titulo=3.0, lucro=3_000.0)
+    _, k = pub.linhas_de_valor_de_mercado(
+        [{"ticker": "XPTO11", "fetched_at": hoje, "payload": q}])
+    assert k == {"XPTO11": 3}
+
+
+# ── composição gravada em bloco (Codex, PR #710) ──────────────────────────────
+# O upsert das linhas spot não apaga. Um quote completo cujo k não fecha não
+# pode deixar o k antigo junto das ações novas.
+
+class _Repo:
+    def __init__(self):
+        self.apagadas = []
+
+    def append_metric_vintages(self, conn, rows):
+        return 0
+
+    def upsert(self, conn, tabela, rows):
+        return len(rows)
+
+    def apagar_composicao_omitida(self, conn, ticker, rows):
+        self.apagadas.append((ticker, sorted(
+            m for m in ac.METRICAS_DE_COMPOSICAO
+            if m not in {r["metric_name"] for r in rows})))
+        return 0
+
+
+def test_quote_completo_sem_k_apaga_o_k_antigo(monkeypatch):
+    fake = _Repo()
+    monkeypatch.setattr(ig, "repo", fake)
+    q = _quote("XPTO11", 30.0, acoes=6_000.0, lpa_titulo=2.6, lucro=2_000.0)
+    ig._gravar_indicadores(None, nz.normalize_all(q), "XPTO11", q)
+    assert fake.apagadas == [("XPTO11", ["Acoes_por_Titulo", "marketCap"])]
+
+
+def test_quote_diario_sem_composicao_nao_apaga(monkeypatch):
+    fake = _Repo()
+    monkeypatch.setattr(ig, "repo", fake)
+    q = _diario("XPTO11", 33.0)
+    ig._gravar_indicadores(None, nz.normalize_all(q), "XPTO11", q)
+    assert fake.apagadas == []
+
+
+def test_apagar_composicao_omitida_so_apaga_o_que_faltou():
+    from data_pipeline.market import repository as repo
+
+    class _Conn:
+        def __init__(self):
+            self.chamadas = []
+
+        def execute(self, sql, params):
+            self.chamadas.append((str(sql), params))
+
+            class _R:
+                rowcount = 1
+            return _R()
+
+    conn = _Conn()
+    linhas = [{"period": "spot", "metric_name": "Acoes_Emitidas"},
+              {"period": "spot", "metric_name": "LPA"}]
+    assert repo.apagar_composicao_omitida(conn, "xpto11", linhas) == 1
+    (sql, params), = conn.chamadas
+    assert "DELETE FROM market.calculated_metrics" in sql and "'spot'" in sql
+    assert params == {"t": "XPTO11", "m": ["marketCap", "Acoes_por_Titulo"]}
+
+    conn = _Conn()
+    cheias = [{"period": "spot", "metric_name": m} for m in ac.METRICAS_DE_COMPOSICAO]
+    assert repo.apagar_composicao_omitida(conn, "XPTO11", cheias) == 0
+    assert conn.chamadas == []

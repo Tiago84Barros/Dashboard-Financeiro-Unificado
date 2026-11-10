@@ -313,8 +313,7 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
             dem += repo.upsert(conn, t, data[t])
         prog["demonstracoes"] += dem
         prog["dividendos"] += repo.upsert(conn, "dividends", data["dividends"])
-        repo.append_metric_vintages(conn, data["calculated_metrics"])
-        prog["indicadores"] += repo.upsert(conn, "calculated_metrics", data["calculated_metrics"])
+        prog["indicadores"] += _gravar_indicadores(conn, data, novo or tk, quote)
         if novo:
             _registrar_troca_pendente(conn, tk, novo, cod, prog)
         # qualidade: sinaliza ausências relevantes
@@ -702,6 +701,22 @@ def enrich_setores() -> dict:
     return prog
 
 
+def _gravar_indicadores(conn, data, ticker, quote, composicao=None) -> int:
+    """Grava as linhas de indicador (vintages e spot). O upsert não apaga:
+    quando o quote tem a composição (ações emitidas e os campos de k) e mesmo
+    assim não emite uma das ``acoes.METRICAS_DE_COMPOSICAO`` (k não fecha),
+    a linha antiga sai, para o k velho não ficar ao lado das ações novas. O
+    quote diário, sem composição, não apaga nada: o k do último completo
+    continua valendo."""
+    from data_pipeline.market import acoes as _ac
+    linhas = data["calculated_metrics"]
+    repo.append_metric_vintages(conn, linhas)
+    n = repo.upsert(conn, "calculated_metrics", linhas)
+    if _ac.tem_composicao(_ac.quote_com_composicao(quote, composicao)):
+        repo.apagar_composicao_omitida(conn, ticker, linhas)
+    return n
+
+
 def _composicoes_mais_novas(conn, tickers=None) -> dict:
     """{ticker: defaultKeyStatistics} do quote completo mais novo, só com os
     campos de ``acoes.COMPOSICAO``. O quote mais novo pode ser o do refresh
@@ -801,8 +816,8 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
                 for t in ("income_statements", "balance_sheets", "cash_flow_statements"):
                     prog["demonstracoes"] += repo.upsert(conn, t, data[t])
                 prog["dividendos"] += repo.upsert(conn, "dividends", data["dividends"])
-                repo.append_metric_vintages(conn, data["calculated_metrics"])
-                prog["indicadores"] += repo.upsert(conn, "calculated_metrics", data["calculated_metrics"])
+                prog["indicadores"] += _gravar_indicadores(
+                    conn, data, novo or tk, quote, composicoes.get(tk))
                 if novo:
                     _registrar_troca_pendente(conn, tk, novo, cod, prog)
             prog["tickers"] += 1
@@ -1026,9 +1041,10 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     "SELECT close FROM market.historical_prices "
                     "WHERE ticker=:t AND close IS NOT NULL "
                     "ORDER BY date DESC LIMIT 1"), {"t": tk}).scalar()
-                unit = conn.execute(text(
+                from data_pipeline.market import acoes as _ac
+                unit = _ac.exige_k(conn.execute(text(
                     "SELECT asset_type FROM market.assets WHERE ticker=:t"),
-                    {"t": tk}).scalar() == "unit"
+                    {"t": tk}).scalar(), tk)
                 # Ações por título: 1 na ação; k na unit, se o normalizador o
                 # derivou; None na unit sem k (acoes.py).
                 por_titulo = spot.get("Acoes_por_Titulo") or (None if unit else 1.0)
