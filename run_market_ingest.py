@@ -95,9 +95,9 @@ def main() -> int:
                             "fiis-cvm-cri", "fiis-v4", "fiis-v4-audit", "fiis-documents",
                             "fiis-registry", "fiis-b3-history", "fiis-entities",
                             "fiis-confidence", "fiis-pit-backtest", "fiis-monitor",
-                            "fiis-enrich",
+                            "fiis-enrich", "fiis-cotahist",
                             "benchmark", "setores"])
-    p.add_argument("--dry-run", action="store_true", help="cadastro: só simula")
+    p.add_argument("--dry-run", action="store_true", help="cadastro/fiis-cotahist: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
     p.add_argument("--source", default=None,
                    choices=["setores", "ticker_cvm", "brapi", "market"])
@@ -196,7 +196,8 @@ def main() -> int:
                         "fiis-v2-history", "fiis-cvm-structured", "fiis-cvm-cri", "fiis-v4",
                         "fiis-v4-audit", "fiis-documents", "fiis-registry",
                         "fiis-b3-history", "fiis-entities", "fiis-confidence",
-                        "fiis-pit-backtest", "fiis-monitor", "fiis-enrich", "benchmark"):
+                        "fiis-pit-backtest", "fiis-monitor", "fiis-enrich", "fiis-cotahist",
+                        "benchmark"):
         from data_pipeline.market import fii_ingest
         if args.command == "fiis-registry":
             from data_pipeline.market.fii_registry import ingest_registry
@@ -220,6 +221,14 @@ def main() -> int:
             rep = resolve_entities()
             log.info("FIIs entidades — novas=%s aceitas=%s propostas=%s",
                      rep.get("canonical_created"), rep.get("accepted"), rep.get("proposed"))
+        elif args.command == "fiis-cotahist":
+            # Sem brapi: o fechamento mais novo da fita da B3 vira a cotação.
+            rep = fii_ingest.promover_fechamento_pregao(dry_run=args.dry_run)
+            log.info("FIIs fechamento do pregão — fundos=%s com_fita=%s mudariam=%s "
+                     "atualizados=%s price_at=%s dry_run=%s variacao=%s",
+                     rep.get("fundos"), rep.get("com_fita"), rep.get("mudariam"),
+                     rep.get("atualizados"), rep.get("price_at"), rep.get("dry_run"),
+                     rep.get("variacao"))
         elif args.command == "fiis-confidence":
             from data_pipeline.market.fii_confidence_pipeline import calibrate_parsers
             rep = calibrate_parsers()
@@ -339,7 +348,8 @@ def main() -> int:
                                 "fiis-cvm-cri", "fiis-v4", "fiis-v4-audit",
                                 "fiis-documents", "fiis-registry", "fiis-b3-history",
                                 "fiis-entities", "fiis-confidence", "fiis-pit-backtest",
-                                "fiis-monitor", "fiis-enrich", "benchmark") and rep.get("erros", 0) != -1:
+                                "fiis-monitor", "fiis-enrich", "fiis-cotahist",
+                                "benchmark") and rep.get("erros", 0) != -1:
             rep["metodologia_v4"] = fii_ingest.snapshot_methodology_v4()
         if args.json:
             print(json.dumps(rep, indent=2, default=str))
@@ -351,7 +361,7 @@ def main() -> int:
             # a rotina agendada carimbaria em dia a coleta dos documentos.
             return 0 if rep.get("status") == "completed" else 1
         if args.command in ("fiis-registry", "fiis-b3-history", "fiis-entities",
-                            "fiis-confidence"):
+                            "fiis-confidence", "fiis-cotahist"):
             return 0 if rep.get("status") == "completed" else 1
         if args.command == "fiis-pit-backtest":
             # Bloqueio metodológico é resultado válido; só falha operacional retorna 1.

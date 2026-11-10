@@ -790,7 +790,9 @@ def _persist_fii_v2_payload(conn, endpoint: str, symbols: list[str],
     exposures: list[dict] = []
     if endpoint in {"list", "indicators"}:
         normalized = fii_v2.normalize_indicators(payload, raw_id)
-        counts["fiis_atualizados"] = repo.upsert(conn, "fiis", normalized["fii_updates"])
+        counts["fiis_atualizados"] = repo.upsert(
+            conn, "fiis", _fita_nos_indicadores(conn, normalized["fii_updates"],
+                                                canonical_collected_at))
         observations.extend(normalized["observations"])
         exposures.extend(normalized.get("exposures") or [])
     elif endpoint == "indicators/history":
@@ -1588,6 +1590,10 @@ def _row(m: dict, *, include_score: bool = True, metadata_ready: bool = False,
     row = {"ticker": m["ticker"], "cnpj": m.get("cnpj"), "name": m.get("name"),
            "segmento": m.get("segmento"), "price": price, "pvp": pvp,
            "dy_12m": dy, "liquidez_diaria": m.get("liquidez_diaria")}
+    if "price_at" in m:
+        # Data da cotação gravada junto com ela (migration 088; sem a coluna o
+        # upsert a omite). Preço inválido não carrega data.
+        row["price_at"] = m.get("price_at") if price is not None else None
     if include_score:
         row["score"] = m.get("score")
         if metadata_ready:
@@ -1743,6 +1749,8 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
             sched.sleep_jittered(base=delay)
 
     if metrics:
+        # Fechamento da fita da B3 mais novo que a cotação vence (10/11/2026).
+        metrics = _aplicar_fita(engine, metrics, vpa_map)
         # P/VP efetivo (fix auditoria FII 2026-07): preço ÷ VPA CVM quando
         # disponível (VPA do último enrich_cvm) — fonte oficial em vez do
         # priceToBook da brapi. O valor derivado é gravado em market.fiis.pvp;
@@ -1807,6 +1815,201 @@ def _vpa_map(conn) -> dict[str, float]:
     except Exception as exc:
         logger.warning("_vpa_map: %s — ranking segue com priceToBook brapi", exc)
         return {}
+
+
+# ── Fechamento da fita da B3 (COTAHIST) contra a foto da brapi ──────────────
+# 10/11/2026: a cota gratuita da brapi acabou em 29/10 e `market.fiis.price`
+# congelou naquele dia (o `fiis-reprocess` de 07/11 regravou a mesma foto com
+# carimbo novo), enquanto a fita seguia diária em `fii_b3_security_history`.
+# Regra única com a leitura do #707: `fii.mais_nova_vence`.
+
+_SQL_FECHAMENTOS_PREGAO = text("""
+    SELECT t.ticker, h.trade_date, h.close
+    FROM unnest(CAST(:tickers AS text[])) AS t(ticker)
+    CROSS JOIN LATERAL (
+        SELECT s.trade_date, s.close
+        FROM market.fii_b3_security_history s
+        WHERE s.ticker = t.ticker AND s.close > 0
+        -- mesma linha que o DISTINCT ON da leitura: o pregão mais novo e,
+        -- nele, a coleta mais recente
+        ORDER BY s.trade_date DESC, s.collected_at DESC, s.id DESC
+        LIMIT 1) h
+""")
+
+
+def _fechamentos_pregao_fii(conn, tickers: list[str]) -> dict[str, tuple]:
+    """Último close > 0 da fita da B3 por ticker: ``{ticker: (trade_date, close)}``."""
+    if not tickers:
+        return {}
+    try:
+        rows = conn.execute(_SQL_FECHAMENTOS_PREGAO,
+                            {"tickers": sorted(set(tickers))}).fetchall()
+    except Exception as exc:  # noqa: BLE001 - fita ausente não derruba a brapi
+        logger.warning("_fechamentos_pregao_fii: %s — cotação segue a brapi", exc)
+        return {}
+    return {str(t).upper(): (d, float(c)) for t, d, c in rows if c is not None}
+
+
+def _aplicar_fita(engine, metrics: list[dict], vpa_map: dict[str, float]) -> list[dict]:
+    """Aplica o close da fita a métricas recém-calculadas da brapi.
+
+    A base de cada uma é a hora da própria cotação (``price_at``, do
+    ``regularMarketTime``); sem ela a brapi fica. Roda antes do P/VP efetivo e
+    do ranking, para o score e o snapshot mensal verem o mesmo preço. Fita
+    ilegível não derruba a gravação da brapi.
+    """
+    if not metrics:
+        return metrics
+    try:
+        with engine.connect() as conn:
+            fita = _fechamentos_pregao_fii(conn, [m["ticker"] for m in metrics])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_aplicar_fita: %s — cotação segue a brapi", exc)
+        return metrics
+    if not fita:
+        return metrics
+    return [fz.aplicar_fechamento_pregao(m, fita.get(m["ticker"]), m.get("price_at"),
+                                         vpa_map.get(m["ticker"]))
+            for m in metrics]
+
+
+def _fita_nos_indicadores(conn, updates: list[dict], coletado_em) -> list[dict]:
+    """Indicadores v2 da brapi: o preço vale pelo instante da coleta.
+
+    A leitura da fita roda num SAVEPOINT: falha dela não pode abortar a
+    transação que ainda grava o payload, as observações e a linhagem.
+    """
+    com_preco = [u["ticker"] for u in updates if u.get("price")]
+    if not com_preco:
+        return updates
+    try:
+        with conn.begin_nested():
+            fita = _fechamentos_pregao_fii(conn, com_preco)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("_fita_nos_indicadores: %s — cotação segue a brapi", exc)
+        fita = {}
+    base = fz.instante(coletado_em)
+    saida = []
+    for u in updates:
+        if not u.get("price"):
+            saida.append(u)
+            continue
+        nova = fz.aplicar_fechamento_pregao(u, fita.get(u["ticker"]), base, u.get("vpa"))
+        nova = {**nova, "price_at": nova.get("price_at") or base}
+        nova.pop("price_source", None)
+        saida.append({k: v for k, v in nova.items() if v is not None})
+    return saida
+
+
+def _linhas_cotacao_fii(conn, com_price_at: bool) -> list[dict]:
+    extra = ", price_at" if com_price_at else ""
+    rows = conn.execute(text(
+        f"SELECT ticker, price, pvp, dy_12m, vpa{extra} FROM market.fiis")).mappings().all()
+    return [{k: (float(v) if k in ("price", "pvp", "dy_12m", "vpa") and v is not None else v)
+             for k, v in dict(r).items()} for r in rows]
+
+
+def _datas_base_cotacao_fii(conn, tickers: list[str]) -> dict[str, object]:
+    """Limite SUPERIOR da data da cotação de `market.fiis`, sem a migration 088.
+
+    Toda cotação que chega a `market.fiis.price` sai de um payload: a foto da
+    brapi (`quote_fii_full`/`quote`, por `ingest` e `reprocess`) ou os
+    indicadores v2 (observação `price`). O preço gravado não pode ser mais novo
+    que o mais novo deles: ``regularMarketTime`` do último payload (``fetched_at``
+    se faltar) e o ``knowledge_at`` mais novo das observações. `updated_at` não
+    serve: qualquer UPDATE o renova, e o `reprocess` de 07/11 regravou a foto de
+    29/10 com carimbo novo.
+    """
+    if not tickers:
+        return {}
+    rows = conn.execute(text("""
+        SELECT t.ticker,
+               GREATEST(q.quando, o.quando) AS quando
+        FROM unnest(CAST(:tickers AS text[])) AS t(ticker)
+        LEFT JOIN LATERAL (
+            SELECT MAX(COALESCE(
+                       NULLIF(COALESCE(b.payload_json->'results'->0->>'regularMarketTime',
+                                       b.payload_json->>'regularMarketTime'), '')::timestamptz,
+                       b.fetched_at)) AS quando
+            FROM (SELECT p.id FROM market.brapi_raw_payloads p
+                  WHERE p.ticker = t.ticker
+                    AND p.endpoint IN ('quote_fii_full', 'quote')
+                    AND p.request_status = 'success' AND p.payload_json IS NOT NULL
+                  ORDER BY p.fetched_at DESC, p.id DESC LIMIT 1) ult
+            JOIN market.brapi_raw_payloads b ON b.id = ult.id) q ON true
+        LEFT JOIN LATERAL (
+            SELECT MAX(knowledge_at) AS quando FROM market.fii_metric_observations f
+            WHERE f.ticker = t.ticker AND f.metric_name = 'price') o ON true
+    """), {"tickers": sorted(set(tickers))}).fetchall()
+    return {str(t).upper(): quando for t, quando in rows}
+
+
+def _gravar_fechamentos(conn, mudancas: list[dict], com_price_at: bool) -> int:
+    if not mudancas:
+        return 0
+    extra = ", price_at = :price_at" if com_price_at else ""
+    sql = text("UPDATE market.fiis SET price = :price, pvp = :pvp, dy_12m = :dy_12m"
+               f"{extra} WHERE ticker = :ticker")
+    chaves = ("ticker", "price", "pvp", "dy_12m") + (("price_at",) if com_price_at else ())
+    conn.execute(sql, [{k: m.get(k) for k in chaves} for m in mudancas])
+    return len(mudancas)
+
+
+def promover_fechamento_pregao(dry_run: bool = False) -> dict:
+    """Etapa sem brapi: o close mais novo da fita da B3 vira a cotação do FII.
+
+    Para cada fundo de `market.fiis`, compara o último pregão da fita com a data
+    da cotação gravada (``price_at`` quando a migration 088 existe; senão o
+    limite superior de `_datas_base_cotacao_fii`). Vence a mais nova
+    (`fii.mais_nova_vence`); P/VP e DY 12m acompanham o preço. ``dry_run`` mede
+    sem gravar.
+    """
+    prog: dict = {"status": "failed", "fundos": 0, "com_fita": 0, "mudariam": 0,
+                  "atualizados": 0, "price_at": False, "dry_run": dry_run,
+                  "variacao": {}, "amostra": []}
+    engine = _engine()
+    if engine is None:
+        return {**prog, "erros": -1}
+    repo.reset_db_cols_cache()
+    with engine.connect() as conn:
+        com_price_at = "price_at" in repo._db_cols(conn, "fiis")
+        linhas = _linhas_cotacao_fii(conn, com_price_at)
+        tickers = [str(r["ticker"]).upper() for r in linhas]
+        fita = _fechamentos_pregao_fii(conn, tickers)
+        # `price_at` nulo (linha gravada antes da 088, ou preço sem hora) cai no
+        # limite superior dado pelos payloads
+        sem_hora = [str(r["ticker"]).upper() for r in linhas if not r.get("price_at")]
+        bases = _datas_base_cotacao_fii(conn, sem_hora) if sem_hora else {}
+    prog.update(fundos=len(linhas), com_fita=len(fita), price_at=com_price_at)
+    mudancas, variacoes = [], []
+    for linha in linhas:
+        tk = str(linha["ticker"]).upper()
+        base = linha.get("price_at") or bases.get(tk)
+        nova = fz.aplicar_fechamento_pregao(linha, fita.get(tk), base, linha.get("vpa"))
+        if nova is linha:
+            continue
+        mudancas.append(nova)
+        antes = linha.get("price")
+        if antes:
+            variacoes.append((nova["price"] / antes - 1.0, tk, antes, nova["price"]))
+    prog["mudariam"] = len(mudancas)
+    if variacoes:
+        absolutas = sorted(abs(v[0]) for v in variacoes)
+        prog["variacao"] = {
+            "mediana_abs": round(absolutas[len(absolutas) // 2], 4),
+            "acima_1pct": sum(a > .01 for a in absolutas),
+            "acima_5pct": sum(a > .05 for a in absolutas),
+            "acima_10pct": sum(a > .10 for a in absolutas),
+            "acima_20pct": sum(a > .20 for a in absolutas)}
+    prog["amostra"] = [{"ticker": tk, "antes": a, "depois": d, "variacao": round(v, 4)}
+                       for v, tk, a, d in sorted(variacoes, key=lambda x: -abs(x[0]))[:10]]
+    if not dry_run and mudancas:
+        with engine.begin() as conn:
+            prog["atualizados"] = _gravar_fechamentos(conn, mudancas, com_price_at)
+    prog["status"] = "completed"
+    logger.info("market/fii fechamento do pregão: %s", {k: v for k, v in prog.items()
+                                                         if k != "amostra"})
+    return prog
 
 
 def _snapshot_score_mensal(conn, ranked_by: dict, ref) -> int:
@@ -2206,6 +2409,9 @@ def reprocess(weights: dict | None = None) -> dict:
             logger.warning("fii reprocess %s: %s", tk, exc)
             prog["erros"] += 1
     if metrics:
+        # Payload velho (a brapi parou em 29/10) não regrava preço que a fita
+        # já superou — mesma regra do ingest e de `promover_fechamento_pregao`.
+        metrics = _aplicar_fita(engine, metrics, vpa_map)
         # P/VP efetivo com VPA CVM — mesmo tratamento do ingest (auditoria FII)
         metrics = [
             {**m, "pvp": fz.pvp_efetivo(m.get("price"),

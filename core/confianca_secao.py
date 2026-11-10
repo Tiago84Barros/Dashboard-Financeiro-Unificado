@@ -522,6 +522,17 @@ _SQL_FRESCOR_CADASTRO_FII = """
     WHERE price > 0 AND updated_at IS NOT NULL"""
 
 
+# Desde 10/11/2026 o preco que a vitrine publica sai de `market.fiis.price`, e
+# este passa a ser o fechamento mais novo da fita da B3
+# (`market.fii_b3_security_history`) quando ele e de pregao posterior a cotacao
+# da brapi (`fii_ingest.promover_fechamento_pregao`, etapa `fiis-cotahist`). O
+# Frescor continua medindo a vitrine -- o que a tela le --, agora alimentada
+# pelas duas fontes. A nota abaixo diz ao usuario de onde vem o preco.
+NOTA_COTACAO_FII = (
+    "Cotacao: vale a mais nova entre o fechamento do pregao da B3 (COTAHIST) e a "
+    "cotacao da brapi; P/VP e DY 12m acompanham o preco escolhido.")
+
+
 def _frescor_fii(conn) -> Componente:
     from sqlalchemy import text
 
@@ -588,6 +599,7 @@ def confianca_fii(engine=None) -> ConfiancaSecao:
     except Exception as exc:  # noqa: BLE001
         comps.append(Componente("Metodologia validada", None, 0.25,
                                 f"nao medido: {type(exc).__name__}"))
+    notas.append(NOTA_COTACAO_FII)
     notas.append(NOTA_DETALHE_DO_CHAT)
     return ConfiancaSecao("Seleção de FIIs", tuple(comps), u, tuple(notas))
 
