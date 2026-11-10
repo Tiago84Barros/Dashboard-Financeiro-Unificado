@@ -106,8 +106,13 @@ def derive_metric_history(financials: pd.DataFrame,
         year_end = p.dropna().assign(fiscal_year=p["date"].dt.year).groupby(
             "fiscal_year", as_index=False)["price"].last()
         f = f.merge(year_end, on="fiscal_year", how="left")
-        market_cap = f["price"] * f.get(
-            "shares_outstanding", pd.Series(np.nan, index=f.index))
+        # O preço é retroajustado por desdobramento; as ações do balanço são da
+        # época. A vitrine traz `shares_outstanding_ajustada` (core.us_acoes) e,
+        # quando ela existe, é ela que multiplica o preço; ausente = vitrine
+        # anterior a essa coluna, lida na base antiga até a próxima publicação.
+        col_acoes = ("shares_outstanding_ajustada"
+                     if "shares_outstanding_ajustada" in f else "shares_outstanding")
+        market_cap = f["price"] * f.get(col_acoes, pd.Series(np.nan, index=f.index))
         cash = f.get("cash_and_equivalents", pd.Series(0.0, index=f.index)).fillna(0)
         enterprise_value = market_cap + f.get(
             "total_debt", pd.Series(np.nan, index=f.index)) - cash

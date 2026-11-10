@@ -199,7 +199,27 @@ _COMPANY_FINANCIAL_COLS = [
     "current_assets", "current_liabilities", "invested_capital",
     "shares_outstanding", "operating_cash_flow", "investing_cash_flow",
     "capex", "free_cash_flow", "dividends_paid", "dividends_per_share",
+    # ações na base dos preços retroajustados (core.us_acoes.acoes_base_atual)
+    "shares_outstanding_ajustada",
 ]
+
+
+def _anexar_acoes_ajustadas(df: pd.DataFrame, splits) -> pd.DataFrame:
+    """Põe as ações do exercício na base do preço e recalcula o DPA nela.
+
+    Gêmeo de ``data_pipeline.us.snapshot.compact_financials`` (mesma função de
+    ``core.us_acoes``): a vitrine publicada usa aquela, o armazém usa esta.
+    """
+    from core.us_acoes import acoes_base_atual
+
+    ajustadas = [acoes_base_atual(r, splits) for r in df.to_dict("records")]
+    df = df.assign(shares_outstanding_ajustada=pd.to_numeric(
+        pd.Series(ajustadas, index=df.index), errors="coerce"))
+    base = df["shares_outstanding_ajustada"].where(
+        df["shares_outstanding"] >= 100000)
+    df["dividends_per_share"] = (
+        pd.to_numeric(df["dividends_paid"], errors="coerce").abs() / base)
+    return df.drop(columns=["reference_date", "available_at"])
 
 
 def load_company_financials(symbol: str) -> pd.DataFrame:
@@ -213,7 +233,8 @@ def load_company_financials(symbol: str) -> pd.DataFrame:
         "i.net_income, b.total_assets, b.total_equity, b.cash_and_equivalents, "
         "b.short_term_debt, b.long_term_debt, b.total_debt, b.net_debt, "
         "b.current_assets, b.current_liabilities, b.invested_capital, "
-        "b.shares_outstanding, cf.operating_cash_flow, "
+        "b.shares_outstanding, b.reference_date, b.available_at, "
+        "cf.operating_cash_flow, "
         "CASE WHEN cf.capex IS NULL AND cf.acquisitions IS NULL AND cf.investments IS NULL "
         "THEN NULL ELSE COALESCE(cf.capex, 0) + COALESCE(cf.acquisitions, 0) + "
         "COALESCE(cf.investments, 0) END AS investing_cash_flow, "
@@ -240,7 +261,9 @@ def load_company_financials(symbol: str) -> pd.DataFrame:
         "ORDER BY i.fiscal_year")
     try:
         with eng.connect() as conn:
-            return pd.read_sql(text(sql), conn, params={"sym": symbol.upper()})
+            df = pd.read_sql(text(sql), conn, params={"sym": symbol.upper()})
+            splits = _splits_do_simbolo(conn, symbol.upper())
+        return _anexar_acoes_ajustadas(df, splits)
     except Exception as exc:  # noqa: BLE001
         logger.warning("load_company_financials falhou: %s", exc)
         return pd.DataFrame(columns=cols)
@@ -953,8 +976,15 @@ def load_snapshot_advanced(symbol: str) -> dict | None:
 
 def load_snapshot_financials(symbol: str) -> pd.DataFrame:
     rows = _snapshot_json_for(symbol, "financials") or []
-    return (pd.DataFrame(rows).reindex(columns=_COMPANY_FINANCIAL_COLS)
-            if rows else pd.DataFrame(columns=_COMPANY_FINANCIAL_COLS))
+    if not rows:
+        return pd.DataFrame(columns=_COMPANY_FINANCIAL_COLS)
+    df = pd.DataFrame(rows)
+    # Campo ausente (vitrine anterior a `shares_outstanding_ajustada`) nao e o
+    # mesmo que campo nulo (ajuste ambiguo): so o segundo vira NaN, o primeiro
+    # deixa a coluna de fora e `derive_metric_history` le a base antiga.
+    cols = [c for c in _COMPANY_FINANCIAL_COLS
+            if c != "shares_outstanding_ajustada" or c in df.columns]
+    return df.reindex(columns=cols)
 
 
 def load_snapshot_financials_for_symbols(symbols) -> dict[str, list[dict]]:
