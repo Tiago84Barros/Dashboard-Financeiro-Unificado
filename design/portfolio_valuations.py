@@ -190,11 +190,13 @@ def render_valuations_classe(classe, positions, fundamentals, *, colunas: int = 
     st.markdown('**Pelo custo de aquisição**')
     sem_custo = custo_desconhecido(positions)
     if sem_custo:
-        # Custo imputado pelo valor de mercado não é custo: o ativo fica fora
-        # desta grade, e quem olha precisa saber quem faltou.
+        # Custo imputado pelo valor de mercado, ou em dólar pelo câmbio de hoje,
+        # não é custo de aquisição: o ativo fica fora desta grade, e quem olha
+        # precisa saber quem faltou.
         aviso_lacuna('Fora da média pelo custo, sem custo de aquisição conhecido: '
-                     + ', '.join(sem_custo) + '. O custo deles não existe na '
-                     'fonte; não é zero nem o valor de hoje.',
+                     + ', '.join(sem_custo) + '. O custo não existe na fonte, '
+                     'ou está em dólar sem o câmbio da compra; não é zero nem o '
+                     'valor de hoje.',
                      codigo='tela.carteira.valuation_classe_custo_desconhecido',
                      entidade=str(classe))
     if any(pelo_custo[k]['value'] is not None for k in metricas):

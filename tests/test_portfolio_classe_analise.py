@@ -224,6 +224,29 @@ def test_contexto_nomeia_quem_ficou_fora_da_media_pelo_custo():
     assert "sem custo de aquisição conhecido: AAA" in texto
 
 
+def test_custo_em_dolar_pelo_cambio_de_hoje_fica_fora_da_media_pelo_custo():
+    """Sem o câmbio da compra, o custo em reais muda com o dólar de hoje.
+
+    Achado do Codex no PR #704. Os dois caminhos que montam a posição marcam a
+    situação de jeitos diferentes: o snapshot grava
+    ``custo_fonte='cambio_atual_estimado'``; o recálculo deixa
+    ``fx_rate_compra=None``. Os dois precisam ficar fora.
+    """
+    snapshot = {**_pos("AAA", 300.0), "moeda": "USD",
+                "custo_fonte": "cambio_atual_estimado", "fx_rate_compra": None}
+    recalculo = {**_pos("BBB", 300.0), "moeda": "USD", "fx_rate_compra": None}
+    historico = {**_pos("CCC", 100.0), "moeda": "USD", "fx_rate_compra": 5.1,
+                 "custo_fonte": "cambio_historico_compras"}
+    em_reais = {**_pos("DDD", 100.0), "moeda": "BRL", "fx_rate_compra": None}
+    posicoes = [snapshot, recalculo, historico, em_reais]
+    fund = {"AAA": {"pl": 50.0}, "BBB": {"pl": 50.0},
+            "CCC": {"pl": 10.0}, "DDD": {"pl": 20.0}}
+    custo = aggregate_valuations(posicoes, fund, ("pl",), peso="total_investido")
+    assert custo["pl"]["value"] == pytest.approx(15.0)
+    assert custo["pl"]["assets"] == 2
+    assert custo_desconhecido(posicoes) == ["AAA", "BBB"]
+
+
 # ── Tesouro Direto ────────────────────────────────────────────────────────
 
 def test_tesouro_agrega_prazo_indexador_e_retorno():

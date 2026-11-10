@@ -425,8 +425,9 @@ def build_carteira_classe_context(
             fora = custo_desconhecido(posicoes)
             if fora:
                 blocos.append("- Fora desta média, sem custo de aquisição "
-                              f"conhecido: {', '.join(fora)} (o custo deles não "
-                              "existe na fonte; não é zero nem o valor de hoje).")
+                              f"conhecido: {', '.join(fora)} (custo ausente na "
+                              "fonte ou em dólar sem o câmbio da compra; não é "
+                              "zero nem o valor de hoje).")
     blocos.append("")
     blocos += _bloco_db(db, rotulo)
 
