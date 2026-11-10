@@ -642,12 +642,13 @@ def compute_company_metrics(
     tend_fcf, _r2_fcf = _tendencia(cashflow, "free_cash_flow", 3, simetrica=True)
     if net_debt is None and total_debt is not None and cash is not None:
         net_debt = total_debt - cash
-    if invested_cap is None and equity is not None and total_debt is not None:
-        invested_cap = equity + total_debt - (cash or 0.0)
+    if (invested_cap is None and equity is not None and total_debt is not None
+            and cash is not None):
+        invested_cap = equity + total_debt - cash
 
     ev = None
-    if market_cap is not None and total_debt is not None:
-        ev = market_cap + total_debt - (cash or 0.0)
+    if market_cap is not None and total_debt is not None and cash is not None:
+        ev = market_cap + total_debt - cash
 
     nopat = None if ebit is None else ebit * (1 - _TAX_DEFAULT)
 

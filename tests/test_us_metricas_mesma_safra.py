@@ -11,8 +11,11 @@ from datetime import date
 
 import pandas as pd
 
-from core.us_metrics import (compute_company_metrics, market_cap_com_origem,
-                             market_cap_confiavel)
+from core.us_metrics import (
+    compute_company_metrics,
+    market_cap_com_origem,
+    market_cap_confiavel,
+)
 
 
 def test_margem_bruta_deriva_do_custo_do_ano_de_referencia():
@@ -112,3 +115,20 @@ def test_dpa_lacuna_sem_contagem_do_exercicio():
     cf = [{"fiscal_year": 2025, "dividends_paid": -1e6}]
     m = compute_company_metrics(inc, bal, cf, shares=1e6)
     assert m["dividends_per_share"] is None
+
+
+def test_caixa_ausente_no_exercicio_nao_vira_zero_em_roic_nem_ev():
+    inc = [{"fiscal_year": 2025, "revenue": 800.0, "net_income": 50.0,
+            "operating_income": 100.0, "ebit": 100.0}]
+    bal = [{"fiscal_year": 2024, "cash_and_equivalents": 300.0},
+           {"fiscal_year": 2025, "total_equity": 500.0, "total_debt": 200.0}]
+    m = compute_company_metrics(inc, bal, [], market_cap=1000.0)
+    assert m["roic"] is None
+    assert m["ev_ebit"] is None and m["ev_ebitda"] is None
+
+
+def test_capital_investido_informado_segue_valendo_sem_caixa():
+    inc = [{"fiscal_year": 2025, "revenue": 800.0, "operating_income": 100.0,
+            "ebit": 100.0}]
+    bal = [{"fiscal_year": 2025, "invested_capital": 700.0}]
+    assert compute_company_metrics(inc, bal, [])["roic"] is not None
