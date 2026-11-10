@@ -26,7 +26,9 @@ Mapeamentos:
 
   dividends sem amount_per_unit:
     amount_per_unit = total_amount / quantity  (se quantity > 0)
-    quantity = 1, amount_per_unit = total_amount  (se sem quantity)
+    sem quantity: quantity e amount_per_unit NULL (exige a SQL 083). Até
+    10/11/2026 gravava 1 cota com o total por cota -- quantidade inventada.
+    Sem a 083 os proventos são recusados de uma vez, com o motivo.
 
 Uso:
   python migration/migrate_app2_investimentos.py             # dry run
@@ -248,8 +250,24 @@ def migrate_investment_transactions(conn, text, apply, records, asset_id_map, ow
 
 
 def migrate_dividends(conn, text, apply, records, asset_id_map, owner_id):
-    """Insere proventos (dividendos, JCP, rendimentos FII)."""
+    """Insere proventos (dividendos, JCP, rendimentos FII).
+
+    Quantidade e valor por unidade seguem a regra única dos importadores
+    (``common.quantidade_e_valor_unitario``): o App2 só guarda o total, então
+    os dois ficam NULL. Isso exige a SQL 083; sem ela, nenhum provento é
+    gravado e o motivo vai para os erros. A recusa é feita antes do primeiro
+    INSERT porque a migração inteira roda numa transação só, e um INSERT
+    barrado pelo NOT NULL derrubaria também ativos e operações.
+    """
+    from data_pipeline.importers.investments import common  # noqa: PLC0415
+
     inserted, skipped, errors = 0, 0, []
+    if apply and records and not common.migracao_083_aplicada(conn):
+        return 0, len(records), [
+            "dividends: o App2 só informa o total, e o banco ainda não aceita "
+            "provento sem quantidade. Nenhum foi gravado (gravar 1 cota seria "
+            "inventar). " + common._INSTRUCAO_083
+        ]
 
     for r in records:
         app2_asset_id = r.get("asset_id")
@@ -262,10 +280,13 @@ def migrate_dividends(conn, text, apply, records, asset_id_map, owner_id):
         inc_type = INCOME_TYPE_MAP.get(raw_type, "dividend")
 
         total_amount = _dec(r.get("amount") or 0, 2) or "0.00"
-        # App2 não tem quantity/amount_per_unit separados
-        # Convenção: quantity=1, amount_per_unit=total
-        quantity = "1.00000000"
-        amount_per_unit = total_amount
+        # App2 não separa quantidade: ausente fica ausente (None, None).
+        try:
+            qtd_app2 = float(r["quantity"]) if r.get("quantity") is not None else None
+        except (TypeError, ValueError):
+            qtd_app2 = None
+        quantity, amount_per_unit = common.quantidade_e_valor_unitario(
+            qtd_app2, float(total_amount))
 
         payment_date = str(r.get("date") or "")[:10]
         if not payment_date:
