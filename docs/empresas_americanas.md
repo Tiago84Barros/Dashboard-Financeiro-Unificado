@@ -468,3 +468,16 @@ reprovaria boas empresas de tecnologia.
 **208 empresas que passavam agora são excluídas** — quase todas por aflição do
 Altman confirmada por um segundo alerta independente (liquidez corrente baixa ou
 cobertura de juros insuficiente). Nenhuma exclusão vem de um sinal isolado.
+
+## Safra única das métricas e idade do valor de mercado
+
+`compute_company_metrics` lê todos os campos do **mesmo exercício de referência**
+(último `fiscal_year` com receita ou lucro; `core/us_metrics.py::ano_de_referencia`).
+Campo ausente nesse ano é lacuna, ou derivação pela definição (lucro bruto =
+receita − custo; EBITDA; FCL; dívida líquida), nunca valor de outro ano: antes
+a AMZN saía com margem bruta de 0,77% (lucro bruto de 2009 ÷ receita de 2025;
+derivada, ~50%) e a BX com ROE calculado sobre PL antigo. Sem tolerância para
+balanço de outro fim de exercício. O valor de mercado publicado
+(`market_cap_history`) com mais de 35 dias frente ao preço usado perde para o
+derivado (preço × ações) e, sem derivado, vira lacuna
+(`market_cap_com_origem` devolve a origem).

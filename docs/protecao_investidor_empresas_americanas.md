@@ -92,9 +92,10 @@ anos mas **não** no último agora emite linha de risco onde o código antigo n�
 emitia nada. Isso amplia a proteção, e a ressalva vai junto para não virar
 alarme falso. Qualidade histórica é o critério, não a foto.
 
-Rede de segurança: `compute_company_metrics` monta cada métrica com `_latest`,
-que aceita o valor não nulo mais recente ainda que venha de exercício anterior;
-a medição por ano não aceita. Quando nenhum ano da janela é avaliável e a foto
+Rede de segurança: `compute_company_metrics` monta cada métrica do mesmo exercício
+de referência (o último com receita ou lucro); campo ausente nele vira lacuna ou
+derivação pela definição, nunca valor de outro ano. A medição por ano também
+não aceita outro ano. Quando nenhum ano da janela é avaliável e a foto
 mesmo assim acusa, a linha aparece como **limitação de cobertura** — sumir com
 ela seria pior, carimbá-la de risco confirmado seria falso.
 
