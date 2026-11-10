@@ -383,6 +383,11 @@ def _mesclar_alias(merged: dict, end, point, *, zero_cede: bool) -> None:
     if atual is None:
         merged[end] = point
         return
+    # Trimestral: a chave e (fy, fp), nao a data. Alias de maior prioridade com
+    # so o comparativo antigo nao pode vencer um alias com o periodo corrente.
+    if point.get("end") and atual.get("end") and str(point["end"]) > str(atual["end"]):
+        merged[end] = point
+        return
     if zero_cede and not atual.get("val") and point.get("val"):
         merged[end] = point
 
@@ -432,7 +437,7 @@ def _collect_quarterly_units(cf: dict, concepts: dict, *, instant: bool = False)
         for tag in tags:
             for key, point in _quarterly_points(
                     _entries(cf, tag, unit), instant=instant).items():
-                merged.setdefault(key, point)
+                _mesclar_alias(merged, key, point, zero_cede=False)
         out[field] = merged
     return out
 
@@ -567,21 +572,19 @@ def _acoes_em_circulacao(cf: dict, *, quarterly: bool) -> dict:
     return merged
 
 
-def _aplicar_divida_combinada(rows: list[dict]) -> None:
-    """Total combinado so entra quando nao ha curto nem longo; depois some.
+def _resolver_divida_combinada(collected: dict) -> None:
+    """Resolve o total combinado ANTES de montar as linhas.
 
-    A procedencia (`filed_at`) acompanha o valor: sem isso a regra point-in-time
-    por campo nao mascararia a divida promovida antes do filing que a trouxe.
+    So vale onde nao ha curto nem longo no periodo; vira `long_term_debt` com a
+    propria procedencia (`filed`). Resolver aqui, e nao depois da linha pronta,
+    evita que um combinado descartado entre no `available_at` e no `filed_at`.
     """
-    for r in rows:
-        combinado = r.pop("_debt_combined", None)
-        filed = r.get("filed_at")
-        data_combinado = filed.pop("_debt_combined", None) if isinstance(filed, dict) else None
-        if (combinado is not None and r.get("short_term_debt") is None
-                and r.get("long_term_debt") is None):
-            r["long_term_debt"] = combinado
-            if isinstance(filed, dict) and data_combinado is not None:
-                filed["long_term_debt"] = data_combinado
+    combinado = collected.pop("_debt_combined", {})
+    curto = collected.get("short_term_debt", {})
+    longo = collected.setdefault("long_term_debt", {})
+    for chave, ponto in combinado.items():
+        if chave not in curto and chave not in longo:
+            longo[chave] = ponto
 
 
 def _exercicio_publicavel(ano: int, symbol: str | None, referencia: Any) -> bool:
@@ -753,8 +756,8 @@ def build_balance_rows(cf: dict, symbol: str | None = None) -> list[dict]:
     collected = _collect(cf, BALANCE_CONCEPTS, _USD)
     collected.update(_collect(cf, BALANCE_AUX_CONCEPTS, _USD))
     collected["shares_outstanding"] = _acoes_em_circulacao(cf, quarterly=False)
+    _resolver_divida_combinada(collected)
     rows = _build_rows(collected, symbol)
-    _aplicar_divida_combinada(rows)
     for r in rows:
         derivar_balance(r)
     return rows
@@ -785,8 +788,8 @@ def build_balance_quarterly_rows(cf: dict, symbol: str | None = None) -> list[di
     collected = _collect_quarterly(cf, BALANCE_CONCEPTS, _USD, instant=True)
     collected.update(_collect_quarterly(cf, BALANCE_AUX_CONCEPTS, _USD, instant=True))
     collected["shares_outstanding"] = _acoes_em_circulacao(cf, quarterly=True)
+    _resolver_divida_combinada(collected)
     rows = _build_quarterly_rows(collected, symbol)
-    _aplicar_divida_combinada(rows)
     for r in rows:
         std, ltd = r.get("short_term_debt"), r.get("long_term_debt")
         r["total_debt"] = None if std is None and ltd is None else (std or 0) + (ltd or 0)

@@ -304,3 +304,26 @@ def test_upsert_descarta_a_coluna_nova_sem_a_migration():
                              "period": "annual"}])
     sql, payload = c.calls[-1]
     assert "total_equity_incl_nci" not in sql
+
+
+def test_pl_trimestral_corrente_vence_o_comparativo_do_alias_prioritario():
+    base = {"form": "10-Q", "fy": 2024, "fp": "Q1"}
+    gaap = {}
+    gaap.update(_fact("Assets", [_e("2024-03-31", 1000, "2024-05-02", **base)]))
+    gaap.update(_fact("StockholdersEquity",
+                      [_e("2023-12-31", 250, "2024-05-02", **base)]))
+    gaap.update(_fact(NCI, [_e("2024-03-31", 400, "2024-05-02", **base)]))
+    row = ef.build_balance_quarterly_rows(_cf(gaap))[0]
+    assert row["total_equity"] == 400
+
+
+def test_combinado_descartado_nao_entra_no_available_at():
+    gaap = {}
+    gaap.update(_fact("Assets", [_e("2020-12-31", 500, "2021-02-15")]))
+    gaap.update(_fact("LongTermDebtNoncurrent", [_e("2020-12-31", 90, "2021-02-15")]))
+    gaap.update(_fact("DebtLongtermAndShorttermCombinedAmount",
+                      [_e("2020-12-31", 110, "2023-02-15")]))
+    row = ef.build_balance_rows(_cf(gaap))[0]
+    assert row["total_debt"] == 90
+    assert row["available_at"] == date(2021, 2, 15)
+    assert "_debt_combined" not in row["filed_at"]
