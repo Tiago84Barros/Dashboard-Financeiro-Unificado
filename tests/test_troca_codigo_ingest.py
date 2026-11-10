@@ -266,6 +266,9 @@ CREATE TABLE market.calculated_metric_vintages (
 CREATE TABLE market.ticker_alias (
     brapi_symbol text PRIMARY KEY, b3_ticker text NOT NULL, codigo_cvm int,
     motivo text, created_at timestamptz DEFAULT now());
+CREATE TABLE market.brapi_raw_payloads (
+    id bigserial PRIMARY KEY, ticker text, endpoint text, payload_json jsonb,
+    request_status text, fetched_at timestamptz DEFAULT now());
 CREATE TABLE public.setores (
     ticker text PRIMARY KEY, nome_empresa text, "SETOR" text, "SUBSETOR" text,
     "SEGMENTO" text, "LISTAGEM" text);

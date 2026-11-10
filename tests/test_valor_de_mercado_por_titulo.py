@@ -395,3 +395,66 @@ def test_apagar_composicao_omitida_so_apaga_o_que_faltou():
     cheias = [{"period": "spot", "metric_name": m} for m in ac.METRICAS_DE_COMPOSICAO]
     assert repo.apagar_composicao_omitida(conn, "XPTO11", cheias) == 0
     assert conn.chamadas == []
+
+
+# ── refresh diário busca a composição (Codex, PR #710) ────────────────────────
+# Sem ela, o diário caía no marketCap da brapi e sobrescrevia o valor corrigido.
+
+class _Para(Exception):
+    pass
+
+
+class _EngineSoLeitura:
+    def __init__(self):
+        self.conexoes = 0
+
+    def connect(self):
+        self.conexoes += 1
+
+        class _C:
+            def __enter__(s):
+                return s
+
+            def __exit__(s, *a):
+                return False
+        return _C()
+
+
+def _ingest_capturando(monkeypatch, quote, full):
+    capt, eng = {}, _EngineSoLeitura()
+    monkeypatch.setattr(ig.brapi, "fetch_quote", lambda tk, **kw: quote)
+    monkeypatch.setattr(ig.brapi, "fetch_quote_full", lambda tk, **kw: quote)
+    monkeypatch.setattr(ig, "_composicoes_mais_novas",
+                        lambda conn, tks: {"XPTO3": {"sharesOutstanding": 1_000.0,
+                                                     "trailingEps": 2.0,
+                                                     "netIncomeToCommon": 2_000.0}})
+
+    def _normaliza(q, composicao=None):
+        capt["composicao"] = composicao
+        raise _Para
+    monkeypatch.setattr(ig.nz, "normalize_all", _normaliza)
+    with pytest.raises(_Para):
+        ig.ingest_ticker(eng, "XPTO3", range_="1mo", full=full, cvm_map={},
+                         prog=ig._new_progress(), interval="1d")
+    return capt, eng
+
+
+def test_refresh_diario_passa_a_composicao_do_ultimo_completo(monkeypatch):
+    capt, eng = _ingest_capturando(monkeypatch, _diario("XPTO3", 11.0), full=False)
+    assert capt["composicao"]["sharesOutstanding"] == 1_000.0
+    assert eng.conexoes == 1
+
+
+def test_quote_com_composicao_propria_nao_consulta_o_banco(monkeypatch):
+    q = _quote("XPTO3", 10.0, acoes=1_000.0, lpa_titulo=2.0, lucro=2_000.0)
+    capt, eng = _ingest_capturando(monkeypatch, q, full=True)
+    assert capt["composicao"] is None and eng.conexoes == 0
+
+
+def test_diario_com_composicao_recalcula_o_valor_de_mercado():
+    q = _diario("XPTO3", 11.0)
+    q["marketCap"] = 7_000.0
+    by = {r["metric_name"]: r["metric_value"]
+          for r in nz.metric_rows(q, {"sharesOutstanding": 1_000.0, "trailingEps": 2.0,
+                                      "netIncomeToCommon": 2_000.0})}
+    assert by["marketCap"] == pytest.approx(11_000.0)

@@ -272,7 +272,16 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
         prog["erros"] += 1
         return
 
-    data = nz.normalize_all(quote)
+    # O refresh diário vem sem ``defaultKeyStatistics``: a composição (ações
+    # emitidas e os campos de k) sai do quote completo mais novo, como no
+    # renormalize. Sem ela, o diário caía no marketCap da brapi e sobrescrevia
+    # o valor corrigido pelo completo anterior.
+    from data_pipeline.market import acoes as _ac
+    composicao = None
+    if not _ac.tem_composicao(quote):
+        with engine.connect() as conn:
+            composicao = _composicoes_mais_novas(conn, [tk]).get(tk)
+    data = nz.normalize_all(quote, composicao)
     # Reconciliação: grava sob o ticker-B3 requisitado, não o símbolo divergente
     # que a brapi possa devolver (evita assets órfãos invisíveis no app).
     alias_sym = _reconcile_ticker(data, tk)
@@ -313,7 +322,7 @@ def ingest_ticker(engine, ticker: str, *, range_: str, full: bool,
             dem += repo.upsert(conn, t, data[t])
         prog["demonstracoes"] += dem
         prog["dividendos"] += repo.upsert(conn, "dividends", data["dividends"])
-        prog["indicadores"] += _gravar_indicadores(conn, data, novo or tk, quote)
+        prog["indicadores"] += _gravar_indicadores(conn, data, novo or tk, quote, composicao)
         if novo:
             _registrar_troca_pendente(conn, tk, novo, cod, prog)
         # qualidade: sinaliza ausências relevantes
