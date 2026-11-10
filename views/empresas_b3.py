@@ -3275,6 +3275,8 @@ def render() -> None:
     # `data` do quadro de múltiplos: ali `data` é 31/12 do exercício de
     # referência, uma data contábil que fica no futuro o ano corrente inteiro --
     # medir por ela deu -121 dias e aprovaria qualquer atraso para sempre.
+    # O selo também lê a data do preço (`core.frescor.data_do_preco`): a
+    # publicação semanal renova `updated_at` mesmo com a cotação parada.
     frescor = frescor_da_vitrine("b3")
     from core.frescor import resumo_curto
 

@@ -1863,14 +1863,18 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
         "frescor": _node(
             "frescor", "Selo de frescor", "Origem",
             "Cada vitrine carrega uma cadência alvo e um limite de validade. O selo no "
-            "topo da tela compara a data da publicação com esses dois prazos.",
+            "topo da tela compara a data da publicação com esses dois prazos. Na B3 "
+            "ele compara também a data do preço: as métricas são republicadas toda "
+            "semana mesmo quando a cotação para de chegar.",
             (
                 "Cadência alvo: de quanto em quanto tempo deveria atualizar",
                 "Limite de validade: a partir de quando está velho",
+                "B3: preço com a data mediana da última cotação de cada ticker",
                 "Selo visível na cabeça da tela",
             ),
             "Dado velho não levanta erro — ele só fica parado. Sem selo, parado é "
-            "indistinguível de atualizado.",
+            "indistinguível de atualizado. Publicação em dia sobre preço parado "
+            "também: por isso a B3 mede as duas datas.",
         ),
         "confiabilidade": _node(
             "confiabilidade", "Confiabilidade", "Medição",
