@@ -326,3 +326,49 @@ def test_data_base_ignora_backfill_do_historico():
     fii_ingest._datas_base_cotacao_fii(_C([]), ["FUNDO11"])
     sql = " ".join(log[0].split())
     assert "metadata_json->>'endpoint' = 'indicators'" in sql
+
+
+def _mesmo_preco_pregao_novo(monkeypatch, colunas, price_at):
+    # Gravado: 100 no pregao de 05/11. Fita: 100 de novo no pregao de 09/11.
+    eng = _preparar(monkeypatch, colunas)
+    linha = {"ticker": "VELHO11", "price": 100.0, "pvp": 1.0, "dy_12m": 0.12, "vpa": 100.0}
+    if price_at is not None:
+        linha["price_at"] = price_at
+    monkeypatch.setattr(fii_ingest, "_linhas_cotacao_fii",
+                        lambda conn, com_price_at: [dict(linha)])
+    monkeypatch.setattr(fii_ingest, "_datas_base_cotacao_fii", lambda conn, tickers: {
+        "VELHO11": fz.fechamento_pregao_em(dt.date(2026, 11, 5))})
+    monkeypatch.setattr(fii_ingest, "_fechamentos_pregao_fii", lambda conn, tickers: {
+        "VELHO11": (dt.date(2026, 11, 9), 100.0)})
+    return eng, fii_ingest.promover_fechamento_pregao()
+
+
+def test_com_price_at_mesmo_preco_em_pregao_novo_avanca_a_data(monkeypatch):
+    # Com a 088, a data e dado: o preco igual nao pode deixar `price_at` no
+    # pregao velho, senao a leitura publica a data velha e aceita observacoes
+    # mais velhas que o close que de fato venceu.
+    eng, rep = _mesmo_preco_pregao_novo(
+        monkeypatch, _COLS_SEM_088 | {"price_at"}, fz.fechamento_pregao_em(dt.date(2026, 11, 5)))
+    ups = _updates(eng)
+    assert len(ups) == 1
+    sql, params = ups[0]
+    assert params[0]["price_at"] == fz.fechamento_pregao_em(dt.date(2026, 11, 9))
+    assert params[0]["price"] == 100.0
+    # o predicado do UPDATE deixa passar a data nova com o mesmo preco
+    assert "price_at IS DISTINCT FROM" in " ".join(sql.split())
+    assert rep["atualizados"] == 1 and rep["ja_no_fechamento"] == 0
+    # data que avanca sem preco novo nao entra na variacao de preco
+    assert rep["so_data"] == 1 and rep["amostra"] == []
+
+
+def test_com_price_at_nulo_mesmo_preco_grava_a_data(monkeypatch):
+    eng, rep = _mesmo_preco_pregao_novo(monkeypatch, _COLS_SEM_088 | {"price_at"}, None)
+    ups = _updates(eng)
+    assert len(ups) == 1
+    assert ups[0][1][0]["price_at"] == fz.fechamento_pregao_em(dt.date(2026, 11, 9))
+
+
+def test_sem_price_at_mesmo_preco_em_pregao_novo_nao_grava(monkeypatch):
+    eng, rep = _mesmo_preco_pregao_novo(monkeypatch, _COLS_SEM_088, None)
+    assert _updates(eng) == []
+    assert rep["ja_no_fechamento"] == 1 and rep["atualizados"] == 0

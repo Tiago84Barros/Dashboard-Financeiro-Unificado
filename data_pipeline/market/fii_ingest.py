@@ -1965,11 +1965,14 @@ def _gravar_fechamentos(conn, mudancas: list[dict], com_price_at: bool) -> int:
     if not mudancas:
         return 0
     extra = ", price_at = :price_at" if com_price_at else ""
-    # o gatilho renova `updated_at` em todo UPDATE: regravar o mesmo preço
-    # carimbaria fita parada como dado novo
+    # O gatilho renova `updated_at` em todo UPDATE: regravar o mesmo preço
+    # carimbaria fita parada como dado novo. Com a 088 a data também é dado:
+    # o mesmo preço num pregão mais novo avança `price_at`.
+    muda = "price IS DISTINCT FROM CAST(:price AS numeric)"
+    if com_price_at:
+        muda = f"({muda} OR price_at IS DISTINCT FROM CAST(:price_at AS timestamptz))"
     sql = text("UPDATE market.fiis SET price = :price, pvp = :pvp, dy_12m = :dy_12m"
-               f"{extra} WHERE ticker = :ticker"
-               " AND price IS DISTINCT FROM CAST(:price AS numeric)")
+               f"{extra} WHERE ticker = :ticker AND {muda}")
     chaves = ("ticker", "price", "pvp", "dy_12m") + (("price_at",) if com_price_at else ())
     conn.execute(sql, [{k: m.get(k) for k in chaves} for m in mudancas])
     return len(mudancas)
@@ -1985,7 +1988,7 @@ def promover_fechamento_pregao(dry_run: bool = False) -> dict:
     sem gravar.
     """
     prog: dict = {"status": "failed", "fundos": 0, "com_fita": 0, "mudariam": 0,
-                  "ja_no_fechamento": 0, "atualizados": 0, "price_at": False,
+                  "ja_no_fechamento": 0, "so_data": 0, "atualizados": 0, "price_at": False,
                   "dry_run": dry_run, "variacao": {}, "amostra": []}
     engine = _engine()
     if engine is None:
@@ -2009,10 +2012,18 @@ def promover_fechamento_pregao(dry_run: bool = False) -> dict:
         if nova is linha:
             continue
         if _mesmo_preco(linha.get("price"), nova["price"]):
-            # Sem a 088 a data-base segue a da brapi e o mesmo close volta a
-            # vencer toda noite. Ele já está gravado; regravar só renovaria
-            # `updated_at` (gatilho) e o Frescor do cadastro mentiria.
-            prog["ja_no_fechamento"] += 1
+            if not com_price_at:
+                # Sem a 088 a data-base segue a da brapi e o mesmo close volta a
+                # vencer toda noite. Ele já está gravado; regravar só renovaria
+                # `updated_at` (gatilho) e o Frescor do cadastro mentiria.
+                prog["ja_no_fechamento"] += 1
+                continue
+            # Com a 088, `nova` só sai diferente de `linha` quando o pregão é
+            # mais novo que `price_at` (ou ele é nulo): o preço é o mesmo, a
+            # data avança. Deixá-la no pregão velho faria a leitura publicar a
+            # data velha e aceitar observação mais velha que o close vencedor.
+            prog["so_data"] += 1
+            mudancas.append(nova)
             continue
         mudancas.append(nova)
         antes = linha.get("price")
