@@ -46,8 +46,17 @@ def jsonable(value: Any) -> Any:
 
 
 def compact_financials(income: Sequence[dict], balance: Sequence[dict],
-                       cashflow: Sequence[dict]) -> list[dict]:
-    """Série anual GAAP compacta para todos os painéis da análise individual."""
+                       cashflow: Sequence[dict],
+                       splits: Optional[Sequence] = None) -> list[dict]:
+    """Série anual GAAP compacta para todos os painéis da análise individual.
+
+    Com ``splits`` (``market_us.splits`` do símbolo) cada exercício ganha
+    ``shares_outstanding_ajustada``: as ações na base dos preços retroajustados
+    (``core.us_acoes.acoes_base_atual``), e o dividendo por ação passa a usar
+    essa base. Sem ``splits`` a série sai como antes, na base da época.
+    """
+    from core.us_acoes import acoes_base_atual
+
     bal_by = {r.get("fiscal_year"): r for r in balance}
     cf_by = {r.get("fiscal_year"): r for r in cashflow}
     out = []
@@ -59,9 +68,11 @@ def compact_financials(income: Sequence[dict], balance: Sequence[dict],
         shares = b.get("shares_outstanding")
         div_paid = c.get("dividends_paid")
         div_ps = None
+        ajustada = acoes_base_atual(b, splits) if splits is not None else None
+        base_dps = ajustada if splits is not None else shares
         try:
-            if shares not in (None, 0) and div_paid is not None:
-                div_ps = abs(float(div_paid)) / float(shares)
+            if base_dps not in (None, 0) and div_paid is not None:
+                div_ps = abs(float(div_paid)) / float(base_dps)
         except (TypeError, ValueError, ZeroDivisionError):
             pass
         investing_parts = [c.get(k) for k in ("capex", "acquisitions", "investments")]
@@ -85,6 +96,8 @@ def compact_financials(income: Sequence[dict], balance: Sequence[dict],
             "investing_cash_flow": investing_cf, "capex": c.get("capex"),
             "free_cash_flow": c.get("free_cash_flow"),
             "dividends_paid": div_paid, "dividends_per_share": div_ps,
+            **({"shares_outstanding_ajustada": ajustada}
+               if splits is not None else {}),
         })
     return out
 
@@ -250,6 +263,9 @@ def build_snapshot(engine, *, limit_companies: int | None = None) -> dict:
     # Momento e P&D (core.us_estilos) também: o diário e a DRE não sobem.
     estilos_por_symbol = ur.load_us_estilos()
 
+    with engine.connect() as conn_splits:
+        splits_por_symbol = ur._splits_por_simbolo(conn_splits)
+
     written = errors = 0
     rows_out: list[dict] = []
     for _, srow in scored.iterrows():
@@ -283,7 +299,8 @@ def build_snapshot(engine, *, limit_companies: int | None = None) -> dict:
             rows_out.append(serialize_row(
                 identity=ident, scored_row=srow.to_dict(), metrics=metrics,
                 asymmetry=asym, advanced=adv, dossie=dossie,
-                financials=compact_financials(inc, bal, cfw),
+                financials=compact_financials(
+                    inc, bal, cfw, splits=splits_por_symbol.get(sym, [])),
                 score_version=US_FUNDAMENTAL_SCORE_VERSION,
                 generated_at=generated_at))
         except Exception as exc:  # noqa: BLE001 — 1 empresa ruim não derruba a vitrine

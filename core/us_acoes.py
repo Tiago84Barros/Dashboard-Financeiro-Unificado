@@ -116,3 +116,17 @@ def ultimas_acoes(balance_rows, data_preco, splits: Optional[Sequence] = None
                  ).days > MAX_IDADE_ACOES_DIAS:
             return None          # o mais recente já é velho; os demais também
     return None
+
+
+def acoes_base_atual(balance_row, splits: Optional[Sequence] = None) -> Optional[float]:
+    """Ações de UM balanço na base dos preços retroajustados de hoje.
+
+    Para séries históricas (preço de fim de ano x ações do mesmo exercício): o
+    preço do armazém já reflete todo desdobramento, então a contagem recebe o
+    fator dos desdobramentos posteriores à entrega do balanço. A idade não
+    entra (o preço é da própria época do balanço); desdobramento entre a data
+    de referência e a entrega continua ambíguo e devolve ``None``.
+    """
+    return acoes_na_base_do_preco(
+        balance_row.get("shares_outstanding"), balance_row.get("reference_date"),
+        balance_row.get("available_at"), balance_row.get("reference_date"), splits)
