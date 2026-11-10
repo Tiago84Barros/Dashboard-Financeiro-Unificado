@@ -908,6 +908,52 @@ def _latest_annual(conn, table: str, cols: str, tk: str):
     return row
 
 
+def _valor_de_mercado_atual(*, preco, acoes, por_titulo, mc_spot, unit: bool,
+                            lucro_anual, lpa_anual) -> float | None:
+    """Valor de mercado do título para o snapshot de hoje.
+
+    1. preço do armazém × ações emitidas ÷ ações por título (acoes.py);
+    2. senão, o ``marketCap`` spot do normalizador;
+    3. senão, só para ação, preço × lucro anual / LPA anual. Na unit esse
+       reserva multiplica o preço da unit pelas ações emitidas e infla o valor
+       k vezes (TAEE11 ×3, KLBN11 ×5), então a unit fica sem valor."""
+    from data_pipeline.market import acoes as ac
+
+    mc = ac.valor_de_mercado(preco, acoes, por_titulo)
+    if mc is not None:
+        return mc
+    mc = ac._positivo(mc_spot)
+    if mc is not None or unit:
+        return mc
+    p, lucro, lpa = ac._positivo(preco), ac._f(lucro_anual), ac._f(lpa_anual)
+    if p is None or not lucro or not lpa:
+        return None
+    acoes_d = lucro / lpa
+    return p * acoes_d if acoes_d > 0 else None
+
+
+def _acoes_e_lpa_do_ano(*, lucro, lpa, por_titulo, acoes_atuais):
+    """(títulos do ano, LPA por título) para os múltiplos anuais, ou (None, None).
+
+    lucro / LPA por ação dá as ações emitidas no ano; dividido por k vira
+    títulos (a unit carrega k ações, e o preço do ano é o da unit), e o LPA
+    por título é k × o LPA por ação. Guarda: 0,2–5× dos títulos de hoje.
+    Unit sem k (``por_titulo`` None) não tem conta exata."""
+    from data_pipeline.market import acoes as ac
+
+    k = ac._positivo(por_titulo)
+    lucro, lpa = ac._f(lucro), ac._f(lpa)
+    if k is None or not lucro or not lpa:
+        return None, None
+    titulos = lucro / lpa / k
+    if titulos <= 0:
+        return None, None
+    atuais = ac._positivo(acoes_atuais)
+    if atuais is not None and not (0.2 <= titulos / atuais <= 5.0):
+        return None, None
+    return titulos, lpa * k
+
+
 def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None) -> dict:
     """
     Recalcula indicadores derivados a partir de market.* (SEM rede):
@@ -946,27 +992,26 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                                      "total_assets, equity, cash, gross_debt, net_debt, "
                                      "current_assets, current_liabilities", tk)
                 cf = _latest_annual(conn, "cash_flow_statements", "operating_cash_flow", tk)
-                mc = conn.execute(text(
-                    "SELECT metric_value FROM market.calculated_metrics "
-                    "WHERE ticker=:t AND metric_name='marketCap' ORDER BY year DESC LIMIT 1"),
-                    {"t": tk}).scalar()
-                eps = conn.execute(text(
-                    "SELECT metric_value FROM market.calculated_metrics "
-                    "WHERE ticker=:t AND metric_name='LPA' ORDER BY year DESC LIMIT 1"),
-                    {"t": tk}).scalar()
+                # Linhas spot do normalizador (o quote mais novo da brapi).
+                spot = {r[0]: float(r[1]) for r in conn.execute(text(
+                    "SELECT metric_name, metric_value FROM market.calculated_metrics "
+                    "WHERE ticker=:t AND period='spot'"), {"t": tk}).fetchall()}
+                eps = spot.get("LPA")
                 last_price = conn.execute(text(
                     "SELECT close FROM market.historical_prices "
                     "WHERE ticker=:t AND close IS NOT NULL "
                     "ORDER BY date DESC LIMIT 1"), {"t": tk}).scalar()
-                # market cap: brapi quando disponível; senão deriva = preço × ações,
-                # com ações = lucro anual / LPA anual (mesma empresa, ON/PN herdam).
-                if (mc is None or float(mc) <= 0) and last_price and inc and inc[3] and inc[4]:
-                    try:
-                        shares_d = float(inc[3]) / float(inc[4])
-                        if shares_d > 0:
-                            mc = float(last_price) * shares_d
-                    except (TypeError, ValueError, ZeroDivisionError):
-                        pass
+                unit = conn.execute(text(
+                    "SELECT asset_type FROM market.assets WHERE ticker=:t"),
+                    {"t": tk}).scalar() == "unit"
+                # Ações por título: 1 na ação; k na unit, se o normalizador o
+                # derivou; None na unit sem k (acoes.py).
+                por_titulo = spot.get("Acoes_por_Titulo") or (None if unit else 1.0)
+                mc = _valor_de_mercado_atual(
+                    preco=last_price, acoes=spot.get("Acoes_Emitidas"),
+                    por_titulo=por_titulo, mc_spot=spot.get("marketCap"), unit=unit,
+                    lucro_anual=inc[3] if inc else None,
+                    lpa_anual=inc[4] if inc else None)
                 divs = conn.execute(text(
                     "SELECT event_date, amount FROM market.dividends WHERE ticker=:t"),
                     {"t": tk}).fetchall()
@@ -1074,9 +1119,6 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 # brapi spot: no caminho ANUAL sobrescreve (anual distorce por
                 # não-recorrentes); no TTM real só PREENCHE o que faltar. DY sempre
                 # do trailing da brapi (evita over-count da janela de dividendos).
-                spot = {r[0]: float(r[1]) for r in conn.execute(text(
-                    "SELECT metric_name, metric_value FROM market.calculated_metrics "
-                    "WHERE ticker=:t AND period='spot'"), {"t": tk}).fetchall()}
                 for k in ("P/L", "P/VP", "ROE", "ROA", "Margem_Liquida", "Margem_Operacional"):
                     v = spot.get(k)
                     if v is None or not dq.is_valid_value(k, v):
@@ -1147,12 +1189,9 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     eps_y = i[4] if i else None
                     # ações do ano: NI/LPA (exato) com guarda 0,2–5× das atuais;
                     # senão usa ações atuais (aproximação).
-                    shares_y, exact = None, False
-                    if eps_y and ni:
-                        cand = float(ni) / float(eps_y)
-                        if cand > 0 and (not shares or 0.2 <= cand / shares <= 5.0):
-                            shares_y, exact = cand, True
-                    eps_use = float(eps_y) if exact and eps_y else None
+                    shares_y, eps_use = _acoes_e_lpa_do_ano(
+                        lucro=ni, lpa=eps_y, por_titulo=por_titulo, acoes_atuais=shares)
+                    exact = shares_y is not None
                     f_y = {
                         "revenue": i[0] if i else None, "ebit": i[1] if i else None,
                         "ebitda": i[2] if i else None, "net_income": ni,

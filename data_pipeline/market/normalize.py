@@ -543,11 +543,26 @@ def dividend_rows(quote: dict) -> list[dict]:
 
 # ── Indicadores (calculated_metrics) ──────────────────────────────────────────
 
+_METODO_SPOT = {
+    "marketCap": "preco_x_acoes_emitidas_por_titulo",
+    "Acoes_por_Titulo": "lpa_do_titulo_sobre_lpa_por_acao",
+}
+
 def metric_rows(quote: dict) -> list[dict]:
-    """Indicadores 'spot' fornecidos/derivados pela brapi (P/L, P/VP, EV/EBITDA, marketCap)."""
+    """Indicadores 'spot' fornecidos/derivados pela brapi (P/L, P/VP, EV/EBITDA, marketCap).
+
+    ``marketCap`` não é o campo da brapi: é o preço do título × ações emitidas
+    ÷ ações por título (``acoes.valor_de_mercado_do_quote``), a convenção dos
+    sites. A base da conta vai junto, em ``Acoes_Emitidas`` e
+    ``Acoes_por_Titulo``, para o ``reprocess_metrics`` refazer com o preço do
+    armazém. ``LPA`` é o do título (``trailingEps``): o ``earningsPerShare``
+    do topo traz, na ação de companhia com unit, o LPA da unit."""
+    from data_pipeline.market import acoes as _ac
+
     tk = _ticker(quote)
     if not tk:
         return []
+    unit = _infer_asset_type(tk, quote) == "unit"
     dks = (quote or {}).get("defaultKeyStatistics") or {}
     fin = (quote or {}).get("financialData") or {}
     # DY trailing da própria brapi (consenso) — evita over-count da janela
@@ -565,8 +580,10 @@ def metric_rows(quote: dict) -> list[dict]:
         "P/L": _first(quote, ("priceEarnings",)) or _first(dks, ("trailingPE", "forwardPE")),
         "P/VP": _first(dks, ("priceToBook",)),
         "EV/EBITDA": _first(dks, ("enterpriseToEbitda", "enterpriseValueEbitda")),
-        "marketCap": _first(quote, ("marketCap",)),
-        "LPA": _first(quote, ("earningsPerShare",)) or _first(dks, ("trailingEps",)),
+        "marketCap": _ac.valor_de_mercado_do_quote(quote, unit=unit),
+        "Acoes_Emitidas": _ac.acoes_emitidas(quote),
+        "Acoes_por_Titulo": _ac.acoes_por_titulo(quote, unit=unit),
+        "LPA": _first(dks, ("trailingEps",)) or _first(quote, ("earningsPerShare",)),
         "ROE": _first(fin, ("returnOnEquity",)),
         "ROA": _first(fin, ("returnOnAssets",)),
         "Margem_Liquida": _first(fin, ("profitMargins",)),
@@ -579,8 +596,8 @@ def metric_rows(quote: dict) -> list[dict]:
             continue
         rows.append({
             "ticker": tk, "period": "spot", "year": 0, "quarter": 0,
-            "metric_name": name, "metric_value": val,
-            "calculation_method": "brapi_field",
+            "metric_name": name, "metric_value": float(val),
+            "calculation_method": _METODO_SPOT.get(name, "brapi_field"),
             "source": "brapi.dev", "confidence_score": 80.0,
         })
     return rows
