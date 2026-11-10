@@ -475,14 +475,14 @@ def coletar_fotos_de_valor(conn) -> tuple[list[dict], dict]:
                   FROM market.brapi_raw_payloads
                  WHERE endpoint = 'quote' AND request_status = 'success'
                    AND payload_json IS NOT NULL
-                 ORDER BY ticker, fetched_at DESC) mais_novo
+                 ORDER BY ticker, fetched_at DESC, id DESC) mais_novo
           JOIN market.brapi_raw_payloads b ON b.id = mais_novo.id
           LEFT JOIN (SELECT DISTINCT ON (ticker) ticker, id
                        FROM market.brapi_raw_payloads
                       WHERE endpoint = 'quote' AND request_status = 'success'
                         AND payload_json->'defaultKeyStatistics' ?&
                             array['sharesOutstanding','trailingEps','netIncomeToCommon']
-                      ORDER BY ticker, fetched_at DESC) completo
+                      ORDER BY ticker, fetched_at DESC, id DESC) completo
                  ON completo.ticker = mais_novo.ticker
           LEFT JOIN market.brapi_raw_payloads c ON c.id = completo.id
     """))]
@@ -498,7 +498,7 @@ def coletar_alavancagem(conn, hoje) -> tuple[dict, dict]:
           FROM market.brapi_raw_payloads
          WHERE endpoint = 'quote' AND request_status = 'success'
            AND payload_json ? 'financialData'
-         ORDER BY ticker, fetched_at DESC
+         ORDER BY ticker, fetched_at DESC, id DESC
     """))]
     return alavancagem_brapi(linhas, hoje)
 

@@ -458,3 +458,43 @@ def test_diario_com_composicao_recalcula_o_valor_de_mercado():
           for r in nz.metric_rows(q, {"sharesOutstanding": 1_000.0, "trailingEps": 2.0,
                                       "netIncomeToCommon": 2_000.0})}
     assert by["marketCap"] == pytest.approx(11_000.0)
+
+
+# ── ações novas do quote diário vencem a composição antiga (Codex, PR #710) ──
+# O quote sem os três campos de k pode ainda trazer as ações emitidas. Elas
+# são as mais novas: a composição do último completo só empresta k.
+
+def test_acao_com_acoes_novas_nao_herda_as_acoes_antigas():
+    q = _diario("XPTO3", 10.0)
+    q["defaultKeyStatistics"] = {"sharesOutstanding": 2_000.0}
+    antigo = {"sharesOutstanding": 1_000.0, "trailingEps": 2.0, "netIncomeToCommon": 2_000.0}
+    qc = ac.quote_com_composicao(q, antigo)
+    assert ac.acoes_emitidas(qc) == 2_000.0
+    assert ac.valor_de_mercado_do_quote(qc, unit=False) == pytest.approx(20_000.0)
+
+
+def test_acoes_novas_so_no_topo_tambem_vencem_a_composicao_antiga():
+    q = _diario("XPTO3", 10.0)
+    q["sharesOutstanding"] = 2_000.0
+    antigo = {"sharesOutstanding": 1_000.0, "trailingEps": 2.0, "netIncomeToCommon": 2_000.0}
+    by = {r["metric_name"]: r["metric_value"] for r in nz.metric_rows(q, antigo)}
+    assert by["Acoes_Emitidas"] == 2_000.0
+    assert by["marketCap"] == pytest.approx(20_000.0)
+
+
+def test_unit_com_acoes_novas_tira_k_da_composicao_e_as_acoes_do_quote():
+    q = _diario("XPTO11", 30.0)
+    q["defaultKeyStatistics"] = {"sharesOutstanding": 6_000.0}
+    completo = _quote("XPTO11", 30.0, acoes=3_000.0, lpa_titulo=3.0, lucro=3_000.0)
+    qc = ac.quote_com_composicao(q, completo["defaultKeyStatistics"])
+    assert ac.acoes_por_titulo(qc, unit=True) == 3
+    assert ac.acoes_emitidas(qc) == 6_000.0
+    assert ac.valor_de_mercado_do_quote(qc, unit=True) == pytest.approx(60_000.0)
+
+
+def test_composicao_incompleta_nao_e_conhecida():
+    assert not ac.composicao_conhecida(_diario("XPTO3", 1.0),
+                                       {"sharesOutstanding": 1_000.0})
+    assert ac.composicao_conhecida(_diario("XPTO3", 1.0),
+                                   {"sharesOutstanding": 1_000.0, "trailingEps": 1.0,
+                                    "netIncomeToCommon": 1_000.0})

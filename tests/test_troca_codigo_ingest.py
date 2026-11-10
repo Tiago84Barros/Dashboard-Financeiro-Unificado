@@ -818,3 +818,21 @@ def test_script_recusa_aplicar_no_supabase_sem_confirmacao(monkeypatch, capsys):
 
     codigo, saida = _script(monkeypatch, _sem_banco, capsys, "--alvo", "supabase", "--apply")
     assert codigo == 2 and "--confirmo-producao" in saida
+
+
+def test_composicao_mais_nova_e_a_de_fetched_at_e_nao_a_de_id(banco):
+    # Payload arquivado ganha id novo: id maior não quer dizer quote mais novo.
+    from data_pipeline.market import ingest as ig
+    with banco.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO market.brapi_raw_payloads "
+            "(id, ticker, endpoint, payload_json, request_status, fetched_at) VALUES "
+            "(1, 'XPTO3', 'quote', CAST(:novo AS jsonb), 'success', '2026-10-02'), "
+            "(2, 'XPTO3', 'quote', CAST(:velho AS jsonb), 'success', '2026-09-01')"),
+            {"novo": '{"defaultKeyStatistics": {"sharesOutstanding": 2000, '
+                     '"trailingEps": 1, "netIncomeToCommon": 2000}}',
+             "velho": '{"defaultKeyStatistics": {"sharesOutstanding": 1000, '
+                      '"trailingEps": 1, "netIncomeToCommon": 1000}}'})
+    with banco.connect() as conn:
+        comp = ig._composicoes_mais_novas(conn, ["XPTO3"])
+    assert comp["XPTO3"]["sharesOutstanding"] == 2000

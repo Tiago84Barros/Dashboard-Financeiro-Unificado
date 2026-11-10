@@ -115,7 +115,7 @@ def iter_payload_cash_dividends(conn, tickers: list[str] | None = None,
                       .replace("AND payload_json IS NOT NULL AND id > :last",
                                "AND payload_json IS NOT NULL AND ticker > :last") \
                       .replace("ORDER BY id LIMIT :lim",
-                               "ORDER BY ticker, id DESC LIMIT :lim")
+                               "ORDER BY ticker, fetched_at DESC, id DESC LIMIT :lim")
         cursor: object = ""
     else:
         q = Q_PAYLOADS

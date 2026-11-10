@@ -721,7 +721,7 @@ def _gravar_indicadores(conn, data, ticker, quote, composicao=None) -> int:
     linhas = data["calculated_metrics"]
     repo.append_metric_vintages(conn, linhas)
     n = repo.upsert(conn, "calculated_metrics", linhas)
-    if _ac.tem_composicao(_ac.quote_com_composicao(quote, composicao)):
+    if _ac.composicao_conhecida(quote, composicao):
         repo.apagar_composicao_omitida(conn, ticker, linhas)
     return n
 
@@ -743,7 +743,8 @@ def _composicoes_mais_novas(conn, tickers=None) -> dict:
     if tickers:
         q += " AND ticker = ANY(:tks)"
         params["tks"] = list(tickers)
-    q += " ORDER BY ticker, id DESC"
+    # Payload arquivado ganha id novo: a ordem é a da coleta, id só desempata.
+    q += " ORDER BY ticker, fetched_at DESC, id DESC"
     out = {}
     for tk, dks in conn.execute(text(q), params).fetchall():
         out[str(tk).upper()] = json.loads(dks) if isinstance(dks, str) else dks
@@ -775,7 +776,7 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
         if tickers:
             q += " AND ticker = ANY(:tks)"
             params["tks"] = [t.upper().replace(".SA", "") for t in tickers]
-        q += " ORDER BY ticker, id DESC"
+        q += " ORDER BY ticker, fetched_at DESC, id DESC"
         rows = conn.execute(text(q), params).fetchall()
         composicoes = _composicoes_mais_novas(conn, params.get("tks"))
     trocas = _carregar_trocas(engine)
