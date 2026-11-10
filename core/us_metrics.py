@@ -427,7 +427,8 @@ DIVERGENCIA_ACOES = 10.0
 
 def acoes_em_circulacao(balance: Sequence[dict],
                         informado: Optional[float] = None,
-                        ano: Optional[int] = None) -> Optional[float]:
+                        ano: Optional[int] = None, *,
+                        preco_em=None, splits=None) -> Optional[float]:
     """Ações do último exercício, ou None quando a série se contradiz.
 
     O exercício mais recente vem com a contagem em escala errada num punhado de
@@ -449,6 +450,15 @@ def acoes_em_circulacao(balance: Sequence[dict],
     chega aqui com 100. Contra isso vale o mesmo piso de
     ``ACOES_IMPLICITAS_MINIMAS`` usado no valor de mercado: as bolsas exigem um
     milhão de ações em circulação, e o piso está uma ordem de grandeza abaixo.
+
+    Com ``preco_em`` (data do preço que vai multiplicar a contagem) a contagem
+    vigente passa pela mesma regra de ``core.us_read._latest_shares``: idade
+    máxima de 18 meses e ajuste por desdobramentos posteriores à entrega do
+    balanço (``core.us_acoes``, ``splits`` = ``market_us.splits`` do símbolo).
+    Nesse modo ``informado`` é ignorado: ele já vem dessa mesma regra e o
+    recuo para a contagem crua do balanço é justamente o que ela proíbe. Sem
+    ``preco_em`` (``ano`` dado, ou chamadores sem data de preço) vale a
+    contagem como publicada, sem idade nem ajuste.
     """
     pontos = [(ano, v) for ano, v in _series_values(balance, "shares_outstanding")
               if v and v > 0]
@@ -461,6 +471,9 @@ def acoes_em_circulacao(balance: Sequence[dict],
         # exercicio); `informado` e do balanco mais novo e nao vale aqui. A
         # validacao de escala acima segue sobre a serie inteira.
         valor = _no_ano(balance, "shares_outstanding", ano)
+    elif preco_em is not None:
+        from core.us_acoes import ultimas_acoes
+        valor = ultimas_acoes(balance, preco_em, splits)
     else:
         valor = informado if informado is not None else (
             pontos[-1][1] if pontos else None)
@@ -561,7 +574,7 @@ def _dividend_yield(cashflow: Sequence[dict],
 def compute_company_metrics(
     income: Sequence[dict], balance: Sequence[dict], cashflow: Sequence[dict], *,
     price: Optional[float] = None, market_cap: Optional[float] = None,
-    shares: Optional[float] = None,
+    shares: Optional[float] = None, preco_em=None, splits=None,
 ) -> dict:
     """Deriva o snapshot de métricas de UMA empresa a partir das séries anuais.
 
@@ -609,7 +622,8 @@ def compute_company_metrics(
     # NÃO é `shares or _latest(...)`: a contagem informada vem da mesma
     # linha de balanço e carrega o mesmo defeito de escala — ver
     # `acoes_em_circulacao`, que confronta o último exercício com o anterior.
-    shares_out   = acoes_em_circulacao(balance, shares)
+    shares_out   = acoes_em_circulacao(balance, shares, preco_em=preco_em,
+                                       splits=splits)
     # Contagem do exercicio de referencia: denominador do DPA (numerador e o
     # dividendo desse mesmo exercicio). shares_out segue a mais nova, que e a
     # certa para valor de mercado derivado (preco de hoje x acoes de hoje).
