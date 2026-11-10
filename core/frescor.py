@@ -42,6 +42,31 @@ ALVO_DO_MODULO = {
 # isso que a folga é pequena e o aviso diz o que confiar e o que não confiar.
 TOLERANCIA_DIAS = 3
 
+# Qual alvo traz o PREÇO que a tela mostra, quando ele não é o mesmo que
+# publica a vitrine. Na B3 são dois: `b3_metrics` republica as métricas toda
+# semana a partir do armazém, e `b3_brapi` traz a cotação. Entre 30/10 e
+# 07/11/2026 a brapi recusou toda cotação e `b3_metrics` seguiu republicando:
+# o carimbo de publicação renovava, o preço ficou em 29/10, e o selo dizia "em
+# dia". Módulo fora deste mapa é medido só pela publicação.
+ALVO_DO_PRECO = {
+    "b3": "b3_brapi",
+}
+
+# Mediana da ÚLTIMA data de cada ticker, não `max(date)` da tabela: um ticker
+# que a brapi soltou por acaso levava o máximo para 31/10 com a mediana em
+# 29/10. O universo é o de `core.market_read._multiplos_long` (ação ou unit,
+# ativa, com empresa): FII grava preço na mesma tabela, e sem o filtro a
+# cotação dele decidia o selo das ações; deslistado também fica de fora.
+SQL_DATA_DO_PRECO_B3 = """
+    SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY ultima)
+    FROM (SELECT max(hp.date) AS ultima
+          FROM market.historical_prices hp
+          JOIN market.assets a ON a.ticker = hp.ticker
+            AND a.asset_type IN ('stock','unit')
+            AND a.is_active IS TRUE
+            AND a.company_id IS NOT NULL
+          GROUP BY hp.ticker) AS por_ticker"""
+
 
 def idade_alvo(modulo: str) -> int:
     """Cadência de publicação da vitrine do módulo, em dias."""
@@ -106,11 +131,16 @@ def idade_em_dias(valor, hoje: date | None = None) -> int | None:
     return ((hoje or date.today()) - valor).days
 
 
-def selo(modulo: str, carimbo) -> dict:
+def selo(modulo: str, carimbo, preco=None) -> dict:
     """Descreve o frescor da vitrine para a tela exibir.
 
     ``vencida`` só é ``True`` com idade medida: sem carimbo o selo diz que não
     sabe, e dizer "não sei" é diferente de dizer "está velha".
+
+    ``preco`` é a data do preço que a tela mostra (`data_do_preco`), para o
+    módulo em que ela não acompanha a publicação (`ALVO_DO_PRECO`). Preço além
+    do limite do alvo que o traz vence o selo mesmo com a publicação em dia.
+    Sem ``preco``, ou em módulo fora do mapa, vale só a publicação.
     """
     alvo = idade_alvo(modulo)
     limite = idade_limite(modulo)
@@ -143,14 +173,33 @@ def selo(modulo: str, carimbo) -> dict:
     else:
         texto = f"Publicada em {as_of}, há {idade} dia(s)."
 
+    vencida = idade is not None and idade > limite
+    idade_preco = preco_as_of = limite_preco = None
+    if modulo in ALVO_DO_PRECO:
+        idade_preco = idade_em_dias(preco)
+        limite_preco = limite_do_alvo(ALVO_DO_PRECO[modulo])
+    if idade_preco is not None and idade_preco >= 0:
+        preco_as_of = (preco.isoformat() if isinstance(preco, date)
+                       else str(preco))[:10]
+        if idade_preco > limite_preco:
+            vencida = True
+            texto = (f"{texto} Mas o preço mais recente é de {preco_as_of}, há "
+                     f"{idade_preco} dia(s), além do limite de {limite_preco}: a "
+                     f"cotação parou de chegar e a publicação seguiu sobre ela. "
+                     f"Preço, liquidez e múltiplos derivados de preço estão "
+                     f"desatualizados.")
+
     return {
         "modulo": modulo,
         "as_of": as_of,
         "idade": idade,
         "alvo": alvo,
         "limite": limite,
-        "vencida": idade is not None and idade > limite,
+        "vencida": vencida,
         "atrasada": idade is not None and idade > alvo,
+        "preco_as_of": preco_as_of,
+        "idade_preco": idade_preco,
+        "limite_preco": limite_preco,
         "texto": texto,
     }
 
@@ -163,6 +212,9 @@ def resumo_curto(dados: dict) -> str:
     if idade < 0:
         return "carimbo inválido"
     rotulo = "hoje" if idade == 0 else f"há {idade} dia" + ("s" if idade > 1 else "")
+    lp = dados.get("limite_preco")
+    if lp is not None and (dados.get("idade_preco") or 0) > lp:
+        return f"{rotulo}, preço de {dados['preco_as_of']} (vencida)"
     if dados.get("vencida"):
         return f"{rotulo} (vencida)"
     if dados.get("atrasada"):
@@ -198,3 +250,22 @@ def carimbo_do_modulo(modulo: str):
 
         return mr.load_fii_methodology_inputs().attrs.get("snapshot_as_of")
     raise KeyError(modulo)
+
+
+def data_do_preco(modulo: str, engine=None):
+    """Data do preço que a tela do módulo mostra, ou ``None``.
+
+    Só para módulo em `ALVO_DO_PRECO`; os outros devolvem ``None`` e o selo
+    fica com a publicação. Lê o mesmo banco que a tela lê (`get_engine`).
+    """
+    if modulo not in ALVO_DO_PRECO:
+        return None
+    from sqlalchemy import text
+
+    if engine is None:
+        from core.database import get_engine
+        engine = get_engine()
+    if engine is None:
+        return None
+    with engine.connect() as conn:
+        return conn.execute(text(SQL_DATA_DO_PRECO_B3)).scalar()

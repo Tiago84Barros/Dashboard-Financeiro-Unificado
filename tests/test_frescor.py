@@ -151,3 +151,115 @@ def test_carimbo_de_modulo_desconhecido_falha_alto():
     """
     with pytest.raises(KeyError):
         frescor.carimbo_do_modulo("cripto")
+
+
+# ── Data do preço (B3): publicação em dia sobre preço parado ─────────────────
+# De 30/10 a 07/11/2026 a brapi recusou toda cotação, e `b3_metrics` seguiu
+# republicando a vitrine toda semana: `updated_at` renovava, o preço não. O selo
+# dizia "publicada há 2 dias" sobre preço de duas semanas atrás.
+
+
+def test_publicacao_em_dia_com_preco_parado_e_vencida():
+    s = frescor.selo("b3", _dias_atras(1),
+                     preco=date.today() - timedelta(days=12))
+    assert s["vencida"]
+    assert s["idade_preco"] == 12
+    assert "preço" in s["texto"]
+    assert "(vencida)" in frescor.resumo_curto(s)
+
+
+def test_preco_no_prazo_nao_muda_o_selo():
+    s = frescor.selo("b3", _dias_atras(1), preco=date.today() - timedelta(days=1))
+    assert not s["vencida"] and not s["atrasada"]
+    assert s["idade_preco"] == 1
+
+
+def test_limite_do_preco_sai_da_agenda_do_alvo_que_traz_o_preco():
+    """Fim de semana não pode alarmar: sexta lida na segunda tem 3 dias."""
+    limite = frescor.limite_do_alvo(frescor.ALVO_DO_PRECO["b3"])
+    assert limite == POR_CHAVE[frescor.ALVO_DO_PRECO["b3"]].cadencia_dias + frescor.TOLERANCIA_DIAS
+    assert limite >= 3
+    s = frescor.selo("b3", _dias_atras(1), preco=date.today() - timedelta(days=3))
+    assert not s["vencida"]
+    s = frescor.selo("b3", _dias_atras(1),
+                     preco=date.today() - timedelta(days=limite + 1))
+    assert s["vencida"]
+
+
+def test_sem_data_do_preco_o_selo_fica_como_era():
+    """Sem medida do preço, o selo não inventa: vale só a publicação."""
+    s = frescor.selo("b3", _dias_atras(1), preco=None)
+    assert not s["vencida"]
+    assert s["idade_preco"] is None
+    assert "preço" not in s["texto"]
+
+
+def test_modulo_sem_fonte_de_preco_ignora_o_preco():
+    s = frescor.selo("us", _dias_atras(1), preco=date.today() - timedelta(days=40))
+    assert not s["vencida"]
+    assert s["idade_preco"] is None
+
+
+def test_data_do_preco_e_a_mediana_da_ultima_data_por_ticker():
+    """Um ticker com pregão novo não pode esconder o resto parado.
+
+    O `max(date)` da tabela inteira disse 31/10 quando a mediana era 29/10, e
+    disse "em dia" para o ticker que a brapi soltou por acaso.
+    """
+    assert "percentile_disc(0.5)" in frescor.SQL_DATA_DO_PRECO_B3
+    assert "GROUP BY hp.ticker" in frescor.SQL_DATA_DO_PRECO_B3
+
+
+def test_data_do_preco_mede_o_universo_que_a_tela_mostra():
+    """FII grava preço na mesma `historical_prices` (`fii_ingest`).
+
+    Sem o filtro, cotação nova de FII escondia ação parada, e histórico velho
+    de FII vencia um ranking de ações em dia. O universo é o mesmo de
+    `core.market_read._multiplos_long`: ação ou unit, ativa, com empresa.
+    """
+    import inspect
+    import re
+
+    from core import market_read
+
+    def _norm(s):
+        return re.sub(r"\s+", " ", s)
+
+    sql = _norm(frescor.SQL_DATA_DO_PRECO_B3)
+    fonte = _norm(inspect.getsource(market_read._multiplos_long))
+    for predicado in ("a.asset_type IN ('stock','unit')",
+                      "a.is_active IS TRUE",
+                      "a.company_id IS NOT NULL"):
+        assert predicado in fonte, predicado   # a tela continua com ele
+        assert predicado in sql, predicado
+    assert "JOIN market.assets a ON a.ticker" in sql
+
+
+def test_modulo_fora_do_mapa_nao_consulta_o_banco():
+    class _Explode:
+        def connect(self):
+            raise AssertionError("não devia consultar")
+
+    assert frescor.data_do_preco("us", engine=_Explode()) is None
+
+
+def test_tela_sem_data_do_preco_mostra_o_selo_da_publicacao(monkeypatch):
+    """Falha ao ler o preço não apaga o selo: ele volta a medir a publicação."""
+    from design import componentes
+
+    def _falha(m):
+        raise RuntimeError("banco fora")
+
+    monkeypatch.setattr(componentes, "_carimbo_cacheado", lambda m: _dias_atras(1))
+    monkeypatch.setattr(componentes, "_preco_cacheado", _falha)
+    s = componentes.frescor_da_vitrine("b3")
+    assert s is not None and s["idade"] == 1 and s["idade_preco"] is None
+
+
+def test_tela_com_preco_parado_vence_o_selo(monkeypatch):
+    from design import componentes
+
+    monkeypatch.setattr(componentes, "_carimbo_cacheado", lambda m: _dias_atras(1))
+    monkeypatch.setattr(componentes, "_preco_cacheado",
+                        lambda m: date.today() - timedelta(days=12))
+    assert componentes.frescor_da_vitrine("b3")["vencida"]

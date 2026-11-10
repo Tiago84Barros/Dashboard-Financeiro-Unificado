@@ -574,6 +574,15 @@ def _carimbo_cacheado(modulo: str):
     return carimbo_do_modulo(modulo)
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _preco_cacheado(modulo: str):
+    """Data do preco que a tela mostra (`core.frescor.data_do_preco`). Na B3 a
+    publicacao das metricas renova o carimbo toda semana mesmo com a cotacao
+    parada; sem esta data o selo dizia "em dia" sobre preco de duas semanas."""
+    from core.frescor import data_do_preco
+    return data_do_preco(modulo)
+
+
 def frescor_da_vitrine(modulo: str) -> dict | None:
     """Selo do modulo, ou ``None`` se nao deu para medir.
 
@@ -583,8 +592,16 @@ def frescor_da_vitrine(modulo: str) -> dict | None:
     """
     try:
         from core.frescor import selo
-        return selo(modulo, _carimbo_cacheado(modulo))
+        carimbo = _carimbo_cacheado(modulo)
     except Exception:  # noqa: BLE001 - contexto nao derruba a tela
+        return None
+    try:
+        preco = _preco_cacheado(modulo)
+    except Exception:  # noqa: BLE001 - sem a data do preco, vale a publicacao
+        preco = None
+    try:
+        return selo(modulo, carimbo, preco=preco)
+    except Exception:  # noqa: BLE001
         return None
 
 
@@ -604,9 +621,11 @@ def selo_de_frescor(modulo: str, dados: dict | None = None) -> None:
         detalhe_tecnico(f"Frescor dos dados: {dados['texto']}",
                         codigo=f"componentes.frescor_vitrine.{modulo}")
     else:
+        preco = (f" Preço mais recente: {dados['preco_as_of']}."
+                 if dados.get("preco_as_of") else "")
         detalhe_tecnico(
             f"Vitrine publicada em {dados['as_of']} "
-            f"(alvo de atualização: {dados['alvo']} dia(s)).",
+            f"(alvo de atualização: {dados['alvo']} dia(s)).{preco}",
             codigo=f"componentes.frescor_vitrine.{modulo}")
 
 
