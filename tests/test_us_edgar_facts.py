@@ -108,7 +108,8 @@ def test_balance_derivados():
     assert r["retained_earnings"] == 700           # termo X2 do Altman
 
 
-def test_equity_inclusivo_tem_prioridade_sobre_equity_da_controladora():
+def test_equity_da_controladora_tem_prioridade_sobre_o_inclusivo():
+    """A6: o lucro e do controlador, entao o PL tambem (identidade fica fora)."""
     facts = {}
     facts.update(_fact("Assets", [_e("2024-12-31", 1000, "2025-02-15")]))
     facts.update(_fact("Liabilities", [_e("2024-12-31", 600, "2025-02-15")]))
@@ -118,8 +119,7 @@ def test_equity_inclusivo_tem_prioridade_sobre_equity_da_controladora():
         "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
         [_e("2024-12-31", 400, "2025-02-15")]))
     row = ef.build_balance_rows(_cf(facts))[0]
-    assert row["total_equity"] == 400
-    assert row["total_assets"] == row["total_liabilities"] + row["total_equity"]
+    assert row["total_equity"] == 250
 
 
 def test_available_at_conservador_no_maximo_dos_filings():

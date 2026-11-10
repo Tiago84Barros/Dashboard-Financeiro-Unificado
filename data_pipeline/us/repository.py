@@ -129,6 +129,25 @@ def upsert_asset(conn, company_id: int, profile: dict) -> None:
 _STMT_CONFLICT = ["company_id", "period", "fiscal_year", "fiscal_quarter"]
 
 
+def colunas_da_tabela(conn, table: str) -> set[str]:
+    rows = conn.execute(text(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = :s AND table_name = :t"),
+        {"s": SCHEMA, "t": table}).fetchall()
+    return {r[0] for r in rows}
+
+
+def equity_identity_expr(colunas: set[str]) -> str:
+    """PL da identidade ativo = passivo + PL: o consolidado quando a coluna existe.
+
+    O PL guardado em `total_equity` e o do controlador; a identidade contabil e
+    consolidada. Sem a coluna (migration 087 nao aplicada), cai no estrito.
+    """
+    if "total_equity_incl_nci" in colunas:
+        return "COALESCE(total_equity_incl_nci, total_equity)"
+    return "total_equity"
+
+
 def upsert_statements(conn, table: str, company_id: int, symbol: str,
                       rows: list[dict]) -> int:
     """Grava as linhas anuais/trimestrais. `filed_at` vira JSON (coluna JSONB).
@@ -138,6 +157,12 @@ def upsert_statements(conn, table: str, company_id: int, symbol: str,
     Python para uma coluna JSONB e o driver levanta -- ou pior, grava a repr.
     """
     payload = []
+    if table == "balance_sheets" and any("total_equity_incl_nci" in r for r in rows):
+        # tolerancia ao deploy anterior a migration 087: sem a coluna, o campo
+        # extra derrubaria o INSERT da empresa inteira
+        if "total_equity_incl_nci" not in colunas_da_tabela(conn, table):
+            rows = [{k: v for k, v in r.items() if k != "total_equity_incl_nci"}
+                    for r in rows]
     for r in rows:
         linha = {**r, "company_id": company_id, "symbol": symbol}
         if "filed_at" in linha:

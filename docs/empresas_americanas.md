@@ -159,6 +159,24 @@ só pela CLI/pipeline.
 `design/market_companies.py` (cards CSS compartilhados),
 `app.py` (+1 rota).
 
+#### Conceitos XBRL do parser (`data_pipeline/us/edgar_facts.py`, v8)
+
+- **Patrimônio líquido** é o do controlador (`StockholdersEquity`), o mesmo
+  perímetro do lucro (`NetIncomeLoss`); o valor com minoritários só entra se o
+  primeiro faltar. Sem coluna própria para o PL com minoritários (exigiria
+  migration), o capital investido do ROIC também usa o do controlador.
+- **Dívida**: curto e longo prazo aceitam também `NotesPayable*`,
+  `LongTermDebtAndCapitalLeaseObligations*` e `CommercialPaper`; o total
+  combinado (`DebtLongtermAndShorttermCombinedAmount`) só vale sem as partes.
+  Nenhum tag de dívida vira nulo, nunca zero.
+- **Dividendo pago** cai em `DividendsCommonStockCash`/`DividendsCommonStock`
+  quando não há `Payments*`; o sinal segue a convenção (saída negativa).
+- **Ações em circulação**: capa `dei:EntityCommonStockSharesOutstanding` (classes
+  do mesmo filing somadas; data da capa, posterior ao balanço, mesmo `filed`),
+  depois `CommonStockSharesOutstanding`, depois `Issued` menos tesouraria do
+  mesmo período; sem tesouraria, nulo. Lacuna declarada: classes que valem
+  frações distintas da ação (BRK) somam unidades não comparáveis.
+
 ### 5. Esquema de banco
 
 Schema dedicado `market_us` (isolado de `market.*`/`public.*`). Identidade

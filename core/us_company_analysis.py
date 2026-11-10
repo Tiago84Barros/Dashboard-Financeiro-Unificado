@@ -76,17 +76,24 @@ def derive_metric_history(financials: pd.DataFrame,
         denominator = f[den] if den in f else pd.Series(np.nan, index=f.index)
         return numerator.div(denominator.replace(0, np.nan))
 
+    def div_pos(num: str, den: str) -> pd.Series:
+        # Mesmo contrato de core.us_metrics.div_if_den_positive (A-101): razao com
+        # denominador <= 0 e indefinida (n/m), nao um numero ordenavel.
+        numerator = f[num] if num in f else pd.Series(np.nan, index=f.index)
+        denominator = f[den] if den in f else pd.Series(np.nan, index=f.index)
+        return numerator.div(denominator.where(denominator > 0))
+
     op = f.get("operating_income", f.get("ebit", pd.Series(np.nan, index=f.index)))
     f["operating_margin"] = op.div(f.get("revenue", pd.Series(np.nan, index=f.index)).replace(0, np.nan))
     f["net_margin"] = div("net_income", "revenue")
-    f["roe"] = div("net_income", "total_equity")
+    f["roe"] = div_pos("net_income", "total_equity")
     f["roa"] = div("net_income", "total_assets")
     ebit = f.get("ebit", op)
-    f["roic"] = (ebit * 0.79).div(
-        f.get("invested_capital", pd.Series(np.nan, index=f.index)).replace(0, np.nan))
+    invested = f.get("invested_capital", pd.Series(np.nan, index=f.index))
+    f["roic"] = (ebit * 0.79).div(invested.where(invested > 0))
     f["fcf_margin"] = div("free_cash_flow", "revenue")
-    f["debt_to_equity"] = div("total_debt", "total_equity")
-    f["financial_leverage"] = div("total_assets", "total_equity")
+    f["debt_to_equity"] = div_pos("total_debt", "total_equity")
+    f["financial_leverage"] = div_pos("total_assets", "total_equity")
     f["current_ratio"] = div("current_assets", "current_liabilities")
     paid = f.get("dividends_paid", pd.Series(np.nan, index=f.index)).abs()
     f["payout"] = paid.div(
@@ -104,7 +111,8 @@ def derive_metric_history(financials: pd.DataFrame,
         cash = f.get("cash_and_equivalents", pd.Series(0.0, index=f.index)).fillna(0)
         enterprise_value = market_cap + f.get(
             "total_debt", pd.Series(np.nan, index=f.index)) - cash
-        f["p_b"] = market_cap.div(f.get("total_equity", pd.Series(np.nan, index=f.index)).replace(0, np.nan))
+        equity = f.get("total_equity", pd.Series(np.nan, index=f.index))
+        f["p_b"] = market_cap.div(equity.where(equity > 0))
         f["pe"] = market_cap.div(f.get("net_income", pd.Series(np.nan, index=f.index)).replace(0, np.nan))
         f["ev_ebit"] = enterprise_value.div(ebit.replace(0, np.nan))
         f["p_fcf"] = market_cap.div(f.get("free_cash_flow", pd.Series(np.nan, index=f.index)).replace(0, np.nan))

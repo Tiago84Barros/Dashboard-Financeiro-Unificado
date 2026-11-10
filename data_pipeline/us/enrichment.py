@@ -16,6 +16,7 @@ from core.us_instrumento import (
     ticker_principal_da_emissora,
 )
 from core.us_methodology import US_FUNDAMENTAL_SCORE_VERSION
+from data_pipeline.us.repository import colunas_da_tabela, equity_identity_expr
 
 # A-140: a regra de quem e ativo analisavel mora em core/us_instrumento.py --
 # a leitura da vitrine precisa da MESMA regra, e duplica-la aqui garantiria que
@@ -254,6 +255,7 @@ def derive_market_cap_history(engine) -> dict:
 def promote_lineage_and_quality(engine) -> dict:
     """Preenche versão do parser e promove apenas observações que passam checks."""
     with engine.begin() as conn:
+        eq = equity_identity_expr(colunas_da_tabela(conn, "balance_sheets"))
         for table in ("income_statements", "balance_sheets", "cash_flow_statements"):
             conn.execute(text(f"""
                 UPDATE market_us.{table}
@@ -271,13 +273,13 @@ def promote_lineage_and_quality(engine) -> dict:
                    AND (revenue IS NOT NULL OR net_income IS NOT NULL) THEN 'validated'
               ELSE 'raw' END
         """))
-        conn.execute(text("""
+        conn.execute(text(f"""
             UPDATE market_us.balance_sheets SET quality_status = CASE
               WHEN reference_date > CURRENT_DATE OR available_at < reference_date THEN 'rejected'
               WHEN total_assets IS NOT NULL AND total_liabilities IS NOT NULL
                    AND total_equity IS NOT NULL
-                   AND ABS(total_assets-(total_liabilities+total_equity)) /
-                       GREATEST(ABS(total_assets), ABS(total_liabilities+total_equity), 1) > 0.02
+                   AND ABS(total_assets-(total_liabilities+{eq})) /
+                       GREATEST(ABS(total_assets), ABS(total_liabilities+{eq}), 1) > 0.02
                    THEN 'flagged'
               WHEN available_at IS NOT NULL AND content_hash IS NOT NULL
                    AND total_assets IS NOT NULL THEN 'validated'

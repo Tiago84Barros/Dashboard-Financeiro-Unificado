@@ -43,7 +43,9 @@ _EXCEL_EPOCH = date(1899, 12, 30)
 # Duração aceita como "anual" (10-K com exercícios de ~12 meses).
 _ANNUAL_MIN_DAYS, _ANNUAL_MAX_DAYS = 350, 380
 _QUARTERLY_MIN_DAYS, _QUARTERLY_MAX_DAYS = 70, 110
-PARSER_VERSION = "companyfacts-parser-v7"
+# v8: PL do controlador (A6), mais aliases de divida e dividendo (A7/A8) e
+# contagem de acoes sem `CommonStockSharesIssued` cru, com a capa `dei` (A2/A4).
+PARSER_VERSION = "companyfacts-parser-v8"
 
 # ── Mapas de conceitos (ordem = prioridade) ───────────────────────────────────
 INCOME_CONCEPTS: dict[str, list[str]] = {
@@ -175,17 +177,52 @@ BALANCE_CONCEPTS: dict[str, list[str]] = {
     "total_assets": ["Assets"],
     "goodwill": ["Goodwill"],
     "intangibles": ["IntangibleAssetsNetExcludingGoodwill", "FiniteLivedIntangibleAssetsNet"],
-    "short_term_debt": ["LongTermDebtCurrent", "ShortTermBorrowings", "DebtCurrent"],
-    "long_term_debt": ["LongTermDebtNoncurrent", "LongTermDebt"],
+    # A7: a ORCL tagueia so `LongTermNotesPayable`/`NotesPayableCurrent`; sem estes
+    # aliases a divida saia nula e a empresa parecia ter caixa liquido. Cada campo
+    # usa o PRIMEIRO alias com dado no periodo (nao soma aliases), entao acrescentar
+    # no fim nao dobra a contagem dentro do campo. `CommercialPaper` fica por ultimo
+    # porque `ShortTermBorrowings` costuma ja inclui-lo.
+    "short_term_debt": ["LongTermDebtCurrent", "ShortTermBorrowings", "DebtCurrent",
+                        "NotesPayableCurrent",
+                        "LongTermDebtAndCapitalLeaseObligationsCurrent",
+                        "CommercialPaper"],
+    "long_term_debt": ["LongTermDebtNoncurrent", "LongTermDebt",
+                       "LongTermNotesPayable",
+                       "LongTermDebtAndCapitalLeaseObligations"],
     "current_liabilities": ["LiabilitiesCurrent"],
     "total_liabilities": ["Liabilities"],
-    "total_equity": ["StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest",
-                     "StockholdersEquity"],
+    # A6: o lucro (`NetIncomeLoss`) e o do CONTROLADOR; o PL tem de ser o mesmo
+    # perimetro, ou ROE e P/VPA ficam errados (KKR: 30,9 B contra 78,9 B com NCI).
+    # O PL com minoritarios so entra na falta do outro (sem NCI os dois coincidem).
+    # Nao ha coluna para guardar o PL com NCI sem migration: ver o PR.
+    "total_equity": ["StockholdersEquity",
+                     "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+    # PL consolidado (com minoritarios), guardado a parte SO para a identidade
+    # ativo = passivo + PL e para o capital investido do ROIC. ROE e P/VPA leem
+    # `total_equity` (controlador). Coluna: migration 087.
+    "total_equity_incl_nci": [
+        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
     "retained_earnings": ["RetainedEarningsAccumulatedDeficit"],
 }
-BALANCE_SHARE_CONCEPTS = {
-    "shares_outstanding": (["CommonStockSharesOutstanding", "CommonStockSharesIssued"], _SHARES),
+# Total combinado de divida (curto + longo). Nao e campo do schema: so vale
+# quando NENHUMA das partes existe, senao somaria em dobro. Auxiliar descartado
+# em `_aplicar_divida_combinada`, no mesmo molde dos auxiliares bancarios.
+BALANCE_AUX_CONCEPTS: dict[str, list[str]] = {
+    "_debt_combined": ["DebtLongtermAndShorttermCombinedAmount"],
 }
+
+# A2/A4: contagem de acoes. Ordem de prioridade (ver `_acoes_em_circulacao`):
+#   1. dei:EntityCommonStockSharesOutstanding (capa do filing; soma as classes);
+#   2. us-gaap:CommonStockSharesOutstanding (data do balanco);
+#   3. CommonStockSharesIssued menos acoes em tesouraria do MESMO periodo.
+# `Issued` cru inclui a tesouraria (JPM: 4,10 bi contra ~2,7 bi em circulacao).
+_SHARES_OUTSTANDING_TAGS = ["CommonStockSharesOutstanding"]
+_SHARES_ISSUED_TAGS = ["CommonStockSharesIssued"]
+_SHARES_TREASURY_TAGS = ["TreasuryStockShares", "TreasuryStockCommonShares"]
+_DEI_SHARES_TAG = "EntityCommonStockSharesOutstanding"
+# Fatos instantaneos do balanco que ancoram "qual e o fim do balanco deste filing".
+_BALANCE_ANCHOR_TAGS = ("Assets", "LiabilitiesAndStockholdersEquity",
+                        "StockholdersEquity", "Liabilities")
 
 CASHFLOW_CONCEPTS: dict[str, list[str]] = {
     "operating_cash_flow": ["NetCashProvidedByUsedInOperatingActivities",
@@ -197,7 +234,11 @@ CASHFLOW_CONCEPTS: dict[str, list[str]] = {
     "stock_repurchase": ["PaymentsForRepurchaseOfCommonStock"],
     "debt_issuance": ["ProceedsFromIssuanceOfLongTermDebt", "ProceedsFromNotesPayable"],
     "debt_repayment": ["RepaymentsOfLongTermDebt", "RepaymentsOfDebt"],
-    "dividends_paid": ["PaymentsOfDividendsCommonStock", "PaymentsOfDividends"],
+    # A8: a BAC tagueia so `DividendsCommonStockCash`. Esse e o dividendo
+    # DECLARADO/baixado do PL (positivo), nao o pagamento do fluxo de caixa:
+    # entra por ultimo, e a negacao de NEGATE_FIELDS vale igual para ele.
+    "dividends_paid": ["PaymentsOfDividendsCommonStock", "PaymentsOfDividends",
+                       "DividendsCommonStockCash", "DividendsCommonStock"],
     "stock_based_compensation": ["ShareBasedCompensation", "AllocatedShareBasedCompensationExpense"],
     "depreciation_and_amortization": [
         "DepreciationDepletionAndAmortization",
@@ -342,6 +383,11 @@ def _mesclar_alias(merged: dict, end, point, *, zero_cede: bool) -> None:
     if atual is None:
         merged[end] = point
         return
+    # Trimestral: a chave e (fy, fp), nao a data. Alias de maior prioridade com
+    # so o comparativo antigo nao pode vencer um alias com o periodo corrente.
+    if point.get("end") and atual.get("end") and str(point["end"]) > str(atual["end"]):
+        merged[end] = point
+        return
     if zero_cede and not atual.get("val") and point.get("val"):
         merged[end] = point
 
@@ -391,9 +437,154 @@ def _collect_quarterly_units(cf: dict, concepts: dict, *, instant: bool = False)
         for tag in tags:
             for key, point in _quarterly_points(
                     _entries(cf, tag, unit), instant=instant).items():
-                merged.setdefault(key, point)
+                _mesclar_alias(merged, key, point, zero_cede=False)
         out[field] = merged
     return out
+
+
+def _anchor_end_por_accn(cf: dict, forms: str) -> dict[str, str]:
+    """{accn: fim do balanco corrente} a partir de fatos instantaneos do filing.
+
+    O fato `dei` de capa tem `end` = data da capa (semanas depois do balanco) e
+    nao pode ser casado com o balanco por data. O que os liga e o `accn` (numero
+    do filing): o `end` mais recente entre os fatos de balanco do mesmo `accn` e o
+    balanco corrente (os demais sao comparativos do exercicio anterior).
+    """
+    out: dict[str, str] = {}
+    for tag in _BALANCE_ANCHOR_TAGS:
+        for e in _entries(cf, tag, _USD):
+            accn, end, filed = e.get("accn"), e.get("end"), e.get("filed")
+            if (not accn or not end or not filed or e.get("start")
+                    or not str(e.get("form") or "").startswith(forms)
+                    or not _valid_filing_timing(end, filed)):
+                continue
+            if accn not in out or str(end) > out[accn]:
+                out[accn] = str(end)
+    return out
+
+
+def _dei_shares_points(cf: dict, *, quarterly: bool) -> dict:
+    """Capa do filing (`dei`), classes somadas, na chave do periodo do balanco.
+
+    A capa informa as acoes em circulacao numa data POSTERIOR ao balanco (do
+    10-K, tipicamente 1-2 meses). Documentado e aceito: o fato nasce no mesmo
+    filing, entao `filed` (e o PIT) coincide com o do balanco, e para valor de
+    mercado a contagem recente e a mais proxima do preco usado.
+
+    Empresas com varias classes publicam uma entrada por classe, com o mesmo
+    `accn` e `end` (o companyfacts nao traz a dimensao): somam-se. Limite: classes
+    que valem fracoes distintas da mesma acao (BRK: A = 1.500 B) somam unidades
+    nao comparaveis; nao ha como detectar isso sem a dimensao, e fica como lacuna
+    declarada, sem caso especial por ticker.
+    """
+    forms = "10-Q" if quarterly else "10-K"
+    anchor = _anchor_end_por_accn(cf, forms)
+    grupos: dict[tuple, dict] = {}
+    for e in _entries(cf, _DEI_SHARES_TAG, _SHARES):
+        accn, end, filed = e.get("accn"), e.get("end"), e.get("filed")
+        if (not accn or accn not in anchor or not end or not filed
+                or not str(e.get("form") or "").startswith(forms)):
+            continue
+        val = to_float(e.get("val"))
+        if val is None:
+            continue
+        g = grupos.setdefault((accn, str(end)), {"val": 0.0, "filed": filed, "e": e})
+        g["val"] += val
+    # por filing, so o grupo de `end` mais recente da capa
+    por_accn: dict[str, tuple] = {}
+    for (accn, end), g in grupos.items():
+        if accn not in por_accn or end > por_accn[accn][0]:
+            por_accn[accn] = (end, g)
+    out: dict = {}
+    for accn, (_cover_end, g) in por_accn.items():
+        period_end, filed = anchor[accn], g["filed"]
+        if not _valid_filing_timing(period_end, filed) or g["val"] <= 0:
+            continue
+        if quarterly:
+            fp = str(g["e"].get("fp") or "").upper()
+            if fp not in {"Q1", "Q2", "Q3", "Q4"}:
+                continue
+            fy = _sane_fiscal_year(g["e"].get("fy"), period_end)
+            if not fy:
+                continue
+            key = (fy, int(fp[1]))
+        else:
+            key = period_end
+        point = {"val": g["val"], "filed": filed}
+        if quarterly:
+            point["end"] = period_end
+        cur = out.get(key)
+        # mesma regra de `_quarterly_points`: balanco mais recente; entre
+        # revisoes do mesmo periodo, o filing mais antigo (PIT)
+        if cur is None:
+            out[key] = point
+        elif quarterly and period_end > cur["end"]:
+            out[key] = point
+        elif (not quarterly or period_end == cur["end"]) and str(filed) < str(cur["filed"]):
+            out[key] = point
+    return out
+
+
+def _points(cf: dict, tags: list[str], *, quarterly: bool) -> dict:
+    merged: dict = {}
+    for tag in tags:
+        entries = _entries(cf, tag, _SHARES)
+        pts = (_quarterly_points(entries, instant=True) if quarterly
+               else _annual_points(entries))
+        for key, point in pts.items():
+            merged.setdefault(key, point)
+    return merged
+
+
+def _issued_menos_tesouraria(cf: dict, *, quarterly: bool) -> dict:
+    """Issued - Treasury do mesmo periodo; sem tesouraria (ou <= 0) nao ha valor."""
+    issued = _points(cf, _SHARES_ISSUED_TAGS, quarterly=quarterly)
+    treasury = _points(cf, _SHARES_TREASURY_TAGS, quarterly=quarterly)
+    out: dict = {}
+    for key, pt in issued.items():
+        tr = treasury.get(key)
+        if tr is None:
+            continue
+        # a chave trimestral e (fy, fp), nao a data: um 10-Q traz comparativos.
+        # Emitidas e tesouraria so se subtraem na MESMA data de balanco.
+        if quarterly and pt.get("end") != tr.get("end"):
+            continue
+        iss, trs = to_float(pt["val"]), to_float(tr["val"])
+        if iss is None or trs is None or iss - trs <= 0:
+            continue
+        point = {"val": iss - trs, "filed": max(str(pt["filed"]), str(tr["filed"]))}
+        if quarterly:
+            point["end"] = pt["end"]
+        out[key] = point
+    return out
+
+
+def _acoes_em_circulacao(cf: dict, *, quarterly: bool) -> dict:
+    """{periodo: {val, filed}} de `shares_outstanding`, na ordem de prioridade."""
+    merged: dict = {}
+    for fonte in (
+        lambda: _dei_shares_points(cf, quarterly=quarterly),
+        lambda: _points(cf, _SHARES_OUTSTANDING_TAGS, quarterly=quarterly),
+        lambda: _issued_menos_tesouraria(cf, quarterly=quarterly),
+    ):
+        for key, point in fonte().items():
+            merged.setdefault(key, point)
+    return merged
+
+
+def _resolver_divida_combinada(collected: dict) -> None:
+    """Resolve o total combinado ANTES de montar as linhas.
+
+    So vale onde nao ha curto nem longo no periodo; vira `long_term_debt` com a
+    propria procedencia (`filed`). Resolver aqui, e nao depois da linha pronta,
+    evita que um combinado descartado entre no `available_at` e no `filed_at`.
+    """
+    combinado = collected.pop("_debt_combined", {})
+    curto = collected.get("short_term_debt", {})
+    longo = collected.setdefault("long_term_debt", {})
+    for chave, ponto in combinado.items():
+        if chave not in curto and chave not in longo:
+            longo[chave] = ponto
 
 
 def _exercicio_publicavel(ano: int, symbol: str | None, referencia: Any) -> bool:
@@ -529,7 +720,10 @@ def derivar_balance(r: dict) -> None:
     r["total_debt"] = None if std is None and ltd is None else (std or 0) + (ltd or 0)
     cash = r.get("cash_and_equivalents")
     r["net_debt"] = None if r["total_debt"] is None or cash is None         else r["total_debt"] - cash
-    eq = r.get("total_equity")
+    # capital investido e do perimetro consolidado (o EBIT inclui minoritarios)
+    eq = r.get("total_equity_incl_nci")
+    if eq is None:
+        eq = r.get("total_equity")
     r["invested_capital"] = None if eq is None or r["total_debt"] is None         else eq + r["total_debt"] - (cash or 0.0)
 
 
@@ -560,7 +754,9 @@ def build_income_rows(cf: dict, symbol: str | None = None) -> list[dict]:
 
 def build_balance_rows(cf: dict, symbol: str | None = None) -> list[dict]:
     collected = _collect(cf, BALANCE_CONCEPTS, _USD)
-    collected.update(_collect_units(cf, BALANCE_SHARE_CONCEPTS))
+    collected.update(_collect(cf, BALANCE_AUX_CONCEPTS, _USD))
+    collected["shares_outstanding"] = _acoes_em_circulacao(cf, quarterly=False)
+    _resolver_divida_combinada(collected)
     rows = _build_rows(collected, symbol)
     for r in rows:
         derivar_balance(r)
@@ -590,8 +786,9 @@ def build_income_quarterly_rows(cf: dict, symbol: str | None = None) -> list[dic
 
 def build_balance_quarterly_rows(cf: dict, symbol: str | None = None) -> list[dict]:
     collected = _collect_quarterly(cf, BALANCE_CONCEPTS, _USD, instant=True)
-    collected.update(_collect_quarterly_units(
-        cf, BALANCE_SHARE_CONCEPTS, instant=True))
+    collected.update(_collect_quarterly(cf, BALANCE_AUX_CONCEPTS, _USD, instant=True))
+    collected["shares_outstanding"] = _acoes_em_circulacao(cf, quarterly=True)
+    _resolver_divida_combinada(collected)
     rows = _build_quarterly_rows(collected, symbol)
     for r in rows:
         std, ltd = r.get("short_term_debt"), r.get("long_term_debt")
@@ -599,7 +796,9 @@ def build_balance_quarterly_rows(cf: dict, symbol: str | None = None) -> list[di
         cash = r.get("cash_and_equivalents")
         r["net_debt"] = None if r["total_debt"] is None or cash is None \
             else r["total_debt"] - cash
-        eq = r.get("total_equity")
+        eq = r.get("total_equity_incl_nci")
+        if eq is None:
+            eq = r.get("total_equity")
         r["invested_capital"] = None if eq is None or r["total_debt"] is None \
             else eq + r["total_debt"] - (cash or 0.0)
     return rows

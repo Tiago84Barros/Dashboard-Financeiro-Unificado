@@ -110,4 +110,4 @@ def test_as_tags_pre_606_ficam_no_fim_da_prioridade():
 def test_a_versao_do_parser_subiu_junto_com_a_lista():
     """Dado gravado nao muda quando o parser muda; a versao e o que permite
     saber qual leitura produziu cada linha e o que precisa ser relido."""
-    assert ef.PARSER_VERSION == "companyfacts-parser-v7"
+    assert ef.PARSER_VERSION == "companyfacts-parser-v8"
