@@ -160,8 +160,9 @@ de carteira chamam.
 
 **Aprovada não quer dizer que bate o IFIX.** No run 105 o excesso sobre o
 IFIX oficial era de −0,116 p.p./mês, com IC 95% de [−0,32; +0,10], que
-contém o zero. A validação aprovada de 08/11/2026 (run local 147, publicado
-no Supabase como id 107, `as_of` 31/10/2026, 112 períodos) mede pior:
+contém o zero. A validação aprovada de 08/11/2026 (run local 148, parser
+`1.8.1`, publicado no Supabase como id 108, `as_of` 31/10/2026, 112
+períodos; o run 147, com o `1.8.0`, deu os mesmos números) mede pior:
 
 - retorno médio mensal de 0,372%, contra 0,634% do IFIX oficial;
 - excesso de −0,262 p.p./mês (−0,223 depois de custos), com IC 95% de
