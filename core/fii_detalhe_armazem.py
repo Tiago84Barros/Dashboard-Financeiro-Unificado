@@ -352,7 +352,19 @@ def resumo_precos(precos: list[dict]) -> dict | None:
     for p in ano:
         pico = max(pico, p)
         dd = min(dd, p / pico - 1)
+    # Faixa de 12 meses na mesma base da cotacao exibida: close bruto, so quando
+    # TODO ponto do ano o tem (misturar bases fabrica rompimento).
+    brutos = {}
+    for r in precos:
+        d_, v_ = _data(r.get("date")), _num(r.get("preco_bruto"))
+        if d_ is not None and v_ is not None and v_ > 0:
+            brutos[d_] = v_
+    dias_ano = [d for d, _ in serie if d > ultimo_dia - timedelta(days=365)]
+    faixa_bruta = ([brutos[d] for d in dias_ano] if dias_ano and all(d in brutos for d in dias_ano)
+                   else None)
     return {"ultimo_dia": ultimo_dia, "ultimo": ultimo, "ultimo_bruto": bruto,
+            "min52_bruto": min(faixa_bruta) if faixa_bruta else None,
+            "max52_bruto": max(faixa_bruta) if faixa_bruta else None,
             "pontos": len(ano),
             "r3m": _variacao(ultimo, em(91)), "r12m": _variacao(ultimo, em(365)),
             "max52": max(ano), "min52": min(ano), "dd12m": dd}
@@ -517,14 +529,18 @@ def resumo_para_prompt(detalhe: dict[str, dict], *, origem: str,
             linhas.append("    Preço: o armazém não tem série recente deste fundo.")
         else:
             idade = (hoje - p["ultimo_dia"]).days
+            faixa = (f"faixa 12m {p['min52_bruto']:,.2f}–{p['max52_bruto']:,.2f}; "
+                     if p["min52_bruto"] is not None else
+                     f"faixa 12m (série ajustada por proventos, não comparável à cotação) "
+                     f"{p['min52']:,.2f}–{p['max52']:,.2f}; ")
             vpa = s["vpa"] if s else None
             pvp = (f"; P/VP {p['ultimo_bruto'] / vpa:.2f}"
                    if vpa and p["ultimo_bruto"] else "")
             linhas.append(
                 f"    Preço (cotação de {p['ultimo_dia']:%d/%m/%Y}"
                 + (f", {idade} dias atrás — série do armazém parada" if idade > 20 else "")
-                + f"): R$ {(p['ultimo_bruto'] or p['ultimo']):,.2f}{pvp}; retorno 3m {_pct(p['r3m'])}, "
-                f"12m {_pct(p['r12m'])}; faixa 12m {p['min52']:,.2f}–{p['max52']:,.2f}; "
+                + f"): R$ {(p['ultimo_bruto'] or p['ultimo']):,.2f}{pvp}; retorno total (ajustado) 3m {_pct(p['r3m'])}, "
+                f"12m {_pct(p['r12m'])}; {faixa}"
                 f"queda máx. 12m {_pct(p['dd12m'])} ({p['pontos']} cotações no ano).")
         linhas.append(_linha_liquidez(d, hoje))
         pv = resumo_proventos(d.get("proventos") or [], hoje)

@@ -247,6 +247,7 @@ def _methodology_inputs_to_vitrine(inputs: pd.DataFrame) -> pd.DataFrame:
         "vpa": "VPA", "num_cotistas": "Cotistas", "tipo_gestao": "Gestao",
         "pct_imoveis": "Pct_Imoveis", "pct_papel": "Pct_Papel",
         "pct_caixa": "Pct_Caixa", "pct_fundos": "Pct_Fundos",
+        "liquidez_origem": "Liquidez_Origem", "price_date": "Price_Date",
     }
     classificacoes = inputs.apply(
         lambda row: categoria_fii(
@@ -1789,7 +1790,8 @@ _TIPOS_TIJOLO = {"tijolo", "hibrido"}
 
 
 _KPIS_DA_VITRINE = ("Preço", "P/VP", "DY_12m", "VPA", "Patrimonio", "Cotistas",
-                    "Liquidez_Diaria", "updated_at", "cvm_ref_date")
+                    "Liquidez_Diaria", "updated_at", "cvm_ref_date", "Liquidez_Origem",
+                    "Price_Date")
 
 
 def _kpis_da_vitrine(d: pd.Series, vitrine: pd.DataFrame, ticker: str) -> pd.Series:
@@ -1862,15 +1864,17 @@ def _tab_busca(df: pd.DataFrame) -> None:
 
     # Data-base de cada KPI: cotação (dia da leitura de mercado) e competência
     # do Informe Mensal da CVM (VPA e patrimônio).
-    dia_preco = _data_base(d.get("updated_at"))
+    dia_preco = _data_base(d.get("Price_Date")) or _data_base(d.get("updated_at"))
     sub_preco = f"cotação de {dia_preco}" if dia_preco else None
     comp = _data_base(d.get("cvm_ref_date"), "%m/%Y")
     sub_cvm = f"CVM {comp}" if comp else None
-    detalhe_tecnico(
-        "Liquidez/dia é a mediana de 6 meses fechados do giro diário na B3; "
-        "Fundamentus, Status Invest e Investidor10 usam média de 30 dias ou de "
-        "3 meses, então os números não coincidem.",
-        codigo="fii.liquidez_mediana_6m", entidade=tk)
+    fita_b3 = str(d.get("Liquidez_Origem") or "") == "fita_b3"
+    if fita_b3:
+        detalhe_tecnico(
+            "Liquidez/dia é a mediana de 6 meses fechados do giro diário na B3; "
+            "Fundamentus, Status Invest e Investidor10 usam média de 30 dias ou de "
+            "3 meses, então os números não coincidem.",
+            codigo="fii.liquidez_mediana_6m", entidade=tk)
     r1 = st.columns(4)
     r1[0].markdown(_kpi_html("Preço", _fmt_money(d.get("Preço")), sub=sub_preco,
                              sub_color="#4A5568"), unsafe_allow_html=True)
@@ -1891,7 +1895,8 @@ def _tab_busca(df: pd.DataFrame) -> None:
     r2[2].markdown(_kpi_html("Vacância", vac_val, sub=vac_sub, sub_color="#4A5568",
                              accent="#F6C90E"), unsafe_allow_html=True)
     r2[3].markdown(_kpi_html("Liquidez/dia", _fmt_money(d.get("Liquidez_Diaria"), 0),
-                             sub="mediana de 6 meses", sub_color="#4A5568"),
+                             sub="mediana de 6 meses" if fita_b3 else None,
+                             sub_color="#4A5568"),
                    unsafe_allow_html=True)
 
     st.divider()

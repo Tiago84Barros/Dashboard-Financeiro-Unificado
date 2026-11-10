@@ -130,3 +130,27 @@ def test_busca_sem_linha_na_vitrine_mantem_o_que_tinha():
     d = pd.Series({"Ticker": "FUNDO11", "Preço": 154.2})
     out = fiis._kpis_da_vitrine(d, pd.DataFrame(), "FUNDO11")
     assert out["Preço"] == 154.2
+
+
+def test_competencias_desalinhadas_nao_geram_cotas_nem_dependem_da_ordem():
+    obs = [_obs("equity", 2e9, "2026-10-01", "2026-11-08", "cvm_informe_mensal"),
+           _obs("nav_per_share", 100.0, "2026-09-01", "2026-11-08", "cvm_informe_mensal")]
+    for ordem in (obs, obs[::-1]):
+        row = _aplicar(_base(cvm_ref_date=pd.Timestamp("2026-08-01"),
+                             vpa=90.0, patrimonio_liquido=1e9), list(ordem))
+        assert row["vpa"] == 100.0 and row["patrimonio_liquido"] == 2e9
+        assert row["metric_metadata"].get("shares_outstanding", {}).get(
+            "source", "") != "derivado: PL / VPA (Informe Mensal CVM)"
+
+
+def test_data_do_preco_acompanha_a_observacao_vencedora():
+    row = _aplicar(_base(), [_obs("price", 110.0, "2026-11-09", "2026-11-09")])
+    assert row["price_date"] == "2026-11-09"
+    assert row["metric_metadata"]["pvp"]["price_date"] == "2026-11-09"
+
+
+def test_faixa_12m_usa_close_bruto_ao_lado_da_cotacao():
+    from core import fii_detalhe_armazem as det
+    r = det.resumo_precos([{"date": "2026-10-01", "preco": 80.0, "preco_bruto": 100.0},
+                           {"date": "2026-11-06", "preco": 90.0, "preco_bruto": 120.0}])
+    assert (r["min52_bruto"], r["max52_bruto"]) == (100.0, 120.0)

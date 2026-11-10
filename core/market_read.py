@@ -1121,7 +1121,8 @@ def _ausente(valor) -> bool:
     return valor is None or (not isinstance(valor, str) and pd.isna(valor))
 
 
-def _observacao_vence_base(row: dict, raw_metric: str, obs: dict) -> bool:
+def _observacao_vence_base(row: dict, raw_metric: str, obs: dict,
+                           competencia: dict | None = None) -> bool:
     """Decide se a observacao PIT pode ocupar o lugar do valor da linha-base."""
     coluna = _CADASTRO_CVM_FII.get(raw_metric, raw_metric)
     if coluna in _CADASTRO_CVM_FII.values():
@@ -1131,7 +1132,9 @@ def _observacao_vence_base(row: dict, raw_metric: str, obs: dict) -> bool:
         # So o Informe Mensal da CVM e oficial; a brapi nao reescreve o PL/VPA.
         if "cvm" not in str(obs.get("source") or "").lower():
             return False
-        competencia_base = _dia(row.get("cvm_ref_date"))
+        # Competencia ORIGINAL de cada coluna: a ordem das observacoes nao
+        # pode decidir a aceitacao (Codex #707).
+        competencia_base = (competencia or {}).get(coluna) or _dia(row.get("cvm_ref_date"))
         competencia_obs = _dia(obs.get("reference_date"))
         if competencia_base is None or competencia_obs is None:
             return False
@@ -1151,6 +1154,10 @@ def _observacao_vence_base(row: dict, raw_metric: str, obs: dict) -> bool:
 
 def _aplicar_observacoes_fii(row: dict, observacoes: list[dict],
                              metric_aliases: dict[str, str]) -> None:
+    base_comp = _dia(row.get("cvm_ref_date"))
+    competencia = {"vpa": base_comp, "patrimonio_liquido": base_comp}
+    base_updated = row.get("updated_at")
+    row["price_date"] = str(base_updated)[:10] if not _ausente(base_updated) else None
     for obs in observacoes:
         # Dono unico da resolucao: sem ele a linha de ausencia
         # chegaria aqui como a marca em `value_json`, isto e, uma
@@ -1177,7 +1184,7 @@ def _aplicar_observacoes_fii(row: dict, observacoes: list[dict],
         }
         coluna = _CADASTRO_CVM_FII.get(raw_metric)
         if metric in _COTACAO_FII or coluna:
-            if _ausente(value) or not _observacao_vence_base(row, raw_metric, obs):
+            if _ausente(value) or not _observacao_vence_base(row, raw_metric, obs, competencia):
                 continue
             if coluna:
                 # `nav_per_share`/`equity` continuam publicados sob o proprio
@@ -1186,16 +1193,22 @@ def _aplicar_observacoes_fii(row: dict, observacoes: list[dict],
                 row["metric_metadata"][raw_metric] = meta
                 row[coluna] = value
                 row["metric_metadata"][coluna] = meta
-                comp = _dia(obs.get("reference_date"))
-                if comp is not None:
-                    row["cvm_ref_date"] = comp
+                competencia[coluna] = _dia(obs.get("reference_date"))
                 continue
+            if metric == "price":
+                row["price_date"] = str(obs.get("knowledge_at"))[:10]
         row[metric] = value
         row["metric_metadata"][metric] = meta
-    _consolidar_cotacao_e_cotas_fii(row)
+    # Competencia da linha = a mais antiga entre VPA e PL (conservador); as cotas
+    # so se derivam quando os dois sao da MESMA competencia.
+    comps = [c for c in competencia.values() if c is not None]
+    if comps:
+        row["cvm_ref_date"] = min(comps)
+    _consolidar_cotacao_e_cotas_fii(row, alinhadas=(
+        competencia["vpa"] is not None and competencia["vpa"] == competencia["patrimonio_liquido"]))
 
 
-def _consolidar_cotacao_e_cotas_fii(row: dict) -> None:
+def _consolidar_cotacao_e_cotas_fii(row: dict, alinhadas: bool = True) -> None:
     """P/VP e cotas coerentes com a linha FINAL (preco, VPA e PL).
 
     P/VP = preco / VPA da mesma linha; sem VPA, o P/VP que ja estava. Cotas =
@@ -1209,7 +1222,7 @@ def _consolidar_cotacao_e_cotas_fii(row: dict) -> None:
         row["pvp"] = efetivo
         row["metric_metadata"]["pvp"] = {
             "reference_date": str(row.get("cvm_ref_date"))[:10],
-            "price_date": str(row.get("updated_at"))[:10],
+            "price_date": row.get("price_date") or str(row.get("updated_at"))[:10],
             "available_at": str(row.get("updated_at")),
             "source": "cvm_vpa+market_price",
         }
@@ -1219,7 +1232,7 @@ def _consolidar_cotacao_e_cotas_fii(row: dict) -> None:
     except (TypeError, ValueError):
         return
     comp = _dia(row.get("cvm_ref_date"))
-    if not (pl > 0 and vpa > 0) or comp is None:
+    if not (pl > 0 and vpa > 0) or comp is None or not alinhadas:
         return
     meta_atual = row["metric_metadata"].get("shares_outstanding") or {}
     ref_atual = _dia(meta_atual.get("reference_date"))
