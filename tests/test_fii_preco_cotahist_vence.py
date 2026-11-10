@@ -244,3 +244,85 @@ def test_runner_aceita_o_comando(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["run_market_ingest.py", "fiis-cotahist", "--dry-run"])
     assert run_market_ingest.main() == 0
     assert chamadas == [True]
+
+
+# -- revisao do Codex no #713 -------------------------------------------------
+
+def test_etapa_nao_regrava_close_ja_promovido(monkeypatch):
+    # Sem a 088 a data-base continua a da brapi; o close ja gravado nao pode
+    # disparar UPDATE de novo (o gatilho renovaria `updated_at` sem dado novo).
+    eng = _preparar(monkeypatch, _COLS_SEM_088)
+    monkeypatch.setattr(fii_ingest, "_linhas_cotacao_fii", lambda conn, com_price_at: [
+        {"ticker": "VELHO11", "price": 80.0, "pvp": 0.8, "dy_12m": 0.15, "vpa": 100.0}])
+    rep = fii_ingest.promover_fechamento_pregao()
+    assert _updates(eng) == []
+    assert rep["mudariam"] == 0 and rep["atualizados"] == 0
+    assert rep["ja_no_fechamento"] == 1
+
+
+def test_update_da_etapa_so_regrava_preco_diferente(monkeypatch):
+    eng = _preparar(monkeypatch, _COLS_SEM_088)
+    fii_ingest.promover_fechamento_pregao()
+    sql, _ = _updates(eng)[0]
+    assert "IS DISTINCT FROM" in sql
+
+
+class _ConnNested(_Conn):
+    def begin_nested(self):
+        return self
+
+
+def test_indicadores_dy_invalidado_pelo_preco_novo_vai_nulo(monkeypatch):
+    monkeypatch.setattr(fii_ingest, "_fechamentos_pregao_fii", lambda conn, tickers: {
+        "FUNDO11": (dt.date(2026, 11, 6), 10.0)})
+    saida = fii_ingest._fita_nos_indicadores(
+        _ConnNested([]), [{"ticker": "FUNDO11", "price": 100.0, "pvp": 1.0,
+                           "dy_12m": 0.6, "vpa": 100.0}],
+        dt.datetime(2026, 10, 29, 16, 14, tzinfo=dt.timezone.utc))
+    assert saida[0]["price"] == 10.0
+    assert "dy_12m" in saida[0] and saida[0]["dy_12m"] is None
+
+
+def test_indicadores_sem_troca_nao_ganham_chave_nula(monkeypatch):
+    monkeypatch.setattr(fii_ingest, "_fechamentos_pregao_fii", lambda conn, tickers: {})
+    u = {"ticker": "FUNDO11", "price": 100.0, "vpa": 100.0}
+    saida = fii_ingest._fita_nos_indicadores(
+        _ConnNested([]), [u], dt.datetime(2026, 11, 7, tzinfo=dt.timezone.utc))
+    assert "dy_12m" not in saida[0] and "pvp" not in saida[0]
+
+
+def test_upsert_por_colunas_nao_anula_coluna_de_outra_linha(monkeypatch):
+    # `_upsert` tira as colunas da primeira linha: lote heterogeneo gravaria
+    # NULL nas colunas que uma linha nao trouxe, ou perderia as que so ela trouxe.
+    chamadas = []
+    monkeypatch.setattr(fii_ingest.repo, "_upsert",
+                        lambda conn, table, rows, **kw: chamadas.append(rows) or len(rows))
+    n = fii_ingest.repo.upsert_por_colunas(None, "fiis", [
+        {"ticker": "A11", "price": 1.0},
+        {"ticker": "B11", "price": 2.0, "dy_12m": None},
+        {"ticker": "C11", "price": 3.0}])
+    assert n == 3
+    assert sorted(sorted(r[0]) for r in chamadas) == [
+        ["dy_12m", "price", "ticker"], ["price", "ticker"]]
+    assert [r["ticker"] for lote in chamadas for r in lote if "dy_12m" in r] == ["B11"]
+    for lote in chamadas:
+        assert len({frozenset(r) for r in lote}) == 1
+
+
+def test_data_base_ignora_backfill_do_historico():
+    # Observacao `indicators/history` carrega a hora da coleta para meses
+    # passados; ela nunca gravou `market.fiis.price` e nao pode datar a cotacao.
+    log = []
+
+    class _C(_Conn):
+        def execute(self, stmt, params=None):
+            log.append(str(stmt))
+
+            class _R:
+                def fetchall(self):
+                    return []
+            return _R()
+
+    fii_ingest._datas_base_cotacao_fii(_C([]), ["FUNDO11"])
+    sql = " ".join(log[0].split())
+    assert "metadata_json->>'endpoint' = 'indicators'" in sql

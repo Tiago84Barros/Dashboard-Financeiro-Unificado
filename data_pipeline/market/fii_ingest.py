@@ -790,7 +790,7 @@ def _persist_fii_v2_payload(conn, endpoint: str, symbols: list[str],
     exposures: list[dict] = []
     if endpoint in {"list", "indicators"}:
         normalized = fii_v2.normalize_indicators(payload, raw_id)
-        counts["fiis_atualizados"] = repo.upsert(
+        counts["fiis_atualizados"] = repo.upsert_por_colunas(
             conn, "fiis", _fita_nos_indicadores(conn, normalized["fii_updates"],
                                                 canonical_collected_at))
         observations.extend(normalized["observations"])
@@ -833,7 +833,8 @@ def _persist_fii_v2_payload(conn, endpoint: str, symbols: list[str],
     elif endpoint == "annual-reports":
         normalized = fii_v2.normalize_annual_reports(payload, raw_id)
         observations.extend(normalized["observations"])
-        counts["fiis_atualizados"] = repo.upsert(conn, "fiis", normalized["fii_updates"])
+        counts["fiis_atualizados"] = repo.upsert_por_colunas(conn, "fiis",
+                                                             normalized["fii_updates"])
     elif endpoint == "financials":
         normalized = fii_v2.normalize_financials(payload, raw_id)
         observations.extend(normalized["observations"])
@@ -1895,9 +1896,14 @@ def _fita_nos_indicadores(conn, updates: list[dict], coletado_em) -> list[dict]:
             saida.append(u)
             continue
         nova = fz.aplicar_fechamento_pregao(u, fita.get(u["ticker"]), base, u.get("vpa"))
+        trocou = nova is not u
         nova = {**nova, "price_at": nova.get("price_at") or base}
         nova.pop("price_source", None)
-        saida.append({k: v for k, v in nova.items() if v is not None})
+        # Quando o close troca o preço, P/VP e DY são refeitos sobre ele, e o
+        # nulo que sai daí é dado: o DY reescalado fora da faixa não vale para
+        # o preço novo e tem de apagar o antigo no banco, não ficar ao lado dele.
+        refeitas = ("pvp", "dy_12m") if trocou else ()
+        saida.append({k: v for k, v in nova.items() if v is not None or k in refeitas})
     return saida
 
 
@@ -1919,6 +1925,11 @@ def _datas_base_cotacao_fii(conn, tickers: list[str]) -> dict[str, object]:
     se faltar) e o ``knowledge_at`` mais novo das observações. `updated_at` não
     serve: qualquer UPDATE o renova, e o `reprocess` de 07/11 regravou a foto de
     29/10 com carimbo novo.
+
+    Só contam as observações do endpoint ``indicators``, o único que grava
+    `market.fiis.price`. O ``indicators/history`` carimba com a hora da coleta
+    meses passados que nunca foram cotação corrente: buscar julho em novembro
+    faria a foto de outubro parecer mais nova que o pregão de ontem.
     """
     if not tickers:
         return {}
@@ -1939,17 +1950,26 @@ def _datas_base_cotacao_fii(conn, tickers: list[str]) -> dict[str, object]:
             JOIN market.brapi_raw_payloads b ON b.id = ult.id) q ON true
         LEFT JOIN LATERAL (
             SELECT MAX(knowledge_at) AS quando FROM market.fii_metric_observations f
-            WHERE f.ticker = t.ticker AND f.metric_name = 'price') o ON true
+            WHERE f.ticker = t.ticker AND f.metric_name = 'price'
+              AND f.metadata_json->>'endpoint' = 'indicators') o ON true
     """), {"tickers": sorted(set(tickers))}).fetchall()
     return {str(t).upper(): quando for t, quando in rows}
+
+
+def _mesmo_preco(gravado, novo) -> bool:
+    """Preço do banco (numeric de 4 casas) igual ao close da fita."""
+    return gravado is not None and novo is not None and abs(gravado - novo) < 5e-5
 
 
 def _gravar_fechamentos(conn, mudancas: list[dict], com_price_at: bool) -> int:
     if not mudancas:
         return 0
     extra = ", price_at = :price_at" if com_price_at else ""
+    # o gatilho renova `updated_at` em todo UPDATE: regravar o mesmo preço
+    # carimbaria fita parada como dado novo
     sql = text("UPDATE market.fiis SET price = :price, pvp = :pvp, dy_12m = :dy_12m"
-               f"{extra} WHERE ticker = :ticker")
+               f"{extra} WHERE ticker = :ticker"
+               " AND price IS DISTINCT FROM CAST(:price AS numeric)")
     chaves = ("ticker", "price", "pvp", "dy_12m") + (("price_at",) if com_price_at else ())
     conn.execute(sql, [{k: m.get(k) for k in chaves} for m in mudancas])
     return len(mudancas)
@@ -1965,8 +1985,8 @@ def promover_fechamento_pregao(dry_run: bool = False) -> dict:
     sem gravar.
     """
     prog: dict = {"status": "failed", "fundos": 0, "com_fita": 0, "mudariam": 0,
-                  "atualizados": 0, "price_at": False, "dry_run": dry_run,
-                  "variacao": {}, "amostra": []}
+                  "ja_no_fechamento": 0, "atualizados": 0, "price_at": False,
+                  "dry_run": dry_run, "variacao": {}, "amostra": []}
     engine = _engine()
     if engine is None:
         return {**prog, "erros": -1}
@@ -1987,6 +2007,12 @@ def promover_fechamento_pregao(dry_run: bool = False) -> dict:
         base = linha.get("price_at") or bases.get(tk)
         nova = fz.aplicar_fechamento_pregao(linha, fita.get(tk), base, linha.get("vpa"))
         if nova is linha:
+            continue
+        if _mesmo_preco(linha.get("price"), nova["price"]):
+            # Sem a 088 a data-base segue a da brapi e o mesmo close volta a
+            # vencer toda noite. Ele já está gravado; regravar só renovaria
+            # `updated_at` (gatilho) e o Frescor do cadastro mentiria.
+            prog["ja_no_fechamento"] += 1
             continue
         mudancas.append(nova)
         antes = linha.get("price")
