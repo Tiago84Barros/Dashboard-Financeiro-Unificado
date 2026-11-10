@@ -35,7 +35,10 @@ PARSER_NAME = "cvm_fii_structured"
 # dos arquivos já carregados, sem o qual o PIT não enxerga o dado novo; a
 # métrica que deixa de ser emitida precisa ser apagada antes, porque o ingest
 # não remove observação antiga do mesmo arquivo.
-PARSER_VERSION = "1.8.1"
+# 1.8.2: o mensal passa a emitir ``shares_outstanding`` (``Quantidade_Cotas_Emitidas``
+# do ``geral``), com a competencia como data de referencia: o numero de cotas
+# da brapi estava parado desde 2025-07..2026-04.
+PARSER_VERSION = "1.8.2"
 PARSER_SCHEMA_VERSION = "cvm-fii-structured-v2"
 ARCHIVES = {
     "monthly": ("INF_MENSAL", "inf_mensal_fii_{year}.zip"),
@@ -464,6 +467,11 @@ def _rental_property_share(asset: dict, classes: dict[str, float]) -> float | No
     return min(rental / total, 1.0)
 
 
+def _positive(value):
+    """Cotas emitidas zero/negativas sao campo nao informado, nao quantidade."""
+    return value if value is not None and value > 0 else None
+
+
 def parse_monthly(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
                   raw_payload_id: int | None = None) -> dict:
     tables = _read_zip(archive)
@@ -484,6 +492,8 @@ def parse_monthly(archive: CvmArchive, ticker_by_cnpj: dict[str, str],
             "nav_per_share": _num(comp.get("Valor_Patrimonial_Cotas")),
             "equity": _num(comp.get("Patrimonio_Liquido")),
             "total_investors": _num(comp.get("Total_Numero_Cotistas")),
+            "shares_outstanding": _positive(_num((context.get("general") or {}).get(
+                "Quantidade_Cotas_Emitidas"))),
             "dy_patrimonial_mes": _ratio(comp.get("Percentual_Dividend_Yield_Mes")),
             "total_assets": total_assets,
             "total_liabilities": liabilities,

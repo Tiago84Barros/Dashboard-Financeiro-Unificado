@@ -95,3 +95,32 @@ def test_parse_informe_monthly():
     # composição muda mês a mês (imóveis 900 -> 800)
     assert jan["pct_imoveis"] == 0.9
     assert fev["pct_imoveis"] == 0.8
+
+
+def _df(rows):
+    import pandas as pd
+    return pd.DataFrame(rows, dtype=str)
+
+
+def test_reapresentacao_na_mesma_competencia_vence_pela_entrega_em_qualquer_ordem():
+    v1 = {"CNPJ_Fundo_Classe": "36.501.128/0001-86", "Data_Referencia": "2026-09-01",
+          "Versao": "1", "Data_Entrega": "2026-10-15", "Valor_Patrimonial_Cotas": "195.67"}
+    v3 = {**v1, "Versao": "3", "Data_Entrega": "2026-11-04", "Valor_Patrimonial_Cotas": "100.30"}
+    for linhas in ([v1, v3], [v3, v1]):
+        got = cf._latest_per_cnpj(_df(linhas))["36501128000186"]
+        assert got["Valor_Patrimonial_Cotas"] == "100.30"
+        got_m = cf._by_cnpj_month(_df(linhas))[("36501128000186", "2026-09-01")]
+        assert got_m["Valor_Patrimonial_Cotas"] == "100.30"
+
+
+def test_desempate_sem_versao_usa_data_de_entrega():
+    a = {"CNPJ_Fundo_Classe": "1", "Data_Referencia": "2026-09-01", "Data_Entrega": "2026-10-15", "x": "velha"}
+    b = {**a, "Data_Entrega": "2026-11-04", "x": "nova"}
+    assert cf._latest_per_cnpj(_df([b, a]))["1"]["x"] == "nova"
+    assert cf._latest_per_cnpj(_df([a, b]))["1"]["x"] == "nova"
+
+
+def test_competencia_mais_nova_vence_versao_maior_da_antiga():
+    old = {"CNPJ_Fundo_Classe": "1", "Data_Referencia": "2026-08-01", "Versao": "9", "x": "ago"}
+    new = {**old, "Data_Referencia": "2026-09-01", "Versao": "1", "x": "set"}
+    assert cf._latest_per_cnpj(_df([new, old]))["1"]["x"] == "set"

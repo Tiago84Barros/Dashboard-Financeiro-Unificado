@@ -63,7 +63,7 @@ class Alvo:
 
     ``passos`` é uma sequência de comandos, cada um sendo o que vai depois do
     interpretador Python. Sequência, e não comando único, porque a atualização
-    de FIIs é uma cadeia de sete etapas que só faz sentido inteira: o snapshot
+    de FIIs é uma cadeia de oito etapas que só faz sentido inteira: o snapshot
     publicado sai da última, mas a primeira é que traz o dado novo. Um passo que
     falha aborta os seguintes e reprova o alvo -- meia cadeia publicada é pior
     do que cadeia nenhuma, porque a vitrine sai internamente incoerente.
@@ -114,12 +114,18 @@ class Alvo:
 # companhia. Foi tentar rodar isto remotamente que quebrou o `market-refresh.yml`
 # em 10 execuções diárias seguidas, sempre no mesmo ponto: `apply_fii_schema`
 # batendo em `relation "market.fii_source_releases" does not exist`.
+# Ordem (10/11/2026): as etapas SEM brapi (CVM, vacancia, entidades, confianca)
+# vem antes de `fiis` e `fiis-series`, que dependem da cota da brapi. Desde
+# 29/10 a cota da brapi estourou (plano Gratuito, 15.000 req/30 dias): `fiis`
+# estourava os 5400 s em todas as rodadas, abortava a cadeia no passo 2 e
+# `fiis-cvm` nao rodava havia 12 dias (998 fundos parados em 2026-09-01).
 _CADEIA_FII = (
     ("-m", "scripts.apply_fii_schema", "--warehouse"),
-    ("run_market_ingest.py", "fiis", "--warehouse", "--json"),
     ("run_market_ingest.py", "fiis-cvm", "--warehouse", "--json"),
+    ("run_market_ingest.py", "fiis-vacancia", "--warehouse", "--json"),
     ("run_market_ingest.py", "fiis-entities", "--warehouse", "--json"),
     ("run_market_ingest.py", "fiis-confidence", "--warehouse", "--json"),
+    ("run_market_ingest.py", "fiis", "--warehouse", "--json"),
     ("run_market_ingest.py", "fiis-series", "--warehouse", "--json"),
     ("run_market_ingest.py", "fiis-monitor", "--warehouse", "--json"),
 )

@@ -23,10 +23,18 @@ from core.fii_methodology import (
     income_recurrence_com_motivo,
     income_recurrence_months,
 )
+from core import fii_vacancia
+from core.fii_vacancia import para_fracao
 from core.observacao_ausente import CHAVE_AUSENCIA, marca_de_ausencia
 from data_pipeline.market.fii_sources import metric_observation
 
 SOURCE = "brapi_fii_v2"
+# Escala do vacancyRate POR IMOVEL na brapi. Medido em 10/11/2026 no armazem: a
+# media ponderada por area dos imoveis bate com o resumo do fundo (rho 0,996) e
+# com os sites (HGLG11 3,3%, VISC11 5,7%), logo e fracao. Fundos cujo gestor
+# preencheu o informe em percentual chegam como 1,00 em quase todo imovel
+# (XPML11): `lista_ambigua` os deixa ausentes em vez de 66% inventados.
+BRAPI_ESCALA_VACANCIA_IMOVEL = "fracao"
 VALID_TYPES = {"tijolo", "papel", "fof", "hibrido"}
 _UF_REGION = {
     "AC": "Norte", "AP": "Norte", "AM": "Norte", "PA": "Norte", "RO": "Norte",
@@ -542,6 +550,7 @@ def normalize_properties(payload: dict, raw_payload_id: int | None = None) -> di
         delinquency_weight = 0.0
         region_values: dict[str, float] = defaultdict(float)
         property_values: dict[str, float] = defaultdict(float)
+        first_property = len(properties)
         for item in fund.get("properties") or []:
             name = str(item.get("name") or item.get("identifier") or "").strip()
             if not name:
@@ -565,11 +574,18 @@ def normalize_properties(payload: dict, raw_payload_id: int | None = None) -> di
                     delinquency_weight += revenue_share
             properties.append({
                 "ticker": ticker, "nome_imovel": name[:300],
-                "area_m2": _num(item.get("area")), "vacancia": _num(item.get("vacancyRate")),
+                "area_m2": _num(item.get("area")),
+                # Escala declarada (contrato "fracao"): ver core/fii_vacancia.py.
+                "vacancia": para_fracao(item.get("vacancyRate"), BRAPI_ESCALA_VACANCIA_IMOVEL),
                 "uf": uf, "regiao": _UF_REGION.get(uf),
                 "segmento_imovel": item.get("propertyClass"),
                 "pct_receita": revenue_share, "fonte": SOURCE,
             })
+        # Lista em que a maior parte da area vem 1,00 e ambigua (fundo vazio ou
+        # informe preenchido em percentual): fica ausente, nao 66% inventado.
+        if fii_vacancia.lista_ambigua(properties[first_property:]):
+            for row in properties[first_property:]:
+                row["vacancia"] = None
         property_total = sum(property_values.values())
         if property_total >= .60:
             property_weights = [value / property_total for value in property_values.values()]

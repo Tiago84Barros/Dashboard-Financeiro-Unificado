@@ -70,21 +70,43 @@ def _read_csv(zf: zipfile.ZipFile, name: str):
         return pd.read_csv(f, sep=";", encoding="latin-1", dtype=str)
 
 
+def _chave_entrega(row: dict) -> tuple:
+    """Desempate de reapresentacao: versao maior, depois Data_Entrega mais nova.
+
+    O informe reapresentado traz a MESMA Data_Referencia com `Versao` maior (e
+    `Data_Entrega` mais nova, quando a tabela a tem). Ordenar so pela data de
+    referencia deixava a vencedora depender da ordem das linhas do CSV.
+    """
+    versao = _num(row.get("Versao"))
+    return (versao if versao is not None else -1.0, _s(row.get("Data_Entrega")))
+
+
 def _latest_per_cnpj(df, cnpj_col="CNPJ_Fundo_Classe", date_col="Data_Referencia"):
-    """Mantém a linha mais recente por CNPJ (maior Data_Referencia)."""
+    """Linha mais recente por CNPJ: maior Data_Referencia; na mesma competencia,
+    a reapresentacao (maior Versao, depois Data_Entrega mais nova)."""
     if df is None or df.empty:
         return {}
-    d = df.sort_values(date_col).drop_duplicates(subset=[cnpj_col], keep="last")
-    return {only_digits(r[cnpj_col]): r.to_dict() for _, r in d.iterrows()}
+    best: dict[str, dict] = {}
+    for rec in df.to_dict("records"):
+        key = only_digits(rec[cnpj_col])
+        cur = best.get(key)
+        if cur is None or (_s(rec.get(date_col)), _chave_entrega(rec)) >= (
+                _s(cur.get(date_col)), _chave_entrega(cur)):
+            best[key] = rec
+    return best
 
 
 def _by_cnpj_month(df, cnpj_col="CNPJ_Fundo_Classe", date_col="Data_Referencia"):
-    """Indexa por (cnpj_digits, Data_Referencia) -> linha (dict). Para a série mensal."""
+    """Indexa por (cnpj_digits, Data_Referencia) -> linha (dict). Para a serie mensal.
+    Na mesma competencia vence a reapresentacao (ver `_chave_entrega`)."""
     if df is None or df.empty:
         return {}
     out: dict[tuple, dict] = {}
-    for _, r in df.iterrows():
-        out[(only_digits(r[cnpj_col]), _s(r.get(date_col)))] = r.to_dict()
+    for rec in df.to_dict("records"):
+        key = (only_digits(rec[cnpj_col]), _s(rec.get(date_col)))
+        cur = out.get(key)
+        if cur is None or _chave_entrega(rec) >= _chave_entrega(cur):
+            out[key] = rec
     return out
 
 
@@ -138,6 +160,8 @@ def parse_informe(zip_bytes: bytes, year: int) -> dict[str, dict]:
             "cnpj": cnpj,
             "nome": _s(g.get("Nome_Fundo_Classe"))[:200],
             "isin": _s(g.get("Codigo_ISIN")) or None,
+            # Cotas emitidas na competencia (`geral`), fonte oficial do numero de cotas.
+            "cotas_emitidas": _num(g.get("Quantidade_Cotas_Emitidas")),
             "segmento": _s(g.get("Segmento_Atuacao")) or None,
             "tipo_gestao": _s(g.get("Tipo_Gestao")) or None,
             "publico_alvo": _s(g.get("Publico_Alvo")) or None,

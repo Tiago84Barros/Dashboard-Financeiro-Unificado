@@ -242,6 +242,36 @@ def _sync_methodology_status(conn, validation: dict[str, Any]) -> None:
     """), validation)
 
 
+# Fundo morto/incorporado: liquidez medida zero E informe mensal da CVM parado ha
+# mais de MAX_ATRASO_CVM_MESES competencias. Mantido na vitrine mostra DY de
+# distribuicoes antigas como se fosse corrente (RBRF11 12,5% e IRDM11 15,8%
+# contra 0% e 2,1% nos sites, em 10/11/2026). So sai quem tem as DUAS provas:
+# liquidez ausente ou CVM ausente nao e prova de encerramento.
+MAX_ATRASO_CVM_MESES = 2
+
+
+def _meses_de_atraso(ref, hoje: dt.date) -> int | None:
+    try:
+        data = pd.Timestamp(ref).date()
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(pd.Timestamp(data)):
+        return None
+    return (hoje.year - data.year) * 12 + (hoje.month - data.month)
+
+
+def separar_encerrados(df: pd.DataFrame, hoje: dt.date | None = None) -> tuple[pd.DataFrame, list[str]]:
+    """Tira da vitrine o fundo com liquidez 0 e CVM com mais de 2 competencias de atraso."""
+    if df.empty or not {"liquidez_diaria", "cvm_ref_date"} <= set(df.columns):
+        return df, []
+    hoje = hoje or dt.datetime.now(dt.timezone.utc).date()
+    liquidez = pd.to_numeric(df["liquidez_diaria"], errors="coerce")
+    atraso = df["cvm_ref_date"].map(lambda v: _meses_de_atraso(v, hoje) if pd.notna(v) else None)
+    morto = (liquidez == 0) & atraso.map(lambda m: m is not None and m > MAX_ATRASO_CVM_MESES)
+    tickers = sorted(df.loc[morto, "ticker"].astype(str).str.upper().tolist())
+    return df.loc[~morto].copy(), tickers
+
+
 def build_rows(df: pd.DataFrame, now: dt.datetime | None = None) -> list[dict[str, Any]]:
     if df.empty:
         raise ValueError("warehouse retornou zero inputs de FII")
@@ -483,6 +513,7 @@ def publish(source_url: str, target_url: str, dry_run: bool = False) -> dict[str
         get_engine.clear()
         get_session_factory.clear()
         load_fii_methodology_inputs.clear()
+    source, encerrados = separar_encerrados(source)
     rows = build_rows(source)
     source_engine = _engine(source_url)
     validation = _latest_validation(source_engine)
@@ -498,6 +529,7 @@ def publish(source_url: str, target_url: str, dry_run: bool = False) -> dict[str
     report: dict[str, Any] = {
         "source_rows": len(source),
         "published_rows": len(rows),
+        "encerrados_fora": encerrados,
         "schema_version": SCHEMA_VERSION,
         "dry_run": dry_run,
         "payload_json_bytes": sum(
