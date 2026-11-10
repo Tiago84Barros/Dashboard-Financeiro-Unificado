@@ -122,20 +122,33 @@ def para_percentual(metric: str, value):
     return value * 100 if metric in _FRACAO_PARA_PCT else value
 
 
-def aggregate_valuations(positions, fundamentals, metrics=None):
-    """Σ(valor BRL × indicador)/Σ(valor BRL válido), por indicador.
+# Campo da posição que serve de peso → como a tela o nomeia. O custo é o
+# ``total_investido`` da carteira, já em BRL também no exterior (câmbio da
+# compra); posição sem custo conhecido (zero) fica fora da média pelo custo e
+# rebaixa a cobertura dela, em vez de entrar com peso inventado.
+PESOS = {'valor_mercado': 'valor de mercado', 'total_investido': 'custo'}
 
+
+def aggregate_valuations(positions, fundamentals, metrics=None, *,
+                         peso: str = 'valor_mercado'):
+    """Σ(peso BRL × indicador)/Σ(peso BRL válido), por indicador.
+
+    ``peso`` escolhe o campo da posição que pondera a média: o valor de
+    mercado (padrão) ou o custo de aquisição (``total_investido``). Os dois
+    caminhos são a mesma conta; só muda o peso de cada ativo.
     DY entra em pontos percentuais (8 = 8%); múltiplos em vezes.
     Não imputa ausências. Cada indicador tem seu critério de validade em
     ``SPECS``: múltiplo precisa ser positivo, margem pode ser negativa.
     Lotes do mesmo ticker acumulam exposição, mas contam como um ativo.
-    Cobertura é medida sobre o valor de mercado positivo das posições
-    recebidas — quem passa a carteira inteira mede sobre a carteira; quem
-    passa uma classe mede sobre aquela classe.
+    Cobertura é medida sobre o peso positivo das posições recebidas — quem
+    passa a carteira inteira mede sobre a carteira; quem passa uma classe
+    mede sobre aquela classe.
     """
+    if peso not in PESOS:
+        raise ValueError(f'peso desconhecido: {peso!r}; use um de {sorted(PESOS)}')
     weights = {}
     for pos in positions or ():
-        weight = _number(pos.get('valor_mercado'))
+        weight = _number(pos.get(peso))
         if weight is not None and weight > 0:
             ticker = str(pos.get('ticker') or '').strip().upper()
             weights[ticker] = weights.get(ticker, 0.) + weight

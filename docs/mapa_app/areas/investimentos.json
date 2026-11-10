@@ -476,7 +476,7 @@
             {
               "nome": "Médias de Ações na carteira",
               "resumo": "Médias dos indicadores das suas ações",
-              "explicacao": "Cartões com a média de indicadores como dividendos e preço sobre lucro das suas ações, ponderada pelo valor de cada uma.",
+              "explicacao": "Duas grades de cartões com a média de indicadores como dividendos e preço sobre lucro das suas ações: a primeira pondera cada ação pelo valor de mercado de hoje; a segunda, pelo custo de aquisição (o total investido nela). Os indicadores são os mesmos, só o peso muda: a ação que subiu pesa mais na primeira, a que caiu pesa mais na segunda.",
               "so_admin": false,
               "fonte": "views/investimentos.py:3528 (design/portfolio_valuations.py:140)",
               "filhos": []
@@ -517,7 +517,7 @@
             {
               "nome": "Médias de FIIs na carteira",
               "resumo": "Médias dos indicadores dos seus fundos",
-              "explicacao": "Cartões com a média dos indicadores dos seus FIIs, ponderada pelo valor de cada um. DY, P/VP e vacância física vêm do Fundamentus; a vacância financeira vem da vitrine da Seleção de FIIs (relatórios gerenciais), e um detalhe técnico mostra de quando é a referência de cada fundo.",
+              "explicacao": "Duas grades de cartões com a média dos indicadores dos seus FIIs: uma ponderada pelo valor de mercado de hoje e outra pelo custo de aquisição. DY, P/VP e vacância física vêm do Fundamentus; a vacância financeira vem da vitrine da Seleção de FIIs (relatórios gerenciais), e um detalhe técnico mostra de quando é a referência de cada fundo.",
               "so_admin": false,
               "fonte": "views/investimentos.py:3528 (design/portfolio_valuations.py:140)",
               "filhos": []
@@ -648,7 +648,7 @@
             {
               "nome": "Médias de Exterior na carteira",
               "resumo": "Médias dos indicadores dos ativos de fora",
-              "explicacao": "Cartões com a média dos indicadores disponíveis para os ativos no exterior.",
+              "explicacao": "Duas grades de cartões com a média dos indicadores disponíveis para os ativos no exterior: uma ponderada pelo valor de mercado de hoje e outra pelo custo de aquisição em reais.",
               "so_admin": false,
               "fonte": "views/investimentos.py:3528 (design/portfolio_valuations.py:140)",
               "filhos": []

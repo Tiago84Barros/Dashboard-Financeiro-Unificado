@@ -125,6 +125,72 @@ def test_media_ignora_infinito_sem_contaminar_cobertura():
     assert resultado["pl"]["coverage"] == pytest.approx(0.5)
 
 
+# ── Média pelo custo de aquisição ─────────────────────────────────────────
+
+def test_media_pelo_custo_pondera_pelo_total_investido():
+    """AAA subiu e BBB caiu: pelo mercado AAA domina, pelo custo pesam igual."""
+    posicoes = [_pos("AAA", 900.0, 500.0), _pos("BBB", 100.0, 500.0)]
+    fund = {"AAA": {"pvp": 1.0}, "BBB": {"pvp": 11.0}}
+    mercado = aggregate_valuations(posicoes, fund, ("pvp",))
+    custo = aggregate_valuations(posicoes, fund, ("pvp",), peso="total_investido")
+    assert mercado["pvp"]["value"] == pytest.approx(2.0)
+    assert custo["pvp"]["value"] == pytest.approx(6.0)
+
+
+def test_custo_igual_ao_mercado_da_a_mesma_media():
+    """Equivalência dos caminhos: só o peso muda, a conta é a mesma."""
+    posicoes = [_pos("AAA", 700.0), _pos("BBB", 300.0), _pos("CCC", 50.0)]
+    fund = {"AAA": {"pl": 10.0, "roe": -4.0}, "BBB": {"pl": -3.0, "roe": 20.0},
+            "CCC": {}}
+    metricas = ("pl", "roe")
+    assert (aggregate_valuations(posicoes, fund, metricas)
+            == aggregate_valuations(posicoes, fund, metricas, peso="total_investido"))
+
+
+def test_posicao_sem_custo_fica_fora_da_media_pelo_custo():
+    """Custo zero é custo desconhecido, não peso zero 'apurado': rebaixa a cobertura."""
+    posicoes = [_pos("AAA", 500.0, 400.0), _pos("BBB", 500.0, 0.0)]
+    fund = {"AAA": {"pl": 10.0}, "BBB": {"pl": 30.0}}
+    custo = aggregate_valuations(posicoes, fund, ("pl",), peso="total_investido")
+    assert custo["pl"]["value"] == pytest.approx(10.0)
+    assert custo["pl"]["assets"] == 1
+    assert custo["pl"]["coverage"] == pytest.approx(1.0)  # sobre o custo conhecido
+
+
+def test_lotes_somam_custo_como_somam_mercado():
+    posicoes = [_pos("AAA", 100.0, 300.0), _pos("AAA", 100.0, 300.0),
+                _pos("BBB", 400.0, 400.0)]
+    fund = {"AAA": {"pl": 10.0}, "BBB": {"pl": 20.0}}
+    custo = aggregate_valuations(posicoes, fund, ("pl",), peso="total_investido")
+    assert custo["pl"]["value"] == pytest.approx((600 * 10 + 400 * 20) / 1000)
+    assert custo["pl"]["assets"] == 2
+
+
+def test_peso_desconhecido_e_erro_e_nao_media_silenciosa():
+    with pytest.raises(ValueError):
+        aggregate_valuations([_pos("AAA", 100.0)], {}, ("pl",), peso="quantidade")
+
+
+def test_contexto_leva_as_duas_medias():
+    """O chat recebe os mesmos números das duas grades da tela."""
+    posicoes = [_pos("AAA", 900.0, 500.0), _pos("BBB", 100.0, 500.0)]
+    fund = {"AAA": {"pvp": 1.0}, "BBB": {"pvp": 11.0}}
+    texto = build_carteira_classe_context(
+        "acoes", posicoes,
+        valuations=aggregate_valuations(posicoes, fund, ("pvp",)),
+        valuations_custo=aggregate_valuations(posicoes, fund, ("pvp",),
+                                              peso="total_investido"))
+    assert "ponderadas pelo valor de mercado" in texto
+    assert "ponderadas pelo custo de aquisição" in texto
+    assert "P/VP: 2.00x" in texto and "P/VP: 6.00x" in texto
+    assert "do custo de aquisição da classe" in texto
+
+
+def test_contexto_sem_media_pelo_custo_nao_inventa_bloco():
+    texto = _contexto_acoes()
+    assert "custo de aquisição" not in texto
+
+
 # ── Tesouro Direto ────────────────────────────────────────────────────────
 
 def test_tesouro_agrega_prazo_indexador_e_retorno():
