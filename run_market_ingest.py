@@ -446,7 +446,14 @@ def main() -> int:
         prog = ingest.reprocess_metrics(tickers, args.limit)
 
     if prog.get("erros") == -1:
-        log.error("Falha: schema market.* ausente ou banco não conectado.")
+        if prog.get("bloqueio_brapi"):
+            log.error("Falha: a brapi recusou o lote (429 seguidos, cota esgotada?); "
+                      "%d ticker(s) gravados, %d não tentados.",
+                      prog.get("tickers", 0), prog.get("nao_tentados", 0))
+        else:
+            log.error("Falha: schema market.* ausente ou banco não conectado.")
+        if args.json:
+            print(json.dumps(prog, indent=2, default=str))
         return 1
 
     log.info("Progresso — empresas=%d preços=%d demonstrações=%d dividendos=%d "

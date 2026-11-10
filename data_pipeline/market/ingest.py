@@ -358,8 +358,17 @@ def _run(engine, tickers: list[str], *, range_: str, full: bool,
             if brapi.is_rate_limited(exc):
                 blocks += 1
                 if blocks >= max_blocks:
-                    logger.warning("%s: disjuntor (429) após %d bloqueios — encerrando run.",
-                                   batch_label, blocks)
+                    # Cota esgotada não é aviso: de 30/10 a 07/11/2026 todo
+                    # `quote` voltou 429, o lote parava no 3º ticker com
+                    # tickers=0 e o comando saía 0 -- a rotina carimbava a
+                    # cadeia em dia com o preço parado. Mesma regra do gêmeo
+                    # de FIIs (D2): o coletado fica, o comando sai com erro.
+                    prog["bloqueio_brapi"] = True
+                    prog["nao_tentados"] = len(tickers) - i - 1
+                    logger.error("%s: disjuntor (429) após %d bloqueios — encerrando run "
+                                 "com %d ticker(s) gravados e %d não tentados.",
+                                 batch_label, blocks, prog["tickers"],
+                                 prog["nao_tentados"])
                     break
             else:
                 logger.warning("%s: %s falhou: %s", batch_label, tk, exc)
@@ -375,6 +384,8 @@ def _run(engine, tickers: list[str], *, range_: str, full: bool,
             prog["ecos_dividendos"] = eco["linhas_eco"]
     except Exception as exc:
         logger.warning("%s: checagem de ecos de dividendos falhou: %s", batch_label, exc)
+    if prog.get("bloqueio_brapi"):
+        prog["erros"] = -1  # exit 1 no runner; o que já foi coletado foi gravado acima
     logger.info("market/%s: %s", batch_label, prog)
     return prog
 
