@@ -86,6 +86,9 @@ Desde 28/10/2026 o prejuízo entra de qualquer tamanho (a CSAN3 de 2025 ficava
 fora por ser maior que o preço) e o LPA é rebaseado pelo desdobramento ou
 grupamento que a B3 marcou na fita depois da DFP (``desdobramentos``): a
 brapi dá o LPA na base de ações do exercício e nunca o retroajusta.
+Desde 10/11/2026 a unit entra com o LPA do título, k × o LPA por ação (k =
+ações por unit, ``acoes_por_titulo_do_ticker``, a mesma regra dos múltiplos
+anuais); unit sem k fica fora, em vez de entrar com P/L k vezes maior.
 
 Recusa publicar (saída 1) se a fita da B3 estiver parada há mais de
 ``FITA_MAXIMA_DIAS``, se o mês mais recente da fita ficar fora da série do
@@ -179,8 +182,10 @@ METODO = {
                    "qualquer tamanho inclusos. Desdobramento ou grupamento "
                    "marcado pela B3 (EB/EG) depois de março do ano seguinte "
                    "ao exercício divide o LPA pelo fator, porque ele vem na "
-                   "base de ações da DFP. "
-                   f"Fora da conta: sem LPA do exercício, P/L acima de "
+                   "base de ações da DFP. Na unit, o LPA é o do título "
+                   "(k ações por unit × LPA por ação). "
+                   f"Fora da conta: sem LPA do exercício, unit sem o número "
+                   f"de ações por unit, P/L acima de "
                    f"{MERCADO_PL_MAXIMO:.0f} ou abaixo de "
                    f"{MERCADO_PL_MINIMO:.0f} "
                    "(LPA em escala errada). Mês com menos de "
@@ -481,6 +486,16 @@ def coletar_alavancagem(conn, hoje) -> tuple[dict, dict]:
 
 # -- B3 -----------------------------------------------------------------------------
 
+def acoes_por_titulo_do_ticker(tk: str, mapa: dict, units=()) -> int | None:
+    """k de um ticker para os múltiplos anuais e o P/L mediano: o do mapa
+    (``linhas_de_valor_de_mercado``); fora dele, 1, salvo unit (listada em
+    ``units`` ou com sufixo 11, unit de companhia sem quote), que fica None
+    porque o LPA da base é por ação e o preço é o da unit."""
+    if tk in mapa:
+        return mapa[tk]
+    return None if (tk in set(units) or tk.endswith("11")) else 1
+
+
 def historico_b3(fechamentos, demos, proventos, *, acoes_por_titulo=None,
                  units=()) -> tuple[dict, dict]:
     """Séries anuais por ticker. Puro sobre DataFrames.
@@ -512,8 +527,7 @@ def historico_b3(fechamentos, demos, proventos, *, acoes_por_titulo=None,
 
     for tk, g in df.sort_values("ano").groupby("ticker"):
         g = g.copy()
-        # Sufixo 11 com demonstração é unit de companhia: sem quote, sem k.
-        k = mapa.get(tk, None if (tk in units or tk.endswith("11")) else 1)
+        k = acoes_por_titulo_do_ticker(tk, mapa, units)
         if k is None:
             exclusoes["unit_sem_acoes_por_titulo"] += 1
             g["lpa"] = float("nan")
@@ -569,7 +583,7 @@ def _sucessoes(conn) -> dict:
 
 
 def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None,
-               proventos=None) -> tuple[dict, dict, str | None]:
+               proventos=None, fotos_valor=None) -> tuple[dict, dict, str | None]:
     from core.dividend_types import soma_por_ano
     from core.proventos_b3 import eventos_do_armazem
 
@@ -615,7 +629,8 @@ def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None,
         for df in (fech, demos, prov):
             if c in df:
                 df[c] = df[c].astype(float)
-    linhas_valor, por_titulo = coletar_fotos_de_valor(conn)
+    linhas_valor, por_titulo = (fotos_valor if fotos_valor is not None
+                                else coletar_fotos_de_valor(conn))
     hist, exclusoes = historico_b3(fech, demos, prov, acoes_por_titulo=por_titulo)
     exclusoes["sucessoes_de_ticker"] = dict(sorted(sucessoes.items()))
     hoje = hoje or datetime.now(timezone.utc)
@@ -720,7 +735,8 @@ def desdobramentos(marcas) -> dict[str, list]:
 
 
 def mercado_b3(fechamentos, volumes, lpa, *, eventos: dict | None = None,
-               n: int = UNIVERSO_MERCADO, ano_inicial: int = ANO_INICIAL + 1) -> dict:
+               n: int = UNIVERSO_MERCADO, ano_inicial: int = ANO_INICIAL + 1,
+               acoes_por_titulo: dict | None = None, units=()) -> dict:
     """Série mensal do P/L mediano ponto-no-tempo. Puro sobre DataFrames.
 
     ``fechamentos``: ticker, data (último pregão do mês), close (fita, sem
@@ -730,6 +746,9 @@ def mercado_b3(fechamentos, volumes, lpa, *, eventos: dict | None = None,
     do ano seguinte ao exercício) e até o pregão divide o LPA pelo fator --
     sem isso o 1:5 da SBSP3 em 04/2026 e o da ASAI3 em 08/2021 davam P/L 5x
     menor até a DFP seguinte.
+    ``acoes_por_titulo``: {ticker: k}. Na unit o LPA entra × k, o LPA do
+    título (``acoes_por_titulo_do_ticker``); unit sem k fica fora, em
+    ``sem_acoes_por_titulo``, em vez de entrar com P/L k vezes maior.
     Devolve {"serie": [[data, p_l, lucro_sobre_preco_pct, n], ...],
     "ultimo": {...}, "descartado": {...} | None} -- ``ultimo`` diz quem ficou
     fora no último mês da série e por quê (e o fator de quem foi rebaseado);
@@ -747,6 +766,8 @@ def mercado_b3(fechamentos, volumes, lpa, *, eventos: dict | None = None,
 
     from data_pipeline.market.b3_saidas import fator_acumulado
     eventos = eventos or {}
+    mapa = dict(acoes_por_titulo or {})
+    units = set(units)
     lpa_d = {(str(r.ticker), int(r.ano)): float(r.lpa) for r in lpa.itertuples()
              if pd.notna(r.lpa)}
     universo = universo_mercado(volumes, set(lpa["ticker"].astype(str)), n=n)
@@ -760,16 +781,21 @@ def mercado_b3(fechamentos, volumes, lpa, *, eventos: dict | None = None,
         px = {str(r.ticker): (float(r.close), r.data) for r in g.itertuples()}
         exerc = exercicio_publicado(mes)
         dfp = pd.Timestamp(exerc + 1, 3, 31)
-        eys, sem_lpa, sem_preco, implausiveis = [], [], [], []
+        eys, sem_lpa, sem_preco, implausiveis, sem_k = [], [], [], [], []
         rebaseadas = {}
         for tk in universo[mes.year]:
             if tk not in px or not px[tk][0] > 0:
                 sem_preco.append(tk)
                 continue
+            k = acoes_por_titulo_do_ticker(tk, mapa, units)
+            if k is None:
+                sem_k.append(tk)
+                continue
             lucro = lpa_d.get((tk, exerc))
             if lucro is None or lucro == 0:
                 sem_lpa.append(tk)
                 continue
+            lucro *= k
             fator = fator_acumulado(eventos.get(tk, []), dfp, px[tk][1])
             if fator != 1.0:
                 lucro /= fator
@@ -784,7 +810,8 @@ def mercado_b3(fechamentos, volumes, lpa, *, eventos: dict | None = None,
                 "universo": len(universo[mes.year]), "validas": len(eys),
                 "negativas": sum(1 for y in eys if y < 0),
                 "sem_lpa": sem_lpa, "sem_preco": sem_preco,
-                "implausiveis": implausiveis, "rebaseadas": rebaseadas}
+                "implausiveis": implausiveis, "sem_acoes_por_titulo": sem_k,
+                "rebaseadas": rebaseadas}
         if len(eys) < MERCADO_MIN_VALIDAS:
             descartado = quem
             continue
@@ -855,7 +882,7 @@ _SQL_DESDOBRAMENTOS = r"""
 """
 
 
-def coletar_mercado_b3(conn, sucessoes=None) -> dict:
+def coletar_mercado_b3(conn, sucessoes=None, acoes_por_titulo=None) -> dict:
     fech = _ler(conn, _SQL_FECHAMENTO_MENSAL, ini=ANO_INICIAL + 1)
     vol = _ler(conn, """
         SELECT ticker, EXTRACT(YEAR FROM trade_date)::int AS ano,
@@ -880,7 +907,10 @@ def coletar_mercado_b3(conn, sucessoes=None) -> dict:
     if suc:
         from data_pipeline.market.b3_sucessao import canonizar_fita
         marcas = canonizar_fita(marcas, suc, com_lpa)
-    return mercado_b3(fech, vol, lpa, eventos=desdobramentos(marcas))
+    if acoes_por_titulo is None:
+        acoes_por_titulo = coletar_fotos_de_valor(conn)[1]
+    return mercado_b3(fech, vol, lpa, eventos=desdobramentos(marcas),
+                      acoes_por_titulo=acoes_por_titulo)
 
 
 def mercado_pela_sucessao(fech, vol, sucessoes: dict, com_lpa):
@@ -1356,10 +1386,13 @@ def main(argv=None) -> int:
     with conn:
         conn.execute(text("SET TRANSACTION READ ONLY"))
         proventos = eventos_do_armazem(conn)
-        b3, excl_b3, fita = coletar_b3(conn, precos, agora, proventos=proventos)
+        # Uma leitura das fotos de valor para os dois caminhos que usam k.
+        fotos_valor = coletar_fotos_de_valor(conn)
+        b3, excl_b3, fita = coletar_b3(conn, precos, agora, proventos=proventos,
+                                       fotos_valor=fotos_valor)
         fii, excl_fii = coletar_fii(conn, precos, agora, proventos=proventos)
         eua, excl_eua = coletar_eua(conn)
-        mercado = coletar_mercado_b3(conn)
+        mercado = coletar_mercado_b3(conn, acoes_por_titulo=fotos_valor[1])
 
     relatorio = {
         "b3": len(b3), "fii": len(fii), "eua": len(eua),

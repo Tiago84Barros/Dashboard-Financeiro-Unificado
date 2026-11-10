@@ -449,6 +449,9 @@ def linhas_valuation_b3(mercado: Mapping | None, juros: Mapping[str, Resumo] | N
         fora.append(f"sem preço no mês (ticker mudou?): {_lista(ultimo['sem_preco'])}")
     if ultimo.get("implausiveis"):
         fora.append(f"LPA em escala errada: {_lista(ultimo['implausiveis'])}")
+    if ultimo.get("sem_acoes_por_titulo"):
+        fora.append("unit sem o número de ações por unit: "
+                    f"{_lista(ultimo['sem_acoes_por_titulo'])}")
     composicao = (f"  Composição de hoje: {ultimo.get('validas')} de {ultimo.get('universo')} "
                   f"ações na conta, {ultimo.get('negativas', 0)} com prejuízo; fora da "
                   f"conta -- " + ("; ".join(fora) if fora else "nenhuma") + ".")

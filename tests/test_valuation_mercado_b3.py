@@ -333,3 +333,34 @@ def test_sql_roda_no_armazem_de_verdade():
     assert all(1 < pl < 60 for _, pl, _, _ in mercado["serie"] if pl)
     assert mercado["ultimo"]["universo"] == pv.UNIVERSO_MERCADO
     assert hist["BOVA11"].n > 100 and hist["BOVA11"].inicio.year <= 2017
+
+
+def test_unit_entra_com_o_lpa_do_titulo_e_unit_sem_k_fica_fora():
+    # Gêmeo do histórico anual: o preço é o da unit, o LPA da base é por ação.
+    # Sem k, a unit que carrega 5 ações entrava com P/L 5x maior.
+    tickers = _nomes(22) + ["XPTO11", "XPTZ11"]
+    meses = [date(2020, 4, 30)]
+    precos = {("XPTO11", meses[0]): 50.0, ("XPTZ11", meses[0]): 50.0}
+    fech, vol, lpa = _quadros(tickers, meses=meses, precos=precos)
+    m = pv.mercado_b3(fech, vol, lpa, ano_inicial=2020,
+                      acoes_por_titulo={"XPTO11": 5, "XPTZ11": None})
+    u = m["ultimo"]
+    assert u["validas"] == 23
+    assert u["sem_acoes_por_titulo"] == ["XPTZ11"]
+    # Com k, XPTO11 tem P/L 50 / (5 × 1) = 10, igual às demais: a mediana não se move.
+    assert m["serie"][0][1] == 10.0
+
+
+def test_unit_sem_mapa_nao_entra_com_o_lpa_por_acao():
+    tickers = _nomes(22) + ["XPTO11"]
+    meses = [date(2020, 4, 30)]
+    fech, vol, lpa = _quadros(tickers, meses=meses)
+    u = pv.mercado_b3(fech, vol, lpa, ano_inicial=2020)["ultimo"]
+    assert u["sem_acoes_por_titulo"] == ["XPTO11"] and u["validas"] == 22
+
+
+def test_k_do_ticker_e_uma_regra_so_para_os_dois_caminhos():
+    assert pv.acoes_por_titulo_do_ticker("XPTO3", {}) == 1
+    assert pv.acoes_por_titulo_do_ticker("XPTO11", {}) is None
+    assert pv.acoes_por_titulo_do_ticker("XPTO11", {"XPTO11": 3}) == 3
+    assert pv.acoes_por_titulo_do_ticker("XPTO4", {}, units={"XPTO4"}) is None
