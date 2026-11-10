@@ -14,7 +14,7 @@ SCHEMA = schema_descartavel("app4_us_novos")
 _DDL = """
 CREATE TABLE {s}.assets (symbol text, company_id int, is_active bool,
     analysis_status text, security_type text);
-CREATE TABLE {s}.income_statements (company_id int, updated_at timestamptz);
+CREATE TABLE {s}.income_statements (company_id int, available_at date, updated_at timestamptz DEFAULT now());
 CREATE TABLE {s}.sec_filings (symbol text, form text, filing_date date);
 """
 
@@ -43,7 +43,7 @@ def _roda(c, limit=None):
     sql = fn.SQL_SIMBOLOS_COM_FILING_NOVO.replace("market_us.", f"{SCHEMA}.")
     if limit:
         sql += f" LIMIT {limit}"
-    return [r[0] for r in c.execute(text(sql), {"formularios": list(fn.FORMULARIOS)})]
+    return [r[0] for r in c.execute(text(sql), {"formularios": list(fn.FORMULARIOS), "desde": "2000-01-01"})]
 
 
 def test_so_empresa_com_10k_ou_10q_posterior_a_ultima_extracao(conn):
@@ -51,7 +51,7 @@ def test_so_empresa_com_10k_ou_10q_posterior_a_ultima_extracao(conn):
         INSERT INTO {SCHEMA}.assets VALUES
           ('NOVA',1,true,'eligible','common'), ('EMDIA',2,true,'eligible','common'),
           ('SO8K',3,true,'eligible','common'), ('ETF',4,true,'excluded','etf');
-        INSERT INTO {SCHEMA}.income_statements VALUES
+        INSERT INTO {SCHEMA}.income_statements (company_id, available_at) VALUES
           (1,'2026-10-02'),(2,'2026-11-09'),(3,'2026-10-02'),(4,'2026-10-02');
         INSERT INTO {SCHEMA}.sec_filings VALUES
           ('NOVA','10-K','2026-11-03'), ('EMDIA','10-Q','2026-10-20'),
@@ -64,7 +64,7 @@ def test_mais_atrasada_primeiro_e_lote_limita(conn):
         INSERT INTO {SCHEMA}.assets VALUES
           ('B',2,true,'eligible','common'), ('A',1,true,'eligible','common'),
           ('C',3,true,'eligible','common');
-        INSERT INTO {SCHEMA}.income_statements VALUES
+        INSERT INTO {SCHEMA}.income_statements (company_id, available_at) VALUES
           (1,'2026-10-02'),(2,'2026-10-02'),(3,'2026-10-02');
         INSERT INTO {SCHEMA}.sec_filings VALUES
           ('A','10-Q','2026-11-05'), ('B','10-K','2026-10-10'), ('C','10-Q','2026-11-01')"""))
@@ -72,14 +72,18 @@ def test_mais_atrasada_primeiro_e_lote_limita(conn):
     assert _roda(conn, limit=2) == ["B", "C"]
 
 
-def test_extracao_no_mesmo_dia_do_filing_repete_uma_vez(conn):
-    """Fatos da SEC chegam com atraso: extrair no dia da entrega nao encerra."""
+def test_empresa_adiada_continua_na_fila_depois_do_enrich(conn):
+    """O `enrich` renova `updated_at` de todas as linhas (trigger); a fila nao pode ler isso."""
     conn.execute(text(f"""
         INSERT INTO {SCHEMA}.assets VALUES ('X',1,true,'eligible','common');
-        INSERT INTO {SCHEMA}.income_statements VALUES (1,'2026-11-03 23:00+00');
+        INSERT INTO {SCHEMA}.income_statements (company_id, available_at)
+            VALUES (1,'2026-10-02');
         INSERT INTO {SCHEMA}.sec_filings VALUES ('X','10-K','2026-11-03')"""))
     assert _roda(conn) == ["X"]
-    conn.execute(text(f"UPDATE {SCHEMA}.income_statements SET updated_at='2026-11-04 03:00+00'"))
+    conn.execute(text(f"UPDATE {SCHEMA}.income_statements SET updated_at=now()"))  # enrich
+    assert _roda(conn) == ["X"]
+    # reingerida: o fato entra com available_at = data da entrega -> sai da fila
+    conn.execute(text(f"UPDATE {SCHEMA}.income_statements SET available_at='2026-11-03'"))
     assert _roda(conn) == []
 
 

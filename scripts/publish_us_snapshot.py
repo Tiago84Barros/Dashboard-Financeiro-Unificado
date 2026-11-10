@@ -358,6 +358,14 @@ def main() -> int:
 
     # Retomada por identidade do artefato. Evita regravar milhares de JSONB já
     # confirmados quando o Supabase interrompe um lote perto do fim.
+    # Base do piso de cardinalidade: ATIVOS no destino ANTES de gravar ou
+    # desativar qualquer coisa. Medida depois, a desativacao ja teria reduzido
+    # a base ao tamanho do lote e o piso passaria sempre (achado do Codex, #708).
+    with tgt.connect() as conn:
+        ativos_antes = int(conn.execute(text(
+            "SELECT COUNT(*) FROM market_us.company_snapshots WHERE is_active IS TRUE"
+        )).scalar() or 0)
+    limpeza_ok = pode_apagar_fosseis(len(rows), ativos_antes)
     with tgt.connect() as conn:
         existing = {
             (str(row.symbol), str(row.score_version or ""), row.generated_at)
@@ -388,7 +396,11 @@ def main() -> int:
     # Preserva sobras para rollback, mas as marca como inativas somente após todos
     # os lotes. Uma falha intermediária não reduz nem invalida a vitrine remota.
     symbols = [str(row["symbol"]) for row in rows]
-    _exec_retry(tgt, text(_build_deactivate_stale()), {"symbols": symbols})
+    if limpeza_ok:
+        _exec_retry(tgt, text(_build_deactivate_stale()), {"symbols": symbols})
+    else:
+        print(f"ausentes NAO desativados: publicado {len(rows)} contra {ativos_antes} "
+              f"ativos no destino (piso {PISO_PUBLICADO_FRACAO:.0%}); lote parcial?")
     expected = {
         (str(row["symbol"]), str(row.get("score_version") or ""), row.get("generated_at"))
         for row in rows
@@ -409,11 +421,7 @@ def main() -> int:
         )
     # Fóssil: só depois de a publicação inteira ter sido confirmada, e com piso
     # de cardinalidade contra lote vazio ou parcial.
-    with tgt.connect() as conn:
-        ativos_destino = int(conn.execute(text(
-            "SELECT COUNT(*) FROM market_us.company_snapshots WHERE is_active IS TRUE"
-        )).scalar() or 0)
-    if pode_apagar_fosseis(len(rows), ativos_destino):
+    if limpeza_ok:
         from datetime import datetime, timedelta, timezone
         medidas = [r["generated_at"] for r in rows if r.get("generated_at")]
         referencia = max(medidas) if medidas else datetime.now(timezone.utc)
@@ -424,8 +432,7 @@ def main() -> int:
         print(f"fósseis removidos (desativados, medição anterior a {limite:%d/%m/%Y}): "
               f"{apagadas}")
     else:
-        print(f"fósseis NÃO removidos: publicado {len(rows)} contra {ativos_destino} "
-              f"ativos no destino (piso {PISO_PUBLICADO_FRACAO:.0%}).")
+        print("fósseis NÃO removidos (piso de cardinalidade).")
     print(
         f"publicado nesta execução: {done}; snapshot confirmado: {remote_count} "
         "empresa(s) em market_us.company_snapshots (Supabase)."

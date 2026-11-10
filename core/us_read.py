@@ -411,12 +411,15 @@ def _latest_market_cap(conn, symbol: str, balance_rows=None, income_rows=None):
     errada. A guarda passa a morar no unico lugar que produz
     `bundle["market_cap"]`, em vez de ser repetida em cada consumidor.
     """
-    from core.us_metrics import _latest, market_cap_confiavel
+    from core.us_acoes import _como_data
+    from core.us_metrics import _no_ano, ano_de_referencia, market_cap_confiavel
 
+    publicado_em = None
     try:
-        publicado = conn.execute(text(
-            "SELECT market_cap FROM market_us.market_cap_history "
-            "WHERE symbol=:s ORDER BY date DESC LIMIT 1"), {"s": symbol}).scalar()
+        linha = conn.execute(text(
+            "SELECT market_cap, date FROM market_us.market_cap_history "
+            "WHERE symbol=:s ORDER BY date DESC LIMIT 1"), {"s": symbol}).first()
+        publicado, publicado_em = (linha[0], linha[1]) if linha else (None, None)
     except Exception:  # noqa: BLE001
         publicado = None
     close, data_preco = _latest_close_e_data(conn, symbol)
@@ -432,7 +435,9 @@ def _latest_market_cap(conn, symbol: str, balance_rows=None, income_rows=None):
     except (TypeError, ValueError):
         publicado = None
     return market_cap_confiavel(
-        publicado, derivado, preco, _latest(income_rows or [], "revenue"))
+        publicado, derivado, preco,
+        _no_ano(income_rows or [], "revenue", ano_de_referencia(income_rows or [])),
+        publicado_em=_como_data(publicado_em), preco_em=_como_data(data_preco))
 
 
 def load_company_bundle(symbol: str) -> dict | None:
@@ -479,7 +484,13 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
     Puxa as séries anuais em lote e calcula as métricas em Python (core.us_metrics).
     Retorna vazio se não houver dados — a UI trata offline.
     """
-    from core.us_metrics import _latest, compute_company_metrics, market_cap_confiavel
+    from core.us_acoes import _como_data
+    from core.us_metrics import (
+        _no_ano,
+        ano_de_referencia,
+        compute_company_metrics,
+        market_cap_confiavel,
+    )
     cols = ["symbol", "name", "sector", "industry"]
     eng = _engine()
     if eng is None or not schema_ready():
@@ -514,7 +525,7 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
             bal = _bulk("balance_sheets", _BALANCE_COLS_COM_DATAS)
             cfw = _bulk("cash_flow_statements", _CASHFLOW_COLS)
             mcaps = pd.read_sql(text(
-                "SELECT DISTINCT ON (symbol) symbol, market_cap "
+                "SELECT DISTINCT ON (symbol) symbol, market_cap, date AS mc_date "
                 "FROM market_us.market_cap_history ORDER BY symbol, date DESC"), conn)
             # último preço por símbolo (deriva market cap quando não há histórico)
             closes = pd.read_sql(text(_SQL_ULTIMO_PRECO_POR_SIMBOLO), conn)
@@ -527,6 +538,8 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
         if not mcaps.empty else {}
     close_by_symbol = dict(zip(closes.get("symbol", []), closes.get("px", []))) \
         if not closes.empty else {}
+    data_preco_by_symbol = dict(zip(closes.get("symbol", []), closes.get("px_date", [])))         if not closes.empty else {}
+    mcap_em_by_symbol = dict(zip(mcaps.get("symbol", []), mcaps.get("mc_date", [])))         if not mcaps.empty else {}
     inc_g = {k: v.to_dict("records") for k, v in inc.groupby("company_id")} if not inc.empty else {}
     bal_g = {k: v.to_dict("records") for k, v in bal.groupby("company_id")} if not bal.empty else {}
     cfw_g = {k: v.to_dict("records") for k, v in cfw.groupby("company_id")} if not cfw.empty else {}
@@ -547,7 +560,9 @@ def load_scoring_frame(limit_companies: int | None = None) -> pd.DataFrame:
         mcap = market_cap_confiavel(
             float(publicado) if publicado is not None else None, derivado,
             float(px) if px is not None else None,
-            _latest(inc_g.get(cid, []), "revenue"))
+            _no_ano(inc_g.get(cid, []), "revenue", ano_de_referencia(inc_g.get(cid, []))),
+            publicado_em=_como_data(mcap_em_by_symbol.get(c["symbol"])),
+            preco_em=_como_data(data_preco_by_symbol.get(c["symbol"])))
         m = compute_company_metrics(
             inc_g.get(cid, []), bal_rows, cfw_g.get(cid, []), market_cap=mcap)
         rows.append({"symbol": c["symbol"], "name": c["name"],

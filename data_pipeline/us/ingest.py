@@ -14,9 +14,8 @@ Este módulo é usado pela CLI (run_us_ingest.py). A view não o importa.
 """
 from __future__ import annotations
 
-import time
-
 import logging
+import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Iterable, Mapping, Optional

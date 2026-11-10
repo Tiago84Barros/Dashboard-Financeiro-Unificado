@@ -211,7 +211,10 @@ def test_us_snapshot_publisher_declares_resumable_identity():
 
 def test_publicador_apaga_fossil_desativado_com_retencao_e_piso():
     from scripts.publish_us_snapshot import (
-        _build_deactivate_stale, _build_purge_stale, pode_apagar_fosseis)
+        _build_deactivate_stale,
+        _build_purge_stale,
+        pode_apagar_fosseis,
+    )
 
     sql = _build_purge_stale()
     assert sql.startswith("DELETE FROM market_us.company_snapshots")
@@ -225,3 +228,15 @@ def test_publicador_apaga_fossil_desativado_com_retencao_e_piso():
     assert not pode_apagar_fosseis(500, 4000)
     assert pode_apagar_fosseis(4350, 4000)
     assert pode_apagar_fosseis(10, 0)            # destino sem ativos: nada a proteger
+
+
+def test_piso_mede_o_destino_antes_de_desativar():
+    """100 publicados sobre 3.000 ativos: nao desativa nem apaga os outros 2.900."""
+    import inspect
+
+    import scripts.publish_us_snapshot as m
+
+    assert not m.pode_apagar_fosseis(100, 3000)
+    src = inspect.getsource(m.main)
+    assert src.index("ativos_antes = ") < src.index("_build_deactivate_stale()")
+    assert "if limpeza_ok:\n        _exec_retry(tgt, text(_build_deactivate_stale())" in src
