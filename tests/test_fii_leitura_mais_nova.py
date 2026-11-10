@@ -213,3 +213,28 @@ def test_dy_sem_price_at_tem_data_desconhecida():
     row = _aplicar(_base(), [_obs("price", 111.0, "2026-11-09", "2026-11-09")])
     assert row["price_date"] == "2026-11-09"
     assert row["dy_date"] is None
+
+
+def test_pvp_derivado_nasce_quando_o_ultimo_insumo_ficou_disponivel():
+    # Base de agosto; cotacao de novembro aceita: o P/VP e de novembro.
+    row = _aplicar(_base(updated_at=pd.Timestamp("2026-08-05", tz="UTC")), [
+        _obs("price", 110.0, "2026-11-09", "2026-11-09")])
+    assert row["metric_metadata"]["pvp"]["available_at"].startswith("2026-11-09")
+
+
+def test_pvp_sem_observacao_usa_a_base():
+    row = _aplicar(_base(updated_at=pd.Timestamp("2026-08-05", tz="UTC")), [])
+    assert row["metric_metadata"]["pvp"]["available_at"].startswith("2026-08-05")
+
+
+def test_cotas_derivadas_herdam_a_disponibilidade_do_vpa_e_do_pl():
+    row = _aplicar(_base(updated_at=pd.Timestamp("2026-08-05", tz="UTC"), vpa=10.0,
+                         patrimonio_liquido=5e9, cvm_ref_date=pd.Timestamp("2026-06-01")), [
+        _obs("nav_per_share", 10.0, "2026-10-01", "2026-11-08", "cvm_informe_mensal"),
+        _obs("equity", 5e9, "2026-10-01", "2026-11-08", "cvm_informe_mensal")])
+    assert row["metric_metadata"]["shares_outstanding"]["available_at"].startswith("2026-11-08")
+
+
+def test_load_fiis_mantem_o_cache_de_uma_hora():
+    assert hasattr(market_read.load_fiis, "clear")
+    assert hasattr(market_read._market_fiis_tem_price_at, "clear")

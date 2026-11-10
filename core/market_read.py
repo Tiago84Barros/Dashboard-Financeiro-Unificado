@@ -555,7 +555,6 @@ def load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.Dat
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
-@st.cache_data(ttl=3600, show_spinner=False)
 def _market_fiis_tem_price_at() -> bool:
     """`price_at` vem da migration 088 (nao aplicada por padrao): sem ela a
     consulta nao pode nomear a coluna."""
@@ -564,6 +563,7 @@ def _market_fiis_tem_price_at() -> bool:
     return not df.empty
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
 def load_fiis(segmento: str | None = None) -> pd.DataFrame:
     """Ranking de FIIs de market.fiis (score desc). Filtro opcional por segmento."""
     conditions = ["u.active_status IN ('listed','active')",
@@ -1229,6 +1229,17 @@ def _aplicar_observacoes_fii(row: dict, observacoes: list[dict],
         competencia["vpa"] is not None and competencia["vpa"] == competencia["patrimonio_liquido"]))
 
 
+def _mais_novo(*candidatos) -> str:
+    """O mais novo entre as datas de disponibilidade dos insumos escolhidos."""
+    validos = [(t, c) for c in candidatos if (t := _ts_utc(c)) is not None]
+    return str(max(validos, key=lambda x: x[0])[1]) if validos else "None"
+
+
+def _disp_insumo(row: dict, chave: str, fallback) -> object:
+    meta = (row.get("metric_metadata") or {}).get(chave)
+    return meta.get("available_at") if isinstance(meta, dict) and meta.get("available_at") else fallback
+
+
 def _derivou_pvp(row: dict) -> bool:
     try:
         return float(row.get("price")) > 0 and float(row.get("vpa")) > 0
@@ -1254,7 +1265,12 @@ def _consolidar_cotacao_e_cotas_fii(row: dict, alinhadas: bool = True) -> None:
             row["metric_metadata"]["pvp"] = {
                 "reference_date": str(row.get("vpa_ref_date") or row.get("cvm_ref_date"))[:10],
                 "price_date": row.get("price_date"),
-                "available_at": str(row.get("updated_at")),
+                # Cálculo: nasce quando o ÚLTIMO insumo escolhido ficou
+                # disponível (preço vencedor, VPA vencedor), não no updated_at
+                # da linha-base, que qualquer UPDATE renova.
+                "available_at": _mais_novo(
+                    _disp_insumo(row, "price", row.get("price_at") or row.get("updated_at")),
+                    _disp_insumo(row, "vpa", row.get("updated_at"))),
                 "source": "cvm_vpa+market_price",
             }
     pl, vpa = row.get("patrimonio_liquido"), row.get("vpa")
@@ -1273,7 +1289,9 @@ def _consolidar_cotacao_e_cotas_fii(row: dict, alinhadas: bool = True) -> None:
     row["shares_derived_ref"] = str(comp.date())
     row["metric_metadata"]["shares_outstanding"] = {
         "reference_date": str(comp.date()),
-        "available_at": str(row.get("updated_at")),
+        "available_at": _mais_novo(
+            _disp_insumo(row, "vpa", row.get("updated_at")),
+            _disp_insumo(row, "patrimonio_liquido", row.get("updated_at"))),
         "source": "derivado: PL / VPA (Informe Mensal CVM)",
     }
 
