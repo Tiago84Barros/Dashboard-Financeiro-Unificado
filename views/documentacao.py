@@ -1869,7 +1869,7 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
             (
                 "Cadência alvo: de quanto em quanto tempo deveria atualizar",
                 "Limite de validade: a partir de quando está velho",
-                "B3: preço com a data mediana da última cotação de cada ticker",
+                "B3: preço com a data mediana da última cotação de cada ação ou unit ativa (FII fora)",
                 "Selo visível na cabeça da tela",
             ),
             "Dado velho não levanta erro — ele só fica parado. Sem selo, parado é "

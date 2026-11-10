@@ -54,12 +54,18 @@ ALVO_DO_PRECO = {
 
 # Mediana da ÚLTIMA data de cada ticker, não `max(date)` da tabela: um ticker
 # que a brapi soltou por acaso levava o máximo para 31/10 com a mediana em
-# 29/10. Ticker deslistado puxa a mediana para trás só se for metade do
-# cadastro.
+# 29/10. O universo é o de `core.market_read._multiplos_long` (ação ou unit,
+# ativa, com empresa): FII grava preço na mesma tabela, e sem o filtro a
+# cotação dele decidia o selo das ações; deslistado também fica de fora.
 SQL_DATA_DO_PRECO_B3 = """
     SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY ultima)
-    FROM (SELECT max(date) AS ultima FROM market.historical_prices
-          GROUP BY ticker) AS por_ticker"""
+    FROM (SELECT max(hp.date) AS ultima
+          FROM market.historical_prices hp
+          JOIN market.assets a ON a.ticker = hp.ticker
+            AND a.asset_type IN ('stock','unit')
+            AND a.is_active IS TRUE
+            AND a.company_id IS NOT NULL
+          GROUP BY hp.ticker) AS por_ticker"""
 
 
 def idade_alvo(modulo: str) -> int:

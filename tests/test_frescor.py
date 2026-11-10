@@ -207,7 +207,32 @@ def test_data_do_preco_e_a_mediana_da_ultima_data_por_ticker():
     disse "em dia" para o ticker que a brapi soltou por acaso.
     """
     assert "percentile_disc(0.5)" in frescor.SQL_DATA_DO_PRECO_B3
-    assert "GROUP BY ticker" in frescor.SQL_DATA_DO_PRECO_B3
+    assert "GROUP BY hp.ticker" in frescor.SQL_DATA_DO_PRECO_B3
+
+
+def test_data_do_preco_mede_o_universo_que_a_tela_mostra():
+    """FII grava preço na mesma `historical_prices` (`fii_ingest`).
+
+    Sem o filtro, cotação nova de FII escondia ação parada, e histórico velho
+    de FII vencia um ranking de ações em dia. O universo é o mesmo de
+    `core.market_read._multiplos_long`: ação ou unit, ativa, com empresa.
+    """
+    import inspect
+    import re
+
+    from core import market_read
+
+    def _norm(s):
+        return re.sub(r"\s+", " ", s)
+
+    sql = _norm(frescor.SQL_DATA_DO_PRECO_B3)
+    fonte = _norm(inspect.getsource(market_read._multiplos_long))
+    for predicado in ("a.asset_type IN ('stock','unit')",
+                      "a.is_active IS TRUE",
+                      "a.company_id IS NOT NULL"):
+        assert predicado in fonte, predicado   # a tela continua com ele
+        assert predicado in sql, predicado
+    assert "JOIN market.assets a ON a.ticker" in sql
 
 
 def test_modulo_fora_do_mapa_nao_consulta_o_banco():
