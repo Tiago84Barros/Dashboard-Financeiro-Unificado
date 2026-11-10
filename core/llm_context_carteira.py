@@ -15,7 +15,12 @@ Duas decisões deliberadas:
 """
 from __future__ import annotations
 
-from core.portfolio_valuations import CLASS_LABELS, metric_spec, texto_marcacao_tesouro
+from core.portfolio_valuations import (
+    CLASS_LABELS,
+    custo_desconhecido,
+    metric_spec,
+    texto_marcacao_tesouro,
+)
 
 
 def _n(value):
@@ -417,6 +422,11 @@ def build_carteira_classe_context(
             # mais aqui do que na média pelo valor de mercado.
             blocos.append("")
             blocos += _bloco_valuations(valuations_custo, "custo de aquisição")
+            fora = custo_desconhecido(posicoes)
+            if fora:
+                blocos.append("- Fora desta média, sem custo de aquisição "
+                              f"conhecido: {', '.join(fora)} (o custo deles não "
+                              "existe na fonte; não é zero nem o valor de hoje).")
     blocos.append("")
     blocos += _bloco_db(db, rotulo)
 

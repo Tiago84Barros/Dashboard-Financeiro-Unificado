@@ -16,6 +16,7 @@ from core.portfolio_valuations import (
     _agregavel,
     aggregate_tesouro,
     aggregate_valuations,
+    custo_desconhecido,
     metric_spec,
     para_percentual,
 )
@@ -189,6 +190,38 @@ def test_contexto_leva_as_duas_medias():
 def test_contexto_sem_media_pelo_custo_nao_inventa_bloco():
     texto = _contexto_acoes()
     assert "custo de aquisição" not in texto
+
+
+def test_custo_imputado_pelo_mercado_fica_fora_da_media_pelo_custo():
+    """``mercado_fallback`` é o valor de mercado no lugar de um custo que não existe.
+
+    Achado do Codex no PR #704: contar esse número como custo dava 28 onde a
+    média pelo custo conhecido é 10, com cobertura de 100% e sem aviso.
+    """
+    desconhecido = {**_pos("AAA", 900.0), "custo_fonte": "mercado_fallback"}
+    conhecido = {**_pos("BBB", 100.0), "custo_fonte": "extrato"}
+    fund = {"AAA": {"pl": 30.0}, "BBB": {"pl": 10.0}}
+    custo = aggregate_valuations([desconhecido, conhecido], fund, ("pl",),
+                                 peso="total_investido")
+    assert custo["pl"]["value"] == pytest.approx(10.0)
+    assert custo["pl"]["assets"] == 1
+    # O mercado não muda: lá o valor de hoje é conhecido.
+    mercado = aggregate_valuations([desconhecido, conhecido], fund, ("pl",))
+    assert mercado["pl"]["value"] == pytest.approx(28.0)
+    assert custo_desconhecido([desconhecido, conhecido]) == ["AAA"]
+
+
+def test_contexto_nomeia_quem_ficou_fora_da_media_pelo_custo():
+    desconhecido = {**_pos("AAA", 900.0), "custo_fonte": "mercado_fallback"}
+    conhecido = _pos("BBB", 100.0)
+    posicoes = [desconhecido, conhecido]
+    fund = {"AAA": {"pl": 30.0}, "BBB": {"pl": 10.0}}
+    texto = build_carteira_classe_context(
+        "acoes", posicoes,
+        valuations=aggregate_valuations(posicoes, fund, ("pl",)),
+        valuations_custo=aggregate_valuations(posicoes, fund, ("pl",),
+                                              peso="total_investido"))
+    assert "sem custo de aquisição conhecido: AAA" in texto
 
 
 # ── Tesouro Direto ────────────────────────────────────────────────────────

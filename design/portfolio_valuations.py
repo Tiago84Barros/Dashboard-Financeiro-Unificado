@@ -9,6 +9,7 @@ from core.portfolio_valuations import (
     METRICS_BY_CLASS,
     aggregate_tesouro,
     aggregate_valuations,
+    custo_desconhecido,
     load_valuation_fundamentals,
     metric_spec,
     texto_marcacao_tesouro,
@@ -187,6 +188,15 @@ def render_valuations_classe(classe, positions, fundamentals, *, colunas: int = 
     _grade_medias(resultado, metricas, colunas,
                   'média ponderada pelo valor de mercado', 'valor')
     st.markdown('**Pelo custo de aquisição**')
+    sem_custo = custo_desconhecido(positions)
+    if sem_custo:
+        # Custo imputado pelo valor de mercado não é custo: o ativo fica fora
+        # desta grade, e quem olha precisa saber quem faltou.
+        aviso_lacuna('Fora da média pelo custo, sem custo de aquisição conhecido: '
+                     + ', '.join(sem_custo) + '. O custo deles não existe na '
+                     'fonte; não é zero nem o valor de hoje.',
+                     codigo='tela.carteira.valuation_classe_custo_desconhecido',
+                     entidade=str(classe))
     if any(pelo_custo[k]['value'] is not None for k in metricas):
         _grade_medias(pelo_custo, metricas, colunas,
                       'média ponderada pelo custo', 'custo', ' (pelo custo)')

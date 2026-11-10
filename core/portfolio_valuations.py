@@ -128,6 +128,22 @@ def para_percentual(metric: str, value):
 # rebaixa a cobertura dela, em vez de entrar com peso inventado.
 PESOS = {'valor_mercado': 'valor de mercado', 'total_investido': 'custo'}
 
+#: ``custo_fonte`` que diz "não há custo": o carregador da carteira põe o valor
+#: de mercado em ``total_investido`` para não deixar o campo vazio
+#: (``core.investimentos._montar_carteira_snapshot``). Como peso de uma média
+#: pelo custo, esse número é o mercado disfarçado, não um custo.
+CUSTO_IMPUTADO = 'mercado_fallback'
+
+
+def _sem_custo(pos) -> bool:
+    return str(pos.get('custo_fonte') or '') == CUSTO_IMPUTADO
+
+
+def custo_desconhecido(positions) -> list[str]:
+    """Tickers cujo ``total_investido`` é o valor de mercado imputado."""
+    return sorted({str(p.get('ticker') or '').strip().upper()
+                   for p in positions or () if _sem_custo(p)})
+
 
 def aggregate_valuations(positions, fundamentals, metrics=None, *,
                          peso: str = 'valor_mercado'):
@@ -140,6 +156,9 @@ def aggregate_valuations(positions, fundamentals, metrics=None, *,
     Não imputa ausências. Cada indicador tem seu critério de validade em
     ``SPECS``: múltiplo precisa ser positivo, margem pode ser negativa.
     Lotes do mesmo ticker acumulam exposição, mas contam como um ativo.
+    Pelo custo, posição com custo imputado pelo valor de mercado
+    (``custo_fonte == 'mercado_fallback'``) não pesa: o custo dela é
+    desconhecido.
     Cobertura é medida sobre o peso positivo das posições recebidas — quem
     passa a carteira inteira mede sobre a carteira; quem passa uma classe
     mede sobre aquela classe.
@@ -148,6 +167,11 @@ def aggregate_valuations(positions, fundamentals, metrics=None, *,
         raise ValueError(f'peso desconhecido: {peso!r}; use um de {sorted(PESOS)}')
     weights = {}
     for pos in positions or ():
+        if peso == 'total_investido' and _sem_custo(pos):
+            # Fora do numerador E do denominador: custo desconhecido não é
+            # peso, e contá-lo daria cobertura de 100% sobre um número que
+            # ninguém pagou. Quem chama nomeia o ativo (``custo_desconhecido``).
+            continue
         weight = _number(pos.get(peso))
         if weight is not None and weight > 0:
             ticker = str(pos.get('ticker') or '').strip().upper()
