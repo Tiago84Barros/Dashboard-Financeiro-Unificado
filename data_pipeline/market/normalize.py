@@ -193,14 +193,20 @@ def _statement_items(quote: dict, annual_key: str, quarterly_key: str) -> list[t
     return items
 
 
-# Lucro líquido: alguns bancos (ITUB4, BPAC11) vêm sem netIncome e com o lucro
-# só nos campos de operações continuadas / atribuível.
-_LUCRO = ("netIncome", "netIncomeCommonStockholders",
-          "netIncomeFromContinuingOps", "netIncomeApplicableToCommonShares")
-# Lucro usado para o LPA implícito (lucro / ações): o atribuível aos
-# controladores é o numerador do LPA da DFP.
-_LUCRO_LPA = ("netIncomeApplicableToCommonShares", "netIncome",
-              "netIncomeFromContinuingOps", "netIncomeCommonStockholders")
+# Lucro líquido: o atribuído aos controladores, como o 3.11.01 da DFP, que é
+# o numerador do LPA e o lucro do P/L e do ROE dos sites (Fundamentus, Status
+# Invest, Investidor10). A brapi grava o consolidado, com os minoritários, em
+# netIncome, e o dos controladores em netIncomeApplicableToCommonShares; 0 é
+# ausência (``_lucro``). Alguns bancos (ITUB4, BPAC11) vêm sem netIncome e
+# com o lucro só nos campos de operações continuadas / atribuível. A mesma
+# ordem serve ao lucro gravado e ao LPA implícito (lucro / ações).
+_LUCRO = ("netIncomeApplicableToCommonShares", "netIncome",
+          "netIncomeFromContinuingOps", "netIncomeCommonStockholders")
+# PL consolidado (com os minoritários) e as contas que separam os dois lados.
+_PL = ("totalStockholderEquity", "shareholdersEquity", "stockholdersEquity",
+       "totalEquityGrossMinorityInterest")
+_PL_CONTROLADORES = ("controllerShareholdersEquity",)
+_PL_MINORITARIOS = ("minorityInterest", "nonControllingShareholdersEquity")
 # Campos de LPA que a brapi copia da DFP multiplicados pela ESCALA_MOEDA.
 _LPA_ON = ("basicEarningsPerCommonShare", "dilutedEarningsPerCommonShare")
 _LPA_PN = ("basicEarningsPerPreferredShare", "dilutedEarningsPerPreferredShare")
@@ -238,6 +244,29 @@ def _nao_zero(d: dict, names: tuple[str, ...]):
         if x:
             return x
     return None
+
+
+def _lucro(it: dict):
+    """Lucro dos controladores: o primeiro campo de ``_LUCRO`` diferente de 0
+    (a brapi grava 0 no lugar de nulo). Só quando todos são 0 ou nulos vale o
+    primeiro presente, para o lucro zero continuar zero."""
+    x = _nao_zero(it, _LUCRO)
+    return x if x is not None else _first(it, _LUCRO)
+
+
+def _patrimonio(it: dict):
+    """PL dos controladores, como o 2.03 da DFP menos a participação dos não
+    controladores, que é o PL do P/VP e do ROE dos sites. A brapi grava o PL
+    consolidado em shareholdersEquity e os minoritários à parte, em
+    minorityInterest (ou nonControllingShareholdersEquity, nos bancos). O PL
+    dos controladores explícito, quando vem, vence; 0 é ausência."""
+    ctrl = _nao_zero(it, _PL_CONTROLADORES)
+    if ctrl is not None:
+        return ctrl
+    pl = _first(it, _PL)
+    if pl is None:
+        return None
+    return pl - (_nao_zero(it, _PL_MINORITARIOS) or 0.0)
 
 
 def _vazio(it: dict) -> bool:
@@ -301,7 +330,7 @@ def _divisores_lpa(items: list[tuple[dict, bool]], pn: bool, acoes) -> dict | No
 
     def razao(it):
         bruto, escalado = _lpa_bruto(it, pn)
-        lucro = _nao_zero(it, _LUCRO_LPA)
+        lucro = _nao_zero(it, _LUCRO)
         if bruto is None or lucro is None:
             return bruto, escalado, None
         return bruto, escalado, (math.log10(abs(lucro / bruto)) if bruto * lucro > 0 else False)
@@ -380,7 +409,7 @@ def income_rows(quote: dict) -> list[dict]:
             "gross_profit": _first(it, ("grossProfit",)),
             "ebit": _first(it, ("ebit", "operatingIncome")),
             "ebitda": _first(it, ("ebitda", "normalizedEBITDA")),
-            "net_income": _first(it, _LUCRO),
+            "net_income": _lucro(it),
             "eps": eps,
         })
     return out
@@ -443,9 +472,7 @@ def balance_rows(quote: dict) -> list[dict]:
             "total_assets": _first(it, ("totalAssets",)),
             "total_liabilities": _first(it, ("totalLiab", "totalLiabilities",
                                              "totalLiabilitiesNetMinorityInterest")),
-            "equity": _first(it, ("totalStockholderEquity", "shareholdersEquity",
-                                  "stockholdersEquity", "controllerShareholdersEquity",
-                                  "totalEquityGrossMinorityInterest")),
+            "equity": _patrimonio(it),
             "cash": cash, "gross_debt": gross_debt, "net_debt": net_debt,
             # ativo/passivo circulante p/ Liquidez_Corrente (PC: total* costuma vir
             # nulo na B3 → fallback p/ currentLiabilities).
