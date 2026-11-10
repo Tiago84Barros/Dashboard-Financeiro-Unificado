@@ -15,7 +15,12 @@ Duas decisões deliberadas:
 """
 from __future__ import annotations
 
-from core.portfolio_valuations import CLASS_LABELS, metric_spec, texto_marcacao_tesouro
+from core.portfolio_valuations import (
+    CLASS_LABELS,
+    custo_desconhecido,
+    metric_spec,
+    texto_marcacao_tesouro,
+)
 
 
 def _n(value):
@@ -136,10 +141,10 @@ def _bloco_documentos(documentos) -> list[str]:
     return linhas
 
 
-def _bloco_valuations(valuations) -> list[str]:
+def _bloco_valuations(valuations, base: str = "valor de mercado") -> list[str]:
     if not valuations:
-        return ["MÉDIAS DA CLASSE: nenhuma apurada."]
-    linhas = ["MÉDIAS DA CLASSE (ponderadas pelo valor de mercado, só sobre os "
+        return [f"MÉDIAS DA CLASSE (pelo {base}): nenhuma apurada."]
+    linhas = [f"MÉDIAS DA CLASSE (ponderadas pelo {base}, só sobre os "
               "ativos com dado válido):"]
     for chave, item in valuations.items():
         spec = metric_spec(chave)
@@ -147,7 +152,7 @@ def _bloco_valuations(valuations) -> list[str]:
         texto = "ausente" if valor is None else f"{valor:.2f}{spec.unit}"
         linhas.append(
             f"- {spec.label}: {texto} | cobertura {_frac(item.get('coverage'))} "
-            f"do valor da classe | {int(item.get('assets') or 0)} ativo(s)")
+            f"do {base} da classe | {int(item.get('assets') or 0)} ativo(s)")
     return linhas
 
 
@@ -370,6 +375,7 @@ def build_carteira_classe_context(
     posicoes,
     *,
     valuations=None,
+    valuations_custo=None,
     db=None,
     tesouro=None,
     macro=None,
@@ -411,6 +417,17 @@ def build_carteira_classe_context(
             blocos += lotes
     else:
         blocos += _bloco_valuations(valuations)
+        if valuations_custo is not None:
+            # Mesmos indicadores de hoje, outro peso: o ativo que caiu pesa
+            # mais aqui do que na média pelo valor de mercado.
+            blocos.append("")
+            blocos += _bloco_valuations(valuations_custo, "custo de aquisição")
+            fora = custo_desconhecido(posicoes)
+            if fora:
+                blocos.append("- Fora desta média, sem custo de aquisição "
+                              f"conhecido: {', '.join(fora)} (custo ausente na "
+                              "fonte ou em dólar sem o câmbio da compra; não é "
+                              "zero nem o valor de hoje).")
     blocos.append("")
     blocos += _bloco_db(db, rotulo)
 

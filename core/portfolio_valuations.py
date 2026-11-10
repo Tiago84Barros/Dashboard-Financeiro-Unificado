@@ -122,20 +122,70 @@ def para_percentual(metric: str, value):
     return value * 100 if metric in _FRACAO_PARA_PCT else value
 
 
-def aggregate_valuations(positions, fundamentals, metrics=None):
-    """Σ(valor BRL × indicador)/Σ(valor BRL válido), por indicador.
+# Campo da posição que serve de peso → como a tela o nomeia. O custo é o
+# ``total_investido`` da carteira, já em BRL também no exterior (câmbio da
+# compra); posição sem custo conhecido (zero) fica fora da média pelo custo e
+# rebaixa a cobertura dela, em vez de entrar com peso inventado.
+PESOS = {'valor_mercado': 'valor de mercado', 'total_investido': 'custo'}
 
+#: ``custo_fonte`` que diz que ``total_investido`` não é o custo de aquisição
+#: em reais: ``mercado_fallback`` é o valor de mercado posto no campo para não
+#: deixá-lo vazio (``core.investimentos._montar_carteira_snapshot``);
+#: ``cambio_atual_estimado`` é custo em dólar convertido pelo câmbio de HOJE,
+#: por falta do câmbio da compra (``_adicionar_extras_ao_snapshot``). Como peso
+#: de uma média pelo custo, o primeiro é o mercado disfarçado e o segundo varia
+#: com o dólar do dia.
+CUSTO_NAO_CONHECIDO = frozenset({'mercado_fallback', 'cambio_atual_estimado'})
+
+
+def _sem_custo(pos) -> bool:
+    if str(pos.get('custo_fonte') or '') in CUSTO_NAO_CONHECIDO:
+        return True
+    # O recálculo (``_posicoes_do_recalculo``) não grava ``custo_fonte``: sem o
+    # câmbio da compra, ele converte pelo de hoje e deixa ``fx_rate_compra``
+    # explicitamente nulo. Só vale para moeda estrangeira, e só quando a chave
+    # existe — posição em reais não tem câmbio a conhecer.
+    moeda = str(pos.get('moeda') or 'BRL').upper()
+    return moeda != 'BRL' and 'fx_rate_compra' in pos and pos['fx_rate_compra'] is None
+
+
+def custo_desconhecido(positions) -> list[str]:
+    """Tickers sem custo de aquisição conhecido em reais.
+
+    Custo imputado pelo valor de mercado ou convertido pelo câmbio de hoje.
+    """
+    return sorted({str(p.get('ticker') or '').strip().upper()
+                   for p in positions or () if _sem_custo(p)})
+
+
+def aggregate_valuations(positions, fundamentals, metrics=None, *,
+                         peso: str = 'valor_mercado'):
+    """Σ(peso BRL × indicador)/Σ(peso BRL válido), por indicador.
+
+    ``peso`` escolhe o campo da posição que pondera a média: o valor de
+    mercado (padrão) ou o custo de aquisição (``total_investido``). Os dois
+    caminhos são a mesma conta; só muda o peso de cada ativo.
     DY entra em pontos percentuais (8 = 8%); múltiplos em vezes.
     Não imputa ausências. Cada indicador tem seu critério de validade em
     ``SPECS``: múltiplo precisa ser positivo, margem pode ser negativa.
     Lotes do mesmo ticker acumulam exposição, mas contam como um ativo.
-    Cobertura é medida sobre o valor de mercado positivo das posições
-    recebidas — quem passa a carteira inteira mede sobre a carteira; quem
-    passa uma classe mede sobre aquela classe.
+    Pelo custo, posição sem custo de aquisição conhecido em reais não pesa
+    (ver ``custo_desconhecido``): custo imputado pelo valor de mercado ou
+    custo em dólar convertido pelo câmbio de hoje.
+    Cobertura é medida sobre o peso positivo das posições recebidas — quem
+    passa a carteira inteira mede sobre a carteira; quem passa uma classe
+    mede sobre aquela classe.
     """
+    if peso not in PESOS:
+        raise ValueError(f'peso desconhecido: {peso!r}; use um de {sorted(PESOS)}')
     weights = {}
     for pos in positions or ():
-        weight = _number(pos.get('valor_mercado'))
+        if peso == 'total_investido' and _sem_custo(pos):
+            # Fora do numerador E do denominador: custo desconhecido não é
+            # peso, e contá-lo daria cobertura de 100% sobre um número que
+            # ninguém pagou. Quem chama nomeia o ativo (``custo_desconhecido``).
+            continue
+        weight = _number(pos.get(peso))
         if weight is not None and weight > 0:
             ticker = str(pos.get('ticker') or '').strip().upper()
             weights[ticker] = weights.get(ticker, 0.) + weight

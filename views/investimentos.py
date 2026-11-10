@@ -4131,13 +4131,14 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
     chaves = tuple(sorted({str(t or "").strip().upper() for t in tickers if t}))
 
     st.markdown("---")
-    valuations = tesouro = macro = db = None
+    valuations = valuations_custo = tesouro = macro = db = None
     if classe == "tesouro":
         tesouro = render_valuations_tesouro(posicoes_classe, ano_atual)
         macro = carregar_macro()
         render_db_macro(macro)
     else:
-        valuations = render_valuations_classe(classe, posicoes_classe, fundamentos)
+        valuations, valuations_custo = render_valuations_classe(
+            classe, posicoes_classe, fundamentos)
         st.markdown("---")
         db = carregar_db(classe, chaves)
         render_db_analysis(classe, db)
@@ -4154,7 +4155,8 @@ def _bloco_analise_classe(classe, posicoes_classe, fundamentos, *,
         ativos = ({conj: {str(p.get("ticker") or "").upper(): str(p.get("setor") or "")
                           for p in posicoes_classe}} if conj else None)
         contexto = build_carteira_classe_context(
-            classe, posicoes_classe, valuations=valuations, db=db,
+            classe, posicoes_classe, valuations=valuations,
+            valuations_custo=valuations_custo, db=db,
             tesouro=tesouro, macro=macro, fundamentos=fundamentos,
             documentos=carregar_documentos(classe, chaves),
             valores_reais=valores_reais,

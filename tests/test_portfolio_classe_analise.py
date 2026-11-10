@@ -16,6 +16,7 @@ from core.portfolio_valuations import (
     _agregavel,
     aggregate_tesouro,
     aggregate_valuations,
+    custo_desconhecido,
     metric_spec,
     para_percentual,
 )
@@ -123,6 +124,127 @@ def test_media_ignora_infinito_sem_contaminar_cobertura():
     resultado = aggregate_valuations(posicoes, fund, ("pl",))
     assert math.isfinite(resultado["pl"]["value"])
     assert resultado["pl"]["coverage"] == pytest.approx(0.5)
+
+
+# ── Média pelo custo de aquisição ─────────────────────────────────────────
+
+def test_media_pelo_custo_pondera_pelo_total_investido():
+    """AAA subiu e BBB caiu: pelo mercado AAA domina, pelo custo pesam igual."""
+    posicoes = [_pos("AAA", 900.0, 500.0), _pos("BBB", 100.0, 500.0)]
+    fund = {"AAA": {"pvp": 1.0}, "BBB": {"pvp": 11.0}}
+    mercado = aggregate_valuations(posicoes, fund, ("pvp",))
+    custo = aggregate_valuations(posicoes, fund, ("pvp",), peso="total_investido")
+    assert mercado["pvp"]["value"] == pytest.approx(2.0)
+    assert custo["pvp"]["value"] == pytest.approx(6.0)
+
+
+def test_custo_igual_ao_mercado_da_a_mesma_media():
+    """Equivalência dos caminhos: só o peso muda, a conta é a mesma."""
+    posicoes = [_pos("AAA", 700.0), _pos("BBB", 300.0), _pos("CCC", 50.0)]
+    fund = {"AAA": {"pl": 10.0, "roe": -4.0}, "BBB": {"pl": -3.0, "roe": 20.0},
+            "CCC": {}}
+    metricas = ("pl", "roe")
+    assert (aggregate_valuations(posicoes, fund, metricas)
+            == aggregate_valuations(posicoes, fund, metricas, peso="total_investido"))
+
+
+def test_posicao_sem_custo_fica_fora_da_media_pelo_custo():
+    """Custo zero é custo desconhecido, não peso zero 'apurado': rebaixa a cobertura."""
+    posicoes = [_pos("AAA", 500.0, 400.0), _pos("BBB", 500.0, 0.0)]
+    fund = {"AAA": {"pl": 10.0}, "BBB": {"pl": 30.0}}
+    custo = aggregate_valuations(posicoes, fund, ("pl",), peso="total_investido")
+    assert custo["pl"]["value"] == pytest.approx(10.0)
+    assert custo["pl"]["assets"] == 1
+    assert custo["pl"]["coverage"] == pytest.approx(1.0)  # sobre o custo conhecido
+
+
+def test_lotes_somam_custo_como_somam_mercado():
+    posicoes = [_pos("AAA", 100.0, 300.0), _pos("AAA", 100.0, 300.0),
+                _pos("BBB", 400.0, 400.0)]
+    fund = {"AAA": {"pl": 10.0}, "BBB": {"pl": 20.0}}
+    custo = aggregate_valuations(posicoes, fund, ("pl",), peso="total_investido")
+    assert custo["pl"]["value"] == pytest.approx((600 * 10 + 400 * 20) / 1000)
+    assert custo["pl"]["assets"] == 2
+
+
+def test_peso_desconhecido_e_erro_e_nao_media_silenciosa():
+    with pytest.raises(ValueError):
+        aggregate_valuations([_pos("AAA", 100.0)], {}, ("pl",), peso="quantidade")
+
+
+def test_contexto_leva_as_duas_medias():
+    """O chat recebe os mesmos números das duas grades da tela."""
+    posicoes = [_pos("AAA", 900.0, 500.0), _pos("BBB", 100.0, 500.0)]
+    fund = {"AAA": {"pvp": 1.0}, "BBB": {"pvp": 11.0}}
+    texto = build_carteira_classe_context(
+        "acoes", posicoes,
+        valuations=aggregate_valuations(posicoes, fund, ("pvp",)),
+        valuations_custo=aggregate_valuations(posicoes, fund, ("pvp",),
+                                              peso="total_investido"))
+    assert "ponderadas pelo valor de mercado" in texto
+    assert "ponderadas pelo custo de aquisição" in texto
+    assert "P/VP: 2.00x" in texto and "P/VP: 6.00x" in texto
+    assert "do custo de aquisição da classe" in texto
+
+
+def test_contexto_sem_media_pelo_custo_nao_inventa_bloco():
+    texto = _contexto_acoes()
+    assert "custo de aquisição" not in texto
+
+
+def test_custo_imputado_pelo_mercado_fica_fora_da_media_pelo_custo():
+    """``mercado_fallback`` é o valor de mercado no lugar de um custo que não existe.
+
+    Achado do Codex no PR #704: contar esse número como custo dava 28 onde a
+    média pelo custo conhecido é 10, com cobertura de 100% e sem aviso.
+    """
+    desconhecido = {**_pos("AAA", 900.0), "custo_fonte": "mercado_fallback"}
+    conhecido = {**_pos("BBB", 100.0), "custo_fonte": "extrato"}
+    fund = {"AAA": {"pl": 30.0}, "BBB": {"pl": 10.0}}
+    custo = aggregate_valuations([desconhecido, conhecido], fund, ("pl",),
+                                 peso="total_investido")
+    assert custo["pl"]["value"] == pytest.approx(10.0)
+    assert custo["pl"]["assets"] == 1
+    # O mercado não muda: lá o valor de hoje é conhecido.
+    mercado = aggregate_valuations([desconhecido, conhecido], fund, ("pl",))
+    assert mercado["pl"]["value"] == pytest.approx(28.0)
+    assert custo_desconhecido([desconhecido, conhecido]) == ["AAA"]
+
+
+def test_contexto_nomeia_quem_ficou_fora_da_media_pelo_custo():
+    desconhecido = {**_pos("AAA", 900.0), "custo_fonte": "mercado_fallback"}
+    conhecido = _pos("BBB", 100.0)
+    posicoes = [desconhecido, conhecido]
+    fund = {"AAA": {"pl": 30.0}, "BBB": {"pl": 10.0}}
+    texto = build_carteira_classe_context(
+        "acoes", posicoes,
+        valuations=aggregate_valuations(posicoes, fund, ("pl",)),
+        valuations_custo=aggregate_valuations(posicoes, fund, ("pl",),
+                                              peso="total_investido"))
+    assert "sem custo de aquisição conhecido: AAA" in texto
+
+
+def test_custo_em_dolar_pelo_cambio_de_hoje_fica_fora_da_media_pelo_custo():
+    """Sem o câmbio da compra, o custo em reais muda com o dólar de hoje.
+
+    Achado do Codex no PR #704. Os dois caminhos que montam a posição marcam a
+    situação de jeitos diferentes: o snapshot grava
+    ``custo_fonte='cambio_atual_estimado'``; o recálculo deixa
+    ``fx_rate_compra=None``. Os dois precisam ficar fora.
+    """
+    snapshot = {**_pos("AAA", 300.0), "moeda": "USD",
+                "custo_fonte": "cambio_atual_estimado", "fx_rate_compra": None}
+    recalculo = {**_pos("BBB", 300.0), "moeda": "USD", "fx_rate_compra": None}
+    historico = {**_pos("CCC", 100.0), "moeda": "USD", "fx_rate_compra": 5.1,
+                 "custo_fonte": "cambio_historico_compras"}
+    em_reais = {**_pos("DDD", 100.0), "moeda": "BRL", "fx_rate_compra": None}
+    posicoes = [snapshot, recalculo, historico, em_reais]
+    fund = {"AAA": {"pl": 50.0}, "BBB": {"pl": 50.0},
+            "CCC": {"pl": 10.0}, "DDD": {"pl": 20.0}}
+    custo = aggregate_valuations(posicoes, fund, ("pl",), peso="total_investido")
+    assert custo["pl"]["value"] == pytest.approx(15.0)
+    assert custo["pl"]["assets"] == 2
+    assert custo_desconhecido(posicoes) == ["AAA", "BBB"]
 
 
 # ── Tesouro Direto ────────────────────────────────────────────────────────

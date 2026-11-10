@@ -9,6 +9,7 @@ from core.portfolio_valuations import (
     METRICS_BY_CLASS,
     aggregate_tesouro,
     aggregate_valuations,
+    custo_desconhecido,
     load_valuation_fundamentals,
     metric_spec,
     texto_marcacao_tesouro,
@@ -40,10 +41,11 @@ def _card(titulo: str, valor: str, sub: str, cor: str) -> str:
     )
 
 
-def _registrar_cobertura(rotulo: str, item: dict, denominador: str) -> None:
+def _registrar_cobertura(rotulo: str, item: dict, denominador: str,
+                         base: str = 'valor') -> None:
     """Contagem de ativos e cobertura da média vão para o log, não para o card."""
     texto = (f"{rotulo}: {item['assets']} ativo(s) · {item['coverage']:.1%} "
-             f"do valor da {denominador}")
+             f"do {base} da {denominador}")
     if item['value'] is None:
         aviso_lacuna(texto, codigo='tela.carteira.valuation_sem_media', entidade=rotulo)
     else:
@@ -140,14 +142,37 @@ def render_portfolio_valuations(positions):
 # médias de uma foto e cards de outra, e a divergência não apareceria na tela.
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _grade_medias(resultado, metricas, colunas: int, sub: str, base: str,
+                  entidade_sufixo: str = '') -> None:
+    """Uma grade de cards, a mesma para os dois pesos."""
+    for offset in range(0, len(metricas), colunas):
+        fatia = list(metricas)[offset:offset + colunas]
+        for col, chave in zip(st.columns(colunas), fatia):
+            item = resultado[chave]
+            spec = metric_spec(chave)
+            valor = item['value']
+            texto = '—' if valor is None else f'{valor:.2f}{spec.unit}'
+            _registrar_cobertura(spec.label + entidade_sufixo, item, 'classe', base)
+            with col:
+                st.markdown(_card(spec.label, texto, sub, 'var(--app-text)'),
+                            unsafe_allow_html=True)
+
+
 def render_valuations_classe(classe, positions, fundamentals, *, colunas: int = 4):
     """Médias da classe a partir dos fundamentos que a aba já buscou.
 
-    Devolve o dicionário de agregados para que o chat receba exatamente os
+    Mostra duas grades: a média ponderada pelo valor de mercado de hoje e a
+    ponderada pelo custo de aquisição. A primeira descreve a carteira como ela
+    está; a segunda, como ela foi montada — o ativo que subiu pesa mais na
+    primeira, o que caiu pesa mais na segunda.
+
+    Devolve ``(pelo_mercado, pelo_custo)`` para que o chat receba exatamente os
     mesmos números exibidos.
     """
     metricas = METRICS_BY_CLASS.get(classe, tuple(METRICS))
     resultado = aggregate_valuations(positions, fundamentals, metricas)
+    pelo_custo = aggregate_valuations(positions, fundamentals, metricas,
+                                      peso='total_investido')
     apurados = [k for k in metricas if resultado[k]['value'] is not None]
     st.markdown(f'##### 📐 Médias de {CLASS_LABELS.get(classe, classe)} na carteira')
     if not apurados:
@@ -158,30 +183,44 @@ def render_valuations_classe(classe, positions, fundamentals, *, colunas: int = 
                      'ativo nenhum.',
                      codigo='tela.carteira.valuation_classe_sem_media',
                      entidade=str(classe))
-        return resultado
-    for offset in range(0, len(metricas), colunas):
-        fatia = list(metricas)[offset:offset + colunas]
-        for col, chave in zip(st.columns(colunas), fatia):
-            item = resultado[chave]
-            spec = metric_spec(chave)
-            valor = item['value']
-            texto = '—' if valor is None else f'{valor:.2f}{spec.unit}'
-            _registrar_cobertura(spec.label, item, 'classe')
-            with col:
-                st.markdown(_card(
-                    spec.label, texto,
-                    'média ponderada pelo valor',
-                    'var(--app-text)',
-                ), unsafe_allow_html=True)
+        return resultado, pelo_custo
+    st.markdown('**Pelo valor de mercado**')
+    _grade_medias(resultado, metricas, colunas,
+                  'média ponderada pelo valor de mercado', 'valor')
+    st.markdown('**Pelo custo de aquisição**')
+    sem_custo = custo_desconhecido(positions)
+    if sem_custo:
+        # Custo imputado pelo valor de mercado, ou em dólar pelo câmbio de hoje,
+        # não é custo de aquisição: o ativo fica fora desta grade, e quem olha
+        # precisa saber quem faltou.
+        aviso_lacuna('Fora da média pelo custo, sem custo de aquisição conhecido: '
+                     + ', '.join(sem_custo) + '. O custo não existe na fonte, '
+                     'ou está em dólar sem o câmbio da compra; não é zero nem o '
+                     'valor de hoje.',
+                     codigo='tela.carteira.valuation_classe_custo_desconhecido',
+                     entidade=str(classe))
+    if any(pelo_custo[k]['value'] is not None for k in metricas):
+        _grade_medias(pelo_custo, metricas, colunas,
+                      'média ponderada pelo custo', 'custo', ' (pelo custo)')
+    else:
+        st.info('Sem custo de aquisição conhecido para os ativos com indicador — '
+                'a média pelo custo não existe.')
+        aviso_lacuna('Nenhuma posição desta classe com indicador válido tem custo '
+                     'de aquisição positivo; a média pelo custo não foi apurada.',
+                     codigo='tela.carteira.valuation_classe_sem_custo',
+                     entidade=str(classe))
     st.caption(
-        'Média aritmética ponderada pelo valor de mercado dos ativos COM dado '
-        'válido nesta classe. '
+        'Média aritmética ponderada dos ativos COM dado válido nesta classe: a '
+        'primeira grade pesa cada ativo pelo valor de mercado de hoje; a segunda, '
+        'pelo custo de aquisição (o total investido nele). Ativo que se valorizou '
+        'pesa mais na primeira; o que caiu, na segunda. Os indicadores são os de '
+        'hoje nas duas grades: só o peso muda. '
         'Múltiplo nulo ou negativo é excluído (indefinido, não barato); '
         'margem e crescimento negativos entram, porque são observação legítima. '
         'Não é múltiplo contábil consolidado nem previsão de retorno.'
     )
     _nota_vacancia_financeira(positions, fundamentals, resultado)
-    return resultado
+    return resultado, pelo_custo
 
 
 def _nota_vacancia_financeira(positions, fundamentals, resultado) -> None:
