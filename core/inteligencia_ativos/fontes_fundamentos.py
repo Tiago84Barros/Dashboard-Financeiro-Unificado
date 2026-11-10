@@ -105,7 +105,18 @@ def dados_fii(linha: dict) -> dict[str, Dado]:
         saida[chave] = Dado(valor, fonte, ref, nota)
 
     saida: dict[str, Dado] = {}
-    dado("p_vp", _num(linha.get("pvp")))
+    meta_pvp = (linha.get("metric_metadata") or {}).get("pvp") or {}
+    nota_pvp = None
+    # Campos de topo sobrevivem a compactacao do snapshot publicado; o metadata
+    # (lista de 4 posicoes) nao carrega price_date.
+    dia_preco = linha.get("price_date") or meta_pvp.get("price_date")
+    comp_vpa = linha.get("vpa_ref_date") or meta_pvp.get("reference_date")
+    if comp_vpa:
+        # D1: o P/VP junta duas datas; as duas ficam visiveis. Sem `price_at`
+        # a data da cotacao e desconhecida e a nota diz isso.
+        quando = f"de {str(dia_preco)[:10]}" if dia_preco else "de data desconhecida"
+        nota_pvp = (f"preço {quando} ÷ VPA da CVM de {str(comp_vpa)[:7]}")
+    dado("p_vp", _num(linha.get("pvp")), nota_pvp)
     dado("dividend_yield", _pct(linha.get("dy_12m")))
     vac = _pct(linha.get("vacancia_fisica"))
     if vac is not None:
@@ -142,7 +153,12 @@ def dados_fii(linha: dict) -> dict[str, Dado]:
 
     cotas = _num(linha.get("shares_outstanding"))
     if cotas is not None:
+        derivada = bool(linha.get("shares_derived_ref")) or "derivado" in str(
+            ((linha.get("metric_metadata") or {}).get("shares_outstanding") or {})
+            .get("source") or "")
         dado("emissoes", f"{_br(cotas, 0)} cotas em circulação",
+             "só o saldo atual, derivado de PL ÷ VPA da CVM; não há histórico de "
+             "ofertas publicado" if derivada else
              "só o saldo atual; não há histórico de ofertas publicado")
 
     dado("alavancagem", _pct(linha.get("leverage")),

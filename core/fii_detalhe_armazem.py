@@ -60,7 +60,7 @@ ORDER BY ticker, metric_name, reference_date, knowledge_at DESC NULLS LAST
 """
 
 _SQL_PRECOS = """
-SELECT ticker, date, COALESCE(adjusted_close, close) AS preco
+SELECT ticker, date, COALESCE(adjusted_close, close) AS preco, close AS preco_bruto
 FROM market.historical_prices
 WHERE ticker = ANY(:t) AND date >= :desde AND date <= :hoje
 ORDER BY ticker, date
@@ -198,7 +198,8 @@ def ler_detalhe(engine, tickers, *, hoje: date | None = None) -> dict[str, dict]
              "valor": r["value_numeric"]})
     for r in precos:
         saida[r["ticker"]]["precos"].append(
-            {"date": r["date"], "preco": r["preco"]})
+            {"date": r["date"], "preco": r["preco"],
+             "preco_bruto": r["preco_bruto"]})
     for r in proventos:
         saida[r["ticker"]]["proventos"].append(
             {"data_com": r["data_com"], "pagamento": r["payment_date"],
@@ -333,6 +334,14 @@ def resumo_precos(precos: list[dict]) -> dict | None:
     if len(serie) < 2:
         return None
     ultimo_dia, ultimo = serie[-1]
+    # D7 (auditoria FII 10/11/2026): `preco` e ajustado por proventos (retorno
+    # total) e fica abaixo do preco negociado; P/VP e rendimento sobre o preco
+    # usam o `close` bruto do MESMO dia, e sem ele ficam ausentes.
+    bruto = None
+    for r in precos:
+        if _data(r.get("date")) == ultimo_dia:
+            valor = _num(r.get("preco_bruto"))
+            bruto = valor if valor is not None and valor > 0 else None
 
     def em(dias: int) -> float | None:
         antes = [p for d, p in serie if d <= ultimo_dia - timedelta(days=dias)]
@@ -343,7 +352,20 @@ def resumo_precos(precos: list[dict]) -> dict | None:
     for p in ano:
         pico = max(pico, p)
         dd = min(dd, p / pico - 1)
-    return {"ultimo_dia": ultimo_dia, "ultimo": ultimo, "pontos": len(ano),
+    # Faixa de 12 meses na mesma base da cotacao exibida: close bruto, so quando
+    # TODO ponto do ano o tem (misturar bases fabrica rompimento).
+    brutos = {}
+    for r in precos:
+        d_, v_ = _data(r.get("date")), _num(r.get("preco_bruto"))
+        if d_ is not None and v_ is not None and v_ > 0:
+            brutos[d_] = v_
+    dias_ano = [d for d, _ in serie if d > ultimo_dia - timedelta(days=365)]
+    faixa_bruta = ([brutos[d] for d in dias_ano] if dias_ano and all(d in brutos for d in dias_ano)
+                   else None)
+    return {"ultimo_dia": ultimo_dia, "ultimo": ultimo, "ultimo_bruto": bruto,
+            "min52_bruto": min(faixa_bruta) if faixa_bruta else None,
+            "max52_bruto": max(faixa_bruta) if faixa_bruta else None,
+            "pontos": len(ano),
             "r3m": _variacao(ultimo, em(91)), "r12m": _variacao(ultimo, em(365)),
             "max52": max(ano), "min52": min(ano), "dd12m": dd}
 
@@ -507,13 +529,18 @@ def resumo_para_prompt(detalhe: dict[str, dict], *, origem: str,
             linhas.append("    Preço: o armazém não tem série recente deste fundo.")
         else:
             idade = (hoje - p["ultimo_dia"]).days
+            faixa = (f"faixa 12m {p['min52_bruto']:,.2f}–{p['max52_bruto']:,.2f}; "
+                     if p["min52_bruto"] is not None else
+                     f"faixa 12m (série ajustada por proventos, não comparável à cotação) "
+                     f"{p['min52']:,.2f}–{p['max52']:,.2f}; ")
             vpa = s["vpa"] if s else None
-            pvp = f"; P/VP {p['ultimo'] / vpa:.2f}" if vpa else ""
+            pvp = (f"; P/VP {p['ultimo_bruto'] / vpa:.2f}"
+                   if vpa and p["ultimo_bruto"] else "")
             linhas.append(
                 f"    Preço (cotação de {p['ultimo_dia']:%d/%m/%Y}"
                 + (f", {idade} dias atrás — série do armazém parada" if idade > 20 else "")
-                + f"): R$ {p['ultimo']:,.2f}{pvp}; retorno 3m {_pct(p['r3m'])}, "
-                f"12m {_pct(p['r12m'])}; faixa 12m {p['min52']:,.2f}–{p['max52']:,.2f}; "
+                + f"): R$ {(p['ultimo_bruto'] or p['ultimo']):,.2f}{pvp}; retorno total (ajustado) 3m {_pct(p['r3m'])}, "
+                f"12m {_pct(p['r12m'])}; {faixa}"
                 f"queda máx. 12m {_pct(p['dd12m'])} ({p['pontos']} cotações no ano).")
         linhas.append(_linha_liquidez(d, hoje))
         pv = resumo_proventos(d.get("proventos") or [], hoje)
@@ -521,8 +548,8 @@ def resumo_para_prompt(detalhe: dict[str, dict], *, origem: str,
             linhas.append(f"    Proventos: nenhum registrado nos últimos {ANOS_PROVENTOS} anos.")
         else:
             rend = ""
-            if p is not None and p["ultimo"] > 0 and pv["soma12m"] > 0:
-                rend = f" (≈{pv['soma12m'] / p['ultimo']:.2%} do preço)"
+            if p is not None and p["ultimo_bruto"] and pv["soma12m"] > 0:
+                rend = f" (≈{pv['soma12m'] / p['ultimo_bruto']:.2%} do preço)"
             ant = ("" if pv["soma12m_anterior"] is None
                    else f"; 12 meses anteriores R$ {pv['soma12m_anterior']:,.4f} "
                         f"({_pct(_variacao(pv['soma12m'], pv['soma12m_anterior']))})")

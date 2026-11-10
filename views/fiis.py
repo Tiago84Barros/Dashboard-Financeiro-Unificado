@@ -247,6 +247,9 @@ def _methodology_inputs_to_vitrine(inputs: pd.DataFrame) -> pd.DataFrame:
         "vpa": "VPA", "num_cotistas": "Cotistas", "tipo_gestao": "Gestao",
         "pct_imoveis": "Pct_Imoveis", "pct_papel": "Pct_Papel",
         "pct_caixa": "Pct_Caixa", "pct_fundos": "Pct_Fundos",
+        "liquidez_origem": "Liquidez_Origem", "price_date": "Price_Date",
+        "vpa_ref_date": "Vpa_Ref",
+        "dy_date": "Dy_Date", "pl_ref_date": "Pl_Ref",
     }
     classificacoes = inputs.apply(
         lambda row: categoria_fii(
@@ -1788,6 +1791,33 @@ def _fmt_money(v, dec: int = 2) -> str:
 _TIPOS_TIJOLO = {"tijolo", "hibrido"}
 
 
+_KPIS_DA_VITRINE = ("Preço", "P/VP", "DY_12m", "VPA", "Patrimonio", "Cotistas",
+                    "Liquidez_Diaria", "updated_at", "cvm_ref_date", "Liquidez_Origem",
+                    "Price_Date", "Vpa_Ref", "Dy_Date", "Pl_Ref")
+
+
+def _kpis_da_vitrine(d: pd.Series, vitrine: pd.DataFrame, ticker: str) -> pd.Series:
+    """D5: a Busca lia `market.fiis` do Supabase (dado de 28/10) enquanto o
+    Ranking lia a vitrine; os dois discordavam na mesma tela. Os KPIs passam a
+    vir da linha da vitrine do Ranking; campo ausente nela fica como estava."""
+    out = d.copy()
+    if vitrine is None or vitrine.empty or "Ticker" not in vitrine:
+        return out
+    linha = vitrine[vitrine["Ticker"] == ticker]
+    if linha.empty:
+        return out
+    linha = linha.iloc[0]
+    for campo in _KPIS_DA_VITRINE:
+        if campo in linha.index and pd.notna(linha[campo]):
+            out[campo] = linha[campo]
+    return out
+
+
+def _data_base(valor, formato: str = "%d/%m/%Y") -> str | None:
+    ts = pd.to_datetime(valor, errors="coerce")
+    return None if pd.isna(ts) else ts.strftime(formato)
+
+
 def _tab_busca(df: pd.DataFrame) -> None:
     st.caption("Selecione um FII para ver o histórico fundamentalista, vacância, "
                "composição e a carteira de imóveis (com a região, p/ tijolo/logística).")
@@ -1812,6 +1842,7 @@ def _tab_busca(df: pd.DataFrame) -> None:
         aviso_lacuna(f"Sem dados para {tk}.", codigo="tela.fii.sem_dados",
                      nivel="warning", entidade=tk)
         return
+    d = _kpis_da_vitrine(d, df, tk)
     tipo = (d.get("Tipo") or "").strip().lower()
 
     # ── Cabeçalho / KPIs ──────────────────────────────────────────────────────
@@ -1833,21 +1864,47 @@ def _tab_busca(df: pd.DataFrame) -> None:
     else:
         vac_val, vac_sub = "n/a", "não se aplica (papel/FoF)"
 
+    # Data-base de cada KPI: cotação (dia da leitura de mercado) e competência
+    # do Informe Mensal da CVM (VPA e patrimônio).
+    # Sem `price_at` (migration 088) a data da cotacao e desconhecida: nunca
+    # usar `updated_at` (renovado por qualquer UPDATE) nem a data da serie.
+    dia_preco = _data_base(d.get("Price_Date"))
+    sub_preco = f"cotação de {dia_preco}" if dia_preco else "data da cotação desconhecida"
+    dia_dy = _data_base(d.get("Dy_Date"))
+    sub_dy = f"DY de {dia_dy}" if dia_dy else "data do DY desconhecida"
+    comp_pl = _data_base(d.get("Pl_Ref"), "%m/%Y") or _data_base(d.get("cvm_ref_date"), "%m/%Y")
+    sub_pl = f"CVM {comp_pl}" if comp_pl else None
+    comp = _data_base(d.get("Vpa_Ref"), "%m/%Y") or _data_base(d.get("cvm_ref_date"), "%m/%Y")
+    sub_cvm = f"CVM {comp}" if comp else None
+    fita_b3 = str(d.get("Liquidez_Origem") or "") == "fita_b3"
+    if fita_b3:
+        detalhe_tecnico(
+            "Liquidez/dia é a mediana de 6 meses fechados do giro diário na B3; "
+            "Fundamentus, Status Invest e Investidor10 usam média de 30 dias ou de "
+            "3 meses, então os números não coincidem.",
+            codigo="fii.liquidez_mediana_6m", entidade=tk)
     r1 = st.columns(4)
-    r1[0].markdown(_kpi_html("Preço", _fmt_money(d.get("Preço"))), unsafe_allow_html=True)
+    r1[0].markdown(_kpi_html("Preço", _fmt_money(d.get("Preço")), sub=sub_preco,
+                             sub_color="#4A5568"), unsafe_allow_html=True)
     r1[1].markdown(_kpi_html("P/VP", f"{d.get('P/VP'):.2f}" if pd.notna(d.get("P/VP")) else "—",
-                             accent="#B084F6"), unsafe_allow_html=True)
-    r1[2].markdown(_kpi_html("DY 12m", _fmt_pct(d.get("DY_12m")), accent="#00C896"),
+                             sub=(f"preço ÷ VPA ({sub_cvm})" if sub_cvm else None),
+                             sub_color="#4A5568", accent="#B084F6"), unsafe_allow_html=True)
+    r1[2].markdown(_kpi_html("DY 12m", _fmt_pct(d.get("DY_12m")), sub=sub_dy,
+                             sub_color="#4A5568", accent="#00C896"),
                    unsafe_allow_html=True)
-    r1[3].markdown(_kpi_html("VPA", _fmt_money(d.get("VPA")), accent="#4A9EFF"),
+    r1[3].markdown(_kpi_html("VPA", _fmt_money(d.get("VPA")), sub=sub_cvm,
+                             sub_color="#4A5568", accent="#4A9EFF"),
                    unsafe_allow_html=True)
     r2 = st.columns(4)
-    r2[0].markdown(_kpi_html("Patrimônio", _fmt_money(pl / 1e9, 2) + " bi" if pd.notna(pl) else "—"),
+    r2[0].markdown(_kpi_html("Patrimônio", _fmt_money(pl / 1e9, 2) + " bi" if pd.notna(pl) else "—",
+                             sub=sub_pl, sub_color="#4A5568"),
                    unsafe_allow_html=True)
     r2[1].markdown(_kpi_html("Cotistas", cot, accent="#4A9EFF"), unsafe_allow_html=True)
     r2[2].markdown(_kpi_html("Vacância", vac_val, sub=vac_sub, sub_color="#4A5568",
                              accent="#F6C90E"), unsafe_allow_html=True)
-    r2[3].markdown(_kpi_html("Liquidez/dia", _fmt_money(d.get("Liquidez_Diaria"), 0)),
+    r2[3].markdown(_kpi_html("Liquidez/dia", _fmt_money(d.get("Liquidez_Diaria"), 0),
+                             sub="mediana de 6 meses" if fita_b3 else None,
+                             sub_color="#4A5568"),
                    unsafe_allow_html=True)
 
     st.divider()

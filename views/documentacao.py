@@ -1376,6 +1376,8 @@ FLOW_SELECAO_FIIS = FlowSpec(
             (
                 "_tab_busca()",
                 "core.market_read.load_fii_one()",
+                "Os cartões de preço, P/VP, DY, VPA, patrimônio e liquidez vêm da linha "
+                "da vitrine do Ranking (_kpis_da_vitrine), com a data-base de cada um",
                 "Seleção do FII ordenada pela nota",
                 "Fundo sem dado vira aviso de lacuna, não tela vazia",
                 "Chat do fundo: build_fii_ativo_context() com os rendimentos por cota de "

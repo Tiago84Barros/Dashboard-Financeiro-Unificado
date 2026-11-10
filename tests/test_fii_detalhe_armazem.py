@@ -72,7 +72,7 @@ def _detalhe():
         "precos": [{"date": HOJE - timedelta(days=400), "preco": Decimal("80")},
                    {"date": HOJE - timedelta(days=200), "preco": Decimal("100")},
                    {"date": HOJE - timedelta(days=100), "preco": Decimal("90")},
-                   {"date": HOJE - timedelta(days=5), "preco": Decimal("99")}],
+                   {"date": HOJE - timedelta(days=5), "preco": Decimal("99"), "preco_bruto": Decimal("99")}],
         "proventos": [{"data_com": date(2026, 8, 29), "pagamento": date(2026, 9, 14),
                        "tipo": "Rendimento", "valor": Decimal("1.10")},
                       {"data_com": date(2025, 8, 29), "pagamento": None,
