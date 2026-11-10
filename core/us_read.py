@@ -976,8 +976,15 @@ def load_snapshot_advanced(symbol: str) -> dict | None:
 
 def load_snapshot_financials(symbol: str) -> pd.DataFrame:
     rows = _snapshot_json_for(symbol, "financials") or []
-    return (pd.DataFrame(rows).reindex(columns=_COMPANY_FINANCIAL_COLS)
-            if rows else pd.DataFrame(columns=_COMPANY_FINANCIAL_COLS))
+    if not rows:
+        return pd.DataFrame(columns=_COMPANY_FINANCIAL_COLS)
+    df = pd.DataFrame(rows)
+    # Campo ausente (vitrine anterior a `shares_outstanding_ajustada`) nao e o
+    # mesmo que campo nulo (ajuste ambiguo): so o segundo vira NaN, o primeiro
+    # deixa a coluna de fora e `derive_metric_history` le a base antiga.
+    cols = [c for c in _COMPANY_FINANCIAL_COLS
+            if c != "shares_outstanding_ajustada" or c in df.columns]
+    return df.reindex(columns=cols)
 
 
 def load_snapshot_financials_for_symbols(symbols) -> dict[str, list[dict]]:

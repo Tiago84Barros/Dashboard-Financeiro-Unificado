@@ -89,3 +89,17 @@ def test_caminho_do_armazem_e_o_da_vitrine_dao_a_mesma_serie():
     armazem = _anexar_acoes_ajustadas(armazem, SPLIT_10_1)
     for col in ("shares_outstanding_ajustada", "dividends_per_share"):
         assert list(armazem[col]) == pytest.approx(list(vitrine[col]))
+
+
+def test_vitrine_antiga_sem_a_coluna_continua_na_base_antiga(monkeypatch):
+    import core.us_read as ur
+
+    rows = [{"fiscal_year": 2023, "net_income": 5e8, "shares_outstanding": 100e6}]
+    monkeypatch.setattr(ur, "_snapshot_json_for", lambda s, k: rows)
+    df = ur.load_snapshot_financials("X")
+    assert "shares_outstanding_ajustada" not in df
+    h = derive_metric_history(df, pd.DataFrame(
+        {"date": ["2023-12-29"], "price": [50.0]}))
+    assert h.loc[0, "pe"] == pytest.approx(10.0)
+    rows[0]["shares_outstanding_ajustada"] = None
+    assert "shares_outstanding_ajustada" in ur.load_snapshot_financials("X")
