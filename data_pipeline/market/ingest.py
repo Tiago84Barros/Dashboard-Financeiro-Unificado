@@ -711,17 +711,20 @@ def enrich_setores() -> dict:
 
 
 def _gravar_indicadores(conn, data, ticker, quote, composicao=None) -> int:
-    """Grava as linhas de indicador (vintages e spot). O upsert não apaga:
-    quando o quote tem a composição (ações emitidas e os campos de k) e mesmo
-    assim não emite uma das ``acoes.METRICAS_DE_COMPOSICAO`` (k não fecha),
-    a linha antiga sai, para o k velho não ficar ao lado das ações novas. O
-    quote diário, sem composição, não apaga nada: o k do último completo
-    continua valendo."""
+    """Grava as linhas de indicador (vintages e spot). O upsert não apaga, e
+    as ``acoes.METRICAS_DE_COMPOSICAO`` só valem juntas, da mesma fonte.
+    Quando o quote tem a composição (própria ou a do último completo) ou
+    emite ações emitidas novas, e mesmo assim não emite uma delas (k não
+    fecha), a linha antiga sai: o k velho não fica ao lado das ações novas,
+    que o reprocess juntaria. O quote diário sem composição e sem ações não
+    apaga nada: o k do último completo continua valendo."""
     from data_pipeline.market import acoes as _ac
     linhas = data["calculated_metrics"]
     repo.append_metric_vintages(conn, linhas)
     n = repo.upsert(conn, "calculated_metrics", linhas)
-    if _ac.composicao_conhecida(quote, composicao):
+    acoes_novas = any(str(r.get("period")) == "spot"
+                      and r.get("metric_name") == "Acoes_Emitidas" for r in linhas)
+    if acoes_novas or _ac.composicao_conhecida(quote, composicao):
         repo.apagar_composicao_omitida(conn, ticker, linhas)
     return n
 

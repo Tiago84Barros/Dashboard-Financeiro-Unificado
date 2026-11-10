@@ -121,16 +121,18 @@ def acoes_por_titulo(quote: dict, *, unit: bool) -> int | None:
     """Quantas ações cada título carrega: 1 para ação; k para unit; None se
     a unit não deixa derivar k com segurança.
 
-    k sai dos três campos de um mesmo quote. Quando o quote não os tem e
-    ``quote_com_composicao`` lhe deu os do quote completo mais novo, k sai
-    desses, juntos, mesmo que o quote traga ações emitidas mais novas: as
-    ações de uma data com o LPA de outra não dão a razão."""
+    k sai dos três campos de uma mesma fonte. Quando ``quote_com_composicao``
+    anexou a composição do quote completo mais novo, k sai dela, inteira,
+    mesmo que o quote traga ações emitidas ou LPA mais novos: as ações de uma
+    data com o LPA de outra não dão a razão. O ``sharesOutstanding`` que a
+    função empresta ao ``defaultKeyStatistics`` não conta como composição
+    própria."""
     if not unit:
         return 1
     quote = quote or {}
     dks = quote.get("defaultKeyStatistics") or {}
     comp = quote.get(_COMPOSICAO_DO_COMPLETO)
-    if not tem_composicao(quote) and _composicao_valida(comp):
+    if _composicao_valida(comp):
         return _k_da_razao(comp["sharesOutstanding"], comp["trailingEps"],
                            comp["netIncomeToCommon"])
     return _k_da_razao(acoes_emitidas(quote), dks.get("trailingEps"),

@@ -498,3 +498,30 @@ def test_composicao_incompleta_nao_e_conhecida():
     assert ac.composicao_conhecida(_diario("XPTO3", 1.0),
                                    {"sharesOutstanding": 1_000.0, "trailingEps": 1.0,
                                     "netIncomeToCommon": 1_000.0})
+
+
+# ── k sai inteiro de uma fonte só (Codex, PR #710, 227e0f41) ─────────────────
+# O quote parcial que traz LPA e lucro, mas não as ações, não pode juntar as
+# ações emprestadas do completo com o LPA dele para tirar k.
+
+def test_quote_parcial_sem_acoes_tira_k_da_composicao_e_nao_mistura_datas():
+    q = _quote("XPTO11", 30.0, lpa_titulo=6.0, lucro=3_000.0)
+    completo = {"sharesOutstanding": 3_000.0, "trailingEps": 3.0,
+                "netIncomeToCommon": 3_000.0}
+    qc = ac.quote_com_composicao(q, completo)
+    assert ac.acoes_por_titulo(qc, unit=True) == 3
+    assert ac.valor_de_mercado_do_quote(qc, unit=True) == pytest.approx(30_000.0)
+    by = {r["metric_name"]: r["metric_value"] for r in nz.metric_rows(q, completo)}
+    assert by["Acoes_por_Titulo"] == 3
+    assert by["marketCap"] == pytest.approx(30_000.0)
+
+
+# Ações novas sem k: o k antigo não fica ao lado delas, mesmo quando o quote
+# não traz os três campos de k (o reprocess juntaria os dois).
+
+def test_acoes_novas_sem_k_apagam_o_k_antigo(monkeypatch):
+    fake = _Repo()
+    monkeypatch.setattr(ig, "repo", fake)
+    q = _quote("XPTO11", 30.0, acoes=6_000.0)
+    ig._gravar_indicadores(None, nz.normalize_all(q), "XPTO11", q)
+    assert fake.apagadas == [("XPTO11", ["Acoes_por_Titulo", "marketCap"])]
