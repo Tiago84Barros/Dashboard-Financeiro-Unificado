@@ -14,6 +14,8 @@ from typing import Optional
 
 from sqlalchemy import text
 
+from data_pipeline.us.repository import colunas_da_tabela, equity_identity_expr
+
 # Tolerância relativa padrão para identidades contábeis.
 DEFAULT_TOL = 0.02
 
@@ -85,23 +87,24 @@ def run_audit(engine, limit: int = 100000) -> dict:
                        "severity": severity, "gate": gate})
 
     with engine.begin() as conn:
-        b = conn.execute(text("""
+        eq = equity_identity_expr(colunas_da_tabela(conn, "balance_sheets"))
+        b = conn.execute(text(f"""
           SELECT COUNT(*) total,
             COUNT(*) FILTER (WHERE total_assets IS NULL OR total_liabilities IS NULL OR total_equity IS NULL) skipped,
             COUNT(*) FILTER (WHERE total_assets IS NOT NULL AND total_liabilities IS NOT NULL
-              AND total_equity IS NOT NULL AND ABS(total_assets-(total_liabilities+total_equity)) /
-              GREATEST(ABS(total_assets),ABS(total_liabilities+total_equity),1) > .02) failed
+              AND total_equity IS NOT NULL AND ABS(total_assets-(total_liabilities+{eq})) /
+              GREATEST(ABS(total_assets),ABS(total_liabilities+{eq}),1) > .02) failed
           FROM (SELECT * FROM market_us.balance_sheets ORDER BY reference_date DESC LIMIT :l) x
         """), {"l": limit}).one()
         add("balance_identity_source", "balance_sheets", b[0], b[2], b[1],
             severity="info", gate=False)
 
-        bu = conn.execute(text("""
+        bu = conn.execute(text(f"""
           SELECT COUNT(*) total,
             COUNT(*) FILTER (WHERE total_assets IS NULL OR total_liabilities IS NULL OR total_equity IS NULL) skipped,
             COUNT(*) FILTER (WHERE total_assets IS NOT NULL AND total_liabilities IS NOT NULL
-              AND total_equity IS NOT NULL AND ABS(total_assets-(total_liabilities+total_equity)) /
-              GREATEST(ABS(total_assets),ABS(total_liabilities+total_equity),1) > .02) failed
+              AND total_equity IS NOT NULL AND ABS(total_assets-(total_liabilities+{eq})) /
+              GREATEST(ABS(total_assets),ABS(total_liabilities+{eq}),1) > .02) failed
           FROM (SELECT * FROM market_us.balance_sheets
                 WHERE quality_status IN ('raw','validated')
                 ORDER BY reference_date DESC LIMIT :l) x

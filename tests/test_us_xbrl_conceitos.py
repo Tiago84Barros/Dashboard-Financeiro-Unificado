@@ -229,3 +229,78 @@ def test_issued_menos_tesouraria_trimestral():
 
 def test_parser_version_subiu():
     assert ef.PARSER_VERSION != "companyfacts-parser-v7"
+
+
+# ── Codex #706: provenance, datas e identidade ───────────────────────────────
+def test_divida_combinada_promovida_leva_a_procedencia_e_o_pit_a_mascara():
+    from core.us_pit import REGRA_CAMPO, visiveis
+    gaap = {}
+    gaap.update(_fact("Assets", [_e("2020-12-31", 500, "2021-02-15")]))
+    gaap.update(_fact("DebtLongtermAndShorttermCombinedAmount",
+                      [_e("2020-12-31", 110, "2023-02-15")]))
+    row = ef.build_balance_rows(_cf(gaap))[0]
+    assert row["long_term_debt"] == 110
+    assert "_debt_combined" not in row["filed_at"]
+    assert row["filed_at"]["long_term_debt"] == "2023-02-15"
+    vis = visiveis([row], date(2021, 3, 31), regra=REGRA_CAMPO,
+                  derivar=ef.derivar_balance)
+    assert vis and vis[0]["long_term_debt"] is None
+    assert vis[0]["total_debt"] is None
+
+
+def test_emitidas_e_tesouraria_exigem_a_mesma_data_trimestral():
+    base = {"form": "10-Q", "fy": 2024, "fp": "Q1"}
+    gaap = {}
+    gaap.update(_fact("Assets", [_e("2024-03-31", 600, "2024-05-02", **base)]))
+    gaap.update(_fact("CommonStockSharesIssued",
+                      [_e("2024-03-31", 100, "2024-05-02", **base)], "shares"))
+    # tesouraria so no comparativo de dezembro, mesmo (fy, fp) do filing
+    gaap.update(_fact("TreasuryStockShares",
+                      [_e("2023-12-31", 30, "2024-05-02", **base)], "shares"))
+    row = ef.build_balance_quarterly_rows(_cf(gaap))[0]
+    assert row["shares_outstanding"] is None
+
+
+def test_pl_consolidado_fica_a_parte_e_alimenta_o_capital_investido():
+    gaap = {}
+    gaap.update(_fact("Assets", [_e(END, 1000, FILED)]))
+    gaap.update(_fact("Liabilities", [_e(END, 600, FILED)]))
+    gaap.update(_fact("StockholdersEquity", [_e(END, 250, FILED)]))
+    gaap.update(_fact(NCI, [_e(END, 400, FILED)]))
+    gaap.update(_fact("LongTermDebtNoncurrent", [_e(END, 100, FILED)]))
+    row = ef.build_balance_rows(_cf(gaap))[0]
+    assert row["total_equity"] == 250 and row["total_equity_incl_nci"] == 400
+    assert row["invested_capital"] == 500        # consolidado + divida
+
+
+def test_identidade_usa_o_consolidado_so_quando_a_coluna_existe():
+    from data_pipeline.us.repository import equity_identity_expr
+    assert "total_equity_incl_nci" in equity_identity_expr({"total_equity_incl_nci"})
+    assert equity_identity_expr({"total_equity"}) == "total_equity"
+    # ativo 1000, passivo 600, controlador 250, consolidado 400
+    eq = {"total_equity_incl_nci": 400, "total_equity": 250}
+    total = 600 + (eq["total_equity_incl_nci"] or eq["total_equity"])
+    assert abs(1000 - total) / 1000 <= 0.02
+
+
+def test_upsert_descarta_a_coluna_nova_sem_a_migration():
+    from data_pipeline.us import repository as repo
+
+    class Conn:
+        def __init__(self):
+            self.calls = []
+
+        def execute(self, sql, payload=None):
+            self.calls.append((str(sql), payload))
+            return self
+
+        def fetchall(self):
+            return [("total_equity",)]
+
+    c = Conn()
+    repo.upsert_statements(c, "balance_sheets", 1, "X",
+                           [{"fiscal_year": 2023, "total_equity": 1,
+                             "total_equity_incl_nci": 2, "fiscal_quarter": 0,
+                             "period": "annual"}])
+    sql, payload = c.calls[-1]
+    assert "total_equity_incl_nci" not in sql

@@ -197,6 +197,11 @@ BALANCE_CONCEPTS: dict[str, list[str]] = {
     # Nao ha coluna para guardar o PL com NCI sem migration: ver o PR.
     "total_equity": ["StockholdersEquity",
                      "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+    # PL consolidado (com minoritarios), guardado a parte SO para a identidade
+    # ativo = passivo + PL e para o capital investido do ROIC. ROE e P/VPA leem
+    # `total_equity` (controlador). Coluna: migration 087.
+    "total_equity_incl_nci": [
+        "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
     "retained_earnings": ["RetainedEarningsAccumulatedDeficit"],
 }
 # Total combinado de divida (curto + longo). Nao e campo do schema: so vale
@@ -535,6 +540,10 @@ def _issued_menos_tesouraria(cf: dict, *, quarterly: bool) -> dict:
         tr = treasury.get(key)
         if tr is None:
             continue
+        # a chave trimestral e (fy, fp), nao a data: um 10-Q traz comparativos.
+        # Emitidas e tesouraria so se subtraem na MESMA data de balanco.
+        if quarterly and pt.get("end") != tr.get("end"):
+            continue
         iss, trs = to_float(pt["val"]), to_float(tr["val"])
         if iss is None or trs is None or iss - trs <= 0:
             continue
@@ -559,12 +568,20 @@ def _acoes_em_circulacao(cf: dict, *, quarterly: bool) -> dict:
 
 
 def _aplicar_divida_combinada(rows: list[dict]) -> None:
-    """Total combinado so entra quando nao ha curto nem longo; depois some."""
+    """Total combinado so entra quando nao ha curto nem longo; depois some.
+
+    A procedencia (`filed_at`) acompanha o valor: sem isso a regra point-in-time
+    por campo nao mascararia a divida promovida antes do filing que a trouxe.
+    """
     for r in rows:
         combinado = r.pop("_debt_combined", None)
+        filed = r.get("filed_at")
+        data_combinado = filed.pop("_debt_combined", None) if isinstance(filed, dict) else None
         if (combinado is not None and r.get("short_term_debt") is None
                 and r.get("long_term_debt") is None):
             r["long_term_debt"] = combinado
+            if isinstance(filed, dict) and data_combinado is not None:
+                filed["long_term_debt"] = data_combinado
 
 
 def _exercicio_publicavel(ano: int, symbol: str | None, referencia: Any) -> bool:
@@ -700,7 +717,10 @@ def derivar_balance(r: dict) -> None:
     r["total_debt"] = None if std is None and ltd is None else (std or 0) + (ltd or 0)
     cash = r.get("cash_and_equivalents")
     r["net_debt"] = None if r["total_debt"] is None or cash is None         else r["total_debt"] - cash
-    eq = r.get("total_equity")
+    # capital investido e do perimetro consolidado (o EBIT inclui minoritarios)
+    eq = r.get("total_equity_incl_nci")
+    if eq is None:
+        eq = r.get("total_equity")
     r["invested_capital"] = None if eq is None or r["total_debt"] is None         else eq + r["total_debt"] - (cash or 0.0)
 
 
@@ -773,7 +793,9 @@ def build_balance_quarterly_rows(cf: dict, symbol: str | None = None) -> list[di
         cash = r.get("cash_and_equivalents")
         r["net_debt"] = None if r["total_debt"] is None or cash is None \
             else r["total_debt"] - cash
-        eq = r.get("total_equity")
+        eq = r.get("total_equity_incl_nci")
+        if eq is None:
+            eq = r.get("total_equity")
         r["invested_capital"] = None if eq is None or r["total_debt"] is None \
             else eq + r["total_debt"] - (cash or 0.0)
     return rows

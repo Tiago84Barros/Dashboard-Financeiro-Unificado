@@ -113,3 +113,11 @@ def test_receita_ausente_nao_conta_como_falha():
     check = _check(resultado, "revenue_sign")
     assert check["checked"] == 600
     assert check["skipped"] == 400
+
+
+def _fetchall_sem_colunas(self):
+    # consulta de information_schema: sem a coluna nova, a identidade fica estrita
+    return []
+
+
+_Resultado.fetchall = _fetchall_sem_colunas
