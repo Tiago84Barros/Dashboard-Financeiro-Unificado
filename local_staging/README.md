@@ -309,4 +309,11 @@ estourou a cota de 5 GB) e cada consulta à brapi gravava o payload bruto em
 - respeita o portão de atualidade trimestral: bloqueado, segura indicadores e safras;
 - não apaga nada; a remoção de indicador órfão continua com o `b3_metrics` semanal.
 
+Cota da brapi esgotada derruba o passo 1 (`daily` ou `annual`): três 429
+seguidos acionam o disjuntor, o que já foi coletado fica no armazém e o comando
+sai 1 com `bloqueio_brapi` e `nao_tentados` no JSON. O alvo fica em "última
+tentativa falhou" e volta na próxima rodada. Antes, o mesmo lote saía 0 com
+nenhum ticker gravado, e de 30/10 a 07/11/2026 a cadeia constou em dia com o
+preço do armazém parado em 29/10.
+
 Custo aceito: com esta máquina desligada, a vitrine B3 para de andar.
