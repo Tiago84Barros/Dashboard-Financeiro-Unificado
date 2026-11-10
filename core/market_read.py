@@ -1220,7 +1220,7 @@ def _consolidar_cotacao_e_cotas_fii(row: dict, alinhadas: bool = True) -> None:
     from data_pipeline.market import fii as _fz
     antes = row.get("pvp")
     efetivo = _fz.pvp_efetivo(row.get("price"), row.get("vpa"), antes)
-    if efetivo is not None and efetivo != antes:
+    if efetivo is not None:
         row["pvp"] = efetivo
         row["metric_metadata"]["pvp"] = {
             # Competencia do PROPRIO VPA usado na divisao, nao a minima da linha.
