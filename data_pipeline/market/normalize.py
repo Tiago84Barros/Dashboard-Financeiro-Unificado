@@ -269,6 +269,37 @@ def _patrimonio(it: dict):
     return pl - (_nao_zero(it, _PL_MINORITARIOS) or 0.0)
 
 
+def _dre_de_banco(it: dict) -> bool:
+    """A DRE tem o molde que a brapi usa para bancos.
+
+    Não há ``ebit``, e o ``operatingIncome`` é a linha de outras despesas e
+    receitas operacionais, não o lucro operacional: ou ele é igual ao
+    ``totalOperatingExpenses``, ou, somado ao resultado bruto da
+    intermediação, dá o ``incomeBeforeTax``. Numa empresa comercial o
+    ``operatingIncome`` é o lucro operacional e nenhuma das duas coisas vale.
+    """
+    if _nao_zero(it, ("ebit",)) is not None:
+        return False
+    gp, oi, ibt, toe = (_first(it, (k,)) for k in
+                        ("grossProfit", "operatingIncome", "incomeBeforeTax", "totalOperatingExpenses"))
+    if oi is None or ibt is None:
+        return False
+    tol = 1e-3 * max(abs(oi), abs(ibt), abs(gp or 0.0), 1.0)
+    if toe is not None and abs(toe - oi) <= tol:
+        return True
+    return gp is not None and abs(gp + oi - ibt) <= tol
+
+
+def _ebit(it: dict):
+    """EBIT da DRE. Nos bancos é o resultado antes dos tributos, que é o da
+    margem operacional do Status Invest e do Investidor10 e o 3.05 da DFP dos
+    bancos (``b3_saidas.fundamentos``); o ``operatingIncome`` deles é despesa,
+    e usá-lo punha a margem operacional negativa."""
+    if _dre_de_banco(it):
+        return _first(it, ("incomeBeforeTax",))
+    return _first(it, ("ebit", "operatingIncome"))
+
+
 def _vazio(it: dict) -> bool:
     """Demonstração devolvida com todos os números em 0 (TIMS3 2024/2025): é
     ausência do provedor, não resultado zero."""
@@ -407,7 +438,7 @@ def income_rows(quote: dict) -> list[dict]:
             "period_end_date": period_end, "raw_payload_id": None,
             "revenue": _first(it, ("totalRevenue", "revenue", "operatingRevenue")),
             "gross_profit": _first(it, ("grossProfit",)),
-            "ebit": _first(it, ("ebit", "operatingIncome")),
+            "ebit": _ebit(it),
             "ebitda": _first(it, ("ebitda", "normalizedEBITDA")),
             "net_income": _lucro(it),
             "eps": eps,

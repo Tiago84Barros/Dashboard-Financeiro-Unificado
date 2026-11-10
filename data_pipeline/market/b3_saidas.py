@@ -197,23 +197,88 @@ def lpa_da_classe(contas: dict, classe: str) -> float | None:
     return None
 
 
+# --------------------------------------------------------------------------
+# Plano de contas: comercial, bancos e seguradoras
+# --------------------------------------------------------------------------
+# Os códigos mudam com o plano. Nas empresas comerciais o PL é o 2.03, o EBIT
+# o 3.05 e o lucro o 3.11. Nos bancos, o PL fica em 2.07 (plano do Banco do
+# Brasil) ou 2.08 (plano do Itaú), o 3.05 já é o resultado antes dos tributos
+# e o lucro fica em 3.11 ou 3.09; no plano antigo das financeiras, o PL fica
+# em 2.05, o resultado antes da tributação em 3.07 e o lucro em 3.13. Nas seguradoras, o EBIT fica em 3.07 e o
+# lucro em 3.13. Por isso as contas são achadas pela descrição, no primeiro
+# nível, e o código fixo só vale na falta dela.
+def _conta_de_topo(contas: dict, grupo: str, casa) -> str | None:
+    """Primeira conta de primeiro nível do grupo ("2" ou "3"), na ordem dos
+    códigos, cuja descrição normalizada satisfaz ``casa``."""
+    topo = sorted((cod for cod in contas
+                   if cod.startswith(grupo + ".") and cod.count(".") == 1 and cod != "3.99"),
+                  key=lambda cod: int(cod.split(".")[1]))
+    return next((cod for cod in topo if casa(_norm(contas[cod][0]))), None)
+
+
+def _filha(contas: dict, pai: str, casa) -> str | None:
+    """Subconta direta de ``pai`` cuja descrição normalizada satisfaz ``casa``."""
+    return next((cod for cod in sorted(contas)
+                 if cod.startswith(pai + ".") and cod.count(".") == pai.count(".") + 1
+                 and casa(_norm(contas[cod][0]))), None)
+
+
+def _do_controlador(ds: str) -> bool:
+    return "controlador" in ds and "nao controlador" not in ds
+
+
+def _lucro_dos_controladores(dem: DemonstracaoAnual) -> float | None:
+    """Lucro do exercício atribuído aos controladores (3.11.01 no plano
+    comercial, 3.09.01 nos bancos do plano do Itaú, 3.13.01 nas seguradoras).
+    Na demonstração individual, ou com a subconta em 0 (conta não informada,
+    não lucro zero), vale o lucro do período inteiro."""
+    c = dem.contas
+    total = _conta_de_topo(c, "3", lambda d: "do periodo" in d and ("lucro" in d or "prejuizo" in d)
+                           and "antes" not in d) or "3.11"
+    ni_total = _v(c, total)
+    ctrl = _filha(c, total, _do_controlador) if dem.consolidado else None
+    ni_ctrl = _v(c, ctrl) if ctrl else None
+    return ni_ctrl if ni_ctrl else ni_total
+
+
+def _pl_dos_controladores(dem: DemonstracaoAnual) -> float | None:
+    """PL dos controladores: o PL consolidado (2.03, 2.07 ou 2.08, conforme o
+    plano) menos a participação dos não controladores, ou a subconta do
+    controlador quando a DFP a traz (plano do Banco do Brasil)."""
+    c = dem.contas
+    pl = _conta_de_topo(c, "2", lambda d: "patrimonio liquido" in d) or "2.03"
+    eq = _v(c, pl)
+    if eq is None or not dem.consolidado:
+        return eq
+    ctrl = _filha(c, pl, _do_controlador)
+    if ctrl and _v(c, ctrl):
+        return _v(c, ctrl)
+    nao = _filha(c, pl, lambda d: "nao controlador" in d)
+    return eq - _v(c, nao) if nao else eq
+
+
+def _conta_do_ebit(contas: dict) -> str:
+    """O resultado antes do resultado financeiro e dos tributos (3.05 no plano
+    comercial, 3.07 nas seguradoras). Banco não tem essa linha: o EBIT dele é
+    o resultado antes dos tributos, a convenção dos sites e da brapi."""
+    return (_conta_de_topo(contas, "3", lambda d: "antes do resultado financeiro" in d)
+            or _conta_de_topo(contas, "3", lambda d: "antes dos tributos" in d or "antes tributacao" in d)
+            or "3.05")
+
+
+def _circulante(contas: dict, cod: str) -> bool:
+    x = contas.get(cod)
+    return x is not None and "circulante" in _norm(x[0])
+
+
 def fundamentos(dem: DemonstracaoAnual, classe: str = "3") -> dict:
     """Insumos anuais no vocabulário de ``compute_snapshot`` (valores em R$).
 
     ``classe`` é o sufixo do código negociado ("3" ON, "4" PN, ...).
     """
     c = dem.contas
-    ni_total = _v(c, "3.11")
-    ni_ctrl = _v(c, "3.11.01") if dem.consolidado else None
-    # 3.11.01 em 0 com o 3.11 preenchido é conta não informada, não lucro zero
-    ni = ni_ctrl if ni_ctrl else ni_total
-
-    eq = _v(c, "2.03")
-    if eq is not None and dem.consolidado:
-        for cod, (ds, v) in c.items():
-            if cod.startswith("2.03.") and cod.count(".") == 2 and "nao controlador" in _norm(ds):
-                eq -= v
-                break
+    ni = _lucro_dos_controladores(dem)
+    eq = _pl_dos_controladores(dem)
 
     cash = sum(x for x in (_v(c, "1.01.01"), _v(c, "1.01.02")) if x is not None) \
         if (_v(c, "1.01.01") is not None or _v(c, "1.01.02") is not None) else None
@@ -228,15 +293,16 @@ def fundamentos(dem: DemonstracaoAnual, classe: str = "3") -> dict:
     return {
         "net_income": ni,
         "revenue": _v(c, "3.01"),
-        "ebit": _v(c, "3.05"),
+        "ebit": _v(c, _conta_do_ebit(c)),
         "total_assets": _v(c, "1"),
         "equity": eq,
         "cash": cash,
         "gross_debt": gd,
         "net_debt": (gd - (cash or 0.0)) if gd is not None else None,
         "fco": _v(c, "6.01"),
-        "current_assets": _v(c, "1.01"),
-        "current_liabilities": _v(c, "2.01"),
+        # banco não tem circulante: 1.01 é caixa e 2.01, passivos a valor justo
+        "current_assets": _v(c, "1.01") if _circulante(c, "1.01") else None,
+        "current_liabilities": _v(c, "2.01") if _circulante(c, "2.01") else None,
         "dividendos_pagos": dividendos_pagos(c),
         "lpa": eps,
     }
