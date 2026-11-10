@@ -205,7 +205,8 @@ def fundamentos(dem: DemonstracaoAnual, classe: str = "3") -> dict:
     c = dem.contas
     ni_total = _v(c, "3.11")
     ni_ctrl = _v(c, "3.11.01") if dem.consolidado else None
-    ni = ni_ctrl if ni_ctrl is not None else ni_total
+    # 3.11.01 em 0 com o 3.11 preenchido é conta não informada, não lucro zero
+    ni = ni_ctrl if ni_ctrl else ni_total
 
     eq = _v(c, "2.03")
     if eq is not None and dem.consolidado:

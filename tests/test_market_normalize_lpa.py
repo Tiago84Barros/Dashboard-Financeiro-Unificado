@@ -117,12 +117,20 @@ def test_base_de_acoes_nao_confiavel_nao_corrige_lote():
     assert abs(_eps(rows, 2020) - (-0.42)) < 1e-9
 
 
-def test_lucro_cai_para_operacoes_continuadas():
-    # ITUB4/BPAC11: netIncome ausente; o lucro vem em netIncomeFromContinuingOps
+def test_lucro_sem_net_income_fica_com_o_dos_controladores():
+    # bancos (ITUB4/BPAC11) vêm sem netIncome: o lucro dos controladores vence
+    # o de operações continuadas, que inclui os minoritários
     q = _q("ITUB4", [{"endDate": "2025-12-31",
-                      "netIncomeFromContinuingOps": 45_849_000_000,
-                      "netIncomeApplicableToCommonShares": 44_857_000_000}])
-    assert nz.income_rows(q)[0]["net_income"] == 45_849_000_000
+                      "netIncomeFromContinuingOps": 1_020_000_000,
+                      "netIncomeApplicableToCommonShares": 1_000_000_000}])
+    assert nz.income_rows(q)[0]["net_income"] == 1_000_000_000
+
+
+def test_lucro_cai_para_operacoes_continuadas():
+    # sem netIncome nem o dos controladores, vale o de operações continuadas
+    q = _q("ITUB4", [{"endDate": "2025-12-31",
+                      "netIncomeFromContinuingOps": 1_020_000_000}])
+    assert nz.income_rows(q)[0]["net_income"] == 1_020_000_000
 
 
 def test_demonstracao_toda_zerada_vira_ausencia():
