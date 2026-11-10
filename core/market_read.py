@@ -1204,8 +1204,10 @@ def _aplicar_observacoes_fii(row: dict, observacoes: list[dict],
     comps = [c for c in competencia.values() if c is not None]
     if comps:
         row["cvm_ref_date"] = min(comps)
+    row["_vpa_comp"] = competencia["vpa"]
     _consolidar_cotacao_e_cotas_fii(row, alinhadas=(
         competencia["vpa"] is not None and competencia["vpa"] == competencia["patrimonio_liquido"]))
+    row.pop("_vpa_comp", None)
 
 
 def _consolidar_cotacao_e_cotas_fii(row: dict, alinhadas: bool = True) -> None:
@@ -1221,7 +1223,8 @@ def _consolidar_cotacao_e_cotas_fii(row: dict, alinhadas: bool = True) -> None:
     if efetivo is not None and efetivo != antes:
         row["pvp"] = efetivo
         row["metric_metadata"]["pvp"] = {
-            "reference_date": str(row.get("cvm_ref_date"))[:10],
+            # Competencia do PROPRIO VPA usado na divisao, nao a minima da linha.
+            "reference_date": str(row.get("_vpa_comp") or row.get("cvm_ref_date"))[:10],
             "price_date": row.get("price_date") or str(row.get("updated_at"))[:10],
             "available_at": str(row.get("updated_at")),
             "source": "cvm_vpa+market_price",

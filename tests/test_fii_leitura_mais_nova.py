@@ -154,3 +154,10 @@ def test_faixa_12m_usa_close_bruto_ao_lado_da_cotacao():
     r = det.resumo_precos([{"date": "2026-10-01", "preco": 80.0, "preco_bruto": 100.0},
                            {"date": "2026-11-06", "preco": 90.0, "preco_bruto": 120.0}])
     assert (r["min52_bruto"], r["max52_bruto"]) == (100.0, 120.0)
+
+
+def test_pvp_datado_pela_competencia_do_proprio_vpa():
+    row = _aplicar(_base(cvm_ref_date=pd.Timestamp("2026-08-01")), [
+        _obs("nav_per_share", 100.0, "2026-10-01", "2026-11-08", "cvm_informe_mensal")])
+    assert row["metric_metadata"]["pvp"]["reference_date"] == "2026-10-01"
+    assert "_vpa_comp" not in row
