@@ -72,6 +72,11 @@ def cagr(first: Optional[float], last: Optional[float], years: int) -> Optional[
 def _latest(series: Sequence[dict], field: str) -> Optional[float]:
     """Ultimo ano com valor para o campo -- e NaN conta como ausencia.
 
+    ATENCAO: mistura safras entre campos. `compute_company_metrics` NAO a usa
+    mais (le tudo do exercicio de referencia, `_no_ano`); ela sobrevive so para
+    quem quer "o ultimo valor conhecido" de UM campo isolado, nunca para formar
+    razao com outro campo.
+
     O `is not None` sozinho nao bastava, e a diferenca nao era teorica. O quadro
     de pontuacao chega por pandas (`load_scoring_frame` le em lote e faz
     `to_dict("records")`), onde NULL do Postgres vira `float('nan')`, nao
@@ -91,6 +96,52 @@ def _latest(series: Sequence[dict], field: str) -> Optional[float]:
         if v is not None:
             return v
     return None
+
+
+def _ano_inteiro(v: Any) -> Optional[int]:
+    f = _f(v)
+    return None if f is None else int(f)
+
+
+def ano_de_referencia(income: Sequence[dict], balance: Sequence[dict] = (),
+                      cashflow: Sequence[dict] = ()) -> Optional[int]:
+    """Exercicio de referencia: o ultimo `fiscal_year` com receita ou lucro.
+
+    Todo campo do snapshot e lido DESSE ano (`_no_ano`). `_latest` devolvia o
+    ultimo ano nao nulo de cada campo, e razao com numerador e denominador de
+    safras diferentes saia sem erro nenhum: a AMZN, que nao tagueia
+    `GrossProfit` desde 2009, tinha margem bruta de 0,77% (lucro bruto de 2009
+    sobre receita de 2025) quando a derivada pelo custo dava ~50%.
+
+    Sem receita nem lucro em nenhum ano (financeira esquisita, dado parcial),
+    cai para o maior ano de qualquer demonstrativo -- ainda um unico ano.
+    """
+    anos = [a for r in income
+            if _f(r.get("revenue")) is not None or _f(r.get("net_income")) is not None
+            for a in [_ano_inteiro(r.get("fiscal_year"))] if a is not None]
+    if not anos:
+        anos = [a for serie in (income, balance, cashflow) for r in serie
+                for a in [_ano_inteiro(r.get("fiscal_year"))] if a is not None]
+    return max(anos) if anos else None
+
+
+def _no_ano(series: Sequence[dict], field: str, ano: Optional[int]) -> Optional[float]:
+    """Valor do campo NO exercicio `ano`; ausente => None (nunca outro ano).
+
+    Sem tolerancia deliberadamente: o balanco do fim do exercicio e o par da
+    receita desse exercicio. Aceitar um balanco de um ano antes sob a etiqueta
+    do ano corrente reabriria o defeito do `_latest`; ausencia vira lacuna (ou
+    derivacao, quando a definicao a permite) e derruba cobertura de forma
+    visivel em vez de produzir razao de safras misturadas. NaN conta como
+    ausencia, como em `_latest`. Em ano repetido vale a ultima linha.
+    """
+    if ano is None:
+        return None
+    valor = None
+    for row in series:
+        if _ano_inteiro(row.get("fiscal_year")) == ano:
+            valor = _f(row.get(field))
+    return valor
 
 
 def _series_values(series: Sequence[dict], field: str) -> list[tuple[int, float]]:
@@ -273,12 +324,43 @@ DIVERGENCIA_MARKET_CAP = 10.0
 ACOES_IMPLICITAS_MINIMAS = 100_000
 RECEITA_SOBRE_MARKET_CAP_MAXIMA = 100.0
 
+# Idade maxima do valor de mercado publicado frente ao preco usado: 35 dias =
+# um ciclo mensal de publicacao (31 dias) mais folga de fim de semana/feriado
+# para o preco. Alem disso o publicado deixou de acompanhar o preco: um mes de
+# mercado ja move 20-25% numa grande, e foi essa a defasagem medida.
+IDADE_MAXIMA_PUBLICADO_DIAS = 35
+
 
 def market_cap_confiavel(publicado: Optional[float],
                          derivado: Optional[float],
                          preco: Optional[float] = None,
-                         receita: Optional[float] = None) -> Optional[float]:
-    """Valor de mercado quando as duas fontes concordam; None quando brigam.
+                         receita: Optional[float] = None, *,
+                         publicado_em: Any = None,
+                         preco_em: Any = None) -> Optional[float]:
+    """Valor de mercado (so o numero); ver `market_cap_com_origem`."""
+    return market_cap_com_origem(publicado, derivado, preco, receita,
+                                 publicado_em=publicado_em,
+                                 preco_em=preco_em)[0]
+
+
+def _dias_entre(a: Any, b: Any) -> Optional[int]:
+    """b - a em dias; None se faltar data ou nao for convertivel."""
+    try:
+        da = a.date() if hasattr(a, "date") else a
+        db = b.date() if hasattr(b, "date") else b
+        return (db - da).days
+    except (AttributeError, TypeError):
+        return None
+
+
+def market_cap_com_origem(publicado: Optional[float],
+                          derivado: Optional[float],
+                          preco: Optional[float] = None,
+                          receita: Optional[float] = None, *,
+                          publicado_em: Any = None,
+                          preco_em: Any = None):
+    """(valor, origem). Origem: publicado | derivado | derivado_publicado_velho
+    | None (lacuna). Valor de mercado quando as duas fontes concordam; None quando brigam.
 
     Ha duas fontes no armazem: `market_us.market_cap_history` (publicado) e
     o produto ultimo preco x acoes em circulacao (derivado). Em 08/09/2026
@@ -294,9 +376,20 @@ def market_cap_confiavel(publicado: Optional[float],
     `shareholder_yield` saem vazios em vez de saírem absurdos. O custo e
     2,1% de cobertura nesses campos; o beneficio e nao publicar dividend
     yield de 13.508% ao ano, que era o que a PSKY produzia.
+
+    **Idade do publicado.** `publicado_em` (data do publicado) e `preco_em`
+    (data do preco que gera o derivado) sao opcionais; ausentes, nao ha
+    checagem de idade (compatibilidade). Presentes, o publicado mais de
+    `IDADE_MAXIMA_PUBLICADO_DIAS` anterior ao preco perde para o derivado: a
+    tabela parou em 02/10/2026 e o publicado velho vencia a checagem de 10x,
+    que so pega erro de escala -- INTC valia o dobro do real (publicado de
+    antes da queda) e NVDA, AVGO e GOOG saiam 20-25% acima. Sem derivado o
+    publicado velho vira lacuna: nao ha como saber quanto ele envelheceu.
     """
     if publicado is None or publicado <= 0:
-        return derivado if derivado and derivado > 0 else None
+        if derivado and derivado > 0:
+            return derivado, "derivado"
+        return None, None
     # Checagem que nao depende do derivado: o valor de mercado dividido pelo
     # preco da a contagem de acoes implicita, e ela tem piso conhecido. NYSE
     # e Nasdaq exigem mais de um milhao de acoes em circulacao publica, entao
@@ -306,7 +399,7 @@ def market_cap_confiavel(publicado: Optional[float],
     # `shares_outstanding` no balanco, logo nao havia derivado para
     # confronta-las e a checagem de divergencia as deixava passar inteiras.
     if preco and preco > 0 and publicado / preco < ACOES_IMPLICITAS_MINIMAS:
-        return None
+        return None, None
     # Segunda checagem independente, pela receita. A contagem de acoes pega
     # o absurdo grosseiro, mas deixa passar quem tem acoes plausiveis e
     # valor de mercado em escala errada: a CHTR constava valendo 31 milhoes
@@ -316,20 +409,25 @@ def market_cap_confiavel(publicado: Optional[float],
     # abaixo de 0,01 nao e acao barata, e unidade trocada na origem.
     if (receita and receita > 0
             and receita / publicado > RECEITA_SOBRE_MARKET_CAP_MAXIMA):
-        return None
+        return None, None
+    idade = _dias_entre(publicado_em, preco_em)
+    velho = idade is not None and idade > IDADE_MAXIMA_PUBLICADO_DIAS
     if derivado is None or derivado <= 0:
-        return publicado
+        return (None, None) if velho else (publicado, "publicado")
+    if velho:
+        return derivado, "derivado_publicado_velho"
     razao = publicado / derivado
     if razao > DIVERGENCIA_MARKET_CAP or razao < 1.0 / DIVERGENCIA_MARKET_CAP:
-        return None
-    return publicado
+        return None, None
+    return publicado, "publicado"
 
 
 DIVERGENCIA_ACOES = 10.0
 
 
 def acoes_em_circulacao(balance: Sequence[dict],
-                        informado: Optional[float] = None) -> Optional[float]:
+                        informado: Optional[float] = None,
+                        ano: Optional[int] = None) -> Optional[float]:
     """Ações do último exercício, ou None quando a série se contradiz.
 
     O exercício mais recente vem com a contagem em escala errada num punhado de
@@ -358,8 +456,14 @@ def acoes_em_circulacao(balance: Sequence[dict],
         razao = pontos[-1][1] / pontos[-2][1]
         if razao > DIVERGENCIA_ACOES or razao < 1.0 / DIVERGENCIA_ACOES:
             return None
-    valor = informado if informado is not None else (
-        pontos[-1][1] if pontos else None)
+    if ano is not None:
+        # Contagem do exercicio `ano` (denominador por acao de conta do mesmo
+        # exercicio); `informado` e do balanco mais novo e nao vale aqui. A
+        # validacao de escala acima segue sobre a serie inteira.
+        valor = _no_ano(balance, "shares_outstanding", ano)
+    else:
+        valor = informado if informado is not None else (
+            pontos[-1][1] if pontos else None)
     if valor is None or valor < ACOES_IMPLICITAS_MINIMAS:
         return None
     return valor
@@ -408,7 +512,8 @@ def _linha_do_ultimo_exercicio(series: Sequence[dict]) -> Optional[dict]:
     return melhor[1] if melhor else None
 
 
-def _dividendo_desembolsado(cashflow: Sequence[dict]) -> Optional[float]:
+def _dividendo_desembolsado(cashflow: Sequence[dict],
+                            ano: Optional[int] = None) -> Optional[float]:
     """`dividends_paid` NO exercicio mais recente -- sem cair para anos antes.
 
     Deliberadamente NAO usa `_latest`, que percorre a serie de tras para
@@ -419,12 +524,15 @@ def _dividendo_desembolsado(cashflow: Sequence[dict]) -> Optional[float]:
     mais do ultimo exercicio publicado, e a QCOM -- que paga 3,62/acao --
     saia com 1,91 vindo de um exercicio antigo.
     """
+    if ano is not None:                 # exercicio de referencia do snapshot
+        return _no_ano(cashflow, "dividends_paid", ano)
     linha = _linha_do_ultimo_exercicio(cashflow)
     return None if linha is None else _f(linha.get("dividends_paid"))
 
 
 def _dividend_yield(cashflow: Sequence[dict],
-                    market_cap: Optional[float]) -> Optional[float]:
+                    market_cap: Optional[float],
+                    ano: Optional[int] = None) -> Optional[float]:
     """Dividendo do ultimo exercicio sobre o valor de mercado.
 
     Base: `dividends_paid` do fluxo de caixa (EDGAR) -- o que a empresa
@@ -446,7 +554,7 @@ def _dividend_yield(cashflow: Sequence[dict],
     """
     if market_cap is None or market_cap <= 0:
         return None
-    div = _dividendo_desembolsado(cashflow)
+    div = _dividendo_desembolsado(cashflow, ano)
     return None if div is None else abs(div) / market_cap
 
 
@@ -457,15 +565,17 @@ def compute_company_metrics(
 ) -> dict:
     """Deriva o snapshot de métricas de UMA empresa a partir das séries anuais.
 
-    As séries vêm ordenadas por ano; usamos o último ano com dado para cada campo.
+    Todos os campos saem do MESMO exercício de referência (`ano_de_referencia`);
+    campo ausente nele é None (ou derivado pela definição), nunca de outro ano.
     market_cap pode ser dado direto ou derivado de price*shares.
     """
     # NUMERIC do Postgres chega como Decimal; coage os escalares externos a float
     # (há aritmética direta abaixo, não só safe_div).
     price, market_cap, shares = _f(price), _f(market_cap), _f(shares)
-    revenue     = _latest(income, "revenue")
-    gross       = _latest(income, "gross_profit")
-    cogs        = _latest(income, "cost_of_revenue")
+    ano = ano_de_referencia(income, balance, cashflow)
+    revenue     = _no_ano(income, "revenue", ano)
+    gross       = _no_ano(income, "gross_profit", ano)
+    cogs        = _no_ano(income, "cost_of_revenue", ano)
     gross_derived = False
     if gross is None and revenue is not None and cogs is not None:
         # Lucro bruto NAO e estimativa aqui: e receita menos custo, por
@@ -476,41 +586,45 @@ def compute_company_metrics(
         # 406 empresas cairam assim.
         gross = revenue - abs(cogs)
         gross_derived = True
-    op_income   = _latest(income, "operating_income")
-    ebit        = _latest(income, "ebit") or op_income
-    ebitda      = _latest(income, "ebitda")
-    depreciation = _latest(cashflow, "depreciation_and_amortization")
+    op_income   = _no_ano(income, "operating_income", ano)
+    ebit        = _no_ano(income, "ebit", ano) or op_income
+    ebitda      = _no_ano(income, "ebitda", ano)
+    depreciation = _no_ano(cashflow, "depreciation_and_amortization", ano)
     ebitda_derived = False
     if ebitda is None and op_income is not None and depreciation is not None:
         ebitda = op_income + abs(depreciation)
         ebitda_derived = True
-    net_income  = _latest(income, "net_income")
-    interest    = _latest(income, "interest_expense")
-    _latest(income, "eps")
+    net_income  = _no_ano(income, "net_income", ano)
+    interest    = _no_ano(income, "interest_expense", ano)
+    _no_ano(income, "eps", ano)
 
-    total_assets = _latest(balance, "total_assets")
-    equity       = _latest(balance, "total_equity")
-    total_debt   = _latest(balance, "total_debt")
-    net_debt     = _latest(balance, "net_debt")
-    cash         = _latest(balance, "cash_and_equivalents")
-    cur_assets   = _latest(balance, "current_assets")
-    cur_liab     = _latest(balance, "current_liabilities")
-    invested_cap = _latest(balance, "invested_capital")
+    total_assets = _no_ano(balance, "total_assets", ano)
+    equity       = _no_ano(balance, "total_equity", ano)
+    total_debt   = _no_ano(balance, "total_debt", ano)
+    net_debt     = _no_ano(balance, "net_debt", ano)
+    cash         = _no_ano(balance, "cash_and_equivalents", ano)
+    cur_assets   = _no_ano(balance, "current_assets", ano)
+    cur_liab     = _no_ano(balance, "current_liabilities", ano)
+    invested_cap = _no_ano(balance, "invested_capital", ano)
     # NÃO é `shares or _latest(...)`: a contagem informada vem da mesma
     # linha de balanço e carrega o mesmo defeito de escala — ver
     # `acoes_em_circulacao`, que confronta o último exercício com o anterior.
     shares_out   = acoes_em_circulacao(balance, shares)
+    # Contagem do exercicio de referencia: denominador do DPA (numerador e o
+    # dividendo desse mesmo exercicio). shares_out segue a mais nova, que e a
+    # certa para valor de mercado derivado (preco de hoje x acoes de hoje).
+    shares_ref   = acoes_em_circulacao(balance, None, ano)
 
-    ocf   = _latest(cashflow, "operating_cash_flow")
-    capex = _latest(cashflow, "capex")
-    fcf   = _latest(cashflow, "free_cash_flow")
+    ocf   = _no_ano(cashflow, "operating_cash_flow", ano)
+    capex = _no_ano(cashflow, "capex", ano)
+    fcf   = _no_ano(cashflow, "free_cash_flow", ano)
     if fcf is None and ocf is not None and capex is not None:
         fcf = ocf + capex  # capex vem negativo
-    div_paid  = _latest(cashflow, "dividends_paid")
-    _div_exercicio = _dividendo_desembolsado(cashflow)
-    buyback   = _latest(cashflow, "stock_repurchase")
-    issuance  = _latest(cashflow, "stock_issuance")
-    sbc       = _latest(cashflow, "stock_based_compensation")
+    div_paid  = _no_ano(cashflow, "dividends_paid", ano)
+    _div_exercicio = _dividendo_desembolsado(cashflow, ano)
+    buyback   = _no_ano(cashflow, "stock_repurchase", ano)
+    issuance  = _no_ano(cashflow, "stock_issuance", ano)
+    sbc       = _no_ano(cashflow, "stock_based_compensation", ano)
 
     # SBC é despesa real do acionista (paga em participação, não em caixa) que
     # o FCF GAAP devolve como se fosse ganho: sai do lucro e volta somada no
@@ -528,12 +642,13 @@ def compute_company_metrics(
     tend_fcf, _r2_fcf = _tendencia(cashflow, "free_cash_flow", 3, simetrica=True)
     if net_debt is None and total_debt is not None and cash is not None:
         net_debt = total_debt - cash
-    if invested_cap is None and equity is not None and total_debt is not None:
-        invested_cap = equity + total_debt - (cash or 0.0)
+    if (invested_cap is None and equity is not None and total_debt is not None
+            and cash is not None):
+        invested_cap = equity + total_debt - cash
 
     ev = None
-    if market_cap is not None and total_debt is not None:
-        ev = market_cap + total_debt - (cash or 0.0)
+    if market_cap is not None and total_debt is not None and cash is not None:
+        ev = market_cap + total_debt - cash
 
     nopat = None if ebit is None else ebit * (1 - _TAX_DEFAULT)
 
@@ -595,12 +710,12 @@ def compute_company_metrics(
         # ausencia da linha no EDGAR nao distingue "nao paga" de "nao
         # extraido" (medido: 42% dos ausentes pagavam). Os dois campos usam
         # o exercicio MAIS RECENTE, nao o ultimo ano com valor, e por isso
-        # divergem de payout_ratio/shareholder_yield, que seguem no `_latest`
-        # historico para nao reescrever a serie ja publicada.
-        "dividend_yield": _dividend_yield(cashflow, market_cap),
+        # coincidem agora com payout_ratio/shareholder_yield: todos leem o
+        # exercicio de referencia (antes estes dois seguiam no `_latest`).
+        "dividend_yield": _dividend_yield(cashflow, market_cap, ano),
         "dividends_per_share": safe_div(
             abs(_div_exercicio) if _div_exercicio is not None else None,
-            shares_out),
+            shares_ref),
         "payout_ratio": (safe_div(abs(div_paid), net_income)
                          if div_paid is not None and net_income and net_income > 0
                          else None),

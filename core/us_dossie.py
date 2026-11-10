@@ -134,8 +134,9 @@ def _acende_na_foto(nome: str, m: dict) -> bool:
 
     Esta é a regra que valia até 15/09/2026 para todas as linhas. Ela sobrevive
     aqui com um papel estreito e específico: rede de segurança. `compute_company_metrics`
-    monta cada métrica com `_latest`, que aceita o valor não nulo mais recente
-    ainda que venha de um exercício anterior; a medição por ano, não. Quando
+    monta cada métrica do exercício de referência (o último com receita ou lucro)
+    e, desde a correção de safras, não herda mais valor de exercício anterior;
+    a medição por ano também não. Quando
     nenhum exercício da janela é avaliável e mesmo assim a foto acusa a
     condição, a linha PRECISA aparecer — como limitação de cobertura, porque a
     frequência é justamente o que não foi possível apurar.
