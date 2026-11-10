@@ -18,6 +18,7 @@ Comandos:
     python run_us_ingest.py validate     --warehouse            # auditoria de qualidade
     python run_us_ingest.py monthly      --warehouse            # deriva prices_monthly do diário
     python run_us_ingest.py filings      --warehouse            # 8-K/10-Q/10-K recentes (SEC)
+    python run_us_ingest.py fundamentals --warehouse --novos --no-prices --limit 400 --max-minutos 60
     python run_us_ingest.py monthly      --warehouse --tickers SPY IWB QQQ  # só esses
 
 Opções: --tickers, --exchanges, --limit, --years, --budget, --dry-run, --offline,
@@ -148,6 +149,13 @@ def main() -> int:
                    help="backtest: slippage em pontos-base por turnover")
     p.add_argument("--bootstrap-samples", type=int, default=2000,
                    help="backtest: reamostragens do intervalo de confiança")
+    p.add_argument("--novos", action="store_true",
+                   help="fundamentals: so as empresas com 10-K/10-Q em "
+                        "market_us.sec_filings posterior a ultima extracao "
+                        "(use --limit como lote e --max-minutos como teto)")
+    p.add_argument("--max-minutos", type=float, default=None,
+                   help="fundamentals: para de comecar empresas apos N minutos; "
+                        "o resto fica para a proxima rodada")
     p.add_argument("--no-prices", action="store_true",
                    help="bootstrap: só fundamentos (EDGAR); pula o yfinance (rápido)")
     p.add_argument("--shard", default=None,
@@ -386,6 +394,14 @@ def main() -> int:
 
     if args.command in {"bootstrap", "fundamentals", "resume"}:
         symbols = args.tickers
+        if not symbols and args.novos:
+            from data_pipeline.us.fundamentos_novos import simbolos_com_filing_novo
+            with engine.connect() as conn:
+                symbols = simbolos_com_filing_novo(conn, limit=args.limit)
+            log.info("fundamentos novos: %d empresa(s) com 10-K/10-Q a reingerir",
+                     len(symbols))
+            if not symbols:
+                return out({"ok": True, "processed": 0, "motivo": "nenhum filing novo"})
         if not symbols:
             # Uma representação por companhia. Evita repetir o mesmo CIK para
             # classes de ações diferentes e ignora ativos sem identidade
@@ -442,7 +458,8 @@ def main() -> int:
         return out({"ok": True, **ingest.ingest_symbols(
             provider, engine, symbols, years=args.years, run_key=run_key,
             resume=(args.command == "resume"), with_prices=not args.no_prices,
-            workers=max(1, min(int(args.workers), 8)))})
+            workers=max(1, min(int(args.workers), 8)),
+            max_seconds=(args.max_minutos * 60 if args.max_minutos else None))})
 
     if args.command == "prices":
         # passagem incremental de preços: só quem tem fundamento e ainda não tem preço

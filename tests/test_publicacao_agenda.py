@@ -259,11 +259,24 @@ def test_vitrine_dos_eua_coleta_antes_de_publicar():
     lê o snapshot. Publicar sem coletar só renovaria a data sobre o giro velho.
     """
     alvo = POR_CHAVE["us_snapshot"]
-    assert alvo.passos == (
-        ("run_us_ingest.py", "daily", "--warehouse", "--json"),
-        ("run_us_ingest.py", "snapshot", "--warehouse", "--json"),
-        ("scripts/publish_us_snapshot_from_local.py",),
-    )
+    comandos = [p[1] if p[0] == "run_us_ingest.py" else p[0] for p in alvo.passos]
+    assert comandos == ["fundamentals", "daily", "enrich", "snapshot",
+                        "scripts/publish_us_snapshot_from_local.py"]
+
+
+def test_fundamentos_dos_eua_entram_na_rotina_com_lote_e_teto_de_tempo():
+    """Nenhum alvo reingeria demonstracoes (parada em 02/10/2026).
+
+    Roda depois de `us_sec_filings` (que fornece a lista de 10-K/10-Q novos),
+    com lote e teto de minutos: a tarefa agendada mata a rotina em 4 h.
+    """
+    ordem = [a.chave for a in ALVOS]
+    assert ordem.index("us_sec_filings") < ordem.index("us_snapshot")
+    passo = POR_CHAVE["us_snapshot"].passos[0]
+    assert passo[:2] == ("run_us_ingest.py", "fundamentals")
+    assert "--novos" in passo and "--no-prices" in passo and "--warehouse" in passo
+    assert int(passo[passo.index("--limit") + 1]) <= 1000
+    assert 0 < int(passo[passo.index("--max-minutos") + 1]) <= 60
 
 
 def test_cadencia_dos_eua_cabe_no_teto_do_giro_com_folga():

@@ -14,6 +14,8 @@ Este módulo é usado pela CLI (run_us_ingest.py). A view não o importa.
 """
 from __future__ import annotations
 
+import time
+
 import logging
 from datetime import date, timedelta
 from pathlib import Path
@@ -246,7 +248,8 @@ def load_cik_hints(provider, engine) -> int:
 
 def ingest_symbols(provider: FmpProvider, engine, symbols: Iterable[str], *,
                    run_key="bootstrap", years=20, resume=True,
-                   with_prices=True, workers: int = 1) -> dict:
+                   with_prices=True, workers: int = 1,
+                   max_seconds: Optional[float] = None) -> dict:
     """Percorre símbolos com checkpoint/retomada. Retoma do cursor se resume=True.
 
     with_prices=False: só fundamentos (EDGAR, rápido) — para varrer o mercado
@@ -263,8 +266,13 @@ def ingest_symbols(provider: FmpProvider, engine, symbols: Iterable[str], *,
         start_idx = symbols.index(open_run["cursor"]) + 1
     pending = symbols[start_idx:]
     ok = err = rows_written = 0
+    prazo = (time.monotonic() + max_seconds) if max_seconds else None
+    adiados: list[str] = []
 
     def process(sym):
+        if prazo is not None and time.monotonic() >= prazo:
+            adiados.append(sym)      # teto de tempo: fica para a proxima rodada
+            return sym, {"ok": True, "rows": 0, "adiado": True}, None
         try:
             return sym, ingest_symbol(provider, engine, sym, years=years, run_id=run_id,
                                       with_prices=with_prices), None
@@ -297,7 +305,8 @@ def ingest_symbols(provider: FmpProvider, engine, symbols: Iterable[str], *,
         repo.checkpoint_run(conn, run_id, cursor=None, calls=provider.calls_made,
                             rows=rows_written)
         repo.finish_run(conn, run_id)
-    return {"processed": len(pending), "ok": ok, "errors": err,
+    return {"processed": len(pending) - len(adiados), "ok": ok - len(adiados),
+            "errors": err, "adiados_por_prazo": len(adiados),
             "calls": provider.calls_made, "rows": rows_written, "workers": int(workers)}
 
 

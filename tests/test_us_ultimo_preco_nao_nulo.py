@@ -122,8 +122,8 @@ def test_ultimo_preco_do_scoring_pula_a_barra_sem_close(armazem):
     from core.us_read import _SQL_ULTIMO_PRECO_POR_SIMBOLO
 
     with armazem.connect() as conn:
-        linhas = dict(conn.execute(text(
-            _no_schema_do_teste(_SQL_ULTIMO_PRECO_POR_SIMBOLO))).all())
+        linhas = {r[0]: r[1] for r in conn.execute(text(
+            _no_schema_do_teste(_SQL_ULTIMO_PRECO_POR_SIMBOLO))).all()}
 
     assert linhas == {"AAPL": Decimal("330.32"), "MSFT": Decimal("500.10"),
                       "KO": Decimal("71.00")}
