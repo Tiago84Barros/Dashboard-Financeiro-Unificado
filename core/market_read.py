@@ -1151,17 +1151,15 @@ def _observacao_vence_base(row: dict, raw_metric: str, obs: dict,
         # Mesma competencia: a observacao e a versao mais recente (reapresentacao).
         return competencia_obs >= competencia_base
     if coluna in _COTACAO_FII:
+        from data_pipeline.market import fii as _fz
         atual = row.get(coluna)
-        if _ausente(atual):
-            return True
         # Data da base: `price_at` se houver; senao `updated_at` como LIMITE
         # SUPERIOR (a base nao pode ser mais nova que ele). No caso ambiguo a
-        # base fica.
+        # base fica. A regra e a mesma da escrita em `market.fiis` (fechamento
+        # da fita da B3 contra a foto da brapi): `fii.mais_nova_vence`.
         data_base = _ts_utc(row.get("price_at")) or _ts_utc(row.get("updated_at"))
         data_obs = _ts_utc(obs.get("knowledge_at")) or _ts_utc(obs.get("reference_date"))
-        if data_base is None or data_obs is None:
-            return False
-        return data_obs > data_base
+        return _fz.mais_nova_vence(None if _ausente(atual) else atual, data_base, data_obs)
     return True
 
 

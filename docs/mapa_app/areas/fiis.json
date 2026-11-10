@@ -45,7 +45,7 @@
         {
           "nome": "Ticker · Nome do fundo",
           "resumo": "Os números principais do fundo",
-          "explicacao": "Título com código e nome do fundo, tipo e gestão, e oito cartões: preço, P/VP, DY 12m, VPA (valor patrimonial por cota), patrimônio, número de cotistas, vacância (parte dos imóveis vazia, só para fundos de imóveis) e liquidez diária. Os números vêm da mesma vitrine da aba FIIs Disponíveis, então as duas abas não discordam, e cada cartão mostra a data-base: o dia da cotação (preço e DY) e a competência do informe da CVM (VPA, P/VP e patrimônio).",
+          "explicacao": "Título com código e nome do fundo, tipo e gestão, e oito cartões: preço, P/VP, DY 12m, VPA (valor patrimonial por cota), patrimônio, número de cotistas, vacância (parte dos imóveis vazia, só para fundos de imóveis) e liquidez diária. Os números vêm da mesma vitrine da aba FIIs Disponíveis, então as duas abas não discordam, e cada cartão mostra a data-base: o dia da cotação (preço e DY; vale a mais nova entre o fechamento do pregão da B3 e a brapi) e a competência do informe da CVM (VPA, P/VP e patrimônio).",
           "so_admin": false,
           "fonte": "views/fiis.py:1793"
         },

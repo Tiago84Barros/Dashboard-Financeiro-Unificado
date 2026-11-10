@@ -59,9 +59,33 @@ python run_market_ingest.py fiis-b3-history --years 17 --json
 python run_market_ingest.py fiis-documents --limit 50 --recent-months 24 --json
 python run_market_ingest.py fiis-entities --json
 python run_market_ingest.py fiis-confidence --json
+python run_market_ingest.py fiis-cotahist --warehouse --dry-run --json
 python run_market_ingest.py fiis-pit-backtest --years 10 --json
 python run_market_ingest.py fiis-monitor --json
 ```
+
+## Cotação do fundo: a leitura mais nova vence
+
+`market.fiis.price` não é mais só a cotação da brapi. A etapa `fiis-cotahist`
+(`data_pipeline/market/fii_ingest.py::promover_fechamento_pregao`) compara cada
+fundo com o fechamento mais novo do pregão da B3 em
+`market.fii_b3_security_history` (COTAHIST; por `trade_date` vale a coleta mais
+nova, só `close > 0`) e fica com a leitura de data mais nova. A regra é uma só,
+`data_pipeline/market/fii.py::mais_nova_vence`, e é a mesma que a leitura
+(`core/market_read._observacao_vence_base`, #707) usa para as observações.
+
+- O fechamento vale às 18h de Brasília do dia do pregão, de modo que o
+  fechamento do dia vence a cotação intradiária da brapi do mesmo dia.
+- A data da brapi é o `regularMarketTime` do payload, não `updated_at`, que o
+  gatilho renova a cada UPDATE, inclusive quando o `reprocess` regrava preço
+  velho. Sem a coluna `price_at` (migration 088), a data-base é o limite
+  superior: o mais novo entre o `regularMarketTime` do último payload e o
+  `knowledge_at` das observações de preço.
+- Quando o preço troca, o P/VP passa a ser preço ÷ VPA (`pvp_efetivo`) e o DY
+  12m é reescalado pelo novo preço.
+- A etapa roda na cadeia de FII da rotina local depois da carga do pregão e não
+  depende da cota da brapi. Ela também roda dentro de `fiis`/`reprocess` e da
+  carga v2.
 
 ## Limitação remanescente
 

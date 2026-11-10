@@ -54,7 +54,9 @@ _UPDATE_COLS = {
              "vpa", "num_cotistas", "pct_imoveis", "pct_papel", "pct_caixa", "pct_fundos",
              "cvm_ref_date", "vacancia", "vacancia_ref_date", "num_imoveis",
              "score_version", "score_calculated_at", "metrics_fetched_at", "mandate",
-             "administrator_name", "administrator_cnpj"),
+             "administrator_name", "administrator_cnpj",
+             # migration 088: data da cotação. Sem a coluna, o upsert a omite.
+             "price_at"),
     # snapshot mensal de score+inputs (migração 020, auditoria FII 2026-07):
     # as colunas de score só atualizam quando presentes na linha — o backfill
     # CVM e o snapshot de score preservam as colunas um do outro.
@@ -330,6 +332,22 @@ def upsert(conn, table: str, rows: list[dict]) -> int:
     if table not in _CONFLICT:
         raise ValueError(f"tabela desconhecida: {table}")
     return _upsert(conn, table, rows)
+
+
+def upsert_por_colunas(conn, table: str, rows: list[dict]) -> int:
+    """Upsert de linhas com chaves diferentes, um lote por conjunto de colunas.
+
+    `_upsert` tira as colunas da primeira linha. Num lote heterogêneo, a linha
+    que não trouxe uma coluna gravaria NULL nela, e a que trouxe uma coluna a
+    mais a perderia. Aqui cada linha atualiza só o que trouxe, e um nulo
+    explícito (chave presente, valor None) continua sendo gravado.
+    """
+    if table not in _CONFLICT:
+        raise ValueError(f"tabela desconhecida: {table}")
+    lotes: dict[tuple, list[dict]] = {}
+    for r in rows:
+        lotes.setdefault(tuple(sorted(r)), []).append(r)
+    return sum(_upsert(conn, table, lote) for lote in lotes.values())
 
 
 def _publicacao_cvm(conn, tickers: list[str]) -> dict[tuple[str, int], object]:

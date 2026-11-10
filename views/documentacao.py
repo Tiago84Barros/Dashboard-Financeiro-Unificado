@@ -1220,6 +1220,8 @@ FLOW_SELECAO_FIIS = FlowSpec(
                 "P/VP com faixa-alvo, não monotônico",
                 "VPA vindo da fonte regulatória",
                 "Preço de mercado com prazo de validade próprio",
+                "Cotação: vale a mais nova entre o fechamento do pregão da B3 (COTAHIST) e a "
+                "brapi — etapa fiis-cotahist da cadeia; P/VP e DY acompanham o preço escolhido",
             ),
             "Ordenar por 'P/VP mais baixo' é uma armadilha clássica: a ponta barata concentra "
             "fundos com vacância alta ou crédito problemático.",
