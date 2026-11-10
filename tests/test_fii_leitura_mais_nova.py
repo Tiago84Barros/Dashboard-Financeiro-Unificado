@@ -76,7 +76,8 @@ def test_vpa_de_competencia_mais_velha_ou_fonte_nao_oficial_nao_vence():
 
 
 def test_cotas_derivadas_da_cvm_substituem_a_foto_velha_da_brapi():
-    row = _aplicar(_base(vpa=10.0, patrimonio_liquido=5.67e9), [
+    row = _aplicar(_base(vpa=10.0, patrimonio_liquido=5.67e9,
+                         price_at=pd.Timestamp("2026-11-07 12:00", tz="UTC")), [
         _obs("shares_outstanding", 460e6, "2026-03-01", "2026-07-16")])
     assert row["shares_outstanding"] == pytest.approx(567e6)
     # cotas x VPA fecham com o PL da mesma competencia (<= 1%)
@@ -163,17 +164,44 @@ def test_pvp_datado_pela_competencia_do_proprio_vpa():
     assert "_vpa_comp" not in row
 
 
-def test_enrich_da_cvm_nao_rejuvenesce_a_cotacao_base():
-    row = _base(updated_at=pd.Timestamp("2026-11-10 12:00", tz="UTC"),
-                price_base_at=pd.Timestamp("2026-11-07 12:00", tz="UTC"))
+def test_updated_at_e_so_limite_superior_da_cotacao_base():
+    # enrich da CVM renova updated_at (10/11) sem mexer na cotacao: sem price_at
+    # a base nao tem data. Obs de 09/11 e mais velha que updated_at -> base fica.
+    row = _base(updated_at=pd.Timestamp("2026-11-10 12:00", tz="UTC"))
     _aplicar(row, [_obs("price", 110.0, "2026-11-09", "2026-11-09")])
-    assert row["price"] == 110.0 and row["price_date"] == "2026-11-09"
+    assert row["price"] == 100.0
+    # Mais nova que o limite superior vence com certeza.
+    row = _base(updated_at=pd.Timestamp("2026-11-10 12:00", tz="UTC"))
+    _aplicar(row, [_obs("price", 111.0, "2026-11-11", "2026-11-11")])
+    assert row["price"] == 111.0 and row["price_date"] == "2026-11-11"
+
+
+def test_serie_historica_nao_data_a_cotacao_base():
+    # Cenario do Codex: serie ate 16/07, base de 07/11, obs de outubro. A data da
+    # cotacao nao pode vir da serie; sem price_at ela e desconhecida.
+    row = _base(Series_AvailableAt=pd.Timestamp("2026-07-16", tz="UTC"))
+    _aplicar(row, [_obs("price", 90.0, "2026-10-15", "2026-10-15")])
+    assert row["price"] == 100.0
+    assert row["price_date"] is None
+
+
+def test_price_at_proprio_data_a_cotacao_e_decide():
+    row = _base(price_at=pd.Timestamp("2026-10-01", tz="UTC"))
+    _aplicar(row, [_obs("price", 90.0, "2026-10-15", "2026-10-15")])
+    assert row["price"] == 90.0 and row["price_date"] == "2026-10-15"
+
+
+def test_pvp_sem_vpa_preserva_a_proveniencia_original():
+    row = _base(vpa=None, pvp=0.9, metric_metadata={"pvp": {"source": "cvm_vpa+brapi_quote"}})
+    _aplicar(row, [])
+    assert row["metric_metadata"]["pvp"]["source"] == "cvm_vpa+brapi_quote"
 
 
 def test_proveniencia_sobrevive_a_compactacao_do_snapshot():
     from core.inteligencia_ativos.fontes_fundamentos import dados_fii
     from scripts.publish_fii_selection_snapshot import _compact_payload
-    row = _aplicar(_base(vpa=10.0, patrimonio_liquido=5.67e9), [
+    row = _aplicar(_base(vpa=10.0, patrimonio_liquido=5.67e9,
+                         price_at=pd.Timestamp("2026-11-07 12:00", tz="UTC")), [
         _obs("shares_outstanding", 460e6, "2026-03-01", "2026-07-16")])
     publicado = market_read._expand_snapshot_payload(_compact_payload(row))
     d = dados_fii(publicado)
@@ -181,7 +209,7 @@ def test_proveniencia_sobrevive_a_compactacao_do_snapshot():
     assert "derivado de PL" in d["emissoes"].nota
 
 
-def test_dy_mantem_a_data_da_base_quando_so_o_preco_foi_aceito():
-    row = _aplicar(_base(), [_obs("price", 110.0, "2026-11-09", "2026-11-09")])
+def test_dy_sem_price_at_tem_data_desconhecida():
+    row = _aplicar(_base(), [_obs("price", 111.0, "2026-11-09", "2026-11-09")])
     assert row["price_date"] == "2026-11-09"
-    assert row["dy_date"] == "2026-11-07"
+    assert row["dy_date"] is None

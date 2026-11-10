@@ -1866,10 +1866,12 @@ def _tab_busca(df: pd.DataFrame) -> None:
 
     # Data-base de cada KPI: cotação (dia da leitura de mercado) e competência
     # do Informe Mensal da CVM (VPA e patrimônio).
-    dia_preco = _data_base(d.get("Price_Date")) or _data_base(d.get("updated_at"))
-    sub_preco = f"cotação de {dia_preco}" if dia_preco else None
-    dia_dy = _data_base(d.get("Dy_Date")) or dia_preco
-    sub_dy = f"DY de {dia_dy}" if dia_dy else None
+    # Sem `price_at` (migration 088) a data da cotacao e desconhecida: nunca
+    # usar `updated_at` (renovado por qualquer UPDATE) nem a data da serie.
+    dia_preco = _data_base(d.get("Price_Date"))
+    sub_preco = f"cotação de {dia_preco}" if dia_preco else "data da cotação desconhecida"
+    dia_dy = _data_base(d.get("Dy_Date"))
+    sub_dy = f"DY de {dia_dy}" if dia_dy else "data do DY desconhecida"
     comp_pl = _data_base(d.get("Pl_Ref"), "%m/%Y") or _data_base(d.get("cvm_ref_date"), "%m/%Y")
     sub_pl = f"CVM {comp_pl}" if comp_pl else None
     comp = _data_base(d.get("Vpa_Ref"), "%m/%Y") or _data_base(d.get("cvm_ref_date"), "%m/%Y")

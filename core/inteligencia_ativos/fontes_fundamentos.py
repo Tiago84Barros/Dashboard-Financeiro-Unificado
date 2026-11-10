@@ -111,10 +111,11 @@ def dados_fii(linha: dict) -> dict[str, Dado]:
     # (lista de 4 posicoes) nao carrega price_date.
     dia_preco = linha.get("price_date") or meta_pvp.get("price_date")
     comp_vpa = linha.get("vpa_ref_date") or meta_pvp.get("reference_date")
-    if dia_preco and comp_vpa:
-        # D1: o P/VP junta duas datas; as duas ficam visiveis.
-        nota_pvp = (f"preço de {str(dia_preco)[:10]} ÷ VPA da CVM de "
-                    f"{str(comp_vpa)[:7]}")
+    if comp_vpa:
+        # D1: o P/VP junta duas datas; as duas ficam visiveis. Sem `price_at`
+        # a data da cotacao e desconhecida e a nota diz isso.
+        quando = f"de {str(dia_preco)[:10]}" if dia_preco else "de data desconhecida"
+        nota_pvp = (f"preço {quando} ÷ VPA da CVM de {str(comp_vpa)[:7]}")
     dado("p_vp", _num(linha.get("pvp")), nota_pvp)
     dado("dividend_yield", _pct(linha.get("dy_12m")))
     vac = _pct(linha.get("vacancia_fisica"))

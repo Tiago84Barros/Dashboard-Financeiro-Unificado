@@ -555,6 +555,15 @@ def load_multiplos_historico_batch(tickers: tuple[str, ...]) -> dict[str, pd.Dat
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
+@st.cache_data(ttl=3600, show_spinner=False)
+def _market_fiis_tem_price_at() -> bool:
+    """`price_at` vem da migration 088 (nao aplicada por padrao): sem ela a
+    consulta nao pode nomear a coluna."""
+    df = _q("SELECT 1 FROM information_schema.columns WHERE table_schema='market' "
+            "AND table_name='fiis' AND column_name='price_at'")
+    return not df.empty
+
+
 def load_fiis(segmento: str | None = None) -> pd.DataFrame:
     """Ranking de FIIs de market.fiis (score desc). Filtro opcional por segmento."""
     conditions = ["u.active_status IN ('listed','active')",
@@ -564,6 +573,7 @@ def load_fiis(segmento: str | None = None) -> pd.DataFrame:
         conditions.append("COALESCE(f.segmento_cvm, f.segmento) = :seg")
         params["seg"] = segmento
     where = "WHERE " + " AND ".join(conditions)
+    price_at = ", f.price_at" if _market_fiis_tem_price_at() else ""
     df = _q(f"""
         SELECT f.ticker AS "Ticker", f.name AS "Nome",
                COALESCE(f.segmento_cvm, f.segmento) AS "Segmento", f.tipo AS "Tipo",
@@ -574,7 +584,7 @@ def load_fiis(segmento: str | None = None) -> pd.DataFrame:
                f.pct_imoveis AS "Pct_Imoveis", f.pct_papel AS "Pct_Papel",
                f.pct_caixa AS "Pct_Caixa", f.pct_fundos AS "Pct_Fundos",
                f.score AS "Score", f.updated_at,
-               f.cvm_ref_date, f.vacancia_ref_date
+               f.cvm_ref_date, f.vacancia_ref_date{price_at}
         FROM market.fiis f
         JOIN LATERAL (
             SELECT history.active_status
@@ -1144,7 +1154,10 @@ def _observacao_vence_base(row: dict, raw_metric: str, obs: dict,
         atual = row.get(coluna)
         if _ausente(atual):
             return True
-        data_base = _ts_utc(row.get("price_base_at")) or _ts_utc(row.get("updated_at"))
+        # Data da base: `price_at` se houver; senao `updated_at` como LIMITE
+        # SUPERIOR (a base nao pode ser mais nova que ele). No caso ambiguo a
+        # base fica.
+        data_base = _ts_utc(row.get("price_at")) or _ts_utc(row.get("updated_at"))
         data_obs = _ts_utc(obs.get("knowledge_at")) or _ts_utc(obs.get("reference_date"))
         if data_base is None or data_obs is None:
             return False
@@ -1156,8 +1169,7 @@ def _aplicar_observacoes_fii(row: dict, observacoes: list[dict],
                              metric_aliases: dict[str, str]) -> None:
     base_comp = _dia(row.get("cvm_ref_date"))
     competencia = {"vpa": base_comp, "patrimonio_liquido": base_comp}
-    base_updated = (row.get("price_base_at") if not _ausente(row.get("price_base_at"))
-                    else row.get("updated_at"))
+    base_updated = row.get("price_at")
     row["price_date"] = str(base_updated)[:10] if not _ausente(base_updated) else None
     row["dy_date"] = row["price_date"]
     for obs in observacoes:
@@ -1217,6 +1229,13 @@ def _aplicar_observacoes_fii(row: dict, observacoes: list[dict],
         competencia["vpa"] is not None and competencia["vpa"] == competencia["patrimonio_liquido"]))
 
 
+def _derivou_pvp(row: dict) -> bool:
+    try:
+        return float(row.get("price")) > 0 and float(row.get("vpa")) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def _consolidar_cotacao_e_cotas_fii(row: dict, alinhadas: bool = True) -> None:
     """P/VP e cotas coerentes com a linha FINAL (preco, VPA e PL).
 
@@ -1229,13 +1248,15 @@ def _consolidar_cotacao_e_cotas_fii(row: dict, alinhadas: bool = True) -> None:
     efetivo = _fz.pvp_efetivo(row.get("price"), row.get("vpa"), antes)
     if efetivo is not None:
         row["pvp"] = efetivo
-        row["metric_metadata"]["pvp"] = {
-            # Competencia do PROPRIO VPA usado na divisao, nao a minima da linha.
-            "reference_date": str(row.get("vpa_ref_date") or row.get("cvm_ref_date"))[:10],
-            "price_date": row.get("price_date") or str(row.get("updated_at"))[:10],
-            "available_at": str(row.get("updated_at")),
-            "source": "cvm_vpa+market_price",
-        }
+        # Procedencia de derivacao so quando preco e VPA validos produziram o
+        # P/VP; no fallback a procedencia original do P/VP fica como estava.
+        if _derivou_pvp(row):
+            row["metric_metadata"]["pvp"] = {
+                "reference_date": str(row.get("vpa_ref_date") or row.get("cvm_ref_date"))[:10],
+                "price_date": row.get("price_date"),
+                "available_at": str(row.get("updated_at")),
+                "source": "cvm_vpa+market_price",
+            }
     pl, vpa = row.get("patrimonio_liquido"), row.get("vpa")
     try:
         pl, vpa = float(pl), float(vpa)
@@ -1438,12 +1459,12 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
             "property_count": item.get("Num_Imoveis"),
             "property_diversification": item.get("Property_Diversification"),
             "region_count": item.get("N_Regioes"),
-            # Data propria da cotacao-base: `updated_at` e renovado por qualquer
-            # UPDATE da linha (ex.: enrich da CVM), entao nao data o preco. A
-            # fita (Series_AvailableAt) nao sofre isso; sem ela, o carimbo da linha.
-            "price_base_at": (item.get("Series_AvailableAt")
-                              if not _ausente(item.get("Series_AvailableAt"))
-                              else item.get("updated_at")),
+            # Data PROPRIA da cotacao-base: so `price_at` (migration 088, quando
+            # aplicada e gravada). `updated_at` e renovado por qualquer UPDATE da
+            # linha e a serie historica tem outra data: nenhum dos dois data o
+            # preco, entao sem `price_at` a data e DESCONHECIDA e `updated_at`
+            # so serve de limite superior.
+            "price_at": item.get("price_at"),
             "metric_metadata": {
                 "dy_12m": {"available_at": str(item.get("updated_at")), "source": "brapi",
                            "reference_date": str(item.get("updated_at"))[:10]},
