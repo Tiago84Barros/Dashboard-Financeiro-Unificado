@@ -412,8 +412,10 @@ def valor_de_mercado_brapi(linhas, universo, hoje, *, sucessoes=None,
 def linhas_de_valor_de_mercado(fotos) -> tuple[list[dict], dict]:
     """(linhas para ``valor_de_mercado_brapi``, {ticker: k}). Puro.
 
-    ``fotos``: dicts com ticker, fetched_at e payload (o quote). A conta é a
-    de ``data_pipeline.market.acoes``, a mesma da linha spot ``marketCap``.
+    ``fotos``: dicts com ticker, fetched_at, payload (o quote mais novo) e,
+    opcional, composicao (o ``defaultKeyStatistics`` do quote completo mais
+    novo, ``acoes.quote_com_composicao``). A conta é a de
+    ``data_pipeline.market.acoes``, a mesma da linha spot ``marketCap``.
     k é 1 na ação e None na unit sem k derivável."""
     from data_pipeline.market import acoes as ac
     from data_pipeline.market.normalize import _infer_asset_type
@@ -421,7 +423,7 @@ def linhas_de_valor_de_mercado(fotos) -> tuple[list[dict], dict]:
     linhas, por_titulo = [], {}
     for r in fotos:
         tk = str(r["ticker"]).upper()
-        q = r.get("payload") or {}
+        q = ac.quote_com_composicao(r.get("payload") or {}, r.get("composicao"))
         unit = _infer_asset_type(tk, q) == "unit"
         k = ac.acoes_por_titulo(q, unit=unit)
         por_titulo[tk] = k
@@ -437,9 +439,11 @@ def linhas_de_valor_de_mercado(fotos) -> tuple[list[dict], dict]:
 
 
 def coletar_fotos_de_valor(conn) -> tuple[list[dict], dict]:
-    """O quote mais recente por ticker, só com os campos da conta. O id sai
-    antes, sem abrir o payload: montar o JSON de cada uma das ~100 mil
-    respostas para depois ficar com uma por ticker levava minutos."""
+    """O quote mais recente por ticker, só com os campos da conta, e a
+    composição (ações emitidas e os campos de k) do quote completo mais novo:
+    o do refresh diário vem sem ``defaultKeyStatistics``. Os ids saem antes,
+    sem abrir o payload: montar o JSON de cada uma das ~100 mil respostas
+    para depois ficar com uma por ticker levava minutos."""
     from sqlalchemy import text
     fotos = [dict(r._mapping) for r in conn.execute(text("""
         SELECT b.ticker, b.fetched_at,
@@ -459,13 +463,28 @@ def coletar_fotos_de_valor(conn) -> tuple[list[dict], dict]:
                      b.payload_json->'defaultKeyStatistics'->'trailingEps',
                      'netIncomeToCommon',
                      b.payload_json->'defaultKeyStatistics'->'netIncomeToCommon')
-               ) AS payload
-          FROM (SELECT DISTINCT ON (ticker) id
+               ) AS payload,
+               jsonb_build_object(
+                 'sharesOutstanding',
+                 c.payload_json->'defaultKeyStatistics'->'sharesOutstanding',
+                 'trailingEps', c.payload_json->'defaultKeyStatistics'->'trailingEps',
+                 'netIncomeToCommon',
+                 c.payload_json->'defaultKeyStatistics'->'netIncomeToCommon'
+               ) AS composicao
+          FROM (SELECT DISTINCT ON (ticker) ticker, id
                   FROM market.brapi_raw_payloads
                  WHERE endpoint = 'quote' AND request_status = 'success'
                    AND payload_json IS NOT NULL
                  ORDER BY ticker, fetched_at DESC) mais_novo
           JOIN market.brapi_raw_payloads b ON b.id = mais_novo.id
+          LEFT JOIN (SELECT DISTINCT ON (ticker) ticker, id
+                       FROM market.brapi_raw_payloads
+                      WHERE endpoint = 'quote' AND request_status = 'success'
+                        AND payload_json->'defaultKeyStatistics' ?&
+                            array['sharesOutstanding','trailingEps','netIncomeToCommon']
+                      ORDER BY ticker, fetched_at DESC) completo
+                 ON completo.ticker = mais_novo.ticker
+          LEFT JOIN market.brapi_raw_payloads c ON c.id = completo.id
     """))]
     return linhas_de_valor_de_mercado(fotos)
 

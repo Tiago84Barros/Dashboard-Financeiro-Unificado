@@ -235,3 +235,56 @@ def test_linhas_do_porte_unit_sem_k_fica_fora_e_marcada():
     linhas, k = pub.linhas_de_valor_de_mercado(fotos)
     assert [(r["ticker"], r["origem"]) for r in linhas] == [("XPTO3", "brapi")]
     assert k == {"XPTO11": None, "XPTO3": 1}
+
+
+# ── quote diário sem a composição (Codex, PR #710) ────────────────────────────
+# O refresh diário pede o quote sem ``defaultKeyStatistics``. k e as ações
+# emitidas saem do quote completo mais novo; o preço, do mais novo de todos.
+
+def _diario(tk, preco):
+    q = _quote(tk, preco)
+    q.pop("defaultKeyStatistics")
+    return q
+
+
+def test_composicao_do_quote_completo_vale_no_quote_diario():
+    completo = _quote("XPTO11", 30.0, acoes=3_000.0, lpa_titulo=3.0, lucro=3_000.0)
+    q = ac.quote_com_composicao(_diario("XPTO11", 33.0),
+                                completo["defaultKeyStatistics"])
+    assert ac.acoes_por_titulo(q, unit=True) == 3
+    assert ac.valor_de_mercado_do_quote(q, unit=True) == pytest.approx(33_000.0)
+
+
+def test_composicao_propria_do_quote_nao_e_trocada_pela_antiga():
+    novo = _quote("XPTO11", 30.0, acoes=6_000.0, lpa_titulo=3.0, lucro=6_000.0)
+    antigo = _quote("XPTO11", 30.0, acoes=3_000.0, lpa_titulo=3.0, lucro=1_000.0)
+    q = ac.quote_com_composicao(novo, antigo["defaultKeyStatistics"])
+    assert ac.acoes_por_titulo(q, unit=True) == 3
+    assert ac.acoes_emitidas(q) == 6_000.0
+
+
+def test_metric_rows_do_quote_diario_usa_a_composicao_e_nao_o_lpa_antigo():
+    completo = _quote("XPTO11", 30.0, acoes=3_000.0, lpa_titulo=3.0, lucro=3_000.0)
+    rows = nz.metric_rows(_diario("XPTO11", 33.0),
+                          composicao=completo["defaultKeyStatistics"])
+    by = {r["metric_name"]: r["metric_value"] for r in rows}
+    assert by["Acoes_por_Titulo"] == 3
+    assert by["Acoes_Emitidas"] == 3_000.0
+    assert by["marketCap"] == pytest.approx(33_000.0)
+    # O LPA é do quote que se normaliza; o da composição é de outra data.
+    assert "LPA" not in by
+
+
+def test_linhas_do_porte_quote_diario_mantem_k_da_ultima_composicao():
+    from datetime import datetime, timezone
+
+    from scripts import publish_valuation_historico as pub
+    hoje = datetime(2026, 10, 29, 12, tzinfo=timezone.utc)
+    completo = _quote("XPTO11", 30.0, acoes=3_000.0, lpa_titulo=3.0, lucro=3_000.0)
+    fotos = [{"ticker": "XPTO11", "fetched_at": hoje,
+              "payload": _diario("XPTO11", 33.0),
+              "composicao": completo["defaultKeyStatistics"]}]
+    linhas, k = pub.linhas_de_valor_de_mercado(fotos)
+    assert k == {"XPTO11": 3}
+    assert [(r["ticker"], r["market_cap"], r["origem"]) for r in linhas] == [
+        ("XPTO11", pytest.approx(33_000.0), "acoes")]

@@ -702,6 +702,30 @@ def enrich_setores() -> dict:
     return prog
 
 
+def _composicoes_mais_novas(conn, tickers=None) -> dict:
+    """{ticker: defaultKeyStatistics} do quote completo mais novo, só com os
+    campos de ``acoes.COMPOSICAO``. O quote mais novo pode ser o do refresh
+    diário, que vem sem eles (``acoes.quote_com_composicao``)."""
+    import json
+    q = ("SELECT DISTINCT ON (ticker) ticker, jsonb_build_object("
+         "'sharesOutstanding', payload_json->'defaultKeyStatistics'->'sharesOutstanding', "
+         "'trailingEps', payload_json->'defaultKeyStatistics'->'trailingEps', "
+         "'netIncomeToCommon', payload_json->'defaultKeyStatistics'->'netIncomeToCommon') "
+         "FROM market.brapi_raw_payloads "
+         "WHERE endpoint='quote' AND request_status='success' "
+         "AND payload_json->'defaultKeyStatistics' ?& "
+         "array['sharesOutstanding','trailingEps','netIncomeToCommon']")
+    params: dict = {}
+    if tickers:
+        q += " AND ticker = ANY(:tks)"
+        params["tks"] = list(tickers)
+    q += " ORDER BY ticker, id DESC"
+    out = {}
+    for tk, dks in conn.execute(text(q), params).fetchall():
+        out[str(tk).upper()] = json.loads(dks) if isinstance(dks, str) else dks
+    return out
+
+
 def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> dict:
     """
     Reaplica o normalizador atual aos payloads brutos JÁ salvos em
@@ -729,6 +753,7 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
             params["tks"] = [t.upper().replace(".SA", "") for t in tickers]
         q += " ORDER BY ticker, id DESC"
         rows = conn.execute(text(q), params).fetchall()
+        composicoes = _composicoes_mais_novas(conn, params.get("tks"))
     trocas = _carregar_trocas(engine)
     if limit:
         rows = rows[:limit]
@@ -741,7 +766,7 @@ def renormalize(tickers: list[str] | None = None, limit: int | None = None) -> d
             quote = (p.get("results") or [p])[0] if isinstance(p, dict) else None
             if not quote:
                 continue
-            data = nz.normalize_all(quote)
+            data = nz.normalize_all(quote, composicoes.get(tk))
             # Reconciliação: grava sob o ticker-B3 da coluna do payload (o
             # requisitado), não o símbolo divergente que a brapi possa devolver.
             # Sem isto, um backfill recria os assets órfãos que o ingest evita

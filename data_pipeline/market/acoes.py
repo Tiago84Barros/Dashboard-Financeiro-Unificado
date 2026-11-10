@@ -81,6 +81,36 @@ def acoes_por_titulo(quote: dict, *, unit: bool) -> int | None:
     return None
 
 
+# Campos de ``defaultKeyStatistics`` de que saem as ações emitidas e k.
+COMPOSICAO = ("sharesOutstanding", "trailingEps", "netIncomeToCommon")
+
+
+def tem_composicao(quote: dict) -> bool:
+    dks = (quote or {}).get("defaultKeyStatistics") or {}
+    return all(_f(dks.get(c)) is not None for c in COMPOSICAO)
+
+
+def quote_com_composicao(quote: dict, composicao: dict | None) -> dict:
+    """O quote com a composição (ações emitidas e os campos de k) do quote
+    completo mais novo, quando ele próprio não a tem.
+
+    O refresh diário (``ingest_ticker(full=False)``) pede o quote sem o módulo
+    ``defaultKeyStatistics``. Sem isto, a unit cujo quote mais novo é o diário
+    perdia k, e com ele o valor de mercado, o histórico anual e o lugar no P/L
+    mediano. ``composicao`` é o ``defaultKeyStatistics`` desse quote completo;
+    os três campos entram juntos, para a razão de k não misturar datas. O
+    quote que tem a composição própria fica como está. Só serve à conta de
+    ações: o LPA e os demais campos continuam os do próprio quote."""
+    quote = quote or {}
+    if tem_composicao(quote) or not composicao:
+        return quote
+    if not all(_f(composicao.get(c)) is not None for c in COMPOSICAO):
+        return quote
+    dks = dict(quote.get("defaultKeyStatistics") or {})
+    dks.update({c: composicao[c] for c in COMPOSICAO})
+    return {**quote, "defaultKeyStatistics": dks}
+
+
 def valor_de_mercado(preco, acoes, por_titulo) -> float | None:
     """Preço do título × ações emitidas ÷ ações por título. None sem os três."""
     p, a, k = _positivo(preco), _positivo(acoes), _positivo(por_titulo)
