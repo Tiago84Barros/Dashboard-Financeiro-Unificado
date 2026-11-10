@@ -103,3 +103,17 @@ def test_vitrine_antiga_sem_a_coluna_continua_na_base_antiga(monkeypatch):
     assert h.loc[0, "pe"] == pytest.approx(10.0)
     rows[0]["shares_outstanding_ajustada"] = None
     assert "shares_outstanding_ajustada" in ur.load_snapshot_financials("X")
+
+
+def test_vitrine_antiga_pela_fachada_us_data_sai_preenchida(monkeypatch):
+    import core.us_data as ud
+    import core.us_read as ur
+
+    rows = [{"fiscal_year": 2023, "net_income": 5e8, "shares_outstanding": 100e6}]
+    monkeypatch.setattr(ud, "_use_snapshot", lambda: True)
+    monkeypatch.setattr(ur, "_snapshot_json_for", lambda s, k: rows)
+    fn = getattr(ud.company_financials, "__wrapped__", ud.company_financials)
+    df = fn("X")
+    h = derive_metric_history(df, pd.DataFrame(
+        {"date": ["2023-12-29"], "price": [50.0]}))
+    assert h.loc[0, "pe"] == pytest.approx(10.0)
