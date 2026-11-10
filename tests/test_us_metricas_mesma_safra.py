@@ -94,3 +94,21 @@ def test_publicado_recente_e_sem_datas_seguem_valendo():
     assert market_cap_confiavel(
         1.2e9, 1e9, 10.0, publicado_em=date(2026, 10, 20), preco_em=hoje) == 1.2e9
     assert market_cap_confiavel(1.2e9, 1e9, 10.0) == 1.2e9     # compat
+
+
+def test_dpa_usa_acoes_do_mesmo_exercicio_do_dividendo():
+    inc = [{"fiscal_year": 2024, "net_income": 100.0, "revenue": 500.0}]
+    bal = [{"fiscal_year": 2024, "shares_outstanding": 1e6},
+           {"fiscal_year": 2025, "shares_outstanding": 2e6}]
+    cf = [{"fiscal_year": 2024, "dividends_paid": -1e6},
+          {"fiscal_year": 2025, "dividends_paid": -2e6}]
+    m = compute_company_metrics(inc, bal, cf, shares=2e6)
+    assert m["dividends_per_share"] == 1.0
+
+
+def test_dpa_lacuna_sem_contagem_do_exercicio():
+    inc = [{"fiscal_year": 2025, "net_income": 100.0, "revenue": 500.0}]
+    bal = [{"fiscal_year": 2024, "shares_outstanding": 1e6}]
+    cf = [{"fiscal_year": 2025, "dividends_paid": -1e6}]
+    m = compute_company_metrics(inc, bal, cf, shares=1e6)
+    assert m["dividends_per_share"] is None

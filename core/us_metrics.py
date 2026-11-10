@@ -426,7 +426,8 @@ DIVERGENCIA_ACOES = 10.0
 
 
 def acoes_em_circulacao(balance: Sequence[dict],
-                        informado: Optional[float] = None) -> Optional[float]:
+                        informado: Optional[float] = None,
+                        ano: Optional[int] = None) -> Optional[float]:
     """Ações do último exercício, ou None quando a série se contradiz.
 
     O exercício mais recente vem com a contagem em escala errada num punhado de
@@ -455,8 +456,14 @@ def acoes_em_circulacao(balance: Sequence[dict],
         razao = pontos[-1][1] / pontos[-2][1]
         if razao > DIVERGENCIA_ACOES or razao < 1.0 / DIVERGENCIA_ACOES:
             return None
-    valor = informado if informado is not None else (
-        pontos[-1][1] if pontos else None)
+    if ano is not None:
+        # Contagem do exercicio `ano` (denominador por acao de conta do mesmo
+        # exercicio); `informado` e do balanco mais novo e nao vale aqui. A
+        # validacao de escala acima segue sobre a serie inteira.
+        valor = _no_ano(balance, "shares_outstanding", ano)
+    else:
+        valor = informado if informado is not None else (
+            pontos[-1][1] if pontos else None)
     if valor is None or valor < ACOES_IMPLICITAS_MINIMAS:
         return None
     return valor
@@ -603,6 +610,10 @@ def compute_company_metrics(
     # linha de balanço e carrega o mesmo defeito de escala — ver
     # `acoes_em_circulacao`, que confronta o último exercício com o anterior.
     shares_out   = acoes_em_circulacao(balance, shares)
+    # Contagem do exercicio de referencia: denominador do DPA (numerador e o
+    # dividendo desse mesmo exercicio). shares_out segue a mais nova, que e a
+    # certa para valor de mercado derivado (preco de hoje x acoes de hoje).
+    shares_ref   = acoes_em_circulacao(balance, None, ano)
 
     ocf   = _no_ano(cashflow, "operating_cash_flow", ano)
     capex = _no_ano(cashflow, "capex", ano)
@@ -703,7 +714,7 @@ def compute_company_metrics(
         "dividend_yield": _dividend_yield(cashflow, market_cap, ano),
         "dividends_per_share": safe_div(
             abs(_div_exercicio) if _div_exercicio is not None else None,
-            shares_out),
+            shares_ref),
         "payout_ratio": (safe_div(abs(div_paid), net_income)
                          if div_paid is not None and net_income and net_income > 0
                          else None),
