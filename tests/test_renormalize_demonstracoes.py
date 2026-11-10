@@ -74,7 +74,7 @@ def _patch(monkeypatch, payload_rows, por_ticker, trocas=None):
         upserts.setdefault(table, []).extend(rows or [])
         return len(rows or [])
     monkeypatch.setattr(ig.repo, "upsert", _upsert)
-    monkeypatch.setattr(ig.nz, "normalize_all", lambda quote: por_ticker[quote["symbol"]])
+    monkeypatch.setattr(ig.nz, "normalize_all", lambda quote, composicao=None: por_ticker[quote["symbol"]])
     return conn, upserts
 
 

@@ -2851,7 +2851,10 @@ INDICADORES = [
     {
         "Grupo": "Valuation",
         "Indicador": "P/L",
-        "O que mede": "Preço da ação dividido pelo lucro por ação.",
+        "O que mede": ("Preço do título dividido pelo lucro por título. Na unit, que "
+                        "carrega várias ações, o lucro por unit é o lucro por ação "
+                        "vezes as ações que ela carrega, como no Fundamentus, no "
+                        "Status Invest e no Investidor10."),
         "Importância": "Indica quantos anos de lucro o investidor esta pagando, em termos simplificados.",
         "Leitura": "Menor pode ser mais barato, mas também pode indicar risco, ciclo ou lucro temporário.",
         "Autores": "Graham usa múltiplos com margem de segurança; Lynch popularizou relacionar P/L com crescimento esperado.",
@@ -2859,7 +2862,10 @@ INDICADORES = [
     {
         "Grupo": "Valuation",
         "Indicador": "P/VP",
-        "O que mede": "Valor de mercado dividido pelo patrimônio líquido.",
+        "O que mede": ("Valor de mercado dividido pelo patrimônio líquido. O valor "
+                        "de mercado é o preço da classe vezes as ações emitidas da "
+                        "companhia (todas as classes), dividido pelas ações que "
+                        "cada título carrega (1 na ação, k na unit)."),
         "Importância": "Ajuda a avaliar preço versus base contábil, especialmente bancos e negócios patrimoniais.",
         "Leitura": "Baixo pode indicar desconto ou baixa rentabilidade; alto exige ROE superior e sustentável.",
         "Autores": "Graham usava valor patrimonial como âncora defensiva; Buffett aceita pagar mais por negócios superiores.",

@@ -64,7 +64,7 @@ class _FakeConn:
     def execute(self, clause, params=None):
         sql = str(clause)
         self.executed.append((sql, params or {}))
-        if "brapi_raw_payloads" in sql:
+        if "brapi_raw_payloads" in sql and "defaultKeyStatistics" not in sql:
             return _Result(self._payload_rows)
         return _Result([])
 
@@ -107,7 +107,7 @@ def _patch_renormalize(monkeypatch, payload_rows, data):
         upserts.setdefault(table, []).extend(rows or [])
         return len(rows or [])
     monkeypatch.setattr(ig.repo, "upsert", _upsert)
-    monkeypatch.setattr(ig.nz, "normalize_all", lambda quote: data)
+    monkeypatch.setattr(ig.nz, "normalize_all", lambda quote, composicao=None: data)
     return conn, upserts
 
 
@@ -142,3 +142,18 @@ def test_renormalize_sem_divergencia_nao_registra_alias(monkeypatch):
     assert all(r["ticker"] == "ELET3" for r in upserts["assets"])
     # a leitura das trocas registradas consulta a tabela; gravar, não
     assert not any("INSERT INTO market.ticker_alias" in s for s, _ in conn.executed)
+
+
+def test_renormalize_passa_a_composicao_do_quote_completo(monkeypatch):
+    # O quote mais novo é o diário, sem defaultKeyStatistics: a composição
+    # (ações emitidas e os campos de k) vem do completo mais novo.
+    rows = [("ELET3", 99, {"results": [{"symbol": "ELET3"}]})]
+    _patch_renormalize(monkeypatch, rows, _full_data("ELET3"))
+    comp = {"sharesOutstanding": 3.0, "trailingEps": 3.0, "netIncomeToCommon": 3.0}
+    monkeypatch.setattr(ig, "_composicoes_mais_novas", lambda conn, tks=None: {"ELET3": comp})
+    vistos = []
+    monkeypatch.setattr(ig.nz, "normalize_all",
+                        lambda quote, composicao=None: vistos.append(composicao)
+                        or _full_data("ELET3"))
+    assert ig.renormalize()["tickers"] == 1
+    assert vistos == [comp]

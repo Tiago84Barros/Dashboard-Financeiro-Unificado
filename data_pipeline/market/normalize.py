@@ -543,11 +543,31 @@ def dividend_rows(quote: dict) -> list[dict]:
 
 # ── Indicadores (calculated_metrics) ──────────────────────────────────────────
 
-def metric_rows(quote: dict) -> list[dict]:
-    """Indicadores 'spot' fornecidos/derivados pela brapi (P/L, P/VP, EV/EBITDA, marketCap)."""
+_METODO_SPOT = {
+    "marketCap": "preco_x_acoes_emitidas_por_titulo",
+    "Acoes_por_Titulo": "lpa_do_titulo_sobre_lpa_por_acao",
+}
+
+def metric_rows(quote: dict, composicao: dict | None = None) -> list[dict]:
+    """Indicadores 'spot' fornecidos/derivados pela brapi (P/L, P/VP, EV/EBITDA, marketCap).
+
+    ``marketCap`` não é o campo da brapi: é o preço do título × ações emitidas
+    ÷ ações por título (``acoes.valor_de_mercado_do_quote``), a convenção dos
+    sites. A base da conta vai junto, em ``Acoes_Emitidas`` e
+    ``Acoes_por_Titulo``, para o ``reprocess_metrics`` refazer com o preço do
+    armazém. ``LPA`` é o do título (``trailingEps``): o ``earningsPerShare``
+    do topo traz, na ação de companhia com unit, o LPA da unit.
+
+    ``composicao``: o ``defaultKeyStatistics`` do quote completo mais novo,
+    para o quote diário, que vem sem ele (``acoes.quote_com_composicao``).
+    Entra só na conta de ações."""
+    from data_pipeline.market import acoes as _ac
+
     tk = _ticker(quote)
     if not tk:
         return []
+    unit = _ac.exige_k(_infer_asset_type(tk, quote), tk)
+    q_acoes = _ac.quote_com_composicao(quote, composicao)
     dks = (quote or {}).get("defaultKeyStatistics") or {}
     fin = (quote or {}).get("financialData") or {}
     # DY trailing da própria brapi (consenso) — evita over-count da janela
@@ -565,8 +585,10 @@ def metric_rows(quote: dict) -> list[dict]:
         "P/L": _first(quote, ("priceEarnings",)) or _first(dks, ("trailingPE", "forwardPE")),
         "P/VP": _first(dks, ("priceToBook",)),
         "EV/EBITDA": _first(dks, ("enterpriseToEbitda", "enterpriseValueEbitda")),
-        "marketCap": _first(quote, ("marketCap",)),
-        "LPA": _first(quote, ("earningsPerShare",)) or _first(dks, ("trailingEps",)),
+        "marketCap": _ac.valor_de_mercado_do_quote(q_acoes, unit=unit),
+        "Acoes_Emitidas": _ac.acoes_emitidas(q_acoes),
+        "Acoes_por_Titulo": _ac.acoes_por_titulo(q_acoes, unit=unit),
+        "LPA": _first(dks, ("trailingEps",)) or _first(quote, ("earningsPerShare",)),
         "ROE": _first(fin, ("returnOnEquity",)),
         "ROA": _first(fin, ("returnOnAssets",)),
         "Margem_Liquida": _first(fin, ("profitMargins",)),
@@ -579,14 +601,14 @@ def metric_rows(quote: dict) -> list[dict]:
             continue
         rows.append({
             "ticker": tk, "period": "spot", "year": 0, "quarter": 0,
-            "metric_name": name, "metric_value": val,
-            "calculation_method": "brapi_field",
+            "metric_name": name, "metric_value": float(val),
+            "calculation_method": _METODO_SPOT.get(name, "brapi_field"),
             "source": "brapi.dev", "confidence_score": 80.0,
         })
     return rows
 
 
-def normalize_all(quote: dict) -> dict[str, list[dict]]:
+def normalize_all(quote: dict, composicao: dict | None = None) -> dict[str, list[dict]]:
     """Converte um payload completo em todas as linhas market.* (dicionário por tabela)."""
     comp = company_row(quote)
     ast = asset_row(quote)
@@ -598,5 +620,5 @@ def normalize_all(quote: dict) -> dict[str, list[dict]]:
         "balance_sheets": balance_rows(quote),
         "cash_flow_statements": cashflow_rows(quote),
         "dividends": dividend_rows(quote),
-        "calculated_metrics": metric_rows(quote),
+        "calculated_metrics": metric_rows(quote, composicao),
     }

@@ -101,7 +101,7 @@ def falso(monkeypatch):
 
 def _ingerir(monkeypatch, conn, tk, data, cvm, trocas=None):
     monkeypatch.setattr(ig.sched, "with_backoff", lambda fetch, **k: {"results": [{}]})
-    monkeypatch.setattr(ig.nz, "normalize_all", lambda q: copy.deepcopy(data))
+    monkeypatch.setattr(ig.nz, "normalize_all", lambda q, composicao=None: copy.deepcopy(data))
     prog = ig._new_progress()
     ig.ingest_ticker(_Engine(conn), tk, range_="1mo", full=False, cvm_map=cvm,
                      prog=prog, trocas=trocas)
@@ -191,7 +191,7 @@ def test_renormalize_tambem_registra_a_troca_provada(monkeypatch, falso):
         def execute(self, clause, params=None):
             sql = str(clause)
             self.executed.append((sql, params or {}))
-            if "brapi_raw_payloads" in sql:
+            if "brapi_raw_payloads" in sql and "defaultKeyStatistics" not in sql:
                 return _Result([("ELET3", 99, {"results": [{"symbol": "AXIA3"}]})])
             return _Result()
 
@@ -200,7 +200,7 @@ def test_renormalize_tambem_registra_a_troca_provada(monkeypatch, falso):
     monkeypatch.setattr(ig.repo, "reset_db_cols_cache", lambda: None)
     monkeypatch.setattr(ig.repo, "schema_exists", lambda c: True)
     monkeypatch.setattr(ig.repo, "load_cvm_to_ticker", lambda c: dict(CVM))
-    monkeypatch.setattr(ig.nz, "normalize_all", lambda q: _data("AXIA3"))
+    monkeypatch.setattr(ig.nz, "normalize_all", lambda q, composicao=None: _data("AXIA3"))
 
     prog = ig.renormalize()
     assert prog["erros"] == 0
@@ -266,6 +266,9 @@ CREATE TABLE market.calculated_metric_vintages (
 CREATE TABLE market.ticker_alias (
     brapi_symbol text PRIMARY KEY, b3_ticker text NOT NULL, codigo_cvm int,
     motivo text, created_at timestamptz DEFAULT now());
+CREATE TABLE market.brapi_raw_payloads (
+    id bigserial PRIMARY KEY, ticker text, endpoint text, payload_json jsonb,
+    request_status text, fetched_at timestamptz DEFAULT now());
 CREATE TABLE public.setores (
     ticker text PRIMARY KEY, nome_empresa text, "SETOR" text, "SUBSETOR" text,
     "SEGMENTO" text, "LISTAGEM" text);
@@ -465,7 +468,7 @@ def test_ingestao_registra_a_troca_e_so_o_script_move_o_historico(banco, monkeyp
     # o dado novo sob AXIA3, mas mover o histórico do ELET3 é migração —
     # AGENTS.md pede confirmação humana, então fica pendente para o script.
     monkeypatch.setattr(ig.sched, "with_backoff", lambda fetch, **k: {"results": [{}]})
-    monkeypatch.setattr(ig.nz, "normalize_all", lambda q: _data(
+    monkeypatch.setattr(ig.nz, "normalize_all", lambda q, composicao=None: _data(
         "AXIA3", precos=(("2025-01-03", 41.0), ("2025-01-06", 42.0))))
     monkeypatch.setattr(ig.repo, "save_raw_payload", lambda *a, **k: None)
     monkeypatch.setattr(ig.repo, "append_metric_vintages", lambda *a, **k: 0)
@@ -531,7 +534,7 @@ def test_ingestao_nao_rebaixa_troca_ja_aplicada(banco, monkeypatch):
     # mas o alias já aplicado não pode voltar a pendente.
     _unificar(banco, "ELET3", "AXIA3", aplicar=True, codigo_cvm=2437)
     monkeypatch.setattr(ig.sched, "with_backoff", lambda fetch, **k: {"results": [{}]})
-    monkeypatch.setattr(ig.nz, "normalize_all", lambda q: _data("AXIA3"))
+    monkeypatch.setattr(ig.nz, "normalize_all", lambda q, composicao=None: _data("AXIA3"))
     monkeypatch.setattr(ig.repo, "save_raw_payload", lambda *a, **k: None)
     monkeypatch.setattr(ig.repo, "append_metric_vintages", lambda *a, **k: 0)
     ig.ingest_ticker(banco, "ELET3", range_="1mo", full=False, cvm_map=CVM,
@@ -544,7 +547,7 @@ def test_ingestao_nao_rebaixa_troca_ja_aplicada(banco, monkeypatch):
 def test_ingestao_do_codigo_atual_nao_apaga_a_companhia(banco, monkeypatch, cvm):
     _unificar(banco, "ELET3", "AXIA3", aplicar=True, codigo_cvm=2437)
     monkeypatch.setattr(ig.sched, "with_backoff", lambda fetch, **k: {"results": [{}]})
-    monkeypatch.setattr(ig.nz, "normalize_all", lambda q: _data(
+    monkeypatch.setattr(ig.nz, "normalize_all", lambda q, composicao=None: _data(
         "AXIA3", precos=(("2025-01-06", 42.0),)))
     monkeypatch.setattr(ig.repo, "save_raw_payload", lambda *a, **k: None)
     monkeypatch.setattr(ig.repo, "append_metric_vintages", lambda *a, **k: 0)
@@ -815,3 +818,21 @@ def test_script_recusa_aplicar_no_supabase_sem_confirmacao(monkeypatch, capsys):
 
     codigo, saida = _script(monkeypatch, _sem_banco, capsys, "--alvo", "supabase", "--apply")
     assert codigo == 2 and "--confirmo-producao" in saida
+
+
+def test_composicao_mais_nova_e_a_de_fetched_at_e_nao_a_de_id(banco):
+    # Payload arquivado ganha id novo: id maior não quer dizer quote mais novo.
+    from data_pipeline.market import ingest as ig
+    with banco.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO market.brapi_raw_payloads "
+            "(id, ticker, endpoint, payload_json, request_status, fetched_at) VALUES "
+            "(1, 'XPTO3', 'quote', CAST(:novo AS jsonb), 'success', '2026-10-02'), "
+            "(2, 'XPTO3', 'quote', CAST(:velho AS jsonb), 'success', '2026-09-01')"),
+            {"novo": '{"defaultKeyStatistics": {"sharesOutstanding": 2000, '
+                     '"trailingEps": 1, "netIncomeToCommon": 2000}}',
+             "velho": '{"defaultKeyStatistics": {"sharesOutstanding": 1000, '
+                      '"trailingEps": 1, "netIncomeToCommon": 1000}}'})
+    with banco.connect() as conn:
+        comp = ig._composicoes_mais_novas(conn, ["XPTO3"])
+    assert comp["XPTO3"]["sharesOutstanding"] == 2000

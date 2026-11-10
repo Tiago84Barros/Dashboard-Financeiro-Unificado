@@ -24,9 +24,13 @@ Métodos (repetidos no campo ``metodo`` do arquivo):
   escala errada: ITUB4 2019 tinha LPA 2.780); o mesmo teste sobre o valor de
   mercado implícito vale para o P/VP. O P/L não depende do lucro absoluto --
   bancos não o têm na base (ITUB4 em todos os anos, BBAS3 antes de 2020).
-- B3, porte (seleção de pares): valor de mercado do quote mais recente da
-  brapi, de até 30 dias. Não usa as ações implícitas: ver
-  ``valor_de_mercado_brapi``.
+- B3, unit: a unit carrega k ações (``data_pipeline.market.acoes``), então
+  P/L = fechamento ÷ (k × LPA) e valor de mercado = fechamento × ações
+  implícitas ÷ k. k é o de hoje, derivado do quote mais recente, aplicado a
+  todos os exercícios. Unit sem k fica sem P/L e sem P/VP (só DY).
+- B3, porte (seleção de pares): preço × ações emitidas ÷ k do quote mais
+  recente da brapi, de até 30 dias; sem ações emitidas, o ``marketCap`` do
+  mesmo quote. Não usa as ações implícitas: ver ``valor_de_mercado_brapi``.
 - FII, mensal: P/VP = fechamento do mês na fita da B3 ÷ VPA; DY 12m =
   rendimentos com data-ex nos 12 meses ÷ fechamento. Mês com VPA que salta e
   volta é descartado; janela de DY que atravessa grupamento/desdobramento
@@ -82,6 +86,9 @@ Desde 28/10/2026 o prejuízo entra de qualquer tamanho (a CSAN3 de 2025 ficava
 fora por ser maior que o preço) e o LPA é rebaseado pelo desdobramento ou
 grupamento que a B3 marcou na fita depois da DFP (``desdobramentos``): a
 brapi dá o LPA na base de ações do exercício e nunca o retroajusta.
+Desde 10/11/2026 a unit entra com o LPA do título, k × o LPA por ação (k =
+ações por unit, ``acoes_por_titulo_do_ticker``, a mesma regra dos múltiplos
+anuais); unit sem k fica fora, em vez de entrar com P/L k vezes maior.
 
 Recusa publicar (saída 1) se a fita da B3 estiver parada há mais de
 ``FITA_MAXIMA_DIAS``, se o mês mais recente da fita ficar fora da série do
@@ -103,7 +110,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 CAMINHO_PADRAO = ROOT / "data" / "public" / "valuation_historico.json.gz"
-VERSAO = 1
+VERSAO = 2  # 2: k ações por título na unit (P/L, P/VP e porte)
 ANO_INICIAL = 2010          # a fita da B3 no armazém começa em 2010
 FITA_MAXIMA_DIAS = 45       # a fita chega por arquivo mensal da B3
 FATOR_MC_IMPLAUSIVEL = 20.0
@@ -122,15 +129,18 @@ MERCADO_SALTO_MINIMO = 2.5      # salto sem fator redondo que ainda é desdobram
 
 METODO = {
     "b3": ("Anual. P/L = fechamento do último pregão do ano na fita da B3 "
-           "(sem retroajuste) ÷ LPA publicado do exercício; valor de mercado "
-           "do exercício = fechamento × (lucro ÷ LPA); P/VP = esse valor ÷ "
-           "patrimônio líquido; DY = proventos de renda com data-ex no ano "
-           "(resposta mais nova da brapi) ÷ fechamento. P/L fora de 1/20x "
-           "a 20x da mediana do ticker é "
+           "(sem retroajuste) ÷ (k × LPA publicado do exercício), com k = "
+           "ações que cada título carrega (1 na ação; na unit, derivado do "
+           "quote mais recente); valor de mercado do exercício = fechamento "
+           "× (lucro ÷ LPA) ÷ k; P/VP = esse valor ÷ patrimônio líquido; "
+           "unit sem k fica sem P/L e sem P/VP; DY = proventos de renda com "
+           "data-ex no ano (resposta mais nova da brapi) ÷ fechamento. P/L "
+           "fora de 1/20x a 20x da mediana do ticker é "
            "descartado; o mesmo teste sobre o valor de mercado implícito "
-           "vale para o P/VP. Porte (tamanho na seleção de pares) = valor de "
-           "mercado do quote mais recente da brapi, de até "
-           f"{PORTE_MAX_IDADE_DIAS} dias; sem ele (unit, quote velho), o "
+           "vale para o P/VP. Porte (tamanho na seleção de pares) = preço × "
+           "ações emitidas ÷ k do quote mais recente da brapi (sem ações "
+           "emitidas, o marketCap do mesmo quote), de até "
+           f"{PORTE_MAX_IDADE_DIAS} dias; sem ele (quote velho), o "
            "ticker fica sem porte e o tamanho não filtra os pares dele."),
     "fii": ("Mensal. P/VP = fechamento do último pregão do mês na fita da B3 "
             "÷ VPA do informe mensal; DY 12m = rendimentos com data-ex nos "
@@ -172,8 +182,10 @@ METODO = {
                    "qualquer tamanho inclusos. Desdobramento ou grupamento "
                    "marcado pela B3 (EB/EG) depois de março do ano seguinte "
                    "ao exercício divide o LPA pelo fator, porque ele vem na "
-                   "base de ações da DFP. "
-                   f"Fora da conta: sem LPA do exercício, P/L acima de "
+                   "base de ações da DFP. Na unit, o LPA é o do título "
+                   "(k ações por unit × LPA por ação). "
+                   f"Fora da conta: sem LPA do exercício, unit sem o número "
+                   f"de ações por unit, P/L acima de "
                    f"{MERCADO_PL_MAXIMO:.0f} ou abaixo de "
                    f"{MERCADO_PL_MINIMO:.0f} "
                    "(LPA em escala errada). Mês com menos de "
@@ -351,9 +363,10 @@ def alavancagem_brapi(linhas, hoje, *, max_idade: int = ALAVANCAGEM_MAX_IDADE_DI
 def valor_de_mercado_brapi(linhas, universo, hoje, *, sucessoes=None,
                            max_idade: int = PORTE_MAX_IDADE_DIAS
                            ) -> tuple[dict[str, dict], dict]:
-    """Porte de cada ticker do ``universo``: o ``marketCap`` do quote mais
-    recente da brapi. ``linhas``: dicts com ticker, fetched_at e market_cap,
-    uma por ticker. Puro.
+    """Porte de cada ticker do ``universo``: o valor de mercado do quote mais
+    recente da brapi. ``linhas``: dicts com ticker, fetched_at, market_cap e
+    ``origem`` ("acoes" = preço × ações emitidas ÷ k; senão o ``marketCap``
+    da brapi), uma por ticker (``linhas_de_valor_de_mercado``). Puro.
 
     Por que não fechamento × ações implícitas (lucro ÷ LPA) do último
     exercício: em 29/10/2026, 46 dos 322 tickers que tinham as duas medidas
@@ -363,7 +376,7 @@ def valor_de_mercado_brapi(linhas, universo, hoje, *, sucessoes=None,
     Sem valor de mercado recente, o ticker fica sem porte, e a seleção de
     pares diz que o tamanho não filtrou. Uma estimativa que erra 1000x
     não entra no lugar dele. A brapi não dá marketCap de unit (BPAC11,
-    TAEE11).
+    TAEE11); por ações emitidas ÷ k, a unit tem porte.
 
     Ticker renomeado (ELET3 → AXIA3): vale o quote mais recente da cadeia.
     """
@@ -372,7 +385,8 @@ def valor_de_mercado_brapi(linhas, universo, hoje, *, sucessoes=None,
     for r in linhas:
         mc = _f(r.get("market_cap"))
         if mc is not None and mc > 0:
-            fotos[str(r["ticker"]).upper()] = (r["fetched_at"], mc)
+            fotos[str(r["ticker"]).upper()] = (r["fetched_at"], mc,
+                                               r.get("origem"))
     por_tk = cadeias(sucessoes or {})
     hoje_d = hoje.date() if hasattr(hoje, "date") else hoje
     excl = {"foto_velha": 0, "sem_valor_de_mercado": 0}
@@ -382,29 +396,97 @@ def valor_de_mercado_brapi(linhas, universo, hoje, *, sucessoes=None,
         if not da_cadeia:
             excl["sem_valor_de_mercado"] += 1
             continue
-        (quando, mc), codigo = max(da_cadeia, key=lambda x: x[0][0])
+        (quando, mc, origem), codigo = max(da_cadeia, key=lambda x: x[0][0])
         if (hoje_d - quando.date()).days > max_idade:
             excl["foto_velha"] += 1
             continue
         de = "" if codigo == tk else f"{codigo} em "
+        conta = ("valor de mercado: preço × ações emitidas"
+                 if origem == "acoes" else "valor de mercado da brapi")
         saida[tk] = {"porte": _r(mc, 0),
-                     "porte_ref": (f"valor de mercado da brapi (quote de "
+                     "porte_ref": (f"{conta} (quote de "
                                    f"{de}{quando.date().isoformat()})")}
     return saida, excl
 
 
-def coletar_valor_de_mercado(conn, universo, hoje, sucessoes
-                             ) -> tuple[dict, dict]:
+def linhas_de_valor_de_mercado(fotos) -> tuple[list[dict], dict]:
+    """(linhas para ``valor_de_mercado_brapi``, {ticker: k}). Puro.
+
+    ``fotos``: dicts com ticker, fetched_at, payload (o quote mais novo) e,
+    opcional, composicao (o ``defaultKeyStatistics`` do quote completo mais
+    novo, ``acoes.quote_com_composicao``). A conta é a de
+    ``data_pipeline.market.acoes``, a mesma da linha spot ``marketCap``.
+    k é 1 na ação e None na unit sem k derivável."""
+    from data_pipeline.market import acoes as ac
+    from data_pipeline.market.normalize import _infer_asset_type
+
+    linhas, por_titulo = [], {}
+    for r in fotos:
+        tk = str(r["ticker"]).upper()
+        q = ac.quote_com_composicao(r.get("payload") or {}, r.get("composicao"))
+        unit = ac.exige_k(_infer_asset_type(tk, q), tk)
+        k = ac.acoes_por_titulo(q, unit=unit)
+        por_titulo[tk] = k
+        mc = ac.valor_de_mercado(q.get("regularMarketPrice"),
+                                 ac.acoes_emitidas(q), k)
+        origem = "acoes"
+        if mc is None:
+            mc, origem = ac._positivo(q.get("marketCap")), "brapi"
+        if mc is not None:
+            linhas.append({"ticker": tk, "fetched_at": r["fetched_at"],
+                           "market_cap": mc, "origem": origem})
+    return linhas, por_titulo
+
+
+def coletar_fotos_de_valor(conn) -> tuple[list[dict], dict]:
+    """O quote mais recente por ticker, só com os campos da conta, e a
+    composição (ações emitidas e os campos de k) do quote completo mais novo:
+    o do refresh diário vem sem ``defaultKeyStatistics``. Os ids saem antes,
+    sem abrir o payload: montar o JSON de cada uma das ~100 mil respostas
+    para depois ficar com uma por ticker levava minutos."""
     from sqlalchemy import text
-    linhas = [dict(r._mapping) for r in conn.execute(text("""
-        SELECT DISTINCT ON (ticker) ticker, fetched_at,
-               (payload_json->>'marketCap')::float8 AS market_cap
-          FROM market.brapi_raw_payloads
-         WHERE endpoint = 'quote' AND request_status = 'success'
-           AND jsonb_typeof(payload_json->'marketCap') = 'number'
-         ORDER BY ticker, fetched_at DESC
+    fotos = [dict(r._mapping) for r in conn.execute(text("""
+        SELECT b.ticker, b.fetched_at,
+               jsonb_build_object(
+                 'symbol', b.payload_json->'symbol',
+                 'longName', b.payload_json->'longName',
+                 'shortName', b.payload_json->'shortName',
+                 'summaryProfile', jsonb_build_object(
+                     'sector', b.payload_json->'summaryProfile'->'sector'),
+                 'regularMarketPrice', b.payload_json->'regularMarketPrice',
+                 'marketCap', b.payload_json->'marketCap',
+                 'sharesOutstanding', b.payload_json->'sharesOutstanding',
+                 'defaultKeyStatistics', jsonb_build_object(
+                     'sharesOutstanding',
+                     b.payload_json->'defaultKeyStatistics'->'sharesOutstanding',
+                     'trailingEps',
+                     b.payload_json->'defaultKeyStatistics'->'trailingEps',
+                     'netIncomeToCommon',
+                     b.payload_json->'defaultKeyStatistics'->'netIncomeToCommon')
+               ) AS payload,
+               jsonb_build_object(
+                 'sharesOutstanding',
+                 c.payload_json->'defaultKeyStatistics'->'sharesOutstanding',
+                 'trailingEps', c.payload_json->'defaultKeyStatistics'->'trailingEps',
+                 'netIncomeToCommon',
+                 c.payload_json->'defaultKeyStatistics'->'netIncomeToCommon'
+               ) AS composicao
+          FROM (SELECT DISTINCT ON (ticker) ticker, id
+                  FROM market.brapi_raw_payloads
+                 WHERE endpoint = 'quote' AND request_status = 'success'
+                   AND payload_json IS NOT NULL
+                 ORDER BY ticker, fetched_at DESC, id DESC) mais_novo
+          JOIN market.brapi_raw_payloads b ON b.id = mais_novo.id
+          LEFT JOIN (SELECT DISTINCT ON (ticker) ticker, id
+                       FROM market.brapi_raw_payloads
+                      WHERE endpoint = 'quote' AND request_status = 'success'
+                        AND payload_json->'defaultKeyStatistics' ?&
+                            array['sharesOutstanding','trailingEps','netIncomeToCommon']
+                      ORDER BY ticker, fetched_at DESC, id DESC) completo
+                 ON completo.ticker = mais_novo.ticker
+          LEFT JOIN market.brapi_raw_payloads c ON c.id = completo.id
     """))]
-    return valor_de_mercado_brapi(linhas, universo, hoje, sucessoes=sucessoes)
+    return linhas_de_valor_de_mercado(fotos)
 
 
 def coletar_alavancagem(conn, hoje) -> tuple[dict, dict]:
@@ -416,25 +498,43 @@ def coletar_alavancagem(conn, hoje) -> tuple[dict, dict]:
           FROM market.brapi_raw_payloads
          WHERE endpoint = 'quote' AND request_status = 'success'
            AND payload_json ? 'financialData'
-         ORDER BY ticker, fetched_at DESC
+         ORDER BY ticker, fetched_at DESC, id DESC
     """))]
     return alavancagem_brapi(linhas, hoje)
 
 
 # -- B3 -----------------------------------------------------------------------------
 
-def historico_b3(fechamentos, demos, proventos) -> tuple[dict, dict]:
+def acoes_por_titulo_do_ticker(tk: str, mapa: dict, units=()) -> int | None:
+    """k de um ticker para os múltiplos anuais e o P/L mediano: o do mapa
+    (``linhas_de_valor_de_mercado``); fora dele, 1, salvo unit (listada em
+    ``units`` ou com sufixo 11, unit de companhia sem quote), que fica None
+    porque o LPA da base é por ação e o preço é o da unit."""
+    if tk in mapa:
+        return mapa[tk]
+    return None if (tk in set(units) or tk.endswith("11")) else 1
+
+
+def historico_b3(fechamentos, demos, proventos, *, acoes_por_titulo=None,
+                 units=()) -> tuple[dict, dict]:
     """Séries anuais por ticker. Puro sobre DataFrames.
 
     ``fechamentos``: ticker, ano, close (fita, sem ajuste).
     ``demos``: ticker, ano, lucro, lpa, patrimonio.
     ``proventos``: ticker, ano, total (soma por ação, data-ex no ano).
+    ``acoes_por_titulo``: {ticker: k} (``linhas_de_valor_de_mercado``). O
+    ticker com k None no mapa, ou listado em ``units``, fica sem P/L e sem
+    P/VP: o LPA da base é por ação e o preço é o da unit. Fora do mapa, k = 1,
+    salvo sufixo 11 (unit de companhia sem quote).
     Devolve ({ticker: {"historico": {...}}}, {motivo: contagem}).
     """
     import pandas as pd
     df = (fechamentos.merge(demos, on=["ticker", "ano"], how="inner")
           .merge(proventos, on=["ticker", "ano"], how="left"))
-    exclusoes = {"lpa_implausivel": 0, "acoes_implausiveis": 0}
+    mapa = dict(acoes_por_titulo or {})
+    units = set(units)
+    exclusoes = {"lpa_implausivel": 0, "acoes_implausiveis": 0,
+                 "unit_sem_acoes_por_titulo": 0}
     saida: dict[str, dict] = {}
 
     def _fora(serie):
@@ -446,6 +546,13 @@ def historico_b3(fechamentos, demos, proventos) -> tuple[dict, dict]:
 
     for tk, g in df.sort_values("ano").groupby("ticker"):
         g = g.copy()
+        k = acoes_por_titulo_do_ticker(tk, mapa, units)
+        if k is None:
+            exclusoes["unit_sem_acoes_por_titulo"] += 1
+            g["lpa"] = float("nan")
+        else:
+            # Na unit, o LPA do título é k × o LPA por ação.
+            g["lpa"] = g["lpa"] * k
         # P/L só precisa de preço e LPA, os dois na escala da época; bancos
         # não têm lucro absoluto na base e ficam só com este caminho. A
         # guarda é sobre o próprio múltiplo, que não muda com desdobramento.
@@ -495,7 +602,7 @@ def _sucessoes(conn) -> dict:
 
 
 def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None,
-               proventos=None) -> tuple[dict, dict, str | None]:
+               proventos=None, fotos_valor=None) -> tuple[dict, dict, str | None]:
     from core.dividend_types import soma_por_ano
     from core.proventos_b3 import eventos_do_armazem
 
@@ -541,7 +648,9 @@ def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None,
         for df in (fech, demos, prov):
             if c in df:
                 df[c] = df[c].astype(float)
-    hist, exclusoes = historico_b3(fech, demos, prov)
+    linhas_valor, por_titulo = (fotos_valor if fotos_valor is not None
+                                else coletar_fotos_de_valor(conn))
+    hist, exclusoes = historico_b3(fech, demos, prov, acoes_por_titulo=por_titulo)
     exclusoes["sucessoes_de_ticker"] = dict(sorted(sucessoes.items()))
     hoje = hoje or datetime.now(timezone.utc)
     precos["preco"] = precos["preco"].astype(float)
@@ -550,7 +659,8 @@ def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None,
     exclusoes["momento"] = excl_mom
     alav, excl_alav = coletar_alavancagem(conn, hoje)
     exclusoes["alavancagem"] = excl_alav
-    porte, excl_porte = coletar_valor_de_mercado(conn, hist, hoje, sucessoes)
+    porte, excl_porte = valor_de_mercado_brapi(linhas_valor, hist, hoje,
+                                               sucessoes=sucessoes)
     exclusoes["porte"] = excl_porte
     for tk, item in hist.items():
         item.update(porte.get(tk, {}))
@@ -644,7 +754,8 @@ def desdobramentos(marcas) -> dict[str, list]:
 
 
 def mercado_b3(fechamentos, volumes, lpa, *, eventos: dict | None = None,
-               n: int = UNIVERSO_MERCADO, ano_inicial: int = ANO_INICIAL + 1) -> dict:
+               n: int = UNIVERSO_MERCADO, ano_inicial: int = ANO_INICIAL + 1,
+               acoes_por_titulo: dict | None = None, units=()) -> dict:
     """Série mensal do P/L mediano ponto-no-tempo. Puro sobre DataFrames.
 
     ``fechamentos``: ticker, data (último pregão do mês), close (fita, sem
@@ -654,6 +765,9 @@ def mercado_b3(fechamentos, volumes, lpa, *, eventos: dict | None = None,
     do ano seguinte ao exercício) e até o pregão divide o LPA pelo fator --
     sem isso o 1:5 da SBSP3 em 04/2026 e o da ASAI3 em 08/2021 davam P/L 5x
     menor até a DFP seguinte.
+    ``acoes_por_titulo``: {ticker: k}. Na unit o LPA entra × k, o LPA do
+    título (``acoes_por_titulo_do_ticker``); unit sem k fica fora, em
+    ``sem_acoes_por_titulo``, em vez de entrar com P/L k vezes maior.
     Devolve {"serie": [[data, p_l, lucro_sobre_preco_pct, n], ...],
     "ultimo": {...}, "descartado": {...} | None} -- ``ultimo`` diz quem ficou
     fora no último mês da série e por quê (e o fator de quem foi rebaseado);
@@ -671,6 +785,8 @@ def mercado_b3(fechamentos, volumes, lpa, *, eventos: dict | None = None,
 
     from data_pipeline.market.b3_saidas import fator_acumulado
     eventos = eventos or {}
+    mapa = dict(acoes_por_titulo or {})
+    units = set(units)
     lpa_d = {(str(r.ticker), int(r.ano)): float(r.lpa) for r in lpa.itertuples()
              if pd.notna(r.lpa)}
     universo = universo_mercado(volumes, set(lpa["ticker"].astype(str)), n=n)
@@ -684,16 +800,21 @@ def mercado_b3(fechamentos, volumes, lpa, *, eventos: dict | None = None,
         px = {str(r.ticker): (float(r.close), r.data) for r in g.itertuples()}
         exerc = exercicio_publicado(mes)
         dfp = pd.Timestamp(exerc + 1, 3, 31)
-        eys, sem_lpa, sem_preco, implausiveis = [], [], [], []
+        eys, sem_lpa, sem_preco, implausiveis, sem_k = [], [], [], [], []
         rebaseadas = {}
         for tk in universo[mes.year]:
             if tk not in px or not px[tk][0] > 0:
                 sem_preco.append(tk)
                 continue
+            k = acoes_por_titulo_do_ticker(tk, mapa, units)
+            if k is None:
+                sem_k.append(tk)
+                continue
             lucro = lpa_d.get((tk, exerc))
             if lucro is None or lucro == 0:
                 sem_lpa.append(tk)
                 continue
+            lucro *= k
             fator = fator_acumulado(eventos.get(tk, []), dfp, px[tk][1])
             if fator != 1.0:
                 lucro /= fator
@@ -708,7 +829,8 @@ def mercado_b3(fechamentos, volumes, lpa, *, eventos: dict | None = None,
                 "universo": len(universo[mes.year]), "validas": len(eys),
                 "negativas": sum(1 for y in eys if y < 0),
                 "sem_lpa": sem_lpa, "sem_preco": sem_preco,
-                "implausiveis": implausiveis, "rebaseadas": rebaseadas}
+                "implausiveis": implausiveis, "sem_acoes_por_titulo": sem_k,
+                "rebaseadas": rebaseadas}
         if len(eys) < MERCADO_MIN_VALIDAS:
             descartado = quem
             continue
@@ -779,7 +901,7 @@ _SQL_DESDOBRAMENTOS = r"""
 """
 
 
-def coletar_mercado_b3(conn, sucessoes=None) -> dict:
+def coletar_mercado_b3(conn, sucessoes=None, acoes_por_titulo=None) -> dict:
     fech = _ler(conn, _SQL_FECHAMENTO_MENSAL, ini=ANO_INICIAL + 1)
     vol = _ler(conn, """
         SELECT ticker, EXTRACT(YEAR FROM trade_date)::int AS ano,
@@ -804,7 +926,10 @@ def coletar_mercado_b3(conn, sucessoes=None) -> dict:
     if suc:
         from data_pipeline.market.b3_sucessao import canonizar_fita
         marcas = canonizar_fita(marcas, suc, com_lpa)
-    return mercado_b3(fech, vol, lpa, eventos=desdobramentos(marcas))
+    if acoes_por_titulo is None:
+        acoes_por_titulo = coletar_fotos_de_valor(conn)[1]
+    return mercado_b3(fech, vol, lpa, eventos=desdobramentos(marcas),
+                      acoes_por_titulo=acoes_por_titulo)
 
 
 def mercado_pela_sucessao(fech, vol, sucessoes: dict, com_lpa):
@@ -1280,10 +1405,13 @@ def main(argv=None) -> int:
     with conn:
         conn.execute(text("SET TRANSACTION READ ONLY"))
         proventos = eventos_do_armazem(conn)
-        b3, excl_b3, fita = coletar_b3(conn, precos, agora, proventos=proventos)
+        # Uma leitura das fotos de valor para os dois caminhos que usam k.
+        fotos_valor = coletar_fotos_de_valor(conn)
+        b3, excl_b3, fita = coletar_b3(conn, precos, agora, proventos=proventos,
+                                       fotos_valor=fotos_valor)
         fii, excl_fii = coletar_fii(conn, precos, agora, proventos=proventos)
         eua, excl_eua = coletar_eua(conn)
-        mercado = coletar_mercado_b3(conn)
+        mercado = coletar_mercado_b3(conn, acoes_por_titulo=fotos_valor[1])
 
     relatorio = {
         "b3": len(b3), "fii": len(fii), "eua": len(eua),

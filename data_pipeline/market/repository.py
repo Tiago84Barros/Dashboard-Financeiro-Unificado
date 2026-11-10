@@ -308,6 +308,23 @@ def _upsert(conn, table: str, rows: list[dict], page_size: int = 500) -> int:
     return len(rows)
 
 
+def apagar_composicao_omitida(conn, ticker: str, rows: list[dict]) -> int:
+    """Apaga as linhas spot de ``acoes.METRICAS_DE_COMPOSICAO`` que ``rows``
+    não trouxe. Só para o quote que tem a composição: nele, a ausência quer
+    dizer que o valor não é derivável, e a linha antiga mentiria."""
+    from data_pipeline.market import acoes as ac
+    emitidas = {str(r.get("metric_name")) for r in rows or []
+                if str(r.get("period")) == "spot"}
+    faltam = [m for m in ac.METRICAS_DE_COMPOSICAO if m not in emitidas]
+    if not faltam:
+        return 0
+    res = conn.execute(text(
+        "DELETE FROM market.calculated_metrics "
+        "WHERE ticker = :t AND period = 'spot' AND metric_name = ANY(:m)"),
+        {"t": str(ticker).upper(), "m": faltam})
+    return max(int(getattr(res, "rowcount", 0) or 0), 0)
+
+
 def upsert(conn, table: str, rows: list[dict]) -> int:
     """Upsert genérico para uma tabela market.* conhecida."""
     if table not in _CONFLICT:
