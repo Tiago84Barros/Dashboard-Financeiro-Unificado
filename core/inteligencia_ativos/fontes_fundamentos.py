@@ -105,7 +105,13 @@ def dados_fii(linha: dict) -> dict[str, Dado]:
         saida[chave] = Dado(valor, fonte, ref, nota)
 
     saida: dict[str, Dado] = {}
-    dado("p_vp", _num(linha.get("pvp")))
+    meta_pvp = (linha.get("metric_metadata") or {}).get("pvp") or {}
+    nota_pvp = None
+    if meta_pvp.get("price_date") and meta_pvp.get("reference_date"):
+        # D1: o P/VP junta duas datas; as duas ficam visiveis.
+        nota_pvp = (f"preço de {str(meta_pvp['price_date'])[:10]} ÷ VPA da CVM de "
+                    f"{str(meta_pvp['reference_date'])[:7]}")
+    dado("p_vp", _num(linha.get("pvp")), nota_pvp)
     dado("dividend_yield", _pct(linha.get("dy_12m")))
     vac = _pct(linha.get("vacancia_fisica"))
     if vac is not None:
@@ -142,7 +148,11 @@ def dados_fii(linha: dict) -> dict[str, Dado]:
 
     cotas = _num(linha.get("shares_outstanding"))
     if cotas is not None:
+        derivada = "derivado" in str(((linha.get("metric_metadata") or {})
+                                      .get("shares_outstanding") or {}).get("source") or "")
         dado("emissoes", f"{_br(cotas, 0)} cotas em circulação",
+             "só o saldo atual, derivado de PL ÷ VPA da CVM; não há histórico de "
+             "ofertas publicado" if derivada else
              "só o saldo atual; não há histórico de ofertas publicado")
 
     dado("alavancagem", _pct(linha.get("leverage")),

@@ -1091,6 +1091,149 @@ def _load_fii_selection_snapshot(page_size: int = 500) -> pd.DataFrame:
     return frame
 
 
+# D1/D2/D4 (auditoria FII de 10/11/2026). A observacao PIT sobrescrevia a
+# linha-base de `market.fiis` sem comparar datas: a brapi parou em 16/07 e
+# trocava preco/DY/P-VP de 07/11 pelos de julho. A regra e uma so: vence o dado
+# de data mais nova; ausencia na base e preenchida, nunca sobrescrita ao reves.
+_COTACAO_FII = ("price", "dy_12m", "pvp")
+# metrica da observacao -> coluna da linha-base que ela pode substituir
+_CADASTRO_CVM_FII = {"nav_per_share": "vpa", "equity": "patrimonio_liquido"}
+
+
+def _ts_utc(valor) -> pd.Timestamp | None:
+    if valor is None or (not isinstance(valor, str) and pd.isna(valor)):
+        return None
+    try:
+        ts = pd.Timestamp(valor)
+    except (TypeError, ValueError):
+        return None
+    if pd.isna(ts):
+        return None
+    return ts.tz_localize("UTC") if ts.tzinfo is None else ts.tz_convert("UTC")
+
+
+def _dia(valor) -> pd.Timestamp | None:
+    ts = _ts_utc(valor)
+    return None if ts is None else ts.tz_localize(None).normalize()
+
+
+def _ausente(valor) -> bool:
+    return valor is None or (not isinstance(valor, str) and pd.isna(valor))
+
+
+def _observacao_vence_base(row: dict, raw_metric: str, obs: dict) -> bool:
+    """Decide se a observacao PIT pode ocupar o lugar do valor da linha-base."""
+    coluna = _CADASTRO_CVM_FII.get(raw_metric, raw_metric)
+    if coluna in _CADASTRO_CVM_FII.values():
+        atual = row.get(coluna)
+        if _ausente(atual):
+            return True
+        # So o Informe Mensal da CVM e oficial; a brapi nao reescreve o PL/VPA.
+        if "cvm" not in str(obs.get("source") or "").lower():
+            return False
+        competencia_base = _dia(row.get("cvm_ref_date"))
+        competencia_obs = _dia(obs.get("reference_date"))
+        if competencia_base is None or competencia_obs is None:
+            return False
+        # Mesma competencia: a observacao e a versao mais recente (reapresentacao).
+        return competencia_obs >= competencia_base
+    if coluna in _COTACAO_FII:
+        atual = row.get(coluna)
+        if _ausente(atual):
+            return True
+        data_base = _ts_utc(row.get("updated_at"))
+        data_obs = _ts_utc(obs.get("knowledge_at")) or _ts_utc(obs.get("reference_date"))
+        if data_base is None or data_obs is None:
+            return False
+        return data_obs > data_base
+    return True
+
+
+def _aplicar_observacoes_fii(row: dict, observacoes: list[dict],
+                             metric_aliases: dict[str, str]) -> None:
+    for obs in observacoes:
+        # Dono unico da resolucao: sem ele a linha de ausencia
+        # chegaria aqui como a marca em `value_json`, isto e, uma
+        # string onde a decisao espera numero.
+        value = valor_observado(obs)
+        raw_metric = str(obs["metric_name"])
+        metric = metric_aliases.get(raw_metric, raw_metric)
+        if raw_metric != metric and metric in row:
+            continue
+        meta = {
+            "reference_date": str(obs.get("reference_date")),
+            "available_at": str(obs.get("available_at")),
+            "knowledge_at": str(obs.get("knowledge_at")),
+            "availability_quality": obs.get("availability_quality"),
+            "vintage": obs.get("vintage"),
+            "source": obs.get("source"),
+            "source_quality": {
+                "verified_publication": .95,
+                "first_observed_proxy": .80,
+                "retrospective_backfill": .55,
+                "migration_baseline": .20,
+            }.get(str(obs.get("availability_quality") or ""), .50),
+            "raw_metric_name": raw_metric,
+        }
+        coluna = _CADASTRO_CVM_FII.get(raw_metric)
+        if metric in _COTACAO_FII or coluna:
+            if _ausente(value) or not _observacao_vence_base(row, raw_metric, obs):
+                continue
+            if coluna:
+                # `nav_per_share`/`equity` continuam publicados sob o proprio
+                # nome; a coluna da linha-base recebe a versao oficial.
+                row[raw_metric] = value
+                row["metric_metadata"][raw_metric] = meta
+                row[coluna] = value
+                row["metric_metadata"][coluna] = meta
+                comp = _dia(obs.get("reference_date"))
+                if comp is not None:
+                    row["cvm_ref_date"] = comp
+                continue
+        row[metric] = value
+        row["metric_metadata"][metric] = meta
+    _consolidar_cotacao_e_cotas_fii(row)
+
+
+def _consolidar_cotacao_e_cotas_fii(row: dict) -> None:
+    """P/VP e cotas coerentes com a linha FINAL (preco, VPA e PL).
+
+    P/VP = preco / VPA da mesma linha; sem VPA, o P/VP que ja estava. Cotas =
+    PL / VPA da competencia CVM da linha, quando a foto de cotas da brapi e mais
+    velha que essa competencia: VPA e definido como PL / cotas.
+    """
+    from data_pipeline.market import fii as _fz
+    antes = row.get("pvp")
+    efetivo = _fz.pvp_efetivo(row.get("price"), row.get("vpa"), antes)
+    if efetivo is not None and efetivo != antes:
+        row["pvp"] = efetivo
+        row["metric_metadata"]["pvp"] = {
+            "reference_date": str(row.get("cvm_ref_date"))[:10],
+            "price_date": str(row.get("updated_at"))[:10],
+            "available_at": str(row.get("updated_at")),
+            "source": "cvm_vpa+market_price",
+        }
+    pl, vpa = row.get("patrimonio_liquido"), row.get("vpa")
+    try:
+        pl, vpa = float(pl), float(vpa)
+    except (TypeError, ValueError):
+        return
+    comp = _dia(row.get("cvm_ref_date"))
+    if not (pl > 0 and vpa > 0) or comp is None:
+        return
+    meta_atual = row["metric_metadata"].get("shares_outstanding") or {}
+    ref_atual = _dia(meta_atual.get("reference_date"))
+    if not _ausente(row.get("shares_outstanding")) and ref_atual is not None and ref_atual > comp:
+        return
+    row["shares_outstanding"] = pl / vpa
+    row["metric_metadata"]["shares_outstanding"] = {
+        "reference_date": str(comp.date()),
+        "available_at": str(row.get("updated_at")),
+        "source": "derivado: PL / VPA (Informe Mensal CVM)",
+    }
+
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.DataFrame:
     """Inputs PIT; o publicador pode forçar reconstrução a partir das tabelas-base.
@@ -1272,7 +1415,8 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
             "property_diversification": item.get("Property_Diversification"),
             "region_count": item.get("N_Regioes"),
             "metric_metadata": {
-                "dy_12m": {"available_at": str(item.get("updated_at")), "source": "brapi"},
+                "dy_12m": {"available_at": str(item.get("updated_at")), "source": "brapi",
+                           "reference_date": str(item.get("updated_at"))[:10]},
                 "liquidez_diaria": liquidity_provenance,
                 "pvp": {"available_at": str(item.get("updated_at")), "source": "cvm_vpa+brapi_quote"},
                 "total_return_trend": {
@@ -1286,31 +1430,9 @@ def _load_fii_methodology_inputs_cached(prefer_snapshot: bool = True) -> pd.Data
             },
         }
         if not observations.empty:
-            for obs in observations[observations["ticker"] == ticker].to_dict("records"):
-                # Dono unico da resolucao: sem ele a linha de ausencia
-                # chegaria aqui como a marca em `value_json`, isto e, uma
-                # string onde a decisao espera numero.
-                value = valor_observado(obs)
-                raw_metric = str(obs["metric_name"])
-                metric = metric_aliases.get(raw_metric, raw_metric)
-                if raw_metric != metric and metric in row:
-                    continue
-                row[metric] = value
-                row["metric_metadata"][metric] = {
-                    "reference_date": str(obs.get("reference_date")),
-                    "available_at": str(obs.get("available_at")),
-                    "knowledge_at": str(obs.get("knowledge_at")),
-                    "availability_quality": obs.get("availability_quality"),
-                    "vintage": obs.get("vintage"),
-                    "source": obs.get("source"),
-                    "source_quality": {
-                        "verified_publication": .95,
-                        "first_observed_proxy": .80,
-                        "retrospective_backfill": .55,
-                        "migration_baseline": .20,
-                    }.get(str(obs.get("availability_quality") or ""), .50),
-                    "raw_metric_name": raw_metric,
-                }
+            _aplicar_observacoes_fii(
+                row, observations[observations["ticker"] == ticker].to_dict("records"),
+                metric_aliases)
         if not exposures.empty:
             # Mesmo mapeamento do PIT; `segment` (cadastro do mensal) so
             # preenche `sector` quando nem inquilino nem brapi o deram.
