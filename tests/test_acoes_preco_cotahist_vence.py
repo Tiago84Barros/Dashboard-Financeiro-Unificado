@@ -429,3 +429,11 @@ def test_publicador_nomeia_a_tabela_ausente_sem_escrever():
     r = pub.publish(apply=True, source=_E(True), target=_E(False))
     # com o armazém "existente" a leitura devolveria linhas; aqui só importa a vitrine
     assert r["status"] in ("tabela_ausente_na_vitrine",) and r["migration"] == pub.MIGRATION
+
+
+def test_grau_de_confianca_da_b3_declara_a_origem_da_cotacao():
+    import inspect
+
+    from core import confianca_secao as cs
+    assert "COTAHIST" in cs.NOTA_COTACAO_ACAO
+    assert "NOTA_COTACAO_ACAO" in inspect.getsource(cs.confianca_b3)
