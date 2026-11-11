@@ -459,6 +459,8 @@ def main() -> int:
             rep = ingest.reprocess_metrics(prog["atualizados"])
             prog["indicadores"] = rep.get("indicadores", 0)
             prog["erros"] += max(rep.get("erros", 0), 0)
+            if rep.get("units_spot_sem_composicao"):
+                prog["units_spot_sem_composicao"] = rep["units_spot_sem_composicao"]
     else:
         prog = ingest.reprocess_metrics(tickers, args.limit)
 
@@ -477,6 +479,11 @@ def main() -> int:
              "indicadores=%d erros=%d (tickers=%d)",
              prog["empresas"], prog["precos"], prog["demonstracoes"], prog["dividendos"],
              prog["indicadores"], prog["erros"], prog["tickers"])
+    if prog.get("units_spot_sem_composicao"):
+        # Pulada não é recalculada: o valuation anual dela fica como estava.
+        log.warning("Units puladas por linhas spot de antes do #710 (sem k): %s. "
+                    "Rode `renormalize --warehouse` e repita o reprocess.",
+                    ", ".join(prog["units_spot_sem_composicao"]))
     if "restantes" in prog:
         log.info("Bootstrap — universo=%s | processados agora=%s | RESTANTES=%s",
                  prog.get("universo"), prog["tickers"], prog["restantes"])
