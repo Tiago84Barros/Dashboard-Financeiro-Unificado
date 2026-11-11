@@ -1046,6 +1046,13 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
             if limit:
                 tickers = tickers[:limit]
 
+    from data_pipeline.market import acoes_cotacao as _ac_cot
+    with engine.connect() as _c:
+        # tabela ausente é nomeada no log (ler_slot), não vira "sem preço"
+        slot_existe = _ac_cot.tabela_existe(_c)
+        if not slot_existe:
+            logger.warning("reprocess: %s ausente (migration %s); preço = última barra",
+                           _ac_cot.TABELA, _ac_cot.MIGRATION)
     ref = datetime.now(timezone.utc).date()
     for tk in tickers:
         try:
@@ -1061,10 +1068,9 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     "SELECT metric_name, metric_value FROM market.calculated_metrics "
                     "WHERE ticker=:t AND period='spot'"), {"t": tk}).fetchall()}
                 eps = spot.get("LPA")
-                last_price = conn.execute(text(
-                    "SELECT close FROM market.historical_prices "
-                    "WHERE ticker=:t AND close IS NOT NULL "
-                    "ORDER BY date DESC LIMIT 1"), {"t": tk}).scalar()
+                # Cotação vigente: a mais nova entre a última barra e o fechamento
+                # do COTAHIST (market.b3_cotacao_atual, migration 089).
+                last_price = _ac_cot.preco_atual(conn, tk, existe=slot_existe)
                 from data_pipeline.market import acoes as _ac
                 unit = _ac.exige_k(conn.execute(text(
                     "SELECT asset_type FROM market.assets WHERE ticker=:t"),

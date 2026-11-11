@@ -147,6 +147,10 @@ _CADEIA_PREGAO = (
      "--years", "2"),
     ("scripts/ingerir_precos_b3.py", "--apply", "--anos", "recentes",
      "--cache-apenas"),
+    # Por ultimo: com a fita de acoes ja carregada, o fechamento mais novo vira
+    # a cotacao da acao (market.b3_cotacao_atual) sem depender da cota da brapi.
+    # Sem a migration 089 a etapa termina 0 e nomeia a tabela ausente no log.
+    ("run_market_ingest.py", "acoes-cotahist", "--warehouse", "--json"),
 )
 
 # Documentos de companhias abertas (CVM/IPE) em `public.docs_corporativos`.
@@ -175,6 +179,12 @@ _CADEIA_B3_BRAPI = (
     ("run_market_ingest.py", "setores", "--warehouse", "--json"),
     ("-m", "scripts.snapshot_b3_readiness", "--warehouse"),
     ("scripts/publish_b3_brapi_from_local.py", "--apply"),
+    # Leva o slot de cotacao (market.b3_cotacao_atual) que `acoes-cotahist`
+    # gravou no armazem. So le o armazem e so grava na vitrine o que ela ja
+    # conhece; sem a tabela em qualquer lado, diz qual e e sai 0. O `reprocess`
+    # que recalcula P/L, P/VP e DY com esse preco fica MANUAL: nao foi medido
+    # (grava no armazem) e nenhuma rodada o confirmou dentro das 4 h da tarefa.
+    ("scripts/publish_b3_cotacao_from_local.py", "--apply"),
 )
 _CADEIA_B3_BRAPI_ANUAL = (
     ("run_market_ingest.py", "annual", "--source", "market", "--warehouse",

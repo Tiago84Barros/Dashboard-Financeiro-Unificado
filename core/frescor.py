@@ -67,6 +67,21 @@ SQL_DATA_DO_PRECO_B3 = """
             AND a.company_id IS NOT NULL
           GROUP BY hp.ticker) AS por_ticker"""
 
+# Com o fechamento do COTAHIST em `market.b3_cotacao_atual` (migration 089) o
+# preço que a tela mostra pode ser mais novo que a última barra: o selo olha a
+# data EFETIVA (a maior entre a barra e o fechamento), a mesma que o leitor
+# único `cotacao_pregao.preco_vigente` escolhe. Mesmo universo e mesma mediana.
+SQL_DATA_DO_PRECO_B3_VIGENTE = """
+    SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY ultima)
+    FROM (SELECT GREATEST(max(hp.date), max(c.trade_date)) AS ultima
+          FROM market.historical_prices hp
+          JOIN market.assets a ON a.ticker = hp.ticker
+            AND a.asset_type IN ('stock','unit')
+            AND a.is_active IS TRUE
+            AND a.company_id IS NOT NULL
+          LEFT JOIN market.b3_cotacao_atual c ON c.ticker = hp.ticker
+          GROUP BY hp.ticker) AS por_ticker"""
+
 
 def idade_alvo(modulo: str) -> int:
     """Cadência de publicação da vitrine do módulo, em dias."""
@@ -268,4 +283,7 @@ def data_do_preco(modulo: str, engine=None):
     if engine is None:
         return None
     with engine.connect() as conn:
+        # Sem a tabela (089 não aplicada) vale a última barra, como antes.
+        if conn.execute(text("SELECT to_regclass('market.b3_cotacao_atual') IS NOT NULL")).scalar():
+            return conn.execute(text(SQL_DATA_DO_PRECO_B3_VIGENTE)).scalar()
         return conn.execute(text(SQL_DATA_DO_PRECO_B3)).scalar()

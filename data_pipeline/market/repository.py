@@ -34,6 +34,8 @@ _UPDATE_COLS = {
                           "source", "raw_payload_id", "knowledge_at",
                           "availability_quality", "content_hash"),
     "historical_price_observations": (),
+    # migration 089: cotação corrente da ação (fechamento cru do COTAHIST)
+    "b3_cotacao_atual": ("price", "price_at", "trade_date", "price_source"),
     # point-in-time (019): period_end_date/raw_payload_id ATUALIZAM no conflito;
     # first_seen_at NUNCA entra aqui nem nas linhas — o DEFAULT NOW() preenche
     # no primeiro INSERT e re-ingestões não apagam o histórico de disponibilidade.
@@ -92,6 +94,7 @@ _CONFLICT = {
     "assets": "ticker",
     "historical_prices": "ticker, date",
     "historical_price_observations": "ticker, date, source, content_hash",
+    "b3_cotacao_atual": "ticker",
     "income_statements": "ticker, period, year, quarter",
     "balance_sheets": "ticker, period, year, quarter",
     "cash_flow_statements": "ticker, period, year, quarter",
@@ -115,6 +118,7 @@ _NATURAL_KEY = {
     "assets": ("ticker",),
     "historical_prices": ("ticker", "date"),
     "historical_price_observations": ("ticker", "date", "source", "content_hash"),
+    "b3_cotacao_atual": ("ticker",),
     "income_statements": ("ticker", "period", "year", "quarter"),
     "balance_sheets": ("ticker", "period", "year", "quarter"),
     "cash_flow_statements": ("ticker", "period", "year", "quarter"),

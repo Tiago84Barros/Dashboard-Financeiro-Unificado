@@ -404,7 +404,29 @@ def _precos(tk: str, ref: date | None = None) -> dict:
             (out["preco"] / _f(rows[1]["close"]) - 1) * 100, 1)
     if stats:
         out["min_52s"], out["max_52s"] = _f(stats[0]["min52"]), _f(stats[0]["max52"])
+    if ref is None and rows:
+        _aplicar_cotacao_vigente(tk, out, rows[0])
     return out
+
+
+def _aplicar_cotacao_vigente(tk: str, out: dict, barra: dict) -> None:
+    """O fechamento do COTAHIST (``market.b3_cotacao_atual``, migration 089) vence
+    a última barra quando é de pregão mais novo -- mesmo leitor do reprocess
+    (``cotacao_pregao.preco_vigente``). Só ``preco``/``data_preco``: retorno de
+    12 meses e faixa de 52 semanas seguem a SÉRIE retroajustada, que o close cru
+    não substitui. Tabela ausente: fica a barra, e o dossiê não afirma outra coisa."""
+    from data_pipeline.market import cotacao_pregao as cp
+    if not _table_exists("market.b3_cotacao_atual"):
+        return
+    slot = _rows("SELECT price, price_at FROM market.b3_cotacao_atual WHERE ticker = :t", t=tk)
+    if not slot:
+        return
+    vig = cp.preco_vigente((barra["date"], _f(barra["close"])),
+                           (_f(slot[0]["price"]), slot[0]["price_at"]))
+    if vig and vig[2] == cp.FONTE_FECHAMENTO_PREGAO:
+        out["preco"] = vig[0]
+        out["data_preco"] = str(vig[1].date())
+        out["fonte_preco"] = vig[2]
 
 
 def _market_cap(tk: str) -> float | None:
