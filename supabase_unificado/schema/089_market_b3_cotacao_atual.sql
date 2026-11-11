@@ -32,3 +32,15 @@ COMMENT ON COLUMN market.b3_cotacao_atual.price_at IS
 DROP TRIGGER IF EXISTS trg_b3_cotacao_atual_updated ON market.b3_cotacao_atual;
 CREATE TRIGGER trg_b3_cotacao_atual_updated BEFORE UPDATE ON market.b3_cotacao_atual
     FOR EACH ROW EXECUTE FUNCTION market.set_updated_at();
+
+-- Data API: como as demais tabelas do schema market no Supabase, fica fechada
+-- para anon e authenticated. O app le pela conexao direta, nao pela Data API.
+ALTER TABLE market.b3_cotacao_atual ENABLE ROW LEVEL SECURITY;
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+        REVOKE ALL ON TABLE market.b3_cotacao_atual FROM anon;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+        REVOKE ALL ON TABLE market.b3_cotacao_atual FROM authenticated;
+    END IF;
+END $$;
