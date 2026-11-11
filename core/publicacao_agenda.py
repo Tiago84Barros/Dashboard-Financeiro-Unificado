@@ -151,6 +151,13 @@ _CADEIA_PREGAO = (
     # a cotacao da acao (market.b3_cotacao_atual) sem depender da cota da brapi.
     # Sem a migration 089 a etapa termina 0 e nomeia a tabela ausente no log.
     ("run_market_ingest.py", "acoes-cotahist", "--warehouse", "--json"),
+    # Leva o slot (market.b3_cotacao_atual) a vitrine. Fica AQUI e nao na cadeia
+    # da brapi: com a cota esgotada, o `daily` sai 1 (429) e a rotina aborta o
+    # resto -- o publicador nunca rodaria no cenario para o qual existe. So le o
+    # armazem e so grava o que a vitrine ja conhece; sem a tabela em qualquer
+    # lado, diz qual e e sai 0. O `reprocess` que recalcula P/L, P/VP e DY com
+    # esse preco fica MANUAL: nao foi medido (grava no armazem).
+    ("scripts/publish_b3_cotacao_from_local.py", "--apply"),
 )
 
 # Documentos de companhias abertas (CVM/IPE) em `public.docs_corporativos`.
@@ -179,12 +186,6 @@ _CADEIA_B3_BRAPI = (
     ("run_market_ingest.py", "setores", "--warehouse", "--json"),
     ("-m", "scripts.snapshot_b3_readiness", "--warehouse"),
     ("scripts/publish_b3_brapi_from_local.py", "--apply"),
-    # Leva o slot de cotacao (market.b3_cotacao_atual) que `acoes-cotahist`
-    # gravou no armazem. So le o armazem e so grava na vitrine o que ela ja
-    # conhece; sem a tabela em qualquer lado, diz qual e e sai 0. O `reprocess`
-    # que recalcula P/L, P/VP e DY com esse preco fica MANUAL: nao foi medido
-    # (grava no armazem) e nenhuma rodada o confirmou dentro das 4 h da tarefa.
-    ("scripts/publish_b3_cotacao_from_local.py", "--apply"),
 )
 _CADEIA_B3_BRAPI_ANUAL = (
     ("run_market_ingest.py", "annual", "--source", "market", "--warehouse",

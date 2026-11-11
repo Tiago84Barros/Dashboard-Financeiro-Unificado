@@ -168,3 +168,27 @@ def preco_vigente(barra, slot):
     if b is None or s is None:
         return b or s
     return s if mais_nova_vence(b[0], b[1], s[1]) else b
+
+
+# Razões de mercado do spot da brapi são calculadas sobre a cotação DELA.
+_RAZAO_COM_PRECO = {"P/L": 1, "P/VP": 1, "DY": -1}
+
+
+def rebasear_spot(spot: dict, preco_brapi, preco_novo) -> dict:
+    """Reescala as razões spot (P/L, P/VP: proporcionais ao preço; DY: inversa)
+    da cotação da brapi para o preço escolhido, mantendo o numerador fixo
+    (lucro, patrimônio, dividendos). Mesma conta do rescale de DY/P-VP do FII
+    (`fii.aplicar_fechamento_pregao`). Sem os dois preços, ou iguais, devolve
+    ``spot`` intacto."""
+    try:
+        a, b = float(preco_brapi), float(preco_novo)
+    except (TypeError, ValueError):
+        return spot
+    if not (a > 0 and b > 0) or abs(a - b) < 5e-7:
+        return spot
+    out = dict(spot)
+    for k, sinal in _RAZAO_COM_PRECO.items():
+        v = out.get(k)
+        if v is not None:
+            out[k] = float(v) * (b / a if sinal > 0 else a / b)
+    return out

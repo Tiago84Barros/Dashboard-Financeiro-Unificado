@@ -15,7 +15,7 @@
         {
           "nome": "B3 (bolsa brasileira)",
           "resumo": "Preço diário de ações e FIIs",
-          "explicacao": "O arquivo oficial de cada pregão da B3, com o preço de fechamento de ações e fundos imobiliários. É o primeiro item da rotina diária, porque quase tudo depois depende dele. No fim da cadeia, o fechamento mais novo vira a cotação das ações quando é de pregão mais recente que o da brapi (etapa acoes-cotahist, tabela market.b3_cotacao_atual); a série de preços ajustada não é alterada. Telas que dependem: Empresas B3, Seleção de FIIs, Investimentos (evolução do patrimônio) e Portfólio Global.",
+          "explicacao": "O arquivo oficial de cada pregão da B3, com o preço de fechamento de ações e fundos imobiliários. É o primeiro item da rotina diária, porque quase tudo depois depende dele. No fim da cadeia, o fechamento mais novo vira a cotação das ações quando é de pregão mais recente que o da brapi (etapa de fechamento do pregão das ações); a série de preços ajustada não é alterada. Telas que dependem: Empresas B3, Seleção de FIIs, Investimentos (evolução do patrimônio) e Portfólio Global.",
           "so_admin": false,
           "fonte": "core/publicacao_agenda.py:169",
           "filhos": []

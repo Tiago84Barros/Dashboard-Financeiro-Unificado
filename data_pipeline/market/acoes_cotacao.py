@@ -14,6 +14,7 @@ leitores seguem na última barra.
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from sqlalchemy import text
 
@@ -83,12 +84,20 @@ def _fita_por_ticker(conn, barras: dict[str, tuple], sem_barra: list[str]) -> di
     comparar), e não carrega o histórico inteiro."""
     por: dict[str, list] = {}
     if barras:
-        desde = min(d for d, _ in barras.values())
+        # Margem de 10 dias: a barra pode cair em dia sem pregão (fim de semana,
+        # feriado, lacuna da fita), e o par (último pregão <= base, seguinte) é
+        # o que revela um evento no primeiro pregão depois dela.
+        desde = min(d for d, _ in barras.values()) - timedelta(days=10)
         rows = conn.execute(_SQL_FITA, {"tickers": sorted(barras), "desde": desde}).fetchall()
+        brutas: dict[str, list] = {}
         for tk, d, c, f, e in rows:
             tk = str(tk).upper()
-            if tk in barras and d >= barras[tk][0]:
-                por.setdefault(tk, []).append((d, float(c), f, e))
+            if tk in barras:
+                brutas.setdefault(tk, []).append((d, float(c), f, e))
+        for tk, linhas in brutas.items():
+            base = barras[tk][0]
+            ate = [i for i, r in enumerate(linhas) if r[0] <= base]
+            por[tk] = linhas[ate[-1]:] if ate else linhas
     if sem_barra:
         for tk, d, c, f, e in conn.execute(_SQL_ULTIMO, {"tickers": sorted(sem_barra)}):
             por[str(tk).upper()] = [(d, float(c), f, e)]
@@ -193,9 +202,12 @@ def promover_fechamento_pregao_acoes(dry_run: bool = False) -> dict:
     return prog
 
 
-def preco_atual(conn, ticker: str, *, existe: bool) -> float | None:
+def preco_atual(conn, ticker: str, *, existe: bool) -> tuple[float | None, float | None]:
     """Cotação vigente de UM ticker: leitor único (`cotacao_pregao.preco_vigente`)
     entre a última barra de `historical_prices` e o slot do fechamento.
+
+    Devolve ``(preço vigente, close da última barra)``: o segundo é a cotação
+    sobre a qual as razões spot da brapi foram calculadas (para o rebase).
 
     ``existe`` = a tabela do slot existe (``tabela_existe``, medido uma vez por
     chamada). Sem ela, vale a última barra, como antes da migration 089.
@@ -210,4 +222,4 @@ def preco_atual(conn, ticker: str, *, existe: bool) -> float | None:
                          {"t": ticker}).fetchone()
         slot = (float(r[0]), r[1]) if r else None
     vig = cp.preco_vigente((barra[0], float(barra[1])) if barra else None, slot)
-    return vig[0] if vig else None
+    return (vig[0] if vig else None), (float(barra[1]) if barra else None)

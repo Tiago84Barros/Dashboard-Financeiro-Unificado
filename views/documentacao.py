@@ -2498,7 +2498,7 @@ FLOW_EMPRESAS_B3_TELAS = FlowSpec(
             "anual, CAGR, último exercício, demonstrações, dividendos por ação, múltiplos, "
             "fluxo de caixa, estrutura de capital e dívida, rentabilidade, valuation e o score. "
             "A cotação vale a mais nova entre a última barra de preço e o fechamento do pregão da "
-            "B3 (COTAHIST, etapa acoes-cotahist); market cap, P/L, P/VP e DY acompanham esse preço.",
+            "B3 (COTAHIST, etapa de fechamento do pregão); market cap, P/L, P/VP e DY acompanham esse preço.",
             (
                 "_tab_analise()",
                 "buscar_empresas(): um candidato abre direto; vários viram escolha",

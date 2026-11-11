@@ -1070,7 +1070,10 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 eps = spot.get("LPA")
                 # Cotação vigente: a mais nova entre a última barra e o fechamento
                 # do COTAHIST (market.b3_cotacao_atual, migration 089).
-                last_price = _ac_cot.preco_atual(conn, tk, existe=slot_existe)
+                last_price, preco_brapi = _ac_cot.preco_atual(conn, tk, existe=slot_existe)
+                # P/L, P/VP e DY do spot foram calculados sobre a cotação da
+                # brapi: com o fechamento do COTAHIST vencendo, reescalam.
+                spot = _ac_cot.cp.rebasear_spot(spot, preco_brapi, last_price)
                 from data_pipeline.market import acoes as _ac
                 unit = _ac.exige_k(conn.execute(text(
                     "SELECT asset_type FROM market.assets WHERE ticker=:t"),

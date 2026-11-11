@@ -404,12 +404,13 @@ def _precos(tk: str, ref: date | None = None) -> dict:
             (out["preco"] / _f(rows[1]["close"]) - 1) * 100, 1)
     if stats:
         out["min_52s"], out["max_52s"] = _f(stats[0]["min52"]), _f(stats[0]["max52"])
-    if ref is None and rows:
-        _aplicar_cotacao_vigente(tk, out, rows[0])
+    if ref is None:
+        # também sem barra nenhuma: o slot preenche a ausência
+        _aplicar_cotacao_vigente(tk, out, rows[0] if rows else None)
     return out
 
 
-def _aplicar_cotacao_vigente(tk: str, out: dict, barra: dict) -> None:
+def _aplicar_cotacao_vigente(tk: str, out: dict, barra: dict | None) -> None:
     """O fechamento do COTAHIST (``market.b3_cotacao_atual``, migration 089) vence
     a última barra quando é de pregão mais novo -- mesmo leitor do reprocess
     (``cotacao_pregao.preco_vigente``). Só ``preco``/``data_preco``: retorno de
@@ -421,7 +422,7 @@ def _aplicar_cotacao_vigente(tk: str, out: dict, barra: dict) -> None:
     slot = _rows("SELECT price, price_at FROM market.b3_cotacao_atual WHERE ticker = :t", t=tk)
     if not slot:
         return
-    vig = cp.preco_vigente((barra["date"], _f(barra["close"])),
+    vig = cp.preco_vigente((barra["date"], _f(barra["close"])) if barra else None,
                            (_f(slot[0]["price"]), slot[0]["price_at"]))
     if vig and vig[2] == cp.FONTE_FECHAMENTO_PREGAO:
         out["preco"] = vig[0]

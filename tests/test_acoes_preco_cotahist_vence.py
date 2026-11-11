@@ -284,19 +284,23 @@ def test_migration_e_aditiva_idempotente_e_documenta_rollback():
 def test_agenda_poe_acoes_cotahist_no_fim_do_pregao():
     from core import publicacao_agenda as pa
     cmds = [p[1] for p in pa._CADEIA_PREGAO if p[0] == "run_market_ingest.py"]
-    assert cmds[-1] == "acoes-cotahist"
-    assert pa._CADEIA_PREGAO[-1] == ("run_market_ingest.py", "acoes-cotahist",
-                                     "--warehouse", "--json")
+    assert "acoes-cotahist" in cmds
+    assert ("run_market_ingest.py", "acoes-cotahist", "--warehouse", "--json")         in pa._CADEIA_PREGAO
     # depois de a fita de acoes ser carregada
     assert pa._CADEIA_PREGAO.index(pa._CADEIA_PREGAO[-1]) > max(
         i for i, p in enumerate(pa._CADEIA_PREGAO) if "ingerir_precos_b3.py" in p[0])
 
 
-def test_agenda_publica_a_cotacao_depois_do_publish_da_brapi():
+def test_agenda_publica_a_cotacao_na_cadeia_do_pregao_independente_da_brapi():
+    """Com a cota da brapi esgotada o `daily` sai 1 e a rotina aborta o resto da
+    cadeia da brapi: o publicador tem de estar na cadeia do pregao, depois do
+    `acoes-cotahist`, e fora da cadeia da brapi."""
     from core import publicacao_agenda as pa
-    scripts = [p[0] for p in pa._CADEIA_B3_BRAPI]
-    assert scripts.index("scripts/publish_b3_cotacao_from_local.py") > scripts.index(
-        "scripts/publish_b3_brapi_from_local.py")
+    scripts = [p[0] + "|" + (p[1] if len(p) > 1 else "") for p in pa._CADEIA_PREGAO]
+    i_etapa = scripts.index("run_market_ingest.py|acoes-cotahist")
+    i_pub = scripts.index("scripts/publish_b3_cotacao_from_local.py|--apply")
+    assert i_pub == i_etapa + 1
+    assert all("publish_b3_cotacao" not in p[0] for p in pa._CADEIA_B3_BRAPI)
 
 
 def test_runner_aceita_o_comando(monkeypatch):
@@ -393,8 +397,8 @@ def test_preco_atual_do_reprocess_usa_o_leitor_unico():
                 return _Q((D0, 10.0))
             return _Q((9.0, cp.fechamento_pregao_em(D1)))
 
-    assert ac.preco_atual(_C(), "X3", existe=True) == 9.0
-    assert ac.preco_atual(_C(), "X3", existe=False) == 10.0
+    assert ac.preco_atual(_C(), "X3", existe=True) == (9.0, 10.0)
+    assert ac.preco_atual(_C(), "X3", existe=False) == (10.0, 10.0)
 
 
 # ── publicador local -> Supabase ─────────────────────────────────────────────
@@ -442,3 +446,57 @@ def test_grau_de_confianca_da_b3_declara_a_origem_da_cotacao():
 def test_decidir_mesma_data_e_mesmo_preco_nao_regrava():
     assert ac.decidir((D0, 6.02), _fita((D0, 6.02, "ON")))["acao"] == "manter"
     assert ac.decidir((D0, 6.02), _fita((D0, 6.10, "ON")))["acao"] == "promover"
+
+
+# ── achados do Codex no #718 ─────────────────────────────────────────────────
+
+def test_dossie_le_o_slot_sem_nenhuma_barra(monkeypatch):
+    from core import dossie_b3 as d
+    monkeypatch.setattr(d, "_table_exists", lambda t: True)
+    monkeypatch.setattr(d, "_rows", lambda sql, **p: [
+        {"price": 9.0, "price_at": cp.fechamento_pregao_em(D1)}])
+    out = {"preco": None, "data_preco": None}
+    d._aplicar_cotacao_vigente("X3", out, None)
+    assert out["preco"] == 9.0 and out["data_preco"] == str(D1)
+
+
+def test_rebase_dy_dividendos_1_brapi_10_cotahist_8_da_12_5pct():
+    spot = {"DY": 0.10, "P/L": 10.0, "P/VP": 2.0, "ROE": 0.2}
+    novo = cp.rebasear_spot(spot, 10.0, 8.0)
+    assert novo["DY"] == pytest.approx(0.125)
+    assert novo["P/L"] == pytest.approx(8.0) and novo["P/VP"] == pytest.approx(1.6)
+    assert novo["ROE"] == 0.2                      # não depende do preço
+    assert spot["DY"] == 0.10                      # não muta o original
+
+
+def test_rebase_sem_preco_ou_preco_igual_deixa_o_spot():
+    spot = {"DY": 0.10}
+    assert cp.rebasear_spot(spot, None, 8.0) is spot
+    assert cp.rebasear_spot(spot, 10.0, 10.0) is spot
+
+
+def test_rebase_equivale_ao_rescale_do_fii():
+    m = {"ticker": "X11", "price": 10.0, "pvp": 1.0, "dy_12m": 0.10}
+    fii = fz.aplicar_fechamento_pregao(m, (D1, 8.0), "2026-10-29T16:00:00Z")
+    acao = cp.rebasear_spot({"DY": 0.10, "P/VP": 1.0}, 10.0, 8.0)
+    assert acao["DY"] == pytest.approx(fii["dy_12m"])
+    assert acao["P/VP"] == pytest.approx(fii["pvp"])
+
+
+def test_fita_retem_o_pregao_anterior_a_barra_de_sabado():
+    sabado = dt.date(2026, 11, 7)
+    sex, seg = dt.date(2026, 11, 6), dt.date(2026, 11, 9)
+
+    class _R:
+        def __init__(self, rows): self.rows = rows
+        def fetchall(self): return self.rows
+        def __iter__(self): return iter(self.rows)
+
+    class _C:
+        def execute(self, stmt, p=None):
+            return _R([("X3", sex, 20.0, 1, "ON"), ("X3", seg, 10.0, 1, "ON")])
+
+    fita = ac._fita_por_ticker(_C(), {"X3": (sabado, 20.0)}, [])
+    assert [r[0] for r in fita["X3"]] == [sex, seg]
+    d = ac.decidir((sabado, 20.0), fita["X3"])
+    assert d["acao"] == "evento" and "fator redondo" in d["motivo"]   # split 2:1 sem marcador
