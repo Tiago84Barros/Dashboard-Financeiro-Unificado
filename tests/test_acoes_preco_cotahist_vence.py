@@ -437,3 +437,8 @@ def test_grau_de_confianca_da_b3_declara_a_origem_da_cotacao():
     from core import confianca_secao as cs
     assert "COTAHIST" in cs.NOTA_COTACAO_ACAO
     assert "NOTA_COTACAO_ACAO" in inspect.getsource(cs.confianca_b3)
+
+
+def test_decidir_mesma_data_e_mesmo_preco_nao_regrava():
+    assert ac.decidir((D0, 6.02), _fita((D0, 6.02, "ON")))["acao"] == "manter"
+    assert ac.decidir((D0, 6.02), _fita((D0, 6.10, "ON")))["acao"] == "promover"

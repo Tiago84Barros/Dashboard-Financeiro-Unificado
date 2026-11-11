@@ -111,6 +111,9 @@ def decidir(barra, pregoes, slot=None) -> dict:
     if slot and slot[0] is not None and abs(slot[0] - close) < 5e-7 \
             and cp.instante(slot[1]) == novo_em:
         return {"acao": "ja_no_fechamento"}
+    if barra is not None and barra[0] == trade_date and abs(barra[1] - close) < 5e-7:
+        # mesma data e mesmo preço: o fechamento não traz nada que a barra não tenha
+        return {"acao": "manter"}
     atual = cp.preco_vigente(barra, slot)
     if atual is not None and not cp.mais_nova_vence(atual[0], atual[1], novo_em):
         return {"acao": "manter"}
