@@ -95,9 +95,9 @@ def main() -> int:
                             "fiis-cvm-cri", "fiis-v4", "fiis-v4-audit", "fiis-documents",
                             "fiis-registry", "fiis-b3-history", "fiis-entities",
                             "fiis-confidence", "fiis-pit-backtest", "fiis-monitor",
-                            "fiis-enrich", "fiis-cotahist",
+                            "fiis-enrich", "fiis-cotahist", "acoes-cotahist",
                             "benchmark", "setores"])
-    p.add_argument("--dry-run", action="store_true", help="cadastro/fiis-cotahist: só simula")
+    p.add_argument("--dry-run", action="store_true", help="cadastro/fiis-cotahist/acoes-cotahist: só simula")
     p.add_argument("--tickers", nargs="*", help="Tickers específicos")
     p.add_argument("--source", default=None,
                    choices=["setores", "ticker_cvm", "brapi", "market"])
@@ -180,6 +180,23 @@ def main() -> int:
         if args.json:
             print(json.dumps(rep, indent=2, default=str))
         return 0 if not rep.get("erro") else 1
+
+    if args.command == "acoes-cotahist":
+        # Sem brapi: o fechamento mais novo do COTAHIST vira a cotação da
+        # ação/unit (market.b3_cotacao_atual, migration 089). Só o slot; a
+        # série retroajustada de historical_prices não é tocada.
+        from data_pipeline.market import acoes_cotacao
+        rep = acoes_cotacao.promover_fechamento_pregao_acoes(dry_run=args.dry_run)
+        log.info("Ações fechamento do pregão -- ativos=%s com_fita=%s mudariam=%s "
+                 "atualizados=%s pulados_evento=%s tabela=%s dry_run=%s variacao=%s",
+                 rep.get("ativos"), rep.get("com_fita"), rep.get("mudariam"),
+                 rep.get("atualizados"),
+                 [p["ticker"] for p in rep.get("pulados_evento") or []],
+                 rep.get("tabela_existe"), rep.get("dry_run"), rep.get("variacao"))
+        if args.json:
+            print(json.dumps(rep, indent=2, default=str))
+        # migration pendente é estado conhecido, nomeado no log: não derruba a cadeia
+        return 0 if rep.get("status") in ("completed", "pendente_migration") else 1
 
     if args.command == "setores":
         rep = ingest.enrich_setores()

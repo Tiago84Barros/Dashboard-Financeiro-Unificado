@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import datetime as _dt
 import math
-from zoneinfo import ZoneInfo
 
 FII_SECTOR = "Fundos Imobiliários"
 
@@ -248,73 +247,14 @@ def pvp_efetivo(price, vpa, pvp_brapi) -> float | None:
 # do #707 aplica (`core.market_read._observacao_vence_base`): vence a data mais
 # nova; ausência é preenchida; sem data de um dos lados, o valor presente fica.
 
-_TZ_PREGAO = ZoneInfo("America/Sao_Paulo")
-# Fim do pregão regular da B3 (call de fechamento). O close de um dia é
-# posterior a qualquer cotação intradiária do mesmo dia.
-_HORA_FECHAMENTO = _dt.time(18, 0)
-FONTE_FECHAMENTO_PREGAO = "b3_cotahist"
-
-
-def instante(valor) -> _dt.datetime | None:
-    """Data/hora com fuso. Texto ISO, ``datetime``, ``Timestamp`` ou ``date``.
-
-    Sem fuso, o texto/``datetime`` é lido como UTC (é como o banco devolve
-    ``timestamptz`` sem fuso e como a brapi escreve). Um ``date`` puro é o
-    início do dia em São Paulo: só se sabe o dia, e o fechamento daquele
-    mesmo dia é posterior a ele.
-    """
-    if valor is None:
-        return None
-    if isinstance(valor, float) and math.isnan(valor):
-        return None
-    try:
-        import pandas as pd
-        if valor is pd.NaT:
-            return None
-        if isinstance(valor, pd.Timestamp):
-            valor = valor.to_pydatetime()
-    except ImportError:  # pragma: no cover - pandas é dependência do projeto
-        pass
-    if isinstance(valor, _dt.datetime):
-        return valor if valor.tzinfo else valor.replace(tzinfo=_dt.timezone.utc)
-    if isinstance(valor, _dt.date):
-        return _dt.datetime.combine(valor, _dt.time(0, 0), tzinfo=_TZ_PREGAO)
-    if isinstance(valor, (int, float)):
-        return _dt.datetime.fromtimestamp(float(valor), tz=_dt.timezone.utc)
-    texto = str(valor).strip()
-    if not texto:
-        return None
-    if len(texto) == 10:
-        try:
-            return instante(_dt.date.fromisoformat(texto))
-        except ValueError:
-            return None
-    try:
-        ts = _dt.datetime.fromisoformat(texto.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return ts if ts.tzinfo else ts.replace(tzinfo=_dt.timezone.utc)
-
-
-def fechamento_pregao_em(trade_date) -> _dt.datetime:
-    """Instante do close de um pregão: o dia às 18h de São Paulo."""
-    dia = trade_date if isinstance(trade_date, _dt.date) and not isinstance(
-        trade_date, _dt.datetime) else instante(trade_date).astimezone(_TZ_PREGAO).date()
-    return _dt.datetime.combine(dia, _HORA_FECHAMENTO, tzinfo=_TZ_PREGAO)
-
-
-def mais_nova_vence(valor_atual, data_atual, data_nova) -> bool:
-    """Regra única de cotação (leitura do #707 e escrita em `market.fiis`).
-
-    Valor atual ausente: o novo preenche. Sem data de um dos lados, não se
-    sabe qual é o mais novo e o atual fica. Senão, vence o estritamente mais
-    novo -- empate mantém o que está.
-    """
-    if valor_atual is None or (isinstance(valor_atual, float) and math.isnan(valor_atual)):
-        return True
-    if data_atual is None or data_nova is None:
-        return False
-    return data_nova > data_atual
+# Regra de cotação movida para `cotacao_pregao` (ações e FIIs usam a MESMA
+# função, 11/11/2026); reexportada aqui para os chamadores existentes.
+from data_pipeline.market.cotacao_pregao import (  # noqa: E402,F401
+    FONTE_FECHAMENTO_PREGAO,
+    fechamento_pregao_em,
+    instante,
+    mais_nova_vence,
+)
 
 
 def aplicar_fechamento_pregao(m: dict, fechamento, data_base, vpa=None) -> dict:

@@ -499,6 +499,7 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
         comps.append(Componente("Metodologia validada", None, 0.25,
                                 f"nao medido: {type(exc).__name__}"))
 
+    notas.append(NOTA_COTACAO_ACAO)
     notas.append(NOTA_DETALHE_DO_CHAT)
     return ConfiancaSecao("Empresas B3", tuple(comps), u, tuple(notas))
 
@@ -528,6 +529,12 @@ _SQL_FRESCOR_CADASTRO_FII = """
 # da brapi (`fii_ingest.promover_fechamento_pregao`, etapa `fiis-cotahist`). O
 # Frescor continua medindo a vitrine -- o que a tela le --, agora alimentada
 # pelas duas fontes. A nota abaixo diz ao usuario de onde vem o preco.
+NOTA_COTACAO_ACAO = (
+    "Cotacao: vale a mais nova entre a ultima barra de preco e o fechamento do pregao da B3 "
+    "(COTAHIST, market.b3_cotacao_atual); market cap, P/L, P/VP e DY acompanham o preco "
+    "escolhido. Papel com desdobramento, grupamento ou salto de escala fica na barra.")
+
+
 NOTA_COTACAO_FII = (
     "Cotacao: vale a mais nova entre o fechamento do pregao da B3 (COTAHIST) e a "
     "cotacao da brapi; P/VP e DY 12m acompanham o preco escolhido.")
