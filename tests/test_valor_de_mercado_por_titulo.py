@@ -525,3 +525,118 @@ def test_acoes_novas_sem_k_apagam_o_k_antigo(monkeypatch):
     q = _quote("XPTO11", 30.0, acoes=6_000.0)
     ig._gravar_indicadores(None, nz.normalize_all(q), "XPTO11", q)
     assert fake.apagadas == [("XPTO11", ["Acoes_por_Titulo", "marketCap"])]
+
+
+# ── Unit com linhas spot de antes do #710 ─────────────────────────────────────
+# Em 11/11/2026 um reprocess rodou antes do renormalize: as units ainda tinham o
+# marketCap 'brapi_field' e nenhum Acoes_por_Titulo, ficaram sem ações do ano e o
+# replace_metric_snapshot apagou o valuation anual delas.
+
+@pytest.mark.parametrize("unit,por_titulo,metodo,esperado", [
+    (True, None, "brapi_field", True),        # linha velha: pula
+    (True, None, nz._METODO_SPOT["marketCap"], False),  # normalizador novo, sem k
+    (True, None, None, False),                # unit sem marketCap: sem k por decisão
+    (True, 3.0, "brapi_field", False),        # tem k: recalcula
+    (False, 1.0, "brapi_field", False),       # ação: k vale 1
+])
+def test_spot_anterior_a_composicao(unit, por_titulo, metodo, esperado):
+    assert ig.spot_anterior_a_composicao(
+        unit=unit, por_titulo=por_titulo, metodo_market_cap=metodo) is esperado
+
+
+class _Res:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+    def scalar(self):
+        return self._rows[0][0] if self._rows else None
+
+
+class _Conn:
+    """Armazém de mentira: só o spot e o tipo do ativo existem."""
+
+    def __init__(self, spot, tipo):
+        self.spot, self.tipo = spot, tipo
+
+    def execute(self, sql, params=None):
+        s = str(sql)
+        if "period='spot'" in s:
+            return _Res(self.spot)
+        if "asset_type FROM market.assets" in s:
+            return _Res([(self.tipo,)])
+        if "period='annual' ORDER BY year DESC LIMIT 1" in s:
+            if "income_statements" in s:   # receita, ebit, ebitda, lucro, lpa
+                return _Res([(1_000.0, 200.0, 250.0, 100.0, 0.05)])
+            if "balance_sheets" in s:
+                return _Res([(5_000.0, 800.0, 100.0, 300.0, 200.0, 600.0, 400.0)])
+        return _Res([])
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class _Engine:
+    def __init__(self, conn):
+        self.conn = conn
+
+    def connect(self):
+        return self.conn
+
+    def begin(self):
+        return self.conn
+
+
+class _RepoReprocess:
+    def __init__(self):
+        self.substituidos = []
+
+    def schema_exists(self, conn):
+        return True
+
+    def append_metric_vintages(self, conn, rows):
+        return len(rows)
+
+    def replace_metric_snapshot(self, conn, ticker, rows):
+        self.substituidos.append(ticker)
+        return 0
+
+
+def _reprocess(monkeypatch, spot, tipo="unit"):
+    from data_pipeline.market import acoes_cotacao as ac_cot
+    fake = _RepoReprocess()
+    monkeypatch.setattr(ig, "repo", fake)
+    monkeypatch.setattr(ig, "_engine", lambda: _Engine(_Conn(spot, tipo)))
+    monkeypatch.setattr(ac_cot, "tabela_existe", lambda conn: True)
+    monkeypatch.setattr(ac_cot, "preco_atual", lambda conn, tk, existe=True: (30.0, 30.0))
+    return ig.reprocess_metrics(["XPTO11"]), fake
+
+
+def test_reprocess_pula_unit_com_spot_de_antes_do_710(monkeypatch):
+    prog, fake = _reprocess(monkeypatch, [
+        ("marketCap", 1_000_000.0, "brapi_field"),
+        ("LPA", 2.6, "brapi_field"),
+    ])
+    assert fake.substituidos == []          # nada apagado
+    assert prog["units_spot_sem_composicao"] == ["XPTO11"]
+    assert prog["erros"] == 0
+
+
+def test_reprocess_unit_com_composicao_segue_e_substitui(monkeypatch):
+    prog, fake = _reprocess(monkeypatch, [
+        ("marketCap", 60_000.0, "preco_x_acoes_emitidas_por_titulo"),
+        ("Acoes_Emitidas", 6_000.0, "brapi_field"),
+        ("Acoes_por_Titulo", 3.0, "lpa_do_titulo_sobre_lpa_por_acao"),
+        ("LPA", 2.6, "brapi_field"),
+    ])
+    assert "units_spot_sem_composicao" not in prog
+    assert prog["erros"] == 0
+    assert fake.substituidos == ["XPTO11"]

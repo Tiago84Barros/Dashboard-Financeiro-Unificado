@@ -1018,6 +1018,27 @@ def _acoes_e_lpa_do_ano(*, lucro, lpa, por_titulo, acoes_atuais):
     return titulos, lpa * k
 
 
+# Método que o normalizador gravava no ``marketCap`` spot antes do #710: o campo
+# da brapi, sem ``Acoes_Emitidas`` nem ``Acoes_por_Titulo``. Desde o #710 o
+# ``marketCap`` spot sai de ``acoes.valor_de_mercado_do_quote`` e leva
+# ``preco_x_acoes_emitidas_por_titulo`` mesmo quando cai no campo da brapi.
+METODO_SPOT_ANTERIOR_A_COMPOSICAO = "brapi_field"
+
+
+def spot_anterior_a_composicao(*, unit: bool, por_titulo, metodo_market_cap) -> bool:
+    """True quando a unit chega ao reprocess com as linhas spot de antes do #710.
+
+    Nessas linhas falta k, e sem k a unit não tem ações do ano: o
+    ``replace_metric_snapshot`` apagaria todo o valuation anual dela (em
+    11/11/2026, TAEE11 perdeu 2010-2023). Não é a unit cuja composição a brapi
+    não fecha -- essa já passou pelo normalizador novo e fica sem valor por
+    decisão. É linha velha, que o ``renormalize --warehouse`` regrava a partir
+    do quote arquivado. A ação não entra: sem k ela vale 1."""
+    if not unit or por_titulo is not None:
+        return False
+    return str(metodo_market_cap or "") == METODO_SPOT_ANTERIOR_A_COMPOSICAO
+
+
 def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None) -> dict:
     """
     Recalcula indicadores derivados a partir de market.* (SEM rede):
@@ -1064,9 +1085,12 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                                      "current_assets, current_liabilities", tk)
                 cf = _latest_annual(conn, "cash_flow_statements", "operating_cash_flow", tk)
                 # Linhas spot do normalizador (o quote mais novo da brapi).
-                spot = {r[0]: float(r[1]) for r in conn.execute(text(
-                    "SELECT metric_name, metric_value FROM market.calculated_metrics "
-                    "WHERE ticker=:t AND period='spot'"), {"t": tk}).fetchall()}
+                linhas_spot = conn.execute(text(
+                    "SELECT metric_name, metric_value, calculation_method "
+                    "FROM market.calculated_metrics "
+                    "WHERE ticker=:t AND period='spot'"), {"t": tk}).fetchall()
+                spot = {r[0]: float(r[1]) for r in linhas_spot}
+                metodo_mc = next((r[2] for r in linhas_spot if r[0] == "marketCap"), None)
                 eps = spot.get("LPA")
                 # Cotação vigente: a mais nova entre a última barra e o fechamento
                 # do COTAHIST (market.b3_cotacao_atual, migration 089).
@@ -1081,6 +1105,16 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 # Ações por título: 1 na ação; k na unit, se o normalizador o
                 # derivou; None na unit sem k (acoes.py).
                 por_titulo = spot.get("Acoes_por_Titulo") or (None if unit else 1.0)
+                if spot_anterior_a_composicao(unit=unit, por_titulo=por_titulo,
+                                              metodo_market_cap=metodo_mc):
+                    # Pular em vez de recalcular: nada é apagado nem gravado, e
+                    # o ticker sai nomeado no resultado.
+                    logger.warning(
+                        "reprocess %s: unit com linhas spot de antes do #710 (sem k); "
+                        "pulada para não apagar o valuation anual. Rode "
+                        "`run_market_ingest.py renormalize --warehouse` e repita.", tk)
+                    prog.setdefault("units_spot_sem_composicao", []).append(tk)
+                    continue
                 mc = _valor_de_mercado_atual(
                     preco=last_price, acoes=spot.get("Acoes_Emitidas"),
                     por_titulo=por_titulo, mc_spot=spot.get("marketCap"), unit=unit,
