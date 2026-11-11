@@ -170,25 +170,50 @@ def preco_vigente(barra, slot):
     return s if mais_nova_vence(b[0], b[1], s[1]) else b
 
 
-# Razões de mercado do spot da brapi são calculadas sobre a cotação DELA.
+# Razões de mercado do spot da brapi são calculadas sobre a cotação DELA
+# (`regularMarketPrice` do mesmo quote), que não é necessariamente o close da
+# última barra de `historical_prices`.
 _RAZAO_COM_PRECO = {"P/L": 1, "P/VP": 1, "DY": -1}
 
 
-def rebasear_spot(spot: dict, preco_brapi, preco_novo) -> dict:
-    """Reescala as razões spot (P/L, P/VP: proporcionais ao preço; DY: inversa)
-    da cotação da brapi para o preço escolhido, mantendo o numerador fixo
-    (lucro, patrimônio, dividendos). Mesma conta do rescale de DY/P-VP do FII
-    (`fii.aplicar_fechamento_pregao`). Sem os dois preços, ou iguais, devolve
-    ``spot`` intacto."""
+def preco_do_spot(spot: dict) -> float | None:
+    """Preço sobre o qual as razões spot foram calculadas: P/L x LPA, os dois do
+    MESMO quote (P/L = preço ÷ LPA). Sem um dos dois, ``None``: o denominador não
+    é presumido."""
     try:
-        a, b = float(preco_brapi), float(preco_novo)
+        pl, lpa = float(spot.get("P/L")), float(spot.get("LPA"))
+    except (TypeError, ValueError):
+        return None
+    p = pl * lpa
+    return p if p > 0 else None
+
+
+def rebasear_spot(spot: dict, preco_novo, preco_barra=None) -> dict:
+    """Razões spot (P/L, P/VP, DY) coerentes com o preço escolhido.
+
+    Só age quando o preço escolhido difere do da última barra (o fechamento do
+    COTAHIST venceu). Então reescala P/L e P/VP por novo/antigo e DY por
+    antigo/novo, onde "antigo" é o preço do PRÓPRIO spot (`preco_do_spot`), nunca
+    o close da barra. Sem como recuperá-lo com segurança, as três razões saem do
+    spot e o snapshot as recalcula dos numeradores (lucro, patrimônio e
+    dividendos ÷ preço escolhido), como nas ações sem spot. Mesma conta do
+    rescale de DY/P-VP do FII (`fii.aplicar_fechamento_pregao`).
+    """
+    try:
+        novo = float(preco_novo)
+        barra = float(preco_barra) if preco_barra is not None else None
     except (TypeError, ValueError):
         return spot
-    if not (a > 0 and b > 0) or abs(a - b) < 5e-7:
+    if not novo > 0 or (barra is not None and abs(novo - barra) < 5e-7):
         return spot
+    antigo = preco_do_spot(spot)
     out = dict(spot)
+    if antigo is None:
+        for k in _RAZAO_COM_PRECO:
+            out.pop(k, None)
+        return out
     for k, sinal in _RAZAO_COM_PRECO.items():
         v = out.get(k)
         if v is not None:
-            out[k] = float(v) * (b / a if sinal > 0 else a / b)
+            out[k] = float(v) * (novo / antigo if sinal > 0 else antigo / novo)
     return out

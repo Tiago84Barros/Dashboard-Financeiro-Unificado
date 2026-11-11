@@ -461,26 +461,40 @@ def test_dossie_le_o_slot_sem_nenhuma_barra(monkeypatch):
 
 
 def test_rebase_dy_dividendos_1_brapi_10_cotahist_8_da_12_5pct():
-    spot = {"DY": 0.10, "P/L": 10.0, "P/VP": 2.0, "ROE": 0.2}
-    novo = cp.rebasear_spot(spot, 10.0, 8.0)
+    spot = {"DY": 0.10, "P/L": 10.0, "LPA": 1.0, "P/VP": 2.0, "ROE": 0.2}
+    novo = cp.rebasear_spot(spot, 8.0, 10.0)
     assert novo["DY"] == pytest.approx(0.125)
     assert novo["P/L"] == pytest.approx(8.0) and novo["P/VP"] == pytest.approx(1.6)
     assert novo["ROE"] == 0.2                      # não depende do preço
     assert spot["DY"] == 0.10                      # não muta o original
 
 
-def test_rebase_sem_preco_ou_preco_igual_deixa_o_spot():
-    spot = {"DY": 0.10}
-    assert cp.rebasear_spot(spot, None, 8.0) is spot
+def test_rebase_usa_o_preco_do_spot_e_nao_o_close_da_barra():
+    """Codex #718: P/L 10 a R$10 (LPA 1), close da barra R$8, COTAHIST R$9 -> 9,
+    e não 11,25 (10 x 9/8)."""
+    spot = {"P/L": 10.0, "LPA": 1.0}
+    novo = cp.rebasear_spot(spot, 9.0, 8.0)
+    assert novo["P/L"] == pytest.approx(9.0)
+
+
+def test_rebase_sem_como_recuperar_o_preco_do_spot_tira_as_razoes():
+    spot = {"DY": 0.10, "P/L": 10.0, "P/VP": 2.0, "ROE": 0.2}      # sem LPA
+    novo = cp.rebasear_spot(spot, 8.0, 10.0)
+    assert not {"DY", "P/L", "P/VP"} & set(novo) and novo["ROE"] == 0.2
+
+
+def test_rebase_se_o_preco_nao_mudou_deixa_o_spot():
+    spot = {"DY": 0.10, "P/L": 10.0, "LPA": 1.0}
     assert cp.rebasear_spot(spot, 10.0, 10.0) is spot
+    assert cp.rebasear_spot(spot, None, 10.0) is spot
 
 
 def test_rebase_equivale_ao_rescale_do_fii():
     m = {"ticker": "X11", "price": 10.0, "pvp": 1.0, "dy_12m": 0.10}
     fii = fz.aplicar_fechamento_pregao(m, (D1, 8.0), "2026-10-29T16:00:00Z")
-    acao = cp.rebasear_spot({"DY": 0.10, "P/VP": 1.0}, 10.0, 8.0)
+    acao = cp.rebasear_spot({"DY": 0.10, "P/VP": 1.0, "P/L": 10.0, "LPA": 1.0}, 8.0, 10.0)
     assert acao["DY"] == pytest.approx(fii["dy_12m"])
-    assert acao["P/VP"] == pytest.approx(fii["pvp"])
+    assert acao["P/VP"] == pytest.approx(fii["pvp"]) == pytest.approx(0.8)
 
 
 def test_fita_retem_o_pregao_anterior_a_barra_de_sabado():
