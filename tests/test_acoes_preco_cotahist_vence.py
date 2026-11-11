@@ -514,3 +514,12 @@ def test_fita_retem_o_pregao_anterior_a_barra_de_sabado():
     assert [r[0] for r in fita["X3"]] == [sex, seg]
     d = ac.decidir((sabado, 20.0), fita["X3"])
     assert d["acao"] == "evento" and "fator redondo" in d["motivo"]   # split 2:1 sem marcador
+
+
+def test_migration_fecha_a_tabela_para_a_data_api_como_as_demais_do_market():
+    """No Supabase 40 de 42 tabelas do schema market têm RLS e negam anon e
+    authenticated. Tabela nova sem RLS fica exposta pela Data API."""
+    s = _SQL.read_text(encoding="utf-8")
+    assert "ALTER TABLE market.b3_cotacao_atual ENABLE ROW LEVEL SECURITY" in s
+    assert "REVOKE ALL ON TABLE market.b3_cotacao_atual FROM anon" in s
+    assert "REVOKE ALL ON TABLE market.b3_cotacao_atual FROM authenticated" in s
