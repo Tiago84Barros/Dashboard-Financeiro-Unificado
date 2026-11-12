@@ -150,6 +150,11 @@ LIMIAR_TOM = 0.15
 class Criterio:
     texto: str
     sinal: int          # +1 favorável, -1 desfavorável, 0 contexto
+    # A mesma leitura em linguagem de investidor iniciante, para a tela
+    # resumida (``linguagem_simples``). ``texto`` continua o técnico: é ele
+    # que vai para as LLMs e para a análise detalhada. Vazio: sem versão
+    # simples, e a tela não o mostra na conversa.
+    simples: str = ""
 
 
 @dataclass(frozen=True)
@@ -159,6 +164,7 @@ class Alerta:
     # Veio de manchete, não do balanço: pede confirmação no documento
     # oficial antes de virar venda (``resumida.decisao``).
     noticia: bool = False
+    simples: str = ""   # ver ``Criterio.simples``
 
 
 @dataclass(frozen=True)
@@ -259,6 +265,16 @@ def _pares(n: int) -> str:
     return f"{n} par" if n == 1 else f"{n} pares"
 
 
+def _vezes(x: float) -> str:
+    """7,07 → "7,1 vezes": o múltiplo dito como se fala."""
+    return f"{_br(x, 1)} vezes"
+
+
+# Nome do setor na régua, para a frase simples.
+_SETOR_SIMPLES = {REGULADA: "empresas de energia e saneamento",
+                  CICLICA: "empresas de commodities"}
+
+
 def _fmt(x: float, unidade: str) -> str:
     return _pct(x) if unidade == fnd.PCT else _x(x)
 
@@ -332,6 +348,15 @@ def teto_divida_patrimonio(a: m.AnaliseAtivo, f: fnd.Fundamentos,
 
 # -- qualidade -----------------------------------------------------------------------
 
+# O que a métrica mede, dito para quem está começando.
+_SIMPLES_PARES = {
+    "roe": "lucra {v} ao ano sobre o dinheiro dos sócios (ROE), {rel} as "
+           "concorrentes ({m})",
+    "margem_liquida": "de cada R$ 100 que vende, fica com {v} de lucro "
+                      "(margem líquida), {rel} as concorrentes ({m})",
+}
+
+
 def _contra_pares(c: prs.ComparacaoPares | None, chave: str, rotulo: str,
                   maior_melhor: bool = True) -> Criterio | None:
     ln = c.linha(chave) if c is not None else None
@@ -340,9 +365,14 @@ def _contra_pares(c: prs.ComparacaoPares | None, chave: str, rotulo: str,
         return None
     melhor = (ln.posicao == val.ACIMA) == maior_melhor
     rel = "acima" if ln.posicao == val.ACIMA else "abaixo"
+    modelo = _SIMPLES_PARES.get(chave)
+    simples = modelo.format(
+        v=_pct(ln.valor), m=_pct(ln.mediana_pares),
+        rel="mais que" if ln.posicao == val.ACIMA else "menos que",
+    ) if modelo else ""
     return Criterio(
         f"{rotulo} {_pct(ln.valor)} {rel} da mediana de {_pares(ln.n_pares)} "
-        f"({_pct(ln.mediana_pares)})", 1 if melhor else -1)
+        f"({_pct(ln.mediana_pares)})", 1 if melhor else -1, simples)
 
 
 def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
@@ -365,12 +395,21 @@ def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
         r = _num(roe.valor)
         bom, fraco = (15.0, 10.0) if perfil_ == FINANCEIRA else (15.0, 8.0)
         if r >= bom:
-            crits.append(Criterio(f"ROE de {_pct(r)}{_ref(roe)}: alto", 1))
+            crits.append(Criterio(
+                f"ROE de {_pct(r)}{_ref(roe)}: alto", 1,
+                f"lucra {_pct(r)} ao ano sobre o dinheiro dos sócios (ROE): "
+                "uma boa rentabilidade"))
         elif r < fraco:
-            crits.append(Criterio(f"ROE de {_pct(r)}{_ref(roe)}: baixo "
-                                  f"(abaixo de {_pct(fraco, 0)})", -1))
+            crits.append(Criterio(
+                f"ROE de {_pct(r)}{_ref(roe)}: baixo "
+                f"(abaixo de {_pct(fraco, 0)})", -1,
+                f"lucra só {_pct(r)} ao ano sobre o dinheiro dos sócios "
+                "(ROE): rentabilidade baixa"))
         else:
-            crits.append(Criterio(f"ROE de {_pct(r)}{_ref(roe)}: médio", 0))
+            crits.append(Criterio(
+                f"ROE de {_pct(r)}{_ref(roe)}: médio", 0,
+                f"lucra {_pct(r)} ao ano sobre o dinheiro dos sócios (ROE): "
+                "rentabilidade média"))
     margem_par = _contra_pares(c, "margem_liquida", "Margem líquida")
     if margem_par is not None:
         crits.append(margem_par)
@@ -378,23 +417,28 @@ def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
     lucro = val_("lucro_liquido")
     if lucro is not None and lucro <= 0:
         crits.append(Criterio("Prejuízo no último exercício"
-                              f"{_ref(ind('lucro_liquido'))}", -1))
-        alertas.append(Alerta("prejuízo no último exercício", False))
+                              f"{_ref(ind('lucro_liquido'))}", -1,
+                              "teve prejuízo no último ano"))
+        alertas.append(Alerta("prejuízo no último exercício", False,
+                              simples="a empresa teve prejuízo no último ano"))
 
     cresc_l = val_("crescimento_lucro")
     if cresc_l is not None:
         if cresc_l <= -20:
             crits.append(Criterio(f"Lucro caiu {_pct(-cresc_l)}"
-                                  f"{_ref(ind('crescimento_lucro'))}", -1))
+                                  f"{_ref(ind('crescimento_lucro'))}", -1,
+                                  f"o lucro caiu {_pct(-cresc_l)}"))
         elif cresc_l >= 10:
             crits.append(Criterio(f"Lucro cresceu {_pct(cresc_l)}"
-                                  f"{_ref(ind('crescimento_lucro'))}", 1))
+                                  f"{_ref(ind('crescimento_lucro'))}", 1,
+                                  f"o lucro cresceu {_pct(cresc_l)}"))
 
     payout = val_("payout")
     if perfil_ == FINANCEIRA:
         if payout is not None and payout > PAYOUT_ACIMA_DO_LUCRO:
             crits.append(Criterio(f"Payout de {_pct(payout)}: distribui mais "
-                                  "que o lucro", -1))
+                                  "que o lucro", -1,
+                                  "paga mais dividendos do que lucra"))
         return
 
     roic = ind("roic")
@@ -402,23 +446,31 @@ def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
         r = _num(roic.valor)
         if r >= 12:
             crits.append(Criterio(f"ROIC de {_pct(r)}{_ref(roic)}: retorno "
-                                  "sobre o capital alto", 1))
+                                  "sobre o capital alto", 1,
+                                  f"cada real investido no negócio rende "
+                                  f"{_pct(r)} ao ano (ROIC): bom retorno"))
         elif r < 6:
             crits.append(Criterio(f"ROIC de {_pct(r)}{_ref(roic)}: abaixo do "
-                                  "custo de capital típico", -1))
+                                  "custo de capital típico", -1,
+                                  f"cada real investido no negócio rende só "
+                                  f"{_pct(r)} ao ano (ROIC): pouco"))
     if margem_par is None:
         ml = val_("margem_liquida")
         if ml is not None and ml <= 0:
-            crits.append(Criterio(f"Margem líquida de {_pct(ml)}", -1))
+            crits.append(Criterio(f"Margem líquida de {_pct(ml)}", -1,
+                                  "está vendendo com prejuízo (margem de "
+                                  f"{_pct(ml)})"))
 
     cresc = val_("crescimento_receita")
     if cresc is not None:
         if cresc >= 5:
             crits.append(Criterio(f"Receita cresceu {_pct(cresc)}"
-                                  f"{_ref(ind('crescimento_receita'))}", 1))
+                                  f"{_ref(ind('crescimento_receita'))}", 1,
+                                  f"as vendas cresceram {_pct(cresc)}"))
         elif cresc < 0:
             crits.append(Criterio(f"Receita encolheu {_pct(-cresc)}"
-                                  f"{_ref(ind('crescimento_receita'))}", -1))
+                                  f"{_ref(ind('crescimento_receita'))}", -1,
+                                  f"as vendas encolheram {_pct(-cresc)}"))
 
     # O lucro vira caixa?
     fco = val_("fluxo_caixa_operacional")
@@ -426,36 +478,54 @@ def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
         conv = fco / lucro
         if fco <= 0:
             crits.append(Criterio("Caixa operacional negativo com lucro "
-                                  "positivo: lucro que não vira caixa", -1))
+                                  "positivo: lucro que não vira caixa", -1,
+                                  "o lucro aparece no papel, mas não está "
+                                  "entrando dinheiro no caixa"))
         elif conv > 5:
             # Lucro perto de zero: a razão explode e não mede conversão.
             crits.append(Criterio("Lucro pequeno demais diante do caixa "
                                   "operacional para medir conversão", 0))
         elif conv >= 0.8:
             crits.append(Criterio(f"Caixa operacional de {_br(conv, 2)}x o "
-                                  "lucro: o lucro vira caixa", 1))
+                                  "lucro: o lucro vira caixa", 1,
+                                  "o lucro está virando dinheiro de verdade "
+                                  "no caixa"))
         elif conv < 0.5:
             crits.append(Criterio(f"Caixa operacional de só {_br(conv, 2)}x o "
-                                  "lucro: lucro que não vira caixa", -1))
+                                  "lucro: lucro que não vira caixa", -1,
+                                  "só uma parte pequena do lucro vira "
+                                  "dinheiro no caixa"))
     fcl = val_("fluxo_caixa_livre")
     if fcl is not None:
-        crits.append(Criterio("Fluxo de caixa livre positivo", 1) if fcl > 0
+        crits.append(Criterio("Fluxo de caixa livre positivo", 1,
+                              "sobra dinheiro depois de pagar os "
+                              "investimentos") if fcl > 0
                      else Criterio("Fluxo de caixa livre negativo: consome "
-                                   "caixa", -1))
+                                   "caixa", -1,
+                                   "gasta mais dinheiro do que gera, "
+                                   "somando os investimentos"))
 
     # Endividamento, com a régua do setor.
     bruto = f.indicador("divida_liquida_ebitda")
     if bruto is not None and _num(bruto.valor) is None and \
             (bruto.nota or "").startswith(ff.NOTA_EBITDA_NEGATIVO):
         crits.append(Criterio("EBITDA de 12 meses negativo: a operação não "
-                              "gera caixa para servir a dívida", -1))
+                              "gera caixa para servir a dívida", -1,
+                              "a operação está dando prejuízo e não gera "
+                              "dinheiro para pagar a dívida"))
         alertas.append(Alerta("EBITDA de 12 meses negativo: a operação não "
-                              "paga a dívida", True))
+                              "paga a dívida", True,
+                              simples="a operação da empresa está dando "
+                                      "prejuízo e não gera dinheiro para "
+                                      "pagar a dívida"))
     if bruto is not None and _num(bruto.valor) is None and \
             (bruto.nota or "").startswith(ff.NOTA_FONTES_DIVERGENTES):
         # Número que contradiz o balanço não elimina: avisa e pede conferência.
         alertas.append(Alerta(f"Dívida líquida/EBITDA sem leitura. "
-                              f"{bruto.nota}", False))
+                              f"{bruto.nota}", False,
+                              simples="as fontes de dados discordam sobre o "
+                                      "tamanho da dívida; vale conferir no "
+                                      "balanço"))
     dl_ebitda = ind("divida_liquida_ebitda")
     if dl_ebitda is not None and perfil_ == INCORPORADORA:
         # O EBITDA da incorporadora acompanha o reconhecimento da receita
@@ -472,46 +542,71 @@ def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
                                                      LIMITES_ALAVANCAGEM[GERAL])
         regua = (" (régua de setor regulado)" if perfil_ == REGULADA else
                  " (régua de cíclica)" if perfil_ == CICLICA else "")
+        setor = _SETOR_SIMPLES.get(perfil_)
+        divida = (f"dívida de {_vezes(x)} o que a operação gera por ano "
+                  "(dívida líquida/EBITDA)")
         if x <= 0:
-            crits.append(Criterio("Caixa líquido (dívida líquida negativa)", 1))
+            crits.append(Criterio("Caixa líquido (dívida líquida negativa)", 1,
+                                  "tem mais dinheiro em caixa do que dívidas"))
         elif x <= bom:
             crits.append(Criterio(f"Dívida líquida/EBITDA de {_x(x)}"
-                                  f"{_ref(dl_ebitda)}: confortável{regua}", 1))
+                                  f"{_ref(dl_ebitda)}: confortável{regua}", 1,
+                                  f"{divida}: confortável"))
         elif x > alto:
-            crits.append(Criterio(f"Dívida líquida/EBITDA de {_x(x)}"
-                                  f"{_ref(dl_ebitda)}: alta (acima de "
-                                  f"{_x(alto)}){regua}", -1))
+            crits.append(Criterio(
+                f"Dívida líquida/EBITDA de {_x(x)}"
+                f"{_ref(dl_ebitda)}: alta (acima de "
+                f"{_x(alto)}){regua}", -1,
+                f"{divida}: alta (o sinal de atenção é {_vezes(alto)})"))
             if x > critico:
-                alertas.append(Alerta(f"alavancagem de {_x(x)} o EBITDA, acima "
-                                      f"do limite de {_x(critico)}{regua}",
-                                      True))
+                alertas.append(Alerta(
+                    f"alavancagem de {_x(x)} o EBITDA, acima "
+                    f"do limite de {_x(critico)}{regua}", True,
+                    simples=(f"a dívida está muito alta: {_vezes(x)} o que a "
+                             "operação gera por ano, acima do máximo de "
+                             f"{_vezes(critico)}"
+                             + (f" aceito para {setor}" if setor else ""))))
     dpl = ind("divida_bruta_patrimonio")
     if dpl is not None and teto_pl is not None and perfil_ != FINANCEIRA:
         x, (teto, origem) = _num(dpl.valor), teto_pl
         txt = f"Dívida bruta/patrimônio de {_x(x)}{_ref(dpl)}"
+        frase = (f"a dívida equivale a {_vezes(x)} o patrimônio da empresa "
+                 f"(o máximo para o setor é {_vezes(teto)})")
         if x > teto:
             crits.append(Criterio(f"{txt}: acima do teto de {_x(teto)} "
-                                  f"({origem})", -1))
+                                  f"({origem})", -1,
+                                  f"{frase}: acima do aceitável"))
             if perfil_ == INCORPORADORA and x > FATOR_CRITICO_DIVIDA_PL * teto:
                 alertas.append(Alerta(
                     f"dívida bruta de {_x(x)} o patrimônio, mais de "
                     f"{_br(FATOR_CRITICO_DIVIDA_PL, 0)} vezes o teto de "
-                    f"{_x(teto)} ({origem})", True))
+                    f"{_x(teto)} ({origem})", True,
+                    simples=(f"a dívida está muito alta: {_vezes(x)} o "
+                             "patrimônio, mais que o dobro do máximo do "
+                             f"setor ({_vezes(teto)})")))
         elif perfil_ == INCORPORADORA:
             crits.append(Criterio(f"{txt}: dentro do teto de {_x(teto)} "
-                                  f"({origem})", 1))
+                                  f"({origem})", 1,
+                                  f"{frase}: dentro do aceitável"))
     cob = ind("cobertura_juros")
     if cob is not None:
         x = _num(cob.valor)
         if x >= 3:
             crits.append(Criterio(f"Resultado operacional cobre os juros "
-                                  f"{_x(x)}", 1))
+                                  f"{_x(x)}", 1,
+                                  "o lucro da operação paga os juros da "
+                                  f"dívida com folga ({_vezes(x)})"))
         elif x < COBERTURA_JUROS[0]:
             crits.append(Criterio(f"Cobertura de juros de {_x(x)}: o resultado "
-                                  "operacional mal paga os juros", -1))
+                                  "operacional mal paga os juros", -1,
+                                  "o lucro da operação mal dá para pagar os "
+                                  "juros da dívida"))
             if x < COBERTURA_JUROS[1]:
                 alertas.append(Alerta("o resultado operacional não paga os "
-                                      f"juros (cobertura de {_x(x)})", True))
+                                      f"juros (cobertura de {_x(x)})", True,
+                                      simples="o lucro da operação não é "
+                                              "suficiente para pagar os "
+                                              "juros da dívida"))
 
     if payout is not None and payout > PAYOUT_ACIMA_DO_LUCRO:
         if fcl is not None and fcl < 0:
@@ -522,9 +617,14 @@ def _qualidade_acao(f: fnd.Fundamentos, c, perfil_: str,
                 f"payout de {_pct(payout)} com caixa livre negativo: "
                 + ("dividendo pago com dívida durante o ciclo de investimento"
                    if regulada else "dividendo insustentável"),
-                not regulada))
+                not regulada,
+                simples=("paga mais dividendos do que lucra e está pegando "
+                         "dívida para isso enquanto investe"
+                         if regulada else
+                         "paga mais dividendos do que lucra sem ter caixa "
+                         "para isso: esse dividendo não se sustenta")))
         crits.append(Criterio(f"Payout de {_pct(payout)}: distribui mais que o "
-                              "lucro", -1))
+                              "lucro", -1, "paga mais dividendos do que lucra"))
 
 
 def _qualidade_fii(f: fnd.Fundamentos, c, crits: list[Criterio],
@@ -538,21 +638,29 @@ def _qualidade_fii(f: fnd.Fundamentos, c, crits: list[Criterio],
     if vac is None:
         vac, rot_vac = val_("vacancia_fisica"), "Vacância física"
     if vac is not None:
+        vagos = f"{_pct(vac)} dos imóveis estão vagos (vacância)"
         if vac <= 5:
-            crits.append(Criterio(f"{rot_vac} de {_pct(vac)}: baixa", 1))
+            crits.append(Criterio(f"{rot_vac} de {_pct(vac)}: baixa", 1,
+                                  f"{vagos}: pouco"))
         elif vac > VACANCIA_FII[0]:
-            crits.append(Criterio(f"{rot_vac} de {_pct(vac)}: alta", -1))
+            crits.append(Criterio(f"{rot_vac} de {_pct(vac)}: alta", -1,
+                                  f"{vagos}: muito"))
             if vac > VACANCIA_FII[1]:
                 alertas.append(Alerta(f"{rot_vac.lower()} de {_pct(vac)}",
-                                      True))
+                                      True, simples=f"{vagos}: é muito "
+                                      "imóvel parado sem gerar aluguel"))
     inad = val_("inadimplencia")
     if inad is not None:
+        calote = f"{_pct(inad)} dos aluguéis não estão sendo pagos (inadimplência)"
         if inad > INADIMPLENCIA_FII[0]:
-            crits.append(Criterio(f"Inadimplência de {_pct(inad)}", -1))
+            crits.append(Criterio(f"Inadimplência de {_pct(inad)}", -1,
+                                  f"{calote}: alto"))
             if inad > INADIMPLENCIA_FII[1]:
-                alertas.append(Alerta(f"inadimplência de {_pct(inad)}", True))
+                alertas.append(Alerta(f"inadimplência de {_pct(inad)}", True,
+                                      simples=f"{calote}: muito alto"))
         elif inad <= 1:
-            crits.append(Criterio(f"Inadimplência de {_pct(inad)}: baixa", 1))
+            crits.append(Criterio(f"Inadimplência de {_pct(inad)}: baixa", 1,
+                                  f"{calote}: quase nada"))
     alav = val_("alavancagem")
     if alav is None and c is not None:
         ln = c.linha("alavancagem")
@@ -560,18 +668,29 @@ def _qualidade_fii(f: fnd.Fundamentos, c, crits: list[Criterio],
     if alav is not None:
         if alav > ALAVANCAGEM_FII_ALTA:
             crits.append(Criterio(f"Alavancagem de {_pct(alav)} do patrimônio",
-                                  -1))
+                                  -1, f"o fundo deve o equivalente a "
+                                  f"{_pct(alav)} do patrimônio: dívida alta"))
         elif alav <= 10:
-            crits.append(Criterio(f"Alavancagem de {_pct(alav)}: baixa", 1))
+            crits.append(Criterio(f"Alavancagem de {_pct(alav)}: baixa", 1,
+                                  f"o fundo deve pouco ({_pct(alav)} do "
+                                  "patrimônio)"))
     wault = val_("wault")
     if wault is not None:
         crits.append(Criterio(f"WAULT de {_br(wault)} anos", 1 if wault >= 5
-                              else -1 if wault < 2 else 0))
+                              else -1 if wault < 2 else 0,
+                              "os contratos de aluguel ainda duram, em "
+                              f"média, {_br(wault)} anos"
+                              + (": renda garantida por bastante tempo"
+                                 if wault >= 5 else
+                                 ": pouco tempo, há risco de renegociação"
+                                 if wault < 2 else "")))
     # Dividend yield e P/VP ficam no valuation, para não contar duas vezes.
     liq = c.linha("liquidez_diaria") if c is not None else None
     if liq is not None and liq.posicao == val.ABAIXO:
         crits.append(Criterio(f"Liquidez diária abaixo da mediana de "
-                              f"{_pares(liq.n_pares)}", -1))
+                              f"{_pares(liq.n_pares)}", -1,
+                              "é negociado menos que os concorrentes: pode "
+                              "ser mais difícil vender rápido"))
 
 
 def _leitura_qualidade(crits, alertas) -> str:
@@ -592,6 +711,15 @@ def _leitura_qualidade(crits, alertas) -> str:
 
 _MENOR_E_BARATO = {"p_l", "p_vp", "ev_ebit"}
 
+# Por qual régua o preço foi medido, para a frase simples.
+NOME_SIMPLES = {
+    "p_l": "pelo lucro (P/L {v})",
+    "p_vp": "pelo patrimônio (P/VP {v})",
+    "ev_ebit": "pelo lucro operacional (EV/EBIT {v})",
+    "dividend_yield": "pelos dividendos ({v} ao ano)",
+    "cap_rate": "pelo aluguel ({v} ao ano)",
+}
+
 
 def _valuation(v: val.Valuation, perfil_: str, crits: list[Criterio],
                alertas: list[Alerta]) -> tuple[str, str | None]:
@@ -599,11 +727,14 @@ def _valuation(v: val.Valuation, perfil_: str, crits: list[Criterio],
     saldo, medidos = 0.0, 0
     for ln in v.linhas:
         if ln.motivo == val.NAO_SE_APLICA["patrimonio_negativo"]:
-            alertas.append(Alerta("patrimônio líquido negativo", True))
+            alertas.append(Alerta("patrimônio líquido negativo", True,
+                                  simples="a empresa deve mais do que tem "
+                                          "(patrimônio negativo)"))
         if not ln.aplicavel or ln.atual is None:
             continue
         sinais = []
         partes = []
+        leigo = []
         for pos, est, nome in ((ln.posicao_historica, ln.historico,
                                 "do histórico"),
                                (ln.posicao_pares, ln.pares, "dos pares")):
@@ -617,6 +748,9 @@ def _valuation(v: val.Valuation, perfil_: str, crits: list[Criterio],
                      and ln.percentil_historico is not None else "")
             partes.append(f"{rel} da mediana {nome} "
                           f"({_fmt(est.mediana, ln.unidade)}{extra})")
+            leigo.append((barato, "o normal dela" if nome == "do histórico"
+                          else "as concorrentes",
+                          _fmt(est.mediana, ln.unidade)))
         if not sinais:
             continue
         medidos += 1
@@ -632,13 +766,34 @@ def _valuation(v: val.Valuation, perfil_: str, crits: list[Criterio],
                     "do ciclo; não contou como barato.")
             s = 0.0
         saldo += s
+        simples = _valuation_simples(ln.chave, ln.rotulo, atual, leigo)
+        if s == 0 and any(x > 0 for x in sinais) and nota:
+            simples += " (aqui isso não conta como barato)"
         crits.append(Criterio(f"{ln.rotulo} de {atual}: " + " e ".join(partes),
-                              0 if s == 0 else 1 if s > 0 else -1))
+                              0 if s == 0 else 1 if s > 0 else -1, simples))
     if medidos == 0:
         return SEM_LEITURA, nota
     media = saldo / medidos
     leitura = BARATO if media >= 0.4 else CARO if media <= -0.4 else JUSTO
     return leitura, nota
+
+
+def _valuation_simples(chave: str, rotulo: str, atual: str,
+                       leigo: list[tuple[bool, str, str]]) -> str:
+    """"pelo lucro (P/L 8,58x): barata frente às concorrentes (10,2x), mas
+    cara frente ao histórico dela (11,0x)"."""
+    nome = NOME_SIMPLES.get(chave, rotulo + " {v}").format(v=atual)
+    crase = {"o normal dela": "ao histórico dela",
+             "as concorrentes": "às concorrentes"}
+
+    def lado(barato: bool, itens) -> str:
+        refs = " e ".join(f"{crase.get(ref, ref)} ({med})"
+                          for _, ref, med in itens)
+        return f"{'barata' if barato else 'cara'} frente {refs}"
+    baratos = [x for x in leigo if x[0]]
+    caros = [x for x in leigo if not x[0]]
+    grupos = [lado(b, g) for b, g in ((True, baratos), (False, caros)) if g]
+    return f"{nome}: " + ", mas ".join(grupos)
 
 
 # -- mercado e notícias --------------------------------------------------------------
@@ -696,22 +851,31 @@ def _momento(c, crits: list[Criterio], alertas: list[Alerta]) -> None:
         return
     if med is None or not ln.n_pares:
         crits.append(Criterio(f"Retorno de 12 meses de {_pct(r)} (sem pares "
-                              "para comparar)", 0))
+                              "para comparar)", 0,
+                              f"rendeu {_pct(r)} em 12 meses, contando os "
+                              "dividendos"))
     else:
         dif = r - med
         sinal = (1 if dif >= MOMENTO_DIFERENCA_PP else
                  -1 if dif <= -MOMENTO_DIFERENCA_PP else 0)
         rel = ("acima da" if sinal > 0 else "abaixo da" if sinal < 0 else
                "em linha com a")
+        compara = ("mais que" if sinal > 0 else "menos que" if sinal < 0
+                   else "parecido com")
         crits.append(Criterio(
             f"Retorno de 12 meses de {_pct(r)}, {rel} mediana de "
             f"{_pares(ln.n_pares)} ({_pct(med)}; diferença de "
-            f"{_br(dif)} p.p.)", sinal))
+            f"{_br(dif)} p.p.)", sinal,
+            f"rendeu {_pct(r)} em 12 meses contando os dividendos, {compara} "
+            f"as concorrentes ({_pct(med)})"))
     if r <= MOMENTO_QUEDA_ALERTA:
         alertas.append(Alerta(f"preço caiu {_pct(-r)} em 12 meses (com "
                               "proventos): o mercado precifica alguma "
                               "deterioração; confirme nos fundamentos e nas "
-                              "notícias", False))
+                              "notícias", False,
+                              simples=f"o preço caiu {_pct(-r)} em 12 meses: "
+                              "o mercado pode estar enxergando algum problema; "
+                              "vale conferir o balanço e as notícias"))
 
 
 def _mercado(a: m.AnaliseAtivo, c, crits: list[Criterio],
@@ -727,15 +891,23 @@ def _mercado(a: m.AnaliseAtivo, c, crits: list[Criterio],
             alertas.append(Alerta(f"{n.rotulo_categoria.lower()} citada no "
                                   f"noticiário ({(n.date or '')[:10]}), mas a "
                                   f"notícia fala da saída: {n.headline}",
-                                  False))
+                                  False,
+                                  simples=f"o noticiário fala de "
+                                  f"{n.rotulo_categoria.lower()}, mas da saída "
+                                  f"dela: \"{n.headline}\""))
             crits.append(Criterio(f"{n.rotulo_categoria} em pauta, sem fato "
                                   f"novo: {n.headline}", 0))
             continue
         if n.categoria in CATEGORIAS_CRITICAS:
             alertas.append(Alerta(f"{n.rotulo_categoria.lower()} no noticiário"
                                   f" ({(n.date or '')[:10]}): {n.headline}",
-                                  True, noticia=True))
-            crits.append(Criterio(f"{n.rotulo_categoria}: {n.headline}", -1))
+                                  True, noticia=True,
+                                  simples=f"saiu notícia de "
+                                  f"{n.rotulo_categoria.lower()} envolvendo a "
+                                  f"empresa: \"{n.headline}\""))
+            crits.append(Criterio(f"{n.rotulo_categoria}: {n.headline}", -1,
+                                  f"notícia de {n.rotulo_categoria.lower()}: "
+                                  f"\"{n.headline}\""))
             escores.append(-1.0)
             metodos["categoria"] += 1
             continue
@@ -766,7 +938,9 @@ def _mercado(a: m.AnaliseAtivo, c, crits: list[Criterio],
             f"{len(escores)} notícia(s) própria(s) com tom medido em "
             f"{nots.janela_dias or 60} dias{origem}: {pos} positiva(s), {neg} "
             f"negativa(s), tom médio {_br(media, 2)}{aviso}",
-            1 if media > LIMIAR_TOM else -1 if media < -LIMIAR_TOM else 0))
+            1 if media > LIMIAR_TOM else -1 if media < -LIMIAR_TOM else 0,
+            f"das {len(escores)} notícias recentes sobre a empresa, {pos} "
+            f"soam positivas e {neg} negativas"))
     elif nots.itens:
         nota = "Notícias próprias sem termo que o léxico meça."
     else:
@@ -788,11 +962,19 @@ def _mercado(a: m.AnaliseAtivo, c, crits: list[Criterio],
                 or ln.valor is None or ln.mediana_pares is None:
             continue
         maior = ln.posicao == val.ACIMA
+        simples = (
+            f"o preço sobe e desce {'mais' if maior else 'menos'} que o das "
+            f"concorrentes ({_pct(abs(ln.valor))} contra "
+            f"{_pct(abs(ln.mediana_pares))} ao ano de oscilação)"
+            if chave == "volatilidade" else
+            f"a maior queda do preço foi de {_pct(abs(ln.valor))}, "
+            f"{'pior' if maior else 'menor'} que a das concorrentes "
+            f"({_pct(abs(ln.mediana_pares))})")
         crits.append(Criterio(
             f"{rotulo} de {_pct(abs(ln.valor))} "
             f"{'acima' if maior else 'abaixo'} da mediana de "
             f"{_pares(ln.n_pares)} ({_pct(abs(ln.mediana_pares))})",
-            -1 if maior else 1))
+            -1 if maior else 1, simples))
     _momento(c, crits, alertas)
 
     assinados = [x.sinal for x in crits if x.sinal]

@@ -318,8 +318,8 @@ def test_cartoes_so_usam_tokens_e_nao_viram_link_perigoso(carteira):
     for h in htmls:
         assert _sem_cor_literal(h), h
     assert "javascript:" not in htmls[8] and "&lt;b&gt;t" in htmls[8]
-    assert "Rebalancear" in htmls[2] and "Porcentagem devida" in htmls[2]
-    assert "Ação sugerida" in htmls[2] and "Convicção" in htmls[2]
+    assert "Rebalancear" in htmls[2] and "Tamanho ideal" in htmls[2]
+    assert "O que fazer" in htmls[2] and "Certeza" in htmls[2]
     assert "Justificativa" in htmls[4] and "Dados ausentes" in htmls[4]
     assert tela.TITULO_ALERTAS in htmls[5]
     assert "Leitura do Portfolio Fit" in htmls[-1]

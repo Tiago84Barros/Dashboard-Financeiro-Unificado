@@ -163,6 +163,18 @@ class Decisao:
     custos: rec.CustoVenda | None = None
     substituto: rec.Confronto | None = None
     momento: mo.Momento | None = None      # a queda, se houver (``momento``)
+    # O que a árvore olhou, para a tela contar a decisão em linguagem
+    # simples (``linguagem_simples``) sem reler o texto técnico.
+    sinais_favor: tuple[str, ...] = ()
+    sinais_contra: tuple[str, ...] = ()
+    conviccao_limitada: str = ""           # motivo do teto da convicção
+    peso_atual: float | None = None
+    peso_alvo: float | None = None
+    tese_quebrada: tuple[str, ...] = ()    # gatilhos de fundamentos disparados
+    fora_da_funcao: str | None = None
+    esticamento: rec.Esticamento | None = None
+    # Código da decisão antes da revisão pela queda; vazio se não mudou.
+    antes_da_queda: str = ""
 
     @property
     def rotulo(self) -> str:
@@ -238,8 +250,11 @@ def decisao(a: m.AnaliseAtivo,
     av = avaliacao if avaliacao is not None else av_.avaliar(a)
     s = _situacao(a, sugerido, av, na_carteira)
     mom = mo.medir(a, av, s.quebra)
-    r = _ajustar_ao_momento(_escolher(a, s, av), s, mom)
-    return _completar(a, s, av, r, ctx, mom)
+    antes = _escolher(a, s, av)
+    r = _ajustar_ao_momento(antes, s, mom)
+    d = _completar(a, s, av, r, ctx, mom)
+    return replace(d, antes_da_queda=(antes.codigo if antes.codigo != r.codigo
+                                      else ""))
 
 
 # -- o que a árvore olha --------------------------------------------------------------
@@ -874,7 +889,10 @@ def _completar(a: m.AnaliseAtivo, s: _Situacao, av: av_.Avaliacao,
         contexto=((mom.linha(),) if mom is not None and mom.linha() else ())
         + _contexto(a, s, av, ctx),
         proporcao=r.proporcao, custos=custos, substituto=r.substituto,
-        momento=mom)
+        momento=mom, sinais_favor=cv.favor, sinais_contra=cv.contra,
+        conviccao_limitada=cv.limitada, peso_atual=s.atual,
+        peso_alvo=s.alvo, tese_quebrada=s.quebra, fora_da_funcao=s.fora,
+        esticamento=s.est)
 
 
 # -- porcentagem devida ------------------------------------------------------------

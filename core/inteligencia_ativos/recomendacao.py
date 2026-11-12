@@ -62,6 +62,8 @@ class Esticamento:
     evidencias: tuple[str, ...]      # múltiplos no topo do histórico
     valorizacao: str | None = None   # retorno de 12 meses contra os pares
     excesso_pp: float | None = None  # retorno − mediana dos pares, em p.p.
+    # As mesmas evidências em linguagem simples, para a tela resumida.
+    evidencias_simples: tuple[str, ...] = ()
 
     @property
     def rotulo(self) -> str:
@@ -87,6 +89,7 @@ def esticamento(a: m.AnaliseAtivo, av: av_.Avaliacao) -> Esticamento:
     """
     v = val.Valuation.de_dict(av_._secao(a.valuation))
     evid: list[str] = []
+    leigo: list[str] = []
     topos: list[float] = []
     medido = False
     for ln in v.linhas:
@@ -112,13 +115,42 @@ def esticamento(a: m.AnaliseAtivo, av: av_.Avaliacao) -> Esticamento:
                     f" ({mediana}{espelho})" if mediana else
                     f"{ln.rotulo} de {formatar(ln.atual, ln.unidade, v.moeda)}"
                     f" no percentil {p:.0f} do próprio histórico{espelho}")
+        leigo.append(_evidencia_simples(ln, v.moeda, topo, h))
     nivel = 0
     if av.preco == av_.CARO and topos:
         muito = (any(t >= PERCENTIL_MUITO_ESTICADO for t in topos)
                  or len(topos) >= 2)
         nivel = MUITO_ESTICADO if muito else ESTICADO
     texto, excesso = _valorizacao(a)
-    return Esticamento(nivel, medido, tuple(evid), texto, excesso)
+    return Esticamento(nivel, medido, tuple(evid), texto, excesso,
+                       tuple(leigo))
+
+
+def _evidencia_simples(ln: val.LinhaValuation, moeda: str, topo: float,
+                       h: val.Estatistica | None) -> str:
+    """"Os dividendos de 2,5% ao ano são os menores desde 2017 (o normal
+    dela é 9,6%)": o percentil dito sem a palavra percentil."""
+    atual = formatar(ln.atual, ln.unidade, moeda)
+    desde = (h.inicio or "")[:4] if h is not None else ""
+    normal = (f" (o normal é {formatar(h.mediana, ln.unidade, moeda)})"
+              if h is not None else "")
+    quando = f"desde {desde}" if desde else "do histórico"
+    if ln.chave in _BAIXO_E_CARO:
+        nome = ("os dividendos" if ln.chave == "dividend_yield"
+                else "a renda dos imóveis")
+        if topo >= 99.5:
+            frase = f"{nome} de {atual} ao ano são os menores {quando}"
+        else:
+            frase = (f"{nome} de {atual} ao ano estão entre os "
+                     f"{100 - topo:.0f}% menores {quando}")
+        return f"{frase}{normal}: ou o preço subiu muito, ou o dividendo caiu"
+    nome = {"p_l": "pelo lucro (P/L)", "p_vp": "pelo patrimônio (P/VP)",
+            "ev_ebit": "pelo lucro operacional (EV/EBIT)"}.get(ln.chave,
+                                                               ln.rotulo)
+    if topo >= 99.5:
+        return f"{nome}, o preço de hoje ({atual}) é o mais caro {quando}{normal}"
+    return (f"{nome}, o preço de hoje ({atual}) está entre os "
+            f"{100 - topo:.0f}% mais caros {quando}{normal}")
 
 
 def _valorizacao(a: m.AnaliseAtivo) -> tuple[str | None, float | None]:
@@ -351,6 +383,11 @@ _ORDEM = {BAIXA: 0, MODERADA: 1, ALTA: 2}
 class Conviccao:
     grau: str
     porque: str
+    # Os sinais que entraram na conta, para a tela dizer em palavras simples
+    # o que pesou de cada lado (``linguagem_simples``).
+    favor: tuple[str, ...] = ()
+    contra: tuple[str, ...] = ()
+    limitada: str = ""          # motivo do teto, quando ele baixou o grau
 
 
 def cobertura(av: av_.Avaliacao) -> tuple[int, tuple[str, ...]]:
@@ -406,7 +443,10 @@ def conviccao(favor, contra, av: av_.Avaliacao, teto: str | None = None,
         falta = (f"falta a leitura de {_lista(faltam)}" if faltam
                  else "é um sinal só")
         porque = f"{base} sustenta, mas {falta}"
+    limitada = ""
     if teto is not None and _ORDEM[grau] > _ORDEM[teto]:
         grau = teto
+        limitada = motivo_teto
         porque = f"{porque}; limitada a {ROTULO_CONVICCAO[teto].lower()}: {motivo_teto}"
-    return Conviccao(grau, porque[:1].upper() + porque[1:] + ".")
+    return Conviccao(grau, porque[:1].upper() + porque[1:] + ".",
+                     tuple(favor), tuple(contra), limitada)
