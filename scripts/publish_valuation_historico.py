@@ -707,8 +707,8 @@ def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None,
                 df[c] = df[c].astype(float)
     linhas_valor, por_titulo = (fotos_valor if fotos_valor is not None
                                 else coletar_fotos_de_valor(conn))
-    titulos = {str(l["ticker"]).upper(): l["titulos"] for l in linhas_valor
-               if l.get("titulos")}
+    titulos = {str(lin["ticker"]).upper(): lin["titulos"] for lin in linhas_valor
+               if lin.get("titulos")}
     hist, exclusoes = historico_b3(fech, demos, prov, acoes_por_titulo=por_titulo,
                                    ajustados=ajust, titulos_atuais=titulos)
     exclusoes["sucessoes_de_ticker"] = dict(sorted(sucessoes.items()))

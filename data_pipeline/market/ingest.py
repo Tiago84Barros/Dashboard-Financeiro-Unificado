@@ -1346,9 +1346,20 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 # Ano do provento = ano da data-ex, como no valuation histórico
                 # publicado (`publish_valuation_historico.coletar_b3`): é a data
                 # que dá direito, e a soma por ela fica igual nos dois caminhos.
-                for _d, ex, amt in ev_tk:
-                    if ex is not None and amt:
+                # Provento sem data-ex fica fora da soma (o publicado também o
+                # deixa de fora), mas o ano do pagamento não vira "zero": é ano
+                # com provento de ano incerto, e o payout fica desconhecido.
+                # Sem data nenhuma, nenhum ano pode ser dado como zero.
+                anos_incertos, sem_data = set(), False
+                for d_ev, ex, amt in ev_tk:
+                    if not amt:
+                        continue
+                    if ex is not None:
                         div_year[ex.year] = div_year.get(ex.year, 0.0) + float(amt)
+                    elif d_ev is not None:
+                        anos_incertos.add(d_ev.year)
+                    else:
+                        sem_data = True
 
                 # Fix auditoria 2026-07 (ponto-no-tempo): itera apenas anos
                 # com DEMONSTRAÇÃO publicada. Antes, set(div_year) criava
@@ -1365,7 +1376,8 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     # para ele. A brapi devolve o histórico inteiro num payload,
                     # então lacuna de UM ano dentro de um histórico existente é
                     # ano sem distribuição, não ano não coletado.
-                    if dps is None and div_year:
+                    if (dps is None and div_year and not sem_data
+                            and y not in anos_incertos):
                         dps = 0.0
                     ni = i[3] if i else None
                     eps_y = i[4] if i else None

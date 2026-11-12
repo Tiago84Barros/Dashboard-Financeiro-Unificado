@@ -17,7 +17,6 @@ from data_pipeline.market import acoes_cotacao as ac_cot
 from data_pipeline.market import b3_sucessao as suc
 from data_pipeline.market import ingest as ig
 
-
 # ── a regra das ações do ano (R3: época com teto, base de hoje só no desdobramento)
 
 def test_epoca_passa_na_guarda_pelo_fator():
@@ -244,7 +243,7 @@ class _Repo:
         return 0
 
 
-def _reprocess(monkeypatch):
+def _reprocess(monkeypatch, eventos=None):
     repo = _Repo()
     monkeypatch.setattr(ig, "repo", repo)
     monkeypatch.setattr(ig, "_engine", lambda: _Engine(_ConnAnual()))
@@ -257,7 +256,8 @@ def _reprocess(monkeypatch):
                         lambda conn, tk, codigos=None: {y: v[3] for y, v in ANOS.items()})
     monkeypatch.setattr(ac_cot, "ajustados_de_fim_de_ano",
                         lambda conn, tk: {y: v[4] for y, v in ANOS.items()})
-    eventos = [(dt.date(y, 6, 30), dt.date(y, 6, 15), v[5]) for y, v in ANOS.items()]
+    if eventos is None:
+        eventos = [(dt.date(y, 6, 30), dt.date(y, 6, 15), v[5]) for y, v in ANOS.items()]
     monkeypatch.setattr(ig, "_eventos_de_renda", lambda conn: ({"XPTO3": eventos}, "fake"))
     prog = ig.reprocess_metrics(["XPTO3"])
     anual = {}
@@ -321,10 +321,31 @@ def test_reprocess_sem_fita_marca_o_preco_ajustado(monkeypatch):
     assert prog["tickers_com_sucessao"] == 0
 
 
+def test_provento_sem_data_ex_nao_vira_payout_zero_no_ano_do_pagamento(monkeypatch):
+    # 2021 com data-ex; 2022 só com o pagamento. 2022 fica sem DY e sem Payout,
+    # como no publicador, que só soma pela data-ex. 2023, sem evento nenhum,
+    # continua com payout zero. (2024 fica acima do teto: sem P/L, sem Payout.)
+    eventos = [(dt.date(2021, 6, 30), dt.date(2021, 6, 15), 0.5),
+               (dt.date(2022, 6, 30), None, 2.0)]
+    prog, anual = _reprocess(monkeypatch, eventos)
+    assert prog["erros"] == 0
+    assert anual[2021]["Payout"]["metric_value"] > 0
+    assert "Payout" not in anual[2022] and "DY" not in anual[2022]
+    assert anual[2023]["Payout"]["metric_value"] == 0.0
+
+
+def test_evento_sem_data_nenhuma_deixa_o_payout_desconhecido(monkeypatch):
+    eventos = [(dt.date(2021, 6, 30), dt.date(2021, 6, 15), 0.5), (None, None, 1.0)]
+    prog, anual = _reprocess(monkeypatch, eventos)
+    assert prog["erros"] == 0
+    assert anual[2021]["Payout"]["metric_value"] > 0
+    assert all("Payout" not in anual[y] for y in (2022, 2023))
+
+
 # ── proventos: o banco completa só o ano inteiro que a foto não tem ───────────
 
-def _ev(tk, ex, pag, valor):
-    return {"ticker": tk, "type": "DIVIDENDO", "ex_date": pd.Timestamp(ex),
+def _ev(tk, ex, pag, valor, tipo="DIVIDENDO"):
+    return {"ticker": tk, "type": tipo, "ex_date": pd.Timestamp(ex),
             "payment_date": pd.Timestamp(pag) if pag else pd.NaT,
             "event_date": pd.Timestamp(pag or ex), "amount": valor}
 
@@ -353,6 +374,20 @@ def test_copia_na_virada_do_ano_nao_conta_duas_vezes():
     # Data-ex regravada: 30/12 na foto, 03/01 no banco. Mesmo valor, 4 dias.
     foto = [_ev("XPTO3", "2022-12-30", None, 1.25)]
     banco = [_ev("XPTO3", "2023-01-03", None, 1.25)]
+    assert _anos(foto, banco).empty
+
+
+def test_jcp_e_dividendo_do_mesmo_valor_na_virada_sao_dois_proventos():
+    # JCP com data-ex em 30/12 no banco, DIVIDENDO de mesmo valor em 03/01 na foto.
+    foto = [_ev("XPTO3", "2023-01-03", None, 1.25, "DIVIDENDO")]
+    banco = [_ev("XPTO3", "2022-12-30", None, 1.25, "JCP")]
+    out = _anos(foto, banco)
+    assert list(out["amount"]) == [1.25] and list(out["type"]) == ["JCP"]
+
+
+def test_tipo_ausente_num_lado_nao_separa_a_copia():
+    foto = [_ev("XPTO3", "2022-12-30", None, 1.25, None)]
+    banco = [_ev("XPTO3", "2023-01-03", None, 1.25, "jcp ")]
     assert _anos(foto, banco).empty
 
 

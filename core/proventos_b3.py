@@ -131,8 +131,11 @@ def anos_que_a_foto_nao_tem(foto, banco):
     354 tickers com mais de 10% menos linhas que a maior foto); o ano que
     some inteiro deixa o DY e o payout do valuation anual sem número. O
     banco devolve esse ano -- menos a cópia de um provento que a foto tem
-    num ano vizinho: mesmo valor (``TOLERANCIA_VALOR``) e o mesmo pagamento,
-    ou data-ex a até ``JANELA_EX_DIAS`` dias. É o caso da data-ex regravada
+    num ano vizinho: mesmo tipo, mesmo valor (``TOLERANCIA_VALOR``) e o mesmo
+    pagamento, ou data-ex a até ``JANELA_EX_DIAS`` dias. O tipo entra porque
+    um JCP e um DIVIDENDO do mesmo valor, perto da virada, são dois proventos
+    (:func:`core.dividend_types.renda_por_evento` também os separa); tipo
+    ausente num dos lados não separa. É o caso da data-ex regravada
     na virada do ano (30/12 na foto, 03/01 no banco), que contaria duas vezes.
     """
     import numpy as np
@@ -156,14 +159,16 @@ def anos_que_a_foto_nao_tem(foto, banco):
     if b.empty:
         return pd.DataFrame(columns=colunas)
     b = b.reset_index(drop=True).assign(_i=lambda x: x.index)
-    par = b[["_i", "ticker", "_ex", "payment_date", "amount"]].merge(
-        f[["ticker", "_ex", "payment_date", "amount"]], on="ticker", suffixes=("", "_f"))
+    par = b[["_i", "ticker", "type", "_ex", "payment_date", "amount"]].merge(
+        f[["ticker", "type", "_ex", "payment_date", "amount"]], on="ticker", suffixes=("", "_f"))
+    tipo, tipo_f = (par[c].astype("string").str.strip().str.upper() for c in ("type", "type_f"))
+    mesmo_tipo = tipo.isna() | tipo_f.isna() | tipo.eq(tipo_f).fillna(False)
     mesmo_valor = ((par["amount"] - par["amount_f"]).abs()
                    <= TOLERANCIA_VALOR * np.maximum(par["amount"], par["amount_f"]))
     pag, pag_f = (pd.to_datetime(par[c], errors="coerce") for c in ("payment_date", "payment_date_f"))
     mesmo_pagamento = pag.notna() & pag.eq(pag_f)
     ex_perto = (par["_ex"] - par["_ex_f"]).abs() <= pd.Timedelta(days=JANELA_EX_DIAS)
-    copia = set(par.loc[mesmo_valor & (mesmo_pagamento | ex_perto), "_i"])
+    copia = set(par.loc[mesmo_tipo & mesmo_valor & (mesmo_pagamento | ex_perto), "_i"])
     return b[~b["_i"].isin(copia)][colunas].reset_index(drop=True)
 
 
