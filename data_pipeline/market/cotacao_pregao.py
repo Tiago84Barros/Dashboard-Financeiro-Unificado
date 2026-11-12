@@ -175,8 +175,9 @@ def preco_vigente(barra, slot):
 # última barra de `historical_prices`.
 _RAZAO_COM_PRECO = {"P/L": 1, "P/VP": 1, "DY": -1}
 # P/L x LPA mais longe que isto do preço de referência não é o preço do quote:
-# P/L e LPA vieram de bases diferentes. TAEE3 (12/11/2026): o produto dava 1/3
-# do preço (o k = 3 da unit TAEE11), e o DY 7,69% virava 2,53% no reprocess.
+# P/L e LPA vieram de bases diferentes. TAEE3 (armazém, 12/11/2026): P/L 2,76
+# (preço ÷ LPA da unit TAEE11, 4,72) x LPA 1,57 (por ação) = 4,34, 1/3 do preço,
+# e o DY 7,69% virava 2,53% reescalado para 13,20. Mesmo padrão no TAEE4.
 SPOT_PRECO_DESVIO_MAX = 1.5
 
 
