@@ -43,10 +43,15 @@ Métodos (repetidos no campo ``metodo`` do arquivo):
   depois de um split e não são retroajustadas (AAPL até set/2020 saía com 1/4
   do valor). O degrau da contagem é retroajustado: o valor anterior é
   multiplicado pela razão do split (``market_us.splits``, ou a razão medida
-  quando é uma que a bolsa pratica); degrau que não é split (emissão) fica.
-  Depois, mês isolado cujo valor ÷ preço foge mais de 1,5x da mediana móvel
-  de 13 meses é descartado. Até 08/11/2026 descartava-se tudo antes do
-  último degrau, e 2.852 das 4.350 empresas ficavam sem histórico de P/L.
+  quando é uma que a bolsa pratica); degrau que não é split (emissão) fica,
+  e o de escala do XBRL (1000x) também. Degrau sem split que leva as ações a
+  menos da metade é grupamento misturado com emissão: o histórico anterior
+  sai (desde 12/11/2026; antes ele ficava e saía P/VP na casa dos milhões).
+  Antes de medir os degraus sai o bloco de até 3 meses cujo valor ÷ preço
+  destoa dos dois lados (AAPL abr--jun/2014, que escondia o 7:1). Depois,
+  mês isolado cujo valor ÷ preço foge mais de 1,5x da mediana móvel de 13
+  meses é descartado. Até 08/11/2026 descartava-se tudo antes do último
+  degrau, e 2.852 das 4.350 empresas ficavam sem histórico de P/L.
 
 Momento de preço (desde 01/10/2026): retorno de 12 e de 3 meses com preço
 ajustado por proventos e eventos (retorno total), do fechamento mensal mais
@@ -157,9 +162,13 @@ METODO = {
             "ponto-no-tempo não são retroajustadas por split: o valor "
             "anterior ao primeiro balanço pós-split é multiplicado pela razão "
             "do split (market_us.splits, ou a razão medida quando é uma que a "
-            "bolsa pratica); degrau que não é split (emissão, recompra) fica. "
-            "Mês isolado em que valor ÷ preço foge mais de 1,5x da mediana "
-            "móvel de 13 meses é descartado, e mês sem preço também."),
+            "bolsa pratica); degrau que não é split (emissão, recompra) fica, e o "
+            "de escala do XBRL (1000x) também. Degrau sem split que leva as "
+            "ações a menos da metade (grupamento misturado com emissão) "
+            "descarta o histórico anterior a ele. Bloco de até 3 meses em que "
+            "valor ÷ preço destoa dos dois lados sai antes de medir os "
+            "degraus; mês em que foge mais de 1,5x da mediana móvel de 13 "
+            "meses é descartado, e mês sem preço também."),
     "volatilidade": (f"Desvio-padrão dos retornos mensais dos últimos "
                      f"{JANELA_VOL_MESES} meses (preço ajustado), anualizado "
                      "(× √12), em %."),
@@ -1129,6 +1138,23 @@ DIAS_ATE_O_BALANCO = 300
 #: Mês isolado cujo valor foge disto da mediana móvel das vizinhanças é
 #: contagem errada daquele mês, não regime novo.
 DESVIO_MES_ISOLADO = 1.5
+#: Até quantos meses seguidos de contagem errada são reconhecidos como bloco
+#: errado, e não como regime. A AAPL tem abr--jun/2014 cerca de 1000x abaixo,
+#: três meses colados ao split 7:1: com só o mês isolado reconhecido, o bloco
+#: escondia o split e o histórico até 2013 ficava 7x baixo.
+MESES_DO_BLOCO_ERRADO = 3
+#: Os meses de um bloco errado têm a mesma contagem errada entre si, dentro
+#: desta tolerância.
+COERENCIA_DO_BLOCO = 1.25
+#: Degrau para baixo sem split que leva as ações a menos desta fração da
+#: contagem anterior. Recompra não faz isso; é grupamento misturado com
+#: emissão, sem razão de split que o explique, e o passado não tem como ser
+#: posto na escala de hoje -- sai.
+ACOES_CAEM_A_MENOS_DE = 0.5
+#: Degrau de 1000^k (dentro desta tolerância) é erro de escala do XBRL
+#: (milhares contra unidades) na contagem do balanço. Patrimônio e lucro do
+#: mesmo balanço costumam vir com o mesmo erro, então o degrau fica.
+TOLERANCIA_DEGRAU_ESCALA = 1.25
 
 
 def _parece_split(razao: float) -> bool:
@@ -1174,34 +1200,59 @@ def _split_registrado(splits, simbolo: str, quando, medido: float):
     return melhor
 
 
-def _picos_isolados(acoes):
+def _picos_isolados(acoes, max_meses: int = MESES_DO_BLOCO_ERRADO):
     """Máscara dos meses cuja contagem destoa dos vizinhos dos DOIS lados:
-    contagem errada de um mês, não degrau. O primeiro mês de um regime novo
-    destoa só do lado de antes e fica; o mês errado na véspera de um split
+    contagem errada de um mês, ou de um bloco de até ``max_meses`` meses
+    seguidos com a mesma contagem errada (dentro de
+    :data:`COERENCIA_DO_BLOCO`), não degrau. O primeiro mês de um regime novo
+    destoa só do lado de antes e fica; o bloco errado na véspera de um split
     destoa dos dois e sai -- com ele no meio, nenhum dos dois saltos parecia
     persistente, o degrau não era medido e o histórico ficava na escala
-    errada. Por isso o pico sai ANTES de medir o degrau."""
+    errada (AAPL: abr--jun/2014 cerca de 1000x abaixo, antes do 7:1). Por
+    isso o bloco sai ANTES de medir o degrau. Com ``max_meses=1`` é o pico
+    isolado de um mês só."""
     import numpy as np
     acoes = np.asarray(acoes, dtype=float)
-    pico = np.zeros(len(acoes), dtype=bool)
-    for i in range(1, len(acoes) - 1):
-        antes = acoes[max(0, i - 2):i]
-        depois = acoes[i + 1:i + 3]
-        antes, depois = antes[antes > 0], depois[depois > 0]
-        if not len(antes) or not len(depois) or not acoes[i] > 0:
-            continue
-        m_antes, m_depois = float(np.median(antes)), float(np.median(depois))
-        limite = math.log(DESVIO_MES_ISOLADO)
-        if (abs(math.log(acoes[i] / m_antes)) > limite
-                and abs(math.log(acoes[i] / m_depois)) > limite):
-            pico[i] = True
+    n = len(acoes)
+    pico = np.zeros(n, dtype=bool)
+    limite = math.log(DESVIO_MES_ISOLADO)
+    for tamanho in range(1, max_meses + 1):
+        for i in range(1, n - tamanho):
+            bloco = acoes[i:i + tamanho]
+            if not (bloco > 0).all():
+                continue
+            if tamanho > 1 and math.log(bloco.max() / bloco.min()) > math.log(COERENCIA_DO_BLOCO):
+                continue
+            antes = acoes[max(0, i - 2):i]
+            depois = acoes[i + tamanho:i + tamanho + 2]
+            antes, depois = antes[antes > 0], depois[depois > 0]
+            if not len(antes) or not len(depois):
+                continue
+            m_bloco = float(np.median(bloco))
+            if (abs(math.log(m_bloco / float(np.median(antes)))) > limite
+                    and abs(math.log(m_bloco / float(np.median(depois)))) > limite):
+                pico[i:i + tamanho] = True
     return pico
+
+
+def _degrau_de_escala(salto: float) -> bool:
+    """Salto de 1000^k (k != 0): erro de escala do XBRL, não evento."""
+    if not salto or salto <= 0:
+        return False
+    k = round(math.log10(salto) / 3)
+    return k != 0 and abs(math.log10(salto) - 3 * k) <= math.log10(TOLERANCIA_DEGRAU_ESCALA)
 
 
 def _retroajustar_simbolo(g, splits, contagem: dict):
     """Multiplica o valor de mercado anterior a cada degrau de contagem pela
     razão do split. ``g`` é o quadro de UM símbolo ordenado por data, com as
-    colunas ``acoes`` e ``market_cap``; devolve ``market_cap`` ajustado."""
+    colunas ``acoes`` e ``market_cap``; devolve ``market_cap`` ajustado.
+
+    Degrau que não é split: o de escala (1000^k) e o que não leva as ações a
+    menos de :data:`ACOES_CAEM_A_MENOS_DE` da contagem anterior (emissão,
+    fusão, recompra grande) ficam como estão. O que leva -- grupamento
+    misturado com emissão, sem razão de split -- deixa o passado sem escala
+    conhecida: os meses anteriores voltam como NaN, para serem descartados."""
     import numpy as np
     acoes = g["acoes"].to_numpy(dtype=float)
     fatores = np.ones(len(g))
@@ -1233,11 +1284,19 @@ def _retroajustar_simbolo(g, splits, contagem: dict):
         if razao is None and _parece_split(salto):
             razao = salto
         if razao is None:
-            contagem["degraus_mantidos"] += 1   # emissão ou recompra de verdade
+            if salto < ACOES_CAEM_A_MENOS_DE and not _degrau_de_escala(salto):
+                # Recompra não corta a contagem pela metade: é grupamento
+                # sem razão de split. O passado não tem escala conhecida.
+                contagem["degraus_cortados"] += 1
+                fatores[:i] = np.nan
+            else:
+                contagem["degraus_mantidos"] += 1   # emissão, recompra, escala
             continue
         contagem["degraus_retroajustados"] += 1
         fatores[:i] *= razao
-    contagem["meses_retroajustados"] += int((fatores != 1.0).sum())
+    cortados = np.isnan(fatores)
+    contagem["meses_cortados"] += int(cortados.sum())
+    contagem["meses_retroajustados"] += int((~cortados & (fatores != 1.0)).sum())
     return g["market_cap"].to_numpy(dtype=float) * fatores
 
 
@@ -1254,7 +1313,12 @@ def capitalizacao_limpa(capitalizacao, precos, splits=None) -> tuple:
     alguma vez. Agora o degrau é retroajustado: o valor anterior é
     multiplicado pela razão do split (``market_us.splits`` quando registrado;
     senão a razão medida, se for uma que a bolsa pratica). Degrau que não é
-    split (emissão, recompra grande) fica como está, porque é mudança real.
+    split (emissão, recompra grande) fica como está, porque é mudança real;
+    o de escala do XBRL (1000^k) também fica. Degrau sem split que leva as
+    ações a menos da metade é grupamento misturado com emissão: o passado
+    dele sai (``degraus_cortados``, ``meses_cortados``). Antes de medir os
+    degraus saem os blocos de até :data:`MESES_DO_BLOCO_ERRADO` meses com
+    contagem errada.
 
     Depois disso, mês isolado cujas ações implícitas fogem mais de
     :data:`DESVIO_MES_ISOLADO` da mediana móvel de 13 meses é contagem errada
@@ -1269,7 +1333,8 @@ def capitalizacao_limpa(capitalizacao, precos, splits=None) -> tuple:
     import pandas as pd
     contagem = {"capitalizacao_fora_do_preco": 0, "sem_preco_no_mes": 0,
                 "degraus_retroajustados": 0, "degraus_mantidos": 0,
-                "meses_retroajustados": 0}
+                "meses_retroajustados": 0, "degraus_cortados": 0,
+                "meses_cortados": 0}
     c = capitalizacao.dropna(subset=["date", "market_cap"]).copy()
     c["date"] = pd.to_datetime(c["date"])
     c["mes"] = c["date"].dt.to_period("M")
@@ -1293,6 +1358,11 @@ def capitalizacao_limpa(capitalizacao, precos, splits=None) -> tuple:
     # 2. Degraus de contagem retroajustados pela razão do split.
     c["market_cap"] = np.concatenate([
         _retroajustar_simbolo(g, splits, contagem) for _, g in c.groupby("symbol", sort=False)])
+    #    O passado de um degrau cortado (NaN) sai aqui; os cortes são sempre
+    #    o começo da série, então a mediana móvel abaixo não muda por isso.
+    c = c.loc[c["market_cap"].notna()].reset_index(drop=True)
+    if c.empty:
+        return c[["symbol", "date", "market_cap"]], contagem
     c["acoes"] = c["market_cap"] / c["close"]
     # 3. O que ainda destoa da vizinhança na série já corrigida (bordas, picos
     #    duplos) sai pela mediana móvel.

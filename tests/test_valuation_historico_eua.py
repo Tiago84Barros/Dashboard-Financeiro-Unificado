@@ -207,3 +207,92 @@ def test_parece_split_distingue_razao_de_bolsa_de_emissao():
 def test_metodo_publicado_descreve_o_retroajuste_e_nao_o_descarte():
     assert "multiplicado pela razão do split" in pub.METODO["eua"]
     assert "tudo antes do último degrau" not in pub.METODO["eua"]
+
+
+# -- 12/11/2026: bloco errado de até 3 meses, degrau de escala e corte ----------
+
+def test_bloco_de_tres_meses_errados_na_vespera_do_split_nao_esconde_o_split():
+    """AAPL abr--jun/2014: três meses ~1000x abaixo colados ao 7:1. Com só o
+    pico de um mês reconhecido, o bloco escondia o degrau e o histórico até
+    2013 ficava 7x baixo (P/L de 1,5--1,9)."""
+    acoes = [1 * BI] * 20 + [0.001 * BI] * 3 + [7 * BI] * 20
+    cap, precos = _serie("AAPL", acoes)
+    meses = _meses(len(acoes))
+    splits = pd.DataFrame([{"symbol": "AAPL", "split_date": meses[21].date(),
+                            "numerator": 7, "denominator": 1}])
+    limpo, contagem = pub.capitalizacao_limpa(cap, precos, splits)
+    assert contagem["capitalizacao_fora_do_preco"] == 3 and len(limpo) == 40
+    assert contagem["degraus_retroajustados"] == 1
+    assert (limpo["market_cap"].round(0) == 175 * BI).all()
+
+
+def test_bloco_errado_sai_mas_o_comeco_de_um_regime_novo_fica():
+    """O bloco que volta ao nível de antes destoa dos dois lados e sai; os
+    primeiros meses de um regime novo destoam só do lado de antes e ficam,
+    para o degrau decidir."""
+    regime = [1.0] * 10 + [0.001] * 10
+    assert pub._picos_isolados(regime).sum() == 0
+    coerente = [1.0] * 10 + [0.001] * 3 + [1.0] * 10
+    assert pub._picos_isolados(coerente)[10:13].all()
+    assert pub._picos_isolados(coerente).sum() == 3
+    # Com max_meses=1, o comportamento antigo: só o mês do meio saía, e os
+    # dois das pontas ficavam para esconder o degrau.
+    assert pub._picos_isolados(coerente, max_meses=1).sum() < 3
+
+
+def test_grupamento_sem_razao_de_split_corta_o_historico_anterior():
+    """Ações caem a 0,18x sem split registrado e sem razão de bolsa:
+    grupamento misturado com emissão. Mantido, o passado saía com P/VP na
+    casa dos milhões; agora sai e é contado."""
+    acoes = [1 * BI] * 20 + [0.18 * BI] * 20
+    cap, precos = _serie("SMAL", acoes)
+    limpo, contagem = pub.capitalizacao_limpa(cap, precos, None)
+    assert contagem["degraus_cortados"] == 1 and contagem["meses_cortados"] == 20
+    assert contagem["degraus_mantidos"] == 0 and contagem["degraus_retroajustados"] == 0
+    assert len(limpo) == 20
+    assert limpo["date"].min() == _meses(40)[20]
+    assert (limpo["market_cap"].round(0) == 4.5 * BI).all()
+
+
+def test_recompra_grande_fica_como_esta():
+    """0,685x (INVA): queda grande, mas acima da metade -- recompra pode
+    fazer isso. O degrau é medido e mantido."""
+    acoes = [1 * BI] * 20 + [0.685 * BI] * 20
+    cap, precos = _serie("INVA", acoes)
+    limpo, contagem = pub.capitalizacao_limpa(cap, precos, None)
+    assert contagem["degraus_mantidos"] == 1 and contagem["degraus_cortados"] == 0
+    assert len(limpo) == 40
+    assert limpo["market_cap"].iloc[0] == pytest.approx(25 * BI)
+
+
+def test_degrau_de_escala_do_xbrl_fica():
+    """Contagem 1000x abaixo dali em diante: erro de escala do balanço, que
+    patrimônio e lucro do mesmo balanço carregam junto. Cortar perderia
+    anos que o índice certo tem; o degrau fica."""
+    acoes = [1 * BI] * 20 + [0.001 * BI] * 20
+    cap, precos = _serie("ESCA", acoes)
+    limpo, contagem = pub.capitalizacao_limpa(cap, precos, None)
+    assert contagem["degraus_mantidos"] == 1 and contagem["degraus_cortados"] == 0
+    assert len(limpo) == 40
+    assert pub._degrau_de_escala(0.001) and pub._degrau_de_escala(1e-6 * 1.1)
+    assert pub._degrau_de_escala(1000.0)
+    assert not pub._degrau_de_escala(0.18) and not pub._degrau_de_escala(1.0)
+
+
+def test_corte_tira_os_anos_anteriores_do_historico_e_mantem_os_seguintes():
+    """O corte chega ao P/L publicado: os anos com valor de mercado só antes
+    do degrau somem, e os de depois ficam iguais aos de uma série que nunca
+    teve o passado errado."""
+    acoes = [1 * BI] * 24 + [0.18 * BI] * 24
+    cap, precos = _serie("SMAL", acoes)
+    limpo, _ = pub.capitalizacao_limpa(cap, precos, None)
+    so_o_depois = cap.iloc[24:].reset_index(drop=True)
+    limpo_ref, _ = pub.capitalizacao_limpa(so_o_depois, precos, None)
+    anuais = pd.DataFrame([
+        {"symbol": "SMAL", "fiscal_year": a, "reference_date": date(a, 12, 31),
+         "net_income": 1 * BI, "equity": 2 * BI, "dividends_paid": None}
+        for a in (2018, 2019, 2020, 2021)])
+    hist = pub.historico_eua(anuais, limpo)["SMAL"]
+    ref = pub.historico_eua(anuais, limpo_ref)["SMAL"]
+    assert hist == ref
+    assert [a for a, _ in hist["p_vp"]] == [2020, 2021]
