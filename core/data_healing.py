@@ -219,10 +219,13 @@ def _collect_sources(tickers: tuple[str, ...]) -> dict[str, dict[str, dict[str, 
         except Exception:
             si_db = {}
         # brapi.dev: 3ª fonte web (P/L + DY trailing). Falha/sem token → {}.
+        # O módulo defaultKeyStatistics traz o LPA do título: sem ele, a ação
+        # de companhia com unit (TAEE3) leva o P/L calculado com o LPA da unit.
         br_db: dict[str, Any] = {}
         if _brapi is not None:
             try:
-                q = _brapi.fetch_quote(tkc, range_="1y", interval="1mo")
+                q = _brapi.fetch_quote(tkc, range_="1y", interval="1mo",
+                                       modules="defaultKeyStatistics")
                 if q:
                     br_db = _brapi.current_fundamentals(q)
             except Exception:

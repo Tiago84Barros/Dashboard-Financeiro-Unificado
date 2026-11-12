@@ -613,12 +613,17 @@ def metric_rows(quote: dict, composicao: dict | None = None) -> list[dict]:
     ÷ ações por título (``acoes.valor_de_mercado_do_quote``), a convenção dos
     sites. A base da conta vai junto, em ``Acoes_Emitidas`` e
     ``Acoes_por_Titulo``, para o ``reprocess_metrics`` refazer com o preço do
-    armazém. ``LPA`` é o do título (``trailingEps``): o ``earningsPerShare``
-    do topo traz, na ação de companhia com unit, o LPA da unit.
+    armazém. ``LPA`` é o do título (``core.brapi.lpa_do_titulo``): o
+    ``earningsPerShare`` do topo traz, na ação de companhia com unit, o LPA da
+    unit. ``P/L`` é o preço do título ÷ esse LPA (``core.brapi.pl_do_titulo``),
+    não o ``priceEarnings`` da brapi, que usa o mesmo LPA da unit (TAEE3:
+    2,76 em vez de 8,4); assim P/L × LPA fecha com o preço.
 
     ``composicao``: o ``defaultKeyStatistics`` do quote completo mais novo,
     para o quote diário, que vem sem ele (``acoes.quote_com_composicao``).
-    Entra só na conta de ações."""
+    Entra na conta de ações e, pelo ``trailingEps``, para reconhecer no topo o
+    LPA da unit e convertê-lo por k (``core.brapi.lpa_do_titulo``); o LPA
+    dela, de outra data, nunca é gravado."""
     from data_pipeline.market import acoes as _ac
 
     tk = _ticker(quote)
@@ -627,6 +632,13 @@ def metric_rows(quote: dict, composicao: dict | None = None) -> list[dict]:
     unit = _ac.exige_k(_infer_asset_type(tk, quote), tk)
     q_acoes = _ac.quote_com_composicao(quote, composicao)
     dks = (quote or {}).get("defaultKeyStatistics") or {}
+    from core.brapi import lpa_do_titulo, pl_do_titulo
+    lpa_completo = ((q_acoes.get(_ac._COMPOSICAO_DO_COMPLETO) or {})
+                    .get("trailingEps"))
+    lpa = lpa_do_titulo(quote, lpa_completo)
+    pl, metodo_pl = pl_do_titulo(quote, lpa_completo)
+    if pl is None:
+        pl = _first(dks, ("trailingPE", "forwardPE"))
     fin = (quote or {}).get("financialData") or {}
     # DY trailing da própria brapi (consenso), quando serve: nunca na unit
     # (inconsistente lá: SAPR11 1,72% contra 6,4%) nem acima de 1,5x a soma
@@ -639,13 +651,13 @@ def metric_rows(quote: dict, composicao: dict | None = None) -> list[dict]:
         if not dy_da_brapi_serve(dy_spot, trailing_dy(quote), unit=unit):
             dy_spot = None
     cand = {
-        "P/L": _first(quote, ("priceEarnings",)) or _first(dks, ("trailingPE", "forwardPE")),
+        "P/L": pl,
         "P/VP": _first(dks, ("priceToBook",)),
         "EV/EBITDA": _first(dks, ("enterpriseToEbitda", "enterpriseValueEbitda")),
         "marketCap": _ac.valor_de_mercado_do_quote(q_acoes, unit=unit),
         "Acoes_Emitidas": _ac.acoes_emitidas(q_acoes),
         "Acoes_por_Titulo": _ac.acoes_por_titulo(q_acoes, unit=unit),
-        "LPA": _first(dks, ("trailingEps",)) or _first(quote, ("earningsPerShare",)),
+        "LPA": lpa,
         "ROE": _first(fin, ("returnOnEquity",)),
         "ROA": _first(fin, ("returnOnAssets",)),
         "Margem_Liquida": _first(fin, ("profitMargins",)),
@@ -659,7 +671,8 @@ def metric_rows(quote: dict, composicao: dict | None = None) -> list[dict]:
         rows.append({
             "ticker": tk, "period": "spot", "year": 0, "quarter": 0,
             "metric_name": name, "metric_value": float(val),
-            "calculation_method": _METODO_SPOT.get(name, "brapi_field"),
+            "calculation_method": (metodo_pl if name == "P/L"
+                                   else _METODO_SPOT.get(name, "brapi_field")),
             "source": "brapi.dev", "confidence_score": 80.0,
         })
     return rows

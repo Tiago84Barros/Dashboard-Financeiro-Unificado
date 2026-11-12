@@ -264,10 +264,97 @@ def trailing_dy(quote: dict, asof: datetime | None = None) -> float | None:
     return dy if 0 < dy <= 0.50 else None
 
 
+# O ``earningsPerShare`` do topo do quote, na ação de companhia com unit, é o
+# LPA da unit (TAEE3 em 12/11/2026: 4,718, o da TAEE11, contra 1,573 da ação),
+# e o ``priceEarnings`` da brapi é o preço ÷ esse LPA: 2,76 em vez de 8,4. Na
+# própria unit e na ação de companhia sem unit os dois coincidem com o
+# ``trailingEps``. Fora desta faixa, o LPA do topo é de outro título.
+LPA_TOPO_DESVIO_MAX = 1.5
+
+METODO_PL_DO_TITULO = "preco_sobre_lpa_do_titulo"
+METODO_PL_DA_BRAPI = "brapi_field"
+
+
+def _lpa_destoa(topo: float, ref: float) -> bool:
+    if topo <= 0 or ref <= 0:
+        return False
+    r = topo / ref
+    return not (1 / LPA_TOPO_DESVIO_MAX <= r <= LPA_TOPO_DESVIO_MAX)
+
+
+def _k_do_topo(topo, ref) -> int | None:
+    """k inteiro (≥ 2) quando o LPA do topo é o da unit e ``ref`` o da ação:
+    topo ≈ k × ref. None quando a razão não é um inteiro (±10%)."""
+    if topo is None or ref is None or not _lpa_destoa(topo, ref):
+        return None
+    r = topo / ref
+    k = round(r)
+    return k if k >= 2 and abs(r - k) <= 0.1 * k else None
+
+
+def _topo_de_outro_titulo(q: dict, lpa_do_completo) -> bool:
+    """True quando o ``earningsPerShare`` do topo destoa do LPA do título
+    (o do próprio quote ou, sem ele, o do quote completo mais novo)."""
+    topo = _to_float(q.get("earningsPerShare"))
+    dks = q.get("defaultKeyStatistics") or {}
+    ref = _to_float(dks.get("trailingEps")) if isinstance(dks, dict) else None
+    if ref is None:
+        ref = _to_float(lpa_do_completo)
+    return topo is not None and ref is not None and _lpa_destoa(topo, ref)
+
+
+def lpa_do_titulo(quote: dict, lpa_do_completo=None) -> float | None:
+    """LPA do título do quote (por unit na unit, por ação na ação).
+
+    1. ``defaultKeyStatistics.trailingEps`` do próprio quote;
+    2. sem ele (o quote diário vem sem o módulo), o ``earningsPerShare`` do
+       topo, o do próprio quote, quando não destoa mais de
+       ``LPA_TOPO_DESVIO_MAX`` do ``trailingEps`` do quote completo mais novo
+       (``lpa_do_completo``);
+    3. quando destoa por um k inteiro -- a assinatura do LPA da unit na ação
+       --, o do topo ÷ k: continua o número da data do quote, convertido;
+    4. destoando sem k inteiro, None. O LPA do completo, de outra data, nunca
+       entra no lugar."""
+    q = quote or {}
+    dks = q.get("defaultKeyStatistics") or {}
+    proprio = _to_float(dks.get("trailingEps")) if isinstance(dks, dict) else None
+    if proprio is not None:
+        return proprio
+    topo = _to_float(q.get("earningsPerShare"))
+    ref = _to_float(lpa_do_completo)
+    if topo is None or ref is None or not _lpa_destoa(topo, ref):
+        return topo
+    k = _k_do_topo(topo, ref)
+    return topo / k if k else None
+
+
+def pl_do_titulo(quote: dict, lpa_do_completo=None) -> tuple[float | None, str]:
+    """(P/L do título, método): preço ÷ ``lpa_do_titulo`` quando os dois são
+    positivos, para P/L × LPA fechar com o preço.
+
+    Sem preço ou com LPA ≤ 0 cai no ``priceEarnings`` da brapi, salvo quando
+    o ``earningsPerShare`` do topo, base dele, destoa do LPA do título: aí o
+    ``priceEarnings`` é de outro título e não entra."""
+    q = quote or {}
+    lpa = lpa_do_titulo(q, lpa_do_completo)
+    preco = _to_float(q.get("regularMarketPrice"))
+    if preco is not None and preco > 0 and lpa is not None and lpa > 0:
+        return preco / lpa, METODO_PL_DO_TITULO
+    pe = _to_float(q.get("priceEarnings"))
+    if pe is None or _topo_de_outro_titulo(q, lpa_do_completo):
+        return None, METODO_PL_DA_BRAPI
+    return pe, METODO_PL_DA_BRAPI
+
+
 def current_fundamentals(quote: dict) -> dict[str, float]:
-    """Indicadores atuais corroboráveis pela brapi (escala BD: % em decimal)."""
+    """Indicadores atuais corroboráveis pela brapi (escala BD: % em decimal).
+
+    P/L é o do título (``pl_do_titulo``), não o ``priceEarnings`` cru, que na
+    ação de companhia com unit usa o LPA da unit. O quote precisa trazer o
+    ``defaultKeyStatistics`` para a ação ter o LPA dela (``data_healing`` o
+    pede)."""
     out: dict[str, float] = {}
-    pl = _to_float((quote or {}).get("priceEarnings"))
+    pl, _ = pl_do_titulo(quote)
     if pl is not None:
         out["P/L"] = pl
     dy = trailing_dy(quote)
