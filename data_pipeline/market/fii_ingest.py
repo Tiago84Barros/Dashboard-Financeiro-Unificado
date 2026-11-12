@@ -2204,8 +2204,12 @@ def backfill_metrics_monthly(years: int = 3) -> dict:
     """
     Série MENSAL de fundamentos do FII (VPA/PL/cotistas/DY/composição) a partir do
     Informe Mensal da CVM dos últimos `years` anos -> market.fii_metrics_monthly.
-    Casa por CNPJ com market.fiis (só grava tickers conhecidos). VPA mensal + preço
-    bruto (market.historical_prices) dão o P/VP histórico na leitura. Idempotente.
+    Casa por CNPJ com market.fiis (só grava tickers conhecidos). O P/VP histórico
+    sai na leitura: fechamento do mês na fita da B3 ÷ VPA mensal. Idempotente.
+
+    Sem nenhum ano lido da CVM devolve ``erros = -1`` (o runner sai com 1): a
+    etapa roda na cadeia noturna, e "CVM fora do ar" não pode carimbar a série
+    como renovada.
     """
     from datetime import datetime, timezone
 
@@ -2239,6 +2243,11 @@ def backfill_metrics_monthly(years: int = 3) -> dict:
             for rec in series:
                 out.append({"ticker": tk, **rec})
     prog["linhas"] = len(out)
+    if not prog["anos"]:
+        prog["erros"] = -1
+        prog["motivo"] = "informe mensal da CVM indisponivel em todos os anos pedidos"
+        logger.warning("market/fii backfill_metrics_monthly: %s", prog)
+        return prog
     if out:
         with engine.begin() as conn:
             prog["gravados"] = repo.upsert(conn, "fii_metrics_monthly", out)

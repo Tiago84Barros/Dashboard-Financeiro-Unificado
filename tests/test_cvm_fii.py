@@ -61,8 +61,8 @@ def _build_informe_zip(year: int) -> bytes:
     complemento = (
         "CNPJ_Fundo_Classe;Data_Referencia;Patrimonio_Liquido;"
         "Valor_Patrimonial_Cotas;Total_Numero_Cotistas;Percentual_Dividend_Yield_Mes\n"
-        f"{cnpj};{year}-01-31;1000000,00;100,50;5000;0,80\n"
-        f"{cnpj};{year}-02-29;1010000,00;101,00;5100;0,75\n"
+        f"{cnpj};{year}-01-31;1000000,00;100,50;5000;0.008\n"
+        f"{cnpj};{year}-02-29;1010000,00;101,00;5100;0.0075\n"
     )
     ativo = (
         "CNPJ_Fundo_Classe;Data_Referencia;Valor_Ativo;"
@@ -90,11 +90,41 @@ def test_parse_informe_monthly():
     assert jan["vpa"] == 100.50
     assert fev["vpa"] == 101.00
     assert jan["num_cotistas"] == 5000
+    # a CVM entrega fracao (0.008 = 0,8% ao mes), nao percentual
     assert jan["dy_patrimonial_mes"] == 0.008
     assert fev["dy_patrimonial_mes"] == 0.0075
     # composição muda mês a mês (imóveis 900 -> 800)
     assert jan["pct_imoveis"] == 0.9
     assert fev["pct_imoveis"] == 0.8
+
+
+def test_rendimento_do_informe_e_fracao_e_nao_e_dividido_por_100():
+    # Valores do arquivo real da CVM (HGLG11, 2026): 0.007052 = 0,7052% ao mes.
+    # De 07 a 11/2026 o leitor dividia por 100 e gravava 0,0000705.
+    assert cf._bounded_ratio("0.007052") == 0.007052
+    assert cf._bounded_ratio("0,007052") == 0.007052
+    assert cf._bounded_ratio(0.2) == 0.2
+    # fora da faixa nao e dado: negativo, acima de 20% ao mes, ou o fundo que
+    # preenche em percentual (0,80), que nao da para distinguir de 80%
+    assert cf._bounded_ratio("-0.000976") is None
+    assert cf._bounded_ratio("0,80") is None
+    assert cf._bounded_ratio("10.19") is None
+    assert cf._bounded_ratio("") is None and cf._bounded_ratio(None) is None
+
+
+def test_foto_e_serie_mensal_leem_o_rendimento_na_mesma_unidade():
+    # parse_informe (foto do ultimo mes) e parse_informe_monthly (serie) sao
+    # gemeos: a mesma coluna, a mesma unidade.
+    buf = io.BytesIO(_build_informe_zip(2024))
+    with zipfile.ZipFile(buf, "a") as zf:
+        zf.writestr("inf_mensal_fii_geral_2024.csv", (
+            "CNPJ_Fundo_Classe;Data_Referencia;Nome_Fundo_Classe\n"
+            "11.728.688/0001-47;2024-01-31;FUNDO TESTE\n"
+            "11.728.688/0001-47;2024-02-29;FUNDO TESTE\n").encode("latin-1"))
+    data = buf.getvalue()
+    foto = cf.parse_informe(data, 2024)["11728688000147"]
+    serie = cf.parse_informe_monthly(data, 2024)["11728688000147"]
+    assert foto["dy_patrimonial_mes"] == serie[-1]["dy_patrimonial_mes"] == 0.0075
 
 
 def _df(rows):

@@ -47,6 +47,26 @@ def test_recusa_serie_velha_e_aceita_em_dia():
     assert pub.serie_velha(pub.montar_payload([], [], AGORA), AGORA.date())
 
 
+def test_foto_do_score_sem_vpa_nao_renova_a_serie():
+    # A tabela recebe duas escritas: o informe da CVM (VPA) e a foto mensal do
+    # score (sem VPA). Com a CVM parada em 05/2026, as fotos de 07 a 10/2026
+    # faziam a guarda medir o mes da foto e publicar a serie parada como atual.
+    met = [_metrica("A11", date(2026, 5, 1))] + [
+        _metrica("A11", date(2026, m, 1), vpa=None) for m in (7, 8, 9, 10)]
+    p = pub.montar_payload(met, [], AGORA)
+    assert p["base_ate"] == "2026-05-01"
+    assert p["n_linhas"] == 5                # as fotos seguem no arquivo
+    assert "2026-05-01" in pub.serie_velha(p, AGORA.date())
+    # VPA zero ou negativo tambem nao e informe aproveitavel
+    zerado = pub.montar_payload(
+        [_metrica("A11", date(2026, 5, 1)), _metrica("A11", date(2026, 9, 1), vpa=0.0)],
+        [], AGORA)
+    assert zerado["base_ate"] == "2026-05-01"
+    # so fotos, nenhum VPA: nao ha serie a publicar
+    so_foto = pub.montar_payload([_metrica("A11", date(2026, 10, 1), vpa=None)], [], AGORA)
+    assert so_foto["base_ate"] is None and pub.serie_velha(so_foto, AGORA.date())
+
+
 def test_serializacao_e_deterministica(tmp_path):
     p = pub.montar_payload([_metrica("A11", date(2026, 9, 1))], [], AGORA)
     a, b = tmp_path / "a.json.gz", tmp_path / "b.json.gz"

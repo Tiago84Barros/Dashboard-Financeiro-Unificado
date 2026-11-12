@@ -2,10 +2,11 @@
 
 Lê o armazém local (Docker ``dfu_warehouse``), só leitura. O Supabase passou
 dos 500 MB e estourou a cota de egress (restrição em 14/10/2026), então a
-``market.fii_metrics_monthly`` de lá parou em 05/2026 enquanto o armazém
-estava em dia (9.016 linhas, 325 fundos, até 10/2026, ~1,4 MB). O app lê este
-arquivo primeiro (``core.market_read.load_fii_metrics_mensal``) e só cai no
-Supabase para o fundo que o arquivo não traz.
+``market.fii_metrics_monthly`` de lá parou em 05/2026. O armazém é renovado
+toda noite pela etapa ``fiis-metrics`` da cadeia de FIIs (informe mensal da
+CVM; em 12/11/2026: 28.766 linhas, 1.069 fundos, VPA até 09-10/2026). O app lê
+este arquivo primeiro (``core.market_read.load_fii_metrics_mensal``) e só cai
+no Supabase para o fundo que o arquivo não traz.
 
 Por fundo, uma lista de meses com as colunas de ``COLUNAS`` e, junto,
 ``fechamento``: o fechamento do último pregão do mês na fita oficial da B3
@@ -15,9 +16,13 @@ de antes, só que com o preço lido do armazém em vez do Supabase. Mês sem
 fechamento na fita fica com ``null`` e o P/VP sai nulo (nunca herda preço
 ajustado por split).
 
-Recusa publicar (saída 1) se o último mês da série tiver mais de
+Recusa publicar (saída 1) se o último mês COM VPA tiver mais de
 ``SERIE_MAXIMA_DIAS`` dias: renovar ``gerado_em`` sobre série parada faria o
-arquivo parecer em dia.
+arquivo parecer em dia. O mês que conta é o do informe da CVM, não o de
+qualquer linha: a tabela também recebe a foto mensal do score (preço, P/VP,
+DY, sem VPA), que nasce todo mês. Até 12/11/2026 a guarda media o último mês
+de qualquer linha, e essas fotos fizeram a série parada em 05/2026 passar por
+atual durante cinco meses.
 """
 from __future__ import annotations
 
@@ -84,7 +89,10 @@ def _mes(d) -> str:
 def montar_payload(metricas: list[dict], fechamentos: list[dict],
                    agora: datetime) -> dict:
     """Puro. ``metricas``: linhas de fii_metrics_monthly; ``fechamentos``:
-    ticker, mes (data qualquer do mês), close."""
+    ticker, mes (data qualquer do mês), close.
+
+    ``base_ate`` é o último mês em que algum fundo tem VPA positivo -- o
+    alcance do informe da CVM. Linha só com a foto do score não o avança."""
     fech = {(str(r["ticker"]).strip().upper(), _mes(r["mes"])): _num(r["close"])
             for r in fechamentos}
     por_ticker: dict[str, list] = {}
@@ -94,7 +102,9 @@ def montar_payload(metricas: list[dict], fechamentos: list[dict],
         mes = r["ref_month"]
         if mes is None:
             continue
-        ultimo = mes if ultimo is None or mes > ultimo else ultimo
+        vpa = _num(r["vpa"])
+        if vpa is not None and vpa > 0 and (ultimo is None or mes > ultimo):
+            ultimo = mes
         por_ticker.setdefault(tk, []).append([
             _mes(mes), _num(r["vpa"]), _num(r["patrimonio_liquido"], 2),
             None if r["num_cotistas"] is None else int(r["num_cotistas"]),
@@ -116,11 +126,12 @@ def serie_velha(payload: dict, hoje: date) -> str | None:
     """Motivo da recusa, ou ``None`` se a série está em dia."""
     base = payload.get("base_ate")
     if not base:
-        return "armazém sem nenhuma linha em market.fii_metrics_monthly"
+        return "armazém sem nenhum mês com VPA em market.fii_metrics_monthly"
     idade = (hoje - date.fromisoformat(base)).days
     if idade > SERIE_MAXIMA_DIAS:
-        return (f"último mês da série é {base} ({idade} dias); limite "
-                f"{SERIE_MAXIMA_DIAS}. Rodar a ingestão de FIIs antes.")
+        return (f"último mês com VPA é {base} ({idade} dias); limite "
+                f"{SERIE_MAXIMA_DIAS}. Rodar `run_market_ingest.py fiis-metrics "
+                f"--warehouse` antes.")
     return None
 
 
@@ -164,6 +175,10 @@ def main(argv=None) -> int:
     relatorio["linhas_sem_fechamento"] = sum(
         1 for v in payload["por_ticker"].values() for linha in v
         if linha[-1] is None)
+    relatorio["fundos_no_ultimo_mes"] = sum(
+        1 for v in payload["por_ticker"].values()
+        if any(linha[0] == payload["base_ate"] and (linha[1] or 0) > 0
+               for linha in v))
     motivo = serie_velha(payload, agora.date())
     if motivo:
         relatorio["erro"] = motivo
