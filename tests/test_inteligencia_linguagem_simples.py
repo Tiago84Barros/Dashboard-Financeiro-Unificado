@@ -6,12 +6,14 @@ sem sigla solta, sem repetir os cartões de cima nem um número já dito, e o
 texto técnico continua o mesmo para as LLMs.
 """
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
 from core.inteligencia_ativos import avaliacao as av
 from core.inteligencia_ativos import fundamentos as f
 from core.inteligencia_ativos import linguagem_simples as ls
+from core.inteligencia_ativos import recomendacao as rec
 from core.inteligencia_ativos import resumida as rs
 from core.inteligencia_ativos import secoes
 from tests.test_inteligencia_ativos_adequacao import _analise, _ctx, _pos
@@ -157,3 +159,42 @@ def test_estilo_da_tela_so_usa_tokens_e_cabe_num_markdown():
     assert _sem_cor_literal(tela.CSS)
     assert "\n" not in tela.CSS
     assert tela.CSS.startswith("<style>") and tela.CSS.endswith("</style>")
+
+
+def test_venda_forcada_por_alerta_do_balanco_nao_tem_certeza_baixa(an):
+    """Venda por alerta eliminatório confirmado no balanço: a regra diz que
+    nenhum ponto bom compensa, então o preço normal não divide a decisão
+    nem a deixa com certeza baixa (12/11/2026)."""
+    a = _taee(an)
+    d = rs.decisao(a, _sug(4.1))
+    cv = ls.conversar(a, d, _sug(4.1))
+    assert d.codigo == rs.VENDER
+    assert d.conviccao == rec.MODERADA and ls.CERTEZA[d.conviccao] == "Média"
+    assert d.conviccao_sustentada == rs.MOTIVO_PISO_ALERTA
+    assert "elevada a moderada" in d.porque_conviccao
+    assert cv.certeza_curta == "o alerta grave pesa mais que o resto"
+    # os sinais contra continuam visíveis na balança
+    assert d.sinais_contra
+
+
+def test_piso_sobe_o_grau_e_o_teto_prevalece():
+    lidas = SimpleNamespace(qualidade=av.FORTE, preco=av.JUSTO,
+                            mercado=av.POSITIVO)
+    c = rec.conviccao(["a"], ["b", "c"], lidas)
+    assert c.grau == rec.BAIXA and not c.sustentada
+    c = rec.conviccao(["a"], ["b", "c"], lidas, piso=rec.MODERADA,
+                      motivo_piso="m")
+    assert c.grau == rec.MODERADA and c.sustentada == "m"
+    # o teto vem depois e prevalece; piso que não subiu nada não aparece
+    c = rec.conviccao(["a", "b"], [], lidas, teto=rec.MODERADA,
+                      motivo_teto="t", piso=rec.MODERADA, motivo_piso="m")
+    assert c.grau == rec.MODERADA and c.limitada == "t" and not c.sustentada
+
+
+def test_alerta_so_do_noticiario_nao_ganha_piso(an):
+    a = _taee(an)
+    avl = av.avaliar(a)
+    avl = replace(avl, alertas=tuple(replace(x, noticia=True) if x.critico
+                                     else x for x in avl.alertas))
+    d = rs.decisao(a, _sug(4.1), avl)
+    assert d.codigo == rs.ACOMPANHAR and not d.conviccao_sustentada

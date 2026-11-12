@@ -836,7 +836,7 @@
             {
               "nome": "Quanto pesa hoje · Tamanho ideal · O que fazer · Certeza",
               "resumo": "Peso hoje, peso ideal, a ação e o grau de certeza",
-              "explicacao": "Quatro números lado a lado: o peso hoje, o tamanho ideal, o que fazer (manter, comprar, acompanhar, rebalancear, reduzir parcialmente, vender ou substituir) e a certeza (alta, média ou baixa), cada um com uma linha curta em linguagem simples (por exemplo, 'dívida alta demais' ou 'faltam 2,7 pontos'). Num ativo em queda, a ação que venderia é revista antes de aparecer: se nenhum fundamento piorou, a tela não sugere vender na queda (rebalancear pelos aportes ou manter); se piorou, sugere vender em etapas, cerca de 1/3 por vez, salvo alerta grave confirmado no balanço.",
+              "explicacao": "Quatro números lado a lado: o peso hoje, o tamanho ideal, o que fazer (manter, comprar, acompanhar, rebalancear, reduzir parcialmente, vender ou substituir) e a certeza (alta, média ou baixa), cada um com uma linha curta em linguagem simples (por exemplo, 'dívida alta demais' ou 'faltam 2,7 pontos'). Num ativo em queda, a ação que venderia é revista antes de aparecer: se nenhum fundamento piorou, a tela não sugere vender na queda (rebalancear pelos aportes ou manter); se piorou, sugere vender em etapas, cerca de 1/3 por vez, salvo alerta grave confirmado no balanço. Essa venda por alerta grave nunca aparece com certeza baixa: nenhum ponto bom compensa o alerta, então o preço normal não divide a decisão.",
               "so_admin": false,
               "fonte": "views/inteligencia_ativos_resumida.py:135",
               "filhos": []
