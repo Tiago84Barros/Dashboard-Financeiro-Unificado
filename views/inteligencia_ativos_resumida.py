@@ -12,6 +12,12 @@ sair, dois pares numa tabela, o papel na carteira, notícias, relatórios e o
 que do macro pesa. O detalhe completo
 (13 etapas e Portfolio Fit) segue na aba, sob "Análise detalhada".
 
+Linguagem (12/11/2026, pedido do usuário): a caixa conversa com o
+investidor iniciante. Os cartões de cima e a conversa saem de
+core/inteligencia_ativos/linguagem_simples.py; o texto técnico (justificativa,
+alertas, condições, limitações e a avaliação por dimensão) continua inteiro,
+num bloco recolhido "Ver a análise técnica completa" no fim da caixa.
+
 Os cartões saem num st.markdown só e só usam tokens var(--app-*).
 Dados: core/inteligencia_ativos/resumida.py (puro).
 """
@@ -23,6 +29,7 @@ import streamlit as st
 
 from core.inteligencia_ativos import avaliacao as av_
 from core.inteligencia_ativos import destaques_relatorios as dr
+from core.inteligencia_ativos import linguagem_simples as ls
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import pares as prs
 from core.inteligencia_ativos import resumida as rs
@@ -132,12 +139,19 @@ def rotulo_expander(a: m.AnaliseAtivo,
     return f"{a.ativo.ticker} · {peso} · {d.rotulo}"
 
 
+ROTULOS_POSICAO = ("Quanto pesa hoje", "Tamanho ideal", "O que fazer",
+                   "Certeza")
+
+
 def cartao_posicao(a: m.AnaliseAtivo,
                    sugerido: rs.AlvoSugerido | None = None,
                    avaliacao: av_.Avaliacao | None = None,
-                   d: rs.Decisao | None = None) -> str:
-    """% atual, % devida, a ação sugerida e o grau de convicção. Puro."""
+                   d: rs.Decisao | None = None,
+                   conversa: ls.Conversa | None = None) -> str:
+    """Quanto pesa hoje, o tamanho ideal, o que fazer e com quanta certeza,
+    em linguagem simples. Puro."""
     d = d if d is not None else rs.decisao(a, sugerido, avaliacao)
+    cv = conversa if conversa is not None else ls.conversar(a, d, sugerido)
     devido = rs.peso_devido(a, sugerido)
     cor = _COR_DECISAO[d.codigo]
 
@@ -148,18 +162,82 @@ def cartao_posicao(a: m.AnaliseAtivo,
                 f'color:var(--app-text);{estilo}">{escape(valor)}</div>'
                 f'<div style="font-size:0.78rem;color:var(--app-subtle)">'
                 f'{escape(detalhe)}</div></div>')
+    hoje, ideal, fazer, certeza = ROTULOS_POSICAO
     return (
         f'<div style="{_CAIXA}"><div style="display:flex;gap:14px;'
         f'flex-wrap:wrap">'
-        + _kpi("Porcentagem atual", _pct(a.ativo.peso_atual),
+        + _kpi(hoje, _pct(a.ativo.peso_atual),
                _moeda(a.ativo.valor_mercado, a.ativo.moeda))
-        + _kpi("Porcentagem devida", devido.valor, devido.detalhe)
-        + _kpi("Ação sugerida", d.rotulo, d.detalhe, f"color:{cor}")
-        + _kpi("Convicção", d.rotulo_conviccao, d.porque_conviccao)
-        + "</div>"
-        + (f'<div style="font-size:0.82rem;color:var(--app-muted);'
-           f'margin-top:6px">{escape(d.motivo)}</div>' if d.motivo else "")
-        + _nota(rs.AVISO_DECISAO) + "</div>")
+        + _kpi(ideal, devido.valor, cv.devida_curta)
+        + _kpi(fazer, d.rotulo, cv.acao_curta, f"color:{cor}")
+        + _kpi(certeza, ls.CERTEZA[d.conviccao], cv.certeza_curta)
+        + "</div></div>")
+
+
+def _paragrafos(frases) -> str:
+    return "".join(f'<p style="margin:2px 0 6px;font-size:0.9rem;'
+                   f'line-height:1.5;color:var(--app-text)">{escape(f)}</p>'
+                   for f in frases if f)
+
+
+_COR_TOM = {1: "var(--app-primary)", -1: "var(--app-danger)",
+            0: "var(--app-muted)"}
+
+
+def _bloco_leitura(lt: ls.Leitura) -> str:
+    frases = "".join(
+        f'<li style="margin:2px 0">{escape(f)}</li>' for f in lt.frases)
+    return (f'<div style="border:1px solid var(--app-border);border-radius:8px;'
+            f'padding:8px 10px;background:var(--app-surface-raised)">'
+            f'<div style="{_SUB};margin-top:0">{escape(lt.rotulo)}</div>'
+            f'<div style="font-size:1rem;font-weight:700;'
+            f'color:{_COR_TOM[lt.tom]}">{escape(lt.leitura.capitalize())}</div>'
+            + (f'<ul style="margin:4px 0 0 16px;padding:0;font-size:0.84rem;'
+               f'color:var(--app-text)">{frases}</ul>' if frases else "")
+            + "</div>")
+
+
+def cartao_conversa(cv: ls.Conversa) -> str:
+    """A recomendação em linguagem simples, sem repetir os cartões de cima:
+    por quê, o que eu vi, na prática, a favor e contra e o que mudaria.
+    Seção sem conteúdo não aparece. Puro."""
+    partes = [_secao("Por quê"), _paragrafos(cv.porque)]
+    if cv.leituras:
+        partes += [_secao("O que eu vi"),
+                   '<div style="display:grid;grid-template-columns:repeat('
+                   'auto-fill,minmax(220px,1fr));gap:8px">'
+                   + "".join(_bloco_leitura(x) for x in cv.leituras)
+                   + "</div>"]
+    for titulo, itens in (("Na prática", cv.pratica),
+                          ("A favor e contra", cv.pesos),
+                          ("O que mudaria a sugestão", cv.mudaria)):
+        if itens:
+            partes += [_secao(titulo), _itens(itens)]
+    html = f'<div style="{_CAIXA}">{"".join(partes)}</div>'
+    if cv.investigar:
+        html += (f'<div style="{_CAIXA}border-left:3px solid '
+                 f'var(--app-warning);">{_secao(TITULO_INVESTIGAR)}'
+                 f'{_itens(cv.investigar)}</div>')
+    return html
+
+
+TITULO_INVESTIGAR = "Vale conferir"
+
+
+def bloco_tecnico(d: rs.Decisao, av: av_.Avaliacao) -> str:
+    """O texto técnico de sempre (motivo, alertas, justificativa, condições,
+    limitações e a avaliação por dimensão), recolhido. O aviso de
+    metodologia (``rs.AVISO_DECISAO``) fica só para as LLMs: na tela ele
+    cansava sem informar (pedido do usuário, 12/11/2026). Puro."""
+    motivo = (f'<div style="{_CAIXA}"><div style="font-size:0.84rem;'
+              f'color:var(--app-text)">{escape(d.motivo)}</div></div>'
+              if d.motivo else "")
+    corpo = (motivo + cartao_alertas(d) + cartao_recomendacao(d)
+             + cartao_avaliacao(av))
+    return ('<details style="margin:8px 0"><summary style="cursor:pointer;'
+            'color:var(--app-muted);font-size:0.85rem">Ver a análise técnica '
+            'completa</summary>'
+            f'{corpo}</details>')
 
 
 def _itens(itens) -> str:
@@ -334,7 +412,10 @@ def _bloco_metrica(mt: rs.MetricaPares) -> str:
         f'solid var(--app-border);border-radius:8px;padding:8px 10px;'
         f'background:var(--app-surface-raised)">'
         f'<div style="{_SUB};margin-top:0">{escape(mt.rotulo)}</div>'
-        f'<div style="display:flex;align-items:baseline;gap:8px;'
+        + (f'<div style="font-size:0.74rem;color:var(--app-muted);'
+           f'margin-top:-2px">{escape(ls.O_QUE_MEDE[mt.chave])}</div>'
+           if mt.chave in ls.O_QUE_MEDE else "")
+        + f'<div style="display:flex;align-items:baseline;gap:8px;'
         f'flex-wrap:wrap"><span style="font-size:1.15rem;font-weight:700;'
         f'color:var(--app-text)">{escape(mt.texto_ativo)}</span>'
         f'<span style="font-size:0.75rem;color:var(--app-muted)">'
@@ -663,16 +744,17 @@ def _render_ativo(a: m.AnaliseAtivo, ctx: m.ContextoInvestidor,
                   sugerido: rs.AlvoSugerido | None = None) -> None:
     av = av_.avaliar(a)
     d = rs.decisao(a, sugerido, av, na_carteira=na_carteira, ctx=ctx)
+    cv = ls.conversar(a, d, sugerido)
     with st.expander(rotulo_expander(a, sugerido, av, d)):
-        html = (cartao_posicao(a, sugerido, av, d) + cartao_alertas(d)
-                + cartao_recomendacao(d))
+        html = cartao_posicao(a, sugerido, av, d, cv) + cartao_conversa(cv)
         if d.codigo in (rs.VENDER, rs.SUBSTITUIR):
             html += cartao_substitutos(rs.substitutos(a, na_carteira))
-        html += (cartao_avaliacao(av) + cartao_pares(rs.tabela_pares(a)) + cartao_papel(a)
+        html += (cartao_pares(rs.tabela_pares(a)) + cartao_papel(a)
                  + cartao_noticias(a, _noticiario_geral()
                                    if rs.precisa_noticiario_geral(a) else None)
                  + cartao_relatorios(a, _destaques(a.ativo.ticker))
-                 + cartao_macro(rs.macro(a, ctx), _impacto_fit(a)))
+                 + cartao_macro(rs.macro(a, ctx), _impacto_fit(a))
+                 + bloco_tecnico(d, av))
         st.markdown(html, unsafe_allow_html=True)
         st.button("Ver análise completa", key=f"ia_resumo_{a.ativo.ticker}",
                   on_click=_abrir_detalhe, args=(a.ativo.ticker,))

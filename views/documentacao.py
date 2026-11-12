@@ -2648,6 +2648,11 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
                 "'Meu cenário' saiu",
                 "A análise é refeita depois de 15 minutos, o mesmo prazo das fontes",
                 "Cada foto é gravada no histórico, que não aparece na tela",
+                "Cada caixa conversa em linguagem simples (core/inteligencia_ativos/"
+                "linguagem_simples.py, 12/11/2026), curta e sem repetir os números de cima: por "
+                "quê, o que foi visto na empresa, no preço e na bolsa, na prática, a favor e "
+                "contra e o que mudaria a sugestão; o texto técnico, o mesmo que vai às LLMs, "
+                "fica recolhido em 'Ver a análise técnica completa'",
             ),
             "A primeira pergunta é 'como está a minha carteira?'. O resumo responde isso de "
             "cara; o detalhe fica fechado até ser pedido.",

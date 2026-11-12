@@ -155,9 +155,14 @@ def test_aba_mostra_resumo_cartoes_e_abre_a_analise(_historico_em_memoria):
     assert not app.exception
     htmls = [md.value for md in app.markdown]
     assert any("Patrimônio total" in h for h in htmls)
-    cartoes = [h for h in htmls if "Ação sugerida" in h
-               and "Porcentagem devida" in h]
+    cartoes = [h for h in htmls if "O que fazer" in h
+               and "Tamanho ideal" in h]
     assert len(cartoes) == 2
+    # a conversa vem primeiro; o texto técnico continua, recolhido
+    assert all("Por quê" in h and "Recomendação por regras" not in h
+               for h in cartoes)
+    assert all("<details" in h and "Ver a análise técnica completa" in h
+               for h in cartoes)
     # a primeira visita grava a foto de cada ativo e a da carteira
     guardado = hist.ler(_historico_em_memoria["extra"])
     assert set(guardado) == {"HGLG11", "TAEE11", hist.CARTEIRA}
