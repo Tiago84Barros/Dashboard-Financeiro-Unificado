@@ -149,10 +149,11 @@ def compute_snapshot(f: dict) -> dict[str, tuple[float, str]]:
     return out
 
 
-# Múltiplos de valuation por ANO derivados de ações em circulação ATUAIS
-# (não temos ações históricas) — aproximação válida em janelas curtas; recebem
-# confiança menor. Fundamentais (margens/ROE/ROA/ROIC/Endiv/Liquidez) e DY são
-# exatos das demonstrações/preço e mantêm confiança cheia.
+# Múltiplos de valuation por ANO cujas ações vêm de lucro ÷ LPA. Quando a guarda
+# de `acoes.acoes_e_lpa_do_ano` aprova as ações, o múltiplo é exato
+# (low_conf=None). Esta lista é o que recebe confiança menor se um chamador
+# marcar o ano como aproximado. Fundamentais (margens, ROE, ROA, ROIC, Endiv,
+# Liquidez) e DY não dependem das ações e mantêm a confiança cheia.
 ANNUAL_APPROX = frozenset({"P/L", "P/VP", "EV_EBIT", "P_FCO", "Payout"})
 
 

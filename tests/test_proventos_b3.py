@@ -395,17 +395,24 @@ def test_eventos_do_armazem_partilha_como_a_leitura(monkeypatch):
 
     def _read_sql_query(sql, conn, params=None):
         pedidos["sql"], pedidos["params"] = str(sql), params
-        return pd.DataFrame([_linha_banco("BBBB4", 0.5, "2024-12-10", "2025-01-10")])
+        return pd.DataFrame([
+            _linha_banco("BBBB4", 0.5, "2024-12-10", "2025-01-10"),
+            # AAAA3 tem foto: o ano que ela cobre fica com ela...
+            _linha_banco("AAAA3", 9.0, "2024-06-10", "2024-07-10"),
+            # ...e o ano que ela perdeu volta do banco.
+            _linha_banco("AAAA3", 0.7, "2021-06-10", "2021-07-10"),
+        ])
 
     monkeypatch.setattr(pd, "read_sql_query", _read_sql_query)
 
     ev = pb.eventos_do_armazem(_Conn())
 
-    assert pedidos["params"] == {"cobertos": ["AAAA3"]}
-    assert "NOT (upper(d.ticker) = ANY(:cobertos))" in pedidos["sql"]
+    # O banco é lido inteiro e partilhado aqui (anos_que_a_foto_nao_tem).
+    assert not pedidos["params"]
     assert "foto_em" not in ev.columns
-    assert _anos(soma_por_ano(ev), "AAAA3") == {2023: 0.1, 2024: 1.4}
+    assert _anos(soma_por_ano(ev), "AAAA3") == {2021: 0.7, 2023: 0.1, 2024: 1.4}
     assert _anos(soma_por_ano(ev), "BBBB4") == {2025: 0.5}
+    assert ev.attrs["anos_do_banco"] == 1
 
 
 # --------------------------------------------------------------------------

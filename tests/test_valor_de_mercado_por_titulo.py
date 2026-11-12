@@ -143,17 +143,18 @@ def test_reprocess_acao_sem_acoes_mantem_os_reservas():
 
 def test_reprocess_acoes_do_ano_da_unit_sao_por_unit():
     # lucro / LPA por ação = ações emitidas; o título é a unit, que carrega 3.
-    acoes, lpa = ig._acoes_e_lpa_do_ano(lucro=3_000.0, lpa=1.0, por_titulo=3.0,
-                                        acoes_atuais=1_000.0)
+    acoes, lpa, base = ac.acoes_e_lpa_do_ano(lucro=3_000.0, lpa=1.0, por_titulo=3.0,
+                                             acoes_atuais=1_000.0)
     assert acoes == pytest.approx(1_000.0)
     assert lpa == pytest.approx(3.0)
+    assert base == ac.BASE_DA_EPOCA
     # Ação: inalterado.
-    acoes, lpa = ig._acoes_e_lpa_do_ano(lucro=3_000.0, lpa=1.0, por_titulo=1.0,
-                                        acoes_atuais=3_000.0)
+    acoes, lpa, _ = ac.acoes_e_lpa_do_ano(lucro=3_000.0, lpa=1.0, por_titulo=1.0,
+                                          acoes_atuais=3_000.0)
     assert (acoes, lpa) == (pytest.approx(3_000.0), 1.0)
-    # Guarda 0,2–5x das ações atuais continua valendo.
-    assert ig._acoes_e_lpa_do_ano(lucro=3_000.0, lpa=0.01, por_titulo=1.0,
-                                  acoes_atuais=3_000.0) == (None, None)
+    # Teto de 5x as ações atuais continua valendo.
+    assert ac.acoes_e_lpa_do_ano(lucro=3_000.0, lpa=0.01, por_titulo=1.0,
+                                 acoes_atuais=3_000.0) is None
 
 
 # ── caminho 3: publish_valuation_historico ────────────────────────────────────
@@ -617,6 +618,8 @@ def _reprocess(monkeypatch, spot, tipo="unit"):
     monkeypatch.setattr(ig, "_engine", lambda: _Engine(_Conn(spot, tipo)))
     monkeypatch.setattr(ac_cot, "tabela_existe", lambda conn: True)
     monkeypatch.setattr(ac_cot, "preco_atual", lambda conn, tk, existe=True: (30.0, 30.0))
+    monkeypatch.setattr(ac_cot, "fita_existe", lambda conn: False)
+    monkeypatch.setattr(ig, "_eventos_de_renda", lambda conn: ({}, "fake"))
     return ig.reprocess_metrics(["XPTO11"]), fake
 
 
