@@ -194,6 +194,39 @@ def test_metric_rows_dy_spot_guard():
     assert by["DY"] == 0.16
 
 
+def test_metric_rows_dy_spot_da_unit_nunca_entra():
+    """SAPR11 (k = 5, 12/11/2026): a brapi dava 1,72% para a unit que pagou
+    1,96 sobre 30,85 (6,4%). A trava de 1,5x só olha o lado inflado; na unit
+    o DY da brapi não entra nem baixo nem coerente."""
+    q = {"symbol": "SAPR11", "regularMarketPrice": 30.85,
+         "defaultKeyStatistics": {"dividendYield": 0.0172},
+         "dividendsData": {"cashDividends": [
+             {"paymentDate": "2026-06-19T03:00:00.000Z",
+              "lastDatePrior": "2026-06-10T03:00:00.000Z",
+              "rate": 1.96, "label": "DIVIDENDO", "remarks": ""},
+         ]}}
+    by = {r["metric_name"]: r["metric_value"] for r in nz.metric_rows(q)}
+    assert "DY" not in by
+    q["defaultKeyStatistics"]["dividendYield"] = 0.064
+    by = {r["metric_name"]: r["metric_value"] for r in nz.metric_rows(q)}
+    assert "DY" not in by
+    # o mesmo número na ação ordinária (fora da unit) é mantido
+    q["symbol"] = "SAPR3"
+    by = {r["metric_name"]: r["metric_value"] for r in nz.metric_rows(q)}
+    assert by["DY"] == 0.064
+
+
+def test_dy_da_brapi_serve_regra_unica():
+    from data_pipeline.market.metrics import dy_da_brapi_serve as serve
+    assert serve(0.069, 0.07, unit=False)
+    assert serve(0.0172, 0.064, unit=False)        # over-count da janela: mantém
+    assert not serve(0.33, 0.154, unit=False)      # multi-classe: > 1,5x
+    assert not serve(0.0172, 0.064, unit=True)     # SAPR11
+    assert not serve(0.0757, 0.0748, unit=True)    # TAEE11: o próprio basta
+    assert not serve(None, 0.07, unit=False)
+    assert not serve(0.0, 0.07, unit=False)        # fora da faixa de DY
+
+
 def test_metric_rows():
     by = {r["metric_name"]: r["metric_value"] for r in nz.metric_rows(_Q)}
     assert by["P/L"] == 5.0 and by["P/VP"] == 1.4 and by["EV/EBITDA"] == 3.1

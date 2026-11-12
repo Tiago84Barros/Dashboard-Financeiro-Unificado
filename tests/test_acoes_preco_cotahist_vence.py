@@ -483,6 +483,34 @@ def test_rebase_sem_como_recuperar_o_preco_do_spot_tira_as_razoes():
     assert not {"DY", "P/L", "P/VP"} & set(novo) and novo["ROE"] == 0.2
 
 
+def test_rebase_com_preco_do_spot_implausivel_tira_as_razoes():
+    """TAEE3 no armazém (12/11/2026): spot P/L 2,7615 e LPA 1,5728 (por ação)
+    dão 4,34, 1/3 do preço: a brapi calculou o P/L com o LPA da unit (4,7184,
+    k = 3). Reescalado para 13,20, o DY de 7,69% virava os 2,53% gravados."""
+    spot = {"DY": 0.0769, "P/L": 2.76152933, "LPA": 1.57278973,
+            "P/VP": 1.6864446, "ROE": 0.2}
+    sem_guarda = 0.0769 * cp.preco_do_spot(spot) / 13.20
+    assert sem_guarda == pytest.approx(0.02530304, abs=1e-7)   # o defeito
+    novo = cp.rebasear_spot(spot, 13.20, 13.25)
+    assert not {"DY", "P/L", "P/VP"} & set(novo) and novo["ROE"] == 0.2
+    # a unit, coerente (8,4224 x 4,7184 = 39,74), segue reescalando
+    unit = cp.rebasear_spot({"DY": 0.0757, "P/L": 8.42240153, "LPA": 4.7183692},
+                            39.60, 39.74)
+    assert unit["DY"] == pytest.approx(0.0757 * 39.74 / 39.60, rel=1e-6)
+    # o mesmo vale para o lado de cima (P/L x LPA 3x o preço)
+    alto = cp.rebasear_spot({"DY": 0.07, "P/L": 39.0, "LPA": 1.0}, 13.2, 13.0)
+    assert "DY" not in alto and "P/L" not in alto
+    # sem barra, a referência é o preço novo
+    sem_barra = cp.rebasear_spot({"DY": 0.07, "P/L": 4.3, "LPA": 1.0}, 13.2)
+    assert "DY" not in sem_barra
+
+
+def test_rebase_no_limite_de_plausibilidade_ainda_reescala():
+    # 14,9 contra 10 (1,49x): a cotação andou, mas o spot é do mesmo quote
+    novo = cp.rebasear_spot({"DY": 0.10, "P/L": 14.9, "LPA": 1.0}, 11.0, 10.0)
+    assert novo["DY"] == pytest.approx(0.10 * 14.9 / 11.0)
+
+
 def test_rebase_se_o_preco_nao_mudou_deixa_o_spot():
     spot = {"DY": 0.10, "P/L": 10.0, "LPA": 1.0}
     assert cp.rebasear_spot(spot, 10.0, 10.0) is spot

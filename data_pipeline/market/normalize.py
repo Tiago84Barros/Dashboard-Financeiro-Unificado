@@ -628,16 +628,15 @@ def metric_rows(quote: dict, composicao: dict | None = None) -> list[dict]:
     q_acoes = _ac.quote_com_composicao(quote, composicao)
     dks = (quote or {}).get("defaultKeyStatistics") or {}
     fin = (quote or {}).get("financialData") or {}
-    # DY trailing da própria brapi (consenso) — evita over-count da janela
-    # de dividendos somada (ex.: SAPR3 cluster de JCP em junho). Em multi-
-    # classe (CEBR5/6...), porém, o consenso da brapi soma TODAS as classes
-    # e infla ~2x: quando excede 1,5x a soma própria 12m (pós-dedup por
-    # classe), descarta — nunca grava lixo em calculated_metrics/vintages.
+    # DY trailing da própria brapi (consenso), quando serve: nunca na unit
+    # (inconsistente lá: SAPR11 1,72% contra 6,4%) nem acima de 1,5x a soma
+    # própria 12m (multi-classe). Regra em ``metrics.dy_da_brapi_serve``, a
+    # mesma do reprocess — nunca grava lixo em calculated_metrics/vintages.
     dy_spot = _first(dks, ("dividendYield", "yield"))
     if dy_spot is not None:
         from core.brapi import trailing_dy
-        dy_proprio = trailing_dy(quote)
-        if dy_proprio and dy_spot > dy_proprio * 1.5:
+        from data_pipeline.market.metrics import dy_da_brapi_serve
+        if not dy_da_brapi_serve(dy_spot, trailing_dy(quote), unit=unit):
             dy_spot = None
     cand = {
         "P/L": _first(quote, ("priceEarnings",)) or _first(dks, ("trailingPE", "forwardPE")),
