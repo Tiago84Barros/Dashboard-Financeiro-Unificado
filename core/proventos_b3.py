@@ -131,14 +131,16 @@ def anos_que_a_foto_nao_tem(foto, banco):
     354 tickers com mais de 10% menos linhas que a maior foto); o ano que
     some inteiro deixa o DY e o payout do valuation anual sem número. O
     banco devolve esse ano -- menos a cópia de um provento que a foto tem
-    num ano vizinho: mesmo tipo, mesmo valor (``TOLERANCIA_VALOR``) e o mesmo
-    pagamento, ou data-ex a até ``JANELA_EX_DIAS`` dias -- e, quando os dois
-    lados têm pagamento válido (depois da data-ex), pagamentos a até
-    ``JANELA_PAGAMENTO_DIAS`` dias, a mesma janela de
-    :func:`core.dividend_types.renda_por_evento`: data-ex vizinha com
-    pagamentos meses à parte são dois proventos. O tipo entra porque
-    um JCP e um DIVIDENDO do mesmo valor, perto da virada, são dois proventos
-    (:func:`core.dividend_types.renda_por_evento` também os separa); tipo
+    num ano vizinho: mesmo tipo, mesmo valor (``TOLERANCIA_VALOR``) e data-ex
+    a até ``JANELA_EX_DIAS`` dias -- e, quando os dois lados têm pagamento
+    válido (depois da data-ex), pagamentos a até ``JANELA_PAGAMENTO_DIAS``
+    dias. São as janelas de :func:`core.dividend_types.renda_por_evento`:
+    data-ex vizinha com pagamentos meses à parte são dois proventos, e data-ex
+    distante com o mesmo pagamento também (JCPs declarados em meses
+    diferentes e pagos juntos). O mesmo pagamento só basta quando falta a
+    data-ex num dos lados. O tipo entra porque um JCP e um DIVIDENDO do mesmo
+    valor, perto da virada, são dois proventos (``renda_por_evento`` também
+    os separa); tipo
     ausente num dos lados não separa. É o caso da data-ex regravada
     na virada do ano (30/12 na foto, 03/01 no banco), que contaria duas vezes.
     """
@@ -167,14 +169,16 @@ def anos_que_a_foto_nao_tem(foto, banco):
     if b.empty:
         return pd.DataFrame(columns=colunas)
     b = b.reset_index(drop=True).assign(_i=lambda x: x.index)
-    par = b[["_i", "ticker", "type", "_ex", "payment_date", "amount"]].merge(
-        f[["ticker", "type", "_ex", "payment_date", "amount"]], on="ticker", suffixes=("", "_f"))
+    cols = ["ticker", "type", "ex_date", "_ex", "payment_date", "amount"]
+    par = b[["_i", *cols]].merge(f[cols], on="ticker", suffixes=("", "_f"))
     tipo, tipo_f = (par[c].astype("string").str.strip().str.upper() for c in ("type", "type_f"))
     mesmo_tipo = tipo.isna() | tipo_f.isna() | tipo.eq(tipo_f).fillna(False)
     mesmo_valor = ((par["amount"] - par["amount_f"]).abs()
                    <= TOLERANCIA_VALOR * np.maximum(par["amount"], par["amount_f"]))
     pag, pag_f = (pd.to_datetime(par[c], errors="coerce") for c in ("payment_date", "payment_date_f"))
-    mesmo_pagamento = pag.notna() & pag.eq(pag_f)
+    sem_ex = (pd.to_datetime(par["ex_date"], errors="coerce").isna()
+              | pd.to_datetime(par["ex_date_f"], errors="coerce").isna())
+    mesmo_pagamento = sem_ex & pag.notna() & pag.eq(pag_f)
     ex_perto = (par["_ex"] - par["_ex_f"]).abs() <= pd.Timedelta(days=JANELA_EX_DIAS)
     validos = (pag.notna() & pag.gt(par["_ex"])) & (pag_f.notna() & pag_f.gt(par["_ex_f"]))
     pag_perto = (pag - pag_f).abs() <= pd.Timedelta(days=JANELA_PAGAMENTO_DIAS)

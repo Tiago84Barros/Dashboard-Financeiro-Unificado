@@ -404,9 +404,17 @@ def test_tipo_ausente_num_lado_nao_separa_a_copia():
     assert _anos(foto, banco).empty
 
 
-def test_copia_pelo_mesmo_pagamento_mesmo_longe_na_data_ex():
-    foto = [_ev("XPTO3", "2022-12-01", "2023-03-10", 1.25)]
-    banco = [_ev("XPTO3", "2023-02-01", "2023-03-10", 1.25)]
+def test_data_ex_distante_com_o_mesmo_pagamento_sao_dois_proventos():
+    # JCPs declarados em dez/2022 e mar/2023, pagos juntos em dez/2023.
+    foto = [_ev("XPTO3", "2023-03-15", "2023-12-20", 1.25, "JCP")]
+    banco = [_ev("XPTO3", "2022-12-15", "2023-12-20", 1.25, "JCP")]
+    assert list(_anos(foto, banco)["amount"]) == [1.25]
+
+
+def test_mesmo_pagamento_basta_quando_falta_a_data_ex_num_lado():
+    foto = [_ev("XPTO3", "2023-01-05", "2023-03-10", 1.25)]
+    banco = [{**_ev("XPTO3", "2023-01-05", "2023-03-10", 1.25), "ex_date": pd.NaT,
+              "event_date": pd.Timestamp("2022-12-20")}]
     assert _anos(foto, banco).empty
 
 
