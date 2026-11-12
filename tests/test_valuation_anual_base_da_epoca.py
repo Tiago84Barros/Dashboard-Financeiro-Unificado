@@ -385,6 +385,19 @@ def test_jcp_e_dividendo_do_mesmo_valor_na_virada_sao_dois_proventos():
     assert list(out["amount"]) == [1.25] and list(out["type"]) == ["JCP"]
 
 
+def test_data_ex_vizinha_com_pagamentos_meses_a_parte_sao_dois_proventos():
+    # JCP 29/12/2022 pago em jun/2023 e JCP 03/01/2023 pago em dez/2023.
+    foto = [_ev("XPTO3", "2023-01-03", "2023-12-20", 1.25, "JCP")]
+    banco = [_ev("XPTO3", "2022-12-29", "2023-06-20", 1.25, "JCP")]
+    assert list(_anos(foto, banco)["amount"]) == [1.25]
+
+
+def test_data_ex_vizinha_com_pagamentos_na_janela_e_copia():
+    foto = [_ev("XPTO3", "2023-01-03", "2023-02-10", 1.25, "JCP")]
+    banco = [_ev("XPTO3", "2022-12-29", "2023-02-20", 1.25, "JCP")]
+    assert _anos(foto, banco).empty
+
+
 def test_tipo_ausente_num_lado_nao_separa_a_copia():
     foto = [_ev("XPTO3", "2022-12-30", None, 1.25, None)]
     banco = [_ev("XPTO3", "2023-01-03", None, 1.25, "jcp ")]

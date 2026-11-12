@@ -132,7 +132,11 @@ def anos_que_a_foto_nao_tem(foto, banco):
     some inteiro deixa o DY e o payout do valuation anual sem número. O
     banco devolve esse ano -- menos a cópia de um provento que a foto tem
     num ano vizinho: mesmo tipo, mesmo valor (``TOLERANCIA_VALOR``) e o mesmo
-    pagamento, ou data-ex a até ``JANELA_EX_DIAS`` dias. O tipo entra porque
+    pagamento, ou data-ex a até ``JANELA_EX_DIAS`` dias -- e, quando os dois
+    lados têm pagamento válido (depois da data-ex), pagamentos a até
+    ``JANELA_PAGAMENTO_DIAS`` dias, a mesma janela de
+    :func:`core.dividend_types.renda_por_evento`: data-ex vizinha com
+    pagamentos meses à parte são dois proventos. O tipo entra porque
     um JCP e um DIVIDENDO do mesmo valor, perto da virada, são dois proventos
     (:func:`core.dividend_types.renda_por_evento` também os separa); tipo
     ausente num dos lados não separa. É o caso da data-ex regravada
@@ -141,7 +145,11 @@ def anos_que_a_foto_nao_tem(foto, banco):
     import numpy as np
     import pandas as pd
 
-    from core.dividend_types import JANELA_EX_DIAS, TOLERANCIA_VALOR
+    from core.dividend_types import (
+        JANELA_EX_DIAS,
+        JANELA_PAGAMENTO_DIAS,
+        TOLERANCIA_VALOR,
+    )
 
     colunas = [c for c in COLUNAS if c != "foto_em"]
     if banco is None or banco.empty or foto is None or foto.empty:
@@ -168,6 +176,9 @@ def anos_que_a_foto_nao_tem(foto, banco):
     pag, pag_f = (pd.to_datetime(par[c], errors="coerce") for c in ("payment_date", "payment_date_f"))
     mesmo_pagamento = pag.notna() & pag.eq(pag_f)
     ex_perto = (par["_ex"] - par["_ex_f"]).abs() <= pd.Timedelta(days=JANELA_EX_DIAS)
+    validos = (pag.notna() & pag.gt(par["_ex"])) & (pag_f.notna() & pag_f.gt(par["_ex_f"]))
+    pag_perto = (pag - pag_f).abs() <= pd.Timedelta(days=JANELA_PAGAMENTO_DIAS)
+    ex_perto = ex_perto & (~validos | pag_perto)
     copia = set(par.loc[mesmo_tipo & mesmo_valor & (mesmo_pagamento | ex_perto), "_i"])
     return b[~b["_i"].isin(copia)][colunas].reset_index(drop=True)
 
