@@ -174,6 +174,10 @@ def preco_vigente(barra, slot):
 # (`regularMarketPrice` do mesmo quote), que não é necessariamente o close da
 # última barra de `historical_prices`.
 _RAZAO_COM_PRECO = {"P/L": 1, "P/VP": 1, "DY": -1}
+# P/L x LPA mais longe que isto do preço de referência não é o preço do quote:
+# P/L e LPA vieram de bases diferentes. TAEE3 (12/11/2026): o produto dava 1/3
+# do preço (o k = 3 da unit TAEE11), e o DY 7,69% virava 2,53% no reprocess.
+SPOT_PRECO_DESVIO_MAX = 1.5
 
 
 def preco_do_spot(spot: dict) -> float | None:
@@ -198,6 +202,11 @@ def rebasear_spot(spot: dict, preco_novo, preco_barra=None) -> dict:
     spot e o snapshot as recalcula dos numeradores (lucro, patrimônio e
     dividendos ÷ preço escolhido), como nas ações sem spot. Mesma conta do
     rescale de DY/P-VP do FII (`fii.aplicar_fechamento_pregao`).
+
+    "Com segurança" também exige que o preço do spot seja plausível: fora de
+    1/1,5 a 1,5x o close da barra (ou do preço novo, sem barra), P/L e LPA
+    vieram de bases diferentes e a escala sairia errada por esse fator. As três
+    razões saem, como sem preço.
     """
     try:
         novo = float(preco_novo)
@@ -208,6 +217,10 @@ def rebasear_spot(spot: dict, preco_novo, preco_barra=None) -> dict:
         return spot
     antigo = preco_do_spot(spot)
     out = dict(spot)
+    ref = barra if barra is not None and barra > 0 else novo
+    if antigo is not None and not (
+            1 / SPOT_PRECO_DESVIO_MAX <= antigo / ref <= SPOT_PRECO_DESVIO_MAX):
+        antigo = None
     if antigo is None:
         for k in _RAZAO_COM_PRECO:
             out.pop(k, None)

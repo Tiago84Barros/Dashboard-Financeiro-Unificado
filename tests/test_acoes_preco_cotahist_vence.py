@@ -483,6 +483,26 @@ def test_rebase_sem_como_recuperar_o_preco_do_spot_tira_as_razoes():
     assert not {"DY", "P/L", "P/VP"} & set(novo) and novo["ROE"] == 0.2
 
 
+def test_rebase_com_preco_do_spot_implausivel_tira_as_razoes():
+    """TAEE3 (12/11/2026): P/L x LPA dava ~1/3 do preço (bases diferentes, o
+    k = 3 da TAEE11), e o DY de 7,69% virava 2,53% no reprocess."""
+    spot = {"DY": 0.0769, "P/L": 4.3, "LPA": 1.0, "P/VP": 1.9, "ROE": 0.2}
+    novo = cp.rebasear_spot(spot, 13.2, 13.0)
+    assert not {"DY", "P/L", "P/VP"} & set(novo) and novo["ROE"] == 0.2
+    # o mesmo vale para o lado de cima (P/L x LPA 3x o preço)
+    alto = cp.rebasear_spot({"DY": 0.07, "P/L": 39.0, "LPA": 1.0}, 13.2, 13.0)
+    assert "DY" not in alto and "P/L" not in alto
+    # sem barra, a referência é o preço novo
+    sem_barra = cp.rebasear_spot({"DY": 0.07, "P/L": 4.3, "LPA": 1.0}, 13.2)
+    assert "DY" not in sem_barra
+
+
+def test_rebase_no_limite_de_plausibilidade_ainda_reescala():
+    # 14,9 contra 10 (1,49x): a cotação andou, mas o spot é do mesmo quote
+    novo = cp.rebasear_spot({"DY": 0.10, "P/L": 14.9, "LPA": 1.0}, 11.0, 10.0)
+    assert novo["DY"] == pytest.approx(0.10 * 14.9 / 11.0)
+
+
 def test_rebase_se_o_preco_nao_mudou_deixa_o_spot():
     spot = {"DY": 0.10, "P/L": 10.0, "LPA": 1.0}
     assert cp.rebasear_spot(spot, 10.0, 10.0) is spot

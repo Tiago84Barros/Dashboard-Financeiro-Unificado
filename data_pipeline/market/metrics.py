@@ -18,6 +18,31 @@ from __future__ import annotations
 
 import core.data_quality as _dq
 
+# Acima disto o DY da brapi é o consenso somando as classes (CEBR5/6, BRSR5/6).
+DY_BRAPI_INFLADO = 1.5
+
+
+def dy_da_brapi_serve(dy_brapi, dy_proprio, *, unit: bool) -> bool:
+    """True quando o DY trailing da brapi pode ficar no lugar do próprio.
+
+    Regra única do normalizador (``normalize.metric_rows``) e do reprocess
+    (``ingest.reprocess_metrics``); o próprio é a soma de 12 meses do título
+    sobre o preço do título.
+
+    - Unit nunca usa o da brapi (12/11/2026). O DY dela na unit é
+      inconsistente: no armazém, TAEE11 (7,57%) e SANB11 (8,81%) batiam, mas
+      SAPR11 (k = 5) tinha 1,72% gravado, quando a unit pagou 1,96 em 12 meses
+      sobre 30,85, 6,4%. A trava de 1,5x não pegava porque só olha o lado
+      inflado. O próprio, título sobre título, não depende de k; sem ele, a
+      unit fica sem DY: medir errado por k é pior que não medir.
+    - Nas demais, a brapi vale salvo quando passa de 1,5x o próprio (a soma
+      das classes). O inverso, próprio muito acima, mantém a brapi: é o
+      over-count da janela de 12 meses (SAPR3, cluster de JCP em junho).
+    """
+    if unit or dy_brapi is None or not _dq.is_valid_value("DY", dy_brapi):
+        return False
+    return not (dy_proprio and dy_brapi > dy_proprio * DY_BRAPI_INFLADO)
+
 
 def _safe_div(a, b):
     a = _dq.to_float(a)
