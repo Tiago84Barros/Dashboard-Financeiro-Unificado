@@ -115,3 +115,62 @@ def test_data_healing_pede_o_modulo_do_lpa(monkeypatch):
     out = dh._collect_sources(("TAEE3",))
     assert "defaultKeyStatistics" in pedidos[0]["modules"]
     assert out["TAEE3"]["brapi"]["P/L"] == pytest.approx(8.39, abs=0.01)
+
+
+# ── Checagem de plausibilidade do LPA (payloads reais de 29/10/2026) ────────
+# O trailingEps da brapi é lucro ÷ sharesOutstanding, e a contagem às vezes
+# vem errada. O LPA implícito (lucro × preço ÷ marketCap) não depende dela.
+_MILS3 = {
+    "symbol": "MILS3", "regularMarketPrice": 15.15, "priceEarnings": 7.9661373,
+    "earningsPerShare": 1.9778641, "marketCap": 3_584_443_662,
+    "defaultKeyStatistics": {"trailingEps": 9321.7014033, "sharesOutstanding": 48172,
+                             "netIncomeToCommon": 449_045_000},
+}
+_TFCO4 = {
+    "symbol": "TFCO4", "regularMarketPrice": 10.09, "priceEarnings": 10.4192482,
+    "earningsPerShare": 0.9684276, "marketCap": 1_544_110_416,
+    "defaultKeyStatistics": {"trailingEps": 0.1559320, "sharesOutstanding": 942_744_260,
+                             "netIncomeToCommon": 147_004_000},
+}
+# PN com marketCap da companhia: o implícito destoa, mas os dois LPA da brapi
+# concordam -- quem está fora é a referência.
+_RSUL4 = {
+    "symbol": "RSUL4", "regularMarketPrice": 100.0, "earningsPerShare": 10.072,
+    "marketCap": 1.0e9,
+    "defaultKeyStatistics": {"trailingEps": 10.08, "netIncomeToCommon": 2.3481e8},
+}
+
+
+@pytest.mark.parametrize("q, lpa", [(_MILS3, 1.9778641), (_TFCO4, 0.9684276)])
+def test_trailingeps_com_contagem_errada_cai_no_lpa_do_topo(q, lpa):
+    by = _by(nz.metric_rows(q))
+    assert by["LPA"]["metric_value"] == pytest.approx(lpa)
+    assert by["P/L"]["metric_value"] == pytest.approx(q["regularMarketPrice"] / lpa)
+    assert by["P/L"]["metric_value"] == pytest.approx(q["priceEarnings"], rel=0.05)
+    assert by["P/L"]["calculation_method"] == brapi.METODO_PL_DO_TITULO
+
+
+def test_dois_lpa_da_brapi_concordando_ficam_mesmo_longe_do_implicito():
+    by = _by(nz.metric_rows(_RSUL4))
+    assert by["LPA"]["metric_value"] == pytest.approx(10.08)
+
+
+def test_unit_na_acao_passa_pela_checagem():
+    """TAEE3 com lucro e marketCap reais: o trailingEps (o da ação) fica
+    perto do implícito, e o topo (o da unit) não entra."""
+    q = dict(_TAEE3, marketCap=13_680_051_319,
+             defaultKeyStatistics=dict(_TAEE3["defaultKeyStatistics"],
+                                       netIncomeToCommon=1_625_473_000))
+    assert brapi.lpa_do_titulo(q) == pytest.approx(1.57278973)
+
+
+def test_nenhum_lpa_plausivel_nao_grava():
+    q = {"symbol": "XPTO3", "regularMarketPrice": 10.0, "priceEarnings": 0.001,
+         "earningsPerShare": 50.0, "marketCap": 1.0e9,
+         "defaultKeyStatistics": {"trailingEps": 5000.0, "netIncomeToCommon": 1.0e8}}
+    by = _by(nz.metric_rows(q))
+    assert "LPA" not in by and "P/L" not in by
+
+
+def test_gemeo_current_fundamentals_tambem_checa():
+    assert brapi.current_fundamentals(_MILS3)["P/L"] == pytest.approx(15.15 / 1.9778641)
