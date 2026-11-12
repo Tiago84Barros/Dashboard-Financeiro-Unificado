@@ -76,6 +76,63 @@ _SQL_ULTIMO = text("""
     WHERE s.ticker = ANY(:tickers) AND s.close_unitario > 0
     ORDER BY s.ticker, s.trade_date DESC""")
 
+# Último pregão de cada ano, SEM ajuste. Mesma expressão de preço e mesma
+# ordem de `scripts/publish_valuation_historico.coletar_b3` (o histórico de
+# valuation publicado): os dois caminhos que fazem o múltiplo anual leem o
+# mesmo fechamento.
+_SQL_FIM_DE_ANO = text("""
+    SELECT DISTINCT ON (EXTRACT(YEAR FROM s.trade_date))
+           EXTRACT(YEAR FROM s.trade_date)::int AS ano,
+           COALESCE(s.close_unitario, s.close / NULLIF(s.fator_cotacao, 0)) AS close
+    FROM market.b3_security_history s
+    WHERE s.ticker = ANY(:codigos) AND s.close > 0
+    ORDER BY EXTRACT(YEAR FROM s.trade_date), s.trade_date DESC, s.collected_at DESC""")
+
+_SQL_AJUSTADO_FIM_DE_ANO = text("""
+    SELECT DISTINCT ON (EXTRACT(YEAR FROM h.date))
+           EXTRACT(YEAR FROM h.date)::int AS ano, h.close
+    FROM market.historical_prices h
+    WHERE h.ticker = :t AND h.close > 0
+    ORDER BY EXTRACT(YEAR FROM h.date), h.date DESC""")
+
+FITA = "market.b3_security_history"
+
+
+def fita_existe(conn) -> bool:
+    return bool(conn.execute(text(f"SELECT to_regclass('{FITA}') IS NOT NULL")).scalar())
+
+
+def fechamentos_de_fim_de_ano(conn, ticker: str, codigos=None) -> dict[int, float]:
+    """``{ano: fechamento do último pregão do ano}`` na fita do COTAHIST, sem ajuste.
+
+    É a escala da época: o preço com que o mercado negociava as ações que o
+    LPA e o provento por ação daquele ano contam. `historical_prices.close` é
+    retroajustado por desdobramento até hoje e não serve para multiplicar
+    ações do ano (SBSP3: 1:5 em abr/2026).
+
+    ``codigos``: todos os códigos da cadeia de sucessão do ticker
+    (`b3_sucessao.cadeias`). A fita troca de código quando o ticker muda
+    (ELET6 → AXIA6 em 11/2025) e as demonstrações ficam num só; sem a
+    cadeia, o código novo não tinha fechamento dos anos de antes da troca e
+    o ano caía no preço ajustado. É a mesma expansão do valuation histórico
+    publicado (`publish_valuation_historico.fita_pelo_universo`): fica o
+    pregão mais recente do ano entre os códigos (as cadeias não se
+    sobrepõem no tempo)."""
+    codigos = sorted({str(ticker).upper(), *(str(c).upper() for c in (codigos or ()))})
+    linhas = conn.execute(_SQL_FIM_DE_ANO, {"codigos": codigos}).fetchall()
+    return {int(a): float(c) for a, c in linhas if c is not None and float(c) > 0}
+
+
+def ajustados_de_fim_de_ano(conn, ticker: str) -> dict[int, float]:
+    """``{ano: último close > 0 do ano}`` em `market.historical_prices` (ajustado).
+
+    Só o próprio ticker, sem a cadeia de sucessão: o histórico de um código
+    que saiu de negociação parou de ser reajustado no dia da troca, e a razão
+    sem ajuste ÷ ajustado deixaria de medir os eventos posteriores. Preço
+    ajustado zero ou negativo (yfinance devolve, EPAR3) não é preço."""
+    linhas = conn.execute(_SQL_AJUSTADO_FIM_DE_ANO, {"t": ticker}).fetchall()
+    return {int(a): float(c) for a, c in linhas if c is not None and float(c) > 0}
+
 
 def _fita_por_ticker(conn, barras: dict[str, tuple], sem_barra: list[str]) -> dict[str, list]:
     """Linhas diárias do COTAHIST desde o pregão da barra (inclusive), por ticker.

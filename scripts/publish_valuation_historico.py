@@ -132,9 +132,14 @@ METODO = {
            "(sem retroajuste) ÷ (k × LPA publicado do exercício), com k = "
            "ações que cada título carrega (1 na ação; na unit, derivado do "
            "quote mais recente); valor de mercado do exercício = fechamento "
-           "× (lucro ÷ LPA) ÷ k; P/VP = esse valor ÷ patrimônio líquido; "
-           "unit sem k fica sem P/L e sem P/VP; DY = proventos de renda com "
-           "data-ex no ano (resposta mais nova da brapi) ÷ fechamento. P/L "
+           "× (lucro ÷ LPA) ÷ k; P/VP = esse valor ÷ patrimônio líquido. "
+           "As ações do exercício (lucro ÷ LPA) ficam na base da época "
+           "enquanto, × o fator dos desdobramentos e grupamentos posteriores, "
+           "não passam de 5x as de hoje; acima disso, só o LPA reapresentado "
+           "depois de um desdobramento volta para a época, e o resto fica sem "
+           "P/L e sem P/VP. Unit sem k fica sem P/L e sem P/VP; DY = proventos "
+           "de renda com data-ex no ano (resposta mais nova da brapi, mais os "
+           "anos inteiros que ela não tem, de market.dividends) ÷ fechamento. P/L "
            "fora de 1/20x a 20x da mediana do ticker é "
            "descartado; o mesmo teste sobre o valor de mercado implícito "
            "vale para o P/VP. Porte (tamanho na seleção de pares) = preço × "
@@ -433,8 +438,11 @@ def linhas_de_valor_de_mercado(fotos) -> tuple[list[dict], dict]:
         if mc is None:
             mc, origem = ac._positivo(q.get("marketCap")), "brapi"
         if mc is not None:
+            preco = ac._positivo(q.get("regularMarketPrice"))
             linhas.append({"ticker": tk, "fetched_at": r["fetched_at"],
-                           "market_cap": mc, "origem": origem})
+                           "market_cap": mc, "origem": origem,
+                           # títulos de hoje: a régua da guarda das ações do ano
+                           "titulos": (mc / preco) if preco else None})
     return linhas, por_titulo
 
 
@@ -516,7 +524,7 @@ def acoes_por_titulo_do_ticker(tk: str, mapa: dict, units=()) -> int | None:
 
 
 def historico_b3(fechamentos, demos, proventos, *, acoes_por_titulo=None,
-                 units=()) -> tuple[dict, dict]:
+                 units=(), ajustados=None, titulos_atuais=None) -> tuple[dict, dict]:
     """Séries anuais por ticker. Puro sobre DataFrames.
 
     ``fechamentos``: ticker, ano, close (fita, sem ajuste).
@@ -526,15 +534,37 @@ def historico_b3(fechamentos, demos, proventos, *, acoes_por_titulo=None,
     ticker com k None no mapa, ou listado em ``units``, fica sem P/L e sem
     P/VP: o LPA da base é por ação e o preço é o da unit. Fora do mapa, k = 1,
     salvo sufixo 11 (unit de companhia sem quote).
+    ``ajustados``: ticker, ano, close_ajustado (último close > 0 do ano em
+    ``market.historical_prices``). ``titulos_atuais``: {ticker: títulos de
+    hoje}. As ações do ano passam pela conta e pela guarda de
+    `data_pipeline.market.acoes.acoes_e_lpa_do_ano`, a mesma do reprocess
+    (`ingest.reprocess_metrics`): época até 5x as ações de hoje; o fator sem ajuste ÷
+    ajustado só resgata o ano cujo LPA veio na base de hoje depois de um
+    desdobramento; acima do teto e sem esse resgate, o ano fica sem P/L e sem
+    P/VP. Sem ``titulos_atuais`` do
+    ticker não há régua, e vale a época. Ano sem lucro absoluto (bancos na
+    base) não tem ações do ano e fica com P/L = fechamento ÷ (k × LPA), sem
+    essa guarda -- diferença conhecida do reprocess, que deixa o ano sem
+    valuation. A guarda da mediana (``FATOR_MC_IMPLAUSIVEL``) é só deste
+    caminho e vem depois.
     Devolve ({ticker: {"historico": {...}}}, {motivo: contagem}).
     """
     import pandas as pd
+
+    from data_pipeline.market import acoes as ac
     df = (fechamentos.merge(demos, on=["ticker", "ano"], how="inner")
           .merge(proventos, on=["ticker", "ano"], how="left"))
+    if ajustados is not None and not ajustados.empty:
+        df = df.merge(ajustados[["ticker", "ano", "close_ajustado"]],
+                      on=["ticker", "ano"], how="left")
+    else:
+        df["close_ajustado"] = float("nan")
     mapa = dict(acoes_por_titulo or {})
+    atuais = dict(titulos_atuais or {})
     units = set(units)
     exclusoes = {"lpa_implausivel": 0, "acoes_implausiveis": 0,
-                 "unit_sem_acoes_por_titulo": 0}
+                 "unit_sem_acoes_por_titulo": 0, "acoes_fora_da_guarda": 0,
+                 "anos_lpa_base_de_hoje": 0}
     saida: dict[str, dict] = {}
 
     def _fora(serie):
@@ -544,25 +574,42 @@ def historico_b3(fechamentos, demos, proventos, *, acoes_por_titulo=None,
         return ((serie / med > FATOR_MC_IMPLAUSIVEL)
                 | (serie / med < 1 / FATOR_MC_IMPLAUSIVEL))
 
+    def _num(v):
+        return None if v is None or pd.isna(v) else float(v)
+
     for tk, g in df.sort_values("ano").groupby("ticker"):
         g = g.copy()
         k = acoes_por_titulo_do_ticker(tk, mapa, units)
         if k is None:
             exclusoes["unit_sem_acoes_por_titulo"] += 1
-            g["lpa"] = float("nan")
-        else:
-            # Na unit, o LPA do título é k × o LPA por ação.
-            g["lpa"] = g["lpa"] * k
-        # P/L só precisa de preço e LPA, os dois na escala da época; bancos
-        # não têm lucro absoluto na base e ficam só com este caminho. A
-        # guarda é sobre o próprio múltiplo, que não muda com desdobramento.
-        g["pl"] = (g["close"] / g["lpa"]).where((g["lpa"] > 0) & (g["close"] > 0))
+        pls, acoes_ano = [], []
+        for r in g.itertuples():
+            close, lucro, lpa = _num(r.close), _num(r.lucro), _num(r.lpa)
+            adj = _num(r.close_ajustado)
+            pl = acoes = None
+            if k is not None and close and close > 0 and lpa:
+                if lucro is None:
+                    # P/L só precisa de preço e LPA, os dois na escala da época.
+                    pl = close / (lpa * k) if lpa * k > 0 else None
+                else:
+                    base = ac.acoes_e_lpa_do_ano(
+                        lucro=lucro, lpa=lpa, por_titulo=k,
+                        acoes_atuais=atuais.get(tk),
+                        fator_base=(close / adj) if adj and adj > 0 else None)
+                    if base is None:
+                        exclusoes["acoes_fora_da_guarda"] += 1
+                    else:
+                        acoes, lpa_titulo, qual = base
+                        if qual == ac.BASE_DE_HOJE:
+                            exclusoes["anos_lpa_base_de_hoje"] += 1
+                        pl = close / lpa_titulo if lpa_titulo > 0 else None
+            pls.append(pl)
+            acoes_ano.append(acoes)
+        g["pl"] = pd.Series(pls, index=g.index, dtype="float64")
         fora_pl = _fora(g["pl"])
         exclusoes["lpa_implausivel"] += int(fora_pl.sum())
         g.loc[fora_pl, "pl"] = None
-        valido = (g["lpa"].abs() > 0) & g["lucro"].notna() & (g["close"] > 0)
-        g["acoes"] = (g["lucro"] / g["lpa"]).where(valido)
-        g.loc[g["acoes"] <= 0, "acoes"] = None
+        g["acoes"] = pd.Series(acoes_ano, index=g.index, dtype="float64")
         g["mc"] = g["close"] * g["acoes"]
         fora = _fora(g["mc"])
         exclusoes["acoes_implausiveis"] += int(fora.sum())
@@ -642,15 +689,28 @@ def coletar_b3(conn, precos_supabase=None, hoje=None, sucessoes=None,
     universo = set(demos["ticker"].astype(str))
     fech = fita_pelo_universo(fech, sucessoes, universo, ["ticker", "ano"])
     ultimo = fita_pelo_universo(ultimo, sucessoes, universo, ["ticker"])
+    # Último close ajustado do ano, do próprio ticker (sem a cadeia): é o
+    # denominador do fator de base das ações do ano, a mesma leitura do
+    # reprocess (`acoes_cotacao.ajustados_de_fim_de_ano`).
+    ajust = _ler(conn, """
+        SELECT DISTINCT ON (ticker, EXTRACT(YEAR FROM date))
+               ticker, EXTRACT(YEAR FROM date)::int AS ano, close AS close_ajustado
+          FROM market.historical_prices
+         WHERE close > 0 AND date >= make_date(:ini, 1, 1)
+         ORDER BY ticker, EXTRACT(YEAR FROM date), date DESC
+    """, ini=ANO_INICIAL)
     precos = (precos_supabase if precos_supabase is not None
               else _ler(conn, _SQL_PRECOS_MENSAIS))
-    for c in ("close", "lucro", "lpa", "patrimonio", "total"):
-        for df in (fech, demos, prov):
+    for c in ("close", "lucro", "lpa", "patrimonio", "total", "close_ajustado"):
+        for df in (fech, demos, prov, ajust):
             if c in df:
                 df[c] = df[c].astype(float)
     linhas_valor, por_titulo = (fotos_valor if fotos_valor is not None
                                 else coletar_fotos_de_valor(conn))
-    hist, exclusoes = historico_b3(fech, demos, prov, acoes_por_titulo=por_titulo)
+    titulos = {str(l["ticker"]).upper(): l["titulos"] for l in linhas_valor
+               if l.get("titulos")}
+    hist, exclusoes = historico_b3(fech, demos, prov, acoes_por_titulo=por_titulo,
+                                   ajustados=ajust, titulos_atuais=titulos)
     exclusoes["sucessoes_de_ticker"] = dict(sorted(sucessoes.items()))
     hoje = hoje or datetime.now(timezone.utc)
     precos["preco"] = precos["preco"].astype(float)

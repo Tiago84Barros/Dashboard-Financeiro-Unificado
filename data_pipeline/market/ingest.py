@@ -996,28 +996,6 @@ def _valor_de_mercado_atual(*, preco, acoes, por_titulo, mc_spot, unit: bool,
     return p * acoes_d if acoes_d > 0 else None
 
 
-def _acoes_e_lpa_do_ano(*, lucro, lpa, por_titulo, acoes_atuais):
-    """(títulos do ano, LPA por título) para os múltiplos anuais, ou (None, None).
-
-    lucro / LPA por ação dá as ações emitidas no ano; dividido por k vira
-    títulos (a unit carrega k ações, e o preço do ano é o da unit), e o LPA
-    por título é k × o LPA por ação. Guarda: 0,2–5× dos títulos de hoje.
-    Unit sem k (``por_titulo`` None) não tem conta exata."""
-    from data_pipeline.market import acoes as ac
-
-    k = ac._positivo(por_titulo)
-    lucro, lpa = ac._f(lucro), ac._f(lpa)
-    if k is None or not lucro or not lpa:
-        return None, None
-    titulos = lucro / lpa / k
-    if titulos <= 0:
-        return None, None
-    atuais = ac._positivo(acoes_atuais)
-    if atuais is not None and not (0.2 <= titulos / atuais <= 5.0):
-        return None, None
-    return titulos, lpa * k
-
-
 # Método que o normalizador gravava no ``marketCap`` spot antes do #710: o campo
 # da brapi, sem ``Acoes_Emitidas`` nem ``Acoes_por_Titulo``. Desde o #710 o
 # ``marketCap`` spot sai de ``acoes.valor_de_mercado_do_quote`` e leva
@@ -1039,15 +1017,85 @@ def spot_anterior_a_composicao(*, unit: bool, por_titulo, metodo_market_cap) -> 
     return str(metodo_market_cap or "") == METODO_SPOT_ANTERIOR_A_COMPOSICAO
 
 
+# Origem do preço do ano. Não vai para o ``calculation_method``: mudar o método
+# abre safra nova em ``calculated_metric_vintages`` para cada métrica, mesmo com
+# o valor igual. A contagem sai em ``anos_preco_ajustado`` no retorno.
+ORIGEM_PRECO_FITA = "fechamento COTAHIST sem ajuste"
+ORIGEM_PRECO_AJUSTADO = "historical_prices ajustado"
+
+
+def _preco_do_ano(*, sem_ajuste, ajustado) -> tuple[float | None, float | None, str | None]:
+    """(preço do ano, fator_base, origem) para os múltiplos anuais.
+
+    Ações do ano (lucro ÷ LPA), LPA e provento por ação (`market.dividends`)
+    estão na base DA ÉPOCA; o preço que se multiplica por elas tem de estar
+    também. O último pregão do ano na fita (sem ajuste) está; o
+    `historical_prices.close` está retroajustado até hoje. Com os dois, a
+    razão entre eles é o fator acumulado dos eventos posteriores
+    (``fator_base`` de `acoes.acoes_e_lpa_do_ano`).
+
+    Sem a fita (ano antes de 2010, tabela ausente, ticker sem pregão no ano)
+    fica o preço ajustado, que é o que o reprocess usava antes: correto onde
+    não houve evento depois do ano, e marcado na origem para a auditoria."""
+    if sem_ajuste:
+        fator = (sem_ajuste / ajustado) if ajustado else None
+        return float(sem_ajuste), fator, ORIGEM_PRECO_FITA
+    if ajustado:
+        return float(ajustado), None, ORIGEM_PRECO_AJUSTADO
+    return None, None, None
+
+
+FONTE_PROVENTOS_FOTO = "foto mais nova da brapi + market.dividends deduplicado"
+FONTE_PROVENTOS_BANCO = "market.dividends deduplicado (sem market.brapi_raw_payloads)"
+
+
+def _eventos_de_renda(conn) -> tuple[dict[str, list[tuple]], str]:
+    """Proventos de renda por ticker, ``[(event_date, ex_date, amount), ...]``.
+
+    ``market.dividends`` cru não serve: o upsert não apaga, e cada revisão da
+    brapi deixa a linha velha ao lado da nova. A SBSP3 tem dois JCP de 1,276 em
+    2023 (data-ex 28/04 e 12/05) e a soma crua dobrava o DY. A leitura é a de
+    `core.proventos_b3.eventos_do_armazem`, a mesma do valuation histórico
+    publicado. Banco sem as fotos (`market.brapi_raw_payloads`) cai na regra de
+    leitura de `market.dividends` (`renda_por_evento`) e a fonte fica nomeada."""
+    import pandas as pd
+
+    from core.dividend_types import renda_por_evento, sql_proventos_de_renda
+    from core.proventos_b3 import eventos_do_armazem
+
+    tem_fotos = conn.execute(text(
+        "SELECT to_regclass('market.brapi_raw_payloads') IS NOT NULL")).scalar()
+    if tem_fotos:
+        ev, fonte = eventos_do_armazem(conn), FONTE_PROVENTOS_FOTO
+    else:
+        logger.warning("reprocess: market.brapi_raw_payloads ausente; proventos "
+                       "pela regra de leitura de market.dividends")
+        ev = renda_por_evento(pd.read_sql_query(
+            text(sql_proventos_de_renda("TRUE")), conn))
+        fonte = FONTE_PROVENTOS_BANCO
+
+    def _dia(v):
+        return None if v is None or pd.isna(v) else pd.Timestamp(v).date()
+
+    out: dict[str, list[tuple]] = {}
+    for tk, d, ex, a in ev[["ticker", "event_date", "ex_date", "amount"]].itertuples(
+            index=False, name=None):
+        out.setdefault(str(tk).strip().upper(), []).append((_dia(d), _dia(ex), a))
+    return out, fonte
+
+
 def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None) -> dict:
     """
     Recalcula indicadores derivados a partir de market.* (SEM rede):
       • snapshot completo (period='ttm'): Margem_Liquida/Operacional, ROE, ROA,
         ROIC, Endividamento_Total, Liquidez_Corrente, P/L, P/VP, EV_EBIT, P_FCO,
         DY, Payout;
-      • histórico anual (period='annual', um conjunto por ano): fundamentais e DY
-        exatos; valuation (P/L, P/VP, EV_EBIT, P_FCO, Payout) aproximado via ações
-        atuais (confiança menor).
+      • histórico anual (period='annual', um conjunto por ano): fundamentais
+        exatos das demonstrações; valuation (P/L, P/VP, EV_EBIT, P_FCO), DY e
+        Payout com o fechamento do ano na base da época (`_preco_do_ano`) e as
+        ações do ano = lucro ÷ LPA (`acoes.acoes_e_lpa_do_ano`). Ano sem LPA, ou
+        reprovado na guarda, fica SEM valuation: não há reserva por ações atuais
+        desde jun/2026.
     Roda sobre as empresas já em market.assets (cresce com o bootstrap).
     """
     from datetime import datetime, timezone
@@ -1074,6 +1122,26 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
         if not slot_existe:
             logger.warning("reprocess: %s ausente (migration %s); preço = última barra",
                            _ac_cot.TABELA, _ac_cot.MIGRATION)
+        fita_existe = _ac_cot.fita_existe(_c)
+        if not fita_existe:
+            logger.warning("reprocess: %s ausente; múltiplos anuais com o preço "
+                           "ajustado (%s)", _ac_cot.FITA, ORIGEM_PRECO_AJUSTADO)
+        eventos_renda, prog["fonte_proventos"] = _eventos_de_renda(_c)
+    # Cadeias de sucessão de ticker (ELET6 → AXIA6): a fita troca de código, as
+    # demonstrações não. Conexão própria: uma falha aqui aborta a transação, e
+    # o resto do cabeçalho não pode morrer com ela.
+    cadeias_tk: dict[str, list[str]] = {}
+    if fita_existe:
+        try:
+            from data_pipeline.market import b3_sucessao as _suc
+            with engine.connect() as _c:
+                cadeias_tk = _suc.cadeias(_suc.carregar_sucessoes(_c))
+        except Exception as exc:  # sem sucessão, cada código só com a sua fita
+            logger.warning("reprocess: sucessão de tickers indisponível (%s: %s); "
+                           "fita só pelo próprio código", type(exc).__name__, exc)
+    prog["tickers_com_sucessao"] = len(cadeias_tk)
+    prog["anos_preco_ajustado"] = 0
+    prog["anos_lpa_base_de_hoje"] = 0
     ref = datetime.now(timezone.utc).date()
     for tk in tickers:
         try:
@@ -1120,9 +1188,10 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                     por_titulo=por_titulo, mc_spot=spot.get("marketCap"), unit=unit,
                     lucro_anual=inc[3] if inc else None,
                     lpa_anual=inc[4] if inc else None)
-                divs = conn.execute(text(
-                    "SELECT event_date, amount FROM market.dividends WHERE ticker=:t"),
-                    {"t": tk}).fetchall()
+                # (event_date, ex_date, amount) já deduplicados: a mesma regra
+                # do valuation histórico publicado (`_eventos_de_renda`).
+                ev_tk = eventos_renda.get(tk, [])
+                divs = [(d, a) for d, _ex, a in ev_tk]
 
                 # dividendos POR AÇÃO nos últimos 366 dias (fallback p/ DY)
                 div_ps_ttm = sum(float(a) for d, a in divs
@@ -1251,11 +1320,14 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 rows_out = mx.to_metric_rows(tk, snap)
 
                 # ── Histórico anual (period='annual', um conjunto por ano) ──
-                # Fundamentais (margens, ROE, ROA, ROIC, Endiv, Liquidez) e DY são
-                # exatos das demonstrações/preço. Valuation (P/L, P/VP, EV_EBIT,
-                # P_FCO, Payout): EXATO quando há LPA do ano (ações = NI/LPA, com
-                # guarda); senão APROXIMADO via ações atuais → confiança menor.
+                # Fundamentais (margens, ROE, ROA, ROIC, Endiv, Liquidez) são
+                # exatos das demonstrações. Valuation (P/L, P/VP, EV_EBIT, P_FCO,
+                # Payout) só existe com LPA do ano (ações = NI/LPA, com guarda);
+                # DY e valuation usam o preço do ano na base da época
+                # (`_preco_do_ano`).
                 shares = (float(mc) / float(last_price)) if (mc and last_price) else None
+                sem_ajuste_y = (_ac_cot.fechamentos_de_fim_de_ano(
+                    conn, tk, cadeias_tk.get(str(tk).upper())) if fita_existe else {})
 
                 def _by_year(table: str, cols: str) -> dict:
                     return {int(r[0]): r[1:] for r in conn.execute(text(
@@ -1267,16 +1339,16 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                                  "current_assets, current_liabilities")
                 cf_y = _by_year("cash_flow_statements", "operating_cash_flow")
 
-                year_end, div_year = {}, {}
-                for d, px in conn.execute(text(
-                    "SELECT date, close FROM market.historical_prices "
-                    "WHERE ticker=:t AND close IS NOT NULL ORDER BY date"),
-                        {"t": tk}).fetchall():
-                    if d is not None and px:
-                        year_end[d.year] = float(px)
-                for d, amt in divs:
-                    if d is not None and amt:
-                        div_year[d.year] = div_year.get(d.year, 0.0) + float(amt)
+                # Último close ajustado > 0 do ano, a mesma leitura do valuation
+                # histórico publicado (`acoes_cotacao.ajustados_de_fim_de_ano`).
+                year_end = _ac_cot.ajustados_de_fim_de_ano(conn, tk)
+                div_year = {}
+                # Ano do provento = ano da data-ex, como no valuation histórico
+                # publicado (`publish_valuation_historico.coletar_b3`): é a data
+                # que dá direito, e a soma por ela fica igual nos dois caminhos.
+                for _d, ex, amt in ev_tk:
+                    if ex is not None and amt:
+                        div_year[ex.year] = div_year.get(ex.year, 0.0) + float(amt)
 
                 # Fix auditoria 2026-07 (ponto-no-tempo): itera apenas anos
                 # com DEMONSTRAÇÃO publicada. Antes, set(div_year) criava
@@ -1284,7 +1356,9 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 # parciais + preço de hoje (DY distorcido no histórico).
                 for y in sorted(set(inc_y) | set(bal_y) | set(cf_y)):
                     i, b, cfy = inc_y.get(y), bal_y.get(y), cf_y.get(y)
-                    px, dps = year_end.get(y), div_year.get(y)
+                    px, fator_base, origem_px = _preco_do_ano(
+                        sem_ajuste=sem_ajuste_y.get(y), ajustado=year_end.get(y))
+                    dps = div_year.get(y)
                     # Mesmo princípio do snapshot: ano sem dividendo é payout 0,
                     # não payout desconhecido — mas só quando o ticker tem algum
                     # histórico, provando que a ingestão de dividendos funciona
@@ -1295,10 +1369,15 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                         dps = 0.0
                     ni = i[3] if i else None
                     eps_y = i[4] if i else None
-                    # ações do ano: NI/LPA (exato) com guarda 0,2–5× das atuais;
-                    # senão usa ações atuais (aproximação).
-                    shares_y, eps_use = _acoes_e_lpa_do_ano(
-                        lucro=ni, lpa=eps_y, por_titulo=por_titulo, acoes_atuais=shares)
+                    # Ações do ano = NI/LPA, época até o teto (`acoes.acoes_e_lpa_do_ano`,
+                    # a mesma conta do valuation histórico publicado); acima do
+                    # teto e sem resgate pela base de hoje = sem valuation no ano.
+                    base_y = _ac.acoes_e_lpa_do_ano(
+                        lucro=ni, lpa=eps_y, por_titulo=por_titulo, acoes_atuais=shares,
+                        fator_base=fator_base)
+                    shares_y, eps_use = (base_y[0], base_y[1]) if base_y else (None, None)
+                    if base_y and base_y[2] == _ac.BASE_DE_HOJE:
+                        prog["anos_lpa_base_de_hoje"] += 1
                     exact = shares_y is not None
                     f_y = {
                         "revenue": i[0] if i else None, "ebit": i[1] if i else None,
@@ -1312,6 +1391,8 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                         "market_cap": (px * shares_y) if (px and shares_y) else None,
                         "price": px, "eps": eps_use, "div_ttm": dps,
                     }
+                    if origem_px == ORIGEM_PRECO_AJUSTADO:
+                        prog["anos_preco_ajustado"] += 1
                     rows_out += mx.to_metric_rows(tk, mx.compute_snapshot(f_y),
                                                   period="annual", year=y,
                                                   low_conf=None if exact else mx.ANNUAL_APPROX)

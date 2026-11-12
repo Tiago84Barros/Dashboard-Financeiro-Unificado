@@ -79,7 +79,8 @@ O arquivo é necessário porque o histórico vem de tabelas que só existem no a
 
 O publicador tem estas guardas:
 
-- **B3.** Um P/L que foge 20x da mediana do próprio ticker é descartado, porque é LPA de outra escala. O valor de mercado implícito (lucro ÷ LPA × preço) passa pela mesma guarda.
+- **B3.** As ações do ano (lucro ÷ LPA) ficam na base da época enquanto, multiplicadas pelo fator fechamento sem ajuste ÷ ajustado, não passam de 5x as ações de hoje. Acima disso, só o LPA reapresentado depois de um desdobramento (ações do ano entre 0,8x e 1,25x as de hoje, fator > 1,25) volta para a época, dividido pelo fator; o resto fica sem P/L e sem P/VP. A regra é `data_pipeline.market.acoes.acoes_e_lpa_do_ano`, a mesma do reprocess do armazém. Depois, um P/L que foge 20x da mediana do próprio ticker é descartado, porque é LPA de outra escala. O valor de mercado implícito (lucro ÷ LPA × preço) passa pela mesma guarda.
+- **DY da B3.** A soma é a da resposta mais nova da brapi, mais os anos inteiros que ela não tem, tirados de `market.dividends` sem a cópia de um provento que a foto já tem (`core.proventos_b3.anos_que_a_foto_nao_tem`).
 - **EUA.** Os meses em que o valor de mercado não acompanha o preço são descartados. Isso acontece porque as ações do ponto-no-tempo chegam atrasadas depois de um desdobramento. Também sai todo o trecho anterior ao último degrau: a AAPL até set/2020 aparecia com 1/4 do valor.
 
 ## Limitações conhecidas

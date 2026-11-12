@@ -117,12 +117,68 @@ def eventos_das_fotos(fotos):
              .reset_index(drop=True))
 
 
+def anos_que_a_foto_nao_tem(foto, banco):
+    """Eventos do banco nos anos em que a foto do ticker não tem provento.
+
+    ``foto`` e ``banco`` têm as colunas de eventos (:func:`eventos_das_fotos`
+    sem ``foto_em``; ``banco`` já passou por
+    :func:`core.dividend_types.renda_por_evento`). O ano é o da data-ex (o
+    pagamento quando falta a data-ex), a mesma régua da soma do DY. Só entra
+    o ticker que tem foto, e só o ano inteiro que ela não tem: num ano que a
+    foto cobre, a resposta mais nova decide, e o banco não completa parcela.
+
+    A foto mais nova perde linhas que a brapi já deu (medido em 29/10/2026:
+    354 tickers com mais de 10% menos linhas que a maior foto); o ano que
+    some inteiro deixa o DY e o payout do valuation anual sem número. O
+    banco devolve esse ano -- menos a cópia de um provento que a foto tem
+    num ano vizinho: mesmo valor (``TOLERANCIA_VALOR``) e o mesmo pagamento,
+    ou data-ex a até ``JANELA_EX_DIAS`` dias. É o caso da data-ex regravada
+    na virada do ano (30/12 na foto, 03/01 no banco), que contaria duas vezes.
+    """
+    import numpy as np
+    import pandas as pd
+
+    from core.dividend_types import JANELA_EX_DIAS, TOLERANCIA_VALOR
+
+    colunas = [c for c in COLUNAS if c != "foto_em"]
+    if banco is None or banco.empty or foto is None or foto.empty:
+        return pd.DataFrame(columns=colunas)
+
+    def _ex(d):
+        return pd.to_datetime(d["ex_date"], errors="coerce").fillna(
+            pd.to_datetime(d["event_date"], errors="coerce"))
+
+    f = foto.assign(_ex=_ex(foto), ticker=foto["ticker"].astype(str).str.upper())
+    b = banco.assign(_ex=_ex(banco), ticker=banco["ticker"].astype(str).str.upper())
+    anos_f = set(zip(f["ticker"], f["_ex"].dt.year))
+    b = b[b["ticker"].isin(set(f["ticker"]))]
+    b = b[[(t, a) not in anos_f for t, a in zip(b["ticker"], b["_ex"].dt.year)]]
+    if b.empty:
+        return pd.DataFrame(columns=colunas)
+    b = b.reset_index(drop=True).assign(_i=lambda x: x.index)
+    par = b[["_i", "ticker", "_ex", "payment_date", "amount"]].merge(
+        f[["ticker", "_ex", "payment_date", "amount"]], on="ticker", suffixes=("", "_f"))
+    mesmo_valor = ((par["amount"] - par["amount_f"]).abs()
+                   <= TOLERANCIA_VALOR * np.maximum(par["amount"], par["amount_f"]))
+    pag, pag_f = (pd.to_datetime(par[c], errors="coerce") for c in ("payment_date", "payment_date_f"))
+    mesmo_pagamento = pag.notna() & pag.eq(pag_f)
+    ex_perto = (par["_ex"] - par["_ex_f"]).abs() <= pd.Timedelta(days=JANELA_EX_DIAS)
+    copia = set(par.loc[mesmo_valor & (mesmo_pagamento | ex_perto), "_i"])
+    return b[~b["_i"].isin(copia)][colunas].reset_index(drop=True)
+
+
 def eventos_do_armazem(conn):
     """Todos os eventos de renda, para quem já lê o armazém local.
 
-    Ticker com foto sai da foto; o resto, de ``market.dividends`` pela regra
-    de leitura :func:`core.dividend_types.renda_por_evento` -- a mesma partilha
-    de :func:`renda_anual`. Sem a coluna ``foto_em``.
+    Ticker com foto sai da foto, mais os anos que ela não tem
+    (:func:`anos_que_a_foto_nao_tem`); o resto, de ``market.dividends`` pela
+    regra de leitura :func:`core.dividend_types.renda_por_evento` -- a mesma
+    partilha de :func:`renda_anual`. Sem a coluna ``foto_em``. É a fonte do
+    DY e do payout dos dois caminhos do valuation anual (o reprocess de
+    ``data_pipeline.market.ingest`` e ``scripts/publish_valuation_historico``).
+    ``attrs["anos_do_banco"]`` conta os ticker-anos que vieram do banco para
+    tickers com foto. A soma publicada em :data:`ARQUIVO` continua só da
+    foto: ela é a resposta da brapi, e o banco é reserva.
     """
     import pandas as pd
     from sqlalchemy import text
@@ -130,16 +186,23 @@ def eventos_do_armazem(conn):
     from core.dividend_types import renda_por_evento, sql_proventos_de_renda
 
     fotos = conn.execute(text(SQL_FOTOS)).fetchall()
-    cobertos = sorted({str(f[0]).strip().upper() for f in fotos})
-    bruto = pd.read_sql_query(
-        text(sql_proventos_de_renda("NOT (upper(d.ticker) = ANY(:cobertos))")),
-        conn, params={"cobertos": cobertos})
-    partes = [eventos_das_fotos(fotos).drop(columns="foto_em"), renda_por_evento(bruto)]
+    cobertos = {str(f[0]).strip().upper() for f in fotos}
+    bruto = pd.read_sql_query(text(sql_proventos_de_renda("TRUE")), conn)
+    banco = renda_por_evento(bruto)
+    da_foto = eventos_das_fotos(fotos).drop(columns="foto_em")
+    coberto = banco["ticker"].isin(cobertos) if not banco.empty else []
+    preenche = anos_que_a_foto_nao_tem(da_foto, banco[coberto] if len(banco) else banco)
+    partes = [da_foto, preenche, banco[~coberto] if len(banco) else banco]
     partes = [p for p in partes if not p.empty]
     if not partes:
-        return pd.DataFrame(columns=[c for c in COLUNAS if c != "foto_em"])
-    return (pd.concat(partes, ignore_index=True)
-              .sort_values(["ticker", "event_date", "type"]).reset_index(drop=True))
+        out = pd.DataFrame(columns=[c for c in COLUNAS if c != "foto_em"])
+    else:
+        out = (pd.concat(partes, ignore_index=True)
+                 .sort_values(["ticker", "event_date", "type"]).reset_index(drop=True))
+    ex = pd.to_datetime(preenche["ex_date"], errors="coerce").fillna(
+        pd.to_datetime(preenche["event_date"], errors="coerce"))
+    out.attrs["anos_do_banco"] = int(len(set(zip(preenche["ticker"], ex.dt.year))))
+    return out
 
 
 def carregar() -> dict:
