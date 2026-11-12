@@ -168,6 +168,7 @@ class Decisao:
     sinais_favor: tuple[str, ...] = ()
     sinais_contra: tuple[str, ...] = ()
     conviccao_limitada: str = ""           # motivo do teto da convicção
+    conviccao_sustentada: str = ""         # motivo do piso da convicção
     peso_atual: float | None = None
     peso_alvo: float | None = None
     tese_quebrada: tuple[str, ...] = ()    # gatilhos de fundamentos disparados
@@ -223,6 +224,8 @@ def decisao(a: m.AnaliseAtivo,
     1. Alerta eliminatório do balanço → vender, ou substituir se um par fora
        da carteira for claramente superior (``rec.confrontar``). Alerta só
        do noticiário → acompanhar: a manchete pede confirmação oficial.
+       A venda pelo alerta do balanço tem certeza no mínimo moderada
+       (12/11/2026): nenhum ponto bom compensa o alerta.
     2. Gatilho da tese disparado → reduzir 1/3; com qualidade frágil, sair.
     3. Ativo fora da função na carteira → acompanhar (reavaliar a tese); com
        qualidade frágil, sair.
@@ -351,6 +354,8 @@ class _Rascunho:
     substituto: rec.Confronto | None = None
     teto: str | None = None             # convicção máxima
     motivo_teto: str = ""
+    piso: str | None = None             # convicção mínima
+    motivo_piso: str = ""
 
 
 def _motivo_qualidade(av: av_.Avaliacao) -> str:
@@ -523,6 +528,13 @@ def _ajustar_ao_momento(r: _Rascunho, s: _Situacao,
     return r
 
 
+# A venda por alerta eliminatório confirmado no balanço não admite
+# compensação: os sinais contra (preço normal, um ponto bom) não dividem a
+# decisão e não podem deixá-la com certeza baixa (12/11/2026).
+MOTIVO_PISO_ALERTA = ("alerta eliminatório confirmado no balanço, que nenhum "
+                      "ponto bom compensa")
+
+
 def _por_alerta(s: _Situacao, av: av_.Avaliacao) -> _Rascunho:
     al = av.criticos[0]
     texto = f"{al.texto[:1].upper()}{al.texto[1:]}"
@@ -541,12 +553,14 @@ def _por_alerta(s: _Situacao, av: av_.Avaliacao) -> _Rascunho:
             teto=rec.MODERADA,
             motivo_teto=("o alerta veio só do noticiário e não foi confirmado "
                          "em documento oficial"))
-    return _sair(s, "alerta eliminatório",
-                 f"{texto}. Nenhum ponto bom compensa esse alerta.",
-                 ("alerta eliminatório",),
-                 ("Se o alerta for resolvido (por exemplo, a dívida voltar "
-                  "para baixo do teto do setor), a recomendação volta a "
-                  "seguir fundamentos, preço e peso.",))
+    return replace(
+        _sair(s, "alerta eliminatório",
+              f"{texto}. Nenhum ponto bom compensa esse alerta.",
+              ("alerta eliminatório",),
+              ("Se o alerta for resolvido (por exemplo, a dívida voltar "
+               "para baixo do teto do setor), a recomendação volta a "
+               "seguir fundamentos, preço e peso.",)),
+        piso=rec.MODERADA, motivo_piso=MOTIVO_PISO_ALERTA)
 
 
 def _fragil(s: _Situacao, av: av_.Avaliacao) -> _Rascunho:
@@ -724,7 +738,8 @@ def _conviccao(s: _Situacao, av: av_.Avaliacao,
         motivo = ("acompanhar é provisório: depende do que a investigação "
                   "encontrar")
     return rec.conviccao(list(dict.fromkeys(favor)),
-                         list(dict.fromkeys(contra)), av, teto, motivo)
+                         list(dict.fromkeys(contra)), av, teto, motivo,
+                         r.piso, r.motivo_piso)
 
 
 def _justificativas(a: m.AnaliseAtivo, s: _Situacao,
@@ -890,7 +905,8 @@ def _completar(a: m.AnaliseAtivo, s: _Situacao, av: av_.Avaliacao,
         + _contexto(a, s, av, ctx),
         proporcao=r.proporcao, custos=custos, substituto=r.substituto,
         momento=mom, sinais_favor=cv.favor, sinais_contra=cv.contra,
-        conviccao_limitada=cv.limitada, peso_atual=s.atual,
+        conviccao_limitada=cv.limitada, conviccao_sustentada=cv.sustentada,
+        peso_atual=s.atual,
         peso_alvo=s.alvo, tese_quebrada=s.quebra, fora_da_funcao=s.fora,
         esticamento=s.est)
 

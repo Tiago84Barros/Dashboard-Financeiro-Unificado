@@ -388,6 +388,7 @@ class Conviccao:
     favor: tuple[str, ...] = ()
     contra: tuple[str, ...] = ()
     limitada: str = ""          # motivo do teto, quando ele baixou o grau
+    sustentada: str = ""        # motivo do piso, quando ele subiu o grau
 
 
 def cobertura(av: av_.Avaliacao) -> tuple[int, tuple[str, ...]]:
@@ -408,7 +409,8 @@ def _lista(xs) -> str:
 
 
 def conviccao(favor, contra, av: av_.Avaliacao, teto: str | None = None,
-              motivo_teto: str = "") -> Conviccao:
+              motivo_teto: str = "", piso: str | None = None,
+              motivo_piso: str = "") -> Conviccao:
     """Grau de convicção da ação sugerida. Puro.
 
     * Baixa: no máximo uma dimensão lida, ou dois sinais contra, ou tantos
@@ -419,6 +421,12 @@ def conviccao(favor, contra, av: av_.Avaliacao, teto: str | None = None,
 
     ``teto`` limita o grau (ex.: alerta só do noticiário, troca por um par
     que não passou pela avaliação completa).
+
+    ``piso`` garante um grau mínimo quando a regra que decidiu não admite
+    compensação (12/11/2026): na venda por alerta eliminatório confirmado no
+    balanço, "nenhum ponto bom compensa esse alerta", e contar o preço normal
+    como sinal contra dava certeza baixa a uma venda que a própria regra
+    trata como inegociável. O teto vem depois e prevalece.
     """
     favor, contra = list(favor), list(contra)
     n, faltam = cobertura(av)
@@ -443,10 +451,16 @@ def conviccao(favor, contra, av: av_.Avaliacao, teto: str | None = None,
         falta = (f"falta a leitura de {_lista(faltam)}" if faltam
                  else "é um sinal só")
         porque = f"{base} sustenta, mas {falta}"
+    sustentada = ""
+    if piso is not None and _ORDEM[grau] < _ORDEM[piso]:
+        grau = piso
+        sustentada = motivo_piso
+        porque = f"{porque}; elevada a {ROTULO_CONVICCAO[piso].lower()}: {motivo_piso}"
     limitada = ""
     if teto is not None and _ORDEM[grau] > _ORDEM[teto]:
         grau = teto
         limitada = motivo_teto
         porque = f"{porque}; limitada a {ROTULO_CONVICCAO[teto].lower()}: {motivo_teto}"
     return Conviccao(grau, porque[:1].upper() + porque[1:] + ".",
-                     tuple(favor), tuple(contra), limitada)
+                     tuple(favor), tuple(contra), limitada,
+                     sustentada if not limitada else "")

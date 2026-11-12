@@ -491,6 +491,8 @@ def _investigar(d: rs.Decisao, av: av_.Avaliacao) -> tuple[str, ...]:
 def _certeza_curta(d: rs.Decisao) -> str:
     if d.conviccao_limitada:
         return _limite_simples(d.conviccao_limitada)
+    if d.conviccao_sustentada:
+        return "o alerta grave pesa mais que o resto"
     if d.sinais_contra and d.sinais_favor:
         return "há sinais nos dois sentidos"
     if d.sinais_contra:
