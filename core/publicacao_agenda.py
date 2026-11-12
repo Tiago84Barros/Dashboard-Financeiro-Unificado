@@ -63,7 +63,7 @@ class Alvo:
 
     ``passos`` é uma sequência de comandos, cada um sendo o que vai depois do
     interpretador Python. Sequência, e não comando único, porque a atualização
-    de FIIs é uma cadeia de nove etapas que só faz sentido inteira: o snapshot
+    de FIIs é uma cadeia de dez etapas que só faz sentido inteira: o snapshot
     publicado sai da última, mas a primeira é que traz o dado novo. Um passo que
     falha aborta os seguintes e reprova o alvo -- meia cadeia publicada é pior
     do que cadeia nenhuma, porque a vitrine sai internamente incoerente.
@@ -123,9 +123,15 @@ class Alvo:
 # `market.fiis.price` o fechamento mais novo da fita da B3, que o alvo
 # `b3_pregao` carrega antes desta cadeia. Sem ela a cotacao congelou em 29/10,
 # porque `fiis` falha todo dia e o `reprocess` so regrava a foto velha.
+# `fiis-metrics` (12/11/2026) e a serie MENSAL do informe da CVM em
+# `market.fii_metrics_monthly` (VPA, patrimonio, cotistas, composicao). Nao
+# estava em cadeia nenhuma: rodava so a mao, e a serie parou em 05/2026 para
+# 282 dos 325 fundos -- o P/VP historico e a serie de VPA da tela pararam
+# junto. So depende da CVM (3 ZIPs anuais, ~30 s), por isso vem antes da brapi.
 _CADEIA_FII = (
     ("-m", "scripts.apply_fii_schema", "--warehouse"),
     ("run_market_ingest.py", "fiis-cvm", "--warehouse", "--json"),
+    ("run_market_ingest.py", "fiis-metrics", "--warehouse", "--json"),
     ("run_market_ingest.py", "fiis-vacancia", "--warehouse", "--json"),
     ("run_market_ingest.py", "fiis-entities", "--warehouse", "--json"),
     ("run_market_ingest.py", "fiis-confidence", "--warehouse", "--json"),
@@ -425,9 +431,10 @@ ALVOS: tuple[Alvo, ...] = (
         # Série mensal de fundamentos dos FIIs (VPA, patrimônio, cotistas,
         # composição) com o fechamento mensal da fita da B3 para o P/VP. No
         # Supabase a market.fii_metrics_monthly parou em 05/2026 (sem espaço
-        # e sem egress); o armazém tem até o mês corrente. O dado é mensal,
-        # mas o P/VP do mês corrente muda com o preço: semanal basta e
-        # limita o histórico no git.
+        # e sem egress); o armazém é renovado pela etapa `fiis-metrics` da
+        # cadeia de FIIs e vai até o último informe mensal que a CVM publicou
+        # (~1 mês de atraso). O dado é mensal, mas o P/VP do mês corrente muda
+        # com o preço: semanal basta e limita o histórico no git.
         chave="fii_metrics_monthly",
         titulo="Série mensal de fundamentos dos FIIs",
         passos=(("scripts/publish_fii_metrics_monthly.py",),),

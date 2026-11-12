@@ -3384,8 +3384,8 @@
             },
             {
               "nome": "Fundos imobiliários (FIIs)",
-              "resumo": "Cadeia de nove etapas e ranking de FIIs",
-              "explicacao": "Todo dia: documentos dos fundos, uma cadeia de nove etapas (cadastro da CVM, vacância, confiança, fechamento do pregão da B3 como cotação, coleta de preço, séries, monitoramento; a CVM e o fechamento da B3 rodam antes da brapi, cuja cota pode esgotar; vence a cotação de data mais nova) e a publicação da seleção de FIIs. Toda semana: série mensal de patrimônio, cotistas e preço sobre valor patrimonial. Telas que dependem: Seleção de FIIs e Portfólio Global.",
+              "resumo": "Cadeia de dez etapas e ranking de FIIs",
+              "explicacao": "Todo dia: documentos dos fundos, uma cadeia de dez etapas (cadastro da CVM, informe mensal da CVM com valor patrimonial, patrimônio e cotistas de cada mês, vacância, confiança, fechamento do pregão da B3 como cotação, coleta de preço, séries, monitoramento; a CVM e o fechamento da B3 rodam antes da brapi, cuja cota pode esgotar; vence a cotação de data mais nova) e a publicação da seleção de FIIs. Toda semana: o arquivo da série mensal de patrimônio, cotistas e preço sobre valor patrimonial, que só sai se o último mês com valor patrimonial tiver até 75 dias. Telas que dependem: Seleção de FIIs e Portfólio Global.",
               "so_admin": false
             },
             {

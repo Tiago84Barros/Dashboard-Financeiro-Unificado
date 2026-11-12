@@ -56,11 +56,18 @@ def _num(v):
         return None
 
 
-def _bounded_percent_ratio(v, low: float = 0.0, high: float = 0.20):
-    """Converte percentual CVM (0,80 = 0,8%) para razão decimal e valida."""
+def _bounded_ratio(v, low: float = 0.0, high: float = 0.20):
+    """Razão decimal de um campo ``Percentual_*`` do informe mensal, validada.
+
+    Apesar do nome da coluna, a CVM entrega FRAÇÃO: ``0.007052`` é 0,7052% ao
+    mês (HGLG11, 09/2026; mediana dos positivos de 2026 = 0,0082). De
+    05/07/2026 a 12/11/2026 este leitor dividia por 100, supondo percentual, e
+    gravava o rendimento patrimonial cem vezes menor. Ninguém viu porque a
+    carga mensal não rodava. Fora de ``[low, high]`` vira None: rendimento
+    negativo ou acima de 20% ao mês não é dado aproveitável -- inclusive o do
+    fundo que preenche em percentual (``0,80``), que não dá para distinguir.
+    """
     value = _num(v)
-    if value is not None:
-        value /= 100.0
     return value if value is not None and low <= value <= high else None
 
 
@@ -169,7 +176,7 @@ def parse_informe(zip_bytes: bytes, year: int) -> dict[str, dict]:
             "patrimonio_liquido": _num((c or {}).get("Patrimonio_Liquido")),
             "vpa": _num((c or {}).get("Valor_Patrimonial_Cotas")),
             "num_cotistas": _num((c or {}).get("Total_Numero_Cotistas")),
-            "dy_patrimonial_mes": _bounded_percent_ratio(
+            "dy_patrimonial_mes": _bounded_ratio(
                 (c or {}).get("Percentual_Dividend_Yield_Mes")
             ),
             **composition,
@@ -214,7 +221,7 @@ def parse_informe_monthly(zip_bytes: bytes, year: int) -> dict[str, list[dict]]:
             "patrimonio_liquido": _num((c or {}).get("Patrimonio_Liquido")),
             "vpa": _num((c or {}).get("Valor_Patrimonial_Cotas")),
             "num_cotistas": _num((c or {}).get("Total_Numero_Cotistas")),
-            "dy_patrimonial_mes": _bounded_percent_ratio(
+            "dy_patrimonial_mes": _bounded_ratio(
                 (c or {}).get("Percentual_Dividend_Yield_Mes")
             ),
             **composition,
