@@ -88,7 +88,7 @@ def test_um_ano_lido_basta_e_grava_so_ticker_conhecido(monkeypatch):
     rep = fii_ingest.backfill_metrics_monthly()
     assert rep["erros"] == 0 and len(rep["anos"]) == 1
     assert len(gravadas) == 1 and gravadas[0][0] == "fii_metrics_monthly"
-    assert [l["ticker"] for l in gravadas[0][1]] == ["AAAA11"]
+    assert [linha["ticker"] for linha in gravadas[0][1]] == ["AAAA11"]
     assert rep["gravados"] == 1
 
 
