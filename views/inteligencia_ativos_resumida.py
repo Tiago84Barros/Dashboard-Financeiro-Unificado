@@ -18,6 +18,15 @@ core/inteligencia_ativos/linguagem_simples.py; o texto técnico (justificativa,
 alertas, condições, limitações e a avaliação por dimensão) continua inteiro,
 num bloco recolhido "Ver a análise técnica completa" no fim da caixa.
 
+Visual (12/11/2026, pedido do usuário: "estilo mais profissional"): os
+cartões usam as classes ``ia-*`` de ``CSS``, injetado uma vez por
+``render``, no lugar de estilo solto em cada ``<div>``. Uma escala só de
+tipo (rótulo .68rem em caixa alta, corpo .9rem com entrelinha 1,6, número
+em ``tabular-nums``), espaçamento em múltiplos de 4 px, texto secundário em
+``--app-muted`` (o ``--app-subtle`` ficava abaixo do contraste legível em
+letra pequena) e cor só onde ela carrega sentido: a ação, o tom de cada
+leitura e o aviso. A fonte é a do app inteiro, para a tela não destoar.
+
 Os cartões saem num st.markdown só e só usam tokens var(--app-*).
 Dados: core/inteligencia_ativos/resumida.py (puro).
 """
@@ -49,13 +58,124 @@ _COR_DECISAO = {rs.COMPRAR: "var(--app-info)",
                 rs.VENDER: "var(--app-danger)",
                 rs.SUBSTITUIR: "var(--app-danger)"}
 
-_CAIXA = ('border:1px solid var(--app-border);border-radius:10px;'
-          'background:var(--app-surface);padding:10px 14px;margin:6px 0;')
-_SUB = ('font-size:0.7rem;font-weight:700;letter-spacing:.05em;'
-        'text-transform:uppercase;color:var(--app-subtle);margin:10px 0 4px')
-_TD = 'style="padding:3px 12px 3px 0;vertical-align:top;color:var(--app-text)"'
-_TH = ('style="padding:3px 12px 3px 0;text-align:left;font-weight:600;'
-       'color:var(--app-muted);font-size:0.78rem"')
+# Uma linha só: linha em branco fecha o bloco HTML do Streamlit, e recuo de
+# quatro espaços vira bloco de código. Seletores com ``.ia-caixa`` na frente
+# para vencer o estilo que o Streamlit dá a p/ul/li dentro do markdown.
+CSS = "<style>" + "".join((
+    ".ia-caixa{background:var(--app-surface);border:1px solid var(--app-border);"
+    "border-radius:var(--app-radius-md);padding:16px 18px;margin:10px 0;"
+    "color:var(--app-text);font-size:.9rem;line-height:1.6;}",
+    ".ia-caixa b,.ia-caixa strong{font-weight:600;}",
+    ".ia-titulo{font-size:.68rem;font-weight:700;letter-spacing:.08em;"
+    "text-transform:uppercase;color:var(--app-muted);margin:20px 0 8px;"
+    "line-height:1.3;}",
+    ".ia-caixa>.ia-titulo:first-child,.ia-bloco>.ia-titulo:first-child"
+    "{margin-top:0;}",
+    ".ia-bloco{border-top:1px solid var(--app-border);margin-top:16px;"
+    "padding-top:16px;}",
+    ".ia-bloco:first-child{border-top:0;margin-top:0;padding-top:0;}",
+    ".ia-caixa p.ia-p{margin:0 0 8px;font-size:.9rem;line-height:1.6;"
+    "color:var(--app-text);}",
+    ".ia-caixa p.ia-p:last-child{margin-bottom:0;}",
+    ".ia-caixa p.ia-lead{font-size:.98rem;font-weight:500;}",
+    ".ia-nota{font-size:.75rem;line-height:1.5;color:var(--app-muted);"
+    "margin-top:12px;}",
+    ".ia-vazio{color:var(--app-muted);font-size:.86rem;}",
+    ".ia-num{font-variant-numeric:tabular-nums;}",
+    # listas
+    ".ia-caixa ul.ia-lista{list-style:none;margin:0;padding:0;}",
+    ".ia-caixa ul.ia-lista>li{position:relative;margin:0 0 6px;"
+    "padding-left:16px;font-size:.88rem;line-height:1.55;color:var(--app-text);}",
+    ".ia-caixa ul.ia-lista>li:last-child{margin-bottom:0;}",
+    ".ia-caixa ul.ia-lista>li::before{content:'';position:absolute;left:3px;"
+    "top:.62em;width:5px;height:5px;border-radius:50%;"
+    "background:var(--app-border-strong);}",
+    # cartões de cima
+    ".ia-kpis{display:grid;grid-template-columns:repeat(auto-fit,"
+    "minmax(160px,1fr));gap:12px;}",
+    ".ia-kpi{background:var(--app-surface-raised);border:1px solid "
+    "var(--app-border);border-radius:var(--app-radius-sm);padding:12px 14px;}",
+    ".ia-kpi--acao{box-shadow:inset 3px 0 0 var(--ia-cor);}",
+    ".ia-kpi-rot{font-size:.68rem;font-weight:700;letter-spacing:.08em;"
+    "text-transform:uppercase;color:var(--app-muted);}",
+    ".ia-kpi-val{font-size:1.45rem;font-weight:700;line-height:1.2;"
+    "letter-spacing:-.01em;margin-top:6px;color:var(--app-text);"
+    "font-variant-numeric:tabular-nums;}",
+    ".ia-kpi-det{font-size:.78rem;line-height:1.4;color:var(--app-muted);"
+    "margin-top:4px;}",
+    # grade de peças (leituras, dimensões, métricas, cenário)
+    ".ia-grade{display:grid;grid-template-columns:repeat(auto-fill,"
+    "minmax(230px,1fr));gap:12px;}",
+    ".ia-peca{background:var(--app-surface-raised);border:1px solid "
+    "var(--app-border);border-radius:var(--app-radius-sm);padding:12px 14px;}",
+    ".ia-peca-rot{font-size:.68rem;font-weight:700;letter-spacing:.08em;"
+    "text-transform:uppercase;color:var(--app-muted);}",
+    ".ia-peca-val{display:flex;align-items:center;gap:8px;font-size:1rem;"
+    "font-weight:700;margin:6px 0 8px;}",
+    ".ia-peca-val::before{content:'';flex:none;width:8px;height:8px;"
+    "border-radius:50%;background:currentColor;}",
+    ".ia-peca-det{font-size:.76rem;line-height:1.45;color:var(--app-muted);}",
+    ".ia-peca .ia-lista>li{font-size:.84rem;}",
+    # a favor e contra
+    ".ia-peso{display:grid;grid-template-columns:72px 1fr;gap:12px;"
+    "align-items:baseline;margin:0 0 6px;font-size:.88rem;line-height:1.55;}",
+    ".ia-peso:last-child{margin-bottom:0;}",
+    ".ia-peso-rot{font-size:.68rem;font-weight:700;letter-spacing:.08em;"
+    "text-transform:uppercase;}",
+    # aviso "vale conferir" e alertas
+    ".ia-aviso{background:color-mix(in srgb,var(--app-warning) 6%,"
+    "var(--app-surface));border-color:color-mix(in srgb,var(--app-warning) "
+    "30%,var(--app-border));border-left:3px solid var(--app-warning);}",
+    ".ia-aviso .ia-titulo{color:var(--app-warning);}",
+    ".ia-alerta{margin:0 0 6px;font-size:.86rem;line-height:1.55;}",
+    # critérios com sinal
+    ".ia-crit{display:flex;gap:8px;margin:0 0 4px;font-size:.84rem;"
+    "line-height:1.5;color:var(--app-text);}",
+    ".ia-crit>span:first-child{flex:none;width:10px;font-weight:700;}",
+    # métricas contra os pares
+    ".ia-metrica-val{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;"
+    "margin-top:6px;}",
+    ".ia-metrica-val>b{font-size:1.2rem;font-weight:700;letter-spacing:-.01em;"
+    "font-variant-numeric:tabular-nums;}",
+    ".ia-legenda{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:.8rem;"
+    "color:var(--app-text);margin-bottom:12px;}",
+    ".ia-legenda>span{white-space:nowrap;}",
+    # manchetes e documentos
+    ".ia-item{padding:10px 0;border-top:1px solid var(--app-border);}",
+    ".ia-item:first-child{border-top:0;padding-top:0;}",
+    ".ia-meta{font-size:.74rem;color:var(--app-muted);"
+    "font-variant-numeric:tabular-nums;margin-bottom:2px;}",
+    ".ia-caixa a{color:var(--app-text);text-decoration:none;border-bottom:1px "
+    "solid var(--app-border-strong);}",
+    ".ia-caixa a:hover{color:var(--app-info);border-bottom-color:var(--app-info);}",
+    # cabeçalho de grupo e lista de renda fixa
+    ".ia-grupo{display:flex;justify-content:space-between;align-items:baseline;"
+    "flex-wrap:wrap;gap:8px;margin:28px 0 4px;padding-bottom:8px;"
+    "border-bottom:1px solid var(--app-border);}",
+    ".ia-grupo-nome{font-size:1.1rem;font-weight:700;color:var(--app-text);}",
+    ".ia-grupo-valor{font-size:.95rem;font-weight:600;color:var(--app-text);"
+    "font-variant-numeric:tabular-nums;}",
+    ".ia-grupo-extra{font-size:.8rem;color:var(--app-muted);margin-bottom:6px;}",
+    ".ia-tabela{width:100%;border-collapse:collapse;font-size:.88rem;}",
+    ".ia-tabela td{padding:8px 12px 8px 0;vertical-align:top;"
+    "border-bottom:1px solid var(--app-border);color:var(--app-text);}",
+    ".ia-tabela tr:last-child td{border-bottom:0;}",
+    ".ia-tabela td.ia-dir{text-align:right;padding-right:0;"
+    "font-variant-numeric:tabular-nums;white-space:nowrap;}",
+    # bloco técnico recolhido
+    ".ia-tecnico{margin:12px 0 4px;border:1px solid var(--app-border);"
+    "border-radius:var(--app-radius-sm);background:var(--app-surface);}",
+    ".ia-tecnico>summary{cursor:pointer;list-style:none;display:flex;"
+    "align-items:center;gap:8px;padding:10px 14px;font-size:.84rem;"
+    "font-weight:600;color:var(--app-muted);}",
+    ".ia-tecnico>summary::-webkit-details-marker{display:none;}",
+    ".ia-tecnico>summary::before{content:'›';display:inline-block;"
+    "font-size:1.1rem;line-height:1;transition:transform .15s ease;}",
+    ".ia-tecnico[open]>summary::before{transform:rotate(90deg);}",
+    ".ia-tecnico>summary:hover{color:var(--app-text);}",
+    ".ia-tecnico-corpo{padding:0 14px 4px;}",
+    ".ia-tecnico .ia-caixa{background:var(--app-surface-raised);}",
+)) + "</style>"
 
 
 def _pct(x: float | None) -> str:
@@ -71,18 +191,24 @@ def _moeda(x: float | None, moeda: str = "BRL") -> str:
 def _link(texto: str, url: str | None) -> str:
     if url and url.lower().startswith(("http://", "https://")):
         return (f'<a href="{escape(url, quote=True)}" target="_blank" '
-                f'rel="noopener noreferrer" style="color:var(--app-text)">'
-                f'{escape(texto)}</a>')
+                f'rel="noopener noreferrer">{escape(texto)}</a>')
     return escape(texto)
 
 
+def _caixa(corpo: str, extra: str = "") -> str:
+    return f'<div class="ia-caixa{" " + extra if extra else ""}">{corpo}</div>'
+
+
 def _secao(titulo: str) -> str:
-    return f'<div style="{_SUB}">{escape(titulo)}</div>'
+    return f'<div class="ia-titulo">{escape(titulo)}</div>'
 
 
 def _nota(texto: str) -> str:
-    return (f'<div style="font-size:0.75rem;color:var(--app-subtle);'
-            f'margin-top:4px">{escape(texto)}</div>')
+    return f'<div class="ia-nota">{escape(texto)}</div>'
+
+
+def _vazio(texto: str) -> str:
+    return f'<div class="ia-vazio">{escape(texto)}</div>'
 
 
 # -- cabeçalho de grupo e lista simples ---------------------------------------------
@@ -101,26 +227,23 @@ def cabecalho_grupo(b: rs.Bloco, meta_reserva: str | None = None) -> str:
             alvo = f"alvo da classe {_pct(b.alvo_classe)}"
     extra = " · ".join(x for x in (alvo, meta_reserva or "") if x)
     return (
-        f'<div style="display:flex;justify-content:space-between;'
-        f'align-items:baseline;flex-wrap:wrap;gap:6px;margin-top:14px">'
-        f'<div style="font-size:1.05rem;font-weight:700;color:var(--app-text)">'
+        f'<div class="ia-grupo"><div class="ia-grupo-nome">'
         f'{_ICONE.get(b.chave, "")} {escape(b.rotulo)}</div>'
-        f'<div style="color:var(--app-text);font-weight:600">'
+        f'<div class="ia-grupo-valor">'
         f'{escape(_moeda(b.valor))} · {escape(_pct(b.peso))}</div></div>'
-        + (f'<div style="font-size:0.8rem;color:var(--app-subtle)">'
-           f'{escape(extra)}</div>' if extra else ""))
+        + (f'<div class="ia-grupo-extra">{escape(extra)}</div>'
+           if extra else ""))
 
 
 def cartao_lista(b: rs.Bloco) -> str:
     """Reserva e renda fixa: cada título com valor e % da carteira. Puro."""
     linhas = "".join(
-        f'<tr><td {_TD}><b>{escape(ln.ticker)}</b>'
-        f'<div style="font-size:0.78rem;color:var(--app-subtle)">'
-        f'{escape(ln.nome or "")}</div></td>'
-        f'<td {_TD}>{escape(_moeda(ln.valor, ln.moeda))}</td>'
-        f'<td {_TD}>{escape(_pct(ln.peso))}</td></tr>' for ln in b.linhas)
-    return (f'<div style="{_CAIXA}"><table style="border-collapse:collapse;'
-            f'width:100%;font-size:0.88rem">{linhas}</table></div>')
+        f'<tr><td><b>{escape(ln.ticker)}</b>'
+        f'<div class="ia-peca-det">{escape(ln.nome or "")}</div></td>'
+        f'<td class="ia-dir">{escape(_moeda(ln.valor, ln.moeda))}</td>'
+        f'<td class="ia-dir">{escape(_pct(ln.peso))}</td></tr>'
+        for ln in b.linhas)
+    return _caixa(f'<table class="ia-tabela">{linhas}</table>')
 
 
 # -- a caixa de cada ativo ------------------------------------------------------------
@@ -155,69 +278,94 @@ def cartao_posicao(a: m.AnaliseAtivo,
     devido = rs.peso_devido(a, sugerido)
     cor = _COR_DECISAO[d.codigo]
 
-    def _kpi(rotulo, valor, detalhe="", estilo=""):
-        return (f'<div style="flex:1;min-width:140px">'
-                f'<div style="{_SUB};margin-top:0">{escape(rotulo)}</div>'
-                f'<div style="font-size:1.25rem;font-weight:700;'
-                f'color:var(--app-text);{estilo}">{escape(valor)}</div>'
-                f'<div style="font-size:0.78rem;color:var(--app-subtle)">'
-                f'{escape(detalhe)}</div></div>')
+    def _kpi(rotulo, valor, detalhe="", cor_valor=""):
+        acao = (f' ia-kpi--acao" style="--ia-cor:{cor_valor}' if cor_valor
+                else "")
+        estilo = f' style="color:{cor_valor}"' if cor_valor else ""
+        return (f'<div class="ia-kpi{acao}">'
+                f'<div class="ia-kpi-rot">{escape(rotulo)}</div>'
+                f'<div class="ia-kpi-val"{estilo}>{escape(valor)}</div>'
+                + (f'<div class="ia-kpi-det">{escape(detalhe)}</div>'
+                   if detalhe else "")
+                + '</div>')
     hoje, ideal, fazer, certeza = ROTULOS_POSICAO
-    return (
-        f'<div style="{_CAIXA}"><div style="display:flex;gap:14px;'
-        f'flex-wrap:wrap">'
+    return _caixa(
+        '<div class="ia-kpis">'
         + _kpi(hoje, _pct(a.ativo.peso_atual),
                _moeda(a.ativo.valor_mercado, a.ativo.moeda))
         + _kpi(ideal, devido.valor, cv.devida_curta)
-        + _kpi(fazer, d.rotulo, cv.acao_curta, f"color:{cor}")
+        + _kpi(fazer, d.rotulo, cv.acao_curta, cor)
         + _kpi(certeza, ls.CERTEZA[d.conviccao], cv.certeza_curta)
-        + "</div></div>")
+        + "</div>")
 
 
-def _paragrafos(frases) -> str:
-    return "".join(f'<p style="margin:2px 0 6px;font-size:0.9rem;'
-                   f'line-height:1.5;color:var(--app-text)">{escape(f)}</p>'
-                   for f in frases if f)
+def _paragrafos(frases, lead: bool = False) -> str:
+    frases = [f for f in frases if f]
+    return "".join(
+        f'<p class="ia-p{" ia-lead" if lead and i == 0 else ""}">'
+        f'{escape(f)}</p>' for i, f in enumerate(frases))
 
 
 _COR_TOM = {1: "var(--app-primary)", -1: "var(--app-danger)",
             0: "var(--app-muted)"}
 
 
+def _lista(itens) -> str:
+    return ('<ul class="ia-lista">'
+            + "".join(f"<li>{escape(x)}</li>" for x in itens if x)
+            + "</ul>")
+
+
 def _bloco_leitura(lt: ls.Leitura) -> str:
-    frases = "".join(
-        f'<li style="margin:2px 0">{escape(f)}</li>' for f in lt.frases)
-    return (f'<div style="border:1px solid var(--app-border);border-radius:8px;'
-            f'padding:8px 10px;background:var(--app-surface-raised)">'
-            f'<div style="{_SUB};margin-top:0">{escape(lt.rotulo)}</div>'
-            f'<div style="font-size:1rem;font-weight:700;'
-            f'color:{_COR_TOM[lt.tom]}">{escape(lt.leitura.capitalize())}</div>'
-            + (f'<ul style="margin:4px 0 0 16px;padding:0;font-size:0.84rem;'
-               f'color:var(--app-text)">{frases}</ul>' if frases else "")
+    return (f'<div class="ia-peca"><div class="ia-peca-rot">'
+            f'{escape(lt.rotulo)}</div>'
+            f'<div class="ia-peca-val" style="color:{_COR_TOM[lt.tom]}">'
+            f'{escape(lt.leitura.capitalize())}</div>'
+            + (_lista(lt.frases) if lt.frases else "")
             + "</div>")
+
+
+_ROTULO_PESO = {"A favor": "var(--app-primary)", "Contra": "var(--app-danger)"}
+
+
+def _pesos(itens) -> str:
+    """"A favor: x." vira rótulo colorido e texto lado a lado."""
+    linhas = []
+    for x in itens:
+        rot, _, resto = x.partition(": ")
+        if rot in _ROTULO_PESO and resto:
+            linhas.append(
+                f'<div class="ia-peso"><span class="ia-peso-rot" '
+                f'style="color:{_ROTULO_PESO[rot]}">{escape(rot)}</span>'
+                f'<span>{escape(resto)}</span></div>')
+        else:
+            linhas.append(_lista((x,)))
+    return "".join(linhas)
+
+
+def _bloco(titulo: str, corpo: str) -> str:
+    return f'<div class="ia-bloco">{_secao(titulo)}{corpo}</div>'
 
 
 def cartao_conversa(cv: ls.Conversa) -> str:
     """A recomendação em linguagem simples, sem repetir os cartões de cima:
     por quê, o que eu vi, na prática, a favor e contra e o que mudaria.
     Seção sem conteúdo não aparece. Puro."""
-    partes = [_secao("Por quê"), _paragrafos(cv.porque)]
+    partes = [_bloco("Por quê", _paragrafos(cv.porque, lead=True))]
     if cv.leituras:
-        partes += [_secao("O que eu vi"),
-                   '<div style="display:grid;grid-template-columns:repeat('
-                   'auto-fill,minmax(220px,1fr));gap:8px">'
-                   + "".join(_bloco_leitura(x) for x in cv.leituras)
-                   + "</div>"]
-    for titulo, itens in (("Na prática", cv.pratica),
-                          ("A favor e contra", cv.pesos),
-                          ("O que mudaria a sugestão", cv.mudaria)):
-        if itens:
-            partes += [_secao(titulo), _itens(itens)]
-    html = f'<div style="{_CAIXA}">{"".join(partes)}</div>'
+        partes.append(_bloco(
+            "O que eu vi", '<div class="ia-grade">'
+            + "".join(_bloco_leitura(x) for x in cv.leituras) + "</div>"))
+    if cv.pratica:
+        partes.append(_bloco("Na prática", _lista(cv.pratica)))
+    if cv.pesos:
+        partes.append(_bloco("A favor e contra", _pesos(cv.pesos)))
+    if cv.mudaria:
+        partes.append(_bloco("O que mudaria a sugestão", _lista(cv.mudaria)))
+    html = _caixa("".join(partes))
     if cv.investigar:
-        html += (f'<div style="{_CAIXA}border-left:3px solid '
-                 f'var(--app-warning);">{_secao(TITULO_INVESTIGAR)}'
-                 f'{_itens(cv.investigar)}</div>')
+        html += _caixa(_secao(TITULO_INVESTIGAR) + _lista(cv.investigar),
+                       "ia-aviso")
     return html
 
 
@@ -229,23 +377,16 @@ def bloco_tecnico(d: rs.Decisao, av: av_.Avaliacao) -> str:
     limitações e a avaliação por dimensão), recolhido. O aviso de
     metodologia (``rs.AVISO_DECISAO``) fica só para as LLMs: na tela ele
     cansava sem informar (pedido do usuário, 12/11/2026). Puro."""
-    motivo = (f'<div style="{_CAIXA}"><div style="font-size:0.84rem;'
-              f'color:var(--app-text)">{escape(d.motivo)}</div></div>'
-              if d.motivo else "")
+    motivo = (_caixa(_paragrafos((d.motivo,))) if d.motivo else "")
     corpo = (motivo + cartao_alertas(d) + cartao_recomendacao(d)
              + cartao_avaliacao(av))
-    return ('<details style="margin:8px 0"><summary style="cursor:pointer;'
-            'color:var(--app-muted);font-size:0.85rem">Ver a análise técnica '
+    return ('<details class="ia-tecnico"><summary>Ver a análise técnica '
             'completa</summary>'
-            f'{corpo}</details>')
+            f'<div class="ia-tecnico-corpo">{corpo}</div></details>')
 
 
 def _itens(itens) -> str:
-    return "".join(
-        f'<div style="display:flex;gap:6px;margin:2px 0;font-size:0.82rem;'
-        f'color:var(--app-text)"><span style="flex:none;'
-        f'color:var(--app-subtle)">•</span><span>{escape(x)}</span></div>'
-        for x in itens)
+    return _lista(itens)
 
 
 def cartao_recomendacao(d: rs.Decisao) -> str:
@@ -275,7 +416,7 @@ def cartao_recomendacao(d: rs.Decisao) -> str:
                            tuple(x for x in d.contexto if x != momento))):
         if itens:
             partes += [_secao(titulo), _itens(itens)]
-    return f'<div style="{_CAIXA}">{"".join(partes)}</div>'
+    return _caixa("".join(partes))
 
 
 TITULO_ALERTAS = "Alertas para investigar (não são ordens de compra ou venda)"
@@ -287,8 +428,7 @@ def cartao_alertas(d: rs.Decisao) -> str:
     alerta. Puro."""
     if not d.alertas:
         return ""
-    return (f'<div style="{_CAIXA}border-left:3px solid var(--app-warning);">'
-            f'{_secao(TITULO_ALERTAS)}{_itens(d.alertas)}</div>')
+    return _caixa(_secao(TITULO_ALERTAS) + _itens(d.alertas), "ia-aviso")
 
 
 AVISO_AVALIACAO = ("Avaliação por regras sobre os dados do app, não "
@@ -302,10 +442,10 @@ _COR_LEITURA = {
     av_.NEUTRO: "var(--app-text)", av_.MISTO: "var(--app-warning)",
     av_.FRAGIL: "var(--app-danger)", av_.CARO: "var(--app-warning)",
     av_.NEGATIVO: "var(--app-danger)",
-    av_.INSUFICIENTE: "var(--app-subtle)", av_.SEM_LEITURA: "var(--app-subtle)",
+    av_.INSUFICIENTE: "var(--app-muted)", av_.SEM_LEITURA: "var(--app-muted)",
 }
 _SINAL = {1: ("+", "var(--app-primary)"), -1: ("−", "var(--app-danger)"),
-          0: ("·", "var(--app-subtle)")}
+          0: ("·", "var(--app-muted)")}
 
 
 def _bloco_dimensao(d: av_.Dimensao) -> str:
@@ -314,21 +454,17 @@ def _bloco_dimensao(d: av_.Dimensao) -> str:
                         codigo="inteligencia.avaliacao_nota_dimensao")
     cor = _COR_LEITURA.get(d.leitura, "var(--app-text)")
     itens = "".join(
-        f'<div style="display:flex;gap:6px;margin:2px 0;font-size:0.82rem;'
-        f'color:var(--app-text)"><span style="font-weight:700;width:10px;'
-        f'flex:none;color:{_SINAL[c.sinal][1]}">{_SINAL[c.sinal][0]}</span>'
-        f'<span>{escape(c.texto)}</span></div>'
+        f'<div class="ia-crit"><span style="color:{_SINAL[c.sinal][1]}">'
+        f'{_SINAL[c.sinal][0]}</span><span>{escape(c.texto)}</span></div>'
         for c in d.criterios)
     contagem = (f"{d.favoraveis} a favor · {d.desfavoraveis} contra"
                 if d.criterios else "")
     return (
-        f'<div style="border:1px solid var(--app-border);border-radius:8px;'
-        f'padding:8px 10px;background:var(--app-surface-raised)">'
-        f'<div style="{_SUB};margin-top:0">{escape(d.rotulo)}</div>'
-        f'<div style="font-size:1.05rem;font-weight:700;color:{cor}">'
+        f'<div class="ia-peca"><div class="ia-peca-rot">{escape(d.rotulo)}'
+        f'</div><div class="ia-peca-val" style="color:{cor}">'
         f'{escape(d.rotulo_leitura)}</div>'
-        + (f'<div style="font-size:0.74rem;color:var(--app-subtle);'
-           f'margin-bottom:4px">{escape(contagem)}</div>' if contagem else "")
+        + (f'<div class="ia-peca-det" style="margin:-4px 0 8px">'
+           f'{escape(contagem)}</div>' if contagem else "")
         + itens
         + "</div>")
 
@@ -348,34 +484,31 @@ def cartao_avaliacao(av: av_.Avaliacao) -> str:
                     codigo="inteligencia.avaliacao_regua_setorial")
     detalhe_tecnico(av_.AVISO, codigo="inteligencia.avaliacao_metodologia")
     alertas = "".join(
-        f'<div style="margin:3px 0;font-size:0.84rem;color:'
+        f'<div class="ia-alerta" style="color:'
         f'{"var(--app-danger)" if al.critico else "var(--app-warning)"}">'
         f'<b>{_rotulo_alerta(al)}:</b> '
         f'{escape(al.texto)}</div>' for al in av.alertas)
     grade = "".join(_bloco_dimensao(d) for d in av.dimensoes)
-    return (f'<div style="{_CAIXA}">{_secao("Avaliação do ativo")}'
-            f'{alertas}'
-            f'<div style="display:grid;grid-template-columns:repeat(auto-fill,'
-            f'minmax(240px,1fr));gap:8px;margin-top:4px">{grade}</div>'
-            f'{_nota(AVISO_AVALIACAO)}</div>')
+    return _caixa(f'{_secao("Avaliação do ativo")}{alertas}'
+                  f'<div class="ia-grade" style="margin-top:8px">{grade}</div>'
+                  f'{_nota(AVISO_AVALIACAO)}')
 
 
 def cartao_substitutos(subs: tuple[prs.Par, ...]) -> str:
     """Só aparece quando a ação é vender ou substituir. Puro."""
     if not subs:
-        corpo = ('<div style="color:var(--app-muted)">Nenhum par do mesmo '
-                 'segmento fora da sua carteira para comparar (com poucos '
-                 'pares, o grupo de comparação inclui outros segmentos, e '
-                 'troca entre segmentos não é sugerida).</div>')
+        corpo = _vazio('Nenhum par do mesmo segmento fora da sua carteira '
+                       'para comparar (com poucos pares, o grupo de '
+                       'comparação inclui outros segmentos, e troca entre '
+                       'segmentos não é sugerida).')
     else:
         corpo = "".join(
-            f'<div style="margin:2px 0"><b style="color:var(--app-text)">'
-            f'{escape(p.ticker)}</b> <span style="color:var(--app-muted)">'
-            f'{escape(p.nome or "")}</span><div style="font-size:0.78rem;'
-            f'color:var(--app-subtle)">{escape(p.motivo)}</div></div>'
+            f'<div class="ia-item"><b>{escape(p.ticker)}</b> '
+            f'<span class="ia-meta">{escape(p.nome or "")}</span>'
+            f'<div class="ia-peca-det">{escape(p.motivo)}</div></div>'
             for p in subs)
-    return (f'<div style="{_CAIXA}">{_secao("Se sair, qual substituir?")}'
-            f'{corpo}{_nota(rs.AVISO_SUBSTITUTO)}</div>')
+    return _caixa(f'{_secao("Se sair, qual substituir?")}'
+                  f'{corpo}{_nota(rs.AVISO_SUBSTITUTO)}')
 
 
 def _regua(mt: rs.MetricaPares) -> str:
@@ -399,7 +532,7 @@ def _regua(mt: rs.MetricaPares) -> str:
             f'left:{pt.posicao:.1f}%;top:{3 - tam / 2:.1f}px;width:{tam}px;'
             f'height:{tam}px;margin-left:-{tam / 2:.1f}px;border-radius:50%;'
             f'{estilo}"></div>')
-    return ('<div style="position:relative;height:6px;margin:12px 6px 8px;'
+    return ('<div style="position:relative;height:6px;margin:14px 6px 10px;'
             'border-radius:3px;background:var(--app-border)">'
             + "".join(marcas) + "</div>")
 
@@ -408,24 +541,18 @@ def _bloco_metrica(mt: rs.MetricaPares) -> str:
     pares = " · ".join(f"{escape(pt.ticker)} {escape(pt.texto)}"
                        for pt in mt.pontos if not pt.eh_ativo)
     return (
-        f'<div title="{escape(mt.leitura, quote=True)}" style="border:1px '
-        f'solid var(--app-border);border-radius:8px;padding:8px 10px;'
-        f'background:var(--app-surface-raised)">'
-        f'<div style="{_SUB};margin-top:0">{escape(mt.rotulo)}</div>'
-        + (f'<div style="font-size:0.74rem;color:var(--app-muted);'
-           f'margin-top:-2px">{escape(ls.O_QUE_MEDE[mt.chave])}</div>'
+        f'<div class="ia-peca" title="{escape(mt.leitura, quote=True)}">'
+        f'<div class="ia-peca-rot">{escape(mt.rotulo)}</div>'
+        + (f'<div class="ia-peca-det">{escape(ls.O_QUE_MEDE[mt.chave])}</div>'
            if mt.chave in ls.O_QUE_MEDE else "")
-        + f'<div style="display:flex;align-items:baseline;gap:8px;'
-        f'flex-wrap:wrap"><span style="font-size:1.15rem;font-weight:700;'
-        f'color:var(--app-text)">{escape(mt.texto_ativo)}</span>'
-        f'<span style="font-size:0.75rem;color:var(--app-muted)">'
+        + f'<div class="ia-metrica-val"><b>{escape(mt.texto_ativo)}</b>'
+        f'<span class="ia-peca-det">'
         f'{escape(rs.ROTULO_POSICAO.get(mt.posicao, ""))}</span></div>'
         + _regua(mt)
-        + f'<div style="font-size:0.74rem;color:var(--app-subtle)">'
+        + f'<div class="ia-peca-det ia-num">'
           f'Mediana do segmento {escape(mt.texto_mediana)} '
           f'({mt.n_pares} {"par" if mt.n_pares == 1 else "pares"})</div>'
-        + (f'<div style="font-size:0.74rem;color:var(--app-muted)">'
-           f'{pares}</div>' if pares else "")
+        + (f'<div class="ia-peca-det ia-num">{pares}</div>' if pares else "")
         + "</div>")
 
 
@@ -435,31 +562,26 @@ def cartao_pares(t: rs.TabelaPares) -> str:
     if not t.linhas:
         aviso_lacuna(f"Comparação com o segmento: {t.motivo or 'sem dado'}",
                      codigo="tela.inteligencia.pares_sem_dado")
-        return (f'<div style="{_CAIXA}">{_secao(titulo)}<div style="color:'
-                'var(--app-muted)">Comparação indisponível no momento.'
-                '</div></div>')
+        return _caixa(_secao(titulo)
+                      + _vazio("Comparação indisponível no momento."))
     ponto = ('<span style="display:inline-block;width:9px;height:9px;'
-             'border-radius:50%;margin-right:4px;vertical-align:middle;{}">'
+             'border-radius:50%;margin-right:6px;vertical-align:middle;{}">'
              '</span>')
     legenda = []
     for i, (tk, nome) in enumerate(t.nomes):
         estilo = ("background:var(--app-primary)" if i == 0 else
                   "border:2px solid var(--app-muted)")
-        legenda.append(f'<span style="margin-right:12px;white-space:nowrap">'
-                       f'{ponto.format(estilo)}<b>{escape(tk)}</b> '
-                       f'<span style="color:var(--app-subtle)">'
-                       f'{escape(nome)}</span></span>')
-    legenda.append('<span style="white-space:nowrap"><span style="display:'
-                   'inline-block;width:2px;height:11px;margin-right:4px;'
-                   'vertical-align:middle;background:var(--app-text);'
-                   'opacity:.55"></span>mediana do segmento</span>')
+        legenda.append(f'<span>{ponto.format(estilo)}<b>{escape(tk)}</b> '
+                       f'<span class="ia-meta">{escape(nome)}</span></span>')
+    legenda.append('<span><span style="display:inline-block;width:2px;'
+                   'height:11px;margin-right:6px;vertical-align:middle;'
+                   'background:var(--app-text);opacity:.55"></span>'
+                   'mediana do segmento</span>')
     grade = "".join(_bloco_metrica(mt) for mt in t.metricas)
-    return (f'<div style="{_CAIXA}">{_secao(f"{titulo} · {t.titulo}")}'
-            f'<div style="font-size:0.8rem;color:var(--app-text);'
-            f'margin-bottom:8px">{"".join(legenda)}</div>'
-            f'<div style="display:grid;grid-template-columns:repeat(auto-fill,'
-            f'minmax(200px,1fr));gap:8px">{grade}</div>'
-            f'{_nota(prs.RODAPE)}</div>')
+    return _caixa(f'{_secao(f"{titulo} · {t.titulo}")}'
+                  f'<div class="ia-legenda">{"".join(legenda)}</div>'
+                  f'<div class="ia-grade">{grade}</div>'
+                  f'{_nota(prs.RODAPE)}')
 
 
 def cartao_papel(a: m.AnaliseAtivo) -> str:
@@ -469,7 +591,7 @@ def cartao_papel(a: m.AnaliseAtivo) -> str:
               if a.papel_principal is None or p.codigo != a.papel_principal.codigo]
     tese = a.tese
     linhas = [f"<b>Papel:</b> {escape(papel)}"
-              + (f' <span style="color:var(--app-subtle)">(também: '
+              + (f' <span class="ia-meta">(também: '
                  f'{escape(", ".join(outros))})</span>' if outros else "")]
     if tese.por_que_esta_na_carteira:
         linhas.append(f"<b>Por que está na carteira:</b> "
@@ -477,27 +599,27 @@ def cartao_papel(a: m.AnaliseAtivo) -> str:
     if tese.alinhamento:
         linhas.append(f"<b>Alinhamento com a estratégia:</b> "
                       f"{escape(tese.alinhamento)}")
-    return (f'<div style="{_CAIXA}">{_secao("Papel na carteira")}'
-            + "".join(f'<div style="margin:2px 0;color:var(--app-text)">'
-                      f'{x}</div>' for x in linhas) + "</div>")
+    return _caixa(_secao("Papel na carteira")
+                  + "".join(f'<p class="ia-p">{x}</p>' for x in linhas))
 
 
 def _manchete(i) -> str:
     origem = f"{i.ticker} · " if getattr(i, "ticker", None) else ""
-    return (f'<div style="margin:3px 0"><span style="color:var(--app-subtle);'
-            f'font-size:0.78rem">{escape(origem)}'
+    return (f'<div class="ia-item"><div class="ia-meta">{escape(origem)}'
             f'{escape(rs.inf._data_br(i.date))} · {escape(i.source or "—")}'
-            f'</span><div style="color:var(--app-text)">'
-            f'{_link(i.headline, i.url)}</div></div>')
+            f'</div><div>{_link(i.headline, i.url)}</div></div>')
 
 
 def _manchete_cenario(i: rs.ItemCenario) -> str:
     pais = f" · {i.pais}" if i.pais else ""
-    return (f'<div style="margin:3px 0"><span style="color:var(--app-subtle);'
-            f'font-size:0.78rem">{escape(i.tema.capitalize())}{escape(pais)} · '
-            f'{escape(i.data)} · {escape(i.veiculo or "—")}</span>'
-            f'<div style="color:var(--app-text)">{_link(i.titulo, i.url)}'
-            f'</div></div>')
+    return (f'<div class="ia-item"><div class="ia-meta">'
+            f'{escape(i.tema.capitalize())}{escape(pais)} · '
+            f'{escape(i.data)} · {escape(i.veiculo or "—")}</div>'
+            f'<div>{_link(i.titulo, i.url)}</div></div>')
+
+
+def _manchetes(html: str) -> str:
+    return f"<div>{html}</div>"
 
 
 def cartao_noticias(a: m.AnaliseAtivo,
@@ -508,18 +630,17 @@ def cartao_noticias(a: m.AnaliseAtivo,
     itens, motivo = rs.noticias(a)
     partes = []
     if itens:
-        partes.append("".join(_manchete(i) for i in itens))
+        partes.append(_manchetes("".join(_manchete(i) for i in itens)))
     else:
         aviso_lacuna(f"Notícias do ativo: {motivo or 'sem notícias'}",
                      codigo="tela.inteligencia.noticias_do_ativo_sem_dado",
                      entidade=str(a.ativo.ticker))
-        partes.append('<div style="color:var(--app-muted)">Nenhuma notícia '
-                      'disponível para este ativo.</div>')
+        partes.append(_vazio("Nenhuma notícia disponível para este ativo."))
     setor, rotulo = rs.noticias_setor(a)
     if setor:
         partes.append(_secao("Como está o segmento"
                              + (f" · {rotulo}" if rotulo else "")))
-        partes.append("".join(_manchete(i) for i in setor))
+        partes.append(_manchetes("".join(_manchete(i) for i in setor)))
         from core.inteligencia_ativos.secoes import ROTULO_POSICOES_ETF
         partes.append(_nota(
             "Notícias das maiores posições do fundo, não do fundo."
@@ -532,11 +653,11 @@ def cartao_noticias(a: m.AnaliseAtivo,
         temas = rs.temas_do_ativo(a.ativo.classe_politica)
         partes.append(_secao("Cenário econômico e político"))
         if cenario:
-            partes.append("".join(_manchete_cenario(i) for i in cenario))
+            partes.append(_manchetes(
+                "".join(_manchete_cenario(i) for i in cenario)))
         else:
-            partes.append('<div style="color:var(--app-muted)">Nenhuma '
-                          'manchete de juros, inflação, câmbio, fiscal ou '
-                          'política no período.</div>')
+            partes.append(_vazio("Nenhuma manchete de juros, inflação, "
+                                 "câmbio, fiscal ou política no período."))
         detalhe_tecnico("Notícias do cenário"
                         + (f" escolhidas por {temas}" if temas else "")
                         + (f"; fonte: {origem}" if origem else ""),
@@ -548,7 +669,7 @@ def cartao_noticias(a: m.AnaliseAtivo,
         aviso_lacuna("Cenário econômico e político indisponível",
                      codigo="tela.inteligencia.cenario_noticias_indisponivel",
                      entidade=str(a.ativo.ticker))
-    return f'<div style="{_CAIXA}">{_secao("Notícias")}{"".join(partes)}</div>'
+    return _caixa(_secao("Notícias") + "".join(partes))
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -591,26 +712,22 @@ def cartao_relatorios(a: m.AnaliseAtivo,
     partes = []
     for d in destaques:
         partes.append(
-            '<div style="margin:6px 0 8px 0"><div style="font-size:0.78rem;'
-            f'color:var(--app-subtle)">{escape(rs.inf._data_br(d.data))} · '
-            f'{escape(d.tipo)}</div><div style="color:var(--app-text);'
-            f'font-weight:700;margin:1px 0 3px 0">{escape(d.titulo)}</div>'
-            '<ul style="margin:0 0 0 18px;padding:0;color:var(--app-text)">'
-            + "".join(f'<li style="margin:2px 0">{escape(f)}</li>'
-                      for f in d.frases)
-            + "</ul></div>")
+            f'<div class="ia-item"><div class="ia-meta">'
+            f'{escape(rs.inf._data_br(d.data))} · {escape(d.tipo)}</div>'
+            f'<div style="font-weight:600;margin:2px 0 6px">'
+            f'{escape(d.titulo)}</div>{_lista(d.frases)}</div>')
     restantes = [d for d in docs
                  if not any(dr.mesmo_documento(d.titulo, d.reference_date, x)
                             for x in destaques)]
     if restantes:
         partes.append(
-            f'<div style="margin-top:6px;color:var(--app-muted);'
-            f'font-size:0.8rem"><b>{"Outros documentos recentes" if destaques else "Documentos recentes"}'
-            ':</b></div>'
+            _secao("Outros documentos recentes" if destaques
+                   else "Documentos recentes")
             + "".join(
-                '<div style="margin:2px 0;font-size:0.82rem;color:var(--app-'
-                f'text)">{escape(rs.inf._data_br(d.reference_date))} · '
-                f'{escape(d.rotulo or "")}: {escape(d.titulo or "")}</div>'
+                f'<div class="ia-item"><div class="ia-meta">'
+                f'{escape(rs.inf._data_br(d.reference_date))} · '
+                f'{escape(d.rotulo or "")}</div>'
+                f'<div>{escape(d.titulo or "")}</div></div>'
                 for d in restantes))
     if restantes:
         aviso_lacuna("Relatórios: documentos recentes ainda sem texto "
@@ -621,57 +738,49 @@ def cartao_relatorios(a: m.AnaliseAtivo,
         aviso_lacuna(f"Relatórios: {motivo or rs.inf.NAO_DISPONIVEL}",
                      codigo="tela.inteligencia.relatorios_sem_dado",
                      entidade=str(a.ativo.ticker))
-        partes.append('<div style="color:var(--app-muted)">Nenhum relatório '
-                      'disponível para este ativo.</div>')
+        partes.append(_vazio("Nenhum relatório disponível para este ativo."))
     nota = ("Trechos literais dos documentos oficiais. A leitura do que isso "
             "muda na tese está na análise detalhada." if destaques else
             "Os pontos principais aparecem aqui quando o texto dos "
             "documentos estiver disponível.")
-    return (f'<div style="{_CAIXA}">{_secao("Relatórios relevantes")}'
-            f'{"".join(partes)}{_nota(nota)}</div>')
+    return _caixa(_secao("Relatórios relevantes") + "".join(partes)
+                  + _nota(nota))
 
 
 def cartao_macro(mc: rs.Macro, impacto: str | None = None) -> str:
     """Como o macro influencia: canais da classe, o seu cenário e, se já
     gerada, a leitura do Portfolio Fit. Puro."""
-    partes = [f'<div style="color:var(--app-text)"><b>O que mais pesa nesta '
-              f'classe:</b> {escape(", ".join(mc.canais) or "—")}</div>']
+    partes = [f'<p class="ia-p"><b>O que mais pesa nesta classe:</b> '
+              f'{escape(", ".join(mc.canais) or "—")}</p>']
     if mc.sem_cenario:
         aviso_lacuna("Macro: as séries do banco não puderam ser lidas",
                      codigo="tela.inteligencia.macro_series_ilegiveis")
-        partes.append('<div style="color:var(--app-muted)">Cenário macro '
-                      'indisponível no momento.</div>')
+        partes.append(_vazio("Cenário macro indisponível no momento."))
     elif mc.premissas:
-        partes.append("<div style=\"color:var(--app-text);margin-top:4px\">"
-                      "<b>Como estão agora (lido dos dados):</b></div><ul "
-                      "style=\"margin:2px 0 0 18px;padding:0;"
-                      "color:var(--app-text)\">"
-                      + "".join(f"<li>{escape(p)}</li>" for p in mc.premissas)
-                      + "</ul>")
+        partes.append('<p class="ia-p" style="margin-top:8px"><b>Como estão '
+                      'agora (lido dos dados):</b></p>'
+                      + _lista(mc.premissas))
     else:
         aviso_lacuna("Macro: sem dado para as variáveis desta classe",
                      codigo="tela.inteligencia.macro_sem_variaveis")
-        partes.append('<div style="color:var(--app-muted)">Cenário macro '
-                      'indisponível no momento.</div>')
+        partes.append(_vazio("Cenário macro indisponível no momento."))
     if mc.sinais:
-        partes.append("<ul style=\"margin:4px 0 0 18px;padding:0;"
-                      "color:var(--app-warning)\">"
-                      + "".join(f"<li>{escape(s)}</li>" for s in mc.sinais)
-                      + "</ul>")
+        partes.append('<div style="color:var(--app-warning);margin-top:8px">'
+                      + "".join(f'<div class="ia-alerta">{escape(s)}</div>'
+                                for s in mc.sinais) + "</div>")
     if impacto:
-        partes.append(f'<div style="color:var(--app-text);margin-top:6px">'
-                      f'<b>Leitura do Portfolio Fit:</b> {escape(impacto)}</div>')
+        partes.append(f'<p class="ia-p" style="margin-top:8px"><b>Leitura do '
+                      f'Portfolio Fit:</b> {escape(impacto)}</p>')
     else:
         partes.append(_nota("A leitura do impacto sai do Portfolio Fit, na "
                             "análise detalhada."))
-    return (f'<div style="{_CAIXA}">{_secao("Como o macro influencia")}'
-            + "".join(partes) + "</div>")
+    return _caixa(_secao("Como o macro influencia") + "".join(partes))
 
 
 _SETA_TENDENCIA = {"alta": ("▲ alta", "var(--app-warning)"),
                    "queda": ("▼ queda", "var(--app-info)"),
                    "estavel": ("● estável", "var(--app-muted)"),
-                   "incerta": ("? incerta", "var(--app-subtle)")}
+                   "incerta": ("? incerta", "var(--app-muted)")}
 
 
 def cartao_cenario(linhas: tuple[rs.LinhaCenario, ...]) -> str:
@@ -681,9 +790,8 @@ def cartao_cenario(linhas: tuple[rs.LinhaCenario, ...]) -> str:
         aviso_lacuna("Cenário econômico: as séries macro do banco não puderam "
                      "ser lidas",
                      codigo="tela.inteligencia.cenario_series_ilegiveis")
-        return (f'<div style="{_CAIXA}">{_secao("🌎 Cenário econômico atual")}'
-                '<div style="color:var(--app-muted)">Cenário econômico '
-                'indisponível no momento.</div></div>')
+        return _caixa(_secao("🌎 Cenário econômico atual")
+                      + _vazio("Cenário econômico indisponível no momento."))
     detalhe_tecnico("Cenário lido pelo programa das séries do banco (Selic, "
                     "IPCA, curva do Tesouro, dólar, juros e crédito nos EUA). "
                     "Commodities e risco geopolítico não têm série: as LLMs "
@@ -698,29 +806,23 @@ def cartao_cenario(linhas: tuple[rs.LinhaCenario, ...]) -> str:
                             + (f" · {ln.referencia}" if ln.referencia else ""),
                             codigo="inteligencia.cenario_fonte_serie",
                             entidade=ln.rotulo)
-            corpo = (f'<div style="color:var(--app-text);font-size:0.86rem;'
-                     f'margin-top:2px">{escape(ln.valor)}</div>'
-                     f'<div style="font-size:0.74rem;font-weight:700;color:{cor};'
-                     f'margin-top:4px">{escape(seta)}</div>')
+            corpo = (f'<div class="ia-num" style="font-size:.88rem;'
+                     f'margin-top:6px">{escape(ln.valor)}</div>'
+                     f'<div style="font-size:.74rem;font-weight:700;color:{cor};'
+                     f'margin-top:6px">{escape(seta)}</div>')
         else:
             aviso_lacuna(f"Cenário econômico — {ln.rotulo}: sem dado "
                          f"({ln.fonte or 'ausente'})",
                          codigo="tela.inteligencia.cenario_variavel_sem_dado",
                          entidade=ln.rotulo)
-            corpo = ('<div style="color:var(--app-subtle);font-size:0.8rem;'
-                     'margin-top:2px">Sem dado.</div>')
-        pecas.append('<div style="border:1px solid var(--app-border);'
-                     'border-radius:8px;background:var(--app-surface-raised);'
-                     'padding:8px 10px"><div style="font-size:0.72rem;'
-                     'font-weight:700;color:var(--app-muted);text-transform:'
-                     f'uppercase;letter-spacing:.04em">{escape(ln.rotulo)}</div>'
-                     f'{corpo}</div>')
-    return (f'<div style="{_CAIXA}">{_secao("🌎 Cenário econômico atual")}'
-            '<div style="display:grid;grid-template-columns:repeat(auto-fill,'
-            f'minmax(220px,1fr));gap:8px">{"".join(pecas)}</div>'
-            + _nota("A tendência é calculada a partir dos dados, não é "
-                    "opinião.")
-            + "</div>")
+            corpo = ('<div class="ia-vazio" style="margin-top:6px">'
+                     'Sem dado.</div>')
+        pecas.append(f'<div class="ia-peca"><div class="ia-peca-rot">'
+                     f'{escape(ln.rotulo)}</div>{corpo}</div>')
+    return _caixa(_secao("🌎 Cenário econômico atual")
+                  + f'<div class="ia-grade">{"".join(pecas)}</div>'
+                  + _nota("A tendência é calculada a partir dos dados, não é "
+                          "opinião."))
 
 
 def _impacto_fit(a: m.AnaliseAtivo) -> str | None:
@@ -763,6 +865,7 @@ def _render_ativo(a: m.AnaliseAtivo, ctx: m.ContextoInvestidor,
 def render(analises, ctx: m.ContextoInvestidor,
            politica: dict | None = None) -> None:
     na_carteira = tuple(a.ativo.ticker for a in analises)
+    st.markdown(CSS, unsafe_allow_html=True)
     with st.expander("🌎 Cenário econômico atual (lido dos dados)"):
         st.markdown(cartao_cenario(rs.cenario_atual(ctx.cenario)),
                     unsafe_allow_html=True)

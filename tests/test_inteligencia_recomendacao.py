@@ -149,7 +149,8 @@ def test_alerta_e_acao_ficam_separados(an):
     d = rs.decisao(_solida(an, 8.5, _caro(70.0)), _sug(2.5))
     assert not any("rebalancear" == x.lower()[:11] for x in d.alertas)
     html = tela.cartao_alertas(d)
-    assert tela.TITULO_ALERTAS in html and "var(--app-warning)" in html
+    assert tela.TITULO_ALERTAS in html and "ia-aviso" in html
+    assert ".ia-aviso{" in tela.CSS and "var(--app-warning)" in tela.CSS
     assert _sem_cor_literal(html)
     sem = rs.decisao(_solida(an, 2.5), _sug(2.5))
     assert tela.cartao_alertas(replace(sem, alertas=())) == ""

@@ -149,3 +149,11 @@ def test_texto_para_a_llm_continua_o_tecnico(an):
     d = rs.decisao(a, _sug(4.1))
     txt = vd.texto_ticker(vd.veredito_de_decisao("TAEE11", d), "TAEE11")
     assert "alavancagem de 7,07x o EBITDA" in txt
+
+
+def test_estilo_da_tela_so_usa_tokens_e_cabe_num_markdown():
+    """O CSS da caixa (12/11/2026) não crava cor e não tem quebra de linha:
+    linha em branco fecha o bloco HTML do Streamlit."""
+    assert _sem_cor_literal(tela.CSS)
+    assert "\n" not in tela.CSS
+    assert tela.CSS.startswith("<style>") and tela.CSS.endswith("</style>")
