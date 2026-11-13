@@ -43,10 +43,7 @@ jobs:
       APP_ENV: production
       MOCK_MODE: "false"
       PYTHONUNBUFFERED: "1"
-      SUPABASE_UNIFICADO_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
       DATABASE_URL:           ${{ secrets.DATABASE_URL }}
-      SUPABASE_DB_URL:        ${{ secrets.SUPABASE_DB_URL }}
-      OWNER_USER_ID:          ${{ secrets.OWNER_USER_ID }}
       # Token da API brapi.dev (backfill histórico de DY). Free: 15k req/mês.
       BRAPI_TOKEN:            ${{ secrets.BRAPI_TOKEN }}
       # Auditoria & saneamento: "false" = dry-run (apenas propõe + relatório).
@@ -72,9 +69,9 @@ jobs:
 
       - name: Validar configuração do Supabase
         run: |
-          DB_URL="${SUPABASE_UNIFICADO_URL:-${DATABASE_URL:-${SUPABASE_DB_URL}}}"
+          DB_URL="${DATABASE_URL}"
           if [ -z "$DB_URL" ]; then
-            echo "ERRO: configure SUPABASE_UNIFICADO_URL em Settings > Secrets and variables > Actions."
+            echo "ERRO: configure o secret DATABASE_URL em Settings > Secrets and variables > Actions."
             exit 1
           fi
           case "$DB_URL" in
@@ -87,7 +84,7 @@ jobs:
               exit 1
               ;;
             *)
-              echo "ERRO: SUPABASE_UNIFICADO_URL não está em formato SQLAlchemy/PostgreSQL válido."
+              echo "ERRO: DATABASE_URL não está em formato SQLAlchemy/PostgreSQL válido."
               echo "O valor deve iniciar com postgresql:// ou postgres://."
               exit 1
               ;;

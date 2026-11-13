@@ -216,10 +216,13 @@ Dashboard-Financeiro-Unificado/
 2. Executar os SQLs na ordem explícita documentada em
    `supabase_unificado/schema/README_EXECUCAO_SQL.md` (`001` → `022`;
    existem dois scripts `018`, ambos obrigatórios)
-3. Configurar `.env` com `SUPABASE_UNIFICADO_URL`, `OWNER_USER_ID` e `APP_PASSWORD`
+3. Configurar `.env` com `DATABASE_URL` (ou `SUPABASE_UNIFICADO_URL`), `OWNER_USER_ID` e `APP_PASSWORD`
 4. Definir `MOCK_MODE=false`
-5. Executar a migração: `python migration/05_load_to_unified_supabase.py`
-6. Importar cotações: Configurações → aba Cotações → Atualizar Cotações
+5. Importar cotações: Configurações → aba Cotações → Atualizar Cotações
+
+> A carga inicial vinda dos três apps originais (pasta `migration/`) foi feita
+> uma vez e aposentada em 11/2026; o código saiu do repositório e continua no
+> histórico do git.
 
 > Checklist detalhado: [`docs/status_atual_implementacao.md`](docs/status_atual_implementacao.md)
 

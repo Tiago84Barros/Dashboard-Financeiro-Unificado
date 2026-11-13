@@ -53,31 +53,6 @@ _DEFAULT_REGISTRY: list[dict] = [
         "description":  "Taxas e PUs diários de compra/venda de cada título do Tesouro Direto. É a ponta de mercado da marcação a mercado: sem ela o app só repetiria a rentabilidade acumulada impressa no extrato.",
     },
     {
-        # LEGADO (app1): sincronizava public.macro do banco do App1. Desativado —
-        # a tabela `macro` já é alimentada diretamente pela fonte primária via
-        # update_bcb (Banco Central / SGS). App1 descontinuado.
-        "table_name":   "macro",
-        "source_name":  "Macro / Histórico B3 (legado app1)",
-        "job_name":     "update_macro",
-        "update_type":  "incremental",
-        "frequency":    "manual",
-        "priority":     3,
-        "is_active":    False,
-        "description":  "[Legado] Sync do App1; substituído por update_bcb (fonte primária BCB/SGS).",
-    },
-    {
-        # LEGADO (app1): copiava docs CVM do banco do App1. Desativado —
-        # substituído pelo coletor nativo update_cvm_ipe (CVM Dados Abertos).
-        "table_name":   "docs_corporativos_chunks",
-        "source_name":  "CVM / IPE (legado app1)",
-        "job_name":     "update_cvm",
-        "update_type":  "incremental",
-        "frequency":    "manual",
-        "priority":     4,
-        "is_active":    False,
-        "description":  "[Legado] Sync do App1; substituído pelo coletor nativo update_cvm_ipe.",
-    },
-    {
         "table_name":   "docs_corporativos, docs_corporativos_chunks",
         "source_name":  "CVM Dados Abertos (IPE)",
         "job_name":     "update_cvm_ipe",
