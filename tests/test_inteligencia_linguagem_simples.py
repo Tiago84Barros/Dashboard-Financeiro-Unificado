@@ -207,8 +207,8 @@ def test_alerta_so_do_noticiario_nao_ganha_piso(an):
 # regra soma as métricas de preço (o P/L menor compensa), e o texto tem de
 # dizer isso em vez de negar.
 
-from core.inteligencia_ativos import pares as p  # noqa: E402
 from core.cenario import modelo as cen  # noqa: E402
+from core.inteligencia_ativos import pares as p  # noqa: E402
 
 PSSA3 = {"roe": 22.8, "margem_liquida": 15.0, "p_l": 9.0, "p_vp": 1.78}
 BBSE3 = {"roe": 84.4, "margem_liquida": 60.0, "p_l": 7.0, "p_vp": 6.82,
