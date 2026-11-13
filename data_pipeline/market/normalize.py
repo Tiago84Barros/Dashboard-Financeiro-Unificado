@@ -608,6 +608,52 @@ _METODO_SPOT = {
     "marketCap": "preco_x_acoes_emitidas_por_titulo",
     "Acoes_por_Titulo": "lpa_do_titulo_sobre_lpa_por_acao",
 }
+# P/VP spot com a conta do ttm (``metrics.compute_snapshot``: market_cap/equity).
+METODO_PVP_DO_TITULO = "valor_de_mercado_sobre_pl"
+METODO_PVP_DA_BRAPI = "brapi_field"
+
+
+def pl_mais_recente(quote: dict) -> float | None:
+    """PL dos controladores do balanço mais recente do quote: o mesmo
+    ``equity`` que ``balance_rows`` grava e o ttm divide. No empate de data,
+    o trimestral vence o anual (são o mesmo balanço)."""
+    linhas = [r for r in balance_rows(quote or {}) if r.get("equity") is not None]
+    if not linhas:
+        return None
+    mais_novo = max(linhas, key=lambda r: (r["period_end_date"], r["period"] == "quarterly"))
+    return float(mais_novo["equity"])
+
+
+def pvp_do_titulo(quote: dict, composicao: dict | None = None, *,
+                  unit: bool) -> tuple[float | None, str]:
+    """(P/VP spot, método): valor de mercado do título ÷ PL dos controladores.
+
+    O ``priceToBook`` da brapi é preço ÷ (PL ÷ ``sharesOutstanding``), e a
+    contagem de ações dela às vezes vem errada (29/10/2026: TFCO4 com 942 mi
+    deu P/VP 15,8; MILS3 com 48.172 deu 0,0; JBSS32 3,55 contra ~1,6). O
+    valor de mercado aqui é o de ``acoes.valor_de_mercado_do_quote``, com as
+    ações conferidas pela regra única (``core.brapi.escolher_pela_referencia``,
+    #729), e o PL é o de ``pl_mais_recente``: a mesma conta do ttm, então
+    spot e ttm só diferem pela data do preço e do balanço.
+
+    Sem valor de mercado ou sem PL (o quote diário vem sem balanço), cai no
+    ``priceToBook``, salvo quando a conferência rejeitou a contagem bruta: aí
+    ele é da contagem errada e não entra. PL zero também não entra."""
+    from data_pipeline.market import acoes as _ac
+
+    q_acoes = _ac.quote_com_composicao(quote or {}, composicao)
+    mc = _ac.valor_de_mercado_do_quote(q_acoes, unit=unit)
+    pl = pl_mais_recente(quote)
+    if mc is not None and pl:
+        return mc / pl, METODO_PVP_DO_TITULO
+    dks = (quote or {}).get("defaultKeyStatistics") or {}
+    ptb = _first(dks, ("priceToBook",))
+    if ptb is None:
+        return None, METODO_PVP_DA_BRAPI
+    bruto = _ac._acoes_brutas(q_acoes)
+    if bruto is not None and _ac.acoes_emitidas(q_acoes) != bruto:
+        return None, METODO_PVP_DA_BRAPI
+    return ptb, METODO_PVP_DA_BRAPI
 
 def metric_rows(quote: dict, composicao: dict | None = None) -> list[dict]:
     """Indicadores 'spot' fornecidos/derivados pela brapi (P/L, P/VP, EV/EBITDA, marketCap).
@@ -620,7 +666,9 @@ def metric_rows(quote: dict, composicao: dict | None = None) -> list[dict]:
     ``earningsPerShare`` do topo traz, na ação de companhia com unit, o LPA da
     unit. ``P/L`` é o preço do título ÷ esse LPA (``core.brapi.pl_do_titulo``),
     não o ``priceEarnings`` da brapi, que usa o mesmo LPA da unit (TAEE3:
-    2,76 em vez de 8,4); assim P/L × LPA fecha com o preço.
+    2,76 em vez de 8,4); assim P/L × LPA fecha com o preço. ``P/VP`` é esse
+    valor de mercado ÷ PL dos controladores (``pvp_do_titulo``), não o
+    ``priceToBook`` da brapi, que herda a contagem de ações errada dela.
 
     ``composicao``: o ``defaultKeyStatistics`` do quote completo mais novo,
     para o quote diário, que vem sem ele (``acoes.quote_com_composicao``).
@@ -653,9 +701,10 @@ def metric_rows(quote: dict, composicao: dict | None = None) -> list[dict]:
         from data_pipeline.market.metrics import dy_da_brapi_serve
         if not dy_da_brapi_serve(dy_spot, trailing_dy(quote), unit=unit):
             dy_spot = None
+    pvp, metodo_pvp = pvp_do_titulo(quote, composicao, unit=unit)
     cand = {
         "P/L": pl,
-        "P/VP": _first(dks, ("priceToBook",)),
+        "P/VP": pvp,
         "EV/EBITDA": _first(dks, ("enterpriseToEbitda", "enterpriseValueEbitda")),
         "marketCap": _ac.valor_de_mercado_do_quote(q_acoes, unit=unit),
         "Acoes_Emitidas": _ac.acoes_emitidas(q_acoes),
@@ -675,6 +724,7 @@ def metric_rows(quote: dict, composicao: dict | None = None) -> list[dict]:
             "ticker": tk, "period": "spot", "year": 0, "quarter": 0,
             "metric_name": name, "metric_value": float(val),
             "calculation_method": (metodo_pl if name == "P/L"
+                                   else metodo_pvp if name == "P/VP"
                                    else _METODO_SPOT.get(name, "brapi_field")),
             "source": "brapi.dev", "confidence_score": 80.0,
         })
