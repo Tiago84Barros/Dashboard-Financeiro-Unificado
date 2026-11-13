@@ -33,6 +33,7 @@ from dataclasses import dataclass
 from core.inteligencia_ativos import avaliacao as av_
 from core.inteligencia_ativos import modelos as m
 from core.inteligencia_ativos import momento as mo
+from core.inteligencia_ativos import pares as prs
 from core.inteligencia_ativos import recomendacao as rec
 from core.inteligencia_ativos import resumida as rs
 
@@ -233,8 +234,7 @@ def _porque(a: m.AnaliseAtivo, d: rs.Decisao,
         out.append("Não há concorrente claramente melhor para trocar.")
     sub = d.substituto
     if sub is not None and d.codigo == rs.SUBSTITUIR:
-        out.append(f"{sub.ticker} é do mesmo setor, mais saudável, sem ser "
-                   "mais cara nem mais arriscada.")
+        out += _porque_troca(sub)
     if d.antes_da_queda and d.momento is not None:
         fatos = _lista(_fatos_queda(d.momento))
         if d.codigo in (rs.MANTER, rs.REBALANCEAR):
@@ -462,8 +462,8 @@ def _mudaria(d: rs.Decisao, av: av_.Avaliacao) -> tuple[str, ...]:
     if d.codigo in (rs.MANTER, rs.COMPRAR, rs.REBALANCEAR, rs.ACOMPANHAR):
         out.append("Se a saúde da empresa piorar, vender uma parte ou tudo.")
     if d.codigo == rs.SUBSTITUIR and d.substituto is not None:
-        out.append(f"Se {d.substituto.ticker} deixar de ser claramente melhor, "
-                   "só vender.")
+        out.append(f"Se {d.substituto.ticker} deixar de sair melhor na "
+                   "comparação, só vender.")
     return tuple(dict.fromkeys(out))
 
 
@@ -520,4 +520,354 @@ O_QUE_MEDE = {
     "alavancagem": "quanto o fundo deve, em % do patrimônio",
     "max_drawdown": "a maior queda do preço no período",
     "liquidez_diaria": "quanto é negociado por dia; mais é mais fácil vender",
+    "porte": "o tamanho: quanto vale a empresa inteira na bolsa (no fundo "
+             "imobiliário, o patrimônio dele)",
+    "taxa_mercado": "quanto o título paga hoje, se comprado agora",
+    "prazo": "quanto tempo falta para o título vencer",
 }
+
+# -- a comparação com as parecidas, em palavras (pedido de 13/11/2026) -------------
+#
+# A comparação e a troca falavam "mediana do segmento", "EV/EBIT",
+# "drawdown", "porte 3,2x o do ativo". Aqui ficam as palavras; a conta é a
+# de ``pares`` e de ``recomendacao.diferencas``, sem regra nova.
+
+ROTULO_SIMPLES = {
+    "p_l": "Preço sobre o lucro (P/L)",
+    "p_vp": "Preço sobre o patrimônio (P/VP)",
+    "ev_ebit": "Valor da empresa sobre o lucro da operação (EV/EBIT)",
+    "dy_mediano_5a": "Dividendos num ano típico",
+    "dividend_yield": "Rendimentos dos últimos 12 meses",
+    "cap_rate": "Aluguel sobre o preço",
+    "roe": "Lucro sobre o dinheiro dos sócios (ROE)",
+    "margem_liquida": "Margem de lucro",
+    "volatilidade": "Sobe e desce do preço",
+    "retorno_12m": "Quanto rendeu em 12 meses",
+    "alavancagem": "Dívida do fundo",
+    "max_drawdown": "Maior queda",
+    "liquidez_diaria": "Negociado por dia",
+    "porte": "Tamanho",
+    "taxa_mercado": "Taxa de hoje",
+    "prazo": "Prazo até vencer",
+}
+
+TIPICO = "típico do setor"
+ROTULO_POSICAO_SIMPLES = {
+    "acima": f"acima do {TIPICO}", "abaixo": f"abaixo do {TIPICO}",
+    "em_linha": f"parecido com o {TIPICO}", "sem_dado": "sem dado deste ativo",
+}
+RODAPE_PARES = ("O \"típico do setor\" é o valor do meio entre as empresas "
+                "parecidas. Um número melhor que o delas não quer dizer, "
+                "sozinho, que o investimento seja melhor: isto é para "
+                "comparar, não é recomendação.")
+
+
+def rotulo_metrica(chave: str, tecnico: str = "") -> str:
+    return ROTULO_SIMPLES.get(chave, tecnico or chave)
+
+
+# O que o par tem a mais (melhor) ou a menos (pior), dito como coisa que se
+# "tem": "BBSE3 tem mais lucro sobre o dinheiro dos sócios".
+_TROCA = {
+    "roe": ("mais lucro sobre o dinheiro dos sócios",
+            "menos lucro sobre o dinheiro dos sócios"),
+    "margem_liquida": ("mais lucro em cada venda", "menos lucro em cada venda"),
+    "p_l": ("preço mais baixo em relação ao lucro",
+            "preço mais alto em relação ao lucro"),
+    "p_vp": ("preço mais baixo em relação ao patrimônio",
+             "preço mais alto em relação ao patrimônio"),
+    "ev_ebit": ("preço mais baixo em relação ao lucro da operação",
+                "preço mais alto em relação ao lucro da operação"),
+    "dy_mediano_5a": ("mais dividendos num ano típico",
+                      "menos dividendos num ano típico"),
+    "dividend_yield": ("mais rendimentos nos últimos 12 meses",
+                       "menos rendimentos nos últimos 12 meses"),
+    "cap_rate": ("mais aluguel em relação ao preço",
+                 "menos aluguel em relação ao preço"),
+    "volatilidade": ("preço mais estável", "preço que sobe e desce mais"),
+    "alavancagem": ("menos dívida", "mais dívida"),
+    "max_drawdown": ("queda menor no pior momento",
+                     "queda maior no pior momento"),
+}
+
+
+def _troca_texto(df: rec.Diferenca) -> str:
+    melhor, pior = _TROCA.get(df.chave, (f"{df.metrica} melhor",
+                                         f"{df.metrica} pior"))
+    return melhor if df.par_melhor else pior
+
+
+@dataclass(frozen=True)
+class Troca:
+    """Uma alternativa de troca contada em palavras: quem é, o que tem de
+    melhor, o que tem de pior e se passa no critério da troca."""
+    ticker: str
+    nome: str
+    apresentacao: str                # "Do mesmo setor (Seguros), bem maior."
+    vantagens: tuple[str, ...]       # "mais lucro sobre ... (84,4% contra 22,8%)"
+    desvantagens: tuple[str, ...]
+    conclusao: str
+
+
+def _comparacao(a: m.AnaliseAtivo) -> prs.ComparacaoPares | None:
+    return prs.ComparacaoPares.de_dict(a.pares.dados) if a.pares.dados else None
+
+
+def _tamanho(a: m.AnaliseAtivo, par: prs.Par) -> str:
+    """"bem maior", "menor"... pelo porte do par sobre o do ativo."""
+    c = _comparacao(a)
+    ln = c.linha("porte") if c is not None else None
+    if ln is None:
+        return ""
+    r = prs._razao(ln.valor, par.metricas.get("porte"))
+    if r is None:
+        return ""
+    return ("bem maior" if r >= 2 else "maior" if r >= 1.25 else
+            "de tamanho parecido" if r > 0.8 else "menor" if r > 0.5
+            else "bem menor")
+
+
+def trocar_por(a: m.AnaliseAtivo, par: prs.Par) -> Troca:
+    """O par ``par`` como alternativa ao ativo ``a``, em palavras. A conta é
+    a de ``recomendacao.diferencas`` e o veredito o de
+    ``Confronto.claramente_superior``: aqui não se decide nada. Puro."""
+    tk = a.ativo.ticker
+    c = _comparacao(a)
+    setor = c.grupo.valor if c is not None and c.grupo.valor else ""
+    tam = _tamanho(a, par)
+    apresentacao = _frase(
+        "Do mesmo setor" + (f" ({setor})" if setor else "")
+        + (f", {tam} que {tk}" if tam and tam != "de tamanho parecido"
+           else f", {tam} de {tk}" if tam else ""))
+    difs = rec.diferencas(a, par)
+    vant = tuple(f"{_troca_texto(df)} ({df.valor_par} contra {df.valor_ativo} "
+                 f"de {tk})" for df in difs if df.par_melhor is True)
+    desv = tuple(f"{_troca_texto(df)} ({df.valor_par} contra {df.valor_ativo} "
+                 f"de {tk})" for df in difs if df.par_melhor is False)
+    cf = rec.confrontar(a, par)
+    if cf is None or cf.n < rec.MIN_METRICAS_TROCA:
+        conclusao = "Há poucos números para comparar: não dá para dizer que é melhor."
+    elif cf.claramente_superior:
+        conclusao = (f"No conjunto, é mais saudável que {tk} e, somando os "
+                     "números de preço e os de risco, não sai pior: passa no "
+                     "critério de troca"
+                     + (", mesmo perdendo nos pontos marcados com ✗."
+                        if desv else "."))
+    elif cf.saldo_qualidade <= 0:
+        conclusao = f"Não é mais saudável que {tk}: a troca não compensa."
+    elif cf.saldo_valuation < 0:
+        conclusao = ("É mais saudável, mas, somando os números de preço, sai "
+                     "mais cara: a troca não compensa.")
+    else:
+        conclusao = ("É mais saudável, mas o preço sobe e desce mais: a troca "
+                     "não compensa.")
+    return Troca(par.ticker, par.nome or "", apresentacao, vant, desv,
+                 conclusao)
+
+
+def _porque_troca(sub: rec.Confronto) -> list[str]:
+    """O porquê da troca sem número (o cartão da troca mostra os números) e
+    sem esconder o que o substituto tem de pior: a regra soma as métricas
+    de preço e de risco, então uma delas pode ser pior (13/11/2026)."""
+    vant = [_troca_texto(df) for df in sub.diferencas if df.par_melhor is True]
+    desv = [_troca_texto(df) for df in sub.diferencas if df.par_melhor is False]
+    if not vant:
+        return [f"{sub.ticker}, do mesmo setor, sai melhor na comparação."]
+    out = [f"{sub.ticker}, do mesmo setor, sai melhor na comparação: tem "
+           f"{_lista(vant[:3])}."]
+    if desv:
+        out.append(f"Em troca, tem {_lista(desv[:2])}.")
+    return out
+
+
+# -- a economia, em palavras (pedido de 13/11/2026) ---------------------------------
+
+TENDENCIA_SIMPLES = {"alta": "subindo", "queda": "caindo",
+                     "estavel": "estável", "incerta": "sem direção clara"}
+
+ROTULO_CENARIO = {
+    "interest_rate": "Juros no Brasil (Selic)",
+    "interest_rate_outlook": "Para onde vão os juros",
+    "inflation": "Inflação",
+    "inflation_outlook": "Inflação esperada",
+    "economic_activity": "Crescimento da economia",
+    "fx": "Dólar",
+    "fiscal_policy": "Contas do governo",
+    "credit": "Juro acima da inflação",
+    "commodities": "Petróleo, minério e grãos",
+    "global_economy": "Economia dos EUA",
+    "geopolitical_risk": "Guerras e tensões",
+    "capital_markets": "Apetite por risco",
+}
+
+O_QUE_E = {
+    "interest_rate": "Os juros básicos do país. Definem quanto rende a "
+                     "renda fixa e quanto custa o dinheiro.",
+    "interest_rate_outlook": "O que os títulos do Tesouro mostram sobre os "
+                             "juros nos próximos anos.",
+    "inflation": "Quanto os preços subiram (IPCA, o índice oficial).",
+    "inflation_outlook": "Quanto de inflação o mercado espera à frente.",
+    "economic_activity": "Se o país está produzindo e consumindo mais.",
+    "fx": "Quanto custa um dólar em reais.",
+    "fiscal_policy": "O tamanho da dívida do governo.",
+    "credit": "Quanto se ganha, em títulos do Tesouro, além da inflação. "
+              "É o custo real do dinheiro.",
+    "commodities": "Preços de matérias-primas que o Brasil exporta.",
+    "global_economy": "Os juros dos EUA, que puxam o dinheiro do mundo "
+                      "inteiro.",
+    "geopolitical_risk": "Conflitos e eleições que assustam os investidores.",
+    "capital_markets": "Se os investidores estão aceitando risco ou fugindo "
+                       "dele.",
+}
+
+# Por que a variável pesa na classe do ativo. Regras gerais de economia, não
+# conta do app: por isso o "costuma".
+POR_QUE_PESA = {
+    "renda_fixa": {
+        "interest_rate": "Define quanto rendem o Tesouro Selic e os CDBs que "
+                         "acompanham o CDI.",
+        "interest_rate_outlook": "Se o mercado espera juros menores, os "
+                                 "prefixados já comprados costumam se "
+                                 "valorizar; se espera maiores, perdem valor "
+                                 "antes do vencimento.",
+        "inflation": "Títulos atrelados ao IPCA repõem a inflação; nos "
+                     "outros, inflação alta come o ganho.",
+        "inflation_outlook": "Quanto mais inflação se espera, mais um "
+                             "prefixado precisa pagar para valer a pena.",
+        "fiscal_policy": "Governo mais endividado costuma ter de pagar juros "
+                         "maiores para pegar dinheiro emprestado.",
+        "credit": "É a régua para saber se um título paga bem acima da "
+                  "inflação.",
+    },
+    "acoes_br": {
+        "interest_rate_outlook": "Juros caindo costumam ajudar a bolsa: as "
+                                 "empresas pagam menos pelas dívidas e a "
+                                 "renda fixa fica menos atraente.",
+        "economic_activity": "Economia crescendo costuma trazer mais vendas e "
+                             "mais lucro.",
+        "fx": "Dólar alto ajuda quem exporta e atrapalha quem tem dívida ou "
+              "custo em dólar.",
+        "fiscal_policy": "Contas do governo desarrumadas costumam puxar juros "
+                         "e dólar para cima, o que pesa na bolsa.",
+        "commodities": "Mexem direto no lucro de petroleiras, mineradoras e "
+                       "do agronegócio.",
+        "capital_markets": "Quando o investidor aceita mais risco, costuma "
+                           "sobrar dinheiro para a bolsa.",
+    },
+    "fiis": {
+        "interest_rate": "Com juros altos, a renda fixa disputa com os "
+                         "rendimentos dos fundos, e a cota costuma cair.",
+        "interest_rate_outlook": "Expectativa de juros menores costuma "
+                                 "valorizar as cotas.",
+        "inflation": "Muitos aluguéis e os títulos dos fundos de papel são "
+                     "corrigidos pela inflação.",
+        "credit": "Pesa nos fundos que emprestam dinheiro a empresas e "
+                  "incorporadoras.",
+        "economic_activity": "Economia forte costuma encher escritórios, "
+                             "galpões e shoppings.",
+        "capital_markets": "Quando o investidor aceita mais risco, os fundos "
+                           "costumam ficar mais procurados.",
+    },
+    "exterior": {
+        "fx": "O investimento é em dólar: dólar subindo aumenta o valor em "
+              "reais; caindo, diminui.",
+        "global_economy": "Os juros dos EUA mexem no preço das ações e dos "
+                          "títulos de lá.",
+        "geopolitical_risk": "Tensões costumam derrubar as bolsas e "
+                             "fortalecer o dólar.",
+        "capital_markets": "Mostra se o investidor lá fora está com apetite "
+                           "ou com medo de risco.",
+    },
+}
+
+
+def por_que_pesa(classe: str | None, chave: str) -> str:
+    return POR_QUE_PESA.get(classe or "", {}).get(chave) or O_QUE_E.get(chave, "")
+
+
+_N = r"([+-]?\d[\d.]*(?:,\d+)?)"   # número no formato brasileiro
+
+
+def _dolar(m_: re.Match) -> str:
+    v = float(m_.group(1).replace(".", "").replace(",", "."))
+    return f"o dólar vale R$ {v:.2f}".replace(".", ",")
+
+
+def _pib(m_: re.Match) -> str:
+    ano, v = m_.group(1), m_.group(2)
+    neg = v.startswith("-")
+    return (f"a economia {'encolheu' if neg else 'cresceu'} "
+            f"{v.lstrip('+-')}% em {ano} (PIB)")
+
+
+# Em ordem: os padrões de ``core/cenario/automatico.py`` primeiro, os
+# genéricos (a.a., pp) por último. Texto que não casa passa como está.
+_GLOSSARIO: tuple[tuple[re.Pattern, object], ...] = tuple(
+    (re.compile(p), r) for p, r in (
+        (rf"^Selic {_N}% a\.a\. \({_N}% em (\d{{4}})\)",
+         r"Selic em \1% ao ano (era \2% em \3)"),
+        (rf"^Selic {_N}% a\.a\.", r"Selic em \1% ao ano"),
+        (rf"prefixado de ~1 ano {_N}% a\.a\.",
+         r"o Tesouro prefixado de 1 ano paga \1% ao ano"),
+        (rf" contra Selic {_N}%: mercado precifica corte",
+         r", abaixo da Selic (\1%): o mercado espera juros caindo"),
+        (rf" contra Selic {_N}%: mercado precifica alta",
+         r", acima da Selic (\1%): o mercado espera juros subindo"),
+        (rf" contra Selic {_N}%: mercado precifica juros estáveis",
+         r", perto da Selic (\1%): o mercado espera juros parados"),
+        (rf"; ~5 anos {_N}%", r". O de 5 anos paga \1%"),
+        (rf"IPCA acumulado em (\d{{4}}) até o último mês divulgado: {_N}%",
+         r"os preços subiram \2% em \1 até o último mês divulgado"),
+        (rf"^IPCA (\d{{4}}): {_N}%", r"os preços subiram \2% em \1"),
+        (rf"; anos fechados (\d{{4}}) {_N}% → (\d{{4}}) {_N}%",
+         r". Nos anos anteriores: \2% em \1 e \4% em \3"),
+        (rf"inflação implícita de ~2 anos {_N}% a\.a\. contra IPCA (\d{{4}}) {_N}%",
+         r"o mercado espera inflação de \1% ao ano nos próximos 2 anos "
+         r"(em \2 foi \3%)"),
+        (rf"inflação implícita de ~2 anos {_N}% a\.a\.",
+         r"o mercado espera inflação de \1% ao ano nos próximos 2 anos"),
+        (rf"US\$ 1 = R\$ {_N}", _dolar),
+        (rf"PIB (\d{{4}}) {_N}%", _pib),
+        (rf"confiança do consumidor {_N} \({_N} pontos em (\d{{4}})\)",
+         r"a confiança do consumidor está em \1 pontos (\2 em \3)"),
+        (rf"dívida do governo central {_N}% do PIB em (\d{{4}}) \({_N}% em "
+         r"(\d{4})\)",
+         r"a dívida do governo equivale a \1% de tudo o que o país produz "
+         r"em um ano (dado de \2); era \3% em \4"),
+        (rf"dívida do governo central {_N}% do PIB em (\d{{4}})",
+         r"a dívida do governo equivale a \1% de tudo o que o país produz "
+         r"em um ano (dado de \2)"),
+        (rf"juro real de mercado \(IPCA\+ ~3 anos\) {_N}% a\.a\.; Selic {_N}%",
+         r"o Tesouro IPCA+ de 3 anos paga \1% ao ano acima da inflação "
+         r"(a Selic está em \2%)"),
+        (rf"juro real de mercado \(IPCA\+ ~3 anos\) {_N}% a\.a\.",
+         r"o Tesouro IPCA+ de 3 anos paga \1% ao ano acima da inflação"),
+        (rf"juro do Fed {_N}% \(Fed Funds efetivo {_N}%; {_N}% em (\S+)\)",
+         r"juro básico dos EUA em \1% (era \3% em \4)"),
+        (rf"juro do Fed {_N}%", r"juro básico dos EUA em \1%"),
+        (rf"Treasury 10 anos {_N}%",
+         r"o título de 10 anos do governo americano paga \1%"),
+        (rf"spread high yield EUA {_N} pp \({_N} pp em (\S+)\)",
+         r"empresas arriscadas dos EUA pagam \1 pontos a mais que o governo "
+         r"de lá (eram \2 em \3)"),
+        (rf"spread high yield EUA {_N} pp",
+         r"empresas arriscadas dos EUA pagam \1 pontos a mais que o governo "
+         r"de lá"),
+        (r"; spread menor = mais apetite a risco",
+         r". Quanto menor essa diferença, mais apetite por risco"),
+        (r" a\.a\.", r" ao ano"),
+        (r" pp\b", r" pontos"),
+    ))
+
+
+def valor_simples(texto: str | None) -> str:
+    """O valor de uma variável do cenário sem sigla de mercado. Só troca
+    palavras: os números são os mesmos do texto original. Puro."""
+    if not texto:
+        return ""
+    t = texto
+    for padrao, troca in _GLOSSARIO:
+        t = padrao.sub(troca, t)
+    t = t.replace("; ", ". ")
+    t = re.sub(r"\. ([a-zà-ú])", lambda m_: ". " + m_.group(1).upper(), t)
+    return _frase(t)

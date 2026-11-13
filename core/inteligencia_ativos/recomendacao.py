@@ -18,8 +18,9 @@ precisa além do peso:
   caro *e* no topo do histórico: só isso justifica realizar parte de uma
   posição sólida.
 * **Confronto** — um par só é substituto quando é claramente superior na
-  qualidade e não pior em valuation nem em risco, numa comparação com pelo
-  menos três métricas. Mais barato não basta (ordenar não é superar).
+  qualidade e, no SALDO de cada dimensão, não pior em valuation nem em
+  risco, numa comparação com pelo menos três métricas. Saldo: um P/VP pior
+  pode ser compensado por um P/L melhor; ``diferencas`` diz qual perdeu. Mais barato não basta (ordenar não é superar).
 * **Custo da venda** — IR pela regra do tipo fiscal do ticker
   (``core.ir_renda_variavel``) e meia-spread só onde ele foi calibrado
   (``core.transaction_costs``). Onde não há regra calibrada (exterior, FII
@@ -201,6 +202,22 @@ MIN_METRICAS_TROCA = 3
 
 
 @dataclass(frozen=True)
+class Diferenca:
+    """Uma métrica comparada entre o par e o ativo. ``par_melhor`` é None
+    no empate (diferença relativa até ``EMPATE_RELATIVO``)."""
+    chave: str
+    metrica: str                     # rótulo técnico: "P/VP"
+    dimensao: str                    # Q, V ou R
+    par_melhor: bool | None
+    valor_par: str                   # já formatado: "6,82x"
+    valor_ativo: str
+
+    @property
+    def texto(self) -> str:
+        return f"{self.metrica} ({self.valor_par} contra {self.valor_ativo})"
+
+
+@dataclass(frozen=True)
 class Confronto:
     ticker: str
     nome: str | None
@@ -210,11 +227,16 @@ class Confronto:
     saldo_valuation: int
     saldo_risco: int
     n: int                           # métricas comparadas
+    # As mesmas métricas, uma a uma, para quem precisa contar a troca em
+    # palavras (linguagem_simples): melhor/pior são o texto técnico delas.
+    diferencas: tuple[Diferenca, ...] = ()
 
     @property
     def claramente_superior(self) -> bool:
-        """Melhor na qualidade, não pior no preço nem no risco, com base
-        mínima de comparação."""
+        """Melhor na qualidade e, no SALDO de cada dimensão, não pior no
+        preço nem no risco, com base mínima de comparação. Saldo, não
+        métrica a métrica: um P/VP pior compensado por um P/L melhor passa,
+        e a troca tem de dizer isso (``pior``)."""
         return (self.n >= MIN_METRICAS_TROCA and self.saldo_qualidade > 0
                 and self.saldo_valuation >= 0 and self.saldo_risco >= 0)
 
@@ -229,14 +251,14 @@ class Confronto:
         return f"{self.ticker} {corpo} ({self.n} métricas comparadas)"
 
 
-def confrontar(a: m.AnaliseAtivo, par: prs.Par) -> Confronto | None:
-    """O par contra o ativo, métrica a métrica, por dimensão. Puro."""
+def diferencas(a: m.AnaliseAtivo, par: prs.Par) -> tuple[Diferenca, ...]:
+    """O par contra o ativo, métrica a métrica, empates incluídos. É a
+    única conta da comparação: ``confrontar`` só soma o que sai daqui.
+    Puro."""
     c = _comparacao(a)
     if c is None:
-        return None
-    melhor, pior = [], []
-    saldo = {Q: 0, V: 0, R: 0}
-    n = 0
+        return ()
+    out: list[Diferenca] = []
     for chave, dim, maior_melhor in METRICAS_CONFRONTO.get(c.tipo, ()):
         ln = c.linha(chave)
         if ln is None:
@@ -249,19 +271,29 @@ def confrontar(a: m.AnaliseAtivo, par: prs.Par) -> Confronto | None:
             x, y = abs(x), abs(y)
         if chave in _SO_POSITIVO and (x <= 0 or y <= 0):
             continue
-        n += 1
         escala = max(abs(x), abs(y))
-        if escala == 0 or abs(y - x) / escala <= EMPATE_RELATIVO:
-            continue
-        par_melhor = (y > x) == maior_melhor
-        saldo[dim] += 1 if par_melhor else -1
-        texto = (f"{ln.metrica} ({formatar(y, ln.unidade, c.moeda)} contra "
-                 f"{formatar(x, ln.unidade, c.moeda)})")
-        (melhor if par_melhor else pior).append(texto)
-    if n == 0:
+        empate = escala == 0 or abs(y - x) / escala <= EMPATE_RELATIVO
+        out.append(Diferenca(
+            chave, ln.metrica, dim,
+            None if empate else (y > x) == maior_melhor,
+            formatar(y, ln.unidade, c.moeda), formatar(x, ln.unidade, c.moeda)))
+    return tuple(out)
+
+
+def confrontar(a: m.AnaliseAtivo, par: prs.Par) -> Confronto | None:
+    """O par contra o ativo, métrica a métrica, por dimensão. Puro."""
+    difs = diferencas(a, par)
+    if not difs:
         return None
-    return Confronto(par.ticker, par.nome, tuple(melhor), tuple(pior),
-                     saldo[Q], saldo[V], saldo[R], n)
+    saldo = {Q: 0, V: 0, R: 0}
+    for df in difs:
+        if df.par_melhor is not None:
+            saldo[df.dimensao] += 1 if df.par_melhor else -1
+    return Confronto(
+        par.ticker, par.nome,
+        tuple(df.texto for df in difs if df.par_melhor is True),
+        tuple(df.texto for df in difs if df.par_melhor is False),
+        saldo[Q], saldo[V], saldo[R], len(difs), difs)
 
 
 def melhor_substituto(a: m.AnaliseAtivo, candidatos) -> Confronto | None:

@@ -18,8 +18,9 @@ O que ele responde, sempre que o Portfólio Global tem modelo e alocação:
 5. **Substituições** (pedidos de 08/11/2026): quando um ativo é melhor que
    um da carteira, a troca sugerida e o porquê -- **sempre dentro do mesmo
    segmento** (banco não troca por elétrica). "Melhor" é a régua do "Se
-   sair, qual substituir?" (``recomendacao.confrontar``: melhor na
-   qualidade, não pior no preço nem no risco, métrica a métrica). O
+   vender, por qual trocar?" (``recomendacao.confrontar``: melhor na
+   qualidade e, no SALDO de cada dimensão, não pior no preço nem no risco;
+   uma métrica pior pode ser compensada por outra da mesma dimensão). O
    candidato vem primeiro do Portfólio Global; sem equivalente lá, dos pares
    do próprio ativo fora da carteira. Sem nenhum claramente superior, o
    ativo que a Inteligência já questiona ganha as alternativas do segmento
@@ -669,9 +670,9 @@ def _candidatos(a, sai: refm.LinhaAtivo, entram_modelo: list,
 
 
 def _comparar(a, av_sai: av_.Avaliacao | None, c: _Candidato):
-    """``recomendacao.confrontar``: a régua única do "Se sair, qual
-    substituir?" -- melhor na qualidade, não pior no preço nem no risco,
-    com três métricas no mínimo. Do modelo, a qualidade medida também não
+    """``recomendacao.confrontar``: a régua única do "Se vender, por
+    qual trocar?" -- melhor na qualidade e, no saldo de cada dimensão, não
+    pior no preço nem no risco, com três métricas no mínimo. Do modelo, a qualidade medida também não
     pode ser menor. Só dentro do mesmo segmento (``_candidatos``)."""
     cf = rec.confrontar(a, c.par)
     if cf is None:

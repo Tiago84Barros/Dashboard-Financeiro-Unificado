@@ -1,7 +1,7 @@
 {
   "nome": "Dashboard Financeiro Unificado",
   "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, o que funciona por trás delas.",
-  "data_mapa": "12/11/2026",
+  "data_mapa": "13/11/2026",
   "filhos": [
     {
       "nome": "Dashboard Geral",
@@ -1361,9 +1361,9 @@
               ]
             },
             {
-              "nome": "Cenário econômico atual (lido dos dados)",
+              "nome": "Como está a economia agora",
               "resumo": "Resumo da economia que a análise considera",
-              "explicacao": "Caixa recolhida, no topo da aba liberada, com a leitura do momento da economia que serve de pano de fundo para as sugestões.",
+              "explicacao": "Caixa recolhida, no topo da aba liberada, com a leitura do momento da economia que serve de pano de fundo para as sugestões. Cada item diz em uma linha o que é (por exemplo, 'Selic: o juro básico do país'), o número em frases comuns ('Selic em 15,00% ao ano, era 10,50% em 2024') e se está subindo, caindo ou estável; a direção é calculada pelos números.",
               "so_admin": false
             },
             {
@@ -1375,7 +1375,7 @@
             {
               "nome": "Ações · Fundos imobiliários · Internacional · Outros ativos",
               "resumo": "Uma caixa por ativo: a ação sugerida e por quê",
-              "explicacao": "Cada ativo vira uma caixa recolhida com um título do tipo 'BBAS3 · 8,5% → 2,3% · Rebalancear' (peso atual, peso sugerido e ação sugerida). Abrindo, aparece a análise resumida daquele ativo.",
+              "explicacao": "Cada ativo vira uma caixa recolhida com um título do tipo 'BBAS3 · pesa 8,5% (ideal 2,3%) · Rebalancear' (quanto pesa hoje, o peso ideal e o que fazer). Abrindo, aparece a análise resumida daquele ativo.",
               "so_admin": false,
               "filhos": [
                 {
@@ -1397,21 +1397,21 @@
                   "so_admin": false
                 },
                 {
-                  "nome": "Se sair, qual substituir?",
+                  "nome": "Se vender, por qual trocar?",
                   "resumo": "Sugestões de troca quando a ação é vender ou substituir",
-                  "explicacao": "Só aparece quando a ação sugerida é vender ou substituir: lista ativos que poderiam ocupar o lugar. A troca só é sugerida quando o substituto é claramente superior em qualidade, sem preço nem risco piores. Só entram concorrentes do mesmo segmento: quando há poucos, o grupo de comparação inclui outros segmentos e a tela não sugere troca.",
+                  "explicacao": "Só aparece quando a ação sugerida é vender ou substituir: lista ativos que poderiam ocupar o lugar, cada um com o tamanho perto do seu, o que tem de melhor (✓) e o que tem de pior (✗), com os números dos dois lados, e uma conclusão. A troca só é sugerida quando o substituto é melhor na qualidade e, somando os indicadores de cada grupo, não pior no preço nem no risco: um indicador pior pode ser compensado por outro do mesmo grupo, e a tela mostra qual; por isso um substituto pode aparecer com preço mais alto em uma medida (por exemplo, preço sobre o patrimônio) quando é mais barato em outra. Só entram concorrentes do mesmo segmento: quando há poucos, o grupo de comparação inclui outros segmentos e a tela não sugere troca.",
                   "so_admin": false
                 },
                 {
-                  "nome": "Comparação com o mesmo segmento",
+                  "nome": "Como se compara com empresas parecidas",
                   "resumo": "O ativo contra os concorrentes, indicador a indicador",
-                  "explicacao": "Uma régua por indicador comparando o ativo com dois parecidos e com o valor típico do segmento; cada indicador traz, embaixo do nome, o que ele mede em palavras simples. A avaliação por dimensões passou para dentro de 'Ver a análise técnica completa'. Num ETF, os indicadores do fundo (índice, maiores posições, concentração, taxa, liquidez e setores) vêm do yfinance; o tracking error não é calculado.",
+                  "explicacao": "Uma régua por indicador comparando o ativo com dois parecidos e com o típico do setor; cada indicador tem nome comum ('Lucro sobre o dinheiro dos sócios', com a sigla ROE entre parênteses) e, embaixo, o que ele mede em palavras simples. A avaliação por dimensões passou para dentro de 'Ver a análise técnica completa'. Num ETF, os indicadores do fundo (índice, maiores posições, concentração, taxa, liquidez e setores) vêm do yfinance; o tracking error não é calculado.",
                   "so_admin": false
                 },
                 {
-                  "nome": "Papel na carteira · Notícias · Relatórios relevantes · Como o macro influencia",
+                  "nome": "Por que você tem este ativo · Notícias · O que a empresa divulgou · O que da economia mexe com este ativo",
                   "resumo": "Função do ativo, notícias e efeito da economia",
-                  "explicacao": "Para que o ativo serve na sua carteira, notícias recentes, trechos de relatórios da empresa (entregues à CVM, ao FNET ou, nas ações americanas, à SEC) e como juros, inflação e câmbio o afetam. Num ETF sem notícia própria, aparecem as notícias das maiores posições do fundo, marcadas como tal.",
+                  "explicacao": "Para que o ativo serve na sua carteira, notícias recentes (do ativo, do setor e da economia e política), trechos copiados dos documentos oficiais da empresa (entregues à CVM, ao FNET ou, nas ações americanas, à SEC) e como juros, inflação e câmbio o afetam: cada item da economia diz o número em frases comuns, se está subindo ou caindo e por que importa para esta classe de ativo. Num ETF sem notícia própria, aparecem as notícias das maiores posições do fundo, marcadas como tal.",
                   "so_admin": false
                 },
                 {
@@ -1437,7 +1437,7 @@
                 {
                   "nome": "Substituições sugeridas no mesmo segmento",
                   "resumo": "Ativo melhor do mesmo setor que um seu, e por quê",
-                  "explicacao": "Quando um ativo do mesmo segmento é melhor que um dos seus, a tela sugere a troca e explica por quê. 'Melhor' é a mesma comparação do 'Se sair, qual substituir?': melhor em qualidade e não pior em preço nem em risco, indicador a indicador. A troca nunca atravessa setores: um banco não é trocado por uma elétrica. O substituto vem primeiro da carteira sugerida do Portfólio Global; se ela não tiver ninguém do setor, vem dos concorrentes do próprio ativo fora da sua carteira (esses, comparados só pelos indicadores publicados). Se nenhum for claramente melhor, o ativo que a Inteligência já questiona aparece em 'Sem substituto claramente superior no segmento', com as alternativas de qualidade melhor e o que cada uma perde. Se a Inteligência ainda recomenda manter ou acompanhar o seu ativo, a troca é aos poucos, levando os próximos aportes para o novo; só sugere vender, com o custo e o imposto estimados, quando a própria Inteligência já indica vender, substituir ou reduzir.",
+                  "explicacao": "Quando um ativo do mesmo segmento é melhor que um dos seus, a tela sugere a troca e explica por quê. 'Melhor' é a mesma comparação do 'Se vender, por qual trocar?': melhor na qualidade e, somando os indicadores de cada grupo, não pior no preço nem no risco: um indicador pior pode ser compensado por outro do mesmo grupo, e a tela mostra qual. A troca nunca atravessa setores: um banco não é trocado por uma elétrica. O substituto vem primeiro da carteira sugerida do Portfólio Global; se ela não tiver ninguém do setor, vem dos concorrentes do próprio ativo fora da sua carteira (esses, comparados só pelos indicadores publicados). Se nenhum for claramente melhor, o ativo que a Inteligência já questiona aparece em 'Sem substituto claramente superior no segmento', com as alternativas de qualidade melhor e o que cada uma perde. Se a Inteligência ainda recomenda manter ou acompanhar o seu ativo, a troca é aos poucos, levando os próximos aportes para o novo; só sugere vender, com o custo e o imposto estimados, quando a própria Inteligência já indica vender, substituir ou reduzir.",
                   "so_admin": false
                 },
                 {

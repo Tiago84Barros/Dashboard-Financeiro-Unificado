@@ -116,9 +116,9 @@ def test_cenario_atual_e_cartao_mostram_valor_fonte_e_ausencia():
     selic = linhas[0]
     assert selic.valor.startswith("Selic") and selic.referencia == "30/09/2026"
     html = tela.cartao_cenario(linhas)
-    assert "Selic 15,00%" in html and "Sem dado" in html
+    assert "Selic em 15,00% ao ano" in html and "Sem dado" in html
     assert "#" not in html.replace("&#", "")
     assert rs.cenario_atual(None) == ()
     vazio = tela.cartao_cenario(())
-    assert "indisponível no momento" in vazio
+    assert "indisponíveis no momento" in vazio
     assert "não puderam ser lidas" not in vazio   # motivo técnico só no log

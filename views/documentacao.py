@@ -2654,6 +2654,13 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
                 "quê, o que foi visto na empresa, no preço e na bolsa, na prática, a favor e "
                 "contra e o que mudaria a sugestão; o texto técnico, o mesmo que vai às LLMs, "
                 "fica recolhido em 'Ver a análise técnica completa'",
+                "Desde 13/11/2026 os cartões de baixo também falam simples: 'Como está a "
+                "economia agora' (cada item com o que é, o número em frases comuns e se sobe "
+                "ou cai), 'Como se compara com empresas parecidas' (típico do setor, nomes "
+                "comuns com a sigla entre parênteses), 'Por que você tem este ativo', 'O que "
+                "da economia mexe com este ativo' e 'Se vender, por qual trocar?', que mostra "
+                "o que o substituto tem de melhor e de pior, com os números dos dois lados "
+                "(recomendacao.diferencas, a mesma conta do confronto)",
             ),
             "A primeira pergunta é 'como está a minha carteira?'. O resumo responde isso de "
             "cara; o detalhe fica fechado até ser pedido.",
@@ -2699,9 +2706,10 @@ FLOW_INTELIGENCIA_IR = FlowSpec(
                 "prevista na sua estratégia",
                 "Classe: a sua estratégia é a premissa; perto dela, manter, longe dela, "
                 "rebalancear pelos aportes",
-                "Substituição: só dentro do mesmo segmento, pela régua do 'Se sair, qual "
-                "substituir?' (recomendacao.confrontar: melhor na qualidade e não pior no "
-                "preço nem no risco, com três métricas no mínimo). O substituto vem do "
+                "Substituição: só dentro do mesmo segmento, pela régua do 'Se vender, por "
+                "qual trocar?' (recomendacao.confrontar: melhor na qualidade e, no saldo "
+                "de cada dimensão, não pior no preço nem no risco, com três métricas no "
+                "mínimo; uma métrica pior pode ser compensada por outra da mesma dimensão). O substituto vem do "
                 "Portfólio Global ou, sem equivalente lá, dos pares do ativo fora da carteira. "
                 "Sem nenhum claramente superior, o ativo em pauta mostra as alternativas do "
                 "segmento e o que cada uma perde. Uma troca por ativo, nunca para quem a "

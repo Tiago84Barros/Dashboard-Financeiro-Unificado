@@ -198,3 +198,135 @@ def test_alerta_so_do_noticiario_nao_ganha_piso(an):
                                      else x for x in avl.alertas))
     d = rs.decisao(a, _sug(4.1), avl)
     assert d.codigo == rs.ACOMPANHAR and not d.conviccao_sustentada
+
+
+# -- comparação, troca e economia em palavras (13/11/2026) -----------------------
+#
+# O caso do print: PSSA3 com "Substituir por BBSE3" e a frase "sem ser mais
+# cara". BBSE3 tem P/VP de 6,82x contra 1,78x: mais cara nessa métrica. A
+# regra soma as métricas de preço (o P/L menor compensa), e o texto tem de
+# dizer isso em vez de negar.
+
+from core.cenario import modelo as cen  # noqa: E402
+from core.inteligencia_ativos import pares as p  # noqa: E402
+
+PSSA3 = {"roe": 22.8, "margem_liquida": 15.0, "p_l": 9.0, "p_vp": 1.78}
+BBSE3 = {"roe": 84.4, "margem_liquida": 60.0, "p_l": 7.0, "p_vp": 6.82,
+         "porte": 300.0}
+
+
+def _seguradora(an):
+    a = an["WEGE3"]
+    grupo = p.GrupoPares("segmento", "Seguros", (
+        p.Par("BBSE3", "BB Seguridade", 0.2, "porte maior", BBSE3),))
+    cand = p.Candidato("WEGE3", "WEGE3", f.ACAO, "B3",
+                       (("segmento", "Seguros"),), 100.0, 30.0,
+                       "volatilidade", {**PSSA3, "porte": 100.0}, "WEGE", 2025)
+    c = p.comparar(cand, grupo)
+    return replace(a, pares=replace(a.pares, dados=c.como_dict()))
+
+
+def test_diferencas_e_confronto_contam_a_mesma_coisa(an):
+    a = _seguradora(an)
+    par = rs.substitutos(a, ())[0]
+    difs = rec.diferencas(a, par)
+    cf = rec.confrontar(a, par)
+    assert cf.diferencas == difs and cf.n == len(difs) == 4
+    assert cf.melhor == tuple(d.texto for d in difs if d.par_melhor is True)
+    assert cf.pior == tuple(d.texto for d in difs if d.par_melhor is False)
+    assert cf.pior == ("P/VP (6,82x contra 1,78x)",)
+    # passa pelo SALDO: o P/L menor compensa o P/VP maior
+    assert cf.saldo_valuation == 0 and cf.claramente_superior
+
+
+def test_troca_diz_o_que_o_substituto_tem_de_pior(an):
+    a = _seguradora(an)
+    t = ls.trocar_por(a, rs.substitutos(a, ())[0])
+    assert t.ticker == "BBSE3"
+    assert t.apresentacao == "Do mesmo setor (Seguros), bem maior que WEGE3."
+    assert any("mais lucro sobre o dinheiro dos sócios (84,4% contra 22,8%"
+               in x for x in t.vantagens)
+    assert t.desvantagens == ("preço mais alto em relação ao patrimônio "
+                              "(6,82x contra 1,78x de WEGE3)",)
+    assert "passa no critério de troca" in t.conclusao
+    assert "mesmo perdendo" in t.conclusao
+    html = tela.cartao_substitutos(a, rs.substitutos(a, ()))
+    assert "✗ preço mais alto em relação ao patrimônio" in html
+    assert _sem_cor_literal(html)
+    for termo in JARGAO + ("EV/EBIT", "drawdown", "o do ativo"):
+        assert termo not in html.lower().replace("(p/vp)", ""), termo
+
+
+def test_porque_da_troca_nao_nega_o_preco_pior(an):
+    a = _seguradora(an)
+    cf = rec.confrontar(a, rs.substitutos(a, ())[0])
+    frases = ls._porque_troca(cf)
+    txt = " ".join(frases)
+    assert "sem ser mais cara" not in txt
+    assert txt.startswith("BBSE3, do mesmo setor, sai melhor na comparação: "
+                          "tem mais lucro sobre o dinheiro dos sócios")
+    assert frases[-1] == ("Em troca, tem preço mais alto em relação ao "
+                          "patrimônio.")
+    sem_ticker = txt.replace("BBSE3", "")
+    assert not any(ch.isdigit() for ch in sem_ticker)   # números ficam no cartão
+
+
+def test_troca_que_nao_passa_diz_por_que(an):
+    a = _seguradora(an)
+    caro = p.Par("X", "X", 0.2, "", {"roe": 30.0, "margem_liquida": 20.0,
+                                     "p_l": 15.0, "p_vp": 3.0})
+    t = ls.trocar_por(a, caro)
+    assert "sai mais cara" in t.conclusao and "não compensa" in t.conclusao
+    pouco = ls.trocar_por(a, p.Par("Y", "Y", 0.2, "", {"roe": 30.0}))
+    assert "poucos números" in pouco.conclusao
+
+
+@pytest.mark.parametrize("tecnico, simples", [
+    ("Selic 15,00% a.a. (10,50% em 2024)",
+     "Selic em 15,00% ao ano (era 10,50% em 2024)."),
+    ("prefixado de ~1 ano 14,20% a.a. contra Selic 15,00%: mercado precifica "
+     "corte; ~5 anos 13,40%",
+     "O Tesouro prefixado de 1 ano paga 14,20% ao ano, abaixo da Selic "
+     "(15,00%): o mercado espera juros caindo. O de 5 anos paga 13,40%."),
+    ("IPCA acumulado em 2026 até o último mês divulgado: 3,9%; anos fechados "
+     "2024 4,8% → 2025 4,3%",
+     "Os preços subiram 3,9% em 2026 até o último mês divulgado. Nos anos "
+     "anteriores: 4,8% em 2024 e 4,3% em 2025."),
+    ("inflação implícita de ~2 anos 4,6% a.a. contra IPCA 2025 4,3%",
+     "O mercado espera inflação de 4,6% ao ano nos próximos 2 anos (em 2025 "
+     "foi 4,3%)."),
+    ("US$ 1 = R$ 5,4321 (+2,1% desde 01/10/2026)",
+     "O dólar vale R$ 5,43 (+2,1% desde 01/10/2026)."),
+    ("PIB 2025 -0,5%", "A economia encolheu 0,5% em 2025 (PIB)."),
+    ("dívida do governo central 78,1% do PIB em 2026 (74,4% em 2024)",
+     "A dívida do governo equivale a 78,1% de tudo o que o país produz em um "
+     "ano (dado de 2026). Era 74,4% em 2024."),
+    ("juro real de mercado (IPCA+ ~3 anos) 7,8% a.a.; Selic 15,00%",
+     "O Tesouro IPCA+ de 3 anos paga 7,8% ao ano acima da inflação (a Selic "
+     "está em 15,00%)."),
+    ("spread high yield EUA 3,1 pp (4,5 pp em 01/2024); spread menor = mais "
+     "apetite a risco",
+     "Empresas arriscadas dos EUA pagam 3,1 pontos a mais que o governo de lá "
+     "(eram 4,5 em 01/2024). Quanto menor essa diferença, mais apetite por "
+     "risco."),
+])
+def test_valor_do_cenario_sem_sigla_de_mercado(tecnico, simples):
+    assert ls.valor_simples(tecnico) == simples
+
+
+def test_vocabulario_da_economia_cobre_todo_o_modelo():
+    assert set(ls.ROTULO_CENARIO) == set(cen.CHAVES)
+    assert set(ls.O_QUE_E) == set(cen.CHAVES)
+    for classe, porque in ls.POR_QUE_PESA.items():
+        assert set(porque) <= set(cen.relevantes(classe)), classe
+        assert set(cen.relevantes(classe)) <= set(porque), classe
+
+
+def test_comparacao_com_parecidas_sem_mediana_nem_segmento(an):
+    a = _seguradora(an)
+    html = tela.cartao_pares(rs.tabela_pares(a))
+    assert "Como se compara com empresas parecidas · Seguros" in html
+    assert "Típico do setor" in html and "Lucro sobre o dinheiro dos sócios" in html
+    low = html.lower()
+    assert "mediana" not in low and "segmento" not in low
+    assert _sem_cor_literal(html)
