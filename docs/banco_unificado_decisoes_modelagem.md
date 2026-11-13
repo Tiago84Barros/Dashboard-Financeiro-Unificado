@@ -43,15 +43,13 @@ O usuário especificou as 22 tabelas do modelo canônico com nomes em inglês
 **Decisão:** **Inglês para todas as 22 tabelas** (conforme especificação do usuário).
 
 A renomeação é segura (`ALTER TABLE RENAME`) e não destrutiva.
-O banco não tem dados reais (MOCK_MODE=true) — janela ideal para a mudança.
-Após a migração de dados (Fase 4.7) não é possível renomear sem impacto.
+A mudança foi feita antes da carga inicial de dados, quando renomear ainda não tinha impacto.
 
 **Consequências:**
-- `etl/schema_setup.py` → atualizar `_DDL` e `TABELAS_ESPERADAS` (Fase 4.9)
+- `etl/schema_setup.py` → atualizar `_DDL` e `TABELAS_ESPERADAS`
 - `etl/importacao.py` → atualizar `_TABELAS_VALIDAS`
 - `core/financeiro.py` → atualizar todas as queries SQL inline
-- Scripts DDL da Fase 4.3 já usarão os nomes em inglês
-- Renomeação das 10 tabelas existentes incluída no script DDL da Fase 4.5
+- Os scripts DDL de `supabase_unificado/schema/` usam os nomes em inglês, renomeação das 10 tabelas antigas incluída
 
 ---
 
@@ -104,7 +102,7 @@ O modelo canônico expande para 22 tabelas para suportar todos os domínios do A
 | `migration_source_map` | Mapa origem→destino é a chave de idempotência — evita duplicação em reexecuções |
 
 **Consequências:**
-- Schema mais complexo → mais scripts DDL na Fase 4.3
+- Schema mais complexo → mais scripts DDL
 - Mais tabelas a rastrear em `verificar_schema()`
 - Tabelas novas não têm dados de origem — requerem seed ou população manual
 

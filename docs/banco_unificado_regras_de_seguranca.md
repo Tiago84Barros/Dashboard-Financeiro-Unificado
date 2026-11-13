@@ -3,7 +3,7 @@
 > Documento: `docs/banco_unificado_regras_de_seguranca.md`
 > Criado em: 2026-05-13
 > Escopo: Dashboard-Financeiro-Unificado + projeto Supabase do Dashboard Financeiro
-> Status: Vigente a partir da Fase 4.0
+> Status: Vigente
 
 ---
 
