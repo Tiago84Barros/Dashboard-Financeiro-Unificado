@@ -147,6 +147,37 @@ Ao corrigir uma regra, uma escala, um filtro ou um agregador, antes do PR:
 5. **Atualize o texto junto com a fórmula:** docstring, manifesto, metodologia
    em `docs/` e as três abas de Configurações.
 
+## Merge de PR: CI verde e revisão do Codex
+
+Regra do usuário de 13/11/2026. Os PRs #734, #735 e #736 foram mesclados só
+com o CI verde. A revisão do Codex terminou minutos depois do merge. Saiu
+limpa, mas por sorte. Mesmo quando o usuário pede "mescle quando o CI passar",
+o merge segue esta ordem:
+
+1. **O CI passa** em todas as versões, no commit atual do PR.
+2. **O PR sai de rascunho assim que o CI passa.** É o "Draft marked ready"
+   que dispara a revisão do Codex (`chatgpt-codex-connector[bot]`). Deixar
+   isso para o momento do merge faz a revisão chegar tarde demais.
+3. **Esperar a revisão terminar.** O Codex mantém um comentário de resumo no
+   PR, "Codex Review Summary". A linha 📝 Code Review tem de estar
+   **Completed** no commit atual do PR. Ver `codex-review-state` no
+   comentário: `commit_sha` igual ao commit atual e `has_unresolved_findings: false`.
+4. **Achado bloqueia o merge.** Conferir o achado contra o código:
+   - Se for real, pequeno e do escopo do PR, corrigir.
+   - Se for maior que isso, levar ao usuário.
+   - Se não for real, responder no fio do comentário com o que foi verificado.
+
+   Um commit novo dispara outra revisão, e a espera recomeça.
+5. **Codex sem resposta em uns 30 minutos:** avisar o usuário em vez de
+   mesclar sem a revisão.
+
+A revisão de **segurança** do Codex só roda com o comentário
+`@codex security review`. "Sem achados" na revisão de código não cobre
+segurança.
+
+Nada disso autoriza merge por conta própria: o merge continua exigindo o
+pedido do usuário.
+
 ## Regras
 
 - Não apagar funcionalidades existentes sem validação.
