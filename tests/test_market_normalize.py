@@ -229,8 +229,11 @@ def test_dy_da_brapi_serve_regra_unica():
 
 def test_metric_rows():
     by = {r["metric_name"]: r["metric_value"] for r in nz.metric_rows(_Q)}
-    assert by["P/L"] == 5.0 and by["P/VP"] == 1.4 and by["EV/EBITDA"] == 3.1
+    assert by["P/L"] == 5.0 and by["EV/EBITDA"] == 3.1
     assert by["ROE"] == 0.24 and by["marketCap"] == 5.0e11
+    # P/VP = valor de mercado ÷ PL do balanço mais novo (pvp_do_titulo), não o
+    # priceToBook (1,4), que herda a contagem de ações da brapi
+    assert by["P/VP"] == 5.0e11 / 400.0
     # trailing da brapi (consenso) — usado p/ corrigir distorção do último ano
     assert by["ROA"] == 0.09 and by["Margem_Operacional"] == 0.29
     assert by["DY"] == 0.069

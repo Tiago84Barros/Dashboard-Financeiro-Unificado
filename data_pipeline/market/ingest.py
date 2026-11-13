@@ -1296,6 +1296,10 @@ def reprocess_metrics(tickers: list[str] | None = None, limit: int | None = None
                 # brapi spot: no caminho ANUAL sobrescreve (anual distorce por
                 # não-recorrentes); no TTM real só PREENCHE o que faltar. DY sempre
                 # do trailing da brapi (evita over-count da janela de dividendos).
+                # P/L e P/VP spot já não são os campos crus da brapi: saem do
+                # título, com as ações conferidas (normalize.metric_rows,
+                # ``pl_do_titulo`` e ``pvp_do_titulo``), então sobrescrever com
+                # eles não traz de volta a contagem errada.
                 for k in ("P/L", "P/VP", "ROE", "ROA", "Margem_Liquida", "Margem_Operacional"):
                     v = spot.get(k)
                     if v is None or not dq.is_valid_value(k, v):
