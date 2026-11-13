@@ -922,18 +922,12 @@ def _render_banco() -> None:
     with st.container(border=True, key="cfg_database_imports"):
         _render_workflow_header(
             "04", "Rotas de importação",
-            "Use simulação e revisão antes de gravar arquivos ou copiar dados de outra origem.",
-            "CSV · Excel · SQL", "Prévia obrigatória",
+            "Use simulação e revisão antes de gravar dados vindos de arquivo.",
+            "CSV · Excel", "Prévia obrigatória",
         )
         with st.expander("📄 Importar dados de arquivo (CSV / Excel)"):
             if settings.has_database:
                 _render_import_csv()
-            else:
-                st.warning("Banco não conectado.")
-
-        with st.expander("🔗 Importar de banco de origem (PostgreSQL / SQLite)"):
-            if settings.has_database:
-                _render_import_postgres()
             else:
                 st.warning("Banco não conectado.")
 
@@ -1158,119 +1152,6 @@ def _mostrar_template_csv(tipo: str) -> None:
         mime="text/csv",
         key=f"_tpl_{tipo}",
     )
-
-
-def _render_import_postgres() -> None:
-    st.caption("Conecte a um banco de origem para importar dados históricos.")
-
-    # Só fontes configuradas no ambiente. O campo "Outra (informar URL)"
-    # aceitava qualquer connection string digitada na tela publicada: o
-    # servidor da Streamlit Cloud abria conexão para o host que o formulário
-    # mandasse, sem que isso servisse a nenhuma importação recorrente.
-    fontes = {
-        nome: url for nome, url in {
-            "App 1 — Dashboard B3":          settings.SOURCE_DB_APP1,
-            "App 2 — Investimentos (SQLite)": settings.SOURCE_DB_APP2,
-            "App 3 — Controle Financeiro":    settings.url_origem_controle,
-        }.items() if url
-    }
-    if not fontes:
-        st.info(
-            "Nenhum banco de origem configurado. Informe a URL no ambiente "
-            "(SOURCE_DB_APP1, SOURCE_DB_APP2 ou a do Controle Financeiro)."
-        )
-        return
-
-    fonte = st.selectbox("Fonte", list(fontes.keys()), key="_pg_fonte")
-    url = fontes[fonte]
-    st.success(f"URL configurada para {fonte} ✓")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Testar conexão", key="_pg_test"):
-            _testar_conexao_fonte(url)
-    with col2:
-        if st.button("Listar tabelas", key="_pg_list"):
-            _listar_tabelas_fonte(url)
-
-    st.markdown("---")
-    _render_import_generica(url)
-
-
-def _testar_conexao_fonte(url: str) -> None:
-    from etl.importacao import ImportadorPostgres
-    with st.spinner("Conectando…"):
-        imp = ImportadorPostgres(url)
-    if imp.conectado:
-        st.success(f"Conexão OK — {len(imp.listar_tabelas())} tabela(s)")
-    else:
-        st.error("Falha na conexão")
-
-
-def _listar_tabelas_fonte(url: str) -> None:
-    from etl.importacao import ImportadorPostgres
-    imp = ImportadorPostgres(url)
-    if not imp.conectado:
-        st.error("Sem conexão com a fonte")
-        return
-    tabelas = imp.listar_tabelas()
-    if not tabelas:
-        st.info("Nenhuma tabela encontrada.")
-        return
-    dados = [{"Tabela": t, "Colunas": ", ".join(imp.listar_colunas(t)[:8])}
-             for t in sorted(tabelas)]
-    st.dataframe(pd.DataFrame(dados), width="stretch", hide_index=True)
-
-
-def _render_import_generica(url_fonte: str) -> None:
-    st.caption("Mapeamento manual: escolha origem, destino e o mapeamento de colunas.")
-    col1, col2 = st.columns(2)
-    with col1:
-        tabela_fonte = st.text_input("Tabela na fonte", placeholder="ex: lancamentos", key="_gi_src")
-    with col2:
-        from etl.schema_setup import TABELAS_ESPERADAS
-        tabela_destino = st.selectbox("Tabela destino", TABELAS_ESPERADAS, key="_gi_dst")
-
-    mapeamento_txt = st.text_area(
-        "Mapeamento (destino=fonte, uma linha por campo)",
-        height=100,
-        placeholder="descricao=descricao\nvalor=valor\ndata_competencia=data",
-        key="_gi_map",
-    )
-    dry_run = st.toggle("Simulação (dry run)", value=True, key="_gi_dry")
-
-    if st.button("Executar", type="secondary" if dry_run else "primary", key="_gi_exec"):
-        if not tabela_fonte or not mapeamento_txt:
-            st.error("Informe a tabela e o mapeamento.")
-            return
-        mapeamento = {}
-        for linha in mapeamento_txt.strip().splitlines():
-            if "=" in linha:
-                d, f = linha.split("=", 1)
-                mapeamento[d.strip()] = f.strip()
-        if not mapeamento:
-            st.error("Mapeamento inválido.")
-            return
-        from etl.importacao import ImportadorPostgres
-        with st.spinner("Importando…"):
-            imp = ImportadorPostgres(url_fonte)
-            if not imp.conectado:
-                st.error("Sem conexão com a fonte.")
-                return
-            res = imp.importar_tabela_generica(
-                tabela_fonte=tabela_fonte,
-                tabela_destino=tabela_destino,
-                mapeamento=mapeamento,
-                filtro_sql="",
-                dry_run=dry_run,
-            )
-        if res.ok:
-            st.success(res.resumo())
-        else:
-            st.error(res.resumo())
-            with st.expander("Erros"):
-                for e in res.erros:
-                    st.code(e)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

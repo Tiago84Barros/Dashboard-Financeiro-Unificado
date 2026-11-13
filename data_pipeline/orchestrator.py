@@ -33,8 +33,6 @@ logger = logging.getLogger(__name__)
 _JOB_MAP: dict[str, str] = {
     "update_b3_quotes":       "data_pipeline.jobs.update_b3_quotes",
     "update_bcb":             "data_pipeline.jobs.update_bcb",
-    "update_macro":           "data_pipeline.jobs.update_macro",
-    "update_cvm":             "data_pipeline.jobs.update_cvm",
     "update_cvm_ipe":         "data_pipeline.jobs.update_cvm_ipe",
     "update_cvm_fulltext":    "data_pipeline.jobs.update_cvm_fulltext",
     "update_brapi_history":   "data_pipeline.jobs.update_brapi_history",

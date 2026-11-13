@@ -2170,12 +2170,15 @@ FLOW_CONFIGURACOES = FlowSpec(
         ),
         "cfg_banco": _node(
             "cfg_banco", "Banco de dados", "Diagnóstico",
-            "Conexão, capacidade e schema do banco publicado, além das rotas controladas de "
-            "importação. Diagnóstico técnico, sem conteúdo financeiro.",
+            "Conexão, capacidade e schema do banco publicado, além da importação de "
+            "planilha (CSV / Excel) com simulação antes de gravar. Diagnóstico técnico, "
+            "sem conteúdo financeiro.",
             (
                 "Aba 🗄️ Banco de dados",
                 "Estado da conexão e avisos de ambiente",
                 "Uso do espaço e maiores tabelas",
+                "A importação direta dos bancos dos apps originais saiu em 11/2026: "
+                "a carga inicial já foi feita e nenhum ambiente aponta mais para eles",
             ),
             "O plano gratuito da nuvem tem teto de espaço, e estourar o teto derruba a leitura "
             "do app inteiro. Ver a margem antes de publicar carga nova é o que evita a parada.",

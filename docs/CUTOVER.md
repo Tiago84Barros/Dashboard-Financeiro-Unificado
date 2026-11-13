@@ -33,7 +33,8 @@ Fundamentus/Status Invest em `public.*`) para a fonte nova (BRAPI Pro em
 ### 2. Desativar jobs legados (registry + workflow)
 - `data_pipeline/update_registry.py`: `is_active=False` (ou `frequency='manual'`)
   para: `update_b3_fundamentals`, `update_dividendos`, `audit_and_heal`,
-  `heal_fundamentals`, `update_b3_quotes` (parte B3), `update_cvm`, `update_macro`.
+  `heal_fundamentals`, `update_b3_quotes` (parte B3). (`update_cvm` e `update_macro`
+  foram apagados em 11/2026, junto com os bancos legados que liam.)
 - `.github/workflows/data_pipeline.yml`: remover passos de audit/heal e updates
   legados de B3; **manter** `update_bcb`, `update_fx_rates`, `update_cvm_ipe`,
   `update_empresas_eua` e o passo internacional de cotações.
@@ -41,8 +42,9 @@ Fundamentus/Status Invest em `public.*`) para a fonte nova (BRAPI Pro em
 ### 3. Remover código de reparo (balde ❌)
 - `core/data_healing.py`, `core/data_reconciliacao.py` (parte de scraping).
 - `data_pipeline/jobs/audit_and_heal.py`, `heal_fundamentals.py`,
-  `update_b3_fundamentals.py`, `update_dividendos.py`, `update_cvm.py`,
-  `update_macro.py`, `update_brapi_history.py` (confirmar superado).
+  `update_b3_fundamentals.py`, `update_dividendos.py`,
+  `update_brapi_history.py` (confirmar superado). `update_cvm.py` e
+  `update_macro.py` já saíram (11/2026).
 - `data_pipeline/quality/`: `comparer.py`, `sanitizer.py`, `updater.py`,
   `score.py`, `report.py`, `validator.py` (manter `scheduler.py` — usado pelo
   `market/ingest`).

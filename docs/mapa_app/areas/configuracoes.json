@@ -333,25 +333,17 @@
         },
         {
           "nome": "Rotas de importação",
-          "resumo": "Importar planilhas ou dados de outra base",
-          "explicacao": "Duas portas para trazer dados antigos, sempre com simulação antes de gravar. As importações da B3, XP e Nomad não ficam aqui, e sim em Atualização de dados.",
+          "resumo": "Importar planilhas de transações, operações ou proventos",
+          "explicacao": "Uma porta para trazer dados de planilha, sempre com simulação antes de gravar. A antiga importação direta dos bancos dos apps originais saiu em 11/2026: a carga inicial já foi feita e nenhum ambiente aponta mais para eles. As importações da B3, XP e Nomad não ficam aqui, e sim em Atualização de dados.",
           "so_admin": false,
-          "fonte": "views/configuracoes.py:893",
+          "fonte": "views/configuracoes.py:922",
           "filhos": [
             {
               "nome": "Importar dados de arquivo (CSV / Excel)",
               "resumo": "Subir planilha de transações, operações ou proventos",
               "explicacao": "Escolha o tipo de dado, envie a planilha e rode primeiro a 'Simulação' para ver o que entraria. Desligando a simulação, o botão vira 'GRAVAR NO BANCO'. Sem arquivo, a tela mostra o modelo de colunas para baixar.",
               "so_admin": false,
-              "fonte": "views/configuracoes.py:1010",
-              "filhos": []
-            },
-            {
-              "nome": "Importar de banco de origem (PostgreSQL / SQLite)",
-              "resumo": "Trazer histórico de uma base antiga",
-              "explicacao": "Escolha a fonte, use 'Testar conexão' e 'Listar tabelas' e indique qual coluna vai para onde. Também roda em simulação antes de gravar de verdade.",
-              "so_admin": false,
-              "fonte": "views/configuracoes.py:1133",
+              "fonte": "views/configuracoes.py:1034",
               "filhos": []
             }
           ]

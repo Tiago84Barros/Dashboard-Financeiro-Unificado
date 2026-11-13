@@ -41,10 +41,7 @@ jobs:
     env:
       APP_ENV: production
       PYTHONUNBUFFERED: "1"
-      SUPABASE_UNIFICADO_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-      OWNER_USER_ID: ${{ secrets.OWNER_USER_ID }}
       BRAPI_TOKEN: ${{ secrets.BRAPI_TOKEN }}
       MARKET_DELAY: "1.0"
     steps:
@@ -99,10 +96,7 @@ jobs:
     env:
       APP_ENV: production
       PYTHONUNBUFFERED: "1"
-      SUPABASE_UNIFICADO_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
-      OWNER_USER_ID: ${{ secrets.OWNER_USER_ID }}
       BRAPI_TOKEN: ${{ secrets.BRAPI_TOKEN }}
       MARKET_DELAY: "1.0"
     steps:

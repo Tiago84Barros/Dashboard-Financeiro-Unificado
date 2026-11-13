@@ -10,8 +10,10 @@ Ordem de prioridade (da maior para a menor):
 Estrategia de banco (Fase 4.0):
   Prioridade de db_url: SUPABASE_UNIFICADO_URL > DATABASE_URL > SUPABASE_DB_URL
   - SUPABASE_UNIFICADO_URL      : projeto Supabase Dashboard Financeiro (banco central)
-  - SUPABASE_ORIGEM_CONTROLE_URL: projeto Supabase Controle Financeiro (migracao)
-  - SOURCE_DB_APP2              : SQLite do Dashboard-Investimentos (migracao)
+
+  Os bancos dos apps originais (SOURCE_DB_APP1/2/3, SUPABASE_ORIGEM_CONTROLE_URL)
+  serviram so a carga inicial e foram aposentados em 11/2026: nenhum ambiente os
+  configura, e o codigo que os lia saiu junto.
 """
 import json
 import os
@@ -135,11 +137,6 @@ class Settings:
     # Formato: postgresql://app4_reader:SENHA@HOST.pooler.supabase.com:6543/postgres
     SUPABASE_UNIFICADO_URL: str = _get_secret("SUPABASE_UNIFICADO_URL")
     SUPABASE_UNIFICADO_ANON_KEY: str = _get_secret("SUPABASE_UNIFICADO_ANON_KEY")
-
-    # ── Banco de origem (Controle Financeiro — leitura durante migracao) ──────
-    # Usado apenas para importar dados historicos. Nunca para gravacao.
-    SUPABASE_ORIGEM_CONTROLE_URL: str = _get_secret("SUPABASE_ORIGEM_CONTROLE_URL")
-    SUPABASE_ORIGEM_CONTROLE_ANON_KEY: str = _get_secret("SUPABASE_ORIGEM_CONTROLE_ANON_KEY")
 
     # ── Variaveis legadas (retrocompatibilidade) ──────────────────────────────
     # Mantidas para nao quebrar .env existentes. Preferir SUPABASE_UNIFICADO_URL.
@@ -309,11 +306,6 @@ class Settings:
         # Compatibilidade com jobs e fixtures; sessões ignoram este valor.
         self._legacy_owner_id = value
 
-    # ── Fontes de importacao (apps originais — somente leitura) ──────────────
-    SOURCE_DB_APP1: str = _get_secret("SOURCE_DB_APP1")  # Dashboard (PostgreSQL)
-    SOURCE_DB_APP2: str = _get_secret("SOURCE_DB_APP2")  # Dashboard-Investimentos (SQLite)
-    SOURCE_DB_APP3: str = _get_secret("SOURCE_DB_APP3")  # Controle_Financeiro (alias legado)
-
     # ── Propriedades derivadas ────────────────────────────────────────────────
 
     @property
@@ -328,14 +320,6 @@ class Settings:
             or self.SUPABASE_DB_URL
             or ""
         )
-
-    @property
-    def url_origem_controle(self) -> str:
-        """
-        URL do Supabase Controle Financeiro (fonte temporaria de migracao).
-        SUPABASE_ORIGEM_CONTROLE_URL tem prioridade; SOURCE_DB_APP3 e alias legado.
-        """
-        return self.SUPABASE_ORIGEM_CONTROLE_URL or self.SOURCE_DB_APP3
 
     @property
     def is_development(self) -> bool:
@@ -400,23 +384,6 @@ class Settings:
     def has_owner(self) -> bool:
         """True se OWNER_USER_ID estiver configurado (necessario para queries reais)."""
         return bool(self.OWNER_USER_ID)
-
-    @property
-    def has_origem_controle(self) -> bool:
-        """True se a URL de origem do Controle Financeiro estiver configurada."""
-        return bool(self.url_origem_controle)
-
-    @property
-    def has_source_app1(self) -> bool:
-        return bool(self.SOURCE_DB_APP1)
-
-    @property
-    def has_source_app2(self) -> bool:
-        return bool(self.SOURCE_DB_APP2)
-
-    @property
-    def has_source_app3(self) -> bool:
-        return bool(self.SOURCE_DB_APP3)
 
     # ── Motor Conjuntural: derivadas ──────────────────────────────────────────
 
