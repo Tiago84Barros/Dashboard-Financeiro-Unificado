@@ -122,6 +122,7 @@ def run() -> dict:
     preenchidos = falhas = 0
     blocos = 0
     interrompido = False
+    ultima_recusa = ""
 
     for i, tk in enumerate(tickers):
         try:
@@ -136,6 +137,7 @@ def run() -> dict:
                 blocos += 1
                 if blocos >= max_blocks:
                     interrompido = True
+                    ultima_recusa = str(exc)
                     break
             falhas += 1
             continue
@@ -203,7 +205,7 @@ def run() -> dict:
     msg = f"{preenchidos} DY anuais preenchidos em {len(tickers)} empresas; {falhas} falhas"
     if interrompido:
         result["status"] = "partial_success"
-        msg += " — disjuntor acionado (429); retoma depois"
+        msg += f" — disjuntor acionado ({ultima_recusa}); retoma depois"
     elif falhas and not preenchidos:
         result["status"] = "partial_success"
     result["error_message"] = msg if (interrompido or falhas) else None

@@ -1713,14 +1713,19 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
     delay = float(os.getenv("MARKET_DELAY", "1.0"))
     metrics: list[dict] = []
     seguidos_limitados = 0
+    ultima_recusa = ""
     for i, tk in enumerate(universe):
         if seguidos_limitados >= LIMITE_RECUSAS_SEGUIDAS:
             # Cota da brapi esgotada (429/401/403 em sequencia): continuar so
             # gasta ~1 min por fundo em backoff (~20 h para 1.300 fundos), estoura
             # o teto da cadeia sem gravar nada e ainda soma recusas na cota.
             logger.error("brapi recusou %d fundos seguidos (cota esgotada?); "
-                         "interrompendo em %s/%d", seguidos_limitados, i, len(universe))
+                         "interrompendo em %s/%d; ultima recusa: %s",
+                         seguidos_limitados, i, len(universe), ultima_recusa)
             prog["bloqueio_brapi"] = True
+            # O que a brapi disse na ultima recusa (corpo + cabecalhos de cota),
+            # para o JSON do comando separar cota mensal de limite por minuto.
+            prog["motivo_bloqueio"] = ultima_recusa
             break
         try:
             quote = sched.with_backoff(
@@ -1746,6 +1751,7 @@ def ingest(limit: int | None = None, tickers: list[str] | None = None,
             prog["erros"] += 1
             if brapi.is_rate_limited(exc):
                 seguidos_limitados += 1
+                ultima_recusa = str(exc)
         if i < len(universe) - 1:
             sched.sleep_jittered(base=delay)
 
@@ -2091,8 +2097,10 @@ def ingest_benchmark(ticker: str = "XFIX11") -> dict:
         quote = brapi.fetch_quote(ticker, range_="max", interval="1mo",
                                   dividends=False, fundamental=False)
     except Exception as exc:
+        # O motivo vai ao JSON do comando: um 429 da brapi aqui é a mesma
+        # recusa do `fiis`, e "erros: -1" sozinho não dizia qual.
         logger.warning("ingest_benchmark %s: %s", ticker, exc)
-        return {**prog, "erros": -1}
+        return {**prog, "erros": -1, "motivo": str(exc)}
     if not quote:
         return {**prog, "erros": -1}
     with engine.begin() as conn:

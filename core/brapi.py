@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -76,8 +77,58 @@ _AUDIT_HEADERS = ("etag", "last-modified", "date", "content-type", "content-leng
 def _retry_after(headers) -> float | None:
     try:
         return max(float(headers.get("Retry-After")), 0.0)
-    except (TypeError, ValueError):
+    except (AttributeError, TypeError, ValueError):
         return None
+
+
+# Cabeçalhos que dizem QUAL limite recusou: sem eles, um 429 de cota mensal
+# esgotada e um de limite por minuto saem iguais no log.
+_CABECALHOS_RECUSA = ("retry-after", "x-ratelimit-limit", "x-ratelimit-remaining",
+                      "x-ratelimit-reset")
+_MAX_CORPO_RECUSA = 300
+_RE_SEGREDO = re.compile(r"(?i)(token=|bearer\s+)[^\s&\"',;]+")
+
+
+def motivo_recusa(resp) -> str:
+    """Resume uma recusa da brapi numa linha, para log e para o JSON do comando.
+
+    "HTTP 429 | <code / message do corpo> | retry-after=..., x-ratelimit-remaining=0".
+    De 29/10 a 13/11/2026 o `market-refresh` recebeu 429 em todo `quote` e o log
+    só dizia "HTTP 429": não dava para separar cota mensal, limite por minuto e
+    plano vencido sem abrir o painel da brapi. O token nunca sai: é mascarado no
+    corpo, e o corpo é truncado em 300 caracteres.
+    """
+    partes = [f"HTTP {getattr(resp, 'status_code', '?')}"]
+    corpo = ""
+    try:
+        data = resp.json()
+    except Exception:
+        data = None
+    if isinstance(data, dict):
+        campos = [str(data[k]).strip() for k in ("code", "message", "error")
+                  if isinstance(data.get(k), (str, int, float))
+                  and not isinstance(data.get(k), bool) and str(data[k]).strip()]
+        corpo = " / ".join(dict.fromkeys(campos))
+    if not corpo:
+        texto = getattr(resp, "text", "")
+        corpo = texto if isinstance(texto, str) else ""
+    corpo = " ".join(corpo.split())
+    tok = _token()
+    if tok:
+        corpo = corpo.replace(tok, "***")
+    corpo = _RE_SEGREDO.sub(r"\1***", corpo)
+    if len(corpo) > _MAX_CORPO_RECUSA:
+        corpo = corpo[:_MAX_CORPO_RECUSA] + "…"
+    if corpo:
+        partes.append(corpo)
+    try:
+        cab = {str(k).lower(): str(v) for k, v in dict(resp.headers or {}).items()}
+    except Exception:
+        cab = {}
+    vistos = [f"{n}={cab[n]}" for n in _CABECALHOS_RECUSA if n in cab]
+    if vistos:
+        partes.append(", ".join(vistos))
+    return " | ".join(partes)
 
 
 def _token() -> str:
@@ -459,7 +510,8 @@ def fetch_quote(ticker: str, range_: str = "max", interval: str = "1mo",
     # cargas grandes) são RETENTÁVEIS → sobem como BrapiRateLimited p/ o backoff
     # retentar em vez de descartar o ativo (senão FIIs válidos somem do universo).
     if resp.status_code in (429, 401, 403):
-        raise BrapiRateLimited(f"HTTP {resp.status_code}")
+        raise BrapiRateLimited(motivo_recusa(resp),
+                               retry_after=_retry_after(getattr(resp, "headers", None)))
     if resp.status_code != 200:
         logger.warning("brapi %s: HTTP %s", tk, resp.status_code)
         return None
@@ -517,14 +569,10 @@ def fetch_fii_v2_response(endpoint: str,
     except Exception as exc:
         raise BrapiError(str(exc)) from exc
     if response.status_code == 429:
-        raise BrapiRateLimited(f"HTTP {response.status_code}",
-                               retry_after=_retry_after(response.headers))
+        raise BrapiRateLimited(motivo_recusa(response),
+                               retry_after=_retry_after(getattr(response, "headers", None)))
     if response.status_code in (401, 403):
-        try:
-            error_code = str((response.json() or {}).get("code") or "")
-        except Exception:
-            error_code = ""
-        raise BrapiAuthError(f"HTTP {response.status_code} {error_code}".strip())
+        raise BrapiAuthError(motivo_recusa(response))
     if response.status_code != 200:
         raise BrapiError(f"FII v2 {endpoint}: HTTP {response.status_code}")
     try:
@@ -603,7 +651,8 @@ def fetch_list(timeout: int = 45) -> list[str]:
     except Exception as exc:
         raise BrapiError(str(exc)) from exc
     if resp.status_code == 429:
-        raise BrapiRateLimited("HTTP 429")
+        raise BrapiRateLimited(motivo_recusa(resp),
+                               retry_after=_retry_after(getattr(resp, "headers", None)))
     if resp.status_code != 200:
         return []
     try:
@@ -639,7 +688,8 @@ def fetch_fund_list(timeout: int = 45) -> list[str]:
     except Exception as exc:
         raise BrapiError(str(exc)) from exc
     if resp.status_code == 429:
-        raise BrapiRateLimited("HTTP 429")
+        raise BrapiRateLimited(motivo_recusa(resp),
+                               retry_after=_retry_after(getattr(resp, "headers", None)))
     if resp.status_code != 200:
         return []
     try:
