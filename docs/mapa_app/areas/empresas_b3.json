@@ -352,7 +352,7 @@
             {
               "nome": "Composição possível com proteção ao investidor",
               "resumo": "Proposta parcial quando a carteira não fecha",
-              "explicacao": "Aparece no lugar do resto da página quando não há empresas suficientes para respeitar os limites de concentração. Mostra uma proposta parcial, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\".",
+              "explicacao": "Aparece no lugar da carteira sugerida (macro, saúde, salvar e distribuição setorial) quando não há empresas suficientes para respeitar os limites de concentração. Mostra uma proposta parcial, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\". Depois dela seguem os mesmos painéis da carteira normal: Patches 1 a 5, desempenho da safra vigente, desempenho safra a safra contra Selic e Pesos Iguais e a metodologia.",
               "so_admin": false,
               "fonte": "views/portfolio_b3.py:4404/4421/4432 -> design/portfolio_review.py:13",
               "filhos": []

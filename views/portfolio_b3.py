@@ -4386,6 +4386,19 @@ def render(show_header: bool = True) -> None:
     )
     _required_global = minimum_assets_for_cap(cap)
     _portfolio_viavel = len(proximos_uniq) >= _required_global
+    # A rota de revisão (metas que não comportam carteira) mostra a composição
+    # possível e, em seguida, os MESMOS painéis analíticos da rota normal.
+    # De 10/09 a 13/11/2026 ela dava `return` logo após os cards, e a tela
+    # perdia os Patches 1-5, o desempenho da safra vigente e as safras ano a
+    # ano contra Selic/EW sem aviso nenhum.
+    _args_revisao = dict(
+        resultados=resultados, aprovados=aprovados, proximos_uniq=proximos_uniq,
+        df_mult_todos=df_mult_todos, df_set=df_set, entry_guard=entry_guard,
+        cap=cap, teto_setor=float(teto_setor), teto_ciclico=float(teto_ciclico),
+        taxa_selic_aa=float(taxa_selic_aa),
+        vetados={item["tk"] for item in quali_log["vetados"]},
+        df_precos_all=df_precos_all, selic_hist=selic_hist,
+    )
     if proximos_uniq and _portfolio_viavel:
         if not corr_diag.get("aplicado"):
             # Comportamento original: pesos só do orçamento/score, projetados no cap.
@@ -4442,14 +4455,7 @@ def render(show_header: bool = True) -> None:
                 > float(teto_ciclico)+1e-6
             )
             if exceeds:
-                from core.portfolio_review_routes import b3_review
-                from design.portfolio_review import render_portfolio_review
-
-                proposal = b3_review(resultados, df_mult_todos, entry_guard, cap=cap,
-                                    sector_cap=float(teto_setor), cycle_cap=float(teto_ciclico),
-                                    selic=float(taxa_selic_aa),
-                                    vetoed={item["tk"] for item in quali_log["vetados"]})
-                render_portfolio_review(proposal, key="b3_review")
+                _rota_revisao(**_args_revisao)
                 return
             for item in proximos_uniq:
                 item["peso"] = _pesos_fin[item["tk"]]
@@ -4461,25 +4467,11 @@ def render(show_header: bool = True) -> None:
                            "SELEÇÃO, não na ponderação.")
                 st.warning(_aviso + _sufixo, icon="⚠️")
     elif proximos_uniq:
-        from core.portfolio_review_routes import b3_review
-        from design.portfolio_review import render_portfolio_review
-
-        proposal = b3_review(resultados, df_mult_todos, entry_guard, cap=cap,
-                            sector_cap=float(teto_setor), cycle_cap=float(teto_ciclico),
-                            selic=float(taxa_selic_aa),
-                            vetoed={item["tk"] for item in quali_log["vetados"]})
-        render_portfolio_review(proposal, key="b3_review")
+        _rota_revisao(**_args_revisao)
         return
 
     if not proximos_uniq:
-        from core.portfolio_review_routes import b3_review
-        from design.portfolio_review import render_portfolio_review
-
-        proposal = b3_review(resultados, df_mult_todos, entry_guard, cap=cap,
-                            sector_cap=float(teto_setor), cycle_cap=float(teto_ciclico),
-                            selic=float(taxa_selic_aa),
-                            vetoed={item["tk"] for item in quali_log["vetados"]})
-        render_portfolio_review(proposal, key="b3_review")
+        _rota_revisao(**_args_revisao)
         return
 
     # ── CAMADA MACRO LOCAL ────────────────────────────────────────────────
@@ -4946,6 +4938,28 @@ def render(show_header: bool = True) -> None:
         for item in (proximos_uniq or [])
     ]
 
+    _render_analises_da_carteira(
+        resultados, aprovados, proximos_uniq, df_precos_all,
+        selic_hist=selic_hist, taxa_selic_aa=taxa_selic_aa,
+    )
+
+
+def _render_analises_da_carteira(
+    resultados: list[dict],
+    aprovados: list[dict],
+    proximos_uniq: list[dict],
+    df_precos_all: pd.DataFrame,
+    *,
+    selic_hist: dict[int, float],
+    taxa_selic_aa: float,
+    safras_base: list[dict] | None = None,
+) -> None:
+    """Painéis analíticos que acompanham qualquer carteira desta aba.
+
+    Patches 1-5, desempenho da safra vigente, safras ano a ano contra Selic e
+    Pesos Iguais e a metodologia. É chamada pela rota normal e pela rota de
+    revisão (`_rota_revisao`): as duas mostram os mesmos painéis.
+    """
     _render_paineis_app1(resultados, proximos_uniq, df_precos_all)
 
     # ── DESEMPENHO PARCIAL ANO ATUAL ─────────────────────────────────────────
@@ -5047,9 +5061,11 @@ def render(show_header: bool = True) -> None:
 
     # `aprovados` (nao `resultados`) e a carteira que esta aba publica: as
     # safras do Bloco 1 tem que ser reconstruidas com o MESMO conjunto de
-    # segmentos que a tela recomenda.
+    # segmentos que a tela recomenda. Na rota de revisao sem nenhum segmento
+    # aprovado, a composicao sai de todos os segmentos analisados
+    # (`b3_review`), e as safras seguem esse mesmo conjunto -- dito na tela.
     render_safras(
-        aprovados,
+        safras_base if safras_base is not None else aprovados,
         df_precos_all,
         selic_por_ano=selic_hist,
         taxa_selic_aa=taxa_selic_aa,
@@ -5057,6 +5073,106 @@ def render(show_header: bool = True) -> None:
 
     # ── Metodologia e referências científicas ────────────────────────────────
     _render_metodologia_portfolio()
+
+
+def _itens_da_revisao(
+    proposal: dict,
+    proximos_uniq: list[dict],
+    resultados: list[dict],
+    df_set: pd.DataFrame,
+) -> list[dict]:
+    """Converte a composição de `b3_review` no formato de `proximos_uniq`.
+
+    Os painéis analíticos leem setor, segmento, alfa e rank de cada ativo. O
+    ticker que já era líder aproveita a ficha montada pela rota normal; os
+    demais recebem a ficha do segmento em que têm o maior score do próximo
+    ano. O peso é sempre o da composição para revisão.
+    """
+    fichas = {str(p["tk"]).upper().replace(".SA", ""): p for p in proximos_uniq or []}
+    melhor_seg: dict[str, tuple[float, dict]] = {}
+    for res in resultados or []:
+        for tk, score in (res.get("score_proximo") or {}).items():
+            chave = str(tk).upper().replace(".SA", "")
+            try:
+                valor = float(score)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(valor):
+                continue
+            if chave not in melhor_seg or valor > melhor_seg[chave][0]:
+                melhor_seg[chave] = (valor, res)
+
+    _ctk = "ticker" if df_set is not None and "ticker" in df_set.columns else None
+    itens: list[dict] = []
+    for row in proposal.get("items") or []:
+        tk = str(row.get("ticker") or "").upper().replace(".SA", "")
+        peso = float(row.get("weight") or 0.0)
+        if not tk or peso <= 0:
+            continue
+        if tk in fichas:
+            item = dict(fichas[tk])
+        else:
+            score, res = melhor_seg.get(tk, (float(row.get("quality") or 0.0), {}))
+            nome = tk
+            if _ctk and "nome_empresa" in df_set.columns:
+                _n = df_set.loc[df_set[_ctk] == tk, "nome_empresa"]
+                if not _n.empty and isinstance(_n.iloc[0], str):
+                    nome = _n.iloc[0][:24]
+            item = {
+                "tk": tk, "nome": nome, "score": score,
+                "setor": res.get("setor") or row.get("setor"),
+                "subsetor": res.get("subsetor"),
+                "segmento": res.get("segmento"),
+                "alpha_selic": _margem_pct(res.get("val_est_oos", 0.0),
+                                           res.get("val_selic_oos", 0.0)) if res else 0.0,
+                "alpha_ew": _margem_pct(res.get("val_est_oos", 0.0),
+                                        res.get("val_ew_oos", 0.0)) if res else 0.0,
+                "rank_score": _rank_ticker(res.get("score_proximo") or {}, tk) if res else None,
+            }
+        item["peso"] = peso
+        itens.append(item)
+    return itens
+
+
+def _rota_revisao(
+    *,
+    resultados: list[dict],
+    aprovados: list[dict],
+    proximos_uniq: list[dict],
+    df_mult_todos: pd.DataFrame,
+    df_set: pd.DataFrame,
+    entry_guard: dict,
+    cap: float,
+    teto_setor: float,
+    teto_ciclico: float,
+    taxa_selic_aa: float,
+    vetados: set[str],
+    df_precos_all: pd.DataFrame,
+    selic_hist: dict[int, float],
+) -> None:
+    """Composição para revisão seguida dos mesmos painéis da rota normal."""
+    from core.portfolio_review_routes import b3_review
+    from design.portfolio_review import render_portfolio_review
+
+    proposal = b3_review(resultados, df_mult_todos, entry_guard, cap=cap,
+                         sector_cap=teto_setor, cycle_cap=teto_ciclico,
+                         selic=taxa_selic_aa, vetoed=vetados)
+    render_portfolio_review(proposal, key="b3_review")
+
+    itens = _itens_da_revisao(proposal, proximos_uniq, resultados, df_set)
+    safras_base = None
+    if not aprovados:
+        safras_base = resultados
+        aviso_lacuna(
+            "Nenhum segmento foi aprovado nesta execução. As safras ano a ano "
+            "abaixo reconstroem os líderes de todos os segmentos analisados, o "
+            "mesmo conjunto de onde sai a composição para revisão.",
+            codigo="tela.portfolio_b3.revisao_safras_sem_aprovados")
+    _render_analises_da_carteira(
+        resultados, aprovados, itens, df_precos_all,
+        selic_hist=selic_hist, taxa_selic_aa=taxa_selic_aa,
+        safras_base=safras_base,
+    )
 
 
 def _render_metodologia_portfolio() -> None:
