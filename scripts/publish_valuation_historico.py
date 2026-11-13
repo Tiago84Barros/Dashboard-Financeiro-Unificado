@@ -472,6 +472,8 @@ def coletar_fotos_de_valor(conn) -> tuple[list[dict], dict]:
                      'sector', b.payload_json->'summaryProfile'->'sector'),
                  'regularMarketPrice', b.payload_json->'regularMarketPrice',
                  'marketCap', b.payload_json->'marketCap',
+                 -- alternativo da conferência das ações (acoes.acoes_emitidas)
+                 'earningsPerShare', b.payload_json->'earningsPerShare',
                  'sharesOutstanding', b.payload_json->'sharesOutstanding',
                  'defaultKeyStatistics', jsonb_build_object(
                      'sharesOutstanding',

@@ -30,6 +30,15 @@ minoritários. Quando a razão não fecha num inteiro, k fica desconhecido: a
 unit fica só com o ``marketCap`` da brapi, que é da companhia (a mesma
 convenção dos sites), e nunca com o reserva lucro / LPA, que inflava k vezes.
 
+**As ações emitidas são conferidas.** O ``sharesOutstanding`` da brapi às
+vezes vem errado (MILS3 com 48.172 ações, BNBR3 com 12,3 mi, TFCO4 com 942
+mi em 29/10/2026), e o valor de mercado herdava o erro: P/L ttm de 0,47 na
+BNBR3 e de 66 na TFCO4, contra 3,8 e 10,4. ``acoes_emitidas`` confere a
+contagem contra ``marketCap`` ÷ preço com a mesma regra do LPA do título
+(``core.brapi.escolher_pela_referencia``, #727); k continua saindo da
+contagem bruta (``_acoes_brutas``), porque é com ela que a brapi fez o
+``trailingEps``.
+
 Convenção divergente registrada: em IGTI3/IGTI11 o Fundamentus conta 2,08 bi
 de ações e o Status Invest e o Investidor10 contam 1,21 bi, a mesma base da
 brapi. Fica a da brapi, porque é a dos dois sites que concordam.
@@ -55,11 +64,58 @@ def _positivo(v) -> float | None:
     return x if x is not None and x > 0 else None
 
 
-def acoes_emitidas(quote: dict) -> float | None:
-    """Ações emitidas da companhia, todas as classes (igual em TAEE3/4/11)."""
+def _acoes_brutas(quote: dict) -> float | None:
+    """O ``sharesOutstanding`` como a brapi deu, sem conferência. É a base de
+    k: o ``trailingEps`` da unit foi calculado com esta contagem."""
     quote = quote or {}
     dks = quote.get("defaultKeyStatistics") or {}
     return _positivo(dks.get("sharesOutstanding")) or _positivo(quote.get("sharesOutstanding"))
+
+
+def _lucro(quote: dict):
+    dks = (quote or {}).get("defaultKeyStatistics") or {}
+    lucro = _f(dks.get("netIncomeToCommon"))
+    if lucro is None:
+        comp = (quote or {}).get(_COMPOSICAO_DO_COMPLETO)
+        lucro = _f(comp.get("netIncomeToCommon")) if isinstance(comp, dict) else None
+    return lucro
+
+
+def acoes_emitidas(quote: dict) -> float | None:
+    """Ações emitidas da companhia, todas as classes (igual em TAEE3/4/11),
+    conferidas contra o ``marketCap`` da brapi.
+
+    A contagem da brapi às vezes vem errada (29/10/2026: MILS3 com 48.172
+    ações, BNBR3 com 12,3 mi, TFCO4 com 942 mi), e com ela o valor de
+    mercado, e daí o P/L, o P/VP, o EV/EBIT e o P/FCO do ttm. A conferência é
+    a mesma regra do LPA do título (``core.brapi.escolher_pela_referencia``,
+    #727), do lado das ações, em títulos:
+
+    - referência: ``marketCap`` ÷ preço;
+    - próprio: ações brutas ÷ k (k da razão do próprio quote, 1 na ação);
+    - alternativo: lucro ÷ ``earningsPerShare`` do topo (mesmo sinal).
+
+    Escolhido o próprio, voltam as ações brutas; escolhido o alternativo,
+    ele × k. Sem nenhum plausível, None: o valor de mercado cai no
+    ``marketCap`` da brapi (``valor_de_mercado_do_quote``), que erra até
+    ~35%, contra as contagens erradas, que erram de 2× a 5.000×. Sem
+    ``marketCap`` (as units) não há referência e as ações ficam como vieram."""
+    bruto = _acoes_brutas(quote)
+    if bruto is None:
+        return None
+    quote = quote or {}
+    preco, mcap = _positivo(quote.get("regularMarketPrice")), _positivo(quote.get("marketCap"))
+    if preco is None or mcap is None:
+        return bruto
+    from core.brapi import escolher_pela_referencia
+
+    k = acoes_por_titulo(quote, unit=True) or 1
+    lucro, topo = _lucro(quote), _f(quote.get("earningsPerShare"))
+    alternativo = (lucro / topo) if (lucro and topo and abs(lucro) >= 1.0) else None
+    escolha = escolher_pela_referencia(bruto / k, alternativo, mcap / preco)
+    if escolha is None:
+        return None
+    return bruto if escolha == bruto / k else escolha * k
 
 
 # Tipos de ativo em que k não é 1 por suposição. ``other`` é o título de
@@ -135,7 +191,7 @@ def acoes_por_titulo(quote: dict, *, unit: bool) -> int | None:
     if _composicao_valida(comp):
         return _k_da_razao(comp["sharesOutstanding"], comp["trailingEps"],
                            comp["netIncomeToCommon"])
-    return _k_da_razao(acoes_emitidas(quote), dks.get("trailingEps"),
+    return _k_da_razao(_acoes_brutas(quote), dks.get("trailingEps"),
                        dks.get("netIncomeToCommon"))
 
 
@@ -160,7 +216,7 @@ def quote_com_composicao(quote: dict, composicao: dict | None) -> dict:
         return quote
     comp = {c: composicao[c] for c in COMPOSICAO}
     out = {**quote, _COMPOSICAO_DO_COMPLETO: comp}
-    if acoes_emitidas(quote) is None:
+    if _acoes_brutas(quote) is None:
         dks = dict(quote.get("defaultKeyStatistics") or {})
         dks["sharesOutstanding"] = comp["sharesOutstanding"]
         out["defaultKeyStatistics"] = dks

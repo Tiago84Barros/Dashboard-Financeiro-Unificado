@@ -323,8 +323,11 @@ def _lpa_bruto(it: dict, pn: bool):
 
 
 def _acoes(quote: dict):
-    dks = (quote or {}).get("defaultKeyStatistics") or {}
-    return _nao_zero(dks, ("sharesOutstanding",)) or _nao_zero(quote, ("sharesOutstanding",))
+    """As ações de hoje, âncora da escala do LPA: as mesmas, conferidas, do
+    valor de mercado (``acoes.acoes_emitidas``). A contagem errada da brapi
+    (MILS3, 48.172 ações) não ancorava escala nenhuma."""
+    from data_pipeline.market import acoes as _ac
+    return _ac.acoes_emitidas(quote)
 
 
 def _divisores_lpa(items: list[tuple[dict, bool]], pn: bool, acoes) -> dict | None:
