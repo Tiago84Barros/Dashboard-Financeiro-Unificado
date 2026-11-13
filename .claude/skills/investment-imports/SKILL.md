@@ -20,8 +20,7 @@ app4 e compatibilidade com as visões já existentes.
 - **Não fazer scraping** de B3, XP, Nomad, corretora ou banco.
 - **Não automatizar login** em portal de investidor.
 - **Não pedir, capturar ou armazenar senha pessoal**.
-- Não copiar parser do Dashboard-Investimentos cegamente — adaptar ao schema
-  do app4 (ver mapeamento abaixo).
+- Todo parser segue o schema do app4 (ver mapeamento abaixo).
 
 ## Fontes suportadas
 

@@ -1,16 +1,6 @@
 # Dashboard Financeiro Unificado
 
-Plataforma financeira local em **Python + Streamlit** que unifica controle financeiro, gestão de investimentos, análise de empresas e indicadores macroeconômicos. Versão atual: **v0.5.10 — Fase 5 concluída**.
-
-## Objetivo
-
-Centralizar em uma única plataforma local as funcionalidades distribuídas em três projetos originais:
-
-- [`Tiago84Barros/Dashboard`](https://github.com/Tiago84Barros/Dashboard)
-- [`Tiago84Barros/Controle_Financeiro`](https://github.com/Tiago84Barros/Controle_Financeiro)
-- [`Tiago84Barros/Dashboard-Investimentos`](https://github.com/Tiago84Barros/Dashboard-Investimentos)
-
----
+Plataforma financeira local em **Python + Streamlit** que unifica controle financeiro, gestão de investimentos, análise de empresas e indicadores macroeconômicos.
 
 ## Pré-requisitos
 
@@ -171,10 +161,7 @@ Dashboard-Financeiro-Unificado/
 │       ├── 007_views.sql
 │       └── 008_seed_reference_data.sql
 │
-└── docs/                         ← documentação técnica gerada
-    ├── plano_fases_implementacao.md
-    ├── status_fase_5.md          ← registro completo da Fase 5
-    └── status_atual_implementacao.md
+└── docs/                         ← documentação técnica e metodologias
 ```
 
 ---
@@ -220,12 +207,6 @@ Dashboard-Financeiro-Unificado/
 4. Definir `MOCK_MODE=false`
 5. Importar cotações: Configurações → aba Cotações → Atualizar Cotações
 
-> A carga inicial vinda dos três apps originais (pasta `migration/`) foi feita
-> uma vez e aposentada em 11/2026; o código saiu do repositório e continua no
-> histórico do git.
-
-> Checklist detalhado: [`docs/status_atual_implementacao.md`](docs/status_atual_implementacao.md)
-
 ---
 
 ## Stack técnica
@@ -245,12 +226,8 @@ Dashboard-Financeiro-Unificado/
 
 ---
 
-## Status
+## Mapa do app
 
-**Fase 5 concluída — v0.5.10** (2026-05-14)
-
-11 telas com dados reais ou mock, 6 módulos `core/`, 1.351 transações de investimento + 517 proventos migrados, cotações via yfinance, 6 regras de alertas automáticas.
-
-Próximo passo: **Fase 6 — Schema cartão + IR estimado**.
-
-> Planejamento completo: [`docs/plano_fases_implementacao.md`](docs/plano_fases_implementacao.md)
+O mapa atualizado das telas, abas e fontes de dados fica em ⚙️ Configurações →
+🗺️ Mapa do App (gerado de `docs/mapa_app/`). As regras de arquitetura e dos dois
+bancos estão em `CLAUDE.md`.

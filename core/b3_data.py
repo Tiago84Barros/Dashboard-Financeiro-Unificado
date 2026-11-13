@@ -157,6 +157,6 @@ def load_macro_history(*a, **k):
     return _legacy.load_macro_history(*a, **k)
 
 
-# Passthrough p/ código que acessa a engine do App 1 diretamente.
+# Passthrough p/ código que acessa a engine das tabelas B3 diretamente.
 def _engine():
     return _legacy._engine()

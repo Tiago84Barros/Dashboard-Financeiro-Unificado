@@ -1032,7 +1032,7 @@ def _executar_criar_schema() -> None:
 
 
 def _render_import_csv() -> None:
-    st.caption("Exporte do app original em CSV e importe aqui. Use simulação antes de gravar.")
+    st.caption("Exporte a planilha em CSV e importe aqui. Use simulação antes de gravar.")
 
     tipo_dados = st.selectbox(
         "Tipo de dados",

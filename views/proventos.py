@@ -1,5 +1,5 @@
 """
-pages/proventos.py
+views/proventos.py
 Histórico de dividendos, JCP e rendimentos de FII.
 
 Seções:
@@ -8,8 +8,7 @@ Seções:
   3. Resumo   — por ativo (top N) e por tipo de provento
   4. Tabela   — todos os eventos com filtro por ticker / tipo / período
 
-Origem: Tiago84Barros/Dashboard-Investimentos (App 2)
-Dados:  core/proventos.get_proventos() — mock → real (Fase 5.2)
+Dados:  core/proventos.get_proventos()
 """
 import pandas as pd
 import plotly.graph_objects as go
@@ -95,7 +94,7 @@ def render() -> None:
 
     if d["num_eventos"] == 0:
         detalhe_tecnico(
-            "Tabela dividends vazia para este usuário; os dados entram via App 2 ou script.",
+            "Tabela dividends vazia para este usuário; os dados entram por importação de extrato ou script.",
             codigo="proventos.tabela_vazia",
         )
         st.info("**Nenhum provento registrado.**", icon="💵")

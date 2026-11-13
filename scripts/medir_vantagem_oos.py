@@ -219,7 +219,7 @@ def _fonte_efetiva_b3() -> str:
         return "fonte nao resolvida"
     if "localhost" in url or "127.0.0.1" in url:
         return "armazem local"
-    return "banco publicado do App 1 (nuvem)"
+    return "banco publicado (nuvem)"
 
 
 def medir_b3(resultados=None) -> dict:

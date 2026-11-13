@@ -231,7 +231,7 @@ migration/output/transformed/*.csv
 # Backups do banco (dados reais — nunca comitar)
 migration/backup/
 
-# Bancos de dados locais (SQLite do App 2)
+# Bancos de dados locais (SQLite)
 *.db
 *.sqlite
 *.sqlite3

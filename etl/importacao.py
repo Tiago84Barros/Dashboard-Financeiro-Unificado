@@ -4,10 +4,6 @@ Camada de importação de dados de fontes externas para o schema unificado.
 
 Fonte suportada: CSV / Excel — exportação manual de qualquer app ou planilha.
 
-A importação direta dos bancos dos apps originais (ImportadorPostgres) foi
-aposentada em 11/2026: a carga inicial já foi feita e nenhum ambiente
-configura mais SOURCE_DB_APP1/2/3.
-
 Segurança:
   - dry_run=True  (padrão) simula sem gravar nenhum dado
   - Toda gravação real ocorre dentro de uma transação (rollback automático em erro)

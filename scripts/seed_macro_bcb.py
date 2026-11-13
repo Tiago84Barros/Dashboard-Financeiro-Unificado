@@ -1,5 +1,5 @@
 """
-Cria/atualiza public.macro no App 4 a partir das fontes macro do App 1.
+Cria/atualiza public.macro a partir das séries do BCB.
 
 Fonte:
   - BCB/SGS: Selic, IPCA, cambio, balanca comercial, ICC, PIB e divida publica.

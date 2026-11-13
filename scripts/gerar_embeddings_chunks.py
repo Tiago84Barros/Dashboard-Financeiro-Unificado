@@ -1,6 +1,6 @@
 """
 scripts/gerar_embeddings_chunks.py
-Gera embeddings OpenAI para chunks CVM sem embedding e persiste no banco App1.
+Gera embeddings OpenAI para chunks CVM sem embedding e persiste no banco unificado.
 
 Uso:
     python scripts/gerar_embeddings_chunks.py
@@ -9,7 +9,7 @@ Uso:
     python scripts/gerar_embeddings_chunks.py --dry-run
 
 Variáveis de ambiente necessárias:
-  - SUPABASE_DB_URL_B3  : banco App1 (Supabase) — leitura + escrita
+  - SUPABASE_DB_URL_B3  : banco (Supabase ou staging) — leitura + escrita
   - OPENAI_API_KEY      : chave da API OpenAI
 
 O script é idempotente: só processa chunks onde embedding IS NULL.
@@ -294,7 +294,7 @@ def run(args: argparse.Namespace) -> None:
 
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
-        description="Gera embeddings OpenAI para chunks CVM e salva no banco App1.",
+        description="Gera embeddings OpenAI para chunks CVM e salva no banco.",
     )
     p.add_argument(
         "--tickers", nargs="+", metavar="TICKER",

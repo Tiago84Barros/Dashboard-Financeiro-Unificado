@@ -1,7 +1,7 @@
 """
-pages/investimentos.py  — v3 (layout original replicado)
+views/investimentos.py
 
-Replica as 4 seções do app dashboard-investimentos.streamlit.app:
+Seções da tela Investimentos:
   Tabs: Dashboard | Histórico | Carteira | Análise
 
 Dashboard:
@@ -973,7 +973,7 @@ def _estado_item(tipo: str, titulo: str, texto: str) -> str:
 
 
 def _secao_titulo_orig(icone: str, titulo: str, sub: str = "") -> None:
-    """Título de seção estilo app original (ícone grande + texto)."""
+    """Título de seção (ícone grande + texto)."""
     sub_html = (
         f'<div style="font-size:0.80rem;color:var(--app-subtle);margin-top:2px;">{sub}</div>'
         if sub else ""
@@ -2367,7 +2367,7 @@ def _tab_dashboard(carteira: dict, proventos: dict, cashflow: list, evolucao: di
                                 "e Movimentação, a preço de fechamento da B3.",
                                 codigo="investimentos.evolucao_patrimonial.fonte_negociacoes")
             else:
-                detalhe_tecnico("Evolução baseada nos snapshots importados do App2.",
+                detalhe_tecnico("Evolução baseada nos snapshots de posição importados (XP).",
                                 codigo="investimentos.evolucao_patrimonial.fonte_snapshots")
         elif cashflow:
             st.plotly_chart(_fig_evolucao(cashflow, total),

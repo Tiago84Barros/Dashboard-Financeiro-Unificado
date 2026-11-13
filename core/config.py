@@ -11,9 +11,6 @@ Estrategia de banco (Fase 4.0):
   Prioridade de db_url: SUPABASE_UNIFICADO_URL > DATABASE_URL > SUPABASE_DB_URL
   - SUPABASE_UNIFICADO_URL      : projeto Supabase Dashboard Financeiro (banco central)
 
-  Os bancos dos apps originais (SOURCE_DB_APP1/2/3, SUPABASE_ORIGEM_CONTROLE_URL)
-  serviram so a carga inicial e foram aposentados em 11/2026: nenhum ambiente os
-  configura, e o codigo que os lia saiu junto.
 """
 import json
 import os

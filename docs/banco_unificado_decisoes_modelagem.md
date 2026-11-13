@@ -66,7 +66,6 @@ Consequência direta de DM-001. Se as tabelas terão nomes em inglês, as coluna
 
 **Decisão:** Inglês para todos os nomes de colunas.
 
-Mapeamento definido em `docs/banco_unificado_mapa_origem_destino.md` (Seção 2).
 
 **Consequências:**
 - `usuario_id` → `user_id` em todas as tabelas (afeta código de RLS e queries)
@@ -167,7 +166,7 @@ Transferências de saída têm `amount < 0`; de entrada têm `amount > 0`.
 
 **Consequências:**
 - Queries de saldo: `SUM(amount) WHERE user_id = :owner_id` — simples e eficiente
-- ETL deve garantir que despesas importadas do App 3 tenham `amount` negativo
+- Toda importação deve garantir que despesas tenham `amount` negativo
 - `ABS(amount)` para exibição de valores de despesa na UI
 
 ---
@@ -179,8 +178,8 @@ Transferências de saída têm `amount < 0`; de entrada têm `amount > 0`.
 **Data:** 2026-05-13
 
 **Contexto:**
-Dados históricos do App 3 (Controle Financeiro) têm o campo `banco` como string livre,
-não como FK para uma tabela de instituições. A migração não pode mapear todos os valores.
+Os lançamentos históricos do controle financeiro têm o campo `banco` como string livre,
+não como FK para uma tabela de instituições. Nem todos os valores podem ser mapeados.
 
 **Decisão:** `financial_institution_id` em `accounts` é NULLABLE.
 
@@ -189,7 +188,7 @@ Após a migração, o usuário pode vincular manualmente as contas às institui�
 
 **Consequências:**
 - A coluna `banco` (string) da tabela atual é substituída por `financial_institution_id`
-- Dados migrados do App 3 terão `financial_institution_id = NULL` inicialmente
+- Lançamentos históricos terão `financial_institution_id = NULL` inicialmente
 - UI deve exibir "Banco não vinculado" quando NULL, com opção de vincular
 
 ---
@@ -201,13 +200,12 @@ Após a migração, o usuário pode vincular manualmente as contas às institui�
 **Data:** 2026-05-13
 
 **Contexto:**
-O App 2 (SQLite) não tem conceito de carteira nomeada — todas as operações são planas.
-Tornar `portfolio_id` obrigatório bloquearia a migração.
+O histórico de operações importado não tem carteira nomeada — todas as operações são planas.
+Tornar `portfolio_id` obrigatório bloquearia esse histórico.
 
 **Decisão:** `portfolio_id` é NULLABLE em `investment_transactions`.
 
-Na migração do App 2, criar uma carteira padrão "Carteira App 2" e associar todos
-os dados históricos a ela. Novos registros podem (ou não) ter carteira associada.
+Novos registros podem (ou não) ter carteira associada.
 
 **Consequências:**
 - Queries de carteira devem tratar NULL (todas as operações sem carteira)
@@ -314,13 +312,13 @@ Configurações futuras que não justificam nova coluna vão para `extra_setting
 
 ## DM-012 — Schema `public` em Vez de Schema `app4`
 
-**Status:** `pendente revisão`
+**Status:** `aprovada` — `public`
 **Impacto:** `alto`
 **Data:** 2026-05-13
 
 **Contexto:**
-O `docs/status_fase_4.md` (seção de redefinição) menciona criar um schema `app4`
-dentro do projeto Supabase Dashboard Financeiro, para coexistir com dados dos apps Next.js.
+Cogitou-se criar um schema `app4` dentro do projeto Supabase para isolar as tabelas novas
+das que já existiam em `public`.
 
 **Opções consideradas:**
 
@@ -329,18 +327,9 @@ dentro do projeto Supabase Dashboard Financeiro, para coexistir com dados dos ap
 | Schema `app4` | Isolamento; sem conflito de nomes | Supabase free tem limitações em search_path; mais complexidade de configuração |
 | Schema `public` (preferência atual) | Padrão Supabase; RLS funciona out-of-the-box; sem configuração extra | Se houver tabelas Next.js no mesmo projeto, pode haver conflito de nomes |
 
-**Decisão pendente:** confirmar na **Fase 4.1** se o banco Dashboard Financeiro já tem
-tabelas em `public`. Se houver conflito de nomes → usar schema `app4`.
-Se `public` estiver vazio → usar `public` (mais simples).
+**Decisão:** `public`, sem conflito de nomes com as tabelas existentes. Dados de mercado
+ficam em schemas próprios (`market`, `market_us`, ...).
 
-**Consequências se `app4`:**
-- `set search_path = app4, public` no início de cada sessão (ou na DATABASE_URL)
-- Scripts DDL usam `CREATE TABLE IF NOT EXISTS app4.tabela`
-- `etl/schema_setup.py` precisa incluir o prefixo de schema
-
-**Consequências se `public`:**
-- Sem mudança na configuração atual
-- Risco de conflito se o projeto tiver tabelas Next.js — a ser verificado na Fase 4.1
 
 ---
 
@@ -371,7 +360,6 @@ Herdado de `modelagem_inicial.md`. Alternativas: `FLOAT`, `DECIMAL`, `INTEGER` (
 | ID | Questão | Bloqueador |
 |----|---------|------------|
 | DM-001 | Aprovação humana do uso de nomes em inglês | Aguarda resposta do proprietário |
-| DM-012 | Schema `public` vs. `app4` | Aguarda resultado da Fase 4.1 (auditoria) |
 
 ---
 

@@ -107,9 +107,9 @@ backup verificado realizado nas últimas 24 horas.
 - Arquivo foi aberto e inspecionado (não está corrompido)
 - Arquivo está armazenado localmente fora do repositório (não commitar se tiver dados)
 
-**Fases que exigem backup antes de iniciar:**
-- Fase 4.5 — aplicação dos scripts DDL no Supabase
-- Fase 4.7 — migração de dados
+**Operações que exigem backup antes de iniciar:**
+- aplicação de scripts DDL no Supabase
+- carga ou correção de dados em massa
 
 **Formato recomendado para nome do arquivo:**
 ```
@@ -153,7 +153,7 @@ Toda execução de migração de dados deve gerar um log registrando o que foi f
 ```
 
 **Onde salvar:**
-`supabase_unificado/validation/log_migracao_AAAAMMDD.md`
+fora do repositório (contém contagens e somas de dados reais)
 
 ---
 
@@ -287,7 +287,6 @@ explicação registrada no log) aos totais da origem.
 [ ] RLS habilitada em todas as tabelas de `public` e `market`
 [ ] tabelas backend-only sem grants para `anon`/`authenticated`
 [ ] Backup verificado antes de operação DDL ou DML destrutiva
-[ ] Log de migração criado e salvo em supabase_unificado/validation/
 [ ] Somatórios financeiros comparados origem × destino
 [ ] Nenhum DROP TABLE / TRUNCATE / DELETE executado sem autorização escrita
 [ ] Scripts SQL versionados com cabeçalho de data e objetivo
@@ -298,10 +297,7 @@ explicação registrada no log) aos totais da origem.
 
 ## Referências
 
-- `docs/estrategia_supabase_unificado_plano_gratuito.md` — decisão arquitetural
-- `docs/banco_unificado_fases.md` — plano de execução completo
+- `docs/plano_saida_supabase_free.md` — limite do plano gratuito e arquitetura local-first
 - `etl/schema_setup.py` — DDL das 10 tabelas
 - `core/auth.py` — gate de autenticação do app
 - `supabase_unificado/schema/` — scripts DDL versionados
-- `supabase_unificado/migrations/` — scripts ETL de migração
-- `supabase_unificado/validation/` — logs e relatórios

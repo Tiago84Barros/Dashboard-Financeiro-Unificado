@@ -2,7 +2,7 @@
 
 ## Objetivo do projeto
 
-Aplicação Streamlit unificada para controle financeiro, investimentos, carteira, proventos, análise de empresas, indicadores econômicos e inteligência artificial aplicada. Repositórios de origem: `Tiago84Barros/Dashboard`, `Tiago84Barros/Controle_Financeiro` e `Tiago84Barros/Dashboard-Investimentos`.
+Aplicação Streamlit unificada para controle financeiro, investimentos, carteira, proventos, análise de empresas, indicadores econômicos e inteligência artificial aplicada.
 
 ## Regras permanentes
 

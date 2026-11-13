@@ -5,8 +5,8 @@
 ## Objetivo
 
 Garantir que novas funcionalidades respeitem a arquitetura existente do app4,
-que unifica Dashboard Financeiro (App 1), Dashboard-Investimentos (App 2) e
-Controle Financeiro (App 3) em uma única aplicação Streamlit + Supabase.
+uma única aplicação Streamlit + Supabase para finanças pessoais, investimentos
+e análise de mercado.
 
 ## Quando usar
 

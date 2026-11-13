@@ -2177,8 +2177,7 @@ FLOW_CONFIGURACOES = FlowSpec(
                 "Aba 🗄️ Banco de dados",
                 "Estado da conexão e avisos de ambiente",
                 "Uso do espaço e maiores tabelas",
-                "A importação direta dos bancos dos apps originais saiu em 11/2026: "
-                "a carga inicial já foi feita e nenhum ambiente aponta mais para eles",
+                "Importação de dados só por planilha (CSV), sempre com simulação antes de gravar",
             ),
             "O plano gratuito da nuvem tem teto de espaço, e estourar o teto derruba a leitura "
             "do app inteiro. Ver a margem antes de publicar carga nova é o que evita a parada.",

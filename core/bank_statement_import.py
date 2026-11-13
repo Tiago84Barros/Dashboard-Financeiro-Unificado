@@ -312,7 +312,7 @@ _TERMOS_SAIDA = (
     # Aporte/transferência para investimento: dinheiro que SAI da conta. Sem
     # estes termos, uma linha sem sinal e sem indicador D/C caía em "entrada"
     # e o saldo de `v_account_balance` (SUM(amount)) inflava. Textos reais do
-    # extrato e do histórico do App 3.
+    # extrato e do histórico migrado.
     "transferido para",
     "transferida para",
     "transferencia para",

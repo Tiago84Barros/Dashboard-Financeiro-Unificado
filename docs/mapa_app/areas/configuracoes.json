@@ -334,7 +334,7 @@
         {
           "nome": "Rotas de importação",
           "resumo": "Importar planilhas de transações, operações ou proventos",
-          "explicacao": "Uma porta para trazer dados de planilha, sempre com simulação antes de gravar. A antiga importação direta dos bancos dos apps originais saiu em 11/2026: a carga inicial já foi feita e nenhum ambiente aponta mais para eles. As importações da B3, XP e Nomad não ficam aqui, e sim em Atualização de dados.",
+          "explicacao": "Uma porta para trazer dados de planilha, sempre com simulação antes de gravar. As importações da B3, XP e Nomad não ficam aqui, e sim em Atualização de dados.",
           "so_admin": false,
           "fonte": "views/configuracoes.py:922",
           "filhos": [
