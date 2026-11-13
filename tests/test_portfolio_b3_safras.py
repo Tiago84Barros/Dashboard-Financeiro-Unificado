@@ -1530,19 +1530,35 @@ def test_ressalvas_do_vies_chegam_como_caption_e_nao_como_tooltip():
 def test_tela_b3_passa_os_aprovados():
     """O Bloco 1 reconstrói a carteira que a tela publica: com `resultados`
     no lugar de `aprovados`, a "Safra a safra" mediria o universo inteiro e
-    não a carteira — nada visível quebraria."""
+    não a carteira — nada visível quebraria.
+
+    Desde 13/11/2026 a chamada mora em `_render_analises_da_carteira`, que a
+    rota normal e a de revisão compartilham. A rota normal não passa
+    `safras_base`, então o Bloco 1 cai em `aprovados`."""
+    arvore = ast.parse((RAIZ / "views" / "portfolio_b3.py")
+                       .read_text(encoding="utf-8"))
     chamada = next(
-        no for no in ast.walk(
-            ast.parse((RAIZ / "views" / "portfolio_b3.py")
-                      .read_text(encoding="utf-8")))
+        no for no in ast.walk(arvore)
         if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
         and no.func.id == "render_safras"
     )
-    assert isinstance(chamada.args[0], ast.Name)
-    assert chamada.args[0].id == "aprovados", (
+    arg = chamada.args[0]
+    assert isinstance(arg, ast.IfExp), ast.dump(arg)
+    assert isinstance(arg.orelse, ast.Name) and arg.orelse.id == "aprovados", (
         "o Bloco 1 nao reconstroi a carteira que a tela publica -- primeiro "
-        f"argumento: {ast.dump(chamada.args[0])}"
+        f"argumento: {ast.dump(arg)}"
     )
+    render = next(no for no in ast.walk(arvore)
+                  if isinstance(no, ast.FunctionDef) and no.name == "render")
+    chamadas = [no for no in ast.walk(render)
+                if isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
+                and no.func.id == "_render_analises_da_carteira"]
+    assert chamadas, "render nao chama _render_analises_da_carteira"
+    for ch in chamadas:
+        assert isinstance(ch.args[1], ast.Name) and ch.args[1].id == "aprovados"
+        assert not any(kw.arg == "safras_base" for kw in ch.keywords), (
+            "a rota normal nao pode trocar a base das safras")
+
 
 
 # ── Rodada de correção 1 ─────────────────────────────────────────────────────
@@ -2375,25 +2391,35 @@ def test_chamada_de_render_safras_e_alcancavel_na_tela_b3():
     """
     arvore = ast.parse((RAIZ / "views" / "portfolio_b3.py")
                        .read_text(encoding="utf-8"))
-    render = next(no for no in ast.walk(arvore)
-                  if isinstance(no, ast.FunctionDef) and no.name == "render")
-
-    def alvo(no):
-        return (isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
-                and no.func.id == "render_safras")
-
-    assert any(alvo(x) for x in ast.walk(render)), (
-        "views/portfolio_b3.py::render nao chama render_safras"
-    )
+    funcoes = {no.name: no for no in ast.walk(arvore)
+               if isinstance(no, ast.FunctionDef)}
     modulo = {no.targets[0].id: no.value.value
               for no in arvore.body
               if isinstance(no, ast.Assign) and len(no.targets) == 1
               and isinstance(no.targets[0], ast.Name)
               and isinstance(no.value, ast.Constant)}
-    assert _alcancavel(render.body, alvo, modulo), (
-        "a chamada de render_safras existe mas esta em codigo morto -- a "
-        "tela de safras inteira (Blocos 1, 2 e 3) nao chega a ser desenhada"
-    )
+
+    def chama(nome):
+        def alvo(no):
+            return (isinstance(no, ast.Call) and isinstance(no.func, ast.Name)
+                    and no.func.id == nome)
+        return alvo
+
+    # render -> _render_analises_da_carteira -> render_safras, e a rota de
+    # revisão -> _render_analises_da_carteira: cada elo tem de estar vivo.
+    # Que a rota de revisão não seja um atalho que pula os painéis é provado
+    # em tests/test_portfolio_b3_revisao_paineis.py.
+    for origem, destino in (("render", "_render_analises_da_carteira"),
+                            ("_rota_revisao", "_render_analises_da_carteira"),
+                            ("_render_analises_da_carteira", "render_safras")):
+        assert any(chama(destino)(x) for x in ast.walk(funcoes[origem])), (
+            f"views/portfolio_b3.py::{origem} nao chama {destino}"
+        )
+        assert _alcancavel(funcoes[origem].body, chama(destino), modulo), (
+            f"a chamada de {destino} em {origem} esta em codigo morto -- a "
+            "tela de safras inteira (Blocos 1, 2 e 3) nao chega a ser desenhada"
+        )
+
 
 
 def test_alcancavel_reprova_codigo_depois_de_return():

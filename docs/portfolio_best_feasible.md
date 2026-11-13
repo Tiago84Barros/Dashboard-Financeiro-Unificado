@@ -36,6 +36,12 @@ verificável ou sem candidatos suficientes, o saldo não alocado é explicitado.
   estatística do segmento permanece uma ressalva. Preserva tetos por ativo,
   setor e classe cíclica. Também intercepta projeções legadas que excederiam
   tetos conjuntos.
+  Depois da composição, a tela segue com os mesmos painéis da rota normal
+  (Patches 1 a 5, desempenho da safra vigente, safras ano a ano contra Selic e
+  Pesos Iguais, metodologia), calculados sobre os ativos da proposta. Sem
+  segmento aprovado, as safras reconstroem todos os segmentos analisados, o
+  mesmo conjunto de onde sai a proposta, e a tela avisa. De 10/09 a 13/11/2026
+  a rota encerrava a página logo após os cards e esses painéis sumiam.
 
 ## Limitações e publicação
 
