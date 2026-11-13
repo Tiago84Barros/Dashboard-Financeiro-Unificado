@@ -2,8 +2,7 @@
 
 > Documento: `docs/banco_unificado_dicionario_dados.md`
 > Criado em: 2026-05-13
-> Fase: 4.2 — Modelo Canônico
-> Status: Rascunho — acompanha `docs/banco_unificado_modelo_canonico.md`
+> Fonte de verdade: os scripts em `supabase_unificado/schema/` (este texto descreve a semântica, não substitui o DDL)
 > Propósito: descrever a semântica de negócio de cada coluna, restrições e regras de uso.
 
 ---
@@ -218,8 +217,7 @@ Constraint UNIQUE em `(user_id, category_id, month_year)`.
 | `type` | ○ | `personal` (geral), `pension` (previdência), `speculative` (curto prazo). |
 | `active` | ✳️ | `FALSE` = carteira encerrada. |
 
-**Nota:** na migração do App 2, criar uma carteira padrão chamada "Carteira App 2" para
-receber todos os dados históricos sem carteira nomeada.
+**Nota:** operações sem carteira nomeada ficam com `portfolio_id` NULL (ver DM-007).
 
 ---
 
@@ -408,7 +406,7 @@ A granularidade (diária, semanal, intraday) é controlada pelo valor de `timest
 | `id` | 🔑✳️🔒 | UUID. |
 | `target_table` | ✳️🔒 | Nome da tabela no banco unificado (ex: `transactions`). |
 | `target_id` | ✳️🔒 | UUID do registro no banco unificado. |
-| `source` | ✳️🔒 | Fonte: `app1`, `app2`, `app3`. |
+| `source` | ✳️🔒 | Origem do lote. Os valores `app1`/`app2`/`app3` são da carga inicial (aposentada); importações novas usam `csv` ou `manual`. |
 | `source_table` | ✳️🔒 | Nome da tabela na fonte (ex: `transacoes`). |
 | `source_id` | ✳️🔒 | ID original na fonte (qualquer tipo como string). |
 | `migrated_at` | ✳️🔒 | Timestamp de quando foi migrado. |

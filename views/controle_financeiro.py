@@ -1,13 +1,13 @@
 """
-pages/controle_financeiro.py  — v4 (preservação fiel do app original)
+views/controle_financeiro.py
 
-Replica FIELMENTE as 4 seções do app original controlefinanceirotsb.streamlit.app:
+Seções da tela Controle Financeiro:
   Sidebar  — Filtros (mês de referência) + Novo Lançamento de conta
                (Tipo: entrada|saída|investimento, Categoria, Data, Valor,
                 Descrição, Salvar)
   Tabs     — Dashboard | Análises | Tabelas | Cartão de Crédito
 
-Adições do app unificado preservadas (não existiam no original):
+Recursos adicionais:
   - Pizza de despesas na aba Análises
   - Orçamento por categoria: a aba saiu da navegação em 30/09/2026; os limites
     se editam em Configurações → Geral e seguem valendo para alertas e Dashboard
@@ -267,7 +267,7 @@ def _fig_pizza_cats(cats: list) -> go.Figure:
 
 
 def _fig_yoy(por_ano: dict, anos: list) -> go.Figure:
-    """Bar chart agrupado: Receitas × Despesas × Investimentos por ano (igual ao original)."""
+    """Bar chart agrupado: Receitas × Despesas × Investimentos por ano."""
     rec   = [por_ano[a]["receitas"]      for a in anos]
     desp  = [por_ano[a]["despesas"]      for a in anos]
     inv   = [por_ano[a].get("investimentos", 0.0) for a in anos]
@@ -298,7 +298,7 @@ def _fig_yoy(por_ano: dict, anos: list) -> go.Figure:
 
 
 def _fig_patrimonio_investido(por_ano: dict, anos: list) -> go.Figure:
-    """Barras anuais de investimentos + linha acumulada (igual ao original)."""
+    """Barras anuais de investimentos + linha acumulada."""
     # Usa investimentos reais se disponíveis; fallback para saldo positivo
     vals  = [por_ano[a].get("investimentos") or max(0.0, por_ano[a]["saldo"]) for a in anos]
     acum  = []
@@ -690,7 +690,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
             st.plotly_chart(_fig_cat_horizontal(cats),
                             width="stretch",
                             config={"displayModeBar": False})
-            # Tabela com % da renda (igual ao original)
+            # Tabela com % da renda
             if receitas > 0:
                 st.markdown(
                     '<div style="display:grid;grid-template-columns:1fr 110px 90px;'
@@ -757,7 +757,7 @@ def _tab_dashboard(d: dict, historico: list, fluxo_inv: dict,
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("<hr style='border-color:var(--app-border);'>", unsafe_allow_html=True)
 
-    # ── Últimos Lançamentos (igual ao original) ───────────────────────────────
+    # ── Últimos Lançamentos ───────────────────────────────
     _secao_titulo("📋", "Últimos Lançamentos")
 
     # Apenas lançamentos inseridos manualmente (source='manual'). Faturas do
@@ -1062,7 +1062,7 @@ def _tab_analises(
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("<hr style='border-color:var(--app-border);'>", unsafe_allow_html=True)
 
-    # ── Comparativo Ano a Ano (YOY) — do app original ─────────────────────────
+    # ── Comparativo Ano a Ano (YOY) ────────────────────────────────────────────
     _secao_titulo("📅", "Comparativo Ano a Ano")
     if hist_anual.get("data_source") == "real_error":
         st.warning("O histórico anual não está disponível no momento.")
@@ -1081,7 +1081,7 @@ def _tab_analises(
         st.plotly_chart(_fig_yoy(por_ano, anos), width="stretch",
                         config={"displayModeBar": False})
 
-        # Tabela resumo (igual ao original: Ano | Receitas | Investimentos | Despesas)
+        # Tabela resumo (Ano | Receitas | Investimentos | Despesas)
         import pandas as pd
         rows_yoy = []
         for a in anos:
@@ -1158,7 +1158,7 @@ def _tab_analises(
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Evolução do Patrimônio Investido (igual ao original) ──────────────────
+    # ── Evolução do Patrimônio Investido ──────────────────
     _secao_titulo("📈", "Evolução do patrimônio investido (ano a ano)")
     if len(anos) >= 1:
         st.plotly_chart(_fig_patrimonio_investido(por_ano, anos), width="stretch",
@@ -1646,11 +1646,10 @@ def _render_conciliacao(d: dict) -> None:
 def _tab_tabelas(d: dict) -> None:
     """
     Consulta de lançamentos com filtros completos (Tipo, Categoria, Ano, Mês, Dia, Texto).
-    Replica fielmente o módulo Consulta_Tabelas.py do app original.
     """
     _secao_titulo("🔍", "Consulta de lançamentos")
 
-    # 1) Tipo — radio fora do form (igual ao original)
+    # 1) Tipo — radio fora do form
     aba = st.radio(
         "Tipo de lançamento",
         ["Todos", "Receitas", "Despesas", "Investimentos"],
@@ -1727,7 +1726,7 @@ def _tab_tabelas(d: dict) -> None:
     txs_f = [t for t in txs_periodo
              if fluxo_do_tipo is None or t.get("tipo_fluxo") == fluxo_do_tipo]
 
-    # ── Resumo (igual ao original) ─────────────────────────────────────────────
+    # ── Resumo ─────────────────────────────────────────────
     total_filtrado = sum(abs(t["valor"]) for t in txs_f)
     total_rec      = sum(abs(t["valor"]) for t in txs_periodo if t.get("tipo_fluxo") == "income")
     total_desp     = sum(abs(t["valor"]) for t in txs_periodo if t.get("tipo_fluxo") == "expense")

@@ -300,7 +300,7 @@ def test_bank_statement_hidden_account_ignores_investment_portfolios():
 
 # ── Aporte/transferência para investimento é saída (CF-B3) ───────────────────
 # Textos reais das 21 transferências para investimento que estavam com
-# amount > 0 no Supabase (sem o sufixo "[Categoria]" que a migração do App 3
+# amount > 0 no Supabase (sem o sufixo "[Categoria]" que a carga inicial
 # anexou). Sem sinal no extrato e sem indicador D/C, `_direction_for` caía em
 # "entrada" e o lançamento inflava o saldo da conta (v_account_balance soma
 # amount).

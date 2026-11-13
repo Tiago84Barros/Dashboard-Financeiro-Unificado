@@ -13,7 +13,7 @@ então grave.
 ### 1.1 Controle financeiro (dado pessoal)
 
 ```bash
-# aportes migrados do App 3 com sinal de entrada (21 linhas, R$ 107.464,03) — #485
+# aportes da carga inicial com sinal de entrada (21 linhas, R$ 107.464,03) — #485
 python scripts/corrige_sinal_aportes_importados.py
 python scripts/corrige_sinal_aportes_importados.py --apply
 

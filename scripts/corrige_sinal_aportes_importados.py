@@ -6,7 +6,7 @@ O saldo da conta (`v_account_balance`) é ``initial_balance + SUM(amount)`` das
 transações liquidadas. Uma transferência PARA investimento (aporte) tem de
 entrar negativa na conta de origem. Duas portas gravaram aportes positivos:
 
-* a migração do App 3 (`migration/04_transform_to_canonical.py`), que trouxe
+* a carga inicial do controle financeiro (`migration/04_transform_to_canonical.py`), que trouxe
   linhas como "Tesouro Direto [Renda Fixa]" e "Transferido para a Rico
   [Renda Variável]" com ``type='transfer'`` e valor positivo;
 * o importador de extrato (`core/bank_statement_import.py::_direction_for`),

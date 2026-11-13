@@ -1,6 +1,6 @@
 """
 core/cvm_ipe.py
-Coletor nativo de documentos CVM/IPE para o app4 (substitui o sync do app1).
+Coletor nativo de documentos CVM/IPE para o app4.
 
 Fonte primária: CVM Dados Abertos — dataset IPE (Informações Periódicas e
 Eventuais), em lote (CSV anual), sem raspar página a página:

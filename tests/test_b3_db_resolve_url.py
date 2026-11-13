@@ -39,7 +39,7 @@ def test_resolve_url_diverge_de_database_url_registra_warning(monkeypatch, caplo
     """
     Reproduz o achado A-009: DATABASE_URL do processo aponta para um banco de
     teste (warehouse local), mas SUPABASE_DB_URL_B3 legado permanece definido
-    (comum quando o .env de produção configura o Supabase original do App 1).
+    (comum quando o .env de produção define SUPABASE_DB_URL).
     _resolve_url() ainda retorna o legado (contrato preservado — ver docstring
     do módulo), mas não pode fazer isso silenciosamente: deve logar a
     divergência, mascarando a senha.

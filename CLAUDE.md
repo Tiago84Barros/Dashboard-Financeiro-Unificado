@@ -11,12 +11,6 @@ Aplicação Streamlit unificada para:
 - indicadores econômicos;
 - inteligência artificial aplicada.
 
-## Repositórios Originais
-
-- Tiago84Barros/Dashboard
-- Tiago84Barros/Controle_Financeiro
-- Tiago84Barros/Dashboard-Investimentos
-
 ## Onde estão os dados — leia ANTES de planejar qualquer coisa que envolva dado
 
 Este projeto tem **dois** bancos, e ignorar o segundo já causou retrabalho caro.

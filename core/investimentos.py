@@ -2519,7 +2519,7 @@ def get_evolucao_patrimonial() -> dict:
     Cada snapshot: {label, mes_str, valor_investido, valor_mercado, valor_com_dividendos}
 
     Quando portfolio_position_snapshots existir (caminho preferencial):
-      - Usa snapshots XP (source_system='app2') como série histórica.
+      - Usa snapshots XP (source_system='app2', rótulo gravado na carga inicial) como série histórica.
       - Para o snapshot mais recente, soma automaticamente os valores
         de outras fontes (Nomad etc.) ao invés de criar pontos separados.
     Fallback: investment_transactions + ratio de rentabilidade atual.

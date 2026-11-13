@@ -6,16 +6,17 @@ Centralizar funcionalidades financeiras, patrimoniais e analíticas em uma únic
 
 ## Estrutura Base
 
-- app.py → ponto de entrada principal
-- pages/ → páginas Streamlit
-- core/ → lógica de negócio
-- etl/ → importação e tratamento de dados
-- design/ → identidade visual e layout
+- app.py → ponto de entrada e roteamento (`_ROTAS`)
+- views/ → telas Streamlit
+- core/ → lógica de negócio e acesso a dados
+- data_pipeline/ e etl/ → coleta, importação e tratamento de dados
+- design/ → identidade visual e componentes
+- supabase_unificado/schema/ → migrations SQL do banco
 - docs/ → documentação técnica
 
-## Estratégia de Migração
+## Bancos
 
-1. Migrar Dashboard como núcleo principal.
-2. Integrar Controle_Financeiro como módulo.
-3. Integrar Dashboard-Investimentos como módulo.
-4. Refatorar banco de dados e dependências.
+- Supabase (nuvem) → banco único que o app publicado lê.
+- Armazém local (Docker `dfu_warehouse`) → dados pesados; gera e publica as vitrines.
+
+Detalhes e regras em `CLAUDE.md`.

@@ -545,7 +545,7 @@ def _simular_seg_backtest(
 ) -> tuple[float, float, float, dict[str, float]]:
     """
     Reconstrói a carteira por segmento usando líderes identificados por ano.
-    Reinveste dividendos mensais por ação (App1-compatible) quando dividendos != None.
+    Reinveste dividendos mensais por ação quando dividendos != None.
     Retorna (valor_estrategia, valor_selic, valor_ew).
     """
     if df_prec_seg.empty:
@@ -609,7 +609,7 @@ def _simular_seg_backtest(
                 caixa_ew += cotas_ew[tk] * last_prices[tk]
                 cotas_ew[tk] = 0.0
 
-        # Reinvestimento de dividendos — idêntico ao App1
+        # Reinvestimento de dividendos
         if dividendos:
             for tk in all_tks:
                 px_tk = float(row.get(tk, 0) or 0)
@@ -1063,7 +1063,7 @@ def _pode_incluir_maior_participacao(
     ano_ref: int,
     max_anos_lid: int,
 ) -> tuple[bool, str, int | None, int | None]:
-    """Replica a regra do app1: maior participacao precisa ter recencia ou rank atual forte."""
+    """Regra de entrada: maior participacao precisa ter recencia ou rank atual forte."""
     ultimo = ultimo_lid.get(ticker)
     rank_atual = _rank_ticker(score_proximo, ticker)
     if ultimo is not None and (ano_ref - int(ultimo)) <= int(max_anos_lid):
@@ -1698,12 +1698,12 @@ def _bloco_segmento(res: dict, df_set: pd.DataFrame,
     st.markdown("<hr style='margin:16px 0;border-color:var(--app-border);'>", unsafe_allow_html=True)
 
 
-def _render_paineis_app1(
+def _render_paineis_analiticos(
     resultados: list[dict],
     proximos_uniq: list[dict],
     df_precos_all: pd.DataFrame,
 ) -> None:
-    """Paineis leves inspirados nos patches do app1, sem dependencias extras."""
+    """Paineis analiticos leves, sem dependencias extras."""
     if not proximos_uniq:
         return
 
@@ -1712,7 +1712,7 @@ def _render_paineis_app1(
     selecionados = {p["tk"] for p in proximos_uniq}
 
     st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>", unsafe_allow_html=True)
-    detalhe_tecnico("Teste incremental: painéis analíticos equivalentes aos patches do app1.",
+    detalhe_tecnico("Painéis analíticos complementares do backtest.",
                     codigo="portfolio_b3.paineis_app1_nota")
 
     with st.expander("🧩 Patch 1 — Régua de Convicção", expanded=False):
@@ -4960,7 +4960,7 @@ def _render_analises_da_carteira(
     Pesos Iguais e a metodologia. É chamada pela rota normal e pela rota de
     revisão (`_rota_revisao`): as duas mostram os mesmos painéis.
     """
-    _render_paineis_app1(resultados, proximos_uniq, df_precos_all)
+    _render_paineis_analiticos(resultados, proximos_uniq, df_precos_all)
 
     # ── DESEMPENHO PARCIAL ANO ATUAL ─────────────────────────────────────────
     if proximos_uniq and "pb3_precos_all" not in st.session_state:

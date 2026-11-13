@@ -1,6 +1,6 @@
 """
 data_pipeline/jobs/update_cvm_ipe.py
-Coletor NATIVO de documentos CVM/IPE para o app4 (substitui o sync do app1).
+Coletor NATIVO de documentos CVM/IPE para o app4.
 
 Fluxo:
   1. Monta o mapa codigo_cvm → ticker a partir de docs_corporativos existentes

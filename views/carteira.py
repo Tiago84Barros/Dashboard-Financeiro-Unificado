@@ -1,5 +1,5 @@
 """
-pages/carteira.py
+views/carteira.py
 Carteira de investimentos: posições, alocação por classe/setor e custo médio.
 
 Seções:
@@ -7,8 +7,7 @@ Seções:
   2. Alocação — donut por classe + donut por setor com tabelas de resumo
   3. Posições — tabela completa de todas as posições com filtro interativo
 
-Origem: Tiago84Barros/Dashboard-Investimentos (App 2)
-Dados:  core/investimentos.get_carteira() — mock → real (Fase 5.1)
+Dados:  core/investimentos.get_carteira()
 """
 import pandas as pd
 import plotly.graph_objects as go

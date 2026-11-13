@@ -720,7 +720,7 @@ def _tab_empresas(df_set: pd.DataFrame) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Scoring e backtesting — Motor v2 (alinhado com App 1)
+# Scoring e backtesting — Motor v2
 # ══════════════════════════════════════════════════════════════════════════════
 
 _DIV_POR_ACAO_MAX = 20.0  # teto sanitizador: acima disso é provavelmente total contábil
@@ -734,7 +734,7 @@ def _div_mes_sanitizado(
     px_ref: float | None = None,
 ) -> float:
     """
-    Dividendo mensal por ação (R$/ação) com sanitização idêntica ao App1.
+    Dividendo mensal por ação (R$/ação) com sanitização de outliers.
     Zera se: série vazia, valor > _DIV_POR_ACAO_MAX, ou > 50% do preço de referência.
     """
     if s is None or s.empty:

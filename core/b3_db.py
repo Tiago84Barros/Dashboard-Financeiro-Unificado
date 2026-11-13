@@ -1,10 +1,10 @@
 """
 core/b3_db.py
-Camada de acesso a dados do Dashboard Fundamentalista B3 (App 1).
+Camada de acesso às tabelas fundamentalistas da B3 no banco unificado.
 
 Variável de ambiente esperada (em ordem de prioridade):
-  1. SUPABASE_DB_URL_B3  — URL dedicada ao banco do App 1
-  2. SUPABASE_DB_URL     — URL do App 1 (nome antigo)
+  1. SUPABASE_DB_URL_B3  — override de sessão (staging local do coletor)
+  2. SUPABASE_DB_URL     — URL de produção usada pelos scripts de publicação
   3. settings.db_url     — fallback: mesmo banco do app unificado (respeita
                            SUPABASE_UNIFICADO_URL > DATABASE_URL > SUPABASE_DB_URL)
 
@@ -14,13 +14,13 @@ mantida de propósito porque scripts de ingestão sobrescrevem SUPABASE_DB_URL_B
 apenas na sessão do shell para apontar o coletor a um banco de staging local sem
 alterar o restante do app (ver local_staging/README.md). Isso significa que, se
 SUPABASE_DB_URL_B3/SUPABASE_DB_URL estiverem definidas no ambiente/.env (comum em
-produção, para o banco original do App 1), esta camada NUNCA respeita um
+produção, apontando para o próprio Supabase unificado), esta camada NUNCA respeita um
 DATABASE_URL sobrescrito no processo — mesmo que o resto do app respeite. Quando
 isso diverge, _resolve_url() registra um logger.warning (sem credenciais) e
 core.b3_data.load_setores() marca `df.attrs["fallback_legado"] = True` para que
 a UI (views/empresas_b3.py) avise o usuário — nunca fica silencioso.
 
-Tabelas usadas (schema public do Supabase do App 1):
+Tabelas usadas (schema public do Supabase unificado):
   - setores                    → listagem de empresas B3 por setor
   - "Demonstracoes_Financeiras" → DRE anual (Receita, EBIT, Lucro, etc.)
   - multiplos                  → múltiplos fundamentalistas anuais
@@ -424,7 +424,7 @@ def load_historico_anos() -> dict[str, int]:
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_selic_macro() -> dict[int, float]:
     """
-    Retorna {ano: selic_decimal} da tabela public.macro do App 1.
+    Retorna {ano: selic_decimal} da tabela public.macro.
     Retorna {} se a tabela não existir ou estiver vazia.
     Aceita Selic em escala decimal (0.1275) ou percentual (12.75).
     """

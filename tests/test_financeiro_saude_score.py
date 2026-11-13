@@ -30,5 +30,5 @@ def test_todas_categorias_estouradas_zera_pontuacao_de_orcamento():
     assert score_com_orcamento == 0
 
 
-def test_exemplo_documentado_status_fase_4():
+def test_exemplo_documentado_saude_score():
     assert calcular_saude_score(50, 15, 0, 7, False) == 90
