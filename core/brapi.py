@@ -303,10 +303,59 @@ def _topo_de_outro_titulo(q: dict, lpa_do_completo) -> bool:
     return topo is not None and ref is not None and _lpa_destoa(topo, ref)
 
 
+# O ``trailingEps`` da brapi é ``netIncomeToCommon`` ÷ ``sharesOutstanding``,
+# e a contagem de ações às vezes vem errada (29/10/2026: MILS3 com 48.172
+# ações e LPA 9.321,70; BNBR3 com 12,3 mi e LPA 223,65; TFCO4 com 942 mi e
+# LPA 0,156). O LPA implícito -- lucro × preço ÷ ``marketCap`` -- não depende
+# dessa contagem. Fora desta faixa em torno dele, o ``trailingEps`` só fica se
+# o ``earningsPerShare`` do topo concordar com ele.
+LPA_IMPLICITO_DESVIO_MAX = 2.0
+
+
+def _lpa_implicito(q: dict) -> float | None:
+    """Lucro × preço ÷ valor de mercado da brapi, ou None sem os três > 0."""
+    dks = q.get("defaultKeyStatistics") or {}
+    lucro = _to_float(dks.get("netIncomeToCommon")) if isinstance(dks, dict) else None
+    preco = _to_float(q.get("regularMarketPrice"))
+    mcap = _to_float(q.get("marketCap"))
+    if not (lucro and preco and mcap) or min(lucro, preco, mcap) <= 0:
+        return None
+    return lucro * preco / mcap
+
+
+def _perto_do_implicito(lpa, implicito) -> bool:
+    if lpa is None or implicito is None or lpa <= 0:
+        return False
+    r = lpa / implicito
+    return 1 / LPA_IMPLICITO_DESVIO_MAX <= r <= LPA_IMPLICITO_DESVIO_MAX
+
+
+def _trailing_plausivel(q: dict, trailing: float) -> float | None:
+    """O ``trailingEps`` do quote, conferido contra o LPA implícito.
+
+    Sem referência, com LPA ≤ 0 ou perto dela, fica. Longe dela, fica se o
+    ``earningsPerShare`` do topo concordar com ele (os dois da brapi batem; a
+    referência é que destoa, como em ações PN com ``marketCap`` da
+    companhia); senão vale o do topo quando ele está perto da referência
+    (contagem de ações errada no ``trailingEps``); nos demais casos, None."""
+    implicito = _lpa_implicito(q)
+    if implicito is None or trailing <= 0 or _perto_do_implicito(trailing, implicito):
+        return trailing
+    topo = _to_float(q.get("earningsPerShare"))
+    if topo is not None and topo > 0 and not _lpa_destoa(topo, trailing):
+        return trailing
+    if _perto_do_implicito(topo, implicito):
+        return topo
+    return None
+
+
 def lpa_do_titulo(quote: dict, lpa_do_completo=None) -> float | None:
     """LPA do título do quote (por unit na unit, por ação na ação).
 
-    1. ``defaultKeyStatistics.trailingEps`` do próprio quote;
+    1. ``defaultKeyStatistics.trailingEps`` do próprio quote, conferido
+       contra o LPA implícito (``_trailing_plausivel``): com a contagem de
+       ações errada, vale o ``earningsPerShare`` do topo, se plausível, ou
+       None;
     2. sem ele (o quote diário vem sem o módulo), o ``earningsPerShare`` do
        topo, o do próprio quote, quando não destoa mais de
        ``LPA_TOPO_DESVIO_MAX`` do ``trailingEps`` do quote completo mais novo
@@ -319,7 +368,7 @@ def lpa_do_titulo(quote: dict, lpa_do_completo=None) -> float | None:
     dks = q.get("defaultKeyStatistics") or {}
     proprio = _to_float(dks.get("trailingEps")) if isinstance(dks, dict) else None
     if proprio is not None:
-        return proprio
+        return _trailing_plausivel(q, proprio)
     topo = _to_float(q.get("earningsPerShare"))
     ref = _to_float(lpa_do_completo)
     if topo is None or ref is None or not _lpa_destoa(topo, ref):
