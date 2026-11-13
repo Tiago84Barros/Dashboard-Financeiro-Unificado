@@ -218,13 +218,13 @@ def cabecalho_grupo(b: rs.Bloco, meta_reserva: str | None = None) -> str:
     alvo = ""
     if b.alvo_classe is not None:
         if b.chave == rs.RESERVA:
-            alvo = (f"conta no alvo da renda fixa ({_pct(b.alvo_classe)}; "
-                    f"renda fixa hoje {_pct(b.peso_classe)})")
+            alvo = (f"entra na meta da renda fixa (meta "
+                    f"{_pct(b.alvo_classe)}; hoje {_pct(b.peso_classe)})")
         elif b.chave == rs.RENDA_FIXA:
-            alvo = (f"alvo da renda fixa {_pct(b.alvo_classe)}, reserva "
-                    f"incluída; hoje {_pct(b.peso_classe)}")
+            alvo = (f"meta da renda fixa, com a reserva: "
+                    f"{_pct(b.alvo_classe)}; hoje {_pct(b.peso_classe)}")
         else:
-            alvo = f"alvo da classe {_pct(b.alvo_classe)}"
+            alvo = f"sua meta para esta classe: {_pct(b.alvo_classe)}"
     extra = " · ".join(x for x in (alvo, meta_reserva or "") if x)
     return (
         f'<div class="ia-grupo"><div class="ia-grupo-nome">'
@@ -252,13 +252,14 @@ def rotulo_expander(a: m.AnaliseAtivo,
                     sugerido: rs.AlvoSugerido | None = None,
                     avaliacao: av_.Avaliacao | None = None,
                     d: rs.Decisao | None = None) -> str:
-    """"BBAS3 · 8,5% → 2,3% · Rebalancear": peso atual, % devida e a ação.
-    ``d`` reaproveita a decisão já calculada."""
+    """"BBAS3 · pesa 8,5% (ideal 2,3%) · Rebalancear": peso atual, % devida
+    e a ação, sem a seta que pedia decifrar (13/11/2026). ``d`` reaproveita
+    a decisão já calculada."""
     d = d if d is not None else rs.decisao(a, sugerido, avaliacao)
     alvo = rs.alvo_do_ativo(a, sugerido)
-    peso = _pct(a.ativo.peso_atual)
+    peso = f"pesa {_pct(a.ativo.peso_atual)}"
     if alvo is not None:
-        peso += f" → {_pct(alvo)}"
+        peso += f" (ideal {_pct(alvo)})"
     return f"{a.ativo.ticker} · {peso} · {d.rotulo}"
 
 
@@ -494,31 +495,41 @@ def cartao_avaliacao(av: av_.Avaliacao) -> str:
                   f'{_nota(AVISO_AVALIACAO)}')
 
 
-def cartao_substitutos(subs: tuple[prs.Par, ...]) -> str:
-    """Só aparece quando a ação é vender ou substituir. Puro."""
+def _troca(t: ls.Troca) -> str:
+    vant = "".join(f'<div class="ia-p">✓ {escape(x)}</div>' for x in t.vantagens)
+    desv = "".join(f'<div class="ia-p">✗ {escape(x)}</div>'
+                   for x in t.desvantagens)
+    return (f'<div class="ia-item"><b>{escape(t.ticker)}</b> '
+            f'<span class="ia-meta">{escape(t.nome)}</span>'
+            f'<div class="ia-peca-det">{escape(t.apresentacao)}</div>'
+            f'<div style="margin-top:6px">{vant}{desv}</div>'
+            f'<p class="ia-p" style="margin-top:6px"><b>{escape(t.conclusao)}'
+            f'</b></p></div>')
+
+
+def cartao_substitutos(a: m.AnaliseAtivo, subs: tuple[prs.Par, ...]) -> str:
+    """Só aparece quando a ação é vender ou substituir: cada alternativa com
+    o que tem de melhor (✓) e de pior (✗) que o ativo, em palavras, e se
+    passa no critério de troca (``linguagem_simples.trocar_por``). Puro."""
     if not subs:
-        corpo = _vazio('Nenhum par do mesmo segmento fora da sua carteira '
-                       'para comparar (com poucos pares, o grupo de '
-                       'comparação inclui outros segmentos, e troca entre '
-                       'segmentos não é sugerida).')
+        corpo = _vazio("Não achamos outra empresa do mesmo setor, fora da sua "
+                       "carteira, para comparar. Quando há poucas, a "
+                       "comparação junta setores diferentes, e trocar de "
+                       "setor não é sugerido.")
     else:
-        corpo = "".join(
-            f'<div class="ia-item"><b>{escape(p.ticker)}</b> '
-            f'<span class="ia-meta">{escape(p.nome or "")}</span>'
-            f'<div class="ia-peca-det">{escape(p.motivo)}</div></div>'
-            for p in subs)
-    return _caixa(f'{_secao("Se sair, qual substituir?")}'
+        corpo = "".join(_troca(ls.trocar_por(a, p)) for p in subs)
+    return _caixa(f'{_secao("Se vender, por qual trocar?")}'
                   f'{corpo}{_nota(rs.AVISO_SUBSTITUTO)}')
 
 
 def _regua(mt: rs.MetricaPares) -> str:
-    """Uma régua por métrica: o ativo (ponto cheio), os pares (vazados) e a
-    mediana do segmento (traço). A régua vai do menor ao maior valor
+    """Uma régua por métrica: o ativo (ponto cheio), os pares (vazados) e o
+    típico do setor, a mediana (traço). A régua vai do menor ao maior valor
     mostrado; não há lado bom nem ruim."""
     marcas = []
     if mt.mediana_pos is not None:
         marcas.append(
-            f'<div title="mediana do segmento" style="position:absolute;'
+            f'<div title="{ls.TIPICO}" style="position:absolute;'
             f'left:{mt.mediana_pos:.1f}%;top:-4px;width:2px;height:14px;'
             f'margin-left:-1px;background:var(--app-text);opacity:.55"></div>')
     for pt in sorted(mt.pontos, key=lambda x: x.eh_ativo):
@@ -542,23 +553,24 @@ def _bloco_metrica(mt: rs.MetricaPares) -> str:
                        for pt in mt.pontos if not pt.eh_ativo)
     return (
         f'<div class="ia-peca" title="{escape(mt.leitura, quote=True)}">'
-        f'<div class="ia-peca-rot">{escape(mt.rotulo)}</div>'
+        f'<div class="ia-peca-rot">'
+        f'{escape(ls.rotulo_metrica(mt.chave, mt.rotulo))}</div>'
         + (f'<div class="ia-peca-det">{escape(ls.O_QUE_MEDE[mt.chave])}</div>'
            if mt.chave in ls.O_QUE_MEDE else "")
         + f'<div class="ia-metrica-val"><b>{escape(mt.texto_ativo)}</b>'
         f'<span class="ia-peca-det">'
-        f'{escape(rs.ROTULO_POSICAO.get(mt.posicao, ""))}</span></div>'
+        f'{escape(ls.ROTULO_POSICAO_SIMPLES.get(mt.posicao, ""))}</span></div>'
         + _regua(mt)
         + f'<div class="ia-peca-det ia-num">'
-          f'Mediana do segmento {escape(mt.texto_mediana)} '
-          f'({mt.n_pares} {"par" if mt.n_pares == 1 else "pares"})</div>'
+          f'Típico do setor: {escape(mt.texto_mediana)} (entre '
+          f'{mt.n_pares} {"empresa" if mt.n_pares == 1 else "empresas"})</div>'
         + (f'<div class="ia-peca-det ia-num">{pares}</div>' if pares else "")
         + "</div>")
 
 
 def cartao_pares(t: rs.TabelaPares) -> str:
-    """O ativo contra o segmento, uma régua por indicador. Puro."""
-    titulo = "Comparação com o mesmo segmento"
+    """O ativo contra empresas parecidas, uma régua por indicador. Puro."""
+    titulo = "Como se compara com empresas parecidas"
     if not t.linhas:
         aviso_lacuna(f"Comparação com o segmento: {t.motivo or 'sem dado'}",
                      codigo="tela.inteligencia.pares_sem_dado")
@@ -576,30 +588,31 @@ def cartao_pares(t: rs.TabelaPares) -> str:
     legenda.append('<span><span style="display:inline-block;width:2px;'
                    'height:11px;margin-right:6px;vertical-align:middle;'
                    'background:var(--app-text);opacity:.55"></span>'
-                   'mediana do segmento</span>')
+                   f'{ls.TIPICO}</span>')
     grade = "".join(_bloco_metrica(mt) for mt in t.metricas)
-    return _caixa(f'{_secao(f"{titulo} · {t.titulo}")}'
+    setor = f" · {t.setor}" if t.setor else ""
+    return _caixa(f'{_secao(f"{titulo}{setor}")}'
                   f'<div class="ia-legenda">{"".join(legenda)}</div>'
                   f'<div class="ia-grade">{grade}</div>'
-                  f'{_nota(prs.RODAPE)}')
+                  f'{_nota(ls.RODAPE_PARES)}')
 
 
 def cartao_papel(a: m.AnaliseAtivo) -> str:
-    """Papel na carteira e se a tese segue de pé. Puro."""
+    """Por que o ativo está na carteira, em palavras de conversa. Puro."""
     papel = a.papel_principal.rotulo if a.papel_principal else "—"
     outros = [p.rotulo for p in a.papeis
               if a.papel_principal is None or p.codigo != a.papel_principal.codigo]
     tese = a.tese
-    linhas = [f"<b>Papel:</b> {escape(papel)}"
+    linhas = [f"<b>Função na carteira:</b> {escape(papel)}"
               + (f' <span class="ia-meta">(também: '
                  f'{escape(", ".join(outros))})</span>' if outros else "")]
     if tese.por_que_esta_na_carteira:
-        linhas.append(f"<b>Por que está na carteira:</b> "
+        linhas.append(f"<b>O motivo:</b> "
                       f"{escape(tese.por_que_esta_na_carteira)}")
     if tese.alinhamento:
-        linhas.append(f"<b>Alinhamento com a estratégia:</b> "
+        linhas.append(f"<b>Combina com a sua estratégia?</b> "
                       f"{escape(tese.alinhamento)}")
-    return _caixa(_secao("Papel na carteira")
+    return _caixa(_secao("Por que você tem este ativo")
                   + "".join(f'<p class="ia-p">{x}</p>' for x in linhas))
 
 
@@ -638,20 +651,20 @@ def cartao_noticias(a: m.AnaliseAtivo,
         partes.append(_vazio("Nenhuma notícia disponível para este ativo."))
     setor, rotulo = rs.noticias_setor(a)
     if setor:
-        partes.append(_secao("Como está o segmento"
+        partes.append(_secao("Como está o setor"
                              + (f" · {rotulo}" if rotulo else "")))
         partes.append(_manchetes("".join(_manchete(i) for i in setor)))
         from core.inteligencia_ativos.secoes import ROTULO_POSICOES_ETF
         partes.append(_nota(
             "Notícias das maiores posições do fundo, não do fundo."
             if str(rotulo or "").startswith(ROTULO_POSICOES_ETF) else
-            "Notícias dos pares do mesmo segmento, não do ativo."))
+            "Notícias de outras empresas do mesmo setor, não desta."))
     if gerais is not None and rs.precisa_noticiario_geral(a):
         brutos, origem = gerais
         falta = max(rs.N_NOTICIAS - len(itens) - len(setor), 1)
         cenario = rs.noticias_cenario(a, brutos, falta)
         temas = rs.temas_do_ativo(a.ativo.classe_politica)
-        partes.append(_secao("Cenário econômico e político"))
+        partes.append(_secao("Economia e política"))
         if cenario:
             partes.append(_manchetes(
                 "".join(_manchete_cenario(i) for i in cenario)))
@@ -663,8 +676,7 @@ def cartao_noticias(a: m.AnaliseAtivo,
                         + (f"; fonte: {origem}" if origem else ""),
                         codigo="inteligencia.noticias_cenario_origem",
                         entidade=str(a.ativo.ticker))
-        partes.append(_nota("Fatos do país que pesam no ativo, não de outras "
-                            "empresas."))
+        partes.append(_nota("Fatos do país que mexem com este ativo."))
     elif not itens and not setor:
         aviso_lacuna("Cenário econômico e político indisponível",
                      codigo="tela.inteligencia.cenario_noticias_indisponivel",
@@ -739,59 +751,87 @@ def cartao_relatorios(a: m.AnaliseAtivo,
                      codigo="tela.inteligencia.relatorios_sem_dado",
                      entidade=str(a.ativo.ticker))
         partes.append(_vazio("Nenhum relatório disponível para este ativo."))
-    nota = ("Trechos literais dos documentos oficiais. A leitura do que isso "
-            "muda na tese está na análise detalhada." if destaques else
+    nota = ("Trechos copiados dos documentos oficiais da empresa. O que isso "
+            "muda na sua decisão está na análise completa." if destaques else
             "Os pontos principais aparecem aqui quando o texto dos "
             "documentos estiver disponível.")
-    return _caixa(_secao("Relatórios relevantes") + "".join(partes)
+    return _caixa(_secao("O que a empresa divulgou") + "".join(partes)
                   + _nota(nota))
 
 
+def _item_macro(classe: str | None, chave: str, valor: str,
+                direcao: str | None, divergente: bool) -> str:
+    tend = ls.TENDENCIA_SIMPLES.get(direcao or "")
+    rot = ls.ROTULO_CENARIO.get(chave, chave)
+    porque = ls.por_que_pesa(classe, chave)
+    return (f'<div class="ia-item"><b>{escape(rot)}</b>'
+            + (f' <span class="ia-meta">· {escape(tend)}</span>' if tend else "")
+            + f'<div class="ia-p">{escape(ls.valor_simples(valor))}</div>'
+            + (f'<div class="ia-peca-det">Por que importa: {escape(porque)}'
+               f'</div>' if porque else "")
+            + ('<div class="ia-peca-det" style="color:var(--app-warning)">'
+               'O dado mais novo difere do registrado no seu cenário; vale '
+               'revisar.</div>' if divergente else "")
+            + "</div>")
+
+
 def cartao_macro(mc: rs.Macro, impacto: str | None = None) -> str:
-    """Como o macro influencia: canais da classe, o seu cenário e, se já
-    gerada, a leitura do Portfolio Fit. Puro."""
-    partes = [f'<p class="ia-p"><b>O que mais pesa nesta classe:</b> '
-              f'{escape(", ".join(mc.canais) or "—")}</p>']
+    """O que da economia mexe com este ativo: cada variável que pesa na
+    classe, com o valor de hoje em palavras, a direção e por que importa.
+    Sem chaves (Macro antigo), cai na lista de premissas. Puro."""
+    nomes = [ls.ROTULO_CENARIO.get(k, k) for k in mc.chaves] or list(mc.canais)
+    partes = [f'<p class="ia-p"><b>O que mais mexe com este tipo de '
+              f'investimento:</b> {escape(", ".join(nomes) or "—")}</p>']
     if mc.sem_cenario:
         aviso_lacuna("Macro: as séries do banco não puderam ser lidas",
                      codigo="tela.inteligencia.macro_series_ilegiveis")
-        partes.append(_vazio("Cenário macro indisponível no momento."))
+        partes.append(_vazio("Os dados da economia estão indisponíveis no momento."))
+    elif mc.itens:
+        partes.append("".join(
+            _item_macro(mc.classe, k, v, dr_, k in mc.sinais_chaves)
+            for k, v, dr_ in mc.itens))
     elif mc.premissas:
-        partes.append('<p class="ia-p" style="margin-top:8px"><b>Como estão '
-                      'agora (lido dos dados):</b></p>'
-                      + _lista(mc.premissas))
+        partes.append(_lista(mc.premissas))
     else:
         aviso_lacuna("Macro: sem dado para as variáveis desta classe",
                      codigo="tela.inteligencia.macro_sem_variaveis")
-        partes.append(_vazio("Cenário macro indisponível no momento."))
-    if mc.sinais:
+        partes.append(_vazio("Os dados da economia estão indisponíveis no momento."))
+    # Sinal de variável sem item na tela (ou Macro antigo, sem chaves) não
+    # some: vai no texto original.
+    com_item = {k for k, _, _ in mc.itens}
+    soltos = [s for i, s in enumerate(mc.sinais)
+              if i >= len(mc.sinais_chaves) or mc.sinais_chaves[i] not in com_item]
+    if soltos:
         partes.append('<div style="color:var(--app-warning);margin-top:8px">'
                       + "".join(f'<div class="ia-alerta">{escape(s)}</div>'
-                                for s in mc.sinais) + "</div>")
+                                for s in soltos) + "</div>")
     if impacto:
-        partes.append(f'<p class="ia-p" style="margin-top:8px"><b>Leitura do '
-                      f'Portfolio Fit:</b> {escape(impacto)}</p>')
+        partes.append(f'<p class="ia-p" style="margin-top:8px"><b>O que a '
+                      f'análise completa concluiu:</b> {escape(impacto)}</p>')
     else:
-        partes.append(_nota("A leitura do impacto sai do Portfolio Fit, na "
-                            "análise detalhada."))
-    return _caixa(_secao("Como o macro influencia") + "".join(partes))
+        partes.append(_nota("O efeito disso neste ativo em particular é lido "
+                            "na análise completa."))
+    return _caixa(_secao("O que da economia mexe com este ativo")
+                  + "".join(partes))
 
 
-_SETA_TENDENCIA = {"alta": ("▲ alta", "var(--app-warning)"),
-                   "queda": ("▼ queda", "var(--app-info)"),
+_SETA_TENDENCIA = {"alta": ("▲ subindo", "var(--app-warning)"),
+                   "queda": ("▼ caindo", "var(--app-info)"),
                    "estavel": ("● estável", "var(--app-muted)"),
-                   "incerta": ("? incerta", "var(--app-muted)")}
+                   "incerta": ("? sem direção clara", "var(--app-muted)")}
+TITULO_CENARIO = "🌎 Como está a economia agora"
 
 
 def cartao_cenario(linhas: tuple[rs.LinhaCenario, ...]) -> str:
-    """Cenário econômico atual, lido dos dados: uma peça por variável, com
-    valor, tendência calculada, fonte e data. Puro."""
+    """Como está a economia agora, lido dos dados: uma peça por variável,
+    com o que ela é, o valor em palavras e a direção calculada. Fonte e data
+    vão para o detalhe técnico. Puro."""
     if not linhas or not any(ln.valor for ln in linhas):
         aviso_lacuna("Cenário econômico: as séries macro do banco não puderam "
                      "ser lidas",
                      codigo="tela.inteligencia.cenario_series_ilegiveis")
-        return _caixa(_secao("🌎 Cenário econômico atual")
-                      + _vazio("Cenário econômico indisponível no momento."))
+        return _caixa(_secao(TITULO_CENARIO)
+                      + _vazio("Os dados da economia estão indisponíveis no momento."))
     detalhe_tecnico("Cenário lido pelo programa das séries do banco (Selic, "
                     "IPCA, curva do Tesouro, dólar, juros e crédito nos EUA). "
                     "Commodities e risco geopolítico não têm série: as LLMs "
@@ -806,8 +846,11 @@ def cartao_cenario(linhas: tuple[rs.LinhaCenario, ...]) -> str:
                             + (f" · {ln.referencia}" if ln.referencia else ""),
                             codigo="inteligencia.cenario_fonte_serie",
                             entidade=ln.rotulo)
-            corpo = (f'<div class="ia-num" style="font-size:.88rem;'
-                     f'margin-top:6px">{escape(ln.valor)}</div>'
+            oque = ls.O_QUE_E.get(ln.chave, "")
+            corpo = ((f'<div class="ia-peca-det">{escape(oque)}</div>'
+                      if oque else "")
+                     + f'<div class="ia-num" style="font-size:.88rem;'
+                     f'margin-top:6px">{escape(ls.valor_simples(ln.valor))}</div>'
                      f'<div style="font-size:.74rem;font-weight:700;color:{cor};'
                      f'margin-top:6px">{escape(seta)}</div>')
         else:
@@ -817,12 +860,13 @@ def cartao_cenario(linhas: tuple[rs.LinhaCenario, ...]) -> str:
                          entidade=ln.rotulo)
             corpo = ('<div class="ia-vazio" style="margin-top:6px">'
                      'Sem dado.</div>')
+        rot = ls.ROTULO_CENARIO.get(ln.chave, ln.rotulo)
         pecas.append(f'<div class="ia-peca"><div class="ia-peca-rot">'
-                     f'{escape(ln.rotulo)}</div>{corpo}</div>')
-    return _caixa(_secao("🌎 Cenário econômico atual")
+                     f'{escape(rot)}</div>{corpo}</div>')
+    return _caixa(_secao(TITULO_CENARIO)
                   + f'<div class="ia-grade">{"".join(pecas)}</div>'
-                  + _nota("A tendência é calculada a partir dos dados, não é "
-                          "opinião."))
+                  + _nota("A direção (subindo, caindo) é calculada pelos "
+                          "números, não é opinião de ninguém."))
 
 
 def _impacto_fit(a: m.AnaliseAtivo) -> str | None:
@@ -850,7 +894,7 @@ def _render_ativo(a: m.AnaliseAtivo, ctx: m.ContextoInvestidor,
     with st.expander(rotulo_expander(a, sugerido, av, d)):
         html = cartao_posicao(a, sugerido, av, d, cv) + cartao_conversa(cv)
         if d.codigo in (rs.VENDER, rs.SUBSTITUIR):
-            html += cartao_substitutos(rs.substitutos(a, na_carteira))
+            html += cartao_substitutos(a, rs.substitutos(a, na_carteira))
         html += (cartao_pares(rs.tabela_pares(a)) + cartao_papel(a)
                  + cartao_noticias(a, _noticiario_geral()
                                    if rs.precisa_noticiario_geral(a) else None)
@@ -866,7 +910,7 @@ def render(analises, ctx: m.ContextoInvestidor,
            politica: dict | None = None) -> None:
     na_carteira = tuple(a.ativo.ticker for a in analises)
     st.markdown(CSS, unsafe_allow_html=True)
-    with st.expander("🌎 Cenário econômico atual (lido dos dados)"):
+    with st.expander(TITULO_CENARIO):
         st.markdown(cartao_cenario(rs.cenario_atual(ctx.cenario)),
                     unsafe_allow_html=True)
     for b in rs.blocos(analises, ctx):

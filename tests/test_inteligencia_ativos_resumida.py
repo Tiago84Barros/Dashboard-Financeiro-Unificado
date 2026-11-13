@@ -147,9 +147,9 @@ def test_decisao_por_ativo_respeita_classe_acima_do_alvo_e_venda_da_analise(
     b = _pesando(a, 8.5)
     b = replace(b, faixa=replace(b.faixa, alvo_ativo=8.0))
     assert rs.decisao(b, _sug(2.5)).codigo == rs.MANTER
-    assert tela.rotulo_expander(b, _sug(2.5)).endswith("8,5% → 8,0% · Manter")
+    assert tela.rotulo_expander(b, _sug(2.5)).endswith("pesa 8,5% (ideal 8,0%) · Manter")
     assert (tela.rotulo_expander(_pesando(a, 8.5), _sug(2.5))
-            == f"{a.ativo.ticker} · 8,5% → 2,5% · Rebalancear")
+            == f"{a.ativo.ticker} · pesa 8,5% (ideal 2,5%) · Rebalancear")
 
 
 def test_peso_devido_sem_alvo_da_classe_fica_no_limite_ou_sem_alvo(carteira):
@@ -308,7 +308,7 @@ def test_cartoes_so_usam_tokens_e_nao_viram_link_perigoso(carteira):
         tela.cabecalho_grupo(rs.blocos(an, ctx)[0], "6 meses"),
         tela.cartao_lista(rs.blocos(an, ctx)[1]),
         tela.cartao_posicao(a),
-        tela.cartao_substitutos(rs.substitutos(a, ())),
+        tela.cartao_substitutos(a, rs.substitutos(a, ())),
         tela.cartao_recomendacao(rs.decisao(a, ctx=ctx)),
         tela.cartao_alertas(rs.decisao(a)),
         tela.cartao_pares(rs.tabela_pares(a)),
@@ -322,8 +322,8 @@ def test_cartoes_so_usam_tokens_e_nao_viram_link_perigoso(carteira):
     assert "O que fazer" in htmls[2] and "Certeza" in htmls[2]
     assert "Justificativa" in htmls[4] and "Dados ausentes" in htmls[4]
     assert tela.TITULO_ALERTAS in htmls[5]
-    assert "Leitura do Portfolio Fit" in htmls[-1]
-    assert tela.rotulo_expander(a) == "BBAS3 · 15,0% · Rebalancear"
+    assert "O que a análise completa concluiu" in htmls[-1]
+    assert tela.rotulo_expander(a) == "BBAS3 · pesa 15,0% · Rebalancear"
 
 
 def test_relatorios_mostram_o_que_o_documento_diz_sem_link(carteira):
@@ -334,7 +334,7 @@ def test_relatorios_mostram_o_que_o_documento_diz_sem_link(carteira):
                     ("O lucro foi de R$ 3 bilhões, <alta> de 8%.",))
     html = tela.cartao_relatorios(a, (d,))
     assert "Release 2T26" in html and "&lt;alta&gt;" in html
-    assert "<a href" not in html and "Trechos literais" in html
+    assert "<a href" not in html and "Trechos copiados" in html
     assert _sem_cor_literal(html)
 
 
@@ -386,10 +386,10 @@ def test_cartao_mostra_cenario_e_diz_os_temas(carteira):
     _, an = carteira
     a = _por(an, "BBAS3")
     html = tela.cartao_noticias(a, (GERAIS, "Acervo local"))
-    assert "Cenário econômico e político" in html
+    assert "Economia e política" in html
     assert "Copom sinaliza corte da Selic" in html
     assert "Sable Offshore" not in html and "Petrobras" not in html
-    assert "não de outras empresas" in html and "Fonte: Acervo local" not in html
+    assert "Fatos do país" in html and "Fonte: Acervo local" not in html
     vazio = tela.cartao_noticias(a, ([GERAIS[0]], "Acervo local"))
     assert "Nenhuma manchete de juros" in vazio and "Sable" not in vazio
 

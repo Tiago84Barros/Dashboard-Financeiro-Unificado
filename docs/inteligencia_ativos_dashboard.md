@@ -4,9 +4,10 @@ Investimentos → Inteligência dos Ativos, com a estratégia concluída. Desde
 30/09/2026 a aba abre numa **página resumida**, desenhada pelo usuário porque
 o painel anterior mostrava tudo de uma vez e confundia. De cima para baixo:
 
-1. **🌎 Cenário econômico atual (lido dos dados)**, num expander no topo: as
-   12 variáveis do cenário com valor, tendência, fonte e data (seção
-   *Cenário lido dos dados*, abaixo).
+1. **🌎 Como está a economia agora**, num expander no topo: as 12
+   variáveis do cenário com o que cada uma é, o valor em frases comuns
+   (`linguagem_simples.valor_simples`), a direção (subindo, caindo,
+   estável), fonte e data (seção *Cenário lido dos dados*, abaixo).
 2. **Página resumida**, um grupo por classe (seção abaixo).
 3. **📊 Visão geral da carteira**, recolhida num expander. Traz o resumo da
    carteira, a premissa, os cálculos objetivos e a tabela de adequação.
@@ -132,12 +133,19 @@ Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
 
     *Comparar alternativas* continua sem gerador em `adequacao.acao`; só tem
     rótulo.
-  - **Se vender, qual substituir?**: até dois pares do mesmo grupo fora da
+  - **Se vender, por qual trocar?**: até dois pares do mesmo grupo fora da
     carteira, os mais próximos em perfil. Não são ordenados como melhores.
-  - **Comparação com o mesmo segmento**: uma régua por métrica (P/L, P/VP,
-    DY, ROE...) com o ativo e os dois pares mais próximos marcados, e a
-    leitura de onde o ativo fica entre eles. Só métricas que têm dado.
-  - **Papel na carteira** e **notícias** (3 mais recentes). A caixa nunca
+    Cada um mostra o tamanho perto do ativo, o que tem de melhor (✓) e de
+    pior (✗), com os números dos dois lados (`linguagem_simples.trocar_por`
+    sobre `recomendacao.diferencas`, a mesma conta de `confrontar`), e a
+    conclusão. Desde 13/11/2026 o texto não diz mais "sem ser mais cara":
+    a regra soma cada dimensão, então BBSE3 passa contra PSSA3 com P/VP
+    pior porque o P/L compensa, e o ✗ mostra isso.
+  - **Como se compara com empresas parecidas**: uma régua por métrica, com
+    nome comum e a sigla entre parênteses ("Lucro sobre o dinheiro dos
+    sócios (ROE)"), o ativo, os dois pares mais próximos e o típico do
+    setor marcados. Só métricas que têm dado.
+  - **Por que você tem este ativo** e **notícias** (3 mais recentes). A caixa nunca
     fica vazia: sem notícia do ativo, mostra as do segmento
     (`informacoes.noticias_com_setor`) e, abaixo, o **Cenário econômico e
     político** (`resumida.noticias_cenario`, PR #454): só juros, inflação,
@@ -146,17 +154,19 @@ Dados em `core/inteligencia_ativos/resumida.py` (puro, só reagrupa o que
     de fora. Ordem: tema que pesa na classe, país do ativo (BR; EUA para
     exterior) e nota. Os itens vêm de `contexto_mercado.itens_gerais()`
     (acervo local → túnel → vitrine), cada nível rotulado.
-  - **Relatórios relevantes**: o que os documentos dizem, não o link. Até 3
+  - **O que a empresa divulgou**: o que os documentos dizem, não o link. Até 3
     documentos dos últimos 12 meses com até 3 frases literais do emissor
     que têm fato e número (resultado, caixa, dívida, proventos, guidance),
     escolhidas de forma determinística do corpus RAG
     (`destaques_relatorios.py`, sem LLM). Tabela, cabeçalho, inglês e
     documento de política/regimento ficam de fora. Documento sem texto no
     acervo aparece só com data e título.
-  - **Como o macro influencia**: as variáveis que mais pesam na classe, o
-    que o cenário lido dos dados diz delas, os sinais de
-    divergência e, se já gerada nesta sessão, a leitura de impacto do
-    Portfolio Fit.
+  - **O que da economia mexe com este ativo**: as variáveis que mais pesam
+    na classe, cada uma com o valor em frases comuns, a direção e "Por que
+    importa" para a classe (`linguagem_simples.POR_QUE_PESA`); a
+    divergência com o cenário vira o aviso "vale revisar" no próprio item
+    e, se já gerada nesta sessão, entra a leitura de impacto do Portfolio
+    Fit.
   - O botão **Ver análise completa** liga a análise detalhada já no ativo.
 
 Os cartões antigos da grade "Ativos" (`tela_painel.render_cards`) saíram da

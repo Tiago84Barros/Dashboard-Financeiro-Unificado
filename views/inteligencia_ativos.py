@@ -1018,9 +1018,9 @@ def cartao_substituicoes(c: conf_.Confronto) -> str:
                  'claramente superior no segmento</div>'
                  + "".join(_item_sem_substituto(x) for x in c.sem_substituto))
     return html + _nota(
-        "Troca só dentro do mesmo segmento, pela régua do \"Se sair, qual "
-        "substituir?\": melhor na qualidade e não pior no preço nem no "
-        "risco, métrica a métrica. O substituto vem do Portfólio Global ou, "
+        "Troca só dentro do mesmo segmento, pela régua do \"Se vender, por "
+        "qual trocar?\": melhor na qualidade e, somando os indicadores de "
+        "cada grupo, não pior no preço nem no risco. O substituto vem do Portfólio Global ou, "
         "sem equivalente lá, dos pares do ativo fora da carteira (esses, só "
         "pelas métricas publicadas). A troca só vende quando a Inteligência "
         "já indica vender, substituir ou reduzir.")

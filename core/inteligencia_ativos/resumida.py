@@ -115,11 +115,11 @@ AVISO_DECISAO = ("Recomendação por regras, não ordem automática: junta a "
                  "impostos. Num ativo em queda, a venda é revista: sem piora "
                  "nos fundamentos, não se vende na queda; com piora, a saída "
                  "vai em etapas, salvo alerta eliminatório do balanço.")
-AVISO_SUBSTITUTO = ("Candidatos do mesmo grupo de comparação, fora da sua "
-                    "carteira. A troca só é sugerida quando um deles supera o "
-                    "ativo na qualidade sem perder no preço nem no risco; "
-                    "potencial de alta maior, sozinho, não basta. Compare na "
-                    "tabela antes de decidir.")
+AVISO_SUBSTITUTO = ("Empresas do mesmo setor que você ainda não tem. A troca "
+                    "só é sugerida quando uma delas é mais saudável e, somando "
+                    "os números de preço e os de risco, não sai pior. Um ou "
+                    "outro número pode ser pior, e isso aparece acima. "
+                    "Subir mais no passado, sozinho, não basta.")
 
 N_PARES_TABELA = 2
 N_NOTICIAS = 3
@@ -411,12 +411,15 @@ def _sair(s: _Situacao, razao: str, motivo: str, razoes=(),
     if cf is not None:
         return _Rascunho(
             SUBSTITUIR, f"substituir por {cf.ticker}: {razao}",
-            f"{motivo} {cf.resumo}: supera na qualidade sem perder no preço "
-            "nem no risco.",
+            f"{motivo} {cf.resumo}: supera na qualidade e, no saldo das "
+            "métricas de preço e de risco, não perde"
+            + (", ainda que perca nas métricas isoladas citadas." if cf.pior
+               else "."),
             tuple(razoes) + (f"{cf.ticker} claramente superior",),
             tuple(condicoes) + (
                 f"Se {cf.ticker} perder a vantagem na qualidade, ou ficar mais "
-                "caro ou mais arriscado que o ativo, a troca deixa de valer e "
+                "caro ou mais arriscado que o ativo no saldo das métricas, a "
+                "troca deixa de valer e "
                 "a saída vira venda simples.",),
             proporcao=1.0, substituto=cf, teto=rec.MODERADA,
             motivo_teto=(f"{cf.ticker} foi comparado só pelas métricas "
@@ -1156,6 +1159,7 @@ class TabelaPares:
     metricas: tuple[MetricaPares, ...] = ()
     nomes: tuple[tuple[str, str], ...] = ()           # (ticker, nome)
     n_grupo: int = 0                    # pares no segmento inteiro
+    setor: str = ""                     # o valor do grupo ("Bancos"), sem o nível
 
 
 def _metrica_pares(ln, pares, ticker: str, moeda: str) -> MetricaPares:
@@ -1213,7 +1217,7 @@ def tabela_pares(a: m.AnaliseAtivo, n: int = N_PARES_TABELA) -> TabelaPares:
         titulo, tuple(ln.metrica for ln in metricas), tuple(linhas),
         metricas=tuple(_metrica_pares(ln, pares, a.ativo.ticker, c.moeda)
                        for ln in metricas),
-        nomes=nomes, n_grupo=len(c.grupo.pares))
+        nomes=nomes, n_grupo=len(c.grupo.pares), setor=c.grupo.valor or "")
 
 
 def substitutos(a: m.AnaliseAtivo, na_carteira, n: int = N_PARES_TABELA
@@ -1388,6 +1392,12 @@ class Macro:
     sinais: tuple[str, ...]              # divergência calculada pelo código
     sem_cenario: bool
     lido_dos_dados: bool = False
+    # As mesmas variáveis por chave, para a tela contar em palavras
+    # (linguagem_simples): (chave, valor, direção) e a chave de cada sinal.
+    classe: str | None = None
+    chaves: tuple[str, ...] = ()
+    itens: tuple[tuple[str, str, str | None], ...] = ()
+    sinais_chaves: tuple[str, ...] = ()
 
 
 def macro(a: m.AnaliseAtivo, ctx: m.ContextoInvestidor) -> Macro:
@@ -1398,18 +1408,22 @@ def macro(a: m.AnaliseAtivo, ctx: m.ContextoInvestidor) -> Macro:
     canais = tuple(cen.ROTULO[k] for k in chaves)
     c = ctx.cenario
     dados = c is not None and c.origem == cen.DADOS
+    classe = a.ativo.classe_politica
     if c is None or c.vazio:
-        return Macro(canais, (), (), True, dados)
-    premissas = []
+        return Macro(canais, (), (), True, dados, classe, tuple(chaves))
+    premissas, itens = [], []
     for k in chaves:
         it = c.item(k)
         if not it.preenchido:
             continue
         direcao = cen.ROTULO_DIRECAO.get(it.expected_direction)
+        itens.append((k, it.current_value, it.expected_direction or None))
         premissas.append(f"{cen.ROTULO[k]}: {it.current_value}"
                          + (f" · tendência {direcao.lower()}" if direcao else ""))
-    sinais = tuple(s.texto for s in ctx.sinais_cenario if s.chave in chaves)
-    return Macro(canais, tuple(premissas), sinais, False, dados)
+    sinais_ = [s for s in ctx.sinais_cenario if s.chave in chaves]
+    return Macro(canais, tuple(premissas), tuple(s.texto for s in sinais_),
+                 False, dados, classe, tuple(chaves), tuple(itens),
+                 tuple(s.chave for s in sinais_))
 
 
 # -- cenário econômico (lido dos dados) ---------------------------------------------
@@ -1421,6 +1435,7 @@ class LinhaCenario:
     tendencia: str | None      # alta / estavel / queda / incerta
     fonte: str
     referencia: str | None     # DD/MM/AAAA
+    chave: str = ""            # a chave do modelo (linguagem_simples)
 
 
 def cenario_atual(c) -> tuple[LinhaCenario, ...]:
@@ -1434,5 +1449,5 @@ def cenario_atual(c) -> tuple[LinhaCenario, ...]:
         saida.append(LinhaCenario(
             cen.ROTULO[k], it.current_value or None,
             it.expected_direction or None, it.source or "",
-            ref.strftime("%d/%m/%Y") if ref else None))
+            ref.strftime("%d/%m/%Y") if ref else None, k))
     return tuple(saida)
