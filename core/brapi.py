@@ -330,23 +330,35 @@ def _perto_do_implicito(lpa, implicito) -> bool:
     return 1 / LPA_IMPLICITO_DESVIO_MAX <= r <= LPA_IMPLICITO_DESVIO_MAX
 
 
-def _trailing_plausivel(q: dict, trailing: float) -> float | None:
-    """O ``trailingEps`` do quote, conferido contra o LPA implícito.
+def escolher_pela_referencia(proprio: float, alternativo, referencia):
+    """A regra única da contagem de ações da brapi, em qualquer das duas
+    pontas: LPA (``_trailing_plausivel``) ou ações emitidas
+    (``data_pipeline.market.acoes.acoes_emitidas``). ``proprio`` > 0.
 
-    Sem referência, com LPA ≤ 0 ou perto dela, fica. Longe dela, fica se o
-    ``earningsPerShare`` do topo concordar com ele (os dois da brapi batem; a
-    referência é que destoa, como em ações PN com ``marketCap`` da
-    companhia); senão vale o do topo quando ele está perto da referência
-    (contagem de ações errada no ``trailingEps``); nos demais casos, None."""
-    implicito = _lpa_implicito(q)
-    if implicito is None or trailing <= 0 or _perto_do_implicito(trailing, implicito):
-        return trailing
-    topo = _to_float(q.get("earningsPerShare"))
-    if topo is not None and topo > 0 and not _lpa_destoa(topo, trailing):
-        return trailing
-    if _perto_do_implicito(topo, implicito):
-        return topo
+    Sem referência ou perto dela (``LPA_IMPLICITO_DESVIO_MAX``), fica o
+    próprio. Longe dela, fica o próprio se o alternativo concordar com ele
+    (``LPA_TOPO_DESVIO_MAX``): os dois campos da brapi batem e quem destoa é
+    a referência, como em ações PN com ``marketCap`` da companhia. Senão vale
+    o alternativo quando ele está perto da referência; nos demais casos, None.
+    As faixas são simétricas, então a regra dá a mesma resposta no LPA e no
+    seu inverso, as ações (lucro ÷ LPA)."""
+    if referencia is None or referencia <= 0 or _perto_do_implicito(proprio, referencia):
+        return proprio
+    if alternativo is not None and alternativo > 0 and not _lpa_destoa(alternativo, proprio):
+        return proprio
+    if _perto_do_implicito(alternativo, referencia):
+        return alternativo
     return None
+
+
+def _trailing_plausivel(q: dict, trailing: float) -> float | None:
+    """O ``trailingEps`` do quote, conferido contra o LPA implícito pela
+    ``escolher_pela_referencia``, com o ``earningsPerShare`` do topo de
+    alternativo. LPA ≤ 0 fica como veio."""
+    if trailing <= 0:
+        return trailing
+    return escolher_pela_referencia(trailing, _to_float(q.get("earningsPerShare")),
+                                    _lpa_implicito(q))
 
 
 def lpa_do_titulo(quote: dict, lpa_do_completo=None) -> float | None:
