@@ -28,7 +28,6 @@ jobs:
       SUPABASE_UNIFICADO_URL: ${{ secrets.SUPABASE_UNIFICADO_URL }}
       DATABASE_URL:           ${{ secrets.DATABASE_URL }}
       SUPABASE_DB_URL:        ${{ secrets.SUPABASE_DB_URL }}
-      SOURCE_DB_APP1:         ${{ secrets.SOURCE_DB_APP1 }}
       OWNER_USER_ID:          ${{ secrets.OWNER_USER_ID }}
       # Token da API brapi.dev (backfill histórico de DY). Free: 15k req/mês.
       BRAPI_TOKEN:            ${{ secrets.BRAPI_TOKEN }}
