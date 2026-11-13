@@ -365,10 +365,14 @@ def _run(engine, tickers: list[str], *, range_: str, full: bool,
                     # de FIIs (D2): o coletado fica, o comando sai com erro.
                     prog["bloqueio_brapi"] = True
                     prog["nao_tentados"] = len(tickers) - i - 1
+                    # O que a brapi disse (corpo + cabeçalhos de cota): separa
+                    # cota mensal esgotada de limite por minuto no JSON.
+                    prog["motivo_bloqueio"] = str(exc)
                     logger.error("%s: disjuntor (429) após %d bloqueios — encerrando run "
-                                 "com %d ticker(s) gravados e %d não tentados.",
+                                 "com %d ticker(s) gravados e %d não tentados; "
+                                 "última recusa: %s",
                                  batch_label, blocks, prog["tickers"],
-                                 prog["nao_tentados"])
+                                 prog["nao_tentados"], exc)
                     break
             else:
                 logger.warning("%s: %s falhou: %s", batch_label, tk, exc)
@@ -580,7 +584,8 @@ def validate(tickers: list[str], persist: bool = True) -> dict:
             quote = sched.with_backoff(lambda t=tk: brapi.fetch_quote_full(t),
                                        retries=3, base=4.0, on_block=brapi.is_rate_limited)
         except Exception as exc:
-            entry["erro"] = ("rate_limited" if brapi.is_rate_limited(exc) else f"erro: {exc}")[:200]
+            entry["erro"] = (f"rate_limited: {exc}" if brapi.is_rate_limited(exc)
+                             else f"erro: {exc}")[:400]
             report["tickers"][tk] = entry
             continue
         if not quote:

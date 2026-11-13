@@ -353,8 +353,9 @@ def main() -> int:
                      rep.get("fiis"), rep.get("precos"), rep.get("dividendos"), rep.get("erros"))
         elif args.command == "benchmark":
             rep = fii_ingest.ingest_benchmark("XFIX11")  # proxy do IFIX (ETF)
-            log.info("Benchmark %s — precos=%s erros=%s",
-                     rep.get("ticker"), rep.get("precos"), rep.get("erros"))
+            log.info("Benchmark %s — precos=%s erros=%s%s",
+                     rep.get("ticker"), rep.get("precos"), rep.get("erros"),
+                     f" motivo={rep['motivo']}" if rep.get("motivo") else "")
         else:
             rep = (fii_ingest.reprocess() if args.command == "fiis-reprocess"
                    else fii_ingest.ingest(limit=args.limit, tickers=tickers))
@@ -466,9 +467,10 @@ def main() -> int:
 
     if prog.get("erros") == -1:
         if prog.get("bloqueio_brapi"):
-            log.error("Falha: a brapi recusou o lote (429 seguidos, cota esgotada?); "
-                      "%d ticker(s) gravados, %d não tentados.",
-                      prog.get("tickers", 0), prog.get("nao_tentados", 0))
+            log.error("Falha: a brapi recusou o lote (429 seguidos); "
+                      "%d ticker(s) gravados, %d não tentados. Motivo: %s",
+                      prog.get("tickers", 0), prog.get("nao_tentados", 0),
+                      prog.get("motivo_bloqueio") or "não informado")
         else:
             log.error("Falha: schema market.* ausente ou banco não conectado.")
         if args.json:
