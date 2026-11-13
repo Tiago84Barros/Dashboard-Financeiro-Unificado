@@ -41,7 +41,7 @@ arquiteturas possíveis:
 | Há processo persistente? | **Não** | o container só executa enquanto responde a uma requisição |
 | Há worker? | **Não**, e não há onde hospedar um sem custo | nada de fila, nada de daemon |
 | Há banco? | Sim, Supabase (plano free, teto de 500 MB) | é o único estado que os processos compartilham |
-| Há agendador? | **Sim, e já existia**: cron do GitHub Actions | `data_pipeline.yml`, `market-refresh.yml`, `update-data.yml` |
+| Há agendador? | **Sim, e já existia**: cron do GitHub Actions | `data_pipeline.yml`, `market-refresh.yml` |
 
 Duas consequências mandam no desenho:
 

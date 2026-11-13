@@ -3459,7 +3459,7 @@
             {
               "nome": "Atualização na nuvem duas vezes ao dia",
               "resumo": "Cotações, dólar, Banco Central e Tesouro",
-              "explicacao": "Duas tarefas no GitHub rodam a mesma atualização: às 9h e às 18h30 (horário de Brasília). Buscam cotações, dólar, indicadores do Banco Central e preços do Tesouro, e fazem a limpeza do histórico de recomendações (hoje só em simulação). É o que aparece em Configurações → Dados de mercado.",
+              "explicacao": "Uma tarefa no GitHub dispara às 9h e às 18h30 (horário de Brasília); o GitHub costuma atrasar esses horários. Quem chegar primeiro no dia faz a atualização, e o segundo disparo só refaz o que falhou. Busca cotações, dólar, indicadores do Banco Central e preços do Tesouro, e faz a limpeza do histórico de recomendações (hoje só em simulação). É o que aparece em Configurações → Dados de mercado.",
               "so_admin": false
             },
             {

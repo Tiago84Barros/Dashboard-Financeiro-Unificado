@@ -2,8 +2,16 @@ name: Pipeline de Dados
 
 on:
   schedule:
-    # Executa todo dia às 18:30 horário de Brasília (21:30 UTC).
-    - cron: "30 21 * * *"
+    # Único workflow do pipeline de dados (absorveu o antigo update-data.yml).
+    # Dois horários, isolados dos demais jobs para evitar escrita concorrente
+    # no compute Nano (Free): bootstrap 06:00, market-refresh 09:00
+    # (+ anual sáb 08:00). Os jobs "diario" rodam uma vez por data de Brasília
+    # (should_run_job), então o segundo disparo só executa o que o primeiro
+    # não concluiu: funciona como nova tentativa, não como carga dobrada.
+    # O GitHub costuma atrasar o cron em horas; quem chegar primeiro no dia
+    # faz o trabalho.
+    - cron: "0 12 * * *"     # 09:00 BRT
+    - cron: "30 21 * * *"    # 18:30 BRT
   workflow_dispatch:
     # Permite disparo manual pela aba Actions do GitHub
     inputs:
@@ -11,9 +19,19 @@ on:
         description: "Forçar atualização (ignorar controle de frequência)"
         type: boolean
         default: false
+      source:
+        description: "Job específico (ex.: update_bcb) ou all"
+        required: false
+        default: "all"
+        type: string
 
 permissions:
   contents: read
+
+# Nunca duas execuções ao mesmo tempo contra o Supabase; a segunda espera.
+concurrency:
+  group: pipeline-de-dados
+  cancel-in-progress: false
 
 jobs:
   update:
@@ -86,12 +104,25 @@ jobs:
           PY
 
       - name: Executar pipeline
+        env:
+          # Entradas passam por env, nunca interpoladas no script (evita injeção).
+          INPUT_FORCE: ${{ github.event.inputs.force || 'false' }}
+          INPUT_SOURCE: ${{ github.event.inputs.source || 'all' }}
         run: |
-          if [ "${{ github.event.inputs.force }}" = "true" ]; then
-            python run_data_updates.py --all --force --json
+          ARGS=(--json)
+          if [ -z "$INPUT_SOURCE" ] || [ "$INPUT_SOURCE" = "all" ]; then
+            ARGS+=(--all)
+          elif [[ "$INPUT_SOURCE" =~ ^[a-z0-9_]+$ ]]; then
+            ARGS+=(--source "$INPUT_SOURCE")
           else
-            python run_data_updates.py --all --json
+            echo "ERRO: 'source' inválido: use o nome de um job (letras minúsculas, números e _) ou all."
+            exit 1
           fi
+          if [ "$INPUT_FORCE" = "true" ]; then
+            ARGS+=(--force)
+          fi
+          echo "Executando: python run_data_updates.py ${ARGS[*]}"
+          python run_data_updates.py "${ARGS[@]}"
 
       - name: Resumo do resultado
         if: always()
