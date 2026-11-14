@@ -59,6 +59,7 @@ def _point_to_warehouse() -> bool:
     14/11/2026 com o container saudável. ``warehouse/.env`` fica de reserva.
     """
     from dotenv import dotenv_values
+
     from scripts.publish_fii_selection_from_local import senha_do_warehouse
 
     password = ""
