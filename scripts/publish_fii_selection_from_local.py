@@ -13,20 +13,51 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def _warehouse_url() -> str:
-    inspection = subprocess.run(
-        ["docker", "inspect", "dfu_warehouse", "--format", "{{json .Config.Env}}"],
-        check=True, capture_output=True, text=True,
-    )
-    environment = json.loads(inspection.stdout)
-    password_entry = next(
-        (item for item in environment if str(item).startswith("POSTGRES_PASSWORD=")),
-        None,
-    )
-    if not password_entry:
+CONTAINER_WAREHOUSE = "dfu_warehouse"
+PRAZO_INSPECAO = 60
+
+
+def senha_do_warehouse(*, timeout: float = PRAZO_INSPECAO) -> str:
+    """Senha efetiva do container do armazém, lida por ``docker inspect``.
+
+    Ponto único de leitura da senha. ``docker compose exec ... printenv``, que
+    os ``run_*_ingest.py`` usavam, abre um processo dentro do container e
+    depende do projeto compose; em 13/11 e 14/11/2026 ele falhou com o
+    container saudável, enquanto o ``docker inspect`` da mesma rotina, minutos
+    depois, respondeu. O inspect só lê a configuração do container.
+
+    Levanta ``RuntimeError`` sem a senha. A mensagem nunca carrega a saída do
+    inspect, que contém a credencial.
+    """
+    try:
+        inspecao = subprocess.run(
+            ["docker", "inspect", CONTAINER_WAREHOUSE, "--format", "{{json .Config.Env}}"],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            f"docker inspect {CONTAINER_WAREHOUSE} sem resposta em {timeout:.0f}s") from None
+    except OSError as exc:
+        raise RuntimeError(f"docker indisponível ({type(exc).__name__})") from None
+    if inspecao.returncode != 0:
+        erro = ((inspecao.stderr or "").strip().splitlines() or [""])[0][:200]
+        raise RuntimeError(
+            f"docker inspect {CONTAINER_WAREHOUSE} saiu com {inspecao.returncode}: {erro}")
+    try:
+        ambiente = json.loads(inspecao.stdout or "null") or []
+    except ValueError:
+        raise RuntimeError("docker inspect devolveu ambiente ilegível") from None
+    entrada = next(
+        (item for item in ambiente if str(item).startswith("POSTGRES_PASSWORD=")), None)
+    senha = str(entrada).split("=", 1)[1] if entrada else ""
+    if not senha:
         raise RuntimeError("senha do warehouse local indisponivel")
-    password = str(password_entry).split("=", 1)[1]
-    return f"postgresql://postgres:{quote_plus(password)}@localhost:5433/postgres"
+    return senha
+
+
+def _warehouse_url() -> str:
+    senha = senha_do_warehouse()
+    return f"postgresql://postgres:{quote_plus(senha)}@localhost:5433/postgres"
 
 
 def main() -> int:
