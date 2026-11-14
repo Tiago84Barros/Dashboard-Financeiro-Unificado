@@ -573,7 +573,8 @@ def montar_carteira(itens_por_segmento: list[tuple[str, list[str], dict]], *,
     `itens_por_segmento`: (setor, selecionados, pesos do segmento). Como o
     laço final da tela, descarta quem tem peso 0 e quem ``exclui`` (o Score
     de Entrada da safra) barra, sem substituição. Devolve
-    `{"pesos", "inviavel", "exige_revisao", "avisos"}`. Quando a tela
+    `{"pesos", "inviavel", "exige_revisao", "avisos", "setor_de"}` -- o setor
+    que cada nome levou aos tetos, para quem refaz a projeção com outros pesos. Quando a tela
     mostraria a revisão em vez de carteira (poucos ativos para o cap, ou tetos
     que não fecham), os pesos saem mesmo assim e a safra é MARCADA.
     """
@@ -585,7 +586,8 @@ def montar_carteira(itens_por_segmento: list[tuple[str, list[str], dict]], *,
         if locais:
             grupos.append((setor, locais))
     if not grupos:
-        return {"pesos": {}, "inviavel": True, "exige_revisao": True, "avisos": []}
+        return {"pesos": {}, "inviavel": True, "exige_revisao": True, "avisos": [],
+                "setor_de": {}}
     orc = 1.0 / len(grupos)
     pesos_fin: dict[str, float] = {}
     setor_de: dict[str, str] = {}
@@ -615,7 +617,92 @@ def montar_carteira(itens_por_segmento: list[tuple[str, list[str], dict]], *,
     if total > 0:
         pesos_fin = {tk: w / total for tk, w in pesos_fin.items()}
     return {"pesos": pesos_fin, "inviavel": inviavel,
-            "exige_revisao": exige_revisao, "avisos": list(avisos or [])}
+            "exige_revisao": exige_revisao, "avisos": list(avisos or []),
+            "setor_de": {tk: setor_de[tk] for tk in pesos_fin}}
+
+
+# ── pesos do motor × pesos iguais nos MESMOS nomes ──────────────────────────
+# A variante "sem_portao" mede a carteira contra o 1/N do UNIVERSO da safra:
+# mistura a escolha dos nomes com a regra de peso. As duas abaixo fixam os
+# nomes que a carteira do motor tem e trocam só o peso -- o excesso pareado
+# (motor − alternativa) mede o que o orçamento por segmento e o peso pelo
+# score acrescentam, sem sorte de nome no meio.
+
+MESMOS_NOMES_IGUAIS = "iguais"
+MESMOS_NOMES_IGUAIS_TETOS = "iguais_com_tetos"
+
+
+def pesos_iguais_mesmos_nomes(pesos: dict[str, float], *,
+                              setor_de: dict[str, str] | None = None,
+                              cap: float | None = None, teto_setor: float = 1.0,
+                              teto_ciclico: float = 1.0) -> dict[str, float]:
+    """1/N sobre os nomes da carteira do motor.
+
+    Sem ``cap``, é o 1/N puro. Com ``cap`` (e tetos), parte do 1/N e passa
+    pela MESMA projeção de `montar_carteira` -- isola o efeito do score e do
+    orçamento por segmento, mantendo os limites de concentração. Como na
+    montagem, a projeção não roda quando os nomes não comportam o cap.
+    """
+    nomes = [tk for tk, w in pesos.items() if float(w or 0.0) > 0]
+    if not nomes:
+        return {}
+    iguais = {tk: 1.0 / len(nomes) for tk in nomes}
+    if cap is None or len(nomes) < minimum_assets_for_cap(cap):
+        return iguais
+    out = project_capped_simplex(iguais, cap)
+    if (teto_setor < 1.0 or teto_ciclico < 1.0) and setor_de:
+        grupos = {tk: str(setor_de.get(tk, "")) for tk in out}
+        ciclico = {tk: classify_cycle(grupos[tk]) == "ciclico" for tk in out}
+        out, _ = project_dual_capped(out, grupos, ciclico, cap,
+                                     float(teto_setor), float(teto_ciclico))
+    total = sum(out.values())
+    return {tk: w / total for tk, w in out.items()} if total > 0 else iguais
+
+
+def comparar_mesmos_nomes(linhas: list[dict], cfg: CostConfig,
+                          alternativa: Callable[[dict], dict[str, float]]) -> dict:
+    """Carteira do motor × outra regra de peso sobre os MESMOS nomes.
+
+    ``linhas``: ``{"safra", "pesos", "retornos", "mensuravel"}`` por safra (a
+    variante sem portão). ``alternativa(linha)`` devolve os pesos a comparar.
+    As duas cadeias pagam o giro pelo mesmo `simular_custos`, e o excesso é
+    ``motor − alternativa`` por safra. ``distancia_pesos`` é a fração da
+    carteira que muda de uma regra para a outra (0 = mesmos pesos).
+    """
+    def _cadeia(regra):
+        return simular_custos(
+            [{"safra": r["safra"],
+              "pesos": regra(r) if r.get("mensuravel", True) else {},
+              "retornos": r["retornos"]} for r in linhas], cfg)
+
+    motor = _cadeia(lambda r: r["pesos"])
+    alt = _cadeia(alternativa)
+    tabela: list[dict] = []
+    for r, cm, ca in zip(linhas, motor, alt):
+        linha: dict = {"safra": r["safra"], "n_ativos": len(r["pesos"])}
+        if cm.get("medida") and ca.get("medida"):
+            p_alt = alternativa(r)
+            todos = set(r["pesos"]) | set(p_alt)
+            linha.update({
+                "motor_bruto": cm["bruto"], "motor_liquido": cm["liquido"],
+                "alternativa_bruto": ca["bruto"], "alternativa_liquido": ca["liquido"],
+                "excesso": cm["liquido"] - ca["liquido"],
+                "excesso_bruto": cm["bruto"] - ca["bruto"],
+                "distancia_pesos": 0.5 * sum(abs(float(r["pesos"].get(tk, 0.0))
+                                                 - float(p_alt.get(tk, 0.0)))
+                                             for tk in todos),
+                "giro_motor": cm["giro"], "giro_alternativa": ca["giro"],
+            })
+        else:
+            linha["sem_carteira"] = True
+        tabela.append(linha)
+    resumo = resumir(tabela, "excesso")
+    return {
+        "resumo": resumo,
+        "resumo_bruto": resumir(tabela, "excesso_bruto"),
+        "leitura": leitura_honesta(resumo, "pesos iguais nos mesmos nomes"),
+        "safras": tabela,
+    }
 
 
 # ── retorno da safra ────────────────────────────────────────────────────────
