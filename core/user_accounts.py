@@ -201,7 +201,7 @@ def cadastrar_usuario(name: str, email: str, password: str) -> str:
     o login escolher um deles em silêncio.
     """
     if not novos_configurado():
-        raise RuntimeError("O cadastro de novas contas ainda não está aberto.")
+        raise RuntimeError("O cadastro de novas contas está temporariamente indisponível.")
     name, email = _validar_cadastro(name, email)
     encoded = hash_password(password)
     with _engine(BANCO_PRINCIPAL).connect() as conn:

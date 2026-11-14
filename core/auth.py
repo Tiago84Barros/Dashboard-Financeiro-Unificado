@@ -233,8 +233,10 @@ def _renderizar_cadastro() -> None:
     """
     from core.database import novos_configurado
     if not novos_configurado():
-        st.info("O cadastro de novas contas ainda não está aberto. "
-                "Fale com o administrador para receber acesso.")
+        # Não depende de aprovação de ninguém: falta só o banco das contas
+        # novas estar configurado. A mensagem não manda procurar o admin.
+        st.info("O cadastro de novas contas está temporariamente indisponível. "
+                "Tente de novo mais tarde.")
         return
     with st.form("_auth_cadastro", clear_on_submit=False):
         nome = st.text_input("Nome", max_chars=150)
