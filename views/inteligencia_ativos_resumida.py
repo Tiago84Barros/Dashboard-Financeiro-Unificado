@@ -2,8 +2,8 @@
 views/inteligencia_ativos_resumida.py
 Página resumida da Inteligência dos Ativos (30/09/2026).
 
-Segue o rascunho do usuário: reserva de emergência e renda fixa numa lista
-curta; ações, FIIs e internacional com uma caixa por ativo. Dentro da caixa,
+Segue o rascunho do usuário: reserva de emergência e renda fixa com um card
+curto por título; ações, FIIs e internacional com uma caixa por ativo. Dentro da caixa,
 na ordem do rascunho: quanto tem e quanto deveria ter, a ação sugerida
 (manter, comprar, acompanhar, rebalancear, reduzir parcialmente, vender ou
 substituir) com justificativa, convicção, condições e limitações, os alertas
@@ -156,12 +156,35 @@ CSS = "<style>" + "".join((
     ".ia-grupo-valor{font-size:.95rem;font-weight:600;color:var(--app-text);"
     "font-variant-numeric:tabular-nums;}",
     ".ia-grupo-extra{font-size:.8rem;color:var(--app-muted);margin-bottom:6px;}",
-    ".ia-tabela{width:100%;border-collapse:collapse;font-size:.88rem;}",
-    ".ia-tabela td{padding:8px 12px 8px 0;vertical-align:top;"
-    "border-bottom:1px solid var(--app-border);color:var(--app-text);}",
-    ".ia-tabela tr:last-child td{border-bottom:0;}",
-    ".ia-tabela td.ia-dir{text-align:right;padding-right:0;"
+    # um card por título da reserva e da renda fixa
+    ".ia-titulos{display:grid;grid-template-columns:repeat(auto-fill,"
+    "minmax(220px,1fr));gap:12px;margin:12px 0 4px;}",
+    ".ia-tit{display:flex;flex-direction:column;background:var(--app-surface);"
+    "border:1px solid var(--app-border);border-radius:var(--app-radius-sm);"
+    "padding:14px 16px;box-shadow:inset 0 3px 0 var(--app-primary);"
+    "color:var(--app-text);}",
+    ".ia-tit-topo{display:flex;justify-content:space-between;"
+    "align-items:baseline;gap:8px;}",
+    ".ia-tit-tk{font-size:.95rem;font-weight:700;letter-spacing:.01em;"
+    "overflow-wrap:anywhere;}",
+    ".ia-tit-peso{flex:none;font-size:.78rem;font-weight:700;padding:1px 8px;"
+    "border-radius:999px;background:var(--app-surface-raised);"
+    "border:1px solid var(--app-border);font-variant-numeric:tabular-nums;}",
+    ".ia-tit-nome{font-size:.78rem;line-height:1.4;color:var(--app-muted);"
+    "margin-top:2px;}",
+    ".ia-tit-val{font-size:1.3rem;font-weight:700;letter-spacing:-.01em;"
+    "line-height:1.2;margin-top:auto;padding-top:12px;"
     "font-variant-numeric:tabular-nums;white-space:nowrap;}",
+    ".ia-tit-barra{height:4px;border-radius:2px;background:var(--app-border);"
+    "margin-top:10px;overflow:hidden;}",
+    ".ia-tit-barra>span{display:block;height:100%;border-radius:2px;"
+    "background:var(--app-primary);}",
+    ".ia-tit-det{font-size:.72rem;color:var(--app-muted);margin-top:4px;"
+    "font-variant-numeric:tabular-nums;}",
+    "@media (max-width:640px){.ia-titulos{grid-template-columns:repeat(2,"
+    "minmax(0,1fr));gap:8px;}.ia-tit{padding:12px;}"
+    ".ia-tit-topo{flex-wrap:wrap;gap:4px;}"
+    ".ia-tit-val{font-size:1.02rem;white-space:normal;}}",
     # bloco técnico recolhido
     ".ia-tecnico{margin:12px 0 4px;border:1px solid var(--app-border);"
     "border-radius:var(--app-radius-sm);background:var(--app-surface);}",
@@ -235,15 +258,41 @@ def cabecalho_grupo(b: rs.Bloco, meta_reserva: str | None = None) -> str:
            if extra else ""))
 
 
+def _parte_do_grupo(valor: float | None, total: float | None) -> float | None:
+    """% do título dentro do grupo, que a barra do card desenha."""
+    if valor is None or not total or total <= 0:
+        return None
+    return max(0.0, min(100.0, valor / total * 100))
+
+
 def cartao_lista(b: rs.Bloco) -> str:
-    """Reserva e renda fixa: cada título com valor e % da carteira. Puro."""
-    linhas = "".join(
-        f'<tr><td><b>{escape(ln.ticker)}</b>'
-        f'<div class="ia-peca-det">{escape(ln.nome or "")}</div></td>'
-        f'<td class="ia-dir">{escape(_moeda(ln.valor, ln.moeda))}</td>'
-        f'<td class="ia-dir">{escape(_pct(ln.peso))}</td></tr>'
-        for ln in b.linhas)
-    return _caixa(f'<table class="ia-tabela">{linhas}</table>')
+    """Reserva e renda fixa: um card por título, com valor, % da carteira e
+    uma barra com a parte do grupo (14/11/2026, pedido do usuário: cards no
+    lugar da tabela simples). Puro.
+
+    A parte do grupo só sai quando todos os títulos têm valor: ``Bloco.valor``
+    soma ``valor_mercado or 0.0``, e um título sem valoração encolheria o
+    denominador, mostrando "100% do grupo" num grupo de dois (revisão do #746)."""
+    total = (b.valor if all(ln.valor is not None for ln in b.linhas)
+             else None)
+
+    def _card(ln: rs.Linha) -> str:
+        parte = _parte_do_grupo(ln.valor, total)
+        barra = ("" if parte is None else
+                 f'<div class="ia-tit-barra"><span style="width:{parte:.1f}%">'
+                 f'</span></div><div class="ia-tit-det">'
+                 f'{escape(_pct(parte))} do grupo</div>')
+        return (f'<div class="ia-tit"><div class="ia-tit-topo">'
+                f'<span class="ia-tit-tk">{escape(ln.ticker)}</span>'
+                f'<span class="ia-tit-peso" title="% da carteira">'
+                f'{escape(_pct(ln.peso))}</span></div>'
+                + (f'<div class="ia-tit-nome">{escape(ln.nome)}</div>'
+                   if ln.nome else "")
+                + f'<div class="ia-tit-val">'
+                f'{escape(_moeda(ln.valor, ln.moeda))}</div>{barra}</div>')
+    if not b.linhas:
+        return _caixa(_vazio("Nenhum título neste grupo."))
+    return f'<div class="ia-titulos">{"".join(map(_card, b.linhas))}</div>'
 
 
 # -- a caixa de cada ativo ------------------------------------------------------------
