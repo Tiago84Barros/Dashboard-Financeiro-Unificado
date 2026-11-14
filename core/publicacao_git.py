@@ -81,6 +81,12 @@ from pathlib import Path
 #: Push que pende esperando senha trava a rotina inteira. Melhor falhar rápido
 #: e avisar do que segurar a fila até o teto de 90 min do orquestrador.
 TIMEOUT_GIT = 180
+#: O push tem prazo próprio. Em 13/11/2026 o commit do corpus RAG (24 parquets,
+#: ~147 MB) não subiu em `TIMEOUT_GIT`: upload grande é lento, não pendurado.
+#: Prompt de senha não é o risco aqui -- `GIT_TERMINAL_PROMPT=0` o recusa na hora.
+TIMEOUT_PUSH = 900
+#: Código de saída de um comando que não respondeu no prazo (o do `timeout(1)`).
+RC_TIMEOUT = 124
 RAMO_PUBLICADO = "main"
 #: Segundos entre tentativas de `git fetch`. Fetch que falha agora bloqueia a
 #: rotina inteira, então um soluço de DNS na hora do disparo não pode custar a
@@ -105,21 +111,38 @@ class ResultadoPublicacao:
     def resumo(self) -> str:
         if self.erros:
             return "; ".join(self.erros)
-        if not self.commitou:
-            return self.motivo or "nada a commitar"
         alvo = ", ".join(self.arquivos)
-        estado = "empurrado" if self.empurrou else "NÃO empurrado"
-        return f"{alvo}: commitado e {estado}"
+        if self.commitou:
+            estado = "empurrado" if self.empurrou else "NÃO empurrado"
+            texto = f"{alvo}: commitado e {estado}"
+        elif self.empurrou:
+            texto = f"{alvo}: commit anterior empurrado"
+        else:
+            return self.motivo or "nada a commitar"
+        return f"{texto} ({self.motivo})" if self.motivo else texto
 
 
-def _git(raiz: Path, *argumentos: str) -> subprocess.CompletedProcess:
+def _git(raiz: Path, *argumentos: str,
+         timeout: int = TIMEOUT_GIT) -> subprocess.CompletedProcess:
+    """Roda o git. Comando que não responde no prazo volta como falha
+    (`RC_TIMEOUT`), não como exceção.
+
+    Até 13/11/2026 a `TimeoutExpired` escapava: o push do corpus RAG estourou o
+    prazo, a exceção derrubou a rotina antes da verificação e da notificação,
+    e o estado já dizia "ok". Quem chama já trata código de saída não zero.
+    """
     ambiente = dict(os.environ)
     # Sem isto, um push sem credencial guardada abre prompt e pendura o processo
     # até o timeout do orquestrador, sem dizer o motivo.
     ambiente["GIT_TERMINAL_PROMPT"] = "0"
-    return subprocess.run(["git", *argumentos], cwd=str(raiz), env=ambiente,
-                          capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", timeout=TIMEOUT_GIT, check=False)
+    argv = ["git", *argumentos]
+    try:
+        return subprocess.run(argv, cwd=str(raiz), env=ambiente,
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(argv, RC_TIMEOUT, "",
+                                           f"sem resposta em {timeout} s")
 
 
 def _ultima_linha(proc: subprocess.CompletedProcess) -> str:
@@ -145,20 +168,24 @@ def operacao_em_curso(raiz: Path) -> str:
     return ""
 
 
-def artefatos_mudados(raiz: Path, caminhos: list[str]) -> list[str]:
+def artefatos_mudados(raiz: Path, caminhos: list[str]) -> list[str] | None:
     """Quais dos caminhos declarados diferem do que está commitado.
 
     Cobre os dois casos: arquivo rastreado que mudou (`diff HEAD`) e artefato
     que ainda não existe no repositório (`ls-files --others`). Um artefato novo
     que nunca fosse commitado seria a falha silenciosa desta rotina.
+
+    ``None`` quando qualquer um dos dois comandos falha ou fica sem resposta.
+    Lista vazia afirma "nada mudou"; um git que não respondeu não prova isso, e
+    tratá-lo como lista vazia deixava a publicação dar ``ok`` com o artefato
+    novo fora do commit (revisão do PR #743).
     """
     mudados: set[str] = set()
-    proc = _git(raiz, "diff", "--name-only", "HEAD", "--", *caminhos)
-    if proc.returncode == 0:
-        mudados.update(linha.strip() for linha in (proc.stdout or "").splitlines()
-                       if linha.strip())
-    proc = _git(raiz, "ls-files", "--others", "--exclude-standard", "--", *caminhos)
-    if proc.returncode == 0:
+    for argumentos in (("diff", "--name-only", "HEAD", "--", *caminhos),
+                       ("ls-files", "--others", "--exclude-standard", "--", *caminhos)):
+        proc = _git(raiz, *argumentos)
+        if proc.returncode != 0:
+            return None
         mudados.update(linha.strip() for linha in (proc.stdout or "").splitlines()
                        if linha.strip())
     return sorted(mudados)
@@ -218,7 +245,8 @@ def _buscar_origin(raiz: Path, pausas) -> tuple[subprocess.CompletedProcess, int
     """`git fetch` com novas tentativas. Devolve a última resposta e quantas foram.
 
     Fetch que estoura `TIMEOUT_GIT` conta como tentativa falha, não como exceção:
-    rede pela metade costuma pendurar em vez de recusar.
+    rede pela metade costuma pendurar em vez de recusar. `_git` já devolve o
+    estouro como falha; o `except` fica para quem o substitui (testes).
     """
     tentativas = 0
     for pausa in (0, *pausas):
@@ -355,34 +383,82 @@ def publicar_artefatos(raiz: Path, caminhos, mensagem: str,
         return resultado
 
     mudados = artefatos_mudados(raiz, declarados)
-    if not mudados:
-        resultado.motivo = "artefato idêntico ao commitado"
+    if mudados is None:
+        resultado.erros.append(
+            "não deu para saber se o artefato mudou (git diff/ls-files falhou ou "
+            "ficou sem resposta); nada foi commitado e o alvo segue pendente")
         return resultado
+    if mudados:
+        proc = _git(raiz, "add", "--", *mudados)
+        if proc.returncode != 0:
+            resultado.erros.append(f"git add falhou: {_ultima_linha(proc)}")
+            return resultado
 
-    proc = _git(raiz, "add", "--", *mudados)
-    if proc.returncode != 0:
-        resultado.erros.append(f"git add falhou: {_ultima_linha(proc)}")
-        return resultado
-
-    # Pathspec explícito: commita SÓ estes caminhos, mesmo que haja outra coisa
-    # no índice. A rotina não pode varrer para dentro do commit o que a pessoa
-    # estava preparando.
-    proc = _git(raiz, "commit", "-m", mensagem, "--", *mudados)
-    if proc.returncode != 0:
-        resultado.erros.append(f"git commit falhou: {_ultima_linha(proc)}")
-        return resultado
-    resultado.commitou = True
-    resultado.arquivos = tuple(mudados)
+        # Pathspec explícito: commita SÓ estes caminhos, mesmo que haja outra
+        # coisa no índice. A rotina não pode varrer para dentro do commit o que
+        # a pessoa estava preparando.
+        proc = _git(raiz, "commit", "-m", mensagem, "--", *mudados)
+        if proc.returncode != 0:
+            resultado.erros.append(f"git commit falhou: {_ultima_linha(proc)}")
+            return resultado
+        resultado.commitou = True
+        resultado.arquivos = tuple(mudados)
 
     if not empurrar:
+        if not mudados:
+            resultado.motivo = "artefato idêntico ao commitado"
         return resultado
 
-    proc = _git(raiz, "push", "origin", RAMO_PUBLICADO)
+    # Idêntico à HEAD não quer dizer que está na origin: o commit de uma
+    # execução cujo push falhou fica na main local, e a regeneração seguinte
+    # sai igual a ele. Quem decide se há o que empurrar é a origin/main.
+    fora = _fora_da_origin(raiz, declarados)
+    if fora is None:
+        resultado.erros.append(
+            "não deu para comparar o artefato com a origin/main; sem isso não "
+            "dá para saber se ele chegou")
+        return resultado
+    if not mudados and not fora:
+        resultado.motivo = "artefato idêntico ao commitado e já na origin/main"
+        return resultado
+    if not mudados:
+        resultado.arquivos = tuple(fora)
+
+    proc = _git(raiz, "push", "origin", RAMO_PUBLICADO, timeout=TIMEOUT_PUSH)
+    if proc.returncode == RC_TIMEOUT and _chegou_a_origin(raiz, declarados):
+        # O envio completou e o git pendurou depois. O que vale é a origin.
+        resultado.empurrou = True
+        resultado.motivo = (f"push {_ultima_linha(proc)}, mas a origin/main "
+                            "já tem o artefato")
+        return resultado
     if proc.returncode != 0:
         # Sem force e sem rebase automático: ver o cabeçalho do módulo.
+        quando = ("commitado localmente" if resultado.commitou
+                  else "commit anterior ainda só na main local")
         resultado.erros.append(
-            f"commitado localmente, mas o push falhou: {_ultima_linha(proc)}. "
-            "O commit está na main local; nada foi forçado.")
+            f"{quando}, mas o push falhou: {_ultima_linha(proc)}. "
+            "O commit está na main local; nada foi forçado, e a próxima "
+            "execução tenta de novo.")
         return resultado
     resultado.empurrou = True
     return resultado
+
+
+def _fora_da_origin(raiz: Path, declarados: list[str]) -> list[str] | None:
+    """Quais artefatos da HEAD diferem da `origin/main` local.
+
+    ``None`` quando o git não respondeu (sem a ref da origin, por exemplo): aí
+    ninguém afirma que o artefato chegou.
+    """
+    proc = _git(raiz, "diff", "--name-only", f"origin/{RAMO_PUBLICADO}", "HEAD",
+                "--", *declarados)
+    if proc.returncode != 0:
+        return None
+    return sorted(linha.strip() for linha in (proc.stdout or "").splitlines()
+                  if linha.strip())
+
+
+def _chegou_a_origin(raiz: Path, declarados: list[str]) -> bool:
+    """Depois de um push sem resposta: a origin já tem o que a HEAD tem?"""
+    proc = _git(raiz, "fetch", "origin", RAMO_PUBLICADO)
+    return proc.returncode == 0 and _fora_da_origin(raiz, declarados) == []

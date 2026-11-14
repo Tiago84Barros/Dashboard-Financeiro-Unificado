@@ -216,13 +216,17 @@ def get_warehouse_detail_context(tickers: list[str], *,
     except Exception as exc:  # noqa: BLE001
         logger.warning("detalhe publicado ilegível: %s", exc)
         publicado = None
+    tunel = (f"indisponível agora ({falha_tunel})" if falha_tunel
+             else "túnel não configurado neste ambiente")
     if publicado is not None:
         detalhe, origem = publicado
         if captura is not None:
             captura.update(detalhe)
-        return resumo_para_prompt(detalhe, origem=origem, com_precos=False)
-    tunel = (f"indisponível agora ({falha_tunel})" if falha_tunel
-             else "túnel não configurado neste ambiente")
+        # A fonte que falhou continua nomeada: sem isto, a LLM não sabe por
+        # que o preço diário ficou de fora nem que o túnel caiu.
+        estado = f"túnel {tunel}" if falha_tunel else tunel
+        return resumo_para_prompt(detalhe, origem=f"{origem}; {estado}",
+                                  com_precos=False)
     return (f"DETALHE DO ARMAZÉM LOCAL: {tunel}, e o arquivo publicado "
             "(data/public/detalhe_eua.json.gz) ainda não existe; preço diário, "
             "trimestres e proventos não entraram.")
