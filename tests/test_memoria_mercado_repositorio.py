@@ -356,10 +356,15 @@ def test_fonte_nao_diaria_ainda_carrega_o_aviso(monkeypatch):
 def test_o_script_le_a_senha_do_container_e_nunca_de_uma_constante():
     """A senha do armazem sai do `docker inspect`, nao do codigo -- regra
     permanente do usuario: chave em variavel de ambiente, nunca no fonte."""
-    fonte = inspect.getsource(construtor.warehouse_url)
-    assert "docker" in fonte and "POSTGRES_PASSWORD=" in fonte
-    assert "localhost:5433" in fonte
-    assert "quote_plus(senha)" in fonte      # senha com caractere especial
-    # E o modulo inteiro nao carrega nenhuma senha literal.
-    modulo = inspect.getsource(construtor)
-    assert "postgres:postgres@" not in modulo
+    from scripts import publish_fii_selection_from_local as pub
+
+    # Desde 14/11/2026 o script delega ao leitor unico do armazem.
+    assert "_warehouse_url()" in inspect.getsource(construtor.warehouse_url)
+    leitor = inspect.getsource(pub.senha_do_warehouse)
+    assert '"docker", "inspect"' in leitor and "POSTGRES_PASSWORD=" in leitor
+    url = inspect.getsource(pub._warehouse_url)
+    assert "localhost:5433" in url
+    assert "quote_plus(senha)" in url        # senha com caractere especial
+    # E nenhum dos dois modulos carrega senha literal.
+    for modulo in (construtor, pub):
+        assert "postgres:postgres@" not in inspect.getsource(modulo)
