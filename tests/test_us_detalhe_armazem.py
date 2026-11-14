@@ -194,12 +194,26 @@ def test_cliente_traz_detalhe_pelo_tunel_e_guarda(tunel):
     assert tunel == [["AAPL", "KO"]]
 
 
+def _sem_arquivo_publicado(monkeypatch):
+    """Sem túnel, o contexto cai no arquivo publicado (data/public/detalhe_eua.json.gz).
+
+    Os dois testes abaixo medem a mensagem de quando NENHUM dos dois existe; com
+    o arquivo de verdade no repositório, a leitura dele passava na frente e o
+    teste dependia de o arquivo estar vazio. O caminho do arquivo tem teste
+    próprio em ``tests/test_us_detalhe_publicado.py``.
+    """
+    import core.us_detalhe_armazem as det
+
+    monkeypatch.setattr(det, "ler_do_arquivo", lambda *_a, **_k: None)
+
+
 def test_contexto_da_llm_diz_quando_o_tunel_nao_existe(monkeypatch):
     import core.llm_context_us as ctx
     import core.us_read as ur
 
     monkeypatch.setattr(ur, "_db_is_local", lambda: False)
     monkeypatch.setattr(ar, "_config", lambda: ("", ""))
+    _sem_arquivo_publicado(monkeypatch)
     assert "túnel não configurado" in ctx.get_warehouse_detail_context(["AAPL"])
 
 
@@ -212,6 +226,7 @@ def test_contexto_da_llm_diz_quando_o_tunel_caiu(monkeypatch):
 
     monkeypatch.setattr(ur, "_db_is_local", lambda: False)
     monkeypatch.setattr(ar, "detalhe_eua", _cai)
+    _sem_arquivo_publicado(monkeypatch)
     texto = ctx.get_warehouse_detail_context(["AAPL"])
     assert "indisponível agora" in texto and "PC ou túnel desligado" in texto
 
