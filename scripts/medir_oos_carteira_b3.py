@@ -26,7 +26,9 @@ Uso::
 A mesma rodada compara também, safra a safra, os pesos do motor com pesos
 iguais nos MESMOS nomes (puro e com os tetos do perfil): a chave
 ``pesos_do_motor_vs_iguais_mesmos_nomes`` de cada perfil diz se a regra de
-peso acrescenta algo além da escolha dos nomes.
+peso acrescenta algo além da escolha dos nomes. Safra em que os pesos iguais
+não cabem nos tetos do perfil (ou em que o motor exige revisão) sai marcada,
+e ``resumo_dentro_dos_limites`` refaz a conta sem ela.
 
 O armazém local precisa estar de pé (`docker ps --filter name=dfu_warehouse`):
 preços saem de lá. Nada é gravado em banco nenhum -- só o JSON.
@@ -471,7 +473,7 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
             lambda r: oos.pesos_iguais_mesmos_nomes(r["pesos"])),
         oos.MESMOS_NOMES_IGUAIS_TETOS: oos.comparar_mesmos_nomes(
             linhas_sem, cost_cfg,
-            lambda r: oos.pesos_iguais_mesmos_nomes(
+            lambda r: oos.carteira_iguais_mesmos_nomes(
                 r["pesos"], setor_de=r["setor_de"], cap=cap,
                 teto_setor=float(params["teto_setor"]),
                 teto_ciclico=float(params["teto_ciclico"]))),
@@ -485,6 +487,11 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
 
 
 def main() -> int:
+    # Console do Windows (cp1252) não escreve "→": o --dry-run quebrava no
+    # print do JSON depois de medir tudo. Troca o caractere por "?" e segue.
+    for fluxo in (sys.stdout, sys.stderr):
+        if hasattr(fluxo, "reconfigure"):
+            fluxo.reconfigure(errors="replace")
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dry-run", action="store_true", help="mede e imprime sem gravar")
     ap.add_argument("--perfil", action="append",
@@ -606,7 +613,14 @@ def main() -> int:
                       f"motor={linha['motor_liquido']:+.1%} "
                       f"{regra}={linha['alternativa_liquido']:+.1%} "
                       f"excesso={linha['excesso']:+.1%} "
-                      f"pesos diferentes={linha['distancia_pesos']:.0%}", flush=True)
+                      f"pesos diferentes={linha['distancia_pesos']:.0%}"
+                      f"{' [alternativa fora dos limites]' if linha['alternativa_fora_dos_limites'] else ''}"
+                      f"{' [motor exige revisao]' if linha['motor_fora_dos_limites'] else ''}",
+                      flush=True)
+            dentro = comp["resumo_dentro_dos_limites"]
+            if comp["safras_alternativa_fora_dos_limites"] or comp["safras_motor_fora_dos_limites"]:
+                print(f"    so safras dentro dos limites: media={dentro['media']} "
+                      f"ic95={dentro['ic95']} n={dentro['n_safras']}", flush=True)
 
     saida = {
         "versao_medicao": oos.VERSAO_MEDICAO,
