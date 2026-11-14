@@ -273,6 +273,23 @@ def test_cartoes_escapam_e_mostram_os_numeros():
     assert "<b>x" not in fora
 
 
+def test_cartao_confronto_sai_balanceado_e_numa_linha():
+    """O Streamlit fecha tag aberta em cada st.markdown e transforma recuo em
+    bloco de código: o cartão sai inteiro, balanceado e sem quebra de linha."""
+    html = tela.cartao_confronto(_conf())
+    assert html.count("<div") == html.count("</div>")
+    assert html.count("<table") == html.count("</table>") == 2
+    assert html.count("<tr") == html.count("</tr>")
+    assert "\n" not in html
+    assert "Qualidade por classe" in html and "Distribuição por classe" in html
+
+
+def test_td_das_tabelas_e_atributo_e_nao_tag():
+    """O confronto redefinia ``_TD`` como tag inteira, e valuation, pares e
+    notícias, que usam ``<td {_TD}cor">``, saíam com ``<td <td ...>``."""
+    assert tela._TD.startswith("style=")
+
+
 def test_avaliacoes_do_modelo_lembra_sucesso_e_nao_lembra_falha(monkeypatch):
     chamadas = []
 
