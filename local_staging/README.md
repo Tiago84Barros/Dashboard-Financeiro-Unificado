@@ -204,7 +204,12 @@ Duas regras que existem por incidente:
 ### Estado, log e verificação
 
 O estado fica em `local_staging/estado_publicacao.json`, gravado **depois de cada
-alvo** (hibernar no meio não desfaz o que já foi publicado). Na primeira execução
+alvo** (hibernar no meio não desfaz o que já foi publicado). Alvo que declara
+artefato em `data/public/` fica `artefato_pendente` até o push do artefato
+chegar à `origin/main`; só então vira `ok` e a data avança. Em 13/11/2026 o
+push do `rag_corpus` não respondeu, a rotina caiu e o estado já dizia `ok`: o
+artefato ficou só na main local e ninguém foi avisado. Pendente volta à fila
+na execução seguinte e aparece no vigia. Na primeira execução
 ele é semeado com a data real da última publicação lida dos próprios bancos --
 sem isso um arquivo vazio republicaria tudo, inclusive as 346 mil linhas de
 `prices_monthly`:

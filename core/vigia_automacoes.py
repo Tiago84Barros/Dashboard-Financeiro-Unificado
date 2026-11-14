@@ -47,7 +47,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 from core.frescor import TOLERANCIA_DIAS, idade_em_dias, limite_do_alvo
-from core.publicacao_agenda import ALVOS
+from core.publicacao_agenda import ALVOS, STATUS_ARTEFATO_PENDENTE
 
 CONCLUSOES_FALHA = frozenset({"failure", "timed_out", "startup_failure"})
 CONCLUSOES_SUCESSO = frozenset({"success"})
@@ -187,8 +187,13 @@ def problemas_vitrine(estado: dict, hoje: date, alvos=ALVOS
         texto = (f"{alvo.titulo} ({alvo.chave}): última publicação em "
                  f"{_dia(ultima)}, há {idade} dias -- limite {limite} d "
                  f"(cadência {alvo.cadencia_dias} d + tolerância {TOLERANCIA_DIAS} d).")
-        if registro.get("ultimo_status") not in (None, "ok"):
-            texto += (f" A última tentativa ({_dia(registro.get('ultima_tentativa'))}) "
+        status = registro.get("ultimo_status")
+        tentativa = _dia(registro.get("ultima_tentativa"))
+        if status == STATUS_ARTEFATO_PENDENTE:
+            texto += (f" A última tentativa ({tentativa}) publicou, mas o artefato "
+                      "não chegou à main; veja local_staging/logs/atualizacao_vitrines.log.")
+        elif status not in (None, "ok"):
+            texto += (f" A última tentativa ({tentativa}) "
                       "falhou; veja local_staging/logs/atualizacao_vitrines.log.")
         # A data da última publicação só muda quando publica -- e publicar
         # zera a idade. Na prática, reaviso só pelas 24 h.

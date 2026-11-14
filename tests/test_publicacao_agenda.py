@@ -329,3 +329,20 @@ def test_indices_de_referencia_dos_eua_sao_coletados_derivados_e_publicados_todo
     # Antes da republicação mensal, para que ela já leve os índices frescos.
     chaves = [a.chave for a in ALVOS]
     assert chaves.index("us_benchmarks") < chaves.index("us_prices")
+
+
+def test_artefato_pendente_nao_avanca_a_data_e_volta_para_a_fila():
+    """13/11/2026: o publicador rodou, o estado disse "ok" e o artefato não
+    chegou à main. Publicado é quando o artefato está na origin."""
+    original = {"cdi_diario": _registro(0.5)}
+    novo = registrar_resultado(original, "cdi_diario", True, AGORA, versao="2",
+                               artefato_pendente=True)
+    registro = novo["cdi_diario"]
+
+    assert registro["ultimo_status"] == "artefato_pendente"
+    assert registro["ultima_tentativa"] == AGORA.isoformat()
+    assert registro["ultima_publicacao"] == original["cdi_diario"]["ultima_publicacao"]
+    assert "versao" not in registro
+    # Dentro da cadência, mas devido: o artefato da main é o velho.
+    assert motivo_para_publicar(POR_CHAVE["cdi_diario"], registro, AGORA) == (
+        "artefato não chegou à main")
