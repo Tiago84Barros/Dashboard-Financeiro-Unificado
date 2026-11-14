@@ -194,22 +194,26 @@ def test_cliente_traz_detalhe_pelo_tunel_e_guarda(tunel):
     assert tunel == [["AAPL", "KO"]]
 
 
-def test_contexto_da_llm_diz_quando_o_tunel_nao_existe(monkeypatch):
+def test_contexto_da_llm_diz_quando_o_tunel_nao_existe(monkeypatch, tmp_path):
     import core.llm_context_us as ctx
     import core.us_read as ur
 
+    # Sem túnel E sem arquivo publicado. O arquivo do repositório não serve de
+    # "ausente": desde 14/11/2026 ele tem dado, e o contexto cai nele.
+    monkeypatch.setattr(det, "ARQUIVO", tmp_path / "nao_existe.json.gz")
     monkeypatch.setattr(ur, "_db_is_local", lambda: False)
     monkeypatch.setattr(ar, "_config", lambda: ("", ""))
     assert "túnel não configurado" in ctx.get_warehouse_detail_context(["AAPL"])
 
 
-def test_contexto_da_llm_diz_quando_o_tunel_caiu(monkeypatch):
+def test_contexto_da_llm_diz_quando_o_tunel_caiu(monkeypatch, tmp_path):
     import core.llm_context_us as ctx
     import core.us_read as ur
 
     def _cai(_s):
         raise ar.ArmazemRemotoIndisponivel("sem resposta — PC ou túnel desligado?")
 
+    monkeypatch.setattr(det, "ARQUIVO", tmp_path / "nao_existe.json.gz")
     monkeypatch.setattr(ur, "_db_is_local", lambda: False)
     monkeypatch.setattr(ar, "detalhe_eua", _cai)
     texto = ctx.get_warehouse_detail_context(["AAPL"])
