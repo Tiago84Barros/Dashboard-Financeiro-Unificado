@@ -268,9 +268,16 @@ def _parte_do_grupo(valor: float | None, total: float | None) -> float | None:
 def cartao_lista(b: rs.Bloco) -> str:
     """Reserva e renda fixa: um card por título, com valor, % da carteira e
     uma barra com a parte do grupo (14/11/2026, pedido do usuário: cards no
-    lugar da tabela simples). Puro."""
+    lugar da tabela simples). Puro.
+
+    A parte do grupo só sai quando todos os títulos têm valor: ``Bloco.valor``
+    soma ``valor_mercado or 0.0``, e um título sem valoração encolheria o
+    denominador, mostrando "100% do grupo" num grupo de dois (revisão do #746)."""
+    total = (b.valor if all(ln.valor is not None for ln in b.linhas)
+             else None)
+
     def _card(ln: rs.Linha) -> str:
-        parte = _parte_do_grupo(ln.valor, b.valor)
+        parte = _parte_do_grupo(ln.valor, total)
         barra = ("" if parte is None else
                  f'<div class="ia-tit-barra"><span style="width:{parte:.1f}%">'
                  f'</span></div><div class="ia-tit-det">'
