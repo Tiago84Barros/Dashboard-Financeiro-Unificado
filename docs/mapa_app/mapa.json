@@ -1369,7 +1369,7 @@
             {
               "nome": "Reserva de emergência · Renda fixa",
               "resumo": "Lista dos títulos com valor e peso",
-              "explicacao": "Para esses dois grupos a tela mostra só uma lista simples de cada título, com valor e porcentagem da carteira; o cabeçalho traz o alvo da renda fixa e a meta da reserva.",
+              "explicacao": "Para esses dois grupos a tela mostra um cartão por título, com o nome, o valor, a porcentagem da carteira e uma barra com a parte do título dentro do grupo; o cabeçalho traz o alvo da renda fixa e a meta da reserva.",
               "so_admin": false
             },
             {
