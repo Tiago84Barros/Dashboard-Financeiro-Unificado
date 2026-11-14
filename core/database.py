@@ -91,6 +91,38 @@ def engine_do_banco(banco: str):
     return _engine_principal()
 
 
+def engine_do_app():
+    """Engine onde se grava dado do app, e não de uma pessoa: o principal.
+
+    Ativos, instituições, registros de lacuna e de validação são de todos e
+    moram no principal. Numa sessão de conta nova o ``get_engine()`` aponta
+    para o banco ``novos``, onde essas tabelas são estrangeiras: o
+    ``postgres_fdw`` não aceita ``ON CONFLICT DO UPDATE`` e manda NULL nas
+    colunas com padrão (o ``IMPORT FOREIGN SCHEMA`` não traz os padrões).
+    Ler pelo ``get_engine()`` continua certo; gravar, não.
+    """
+    return engine_do_banco(BANCO_PRINCIPAL)
+
+
+def tabela_estrangeira(conn, tabela: str) -> bool:
+    """True quando ``tabela`` é estrangeira no banco desta conexão.
+
+    É o sinal de que a conexão é do banco ``novos`` e de que a gravação em
+    ``tabela`` precisa ir para :func:`engine_do_app`. Fora do Postgres
+    (SQLite, dublês de teste) é sempre False.
+    """
+    try:
+        if getattr(getattr(conn, "dialect", None), "name", None) != "postgresql":
+            return False
+        relkind = conn.execute(
+            text("SELECT relkind FROM pg_class WHERE oid = to_regclass(:t)"),
+            {"t": tabela if "." in tabela else f"public.{tabela}"},
+        ).scalar()
+    except Exception:
+        return False
+    return relkind == "f"
+
+
 def novos_configurado() -> bool:
     """True quando o Supabase das contas novas tem URL nos Secrets."""
     from core.config import settings

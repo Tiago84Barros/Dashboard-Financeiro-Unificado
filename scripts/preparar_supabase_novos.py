@@ -17,9 +17,10 @@ O banco ``novos`` fica assim:
   recriadas localmente, para somar os dados de quem mora aqui.
 - As **linhas sem dono** das tabelas de pessoa (as categorias do sistema,
   ``user_id IS NULL``) são copiadas, com o mesmo id.
-- RLS ligado nas tabelas locais e nada liberado para ``anon`` e
-  ``authenticated``: a API de dados do Supabase não expõe nada. O app conecta
-  como dono das tabelas.
+- RLS ligado nas tabelas locais, com as mesmas policies do principal (os
+  preflights das carteiras-modelo as exigem pelo nome), e nada liberado para
+  ``anon`` e ``authenticated``: a API de dados do Supabase não expõe nada. O
+  app conecta como dono das tabelas.
 
 Uso::
 
@@ -247,6 +248,49 @@ def _indices(conn, tabela: str) -> list[str]:
     return [re.sub(r"^CREATE (UNIQUE )?INDEX ", r"CREATE \1INDEX IF NOT EXISTS ", d) for d in defs]
 
 
+def _policies(conn, tabela: str) -> list[dict]:
+    """Policies de RLS da tabela, como o catálogo as guarda.
+
+    O app conecta como dono das tabelas e o RLS não o barra, mas os
+    ``_preflight_schema`` das carteiras-modelo (B3, FII, EUA) exigem a policy
+    do dono pelo nome em ``pg_policies`` e recusam gravar sem ela.
+    """
+    linhas = conn.execute(text("""
+        SELECT p.polname, p.polpermissive, p.polcmd,
+               COALESCE(ARRAY(SELECT CASE WHEN r = 0 THEN 'public' ELSE r::regrole::text END
+                                FROM unnest(p.polroles) AS r), ARRAY['public']),
+               pg_get_expr(p.polqual, p.polrelid), pg_get_expr(p.polwithcheck, p.polrelid)
+          FROM pg_policy p
+         WHERE p.polrelid = ('public.' || quote_ident(:t))::regclass
+         ORDER BY p.polname
+    """), {"t": tabela}).all()
+    return [dict(nome=n, permissiva=pe, comando=c, papeis=list(r), using=u, check=w)
+            for n, pe, c, r, u, w in linhas]
+
+
+_COMANDOS_POLICY = {"r": "SELECT", "a": "INSERT", "w": "UPDATE", "d": "DELETE", "*": "ALL"}
+
+
+def _criar_policy(tabela: str, pol: dict, papeis_da_api: bool) -> list[str]:
+    """``DROP``/``CREATE`` da policy: rodar de novo a deixa igual à do principal.
+
+    Sem os papéis da API (Postgres puro, testes), ``anon``/``authenticated``
+    viram ``public``: o nome e as expressões, que é o que o app confere,
+    ficam os mesmos.
+    """
+    papeis = [r for r in pol["papeis"] if papeis_da_api or r not in _PAPEIS_DA_API]
+    papeis = papeis or ["public"]
+    alvo = ", ".join(papeis)  # ``regrole::text`` já sai citado quando precisa
+    sql = (f"CREATE POLICY {q(pol['nome'])} ON public.{q(tabela)} "
+           f"AS {'PERMISSIVE' if pol['permissiva'] else 'RESTRICTIVE'} "
+           f"FOR {_COMANDOS_POLICY[pol['comando']]} TO {alvo}")
+    if pol["using"] is not None:
+        sql += f" USING ({pol['using']})"
+    if pol["check"] is not None:
+        sql += f" WITH CHECK ({pol['check']})"
+    return [f"DROP POLICY IF EXISTS {q(pol['nome'])} ON public.{q(tabela)}", sql]
+
+
 def _sequencia(conn, nome_qualificado: str) -> str:
     tipo, inicio, passo, minimo, maximo, cache, ciclo = conn.execute(text("""
         SELECT format_type(seqtypid, NULL), seqstart, seqincrement, seqmin, seqmax,
@@ -289,6 +333,7 @@ def montar_plano(principal, fdw: dict, papeis_da_api: bool = True) -> Plano:
         colunas = {t: _colunas(conn, t) for t in locais}
         restricoes = {t: _restricoes(conn, t) for t in locais}
         indices = {t: _indices(conn, t) for t in locais}
+        policies = {t: _policies(conn, t) for t in locais}
         sequencias: dict[str, tuple[str, str]] = {}
         for t in locais:
             for col in colunas[t]:
@@ -379,6 +424,8 @@ def montar_plano(principal, fdw: dict, papeis_da_api: bool = True) -> Plano:
     # Nada exposto pela API de dados do Supabase.
     for t in locais:
         c.append(f"ALTER TABLE public.{q(t)} ENABLE ROW LEVEL SECURITY")
+        for pol in policies[t]:
+            c.extend(_criar_policy(t, pol, papeis_da_api))
     if papeis_da_api:
         papeis = ", ".join(_PAPEIS_DA_API)
         for esquema in remotos:

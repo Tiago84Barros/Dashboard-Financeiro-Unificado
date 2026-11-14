@@ -27,6 +27,8 @@ from scripts import preparar_supabase_novos as prep
 ADMIN = "11111111-1111-1111-1111-111111111111"
 PASSWORD = "Test#8Ab"
 _SCHEMA = Path(__file__).parents[1] / "supabase_unificado/schema"
+_AUTH_UID = ("CREATE SCHEMA auth; CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql "
+             "STABLE AS 'SELECT NULL::uuid'")
 
 
 @pytest.fixture
@@ -66,6 +68,10 @@ def dois_bancos(monkeypatch):
         conn.execute(text("ALTER TABLE import_logs DROP CONSTRAINT import_logs_batch_id_fkey, "
                           "ADD CONSTRAINT import_logs_batch_id_fkey FOREIGN KEY (batch_id) "
                           "REFERENCES import_batches(id)"))
+        # Como no Supabase: ``auth.uid()`` e uma policy de dono numa tabela da pessoa.
+        conn.execute(text(_AUTH_UID))
+        conn.execute(text("CREATE POLICY accounts_owner_all ON accounts FOR ALL "
+                          "USING (user_id = auth.uid()) WITH CHECK (user_id = auth.uid())"))
         conn.execute(text("CREATE SCHEMA market"))
         conn.execute(text("CREATE TABLE market.cotacao (ticker text PRIMARY KEY, preco numeric)"))
         conn.execute(text("INSERT INTO market.cotacao VALUES ('TEST3', 10.5)"))
@@ -78,6 +84,8 @@ def dois_bancos(monkeypatch):
            "port": os.environ.get("APP4_USERS_TEST_FDW_PORT", "5432"),
            "dbname": nomes[BANCO_PRINCIPAL], "user": parsed.username,
            "password": parsed.password or "", "sslmode": "disable"}
+    with engines[BANCO_NOVOS].begin() as conn:  # o Supabase novo já nasce com ``auth``
+        conn.execute(text(_AUTH_UID))
     plano = prep.montar_plano(engines[BANCO_PRINCIPAL], fdw, papeis_da_api=False)
     prep.aplicar(engines[BANCO_NOVOS], plano)
     monkeypatch.setattr(accounts, "engine_do_banco", lambda banco: engines[banco])
@@ -115,6 +123,54 @@ def test_preparo_separa_o_que_e_da_pessoa_do_que_e_compartilhado(dois_bancos):
     # Reaplicar é seguro (roda de novo depois de cada migration do principal).
     prep.aplicar(novos, prep.montar_plano(engines[BANCO_PRINCIPAL], fdw, papeis_da_api=False))
     assert _contar(novos, "SELECT count(*) FROM categories WHERE user_id IS NULL") == 2
+
+
+def test_policies_do_principal_valem_no_novos(dois_bancos):
+    engines, _, fdw = dois_bancos
+    novos = engines[BANCO_NOVOS]
+    sql = ("SELECT pg_get_expr(polqual, polrelid) || ' | ' || pg_get_expr(polwithcheck, polrelid) "
+           "FROM pg_policy WHERE polname = 'accounts_owner_all' AND polrelid = 'public.accounts'::regclass")
+    esperado = _contar(engines[BANCO_PRINCIPAL], sql)
+    assert esperado and _contar(novos, sql) == esperado
+    # Reaplicar não duplica nem falha.
+    prep.aplicar(novos, prep.montar_plano(engines[BANCO_PRINCIPAL], fdw, papeis_da_api=False))
+    assert _contar(novos, "SELECT count(*) FROM pg_policy WHERE polname = 'accounts_owner_all'") == 1
+
+
+def test_tabela_estrangeira_distingue_o_compartilhado(dois_bancos):
+    from core.database import tabela_estrangeira
+
+    engines, _, _ = dois_bancos
+    with engines[BANCO_NOVOS].connect() as conn:
+        assert tabela_estrangeira(conn, "assets")
+        assert tabela_estrangeira(conn, "market.cotacao")
+        assert not tabela_estrangeira(conn, "accounts")
+        assert not tabela_estrangeira(conn, "nao_existe")
+    with engines[BANCO_PRINCIPAL].connect() as conn:
+        assert not tabela_estrangeira(conn, "assets")
+
+
+def test_ativo_e_instituicao_criados_numa_conta_nova_vao_ao_principal(dois_bancos, monkeypatch):
+    import core.database as database
+    from data_pipeline.importers.investments import common
+
+    engines, _, _ = dois_bancos
+    monkeypatch.setattr(database, "engine_do_app", lambda: engines[BANCO_PRINCIPAL])
+    principal = engines[BANCO_PRINCIPAL]
+    with engines[BANCO_NOVOS].begin() as conn:
+        um = common.get_or_create_asset(conn, "TSTA3", name="Teste A")
+        lote = common.batch_get_or_create_assets(conn, [("TSTA3", "Teste A", "stock"),
+                                                       ("TSTB4", "Teste B", "stock")])
+        inst = common.get_or_create_institution(conn, "Corretora Teste", "broker")
+        # A foto do fdw nesta transação não vê a criação; a releitura no principal vê.
+        assert common.get_or_create_institution(conn, "Corretora Teste", "broker") == inst
+    assert lote["TSTA3"] == um and set(lote) == {"TSTA3", "TSTB4"}
+    assert _contar(principal, "SELECT count(*) FROM assets WHERE ticker IN ('TSTA3','TSTB4')") == 2
+    assert _contar(principal, "SELECT currency FROM assets WHERE ticker = 'TSTB4'") == "BRL"
+    assert _contar(principal, "SELECT id::text FROM financial_institutions "
+                              "WHERE name = 'Corretora Teste'") == inst
+    with engines[BANCO_PRINCIPAL].begin() as conn:  # no principal, a gravação fica na transação
+        assert common.get_or_create_asset(conn, "TSTA3") == um
 
 
 def test_plano_impresso_nao_mostra_a_senha(dois_bancos):

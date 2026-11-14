@@ -18,9 +18,18 @@ o cadastro ainda não abriu. Ela nunca grava no principal.
 - O cadastro (`cadastrar_usuario`) grava só no novos. Ele recusa um e-mail que
   já existe em qualquer um dos dois bancos.
 - Dados que são do app, e não de uma pessoa, continuam gravados no principal,
-  mesmo numa sessão de conta nova (exemplo: `core/lacunas/registro.py`). No
-  novos essas tabelas são estrangeiras, e o `ON CONFLICT DO UPDATE` não passa
-  pelo `postgres_fdw`.
+  mesmo numa sessão de conta nova, por `core.database.engine_do_app()`. No
+  novos essas tabelas são estrangeiras: o `postgres_fdw` não aceita
+  `ON CONFLICT DO UPDATE` e manda NULL nas colunas com padrão, porque o
+  `IMPORT FOREIGN SCHEMA` não traz os padrões. Gravam assim:
+  - o registro de lacunas (`app_lacunas`, em `core/lacunas/registro.py`);
+  - o histórico de validação da Carteira B3 (`market.b3_validation_runs`);
+  - os ativos e as instituições que uma importação cria (`assets` e
+    `financial_institutions`, em
+    `data_pipeline/importers/investments/common.py`). A função
+    `conexao_de_escrita_compartilhada` usa a conexão da importação quando a
+    tabela é local, e o principal quando ela é estrangeira
+    (`core.database.tabela_estrangeira`).
 
 ## O que mora no banco novos
 
@@ -31,8 +40,12 @@ o cadastro ainda não abriu. Ela nunca grava no principal.
 | Visões | as que leem tabelas de pessoa (`v_account_balance` e outras) são recriadas localmente |
 | Linhas sem dono | as categorias do sistema (`user_id IS NULL`) são copiadas com o mesmo id |
 
-RLS fica ligado nas tabelas locais, e nada é liberado para `anon` e
-`authenticated`.
+RLS fica ligado nas tabelas locais, e as policies de cada uma são recriadas
+como estão no principal (`pg_policy`: comando, papéis, `USING` e
+`WITH CHECK`); os preflights das carteiras-modelo as procuram pelo nome.
+Os privilégios de `anon` e `authenticated` são revogados, e a API de dados
+do Supabase não expõe nada. Com `--sem-papeis-da-api` (Postgres puro, sem
+esses papéis), eles saem das policies.
 
 ## Passo a passo (feito pelo administrador)
 
@@ -97,6 +110,10 @@ A conta do administrador é recusada. A memória das conversas mora em
 - **Latência e egress**: toda leitura de mercado numa sessão de conta nova
   atravessa o `postgres_fdw` até o principal e conta no egress dos dois
   projetos.
+- **Ativo criado numa importação de conta nova** é confirmado no principal
+  numa transação própria, antes de a importação seguir. Se a importação
+  falhar depois, o ativo fica no cadastro, como qualquer outro ticker. A
+  instituição também.
 - **Categorias do sistema** são copiadas na preparação. Uma categoria de
   sistema criada depois no principal só chega ao novos quando o script roda
   de novo.
