@@ -541,3 +541,134 @@ def test_substituto_do_piso_que_a_guarda_exclui_sai_na_montagem_sem_nova_troca()
     assert set(sel) == {"BBBB3", "CCCC3"}
     cart = oos.montar_carteira([("S", sel, pesos)], **TETOS, exclui=_so_c)
     assert list(cart["pesos"]) == ["BBBB3"]
+
+
+# ── pesos do motor × pesos iguais nos mesmos nomes ──────────────────────────
+
+def test_pesos_iguais_mesmos_nomes_puro_ignora_peso_zero():
+    pesos = {"A": 0.5, "B": 0.3, "C": 0.2, "D": 0.0}
+    assert oos.pesos_iguais_mesmos_nomes(pesos) == pytest.approx(
+        {"A": 1 / 3, "B": 1 / 3, "C": 1 / 3})
+    assert oos.pesos_iguais_mesmos_nomes({}) == {}
+
+
+def test_pesos_iguais_com_tetos_respeita_teto_de_setor():
+    pesos = {tk: 0.1 for tk in "ABCDEFGHIJ"}
+    setor_de = {tk: ("Bancos" if tk in "ABCDE" else f"S{tk}") for tk in pesos}
+    out = oos.pesos_iguais_mesmos_nomes(pesos, setor_de=setor_de, cap=0.25,
+                                        teto_setor=0.30, teto_ciclico=1.0)
+    assert sum(out.values()) == pytest.approx(1.0)
+    assert sum(w for tk, w in out.items() if setor_de[tk] == "Bancos") <= 0.30 + 1e-6
+    assert max(out.values()) <= 0.25 + 1e-6
+
+
+def test_pesos_iguais_com_tetos_sem_nomes_para_o_cap_fica_puro():
+    # Como a montagem: com menos nomes do que o cap comporta, não projeta.
+    out = oos.pesos_iguais_mesmos_nomes({"A": 0.7, "B": 0.3}, cap=0.25)
+    assert out == pytest.approx({"A": 0.5, "B": 0.5})
+
+
+def test_montar_carteira_devolve_o_setor_usado_nos_tetos():
+    itens = [("Bancos", ["A", "B"], {"A": 2.0, "B": 1.0}),
+             ("Energia", ["B", "C"], {"B": 1.0, "C": 1.0})]
+    cart = oos.montar_carteira(itens, cap=1.0, teto_setor=1.0, teto_ciclico=1.0)
+    # B aparece nos dois segmentos: vale o primeiro, como no laço da montagem.
+    assert cart["setor_de"] == {"A": "Bancos", "B": "Bancos", "C": "Energia"}
+
+
+def test_comparar_mesmos_nomes_contra_si_mesmo_da_zero():
+    linhas = [
+        {"safra": 2020, "pesos": {"A": 0.5, "B": 0.5},
+         "retornos": {"A": 0.10, "B": -0.05}, "mensuravel": True},
+        {"safra": 2021, "pesos": {"A": 0.5, "C": 0.5},
+         "retornos": {"A": 0.20, "C": 0.00}, "mensuravel": True},
+    ]
+    comp = oos.comparar_mesmos_nomes(linhas, CFG, lambda r: r["pesos"])
+    for linha in comp["safras"]:
+        assert linha["excesso"] == pytest.approx(0.0, abs=1e-12)
+        assert linha["distancia_pesos"] == pytest.approx(0.0)
+
+
+def test_comparar_mesmos_nomes_mede_so_a_regra_de_peso():
+    # Uma safra, sem custo: o excesso bruto é a conta à mão.
+    linhas = [{"safra": 2022, "pesos": {"A": 0.8, "B": 0.2},
+               "retornos": {"A": 0.10, "B": 0.30}, "mensuravel": True}]
+    comp = oos.comparar_mesmos_nomes(
+        linhas, CFG, lambda r: oos.pesos_iguais_mesmos_nomes(r["pesos"]))
+    linha = comp["safras"][0]
+    assert linha["motor_bruto"] == pytest.approx(0.8 * 0.10 + 0.2 * 0.30)
+    assert linha["alternativa_bruto"] == pytest.approx(0.5 * 0.10 + 0.5 * 0.30)
+    assert linha["excesso_bruto"] == pytest.approx(0.14 - 0.20)
+    assert linha["distancia_pesos"] == pytest.approx(0.3)
+    assert comp["resumo"]["n_safras"] == 1
+
+
+def test_comparar_mesmos_nomes_safra_sem_carteira_fica_marcada():
+    linhas = [{"safra": 2015, "pesos": {}, "retornos": {}, "mensuravel": False},
+              {"safra": 2016, "pesos": {"A": 1.0}, "retornos": {"A": 0.1},
+               "mensuravel": True}]
+    comp = oos.comparar_mesmos_nomes(
+        linhas, CFG, lambda r: oos.pesos_iguais_mesmos_nomes(r["pesos"]))
+    assert comp["safras"][0].get("sem_carteira") is True
+    assert comp["resumo"]["n_safras"] == 1
+
+
+def test_iguais_com_tetos_que_nao_cabem_sai_marcado():
+    # Achado do Codex no PR #741: quatro bancos com teto de setor de 30% não
+    # cabem; os pesos saem, mas a carteira tem de dizer que viola o perfil.
+    pesos = {tk: 0.25 for tk in ("BBAS3", "ITUB4", "BBDC4", "SANB11")}
+    setor_de = {tk: "Bancos" for tk in pesos}
+    cart = oos.carteira_iguais_mesmos_nomes(pesos, setor_de=setor_de, cap=0.25,
+                                            teto_setor=0.30, teto_ciclico=1.0)
+    assert cart["exige_revisao"] is True
+    assert cart["avisos"]
+    assert sum(cart["pesos"].values()) == pytest.approx(1.0)
+
+
+def test_iguais_e_montagem_leem_os_limites_pela_mesma_regra():
+    # Gêmeos: mesmos nomes, mesmos pesos de entrada -> mesmo status.
+    casos = [
+        ({tk: 0.25 for tk in "ABCD"}, {tk: "Bancos" for tk in "ABCD"}),
+        ({tk: 0.1 for tk in "ABCDEFGHIJ"}, {tk: f"S{tk}" for tk in "ABCDEFGHIJ"}),
+        ({"A": 0.5, "B": 0.5}, {"A": "S1", "B": "S2"}),
+    ]
+    limites = {"cap": 0.25, "teto_setor": 0.30, "teto_ciclico": 0.60}
+    status = set()
+    for pesos, setor_de in casos:
+        alt = oos.carteira_iguais_mesmos_nomes(pesos, setor_de=setor_de, **limites)
+        itens = [(setor_de[tk], [tk], {tk: 1.0}) for tk in pesos]
+        if len(set(setor_de.values())) < len(pesos):
+            itens = [("Bancos", list(pesos), {tk: 1.0 for tk in pesos})]
+        mont = oos.montar_carteira(itens, **limites)
+        assert alt["pesos"] == pytest.approx(mont["pesos"])
+        for chave in ("inviavel", "exige_revisao"):
+            assert alt[chave] == mont[chave], (pesos, chave)
+        status.add((alt["inviavel"], alt["exige_revisao"]))
+    # Os três casos cobrem: tetos que não fecham, carteira válida, poucos nomes.
+    assert status == {(False, True), (False, False), (True, True)}
+
+
+def test_comparar_mesmos_nomes_propaga_violacao_de_limites():
+    pesos = {tk: 0.25 for tk in ("BBAS3", "ITUB4", "BBDC4", "SANB11")}
+    setor_de = {tk: "Bancos" for tk in pesos}
+    linhas = [
+        {"safra": 2020, "pesos": pesos, "setor_de": setor_de,
+         "retornos": {tk: 0.1 for tk in pesos}, "mensuravel": True,
+         "inviavel_no_cap": False, "exige_revisao": True},
+        {"safra": 2021, "pesos": {"A": 0.5, "B": 0.5}, "setor_de": {},
+         "retornos": {"A": 0.1, "B": 0.0}, "mensuravel": True},
+    ]
+    comp = oos.comparar_mesmos_nomes(
+        linhas, CFG, lambda r: oos.carteira_iguais_mesmos_nomes(
+            r["pesos"], setor_de=r["setor_de"], cap=0.25, teto_setor=0.30,
+            teto_ciclico=1.0))
+    assert comp["safras_alternativa_fora_dos_limites"] == [2020, 2021]
+    assert comp["safras_motor_fora_dos_limites"] == [2020]
+    assert comp["safras"][0]["alternativa_avisos"]
+    assert "ATENÇÃO" in comp["leitura"]
+    assert comp["resumo_dentro_dos_limites"]["n_safras"] == 0
+    # Pesos soltos (1/N puro) continuam aceitos e não marcam nada.
+    puro = oos.comparar_mesmos_nomes(
+        linhas[1:], CFG, lambda r: oos.pesos_iguais_mesmos_nomes(r["pesos"]))
+    assert puro["safras_alternativa_fora_dos_limites"] == []
+    assert puro["resumo_dentro_dos_limites"]["n_safras"] == 1
