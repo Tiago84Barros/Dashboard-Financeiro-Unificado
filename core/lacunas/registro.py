@@ -85,9 +85,13 @@ def _ja_visto(impressao: str) -> bool:
 
 
 def _engine():
-    from core.database import get_engine
+    # ``app_lacunas`` é do app, não de uma pessoa: mora no principal. Numa
+    # sessão de conta nova o ``get_engine()`` aponta para o Supabase das contas
+    # novas, onde ela é tabela estrangeira -- e o ``ON CONFLICT DO UPDATE`` da
+    # gravação não passa pelo ``postgres_fdw``.
+    from core.database import BANCO_PRINCIPAL, engine_do_banco
 
-    return get_engine()
+    return engine_do_banco(BANCO_PRINCIPAL)
 
 
 def _gravar_banco_seguro(engine, lacuna) -> None:

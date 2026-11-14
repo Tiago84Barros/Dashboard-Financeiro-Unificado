@@ -20,7 +20,7 @@ user_state = fixtures.user_state
 
 def test_tema_isolado_e_preserva_outras_preferencias(postgres, user_state):
     login_as(user_state, ADMIN)
-    other = accounts.create_user("Pessoa tema", "theme@example.test", PASSWORD)
+    other = accounts.cadastrar_usuario("Pessoa tema", "theme@example.test", PASSWORD)
     # Conta que nunca escolheu tema responde ausência, não "dark": são duas
     # respostas diferentes e confundi-las apagava a memória de quem está no claro.
     assert preferences.load_theme() is None
@@ -835,10 +835,14 @@ def test_entrar_nao_herda_o_tema_de_quem_estava_antes(monkeypatch):
 
     import core.auth as auth
 
-    fonte = inspect.getsource(auth._renderizar_login)
+    # Entrar e criar conta passam pelo mesmo ``_entrar``.
+    fonte = inspect.getsource(auth._entrar)
     assert "st.session_state.clear()" in fonte, (
         "o login passou a preservar o tema e pode herdar o da conta anterior"
     )
+    for caminho in (auth._renderizar_entrada, auth._renderizar_cadastro):
+        assert "_entrar(user)" in inspect.getsource(caminho)
+        assert "_app4_user" not in inspect.getsource(caminho)
 
 
 # -- nada no caminho do tema pode depender de ser administrador ---------------

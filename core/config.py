@@ -135,6 +135,12 @@ class Settings:
     SUPABASE_UNIFICADO_URL: str = _get_secret("SUPABASE_UNIFICADO_URL")
     SUPABASE_UNIFICADO_ANON_KEY: str = _get_secret("SUPABASE_UNIFICADO_ANON_KEY")
 
+    # ── Banco das contas novas (cadastro aberto, desde 14/11/2026) ────────────
+    # Segundo projeto Supabase. Quem se cadastra pela tela de login grava aqui;
+    # quem já existia continua no banco acima. Vazio = cadastro fechado.
+    # Formato: postgresql://postgres.REF:SENHA@HOST.pooler.supabase.com:6543/postgres
+    SUPABASE_NOVOS_URL: str = _get_secret("SUPABASE_NOVOS_URL")
+
     # ── Variaveis legadas (retrocompatibilidade) ──────────────────────────────
     # Mantidas para nao quebrar .env existentes. Preferir SUPABASE_UNIFICADO_URL.
     DATABASE_URL: str = _get_secret("DATABASE_URL")
@@ -317,6 +323,11 @@ class Settings:
             or self.SUPABASE_DB_URL
             or ""
         )
+
+    @property
+    def db_url_novos(self) -> str:
+        """URL do Supabase das contas criadas pelo cadastro da tela de login."""
+        return self.SUPABASE_NOVOS_URL or ""
 
     @property
     def is_development(self) -> bool:

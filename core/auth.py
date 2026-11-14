@@ -68,6 +68,7 @@ def verificar_autenticacao() -> None:
         agora = time.time()
         marca = st.session_state.get(_VALIDADA)
         if _ainda_vale(marca, user, agora, _VALIDADE_DA_REVALIDACAO):
+            _marcar_presenca(user)
             return
         try:
             valido = session_valid(user)
@@ -76,6 +77,7 @@ def verificar_autenticacao() -> None:
             if _ainda_vale(marca, user, agora, _TOLERANCIA_SEM_BANCO):
                 # Banco fora do ar não é credencial inválida. Antes isto
                 # parava o app com uma tarja de erro no lugar da página.
+                _marcar_presenca(user)
                 return
             st.error("Não foi possível validar sua sessão. Tente novamente.")
             st.stop()
@@ -83,11 +85,24 @@ def verificar_autenticacao() -> None:
             st.session_state[_VALIDADA] = (
                 str(user.get("id", "")), str(user.get("credential_version", "")), agora
             )
+            _marcar_presenca(user)
             return
         _limpar_sessao()
 
     _renderizar_login()
     st.stop()
+
+
+def _marcar_presenca(user: dict) -> None:
+    """Põe esta sessão no painel de logados do administrador.
+
+    Presença é acessório: falha aqui nunca derruba o login de ninguém.
+    """
+    try:
+        from core.presenca import registrar
+        registrar(user)
+    except Exception:
+        logger.exception("falha ao registrar presença")
 
 
 def _ainda_vale(marca, user: dict, agora: float, janela: float) -> bool:
@@ -121,6 +136,11 @@ def _limpar_sessao() -> None:
     """
     from design.theme_selector import limpar_sessao_preservando_o_tema
 
+    try:
+        from core.presenca import remover
+        remover()
+    except Exception:
+        logger.exception("falha ao tirar a sessão do painel de logados")
     limpar_sessao_preservando_o_tema()
 
 
@@ -145,8 +165,13 @@ def _senha_correta(entrada: str) -> bool:
     return bool(conf) and hmac.compare_digest(entrada, conf)
 
 
+#: Cadastros que uma mesma sessão do navegador pode fazer. O teto global
+#: por hora mora em ``core.user_accounts._CADASTROS_POR_HORA``.
+_CADASTROS_POR_SESSAO = 3
+
+
 def _renderizar_login() -> None:
-    """Renderiza o formulário de login centralizado."""
+    """Tela de entrada: aba para entrar e aba para criar a própria conta."""
     _, col, _ = st.columns([1, 2, 1])
     with col:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
@@ -155,32 +180,95 @@ def _renderizar_login() -> None:
             unsafe_allow_html=True,
         )
         st.markdown(
-            '<p style="text-align:center;color:#718096;margin-top:0">Acesso restrito</p>',
+            '<p style="text-align:center;color:#718096;margin-top:0">'
+            "Entre na sua conta ou crie uma nova</p>",
             unsafe_allow_html=True,
         )
         st.markdown("<br>", unsafe_allow_html=True)
 
-        email = st.text_input("E-mail ou administrador", key="_auth_email_input")
-        senha = st.text_input(
-            "Senha de acesso",
-            type="password",
-            key="_auth_senha_input",
-            placeholder="Digite sua senha",
-        )
+        aba_entrar, aba_criar = st.tabs(["Entrar", "Criar conta"])
+        with aba_entrar:
+            _renderizar_entrada()
+        with aba_criar:
+            _renderizar_cadastro()
 
-        if st.button("Entrar", width="stretch", type="primary"):
-            if not senha:
-                st.warning("Informe a senha.")
+
+def _entrar(user: dict) -> None:
+    st.session_state.clear()
+    st.session_state["_app4_user"] = user
+    st.rerun()
+
+
+def _renderizar_entrada() -> None:
+    email = st.text_input("E-mail ou administrador", key="_auth_email_input")
+    senha = st.text_input(
+        "Senha de acesso",
+        type="password",
+        key="_auth_senha_input",
+        placeholder="Digite sua senha",
+    )
+
+    if st.button("Entrar", width="stretch", type="primary"):
+        if not senha:
+            st.warning("Informe a senha.")
+        else:
+            from core.user_accounts import authenticate
+            try:
+                user = authenticate(email, senha)
+            except Exception:
+                st.error("Não foi possível acessar as contas. Tente novamente mais tarde.")
+                return
+            if user:
+                _entrar(user)
             else:
-                from core.user_accounts import authenticate
-                try:
-                    user = authenticate(email, senha)
-                except Exception:
-                    st.error("Não foi possível acessar as contas. Tente novamente mais tarde.")
-                    return
-                if user:
-                    st.session_state.clear()
-                    st.session_state["_app4_user"] = user
-                    st.rerun()
-                else:
-                    st.error("Credenciais inválidas ou acesso temporariamente bloqueado.")
+                st.error("Credenciais inválidas ou acesso temporariamente bloqueado.")
+
+
+def _renderizar_cadastro() -> None:
+    """Cadastro aberto: qualquer pessoa cria a própria conta.
+
+    A conta nasce no Supabase das contas novas (``core.user_accounts.
+    cadastrar_usuario``). Sem ele configurado, a aba diz que o cadastro ainda
+    não abriu, em vez de gravar no banco principal, que está no limite.
+    """
+    from core.database import novos_configurado
+    if not novos_configurado():
+        st.info("O cadastro de novas contas ainda não está aberto. "
+                "Fale com o administrador para receber acesso.")
+        return
+    with st.form("_auth_cadastro", clear_on_submit=False):
+        nome = st.text_input("Nome", max_chars=150)
+        email = st.text_input("E-mail", max_chars=255)
+        senha = st.text_input("Senha (exatamente 8 caracteres)", type="password", max_chars=8)
+        confirma = st.text_input("Repita a senha", type="password", max_chars=8)
+        enviado = st.form_submit_button("Criar conta", width="stretch", type="primary")
+    if not enviado:
+        return
+    feitos = int(st.session_state.get("_auth_cadastros_feitos", 0))
+    if feitos >= _CADASTROS_POR_SESSAO:
+        st.error("Limite de cadastros desta sessão atingido.")
+        return
+    if senha != confirma:
+        st.error("As duas senhas não conferem.")
+        return
+    from core.user_accounts import authenticate, cadastrar_usuario
+    try:
+        cadastrar_usuario(nome, email, senha)
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+    except RuntimeError as exc:
+        st.error(str(exc))
+        return
+    except Exception:
+        logger.exception("falha no cadastro aberto")
+        st.error("Não foi possível criar a conta agora. Tente novamente mais tarde.")
+        return
+    st.session_state["_auth_cadastros_feitos"] = feitos + 1
+    try:
+        user = authenticate(email, senha)
+    except Exception:
+        user = None
+    if user:
+        _entrar(user)
+    st.success("Conta criada. Entre pela aba Entrar.")
