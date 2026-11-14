@@ -148,7 +148,10 @@ FAIXA_MEDIA = 55.0
 # Declarar "nao se aplica" e diferente de declarar 0%, e a tela de Grau de
 # Confianca escreve a declaracao: tela ausente pareceria tela sem problema.
 # A Documentacao saiu daqui em 29/10/2026: deixou de ser rota em 24/09 e
-# vive dentro de Configuracoes.
+# vive dentro de Configuracoes. Os blocos de Seguranca que entraram em
+# 14/11/2026 nao mudam isso: "Usuarios logados agora" conta sessoes do proprio
+# servidor (core.presenca, em memoria) e "Excluir conta" e acao, nao leitura --
+# nenhum dos dois afirma dado de mercado ou de carteira que a nota mediria.
 SECOES_SEM_AFIRMACAO = ("Configurações",)
 
 # Subabas cujo numero a nota da tela NAO mede. A nota de uma tela e a do dado

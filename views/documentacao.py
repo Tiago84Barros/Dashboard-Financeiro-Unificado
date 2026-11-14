@@ -1997,7 +1997,8 @@ FLOW_CONFIGURACOES = FlowSpec(
                           "cfg_trocar_usuario", "cfg_memoria_llm")),
         ("Diagnóstico", ("cfg_confianca", "cfg_restricoes", "cfg_mercado", "cfg_banco")),
         ("Entrada de arquivo", ("cfg_fatura", "cfg_extrato", "cfg_carteira", "cfg_cnpj")),
-        ("Segurança", ("cfg_conta", "cfg_sessao", "cfg_usuarios")),
+        ("Segurança", ("cfg_conta", "cfg_sessao", "cfg_usuarios", "cfg_logados",
+                       "cfg_excluir_conta")),
         ("Referência", ("cfg_mapa", "cfg_documentacao")),
     ),
     default="cfg_tema",
@@ -2237,19 +2238,23 @@ FLOW_CONFIGURACOES = FlowSpec(
         ),
         "cfg_conta": _node(
             "cfg_conta", "Minha conta e cadastro", "Segurança",
-            "Abre a aba Segurança. Em Minha conta, você troca a própria senha; em Cadastrar "
-            "usuário, quem administra cria a conta de outra pessoa, que terá os próprios "
-            "dados financeiros e a própria memória de conversas.",
+            "Abre a aba Segurança. Em Minha conta, você troca a própria senha. Criar conta "
+            "não é mais daqui: desde 14/11/2026 qualquer pessoa cria a própria conta na aba "
+            "Criar conta da tela de login, e ela nasce com os próprios dados financeiros e a "
+            "própria memória de conversas.",
             (
-                "Aba 🔒 Segurança, Minha conta e Cadastrar usuário",
+                "Aba 🔒 Segurança, Minha conta",
                 "render_user_accounts() (design/user_accounts.py)",
                 "Nova senha com exatamente 8 caracteres; a sessão é encerrada depois da troca",
-                "Cadastrar usuário é do administrador: create_user chama require_admin, e "
-                "quem não administra vê a explicação no lugar do formulário",
+                "Cadastro na tela de login: core/auth.py::_renderizar_cadastro chama "
+                "core.user_accounts.cadastrar_usuario",
+                "Conta nova mora no Supabase das contas novas (SUPABASE_NOVOS_URL); as contas "
+                "anteriores continuam no Supabase principal",
+                "Sem SUPABASE_NOVOS_URL, a aba Criar conta diz que o cadastro ainda não abriu",
             ),
-            "O bloco Cadastrar usuário não some para quem não administra desde 12/10/2026: "
-            "pedaço que desaparece sem explicação parece defeito, e o formulário só "
-            "entregaria um botão que sempre falha, porque quem recusa de fato é create_user.",
+            "O Supabase principal está no limite do plano gratuito. Conta nova ali cresceria "
+            "justo o banco que não tem espaço; por isso o cadastro aberto grava só no banco "
+            "novo, e recusa e-mail que já existe em qualquer um dos dois.",
         ),
         "cfg_sessao": _node(
             "cfg_sessao", "Proteção e sessão", "Segurança",
@@ -2275,6 +2280,36 @@ FLOW_CONFIGURACOES = FlowSpec(
             ),
             "A lista fecha a página, e não abre: o administrador chega nela depois de conferir "
             "o estado da sessão e da credencial.",
+        ),
+        "cfg_logados": _node(
+            "cfg_logados", "Usuários logados agora", "Segurança",
+            "Mostra quantas pessoas estão com o aplicativo aberto neste momento, quantas abas "
+            "do navegador isso soma e o nome de cada uma. Visível apenas para quem administra.",
+            (
+                "Aba 🔒 Segurança, bloco 04",
+                "render_logged_users(); core.presenca.usuarios_logados chama require_admin",
+                "Conta a sessão enquanto a aba está conectada e o login não expirou (12 h)",
+                "Registro em memória do servidor, nada gravado no banco",
+            ),
+            "Presença é fato do servidor que está de pé, não dado a guardar. Gravar a cada "
+            "clique disputaria a única conexão de banco do app. O limite é que, com mais de "
+            "uma réplica do app, cada uma veria só as próprias sessões.",
+        ),
+        "cfg_excluir_conta": _node(
+            "cfg_excluir_conta", "Excluir conta", "Segurança",
+            "Apaga uma conta e todos os dados dela: lançamentos, contas, cartões, carteiras, "
+            "importações, preferências e memória das conversas. Só quem administra, e a "
+            "conta do próprio administrador não aparece na lista.",
+            (
+                "Aba 🔒 Segurança, bloco 05",
+                "render_delete_user(); core.user_accounts.excluir_usuario chama require_admin",
+                "Confirmação pelo e-mail da conta digitado por extenso",
+                "Apaga no banco onde a conta mora, numa transação só",
+                "Toda tabela com user_id entra na exclusão, inclusive as que surgirem depois",
+            ),
+            "A exclusão lê o catálogo do banco em vez de uma lista fixa de tabelas: tabela "
+            "nova com user_id não fica para trás, e uma falha no meio desfaz tudo em vez de "
+            "deixar meia conta.",
         ),
         "cfg_mapa": _node(
             "cfg_mapa", "Mapa do App", "Referência",
@@ -2313,7 +2348,8 @@ FLOW_CONFIGURACOES = FlowSpec(
         "A tela é a mesma para todo mundo desde 12/10/2026: as nove abas aparecem para "
         "quem administra e para quem não administra. O que separa os dois é o dado que "
         "cada guarda entrega — a lista de usuários cadastrados, por exemplo, continua só "
-        "do administrador, e o bloco diz isso em vez de desaparecer.",
+        "do administrador, e o bloco diz isso em vez de desaparecer. O mesmo vale para quem está "
+        "logado e para a exclusão de conta.",
         "As duas entradas do Controle Financeiro são irmãs na mesma sub-aba, mas nunca se "
         "somam: a fatura é fluxo futuro e o extrato é o mês corrente.",
     ),

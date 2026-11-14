@@ -2882,7 +2882,7 @@
     {
       "nome": "Configurações",
       "resumo": "Ajustes, envio de arquivos e saúde do app",
-      "explicacao": "A tela se chama Central de Configurações e tem nove abas. Nela você ajusta sua conta, envia os arquivos do cartão, do banco e das corretoras, acompanha se os dados de mercado estão em dia, cuida da segurança, abre este mapa e consulta o guia do app. Desde 12/10/2026 todas as abas aparecem para todas as pessoas; só dois blocos da aba Segurança são exclusivos do administrador.",
+      "explicacao": "A tela se chama Central de Configurações e tem nove abas. Nela você ajusta sua conta, envia os arquivos do cartão, do banco e das corretoras, acompanha se os dados de mercado estão em dia, cuida da segurança, abre este mapa e consulta o guia do app. Desde 12/10/2026 todas as abas aparecem para todas as pessoas; só três blocos da aba Segurança são exclusivos do administrador: a lista de usuários cadastrados, quem está logado agora e a exclusão de conta. Criar conta não é daqui: desde 14/11/2026 qualquer pessoa cria a própria conta na tela de login.",
       "so_admin": false,
       "filhos": [
         {
@@ -3157,8 +3157,8 @@
         },
         {
           "nome": "Segurança",
-          "resumo": "Senha, sessão e quem tem acesso",
-          "explicacao": "Cuida do acesso ao app: trocar a sua senha, encerrar a sessão e gerar a senha protegida do app. O cadastro de pessoas e a lista de usuários só funcionam para o administrador; os demais veem um aviso no lugar.",
+          "resumo": "Senha, sessão, quem tem acesso e quem está logado",
+          "explicacao": "Cuida do acesso ao app: trocar a sua senha, encerrar a sessão e gerar a senha protegida do app. Três blocos são só do administrador: a lista de usuários cadastrados, quem está logado agora e a exclusão de uma conta com todos os dados dela; os demais veem um aviso no lugar. Criar conta saiu daqui em 14/11/2026: qualquer pessoa cria a própria conta na aba 'Criar conta' da tela de login, e a conta nova fica num segundo Supabase, porque o primeiro está cheio.",
           "so_admin": false,
           "filhos": [
             {
@@ -3166,12 +3166,6 @@
               "resumo": "Trocar a própria senha",
               "explicacao": "Mostra o seu e-mail. Preencha a senha atual, a nova senha (8 caracteres) e a confirmação, e clique em 'Alterar minha senha'. Depois da troca o app encerra a sessão para você entrar de novo.",
               "so_admin": false
-            },
-            {
-              "nome": "Cadastrar usuário",
-              "resumo": "Criar conta para outra pessoa",
-              "explicacao": "Formulário com nome, e-mail, senha inicial e confirmação, e o botão 'Cadastrar usuário'. Cada pessoa cadastrada tem seus próprios dados e conversas. Quem não é administrador vê só um aviso dizendo que essa ação é de quem administra o app.",
-              "so_admin": true
             },
             {
               "nome": "Proteção e sessão",
@@ -3188,7 +3182,19 @@
             {
               "nome": "Usuários cadastrados",
               "resumo": "Lista de quem tem acesso",
-              "explicacao": "Tabela com nome, e-mail, data de cadastro, situação (ativo ou inativo) e perfil. Só o administrador vê a lista; os demais veem um aviso explicando que ela é restrita.",
+              "explicacao": "Tabela com nome, e-mail, data de cadastro, situação (ativo ou inativo), perfil e o banco onde a conta mora: o Supabase principal, para as contas antigas, ou o das contas novas. Só o administrador vê a lista; os demais veem um aviso explicando que ela é restrita.",
+              "so_admin": true
+            },
+            {
+              "nome": "Usuários logados agora",
+              "resumo": "Quantas pessoas e quem está com o app aberto",
+              "explicacao": "Mostra o número de pessoas logadas neste momento, quantas abas do navegador isso soma e uma tabela com o nome de cada pessoa, a hora em que entrou, a última atividade e o banco da conta. Uma pessoa conta enquanto a aba está aberta e o login não expirou. Só o administrador vê; os demais veem um aviso.",
+              "so_admin": true
+            },
+            {
+              "nome": "Excluir conta",
+              "resumo": "Apagar uma conta e todos os dados dela",
+              "explicacao": "Escolha a conta, leia o aviso e digite o e-mail dela para confirmar. O botão 'Excluir conta e todos os dados' apaga lançamentos, contas, cartões, carteiras, importações, preferências e memória das conversas da pessoa. Não tem volta. A conta do administrador não aparece na lista. Só o administrador vê; os demais veem um aviso.",
               "so_admin": true
             }
           ]

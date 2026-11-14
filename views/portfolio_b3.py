@@ -3675,9 +3675,11 @@ def render(show_header: bool = True) -> None:
         # parametros, versoes e qualidade PIT explicitamente declarada.
         try:
             from core.b3_validation import persist_validation_run
-            from core.database import get_engine
+            from core.database import engine_do_app
 
-            _eng_validation = get_engine()
+            # Registro de validação é do app: grava no principal mesmo numa
+            # sessão de conta nova (ver ``engine_do_app``).
+            _eng_validation = engine_do_app()
             if _eng_validation is not None:
                 _summary_validation = {
                     "segments_processed": len(resultados),
