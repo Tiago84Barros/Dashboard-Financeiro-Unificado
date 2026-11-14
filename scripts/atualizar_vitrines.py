@@ -76,6 +76,8 @@ DOCKER_DESKTOP = Path(r"C:\Program Files\Docker\Docker\Docker Desktop.exe")
 # Um alvo travado não pode segurar a fila para sempre: sem teto, um passo que
 # nunca retorna deixa todos os alvos seguintes vencidos e silenciosos.
 TIMEOUT_PASSO = 90 * 60
+# Teto da verificação de frescor de todas as vitrines tocadas na rodada.
+TIMEOUT_VERIFICACAO = 30 * 60
 # A tarefa agendada "DFU - Atualizar vitrines" tem limite de execução de 4 h e
 # MATA a rotina ao estourá-lo: em 05/10/2026 ela caiu às 23:30 no meio do
 # `us_snapshot`, e notícias, macro, espelho e CDI não rodaram -- sem
@@ -434,17 +436,31 @@ def verificar(modulos: set[str], ambiente: dict) -> tuple[bool, str]:
     argumentos = []
     for modulo in sorted(modulos):
         argumentos += ["--modulo", modulo]
-    proc = subprocess.run(
-        [_python(), "scripts/verificar_frescor_vitrines.py", *argumentos],
-        cwd=str(ROOT), env=ambiente, capture_output=True, text=True,
-        encoding="utf-8", errors="replace", timeout=1800, check=False)
+    # Mesmo defeito do push de 13/11/2026: a `TimeoutExpired` escapando daqui
+    # pularia o "=== fim" e a notificação de falha da rodada inteira.
+    try:
+        proc = subprocess.run(
+            [_python(), "scripts/verificar_frescor_vitrines.py", *argumentos],
+            cwd=str(ROOT), env=ambiente, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=TIMEOUT_VERIFICACAO,
+            check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, (f"REPROVOU  a verificação de frescor não terminou "
+                       f"({type(exc).__name__}: {str(exc)[:200]})")
     saida = "\n".join(linha for linha in (proc.stdout or "").splitlines()
                       if linha.startswith(("OK", "REPROVOU")))
     return proc.returncode == 0, saida
 
 
-def levar_artefatos_ao_repositorio(alvos_ok: list) -> list[str]:
+def levar_artefatos_ao_repositorio(alvos_ok: list, ao_enviar=None) -> list[str]:
     """Commita e empurra os artefatos dos alvos que publicaram com sucesso.
+
+    ``ao_enviar(alvo)`` é chamado quando o artefato do alvo está na
+    `origin/main` -- só aí o alvo conta como publicado. Até 13/11/2026 o estado
+    gravava "ok" logo depois do publicador; o push do `rag_corpus` não
+    respondeu, a exceção derrubou a rotina, e a execução seguinte o achou em
+    dia. Cada alvo vai num `try` próprio: a falha de um vira aviso e não
+    impede os seguintes, a verificação nem a notificação.
 
     Existe porque a vitrine de FIIs escreve um arquivo DENTRO do repositório --
     o fallback offline que o app lê quando o Supabase não responde. Ele não pode
@@ -478,10 +494,18 @@ def levar_artefatos_ao_repositorio(alvos_ok: list) -> list[str]:
             "um fallback que vai expirar.\n\n"
             "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
         )
-        resultado = publicar_artefatos(ROOT, alvo.artefatos, mensagem)
-        registrar(f"  {alvo.chave}: artefato -> {resultado.resumo()}")
-        if not resultado.ok:
-            avisos.append(f"{alvo.chave}: {resultado.resumo()}")
+        try:
+            resultado = publicar_artefatos(ROOT, alvo.artefatos, mensagem)
+            registrar(f"  {alvo.chave}: artefato -> {resultado.resumo()}")
+            if not resultado.ok:
+                avisos.append(f"{alvo.chave}: {resultado.resumo()}")
+                continue
+            if ao_enviar is not None:
+                ao_enviar(alvo)
+        except Exception as exc:  # noqa: BLE001
+            aviso = f"{alvo.chave}: {type(exc).__name__}: {exc}"
+            registrar(f"  {alvo.chave}: artefato -> ERRO {aviso}")
+            avisos.append(aviso)
     return avisos
 
 
@@ -645,9 +669,12 @@ def _publicar(args, atualizacao=None) -> int:
         registrar(f"  {alvo.chave}: {alvo.titulo} -- {motivo}")
         ok, detalhe = executar(alvo, ambiente)
         # Gravado a cada alvo, não no fim: hibernar no meio não pode desfazer o
-        # que já foi publicado.
+        # que já foi publicado. Alvo com artefato fica pendente até o artefato
+        # chegar à origin/main (ver `levar_artefatos_ao_repositorio`): se a
+        # rotina morrer antes, a próxima execução o publica de novo.
         estado = registrar_resultado(estado, alvo.chave, ok, agora,
-                                     versoes.get(alvo.chave))
+                                     versoes.get(alvo.chave),
+                                     artefato_pendente=ok and bool(alvo.artefatos))
         gravar_estado(estado)
         if ok:
             publicados.append(alvo.chave)
@@ -667,7 +694,15 @@ def _publicar(args, atualizacao=None) -> int:
     # Antes de verificar, porque a verificação lê a vitrine e não o repositório:
     # a ordem entre as duas não muda o resultado de nenhuma, mas um artefato que
     # não foi commitado tem de entrar na mesma notificação que o resto.
-    avisos_git = levar_artefatos_ao_repositorio(publicados_alvos)
+    situacao = {"estado": estado}
+
+    def _enviado(alvo) -> None:
+        situacao["estado"] = registrar_resultado(
+            situacao["estado"], alvo.chave, True, agora, versoes.get(alvo.chave))
+        gravar_estado(situacao["estado"])
+
+    avisos_git = levar_artefatos_ao_repositorio(publicados_alvos,
+                                                ao_enviar=_enviado)
 
     verificacao_ok, verificacao = verificar(modulos, ambiente)
     if verificacao:

@@ -391,3 +391,115 @@ def test_atualizar_main_sem_git_bloqueia_sem_excecao(monkeypatch, tmp_path):
     resultado = pg.atualizar_main(tmp_path)
 
     assert not resultado.pode_publicar and "git não respondeu" in resultado.resumo()
+
+
+# --- push que não responde: 13/11/2026 ----------------------------------------
+#
+# O commit do corpus RAG (24 parquets, ~147 MB) entrou na main local às 14:58 e
+# o push não respondeu em `TIMEOUT_GIT`. A exceção escapou de `_git`, derrubou a
+# rotina antes da verificação e da notificação, e o estado já dizia "ok".
+
+def _interceptar_push(monkeypatch, ao_empurrar):
+    """Troca só o `push`; o resto do git roda de verdade no repositório."""
+    from core import publicacao_git as pg
+
+    real = pg._git
+    chamadas = []
+
+    def _git_com_push(raiz, *argumentos, **opcoes):
+        chamadas.append((argumentos, opcoes))
+        if argumentos[:1] == ("push",):
+            return ao_empurrar(real, raiz, argumentos, opcoes)
+        return real(raiz, *argumentos, **opcoes)
+
+    monkeypatch.setattr(pg, "_git", _git_com_push)
+    return chamadas
+
+
+def _sem_resposta(argumentos):
+    from core import publicacao_git as pg
+
+    return subprocess.CompletedProcess(
+        ["git", *argumentos], pg.RC_TIMEOUT, "", f"sem resposta em {pg.TIMEOUT_PUSH} s")
+
+
+def test_git_sem_resposta_vira_falha_e_nao_excecao(monkeypatch, tmp_path):
+    """Exceção aqui mata a rotina antes de ela avisar; processo morto não notifica."""
+    from core import publicacao_git as pg
+
+    def _pendura(argv, **opcoes):
+        raise subprocess.TimeoutExpired(argv, opcoes["timeout"])
+
+    monkeypatch.setattr(pg.subprocess, "run", _pendura)
+
+    proc = pg._git(tmp_path, "push", "origin", "main", timeout=7)
+
+    assert proc.returncode == pg.RC_TIMEOUT
+    assert "sem resposta em 7 s" in proc.stderr
+
+
+def test_push_tem_prazo_proprio_maior_que_o_dos_outros_comandos(monkeypatch, repositorio):
+    from core import publicacao_git as pg
+
+    chamadas = _interceptar_push(
+        monkeypatch, lambda real, raiz, argumentos, opcoes: real(raiz, *argumentos, **opcoes))
+    _escrever(repositorio, ARTEFATO, "conteudo")
+
+    assert publicar_artefatos(repositorio, [ARTEFATO], MENSAGEM).empurrou
+    [opcoes] = [o for a, o in chamadas if a[:1] == ("push",)]
+    assert opcoes == {"timeout": pg.TIMEOUT_PUSH}
+    assert pg.TIMEOUT_PUSH > pg.TIMEOUT_GIT
+
+
+def test_push_sem_resposta_que_nao_chegou_e_falha(monkeypatch, repositorio):
+    _interceptar_push(monkeypatch, lambda _real, _raiz, argumentos, _o: _sem_resposta(argumentos))
+    _escrever(repositorio, ARTEFATO, "conteudo")
+
+    resultado = publicar_artefatos(repositorio, [ARTEFATO], MENSAGEM)
+
+    assert resultado.commitou and not resultado.empurrou and not resultado.ok
+    assert "sem resposta" in resultado.resumo()
+    assert _commits_do_remoto(repositorio) == ["base"]
+
+
+def test_push_sem_resposta_que_chegou_conta_como_empurrado(monkeypatch, repositorio):
+    """O git pode completar o envio e pendurar depois. A origin é que diz."""
+    def _empurra_e_pendura(real, raiz, argumentos, opcoes):
+        real(raiz, *argumentos, **opcoes)
+        return _sem_resposta(argumentos)
+
+    _interceptar_push(monkeypatch, _empurra_e_pendura)
+    _escrever(repositorio, ARTEFATO, "conteudo")
+
+    resultado = publicar_artefatos(repositorio, [ARTEFATO], MENSAGEM)
+
+    assert resultado.ok and resultado.commitou and resultado.empurrou
+    assert "sem resposta" in resultado.resumo()
+    assert _commits_do_remoto(repositorio)[0] == MENSAGEM
+
+
+def test_commit_que_ficou_sem_push_sobe_na_execucao_seguinte(repositorio):
+    """Antes, artefato idêntico ao da HEAD saía como "nada a fazer", e o commit
+    que nunca subiu ficava na main local sem ninguém levar."""
+    _escrever(repositorio, ARTEFATO, "conteudo")
+    publicar_artefatos(repositorio, [ARTEFATO], MENSAGEM, empurrar=False)
+
+    resultado = publicar_artefatos(repositorio, [ARTEFATO], MENSAGEM)
+
+    assert resultado.ok and not resultado.commitou and resultado.empurrou
+    assert resultado.arquivos == (ARTEFATO,)
+    assert "empurrado" in resultado.resumo()
+    _git(repositorio, "fetch", "origin")
+    assert _commits_do_remoto(repositorio)[0] == MENSAGEM
+
+
+def test_artefato_ja_na_origin_nao_empurra(monkeypatch, repositorio):
+    _escrever(repositorio, ARTEFATO, "conteudo")
+    assert publicar_artefatos(repositorio, [ARTEFATO], MENSAGEM).empurrou
+
+    chamadas = _interceptar_push(monkeypatch, lambda *_a: pytest.fail("push sem motivo"))
+    resultado = publicar_artefatos(repositorio, [ARTEFATO], MENSAGEM)
+
+    assert resultado.ok and not resultado.commitou and not resultado.empurrou
+    assert "idêntico" in resultado.motivo
+    assert not [a for a, _ in chamadas if a[:1] == ("push",)]

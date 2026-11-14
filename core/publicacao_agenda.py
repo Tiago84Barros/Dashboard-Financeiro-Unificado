@@ -56,6 +56,10 @@ from core.us_benchmark import US_BENCHMARKS as _US_BENCHMARKS
 SIMBOLOS_BENCHMARK_EUA: tuple[str, ...] = tuple(
     sorted({s for s in _US_BENCHMARKS.values() if s}))
 
+#: `ultimo_status` do alvo cujo publicador rodou, mas cujo artefato ainda não
+#: chegou à `origin/main`. Ver `registrar_resultado`.
+STATUS_ARTEFATO_PENDENTE = "artefato_pendente"
+
 
 @dataclass(frozen=True)
 class Alvo:
@@ -725,6 +729,8 @@ def motivo_para_publicar(
     que só diz "publiquei 4 alvos" não deixa auditar se publicou o que devia.
     """
     registro = registro or {}
+    if registro.get("ultimo_status") == STATUS_ARTEFATO_PENDENTE:
+        return "artefato não chegou à main"
     if registro.get("ultimo_status") not in (None, "ok"):
         return "última tentativa falhou"
 
@@ -783,18 +789,28 @@ def registrar_resultado(
     ok: bool,
     agora: datetime,
     versao: str | None = None,
+    *,
+    artefato_pendente: bool = False,
 ) -> dict:
     """Estado novo após uma tentativa. Não muta o recebido.
 
     ``ultima_publicacao`` só avança quando deu certo: se a falha carimbasse a
     data, o alvo sairia da lista de devedores sem ter publicado -- que é
     exatamente como uma vitrine vence sem ninguém notar.
+
+    ``artefato_pendente``: o publicador rodou, mas o artefato do alvo ainda não
+    chegou à `origin/main`. Também não avança a data: em 13/11/2026 o
+    `rag_corpus` foi marcado "ok" antes do push, o push não respondeu, e a
+    execução seguinte o achou em dia. Quem confirma o envio grava "ok" depois.
     """
     novo = {k: dict(v) for k, v in estado.items()}
     registro = novo.setdefault(chave, {})
-    registro["ultimo_status"] = "ok" if ok else "erro"
+    if ok and artefato_pendente:
+        registro["ultimo_status"] = STATUS_ARTEFATO_PENDENTE
+    else:
+        registro["ultimo_status"] = "ok" if ok else "erro"
     registro["ultima_tentativa"] = agora.isoformat()
-    if ok:
+    if ok and not artefato_pendente:
         registro["ultima_publicacao"] = agora.isoformat()
         if versao is not None:
             registro["versao"] = versao
