@@ -71,11 +71,9 @@ import argparse
 import json
 import logging
 import re
-import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
-from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine, text
 
@@ -225,18 +223,14 @@ def verificar_fonte(engine, mercado: str) -> dict:
 
 
 def warehouse_url() -> str:
-    """URL do armazem local, com a senha lida do container. Nunca logada."""
-    inspecao = subprocess.run(
-        ["docker", "inspect", "dfu_warehouse", "--format", "{{json .Config.Env}}"],
-        check=True, capture_output=True, text=True,
-    )
-    ambiente = json.loads(inspecao.stdout)
-    entrada = next((i for i in ambiente
-                    if str(i).startswith("POSTGRES_PASSWORD=")), None)
-    if not entrada:
-        raise RuntimeError("senha do warehouse local indisponivel")
-    senha = str(entrada).split("=", 1)[1]
-    return f"postgresql://postgres:{quote_plus(senha)}@localhost:5433/postgres"
+    """URL do armazem local, com a senha lida do container. Nunca logada.
+
+    Delega a ``publish_fii_selection_from_local._warehouse_url``, ponto unico
+    da leitura da senha (``docker inspect`` com prazo).
+    """
+    from scripts.publish_fii_selection_from_local import _warehouse_url
+
+    return _warehouse_url()
 
 
 def carregar_eventos_de_arquivo(caminho: Path) -> list[dict]:

@@ -23,7 +23,6 @@ import argparse
 import json
 import logging
 import os
-import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import quote
@@ -52,21 +51,22 @@ def _local_database_target() -> bool:
 
 
 def _point_to_warehouse() -> bool:
-    """Usa a senha efetiva do container; o arquivo local é apenas fallback."""
+    """Usa a senha efetiva do container; o arquivo local é apenas fallback.
+
+    A senha sai de ``senha_do_warehouse`` (``docker inspect``), o mesmo leitor
+    do resto da rotina. O ``docker compose exec ... printenv`` de antes falhou
+    em 13/11 e 14/11/2026 com o container saudável.
+    """
     from dotenv import dotenv_values
+
+    from scripts.publish_fii_selection_from_local import senha_do_warehouse
 
     password = ""
     try:
-        proc = subprocess.run(
-            ["docker", "compose", "exec", "-T", "warehouse", "printenv",
-             "POSTGRES_PASSWORD"],
-            cwd=str(_ROOT / "warehouse"), capture_output=True, text=True,
-            timeout=10, check=False,
-        )
-        if proc.returncode == 0:
-            password = (proc.stdout or "").strip()
-    except (OSError, subprocess.SubprocessError):
-        pass
+        password = senha_do_warehouse()
+    except RuntimeError as exc:
+        log.warning("senha do warehouse pelo docker inspect falhou: %s; "
+                    "tentando warehouse/.env", exc)
     if not password:
         env_paths = [_ROOT / "warehouse" / ".env"]
         env_paths.extend(_ROOT.glob(".claude/worktrees/*/warehouse/.env"))
@@ -74,7 +74,8 @@ def _point_to_warehouse() -> bool:
         password = str((dotenv_values(warehouse_file) if warehouse_file else {}).get(
             "WAREHOUSE_PASSWORD") or "").strip()
     if not password:
-        log.error("senha do warehouse local indisponível")
+        log.error("senha do warehouse local indisponível "
+                  "(docker inspect e warehouse/.env)")
         return False
     local_url = ("postgresql://postgres:" + quote(password, safe="")
                  + "@127.0.0.1:5433/postgres")
