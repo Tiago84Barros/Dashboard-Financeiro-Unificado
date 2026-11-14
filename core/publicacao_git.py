@@ -168,20 +168,24 @@ def operacao_em_curso(raiz: Path) -> str:
     return ""
 
 
-def artefatos_mudados(raiz: Path, caminhos: list[str]) -> list[str]:
+def artefatos_mudados(raiz: Path, caminhos: list[str]) -> list[str] | None:
     """Quais dos caminhos declarados diferem do que está commitado.
 
     Cobre os dois casos: arquivo rastreado que mudou (`diff HEAD`) e artefato
     que ainda não existe no repositório (`ls-files --others`). Um artefato novo
     que nunca fosse commitado seria a falha silenciosa desta rotina.
+
+    ``None`` quando qualquer um dos dois comandos falha ou fica sem resposta.
+    Lista vazia afirma "nada mudou"; um git que não respondeu não prova isso, e
+    tratá-lo como lista vazia deixava a publicação dar ``ok`` com o artefato
+    novo fora do commit (revisão do PR #743).
     """
     mudados: set[str] = set()
-    proc = _git(raiz, "diff", "--name-only", "HEAD", "--", *caminhos)
-    if proc.returncode == 0:
-        mudados.update(linha.strip() for linha in (proc.stdout or "").splitlines()
-                       if linha.strip())
-    proc = _git(raiz, "ls-files", "--others", "--exclude-standard", "--", *caminhos)
-    if proc.returncode == 0:
+    for argumentos in (("diff", "--name-only", "HEAD", "--", *caminhos),
+                       ("ls-files", "--others", "--exclude-standard", "--", *caminhos)):
+        proc = _git(raiz, *argumentos)
+        if proc.returncode != 0:
+            return None
         mudados.update(linha.strip() for linha in (proc.stdout or "").splitlines()
                        if linha.strip())
     return sorted(mudados)
@@ -379,6 +383,11 @@ def publicar_artefatos(raiz: Path, caminhos, mensagem: str,
         return resultado
 
     mudados = artefatos_mudados(raiz, declarados)
+    if mudados is None:
+        resultado.erros.append(
+            "não deu para saber se o artefato mudou (git diff/ls-files falhou ou "
+            "ficou sem resposta); nada foi commitado e o alvo segue pendente")
+        return resultado
     if mudados:
         proc = _git(raiz, "add", "--", *mudados)
         if proc.returncode != 0:

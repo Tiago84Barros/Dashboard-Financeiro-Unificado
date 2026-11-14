@@ -503,3 +503,36 @@ def test_artefato_ja_na_origin_nao_empurra(monkeypatch, repositorio):
     assert resultado.ok and not resultado.commitou and not resultado.empurrou
     assert "idêntico" in resultado.motivo
     assert not [a for a, _ in chamadas if a[:1] == ("push",)]
+
+
+def _interceptar(monkeypatch, comando):
+    """Faz `comando` (diff, ls-files...) ficar sem resposta; o resto roda de verdade."""
+    from core import publicacao_git as pg
+
+    real = pg._git
+
+    def _git_que_pendura(raiz, *argumentos, **opcoes):
+        if argumentos[:1] == (comando,) and "HEAD" in argumentos[:3] + ("HEAD",) \
+                and not any(str(a).startswith("origin/") for a in argumentos):
+            return _sem_resposta(argumentos)
+        return real(raiz, *argumentos, **opcoes)
+
+    monkeypatch.setattr(pg, "_git", _git_que_pendura)
+
+
+@pytest.mark.parametrize("comando", ["diff", "ls-files"])
+def test_deteccao_sem_resposta_nao_vira_artefato_identico(monkeypatch, repositorio, comando):
+    """Revisão do PR #743: com o `diff HEAD` sem resposta, a lista vazia dizia
+    "nada mudou", a HEAD já igual à origin dava `ok=True` e o alvo virava `ok`
+    com o artefato novo fora do commit."""
+    _escrever(repositorio, ARTEFATO, "old")
+    assert publicar_artefatos(repositorio, [ARTEFATO], MENSAGEM).empurrou
+    _escrever(repositorio, ARTEFATO, "new")
+    _interceptar(monkeypatch, comando)
+
+    assert artefatos_mudados(repositorio, [ARTEFATO]) is None
+    resultado = publicar_artefatos(repositorio, [ARTEFATO], MENSAGEM)
+
+    assert not resultado.ok and not resultado.commitou and not resultado.empurrou
+    assert "não deu para saber se o artefato mudou" in resultado.resumo()
+    assert _commits_do_remoto(repositorio) == [MENSAGEM, "base"]
