@@ -853,7 +853,6 @@ def cartao_referencia_ativo(ref: refm.ReferenciaModelo, ticker: str) -> str:
     return _cartao_ref(titulo, corpo)
 
 
-_TD = '<td style="padding:3px 10px 3px 0;vertical-align:top">'
 _COR_CONCLUSAO = {
     conf_.MUDAR: "var(--app-warning)",
     conf_.PERMANECER: "var(--app-info)",
@@ -870,10 +869,90 @@ def _chip_conclusao(conclusao: str) -> str:
             f'{escape(conf_.ROTULO_CONCLUSAO[conclusao])}</span>')
 
 
-def _qual(q: conf_.QualidadeLado) -> str:
+# -- cartão do confronto --------------------------------------------------------
+# Marcação em linha única, sem recuo nem interpolação sozinha numa linha: o
+# Streamlit fecha tag aberta e transforma recuo em bloco de código.
+
+_CF_ROTULO = ('font-size:0.7rem;font-weight:700;letter-spacing:.05em;'
+              'text-transform:uppercase;color:var(--app-subtle)')
+_CF_SECAO = (f'<div style="{_CF_ROTULO};margin:0 0 8px 0">')
+# Estilos inteiros nas células: o CSS de tabela do markdown do Streamlit põe
+# borda em cada célula, e só o estilo em linha passa por cima dele.
+_CF_TH = ('padding:8px 12px;font-size:0.7rem;font-weight:700;letter-spacing:'
+          '.04em;text-transform:uppercase;color:var(--app-subtle);background:'
+          'var(--app-surface-raised);border:none;border-bottom:1px solid '
+          'var(--app-border);white-space:nowrap')
+_CF_TD = ('padding:9px 12px;border:none;border-bottom:1px solid '
+          'var(--app-border);background:transparent;vertical-align:middle;'
+          'color:var(--app-text)')
+
+
+def _cor_nota(nota: float | None) -> str:
+    """Mesmas faixas de ``conf_.rotulo_nota``: forte, adequada, frágil."""
+    if nota is None:
+        return "var(--app-subtle)"
+    if nota >= 2.5:
+        return "var(--app-primary)"
+    if nota >= 1.5:
+        return "var(--app-info)"
+    return "var(--app-warning)"
+
+
+def _qual_html(q: conf_.QualidadeLado, tamanho: str = "0.84rem") -> str:
+    """Rótulo colorido pela faixa e a nota ao lado, mais discreta."""
     if q.nota is None:
-        return "sem leitura"
-    return f"{q.rotulo} ({q.nota:.1f})".replace(".", ",")
+        return ('<span style="color:var(--app-subtle);font-style:italic">'
+                'sem leitura</span>')
+    nota = f"{q.nota:.1f}".replace(".", ",")
+    return (f'<span style="white-space:nowrap"><span style="color:'
+            f'{_cor_nota(q.nota)};font-weight:700">{escape(q.rotulo)}</span> '
+            f'<span style="font-size:{tamanho};color:var(--app-muted);'
+            'font-weight:600;font-variant-numeric:tabular-nums">'
+            f'{nota}</span></span>')
+
+
+def _kpi_confronto(rotulo: str, valor: str, sub: str, cor: str) -> str:
+    """Um indicador do topo do confronto. ``valor`` já vem em HTML."""
+    return ('<div style="background:var(--app-surface-raised);border:1px solid '
+            f'var(--app-border);border-top:3px solid {cor};border-radius:'
+            'var(--app-radius-sm);padding:12px 14px;min-width:0">'
+            f'<div style="{_CF_ROTULO}">{escape(rotulo)}</div>'
+            '<div style="font-size:1.3rem;font-weight:800;color:var(--app-text);'
+            'margin-top:6px;line-height:1.2;font-variant-numeric:tabular-nums">'
+            f'{valor}</div><div style="font-size:0.76rem;color:var(--app-muted);'
+            f'margin-top:4px">{escape(sub)}</div></div>')
+
+
+def _tabela_confronto(cabecalho: list[tuple[str, str]],
+                      linhas: list[list[tuple[str, str]]]) -> str:
+    """Tabela larga, com cabeçalho em faixa e números alinhados à direita.
+    ``cabecalho`` e cada célula são (html, alinhamento)."""
+    ths = "".join(f'<th style="{_CF_TH};text-align:{al}">{h}</th>'
+                  for h, al in cabecalho)
+    trs = "".join(
+        "<tr>" + "".join(
+            f'<td style="{_CF_TD};text-align:{al}">{v}</td>'
+            for v, al in linha) + "</tr>"
+        for linha in linhas)
+    return ('<div style="overflow-x:auto;border:1px solid var(--app-border);'
+            'border-radius:var(--app-radius-sm)"><table style="width:100%;'
+            'border-collapse:collapse;margin:0;font-size:0.86rem;'
+            'font-variant-numeric:tabular-nums">'
+            f'<thead><tr>{ths}</tr></thead><tbody>{trs}</tbody></table></div>')
+
+
+def _diferenca_html(k: conf_.DivergenciaClasse) -> str:
+    """Real − modelo: em destaque só quando passa do limiar da classe."""
+    if not k.acentuada:
+        return f'<span style="color:var(--app-muted)">{_pp(k.diferenca)}</span>'
+    return ('<span style="display:inline-block;padding:1px 8px;border-radius:'
+            '999px;font-weight:700;color:var(--app-warning);border:1px solid '
+            f'var(--app-warning)">{_pp(k.diferenca)}</span>')
+
+
+def _painel_confronto(titulo: str, corpo: str, flex: str) -> str:
+    return (f'<div style="flex:{flex};min-width:0">{_CF_SECAO}'
+            f'{escape(titulo)}</div>{corpo}</div>')
 
 
 def cartao_confronto(c: conf_.Confronto) -> str:
@@ -883,45 +962,82 @@ def cartao_confronto(c: conf_.Confronto) -> str:
     if not c.disponivel:
         return _cartao_ref(titulo, _indisponivel(
             "Confronto com o modelo", c.motivo, "Não disponível."))
-    corpo = _grade([
-        ("Qualidade média · sua carteira", _qual(c.carteira)),
-        ("Qualidade média · modelo", _qual(c.modelo)),
-        ("Peso com alerta eliminatório",
-         f"{_pct(c.carteira.peso_com_alerta)} × {_pct(c.modelo.peso_com_alerta)}"),
-        ("Aderência ao modelo", _pct(c.aderencia)),
+    detalhe_tecnico(refm.AVISO, codigo="inteligencia.referencia_modelo_aviso")
+    alerta_cart = c.carteira.peso_com_alerta
+    kpis = "".join([
+        _kpi_confronto("Qualidade média · sua carteira",
+                       _qual_html(c.carteira, "0.95rem"),
+                       f"Cobertura: {_pct(c.carteira.cobertura)} do peso",
+                       _cor_nota(c.carteira.nota)),
+        _kpi_confronto("Qualidade média · modelo",
+                       _qual_html(c.modelo, "0.95rem"),
+                       f"Cobertura: {_pct(c.modelo.cobertura)} do peso",
+                       _cor_nota(c.modelo.nota)),
+        _kpi_confronto("Peso com alerta eliminatório", escape(_pct(alerta_cart)),
+                       f"No modelo: {_pct(c.modelo.peso_com_alerta)}",
+                       "var(--app-warning)" if (alerta_cart or 0) > 0
+                       else "var(--app-primary)"),
+        _kpi_confronto("Aderência ao modelo", escape(_pct(c.aderencia)),
+                       "da base já em ativos do modelo", "var(--app-info)"),
     ])
+    corpo = ('<div style="display:grid;grid-template-columns:repeat(auto-fit,'
+             f'minmax(140px,1fr));gap:12px">{kpis}</div>')
     corpo += _nota(
         "Qualidade de 1 (frágil) a 3 (forte), média ponderada pelo peso, "
-        "medida com a mesma régua da Inteligência nos dois lados. Cobertura: "
-        f"{_pct(c.carteira.cobertura)} do peso da sua carteira e "
-        f"{_pct(c.modelo.cobertura)} do peso do modelo. Aderência é a parte "
-        "da base que já está em ativos do modelo, até o peso do modelo.")
+        "medida com a mesma régua da Inteligência nos dois lados; a "
+        "cobertura é a parte do peso que tem essa leitura. Aderência é a "
+        "parte da base que já está em ativos do modelo, até o peso do modelo.")
+
+    paineis = ""
     if c.por_classe:
-        linhas = "".join(
-            f"<tr>{_TD}{escape(q.rotulo)}</td>{_TD}{escape(_qual(q.carteira))}"
-            f"</td>{_TD}{escape(_qual(q.modelo))}</td></tr>"
-            for q in c.por_classe)
-        corpo += ('<div style="margin-top:10px;font-weight:700">Qualidade '
-                  'por classe</div>'
-                  + _tabela(["Classe", "Sua carteira", "Modelo"], linhas))
+        paineis += _painel_confronto("Qualidade por classe", _tabela_confronto(
+            [("Classe", "left"), ("Sua carteira", "left"), ("Modelo", "left")],
+            [[(escape(q.rotulo), "left"), (_qual_html(q.carteira), "left"),
+              (_qual_html(q.modelo), "left")] for q in c.por_classe]),
+            "1 1 280px")
     if c.classes:
-        linhas = "".join(
-            f"<tr>{_TD}{escape(k.rotulo)}</td>{_TD}{_pct(k.real)}</td>"
-            f"{_TD}{_pct(k.alvo_modelo)}</td>{_TD}{_pct(k.alvo_estrategia)}"
-            f"</td>{_TD}{_pp(k.diferenca)}</td></tr>"
-            for k in c.classes)
-        corpo += ('<div style="margin-top:10px;font-weight:700">Distribuição '
-                  'por classe</div>'
-                  + _tabela(["Classe", "Real", "Modelo", "Sua estratégia",
-                             "Real − modelo"], linhas))
-    for k in c.classes_acentuadas:
-        corpo += (f'<div style="margin-top:6px">{_chip_conclusao(k.conclusao)}'
-                  f' {escape(k.texto)}</div>')
-    corpo += _lista(c.avisos)
-    corpo += _nota(f"Base dos pesos: {refm.ROTULO_BASE[c.base]}. Divergência "
-                   f"acentuada: {conf_.LIMIAR_CLASSE_PP:.0f} pp ou mais na "
-                   f"classe, {conf_.LIMIAR_ATIVO_PP:.0f} pp ou mais no ativo.")
-    return _cartao_ref(titulo, corpo)
+        paineis += _painel_confronto("Distribuição por classe", _tabela_confronto(
+            [("Classe", "left"), ("Real", "right"), ("Modelo", "right"),
+             ("Sua estratégia", "right"), ("Real − modelo", "right")],
+            [[(escape(k.rotulo), "left"),
+              (f'<strong>{_pct(k.real)}</strong>', "right"),
+              (_pct(k.alvo_modelo), "right"),
+              (_pct(k.alvo_estrategia), "right"),
+              (_diferenca_html(k), "right")] for k in c.classes]),
+            "1.6 1 400px")
+    if paineis:
+        corpo += ('<div style="display:flex;flex-wrap:wrap;gap:16px;'
+                  f'margin-top:18px">{paineis}</div>')
+
+    if c.classes_acentuadas:
+        itens = "".join(
+            '<div style="display:flex;gap:12px;align-items:baseline;'
+            'padding:10px 14px;background:var(--app-surface-raised);'
+            'border:1px solid var(--app-border);border-left:3px solid '
+            f'{_COR_CONCLUSAO[k.conclusao]};border-radius:8px">'
+            f'<div style="flex:0 0 auto;white-space:nowrap">'
+            f'{_chip_conclusao(k.conclusao)}</div>'
+            '<div style="flex:1 1 auto;min-width:0;font-size:0.88rem;'
+            f'line-height:1.5;color:var(--app-text)">{escape(k.texto)}</div>'
+            '</div>'
+            for k in c.classes_acentuadas)
+        corpo += (f'<div style="margin-top:18px">{_CF_SECAO}Leitura das classes '
+                  'que divergem</div><div style="display:flex;flex-direction:'
+                  f'column;gap:8px">{itens}</div></div>')
+    if c.avisos:
+        corpo += ('<div style="margin-top:14px;padding:10px 14px;border-radius:'
+                  '8px;border:1px dashed var(--app-border);font-size:0.84rem;'
+                  f'color:var(--app-muted)">{_lista(c.avisos)}</div>')
+    corpo += ('<div style="margin-top:16px;padding-top:10px;border-top:1px '
+              'solid var(--app-border)">'
+              + _nota(f"Base dos pesos: {refm.ROTULO_BASE[c.base]}. Divergência "
+                      f"acentuada: {conf_.LIMIAR_CLASSE_PP:.0f} pp ou mais na "
+                      f"classe, {conf_.LIMIAR_ATIVO_PP:.0f} pp ou mais no "
+                      "ativo.") + '</div>')
+    return ('<div style="background:var(--app-surface);border:1px solid '
+            'var(--app-border);border-radius:var(--app-radius-md);padding:18px '
+            f'20px;margin-top:8px"><div style="{_CF_ROTULO};margin-bottom:12px">'
+            f'{escape(titulo)}</div>{corpo}</div>')
 
 
 def _item_divergencia(d: conf_.Divergencia, pesos: str) -> str:

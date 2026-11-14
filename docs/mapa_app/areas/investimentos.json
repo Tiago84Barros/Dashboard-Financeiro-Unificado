@@ -896,14 +896,14 @@
           "resumo": "Sua carteira confrontada com a carteira sugerida",
           "explicacao": "Logo abaixo das caixas dos ativos, compara sempre a sua carteira com a carteira recomendada do Portfólio Global: a qualidade média dos dois lados (de 1, frágil, a 3, forte), o peso em ativos com alerta grave, quanto da carteira já coincide com o modelo e a divisão por classe (a sua, a do modelo e a da sua estratégia). Quando uma classe diverge 5 pontos ou mais, explica se vale manter ou rebalancear pelos aportes, com a sua estratégia como premissa.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos.py:1165 (_render_confronto; core/inteligencia_ativos/confronto_modelo.py)",
+          "fonte": "views/inteligencia_ativos.py:1281 (_render_confronto; core/inteligencia_ativos/confronto_modelo.py)",
           "filhos": [
             {
               "nome": "Divergências de peso e o porquê",
               "resumo": "Ativos com 3 pontos ou mais de diferença",
               "explicacao": "Cada ativo seu que pesa 3 pontos ou mais acima ou abaixo do modelo, com a conclusão — mudança sugerida ou manter a sua escolha — e os motivos. A conclusão segue a decisão da Inteligência para o ativo: nunca manda vender só porque o modelo pesa menos, nem comprar quando a Inteligência barra o aporte.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos.py:941 (cartao_divergencias)",
+              "fonte": "views/inteligencia_ativos.py:1057 (cartao_divergencias)",
               "filhos": []
             },
             {
@@ -911,7 +911,7 @@
               "resumo": "Ativo melhor do mesmo setor que um seu, e por quê",
               "explicacao": "Quando um ativo do mesmo segmento é melhor que um dos seus, a tela sugere a troca e explica por quê. 'Melhor' é a mesma comparação do 'Se vender, por qual trocar?': melhor na qualidade e, somando os indicadores de cada grupo, não pior no preço nem no risco: um indicador pior pode ser compensado por outro do mesmo grupo, e a tela mostra qual. A troca nunca atravessa setores: um banco não é trocado por uma elétrica. O substituto vem primeiro da carteira sugerida do Portfólio Global; se ela não tiver ninguém do setor, vem dos concorrentes do próprio ativo fora da sua carteira (esses, comparados só pelos indicadores publicados). Se nenhum for claramente melhor, o ativo que a Inteligência já questiona aparece em 'Sem substituto claramente superior no segmento', com as alternativas de qualidade melhor e o que cada uma perde. Se a Inteligência ainda recomenda manter ou acompanhar o seu ativo, a troca é aos poucos, levando os próximos aportes para o novo; só sugere vender, com o custo e o imposto estimados, quando a própria Inteligência já indica vender, substituir ou reduzir.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos.py:1007 (cartao_substituicoes; core/inteligencia_ativos/confronto_modelo.py:substituicoes)",
+              "fonte": "views/inteligencia_ativos.py:1123 (cartao_substituicoes; core/inteligencia_ativos/confronto_modelo.py:substituicoes)",
               "filhos": []
             },
             {
@@ -919,7 +919,7 @@
               "resumo": "Incluir ou não, e por quê",
               "explicacao": "Os ativos do modelo que você não tem, avaliados com a mesma régua da Inteligência. Viram candidatos a inclusão só se não tiverem alerta grave nem qualidade frágil, se não forem piores que a média dos seus ativos da mesma classe e se a sua estratégia previr a classe. Os demais aparecem como 'não incluir agora' ou 'sem avaliação', com o motivo.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos.py:954 (cartao_candidatos)",
+              "fonte": "views/inteligencia_ativos.py:1070 (cartao_candidatos)",
               "filhos": []
             }
           ]
@@ -929,7 +929,7 @@
           "resumo": "Resumo da carteira frente à estratégia",
           "explicacao": "Caixa recolhida com o resumo da carteira (Patrimônio total, Rentabilidade, Renda gerada (12 meses), Ativos que merecem revisão, alocação atual contra o alvo, concentrações, alertas e próximos eventos), a estratégia usada como base e uma tabela com papel, peso e ação a considerar para cada ativo. A comparação com a carteira recomendada do Portfólio Global saiu daqui e fica no confronto logo acima.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos.py:1208",
+          "fonte": "views/inteligencia_ativos.py:1324",
           "filhos": []
         },
         {
@@ -937,14 +937,14 @@
           "resumo": "Estudo completo de um ativo escolhido",
           "explicacao": "Botão de ligar e desligar. Ligado, mostra o estudo passo a passo de um ativo e o quanto ele combina com a sua carteira.",
           "so_admin": false,
-          "fonte": "views/inteligencia_ativos.py:1220",
+          "fonte": "views/inteligencia_ativos.py:1336",
           "filhos": [
             {
               "nome": "Ativo",
               "resumo": "Escolhe qual ativo detalhar",
               "explicacao": "Seletor com todos os ativos da carteira; também é preenchido pelo botão 'Ver análise completa'.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos.py:1225",
+              "fonte": "views/inteligencia_ativos.py:1341",
               "filhos": []
             },
             {
@@ -968,7 +968,7 @@
               "resumo": "Quanto o ativo combina com sua carteira",
               "explicacao": "Mostra uma leitura por regras (limites, alvo da classe e papel do ativo) e o botão 'Gerar leitura de Portfolio Fit', em que a IA escreve uma avaliação mais completa. Sem IA configurada, aparece um aviso de indisponibilidade.",
               "so_admin": false,
-              "fonte": "views/inteligencia_ativos.py:1250 (views/inteligencia_ativos_fit.py:226)",
+              "fonte": "views/inteligencia_ativos.py:1366 (views/inteligencia_ativos_fit.py:226)",
               "filhos": []
             }
           ]
