@@ -215,6 +215,20 @@ def test_cadastro_fica_fechado_sem_o_novos(monkeypatch):
         accounts.cadastrar_usuario("Pessoa", "p@example.test", PASSWORD)
 
 
+
+def test_cadastro_fechado_nao_manda_procurar_o_administrador(monkeypatch):
+    # Criar conta não depende de aprovação: só do banco novos configurado.
+    import core.auth as auth
+    import core.database as database
+
+    avisos = []
+    monkeypatch.setattr(database, "novos_configurado", lambda: False)
+    monkeypatch.setattr(auth.st, "info", avisos.append)
+    monkeypatch.setattr(auth.st, "form", lambda *a, **k: pytest.fail("formulário sem banco"))
+    auth._renderizar_cadastro()
+    assert len(avisos) == 1 and "administrador" not in avisos[0].lower()
+
+
 def test_conta_nova_grava_no_novos_e_le_o_compartilhado(dois_bancos, user_state):
     engines, _, _ = dois_bancos
     uid = accounts.cadastrar_usuario("Pessoa nova", "nova@example.test", PASSWORD)
