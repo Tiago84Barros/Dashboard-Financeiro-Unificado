@@ -10,8 +10,11 @@ Uso padrão em cada página:
         with col1:
             card_metrica("Saldo", "R$ 12.300,00", delta="+5,2%", positivo=True)
 """
+import base64
 import re
+from functools import lru_cache
 from html import escape
+from pathlib import Path
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -47,6 +50,41 @@ def _iniciais(nome: str) -> str:
     return (partes[0][0] + partes[-1][0]).upper()
 
 
+LOGO_SVG = Path(__file__).resolve().parent / "assets" / "tsb_logo.svg"
+"""Monograma TSB dourado, sem fundo -- desenhado pelo dono do app em 15/11/2026."""
+
+LOGO_ICONE_PNG = Path(__file__).resolve().parent / "assets" / "tsb_icone.png"
+"""O mesmo monograma no ladrilho escuro, para o ícone da aba (``page_icon``)."""
+
+
+@lru_cache(maxsize=1)
+def _logo_data_uri() -> str:
+    """O SVG do monograma em data URI; vazio se o arquivo não existir."""
+    try:
+        dados = base64.b64encode(LOGO_SVG.read_bytes()).decode("ascii")
+    except OSError:
+        return ""
+    return f"data:image/svg+xml;base64,{dados}"
+
+
+def logo_img_html(tamanho: int = 30, classe: str = "app-brand-logo") -> str:
+    """``<img>`` com o monograma embutido em data URI, numa linha só.
+
+    Usado no card da marca do menu lateral e na tela de login. Data URI e não
+    SVG inline: o ``st.markdown`` quebra HTML com várias linhas e um ``id`` de
+    gradiente inline colidiria com outro SVG da página. Sem o arquivo, volta o
+    emoji antigo -- a marca nunca some.
+    """
+    uri = _logo_data_uri()
+    if not uri:
+        return "📊"
+    lado = int(tamanho)
+    return (
+        f'<img src="{uri}" alt="" class="{escape(classe, quote=True)}" '
+        f'width="{lado}" height="{lado}">'
+    )
+
+
 def marca_sidebar_html(usuario: str = "") -> str:
     """HTML do topo da sidebar: quem está logado e o card da marca.
 
@@ -71,7 +109,7 @@ def marca_sidebar_html(usuario: str = "") -> str:
         '<div class="app-brand">'
         '<div class="app-brand-glow" aria-hidden="true"></div>'
         '<div class="app-brand-head">'
-        '<div class="app-brand-mark" aria-hidden="true">📊</div>'
+        f'<div class="app-brand-mark" aria-hidden="true">{logo_img_html()}</div>'
         '<span class="app-brand-badge">Unificado</span>'
         '</div>'
         '<div class="app-brand-title">Dashboard Financeiro</div>'

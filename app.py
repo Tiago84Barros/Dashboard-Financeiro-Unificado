@@ -9,6 +9,7 @@ import importlib
 import logging
 import sys
 import time
+from pathlib import Path
 
 import streamlit as st
 
@@ -36,9 +37,14 @@ MSG_ERRO_GENERICO_AO_CARREGAR_MODULO = (
     "Não foi possível carregar este módulo. Tente novamente em instantes."
 )
 
+# Monograma TSB do dono do app (15/11/2026). O caminho é montado aqui, e não
+# importado de ``design.componentes``, porque nada do projeto além do guarda de
+# módulos roda antes do ``set_page_config``. Sem o arquivo, volta o emoji.
+_ICONE_DA_ABA = Path(__file__).resolve().parent / "design" / "assets" / "tsb_icone.png"
+
 st.set_page_config(
     page_title="Dashboard Financeiro Unificado",
-    page_icon="📊",
+    page_icon=str(_ICONE_DA_ABA) if _ICONE_DA_ABA.is_file() else "📊",
     layout="wide",
     initial_sidebar_state="expanded",
 )

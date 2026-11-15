@@ -119,6 +119,18 @@ def test_sidebar_brand_shows_logged_user_escaped():
     assert ">TB<" in componentes.marca_sidebar_html("Tiago Barros")
 
 
+def test_sidebar_brand_uses_tsb_monogram_in_a_single_line():
+    html = componentes.marca_sidebar_html("")
+
+    assert componentes.LOGO_SVG.is_file()
+    assert componentes.LOGO_ICONE_PNG.is_file()
+    assert 'class="app-brand-logo"' in html
+    assert "data:image/svg+xml;base64," in html
+    assert "📊" not in html
+    # Uma linha só: o st.markdown transforma HTML quebrado em bloco de código.
+    assert "\n" not in html
+
+
 def test_sidebar_brand_without_user_hides_identity_block():
     html = componentes.marca_sidebar_html("")
 

@@ -172,11 +172,19 @@ _CADASTROS_POR_SESSAO = 3
 
 def _renderizar_login() -> None:
     """Tela de entrada: aba para entrar e aba para criar a própria conta."""
+    # Import local: ``design`` depende de ``core`` (ver ``_limpar_sessao``).
+    from design.componentes import logo_img_html
+
     _, col, _ = st.columns([1, 2, 1])
     with col:
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        # O monograma TSB (15/11/2026) no lugar do 📊, o mesmo do ícone da aba
+        # e do card da marca. Um bloco só, numa linha: logo e título juntos.
         st.markdown(
-            '<h2 style="text-align:center;margin-bottom:2px">📊 Dashboard Financeiro</h2>',
+            '<div style="text-align:center">'
+            f'<div style="display:inline-block;margin-bottom:6px">{logo_img_html(84, "login-logo")}</div>'
+            '<h2 style="text-align:center;margin:0 0 2px">Dashboard Financeiro</h2>'
+            "</div>",
             unsafe_allow_html=True,
         )
         st.markdown(
