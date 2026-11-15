@@ -30,11 +30,19 @@ verificável ou sem candidatos suficientes, o saldo não alocado é explicitado.
   indústria sem aprovação estatística não apaga as empresas da proposta.
   Tetos por ativo, indústria e setor são preservados. O caminho de criação
   deixou de ampliar automaticamente tetos para conseguir investir 100%.
-- B3: utiliza o ranking atual dos segmentos, o guard de entrada e a avaliação
-  de saúde já enriquecida. Excluídas, risco crítico e vetos qualitativos
-  conhecidos continuam fora. A nota numérica ordena, enquanto a aprovação
-  estatística do segmento permanece uma ressalva. Preserva tetos por ativo,
-  setor e classe cíclica. Também intercepta projeções legadas que excederiam
+- B3: cada segmento analisado entra com uma única candidata, a de maior
+  `score_proximo` dentro do segmento, a mesma nota que escolhe a líder na rota
+  normal. Notas de segmentos diferentes não são comparadas: a ordem entre
+  segmentos é aprovados no backtest primeiro, depois os demais pela menor
+  margem até a aprovação (pior entre margem contra Selic e contra Pesos
+  Iguais). Score de Entrada "Excluída", veto da Inteligência dos Ativos
+  (o mesmo `veredito.VETA_SELECAO` da rota normal), risco crítico e vetos
+  qualitativos conhecidos só excluem; a vaga passa à próxima empresa do mesmo
+  segmento. Inteligência indisponível não veta e a tela diz isso. Cada card
+  mostra o status do segmento no backtest. Preserva tetos por ativo, setor e
+  classe cíclica. Até 14/11/2026 a rota juntava todas as empresas de todos os
+  segmentos e ordenava pelo Score de Entrada, um percentil dentro do segmento
+  que não compara setores, e descartava `score_proximo`. Também intercepta projeções legadas que excederiam
   tetos conjuntos.
   Depois da composição, a tela segue com os mesmos painéis da rota normal
   (Patches 1 a 5, desempenho da safra vigente, safras ano a ano contra Selic e

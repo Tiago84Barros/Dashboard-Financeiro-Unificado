@@ -5091,6 +5091,8 @@ def _itens_da_revisao(
     ano. O peso é sempre o da composição para revisão.
     """
     fichas = {str(p["tk"]).upper().replace(".SA", ""): p for p in proximos_uniq or []}
+    por_chave = {(r.get("setor"), r.get("subsetor"), r.get("segmento")): r
+                 for r in resultados or []}
     melhor_seg: dict[str, tuple[float, dict]] = {}
     for res in resultados or []:
         for tk, score in (res.get("score_proximo") or {}).items():
@@ -5114,7 +5116,14 @@ def _itens_da_revisao(
         if tk in fichas:
             item = dict(fichas[tk])
         else:
-            score, res = melhor_seg.get(tk, (float(row.get("quality") or 0.0), {}))
+            # O segmento de onde a composição tirou o ticker manda; o de maior
+            # score só vale para proposta montada sem essa informação.
+            res = por_chave.get((row.get("setor"), row.get("subsetor"), row.get("segmento")))
+            if res is not None and row.get("score_segmento") is not None:
+                score = float(row["score_segmento"])
+            else:
+                score, res = melhor_seg.get(
+                    tk, (float(row.get("score_segmento") or 0.0), {}))
             nome = tk
             if _ctk and "nome_empresa" in df_set.columns:
                 _n = df_set.loc[df_set[_ctk] == tk, "nome_empresa"]
@@ -5134,6 +5143,14 @@ def _itens_da_revisao(
         item["peso"] = peso
         itens.append(item)
     return itens
+
+
+def _barrado_inteligencia(tk: str, setor: str | None) -> bool:
+    """O mesmo veto da Inteligência dos Ativos que a rota normal aplica em
+    ``_aplicar_portao_inteligencia``. Exceção sobe: ``b3_review`` a trata
+    como fail-open e nomeia o ticker nos motivos."""
+    cod, _motivo = veredito.limite(_intel_avaliar_cached(tk, setor))
+    return cod in veredito.VETA_SELECAO
 
 
 def _rota_revisao(
@@ -5158,7 +5175,8 @@ def _rota_revisao(
 
     proposal = b3_review(resultados, df_mult_todos, entry_guard, cap=cap,
                          sector_cap=teto_setor, cycle_cap=teto_ciclico,
-                         selic=taxa_selic_aa, vetoed=vetados)
+                         selic=taxa_selic_aa, vetoed=vetados, approved=aprovados,
+                         barrado=_barrado_inteligencia)
     render_portfolio_review(proposal, key="b3_review")
 
     itens = _itens_da_revisao(proposal, proximos_uniq, resultados, df_set)

@@ -133,3 +133,111 @@ render_portfolio_review(allocate_partial([], []), key="empty")
     assert "10.0%" in cards[0] and "90.0%" in cards[0] and "SYNTH" in cards[0]
     assert "100.0%" in cards[1] and 'class="pr-card"' not in cards[1]
     assert app.dataframe[0].value.iloc[0]["Ativo"] == "SYNTH"
+
+
+# ── Rota alternativa da B3: líderes por segmento, score do segmento ─────────
+# Até 14/11/2026 `b3_review` juntava TODA empresa de todo segmento e ordenava
+# pelo Score de Entrada -- percentil intra-segmento, que não compara setores --,
+# lendo o `score_proximo` só para descartar quem não o tinha.
+
+def _saude_ok(monkeypatch):
+    import core.b3_holdings_health as health
+
+    monkeypatch.setattr(health, "check_holdings", lambda _df, tickers, **_k: [
+        SimpleNamespace(ticker=t, nivel=health.OK) for t in tickers])
+
+
+def _seg(nome, setor, scores, *, est=1.2, selic=1.0, ew=1.0):
+    return {"setor": setor, "subsetor": nome, "segmento": nome,
+            "score_proximo": scores, "val_est": est, "val_selic": selic, "val_ew": ew}
+
+
+def _tickers(result):
+    return sorted(row["ticker"] for row in result["items"])
+
+
+def test_b3_review_pega_so_o_lider_de_cada_segmento_pelo_score_do_segmento(monkeypatch):
+    _saude_ok(monkeypatch)
+    papel = _seg("Papel", "Materiais", {"LIDR3": 90, "SEGU3": 80})
+    hosp = _seg("Hospitais", "Saúde", {"HOSP3": 70})
+    # O Score de Entrada do segundo colocado é maior: antes, ele entrava.
+    guard = {"LIDR3": {"score_entrada": 50, "status_entrada": "Observação"},
+             "SEGU3": {"score_entrada": 99, "status_entrada": "Aprovada"},
+             "HOSP3": {"score_entrada": 40, "status_entrada": "Observação"}}
+    result = b3_review([papel, hosp], pd.DataFrame(), guard, cap=.5, sector_cap=1,
+                       cycle_cap=1, selic=.15)
+    assert _tickers(result) == ["HOSP3", "LIDR3"]
+    lider = next(r for r in result["items"] if r["ticker"] == "LIDR3")
+    assert lider["score_segmento"] == 90 and lider["segmento"] == "Papel"
+
+
+def test_b3_review_prefere_segmentos_aprovados_ao_score_mais_alto(monkeypatch):
+    _saude_ok(monkeypatch)
+    reprovado = _seg("A", "S1", {"AAAA3": 99}, est=3.0)   # maior score e margem
+    aprov_b = _seg("B", "S2", {"BBBB3": 55})
+    aprov_c = _seg("C", "S3", {"CCCC3": 60})
+    result = b3_review([reprovado, aprov_b, aprov_c], pd.DataFrame(), {}, cap=.5,
+                       sector_cap=1, cycle_cap=1, selic=.15, approved=[aprov_b, aprov_c])
+    assert _tickers(result) == ["BBBB3", "CCCC3"]
+    assert all(row["aprovado"] for row in result["items"])
+    assert any("2 de 2 posições" in r for r in result["reasons"])
+
+
+def test_b3_review_ordena_nao_aprovados_pela_margem_do_backtest(monkeypatch):
+    _saude_ok(monkeypatch)
+    fraco = _seg("Fraco", "S1", {"FRAC3": 99}, est=0.9)    # perde da Selic
+    forte = _seg("Forte", "S2", {"FORT3": 40}, est=1.1)    # bate os dois por 10%
+    result = b3_review([fraco, forte], pd.DataFrame(), {}, cap=1, sector_cap=1,
+                       cycle_cap=1, selic=.15)
+    assert _tickers(result) == ["FORT3"]
+    assert result["items"][0]["evidencia_segmento"] == pytest.approx(10.0)
+
+
+def test_b3_review_veto_cede_a_vaga_ao_proximo_do_mesmo_segmento(monkeypatch):
+    _saude_ok(monkeypatch)
+    seg = _seg("Papel", "Materiais", {"LIDR3": 90, "SEGU3": 80, "TERC3": 70})
+    outro = _seg("Hosp", "Saúde", {"HOSP3": 50})
+    guard = {"SEGU3": {"score_entrada": 20, "status_entrada": "Excluída"}}
+    result = b3_review([seg, outro], pd.DataFrame(), guard, cap=.5, sector_cap=1,
+                       cycle_cap=1, selic=.15,
+                       barrado=lambda tk, _setor: tk == "LIDR3")
+    # LIDR3 barrado pela Inteligência, SEGU3 excluído pelo Score de Entrada:
+    # a vaga do segmento vai para TERC3, e o segmento não ganha segunda vaga.
+    assert _tickers(result) == ["HOSP3", "TERC3"]
+    terc = next(r for r in result["items"] if r["ticker"] == "TERC3")
+    assert terc["lider_segmento"] is False
+
+
+def test_b3_review_inteligencia_indisponivel_nao_veta_e_e_nomeada(monkeypatch):
+    _saude_ok(monkeypatch)
+
+    def _falha(_tk, _setor):
+        raise RuntimeError("fora do ar")
+
+    result = b3_review([_seg("A", "S1", {"AAAA3": 80})], pd.DataFrame(), {}, cap=1,
+                       sector_cap=1, cycle_cap=1, selic=.15, barrado=_falha)
+    assert _tickers(result) == ["AAAA3"]
+    assert any("AAAA3 (RuntimeError)" in r for r in result["reasons"])
+
+
+def test_b3_review_ticker_em_dois_segmentos_ocupa_uma_vaga(monkeypatch):
+    _saude_ok(monkeypatch)
+    a = _seg("A", "S1", {"DUPL3": 90, "OUTR3": 50})
+    b = _seg("B", "S2", {"DUPL3": 95, "BBBB3": 60})
+    result = b3_review([a, b], pd.DataFrame(), {}, cap=.5, sector_cap=1, cycle_cap=1,
+                       selic=.15)
+    assert _tickers(result) == ["BBBB3", "DUPL3"]
+
+
+def test_card_da_revisao_b3_mostra_o_score_do_segmento_e_nao_a_prioridade():
+    from design.portfolio_review import _backtest, _html_card, _score
+
+    row = {"ticker": "LIDR3", "weight": .25, "quality": 7.0, "score_segmento": 88.4,
+           "setor": "Materiais", "segmento": "Papel", "aprovado": False,
+           "evidencia_segmento": -3.25}
+    assert _score(row) == 88.4
+    assert _backtest(row) == "Segmento não aprovado · margem -3.2%"
+    html = _html_card(1, row)
+    assert "88.4" in html and "Segmento não aprovado" in html
+    # Rotas de FII e EUA não trazem a situação do backtest: nada muda nelas.
+    assert _backtest({"ticker": "X", "weight": .1, "entry_score": 50}) is None
