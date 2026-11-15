@@ -1339,11 +1339,16 @@ FLOW_SELECAO_FIIS = FlowSpec(
         "otimizacao_fii": _node(
             "otimizacao_fii", "Montagem da carteira", "Carteira",
             "A otimização busca a melhor combinação dentro dos SEUS limites. Quando os "
-            "limites se contradizem, o app avisa qual deles esvaziou a carteira.",
+            "limites se contradizem, o app avisa qual deles esvaziou a carteira. Quando "
+            "nem a cessão fecha, a composição para revisão usa a mesma utilidade e as "
+            "mesmas bandas por tipo da carteira normal: depois do capital, minimiza o "
+            "desvio fora das bandas, porque a nota é percentil dentro do tipo e não "
+            "decide quanto vai para cada tipo.",
             (
                 "Otimização com restrições de peso e de grupo",
                 "Diagnóstico quando a restrição é inalcançável",
                 "Cessão controlada da forma, nunca do risco",
+                "Revisão: capital, depois bandas por tipo, depois utilidade",
             ),
             "Carteira vazia quase nunca é falta de ativo bom: é teto inalcançável. "
             "O app precisa dizer QUAL limite travou, não devolver uma lista em branco.",
