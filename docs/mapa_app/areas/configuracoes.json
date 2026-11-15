@@ -23,7 +23,7 @@
         {
           "nome": "Seções do aplicativo",
           "resumo": "Escolher quais telas aparecem no menu",
-          "explicacao": "Um interruptor para cada seção que pode sair do menu lateral: Controle Financeiro, Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global. Dashboard Geral e Configurações ficam sempre, e uma linha acima dos interruptores diz isso. Desligue o que você não usa e clique em 'Salvar seções'; antes do clique aparecem quantas estão ligadas e o que sai ou volta ao menu. A escolha fica na sua conta e não muda o menu de outras pessoas. Tirar do menu não apaga nada: dados, carteiras salvas e conversas continuam guardados, e a seção volta inteira quando você liga o interruptor de novo. O Dashboard Geral passa a mostrar só os blocos das seções ligadas.",
+          "explicacao": "Um interruptor para cada seção que pode sair do menu lateral: Controle Financeiro, Controle CNPJ, Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global. Dashboard Geral e Configurações ficam sempre, e uma linha acima dos interruptores diz isso. Uma conta criada desde 15/11/2026 começa só com Controle Financeiro e Investimentos ligados; as outras cinco ficam desligadas até você ligá-las aqui. As contas que já existiam não perderam nenhuma seção. Desligue o que você não usa e clique em 'Salvar seções'; antes do clique aparecem quantas estão ligadas e o que sai ou volta ao menu. A escolha fica na sua conta e não muda o menu de outras pessoas. Tirar do menu não apaga nada: dados, carteiras salvas e conversas continuam guardados, e a seção volta inteira quando você liga o interruptor de novo. O Dashboard Geral passa a mostrar só os blocos das seções ligadas.",
           "so_admin": false,
           "fonte": "views/configuracoes_geral.py:82",
           "filhos": []
@@ -353,7 +353,7 @@
     {
       "nome": "Segurança",
       "resumo": "Senha, sessão, quem tem acesso e quem está logado",
-      "explicacao": "Cuida do acesso ao app: trocar a sua senha, encerrar a sessão e gerar a senha protegida do app. Três blocos são só do administrador: a lista de usuários cadastrados, quem está logado agora e a exclusão de uma conta com todos os dados dela; os demais veem um aviso no lugar. Criar conta saiu daqui em 14/11/2026: qualquer pessoa cria a própria conta na aba 'Criar conta' da tela de login, e a conta nova fica num segundo Supabase, porque o primeiro está cheio.",
+      "explicacao": "Cuida do acesso ao app: trocar a sua senha, encerrar a sessão e gerar a senha protegida do app. Três blocos são só do administrador: a lista de usuários cadastrados, quem está logado agora e a exclusão de uma conta com todos os dados dela; os demais veem um aviso no lugar. Criar conta saiu daqui em 14/11/2026: qualquer pessoa cria a própria conta na aba 'Criar conta' da tela de login, e a conta nova fica num segundo Supabase, porque o primeiro está cheio. Ela começa com o menu enxuto: Dashboard Geral, Controle Financeiro, Investimentos e Configurações; o resto se liga na aba Geral, em Seções do aplicativo.",
       "so_admin": false,
       "fonte": "views/configuracoes.py:136 → views/configuracoes.py:2005",
       "filhos": [

@@ -117,6 +117,10 @@ def _render_secoes() -> None:
         fixas = [f"**{s.rotulo}**" for s in secoes_app.SECOES if s.fixa]
         st.markdown(f"Sempre no menu: {' e '.join(fixas)} — a porta de "
                     "entrada e o lugar onde esta escolha se desfaz.")
+        visiveis_novas = [s.nome for s in secoes_app.SECOES
+                          if not s.fixa and s.modulo in secoes_app.VISIVEIS_CONTA_NOVA]
+        st.caption(f"Conta nova começa só com {' e '.join(visiveis_novas)} ligados; "
+                   "as outras seções ficam aqui, prontas para ligar.")
         # Linhas de dois, e não duas colunas altas: no celular as colunas
         # empilham, e duas colunas altas viravam "1, 3, 5, 2, 4, 6" -- a
         # ordem do menu se perdia justamente onde a tela é mais estreita.

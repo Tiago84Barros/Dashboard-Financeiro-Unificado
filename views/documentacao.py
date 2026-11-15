@@ -2028,9 +2028,13 @@ FLOW_CONFIGURACOES = FlowSpec(
             "e a seção volta inteira quando o interruptor é ligado de novo.",
             (
                 "Aba ⚙️ Geral, bloco 02 (🧭 Seções do aplicativo), logo depois do tema",
-                "Um interruptor por seção opcional: Controle Financeiro, Investimentos, "
-                "Empresas B3, Empresas Americanas, Seleção de FIIs e Portfólio Global",
+                "Um interruptor por seção opcional: Controle Financeiro, Controle CNPJ, "
+                "Investimentos, Empresas B3, Empresas Americanas, Seleção de FIIs e "
+                "Portfólio Global",
                 "Dashboard Geral e Configurações ficam sempre no menu, sem interruptor",
+                "Conta criada desde 15/11/2026 começa só com Controle Financeiro e "
+                "Investimentos ligados (core.secoes_app.VISIVEIS_CONTA_NOVA); as outras "
+                "cinco se ligam aqui. Conta anterior não perdeu seção",
                 "Botão 💾 Salvar seções; antes do clique, a contagem de ligadas e o que sai "
                 "ou volta ao menu",
                 "core.secoes_app: catálogo das seções, filtro do menu e cache da sessão",
@@ -2251,6 +2255,9 @@ FLOW_CONFIGURACOES = FlowSpec(
                 "Conta nova mora no Supabase das contas novas (SUPABASE_NOVOS_URL); as contas "
                 "anteriores continuam no Supabase principal",
                 "Sem SUPABASE_NOVOS_URL, a aba Criar conta diz que o cadastro ainda não abriu",
+                "A conta nasce com o menu enxuto: Dashboard Geral, Controle Financeiro, "
+                "Investimentos e Configurações. O resto se liga em ⚙️ Geral → 🧭 Seções do "
+                "aplicativo; a escolha inicial é gravada na mesma transação do cadastro",
             ),
             "O Supabase principal está no limite do plano gratuito. Conta nova ali cresceria "
             "justo o banco que não tem espaço; por isso o cadastro aberto grava só no banco "

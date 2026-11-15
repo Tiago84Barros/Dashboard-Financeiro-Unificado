@@ -221,6 +221,17 @@ def cadastrar_usuario(name: str, email: str, password: str) -> str:
             raise RuntimeError("Muitos cadastros na última hora. Tente novamente mais tarde.")
         conn.execute(text("INSERT INTO profiles (id, name, email, password_hash) VALUES (:uid, :name, :email, :password)"),
                      {"uid": uid, "name": name, "email": email, "password": encoded})
+        # A conta nasce com o menu enxuto (``core.secoes_app.VISIVEIS_CONTA_NOVA``),
+        # na MESMA transação: não existe conta criada sem a escolha inicial.
+        # Import local: ``core.user_preferences`` importa este módulo.
+        from core.secoes_app import ocultas_conta_nova
+        from core.user_preferences import SECOES_OCULTAS_FIELD
+
+        conn.execute(text(
+            "INSERT INTO user_settings (user_id, extra_settings) VALUES "
+            "(:uid, jsonb_build_object(CAST(:field AS text), CAST(:ocultas AS jsonb)))"
+        ), {"uid": uid, "field": SECOES_OCULTAS_FIELD,
+            "ocultas": json.dumps(list(ocultas_conta_nova()))})
     return uid
 
 

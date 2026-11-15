@@ -17,6 +17,11 @@ o cadastro ainda não abriu. Ela nunca grava no principal.
   depois no novos. Se o novos cair, quem mora no principal continua entrando.
 - O cadastro (`cadastrar_usuario`) grava só no novos. Ele recusa um e-mail que
   já existe em qualquer um dos dois bancos.
+- A conta nasce com o menu enxuto. Ficam Dashboard Geral, Controle Financeiro,
+  Investimentos e Configurações (`core.secoes_app.VISIVEIS_CONTA_NOVA`). O
+  cadastro grava as outras seções como ocultas em
+  `user_settings.extra_settings`, na mesma transação do `profiles`. A pessoa
+  liga as demais em Configurações › Geral › Seções do aplicativo.
 - Dados que são do app, e não de uma pessoa, continuam gravados no principal,
   mesmo numa sessão de conta nova, por `core.database.engine_do_app()`. No
   novos essas tabelas são estrangeiras: o `postgres_fdw` não aceita
