@@ -217,26 +217,27 @@ def us_review(eligible, params, audit=None, avaliador=None):
         fila.append({"industry": industry, "camada": _US_AMOSTRA, "falhas": 0,
                      "margem": None, "motivo": "fora da auditoria"})
     por_industria = {item["industry"]: item for item in fila}
+    # A existência de indústria aprovada sai da auditoria, ANTES da seleção:
+    # decidir pelos blocos que sobreviveram ao piso deixaria uma indústria
+    # reprovada impedir a rede final de restaurar as aprovadas -- e a revisão
+    # sairia de indústrias que a carteira normal não usaria.
+    aprovadas = [item["industry"] for item in fila if item["camada"] == _US_APROVADA]
     blocos, floor_log, intel_log = _lideres_por_industria(
-        eligible, [item["industry"] for item in fila], params, avaliador,
+        eligible, aprovadas or [item["industry"] for item in fila], params, avaliador,
         motivo="Liderança de score na indústria",
         motivo_inteligencia="Entrou pela Inteligência dos Ativos na indústria")
     top_n = max(1, int(params.top_n))
-    aprovados = [b for b in blocos
-                 if por_industria[str(b["industry_group"].iloc[0])]["camada"] == _US_APROVADA]
-    demais = [b for b in blocos
-              if por_industria[str(b["industry_group"].iloc[0])]["camada"] != _US_APROVADA]
     partes = []
-    if aprovados:
+    if aprovadas and blocos:
         # Exatamente a lista da carteira normal (select_industry_leaders): com
         # indústria aprovada, a revisão só existe porque os tetos não fecham, e
         # o que não cabe neles fica como capital não alocado -- não vira vaga
         # para indústria que a carteira normal reprovou.
-        partes.append(pd.concat(aprovados, ignore_index=True).sort_values(
+        partes.append(pd.concat(blocos, ignore_index=True).sort_values(
             ["entry_score", "fundamental_score"], ascending=False).head(top_n))
-    else:
+    elif not aprovadas:
         vagas = top_n
-        for bloco in demais:
+        for bloco in blocos:
             if vagas <= 0:
                 break
             partes.append(bloco.head(vagas))

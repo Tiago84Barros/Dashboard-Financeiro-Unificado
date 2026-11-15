@@ -499,3 +499,27 @@ def test_card_dos_eua_mostra_a_situacao_da_industria_e_nao_backtest_de_segmento(
     assert _backtest(row) == "Indústria em observação · margem -3.0 pts"
     assert "Segmento" not in _backtest({**row, "aprovado": True,
                                         "situacao_grupo": "Indústria aprovada"})
+
+
+def test_us_review_piso_que_zera_as_aprovadas_nao_abre_vaga_para_reprovada(monkeypatch):
+    """Achado do Codex no PR #757: decidir "há aprovada" pelos blocos que
+    sobreviveram ao piso deixava uma reprovada impedir a rede final."""
+    import core.us_quality_floor as floor
+    from core.us_portfolio_creation import build_industry_audit, select_industry_leaders
+
+    params = USPortfolioCreationParams(apply_quality_floor=True)
+    from core.us_portfolio_creation import prepare_eligible_universe
+    eligible, _ = prepare_eligible_universe(_universo_us(), params)
+    audit = build_industry_audit(eligible, params)
+    aprovadas = set(audit.loc[audit["status"].eq("Aprovada"), "industry_group"].astype(str))
+    assert aprovadas and aprovadas != set(audit["industry_group"].astype(str))
+    # O piso reprova tudo nas aprovadas e aprova tudo nas demais.
+    monkeypatch.setattr(floor, "apply_with_substitution",
+                        lambda sel, ranked, frame, pesos, grupo, log, **_:
+                        [] if grupo in aprovadas else list(sel))
+    normal = select_industry_leaders(eligible, audit, params)
+    revisao = us_review(eligible, params, audit)
+    assert set(normal["industry_group"].astype(str)) <= aprovadas
+    assert {row["industry_group"] for row in revisao["items"]} <= aprovadas
+    assert {row["symbol"] for row in revisao["items"]} <= set(normal["symbol"])
+    assert revisao["quality_floor_log"].get("carteira_preservada")
