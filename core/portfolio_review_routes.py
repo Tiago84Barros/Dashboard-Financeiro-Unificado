@@ -205,9 +205,12 @@ def b3_review(results, fundamentals, entry_guard, *, cap, sector_cap, cycle_cap,
     candidatos.sort(key=lambda row: (
         not row["aprovado"],
         -(row["evidencia_segmento"] if row["evidencia_segmento"] is not None else -math.inf),
-        -row["score_segmento"], row["ticker"]))
+        tuple(str(parte or "") for parte in (row["setor"], row["subsetor"], row["segmento"])),
+        row["ticker"]))
     # Prioridade estritamente decrescente: o otimizador preenche primeiro os
-    # segmentos aprovados e, entre os demais, os de maior evidência.
+    # segmentos aprovados e, entre os demais, os de maior evidência. Empate de
+    # evidência cai na chave do segmento, nunca no score: scores de segmentos
+    # diferentes não são comparáveis e aqui viram prioridade de capital.
     rows = [{**row, "quality": float(len(candidatos) - i)} for i, row in enumerate(candidatos)]
     constraints = []
     for sector in sorted({row["setor"] for row in rows}):

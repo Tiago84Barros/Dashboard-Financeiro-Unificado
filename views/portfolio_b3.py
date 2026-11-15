@@ -5091,8 +5091,8 @@ def _itens_da_revisao(
     ano. O peso é sempre o da composição para revisão.
     """
     fichas = {str(p["tk"]).upper().replace(".SA", ""): p for p in proximos_uniq or []}
-    por_chave = {(r.get("setor"), r.get("subsetor"), r.get("segmento")): r
-                 for r in resultados or []}
+    por_chave = {(r.get("setor") or "Não classificado", r.get("subsetor"),
+                  r.get("segmento")): r for r in resultados or []}
     melhor_seg: dict[str, tuple[float, dict]] = {}
     for res in resultados or []:
         for tk, score in (res.get("score_proximo") or {}).items():

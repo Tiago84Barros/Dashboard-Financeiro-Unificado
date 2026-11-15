@@ -181,9 +181,18 @@ def _html_backtest(row: dict) -> str:
             f'{_t(texto)}</span>')
 
 
+def _prioridade(row: dict) -> float:
+    """Desempate dos cards de mesmo peso.
+
+    Na B3 o score exibido é do segmento e não compara segmentos; a ordem vem
+    da prioridade de alocação (``quality``), que já põe aprovados à frente.
+    """
+    valor = _numero(row.get("quality") if "score_segmento" in row else _score(row))
+    return -math.inf if valor is None else valor
+
+
 def _ordenados(itens: list[dict]) -> list[dict]:
-    return sorted(itens, key=lambda row: (-float(row["weight"]),
-                                          -(_numero(_score(row)) or -math.inf),
+    return sorted(itens, key=lambda row: (-float(row["weight"]), -_prioridade(row),
                                           str(row["ticker"])))
 
 

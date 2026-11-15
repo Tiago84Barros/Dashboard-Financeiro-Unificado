@@ -241,3 +241,36 @@ def test_card_da_revisao_b3_mostra_o_score_do_segmento_e_nao_a_prioridade():
     assert "88.4" in html and "Segmento não aprovado" in html
     # Rotas de FII e EUA não trazem a situação do backtest: nada muda nelas.
     assert _backtest({"ticker": "X", "weight": .1, "entry_score": 50}) is None
+
+
+def test_b3_review_empate_de_evidencia_nao_desempata_pelo_score(monkeypatch):
+    """Empate de margem cai na chave do segmento: o score de um segmento não
+    pode comprar prioridade de capital sobre o de outro (achado do Codex no
+    PR #751)."""
+    _saude_ok(monkeypatch)
+    alto = _seg("Zeta", "S2", {"ALTO3": 99}, est=1.1)
+    baixo = _seg("Alfa", "S1", {"BAIX3": 40}, est=1.1)
+    result = b3_review([alto, baixo], pd.DataFrame(), {}, cap=1, sector_cap=1,
+                       cycle_cap=1, selic=.15)
+    assert _tickers(result) == ["BAIX3"], "o score 99 venceu o empate de margem"
+    sem_medida = [_seg("Zeta", "S2", {"ALTO3": 99}, est=None),
+                  _seg("Alfa", "S1", {"BAIX3": 40}, est=None)]
+    result = b3_review(sem_medida, pd.DataFrame(), {}, cap=1, sector_cap=1,
+                       cycle_cap=1, selic=.15)
+    assert _tickers(result) == ["BAIX3"]
+
+
+def test_cards_b3_de_mesmo_peso_seguem_a_prioridade_e_nao_o_score():
+    """Aprovado com score 40 vem antes de reprovado com score 99 no mesmo
+    peso: a ordem dos cards é a do otimizador (achado do Codex no PR #751)."""
+    from design.portfolio_review import _ordenados
+
+    itens = [{"ticker": "REPR3", "weight": .25, "quality": 1.0, "score_segmento": 99,
+              "aprovado": False},
+             {"ticker": "APRV3", "weight": .25, "quality": 2.0, "score_segmento": 40,
+              "aprovado": True}]
+    assert [r["ticker"] for r in _ordenados(itens)] == ["APRV3", "REPR3"]
+    # Fora da B3 o score observado continua desempatando.
+    fii = [{"ticker": "B11", "weight": .5, "type_score": 50},
+           {"ticker": "A11", "weight": .5, "type_score": 80}]
+    assert [r["ticker"] for r in _ordenados(fii)] == ["A11", "B11"]
