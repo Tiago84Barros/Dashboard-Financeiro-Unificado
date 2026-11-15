@@ -30,7 +30,12 @@ from core.publicacao_agenda import POR_CHAVE
 ALVO_DO_MODULO = {
     "fii": "fii_selection",
     "us": "us_snapshot",
-    "b3": "b3_metrics",
+    # Era `b3_metrics`, que saiu da rotina em 15/11/2026: o Supabase não
+    # recebe mais atualização. `b3_brapi_anual` tem a mesma cadência semanal,
+    # então o limite do selo continua em 7 + 3 dias. O carimbo continua sendo
+    # o `updated_at` da vitrine que a tela lê, então uma vitrine congelada
+    # aparece vencida, e é isso que tem de aparecer.
+    "b3": "b3_brapi_anual",
     "noticias": "noticias_vitrine",
     "espelho": "espelho_supabase",
     "macro": "macro_insumos",
@@ -43,7 +48,7 @@ ALVO_DO_MODULO = {
 TOLERANCIA_DIAS = 3
 
 # Qual alvo traz o PREÇO que a tela mostra, quando ele não é o mesmo que
-# publica a vitrine. Na B3 são dois: `b3_metrics` republica as métricas toda
+# publica a vitrine. Na B3 eram dois: `b3_metrics` republicava as métricas toda
 # semana a partir do armazém, e `b3_brapi` traz a cotação. Entre 30/10 e
 # 07/11/2026 a brapi recusou toda cotação e `b3_metrics` seguiu republicando:
 # o carimbo de publicação renovava, o preço ficou em 29/10, e o selo dizia "em

@@ -1866,8 +1866,9 @@ FLOW_QUALIDADE_DADOS = FlowSpec(
             "frescor", "Selo de frescor", "Origem",
             "Cada vitrine carrega uma cadência alvo e um limite de validade. O selo no "
             "topo da tela compara a data da publicação com esses dois prazos. Na B3 "
-            "ele compara também a data do preço: as métricas são republicadas toda "
-            "semana mesmo quando a cotação para de chegar.",
+            "ele compara também a data do preço: uma publicação em dia pode trazer "
+            "uma cotação que parou de chegar. Desde 15/11/2026 a rotina não publica "
+            "a B3 no Supabase, e uma cópia congelada lá aparece vencida.",
             (
                 "Cadência alvo: de quanto em quanto tempo deveria atualizar",
                 "Limite de validade: a partir de quando está velho",

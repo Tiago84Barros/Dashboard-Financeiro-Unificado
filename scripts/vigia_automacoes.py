@@ -105,7 +105,7 @@ def runs_agendados(workflow: str, gh: str) -> list[dict] | None:
 def atualidade_b3_do_armazem(hoje) -> dict | None:
     """Avaliação do trimestre vigente no armazém local, ou ``None`` se não deu.
 
-    Só o armazém: é dele que o alvo ``b3_metrics`` publica, e lê-lo não gasta
+    Só o armazém: é dele que saem as métricas da B3, e lê-lo não gasta
     egress do Supabase. Docker desligado não é problema a avisar aqui, porque a
     própria rotina de publicação já falha alto sem ele.
     """
