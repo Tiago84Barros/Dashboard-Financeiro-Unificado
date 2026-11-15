@@ -11,6 +11,7 @@ import streamlit as st
 
 from core.user_accounts import change_password, excluir_usuario, list_users
 from core.user_context import is_admin, principal, require_user
+from design.componentes import card_metrica
 from design.lacunas import falha_de_acao
 
 _NOME_DO_BANCO = {"principal": "Supabase principal", "novos": "Supabase das contas novas"}
@@ -127,9 +128,27 @@ def render_logged_users():
         falha_de_acao("Não foi possível ler quem está logado.", exc)
         return
     abas = sum(p["abas"] for p in logados)
-    col1, col2 = st.columns(2)
-    col1.metric("Pessoas logadas", len(logados))
-    col2.metric("Abas abertas", abas)
+    # Cards KPI do tema (``card_metrica``), não ``st.metric``: o st.metric
+    # desenhava retângulos brancos crus, fora do visual do resto do app.
+    ultima = max((p["visto"] for p in logados), default=None)
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        card_metrica("Pessoas logadas", len(logados),
+                     delta="com o app aberto agora", accent="var(--app-primary)",
+                     ajuda="Pessoas distintas com sessão conectada e identidade válida.")
+    with col2:
+        media = f"média de {abas / len(logados):.1f} por pessoa".replace(".", ",") \
+            if logados else "nenhuma aba conectada"
+        card_metrica("Abas abertas", abas, delta=media, accent="var(--app-info)",
+                     ajuda="Cada aba do navegador conectada conta uma vez.")
+    with col3:
+        card_metrica(
+            "Última atividade",
+            datetime.fromtimestamp(ultima).strftime("%H:%M") if ultima else "—",
+            delta=datetime.fromtimestamp(ultima).strftime("%d/%m/%Y") if ultima else "sem sessões",
+            accent="var(--app-warning)",
+            ajuda="Momento mais recente em que alguma sessão deu sinal (horário do servidor).",
+        )
     if not logados:
         st.caption("Ninguém logado agora.")
         return

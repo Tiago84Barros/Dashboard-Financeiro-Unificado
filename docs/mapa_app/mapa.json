@@ -3188,7 +3188,7 @@
             {
               "nome": "Usuários logados agora",
               "resumo": "Quantas pessoas e quem está com o app aberto",
-              "explicacao": "Mostra o número de pessoas logadas neste momento, quantas abas do navegador isso soma e uma tabela com o nome de cada pessoa, a hora em que entrou, a última atividade e o banco da conta. Uma pessoa conta enquanto a aba está aberta e o login não expirou. Só o administrador vê; os demais veem um aviso.",
+              "explicacao": "Mostra, em três cards, o número de pessoas logadas neste momento, quantas abas do navegador isso soma e a hora da atividade mais recente, e abaixo uma tabela com o nome de cada pessoa, a hora em que entrou, a última atividade e o banco da conta. Uma pessoa conta enquanto a aba está aberta e o login não expirou. Só o administrador vê; os demais veem um aviso.",
               "so_admin": true
             },
             {
