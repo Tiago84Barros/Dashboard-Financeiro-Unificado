@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
 from math import ceil
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 import numpy as np
 import pandas as pd
@@ -461,49 +461,44 @@ def build_industry_audit(
     ).drop(columns="_status_order").reset_index(drop=True)
 
 
-def select_industry_leaders(
+def _lideres_por_industria(
     eligible: pd.DataFrame,
-    industry_audit: pd.DataFrame,
+    industrias: Sequence[str],
     params: USPortfolioCreationParams,
     avaliador: Callable[[str], Any] | None = None,
-) -> pd.DataFrame:
-    """Seleciona finalistas somente dentro das indústrias aprovadas.
+    motivo: str = "Liderança de score na indústria aprovada",
+    motivo_inteligencia: str = "Entrou pela Inteligência dos Ativos na indústria aprovada",
+) -> tuple[list[pd.DataFrame], dict, dict]:
+    """Os ``leaders_per_industry`` melhores de cada indústria, na ordem dada.
 
-    Com ``avaliador`` (ticker → ``Avaliacao`` da Inteligência dos Ativos),
-    depois do piso de qualidade passa o portão da Inteligência
-    (``veredito.filtrar_selecao``): líder que ela manda avaliar troca ou não
-    aportar sai, e o próximo da MESMA indústria que passa no piso e no portão
-    entra. O log vai em ``attrs["inteligencia_log"]``."""
+    É a regra única de escolha dentro da indústria, usada pela carteira normal
+    (``select_industry_leaders``) e pela composição para revisão
+    (``core.portfolio_review_routes.us_review``): ordem por ``entry_score`` e
+    ``fundamental_score`` DENTRO da indústria, piso de qualidade com
+    substituição pelo próximo da mesma indústria e, com ``avaliador``, o
+    portão da Inteligência dos Ativos com a mesma substituição. Devolve um
+    bloco por indústria que ficou com algum nome, o log do piso e o da
+    Inteligência."""
     from core.inteligencia_ativos import veredito
-
-    intel_log = veredito.novo_log_selecao()
-
-    def _vazio() -> pd.DataFrame:
-        """Frame vazio que ainda carrega o log — quem consome não precisa
-        descobrir por qual caminho a seleção saiu vazia."""
-        saida = pd.DataFrame()
-        saida.attrs["quality_floor_log"] = {}
-        saida.attrs["inteligencia_log"] = intel_log
-        return saida
-
-    if eligible is None or eligible.empty or industry_audit is None or industry_audit.empty:
-        return _vazio()
-    approved = set(industry_audit.loc[
-        industry_audit["status"].eq("Aprovada"), "industry_group"
-    ].astype(str))
-    if not approved:
-        return _vazio()
-
     from core.us_quality_floor import apply_with_substitution
 
+    intel_log = veredito.novo_log_selecao()
     floor_log: dict[str, list[dict]] = {}
+    if eligible is None or eligible.empty or not industrias:
+        return [], floor_log, intel_log
+    work = eligible.copy()
+    if "fundamental_score" not in work:
+        work["fundamental_score"] = np.nan
+    grupos = {str(nome): grupo for nome, grupo in work.groupby(
+        work["industry_group"].astype(str), dropna=False)}
     records = []
     # Líderes ANTES do piso, por indústria. Só são usados se o piso tiver
     # esvaziado TODAS as indústrias (ver a rede no fim da função).
     sem_piso: list = []
-    for industry, group in eligible[eligible["industry_group"].isin(approved)].groupby(
-        "industry_group", dropna=False
-    ):
+    for industry in dict.fromkeys(str(nome) for nome in industrias):
+        group = grupos.get(industry)
+        if group is None or group.empty:
+            continue
         ranked = group.sort_values(
             ["entry_score", "fundamental_score"], ascending=False)
         leaders = ranked.head(max(1, int(params.leaders_per_industry))).copy()
@@ -554,9 +549,7 @@ def select_industry_leaders(
             entrou = set()
 
         leaders["selection_reason"] = [
-            ("Entrou pela Inteligência dos Ativos na indústria aprovada"
-             if str(sym) in entrou else
-             "Liderança de score na indústria aprovada")
+            motivo_inteligencia if str(sym) in entrou else motivo
             for sym in leaders["symbol"]]
         records.append(leaders)
     if not records:
@@ -574,10 +567,7 @@ def select_industry_leaders(
         sem_piso = [b[~b["symbol"].astype(str).isin(vetados)] for b in sem_piso]
         sem_piso = [b for b in sem_piso if not b.empty]
         if not sem_piso:
-            saida = pd.DataFrame()
-            saida.attrs["quality_floor_log"] = floor_log
-            saida.attrs["inteligencia_log"] = intel_log
-            return saida
+            return [], floor_log, intel_log
         floor_log.setdefault("carteira_preservada", []).append({
             "motivo": ("o piso de qualidade reprovou todas as indústrias "
                        "aprovadas; a carteira foi remontada SEM o piso para "
@@ -591,6 +581,39 @@ def select_industry_leaders(
                 "Carteira preservada: o piso de qualidade reprovaria "
                 "todos os nomes desta indústria")
             records.append(bloco)
+    return records, floor_log, intel_log
+
+
+def select_industry_leaders(
+    eligible: pd.DataFrame,
+    industry_audit: pd.DataFrame,
+    params: USPortfolioCreationParams,
+    avaliador: Callable[[str], Any] | None = None,
+) -> pd.DataFrame:
+    """Seleciona finalistas somente dentro das indústrias aprovadas.
+
+    Com ``avaliador`` (ticker → ``Avaliacao`` da Inteligência dos Ativos),
+    depois do piso de qualidade passa o portão da Inteligência
+    (``veredito.filtrar_selecao``): líder que ela manda avaliar troca ou não
+    aportar sai, e o próximo da MESMA indústria que passa no piso e no portão
+    entra. O log vai em ``attrs["inteligencia_log"]``. A escolha dentro da
+    indústria é ``_lideres_por_industria``, a mesma da composição para
+    revisão."""
+    approved: list[str] = []
+    if (eligible is not None and not eligible.empty
+            and industry_audit is not None and not industry_audit.empty):
+        approved = sorted(set(industry_audit.loc[
+            industry_audit["status"].eq("Aprovada"), "industry_group"
+        ].astype(str)))
+    records, floor_log, intel_log = _lideres_por_industria(
+        eligible, approved, params, avaliador)
+    if not records:
+        # Frame vazio que ainda carrega o log — quem consome não precisa
+        # descobrir por qual caminho a seleção saiu vazia.
+        saida = pd.DataFrame()
+        saida.attrs["quality_floor_log"] = floor_log
+        saida.attrs["inteligencia_log"] = intel_log
+        return saida
     candidates = pd.concat(records, ignore_index=True)
     candidates = candidates.sort_values(
         ["entry_score", "fundamental_score"], ascending=False
@@ -898,7 +921,8 @@ def build_portfolio_creation(
                     f"Nenhuma indústria aprovada: o piso de score de entrada está "
                     f"em {float(params.min_entry_score):.0f} e a melhor indústria "
                     f"do universo alcança {float(teto):.1f}. A composição alternativa "
-                    "considera o mérito individual sem declarar a indústria aprovada."]
+                    "usa os líderes de cada indústria, pela margem até a aprovação, "
+                    "sem declarar a indústria aprovada."]
     review_portfolio = None
     if holdings.empty or (params.require_historical_signal and not history_available):
         from core.portfolio_review_routes import us_review
@@ -907,7 +931,7 @@ def build_portfolio_creation(
         vetados = {v["tk"] for v in intel_log.get("vetados") or ()}
         review_portfolio = us_review(
             eligible[~eligible["symbol"].astype(str).isin(vetados)]
-            if vetados else eligible, params)
+            if vetados else eligible, params, audit, avaliador)
         if liquidity_block:
             review_portfolio["reasons"].append(str(liquidity_block))
         if publication_blocking_error:

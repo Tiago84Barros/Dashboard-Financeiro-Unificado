@@ -408,3 +408,94 @@ def test_cards_fii_de_mesmo_peso_seguem_a_utilidade_e_nao_o_percentil():
              {"ticker": "TIJO11", "tipo": "tijolo", "weight": .1, "type_score": 40,
               "quality": .60}]
     assert [r["ticker"] for r in _ordenados(itens)] == ["TIJO11", "PAPL11"]
+
+
+# ── Rota alternativa dos EUA: líderes por indústria, alvo da carteira normal ─
+# Até 15/11/2026 `us_review` juntava toda elegível de toda indústria, sem cota
+# por indústria, e maximizava o `entry_score` -- percentil DENTRO da indústria.
+# O otimizador encostava os pesos no teto por ativo (cerca de 13 nomes a 8%
+# contra 26 na carteira normal). Estes testes amarram a revisão à mesma regra.
+
+_SETORES_US = ["Technology", "Healthcare", "Industrials", "Utilities", "Energy",
+               "Basic Materials", "Consumer Defensive", "Consumer Cyclical"]
+
+
+def _universo_us(setores=_SETORES_US, ruido=6.0):
+    from tests.test_us_portfolio_creation import _universe
+
+    universo = _universe(groups=16, names_per_group=6)
+    universo["sector"] = [setores[int(s[1:3]) % len(setores)] for s in universo["symbol"]]
+    rng = np.random.default_rng(7)
+    for coluna in ("score_quality", "score_growth", "score_solidity",
+                   "score_capital_efficiency", "score_valuation", "score_shareholder"):
+        universo[coluna] = universo[coluna] + rng.normal(0, ruido, len(universo))
+    return universo
+
+
+@pytest.mark.parametrize("weighting", ["equal", "score", "inverse_vol"])
+def test_us_review_reproduz_a_carteira_normal_quando_ha_industria_aprovada(weighting):
+    from core.us_portfolio_creation import build_portfolio_creation
+
+    params = USPortfolioCreationParams(apply_quality_floor=False, weighting=weighting)
+    normal = build_portfolio_creation(_universo_us(), params)
+    assert normal["review_portfolio"] is None and not normal["holdings"].empty
+    revisao = us_review(normal["eligible"], params, normal["industry_audit"])
+    pesos_normal = normal["holdings"].set_index("symbol")["weight"].to_dict()
+    pesos_revisao = {row["symbol"]: row["weight"] for row in revisao["items"]}
+    assert set(pesos_revisao) == set(pesos_normal)
+    assert pesos_revisao == pytest.approx(pesos_normal, abs=1e-6)
+    assert all(row["aprovado"] for row in revisao["items"])
+
+
+def test_us_review_com_teto_de_setor_inviavel_mantem_as_candidatas_e_deixa_caixa():
+    from core.us_portfolio_creation import build_portfolio_creation
+
+    params = USPortfolioCreationParams(apply_quality_floor=False)
+    # Três setores contra teto de 25%: a carteira normal sai vazia e cai na revisão.
+    result = build_portfolio_creation(_universo_us(setores=_SETORES_US[:3]), params)
+    revisao = result["review_portfolio"]
+    assert result["holdings"].empty and revisao is not None
+    assert ({row["symbol"] for row in revisao["items"]}
+            <= set(result["candidates"]["symbol"]))
+    assert all(row["aprovado"] for row in revisao["items"])
+    assert revisao["allocated_weight"] <= 3 * params.max_sector_weight + 1e-6
+    assert revisao["allocated_weight"] + revisao["unallocated_weight"] == pytest.approx(1)
+
+
+def test_us_review_sem_aprovada_respeita_cota_e_ordena_industrias_pela_margem():
+    from dataclasses import replace
+
+    from core.us_portfolio_creation import build_portfolio_creation
+
+    base = USPortfolioCreationParams(apply_quality_floor=False)
+    params = replace(base, min_entry_score=99)
+    result = build_portfolio_creation(_universo_us(), params)
+    revisao = result["review_portfolio"]
+    assert revisao is not None and revisao["items"]
+    itens = pd.DataFrame(revisao["items"])
+    assert itens.groupby("industry_group").size().max() <= params.leaders_per_industry
+    assert not itens["aprovado"].any()
+    # Nenhum ativo encosta no teto por ativo: o peso segue o alvo da carteira
+    # normal, não o maior score.
+    assert len(itens) > 1 / params.max_weight
+    assert itens["weight"].max() < params.max_weight - 1e-6
+    # A fila de indústrias segue a margem até o corte, não o score de um líder.
+    audit = result["industry_audit"].set_index("industry_group")
+    margem = np.minimum(audit["avg_entry_score"] - params.min_entry_score,
+                        audit["score_edge"] - params.min_score_edge)
+    ordem = itens.sort_values("quality", ascending=False)["industry_group"].drop_duplicates()
+    assert list(margem.loc[ordem]) == sorted(margem.loc[ordem], reverse=True)
+    # Com cota por indústria, a revisão fica perto da carteira normal.
+    normal = build_portfolio_creation(_universo_us(), base)["holdings"]
+    comum = set(normal["symbol"]) & set(itens["symbol"])
+    assert len(comum) >= .8 * len(normal)
+
+
+def test_card_dos_eua_mostra_a_situacao_da_industria_e_nao_backtest_de_segmento():
+    from design.portfolio_review import _backtest
+
+    row = {"ticker": "U001", "industry_group": "Industry 0", "aprovado": False,
+           "situacao_grupo": "Indústria em observação · margem -3.0 pts"}
+    assert _backtest(row) == "Indústria em observação · margem -3.0 pts"
+    assert "Segmento" not in _backtest({**row, "aprovado": True,
+                                        "situacao_grupo": "Indústria aprovada"})

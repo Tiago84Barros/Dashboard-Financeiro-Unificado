@@ -1603,11 +1603,16 @@ FLOW_EMPRESAS_EUA = FlowSpec(
             "Transforma o ranking em carteira, com limites por setor e por ativo "
             "definidos por você. O botão 💾 Salvar como carteira padrão grava no "
             "banco; é essa carteira que o Dashboard Geral, o Portfólio Global e a "
-            "Avaliação de Portfólio usam.",
+            "Avaliação de Portfólio usam. Quando nenhuma indústria é aprovada ou os "
+            "tetos não fecham, a composição para revisão segue a mesma regra: os "
+            "líderes de cada indústria, só as aprovadas quando existem (as demais, "
+            "sem nenhuma aprovada, pela margem até a aprovação) e o mesmo alvo de "
+            "pesos; o que não cabe nos tetos fica como capital não alocado.",
             (
                 "Limites por setor e por ativo",
                 "Piso de liquidez",
                 "Diagnóstico de restrição inalcançável",
+                "Revisão: líderes por indústria e o alvo de pesos da carteira normal",
                 "save_us_portfolio_model() → us_portfolio_models, no clique "
                 "(on_click), antes do rerun da tela",
             ),
