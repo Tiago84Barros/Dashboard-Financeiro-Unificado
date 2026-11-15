@@ -455,7 +455,7 @@ def main() -> int:
         prog = ingest.renormalize(tickers, args.limit)
     elif args.command == "renormalize-demonstracoes":
         # Demonstração regravada sem indicador recalculado deixa o TTM velho
-        # na origem do b3_metrics: os dois passos andam juntos.
+        # no armazém, de onde o app lê as métricas: os dois passos andam juntos.
         prog = ingest.renormalize_demonstracoes(tickers, args.limit, forcar=args.forcar)
         if prog.get("atualizados"):
             rep = ingest.reprocess_metrics(prog["atualizados"])

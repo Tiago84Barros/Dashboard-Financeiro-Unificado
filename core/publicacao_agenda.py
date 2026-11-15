@@ -76,8 +76,9 @@ class Alvo:
     publicadores divergem no padrão de escrita: ``publish_fii_selection_from_local``
     e ``publish_us_snapshot_from_local`` GRAVAM por omissão (``--dry-run`` é que
     é opcional), enquanto ``publish_us_score_vintages``, ``publish_us_prices_monthly``,
-    ``publish_us_delistings`` e ``publish_b3_metrics_to_supabase`` SIMULAM por
-    omissão e só gravam com ``--apply``. Chamar os do segundo grupo sem a flag
+    ``publish_us_delistings`` (e, fora da rotina desde 15/11/2026,
+    ``publish_b3_metrics_to_supabase``) SIMULAM por omissão e só gravam com
+    ``--apply``. Chamar os do segundo grupo sem a flag
     não dá erro: imprime o resumo, sai com código 0 e não publica nada. A rotina
     marcaria sucesso e a vitrine envelheceria em silêncio.
 
@@ -161,13 +162,10 @@ _CADEIA_PREGAO = (
     # a cotacao da acao (market.b3_cotacao_atual) sem depender da cota da brapi.
     # Sem a migration 089 a etapa termina 0 e nomeia a tabela ausente no log.
     ("run_market_ingest.py", "acoes-cotahist", "--warehouse", "--json"),
-    # Leva o slot (market.b3_cotacao_atual) a vitrine. Fica AQUI e nao na cadeia
-    # da brapi: com a cota esgotada, o `daily` sai 1 (429) e a rotina aborta o
-    # resto -- o publicador nunca rodaria no cenario para o qual existe. So le o
-    # armazem e so grava o que a vitrine ja conhece; sem a tabela em qualquer
-    # lado, diz qual e e sai 0. O `reprocess` que recalcula P/L, P/VP e DY com
-    # esse preco fica MANUAL: nao foi medido (grava no armazem).
-    ("scripts/publish_b3_cotacao_from_local.py", "--apply"),
+    # Sem publicador para o Supabase (15/11/2026). A cotação fica no armazém
+    # (market.b3_cotacao_atual) e o app4 a lê de lá. O
+    # `scripts/publish_b3_cotacao_from_local.py` segue no repositório para
+    # uso manual, fora da rotina: o Supabase free não recebe atualização.
 )
 
 # Documentos de companhias abertas (CVM/IPE) em `public.docs_corporativos`.
@@ -186,23 +184,20 @@ _CADEIA_CVM_IPE = (
 # Empresas B3 pela brapi (caminho A, 05/10/2026). Rodava no GitHub contra o
 # Supabase: cada recálculo de indicador lia demonstrações e preços de lá
 # (egress, numa conta que estourou a cota) e cada consulta gravava o payload
-# bruto em `brapi_raw_payloads` (64 MB de 500). Agora ingere no armazém e o
-# publicador leva à vitrine só o que o app lê, incrementalmente por marca
-# d'água. Ele não cria ativo nem empresa: ticker que a vitrine não conhece é
-# retido e relatado -- o armazém tem fósseis de alias (BRML3, CARD3).
+# bruto em `brapi_raw_payloads` (64 MB de 500). Agora ingere só no armazém.
+# Até 15/11/2026 havia um último passo, `scripts/publish_b3_brapi_from_local.py
+# --apply`, que levava ao Supabase o que o app lê. Saiu por diretriz do
+# usuário: o Supabase free não recebe atualização, e o app4 lê a B3 do
+# armazém. O script fica no repositório para uso manual.
 _CADEIA_B3_BRAPI = (
     ("run_market_ingest.py", "daily", "--source", "market", "--warehouse",
      "--json"),
     ("run_market_ingest.py", "setores", "--warehouse", "--json"),
     ("-m", "scripts.snapshot_b3_readiness", "--warehouse"),
-    ("scripts/publish_b3_brapi_from_local.py", "--apply"),
 )
 _CADEIA_B3_BRAPI_ANUAL = (
     ("run_market_ingest.py", "annual", "--source", "market", "--warehouse",
      "--json"),
-    # `range=1y` reescreve um ano de preço; a janela padrão leva só 35 dias.
-    ("scripts/publish_b3_brapi_from_local.py", "--apply", "--dias-precos",
-     "400"),
 )
 ALVOS: tuple[Alvo, ...] = (
     Alvo(
@@ -267,20 +262,10 @@ ALVOS: tuple[Alvo, ...] = (
         # deixa a `main` com um fallback que vai expirar.
         artefatos=("data/public/fii_selection_snapshot_v2.json.gz",),
     ),
-    Alvo(
-        chave="b3_metrics",
-        titulo="Métricas B3 (calculated_metrics)",
-        passos=(("scripts/publish_b3_metrics_to_supabase.py", "--apply"),),
-        cadencia_dias=7,
-        modulo="b3",
-    ),
-    Alvo(
-        chave="b3_vintages",
-        titulo="Safras PIT da B3",
-        passos=(("scripts/publish_b3_vintages_from_local.py",),),
-        cadencia_dias=7,
-        modulo="b3",
-    ),
+    # `b3_metrics` (publish_b3_metrics_to_supabase) e `b3_vintages`
+    # (publish_b3_vintages_from_local) saíram em 15/11/2026: os dois só
+    # gravavam no Supabase, que não recebe mais atualização. Métricas e safras
+    # PIT da B3 ficam no armazém. Os scripts seguem no repositório.
     Alvo(
         chave="us_snapshot",
         titulo="Vitrine dos EUA (company_snapshots)",
@@ -678,11 +663,10 @@ ALVOS: tuple[Alvo, ...] = (
         # depois de `b3_pregao` empurrava notícias, macro e espelho para além
         # do limite de 4 h da tarefa agendada (ver PRAZO_ROTINA_MIN). No fim, o
         # que o prazo adia é esta ingestão, retomada no dia seguinte. E rodam
-        # depois de `brapi_raw_poda`: o publicador leva na mesma noite as
-        # demonstrações que `renormalize-demonstracoes` regravou.
-        # `b3_metrics`/`b3_vintages` (semanais) leem o armazém da véspera.
+        # depois de `brapi_raw_poda`, que regrava as demonstrações
+        # (`renormalize-demonstracoes`) antes da ingestão nova.
         chave="b3_brapi",
-        titulo="Empresas B3 pela brapi (armazém → vitrine)",
+        titulo="Empresas B3 pela brapi no armazém",
         passos=_CADEIA_B3_BRAPI,
         cadencia_dias=1,
         modulo="b3",
@@ -690,7 +674,7 @@ ALVOS: tuple[Alvo, ...] = (
     ),
     Alvo(
         chave="b3_brapi_anual",
-        titulo="Demonstrações B3 pela brapi (refresh anual)",
+        titulo="Demonstrações B3 pela brapi no armazém (refresh anual)",
         passos=_CADEIA_B3_BRAPI_ANUAL,
         cadencia_dias=7,
         modulo="b3",

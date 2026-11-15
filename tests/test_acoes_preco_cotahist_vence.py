@@ -291,16 +291,16 @@ def test_agenda_poe_acoes_cotahist_no_fim_do_pregao():
         i for i, p in enumerate(pa._CADEIA_PREGAO) if "ingerir_precos_b3.py" in p[0])
 
 
-def test_agenda_publica_a_cotacao_na_cadeia_do_pregao_independente_da_brapi():
-    """Com a cota da brapi esgotada o `daily` sai 1 e a rotina aborta o resto da
-    cadeia da brapi: o publicador tem de estar na cadeia do pregao, depois do
-    `acoes-cotahist`, e fora da cadeia da brapi."""
+def test_agenda_carrega_a_cotacao_no_armazem_sem_publicar_no_supabase():
+    """A cotacao do COTAHIST entra no armazem pela cadeia do pregao, que nao
+    depende da cota da brapi, e nenhum alvo a leva ao Supabase."""
     from core import publicacao_agenda as pa
     scripts = [p[0] + "|" + (p[1] if len(p) > 1 else "") for p in pa._CADEIA_PREGAO]
-    i_etapa = scripts.index("run_market_ingest.py|acoes-cotahist")
-    i_pub = scripts.index("scripts/publish_b3_cotacao_from_local.py|--apply")
-    assert i_pub == i_etapa + 1
-    assert all("publish_b3_cotacao" not in p[0] for p in pa._CADEIA_B3_BRAPI)
+    assert "run_market_ingest.py|acoes-cotahist" in scripts
+    # Desde 15/11/2026 o publicador não roda na rotina: o Supabase free não
+    # recebe atualização e o app4 lê a cotação do armazém.
+    todos = [p for a in pa.ALVOS for p in a.passos]
+    assert all("publish_b3_cotacao" not in p[0] for p in todos)
 
 
 def test_runner_aceita_o_comando(monkeypatch):
