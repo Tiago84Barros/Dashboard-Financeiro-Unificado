@@ -58,20 +58,30 @@ LOGO_ICONE_PNG = Path(__file__).resolve().parent / "assets" / "tsb_icone.png"
 
 
 @lru_cache(maxsize=1)
-def _logo_img_html() -> str:
-    """``<img>`` com o monograma embutido em data URI.
-
-    Data URI e não SVG inline: o ``st.markdown`` quebra HTML com várias linhas
-    e um ``id`` de gradiente inline colidiria com outro SVG da página. Sem o
-    arquivo, volta o emoji antigo -- a marca nunca some.
-    """
+def _logo_data_uri() -> str:
+    """O SVG do monograma em data URI; vazio se o arquivo não existir."""
     try:
         dados = base64.b64encode(LOGO_SVG.read_bytes()).decode("ascii")
     except OSError:
+        return ""
+    return f"data:image/svg+xml;base64,{dados}"
+
+
+def logo_img_html(tamanho: int = 30, classe: str = "app-brand-logo") -> str:
+    """``<img>`` com o monograma embutido em data URI, numa linha só.
+
+    Usado no card da marca do menu lateral e na tela de login. Data URI e não
+    SVG inline: o ``st.markdown`` quebra HTML com várias linhas e um ``id`` de
+    gradiente inline colidiria com outro SVG da página. Sem o arquivo, volta o
+    emoji antigo -- a marca nunca some.
+    """
+    uri = _logo_data_uri()
+    if not uri:
         return "📊"
+    lado = int(tamanho)
     return (
-        f'<img src="data:image/svg+xml;base64,{dados}" alt="" '
-        'class="app-brand-logo" width="30" height="30">'
+        f'<img src="{uri}" alt="" class="{escape(classe, quote=True)}" '
+        f'width="{lado}" height="{lado}">'
     )
 
 
@@ -99,7 +109,7 @@ def marca_sidebar_html(usuario: str = "") -> str:
         '<div class="app-brand">'
         '<div class="app-brand-glow" aria-hidden="true"></div>'
         '<div class="app-brand-head">'
-        f'<div class="app-brand-mark" aria-hidden="true">{_logo_img_html()}</div>'
+        f'<div class="app-brand-mark" aria-hidden="true">{logo_img_html()}</div>'
         '<span class="app-brand-badge">Unificado</span>'
         '</div>'
         '<div class="app-brand-title">Dashboard Financeiro</div>'
