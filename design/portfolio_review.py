@@ -182,12 +182,14 @@ def _html_backtest(row: dict) -> str:
 
 
 def _prioridade(row: dict) -> float:
-    """Desempate dos cards de mesmo peso.
+    """Desempate dos cards de mesmo peso: a prioridade de alocação.
 
-    Na B3 o score exibido é do segmento e não compara segmentos; a ordem vem
-    da prioridade de alocação (``quality``), que já põe aprovados à frente.
+    O score exibido não compara grupos: na B3 é do segmento, nos FIIs é
+    percentil dentro do tipo. A ordem vem de ``quality``, o critério que a
+    rota de revisão maximizou (na B3 já põe aprovados à frente; nos FIIs é a
+    utilidade da carteira normal). Nos EUA ``quality`` é o próprio score.
     """
-    valor = _numero(row.get("quality") if "score_segmento" in row else _score(row))
+    valor = _numero(row.get("quality") if "quality" in row else _score(row))
     return -math.inf if valor is None else valor
 
 

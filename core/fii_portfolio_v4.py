@@ -435,6 +435,47 @@ def _adaptive_type_bands(
     }
 
 
+def utilidade_fundamental(rows: list[dict], policy: PortfolioPolicy, *,
+                          penalizar_incerteza: bool = True) -> np.ndarray:
+    """Utilidade fundamental de cada FII: ponto único das rotas de carteira.
+
+    Usada pela otimização (``_optimize_sob_politica``), pela pré-seleção
+    (``_candidate_pool``) e pela revisão parcial
+    (``core.portfolio_review_routes.fii_review``). Não inclui macro,
+    correlação nem giro, que dependem de insumos da tela.
+
+    ``type_score`` é percentil calculado só dentro do tipo, e por isso não
+    compara tipos. As bandas táticas por categoria decidem quanto vai a cada
+    tipo: rígidas na carteira, metas lexicográficas na revisão. Sem elas,
+    esta utilidade sozinha poria quase tudo no tipo de percentis mais altos.
+
+    A pré-seleção passa ``penalizar_incerteza=False`` porque lá a incerteza
+    já entra como restrição dura (``max_weighted_uncertainty``); mudar isso
+    mudaria a carteira publicada, e esta função só unifica a conta.
+    """
+    quality = np.array([_num(row.get("type_score")) / 100 for row in rows])
+    confidence = np.array([_num(row.get("confidence")) for row in rows])
+    # A função objetivo precisa usar a mesma renda que o gate: premiar o DY
+    # divulgado aqui recolocaria um evento não recorrente na decisão final.
+    dy = np.array([_num(dy_recorrente(row)) for row in rows])
+    adverse = np.array([
+        np.mean([max(-asset_scenario_return(row, name), 0) for name in SCENARIOS[1:]])
+        for row in rows
+    ])
+    evidence = np.array([supplementary_evidence_score(row) for row in rows])
+    utility = (
+        .45 * quality
+        + .30 * confidence
+        + .25 * np.clip(dy / .15, 0, 1)
+        + policy.data_quality_bonus * evidence
+        - .35 * adverse
+    )
+    if penalizar_incerteza:
+        utility = utility - policy.uncertainty_penalty * (
+            1.0 - np.clip(confidence, 0.0, 1.0))
+    return utility
+
+
 def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
                     policy: PortfolioPolicy, scenario: MacroScenario,
                     previous_weights: dict[str, float] | None = None,
@@ -456,23 +497,8 @@ def _candidate_pool(ranked: list[dict], bands: dict[str, tuple[float, float]],
         return [], {"status": "data_prerequisites_missing", "reason": "pool vazio"}
 
     n = len(pool)
-    quality = np.array([_num(row.get("type_score")) / 100 for row in pool])
     confidence = np.array([_num(row.get("confidence")) for row in pool])
-    # A função objetivo precisa usar a mesma renda que o gate: premiar o DY
-    # divulgado aqui recolocaria um evento não recorrente na decisão final.
-    dy = np.array([_num(dy_recorrente(row)) for row in pool])
-    adverse = np.array([
-        np.mean([max(-asset_scenario_return(row, name), 0) for name in SCENARIOS[1:]])
-        for row in pool
-    ])
-    evidence = np.array([supplementary_evidence_score(row) for row in pool])
-    utility = (
-        .45 * quality
-        + .30 * confidence
-        + .25 * np.clip(dy / .15, 0, 1)
-        + policy.data_quality_bonus * evidence
-        - .35 * adverse
-    )
+    utility = utilidade_fundamental(pool, policy, penalizar_incerteza=False)
     previous_weights = previous_weights or {}
     previous = np.array([
         max(_num(previous_weights.get(str(row.get("ticker")))), 0.0)
@@ -1004,15 +1030,10 @@ def _optimize_sob_politica(
     caps_por_ticker = {
         str(rows[i].get("ticker")): float(tetos[i]) for i in range(n)
     }
-    quality = np.array([_num(r.get("type_score")) / 100 for r in rows])
     confidence = np.array([_num(r.get("confidence")) for r in rows])
-    # Mantém pesos, ranking e o piso de renda na mesma definição recorrente.
-    dy = np.array([_num(dy_recorrente(row)) for row in rows])
     scenario_values_by_asset = np.array([
         [asset_scenario_return(r, s) for s in SCENARIOS] for r in rows
     ], dtype=float)
-    adverse = np.maximum(-scenario_values_by_asset[:, 1:], 0.0).mean(axis=1)
-    evidence = np.array([supplementary_evidence_score(row) for row in rows])
     uncertainty = 1.0 - np.clip(confidence, 0.0, 1.0)
     normalized_previous = {
         str(ticker): max(_num(weight), 0.0)
@@ -1024,14 +1045,9 @@ def _optimize_sob_politica(
     previous_outside_pool = max(
         sum(normalized_previous.values()) - float(previous_vector.sum()), 0.0
     )
-    utility = (
-        .45 * quality
-        + .30 * confidence
-        + .25 * np.clip(dy / .15, 0, 1)
-        + policy.data_quality_bonus * evidence
-        - .35 * adverse
-        - policy.uncertainty_penalty * uncertainty
-    )
+    # Mantém pesos, ranking e o piso de renda na mesma definição recorrente,
+    # e a revisão parcial na mesma conta (ponto único).
+    utility = utilidade_fundamental(rows, policy)
     macro_scale = {
         "fundamental": 0.0,
         "moderate": 0.08,

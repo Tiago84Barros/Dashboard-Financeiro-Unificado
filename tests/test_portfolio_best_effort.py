@@ -270,7 +270,141 @@ def test_cards_b3_de_mesmo_peso_seguem_a_prioridade_e_nao_o_score():
              {"ticker": "APRV3", "weight": .25, "quality": 2.0, "score_segmento": 40,
               "aprovado": True}]
     assert [r["ticker"] for r in _ordenados(itens)] == ["APRV3", "REPR3"]
-    # Fora da B3 o score observado continua desempatando.
+    # Sem prioridade de alocação (item fora de rota de revisão), o score
+    # observado continua desempatando.
     fii = [{"ticker": "B11", "weight": .5, "type_score": 50},
            {"ticker": "A11", "weight": .5, "type_score": 80}]
     assert [r["ticker"] for r in _ordenados(fii)] == ["A11", "B11"]
+
+
+# --- Metas por faixa e revisão de FIIs pela mesma seleção da carteira normal ---
+
+
+def _dois_grupos(n_por_grupo=4):
+    rows = ([{"ticker": f"A{i}", "quality": 10 - i} for i in range(n_por_grupo)]
+            + [{"ticker": f"B{i}", "quality": 1 - i/10} for i in range(n_por_grupo)])
+    grupo_a = np.array([1.0]*n_por_grupo + [0.0]*n_por_grupo)
+    return rows, grupo_a
+
+
+def test_metas_mudam_a_composicao_sem_perder_capital():
+    rows, grupo_a = _dois_grupos()
+    livre = allocate_partial(rows, [.25]*8)
+    assert {r["ticker"] for r in livre["items"]} == {"A0", "A1", "A2", "A3"}
+    com_meta = allocate_partial(rows, [.25]*8, target_bands=[
+        (grupo_a, 0, .5), (1 - grupo_a, .5, 1)])
+    assert com_meta["allocated_weight"] == pytest.approx(1)
+    assert com_meta["target_deviation"] == pytest.approx(0, abs=1e-7)
+    # Dentro da faixa, a qualidade ainda escolhe: os dois melhores de cada grupo.
+    assert {r["ticker"] for r in com_meta["items"]} == {"A0", "A1", "B0", "B1"}
+
+
+def test_meta_nao_veta_capital_e_o_desvio_fica_medido():
+    rows, grupo_a = _dois_grupos()
+    # O grupo B só comporta 20%: cumprir o piso de 50% zeraria capital.
+    caps = [.25]*4 + [.05]*4
+    result = allocate_partial(rows, caps, target_bands=[(1 - grupo_a, .5, 1),
+                                                        (grupo_a, 0, .5)])
+    assert result["allocated_weight"] == pytest.approx(1)
+    assert sum(r["weight"] for r in result["items"] if r["ticker"][0] == "B") \
+        == pytest.approx(.2)
+    # Piso de B 30 p.p. abaixo e teto de A 30 p.p. acima: o desvio aparece.
+    assert result["target_deviation"] == pytest.approx(.6)
+
+
+def test_meta_invalida_e_recusada():
+    rows, grupo_a = _dois_grupos()
+    with pytest.raises(ValueError):
+        allocate_partial(rows, [.25]*8, target_bands=[(grupo_a, .6, .4)])
+    with pytest.raises(ValueError):
+        allocate_partial(rows, [.25]*8, target_bands=[(grupo_a[:3], 0, .5)])
+
+
+def _universo_fii():
+    """Papel com percentis altos, tijolo com percentis baixos: no tipo, os
+    dois vão de ponta a ponta, mas o número de um não compara com o do outro."""
+    from tests.test_fii_portfolio_v4 import _candidate
+
+    kinds = ["tijolo"]*6 + ["papel"]*12 + ["fof"]*3 + ["hibrido"]*3
+    rows = [_candidate(i, kind) for i, kind in enumerate(kinds)]
+    for row in rows:
+        row["income_recurrence"] = .9
+        row["type_score"] = {"papel": 99, "tijolo": 40}.get(row["tipo"], 60) - (
+            int(row["ticker"][1:4]) % 6)
+        if row["tipo"] in {"tijolo", "hibrido"}:
+            row.update(tenant_concentration=.2, lease_expiry_concentration_24m=.1)
+    return rows
+
+
+def test_revisao_fii_respeita_as_bandas_quando_ha_capital_para_isso():
+    """Achado de 15/11/2026: a revisão punha 70% num tipo cuja banda máxima
+    era 45%, porque o percentil dentro do tipo decidia sozinho entre tipos."""
+    from core.fii_methodology import tactical_type_bands
+
+    scenario = MacroScenario(selic=10.5, ipca=4)
+    result = fii_review(_universo_fii(), PortfolioPolicy(), scenario)
+    assert result["allocated_weight"] == pytest.approx(1)
+    assert result["target_deviation"] == pytest.approx(0, abs=1e-6)
+    for kind, (lo, hi) in tactical_type_bands(scenario).items():
+        actual = result["category_targets"][kind]["actual"]
+        assert lo - 1e-6 <= actual <= hi + 1e-6, (kind, actual, lo, hi)
+
+
+def test_revisao_e_carteira_normal_concordam_nas_bandas_por_tipo():
+    """Equivalência entre os caminhos: num universo em que a carteira normal
+    fecha, a revisão cai dentro das mesmas bandas efetivas."""
+    from core.fii_portfolio_v4 import optimize_diligence_portfolio
+
+    scenario = MacroScenario(selic=10.5, ipca=4)
+    rows = _universo_fii()
+    normal = optimize_diligence_portfolio(rows, scenario)
+    assert normal["items"], normal.get("blockers")
+    bandas = normal["macro_bands"]
+    revisao = fii_review(rows, PortfolioPolicy(), scenario)
+    for kind, (lo, hi) in bandas.items():
+        assert revisao["category_targets"][kind]["minimum"] == pytest.approx(lo)
+        assert revisao["category_targets"][kind]["maximum"] == pytest.approx(hi)
+        actual = revisao["category_targets"][kind]["actual"]
+        assert lo - 1e-6 <= actual <= hi + 1e-6, (kind, actual, lo, hi)
+
+
+def test_revisao_fii_usa_a_utilidade_da_carteira_normal():
+    """Ponto único: a prioridade da revisão é ``utilidade_fundamental``, com
+    perda em cenário adverso e incerteza, e não uma conta própria."""
+    from core.fii_portfolio_v4 import utilidade_fundamental
+
+    rows = _universo_fii()
+    policy = PortfolioPolicy()
+    result = fii_review(rows, policy, MacroScenario(selic=10.5, ipca=4))
+    por_ticker = {row["ticker"]: row for row in rows}
+    for item in result["items"]:
+        esperado = utilidade_fundamental([por_ticker[item["ticker"]]], policy)[0]
+        assert item["quality"] == pytest.approx(esperado)
+    # A penalidade de incerteza entra: mesma linha, menos confiança. A conta
+    # antiga da revisão só perdia .30 * .2; agora perde também a penalidade (e
+    # o que a confiança mexe no cenário adverso).
+    base = dict(rows[6])
+    incerto = {**base, "confidence": .7}
+    alto, baixo = utilidade_fundamental([base, incerto], policy)
+    assert alto - baixo >= .2*(.30 + policy.uncertainty_penalty) - 1e-9
+
+
+def test_bandas_da_revisao_fii_sao_as_adaptadas_da_carteira_normal():
+    """Tipo sem candidato tem meta zero, como na carteira normal; a meta
+    original dele não pode virar desvio impossível de cumprir."""
+    rows = [row for row in _universo_fii() if row["tipo"] in {"tijolo", "papel"}]
+    result = fii_review(rows, PortfolioPolicy(), MacroScenario(selic=10.5, ipca=4))
+    assert result["category_targets"]["fof"]["minimum"] == 0
+    assert result["category_targets"]["fof"]["maximum"] == 0
+
+
+def test_cards_fii_de_mesmo_peso_seguem_a_utilidade_e_nao_o_percentil():
+    """Gêmeo do achado do Codex no PR #751: na revisão de FIIs o percentil
+    não compara tipos, então ele não desempata cards de tipos diferentes."""
+    from design.portfolio_review import _ordenados
+
+    itens = [{"ticker": "PAPL11", "tipo": "papel", "weight": .1, "type_score": 99,
+              "quality": .50},
+             {"ticker": "TIJO11", "tipo": "tijolo", "weight": .1, "type_score": 40,
+              "quality": .60}]
+    assert [r["ticker"] for r in _ordenados(itens)] == ["TIJO11", "PAPL11"]

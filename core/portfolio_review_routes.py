@@ -21,20 +21,50 @@ def _finite(value):
 
 
 def fii_review(rows, policy, scenario):
+    """Revisão parcial da carteira de FIIs quando a carteira com bandas não fecha.
+
+    Segue a seleção da carteira normal, nunca uma conta própria:
+
+    * a qualidade é ``utilidade_fundamental``, a mesma utilidade do otimizador
+      (score no tipo, confiança, renda recorrente, evidência, perda em cenário
+      adverso e incerteza). Macro, correlação e giro ficam de fora porque a
+      revisão não recebe esses insumos;
+    * ``type_score`` é percentil dentro do tipo e não compara tipos. Por isso
+      as bandas táticas (as mesmas bandas adaptadas da carteira normal) entram
+      como metas lexicográficas: depois de maximizar o capital, minimiza-se o
+      desvio fora das faixas, e só então a utilidade escolhe os fundos. Sem
+      isso, o percentil decidia sozinho quanto ia a cada tipo, até o teto de
+      ``max_single_type``.
+
+    Meta não é veto: faixa que não cabe vira desvio medido em
+    ``category_targets``. O universo é o da tela: só elegíveis estritos, sem
+    os vetados pela Inteligência dos Ativos.
+    """
     from core.fii_lookthrough import dimension_is_applicable
     from core.fii_methodology import tactical_type_bands
-    from core.fii_portfolio_v4 import LIMITS, _dimension_matrix, _teto_por_ativo
-    from core.fii_renda_recorrente import dy_recorrente
+    from core.fii_portfolio_v4 import (
+        LIMITS,
+        _adaptive_type_bands,
+        _dimension_matrix,
+        _teto_por_ativo,
+        utilidade_fundamental,
+    )
 
     clean = {}
     for source in rows:
         score, confidence = _finite(source.get("type_score")), _finite(source.get("confidence"))
         if not source.get("ticker") or score is None or confidence is None or confidence <= 0:
             continue
-        income = _finite(dy_recorrente(source))
-        clean.setdefault(str(source["ticker"]), {**source,
-            "quality": .45*score/100 + .30*confidence + .25*min((income or 0)/.15, 1)})
+        clean.setdefault(str(source["ticker"]), dict(source))
     candidates = list(clean.values())
+    for row, utility in zip(candidates, utilidade_fundamental(candidates, policy)):
+        row["quality"] = float(utility)
+    original_bands = tactical_type_bands(scenario)
+    # As mesmas bandas efetivas da carteira normal: categoria sem candidato
+    # tem piso zero e cede capacidade. Com menos tipos que o mínimo, a carteira
+    # normal bloqueia; aqui ficam as bandas originais como meta.
+    adapted_bands, _ = _adaptive_type_bands(original_bands, candidates, policy)
+    bands = adapted_bands or original_bands
     caps = _teto_por_ativo(candidates, policy)
     constraints = []
     unknown = set()
@@ -57,14 +87,19 @@ def fii_review(rows, policy, scenario):
     for kind in ("tijolo", "papel", "fof", "hibrido"):
         constraints.append((np.array([float(row.get("tipo") == kind) for row in candidates]),
                             policy.max_single_type))
+    targets = [(np.array([float(row.get("tipo") == kind) for row in candidates]), lo, hi)
+               for kind, (lo, hi) in bands.items()]
     result = allocate_partial(candidates, caps, upper_constraints=constraints,
+        target_bands=targets,
         max_assets=policy.max_assets, min_weight=policy.min_asset_weight,
-        reasons=["Bandas táticas por categoria tratadas como metas; tetos individuais, "
+        reasons=["Bandas táticas por categoria tratadas como metas: depois do capital, "
+                 "a composição minimiza o desvio fora das faixas e só então escolhe "
+                 "pela mesma utilidade da carteira normal; tetos individuais, "
                  "concentração, liquidez e incerteza preservados.",
                  "A composição requer revisão; aprovação PIT permanece independente."])
     result["category_targets"] = {kind: {"minimum": lo, "maximum": hi,
         "actual": sum(row["weight"] for row in result["items"] if row.get("tipo") == kind)}
-        for kind, (lo, hi) in tactical_type_bands(scenario).items()}
+        for kind, (lo, hi) in bands.items()}
     if unknown:
         result["reasons"].append("Sem alocação em fundos com exposição obrigatória desconhecida: "
                                  + ", ".join(sorted(unknown)))

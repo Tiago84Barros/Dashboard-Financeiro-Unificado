@@ -7,8 +7,11 @@ não alocado. A proposta pode ser baixada em JSON com seus pesos e ressalvas.
 
 ## Critério determinístico
 
-O otimizador resolve dois problemas em sequência: maximiza a fração alocável sob
-os limites rígidos; depois maximiza a qualidade observada mantendo essa fração.
+O otimizador resolve até três problemas em sequência (lexicográfico): maximiza a
+fração alocável sob os limites rígidos; quando o módulo informa metas por faixa
+(bandas táticas dos FIIs), minimiza o desvio total fora dessas faixas mantendo a
+fração; por fim maximiza a qualidade observada mantendo as duas anteriores. Meta
+nunca veta capital: o que não cabe nela vira desvio medido (`target_deviation`).
 Pesos são frações do capital total, não da parte investida. Portanto, ativos mais
 saldo não alocado somam 100%, sem renormalização que estoure os tetos. O saldo não
 tem rendimento, produto financeiro ou liquidez presumidos.
@@ -21,11 +24,24 @@ verificável ou sem candidatos suficientes, o saldo não alocado é explicitado.
 
 ## Regras por módulo
 
-- FIIs: usa o universo que passou pela elegibilidade. Bandas táticas tornam-se
-  metas reportadas lado a lado com o resultado. Preserva quantidade máxima,
-  peso mínimo econômico, teto individual (incluindo redução por opacidade),
-  teto de categoria, concentrações observadas, iliquidez e incerteza média da
-  parcela investida. Exposições obrigatórias ausentes recebem peso zero.
+- FIIs: usa o universo que passou pela elegibilidade. As bandas táticas são
+  as mesmas efetivas da carteira normal (`_adaptive_type_bands`, que já as
+  ajusta ao universo disponível) e entram como metas: depois do capital, a
+  composição minimiza o desvio fora das faixas. A qualidade que decide entre
+  fundos é `utilidade_fundamental`, a mesma função da carteira normal
+  (percentil no tipo, confiança, renda recorrente, evidência complementar,
+  penalidade de cenário adverso e de incerteza); os cards de mesmo peso seguem
+  essa utilidade. Preserva quantidade máxima, peso mínimo econômico, teto
+  individual (incluindo redução por opacidade), teto de categoria (70%),
+  concentrações observadas, iliquidez e incerteza média da parcela investida.
+  Exposições obrigatórias ausentes recebem peso zero. Como o capital vem antes
+  das metas, um tipo sem capacidade suficiente deixa a sobra para os outros,
+  até o teto de 70%, e o desvio aparece medido. Diferença que permanece: a rota
+  normal afrouxa tetos individuais por viabilidade; a revisão os mantém rígidos.
+  Até 15/11/2026 a revisão usava utilidade própria (sem penalidades de cenário
+  e incerteza) e as bandas eram só reportadas; como `type_score` é percentil
+  dentro do tipo, ele decidia a divisão entre tipos e um tipo chegava a 70%
+  com outro em zero.
 - Americanas: usa empresas elegíveis e o piso individual existente; uma
   indústria sem aprovação estatística não apaga as empresas da proposta.
   Tetos por ativo, indústria e setor são preservados. O caminho de criação
@@ -78,8 +94,9 @@ o teste com essa cardinalidade não certifica os pesos do universo de produção
 - Resultado final: 146 testes focados aprovados; Ruff nos arquivos alterados e
   `git diff --check` aprovados. `streamlit run app.py` iniciou em loopback.
 
-A proposta alternativa usa os scores e concentrações observáveis, sem tilt macro
-ou otimização de correlação. Essas camadas continuam no caminho original e não
+A proposta alternativa usa os scores e concentrações observáveis, sem
+otimização de correlação; nos FIIs, aplica as bandas táticas do cenário como
+metas e as penalidades de cenário adverso e de incerteza da carteira normal. Essas camadas continuam no caminho original e não
 são apresentadas como verificadas na proposta. Cinco testes antigos de alocação
 integral e um de apresentação exploratória foram atualizados para verificar
 saldo explícito e tetos preservados; a primeira execução identificou essa
