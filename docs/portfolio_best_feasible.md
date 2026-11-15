@@ -48,7 +48,10 @@ verificável ou sem candidatos suficientes, o saldo não alocado é explicitado.
   o piso de qualidade e o portão da Inteligência dos Ativos substituindo pelo
   próximo da mesma indústria. Havendo indústria aprovada (a revisão roda porque
   os tetos não fecham), as candidatas são exatamente as da carteira normal e o
-  que não cabe fica como capital não alocado. Sem nenhuma aprovada, uma
+  que não cabe fica como capital não alocado; o corte no `top_n` usa a mesma
+  ordem (`_ordenar_por_score`: os dois scores e o ticker como desempate), para
+  que um empate na fronteira não dependa da ordem em que as indústrias chegam.
+  Sem nenhuma aprovada, uma
   indústria sem aprovação estatística não apaga as empresas da proposta: entram
   primeiro as que têm amostra mínima, pelo menor número de critérios não
   atendidos e pela maior margem até o corte (o menor entre `min_entry_score` e

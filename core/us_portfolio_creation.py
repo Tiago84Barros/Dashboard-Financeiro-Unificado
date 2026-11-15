@@ -368,7 +368,7 @@ def build_industry_audit(
     records: list[dict[str, Any]] = []
 
     for industry, group in eligible.groupby("industry_group", dropna=False):
-        ranked = group.sort_values(["entry_score", "fundamental_score"], ascending=False)
+        ranked = _ordenar_por_score(group)
         leaders = ranked.head(max(1, int(params.leaders_per_industry)))
         sector = str(ranked["sector_group"].mode().iloc[0])
         avg_entry = float(_numeric(leaders, "entry_score").mean())
@@ -461,6 +461,50 @@ def build_industry_audit(
     ).drop(columns="_status_order").reset_index(drop=True)
 
 
+def _avaliador_memorizado(avaliador: Callable[[str], Any]) -> Callable[[str], Any]:
+    """``avaliador`` com um veredito por ticker: a falha também é lembrada e
+    relançada, para o portão seguir fail-open e nomear a indisponibilidade."""
+    cache: dict[str, tuple[bool, Any]] = {}
+
+    def avaliar(ticker: str) -> Any:
+        chave = str(ticker).upper()
+        if chave not in cache:
+            try:
+                cache[chave] = (True, avaliador(ticker))
+            except Exception as exc:  # noqa: BLE001 — relançada abaixo
+                cache[chave] = (False, exc)
+        ok, valor = cache[chave]
+        if not ok:
+            raise valor
+        return valor
+
+    return avaliar
+
+
+def _mesclar_log_inteligencia(destino: dict, origem: dict) -> None:
+    """Junta o log do portão da rede final ao da seleção sem repetir
+    entrada: o nome vetado no laço e de novo na rede aparece uma vez."""
+    for chave, entradas in origem.items():
+        lista = destino.setdefault(chave, [])
+        for entrada in entradas:
+            if entrada not in lista:
+                lista.append(entrada)
+
+
+def _ordenar_por_score(frame: pd.DataFrame) -> pd.DataFrame:
+    """A ordem única de candidatas nos EUA: ``entry_score`` e depois
+    ``fundamental_score``, decrescentes, e o ticker como desempate explícito.
+    Sem o desempate, duas rotas que juntam as mesmas indústrias em ordens
+    diferentes (alfabética na carteira normal, margem da auditoria na
+    revisão) escolheriam nomes diferentes num empate na fronteira do
+    ``top_n``. Usada na auditoria, dentro da indústria e no corte final."""
+    work = frame.assign(_tk=frame["symbol"].astype(str).str.upper())
+    return work.sort_values(
+        ["entry_score", "fundamental_score", "_tk"],
+        ascending=[False, False, True], kind="mergesort",
+    ).drop(columns="_tk")
+
+
 def _lideres_por_industria(
     eligible: pd.DataFrame,
     industrias: Sequence[str],
@@ -486,6 +530,10 @@ def _lideres_por_industria(
     floor_log: dict[str, list[dict]] = {}
     if eligible is None or eligible.empty or not industrias:
         return [], floor_log, intel_log
+    if avaliador is not None:
+        # A rede final pode julgar de novo um nome já julgado; o veredito é
+        # pedido uma vez só por ticker, inclusive quando a avaliação falha.
+        avaliador = _avaliador_memorizado(avaliador)
     work = eligible.copy()
     if "fundamental_score" not in work:
         work["fundamental_score"] = np.nan
@@ -499,10 +547,9 @@ def _lideres_por_industria(
         group = grupos.get(industry)
         if group is None or group.empty:
             continue
-        ranked = group.sort_values(
-            ["entry_score", "fundamental_score"], ascending=False)
+        ranked = _ordenar_por_score(group)
         leaders = ranked.head(max(1, int(params.leaders_per_industry))).copy()
-        sem_piso.append(leaders.copy())
+        sem_piso.append((str(industry), leaders.copy(), ranked))
 
         if params.apply_quality_floor:
             # A vaga da indústria é preservada: quem é reprovado sai e o próximo
@@ -561,21 +608,36 @@ def _lideres_por_industria(
         # recebe proteção nenhuma: recebe a tela em branco e vai decidir
         # sem o motor. A carteira volta a ser a PRÉ-PISO, e a cessão é
         # declarada no log, não silenciada.
-        # A rede devolve o piso, nunca o portão da Inteligência: nome que ela
-        # barra não volta por essa porta.
-        vetados = {v["tk"] for v in intel_log["vetados"]}
-        sem_piso = [b[~b["symbol"].astype(str).isin(vetados)] for b in sem_piso]
-        sem_piso = [b for b in sem_piso if not b.empty]
-        if not sem_piso:
+        # A rede devolve o piso, nunca o portão da Inteligência: os líderes
+        # pré-piso passam pelo portão aqui, com substituição pelo próximo da
+        # mesma indústria (sem o piso, que é o que a rede cede). Indústria
+        # que o piso esvaziou nunca chegou ao portão no laço acima, e nome
+        # que ele barra não entra por essa porta.
+        restaurados = []
+        for industry, leaders, ranked in sem_piso:
+            if avaliador is not None:
+                log_rede = veredito.novo_log_selecao()
+                escolhidos = veredito.filtrar_selecao(
+                    leaders["symbol"].astype(str).tolist(),
+                    list(zip(ranked["symbol"].astype(str),
+                             _numeric(ranked, "entry_score").fillna(0.0))),
+                    avaliador=avaliador, pesos={}, seg_label=industry,
+                    log=log_rede)
+                _mesclar_log_inteligencia(intel_log, log_rede)
+                leaders = ranked[ranked["symbol"].astype(str).isin(
+                    set(escolhidos))].copy()
+            if not leaders.empty:
+                restaurados.append(leaders)
+        if not restaurados:
             return [], floor_log, intel_log
         floor_log.setdefault("carteira_preservada", []).append({
             "motivo": ("o piso de qualidade reprovou todas as indústrias "
-                       "aprovadas; a carteira foi remontada SEM o piso para "
+                       "da seleção; a carteira foi remontada SEM o piso para "
                        "não sair vazia — cada nome abaixo carrega a "
                        "reprovação registrada em 'reprovados'"),
-            "industrias": int(len(sem_piso)),
+            "industrias": int(len(restaurados)),
         })
-        for bloco in sem_piso:
+        for bloco in restaurados:
             bloco = bloco.copy()
             bloco["selection_reason"] = (
                 "Carteira preservada: o piso de qualidade reprovaria "
@@ -615,9 +677,8 @@ def select_industry_leaders(
         saida.attrs["inteligencia_log"] = intel_log
         return saida
     candidates = pd.concat(records, ignore_index=True)
-    candidates = candidates.sort_values(
-        ["entry_score", "fundamental_score"], ascending=False
-    ).head(int(params.top_n)).reset_index(drop=True)
+    candidates = _ordenar_por_score(candidates).head(
+        int(params.top_n)).reset_index(drop=True)
     candidates.attrs["quality_floor_log"] = floor_log
     candidates.attrs["inteligencia_log"] = intel_log
     return candidates

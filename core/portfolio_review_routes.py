@@ -201,6 +201,7 @@ def us_review(eligible, params, audit=None, avaliador=None):
     from core.us_portfolio_creation import (
         _base_target,
         _lideres_por_industria,
+        _ordenar_por_score,
         build_industry_audit,
     )
 
@@ -233,8 +234,10 @@ def us_review(eligible, params, audit=None, avaliador=None):
         # indústria aprovada, a revisão só existe porque os tetos não fecham, e
         # o que não cabe neles fica como capital não alocado -- não vira vaga
         # para indústria que a carteira normal reprovou.
-        partes.append(pd.concat(blocos, ignore_index=True).sort_values(
-            ["entry_score", "fundamental_score"], ascending=False).head(top_n))
+        # A mesma ordem, com o mesmo desempate pelo ticker: os blocos chegam
+        # na ordem da auditoria, não na alfabética da carteira normal.
+        partes.append(_ordenar_por_score(
+            pd.concat(blocos, ignore_index=True)).head(top_n))
     elif not aprovadas:
         vagas = top_n
         for bloco in blocos:

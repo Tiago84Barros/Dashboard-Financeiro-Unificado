@@ -523,3 +523,86 @@ def test_us_review_piso_que_zera_as_aprovadas_nao_abre_vaga_para_reprovada(monke
     assert {row["industry_group"] for row in revisao["items"]} <= aprovadas
     assert {row["symbol"] for row in revisao["items"]} <= set(normal["symbol"])
     assert revisao["quality_floor_log"].get("carteira_preservada")
+
+
+def _avaliador_que_veta(vetados, chamadas):
+    from core.inteligencia_ativos import avaliacao as av
+
+    critico = av.Alerta("dívida bruta de 4,00x o patrimônio", True)
+
+    def avaliar(ticker):
+        chamadas.append(str(ticker))
+        alertas = (critico,) if str(ticker) in vetados else ()
+        return av.Avaliacao(av.GERAL, (av.Dimensao(av.QUALIDADE, av.ADEQUADA),
+                                       av.Dimensao(av.VALUATION, av.JUSTO),
+                                       av.Dimensao(av.MERCADO, av.NEUTRO)), alertas)
+
+    return avaliar
+
+
+def test_rede_final_passa_os_restaurados_pelo_portao_da_inteligencia(monkeypatch):
+    """Achado do Codex no PR #757: com o piso reprovando tudo, a rede final
+    devolvia líderes pré-piso que nunca passaram pelo avaliador. As duas
+    rotas usam a mesma rede; nenhuma deixa entrar o nome que ele barra."""
+    import core.us_quality_floor as floor
+    from core.us_portfolio_creation import (
+        build_industry_audit,
+        prepare_eligible_universe,
+        select_industry_leaders,
+    )
+
+    params = USPortfolioCreationParams(apply_quality_floor=True)
+    eligible, _ = prepare_eligible_universe(_universo_us(), params)
+    audit = build_industry_audit(eligible, params)
+    aprovadas = sorted(set(audit.loc[audit["status"].eq("Aprovada"), "industry_group"]))
+    assert aprovadas
+    monkeypatch.setattr(floor, "apply_with_substitution",
+                        lambda sel, ranked, frame, pesos, grupo, log, **_: [])
+    lider = (eligible[eligible["industry_group"].eq(aprovadas[0])]
+             .sort_values("entry_score", ascending=False)["symbol"].iloc[0])
+    chamadas: list[str] = []
+    avaliador = _avaliador_que_veta({lider}, chamadas)
+
+    normal = select_industry_leaders(eligible, audit, params, avaliador)
+    assert len(chamadas) == len(set(chamadas)), "um veredito por ticker"
+    revisao = us_review(eligible, params, audit, avaliador)
+
+    assert normal.attrs["quality_floor_log"].get("carteira_preservada")
+    assert lider not in set(normal["symbol"])
+    assert lider not in {row["symbol"] for row in revisao["items"]}
+    # A vaga do vetado vai ao próximo da mesma indústria, como no laço.
+    assert normal["industry_group"].eq(aprovadas[0]).sum() == params.leaders_per_industry
+    assert [v["tk"] for v in normal.attrs["inteligencia_log"]["vetados"]] == [lider]
+    assert {row["symbol"] for row in revisao["items"]} <= set(normal["symbol"])
+
+
+def test_us_review_e_carteira_normal_desempatam_igual_na_fronteira_do_top_n():
+    """Achado do Codex no PR #757: com empate nos dois scores na fronteira
+    do top_n, a ordem dos blocos (alfabética na normal, margem da auditoria
+    na revisão) decidia quem entrava."""
+    from dataclasses import replace
+
+    from core.us_portfolio_creation import (
+        build_industry_audit,
+        prepare_eligible_universe,
+        select_industry_leaders,
+    )
+
+    params = USPortfolioCreationParams(apply_quality_floor=False)
+    eligible, _ = prepare_eligible_universe(_universo_us(), params)
+    audit = build_industry_audit(eligible, params)
+    aprovadas = set(audit.loc[audit["status"].eq("Aprovada"), "industry_group"])
+    vagas = len(aprovadas) * params.leaders_per_industry
+    assert vagas > 2
+    empatado = eligible.copy()
+    dentro = empatado["industry_group"].isin(aprovadas)
+    empatado.loc[dentro, ["entry_score", "fundamental_score"]] = [70.0, 60.0]
+    params = replace(params, top_n=vagas - 1)
+
+    normal = select_industry_leaders(empatado, audit, params)
+    revisao = us_review(empatado, params, audit)
+
+    assert len(normal) == vagas - 1
+    assert {row["symbol"] for row in revisao["items"]} == set(normal["symbol"])
+    # O desempate é o ticker, não a ordem em que as indústrias chegam.
+    assert normal["symbol"].str.upper().is_monotonic_increasing
