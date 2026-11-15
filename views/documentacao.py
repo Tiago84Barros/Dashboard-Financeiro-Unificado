@@ -9,6 +9,7 @@ dicionário de indicadores/demonstrações financeiras.
 from __future__ import annotations
 
 import html
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import streamlit as st
@@ -2338,12 +2339,15 @@ FLOW_CONFIGURACOES = FlowSpec(
         ),
         "cfg_documentacao": _node(
             "cfg_documentacao", "Documentação", "Referência",
-            "Esta aba: fluxogramas clicáveis das partes complexas do app, com objetivo, "
-            "dados, regra, exemplo, interpretação e cuidados de cada etapa.",
+            "Esta aba: um diagrama de como o app inteiro se encaixa e fluxogramas clicáveis "
+            "das partes complexas, com objetivo, dados, regra, exemplo, interpretação e "
+            "cuidados de cada etapa.",
             (
                 "Aba 📚 Documentação, a nona da barra",
                 "Era rota da barra lateral; virou aba de Configurações em 24/09/2026",
-                "Abas: Dashboard Geral, Controle financeiro, Carteira atual, Inteligência e IR, "
+                "Abas: Visão geral do app (diagrama de como o app inteiro se encaixa), "
+                "Dashboard Geral, Controle financeiro, Controle CNPJ, Carteira atual, "
+                "Inteligência e IR, "
                 "Empresas e Carteira 20 (B3), Criação de portfólio (B3), "
                 "Simulação (B3), Avaliação de portfólio (B3), Empresas Americanas, Seleção de "
                 "FIIs, Portfólio Global, Qualidade dos dados, Configurações e Indicadores",
@@ -3379,6 +3383,25 @@ def _render_av_field(label: str, text: str) -> None:
     )
 
 
+_ALTURA_VISAO_GERAL = 900
+
+
+def _render_visao_geral() -> None:
+    """O diagrama de como o app inteiro se encaixa, num iframe com o tema do app.
+
+    Os fluxogramas das outras abas explicam cada tela por dentro; este mostra
+    de onde o dado vem, onde mora, que tela lê o quê e as regras que valem
+    para todas. A página está em ``docs/visao_geral/como_funciona.html``.
+    """
+    import streamlit.components.v1 as components
+
+    from design.theme_selector import tema_pintado
+    from design.visao_geral_app import pagina_html
+
+    components.html(pagina_html(tema_pintado()), height=_ALTURA_VISAO_GERAL,
+                    scrolling=True)
+
+
 def _render_indicadores() -> None:
     st.markdown(
         """
@@ -3500,13 +3523,15 @@ def render_corpo() -> None:
     """CSS e abas da documentação, sem o cabeçalho da página."""
     st.markdown(_CSS, unsafe_allow_html=True)
 
-    # Na ordem do menu lateral; Qualidade dos dados e Indicadores são transversais.
+    # Visão geral primeiro (o app inteiro num diagrama), depois as telas na
+    # ordem do menu lateral; Qualidade dos dados e Indicadores são transversais.
     # Rótulo e fluxo em listas paralelas, conferidas pelo tamanho: a versão
     # numerada à mão (``with tabs[7]``) desalinhava rótulo e conteúdo a cada aba
     # que entrava no meio. ``tab_labels`` continua sendo uma lista de textos
     # porque o Mapa do App é conferido contra ela
     # (``tests/test_configuracoes_sincronizadas.py``).
     tab_labels = [
+        "Visão geral do app",
         "Dashboard Geral",
         "Controle financeiro",
         "Controle CNPJ",
@@ -3523,7 +3548,9 @@ def render_corpo() -> None:
         "Configurações",
         "Indicadores",
     ]
-    fluxos: list[FlowSpec | None] = [
+    # Cada aba tem um fluxo ou uma função que a desenha.
+    fluxos: list[FlowSpec | Callable[[], None]] = [
+        _render_visao_geral,
         FLOW_DASHBOARD_GERAL,
         FLOW_CONTROLE_FINANCEIRO,
         FLOW_CONTROLE_CNPJ,
@@ -3538,13 +3565,13 @@ def render_corpo() -> None:
         FLOW_PORTFOLIO_GLOBAL,
         FLOW_QUALIDADE_DADOS,
         FLOW_CONFIGURACOES,
-        None,  # Indicadores
+        _render_indicadores,
     ]
     assert len(fluxos) == len(tab_labels), "documentação: aba sem fluxo ou fluxo sem aba"
     tabs = st.tabs(tab_labels)
     for tab, flow in zip(tabs, fluxos):
         with tab:
-            if flow is None:
-                _render_indicadores()
-            else:
+            if isinstance(flow, FlowSpec):
                 _render_flow(flow)
+            else:
+                flow()
