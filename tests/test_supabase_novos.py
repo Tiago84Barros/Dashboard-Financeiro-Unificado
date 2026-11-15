@@ -229,6 +229,34 @@ def test_cadastro_fechado_nao_manda_procurar_o_administrador(monkeypatch):
     assert len(avisos) == 1 and "administrador" not in avisos[0].lower()
 
 
+def test_conta_nova_nasce_so_com_as_secoes_essenciais(dois_bancos, user_state, monkeypatch):
+    from core import secoes_app
+    from core import user_preferences as preferences
+
+    engines, _, _ = dois_bancos
+    # Sem ``ScriptRunContext`` o app cai no principal; aqui o banco sai da
+    # sessão, como no Streamlit de verdade.
+    monkeypatch.setattr(accounts, "banco_da_sessao",
+                        lambda: user_state.get("_app4_user", {}).get("banco", BANCO_PRINCIPAL))
+    user_state.clear()
+    uid = accounts.cadastrar_usuario("Pessoa nova", "menu@example.test", PASSWORD)
+    _login(user_state, uid, BANCO_NOVOS)
+    assert preferences.load_secoes_ocultas() == list(secoes_app.ocultas_conta_nova())
+    assert secoes_app.ocultas_da_sessao(user_state) == frozenset(secoes_app.ocultas_conta_nova())
+    # A escolha inicial não ocupa a linha: o tema grava ao lado dela.
+    preferences.save_theme("light")
+    assert preferences.load_theme() == "light"
+    # Ligar tudo em Configurações devolve o menu inteiro.
+    preferences.save_secoes_ocultas([])
+    assert preferences.load_secoes_ocultas() == []
+
+    # Conta que já existia não perde seção, e o principal não ganha linha.
+    _login(user_state, ADMIN)
+    assert preferences.load_secoes_ocultas() == []
+    assert _contar(engines[BANCO_PRINCIPAL],
+                   "SELECT count(*) FROM user_settings WHERE user_id = :u", u=uid) == 0
+
+
 def test_conta_nova_grava_no_novos_e_le_o_compartilhado(dois_bancos, user_state):
     engines, _, _ = dois_bancos
     uid = accounts.cadastrar_usuario("Pessoa nova", "nova@example.test", PASSWORD)
