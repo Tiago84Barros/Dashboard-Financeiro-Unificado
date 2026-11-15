@@ -328,6 +328,11 @@ hr {
     background: rgba(255,255,255,.08);
     font-size: 1.05rem;
 }
+.app-brand-logo {
+    display: block;
+    width: 30px;
+    height: 30px;
+}
 .app-brand-badge {
     padding: 3px 8px;
     border: 1px solid rgba(0,200,150,.35);
