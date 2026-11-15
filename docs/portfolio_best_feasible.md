@@ -42,10 +42,27 @@ verificável ou sem candidatos suficientes, o saldo não alocado é explicitado.
   e incerteza) e as bandas eram só reportadas; como `type_score` é percentil
   dentro do tipo, ele decidia a divisão entre tipos e um tipo chegava a 70%
   com outro em zero.
-- Americanas: usa empresas elegíveis e o piso individual existente; uma
-  indústria sem aprovação estatística não apaga as empresas da proposta.
-  Tetos por ativo, indústria e setor são preservados. O caminho de criação
-  deixou de ampliar automaticamente tetos para conseguir investir 100%.
+- Americanas: as candidatas saem da mesma função da carteira normal
+  (`_lideres_por_industria`): até `leaders_per_industry` empresas por
+  indústria, pelo score de entrada e fundamentalista dentro da indústria, com
+  o piso de qualidade e o portão da Inteligência dos Ativos substituindo pelo
+  próximo da mesma indústria. Havendo indústria aprovada (a revisão roda porque
+  os tetos não fecham), as candidatas são exatamente as da carteira normal e o
+  que não cabe fica como capital não alocado; o corte no `top_n` usa a mesma
+  ordem (`_ordenar_por_score`: os dois scores e o ticker como desempate), para
+  que um empate na fronteira não dependa da ordem em que as indústrias chegam.
+  Sem nenhuma aprovada, uma
+  indústria sem aprovação estatística não apaga as empresas da proposta: entram
+  primeiro as que têm amostra mínima, pelo menor número de critérios não
+  atendidos e pela maior margem até o corte (o menor entre `min_entry_score` e
+  a vantagem sobre a mediana), e por último as de amostra abaixo do mínimo.
+  Os pesos perseguem o mesmo alvo da carteira normal (`_base_target`) como meta
+  lexicográfica; a fila só desempata. Tetos por ativo, indústria e setor são
+  preservados. O caminho de criação deixou de ampliar automaticamente tetos
+  para conseguir investir 100%. Até 15/11/2026 a revisão juntava toda elegível
+  de toda indústria, sem cota, e maximizava o `entry_score`, percentil dentro
+  da indústria: os pesos encostavam no teto por ativo (cerca de 13 nomes a 8%
+  contra 26 na carteira normal).
 - B3: cada segmento analisado entra com uma única candidata, a de maior
   `score_proximo` dentro do segmento, a mesma nota que escolhe a líder na rota
   normal. Notas de segmentos diferentes não são comparadas: a ordem entre

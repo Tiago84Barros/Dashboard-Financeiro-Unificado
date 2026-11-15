@@ -148,8 +148,10 @@ criada. Avaliação indisponível não veta, mas é listada (fail-open nomeado).
   substituto fica vazia e é listada.
 - **Empresas Americanas**: em `us_portfolio_creation.select_industry_leaders`, depois
   do piso; o substituto é o próximo da mesma indústria que também passa no piso
-  (`filtrar_selecao`). A rede "carteira preservada" e a revisão (`us_review`) não
-  readmitem vetados.
+  (`filtrar_selecao`). A rede "carteira preservada" devolve o piso, não o portão:
+  os líderes pré-piso passam pelo `filtrar_selecao` antes de entrar, com
+  substituição pelo próximo da mesma indústria. A revisão (`us_review`) usa a
+  mesma função e também não readmite vetados.
 - **FIIs**: o otimizador não tem vaga por tipo, então `veredito.reotimizar_sem_vetados`
   exclui o vetado e remonta a carteira (`montar_carteira_com_concessao`) sob as mesmas
   restrições, até 6 rodadas; vetado que resta vai como "persistente", com aviso. A

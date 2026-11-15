@@ -98,7 +98,13 @@ def _score(row: dict) -> object:
 
 
 def _backtest(row: dict) -> str | None:
-    """Situação do segmento no backtest, quando a rota informa (B3)."""
+    """Situação do grupo de origem, quando a rota informa.
+
+    Na B3 é o segmento no backtest; nos EUA a rota manda o texto pronto em
+    ``situacao_grupo`` (indústria aprovada, em observação com a margem, ou de
+    amostra abaixo do mínimo), porque lá não há backtest por indústria."""
+    if "situacao_grupo" in row:
+        return str(row["situacao_grupo"])
     if "aprovado" not in row:
         return None
     if row["aprovado"]:
@@ -175,7 +181,7 @@ def _html_backtest(row: dict) -> str:
     if texto is None:
         return ""
     cor = _POSITIVO if row.get("aprovado") else _ALERTA
-    segmento = row.get("segmento")
+    segmento = row.get("segmento") or row.get("industry_group")
     titulo = f"{segmento} — {texto}" if segmento else texto
     return (f'<span class="pr-rot" style="color:{cor};" title="{_t(titulo)}">'
             f'{_t(texto)}</span>')
@@ -187,7 +193,8 @@ def _prioridade(row: dict) -> float:
     O score exibido não compara grupos: na B3 é do segmento, nos FIIs é
     percentil dentro do tipo. A ordem vem de ``quality``, o critério que a
     rota de revisão maximizou (na B3 já põe aprovados à frente; nos FIIs é a
-    utilidade da carteira normal). Nos EUA ``quality`` é o próprio score.
+    utilidade da carteira normal). Nos EUA é a posição na fila da revisão:
+    líderes por indústria, indústrias aprovadas antes das demais.
     """
     valor = _numero(row.get("quality") if "quality" in row else _score(row))
     return -math.inf if valor is None else valor
@@ -212,7 +219,10 @@ def render_portfolio_review(result, *, key):
             st.dataframe(pd.DataFrame([
                 {"Ativo": row["ticker"], "Peso do capital total": f"{row['weight']:.2%}",
                  "Categoria / setor": _categoria(row), "Score observado": _score(row),
-                 **({"Segmento": row.get("segmento") or "—",
+                 **({"Indústria": row.get("industry_group") or "—",
+                     "Situação da indústria": _backtest(row)}
+                    if "situacao_grupo" in row else
+                    {"Segmento": row.get("segmento") or "—",
                      "Backtest do segmento": _backtest(row)}
                     if "aprovado" in row else {})}
                 for row in itens]), hide_index=True, width="stretch")
