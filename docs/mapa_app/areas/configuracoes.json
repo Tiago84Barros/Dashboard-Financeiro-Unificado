@@ -417,10 +417,18 @@
     {
       "nome": "Documentação",
       "resumo": "Guia ilustrado de como o app funciona",
-      "explicacao": "Fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. Era um item do menu até 24/09/2026 e tem 15 sub-abas, na ordem do menu lateral.",
+      "explicacao": "Um diagrama do app inteiro e fluxogramas clicáveis que explicam, passo a passo, as partes mais complexas do app: você clica numa etapa e a explicação aparece ao lado. A primeira sub-aba, Visão geral do app, é um diagrama de como o app inteiro se encaixa: de onde o dado vem, onde mora, que tela lê o quê e as regras que valem para todas. Era um item do menu até 24/09/2026 e tem 16 sub-abas: a Visão geral e, depois dela, uma por tela na ordem do menu lateral.",
       "so_admin": false,
-      "fonte": "views/configuracoes.py:195 → views/documentacao.py:3016",
+      "fonte": "views/configuracoes.py:205 → views/documentacao.py:3522",
       "filhos": [
+        {
+          "nome": "Visão geral do app",
+          "resumo": "O app inteiro num diagrama só",
+          "explicacao": "Diagrama de como o app se encaixa: as fontes que alimentam o app, as rotinas que rodam nos bastidores, os dois bancos (o Supabase na nuvem e o armazém local), as telas e de que dado cada uma depende, as regras que valem para todas e o caminho de um dado num dia comum. Acompanha o tema claro ou escuro escolhido na aba Geral.",
+          "so_admin": false,
+          "fonte": "views/documentacao.py:3389 → design/visao_geral_app.py:31",
+          "filhos": []
+        },
         {
           "nome": "Dashboard Geral",
           "resumo": "Fatos do período primeiro, referências depois",
