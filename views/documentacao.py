@@ -470,7 +470,9 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "no card da líder; o afrouxamento do piso e a vaga que ficou sem substituto vão "
             "para Configurações → Restrições. Quando a carteira não fecha nos limites de "
             "concentração, a composição para revisão usa a mesma nota: uma empresa por "
-            "segmento, aprovados no backtest primeiro, e o card diz se o segmento foi aprovado.",
+            "segmento, aprovados no backtest primeiro, e o card diz se o segmento foi aprovado. "
+            "Abaixo dela vêm os mesmos painéis da carteira normal, a começar pela distribuição "
+            "setorial, em que o dinheiro sem aplicar aparece como \"Não alocado\".",
             ("Lista de empresas líderes", "Score médio", "Alpha médio", "Distribuição setorial"),
             "É a transição do motor por segmento para uma carteira única e acionável.",
         ),
@@ -1607,7 +1609,9 @@ FLOW_EMPRESAS_EUA = FlowSpec(
             "tetos não fecham, a composição para revisão segue a mesma regra: os "
             "líderes de cada indústria, só as aprovadas quando existem (as demais, "
             "sem nenhuma aprovada, pela margem até a aprovação) e o mesmo alvo de "
-            "pesos; o que não cabe nos tetos fica como capital não alocado.",
+            "pesos; o que não cabe nos tetos fica como capital não alocado. Abaixo "
+            "dela vêm os mesmos gráficos de alocação por ativo e por setor da "
+            "carteira normal, com essa sobra como \"Não alocado\".",
             (
                 "Limites por setor e por ativo",
                 "Piso de liquidez",

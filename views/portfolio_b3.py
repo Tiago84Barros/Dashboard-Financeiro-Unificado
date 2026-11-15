@@ -4909,29 +4909,6 @@ def render(show_header: bool = True) -> None:
                              accent="#4A9EFF")
         _render_b3_portfolio_version_history("pb3_save_model")
 
-    # ── DISTRIBUIÇÃO SETORIAL ────────────────────────────────────────────────
-    if proximos_uniq:
-        st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
-                    unsafe_allow_html=True)
-        _sec_hdr("🍕 Distribuição Setorial do Portfólio Sugerido")
-
-        dist: dict[str, float] = {}
-        for p in proximos_uniq:
-            dist[p["setor"]] = dist.get(p["setor"], 0.0) + float(p.get("peso") or 0.0)
-        df_dist = pd.DataFrame(
-            {"Setor": list(dist.keys()), "Peso": list(dist.values())}
-        )
-        fig_pie = px.pie(
-            df_dist, names="Setor", values="Peso",
-            color_discrete_sequence=px.colors.qualitative.Set3,
-        )
-        fig_pie.update_traces(textposition="inside", textinfo="percent+label",
-                              textfont_size=11)
-        fig_pie.update_layout(**_plot_layout(420))
-        fig_pie.update_layout(showlegend=False)
-        st.plotly_chart(fig_pie, width="stretch",
-                        config={"displayModeBar": False}, key="pb3_pie")
-
     # Carteira final exposta para auditoria automatizada (scripts/audit_portfolio_b3.py
     # varre configurações e verifica invariantes). Só leitura — nada aqui muda a
     # carteira; a exposição é o que permite testar o motor sem navegador.
@@ -4944,6 +4921,45 @@ def render(show_header: bool = True) -> None:
         resultados, aprovados, proximos_uniq, df_precos_all,
         selic_hist=selic_hist, taxa_selic_aa=taxa_selic_aa,
     )
+
+
+def _render_distribuicao_setorial(proximos_uniq: list[dict]) -> None:
+    """Pizza do peso de cada setor na carteira em tela.
+
+    Função única das duas rotas: até 15/11/2026 a pizza ficava só no corpo da
+    rota normal, e a rota de revisão, que reaproveita os demais painéis por
+    `_render_analises_da_carteira`, saía sem ela. Setor ausente vira "Não
+    classificado" em vez de uma fatia sem nome, e o capital que a revisão
+    deixa sem aplicar vira a fatia "Não alocado".
+    """
+    if not proximos_uniq:
+        return
+    st.markdown("<hr style='margin:24px 0;border-color:var(--app-border);'>",
+                unsafe_allow_html=True)
+    _sec_hdr("🍕 Distribuição Setorial do Portfólio Sugerido")
+
+    dist: dict[str, float] = {}
+    for p in proximos_uniq:
+        setor = p.get("setor") or "Não classificado"
+        dist[setor] = dist.get(setor, 0.0) + float(p.get("peso") or 0.0)
+    # A revisão pode deixar capital sem aplicar; sem esta fatia a pizza
+    # reescalaria os setores para 100% e esconderia a sobra.
+    sobra = 1.0 - sum(dist.values())
+    if sobra > 1e-3:
+        dist["Não alocado"] = sobra
+    df_dist = pd.DataFrame(
+        {"Setor": list(dist.keys()), "Peso": list(dist.values())}
+    )
+    fig_pie = px.pie(
+        df_dist, names="Setor", values="Peso",
+        color_discrete_sequence=px.colors.qualitative.Set3,
+    )
+    fig_pie.update_traces(textposition="inside", textinfo="percent+label",
+                          textfont_size=11)
+    fig_pie.update_layout(**_plot_layout(420))
+    fig_pie.update_layout(showlegend=False)
+    st.plotly_chart(fig_pie, width="stretch",
+                    config={"displayModeBar": False}, key="pb3_pie")
 
 
 def _render_analises_da_carteira(
@@ -4960,8 +4976,10 @@ def _render_analises_da_carteira(
 
     Patches 1-5, desempenho da safra vigente, safras ano a ano contra Selic e
     Pesos Iguais e a metodologia. É chamada pela rota normal e pela rota de
-    revisão (`_rota_revisao`): as duas mostram os mesmos painéis.
+    revisão (`_rota_revisao`): as duas mostram os mesmos painéis, a começar
+    pela distribuição setorial.
     """
+    _render_distribuicao_setorial(proximos_uniq)
     _render_paineis_analiticos(resultados, proximos_uniq, df_precos_all)
 
     # ── DESEMPENHO PARCIAL ANO ATUAL ─────────────────────────────────────────
