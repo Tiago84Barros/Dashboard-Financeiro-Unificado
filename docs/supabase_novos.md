@@ -22,6 +22,16 @@ o cadastro ainda não abriu. Ela nunca grava no principal.
   cadastro grava as outras seções como ocultas em
   `user_settings.extra_settings`, na mesma transação do `profiles`. A pessoa
   liga as demais em Configurações › Geral › Seções do aplicativo.
+- Os investimentos que a pessoa importa em Configurações ficam inteiros no
+  novos: transações, proventos, posições, fotos da carteira, lotes do
+  Tesouro, movimentações e as contas da corretora (`accounts`). Do que uma
+  importação toca, só o cadastro do ticker (`assets`: ticker, nome, classe,
+  moeda) e o nome da corretora (`financial_institutions`) vão ao principal, e
+  só quando ainda não existem lá. Nenhum dos dois tem `user_id`, quantidade
+  ou valor. Eles ficam no principal por decisão do dono do app (15/11/2026):
+  a rotina de cotações (`data_pipeline/jobs/update_b3_quotes.py`) precifica o
+  `assets` do principal e grava `asset_quotes` pelo `id` dele, e um ticker
+  que nascesse no novos ficaria sem cotação diária.
 - Dados que são do app, e não de uma pessoa, continuam gravados no principal,
   mesmo numa sessão de conta nova, por `core.database.engine_do_app()`. No
   novos essas tabelas são estrangeiras: o `postgres_fdw` não aceita
