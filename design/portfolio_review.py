@@ -90,7 +90,23 @@ def _categoria(row: dict) -> str:
 
 
 def _score(row: dict) -> object:
+    # B3 traz o score do segmento à parte: ali ``quality`` é só a prioridade
+    # interna do otimizador (posição na fila), não um score 0–100.
+    if "score_segmento" in row:
+        return row["score_segmento"]
     return row.get("type_score", row.get("entry_score", row.get("quality")))
+
+
+def _backtest(row: dict) -> str | None:
+    """Situação do segmento no backtest, quando a rota informa (B3)."""
+    if "aprovado" not in row:
+        return None
+    if row["aprovado"]:
+        return "Segmento aprovado no backtest"
+    margem = _numero(row.get("evidencia_segmento"))
+    if margem is None:
+        return "Segmento não aprovado · sem medição"
+    return f"Segmento não aprovado · margem {margem:+.1f}%"
 
 
 def _cor_score(score: float | None) -> str:
@@ -150,12 +166,33 @@ def _html_card(posicao: int, row: dict) -> str:
             f'<div class="pr-linha"><span class="pr-rot">Score observado</span>'
             f'<span class="pr-score" style="color:{cor};">{_t(texto_score)}</span></div>'
             f'<div class="pr-medidor"><span style="width:{preenchido:.1f}%;background-color:{cor};"></span></div>'
+            f'{_html_backtest(row)}'
             f'</div>')
 
 
+def _html_backtest(row: dict) -> str:
+    texto = _backtest(row)
+    if texto is None:
+        return ""
+    cor = _POSITIVO if row.get("aprovado") else _ALERTA
+    segmento = row.get("segmento")
+    titulo = f"{segmento} — {texto}" if segmento else texto
+    return (f'<span class="pr-rot" style="color:{cor};" title="{_t(titulo)}">'
+            f'{_t(texto)}</span>')
+
+
+def _prioridade(row: dict) -> float:
+    """Desempate dos cards de mesmo peso.
+
+    Na B3 o score exibido é do segmento e não compara segmentos; a ordem vem
+    da prioridade de alocação (``quality``), que já põe aprovados à frente.
+    """
+    valor = _numero(row.get("quality") if "score_segmento" in row else _score(row))
+    return -math.inf if valor is None else valor
+
+
 def _ordenados(itens: list[dict]) -> list[dict]:
-    return sorted(itens, key=lambda row: (-float(row["weight"]),
-                                          -(_numero(_score(row)) or -math.inf),
+    return sorted(itens, key=lambda row: (-float(row["weight"]), -_prioridade(row),
                                           str(row["ticker"])))
 
 
@@ -172,7 +209,10 @@ def render_portfolio_review(result, *, key):
         with st.expander("Ver composição em tabela"):
             st.dataframe(pd.DataFrame([
                 {"Ativo": row["ticker"], "Peso do capital total": f"{row['weight']:.2%}",
-                 "Categoria / setor": _categoria(row), "Score observado": _score(row)}
+                 "Categoria / setor": _categoria(row), "Score observado": _score(row),
+                 **({"Segmento": row.get("segmento") or "—",
+                     "Backtest do segmento": _backtest(row)}
+                    if "aprovado" in row else {})}
                 for row in itens]), hide_index=True, width="stretch")
     else:
         st.info("O capital permanece 100% não alocado: não há candidato com evidência "

@@ -352,9 +352,9 @@
             {
               "nome": "Composição possível com proteção ao investidor",
               "resumo": "Proposta parcial quando a carteira não fecha",
-              "explicacao": "Aparece no lugar da carteira sugerida (macro, saúde, salvar e distribuição setorial) quando não há empresas suficientes para respeitar os limites de concentração. Mostra uma proposta parcial, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\". Depois dela seguem os mesmos painéis da carteira normal: Patches 1 a 5, desempenho da safra vigente, desempenho safra a safra contra Selic e Pesos Iguais e a metodologia.",
+              "explicacao": "Aparece no lugar da carteira sugerida (macro, saúde, salvar e distribuição setorial) quando não há empresas suficientes para respeitar os limites de concentração. Cada segmento analisado entra com uma só empresa, a de maior nota dentro do próprio segmento (a mesma nota da carteira normal); notas de segmentos diferentes nunca são comparadas entre si. Os segmentos aprovados no backtest vêm primeiro e os demais seguem pela menor distância até a aprovação. Nota de entrada, Inteligência dos Ativos e risco crítico só tiram empresas: quem é barrado cede a vaga à próxima do mesmo segmento. Cada card diz se o segmento foi aprovado no backtest e, se não foi, por quanto ficou de fora. Mostra uma proposta parcial, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\". Depois dela seguem os mesmos painéis da carteira normal: Patches 1 a 5, desempenho da safra vigente, desempenho safra a safra contra Selic e Pesos Iguais e a metodologia.",
               "so_admin": false,
-              "fonte": "views/portfolio_b3.py:4404/4421/4432 -> design/portfolio_review.py:13",
+              "fonte": "views/portfolio_b3.py:5156 -> core/portfolio_review_routes.py:b3_review -> design/portfolio_review.py:190",
               "filhos": []
             },
             {

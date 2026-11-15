@@ -467,7 +467,9 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "Remove duplicatas, consolida motivos e distribui empresas selecionadas por peso e setor. "
             "Quem entrou pelo piso de qualidade ou pela Inteligência dos Ativos vem etiquetado "
             "no card da líder; o afrouxamento do piso e a vaga que ficou sem substituto vão "
-            "para Configurações → Restrições.",
+            "para Configurações → Restrições. Quando a carteira não fecha nos limites de "
+            "concentração, a composição para revisão usa a mesma nota: uma empresa por "
+            "segmento, aprovados no backtest primeiro, e o card diz se o segmento foi aprovado.",
             ("Lista de empresas líderes", "Score médio", "Alpha médio", "Distribuição setorial"),
             "É a transição do motor por segmento para uma carteira única e acionável.",
         ),
