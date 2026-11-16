@@ -3191,18 +3191,25 @@ def render(show_header: bool = True) -> None:
                      "de comprar boas empresas na baixa.",
             )
             macro_mode = right.selectbox(
-                "Uso do histórico macro nos pesos",
+                "Influência da economia nos pesos da carteira",
                 ["fundamental", "moderate", "scenario"],
                 index=1,
                 format_func={
-                    "fundamental": "Somente fundamentos",
-                    "moderate": "Contextual moderado (recomendado)",
-                    "scenario": "Cenário ampliado",
+                    "fundamental": "Sem ajuste pela economia",
+                    "moderate": "Ajuste moderado (padrão)",
+                    "scenario": "Ajuste ampliado",
                 }.get,
                 key="pb3_macro_mode",
-                help=("Sensibilidades explícitas por setor e séries guardadas no "
-                      "PostgreSQL Docker local, ou nos insumos que ele publicou. "
-                      "Ausência não é tratada como zero."),
+                help=(
+                    "O peso é a fatia da carteira dedicada a cada empresa. O app "
+                    "pode ajustar essas fatias conforme o efeito estimado de juros, "
+                    "inflação e câmbio em cada setor.\n\n"
+                    "- **Sem ajuste pela economia** usa os pesos originais.\n"
+                    "- **Ajuste moderado (padrão)** limita a influência da economia.\n"
+                    "- **Ajuste ampliado** dá mais influência à economia do que o modo moderado.\n\n"
+                    "As empresas selecionadas e os limites de concentração são mantidos. "
+                    "Se o ajuste estiver indisponível, o app usa os pesos originais."
+                ),
             )
             cheapness_weight = float(cheapness_pct) / 100.0
             cap_adaptativo = st.checkbox(
