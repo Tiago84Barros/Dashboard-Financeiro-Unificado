@@ -4404,11 +4404,21 @@ def render(show_header: bool = True) -> None:
     )
     _required_global = minimum_assets_for_cap(cap)
     _portfolio_viavel = len(proximos_uniq) >= _required_global
-    # A rota de revisão (metas que não comportam carteira) mostra a composição
-    # possível e, em seguida, os MESMOS painéis analíticos da rota normal.
-    # De 10/09 a 13/11/2026 ela dava `return` logo após os cards, e a tela
-    # perdia os Patches 1-5, o desempenho da safra vigente e as safras ano a
-    # ano contra Selic/EW sem aviso nenhum.
+    # Limites que não fecham NÃO trocam mais a carteira pela composição para
+    # revisão (decisão do usuário de 16/11/2026): a tela fica na rota normal,
+    # com os líderes dos segmentos aprovados, e diz quais limites ficaram de
+    # fora. A revisão escolhe por outra regra (uma por segmento, inclusive dos
+    # reprovados), que nenhuma medição cobre; a medição OOS
+    # (`core.b3_oos_carteira.montar_carteira`) já media essas safras com os
+    # pesos da rota normal, sem o cap, só marcando-as. Os pesos aqui seguem a
+    # mesma conta: poucos ativos para o cap -> sem projeção, normalizado;
+    # tetos que não fecham -> o que a projeção conjunta devolve, normalizado.
+    # A revisão fica só para quando não sobra nenhum líder.
+    _limites_relaxados: list[str] = []
+    # A rota de revisão mostra a composição possível e, em seguida, os MESMOS
+    # painéis analíticos da rota normal. De 10/09 a 13/11/2026 ela dava
+    # `return` logo após os cards, e a tela perdia os Patches 1-5, o desempenho
+    # da safra vigente e as safras ano a ano contra Selic/EW sem aviso nenhum.
     _args_revisao = dict(
         resultados=resultados, aprovados=aprovados, proximos_uniq=proximos_uniq,
         df_mult_todos=df_mult_todos, df_set=df_set, entry_guard=entry_guard,
@@ -4472,11 +4482,12 @@ def render(show_header: bool = True) -> None:
                 or sum(_pesos_fin[tk] for tk in _pesos_fin if _eh_ciclico[tk])
                 > float(teto_ciclico)+1e-6
             )
-            if exceeds:
-                _rota_revisao(**_args_revisao)
-                return
             for item in proximos_uniq:
                 item["peso"] = _pesos_fin[item["tk"]]
+            if exceeds:
+                _limites_relaxados.append(
+                    "os tetos por ativo, por setor e por classe de ciclo não "
+                    "cabem juntos nestes ativos")
             _n_ciclicos = sum(1 for v in _eh_ciclico.values() if v)
             for _aviso in _avisos_tetos:
                 _sufixo = ("" if "classe" not in _aviso.lower() else
@@ -4485,12 +4496,28 @@ def render(show_header: bool = True) -> None:
                            "SELEÇÃO, não na ponderação.")
                 st.warning(_aviso + _sufixo, icon="⚠️")
     elif proximos_uniq:
-        _rota_revisao(**_args_revisao)
-        return
+        _limites_relaxados.append(
+            f"o limite de {cap:.0%} por ativo exige pelo menos "
+            f"{_required_global} ativos e a carteira tem {len(proximos_uniq)}")
 
     if not proximos_uniq:
         _rota_revisao(**_args_revisao)
         return
+
+    _rota_relaxada = bool(_limites_relaxados)
+    if _rota_relaxada:
+        _normalizar_pesos_relaxados(proximos_uniq)
+        _maior = max(proximos_uniq, key=lambda it: float(it.get("peso") or 0.0))
+        st.warning(
+            "A carteira segue a regra normal, mas não fecha nos limites de "
+            "concentração: " + "; ".join(_limites_relaxados) + ". "
+            f"Maior peso: {_maior['tk']} com {float(_maior.get('peso') or 0.0):.1%}. "
+            "É a mesma conta que a medição fora da amostra usa nessas safras. "
+            "A camada macro não é aplicada e o botão de salvar fica desligado; "
+            "para uma carteira dentro dos limites, ligue o cap adaptativo, "
+            "afrouxe os tetos ou amplie o universo.",
+            icon="⚠️",
+        )
 
     # ── CAMADA MACRO LOCAL ────────────────────────────────────────────────
     # É aplicada depois da correlação e novamente projetada nos mesmos tetos.
@@ -4498,7 +4525,7 @@ def render(show_header: bool = True) -> None:
     macro_snapshot = None
     macro_turnover = 0.0
     macro_fonte = None
-    if proximos_uniq and _portfolio_viavel:
+    if proximos_uniq and _portfolio_viavel and not _rota_relaxada:
         macro_fonte = get_macro_source()
         if macro_fonte is not None:
             try:
@@ -4546,7 +4573,7 @@ def render(show_header: bool = True) -> None:
                 )
         st.session_state["pb3_macro_snapshot"] = macro_snapshot
 
-    if proximos_uniq:
+    if proximos_uniq and not _rota_relaxada:
         if macro_snapshot is None:
             aviso_lacuna(
                 "Camada macro indisponível (sem Docker local e sem arquivo publicado recente); os pesos permanecem "
@@ -4898,7 +4925,7 @@ def render(show_header: bool = True) -> None:
                 "Salvar portfólio padrão",
                 type="primary",
                 key="pb3_save_model",
-                disabled=not _portfolio_viavel,
+                disabled=(not _portfolio_viavel) or _rota_relaxada,
                 on_click=_gravacao.ao_clicar_gravar(
                     "pb3_save_model",
                     lambda: save_b3_portfolio_model(
@@ -5188,6 +5215,27 @@ def _barrado_inteligencia(tk: str, setor: str | None) -> bool:
     como fail-open e nomeia o ticker nos motivos."""
     cod, _motivo = veredito.limite(_intel_avaliar_cached(tk, setor))
     return cod in veredito.VETA_SELECAO
+
+
+def _normalizar_pesos_relaxados(itens: list[dict]) -> None:
+    """Normaliza os pesos da rota normal quando os limites não fecham.
+
+    Mesma conta de `core.b3_oos_carteira.montar_carteira` para a safra marcada
+    como inviável: os pesos ficam como a montagem os deixou e só são
+    reescalados para somar 100%. Peso ausente ou não finito conta como zero.
+    """
+    pesos = []
+    for it in itens:
+        try:
+            w = float(it.get("peso") or 0.0)
+        except (TypeError, ValueError):
+            w = 0.0
+        pesos.append(w if np.isfinite(w) and w > 0 else 0.0)
+    total = sum(pesos)
+    if total <= 0:
+        return
+    for it, w in zip(itens, pesos):
+        it["peso"] = w / total
 
 
 def _rota_revisao(

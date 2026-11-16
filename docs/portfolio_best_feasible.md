@@ -1,7 +1,8 @@
 # Composição possível com proteção ao investidor
 
 A criação de B3, Americanas e FIIs mantém o caminho original quando ele comporta
-uma composição dentro dos critérios. Quando a seleção ou os tetos impedem essa
+uma composição dentro dos critérios (na B3, também quando os líderes não fecham
+nos limites; ver abaixo). Quando a seleção ou os tetos impedem essa
 composição, apresenta uma proposta calculada para revisão, com ativos e capital
 não alocado. A proposta pode ser baixada em JSON com seus pesos e ressalvas.
 
@@ -63,7 +64,13 @@ verificável ou sem candidatos suficientes, o saldo não alocado é explicitado.
   de toda indústria, sem cota, e maximizava o `entry_score`, percentil dentro
   da indústria: os pesos encostavam no teto por ativo (cerca de 13 nomes a 8%
   contra 26 na carteira normal).
-- B3: cada segmento analisado entra com uma única candidata, a de maior
+- B3: a revisão só entra quando nenhum segmento deixa líder. Desde
+  16/11/2026, líderes que não fecham nos limites de concentração (poucos
+  ativos para o cap, ou tetos de setor e ciclo que não cabem juntos) mantêm
+  a rota normal: a tela avisa quais limites ficaram de fora, os pesos são os
+  da montagem normalizados (a mesma conta de `montar_carteira`, que a medição
+  OOS já usava nessas safras), a camada macro não é aplicada e o botão de
+  salvar fica desligado. Na revisão, cada segmento analisado entra com uma única candidata, a de maior
   `score_proximo` dentro do segmento, a mesma nota que escolhe a líder na rota
   normal. Notas de segmentos diferentes não são comparadas: a ordem entre
   segmentos é aprovados no backtest primeiro, depois os demais pela menor
