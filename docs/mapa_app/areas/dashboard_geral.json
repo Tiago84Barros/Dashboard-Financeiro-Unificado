@@ -104,7 +104,7 @@
         {
           "nome": "Empresas B3",
           "resumo": "Resumo da carteira de ações brasileiras sugerida",
-          "explicacao": "Resumo da carteira de ações brasileiras que você salvou na tela Empresas B3: quantas empresas, a nota média e o ano de compra. A etiqueta diz 'Ativa', 'Revisar' (feita com um método antigo) ou 'Sem carteira'. Leva o selo 'Carteira recomendada pelo app'.",
+          "explicacao": "Resumo da carteira de ações brasileiras que você salvou na tela Empresas B3: quantas empresas, a nota média (\"—\" quando nenhuma nota compara a empresa com um par do segmento) e o ano de compra. A etiqueta diz 'Ativa', 'Revisar' (feita com um método antigo) ou 'Sem carteira'. Leva o selo 'Carteira recomendada pelo app'.",
           "so_admin": false,
           "fonte": "views/dashboard_geral.py:1117",
           "filhos": []

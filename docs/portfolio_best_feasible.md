@@ -72,7 +72,11 @@ verificável ou sem candidatos suficientes, o saldo não alocado é explicitado.
   (o mesmo `veredito.VETA_SELECAO` da rota normal), risco crítico e vetos
   qualitativos conhecidos só excluem; a vaga passa à próxima empresa do mesmo
   segmento. Inteligência indisponível não veta e a tela diz isso. Cada card
-  mostra o status do segmento no backtest. Preserva tetos por ativo, setor e
+  mostra o status do segmento no backtest. A nota é percentil entre as
+  compráveis de hoje do segmento (a régua análoga às elegíveis da época que
+  o backtest usa); com uma só comprável não há par, ela sai 0,0 sem medir
+  nada, e o card diz "sem par comparável" (`score_sem_par`), fora da média do
+  score. Até 16/11/2026 o card mostrava 0,0 (caso WEGE3, #1 da revisão). Preserva tetos por ativo, setor e
   classe cíclica. Até 14/11/2026 a rota juntava todas as empresas de todos os
   segmentos e ordenava pelo Score de Entrada, um percentil dentro do segmento
   que não compara setores, e descartava `score_proximo`. Também intercepta projeções legadas que excederiam

@@ -22,7 +22,11 @@ import core.b3_troca_codigo as _troca
 import core.b3_universo_pit as _upit
 import core.data_reconciliacao as _recon
 from core.b3_evidence import sinal_significante, teste_t_unilateral
-from core.b3_methodology import MODEL_SCHEMA_VERSION, SCORE_VERSION
+from core.b3_methodology import (
+    MODEL_SCHEMA_VERSION,
+    SCORE_VERSION,
+    media_scores_comparaveis,
+)
 from core.b3_portfolio_model import (
     list_b3_portfolio_model_versions,
     restore_b3_portfolio_model,
@@ -1240,6 +1244,14 @@ def _processar_segmento(
     )
     if not score_proximo:
         return None
+    # A nota é percentil DENTRO do grupo; com uma só comprável não há par e
+    # ela sai 0,0 sem medir nada (caso WEGE3, 16/11/2026). A régua continua
+    # sendo a das compráveis de hoje, análoga às elegíveis da época que o laço
+    # acima usa: alargá-la faria a carteira de hoje seguir uma regra que o
+    # backtest e a medição OOS não mediram. Na seleção nada muda (sozinha, ela
+    # lidera com peso 1); muda a leitura: a tela diz "sem par comparável" e a
+    # nota sai da média do score.
+    score_sem_par = len(score_proximo) < 2
     ano_ref_score = ano_atual - 1
     # A carteira do próximo ano sai deste score: degradado aqui, a decisão
     # corrente não segue a metodologia declarada.
@@ -1521,6 +1533,9 @@ def _processar_segmento(
         "participacao": participacao,
         "ultimo_lid": ultimo_lid,
         "score_proximo": score_proximo,
+        # Menos de duas compráveis com score: a nota não compara ninguém e a
+        # tela mostra "sem par comparável".
+        "score_sem_par": score_sem_par,
         "ano_ref_score": ano_ref_score,
         "lids_prox": lids_prox,
         "pesos_prox": pesos_prox,
@@ -4149,6 +4164,7 @@ def render(show_header: bool = True) -> None:
             nome = nome_row["nome_empresa"].iloc[0][:24] if not nome_row.empty else tk
             proximos.append({
                 "tk": tk, "nome": nome, "score": score, "peso": peso,
+                "score_sem_par": bool(res.get("score_sem_par")),
                 "score_entrada": score_entrada,
                 "status_entrada": status_entrada,
                 "motivos": motivos,
@@ -4859,7 +4875,8 @@ def render(show_header: bool = True) -> None:
             "num_empresas": len(proximos_uniq),
             "alpha_selic_medio": float(np.mean([p.get("alpha_selic", 0.0) for p in proximos_uniq])),
             "alpha_ew_medio": float(np.mean([p.get("alpha_ew", 0.0) for p in proximos_uniq])),
-            "score_medio": float(np.mean([p.get("score", 0.0) for p in proximos_uniq])),
+            # Sem as notas "sem par comparável"; None quando nenhuma compara.
+            "score_medio": media_scores_comparaveis(proximos_uniq),
             "score_entrada_medio": float(np.mean([p.get("score_entrada", 0.0) for p in proximos_uniq])),
             "q_value_max_aprovados": float(max(
                 (r.get("q_value_oos", 1.0) for r in aprovados),
@@ -4904,8 +4921,9 @@ def render(show_header: bool = True) -> None:
                 card_metrica("Segmentos aprovados", str(len(aprovados)),
                              accent="#4A9EFF")
             with _r3:
+                _sm = metrics_modelo["score_medio"]
                 card_metrica("Score médio",
-                             f"{metrics_modelo['score_medio']:.2f}",
+                             f"{_sm:.2f}" if _sm is not None else "—",
                              accent="#4A9EFF")
         _render_b3_portfolio_version_history("pb3_save_model")
 
@@ -5149,6 +5167,7 @@ def _itens_da_revisao(
                     nome = _n.iloc[0][:24]
             item = {
                 "tk": tk, "nome": nome, "score": score,
+                "score_sem_par": bool(res.get("score_sem_par")) if res else False,
                 "setor": res.get("setor") or row.get("setor"),
                 "subsetor": res.get("subsetor"),
                 "segmento": res.get("segmento"),

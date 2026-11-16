@@ -92,6 +92,10 @@ def _categoria(row: dict) -> str:
 def _score(row: dict) -> object:
     # B3 traz o score do segmento à parte: ali ``quality`` é só a prioridade
     # interna do otimizador (posição na fila), não um score 0–100.
+    # Grupo de uma empresa só: o percentil sai 0,0 sem comparar ninguém, e
+    # mostrar o número leria como "pior do grupo" (caso WEGE3, 16/11/2026).
+    if row.get("score_sem_par"):
+        return None
     if "score_segmento" in row:
         return row["score_segmento"]
     return row.get("type_score", row.get("entry_score", row.get("quality")))
@@ -161,7 +165,10 @@ def _html_resumo(result: dict) -> str:
 def _html_card(posicao: int, row: dict) -> str:
     score = _numero(_score(row))
     cor = _cor_score(score)
-    texto_score = f"{score:.1f}" if score is not None else "—"
+    if row.get("score_sem_par"):
+        texto_score = "sem par comparável"
+    else:
+        texto_score = f"{score:.1f}" if score is not None else "—"
     preenchido = max(0.0, min(score or 0.0, 100.0))
     return (f'<div class="pr-card">'
             f'<div class="pr-topo"><span class="pr-ticker">{_t(row["ticker"])}</span>'
