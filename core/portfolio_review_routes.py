@@ -328,7 +328,11 @@ def _entrada_exclui(entry_guard, ticker):
 
 def b3_review(results, fundamentals, entry_guard, *, cap, sector_cap, cycle_cap, selic,
               vetoed=(), approved=(), barrado=None):
-    """Composição para revisão quando a carteira normal da B3 não comporta os limites.
+    """Composição para revisão quando a rota normal da B3 não deixa nenhum líder.
+
+    Até 16/11/2026 ela também entrava quando os líderes não fechavam nos
+    limites de concentração; agora a tela fica na rota normal nesse caso
+    (`views.portfolio_b3._normalizar_pesos_relaxados`).
 
     Candidatos: a melhor empresa elegível de CADA segmento, pelo mesmo
     ``score_proximo`` que escolhe os líderes na rota normal. O score é
