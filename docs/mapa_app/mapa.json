@@ -1,7 +1,7 @@
 {
   "nome": "Dashboard Financeiro Unificado",
   "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, o que funciona por trás delas.",
-  "data_mapa": "15/11/2026",
+  "data_mapa": "16/11/2026",
   "filhos": [
     {
       "nome": "Dashboard Geral",
@@ -86,7 +86,7 @@
             {
               "nome": "Empresas B3",
               "resumo": "Resumo da carteira de ações brasileiras sugerida",
-              "explicacao": "Resumo da carteira de ações brasileiras que você salvou na tela Empresas B3: quantas empresas, a nota média e o ano de compra. A etiqueta diz 'Ativa', 'Revisar' (feita com um método antigo) ou 'Sem carteira'. Leva o selo 'Carteira recomendada pelo app'.",
+              "explicacao": "Resumo da carteira de ações brasileiras que você salvou na tela Empresas B3: quantas empresas, a nota média (\"—\" quando nenhuma nota compara a empresa com um par do segmento) e o ano de compra. A etiqueta diz 'Ativa', 'Revisar' (feita com um método antigo) ou 'Sem carteira'. Leva o selo 'Carteira recomendada pelo app'.",
               "so_admin": false
             },
             {
@@ -1876,7 +1876,7 @@
                 {
                   "nome": "Composição possível com proteção ao investidor",
                   "resumo": "Proposta parcial quando a carteira não fecha",
-                  "explicacao": "Aparece no lugar da carteira sugerida (macro, saúde e salvar) quando não há empresas suficientes para respeitar os limites de concentração. Cada segmento analisado entra com uma só empresa, a de maior nota dentro do próprio segmento (a mesma nota da carteira normal); notas de segmentos diferentes nunca são comparadas entre si. Os segmentos aprovados no backtest vêm primeiro e os demais seguem pela menor distância até a aprovação. Nota de entrada, Inteligência dos Ativos e risco crítico só tiram empresas: quem é barrado cede a vaga à próxima do mesmo segmento. Cada card diz se o segmento foi aprovado no backtest e, se não foi, por quanto ficou de fora. Mostra uma proposta parcial, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\". Depois dela seguem os mesmos painéis da carteira normal: a distribuição setorial, Patches 1 a 5, desempenho da safra vigente, desempenho safra a safra contra Selic e Pesos Iguais e a metodologia.",
+                  "explicacao": "Aparece no lugar da carteira sugerida (macro, saúde e salvar) quando não há empresas suficientes para respeitar os limites de concentração. Cada segmento analisado entra com uma só empresa, a de maior nota dentro do próprio segmento (a mesma nota da carteira normal); notas de segmentos diferentes nunca são comparadas entre si. Os segmentos aprovados no backtest vêm primeiro e os demais seguem pela menor distância até a aprovação. Nota de entrada, Inteligência dos Ativos e risco crítico só tiram empresas: quem é barrado cede a vaga à próxima do mesmo segmento. Cada card diz se o segmento foi aprovado no backtest e, se não foi, por quanto ficou de fora. A nota compara a empresa com as outras compráveis do segmento; quando ela é a única, o card diz \"sem par comparável\" em vez de 0,0 e essa nota fica fora do score médio. Mostra uma proposta parcial, quanto do dinheiro ficaria sem aplicar e o botão \"Baixar composição para revisão\". Depois dela seguem os mesmos painéis da carteira normal: a distribuição setorial, Patches 1 a 5, desempenho da safra vigente, desempenho safra a safra contra Selic e Pesos Iguais e a metodologia.",
                   "so_admin": false
                 },
                 {
@@ -1922,7 +1922,7 @@
             {
               "nome": "Salvar como portfólio padrão",
               "resumo": "Guarda a carteira como a oficial",
-              "explicacao": "Torna esta carteira a sua carteira-modelo, que aparece resumida no Dashboard Geral e é a usada na aba Avaliação de Portfólio. Ao lado ficam cartões com número de empresas, segmentos aprovados e nota média.",
+              "explicacao": "Torna esta carteira a sua carteira-modelo, que aparece resumida no Dashboard Geral e é a usada na aba Avaliação de Portfólio. Ao lado ficam cartões com número de empresas, segmentos aprovados e nota média; a média deixa de fora a nota de quem é a única comprável do segmento (\"sem par comparável\") e mostra \"—\" se não sobrar nenhuma.",
               "so_admin": false,
               "filhos": [
                 {

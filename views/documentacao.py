@@ -472,8 +472,12 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "concentração, a composição para revisão usa a mesma nota: uma empresa por "
             "segmento, aprovados no backtest primeiro, e o card diz se o segmento foi aprovado. "
             "Abaixo dela vêm os mesmos painéis da carteira normal, a começar pela distribuição "
-            "setorial, em que o dinheiro sem aplicar aparece como \"Não alocado\".",
-            ("Lista de empresas líderes", "Score médio", "Alpha médio", "Distribuição setorial"),
+            "setorial, em que o dinheiro sem aplicar aparece como \"Não alocado\". A nota é "
+            "percentil dentro do segmento entre as compráveis de hoje: segmento com uma só "
+            "comprável não tem par, o card diz \"sem par comparável\" em vez de 0,0 e essa "
+            "nota fica fora do score médio.",
+            ("Lista de empresas líderes", "Score médio sem as notas sem par", "Alpha médio",
+             "Distribuição setorial"),
             "É a transição do motor por segmento para uma carteira única e acionável.",
         ),
         "salvar_cp": _node(

@@ -394,6 +394,8 @@ def b3_review(results, fundamentals, entry_guard, *, cap, sector_cap, cycle_cap,
                 "subsetor": segment.get("subsetor"),
                 "segmento": segment.get("segmento"),
                 "score_segmento": score,
+                # Grupo de uma empresa só: a nota não compara ninguém.
+                "score_sem_par": bool(segment.get("score_sem_par")),
                 "lider_segmento": ticker == ranked[0][0],
                 "aprovado": _chave_segmento(segment) in aprovados,
                 "evidencia_segmento": evidencia_segmento(segment),
