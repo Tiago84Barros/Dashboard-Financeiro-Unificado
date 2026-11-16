@@ -1528,6 +1528,44 @@ def _salvar_carteira_padrao_us(holdings: pd.DataFrame, result: dict,
     )
 
 
+def _render_graficos_alocacao_us(holdings: pd.DataFrame) -> None:
+    """Pizza por ativo e barras por setor da carteira em tela.
+
+    Função única da carteira normal e da composição para revisão: até
+    15/11/2026 os dois gráficos ficavam só no corpo da carteira normal e a
+    revisão terminava sem eles. Os pesos não são reescalados: o capital que a
+    revisão deixa sem aplicar aparece como "Não alocado" nos dois gráficos.
+    """
+    if holdings is None or holdings.empty or not {"symbol", "weight"} <= set(holdings):
+        return
+    dados = holdings.assign(
+        sector_group=(holdings["sector_group"] if "sector_group" in holdings
+                      else pd.Series(index=holdings.index, dtype=object)
+                      ).fillna("Não classificado"))[["symbol", "sector_group", "weight"]]
+    sobra = 1.0 - float(dados["weight"].sum())
+    if sobra > 1e-3:
+        dados = pd.concat([dados, pd.DataFrame([{
+            "symbol": "Não alocado", "sector_group": "Não alocado", "weight": sobra}])],
+            ignore_index=True)
+    chart1, chart2 = st.columns(2)
+    with chart1:
+        fig = px.pie(
+            dados, names="symbol", values="weight", hole=.48,
+            title="Alocação por ativo", labels={"symbol": "Ticker", "weight": "Peso"},
+        )
+        fig.update_layout(**_PLOT_LAYOUT, height=410)
+        st.plotly_chart(fig, width="stretch", key="us_create_pie")
+    with chart2:
+        sector_weights = dados.groupby("sector_group", dropna=False)["weight"].sum().reset_index()
+        fig = px.bar(
+            sector_weights.sort_values("weight"), x="weight", y="sector_group",
+            orientation="h", title="Alocação por setor",
+            labels={"sector_group": "Setor", "weight": "Peso"},
+        )
+        fig.update_layout(**_PLOT_LAYOUT, height=410, xaxis_tickformat=".0%")
+        st.plotly_chart(fig, width="stretch", key="us_create_sector")
+
+
 def _tab_criacao_portfolio(status: dict) -> None:
     """Aplicação em escala da metodologia americana."""
     if _empty_if_offline(status, "Sem dados locais para montar a carteira.", "🚀"):
@@ -1850,6 +1888,8 @@ def _tab_criacao_portfolio(status: dict) -> None:
         from design.portfolio_review import render_portfolio_review
 
         render_portfolio_review(result["review_portfolio"], key="us_review")
+        _render_graficos_alocacao_us(
+            pd.DataFrame(result["review_portfolio"].get("items") or []))
         return
     # Bloqueio antes de qualquer número: sem liquidez verificada não existe
     # carteira publicável, e mostrar auditoria de indústria abaixo faria parecer
@@ -2112,23 +2152,7 @@ def _tab_criacao_portfolio(status: dict) -> None:
             f"Treasury de referência {metrics.get('risk_free_rate', 0):.2%}."
         )
 
-    chart1, chart2 = st.columns(2)
-    with chart1:
-        fig = px.pie(
-            holdings, names="symbol", values="weight", hole=.48,
-            title="Alocação por ativo", labels={"symbol": "Ticker", "weight": "Peso"},
-        )
-        fig.update_layout(**_PLOT_LAYOUT, height=410)
-        st.plotly_chart(fig, width="stretch", key="us_create_pie")
-    with chart2:
-        sector_weights = holdings.groupby("sector_group", dropna=False)["weight"].sum().reset_index()
-        fig = px.bar(
-            sector_weights.sort_values("weight"), x="weight", y="sector_group",
-            orientation="h", title="Alocação por setor",
-            labels={"sector_group": "Setor", "weight": "Peso"},
-        )
-        fig.update_layout(**_PLOT_LAYOUT, height=410, xaxis_tickformat=".0%")
-        st.plotly_chart(fig, width="stretch", key="us_create_sector")
+    _render_graficos_alocacao_us(holdings)
 
     secao_titulo("Relação entre Score e Cobertura", "🔭")
     fig = px.scatter(
