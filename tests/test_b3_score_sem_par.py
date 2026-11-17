@@ -130,7 +130,9 @@ def test_motor_oficial_indicador_sem_ordem_nao_muda_a_ordem_do_grupo():
                              group_col_prefer="SEGMENTO")
     ambos = _score_universo(_mult(com_isolado), ["A3", "B3", "C3"], _PESOS,
                             group_col_prefer="SEGMENTO")
-    ordem = lambda o: o.sort_values("score_raw", ascending=False)["Ticker"].tolist()
+    def ordem(o):
+        return o.sort_values("score_raw", ascending=False)["Ticker"].tolist()
+
     assert ordem(so_roe) == ordem(ambos) == ["A3", "B3", "C3"]
     raw = dict(zip(ambos["Ticker"], ambos["score_raw"]))
     # A metade do peso do P/L sem ordem é neutra (25 pontos) para os três.
