@@ -2233,11 +2233,11 @@ def _carteira_integrada(preferences: dict):
         # renda recorrente na barra lateral para cair neste caminho.
         st.warning(
             "Nenhum FII passou pelos filtros estritos. A carteira será montada "
-            f"cedendo proteção ao investidor: {len(candidatos_da_concessao)} "
-            "candidatos foram reprovados apenas nos portões de proteção e podem "
-            "ser readmitidos, no menor número que viabilize a carteira. Cada "
-            "readmissão aparece nomeada abaixo — proteção cedida não é ausência "
-            "de risco."
+            f"com menos proteção ao investidor. {len(candidatos_da_concessao)} "
+            "candidatos foram reprovados só nos portões de proteção. Eles podem "
+            "voltar, no menor número que permita montar a carteira. Cada "
+            "readmissão aparece pelo nome logo abaixo. Menos proteção não "
+            "significa ausência de risco."
         )
 
     validation = _mr.load_fii_validation_status(METHODOLOGY_VERSION)
@@ -3016,35 +3016,38 @@ def _tab_backtest() -> None:
             # é "não significativo" -- é uma perda que a amostra distingue de
             # acaso, e a tela diz isso com todas as letras.
             st.error(
-                f"Os gates aferem **integridade do protocolo**, não vantagem. O "
-                f"excesso médio sobre o IFIX tem intervalo de 95% de "
+                f"Os gates (testes de aprovação) medem se o **método foi "
+                f"seguido direito**, não se ele dá vantagem. O excesso médio "
+                f"sobre o IFIX tem intervalo de 95% de "
                 f"{excesso['inferior']:+.2%} a {excesso['superior']:+.2%} por "
-                f"período, **inteiro abaixo de zero: a carteira perde do IFIX** "
-                f"nesta amostra, e a perda não é atribuível a acaso. O selo "
-                f"\"Aprovado\" atesta o protocolo, não o desempenho."
+                f"período. O intervalo inteiro fica abaixo de zero: "
+                f"**a carteira perde do IFIX** nesta amostra, e acaso não "
+                f"explica a perda. O selo \"Aprovado\" atesta o método, não o "
+                f"desempenho."
             )
         elif excesso["disponivel"] and excesso["negativo"] and not excesso["significativo"]:
             st.warning(
-                f"Os gates aferem **integridade do protocolo**, não vantagem. O "
-                f"excesso médio sobre o IFIX é **negativo** "
+                f"Os gates (testes de aprovação) medem se o **método foi "
+                f"seguido direito**, não se ele dá vantagem. O excesso médio "
+                f"sobre o IFIX é **negativo** "
                 f"({excesso['media']:+.2%} por período): na média a carteira "
                 f"rendeu menos que o índice. O intervalo de 95% vai de "
                 f"{excesso['inferior']:+.2%} a {excesso['superior']:+.2%}, então "
-                f"a diferença não é distinguível de acaso — mas não há "
+                f"o acaso pode explicar a diferença. Mesmo assim, não há "
                 f"evidência de que a carteira supere o IFIX, e a média aponta "
                 f"para o outro lado."
             )
         elif excesso["disponivel"] and not excesso["significativo"]:
             st.warning(
-                f"Os gates aferem **integridade do protocolo**, não vantagem. O "
-                f"excesso médio sobre o IFIX tem intervalo de 95% de "
+                f"Os gates (testes de aprovação) medem se o **método foi "
+                f"seguido direito**, não se ele dá vantagem. O excesso médio "
+                f"sobre o IFIX tem intervalo de 95% de "
                 f"{excesso['inferior']:+.2%} a {excesso['superior']:+.2%} por "
-                f"período: **excesso não significativo** — o intervalo não fica "
-                f"acima do piso de {excesso['piso']:+.2%}, então a vantagem "
-                f"observada não é distinguível de "
-                f"acaso nesta amostra. A carteira segue sustentada por "
-                f"diversificação e por qualidade do ativo, não por evidência "
-                f"de que supera o índice."
+                f"período: **excesso não significativo**. O intervalo não fica "
+                f"acima do piso de {excesso['piso']:+.2%}, então o acaso pode "
+                f"explicar a vantagem observada nesta amostra. A carteira se "
+                f"apoia na diversificação e na qualidade do ativo, não em "
+                f"evidência de que supera o índice."
             )
 
     st.markdown("#### Retrospectiva da seleção atual")

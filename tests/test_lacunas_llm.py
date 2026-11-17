@@ -149,7 +149,9 @@ def test_instrucao_vai_no_system_sem_alterar_a_lista_original(arquivo, cliente):
 def test_sem_system_a_instrucao_entra_como_system(arquivo, cliente):
     _quem_chama_a_llm([{"role": "user", "content": "P"}])
     enviado = cliente.recebido["messages"]
-    assert enviado[0] == {"role": "system", "content": INSTRUCAO_LACUNAS}
+    assert enviado[0]["role"] == "system"
+    # A regra de escrita simples (core/escrita_simples) divide o mesmo system.
+    assert INSTRUCAO_LACUNAS in enviado[0]["content"]
     assert enviado[1] == {"role": "user", "content": "P"}
 
 

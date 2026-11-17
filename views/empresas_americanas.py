@@ -2239,13 +2239,14 @@ def _render_us_estilos(holdings: pd.DataFrame) -> None:
                            for c in ("Momento 12m (%)", "Nota momento",
                                      "P&D / valor de mercado (%)", "Nota P&D")})
         st.caption(
-            "Momento: retorno total de 12 meses até 1 mês antes do último pregão. P&D: "
-            "despesa de pesquisa e desenvolvimento do último exercício sobre o valor de "
-            "mercado. As notas são o percentil no universo elegível; vazio é neutro (50) "
-            "na nota de entrada -- a empresa não declara P&D ou não tem 12 meses de preço. "
-            "Nos EUA, de 1927 a 2025, o terço com mais momento rendeu 4,1% a.a. acima do "
-            "mercado e o terço com mais P&D, 3,7% a.a. (base acadêmica sem viés de "
-            "sobrevivência, antes de custos).")
+            "Momento: retorno total de 12 meses, até 1 mês antes do último pregão. P&D: "
+            "despesa com pesquisa e desenvolvimento do último exercício, dividida pelo "
+            "valor de mercado. As notas são o percentil no universo elegível (posição "
+            "da empresa entre as demais, de 0 a 100). Campo vazio vale 50, neutro, na "
+            "nota de entrada. Isso acontece quando a empresa não declara P&D ou não "
+            "tem 12 meses de preço. Nos EUA, de 1927 a 2025, o terço com mais momento "
+            "rendeu 4,1% ao ano acima do mercado. O terço com mais P&D rendeu 3,7% ao "
+            "ano (base acadêmica sem viés de sobrevivência, antes de custos).")
 
 
 # ── Criação de Portfólio ──────────────────────────────────────────────────────
@@ -2366,10 +2367,10 @@ def _tab_backtests(status: dict) -> None:
     _bloco_liquido_us(res)
 
     secao_titulo("Desempenho bruto em dólar versus pesos iguais", "📈")
-    st.caption("Retorno total em USD, sem custo, imposto nem câmbio: é a "
+    st.caption("Retorno total em USD, sem custo, imposto nem câmbio. É a "
                "régua da ordenação (Rank-IC, a correlação de ranking acima, e o "
-               "excesso guardado na medição "
-               "fora da amostra), não o que sobra no bolso.")
+               "excesso guardado na medição fora da amostra). Não é o que "
+               "sobra no bolso.")
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         card_metrica("Retorno anual.", _p(p["ann_return"]))

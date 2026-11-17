@@ -1520,11 +1520,11 @@ def _painel_black_litterman(df: pd.DataFrame, ret: pd.DataFrame, alvos: dict,
     st.markdown("#### Alocação Black-Litterman")
     st.caption(
         "Parte da sua meta (prior de equilíbrio π = δΣw) e a inclina pelos "
-        "scores dos três motores, cada um com a confiança que o próprio IC "
-        "fora da amostra justifica. IC aqui é o Rank-IC: correlação, de −1 a "
-        "+1, entre a ordem que o score deu aos ativos e a ordem dos retornos "
-        "que eles tiveram depois — 0 é ordem aleatória, +0,05 a +0,10 já é "
-        "um sinal útil."
+        "scores dos três motores. Cada motor pesa conforme a confiança que o "
+        "próprio IC fora da amostra justifica. IC aqui é o Rank-IC: a "
+        "correlação, de −1 a +1, entre a ordem que o score deu aos ativos e a "
+        "ordem dos retornos que eles tiveram depois. Zero é ordem aleatória. "
+        "De +0,05 a +0,10 já é um sinal útil."
     )
     try:
         restricoes = _ler_restricoes_da_politica(renda_fixa)
@@ -1832,12 +1832,12 @@ def _painel_chat(df: pd.DataFrame, *, alvos: dict, total_brl: float | None,
     """
     st.markdown("#### 💬 Converse com a IA sobre este patrimônio")
     st.caption(
-        "As perguntas são respondidas apenas com os dados desta tela — "
-        "composição, alvo x real, concentração, múltiplos, risco, correlação, "
-        "papel estratégico, as recomendações do motor e a camada macro que as "
-        "ajustou — mais o macro, o noticiário e o detalhe do armazém (liquidez, "
-        "trimestres, proventos) dos ativos, lidos na hora da pergunta. O modelo não busca nada na web; onde o dado falta, ele deve "
-        "dizer que falta."
+        "A IA responde só com os dados do app. Os da tela: composição, alvo x "
+        "real, concentração, múltiplos, risco, correlação, papel estratégico, "
+        "as recomendações do motor e o ajuste macro que as mudou. Os lidos na "
+        "hora da pergunta: macro, noticiário e o detalhe do armazém (liquidez, "
+        "trimestres, proventos) dos ativos. A IA não busca nada na web. Onde o "
+        "dado falta, ela diz que falta."
     )
 
     _, coluna_limpar = st.columns([5, 1])

@@ -27,6 +27,7 @@ import streamlit as st
 
 import core.data_quality as _dq
 from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
+from core.escrita_simples import com_regra_escrita
 from core.inteligencia_ativos import veredito as _veredito
 from core.inteligencia_ativos.veredito import REGRA_VEREDITO
 
@@ -528,6 +529,8 @@ def _chat_complete(
     demanda, e o padrão.
     """
     modulo_lacuna = _modulo_lacuna()
+    # Estilo simples (17/11/2026): ponto único de saída, vale para texto e JSON.
+    messages = com_regra_escrita(messages)
     if not json_mode:
         messages = _com_instrucao_lacunas(messages)
     # Só passa ``pessoal`` quando pedido: quem substitui ``_provider_chain``
