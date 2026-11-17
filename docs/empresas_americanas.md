@@ -69,6 +69,25 @@ Para recomputar o histórico PIT com a nova versão:
 python run_us_ingest.py score-history
 ```
 
+## Valor isolado no grupo vale o neutro (v0.9.1, 17/11/2026)
+
+O score é o percentil de cada métrica dentro da indústria. Quando só **uma**
+empresa de uma indústria grande (≥ `min_group`) tinha a métrica, o percentil
+dela saía 1,0 (ou 0,0 nas métricas em que menor é melhor): nota de ponta tirada
+de uma observação sem par. Um valor só não tem ordem, então agora ele vale 0,5,
+como a ausência. É o gêmeo do achado D2 da B3 (`SCORE_VERSION` 2.33.0).
+
+Medido no armazém local sobre 4.349 empresas: 258 células, 126 empresas mudam de
+nota (média −3,1 pontos, mediana −1,9), CVS e IDXX saem do top-20 e CF e HRMY
+entram. A mesma regra vale para os percentis 0–100 de `core/us_advanced_lab.py`
+(qualidade de caixa) e `core/us_estilos.py` (momento e P&D), que rankeiam no
+universo inteiro.
+
+A vitrine é recalculada pela rotina. O painel PIT e a medição de vantagem só
+voltam depois de recalcular as safras na versão nova
+(`python run_us_ingest.py score-history --warehouse --start-year 2006`). Até lá,
+o painel aparece vazio com o motivo nomeado.
+
 ## Indicadores avançados
 
 `core/us_advanced.py`, determinístico e puro. Deu nome à subaba Análise

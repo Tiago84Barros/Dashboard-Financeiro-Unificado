@@ -121,7 +121,25 @@ US_SCHEMA_VERSION = 1
 # Em `share_count_cagr_3y` o mesmo defeito PREMIAVA -- a queda de escala virava
 # recompra liquida de -99,89%, o melhor valor do universo. Ia de -0,9989 a
 # +2.339.999; agora vai de -0,85 a +3,22, ao custo de 190 leituras (6%).
-US_FUNDAMENTAL_SCORE_VERSION = "0.9.0"
+# 0.9.1 (2026-11-17): valor ISOLADO no grupo passa a valer o neutro, e nao a
+# nota extrema. Gemeo do achado D2 da B3 (SCORE_VERSION 2.33.0). O percentil
+# por industria de uma metrica que so UMA empresa do grupo tem saia 1,0 -- ou
+# 0,0 depois do `1 - x` das metricas em que menor e melhor --, uma nota de
+# ponta tirada de uma observacao sem ninguem com quem comparar. O grupo e
+# grande (>= min_group empresas), entao o fallback para o universo nao
+# disparava: o que faltava era o VALOR, nao a industria. Um valor so nao tem
+# ordem; agora ele vale 0,5, como a ausencia.
+# Medido no armazem local sobre as 4.349 empresas do quadro corrente: 258
+# celulas (44 em interest_coverage, 32 em ev_ebitda, 26 em ev_ebit, 26 em
+# shareholder_yield, 22 em net_debt_ebitda...), 126 empresas mudam de nota,
+# variacao media -3,1 pontos e mediana -1,9 -- o extremo era mais vezes o
+# topo que o fundo. Maiores quedas: RADI -18,1, AXTA -12,3, ZD -11,5. No
+# top-20 saem CVS e IDXX e entram CF e HRMY; no top-50 trocam seis nomes.
+# Os gemeos da escala 0-100 (`core.us_advanced_lab._percentile`, qualidade
+# de caixa, e `core.us_estilos._percentil`, momento e P&D) recebem a mesma
+# regra; eles rankeiam no universo inteiro, onde valor isolado so aparece com
+# o universo quase vazio.
+US_FUNDAMENTAL_SCORE_VERSION = "0.9.1"
 
 # Score de assimetria da aba "Empresas Fora da Curva".
 US_ASYMMETRY_SCORE_VERSION = "0.1.0"
