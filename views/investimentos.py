@@ -2249,7 +2249,7 @@ def _secao_desempenho_categorias(posicoes: list) -> None:
         st.dataframe(pd.DataFrame(linhas), hide_index=True, width="stretch")
         st.caption(
             "Não é a rentabilidade da conta. Usa a quantidade de hoje de cada ativo e "
-            "ignora aportes e vendas. Cada ativo entra na linha a partir do primeiro "
+            "ignora aportes e vendas. Cada ativo entra na linha só a partir do primeiro "
             "aporte (extrato de Negociação ou Movimentação; na falta, a primeira foto de "
             "posição). Ativo sem essa data fica de fora, por isso \"Ativos com série\" "
             "pode ser menor que o total. Cada passo do retorno usa só os ativos com "
@@ -2257,7 +2257,7 @@ def _secao_desempenho_categorias(posicoes: list) -> None:
             "inclui os proventos. Tesouro com cupom conta no dia do pagamento. "
             "Categorias americanas entram em reais, pelo câmbio do dia, salvo quando a "
             "coluna Moeda diz USD. Eventos marcados: pregões em que o Ibovespa (^BVSP; "
-            "na falta, o BOVA11 da base oficial da B3) ou o S&P 500 (^GSPC) andou 5% "
+            "na falta, o BOVA11 da fita oficial da B3) ou o S&P 500 (^GSPC) andou 5% "
             "ou mais. Dias extremos a menos de 30 dias um do outro viram um evento só, "
             "o maior. O nome vem dos cenários do Stress."
         )
@@ -2957,8 +2957,8 @@ def _tab_historico(cashflow: list, proventos: dict, evolucao: dict,
             "mercado da primeira foto ao de hoje. Inclui os aportes, então não é "
             "rentabilidade: mede quanto o patrimônio cresceu, não quanto o dinheiro "
             "rendeu. Proventos usam a mesma taxa, entre o primeiro e o último ano "
-            "completo. Ficam de fora o ano corrente e o primeiro ano, se ele não "
-            "começou em janeiro. Os aportes também puxam essa taxa para cima."
+            "civil completo. Ficam de fora o ano corrente e o primeiro ano, se ele "
+            "não começou em janeiro. Os aportes também puxam essa taxa."
         )
         if evolucao.get("exterior_historico_ok") is False:
             aviso_lacuna("Não foi possível recompor o exterior (Nomad) nos meses passados; "
@@ -3455,7 +3455,7 @@ def _editor_preco_medio_manual(posicoes: list[dict]) -> None:
         st.caption(
             "Use quando nem as notas de negociação nem o extrato da B3 "
             "souberem o preço médio real de um ativo. O valor fica guardado "
-            "à parte. Ele sobrevive a um novo upload de planilha e ao "
+            "em tabela própria. Ele sobrevive a um novo upload de planilha e ao "
             "recálculo das posições. O card passa a mostrar "
             "**“informado por você”**, nunca como declarado pela B3."
         )

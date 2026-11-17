@@ -27,7 +27,7 @@ import streamlit as st
 
 import core.data_quality as _dq
 from core.contexto_mercado import REGRA_CONTEXTO_MERCADO
-from core.escrita_simples import com_regra_escrita
+from core.escrita_simples import anexar_ao_system, com_regra_escrita
 from core.inteligencia_ativos import veredito as _veredito
 from core.inteligencia_ativos.veredito import REGRA_VEREDITO
 
@@ -328,11 +328,7 @@ def _com_ferramentas(client, modelo: str, messages: list[dict], temperature: flo
     """
     from core.llm_ferramentas import REGRA_FERRAMENTAS, executar
 
-    msgs = [dict(m) for m in messages]
-    if msgs and msgs[0].get("role") == "system":
-        msgs[0]["content"] = (msgs[0].get("content") or "") + "\n\n" + REGRA_FERRAMENTAS
-    else:
-        msgs.insert(0, {"role": "system", "content": REGRA_FERRAMENTAS})
+    msgs = anexar_ao_system(messages, REGRA_FERRAMENTAS)
     esquemas = [f.esquema() for f in ferramentas]
     usadas: list[dict] = []
     _ULTIMO.ferramentas = usadas
@@ -386,12 +382,7 @@ def _com_instrucao_lacunas(messages: list[dict]) -> list[dict]:
         from core.lacunas.llm import INSTRUCAO_LACUNAS
     except Exception:  # noqa: BLE001
         return messages
-    copia = [dict(m) for m in messages]
-    if copia and copia[0].get("role") == "system":
-        copia[0]["content"] = (copia[0].get("content") or "") + "\n\n" + INSTRUCAO_LACUNAS
-    else:
-        copia.insert(0, {"role": "system", "content": INSTRUCAO_LACUNAS})
-    return copia
+    return anexar_ao_system(messages, INSTRUCAO_LACUNAS)
 
 
 def _sem_lacunas(texto: str | None, modulo: str) -> str | None:

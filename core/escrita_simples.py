@@ -34,8 +34,40 @@ REGRA_ESCRITA_SIMPLES = (
     "logo depois, em frase curta."
 )
 
-# Marcador curto para saber se a regra já está no prompt (idempotência).
-_MARCA = "ESCRITA SIMPLES:"
+
+def _ja_tem(conteudo, texto: str) -> bool:
+    """O ``texto`` inteiro já está no conteúdo do system (texto ou lista de partes)."""
+    if isinstance(conteudo, str):
+        return texto in conteudo
+    if isinstance(conteudo, list):
+        return any(isinstance(p, dict) and texto in str(p.get("text") or "")
+                   for p in conteudo)
+    return False
+
+
+def anexar_ao_system(messages: list[dict], texto: str) -> list[dict]:
+    """Cópia de ``messages`` com ``texto`` no fim do system prompt.
+
+    Ponto único da operação "anexar ao system", para texto e para lista de
+    partes (``[{"type": "text", "text": ...}]``, formato que a API aceita).
+    Em texto, separa por linha em branco; em lista, acrescenta uma parte. Sem
+    system, cria um no início. Não repete ``texto`` que já esteja lá. Não
+    altera a lista recebida nem as demais mensagens.
+    """
+    copia = [dict(m) for m in messages]
+    if copia and copia[0].get("role") == "system":
+        atual = copia[0].get("content")
+        if _ja_tem(atual, texto):
+            return copia
+        if isinstance(atual, list):
+            copia[0]["content"] = [*atual, {"type": "text", "text": texto}]
+        else:
+            atual = atual if isinstance(atual, str) else ""
+            separador = "\n\n" if atual else ""
+            copia[0]["content"] = atual + separador + texto
+    else:
+        copia.insert(0, {"role": "system", "content": texto})
+    return copia
 
 
 def com_regra_escrita(messages: list[dict]) -> list[dict]:
@@ -45,12 +77,4 @@ def com_regra_escrita(messages: list[dict]) -> list[dict]:
     relatórios em JSON). Se a regra já estiver lá, não repete. Não altera a
     lista recebida nem o texto das demais mensagens.
     """
-    copia = [dict(m) for m in messages]
-    if copia and copia[0].get("role") == "system":
-        atual = copia[0].get("content") or ""
-        if isinstance(atual, str) and _MARCA in atual:
-            return copia
-        copia[0]["content"] = (atual + "\n\n" if atual else "") + REGRA_ESCRITA_SIMPLES
-    else:
-        copia.insert(0, {"role": "system", "content": REGRA_ESCRITA_SIMPLES})
-    return copia
+    return anexar_ao_system(messages, REGRA_ESCRITA_SIMPLES)
