@@ -1245,7 +1245,8 @@ def _processar_segmento(
     if not score_proximo:
         return None
     # A nota é percentil DENTRO do grupo; com uma só comprável não há par e
-    # ela sai 0,0 sem medir nada (caso WEGE3, 16/11/2026). A régua continua
+    # ela não mede nada (caso WEGE3, 16/11/2026; até a 2.32.0 saía 0,0, desde
+    # a 2.33.0 sai no neutro -- achado D2). A régua continua
     # sendo a das compráveis de hoje, análoga às elegíveis da época que o laço
     # acima usa: alargá-la faria a carteira de hoje seguir uma regra que o
     # backtest e a medição OOS não mediram. Na seleção nada muda (sozinha, ela
@@ -4429,12 +4430,13 @@ def render(show_header: bool = True) -> None:
     # revisão (decisão do usuário de 16/11/2026): a tela fica na rota normal,
     # com os líderes dos segmentos aprovados, e diz quais limites ficaram de
     # fora. A revisão escolhe por outra regra (uma por segmento, inclusive dos
-    # reprovados), que nenhuma medição cobre; a medição OOS
-    # (`core.b3_oos_carteira.montar_carteira`) já media essas safras com os
-    # pesos da rota normal, sem o cap, só marcando-as. Os pesos aqui seguem a
-    # mesma conta: poucos ativos para o cap -> sem projeção, normalizado;
-    # tetos que não fecham -> o que a projeção conjunta devolve, normalizado.
-    # A revisão fica só para quando não sobra nenhum líder.
+    # reprovados), que nenhuma medição cobre. Os pesos aqui seguem a conta de
+    # `core.b3_oos_carteira.montar_carteira`: poucos ativos para o cap -> sem
+    # projeção, normalizado; tetos que não fecham -> o que a projeção conjunta
+    # devolve, normalizado. Como a carteira relaxada não pode ser salva, a
+    # medição OOS (desde a oos-carteira-2.4.0, achado D1) conta a safra com
+    # poucos ativos para o cap como CAIXA a Selic, e a de tetos que não fecham
+    # com esses pesos. A revisão fica só para quando não sobra nenhum líder.
     _limites_relaxados: list[str] = []
     # A rota de revisão mostra a composição possível e, em seguida, os MESMOS
     # painéis analíticos da rota normal. De 10/09 a 13/11/2026 ela dava
@@ -4533,8 +4535,9 @@ def render(show_header: bool = True) -> None:
             "A carteira segue a regra normal, mas não fecha nos limites de "
             "concentração: " + "; ".join(_limites_relaxados) + ". "
             f"Maior peso: {_maior['tk']} com {float(_maior.get('peso') or 0.0):.1%}. "
-            "É a mesma conta que a medição fora da amostra usa nessas safras. "
             "A camada macro não é aplicada e o botão de salvar fica desligado; "
+            "por isso a medição fora da amostra conta a safra com poucos ativos "
+            "para o limite como caixa a Selic, não com estes pesos. "
             "para uma carteira dentro dos limites, ligue o cap adaptativo, "
             "afrouxe os tetos ou amplie o universo.",
             icon="⚠️",
@@ -5150,11 +5153,20 @@ def _render_analises_da_carteira(
     # segmentos que a tela recomenda. Na rota de revisao sem nenhum segmento
     # aprovado, a composicao sai de todos os segmentos analisados
     # (`b3_review`), e as safras seguem esse mesmo conjunto -- dito na tela.
+    # Selic realizada mes a mes (achado D13, 17/11/2026): a meta do fim do
+    # ano nao e o que o caixa rendeu na janela abr->mar. Falha de leitura nao
+    # derruba a tela: `render_safras` cai na meta e a legenda diz isso.
+    try:
+        selic_mensal = _db.load_selic_mensal()
+    except Exception as exc:  # noqa: BLE001 -- fonte opcional, nomeada na legenda
+        logger.warning("Selic mensal indisponivel (%s); safras usam a meta", exc)
+        selic_mensal = {}
     render_safras(
         safras_base if safras_base is not None else aprovados,
         df_precos_all,
         selic_por_ano=selic_hist,
         taxa_selic_aa=taxa_selic_aa,
+        selic_mensal=selic_mensal,
     )
 
     # ── Metodologia e referências científicas ────────────────────────────────

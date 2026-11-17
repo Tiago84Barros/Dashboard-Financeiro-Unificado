@@ -1167,9 +1167,11 @@ def _score_universo(
     score = pd.Series(0.0, index=df.index)
 
     for col, (peso, melhor_alto) in pesos.items():
-        if col not in df.columns or peso == 0:
+        if peso == 0:
             continue
-        if col in rendimentos:
+        if col not in df.columns:
+            s = pd.Series(np.nan, index=df.index, dtype=float)
+        elif col in rendimentos:
             # Rendimento: maior é melhor, e a ordem entre lucrativas é a
             # mesma do múltiplo (o recíproco é monótono nos positivos).
             s, melhor_alto = rendimentos[col], True
@@ -1178,6 +1180,12 @@ def _score_universo(
             # reconstruído por imputação.
             s = pd.to_numeric(df[col], errors="coerce")
         if s.notna().sum() < 2:
+            # Sem dois valores não há ordem: o indicador vale o neutro para
+            # todos, a mesma regra do valor ausente (``fillna(0.5)`` abaixo).
+            # Antes o indicador era pulado e somava ZERO -- o segmento de uma
+            # empresa só saía com score 0 (o pior possível), e o ``_scale``
+            # dos ajustes de resiliência caía para 1,0. Achado D2 de 17/11/2026.
+            score += 0.5 * peso * 100.0
             continue
         s_win = _winsorize_series(s.dropna()).reindex(s.index)
 
@@ -1593,6 +1601,21 @@ SCORE_VERSION_CHANGELOG = {
         "parecer de LLM leem o dossie de hoje e seguem cobertos so pela banda "
         "das variantes. Muda a carteira atual e a medicao OOS: ambas sao "
         "desta versao."
+    ),
+    "2.33.0": (
+        "Achado D2 de 17/11/2026: indicador sem dois valores no grupo passa a "
+        "valer o neutro (50% do peso) para todos, a mesma regra do valor "
+        "ausente. Antes ele era pulado e somava zero: o segmento de uma "
+        "empresa so saia com score 0 -- o pior possivel -- e a escala dos "
+        "ajustes de resiliencia caia para 1,0. Antes dos ajustes, a ordem "
+        "dentro de grupos com par nao muda (o indicador sem ordem soma a mesma "
+        "constante para todos); muda o nivel, e os ajustes multiplicativos "
+        "(instabilidade, resiliencia, crowding, macro e o decaimento por anos "
+        "de lideranca) passam a tirar mais pontos em termos absolutos -- a "
+        "rotacao de lideres pode vir um ano antes. O gemeo do painel "
+        "individual (core.b3_company_score._winsorized_percentile) passa a "
+        "dar o neutro a um valor isolado em vez do percentil extremo. A "
+        "medicao OOS e desta versao."
     ),
 }
 

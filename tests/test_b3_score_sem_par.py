@@ -2,8 +2,10 @@
 
 A nota é percentil dentro do grupo, e a régua da decisão são as compráveis de
 hoje -- análoga às elegíveis da época que a reconstrução usa. Com uma só
-comprável, nenhum indicador tem dois valores e a nota sai 0,0 sem medir nada:
-a WEGE3 aparecia como #1 da revisão com score 0,0 e puxava a média. A régua
+comprável, nenhum indicador tem dois valores e a nota não mede nada: a WEGE3
+aparecia como #1 da revisão com score 0,0 e puxava a média. Desde a 2.33.0
+(achado D2, 17/11/2026) o indicador sem ordem vale o neutro e a nota sai 50,
+não 0 -- mas continua sem comparar ninguém, por isso a marca fica. A régua
 fica (alargá-la tiraria a decisão da regra que o backtest mediu); a leitura
 muda: "sem par comparável" no cartão, fora da média, fora do texto da LLM.
 """
@@ -61,15 +63,24 @@ def test_unica_compravel_sai_marcada_sem_par_e_segue_lider():
     assert so_uma is not None
     assert set(so_uma["score_proximo"]) == {"CCCC3"}
     assert so_uma["lids_prox"] == ["CCCC3"]
-    # O 0,0 é o percentil sem par -- por isso a marca.
-    assert so_uma["score_proximo"]["CCCC3"] == pytest.approx(0.0)
+    # Sem par, todo indicador vale o neutro: a nota é 50 antes dos ajustes
+    # multiplicativos, nunca o 0,0 de antes da 2.33.0 (achado D2). Neutro
+    # também não mede nada -- por isso a marca.
+    nota = so_uma["score_proximo"]["CCCC3"]
+    assert nota > 0.0
+    assert nota == pytest.approx(50.0, abs=20.0)
     assert so_uma["score_sem_par"] is True
 
 
-def test_regua_da_decisao_continua_sendo_a_das_compraveis():
+def test_regua_da_decisao_continua_sendo_a_das_compraveis(monkeypatch):
     # Quem não é comprável hoje não entra na régua, como as não elegíveis da
     # época não entram na do backtest: a nota das duas compráveis é a mesma
-    # de um grupo que só tivesse as duas.
+    # de um grupo que só tivesse as duas. Medida ANTES do decaimento por anos
+    # de liderança: esse vem do histórico (com três elegíveis a BBBB3 lidera
+    # um ano e a sequência da CCCC3 recomeça), não da régua de hoje.
+    from views import portfolio_b3 as portfolio
+
+    monkeypatch.setattr(portfolio, "_apply_decay_penalty", lambda s, _anos: dict(s))
     duas = _segmento(TKS, fora_hoje={"BBBB3"})
     so_elas = _segmento(["AAAA3", "CCCC3"])
     assert duas["score_sem_par"] is False
@@ -87,6 +98,45 @@ def test_grupo_de_uma_empresa_e_sem_par_comparavel():
     res = _segmento(["AAAA3"])
     assert res is not None
     assert res["score_sem_par"] is True
+
+
+_PESOS = {"ROE": (0.5, True), "P/L": (0.5, False)}
+
+
+def _mult(linhas: list[dict]) -> pd.DataFrame:
+    df = pd.DataFrame(linhas)
+    df["SEGMENTO"] = "SEG"
+    return df
+
+
+def test_motor_oficial_grupo_de_uma_empresa_sai_no_neutro():
+    """Achado D2: sem dois valores, o indicador vale 0,5 do peso, não zero."""
+    from views.empresas_b3 import _score_universo
+
+    df = _mult([{"Ticker": "SOLO3", "ROE": 0.18, "P/L": 9.0}])
+    out = _score_universo(df, ["SOLO3"], _PESOS, group_col_prefer="SEGMENTO")
+    assert float(out["score_raw"].iloc[0]) == pytest.approx(50.0)
+
+
+def test_motor_oficial_indicador_sem_ordem_nao_muda_a_ordem_do_grupo():
+    """Um indicador com um valor só soma a mesma constante a todos: a ordem
+    do grupo com par é a do indicador que ordena, com ou sem ele."""
+    from views.empresas_b3 import _score_universo
+
+    base = [{"Ticker": "A3", "ROE": 0.25}, {"Ticker": "B3", "ROE": 0.15},
+            {"Ticker": "C3", "ROE": 0.05}]
+    com_isolado = [dict(base[0], **{"P/L": 8.0}), base[1], base[2]]
+    so_roe = _score_universo(_mult(base), ["A3", "B3", "C3"], {"ROE": (1.0, True)},
+                             group_col_prefer="SEGMENTO")
+    ambos = _score_universo(_mult(com_isolado), ["A3", "B3", "C3"], _PESOS,
+                            group_col_prefer="SEGMENTO")
+    def ordem(o):
+        return o.sort_values("score_raw", ascending=False)["Ticker"].tolist()
+
+    assert ordem(so_roe) == ordem(ambos) == ["A3", "B3", "C3"]
+    raw = dict(zip(ambos["Ticker"], ambos["score_raw"]))
+    # A metade do peso do P/L sem ordem é neutra (25 pontos) para os três.
+    assert min(raw.values()) >= 25.0 - 1e-9
 
 
 def test_media_ignora_nota_sem_par_e_nota_ausente():

@@ -264,12 +264,17 @@ def _grafico_barras(completas: pd.DataFrame):
 
 def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                   selic_por_ano: dict[int, float],
-                  taxa_selic_aa: float) -> None:
+                  taxa_selic_aa: float,
+                  selic_mensal: dict[tuple[int, int], float] | None = None) -> None:
     """Bloco 1: a tabela de safras e a barra por safra contra Selic/EW.
     Ao fim, chama `render_expectativa` (Bloco 3).
 
     `resultados` e a lista JA FILTRADA pelo gate de aprovacao -- e a
     carteira que a tela publica.
+
+    `selic_mensal` (achado D13) e a Selic realizada mes a mes de
+    `core.b3_data.load_selic_mensal`; sem ela, cada ano usa a meta de
+    `selic_por_ano`, como antes.
 
     O Bloco 2 (`render_vies_universo`, "Tamanho do vies de universo")
     saiu da tela por pedido do dono do projeto (30/10/2026). A funcao
@@ -289,7 +294,8 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
 
     tabela = tabela_de_safras(resultados, df_precos,
                               selic_por_ano=selic_por_ano,
-                              taxa_selic_aa=taxa_selic_aa)
+                              taxa_selic_aa=taxa_selic_aa,
+                              selic_mensal=selic_mensal)
     if tabela.empty:
         st.caption("Nenhuma safra com líderes reconstruídos.")
         return
@@ -329,6 +335,7 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
                 column_config=_column_config_retorno())
     st.caption("Líquido = bruto − custo de giro − IR. Equal-weight e Selic "
                "seguem brutos.")
+    st.caption(_legenda_selic(tabela))
     detalhe_tecnico(_texto_premissas_liquido_b3(),
                     codigo="portfolio_b3.safras_premissas_liquido")
 
@@ -357,6 +364,29 @@ def render_safras(resultados: list[dict], df_precos: pd.DataFrame, *,
             "sobreviventes renderam.",
             codigo="tela.portfolio_b3.safras_peso_sem_preco",
         )
+
+
+def _legenda_selic(tabela: pd.DataFrame) -> str:
+    """Diz qual Selic a coluna "Selic (%)" mede (achado D13, 17/11/2026).
+
+    Pura, para ser testada direto. A fonte vem de `tabela.attrs`, posta por
+    `core.b3_safras.tabela_de_safras` -- a tela nao adivinha qual serie
+    entrou. Mes que caiu na meta e nomeado, nunca some.
+    """
+    janela = ("Cada safra vai do fechamento de 31/03 ao de 31/03 do ano "
+              "seguinte (12 meses).")
+    if tabela.attrs.get("selic_fonte") != "realizada":
+        return (f"{janela} Selic = meta do fim de cada ano (a série "
+                "mensal realizada não estava disponível nesta análise).")
+    pela_meta = sorted({mes for meses in
+                        (tabela.attrs.get("selic_meses_pela_meta_por_safra")
+                         or {}).values() for mes in (meses or [])})
+    texto = (f"{janela} Selic = taxa realizada mês a mês (média mensal da "
+             "meta Selic, `info_economica_mensal`).")
+    if pela_meta:
+        texto += (" Sem dado mensal, valeu a meta do ano em: "
+                  + ", ".join(pela_meta) + ".")
+    return texto
 
 
 def _ics_por_ano(resultados: list[dict],
@@ -1252,7 +1282,8 @@ def _assinatura_vies(com_gate: pd.DataFrame | None,
                      resultados_todos: list[dict] | None,
                      df_precos: pd.DataFrame | None,
                      selic_por_ano: dict | None,
-                     taxa_selic_aa: float | None) -> str:
+                     taxa_selic_aa: float | None,
+                     selic_mensal: dict | None = None) -> str:
     """Impressao digital das ENTRADAS da medição do viés.
 
     A medição fica em `session_state` e sobrevive a um novo "Rodar": sem
@@ -1281,6 +1312,11 @@ def _assinatura_vies(com_gate: pd.DataFrame | None,
         _serializa(selic_por_ano or {}),
         _serializa(taxa_selic_aa),
     ]
+    # A Selic mensal (D13) so entra quando existe: sem ela a assinatura
+    # continua a mesma de antes, e medicoes guardadas nao caducam a toa.
+    if selic_mensal:
+        partes.append("selic_mensal=" + _serializa(
+            {f"{a:04d}-{m:02d}": v for (a, m), v in sorted(selic_mensal.items())}))
     if com_gate is not None:
         partes.append(_serializa(com_gate))
         # `attrs` nao entra no hash das celulas, e e ele que define a
@@ -1333,7 +1369,8 @@ def render_vies_universo(resultados_aprovados: list[dict],
                          df_precos: pd.DataFrame, *,
                          selic_por_ano: dict[int, float],
                          taxa_selic_aa: float,
-                         tabela_com_gate: pd.DataFrame | None = None) -> None:
+                         tabela_com_gate: pd.DataFrame | None = None,
+                         selic_mensal: dict[tuple[int, int], float] | None = None) -> None:
     """Bloco 2: o tamanho do viés de seleção de universo, SOB DEMANDA.
 
     Atrás de um botão por decisão do dono do projeto: reconstruir todas as
@@ -1383,7 +1420,8 @@ def render_vies_universo(resultados_aprovados: list[dict],
     # ainda vale). O rerun comum, sem clique e sem medicao, nao paga nada.
     assinatura = _assinatura_vies(tabela_com_gate, resultados_aprovados,
                                   resultados_todos, df_precos,
-                                  selic_por_ano, taxa_selic_aa)
+                                  selic_por_ano, taxa_selic_aa,
+                                  selic_mensal)
 
     if not clicou:
         # Medição de OUTRA análise não volta para a tela: ela responde a uma
@@ -1403,10 +1441,12 @@ def render_vies_universo(resultados_aprovados: list[dict],
         if com_gate is None:
             com_gate = tabela_de_safras(resultados_aprovados, df_precos,
                                         selic_por_ano=selic_por_ano,
-                                        taxa_selic_aa=taxa_selic_aa)
+                                        taxa_selic_aa=taxa_selic_aa,
+                                        selic_mensal=selic_mensal)
         sem_gate = tabela_de_safras(resultados_todos, df_precos,
                                     selic_por_ano=selic_por_ano,
-                                    taxa_selic_aa=taxa_selic_aa)
+                                    taxa_selic_aa=taxa_selic_aa,
+                                    selic_mensal=selic_mensal)
         medicao = _vies_universo(com_gate, sem_gate)
 
     st.session_state["pb3_vies_universo"] = {

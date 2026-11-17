@@ -92,8 +92,9 @@ def _categoria(row: dict) -> str:
 def _score(row: dict) -> object:
     # B3 traz o score do segmento à parte: ali ``quality`` é só a prioridade
     # interna do otimizador (posição na fila), não um score 0–100.
-    # Grupo de uma empresa só: o percentil sai 0,0 sem comparar ninguém, e
-    # mostrar o número leria como "pior do grupo" (caso WEGE3, 16/11/2026).
+    # Grupo de uma empresa só: o percentil não compara ninguém (saía 0,0 até a
+    # 2.32.0, sai no neutro desde a 2.33.0), e mostrar o número leria como
+    # posição no grupo (caso WEGE3, 16/11/2026).
     if row.get("score_sem_par"):
         return None
     if "score_segmento" in row:

@@ -2605,3 +2605,59 @@ def test_premissas_do_liquido_saem_das_constantes_e_vao_para_a_tela():
     # A premissa completa saiu da tela: vai para o log de lacunas.
     assert "st.caption(_texto_premissas_liquido_b3())" not in fonte
     assert "detalhe_tecnico(_texto_premissas_liquido_b3()," in fonte
+
+
+# ── D13 (17/11/2026): a tela diz qual Selic e qual janela mediu ─────────────
+
+
+def test_d13_legenda_selic_pela_meta():
+    tabela = pd.DataFrame()
+    tabela.attrs["selic_fonte"] = "meta"
+    texto = mod_safras._legenda_selic(tabela)
+    assert "31/03" in texto and "12 meses" in texto
+    assert "meta do fim de cada ano" in texto
+    assert "realizada" in texto  # diz que a realizada faltou
+
+
+def test_d13_legenda_selic_realizada_nomeia_os_meses_pela_meta():
+    tabela = pd.DataFrame()
+    tabela.attrs["selic_fonte"] = "realizada"
+    tabela.attrs["selic_meses_pela_meta_por_safra"] = {
+        2024: [], 2025: ["2026-02", "2026-03"]}
+    texto = mod_safras._legenda_selic(tabela)
+    assert "taxa realizada mês a mês" in texto
+    assert "2026-02, 2026-03" in texto
+
+    tabela.attrs["selic_meses_pela_meta_por_safra"] = {2024: []}
+    assert "Sem dado mensal" not in mod_safras._legenda_selic(tabela)
+
+
+def test_d13_legenda_selic_sem_attrs_nao_finge_realizada():
+    assert "meta do fim de cada ano" in mod_safras._legenda_selic(pd.DataFrame())
+
+
+def test_d13_assinatura_vies_muda_so_com_selic_mensal():
+    """Sem série mensal, a assinatura é a de antes (medições guardadas não
+    caducam à toa); com ela, a assinatura muda, e muda de novo se a série
+    mudar."""
+    aprovados = [_resultado_b3("A", 2025, ["AAAA3", "BBBB3"])]
+    precos = _precos_b3(["AAAA3", "BBBB3"])
+    base = mod_safras._assinatura_vies(None, aprovados, aprovados, precos, {}, 0.0)
+    assert mod_safras._assinatura_vies(None, aprovados, aprovados, precos, {},
+                                       0.0, selic_mensal={}) == base
+    com = mod_safras._assinatura_vies(None, aprovados, aprovados, precos, {},
+                                      0.0, selic_mensal={(2025, 4): 0.14})
+    assert com != base
+    outra = mod_safras._assinatura_vies(None, aprovados, aprovados, precos, {},
+                                        0.0, selic_mensal={(2025, 4): 0.15})
+    assert outra != com
+
+
+def test_d13_tela_passa_a_selic_mensal_para_as_safras():
+    """Siga a chamada a partir da tela: `views/portfolio_b3.py` lê a série
+    mensal e a entrega a `render_safras`, que a passa a `tabela_de_safras`."""
+    fonte_tela = (RAIZ / "views" / "portfolio_b3.py").read_text(encoding="utf-8")
+    assert "_db.load_selic_mensal()" in fonte_tela
+    assert "selic_mensal=selic_mensal" in fonte_tela
+    fonte = (RAIZ / "views" / "portfolio_b3_safras.py").read_text(encoding="utf-8")
+    assert "st.caption(_legenda_selic(tabela))" in fonte
