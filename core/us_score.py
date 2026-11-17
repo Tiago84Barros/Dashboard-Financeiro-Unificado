@@ -232,7 +232,12 @@ def _winsorized_percentile(s: pd.Series, lower: float = 0.05,
                            upper: float = 0.95) -> pd.Series:
     """Winsoriza e devolve o percentil (0–1) na ordem 'maior é melhor'."""
     valid = s.dropna()
-    if valid.empty:
+    if len(valid) < 2:
+        # Um valor só não tem ordem: o rank dele seria 1,0 (ou 0,0 depois do
+        # `1 - x` de LOWER_IS_BETTER), a nota extrema tirada de uma
+        # observação. Gêmeo do achado D2 de 17/11/2026 na B3
+        # (``core.b3_company_score._winsorized_percentile``). Medido no
+        # armazém: 258 células, 126 empresas mudam de nota (versão 0.9.1).
         return pd.Series(NEUTRAL, index=s.index)
     lo, hi = valid.quantile(lower), valid.quantile(upper)
     clipped = s.clip(lower=lo, upper=hi)

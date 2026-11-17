@@ -69,6 +69,36 @@ Para recomputar o histórico PIT com a nova versão:
 python run_us_ingest.py score-history
 ```
 
+## Valor isolado no grupo vale o neutro (v0.9.1, 17/11/2026)
+
+O score é o percentil de cada métrica dentro da indústria. Quando só **uma**
+empresa de uma indústria grande (≥ `min_group`) tinha a métrica, o percentil
+dela saía 1,0 (ou 0,0 nas métricas em que menor é melhor): nota de ponta tirada
+de uma observação sem par. Um valor só não tem ordem, então agora ele vale 0,5,
+como a ausência. É o gêmeo do achado D2 da B3 (`SCORE_VERSION` 2.33.0).
+
+Medido no armazém local sobre 4.349 empresas: 258 células, 126 empresas mudam de
+nota (média −3,1 pontos, mediana −1,9), CVS e IDXX saem do top-20 e CF e HRMY
+entram. A mesma regra vale para os percentis 0–100 de `core/us_advanced_lab.py`
+(qualidade de caixa) e `core/us_estilos.py` (momento e P&D), que rankeiam no
+universo inteiro.
+
+As safras da 0.9.1 foram recalculadas em 17/11/2026
+(`python run_us_ingest.py score-history --warehouse --start-year 2006`, 29.394
+linhas) e a vantagem fora da amostra foi remedida. Com a mesma régua (top 20,
+pesos pelo score), o excesso sobre o equal-weight foi de −7,56%, com IC 95% de
+−14,22% a −0,94%, e o Rank-IC foi de 0,088. A medição de 08/09, da 0.9.0, dava
+−4,05%. Para separar a regra do dado, as duas regras foram rodadas sobre o dado
+de hoje:
+
+| Regra | Excesso | Rank-IC |
+|---|---|---|
+| Antiga | −9,28% | 0,086 |
+| Nova | −7,56% | 0,088 |
+
+A regra melhora o resultado. A piora em relação a setembro vem dos balanços e
+preços novos.
+
 ## Indicadores avançados
 
 `core/us_advanced.py`, determinístico e puro. Deu nome à subaba Análise
