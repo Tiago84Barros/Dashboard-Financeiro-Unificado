@@ -38,24 +38,24 @@
     "configuracao": "walk-forward anual, top_n=20, pesos=score",
     "extras": {
       "bootstrap_amostras": 2000,
-      "rank_ic_medio": 0.10687500235233253,
+      "rank_ic_medio": 0.08765692846068095,
       "rank_ic_n": 16,
-      "rank_ic_t": 3.961154049955521
+      "rank_ic_t": 3.4372207313820202
     },
     "fonte": "armazem local, market_us.score_vintages + prices_monthly",
     "formato": "percentual",
     "ic_confianca": 0.95,
-    "ic_high": 0.05101277108719286,
-    "ic_low": -0.13836758560136103,
+    "ic_high": -0.009351699878871267,
+    "ic_low": -0.1421901345347766,
     "janela": {
       "fim": "2025-06-30",
       "inicio": "2010-06-30"
     },
-    "media": -0.04045620597460763,
-    "medido_em": "2026-09-08",
+    "media": -0.07556361564356347,
+    "medido_em": "2026-11-17",
     "metrica": "excesso por periodo sobre o equal-weight do universo",
     "motor": "us",
     "n_periodos": 16,
-    "versao_metodologia": "0.9.0"
+    "versao_metodologia": "0.9.1"
   }
 }
