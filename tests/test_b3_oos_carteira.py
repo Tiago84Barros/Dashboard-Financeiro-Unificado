@@ -230,6 +230,54 @@ def test_banda_respeita_o_cap_na_remontagem():
     assert max(adv["carteira"]["pesos"].values()) <= 0.25 + 1e-9
 
 
+def test_banda_escolhe_depois_da_conversao_em_caixa():
+    # Exemplo da revisão do Codex no #763: +50% e -10%, cap de 50% (pede dois
+    # ativos), Selic de 10%. Sem portão rende 20%. Vetar o -10% deixa a
+    # carteira com um ativo só -- inviável no cap -- e a safra vira caixa a
+    # 10%: no bruto (50%) ela parecia o veto "favorável", e a banda não
+    # continha o sem-portão.
+    segs = [_seg("S1", ["L1"], {"L1": 1.0}, ["L1"]),
+            _seg("S2", ["L2"], {"L2": 1.0}, ["L2"])]
+    rets = {"L1": 0.50, "L2": -0.10}
+    tetos = {"cap": 0.5, "teto_setor": 1.0, "teto_ciclico": 1.0}
+    sem = oos.montar_carteira(oos.vetar_na_carteira(segs, None)[0], **tetos)
+    assert not sem["inviavel"]
+
+    so_bruto = oos.escolher_veto(segs, rets, veta="pior", **tetos)
+    assert so_bruto["vetado"] == "L2" and so_bruto["carteira"]["inviavel"]
+
+    fav = oos.escolher_veto(segs, rets, veta="pior", **tetos, caixa=0.10)
+    adv = oos.escolher_veto(segs, rets, veta="melhor", **tetos, caixa=0.10)
+    assert fav["vetado"] is None and fav["efetivo"] == pytest.approx(0.20)
+    assert adv["vetado"] == "L1" and adv["efetivo"] == pytest.approx(0.10)
+    # O bruto da carteira montada continua saindo, para a conferência da medição.
+    assert adv["bruto"] == pytest.approx(-0.10)
+    contado_sem = oos.rendimento_contado(sem, 0.20, 0.10)
+    assert adv["efetivo"] <= contado_sem <= fav["efetivo"]
+
+
+def test_banda_contem_o_sem_portao_depois_da_conversao_em_qualquer_caso():
+    # Varre retornos e Selic: no rendimento contado a banda sempre contém o
+    # sem-portão, com ou sem opção inviável no cap.
+    segs = [_seg("S1", ["L1"], {"L1": 1.0}, ["L1", "R1"]),
+            _seg("S2", ["L2"], {"L2": 1.0}, ["L2"]),
+            _seg("S3", ["L3"], {"L3": 1.0}, ["L3"])]
+    tetos = {"cap": 0.34, "teto_setor": 1.0, "teto_ciclico": 1.0}
+    rng = np.random.default_rng(763)
+    for _ in range(200):
+        rets = dict(zip(["L1", "R1", "L2", "L3"], rng.normal(0.05, 0.4, 4)))
+        caixa = float(rng.uniform(0.0, 0.15))
+        sem = oos.montar_carteira(oos.vetar_na_carteira(segs, None)[0], **tetos)
+        bruto_sem = sum(w * rets[tk] for tk, w in sem["pesos"].items())
+        contado_sem = oos.rendimento_contado(sem, bruto_sem, caixa)
+        adv = oos.escolher_veto(segs, rets, veta="melhor", **tetos, caixa=caixa)
+        fav = oos.escolher_veto(segs, rets, veta="pior", **tetos, caixa=caixa)
+        assert adv["efetivo"] - 1e-12 <= contado_sem <= fav["efetivo"] + 1e-12
+        for esc in (adv, fav):
+            assert esc["efetivo"] == pytest.approx(
+                oos.rendimento_contado(esc["carteira"], esc["bruto"], caixa))
+
+
 # ── montagem ────────────────────────────────────────────────────────────────
 
 def test_orcamento_igual_por_segmento_e_duplicata_somada():
@@ -371,6 +419,23 @@ def test_aquecimento_so_antes_da_primeira_resposta():
                                  _linha(2017, {"AAAA3": 1.0}, inviavel=True),
                                  _linha(2018, {})])
     assert ["rendimento_caixa" in i for i in itens] == [False, False, True, True]
+
+
+def test_aquecimento_e_da_estrategia_e_nao_do_veto():
+    """Um veto que esvazia a primeira safra da estratégia a converte em caixa,
+    como em qualquer outra safra -- não a tira da média por "aquecimento"."""
+    sem_portao = [_linha(2016, {}), _linha(2017, {"AAAA3": 1.0}),
+                  _linha(2018, {"AAAA3": 1.0})]
+    vetada = [_linha(2016, {}), _linha(2017, {}), _linha(2018, {"BBBB3": 1.0})]
+    comeca = oos.primeira_resposta(sem_portao)
+    assert comeca == 2017 and oos.primeira_resposta(vetada) == 2018
+    itens = oos.itens_da_cadeia(vetada, comeca_em=comeca)
+    assert ["rendimento_caixa" in i for i in itens] == [False, True, False]
+    # Sem o início de fora, a variante calcula o próprio (o comportamento antigo).
+    assert ["rendimento_caixa" in i for i in oos.itens_da_cadeia(vetada)] == [
+        False, False, False]
+    assert oos.primeira_resposta([_linha(2016, {})]) is None
+    assert oos.itens_da_cadeia([_linha(2016, {})]) == [{"safra": 2016, "pesos": {}}]
 
 
 def test_safra_inviavel_vira_caixa_e_entra_na_media():

@@ -150,7 +150,9 @@ PORTAO_LLM = {
         "vetado; sem próximo no ranking, o segmento sai e seu orçamento vai "
         "para os demais) --, remonta com cap e tetos e fica com o veto que "
         "MAIS derruba o retorno BRUTO da safra ('veta o melhor', adversário) "
-        "e com o que MAIS o sobe ('veta o pior', favorável). No bruto são "
+        "e com o que MAIS o sobe ('veta o pior', favorável). O bruto comparado "
+        "é o que a média conta: opção que deixa a safra inviável ou sem "
+        "segmento rende a Selic do caixa, não os pesos que sobraram (D1). No bruto são "
         "limites estritos para qualquer portão que vete no máximo um nome por "
         "safra, e o sem-portão fica sempre entre eles. No líquido não são: o "
         "veto muda o giro, e os números líquidos dessas variantes são os dos "
@@ -531,21 +533,31 @@ def aplicar_portao_medido(segmentos: list[Segmento], avaliar, *,
 
 def escolher_veto(segmentos: list[Segmento], retornos: dict[str, float | None], *,
                   veta: str, cap: float, teto_setor: float,
-                  teto_ciclico: float, exclui: Exclui = None) -> dict:
+                  teto_ciclico: float, exclui: Exclui = None,
+                  caixa: float | None = None) -> dict:
     """O limite da banda do portão: o veto ÚNICO da safra que mais derruba
     (`veta="melhor"`, adversário) ou mais sobe (`veta="pior"`, favorável) o
-    retorno bruto da CARTEIRA montada.
+    rendimento da safra.
 
     Enumera todas as opções -- não vetar e vetar cada nome com peso --,
-    remonta com cap e tetos e escolhe pelo retorno bruto (`None` rende 0, a
-    regra de `retorno_da_safra`). Escolher pelo impacto, e não pelo maior
+    remonta com cap e tetos e escolhe pelo rendimento que a medição de fato
+    conta (`rendimento_contado`): o retorno bruto da carteira montada
+    (`None` rende 0, a regra de `retorno_da_safra`) ou, quando a opção não
+    monta (inviável no cap ou sem pesos) e ``caixa`` é dado, o ``caixa`` --
+    a Selic da vigência, a regra D1 de `itens_da_cadeia`. Escolher antes da
+    conversão punha na ponta "favorável" um veto que deixava a carteira sem
+    ativos para o cap e acabava rendendo só a Selic, abaixo do sem-portão
+    (revisão do Codex no #763). Escolher pelo impacto, e não pelo maior
     retorno do vetado, é o que torna o limite estrito: o nome que mais rendeu
     pode ter peso pequeno ou um substituto que rendeu quase o mesmo. "Não
-    vetar" entra como opção, então no bruto vale sempre
+    vetar" entra como opção, então no rendimento contado vale sempre
     `adversário <= sem portão <= favorável`. Empate fica com não vetar e,
     entre vetos, com a ordem alfabética (determinístico). ``exclui`` é a
     guarda da safra: vale para o substituto e para o laço final, nas
-    mesmas condições do sem-portão."""
+    mesmas condições do sem-portão.
+
+    Devolve ``bruto`` (o retorno da carteira montada, mesmo que vire caixa)
+    e ``efetivo`` (o rendimento que decidiu a escolha)."""
     if veta not in ("melhor", "pior"):
         raise ValueError(f"veta deve ser 'melhor' ou 'pior', não {veta!r}")
 
@@ -557,13 +569,24 @@ def escolher_veto(segmentos: list[Segmento], retornos: dict[str, float | None], 
         itens, trocas = vetar_na_carteira(segmentos, vetado, exclui)
         cart = montar_carteira(itens, cap=cap, teto_setor=teto_setor,
                                teto_ciclico=teto_ciclico, exclui=exclui)
-        opcoes.append((_bruto(cart["pesos"]), i, {
-            "vetado": vetado, "trocas": trocas, "itens": itens, "carteira": cart}))
+        bruto = _bruto(cart["pesos"])
+        opcoes.append((rendimento_contado(cart, bruto, caixa), i, {
+            "vetado": vetado, "trocas": trocas, "itens": itens, "carteira": cart,
+            "bruto": bruto}))
     sinal = 1.0 if veta == "melhor" else -1.0
     # Arredondado: veto que não muda nada não pode vencer "não vetar" por
     # ruído de ponto flutuante da reprojeção.
-    bruto, _i, escolhida = min(opcoes, key=lambda o: (round(sinal * o[0], 12), o[1]))
-    return {**escolhida, "bruto": bruto}
+    efetivo, _i, escolhida = min(opcoes, key=lambda o: (round(sinal * o[0], 12), o[1]))
+    return {**escolhida, "efetivo": efetivo}
+
+
+def rendimento_contado(carteira: dict, bruto: float, caixa: float | None) -> float:
+    """O rendimento da safra que a medição conta: a Selic (``caixa``) quando
+    a carteira não monta -- inviável no cap ou sem pesos --, senão o retorno
+    bruto da carteira. É a regra D1 de `itens_da_cadeia`, dita para quem
+    compara opções dentro da safra (a banda do portão)."""
+    nao_monta = not carteira.get("pesos") or bool(carteira.get("inviavel"))
+    return float(caixa) if (nao_monta and caixa is not None) else float(bruto)
 
 
 # ── piso de qualidade da safra ──────────────────────────────────────────────
@@ -686,11 +709,21 @@ def retorno_benchmark(serie: pd.Series | None, df_precos: pd.DataFrame,
 
 # ── custos do giro ──────────────────────────────────────────────────────────
 
-def itens_da_cadeia(linhas: list[dict]) -> list[dict]:
+def primeira_resposta(linhas: list[dict]) -> int | None:
+    """A primeira safra em que a estratégia respondeu (algum peso): o fim do
+    aquecimento de `itens_da_cadeia`."""
+    return next((r["safra"] for r in linhas if r.get("pesos")), None)
+
+
+def itens_da_cadeia(linhas: list[dict], *, comeca_em: int | None = None) -> list[dict]:
     """O que cada safra leva para `simular_custos` (ponto único da regra D1).
 
     ``linhas`` em ordem de safra, cada uma com ``safra``, ``pesos``,
     ``retornos``, ``inviavel_no_cap``, ``mensuravel`` e ``selic``.
+    ``comeca_em`` fixa o fim do aquecimento por fora -- a medição passa o da
+    estratégia sem portão às variantes, para que um veto que esvazia a
+    primeira safra a converta em caixa, como faria em qualquer outra, em vez
+    de tirá-la da média. Sem ele, vale `primeira_resposta(linhas)`.
 
     - Aquecimento -- as safras ANTES da primeira em que a estratégia
       respondeu (algum segmento aprovado, com pesos, montável ou não): fora.
@@ -709,11 +742,11 @@ def itens_da_cadeia(linhas: list[dict]) -> list[dict]:
     def _montavel(r: dict) -> bool:
         return bool(r.get("pesos")) and not r.get("inviavel_no_cap")
 
-    comecou = False
+    inicio = primeira_resposta(linhas) if comeca_em is None else comeca_em
     out: list[dict] = []
     for r in linhas:
         safra = r["safra"]
-        comecou = comecou or bool(r.get("pesos"))
+        comecou = inicio is not None and safra >= inicio
         if not comecou or not r.get("mensuravel", True):
             out.append({"safra": safra, "pesos": {}})
         elif not _montavel(r):
@@ -933,6 +966,7 @@ __all__ = [
     "substituto_no_segmento", "candidatos_a_veto", "tickers_da_banda",
     "vetar_na_carteira", "aplicar_portao_medido", "escolher_veto",
     "aplicar_piso", "montar_carteira", "retornos_por_ticker", "itens_da_cadeia",
+    "primeira_resposta", "rendimento_contado",
     "retorno_benchmark", "simular_custos", "resumir", "leitura_honesta",
     "carregar", "vencida",
 ]

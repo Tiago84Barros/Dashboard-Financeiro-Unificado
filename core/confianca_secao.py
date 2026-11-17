@@ -503,8 +503,45 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
                                 f"nao medido: {type(exc).__name__}"))
 
     notas.append(NOTA_COTACAO_ACAO)
+    notas.append(nota_selic_mensal(engine))
     notas.append(NOTA_DETALHE_DO_CHAT)
     return ConfiancaSecao("Empresas B3", tuple(comps), u, tuple(notas))
+
+
+# Selic mensal (`public.info_economica_mensal`, coluna `Selic_Media`): desde o
+# D13 (PR #763) e o benchmark de caixa da tabela de safras e da medicao fora da
+# amostra -- cada janela 31/03->31/03 compoe a Selic REALIZADA mes a mes. Nao
+# e um pilar com peso (a nota da secao nao muda com ela), mas a tela le esta
+# tabela, e o Grau de Confianca diz de onde ela vem e ate que mes vai. Mes sem
+# dado cai na meta anual e a propria tela nomeia o mes; aqui fica o ultimo mes
+# com dado, para quem ver "2026-01" saber que fev e mar usam a meta.
+_SQL_SELIC_MENSAL = """
+    SELECT max(data), count(*) FROM public.info_economica_mensal
+    WHERE "Selic_Media" IS NOT NULL
+"""
+
+
+def nota_selic_mensal(engine=None) -> str:
+    """Nota de procedencia da Selic mensal que o benchmark das safras le.
+
+    Nunca derruba a secao: falha vira "nao medido", com o motivo nomeado.
+    """
+    base = ("Selic do benchmark das safras: realizada mes a mes de "
+            "public.info_economica_mensal (Selic_Media); mes sem dado usa a meta "
+            "anual e a tela o nomeia. Insumo do benchmark, sem peso na nota")
+    try:
+        from sqlalchemy import text
+
+        from core.database import get_engine
+        eng = engine or get_engine()
+        with eng.connect() as conn:
+            ultimo, meses = conn.execute(text(_SQL_SELIC_MENSAL)).one()
+    except Exception as exc:  # noqa: BLE001
+        return f"{base} -- nao medido: {type(exc).__name__}."
+    if not meses or ultimo is None:
+        return f"{base} -- tabela sem nenhum mes com Selic: toda janela usa a meta."
+    return (f"{base} -- {int(meses)} meses, ultimo "
+            f"{str(ultimo)[:7]}.")
 
 
 # Frescor de FII: idade MEDIANA do dado que a tela le. Ate 03/11/2026 era
