@@ -119,7 +119,10 @@ def _numeric_metric(df: pd.DataFrame, metric: str) -> pd.Series:
 
 def _winsorized_percentile(values: pd.Series, *, higher_is_better: bool) -> pd.Series:
     valid = values.dropna()
-    if valid.empty:
+    if len(valid) < 2:
+        # Um valor só não tem ordem: o rank dele seria 1,0 (ou 0,0), a nota
+        # extrema tirada de uma observação. Mesmo neutro do motor oficial
+        # (``views.empresas_b3._score_universo``, achado D2 de 17/11/2026).
         return pd.Series(_NEUTRAL, index=values.index, dtype=float)
     if len(valid) >= 4:
         lo, hi = valid.quantile(0.05), valid.quantile(0.95)

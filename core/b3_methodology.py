@@ -1,6 +1,6 @@
 """Identidade da metodologia Empresas B3 compartilhada entre UI e persistência."""
 
-SCORE_VERSION = "2.32.0"
+SCORE_VERSION = "2.33.0"
 MODEL_SCHEMA_VERSION = 3
 
 
@@ -12,7 +12,9 @@ def media_scores_comparaveis(items, chave: str = "score") -> float | None:
 
     - nota ausente ou não finita — contar como zero puxava a média para baixo;
     - nota marcada ``score_sem_par``: percentil de um grupo de uma empresa só,
-      que sai 0,0 sem medir nada (caso WEGE3, 16/11/2026).
+      que não compara ninguém (caso WEGE3, 16/11/2026). Até a 2.32.0 ela saía
+      0,0; desde a 2.33.0 sai no neutro (achado D2), mas continua sem medir
+      nada e por isso fica fora da média.
 
     Zero observado num grupo com par continua entrando.
     """

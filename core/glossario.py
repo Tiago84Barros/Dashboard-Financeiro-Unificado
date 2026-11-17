@@ -176,7 +176,11 @@ INTERVALO_95_EXCESSO_IFIX = (
     "confiança, quanto a carteira de FIIs rende por mês a mais (ou a menos) "
     "que o IFIX, calculada reamostrando os meses do teste histórico. Se a "
     "faixa cruza o zero (vai de negativo a positivo), a carteira não se "
-    "distingue do IFIX nesta amostra — por isso aparece \"não significativo\"."
+    "distingue do IFIX nesta amostra — por isso aparece \"não significativo\" "
+    "(\"negativo, não significativo\" quando a média fica abaixo de zero). Se a "
+    "faixa inteira fica abaixo de zero, a carteira perde do IFIX e a perda não "
+    "é atribuível a acaso: aparece \"perde do IFIX\", em vermelho, mesmo com o "
+    "selo \"Aprovado\", que atesta o protocolo e não o desempenho."
 )
 
 # ── Efeito mínimo detectável ────────────────────────────────────────────────

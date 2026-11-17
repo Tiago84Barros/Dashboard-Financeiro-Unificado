@@ -1,7 +1,7 @@
 {
   "nome": "Dashboard Financeiro Unificado",
   "explicacao": "Junta num lugar só suas contas do dia a dia, seus investimentos e a análise de empresas do Brasil e dos EUA. Abaixo estão as 8 telas do menu lateral e, por último, o que funciona por trás delas.",
-  "data_mapa": "16/11/2026",
+  "data_mapa": "17/11/2026",
   "filhos": [
     {
       "nome": "Dashboard Geral",
@@ -1922,7 +1922,7 @@
             {
               "nome": "Salvar como portfólio padrão",
               "resumo": "Guarda a carteira como a oficial",
-              "explicacao": "Torna esta carteira a sua carteira-modelo, que aparece resumida no Dashboard Geral e é a usada na aba Avaliação de Portfólio. Ao lado ficam cartões com número de empresas, segmentos aprovados e nota média; a média deixa de fora a nota de quem é a única comprável do segmento (\"sem par comparável\") e mostra \"—\" se não sobrar nenhuma. Quando os líderes não fecham nos limites de concentração (poucos ativos para o limite por ativo, ou tetos de setor e ciclo que não cabem juntos), a carteira normal continua na tela com um aviso, os pesos passam do limite como na medição fora da amostra, a camada macro não é aplicada e o botão de salvar fica desligado.",
+              "explicacao": "Torna esta carteira a sua carteira-modelo, que aparece resumida no Dashboard Geral e é a usada na aba Avaliação de Portfólio. Ao lado ficam cartões com número de empresas, segmentos aprovados e nota média; a média deixa de fora a nota de quem é a única comprável do segmento (\"sem par comparável\") e mostra \"—\" se não sobrar nenhuma. Quando os líderes não fecham nos limites de concentração (poucos ativos para o limite por ativo, ou tetos de setor e ciclo que não cabem juntos), a carteira normal continua na tela com um aviso, os pesos passam do limite, a camada macro não é aplicada e o botão de salvar fica desligado; por isso a medição fora da amostra conta a safra com poucos ativos para o limite como caixa a Selic, não com esses pesos.",
               "so_admin": false,
               "filhos": [
                 {

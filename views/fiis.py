@@ -66,6 +66,7 @@ from core.fii_validation import (
     leitura_do_excesso,
     texto_do_excesso,
     validation_supports_strategy,
+    veredito_do_excesso,
 )
 from core.glossario import INTERVALO_95_EXCESSO_IFIX
 from core.inteligencia_ativos import veredito
@@ -899,7 +900,15 @@ def _metadado_do_excesso(validation: dict) -> str:
     inferior = f"{excesso['inferior'] * 100:+.2f}".replace(".", ",")
     superior = f"{excesso['superior'] * 100:+.2f}".replace(".", ",")
     faixa = f"Intervalo 95% {inferior} a {superior} p.p./mês"
-    return faixa if excesso["significativo"] else f"{faixa} · não significativo"
+    if excesso["significativo"]:
+        return faixa
+    # D12: o lado do zero aparece também no cabeçalho -- "não significativo"
+    # sozinho fazia o run que perde do IFIX ler igual ao que ganha sem prova.
+    if excesso["perde_significativo"]:
+        return f"{faixa} · perde do IFIX"
+    if excesso["negativo"]:
+        return f"{faixa} · negativo, não significativo"
+    return f"{faixa} · não significativo"
 
 
 def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> str:
@@ -942,8 +951,12 @@ def _card_do_protocolo_pit(validation_status: str, validation_metrics: dict) -> 
     excesso = leitura_do_excesso(validation_metrics)
     sub += " · " + texto_do_excesso(excesso)
     if aprovado and excesso["disponivel"] and not excesso["significativo"]:
-        valor = f"{valor} · excesso não significativo"
-        accent = sub_color = "#F6C90E"
+        # D12: o rótulo diz de que lado do zero o excesso está. Perder do
+        # IFIX com significância pinta o card de vermelho mesmo aprovado: o
+        # selo atesta o protocolo, e o número ao lado dele é uma perda.
+        valor = f"{valor} · {veredito_do_excesso(excesso)}"
+        accent = sub_color = ("#FC5C7D" if excesso["perde_significativo"]
+                              else "#F6C90E")
     return _kpi_html("Protocolo PIT", valor, sub=sub, sub_color=sub_color,
                      accent=accent)
 
@@ -2959,11 +2972,13 @@ def _tab_backtest() -> None:
                                 sub=(("95%, líquido de custos e IR"
                                       if pit.get("ir_calculado") else
                                       "95%, após custos, sem IR")
-                                     + (" · excesso não significativo"
+                                     + (f" · {veredito_do_excesso(excesso)}"
                                         if excesso["disponivel"]
                                         and not excesso["significativo"] else "")),
                                 sub_color="#4A5568",
-                                accent="#00C896" if excesso["significativo"] else "#F6C90E"),
+                                accent=("#00C896" if excesso["significativo"]
+                                        else "#FC5C7D" if excesso["perde_significativo"]
+                                        else "#F6C90E")),
                       unsafe_allow_html=True)
     # A-118: quanto da carteira saiu de campo (liquidação, incorporação ou fim
     # do dado) em vez de ter retorno observado. A versão anterior redistribuía
@@ -2996,7 +3011,30 @@ def _tab_backtest() -> None:
         # como "a estratégia funciona": nenhum dos critérios acima exige que o
         # excesso sobre o índice seja distinguível de zero.
         # O piso é `PISO_IC_EXCESSO`, o mesmo do card da carteira.
-        if excesso["disponivel"] and not excesso["significativo"]:
+        if excesso["perde_significativo"]:
+            # D12: perder do índice com o intervalo inteiro abaixo de zero não
+            # é "não significativo" -- é uma perda que a amostra distingue de
+            # acaso, e a tela diz isso com todas as letras.
+            st.error(
+                f"Os gates aferem **integridade do protocolo**, não vantagem. O "
+                f"excesso médio sobre o IFIX tem intervalo de 95% de "
+                f"{excesso['inferior']:+.2%} a {excesso['superior']:+.2%} por "
+                f"período, **inteiro abaixo de zero: a carteira perde do IFIX** "
+                f"nesta amostra, e a perda não é atribuível a acaso. O selo "
+                f"\"Aprovado\" atesta o protocolo, não o desempenho."
+            )
+        elif excesso["disponivel"] and excesso["negativo"] and not excesso["significativo"]:
+            st.warning(
+                f"Os gates aferem **integridade do protocolo**, não vantagem. O "
+                f"excesso médio sobre o IFIX é **negativo** "
+                f"({excesso['media']:+.2%} por período): na média a carteira "
+                f"rendeu menos que o índice. O intervalo de 95% vai de "
+                f"{excesso['inferior']:+.2%} a {excesso['superior']:+.2%}, então "
+                f"a diferença não é distinguível de acaso — mas não há "
+                f"evidência de que a carteira supere o IFIX, e a média aponta "
+                f"para o outro lado."
+            )
+        elif excesso["disponivel"] and not excesso["significativo"]:
             st.warning(
                 f"Os gates aferem **integridade do protocolo**, não vantagem. O "
                 f"excesso médio sobre o IFIX tem intervalo de 95% de "

@@ -249,6 +249,19 @@ def _vantagem_fii(metrics: dict) -> Portao:
     if leitura["significativo"]:
         return Portao("Vantagem fora da amostra", True, faixa,
                       dimensao=DIM_VANTAGEM)
+    # D12: o mesmo lado do zero que a tela de FIIs mostra
+    # (`core.fii_validation.veredito_do_excesso`).
+    if leitura["perde_significativo"]:
+        return Portao("Vantagem fora da amostra", False,
+                      f"{faixa} -- inteiro abaixo de zero: a carteira perde do "
+                      f"indice, e a perda nao e atribuivel a acaso",
+                      dimensao=DIM_VANTAGEM)
+    if leitura["negativo"]:
+        return Portao("Vantagem fora da amostra", False,
+                      f"{faixa}, media {leitura['media']:+.2%} -- excesso "
+                      f"negativo: na media a carteira rendeu menos que o indice, "
+                      f"e o intervalo atravessa o zero, entao a diferenca nao e "
+                      f"distinguivel de acaso", dimensao=DIM_VANTAGEM)
     return Portao("Vantagem fora da amostra", False,
                   f"{faixa} -- atravessa o zero, entao a vantagem sobre o "
                   f"indice nao e distinguivel de acaso", dimensao=DIM_VANTAGEM)

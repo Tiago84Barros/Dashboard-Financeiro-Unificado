@@ -309,6 +309,81 @@ def test_safra_sem_carteira_fica_fora_e_zera_posicoes():
     assert out[2]["giro"] == pytest.approx(1.0)  # recompra a partir de caixa
 
 
+def test_safra_em_caixa_rende_a_selic_e_conta():
+    """Achado D1: sem carteira montável, o investidor fica em caixa a Selic --
+    a safra é medida, e a venda do que havia paga o custo de bolsa."""
+    out = oos.simular_custos(
+        [{"safra": 2020, "pesos": {"AAAA3": 1.0}, "retornos": {"AAAA3": 0.1}},
+         {"safra": 2021, "pesos": {}, "rendimento_caixa": 0.08},
+         {"safra": 2022, "pesos": {"AAAA3": 1.0}, "retornos": {"AAAA3": 0.0}}], CFG)
+    caixa = out[1]
+    assert caixa["medida"] and caixa["caixa"]
+    assert caixa["bruto"] == pytest.approx(0.08)
+    v1 = oos.CAPITAL_NOCIONAL * (1 + out[0]["liquido"])
+    venda = custo_venda("AAAA3", v1, 0.0, 0.0, CFG)[0]
+    assert caixa["custo_pct"] == pytest.approx(venda / v1, rel=1e-9)
+    assert caixa["liquido"] == pytest.approx((1 - venda / v1) * 1.08 - 1, rel=1e-9)
+    assert caixa["giro"] == pytest.approx(0.0, abs=1e-12)
+    # Sair do caixa é só a compra das ações, sem custo de resgate.
+    v2 = v1 * (1 + caixa["liquido"])
+    assert out[2]["giro"] == pytest.approx(1.0)
+    assert out[2]["custo_pct"] == pytest.approx(custo_compra("AAAA3", v2, CFG) / v2,
+                                                rel=1e-9)
+
+
+def test_caixa_em_sequencia_nao_paga_nada():
+    out = oos.simular_custos([{"safra": 2020, "pesos": {}, "rendimento_caixa": 0.05},
+                              {"safra": 2021, "pesos": {}, "rendimento_caixa": 0.10}],
+                             CFG)
+    assert [o["liquido"] for o in out] == pytest.approx([0.05, 0.10])
+    assert [o["liquido_com_ir"] for o in out] == pytest.approx([0.05, 0.10])
+    assert all(o["custo_pct"] == 0.0 for o in out)
+
+
+def _linha(safra, pesos, inviavel=False, mensuravel=True, selic=0.1):
+    return {"safra": safra, "pesos": pesos, "retornos": {tk: 0.0 for tk in pesos},
+            "inviavel_no_cap": inviavel, "mensuravel": mensuravel, "selic": selic}
+
+
+def test_itens_da_cadeia_caixa_so_depois_do_aquecimento():
+    itens = oos.itens_da_cadeia([
+        _linha(2016, {}),                                   # aquecimento: fora
+        # Primeira resposta, inviável no cap: já é decisão -> caixa, conta.
+        # Até o ajuste de 17/11 ainda era aquecimento e saía da média.
+        _linha(2017, {"AAAA3": 1.0}, inviavel=True),
+        _linha(2018, {"AAAA3": 0.5, "BBBB3": 0.5}),         # primeira montável
+        _linha(2019, {"AAAA3": 1.0}, inviavel=True),        # caixa
+        _linha(2020, {}),                                   # caixa
+        _linha(2021, {}, mensuravel=False),                 # fora
+        _linha(2022, {}, selic=None),                       # fora
+    ])
+    assert [("rendimento_caixa" in i, bool(i["pesos"])) for i in itens] == [
+        (False, False), (True, False), (False, True), (True, False),
+        (True, False), (False, False), (False, False)]
+    assert itens[1]["rendimento_caixa"] == pytest.approx(0.1)
+    assert itens[3]["rendimento_caixa"] == pytest.approx(0.1)
+
+
+def test_aquecimento_so_antes_da_primeira_resposta():
+    """Segmentos avaliados sem nenhum aprovado, antes de qualquer resposta,
+    é aquecimento (sem histórico para aprovar); depois da primeira, é caixa."""
+    itens = oos.itens_da_cadeia([_linha(2015, {}), _linha(2016, {}),
+                                 _linha(2017, {"AAAA3": 1.0}, inviavel=True),
+                                 _linha(2018, {})])
+    assert ["rendimento_caixa" in i for i in itens] == [False, False, True, True]
+
+
+def test_safra_inviavel_vira_caixa_e_entra_na_media():
+    """A inviável não é medida com os pesos concentrados que a tela não
+    mostraria: rende a Selic, e o excesso sobre a Selic é ~0 nela."""
+    linhas = [_linha(2018, {"AAAA3": 0.5, "BBBB3": 0.5}),
+              {**_linha(2019, {"AAAA3": 1.0}, inviavel=True),
+               "retornos": {"AAAA3": 0.9}}]
+    cadeia = oos.simular_custos(oos.itens_da_cadeia(linhas), CFG)
+    assert all(c["medida"] for c in cadeia)
+    assert cadeia[1]["caixa"] and cadeia[1]["bruto"] == pytest.approx(0.1)
+
+
 def test_ir_compensa_prejuizo_anterior():
     # Safra 1: AAAA3 cai 50%; safra 2: troca (prejuízo realizado, sem IR);
     # BBBB3 sobe 100%; safra 3: troca de novo (ganho), compensado pelo prejuízo.

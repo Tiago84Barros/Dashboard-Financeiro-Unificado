@@ -379,8 +379,10 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
         ),
         "macro_cp": _node(
             "macro_cp", "Cenário macro", "Dados",
-            "Carrega Selic e demais variáveis macro para simular benchmark e ajustar o score.",
-            ("load_selic_macro()", "load_macro_history()", "Taxa Selic média de fallback"),
+            "Carrega Selic e demais variáveis macro para simular benchmark e ajustar o score. "
+            "O desempenho safra a safra usa a Selic realizada mês a mês; a meta do ano só "
+            "cobre mês sem dado, e esses meses aparecem nomeados.",
+            ("load_selic_macro()", "load_selic_mensal()", "load_macro_history()", "Taxa Selic média de fallback"),
             "A comparação contra Selic é essencial porque o investidor brasileiro sempre tem uma alternativa de renda fixa.",
         ),
         "setor_cp": _node(
@@ -470,8 +472,9 @@ FLOW_CRIACAO_PORTFOLIO = FlowSpec(
             "no card da líder; o afrouxamento do piso e a vaga que ficou sem substituto vão "
             "para Configurações → Restrições. Quando os líderes não fecham nos limites de "
             "concentração, a carteira normal continua na tela com um aviso: os pesos "
-            "passam do limite como na medição fora da amostra, a camada macro não é "
-            "aplicada e o botão de salvar fica desligado. Só quando nenhum segmento "
+            "passam do limite, a camada macro não é aplicada e o botão de salvar fica "
+            "desligado; por isso a medição fora da amostra conta a safra com poucos "
+            "ativos para o limite como caixa a Selic. Só quando nenhum segmento "
             "deixa líder entra a composição para revisão, com a mesma nota: uma empresa por "
             "segmento, aprovados no backtest primeiro, e o card diz se o segmento foi aprovado. "
             "Abaixo dela vêm os mesmos painéis da carteira normal, a começar pela distribuição "
@@ -1303,7 +1306,10 @@ FLOW_SELECAO_FIIS = FlowSpec(
             "A aba Retrospectiva refaz a seleção safra a safra usando SÓ o que era "
             "conhecido naquela data e mede o que a regra teria escolhido. Fundo da "
             "carteira que sai de campo no período rende zero, nunca o que os "
-            "sobreviventes renderam.",
+            "sobreviventes renderam. O selo \"Aprovado\" atesta o protocolo, não o "
+            "desempenho: ao lado dele a tela diz de que lado do zero está o excesso "
+            "sobre o IFIX, e um intervalo inteiro abaixo de zero sai em vermelho "
+            "como \"perde do IFIX\".",
             (
                 "Safras reconstruídas com dado da época",
                 "Mínimo metodológico de períodos para valer",

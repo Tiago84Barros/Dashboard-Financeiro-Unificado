@@ -22,6 +22,7 @@ from core.fii_validation import (
     PISO_IC_EXCESSO,
     leitura_do_excesso,
     texto_do_excesso,
+    veredito_do_excesso,
 )
 from core.validacao_motor import _vantagem_fii
 
@@ -219,3 +220,80 @@ def test_b3_changelog_termina_na_versao_vigente():
     from core.b3_methodology import SCORE_VERSION
     from views.empresas_b3 import SCORE_VERSION_CHANGELOG
     assert list(SCORE_VERSION_CHANGELOG)[-1] == SCORE_VERSION
+
+
+# ── Achado D12 (17/11/2026): o lado do zero do excesso ───────────────────────
+#
+# O run 66 saía "Aprovado · excesso não significativo" com média NEGATIVA: o
+# mesmo rótulo do run 90, que ganha do IFIX sem significância. O portão segue
+# igual (ver `test_piso_e_aviso_nao_bloqueio`); muda o que a tela diz.
+
+_NEGATIVO_NAO_SIG = _run(-0.0040, 0.0010, mean=-0.0015)
+_PERDE_SIG = _run(-0.0060, -0.0005, mean=-0.0030)
+
+
+def test_d12_leitura_separa_o_lado_do_zero():
+    pos = leitura_do_excesso(_RUN_90)
+    neg = leitura_do_excesso(_NEGATIVO_NAO_SIG)
+    perde = leitura_do_excesso(_PERDE_SIG)
+    assert (pos["negativo"], pos["perde_significativo"]) == (False, False)
+    assert (neg["negativo"], neg["perde_significativo"]) == (True, False)
+    assert (perde["negativo"], perde["perde_significativo"]) == (True, True)
+    # Nenhum dos três ganha do índice.
+    assert not any(x["significativo"] for x in (pos, neg, perde))
+
+
+def test_d12_ausencia_nao_vira_negativo():
+    leitura = leitura_do_excesso({"backtest": {"mean_excess": -0.01}})
+    assert leitura["disponivel"] is False
+    assert leitura["negativo"] is False and leitura["perde_significativo"] is False
+    assert veredito_do_excesso(leitura) is None
+
+
+def test_d12_veredito_unico_para_os_quatro_casos():
+    assert veredito_do_excesso(leitura_do_excesso(_run(0.0012, 0.0045))) == "significativo"
+    assert veredito_do_excesso(leitura_do_excesso(_RUN_90)) == "excesso não significativo"
+    assert (veredito_do_excesso(leitura_do_excesso(_NEGATIVO_NAO_SIG))
+            == "excesso negativo, não significativo")
+    assert (veredito_do_excesso(leitura_do_excesso(_PERDE_SIG))
+            == "perde do IFIX, significativo")
+    assert texto_do_excesso(leitura_do_excesso(_PERDE_SIG)).endswith(
+        "— perde do IFIX, significativo")
+
+
+def test_d12_card_do_protocolo_nao_le_perda_como_empate():
+    neg = fiis._card_do_protocolo_pit("passed", _NEGATIVO_NAO_SIG)
+    assert "Aprovado · excesso negativo, não significativo" in neg
+    # Os hex viram tokens de tema no `_kpi_html` (#F6C90E → --app-warning).
+    assert "var(--app-warning)" in neg and "var(--app-danger)" not in neg
+    perde = fiis._card_do_protocolo_pit("passed", _PERDE_SIG)
+    assert "Aprovado · perde do IFIX, significativo" in perde
+    # Vermelho mesmo aprovado: o selo é do protocolo, o número é uma perda.
+    assert "var(--app-danger)" in perde
+    assert perde.count("<div") == perde.count("</div>")
+
+
+def test_d12_cabecalho_diz_o_lado_do_zero():
+    assert fiis._metadado_do_excesso({"metrics": _NEGATIVO_NAO_SIG}) == (
+        "Intervalo 95% -0,40 a +0,10 p.p./mês · negativo, não significativo")
+    assert fiis._metadado_do_excesso({"metrics": _PERDE_SIG}) == (
+        "Intervalo 95% -0,60 a -0,05 p.p./mês · perde do IFIX")
+
+
+def test_d12_motor_e_tela_concordam_no_lado_do_zero():
+    """Gêmeo: `_vantagem_fii` reprova os três e nomeia o mesmo lado do zero."""
+    pos = _vantagem_fii(_RUN_90)
+    neg = _vantagem_fii(_NEGATIVO_NAO_SIG)
+    perde = _vantagem_fii(_PERDE_SIG)
+    assert not (pos.ok or neg.ok or perde.ok)
+    assert "negativo" not in pos.detalhe and "perde" not in pos.detalhe
+    assert "excesso negativo" in neg.detalhe
+    assert "perde do indice" in perde.detalhe
+
+
+def test_d12_aba_de_backtest_tem_aviso_proprio_para_perda():
+    fonte = (_RAIZ / "views" / "fiis.py").read_text(encoding="utf-8")
+    corpo = fonte.split("def _tab_backtest", 1)[1]
+    assert 'if excesso["perde_significativo"]:' in corpo
+    assert "a carteira perde do IFIX" in corpo
+    assert 'excesso["negativo"] and not excesso["significativo"]' in corpo

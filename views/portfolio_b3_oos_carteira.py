@@ -216,19 +216,35 @@ def render_oos_carteira() -> None:
                                     codigo="portfolio_b3.oos_carteira_portao_inerte",
                                     entidade=nome)
 
-            marcadas = sorted(set(base.get("safras_inviaveis_no_cap") or [])
-                              | set(base.get("safras_com_revisao") or []))
+            em_caixa = base.get("safras_em_caixa")
+            if em_caixa:
+                # Desde a oos-carteira-2.4.0 (achado D1): sem carteira montável,
+                # o investidor fica em caixa e a safra CONTA na média.
+                st.caption("Safras em caixa a Selic, dentro da média (sem "
+                           "carteira-modelo salvável: poucos ativos para o cap, em "
+                           "que a tela só mostra a carteira relaxada, ou nenhum "
+                           "segmento aprovado): " + ", ".join(str(a) for a in em_caixa) + ".")
+            if em_caixa is None:
+                # Medição gravada antes da 2.4.0: a inviável saía com pesos concentrados.
+                marcadas = sorted(set(base.get("safras_inviaveis_no_cap") or [])
+                                  | set(base.get("safras_com_revisao") or []))
+                motivo = "poucos ativos para o cap ou tetos que não fecham"
+            else:
+                marcadas = sorted(set(base.get("safras_com_revisao") or []) - set(em_caixa))
+                motivo = "tetos de setor e de ciclo que não fecham"
             if marcadas:
-                detalhe_tecnico("Safras em que a tela pediria revisão em vez de carteira "
-                                "(poucos ativos para o cap ou tetos que não fecham) — "
-                                "medidas mesmo assim, com os pesos possíveis: "
+                detalhe_tecnico("Safras em que a carteira não fecha nos limites ("
+                                + motivo + "; a tela mostra a carteira relaxada, "
+                                "sem salvar) — medidas com os pesos possíveis: "
                                 + ", ".join(str(a) for a in marcadas) + ".",
                                 codigo="portfolio_b3.oos_carteira_safras_revisao",
                                 entidade=nome)
             sem = base.get("safras_sem_carteira") or []
             if sem:
-                st.caption("Safras sem segmento aprovado (investidor em caixa, "
-                           "fora da média): " + ", ".join(str(a) for a in sem) + ".")
+                st.caption(("Safras fora da média (aquecimento, antes do primeiro "
+                            "segmento aprovado, ou sem preço observado): " if em_caixa is not None else
+                            "Safras sem segmento aprovado (investidor em caixa, "
+                            "fora da média): ") + ", ".join(str(a) for a in sem) + ".")
 
             linhas = [s for s in base.get("safras") or [] if not s.get("sem_carteira")]
             if linhas:
