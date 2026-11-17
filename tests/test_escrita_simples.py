@@ -320,3 +320,24 @@ def test_em_llm_b3_toda_chamada_ao_provedor_roda_depois_do_portao():
     assert regra < corpo.index("_responder_claude(")
     assert regra < corpo.index("_com_ferramentas(")
     assert regra < corpo.index("chat.completions.create")
+
+
+# ── textos de tela que a simplificação não pode deixar enganar (revisão do PR) ─
+
+def _fonte(rel: str) -> str:
+    # Junta as linhas das strings literais para achar frases partidas no código.
+    bruto = (RAIZ / rel).read_text(encoding="utf-8")
+    return re.sub(r'"\s*\n\s*"', "", bruto)
+
+
+def test_legenda_da_evolucao_avisa_que_cupom_do_tesouro_nao_entra():
+    """``retorno_encadeado`` usa só o preço de resgate: a linha cai no cupom."""
+    fonte = _fonte("views/investimentos.py")
+    assert "Tesouro com cupom: o cupom não entra no retorno, e a linha cai no dia do pagamento" in fonte
+    assert "Tesouro com cupom conta no dia do pagamento" not in fonte
+
+
+def test_legenda_dos_fatores_eua_mantem_acima_do_mercado_nos_dois_retornos():
+    fonte = _fonte("views/empresas_americanas.py")
+    assert "rendeu 4,1% ao ano acima do mercado" in fonte
+    assert "rendeu 3,7% ao ano acima do mercado" in fonte

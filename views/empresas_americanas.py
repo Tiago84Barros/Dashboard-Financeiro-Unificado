@@ -2246,7 +2246,7 @@ def _render_us_estilos(holdings: pd.DataFrame) -> None:
             "nota de entrada. Isso acontece quando a empresa não declara P&D ou não "
             "tem 12 meses de preço. Nos EUA, de 1927 a 2025, o terço com mais momento "
             "rendeu 4,1% ao ano acima do mercado. O terço com mais P&D rendeu 3,7% ao "
-            "ano (base acadêmica sem viés de sobrevivência, antes de custos).")
+            "ano acima do mercado (base acadêmica sem viés de sobrevivência, antes de custos).")
 
 
 # ── Criação de Portfólio ──────────────────────────────────────────────────────
