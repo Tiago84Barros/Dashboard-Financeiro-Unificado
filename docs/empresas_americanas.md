@@ -83,10 +83,21 @@ entram. A mesma regra vale para os percentis 0–100 de `core/us_advanced_lab.py
 (qualidade de caixa) e `core/us_estilos.py` (momento e P&D), que rankeiam no
 universo inteiro.
 
-A vitrine é recalculada pela rotina. O painel PIT e a medição de vantagem só
-voltam depois de recalcular as safras na versão nova
-(`python run_us_ingest.py score-history --warehouse --start-year 2006`). Até lá,
-o painel aparece vazio com o motivo nomeado.
+As safras da 0.9.1 foram recalculadas em 17/11/2026
+(`python run_us_ingest.py score-history --warehouse --start-year 2006`, 29.394
+linhas) e a vantagem fora da amostra foi remedida. Com a mesma régua (top 20,
+pesos pelo score), o excesso sobre o equal-weight foi de −7,56%, com IC 95% de
+−14,22% a −0,94%, e o Rank-IC foi de 0,088. A medição de 08/09, da 0.9.0, dava
+−4,05%. Para separar a regra do dado, as duas regras foram rodadas sobre o dado
+de hoje:
+
+| Regra | Excesso | Rank-IC |
+|---|---|---|
+| Antiga | −9,28% | 0,086 |
+| Nova | −7,56% | 0,088 |
+
+A regra melhora o resultado. A piora em relação a setembro vem dos balanços e
+preços novos.
 
 ## Indicadores avançados
 
