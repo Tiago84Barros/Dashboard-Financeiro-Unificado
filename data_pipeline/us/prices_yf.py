@@ -204,8 +204,11 @@ def corrigir_quebra_de_ajuste(linhas: list[dict], splits: list[dict]) -> list[di
         if i_ano is not None and datas[i_ano] < d:
             candidatos.setdefault(i_ano, []).append(r)
     for i, razoes in candidatos.items():
-        if len(razoes) > 1:
-            razoes.append(math.prod(razoes))
+        # O produto passa pelo mesmo piso: 4:1 seguido de 1:5 dá 0,8, e um
+        # fator de 1,25 cabe na tolerância de uma série que não saltou.
+        produto = math.prod(razoes)
+        if len(razoes) > 1 and max(produto, 1 / produto) >= FATOR_MINIMO_DE_SPLIT:
+            razoes.append(produto)
 
     for i in sorted(candidatos, reverse=True):
         anteriores = [j for j in range(i) if _preco_de_referencia(linhas[j])]

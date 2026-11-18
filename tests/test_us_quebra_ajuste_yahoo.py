@@ -116,6 +116,16 @@ def test_um_dos_splits_do_ano_aplicado_outro_esquecido():
     assert out[0]["close"] == pytest.approx(0.4 * 10)
 
 
+def test_produto_pequeno_de_dois_splits_nao_dispara():
+    # 4:1 e depois 1:5 no mesmo ano: o produto 0,8 fica abaixo do piso de 2x.
+    # Série já ajustada, parada em US$ 10: nada pode mudar.
+    precos = {"2025-12-31": 10.0, "2026-01-02": 10.0, "2026-03-02": 10.0,
+              "2026-09-02": 10.0}
+    barras = _barras(precos)
+    splits = [_split("2026-03-02", 4.0), _split("2026-09-02", 0.2)]
+    assert corrigir_quebra_de_ajuste(barras, splits) == barras
+
+
 def test_idempotente():
     uma = corrigir_quebra_de_ajuste(_barras(BRTX), SPLIT_BRTX)
     assert corrigir_quebra_de_ajuste(uma, SPLIT_BRTX) == uma
