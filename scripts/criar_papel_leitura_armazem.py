@@ -29,9 +29,13 @@ A senha é gerada aqui e nunca impressa: a URL vai direto para o arquivo de
 segredos indicado (``--gravar-em``, padrão ``.env`` da raiz) como
 ``ARMAZEM_SQL_DB_URL``. Rodar de novo troca a senha e regrava a linha.
 
+O serviço do túnel (tarefa ``DFU - Armazem leitura``) lê só o ``.env`` da
+árvore principal; a pasta ``dfu-armazem-servico`` não tem ``.env``. Rode na
+árvore principal ou, de outro worktree, aponte ``--gravar-em`` para lá.
+
     python scripts/criar_papel_leitura_armazem.py            # simula
-    python scripts/criar_papel_leitura_armazem.py --apply
-    python scripts/criar_papel_leitura_armazem.py --apply --gravar-em ..\\dfu-armazem-servico\\.env
+    python scripts/criar_papel_leitura_armazem.py --apply    # na árvore principal
+    python scripts/criar_papel_leitura_armazem.py --apply --gravar-em ..\\Dashboard-Financeiro-Unificado\\.env
 """
 from __future__ import annotations
 

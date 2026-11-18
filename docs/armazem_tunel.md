@@ -188,13 +188,19 @@ armazém. O ponto único é `core/fonte_b3.py::consultar`, chamado por
 
 A barreira de segurança da rota é o papel `app4_leitura`, não o filtro do
 texto: ele só enxerga `market`, `market_us` e `public.setores`. Crie (ou troque
-a senha) com:
+a senha) rodando, **na árvore principal**:
 
 ```
-python scripts/criar_papel_leitura_armazem.py --apply --gravar-em ..\dfu-armazem-servico\.env
+python scripts/criar_papel_leitura_armazem.py --apply
 ```
 
-e reinicie a tarefa `DFU - Armazem leitura`. O script também cria a política
+A URL vai para o `.env` da árvore principal, que é o único que o serviço lê
+(a tarefa passa `--env` apontando para ele; a pasta `dfu-armazem-servico` não
+tem `.env`). Rodando de outro worktree, aponte para o mesmo arquivo:
+`--gravar-em ..\Dashboard-Financeiro-Unificado\.env`. Gravar em outro lugar
+deixa o serviço sem a senha nova, e a rota `POST /sql` falha.
+
+Depois, reinicie a tarefa `DFU - Armazem leitura`. O script também cria a política
 `app4_leitura_select` (só SELECT, só para o papel) em cada tabela do escopo
 com RLS ligado: o papel é `NOBYPASSRLS`, e GRANT sem política devolve zero
 linhas sem erro (em 18/11/2026 eram 24 tabelas, entre elas
