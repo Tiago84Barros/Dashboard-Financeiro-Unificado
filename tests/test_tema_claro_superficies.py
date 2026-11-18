@@ -435,6 +435,29 @@ def test_moldura_clara_respeita_a_modebar_escolhida_pela_tela():
     assert fig.to_plotly_json()["layout"]["modebar"]["color"] == "#123456"
 
 
+def test_texto_dentro_da_fatia_continua_branco_no_claro():
+    """O % dentro da fatia se lê sobre a cor do dado, não sobre a página branca.
+
+    Escurecê-lo deixava o percentual da pizza de categorias quase invisível
+    (18/11/2026). O texto fora da marca segue escurecendo.
+    """
+    import plotly.graph_objects as go
+
+    from design.tema_canvas import clarear_figura
+
+    fig = go.Figure([
+        go.Pie(labels=["a", "b"], values=[1, 2], textposition="inside",
+               textfont={"color": "#FFFFFF"}, insidetextfont={"color": "#FFFFFF"}),
+        go.Bar(x=["a"], y=[1], text=["1"], textposition="outside",
+               textfont={"color": "#FFFFFF"}),
+    ])
+    clarear_figura(fig)
+    pizza, barra = fig.to_plotly_json()["data"]
+    assert pizza["textfont"]["color"] == "#FFFFFF"
+    assert pizza["insidetextfont"]["color"] == "#FFFFFF"
+    assert barra["textfont"]["color"].lower() != "#ffffff", "texto sobre a página branca precisa escurecer"
+
+
 # ── Terceira varredura: tinta que escreve POR CIMA de um token ───────────────
 
 def _contraste(a: str, b: str) -> float:
