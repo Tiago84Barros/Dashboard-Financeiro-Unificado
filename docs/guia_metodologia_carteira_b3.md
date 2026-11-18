@@ -582,6 +582,21 @@ características da medição, verificadas no código:
    *montável*, o que deixava fora a 2017 do Equilibrado e a 2018 do
    Conservador, ambas inviáveis
    (`tests/test_b3_oos_carteira.py::test_aquecimento_so_antes_da_primeira_resposta`).
+6. **Tetos que não fecham também são caixa (unificação B3 × FII,
+   18/11/2026, medição 2.6.0).** A tela desliga o salvar nos dois casos da
+   rota relaxada — poucos ativos para o cap e tetos de setor e de ciclo que
+   não fecham (`views/portfolio_b3.py`, `disabled=(not _portfolio_viavel) or
+   _rota_relaxada`) —, mas até a 2.5.0 a medição só convertia o primeiro em
+   caixa: a safra dos tetos entrava com os pesos relaxados, que a tela não
+   deixa salvar. A regra agora é uma função só,
+   `core/b3_oos_carteira.py::carteira_salvavel`, lida pela manchete
+   (`itens_da_cadeia`) e pela banda do portão (`rendimento_contado`). Os pesos
+   relaxados que a tela mostra viram sensibilidade
+   (`sensibilidade_pesos_da_tela` no JSON), nunca manchete. Na medição 2.5.0
+   gravada, só o Conservador tinha safras nesse caso (2023 e 2025). A Seleção
+   de FIIs segue a mesma regra desde a mesma data: período sem carteira
+   publicável é caixa a Selic e conta
+   (`tests/test_b3_oos_carteira.py::test_banda_e_cadeia_leem_a_mesma_regra_de_salvavel`).
 
 ### O alcance da chamada do relatório: por forma (AST) e, desde 22/09/2026, por execução
 

@@ -4435,9 +4435,12 @@ def render(show_header: bool = True) -> None:
     # `core.b3_oos_carteira.montar_carteira`: poucos ativos para o cap -> sem
     # projeção, normalizado; tetos que não fecham -> o que a projeção conjunta
     # devolve, normalizado. Como a carteira relaxada não pode ser salva, a
-    # medição OOS (desde a oos-carteira-2.4.0, achado D1) conta a safra com
-    # poucos ativos para o cap como CAIXA a Selic, e a de tetos que não fecham
-    # com esses pesos. A revisão fica só para quando não sobra nenhum líder.
+    # medição OOS (achado D1: poucos ativos desde a oos-carteira-2.4.0, tetos
+    # desde a 2.6.0) conta a safra relaxada nos DOIS casos como CAIXA a Selic;
+    # estes pesos entram só na sensibilidade. A regra mora em
+    # `core.b3_oos_carteira.carteira_salvavel`, que espelha o `disabled` do
+    # botão de salvar abaixo. A revisão fica só para quando não sobra nenhum
+    # líder.
     _limites_relaxados: list[str] = []
     # A rota de revisão mostra a composição possível e, em seguida, os MESMOS
     # painéis analíticos da rota normal. De 10/09 a 13/11/2026 ela dava
@@ -4537,9 +4540,9 @@ def render(show_header: bool = True) -> None:
             "concentração: " + "; ".join(_limites_relaxados) + ". "
             f"Maior peso: {_maior['tk']} com {float(_maior.get('peso') or 0.0):.1%}. "
             "A camada macro não é aplicada e o botão de salvar fica desligado; "
-            "por isso a medição fora da amostra conta a safra com poucos ativos "
-            "para o limite como caixa a Selic, não com estes pesos. "
-            "para uma carteira dentro dos limites, ligue o cap adaptativo, "
+            "por isso a medição fora da amostra conta esta safra como caixa a "
+            "Selic, não com estes pesos, que só entram numa sensibilidade à parte. "
+            "Para uma carteira dentro dos limites, ligue o cap adaptativo, "
             "afrouxe os tetos ou amplie o universo.",
             icon="⚠️",
         )

@@ -154,15 +154,37 @@ Antes da liberação, o processo exige:
 Sem esses itens, `validation_status` permanece `blocked` e todos os snapshots
 são `diligence_only`.
 
-O walk-forward (`robust_optimizer_point_in_time_backtest`) mede a carteira
-que a tela mostraria em cada safra. Se o otimizador monta a carteira e o
-portão de transparência recusa a publicação (`can_publish=False`), a tela a
-mostra como rascunho não publicável, e o período entra na curva com
-`publicacao_recusada=True`. O desempenho desses períodos aparece separado em
-`curvas_por_publicacao`. A fração viável continua contando só os períodos com
-carteira publicável, e as datas recusadas ficam em
-`publication_refused_periods`. Os períodos em que o otimizador não monta
-carteira nenhuma continuam fora da curva.
+O walk-forward (`robust_optimizer_point_in_time_backtest`) mede o que o
+investidor recebeu em cada safra. Período sem carteira publicável conta como
+**caixa à Selic** da decisão (a do cenário macro, observável na data), com o
+giro e o IR de zerar a posição anterior. Isso vale para os dois casos:
+
+- o otimizador monta a carteira e o portão de transparência recusa a
+  publicação (`can_publish=False`). A tela mostra o rascunho, mas não deixa
+  publicá-lo;
+- o otimizador não monta carteira nenhuma, ou ninguém passa na elegibilidade.
+
+É a mesma regra da medição fora da amostra da Empresas B3
+(`core.b3_oos_carteira.carteira_salvavel`), unificada em 18/11/2026.
+
+Ficam fora da curva:
+
+- o aquecimento, isto é, os períodos antes da primeira carteira montada;
+- as safras sem insumo: colunas ausentes, cenário macro ausente ou estágio
+  `data_prerequisites`;
+- os períodos sem datas de retorno.
+
+Falta de dado não é decisão de ficar em caixa.
+
+`curvas_por_publicacao` separa o que rendeu a carteira publicável (`publicavel`)
+do que rendeu o caixa (`caixa`). O rascunho medido com os próprios pesos, como
+fazia a versão anterior (PR #773), sai só como sensibilidade:
+
+- em `sensibilidade_rascunho`;
+- com `medir_rascunho=True`, quando a função é chamada diretamente.
+
+A fração viável continua contando só os períodos com carteira publicável. As
+datas recusadas ficam em `publication_refused_periods`.
 
 ## Implantação
 

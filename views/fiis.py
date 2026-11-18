@@ -2844,24 +2844,52 @@ def _cards_por_padrao(curvas: dict) -> None:
     ), codigo="fii.backtest_coortes_nao_contiguas")
 
 
-def _cards_por_publicacao(curvas: dict) -> None:
-    """Separa as carteiras publicáveis das que a tela mostrou como rascunho.
+def _cards_por_publicacao(curvas: dict, sensibilidade: dict | None = None) -> None:
+    """Separa a carteira publicável dos meses em caixa a Selic.
 
-    O backtest mede também o mês em que o portão de transparência recusou
-    publicar: a tela mostrou a carteira, com pesos, e quem a seguiu teve o
-    retorno dela. Se o desempenho vier desses meses, a manchete credita à
-    carteira publicável um resultado que é do rascunho. Só aparece quando
-    houve recusa.
+    Mês sem carteira publicável -- o portão de transparência recusou o
+    rascunho, ou o otimizador não montou carteira -- conta na manchete como
+    caixa a Selic da decisão: a tela mostra o rascunho, mas não deixa
+    publicá-lo, e ninguém o recebeu como carteira-modelo. Mesma regra da
+    medição fora da amostra da Empresas B3. O rascunho medido com os próprios
+    pesos sai só como sensibilidade. Só aparece quando houve mês em caixa ou
+    rascunho medido.
+
+    Aceita ainda métricas gravadas antes da unificação (chave
+    ``publicacao_recusada``), quando o rascunho entrava na manchete.
     """
-    if not int((curvas.get("publicacao_recusada") or {}).get("periods") or 0):
+    if "caixa" not in curvas and int(
+            (curvas.get("publicacao_recusada") or {}).get("periods") or 0):
+        _cards_de_coortes("Carteira publicável × rascunho não publicável", (
+            ("Carteira publicável", "#00C896", curvas.get("publicavel") or {},
+             "passou pelo portão de transparência"),
+            ("Rascunho não publicável", "#F6C90E",
+             curvas.get("publicacao_recusada") or {},
+             "medição anterior: rascunho medido com os próprios pesos"),
+        ), codigo="fii.backtest_coortes_publicacao")
         return
-    _cards_de_coortes("Carteira publicável × rascunho não publicável", (
+    if not int((curvas.get("caixa") or {}).get("periods") or 0):
+        return
+    _cards_de_coortes("Carteira publicável × caixa a Selic", (
         ("Carteira publicável", "#00C896", curvas.get("publicavel") or {},
          "passou pelo portão de transparência"),
-        ("Rascunho não publicável", "#F6C90E",
-         curvas.get("publicacao_recusada") or {},
-         "montada e mostrada, publicação recusada"),
+        ("Caixa a Selic", "#F6C90E", curvas.get("caixa") or {},
+         "sem carteira publicável: rascunho recusado ou nenhuma carteira"),
     ), codigo="fii.backtest_coortes_publicacao")
+    sens = sensibilidade or {}
+    if int(sens.get("periods") or 0):
+        excesso = sens.get("mean_excess")
+        texto_excesso = ("—" if excesso is None or pd.isna(excesso)
+                         else f"{float(excesso):+.2%}")
+        datas = sens.get("periodos_com_rascunho") or []
+        detalhe_tecnico(
+            "Sensibilidade, não manchete: medindo o rascunho recusado com os "
+            f"próprios pesos em {len(datas)} mês(es), em vez de caixa, o "
+            f"retorno médio seria {float(sens.get('mean_return') or 0):+.2%} "
+            f"por período e o excesso sobre o IFIX {texto_excesso}. Ninguém "
+            "recebeu essa carteira como carteira-modelo; o número só mostra "
+            "quanto o portão de transparência custou ou poupou.",
+            codigo="fii.backtest_sensibilidade_rascunho")
 
 
 def _cards_de_coortes(cabecalho: str, coortes: tuple, *, codigo: str) -> None:
@@ -3020,7 +3048,8 @@ def _tab_backtest() -> None:
 
     _bloco_liquido_fii(pit)
     _cards_por_padrao(pit.get("curvas_por_padrao") or {})
-    _cards_por_publicacao(pit.get("curvas_por_publicacao") or {})
+    _cards_por_publicacao(pit.get("curvas_por_publicacao") or {},
+                          pit.get("sensibilidade_rascunho"))
 
     blockers = validation.get("blockers") or []
     if blockers:

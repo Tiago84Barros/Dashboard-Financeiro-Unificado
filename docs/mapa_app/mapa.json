@@ -1922,7 +1922,7 @@
             {
               "nome": "Salvar como portfólio padrão",
               "resumo": "Guarda a carteira como a oficial",
-              "explicacao": "Torna esta carteira a sua carteira-modelo, que aparece resumida no Dashboard Geral e é a usada na aba Avaliação de Portfólio. Ao lado ficam cartões com número de empresas, segmentos aprovados e nota média; a média deixa de fora a nota de quem é a única comprável do segmento (\"sem par comparável\") e mostra \"—\" se não sobrar nenhuma. Quando os líderes não fecham nos limites de concentração (poucos ativos para o limite por ativo, ou tetos de setor e ciclo que não cabem juntos), a carteira normal continua na tela com um aviso, os pesos passam do limite, a camada macro não é aplicada e o botão de salvar fica desligado; por isso a medição fora da amostra conta a safra com poucos ativos para o limite como caixa a Selic, não com esses pesos.",
+              "explicacao": "Torna esta carteira a sua carteira-modelo, que aparece resumida no Dashboard Geral e é a usada na aba Avaliação de Portfólio. Ao lado ficam cartões com número de empresas, segmentos aprovados e nota média; a média deixa de fora a nota de quem é a única comprável do segmento (\"sem par comparável\") e mostra \"—\" se não sobrar nenhuma. Quando os líderes não fecham nos limites de concentração (poucos ativos para o limite por ativo, ou tetos de setor e ciclo que não cabem juntos), a carteira normal continua na tela com um aviso, os pesos passam do limite, a camada macro não é aplicada e o botão de salvar fica desligado; por isso a medição fora da amostra conta essas safras (as duas causas) como caixa a Selic, não com esses pesos, que só entram numa sensibilidade à parte. É a mesma regra da Seleção de FIIs.",
               "so_admin": false,
               "filhos": [
                 {
@@ -2702,9 +2702,9 @@
               "so_admin": false
             },
             {
-              "nome": "Carteira publicável × rascunho não publicável",
-              "resumo": "Meses com e sem publicação, lado a lado",
-              "explicacao": "Só aparece quando houve mês em que a carteira foi montada e a publicação foi recusada. O teste histórico mede também esses meses, porque a tela mostrou a carteira como rascunho, e este bloco separa o desempenho deles do das carteiras publicáveis.",
+              "nome": "Carteira publicável × caixa a Selic",
+              "resumo": "Meses com e sem carteira publicável, lado a lado",
+              "explicacao": "Só aparece quando houve mês sem carteira publicável: a publicação foi recusada (a tela mostra o rascunho, mas não deixa publicá-lo) ou o otimizador não montou carteira. O teste histórico conta esses meses como caixa a Selic, a mesma regra da Empresas B3, e este bloco separa o desempenho deles do das carteiras publicáveis. O rascunho medido com os próprios pesos fica numa sensibilidade à parte. Medições gravadas antes de 18/11/2026 ainda mostram o rascunho medido.",
               "so_admin": false
             },
             {

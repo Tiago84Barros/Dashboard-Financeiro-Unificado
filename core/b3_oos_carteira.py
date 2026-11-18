@@ -33,16 +33,21 @@ Este módulo refaz essas quatro decisões safra a safra, point-in-time:
   líquido desconta o giro do rebalanceamento de abril com
   `CostConfig.brasil_pf_default()` -- compra E venda pagam corretagem e meia
   spread, e o IR entra como sensibilidade à parte (depende do porte).
-- **Safra sem carteira é caixa (desde a 2.4.0).** Quando a tela pediria
-  revisão em vez de carteira por faltar ativo para o cap, ou quando nenhum
-  segmento passa, o investidor fica em caixa rendendo a Selic da vigência, e
-  a safra entra na média como entrou na vida dele. A tela, nesse caso,
-  mostra uma carteira relaxada (pesos acima do limite) com o botão de salvar
-  desligado: ela não vira carteira-modelo, e medir esses pesos como se
-  fossem a estratégia, ou tirar o ano da conta, é escolher os anos.
+- **Safra sem carteira salvável é caixa (desde a 2.4.0; tetos desde a
+  2.6.0).** Quando a tela pediria revisão em vez de carteira -- por faltar
+  ativo para o cap OU porque os tetos de setor e de ciclo não fecham --, ou
+  quando nenhum segmento passa, o investidor fica em caixa rendendo a Selic
+  da vigência, e a safra entra na média como entrou na vida dele. A tela,
+  nesses casos, mostra uma carteira relaxada com o botão de salvar
+  desligado (`carteira_salvavel`): ela não vira carteira-modelo, e medir
+  esses pesos como se fossem a estratégia, ou tirar o ano da conta, é
+  escolher os anos. Os pesos relaxados ficam numa sensibilidade à parte
+  (`itens_da_cadeia(..., pesos_da_tela=True)`), nunca na manchete.
   Ficam fora só as de aquecimento (antes da primeira safra em que algum
   segmento foi aprovado, sem líder anterior) e as sem preço observado
-  (`itens_da_cadeia`).
+  (`itens_da_cadeia`). É a mesma regra da Seleção de FIIs
+  (`core.fii_validation.robust_optimizer_point_in_time_backtest`): período
+  sem carteira que se possa salvar ou publicar é caixa e conta.
 
 O que fica FORA, e por quê, é devolvido em `FORA_DO_PIT` e vai para o JSON e a
 tela: cada item ali é uma decisão da carteira de hoje que não dá para refazer
@@ -110,7 +115,14 @@ logger = logging.getLogger(__name__)
 #: primeiro preço era o de 30/04 e abril ficava fora. A Selic do caixa e do
 #: benchmark passa a ser a REALIZADA mês a mês (`info_economica_mensal`),
 #: com a meta do ano como reserva nomeada mês a mês.
-VERSAO_MEDICAO = "oos-carteira-2.5.0"
+#: 2.6.0 (unificação B3 × FII, 18/11/2026): a safra cujos tetos de setor e de
+#: ciclo não fecham (`exige_revisao` sem `inviavel`) também vira CAIXA. A
+#: tela desliga o salvar nos DOIS casos relaxados (`_rota_relaxada` de
+#: `views/portfolio_b3.py`), e até a 2.5.0 a medição só convertia o
+#: inviável no cap: a safra dos tetos era medida com pesos que a tela não
+#: deixa salvar, contra a própria regra D1. Os pesos relaxados que a tela
+#: mostra vão para a sensibilidade `sensibilidade_pesos_da_tela`.
+VERSAO_MEDICAO = "oos-carteira-2.6.0"
 #: Chave interna de `simular_custos` para a posição em caixa.
 _CAIXA = "__caixa__"
 CAMINHO_MEDICAO = Path(__file__).resolve().parents[1] / "data" / "oos_carteira_b3.json"
@@ -543,7 +555,8 @@ def escolher_veto(segmentos: list[Segmento], retornos: dict[str, float | None], 
     remonta com cap e tetos e escolhe pelo rendimento que a medição de fato
     conta (`rendimento_contado`): o retorno bruto da carteira montada
     (`None` rende 0, a regra de `retorno_da_safra`) ou, quando a opção não
-    monta (inviável no cap ou sem pesos) e ``caixa`` é dado, o ``caixa`` --
+    dá carteira salvável (`carteira_salvavel`: inviável no cap, tetos que
+    não fecham ou sem pesos) e ``caixa`` é dado, o ``caixa`` --
     a Selic da vigência, a regra D1 de `itens_da_cadeia`. Escolher antes da
     conversão punha na ponta "favorável" um veto que deixava a carteira sem
     ativos para o cap e acabava rendendo só a Selic, abaixo do sem-portão
@@ -580,13 +593,29 @@ def escolher_veto(segmentos: list[Segmento], retornos: dict[str, float | None], 
     return {**escolhida, "efetivo": efetivo}
 
 
+def carteira_salvavel(pesos: dict | None, *, inviavel: bool,
+                      exige_revisao: bool) -> bool:
+    """A safra dá carteira-modelo que a tela deixa SALVAR? Ponto único da
+    regra D1, lido por `rendimento_contado` e `itens_da_cadeia`.
+
+    Espelha o botão de salvar de `views/portfolio_b3.py`
+    (``disabled=(not _portfolio_viavel) or _rota_relaxada``): sem pesos não
+    há carteira; inviável no cap ou com revisão exigida (tetos de setor e de
+    ciclo que não fecham) é a rota relaxada, mostrada com o salvar
+    desligado. Até a 2.5.0 só o inviável virava caixa -- a revisão por tetos
+    era medida com os pesos relaxados."""
+    return bool(pesos) and not inviavel and not exige_revisao
+
+
 def rendimento_contado(carteira: dict, bruto: float, caixa: float | None) -> float:
     """O rendimento da safra que a medição conta: a Selic (``caixa``) quando
-    a carteira não monta -- inviável no cap ou sem pesos --, senão o retorno
-    bruto da carteira. É a regra D1 de `itens_da_cadeia`, dita para quem
-    compara opções dentro da safra (a banda do portão)."""
-    nao_monta = not carteira.get("pesos") or bool(carteira.get("inviavel"))
-    return float(caixa) if (nao_monta and caixa is not None) else float(bruto)
+    a carteira não é salvável (`carteira_salvavel`), senão o retorno bruto da
+    carteira. É a regra D1 de `itens_da_cadeia`, dita para quem compara
+    opções dentro da safra (a banda do portão)."""
+    salvavel = carteira_salvavel(
+        carteira.get("pesos"), inviavel=bool(carteira.get("inviavel")),
+        exige_revisao=bool(carteira.get("exige_revisao")))
+    return float(caixa) if (not salvavel and caixa is not None) else float(bruto)
 
 
 # ── piso de qualidade da safra ──────────────────────────────────────────────
@@ -715,11 +744,16 @@ def primeira_resposta(linhas: list[dict]) -> int | None:
     return next((r["safra"] for r in linhas if r.get("pesos")), None)
 
 
-def itens_da_cadeia(linhas: list[dict], *, comeca_em: int | None = None) -> list[dict]:
+def itens_da_cadeia(linhas: list[dict], *, comeca_em: int | None = None,
+                    pesos_da_tela: bool = False) -> list[dict]:
     """O que cada safra leva para `simular_custos` (ponto único da regra D1).
 
     ``linhas`` em ordem de safra, cada uma com ``safra``, ``pesos``,
-    ``retornos``, ``inviavel_no_cap``, ``mensuravel`` e ``selic``.
+    ``retornos``, ``inviavel_no_cap``, ``exige_revisao``, ``mensuravel`` e
+    ``selic``. ``pesos_da_tela=True`` é a SENSIBILIDADE: mede os pesos que a
+    tela mostra mesmo quando ela não deixa salvar (rota relaxada), e só a
+    safra sem pesos vira caixa -- o que a manchete media até a 2.3.0 no
+    inviável e até a 2.5.0 nos tetos.
     ``comeca_em`` fixa o fim do aquecimento por fora -- a medição passa o da
     estratégia sem portão às variantes, para que um veto que esvazia a
     primeira safra a converta em caixa, como faria em qualquer outra, em vez
@@ -734,13 +768,18 @@ def itens_da_cadeia(linhas: list[dict], *, comeca_em: int | None = None) -> list
       conta justamente esse ano (2017 no Equilibrado, 2018 no Conservador).
     - Não mensurável (nenhum preço do universo) ou sem Selic medida: fora --
       não há mercado observado para comparar.
-    - Depois do aquecimento, inviável no cap ou sem carteira (nenhum segmento
-      aprovado): CAIXA a Selic da vigência, que é o que o investidor teria; a
-      safra conta.
+    - Depois do aquecimento, sem carteira salvável (`carteira_salvavel`:
+      inviável no cap, tetos que não fecham ou nenhum segmento aprovado):
+      CAIXA a Selic da vigência, que é o que o investidor teria; a safra
+      conta.
     - O resto: a carteira montada, com os retornos de cada papel.
     """
     def _montavel(r: dict) -> bool:
-        return bool(r.get("pesos")) and not r.get("inviavel_no_cap")
+        if pesos_da_tela:
+            return bool(r.get("pesos"))
+        return carteira_salvavel(
+            r.get("pesos"), inviavel=bool(r.get("inviavel_no_cap")),
+            exige_revisao=bool(r.get("exige_revisao")))
 
     inicio = primeira_resposta(linhas) if comeca_em is None else comeca_em
     out: list[dict] = []
@@ -966,7 +1005,7 @@ __all__ = [
     "substituto_no_segmento", "candidatos_a_veto", "tickers_da_banda",
     "vetar_na_carteira", "aplicar_portao_medido", "escolher_veto",
     "aplicar_piso", "montar_carteira", "retornos_por_ticker", "itens_da_cadeia",
-    "primeira_resposta", "rendimento_contado",
+    "primeira_resposta", "carteira_salvavel", "rendimento_contado",
     "retorno_benchmark", "simular_custos", "resumir", "leitura_honesta",
     "carregar", "vencida",
 ]

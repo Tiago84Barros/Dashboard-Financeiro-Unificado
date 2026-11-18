@@ -442,11 +442,28 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
     # onde o sem-portão começa.
     comeca_em = oos.primeira_resposta(linhas_por_variante[oos.SEM_PORTAO])
     for variante, linhas in linhas_por_variante.items():
-        # Achado D1 (2.4.0): depois do aquecimento, safra inviável no cap ou sem
-        # segmento vira caixa a Selic e conta na média; a não mensurável e as
-        # de aquecimento ficam de fora.
+        # Achado D1 (2.4.0, tetos desde a 2.6.0): depois do aquecimento, safra
+        # sem carteira salvável -- inviável no cap, tetos que não fecham ou sem
+        # segmento -- vira caixa a Selic e conta na média; a não mensurável e
+        # as de aquecimento ficam de fora.
         cadeia = oos.simular_custos(oos.itens_da_cadeia(linhas, comeca_em=comeca_em),
                                     cost_cfg)
+        # Sensibilidade: os pesos relaxados que a tela mostra com o salvar
+        # desligado, medidos como se fossem a estratégia. Nunca a manchete.
+        cadeia_tela = oos.simular_custos(
+            oos.itens_da_cadeia(linhas, comeca_em=comeca_em, pesos_da_tela=True),
+            cost_cfg)
+        sens_tabela = [
+            {"safra": r["safra"],
+             "excesso_ew": (c["liquido"] - r["ew"]
+                            if c.get("medida") and r["ew"] is not None else None)}
+            for r, c in zip(linhas, cadeia_tela)]
+        sensibilidade = {
+            "vs_equal_weight": oos.resumir(sens_tabela, "excesso_ew"),
+            "safras_com_pesos_relaxados": [
+                r["safra"] for r, c, ct in zip(linhas, cadeia, cadeia_tela)
+                if c.get("caixa") and not ct.get("caixa") and ct.get("medida")],
+        }
         tabela = []
         for r, c in zip(linhas, cadeia):
             linha = {k: r[k] for k in ("safra", "n_ativos", "segmentos_avaliados",
@@ -492,6 +509,7 @@ def _medir_perfil(resultados, precos, params, decisao, ibov, cost_cfg, hoje, por
             "safras_com_revisao": [t["safra"] for t in tabela if t["exige_revisao"]],
             "safras_sem_carteira": [t["safra"] for t in tabela if t.get("sem_carteira")],
             "safras_em_caixa": [t["safra"] for t in tabela if t.get("caixa")],
+            "sensibilidade_pesos_da_tela": sensibilidade,
             "safras": tabela,
         }
     principal = perfis_var[oos.SEM_PORTAO]["vs_equal_weight"]
