@@ -390,6 +390,21 @@ Duas condições que a janela não pode violar:
   Para o caso (1), split guardado nos últimos 180 dias alarga a janela até 30
   dias antes dele (`splits_vigiados`), e o retroajuste tardio cai numa barra
   comparada. Erro antigo, fora de qualquer janela, só sai com `--completo`.
+- **Quebra de ajuste do próprio Yahoo é corrigida na chegada.** Nos
+  grupamentos de setembro e outubro de 2026, o Yahoo aplicou o fator só às
+  barras do ano do split: tudo até 31/12/2025 ficou sem ajuste, com um salto
+  falso de 1/razão em 02/01/2026 (BRTX 20,8x num 1:20, OPTT 32x num 1:30).
+  Num backtest mensal isso é um retorno de +2.000% em janeiro, que infla a
+  carteira de peso igual. Ele também demora alguns dias para ajustar um split
+  novo, e aí a quebra cai no próprio dia do split (VSEE 90x num 1:80).
+  `prices_yf.corrigir_quebra_de_ajuste` roda dentro de `get_prices_daily`:
+  para split de fator 2 ou mais, procura no fechamento, só no dia do split e no
+  primeiro pregão do ano dele, um salto de 1/razão (tolerância de 30%, que
+  cobre o retorno do próprio dia). Achando, as barras de antes recebem o fator
+  (preço ÷ razão, volume × razão). Janela e histórico completo passam pela
+  mesma regra, então `passado_retroajustado` compara barras corrigidas igual.
+  Varrida sobre os 1.624 ativos com split grande do armazém em 18/11/2026,
+  disparou em 17, todos quebras de verdade, e em nenhum salto antigo.
 - **Preço, provento e split pedem a mesma janela.** A memoização do provedor é
   por `(símbolo, start, end)`; divergir aqui faria duas descidas por símbolo, o
   oposto do pretendido. Por isso `get_dividends`/`get_splits` passaram a aceitar
