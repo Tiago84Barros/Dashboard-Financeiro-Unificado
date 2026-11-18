@@ -606,8 +606,9 @@ def aviso_cobertura_do_universo(modulo: str) -> None:
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _carimbo_cacheado(modulo: str):
-    """Cache curto: o carimbo da B3 sai de `market_health_summary`, que varre a
-    tabela de metricas, e isso nao pode rodar a cada interacao de widget."""
+    """Cache curto: o carimbo da B3 e o `max(updated_at)` da tabela de metricas
+    (`core.frescor.carimbo_do_modulo`), que nao pode rodar a cada interacao de
+    widget."""
     from core.frescor import carimbo_do_modulo
     return carimbo_do_modulo(modulo)
 

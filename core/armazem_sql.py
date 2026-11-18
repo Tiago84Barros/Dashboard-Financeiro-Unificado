@@ -155,7 +155,10 @@ def montar_frame(corpo: dict) -> pd.DataFrame:
             frame[nome] = serie.map(
                 lambda v: _dt.date.fromisoformat(v) if isinstance(v, str) else v)
         elif oid in _OID_CARIMBO:
-            frame[nome] = pd.to_datetime(serie, utc=(oid == 1184))
+            # ISO8601: o isoformat omite a fração quando ela é zero, e a mesma
+            # coluna traz "…:23.875634+00:00" e "…:23+00:00"; sem o formato
+            # explícito o pandas infere pela 1ª linha e recusa as demais.
+            frame[nome] = pd.to_datetime(serie, utc=(oid == 1184), format="ISO8601")
         elif oid in _OID_NUMERIC:
             frame[nome] = pd.to_numeric(serie, errors="coerce")
     return frame

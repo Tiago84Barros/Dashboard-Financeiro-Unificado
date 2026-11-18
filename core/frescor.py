@@ -242,6 +242,19 @@ def resumo_curto(dados: dict) -> str:
     return rotulo
 
 
+def _escalar_b3(sql: str):
+    """Primeiro valor da consulta na fonte da B3, ou ``None`` (vazio ou falha)."""
+    import pandas as pd
+
+    from core.market_read import _q_b3
+
+    df = _q_b3(sql)
+    if df.attrs.get("load_error") or df.empty:
+        return None
+    valor = df.iat[0, 0]
+    return None if pd.isna(valor) else valor
+
+
 def carimbo_do_modulo(modulo: str):
     """Quando a vitrine do módulo foi publicada, lida da fonte de cada um.
 
@@ -262,9 +275,10 @@ def carimbo_do_modulo(modulo: str):
         # uma delas faria o selo mentir no outro ambiente.
         return us_read.data_status().get("last_update")
     if modulo == "b3":
-        from core.market_health import market_health_summary
-
-        return ((market_health_summary() or {}).get("frescor") or {}).get("ultimo_calc")
+        # Lido na fonte da B3 (`core.fonte_b3`), a mesma das telas: o Supabase
+        # parou de receber a B3 em 15/11/2026, e o carimbo dele mediria a
+        # cópia congelada enquanto a tela mostra o armazém.
+        return _escalar_b3("SELECT max(updated_at) FROM market.calculated_metrics")
     if modulo == "fii":
         import core.market_read as mr
 
@@ -276,17 +290,18 @@ def data_do_preco(modulo: str, engine=None):
     """Data do preço que a tela do módulo mostra, ou ``None``.
 
     Só para módulo em `ALVO_DO_PRECO`; os outros devolvem ``None`` e o selo
-    fica com a publicação. Lê o mesmo banco que a tela lê (`get_engine`).
+    fica com a publicação. Lê a mesma fonte que a tela lê (`core.fonte_b3`);
+    ``engine`` explícito mede uma base específica.
     """
     if modulo not in ALVO_DO_PRECO:
         return None
     from sqlalchemy import text
 
     if engine is None:
-        from core.database import get_engine
-        engine = get_engine()
-    if engine is None:
-        return None
+        # Sem engine explícito: a fonte da B3, a mesma que a tela lê.
+        if _escalar_b3("SELECT to_regclass('market.b3_cotacao_atual') IS NOT NULL"):
+            return _escalar_b3(SQL_DATA_DO_PRECO_B3_VIGENTE)
+        return _escalar_b3(SQL_DATA_DO_PRECO_B3)
     with engine.connect() as conn:
         # Sem a tabela (089 não aplicada) vale a última barra, como antes.
         if conn.execute(text("SELECT to_regclass('market.b3_cotacao_atual') IS NOT NULL")).scalar():

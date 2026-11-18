@@ -1,9 +1,9 @@
 {
   "nome": "Empresas B3",
   "resumo": "Estudar ações brasileiras e montar carteiras",
-  "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há cinco abas, em forma de botões: navegar pelas empresas, estudar uma empresa, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada.",
+  "explicacao": "É a área do app dedicada às ações de empresas brasileiras negociadas na bolsa (B3). No topo há cinco abas, em forma de botões: navegar pelas empresas, estudar uma empresa, montar uma carteira, avaliá-la e acompanhar a Carteira 20. Serve para ir da pesquisa de uma empresa até uma carteira montada e acompanhada. Os números da bolsa vêm do armazém local, o banco grande que fica no computador do dono do app e é atualizado todo dia. Se ele não responder, um aviso amarelo no topo diz que os dados mostrados são a cópia guardada em 15/11/2026.",
   "so_admin": false,
-  "fonte": "app.py:74; views/empresas_b3.py:3253 (abas: design/market_companies.py:72 e :87; despacho em views/empresas_b3.py:3253-3317)",
+  "fonte": "app.py:74; views/empresas_b3.py:3253 (abas: design/market_companies.py:72 e :87; despacho em views/empresas_b3.py:3253-3317); fonte dos dados: core/fonte_b3.py (aviso em views/empresas_b3.py::render)",
   "filhos": [
     {
       "nome": "Empresas por Setor",

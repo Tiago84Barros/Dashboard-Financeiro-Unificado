@@ -97,6 +97,17 @@ def test_montar_frame_remonta_os_tipos():
     assert f["n"].tolist() == [1, 2]
 
 
+def test_montar_frame_carimbo_com_e_sem_fracao_de_segundo():
+    """Medido no túnel em 18/11/2026: a 1ª linha sem fração fazia o pandas
+    recusar a seguinte, e o loader caía na cópia congelada do Supabase."""
+    corpo = {"colunas": ["updated_at", "criado"], "tipos": [1184, 1114],
+             "linhas": [["2026-10-04T17:26:23+00:00", "2026-10-04T17:26:23"],
+                        ["2026-10-04T17:26:23.875634+00:00", "2026-10-04T17:26:23.5"]]}
+    f = asql.montar_frame(corpo)
+    assert f["updated_at"].iloc[1] == pd.Timestamp("2026-10-04 17:26:23.875634", tz="UTC")
+    assert f["criado"].iloc[1] == pd.Timestamp("2026-10-04 17:26:23.5")
+
+
 def test_montar_frame_vazio_mantem_colunas():
     f = asql.montar_frame({"colunas": ["a", "b"], "tipos": [25, 1082], "linhas": []})
     assert f.empty and list(f.columns) == ["a", "b"]

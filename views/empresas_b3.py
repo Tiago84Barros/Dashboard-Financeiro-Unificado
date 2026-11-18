@@ -3302,6 +3302,19 @@ def render() -> None:
     fallback_legado = bool(getattr(df_set, "attrs", {}).get("fallback_legado"))
     df_set = _so_acoes(df_set)
 
+    # Desde 15/11/2026 a B3 é lida do armazém local (core.fonte_b3). Se o
+    # armazém não respondeu, os loaders caíram na cópia do Supabase congelada
+    # naquela data -- a tela diz isso em vez de mostrar dado velho calado.
+    from core.fonte_b3 import aviso_reserva
+
+    motivo_reserva = aviso_reserva()
+    if motivo_reserva:
+        st.warning(
+            "O armazém de dados não respondeu. Os dados da B3 abaixo são a "
+            "cópia guardada em 15/11/2026 e podem estar desatualizados.")
+        detalhe_tecnico(f"B3 lida da cópia congelada do Supabase: {motivo_reserva}.",
+                        codigo="b3.fonte_reserva")
+
     if df_set.empty:
         aviso_lacuna(
             "Cadastro de setores vazio — o app não conseguiu ler o banco. "

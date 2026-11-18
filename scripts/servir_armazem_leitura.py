@@ -87,6 +87,8 @@ JANELA_MAX_ATIVOS = 30
 #: Corpo do POST /sql: o SQL tem teto de 20 mil caracteres e as listas de
 #: tickers, de 5 mil itens.
 CORPO_MAX_BYTES = 512 * 1024
+#: Quanto do corpo recusado o servidor lê e joga fora antes de responder 413.
+DESCARTE_MAX_BYTES = 4 * CORPO_MAX_BYTES
 
 _ENGINES: dict[str, object] = {}
 _URL_EUA: list[str] = []
@@ -418,20 +420,37 @@ def fabricar_handler(token: str):
                                               f"{str(exc).splitlines()[0][:200] if str(exc) else ''}"}
             self._responder(status, corpo)
 
+        def _descartar_corpo(self, tamanho: int) -> None:
+            """Lê e joga fora o corpo (até um teto) antes de recusar o pedido.
+
+            Responder e fechar com bytes não lidos faz o Windows abortar a
+            conexão, e o cliente recebia "conexão anulada" em vez do 401/413.
+            """
+            self.close_connection = True
+            restante = min(tamanho, DESCARTE_MAX_BYTES)
+            while restante > 0:
+                lido = self.rfile.read(min(restante, 64 * 1024))
+                if not lido:
+                    break
+                restante -= len(lido)
+
         def do_POST(self):  # noqa: N802 - nome da API do http.server
+            try:
+                tamanho = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                tamanho = -1
             if not token_confere(self.headers.get("Authorization"), token):
+                self._descartar_corpo(tamanho)
                 self._responder(401, {"erro": "não autorizado"})
                 return
             caminho = urlsplit(self.path).path.rstrip("/") or "/"
             rota = ROTAS_POST.get(caminho)
             if rota is None:
+                self._descartar_corpo(tamanho)
                 self._recusar()
                 return
-            try:
-                tamanho = int(self.headers.get("Content-Length") or 0)
-            except ValueError:
-                tamanho = -1
             if not 0 < tamanho <= CORPO_MAX_BYTES:
+                self._descartar_corpo(tamanho)
                 self._responder(413 if tamanho > 0 else 400,
                                 {"erro": "corpo ausente ou grande demais"})
                 return

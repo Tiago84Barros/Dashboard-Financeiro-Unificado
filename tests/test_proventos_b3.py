@@ -352,9 +352,13 @@ def test_demonstracoes_levam_a_procedencia_dos_dividendos_por_ticker(monkeypatch
         mr.load_demonstracoes.clear()
         mr.load_demonstracoes_batch.clear()
 
+    def _sem_fonte_b3(attrs):  # de onde veio a leitura: ``core.fonte_b3``
+        return {k: v for k, v in attrs.items() if k != "fonte_b3"}
+
     for out in (um, lote["AAAA3"]):
-        assert out.attrs == {"fonte": pb.FONTE_ARQUIVO, "foto_em": {"AAAA3": "2026-07-03"}}
-    assert lote["BBBB4"].attrs == {"fonte": pb.FONTE_BANCO, "foto_em": {}}
+        assert _sem_fonte_b3(out.attrs) == {"fonte": pb.FONTE_ARQUIVO,
+                                            "foto_em": {"AAAA3": "2026-07-03"}}
+    assert _sem_fonte_b3(lote["BBBB4"].attrs) == {"fonte": pb.FONTE_BANCO, "foto_em": {}}
 
 
 def test_renda_anual_traz_o_dia_da_resposta_so_de_quem_o_arquivo_cobre(monkeypatch, banco):

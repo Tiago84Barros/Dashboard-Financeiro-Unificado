@@ -502,6 +502,16 @@ def confianca_b3(engine=None) -> ConfiancaSecao:
         comps.append(Componente("Metodologia validada", None, 0.25,
                                 f"nao medido: {type(exc).__name__}"))
 
+    # Desde 15/11/2026 a tela le a B3 do armazem local (core.fonte_b3), e
+    # compute_confidence/universo_b3 sem engine leem pela mesma fonte. Se o
+    # armazem nao respondeu, a medida saiu da copia congelada do Supabase, e a
+    # nota diz isso -- igual ao aviso da tela.
+    if engine is None:
+        from core.fonte_b3 import aviso_reserva
+        motivo = aviso_reserva()
+        if motivo:
+            notas.append("medido na copia do Supabase congelada em 15/11/2026: "
+                         + motivo)
     notas.append(NOTA_COTACAO_ACAO)
     notas.append(NOTA_DETALHE_DO_CHAT)
     return ConfiancaSecao("Empresas B3", tuple(comps), u, tuple(notas))

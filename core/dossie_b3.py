@@ -58,13 +58,31 @@ NAO_AVALIADO = "nao_avaliado"
 # Acesso a banco (engine singleton do projeto — nunca criar engine próprio)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _rows(sql: str, **params) -> list[dict]:
-    from core.database import get_engine
-    eng = get_engine()
-    if eng is None:
+def _rows(sql: str, _banco_do_app: bool = False, **params) -> list[dict]:
+    """Linhas da consulta como dicts.
+
+    ``market.*`` e ``public.setores`` vêm da fonte da B3 (``core.fonte_b3``:
+    o armazém local, com a cópia congelada do Supabase como reserva
+    nomeada). ``_banco_do_app=True`` lê o banco do app, para o que o papel
+    só-leitura do armazém não enxerga (``public.docs_corporativos``).
+    """
+    if _banco_do_app:
+        from core.database import get_engine
+        eng = get_engine()
+        if eng is None:
+            return []
+        with eng.connect() as conn:
+            return [dict(r) for r in conn.execute(text(sql), params).mappings().all()]
+
+    from core.market_read import _q_b3
+    df = _q_b3(sql, params)
+    erro = df.attrs.get("load_error")
+    if erro == "database_unavailable":
         return []
-    with eng.connect() as conn:
-        return [dict(r) for r in conn.execute(text(sql), params).mappings().all()]
+    if erro:
+        raise RuntimeError(f"leitura da B3 falhou ({df.attrs.get('error_type') or erro})")
+    # NaN do DataFrame volta a ser None, como na leitura linha a linha.
+    return df.astype(object).where(df.notna(), None).to_dict("records")
 
 
 def _f(v) -> float | None:
@@ -525,7 +543,7 @@ def _eventos_societarios(tk: str, n: int = 12) -> dict:
         WHERE ticker LIKE :pref
         ORDER BY COALESCE(document_date, data) DESC LIMIT :n
         """,
-        pref=tk[:4] + "%", n=n,
+        _banco_do_app=True, pref=tk[:4] + "%", n=n,
     )
     eventos = [{"data": str(r["dt"]), "categoria": r["cat"],
                 "titulo": (r["titulo"] or "")[:140]} for r in rows]
