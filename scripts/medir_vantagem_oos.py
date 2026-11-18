@@ -51,6 +51,10 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,7 +113,7 @@ def _apontar_para_armazem_local() -> str:
 US_SAFRAS_ANOS = (2006, 2025)
 
 
-def painel_us_em_memoria(engine) -> "pd.DataFrame":
+def painel_us_em_memoria(engine) -> pd.DataFrame:
     """Painel PIT da versão CORRENTE do score, montado sem escrever no armazém.
 
     Subir `US_FUNDAMENTAL_SCORE_VERSION` esvazia o painel lido de
@@ -122,10 +126,13 @@ def painel_us_em_memoria(engine) -> "pd.DataFrame":
     import pandas as pd
     from sqlalchemy import text
 
+    from core.us_data import HORIZONTE_PAINEL_MESES
     from core.us_read import _ler_desfechos
     from data_pipeline.us.scoring_history import (
-        annual_asof_dates, build_annual_panel, safras_pit)
-    from core.us_data import HORIZONTE_PAINEL_MESES
+        annual_asof_dates,
+        build_annual_panel,
+        safras_pit,
+    )
 
     datas = annual_asof_dates(*US_SAFRAS_ANOS)
     with engine.connect() as conn:

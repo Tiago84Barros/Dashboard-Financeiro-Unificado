@@ -15,8 +15,8 @@ import pandas as pd
 from sqlalchemy import create_engine, event, text
 
 import data_pipeline.us.scoring_history as sh
-from core.us_data import HORIZONTE_PAINEL_MESES
 import scripts.medir_vantagem_oos as medir
+from core.us_data import HORIZONTE_PAINEL_MESES
 
 
 def _safras_falsas(conn, datas, *, limit_companies=None):

@@ -27,8 +27,8 @@ import pytest
 
 from core.us_advanced_lab import _percentile
 from core.us_score import (
-    NEUTRAL,
     _ALL_METRICS,
+    NEUTRAL,
     _rank_within,
     percentil_winsorizado,
     score_cross_section,
