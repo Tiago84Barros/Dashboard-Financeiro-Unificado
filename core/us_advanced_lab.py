@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from core.us_estilos import notas_de_estilo
+from core.us_score import percentil_winsorizado
 
 # As seis primeiras são as trilhas fundamentalistas de core.us_score; momento e
 # P&D (core.us_estilos) entraram em 30/10/2026 -- os dois estilos que mais
@@ -55,18 +56,15 @@ def normalize_weights(weights: dict[str, float] | None = None) -> dict[str, floa
 
 
 def _percentile(values: pd.Series, higher: bool = True) -> pd.Series:
+    """Percentil 0–100 pela mesma conta do score (``percentil_winsorizado``).
+
+    Até a 0.9.1 esta era uma cópia da conta, que só winsorizava com quatro
+    valores ou mais (o valor solitário já saía neutro, 50). Na 0.9.2 ela
+    passou a chamar a função do score. O corte de 5% não reordena nada abaixo
+    de ~20 valores, então o número é o mesmo de antes.
+    """
     numeric = pd.to_numeric(values, errors="coerce").replace([np.inf, -np.inf], np.nan)
-    valid = numeric.dropna()
-    if len(valid) < 2:
-        # Um valor só não tem ordem: seria 100 (ou 0), a nota extrema tirada
-        # de uma observação. Gêmeo do achado D2 de 17/11/2026 na B3.
-        return pd.Series(50.0, index=numeric.index)
-    if len(valid) >= 4:
-        numeric = numeric.clip(valid.quantile(.05), valid.quantile(.95))
-    score = numeric.rank(pct=True, method="average") * 100
-    if not higher:
-        score = 100 - score
-    return score.fillna(50.0).clip(0, 100)
+    return (percentil_winsorizado(numeric, maior_melhor=higher) * 100).clip(0, 100)
 
 
 # Rótulos gravados em `risk_driver`. São constantes porque

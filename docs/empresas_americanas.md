@@ -99,6 +99,66 @@ de hoje:
 A regra melhora o resultado. A piora em relação a setembro vem dos balanços e
 preços novos.
 
+## Score sem par na indústria (v0.9.2, 18/11/2026)
+
+A 0.9.1 tirou a nota de ponta do valor **isolado**. Mas o corte "grupos
+pequenos usam o universo" seguia contando **empresas** da indústria, não
+**valores válidos da métrica**. Numa indústria de cinco empresas em que só duas
+publicam ROIC, o percentil saía de dois pontos: o pior dos dois valia 0,5 e o
+melhor 1,0, mesmo sendo os dois piores ROIC do universo. A empresa **sem
+indústria** tinha o defeito simétrico: o `groupby` descarta a chave nula, e ela
+saía neutra (0,5) em todas as métricas.
+
+Correção, em `core/us_score.py`: a métrica com menos de quatro valores válidos
+na indústria, ou de empresa sem indústria, é ranqueada no universo. O neutro
+abaixo de dois valores, da 0.9.1, continua valendo. As duas regras moram numa
+função só, `percentil_winsorizado`, que o laboratório de indicadores avançados
+(`core/us_advanced_lab._percentile`) também passou a chamar: ele já ranqueava
+no universo, e o número dele não muda. O percentil de momentum dos estilos
+(`core/us_estilos._percentil`) não tem grupo e fica com a regra da 0.9.1.
+
+Medido no armazém local sobre o corte transversal de 4.349 empresas:
+
+- **Alcance.** 2.710 dos 73.558 pares empresa×métrica estavam em indústria com
+  menos de quatro valores da métrica, em 686 empresas. Três empresas estavam
+  sem indústria.
+- **Contra a 0.9.1.** Mudam 673 notas, as três sem indústria entre elas. A
+  mediana de |Δ| é 1,3 ponto (p95 7,5). Catorze caem mais de 10 pontos; nenhuma
+  sobe tanto.
+- **Ordem e status.** Spearman 0,991 entre as duas notas. Ficam 15 do top 20,
+  40 do top 50 e 86 do top 100. Nenhuma empresa muda de status de decisão.
+
+Vantagem fora da amostra, walk-forward anual de 2010 a 2025 (16 períodos, top
+20 por score), com as três regras rodadas sobre o mesmo dado:
+
+| Regra | Excesso médio (IC 95%) | Rank-IC (t) |
+|---|---|---|
+| 0.9.0 | −9,28% (−17,2% a −1,3%) | 0,086 (3,36) |
+| 0.9.1 | −7,56% (−14,2% a −0,9%) | 0,088 (3,44) |
+| **0.9.2** | **−5,21% (−13,5% a +2,4%)** | **0,089 (3,53)** |
+
+A 0.9.2 melhora o excesso em mais 2,3 pontos sem piorar o Rank-IC. O IC do
+excesso passa a cruzar o zero: o motor deixa de perder de forma
+estatisticamente clara para o equal-weight, mas não passa a ganhar. Nada no
+universo nem na medição foi afrouxado.
+
+A medição também roda sem escrever no armazém:
+`medir_vantagem_oos.py --motor us --em-memoria`. As safras saem do mesmo
+gerador que a regeneração usa, `scoring_history.safras_pit`, numa transação só
+de leitura.
+
+Achado lateral: o registro de 08/09/2026 da 0.9.0 (−4,05%) saiu de safras
+anteriores aos PRs #705 e #711, que mudaram o score sem subir a versão.
+Recalculadas hoje, aquelas safras diferem das gravadas em 1,1 ponto na mediana
+(Spearman 0,944); com os preços de hoje, as gravadas ainda dão −4,07%. O que
+divergiu foram as safras, não o backtest.
+
+As safras da 0.9.2 foram gravadas em 18/11/2026
+(`python run_us_ingest.py score-history --warehouse --start-year 2006 --end-year 2025`).
+O comando só apaga linhas da própria versão: as da 0.9.0 e da 0.9.1 ficam. A
+tela passa a mostrar a 0.9.2 quando a rotina regenerar o snapshot
+(`python run_us_ingest.py snapshot --warehouse`) e publicar `us_vintages`.
+
 ## Indicadores avançados
 
 `core/us_advanced.py`, determinístico e puro. Deu nome à subaba Análise
