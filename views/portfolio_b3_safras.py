@@ -616,23 +616,22 @@ def _expectativa(resultados: list[dict], tabela: pd.DataFrame) -> dict:
             f"O intervalo de 95% do excesso {'líquido ' if liquido else ''}"
             f"sobre a Selic vai de {baixo:+.1%} "
             f"a {alto:+.1%} por safra: ele **atravessa o zero**. Nesta "
-            "amostra, a vantagem observada não é distinguível de acaso. "
-            "Ordenar não é superar — o Rank-IC pode indicar que o motor "
-            "discrimina retornos sem que isso vire vantagem líquida."
+            "amostra, o acaso pode explicar a vantagem observada. "
+            "Ordenar não é superar: o Rank-IC pode mostrar que o motor "
+            "separa bem os retornos, sem que isso vire ganho líquido."
         )
     if baixo_ew is not None and baixo_ew <= 0 <= alto_ew:
         avisos.append(
             f"O intervalo de 95% do excesso {'líquido ' if liquido else ''}"
             "sobre o equal-weight vai de "
             f"{baixo_ew:+.1%} a {alto_ew:+.1%} por safra: ele **atravessa o "
-            "zero**. Nesta amostra, a carteira não é distinguível de comprar "
-            "o universo inteiro em partes iguais.")
+            "zero**. Nesta amostra, o acaso pode explicar a diferença para "
+            "comprar o universo inteiro em partes iguais.")
     if loo["safras_que_viram"] > 0:
         avisos.append(
             f"O veredito muda se {loo['safras_que_viram']} dos "
-            f"{loo['n_safras']} anos for removido. Uma conclusão que depende "
-            "de um ano específico não é uma conclusão sobre a estratégia — é "
-            "uma conclusão sobre aquele ano."
+            f"{loo['n_safras']} anos for removido. Se a conclusão depende de "
+            "um ano só, ela não vale para a estratégia: vale para aquele ano."
         )
 
     # N-3: a causa vem do que `_ics_por_ano` VIU (os pares), não de
